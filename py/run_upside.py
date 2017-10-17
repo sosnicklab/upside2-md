@@ -62,7 +62,10 @@ def upside_config(fasta,
                   cavity_radius=0.,
                   debugging_only_heuristic_cavity_radius=None,
                   cavity_radius_from_config='',
-                  make_unbound=False):
+                  make_unbound=False,
+                  membrane_potential='',
+                  membrane_thickness=0.,
+                  membrane_exclude_residues=[]):
     
     args = [os.path.join(py_source_dir, 'upside_config.py'), '--fasta=%s'%fasta, '--output=%s'%output]
 
@@ -114,6 +117,14 @@ def upside_config(fasta,
         args.append('--cavity-radius-from-config=%s'%cavity_radius_from_config)
     if make_unbound:
         args.append('--make-unbound')
+
+    if membrane_potential and not membrane_thickness:
+        raise ValueError('Must supply membrane_thickness if using membrane_potential')
+    else:
+        args.append('--membrane-potential=%s'%membrane_potential)
+        args.append('--membrane-thickness=%f'%membrane_thickness)
+        for ex_res in membrane_exclude_residues:
+            args.append('--membrane-exclude-residues=%s'%ex_res)
         
     return ' '.join(args) + '\n' + sp.check_output(args)
 
