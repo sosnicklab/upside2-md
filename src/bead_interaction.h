@@ -10,20 +10,20 @@
 // FIXME Make n_param and the various n_knots proper runtime flags, probably by making sure
 // that InteractionGraph receives an IType object rather than just using it as a namespace.
 #if defined(PARAM_7A_CUTOFF)
-    #define N_KNOT_SC_SC   16
-    #define N_KNOT_SC_BB   12
-    #define N_KNOT_ANGULAR 15
-    #define KNOT_SPACING   0.5f
+    #define N_KNOT_SC_SC   9
+    #define N_KNOT_SC_BB   7
+    #define N_KNOT_ANGULAR 8
+    #define KNOT_SPACING   1.f
 #elif defined(PARAM_10A_CUTOFF)
     #define N_KNOT_SC_SC   12
     #define N_KNOT_SC_BB   12
     #define N_KNOT_ANGULAR 8
     #define KNOT_SPACING   1.f
 #else
-    #define N_KNOT_SC_SC   9
-    #define N_KNOT_SC_BB   7
-    #define N_KNOT_ANGULAR 8
-    #define KNOT_SPACING   1.f
+    #define N_KNOT_SC_SC   16
+    #define N_KNOT_SC_BB   12
+    #define N_KNOT_ANGULAR 15
+    #define KNOT_SPACING   0.5f
 #endif
 
 namespace {
