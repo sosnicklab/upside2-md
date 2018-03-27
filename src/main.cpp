@@ -324,6 +324,8 @@ try {
             false, 0.009, "float", cmd);
     ValueArg<double> duration_arg("", "duration", "duration of simulation", 
             true, -1., "float", cmd);
+    ValueArg<double> time_lim_arg("", "time-limit", "Run time limit of simulation in seconds (default unlimited)", 
+            false, -1., "float", cmd);
     ValueArg<unsigned long> seed_arg("", "seed", "random seed (default 42)", 
             false, 42l, "int", cmd);
     ValueArg<string> temperature_arg("", "temperature", "thermostat temperature (default 1.0, "
@@ -394,8 +396,11 @@ try {
             }
         }
 
+
         float dt = time_step_arg.getValue();
         double duration = duration_arg.getValue();
+        double time_lim = time_lim_arg.getValue();
+        bool passed_time_lim = false;
         uint64_t n_round = round(duration / (3*dt));
         int thermostat_interval = max(1.,round(thermostat_interval_arg.getValue() / (3*dt)));
         int frame_interval = max(1.,round(frame_interval_arg.getValue() / (3*dt)));
@@ -557,11 +562,13 @@ try {
 
             if(do_recenter) {
                 for(auto &n: sys->engine.nodes) {
-                    if(is_prefix(n.name, "cavity_radial"))
+                    if(is_prefix(n.name, "cavity_radial") || is_prefix(n.name, "spherical_well"))
                         throw string("You have re-centering and a radial potential turned on.  "
                                 "This is not what you want.  Consider --disable-recentering.");
                 }
             }
+
+
         } catch(const string &e) {
             fprintf(stderr, "\n\nERROR: %s\n", e.c_str());
             error_exit_omp = true;
@@ -623,7 +630,21 @@ try {
 
                     // Check for stop signal somewhat infrequently to avoid any (possibly theoretical)
                     // performance cost on a NUMA machine
-                    if((nr%8==ns%8) && received_signal!=NO_SIGNAL) break;
+                    if((nr%8==ns%8)) {
+                        if (received_signal!=NO_SIGNAL) {
+                            break;
+                        }
+
+                        // Check if run time limit exceeded 
+                        if (time_lim > 0.) {
+                            auto elapsed = chrono::duration<double>(std::chrono::high_resolution_clock::now() - tstart).count();
+                            // printf("Currently at %.1f seconds\n", elapsed);
+                            if (elapsed > time_lim) {
+                                passed_time_lim = true;
+                                break;
+                            }
+                        }    
+                    } 
 
                     // Don't pivot at t=0 so that a partially strained system may relax before the
                     // first pivot
@@ -667,11 +688,13 @@ try {
             }
             // Here we are running in serial again
             if(received_signal!=NO_SIGNAL) break;
+            if(passed_time_lim) break;
 
             if(replica_interval && !(systems[0].round_num % replica_interval))
                 replex->attempt_swaps(base_random_seed, systems[0].round_num, systems);
         }
         if(received_signal!=NO_SIGNAL) {fprintf(stderr, "Received early termination signal\n");}
+        if(passed_time_lim) {fprintf(stderr, "Passed time limit\n");}
         for(auto& sys: systems) sys.logger = shared_ptr<H5Logger>(); // release shared_ptr, which also flushes data during destructor
 
         auto elapsed = chrono::duration<double>(std::chrono::high_resolution_clock::now() - tstart).count();

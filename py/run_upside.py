@@ -56,6 +56,7 @@ def upside_config(fasta,
                   restraint_spring=None,
                   rotamer_interaction_param='',
                   contacts='',
+                  spherical_well='',
                   secstr_bias='',
                   chain_break_from_file='',
                   apply_restraint_group_to_each_chain=False,
@@ -104,6 +105,8 @@ def upside_config(fasta,
         args.append('--secstr-bias=%s'%secstr_bias)
     if contacts:
         args.append('--contact-energies=%s'%contacts)
+    if spherical_well:
+        args.append('--spherical-well=%s'%spherical_well)
 
     if chain_break_from_file:
         args.append('--chain-break-from-file=%s'%chain_break_from_file)
@@ -150,7 +153,7 @@ class UpsideJob(object):
                 pass
         return retcode
 
-def run_upside(queue, config, duration, frame_interval, n_threads=1, minutes=None, temperature=1., seed=None,
+def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threads=1, minutes=None, temperature=1., seed=None,
                replica_interval=None, anneal_factor=1., anneal_duration=-1., mc_interval=None, 
                time_step = None, swap_sets = None,
                log_level='basic', account=None, disable_recentering=False,
@@ -164,6 +167,9 @@ def run_upside(queue, config, duration, frame_interval, n_threads=1, minutes=Non
         upside_args.extend(['--temperature', ','.join(map(str,temperature))])
     except TypeError:  # not iterable
         upside_args.extend(['--temperature', str(temperature)])
+
+    if time_limit is not None:
+        upside_args.extend(['--time-limit', str(time_limit)])
 
     if replica_interval is not None:
         upside_args.extend(['--replica-interval', '%f'%replica_interval])
@@ -263,6 +269,31 @@ def continue_sim(partition, configs, duration, frame_interval, **upside_kwargs):
 
     upside_kwargs['temperature'] = temps
     return run_upside(partition, configs, duration, frame_interval, **upside_kwargs)
+
+def read_output(t, output_name, stride):
+    """Read output from continued Upside h5 files"""
+    def output_groups():
+        i=0
+        while 'output_previous_%i'%i in t.root:
+            yield t.get_node('/output_previous_%i'%i)
+            i += 1
+        if 'output' in t.root: 
+            yield t.get_node('/output')
+            i += 1
+
+    start_frame = 0
+    total_frames_produced = 0
+    output = []
+    time = []
+    for g_no, g in enumerate(output_groups()):
+        # take into account that the first frame of each output is the same as the last frame before restart
+        # attempt to land on the stride
+        sl = slice(start_frame,None,stride)
+        output.append(g._f_get_child(output_name)[sl,0])
+        total_frames_produced += g._f_get_child(output_name).shape[0]-(1 if g_no else 0)  # correct for first frame
+        start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
+    output = np.concatenate(output,axis=0)
+    return output
 
 
 def status(job):

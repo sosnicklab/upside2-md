@@ -426,6 +426,62 @@ struct ZFlatBottom : public PotentialNode
 };
 static RegisterNodeType<ZFlatBottom,1> z_flat_bottom_node("z_flat_bottom");
 
+struct SphericalWell : public PotentialNode
+{
+    struct Params {
+        index_t id;
+        float3 r0;
+        float radius;
+        float spring_constant;
+    };
+
+    int n_term;
+    CoordNode& pos;
+    vector<Params> params;
+
+    SphericalWell(hid_t hdf_group, CoordNode& pos_):
+        PotentialNode(),
+        pos(pos_), params( get_dset_size(1, hdf_group, "atom")[0] )
+    {
+        n_term = params.size();
+        check_size(hdf_group, "atom",            n_term);
+        check_size(hdf_group, "r0",              n_term, 3);
+        check_size(hdf_group, "radius",          n_term);
+        check_size(hdf_group, "spring_constant", n_term);
+
+        traverse_dset<1,int  >(hdf_group, "atom", [&](size_t nt, int x) {params[nt].id=x;});
+        traverse_dset<2,float>(hdf_group, "r0", [&](size_t nt, size_t i, float x) {params[nt].r0[i] = x;});
+        traverse_dset<1,float>(hdf_group, "radius", [&](size_t nt, float x) {params[nt].radius = x;});
+        traverse_dset<1,float>(hdf_group, "spring_constant", [&](size_t nt, float x) {
+                params[nt].spring_constant = x;});
+    }
+
+    virtual void compute_value(ComputeMode mode) {
+        Timer timer(string("spherical_well"));
+
+        VecArray posc = pos.output;
+        VecArray pos_sens = pos.sens;
+        float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
+        if(pot) *pot = 0.f;
+
+        for(int nt=0; nt<n_term; ++nt) {
+            auto& p = params[nt];
+            auto r = load_vec<3>(posc, p.id);
+
+            auto disp = r-p.r0; 
+            float disp_mag2 = mag2(disp);
+            if(disp_mag2>sqr(p.radius)) {
+                float inv_disp_mag = rsqrt(disp_mag2);
+                float disp_mag = disp_mag2*inv_disp_mag;
+                float excess = disp_mag-p.radius;
+
+                if(pot) *pot += 0.5f * p.spring_constant * sqr(excess);
+                update_vec(pos_sens, p.id, (p.spring_constant*excess*inv_disp_mag)*disp);
+            }
+        }
+    }
+};
+static RegisterNodeType<SphericalWell,1> spherical_well_node("spherical_well");
 
 struct AngleSpring : public PotentialNode
 {

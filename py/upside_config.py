@@ -43,38 +43,54 @@ def write_cavity_radial(cavity_radius):
     create_array(g, 'spring_constant', np.ones(n_atom)*5.)
 
 
-def write_z_flat_bottom(parser, fasta, z_spring_table):
-    fields = [ln.split() for ln in open(z_spring_table,'U')]
-    header = 'residue z0 radius spring_constant'
+def write_flat_bottom(parser, fasta, spring_table, z_only=True):
+    fields = [ln.split() for ln in open(spring_table,'U')]
+    if z_only:
+        header = 'residue z0 radius spring_constant'
+        desc = "z-flat-bottom"
+    else:
+        header = 'residue x0 y0 z0 radius spring_constant'
+        desc = "spherical-well"
     actual_header = [x.lower() for x in fields[0]]
     if actual_header != header.split():
-        parser.error('First line of z-flat-bottom table must be "%s" but is "%s"'
-                %(header," ".join(actual_header)))
+        parser.error('First line of %s table must be "%s" but is "%s"'
+                %(desc,header," ".join(actual_header)))
     if not all(len(f)==len(fields[0]) for f in fields):
-        parser.error('Invalid format for z-flat-bottom file')
+        parser.error('Invalid format for %s file' % desc)
     fields = fields[1:]
     n_spring = len(fields)
 
-    g = t.create_group(t.root.input.potential, 'z_flat_bottom')
+    g = t.create_group(t.root.input.potential, '%s' % desc.replace("-", "_"))
     g._v_attrs.arguments = np.array(['pos'])
 
     atom            = np.zeros((n_spring), dtype='i')
-    z0              = np.zeros((n_spring,))
+    if z_only:
+        z0          = np.zeros((n_spring,))
+    else:
+        r0          = np.zeros((n_spring,3))
     radius          = np.zeros((n_spring,))
     spring_constant = np.zeros((n_spring,))
 
     for i,f in enumerate(fields):
         res = int(f[0])
-        msg = 'Z_flat energy specified for residue %i (zero is first residue) but there are only %i residues in the FASTA'
-        if not (0 <= res < len(fasta)): raise ValueError(msg % (res, len(fasta)))
+        msg = '%s energy specified for residue %i (zero is first residue) but there are only %i residues in the FASTA'
+        if not (0 <= res < len(fasta)): raise ValueError(msg % (desc, res, len(fasta)))
         atom[i] = int(f[0])*3 + 1  # restrain the CA atom in each residue
 
-        z0[i]              = float(f[1])
-        radius[i]          = float(f[2])
-        spring_constant[i] = float(f[3])
+        if z_only:
+            z0[i]              = float(f[1])
+            radius[i]          = float(f[2])
+            spring_constant[i] = float(f[3])
+        else:
+            r0[i]              = [float(f[1]), float(f[2]), float(f[3])]
+            radius[i]          = float(f[4])
+            spring_constant[i] = float(f[5])
 
     create_array(g, 'atom',            obj=atom)
-    create_array(g, 'z0',              obj=z0)
+    if z_only:
+        create_array(g, 'z0',          obj=z0)
+    else:
+        create_array(g, 'r0',          obj=r0)
     create_array(g, 'radius',          obj=radius)
     create_array(g, 'spring_constant', obj=spring_constant)
 
@@ -1268,6 +1284,10 @@ def main():
             help='Table of Z-flat-bottom springs.  Each line must contain 4 fields and the first line '+
             'must contain "residue z0 radius spring_constant".  The restraint is applied to the CA atom '+
             'of each residue.')
+    parser.add_argument('--spherical-well', default='',
+            help='Table of spherical-well springs.  Each line must contain 6 fields and the first line '+
+            'must contain "residue x0 y0 z0 radius spring_constant". '+
+            'The restraint is applied to the CA atom of each residue.')
     parser.add_argument('--tension', default='',
             help='Table of linear tensions.  Each line must contain 4 fields and the first line '+
             'must contain "residue tension_x tension_y tension_z".  The residue will be pulled in the '+
@@ -1567,13 +1587,13 @@ def main():
                 # move receptor chains
                 first_res = chain_endpts(n_res, chain_first_residue, 0)[0]
                 next_first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0]-1)[1]
-                pick_disp = random.choice([0, 2, 4])
+                pick_disp = np.random.choice([0, 2, 4])
                 pos[first_res*3:next_first_res*3,:,0] = pos[first_res*3:next_first_res*3,:,0] + displacement[pick_disp]*0.5*args.cavity_radius
 
                 # move ligand chains
                 first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0])[0]
                 next_first_res = chain_endpts(n_res, chain_first_residue, n_chains-1)[1]
-                pick_disp = random.choice([1, 3, 5])
+                pick_disp = np.random.choice([1, 3, 5])
                 pos[first_res*3:next_first_res*3,:,0] = pos[first_res*3:next_first_res*3,:,0] + displacement[pick_disp]*0.5*args.cavity_radius
             t.root.input.pos[:] = pos
             target = pos.copy()
@@ -1583,7 +1603,10 @@ def main():
         write_backbone_pair(fasta_seq)
 
     if args.z_flat_bottom:
-        write_z_flat_bottom(parser,fasta_seq, args.z_flat_bottom)
+        write_flat_bottom(parser,fasta_seq, args.z_flat_bottom)
+
+    if args.spherical_well:
+        write_flat_bottom(parser,fasta_seq, args.spherical_well, z_only=False)
     
     if args.tension and args.ask_before_using_AFM:
         print 'Nope, you cannot pull the protein using two modes. Choose one.'
