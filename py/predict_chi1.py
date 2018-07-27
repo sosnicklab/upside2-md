@@ -58,7 +58,7 @@ class Chi1Predict(object):
 
 def main():
     import pandas as pd
-    src = os.path.expanduser('~/upside/src')
+    src = os.path.expanduser('~/upside/py')
     sys.path.append(src)
     import upside_engine as ue
     import argparse
@@ -83,7 +83,7 @@ def main():
         sp.check_call([
             os.path.join(src,'upside_config.py'),
                 '--fasta=%s.fasta'%base_initial,
-                '--initial-structures=%s.initial.pkl'%base_initial,
+                '--initial-structure=%s.initial.pkl'%base_initial,
                 '--loose-hbond-criteria',  # handle poor hbond geometry in some crystal structures
                 '--dynamic-rotamer-1body',
                 '--rotamer-placement=%s'  %args.sidechain_param,

@@ -1022,8 +1022,8 @@ def write_rotamer_placement(fasta, placement_library, dynamic_placement, dynamic
     return sc_node_name, pl_node_name
 
 
-def write_rotamer(fasta, interaction_library, damping, sc_node_name, pl_node_name):
-    g = t.create_group(t.root.input.potential, 'rotamer')
+def write_rotamer(fasta, interaction_library, damping, sc_node_name, pl_node_name, suffix=''):
+    g = t.create_group(t.root.input.potential, 'rotamer%s' % suffix)
     args = [sc_node_name,pl_node_name]
     def arg_maybe(nm):
         if nm in t.root.input.potential: args.append(nm)
@@ -1357,7 +1357,7 @@ def main():
     parser_grp1.add_argument('--cavity-radius', default=0., type=float,
             help='Enclose the whole simulation in a radial cavity centered at the origin to achieve finite concentration '+
             'of protein.  Necessary for multichain simulation (though this mode is unsupported.')
-    parser_grp1.add_argument('--debugging-only-heuristic-cavity-radius', default=0., type=float,
+    parser_grp1.add_argument('--heuristic-cavity-radius', default=0., type=float,
         help='Set the cavity radius to this provided scale factor times the max distance between com\'s and atoms of the chains.')
     parser_grp1.add_argument('--cavity-radius-from-config', default='', help='Config file with cavity radius set. Useful for applying'+
             ' the same heuristic cavity of bound complex config to unbound counterpart')
@@ -1394,7 +1394,7 @@ def main():
     create_array(input, 'sequence', obj=fasta_seq_with_cpr)
 
     if args.initial_structure:
-        init_pos = cPickle.load(open(args.initial_structure))
+        init_pos = cPickle.load(open(args.initial_structure)) # ToDo: check if need 'rb' in open
         assert init_pos.shape == (n_atom, 3, 1)
 
     if args.target_structure:
@@ -1453,8 +1453,7 @@ def main():
                 print "rl_chains:", rl_chains
 
         print
-        print "n_chains"
-        print n_chains
+        print "n_chains:", n_chains
 
         if chain_first_residue.size:
             break_grp = t.create_group("/input","chain_break","Indicates that multi-chain simulation and removal of bonded potential terms accross chains requested")
@@ -1510,40 +1509,34 @@ def main():
         create_array(grp, 'rama_map_id',  obj=np.zeros(len(fasta_seq), dtype='i4'))
         create_array(grp, 'rama_pot',     obj=ref_state_cor[None])
 
-    if args.debugging_only_heuristic_cavity_radius:
+    if args.heuristic_cavity_radius:
         if n_chains < 2:
-            print>>sys.stderr, 'WARNING: --debugging-only-heuristic-cavity-radius requires at least 2 chains. Skipping setting up cavity'
+            print>>sys.stderr, 'WARNING: --heuristic-cavity-radius requires at least 2 chains. Skipping setting up cavity'
         else:
-            com_list = []
-            com_dist_list = []
+            if not has_rl_info: # all chains separately
+                com_list = []
+                for i in xrange(n_chains):
+                    first_res, next_first_res = chain_endpts(n_res, chain_first_residue, i)
+                    com_list.append(pos[first_res*3:next_first_res*3,:,0].mean(axis=0))
+            else: # receptor and ligand chains considered as groups
+                # receptor com
+                first_res = chain_endpts(n_res, chain_first_residue, 0)[0]
+                next_first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0]-1)[1]
+                r_com = xyz[:,first_res*3:next_first_res*3].mean(axis=1)
 
-            for i in xrange(n_chains):
-                first_res, next_first_res = chain_endpts(n_res, chain_first_residue, i)
-                com_list.append(pos[first_res*3:next_first_res*3,:,0].mean(axis=0))
+                # ligand com
+                first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0])[0]
+                next_first_res = chain_endpts(n_res, chain_first_residue, n_chains-1)[1]
+                l_com = xyz[:,first_res*3:next_first_res*3].mean(axis=1)
 
-            # Distance between chain com
-            # for i in xrange(n_chains):
-            #     print
-            #     print "com_list"
-            #     print com_list[i]
-            #     for j in xrange(n_chains):
-            #         if j > i:
-            #             com_dist_list.append(vmag(com_list[i]-com_list[j]))
-
-            # args.cavity_radius = 2.*max(com_dist_list)
-            # print
-            # print "old cavity_radius"
-            # print args.cavity_radius
-            # com_dist_list = []
-
+                com_list = [r_com, l_com]
             # Distance between chain com and all atoms
+            com_dist_list = []
             for i in xrange(n_chains):
                 for j in xrange(n_atom):
                         com_dist_list.append(vmag(com_list[i]-pos[j,:,0]))
 
-            # Max distance between all atoms
-
-            args.cavity_radius = args.debugging_only_heuristic_cavity_radius*max(com_dist_list)
+            args.cavity_radius = args.heuristic_cavity_radius*max(com_dist_list)
             print
             print "cavity_radius"
             print args.cavity_radius
@@ -1551,7 +1544,7 @@ def main():
     if args.cavity_radius_from_config:
         if n_chains < 2:
             print>>sys.stderr, 'WARNING: --cavity-radius-from-config requires at least 2 chains. Skipping setting up cavity'
-        elif args.debugging_only_heuristic_cavity_radius:
+        elif args.heuristic_cavity_radius:
             print>>sys.stderr, 'WARNING: Overwriting heuristic cavity with the one from --cavity-radius-from-config'
         else:
             t_cavity = tb.open_file(args.cavity_radius_from_config,'r')
@@ -1596,7 +1589,6 @@ def main():
                 pick_disp = np.random.choice([1, 3, 5])
                 pos[first_res*3:next_first_res*3,:,0] = pos[first_res*3:next_first_res*3,:,0] + displacement[pick_disp]*0.5*args.cavity_radius
             t.root.input.pos[:] = pos
-            target = pos.copy()
 
     if args.backbone:
         require_affine = True

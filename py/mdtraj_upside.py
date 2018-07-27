@@ -1,8 +1,9 @@
 # VERY IMPORTANT all distances must be in nanometers for MDTraj
+import sys
+import cPickle as cp
 import numpy as np
 import mdtraj.core.element as el
 import mdtraj as md
-import sys
 
 from mdtraj.formats.registry import FormatRegistry
 angstrom=0.1  # conversion to nanometer from angstrom
@@ -110,40 +111,62 @@ def traj_from_upside(seq, time, pos, chain_first_residue=[0]):
 
 
 @FormatRegistry.register_loader('.up')
-def load_upside_traj(fname, stride=1, atom_indices=None, target_pos_only=False):
-    assert atom_indices is None
+def load_upside_traj(fname, stride=1, from_init=False, fasta_fn='', chain_breaks_fn='', target_pos_only=False):
     import tables as tb
-    with tb.open_file(fname) as t:
-        last_time = 0.
-        start_frame = 0
-        total_frames_produced = 0
-        xyz = []
-        time = []
-        if target_pos_only:
-            xyz.append(t.root.target.pos[:,:,0])
-            time.append(np.zeros(1,dtype='f4'))
-            last_time = time[-1]
-            total_frames_produced = 1
-            start_frame=1
-        else:
-            for g_no, g in enumerate(_output_groups(t)):
-                # take into account that the first frame of each pos is the same as the last frame before restart
-                # attempt to land on the stride
-                sl = slice(start_frame,None,stride)
-                xyz.append(g.pos[sl,0])
-                time.append(g.time[sl]+last_time)
-                last_time = g.time[-1]+last_time
-                total_frames_produced += g.pos.shape[0]-(1 if g_no else 0)  # correct for first frame
-                start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
+
+    if from_init and target_pos_only:
+        raise ValueError("Cannot have both from_init and target_pos_only.")
+    if from_init and (not fasta_fn or not chain_breaks_fn):
+        raise ValueError("from_init requires both fasta_fn and chain_breaks_fn set.")
+
+    last_time = 0.
+    start_frame = 0
+    total_frames_produced = 0
+    xyz = []
+    time = []
+    # Check for chain breaks in config file
+    chain_first_residue = np.array([0], dtype='int32')
+
+    if from_init:
+        with open(fname, 'rb') as f:
+            xyz.append(cp.load(f)[...,0])
+
+        with open(fasta_fn) as f:
+            fasta_str = ''.join(f.read().splitlines()[1:])
+        seq = fasta_str.replace("*", "") # Remove CIS PRO indicators
+
+        with open(chain_breaks_fn) as f:
+            chain_first_residue = np.append(chain_first_residue,
+                                            np.array([int(i) for i in f.readline().split()]))
+    else:
+        with tb.open_file(fname) as t:
+            if target_pos_only:
+                xyz.append(t.root.target.pos[:,:,0])
+            else:
+                for g_no, g in enumerate(_output_groups(t)):
+                    # take into account that the first frame of each pos is the same as the last frame before restart
+                    # attempt to land on the stride
+                    sl = slice(start_frame,None,stride)
+                    xyz.append(g.pos[sl,0])
+                    time.append(g.time[sl]+last_time)
+                    last_time = g.time[-1]+last_time
+                    total_frames_produced += g.pos.shape[0]-(1 if g_no else 0)  # correct for first frame
+                    start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
+        
+            seq = t.root.input.sequence[:]
+
+            if 'chain_break' in t.root.input:
+                chain_first_residue = np.append(chain_first_residue, t.root.input.chain_break.chain_first_residue[:])
+        
+    if from_init or target_pos_only:
+        xyz = np.array(xyz)
+        time.append(np.zeros(1,dtype='f4'))
+        last_time = time[-1]
+        total_frames_produced = 1
+        start_frame = 1
+    else:
         xyz = np.concatenate(xyz,axis=0)
-        time = np.concatenate(time,axis=0)
-
-        seq = t.root.input.sequence[:]
-
-        # Check for chain breaks in config file
-        chain_first_residue = np.array([0], dtype='int32')
-        if 'chain_break' in t.root.input:
-            chain_first_residue = np.append(chain_first_residue, t.root.input.chain_break.chain_first_residue[:])
+    time = np.concatenate(time,axis=0)
 
     return traj_from_upside(seq, time, xyz, chain_first_residue=chain_first_residue)
 
@@ -304,24 +327,28 @@ def replex_demultiplex(list_of_replex_traj, replica_index):
 
 
 
-def ca_interfacial_rmsd_angstroms(traj, native, group1, group2, ca_cutoff_angstroms=10., verbose=True):
-    native = native[0]  # ensure only a single frame is passed
+class ca_interfacial_rmsd_angstroms:
 
-    res_group1, res_group2 = [np.array(sorted(set([native.topology.atom(i).residue.index for i in g])))
-            for g in (group1,group2)]
+    def __init__(self, native, group1, group2, ca_cutoff_angstroms=10., verbose=True):
+        self.native = native[0]  # ensure only a single frame is passed
 
-    contact_pairs = np.array([(i,j) for i in res_group1 for j in res_group2])
-    is_contact = (10.*md.compute_contacts(native,scheme='ca', contacts=contact_pairs)[0]<ca_cutoff_angstroms)[0]
-    contacts = contact_pairs[is_contact]
-            
-    interface_residues = sorted(set(contacts[:,0]).union(set(contacts[:,1])))
-    if verbose:
-        print '%i interface residues (%i,%i)' % (
-                len(interface_residues), len(set(contacts[:,0])), len(set(contacts[:,1])))
-    interface_atom_indices = np.array([a.index for a in native.topology.atoms
-                                               if  a.residue.index in interface_residues])
+        res_group1, res_group2 = [np.array(sorted(set([native.topology.atom(i).residue.index for i in g])))
+                for g in (group1,group2)]
 
-    return 10.*md.rmsd(traj.atom_slice(interface_atom_indices), native.atom_slice(interface_atom_indices))
+        contact_pairs = np.array([(i,j) for i in res_group1 for j in res_group2])
+        is_contact = (10.*md.compute_contacts(native,scheme='ca', contacts=contact_pairs)[0]<ca_cutoff_angstroms)[0]
+        contacts = contact_pairs[is_contact]
+                
+        interface_residues = sorted(set(contacts[:,0]).union(set(contacts[:,1])))
+        if verbose:
+            print '%i interface residues (%i,%i)' % (
+                    len(interface_residues), len(set(contacts[:,0])), len(set(contacts[:,1])))
+        self.interface_atom_indices = np.array([a.index for a in native.topology.atoms
+                                                   if  a.residue.index in interface_residues])
+
+    def compute_irmsd(self, traj):
+        native = native[0]  # ensure only a single frame is passed
+        return 10.*md.rmsd(traj, self.native, atom_indices=self.interface_atom_indices)
     
 
 def ca_rmsd_angstroms(traj, native, cut_tails=False, verbose=True):

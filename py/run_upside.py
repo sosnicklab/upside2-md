@@ -1,10 +1,13 @@
 ''' Very opinionated convenience script for running upside jobs on midway '''
-import collections
-import numpy as np
-import subprocess as sp
 import os, sys
+import collections
+import subprocess as sp
+import numpy as np
+import tables as tb
 import json,uuid
 import time
+
+from upside_config import chain_endpts
 
 # FIXME This assumes that upside-parameters is a sibling of upside in the 
 # directory structure.  Later, I will move the parameter directory into the
@@ -211,7 +214,7 @@ def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threa
         # setting --export on srun will blow away the rest of the environment
         # afterward, we will undo the change
 
-        assert minutes is not None  # time limits currently not supported by srun-launcher
+        assert minutes is None  # time limits currently not supported by srun-launcher
 
         old_omp_num_threads = os.environ.get('OMP_NUM_THREADS', None)
 
@@ -271,7 +274,7 @@ def continue_sim(partition, configs, duration, frame_interval, **upside_kwargs):
     return run_upside(partition, configs, duration, frame_interval, **upside_kwargs)
 
 def read_output(t, output_name, stride):
-    """Read output from continued Upside h5 files"""
+    """Read output from continued Upside h5 files."""
     def output_groups():
         i=0
         while 'output_previous_%i'%i in t.root:
@@ -289,12 +292,39 @@ def read_output(t, output_name, stride):
         # take into account that the first frame of each output is the same as the last frame before restart
         # attempt to land on the stride
         sl = slice(start_frame,None,stride)
-        output.append(g._f_get_child(output_name)[sl,0])
+        output.append(g._f_get_child(output_name)[sl,:])
         total_frames_produced += g._f_get_child(output_name).shape[0]-(1 if g_no else 0)  # correct for first frame
         start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
     output = np.concatenate(output,axis=0)
     return output
 
+def compute_com_dist(config_fn):
+    """Compute center of mass distance between receptor and ligand."""
+    with tb.open_file(config_fn) as t:
+        n_res = len(t.root.input.sequence[:])
+        try:
+            xyz = read_output(t, "pos", 1)[:,0,:,:] 
+        except ValueError:
+            print "No output for %s" % config_fn
+            sys.exit(1)
+        else:
+            chain_first_residue = t.root.input.chain_break.chain_first_residue[:]
+            rl_chains = t.root.input.chain_break.rl_chains[:]
+
+    n_chains = len(chain_first_residue) + 1
+
+    # receptor com
+    first_res = chain_endpts(n_res, chain_first_residue, 0)[0]
+    next_first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0]-1)[1]
+    r_com = xyz[:,first_res*3:next_first_res*3].mean(axis=1)
+
+    # ligand com
+    first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0])[0]
+    next_first_res = chain_endpts(n_res, chain_first_residue, n_chains-1)[1]
+    l_com = xyz[:,first_res*3:next_first_res*3].mean(axis=1)
+
+    com_dist = vmag(r_com - l_com)
+    return com_dist
 
 def status(job):
     try:
