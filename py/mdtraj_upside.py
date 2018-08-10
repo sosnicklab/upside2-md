@@ -8,6 +8,11 @@ import mdtraj as md
 from mdtraj.formats.registry import FormatRegistry
 angstrom=0.1  # conversion to nanometer from angstrom
 
+aa_conv_dict = {"A": "ALA", "R": "ARG", "N": "ASN", "D": "ASP", "C": "CYS", "E": "GLU",
+                "Q": "GLN", "G": "GLY", "H": "HIS", "I": "ILE", "L": "LEU", "K": "LYS",
+                "M": "MET", "F": "PHE", "P": "PRO", "S": "SER", "T": "THR", "W": "TRP",
+                "Y": "TYR", "V": "VAL",}
+
 print 'Very Important: All distances are in nanometers for MDTraj'
 
 def vmag(x):
@@ -134,6 +139,7 @@ def load_upside_traj(fname, stride=1, from_init=False, fasta_fn='', chain_breaks
         with open(fasta_fn) as f:
             fasta_str = ''.join(f.read().splitlines()[1:])
         seq = fasta_str.replace("*", "") # Remove CIS PRO indicators
+        seq = [aa_conv_dict[aa] for aa in seq]
 
         with open(chain_breaks_fn) as f:
             chain_first_residue = np.append(chain_first_residue,
@@ -157,13 +163,10 @@ def load_upside_traj(fname, stride=1, from_init=False, fasta_fn='', chain_breaks
 
             if 'chain_break' in t.root.input:
                 chain_first_residue = np.append(chain_first_residue, t.root.input.chain_break.chain_first_residue[:])
-        
+     
     if from_init or target_pos_only:
         xyz = np.array(xyz)
         time.append(np.zeros(1,dtype='f4'))
-        last_time = time[-1]
-        total_frames_produced = 1
-        start_frame = 1
     else:
         xyz = np.concatenate(xyz,axis=0)
     time = np.concatenate(time,axis=0)
@@ -347,7 +350,6 @@ class ca_interfacial_rmsd_angstroms:
                                                    if  a.residue.index in interface_residues])
 
     def compute_irmsd(self, traj):
-        native = native[0]  # ensure only a single frame is passed
         return 10.*md.rmsd(traj, self.native, atom_indices=self.interface_atom_indices)
     
 

@@ -1522,17 +1522,17 @@ def main():
                 # receptor com
                 first_res = chain_endpts(n_res, chain_first_residue, 0)[0]
                 next_first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0]-1)[1]
-                r_com = xyz[:,first_res*3:next_first_res*3].mean(axis=1)
+                r_com = pos[first_res*3:next_first_res*3,:,0].mean(axis=0)
 
                 # ligand com
                 first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0])[0]
                 next_first_res = chain_endpts(n_res, chain_first_residue, n_chains-1)[1]
-                l_com = xyz[:,first_res*3:next_first_res*3].mean(axis=1)
+                l_com = pos[first_res*3:next_first_res*3,:,0].mean(axis=0)
 
                 com_list = [r_com, l_com]
             # Distance between chain com and all atoms
             com_dist_list = []
-            for i in xrange(n_chains):
+            for i in xrange(len(com_list)):
                 for j in xrange(n_atom):
                         com_dist_list.append(vmag(com_list[i]-pos[j,:,0]))
 

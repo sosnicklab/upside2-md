@@ -64,7 +64,7 @@ def upside_config(fasta,
                   chain_break_from_file='',
                   apply_restraint_group_to_each_chain=False,
                   cavity_radius=0.,
-                  debugging_only_heuristic_cavity_radius=None,
+                  heuristic_cavity_radius=None,
                   cavity_radius_from_config='',
                   make_unbound=False,
                   membrane_potential='',
@@ -117,8 +117,8 @@ def upside_config(fasta,
         args.append('--apply-restraint-group-to-each-chain')
     if cavity_radius:
         args.append('--cavity-radius=%f'%cavity_radius)
-    if debugging_only_heuristic_cavity_radius:
-        args.append('--debugging-only-heuristic-cavity-radius=%f'%debugging_only_heuristic_cavity_radius)
+    if heuristic_cavity_radius:
+        args.append('--heuristic-cavity-radius=%f'%heuristic_cavity_radius)
     if cavity_radius_from_config:
         args.append('--cavity-radius-from-config=%s'%cavity_radius_from_config)
     if make_unbound:
