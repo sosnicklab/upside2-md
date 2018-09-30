@@ -57,6 +57,7 @@ def upside_config(fasta,
                   reference_rama='',
                   restraint_groups=[],
                   restraint_spring=None,
+                  offset_spring='',
                   rotamer_interaction_param='',
                   contacts='',
                   spherical_well='',
@@ -91,6 +92,8 @@ def upside_config(fasta,
         args.append('--restraint-group=%s'%rg)
     if restraint_spring is not None:
         args.append('--restraint-spring-constant=%f'%restraint_spring)
+    if offset_spring:
+        args.append('--offset-spring=%s'%offset_spring)
         
     if rotamer_interaction_param:
         args.append('--rotamer-placement=%s'%placement)
