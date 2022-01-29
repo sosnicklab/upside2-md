@@ -631,6 +631,8 @@ struct RotamerSidechain: public PotentialNode {
     int n_prob_nodes;
     InteractionGraph<BT> igraph;
     array<int,UPPER_ROT> n_elem_rot;
+    int n_elem_sum;
+    int max_n_edge;
 
     NodeHolder* node_holders_matrix[UPPER_ROT];
     NodeHolder  nodes1, nodes3, nodes6; // FIXME initialize these with sane max_n_edge
@@ -656,17 +658,19 @@ struct RotamerSidechain: public PotentialNode {
         n_prob_nodes(prob_nodes.size()),
         igraph(open_group(grp,"pair_interaction").get(), &pos_node_),
         n_elem_rot(calculate_n_elem(igraph)),
+	n_elem_sum( n_elem_rot[1] + n_elem_rot[3] + n_elem_rot[6]),
+        max_n_edge(h5::read_attribute<int>(grp, "pair_interaction", "max_n_edge", n_elem_sum*n_elem_sum)),
 
         nodes1(1,n_elem_rot[1]),
         nodes3(3,n_elem_rot[3]),
         nodes6(6,n_elem_rot[6]),
 
-        edges11(nodes1,nodes1,n_elem_rot[1]*(n_elem_rot[1]+1)/2),
-        edges13(nodes1,nodes3,n_elem_rot[1]* n_elem_rot[3]),
-        edges16(nodes1,nodes6,n_elem_rot[1]* n_elem_rot[6]),
-        edges33(nodes3,nodes3,n_elem_rot[3]*(n_elem_rot[3]+1)/2),
-        edges36(nodes3,nodes6,n_elem_rot[3]* n_elem_rot[6]),
-        edges66(nodes6,nodes6,n_elem_rot[6]*(n_elem_rot[6]+1)/2),
+        edges11(nodes1,nodes1, min(n_elem_rot[1]*(n_elem_rot[1]+1)/2 , max_n_edge) ),
+        edges13(nodes1,nodes3, min(n_elem_rot[1]* n_elem_rot[3]      , max_n_edge) ),
+        edges16(nodes1,nodes6, min(n_elem_rot[1]* n_elem_rot[6]      , max_n_edge) ),
+        edges33(nodes3,nodes3, min(n_elem_rot[3]*(n_elem_rot[3]+1)/2 , max_n_edge) ),
+        edges36(nodes3,nodes6, min(n_elem_rot[3]* n_elem_rot[6]      , max_n_edge) ),
+        edges66(nodes6,nodes6, min(n_elem_rot[6]*(n_elem_rot[6]+1)/2 , max_n_edge) ),
 
         // energy_cap      (read_attribute<float>(grp,"pair_interaction","energy_cap")),
         // energy_cap_width(read_attribute<float>(grp,"pair_interaction","energy_cap_width")),
