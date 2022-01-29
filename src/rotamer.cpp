@@ -300,6 +300,26 @@ struct NodeHolder {
             for(int no: range(N_ROT)) en += b[no] * logf((1e-10f+b[no])*rcp(1e-10f+pr[no]));
             return en;
         }
+
+    // add to split the potential and entropy
+    template <int N_ROT, int EType>
+        float node_entropy(int nn) {
+            auto b = load_vec<N_ROT>(cur_belief,nn);
+            b *= rcp(sum(b));
+            auto pr = load_vec<N_ROT>(prob,nn);
+
+            float en = 0;
+            if (EType == 0) {
+                // average energy 
+                en = energy_offset[nn];
+                for(int no: range(N_ROT)) en -= b[no] * logf( 1e-10f+pr[no] );
+            }
+            else {
+                // entropy
+                for(int no: range(N_ROT)) en += b[no] * logf( 1e-10f+b[no] );
+            }
+            return en;
+        }
 };
 
 constexpr static int simd_width = 4;
@@ -444,6 +464,33 @@ struct EdgeHolder {
                     // which is what I want for calculating the overall energy
                     // the 1e-10f prevents NaN if some probabilities are exactly 0
                     en += p[i] * logf((1e-10f+p[i]) * rcp(1e-10f+pr[no1*ru(N_ROT2)+no2]*b1[no1]*b2[no2]));
+                }
+            }
+
+            return en;
+        }
+
+        // add to split the potential and entropy
+        template<int N_ROT1, int N_ROT2, int EType>
+        float edge_entropy(int ne) {
+            auto b1 = load_vec<N_ROT1>(nodes1.cur_belief, edge_indices1[ne]);  // really marginal
+            auto b2 = load_vec<N_ROT2>(nodes2.cur_belief, edge_indices2[ne]);
+
+            auto p  = load_vec<N_ROT1*   N_ROT2 >(marginal, ne);
+            auto pr = load_vec<N_ROT1*ru(N_ROT2)>(prob, ne);
+
+            float en = 0.f;
+            for(int no1: range(N_ROT1)) {
+                for(int no2: range(N_ROT2)) {
+                    int i = no1*N_ROT2 + no2;
+                    if (EType == 0) {
+                        // average potential energy 
+                        en -= p[i] * logf( 1e-10f+pr[no1*ru(N_ROT2)+no2] );
+                    }
+                    else {
+                        // the mutual information
+                        en += p[i] * logf( (1e-10f+p[i]) * rcp(1e-10f+b1[no1]*b2[no2]) );
+                    }
                 }
             }
 
@@ -662,6 +709,16 @@ struct RotamerSidechain: public PotentialNode {
             default_logger->add_logger<float>("rotamer_free_energy", {nodes1.n_elem+nodes3.n_elem+nodes6.n_elem}, 
                     [&](float* buffer) {
                        auto en = residue_free_energies();
+                       copy(begin(en), end(en), buffer);});
+
+            default_logger->add_logger<float>("rotamer_potential", {nodes1.n_elem+nodes3.n_elem+nodes6.n_elem}, 
+                    [&](float* buffer) {
+                       auto en = residue_entropy<0>();
+                       copy(begin(en), end(en), buffer);});
+
+            default_logger->add_logger<float>("rotamer_entropy", {nodes1.n_elem+nodes3.n_elem+nodes6.n_elem}, 
+                    [&](float* buffer) {
+                       auto en = residue_entropy<1>();
                        copy(begin(en), end(en), buffer);});
 
             for(int npn: range(n_prob_nodes))
@@ -894,6 +951,46 @@ struct RotamerSidechain: public PotentialNode {
 
         for(int ne: range(edges66.nodes_to_edge.n_edge)) {
             float en = edges66.edge_free_energy<6,6>(ne);
+            e6[edges66.edge_indices1[ne]] += 0.5*en;
+            e6[edges66.edge_indices2[ne]] += 0.5*en;
+        }
+
+        return arrange_energies(e1,e3,e6);
+    }
+
+    // add to split the potential and entropy
+    template<int EType>
+    vector<float> residue_entropy() {
+        vector<float> e1(nodes1.n_elem, 0.f);
+        vector<float> e3(nodes3.n_elem, 0.f);
+        vector<float> e6(nodes6.n_elem, 0.f);
+
+        for(int nn: range(nodes1 .n_elem)) {float en = nodes1.node_entropy<1,EType>(nn); e1[nn] += en;}
+        for(int nn: range(nodes3 .n_elem)) {float en = nodes3.node_entropy<3,EType>(nn); e3[nn] += en;}
+        for(int nn: range(nodes6 .n_elem)) {float en = nodes6.node_entropy<6,EType>(nn); e6[nn] += en;}
+
+        if (EType == 0) {
+            for(int ne: range(edges11.nodes_to_edge.n_edge)) {
+                float en = -logf(edges11.prob(0,ne));
+                e1[edges11.edge_indices1[ne]] += 0.5*en;
+                e1[edges11.edge_indices2[ne]] += 0.5*en;
+            }
+        }
+
+        for(int ne: range(edges33.nodes_to_edge.n_edge)) {
+            float en = edges33.edge_entropy<3,3,EType>(ne);
+            e3[edges33.edge_indices1[ne]] += 0.5*en;
+            e3[edges33.edge_indices2[ne]] += 0.5*en;
+        }
+
+        for(int ne: range(edges36.nodes_to_edge.n_edge)) {
+            float en = edges36.edge_entropy<3,6,EType>(ne);
+            e3[edges36.edge_indices1[ne]] += 0.5*en;
+            e6[edges36.edge_indices2[ne]] += 0.5*en;
+        }
+
+        for(int ne: range(edges66.nodes_to_edge.n_edge)) {
+            float en = edges66.edge_entropy<6,6,EType>(ne);
             e6[edges66.edge_indices1[ne]] += 0.5*en;
             e6[edges66.edge_indices2[ne]] += 0.5*en;
         }
