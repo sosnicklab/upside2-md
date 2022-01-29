@@ -9,6 +9,7 @@
 #include <algorithm>
 #include "Float4.h"
 
+#include <stdexcept>
 
 template <typename T>
 inline T* operator+(const std::unique_ptr<T[]>& ptr, int i) {
@@ -264,6 +265,7 @@ struct InteractionGraph{
     constexpr static const bool simd_width = IType::simd_width;
     constexpr static const int  align      = maxint(4,simd_width);
     constexpr static const int  align_bytes= 4*align;
+    constexpr static const long long  align_bytes_long = 4*align;
     constexpr static const int  n_dim1     = IType::n_dim1, n_dim1a = round_up(n_dim1, align);
     constexpr static const int  n_dim2     = IType::n_dim2, n_dim2a = round_up(n_dim2, align);
     constexpr static const int  n_param    = IType::n_param;
@@ -291,6 +293,7 @@ struct InteractionGraph{
     int32_t* edge_indices2;  
     int32_t* edge_id1;
     int32_t* edge_id2;
+    long long max_n_edge_deriv;
     std::unique_ptr<float[]>    edge_value;
     std::unique_ptr<float[]>    edge_deriv;  // this may become a SIMD-type vector
     std::unique_ptr<float[]>    edge_sensitivity; // must be filled by user of this class
@@ -302,7 +305,7 @@ struct InteractionGraph{
     std::vector<Vec<n_param>> edge_param_deriv;
     VecArrayStorage           interaction_param_deriv;
 
-    InteractionGraph(hid_t grp, CoordNode* pos_node1_, CoordNode* pos_node2_ = nullptr):
+    InteractionGraph(hid_t grp, CoordNode* pos_node1_, CoordNode* pos_node2_ = nullptr) try :
         pos_node1(pos_node1_), pos_node2(pos_node2_),
 
         n_elem1(h5::get_dset_size(1,grp,symmetric?"index":"index1")[0]), 
@@ -311,10 +314,8 @@ struct InteractionGraph{
         n_type1(h5::get_dset_size(3,grp,"interaction_param")[0]),
         n_type2(h5::get_dset_size(3,grp,"interaction_param")[1]),
 
-        max_n_edge(round_up(
-                    h5::read_attribute<int>(grp, ".", "max_n_edge", 
-                        n_elem1*n_elem2/(symmetric?2:1)),
-                        16)),
+        max_n_edge(round_up( h5::read_attribute<int>(grp, ".", "max_n_edge", 
+                             n_elem1*n_elem2/(symmetric?2:1)),  16)),
 
         types1(new_aligned<int32_t>(n_elem1,16)), types2(new_aligned<int32_t>(n_elem2,16)),
         id1   (new_aligned<int32_t>(n_elem1,16)), id2   (new_aligned<int32_t>(n_elem2,16)),
@@ -327,17 +328,16 @@ struct InteractionGraph{
         edge_indices2(pairlist.edge_indices2.get()),
         edge_id1      (pairlist.edge_id1.get()),
         edge_id2      (pairlist.edge_id2.get()),
-
-        edge_value      (new_aligned<float>  (max_n_edge,                 align_bytes)),
-        edge_deriv      (new_aligned<float>  (max_n_edge*(n_dim1+n_dim2), align_bytes)),
-        edge_sensitivity(new_aligned<float>  (max_n_edge,                 align_bytes)),
+        max_n_edge_deriv((long long) max_n_edge * (n_dim1+n_dim2)),
+        edge_value      (new_aligned<float>  (max_n_edge,                  align_bytes)),
+        edge_deriv      (new_aligned<float>  (max_n_edge_deriv,       align_bytes_long)),
+        edge_sensitivity(new_aligned<float>  (max_n_edge,                  align_bytes)),
 
         interaction_param(new_aligned<float>(n_type1*n_type2*n_param, 4)),
 
         pos1_deriv(new_aligned<float>(round_up(n_elem1,16)*n_dim1a,             maxint(4,simd_width))),
-        pos2_deriv(new_aligned<float>(round_up(symmetric?16:n_elem2,16)*n_dim2a, maxint(4,simd_width)))
-
-        ,interaction_param_deriv(n_param, n_type1*n_type2)
+        pos2_deriv(new_aligned<float>(round_up(symmetric?16:n_elem2,16)*n_dim2a, maxint(4,simd_width))),
+        interaction_param_deriv(n_param, n_type1*n_type2)
     {
         using namespace h5;
         auto suffix1 = [](const char* base) {return base + std::string(symmetric?"":"1");};
@@ -378,7 +378,9 @@ struct InteractionGraph{
             for(int nr: range(n_elem2)) types2[nr] = types1[nr];
             for(int nr: range(n_elem2)) id2   [nr] = id1   [nr];
         }
-    }
+    } catch (std::runtime_error& e) {
+        std::cerr << e.what() << std::endl;
+    } 
 
     void update_cutoffs() {
         cutoff = 0.f;
@@ -488,8 +490,10 @@ struct InteractionGraph{
             Vec<n_dim2,Float4> d2;
 
             IType::compute_edge(d1,d2, interaction_ptr, coord1,coord2).store(edge_value+ne);
-            store_vec(edge_deriv + ne*(n_dim1+n_dim2),          d1);
-            store_vec(edge_deriv + ne*(n_dim1+n_dim2)+4*n_dim1, d2);
+            long long id_ed1 = (long long) ne * (long long) (n_dim1+n_dim2);
+            long long id_ed2 = id_ed1 + (long long) 4*n_dim1;
+            store_vec(edge_deriv + id_ed1, d1);
+            store_vec(edge_deriv + id_ed2, d2);
 
             if(param_deriv) {
                 for(int i: range(4)) {
@@ -527,8 +531,10 @@ struct InteractionGraph{
             auto i2 = Int4(edge_indices2+ne);
             auto sens = Float4(edge_sensitivity+ne);
 
-            auto d1 = sens*load_vec<n_dim1>(edge_deriv + ne*(n_dim1+n_dim2), Alignment::aligned);
-            auto d2 = sens*load_vec<n_dim2>(edge_deriv + ne*(n_dim1+n_dim2)+4*n_dim1, Alignment::aligned);
+            long long id_ed1 = (long long) ne * (long long) (n_dim1+n_dim2);
+            long long id_ed2 = id_ed1 + (long long) 4*n_dim1;
+            auto d1 = sens*load_vec<n_dim1>(edge_deriv + id_ed1, Alignment::aligned);
+            auto d2 = sens*load_vec<n_dim2>(edge_deriv + id_ed2, Alignment::aligned);
 
             aligned_scatter_update_vec_destructive(pos1_deriv.get(),                       i1*Int4(n_dim1a), d1);
             aligned_scatter_update_vec_destructive((symmetric?pos1_deriv:pos2_deriv).get(),i2*Int4(n_dim2a), d2);
@@ -538,6 +544,8 @@ struct InteractionGraph{
                     int t1 = types1[edge_indices1[ne+i]];
                     int t2 = types2[edge_indices2[ne+i]];
                     update_vec(interaction_param_deriv, t1*n_type2+t2, extract_float(sens,i)*edge_param_deriv[ne+i]);
+                    if(symmetric) 
+                        update_vec(interaction_param_deriv, t2*n_type1+t1, extract_float(sens,i)*edge_param_deriv[ne+i]);
                 }
             }
         }

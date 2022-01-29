@@ -10,6 +10,7 @@
 #include "Float4.h"
 
 static constexpr int default_alignment=4; // suitable for SSE
+static constexpr long long default_alignment_long=4; // suitable for SSE
 
 // the function below is used to allow a version of max to be called in a constexpr context
 constexpr inline int maxint(int i, int j) {
@@ -20,6 +21,10 @@ constexpr inline int round_up(int i, int alignment) {
     return ((i+alignment-1)/alignment)*alignment; // probably alignment is a power of 2
 }
 
+constexpr inline long long round_up(long long i, long long alignment) {
+    return ((i+alignment-1)/alignment)*alignment; // probably alignment is a power of 2
+}
+
 constexpr inline int ru(int i) {
     return i==1 ? i : round_up(i,4);
 }
@@ -27,6 +32,16 @@ constexpr inline int ru(int i) {
 
 template <typename T>
 static std::unique_ptr<T[]> new_aligned(int n_elem, int alignment_elems=default_alignment) {
+    // round up allocation to ensure that you can also read to the end without
+    //   overstepping the array, if needed
+    T* ptr = new T[round_up(n_elem, alignment_elems)];
+    // printf("aligning %i elements at %p\n", round_up(n_elem, alignment_elems), (void*)ptr);
+    // if((unsigned long)(ptr)%(unsigned long)(alignment_elems*sizeof(T))) throw "bad alignment on string";
+    return std::unique_ptr<T[]>(ptr);
+}
+
+template <typename T>
+static std::unique_ptr<T[]> new_aligned(long long n_elem, long long alignment_elems=default_alignment_long) {
     // round up allocation to ensure that you can also read to the end without
     //   overstepping the array, if needed
     T* ptr = new T[round_up(n_elem, alignment_elems)];
@@ -163,9 +178,12 @@ struct
      const ScalarT& operator[](int i) const {return v[i];}
  };
 
+typedef Vec<1,float> float1;
 typedef Vec<2,float> float2;
 typedef Vec<3,float> float3;
 typedef Vec<4,float> float4;
+
+typedef Vec<3,  int>   int3;
 
 // template <int D>
 // inline Vec<D,float> load_vec(const VecArray& a, int idx) {
@@ -265,6 +283,26 @@ inline Vec<D,S> approx_vec_rcp(const Vec<D,S>& x) {
     return y;
 }
 
+template <int D, typename S> 
+inline Vec<D, int> vec_floor(const Vec<D,S>& x) {
+    Vec<D, int> y;
+    for(int i=0; i<D; ++i) y[i] = floor(x[i]);
+    return y;
+}
+
+template <int D, typename S> 
+inline Vec<D, int> vec_round(const Vec<D,S>& x) {
+    Vec<D, int> y;
+    for(int i=0; i<D; ++i) y[i] = round(x[i]);
+    return y;
+}
+
+template <int D, typename S> 
+inline Vec<D, int> vec_ceil(const Vec<D,S>& x) {
+    Vec<D, int> y;
+    for(int i=0; i<D; ++i) y[i] = ceil(x[i]);
+    return y;
+}
 
 
 // FIXME more general blendv needed
