@@ -20,10 +20,11 @@
     #define N_KNOT_ANGULAR 8
     #define KNOT_SPACING   1.f
 #else
-    #define N_KNOT_SC_SC   16
-    #define N_KNOT_SC_BB   12
+    #define N_KNOT_SC_SC   12
+    #define N_KNOT_SC_BB   10
     #define N_KNOT_ANGULAR 15
-    #define KNOT_SPACING   0.5f
+    #define KNOT_SPACING    0.7f
+    #define KNOT_SPACING_BB 0.625f
 #endif
 
 namespace {
@@ -90,6 +91,7 @@ namespace {
                 const Vec<n_dim1> &x1, const Vec<n_dim2> &x2)
         {
             d_param = make_zero<n_param>();
+
 
             float3 displace = extract<0,3>(x2)-extract<0,3>(x1);
             float3 rvec1 = extract<3,6>(x1);
