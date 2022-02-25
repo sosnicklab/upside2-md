@@ -35,6 +35,7 @@ struct MembranePotential : public PotentialNode
 
     vector<ResidueParams>     res_params;
     vector<PotentialCBParams> pot_params;
+    vector<float> weights;
 
     LayeredClampedSpline1D<1> membrane_energy_cb_spline;
     LayeredClampedSpline1D<1> membrane_energy_uhb_spline;
@@ -59,6 +60,7 @@ struct MembranePotential : public PotentialNode
 
         res_params(n_elem),
         pot_params(n_restype),
+        weights(get_dset_size(1, grp, "weights")[0]),
 
         membrane_energy_cb_spline(
                 get_dset_size(2, grp, "cb_energy")[0],
@@ -90,6 +92,7 @@ struct MembranePotential : public PotentialNode
         traverse_dset<1,  int>(grp,  "residue_type", [&](size_t nr,   int rt) {res_params[nr].restype   = rt;});
         traverse_dset<1,float>(grp,  "cov_midpoint", [&](size_t rt, float bc) {pot_params[rt].cov_midpoint  = bc;});
         traverse_dset<1,float>(grp, "cov_sharpness", [&](size_t rt, float bw) {pot_params[rt].cov_sharpness = bw;});
+        traverse_dset<1,float>(grp,       "weights", [&](size_t n,  float x)  {weights[n]=x;});
 
         vector<double> cb_energy_data;
         traverse_dset<2,double>(grp, "cb_energy", [&](size_t rt, size_t z_index, double value) {
@@ -125,11 +128,19 @@ struct MembranePotential : public PotentialNode
             float spline_deriv = result[0]*cb_z_scale; // scale to get derivative in *unnormalized* coordinates
 
             auto& pp = pot_params[p.restype];
-            auto cover_sig = compact_sigmoid(env_cov(0, p.env_index)-pp.cov_midpoint, pp.cov_sharpness);
+
+            float bl = 0.0;
+            for(int aa: range(20)) 
+                bl += weights[aa] * env_cov(0, p.env_index*20+aa);
+
+            auto cover_sig = compact_sigmoid(bl-pp.cov_midpoint, pp.cov_sharpness);
 
             potential                    += spline_value*cover_sig.x();
             cb_pos_sens (2, p.cb_index)  += spline_deriv*cover_sig.x();
-            env_cov_sens(0, p.env_index) += spline_value*cover_sig.y();
+
+            auto d_pot  = spline_value*cover_sig.y();
+            for(int aa: range(20)) 
+                env_cov_sens(0, p.env_index*20+aa) +=  weights[aa] * d_pot;
         }
 
         int n_virtual = n_donor+n_acceptor;
