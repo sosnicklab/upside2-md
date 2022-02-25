@@ -70,6 +70,7 @@ struct H5Logger {
     h5::H5Obj config;
     h5::H5Obj logging_group;
     std::vector<std::unique_ptr<SingleLogger>> state_loggers;
+    std::vector<std::unique_ptr<SingleLogger>> state_dense_loggers;
     size_t n_samples_buffered;
 
     // H5Logger(): level(LOG_BASIC), config(0u), logging_group(0u), n_samples_buffered(0u) {}
@@ -90,12 +91,20 @@ struct H5Logger {
         if(!(n_samples_buffered % 100)) flush();
     }
 
+    void collect_dense_samples() {
+        Timer timer(std::string("dense_logger"));
+        for(auto &sl: state_dense_loggers) 
+            sl->collect_samples();
+    }
+
     void flush() {
         // HDF5 is often built non-thread-safe, so we must serialize access with a OpenMP critical section
         #pragma omp critical (hdf5_write_access)
         {
             if(n_samples_buffered) {
                 for(auto &sl: state_loggers) 
+                    sl->dump_samples();
+                for(auto &sl: state_dense_loggers) 
                     sl->dump_samples();
                 n_samples_buffered = 0u;
                 H5Fflush(config.get(), H5F_SCOPE_LOCAL);
@@ -111,6 +120,16 @@ struct H5Logger {
         auto logger = std::unique_ptr<SingleLogger>(
                 new SpecializedSingleLogger<T,F>(logging_group.get(), relative_path, sample_function, data_shape));
         state_loggers.emplace_back(std::move(logger));
+    }
+
+    template <typename T, typename F>
+    void add_dense_logger(
+            const char* relative_path, 
+            const std::initializer_list<int>& data_shape, 
+            const F&& sample_function) {
+        auto logger = std::unique_ptr<SingleLogger>(
+                new SpecializedSingleLogger<T,F>(logging_group.get(), relative_path, sample_function, data_shape));
+        state_dense_loggers.emplace_back(std::move(logger));
     }
 
     template <typename T, typename F>
