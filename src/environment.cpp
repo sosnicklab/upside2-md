@@ -492,4 +492,293 @@ struct NonlinearCoupling : public PotentialNode {
 };
 static RegisterNodeType<NonlinearCoupling,1> nonlinear_coupling_node("nonlinear_coupling");
 
+struct SigmoidCoupling : public PotentialNode {
+    CoordNode& input;
+    int n_restype, n_residue;
+    vector<float> scale;      // length n_residue
+    vector<float> center;     // length n_residue
+    vector<float> sharpness;  // length n_residue
+    vector<float> weights;
+    vector<int>   coupling_types; // length input n_residue
+    vector<float> wnumber;
+    int num_independent_weight;
+
+    SigmoidCoupling(hid_t grp, CoordNode& input_):
+        PotentialNode(),
+        input(input_),
+        n_restype(get_dset_size(1,grp, "scale")[0]),
+        n_residue(input.n_elem/n_restype),
+        scale(n_restype),
+        center(n_restype),
+        sharpness(n_restype),
+        weights(400),
+        coupling_types(n_residue),
+        wnumber(n_residue),
+        num_independent_weight(read_attribute<int>(grp, ".", "number_independent_weights"))
+    {
+        check_elem_width(input, 1);  // could be generalized
+
+        check_size(grp, "center", n_restype);
+        check_size(grp, "sharpness", n_restype);
+        check_size(grp, "coupling_types", n_residue);
+        check_size(grp, "weights", n_restype*n_restype);
+
+        traverse_dset<1,float>(grp,"scale",[&](size_t n, float x){scale[n]=x;});
+        traverse_dset<1,float>(grp,"center",[&](size_t n, float x){center[n]=x;});
+        traverse_dset<1,float>(grp,"sharpness",[&](size_t n, float x){sharpness[n]=x;});
+        traverse_dset<1,float>(grp,"weights",[&](size_t n, float x){weights[n]=x;});
+        traverse_dset<1,int>(grp,"coupling_types",[&](size_t n, int x){coupling_types[n]=x;});
+
+        for(int i: coupling_types) if(i<0 || i>=n_restype) throw string("invalid coupling type");
+
+        if (num_independent_weight != 1 and num_independent_weight != 20 and num_independent_weight != 400) 
+            throw string("the number of independent weights should be 1, 20 or 400");
+
+        if(logging(LOG_DETAILED)) {
+            default_logger->add_logger<float>("sigmoid_coupling", {n_residue}, [&](float* buffer) {
+                for(int nr: range(n_residue)) {
+                    wnumber[nr] = 0.0;
+                    int ctype = coupling_types[nr];
+                    for(int aa: range(n_restype)) 
+                        wnumber[nr] += weights[ctype*n_restype+aa] * input.output(0, nr*n_restype+aa);
+                    auto out = compact_sigmoid(wnumber[nr]-center[ctype], sharpness[ctype]);
+                    buffer[nr] = out.x() * scale[ctype];
+                }});
+        }
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        Timer timer("sigmoid_coupling");
+
+        float pot = 0.f;
+        for(int nr: range(n_residue)) {
+            wnumber[nr] = 0.0;
+            int ctype = coupling_types[nr];
+            for(int aa: range(n_restype)) {
+                wnumber[nr] += weights[ctype*n_restype+aa] * input.output(0, nr*n_restype+aa);
+            }
+            auto out = compact_sigmoid(wnumber[nr]-center[ctype], sharpness[ctype]);
+
+            pot += scale[ctype] * out.x();
+            for(int aa: range(n_restype)) 
+                input.sens(0,nr*n_restype+aa) +=  weights[ctype*n_restype+aa] * scale[ctype] * out.y();
+        }
+        potential = pot;
+    }
+
+    virtual std::vector<float> get_param() const override {
+        int wsize = n_restype*n_restype;
+        vector<float> params(n_restype*3+wsize, 0.f);
+
+        for(int ct: range(n_restype)) {
+            params[0*n_restype+ct] = scale[ct];
+            params[1*n_restype+ct] = center[ct];
+            params[2*n_restype+ct] = sharpness[ct];
+        }
+
+        for(int ct: range(wsize)) 
+            params[3*n_restype+ct] = weights[ct];
+
+        return params;
+    }
+
+    virtual void set_param(const std::vector<float>& new_param) override {
+        int csize = 3*n_restype;
+        int wsize = n_restype*n_restype;
+        if(new_param.size() != size_t(csize+wsize))
+            throw string("the size of parameters should be 3*the number of amino acid type + (the number of amino acid type)^2");
+
+        for(int ct: range(n_restype)) {
+             scale[ct]     = new_param[0*n_restype+ct];
+             center[ct]    = new_param[1*n_restype+ct];
+             sharpness[ct] = new_param[2*n_restype+ct];
+        }
+
+        for(int ct: range(wsize)) 
+             weights[ct]   = new_param[3*n_restype+ct];
+    }
+
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {
+        int csize = 3*n_restype; // for scale. center and sharpness
+        int wsize = n_restype*n_restype;
+
+        vector<float> deriv(csize+wsize, 0.f);
+        vector<float> sens(n_residue, 0.f);
+
+        for(int nr: range(n_residue)) {
+            wnumber[nr] = 0.0;
+            int ctype = coupling_types[nr];
+
+            for(int aa: range(n_restype)) 
+                wnumber[nr] += weights[ctype*n_restype+aa] * input.output(0, nr*n_restype+aa);
+
+            auto dist_coord = wnumber[nr]-center[ctype];
+            auto out = compact_sigmoid(dist_coord, sharpness[ctype]);
+
+            deriv[0*n_restype+ctype] +=  out.x();
+            deriv[1*n_restype+ctype] += -scale[ctype] * out.y();
+            deriv[2*n_restype+ctype] +=  scale[ctype] * dist_coord * out.y()/sharpness[ctype];
+
+            if ( num_independent_weight > 1) 
+                sens[nr]              =  out.y() * scale[ctype];
+        }
+
+        if ( num_independent_weight == 1 )
+            return deriv;
+
+        for(int nr: range(n_residue)) {
+            int ctype = coupling_types[nr];
+            for(int aa: range(n_restype)) {
+                auto deriv_aa = sens[nr] * input.output(0, nr*n_restype+aa);
+                if ( num_independent_weight == 400)
+                    deriv[csize+ctype*n_restype+aa] += deriv_aa;
+                else if ( num_independent_weight == 20 ) 
+                    for (int aa2: range(n_restype)) 
+                        deriv[csize+aa2*n_restype+aa] += deriv_aa;
+            }
+        }
+
+        return deriv;
+    }
+#endif
+
+};
+static RegisterNodeType<SigmoidCoupling,1> sigmoid_coupling_node("sigmoid_coupling");
+
+//struct BackboneWeightedBurialLevel : public CoordNode {
+//
+//    CoordNode& env_sc;
+//
+//    int n_restype;
+//    int n_bb;
+//    float scale;
+//    float center;
+//    float sharpness;
+//    float hbond_weight;
+//    vector<float> weights;
+//
+//    BackboneWeightedBurialLevel(hid_t grp, CoordNode& env_sc_):
+//
+//        PotentialNode(),
+//        env_sc      (env_sc_),
+//        n_restype   (read_attribute<int>(grp, ".", "num_aa_types")),
+//        n_bb        (env_sc.n_elem/n_restype),
+//        weights     (get_dset_size(1,grp, "weights")[0])
+//    {
+//        check_elem_width(env_sc, 1);  // could be generalized
+//        traverse_dset<1,float>(grp,"weights",[&](size_t n, float x){weights[n]=x;});
+//    }
+//
+//    virtual void compute_value(ComputeMode mode) override {
+//        Timer timer("backbone_weighted_bl");
+//
+//        for(int nr: range(n_bb)) {
+//            float bl = 0.0;
+//            for(int aa: range(n_restype)) 
+//                bl += weights[aa] * env_sc.output(0, nr*n_restype+aa);
+//            bl += hbond_weight*env_hb.output(0, nr);
+//
+//            output(0, nr) = bl;
+//        }
+//    }
+//
+//    virtual void propagate_deriv() override {
+//        Timer timer("d_backbone_weighted_bl");
+//
+//        for(int nr: range(n_bb)) {
+//            for(int aa: range(n_restype)) 
+//                env_sc.sens(0, nr*n_restype+aa) +=  weights[aa] * d_pot;
+//        }
+//    }
+//};
+//
+//static RegisterNodeType<BackboneWeightedBurialLevel,1>_node("bb_sigmoid_coupling");
+
+struct BackboneSigmoidCoupling : public PotentialNode {
+
+    CoordNode& env_hb;
+    CoordNode& env_sc;
+    int n_restype;
+    int n_bb;
+    float scale;
+    float center;
+    float sharpness;
+    float hbond_weight;
+    vector<float> weights;
+
+    BackboneSigmoidCoupling(hid_t grp, CoordNode& env_sc_, CoordNode& env_hb_):
+        PotentialNode(),
+        env_hb      (env_hb_),
+        env_sc      (env_sc_),
+        n_restype   (read_attribute<int>(grp, ".", "num_aa_types")),
+        n_bb        (env_sc.n_elem/n_restype),
+        scale       (read_attribute<float>(grp, ".", "scale")),
+        center      (read_attribute<float>(grp, ".", "center")),
+        sharpness   (read_attribute<float>(grp, ".", "sharpness")),
+        hbond_weight(read_attribute<float>(grp, ".", "hbond_weight")),
+        weights     (get_dset_size(1,grp, "weights")[0])
+    {
+        check_elem_width(env_sc, 1);  // could be generalized
+        check_elem_width(env_hb, 1);  // could be generalized
+        traverse_dset<1,float>(grp,"weights",[&](size_t n, float x){weights[n]=x;});
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        Timer timer("backbone_sigmoid_coupling");
+        float pot = 0.f;
+        for(int nr: range(n_bb)) {
+            float bl = 0.0;
+            for(int aa: range(n_restype)) 
+                bl += weights[aa] * env_sc.output(0, nr*n_restype+aa);
+            bl += hbond_weight*env_hb.output(0, nr);
+            auto out = compact_sigmoid(bl-center, sharpness);
+
+            pot        += scale * out.x();
+            auto d_pot  = scale * out.y();
+            for(int aa: range(n_restype)) 
+                env_sc.sens(0, nr*n_restype+aa) +=  weights[aa] * d_pot;
+            env_hb.sens(0, nr) +=  hbond_weight* d_pot;
+        }
+        potential = pot;
+    }
+
+    virtual std::vector<float> get_param() const override {
+        vector<float> params(4, 0.f);
+        params[0] = scale;
+        params[1] = center;
+        params[2] = sharpness;
+        params[3] = hbond_weight;
+        return params;
+    }
+    virtual void set_param(const std::vector<float>& new_param) override {
+        scale        = new_param[0];
+        center       = new_param[1];
+        sharpness    = new_param[2];
+        hbond_weight = new_param[3];
+    }
+
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {
+        vector<float> deriv(4, 0.f);
+        for(int nr: range(n_bb)) {
+            float bl = 0.0;
+            for(int aa: range(n_restype)) 
+                bl += weights[aa] * env_sc.output(0, nr*n_restype+aa);
+            bl += hbond_weight*env_hb.output(0, nr);
+
+            auto dist_coord = bl-center;
+            auto out = compact_sigmoid(dist_coord, sharpness);
+            deriv[0] +=  out.x();
+            //deriv[1] += -scale * out.y();
+            //deriv[2] +=  scale * dist_coord * out.y()/sharpness;
+            //deriv[3] +=  scale * out.y() * env_hb.output(0, nr);
+        }
+        return deriv;
+    }
+#endif
+};
+
+static RegisterNodeType<BackboneSigmoidCoupling,2> bb_sigmoid_coupling_node("bb_sigmoid_coupling");
+
 }
