@@ -134,6 +134,177 @@ struct HBondSidechainRadialPairs : public PotentialNode
     virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
 };
 
+template <bool is_symmetric>
+struct ContactInteraction {
+
+    constexpr static bool  symmetric = is_symmetric;
+    constexpr static int   n_param = 4, n_dim1=3, n_dim2=3, simd_width=1;
+
+    static float cutoff(const float* p) {
+        return p[3]+1e-6;
+    }
+
+    static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
+        auto sequence_exclude = Int4(2);  // exclude i,i, i,i+1, and i,i+2
+        return (sequence_exclude < id1-id2) | (sequence_exclude < id2-id1);
+    }
+
+    static bool is_compatible(const float* p1, const float* p2) { return true;}
+
+    static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4], 
+                const Vec<n_dim1,Float4> &x1, const Vec<n_dim2,Float4> &x2) {
+
+        auto disp       = x1-x2;
+        auto dist2      = mag2(disp);
+        auto inv_dist   = rsqrt(dist2+Float4(1e-7f));  // 1e-7 is divergence protection
+        auto dist       = dist2*inv_dist;
+        auto scale      = Float4(p[0]);
+        auto center     = Float4(p[1]);
+        auto sharpness  = Float4(p[2]);
+        auto empty      = Float4(p[3]);
+        transpose4(scale,  center,  sharpness,  empty);
+        auto sig  = compact_sigmoid(dist-center,  sharpness);
+        d1 = disp*inv_dist*scale*sig.y();
+        d2 = -d1;
+        return scale*sig.x();
+    }
+
+    static void param_deriv(Vec<n_param> &d_param, const float* p,
+            const Vec<n_dim1> &x1, const Vec<n_dim2> &x2) {
+        d_param     = make_zero<n_param>();
+        auto dist   = mag(x1-x2);
+        auto out    = compact_sigmoid(dist-p[1], p[2]);
+        d_param[0] +=  out.x();
+        d_param[1] += -p[0] * out.y();
+        d_param[2] +=  p[0] * (dist-p[1]) * out.y()/p[2];
+   }
+
+};
+
+struct SymmContactNListEnergy : public PotentialNode
+{
+    InteractionGraph<ContactInteraction<true>> igraph;
+    SymmContactNListEnergy(hid_t grp, CoordNode& pos_):
+        PotentialNode(),
+        igraph(grp, &pos_)
+    {};
+    virtual void compute_value(ComputeMode mode) {
+        Timer timer(string("fast_contact"));
+        igraph.compute_edges();
+        for(int ne=0; ne<igraph.n_edge; ++ne) igraph.edge_sensitivity[ne] = 1.f;
+        igraph.propagate_derivatives();
+        if(mode==PotentialAndDerivMode) {
+            potential = 0.f;
+            for(int ne=0; ne<igraph.n_edge; ++ne) 
+                potential += igraph.edge_value[ne];
+        }
+    }
+    virtual std::vector<float> get_param() const override {return igraph.get_param();}
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {return igraph.get_param_deriv();}
+#endif
+    virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
+};
+
+struct NoSymmContactNListEnergy : public PotentialNode
+{
+    InteractionGraph<ContactInteraction<false>> igraph;
+    NoSymmContactNListEnergy(hid_t grp, CoordNode& posA_, CoordNode& posB_):
+        PotentialNode(),
+        igraph(grp, &posA_, &posB_)
+    {};
+    virtual void compute_value(ComputeMode mode) {
+        Timer timer(string("fast contact"));
+        igraph.compute_edges();
+        for(int ne=0; ne<igraph.n_edge; ++ne) igraph.edge_sensitivity[ne] = 1.f;
+        igraph.propagate_derivatives();
+        if(mode==PotentialAndDerivMode) {
+            potential = 0.f;
+            for(int ne=0; ne<igraph.n_edge; ++ne) 
+                potential += igraph.edge_value[ne];
+        }
+    }
+    virtual std::vector<float> get_param() const override {return igraph.get_param();}
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {return igraph.get_param_deriv();}
+#endif
+    virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
+};
+
+struct WallSpring : public PotentialNode
+{
+    struct Params {
+        index_t atom[2];
+        float equil_dist;
+        float spring_constant;
+        float sign;
+    };
+
+    int n_elem;
+    CoordNode& pos;
+    vector<Params> params;
+
+    WallSpring(hid_t grp, CoordNode& pos_):
+        PotentialNode(),
+        n_elem(get_dset_size(2, grp, "id")[0]), pos(pos_), params(n_elem)
+    {
+        int n_dep = 2;  // number of atoms that each term depends on 
+        check_size(grp, "id",           n_elem, n_dep);
+        check_size(grp, "signs",        n_elem);
+        check_size(grp, "equil_dist",   n_elem);
+        check_size(grp, "spring_const", n_elem);
+
+        auto& p = params;
+        traverse_dset<2,int>  (grp, "id",           [&](size_t i, size_t j, int   x) {p[i].atom[j] = x;});
+        traverse_dset<1,float>(grp, "signs",        [&](size_t i,           float x) {p[i].sign = x;});
+        traverse_dset<1,float>(grp, "equil_dist",   [&](size_t i,           float x) {p[i].equil_dist = x;});
+        traverse_dset<1,float>(grp, "spring_const", [&](size_t i,           float x) {p[i].spring_constant = x;});
+
+        if(logging(LOG_DETAILED))
+            default_logger->add_logger<float>("wall_energy", {1}, [&](float* buffer) {
+                    float pot = 0.f;
+                    VecArray x = pos.output;
+
+                    for(int nt=0; nt<n_elem; ++nt) {
+
+                        auto p = params[nt];
+                        float dmag = mag(load_vec<3>(x, p.atom[0]) - load_vec<3>(x, p.atom[1]));
+
+                        auto dist = dmag - p.equil_dist;
+                        if ( p.sign*dist >= 0.0) pot += 0.5f * p.spring_constant * sqr(dist);
+                    }
+                    buffer[0] = pot;
+                    });
+    }
+
+    virtual void compute_value(ComputeMode mode) {
+        Timer timer(string("walls"));
+
+        VecArray posc = pos.output;
+        VecArray pos_sens = pos.sens;
+        float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
+        if(pot) *pot = 0.f;
+
+        for(int nt=0; nt<n_elem; ++nt) {
+            auto& p = params[nt];
+
+            auto x1 = load_vec<3>(posc, p.atom[0]);
+            auto x2 = load_vec<3>(posc, p.atom[1]);
+
+            auto disp = x1 - x2;
+            auto dist = mag(disp);
+
+            if (dist*p.sign > 0.0) {
+
+                auto deriv = p.spring_constant * (1.f - p.equil_dist*inv_mag(disp)) * disp;
+                if(pot) *pot += 0.5f * p.spring_constant * sqr(mag(disp) - p.equil_dist);
+
+                update_vec(pos_sens, p.atom[0],  deriv);
+                update_vec(pos_sens, p.atom[1], -deriv);
+            }
+        }
+    }
+};
 
 struct ContactEnergy : public PotentialNode
 {
@@ -311,6 +482,8 @@ struct CooperationContacts : public PotentialNode
 }
 
 static RegisterNodeType<ContactEnergy,1>             contact_node("contact");
+static RegisterNodeType<SymmContactNListEnergy,1>    sfast_contact_node("symm_fast_contact");
+static RegisterNodeType<NoSymmContactNListEnergy,2>  nsfast_contact_node("nosymm_fast_contact");
 static RegisterNodeType<CooperationContacts,1>       cooperation_contacts_node("cooperation_contacts");
 static RegisterNodeType<SidechainRadialPairs,1>      radial_node ("radial");
 static RegisterNodeType<HBondSidechainRadialPairs,2> hbond_sc_radial_node ("hbond_sc_radial");
