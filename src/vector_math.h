@@ -475,6 +475,30 @@ inline Vec<D,S> operator-(const Vec<D,S>& a) {
 }
 //! \endcond
 
+
+//! \cond, Zongan to handle int3
+/* Implicit type conversion rules in C++ operators
+ * int + float =>  float + float = float
+ * int * float =>  float * float = float
+ * float * int =>  float * float = float
+ * int / float =>  float / float = float
+ * float / int =>  float / float = float
+ * int / int                     = int
+ */
+inline float3 operator+(const float3& a, const   int3& b){float3 c; c[0] = a[0]+b[0]; c[1] = a[1]+b[1]; c[2] = a[2]+b[2]; return c;}
+inline float3 operator+(const   int3& a, const float3& b){float3 c; c[0] = a[0]+b[0]; c[1] = a[1]+b[1]; c[2] = a[2]+b[2]; return c;}
+
+inline float3 operator-(const float3& a, const   int3& b){float3 c; c[0] = a[0]-b[0]; c[1] = a[1]-b[1]; c[2] = a[2]-b[2]; return c;}
+inline float3 operator-(const   int3& a, const float3& b){float3 c; c[0] = a[0]-b[0]; c[1] = a[1]-b[1]; c[2] = a[2]-b[2]; return c;}
+
+inline float3 operator*(const float3& a, const   int3& b){float3 c; c[0] = a[0]*b[0]; c[1] = a[1]*b[1]; c[2] = a[2]*b[2]; return c;}
+inline float3 operator*(const   int3& a, const float3& b){float3 c; c[0] = a[0]*b[0]; c[1] = a[1]*b[1]; c[2] = a[2]*b[2]; return c;}
+
+inline float3 operator/(const float3& a, const   int3& b){float3 c; c[0] = a[0]/b[0]; c[1] = a[1]/b[1]; c[2] = a[2]/b[2]; return c;}
+inline float3 operator/(const   int3& a, const float3& b){float3 c; c[0] = a[0]/b[0]; c[1] = a[1]/b[1]; c[2] = a[2]/b[2]; return c;}
+
+//! \endcond
+
 // FIXME how to handle sqrtf, rsqrtf for simd types?
 // I will assume there are functions rsqrt(s) and rcp(s) and sqrt(s) and I will write sqr(s)
 
