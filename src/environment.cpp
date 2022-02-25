@@ -28,8 +28,8 @@ namespace {
                 const Vec<n_dim1,Float4> &cb_pos, const Vec<n_dim2,Float4> &sc_pos) {
             Float4 one(1.f);
             auto displace = extract<0,3>(sc_pos)-extract<0,3>(cb_pos);
-            auto rvec1 = extract<3,6>(cb_pos);
-            auto prob  = sc_pos[3];
+            auto rvec1    = extract<3,6>(cb_pos);
+            auto prob     = sc_pos[3];
 
             auto dist2 = mag2(displace);
             auto inv_dist = rsqrt(dist2);
@@ -69,34 +69,56 @@ namespace {
 
 
 struct EnvironmentCoverage : public CoordNode {
+
+    int n_aa;
+    int n_res;
+    std::vector<int> aa_types;
     InteractionGraph<EnvironmentCoverageInteraction> igraph;
 
     EnvironmentCoverage(hid_t grp, CoordNode& cb_pos_, CoordNode& weighted_sidechains_):
-        CoordNode(get_dset_size(1,grp,"index1")[0], 1),
+        CoordNode(get_dset_size(1,grp,"index1")[0]*read_attribute<int>(grp,".","num_aa_types") , 1),
+        n_aa(read_attribute<int>(grp,".","num_aa_types")), 
+        n_res(get_dset_size(1,grp,"index1")[0]),
+        aa_types(n_res),
         igraph(grp, &cb_pos_, &weighted_sidechains_)
     {
+        check_size(grp, "aa_types", n_res);
+        traverse_dset<1,int>  (grp,"aa_types",[&](size_t ne, int x){aa_types[ne]=x;});
+
         if(logging(LOG_EXTENSIVE)) {
             default_logger->add_logger<float>("environment_coverage", {n_elem}, [&](float* buffer) {
                     for(int ne: range(n_elem))
                             buffer[ne] = output(0,ne);});
         }
+
+        for(int i=0;i<n_aa*n_res; ++i)
+            output(0, i) = 0.0;
     }
 
     virtual void compute_value(ComputeMode mode) override {
         Timer timer(string("environment_coverage"));
 
         igraph.compute_edges();
-
         fill(output, 0.f);
-        for(int ne=0; ne<igraph.n_edge; ++ne)  // accumulate for each cb
-            output(0, igraph.edge_indices1[ne]) += igraph.edge_value[ne];
+
+        // accumulate for each cb
+        for(int ne=0; ne<igraph.n_edge; ++ne) {
+            int indices1 = igraph.edge_indices1[ne];
+            int id2      = igraph.edge_id2[ne];
+            int type2    = aa_types[id2];
+            output(0, indices1*n_aa+type2) += igraph.edge_value[ne];
+        }
     }
 
     virtual void propagate_deriv() override {
         Timer timer(string("d_environment_coverage"));
 
-        for(int ne: range(igraph.n_edge))
-            igraph.edge_sensitivity[ne] = sens(0,igraph.edge_indices1[ne]);
+        for(int ne: range(igraph.n_edge)) {
+            int indices1 = igraph.edge_indices1[ne];
+            int id2      = igraph.edge_id2[ne];
+            int type2    = aa_types[id2];
+            igraph.edge_sensitivity[ne] = sens(0, indices1*n_aa+type2);
+        }
         igraph.propagate_derivatives();
     }
 
@@ -107,7 +129,6 @@ struct EnvironmentCoverage : public CoordNode {
     virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
 };
 static RegisterNodeType<EnvironmentCoverage,2> environment_coverage_node("environment_coverage");
-
 
 struct WeightedPos : public CoordNode {
     CoordNode &pos;
@@ -323,75 +344,150 @@ static RegisterNodeType<LinearCoupling,2> linear_coupling_node2("linear_coupling
 
 struct NonlinearCoupling : public PotentialNode {
     CoordNode& input;
-    int n_restype, n_coeff;
+    int n_restype, n_coeff, n_res;
     float spline_offset, spline_inv_dx;
     vector<float> coeff;      // length n_restype*n_coeff
     vector<int>   coupling_types; // length input n_elem
+    vector<float> weights;
+    vector<float> wnumber;
+    int num_independent_weight;
 
     NonlinearCoupling(hid_t grp, CoordNode& input_):
         PotentialNode(),
         input(input_),
         n_restype(get_dset_size(2,grp,"coeff")[0]),
         n_coeff  (get_dset_size(2,grp,"coeff")[1]),
+        n_res(input.n_elem/n_restype),
         spline_offset(read_attribute<float>(grp,"coeff","spline_offset")),
         spline_inv_dx(read_attribute<float>(grp,"coeff","spline_inv_dx")),
         coeff(n_restype*n_coeff),
-        coupling_types(input.n_elem)
+        coupling_types(n_res),
+        weights(n_restype*n_restype),
+        wnumber(n_res),
+        num_independent_weight(read_attribute<int>(grp, ".", "number_independent_weights"))
     {
         check_elem_width(input, 1);  // could be generalized
 
-        check_size(grp, "coupling_types", input.n_elem);
+        check_size(grp, "coupling_types", n_res);
+        check_size(grp, "weights", n_restype*n_restype);
+
         traverse_dset<2,float>(grp,"coeff",[&](size_t nt, size_t nc, float x){coeff[nt*n_coeff+nc]=x;});
-        traverse_dset<1,int>(grp,"coupling_types",[&](size_t ne, int x){coupling_types[ne]=x;});
+        traverse_dset<1,int>  (grp,"coupling_types",[&](size_t ne, int x){coupling_types[ne]=x;});
+        traverse_dset<1,float>(grp,"weights",[&](size_t nw, float x){weights[nw]=x;});
+
         for(int i: coupling_types) if(i<0 || i>=n_restype) throw string("invalid coupling type");
 
+        if (num_independent_weight != 1 and num_independent_weight != 20 and num_independent_weight != 400) 
+            throw string("the number of independent weights should be 1, 20 or 400");
+
         if(logging(LOG_DETAILED)) {
-            default_logger->add_logger<float>("nonlinear_coupling", {input.n_elem}, [&](float* buffer) {
-                    for(int ne: range(input.n_elem)) {
-                        auto coord = (input.output(0,ne)-spline_offset)*spline_inv_dx;
-                        buffer[ne] = clamped_deBoor_value_and_deriv(
-                                coeff.data() + coupling_types[ne]*n_coeff, coord, n_coeff)[0];
-                    }});
+            default_logger->add_logger<float>("nonlinear_coupling", {n_res}, [&](float* buffer) {
+                for(int nr: range(n_res)) {
+                    wnumber[nr] = 0.0;
+                    int ctype = coupling_types[nr];
+                    for(int aa: range(n_restype)) 
+                        wnumber[nr] += weights[ctype*n_restype+aa] * input.output(0, nr*n_restype+aa);
+                    auto coord = (wnumber[nr]-spline_offset)*spline_inv_dx;
+                    buffer[nr] = clamped_deBoor_value_and_deriv(
+                            coeff.data() + ctype*n_coeff, coord, n_coeff)[0];
+                }});
         }
     }
 
     virtual void compute_value(ComputeMode mode) override {
         Timer timer("nonlinear_coupling");
-        int n_elem = input.n_elem;
+
         float pot = 0.f;
-        for(int ne=0; ne<n_elem; ++ne) {
-            auto coord = (input.output(0,ne)-spline_offset)*spline_inv_dx;
-            auto v = clamped_deBoor_value_and_deriv(coeff.data() + coupling_types[ne]*n_coeff, coord, n_coeff);
-            pot              += v[0];
-            input.sens(0,ne) += v[1]*spline_inv_dx;
+        for(int nr: range(n_res)) {
+            wnumber[nr] = 0.0;
+            int ctype = coupling_types[nr];
+            for(int aa: range(n_restype)) 
+                wnumber[nr] += weights[ctype*n_restype+aa] * input.output(0, nr*n_restype+aa);
+
+            auto coord = (wnumber[nr]-spline_offset)*spline_inv_dx;
+            auto v = clamped_deBoor_value_and_deriv(coeff.data() + ctype*n_coeff, coord, n_coeff);
+
+            pot += v[0];
+            for(int aa: range(n_restype)) 
+                input.sens(0, nr*n_restype+aa) = weights[ctype*n_restype+aa] * spline_inv_dx * v[1];
         }
+
         potential = pot;
     }
 
     virtual std::vector<float> get_param() const override {
-        return coeff;
+        int csize = coeff.size();
+        int wsize = n_restype*n_restype;
+        vector<float> params(csize+wsize, 0.f);
+
+        for(int ct: range(csize)) 
+            params[ct] = coeff[ct];
+
+        for(int ct: range(wsize)) 
+            params[ct+csize] = weights[ct];
+
+        return params;
     }
 
 #ifdef PARAM_DERIV
     virtual std::vector<float> get_param_deriv() override {
-        vector<float> deriv(coeff.size(), 0.f);
 
-        int n_elem = input.n_elem;
-        for(int ne=0; ne<n_elem; ++ne) {
+        int csize = coeff.size();
+        int wsize = n_restype*n_restype;
+
+        vector<float> deriv(csize+wsize, 0.f);
+        vector<float> sens(n_res, 0.f);
+
+        for(int nr: range(n_res)) {
             int starting_bin;
             float result[4];
-            auto coord = (input.output(0,ne)-spline_offset)*spline_inv_dx;
+            wnumber[nr] = 0.0;
+            int ctype = coupling_types[nr];
+
+            for(int aa: range(n_restype)) 
+                wnumber[nr] += weights[ctype*n_restype+aa] * input.output(0, nr*n_restype+aa);
+
+            auto coord = (wnumber[nr]-spline_offset)*spline_inv_dx;
+
             clamped_deBoor_coeff_deriv(&starting_bin, result, coord, n_coeff);
-            for(int i: range(4)) deriv[coupling_types[ne]*n_coeff+starting_bin+i] += result[i];
+            for(int i: range(4)) deriv[ctype*n_coeff+starting_bin+i] += result[i];
+
+            if ( num_independent_weight > 1) {
+                auto v = clamped_deBoor_value_and_deriv(coeff.data() + ctype*n_coeff, coord, n_coeff);
+                sens[nr] = spline_inv_dx * v[1];
+            }
         }
+
+        if ( num_independent_weight == 1 )
+            return deriv;
+
+        for(int nr: range(n_res)) {
+            int ctype = coupling_types[nr];
+            for(int aa: range(n_restype)) {
+                auto deriv_aa = sens[nr] * input.output(0, nr*n_restype+aa);
+                if ( num_independent_weight == 400)
+                    deriv[csize+ctype*n_restype+aa] += deriv_aa;
+                else if ( num_independent_weight == 20 ) 
+                    for (int aa2: range(n_restype)) 
+                        deriv[csize+aa2*n_restype+aa] += deriv_aa;
+            }
+        }
+        
         return deriv;
     }
 #endif
 
     virtual void set_param(const std::vector<float>& new_param) override {
-        if(new_param.size() != coeff.size())
-            throw string("attempting to change size of coeff vector on set_param");
-        copy(begin(new_param),end(new_param), begin(coeff));
+        int csize = coeff.size();
+        int wsize = n_restype*n_restype;
+        if(new_param.size() != size_t(csize+wsize))
+            throw string("the size of parameters should be the size of coeff + (the number of amino acid type)^2");
+
+        std::vector<float> params(csize+wsize);
+        copy(begin(new_param),end(new_param), begin(params));
+
+        for( int i : range(csize)) coeff[i] = params[i];
+        for(int aa: range(wsize)) weights[aa] = params[csize+aa];
     }
 };
 static RegisterNodeType<NonlinearCoupling,1> nonlinear_coupling_node("nonlinear_coupling");
