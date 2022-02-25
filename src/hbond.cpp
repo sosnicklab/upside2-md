@@ -419,40 +419,254 @@ static RegisterNodeType<HBondCoverage,2> coverage_node("hbond_coverage");
 struct HBondEnergy : public HBondCounter
 {
     CoordNode& protein_hbond;
+    CoordNode& rama;
+    int n_res;
     int n_virtual;
-    float E_protein;
+    int n_donor;
+    int n_acceptor;
+    int n_param;
+    std::vector<float> params;
+    std::vector<float> hb_number1; // in one residue
+    std::vector<float> hb_number2; // in one peptide
+    std::vector<int>   donor_resid;
+    std::vector<int>   acceptor_resid;
+    std::map<int,int>  resid_donor;
+    std::map<int,int>  resid_acceptor;
 
-    HBondEnergy(hid_t grp, CoordNode& protein_hbond_):
+    std::vector<float> Ehbond;
+    std::vector<float> dPhi;
+    std::vector<float> dPsi;
+    float E_beta;
+    float E_alpha;
+    float E_other;
+    float boundary_turn1;
+    float sharpness_turn1;
+    float boundary_turn2;
+    float sharpness_turn2;
+    float boundary_helix1;
+    float sharpness_helix1;
+    float boundary_helix2;
+    float sharpness_helix2;
+    float E_bias;
+
+    HBondEnergy(hid_t grp, CoordNode& protein_hbond_, CoordNode& rama_):
         HBondCounter(),
         protein_hbond(protein_hbond_),
+        rama(rama_),
+        n_res(get_dset_size(1, grp, "rama_resid")[0]),
         n_virtual(protein_hbond.n_elem),
-        E_protein(read_attribute<float>(grp, ".", "protein_hbond_energy"))
-    {}
+        n_donor(get_dset_size(1, grp, "donor_resid")[0]),
+        n_acceptor(get_dset_size(1, grp, "acceptor_resid")[0]),
+        n_param(get_dset_size(1, grp, "parameters")[0]),
+        params(n_param),
+        hb_number1(n_res),
+        hb_number2(n_res-1),
+        donor_resid(n_donor),
+        acceptor_resid(n_acceptor),
+        Ehbond(n_res),
+        dPhi(n_res),
+        dPsi(n_res)
+    {
+        assert(n_donor+n_acceptor==n_virtual);
+        traverse_dset<1, float> (grp, "parameters",     [&](size_t i, float x) {params[i] = x;});
+        traverse_dset<1, int>   (grp, "donor_resid",    [&](size_t i, int x)   {donor_resid[i] = x;    resid_donor.insert(pair<int, int>(x, (int)i));  });
+        traverse_dset<1, int>   (grp, "acceptor_resid", [&](size_t i, int x)   {acceptor_resid[i] = x; resid_acceptor.insert(pair<int, int>(x, (int)i));});
+        E_alpha         = params[0];
+        E_beta          = params[1];
+        E_other         = params[2];
+        E_bias          = params[3];
+        boundary_turn1  = params[4];
+        sharpness_turn1 = params[5];
+        boundary_turn2  = params[6];
+        sharpness_turn2 = params[7];
+        boundary_helix1  = params[8];
+        sharpness_helix1 = params[9];
+        boundary_helix2  = params[10];
+        sharpness_helix2 = params[11];
+    }
 
     virtual void compute_value(ComputeMode mode) override {
         Timer timer(string("hbond_energy"));
-        float tot_hb = 0.f;
-        VecArray pp      = protein_hbond.output;
-        VecArray pp_sens = protein_hbond.sens;
-        float Ep = E_protein;
+        VecArray pp        = protein_hbond.output;
+        VecArray pp_sens   = protein_hbond.sens;
+        VecArray ramac     = rama.output;
+        VecArray rama_sens = rama.sens;
 
-        // Compute probabilities of P and S states
-        for(int nv=0; nv<n_virtual; ++nv) {
-            tot_hb        += pp(6,nv);
-            pp_sens(6,nv) += Ep;
+        for( int i=0; i<n_res; i++) {
+            auto r = load_vec<2>(ramac, i);
+
+            auto phiv1 = compact_sigmoid(r.v[0]-boundary_turn1, sharpness_turn1);
+            auto phiv2 = compact_sigmoid(r.v[0]-boundary_turn2, sharpness_turn2);
+            auto psiv1 = compact_sigmoid(r.v[1]-boundary_helix1, sharpness_helix1);
+            auto psiv2 = compact_sigmoid(r.v[1]-boundary_helix2, sharpness_helix2);
+
+            float turn_score   = (1.-phiv1.x())*phiv2.x();
+            float psi_score    = (1.-psiv1.x())*psiv2.x();
+            float n_turn_score = 1. - turn_score;
+            float n_psi_score  = 1. - psi_score;
+            float helix_score  = n_turn_score * psi_score;
+            float sheet_score  = n_turn_score * n_psi_score;
+
+            float dturn_dphi  = phiv2.y() - (phiv1.y()*phiv2.x() + phiv1.x()*phiv2.y());
+            float dpsis_dpsi  = psiv2.y() - (psiv1.y()*psiv2.x() + psiv1.x()*psiv2.y());
+            float dhelix_dphi = -dturn_dphi * psi_score;
+            float dsheet_dphi = -dturn_dphi * n_psi_score;
+            float dhelix_dpsi = n_turn_score *  dpsis_dpsi;
+            float dsheet_dpsi = n_turn_score * -dpsis_dpsi;
+
+            Ehbond[i] = E_alpha * helix_score + E_beta * sheet_score + E_other * turn_score;
+            dPhi[i]   = E_alpha * dhelix_dphi + E_beta * dsheet_dphi + E_other * dturn_dphi;
+            dPsi[i]   = E_alpha * dhelix_dpsi + E_beta * dsheet_dpsi;
+
         }
-        potential = tot_hb*Ep;
-        n_hbond = tot_hb;
+
+        // count hbond number in one residue
+        for( int i =0; i<n_res; i++ ) 
+            hb_number1[i] = 0.0;
+        for(int nd=0; nd<n_donor; ++nd) {
+            int resid = donor_resid[nd];
+            hb_number1[resid] += pp(6,nd);
+        }
+        for(int na=0; na<n_acceptor; ++na) {
+            int resid = acceptor_resid[na];
+            hb_number1[resid] += pp(6,na+n_donor);
+        }
+
+        // count hbond number in one peptide
+        for( int i =0; i<n_res-1; i++ ) 
+            hb_number2[i] = 0.0;
+        for(int nd=0; nd<n_donor; ++nd) {
+            int pepid = donor_resid[nd]-1;
+            hb_number2[pepid] += pp(6,nd);
+        }
+        for(int na=0; na<n_acceptor; ++na) {
+            int pepid = acceptor_resid[na];
+            hb_number2[pepid] += pp(6,na+n_donor);
+        }
+
+        n_hbond = 0.0;
+        potential = 0.0;
+        for( int i =0; i<n_res; i++ ) {
+            if (hb_number1[i] == 0.0)
+                continue;
+            n_hbond      += hb_number1[i];
+            potential    += hb_number1[i]*Ehbond[i];
+
+            auto iter = resid_donor.find(i);
+            if(iter!=resid_donor.end()) {
+                pp_sens(6,iter->second) += Ehbond[i];
+            }
+            iter = resid_acceptor.find(i);
+            if(iter!=resid_acceptor.end()) {
+                pp_sens(6,iter->second+n_donor) += Ehbond[i];
+            }
+
+            rama_sens(0, i) += hb_number1[i]*dPhi[i];
+            rama_sens(1, i) += hb_number1[i]*dPsi[i];
+        }
+
+        for( int i =0; i<n_res-1; i++ ) {
+            if (hb_number2[i] <= 1.0)
+                continue;
+            auto dE       = compact_sigmoid(1.5-hb_number2[i], 2.0);
+            potential    += dE.x() * E_bias;
+            auto dE_dHB   = -dE.y() * E_bias ;
+            auto iter = resid_donor.find(i+1);
+            if(iter!=resid_donor.end()) {
+                pp_sens(6,iter->second) += dE_dHB;
+            }
+            iter = resid_acceptor.find(i);
+            if(iter!=resid_acceptor.end()) {
+                pp_sens(6,iter->second+n_donor) += dE_dHB;
+            }
+        }
     }
 
-    virtual std::vector<float> get_param() const override {return vector<float>(1,E_protein);}
+    virtual std::vector<float> get_param() const override {return params;}
 #ifdef PARAM_DERIV
-    virtual std::vector<float> get_param_deriv() override {return vector<float>(1,float(n_hbond));}
+    virtual std::vector<float> get_param_deriv() override {
+        std::vector<float> dparams(12);
+
+        std::vector<float> dE_other(n_res);
+        std::vector<float> dE_alpha(n_res);
+        std::vector<float> dE_beta(n_res);
+
+        for( int i =0; i<12; i++ ) 
+            dparams[i] = 0.0;
+
+        VecArray ramac = rama.output;
+        VecArray pp    = protein_hbond.output;
+        for( int i=0; i<n_res; i++) {
+            auto r = load_vec<2>(ramac, i);
+
+            auto phiv1 = compact_sigmoid(r.v[0]-boundary_turn1, sharpness_turn1);
+            auto phiv2 = compact_sigmoid(r.v[0]-boundary_turn2, sharpness_turn2);
+            auto psiv1 = compact_sigmoid(r.v[1]-boundary_helix1, sharpness_helix1);
+            auto psiv2 = compact_sigmoid(r.v[1]-boundary_helix2, sharpness_helix2);
+
+            float turn_score   = (1.-phiv1.x())*phiv2.x();
+            float psi_score    = (1.-psiv1.x())*psiv2.x();
+            float n_turn_score = 1. - turn_score;
+            float n_psi_score  = 1. - psi_score;
+            float helix_score  = n_turn_score * psi_score;
+            float sheet_score  = n_turn_score * n_psi_score;
+
+            dE_alpha[i] = helix_score;
+            dE_beta[i]  = sheet_score;
+            dE_other[i] = turn_score;
+        }
+
+        for( int i =0; i<n_res; i++ ) 
+            hb_number1[i] = 0.0;
+        for(int nd=0; nd<n_donor; ++nd) {
+            int resid = donor_resid[nd];
+            hb_number1[resid] += pp(6,nd);
+        }
+        for(int na=0; na<n_acceptor; ++na) {
+            int resid = acceptor_resid[na];
+            hb_number1[resid] += pp(6,na+n_donor);
+        }
+
+        for( int i =0; i<n_res; i++ ) {
+            dparams[0] += hb_number1[i]*dE_alpha[i];
+            dparams[1] += hb_number1[i]*dE_beta[i];
+            dparams[2] += hb_number1[i]*dE_other[i];
+        }
+
+        for( int i =0; i<n_res-1; i++ ) 
+            hb_number2[i] = 0.0;
+        for(int nd=0; nd<n_donor; ++nd) {
+            int pepid = donor_resid[nd]-1;
+            hb_number2[pepid] += pp(6,nd);
+        }
+        for(int na=0; na<n_acceptor; ++na) {
+            int pepid = acceptor_resid[na];
+            hb_number2[pepid] += pp(6,na+n_donor);
+        }
+        for( int i =0; i<n_res-1; i++ ) {
+            auto dE     = compact_sigmoid(1.5-hb_number2[i], 2.0);
+            dparams[3] += dE.x();
+        }
+
+        return dparams;
+    }
 #endif
     virtual void set_param(const std::vector<float>& new_param) override {
-        if(new_param.size() != 1u) throw string("expected 1 param to hbond_energy but got "+
-                to_string(new_param.size()));
-        E_protein = new_param[0];
+        // FIXME add a check to the size of parameters
+        params = new_param;
+        E_alpha          = params[0];
+        E_beta           = params[1];
+        E_other          = params[2];
+        E_bias           = params[3];
+        boundary_turn1   = params[4];
+        sharpness_turn1  = params[5];
+        boundary_turn2   = params[6];
+        sharpness_turn2  = params[7];
+        boundary_helix1  = params[8];
+        sharpness_helix1 = params[9];
+        boundary_helix2  = params[10];
+        sharpness_helix2 = params[11];
     }
 };
-static RegisterNodeType<HBondEnergy,1> hbond_energy_node("hbond_energy");
+static RegisterNodeType<HBondEnergy,2> hbond_energy_node("hbond_energy");
+
