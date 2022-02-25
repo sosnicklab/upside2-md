@@ -294,6 +294,65 @@ namespace {
     };
 }
 
+struct CTerHBond : public CoordNode {
+    CoordNode& infer;
+    CoordNode& bb;
+    int n_donor;
+    float cutoff;
+    std::vector<int> id1, id2;
+    std::vector<index_t> index1, index2;
+    float inner_barrier, inner_scale, outer_barrier, outer_scale;
+
+    CTerHBond(hid_t grp, CoordNode& infer_, CoordNode& bb_):
+        CoordNode(get_dset_size(1,grp,"index1")[0], 1),
+        infer(infer_), bb(bb_),
+        n_donor(get_dset_size(1, grp, "index1")[0]),
+        cutoff(5.5),
+        id1(n_donor), id2(1),
+        index1(n_donor), index2(1),
+        inner_barrier(read_attribute<float>(grp, ".", "inner_barrier")),
+        inner_scale(read_attribute<float>(grp, ".", "inner_scale")),
+        outer_barrier(read_attribute<float>(grp, ".", "outer_barrier")),
+        outer_scale(read_attribute<float>(grp, ".", "outer_scale"))
+    {
+
+        check_size(grp, "id1",      n_donor);
+        check_size(grp, "index1",   n_donor);
+        check_size(grp, "id2",      1);
+        check_size(grp, "index2",   1);
+
+        traverse_dset<1,int>(grp, "id1",    [&](size_t i, int x){id1[i] = x;});
+        traverse_dset<1,int>(grp, "id2",    [&](size_t i, int x){id2[i] = x;});
+        traverse_dset<1,int>(grp, "index1", [&](size_t i, int x){index1[i] = x;});
+        traverse_dset<1,int>(grp, "index2", [&](size_t i, int x){index2[i] = x;});
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        Timer timer(string("CTer_hbond"));
+
+        VecArray vs = output;
+
+        auto C = load_vec<3>(bb.output, index2[0]);
+        for(int n=0; n<n_donor; ++n) {
+
+            auto NH = load_vec<6>(infer.output, index1[n]);
+            auto H = extract<0,3>(NH);
+            auto disp = H - C;
+            auto magHC = mag(disp);
+            if (magHC <  cutoff and abs(id1[n]-id2[0]) > 1) {
+                //auto radial = hbond_radial_potential(magHC, inner_barrier, inner_scale, outer_barrier, outer_scale);
+                //vs(0,n) = radial.x();
+                vs(0,n) = magHC;
+            }
+            else
+                vs(0,n) = cutoff;
+       }
+    }
+
+    virtual void propagate_deriv() override { }
+};
+static RegisterNodeType<CTerHBond,2> cter_hbond_node("cter_hbond");
+
 
 struct ProteinHBond : public CoordNode
 {
