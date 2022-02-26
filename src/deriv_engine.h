@@ -149,6 +149,7 @@ struct DerivEngine
     {
         std::string name; //!< HDF5 name of the group for the node
         std::unique_ptr<DerivComputation> computation; //!< underlying DerivComputation for calculations
+        int integrator_level;//
         std::vector<size_t> parents;  //!< list of indices for parent nodes (a.k.a. inputs)
         std::vector<size_t> children; //!< list of indices for child nodes (a.k.a. consumers of output)
 
@@ -166,6 +167,7 @@ struct DerivEngine
         Node(Node&& other):
             name(std::move(other.name)),
             computation(std::move(other.computation)),
+            integrator_level(other.integrator_level),
             parents(std::move(other.parents)),
             children(std::move(other.children)),
             germ_exec_level(other.germ_exec_level),
@@ -177,6 +179,10 @@ struct DerivEngine
     //!
     //! nodes[0] is guaranteed to be the Pos node
     std::vector<Node> nodes;
+
+    std::vector<int> germ_exec_levels;
+    std::vector<int> deriv_exec_levels;
+
     //! \brief Pointer to pos node (used for position input and derivative output)
     Pos* pos;
     //! \brief potential energy output of the computation graph
@@ -198,6 +204,7 @@ struct DerivEngine
     //! \brief Add nodes to computation graph
     void add_node(
             const std::string& name, 
+            int integrator_level, 
             std::unique_ptr<DerivComputation> fcn, 
             std::vector<std::string> argument_names);
 
@@ -225,6 +232,10 @@ struct DerivEngine
     //!
     //! See ComputeMode for details.
     void compute(ComputeMode mode);
+    void compute(ComputeMode mode, int integrator_level);
+
+    void build_exec_levels();
+    void build_integrator_levels(bool print_info, float dt, int inner_step);
 
     //! \brief Integration scheme (i.e. position and velocity update weights) to use
     enum IntegratorType {Verlet=0, Predescu=1};
@@ -232,15 +243,17 @@ struct DerivEngine
     //! \brief Perform a full integration cycle (3 time steps)
     //!
     //! See integration_stage for details.
-    void integration_cycle(VecArray mom, float dt, float max_force,
-            IntegratorType type = Verlet);
+    void integration_cycle(VecArray mom, float dt, float max_force, IntegratorType type = Verlet);
+    void integration_cycle(VecArray mom, float dt);
+    void integration_cycle(VecArray mom, float dt, int inner_step);
 };
 
 //! \brief Count the number hbonds for a system
 double get_n_hbond(DerivEngine &engine);
 
 //! \brief Construct DerivEngine from potential group
-DerivEngine initialize_engine_from_hdf5(int n_atom, hid_t potential_group, bool quiet=false);
+DerivEngine initialize_engine_from_hdf5(int n_atom, hid_t potential_group);
+//DerivEngine initialize_engine_from_hdf5(int n_atom, hid_t potential_group, bool quiet=false);
 
 //! \brief Vector of non-null CoordNode pointers
 typedef std::vector<CoordNode*> ArgList;

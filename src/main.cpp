@@ -352,6 +352,12 @@ try {
             false, -1., "float", cmd);
     ValueArg<double> thermostat_timescale_arg("", "thermostat-timescale", "timescale for the thermostat", 
             false, 5., "float", cmd);
+
+    ValueArg<string> integrator_arg("", "integrator", 
+            "Use this option to control which Integrator are used.  Available levels are v(verlet) or mv(multi-step verlet). "
+            "Default is verlet.",
+            false, "", "v, mv ", cmd);
+    ValueArg<int> inner_step_arg("", "inner-step", "inner step for the integrator", false, 3, "int", cmd);
     SwitchArg disable_recenter_arg("", "disable-recentering", 
             "Disable all recentering of protein in the universe", 
             cmd, false);
@@ -394,11 +400,16 @@ try {
             }
         }
 
+
         float dt = time_step_arg.getValue();
+        int inner_step = 3;
+        if  (integrator_arg.getValue() == "mv" )
+            inner_step = inner_step_arg.getValue();
+
         double duration = duration_arg.getValue();
-        uint64_t n_round = round(duration / (3*dt));
-        int thermostat_interval = max(1.,round(thermostat_interval_arg.getValue() / (3*dt)));
-        int frame_interval = max(1.,round(frame_interval_arg.getValue() / (3*dt)));
+        uint64_t n_round = round(duration / (inner_step*dt));
+        int thermostat_interval = max(1.,round(thermostat_interval_arg.getValue() / (inner_step*dt))); //  FIXME inner_step
+        int frame_interval = max(1.,round(frame_interval_arg.getValue() / (inner_step*dt)));
 
         unsigned long big_prime = 4294967291ul;  // largest prime smaller than 2^32
         uint32_t base_random_seed = uint32_t(seed_arg.getValue() % big_prime);
@@ -407,7 +418,7 @@ try {
         if(verbose) printf("random seed: %lu\n", (unsigned long)(base_random_seed));
 
         int mc_interval = mc_interval_arg.getValue() > 0. 
-            ? max(1,int(mc_interval_arg.getValue()/(3*dt)))
+            ? max(1,int(mc_interval_arg.getValue()/(inner_step*dt))) 
             : 0;
 
         int duration_print_width = ceil(log(1+duration)/log(10));
@@ -444,7 +455,7 @@ try {
 
         int replica_interval = 0;
         if(replica_interval_arg.getValue())
-            replica_interval = max(1.,replica_interval_arg.getValue()/(3*dt));
+            replica_interval = max(1.,replica_interval_arg.getValue()/(inner_step*dt));
 
         // system 0 is the minimum temperature
         int n_system = systems.size();
@@ -493,6 +504,8 @@ try {
 
             auto potential_group = open_group(sys->config.get(), "/input/potential");
             sys->engine = initialize_engine_from_hdf5(sys->n_atom, potential_group.get());
+            if  (integrator_arg.getValue() == "mv" )
+                sys->engine.build_integrator_levels(true, dt, inner_step );
 
             // Override parameters as instructed by users
             for(const auto& p: set_param_map)
@@ -520,7 +533,7 @@ try {
             sys->set_temperature(sys->initial_temperature);
 
             sys->thermostat.apply(sys->mom, sys->n_atom); // initial thermalization
-            sys->thermostat.set_delta_t(thermostat_interval*3*dt);  // set true thermostat interval
+            sys->thermostat.set_delta_t(thermostat_interval*inner_step*dt);  // set true thermostat interval  //  FIXME inner_step
 
             // we must capture the sys pointer by value here so that it is available later
             sys->logger->add_logger<float>("pos", {1, sys->n_atom, 3}, [sys](float* pos_buffer) {
@@ -537,8 +550,8 @@ try {
             sys->logger->add_logger<double>("potential", {1}, [sys](double* pot_buffer) {
                     sys->engine.compute(PotentialAndDerivMode);
                     pot_buffer[0] = sys->engine.potential;});
-            sys->logger->add_logger<double>("time", {}, [sys,dt](double* time_buffer) {
-                    *time_buffer=3*dt*sys->round_num;});
+            sys->logger->add_logger<double>("time", {}, [sys,dt,inner_step](double* time_buffer) {
+                    *time_buffer=inner_step*dt*sys->round_num;});
 
             if(mc_interval) {
                 // sys->mc_samplers = MultipleMonteCarloSampler{open_group(sys->config.get(), "/input/sampler_group").get(), *sys->logger};
@@ -562,6 +575,8 @@ try {
                                 "This is not what you want.  Consider --disable-recentering.");
                 }
             }
+
+
         } catch(const string &e) {
             fprintf(stderr, "\n\nERROR: %s\n", e.c_str());
             error_exit_omp = true;
@@ -647,7 +662,7 @@ try {
 
                         if(verbose) printf(
                                 "%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg %5.1f A, potential % 8.2f\n", 
-                                duration_print_width, nr*3*double(dt), 
+                                duration_print_width, nr*double(dt*inner_step), 
                                 duration_print_width, duration, 
                                 ns, sys.temperature,
                                 get_n_hbond(sys.engine), Rg, sys.engine.potential);
@@ -657,10 +672,14 @@ try {
                     if(!(nr%thermostat_interval)) {
                         // Handle simulated annealing if applicable
                         if(anneal_factor != 1.)
-                            sys.set_temperature(anneal_temp(sys.initial_temperature, 3*dt*(sys.round_num+1)));
+                            sys.set_temperature(anneal_temp(sys.initial_temperature, inner_step*dt*(sys.round_num+1)));
                         sys.thermostat.apply(sys.mom, sys.n_atom);
                     }
-                    sys.engine.integration_cycle(sys.mom, dt, 0.f, DerivEngine::Verlet);
+
+                    if  (integrator_arg.getValue() == "mv" )
+                        sys.engine.integration_cycle(sys.mom, dt, inner_step);
+                    else
+                        sys.engine.integration_cycle(sys.mom, dt);
 
                     do_break = nr>last_start && replica_interval && !((nr+1)%replica_interval);
                 }
@@ -678,8 +697,8 @@ try {
         if(verbose)
             printf("\n\nfinished in %.1f seconds (%.2f us/systems/step, %.1e simulation_time_unit/hour)\n",
                 elapsed,
-                elapsed*1e6/systems.size()/systems[0].round_num/3, 
-                systems[0].round_num*3*dt/elapsed * 3600.);
+                elapsed*1e6/systems.size()/systems[0].round_num/inner_step, 
+                systems[0].round_num*inner_step*dt/elapsed * 3600.); 
 
         if(verbose) printf("\navg_kinetic_energy/1.5kT");
         for(auto& sys: systems) {
@@ -724,7 +743,7 @@ try {
 #ifdef COLLECT_PROFILE
         if(verbose) {
             printf("\n");
-            global_time_keeper.print_report(3*systems[0].round_num+1);
+            global_time_keeper.print_report(inner_step*systems[0].round_num+1); //  FIXME inner_step
             printf("\n");
         }
 #endif
