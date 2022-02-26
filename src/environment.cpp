@@ -9,6 +9,108 @@ using namespace std;
 using namespace h5;
 
 namespace {
+    template <bool is_symmetric>
+    struct SphereEnvironmentCoverageInteraction {
+        // parameters are r0,r_sharpness, dot0,dot_sharpness
+
+        constexpr static bool  symmetric = is_symmetric;
+        constexpr static int   n_param=2, n_dim1=3, n_dim2=3, simd_width=1;
+
+        static float cutoff(const float* p) {
+            return p[0] + compact_sigmoid_cutoff(p[1]);
+        }
+
+        static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
+            auto sequence_exclude = Int4(1);  // exclude i,i, i,i+1, and i,i+2
+            return (sequence_exclude < id1-id2) | (sequence_exclude < id2-id1);
+        }
+
+        static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4],
+                const Vec<n_dim1,Float4> &cb_pos, const Vec<n_dim2,Float4> &sc_pos) {
+
+            Float4 one(1.f);
+            auto displace = extract<0,3>(sc_pos)-extract<0,3>(cb_pos);
+
+            auto dist2            = mag2(displace);
+            auto inv_dist         = rsqrt(dist2);
+            auto dist             = dist2*inv_dist;
+            auto displace_unitvec = inv_dist*displace;
+
+            // read parameters then transpose
+            Float4 r0(p[0]);
+            Float4 s0(p[1]);
+            Float4 null0(0.f);
+            Float4 null1(0.f);
+            transpose4(r0, s0, null0, null1);
+
+            auto radial_sig = compact_sigmoid(dist-r0, s0);
+            auto score = radial_sig.x();
+
+            // now we compute derivatives (minus sign is from the derivative of angular_sig)
+            auto d_displace = radial_sig.y() * displace_unitvec;
+            store<0,3>(d1, -d_displace);
+            store<0,3>(d2,  d_displace);
+            return score;
+        }
+        static void param_deriv(Vec<n_param> &d_param, const float* p,
+                const Vec<n_dim1> &hb_pos, const Vec<n_dim2> &sc_pos) {
+            d_param = make_zero<n_param>();   // not implemented currently
+        }
+        static bool is_compatible(const float* p1, const float* p2) {return true;};
+    };
+    
+    template <bool is_symmetric>
+    struct WeightedSphereEnvironmentCoverageInteraction {
+        // parameters are r0,r_sharpness, dot0,dot_sharpness
+
+        constexpr static bool  symmetric = is_symmetric;
+        constexpr static int   n_param=2, n_dim1=3, n_dim2=4, simd_width=1;
+
+        static float cutoff(const float* p) {
+            return p[0] + compact_sigmoid_cutoff(p[1]);
+        }
+
+        static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
+            auto sequence_exclude = Int4(2);  // exclude i,i, i,i+1, and i,i+2
+            return (sequence_exclude < id1-id2) | (sequence_exclude < id2-id1);
+        }
+
+        static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4],
+                const Vec<n_dim1,Float4> &cb_pos, const Vec<n_dim2,Float4> &sc_pos) {
+
+            Float4 one(1.f);
+            auto displace = extract<0,3>(sc_pos)-extract<0,3>(cb_pos);
+            auto prob     = sc_pos[3];
+
+            auto dist2            = mag2(displace);
+            auto inv_dist         = rsqrt(dist2);
+            auto dist             = dist2*inv_dist;
+            auto displace_unitvec = inv_dist*displace;
+
+            // read parameters then transpose
+            Float4 r0(p[0]);
+            Float4 s0(p[1]);
+            Float4 null0(0.f);
+            Float4 null1(0.f);
+            transpose4(r0, s0, null0, null1);
+
+            auto radial_sig = compact_sigmoid(dist-r0, s0);
+            auto score = radial_sig.x();
+
+            // now we compute derivatives (minus sign is from the derivative of angular_sig)
+            auto d_displace = prob * radial_sig.y() * displace_unitvec;
+            store<0,3>(d1, -d_displace);
+            store<0,3>(d2,  d_displace);
+            d2[3] = score;
+            return score*prob;
+        }
+        static void param_deriv(Vec<n_param> &d_param, const float* p,
+                const Vec<n_dim1> &hb_pos, const Vec<n_dim2> &sc_pos) {
+            d_param = make_zero<n_param>();   // not implemented currently
+        }
+        static bool is_compatible(const float* p1, const float* p2) {return true;};
+    };
+
     struct EnvironmentCoverageInteraction {
         // parameters are r0,r_sharpness, dot0,dot_sharpness
 
@@ -318,6 +420,70 @@ struct HbondBackBoneCoverage : public CoordNode {
     virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
 };
 static RegisterNodeType<HbondBackBoneCoverage,2> hbond_backbone_coverage_node("hbbb_coverage");
+
+struct SphereEnvironmentCoverage : public CoordNode {
+    InteractionGraph<SphereEnvironmentCoverageInteraction<true>> igraph;
+
+    SphereEnvironmentCoverage(hid_t grp, CoordNode& pos1_ ):
+        CoordNode(get_dset_size(1,grp,"index")[0], 1),
+        igraph(grp, &pos1_) {
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        Timer timer(string("sphere_environment_coverage"));
+        igraph.compute_edges();
+        fill(output, 0.f);
+        for(int ne=0; ne<igraph.n_edge; ++ne)  // accumulate for each cb
+            output(0, igraph.edge_indices1[ne]) += igraph.edge_value[ne];
+    }
+
+    virtual void propagate_deriv() override {
+        Timer timer(string("d_hbond_environment_coverage"));
+
+        for(int ne: range(igraph.n_edge))
+            igraph.edge_sensitivity[ne] = sens(0,igraph.edge_indices1[ne]);
+        igraph.propagate_derivatives();
+    }
+
+    virtual std::vector<float> get_param() const override {return igraph.get_param();}
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {return igraph.get_param_deriv();}
+#endif
+    virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
+};
+static RegisterNodeType<SphereEnvironmentCoverage,1> sphere_environment_coverage_node("SphereCoverage");
+
+struct WeightedSphereEnvironmentCoverage : public CoordNode {
+    InteractionGraph<WeightedSphereEnvironmentCoverageInteraction<false>> igraph;
+
+    WeightedSphereEnvironmentCoverage(hid_t grp, CoordNode& pos1_):
+        CoordNode(get_dset_size(1,grp,"index")[0], 1),
+        igraph(grp, &pos1_, &pos1_) {
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        Timer timer(string("sphere_environment_coverage"));
+        igraph.compute_edges();
+        fill(output, 0.f);
+        for(int ne=0; ne<igraph.n_edge; ++ne)  // accumulate for each cb
+            output(0, igraph.edge_indices1[ne]) += igraph.edge_value[ne];
+    }
+
+    virtual void propagate_deriv() override {
+        Timer timer(string("d_hbond_environment_coverage"));
+
+        for(int ne: range(igraph.n_edge))
+            igraph.edge_sensitivity[ne] = sens(0,igraph.edge_indices1[ne]);
+        igraph.propagate_derivatives();
+    }
+
+    virtual std::vector<float> get_param() const override {return igraph.get_param();}
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {return igraph.get_param_deriv();}
+#endif
+    virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
+};
+static RegisterNodeType<WeightedSphereEnvironmentCoverage,1> weighted_sphere_environment_coverage_node("WeightedSphereCoverage");
 
 
 struct WeightedPos : public CoordNode {
