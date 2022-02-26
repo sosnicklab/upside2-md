@@ -395,6 +395,13 @@ try {
     ValueArg<double> anneal_duration_arg("", "anneal-duration", "duration of annealing phase "
             "(default is duration of simulation)", 
             false, -1., "float", cmd);
+
+    ValueArg<double> anneal_start_arg("", "anneal-start", "start annealing phase ",
+            false, -1., "float", cmd);
+
+    ValueArg<double> anneal_end_arg("", "anneal-end", "end annealing phase ", 
+            false, -1., "float", cmd);
+
     ValueArg<double> frame_interval_arg("", "frame-interval", "simulation time between frames", 
             true, -1., "float", cmd);
     ValueArg<double> replica_interval_arg("", "replica-interval", 
@@ -508,14 +515,23 @@ try {
         double anneal_factor = anneal_factor_arg.getValue();
         double anneal_duration = anneal_duration_arg.getValue();
         if(anneal_duration == -1.) anneal_duration = duration;
-        double anneal_start = duration - anneal_duration;
+
+        double anneal_start = anneal_start_arg.getValue();
+        if (anneal_start < 0.0) anneal_start = 0.0;
+        double anneal_end = anneal_end_arg.getValue();
+        if (anneal_end > anneal_start) anneal_duration = anneal_end-anneal_start;
 
         // tighter spacing at the low end of temperatures because the variance is decreasing
         auto anneal_temp = [=](double initial_temperature, double time) {
             auto fraction = max(0., (time-anneal_start) / anneal_duration);
             double T0 = initial_temperature;
             double T1 = initial_temperature*anneal_factor;
-            return sqr(sqrt(T0)*(1.-fraction) + sqrt(T1)*fraction);
+            if (time <= anneal_start)
+                return T0;
+            else if (time > anneal_end)
+                return T1;
+            else 
+                return sqr(sqrt(T0)*(1.-fraction) + sqrt(T1)*fraction);
         };
 
         vector<string> outputs(systems.size());
