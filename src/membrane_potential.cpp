@@ -6,6 +6,9 @@
 #include "h5_support.h"
 #include <vector>
 #include "spline.h"
+#include <iostream>
+
+#define N_AMINO_ACID_TYPE 20
 
 using namespace h5;
 using namespace std;
@@ -161,6 +164,420 @@ struct MembranePotential : public PotentialNode
             hb_sens(6, nv) += -2.f*spline_value*uhb_prob; 
         }
     }
+
+    virtual std::vector<float> get_param() const override {
+        vector<float> params(40, 0.f);
+        for(int n=0;n<20;n++) {
+            auto& pp = pot_params[n];
+            params[n] = pp.cov_midpoint;
+            params[20+n] = pp.cov_sharpness;
+        }
+        return params;
+    }
+
+    virtual void set_param(const std::vector<float>& new_params) override {
+        for(int n=0;n<20;n++) {
+            auto& pp = pot_params[n];
+            pp.cov_midpoint = new_params[n];
+            pp.cov_sharpness = new_params[20+n];
+        }
+    }
+
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {
+        vector<float> deriv(40, 0.f);
+
+        VecArray cb_pos  = res_pos.output;
+        VecArray env_cov = environment_coverage.output;
+
+        for(int nr=0; nr<n_elem; ++nr) {
+            auto &p = res_params[nr];
+            float cb_z = cb_pos(2, p.cb_index);
+
+            float result[2]; // deriv then value
+            membrane_energy_cb_spline.evaluate_value_and_deriv(result, p.restype, (cb_z + cb_z_shift) * cb_z_scale);
+            float spline_value = result[1];
+
+            float bl = 0.0;
+            for(int aa: range(20)) 
+                bl += weights[aa] * env_cov(0, p.env_index*20+aa);
+
+            auto& pp        = pot_params[p.restype];
+            auto  env_coord = bl-pp.cov_midpoint;
+            auto cover_sig  = compact_sigmoid(env_coord, pp.cov_sharpness);
+
+            deriv[p.restype]    += -spline_value * cover_sig.y();
+            deriv[p.restype+20] +=  spline_value * env_coord/pp.cov_sharpness * cover_sig.y();
+        }
+
+        return deriv;
+    }
+#endif
+
 };
 
 static RegisterNodeType<MembranePotential, 3> membrane_potential_node("membrane_potential");
+
+
+struct MembraneCBPotential : public PotentialNode
+{
+    int n_elem;        // number of residues to process
+    int n_restype;
+
+    vector<int> cb_index;
+    vector<int> res_type;
+
+    CoordNode& res_pos;  // CB atom
+    CoordNode& environment_coverage;
+    vector<float> weights;
+
+    int n_bl;
+    vector<float> bl_nodes;
+    float bl_range_sharpness;
+    float left_right_node;
+    float left_right_sharpness;
+
+    int n_node;
+    float zstart;
+    float zscale;
+
+    vector<float> coeff;      // length n_restype*n_coeff
+
+    MembraneCBPotential(hid_t grp, CoordNode& res_pos_,
+                                 CoordNode& environment_coverage_):
+        PotentialNode(),
+        n_elem              (get_dset_size(1, grp, "cb_index")[0]),
+        n_restype           (get_dset_size(3, grp, "coeff")[0]),
+        cb_index            (n_elem),
+        res_type            (n_elem),
+        res_pos             (res_pos_),
+        environment_coverage(environment_coverage_),
+        weights             (get_dset_size(1, grp, "weights")[0]),
+        n_bl                (get_dset_size(3, grp, "coeff")[1]),
+        bl_nodes            (n_bl-1),
+        bl_range_sharpness  (read_attribute<float>(grp, ".", "bl_range_sharpness" )),
+        left_right_node     (read_attribute<float>(grp, ".", "left_right_node" )),
+        left_right_sharpness(read_attribute<float>(grp, ".", "left_right_sharpness" )),
+        n_node              (get_dset_size(3, grp, "coeff")[2]),
+        zstart              (read_attribute<float>(grp, ".", "z_start" )),
+        zscale              (read_attribute<float>(grp, ".", "z_scale" )),
+        coeff               (n_restype*n_bl*n_node)
+    {
+        check_elem_width_lower_bound(res_pos, 3);
+        check_elem_width_lower_bound(environment_coverage, 1);
+
+        check_size(grp, "res_type", n_elem);
+        check_size(grp, "bl_nodes", n_bl-1);
+        check_size(grp, "coeff",    n_restype, n_bl, n_node);
+
+        traverse_dset<1, float>(grp, "cb_index",  [&](size_t n, float x) {cb_index[n] = x;});
+        traverse_dset<1, int>  (grp, "res_type",  [&](size_t n, int x)   {res_type[n] = x;});
+        traverse_dset<1, float>(grp, "weights",   [&](size_t n, float x) {weights[n]  = x;});
+        traverse_dset<1, float>(grp, "bl_nodes",  [&](size_t n, float x) {bl_nodes[n] = x;});
+
+        traverse_dset<3, float>(grp, "coeff",[&](size_t n, size_t l, size_t c, float x) 
+                        { coeff[n*n_node*n_bl + l*n_node + c] = x;} );
+    }
+
+    virtual void compute_value(ComputeMode mode) {
+        Timer timer(string("cb_membrane_potential"));
+
+        VecArray cb_pos       = res_pos.output;
+        VecArray cb_pos_sens  = res_pos.sens;
+        VecArray env_cov      = environment_coverage.output;
+        VecArray env_cov_sens = environment_coverage.sens;
+
+        potential = 0.f;
+
+        vector<float> bl_score1(n_bl-1);
+        vector<float> bl_score2(n_bl-1);
+        vector<float> d_bl_score1(n_bl-1);
+        vector<float> d_bl_score2(n_bl-1);
+        vector<float> bl_score(n_bl);
+        vector<float> d_bl_score(n_bl);
+
+        vector<float> fs(n_bl);
+        vector<float> dfs(n_bl);
+
+        for(int nr=0; nr<n_elem; ++nr) {
+            int rt = res_type[nr];
+            int ri = cb_index[nr];
+	    
+            // burial level
+            float bl = 0.0;
+            for(int aa: range(n_restype)) 
+                bl += weights[aa] * env_cov(0, ri*n_restype+aa);
+
+            for (int i: range(n_bl-1)) {
+                auto s1 = compact_sigmoid(bl-bl_nodes[i], bl_range_sharpness);
+                auto s2 = compact_sigmoid(bl_nodes[i]-bl, bl_range_sharpness);
+                bl_score1[i]   = s1.x();
+                d_bl_score1[i] = s1.y();
+                bl_score2[i]   = s2.x();
+                d_bl_score2[i] = -s2.y();
+            }
+
+            bl_score[0]   = bl_score1[0];
+            d_bl_score[0] = d_bl_score1[0];
+            bl_score[n_bl-1]   = bl_score2[n_bl-2];
+            d_bl_score[n_bl-1] = d_bl_score2[n_bl-2];
+            for (int i: range(n_bl-2)) {
+                bl_score[i+1]   = bl_score2[i]*bl_score1[i+1];
+                d_bl_score[i+1] = d_bl_score2[i]*bl_score1[i+1] + bl_score2[i]*d_bl_score1[i+1];
+            }
+
+	    // z
+            float cb_z = cb_pos(2, ri);
+            auto sig_left = compact_sigmoid(cb_z-left_right_node, left_right_sharpness);
+            float ll  = sig_left.x();
+            float lr  = 1.f-sig_left.x();
+            float dll = sig_left.y();
+            float dlr = -sig_left.y();
+
+            auto coord_left  = ( cb_z-zstart)*zscale;
+            auto coord_right = (-cb_z-zstart)*zscale;
+
+            float df_dz  = 0.0;
+            float df_dbl = 0.0;
+            for (int i: range(n_bl)) {
+                int shift = (rt*n_bl + i)*n_node;
+                auto v = clamped_deBoor_value_and_deriv(coeff.data() + shift, coord_left, n_node);
+                float f_left  = v.x();
+                float df_left = v.y()*zscale;
+
+                v = clamped_deBoor_value_and_deriv(coeff.data() + shift, coord_right, n_node);
+                float f_right  = v.x();
+                float df_right = -v.y()*zscale;
+
+                float fs  = ll*f_left + lr*f_right;
+                float dfs = ll*df_left + dll*f_left + lr*df_right + dlr*f_right;
+
+                potential +=   bl_score[i] *  fs;
+                df_dz     +=   bl_score[i] * dfs;
+                df_dbl    += d_bl_score[i] *  fs;
+            }
+
+            cb_pos_sens (2, ri)  += df_dz;
+            for(int aa: range(n_restype)) 
+                env_cov_sens(0, ri*n_restype+aa) += weights[aa] * df_dbl;
+        }
+    }
+
+    virtual std::vector<float> get_param() const override {
+        int np = n_restype*n_bl*n_node;
+        vector<float> params(np, 0.f);
+        for(int n=0;n<np;n++) {
+            params[n] = coeff[n];
+        }
+        return params;
+    }
+
+    virtual void set_param(const std::vector<float>& new_params) override {
+        int np = n_restype*n_bl*n_node;
+        for(int n=0;n<np;n++) {
+            coeff[n] = new_params[n];
+        }
+    }
+
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {
+        int np = n_restype*n_bl*n_node;
+        vector<float> deriv(np, 0.f);
+
+        VecArray cb_pos  = res_pos.output;
+        VecArray env_cov = environment_coverage.output;
+
+        vector<float> bl_score1(n_bl-1);
+        vector<float> bl_score2(n_bl-1);
+        vector<float> d_bl_score1(n_bl-1);
+        vector<float> d_bl_score2(n_bl-1);
+        vector<float> bl_score(n_bl);
+        vector<float> d_bl_score(n_bl);
+
+        for(int nr=0; nr<n_elem; ++nr) {
+            int rt = res_type[nr];
+            int ri = cb_index[nr];
+
+            float bl = 0.0;
+            for(int aa: range(n_restype)) 
+                bl += weights[aa] * env_cov(0, ri*n_restype+aa);
+            for (int i: range(n_bl-1)) {
+                auto s1 = compact_sigmoid(bl-bl_nodes[i], bl_range_sharpness);
+                auto s2 = compact_sigmoid(bl_nodes[i]-bl, bl_range_sharpness);
+                bl_score1[i]   = s1.x();
+                bl_score2[i]   = s2.x();
+            }
+            bl_score[0]       = bl_score1[0];
+            for (int i: range(n_bl-2)) 
+                bl_score[i+1] = bl_score2[i]*bl_score1[i+1];
+            bl_score[n_bl-1]  = bl_score2[n_bl-2];
+
+            float cb_z        = cb_pos(2, ri);
+            auto  sig_left    = compact_sigmoid(cb_z-left_right_node, left_right_sharpness);
+            float ll          = sig_left.x();
+            float lr          = 1.f-sig_left.x();
+
+            auto  coord_left  = ( cb_z-zstart)*zscale;
+            auto  coord_right = (-cb_z-zstart)*zscale;
+
+            int starting_bin;
+            float result[4];
+            clamped_deBoor_coeff_deriv(&starting_bin, result, coord_left, n_node);
+            for (int bi: range(n_bl)) {
+                int shift = (rt*n_bl + bi)*n_node;
+                for(int i: range(4)) deriv[shift+starting_bin+i] += result[i]*bl_score[bi]*ll;
+            }
+
+            clamped_deBoor_coeff_deriv(&starting_bin, result, coord_right, n_node);
+            for (int bi: range(n_bl)) {
+                int shift = (rt*n_bl + bi)*n_node + np;
+                for(int i: range(4)) deriv[shift+starting_bin+i] += result[i]*bl_score[bi]*lr;
+            }
+        }
+        return deriv;
+    }
+#endif
+};
+
+static RegisterNodeType<MembraneCBPotential, 2> membrane_cb_potential_node("cb_membrane_potential");
+
+struct MembraneHBPotential : public PotentialNode
+{
+    int n_elem;        // number of residues to process
+
+    vector<int> hb_index;
+    vector<int> hb_type;
+
+    CoordNode& protein_hbond;
+
+    int   n_node;
+    float zstart;
+    float zscale;
+    float left_right_node;
+    float left_right_sharpness;
+
+    vector<float> coeff;      // length n_restype*n_coeff
+
+    MembraneHBPotential(hid_t grp, CoordNode& protein_hbond_):
+        PotentialNode(),
+        n_elem              (get_dset_size(1, grp, "hb_index")[0]),
+        hb_index            (n_elem),
+        hb_type             (n_elem),
+        protein_hbond       (protein_hbond_),
+        n_node              (get_dset_size(3, grp, "coeff")[2]),
+        zstart              (read_attribute<float>(grp, ".", "z_start" )),
+        zscale              (read_attribute<float>(grp, ".", "z_scale" )),
+        left_right_node     (read_attribute<float>(grp, ".", "left_right_node" )),
+        left_right_sharpness(read_attribute<float>(grp, ".", "left_right_sharpness" )),
+        coeff               (2*2*n_node)
+    {
+        check_size(grp, "hb_type",  n_elem);
+        check_size(grp, "coeff",  2, 2, n_node);
+        traverse_dset<1, float>( grp, "hb_index", [&](size_t n, float x) {hb_index[n] = x;} );
+        traverse_dset<1, int>  ( grp, "hb_type",  [&](size_t n, int x)   {hb_type[n]  = x;} );
+
+        traverse_dset<3, float>(grp, "coeff",[&](size_t n, size_t l, size_t c, float x) 
+                        { coeff[(n*2+l)*n_node + c] = x;} );
+    }
+
+    virtual void compute_value(ComputeMode mode) {
+        Timer timer(string("hb_membrane_potential"));
+
+        VecArray hb_pos  = protein_hbond.output;
+        VecArray hb_sens = protein_hbond.sens;
+
+        potential = 0.f;
+        for(int nv=0; nv<n_elem; ++nv) {
+
+            int   rt          = hb_type[nv];
+            int   ri          = hb_index[nv];
+            float hb_z        = hb_pos(2, ri);
+            float hb_prob     = hb_pos(6, ri);  // probability that his virtual participates in any HBond
+            auto  coord_left  = ( hb_z-zstart)*zscale;
+            auto  coord_right = (-hb_z-zstart)*zscale;
+	    
+            auto sig_left = compact_sigmoid(hb_z-left_right_node, left_right_sharpness);
+            float ll      = sig_left.x();
+            float lr      = 1.f-sig_left.x();
+            float dll     = sig_left.y();
+            float dlr     = -sig_left.y();
+
+            auto f1l   = clamped_deBoor_value_and_deriv(coeff.data() + (rt*2)*n_node, coord_left,  n_node);
+            auto f1r   = clamped_deBoor_value_and_deriv(coeff.data() + (rt*2)*n_node, coord_right, n_node);
+            float fs1  = ll*f1l.x() + lr*f1r.x();
+            float dfs1 = ll*f1l.y()*zscale + dll*f1l.x() - lr*f1r.y()*zscale + dlr*f1r.x();
+
+            float uhb_prob      = 1.f-hb_prob;
+            float sqr_uhb_prob  = sqr(uhb_prob);
+            potential          += sqr_uhb_prob  *  fs1;
+            hb_sens(2, ri)     += sqr_uhb_prob  * dfs1;
+            hb_sens(6, ri)     += -2.f*uhb_prob *  fs1;
+
+            auto f2l   = clamped_deBoor_value_and_deriv(coeff.data() + (rt*2+1)*n_node, coord_left,  n_node);
+            auto f2r   = clamped_deBoor_value_and_deriv(coeff.data() + (rt*2+1)*n_node, coord_right, n_node);
+            float fs2  = ll*f2l.x() + lr*f2r.x();
+            float dfs2 = ll*f2l.y()*zscale + dll*f2l.x() - lr*f2r.y()*zscale + dlr*f2r.x();
+
+            float sqr_hb_prob   = 1.f - sqr_uhb_prob;
+            potential          += sqr_hb_prob *  fs2;
+            hb_sens(2, ri)     += sqr_hb_prob * dfs2;
+            hb_sens(6, ri)     += 2.f*hb_prob *  fs2;
+        }
+    }
+
+    virtual std::vector<float> get_param() const override {
+        int np = 2*2*n_node;
+        vector<float> params(np, 0.f);
+        for(int n=0;n<np;n++) {
+            params[n] = coeff[n];
+        }
+        return params;
+    }
+
+    virtual void set_param(const std::vector<float>& new_params) override {
+        int np = 2*2*n_node;
+        for(int n=0;n<np;n++) {
+            coeff[n]  = new_params[n];
+        }
+    }
+
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {
+        int np = 2*2*n_node;
+        vector<float> deriv(np, 0.f);
+        VecArray hb_pos = protein_hbond.output;
+
+        for(int nv=0; nv<n_elem; ++nv) {
+
+            int   rt           = hb_type[nv];
+            int   ri           = hb_index[nv];
+
+            float hb_z         = hb_pos(2, ri);
+            auto  coord_left   = ( hb_z-zstart)*zscale;
+            auto  coord_right  = (-hb_z-zstart)*zscale;
+            auto  sig_left     = compact_sigmoid(hb_z-left_right_node, left_right_sharpness);
+            float ll           = sig_left.x();
+            float lr           = 1.f-sig_left.x();
+
+            float hb_prob      = hb_pos(6, ri);  // probability that his virtual participates in any HBond
+            float uhb_prob     = 1.f-hb_prob;
+            float sqr_uhb_prob = sqr(uhb_prob);
+            float sqr_hb_prob  = 1.f - sqr_uhb_prob;
+
+            int starting_bin;
+            float result[4];
+            clamped_deBoor_coeff_deriv(&starting_bin, result, coord_left, n_node);
+            for(int i: range(4)) deriv[(rt*2+0)*n_node+starting_bin+i] += result[i]*ll*sqr_uhb_prob;
+            for(int i: range(4)) deriv[(rt*2+1)*n_node+starting_bin+i] += result[i]*ll*sqr_hb_prob;
+
+            clamped_deBoor_coeff_deriv(&starting_bin, result, coord_right, n_node);
+            for(int i: range(4)) deriv[(rt*2+0)*n_node+starting_bin+i] += result[i]*lr*sqr_uhb_prob;
+            for(int i: range(4)) deriv[(rt*2+1)*n_node+starting_bin+i] += result[i]*lr*sqr_hb_prob;
+        }
+        return deriv;
+    }
+#endif
+};
+
+static RegisterNodeType<MembraneHBPotential, 1> membrane_hb_potential_node("hb_membrane_potential");
+
