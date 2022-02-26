@@ -200,32 +200,3 @@ struct Conv1D : public CoordNode
 static RegisterNodeType<Conv1D,1> conv1d_node("conv1d");
 
 
-struct ScaledSum: public PotentialNode
-{
-    CoordNode& input;
-    float scale;
-
-    ScaledSum(hid_t grp, CoordNode& input_):
-        PotentialNode(),
-        input(input_),
-        scale(read_attribute<float>(grp, ".", "scale"))
-    {
-
-        if(input.elem_width != 1u) throw string("Sum only works on elem width 1");
-    }
-
-    virtual void compute_value(ComputeMode mode) override {
-        Timer timer(string("scaled_sum")); 
-        VecArray value = input.output;
-        VecArray sens  = input.sens;
-        int n_elem = input.n_elem;
-
-        float pot = 0.f;
-        for(int i=0; i<n_elem; ++i) pot += value(0,i);
-        pot *= scale;
-        potential = pot;
-
-        for(int i=0; i<n_elem; ++i) sens(0,i) += scale;
-    }
-};
-static RegisterNodeType<ScaledSum,1> scaled_sum_node("scaled_sum");
