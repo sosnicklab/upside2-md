@@ -99,6 +99,8 @@ struct System {
     float initial_temperature;
     float temperature;
     H5Obj config;
+    H5Obj input;
+    H5Obj output;
     shared_ptr<H5Logger> logger;
     DerivEngine engine;
     MultipleMonteCarloSampler mc_samplers;
@@ -416,6 +418,11 @@ try {
             "Default is verlet.",
             false, "", "v, mv ", cmd);
     ValueArg<int> inner_step_arg("", "inner-step", "inner step for the integrator", false, 3, "int", cmd);
+
+    ValueArg<string> input_arg("i", "input", "h5df input file for position", false, "not_Defined_By_user", "string", cmd);
+    ValueArg<string> input_base_arg("", "input-base", "h5df input files base for positions", false, "not_Defined_By_user", "string_list", cmd);
+    ValueArg<string> output_arg("o", "output", "h5df output log file", false, "not_Defined_By_user", "string", cmd);
+    ValueArg<string> output_base_arg("", "output-base", "the base name of h5df output log files.", false, "not_Defined_By_user", "string", cmd);
     SwitchArg disable_recenter_arg("", "disable-recentering", 
             "Disable all recentering of protein in the universe", 
             cmd, false);
@@ -511,6 +518,52 @@ try {
             return sqr(sqrt(T0)*(1.-fraction) + sqrt(T1)*fraction);
         };
 
+        vector<string> outputs(systems.size());
+        bool user_defined_output = false;
+
+        auto out_name = output_arg.getValue();
+        if (out_name != "not_Defined_By_user") {
+            auto output_strings = split_string(out_name, ",");
+
+            if(output_strings.size() != 1u && output_strings.size() != systems.size()) 
+                throw string("Received "+to_string(output_strings.size())+" outputs but have "
+                        +to_string(systems.size())+" systems");
+
+            for(int ns: range(systems.size())) 
+                outputs[ns] = output_strings.size()>1u ? output_strings[ns] : output_strings[0];
+
+            user_defined_output = true;
+        }
+
+        auto out_base = output_base_arg.getValue();
+        if (out_base != "not_Defined_By_user")  {
+            for(int ns: range(systems.size())) 
+                outputs[ns] = out_base + "_" + to_string(ns) + ".h5";
+            user_defined_output = true;
+        }
+        
+        vector<string> inputs(systems.size());
+        bool user_defined_input = false;
+
+        auto in_name = input_arg.getValue();
+        if (in_name != "not_Defined_By_user") {
+            auto input_strings = split_string(in_name, ",");
+
+            if(input_strings.size() != 1u && input_strings.size() != systems.size()) 
+                throw string("Received "+to_string(input_strings.size())+" inputs but have "
+                        +to_string(systems.size())+" systems");
+
+            for(int ns: range(systems.size())) 
+                inputs[ns] = input_strings.size()>1u ? input_strings[ns] : input_strings[0];
+
+            user_defined_input = true;
+        }
+        auto in_base = input_base_arg.getValue();
+        if (in_base != "not_Defined_By_user")  {
+            for(int ns: range(systems.size())) 
+                inputs[ns] = in_base + "_" + to_string(ns) + ".h5";
+            user_defined_input = true;
+        }
         int replica_interval = 0;
         if(replica_interval_arg.getValue())
             replica_interval = max(1.,replica_interval_arg.getValue()/(inner_step*dt));
@@ -530,17 +583,39 @@ try {
             sys->random_seed = base_random_seed + ns;
 
             try {
-                sys->config = h5_obj(H5Fclose,
+                if (user_defined_output) {
+                    sys->config = h5_obj(H5Fclose,
+                        H5Fopen(config_paths[ns].c_str(), H5F_ACC_RDONLY, H5P_DEFAULT));
+                }
+                else {
+                    sys->config = h5_obj(H5Fclose,
                         H5Fopen(config_paths[ns].c_str(), H5F_ACC_RDWR, H5P_DEFAULT));
+                }
             } catch(string &s) {
                 throw string("Unable to open configuration file at ") + config_paths[ns];
             }
 
-            if(h5_exists(sys->config.get(), "output")) {
-                // Note that it is not possible in HDF5 1.8.x to reclaim space by deleting
-                // datasets or groups.  Subsequent h5repack will reclaim space, however.
-                h5_noerr(H5Ldelete(sys->config.get(), "/output", H5P_DEFAULT));
+            if (user_defined_input) {
+                try {
+                    sys->input = h5_obj(H5Fclose,
+                            H5Fopen(inputs[ns].c_str(), H5F_ACC_RDONLY, H5P_DEFAULT));
+                } catch(string &s) {
+                    throw string("Unable to open input position file ") + inputs[ns];
+                }
             }
+
+            if (user_defined_output) {
+                sys->output = h5_obj(H5Fclose, 
+                   H5Fcreate(outputs[ns].c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT));
+            }
+            else {
+                if(h5_exists(sys->config.get(), "output")) {
+                    // Note that it is not possible in HDF5 1.8.x to reclaim space by deleting
+                    // datasets or groups.  Subsequent h5repack will reclaim space, however.
+                    h5_noerr(H5Ldelete(sys->config.get(), "/output", H5P_DEFAULT));
+                }
+            }
+
 
             LogLevel log_level;
             if     (log_level_arg.getValue() == "")          log_level = LOG_DETAILED;
@@ -549,12 +624,22 @@ try {
             else if(log_level_arg.getValue() == "extensive") log_level = LOG_EXTENSIVE;
             else throw string("Illegal value for --log-level");
 
-            sys->logger = make_shared<H5Logger>(sys->config, "output", log_level);
+            if (user_defined_output) 
+                sys->logger = make_shared<H5Logger>(sys->output, "output", log_level);
+            else
+                sys->logger = make_shared<H5Logger>(sys->config, "output", log_level);
+
             default_logger = sys->logger;  // FIXME kind of a hack for the ugly global variable
 
-            write_string_attribute(sys->config.get(), "output", "invocation", invocation);
+            if (user_defined_output) 
+                write_string_attribute(sys->output.get(), "output", "invocation", invocation);
+            else
+                write_string_attribute(sys->config.get(), "output", "invocation", invocation);
 
             auto pos_shape = get_dset_size(3, sys->config.get(), "/input/pos");
+            if (user_defined_input) 
+                pos_shape = get_dset_size(3, sys->input.get(), "/input/pos");
+
             sys->n_atom = pos_shape[0];
             sys->mom.reset(3, sys->n_atom);
             for(int d: range(3)) for(int na: range(sys->n_atom)) sys->mom(d,na) = 0.f;
@@ -571,8 +656,12 @@ try {
             for(const auto& p: set_param_map)
                 sys->engine.get(p.first).computation->set_param(p.second);
 
-            traverse_dset<3,float>(sys->config.get(), "/input/pos", [&](size_t na, size_t d, size_t ns, float x) { 
-                    sys->engine.pos->output(d,na) = x;});
+            if (user_defined_input) 
+                traverse_dset<3,float>(sys->input.get(), "/input/pos", [&](size_t na, size_t d, size_t ns, float x) { 
+                        sys->engine.pos->output(d,na) = x;});
+            else
+                traverse_dset<3,float>(sys->config.get(), "/input/pos", [&](size_t na, size_t d, size_t ns, float x) { 
+                        sys->engine.pos->output(d,na) = x;});
 
             if(verbose) printf("%s\nn_atom %i\n\n", config_paths[ns].c_str(), sys->n_atom);
 
@@ -764,11 +853,22 @@ try {
         for(auto& sys: systems) {
             double sum_kinetic = 0.;
             long n_kinetic = 0l;
-            size_t tot_frames = get_dset_size(2, sys.config.get(), "/output/kinetic")[0];
 
-            traverse_dset<2,float>(sys.config.get(),"/output/kinetic", [&](size_t nf, size_t ns, float x){
+            size_t tot_frames;
+            if (user_defined_output) 
+                tot_frames = get_dset_size(2, sys.output.get(), "/output/kinetic")[0];
+            else
+                tot_frames = get_dset_size(2, sys.config.get(), "/output/kinetic")[0];
+
+            if (user_defined_output) 
+                traverse_dset<2,float>(sys.output.get(),"/output/kinetic", [&](size_t nf, size_t ns, float x){
                     if(nf>tot_frames/2){ sum_kinetic+=x; n_kinetic++; }
-                    });
+                });
+            else 
+                traverse_dset<2,float>(sys.config.get(),"/output/kinetic", [&](size_t nf, size_t ns, float x){
+                    if(nf>tot_frames/2){ sum_kinetic+=x; n_kinetic++; }
+                });
+
             if(verbose) printf(" % .3f", sum_kinetic/n_kinetic / (1.5*sys.temperature));
         }
         if(verbose) printf("\n");
@@ -779,8 +879,12 @@ try {
                 if(verbose)printf("pivot_success:\n");
                 for(auto& sys: systems) {
                     std::vector<int64_t> ps(2,0);
-                    traverse_dset<2,int>(sys.config.get(), "/output/pivot_stats", [&](size_t nf, int d, int x) {
-                            ps[d] += x;});
+
+                    if (user_defined_output) 
+                        traverse_dset<2,int>(sys.output.get(), "/output/pivot_stats", [&](size_t nf, int d, int x) {ps[d] += x;});
+                    else
+                        traverse_dset<2,int>(sys.config.get(), "/output/pivot_stats", [&](size_t nf, int d, int x) {ps[d] += x;});
+
                     if(verbose)printf(" % .4f", double(ps[0])/double(ps[1]));
                 }
                 if(verbose)printf("\n");
@@ -792,8 +896,12 @@ try {
                 if(verbose)printf("jump_success:\n");
                 for(auto& sys: systems) {
                     std::vector<int64_t> ps(2,0);
-                    traverse_dset<2,int>(sys.config.get(), "/output/jump_stats", [&](size_t nf, int d, int x) {
-                            ps[d] += x;});
+
+                    if (user_defined_output) 
+                        traverse_dset<2,int>(sys.output.get(), "/output/jump_stats", [&](size_t nf, int d, int x) {ps[d] += x;});
+                    else 
+                        traverse_dset<2,int>(sys.config.get(), "/output/jump_stats", [&](size_t nf, int d, int x) {ps[d] += x;});
+
                     if(verbose)printf(" % .4f", double(ps[0])/double(ps[1]));
                 }
                 if(verbose)printf("\n");
