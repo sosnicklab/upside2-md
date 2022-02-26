@@ -67,6 +67,121 @@ namespace {
         static bool is_compatible(const float* p1, const float* p2) {return true;};
     };
 
+    struct HbondEnvironmentCoverageInteraction {
+        // parameters are r0,r_sharpness, dot0,dot_sharpness
+    
+        constexpr static bool  symmetric = false;
+        constexpr static int   n_param=4, n_dim1=6, n_dim2=6, simd_width=1;
+    
+        static float cutoff(const float* p) {
+    	return p[0] + compact_sigmoid_cutoff(p[1]);
+        }
+    
+        static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
+            auto sequence_exclude = Int4(2);  // exclude i,i, i,i+1, and i,i+2
+            return (sequence_exclude < id1-id2) | (sequence_exclude < id2-id1);
+            //return Int4() == Int4();  // No exclusions (all true)
+        }
+    
+        static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4],
+    	    const Vec<n_dim1,Float4> &x1, const Vec<n_dim2,Float4> &x2) {
+
+    	Float4 one(1.f);
+    	auto displace = extract<0,3>(x2)-extract<0,3>(x1);
+    	auto rvec1 = extract<3,6>(x1);
+    
+    	auto dist2 = mag2(displace);
+    	auto inv_dist = rsqrt(dist2);
+    	auto dist = dist2*inv_dist;
+    	auto displace_unitvec = inv_dist*displace;
+    
+    	// read parameters then transpose
+    	Float4 r0(p[0]);
+    	Float4 r_sharpness(p[1]);
+    	Float4 dot0(p[2]);
+    	Float4 dot_sharpness(p[3]);
+    	transpose4(r0,r_sharpness,dot0,dot_sharpness);
+    
+    	auto dp = dot(displace_unitvec,rvec1);
+    	auto radial_sig  = compact_sigmoid(dist-r0, r_sharpness);
+    	auto angular_sig = compact_sigmoid(dot0-dp, dot_sharpness);
+    
+    	// now we compute derivatives (minus sign is from the derivative of angular_sig)
+    	auto d_displace = radial_sig.y()*angular_sig.x() * displace_unitvec -
+    	       		radial_sig.x()*angular_sig.y()* inv_dist*(rvec1 - dp*displace_unitvec);
+    
+    	store<3,6>(d1, -radial_sig.x()*angular_sig.y()*displace_unitvec);
+    	store<0,3>(d1, -d_displace);
+    	store<0,3>(d2,  d_displace);
+    	auto score = radial_sig.x() * angular_sig.x();
+    	return score;
+        }
+    
+        static void param_deriv(Vec<n_param> &d_param, const float* p,
+    	    const Vec<n_dim1> &hb_pos, const Vec<n_dim2> &sc_pos) {
+    	d_param = make_zero<n_param>();   // not implemented currently
+        }
+    
+        static bool is_compatible(const float* p1, const float* p2) {return true;};
+    };
+
+    struct HbondEnvironmentCoverageInteraction2 {
+        // parameters are r0,r_sharpness, dot0,dot_sharpness
+    
+        constexpr static bool  symmetric = false;
+        constexpr static int   n_param=4, n_dim1=6, n_dim2=3, simd_width=1;
+    
+        static float cutoff(const float* p) {
+    	return p[0] + compact_sigmoid_cutoff(p[1]);
+        }
+    
+        static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
+            auto sequence_exclude = Int4(2);  // exclude i,i, i,i+1, and i,i+2
+            return (sequence_exclude < id1-id2) | (sequence_exclude < id2-id1);
+            //return Int4() == Int4();  // No exclusions (all true)
+        }
+    
+        static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4],
+    	    const Vec<n_dim1,Float4> &x1, const Vec<n_dim2,Float4> &x2) {
+
+    	Float4 one(1.f);
+    	auto displace = extract<0,3>(x2)-extract<0,3>(x1);
+    	auto rvec1 = extract<3,6>(x1);
+    
+    	auto dist2 = mag2(displace);
+    	auto inv_dist = rsqrt(dist2);
+    	auto dist = dist2*inv_dist;
+    	auto displace_unitvec = inv_dist*displace;
+    
+    	// read parameters then transpose
+    	Float4 r0(p[0]);
+    	Float4 r_sharpness(p[1]);
+    	Float4 dot0(p[2]);
+    	Float4 dot_sharpness(p[3]);
+    	transpose4(r0,r_sharpness,dot0,dot_sharpness);
+    
+    	auto dp = dot(displace_unitvec,rvec1);
+    	auto radial_sig  = compact_sigmoid(dist-r0, r_sharpness);
+    	auto angular_sig = compact_sigmoid(dot0-dp, dot_sharpness);
+    
+    	// now we compute derivatives (minus sign is from the derivative of angular_sig)
+    	auto d_displace = radial_sig.y()*angular_sig.x() * displace_unitvec -
+    	       		radial_sig.x()*angular_sig.y()* inv_dist*(rvec1 - dp*displace_unitvec);
+    
+    	store<3,6>(d1, -radial_sig.x()*angular_sig.y()*displace_unitvec);
+    	store<0,3>(d1, -d_displace);
+    	store<0,3>(d2,  d_displace);
+    	auto score = radial_sig.x() * angular_sig.x();
+    	return score;
+        }
+    
+        static void param_deriv(Vec<n_param> &d_param, const float* p,
+    	    const Vec<n_dim1> &hb_pos, const Vec<n_dim2> &sc_pos) {
+    	d_param = make_zero<n_param>();   // not implemented currently
+        }
+    
+        static bool is_compatible(const float* p1, const float* p2) {return true;};
+    };
 
 struct EnvironmentCoverage : public CoordNode {
 
@@ -129,6 +244,81 @@ struct EnvironmentCoverage : public CoordNode {
     virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
 };
 static RegisterNodeType<EnvironmentCoverage,2> environment_coverage_node("environment_coverage");
+
+struct HbondEnvironmentCoverage : public CoordNode {
+    InteractionGraph<HbondEnvironmentCoverageInteraction> igraph;
+
+    HbondEnvironmentCoverage(hid_t grp, CoordNode& pos1_, CoordNode& pos2_):
+        CoordNode(get_dset_size(1,grp,"index1")[0], 1),
+        igraph(grp, &pos1_, &pos2_) {
+        if(logging(LOG_EXTENSIVE)) {
+            default_logger->add_logger<float>("hbond_environment_coverage", {n_elem}, [&](float* buffer) {
+                for(int ne: range(n_elem))
+                    buffer[ne] = output(0,ne);});
+        }
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        Timer timer(string("hbond_environment_coverage"));
+        igraph.compute_edges();
+        fill(output, 0.f);
+        for(int ne=0; ne<igraph.n_edge; ++ne)  // accumulate for each cb
+            output(0, igraph.edge_indices1[ne]) += igraph.edge_value[ne];
+    }
+
+    virtual void propagate_deriv() override {
+        Timer timer(string("d_hbond_environment_coverage"));
+
+        for(int ne: range(igraph.n_edge))
+            igraph.edge_sensitivity[ne] = sens(0,igraph.edge_indices1[ne]);
+        igraph.propagate_derivatives();
+    }
+
+    virtual std::vector<float> get_param() const override {return igraph.get_param();}
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {return igraph.get_param_deriv();}
+#endif
+    virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
+};
+static RegisterNodeType<HbondEnvironmentCoverage,2> hbond_environment_coverage_node("hb_environment_coverage");
+
+struct HbondBackBoneCoverage : public CoordNode {
+    InteractionGraph<HbondEnvironmentCoverageInteraction2> igraph;
+
+    HbondBackBoneCoverage(hid_t grp, CoordNode& pos1_, CoordNode& pos2_):
+        CoordNode(get_dset_size(1,grp,"index1")[0], 1),
+        igraph(grp, &pos1_, &pos2_) {
+        if(logging(LOG_EXTENSIVE)) {
+            default_logger->add_logger<float>("hbond_backbone_coverage", {n_elem}, [&](float* buffer) {
+                for(int ne: range(n_elem))
+                    buffer[ne] = output(0,ne);});
+        }
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        Timer timer(string("hbond_backbone_coverage"));
+        igraph.compute_edges();
+        fill(output, 0.f);
+        for(int ne=0; ne<igraph.n_edge; ++ne)  // accumulate for each cb
+            output(0, igraph.edge_indices1[ne]) += igraph.edge_value[ne];
+    }
+
+    virtual void propagate_deriv() override {
+        Timer timer(string("d_hbond_backbone_coverage"));
+
+        for(int ne: range(igraph.n_edge))
+            igraph.edge_sensitivity[ne] = sens(0,igraph.edge_indices1[ne]);
+        igraph.propagate_derivatives();
+    }
+
+    virtual std::vector<float> get_param() const override {return igraph.get_param();}
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {return igraph.get_param_deriv();}
+#endif
+    virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
+};
+static RegisterNodeType<HbondBackBoneCoverage,2> hbond_backbone_coverage_node("hbbb_coverage");
+
 
 struct WeightedPos : public CoordNode {
     CoordNode &pos;
