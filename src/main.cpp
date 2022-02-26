@@ -12,6 +12,9 @@
 #include "state_logger.h"
 #include <csignal>
 #include <map>
+#include <sstream>
+#include <fstream>
+#include <iostream>
 
 #if defined(_OPENMP)
 #include <omp.h>
@@ -138,18 +141,23 @@ vector<string> split_string(const string& src, const string& sep) {
 
 
 struct ReplicaExchange {
-    struct SwapPair {int sys1; int sys2; uint64_t n_attempt; uint64_t n_success;};
+    struct SwapPair {int sys1; int sys2; uint64_t n_attempt; uint64_t n_success; int set_id;};
     vector<vector<SwapPair>> swap_sets;
     vector<int> replica_indices;
     vector<vector<SwapPair*>> participating_swaps;
+    int n_swap_sets;
+    int n_attempt_swaps;
 
     ReplicaExchange(vector<System>& systems, vector<string> swap_sets_strings) {
+        n_swap_sets = (int)swap_sets_strings.size();
+        n_attempt_swaps = 0;
         int n_system = systems.size();
         for(int ns: range(n_system)) {
             replica_indices.push_back(ns);
             participating_swaps.emplace_back();
         }
 
+        int set_id = 0;
         for(string& set_string: swap_sets_strings) {
             swap_sets.emplace_back();
             auto& set = swap_sets.back();
@@ -166,10 +174,14 @@ struct ReplicaExchange {
 
                 s.n_attempt = 0u;
                 s.n_success = 0u;
+   
+                s.set_id = set_id;
 
                 int n_system = systems.size();
                 if(s.sys1 >= n_system || s.sys2 >= n_system) throw string("invalid system");
             }
+
+            set_id += 1;
         }
 
         for(auto& ss: swap_sets) {
@@ -224,7 +236,7 @@ struct ReplicaExchange {
                 sw.n_success = sw.n_attempt = 0u;
     }
 
-    void attempt_swaps(uint32_t seed, uint64_t round, vector<System>& systems) {
+    void attempt_swaps(uint32_t seed, uint64_t round, vector<System>& systems, int exchange_criterion ) {
         int n_system = systems.size();
 
         vector<float> beta;
@@ -234,8 +246,25 @@ struct ReplicaExchange {
         auto compute_log_boltzmann = [&]() {
             vector<float> result(n_system);
             for(int i=0; i<n_system; ++i) {
-                systems[i].engine.compute(PotentialAndDerivMode);
-                result[i] = -beta[i]*systems[i].engine.potential;
+
+                if (systems[i].use_amd) {
+                    systems[i].engine.compute(PotentialAndDerivMode, 1);
+                    auto pot = systems[i].engine.potential;
+                    float dpot = 0.0;
+                    if (pot < systems[i].amd_E) {
+                        float de = systems[i].amd_E-pot;
+                        dpot = de*de/(systems[i].amd_alpha+de);
+                    }
+                    result[i]  = -beta[i]*(pot+dpot);
+
+                    systems[i].engine.compute(PotentialAndDerivMode, 0);
+                    result[i] += -beta[i]*systems[i].engine.potential;
+
+                }
+                else {
+                    systems[i].engine.compute(PotentialAndDerivMode);
+                    result[i] = -beta[i]*systems[i].engine.potential;
+                }
             }
             return result;
         };
@@ -248,30 +277,55 @@ struct ReplicaExchange {
 
         RandomGenerator random(seed, REPLICA_EXCHANGE_RANDOM_STREAM, 0u, round);
 
+        int swap_select = n_attempt_swaps%n_swap_sets;
+
         for(auto& set: swap_sets) {
             // FIXME the first energy computation is unnecessary if we are not on the first swap set
             // It is important that the energy is computed more than once in case
             // we are doing Hamiltonian parallel tempering rather than 
             // temperature parallel tempering
-            
-            auto old_lboltz = compute_log_boltzmann();
-            for(auto& swap_pair: set) coord_swap(swap_pair.sys1, swap_pair.sys2);
-            auto new_lboltz  = compute_log_boltzmann();
 
-            // reverse all swaps that should not occur by metropolis criterion
-            for(auto& swap_pair: set) {
-                auto s1 = swap_pair.sys1; 
-                auto s2 = swap_pair.sys2;
-                swap_pair.n_attempt++;
-                float lboltz_diff = (new_lboltz[s1] + new_lboltz[s2]) - (old_lboltz[s1]+old_lboltz[s2]);
-                // If we reject the swap, we must reverse it
-                if(lboltz_diff < 0.f && expf(lboltz_diff) < random.uniform_open_closed().x()) {
-                    coord_swap(s1,s2);
-                } else {
-                    swap_pair.n_success++;
+            if (set[0].set_id != swap_select)
+                continue;
+            
+            if (exchange_criterion == 0) {
+                auto old_lboltz = compute_log_boltzmann();
+                for(auto& swap_pair: set) coord_swap(swap_pair.sys1, swap_pair.sys2);
+                auto new_lboltz  = compute_log_boltzmann();
+
+                // reverse all swaps that should not occur by metropolis criterion
+                for(auto& swap_pair: set) {
+                    auto s1 = swap_pair.sys1; 
+                    auto s2 = swap_pair.sys2;
+                    swap_pair.n_attempt++;
+
+                    float lboltz_diff = (new_lboltz[s1] + new_lboltz[s2]) - (old_lboltz[s1]+old_lboltz[s2]);
+                    // If we reject the swap, we must reverse it
+                    if(lboltz_diff < 0.f && expf(lboltz_diff) < random.uniform_open_closed().x()) {
+                        coord_swap(s1,s2);
+                    } else {
+                        swap_pair.n_success++;
+                    }
+                }
+            }
+            else if (exchange_criterion == 1) {
+                auto lboltz  = compute_log_boltzmann();
+
+                // reverse all swaps that should not occur by metropolis criterion
+                for(auto& swap_pair: set) {
+                    auto s1 = swap_pair.sys1; 
+                    auto s2 = swap_pair.sys2;
+                    swap_pair.n_attempt++;
+                    float lboltz_diff = lboltz[s2] - lboltz[s1];
+                    // If we reject the swap, we must reverse it
+                    if(lboltz_diff >= 0.f || expf(lboltz_diff) >= random.uniform_open_closed().x()) {
+                        coord_swap(s1,s2);
+                        swap_pair.n_success++;
+                    }
                 }
             }
         }
+        n_attempt_swaps += 1;
     }
 };
 
@@ -317,8 +371,8 @@ vector<float> potential_deriv_agreement(DerivEngine& engine) {
 int upside_main(int argc, const char* const * argv, int verbose=1)
 try {
     using namespace TCLAP;  // Templatized C++ Command Line Parser (tclap.sourceforge.net)
-    CmdLine cmd("Using Protein Statistical Information for Dynamics Estimation (Upside)\n Author: John Jumper", 
-            ' ', "0.1");
+    CmdLine cmd("Using Protein Statistical Information for Dynamics Estimation (Upside)\n Author: John Jumper, Xiangda Peng", 
+            ' ', "2.0alpha");
 
     ValueArg<double> time_step_arg("", "time-step", "time step for integration (default 0.009)", 
             false, 0.009, "float", cmd);
@@ -344,6 +398,10 @@ try {
     ValueArg<double> replica_interval_arg("", "replica-interval", 
             "simulation time between applications of replica exchange (0 means no replica exchange, default 0.)", 
             false, 0., "float", cmd);
+    ValueArg<int> exchange_criterion_arg("", "exchange-criterion", 
+            "the way of calculating exchange criteria (0 means using the total energy difference of two boltzmann " 
+            "before and after the exchanging, 1 means using the energy difference between two boltzmann, default 0 )", 
+            false, 0, "int", cmd);
     ValueArg<double> mc_interval_arg("", "monte-carlo-interval", 
             "simulation time between attempts to do Monte Carlo moves (0. means no MC moves, default 0.)", 
             false, 0., "float", cmd);
@@ -456,6 +514,8 @@ try {
         int replica_interval = 0;
         if(replica_interval_arg.getValue())
             replica_interval = max(1.,replica_interval_arg.getValue()/(inner_step*dt));
+
+        int exchange_criterion = exchange_criterion_arg.getValue();
 
         // system 0 is the minimum temperature
         int n_system = systems.size();
@@ -688,7 +748,7 @@ try {
             if(received_signal!=NO_SIGNAL) break;
 
             if(replica_interval && !(systems[0].round_num % replica_interval))
-                replex->attempt_swaps(base_random_seed, systems[0].round_num, systems);
+                replex->attempt_swaps(base_random_seed, systems[0].round_num, systems, exchange_criterion);
         }
         if(received_signal!=NO_SIGNAL) {fprintf(stderr, "Received early termination signal\n");}
         for(auto& sys: systems) sys.logger = shared_ptr<H5Logger>(); // release shared_ptr, which also flushes data during destructor
