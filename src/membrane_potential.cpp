@@ -1084,3 +1084,98 @@ struct MembraneSurfHBPotential : public PotentialNode
 
 static RegisterNodeType<MembraneSurfHBPotential, 3> membrane_surf_hb_potential_node("hb_surf_membrane_potential");
 
+struct MembraneLateralPotential : public PotentialNode
+{
+    int n_residue;        // number of residues to process
+    int n_restype;        // number of residues to process
+    CoordNode& pos;     // CB atom
+    CoordNode& BL;      // burial level
+    CoordNode& surface; // surface score
+    vector<int> cb_index;
+    vector<int> cb_restype;
+    vector<float> weights;
+    vector<float> cov_midpoint;
+    vector<float> cov_sharpness;
+    float min_z, max_z, inv_dz;
+    int n_knot;
+    float half_thickness;
+    vector<float> params;
+
+    MembraneLateralPotential(hid_t grp, CoordNode& pos_,
+                                        CoordNode& environment_coverage_,
+                                        CoordNode& surface_):
+        PotentialNode(),
+        n_residue (get_dset_size(1, grp,  "cb_index")[0]),
+        n_restype (N_AMINO_ACID_TYPE),
+        pos(pos_),
+        BL(environment_coverage_),
+        surface(surface_),
+        cb_index(n_residue),
+        cb_restype(n_residue),
+        weights(N_AMINO_ACID_TYPE),
+        cov_midpoint(n_restype),
+        cov_sharpness(n_restype),
+        min_z(read_attribute<float>(grp, ".","min_z")),
+        max_z(read_attribute<float>(grp, ".","max_z")),
+        inv_dz(read_attribute<float>(grp, ".","inv_dz")),
+        n_knot(read_attribute<int>(grp, ".", "n_knot")),
+        half_thickness(read_attribute<float>(grp, ".", "half_thickness" )),
+        params(n_knot)
+    {
+        check_elem_width_lower_bound(pos, 3);
+        check_elem_width_lower_bound(BL, 1);
+        check_elem_width_lower_bound(surface, 3);
+
+        check_size(grp,      "restypes", n_residue);
+        check_size(grp,  "cov_midpoint", n_restype);
+        check_size(grp, "cov_sharpness", n_restype);
+        check_size(grp,       "weights", N_AMINO_ACID_TYPE);
+        check_size(grp,        "params", n_knot);
+        traverse_dset<1,float>(grp,      "cb_index", [&](size_t n,   float x) {cb_index[n] = x;});
+        traverse_dset<1,  int>(grp,      "restypes", [&](size_t nr,   int rt) {cb_restype[nr]    = rt;});
+        traverse_dset<1,float>(grp,       "weights", [&](size_t rt, float bw) {weights[rt]       = bw;});
+        traverse_dset<1,float>(grp,  "cov_midpoint", [&](size_t rt, float bc) {cov_midpoint[rt]  = bc;});
+        traverse_dset<1,float>(grp, "cov_sharpness", [&](size_t rt, float bs) {cov_sharpness[rt] = bs;});
+        traverse_dset<1,float>(grp,        "params", [&](size_t rt, float pv) {params[rt]        = pv;});
+    }
+
+    virtual void compute_value(ComputeMode mode) {
+        Timer timer(string("membrane_lateral_potential"));
+
+        VecArray surf    = surface.output;
+        VecArray bl      = BL.output;
+        //VecArray bl_sens = BL.sens; // FIXME calcu the sens of bl
+        VecArray cb_pos  = pos.output;
+        VecArray cb_sens = pos.sens;
+
+        potential = 0.f;
+
+        vector<float> weighted_bl(n_residue, 0.);
+        for(int nr=0; nr<n_residue; ++nr)
+            for(int aa: range(N_AMINO_ACID_TYPE))
+                weighted_bl[nr] += weights[aa] * bl(0, nr*N_AMINO_ACID_TYPE+aa);
+
+        float* pp = &params[0];
+        for(int i=0; i<n_residue; ++i) {
+            int nr = cb_index[i];
+
+            float surfv = surf(0, nr);
+	        if (cb_pos(2, nr) > half_thickness or cb_pos(2, nr) < -half_thickness)
+                surfv = 1.0;
+
+            int rtype = cb_restype[nr];
+            auto cover_sig = compact_sigmoid(weighted_bl[nr]-cov_midpoint[rtype], cov_sharpness[rtype]);
+
+            if(surfv<=0 or cover_sig.x() ==0 ) continue;
+
+            float           coord = (cb_pos(2, nr)-min_z)*inv_dz;
+            auto   lateral_spline = clamped_deBoor_value_and_deriv(pp, coord, n_knot);
+            float force_magnitude = surfv*lateral_spline.x();
+            cb_sens (0, nr)      -= force_magnitude*cover_sig.x()*surf(1, nr);
+            cb_sens (1, nr)      -= force_magnitude*cover_sig.x()*surf(2, nr);
+        }
+    }
+};
+
+static RegisterNodeType<MembraneLateralPotential, 3> membrane_lateral_potential_node("membranelateral_potential");
+
