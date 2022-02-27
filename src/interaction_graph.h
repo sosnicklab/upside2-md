@@ -8,7 +8,7 @@
 #include "timing.h"
 #include <algorithm>
 #include "Float4.h"
-
+#include <iostream>
 #include <stdexcept>
 
 template <typename T>
