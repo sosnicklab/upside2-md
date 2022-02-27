@@ -248,25 +248,8 @@ struct ReplicaExchange {
         auto compute_log_boltzmann = [&]() {
             vector<float> result(n_system);
             for(int i=0; i<n_system; ++i) {
-
-                if (systems[i].use_amd) {
-                    systems[i].engine.compute(PotentialAndDerivMode, 1);
-                    auto pot = systems[i].engine.potential;
-                    float dpot = 0.0;
-                    if (pot < systems[i].amd_E) {
-                        float de = systems[i].amd_E-pot;
-                        dpot = de*de/(systems[i].amd_alpha+de);
-                    }
-                    result[i]  = -beta[i]*(pot+dpot);
-
-                    systems[i].engine.compute(PotentialAndDerivMode, 0);
-                    result[i] += -beta[i]*systems[i].engine.potential;
-
-                }
-                else {
-                    systems[i].engine.compute(PotentialAndDerivMode);
-                    result[i] = -beta[i]*systems[i].engine.potential;
-                }
+                systems[i].engine.compute(PotentialAndDerivMode);
+                result[i] = -beta[i]*systems[i].engine.potential;
             }
             return result;
         };
