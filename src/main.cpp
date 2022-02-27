@@ -725,7 +725,7 @@ try {
 
             if(do_recenter) {
                 for(auto &n: sys->engine.nodes) {
-                    if(is_prefix(n.name, "cavity_radial"))
+                    if(is_prefix(n.name, "cavity_radial") || is_prefix(n.name, "spherical_well"))
                         throw string("You have re-centering and a radial potential turned on.  "
                                 "This is not what you want.  Consider --disable-recentering.");
                 }

@@ -1,8 +1,9 @@
 # VERY IMPORTANT all distances must be in nanometers for MDTraj
+import sys
+import cPickle as cp
 import numpy as np
 import mdtraj.core.element as el
 import mdtraj as md
-import sys
 
 from mdtraj.formats.registry import FormatRegistry
 angstrom=0.1  # conversion to nanometer from angstrom
@@ -409,24 +410,27 @@ def replex_demultiplex(list_of_replex_traj, replica_index):
 
 
 
-def ca_interfacial_rmsd_angstroms(traj, native, group1, group2, ca_cutoff_angstroms=10., verbose=True):
-    native = native[0]  # ensure only a single frame is passed
+class ca_interfacial_rmsd_angstroms:
 
-    res_group1, res_group2 = [np.array(sorted(set([native.topology.atom(i).residue.index for i in g])))
-            for g in (group1,group2)]
+    def __init__(self, native, group1, group2, ca_cutoff_angstroms=10., verbose=True):
+        self.native = native[0]  # ensure only a single frame is passed
 
-    contact_pairs = np.array([(i,j) for i in res_group1 for j in res_group2])
-    is_contact = (10.*md.compute_contacts(native,scheme='ca', contacts=contact_pairs)[0]<ca_cutoff_angstroms)[0]
-    contacts = contact_pairs[is_contact]
-            
-    interface_residues = sorted(set(contacts[:,0]).union(set(contacts[:,1])))
-    if verbose:
-        print ('%i interface residues (%i,%i)' % (
-                len(interface_residues), len(set(contacts[:,0])), len(set(contacts[:,1]))))
-    interface_atom_indices = np.array([a.index for a in native.topology.atoms
-                                               if  a.residue.index in interface_residues])
+        res_group1, res_group2 = [np.array(sorted(set([native.topology.atom(i).residue.index for i in g])))
+                for g in (group1,group2)]
 
-    return 10.*md.rmsd(traj.atom_slice(interface_atom_indices), native.atom_slice(interface_atom_indices))
+        contact_pairs = np.array([(i,j) for i in res_group1 for j in res_group2])
+        is_contact = (10.*md.compute_contacts(native,scheme='ca', contacts=contact_pairs)[0]<ca_cutoff_angstroms)[0]
+        contacts = contact_pairs[is_contact]
+                
+        interface_residues = sorted(set(contacts[:,0]).union(set(contacts[:,1])))
+        if verbose:
+            print ('%i interface residues (%i,%i)' % (
+                    len(interface_residues), len(set(contacts[:,0])), len(set(contacts[:,1]))))
+        self.interface_atom_indices = np.array([a.index for a in native.topology.atoms
+                                                   if  a.residue.index in interface_residues])
+
+    def compute_irmsd(self, traj):
+        return 10.*md.rmsd(traj, self.native, atom_indices=self.interface_atom_indices)
     
 
 def ca_rmsd_angstroms(traj, native, cut_tails=False, verbose=True):

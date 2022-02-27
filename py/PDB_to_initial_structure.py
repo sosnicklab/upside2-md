@@ -159,7 +159,7 @@ def main():
                 dist = vmag(r.N-coords[-1])
                 if dist > 2. or not i: # catch new chain anyway
                     print ('    %s chain break at residue %i (%4.1f A)' % (('UNEXPECTED' if i else 'expected  '),
-                         len(coords)/3, dist))
+                         len(coords)//3, dist))
                     if i: unexpected_chain_breaks = True
 
                     if args.record_chain_breaks: chain_first_residue.append(len(coords)/3)

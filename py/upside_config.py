@@ -1242,6 +1242,7 @@ def write_rotamer(fasta, interaction_library, damping, sc_node_name, pl_node_nam
 
     g = t.create_group(t.root.input.potential, 'rotamer%s' % suffix)
     args = [bstring(sc_node_name), bstring(pl_node_name)]
+
     def arg_maybe(nm):
         if nm in t.root.input.potential: args.append(bstring(nm))
     arg_maybe('hbond_coverage')
@@ -2353,6 +2354,13 @@ def main():
 
     if require_affine:
         write_affine_alignment(len(fasta_seq))
+
+
+    if args.offset_spring:
+        print
+        print "Offset spring defined by {} file".format(args.offset_spring)
+
+        make_offset_spring(parser, args.offset_spring)
 
 
     # if we have the necessary information, write pivot_sampler
