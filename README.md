@@ -13,37 +13,15 @@ Python dependencies.  Depending on your use-case for Upside, you may not need
 all of these libraries.  The error message in case of a missing library should
 be clear enough to figure out.
 
-  * Python 2.7
+  * Python 3.7+
   * Numpy
   * Scipy (sometimes needed for `upside_config.py`, depending on options)
   * PyTables (needed for reading HDF5 files from Python)
   * Prody (needed for reading .pdb files)
   * Pandas (needed for `predict_chi1.py`)
+  * H5py (needed for `generate_restart_config.py`)
   * MDTraj (optional but capable of loading and analyzing Upside trajectories)
-
-## Acquiring specific versions of Upside to reproduce a paper
-
-Each paper that uses Upside should create a git tag that indicates the precise
-git version of Upside needed to reproduce the results of the paper.  The
-following paper tags have been created.
-
-  * `sidechain_paper` -- "Maximum-likelihood, self-consistent side chain free
-    energies with applications to protein molecular dynamics"
-  * `trajectory_training_paper` -- "Trajectory-Based Parameterization of a
-    Coarse-Grained Forcefield for High-Thoughput Protein Simulation"
-
-To get the precise version of Upside needed for the side chain free energy
-paper, just do `git checkout sidechain_paper`.  Note that you should ignore the
-rest of this ignore, and consult `README.md` after checking out the tagged
-version.  The compile or run instructions may be different between the versions.
-
-External users of Upside are encourage to tag the version used in their work
-and the tag will be added to the main Upside repository (feel free to open a
-GitHub issue for this).  This will also help the Upside team keep track of
-published results using Upside.  If modifications of Upside are required,
-please create a branch and open a GitHub pull request.  The branch will be
-preserved in this repository for reproducibility even if it is not merged into
-the master branch.
+  * Pymbar (optional but capable of doing mbar reweighting for REMD simulations)
 
 #### Compiling Upside
 
@@ -56,65 +34,15 @@ This install guide assumes that you are using Linux or OS X.  Upside should
 install and run on Windows as well, but this has not been tested.
 
 The build system uses CMake (www.CMake.org) to find dependencies.  Please
-change to the `obj/` directory of the upside directory and execute the following
-commands.
-
-    rm -rf ../obj/* && cmake ../src && make -j
-
-Due to a quirk in the current handling of parameters, Upside must be recompiled
-to handle the 10A cutoff parameter files.  If you want to use the 10A cutoff
-parameters for either chi1 prediction or molecular dynamics, please compile with
+change to the root directory of the upside directory. You may change the path 
+for Eigen and python in source_sh based on your environment. Then, just run
 the following commands.
 
-    rm -rf ../obj/* && CXXFLAGS=-DPARAM_10A_CUTOFF cmake ../src && make -j
+    ./install.sh
 
 After these commands execute successfully, the `obj/` directory will contain
 the `upside` executable and the `libupside.so` shared library (exact name of
 shared library may depend on operating system).
-
-#### Predicting chi1 rotamer states
-
-After compiling the code, you may perform chi1 prediction on a PDB file.  
-
-    upside/py/predict_chi1.py --sidechain-params /path/to/params.h5 input.pdb output.chi
-
-As noted above, you must compile with `CXXFLAGS=-DPARAM_10A_CUTOFF` to use the
-10A cutoff parameters.  The output will be of the form
-
-    residue restype chain resnum chi1_prob0 chi1_prob1 chi1_prob2 chi1_from_input_file
-    0       ILE     A     1      0.0000     0.0003     0.9997     -59.7
-    1       VAL     A     2      0.9986     0.0014     0.0001     54.7
-    2       GLY     A     3      1.0000     0.0000     0.0000     nan
-
-The residue is 0-indexed along the chains, but the resnum is taken from the
-original PDB file. 
-
-The Upside chi1 predictions are expressed as probabilities
-for each of the three chi1 rotamers, representing the ranges [0,120),
-[120,240), and [240,360), respectively.  The probabilities are directly the
-1-body marginal probabilities from the belief propagation, summed over the chi2
-states where necessary.
-
-The `chi1_from_input_file` field returns the chi1 angle in the input PDB file.
-Any residue without a chi1 angle (either because of the amino acid or just
-because it is omitted from the input .pdb) will give NaN.  The chi1 angles from
-the input PDB file have no effect on the `chi1_prob` fields.
-
-A note on the timing information that `predict_chi1.py` reports.  The
-`predict_chi1.py` executable is rather inefficient, since it is really a
-by-product of the MD engine.  For chi1 prediction, we must read the PDB file,
-run `upside_config.py` to create a molecular dynamics configuration, start the
-Upside MD engine, compute a single MD energy evaluation, read the side chain
-marginal probabilities from the MD engine, and then write the output text file.
-The "Time to compute" line in the output (which is the evaluation time reported
-in the paper) only counts the time involved in the energy evaluation and
-reading the marginal probabilities.  This time is chosen because it represents
-the repeated work that is involved in setting up and solving the side chain
-interactions for a new backbone position without the one time costs of
-converting the PDB to an Upside configuration, booting the Upside engine, or
-writing the output.  This time is a bit slower than a typical MD force
-evaluation for the same structure in part because Upside must calculate pair
-lists for the first time.  
 
 #### Running molecular dynamics
 
@@ -142,14 +70,15 @@ folding or conformational dynamics simulation.
 
     upside/py/upside_config.py --output                   simulation.up \
                                --fasta                    output_basename.fasta \
-                               --initial-structure        output_basename.initial.pkl \
-                               --hbond-energy             $(cat upside/parameters/ff_1/hbond) \
+                               --initial-structure        output_basename.initial.npy \
+                               --hbond-energy             upside/parameters/ff_2.1/hbond.h5 \
                                --dynamic-rotamer-1body    \
-                               --rotamer-placement        upside/parameters/ff_1/sidechain.h5 \
-                               --rotamer-interaction      upside/parameters/ff_1/sidechain.h5 \
-			       --environment              upside/parameters/ff_1/environment.h5 \
+                               --rotamer-placement        upside/parameters/ff_2.1/sidechain.h5 \
+                               --rotamer-interaction      upside/parameters/ff_2.1/sidechain.h5 \
+			       --environment-potential    upside/parameters/ff_2.1/environment.h5 \
+			       --bb-environment-potential upside/parameters/ff_2.1/bb_env.dat \
                                --rama-library             upside/parameters/common/rama.dat \
-			       --rama-sheet-mixing-energy $(cat upside/parameters/ff_1/sheet) \
+			       --rama-sheet-mixing-energy upside/parameters/ff_2.1/sheet \
                                --reference-state-rama     upside/parameters/common/rama_reference.pkl
 
 If `--initial-structure` is omitted, the simulation will be initialized with
@@ -165,7 +94,7 @@ needed to run the simulation.
 
 A simple, constant-temperature simulation may be run with 
 
-    upside/obj/upside --duration 1e7 --frame-interval 1e2 --temperature 0.5 --seed $RANDOM simulation.up
+    upside/obj/upside --duration 1e7 --frame-interval 1e2 --temperature 0.85 --seed $RANDOM simulation.up
 
 Note that the simulation results are written into the "/output" group of the
 provide `simulation.up` file.  This ensures that simulation output is stored in

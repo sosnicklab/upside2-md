@@ -1,0 +1,45 @@
+This is the second version of Upside.
+It's still in the alpha stage. It will be updated or corrected continuously.
+
+Changes:
+
+   for users
+
+       1. support the latest ff2.1 and membrane protein force fields. NOT compatible with ff1.0, ff1.5 and zongan's  membrane force field
+
+       2. switch to python 3
+
+       3. trans-cis PRO simulation (will add example to show)
+
+       4. the config process is divided into basic stage and advanced stage, which are completed by upside_config.py and advanced_config.py respectively.
+
+       5. you don't need the ugly_hack_break_chain.py any more. When the system has multiple chains, the script will handle it automatically.
+
+       6. replica exchange. When you have multiple swap-sets, the exchange attempts of differet swap-sets are set to be handled asynchronously. 
+          For example, if you set the --replica-interval as 5, the swap-set1 and swap-set2 will try to exchange at time 5,15,25... and 10,20,30... respectively. 
+          It is helpful for short-term simulations (such as training). It also means that you need to halve the --replica-interval value to maintain the 
+          same exchange frequency as before.
+       
+       7. More flexible restraints. You have the opportunity to add special force just by modifying the python code, including but not limited to:
+              pulls a group of atoms instead of just one atoms
+              rotate four atoms or groups
+              add walls to confine the motion of any atoms/groups in arbitrary dimensions, etc.
+          I will add examples to show more
+       
+       8. examples. Above changes are big. But don't worry, I've created an example folder that contains the most commonly used simulation scenarios. 
+          These examples will continue to be added or improved. Please try and give suggestions or requests.
+
+       9. add intensive memory mode
+
+       10. add multi-step integrator
+
+    for developers
+
+        1. abstract as many CoordNodes and PotentialNodes as possible so that developers can flexibly implement new forces at the python level
+
+        2. added upside_node library to manage CoordNode and PotentialNode
+
+        3. cleaned upside_config.py, leaving only the core functions. Add a advanced_config.py to deal with various forces such as RMSD restraint, 
+           pulling simulation, etc. 
+
+        4, clean up C++ code (in progress)

@@ -356,7 +356,7 @@ vector<float> potential_deriv_agreement(DerivEngine& engine) {
 int upside_main(int argc, const char* const * argv, int verbose=1)
 try {
     using namespace TCLAP;  // Templatized C++ Command Line Parser (tclap.sourceforge.net)
-    CmdLine cmd("Using Protein Statistical Information for Dynamics Estimation (Upside)\n Author: John Jumper, Xiangda Peng", 
+    CmdLine cmd("Using Protein Statistical Information for Dynamics Estimation (Upside)\n Author: John Jumper, Xiangda Peng, Nabil Faruk", 
             ' ', "2.0alpha");
 
     ValueArg<double> time_step_arg("", "time-step", "time step for integration (default 0.009)", 
