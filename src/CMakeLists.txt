@@ -19,20 +19,25 @@ set (CMAKE_LD_FLAGS  "${OMP_FLAGS} ${CMAKE_LD_FLAGS}" )
 include_directories(SYSTEM "include")
 
 set (ENGINE_SRC 
-    nn.cpp
     main.cpp
     environment.cpp
     hbond.cpp 
     rotamer.cpp
     placement.cpp
     rama_map_pot.cpp
+    coord_operator.cpp
+    coord_basic.cpp
+    coord_const.cpp
+    coord_map.cpp
     spline.cpp
+    spring.cpp
+    sigmoid_energy.cpp
     deriv_engine.cpp 
     sidechain_radial.cpp
     backbone_steric.cpp 
-    bonds.cpp 
     eig.cpp 
     membrane_potential.cpp
+    surface.cpp
     timing.cpp 
     thermostat.cpp
     h5_support.cpp 
