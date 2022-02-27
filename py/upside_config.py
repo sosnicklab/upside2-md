@@ -299,34 +299,105 @@ def write_environment(fasta, environment_library, sc_node_name, potential_type=0
         create_array(egrp, 'center', np.array(centers))
         create_array(egrp, 'sharpness', np.array(sharpness))
 
+def write_bb_environment(fasta, environment_library, sc_node_name, bb_env_fn, use_hbb=False):
 
+    n_res = len(fasta)
+
+    with tb.open_file(environment_library) as lib:
+        coverage_param = lib.root.coverage_param[:]
+        # params are r0,r_sharpness, dot0, dot_sharpness
+        weights           = lib.root.weights[:]
+        restype_order = dict([(str(x),i) for i,x in enumerate(lib.root.restype_order[:])])
+
+    # Bring position and probability together for the side chains
+    sc_node = t.get_node(t.root.input.potential, sc_node_name)
+    n_sc = sc_node.affine_residue.shape[0]
+
+    #
+    infer_group = t.get_node('/input/potential/infer_H_O')
+    d_res_id    = infer_group.donors.residue[:]
+    a_res_id    = infer_group.acceptors.residue[:]
+    res_id      = np.concatenate([d_res_id, a_res_id])
+    n_donor     = infer_group.donors   .id.shape[0]
+    n_acceptor  = infer_group.acceptors.id.shape[0]
+
+    # Compute SC coverage of the HN or OC
+    cgrp = t.create_group(potential, 'environment_coverage_hb')
+    cgrp._v_attrs.arguments = np.array(['infer_H_O','weighted_pos'])
+    cgrp._v_attrs.num_aa_types = 20
+
+    coverage_param = np.array([[[6.0, 1.0, -0.1, 1.0]]])
+    create_array(cgrp, 'interaction_param', coverage_param)
+    create_array(cgrp, 'aa_types', [restype_order[fasta[i]] for i in res_id])
+    # group1 is the H or O
+    create_array(cgrp, 'index1', np.arange(n_donor+n_acceptor))
+    create_array(cgrp, 'type1',  np.arange(n_donor+n_acceptor)*0)
+    create_array(cgrp, 'id1',    res_id)
     # group 2 is the weighted points to interact with
     create_array(cgrp, 'index2', np.arange(n_sc))
     create_array(cgrp, 'type2',  0*np.arange(n_sc))   # for now coverage is very simple, so no types on SC
     create_array(cgrp, 'id2',    sc_node.affine_residue[:])
 
+    # Compute acceptor coverage of the HN
+    cgrp = t.create_group(potential, 'hb_environment_coverage_hn')
+    cgrp._v_attrs.arguments = np.array(['infer_H_O','infer_H_O'])
+    coverage_param = np.array([[[3.5, 2.0, 0.0, 2.0]]])
     create_array(cgrp, 'interaction_param', coverage_param)
+    # group1 is the H
+    create_array(cgrp, 'index1', np.arange(n_donor))
+    create_array(cgrp, 'type1',  np.arange(n_donor)*0)
+    create_array(cgrp, 'id1',    np.array(d_res_id))
+    # group 2 is the O
+    create_array(cgrp, 'index2', np.arange(n_donor, n_donor+n_acceptor))
+    create_array(cgrp, 'type2',  np.arange(n_acceptor)*0)
+    create_array(cgrp, 'id2',    np.array(a_res_id))
 
-    # # Transform coverage to [0,1] scale (1 indicates the most buried)
-    # tgrp = t.create_group(potential, 'uniform_transform_environment')
-    # tgrp._v_attrs.arguments = np.array(['environment_coverage'])
-    # create_array(tgrp, 'bspline_coeff', coverage_transform)
-    # tgrp.bspline_coeff._v_attrs.spline_offset = coverage_transform_offset
-    # tgrp.bspline_coeff._v_attrs.spline_inv_dx = coverage_transform_inv_dx
+    # Compute donor coverage of the OC
+    cgrp = t.create_group(potential, 'hb_environment_coverage_oc')
+    cgrp._v_attrs.arguments = np.array(['infer_H_O','infer_H_O'])
+    coverage_param = np.array([[[3.5, 2.0, 0.0, 2.0]]])
+    create_array(cgrp, 'interaction_param', coverage_param)
+    # group1 is the O
+    create_array(cgrp, 'index1', np.arange(n_donor, n_donor+n_acceptor))
+    create_array(cgrp, 'type1',  np.arange(n_acceptor)*0)
+    create_array(cgrp, 'id1',    np.array(a_res_id))
+    # group 2 is the H
+    create_array(cgrp, 'index2', np.arange(n_donor))
+    create_array(cgrp, 'type2',  np.arange(n_donor)*0)
+    create_array(cgrp, 'id2',    np.array(d_res_id))
 
-    # # Linearly couple the transform to energies
-    # egrp = t.create_group(potential, 'linear_coupling_uniform_environment')
-    # egrp._v_attrs.arguments = np.array(['uniform_transform_environment'])
-    # create_array(egrp, 'couplings', energies)
-    # create_array(egrp, 'coupling_types', [restype_order[s] for s in fasta])
+    # Compute donor coverage of the BB
+    if use_hbb:
+        cgrp = t.create_group(potential, 'hbbb_coverage')
+        cgrp._v_attrs.arguments = np.array(['infer_H_O','pos'])
+        coverage_param = np.array([[[6.0, 1.0, -0.1, 1.0]]])
+        create_array(cgrp, 'interaction_param', coverage_param)
+        # group1 is the O
+        create_array(cgrp, 'index1', np.arange(n_donor))
+        create_array(cgrp, 'type1',  np.arange(n_donor)*0)
+        create_array(cgrp, 'id1',    np.array(d_res_id))
+        # group 2 is the H
+        create_array(cgrp, 'index2', np.arange(n_res*3))
+        create_array(cgrp, 'type2',  np.arange(n_res*3)*0)
+        create_array(cgrp, 'id2',    np.arange(n_res*3)/3)
 
-    # Couple an energy to the coverage coordinates
-    egrp = t.create_group(potential, 'nonlinear_coupling_environment')
-    egrp._v_attrs.arguments = np.array(['environment_coverage'])
-    create_array(egrp, 'coeff', energies)
-    egrp.coeff._v_attrs.spline_offset = energies_x_offset
-    egrp.coeff._v_attrs.spline_inv_dx = energies_x_inv_dx
-    create_array(egrp, 'coupling_types', [restype_order[s] for s in fasta])
+    # cat the 
+    pgrp = t.create_group(potential, 'cat_pos_bb_coverage')
+    pgrp._v_attrs.arguments = np.array(['hb_environment_coverage_hn', 'hb_environment_coverage_oc'])
+    pgrp._v_attrs.n_dim = 1
+    create_array(pgrp, 'index_pos1', np.arange(n_donor))
+    create_array(pgrp, 'index_pos2', np.arange(n_acceptor))
+
+    #
+    egrp = t.create_group(potential, 'bb_sigmoid_coupling_environment')
+    egrp._v_attrs.arguments = np.array(['environment_coverage_hb', 'cat_pos_bb_coverage'])
+    egrp._v_attrs.num_aa_types = 20
+    bb_env_param = np.loadtxt(bb_env_fn)
+    egrp._v_attrs.scale = bb_env_param[0]
+    egrp._v_attrs.center = bb_env_param[1]
+    egrp._v_attrs.sharpness = bb_env_param[2]
+    egrp._v_attrs.hbond_weight = bb_env_param[3]
+    create_array(egrp, 'weights', np.array(weights))
 
 
 def write_count_hbond(fasta, hbond_energy, coverage_library, loose_hbond, sc_node_name):
@@ -1365,6 +1436,11 @@ def main():
             'beads of all amino acids are the same (1.0); The value 20 means that the weights depends on the amino ' +
             'acid type of side chain beads; The value 400 means that the weights depends on the residue type type of ' + 
             'side chain beads or CB atoms belongs to.')
+    parser.add_argument('--bb-environment-potential', default='',
+            help='Path to many-body environment potential for backbone')
+    parser.add_argument('--use-heavy-atom-coverage', default=False, action='store_true',
+            help='include heavy atoms on backbone when count the coverage for H/O')
+
     parser.add_argument('--reference-state-rama', default='',
             help='Do not use this unless you know what you are doing.')
 
