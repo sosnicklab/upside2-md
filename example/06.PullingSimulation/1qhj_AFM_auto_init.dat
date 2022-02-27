@@ -1,0 +1,3 @@
+residue spring_const pulling_vel_x pulling_vel_y pulling_vel_z
+0   0.05  0.0 0.0 0.0
+227 0.05  0.0 0.0 -0.001
