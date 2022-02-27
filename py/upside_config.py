@@ -1064,19 +1064,60 @@ def write_torus_dbn(seq, torus_dbn_library):
     create_array(hgrp, 'transition_energy', transition_energy)
 
 
-def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bias='', mode='mixture'):
+def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bias='', mode='mixture', param_deriv=False):
     grp = t.create_group(potential, 'rama_map_pot')
     grp._v_attrs.arguments = np.array(['rama_coord'])
 
-    rama_pot = read_weighted_maps(seq, rama_library_h5, sheet_mixing_energy, mode)
+    # create a sheet array for all the residures
+    with tb.open_file(rama_library_h5) as tr:
+        sheet_restype    = tr.root.sheet._v_attrs.restype
+        sheet_rid_dict   = dict([(x,i) for i,x in enumerate(sheet_restype)])
+        grp._v_attrs.restype = sheet_restype
 
     if sheet_mixing_energy is not None:
         # support finite differencing for potential derivative
         eps = 1e-2
         grp._v_attrs.sheet_eps = eps
-        create_array(grp, 'more_sheet_rama_pot', read_weighted_maps(seq, rama_library_h5, sheet_mixing_energy+eps))
-        create_array(grp, 'less_sheet_rama_pot', read_weighted_maps(seq, rama_library_h5, sheet_mixing_energy-eps))
+        sheet_mixing_values = np.loadtxt(sheet_mixing_energy)
+        assert sheet_mixing_values.size == len(sheet_restype)
 
+    sheet      = []
+    sheet_rids = []
+
+    for s in seq:
+        if s == "CPR":
+            rid = sheet_rid_dict["PRO"]
+        else:
+            rid = sheet_rid_dict[s]
+        sheet_rids.append(rid)
+        sheet.append(sheet_mixing_values[rid])
+
+    sheet      = np.array(sheet)
+    sheet_rids = np.array(sheet_rids)
+    rama_pot   = read_weighted_maps(seq, rama_library_h5, sheet, mode)
+
+    # support finite differencing for potential derivative
+    if param_deriv:
+        eps = 5e-4
+        grp._v_attrs.sheet_eps = eps
+        for s in sheet_restype:
+
+            if s == "PRO":
+                if (s not in seq) and ("CPR" not in seq):
+                    continue
+            else:
+                if s not in seq:
+                    continue
+
+            rid = sheet_rid_dict[s]
+
+            more_sheet = sheet.copy()
+            more_sheet[sheet_rids == rid] += eps
+            less_sheet = sheet.copy()
+            less_sheet[sheet_rids == rid] -= eps
+            create_array(grp, 'more_sheet_rama_pot_'+s, read_weighted_maps(seq, rama_library_h5, more_sheet))
+            create_array(grp, 'less_sheet_rama_pot_'+s, read_weighted_maps(seq, rama_library_h5, less_sheet))
+ 
     if secstr_bias:
         assert len(rama_pot.shape) == 3
         phi = np.linspace(-np.pi,np.pi,rama_pot.shape[1],endpoint=False)[:,None]
