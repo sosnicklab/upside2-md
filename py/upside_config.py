@@ -237,12 +237,7 @@ def write_environment(fasta, environment_library, sc_node_name, potential_type=0
     ref_pos[1] = ( 0.,          0.,          0.)        # CA
     ref_pos[2] = ( 1.25222632, -0.87268266,  0.)        # C
     ref_pos[3] = ( 0.,          0.94375626,  1.2068012) # CB
-
-    # FIXME this places the CB in a weird location since I should have
-    #  used ref_pos[:3].mean(axis=0,keepdims=1) instead.  I cannot change
-    #  this without re-running training.  Thankfully, it is a fairly small
-    #  mistake and probably irrelevant with contrastive divergence training.
-    ref_pos -= ref_pos.mean(axis=0,keepdims=1)
+    ref_pos   -= ref_pos[:3].mean(axis=0,keepdims=1)
 
     placement_data = np.zeros((1,6))
     placement_data[0,0:3] = ref_pos[3]
