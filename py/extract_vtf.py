@@ -20,19 +20,19 @@ def print_traj_vtf(fname, sequence, traj, bond_id):
 
     for ns in xrange(n_system):
         for na in xrange(n_atom):
-            print >>vtf, "atom %i name %s resid %i resname %s segid s%i" % (
-                    n_atom*ns+na, ['N','CA','C'][na%3], na/3, sequence[na/3], ns)
+            print ( "atom %i name %s resid %i resname %s segid s%i" % (
+                    n_atom*ns+na, ['N','CA','C'][na%3], na/3, sequence[na/3], ns), file=vtf)
     
     for a,b in bond_id:
         for ns in xrange(n_system):
-            print >>vtf, "bond %i:%i" % (n_atom*ns+a,n_atom*ns+b)
+            print ("bond %i:%i" % (n_atom*ns+a,n_atom*ns+b), file=vtf)
 
     for frame in traj:
-        print >>vtf, "\ntimestep ordered"
+        print ("\ntimestep ordered", file=vtf)
         for ns in xrange(n_system):
             for na in xrange(n_atom):
-                print >>vtf, "%.3f %.3f %.3f" % (frame[na,0,ns], frame[na,1,ns], frame[na,2,ns])
-    print >>vtf
+                print ("%.3f %.3f %.3f" % (frame[na,0,ns], frame[na,1,ns], frame[na,2,ns]), file=vtf)
+    print ('', file=vtf)
     vtf.close()
 
 
@@ -40,7 +40,7 @@ def print_augmented_vtf(fname, sequence, traj, chain_first_residue):
     n_timestep, n_atom, three, n_system = traj.shape
     assert three == 3
     assert n_atom%3 ==0
-    n_res = n_atom/3
+    n_res = n_atom//3
 
     vtf = open(fname,'w')
 
@@ -53,8 +53,8 @@ def print_augmented_vtf(fname, sequence, traj, chain_first_residue):
     # write structure information
     atom_id = 0
     prev_C = None
-    for ns in xrange(n_system):
-        for nr in xrange(n_res):
+    for ns in range(n_system):
+        for nr in range(n_res):
             res = 'resid %i resname %s segid s%i' % (nr, sequence[nr], ns)
 
             vtf.write('atom %i name N  %s\n' % (atom_id+0, res))
@@ -90,8 +90,8 @@ def print_augmented_vtf(fname, sequence, traj, chain_first_residue):
 
     for f in range(len(traj)):
         vtf.write("\ntimestep ordered\n")
-        for ns in xrange(n_system):
-            for nr in xrange(n_res):
+        for ns in range(n_system):
+            for nr in range(n_res):
                 vtf.write("%.3f %.3f %.3f\n" % (N [f,nr,0,ns], N [f,nr,1,ns], N [f,nr,2,ns]))
                 vtf.write("%.3f %.3f %.3f\n" % (CA[f,nr,0,ns], CA[f,nr,1,ns], CA[f,nr,2,ns]))
                 vtf.write("%.3f %.3f %.3f\n" % (C [f,nr,0,ns], C [f,nr,1,ns], C [f,nr,2,ns]))
@@ -140,10 +140,10 @@ def main():
             # attempt to land on the stride
             total_frames_produced += g.pos.shape[0]-1  # correct for first frame
             start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
-            print opath, total_frames_produced, 'cumulative frames found'
+            print (opath, total_frames_produced, 'cumulative frames found')
 
     pos = np.concatenate(pos, axis=0)
-    print pos.shape[0], 'frames for output', pos.shape[0]/30., 'seconds at 30 frames/second video'
+    print (pos.shape[0], 'frames for output', pos.shape[0]/30., 'seconds at 30 frames/second video')
     print_augmented_vtf(args.output_vtf, seq, pos, chain_first_residue)
 
 if __name__ == '__main__':
