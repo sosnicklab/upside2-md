@@ -3,6 +3,7 @@
 #include <map>
 #include <algorithm>
 #include <memory>
+#include <iostream>
 #include <cassert>
 
 using namespace h5;

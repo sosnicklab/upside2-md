@@ -159,9 +159,17 @@ struct DerivEngine
         //! \brief Construct from name and unique_ptr to computation
         Node(std::string name_, std::unique_ptr<DerivComputation> computation_):
             name(name_), computation(std::move(computation_)) {};
+
+        Node(std::string name_, std::unique_ptr<DerivComputation> computation_, int integrator_level_):
+            name(name_), computation(std::move(computation_)), integrator_level(integrator_level_) {};
+        
         //! \brief Construct from name and raw pointer to computation
         Node(std::string name_, DerivComputation* computation_):
             name(name_), computation(computation_) {};
+
+        Node(std::string name_, DerivComputation* computation_, int integrator_level_):
+            name(name_), computation(computation_), integrator_level(integrator_level_) {};
+
         Node(const Node& other) = delete;
         //! \brief Move constructor (Node's are not copyable)
         Node(Node&& other):
