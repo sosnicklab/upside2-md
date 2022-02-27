@@ -212,17 +212,22 @@ def write_infer_H_O(fasta, excluded_residues):
     create_array(acceptors, 'id', obj=np.array(( 1,2,3))[None,:] + 3*acceptor_residues[:,None])
 
 
-def write_environment(fasta, environment_library, sc_node_name, pl_node_name):
+def write_weighted_pos(sc_node_name, pl_node_name): 
+    # Bring position and probability together for the side chains
+    wgrp = t.create_group(potential, 'weighted_pos')
+    wgrp._v_attrs.arguments = np.array([sc_node_name, pl_node_name])
+    sc_node = t.get_node(t.root.input.potential, sc_node_name)
+    n_sc = sc_node.affine_residue.shape[0]
+    create_array(wgrp, 'index_pos',   np.arange(n_sc))
+    create_array(wgrp, 'index_weight', np.arange(n_sc))
+
+def write_environment(fasta, environment_library, sc_node_name, potential_type=0, weights_number = 20, use_bb_bl_for_hb=False):
+
     with tb.open_file(environment_library) as lib:
-        energies    = lib.root.energies[:]
-        energies_x_offset = lib.root.energies._v_attrs.offset
-        energies_x_inv_dx = lib.root.energies._v_attrs.inv_dx
-
-        restype_order = dict([(str(x),i) for i,x in enumerate(lib.root.restype_order[:])])
-
         coverage_param = lib.root.coverage_param[:]
-        assert coverage_param.shape == (len(restype_order),1,4)
         # params are r0,r_sharpness, dot0, dot_sharpness
+        weights           = lib.root.weights[:]
+        restype_order = dict([(str(x),i) for i,x in enumerate(lib.root.restype_order[:])])
 
     # Place CB
     pgrp = t.create_group(potential, 'placement_fixed_point_vector_only_CB')
@@ -232,6 +237,7 @@ def write_environment(fasta, environment_library, sc_node_name, pl_node_name):
     ref_pos[1] = ( 0.,          0.,          0.)        # CA
     ref_pos[2] = ( 1.25222632, -0.87268266,  0.)        # C
     ref_pos[3] = ( 0.,          0.94375626,  1.2068012) # CB
+
     # FIXME this places the CB in a weird location since I should have
     #  used ref_pos[:3].mean(axis=0,keepdims=1) instead.  I cannot change
     #  this without re-running training.  Thankfully, it is a fairly small
@@ -247,21 +253,57 @@ def write_environment(fasta, environment_library, sc_node_name, pl_node_name):
     create_array(pgrp, 'placement_data',  placement_data)
 
     # Bring position and probability together for the side chains
-    wgrp = t.create_group(potential, 'weighted_pos')
-    wgrp._v_attrs.arguments = np.array([sc_node_name, pl_node_name])
     sc_node = t.get_node(t.root.input.potential, sc_node_name)
     n_sc = sc_node.affine_residue.shape[0]
-    create_array(wgrp, 'index_pos',   np.arange(n_sc))
-    create_array(wgrp, 'index_weight', np.arange(n_sc))
 
     # Compute SC coverage of the CB
-    cgrp = t.create_group(potential, 'environment_coverage')
+    cgrp = t.create_group(potential, 'environment_coverage_sc')
     cgrp._v_attrs.arguments = np.array(['placement_fixed_point_vector_only_CB','weighted_pos'])
+    cgrp._v_attrs.num_aa_types = 20
 
     # group1 is the source CB
     create_array(cgrp, 'index1', np.arange(len(fasta)))
     create_array(cgrp, 'type1', np.array([restype_order[s] for s in fasta]))  # one type per CB type
     create_array(cgrp, 'id1',    np.arange(len(fasta)))
+    # group 2 is the weighted points to interact with
+    create_array(cgrp, 'index2', np.arange(n_sc))
+    create_array(cgrp, 'type2',  0*np.arange(n_sc))   # for now coverage is very simple, so no types on SC
+    create_array(cgrp, 'id2',    sc_node.affine_residue[:])
+    create_array(cgrp, 'interaction_param', coverage_param)
+    create_array(cgrp, 'aa_types', [restype_order[s] for s in fasta])
+
+    # Couple an energy to the coverage coordinates
+    assert (potential_type == 0 or potential_type == 1)
+
+    coupling_method = "nonlinear" if potential_type == 0 else "sigmoid"
+    egrp = t.create_group(potential, '{}_coupling_environment'.format(coupling_method))
+    egrp._v_attrs.arguments = np.array(['environment_coverage_sc'])
+    egrp._v_attrs.number_independent_weights = weights_number # 1, or 20, or 400
+
+    print egrp._v_attrs.number_independent_weights
+
+    create_array(egrp, 'coupling_types', [restype_order[s] for s in fasta])
+    create_array(egrp, 'weights', np.array(weights))
+
+    # spline-like coupling function
+    if potential_type == 0:
+        with tb.open_file(environment_library) as lib:
+            energies          = lib.root.energies[:]
+            energies_x_offset = lib.root.energies._v_attrs.offset
+            energies_x_inv_dx = lib.root.energies._v_attrs.inv_dx
+        create_array(egrp, 'coeff', energies)
+        egrp.coeff._v_attrs.spline_offset = energies_x_offset
+        egrp.coeff._v_attrs.spline_inv_dx = energies_x_inv_dx
+    # sigmoid-like coupling function
+    else:
+        with tb.open_file(environment_library) as lib:
+            scales    = lib.root.scale[:]
+            centers   = lib.root.center[:]
+            sharpness = lib.root.sharpness[:]
+        create_array(egrp, 'scale', np.array(scales))
+        create_array(egrp, 'center', np.array(centers))
+        create_array(egrp, 'sharpness', np.array(sharpness))
+
 
     # group 2 is the weighted points to interact with
     create_array(cgrp, 'index2', np.arange(n_sc))
@@ -862,7 +904,6 @@ def write_rama_coord():
                          #   and non-existence is indicated by -1
     create_array(grp, 'id', id)
 
-
 def write_sidechain_radial(fasta, library, excluded_residues, suffix=''):
     g = t.create_group(t.root.input.potential, 'radial'+suffix)
     g._v_attrs.arguments = np.array(['placement_fixed_point_only_CB'])
@@ -1322,6 +1363,13 @@ def main():
             'residue.')
     parser.add_argument('--environment-potential', default='',
             help='Path to many-body environment potential')
+    parser.add_argument('--environment-potential-type', default=0, type=int,
+            help='The type 0 is spline-like nonlinear coupling function, 1 is the sigmoid-like coupling function')
+    parser.add_argument('--environment-weights-number', default=20, type=int,
+            help='Only three values are allowed: 1, 20, 40. The value 1 means that the weights of the side chain ' + 
+            'beads of all amino acids are the same (1.0); The value 20 means that the weights depends on the amino ' +
+            'acid type of side chain beads; The value 400 means that the weights depends on the residue type type of ' + 
+            'side chain beads or CB atoms belongs to.')
     parser.add_argument('--reference-state-rama', default='',
             help='Do not use this unless you know what you are doing.')
 
@@ -1363,6 +1411,7 @@ def main():
     require_affine = False
     require_rama = False
     require_backbone_point = False
+    require_weighted_pos = False
 
     global n_atom, t, potential
     n_res = len(fasta_seq)
@@ -1459,7 +1508,8 @@ def main():
     if args.environment_potential:
         if args.rotamer_placement is None:
             parser.error('--rotamer-placement is required, based on other options.')
-        write_environment(fasta_seq, args.environment_potential, sc_node_name, pl_node_name)
+        require_weighted_pos = True     
+        write_environment(fasta_seq, args.environment_potential, sc_node_name, args.environment_potential_type, args.environment_weights_number)
 
     args_group = t.create_group(input, 'args')
     for k,v in sorted(vars(args).items()):
@@ -1617,6 +1667,9 @@ def main():
     if require_backbone_point:
         require_affine = True
         write_CB(fasta_seq)
+
+    if require_weighted_pos:
+        write_weighted_pos(sc_node_name, pl_node_name)
 
     if require_rama:
         write_rama_coord()
