@@ -58,8 +58,12 @@ class Chi1Predict(object):
 
 def main():
     import pandas as pd
-    src = os.path.expanduser('~/upside/src')
-    sys.path.append(src)
+
+    upside_path = os.environ['UPSIDE_HOME']
+    upside_utils_dir = os.path.expanduser(upside_path+"/py")
+    src = os.path.expanduser(upside_utils_dir)
+    sys.path.insert(0, src)
+
     import upside_engine as ue
     import argparse
     parser = argparse.ArgumentParser()
@@ -83,7 +87,7 @@ def main():
         sp.check_call([
             os.path.join(src,'upside_config.py'),
                 '--fasta=%s.fasta'%base_initial,
-                '--initial-structures=%s.initial.pkl'%base_initial,
+                '--initial-structure=%s.initial.pkl'%base_initial,
                 '--loose-hbond-criteria',  # handle poor hbond geometry in some crystal structures
                 '--dynamic-rotamer-1body',
                 '--rotamer-placement=%s'  %args.sidechain_param,
@@ -109,16 +113,16 @@ def main():
     finally:
         shutil.rmtree(direc)
 
-    print
-    print 'Time to compute %.5f seconds for %i residues' % (t2-t0, len(pos)/3)
+    print ()
+    print ('Time to compute %.5f seconds for %i residues' % (t2-t0, len(pos)/3))
 
     chi1_prob_array = predictor.predict_chi1(seq, residue, sens)
 
     assert len(chi1_true) == len(seq)
     with open(args.chi_output,'wt') as f:
-        print >>f, 'residue restype chain resnum chi1_prob0 chi1_prob1 chi1_prob2 chi1_from_input_file'
+        print ('residue restype chain resnum chi1_prob0 chi1_prob1 chi1_prob2 chi1_from_input_file', file=f)
         for resnum in range(len(seq)):
-            print >>f, '%i %s %s %s %.4f %.4f %.4f %.1f' % (
+            print ( '%i %s %s %s %.4f %.4f %.4f %.1f' % (
                     resnum,
                     (seq[resnum] if seq[resnum]!='CPR' else 'PRO'),
                     chi1_true.chain[resnum],
@@ -127,7 +131,7 @@ def main():
                     chi1_prob_array[resnum,1],
                     chi1_prob_array[resnum,2],
                     chi1_true.chi1[resnum],
-                    )
+                    ), file=f )
 
 if __name__ == '__main__':
     main()

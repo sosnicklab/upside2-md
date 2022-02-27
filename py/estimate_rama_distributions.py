@@ -21,7 +21,7 @@ def add_image_points(rama, padding):
 
 
 def rama_density(rama, bw_no_std):
-    print rama.shape
+    print (rama.shape)
     assert rama.shape == (rama.shape[0], 2)
     bins = (-180.+np.arange(72)*5.)*deg
 
