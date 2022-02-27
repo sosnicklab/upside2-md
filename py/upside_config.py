@@ -785,6 +785,62 @@ def make_restraint_group(group_num, residues, initial_pos, strength):
     create_array(grp, 'spring_const', obj=np.concatenate((spring_const,strength*np.ones(len(pairs))),axis=0))
     create_array(grp, 'bonded_atoms', obj=np.concatenate((bonded_atoms,np.zeros(len(pairs),dtype='int')),axis=0))
 
+def make_offset_spring(parser, restraint_table):
+
+    use_atom_index = False
+    use_residue_index = False
+
+    fields = [ln.split() for ln in open(restraint_table,'U')]
+
+    atom_header_fields = 'atom1 atom2 distance spring_constant'.split()
+    residue_header_fields = 'residue1 residue2 distance spring_constant'.split()
+
+    if [x.lower() for x in fields[0]] == atom_header_fields:
+        use_atom_index = True
+        len_header_fields = len(atom_header_fields)
+    elif [x.lower() for x in fields[0]] == residue_header_fields:
+        use_residue_index = True
+        len_header_fields = len(residue_header_fields)
+    else:
+        parser.error('First line of restraint table must be "%s"'%(" ".join(atom_header_fields)))
+        parser.error('or "%s"'%(" ".join(residue_header_fields)))
+
+    if not all(len(f)==len_header_fields for f in fields):
+        parser.error('Invalid format for restraint file')
+
+    fields = fields[1:]
+    n_restraint = len(fields)
+
+    grp = t.root.input.potential.dist_spring
+
+    id = grp.id[:]
+    equil_dist = grp.equil_dist[:]
+    spring_const = grp.spring_const[:]
+    bonded_atoms = grp.bonded_atoms[:]
+    n_orig = id.shape[0]
+
+    fields = np.array(fields)
+    pairs = fields[:,0:2]
+    pairs = pairs.astype(int)
+    if use_residue_index:
+        pairs = pairs*3+1 
+
+    pair_dists = fields[:,2]
+    pair_dists = pair_dists.astype('float64')
+
+    pair_spring_consts = fields[:,3]
+    pair_spring_consts = pair_spring_consts.astype('float')
+
+    grp.id._f_remove()
+    grp.equil_dist._f_remove()
+    grp.spring_const._f_remove()
+    grp.bonded_atoms._f_remove()
+
+    create_array(grp, 'id',           obj=np.concatenate((id,           pairs),      axis=0))
+    create_array(grp, 'equil_dist',   obj=np.concatenate((equil_dist,   pair_dists), axis=0))
+    create_array(grp, 'spring_const', obj=np.concatenate((spring_const, pair_spring_consts), axis=0))
+    create_array(grp, 'bonded_atoms', obj=np.concatenate((bonded_atoms, np.zeros(len(pairs),dtype='int')), axis=0))
+
 
 def make_tab_matrices(phi, theta, bond_length):
     '''TAB matrices are torsion-angle-bond affine transformation matrices'''
@@ -1809,6 +1865,12 @@ def main():
 
     parser.add_argument('--restraint-spring-constant', default=4., type=float,
             help='Spring constant used to restrain atoms in a restraint group (default 4.) ')
+    parser.add_argument('--offset-spring', default='',
+            help='Path to text file that defines a restraint atom/residue pairs list.  The first line of the file ' +
+            'should be a header containing "residue1 residue2 distance spring_constant" or '+
+            '"atom1 atom2 distance spring_constant", and the remaining lines should contain '+
+            'space separated values.')
+
     parser.add_argument('--contact-energies', default='',
             help='Path to text file that defines a contact energy function.  The first line of the file should ' +
             'be a header containing "residue1 residue2 energy distance transition_width", and the remaining '+
@@ -2230,6 +2292,13 @@ def main():
             assert np.amax(list(restrained_residues)) < len(fasta_seq)
             highlight_residues('group_%i'%i, fasta_seq, restrained_residues)
             make_restraint_group(i,set(restrained_residues),pos[:,:,0], args.restraint_spring_constant)
+
+    if args.offset_spring:
+        print
+        print "Offset spring defined by {} file".format(args.offset_spring)
+
+        make_offset_spring(parser, args.offset_spring)
+
 
     # if we have the necessary information, write pivot_sampler
     if require_rama and 'rama_map_pot' in potential:
