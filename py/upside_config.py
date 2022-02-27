@@ -283,7 +283,7 @@ def write_environment(fasta, environment_library, sc_node_name, potential_type=0
 
     placement_data = np.zeros((1,6))
     placement_data[0,0:3] = ref_pos[3]
-    placement_data[0,3:6] = (ref_pos[3]-ref_pos[2])/vmag(ref_pos[3]-ref_pos[2])
+    placement_data[0,3:6] = (ref_pos[3]-ref_pos[1])/vmag(ref_pos[3]-ref_pos[1])
 
     create_array(pgrp, 'affine_residue',  np.arange(len(fasta)))
     create_array(pgrp, 'layer_index',     np.zeros(len(fasta),dtype='i'))
