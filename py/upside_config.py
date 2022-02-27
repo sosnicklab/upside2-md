@@ -1380,8 +1380,8 @@ def write_rotamer_placement(fasta, placement_library, dynamic_placement, dynamic
     return sc_node_name, pl_node_name
 
 
-def write_rotamer(fasta, interaction_library, damping, sc_node_name, pl_node_name):
-    g = t.create_group(t.root.input.potential, 'rotamer')
+def write_rotamer(fasta, interaction_library, damping, sc_node_name, pl_node_name, suffix=''):
+    g = t.create_group(t.root.input.potential, 'rotamer%s' % suffix)
     args = [sc_node_name,pl_node_name]
     def arg_maybe(nm):
         if nm in t.root.input.potential: args.append(nm)
@@ -1623,11 +1623,16 @@ def main():
             help='Bias file for secondary structure.  First line of the file must be "residue secstr energy".  '+
             'secstr must be one of "helix" or "sheet".  Bias is implemented by a simple Rama bias, hence coil bias '+
             'is not implemented.')
-    parser.add_argument('--rama-sheet-mixing-energy', default=None, type=float,
+    parser.add_argument('--rama-sheet-mixing-energy', default='', 
             help='reference energy for sheets when mixing with coil library.  More negative numbers mean more '+
             'sheet content in the final structure.  Default is no sheet mixing.')
-    parser.add_argument('--hbond-energy', default=0., type=float,
+    parser.add_argument('--rama-param-deriv', default=False, action='store_true',
+            help='generate the param deriv for rama potential')
+    parser.add_argument('--hbond-energy', default=0.,
             help='energy for forming a protein-protein hydrogen bond.  Default is no HBond energy.')
+
+    parser.add_argument('--mid-NC-dist-energy', default='', 
+            help='distance energy of midpoint of backbone N C atoms.')
 
     parser.add_argument('--hbond-exclude-residues', default=[], type=parse_segments,
             help='Residues to have neither hydrogen bond donors or acceptors')
@@ -1892,7 +1897,7 @@ def main():
     if args.rama_library:
         require_rama = True
         write_rama_map_pot(fasta_seq_with_cpr, args.rama_library, args.rama_sheet_mixing_energy,
-                args.secstr_bias, args.rama_library_combining_rule)
+                args.secstr_bias, args.rama_library_combining_rule, args.rama_param_deriv)
     # elif args.torus_dbn_library:
     #     require_rama = True
     #     write_torus_dbn(fasta_seq_with_cpr, args.torus_dbn_library)
