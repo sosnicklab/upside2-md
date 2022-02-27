@@ -3,7 +3,6 @@
 import prody
 import numpy as np
 import sys
-import cPickle
 import argparse
 import tables
 import collections
@@ -173,9 +172,10 @@ def main():
 
     fasta_seq = ''.join(one_letter_aa[s] for s in sequence)
 
-    with open(args.basename + '.initial.pkl','wb') as f:
-        cPickle.dump(coords[...,None], f, -1)
-        f.close()
+    #with open(args.basename + '.initial.pkl','wb') as f:
+    #    cPickle.dump(coords[...,None], f, -1)
+    #    f.close()
+    np.save('{}.initial.npy'.format(args.basename), coords) 
 
     with open(args.basename+'.fasta','w') as f:
         print >>f, '> Created from %s' % args.pdb
