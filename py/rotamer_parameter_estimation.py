@@ -18,10 +18,10 @@ n_knot_angular = 15
 n_angular = 2*n_knot_angular
 # n_restype = 24
 n_restype = 20
-n_knot_sc = 16
-n_knot_hb = 12
-hb_dr = 0.5
-sc_dr = 0.5
+n_knot_sc = 12
+n_knot_hb = 10
+hb_dr = 0.625
+sc_dr = 0.7
 
 param_shapes = collections.OrderedDict()
 param_shapes['rotamer']=(n_restype,n_restype,2*n_knot_angular+2*n_knot_sc)
@@ -32,7 +32,7 @@ param_shapes['placement_fixed_point_vector_only']=(n_rotpos,6)
 # param_shapes['placement_fixed_scalar']=(n_rotpos,1)
 
 lparam = T.dvector('lparam')
-lparam.tag.test_value = np.random.randn(n_restype**2 * (n_angular+2*(n_knot_sc-3))+3*n_restype*(n_angular+2*(n_knot_hb-3)) + n_fix*6)
+lparam.tag.test_value = np.random.randn(n_restype**2 * (n_angular+2*(n_knot_sc-3))+20*n_restype*(n_angular+2*(n_knot_hb-3)) + n_fix*6)
 
 func = lambda expr: (theano.function([lparam],expr, 
     ),expr)
@@ -51,11 +51,11 @@ def unpack_param_maker():
         return 0.5*(x + x.transpose((1,0,2)))
 
     def read_cov(n):
-        return read_param((2,n_restype,n))
+        return read_param((8,n_restype,n))
 
     def read_hyd(n):
         # return read_param((1,n_restype,n))
-        return read_param((n_fix,n_restype,n))
+        return read_param((n_fix*4,n_restype,n))
 
     def read_angular_spline(read_func):
         return T.nnet.sigmoid(read_func(n_knot_angular))  # bound on (0,1)
@@ -144,7 +144,8 @@ def pack_param(*args):
             jac = (lambda x: d_discrep(x, *args)))
     # print 'required %i evaluations' % (results.nfev, )
 
-    if not (discrep(results.x, *args) < 1e-4):
+    print discrep(results.x, *args)
+    if not (discrep(results.x, *args) < 1.6e-4):
         raise ValueError('Failed to converge')
 
     return results.x
@@ -160,6 +161,11 @@ def quadspline_energy(params, n_knots):
     ev = lambda sp: (1./6.)*sp[:,:,:-2] + (2./3.)*sp[:,:,1:-1] + (1./6.)*sp[:,:,2:]
 
     return ev(uni)[:,:,:,None,None] + ev(dp1)[:,:,None,:,None]*ev(dp2)[:,:,None,None,:]*ev(direc)[:,:,:,None,None]
+
+def direc_energy(params, n_knots):
+    direc = params[:,:,sum(n_knots[:3]):                ]
+    ev = lambda sp: (1./6.)*sp[:,:,:-2] + (2./3.)*sp[:,:,1:-1] + (1./6.)*sp[:,:,2:]
+    return ev(direc)
 
 def multimin(a,axes):
     for ax in axes:
@@ -314,8 +320,14 @@ class AdamSolver(object):
 
         u = [None]*len(self.grad1)
         for i,g in enumerate(grad):
-            b=r(self.beta1,i); self.grad1[i] = b*self.grad1[i] + (1.-b)*g    ; grad1corr = self.grad1[i]/(1-b**t)
-            b=r(self.beta2,i); self.grad2[i] = b*self.grad2[i] + (1.-b)*g**2 ; grad2corr = self.grad2[i]/(1-b**t)
+            b=r(self.beta1,i) 
+            self.grad1[i] = b*self.grad1[i] + (1.-b)*g
+            grad1corr = self.grad1[i]/(1-b**t)
+
+            b=r(self.beta2,i)
+            self.grad2[i] = b*self.grad2[i] + (1.-b)*g**2 
+            grad2corr = self.grad2[i]/(1-b**t)
+
             u[i] = -r(self.alpha,i) * grad1corr / (np.sqrt(grad2corr) + r(self.epsilon,i))
 
         return u
