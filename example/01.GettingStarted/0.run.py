@@ -11,7 +11,7 @@ import run_upside as ru
 ## General Settings and Path
 #----------------------------------------------------------------------
 
-pdb_id         = '1dfn' # switch to 1dfn for multi-chain showing
+pdb_id         = 'chig' # switch to 1dfn for multi-chain showing
 pdb_dir        = './pdb'
 sim_id         = 'simple_test'
 is_native      = True
