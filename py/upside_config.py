@@ -1309,6 +1309,42 @@ def write_cooperation_contacts(parser, fasta, contact_table):
     create_array(g, 'distance', obj=dist)
     create_array(g, 'width',    obj=width)
 
+def write_external_pairs_potential(pair_potential_file, use_atoms, used_percent ):
+    # create a linear chain
+
+    with tb.open_file(pair_potential_file) as epp:
+        pairs              = epp.root.pairs[:]
+        coefficients       = epp.root.coefficients[:]
+        atoms              = epp.root.atoms[:]
+        center             = epp.root.centers[:]
+        atoms[atoms=='CB'] = 0
+        atoms[atoms=='CA'] = 1
+        atoms              = np.array(atoms, dtype=int)
+
+    grp = t.create_group(t.root.input.potential, 'external_pairs_potential')
+    grp._v_attrs.arguments = np.array(['placement_fixed_point_only_CB', 'pos'])
+   
+    scales = atoms*3
+    scales[atoms==0] = 1
+    pairs = pairs*scales+atoms
+
+    if use_atoms == "CA":
+        ndx = np.where((atoms[:,0] == 1) * (atoms[:,1] == 1))
+    elif use_atoms == "CB":
+        ndx = np.where((atoms[:,0] == 0) + (atoms[:,1] == 0))
+    elif use_atoms == "ALL":
+        ndx = np.where((atoms[:,0] != 2) + (atoms[:,1] != 2))
+
+    pair = pairs[ndx]
+    atom = atoms[ndx]
+    coefficient = coefficients[ndx]
+        
+    create_array(grp, 'pair',        obj=pair)
+    create_array(grp, 'atom',        obj=atom)
+    create_array(grp, 'coefficient', obj=coefficient)
+    create_array(grp, 'center',      obj=center)
+    create_array(grp, 'used',        obj=np.array([used_percent]))
+
 def write_rama_coord():
     grp = t.create_group(potential, 'rama_coord')
     grp._v_attrs.arguments = np.array(['pos'])
@@ -1790,7 +1826,9 @@ def main():
             'this function is also approximately sigmoidal but the potential energy is constant outside ' +
             '(distance-transition_width,distance+transition_width). The location x_residue is approximately the CB ' +
             'position of the residue.')
-
+    parser.add_argument('--external-pairs-table-potential', default='', help='User-defined table-type pair interactions. (pair and potential)')
+    parser.add_argument('--external-pairs-type',            default='', help='User-defined table-type pair interactions. (used atoms: CA, CB or ALL)')
+    parser.add_argument('--external-pairs-used-percent',    default=1.0, type=float, help='User-defined table-type pair interactions. (used percent)')
     parser.add_argument('--environment-potential', default='',
             help='Path to many-body environment potential')
     parser.add_argument('--environment-potential-type', default=0, type=int,
@@ -2137,6 +2175,16 @@ def main():
     if args.cooperation_contacts:
         require_backbone_point = True
         write_cooperation_contacts(parser, fasta_seq, args.cooperation_contacts)
+
+    if args.external_pairs_table_potential:
+        require_backbone_point = True
+        if args.external_pairs_type is None:
+            parser.error('--external-pairs-table-potential requires --external-pairs-type')
+        else:
+            atom_type = args.external_pairs_type
+            if atom_type != 'CA' and atom_type != 'CB' and atom_type != 'ALL':
+                parser.error('--external-pairs-type must be CA, CB or ALL')
+            write_external_pairs_potential(args.external_pairs_table_potential, atom_type, args.external_pairs_used_percent)
 
     if require_backbone_point:
         require_affine = True
