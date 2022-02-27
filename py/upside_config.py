@@ -1268,6 +1268,47 @@ def write_contact_energies(parser, fasta, contact_table):
     create_array(g, 'distance', obj=dist)
     create_array(g, 'width',    obj=width)
 
+def write_cooperation_contacts(parser, fasta, contact_table):
+    fields = [ln.split() for ln in open(contact_table,'U')]
+    header_fields = 'residue1 residue2 energy distance transition_width'.split()
+    if [x.lower() for x in fields[0]] != header_fields:
+        parser.error('First line of contact energy table must be "%s"'%(" ".join(header_fields)))
+    if not all(len(f)==len(header_fields) for f in fields):
+        parser.error('Invalid format for contact file')
+    fields = fields[1:]
+    n_contact = len(fields)
+
+    g = t.create_group(t.root.input.potential, 'cooperation_contacts')
+    g._v_attrs.arguments = np.array(['placement_fixed_point_only_CB'])
+
+    id     = np.zeros((n_contact,2), dtype='i')
+    energy = np.zeros((n_contact,))
+    dist   = np.zeros((n_contact,))
+    width  = np.zeros((n_contact,))
+
+    for i,f in enumerate(fields):
+        id[i] = (int(f[0]), int(f[1]))
+        msg = 'Contact energy specified for residue %i (zero is first residue) but there are only %i residues in the FASTA'
+        if not (0 <= id[i,0] < len(fasta)): raise ValueError(msg % (id[i,0], len(fasta)))
+        if not (0 <= id[i,1] < len(fasta)): raise ValueError(msg % (id[i,1], len(fasta)))
+
+        energy[i] = float(f[2])
+        dist[i]   = float(f[3])
+        width[i]  = float(f[4])  # compact_sigmoid cuts off at distance +/- width
+
+        if width[i] <= 0.: raise ValueError('Cannot have negative contact transition_width')
+
+    # 0-based indexing sometimes trips up users, so give them a quick check
+    highlight_residues('residues that participate in any --cooperation-contacts potential in uppercase', fasta, id.ravel())
+    if energy.max() > 0.:
+        print ('\nWARNING: Some cooperation contact energies are positive (repulsive).\n'+
+                 '         Please ignore this warning if you intentionally have repulsive contacts.')
+
+    create_array(g, 'id',       obj=id)
+    create_array(g, 'energy',   obj=energy)
+    create_array(g, 'distance', obj=dist)
+    create_array(g, 'width',    obj=width)
+
 def write_rama_coord():
     grp = t.create_group(potential, 'rama_coord')
     grp._v_attrs.arguments = np.array(['pos'])
@@ -1740,6 +1781,16 @@ def main():
             '  This potential is approximately twice as sharp as a standard sigmoid with the same width as the '+
             'specified transition_width.  The location x_residue is approximately the CB position of the '+
             'residue.')
+    parser.add_argument('--cooperation-contacts', default='',
+            help='Path to text file that defines a cooperation contacts function.  The first line of the file ' +
+            'should be a header containing "residue1 residue2 energy distance transition_width", and the remaining ' +
+            'lines should contain space separated values.  It is calculated by the following equation: '+
+            'E_cooperation_contacts = (E1*E2*...*EN)^(1/N), where E1, E2, ..., EN are the contact energies (see '+
+            '--cooperation-contacts option for details). Similar to individual contact energy, the form of ' +
+            'this function is also approximately sigmoidal but the potential energy is constant outside ' +
+            '(distance-transition_width,distance+transition_width). The location x_residue is approximately the CB ' +
+            'position of the residue.')
+
     parser.add_argument('--environment-potential', default='',
             help='Path to many-body environment potential')
     parser.add_argument('--environment-potential-type', default=0, type=int,
@@ -2082,6 +2133,10 @@ def main():
     if args.contact_energies:
         require_backbone_point = True
         write_contact_energies(parser, fasta_seq, args.contact_energies)
+
+    if args.cooperation_contacts:
+        require_backbone_point = True
+        write_cooperation_contacts(parser, fasta_seq, args.cooperation_contacts)
 
     if require_backbone_point:
         require_affine = True
