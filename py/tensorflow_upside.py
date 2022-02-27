@@ -91,7 +91,7 @@ class UpsideEnsemble(object):
             d = self.condiv_dict[nm]
             weights[sys_num], observables[sys_num], sys_traj,sys_seq = d.get_weighted_frames(param_dict)
             assert sys_traj.shape == self.frame_shape + (d.n_atom,3)
-            assert sys_seq.shape == (d.n_atom/3,)
+            assert sys_seq.shape == (d.n_atom//3,)
             traj_list.append((sys_num,sys_traj.astype('f4'),np.array(sys_seq,dtype='S3')))
             atom_counts[sys_num] = d.n_atom
 
