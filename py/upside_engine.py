@@ -157,13 +157,13 @@ def clamped_coeff_deriv(bspline_coeff, x):
 
 
 class Upside(object):
-    def __init__(self, config_file_path, quiet=True):
+    def __init__(self, config_file_path, quiet=False):
         self.config_file_path = str(config_file_path)
         with tb.open_file(self.config_file_path) as t:
             self.initial_pos = t.root.input.pos[:,:,0]
             self.n_atom = self.initial_pos.shape[0]
             self.sequence = t.root.input.sequence[:]
-        self.engine = calc.construct_deriv_engine(self.n_atom, self.config_file_path, bool(quiet))
+        self.engine = calc.construct_deriv_engine(self.n_atom, bytes(self.config_file_path, encoding="ascii"), bool(quiet))
         if self.engine is None: raise RuntimeError('Unable to initialize upside engine for %s'%(config_file_path,))
 
     def __repr__(self):
@@ -186,12 +186,14 @@ class Upside(object):
         return deriv
 
     def set_param(self, param, node_name):
+        node_name = bytes(node_name, encoding="ascii")
         param_size = param.shape
         param = np.require(param.ravel(), dtype='f4', requirements='C')  # flatten and make contiguous
         retcode = calc.set_param(int(param.shape[0]), param.ctypes.data, self.engine, node_name)
         if retcode: raise RuntimeError('Unable to set param with size %s for node %s'%(param_size,node_name))
 
     def get_param_deriv(self, param_shape, node_name):
+        node_name = bytes(node_name, encoding="ascii")
         n_param = int(np.prod(param_shape))
         deriv = np.zeros(param_shape, dtype='f4')
         retcode = calc.get_param_deriv(n_param, deriv.ctypes.data, self.engine, node_name)
@@ -199,6 +201,7 @@ class Upside(object):
         return deriv
 
     def get_param(self, param_shape, node_name):
+        node_name = bytes(node_name, encoding="ascii")
         n_param = int(np.prod(param_shape))
         param = np.zeros(param_shape, dtype='f4')
         retcode = calc.get_param(n_param, param.ctypes.data, self.engine, node_name)
@@ -206,6 +209,7 @@ class Upside(object):
         return param
 
     def get_sens(self, node_name):
+        node_name = bytes(node_name, encoding="ascii")
         n_elem = np.zeros(1,dtype=np.intc)
         elem_width = np.zeros(1,dtype=np.intc)
         retcode = calc.get_output_dims(n_elem.ctypes.data, elem_width.ctypes.data, self.engine, node_name)
@@ -219,6 +223,7 @@ class Upside(object):
         return output
 
     def get_output(self, node_name):
+        node_name = bytes(node_name, encoding="ascii")
         n_elem = np.zeros(1,dtype=np.intc)
         elem_width = np.zeros(1,dtype=np.intc)
         retcode = calc.get_output_dims(n_elem.ctypes.data, elem_width.ctypes.data, self.engine, node_name)
@@ -232,6 +237,8 @@ class Upside(object):
         return output
 
     def get_value_by_name(self, value_shape, node_name, log_name):
+        node_name = bytes(node_name, encoding="ascii")
+        log_name = bytes(log_name, encoding="ascii")
         n_param = int(np.prod(value_shape))
         value = np.zeros(value_shape, dtype='f4')
         retcode = calc.get_value_by_name(n_param, value.ctypes.data, self.engine, node_name, log_name)
@@ -256,7 +263,7 @@ def freeze_nodes(new_h5_path, old_h5_path, nodes_to_freeze, additional_nodes_to_
     pos = engine.initial_pos
 
     en = engine.energy(pos)  # required to fill output
-    if not quiet: print 'energy', en
+    if not quiet: print ('energy', en)
     freeze = dict((nm,engine.get_output(nm)) for nm in nodes_to_freeze)
 
     with tb.open_file(new_h5_path, 'a') as tn:
@@ -274,4 +281,4 @@ def freeze_nodes(new_h5_path, old_h5_path, nodes_to_freeze, additional_nodes_to_
                         for nm in node._v_attrs.arguments])
 
     new_en = Upside(new_h5_path).energy(pos)
-    if not quiet: print 'new_energy', new_en
+    if not quiet: print ('new_energy', new_en)
