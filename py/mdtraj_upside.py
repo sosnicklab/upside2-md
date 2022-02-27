@@ -7,7 +7,12 @@ import sys
 from mdtraj.formats.registry import FormatRegistry
 angstrom=0.1  # conversion to nanometer from angstrom
 
-print 'Very Important: All distances are in nanometers for MDTraj'
+aa_conv_dict = {"A": "ALA", "R": "ARG", "N": "ASN", "D": "ASP", "C": "CYS", "E": "GLU",
+                "Q": "GLN", "G": "GLY", "H": "HIS", "I": "ILE", "L": "LEU", "K": "LYS",
+                "M": "MET", "F": "PHE", "P": "PRO", "S": "SER", "T": "THR", "W": "TRP",
+                "Y": "TYR", "V": "VAL",}
+
+print ('Very Important: All distances are in nanometers for MDTraj')
 
 def vmag(x):
     assert x.shape[-1] == 3
@@ -54,7 +59,8 @@ def traj_from_upside(seq, time, pos, chain_first_residue=[0]):
         if nr in chain_first_residue:
             current_chain = topo.add_chain()
 
-        res = topo.add_residue(seq[nr], current_chain, resSeq=nr)
+        seq_r = str(seq[nr], 'utf-8')
+        res = topo.add_residue(seq_r, current_chain, resSeq=nr)
         atoms.append(topo.add_atom('N', el.nitrogen, res, atom_num)); atom_num+=1; N =atoms[-1]
         atoms.append(topo.add_atom('CA',el.carbon,   res, atom_num)); atom_num+=1; CA=atoms[-1]
         atoms.append(topo.add_atom('C', el.carbon,   res, atom_num)); atom_num+=1; C =atoms[-1]
@@ -108,44 +114,143 @@ def traj_from_upside(seq, time, pos, chain_first_residue=[0]):
     # VERY IMPORTANT all distances must be in nanometers for MDTraj
     return md.Trajectory(xyz=xyz*angstrom, topology=topo, time=time)
 
+def traj_from_upside2(seq, time, pos, chain_first_residue=[0]):
+
+    n_frame = len(pos)
+    n_res = len(seq)
+    seq = np.array([('PRO' if x == 'CPR' else x) for x in seq])
+
+    chain_first_residue = set(chain_first_residue).union(set([0,n_res]))
+    assert all(x<=n_res for x in chain_first_residue)
+    assert 0 in chain_first_residue
+
+    assert pos.shape == (n_frame, 3*n_res, 3)
+    assert seq.shape == (n_res,)
+
+    topo = md.Topology()
+
+    # Main atoms
+    expanded_pos_columns = []
+    atoms = []
+    last_C_atom = None  # needed for adding bonds
+    atom_num = 0
+
+    for nr in range(n_res):
+        if nr in chain_first_residue:
+            current_chain = topo.add_chain()
+
+        res = topo.add_residue(seq[nr], current_chain, resSeq=nr)
+        atoms.append(topo.add_atom('N', el.nitrogen, res, atom_num)); atom_num+=1; N =atoms[-1]
+        atoms.append(topo.add_atom('CA',el.carbon,   res, atom_num)); atom_num+=1; CA=atoms[-1]
+        atoms.append(topo.add_atom('C', el.carbon,   res, atom_num)); atom_num+=1; C =atoms[-1]
+
+        expanded_pos_columns.append(pos[:,3*nr:3*(nr+1)])
+        N_pos  = expanded_pos_columns[-1][:,0]
+        CA_pos = expanded_pos_columns[-1][:,1]
+        C_pos  = expanded_pos_columns[-1][:,2]
+
+        if nr not in chain_first_residue:
+            topo.add_bond(last_C,N)
+        topo.add_bond(N ,CA)
+        topo.add_bond(CA,C)
+
+        last_C = C
+    xyz = np.concatenate(expanded_pos_columns,axis=1)
+
+    # There is some weird bug related to the indices of the topology object.  Basically, the 
+    # indices seem to be messed up by the fact when I didn't add them in residue order.  I will
+    # continue to try to avoid issues by making a copy, which fixes numbering issues.
+    topo = topo.copy()
+
+    # VERY IMPORTANT all distances must be in nanometers for MDTraj
+    return md.Trajectory(xyz=xyz*angstrom, topology=topo, time=time)
+
 
 @FormatRegistry.register_loader('.up')
-def load_upside_traj(fname, stride=1, atom_indices=None, target_pos_only=False):
-    assert atom_indices is None
+def load_upside_traj(fname, top='', stride=1, from_init=False, fasta_fn='', chain_breaks_fn='', target_pos_only=False, add_atoms=True):
     import tables as tb
-    with tb.open_file(fname) as t:
-        last_time = 0.
-        start_frame = 0
-        total_frames_produced = 0
-        xyz = []
-        time = []
-        if target_pos_only:
-            xyz.append(t.root.target.pos[:,:,0])
-            time.append(np.zeros(1,dtype='f4'))
-            last_time = time[-1]
-            total_frames_produced = 1
-            start_frame=1
-        else:
-            for g_no, g in enumerate(_output_groups(t)):
-                # take into account that the first frame of each pos is the same as the last frame before restart
-                # attempt to land on the stride
-                sl = slice(start_frame,None,stride)
-                xyz.append(g.pos[sl,0])
-                time.append(g.time[sl]+last_time)
-                last_time = g.time[-1]+last_time
-                total_frames_produced += g.pos.shape[0]-(1 if g_no else 0)  # correct for first frame
-                start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
-        xyz = np.concatenate(xyz,axis=0)
-        time = np.concatenate(time,axis=0)
 
+    if from_init and target_pos_only:
+        raise ValueError("Cannot have both from_init and target_pos_only.")
+    if from_init and not fasta_fn:
+        raise ValueError("from_init requires fasta_fn set.")
+
+    last_time = 0.
+    start_frame = 0
+    total_frames_produced = 0
+    xyz = []
+    time = []
+    # Check for chain breaks in config file
+    chain_first_residue = np.array([0], dtype='int32')
+
+    if from_init:
+        with open(fname, 'rb') as f:
+            xyz.append(cp.load(f, encoding='latin1')[...,0])
+
+        with open(fasta_fn) as f:
+            fasta_str = ''.join(f.read().splitlines()[1:])
+        seq = fasta_str.replace("*", "") # Remove CIS PRO indicators
+        seq = [aa_conv_dict[aa] for aa in seq]
+
+        if chain_breaks_fn:
+            with open(chain_breaks_fn) as f:
+                chain_first_residue = np.append(chain_first_residue,
+                                                np.array([int(i) for i in f.readline().split()]))
+    else:
+        with tb.open_file(fname) as t:
+            if target_pos_only:
+                xyz.append(t.root.target.pos[:,:,0])
+            else:
+                for g_no, g in enumerate(_output_groups(t)):
+                    # take into account that the first frame of each pos is the same as the last frame before restart
+                    # attempt to land on the stride
+                    sl = slice(start_frame,None,stride)
+                    xyz.append(g.pos[sl,0])
+                    time.append(g.time[sl]+last_time)
+                    last_time = g.time[-1]+last_time
+                    total_frames_produced += g.pos.shape[0]-(1 if g_no else 0)  # correct for first frame
+                    start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
+        
+        if top:
+            tfile = top
+        else:
+            tfile = fname
+        with tb.open_file(tfile) as ref:
+            seq = ref.root.input.sequence[:]
+            if 'chain_break' in ref.root.input:
+                chain_first_residue = np.append(chain_first_residue, ref.root.input.chain_break.chain_first_residue[:])
+     
+    if from_init or target_pos_only:
+        xyz = np.array(xyz)
+        time.append(np.zeros(1,dtype='f4'))
+    else:
+        xyz = np.concatenate(xyz,axis=0)
+    time = np.concatenate(time,axis=0)
+
+    if add_atoms:
+        return traj_from_upside(seq, time, xyz, chain_first_residue=chain_first_residue)
+    else:
+        return traj_from_upside2(seq, time, xyz, chain_first_residue=chain_first_residue)
+
+@FormatRegistry.register_loader('.up')
+def load_upside_ref(fname, stride=1, fasta_fn='', chain_breaks_fn='', add_atoms=True):
+    import tables as tb
+
+    with tb.open_file(fname) as t:
+        xyz = np.array([t.root.input.pos[:,:,0]])
+        time = [np.zeros(1,dtype='f4')]
+        time = np.concatenate(time,axis=0)
         seq = t.root.input.sequence[:]
 
-        # Check for chain breaks in config file
-        chain_first_residue = np.array([0], dtype='int32')
         if 'chain_break' in t.root.input:
             chain_first_residue = np.append(chain_first_residue, t.root.input.chain_break.chain_first_residue[:])
+        else:
+            chain_first_residue = np.array([0], dtype='int32')
 
-    return traj_from_upside(seq, time, xyz, chain_first_residue=chain_first_residue)
+    if add_atoms:
+        return traj_from_upside(seq, time, xyz, chain_first_residue=chain_first_residue)
+    else:
+        return traj_from_upside2(seq, time, xyz, chain_first_residue=chain_first_residue)
 
 def load_upside_data(fname, output_names):
     pass
@@ -316,8 +421,8 @@ def ca_interfacial_rmsd_angstroms(traj, native, group1, group2, ca_cutoff_angstr
             
     interface_residues = sorted(set(contacts[:,0]).union(set(contacts[:,1])))
     if verbose:
-        print '%i interface residues (%i,%i)' % (
-                len(interface_residues), len(set(contacts[:,0])), len(set(contacts[:,1])))
+        print ('%i interface residues (%i,%i)' % (
+                len(interface_residues), len(set(contacts[:,0])), len(set(contacts[:,1]))))
     interface_atom_indices = np.array([a.index for a in native.topology.atoms
                                                if  a.residue.index in interface_residues])
 
