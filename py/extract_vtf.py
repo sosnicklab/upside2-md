@@ -106,15 +106,21 @@ def main():
     parser.add_argument('output_vtf', help='Output trajectory file')
     parser.add_argument('--stride', type=int, default=1, help='Stride for reading file')
     parser.add_argument('--start', type=int, default=0, help='Initial frame to extract VTF')
+    parser.add_argument('--top_h5', type=str, default=None, help='Input top file')
     args = parser.parse_args()
 
-    with tables.open_file(args.input_h5) as t:
+    top_file = args.input_h5
+    if args.top_h5:
+        top_file = args.top_h5
+
+    with tables.open_file(top_file) as t:
         seq = t.root.input.sequence[:]
         if 'chain_break' in t.root.input:
             chain_first_residue = t.root.input.chain_break.chain_first_residue[:]
         else:
             chain_first_residue = None
 
+    with tables.open_file(args.input_h5) as t:
         output_paths = []
         i = 0
         while 'output_previous_%i'%i in t.root:
