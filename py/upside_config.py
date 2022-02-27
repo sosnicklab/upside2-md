@@ -12,6 +12,48 @@ three_letter_aa = dict(
         P='PRO', Q='GLN', R='ARG', S='SER',
         T='THR', V='VAL', W='TRP', Y='TYR')
 
+hbond_donor = [ 'ALA', 'ARG', 'ASN', 'ASP',
+                'CYS', 'GLN', 'GLU', 'GLY',
+                'HIS', 'ILE', 'LEU', 'LYS',
+                'MET', 'PHE', 'SER', 'THR',
+                'TRP', 'TYR', 'VAL' ]
+ 
+hbond_acceptor = [ 'ALA', 'ARG', 'ASN', 'ASP',
+                   'CYS', 'GLN', 'GLU', 'GLY',
+                   'HIS', 'ILE', 'LEU', 'LYS',
+                   'MET', 'PHE', 'PRO', 'SER',
+                   'THR', 'TRP', 'TYR', 'VAL' ]
+ 
+backbone_group0 = { 'ALA' : 0,  'ARG' : 1,  'ASN' : 2,  'ASP' : 3,
+                    'CYS' : 4,  'GLN' : 5,  'GLU' : 6,  'GLY' : 7,
+                    'HIS' : 8,  'ILE' : 9,  'LEU' : 10, 'LYS' : 11,
+                    'MET' : 12, 'PHE' : 13, 'PRO' : 19, 'SER' : 14,
+                    'THR' : 15, 'TRP' : 16, 'TYR' : 17, 'VAL' : 18  }
+
+backbone_group1 = { 'ALA' : 0, 'ARG' : 0, 'ASN' : 1, 'ASP' : 1,
+                    'CYS' : 0, 'GLN' : 0, 'GLU' : 0, 'GLY' : 2,
+                    'HIS' : 0, 'ILE' : 3, 'LEU' : 0, 'LYS' : 0,
+                    'MET' : 0, 'PHE' : 0, 'PRO' : 5, 'SER' : 0,
+                    'THR' : 4, 'TRP' : 0, 'TYR' : 0, 'VAL' : 3  }
+
+backbone_group2 = { 'ALA' : 0, 'ARG' : 0, 'ASN' : 1, 'ASP' : 1,
+                    'CYS' : 2, 'GLN' : 0, 'GLU' : 0, 'GLY' : 3,
+                    'HIS' : 0, 'ILE' : 4, 'LEU' : 0, 'LYS' : 0,
+                    'MET' : 2, 'PHE' : 0, 'PRO' : 7, 'SER' : 5,
+                    'THR' : 6, 'TRP' : 2, 'TYR' : 0, 'VAL' : 4  }
+
+backbone_group4 = { 'ALA' : 0, 'ARG' : 0, 'ASN' : 0, 'ASP' : 0,
+                    'CYS' : 0, 'GLN' : 0, 'GLU' : 0, 'GLY' : 1,
+                    'HIS' : 0, 'ILE' : 0, 'LEU' : 0, 'LYS' : 0,
+                    'MET' : 0, 'PHE' : 0, 'PRO' : 2, 'SER' : 0,
+                    'THR' : 0, 'TRP' : 0, 'TYR' : 0, 'VAL' : 0  }
+
+backbone_group5 = { 'ALA' : 0, 'ARG' : 0, 'ASN' : 0, 'ASP' : 0,
+                    'CYS' : 0, 'GLN' : 0, 'GLU' : 0, 'GLY' : 0,
+                    'HIS' : 0, 'ILE' : 0, 'LEU' : 0, 'LYS' : 0,
+                    'MET' : 0, 'PHE' : 0, 'PRO' : 0, 'SER' : 0,
+                    'THR' : 0, 'TRP' : 0, 'TYR' : 0, 'VAL' : 0  }
+
 aa_num = dict([(k,i) for i,k in enumerate(sorted(three_letter_aa.values()))])
 
 one_letter_aa = dict([(v,k) for k,v in three_letter_aa.items()])
@@ -399,8 +441,118 @@ def write_bb_environment(fasta, environment_library, sc_node_name, bb_env_fn, us
     egrp._v_attrs.hbond_weight = bb_env_param[3]
     create_array(egrp, 'weights', np.array(weights))
 
+def write_hydrophobic_energies(fasta, scale, left_border, right_border):
 
-def write_count_hbond(fasta, hbond_energy, coverage_library, loose_hbond, sc_node_name):
+    # hydrophobic amino acids
+    #==========================================
+    hydrophobic_residue = ['ALA', 'CYS', 'ILE', 'LEU', 'MET', 'PHE', 'TRP', 'TYR', 'VAL']
+
+    n_res = len(fasta)
+
+    index     = []
+    for i,r in enumerate(fasta):
+        if r in hydrophobic_residue:
+            index.append(i)
+    index = np.array(index)
+
+    scale        = scale
+
+    center   = (right_border+left_border)*0.5
+    sharpness = 1.0/((right_border-left_border)*0.5)
+
+    cutoff = right_border
+    parameter = np.array([[[scale, center, sharpness, cutoff]]])
+    
+    # like charge interaction for negative charge
+    g1 = t.create_group(t.root.input.potential, 'symm_fast_contact')
+    g1._v_attrs.arguments = np.array(['placement_fixed_point_only_CB'])
+    create_array(g1, 'interaction_param', parameter)
+    create_array(g1, 'index',             index)
+    create_array(g1, 'type',              index*0)
+    create_array(g1, 'id',                index)
+
+def write_donor_environment(fasta, sc_node_name):
+
+    cgrp = t.create_group(potential, 'donor_environment_coverage')
+    cgrp._v_attrs.arguments = np.array(['infer_H_O', 'weighted_pos'])
+    cgrp._v_attrs.center = 2.0
+    cgrp._v_attrs.sharpness = 2.5
+    cgrp._v_attrs.use_sigm = 0
+
+    coverage_param = np.array([[[6.5, 1., -0.1, 1.0]]]*20)
+
+    sc_node = t.get_node(t.root.input.potential, sc_node_name)
+    n_sc = sc_node.affine_residue.shape[0]
+
+    infer_group = t.get_node('/input/potential/infer_H_O')
+    res_id = infer_group.donors.residue[:]
+    restype_order = dict([(str(x),i) for i,x in enumerate(hbond_donor)])
+
+    # group1 is the HBond donors
+    n_donor    = infer_group.donors   .id.shape[0]
+    create_array(cgrp, 'index1', np.arange(0,n_donor))
+    create_array(cgrp, 'type1',  np.array( [restype_order[fasta[i]] for i in res_id] ) )
+    create_array(cgrp, 'id1',    res_id)
+
+    # group 2 is the weighted points to interact with
+    create_array(cgrp, 'index2', np.arange(n_sc))
+    create_array(cgrp, 'type2',  0*np.arange(n_sc))   # for now coverage is very simple, so no types on SC
+    create_array(cgrp, 'id2',    sc_node.affine_residue[:])
+
+    create_array(cgrp, 'interaction_param', coverage_param)
+
+def write_sc_donor(fasta, sc_node_name):
+
+    cgrp = t.create_group(potential, 'donor_environment_coverage2')
+    cgrp._v_attrs.arguments = np.array(['infer_H_O', 'weighted_pos'])
+    cgrp._v_attrs.center = 0.5
+    cgrp._v_attrs.sharpness = 3.3
+    cgrp._v_attrs.use_sigm = 0
+
+    coverage_param = np.array([[[2.8, 1., -0.1, 1.0]]]*20)
+
+    sc_node = t.get_node(t.root.input.potential, sc_node_name)
+    n_sc = sc_node.affine_residue.shape[0]
+
+    infer_group = t.get_node('/input/potential/infer_H_O')
+    res_id = infer_group.donors.residue[:]
+    restype_order = dict([(str(x),i) for i,x in enumerate(hbond_donor)])
+
+    # group1 is the HBond donors
+    n_donor    = infer_group.donors   .id.shape[0]
+    create_array(cgrp, 'index1', np.arange(0,n_donor))
+    create_array(cgrp, 'type1',  np.array( [restype_order[fasta[i]] for i in res_id] ) )
+    create_array(cgrp, 'id1',    res_id)
+
+    # group 2 is the weighted points to interact with
+    create_array(cgrp, 'index2', np.arange(n_sc))
+    create_array(cgrp, 'type2',  0*np.arange(n_sc))   # for now coverage is very simple, so no types on SC
+    create_array(cgrp, 'id2',    sc_node.affine_residue[:])
+
+    create_array(cgrp, 'interaction_param', coverage_param)
+
+
+def write_cter_hbond(fasta):
+    n_res      = len(fasta)
+    infer_group = t.get_node('/input/potential/infer_H_O')
+    n_donor     = infer_group.donors.id.shape[0]
+
+    igrp = t.create_group(potential, 'cter_hbond')
+    igrp._v_attrs.arguments = np.array(['infer_H_O', 'pos'])
+
+    igrp._v_attrs.inner_barrier = 2.4
+    igrp._v_attrs.inner_scale   = 1./0.100
+    igrp._v_attrs.outer_barrier = 3.5
+    igrp._v_attrs.outer_scale   = 1./0.125
+
+    # group1 is the HBond donors
+    create_array(igrp, 'index1', np.arange(0,n_donor))
+    create_array(igrp, 'id1',    infer_group.donors.residue[:])
+    # group 2 is the HBond acceptors
+    create_array(igrp, 'index2', np.array([n_res*3-1]))
+    create_array(igrp, 'id2',    np.array([n_res-1]))
+
+def write_count_hbond(fasta, loose_hbond ):
     n_res = len(fasta)
 
     infer_group = t.get_node('/input/potential/infer_H_O')
@@ -428,65 +580,180 @@ def write_count_hbond(fasta, hbond_energy, coverage_library, loose_hbond, sc_nod
          (0.182 if loose_hbond else 0.682), 1./0.05,
          0.,   0.]]]))
 
-    if sc_node_name:  # only create hbond_coverage if there are rotamer side chains
-        cgrp = t.create_group(potential, 'hbond_coverage')
-        cgrp._v_attrs.arguments = np.array(['protein_hbond',sc_node_name])
+def write_midpoint_NC(fasta):
+    n_res = len(fasta)
+    igrp = t.create_group(potential, 'midpoint_NC')
+    igrp._v_attrs.arguments = np.array(['pos'])
+    igrp._v_attrs.n_res = n_res
 
-        with tb.open_file(coverage_library) as data:
-             create_array(cgrp, 'interaction_param', data.root.coverage_interaction[:])
-             bead_num = dict((k,i) for i,k in enumerate(data.root.bead_order[:]))
-             hydrophobe_placement = data.root.hydrophobe_placement[:]
-             hydrophobe_interaction = data.root.hydrophobe_interaction[:]
+def write_midpoint_NC_pair(fasta, NC_library):
+    write_midpoint_NC(fasta)
 
-        # group1 is the HBond partners
-        create_array(cgrp, 'index1', np.arange(n_donor+n_acceptor))
-        create_array(cgrp, 'type1',  1*(np.arange(n_donor+n_acceptor) >= n_donor))  # donor is 0, acceptor is 1
-        create_array(cgrp, 'id1',    np.concatenate([infer_group.donors   .residue[:],
-                                                     infer_group.acceptors.residue[:]]))
+    n_res = len(fasta)
+    grp = t.create_group(potential, 'NC_pair')
+    grp._v_attrs.arguments = np.array(['midpoint_NC'])
 
-        # group 2 is the sidechains
-        sc_node = t.get_node(t.root.input.potential, sc_node_name)
-        rseq      = sc_node.beadtype_seq[:]
-        sc_resnum = sc_node.affine_residue[:]
-        create_array(cgrp, 'index2', np.arange(len(rseq)))
-        create_array(cgrp, 'type2',  np.array([bead_num[s] for s in rseq]))
-        create_array(cgrp, 'id2',    sc_resnum)
+    with tb.open_file(NC_library) as lib:
+        param = lib.root.interaction_param[:]
+        create_array(grp, 'interaction_param', obj=param)
 
-        grp = t.create_group(potential, 'placement_fixed_point_vector_scalar')
-        grp._v_attrs.arguments = np.array(['affine_alignment'])
-        create_array(grp, 'affine_residue',  np.arange(3*n_res)/3)
-        create_array(grp, 'layer_index',     np.arange(3*n_res)%3)
-        create_array(grp, 'placement_data',  hydrophobe_placement)
+    create_array(grp, 'index', obj=np.arange(n_res))
+    create_array(grp, 'id',    obj=np.arange(n_res))  # FIXME update for chain breaks
+    create_array(grp, 'type',  obj=0*np.arange(n_res))
 
-        cgrp = t.create_group(potential, 'hbond_coverage_hydrophobe')
-        cgrp._v_attrs.arguments = np.array(['placement_fixed_point_vector_scalar',sc_node_name])
 
-        with tb.open_file(coverage_library) as data:
-             create_array(cgrp, 'interaction_param', data.root.hydrophobe_interaction[:])
-             bead_num = dict((k,i) for i,k in enumerate(data.root.bead_order[:]))
+def write_rotamer_backbone(fasta, coverage_library, sc_node_name):
 
-        # group1 is the hydrophobes
-        # create_array(cgrp, 'index1', np.arange(n_res))
-        # create_array(cgrp, 'type1',  0*np.arange(n_res))
-        # create_array(cgrp, 'id1',    np.arange(n_res))
-        create_array(cgrp, 'index1', np.arange(3*n_res))
-        create_array(cgrp, 'type1',  np.arange(3*n_res)%3)
-        create_array(cgrp, 'id1',    np.arange(3*n_res)/3)
+    n_res          = len(fasta)
 
-        # group 2 is the sidechains
-        rseq = sc_node.beadtype_seq[:]
-        create_array(cgrp, 'index2', np.arange(len(rseq)))
-        create_array(cgrp, 'type2',  np.array([bead_num[s] for s in rseq]))
-        create_array(cgrp, 'id2',    sc_resnum)
+    pre_PRO        = True
+    backbone_group = backbone_group4
+    group_id       = set(val for val in backbone_group.values())
+    num_group      = len(group_id)
 
-    if hbond_energy > 0.:
-        print '\n**** WARNING ****  hydrogen bond formation energy set to repulsive value\n'
+    # for donor and acceptor
+    infer_group = t.get_node('/input/potential/infer_H_O')
+    n_donor    = infer_group.donors   .id.shape[0]
+    n_acceptor = infer_group.acceptors.id.shape[0]
+    n_hbond    = n_donor + n_acceptor
+    d_residues = infer_group.donors   .residue[:]
+    a_residues = infer_group.acceptors.residue[:]
+
+    # for sidechains
+    sc_node = t.get_node(t.root.input.potential, sc_node_name)
+    rseq      = sc_node.beadtype_seq[:]
+    sc_resnum = sc_node.affine_residue[:]
+    sc_index  = np.arange(len(rseq))
+
+    with tb.open_file(coverage_library) as data:
+         bead_num = dict((k,i) for i,k in enumerate(data.root.bead_order[:]))
+         sc_type  = np.array([bead_num[s] for s in rseq])
+         coverage_interaction   = data.root.coverage_interaction[:]
+         hydrophobe_placement   = data.root.hydrophobe_placement[:]
+         hydrophobe_interaction = data.root.hydrophobe_interaction[:]
+
+    # sc-hbond interaction
+    hb_index = np.arange(n_hbond)
+    cgrp = t.create_group(potential, 'hbond_coverage')
+    cgrp._v_attrs.arguments = np.array(['protein_hbond', sc_node_name])
+    create_array(cgrp, 'interaction_param', coverage_interaction)
+    # create the hbond type 
+    hb_type = []
+    for resid in d_residues:
+        res     = fasta[resid]
+        bbt     = backbone_group[res]
+        if resid < n_res-1 and pre_PRO:
+            if fasta[resid+1] in ['PRO', 'CPR']:
+                bbt = num_group
+        hb_type.append(bbt*2+0)
+    for resid in a_residues:
+        res     = fasta[resid]
+        bbt     = backbone_group[res]
+        if resid < n_res-1 and pre_PRO:
+            if fasta[resid+1] in ['PRO', 'CPR']:
+                bbt = num_group
+        hb_type.append(bbt*2+1)
+    hb_type = np.array(hb_type)
+    # group1 is the HBond partners
+    create_array(cgrp, 'index1', hb_index)
+    create_array(cgrp, 'type1',  hb_type)  # donor is 0, acceptor is 1
+    create_array(cgrp, 'id1',    np.concatenate([d_residues, a_residues]))
+    # group2 is the sc
+    create_array(cgrp, 'index2', sc_index)
+    create_array(cgrp, 'type2',  sc_type)
+    create_array(cgrp, 'id2',    sc_resnum)
+
+    # create the oriented backbone atoms
+    bb_index  = np.arange(3*n_res)
+    bb_resnum = bb_index/3
+    grp = t.create_group(potential, 'placement_fixed_point_vector_scalar')
+    grp._v_attrs.arguments = np.array(['affine_alignment'])
+    create_array(grp, 'affine_residue',  bb_resnum)
+    create_array(grp, 'layer_index',     bb_index%3)
+    create_array(grp, 'placement_data',  hydrophobe_placement)
+
+    # sc-backbone interaction
+    cgrp = t.create_group(potential, 'hbond_coverage_hydrophobe')
+    cgrp._v_attrs.arguments = np.array(['placement_fixed_point_vector_scalar',sc_node_name])
+    create_array(cgrp, 'interaction_param', hydrophobe_interaction)
+    # for backbone type
+    bb_type = []
+    for resid, res in enumerate(fasta):
+        for i in [0,1,2]:
+            bbt = backbone_group[res]
+            if resid < n_res-1 and pre_PRO:
+                if fasta[resid+1] in ['PRO', 'CPR']:
+                    bbt = num_group
+            bb_type.append(bbt*3+i)
+    bb_type = np.array(bb_type)
+    # group1 is the backbone partners
+    create_array(cgrp, 'index1', bb_index)
+    create_array(cgrp, 'type1',  bb_type)
+    create_array(cgrp, 'id1',    bb_resnum)
+    # group 2 is the sidechains
+    create_array(cgrp, 'index2', sc_index)
+    create_array(cgrp, 'type2',  sc_type)
+    create_array(cgrp, 'id2',    sc_resnum)
+
+def write_short_hbond(fasta, hbond_energy):
+    n_res = len(fasta)
+    infer_group = t.get_node('/input/potential/infer_H_O')
+    d_residues = infer_group.donors   .residue[:]
+    a_residues = infer_group.acceptors.residue[:]
 
     grp = t.create_group(potential, 'hbond_energy')
-    grp._v_attrs.arguments = np.array(['protein_hbond'])
-    grp._v_attrs.protein_hbond_energy = hbond_energy
+    grp._v_attrs.arguments = np.array(['protein_hbond', 'rama_coord'])
 
+    with tb.open_file(hbond_energy) as data:
+        params = data.root.parameter[:]
 
+    for hbe in params[:3]:
+        if hbe > 0.:
+            print '\n**** WARNING ****  hydrogen bond formation energy set to repulsive value\n'
+            break
+
+    #sharpness = 1.0/(np.pi/12.)
+    #params = [helix_hbond_energy, sheet_hbond_energy, turn_hbond_energy,
+    #          0.0,          sharpness, np.pi*11./12., sharpness,  # for turn or sheet/helix
+    #          -np.pi*2./3., sharpness, np.pi/3.,      sharpness ] # for sheet or helix
+
+    create_array(grp, 'parameters',     params)
+    create_array(grp, 'donor_resid',    d_residues)
+    create_array(grp, 'acceptor_resid', a_residues)
+    create_array(grp, 'rama_resid',     obj=np.arange(n_res))
+
+def write_long_hbond(fasta, hbond_energy):
+
+    n_res = len(fasta)
+    infer_group = t.get_node('/input/potential/infer_H_O')
+    n_donor    = infer_group.donors   .id.shape[0]
+    n_acceptor = infer_group.acceptors.id.shape[0]
+
+    d_residues = infer_group.donors   .residue[:]
+    a_residues = infer_group.acceptors.residue[:]
+
+    # select dim [0, 1, 2, 6] from protein_hbond
+    sgrp = t.create_group(potential, 'select_pos_H_O')
+    sgrp._v_attrs.arguments = np.array(['protein_hbond'])
+    sgrp._v_attrs.n_dim = 3
+    create_array(sgrp, 'index_pos', np.arange(n_donor+n_acceptor))
+    create_array(sgrp, 'index_dim', np.array([0,1,2]))
+
+    lgrp = t.create_group(potential, 'long_hbond_energy_HO')
+    lgrp._v_attrs.arguments = np.array(['select_pos_H_O'])
+    
+    pr = np.loadtxt(hbond_energy)
+    lhb_param = [pr[0], pr[1], 1./pr[2], 0., pr[3], pr[4], 1./pr[5], 0.]
+    create_array(lgrp, 'interaction_param', np.array([[lhb_param]]))
+
+    # group 1 is the donor
+    create_array(lgrp, 'index1', np.arange(n_donor))
+    create_array(lgrp, 'type1',  np.arange(n_donor)*0)
+    create_array(lgrp, 'id1',    d_residues*3)
+    # group 2 is the acceptor
+    create_array(lgrp, 'index2', np.arange(n_donor, n_donor+n_acceptor))
+    create_array(lgrp, 'type2',  np.arange(n_donor, n_donor+n_acceptor)*0)
+    create_array(lgrp, 'id2',    a_residues*3+2)
 
 def make_restraint_group(group_num, residues, initial_pos, strength):
     np.random.seed(314159)  # make groups deterministic
@@ -1574,13 +1841,48 @@ def main():
 
     if args.hbond_energy:
         write_infer_H_O  (fasta_seq, args.hbond_exclude_residues)
-        write_count_hbond(fasta_seq, args.hbond_energy, args.rotamer_interaction, args.loose_hbond_criteria, sc_node_name)
+        write_count_hbond(fasta_seq, args.loose_hbond_criteria )
+        if sc_node_name:
+            write_rotamer_backbone(fasta_seq, args.rotamer_interaction, sc_node_name)
+        write_short_hbond(fasta_seq, args.hbond_energy)#, args.hbond_energy_patterns)
+
+    if args.long_hbond_energy:
+        write_long_hbond(fasta_seq, args.long_hbond_energy)
+
+    if args.mid_NC_dist_energy:
+        write_midpoint_NC_pair(fasta_seq, args.mid_NC_dist_energy)
+
 
     if args.environment_potential:
         if args.rotamer_placement is None:
             parser.error('--rotamer-placement is required, based on other options.')
         require_weighted_pos = True     
         write_environment(fasta_seq, args.environment_potential, sc_node_name, args.environment_potential_type, args.environment_weights_number)
+
+    if args.bb_environment_potential:
+        if args.environment_potential is None:
+            parser.error('--environment-potential is required, based on other options.')
+        require_weighted_pos = True     
+        write_bb_environment(fasta_seq, args.environment_potential, sc_node_name, args.bb_environment_potential, args.use_heavy_atom_coverage)
+
+    if args.long_hydrophobic_energy:
+        require_backbone_point = True
+        write_hydrophobic_energies(fasta_seq, args.long_hydrophobic_energy, args.long_hydrophobic_left, args.long_hydrophobic_right)
+
+    if args.amino_environment:
+        if args.rotamer_placement is None:
+            parser.error('--rotamer-placement is required, based on other options.')
+        require_weighted_pos = True     
+        write_donor_environment(fasta_seq, sc_node_name)
+
+    if args.amino_sc_env:
+        if args.rotamer_placement is None:
+            parser.error('--rotamer-placement is required, based on other options.')
+        require_weighted_pos = True     
+        write_sc_donor(fasta_seq, sc_node_name)
+
+    if args.count_cter_hbond:
+        write_cter_hbond(fasta_seq)
 
     args_group = t.create_group(input, 'args')
     for k,v in sorted(vars(args).items()):
