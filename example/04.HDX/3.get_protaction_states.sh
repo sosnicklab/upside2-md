@@ -5,7 +5,7 @@ source ../../source.sh
 pdb_id=EHEE_rd2_0005
 sim_id=REMD
 
-n_rep=14
+n_rep=16
 
 work_dir=./
 input_dir=$work_dir/inputs

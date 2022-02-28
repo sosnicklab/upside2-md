@@ -8,7 +8,7 @@ sim_id      = 'REMD'
 start_frame = 100
 
 work_dir         = './'
-n_rep            = 14     # replica number
+n_rep            = 16     # replica number
 
 input_dir  = "{}/inputs".format(work_dir)
 output_dir = "{}/outputs".format(work_dir)
@@ -142,8 +142,20 @@ dGhx_D = np.array(dGhx_D)
 # m-value: the slope of dG vs [den]
 mValue = np.diff(dGhx_D, axis=0)/(den[0]-den[1])
 
+#============================================
+# plot
+#============================================
 
+# [den] vs DG
 fig = plt.figure()
 for i,r in enumerate(res):
     plt.plot(den, dGhx_D[:,i])
+plt.xlabel('[den]')
+plt.ylabel('DG (kcal/mol)')
+
+# DG of residues
+fig = plt.figure()
+plt.bar(res, dGhx_D[0,:]) 
+plt.xlabel('seq')
+plt.ylabel('DG (kcal/mol)')
 plt.show()
