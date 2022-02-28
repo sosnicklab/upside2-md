@@ -99,11 +99,12 @@ print (config_stdout)
 # Example 8 will show more details.
 
 kwargs = dict(
+               # select one to run
                fixed_wall = 'wall-const-xyz.dat'
-               pair_wall  = 'wall-pair-xyz.dat'
-               fixed_spring = 'spring-const-xyz.dat'
-               pair_spring = 'spring-pair-xyz.dat'
-               nail = 'nail-xyz.dat'
+               #pair_wall  = 'wall-pair-xyz.dat'
+               #fixed_spring = 'spring-const-xyz.dat'
+               #pair_spring = 'spring-pair-xyz.dat'
+               #nail = 'nail-xyz.dat'
              )
 
 config_stdout = ru.advanced_config(config_base, **kwargs)

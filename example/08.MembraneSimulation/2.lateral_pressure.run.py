@@ -42,8 +42,8 @@ continue_sim     = True  # when you run a new simulation, set it as "False"
 randomseed       = 1     # np.random.randint(0,100000) 
                          # Might want to change the fixed seed for the random number
 
-account          = "pi-trsosnic"
-partition        = "broadwl"
+account          = "your_account"    # FIXME change it 
+partition        = "yout_partition"  # FIXME change it
 job_name         = '{}_{}'.format(pdb_id, sim_id)
 run_time         = "36:00:00" # requested run time of job allocation in hh:mm:ss
 

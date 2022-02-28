@@ -13,7 +13,7 @@ import run_upside as ru
 
 pdb_id         = '1dfn' # switch to 1dfn for multi-chain showing
 pdb_dir        = './pdb'
-sim_id         = 'simple_test'
+sim_id         = 'mts_test'
 is_native      = True
 ff             = 'ff_2.1'
 T              = 0.8

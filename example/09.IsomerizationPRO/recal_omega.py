@@ -3,7 +3,7 @@ import numpy as np
 import tables as tb
 import mdtraj as md
 
-upside_path = '/home/pengxd/upside-ff2.1v/'
+upside_path = os.environ['UPSIDE_HOME']
 upside_utils_dir = os.path.expanduser(upside_path+"/py")
 sys.path.insert(0, upside_utils_dir)
 
@@ -25,4 +25,4 @@ for i in range(n_frame):
     lambb = engine.get_output('SigmoidCoord_trans2')[:,0]
     lamb1 = engine.get_output('Add_lambda_trans')[:,0]
     lamb2 = engine.get_output('Multiply_lambda_cis')[:,0]
-    print omega[0], lamb1[0], lamb2[0], lamba[0], lambb[0]
+    print (omega[0], lamb1[0], lamb2[0], lamba[0], lambb[0])

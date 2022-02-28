@@ -3,7 +3,7 @@ import numpy as np
 import tables as tb
 import mdtraj as md
 
-upside_path = '/home/pengxd/upside-ff2.1v/'
+upside_path = os.environ['UPSIDE_HOME']
 upside_utils_dir = os.path.expanduser(upside_path+"/py")
 sys.path.insert(0, upside_utils_dir)
 
@@ -29,4 +29,4 @@ for i in range(n_frame):
         energies[j, i] = engine.get_output(pot[j])[0,0]
 
 for i in range(n_frame):
-    print energies[0,i], energies[1,i], energies[2,i], energies[3,i], energies[4,i], energies[5,i]
+    print (energies[0,i], energies[1,i], energies[2,i], energies[3,i], energies[4,i], energies[5,i])

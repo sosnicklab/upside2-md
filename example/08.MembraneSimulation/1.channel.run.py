@@ -33,7 +33,7 @@ T_low            = 0.80
 T_high           = 0.80
 replica_interval = 10    # How long takes an exchange attempt (upside time unit)
 
-continue_sim     = True  # when you run a new simulation, set it as "False"
+continue_sim     = False # when you run a new simulation, set it as "False"
                          # "True" means restarting the simulation from the last frame
                          # of the previous trajectories (they should have the same 
                          # pdb_id and sim_id as the new simulation, and exist in the 
@@ -41,9 +41,8 @@ continue_sim     = True  # when you run a new simulation, set it as "False"
 
 randomseed       = 1     # np.random.randint(0,100000) 
                          # Might want to change the fixed seed for the random number
-
-account          = "pi-trsosnic"
-partition        = "broadwl"
+account          = "your_account"    # FIXME change it 
+partition        = "yout_partition"  # FIXME change it
 job_name         = '{}_{}'.format(pdb_id, sim_id)
 run_time         = "36:00:00" # requested run time of job allocation in hh:mm:ss
 
@@ -124,7 +123,7 @@ kwargs = dict(
                environment_potential      = param_dir_ff + "environment.h5",
                bb_environment_potential   = param_dir_ff + "bb_env.dat",
                channel_membrane_potential = param_dir_ff + "membrane.h5", 
-               surface                    = True.
+               surface                    = True,
                membrane_thickness         = thickness,
                chain_break_from_file      = "{}/{}.chain_breaks".format(input_dir, pdb_id),
              )

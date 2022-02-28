@@ -19,8 +19,8 @@ sim_id         = 'mem_test'
 is_native      = False
 ff             = 'ff_2.1'
 T              = 0.8
-duration       = 1000
-frame_interval = 50
+duration       = 100
+frame_interval = 10
 base_dir       = './'
 
 # Hi, HERE!, trj True, False respectively to see what happens
@@ -29,8 +29,8 @@ intensive_memory = False
 n_rep            = 1     # replica number
 randomseed       = 1     # np.random.randint(0,100000)
                          # Might want to change the fixed seed for the random number
-account          = "pi-trsosnic"
-partition        = "broadwl"
+account          = "your_account"    # FIXME change it 
+partition        = "yout_partition"  # FIXME change it
 #partition        = "caslake"
 job_name         = '{}_{}'.format(pdb_id, sim_id)
 run_time         = "36:00:00" # requested run time of job allocation in hh:mm:ss
@@ -129,6 +129,7 @@ sbatch_opts = (
                 "--partition={} "
                 "--nodes=1 "
                 "--ntasks-per-node={} "
+                "--mem=8000"
               )
 
 sbatch_opts = sbatch_opts.format(account, job_name, log_file, run_time, partition, n_rep)

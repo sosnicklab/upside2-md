@@ -71,7 +71,7 @@ for ii in range(ndx[0].size):
 
     for rid, h5 in enumerate(h5_files):
         with tb.open_file(h5, 'r') as t:
-            for g_no, g in enumerate(_output_groups(t)):
+            for g_no,g in enumerate(_output_groups(t)):
                 if g_no == 0:
                     pos     = g.pos[:,0, aa, dim]
                     tip_pos = g.tip_pos[:, aid, dim]

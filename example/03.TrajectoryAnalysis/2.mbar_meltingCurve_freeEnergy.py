@@ -5,10 +5,10 @@ from pymbar import timeseries # for timeseries analysis
 
 pdb_id      = 'EHEE_rd2_0005'
 sim_id      = 'REMD'
-start_frame = 100
+start_frame = 50
 
 work_dir         = './'
-n_rep            = 14     # replica number
+n_rep            = 16     # replica number
 
 input_dir  = "{}/inputs".format(work_dir)
 output_dir = "{}/outputs".format(work_dir)
@@ -111,7 +111,7 @@ for k in range(T.size):
     dG_hbond.append(g)
 
 fig2 = plt.figure()
-selected_replica = 12
+selected_replica = 8
 plt.plot(bc, dG_hbond[selected_replica] )
 plt.title('T={:.2f}'.format(T[selected_replica]))
 plt.xlabel('#H-bond')
