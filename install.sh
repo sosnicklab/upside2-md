@@ -1,7 +1,7 @@
 #!/bin/bash
 
+echo `pwd`
 upside_path=$(pwd |sed -e 's/\//\\\//g')
-echo $upside_path
 cp source_sh source.sh
 sed -i "s/UP_PATH/$upside_path/g" source.sh
 

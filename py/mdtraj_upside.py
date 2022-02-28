@@ -1,6 +1,6 @@
 # VERY IMPORTANT all distances must be in nanometers for MDTraj
 import sys
-import cPickle as cp
+import pickle as cp
 import numpy as np
 import mdtraj.core.element as el
 import mdtraj as md
@@ -313,7 +313,7 @@ def ca_contact_pca(traj, n_pc, cutoff_angstroms=8., variance_scaled=True):
     m =  (10.*md.compute_contacts(traj,scheme='ca')[0]<cutoff_angstroms)
     m = m-m.mean(axis=0)
     trunc_svd = TruncatedSVD(n_pc).fit(m)
-    pc = trunc_svd.transform(m)*(trunc_svd.explained_variance_ratio_ if variance_scaled else 1.)
+    pc = trunc_svd.transform(m)/(trunc_svd.explained_variance_ratio_ if variance_scaled else 1.)
     del m
     return pc
 
