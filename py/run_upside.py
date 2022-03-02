@@ -420,7 +420,7 @@ def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threa
 
     return UpsideJob(job,config,output_path, timer_object=timer_object)
 
-def continue_sim(configs, partition='', duration=0, frame_interval=0, **upside_kwargs):
+def continue_sim( configs, partition='', duration=0, frame_interval=0, **upside_kwargs):
     upside_kwargs = dict(upside_kwargs)
     temps = []
 
@@ -440,11 +440,11 @@ def continue_sim(configs, partition='', duration=0, frame_interval=0, **upside_k
 
             if 'output' in t.root:
                 t.root.output._f_rename(new_name)
-            # print fn, temps[-1]
+            # print (fn, temps[-1])
 
-    if partition:
-        upside_kwargs['temperature'] = temps
-        return run_upside(partition, configs, duration, frame_interval, **upside_kwargs)
+    if partition :
+        upside_kwargs[ 'temperature'] = temps
+        return run_upside( partition, configs, duration, frame_interval, **upside_kwargs)
 
 def read_output(t, output_name, stride):
     """Read output from continued Upside h5 files."""
