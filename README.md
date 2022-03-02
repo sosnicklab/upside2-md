@@ -75,10 +75,10 @@ folding or conformational dynamics simulation.
                                --dynamic-rotamer-1body    \
                                --rotamer-placement        upside/parameters/ff_2.1/sidechain.h5 \
                                --rotamer-interaction      upside/parameters/ff_2.1/sidechain.h5 \
-			       --environment-potential    upside/parameters/ff_2.1/environment.h5 \
-			       --bb-environment-potential upside/parameters/ff_2.1/bb_env.dat \
+                               --environment-potential    upside/parameters/ff_2.1/environment.h5 \
+                               --bb-environment-potential upside/parameters/ff_2.1/bb_env.dat \
                                --rama-library             upside/parameters/common/rama.dat \
-			       --rama-sheet-mixing-energy upside/parameters/ff_2.1/sheet \
+                               --rama-sheet-mixing-energy upside/parameters/ff_2.1/sheet \
                                --reference-state-rama     upside/parameters/common/rama_reference.pkl
 
 If `--initial-structure` is omitted, the simulation will be initialized with
