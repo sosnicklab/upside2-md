@@ -243,10 +243,9 @@ def load_upside_ref(fname, stride=1, fasta_fn='', chain_breaks_fn='', add_atoms=
         time = np.concatenate(time,axis=0)
         seq = t.root.input.sequence[:]
 
+        chain_first_residue = np.array([0], dtype='int32')
         if 'chain_break' in t.root.input:
             chain_first_residue = np.append(chain_first_residue, t.root.input.chain_break.chain_first_residue[:])
-        else:
-            chain_first_residue = np.array([0], dtype='int32')
 
     if add_atoms:
         return traj_from_upside(seq, time, xyz, chain_first_residue=chain_first_residue)
