@@ -1476,7 +1476,7 @@ def write_bb_environment(fasta, environment_library, sc_node_name, bb_env_fn, us
 #                               membrane
 #---------------------------------------------------------------------------
 
-def write_surface_coord(fasta_seq, included_list=[], thickness=None, zbuffer=None ):
+def write_surface_coord(fasta_seq, method, thickness, included_list=[], zbuffer=1.0 ):
 
     n_res = len(fasta_seq)
 
@@ -1489,27 +1489,30 @@ def write_surface_coord(fasta_seq, included_list=[], thickness=None, zbuffer=Non
     create_array(pgrp, 'index_pos1', index_bb)
     create_array(pgrp, 'index_pos2', index_cb)
 
-    #
+    # surface node
     grp = t.create_group(t.root.input.potential, 'surface')
     grp._v_attrs.arguments = np.array([b'cat_pos_bb_cb' ])
     grp._v_attrs.n_rotation = 20
-    create_array(grp, 'index_cb', index_cb+n_res*3)
+    grp._v_attrs.half_thickness = thickness*0.5
+    grp._v_attrs.zbuffer = zbuffer
+    grp._v_attrs.exclusion = 0
+
+    grp._v_attrs.len_gridx = 8.0
+    grp._v_attrs.len_gridy = 8.0
+    grp._v_attrs.n_gridz = 6
+    grp._v_attrs.n_smallgridx = 2
+    grp._v_attrs.n_smallgridy = 2
+    grp._v_attrs.n_smallgridz = 2
+
+    if method not in [0,1]:
+        print('Error')
+    grp._v_attrs.method_type = method
 
     if len(included_list) > 0:
         grp._v_attrs.exclusion = 1
         create_array(grp, 'included_list', np.array(included_list))
-    elif thickness and zbuffer:
-        grp._v_attrs.exclusion = 1
-        included_list = []
-        min_z = -(thickness*0.5+zbuffer)
-        max_z = thickness*0.5+zbuffer
-        ca_z = t.root.input.pos[1::3,2,0]
-        for i,z in enumerate(ca_z):
-            if z<max_z and z>min_z:
-                included_list.append(i)
-        create_array(grp, 'included_list', np.array(included_list))
-    else:
-        grp._v_attrs.exclusion = 0
+
+    create_array(grp, 'index_cb', index_cb+n_res*3)
 
 def write_membrane_potential(
         fasta_seq, membrane_potential_fpath, membrane_thickness, environment_potential, membrane_exposed_criterion, membrane_exclude_residues, hbond_exclude_residues):
@@ -2035,6 +2038,7 @@ def main():
             help='include heavy atoms on backbone when count the coverage for H/O')
 
     parser.add_argument('--surface', default=False, action='store_true', help='surface')
+    parser.add_argument('--surface-method', default=0, type=int, help='surface finding method. 0: fast method; 1: lipid diffusion algorithm.')
     parser.add_argument('--surface-included-residues', default=[], type=parse_segments,
             help='List of residues in the protein.  The residue list should be of a form like ' +
             '--restraint-group 10-13,17,19-21 and that list would specify all the atoms in '+
@@ -2303,11 +2307,9 @@ def main():
     if args.surface:
         require_backbone_point = True
         if args.surface_included_residues:
-            write_surface_coord(fasta_seq, included_list=args.surface_included_residues)
-        elif args.membrane_thickness and args.zbuffer:
-            write_surface_coord(fasta_seq, thickness=args.membrane_thickness, zbuffer=args.zbuffer)
+            write_surface_coord(fasta_seq, args.surface_method, thickness=args.membrane_thickness, included_list=args.surface_included_residues )
         else:
-            write_surface_coord(fasta_seq, thickness=args.membrane_thickness)
+            write_surface_coord(fasta_seq, args.surface_method, thickness=args.membrane_thickness)
 
     if args.channel_membrane_potential:
         if args.membrane_thickness is None:

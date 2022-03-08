@@ -79,6 +79,7 @@ def upside_config(fasta,
                   use_heavy_atom_coverage='',
 
                   surface=None,
+                  surface_method=None,
                   surface_included_residues=[],
                   zbuffer=None,
                   membrane_potential='',
@@ -152,10 +153,12 @@ def upside_config(fasta,
 
     if surface:
         args.append('--surface')
+        if not membrane_thickness:
+            raise ValueError('Must supply membrane_thickness if using surface')
+    if surface_method:
+        args.append('--surface-method=%i'%surface_method)
     if surface_included_residues:
         args.append('--surface-included-residues=%s'%surface_included_residues)
-    if zbuffer:
-        args.append('--zbuffer=%f'%zbuffer)
 
     if channel_membrane_potential:
         if not membrane_thickness:
