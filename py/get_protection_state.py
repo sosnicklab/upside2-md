@@ -14,15 +14,18 @@ import matplotlib.pyplot as plt
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('top_h5',     help='Input top file (.up or .h5 file)')
-    parser.add_argument('input_h5',   help='Input simulation file')
-    parser.add_argument('output_npy', help='Output npy file')
-    parser.add_argument('--stride',   type=int, default=1, help='(default 1) Stride for reading file')
-    parser.add_argument('--start',    type=int, default=0, help='(default 0) Initial frame')
-    parser.add_argument('--residue',  type=str, default=None, help='(default none) the file used to store the residue id')
-    parser.add_argument('--criterion1', type=float, default=0.01, help='(default 0.00) to judge whether NH is H-bonded. bigger than the criterion means H-bonded')
-    parser.add_argument('--criterion2', type=float, default=0.05, help='(default 0.05) to judge whether NH is H-bonded by side chain aceptor. bigger than the criterion means H-bonded')
-    parser.add_argument('--criterion3', type=float, default=5.00, help='(default 5.00) to judge whether NH is exposed. bigger than the criterion means buried')
+    parser.add_argument('top_h5',            help='Input top file (.up or .h5 file)')
+    parser.add_argument('input_h5',          help='Input simulation file')
+    parser.add_argument('output_npy',        help='Output npy file')
+    parser.add_argument('--use-TM-region',   default=False, action='store_true', help='(default false) treat the NH on the protein-lipid surface as protected')
+    parser.add_argument('--report-raw-data', default=False, action='store_true', help='(default false) report the raw data (H-bond score, burial level, prot-lipid surface score)')
+    parser.add_argument('--stride',          type=int,   default=1, help='(default 1) Stride for reading file')
+    parser.add_argument('--start',           type=int,   default=0, help='(default 0) Initial frame')
+    parser.add_argument('--residue',         type=str,   default=None, help='(default none) the file used to store the residue id')
+    parser.add_argument('--criterion1',      type=float, default=0.01, help='(default 0.01) to judge whether NH is H-bonded. bigger than the criterion means H-bonded')
+    parser.add_argument('--criterion2',      type=float, default=0.05, help='(default 0.05) to judge whether NH is H-bonded by side chain aceptor. bigger than the criterion means H-bonded')
+    parser.add_argument('--criterion3',      type=float, default=5.00, help='(default 5.00) to judge whether NH is exposed. bigger than the criterion means buried')
+    parser.add_argument('--criterion4',      type=float, default=0.50, help='(default 0.50) to judge whether NH is exposed to the lipid. bigger than the criterion means exposed to the lipid')
     args = parser.parse_args()
 
     engine = ue.Upside(args.top_h5)
@@ -47,6 +50,7 @@ def main():
     Hbond1 = []
     Hbond2 = []
     Burial = []
+    Surf   = []
     for i in range(N):
         p = engine.energy(traj_bb.xyz[i]*10)
 
@@ -72,6 +76,9 @@ def main():
                 bl3[ib] += weight2[aa] * burial_level2[ib*20+aa]
         Hbond2.append(bl3)
 
+        if args.use_TM_region:
+            surf = engine.get_output("surface")[donor,0]
+            Surf.append(surf)
 
     Hbond1 = np.array(Hbond1)
     Hbond2 = np.array(Hbond2)
@@ -85,9 +92,28 @@ def main():
     BL[Burial>args.criterion3] = 1.
 
     PS = HB1 + HB2 + BL
+
+    if args.use_TM_region:
+        Surf = np.array(Surf)
+        Su = Su*0.
+        Su[Surf>args.criterion4] = 1.
+        PS += Su
+
     PS[PS>1.] = 1.
 
-    np.save(args.output_npy, PS)
+    if '.npy' in args.output_npy:
+        output_base = args.output_npy[:-4]
+    else:
+        output_base = args.output_npy[:]
+
+    np.save(output_base, PS)
+
+    if args.report_raw_data:
+        np.save('{}_Hbond.npy'.format(output_base), Hbond1)
+        np.save('{}_CTerHbond.npy'.format(output_base), Hbond2)
+        np.save('{}_BurialLevel.npy'.format(output_base), Burial)
+        if args.use_TM_region:
+            np.save('{}_ProtLipidSurf.npy'.format(output_base), Surf)
 
     if args.residue:
         np.savetxt(args.residue, donor, fmt='%i')
