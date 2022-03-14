@@ -1476,7 +1476,7 @@ def write_bb_environment(fasta, environment_library, sc_node_name, bb_env_fn, us
 #                               membrane
 #---------------------------------------------------------------------------
 
-def write_surface_coord(fasta_seq, method, thickness, included_list=[], zbuffer=1.0 ):
+def write_surface_coord(fasta_seq, method, thickness, included_list=[], zbuffer=0.0 ):
 
     n_res = len(fasta_seq)
 
@@ -1489,6 +1489,26 @@ def write_surface_coord(fasta_seq, method, thickness, included_list=[], zbuffer=
     create_array(pgrp, 'index_pos1', index_bb)
     create_array(pgrp, 'index_pos2', index_cb)
 
+    # the auxiliary points are used to fill the surface
+    auxiliary_point = [ [ 0.000,  1.000],
+                        [ 0.000,  0.500],
+                        [ 0.866,  0.500],
+                        [ 0.433,  0.250],
+                        [ 0.866, -0.500],
+                        [ 0.433, -0.250],
+                        [ 0.000, -1.000],
+                        [ 0.000, -0.500],
+                        [-0.866, -0.500],
+                        [-0.433, -0.250],
+                        [-0.866,  0.500],
+                        [-0.433,  0.250],
+                        [ 0.433,  0.750],
+                        [ 0.866,  0.000],
+                        [ 0.433, -0.750],
+                        [-0.433, -0.750],
+                        [-0.866,  0.000],
+                        [-0.433,  0.750] ]
+
     # surface node
     grp = t.create_group(t.root.input.potential, 'surface')
     grp._v_attrs.arguments = np.array([b'cat_pos_bb_cb' ])
@@ -1497,12 +1517,13 @@ def write_surface_coord(fasta_seq, method, thickness, included_list=[], zbuffer=
     grp._v_attrs.zbuffer = zbuffer
     grp._v_attrs.exclusion = 0
 
-    grp._v_attrs.len_gridx = 8.0
-    grp._v_attrs.len_gridy = 8.0
+    grp._v_attrs.len_gridx = 3.0
+    grp._v_attrs.len_gridy = 3.0
     grp._v_attrs.n_gridz = 6
-    grp._v_attrs.n_smallgridx = 2
-    grp._v_attrs.n_smallgridy = 2
+    grp._v_attrs.n_smallgridx = 1
+    grp._v_attrs.n_smallgridy = 1
     grp._v_attrs.n_smallgridz = 2
+    grp._v_attrs.atom_radius = 1.6
 
     if method not in [0,1]:
         print('Error')
@@ -1512,7 +1533,8 @@ def write_surface_coord(fasta_seq, method, thickness, included_list=[], zbuffer=
         grp._v_attrs.exclusion = 1
         create_array(grp, 'included_list', np.array(included_list))
 
-    create_array(grp, 'index_cb', index_cb+n_res*3)
+    create_array( grp, 'index_cb',        index_cb+n_res*3 )
+    create_array( grp, 'auxiliary_point', np.array(auxiliary_point) )
 
 def write_membrane_potential(
         fasta_seq, membrane_potential_fpath, membrane_thickness, environment_potential, membrane_exposed_criterion, membrane_exclude_residues, hbond_exclude_residues):
@@ -2038,7 +2060,7 @@ def main():
             help='include heavy atoms on backbone when count the coverage for H/O')
 
     parser.add_argument('--surface', default=False, action='store_true', help='surface')
-    parser.add_argument('--surface-method', default=0, type=int, help='surface finding method. 0: fast method; 1: lipid diffusion algorithm.')
+    parser.add_argument('--surface-method', default=1, type=int, help='surface finding method. 0: fast method; 1: lipid diffusion algorithm.')
     parser.add_argument('--surface-included-residues', default=[], type=parse_segments,
             help='List of residues in the protein.  The residue list should be of a form like ' +
             '--restraint-group 10-13,17,19-21 and that list would specify all the atoms in '+

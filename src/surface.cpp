@@ -53,16 +53,20 @@ void FindMinMax(vector<float>& X, float& minx, float& maxx, bool initialization,
 
 struct Surface : public CoordNode
 {
+    struct auxiliary_point { float xz[2]; };
+
     int method_type; // 0: fast algorithm; 1: diffusion algorithm
 
     int n_residue;  // number of residues
     int n_used_res;
     int n_rotation; // The number of rotations, from 0 to 90 degrees
+    int n_aux;     
     float r_n_rotation; // The number of rotations, from 0 to 90 degrees
     float dangle;   // the rotation angle of every rotation
 
     float half_thickness;
     float zbuffer;
+    float atom_radius;
     float tm_min;
     float tm_max;
 
@@ -93,6 +97,8 @@ struct Surface : public CoordNode
     vector<float> sfx;
     vector<float> sfy;
 
+    vector<auxiliary_point> auxiliary_points;
+
     //read_attribute<int>(grp, ".", "n_dim1")+read_attribute<int>(grp, ".", "n_dim2")),
     Surface(hid_t grp, CoordNode& pos_):
         CoordNode( get_dset_size(1,grp,"index_cb")[0], 3 ),
@@ -101,17 +107,19 @@ struct Surface : public CoordNode
         n_residue( get_dset_size(1,grp,"index_cb")[0] ),
         n_used_res(n_residue),
         n_rotation( read_attribute<int>(grp, ".", "n_rotation") ),
+        n_aux(get_dset_size(2,grp,"auxiliary_point")[0]),
         r_n_rotation( 1./n_rotation ),
         dangle(0.5*M_PI_F*r_n_rotation),
         half_thickness(read_attribute<float>(grp, ".", "half_thickness")),
         zbuffer(read_attribute<float>(grp, ".", "zbuffer")),
+        atom_radius( read_attribute<float>(grp, ".", "atom_radius") ),
         tm_min(-half_thickness-zbuffer),
         tm_max(half_thickness+zbuffer),
 
         NGRIDZ( read_attribute<int>(grp, ".", "n_gridz") ),
         GRID_X(read_attribute<float>(grp, ".", "len_gridx")),
         GRID_Y(read_attribute<float>(grp, ".", "len_gridy")),
-        GRID_Z((tm_max-tm_min)/NGRIDZ),
+        GRID_Z((tm_max-tm_min+2*atom_radius+0.1)/NGRIDZ),
         r_GRID_Z(1.f/GRID_Z),
 
         SNGRID_X( read_attribute<int>(grp, ".", "n_smallgridx") ),
@@ -133,10 +141,14 @@ struct Surface : public CoordNode
         fx(n_residue,  0.),
         fy(n_residue,  0.),
         sfx(n_residue, 0.),
-        sfy(n_residue, 0.)
+        sfy(n_residue, 0.),
+
+        auxiliary_points(n_aux)
+
     {
         check_elem_width_lower_bound(pos, 3);
-        traverse_dset<1,  int>(grp, "index_cb", [&](size_t rt, index_t x){ index_cb[rt] = x;});
+        traverse_dset<1,   int>(grp, "index_cb",        [&](size_t rt, index_t x)      { index_cb[rt] = x;});
+        traverse_dset<2, float>(grp, "auxiliary_point", [&](size_t rt, int d, float x) { auxiliary_points[rt].xz[d] = x;});
 
         // 0, no exclusion; 
         // 1, exclusion by exclusion_list; 
@@ -237,6 +249,11 @@ struct Surface : public CoordNode
             FindMinMax(bby, miny, maxy, false, n_tm_res*3);
             FindMinMax(cby, miny, maxy, true,  n_tm_res);
 
+            minx -= atom_radius;
+            maxx += atom_radius;
+            miny -= atom_radius;
+            maxy += atom_radius;
+
             // 5. Build the voxels
             float lenx     = maxx-minx;
             float leny     = maxy-miny;
@@ -247,7 +264,7 @@ struct Surface : public CoordNode
             float box_lenx = ngrid_x*GRID_X;
             float box_leny = ngrid_y*GRID_Y;
 
-            float3 side    = make_vec3( minx-0.5f*(box_lenx-lenx), miny-0.5f*(box_leny-leny), tm_min );
+            float3 side    = make_vec3( minx-0.5f*(box_lenx-lenx), miny-0.5f*(box_leny-leny), tm_min-atom_radius );
             float3 bscale1 = make_vec3( ngrid_x/box_lenx, ngrid_y/box_leny, r_GRID_Z );
             float3 bscale2 = make_vec3( SNGRID_X*ngrid_x/box_lenx, SNGRID_Y*ngrid_y/box_leny, SNGRID_Z*r_GRID_Z );
             int3d voxels( ngrid_x, int2d(ngrid_y, int1d(ngrid_z, -1)) );
@@ -260,11 +277,47 @@ struct Surface : public CoordNode
                     int iv = nr*4+i;
                     vids[iv] = vec_floor((aa_xyz - side) * bscale1);
                     voxels[vids[iv].x()][vids[iv].y()][vids[iv].z()] = 1;
+
+                    for(int j=0;j<n_aux;j++) {
+                        float dx = 0.0;
+                        float dy = auxiliary_points[j].xz[0]*atom_radius;
+                        float dz = auxiliary_points[j].xz[1]*atom_radius;
+                        float3 aa_aux_xyz = make_vec3(bbx[nr*3+i]+dx, bby[nr*3+i]+dy , bbz[nr*3+i]+dz);
+                        int3 vid_aux = vec_floor((aa_aux_xyz - side) * bscale1);
+                        voxels[vid_aux.x()][vid_aux.y()][vid_aux.z()] = 1;
+                    }
+                    for(int j=0;j<n_aux;j++) {
+                        float dx = auxiliary_points[j].xz[0]*atom_radius;
+                        float dy = 0.0;
+                        float dz = auxiliary_points[j].xz[1]*atom_radius;
+                        float3 aa_aux_xyz = make_vec3(bbx[nr*3+i]+dx, bby[nr*3+i]+dy , bbz[nr*3+i]+dz);
+                        int3 vid_aux = vec_floor((aa_aux_xyz - side) * bscale1);
+                        voxels[vid_aux.x()][vid_aux.y()][vid_aux.z()] = 1;
+                    }
+
                 }
+
                 float3 cb_xyz = make_vec3(cbx[nr], cby[nr], cbz[nr]);
                 int iv = nr*4+3;
                 vids[iv] = vec_floor((cb_xyz - side) * bscale1);
                 voxels[vids[iv].x()][vids[iv].y()][vids[iv].z()] = 1;
+
+                for(int j=0;j<n_aux;j++) {
+                    float dx = 0.0;
+                    float dy = auxiliary_points[j].xz[0]*atom_radius;
+                    float dz = auxiliary_points[j].xz[1]*atom_radius;
+                    float3 cb_aux_xz = make_vec3(cbx[nr]+dx, cby[nr]+dy , cbz[nr]+dz);
+                    int3 cb_vid_aux = vec_floor((cb_aux_xz - side) * bscale1);
+                    voxels[cb_vid_aux.x()][cb_vid_aux.y()][cb_vid_aux.z()] = 1;
+                }
+                for(int j=0;j<n_aux;j++) {
+                    float dx = auxiliary_points[j].xz[0]*atom_radius;
+                    float dy = 0.0;
+                    float dz = auxiliary_points[j].xz[1]*atom_radius;
+                    float3 cb_aux_yz = make_vec3(cbx[nr]+dx, cby[nr]+dy , cbz[nr]+dz);
+                    int3 cb_vid_aux = vec_floor((cb_aux_yz - side) * bscale1);
+                    voxels[cb_vid_aux.x()][cb_vid_aux.y()][cb_vid_aux.z()] = 1;
+                }
             }
 
             // 7. find the surface voxels 
@@ -429,6 +482,7 @@ struct Surface : public CoordNode
                     if (vtype <= 1) continue;
                     float3 aa_xyz = make_vec3(bbx[nr*3+i], bby[nr*3+i], bbz[nr*3+i]);
                     int3 vid2     = vec_floor((aa_xyz - side) * bscale2);
+
                     int kj        = vid2.y()*ngrid_z*SNGRID_Z+vid2.z();
                     int ki        = vid2.x()*ngrid_z*SNGRID_Z+vid2.z();
 
@@ -436,12 +490,72 @@ struct Surface : public CoordNode
                     int v4 = (vtype%10000)/1000;
                     int v3 = ((vtype%10000)%1000)/100;
                     int v2 = (((vtype%10000)%1000)%100)/10;
+
                     if (v2 == 1 and vid2.x() < xmin_surf_fine[kj]) xmin_surf_fine[kj] = vid2.x();
                     if (v3 == 1 and vid2.x() > xmax_surf_fine[kj]) xmax_surf_fine[kj] = vid2.x();
                     if (v4 == 1 and vid2.y() < ymin_surf_fine[ki]) ymin_surf_fine[ki] = vid2.y();
                     if (v5 == 1 and vid2.y() > ymax_surf_fine[ki]) ymax_surf_fine[ki] = vid2.y();
+
+                    for(int j=0;j<n_aux;j++) {
+                        float dx = 0.0;
+                        float dy = auxiliary_points[j].xz[0]*atom_radius;
+                        float dz = auxiliary_points[j].xz[1]*atom_radius;
+                        float3 aa_aux_xyz = make_vec3(bbx[nr*3+i]+dx, bby[nr*3+i]+dy , bbz[nr*3+i]+dz);
+                        int3 vid_aux = vec_floor((aa_aux_xyz - side) * bscale2);
+                        int kj = vid_aux.y()*ngrid_z*SNGRID_Z+vid2.z();
+                        if (v2 == 1 and vid_aux.x() < xmin_surf_fine[kj]) xmin_surf_fine[kj] = vid_aux.x();
+                        if (v3 == 1 and vid_aux.x() > xmax_surf_fine[kj]) xmax_surf_fine[kj] = vid_aux.x();
+                    }
+
+                    for(int j=0;j<n_aux;j++) {
+                        float dx = auxiliary_points[j].xz[0]*atom_radius;
+                        float dy = 0.0;
+                        float dz = auxiliary_points[j].xz[1]*atom_radius;
+                        float3 aa_aux_xyz = make_vec3(bbx[nr*3+i]+dx, bby[nr*3+i]+dy , bbz[nr*3+i]+dz);
+                        int3 vid_aux = vec_floor((aa_aux_xyz - side) * bscale2);
+                        int ki = vid_aux.x()*ngrid_z*SNGRID_Z+vid2.z();
+                        if (v4 == 1 and vid_aux.y() < ymin_surf_fine[ki]) ymin_surf_fine[ki] = vid_aux.y();
+                        if (v5 == 1 and vid_aux.y() > ymax_surf_fine[ki]) ymax_surf_fine[ki] = vid_aux.y();
+                    }
                 }
             }
+
+            // search the interface CB aux atoms
+            for(int nr: range(n_tm_res)) {
+                int iv        = nr*4+3;
+                int vtype     = voxels[vids[iv].x()][vids[iv].y()][vids[iv].z()];
+
+                if (vtype <= 1) continue;
+                float3 cb_xyz = make_vec3(cbx[nr], cby[nr], cbz[nr]);
+                int3 vid2     = vec_floor((cb_xyz - side) * bscale2);
+                int v5        = vtype/10000;
+                int v4        = (vtype%10000)/1000;
+                int v3        = ((vtype%10000)%1000)/100;
+                int v2        = (((vtype%10000)%1000)%100)/10;
+
+                for(int j=0;j<n_aux;j++) {
+                    float dx = 0.0;
+                    float dy = auxiliary_points[j].xz[0]*atom_radius;
+                    float dz = auxiliary_points[j].xz[1]*atom_radius;
+                    float3 aa_aux_xyz = make_vec3(cbx[nr]+dx, cby[nr]+dy , cbz[nr]+dz);
+                    int3 vid_aux = vec_floor((aa_aux_xyz - side) * bscale2);
+                    int kj = vid_aux.y()*ngrid_z*SNGRID_Z+vid2.z();
+                    if (v2 == 1 and vid_aux.x() < xmin_surf_fine[kj]) xmin_surf_fine[kj] = vid_aux.x();
+                    if (v3 == 1 and vid_aux.x() > xmax_surf_fine[kj]) xmax_surf_fine[kj] = vid_aux.x();
+                }
+
+                for(int j=0;j<n_aux;j++) {
+                    float dx = auxiliary_points[j].xz[0]*atom_radius;
+                    float dy = 0.0;
+                    float dz = auxiliary_points[j].xz[1]*atom_radius;
+                    float3 aa_aux_xyz = make_vec3(cbx[nr]+dx, cby[nr]+dy , cbz[nr]+dz);
+                    int3 vid_aux = vec_floor((aa_aux_xyz - side) * bscale2);
+                    int ki = vid_aux.x()*ngrid_z*SNGRID_Z+vid2.z();
+                    if (v4 == 1 and vid_aux.y() < ymin_surf_fine[ki]) ymin_surf_fine[ki] = vid_aux.y();
+                    if (v5 == 1 and vid_aux.y() > ymax_surf_fine[ki]) ymax_surf_fine[ki] = vid_aux.y();
+                }
+            }
+
             // search the interface CB atoms
             int1d xmin_surf_id(SNGRID_Y*SNGRID_Z*ngrid_yz, -1);
             int1d xmax_surf_id(SNGRID_Y*SNGRID_Z*ngrid_yz, -1);
