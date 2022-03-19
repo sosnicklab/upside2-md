@@ -519,9 +519,9 @@ struct MembraneHBPotential : public PotentialNode
             float dfs2 = ll*f2l.y()*zscale + dll*f2l.x() - lr*f2r.y()*zscale + dlr*f2r.x();
 
             float sqr_hb_prob   = 1.f - sqr_uhb_prob;
-            potential          += sqr_hb_prob *  fs2;
-            hb_sens(2, ri)     += sqr_hb_prob * dfs2;
-            hb_sens(6, ri)     += 2.f*hb_prob *  fs2;
+            potential          += sqr_hb_prob  *  fs2;
+            hb_sens(2, ri)     += sqr_hb_prob  * dfs2;
+            hb_sens(6, ri)     += 2.f*uhb_prob *  fs2;
         }
     }
 
@@ -925,9 +925,9 @@ struct MembraneSurfHBPotential : public PotentialNode
         VecArray env_cov      = environment_coverage.output;
         VecArray env_cov_sens = environment_coverage.sens;
 
-	    float pot     = 0.f;
-	    float comb_f  = 0.f;
-	    float comb_df = 0.f;
+	float pot     = 0.f;
+	float comb_f  = 0.f;
+	float comb_df = 0.f;
 
         for(int nv=0; nv<n_elem; ++nv) {
 
@@ -945,13 +945,13 @@ struct MembraneSurfHBPotential : public PotentialNode
             auto sig_bl = compact_sigmoid(bl-2.5, 2.0);
 
             float surfv = surf(0, rr);
-	        if (hb_z > half_thickness or hb_z < -half_thickness)
-                surfv = 1.0;
+	    if (hb_z > half_thickness or hb_z < -half_thickness)
+            surfv = 1.0;
 
-	        float outer   = surfv*sig_bl.x();
-	        float d_outer = surfv*sig_bl.y();
-	        float inner   = 1.f - outer;
-	        float d_inner = -d_outer;
+	    float outer   = surfv*sig_bl.x();
+	    float d_outer = surfv*sig_bl.y();
+	    float inner   = 1.f - outer;
+	    float d_inner = -d_outer;
 
             float uhb_prob      = 1.f-hb_prob;
             float sqr_uhb_prob  = sqr(uhb_prob);
@@ -966,49 +966,49 @@ struct MembraneSurfHBPotential : public PotentialNode
             auto  coord_left  = ( hb_z-zstart)*zscale;
             auto  coord_right = (-hb_z-zstart)*zscale;
 
-	        float dZ      = 0.f;
-	        float dHB     = 0.f;
-	        float dBL     = 0.f;
+	    float dZ      = 0.f;
+	    float dHB     = 0.f;
+	    float dBL     = 0.f;
 
-	        if (outer > 0.f) {
+	    if (outer > 0.f) {
                 auto uhb_l = clamped_deBoor_value_and_deriv(coeff.data() + (rt*2)*n_node, coord_left,  n_node);
                 auto uhb_r = clamped_deBoor_value_and_deriv(coeff.data() + (rt*2)*n_node, coord_right, n_node);
-	            comb_f     = ll*uhb_l.x() + lr*uhb_r.x();
-	            comb_df    = ll*uhb_l.y()*zscale + dll*uhb_l.x() - lr*uhb_r.y()*zscale + dlr*uhb_r.x();
+	        comb_f     = ll*uhb_l.x() + lr*uhb_r.x();
+	        comb_df    = ll*uhb_l.y()*zscale + dll*uhb_l.x() - lr*uhb_r.y()*zscale + dlr*uhb_r.x();
                 pot       += sqr_uhb_prob *   outer * comb_f;
-	            dHB       -= 2.f*uhb_prob *   outer * comb_f;
-	            dBL       += sqr_uhb_prob * d_outer * comb_f;
-	            dZ        += sqr_uhb_prob *   outer * comb_df;
+	        dHB       -= 2.f*uhb_prob *   outer * comb_f;
+	        dBL       += sqr_uhb_prob * d_outer * comb_f;
+	        dZ        += sqr_uhb_prob *   outer * comb_df;
 
                 auto hb_l = clamped_deBoor_value_and_deriv(coeff.data() + (rt*2+1)*n_node, coord_left,  n_node);
                 auto hb_r = clamped_deBoor_value_and_deriv(coeff.data() + (rt*2+1)*n_node, coord_right, n_node);
-	            comb_f    = ll*hb_l.x() + lr*hb_r.x();
-	            comb_df   = ll*hb_l.y()*zscale + dll*hb_l.x() - lr*hb_r.y()*zscale + dlr*hb_r.x();
+	        comb_f    = ll*hb_l.x() + lr*hb_r.x();
+	        comb_df   = ll*hb_l.y()*zscale + dll*hb_l.x() - lr*hb_r.y()*zscale + dlr*hb_r.x();
                 pot      +=  sqr_hb_prob *   outer * comb_f;
-	            dHB      += 2.f*uhb_prob *   outer * comb_f;
-	            dBL      +=  sqr_hb_prob * d_outer * comb_f;
-	            dZ       +=  sqr_hb_prob *   outer * comb_df;
-	        }
+	        dHB      += 2.f*uhb_prob *   outer * comb_f;
+	        dBL      +=  sqr_hb_prob * d_outer * comb_f;
+	        dZ       +=  sqr_hb_prob *   outer * comb_df;
+	    }
 
-	        if (inner > 0.f) {
+	    if (inner > 0.f) {
                 auto uhb_l_i = clamped_deBoor_value_and_deriv(coeff_inner.data() + (rt*2)*n_node, coord_left,  n_node);
                 auto uhb_r_i = clamped_deBoor_value_and_deriv(coeff_inner.data() + (rt*2)*n_node, coord_right, n_node);
-		        comb_f       = ll*uhb_l_i.x() + lr*uhb_r_i.x();
-		        comb_df      = (ll*uhb_l_i.y() - lr*uhb_r_i.y())*zscale + dll*uhb_l_i.x() + dlr*uhb_r_i.x();
+		comb_f       = ll*uhb_l_i.x() + lr*uhb_r_i.x();
+		comb_df      = (ll*uhb_l_i.y() - lr*uhb_r_i.y())*zscale + dll*uhb_l_i.x() + dlr*uhb_r_i.x();
                 pot         += sqr_uhb_prob *   inner * comb_f;
-	            dHB         -= 2.f*uhb_prob *   inner * comb_f;
-	            dBL         += sqr_uhb_prob * d_inner * comb_f;
-	            dZ          += sqr_uhb_prob *   inner * comb_df;
+	        dHB         -= 2.f*uhb_prob *   inner * comb_f;
+	        dBL         += sqr_uhb_prob * d_inner * comb_f;
+	        dZ          += sqr_uhb_prob *   inner * comb_df;
 
                 auto hb_l_i = clamped_deBoor_value_and_deriv(coeff_inner.data() + (rt*2+1)*n_node, coord_left,  n_node);
                 auto hb_r_i = clamped_deBoor_value_and_deriv(coeff_inner.data() + (rt*2+1)*n_node, coord_right, n_node);
-	            comb_f      = ll*hb_l_i.x() + lr*hb_r_i.x();
-	            comb_df     = ll*hb_l_i.y()*zscale + dll*hb_l_i.x() - lr*hb_r_i.y()*zscale + dlr*hb_r_i.x();
+	        comb_f      = ll*hb_l_i.x() + lr*hb_r_i.x();
+	        comb_df     = ll*hb_l_i.y()*zscale + dll*hb_l_i.x() - lr*hb_r_i.y()*zscale + dlr*hb_r_i.x();
                 pot        +=  sqr_hb_prob *   inner * comb_f;
-	            dHB        += 2.f*uhb_prob *   inner * comb_f;
-	            dBL        +=  sqr_hb_prob * d_inner * comb_f;
-	            dZ         +=  sqr_hb_prob *   inner * comb_df;
-	        }
+	        dHB        += 2.f*uhb_prob *   inner * comb_f;
+	        dBL        +=  sqr_hb_prob * d_inner * comb_f;
+	        dZ         +=  sqr_hb_prob *   inner * comb_df;
+	    }
 
             hb_sens(2, ri) += dZ;
             hb_sens(6, ri) += dHB;
@@ -1160,8 +1160,7 @@ struct MembraneLateralPotential : public PotentialNode
             int nr = cb_index[i];
 
             float surfv = surf(0, nr);
-	        if (cb_pos(2, nr) > half_thickness or cb_pos(2, nr) < -half_thickness)
-                surfv = 1.0;
+	    if (cb_pos(2, nr) > half_thickness or cb_pos(2, nr) < -half_thickness) surfv = 1.0;
 
             int rtype = cb_restype[nr];
             auto cover_sig = compact_sigmoid(weighted_bl[nr]-cov_midpoint[rtype], cov_sharpness[rtype]);
