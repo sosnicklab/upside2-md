@@ -2150,6 +2150,7 @@ def main():
     # the chains:
     #---------------------------------------------
 
+    n_chains = 1
     if args.chain_break_from_file:
         try:
             with open(args.chain_break_from_file) as infile:
@@ -2193,8 +2194,8 @@ def main():
             print ("hbond_exclude_residues")
             print (args.hbond_exclude_residues)
 
-    chain_starts = np.array(chain_first_residue)*3
-    chain_starts = np.append([0], chain_starts)
+        chain_starts = np.array(chain_first_residue)*3
+        chain_starts = np.append([0], chain_starts)
 
     if args.make_unbound:
         if n_chains < 2 or n_chains > 8:
