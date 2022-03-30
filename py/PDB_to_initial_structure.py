@@ -110,7 +110,7 @@ def main():
             help='Comma-separated list of chains to parse (e.g. --chains=A,C,E). Default is all chains.')
     parser.add_argument('--allow-unexpected-chain-breaks', default=False, action='store_true', 
             help='Do not fail on unexpected chain breaks (dangerous)')
-    parser.add_argument('--record-chain-breaks', action='store_true', help='Record index of chain first residues to help automate generation of system files for multiple chains')
+    parser.add_argument('--record-chain-breaks', action='store_true', help='Record index of chain first residues to help automate generation of system files for multiple chains.')
     parser.add_argument('--rl-chains', default='', help='Comma-separated list of number of receptor and ligand chains. Default is no info.')
     parser.add_argument('--disable-recentering', action='store_true',
             help='If turned on, disable recentering of the structure.')
@@ -181,7 +181,8 @@ def main():
 
     if unexpected_chain_breaks and not args.allow_unexpected_chain_breaks:
         print( 'ERROR: see above for unexpected chain breaks, probably missing residues in crystal '+
-                'structure (--allow-unexpected-chain-breaks to suppress this error at your own risk)', file=sys.stderr)
+                'structure or using a multi-chain PDB w/o proper chain labels '+
+                '(--allow-unexpected-chain-breaks to suppress this error at your own risk)', file=sys.stderr)
         sys.exit(1)
 
     fasta_seq = ''.join(one_letter_aa[s] for s in sequence)
