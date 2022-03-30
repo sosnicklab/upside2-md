@@ -84,10 +84,12 @@ def print_augmented_vtf(fname, sequence, traj, chain_first_residue):
             vtf.write('bond %i:%i\n' % (atom_id+0,atom_id+1))  # N->CA bond
             vtf.write('bond %i:%i\n' % (atom_id+1,atom_id+2))  # CA->C bond
 
-            if nr==0 or sequence[nr]=='PRO':
+            if nr==0 or (sequence[nr]=='PRO' and nr!=n_res-1):
                 vtf.write('atom %i name O  %s\n' % (atom_id+3, res))
                 vtf.write('bond %i:%i\n' % (atom_id+2, atom_id+3))  # C->O bond
                 consumed = 4
+            elif nr==n_res-1 and sequence[nr]=='PRO':
+                consumed = 3
             elif nr==n_res-1:
                 vtf.write('atom %i name H  %s\n' % (atom_id+3, res))
                 vtf.write('bond %i:%i\n' % (atom_id+0, atom_id+3))  # N->H bond
@@ -111,7 +113,8 @@ def print_augmented_vtf(fname, sequence, traj, chain_first_residue):
                 vtf.write("%.3f %.3f %.3f\n" % (C [f,nr,0,ns], C [f,nr,1,ns], C [f,nr,2,ns]))
                 if nr>0 and sequence[nr]!='PRO': 
                     vtf.write("%.3f %.3f %.3f\n" % (H[f,nr-1,0,ns], H[f,nr-1,1,ns], H[f,nr-1,2,ns]))
-                if nr<n_res-1: vtf.write("%.3f %.3f %.3f\n" % (O[f,nr,0,ns], O[f,nr,1,ns], O[f,nr,2,ns]))
+                if nr<n_res-1: 
+                    vtf.write("%.3f %.3f %.3f\n" % (O[f,nr,0,ns], O[f,nr,1,ns], O[f,nr,2,ns]))
 
 def main():
     import argparse
