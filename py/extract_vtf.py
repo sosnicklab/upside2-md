@@ -1,10 +1,19 @@
 #!/usr/bin/env python
-import tables
 import sys
+from string import ascii_lowercase
+import tables
 import numpy as np
 
 H_bond=0.88
 O_bond=1.24
+
+# Chain labels
+chain_labels = []
+for c in ascii_lowercase:
+    chain_labels.append(c.upper())
+for c1 in ascii_lowercase:
+    for c2 in ascii_lowercase:
+        chain_labels.append(c1.upper() + c2.upper())
 
 def vmag(x):# special version for systems
     assert x.shape[-2] == 3
@@ -55,7 +64,12 @@ def print_augmented_vtf(fname, sequence, traj, chain_first_residue):
     prev_C = None
     for ns in range(n_system):
         for nr in range(n_res):
-            res = 'resid %i resname %s segid s%i' % (nr, sequence[nr], ns)
+            if nr == 0:
+                ch_idx = 0
+            if chain_first_residue is not None:
+                if nr in chain_first_residue:
+                    ch_idx += 1
+            res = 'resid %i resname %s segid s%i chain %s' % (nr, sequence[nr], ns, chain_labels[ch_idx])
 
             vtf.write('atom %i name N  %s\n' % (atom_id+0, res))
             vtf.write('atom %i name CA %s\n' % (atom_id+1, res))
