@@ -168,13 +168,13 @@ def traj_from_upside2(seq, time, pos, chain_first_residue=[0]):
 
 
 @FormatRegistry.register_loader('.up')
-def load_upside_traj(fname, top='', stride=1, from_init=False, fasta_fn='', chain_breaks_fn='', target_pos_only=False, add_atoms=True):
+def load_upside_traj(fname, top='', stride=1, external_pos=[], from_init=False, fasta_fn='', chain_breaks_fn='', target_pos_only=False, add_atoms=True):
     import tables as tb
 
     if from_init and target_pos_only:
         raise ValueError("Cannot have both from_init and target_pos_only.")
     if from_init and not fasta_fn:
-        raise ValueError("from_init requires fasta_fn set.")
+        raise ValueError("from_init requires fasta_fn.")
 
     last_time = 0.
     start_frame = 0
@@ -221,7 +221,11 @@ def load_upside_traj(fname, top='', stride=1, from_init=False, fasta_fn='', chai
             if 'chain_break' in ref.root.input:
                 chain_first_residue = np.append(chain_first_residue, ref.root.input.chain_break.chain_first_residue[:])
      
-    if from_init or target_pos_only:
+    if len(external_pos) > 0:
+        assert external_pos.shape[1:] == xyz[0].shape[1:]
+        xyz = external_pos[::stride]
+        time = [np.arange(len(xyz))]
+    elif from_init or target_pos_only:
         xyz = np.array(xyz)
         time.append(np.zeros(1,dtype='f4'))
     else:
