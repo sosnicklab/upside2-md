@@ -163,8 +163,8 @@ struct JumpSampler : public MonteCarloSampler {
     };
 
     int n_jump_chains;
-
     std::vector<JumpChain> jump_chains;
+    float prob_mod;
 
     JumpSampler(const std::string& grp_name, hid_t grp, H5Logger& logger); // Constructor declaration
 
@@ -175,8 +175,8 @@ struct JumpSampler : public MonteCarloSampler {
 JumpSampler::JumpSampler(const std::string& name, hid_t grp, H5Logger& logger): // Constructor definition
     MonteCarloSampler(name, JUMP_MOVE_RANDOM_STREAM, logger),
     n_jump_chains(h5::get_dset_size(2, grp, "atom_range")[0]),
-
-    jump_chains(n_jump_chains)
+    jump_chains(n_jump_chains),
+    prob_mod(h5::read_attribute<float>(grp, ".", "prob_mod", 0.f))
 {
     using namespace h5;
     check_size(grp, "atom_range",  n_jump_chains, 2);
@@ -247,7 +247,7 @@ void JumpSampler::propose_random_move(float* delta_lprob,
         }       
     }
     
-    *delta_lprob = 0.f;
+    *delta_lprob = prob_mod; //0.f;
 }
 
 // ===[Monte Carlo Sampler Definitions]===
