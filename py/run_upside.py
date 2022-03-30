@@ -204,7 +204,6 @@ def advanced_config(config,
                   fixed_spring='',
                   pair_spring='',
                   nail='',
-                  offset_spring='',
                   contact_energies='',
                   cooperation_contacts='',
                   plumed='',
@@ -232,8 +231,6 @@ def advanced_config(config,
         args.append('--restraint-group=%s'%rg)
     if restraint_spring_constant is not None:
         args.append('--restraint-spring-constant=%f'%restraint_spring_constant)
-    if offset_spring:
-        args.append('--offset-spring=%s'%offset_spring)
     if flat_bottom:
         args.append('--flat-bottom=%s'%flat_bottom)
 
