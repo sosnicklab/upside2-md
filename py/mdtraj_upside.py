@@ -334,9 +334,10 @@ def kmeans_cluster(pc, rmsd, n_clusters):
 
 def extract_bb_pos_angstroms(traj):
     # extract N,CA,C positions for measurements
-    bb_atoms =  [(a.serial,a.index) for a in traj.topology.atoms if a.name in ('N','CA','C')]
+    bb_sele = traj.top.select("backbone")
+    bb_atoms =  [(a.serial,a.index) for a in traj.atom_slice(bb_sele).top.atoms if a.name in ('N','CA','C')]
     # Must convert distances to angstroms
-    pos = 10.*traj.xyz[:,np.array([index for serial,index in sorted(bb_atoms)])]
+    pos = 10.*traj.atom_slice(bb_sele).xyz[:,np.array([index for serial,index in sorted(bb_atoms)])]
     assert pos.shape[1] == traj.n_residues*3
     return pos
 
