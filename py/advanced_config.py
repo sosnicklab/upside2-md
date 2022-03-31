@@ -116,6 +116,42 @@ def add_to_const3D2(new_id, input_name):
 def append_const3D_to_pos():
     ConcatCoord(t, 'pos_const', ['pos', 'Const3D'])
 
+def write_affine_alignment(n_res):
+    grp = t.create_group(potential, 'affine_alignment')
+    grp._v_attrs.arguments = np.array([b'pos'])
+
+    ref_geom = np.zeros((n_res,3,3))
+    ref_geom[:,0] = (-1.19280531, -0.83127186, 0.)  # N
+    ref_geom[:,1] = ( 0.,          0.,         0.)  # CA
+    ref_geom[:,2] = ( 1.25222632, -0.87268266, 0.)  # C
+    ref_geom -= ref_geom.mean(axis=1)[:,None]
+
+    N  = np.arange(n_res)*3 + 0
+    CA = np.arange(n_res)*3 + 1
+    C  = np.arange(n_res)*3 + 2
+
+    atoms = np.column_stack((N,CA,C))
+    create_array(grp, 'atoms', obj=atoms)
+    create_array(grp, 'ref_geom', obj=ref_geom)
+
+def write_CB(fasta):
+    # Place CB
+    pgrp = t.create_group(potential, 'placement_fixed_point_only_CB')
+    pgrp._v_attrs.arguments = np.array([b'affine_alignment'])
+    ref_pos = np.zeros((4,3))
+    ref_pos[0] = (-1.19280531, -0.83127186,  0.)        # N
+    ref_pos[1] = ( 0.,          0.,          0.)        # CA
+    ref_pos[2] = ( 1.25222632, -0.87268266,  0.)        # C
+    ref_pos[3] = ( 0.,          0.94375626,  1.2068012) # CB
+    ref_pos -= ref_pos[:3].mean(axis=0,keepdims=1)
+
+    placement_data = np.zeros((1,3))
+    placement_data[0,0:3] = ref_pos[3]
+
+    create_array(pgrp, 'affine_residue',  np.arange(len(fasta)))
+    create_array(pgrp, 'layer_index',     np.zeros(len(fasta),dtype='i'))
+    create_array(pgrp, 'placement_data',  placement_data)
+
 #=========================================================================
 #                             wall potential 
 #=========================================================================
@@ -1417,8 +1453,16 @@ def main():
     if use_append_const3D_to_pos:
         append_const3D_to_pos()
 
-    t.close()
+    if require_backbone_point:
+        require_affine = True
+        if not 'placement_fixed_point_only_CB' in t.root.input.potential:
+            write_CB(fasta)
 
+    if require_affine:
+        if not 'affine_alignment' in t.root.input.potential:
+            write_affine_alignment(n_res)
+
+    t.close()
 
 if __name__ == '__main__':
     main()
