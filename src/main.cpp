@@ -9,12 +9,14 @@
 #include <algorithm>
 #include <set>
 #include "random.h"
+#include <random>
 #include "state_logger.h"
 #include <csignal>
 #include <map>
 #include <sstream>
 #include <fstream>
 #include <iostream>
+#include <cstdlib>
 
 #if defined(_OPENMP)
 #include <omp.h>
@@ -314,6 +316,97 @@ struct ReplicaExchange {
     }
 };
 
+struct CurvatureChange {
+
+    uniform_real_distribution<float> distribution;
+
+    CurvatureChange(vector<System>& systems ): distribution(-1,1) {
+
+
+        int n_system = systems.size();
+
+        // enable logging of replica events
+        for(int ns: range(n_system)) {
+            auto logger = systems[ns].logger;
+            if(!logger) continue;
+            if(static_cast<int>(logger->level) < static_cast<int>(LOG_BASIC)) continue;
+
+            CoordNode* ccenter;
+            float ccenter_z = 0.0;
+            for(auto &n:  systems[ns].engine.nodes) {
+                if(is_prefix(n.name, "Const3D_curvature_center")) {
+                    ccenter = dynamic_cast<CoordNode*>(n.computation.get());
+                    ccenter_z = ccenter->output(2,0);
+                    break;
+                }
+            }
+
+            logger->add_logger<float>("center_of_curvature", {1}, [ccenter_z](float* buffer) {buffer[0] = ccenter_z; });
+        }
+    }
+
+    void attempt_change(uint32_t seed, uint64_t round, System& sys, float relative_change  ) {
+
+        float beta = 1.f/sys.temperature;
+
+        RandomGenerator random(seed, REPLICA_EXCHANGE_RANDOM_STREAM, 0u, round);
+        mt19937 rng;
+        rng.seed(seed);
+
+        CoordNode* ccenter;
+        for(auto &n:  sys.engine.nodes) {
+            if(is_prefix(n.name, "Const3D_curvature_center")) {
+                ccenter = dynamic_cast<CoordNode*>(n.computation.get());
+                break;
+            }
+        }
+
+        float memb_potential = 0.f;
+        for(auto &n:  sys.engine.nodes) {
+            if(is_prefix(n.name, "cb_membrane_potential") or is_prefix(n.name, "hb_membrane_potential")) {
+                n.computation->compute_value(PotentialAndDerivMode);
+                auto pot_node = static_cast<PotentialNode*>(n.computation.get());
+                memb_potential += pot_node->potential;
+            }
+            else if(is_prefix(n.name, "cb_surf_membrane_potential") or is_prefix(n.name, "hb_surf_membrane_potential")) {
+                n.computation->compute_value(PotentialAndDerivMode);
+                auto pot_node = static_cast<PotentialNode*>(n.computation.get());
+                memb_potential += pot_node->potential;
+            }
+        }
+
+        float rand_value = ((float) rand()/RAND_MAX - 0.5)*2.;
+        float centerz = ccenter->output(2,0);
+        float dcenterz = relative_change*centerz*rand_value;
+        ccenter->output(2,0) += dcenterz;
+
+        float new_memb_potential = 0.f;
+        for(auto &n:  sys.engine.nodes) {
+            if(is_prefix(n.name, "cb_membrane_potential") or is_prefix(n.name, "hb_membrane_potential")) {
+                n.computation->compute_value(PotentialAndDerivMode);
+                auto pot_node = static_cast<PotentialNode*>(n.computation.get());
+                new_memb_potential += pot_node->potential;
+            }
+            else if(is_prefix(n.name, "cb_surf_membrane_potential") or is_prefix(n.name, "hb_surf_membrane_potential")) {
+                n.computation->compute_value(PotentialAndDerivMode);
+                auto pot_node = static_cast<PotentialNode*>(n.computation.get());
+                new_memb_potential += pot_node->potential;
+            }
+        }
+
+        cout << dcenterz << " " << rand_value << " " << relative_change << " " << centerz << " || " << new_memb_potential << " " << memb_potential << endl;
+
+        float old_lboltz = -beta*memb_potential;
+        float new_lboltz = -beta*new_memb_potential;
+
+        float lboltz_diff = new_lboltz - old_lboltz;
+        if(lboltz_diff < 0.f && expf(lboltz_diff) < random.uniform_open_closed().x()) {
+            ccenter->output(2,0) -= dcenterz;
+        }
+
+    }
+};
+
 
 vector<float> potential_deriv_agreement(DerivEngine& engine) {
     vector<float> relative_error;
@@ -406,6 +499,14 @@ try {
             false, -1., "float", cmd);
     ValueArg<double> thermostat_timescale_arg("", "thermostat-timescale", "timescale for the thermostat", 
             false, 5., "float", cmd);
+
+    ValueArg<double> curvature_changer_interval_arg("", "curvature-changer-interval", 
+            "simulation time between applications of curvature change (0 means no curvature change, default 0.)", 
+            false, 0., "float", cmd);
+
+    ValueArg<double> relative_curvature_radius_change_arg("", "relative-curvature-radius-change", 
+            "Maximum amount of curvature radius adjustment (default 0.05)", 
+            false, 0.05, "float", cmd);
 
     ValueArg<string> integrator_arg("", "integrator", 
             "Use this option to control which Integrator are used.  Available levels are v(verlet) or mv(multi-step verlet). "
@@ -575,6 +676,11 @@ try {
             replica_interval = max(1.,replica_interval_arg.getValue()/(inner_step*dt));
 
         int exchange_criterion = exchange_criterion_arg.getValue();
+
+        int curvature_changer_interval = 0;
+        if(curvature_changer_interval_arg.getValue())
+            curvature_changer_interval = max(1.,curvature_changer_interval_arg.getValue()/(inner_step*dt));
+        float relative_curvature_radius_change = relative_curvature_radius_change_arg.getValue();
 
         // system 0 is the minimum temperature
         int n_system = systems.size();
@@ -758,6 +864,12 @@ try {
                     throw string("Replica exchange requires all systems have the same number of atoms");
         }
 
+        unique_ptr<CurvatureChange> curvature_changer;
+        if(curvature_changer_interval) {
+            if(verbose) printf("initializing curvature changer\n");
+            curvature_changer.reset(new CurvatureChange(systems));
+        }
+
         if(verbose) printf("\n");
         for(int ns: range(systems.size())) {
             if(verbose) printf("%i %.2f\n", ns, systems[ns].temperature);
@@ -773,6 +885,7 @@ try {
             if(verbose) printf(" %.2f", sys.engine.potential);
         }
         if(verbose) printf("\n");
+
 
         // Install signal handlers to dump state only when the simulation has really started.  This is intended to prevent
         // loss of buffered data and to present final statistics.  It is especially useful when being killed due to running 
@@ -854,6 +967,9 @@ try {
                     else
                         sys.engine.integration_cycle(sys.mom, dt);
 
+                    if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
+                        curvature_changer->attempt_change(base_random_seed, sys.round_num, sys, relative_curvature_radius_change);
+
                     do_break = nr>last_start && replica_interval && !((nr+1)%replica_interval);
                 }
             }
@@ -863,7 +979,11 @@ try {
 
             if(replica_interval && !(systems[0].round_num % replica_interval))
                 replex->attempt_swaps(base_random_seed, systems[0].round_num, systems, exchange_criterion);
+
         }
+
+
+
         if(received_signal!=NO_SIGNAL) {fprintf(stderr, "Received early termination signal\n");}
         if(passed_time_lim) {fprintf(stderr, "Passed time limit\n");}
         for(auto& sys: systems) sys.logger = shared_ptr<H5Logger>(); // release shared_ptr, which also flushes data during destructor
