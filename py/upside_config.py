@@ -3,6 +3,7 @@ import numpy as np
 import tables as tb
 import sys,os
 import _pickle as cPickle
+from upside_nodes import *
 
 #---------------------------------------------------------------------------
 #                     Predefined variables, types
@@ -1659,7 +1660,7 @@ def write_membrane_potential(
     grp.uhb_energy._v_attrs.z_min = z_[ 0]
     grp.uhb_energy._v_attrs.z_max = z_[-1]
 
-def write_membrane_potential3(fasta_seq, membrane_potential_fpath, membrane_thickness, membrane_exclude_residues, hbond_exclude_residues):
+def write_membrane_potential3(fasta_seq, membrane_potential_fpath, membrane_thickness, membrane_exclude_residues, hbond_exclude_residues, use_curvature=False, curvature_radius=200, curvature_sign=1):
 
     half_thickness = membrane_thickness * 0.5
 
@@ -1686,10 +1687,11 @@ def write_membrane_potential3(fasta_seq, membrane_potential_fpath, membrane_thic
         cb_start = cb_z_min - half_thickness
         hb_start = hb_z_min - half_thickness
 
+    curvature_center = Const3DCoord1(t, 'curvature_center', 'pos', 0, 1, 2, [[0., 0., curvature_radius*-1*curvature_sign ]])
 
     # memb potential for CB atoms
     grp = t.create_group(t.root.input.potential, 'cb_membrane_potential')
-    grp._v_attrs.arguments            = np.array([b'placement_fixed_point_only_CB', b'environment_coverage_sc'])
+    grp._v_attrs.arguments            = np.array([b'placement_fixed_point_only_CB', b'environment_coverage_sc', bstring(curvature_center)])
     grp._v_attrs.integrator_level     = 0
     grp._v_attrs.z_start              = cb_start
     grp._v_attrs.z_scale              = 1./cb_dz
@@ -1697,6 +1699,12 @@ def write_membrane_potential3(fasta_seq, membrane_potential_fpath, membrane_thic
     grp._v_attrs.left_right_node      = 0.0
     grp._v_attrs.left_right_sharpness = 1./cb_dz
     grp._v_attrs.half_thickness       = half_thickness
+
+    grp._v_attrs.use_curvature        = int(use_curvature)
+    grp._v_attrs.curvature_radius     = curvature_radius
+    grp._v_attrs.curvature_sign       = curvature_sign
+
+    print(grp._v_attrs.use_curvature, grp._v_attrs.curvature_radius, grp._v_attrs.curvature_sign)
 
     n_res = len(fasta_seq)
     used_res = []
@@ -1725,13 +1733,18 @@ def write_membrane_potential3(fasta_seq, membrane_potential_fpath, membrane_thic
 
     # memb potential for HB atoms
     grp = t.create_group(t.root.input.potential, 'hb_membrane_potential')
-    grp._v_attrs.arguments            = np.array([b'protein_hbond'])
+    grp._v_attrs.arguments            = np.array([b'protein_hbond', bstring(curvature_center)])
     grp._v_attrs.integrator_level     = 0
     grp._v_attrs.z_start              = hb_start
     grp._v_attrs.z_scale              = 1./hb_dz
     grp._v_attrs.left_right_node      = 0.0
     grp._v_attrs.left_right_sharpness = 1./hb_dz
     grp._v_attrs.half_thickness       = half_thickness
+
+    grp._v_attrs.use_curvature        = int(use_curvature)
+    grp._v_attrs.curvature_radius     = curvature_radius
+    grp._v_attrs.curvature_sign       = curvature_sign
+
 
     infer_group = t.get_node('/input/potential/infer_H_O')
     d_res_id    = infer_group.donors.residue[:]
@@ -1757,7 +1770,7 @@ def write_membrane_potential3(fasta_seq, membrane_potential_fpath, membrane_thic
     create_array(grp,  'hb_type', hb_type)
     create_array(grp,    'coeff', hb_energy)
 
-def write_membrane_potential4(fasta_seq, membrane_potential_fpath, membrane_thickness, membrane_exclude_residues, hbond_exclude_residues):
+def write_membrane_potential4(fasta_seq, membrane_potential_fpath, membrane_thickness, membrane_exclude_residues, hbond_exclude_residues, use_curvature=False, curvature_radius=200, curvature_sign=1):
 
     half_thickness = membrane_thickness * 0.5
 
@@ -1787,9 +1800,11 @@ def write_membrane_potential4(fasta_seq, membrane_potential_fpath, membrane_thic
         hb_start = hb_z_min - half_thickness
 
 
+    curvature_center = Const3DCoord1(t, 'curvature_center', 'pos', 0, 1, 2, [[0., 0., curvature_radius*-1*curvature_sign ]])
+
     # memb potential for CB atoms
     grp = t.create_group(t.root.input.potential, 'cb_surf_membrane_potential')
-    grp._v_attrs.arguments            = np.array([b'placement_fixed_point_only_CB', b'environment_coverage_sc', b'surface'])
+    grp._v_attrs.arguments            = np.array([b'placement_fixed_point_only_CB', b'environment_coverage_sc', b'surface', bstring(curvature_center)])
     grp._v_attrs.integrator_level     = 0
     grp._v_attrs.z_start              = cb_start
     grp._v_attrs.z_scale              = 1./cb_dz
@@ -1797,6 +1812,10 @@ def write_membrane_potential4(fasta_seq, membrane_potential_fpath, membrane_thic
     grp._v_attrs.left_right_node      = 0.0
     grp._v_attrs.left_right_sharpness = 1./cb_dz
     grp._v_attrs.half_thickness       = half_thickness
+
+    grp._v_attrs.use_curvature        = int(use_curvature)
+    grp._v_attrs.curvature_radius     = curvature_radius
+    grp._v_attrs.curvature_sign       = curvature_sign
 
     n_res = len(fasta_seq)
     used_res = []
@@ -1826,13 +1845,17 @@ def write_membrane_potential4(fasta_seq, membrane_potential_fpath, membrane_thic
 
     # memb potential for HB atoms
     grp = t.create_group(t.root.input.potential, 'hb_surf_membrane_potential')
-    grp._v_attrs.arguments            = np.array([b'protein_hbond', b'environment_coverage_sc', b'surface'])
+    grp._v_attrs.arguments            = np.array([b'protein_hbond', b'environment_coverage_sc', b'surface', bstring(curvature_center)])
     grp._v_attrs.integrator_level     = 0
     grp._v_attrs.z_start              = hb_start
     grp._v_attrs.z_scale              = 1./hb_dz
     grp._v_attrs.left_right_node      = 0.0
     grp._v_attrs.left_right_sharpness = 1./hb_dz
     grp._v_attrs.half_thickness       = half_thickness
+
+    grp._v_attrs.use_curvature        = int(use_curvature)
+    grp._v_attrs.curvature_radius     = curvature_radius
+    grp._v_attrs.curvature_sign       = curvature_sign
 
     infer_group = t.get_node('/input/potential/infer_H_O')
     d_res_id    = infer_group.donors.residue[:]
@@ -2078,6 +2101,13 @@ def main():
             help='Parameter file (.h5 format) for membrane potential with channel information. User must also supply --membrane-thickness.')
     parser.add_argument('--membrane-potential', default='',
             help='Parameter file (.h5 format) for membrane potential. User must also supply --membrane-thickness.')
+
+    parser.add_argument('--use-curvature', default=False, action='store_true', help='model the curvature layers of lipid.')
+    parser.add_argument('--curvature-radius', default=1000., type=float,
+            help='Curvature radius of the membrane in angstroms for use with --membrane-potential and --use-curvature.')
+    parser.add_argument('--curvature-sign', default=1., type=int,
+            help='Curvature sign of the membrane (1 for positive curvature,  -1 for negative curvature)')
+
     parser.add_argument('--membrane-exclude-residues', default=[], type=parse_segments,
             help='Residues that do not participate in the --membrane-potential (same format as --restraint-group).' +
                  'User must also supply --membrane-potential.')
@@ -2344,7 +2374,10 @@ def main():
                                  args.channel_membrane_potential,
                                  args.membrane_thickness,
                                  args.membrane_exclude_residues, 
-                                 args.hbond_exclude_residues)
+                                 args.hbond_exclude_residues,
+                                 args.use_curvature,
+                                 args.curvature_radius,
+                                 args.curvature_sign)
 
     if args.membrane_potential:
         if args.membrane_thickness is None:
@@ -2354,7 +2387,10 @@ def main():
                                  args.membrane_potential,
                                  args.membrane_thickness,
                                  args.membrane_exclude_residues, 
-                                 args.hbond_exclude_residues)
+                                 args.hbond_exclude_residues,
+                                 args.use_curvature,
+                                 args.curvature_radius,
+                                 args.curvature_sign)
 
     if args.membrane_lateral_potential:
         if not args.surface:

@@ -88,6 +88,9 @@ def upside_config(fasta,
                   membrane_exposed_criterion=None,
                   membrane_exclude_residues=[],
                   membrane_lateral_potential='',
+                  use_curvature=False,
+                  curvature_radius=1000.,
+                  curvature_sign=1,
                   ):
     
     args = [os.path.join(py_source_dir, 'upside_config.py'), '--fasta=%s'%fasta, '--output=%s'%output]
@@ -172,7 +175,12 @@ def upside_config(fasta,
             args.append('--membrane-exposed-criterion=%s'%membrane_exposed_criterion)
         for ex_res in membrane_exclude_residues:
             args.append('--membrane-exclude-residues=%s'%ex_res)
-        
+
+        if use_curvature:
+            args.append('--use-curvature')
+            args.append('--curvature-radius=%f'%curvature_radius)
+            args.append('--curvature-sign=%d'%curvature_sign)
+
     if membrane_potential:
         if not membrane_thickness:
             raise ValueError('Must supply membrane_thickness if using membrane_potential')
@@ -182,6 +190,11 @@ def upside_config(fasta,
             args.append('--membrane-exposed-criterion=%s'%membrane_exposed_criterion)
         for ex_res in membrane_exclude_residues:
             args.append('--membrane-exclude-residues=%s'%ex_res)
+
+        if use_curvature:
+            args.append('--use-curvature')
+            args.append('--curvature-radius=%f'%curvature_radius)
+            args.append('--curvature-sign=%d'%curvature_sign)
 
     if membrane_lateral_potential:
         if not surface:
