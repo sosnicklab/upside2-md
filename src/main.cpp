@@ -394,8 +394,6 @@ struct CurvatureChange {
             }
         }
 
-        cout << dcenterz << " " << rand_value << " " << relative_change << " " << centerz << " || " << new_memb_potential << " " << memb_potential << endl;
-
         float old_lboltz = -beta*memb_potential;
         float new_lboltz = -beta*new_memb_potential;
 
