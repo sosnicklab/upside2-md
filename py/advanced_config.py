@@ -95,8 +95,10 @@ def add_to_const3D2(new_id, input_name):
     node_name = 'Const3D_{}'.format(input_name)
 
     if node_name in pot_group:
-        xyz  = np.array(xyz)
-        id0  = pot_group.Const3D.id[:]
+
+        node = pot_group[node_name]
+
+        id0  = node.id[:]
         index = -1
         for i,x in enumerate(id0):
             if x == new_id:
@@ -105,8 +107,8 @@ def add_to_const3D2(new_id, input_name):
         if index < 0:
             index = id0.size
             new_ids  = np.concatenate((id0, [new_id]))
-            pot_group.Const3D.id._f_remove(recursive=True, force=True)
-            create_array(pot_group.Const3D, 'id', new_ids)
+            node.id._f_remove(recursive=True, force=True)
+            create_array(node, 'id', new_ids)
     else:
         const   = Const3DCoord2(t, input_name, 0, 1, 2, [new_id])
         index   = 0
@@ -1312,6 +1314,8 @@ def main():
 
     multi_chain = False
     has_rl_info = True
+    require_backbone_point = False
+    require_affine = False
 
     if 'chain_break' in t.root.input:
         chain_first_residue = t.root.input.chain_break.chain_first_residue[:]

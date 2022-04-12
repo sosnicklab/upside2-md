@@ -320,30 +320,7 @@ struct CurvatureChange {
 
     uniform_real_distribution<float> distribution;
 
-    CurvatureChange(vector<System>& systems ): distribution(-1,1) {
-
-
-        int n_system = systems.size();
-
-        // enable logging of replica events
-        for(int ns: range(n_system)) {
-            auto logger = systems[ns].logger;
-            if(!logger) continue;
-            if(static_cast<int>(logger->level) < static_cast<int>(LOG_BASIC)) continue;
-
-            CoordNode* ccenter;
-            float ccenter_z = 0.0;
-            for(auto &n:  systems[ns].engine.nodes) {
-                if(is_prefix(n.name, "Const3D_curvature_center")) {
-                    ccenter = dynamic_cast<CoordNode*>(n.computation.get());
-                    ccenter_z = ccenter->output(2,0);
-                    break;
-                }
-            }
-
-            logger->add_logger<float>("center_of_curvature", {1}, [ccenter_z](float* buffer) {buffer[0] = ccenter_z; });
-        }
-    }
+    CurvatureChange(vector<System>& systems ): distribution(-1,1) {}
 
     void attempt_change(uint32_t seed, uint64_t round, System& sys, float relative_change  ) {
 
@@ -393,6 +370,8 @@ struct CurvatureChange {
                 new_memb_potential += pot_node->potential;
             }
         }
+
+        //cout << dcenterz << " " << rand_value << " " << relative_change << " " << centerz << " || " << new_memb_potential << " " << memb_potential << endl;
 
         float old_lboltz = -beta*memb_potential;
         float new_lboltz = -beta*new_memb_potential;

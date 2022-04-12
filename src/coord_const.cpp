@@ -36,6 +36,8 @@ struct ConstantCoord1D : public CoordNode
             check_size(grp, "value", n_elem, 1);
             traverse_dset<1,float>(grp, "value", [&](size_t ne, float x) { output(0,ne) = x;});
 	}
+
+
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -138,6 +140,26 @@ struct ConstantCoord3D : public CoordNode
             check_size(grp, "value", n_elem, 3);
             traverse_dset<2,float>(grp, "value", [&](size_t ne, size_t nt, float x) { output(nt, ne) = x;});
 	}
+
+        if(logging(LOG_DETAILED)) {
+            if (default_logger) {
+                bool suff_exists = true;
+                int log_suffix = 0;
+                while(suff_exists) {
+                    if(h5_exists(default_logger->logging_group.get(), ("Const3D_" + to_string(log_suffix)).c_str())) {
+                        log_suffix++;
+                    } else {
+                        suff_exists = false;
+                    }
+                }
+                default_logger->add_logger<float>( ("Const3D_" + to_string(log_suffix)).c_str(), {n_elem, 3}, [&](float* buffer) {
+                    for(int nt=0; nt<n_elem; ++nt) {
+                        auto x = load_vec<3>(output, nt);
+                        for(int d=0; d<3; ++d) buffer[nt*3 + d] = x[d];
+                    }
+                });
+            }
+        }
     }
 
     virtual void compute_value(ComputeMode mode) {
