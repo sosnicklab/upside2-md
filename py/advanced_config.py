@@ -1108,11 +1108,13 @@ def main():
     parser_grp1 = parser.add_mutually_exclusive_group()
     parser_grp1.add_argument('--cavity-radius', default=0., type=float,
             help='Enclose the whole simulation in a radial cavity centered at the origin to achieve finite concentration '+
-            'of protein.  Necessary for multichain simulation (though this mode is unsupported.')
+            'of protein.  Necessary for multichain simulation.')
     parser_grp1.add_argument('--heuristic-cavity-radius', default=0., type=float,
         help='Set the cavity radius to this provided scale factor times the max distance between com\'s and atoms of the chains.')
     parser_grp1.add_argument('--cavity-radius-from-config', default='', help='Config file with cavity radius set. Useful for applying'+
             ' the same heuristic cavity of bound complex config to unbound counterpart')
+    parser.add_argument('--make-unbound', action='store_true',
+        help='Separate chains into different corners of a cavity that you set with one of the cavity options.')
 
     parser.add_argument('--fixed-wall', default='',
             help='Table of fixed wall springs.  Each line must contain 5-7 fields and the first line '+
@@ -1313,7 +1315,7 @@ def main():
     use_append_const3D_to_pos = False
 
     multi_chain = False
-    has_rl_info = True
+    has_rl_info = False
     require_backbone_point = False
     require_affine = False
 
@@ -1331,7 +1333,7 @@ def main():
         else:
             if not has_rl_info: # all chains separately
                 com_list = []
-                for i in xrange(n_chains):
+                for i in range(n_chains):
                     first_res, next_first_res = chain_endpts(n_res, chain_first_residue, i)
                     com_list.append(pos[first_res*3:next_first_res*3,:,0].mean(axis=0))
             else: # receptor and ligand chains considered as groups
@@ -1348,8 +1350,8 @@ def main():
                 com_list = [r_com, l_com]
             # Distance between chain com and all atoms
             com_dist_list = []
-            for i in xrange(len(com_list)):
-                for j in xrange(n_atom):
+            for i in range(len(com_list)):
+                for j in range(n_atom):
                         com_dist_list.append(vmag(com_list[i]-pos[j,:,0]) + 2.)
 
             args.cavity_radius = args.heuristic_cavity_radius*max(com_dist_list)
@@ -1369,6 +1371,39 @@ def main():
             print ()
             print ("cavity_radius")
             print (args.cavity_radius)
+
+    if args.make_unbound:
+        if n_chains < 2 or n_chains > 8:
+            eprint('WARNING: --make-unbound requires at least 2 and no more than 8 chains. Skipping separating chains.\n'
+                   'See --record-chain-breaks in PDB_to_initial_structure.py and --chain-break-from-file in upside_config.py')
+        elif not args.cavity_radius:
+            eprint('WARNING: --make-unbound requires setting a cavity radius. Skipping separating chains')
+        else:
+            print ()
+            print ("making unbound")
+            pos = t.root.input.pos[:]
+            displacement = np.array([[-1.,0.,0.], [1.,0.,0.],
+                                     [0.,-1.,0.], [0.,1.,0.],
+                                     [0.,0.,-1.], [0.,0.,1.],])
+            if not has_rl_info: # separate all chains
+                for j in range(n_chains):
+                    first_res, next_first_res = chain_endpts(n_res, chain_first_residue, j)
+                    #com = pos[first_res*3:next_first_res*3,:,0].mean(axis=0)
+                    pos[first_res*3:next_first_res*3,:,0] = (pos[first_res*3:next_first_res*3,:,0] +
+                            displacement[j]*0.5*args.cavity_radius) #- displacement[j]*com
+            else: # keep receptor and ligand chains together
+                # move receptor chains
+                first_res = chain_endpts(n_res, chain_first_residue, 0)[0]
+                next_first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0]-1)[1]
+                pick_disp = np.random.choice([0, 2, 4])
+                pos[first_res*3:next_first_res*3,:,0] = pos[first_res*3:next_first_res*3,:,0] + displacement[pick_disp]*0.5*args.cavity_radius
+
+                # move ligand chains
+                first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0])[0]
+                next_first_res = chain_endpts(n_res, chain_first_residue, n_chains-1)[1]
+                pick_disp = np.random.choice([1, 3, 5])
+                pos[first_res*3:next_first_res*3,:,0] = pos[first_res*3:next_first_res*3,:,0] + displacement[pick_disp]*0.5*args.cavity_radius
+            t.root.input.pos[:] = pos
 
     if args.group:
         write_group_node(parser, fasta, args.group)

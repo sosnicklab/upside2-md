@@ -1987,12 +1987,6 @@ def main():
     parser.add_argument('--jump-rotation-scale', type=float, default=30., help='Rotational gaussian width in degrees for Monte Carlo JumpSampler. Default: 30 degrees')
     parser.add_argument('--remove-pivot', action='store_true', help='Whether to remove the MC PivotSampler param group to isolate JumpSampler for testing')
 
-    parser.add_argument('--make-unbound', action='store_true',
-            help='Separate chains into different corners of a cavity that you set with one of the cavity options.')
-    parser.add_argument('--cavity-radius', default=0., type=float,
-            help='Enclose the whole simulation in a radial cavity centered at the origin to achieve finite concentration '+
-            'of protein.  Necessary for multichain simulation (though this mode is unsupported.')
-
     parser.add_argument('--bond-stiffness', default=48., type=float,
             help='Bond spring constant in units of energy/A^2 (default 48)')
     parser.add_argument('--angle-stiffness', default=175., type=float,
@@ -2121,9 +2115,6 @@ def main():
 
     args = parser.parse_args()
 
-    if args.make_unbound and not args.chain_break_from_file:
-        parser.error('--make-unbound requires --chain-break-from-file')
-
     require_affine = False
     require_rama = False
     require_backbone_point = False
@@ -2226,38 +2217,6 @@ def main():
 
         chain_starts = np.array(chain_first_residue)*3
         chain_starts = np.append([0], chain_starts)
-
-    if args.make_unbound:
-        if n_chains < 2 or n_chains > 8:
-            eprint('WARNING: --make-unbound requires at least 2 and no more than 8 chains. Skipping separating chains')
-        elif not args.cavity_radius:
-            eprint('WARNING: --make-unbound requires setting a cavity radius. Skipping separating chains')
-        else:
-            print ()
-            print ("making unbound")
-
-            displacement = np.array([[-1.,0.,0.], [1.,0.,0.],
-                                     [0.,-1.,0.], [0.,1.,0.],
-                                     [0.,0.,-1.], [0.,0.,1.],])
-            if not has_rl_info: # separate all chains
-                for j in range(n_chains):
-                    first_res, next_first_res = chain_endpts(n_res, chain_first_residue, j)
-                    #com = pos[first_res*3:next_first_res*3,:,0].mean(axis=0)
-                    pos[first_res*3:next_first_res*3,:,0] = (pos[first_res*3:next_first_res*3,:,0] +
-                            displacement[j]*0.5*args.cavity_radius) #- displacement[j]*com
-            else: # keep receptor and ligand chains together
-                # move receptor chains
-                first_res = chain_endpts(n_res, chain_first_residue, 0)[0]
-                next_first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0]-1)[1]
-                pick_disp = np.random.choice([0, 2, 4])
-                pos[first_res*3:next_first_res*3,:,0] = pos[first_res*3:next_first_res*3,:,0] + displacement[pick_disp]*0.5*args.cavity_radius
-
-                # move ligand chains
-                first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0])[0]
-                next_first_res = chain_endpts(n_res, chain_first_residue, n_chains-1)[1]
-                pick_disp = np.random.choice([1, 3, 5])
-                pos[first_res*3:next_first_res*3,:,0] = pos[first_res*3:next_first_res*3,:,0] + displacement[pick_disp]*0.5*args.cavity_radius
-            t.root.input.pos[:] = pos
 
     # record the commands and options
     #---------------------------------------------
