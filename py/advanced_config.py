@@ -1319,6 +1319,13 @@ def main():
     require_backbone_point = False
     require_affine = False
 
+    # Record of adv config options
+    args_group = t.create_group(t.root.input, 'adv_args')
+    for k,v in sorted(vars(args).items()):
+        args_group._v_attrs[k] = v
+    args_group._v_attrs['invocation'] = ' '.join(sys.argv[:])
+
+
     if 'chain_break' in t.root.input:
         chain_first_residue = t.root.input.chain_break.chain_first_residue[:]
         multi_chain = True
