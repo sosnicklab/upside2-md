@@ -1459,7 +1459,7 @@ def write_bb_environment(fasta, environment_library, sc_node_name, bb_env_fn, us
         create_array(cgrp, 'type2',  np.arange(n_res*3)*0)
         create_array(cgrp, 'id2',    np.arange(n_res*3)/3)
 
-    # cat the 
+    # cat them 
     pgrp = t.create_group(potential, 'cat_pos_bb_coverage')
     pgrp._v_attrs.arguments = np.array([b'hb_environment_coverage_hn', b'hb_environment_coverage_oc'])
     pgrp._v_attrs.n_dim = 1
@@ -1964,6 +1964,51 @@ def write_membrane_lateral_potential( parser, fasta_seq, lateral_potential_fpath
     grp._v_attrs.integrator_level     = 0
 
 #---------------------------------------------------------------------------
+#                      Utility functions for potentials
+#---------------------------------------------------------------------------
+def apply_param_scale(hb_scale=1., env_scale=1., rot_scale=1., memb_scale=1.):
+    pot_group = t.root.input.potential
+    if hb_scale != 1.:
+        print ("scaling hb {}x".format(hb_scale))
+        # See write_short_hbond() for layout of params.
+        # WARNING: First three are supposed to be helix_hbond_energy, sheet_hbond_energy, turn_hbond_energy, 
+        # but there seems to be an extra fourth energy in the actual param data not included in the (outdated?) layout  
+        pot_group.hbond_energy.parameters[:4] *= hb_scale
+        # ToDo: what about the hbond_coverage groups -> how are they coupled
+        # to the energy? For env it's clear, but not so for hb (not sure if this still applies to Upside2)
+
+    if env_scale != 1.:
+        print ("scaling env {}x".format(env_scale))
+        if "sigmoid_coupling_environment" in pot_group:
+            pot_group.sigmoid_coupling_environment.scale[:] *= env_scale
+        elif "nonlinear_coupling_environment" in pot_group:
+            pot_group.nonlinear_coupling_environment.coeff[:] *= env_scale
+
+        # Backbone environment
+        if "bb_sigmoid_coupling_environment" in pot_group:
+            pot_group.bb_sigmoid_coupling_environment._v_attrs.scale *= env_scale
+
+    if rot_scale != 1.:
+        print ("scaling rot {}x".format(rot_scale))
+        # ToDo: scale placement energy? They are rama dep 1-body
+        # Scaling only the radial parts
+        n_knot_ang = 15
+        pot_group.hbond_coverage.interaction_param[2*n_knot_ang:] *= rot_scale
+        pot_group.hbond_coverage_hydrophobe.interaction_param[2*n_knot_ang:] *= rot_scale
+        pot_group.rotamer.pair_interaction.interaction_param[2*n_knot_ang:] *= rot_scale
+
+    if memb_scale != 1.:
+        print ("scaling memb {}x".format(memb_scale))
+        # Regular membrane potential is written by write_membrane_potential3()
+        if "cb_membrane_potential" in pot_group:
+            pot_group.cb_membrane_potential.coeff[:]  *= memb_scale
+            pot_group.hb_membrane_potential.coeff[:] *= memb_scale
+        elif "cb_surf_membrane_potential" in pot_group:
+            pot_group.cb_surf_membrane_potential.coeff[:]  *= memb_scale
+            pot_group.hb_surf_membrane_potential.coeff[:] *= memb_scale
+    print()
+
+#---------------------------------------------------------------------------
 #                              main function 
 #---------------------------------------------------------------------------
 
@@ -2122,6 +2167,11 @@ def main():
             help='Table of lateral pressure curve.  Each line must contain 2 fields and the header line must be '+
             '"z lateral_pressure". Next is followed by the z position and the corresponding pressure value in bar. '+
             'The largest z and the smallest z will be the boundaries of the lateral pressure.')
+
+    parser.add_argument('--hb-scale', default=1., type=float, help='Scaling for hbond potential')
+    parser.add_argument('--env-scale', default=1., type=float, help='Scaling for environment potentials')
+    parser.add_argument('--rot-scale', default=1., type=float, help='Scaling for rotamer pair potential')
+    parser.add_argument('--memb-scale', default=1., type=float, help='Scaling for membrane potential')
 
     args = parser.parse_args()
 
@@ -2424,6 +2474,8 @@ def main():
             create_array(grp, 'pivot_restype', potential.rama_map_pot.rama_map_id_all[:][non_terminal_residue])
             create_array(grp, 'pivot_range',   np.column_stack((grp.pivot_atom[:,4]+1,np.zeros(sum(non_terminal_residue),'i')+n_atom)))
 
+    # Scale potential if requested
+    apply_param_scale(args.hb_scale, args.env_scale, args.rot_scale, args.memb_scale)
 
     t.close()
 

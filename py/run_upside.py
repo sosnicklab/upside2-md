@@ -95,6 +95,11 @@ def upside_config(fasta,
                   use_curvature=False,
                   curvature_radius=1000.,
                   curvature_sign=1,
+
+                  hb_scale=1.,
+                  env_scale=1.,
+                  rot_scale=1.,
+                  memb_scale=1.,
                   ):
     
     args = [os.path.join(py_source_dir, 'upside_config.py'), '--fasta=%s'%fasta, '--output=%s'%output]
@@ -212,6 +217,15 @@ def upside_config(fasta,
         if not channel_membrane_potential and not membrane_potential:
             raise ValueError('Must supply --channel-membrane-potential or --membrane-potential if using membrane_lateral_potential')
         args.append('--membrane-lateral-potential=%s'%membrane_lateral_potential)
+
+    if hb_scale != 1.:
+        args.append('--hb-scale=%s'%hb_scale)
+    if env_scale != 1.:
+        args.append('--env-scale=%s'%env_scale)
+    if rot_scale != 1.:
+        args.append('--rot-scale=%s'%rot_scale)
+    if memb_scale != 1.:
+        args.append('--memb-scale=%s'%memb_scale)
         
     return ' '.join(args) + '\n' + sp.check_output(args).decode('ASCII')
 
