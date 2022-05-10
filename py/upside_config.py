@@ -1015,7 +1015,7 @@ def write_short_hbond(fasta, hbond_energy):
     create_array(grp, 'acceptor_resid', a_residues)
     create_array(grp, 'rama_resid',     obj=np.arange(n_res))
 
-def write_rotamer_placement(fasta, placement_library, dynamic_placement, dynamic_1body, fix_rotamer):
+def write_rotamer_placement(fasta, placement_library, dynamic_placement, dynamic_1body, fix_rotamer, excluded_residues):
     def compute_chi1_state(angles):
         chi1_state = np.ones(angles.shape, dtype='i')
         chi1_state[(   0.*deg<=angles)&(angles<120.*deg)] = 0
@@ -1092,6 +1092,9 @@ def write_rotamer_placement(fasta, placement_library, dynamic_placement, dynamic
     count_by_n_rot = dict()
 
     for rnum,aa in enumerate(fasta):
+        if rnum in excluded_residues:
+            continue
+
         restype = restype_num[aa]
         start,stop,n_bead = start_stop[restype]
         assert (stop-start)%n_bead == 0
@@ -1276,7 +1279,7 @@ def write_rotamer(fasta, interaction_library, damping, sc_node_name, pl_node_nam
 #                           multibody interactions
 #---------------------------------------------------------------------------
 
-def write_environment(fasta, environment_library, sc_node_name, potential_type=0, weights_number = 20, vector_CA_CO = False, use_bb_bl_for_hb=False):
+def write_environment(fasta, environment_library, sc_node_name, potential_type=0, weights_number = 20, vector_CA_CO = False, use_bb_bl_for_hb=False, excluded_residues=[], rot_exclude_residues=[]):
 
     n_res = len(fasta)
 
@@ -1302,7 +1305,7 @@ def write_environment(fasta, environment_library, sc_node_name, potential_type=0
     if vector_CA_CO:
         placement_data[0,3:6] = (ref_pos[3]-ref_pos[2])/vmag(ref_pos[3]-ref_pos[2])
     else:
-        placement_data[0,3:6] = (ref_pos[3]-ref_pos[1])/vmag(ref_pos[3]-ref_pos[1])
+        placement_data[0,3:6] = (ref_pos[3]-ref_pos[1])/vmag(ref_pos[3]-ref_pos[1])   
 
     create_array(pgrp, 'affine_residue',  np.arange(len(fasta)))
     create_array(pgrp, 'layer_index',     np.zeros(len(fasta),dtype='i'))
@@ -1319,16 +1322,18 @@ def write_environment(fasta, environment_library, sc_node_name, potential_type=0
     if use_intensive_memory:
         cgrp._v_attrs.max_n_edge = n_res * 160
 
+    res_seq = np.array([resid for resid in range(len(fasta)) if resid not in excluded_residues]) 
+
     # group1 is the source CB
-    create_array(cgrp, 'index1', np.arange(len(fasta)))
-    create_array(cgrp, 'type1',  np.array([restype_order[s] for s in fasta]))  # one type per CB type
-    create_array(cgrp, 'id1',    np.arange(len(fasta)))
+    create_array(cgrp, 'index1', res_seq)
+    create_array(cgrp, 'type1',  np.array([restype_order[s] for resid, s in enumerate(fasta) if resid not in excluded_residues]))  # one type per CB type
+    create_array(cgrp, 'id1',    res_seq)
     # group 2 is the weighted points to interact with
     create_array(cgrp, 'index2', np.arange(n_sc))
     create_array(cgrp, 'type2',  0*np.arange(n_sc))   # for now coverage is very simple, so no types on SC
     create_array(cgrp, 'id2',    sc_node.affine_residue[:])
     create_array(cgrp, 'interaction_param', coverage_param)
-    create_array(cgrp, 'aa_types', [restype_order[s] for s in fasta])
+    create_array(cgrp, 'aa_types', np.array([restype_order[s] for resid, s in enumerate(fasta) if resid not in excluded_residues]))
 
     # Couple an energy to the coverage coordinates
     assert (potential_type == 0 or potential_type == 1)
@@ -1339,7 +1344,7 @@ def write_environment(fasta, environment_library, sc_node_name, potential_type=0
     egrp._v_attrs.integrator_level = 1
     egrp._v_attrs.number_independent_weights = weights_number # 1, or 20, or 400
 
-    create_array(egrp, 'coupling_types', [restype_order[s] for s in fasta])
+    create_array(egrp, 'coupling_types', np.array([restype_order[s] for resid, s in enumerate(fasta) if resid not in excluded_residues]))
     create_array(egrp, 'weights', np.array(weights))
 
     # spline-like coupling function
@@ -2059,6 +2064,8 @@ def main():
             help='rotamer sidechain pair interaction parameters')
     parser.add_argument('--rotamer-solve-damping', default=0.4, type=float,
             help='damping factor to use for solving sidechain placement problem')
+    parser.add_argument('--rotamer-exclude-residues', default=[], type=parse_segments,
+            help='Residues that do not have rotamer sidechain beads nor participate in their pair interaction. Currently not properly implemented')
 
     parser.add_argument('--environment-potential', default='',
             help='Path to many-body environment potential')
@@ -2070,6 +2077,9 @@ def main():
             'acid type of side chain beads; The value 400 means that the weights depends on the residue type type of ' + 
             'side chain beads or CB atoms belongs to.')
     parser.add_argument('--vector-CA-CO', default=False, action='store_true', help='use vector CA-CO for the hemisphere orientation to be compatible with FF2.0 ')
+    parser.add_argument('--env-exclude-residues', default=[], type=parse_segments,
+            help='Residues that do not participate as the CB center for the environment interaction. Note that residues ' +
+            'in --rotamer-exclude-residues do not contribute beads for the interaction. Currently not properly implemented')
 
     parser.add_argument('--bb-environment-potential', default='',
             help='Path to many-body environment potential for backbone')
@@ -2114,6 +2124,9 @@ def main():
             'The largest z and the smallest z will be the boundaries of the lateral pressure.')
 
     args = parser.parse_args()
+
+    if args.rotamer_exclude_residues or args.env_exclude_residues:
+        parser.error('--rotamer-exclude-residues and --env-exclude-residues are not properly implemented yet')
 
     require_affine = False
     require_rama = False
@@ -2289,7 +2302,7 @@ def main():
         sc_node_name, pl_node_name = write_rotamer_placement(
                 fasta_seq, args.rotamer_placement,
                 args.dynamic_rotamer_placement, args.dynamic_rotamer_1body,
-                args.fix_rotamer)
+                args.fix_rotamer, args.rotamer_exclude_residues)
 
     if args.hbond_energy and sc_node_name:
         write_rotamer_backbone(fasta_seq, args.rotamer_interaction, sc_node_name)
@@ -2305,7 +2318,7 @@ def main():
         if args.rotamer_placement is None:
             parser.error('--rotamer-placement is required, based on other options.')
         require_weighted_pos = True     
-        write_environment(fasta_seq, args.environment_potential, sc_node_name, args.environment_potential_type, args.environment_weights_number, args.vector_CA_CO)
+        write_environment(fasta_seq, args.environment_potential, sc_node_name, args.environment_potential_type, args.environment_weights_number, args.vector_CA_CO, False, args.env_exclude_residues, args.rotamer_exclude_residues)
 
     if args.bb_environment_potential:
         if args.environment_potential is None:

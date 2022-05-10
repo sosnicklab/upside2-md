@@ -296,7 +296,7 @@ struct EnvironmentCoverage : public CoordNode {
         CoordNode(get_dset_size(1,grp,"index1")[0]*read_attribute<int>(grp,".","num_aa_types") , 1),
         n_aa(read_attribute<int>(grp,".","num_aa_types")), 
         n_res(get_dset_size(1,grp,"index1")[0]),
-        aa_types(n_res),
+        aa_types(n_res), // FIXME: aa_types should be initialized from (non bead rotamer redundant) n_res of SC beads. index2 is multiplied by rotamers, so can't use that directly
         igraph(grp, &cb_pos_, &weighted_sidechains_)
     {
         check_size(grp, "aa_types", n_res);

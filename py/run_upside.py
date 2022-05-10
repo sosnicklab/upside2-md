@@ -65,16 +65,20 @@ def upside_config(fasta,
 
                   backbone=True,
                   hbond_energy=None,
+                  hbond_exclude_residues='',
 
                   fix_rotamer = '',
                   dynamic_rotamer_1body = False,
                   rotamer_placement='',
                   rotamer_interaction='',
+                  rotamer_exclude_residues='',
 
                   environment_potential='',
                   environment_potential_type=None,
                   environment_weights_number=None,
                   vector_CA_CO=False,
+                  env_exclude_residues='',
+
                   bb_environment_potential='',
                   use_heavy_atom_coverage='',
 
@@ -86,7 +90,7 @@ def upside_config(fasta,
                   channel_membrane_potential='',
                   membrane_thickness=0.,
                   membrane_exposed_criterion=None,
-                  membrane_exclude_residues=[],
+                  membrane_exclude_residues='',
                   membrane_lateral_potential='',
                   use_curvature=False,
                   curvature_radius=1000.,
@@ -121,6 +125,8 @@ def upside_config(fasta,
         args.append('--no-backbone')
     if hbond_energy:
         args.append('--hbond-energy=%s'%hbond_energy)
+    if hbond_exclude_residues:
+        args.append('--hbond-exclude-residues=%s'%hbond_exclude_residues)
     if reference_state_rama:
         args.append('--reference-state-rama=%s'%reference_state_rama)
 
@@ -132,6 +138,8 @@ def upside_config(fasta,
         args.append('--rotamer-interaction=%s'%rotamer_interaction)
     if fix_rotamer:
         args.append('--fix-rotamer=%s'%fix_rotamer)
+    if rotamer_exclude_residues:
+        args.append('--rotamer-exclude-residues=%s'%rotamer_exclude_residues)
 
     if environment_potential:
         args.append('--environment-potential=%s'%environment_potential)
@@ -141,6 +149,8 @@ def upside_config(fasta,
         args.append('--environment-weights-number=%s'%environment_weights_number)
     if vector_CA_CO:
         args.append('--vector-CA-CO')
+    if env_exclude_residues:
+        args.append('--env-exclude-residues=%s'%env_exclude_residues)
 
     if bb_environment_potential:
         args.append('--bb-environment-potential=%s'%bb_environment_potential)
@@ -173,8 +183,8 @@ def upside_config(fasta,
         args.append('--membrane-thickness=%f'%membrane_thickness)
         if membrane_exposed_criterion:
             args.append('--membrane-exposed-criterion=%s'%membrane_exposed_criterion)
-        for ex_res in membrane_exclude_residues:
-            args.append('--membrane-exclude-residues=%s'%ex_res)
+        if membrane_exclude_residues:
+            args.append('--membrane-exclude-residues=%s'%membrane_exclude_residues)
 
         if use_curvature:
             args.append('--use-curvature')
@@ -188,8 +198,8 @@ def upside_config(fasta,
         args.append('--membrane-thickness=%f'%membrane_thickness)
         if membrane_exposed_criterion:
             args.append('--membrane-exposed-criterion=%s'%membrane_exposed_criterion)
-        for ex_res in membrane_exclude_residues:
-            args.append('--membrane-exclude-residues=%s'%ex_res)
+        if membrane_exclude_residues:
+            args.append('--membrane-exclude-residues=%s'%membrane_exclude_residues)
 
         if use_curvature:
             args.append('--use-curvature')
