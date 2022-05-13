@@ -168,11 +168,13 @@ def traj_from_upside2(seq, time, pos, chain_first_residue=[0]):
 
 
 @FormatRegistry.register_loader('.up')
-def load_upside_traj(fname, top='', stride=1, external_pos=[], from_init=False, fasta_fn='', chain_breaks_fn='', target_pos_only=False, add_atoms=True):
+def load_upside_traj(fname, top='', stride=1, external_pos=[], from_init=False, fasta_fn='', chain_breaks_fn='', target_pos_only=False, initial_pos_only=False, add_atoms=True):
     import tables as tb
 
     if from_init and target_pos_only:
         raise ValueError("Cannot have both from_init and target_pos_only.")
+    if (from_init and (target_pos_only or initial_pos_only)) or (target_pos_only and initial_pos_only):
+        raise ValueError("Cannot have any combination of from_init, target_pos_only, and initial_pos_only.")
     if from_init and not fasta_fn:
         raise ValueError("from_init requires fasta_fn.")
 
@@ -201,6 +203,8 @@ def load_upside_traj(fname, top='', stride=1, external_pos=[], from_init=False, 
         with tb.open_file(fname) as t:
             if target_pos_only:
                 xyz.append(t.root.target.pos[:,:,0])
+            elif initial_pos_only:
+                xyz.append(t.root.input.pos[:,:,0])
             else:
                 for g_no, g in enumerate(_output_groups(t)):
                     # take into account that the first frame of each pos is the same as the last frame before restart
@@ -222,10 +226,13 @@ def load_upside_traj(fname, top='', stride=1, external_pos=[], from_init=False, 
                 chain_first_residue = np.append(chain_first_residue, ref.root.input.chain_break.chain_first_residue[:])
      
     if len(external_pos) > 0:
-        assert external_pos.shape[1:] == xyz[0].shape[1:]
+        if from_init or target_pos_only or initial_pos_only:
+            assert external_pos.shape[1:] == xyz[0].shape[:]
+        else:
+            assert external_pos.shape[1:] == xyz[0].shape[1:]
         xyz = external_pos[::stride]
         time = [np.arange(len(xyz))]
-    elif from_init or target_pos_only:
+    elif from_init or target_pos_only or initial_pos_only:
         xyz = np.array(xyz)
         time.append(np.zeros(1,dtype='f4'))
     else:
