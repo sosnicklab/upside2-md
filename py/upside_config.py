@@ -2244,17 +2244,19 @@ def main():
             chain_first_residue = np.array([], dtype='int32')
             n_chains = 1
         else:
-            if len(chain_dat) > 1:
+            if len(chain_dat) > 2:
                 has_rl_info = True
             else:
                 has_rl_info = False
-            chain_first_residue = chain_dat[0].split()
-            chain_first_residue = np.array(chain_first_residue, dtype='int32')
+            chain_first_residue = np.array(chain_dat[0].split(), dtype='int32')
+            chain_counts = np.array(chain_dat[1].split(), dtype='int32')
             print ("chain_first_residue:", chain_first_residue)
+            print ("chain_counts:", chain_counts)
             n_chains = chain_first_residue.size+1
             if has_rl_info:
-                rl_chains = np.array(chain_dat[-1].split(), dtype='int32')
-                # rl_chains = [int(i) for i in rl_chains]
+                rl_chains_actual = np.array(chain_dat[2].split(), dtype='int32')
+                rl_chains = np.array(chain_dat[3].split(), dtype='int32')
+                print ("rl_chains_actual:", rl_chains_actual)
                 print ("rl_chains:", rl_chains)
             else:
                 rl_chains = None
@@ -2265,7 +2267,9 @@ def main():
         if chain_first_residue.size:
             break_grp = t.create_group("/input","chain_break","Indicates that multi-chain simulation and removal of bonded potential terms accross chains requested")
             t.create_array(break_grp, "chain_first_residue", chain_first_residue, "Contains array of chain first residues, apart from residue 0")
+            t.create_array(break_grp, "chain_counts", chain_counts, "Counts of (broken) chains for each actual chain")
             if has_rl_info:
+                t.create_array(break_grp, "rl_chains_actual", rl_chains_actual, "Numbers of actual receptor and ligand chains")
                 t.create_array(break_grp, "rl_chains", rl_chains, "Numbers of receptor and ligand chains")    
 
             required_hbond_exclude_res = [i+j for i in chain_first_residue for j in [-1,0]]
