@@ -74,7 +74,11 @@ def traj_from_upside(seq, time, pos, chain_first_residue, chain_counts, add_extr
             # if nr in chain_first_residue:
             #     current_chain = topo.add_chain()
 
-            seq_r = str(seq[nr], 'utf-8')
+            try:
+                seq_r = str(seq[nr], 'utf-8')
+            except TypeError:
+                seq_r = str(seq[nr])
+                
             res = topo.add_residue(seq_r, current_chain, resSeq=nr)
             atoms.append(topo.add_atom('N', el.nitrogen, res, atom_num)); atom_num+=1; N =atoms[-1]
             atoms.append(topo.add_atom('CA',el.carbon,   res, atom_num)); atom_num+=1; CA=atoms[-1]
@@ -155,8 +159,7 @@ def load_upside_traj(fname, top='', stride=1, external_pos=[], from_init=False, 
     chain_counts = np.array([1], dtype='int32')
 
     if from_init:
-        with open(fname, 'rb') as f:
-            xyz.append(cp.load(f, encoding='latin1')[...,0])
+        xyz.append(np.load(fname))
 
         with open(fasta_fn) as f:
             fasta_str = ''.join(f.read().splitlines()[1:])
