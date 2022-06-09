@@ -31,6 +31,7 @@ set (ENGINE_SRC
     coord_map.cpp
     spline.cpp
     spring.cpp
+    tension.cpp
     sigmoid_energy.cpp
     deriv_engine.cpp 
     sidechain_radial.cpp
