@@ -510,7 +510,7 @@ def write_omega_spring1(args, fasta_seq):
     create_array(grp, 'equil_dist',   obj=target_angle[ndx])
     create_array(grp, 'spring_const', obj=args.omega_stiffness*np.ones(id.shape[0]))
 
-def write_omega_spring2(args, fasta_seq, pro_state_file):
+def write_omega_spring2(parser, args, fasta_seq, pro_state_file):
 
     n_res = len(fasta_seq)
 
@@ -787,7 +787,7 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
     create_array(grp, 'rama_map_id_all',  obj=np.arange(rama_pot.shape[0]))
     create_array(grp, 'rama_pot',     obj=rama_pot)
 
-def write_rama_map_pot2(seq, rama_library_h5, pro_state_file, sheet_mixing_energy=None, mode='mixture' ):
+def write_rama_map_pot2(parser, seq, rama_library_h5, pro_state_file, sheet_mixing_energy=None, mode='mixture' ):
 
     n_res = len(seq)
     seq_new = np.array(seq)
@@ -2306,14 +2306,14 @@ def main():
         write_dist_spring(args)
         write_angle_spring(args)
         if args.trans_cis:
-            write_omega_spring2(args, fasta_seq_with_cpr, args.trans_cis)
+            write_omega_spring2(parser, args, fasta_seq_with_cpr, args.trans_cis)
         else:
             write_omega_spring1(args, fasta_seq_with_cpr)
 
     if args.rama_library:
         require_rama = True
         if args.trans_cis:
-            write_rama_map_pot2(fasta_seq_with_cpr, args.rama_library, args.trans_cis, 
+            write_rama_map_pot2(parser, fasta_seq_with_cpr, args.rama_library, args.trans_cis, 
                                 args.rama_sheet_mixing_energy, args.rama_library_combining_rule)
         else:
             write_rama_map_pot(fasta_seq_with_cpr, args.rama_library, args.rama_sheet_mixing_energy,
