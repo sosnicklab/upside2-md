@@ -1,6 +1,6 @@
 ## Installation
 
-#### Dependencies
+### Dependencies
 
 Compile dependencies
 
@@ -23,7 +23,7 @@ be clear enough to figure out.
   * MDTraj (optional but capable of loading and analyzing Upside trajectories)
   * Pymbar (optional but capable of doing mbar reweighting for REMD simulations)
 
-#### Compiling Upside
+### Compiling Upside
 
 This guide assumes that you have all of the compile dependencies satisfied.  In
 particular, the HDF5 high-level must be specifically enabled by a configuration
@@ -44,7 +44,7 @@ After these commands execute successfully, the `obj/` directory will contain
 the `upside` executable and the `libupside.so` shared library (exact name of
 shared library may depend on operating system).
 
-#### Running molecular dynamics
+## Running molecular dynamics
 
 The following sections illustrate running simple molecular dynamics simulations
 with Upside.
@@ -88,9 +88,9 @@ structure prediction.
 The output `simulation.up` is an HDF5 file, and the simulation configuration is
 written in the "/input" group within the `.up` file.  The `upside_config.py`
 copies all of the parameters into its output, so that only `simulation.up` is
-needed to run the simulation.  
+needed to run the simulation.
 
-## Constant temperature simulation
+### Constant temperature simulation
 
 A simple, constant-temperature simulation may be run with 
 
@@ -153,7 +153,12 @@ frames at the temperature 0.5.  This means that in the limit of infinite samplin
 `config_0.up` will contain samples from a Boltzmann ensemble at temperature 0.5 but 
 the trajectory will be discontinuous due to replica swapping.
 
-#### Simulation analysis and visualization
+### Advanced usage
+
+Explore the `upside/example/` folder for examples on running with restraints, membrane
+simulations, pulling simulations, HDX prediction, and more.
+
+## Simulation analysis and visualization
 
 The contents of a `.up` file can be listed with
 
