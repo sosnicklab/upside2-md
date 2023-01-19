@@ -37,6 +37,12 @@ def traj_from_upside(seq, time, pos, chain_first_residue, chain_counts, add_extr
 
     n_frame = len(pos)
     n_res = len(seq)
+
+    try:
+        seq = [str(seq[nr], 'utf-8') for nr in range(n_res)]
+    except TypeError:
+        pass
+
     seq = np.array([('PRO' if x == 'CPR' else x) for x in seq])
 
     ch_first = chain_first_residue[:]
