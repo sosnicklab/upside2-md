@@ -14,6 +14,7 @@ three_letter_aa = dict(
 
 aa_num = dict([(k,i) for i,k in enumerate(sorted(three_letter_aa.values()))])
 one_letter_aa = dict([(v,k) for k,v in three_letter_aa.items()])
+one_letter_aa['CPR'] = 'P' # add entry for cis proline
 deg=np.deg2rad(1)
 default_filter = tb.Filters(complib='zlib', complevel=5, fletcher32=True)
 n_bit_rotamer = 4
