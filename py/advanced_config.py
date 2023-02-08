@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from itertools import count, groupby
 import numpy as np
 import tables as tb
 import sys,os
@@ -1323,6 +1324,15 @@ def main():
     # Record of adv config options
     args_group = t.create_group(t.root.input, 'adv_args')
     for k,v in sorted(vars(args).items()):
+        # h5 has header message size limit, _v_attrs values fall under this.
+        # restraint_group values for large proteins can exceed this as fully expanded array, so
+        # turn them back into compact range form, i.e. ["0-3"], instead of [[0, 1, 2, 3]] 
+        if k == "restraint_group":
+            v_compact = []
+            for restr_grp in v:
+                G=(list(x) for _,x in groupby(restr_grp, lambda x,c=count(): next(c)-x))
+                v_compact.append(",".join("-".join(map(str,(g[0],g[-1])[:len(g)])) for g in G))
+            v = v_compact
         args_group._v_attrs[k] = v
     args_group._v_attrs['invocation'] = ' '.join(sys.argv[:])
 
