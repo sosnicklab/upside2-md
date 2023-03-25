@@ -1303,8 +1303,6 @@ def main():
 
     args = parser.parse_args()
 
-    if args.apply_restraint_group_to_each_chain and not args.chain_break_from_file:
-        parser.error('--apply-restraint-group-to-each-chain requires --chain-break-from-file')
 
     global n_atom, t, potential
     t = tb.open_file(args.config,'a')
@@ -1344,6 +1342,9 @@ def main():
         if 'rl_chains' in t.root.input.chain_break:
             has_rl_info = True
             rl_chains = t.root.input.chain_break.rl_chains[:]
+
+    if args.apply_restraint_group_to_each_chain and ('chain_break' not in t.root.input): 
+        parser.error('--apply-restraint-group-to-each-chain in advanced_config requires --chain-break-from-file in upside_config')
 
     if args.heuristic_cavity_radius:
         if n_chains < 2:
