@@ -50,7 +50,6 @@ def upside_config(fasta,
                   target_structure='',
                   chain_break_from_file='',
                   cavity_radius=0.,
-                  make_unbound=False,
                   intensive_memory= False,
 
                   bond_stiffness=None,
@@ -164,10 +163,6 @@ def upside_config(fasta,
 
     if chain_break_from_file:
         args.append('--chain-break-from-file=%s'%chain_break_from_file)
-    if cavity_radius:
-        args.append('--cavity-radius=%f'%cavity_radius)
-    if make_unbound:
-        args.append('--make-unbound')
 
     if surface:
         args.append('--surface')
@@ -258,6 +253,7 @@ def advanced_config(config,
                   secstr_bias='',
                   chain_break_from_file='',
                   apply_restraint_group_to_each_chain=False,
+                  make_unbound=False,
                   cavity_radius=0.,
                   heuristic_cavity_radius=None,
                   cavity_radius_from_config='',):
@@ -325,6 +321,8 @@ def advanced_config(config,
         args.append('--apply-restraint-group-to-each-chain')
     if cavity_radius:
         args.append('--cavity-radius=%f'%cavity_radius)
+    if make_unbound:
+        args.append('--make-unbound')
     if heuristic_cavity_radius:
         args.append('--heuristic-cavity-radius=%f'%heuristic_cavity_radius)
     if cavity_radius_from_config:
