@@ -513,6 +513,16 @@ try {
             "of the potential for the initial structure.  This may give strange answers for native structures "
             "(no steric clashes may given an agreement of NaN) or random structures (where bonds and angles are "
             "exactly at their equilibrium values).  Interpret these results at your own risk.", cmd, false);
+    SwitchArg record_momentum_arg("", "record-momentum",
+            "record the momentum (so that the trajectory can be exactly restarted)"
+            " the momentum will be recorded in output.mom ",
+            cmd, false);
+    SwitchArg restart_using_momentum_arg("", "restart-using-momentum",
+            "restart the trajectory by initializing using the momentum stored in input.mom,"
+            " this is usually helpful when the simulation ends due to the wall time."
+            " To restart the trajectory, make sure to copy the end momentum of last run to input.mom (similar to the pos treatment when restarting):"
+            " check examples for continue the simulation",
+            cmd, false);
     ValueArg<string> set_param_arg("", "set-param", "Developer use only", false, "", "param_arg", cmd);
     UnlabeledMultiArg<string> config_args("config_files","configuration .h5 files", true, "h5_files");
     cmd.add(config_args);
@@ -730,8 +740,6 @@ try {
                 pos_shape = get_dset_size(3, sys->input.get(), "/input/pos");
 
             sys->n_atom = pos_shape[0];
-            sys->mom.reset(3, sys->n_atom);
-            for(int d: range(3)) for(int na: range(sys->n_atom)) sys->mom(d,na) = 0.f;
 
             if(pos_shape[1]!=3) throw string("invalid dimensions for initial position");
             if(pos_shape[2]!=1) throw string("must have n_system 1 from config");
@@ -744,6 +752,7 @@ try {
             // Override parameters as instructed by users
             for(const auto& p: set_param_map)
                 sys->engine.get(p.first).computation->set_param(p.second);
+
 
             if (user_defined_input) 
                 traverse_dset<3,float>(sys->input.get(), "/input/pos", [&](size_t na, size_t d, size_t ns, float x) { 
@@ -769,9 +778,30 @@ try {
                     1.,
                     1e8);
             sys->set_temperature(sys->initial_temperature);
-
-            sys->thermostat.apply(sys->mom, sys->n_atom); // initial thermalization
             sys->thermostat.set_delta_t(thermostat_interval*inner_step*dt);  // set true thermostat interval  //  FIXME inner_step
+
+            sys->mom.reset(3, sys->n_atom);
+            if (restart_using_momentum_arg.getValue()) { // initialize momentum using input.mom if requested
+                if (user_defined_input) {
+                    if (h5_exists(sys->input.get(), "input/mom")) {
+                        traverse_dset<3,float>(sys->input.get(), "/input/mom", [&](size_t na, size_t d, size_t ns, float x) { 
+                            sys->mom(d,na) = x;});
+                    }
+                    else throw  string("input h5 file doesn't have input.mom group, can't restart using the momentum!");
+                }
+                else {
+                    if (h5_exists(sys->config.get(), "input/mom")) {
+                        traverse_dset<3,float>(sys->config.get(), "/input/mom", [&](size_t na, size_t d, size_t ns, float x) { 
+                                sys->mom(d,na) = x;});
+                    }
+                    else throw  string("input h5 file doesn't have input.mom group, can't restart using the momentum!");
+                }
+            }
+            else {
+                for(int d: range(3)) for(int na: range(sys->n_atom)) sys->mom(d,na) = 0.f;
+                sys->thermostat.apply(sys->mom, sys->n_atom); // initial thermalization if it's a fresh start
+            }
+
 
             // we must capture the sys pointer by value here so that it is available later
             sys->logger->add_logger<float>("pos", {1, sys->n_atom, 3}, [sys](float* pos_buffer) {
@@ -780,6 +810,15 @@ try {
                     for(int d=0; d<3; ++d) 
                     pos_buffer[na*3 + d] = pos_array(d,na);
                     });
+            if (record_momentum_arg.getValue()) { // record the momentum if requested, with the same frequency as the position recording
+                sys->logger->add_logger<float>("mom", {1, sys->n_atom, 3}, [sys](float* mom_buffer) {
+                        VecArray mom_array = sys->mom;
+                        for(int na=0; na<sys->n_atom; ++na) 
+                        for(int d=0; d<3; ++d) 
+                        mom_buffer[na*3 + d] = mom_array(d,na);
+                        });
+                
+            }
             sys->logger->add_logger<double>("kinetic", {1}, [sys](double* kin_buffer) {
                     double sum_kin = 0.f;
                     for(int na=0; na<sys->n_atom; ++na) sum_kin += mag2(load_vec<3>(sys->mom,na));
