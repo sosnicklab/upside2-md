@@ -959,7 +959,7 @@ try {
                         Rg = sqrtf(Rg/sys.n_atom);
 
                         if(verbose) printf(
-                                "%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg %10.5f A, potential % 8.2f\n", 
+                                "%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg %5.1f A, potential % 8.2f\n", 
                                 duration_print_width, nr*double(dt*inner_step), 
                                 duration_print_width, duration, 
                                 ns, sys.temperature,

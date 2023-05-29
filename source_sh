@@ -8,3 +8,5 @@ export UPSIDE_HOME=UP_PATH
 export PATH="$MY_PYTHON/bin:$PATH"
 export PATH=$UPSIDE_HOME/obj:$PATH
 export PYTHONPATH=$UPSIDE_HOME/py:$PYTHONPATH
+
+export PLUMED_TYPESAFE_IGNORE=yes # avoid a weird plumed issue, see discussion here: https://github.com/sosnicklab/upside2-md/pull/4
