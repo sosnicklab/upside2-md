@@ -1,0 +1,3 @@
+rg: GYRATION TYPE=RADIUS ATOMS=1-30
+PRINT ARG=rg STRIDE=1 FILE=outputs/simple_test/chig.rg.plumed
+DUMPATOMS ATOMS=1-30 FILE=outputs/simple_test/chig.xyz.plumed

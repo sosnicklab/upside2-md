@@ -1296,6 +1296,8 @@ def main():
     parser.add_argument('--plumed-temperature', default=0.9, type=float,
             help='set temperature to PLUMED. The default value is 0.9. ' +
             'WARNING: this should be the same as the global temperature, which is set by --temperature.')
+    parser.add_argument('--plumed-just-print', action='store_true',
+        help='Only use Plumed to print value but not add bias to the simulation')
 
     parser.add_argument('--external-pairs-table-potential', default='', help='User-defined table-type pair interactions. (pair and potential)')
     parser.add_argument('--external-pairs-type',            default='', help='User-defined table-type pair interactions. (used atoms: CA, CB or ALL)')
@@ -1488,7 +1490,7 @@ def main():
         write_pulling(parser, fasta, args.ask_before_using_AFM, args.AFM_time_initial, args.AFM_time_step)
 
     if args.plumed:
-        write_plumed(fasta, args.plumed, args.plumed_temperature, args.plumed_time_step)
+        write_plumed(fasta, args.plumed, args.plumed_temperature, args.plumed_time_step, args.plumed_just_print)
 
     if args.contact_energies:
         require_backbone_point = True

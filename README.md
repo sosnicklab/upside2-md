@@ -156,7 +156,7 @@ the trajectory will be discontinuous due to replica swapping.
 ### Advanced usage
 
 Explore the `upside/example/` folder for examples on running with restraints, membrane
-simulations, pulling simulations, HDX prediction, and more.
+simulations, pulling simulations, HDX prediction, PLUMED usaged and more.
 
 ## Simulation analysis and visualization
 
