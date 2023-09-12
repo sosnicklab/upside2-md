@@ -1,0 +1,3 @@
+RMSD: RMSD REFERENCE=pdb/chig.ca.pdb TYPE=OPTIMAL
+restraint: METAD ARG=RMSD SIGMA=0.2 HEIGHT=0.3 PACE=100 FILE=outputs/metad/HILLS
+PRINT ARG=RMSD,restraint.bias STRIDE=100 FILE=outputs/metad/chig.rmsd.plumed

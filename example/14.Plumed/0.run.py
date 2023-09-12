@@ -15,12 +15,14 @@ import run_upside as ru
 pdb_id         = 'chig' # switch to 1dfn for multi-chain showing
 pdb_dir        = './pdb'
 plumed_dir     = 'plumed_input'
-sim_id         = 'simple_test'
+plumed_file    = 'rmsd_metad.in'  # change this to include different plumed input files
+PLUMED_JUST_PRINT = False
+sim_id         = 'metad'
 is_native      = True
 ff             = 'ff_2.1'
 T              = 0.8
-duration       = 1000
-frame_interval = 1
+duration       = 10000
+frame_interval = 100
 base_dir       = './'
 
 #----------------------------------------------------------------------
@@ -102,8 +104,8 @@ print (config_stdout)
 kwargs = dict(
                #restraint_groups = ['0-9'],
                #restraint_spring_constant = 2.0,
-                plumed = f'{plumed_dir}/plumed.in',
-                plumed_just_print = True,
+                plumed = f'{plumed_dir}/{plumed_file}',
+                plumed_just_print = PLUMED_JUST_PRINT,  # True: no bias, just print
              )
 
 config_stdout = ru.advanced_config(config_base, **kwargs)

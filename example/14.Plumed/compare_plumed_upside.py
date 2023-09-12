@@ -1,24 +1,29 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+
 
 
 import numpy as np
 import mdtraj_upside as mu
+import mdtraj as md
 import os
 import matplotlib.pyplot as plt
 
+POS = False
+RG = False
+RMSD = True
 
 # ## compare coordinates
 
-# In[2]:
 
 
-traj = mu.load_upside_traj("outputs/simple_test/chig.run.up")
+
+#traj = mu.load_upside_traj("outputs/simple_test/chig.run.up")
+traj = mu.load_upside_traj("outputs/metad/chig.run.up")
 
 
-# In[3]:
+
 
 
 def quick_xyz_parser(file, natoms):
@@ -45,73 +50,53 @@ def quick_xyz_parser(file, natoms):
     return coords_all
 
 
-# In[5]:
-
-
-coords_all = np.array(quick_xyz_parser('outputs/simple_test/chig.xyz.plumed', natoms=30))
-coords_all.shape
-
-
-# In[6]:
-
-
-core_ids = traj.topology.select("name N or name CA or name C")
-
-
-# In[7]:
-
-
-traj.xyz[:, core_ids].shape
-
-
-# In[10]:
-
-
 if not os.path.exists("results"):
     os.mkdir("results")
 
-plt.plot(traj.time, np.sum((coords_all - traj.xyz[:, core_ids])**2, axis=(1,2)))
-plt.xlabel("Time (in Upside unit)")
-plt.ylabel("RMS difference in coordinates")
-plt.savefig("results/compare_pos_upside_plumed.png", dpi=200, bbox_inches='tight')
-plt.show()
+
+
+if POS:
+    coords_all = np.array(quick_xyz_parser('outputs/simple_test/chig.xyz.plumed', natoms=30))
+    core_ids = traj.topology.select("name N or name CA or name C")
+
+    plt.plot(traj.time, np.sum((coords_all - traj.xyz[:, core_ids])**2, axis=(1,2)))
+    plt.xlabel("Time (in Upside unit)")
+    plt.ylabel("RMS difference in coordinates")
+    plt.savefig("results/compare_pos_upside_plumed.png", dpi=200, bbox_inches='tight')
+    plt.show()
 
 
 # ## compare Rg
 
-# In[11]:
-
-
 def calc_rg(xyz):
     return np.sqrt(np.sum((xyz - xyz.mean(axis=(0,1)))**2)/ len(xyz[0, :]))
 
-
-# In[12]:
-
-
-rgs_upside = [calc_rg(t.xyz[:, core_ids]) for t in traj]
-rgs_upside
-
-
-# In[14]:
-
-
-rgs_plumed = np.loadtxt("outputs/simple_test/chig.rg.plumed")[:, 1]
+if RG:
+    rgs_upside = [calc_rg(t.xyz[:, core_ids]) for t in traj]
+    rgs_plumed = np.loadtxt("outputs/simple_test/chig.rg.plumed")[:, 1]
+    plt.plot(traj.time, rgs_upside, '-', label='mdtraj calculation')
+    plt.plot(traj.time, rgs_plumed, '--', label='plumed calculation')
+    plt.legend()
+    plt.xlabel("Time (in Upside unit)")
+    plt.ylabel("Rg (nm)")
+    plt.savefig("results/compare_Rg_upside_plumed.png", dpi=200, bbox_inches='tight')
+    plt.show()
 
 
-# In[16]:
+# ## Compare RMSD 
+if RMSD:
+    sele = traj.top.select("name CA")
+    rmsd_upside = md.rmsd(traj, traj, atom_indices=sele)
+    rmsd_plumed = np.loadtxt("outputs/metad/chig.rmsd.plumed")[:,1]
+    plt.plot(rmsd_upside, '-', label='mdtraj calculation')
+    plt.plot(rmsd_plumed, '--', label='plumed calculation')
+    plt.legend()
+    plt.xlabel("Time (in Upside unit)")
+    plt.ylabel("Rmsd (nm)")
+    plt.savefig("results/compare_Rmsd_upside_plumed.png", dpi=200, bbox_inches='tight')
+    plt.show()
 
 
-plt.plot(traj.time, rgs_upside, '-', label='mdtraj calculation')
-plt.plot(traj.time, rgs_plumed, '--', label='plumed calculation')
-plt.legend()
-plt.xlabel("Time (in Upside unit)")
-plt.ylabel("Rg (nm)")
-plt.savefig("results/compare_Rg_upside_plumed.png", dpi=200, bbox_inches='tight')
-plt.show()
-
-
-# In[ ]:
 
 
 
