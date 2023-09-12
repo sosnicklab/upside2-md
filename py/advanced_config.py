@@ -868,7 +868,7 @@ def write_pulling(parser, fasta, AFM_table, time_initial, time_step):
     SpringPotential(t, 'pulling', pos_moving_dist, dim, pbc, box_len, np.arange(n_spring), np.zeros(n_spring), spring_const)
 
 def write_tension(parser, fasta, tension_table):
-    fields = [ln.split() for ln in open(tension_table,'U')]
+    fields = [ln.split() for ln in open(tension_table,'r')]
     header = 'residue tension_x tension_y tension_z'
     actual_header = [x.lower() for x in fields[0]]
     if actual_header != header.split():
@@ -924,7 +924,7 @@ def write_plumed(fasta, plumedFile, T=0.9, stepsize=0.009, just_print=False ):
 
 def write_contact_energies(parser, fasta, contact_table):
 
-    fields = [ln.split() for ln in open(contact_table,'U')]
+    fields = [ln.split() for ln in open(contact_table,'r')]
     header_fields = 'residue1 residue2 energy distance transition_width'.split()
     if [x.lower() for x in fields[0]] != header_fields:
         parser.error('First line of contact energy table must be "%s"'%(" ".join(header_fields)))
@@ -967,7 +967,7 @@ def write_contact_energies(parser, fasta, contact_table):
 def write_cooperation_contacts(parser, fasta, table_list):
     table_list = table_list.split(',')
     for j, contact_table in enumerate(table_list):
-        fields = [ln.split() for ln in open(contact_table,'U')]
+        fields = [ln.split() for ln in open(contact_table,'r')]
         header_fields = 'residue1 residue2 energy distance transition_width'.split()
         if [x.lower() for x in fields[0]] != header_fields:
             parser.error('First line of contact energy table must be "%s"'%(" ".join(header_fields)))
@@ -1258,7 +1258,11 @@ def main():
             'which is attached to the tip at (tip_pos_x, tip_pos_y, tip_pos_z). ' +
             'The magnitude of the pulling velocity vector sets the pulling speed. The unit is: angstrom/time_step. ' +
             'The spring_const is in the unit of kT/angstrom^2. At T = 298.15 K, it equals 41.14 pN/angstrom. ' + 
-            'Note: consult with the developer before using this AFM function.')
+            'Note: consult with the developer before using this AFM function. ')
+            'Notice that to use this option, you have to either disable '+
+            'the recentering (soluble protein) or distable z recentering for membrane protein. ' +
+            'To do that, you will need to add --disable-recentering or --disable-z-recentering in UPSIDE EXECUTABLE arguments '+
+            '(not arguments for upside_config.py or advanced_config.py)')
     parser.add_argument('--AFM-time-initial', default=0., type=float,
             help='Time initial for AFM pulling simulation. The default value is 0. ' +
             'WARNING: do not change this value unless the simulation is a continuation of a previous one. ' +
@@ -1271,8 +1275,11 @@ def main():
             help='Table of linear tensions.  Each line must contain 4 fields and the first line '+
             'must contain "residue tension_x tension_y tension_z".  The residue will be pulled in the '+
             'direction (tension_x,tension_y,tension_z) by its CA atom.  The magnitude of the tension vector '+
-            'sets the force.  Units are kT/Angstrom.')
-    
+            'sets the force.  Units are kT/Angstrom. Notice that to use this option, you have to either disable '+
+            'the recentering (soluble protein) or distable z recentering for membrane protein. ' +
+            'To do that, you will need to add --disable-recentering or --disable-z-recentering in UPSIDE EXECUTABLE arguments '+
+            '(not arguments for upside_config.py or advanced_config.py)')
+
     parser.add_argument('--contact-energies', default='',
             help='Path to text file that defines a contact energy function.  The first line of the file should ' +
             'be a header containing "residue1 residue2 energy distance transition_width", and the remaining '+
