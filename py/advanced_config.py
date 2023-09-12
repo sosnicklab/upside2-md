@@ -1258,7 +1258,11 @@ def main():
             'which is attached to the tip at (tip_pos_x, tip_pos_y, tip_pos_z). ' +
             'The magnitude of the pulling velocity vector sets the pulling speed. The unit is: angstrom/time_step. ' +
             'The spring_const is in the unit of kT/angstrom^2. At T = 298.15 K, it equals 41.14 pN/angstrom. ' + 
-            'Note: consult with the developer before using this AFM function.')
+            'Note: consult with the developer before using this AFM function. ')
+            'Notice that to use this option, you have to either disable '+
+            'the recentering (soluble protein) or distable z recentering for membrane protein. ' +
+            'To do that, you will need to add --disable-recentering or --disable-z-recentering in UPSIDE EXECUTABLE arguments '+
+            '(not arguments for upside_config.py or advanced_config.py)')
     parser.add_argument('--AFM-time-initial', default=0., type=float,
             help='Time initial for AFM pulling simulation. The default value is 0. ' +
             'WARNING: do not change this value unless the simulation is a continuation of a previous one. ' +
@@ -1271,8 +1275,11 @@ def main():
             help='Table of linear tensions.  Each line must contain 4 fields and the first line '+
             'must contain "residue tension_x tension_y tension_z".  The residue will be pulled in the '+
             'direction (tension_x,tension_y,tension_z) by its CA atom.  The magnitude of the tension vector '+
-            'sets the force.  Units are kT/Angstrom.')
-    
+            'sets the force.  Units are kT/Angstrom. Notice that to use this option, you have to either disable '+
+            'the recentering (soluble protein) or distable z recentering for membrane protein. ' +
+            'To do that, you will need to add --disable-recentering or --disable-z-recentering in UPSIDE EXECUTABLE arguments '+
+            '(not arguments for upside_config.py or advanced_config.py)')
+
     parser.add_argument('--contact-energies', default='',
             help='Path to text file that defines a contact energy function.  The first line of the file should ' +
             'be a header containing "residue1 residue2 energy distance transition_width", and the remaining '+
