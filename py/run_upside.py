@@ -256,7 +256,9 @@ def advanced_config(config,
                   make_unbound=False,
                   cavity_radius=0.,
                   heuristic_cavity_radius=None,
-                  cavity_radius_from_config='',):
+                  cavity_radius_from_config='',
+                  tension='',
+                   ):
     
     args = [os.path.join(py_source_dir, 'advanced_config.py'), '--config=%s'%config, ]
 
@@ -328,7 +330,11 @@ def advanced_config(config,
     if cavity_radius_from_config:
         args.append('--cavity-radius-from-config=%s'%cavity_radius_from_config)
 
+    if tension:
+        args.append('--tension=%s'%tension)
+
     return ' '.join(args) + '\n' + sp.check_output(args).decode('ASCII')
+
 
 def compile():
     return sp.check_output(['/bin/bash', '-c', 'cd %s; make -j4'%obj_dir])

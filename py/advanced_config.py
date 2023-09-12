@@ -868,7 +868,7 @@ def write_pulling(parser, fasta, AFM_table, time_initial, time_step):
     SpringPotential(t, 'pulling', pos_moving_dist, dim, pbc, box_len, np.arange(n_spring), np.zeros(n_spring), spring_const)
 
 def write_tension(parser, fasta, tension_table):
-    fields = [ln.split() for ln in open(tension_table,'U')]
+    fields = [ln.split() for ln in open(tension_table,'r')]
     header = 'residue tension_x tension_y tension_z'
     actual_header = [x.lower() for x in fields[0]]
     if actual_header != header.split():
@@ -924,7 +924,7 @@ def write_plumed(fasta, plumedFile, T=0.9, stepsize=0.009, just_print=False ):
 
 def write_contact_energies(parser, fasta, contact_table):
 
-    fields = [ln.split() for ln in open(contact_table,'U')]
+    fields = [ln.split() for ln in open(contact_table,'r')]
     header_fields = 'residue1 residue2 energy distance transition_width'.split()
     if [x.lower() for x in fields[0]] != header_fields:
         parser.error('First line of contact energy table must be "%s"'%(" ".join(header_fields)))
@@ -967,7 +967,7 @@ def write_contact_energies(parser, fasta, contact_table):
 def write_cooperation_contacts(parser, fasta, table_list):
     table_list = table_list.split(',')
     for j, contact_table in enumerate(table_list):
-        fields = [ln.split() for ln in open(contact_table,'U')]
+        fields = [ln.split() for ln in open(contact_table,'r')]
         header_fields = 'residue1 residue2 energy distance transition_width'.split()
         if [x.lower() for x in fields[0]] != header_fields:
             parser.error('First line of contact energy table must be "%s"'%(" ".join(header_fields)))
