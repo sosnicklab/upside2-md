@@ -109,7 +109,7 @@ def upside_config(fasta,
     if target_structure:
         args.append('--target-structure=%s'%target_structure)
     if spatial_transform_from_table:
-        args.append('--spatial-transform-from-table'%spatial_transform_from_table)
+        args.append('--spatial-transform-from-table=%s'%spatial_transform_from_table)
     if intensive_memory:
         args.append('--intensive-memory')
 
