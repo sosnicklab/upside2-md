@@ -1,0 +1,11 @@
+residue restype  chain  resnum      chi1     chi2
+      0     GLY              1       nan      nan
+      1     TYR              2  -179.953   86.207
+      2     ASP              3  -174.950   56.997
+      3     PRO              4    22.146  -21.692
+      4     GLU              5  -155.934 -107.111
+      5     THR              6    74.801      nan
+      6     GLY              7       nan      nan
+      7     THR              8    15.899      nan
+      8     TRP              9   -36.890   94.723
+      9     GLY             10       nan      nan

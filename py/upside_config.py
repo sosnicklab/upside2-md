@@ -4,6 +4,8 @@ import tables as tb
 import sys,os
 import _pickle as cPickle
 from upside_nodes import *
+from scipy.spatial.transform import Rotation
+import pdb
 
 #---------------------------------------------------------------------------
 #                     Predefined variables, types
@@ -76,7 +78,63 @@ def create_array(grp, nm, obj=None):
     return t.create_earray(grp, nm, obj=obj, filters=default_filter)
 
 
-#-------------------------------------
+def rotate_to_axis(init_vec, end_vec):
+    """
+    the rotation that transform the init_vec to end_vec
+    basically the cross product gives the axis of the rotation, and the dot product gives the angle
+    """
+
+    # normalize the vectors
+    init_vec_hat = init_vec / np.linalg.norm(init_vec)
+    end_vec_hat = end_vec / np.linalg.norm(end_vec) 
+
+    # compute the rotation axis
+    rot_axis = np.cross(init_vec_hat, end_vec_hat)
+    rot_axis_mag = np.linalg.norm(rot_axis)
+
+    if rot_axis_mag == 0:
+        # check if the init_vec and end_vec are already aligned
+        return Rotation.from_matrix(np.eye(3))
+
+    # normalize the rotation axis
+    rot_axis_hat = rot_axis/np.linalg.norm(rot_axis)
+
+    # compute the rotation angle
+    theta = np.arccos(np.dot(init_vec_hat, end_vec_hat))
+
+    # construct the rotation using axis-angle representation
+    rotation = Rotation.from_rotvec(rot_axis_hat*theta)
+
+    return rotation
+
+
+def apply_spatial_transformation(pos, spatial_tranform_table):
+    fields = [ln.split() for ln in open(spatial_tranform_table, 'r')]
+    header = 'resid1 resid2 axis_x axis_y axis_z offset_x offset_y offset_z'
+    actual_header = [x.lower() for x in fields[0]]
+    if actual_header != header.split():
+        parser.error('First line of spatial transform table must be "%s" but is "%s"'
+                %(header," ".join(actual_header)))
+    if not all(len(f)==len(fields[0]) for f in fields):
+        parser.error('Invalid format for spatial transform table')
+    if len(fields) > 2:
+        parser.error('the spatial transformation table can not be more than 2 lines')
+
+    resid1, resid2 = np.array(fields[1][:2]).astype('int')
+    axis_x, axis_y, axis_z, offset_x, offset_y, offset_z = np.array(fields[1][2:]).astype('float')
+    assert resid1 != resid2, "please use different residues to specify the spatial transformation axis"
+    CA1, CA2 = resid1*3 + 1, resid2*3 + 1
+    dist_12 = np.linalg.norm(pos[CA2]-pos[CA1])
+    assert  dist_12 > 2, f"the chosen residues' Calphas have to be separated more than 2 angstrom! Right now it is {dist_12} angstrom."
+    rotation = rotate_to_axis(pos[CA2]-pos[CA1], np.array([axis_x, axis_y, axis_z]))
+    pos = rotation.apply(pos)
+    pos += np.array([offset_x, offset_y, offset_z]) - (pos[CA1]+pos[CA2])/2
+    return pos
+
+
+
+
+# -------------------------------------
 # build the random initial structure
 
 def make_tab_matrices(phi, theta, bond_length):
@@ -2032,6 +2090,16 @@ def main():
             'requested, structures will be recycled.  If not provided, a ' +
             'freely-jointed chain with good bond lengths and angles but bad dihedrals will be used ' +
             'instead.')
+    parser.add_argument('--spatial-transform-from-table', default='',
+                        help='Name of the table for the spatial transformation. The table has to be formatted like this: ' +
+                 'the first line: resid1 resid2 axis_x axis_y axis_z offset_x offset_y offset_z ' + 
+                 'and the second line is the desired values. '
+                 'This argument can be used to rotate ' +
+                 'and translate the protein: given two residue id (0-based), the transformation will ' +
+                 'make sure  that the vector formed by Calpha of these two residues (assume the vector is from the first residue to the second residue) ' +
+                 'will be aligned with vector (axis_x, axis_y, axis_z), and the center of these two residues (not necessarily com) will be placed on (offset_x, offset_y, offset_z). ' +
+                 'We also note that, if you want to control the offset exactly, you probably want to use the disable-recentering/disable-z-recentering arguement for upside'
+                       )
     parser.add_argument('--chain-break-from-file', default='',
             help='File with indices of chain first residues recorded during initial structure generation to automate creation and analysis of separate chains.')
     parser.add_argument('--jump-length-scale', type=float, default=5., help='Translational gaussian width in angstroms for Monte Carlo JumpSampler. Default: 5 angstroms')
@@ -2224,6 +2292,10 @@ def main():
         pos[:,:,0] = init_pos
     else:
         pos[:,:,0] = random_initial_config(len(fasta_seq))
+
+    if args.spatial_transform_from_table:
+        pos[:,:,0] = apply_spatial_transformation(pos[:,:,0], args.spatial_transform_from_table)
+
     create_array(input, 'pos', obj=pos)
 
     if args.intensive_memory:
