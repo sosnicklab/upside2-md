@@ -1,0 +1,34 @@
+invocation: /home/yihengwu917/source_code/upside2-md-fork/obj/upside --frame-interval 50 --temperature 0.8 --duration 1000 --seed 1 .//outputs/simple_test/chig.run.up --disable-recentering
+random seed: 1
+.//outputs/simple_test/chig.run.up
+n_atom 30
+
+
+0 0.80
+
+Initial potential energy: 6.05
+   0 / 1000 elapsed  0 system 0.80 temp   2.5 hbonds, Rg   4.5 A, potential     6.05
+  50 / 1000 elapsed  0 system 0.80 temp   5.3 hbonds, Rg   4.7 A, potential    -2.99
+ 100 / 1000 elapsed  0 system 0.80 temp   5.1 hbonds, Rg   4.5 A, potential    -1.12
+ 150 / 1000 elapsed  0 system 0.80 temp   5.4 hbonds, Rg   4.7 A, potential     2.61
+ 200 / 1000 elapsed  0 system 0.80 temp   5.5 hbonds, Rg   4.5 A, potential     2.58
+ 250 / 1000 elapsed  0 system 0.80 temp   4.9 hbonds, Rg   4.5 A, potential   -10.29
+ 300 / 1000 elapsed  0 system 0.80 temp   4.3 hbonds, Rg   4.5 A, potential    -0.14
+ 350 / 1000 elapsed  0 system 0.80 temp   5.0 hbonds, Rg   4.8 A, potential    -0.30
+ 400 / 1000 elapsed  0 system 0.80 temp   4.8 hbonds, Rg   4.7 A, potential    -1.78
+ 450 / 1000 elapsed  0 system 0.80 temp   5.4 hbonds, Rg   4.6 A, potential    -8.15
+ 500 / 1000 elapsed  0 system 0.80 temp   5.3 hbonds, Rg   4.5 A, potential    -8.28
+ 550 / 1000 elapsed  0 system 0.80 temp   3.2 hbonds, Rg   4.5 A, potential    -1.59
+ 600 / 1000 elapsed  0 system 0.80 temp   5.3 hbonds, Rg   4.6 A, potential     4.76
+ 650 / 1000 elapsed  0 system 0.80 temp   5.3 hbonds, Rg   4.6 A, potential     2.07
+ 700 / 1000 elapsed  0 system 0.80 temp   5.1 hbonds, Rg   4.8 A, potential     4.86
+ 750 / 1000 elapsed  0 system 0.80 temp   5.6 hbonds, Rg   4.6 A, potential   -10.18
+ 800 / 1000 elapsed  0 system 0.80 temp   5.6 hbonds, Rg   4.8 A, potential     4.47
+ 850 / 1000 elapsed  0 system 0.80 temp   3.8 hbonds, Rg   4.8 A, potential     6.69
+ 900 / 1000 elapsed  0 system 0.80 temp   5.6 hbonds, Rg   4.5 A, potential     2.28
+ 950 / 1000 elapsed  0 system 0.80 temp   5.8 hbonds, Rg   4.5 A, potential    -1.75
+
+
+finished in 6.1 seconds (55.14 us/systems/step, 5.9e+05 simulation_time_unit/hour)
+
+avg_kinetic_energy/1.5kT  1.001

@@ -46,8 +46,9 @@ def stop_upside_gently(process, allowed_termination_seconds=60.):
 
 def upside_config(fasta,
                   output,
-                  initial_structure='', 
+                  initial_structure='',
                   target_structure='',
+                  spatial_transform_from_table='',
                   chain_break_from_file='',
                   cavity_radius=0.,
                   intensive_memory= False,
@@ -107,6 +108,8 @@ def upside_config(fasta,
         args.append('--initial-structure=%s'%initial_structure)
     if target_structure:
         args.append('--target-structure=%s'%target_structure)
+    if spatial_transform_from_table:
+        args.append('--spatial-transform-from-table'%spatial_transform_from_table)
     if intensive_memory:
         args.append('--intensive-memory')
 
