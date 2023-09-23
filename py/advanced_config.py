@@ -1258,7 +1258,7 @@ def main():
             'which is attached to the tip at (tip_pos_x, tip_pos_y, tip_pos_z). ' +
             'The magnitude of the pulling velocity vector sets the pulling speed. The unit is: angstrom/time_step. ' +
             'The spring_const is in the unit of kT/angstrom^2. At T = 298.15 K, it equals 41.14 pN/angstrom. ' + 
-            'Note: consult with the developer before using this AFM function. ')
+            'Note: consult with the developer before using this AFM function. '
             'Notice that to use this option, you have to either disable '+
             'the recentering (soluble protein) or distable z recentering for membrane protein. ' +
             'To do that, you will need to add --disable-recentering or --disable-z-recentering in UPSIDE EXECUTABLE arguments '+
