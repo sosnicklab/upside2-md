@@ -131,7 +131,7 @@ def main():
         top_file = args.top_h5
 
     with tables.open_file(top_file) as t:
-        seq = t.root.input.sequence[:]
+        seq = np.char.decode(t.root.input.sequence[:], encoding='UTF-8')
         if 'chain_break' in t.root.input:
             chain_first_residue = t.root.input.chain_break.chain_first_residue[:]
         else:
