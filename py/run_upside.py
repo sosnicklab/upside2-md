@@ -296,7 +296,7 @@ def advanced_config(config,
         args.append('--plumed-temperature=%f'%plumed_temperature)
 
     if contact_energies:
-        args.append('--contact-energies=%s'%contacts)
+        args.append('--contact-energies=%s'%contact_energies)
     if cooperation_contacts:
         args.append('--cooperation-contacts=%s'%cooperation_contacts)
 
