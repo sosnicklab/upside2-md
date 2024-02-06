@@ -22,4 +22,10 @@ CMakeFiles/
 .ycm_extra_conf.py
 compile_commands.json
 source.sh
+src/Plumed.cmake
+src/Plumed.h
+src/Plumed.inc
+example/*/inputs
+example/*/outputs
+example/*/results
 

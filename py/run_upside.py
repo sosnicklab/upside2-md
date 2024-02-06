@@ -244,6 +244,7 @@ def advanced_config(config,
                   plumed='',
                   plumed_time_step=0.009,
                   plumed_temperature=0.9,
+                  plumed_just_print=False,
                   external_table_potential='',
                   external_pairs_type='',
                   external_pairs_used='',
@@ -289,11 +290,13 @@ def advanced_config(config,
         args.append('--group-nail-spring=%s'%group_nail_spring)
     if group_const_spring:
         args.append('--group-const-spring=%s'%group_const_spring)
-        
+
     if plumed:
         args.append('--plumed=%s'%plumed)
         args.append('--plumed-time-step=%f'%plumed_time_step)
         args.append('--plumed-temperature=%f'%plumed_temperature)
+        if plumed_just_print:
+            args.append('--plumed-just-print')
 
     if contact_energies:
         args.append('--contact-energies=%s'%contact_energies)

@@ -1,0 +1,16 @@
+HEADER    
+TITLE     MDANALYSIS FRAMES FROM 0, STEP 1: Created by PDBWriter
+CRYST1   13.983   12.447   10.687  90.00  90.00  90.00 P 1           1
+MODEL        1
+ATOM      2  CA  GLY X   1      -6.880  -0.710   2.900  1.00  0.00      SYST  
+ATOM      5  CA  TYR X   2      -4.190  -0.300   0.210  1.00  0.00      SYST  
+ATOM      8  CA  ASP X   3      -1.290   1.320   2.080  1.00  0.00      SYST  
+ATOM     11  CA  PRO X   4       0.580   3.410  -0.510  1.00  0.00      SYST  
+ATOM     14  CA  GLU X   5       3.530   3.690   1.890  1.00  0.00      SYST  
+ATOM     17  CA  THR X   6       4.680   0.240   0.750  1.00  0.00      SYST  
+ATOM     20  CA  GLY X   7       2.500  -0.020  -2.370  1.00  0.00      SYST  
+ATOM     23  CA  THR X   8       0.410  -3.030  -1.270  1.00  0.00      SYST  
+ATOM     26  CA  TRP X   9      -2.600  -4.010   0.870  1.00  0.00      SYST  
+ATOM     29  CA  GLY X  10      -1.230  -3.770   4.430  1.00  0.00      SYST  
+ENDMDL
+END
