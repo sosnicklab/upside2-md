@@ -29,7 +29,7 @@ base_dir       = './'
 
 input_dir  = "{}/inputs".format(base_dir)
 output_dir = "{}/outputs".format(base_dir)
-run_dir    = "{}/{}".format(output_dir, sim_id) 
+run_dir    = "{}/{}".format(output_dir, sim_id)
 
 make_dirs = [input_dir, output_dir, run_dir]
 for direc in make_dirs:

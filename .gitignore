@@ -22,4 +22,6 @@ CMakeFiles/
 .ycm_extra_conf.py
 compile_commands.json
 source.sh
+**inputs/
+**outputs/
 
