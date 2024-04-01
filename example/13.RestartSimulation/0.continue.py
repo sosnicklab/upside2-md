@@ -25,7 +25,7 @@ duration       = 1000
 frame_interval = 1
 base_dir       = './'
 
-continue_sim     = False  # when you run a new simulation, set it as "False"
+continue_sim     = True  # when you run a new simulation, set it as "False"
                          # "True" means restarting the simulation from the last frame
                          # of the previous trajectories (they should have the same 
                          # pdb_id and sim_id as the new simulation, and exist in the 
