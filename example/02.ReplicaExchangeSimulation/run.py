@@ -35,7 +35,7 @@ T_low            = 0.80
 T_high           = 0.94
 replica_interval = 10    # How long takes an exchange attempt (upside time unit)
 
-continue_sim     = True  # when you run a new simulation, set it as "False"
+continue_sim     = False  # when you run a new simulation, set it as "False"
                          # "True" means restarting the simulation from the last frame
                          # of the previous trajectories (they should have the same 
                          # pdb_id and sim_id as the new simulation, and exist in the 
