@@ -63,7 +63,7 @@ kwargs="$kwargs --bb-environment-potential=$param_dir_ff/bb_env.dat"
 kwargs="$kwargs --chain-break-from-file=$input_dir/$pdb_id.chain_breaks"
 kwargs="$kwargs --spatial-transform-from-table=spatial_table"
 
-if [ is_native ]; then
+if [ $is_native ]; then
     kwargs="$kwargs --initial-structure=$input_dir/$pdb_id.initial.npy"
 fi
 
