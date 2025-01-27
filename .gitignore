@@ -3,6 +3,11 @@ run/
 bin/
 data/
 doc/
+.vscode/
+build/.cmake/
+build/build.ninja
+build/cmake_install.cmake
+build/Makefile
 *~
 *.swp
 *.vtf
