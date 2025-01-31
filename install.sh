@@ -11,4 +11,4 @@ rm -rf obj/*
 cd obj
 
 cmake ../src/  -DEIGEN3_INCLUDE_DIR=$EIGEN_HOME
-make
+make VERBOSE=1

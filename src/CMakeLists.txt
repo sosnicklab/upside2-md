@@ -1,24 +1,30 @@
 cmake_minimum_required(VERSION 2.8)
 project(upside CXX C)
 
-set (CMAKE_MODULE_PATH "../cmake;${CMAKE_MODULE_PATH}")
+set(CMAKE_MODULE_PATH "../cmake;${CMAKE_MODULE_PATH}")
 find_package(HDF5 REQUIRED COMPONENTS C)
-find_package(OpenMP QUIET)
+find_package(Eigen3 REQUIRED NO_MODULE)
+include_directories(${EIGEN3_INCLUDE_DIRS})
+find_package(OpenMP REQUIRED)
 
 set(ARCH "native" CACHE STRING "architecture to use for -march flag to compiler")
-
 set(DEBUG_FLAGS "-g")
 
-set (OMP_FLAGS "${OpenMP_CXX_FLAGS}") # "-fsanitize=address") #
-set (DEFINES "-DR123_NO_SINCOS -Drestrict=__restrict__ -DNDEBUG")
-set (OPT     "-O3 -ffast-math -fno-omit-frame-pointer -march=${ARCH}")
-set (WARN    "-pedantic -Wall -Wno-strict-overflow -Wno-unused-function -Wno-unknown-pragmas")
+set(OMP_FLAGS "${OpenMP_CXX_FLAGS}")
+set(DEFINES "-DR123_NO_SINCOS -Drestrict=__restrict__ -DNDEBUG")
+set(OPT "-O3 -ffast-math -fno-omit-frame-pointer -march=${ARCH}")
+set(WARN "-pedantic -Wall -Wno-strict-overflow -Wno-unused-function -Wno-unknown-pragmas")
 
-set (CMAKE_CXX_FLAGS "${OMP_FLAGS} ${CMAKE_CXX_FLAGS} ${DEBUG_FLAGS} -std=c++11 ${DEFINES} ${OPT} ${WARN}" )
-set (CMAKE_LD_FLAGS  "${OMP_FLAGS} ${CMAKE_LD_FLAGS}" )
+set(CMAKE_CXX_FLAGS "${OMP_FLAGS} ${CMAKE_CXX_FLAGS} ${DEBUG_FLAGS} -std=c++11 ${DEFINES} ${OPT} ${WARN}")
+set(CMAKE_EXE_LINKER_FLAGS "${OMP_FLAGS} ${CMAKE_EXE_LINKER_FLAGS}")
+set(CMAKE_OSX_ARCHITECTURES arm64)
+
 include_directories(SYSTEM "include")
+include_directories(/opt/homebrew/include)
+include_directories(/opt/homebrew/include/eigen3) 
+link_directories(/opt/homebrew/opt/libomp/lib)
 
-set (ENGINE_SRC 
+set(ENGINE_SRC 
     main.cpp
     environment.cpp
     hbond.cpp 
@@ -45,24 +51,21 @@ set (ENGINE_SRC
     state_logger.cpp
     monte_carlo_sampler.cpp)
 
-add_executable (upside ${ENGINE_SRC})
+# Create the `upside` executable
+add_executable(upside ${ENGINE_SRC})
+INCLUDE_DIRECTORIES(${HDF5_INCLUDE_DIRS})
 
-INCLUDE_DIRECTORIES (${HDF5_INCLUDE_DIRS})
-target_link_libraries(upside stdc++ ${HDF5_LIBRARIES})
+# Now we can link libraries
+target_link_libraries(upside stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
 
-find_package(Eigen3 REQUIRED)
-include_directories(SYSTEM ${EIGEN3_INCLUDE_DIR})
+# Create the shared library
+add_library(upside_calculation SHARED engine_c_library.cpp ${ENGINE_SRC})
+set_target_properties(upside_calculation PROPERTIES COMPILE_FLAGS "-DPARAM_DERIV" OUTPUT_NAME "upside")
 
-add_library(upside_calculation SHARED
-    engine_c_library.cpp
-    ${ENGINE_SRC})
+# Link OpenMP with shared library
+target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
 
-set_target_properties(upside_calculation PROPERTIES
-    COMPILE_FLAGS "-DPARAM_DERIV"
-    OUTPUT_NAME   "upside")
-
-target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES})
-
+# Other executables
 add_executable(compute_rotamer_centers generate_from_rotamer.cpp compute_rotamer_centers.cpp h5_support.cpp)
 target_link_libraries(compute_rotamer_centers stdc++ m ${HDF5_LIBRARIES})
 set_target_properties(compute_rotamer_centers PROPERTIES EXCLUDE_FROM_ALL 1)

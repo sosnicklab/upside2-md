@@ -41,13 +41,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <ia32intrin.h>
 #endif
 #if R123_USE_XMMINTRIN_H
-#include <xmmintrin.h>
+#include <sse2neon.h>
 #endif
 #if R123_USE_EMMINTRIN_H
-#include <emmintrin.h>
+#include <sse2neon.h>
 #endif
 #if R123_USE_SMMINTRIN_H
-#include <smmintrin.h>
+#include <sse2neon.h>
 #endif
 #if R123_USE_WMMINTRIN_H
 #include <wmmintrin.h>
