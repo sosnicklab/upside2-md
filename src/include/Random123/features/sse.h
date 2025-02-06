@@ -34,6 +34,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #if R123_USE_SSE
 
+#if defined(__APPLE__) && defined(__arm64__)
+
 #if R123_USE_X86INTRIN_H
 #include <x86intrin.h>
 #endif
@@ -60,6 +62,33 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <limits>
 #include <stdexcept>
 #endif
+
+#else
+
+#if R123_USE_X86INTRIN_H
+#include <x86intrin.h>
+#endif
+#if R123_USE_IA32INTRIN_H
+#include <ia32intrin.h>
+#endif
+#if R123_USE_XMMINTRIN_H
+#include <xmmintrin.h>   // Use XMMintrin for x86
+#endif
+#if R123_USE_EMMINTRIN_H
+#include <emmintrin.h>   // Use EMMintrin for x86
+#endif
+#if R123_USE_SMMINTRIN_H
+#include <smmintrin.h>   // Use SMMintrin for x86
+#endif
+#if R123_USE_WMMINTRIN_H
+#include <wmmintrin.h>
+#endif
+#if R123_USE_INTRIN_H
+#include <intrin.h>
+#endif
+
+#endif // End architecture check
+
 
 #if R123_USE_ASM_GNU
 
