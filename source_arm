@@ -1,0 +1,31 @@
+#!/bin/bash
+
+export MY_PYTHON=/opt/homebrew/Cellar/python@3.13/3.13.1 # change it according to your environment
+export EIGEN_HOME=/opt/homebrew/include/eigen3 #  change it according to your environment
+
+export UPSIDE_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+export PATH="$MY_PYTHON/bin:$PATH"
+export PATH=$UPSIDE_HOME/obj:$PATH
+export PYTHONPATH=$UPSIDE_HOME/py:$PYTHONPATH
+
+export CMAKE_PREFIX_PATH="$(brew --prefix)"
+export EIGEN_HOME=$(brew --prefix eigen)/include/eigen3
+export HDF5_ROOT=$(brew --prefix hdf5)
+
+export OpenMP_CXX_FLAGS="-Xpreprocessor -fopenmp -I$(brew --prefix libomp)/include"
+export OpenMP_CXX_LIB_NAMES="omp"
+export OpenMP_C_FLAGS="-Xpreprocessor -fopenmp -I$(brew --prefix libomp)/include"
+export OpenMP_C_LIB_NAMES="omp"
+export OpenMP_libomp_LIBRARY="$(brew --prefix libomp)/lib/libomp.dylib"
+export LDFLAGS="-L$(brew --prefix libomp)/lib"
+export CPPFLAGS="-I$(brew --prefix libomp)/include"
+export CMAKE_PREFIX_PATH="$(brew --prefix libomp):$CMAKE_PREFIX_PATH"
+
+export CPLUS_INCLUDE_PATH=$(brew --prefix libomp)/include:$CPLUS_INCLUDE_PATH
+export LIBRARY_PATH=$(brew --prefix libomp)/lib:$LIBRARY_PATH
+export LD_LIBRARY_PATH=$(brew --prefix libomp)/lib:$LD_LIBRARY_PATH
+
+export PATH="$(brew --prefix binutils)/bin:$PATH"
+export CC=$(which gcc)
+export CXX=$(which g++)
