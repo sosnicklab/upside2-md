@@ -1,75 +1,10 @@
 cmake_minimum_required(VERSION 2.8)
 project(upside CXX C)
 
-set(CMAKE_MODULE_PATH "../cmake;${CMAKE_MODULE_PATH}")
-find_package(HDF5 REQUIRED COMPONENTS C)
-find_package(Eigen3 REQUIRED NO_MODULE)
-include_directories(${EIGEN3_INCLUDE_DIRS})
-find_package(OpenMP REQUIRED)
-
-set(ARCH "native" CACHE STRING "architecture to use for -march flag to compiler")
-set(DEBUG_FLAGS "-g")
-
-set(OMP_FLAGS "${OpenMP_CXX_FLAGS}")
-set(DEFINES "-DR123_NO_SINCOS -Drestrict=__restrict__ -DNDEBUG")
-set(OPT "-O3 -ffast-math -fno-omit-frame-pointer -march=${ARCH}")
-set(WARN "-pedantic -Wall -Wno-strict-overflow -Wno-unused-function -Wno-unknown-pragmas")
-
-set(CMAKE_CXX_FLAGS "${OMP_FLAGS} ${CMAKE_CXX_FLAGS} ${DEBUG_FLAGS} -std=c++11 ${DEFINES} ${OPT} ${WARN}")
-set(CMAKE_EXE_LINKER_FLAGS "${OMP_FLAGS} ${CMAKE_EXE_LINKER_FLAGS}")
-set(CMAKE_OSX_ARCHITECTURES arm64)
-
-include_directories(SYSTEM "include")
-include_directories(/opt/homebrew/include)
-include_directories(/opt/homebrew/include/eigen3) 
-link_directories(/opt/homebrew/opt/libomp/lib)
-
-set(ENGINE_SRC 
-    main.cpp
-    environment.cpp
-    hbond.cpp 
-    rotamer.cpp
-    placement.cpp
-    rama_map_pot.cpp
-    coord_operator.cpp
-    coord_basic.cpp
-    coord_const.cpp
-    coord_map.cpp
-    spline.cpp
-    spring.cpp
-    tension.cpp
-    sigmoid_energy.cpp
-    deriv_engine.cpp 
-    sidechain_radial.cpp
-    backbone_steric.cpp 
-    eig.cpp 
-    membrane_potential.cpp
-    surface.cpp
-    timing.cpp 
-    thermostat.cpp
-    h5_support.cpp 
-    state_logger.cpp
-    monte_carlo_sampler.cpp)
-
-# Create the `upside` executable
-add_executable(upside ${ENGINE_SRC})
-INCLUDE_DIRECTORIES(${HDF5_INCLUDE_DIRS})
-
-# Now we can link libraries
-target_link_libraries(upside stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
-
-# Create the shared library
-add_library(upside_calculation SHARED engine_c_library.cpp ${ENGINE_SRC})
-set_target_properties(upside_calculation PROPERTIES COMPILE_FLAGS "-DPARAM_DERIV" OUTPUT_NAME "upside")
-
-# Link OpenMP with shared library
-target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
-
-# Other executables
-add_executable(compute_rotamer_centers generate_from_rotamer.cpp compute_rotamer_centers.cpp h5_support.cpp)
-target_link_libraries(compute_rotamer_centers stdc++ m ${HDF5_LIBRARIES})
-set_target_properties(compute_rotamer_centers PROPERTIES EXCLUDE_FROM_ALL 1)
-
-add_executable(compute_rotamer_pos generate_from_rotamer.cpp compute_rotamer_pos.cpp h5_support.cpp)
-target_link_libraries(compute_rotamer_pos stdc++ m ${HDF5_LIBRARIES})
-set_target_properties(compute_rotamer_pos PROPERTIES EXCLUDE_FROM_ALL 1)
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
+    message(STATUS "Detected ARM Mac (M1/M2/M3), using CMakeLists_M1.txt")
+    include(${CMAKE_SOURCE_DIR}/CMakeLists_M1.txt)
+else()
+    message(STATUS "Using default CMakeLists.txt for x86_64 or other OS")
+    include(${CMAKE_SOURCE_DIR}/CMakeLists_Other.txt)
+endif()
