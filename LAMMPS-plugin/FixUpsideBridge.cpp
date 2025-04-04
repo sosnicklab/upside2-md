@@ -7,7 +7,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <cstdlib>     // for system()
+#include <cstdlib>
 #include <iostream>
 
 using namespace LAMMPS_NS;
