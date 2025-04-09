@@ -1,10 +1,10 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 
 # EDITABLE SECTIONS ARE MARKED WITH #@#
 
 
-version = "2.6"
+version = "2.6_3"
 authors = ["Djurre H. de Jong", "Jaakko J. Uusitalo", "Tsjerk A. Wassenaar"]
 
 # This program has grown to be pretty complex.
@@ -31,7 +31,7 @@ authors = ["Djurre H. de Jong", "Jaakko J. Uusitalo", "Tsjerk A. Wassenaar"]
 ## 6 # FORCE FIELD PARAMETERS ##  -> @FF <-
 ################################
 
-class martini21:
+class martini21(object):
     ff = True
     def __init__(self):
 
@@ -217,26 +217,26 @@ class martini21:
         # Dictionary of default bead types (*D)                                                     
         self.bbBeadDictD  = hash(bbss,self.bbdef)                                                             
         # Dictionary of dictionaries of types for specific residues (*S)                            
-        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in self.bbtyp.keys()])                        
+        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in list(self.bbtyp.keys())])                        
         
         ## BB BOND TYPE ##                                                                          
         # Dictionary of default abond types (*D)                                                    
-        self.bbBondDictD = hash(bbss,zip(self.bbldef,self.bbkb))                                                   
+        self.bbBondDictD = hash(bbss,list(zip(self.bbldef,self.bbkb)))                                                   
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbBondDictS = dict([(i,hash(bbss,zip(self.bbltyp[i],self.bbkbtyp[i]))) for i in self.bbltyp.keys()])       
+        self.bbBondDictS = dict([(i,hash(bbss,list(zip(self.bbltyp[i],self.bbkbtyp[i])))) for i in list(self.bbltyp.keys())])       
         # This is tricky to read, but it gives the right bondlength/force constant
         
         ## BBB ANGLE TYPE ##                                                                        
         # Dictionary of default angle types (*D)                                                    
-        self.bbAngleDictD = hash(bbss,zip(self.bbadef,self.bbka))                                                  
+        self.bbAngleDictD = hash(bbss,list(zip(self.bbadef,self.bbka)))                                                  
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbAngleDictS = dict([(i,hash(bbss,zip(self.bbatyp[i],self.bbkatyp[i]))) for i in self.bbatyp.keys()])      
+        self.bbAngleDictS = dict([(i,hash(bbss,list(zip(self.bbatyp[i],self.bbkatyp[i])))) for i in list(self.bbatyp.keys())])      
                     
         ## BBBB DIHEDRAL TYPE ##                                                                    
         # Dictionary of default dihedral types (*D)                                                 
-        self.bbDihedDictD = hash(bbss,zip(self.bbddef,self.bbkd,self.bbdmul))                                           
+        self.bbDihedDictD = hash(bbss,list(zip(self.bbddef,self.bbkd,self.bbdmul)))                                           
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbDihedDictS = dict([(i,hash(bbss,zip(self.bbdtyp[i],self.bbkdtyp[i]))) for i in self.bbdtyp.keys()])      
+        self.bbDihedDictS = dict([(i,hash(bbss,list(zip(self.bbdtyp[i],self.bbkdtyp[i])))) for i in list(self.bbdtyp.keys())])      
         
     # The following function returns the backbone bead for a given residue and                   
     # secondary structure type.                                                                 
@@ -253,7 +253,11 @@ class martini21:
         b1 = self.bbBondDictS.get(r[0],self.bbBondDictD).get(ss[0],self.bbBondDictD.get(ss[0]))
         b2 = self.bbBondDictS.get(r[1],self.bbBondDictD).get(ss[1],self.bbBondDictD.get(ss[1]))
         # Determine which parameters to use for the bond
-        return ( (b1[0]+b2[0])/2, min(b1[1],b2[1]) )
+        # Python3 no longer returns a NoneType if None is compared to an integer.
+        if b1[1] == None or b2[1] == None:
+            return ( (b1[0]+b2[0])/2, None )
+        else:
+            return ( (b1[0]+b2[0])/2, min(b1[1],b2[1]) )
     
     def bbGetAngle(self,r,ca,ss):
         # PRO in helices is dominant
@@ -279,253 +283,6 @@ class martini21:
 ## 6 # FORCE FIELD PARAMETERS ##  -> @FF <-
 ################################
 
-class martini21p:
-    ff = True
-    def __init__(self):
-
-        # parameters are defined here for the following (protein) forcefields:
-        self.name = 'martini21p'
-        
-        # Charged types:
-        self.charges = {"Qd":1, "Qa":-1, "SQd":1, "SQa":-1, "RQd":1, "AQa":-1}                                                           #@#
-        
-        
-        #----+---------------------+
-        ## A | BACKBONE PARAMETERS |
-        #----+---------------------+
-        #
-        # bbss  lists the one letter secondary structure code
-        # bbdef lists the corresponding default backbone beads
-        # bbtyp lists the corresponding residue specific backbone beads
-        #
-        # bbd   lists the structure specific backbone bond lengths
-        # bbkb  lists the corresponding bond force constants
-        #
-        # bba   lists the structure specific angles
-        # bbka  lists the corresponding angle force constants
-        #
-        # bbd   lists the structure specific dihedral angles
-        # bbkd  lists the corresponding force constants
-        #
-        # -=NOTE=- 
-        #  if the secondary structure types differ between bonded atoms
-        #  the bond is assigned the lowest corresponding force constant 
-        #
-        # -=NOTE=-
-        # if proline is anywhere in the helix, the BBB angle changes for 
-        # all residues
-        #
-        
-        ###############################################################################################
-        ## BEADS ##                                                                         #                 
-        #                          F     E     H     1     2     3     T     S     C        # SS one letter   
-        self.bbdef    =    spl(" N0   Nda    N0    Nd    Na   Nda   Nda    P5    P5")  # Default beads   #@#
-        self.bbtyp    = {                                                                   #                 #@#
-                     "ALA": spl(" C5    N0    C5    N0    N0    N0    N0    P4    P4"),# ALA specific    #@#
-                     "PRO": spl(" C5    N0    C5    N0    Na    N0    N0    Na    Na"),# PRO specific    #@#
-                     "HYP": spl(" C5    N0    C5    N0    N0    N0    N0    Na    Na") # HYP specific    #@#
-        }                                                                                   #                 #@#
-        ## BONDS ##                                                                         #                 
-        self.bbldef   =             (.365, .350, .350, .350, .350, .350, .350, .350, .350)  # BB bond lengths #@#
-        self.bbkb     =             (1250, 1250, 1250, 1250, 1250, 1250,  500,  400,  400)  # BB bond kB      #@#
-        self.bbltyp   = {}                                                                  #                 #@#
-        self.bbkbtyp  = {}                                                                  #                 #@#
-        ## ANGLES ##                                                                        #                 
-        self.bbadef   =             ( 119.2,134,   96,   96,   96,   96,  100,  130,  127)  # BBB angles      #@#
-        self.bbka     =             ( 150,   25,  700,  700,  700,  700,   25,   25,   25)  # BBB angle kB    #@#
-        self.bbatyp   = {                                                                   #                 #@#
-               "PRO":               ( 119.2,134,   98,   98,   98,   98,  100,  130,  127), # PRO specific    #@#
-               "HYP":               ( 119.2,134,   98,   98,   98,   98,  100,  130,  127)  # PRO specific    #@#
-        }                                                                                   #                 #@#
-        self.bbkatyp  = {                                                                   #                 #@#
-               "PRO":               ( 150,   25,  100,  100,  100,  100,   25,   25,   25), # PRO specific    #@#
-               "HYP":               ( 150,   25,  100,  100,  100,  100,   25,   25,   25)  # PRO specific    #@#
-        }                                                                                   #                 #@#
-        ## DIHEDRALS ##                                                                     #                 
-        self.bbddef   =             ( 90.7,   0, -120, -120, -120, -120)                    # BBBB dihedrals  #@#
-        self.bbkd     =             ( 100,   10,  400,  400,  400,  400)                    # BBBB kB         #@#
-        self.bbdmul   =             (   1,    1,    1,    1,    1,    1)                    # BBBB mltplcty   #@#
-        self.bbdtyp   = {}                                                                  #                 #@#
-        self.bbkdtyp  = {}                                                                  #                 #@#
-                                                                                            #                 
-        ###############################################################################################               
-        
-        # Some Forcefields use the Ca position to position the BB-bead (me like!)
-        # martini 2.1 doesn't
-        self.ca2bb = False 
-        
-        # BBS angle, equal for all ss types                                                         
-        # Connects BB(i-1),BB(i),SC(i), except for first residue: BB(i+1),BB(i),SC(i)               
-        #                 ANGLE   Ka                                                                
-        self.bbsangle =      [   100,  25]                                                               #@#
-        
-        # Bonds for extended structures (more stable than using dihedrals)                          
-        #               LENGTH FORCE                                                                
-        self.ebonds   = {                                                                                #@#
-               'short': [ .640, 2500],                                                              #@#
-               'long' : [ .970, 2500]                                                               #@#
-        }                                                                                           #@#
-        
-        
-        #----+-----------------------+
-        ## B | SIDE CHAIN PARAMETERS |
-        #----+-----------------------+
-        
-        # To be compatible with Elnedyn, all parameters are explicitly defined, even if they are double.
-        self.sidechains = {
-            #RES#   BEADS                   BONDS                                                   ANGLES              DIHEDRALS
-            #                               BB-SC          SC-SC                                        BB-SC-SC  SC-SC-SC
-            "TRP": [spl("SC4 SP1 SC4 SC4"),[(0.300,5000)]+[(0.270,None) for i in range(5)],        [(210,50),(90,50),(90,50)], [(0,50),(0,200)]],
-            "TYR": [spl("SC4 SC4 SP1"),    [(0.320,5000), (0.270,None), (0.270,None),(0.270,None)],[(150,50),(150,50)],        [(0,50)]],
-            "PHE": [spl("SC4 SC4 SC4"),    [(0.310,7500), (0.270,None), (0.270,None),(0.270,None)],[(150,50),(150,50)],        [(0,50)]],
-            "HIS": [spl("SC4 SP1 SP1"),    [(0.320,7500), (0.270,None), (0.270,None),(0.270,None)],[(150,50),(150,50)],        [(0,50)]],
-            "HIH": [spl("SC4 SP1 SQd"),    [(0.320,7500), (0.270,None), (0.270,None),(0.270,None)],[(150,50),(150,50)],        [(0,50)]],
-            "ARG": [spl("N0 Qd"),          [(0.330,5000), (0.340,5000)],                           [(180,25)]],
-            "LYS": [spl("C3 Qd"),          [(0.330,5000), (0.280,5000)],                           [(180,25)]],
-            "CYS": [spl("C5"),             [(0.310,7500)]],
-            "ASP": [spl("Qa"),             [(0.320,7500)]],
-            "GLU": [spl("Qa"),             [(0.400,5000)]],
-            "ILE": [spl("C1"),            [(0.310,None)]],
-            "LEU": [spl("C1"),            [(0.330,7500)]],
-            "MET": [spl("C5"),             [(0.400,2500)]],
-            "ASN": [spl("P5"),             [(0.320,5000)]],
-            "PRO": [spl("C2"),            [(0.300,7500)]],
-            "HYP": [spl("P1"),             [(0.300,7500)]],
-            "GLN": [spl("P4"),             [(0.400,5000)]],
-            "SER": [spl("P1"),             [(0.250,7500)]],
-            "THR": [spl("P1"),             [(0.260,None)]],
-            "VAL": [spl("C2"),            [(0.265,None)]],
-            "ALA": [],
-            "GLY": [],
-            }
-        
-        # Not all (eg Elnedyn) forcefields use backbone-backbone-sidechain angles and BBBB-dihedrals.
-        self.UseBBSAngles          = True 
-        self.UseBBBBDihedrals      = True
-
-        # Martini 2.2p has polar and charged residues with seperate charges.
-        self.polar   = []
-        self.charged = []
-
-        # If masses or charged diverge from standard (45/72 and -/+1) they are defined here.
-        self.mass_charge = {
-        #RES   MASS               CHARGE
-        }
-
-        # Defines the connectivity between between beads
-        self.connectivity = {
-        #RES       BONDS                                   ANGLES             DIHEDRALS              V-SITE
-        "TRP":     [[(0,1),(1,2),(1,3),(2,3),(2,4),(3,4)], [(0,1,2),(0,1,3)], [(0,2,3,1),(1,2,4,3)]],
-        "TYR":     [[(0,1),(1,2),(1,3),(2,3)],             [(0,1,2),(0,1,3)], [(0,2,3,1)]],
-        "PHE":     [[(0,1),(1,2),(1,3),(2,3)],             [(0,1,2),(0,1,3)], [(0,2,3,1)]],
-        "HIS":     [[(0,1),(1,2),(1,3),(2,3)],             [(0,1,2),(0,1,3)], [(0,2,3,1)]],
-        "HIH":     [[(0,1),(1,2),(1,3),(2,3)],             [(0,1,2),(0,1,3)], [(0,2,3,1)]],
-        "GLN":     [[(0,1)]],
-        "ASN":     [[(0,1)]],
-        "SER":     [[(0,1)]],
-        "THR":     [[(0,1)]],
-        "ARG":     [[(0,1),(1,2)],                         [(0,1,2)]],
-        "LYS":     [[(0,1),(1,2)],                         [(0,1,2)]],
-        "ASP":     [[(0,1)]],
-        "GLU":     [[(0,1)]],
-        "CYS":     [[(0,1)]],
-        "ILE":     [[(0,1)]],
-        "LEU":     [[(0,1)]],
-        "MET":     [[(0,1)]],
-        "PRO":     [[(0,1)]],
-        "HYP":     [[(0,1)]],
-        "VAL":     [[(0,1)]],
-        "ALA":     [],
-        "GLY":     [],
-        }
-
-        #----+----------------+
-        ## C | SPECIAL BONDS  |
-        #----+----------------+
-        
-        self.special = {
-            # Used for sulfur bridges
-            # ATOM 1         ATOM 2          BOND LENGTH   FORCE CONSTANT
-            (("SC1","CYS"), ("SC1","CYS")):     (0.24,         None),
-            }
-       
-        # By default use an elastic network
-        self.ElasticNetwork = False
- 
-        # Elastic networks bond shouldn't lead to exclusions (type 6) 
-        # But Elnedyn has been parametrized with type 1.
-        self.EBondType = 6
-        
-        #----+----------------+
-        ## D | INTERNAL STUFF |
-        #----+----------------+
-        
-        
-        ## BACKBONE BEAD TYPE ##                                                                    
-        # Dictionary of default bead types (*D)                                                     
-        self.bbBeadDictD  = hash(bbss,self.bbdef)                                                             
-        # Dictionary of dictionaries of types for specific residues (*S)                            
-        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in self.bbtyp.keys()])                        
-        
-        ## BB BOND TYPE ##                                                                          
-        # Dictionary of default abond types (*D)                                                    
-        self.bbBondDictD = hash(bbss,zip(self.bbldef,self.bbkb))                                                   
-        # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbBondDictS = dict([(i,hash(bbss,zip(self.bbltyp[i],self.bbkbtyp[i]))) for i in self.bbltyp.keys()])       
-        # This is tricky to read, but it gives the right bondlength/force constant
-        
-        ## BBB ANGLE TYPE ##                                                                        
-        # Dictionary of default angle types (*D)                                                    
-        self.bbAngleDictD = hash(bbss,zip(self.bbadef,self.bbka))                                                  
-        # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbAngleDictS = dict([(i,hash(bbss,zip(self.bbatyp[i],self.bbkatyp[i]))) for i in self.bbatyp.keys()])      
-                    
-        ## BBBB DIHEDRAL TYPE ##                                                                    
-        # Dictionary of default dihedral types (*D)                                                 
-        self.bbDihedDictD = hash(bbss,zip(self.bbddef,self.bbkd,self.bbdmul))                                           
-        # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbDihedDictS = dict([(i,hash(bbss,zip(self.bbdtyp[i],self.bbkdtyp[i]))) for i in self.bbdtyp.keys()])      
-        
-    # The following function returns the backbone bead for a given residue and                   
-    # secondary structure type.                                                                 
-    # 1. Look up the proper dictionary for the residue                                          
-    # 2. Get the proper type from it for the secondary structure                                
-    # If the residue is not in the dictionary of specials, use the default                      
-    # If the secondary structure is not listed (in the residue specific                         
-    # dictionary) revert to the default.                                                        
-    def bbGetBead(self,r1,ss="C"):                                                                   
-        return self.bbBeadDictS.get(r1,self.bbBeadDictD).get(ss,self.bbBeadDictD.get(ss))                      
-    
-    
-    def bbGetBond(self,r,a,ss):
-        # Retrieve parameters for each residue from table defined above
-        b1 = self.bbBondDictS.get(r[0],self.bbBondDictD).get(ss[0],self.bbBondDictD.get(ss[0]))
-        b2 = self.bbBondDictS.get(r[1],self.bbBondDictD).get(ss[1],self.bbBondDictD.get(ss[1]))
-        # Determine which parameters to use for the bond
-        return ( (b1[0]+b2[0])/2, min(b1[1],b2[1]) )
-    
-    def bbGetAngle(self,r,ca,ss):
-        # PRO in helices is dominant
-        if r[1] == "PRO" and ss[1] in "H123":
-            return self.bbAngleDictS["PRO"].get(ss[1])
-        else:
-            # Retrieve parameters for each residue from table defined above
-            a = [ self.bbAngleDictS.get(r[0],self.bbAngleDictD).get(ss[0],self.bbAngleDictD.get(ss[0])),
-                  self.bbAngleDictS.get(r[1],self.bbAngleDictD).get(ss[1],self.bbAngleDictD.get(ss[1])),
-                  self.bbAngleDictS.get(r[2],self.bbAngleDictD).get(ss[2],self.bbAngleDictD.get(ss[2])) ]
-            # Sort according to force constant
-            a.sort(key=lambda i: (i[1],i[0]))
-            # This selects the set with the smallest force constant and the smallest angle
-            return a[0]
-        
-    def messages(self):
-        '''Prints any force-field specific logging messages.'''
-        logging.info('Note: Cysteine bonds are 0.24 nm constraints, instead of the published 0.39nm/5000kJ/mol.')
-
-################################
-## 6 # FORCE FIELD PARAMETERS ##  -> @FF <-
-################################
-
 # New martini 2.2 parameters.
 # Changed: 
 #   Unstructured Pro backbone bead
@@ -534,7 +291,7 @@ class martini21p:
 #   Trp sidechain
 #   Helix BB-bonds to constraint      
 
-class martini22:
+class martini22(object):
     ff = True
     def __init__(self):
 
@@ -720,26 +477,26 @@ class martini22:
         # Dictionary of default bead types (*D)                                                     
         self.bbBeadDictD  = hash(bbss,self.bbdef)                                                             
         # Dictionary of dictionaries of types for specific residues (*S)                            
-        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in self.bbtyp.keys()])                        
+        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in list(self.bbtyp.keys())])                        
         
         ## BB BOND TYPE ##                                                                          
         # Dictionary of default abond types (*D)                                                    
-        self.bbBondDictD = hash(bbss,zip(self.bbldef,self.bbkb))                                                   
+        self.bbBondDictD = hash(bbss,list(zip(self.bbldef,self.bbkb)))                                                   
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbBondDictS = dict([(i,hash(bbss,zip(self.bbltyp[i],self.bbkbtyp[i]))) for i in self.bbltyp.keys()])       
+        self.bbBondDictS = dict([(i,hash(bbss,list(zip(self.bbltyp[i],self.bbkbtyp[i])))) for i in list(self.bbltyp.keys())])       
         # This is tricky to read, but it gives the right bondlength/force constant
         
         ## BBB ANGLE TYPE ##                                                                        
         # Dictionary of default angle types (*D)                                                    
-        self.bbAngleDictD = hash(bbss,zip(self.bbadef,self.bbka))                                                  
+        self.bbAngleDictD = hash(bbss,list(zip(self.bbadef,self.bbka)))                                                  
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbAngleDictS = dict([(i,hash(bbss,zip(self.bbatyp[i],self.bbkatyp[i]))) for i in self.bbatyp.keys()])      
+        self.bbAngleDictS = dict([(i,hash(bbss,list(zip(self.bbatyp[i],self.bbkatyp[i])))) for i in list(self.bbatyp.keys())])      
                     
         ## BBBB DIHEDRAL TYPE ##                                                                    
         # Dictionary of default dihedral types (*D)                                                 
-        self.bbDihedDictD = hash(bbss,zip(self.bbddef,self.bbkd,self.bbdmul))                                           
+        self.bbDihedDictD = hash(bbss,list(zip(self.bbddef,self.bbkd,self.bbdmul)))                                           
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbDihedDictS = dict([(i,hash(bbss,zip(self.bbdtyp[i],self.bbkdtyp[i]))) for i in self.bbdtyp.keys()])      
+        self.bbDihedDictS = dict([(i,hash(bbss,list(zip(self.bbdtyp[i],self.bbkdtyp[i])))) for i in list(self.bbdtyp.keys())])      
         
     # The following function returns the backbone bead for a given residue and                   
     # secondary structure type.                                                                 
@@ -757,7 +514,11 @@ class martini22:
         b1 = self.bbBondDictS.get(r[0],self.bbBondDictD).get(ss[0],self.bbBondDictD.get(ss[0]))
         b2 = self.bbBondDictS.get(r[1],self.bbBondDictD).get(ss[1],self.bbBondDictD.get(ss[1]))
         # Determine which parameters to use for the bond
-        return ( (b1[0]+b2[0])/2, min(b1[1],b2[1]) )
+        # Python3 no longer returns a NoneType if None is compared to an integer.
+        if b1[1] == None or b2[1] == None:
+            return ( (b1[0]+b2[0])/2, None )
+        else:
+            return ( (b1[0]+b2[0])/2, min(b1[1],b2[1]) )
     
     def bbGetAngle(self,r,ca,ss):
         # PRO in helices is dominant
@@ -781,6 +542,257 @@ class martini22:
 ## 6 # FORCE FIELD PARAMETERS ##  -> @FF <-
 ################################
 
+class martini21p(object):
+    ff = True
+    def __init__(self):
+
+        # parameters are defined here for the following (protein) forcefields:
+        self.name = 'martini21p'
+        
+        # Charged types:
+        self.charges = {"Qd":1, "Qa":-1, "SQd":1, "SQa":-1, "RQd":1, "AQa":-1}                                                           #@#
+        
+        
+        #----+---------------------+
+        ## A | BACKBONE PARAMETERS |
+        #----+---------------------+
+        #
+        # bbss  lists the one letter secondary structure code
+        # bbdef lists the corresponding default backbone beads
+        # bbtyp lists the corresponding residue specific backbone beads
+        #
+        # bbd   lists the structure specific backbone bond lengths
+        # bbkb  lists the corresponding bond force constants
+        #
+        # bba   lists the structure specific angles
+        # bbka  lists the corresponding angle force constants
+        #
+        # bbd   lists the structure specific dihedral angles
+        # bbkd  lists the corresponding force constants
+        #
+        # -=NOTE=- 
+        #  if the secondary structure types differ between bonded atoms
+        #  the bond is assigned the lowest corresponding force constant 
+        #
+        # -=NOTE=-
+        # if proline is anywhere in the helix, the BBB angle changes for 
+        # all residues
+        #
+        
+        ###############################################################################################
+        ## BEADS ##                                                                         #                 
+        #                          F     E     H     1     2     3     T     S     C        # SS one letter   
+        self.bbdef    =    spl(" N0   Nda    N0    Nd    Na   Nda   Nda    P5    P5")  # Default beads   #@#
+        self.bbtyp    = {                                                                   #                 #@#
+                     "ALA": spl(" C5    N0    C5    N0    N0    N0    N0    P4    P4"),# ALA specific    #@#
+                     "PRO": spl(" C5    N0    C5    N0    Na    N0    N0    Na    Na"),# PRO specific    #@#
+                     "HYP": spl(" C5    N0    C5    N0    N0    N0    N0    Na    Na") # HYP specific    #@#
+        }                                                                                   #                 #@#
+        ## BONDS ##                                                                         #                 
+        self.bbldef   =             (.365, .350, .350, .350, .350, .350, .350, .350, .350)  # BB bond lengths #@#
+        self.bbkb     =             (1250, 1250, 1250, 1250, 1250, 1250,  500,  400,  400)  # BB bond kB      #@#
+        self.bbltyp   = {}                                                                  #                 #@#
+        self.bbkbtyp  = {}                                                                  #                 #@#
+        ## ANGLES ##                                                                        #                 
+        self.bbadef   =             ( 119.2,134,   96,   96,   96,   96,  100,  130,  127)  # BBB angles      #@#
+        self.bbka     =             ( 150,   25,  700,  700,  700,  700,   25,   25,   25)  # BBB angle kB    #@#
+        self.bbatyp   = {                                                                   #                 #@#
+               "PRO":               ( 119.2,134,   98,   98,   98,   98,  100,  130,  127), # PRO specific    #@#
+               "HYP":               ( 119.2,134,   98,   98,   98,   98,  100,  130,  127)  # PRO specific    #@#
+        }                                                                                   #                 #@#
+        self.bbkatyp  = {                                                                   #                 #@#
+               "PRO":               ( 150,   25,  100,  100,  100,  100,   25,   25,   25), # PRO specific    #@#
+               "HYP":               ( 150,   25,  100,  100,  100,  100,   25,   25,   25)  # PRO specific    #@#
+        }                                                                                   #                 #@#
+        ## DIHEDRALS ##                                                                     #                 
+        self.bbddef   =             ( 90.7,   0, -120, -120, -120, -120)                    # BBBB dihedrals  #@#
+        self.bbkd     =             ( 100,   10,  400,  400,  400,  400)                    # BBBB kB         #@#
+        self.bbdmul   =             (   1,    1,    1,    1,    1,    1)                    # BBBB mltplcty   #@#
+        self.bbdtyp   = {}                                                                  #                 #@#
+        self.bbkdtyp  = {}                                                                  #                 #@#
+                                                                                            #                 
+        ###############################################################################################               
+        
+        # Some Forcefields use the Ca position to position the BB-bead (me like!)
+        # martini 2.1 doesn't
+        self.ca2bb = False 
+        
+        # BBS angle, equal for all ss types                                                         
+        # Connects BB(i-1),BB(i),SC(i), except for first residue: BB(i+1),BB(i),SC(i)               
+        #                 ANGLE   Ka                                                                
+        self.bbsangle =      [   100,  25]                                                               #@#
+        
+        # Bonds for extended structures (more stable than using dihedrals)                          
+        #               LENGTH FORCE                                                                
+        self.ebonds   = {                                                                                #@#
+               'short': [ .640, 2500],                                                              #@#
+               'long' : [ .970, 2500]                                                               #@#
+        }                                                                                           #@#
+        
+        
+        #----+-----------------------+
+        ## B | SIDE CHAIN PARAMETERS |
+        #----+-----------------------+
+        
+        # To be compatible with Elnedyn, all parameters are explicitly defined, even if they are double.
+        self.sidechains = {
+            #RES#   BEADS                   BONDS                                                   ANGLES              DIHEDRALS
+            #                               BB-SC          SC-SC                                        BB-SC-SC  SC-SC-SC
+            "TRP": [spl("SC4 SP1 SC4 SC4"),[(0.300,5000)]+[(0.270,None) for i in range(5)],        [(210,50),(90,50),(90,50)], [(0,50),(0,200)]],
+            "TYR": [spl("SC4 SC4 SP1"),    [(0.320,5000), (0.270,None), (0.270,None),(0.270,None)],[(150,50),(150,50)],        [(0,50)]],
+            "PHE": [spl("SC4 SC4 SC4"),    [(0.310,7500), (0.270,None), (0.270,None),(0.270,None)],[(150,50),(150,50)],        [(0,50)]],
+            "HIS": [spl("SC4 SP1 SP1"),    [(0.320,7500), (0.270,None), (0.270,None),(0.270,None)],[(150,50),(150,50)],        [(0,50)]],
+            "HIH": [spl("SC4 SP1 SQd"),    [(0.320,7500), (0.270,None), (0.270,None),(0.270,None)],[(150,50),(150,50)],        [(0,50)]],
+            "ARG": [spl("N0 Qd"),          [(0.330,5000), (0.340,5000)],                           [(180,25)]],
+            "LYS": [spl("C3 Qd"),          [(0.330,5000), (0.280,5000)],                           [(180,25)]],
+            "CYS": [spl("C5"),             [(0.310,7500)]],
+            "ASP": [spl("Qa"),             [(0.320,7500)]],
+            "GLU": [spl("Qa"),             [(0.400,5000)]],
+            "ILE": [spl("C1"),            [(0.310,None)]],
+            "LEU": [spl("C1"),            [(0.330,7500)]],
+            "MET": [spl("C5"),             [(0.400,2500)]],
+            "ASN": [spl("P5"),             [(0.320,5000)]],
+            "PRO": [spl("C2"),            [(0.300,7500)]],
+            "HYP": [spl("P1"),             [(0.300,7500)]],
+            "GLN": [spl("P4"),             [(0.400,5000)]],
+            "SER": [spl("P1"),             [(0.250,7500)]],
+            "THR": [spl("P1"),             [(0.260,None)]],
+            "VAL": [spl("C2"),            [(0.265,None)]],
+            "ALA": [],
+            "GLY": [],
+            }
+        
+        # Not all (eg Elnedyn) forcefields use backbone-backbone-sidechain angles and BBBB-dihedrals.
+        self.UseBBSAngles          = True 
+        self.UseBBBBDihedrals      = True
+
+        # Martini 2.2p has polar and charged residues with seperate charges.
+        self.polar   = []
+        self.charged = []
+
+        # If masses or charged diverge from standard (45/72 and -/+1) they are defined here.
+        self.mass_charge = {
+        #RES   MASS               CHARGE
+        }
+
+        # Defines the connectivity between between beads
+        self.connectivity = {
+        #RES       BONDS                                   ANGLES             DIHEDRALS              V-SITE
+        "TRP":     [[(0,1),(1,2),(1,3),(2,3),(2,4),(3,4)], [(0,1,2),(0,1,3)], [(0,2,3,1),(1,2,4,3)]],
+        "TYR":     [[(0,1),(1,2),(1,3),(2,3)],             [(0,1,2),(0,1,3)], [(0,2,3,1)]],
+        "PHE":     [[(0,1),(1,2),(1,3),(2,3)],             [(0,1,2),(0,1,3)], [(0,2,3,1)]],
+        "HIS":     [[(0,1),(1,2),(1,3),(2,3)],             [(0,1,2),(0,1,3)], [(0,2,3,1)]],
+        "HIH":     [[(0,1),(1,2),(1,3),(2,3)],             [(0,1,2),(0,1,3)], [(0,2,3,1)]],
+        "GLN":     [[(0,1)]],
+        "ASN":     [[(0,1)]],
+        "SER":     [[(0,1)]],
+        "THR":     [[(0,1)]],
+        "ARG":     [[(0,1),(1,2)],                         [(0,1,2)]],
+        "LYS":     [[(0,1),(1,2)],                         [(0,1,2)]],
+        "ASP":     [[(0,1)]],
+        "GLU":     [[(0,1)]],
+        "CYS":     [[(0,1)]],
+        "ILE":     [[(0,1)]],
+        "LEU":     [[(0,1)]],
+        "MET":     [[(0,1)]],
+        "PRO":     [[(0,1)]],
+        "HYP":     [[(0,1)]],
+        "VAL":     [[(0,1)]],
+        "ALA":     [],
+        "GLY":     [],
+        }
+
+        #----+----------------+
+        ## C | SPECIAL BONDS  |
+        #----+----------------+
+        
+        self.special = {
+            # Used for sulfur bridges
+            # ATOM 1         ATOM 2          BOND LENGTH   FORCE CONSTANT
+            (("SC1","CYS"), ("SC1","CYS")):     (0.24,         None),
+            }
+       
+        # By default use an elastic network
+        self.ElasticNetwork = False
+ 
+        # Elastic networks bond shouldn't lead to exclusions (type 6) 
+        # But Elnedyn has been parametrized with type 1.
+        self.EBondType = 6
+        
+        #----+----------------+
+        ## D | INTERNAL STUFF |
+        #----+----------------+
+        
+        
+        ## BACKBONE BEAD TYPE ##                                                                    
+        # Dictionary of default bead types (*D)                                                     
+        self.bbBeadDictD  = hash(bbss,self.bbdef)                                                             
+        # Dictionary of dictionaries of types for specific residues (*S)                            
+        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in list(self.bbtyp.keys())])                        
+        
+        ## BB BOND TYPE ##                                                                          
+        # Dictionary of default abond types (*D)                                                    
+        self.bbBondDictD = hash(bbss,list(zip(self.bbldef,self.bbkb)))                                                   
+        # Dictionary of dictionaries for specific types (*S)                                        
+        self.bbBondDictS = dict([(i,hash(bbss,list(zip(self.bbltyp[i],self.bbkbtyp[i])))) for i in list(self.bbltyp.keys())])       
+        # This is tricky to read, but it gives the right bondlength/force constant
+        
+        ## BBB ANGLE TYPE ##                                                                        
+        # Dictionary of default angle types (*D)                                                    
+        self.bbAngleDictD = hash(bbss,list(zip(self.bbadef,self.bbka)))                                                  
+        # Dictionary of dictionaries for specific types (*S)                                        
+        self.bbAngleDictS = dict([(i,hash(bbss,list(zip(self.bbatyp[i],self.bbkatyp[i])))) for i in list(self.bbatyp.keys())])      
+                    
+        ## BBBB DIHEDRAL TYPE ##                                                                    
+        # Dictionary of default dihedral types (*D)                                                 
+        self.bbDihedDictD = hash(bbss,list(zip(self.bbddef,self.bbkd,self.bbdmul)))                                           
+        # Dictionary of dictionaries for specific types (*S)                                        
+        self.bbDihedDictS = dict([(i,hash(bbss,list(zip(self.bbdtyp[i],self.bbkdtyp[i])))) for i in list(self.bbdtyp.keys())])      
+        
+    # The following function returns the backbone bead for a given residue and                   
+    # secondary structure type.                                                                 
+    # 1. Look up the proper dictionary for the residue                                          
+    # 2. Get the proper type from it for the secondary structure                                
+    # If the residue is not in the dictionary of specials, use the default                      
+    # If the secondary structure is not listed (in the residue specific                         
+    # dictionary) revert to the default.                                                        
+    def bbGetBead(self,r1,ss="C"):                                                                   
+        return self.bbBeadDictS.get(r1,self.bbBeadDictD).get(ss,self.bbBeadDictD.get(ss))                      
+    
+    
+    def bbGetBond(self,r,a,ss):
+        # Retrieve parameters for each residue from table defined above
+        b1 = self.bbBondDictS.get(r[0],self.bbBondDictD).get(ss[0],self.bbBondDictD.get(ss[0]))
+        b2 = self.bbBondDictS.get(r[1],self.bbBondDictD).get(ss[1],self.bbBondDictD.get(ss[1]))
+        # Determine which parameters to use for the bond
+        # Python3 no longer returns a NoneType if None is compared to an integer.
+        if b1[1] == None or b2[1] == None:
+            return ( (b1[0]+b2[0])/2, None )
+        else:
+            return ( (b1[0]+b2[0])/2, min(b1[1],b2[1]) )
+    
+    def bbGetAngle(self,r,ca,ss):
+        # PRO in helices is dominant
+        if r[1] == "PRO" and ss[1] in "H123":
+            return self.bbAngleDictS["PRO"].get(ss[1])
+        else:
+            # Retrieve parameters for each residue from table defined above
+            a = [ self.bbAngleDictS.get(r[0],self.bbAngleDictD).get(ss[0],self.bbAngleDictD.get(ss[0])),
+                  self.bbAngleDictS.get(r[1],self.bbAngleDictD).get(ss[1],self.bbAngleDictD.get(ss[1])),
+                  self.bbAngleDictS.get(r[2],self.bbAngleDictD).get(ss[2],self.bbAngleDictD.get(ss[2])) ]
+            # Sort according to force constant
+            a.sort(key=lambda i: (i[1],i[0]))
+            # This selects the set with the smallest force constant and the smallest angle
+            return a[0]
+        
+    def messages(self):
+        '''Prints any force-field specific logging messages.'''
+        logging.info('Note: Cysteine bonds are 0.24 nm constraints, instead of the published 0.39nm/5000kJ/mol.')
+
+################################
+## 6 # FORCE FIELD PARAMETERS ##  -> @FF <-
+################################
+
 # New martini 2.2p parameters.
 # Changed: 
 #   Unstructured Pro backbone bead
@@ -789,10 +801,9 @@ class martini22:
 #   Trp sidechain
 #   Polar beads
 #   Helix BB-bonds to constraint      
-# Todo:
 #   Helix BB-bond length
 
-class martini22p:
+class martini22p(object):
     ff = True
     def __init__(self):
 
@@ -800,8 +811,7 @@ class martini22p:
         self.name = 'martini22p'
         
         # Charged types:
-        self.charges = {"Qd":1, "Qa":-1, "SQd":1, "SQa":-1, "RQd":1, "AQa":-1}                                                           #@#
-        
+        self.charges = {"Qd":1, "Qa":-1, "SQd":1, "SQa":-1, "RQd":1, "AQa":-1}    #@#
         
         #----+---------------------+
         ## A | BACKBONE PARAMETERS |
@@ -986,26 +996,26 @@ class martini22p:
         # Dictionary of default bead types (*D)                                                     
         self.bbBeadDictD  = hash(bbss,self.bbdef)                                                             
         # Dictionary of dictionaries of types for specific residues (*S)                            
-        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in self.bbtyp.keys()])                        
+        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in list(self.bbtyp.keys())])                        
         
         ## BB BOND TYPE ##                                                                          
         # Dictionary of default abond types (*D)                                                    
-        self.bbBondDictD = hash(bbss,zip(self.bbldef,self.bbkb))                                                   
+        self.bbBondDictD = hash(bbss,list(zip(self.bbldef,self.bbkb)))                                                   
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbBondDictS = dict([(i,hash(bbss,zip(self.bbltyp[i],self.bbkbtyp[i]))) for i in self.bbltyp.keys()])       
+        self.bbBondDictS = dict([(i,hash(bbss,list(zip(self.bbltyp[i],self.bbkbtyp[i])))) for i in list(self.bbltyp.keys())])       
         # This is tricky to read, but it gives the right bondlength/force constant
         
         ## BBB ANGLE TYPE ##                                                                        
         # Dictionary of default angle types (*D)                                                    
-        self.bbAngleDictD = hash(bbss,zip(self.bbadef,self.bbka))                                                  
+        self.bbAngleDictD = hash(bbss,list(zip(self.bbadef,self.bbka)))                                                  
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbAngleDictS = dict([(i,hash(bbss,zip(self.bbatyp[i],self.bbkatyp[i]))) for i in self.bbatyp.keys()])      
+        self.bbAngleDictS = dict([(i,hash(bbss,list(zip(self.bbatyp[i],self.bbkatyp[i])))) for i in list(self.bbatyp.keys())])      
                     
         ## BBBB DIHEDRAL TYPE ##                                                                    
         # Dictionary of default dihedral types (*D)                                                 
-        self.bbDihedDictD = hash(bbss,zip(self.bbddef,self.bbkd,self.bbdmul))                                           
+        self.bbDihedDictD = hash(bbss,list(zip(self.bbddef,self.bbkd,self.bbdmul)))                                           
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbDihedDictS = dict([(i,hash(bbss,zip(self.bbdtyp[i],self.bbkdtyp[i]))) for i in self.bbdtyp.keys()])      
+        self.bbDihedDictS = dict([(i,hash(bbss,list(zip(self.bbdtyp[i],self.bbkdtyp[i])))) for i in list(self.bbdtyp.keys())])      
         
     # The following function returns the backbone bead for a given residue and                   
     # secondary structure type.                                                                 
@@ -1023,7 +1033,11 @@ class martini22p:
         b1 = self.bbBondDictS.get(r[0],self.bbBondDictD).get(ss[0],self.bbBondDictD.get(ss[0]))
         b2 = self.bbBondDictS.get(r[1],self.bbBondDictD).get(ss[1],self.bbBondDictD.get(ss[1]))
         # Determine which parameters to use for the bond
-        return ( (b1[0]+b2[0])/2, min(b1[1],b2[1]) )
+        # Python3 no longer returns a NoneType if None is compared to an integer.
+        if b1[1] == None or b2[1] == None:
+            return ( (b1[0]+b2[0])/2, None )
+        else:
+            return ( (b1[0]+b2[0])/2, min(b1[1],b2[1]) )
 
     def bbGetAngle(self,r,ca,ss):
         # PRO in helices is dominant
@@ -1049,7 +1063,7 @@ class martini22p:
 ## 6 # FORCE FIELD PARAMETERS ##  -> @FF <-
 ################################
 
-class elnedyn:
+class elnedyn(object):
     ff = True
     def __init__(self):
         '''The forcefield has been implemented with some changes compared to the published parameters:
@@ -1239,26 +1253,26 @@ class elnedyn:
         # Dictionary of default bead types (*D)                                                     
         self.bbBeadDictD  = hash(bbss,self.bbdef)                                                             
         # Dictionary of dictionaries of types for specific residues (*S)                            
-        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in self.bbtyp.keys()])                        
+        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in list(self.bbtyp.keys())])                        
          
         ## BB BOND TYPE ##                                                                          
         # Dictionary of default abond types (*D)                                                    
-        self.bbBondDictD = hash(bbss,zip(self.bbldef,self.bbkb))                                                   
+        self.bbBondDictD = hash(bbss,list(zip(self.bbldef,self.bbkb)))                                                   
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbBondDictS = dict([(i,hash(bbss,zip(self.bbltyp[i],self.bbkbtyp[i]))) for i in self.bbltyp.keys()])       
+        self.bbBondDictS = dict([(i,hash(bbss,list(zip(self.bbltyp[i],self.bbkbtyp[i])))) for i in list(self.bbltyp.keys())])       
         # This is tricky to read, but it gives the right bondlength/force constant
 
         ## BBB ANGLE TYPE ##                                                                        
         # Dictionary of default angle types (*D)                                                    
-        self.bbAngleDictD = hash(bbss,zip(self.bbadef,self.bbka))                                                  
+        self.bbAngleDictD = hash(bbss,list(zip(self.bbadef,self.bbka)))                                                  
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbAngleDictS = dict([(i,hash(bbss,zip(self.bbatyp[i],self.bbkatyp[i]))) for i in self.bbatyp.keys()])      
+        self.bbAngleDictS = dict([(i,hash(bbss,list(zip(self.bbatyp[i],self.bbkatyp[i])))) for i in list(self.bbatyp.keys())])      
        
         ## BBBB DIHEDRAL TYPE ##                                                                    
         # Dictionary of default dihedral types (*D)                                                 
-        self.bbDihedDictD = hash(bbss,zip(self.bbddef,self.bbkd,self.bbdmul))                                           
+        self.bbDihedDictD = hash(bbss,list(zip(self.bbddef,self.bbkd,self.bbdmul)))                                           
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbDihedDictS = dict([(i,hash(bbss,zip(self.bbdtyp[i],self.bbkdtyp[i]))) for i in self.bbdtyp.keys()])      
+        self.bbDihedDictS = dict([(i,hash(bbss,list(zip(self.bbdtyp[i],self.bbkdtyp[i])))) for i in list(self.bbdtyp.keys())])      
 
     # The following function returns the backbone bead for a given residue and                   
     # secondary structure type.                                                                 
@@ -1297,7 +1311,7 @@ class elnedyn:
 ## 6 # FORCE FIELD PARAMETERS ##  -> @FF <-
 ################################
 
-class elnedyn22:
+class elnedyn22(object):
     '''The forcefield has been implemented with some changes compared to the published parameters:
     - Trp has an extra constrain added to the sidechain
     - The Backbone-Sidechain bonds with high force constants are replaced by constraints except for Trp and His.
@@ -1488,26 +1502,26 @@ class elnedyn22:
         # Dictionary of default bead types (*D)                                                     
         self.bbBeadDictD  = hash(bbss,self.bbdef)                                                             
         # Dictionary of dictionaries of types for specific residues (*S)                            
-        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in self.bbtyp.keys()])                        
+        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in list(self.bbtyp.keys())])                        
          
         ## BB BOND TYPE ##                                                                          
         # Dictionary of default abond types (*D)                                                    
-        self.bbBondDictD = hash(bbss,zip(self.bbldef,self.bbkb))                                                   
+        self.bbBondDictD = hash(bbss,list(zip(self.bbldef,self.bbkb)))                                                   
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbBondDictS = dict([(i,hash(bbss,zip(self.bbltyp[i],self.bbkbtyp[i]))) for i in self.bbltyp.keys()])       
+        self.bbBondDictS = dict([(i,hash(bbss,list(zip(self.bbltyp[i],self.bbkbtyp[i])))) for i in list(self.bbltyp.keys())])       
         # This is tricky to read, but it gives the right bondlength/force constant
 
         ## BBB ANGLE TYPE ##                                                                        
         # Dictionary of default angle types (*D)                                                    
-        self.bbAngleDictD = hash(bbss,zip(self.bbadef,self.bbka))                                                  
+        self.bbAngleDictD = hash(bbss,list(zip(self.bbadef,self.bbka)))                                                  
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbAngleDictS = dict([(i,hash(bbss,zip(self.bbatyp[i],self.bbkatyp[i]))) for i in self.bbatyp.keys()])      
+        self.bbAngleDictS = dict([(i,hash(bbss,list(zip(self.bbatyp[i],self.bbkatyp[i])))) for i in list(self.bbatyp.keys())])      
        
         ## BBBB DIHEDRAL TYPE ##                                                                    
         # Dictionary of default dihedral types (*D)                                                 
-        self.bbDihedDictD = hash(bbss,zip(self.bbddef,self.bbkd,self.bbdmul))                                           
+        self.bbDihedDictD = hash(bbss,list(zip(self.bbddef,self.bbkd,self.bbdmul)))                                           
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbDihedDictS = dict([(i,hash(bbss,zip(self.bbdtyp[i],self.bbkdtyp[i]))) for i in self.bbdtyp.keys()])      
+        self.bbDihedDictS = dict([(i,hash(bbss,list(zip(self.bbdtyp[i],self.bbkdtyp[i])))) for i in list(self.bbdtyp.keys())])      
 
     # The following function returns the backbone bead for a given residue and                   
     # secondary structure type.                                                                 
@@ -1546,7 +1560,7 @@ class elnedyn22:
 ## 6 # FORCE FIELD PARAMETERS ##  -> @FF <-
 ################################
 
-class elnedyn22p:
+class elnedyn22p(object):
     ff = True
     def __init__(self):
 
@@ -1743,26 +1757,26 @@ class elnedyn22p:
         # Dictionary of default bead types (*D)                                                     
         self.bbBeadDictD  = hash(bbss,self.bbdef)                                                             
         # Dictionary of dictionaries of types for specific residues (*S)                            
-        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in self.bbtyp.keys()])                        
+        self.bbBeadDictS  = dict([(i,hash(bbss,self.bbtyp[i])) for i in list(self.bbtyp.keys())])                        
          
         ## BB BOND TYPE ##                                                                          
         # Dictionary of default abond types (*D)                                                    
-        self.bbBondDictD = hash(bbss,zip(self.bbldef,self.bbkb))                                                   
+        self.bbBondDictD = hash(bbss,list(zip(self.bbldef,self.bbkb)))                                                   
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbBondDictS = dict([(i,hash(bbss,zip(self.bbltyp[i],self.bbkbtyp[i]))) for i in self.bbltyp.keys()])       
+        self.bbBondDictS = dict([(i,hash(bbss,list(zip(self.bbltyp[i],self.bbkbtyp[i])))) for i in list(self.bbltyp.keys())])       
         # This is tricky to read, but it gives the right bondlength/force constant
 
         ## BBB ANGLE TYPE ##                                                                        
         # Dictionary of default angle types (*D)                                                    
-        self.bbAngleDictD = hash(bbss,zip(self.bbadef,self.bbka))                                                  
+        self.bbAngleDictD = hash(bbss,list(zip(self.bbadef,self.bbka)))                                                  
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbAngleDictS = dict([(i,hash(bbss,zip(self.bbatyp[i],self.bbkatyp[i]))) for i in self.bbatyp.keys()])      
+        self.bbAngleDictS = dict([(i,hash(bbss,list(zip(self.bbatyp[i],self.bbkatyp[i])))) for i in list(self.bbatyp.keys())])      
        
         ## BBBB DIHEDRAL TYPE ##                                                                    
         # Dictionary of default dihedral types (*D)                                                 
-        self.bbDihedDictD = hash(bbss,zip(self.bbddef,self.bbkd,self.bbdmul))                                           
+        self.bbDihedDictD = hash(bbss,list(zip(self.bbddef,self.bbkd,self.bbdmul)))                                           
         # Dictionary of dictionaries for specific types (*S)                                        
-        self.bbDihedDictS = dict([(i,hash(bbss,zip(self.bbdtyp[i],self.bbkdtyp[i]))) for i in self.bbdtyp.keys()])      
+        self.bbDihedDictS = dict([(i,hash(bbss,list(zip(self.bbdtyp[i],self.bbkdtyp[i])))) for i in list(self.bbdtyp.keys())])      
 
     # The following function returns the backbone bead for a given residue and                   
     # secondary structure type.                                                                 
@@ -1806,14 +1820,14 @@ import types, os
     
 # This is a simple and versatily option class that allows easy
 # definition and parsing of options.
-class Option:
+class Option(object):
     def __init__(self, func=str, num=1, default=None, description=""):
         self.func        = func
         self.num         = num
         self.value       = default
         self.description = description
 
-    def __nonzero__(self): 
+    def __bool__(self): 
         if self.func == bool:
             return self.value != False
         return bool(self.value)
@@ -1829,11 +1843,11 @@ class Option:
     
 # Parameters can be defined for multiple forcefields
 # We look for them within the script...
-forcefields = [str(ff).split('.')[-1] for ff in globals().values() if (type(ff) == types.ClassType and hasattr(ff,"ff"))]
+forcefields = [str(ff).split('.')[-1] for ff in list(globals().values()) if (type(ff) == type and hasattr(ff,"ff"))]
 # ... in the local directory, ....
 forcefields += [ff[:-3] for ff in os.listdir(".") if ff[-6:] == "_ff.py"]
 # ... and in the GMXDATA dir.
-if os.environ.has_key("GMXDATA"):
+if "GMXDATA" in os.environ:
     forcefields += [ff[:-3] for ff in os.listdir(os.environ["GMXDATA"]+"/top/") if ff[-6:] == "_ff.py"]
 
 # Lists for gathering arguments to options that can be specified
@@ -2037,11 +2051,11 @@ def help():
     import sys
     for item in options:
         if type(item) == str:
-            print item
+            print(item)
     for item in options:
         if type(item) != str:
-            print "%10s  %s" % (item[0], item[1].description)
-    print
+            print("%10s  %s" % (item[0], item[1].description))
+    print()
     sys.exit()
 ##############################
 ## 2 # COMMAND LINE PARSING ##  -> @CMD <-
@@ -2266,7 +2280,7 @@ def nsplit(*x):
 
 # Make a dictionary from two lists
 def hash(x, y):
-    return dict(zip(x, y))
+    return dict(list(zip(x, y)))
 
 
 # Function to reformat pattern strings
@@ -2339,7 +2353,7 @@ residueTypes = dict(
     )
 
 
-class CoarseGrained:
+class CoarseGrained(object):
     # Class for mapping an atomistic residue list to a coarsegrained one
     # Should get an __init__ function taking a residuelist, atomlist, Pymol selection or ChemPy model
     # The result should be stored in a list-type attribute
@@ -2452,8 +2466,8 @@ class CoarseGrained:
 # [(m,(x,y,z),id),..] and returns the weighted average of the
 # coordinates and the list of ids mapped to this bead
 def aver(b):
-    mwx, ids = zip(*[((m*x, m*y, m*z), i) for m, (x, y, z), i in b])      # Weighted coordinates
-    tm  = sum(zip(*b)[0])                                                 # Sum of weights
+    mwx, ids = list(zip(*[((m*x, m*y, m*z), i) for m, (x, y, z), i in b]))      # Weighted coordinates
+    tm  = sum(next(zip(*b)))                                                 # Sum of weights
     return [sum(i)/tm for i in zip(*mwx)], ids                            # Centre of mass
 
 
@@ -2469,7 +2483,7 @@ def map(r, ca2bb = False):
     q = [[(m, coord, a.index((atom, m, coord))) for atom, m, coord in a if atom in i] for i in p]
 
     # Bead positions
-    return zip(*[aver(i) for i in q])
+    return list(zip(*[aver(i) for i in q]))
 
 
 # Mapping for index file
@@ -2508,7 +2522,7 @@ ss_names = {
  "C": "Coil",                                                                               #@#
 }
 
-bbss = ss_names.keys()
+bbss = list(ss_names.keys())
 bbss = spl("  F     E     H     1     2     3     T     S     C")  # SS one letter
 
 
@@ -2565,7 +2579,7 @@ ss2num = hash(bbss, ssnum)
 
 
 # List of programs for which secondary structure definitions can be processed
-programs = ssdefs.keys()
+programs = list(ssdefs.keys())
 
 
 # Dictionaries mapping ss types to the CG ss types
@@ -2610,11 +2624,11 @@ def ssClassification(ss, program="dssp"):
     # Translate dssp/pymol/gmx ss to Martini ss
     ss  = ss.translate(sstt[program])
     # Separate the different secondary structure types
-    sep = dict([(i, ss.translate(sstd[i])) for i in sstd.keys()])
+    sep = dict([(i, ss.translate(sstd[i])) for i in list(sstd.keys())])
     # Do type substitutions based on patterns
     # If the ss type is not in the patterns lists, do not substitute
     # (use empty lists for substitutions)
-    typ = [typesub(sep[i], patterns.get(i, []), pattypes.get(i, [])) for i in sstd.keys()]
+    typ = [typesub(sep[i], patterns.get(i, []), pattypes.get(i, [])) for i in list(sstd.keys())]
     # Translate all types to numerical values
     typ = [[ord(j) for j in list(i)] for i in typ]
     # Sum characters back to get a full typed sequence
@@ -2646,8 +2660,8 @@ def call_dssp(chain, atomlist, executable='dsspcmbi'):
 
     for atom in atomlist:
         if atom[0][:2] == 'O1': atom = ('O',)+atom[1:]
-        if atom[0][0] != 'H' and atom[0][:2] != 'O2': p.stdin.write(pdbOut(atom))
-    p.stdin.write('TER\n')
+        if atom[0][0] != 'H' and atom[0][:2] != 'O2': p.stdin.write(pdbOut(atom).encode('utf-8'))
+    p.stdin.write('TER\n'.encode('utf-8'))
     data = p.communicate()
     p.wait()
     main, ss = 0, ''
@@ -2839,15 +2853,15 @@ def groAtom(a):
 def groFrameIterator(streamIterator):
     while True:
         try:
-            title = streamIterator.next()
+            title = next(streamIterator)
         except StopIteration:
             break
-        natoms = streamIterator.next().strip()
+        natoms = next(streamIterator).strip()
         if not natoms:
             break
         natoms = int(natoms)
-        atoms  = [groAtom(streamIterator.next()) for i in range(natoms)]
-        box    = groBoxRead(streamIterator.next())
+        atoms  = [groAtom(next(streamIterator)) for i in range(natoms)]
+        box    = groBoxRead(next(streamIterator))
         yield title, atoms, box
 
 
@@ -2859,12 +2873,12 @@ def groFrameIterator(streamIterator):
 # Called from main.
 def getChargeType(resname, resid, choices):
     '''Get user input for the charge of residues, based on list with choises.'''
-    print 'Which %s type do you want for residue %s:' % (resname, resid+1)
-    for i, choice in choices.iteritems():
-        print '%s. %s' % (i, choice)
+    print('Which %s type do you want for residue %s:' % (resname, resid+1))
+    for i, choice in choices.items():
+        print('%s. %s' % (i, choice))
     choice = None
-    while choice not in choices.keys():
-        choice = input('Type a number:')
+    while choice not in list(choices.keys()):
+        choice = eval(input('Type a number:'))
     return choices[choice]
 
 
@@ -2966,7 +2980,7 @@ def breaks(residuelist, selection=("N", "CA", "C"), cutoff=2.5):
 
 
 def contacts(atoms, cutoff=5):
-    rla = range(len(atoms))
+    rla = list(range(len(atoms)))
     crd = [atom[4:] for atom in atoms]
     return [(i, j) for i in rla[:-1] for j in rla[i+1:]
             if distance2(crd[i], crd[j]) < cutoff]
@@ -2990,7 +3004,7 @@ def add_dummy(beads, dist=0.11, n=2):
 
 
 def check_merge(chains, m_list=[], l_list=[], ss_cutoff=0):
-    chainIndex = range(len(chains))
+    chainIndex = list(range(len(chains)))
 
     if 'all' in m_list:
         logging.info("All chains will be merged in a single moleculetype.")
@@ -3006,7 +3020,7 @@ def check_merge(chains, m_list=[], l_list=[], ss_cutoff=0):
         # before building the dictionary
         chainIndex.reverse()
         chainID.reverse()
-        dct = dict(zip(chainID, chainIndex))
+        dct = dict(list(zip(chainID, chainIndex)))
         chainIndex.reverse()
         # Convert chains in the merge_list to numeric, if necessary
         # NOTE The internal numbering is zero-based, while the
@@ -3094,7 +3108,7 @@ def check_merge(chains, m_list=[], l_list=[], ss_cutoff=0):
 
 ## !! NOTE !! ##
 ## XXX The chain class needs to be simplified by extracting things to separate functions/classes
-class Chain:
+class Chain(object):
     # Attributes defining a chain
     # When copying a chain, or slicing, the attributes in this list have to
     # be handled accordingly.
@@ -3190,25 +3204,24 @@ class Chain:
                         return i
                 else:
                     return []
+        elif type(other) == slice:
+            # This implements the old __getslice__ method 
+            i, j = other.start, other.stop
+            newchain = Chain(self.options, name=self.id)
+            # Extract the slices from all lists
+            for attr in self._attributes:
+                setattr(newchain, attr, getattr(self, attr)[i:j])
+            # Breaks that fall within the start and end of this chain need to be passed on.
+            # Residue numbering is increased by 20 bits!!
+            ch_sta, ch_end      = newchain.residues[0][0][2], newchain.residues[-1][0][2]
+            newchain.breaks     = [crack for crack in self.breaks if ch_sta < (crack << 20) < ch_end]
+            newchain.links      = [link for link in self.links if ch_sta < (link << 20) < ch_end]
+            newchain.multiscale = self.multiscale
+            newchain.natoms     = len(newchain.atoms())
+            # newchain.type()
+            # Return the chain slice
+            return newchain
         return self.sequence[other]
-
-    # Extract a piece of a chain as a new chain
-    def __getslice__(self, i, j):
-        newchain = Chain(self.options, name=self.id)
-        # Extract the slices from all lists
-        for attr in self._attributes:
-            setattr(newchain, attr, getattr(self, attr)[i:j])
-        # Breaks that fall within the start and end of this chain need to be passed on.
-        # Residue numbering is increased by 20 bits!!
-        # XXX I don't know if this works.
-        ch_sta, ch_end      = newchain.residues[0][0][2], newchain.residues[-1][0][2]
-        newchain.breaks     = [crack for crack in self.breaks if ch_sta < (crack << 20) < ch_end]
-        newchain.links      = [link for link in self.links if ch_sta < (link << 20) < ch_end]
-        newchain.multiscale = self.multiscale
-        newchain.natoms     = len(newchain.atoms())
-        newchain.type()
-        # Return the chain slice
-        return newchain
 
     def _contains(self, atomlist, atom):
         atnm, resn, resi, chn = atom
@@ -3338,7 +3351,7 @@ class Chain:
             residue = [(atom[0], resname)+atom[2:] for atom in residue]
             if residue[0][1] in ("SOL", "HOH", "TIP"):
                 continue
-            if not residue[0][1] in CoarseGrained.mapping.keys():
+            if not residue[0][1] in list(CoarseGrained.mapping.keys()):
                 logging.warning("Skipped unknown residue %s\n" % residue[0][1])
                 continue
             # Get the mapping for this residue
@@ -3349,7 +3362,7 @@ class Chain:
             # an error
             try:
                 beads, ids = map(residue, ca2bb=self.options['ForceField'].ca2bb)
-                beads      = zip(CoarseGrained.names[residue[0][1]], beads, ids)
+                beads      = list(zip(CoarseGrained.names[residue[0][1]], beads, ids))
                 if residue[0][1] in self.options['ForceField'].polar:
                     beads = add_dummy(beads, dist=0.14, n=2)
                 elif residue[0][1] in self.options['ForceField'].charged:
@@ -3382,8 +3395,8 @@ class Chain:
         # Return pairs of numbers that should be CONECTed
         # First extract the backbone IDs
         cg = self.cg()
-        bb = [i+1 for i, j in zip(range(len(cg)), cg) if j[0] == "BB"]
-        bb = zip(bb, bb[1:]+[len(bb)])
+        bb = [i+1 for i, j in zip(list(range(len(cg))), cg) if j[0] == "BB"]
+        bb = list(zip(bb, bb[1:]+[len(bb)]))
         # Set the backbone CONECTs (check whether the distance is consistent with binding)
         conect = [(i, j) for i, j in bb[:-1] if distance2(cg[i-1][4:7], cg[j-1][4:7]) < 14]
         # Now add CONECTs for sidechains
@@ -3396,7 +3409,7 @@ import logging, math
 
 
 # This is a generic class for Topology Bonded Type definitions
-class Bonded:
+class Bonded(object):
     # The init method is generic to the bonded types,
     # but may call the set method if atoms are given
     # as (ID, ResidueName, SecondaryStructure) tuples
@@ -3420,7 +3433,7 @@ class Bonded:
                     if not attr[0] == "_":
                         setattr(self, attr, getattr(other, attr))
             elif type(other) == dict:
-                for attr in other.keys():
+                for attr in list(other.keys()):
                     setattr(self, attr, other[attr])
             elif type(other) in (list, tuple):
                 self.atoms = other
@@ -3439,7 +3452,7 @@ class Bonded:
         if self.atoms and type(self.atoms[0]) == tuple:
             self.set(self.atoms, **kwargs)
 
-    def __nonzero__(self):
+    def __bool__(self):
         return bool(self.atoms)
 
     def __str__(self):
@@ -3485,7 +3498,7 @@ class Bonded:
 # using the category
 class Bond(Bonded):
     def set(self, atoms, **kwargs):
-        ids, r, ss, ca  = zip(*atoms)
+        ids, r, ss, ca  = list(zip(*atoms))
         self.atoms      = ids
         self.type       = 1
         self.positionCa = ca
@@ -3510,7 +3523,7 @@ class Bond(Bonded):
 # Similar to the preceding class
 class Angle(Bonded):
     def set(self, atoms, **kwargs):
-        ids, r, ss, ca  = zip(*atoms)
+        ids, r, ss, ca  = list(zip(*atoms))
         self.atoms      = ids
         self.type       = 2
         self.positionCa = ca
@@ -3522,7 +3535,7 @@ class Angle(Bonded):
 # Similar to the preceding class
 class Vsite(Bonded):
     def set(self, atoms, **kwargs):
-        ids, r, ss, ca  = zip(*atoms)
+        ids, r, ss, ca  = list(zip(*atoms))
         self.atoms      = ids
         self.type       = 1
         self.positionCa = ca
@@ -3534,7 +3547,7 @@ class Vsite(Bonded):
 # Similar to the preceding class
 class Exclusion(Bonded):
     def set(self, atoms, **kwargs):
-        ids, r, ss, ca  = zip(*atoms)
+        ids, r, ss, ca  = list(zip(*atoms))
         self.atoms      = ids
         self.positionCa = ca
         self.comments   = "%s" % (r[0])
@@ -3545,7 +3558,7 @@ class Exclusion(Bonded):
 # Similar to the preceding class
 class Dihedral(Bonded):
     def set(self, atoms, **kwargs):
-        ids, r, ss, ca  = zip(*atoms)
+        ids, r, ss, ca  = list(zip(*atoms))
         self.atoms      = ids
         self.type       = 1
         self.positionCa = ca
@@ -3584,7 +3597,7 @@ class CategorizedList(list):
             return [i for i in self if i.category == tag[0]]
 
 
-class Topology:
+class Topology(object):
     def __init__(self, other=None, options=None, name=""):
         self.name        = ''
         self.nrexcl      = 1
@@ -3849,7 +3862,7 @@ class Topology:
 
         # Backbone bead atom IDs
         bbid = [startAtom]
-        for i in zip(*sc)[0]:
+        for i in next(zip(*sc)):
             bbid.append(bbid[-1]+len(i)+1)
 
         # Calpha positions, to get Elnedyn BBB-angles and BB-bond lengths
@@ -3863,12 +3876,12 @@ class Topology:
                     positionCa.append(atom[4:])
 
         # Residue numbers for this moleculetype topology
-        resid = range(startResi, startResi+len(self.sequence))
+        resid = list(range(startResi, startResi+len(self.sequence)))
 
         # This contains the information for deriving backbone bead types,
         # bb bond types, bbb/bbs angle types, and bbbb dihedral types and
         # Elnedyn BB-bondlength BBB-angles
-        seqss = zip(bbid, self.sequence, self.secstruc, positionCa)
+        seqss = list(zip(bbid, self.sequence, self.secstruc, positionCa))
 
         # Fetch the proper backbone beads
         bb = [self.options['ForceField'].bbGetBead(res, typ) for num, res, typ, Ca in seqss]
@@ -3897,13 +3910,13 @@ class Topology:
             self.angles.extend([Angle(triple, options=self.options, category="BBB") for triple in zip(frg, frg[1:], frg[2:])])
 
             # Get backbone quadruples
-            quadruples = zip(frg, frg[1:], frg[2:], frg[3:])
+            quadruples = list(zip(frg, frg[1:], frg[2:], frg[3:]))
 
             # No i-1,i,i+1,i+2 interactions defined for Elnedyn
             if self.options['ForceField'].UseBBBBDihedrals:
                 # Process dihedrals
                 for q in quadruples:
-                    id, rn, ss, ca = zip(*q)
+                    id, rn, ss, ca = list(zip(*q))
                     # Maybe do local elastic networks
                     if ss == ("E", "E", "E", "E") and not self.options['ExtendedDihedrals']:
                         # This one may already be listed as the 2-4 bond of a previous one
@@ -4033,7 +4046,7 @@ class Topology:
             # The polarizable forcefield give problems with the charges in the sidechain,
             # if the backbone is also charged.
             # To avoid that, we add explicit exclusions
-            if bbb in self.options['ForceField'].charges.keys() and resname in self.options['ForceField'].mass_charge.keys():
+            if bbb in list(self.options['ForceField'].charges.keys()) and resname in list(self.options['ForceField'].mass_charge.keys()):
                 for i in [j for j, d in enumerate(scatoms) if d == 'D']:
                     self.exclusions.append(Exclusion(
                         options    = self.options,
@@ -4048,7 +4061,7 @@ class Topology:
                     atype, aname = "v" + atype, "v" + aname
                 # If mass or charge diverse, we adopt it here.
                 # We don't want to do this for BB beads because of charged termini.
-                if resname in self.options['ForceField'].mass_charge.keys() and counter != 0:
+                if resname in list(self.options['ForceField'].mass_charge.keys()) and counter != 0:
                     M, Q = self.options['ForceField'].mass_charge[resname]
                     aname = Q[counter-1] > 0 and 'SCP' or Q[counter-1] < 0 and 'SCN' or aname
                     self.atoms.append((atid, atype, resi, resname, aname, atid,
@@ -4137,16 +4150,16 @@ class Topology:
 
         # Backbone bead atom IDs
         bbid = [[startAtom, startAtom+1, startAtom+2]]
-        for i in zip(*sc)[0]:
+        for i in next(zip(*sc)):
             bbid1 = bbid[-1][0]+len(i)+3
             bbid.append([bbid1, bbid1+1, bbid1+2])
 
         # Residue numbers for this moleculetype topology
-        resid = range(startResi, startResi+len(self.sequence))
+        resid = list(range(startResi, startResi+len(self.sequence)))
 
         # This contains the information for deriving backbone bead types,
         # bb bond types, bbb/bbs angle types, and bbbb dihedral types.
-        seqss = zip(bbid, self.sequence, self.secstruc)
+        seqss = list(zip(bbid, self.sequence, self.secstruc))
 
         # Fetch the proper backbone beads
         # Since there are three beads we need to split these to the list
@@ -4182,12 +4195,12 @@ class Topology:
             self.angles.extend([Angle(triple, options=self.options, category="BBB") for triple in zip(frg, frg[1:], frg[2:])])
 
             # Get backbone quadruples
-            quadruples = zip(frg, frg[1:], frg[2:], frg[3:])
+            quadruples = list(zip(frg, frg[1:], frg[2:], frg[3:]))
 
             # No i-1,i,i+1,i+2 interactions defined for Elnedyn
             # Process dihedrals
             for q in quadruples:
-                id, rn, ss, ca = zip(*q)
+                id, rn, ss, ca = list(zip(*q))
                 # Since dihedrals can return None, we first collect them separately and then
                 # add the non-None ones to the list
                 dihed = Dihedral(q, options=self.options, category="BBBB")
@@ -4341,7 +4354,7 @@ def main(options):
 
     # The streamTag iterator first yields the file type, which
     # is used to specify the function for reading frames
-    fileType = inStream.next()
+    fileType = next(inStream)
     if fileType == "GRO":
         frameIterator = groFrameIterator
     else:
@@ -4371,7 +4384,7 @@ def main(options):
             # Reorder, such that each chain is specified with (i,j,k)
             # where i and j are the start and end of the chain, and
             # k is a chain identifier
-            chains = zip([0]+broken, broken+[len(residuelist)], range(len(broken)+1))
+            chains = list(zip([0]+broken, broken+[len(residuelist)], list(range(len(broken)+1))))
             chains = [Chain(options, residuelist[i:j], name=chr(65+k)) for i, j, k in chains]
 
         for chain in chains:
@@ -4559,7 +4572,7 @@ def main(options):
         for i_count, i in enumerate(residues(atoms)):
             if i[0][1] in ("SOL", "HOH", "TIP"):
                 continue
-            if not i[0][1] in CoarseGrained.mapping.keys():
+            if not i[0][1] in list(CoarseGrained.mapping.keys()):
                 continue
             nra = 0
             names = [j[0] for j in i]
@@ -4585,7 +4598,7 @@ def main(options):
 
         # Collect the secondary structure stuff and decide what to do with it
         # First rearrange by the residue
-        ssTotal = zip(*ssTotal)
+        ssTotal = list(zip(*ssTotal))
         ssAver  = []
         for i in ssTotal:
             si = list(set(i))
@@ -4630,14 +4643,14 @@ def main(options):
         if options['CystineCheckBonds']:
             logging.info("Checking for cystine bridges, based on sulphur (SG) atoms lying closer than %.4f nm" % math.sqrt(options['CystineMaxDist2']/100))
 
-            cyscoord  = zip(*[[j[4:7] for j in i] for i in cysteines])
+            cyscoord  = list(zip(*[[j[4:7] for j in i] for i in cysteines]))
             cysteines = [i[:4] for i in cysteines[0]]
 
             bl, kb    = options['ForceField'].special[(("SC1", "CYS"), ("SC1", "CYS"))]
 
             # Check the distances and add the cysteines to the link list if the
             # SG atoms have a distance smaller than the cutoff.
-            rlc = range(len(cysteines))
+            rlc = list(range(len(cysteines)))
             for i in rlc[:-1]:
                 for j in rlc[i+1:]:
                     # Checking the minimum distance over all frames
@@ -4686,7 +4699,7 @@ def main(options):
 
                 # Have to add the connections, like the connecting network
                 # Gather coordinates
-                mcg, coords = zip(*[(j[:4], j[4:7]) for m in mol for j in m.cg(force=True)])
+                mcg, coords = list(zip(*[(j[:4], j[4:7]) for m in mol for j in m.cg(force=True)]))
                 mcg         = list(mcg)
 
                 # Run through the link list and add connections (links = cys bridges or hand specified links)
@@ -4778,9 +4791,9 @@ Martini system from %s
     options['ForceField'].messages()
 
     # The following lines are always printed (if no errors occur).
-    print "\n\tThere you are. One MARTINI. Shaken, not stirred.\n"
+    print("\n\tThere you are. One MARTINI. Shaken, not stirred.\n")
     Q = martiniq.pop(random.randint(0, len(martiniq)-1))
-    print "\n", Q[1], "\n%80s" % ("--"+Q[0]), "\n"
+    print("\n", Q[1], "\n%80s" % ("--"+Q[0]), "\n")
 if __name__ == '__main__':
     import sys, logging
     args = sys.argv[1:]
