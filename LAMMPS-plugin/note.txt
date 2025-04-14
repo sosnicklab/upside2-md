@@ -1,0 +1,1 @@
+- The CA is mapped to BB, in the same mannar as Elnedyn, as Upside does not contain all atoms in the backbone
