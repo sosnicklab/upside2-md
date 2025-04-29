@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.5)
 project(upside CXX C)
 
 if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
