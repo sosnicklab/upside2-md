@@ -1,3 +1,11 @@
+#include "deriv_engine.h"
+#include "timing.h"
+#include "state_logger.h"
+
+using namespace h5;
+using namespace std;
+//Bond, Angle and Dihedral the same format in MARTINI 10.1021/jp071097f
+//Missing: Proper Dihedral from 10.1021/ct700324x (might not need if only exist in protein model)
 struct DistSpring : public PotentialNode
 {
     struct Params {
