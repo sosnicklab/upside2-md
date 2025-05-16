@@ -1,9 +1,9 @@
 #!/bin/bash
 
 export MY_PYTHON=/opt/homebrew/Cellar/python@3.13/3.13.3 # change it according to your environment
-export EIGEN_HOME=/opt/homebrew/include/eigen3 #  change it according to your environment
+export EIGEN_HOME=/opt/homebrew/Cellar/eigen/3.4.0_1/include/eigen3 # change it according to your environment
 
-export UPSIDE_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export UPSIDE_HOME="/Users/yinhan/Documents/upside2-md"
 
 export PATH="$MY_PYTHON/bin:$PATH"
 export PATH=$UPSIDE_HOME/obj:$PATH

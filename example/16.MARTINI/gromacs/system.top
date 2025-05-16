@@ -1,0 +1,16 @@
+#include "toppar/martini_v2.2.itp"
+#include "toppar/martini_v2.0_lipids_all_201506.itp"
+#include "toppar/martini_v2.0_ions.itp"
+#include "PROA_P.itp"
+
+[ system ]
+; name
+Martini system
+
+[ molecules ]
+; name        number
+PROA_P 1
+DOPC 281
+W 3148
+NA 41
+CL 38

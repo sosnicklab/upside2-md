@@ -196,4 +196,101 @@ struct DihedralSpring : public PotentialNode
 };
 static RegisterNodeType<DihedralSpring,1> dihedral_spring_node("dihedral_spring");
 
+struct OverlayedPotential : public PotentialNode {
+    CoordNode& pos;
+    int n_elem;
+    vector<int> atom_indices;
+    
+    // LJ parameters
+    float epsilon;
+    float sigma;
+    float lj_cutoff;
+    
+    // Coulombic parameters
+    vector<float> charges;
+    float coul_cutoff;
+    float dielectric;
+    
+    OverlayedPotential(hid_t grp, CoordNode& pos_):
+        PotentialNode(),
+        pos(pos_),
+        n_elem(get_dset_size(1, grp, "atom_indices")[0]),
+        atom_indices(n_elem),
+        epsilon(read_attribute<float>(grp, ".", "epsilon")),
+        sigma(read_attribute<float>(grp, ".", "sigma")),
+        lj_cutoff(read_attribute<float>(grp, ".", "lj_cutoff")),
+        charges(n_elem),
+        coul_cutoff(read_attribute<float>(grp, ".", "coul_cutoff")),
+        dielectric(read_attribute<float>(grp, ".", "dielectric")) {
+        
+        // Read atom indices
+        traverse_dset<1,int>(grp, "atom_indices", 
+            [&](size_t i, int idx) {atom_indices[i] = idx;});
+            
+        // Read charges
+        traverse_dset<1,float>(grp, "charges",
+            [&](size_t i, float q) {charges[i] = q;});
+    }
+    
+    virtual void compute_value(ComputeMode mode) {
+        VecArray pos_array = pos.output;
+        VecArray pos_sens = pos.sens;
+        
+        potential = 0.f;
+        
+        for(int i=0; i<n_elem; ++i) {
+            for(int j=i+1; j<n_elem; ++j) {
+                int idx1 = atom_indices[i];
+                int idx2 = atom_indices[j];
+                
+                // Calculate distance
+                float dx = pos_array(0,idx2) - pos_array(0,idx1);
+                float dy = pos_array(1,idx2) - pos_array(1,idx1);
+                float dz = pos_array(2,idx2) - pos_array(2,idx1);
+                float r2 = dx*dx + dy*dy + dz*dz;
+                float r = sqrt(r2);
+                
+                // LJ potential
+                if(r2 <= lj_cutoff*lj_cutoff) {
+                    float r6 = pow(sigma/r, 6);
+                    float r12 = r6*r6;
+                    float lj_energy = 4*epsilon*(r12 - r6);
+                    potential += lj_energy;
+                    
+                    float lj_force = 24*epsilon*(2*r12 - r6)/(r*r);
+                    float fx = lj_force * dx/r;
+                    float fy = lj_force * dy/r;
+                    float fz = lj_force * dz/r;
+                    
+                    pos_sens(0,idx1) -= fx;
+                    pos_sens(1,idx1) -= fy;
+                    pos_sens(2,idx1) -= fz;
+                    pos_sens(0,idx2) += fx;
+                    pos_sens(1,idx2) += fy;
+                    pos_sens(2,idx2) += fz;
+                }
+                
+                // Coulombic potential
+                if(r2 <= coul_cutoff*coul_cutoff) {
+                    float coul_energy = charges[i]*charges[j]/(4*M_PI*dielectric*r);
+                    potential += coul_energy;
+                    
+                    float coul_force = charges[i]*charges[j]/(4*M_PI*dielectric*r2);
+                    float fx = coul_force * dx/r;
+                    float fy = coul_force * dy/r;
+                    float fz = coul_force * dz/r;
+                    
+                    pos_sens(0,idx1) -= fx;
+                    pos_sens(1,idx1) -= fy;
+                    pos_sens(2,idx1) -= fz;
+                    pos_sens(0,idx2) += fx;
+                    pos_sens(1,idx2) += fy;
+                    pos_sens(2,idx2) += fz;
+                }
+            }
+        }
+    }
+};
+static RegisterNodeType<OverlayedPotential,1> overlayed_potential_node("overlayed_potential");
+
 

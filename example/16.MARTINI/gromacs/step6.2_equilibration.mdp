@@ -1,0 +1,43 @@
+define                   = -DPOSRES -DPOSRES_FC=1000 -DBILAYER_LIPIDHEAD_FC=200
+integrator               = md
+tinit                    = 0.0
+dt                       = 0.002
+nsteps                   = 500000
+
+nstlog                   = 1000
+nstenergy                = 1000
+nstxout-compressed       = 1000
+compressed-x-precision   = 100
+
+cutoff-scheme            = Verlet
+nstlist                  = 20
+ns_type                  = grid
+pbc                      = xyz
+verlet-buffer-tolerance  = 0.005
+
+epsilon_r                = 15
+coulombtype              = reaction-field
+rcoulomb                 = 1.1
+vdw_type                 = cutoff
+vdw-modifier             = Potential-shift-verlet
+rvdw                     = 1.1
+
+tcoupl                   = v-rescale
+tc-grps                  = protein membrane solute
+tau_t                    = 1.0 1.0  1.0
+ref_t                    = 303.15 303.15 303.15
+
+; Pressure coupling:
+Pcoupl                   = berendsen
+Pcoupltype               = semiisotropic
+tau_p                    = 5.0
+compressibility          = 3e-4 3e-4
+ref_p                    = 1.0  1.0
+
+; GENERATE VELOCITIES FOR STARTUP RUN:
+gen_vel                  = yes
+gen_temp                 = 303.15
+gen_seed                 = 4431828778
+
+refcoord_scaling         = all
+

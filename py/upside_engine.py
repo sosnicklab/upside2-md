@@ -4,6 +4,7 @@ import shutil
 import tables as tb
 import os
 import time
+import platform
 
 # We have to do a dirty trick to get the correct path to libupside.so
 # It is likely possible to modify the build system to drop a config file 
@@ -16,7 +17,17 @@ import time
 # instead of going through upside/py.  
 py_source_dir = os.path.dirname(__file__)
 obj_dir = os.path.join(py_source_dir, '..', 'obj')
-calc = ct.cdll.LoadLibrary(os.path.join(obj_dir, 'libupside.so'))
+
+# Try to load the library with appropriate extension for the platform
+if platform.system() == 'Darwin':  # macOS
+    lib_path = os.path.join(obj_dir, 'libupside.dylib')
+else:  # Linux and others
+    lib_path = os.path.join(obj_dir, 'libupside.so')
+
+if not os.path.exists(lib_path):
+    raise RuntimeError(f'Could not find UPSIDE library at {lib_path}')
+
+calc = ct.cdll.LoadLibrary(lib_path)
 
 calc.construct_deriv_engine.restype  = ct.c_void_p
 calc.construct_deriv_engine.argtypes = [ct.c_int, ct.c_char_p, ct.c_bool]
