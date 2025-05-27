@@ -25,4 +25,5 @@ source.sh
 **inputs/
 **outputs/
 .vscode/
-venv/
+.venv/
+.DS_Store
