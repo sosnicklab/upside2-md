@@ -1,6 +1,7 @@
 #include "deriv_engine.h"
 #include "timing.h"
 #include "state_logger.h"
+#include <iostream>
 
 using namespace h5;
 using namespace std;

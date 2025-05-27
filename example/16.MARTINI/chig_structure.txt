@@ -1,0 +1,166 @@
+/                        Group
+/input                   Group
+/input/args              Group
+/input/pivot_moves       Group
+/input/pivot_moves/pivot_atom Dataset {8/Inf, 5}
+/input/pivot_moves/pivot_range Dataset {8/Inf, 2}
+/input/pivot_moves/pivot_restype Dataset {8/Inf}
+/input/pivot_moves/proposal_pot Dataset {10/Inf, 72, 72}
+/input/pos               Dataset {30/Inf, 3, 1}
+/input/potential         Group
+/input/potential/Angle   Group
+/input/potential/Angle/id Dataset {28/Inf, 3}
+/input/potential/Dihedral_omega Group
+/input/potential/Dihedral_omega/id Dataset {9/Inf, 4}
+/input/potential/Dihedral_phi Group
+/input/potential/Dihedral_phi/id Dataset {10/Inf, 4}
+/input/potential/Dihedral_psi Group
+/input/potential/Dihedral_psi/id Dataset {10/Inf, 4}
+/input/potential/Distance3D Group
+/input/potential/Distance3D/id Dataset {29/Inf, 2}
+/input/potential/Spring_angle Group
+/input/potential/Spring_angle/equil_dist Dataset {28/Inf}
+/input/potential/Spring_angle/id Dataset {28/Inf}
+/input/potential/Spring_angle/spring_const Dataset {28/Inf}
+/input/potential/Spring_bond Group
+/input/potential/Spring_bond/equil_dist Dataset {29/Inf}
+/input/potential/Spring_bond/id Dataset {29/Inf}
+/input/potential/Spring_bond/spring_const Dataset {29/Inf}
+/input/potential/Spring_omega Group
+/input/potential/Spring_omega/equil_dist Dataset {9/Inf}
+/input/potential/Spring_omega/id Dataset {9/Inf}
+/input/potential/Spring_omega/spring_const Dataset {9/Inf}
+/input/potential/affine_alignment Group
+/input/potential/affine_alignment/atoms Dataset {10/Inf, 3}
+/input/potential/affine_alignment/ref_geom Dataset {10/Inf, 3, 3}
+/input/potential/backbone_pairs Group
+/input/potential/backbone_pairs/id Dataset {10/Inf}
+/input/potential/backbone_pairs/n_atom Dataset {10/Inf}
+/input/potential/backbone_pairs/ref_pos Dataset {10/Inf, 4, 3}
+/input/potential/bb_sigmoid_coupling_environment Group
+/input/potential/bb_sigmoid_coupling_environment/weights Dataset {400/Inf}
+/input/potential/cat_pos_bb_coverage Group
+/input/potential/cat_pos_bb_coverage/index_pos1 Dataset {8/Inf}
+/input/potential/cat_pos_bb_coverage/index_pos2 Dataset {9/Inf}
+/input/potential/environment_coverage_hb Group
+/input/potential/environment_coverage_hb/aa_types Dataset {17/Inf}
+/input/potential/environment_coverage_hb/id1 Dataset {17/Inf}
+/input/potential/environment_coverage_hb/id2 Dataset {36/Inf}
+/input/potential/environment_coverage_hb/index1 Dataset {17/Inf}
+/input/potential/environment_coverage_hb/index2 Dataset {36/Inf}
+/input/potential/environment_coverage_hb/interaction_param Dataset {1/Inf, 1, 4}
+/input/potential/environment_coverage_hb/type1 Dataset {17/Inf}
+/input/potential/environment_coverage_hb/type2 Dataset {36/Inf}
+/input/potential/environment_coverage_sc Group
+/input/potential/environment_coverage_sc/aa_types Dataset {10/Inf}
+/input/potential/environment_coverage_sc/id1 Dataset {10/Inf}
+/input/potential/environment_coverage_sc/id2 Dataset {36/Inf}
+/input/potential/environment_coverage_sc/index1 Dataset {10/Inf}
+/input/potential/environment_coverage_sc/index2 Dataset {36/Inf}
+/input/potential/environment_coverage_sc/interaction_param Dataset {20/Inf, 1, 4}
+/input/potential/environment_coverage_sc/type1 Dataset {10/Inf}
+/input/potential/environment_coverage_sc/type2 Dataset {36/Inf}
+/input/potential/hb_environment_coverage_hn Group
+/input/potential/hb_environment_coverage_hn/id1 Dataset {8/Inf}
+/input/potential/hb_environment_coverage_hn/id2 Dataset {9/Inf}
+/input/potential/hb_environment_coverage_hn/index1 Dataset {8/Inf}
+/input/potential/hb_environment_coverage_hn/index2 Dataset {9/Inf}
+/input/potential/hb_environment_coverage_hn/interaction_param Dataset {1/Inf, 1, 4}
+/input/potential/hb_environment_coverage_hn/type1 Dataset {8/Inf}
+/input/potential/hb_environment_coverage_hn/type2 Dataset {9/Inf}
+/input/potential/hb_environment_coverage_oc Group
+/input/potential/hb_environment_coverage_oc/id1 Dataset {9/Inf}
+/input/potential/hb_environment_coverage_oc/id2 Dataset {8/Inf}
+/input/potential/hb_environment_coverage_oc/index1 Dataset {9/Inf}
+/input/potential/hb_environment_coverage_oc/index2 Dataset {8/Inf}
+/input/potential/hb_environment_coverage_oc/interaction_param Dataset {1/Inf, 1, 4}
+/input/potential/hb_environment_coverage_oc/type1 Dataset {9/Inf}
+/input/potential/hb_environment_coverage_oc/type2 Dataset {8/Inf}
+/input/potential/hbond_coverage Group
+/input/potential/hbond_coverage/id1 Dataset {17/Inf}
+/input/potential/hbond_coverage/id2 Dataset {36/Inf}
+/input/potential/hbond_coverage/index1 Dataset {17/Inf}
+/input/potential/hbond_coverage/index2 Dataset {36/Inf}
+/input/potential/hbond_coverage/interaction_param Dataset {8/Inf, 20, 50}
+/input/potential/hbond_coverage/type1 Dataset {17/Inf}
+/input/potential/hbond_coverage/type2 Dataset {36/Inf}
+/input/potential/hbond_coverage_hydrophobe Group
+/input/potential/hbond_coverage_hydrophobe/id1 Dataset {30/Inf}
+/input/potential/hbond_coverage_hydrophobe/id2 Dataset {36/Inf}
+/input/potential/hbond_coverage_hydrophobe/index1 Dataset {30/Inf}
+/input/potential/hbond_coverage_hydrophobe/index2 Dataset {36/Inf}
+/input/potential/hbond_coverage_hydrophobe/interaction_param Dataset {12/Inf, 20, 50}
+/input/potential/hbond_coverage_hydrophobe/type1 Dataset {30/Inf}
+/input/potential/hbond_coverage_hydrophobe/type2 Dataset {36/Inf}
+/input/potential/hbond_energy Group
+/input/potential/hbond_energy/acceptor_resid Dataset {9/Inf}
+/input/potential/hbond_energy/donor_resid Dataset {8/Inf}
+/input/potential/hbond_energy/parameters Dataset {12/Inf}
+/input/potential/hbond_energy/rama_resid Dataset {10/Inf}
+/input/potential/infer_H_O Group
+/input/potential/infer_H_O/acceptors Group
+/input/potential/infer_H_O/acceptors/bond_length Dataset {9/Inf}
+/input/potential/infer_H_O/acceptors/id Dataset {9/Inf, 3}
+/input/potential/infer_H_O/acceptors/residue Dataset {9/Inf}
+/input/potential/infer_H_O/donors Group
+/input/potential/infer_H_O/donors/bond_length Dataset {8/Inf}
+/input/potential/infer_H_O/donors/id Dataset {8/Inf, 3}
+/input/potential/infer_H_O/donors/residue Dataset {8/Inf}
+/input/potential/placement_fixed_point_vector_only Group
+/input/potential/placement_fixed_point_vector_only/affine_residue Dataset {36/Inf}
+/input/potential/placement_fixed_point_vector_only/beadtype_seq Dataset {36/Inf}
+/input/potential/placement_fixed_point_vector_only/fix_rotamer Dataset {0/Inf}
+/input/potential/placement_fixed_point_vector_only/id_seq Dataset {36/Inf}
+/input/potential/placement_fixed_point_vector_only/layer_index Dataset {36/Inf}
+/input/potential/placement_fixed_point_vector_only/placement_data Dataset {86/Inf, 6}
+/input/potential/placement_fixed_point_vector_only/rama_residue Dataset {36/Inf}
+/input/potential/placement_fixed_point_vector_only_CB Group
+/input/potential/placement_fixed_point_vector_only_CB/affine_residue Dataset {10/Inf}
+/input/potential/placement_fixed_point_vector_only_CB/layer_index Dataset {10/Inf}
+/input/potential/placement_fixed_point_vector_only_CB/placement_data Dataset {1/Inf, 6}
+/input/potential/placement_fixed_point_vector_scalar Group
+/input/potential/placement_fixed_point_vector_scalar/affine_residue Dataset {30/Inf}
+/input/potential/placement_fixed_point_vector_scalar/layer_index Dataset {30/Inf}
+/input/potential/placement_fixed_point_vector_scalar/placement_data Dataset {3/Inf, 7}
+/input/potential/placement_scalar Group
+/input/potential/placement_scalar/affine_residue Dataset {36/Inf}
+/input/potential/placement_scalar/layer_index Dataset {36/Inf}
+/input/potential/placement_scalar/placement_data Dataset {86/Inf, 36, 36, 1}
+/input/potential/placement_scalar/rama_residue Dataset {36/Inf}
+/input/potential/protein_hbond Group
+/input/potential/protein_hbond/id1 Dataset {8/Inf}
+/input/potential/protein_hbond/id2 Dataset {9/Inf}
+/input/potential/protein_hbond/index1 Dataset {8/Inf}
+/input/potential/protein_hbond/index2 Dataset {9/Inf}
+/input/potential/protein_hbond/interaction_param Dataset {1/Inf, 1, 8}
+/input/potential/protein_hbond/type1 Dataset {8/Inf}
+/input/potential/protein_hbond/type2 Dataset {9/Inf}
+/input/potential/rama_coord Group
+/input/potential/rama_coord/id Dataset {10/Inf, 5}
+/input/potential/rama_coord/index_pos1 Dataset {10/Inf}
+/input/potential/rama_coord/index_pos2 Dataset {10/Inf}
+/input/potential/rama_map_pot Group
+/input/potential/rama_map_pot/rama_map_id Dataset {10/Inf}
+/input/potential/rama_map_pot/rama_map_id_all Dataset {10/Inf}
+/input/potential/rama_map_pot/rama_pot Dataset {10/Inf, 72, 72}
+/input/potential/rama_map_pot/residue_id Dataset {10/Inf}
+/input/potential/rama_map_pot_ref Group
+/input/potential/rama_map_pot_ref/rama_map_id Dataset {10/Inf}
+/input/potential/rama_map_pot_ref/rama_pot Dataset {1/Inf, 72, 72}
+/input/potential/rama_map_pot_ref/residue_id Dataset {10/Inf}
+/input/potential/rotamer Group
+/input/potential/rotamer/pair_interaction Group
+/input/potential/rotamer/pair_interaction/id Dataset {36/Inf}
+/input/potential/rotamer/pair_interaction/index Dataset {36/Inf}
+/input/potential/rotamer/pair_interaction/interaction_param Dataset {20/Inf, 20, 54}
+/input/potential/rotamer/pair_interaction/type Dataset {36/Inf}
+/input/potential/sigmoid_coupling_environment Group
+/input/potential/sigmoid_coupling_environment/center Dataset {20/Inf}
+/input/potential/sigmoid_coupling_environment/coupling_types Dataset {10/Inf}
+/input/potential/sigmoid_coupling_environment/scale Dataset {20/Inf}
+/input/potential/sigmoid_coupling_environment/sharpness Dataset {20/Inf}
+/input/potential/sigmoid_coupling_environment/weights Dataset {400/Inf}
+/input/potential/weighted_pos Group
+/input/potential/weighted_pos/index_pos Dataset {36/Inf}
+/input/potential/weighted_pos/index_weight Dataset {36/Inf}
+/input/sequence          Dataset {10/Inf}
