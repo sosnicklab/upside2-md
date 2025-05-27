@@ -1,157 +1,140 @@
-#!.venv/bin/python
+#!/usr/bin/env python
+
+import sys, os, shutil
+import subprocess as sp
 import numpy as np
 import tables as tb
 import argparse
-import sys
-import re
 
-def read_pdb_line(line):
-    """Parse a single PDB line and return atom information."""
-    if not line.startswith('ATOM') and not line.startswith('HETATM'):
-        return None
-        
-    try:
-        # Extract atom information from PDB line
-        atom_name = line[12:16].strip()
-        res_name = line[17:20].strip()
-        chain_id = line[21]
-        res_num = int(line[22:26])
-        x = float(line[30:38])
-        y = float(line[38:46])
-        z = float(line[46:54])
-        
-        # Read occupancy (charge) with default 0.0
-        try:
-            occupancy = float(line[54:60])  # Used for charge in MARTINI
-        except ValueError:
-            occupancy = 0.0  # Default charge if not specified
-            
-        try:
-            temp_factor = float(line[60:66])  # Used for LJ parameters in MARTINI
-        except ValueError:
-            temp_factor = 0.0  # Default temp factor if not specified
-        
-        return {
-            'atom_name': atom_name,
-            'res_name': res_name,
-            'chain_id': chain_id,
-            'res_num': res_num,
-            'coords': np.array([x, y, z]),
-            'occupancy': occupancy,  # Charge
-            'temp_factor': temp_factor  # LJ parameter
-        }
-    except (ValueError, IndexError):
-        return None
+# Get UPSIDE home directory
+upside_path = os.environ['UPSIDE_HOME']
+upside_utils_dir = os.path.expanduser(upside_path+"/py")
+sys.path.insert(0, upside_utils_dir)
+
+# Import UPSIDE utilities
+import run_upside as ru
 
 def read_martini_pdb(pdb_file):
-    """Read MARTINI PDB file and extract coordinates and atom information."""
-    coords = []
-    atom_indices = []
-    charges = []  # Will be filled with 0.0 for all atoms
-    atom_types = []
-    res_names = []
-    chain_ids = []
-    res_nums = []
-    
+    """Read MARTINI PDB file and return positions of water beads."""
+    positions = []
     with open(pdb_file, 'r') as f:
-        for i, line in enumerate(f):
-            atom_info = read_pdb_line(line)
-            if atom_info:
-                coords.append(atom_info['coords'])
-                atom_indices.append(i)
-                charges.append(0.0)  # Set all charges to 0.0
-                atom_types.append(atom_info['atom_name'])
-                res_names.append(atom_info['res_name'])
-                chain_ids.append(atom_info['chain_id'])
-                res_nums.append(atom_info['res_num'])
-    
-    return (np.array(coords), np.array(atom_indices), np.array(charges), 
-            atom_types, res_names, chain_ids, res_nums)
+        for line in f:
+            if line.startswith('ATOM'):
+                x = float(line[30:38])
+                y = float(line[38:46])
+                z = float(line[46:54])
+                positions.append([x, y, z])
+    return np.array(positions)
 
-def create_upside_h5(coords, atom_indices, charges, atom_types, res_names, 
-                     chain_ids, res_nums, output_file, epsilon=1.0, sigma=1.0, 
-                     lj_cutoff=10.0, coul_cutoff=12.0, dielectric=80.0):
-    """Create UPSIDE h5 file with pairs potential parameters."""
-    
-    with tb.open_file(output_file, 'w') as f:
-        # Create root group
-        root = f.root
-        
-        # Create all possible pairs of atoms
-        n_atoms = len(atom_indices)
-        pairs = []
-        for i in range(n_atoms):
-            for j in range(i+1, n_atoms):
-                pairs.append([i, j])
-        pairs = np.array(pairs)
-        
-        # Create coefficients array (using LJ parameters)
-        coefficients = np.ones(len(pairs)) * epsilon
-        
-        # Create atoms array (0 for CB, 1 for CA)
-        atoms = np.zeros((len(pairs), 2), dtype=int)
-        for i, (a1, a2) in enumerate(pairs):
-            if atom_types[a1] == 'CA':
-                atoms[i, 0] = 1
-            if atom_types[a2] == 'CA':
-                atoms[i, 1] = 1
-        
-        # Create centers array (using initial coordinates)
-        centers = np.zeros((len(pairs), 3))
-        for i, (a1, a2) in enumerate(pairs):
-            centers[i] = (coords[a1] + coords[a2]) / 2
-        
-        # Store all arrays in root group
-        f.create_array(root, 'pairs', pairs)
-        f.create_array(root, 'coefficients', coefficients)
-        f.create_array(root, 'atoms', atoms)
-        f.create_array(root, 'centers', centers)
-        
-        # Store metadata
-        root._v_attrs.num_atoms = len(atom_indices)
-        root._v_attrs.num_chains = len(set(chain_ids))
-        root._v_attrs.epsilon = epsilon
-        root._v_attrs.sigma = sigma
-        root._v_attrs.lj_cutoff = lj_cutoff
-        root._v_attrs.coul_cutoff = coul_cutoff
-        root._v_attrs.dielectric = dielectric
+def create_martini_fasta(n_beads, output_file):
+    """Create a minimal FASTA file with the correct number of residues."""
+    with open(output_file, 'w') as f:
+        f.write("> MARTINI\n")
+        f.write("A" * n_beads)  # Use 'A' for all residues
 
 def main():
-    parser = argparse.ArgumentParser(description='Convert MARTINI PDB to UPSIDE h5 input file')
-    parser.add_argument('pdb_file', help='Input MARTINI PDB file')
-    parser.add_argument('output_file', help='Output UPSIDE h5 file')
-    parser.add_argument('--epsilon', type=float, default=1.0, help='LJ epsilon parameter')
-    parser.add_argument('--sigma', type=float, default=1.0, help='LJ sigma parameter')
-    parser.add_argument('--lj-cutoff', type=float, default=10.0, help='LJ cutoff distance')
-    parser.add_argument('--coul-cutoff', type=float, default=12.0, help='Coulombic cutoff distance')
-    parser.add_argument('--dielectric', type=float, default=80.0, help='Dielectric constant')
-    
+    parser = argparse.ArgumentParser(description='Convert MARTINI PDB to UPSIDE format')
+    parser.add_argument('pdb', help='Input MARTINI PDB file')
+    parser.add_argument('output', help='Output base name (without extension)')
     args = parser.parse_args()
+
+    # Create output directories
+    input_dir = os.path.dirname(args.output) or '.'
+    if not os.path.exists(input_dir):
+        os.makedirs(input_dir)
+
+    # Read MARTINI positions
+    positions = read_martini_pdb(args.pdb)
+    n_beads = len(positions)
+
+    # Create FASTA file
+    fasta_file = f"{args.output}.fasta"
+    create_martini_fasta(n_beads, fasta_file)
+
+    # Create initial structure file
+    # UPSIDE expects (n_atoms, 3) shape for initial structure
+    # Each residue has 3 atoms (N, CA, C)
+    n_atoms = n_beads * 3
+    initial_pos = np.zeros((n_atoms, 3))
     
-    try:
-        # Read MARTINI PDB
-        print(f"Reading MARTINI PDB file: {args.pdb_file}")
-        coords, atom_indices, charges, atom_types, res_names, chain_ids, res_nums = read_martini_pdb(args.pdb_file)
-        
-        # Create UPSIDE h5 file
-        print(f"Creating UPSIDE h5 file: {args.output_file}")
-        create_upside_h5(
-            coords, atom_indices, charges, atom_types, res_names, 
-            chain_ids, res_nums, args.output_file,
-            epsilon=args.epsilon,
-            sigma=args.sigma,
-            lj_cutoff=args.lj_cutoff,
-            coul_cutoff=args.coul_cutoff,
-            dielectric=args.dielectric
-        )
-        
-        print("Conversion completed successfully!")
-        print(f"Number of atoms processed: {len(atom_indices)}")
-        print(f"Number of chains: {len(set(chain_ids))}")
-        
-    except Exception as e:
-        print(f"Error: {str(e)}", file=sys.stderr)
-        sys.exit(1)
+    # For each water bead, create 3 atoms in a line
+    for i in range(n_beads):
+        # Get the water bead position
+        pos = positions[i]
+        # Create 3 atoms in a line with 3.8Å spacing
+        initial_pos[i*3] = pos  # N atom
+        initial_pos[i*3+1] = pos + np.array([3.8, 0, 0])  # CA atom
+        initial_pos[i*3+2] = pos + np.array([7.6, 0, 0])  # C atom
+
+    # Save initial structure
+    initial_file = f"{args.output}.initial.npy"
+    np.save(initial_file, initial_pos)
+
+    # Create UPSIDE configuration
+    config_file = f"{args.output}.up"
+    
+    # Parameters
+    param_dir_base = os.path.expanduser(upside_path+"/parameters/")
+    param_dir_common = param_dir_base + "common/"
+    param_dir_ff = param_dir_base + 'ff_2.1/'
+
+    # Configure UPSIDE
+    kwargs = dict(
+        rama_library=param_dir_common + "rama.dat",
+        rama_sheet_mix_energy=param_dir_ff + "sheet",
+        reference_state_rama=param_dir_common + "rama_reference.pkl",
+        hbond_energy=param_dir_ff + "hbond.h5",
+        rotamer_placement=param_dir_ff + "sidechain.h5",
+        dynamic_rotamer_1body=True,
+        rotamer_interaction=param_dir_ff + "sidechain.h5",
+        environment_potential=param_dir_ff + "environment.h5",
+        bb_environment_potential=param_dir_ff + "bb_env.dat",
+        initial_structure=initial_file,
+    )
+
+    # Generate base configuration
+    config_stdout = ru.upside_config(fasta_file, config_file, **kwargs)
+    print("Config commandline options:")
+    print(config_stdout)
+
+    # Add MARTINI potential
+    with tb.open_file(config_file, 'r+') as t:
+        # Create martini_potential group
+        martini_group = t.create_group(t.root.input.potential, 'martini_potential')
+        martini_group._v_attrs.arguments = np.array([b'pos'])
+        martini_group._v_attrs.epsilon = 5.6  # kJ/mol
+        martini_group._v_attrs.sigma = 0.47   # nm
+        martini_group._v_attrs.lj_cutoff = 1.2  # nm
+        martini_group._v_attrs.coul_cutoff = 1.2  # nm
+        martini_group._v_attrs.dielectric = 15.0  # MARTINI water dielectric
+
+        # Create arrays in the martini_potential group
+        atoms = np.zeros(n_atoms, dtype=int)  # All atoms are water beads (type 0)
+        t.create_array(martini_group, 'atom_indices', obj=atoms)
+        t.create_array(martini_group, 'charges', obj=np.zeros(n_atoms))  # Water is neutral
+
+        # Add MARTINI force field parameters
+        # Create pairs array for MARTINI interactions
+        # Only create pairs between water beads (every 3rd atom)
+        n_pairs = 0
+        pairs_list = []
+        for i in range(0, n_atoms, 3):
+            for j in range(i+3, n_atoms, 3):
+                pairs_list.append([i, j])
+                n_pairs += 1
+
+        pairs_array = np.array(pairs_list, dtype=int)
+
+        # Create coefficients array for MARTINI interactions
+        coeff_array = np.zeros((n_pairs, 4))  # [epsilon, sigma, charge1, charge2]
+        for i in range(n_pairs):
+            coeff_array[i] = [5.6, 0.47, 0.0, 0.0]  # MARTINI water parameters
+
+        # Add these arrays to the martini_potential group
+        t.create_array(martini_group, 'pairs', obj=pairs_array)
+        t.create_array(martini_group, 'coefficients', obj=coeff_array)
+
+    print(f"\nDone! Created {config_file}")
 
 if __name__ == '__main__':
     main()

@@ -1,0 +1,1368 @@
+
+hbond, 7 donors, 7 acceptors in sequence
+
+Configuring...
+Initial positions shape: (1, 32, 3)
+
+Inspecting generated .up file:
+
+Group: input
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+
+Group: input/args
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: angle_stiffness = 175.0
+  Attribute: backbone = 1
+  Attribute: bb_environment_potential = b'/Users/yinhan/Documents/upside2-md/parameters/ff_2.1/bb_env.dat'
+  Attribute: bond_stiffness = 48.0
+  Attribute: chain_break_from_file = Empty(dtype=dtype('S1'))
+  Attribute: channel_membrane_potential = Empty(dtype=dtype('S1'))
+  Attribute: curvature_radius = 1000.0
+  Attribute: curvature_sign = 1.0
+  Attribute: debugging_only_disable_basic_springs = 0
+  Attribute: dynamic_rotamer_1body = 1
+  Attribute: dynamic_rotamer_placement = 0
+  Attribute: env_exclude_residues = b'(lp0\n.'
+  Attribute: env_scale = 1.0
+  Attribute: environment_potential = b'/Users/yinhan/Documents/upside2-md/parameters/ff_2.1/environment.h5'
+  Attribute: environment_potential_type = 1
+  Attribute: environment_weights_number = 20
+  Attribute: fasta = b'.//inputs/martini.fasta'
+  Attribute: fix_rotamer = Empty(dtype=dtype('S1'))
+  Attribute: hb_scale = 1.0
+  Attribute: hbond_energy = b'/Users/yinhan/Documents/upside2-md/parameters/ff_2.1/hbond.h5'
+  Attribute: hbond_exclude_residues = b'(lp0\n.'
+  Attribute: initial_structure = Empty(dtype=dtype('S1'))
+  Attribute: intensive_memory = 0
+  Attribute: invocation = b'/Users/yinhan/Documents/upside2-md/py/upside_config.py --fasta .//inputs/martini.fasta --output .//inputs/martini_temp.up --rama-library /Users/yinhan/Documents/upside2-md/parameters/common/rama.dat --rama-sheet-mixing-energy /Users/yinhan/Documents/upside2-md/parameters/ff_2.1/sheet --reference-state-rama /Users/yinhan/Documents/upside2-md/parameters/common/rama_reference.pkl --hbond-energy /Users/yinhan/Documents/upside2-md/parameters/ff_2.1/hbond.h5 --rotamer-placement /Users/yinhan/Documents/upside2-md/parameters/ff_2.1/sidechain.h5 --dynamic-rotamer-1body --rotamer-interaction /Users/yinhan/Documents/upside2-md/parameters/ff_2.1/sidechain.h5 --environment-potential /Users/yinhan/Documents/upside2-md/parameters/ff_2.1/environment.h5 --bb-environment-potential /Users/yinhan/Documents/upside2-md/parameters/ff_2.1/bb_env.dat'
+  Attribute: jump_length_scale = 5.0
+  Attribute: jump_rotation_scale = 30.0
+  Attribute: loose_hbond_criteria = 0
+  Attribute: memb_scale = 1.0
+  Attribute: membrane_exclude_residues = b'(lp0\n.'
+  Attribute: membrane_exposed_criterion = b'N.'
+  Attribute: membrane_lateral_potential = Empty(dtype=dtype('S1'))
+  Attribute: membrane_potential = Empty(dtype=dtype('S1'))
+  Attribute: membrane_thickness = b'N.'
+  Attribute: no_intensive_memory = 0
+  Attribute: omega_stiffness = 30.0
+  Attribute: output = b'.//inputs/martini_temp.up'
+  Attribute: rama_library = b'/Users/yinhan/Documents/upside2-md/parameters/common/rama.dat'
+  Attribute: rama_library_combining_rule = b'mixture'
+  Attribute: rama_param_deriv = 0
+  Attribute: rama_sheet_library = b'N.'
+  Attribute: rama_sheet_mixing_energy = b'/Users/yinhan/Documents/upside2-md/parameters/ff_2.1/sheet'
+  Attribute: reference_state_rama = b'/Users/yinhan/Documents/upside2-md/parameters/common/rama_reference.pkl'
+  Attribute: remove_pivot = 0
+  Attribute: rot_scale = 1.0
+  Attribute: rotamer_exclude_residues = b'(lp0\n.'
+  Attribute: rotamer_interaction = b'/Users/yinhan/Documents/upside2-md/parameters/ff_2.1/sidechain.h5'
+  Attribute: rotamer_placement = b'/Users/yinhan/Documents/upside2-md/parameters/ff_2.1/sidechain.h5'
+  Attribute: rotamer_solve_damping = 0.4
+  Attribute: secstr_bias = Empty(dtype=dtype('S1'))
+  Attribute: spatial_transform_from_table = Empty(dtype=dtype('S1'))
+  Attribute: surface = 0
+  Attribute: surface_included_residues = b'(lp0\n.'
+  Attribute: surface_method = 1
+  Attribute: target_structure = Empty(dtype=dtype('S1'))
+  Attribute: trans_cis = Empty(dtype=dtype('S1'))
+  Attribute: use_curvature = 0
+  Attribute: use_heavy_atom_coverage = 0
+  Attribute: vector_CA_CO = 0
+  Attribute: zbuffer = b'N.'
+
+Group: input/pivot_moves
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+
+Dataset: input/pivot_moves/pivot_atom
+  Shape: (6, 5)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/pivot_moves/pivot_range
+  Shape: (6, 2)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/pivot_moves/pivot_restype
+  Shape: (6,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/pivot_moves/proposal_pot
+  Shape: (8, 72, 72)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/pos
+  Attribute: arguments = [b'pos']
+
+Dataset: input/pos/pos
+  Shape: (1, 32, 3)
+  Type: float64
+
+Group: input/potential
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+
+Group: input/potential/Angle
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'pos']
+
+Dataset: input/potential/Angle/id
+  Shape: (22, 3)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/Dihedral_omega
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'pos']
+
+Dataset: input/potential/Dihedral_omega/id
+  Shape: (7, 4)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/Dihedral_phi
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'pos']
+
+Dataset: input/potential/Dihedral_phi/id
+  Shape: (8, 4)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/Dihedral_psi
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'pos']
+
+Dataset: input/potential/Dihedral_psi/id
+  Shape: (8, 4)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/Distance3D
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'pos' b'pos']
+
+Dataset: input/potential/Distance3D/id
+  Shape: (23, 2)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/Spring_angle
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'Angle']
+  Attribute: box_len = 0
+  Attribute: dim1 = 0
+  Attribute: integrator_level = 0
+  Attribute: pbc = 0
+
+Dataset: input/potential/Spring_angle/equil_dist
+  Shape: (22,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/Spring_angle/id
+  Shape: (22,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/Spring_angle/spring_const
+  Shape: (22,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/Spring_bond
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'Distance3D']
+  Attribute: box_len = 0
+  Attribute: dim1 = 0
+  Attribute: integrator_level = 0
+  Attribute: pbc = 0
+
+Dataset: input/potential/Spring_bond/equil_dist
+  Shape: (23,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/Spring_bond/id
+  Shape: (23,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/Spring_bond/spring_const
+  Shape: (23,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/Spring_omega
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'Dihedral_omega']
+  Attribute: box_len = 6.283185307179586
+  Attribute: dim1 = 0
+  Attribute: integrator_level = 0
+  Attribute: pbc = 1
+
+Dataset: input/potential/Spring_omega/equil_dist
+  Shape: (7,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/Spring_omega/id
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/Spring_omega/spring_const
+  Shape: (7,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/affine_alignment
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'pos']
+
+Dataset: input/potential/affine_alignment/atoms
+  Shape: (8, 3)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/affine_alignment/ref_geom
+  Shape: (8, 3, 3)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/backbone_pairs
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'affine_alignment']
+  Attribute: integrator_level = 1
+
+Dataset: input/potential/backbone_pairs/id
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/backbone_pairs/n_atom
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/backbone_pairs/ref_pos
+  Shape: (8, 4, 3)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/bb_sigmoid_coupling_environment
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'environment_coverage_hb' b'cat_pos_bb_coverage']
+  Attribute: center = 2.0
+  Attribute: hbond_weight = 2.0
+  Attribute: integrator_level = 1
+  Attribute: num_aa_types = 20
+  Attribute: scale = -0.30142811281071186
+  Attribute: sharpness = 0.5
+
+Dataset: input/potential/bb_sigmoid_coupling_environment/weights
+  Shape: (400,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/cat_pos_bb_coverage
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'hb_environment_coverage_hn' b'hb_environment_coverage_oc']
+  Attribute: n_dim = 1
+
+Dataset: input/potential/cat_pos_bb_coverage/index_pos1
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/cat_pos_bb_coverage/index_pos2
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/environment_coverage_hb
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'infer_H_O' b'weighted_pos']
+  Attribute: num_aa_types = 20
+
+Dataset: input/potential/environment_coverage_hb/aa_types
+  Shape: (14,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_hb/id1
+  Shape: (14,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_hb/id2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_hb/index1
+  Shape: (14,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_hb/index2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_hb/interaction_param
+  Shape: (1, 1, 4)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_hb/type1
+  Shape: (14,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_hb/type2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/environment_coverage_sc
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'placement_fixed_point_vector_only_CB' b'weighted_pos']
+  Attribute: num_aa_types = 20
+
+Dataset: input/potential/environment_coverage_sc/aa_types
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_sc/id1
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_sc/id2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_sc/index1
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_sc/index2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_sc/interaction_param
+  Shape: (20, 1, 4)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_sc/type1
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/environment_coverage_sc/type2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/hb_environment_coverage_hn
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'infer_H_O' b'infer_H_O']
+
+Dataset: input/potential/hb_environment_coverage_hn/id1
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hb_environment_coverage_hn/id2
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hb_environment_coverage_hn/index1
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hb_environment_coverage_hn/index2
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hb_environment_coverage_hn/interaction_param
+  Shape: (1, 1, 4)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hb_environment_coverage_hn/type1
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hb_environment_coverage_hn/type2
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/hb_environment_coverage_oc
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'infer_H_O' b'infer_H_O']
+
+Dataset: input/potential/hb_environment_coverage_oc/id1
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hb_environment_coverage_oc/id2
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hb_environment_coverage_oc/index1
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hb_environment_coverage_oc/index2
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hb_environment_coverage_oc/interaction_param
+  Shape: (1, 1, 4)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hb_environment_coverage_oc/type1
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hb_environment_coverage_oc/type2
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/hbond_coverage
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'protein_hbond' b'placement_fixed_point_vector_only']
+
+Dataset: input/potential/hbond_coverage/id1
+  Shape: (14,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_coverage/id2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_coverage/index1
+  Shape: (14,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_coverage/index2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_coverage/interaction_param
+  Shape: (8, 20, 50)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_coverage/type1
+  Shape: (14,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_coverage/type2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/hbond_coverage_hydrophobe
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'placement_fixed_point_vector_scalar'
+ b'placement_fixed_point_vector_only']
+
+Dataset: input/potential/hbond_coverage_hydrophobe/id1
+  Shape: (24,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_coverage_hydrophobe/id2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_coverage_hydrophobe/index1
+  Shape: (24,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_coverage_hydrophobe/index2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_coverage_hydrophobe/interaction_param
+  Shape: (12, 20, 50)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_coverage_hydrophobe/type1
+  Shape: (24,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_coverage_hydrophobe/type2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/hbond_energy
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'protein_hbond' b'rama_coord']
+  Attribute: integrator_level = 1
+
+Dataset: input/potential/hbond_energy/acceptor_resid
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_energy/donor_resid
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_energy/parameters
+  Shape: (12,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/hbond_energy/rama_resid
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/infer_H_O
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'pos']
+
+Group: input/potential/infer_H_O/acceptors
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+
+Dataset: input/potential/infer_H_O/acceptors/bond_length
+  Shape: (7,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/infer_H_O/acceptors/id
+  Shape: (7, 3)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/infer_H_O/acceptors/residue
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/infer_H_O/donors
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+
+Dataset: input/potential/infer_H_O/donors/bond_length
+  Shape: (7,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/infer_H_O/donors/id
+  Shape: (7, 3)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/infer_H_O/donors/residue
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/martini_potential
+  Attribute: arguments = [b'pos']
+  Attribute: coul_cutoff = 1.2
+  Attribute: dielectric = 15.0
+  Attribute: epsilon = 5.6
+  Attribute: lj_cutoff = 1.2
+  Attribute: sigma = 0.47
+
+Dataset: input/potential/martini_potential/atom_indices
+  Shape: (24,)
+  Type: int64
+
+Dataset: input/potential/martini_potential/charges
+  Shape: (24,)
+  Type: float64
+
+Dataset: input/potential/martini_potential/coefficients
+  Shape: (28, 4)
+  Type: float64
+
+Dataset: input/potential/martini_potential/extra_indices
+  Shape: (8,)
+  Type: int64
+
+Dataset: input/potential/martini_potential/pairs
+  Shape: (28, 2)
+  Type: int64
+
+Group: input/potential/placement_fixed_point_vector_only
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'affine_alignment']
+
+Dataset: input/potential/placement_fixed_point_vector_only/affine_residue
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_fixed_point_vector_only/beadtype_seq
+  Shape: (8,)
+  Type: |S5
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_fixed_point_vector_only/fix_rotamer
+  Shape: (0,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_fixed_point_vector_only/id_seq
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_fixed_point_vector_only/layer_index
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_fixed_point_vector_only/placement_data
+  Shape: (86, 6)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_fixed_point_vector_only/rama_residue
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/placement_fixed_point_vector_only_CB
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'affine_alignment']
+
+Dataset: input/potential/placement_fixed_point_vector_only_CB/affine_residue
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_fixed_point_vector_only_CB/layer_index
+  Shape: (8,)
+  Type: int32
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_fixed_point_vector_only_CB/placement_data
+  Shape: (1, 6)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/placement_fixed_point_vector_scalar
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'affine_alignment']
+
+Dataset: input/potential/placement_fixed_point_vector_scalar/affine_residue
+  Shape: (24,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_fixed_point_vector_scalar/layer_index
+  Shape: (24,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_fixed_point_vector_scalar/placement_data
+  Shape: (3, 7)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/placement_scalar
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'affine_alignment' b'rama_coord']
+
+Dataset: input/potential/placement_scalar/affine_residue
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_scalar/layer_index
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_scalar/placement_data
+  Shape: (86, 36, 36, 1)
+  Type: float32
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/placement_scalar/rama_residue
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/protein_hbond
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'infer_H_O']
+
+Dataset: input/potential/protein_hbond/id1
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/protein_hbond/id2
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/protein_hbond/index1
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/protein_hbond/index2
+  Shape: (7,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/protein_hbond/interaction_param
+  Shape: (1, 1, 8)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/protein_hbond/type1
+  Shape: (7,)
+  Type: int32
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/protein_hbond/type2
+  Shape: (7,)
+  Type: int32
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/rama_coord
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'Dihedral_phi' b'Dihedral_psi']
+
+Dataset: input/potential/rama_coord/id
+  Shape: (8, 5)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/rama_coord/index_pos1
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/rama_coord/index_pos2
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/rama_map_pot
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'rama_coord']
+  Attribute: integrator_level = 0
+  Attribute: restype = b'(lp0\nVALA\np1\naVARG\np2\naVASN\np3\naVASP\np4\naVCYS\np5\naVGLN\np6\naVGLU\np7\naVGLY\np8\naVHIS\np9\naVILE\np10\naVLEU\np11\naVLYS\np12\naVMET\np13\naVPHE\np14\naVPRO\np15\naVSER\np16\naVTHR\np17\naVTRP\np18\naVTYR\np19\naVVAL\np20\na.'
+  Attribute: sheet_eps = 0.01
+
+Dataset: input/potential/rama_map_pot/rama_map_id
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/rama_map_pot/rama_map_id_all
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/rama_map_pot/rama_pot
+  Shape: (8, 72, 72)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/rama_map_pot/residue_id
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/rama_map_pot_ref
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'rama_coord']
+  Attribute: log_pot = 0
+
+Dataset: input/potential/rama_map_pot_ref/rama_map_id
+  Shape: (8,)
+  Type: int32
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/rama_map_pot_ref/rama_pot
+  Shape: (1, 72, 72)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/rama_map_pot_ref/residue_id
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/rotamer
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'placement_fixed_point_vector_only' b'placement_scalar'
+ b'hbond_coverage' b'hbond_coverage_hydrophobe']
+  Attribute: damping = 0.4
+  Attribute: integrator_level = 1
+  Attribute: iteration_chunk_size = 2
+  Attribute: max_iter = 1000
+  Attribute: tol = 0.001
+
+Group: input/potential/rotamer/pair_interaction
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+
+Dataset: input/potential/rotamer/pair_interaction/id
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/rotamer/pair_interaction/index
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/rotamer/pair_interaction/interaction_param
+  Shape: (20, 20, 54)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/rotamer/pair_interaction/type
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/sigmoid_coupling_environment
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'environment_coverage_sc']
+  Attribute: integrator_level = 1
+  Attribute: number_independent_weights = 20
+
+Dataset: input/potential/sigmoid_coupling_environment/center
+  Shape: (20,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/sigmoid_coupling_environment/coupling_types
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/sigmoid_coupling_environment/scale
+  Shape: (20,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/sigmoid_coupling_environment/sharpness
+  Shape: (20,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/sigmoid_coupling_environment/weights
+  Shape: (400,)
+  Type: float64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Group: input/potential/weighted_pos
+  Attribute: CLASS = b'GROUP'
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.0'
+  Attribute: arguments = [b'placement_fixed_point_vector_only' b'placement_scalar']
+
+Dataset: input/potential/weighted_pos/index_pos
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/potential/weighted_pos/index_weight
+  Shape: (8,)
+  Type: int64
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Dataset: input/sequence
+  Shape: (8,)
+  Type: |S3
+  Attribute: CLASS = b'EARRAY'
+  Attribute: EXTDIM = 0
+  Attribute: TITLE = Empty(dtype=dtype('S1'))
+  Attribute: VERSION = b'1.1'
+
+Done generating .up file. Please inspect the output above to verify the structure.

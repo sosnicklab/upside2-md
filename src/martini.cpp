@@ -196,7 +196,7 @@ struct DihedralSpring : public PotentialNode
 };
 static RegisterNodeType<DihedralSpring,1> dihedral_spring_node("dihedral_spring");
 
-struct OverlayedPotential : public PotentialNode {
+struct MartiniPotential : public PotentialNode {
     CoordNode& pos;
     int n_elem;
     vector<int> atom_indices;
@@ -211,7 +211,10 @@ struct OverlayedPotential : public PotentialNode {
     float coul_cutoff;
     float dielectric;
     
-    OverlayedPotential(hid_t grp, CoordNode& pos_):
+    // Extra particles
+    vector<int> extra_indices;
+    
+    MartiniPotential(hid_t grp, CoordNode& pos_):
         PotentialNode(),
         pos(pos_),
         n_elem(get_dset_size(1, grp, "atom_indices")[0]),
@@ -230,6 +233,14 @@ struct OverlayedPotential : public PotentialNode {
         // Read charges
         traverse_dset<1,float>(grp, "charges",
             [&](size_t i, float q) {charges[i] = q;});
+            
+        // Read extra particle indices if they exist
+        if(H5Lexists(grp, "extra_indices", H5P_DEFAULT)) {
+            int n_extra = get_dset_size(1, grp, "extra_indices")[0];
+            extra_indices.resize(n_extra);
+            traverse_dset<1,int>(grp, "extra_indices",
+                [&](size_t i, int idx) {extra_indices[i] = idx;});
+        }
     }
     
     virtual void compute_value(ComputeMode mode) {
@@ -238,10 +249,14 @@ struct OverlayedPotential : public PotentialNode {
         
         potential = 0.f;
         
-        for(int i=0; i<n_elem; ++i) {
-            for(int j=i+1; j<n_elem; ++j) {
-                int idx1 = atom_indices[i];
-                int idx2 = atom_indices[j];
+        // Combine regular and extra particles
+        vector<int> all_indices = atom_indices;
+        all_indices.insert(all_indices.end(), extra_indices.begin(), extra_indices.end());
+        
+        for(int i=0; i<all_indices.size(); ++i) {
+            for(int j=i+1; j<all_indices.size(); ++j) {
+                int idx1 = all_indices[i];
+                int idx2 = all_indices[j];
                 
                 // Calculate distance
                 float dx = pos_array(0,idx2) - pos_array(0,idx1);
@@ -291,6 +306,6 @@ struct OverlayedPotential : public PotentialNode {
         }
     }
 };
-static RegisterNodeType<OverlayedPotential,1> overlayed_potential_node("overlayed_potential");
+static RegisterNodeType<MartiniPotential,1> martini_potential_node("martini_potential");
 
 

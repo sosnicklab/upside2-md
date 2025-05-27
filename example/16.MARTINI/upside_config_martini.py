@@ -1,6 +1,6 @@
 # In your configuration script
 kwargs = dict(
-    overlayed_potential = {
+    martini_potential = {
         'epsilon': 1.0,
         'sigma': 1.0,
         'lj_cutoff': 10.0,
@@ -13,5 +13,5 @@ kwargs = dict(
 
 # Use in simulation
 config_stdout = ru.upside_config(fasta, config_base, 
-    overlayed_potential=param_dir + "overlayed_potential.h5",
+    martini_potential=param_dir + "martini_potential.h5",
     **kwargs)
