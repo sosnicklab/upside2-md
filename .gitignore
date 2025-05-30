@@ -8,6 +8,7 @@ build/.cmake/
 build/build.ninja
 build/cmake_install.cmake
 build/Makefile
+tests/build/
 *~
 *.swp
 *.vtf
@@ -20,6 +21,7 @@ a.out
 *.s
 .clang_complete
 CMakeCache.txt
+gmon.out
 CMakeFiles/
 *.bak
 *.DS_Store

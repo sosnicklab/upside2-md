@@ -256,6 +256,14 @@ struct PairlistComputation {
                 edge_indices2[i] = edge_indices2[i-i%4]; // just put something sane here
             }
         }
+
+        #ifdef TEST_HOOKS
+        // Getter for testing purposes, conditionally compiled
+        float get_cache_buffer_for_testing() const {
+            return this->cache_buffer;
+        }
+        #endif
+
 };
 
 
