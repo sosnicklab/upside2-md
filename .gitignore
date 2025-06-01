@@ -21,6 +21,7 @@ a.out
 *.s
 .clang_complete
 CMakeCache.txt
+tests/records/temp_capture_args.gdb
 gmon.out
 CMakeFiles/
 *.bak

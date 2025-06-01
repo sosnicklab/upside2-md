@@ -36,38 +36,38 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 
 # === Test Executable ===
-add_executable(run_pairlist_tests test_pairlist.cpp)
+add_executable(testbridge testbridge.cpp)
 
 # Add the compile definition for test accessors HERE:
-target_compile_definitions(run_pairlist_tests PRIVATE TEST_HOOKS)
+target_compile_definitions(testbridge PRIVATE TEST_HOOKS)
 
 # === Include Directories ===
 # Assuming Float4.h, interaction_graph.h, vector_math.h are in a 'src' directory
 # relative to the main project root, and tests are in 'project_root/tests'.
 # Adjust the path "${CMAKE_CURRENT_SOURCE_DIR}/../src" as needed.
 # The error message indicated #include "../src/Float4.h" from test_pairlist.cpp
-target_include_directories(run_pairlist_tests PRIVATE
+target_include_directories(testbridge PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" # Path to Float4.h, interaction_graph.h etc.
     "$catch2_SOURCE_DIR/include" # Catch2 include directory
     # Add other necessary include paths here
 )
 
 # === Link Libraries ===
-target_link_libraries(run_pairlist_tests PRIVATE
+target_link_libraries(testbridge PRIVATE
     Catch2::Catch2
     Eigen3::Eigen      # For Eigen
 )
 if(OpenMP_FOUND)
-    target_link_libraries(run_pairlist_tests PRIVATE OpenMP::OpenMP_CXX)
+    target_link_libraries(testbridge PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
 # === Enable Testing with CTest ===
 enable_testing()
-add_test(NAME PairlistComputationTests COMMAND run_pairlist_tests)
+add_test(NAME PairlistComputationTests COMMAND testbridge)
 
 # === HDF5 Support ===
 find_package(HDF5 COMPONENTS C QUIET)
 if(HDF5_FOUND)
-  target_include_directories(run_pairlist_tests PRIVATE ${HDF5_C_INCLUDE_DIRS})
-  target_link_libraries(run_pairlist_tests PRIVATE ${HDF5_C_LIBRARIES})
+  target_include_directories(testbridge PRIVATE ${HDF5_C_INCLUDE_DIRS})
+  target_link_libraries(testbridge PRIVATE ${HDF5_C_LIBRARIES})
 endif()

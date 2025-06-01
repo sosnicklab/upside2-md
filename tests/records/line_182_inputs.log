@@ -1,0 +1,938 @@
+Starting breakpoint at src/interaction_graph.h:182
+Breakpoint 1 at 0x81b60: src/interaction_graph.h:182. (12 locations)
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+
+Breakpoint 1.7, PairlistComputation<false>::change_cache_buffer (new_buffer=1.70000005, this=0x555555848a50) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+182	        void change_cache_buffer(float new_buffer) {cache_buffer=new_buffer;}
+--- GDB_CAPTURE_HIT_START ---
+HIT_NUMBER:$1 = 1
+LOCATION: Hit at src/interaction_graph.h:182
+=== ARGUMENTS ===
+new_buffer = 1.70000005
+this = 0x555555848a50
+=== DEREFERENCED_ARGUMENTS ===
+VARIABLE: new_buffer = 1.70000005
+VARIABLE: this = 0x555555848a50
+DEREF: *this = {
+  n_elem1 = 8,
+  n_elem2 = 9,
+  edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x5555558cb550
+  },
+  edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x5555558cb9c0
+  },
+  edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x5555558cbb10
+  },
+  edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x5555558cbc60
+  },
+  n_edge = 0,
+  cache_valid = false,
+  cache_buffer = 1,
+  cache_cutoff = 0,
+  cache_pos1 = std::unique_ptr<float []> = {
+    get() = 0x5555558cbdb0
+  },
+  cache_pos2 = std::unique_ptr<float []> = {
+    get() = 0x5555558cbec0
+  },
+  cache_id1 = std::unique_ptr<int []> = {
+    get() = 0x5555558cbfd0
+  },
+  cache_id2 = std::unique_ptr<int []> = {
+    get() = 0x5555558cc020
+  },
+  cache_edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x5555558cc070
+  },
+  cache_edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x5555558cc1c0
+  },
+  cache_edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x5555558cd8b0
+  },
+  cache_edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x5555558cda00
+  },
+  cache_n_edge = 0
+}
+THIS_TYPE: this type: PairlistComputation<false>
+MEMBER: this->.n_elem1 = 8
+MEMBER: this->.n_elem2 = 9
+MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x5555558cb550
+}
+MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x5555558cb9c0
+}
+MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x5555558cbb10
+}
+MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x5555558cbc60
+}
+MEMBER: this->.n_edge = 0
+MEMBER: this->.cache_valid = false
+MEMBER: this->.cache_buffer = 1
+MEMBER: this->.cache_cutoff = 0
+MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
+  get() = 0x5555558cbdb0
+}
+MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
+  get() = 0x5555558cbec0
+}
+MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
+  get() = 0x5555558cbfd0
+}
+MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
+  get() = 0x5555558cc020
+}
+MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x5555558cc070
+}
+MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x5555558cc1c0
+}
+MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x5555558cd8b0
+}
+MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x5555558cda00
+}
+MEMBER: this->.cache_n_edge = 0
+=== LOCAL_VARIABLES ===
+No locals.
+=== DEREFERENCED_LOCALS ===
+=== BACKTRACE ===
+#0  PairlistComputation<false>::change_cache_buffer (new_buffer=1.70000005, this=0x555555848a50) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+#1  InteractionGraph<(anonymous namespace)::ProteinHBondInteraction>::update_cutoffs (this=this@entry=0x5555558489c0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408
+#2  0x0000555555607c5e in InteractionGraph<(anonymous namespace)::ProteinHBondInteraction>::InteractionGraph (this=0x5555558489c0, grp=144115188075855890, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371
+#3  0x000055555560b2b0 in ProteinHBond::ProteinHBond (this=0x555555848980, grp=144115188075855890, infer_=...) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:367
+#4  0x000055555560b3ef in RegisterNodeType<ProteinHBond, 1>::RegisterNodeType(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)::{lambda(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&)#1}::operator()(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&) const (__closure=<optimized out>, grp=144115188075855890, args=std::vector of length 1, capacity 1 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:331
+--- GDB_CAPTURE_HIT_END ---
+
+Breakpoint 1.2, PairlistComputation<false>::change_cache_buffer (new_buffer=1.79999995, this=0x5555559546f8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+182	        void change_cache_buffer(float new_buffer) {cache_buffer=new_buffer;}
+--- GDB_CAPTURE_HIT_START ---
+HIT_NUMBER:$2 = 2
+LOCATION: Hit at src/interaction_graph.h:182
+=== ARGUMENTS ===
+new_buffer = 1.79999995
+this = 0x5555559546f8
+=== DEREFERENCED_ARGUMENTS ===
+VARIABLE: new_buffer = 1.79999995
+VARIABLE: this = 0x5555559546f8
+DEREF: *this = {
+  n_elem1 = 8,
+  n_elem2 = 9,
+  edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x555555943a60
+  },
+  edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x555555943bb0
+  },
+  edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555943d00
+  },
+  edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555943e50
+  },
+  n_edge = 0,
+  cache_valid = false,
+  cache_buffer = 1,
+  cache_cutoff = 0,
+  cache_pos1 = std::unique_ptr<float []> = {
+    get() = 0x555555943fa0
+  },
+  cache_pos2 = std::unique_ptr<float []> = {
+    get() = 0x5555559440b0
+  },
+  cache_id1 = std::unique_ptr<int []> = {
+    get() = 0x5555559441c0
+  },
+  cache_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555944210
+  },
+  cache_edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x5555559458d0
+  },
+  cache_edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x555555945a20
+  },
+  cache_edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555945b70
+  },
+  cache_edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555945cc0
+  },
+  cache_n_edge = 0
+}
+THIS_TYPE: this type: PairlistComputation<false>
+MEMBER: this->.n_elem1 = 8
+MEMBER: this->.n_elem2 = 9
+MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x555555943a60
+}
+MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x555555943bb0
+}
+MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555943d00
+}
+MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555943e50
+}
+MEMBER: this->.n_edge = 0
+MEMBER: this->.cache_valid = false
+MEMBER: this->.cache_buffer = 1
+MEMBER: this->.cache_cutoff = 0
+MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
+  get() = 0x555555943fa0
+}
+MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
+  get() = 0x5555559440b0
+}
+MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
+  get() = 0x5555559441c0
+}
+MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555944210
+}
+MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x5555559458d0
+}
+MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x555555945a20
+}
+MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555945b70
+}
+MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555945cc0
+}
+MEMBER: this->.cache_n_edge = 0
+=== LOCAL_VARIABLES ===
+No locals.
+=== DEREFERENCED_LOCALS ===
+=== BACKTRACE ===
+#0  PairlistComputation<false>::change_cache_buffer (new_buffer=1.79999995, this=0x5555559546f8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+#1  InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::update_cutoffs (this=this@entry=0x555555954668) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408
+#2  0x00005555555f00b2 in InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::InteractionGraph (this=0x555555954668, grp=144115188075855894, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371
+#3  0x00005555555f5381 in (anonymous namespace)::HbondEnvironmentCoverage::HbondEnvironmentCoverage (this=0x555555954630, grp=144115188075855894, pos1_=..., pos2_=...) at /home/okleinmann/projects/upside2-md/src/environment.cpp:355
+#4  0x00005555555f5457 in operator() (__closure=<optimized out>, grp=144115188075855894, args=std::vector of length 2, capacity 2 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:342
+--- GDB_CAPTURE_HIT_END ---
+
+Breakpoint 1.2, PairlistComputation<false>::change_cache_buffer (new_buffer=1.79999995, this=0x555555984018) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+182	        void change_cache_buffer(float new_buffer) {cache_buffer=new_buffer;}
+--- GDB_CAPTURE_HIT_START ---
+HIT_NUMBER:$3 = 3
+LOCATION: Hit at src/interaction_graph.h:182
+=== ARGUMENTS ===
+new_buffer = 1.79999995
+this = 0x555555984018
+=== DEREFERENCED_ARGUMENTS ===
+VARIABLE: new_buffer = 1.79999995
+VARIABLE: this = 0x555555984018
+DEREF: *this = {
+  n_elem1 = 9,
+  n_elem2 = 8,
+  edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x5555559e0bf0
+  },
+  edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x5555559e0d40
+  },
+  edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x5555559e0e90
+  },
+  edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x5555559e0fe0
+  },
+  n_edge = 0,
+  cache_valid = false,
+  cache_buffer = 1,
+  cache_cutoff = 0,
+  cache_pos1 = std::unique_ptr<float []> = {
+    get() = 0x5555559e1130
+  },
+  cache_pos2 = std::unique_ptr<float []> = {
+    get() = 0x5555559e1240
+  },
+  cache_id1 = std::unique_ptr<int []> = {
+    get() = 0x5555559e1350
+  },
+  cache_id2 = std::unique_ptr<int []> = {
+    get() = 0x5555559e13a0
+  },
+  cache_edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x5555559e2330
+  },
+  cache_edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x5555559e2480
+  },
+  cache_edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x5555559e25d0
+  },
+  cache_edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x5555559e2720
+  },
+  cache_n_edge = 0
+}
+THIS_TYPE: this type: PairlistComputation<false>
+MEMBER: this->.n_elem1 = 9
+MEMBER: this->.n_elem2 = 8
+MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x5555559e0bf0
+}
+MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x5555559e0d40
+}
+MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x5555559e0e90
+}
+MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x5555559e0fe0
+}
+MEMBER: this->.n_edge = 0
+MEMBER: this->.cache_valid = false
+MEMBER: this->.cache_buffer = 1
+MEMBER: this->.cache_cutoff = 0
+MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
+  get() = 0x5555559e1130
+}
+MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
+  get() = 0x5555559e1240
+}
+MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
+  get() = 0x5555559e1350
+}
+MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
+  get() = 0x5555559e13a0
+}
+MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x5555559e2330
+}
+MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x5555559e2480
+}
+MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x5555559e25d0
+}
+MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x5555559e2720
+}
+MEMBER: this->.cache_n_edge = 0
+=== LOCAL_VARIABLES ===
+No locals.
+=== DEREFERENCED_LOCALS ===
+=== BACKTRACE ===
+#0  PairlistComputation<false>::change_cache_buffer (new_buffer=1.79999995, this=0x555555984018) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+#1  InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::update_cutoffs (this=this@entry=0x555555983f88) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408
+#2  0x00005555555f00b2 in InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::InteractionGraph (this=0x555555983f88, grp=144115188075855895, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371
+#3  0x00005555555f5381 in (anonymous namespace)::HbondEnvironmentCoverage::HbondEnvironmentCoverage (this=0x555555983f50, grp=144115188075855895, pos1_=..., pos2_=...) at /home/okleinmann/projects/upside2-md/src/environment.cpp:355
+#4  0x00005555555f5457 in operator() (__closure=<optimized out>, grp=144115188075855895, args=std::vector of length 2, capacity 2 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:342
+--- GDB_CAPTURE_HIT_END ---
+
+Breakpoint 1.6, PairlistComputation<false>::change_cache_buffer (new_buffer=2, this=0x555555965cb8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+182	        void change_cache_buffer(float new_buffer) {cache_buffer=new_buffer;}
+--- GDB_CAPTURE_HIT_START ---
+HIT_NUMBER:$4 = 4
+LOCATION: Hit at src/interaction_graph.h:182
+=== ARGUMENTS ===
+new_buffer = 2
+this = 0x555555965cb8
+=== DEREFERENCED_ARGUMENTS ===
+VARIABLE: new_buffer = 2
+VARIABLE: this = 0x555555965cb8
+DEREF: *this = {
+  n_elem1 = 17,
+  n_elem2 = 36,
+  edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x555555a1c090
+  },
+  edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x555555a1ca60
+  },
+  edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555a1d430
+  },
+  edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555a1de00
+  },
+  n_edge = 0,
+  cache_valid = false,
+  cache_buffer = 1,
+  cache_cutoff = 7.55507697e+31,
+  cache_pos1 = std::unique_ptr<float []> = {
+    get() = 0x555555a19cc0
+  },
+  cache_pos2 = std::unique_ptr<float []> = {
+    get() = 0x555555a1e7d0
+  },
+  cache_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555a1a8f0
+  },
+  cache_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555840470
+  },
+  cache_edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x555555a1eae0
+  },
+  cache_edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x555555a1f4b0
+  },
+  cache_edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555a1fe80
+  },
+  cache_edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555a20850
+  },
+  cache_n_edge = 0
+}
+THIS_TYPE: this type: PairlistComputation<false>
+MEMBER: this->.n_elem1 = 17
+MEMBER: this->.n_elem2 = 36
+MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x555555a1c090
+}
+MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x555555a1ca60
+}
+MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555a1d430
+}
+MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555a1de00
+}
+MEMBER: this->.n_edge = 0
+MEMBER: this->.cache_valid = false
+MEMBER: this->.cache_buffer = 1
+MEMBER: this->.cache_cutoff = 7.55507697e+31
+MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
+  get() = 0x555555a19cc0
+}
+MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
+  get() = 0x555555a1e7d0
+}
+MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555a1a8f0
+}
+MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555840470
+}
+MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x555555a1eae0
+}
+MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x555555a1f4b0
+}
+MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555a1fe80
+}
+MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555a20850
+}
+MEMBER: this->.cache_n_edge = 0
+=== LOCAL_VARIABLES ===
+No locals.
+=== DEREFERENCED_LOCALS ===
+=== BACKTRACE ===
+#0  PairlistComputation<false>::change_cache_buffer (new_buffer=2, this=0x555555965cb8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+#1  InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::update_cutoffs (this=this@entry=0x555555965c28) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408
+#2  0x0000555555609158 in InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::InteractionGraph (this=0x555555965c28, grp=144115188075855896, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371
+#3  0x00005555556097f2 in HBondCoverage::HBondCoverage (this=0x555555965bf0, grp=144115188075855896, infer_=..., sidechains_=warning: RTTI symbol not found for class '(anonymous namespace)::PlacementNode<(anonymous namespace)::FixedPlacement<6>, ((anonymous namespace)::PlaceT)2, ((anonymous namespace)::PlaceT)1>'
+...) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:444
+#4  0x00005555556098cf in RegisterNodeType<HBondCoverage, 2>::RegisterNodeType(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)::{lambda(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&)#1}::operator()(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&) const (__closure=<optimized out>, grp=144115188075855896, args=std::vector of length 2, capacity 2 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:342
+--- GDB_CAPTURE_HIT_END ---
+
+Breakpoint 1.6, PairlistComputation<false>::change_cache_buffer (new_buffer=2, this=0x5555559ef7d8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+182	        void change_cache_buffer(float new_buffer) {cache_buffer=new_buffer;}
+--- GDB_CAPTURE_HIT_START ---
+HIT_NUMBER:$5 = 5
+LOCATION: Hit at src/interaction_graph.h:182
+=== ARGUMENTS ===
+new_buffer = 2
+this = 0x5555559ef7d8
+=== DEREFERENCED_ARGUMENTS ===
+VARIABLE: new_buffer = 2
+VARIABLE: this = 0x5555559ef7d8
+DEREF: *this = {
+  n_elem1 = 30,
+  n_elem2 = 36,
+  edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x555555a72f80
+  },
+  edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x555555a74090
+  },
+  edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555a751a0
+  },
+  edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555a762b0
+  },
+  n_edge = 0,
+  cache_valid = false,
+  cache_buffer = 1,
+  cache_cutoff = 7.55507697e+31,
+  cache_pos1 = std::unique_ptr<float []> = {
+    get() = 0x555555a70bd0
+  },
+  cache_pos2 = std::unique_ptr<float []> = {
+    get() = 0x555555a773c0
+  },
+  cache_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555a70960
+  },
+  cache_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555a1a980
+  },
+  cache_edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x555555a776d0
+  },
+  cache_edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x555555a787e0
+  },
+  cache_edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555a798f0
+  },
+  cache_edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555a7aa00
+  },
+  cache_n_edge = 0
+}
+THIS_TYPE: this type: PairlistComputation<false>
+MEMBER: this->.n_elem1 = 30
+MEMBER: this->.n_elem2 = 36
+MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x555555a72f80
+}
+MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x555555a74090
+}
+MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555a751a0
+}
+MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555a762b0
+}
+MEMBER: this->.n_edge = 0
+MEMBER: this->.cache_valid = false
+MEMBER: this->.cache_buffer = 1
+MEMBER: this->.cache_cutoff = 7.55507697e+31
+MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
+  get() = 0x555555a70bd0
+}
+MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
+  get() = 0x555555a773c0
+}
+MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555a70960
+}
+MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555a1a980
+}
+MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x555555a776d0
+}
+MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x555555a787e0
+}
+MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555a798f0
+}
+MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555a7aa00
+}
+MEMBER: this->.cache_n_edge = 0
+=== LOCAL_VARIABLES ===
+No locals.
+=== DEREFERENCED_LOCALS ===
+=== BACKTRACE ===
+#0  PairlistComputation<false>::change_cache_buffer (new_buffer=2, this=0x5555559ef7d8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+#1  InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::update_cutoffs (this=this@entry=0x5555559ef748) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408
+#2  0x0000555555609158 in InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::InteractionGraph (this=0x5555559ef748, grp=144115188075855897, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371
+#3  0x00005555556097f2 in HBondCoverage::HBondCoverage (this=0x5555559ef710, grp=144115188075855897, infer_=warning: RTTI symbol not found for class '(anonymous namespace)::PlacementNode<(anonymous namespace)::FixedPlacement<7>, ((anonymous namespace)::PlaceT)2, ((anonymous namespace)::PlaceT)1, ((anonymous namespace)::PlaceT)0>'
+..., sidechains_=warning: RTTI symbol not found for class '(anonymous namespace)::PlacementNode<(anonymous namespace)::FixedPlacement<6>, ((anonymous namespace)::PlaceT)2, ((anonymous namespace)::PlaceT)1>'
+...) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:444
+#4  0x00005555556098cf in RegisterNodeType<HBondCoverage, 2>::RegisterNodeType(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)::{lambda(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&)#1}::operator()(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&) const (__closure=<optimized out>, grp=144115188075855897, args=std::vector of length 2, capacity 2 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:342
+--- GDB_CAPTURE_HIT_END ---
+
+Breakpoint 1.8, PairlistComputation<true>::change_cache_buffer (new_buffer=2.39999986, this=0x555555b6d9e0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+182	        void change_cache_buffer(float new_buffer) {cache_buffer=new_buffer;}
+--- GDB_CAPTURE_HIT_START ---
+HIT_NUMBER:$6 = 6
+LOCATION: Hit at src/interaction_graph.h:182
+=== ARGUMENTS ===
+new_buffer = 2.39999986
+this = 0x555555b6d9e0
+=== DEREFERENCED_ARGUMENTS ===
+VARIABLE: new_buffer = 2.39999986
+VARIABLE: this = 0x555555b6d9e0
+DEREF: *this = {
+  n_elem1 = 36,
+  n_elem2 = 36,
+  edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x555555b56c50
+  },
+  edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x555555b576a0
+  },
+  edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555b580f0
+  },
+  edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555b58b40
+  },
+  n_edge = 0,
+  cache_valid = false,
+  cache_buffer = 1,
+  cache_cutoff = 0,
+  cache_pos1 = std::unique_ptr<float []> = {
+    get() = 0x555555b72f40
+  },
+  cache_pos2 = std::unique_ptr<float []> = {
+    get() = 0x555555b73250
+  },
+  cache_id1 = std::unique_ptr<int []> = {
+    get() = 0x55555583f810
+  },
+  cache_id2 = std::unique_ptr<int []> = {
+    get() = 0x55555583ce00
+  },
+  cache_edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x555555b59590
+  },
+  cache_edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x555555b59fe0
+  },
+  cache_edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555b5aa30
+  },
+  cache_edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555b5b480
+  },
+  cache_n_edge = 0
+}
+THIS_TYPE: this type: PairlistComputation<true>
+MEMBER: this->.n_elem1 = 36
+MEMBER: this->.n_elem2 = 36
+MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x555555b56c50
+}
+MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x555555b576a0
+}
+MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555b580f0
+}
+MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555b58b40
+}
+MEMBER: this->.n_edge = 0
+MEMBER: this->.cache_valid = false
+MEMBER: this->.cache_buffer = 1
+MEMBER: this->.cache_cutoff = 0
+MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
+  get() = 0x555555b72f40
+}
+MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
+  get() = 0x555555b73250
+}
+MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
+  get() = 0x55555583f810
+}
+MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
+  get() = 0x55555583ce00
+}
+MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x555555b59590
+}
+MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x555555b59fe0
+}
+MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555b5aa30
+}
+MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555b5b480
+}
+MEMBER: this->.cache_n_edge = 0
+=== LOCAL_VARIABLES ===
+No locals.
+=== DEREFERENCED_LOCALS ===
+=== BACKTRACE ===
+#0  PairlistComputation<true>::change_cache_buffer (new_buffer=2.39999986, this=0x555555b6d9e0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+#1  InteractionGraph<PosQuadSplineInteraction>::update_cutoffs (this=this@entry=0x555555b6d950) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408
+#2  0x0000555555611393 in InteractionGraph<PosQuadSplineInteraction>::InteractionGraph (this=0x555555b6d950, grp=144115188075855901, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371
+#3  0x0000555555614500 in RotamerSidechain<PosQuadSplineInteraction>::RotamerSidechain (this=0x555555b6d920, grp=144115188075855900, pos_node_=warning: RTTI symbol not found for class '(anonymous namespace)::PlacementNode<(anonymous namespace)::FixedPlacement<6>, ((anonymous namespace)::PlaceT)2, ((anonymous namespace)::PlaceT)1>'
+..., prob_nodes_=...) at /home/okleinmann/projects/upside2-md/src/h5_support.h:38
+#4  0x0000555555615209 in RegisterRotamerSidechain<PosQuadSplineInteraction>::RegisterRotamerSidechain(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)::{lambda(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&)#1}::operator()(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&) const (__closure=<optimized out>, grp=144115188075855900, args=std::vector of length 4, capacity 4 = {...}) at /home/okleinmann/projects/upside2-md/src/rotamer.cpp:1178
+--- GDB_CAPTURE_HIT_END ---
+
+Breakpoint 1.1, PairlistComputation<false>::change_cache_buffer (new_buffer=2.4000001, this=0x555555bba4c8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+182	        void change_cache_buffer(float new_buffer) {cache_buffer=new_buffer;}
+--- GDB_CAPTURE_HIT_START ---
+HIT_NUMBER:$7 = 7
+LOCATION: Hit at src/interaction_graph.h:182
+=== ARGUMENTS ===
+new_buffer = 2.4000001
+this = 0x555555bba4c8
+=== DEREFERENCED_ARGUMENTS ===
+VARIABLE: new_buffer = 2.4000001
+VARIABLE: this = 0x555555bba4c8
+DEREF: *this = {
+  n_elem1 = 17,
+  n_elem2 = 36,
+  edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x555555bc8250
+  },
+  edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x555555bc8c20
+  },
+  edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555bc95f0
+  },
+  edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555bc9fc0
+  },
+  n_edge = 0,
+  cache_valid = false,
+  cache_buffer = 1,
+  cache_cutoff = 0,
+  cache_pos1 = std::unique_ptr<float []> = {
+    get() = 0x555555bc8040
+  },
+  cache_pos2 = std::unique_ptr<float []> = {
+    get() = 0x555555bc6e20
+  },
+  cache_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555bc7130
+  },
+  cache_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555b65980
+  },
+  cache_edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x555555bca990
+  },
+  cache_edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x555555bcb360
+  },
+  cache_edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555bcbd30
+  },
+  cache_edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555bcc700
+  },
+  cache_n_edge = 0
+}
+THIS_TYPE: this type: PairlistComputation<false>
+MEMBER: this->.n_elem1 = 17
+MEMBER: this->.n_elem2 = 36
+MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x555555bc8250
+}
+MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x555555bc8c20
+}
+MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555bc95f0
+}
+MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555bc9fc0
+}
+MEMBER: this->.n_edge = 0
+MEMBER: this->.cache_valid = false
+MEMBER: this->.cache_buffer = 1
+MEMBER: this->.cache_cutoff = 0
+MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
+  get() = 0x555555bc8040
+}
+MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
+  get() = 0x555555bc6e20
+}
+MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555bc7130
+}
+MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555b65980
+}
+MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x555555bca990
+}
+MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x555555bcb360
+}
+MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555bcbd30
+}
+MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555bcc700
+}
+MEMBER: this->.cache_n_edge = 0
+=== LOCAL_VARIABLES ===
+No locals.
+=== DEREFERENCED_LOCALS ===
+=== BACKTRACE ===
+#0  PairlistComputation<false>::change_cache_buffer (new_buffer=2.4000001, this=0x555555bba4c8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+#1  InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::update_cutoffs (this=this@entry=0x555555bba438) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408
+#2  0x00005555555eebb7 in InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::InteractionGraph (this=0x555555bba438, grp=144115188075855904, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371
+#3  0x00005555555f4f05 in (anonymous namespace)::EnvironmentCoverage::EnvironmentCoverage (this=0x555555bba3e0, grp=144115188075855904, cb_pos_=..., weighted_sidechains_=...) at /usr/include/c++/12/bits/new_allocator.h:90
+#4  0x00005555555f5047 in operator() (__closure=<optimized out>, grp=144115188075855904, args=std::vector of length 2, capacity 2 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:342
+--- GDB_CAPTURE_HIT_END ---
+
+Breakpoint 1.1, PairlistComputation<false>::change_cache_buffer (new_buffer=2.80000019, this=0x555555c085f8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+182	        void change_cache_buffer(float new_buffer) {cache_buffer=new_buffer;}
+--- GDB_CAPTURE_HIT_START ---
+HIT_NUMBER:$8 = 8
+LOCATION: Hit at src/interaction_graph.h:182
+=== ARGUMENTS ===
+new_buffer = 2.80000019
+this = 0x555555c085f8
+=== DEREFERENCED_ARGUMENTS ===
+VARIABLE: new_buffer = 2.80000019
+VARIABLE: this = 0x555555c085f8
+DEREF: *this = {
+  n_elem1 = 10,
+  n_elem2 = 36,
+  edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x555555c13580
+  },
+  edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x555555c15400
+  },
+  edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555c159d0
+  },
+  edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555c15fa0
+  },
+  n_edge = 0,
+  cache_valid = false,
+  cache_buffer = 1,
+  cache_cutoff = 0,
+  cache_pos1 = std::unique_ptr<float []> = {
+    get() = 0x555555c12de0
+  },
+  cache_pos2 = std::unique_ptr<float []> = {
+    get() = 0x555555c13b50
+  },
+  cache_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555c13e60
+  },
+  cache_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555bc71c0
+  },
+  cache_edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x555555c16570
+  },
+  cache_edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x555555c16b40
+  },
+  cache_edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x555555c17110
+  },
+  cache_edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x555555c176e0
+  },
+  cache_n_edge = 0
+}
+THIS_TYPE: this type: PairlistComputation<false>
+MEMBER: this->.n_elem1 = 10
+MEMBER: this->.n_elem2 = 36
+MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x555555c13580
+}
+MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x555555c15400
+}
+MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555c159d0
+}
+MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555c15fa0
+}
+MEMBER: this->.n_edge = 0
+MEMBER: this->.cache_valid = false
+MEMBER: this->.cache_buffer = 1
+MEMBER: this->.cache_cutoff = 0
+MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
+  get() = 0x555555c12de0
+}
+MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
+  get() = 0x555555c13b50
+}
+MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555c13e60
+}
+MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555bc71c0
+}
+MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x555555c16570
+}
+MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x555555c16b40
+}
+MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x555555c17110
+}
+MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x555555c176e0
+}
+MEMBER: this->.cache_n_edge = 0
+=== LOCAL_VARIABLES ===
+No locals.
+=== DEREFERENCED_LOCALS ===
+=== BACKTRACE ===
+#0  PairlistComputation<false>::change_cache_buffer (new_buffer=2.80000019, this=0x555555c085f8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+#1  InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::update_cutoffs (this=this@entry=0x555555c08568) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408
+#2  0x00005555555eebb7 in InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::InteractionGraph (this=0x555555c08568, grp=144115188075855905, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371
+#3  0x00005555555f4f05 in (anonymous namespace)::EnvironmentCoverage::EnvironmentCoverage (this=0x555555c08510, grp=144115188075855905, cb_pos_=warning: RTTI symbol not found for class '(anonymous namespace)::PlacementNode<(anonymous namespace)::FixedPlacement<6>, ((anonymous namespace)::PlaceT)2, ((anonymous namespace)::PlaceT)1>'
+..., weighted_sidechains_=...) at /usr/include/c++/12/bits/new_allocator.h:90
+#4  0x00005555555f5047 in operator() (__closure=<optimized out>, grp=144115188075855905, args=std::vector of length 2, capacity 2 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:342
+--- GDB_CAPTURE_HIT_END ---
+[New Thread 0x7ffff58c16c0 (LWP 33448)]
+[New Thread 0x7ffff50c06c0 (LWP 33449)]
+[New Thread 0x7ffff48bf6c0 (LWP 33450)]
+[New Thread 0x7ffff40be6c0 (LWP 33451)]
+[New Thread 0x7ffff38bd6c0 (LWP 33452)]
+[New Thread 0x7ffff30bc6c0 (LWP 33453)]
+[New Thread 0x7ffff28bb6c0 (LWP 33454)]
+[New Thread 0x7ffff20ba6c0 (LWP 33455)]
+[New Thread 0x7ffff18b96c0 (LWP 33456)]
+[New Thread 0x7ffff10b86c0 (LWP 33457)]
+[New Thread 0x7ffff08b76c0 (LWP 33458)]
+[New Thread 0x7ffff00b66c0 (LWP 33459)]
+[New Thread 0x7fffef8b56c0 (LWP 33460)]
+[New Thread 0x7fffef0b46c0 (LWP 33461)]
+[New Thread 0x7fffee8b36c0 (LWP 33462)]
+[New Thread 0x7fffee0b26c0 (LWP 33463)]
+[New Thread 0x7fffed8b16c0 (LWP 33464)]
+[New Thread 0x7fffed0b06c0 (LWP 33465)]
+[New Thread 0x7fffec8af6c0 (LWP 33466)]
+[Thread 0x7fffec8af6c0 (LWP 33466) exited]
+[Thread 0x7fffed0b06c0 (LWP 33465) exited]
+[Thread 0x7fffed8b16c0 (LWP 33464) exited]
+[Thread 0x7fffee8b36c0 (LWP 33462) exited]
+[Thread 0x7fffef0b46c0 (LWP 33461) exited]
+[Thread 0x7fffef8b56c0 (LWP 33460) exited]
+[Thread 0x7ffff00b66c0 (LWP 33459) exited]
+[Thread 0x7ffff08b76c0 (LWP 33458) exited]
+[Thread 0x7ffff10b86c0 (LWP 33457) exited]
+[Thread 0x7ffff18b96c0 (LWP 33456) exited]
+[Thread 0x7ffff20ba6c0 (LWP 33455) exited]
+[Thread 0x7ffff28bb6c0 (LWP 33454) exited]
+[Thread 0x7ffff30bc6c0 (LWP 33453) exited]
+[Thread 0x7ffff38bd6c0 (LWP 33452) exited]
+[Thread 0x7ffff40be6c0 (LWP 33451) exited]
+[Thread 0x7ffff48bf6c0 (LWP 33450) exited]
+[Thread 0x7ffff50c06c0 (LWP 33449) exited]
+[Thread 0x7ffff58c16c0 (LWP 33448) exited]
+[Thread 0x7ffff668fa00 (LWP 33435) exited]
+[Thread 0x7fffee0b26c0 (LWP 33463) exited]
+[New process 33435]
+[Inferior 1 (process 33435) exited normally]
