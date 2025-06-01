@@ -10,12 +10,14 @@ upside_home = os.environ.get("UPSIDE_HOME")
 
 # Instead of function name, use file and line number
 source_file = "src/interaction_graph.h"  # Adjust path as needed
-line_number = 182  # Replace with actual line number
+line_number = 62  # Replace with actual line number
 max_hits = 20
+run_name = "chig" # Used for output file name; should be somewhat specific (e.g. chig-hdx).
+custom_commands = {"pos_array_1": "p *aligned_pos1 @ (this.n_elem1 * pos1_stride)","pos_array_2": "p *aligned_pos2 @ (this.n_elem2 * pos2_stride)"} # Optional custom GDB command configuration
 
 upside_args = [
     "--duration", "1000",
-    "--frame-interval", "50", 
+    "--frame-interval", "50",
     "--temperature", "0.8",
     "--seed", "1",
     f"{upside_home}/example/01.GettingStarted/outputs/simple_test/chig.run.up"
@@ -63,6 +65,17 @@ def generate_gdb_script_content(source_file, line_number, log_file_path, max_hit
     """
     abs_log_file_path = os.path.abspath(log_file_path)
 
+    # Build custom commands section
+    custom_commands_section = ""
+    if custom_commands:
+        custom_commands_section = """
+echo === CUSTOM_COMMANDS ===\\n"""
+        for custom_name, custom_cmd in custom_commands.items():
+            custom_commands_section += f"""
+echo CUSTOM_{custom_name.upper()}_START:\\n
+{custom_cmd}
+echo CUSTOM_{custom_name.upper()}_END:\\n"""
+
     script_content = f"""set pagination off
 set confirm off
 set width 0
@@ -77,7 +90,7 @@ set $hit_count = 0
 set logging file {abs_log_file_path}
 set logging redirect on
 set logging overwrite on
-set logging on
+set logging enabled on
 
 echo Starting breakpoint at {source_file}:{line_number}\\n
 
@@ -197,7 +210,7 @@ try:
 except Exception as e:
     print(f"LOCAL_SCRIPT_ERROR: Error in Python script: {{e}}")
 end
-
+{custom_commands_section}
 echo === BACKTRACE ===\\n
 backtrace 5
 
@@ -306,6 +319,7 @@ def parse_gdb_log(log_file_path):
                 "dereferenced_locals": {},
                 "this_members": {},
                 "pointer_members": {},
+                "custom_commands": {},
                 "errors": []
             }
             
@@ -432,6 +446,44 @@ def parse_gdb_log(log_file_path):
                                 hit_data["errors"].append(local_line)
                         i += 1
                     continue
+
+                elif line == "=== CUSTOM_COMMANDS ===":
+                    current_section = "custom_commands"
+                    i += 1
+                    # Parse custom commands
+                    current_custom_name = None
+                    current_custom_output = []
+                    
+                    while i < len(lines) and not lines[i].strip().startswith("==="):
+                        custom_line = lines[i].strip()
+                        
+                        # Check for custom command start
+                        if custom_line.startswith("CUSTOM_") and custom_line.endswith("_START:"):
+                            if current_custom_name and current_custom_output:
+                                # Save previous custom command
+                                hit_data["custom_commands"][current_custom_name] = "\n".join(current_custom_output)
+                            
+                            # Extract custom name
+                            current_custom_name = custom_line.replace("CUSTOM_", "").replace("_START:", "").lower()
+                            current_custom_output = []
+                        
+                        # Check for custom command end
+                        elif custom_line.startswith("CUSTOM_") and custom_line.endswith("_END:"):
+                            if current_custom_name and current_custom_output:
+                                hit_data["custom_commands"][current_custom_name] = "\n".join(current_custom_output)
+                            current_custom_name = None
+                            current_custom_output = []
+                        
+                        # Collect output between start and end
+                        elif current_custom_name is not None:
+                            current_custom_output.append(custom_line)
+                        
+                        i += 1
+                    
+                    # Handle last custom command if no end marker
+                    if current_custom_name and current_custom_output:
+                        hit_data["custom_commands"][current_custom_name] = "\n".join(current_custom_output)
+                    continue
                     
                 elif line == "=== BACKTRACE ===":
                     current_section = "backtrace"
@@ -515,8 +567,26 @@ def capture_function_inputs_with_gdb(
         print("GDB Process STDOUT:\n", process.stdout)
         if process.stderr:
             print("GDB Process STDERR:\n", process.stderr)
+        
         if process.returncode != 0:
             print(f"Warning: GDB process exited with code {process.returncode}")
+            # Print GDB script and log file locations for debugging
+            print(f"GDB script location: {gdb_temp_script_path}")
+            print(f"GDB log file location: {gdb_log_file}")
+            
+            # Check if log file exists and print any error content
+            if os.path.exists(gdb_log_file):
+                try:
+                    with open(gdb_log_file, 'r') as f:
+                        log_content = f.read().strip()
+                        if log_content:
+                            print(f"GDB Log file content:\n{log_content}")
+                        else:
+                            print("GDB log file is empty")
+                except Exception as e:
+                    print(f"Could not read log file: {e}")
+            else:
+                print("GDB log file was not created")
 
     except subprocess.TimeoutExpired:
         print(f"GDB command timed out after {timeout_seconds} seconds.")
@@ -540,13 +610,43 @@ def save_to_json(data, filename):
     except Exception as e:
         print(f"Error saving to JSON: {e}")
 
+def test_gdb_basic(executable_path, source_file, line_number):
+    """Test basic GDB functionality"""
+    test_script = f"""
+set confirm off
+file {executable_path}
+info sources
+list {source_file}:{line_number}
+break {source_file}:{line_number}
+info breakpoints
+quit
+"""
+    
+    test_script_path = f"{upside_home}/tests/records/test_gdb.gdb"
+    with open(test_script_path, "w") as f:
+        f.write(test_script)
+    
+    print("Testing basic GDB functionality...")
+    result = subprocess.run(['gdb', '--batch', '-nx', '-x', test_script_path], 
+                          capture_output=True, text=True)
+    
+    print("Test GDB STDOUT:")
+    print(result.stdout)
+    print("Test GDB STDERR:")
+    print(result.stderr)
+    print(f"Test GDB Return Code: {result.returncode}")
+
 if __name__ == "__main__":
     cpp_executable = f"{upside_home}/obj/upside"
     function_pattern = "PairlistComputation"  # Pattern to search for
     
+    
+
     if not os.path.exists(cpp_executable):
         print(f"Executable '{cpp_executable}' not found.")
         exit(1)
+
+    test_gdb_basic(cpp_executable, source_file, line_number)
     
     # # Try to automatically find the function location
     # print("Searching for function location...")
@@ -564,9 +664,9 @@ if __name__ == "__main__":
     #         print(f"  {f}")
         
         # Manual specification - you'll need to find the right file and line
-        source_file = source_file  # UPDATE THIS
-        line_number = line_number  # UPDATE THIS
-        print(f"Using manual location: {source_file}:{line_number}")
+    source_file = source_file  # UPDATE THIS
+    line_number = line_number  # UPDATE THIS
+    print(f"Using manual location: {source_file}:{line_number}")
 
     captured_inputs = capture_function_inputs_with_gdb(
         executable_path=cpp_executable,
@@ -595,6 +695,7 @@ if __name__ == "__main__":
             print(f"  Pointer Members: {len(hit_data['pointer_members'])} items")
             print(f"  Local Variables: {len(hit_data['locals'])} items")
             print(f"  Dereferenced Locals: {len(hit_data['dereferenced_locals'])} items")
+            print(f"  Custom Commands: {len(hit_data['custom_commands'])} items")
             print(f"  Backtrace: {len(hit_data['backtrace'])} frames")
             print(f"  Errors: {len(hit_data['errors'])} items")
             
