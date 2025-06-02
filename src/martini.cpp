@@ -197,114 +197,196 @@ struct DihedralSpring : public PotentialNode
 };
 static RegisterNodeType<DihedralSpring,1> dihedral_spring_node("dihedral_spring");
 
-struct MartiniPotential : public PotentialNode {
+struct WallReflectPotential : public PotentialNode
+{
+    int n_atom;
     CoordNode& pos;
-    int n_elem;
-    vector<int> atom_indices;
     
-    // LJ parameters
-    float epsilon;
-    float sigma;
-    float lj_cutoff;
+    // Wall parameters
+    float wall_xlo, wall_xhi, wall_ylo, wall_yhi, wall_zlo, wall_zhi;
     
-    // Coulombic parameters
-    vector<float> charges;
-    float coul_cutoff;
-    float dielectric;
-    
-    // Extra particles
-    vector<int> extra_indices;
-    
-    MartiniPotential(hid_t grp, CoordNode& pos_):
-        PotentialNode(),
-        pos(pos_),
-        n_elem(get_dset_size(1, grp, "atom_indices")[0]),
-        atom_indices(n_elem),
-        epsilon(read_attribute<float>(grp, ".", "epsilon")),
-        sigma(read_attribute<float>(grp, ".", "sigma")),
-        lj_cutoff(read_attribute<float>(grp, ".", "lj_cutoff")),
-        charges(n_elem),
-        coul_cutoff(read_attribute<float>(grp, ".", "coul_cutoff")),
-        dielectric(read_attribute<float>(grp, ".", "dielectric")) {
-        
-        // Read atom indices
-        traverse_dset<1,int>(grp, "atom_indices", 
-            [&](size_t i, int idx) {atom_indices[i] = idx;});
-            
-        // Read charges
-        traverse_dset<1,float>(grp, "charges",
-            [&](size_t i, float q) {charges[i] = q;});
-            
-        // Read extra particle indices if they exist
-        if(H5Lexists(grp, "extra_indices", H5P_DEFAULT)) {
-            int n_extra = get_dset_size(1, grp, "extra_indices")[0];
-            extra_indices.resize(n_extra);
-            traverse_dset<1,int>(grp, "extra_indices",
-                [&](size_t i, int idx) {extra_indices[i] = idx;});
-        }
+    WallReflectPotential(hid_t grp, CoordNode& pos_):
+        PotentialNode(), n_atom(pos_.n_elem), pos(pos_)
+    {
+        wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
+        wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
+        wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
+        wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
+        wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
+        wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
     }
-    
+
     virtual void compute_value(ComputeMode mode) {
-        VecArray pos_array = pos.output;
-        VecArray pos_sens = pos.sens;
+        Timer timer(string("wall_reflect_potential"));
         
-        potential = 0.f;
+        VecArray pos1 = pos.output;
         
-        // Combine regular and extra particles
-        vector<int> all_indices = atom_indices;
-        all_indices.insert(all_indices.end(), extra_indices.begin(), extra_indices.end());
-        
-        for(int i=0; i<all_indices.size(); ++i) {
-            for(int j=i+1; j<all_indices.size(); ++j) {
-                int idx1 = all_indices[i];
-                int idx2 = all_indices[j];
-                
-                // Calculate distance
-                float dx = pos_array(0,idx2) - pos_array(0,idx1);
-                float dy = pos_array(1,idx2) - pos_array(1,idx1);
-                float dz = pos_array(2,idx2) - pos_array(2,idx1);
-                float r2 = dx*dx + dy*dy + dz*dz;
-                float r = sqrt(r2);
-                
-                // LJ potential
-                if(r2 <= lj_cutoff*lj_cutoff) {
-                    float r6 = pow(sigma/r, 6);
-                    float r12 = r6*r6;
-                    float lj_energy = 4*epsilon*(r12 - r6);
-                    potential += lj_energy;
-                    
-                    float lj_force = 24*epsilon*(2*r12 - r6)/(r*r);
-                    float fx = lj_force * dx/r;
-                    float fy = lj_force * dy/r;
-                    float fz = lj_force * dz/r;
-                    
-                    pos_sens(0,idx1) -= fx;
-                    pos_sens(1,idx1) -= fy;
-                    pos_sens(2,idx1) -= fz;
-                    pos_sens(0,idx2) += fx;
-                    pos_sens(1,idx2) += fy;
-                    pos_sens(2,idx2) += fz;
-                }
-                
-                // Coulombic potential
-                if(r2 <= coul_cutoff*coul_cutoff) {
-                    float coul_energy = charges[i]*charges[j]/(4*M_PI*dielectric*r);
-                    potential += coul_energy;
-                    
-                    float coul_force = charges[i]*charges[j]/(4*M_PI*dielectric*r2);
-                    float fx = coul_force * dx/r;
-                    float fy = coul_force * dy/r;
-                    float fz = coul_force * dz/r;
-                    
-                    pos_sens(0,idx1) -= fx;
-                    pos_sens(1,idx1) -= fy;
-                    pos_sens(2,idx1) -= fz;
-                    pos_sens(0,idx2) += fx;
-                    pos_sens(1,idx2) += fy;
-                    pos_sens(2,idx2) += fz;
-                }
+        // Apply wall reflections - hard constraint, no forces needed
+        for(int na=0; na<n_atom; ++na) {
+            auto p = load_vec<3>(pos1, na);
+            bool reflected = false;
+            
+            // Check and reflect against walls
+            // X dimension
+            if (p.x() < wall_xlo) {
+                p.x() = wall_xlo + (wall_xlo - p.x());
+                reflected = true;
+            }
+            if (p.x() > wall_xhi) {
+                p.x() = wall_xhi - (p.x() - wall_xhi);
+                reflected = true;
+            }
+            
+            // Y dimension  
+            if (p.y() < wall_ylo) {
+                p.y() = wall_ylo + (wall_ylo - p.y());
+                reflected = true;
+            }
+            if (p.y() > wall_yhi) {
+                p.y() = wall_yhi - (p.y() - wall_yhi);
+                reflected = true;
+            }
+            
+            // Z dimension
+            if (p.z() < wall_zlo) {
+                p.z() = wall_zlo + (wall_zlo - p.z());
+                reflected = true;
+            }
+            if (p.z() > wall_zhi) {
+                p.z() = wall_zhi - (p.z() - wall_zhi);
+                reflected = true;
+            }
+            
+            // Store reflected position
+            if (reflected) {
+                store_vec<3>(pos1, na, p);
             }
         }
+        
+        // No potential energy contribution from hard walls
+        potential = 0.f;
+    }
+};
+static RegisterNodeType<WallReflectPotential,1> wall_reflect_potential_node("wall_reflect_potential");
+
+struct MartiniPotential : public PotentialNode
+{
+    int n_atom;
+    CoordNode& pos;
+    
+    vector<array<float,4>> coeff;
+    vector<pair<int,int>> pairs;
+    
+    float epsilon, sigma, lj_cutoff, coul_cutoff, dielectric;
+    
+    MartiniPotential(hid_t grp, CoordNode& pos_):
+        PotentialNode(), n_atom(pos_.n_elem), pos(pos_)
+    {
+        check_size(grp, "atom_indices", n_atom);
+        check_size(grp, "charges", n_atom);
+        
+        epsilon     = read_attribute<float>(grp, ".", "epsilon");
+        sigma       = read_attribute<float>(grp, ".", "sigma");  
+        lj_cutoff   = read_attribute<float>(grp, ".", "lj_cutoff");
+        coul_cutoff = read_attribute<float>(grp, ".", "coul_cutoff");
+        dielectric  = read_attribute<float>(grp, ".", "dielectric");
+        
+        auto n_pair = get_dset_size(2, grp, "pairs")[0];
+        check_size(grp, "coefficients", n_pair, 4);
+        
+        pairs.resize(n_pair);
+        traverse_dset<2,int>(grp, "pairs", [&](size_t np, size_t d, int x) {
+            if(d == 0) pairs[np].first = x;
+            else pairs[np].second = x;
+        });
+        
+        coeff.resize(n_pair);
+        traverse_dset<2,float>(grp, "coefficients", [&](size_t np, size_t d, float x) {
+            coeff[np][d] = x;
+        });
+    }
+
+    virtual void compute_value(ComputeMode mode) {
+        Timer timer(string("martini_potential"));
+        
+        VecArray pos1      = pos.output;
+        VecArray pos1_sens = pos.sens;
+        
+        fill(pos1_sens, 3, n_atom, 0.f);
+        
+        float pot = 0.f;
+        
+        // Compute particle-particle interactions
+        for(size_t np=0; np<pairs.size(); ++np) {
+            int i = pairs[np].first;
+            int j = pairs[np].second;
+            
+            auto eps   = coeff[np][0];
+            auto sig   = coeff[np][1];
+            auto qi    = coeff[np][2];
+            auto qj    = coeff[np][3];
+            
+            if(eps==0.f && sig==0.f && qi==0.f && qj==0.f) continue;
+            
+            auto p1 = load_vec<3>(pos1, i);
+            auto p2 = load_vec<3>(pos1, j);
+            auto dr = p1 - p2;
+            auto dist2 = mag2(dr);
+            auto dist = sqrtf(dist2);
+            
+            if(dist > max(lj_cutoff, coul_cutoff)) continue;
+            
+            Vec<3> force = make_zero<3>();
+            
+            // Lennard-Jones potential
+            if(eps != 0.f && sig != 0.f && dist < lj_cutoff) {
+                // Enhanced overflow protection: prevent core overlap
+                // Set minimum distance to 1.12*sigma (LJ minimum) to prevent unphysical overlap
+                float min_dist = 1.12f * sig;  // 2^(1/6) ≈ 1.12 is the LJ minimum
+                float effective_dist = max(dist, min_dist);
+                
+                auto sig_r = sig / effective_dist;
+                auto sig_r6 = sig_r * sig_r * sig_r * sig_r * sig_r * sig_r;
+                auto sig_r12 = sig_r6 * sig_r6;
+                
+                // Check for overflow in LJ terms
+                if(std::isfinite(sig_r6) && std::isfinite(sig_r12)) {
+                    auto lj_pot = 4.f * eps * (sig_r12 - sig_r6);
+                    auto deriv = 24.f * eps / (effective_dist * effective_dist) * (2.f * sig_r12 - sig_r6);
+                    
+                    // Cap maximum force magnitude to prevent integration instability
+                    float max_force_magnitude = 1000.0f * eps;  // Reasonable force limit
+                    float force_mag = mag(deriv * dr);
+                    if(force_mag > max_force_magnitude) {
+                        deriv = deriv * (max_force_magnitude / force_mag);
+                    }
+                    
+                    // Only apply if potential and derivative are finite
+                    if(std::isfinite(lj_pot) && std::isfinite(deriv)) {
+                        pot += lj_pot;
+                        force += deriv * dr;
+                    }
+                }
+            }
+            
+            // Coulomb potential
+            if(qi != 0.f && qj != 0.f && dist < coul_cutoff) {
+                const float ke = 332.0636f;  // Coulomb constant in UPSIDE units
+                auto coul_pot = ke * qi * qj / (dielectric * dist);
+                auto deriv = -coul_pot / dist2;
+                
+                // Only apply if potential and derivative are finite
+                if(std::isfinite(coul_pot) && std::isfinite(deriv)) {
+                    pot += coul_pot;
+                    force += deriv * dr;
+                }
+            }
+            
+            update_vec<3>(pos1_sens, i,  force);
+            update_vec<3>(pos1_sens, j, -force);
+        }
+        
+        potential = pot;
     }
 };
 static RegisterNodeType<MartiniPotential,1> martini_potential_node("martini_potential");
