@@ -10,10 +10,10 @@ upside_home = os.environ.get("UPSIDE_HOME")
 
 # Instead of function name, use file and line number
 source_file = "src/interaction_graph.h"  # Adjust path as needed
-line_number = 62  # Replace with actual line number
+line_number = 213  # Replace with actual line number
 max_hits = 20
 run_name = "chig" # Used for output file name; should be somewhat specific (e.g. chig-hdx).
-custom_commands = {"pos_array_1": "p *aligned_pos1 @ (this.n_elem1 * pos1_stride)","pos_array_2": "p *aligned_pos2 @ (this.n_elem2 * pos2_stride)"} # Optional custom GDB command configuration
+custom_commands = {"pos_array_1": "p *aligned_pos1 @ (this.n_elem1 * pos1_stride)","pos_array_2": "p *aligned_pos2 @ (this.n_elem2 * pos2_stride)","symmetry":"p symmetric"} # Optional custom GDB command configuration
 
 upside_args = [
     "--duration", "1000",
@@ -460,8 +460,12 @@ def parse_gdb_log(log_file_path):
                         # Check for custom command start
                         if custom_line.startswith("CUSTOM_") and custom_line.endswith("_START:"):
                             if current_custom_name and current_custom_output:
-                                # Save previous custom command
-                                hit_data["custom_commands"][current_custom_name] = "\n".join(current_custom_output)
+                                # Save previous custom command with cleaned output
+                                cleaned_output = "\n".join(current_custom_output)
+                                # Remove GDB variable assignment pattern like "$18 = "
+                                import re
+                                cleaned_output = re.sub(r'^\$\d+\s*=\s*', '', cleaned_output)
+                                hit_data["custom_commands"][current_custom_name] = cleaned_output
                             
                             # Extract custom name
                             current_custom_name = custom_line.replace("CUSTOM_", "").replace("_START:", "").lower()
@@ -470,7 +474,12 @@ def parse_gdb_log(log_file_path):
                         # Check for custom command end
                         elif custom_line.startswith("CUSTOM_") and custom_line.endswith("_END:"):
                             if current_custom_name and current_custom_output:
-                                hit_data["custom_commands"][current_custom_name] = "\n".join(current_custom_output)
+                                # Save custom command with cleaned output
+                                cleaned_output = "\n".join(current_custom_output)
+                                # Remove GDB variable assignment pattern like "$18 = "
+                                import re
+                                cleaned_output = re.sub(r'^\$\d+\s*=\s*', '', cleaned_output)
+                                hit_data["custom_commands"][current_custom_name] = cleaned_output
                             current_custom_name = None
                             current_custom_output = []
                         
@@ -482,7 +491,11 @@ def parse_gdb_log(log_file_path):
                     
                     # Handle last custom command if no end marker
                     if current_custom_name and current_custom_output:
-                        hit_data["custom_commands"][current_custom_name] = "\n".join(current_custom_output)
+                        cleaned_output = "\n".join(current_custom_output)
+                        # Remove GDB variable assignment pattern like "$18 = "
+                        import re
+                        cleaned_output = re.sub(r'^\$\d+\s*=\s*', '', cleaned_output)
+                        hit_data["custom_commands"][current_custom_name] = cleaned_output
                     continue
                     
                 elif line == "=== BACKTRACE ===":

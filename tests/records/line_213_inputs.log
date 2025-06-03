@@ -1,66 +1,67 @@
-Starting breakpoint at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-Breakpoint 1 at 0x8537a: /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213. (13 locations)
+Starting breakpoint at src/interaction_graph.h:213
+Breakpoint 1 at 0x8537a: src/interaction_graph.h:213. (13 locations)
 [Thread debugging using libthread_db enabled]
 Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
 
-Breakpoint 1.13, PairlistComputation<true>::find_edges<(anonymous namespace)::acceptable_backbone_pair> (this=this@entry=0x5555557da6b0, cutoff=6.91850281, aligned_pos1=0x555555c84670, pos1_stride=4, id1=0x55555583c9f0, aligned_pos2=0x555555c84670, pos2_stride=4, id2=0x55555583c9f0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Breakpoint 1.13, PairlistComputation<true>::find_edges<(anonymous namespace)::acceptable_backbone_pair> (this=this@entry=0x5555557da830, cutoff=6.91850281, aligned_pos1=0x555555c843f0, pos1_stride=4, id1=0x55555583cb70, aligned_pos2=0x555555c843f0, pos2_stride=4, id2=0x55555583cb70) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+warning: Source file is more recent than executable.
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
 HIT_NUMBER:$1 = 1
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x5555557da6b0
+this = 0x5555557da830
 cutoff = 6.91850281
-aligned_pos1 = 0x555555c84670
+aligned_pos1 = 0x555555c843f0
 pos1_stride = 4
-id1 = 0x55555583c9f0
-aligned_pos2 = 0x555555c84670
+id1 = 0x55555583cb70
+aligned_pos2 = 0x555555c843f0
 pos2_stride = 4
-id2 = 0x55555583c9f0
+id2 = 0x55555583cb70
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x5555557da6b0
+VARIABLE: this = 0x5555557da830
 DEREF: *this = {
   n_elem1 = 10,
   n_elem2 = 10,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x55555582ba50
+    get() = 0x55555582bbd0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x55555582afb0
+    get() = 0x55555582b130
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555557aeed0
+    get() = 0x5555557af050
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555557aee00
+    get() = 0x5555557aef80
   },
   n_edge = 0,
   cache_valid = false,
   cache_buffer = 1,
   cache_cutoff = 0,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x55555583ca40
+    get() = 0x55555583cbc0
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x55555583cb50
+    get() = 0x55555583ccd0
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x55555582e490
+    get() = 0x55555582e610
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555557ff440
+    get() = 0x5555557ff5c0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555764e70
+    get() = 0x555555764df0
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555557628a0
+    get() = 0x555555762820
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555763270
+    get() = 0x5555557631f0
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x55555583cc60
+    get() = 0x55555583cde0
   },
   cache_n_edge = 0
 }
@@ -68,56 +69,56 @@ THIS_TYPE: this type: PairlistComputation<true>
 MEMBER: this->.n_elem1 = 10
 MEMBER: this->.n_elem2 = 10
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x55555582ba50
+  get() = 0x55555582bbd0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x55555582afb0
+  get() = 0x55555582b130
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555557aeed0
+  get() = 0x5555557af050
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555557aee00
+  get() = 0x5555557aef80
 }
 MEMBER: this->.n_edge = 0
 MEMBER: this->.cache_valid = false
 MEMBER: this->.cache_buffer = 1
 MEMBER: this->.cache_cutoff = 0
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x55555583ca40
+  get() = 0x55555583cbc0
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x55555583cb50
+  get() = 0x55555583ccd0
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x55555582e490
+  get() = 0x55555582e610
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555557ff440
+  get() = 0x5555557ff5c0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555764e70
+  get() = 0x555555764df0
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555557628a0
+  get() = 0x555555762820
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555763270
+  get() = 0x5555557631f0
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x55555583cc60
+  get() = 0x55555583cde0
 }
 MEMBER: this->.cache_n_edge = 0
 VARIABLE: cutoff = 6.91850281
-VARIABLE: aligned_pos1 = 0x555555c84670
+VARIABLE: aligned_pos1 = 0x555555c843f0
 DEREF: *aligned_pos1 = -5.95233345
 VARIABLE: pos1_stride = 4
-VARIABLE: id1 = 0x55555583c9f0
+VARIABLE: id1 = 0x55555583cb70
 DEREF: *id1 = 0
-VARIABLE: aligned_pos2 = 0x555555c84670
+VARIABLE: aligned_pos2 = 0x555555c843f0
 DEREF: *aligned_pos2 = -5.95233345
 VARIABLE: pos2_stride = 4
-VARIABLE: id2 = 0x55555583c9f0
+VARIABLE: id2 = 0x55555583cb70
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -139,72 +140,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$2 = {-5.95233345, -0.601000011, 2.12300014, 0, -3.82566643, 0.465666652, -0.313666672, 0, -0.838999987, 1.50566673, 0.576333404, 0, 1.21099997, 3.69233322, -0.933666706, 0, 3.82766676, 3.65566635, 0.569666684, 0, 4.71433353, 0.895666718, -0.510333359, 0, 2.88433337, 0.0156666636, -2.87699986, 0, 0.754333377, -2.19766688, -1.87033343, 0, -1.579, -3.73433375, 0.00966668129, 0, -1.19566667, -3.69766688, 3.22633362, 0}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$3 = {-5.95233345, -0.601000011, 2.12300014, 0, -3.82566643, 0.465666652, -0.313666672, 0, -0.838999987, 1.50566673, 0.576333404, 0, 1.21099997, 3.69233322, -0.933666706, 0, 3.82766676, 3.65566635, 0.569666684, 0, 4.71433353, 0.895666718, -0.510333359, 0, 2.88433337, 0.0156666636, -2.87699986, 0, 0.754333377, -2.19766688, -1.87033343, 0, -1.579, -3.73433375, 0.00966668129, 0, -1.19566667, -3.69766688, 3.22633362, 0}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$4 = true
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<true>::find_edges<(anonymous namespace)::acceptable_backbone_pair> (this=this@entry=0x5555557da6b0, cutoff=6.91850281, aligned_pos1=0x555555c84670, pos1_stride=4, id1=0x55555583c9f0, aligned_pos2=0x555555c84670, pos2_stride=4, id2=0x55555583c9f0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x0000555555687ab3 in BackbonePairs::compute_value (this=0x5555557da660, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/backbone_steric.cpp:102
+#0  PairlistComputation<true>::find_edges<(anonymous namespace)::acceptable_backbone_pair> (this=this@entry=0x5555557da830, cutoff=6.91850281, aligned_pos1=0x555555c843f0, pos1_stride=4, id1=0x55555583cb70, aligned_pos2=0x555555c843f0, pos2_stride=4, id2=0x55555583cb70) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x0000555555687ab3 in BackbonePairs::compute_value (this=0x5555557da7e0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/backbone_steric.cpp:102
 #2  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #3  0x00005555555c1970 in upside_main (argc=<optimized out>, argv=<optimized out>, verbose=verbose@entry=1) at /home/okleinmann/projects/upside2-md/src/main.cpp:900
 #4  0x00005555555c43c4 in main (argc=<optimized out>, argv=<optimized out>) at /home/okleinmann/projects/upside2-md/src/main.cpp:1104
 --- GDB_CAPTURE_HIT_END ---
 
-Breakpoint 1.6, PairlistComputation<false>::find_edges<(anonymous namespace)::ProteinHBondInteraction::acceptable_id_pair> (this=this@entry=0x555555848a50, cutoff=3.5, aligned_pos1=0x5555558c9870, pos1_stride=pos1_stride@entry=8, id1=0x5555558cb760, aligned_pos2=0x5555558cb7b0, pos2_stride=pos2_stride@entry=8, id2=0x5555558cb500) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Breakpoint 1.6, PairlistComputation<false>::find_edges<(anonymous namespace)::ProteinHBondInteraction::acceptable_id_pair> (this=this@entry=0x555555848bd0, cutoff=3.5, aligned_pos1=0x5555558c99f0, pos1_stride=pos1_stride@entry=8, id1=0x5555558cb8e0, aligned_pos2=0x5555558cb930, pos2_stride=pos2_stride@entry=8, id2=0x5555558cb680) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$2 = 2
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$5 = 2
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555848a50
+this = 0x555555848bd0
 cutoff = 3.5
-aligned_pos1 = 0x5555558c9870
+aligned_pos1 = 0x5555558c99f0
 pos1_stride = 8
-id1 = 0x5555558cb760
-aligned_pos2 = 0x5555558cb7b0
+id1 = 0x5555558cb8e0
+aligned_pos2 = 0x5555558cb930
 pos2_stride = 8
-id2 = 0x5555558cb500
+id2 = 0x5555558cb680
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555848a50
+VARIABLE: this = 0x555555848bd0
 DEREF: *this = {
   n_elem1 = 8,
   n_elem2 = 9,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cb550
+    get() = 0x5555558cb6d0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cb9c0
+    get() = 0x5555558cbb40
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cbb10
+    get() = 0x5555558cbc90
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cbc60
+    get() = 0x5555558cbde0
   },
   n_edge = 0,
   cache_valid = false,
   cache_buffer = 1.70000005,
   cache_cutoff = 0,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x5555558cbdb0
+    get() = 0x5555558cbf30
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x5555558cbec0
+    get() = 0x5555558cc040
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cbfd0
+    get() = 0x5555558cc150
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cc020
+    get() = 0x5555558cc1a0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cc070
+    get() = 0x5555558cc1f0
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cc1c0
+    get() = 0x5555558cc340
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cd8b0
+    get() = 0x5555558cda30
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cda00
+    get() = 0x5555558cdb80
   },
   cache_n_edge = 0
 }
@@ -212,56 +223,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 8
 MEMBER: this->.n_elem2 = 9
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cb550
+  get() = 0x5555558cb6d0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cb9c0
+  get() = 0x5555558cbb40
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cbb10
+  get() = 0x5555558cbc90
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cbc60
+  get() = 0x5555558cbde0
 }
 MEMBER: this->.n_edge = 0
 MEMBER: this->.cache_valid = false
 MEMBER: this->.cache_buffer = 1.70000005
 MEMBER: this->.cache_cutoff = 0
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x5555558cbdb0
+  get() = 0x5555558cbf30
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x5555558cbec0
+  get() = 0x5555558cc040
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cbfd0
+  get() = 0x5555558cc150
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cc020
+  get() = 0x5555558cc1a0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cc070
+  get() = 0x5555558cc1f0
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cc1c0
+  get() = 0x5555558cc340
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cd8b0
+  get() = 0x5555558cda30
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cda00
+  get() = 0x5555558cdb80
 }
 MEMBER: this->.cache_n_edge = 0
 VARIABLE: cutoff = 3.5
-VARIABLE: aligned_pos1 = 0x5555558c9870
+VARIABLE: aligned_pos1 = 0x5555558c99f0
 DEREF: *aligned_pos1 = -5.66885471
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x5555558cb760
+VARIABLE: id1 = 0x5555558cb8e0
 DEREF: *id1 = 1
-VARIABLE: aligned_pos2 = 0x5555558cb7b0
+VARIABLE: aligned_pos2 = 0x5555558cb930
 DEREF: *aligned_pos2 = -4.17120934
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x5555558cb500
+VARIABLE: id2 = 0x5555558cb680
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -283,72 +294,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$6 = {-5.66885471, 0.65845108, -0.2592327, -0.764986336, 0.544830799, -0.343446255, 1.00000002e+20, 1.00000002e+20, -1.81063712, -0.100712679, 0.865022838, 0.0284425952, -0.954218984, 0.297753274, 1.00000002e+20, 1.00000002e+20, 1.93304849, 3.81345892, 0.895142376, -0.785551071, -0.131296456, 0.604707241, 1.00000002e+20, 1.00000002e+20, 3.49375653, 1.6463567, 0.532758415, -0.955201089, -0.139367461, 0.261089116, 1.00000002e+20, 1.00000002e+20, 2.95413399, 1.0802263, -1.38677168, -0.579772055, 0.478666216, 0.659350395, 1.00000002e+20, 1.00000002e+20, 1.56805336, -0.797739506, -1.56716549, -0.0184999928, 0.605977774, 0.79526639, 1.00000002e+20, 1.00000002e+20, -1.06592965, -4.1814146, -1.77056515, 0.022428399, -0.69365263, -0.719960392, 1.00000002e+20, 1.00000002e+20, -1.66565347, -2.25531197, 1.97789991, -0.318166882, 0.926918328, -0.19897753, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$7 = {-4.17120934, -1.13087535, 1.63262057, 0.753594637, -0.548286557, 0.362597257, 1.00000002e+20, 1.00000002e+20, -2.80709958, 2.30934477, -0.611981928, -0.0495426208, 0.951891065, -0.302404761, 1.00000002e+20, 1.00000002e+20, 0.918775976, 1.22713006, -0.491451651, 0.616486013, -0.678927362, -0.398751318, 1.00000002e+20, 1.00000002e+20, 3.41207242, 4.1386447, -1.70612705, 0.772370279, 0.136810213, -0.620263755, 1.00000002e+20, 1.00000002e+20, 6.05847836, 3.16293192, 0.106711589, 0.954955518, 0.16446121, -0.247006774, 1.00000002e+20, 1.00000002e+20, 5.41466522, -0.310462147, -2.42082214, 0.597041965, -0.48343721, -0.640179098, 1.00000002e+20, 1.00000002e+20, 2.26970243, -1.71765602, -4.33383846, 0.0285234787, -0.594077408, -0.80390209, 1.00000002e+20, 1.00000002e+20, -0.185046926, -1.74580669, -0.238571689, 0.000499791349, 0.705801129, 0.708409905, 1.00000002e+20, 1.00000002e+20, -1.11906636, -5.16866207, 1.47199643, 0.311774433, -0.93359828, 0.176610038, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$8 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::ProteinHBondInteraction::acceptable_id_pair> (this=this@entry=0x555555848a50, cutoff=3.5, aligned_pos1=0x5555558c9870, pos1_stride=pos1_stride@entry=8, id1=0x5555558cb760, aligned_pos2=0x5555558cb7b0, pos2_stride=pos2_stride@entry=8, id2=0x5555558cb500) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x0000555555603aa7 in InteractionGraph<(anonymous namespace)::ProteinHBondInteraction>::compute_edges<>(void) (this=this@entry=0x5555558489c0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x0000555555603ddf in ProteinHBond::compute_value (this=0x555555848980, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:393
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::ProteinHBondInteraction::acceptable_id_pair> (this=this@entry=0x555555848bd0, cutoff=3.5, aligned_pos1=0x5555558c99f0, pos1_stride=pos1_stride@entry=8, id1=0x5555558cb8e0, aligned_pos2=0x5555558cb930, pos2_stride=pos2_stride@entry=8, id2=0x5555558cb680) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x0000555555603aa7 in InteractionGraph<(anonymous namespace)::ProteinHBondInteraction>::compute_edges<>(void) (this=this@entry=0x555555848b40) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x0000555555603ddf in ProteinHBond::compute_value (this=0x555555848b00, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:393
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555c1970 in upside_main (argc=<optimized out>, argv=<optimized out>, verbose=verbose@entry=1) at /home/okleinmann/projects/upside2-md/src/main.cpp:900
 --- GDB_CAPTURE_HIT_END ---
 
-Breakpoint 1.2, PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x5555559546f8, cutoff=4, aligned_pos1=0x555555943640, pos1_stride=pos1_stride@entry=8, id1=0x555555943020, aligned_pos2=0x555555943850, pos2_stride=pos2_stride@entry=8, id2=0x555555943450) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Breakpoint 1.2, PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555954878, cutoff=4, aligned_pos1=0x5555559437c0, pos1_stride=pos1_stride@entry=8, id1=0x5555559431a0, aligned_pos2=0x5555559439d0, pos2_stride=pos2_stride@entry=8, id2=0x5555559435d0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$3 = 3
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$9 = 3
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x5555559546f8
+this = 0x555555954878
 cutoff = 4
-aligned_pos1 = 0x555555943640
+aligned_pos1 = 0x5555559437c0
 pos1_stride = 8
-id1 = 0x555555943020
-aligned_pos2 = 0x555555943850
+id1 = 0x5555559431a0
+aligned_pos2 = 0x5555559439d0
 pos2_stride = 8
-id2 = 0x555555943450
+id2 = 0x5555559435d0
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x5555559546f8
+VARIABLE: this = 0x555555954878
 DEREF: *this = {
   n_elem1 = 8,
   n_elem2 = 9,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555943a60
+    get() = 0x555555943be0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555943bb0
+    get() = 0x555555943d30
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555943d00
+    get() = 0x555555943e80
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555943e50
+    get() = 0x555555943fd0
   },
   n_edge = 0,
   cache_valid = false,
   cache_buffer = 1.79999995,
   cache_cutoff = 0,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x555555943fa0
+    get() = 0x555555944120
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x5555559440b0
+    get() = 0x555555944230
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555559441c0
+    get() = 0x555555944340
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555944210
+    get() = 0x555555944390
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x5555559458d0
+    get() = 0x555555945a50
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555945a20
+    get() = 0x555555945ba0
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555945b70
+    get() = 0x555555945cf0
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555945cc0
+    get() = 0x555555945e40
   },
   cache_n_edge = 0
 }
@@ -356,56 +377,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 8
 MEMBER: this->.n_elem2 = 9
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555943a60
+  get() = 0x555555943be0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555943bb0
+  get() = 0x555555943d30
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555943d00
+  get() = 0x555555943e80
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555943e50
+  get() = 0x555555943fd0
 }
 MEMBER: this->.n_edge = 0
 MEMBER: this->.cache_valid = false
 MEMBER: this->.cache_buffer = 1.79999995
 MEMBER: this->.cache_cutoff = 0
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x555555943fa0
+  get() = 0x555555944120
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x5555559440b0
+  get() = 0x555555944230
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555559441c0
+  get() = 0x555555944340
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555944210
+  get() = 0x555555944390
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x5555559458d0
+  get() = 0x555555945a50
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555945a20
+  get() = 0x555555945ba0
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555945b70
+  get() = 0x555555945cf0
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555945cc0
+  get() = 0x555555945e40
 }
 MEMBER: this->.cache_n_edge = 0
 VARIABLE: cutoff = 4
-VARIABLE: aligned_pos1 = 0x555555943640
+VARIABLE: aligned_pos1 = 0x5555559437c0
 DEREF: *aligned_pos1 = -5.66885471
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x555555943020
+VARIABLE: id1 = 0x5555559431a0
 DEREF: *id1 = 1
-VARIABLE: aligned_pos2 = 0x555555943850
+VARIABLE: aligned_pos2 = 0x5555559439d0
 DEREF: *aligned_pos2 = -4.17120934
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x555555943450
+VARIABLE: id2 = 0x5555559435d0
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -427,72 +448,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$10 = {-5.66885471, 0.65845108, -0.2592327, -0.764986336, 0.544830799, -0.343446255, 1.00000002e+20, 1.00000002e+20, -1.81063712, -0.100712679, 0.865022838, 0.0284425952, -0.954218984, 0.297753274, 1.00000002e+20, 1.00000002e+20, 1.93304849, 3.81345892, 0.895142376, -0.785551071, -0.131296456, 0.604707241, 1.00000002e+20, 1.00000002e+20, 3.49375653, 1.6463567, 0.532758415, -0.955201089, -0.139367461, 0.261089116, 1.00000002e+20, 1.00000002e+20, 2.95413399, 1.0802263, -1.38677168, -0.579772055, 0.478666216, 0.659350395, 1.00000002e+20, 1.00000002e+20, 1.56805336, -0.797739506, -1.56716549, -0.0184999928, 0.605977774, 0.79526639, 1.00000002e+20, 1.00000002e+20, -1.06592965, -4.1814146, -1.77056515, 0.022428399, -0.69365263, -0.719960392, 1.00000002e+20, 1.00000002e+20, -1.66565347, -2.25531197, 1.97789991, -0.318166882, 0.926918328, -0.19897753, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$11 = {-4.17120934, -1.13087535, 1.63262057, 0.753594637, -0.548286557, 0.362597257, 1.00000002e+20, 1.00000002e+20, -2.80709958, 2.30934477, -0.611981928, -0.0495426208, 0.951891065, -0.302404761, 1.00000002e+20, 1.00000002e+20, 0.918775976, 1.22713006, -0.491451651, 0.616486013, -0.678927362, -0.398751318, 1.00000002e+20, 1.00000002e+20, 3.41207242, 4.1386447, -1.70612705, 0.772370279, 0.136810213, -0.620263755, 1.00000002e+20, 1.00000002e+20, 6.05847836, 3.16293192, 0.106711589, 0.954955518, 0.16446121, -0.247006774, 1.00000002e+20, 1.00000002e+20, 5.41466522, -0.310462147, -2.42082214, 0.597041965, -0.48343721, -0.640179098, 1.00000002e+20, 1.00000002e+20, 2.26970243, -1.71765602, -4.33383846, 0.0285234787, -0.594077408, -0.80390209, 1.00000002e+20, 1.00000002e+20, -0.185046926, -1.74580669, -0.238571689, 0.000499791349, 0.705801129, 0.708409905, 1.00000002e+20, 1.00000002e+20, -1.11906636, -5.16866207, 1.47199643, 0.311774433, -0.93359828, 0.176610038, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$12 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x5555559546f8, cutoff=4, aligned_pos1=0x555555943640, pos1_stride=pos1_stride@entry=8, id1=0x555555943020, aligned_pos2=0x555555943850, pos2_stride=pos2_stride@entry=8, id2=0x555555943450) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555555e8dc5 in InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555954668) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x00005555555e905f in (anonymous namespace)::HbondEnvironmentCoverage::compute_value (this=0x555555954630, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:365
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555954878, cutoff=4, aligned_pos1=0x5555559437c0, pos1_stride=pos1_stride@entry=8, id1=0x5555559431a0, aligned_pos2=0x5555559439d0, pos2_stride=pos2_stride@entry=8, id2=0x5555559435d0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555555e8dc5 in InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x5555559547e8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x00005555555e905f in (anonymous namespace)::HbondEnvironmentCoverage::compute_value (this=0x5555559547b0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:365
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555c1970 in upside_main (argc=<optimized out>, argv=<optimized out>, verbose=verbose@entry=1) at /home/okleinmann/projects/upside2-md/src/main.cpp:900
 --- GDB_CAPTURE_HIT_END ---
 
-Breakpoint 1.2, PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555984018, cutoff=4, aligned_pos1=0x5555559e2120, pos1_stride=pos1_stride@entry=8, id1=0x5555559df6d0, aligned_pos2=0x5555559df7f0, pos2_stride=pos2_stride@entry=8, id2=0x5555559df720) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Breakpoint 1.2, PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555984198, cutoff=4, aligned_pos1=0x5555559e22a0, pos1_stride=pos1_stride@entry=8, id1=0x5555559dfb20, aligned_pos2=0x5555559e0d70, pos2_stride=pos2_stride@entry=8, id2=0x5555559df850) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$4 = 4
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$13 = 4
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555984018
+this = 0x555555984198
 cutoff = 4
-aligned_pos1 = 0x5555559e2120
+aligned_pos1 = 0x5555559e22a0
 pos1_stride = 8
-id1 = 0x5555559df6d0
-aligned_pos2 = 0x5555559df7f0
+id1 = 0x5555559dfb20
+aligned_pos2 = 0x5555559e0d70
 pos2_stride = 8
-id2 = 0x5555559df720
+id2 = 0x5555559df850
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555984018
+VARIABLE: this = 0x555555984198
 DEREF: *this = {
   n_elem1 = 9,
   n_elem2 = 8,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x5555559e0bf0
+    get() = 0x5555559e0f80
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555559e0d40
+    get() = 0x5555559e10d0
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555559e0e90
+    get() = 0x5555559e1220
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555559e0fe0
+    get() = 0x5555559e1370
   },
   n_edge = 0,
   cache_valid = false,
   cache_buffer = 1.79999995,
   cache_cutoff = 0,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x5555559e1130
+    get() = 0x5555559e14c0
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x5555559e1240
+    get() = 0x5555559e24b0
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555559e1350
+    get() = 0x5555559df8a0
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555559e13a0
+    get() = 0x5555559e15d0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x5555559e2330
+    get() = 0x5555559e25c0
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555559e2480
+    get() = 0x5555559e2710
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555559e25d0
+    get() = 0x5555559e2860
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555559e2720
+    get() = 0x5555559e29b0
   },
   cache_n_edge = 0
 }
@@ -500,56 +531,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 9
 MEMBER: this->.n_elem2 = 8
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x5555559e0bf0
+  get() = 0x5555559e0f80
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555559e0d40
+  get() = 0x5555559e10d0
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555559e0e90
+  get() = 0x5555559e1220
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555559e0fe0
+  get() = 0x5555559e1370
 }
 MEMBER: this->.n_edge = 0
 MEMBER: this->.cache_valid = false
 MEMBER: this->.cache_buffer = 1.79999995
 MEMBER: this->.cache_cutoff = 0
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x5555559e1130
+  get() = 0x5555559e14c0
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x5555559e1240
+  get() = 0x5555559e24b0
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555559e1350
+  get() = 0x5555559df8a0
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555559e13a0
+  get() = 0x5555559e15d0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x5555559e2330
+  get() = 0x5555559e25c0
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555559e2480
+  get() = 0x5555559e2710
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555559e25d0
+  get() = 0x5555559e2860
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555559e2720
+  get() = 0x5555559e29b0
 }
 MEMBER: this->.cache_n_edge = 0
 VARIABLE: cutoff = 4
-VARIABLE: aligned_pos1 = 0x5555559e2120
+VARIABLE: aligned_pos1 = 0x5555559e22a0
 DEREF: *aligned_pos1 = -4.17120934
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x5555559df6d0
+VARIABLE: id1 = 0x5555559dfb20
 DEREF: *id1 = 0
-VARIABLE: aligned_pos2 = 0x5555559df7f0
+VARIABLE: aligned_pos2 = 0x5555559e0d70
 DEREF: *aligned_pos2 = -5.66885471
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x5555559df720
+VARIABLE: id2 = 0x5555559df850
 DEREF: *id2 = 1
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -571,72 +602,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$14 = {-4.17120934, -1.13087535, 1.63262057, 0.753594637, -0.548286557, 0.362597257, 1.00000002e+20, 1.00000002e+20, -2.80709958, 2.30934477, -0.611981928, -0.0495426208, 0.951891065, -0.302404761, 1.00000002e+20, 1.00000002e+20, 0.918775976, 1.22713006, -0.491451651, 0.616486013, -0.678927362, -0.398751318, 1.00000002e+20, 1.00000002e+20, 3.41207242, 4.1386447, -1.70612705, 0.772370279, 0.136810213, -0.620263755, 1.00000002e+20, 1.00000002e+20, 6.05847836, 3.16293192, 0.106711589, 0.954955518, 0.16446121, -0.247006774, 1.00000002e+20, 1.00000002e+20, 5.41466522, -0.310462147, -2.42082214, 0.597041965, -0.48343721, -0.640179098, 1.00000002e+20, 1.00000002e+20, 2.26970243, -1.71765602, -4.33383846, 0.0285234787, -0.594077408, -0.80390209, 1.00000002e+20, 1.00000002e+20, -0.185046926, -1.74580669, -0.238571689, 0.000499791349, 0.705801129, 0.708409905, 1.00000002e+20, 1.00000002e+20, -1.11906636, -5.16866207, 1.47199643, 0.311774433, -0.93359828, 0.176610038, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$15 = {-5.66885471, 0.65845108, -0.2592327, -0.764986336, 0.544830799, -0.343446255, 1.00000002e+20, 1.00000002e+20, -1.81063712, -0.100712679, 0.865022838, 0.0284425952, -0.954218984, 0.297753274, 1.00000002e+20, 1.00000002e+20, 1.93304849, 3.81345892, 0.895142376, -0.785551071, -0.131296456, 0.604707241, 1.00000002e+20, 1.00000002e+20, 3.49375653, 1.6463567, 0.532758415, -0.955201089, -0.139367461, 0.261089116, 1.00000002e+20, 1.00000002e+20, 2.95413399, 1.0802263, -1.38677168, -0.579772055, 0.478666216, 0.659350395, 1.00000002e+20, 1.00000002e+20, 1.56805336, -0.797739506, -1.56716549, -0.0184999928, 0.605977774, 0.79526639, 1.00000002e+20, 1.00000002e+20, -1.06592965, -4.1814146, -1.77056515, 0.022428399, -0.69365263, -0.719960392, 1.00000002e+20, 1.00000002e+20, -1.66565347, -2.25531197, 1.97789991, -0.318166882, 0.926918328, -0.19897753, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$16 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555984018, cutoff=4, aligned_pos1=0x5555559e2120, pos1_stride=pos1_stride@entry=8, id1=0x5555559df6d0, aligned_pos2=0x5555559df7f0, pos2_stride=pos2_stride@entry=8, id2=0x5555559df720) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555555e8dc5 in InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555983f88) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x00005555555e905f in (anonymous namespace)::HbondEnvironmentCoverage::compute_value (this=0x555555983f50, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:365
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555984198, cutoff=4, aligned_pos1=0x5555559e22a0, pos1_stride=pos1_stride@entry=8, id1=0x5555559dfb20, aligned_pos2=0x5555559e0d70, pos2_stride=pos2_stride@entry=8, id2=0x5555559df850) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555555e8dc5 in InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555984108) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x00005555555e905f in (anonymous namespace)::HbondEnvironmentCoverage::compute_value (this=0x5555559840d0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:365
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555c1970 in upside_main (argc=<optimized out>, argv=<optimized out>, verbose=verbose@entry=1) at /home/okleinmann/projects/upside2-md/src/main.cpp:900
 --- GDB_CAPTURE_HIT_END ---
 
-Breakpoint 1.7, PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555965cb8, cutoff=4.99999952, aligned_pos1=0x555555a19ed0, pos1_stride=pos1_stride@entry=8, id1=0x555555a19b90, aligned_pos2=0x555555a1a2e0, pos2_stride=pos2_stride@entry=8, id2=0x555555905e50) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Breakpoint 1.7, PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555965e38, cutoff=4.99999952, aligned_pos1=0x555555a1a150, pos1_stride=pos1_stride@entry=8, id1=0x555555a19db0, aligned_pos2=0x555555a1a560, pos2_stride=pos2_stride@entry=8, id2=0x555555905fd0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$5 = 5
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$17 = 5
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555965cb8
+this = 0x555555965e38
 cutoff = 4.99999952
-aligned_pos1 = 0x555555a19ed0
+aligned_pos1 = 0x555555a1a150
 pos1_stride = 8
-id1 = 0x555555a19b90
-aligned_pos2 = 0x555555a1a2e0
+id1 = 0x555555a19db0
+aligned_pos2 = 0x555555a1a560
 pos2_stride = 8
-id2 = 0x555555905e50
+id2 = 0x555555905fd0
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555965cb8
+VARIABLE: this = 0x555555965e38
 DEREF: *this = {
   n_elem1 = 17,
   n_elem2 = 36,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555a1c090
+    get() = 0x555555a1c2b0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555a1ca60
+    get() = 0x555555a1cc80
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555a1d430
+    get() = 0x555555a1d650
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555a1de00
+    get() = 0x555555a1e020
   },
   n_edge = 0,
   cache_valid = false,
   cache_buffer = 2,
   cache_cutoff = 7.55507697e+31,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x555555a19cc0
+    get() = 0x555555a19ee0
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x555555a1e7d0
+    get() = 0x555555a1e9f0
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555a1a8f0
+    get() = 0x555555a1ab70
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555840470
+    get() = 0x5555558405f0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555a1eae0
+    get() = 0x555555a1ed00
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555a1f4b0
+    get() = 0x555555a1f6d0
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555a1fe80
+    get() = 0x555555a200a0
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555a20850
+    get() = 0x555555a20a70
   },
   cache_n_edge = 0
 }
@@ -644,56 +685,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 17
 MEMBER: this->.n_elem2 = 36
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555a1c090
+  get() = 0x555555a1c2b0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555a1ca60
+  get() = 0x555555a1cc80
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555a1d430
+  get() = 0x555555a1d650
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555a1de00
+  get() = 0x555555a1e020
 }
 MEMBER: this->.n_edge = 0
 MEMBER: this->.cache_valid = false
 MEMBER: this->.cache_buffer = 2
 MEMBER: this->.cache_cutoff = 7.55507697e+31
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x555555a19cc0
+  get() = 0x555555a19ee0
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x555555a1e7d0
+  get() = 0x555555a1e9f0
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555a1a8f0
+  get() = 0x555555a1ab70
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555840470
+  get() = 0x5555558405f0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555a1eae0
+  get() = 0x555555a1ed00
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555a1f4b0
+  get() = 0x555555a1f6d0
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555a1fe80
+  get() = 0x555555a200a0
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555a20850
+  get() = 0x555555a20a70
 }
 MEMBER: this->.cache_n_edge = 0
 VARIABLE: cutoff = 4.99999952
-VARIABLE: aligned_pos1 = 0x555555a19ed0
+VARIABLE: aligned_pos1 = 0x555555a1a150
 DEREF: *aligned_pos1 = -5.66885471
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x555555a19b90
+VARIABLE: id1 = 0x555555a19db0
 DEREF: *id1 = 1
-VARIABLE: aligned_pos2 = 0x555555a1a2e0
+VARIABLE: aligned_pos2 = 0x555555a1a560
 DEREF: *aligned_pos2 = -6.37703133
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x555555905e50
+VARIABLE: id2 = 0x555555905fd0
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -715,72 +756,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$18 = {-5.66885471, 0.65845108, -0.2592327, -0.764986336, 0.544830799, -0.343446255, 0, 1.00000002e+20, -1.81063712, -0.100712679, 0.865022838, 0.0284425952, -0.954218984, 0.297753274, 0.00829660892, 1.00000002e+20, 1.93304849, 3.81345892, 0.895142376, -0.785551071, -0.131296456, 0.604707241, 0, 1.00000002e+20, 3.49375653, 1.6463567, 0.532758415, -0.955201089, -0.139367461, 0.261089116, 5.27501106e-05, 1.00000002e+20, 2.95413399, 1.0802263, -1.38677168, -0.579772055, 0.478666216, 0.659350395, 0.720860422, 1.00000002e+20, 1.56805336, -0.797739506, -1.56716549, -0.0184999928, 0.605977774, 0.79526639, 0.699054658, 1.00000002e+20, -1.06592965, -4.1814146, -1.77056515, 0.022428399, -0.69365263, -0.719960392, 0, 1.00000002e+20, -1.66565347, -2.25531197, 1.97789991, -0.318166882, 0.926918328, -0.19897753, 0.0560789704, 1.00000002e+20, -4.17120934, -1.13087535, 1.63262057, 0.753594637, -0.548286557, 0.362597257, 0.0560802221, 1.00000002e+20, -2.80709958, 2.30934477, -0.611981928, -0.0495426208, 0.951891065, -0.302404761, 0, 1.00000002e+20, 0.918775976, 1.22713006, -0.491451651, 0.616486013, -0.678927362, -0.398751318, 0.915998697, 1.00000002e+20, 3.41207242, 4.1386447, -1.70612705, 0.772370279, 0.136810213, -0.620263755, 0, 1.00000002e+20, 6.05847836, 3.16293192, 0.106711589, 0.954955518...}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$19 = {-6.37703133, -0.15917775, 2.07686019, -0.323963583, 0.934393406, 0.148176879, 1.00000002e+20, 1.00000002e+20, -5.13446379, 3.13012314, -3.12758756, 0.0226619989, 0.30398953, 0.952405334, 1.00000002e+20, 1.00000002e+20, -1.39120269, -0.282357693, -4.48581266, -0.526636839, 0.217367813, 0.821829677, 1.00000002e+20, 1.00000002e+20, -1.59268308, 0.136248946, -3.79538965, 0.640213072, 0.367948622, 0.674344182, 1.00000002e+20, 1.00000002e+20, -5.57865524, -1.57433856, -3.27822185, -0.25122273, 0.168141544, 0.953212857, 1.00000002e+20, 1.00000002e+20, -5.25107861, -1.39046776, -2.98478031, 0.903744221, -0.391896904, -0.172227412, 1.00000002e+20, 1.00000002e+20, -5.60599899, -1.73025858, -3.43705273, 0.519579172, 0.429255635, 0.738766789, 1.00000002e+20, 1.00000002e+20, 0.827990413, -0.224653125, 3.00674343, 0.0635836422, -0.758469343, -0.648598909, 1.00000002e+20, 1.00000002e+20, -0.0888296366, 0.325733662, 1.46868432, 0.608897746, -0.697833776, 0.377187967, 1.00000002e+20, 1.00000002e+20, 0.188547134, 2.27204323, 4.3912282, 0.893925667, 0.106140912, -0.435465544, 1.00000002e+20, 1.00000002e+20, 0.233741522, 1.88623381, 2.37110186, 0.577684999, 0.481066823, 0.659434557, 1.00000002e+20, 1.00000002e+20, -0.735849321, 1.47080398, 4.174891, -0.944180906, -0.12042892, -0.306624562, 1.00000002e+20, 1.00000002e+20, -0.979936004, 1.28127193, 2.11245537, -0.248235583...}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$20 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555965cb8, cutoff=4.99999952, aligned_pos1=0x555555a19ed0, pos1_stride=pos1_stride@entry=8, id1=0x555555a19b90, aligned_pos2=0x555555a1a2e0, pos2_stride=pos2_stride@entry=8, id2=0x555555905e50) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555556046f5 in InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555965c28) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x00005555556049a1 in HBondCoverage::compute_value (this=0x555555965bf0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:454
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555965e38, cutoff=4.99999952, aligned_pos1=0x555555a1a150, pos1_stride=pos1_stride@entry=8, id1=0x555555a19db0, aligned_pos2=0x555555a1a560, pos2_stride=pos2_stride@entry=8, id2=0x555555905fd0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555556046f5 in InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555965da8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x00005555556049a1 in HBondCoverage::compute_value (this=0x555555965d70, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:454
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555c1970 in upside_main (argc=<optimized out>, argv=<optimized out>, verbose=verbose@entry=1) at /home/okleinmann/projects/upside2-md/src/main.cpp:900
 --- GDB_CAPTURE_HIT_END ---
 
-Breakpoint 1.7, PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x5555559ef7d8, cutoff=4.99999952, aligned_pos1=0x555555a70de0, pos1_stride=pos1_stride@entry=8, id1=0x555555a5f470, aligned_pos2=0x555555a711f0, pos2_stride=pos2_stride@entry=8, id2=0x555555a1aa50) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Breakpoint 1.7, PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x5555559f0d98, cutoff=4.99999952, aligned_pos1=0x555555a71110, pos1_stride=pos1_stride@entry=8, id1=0x555555a5f7c0, aligned_pos2=0x555555a71520, pos2_stride=pos2_stride@entry=8, id2=0x555555a3aff0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$6 = 6
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$21 = 6
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x5555559ef7d8
+this = 0x5555559f0d98
 cutoff = 4.99999952
-aligned_pos1 = 0x555555a70de0
+aligned_pos1 = 0x555555a71110
 pos1_stride = 8
-id1 = 0x555555a5f470
-aligned_pos2 = 0x555555a711f0
+id1 = 0x555555a5f7c0
+aligned_pos2 = 0x555555a71520
 pos2_stride = 8
-id2 = 0x555555a1aa50
+id2 = 0x555555a3aff0
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x5555559ef7d8
+VARIABLE: this = 0x5555559f0d98
 DEREF: *this = {
   n_elem1 = 30,
   n_elem2 = 36,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555a72f80
+    get() = 0x555555a732d0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555a74090
+    get() = 0x555555a743e0
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555a751a0
+    get() = 0x555555a754f0
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555a762b0
+    get() = 0x555555a76600
   },
   n_edge = 0,
   cache_valid = false,
   cache_buffer = 2,
   cache_cutoff = 7.55507697e+31,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x555555a70bd0
+    get() = 0x555555a70f00
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x555555a773c0
+    get() = 0x555555a77710
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555a70960
+    get() = 0x555555a70cb0
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555a1a980
+    get() = 0x555555a1ac00
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555a776d0
+    get() = 0x555555a77a20
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555a787e0
+    get() = 0x555555a78b30
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555a798f0
+    get() = 0x555555a79c40
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555a7aa00
+    get() = 0x555555a7ad50
   },
   cache_n_edge = 0
 }
@@ -788,56 +839,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 30
 MEMBER: this->.n_elem2 = 36
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555a72f80
+  get() = 0x555555a732d0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555a74090
+  get() = 0x555555a743e0
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555a751a0
+  get() = 0x555555a754f0
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555a762b0
+  get() = 0x555555a76600
 }
 MEMBER: this->.n_edge = 0
 MEMBER: this->.cache_valid = false
 MEMBER: this->.cache_buffer = 2
 MEMBER: this->.cache_cutoff = 7.55507697e+31
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x555555a70bd0
+  get() = 0x555555a70f00
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x555555a773c0
+  get() = 0x555555a77710
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555a70960
+  get() = 0x555555a70cb0
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555a1a980
+  get() = 0x555555a1ac00
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555a776d0
+  get() = 0x555555a77a20
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555a787e0
+  get() = 0x555555a78b30
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555a798f0
+  get() = 0x555555a79c40
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555a7aa00
+  get() = 0x555555a7ad50
 }
 MEMBER: this->.cache_n_edge = 0
 VARIABLE: cutoff = 4.99999952
-VARIABLE: aligned_pos1 = 0x555555a70de0
+VARIABLE: aligned_pos1 = 0x555555a71110
 DEREF: *aligned_pos1 = -6.98670244
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x555555a5f470
+VARIABLE: id1 = 0x555555a5f7c0
 DEREF: *id1 = 0
-VARIABLE: aligned_pos2 = 0x555555a711f0
+VARIABLE: aligned_pos2 = 0x555555a71520
 DEREF: *aligned_pos2 = -6.37703133
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x555555a1aa50
+VARIABLE: id2 = 0x555555a3aff0
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -859,72 +910,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$22 = {-6.98670244, -1.11748445, 1.3504231, -0.128091842, 0.48499012, -0.865087867, 0, 1.00000002e+20, -6.70136309, 0.941283286, 2.1466074, -0.190924212, 0.97955811, -0.0633554161, 0, 1.00000002e+20, -4.68128633, -0.489978522, 0.843942046, -0.339652091, 0.466032445, -0.816976309, 0, 1.00000002e+20, -3.26384497, -0.802604318, -0.216744334, 0.824439704, -0.11113403, -0.55493027, 0, 1.00000002e+20, -3.99281716, 0.293435097, -2.01149893, 0.0250056982, 0.140037358, -0.989830017, 0, 1.00000002e+20, -2.32799816, 1.44941425, -0.0832251161, 0.736924171, -0.304567188, -0.603473842, 0, 1.00000002e+20, -1.45617867, 2.66116667, 1.04265916, 0.639888823, 0.657595634, 0.397629827, 0, 1.00000002e+20, -0.192769349, 1.18814719, 2.13254857, 0.605944633, -0.210520685, 0.767144978, 0, 1.00000002e+20, 0.511489749, 2.26857948, -0.349957585, 0.485713661, 0.67948848, 0.549888074, 0, 1.00000002e+20, 1.2230953, 2.81255627, -2.01041985, 0.553162396, 0.322263211, -0.768217325, 0, 1.00000002e+20, 0.590655565, 4.94490147, -1.92688715, -0.156971931, 0.868421555, -0.470323503, 0, 1.00000002e+20, 2.98514676, 4.01376963, -0.819835365, 0.386692792, 0.248931482, -0.887976348, 0, 1.00000002e+20, 4.37946415, 4.88650465, 0.231869161, 0.901075423...}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$23 = {-6.37703133, -0.15917775, 2.07686019, -0.323963583, 0.934393406, 0.148176879, 1.00000002e+20, 1.00000002e+20, -5.13446379, 3.13012314, -3.12758756, 0.0226619989, 0.30398953, 0.952405334, 1.00000002e+20, 1.00000002e+20, -1.39120269, -0.282357693, -4.48581266, -0.526636839, 0.217367813, 0.821829677, 1.00000002e+20, 1.00000002e+20, -1.59268308, 0.136248946, -3.79538965, 0.640213072, 0.367948622, 0.674344182, 1.00000002e+20, 1.00000002e+20, -5.57865524, -1.57433856, -3.27822185, -0.25122273, 0.168141544, 0.953212857, 1.00000002e+20, 1.00000002e+20, -5.25107861, -1.39046776, -2.98478031, 0.903744221, -0.391896904, -0.172227412, 1.00000002e+20, 1.00000002e+20, -5.60599899, -1.73025858, -3.43705273, 0.519579172, 0.429255635, 0.738766789, 1.00000002e+20, 1.00000002e+20, 0.827990413, -0.224653125, 3.00674343, 0.0635836422, -0.758469343, -0.648598909, 1.00000002e+20, 1.00000002e+20, -0.0888296366, 0.325733662, 1.46868432, 0.608897746, -0.697833776, 0.377187967, 1.00000002e+20, 1.00000002e+20, 0.188547134, 2.27204323, 4.3912282, 0.893925667, 0.106140912, -0.435465544, 1.00000002e+20, 1.00000002e+20, 0.233741522, 1.88623381, 2.37110186, 0.577684999, 0.481066823, 0.659434557, 1.00000002e+20, 1.00000002e+20, -0.735849321, 1.47080398, 4.174891, -0.944180906, -0.12042892, -0.306624562, 1.00000002e+20, 1.00000002e+20, -0.979936004, 1.28127193, 2.11245537, -0.248235583...}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$24 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x5555559ef7d8, cutoff=4.99999952, aligned_pos1=0x555555a70de0, pos1_stride=pos1_stride@entry=8, id1=0x555555a5f470, aligned_pos2=0x555555a711f0, pos2_stride=pos2_stride@entry=8, id2=0x555555a1aa50) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555556046f5 in InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x5555559ef748) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x00005555556049a1 in HBondCoverage::compute_value (this=0x5555559ef710, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:454
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x5555559f0d98, cutoff=4.99999952, aligned_pos1=0x555555a71110, pos1_stride=pos1_stride@entry=8, id1=0x555555a5f7c0, aligned_pos2=0x555555a71520, pos2_stride=pos2_stride@entry=8, id2=0x555555a3aff0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555556046f5 in InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x5555559f0d08) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x00005555556049a1 in HBondCoverage::compute_value (this=0x5555559f0cd0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:454
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555c1970 in upside_main (argc=<optimized out>, argv=<optimized out>, verbose=verbose@entry=1) at /home/okleinmann/projects/upside2-md/src/main.cpp:900
 --- GDB_CAPTURE_HIT_END ---
 
-Breakpoint 1.8, PairlistComputation<true>::find_edges<&PosQuadSplineInteraction::acceptable_id_pair> (this=this@entry=0x555555b6d9e0, cutoff=6.99999905, aligned_pos1=0x555555b72930, pos1_stride=pos1_stride@entry=8, id1=0x555555a70a80, aligned_pos2=0x555555b72930, pos2_stride=pos2_stride@entry=8, id2=0x555555a70a80) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Breakpoint 1.8, PairlistComputation<true>::find_edges<&PosQuadSplineInteraction::acceptable_id_pair> (this=this@entry=0x555555b6dd30, cutoff=6.99999905, aligned_pos1=0x555555b72c80, pos1_stride=pos1_stride@entry=8, id1=0x555555a70dd0, aligned_pos2=0x555555b72c80, pos2_stride=pos2_stride@entry=8, id2=0x555555a70dd0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$7 = 7
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$25 = 7
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555b6d9e0
+this = 0x555555b6dd30
 cutoff = 6.99999905
-aligned_pos1 = 0x555555b72930
+aligned_pos1 = 0x555555b72c80
 pos1_stride = 8
-id1 = 0x555555a70a80
-aligned_pos2 = 0x555555b72930
+id1 = 0x555555a70dd0
+aligned_pos2 = 0x555555b72c80
 pos2_stride = 8
-id2 = 0x555555a70a80
+id2 = 0x555555a70dd0
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555b6d9e0
+VARIABLE: this = 0x555555b6dd30
 DEREF: *this = {
   n_elem1 = 36,
   n_elem2 = 36,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555b56c50
+    get() = 0x555555b56fa0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555b576a0
+    get() = 0x555555b579f0
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555b580f0
+    get() = 0x555555b58440
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555b58b40
+    get() = 0x555555b58e90
   },
   n_edge = 0,
   cache_valid = false,
   cache_buffer = 2.39999986,
   cache_cutoff = 0,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x555555b72f40
+    get() = 0x555555b73290
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x555555b73250
+    get() = 0x555555b735a0
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x55555583f810
+    get() = 0x55555583f990
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x55555583ce00
+    get() = 0x55555583cf80
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555b59590
+    get() = 0x555555b598e0
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555b59fe0
+    get() = 0x555555b5a330
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555b5aa30
+    get() = 0x555555b5ad80
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555b5b480
+    get() = 0x555555b5b7d0
   },
   cache_n_edge = 0
 }
@@ -932,56 +993,56 @@ THIS_TYPE: this type: PairlistComputation<true>
 MEMBER: this->.n_elem1 = 36
 MEMBER: this->.n_elem2 = 36
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555b56c50
+  get() = 0x555555b56fa0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555b576a0
+  get() = 0x555555b579f0
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555b580f0
+  get() = 0x555555b58440
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555b58b40
+  get() = 0x555555b58e90
 }
 MEMBER: this->.n_edge = 0
 MEMBER: this->.cache_valid = false
 MEMBER: this->.cache_buffer = 2.39999986
 MEMBER: this->.cache_cutoff = 0
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x555555b72f40
+  get() = 0x555555b73290
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x555555b73250
+  get() = 0x555555b735a0
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x55555583f810
+  get() = 0x55555583f990
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x55555583ce00
+  get() = 0x55555583cf80
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555b59590
+  get() = 0x555555b598e0
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555b59fe0
+  get() = 0x555555b5a330
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555b5aa30
+  get() = 0x555555b5ad80
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555b5b480
+  get() = 0x555555b5b7d0
 }
 MEMBER: this->.cache_n_edge = 0
 VARIABLE: cutoff = 6.99999905
-VARIABLE: aligned_pos1 = 0x555555b72930
+VARIABLE: aligned_pos1 = 0x555555b72c80
 DEREF: *aligned_pos1 = -6.37703133
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x555555a70a80
+VARIABLE: id1 = 0x555555a70dd0
 DEREF: *id1 = 16
-VARIABLE: aligned_pos2 = 0x555555b72930
+VARIABLE: aligned_pos2 = 0x555555b72c80
 DEREF: *aligned_pos2 = -6.37703133
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x555555a70a80
+VARIABLE: id2 = 0x555555a70dd0
 DEREF: *id2 = 16
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -1003,72 +1064,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$26 = {-6.37703133, -0.15917775, 2.07686019, -0.323963583, 0.934393406, 0.148176879, 1.00000002e+20, 1.00000002e+20, -5.13446379, 3.13012314, -3.12758756, 0.0226619989, 0.30398953, 0.952405334, 1.00000002e+20, 1.00000002e+20, -1.39120269, -0.282357693, -4.48581266, -0.526636839, 0.217367813, 0.821829677, 1.00000002e+20, 1.00000002e+20, -1.59268308, 0.136248946, -3.79538965, 0.640213072, 0.367948622, 0.674344182, 1.00000002e+20, 1.00000002e+20, -5.57865524, -1.57433856, -3.27822185, -0.25122273, 0.168141544, 0.953212857, 1.00000002e+20, 1.00000002e+20, -5.25107861, -1.39046776, -2.98478031, 0.903744221, -0.391896904, -0.172227412, 1.00000002e+20, 1.00000002e+20, -5.60599899, -1.73025858, -3.43705273, 0.519579172, 0.429255635, 0.738766789, 1.00000002e+20, 1.00000002e+20, 0.827990413, -0.224653125, 3.00674343, 0.0635836422, -0.758469343, -0.648598909, 1.00000002e+20, 1.00000002e+20, -0.0888296366, 0.325733662, 1.46868432, 0.608897746, -0.697833776, 0.377187967, 1.00000002e+20, 1.00000002e+20, 0.188547134, 2.27204323, 4.3912282, 0.893925667, 0.106140912, -0.435465544, 1.00000002e+20, 1.00000002e+20, 0.233741522, 1.88623381, 2.37110186, 0.577684999, 0.481066823, 0.659434557, 1.00000002e+20, 1.00000002e+20, -0.735849321, 1.47080398, 4.174891, -0.944180906, -0.12042892, -0.306624562, 1.00000002e+20, 1.00000002e+20, -0.979936004, 1.28127193, 2.11245537, -0.248235583...}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$27 = {-6.37703133, -0.15917775, 2.07686019, -0.323963583, 0.934393406, 0.148176879, 1.00000002e+20, 1.00000002e+20, -5.13446379, 3.13012314, -3.12758756, 0.0226619989, 0.30398953, 0.952405334, 1.00000002e+20, 1.00000002e+20, -1.39120269, -0.282357693, -4.48581266, -0.526636839, 0.217367813, 0.821829677, 1.00000002e+20, 1.00000002e+20, -1.59268308, 0.136248946, -3.79538965, 0.640213072, 0.367948622, 0.674344182, 1.00000002e+20, 1.00000002e+20, -5.57865524, -1.57433856, -3.27822185, -0.25122273, 0.168141544, 0.953212857, 1.00000002e+20, 1.00000002e+20, -5.25107861, -1.39046776, -2.98478031, 0.903744221, -0.391896904, -0.172227412, 1.00000002e+20, 1.00000002e+20, -5.60599899, -1.73025858, -3.43705273, 0.519579172, 0.429255635, 0.738766789, 1.00000002e+20, 1.00000002e+20, 0.827990413, -0.224653125, 3.00674343, 0.0635836422, -0.758469343, -0.648598909, 1.00000002e+20, 1.00000002e+20, -0.0888296366, 0.325733662, 1.46868432, 0.608897746, -0.697833776, 0.377187967, 1.00000002e+20, 1.00000002e+20, 0.188547134, 2.27204323, 4.3912282, 0.893925667, 0.106140912, -0.435465544, 1.00000002e+20, 1.00000002e+20, 0.233741522, 1.88623381, 2.37110186, 0.577684999, 0.481066823, 0.659434557, 1.00000002e+20, 1.00000002e+20, -0.735849321, 1.47080398, 4.174891, -0.944180906, -0.12042892, -0.306624562, 1.00000002e+20, 1.00000002e+20, -0.979936004, 1.28127193, 2.11245537, -0.248235583...}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$28 = true
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<true>::find_edges<&PosQuadSplineInteraction::acceptable_id_pair> (this=this@entry=0x555555b6d9e0, cutoff=6.99999905, aligned_pos1=0x555555b72930, pos1_stride=pos1_stride@entry=8, id1=0x555555a70a80, aligned_pos2=0x555555b72930, pos2_stride=pos2_stride@entry=8, id2=0x555555a70a80) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555556188cf in InteractionGraph<PosQuadSplineInteraction>::compute_edges<false> (this=this@entry=0x555555b6d950) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x000055555561a9f3 in RotamerSidechain<PosQuadSplineInteraction>::fill_holders (this=this@entry=0x555555b6d920) at /home/okleinmann/projects/upside2-md/src/rotamer.cpp:890
-#3  0x000055555561c81e in RotamerSidechain<PosQuadSplineInteraction>::compute_value (this=0x555555b6d920, mode=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/rotamer.cpp:843
+#0  PairlistComputation<true>::find_edges<&PosQuadSplineInteraction::acceptable_id_pair> (this=this@entry=0x555555b6dd30, cutoff=6.99999905, aligned_pos1=0x555555b72c80, pos1_stride=pos1_stride@entry=8, id1=0x555555a70dd0, aligned_pos2=0x555555b72c80, pos2_stride=pos2_stride@entry=8, id2=0x555555a70dd0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555556188cf in InteractionGraph<PosQuadSplineInteraction>::compute_edges<false> (this=this@entry=0x555555b6dca0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x000055555561a9f3 in RotamerSidechain<PosQuadSplineInteraction>::fill_holders (this=this@entry=0x555555b6dc70) at /home/okleinmann/projects/upside2-md/src/rotamer.cpp:890
+#3  0x000055555561c81e in RotamerSidechain<PosQuadSplineInteraction>::compute_value (this=0x555555b6dc70, mode=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/rotamer.cpp:843
 #4  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 --- GDB_CAPTURE_HIT_END ---
 
-Breakpoint 1.1, PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555bba4c8, cutoff=7, aligned_pos1=0x555555b75aa0, pos1_stride=pos1_stride@entry=8, id1=0x555555bc5730, aligned_pos2=0x555555bc6b10, pos2_stride=pos2_stride@entry=4, id2=0x555555b9f610) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Breakpoint 1.1, PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555bba2d8, cutoff=7, aligned_pos1=0x555555b75df0, pos1_stride=pos1_stride@entry=8, id1=0x555555bc5540, aligned_pos2=0x555555bc6920, pos2_stride=pos2_stride@entry=4, id2=0x555555b9f420) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$8 = 8
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$29 = 8
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555bba4c8
+this = 0x555555bba2d8
 cutoff = 7
-aligned_pos1 = 0x555555b75aa0
+aligned_pos1 = 0x555555b75df0
 pos1_stride = 8
-id1 = 0x555555bc5730
-aligned_pos2 = 0x555555bc6b10
+id1 = 0x555555bc5540
+aligned_pos2 = 0x555555bc6920
 pos2_stride = 4
-id2 = 0x555555b9f610
+id2 = 0x555555b9f420
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555bba4c8
+VARIABLE: this = 0x555555bba2d8
 DEREF: *this = {
   n_elem1 = 17,
   n_elem2 = 36,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555bc8250
+    get() = 0x555555bc8060
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555bc8c20
+    get() = 0x555555bc8a30
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555bc95f0
+    get() = 0x555555bc9400
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555bc9fc0
+    get() = 0x555555bc9dd0
   },
   n_edge = 0,
   cache_valid = false,
   cache_buffer = 2.4000001,
   cache_cutoff = 0,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x555555bc8040
+    get() = 0x555555bc7e50
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x555555bc6e20
+    get() = 0x555555bc6c30
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555bc7130
+    get() = 0x555555bc6f40
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555b65980
+    get() = 0x555555b65cd0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555bca990
+    get() = 0x555555bca7a0
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555bcb360
+    get() = 0x555555bcb170
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555bcbd30
+    get() = 0x555555bcbb40
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555bcc700
+    get() = 0x555555bcc510
   },
   cache_n_edge = 0
 }
@@ -1076,56 +1147,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 17
 MEMBER: this->.n_elem2 = 36
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555bc8250
+  get() = 0x555555bc8060
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555bc8c20
+  get() = 0x555555bc8a30
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555bc95f0
+  get() = 0x555555bc9400
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555bc9fc0
+  get() = 0x555555bc9dd0
 }
 MEMBER: this->.n_edge = 0
 MEMBER: this->.cache_valid = false
 MEMBER: this->.cache_buffer = 2.4000001
 MEMBER: this->.cache_cutoff = 0
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x555555bc8040
+  get() = 0x555555bc7e50
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x555555bc6e20
+  get() = 0x555555bc6c30
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555bc7130
+  get() = 0x555555bc6f40
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555b65980
+  get() = 0x555555b65cd0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555bca990
+  get() = 0x555555bca7a0
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555bcb360
+  get() = 0x555555bcb170
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555bcbd30
+  get() = 0x555555bcbb40
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555bcc700
+  get() = 0x555555bcc510
 }
 MEMBER: this->.cache_n_edge = 0
 VARIABLE: cutoff = 7
-VARIABLE: aligned_pos1 = 0x555555b75aa0
+VARIABLE: aligned_pos1 = 0x555555b75df0
 DEREF: *aligned_pos1 = -5.66885471
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x555555bc5730
+VARIABLE: id1 = 0x555555bc5540
 DEREF: *id1 = 1
-VARIABLE: aligned_pos2 = 0x555555bc6b10
+VARIABLE: aligned_pos2 = 0x555555bc6920
 DEREF: *aligned_pos2 = -6.37703133
 VARIABLE: pos2_stride = 4
-VARIABLE: id2 = 0x555555b9f610
+VARIABLE: id2 = 0x555555b9f420
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -1147,72 +1218,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$30 = {-5.66885471, 0.65845108, -0.2592327, -0.764986336, 0.544830799, -0.343446255, 1.00000002e+20, 1.00000002e+20, -1.81063712, -0.100712679, 0.865022838, 0.0284425952, -0.954218984, 0.297753274, 1.00000002e+20, 1.00000002e+20, 1.93304849, 3.81345892, 0.895142376, -0.785551071, -0.131296456, 0.604707241, 1.00000002e+20, 1.00000002e+20, 3.49375653, 1.6463567, 0.532758415, -0.955201089, -0.139367461, 0.261089116, 1.00000002e+20, 1.00000002e+20, 2.95413399, 1.0802263, -1.38677168, -0.579772055, 0.478666216, 0.659350395, 1.00000002e+20, 1.00000002e+20, 1.56805336, -0.797739506, -1.56716549, -0.0184999928, 0.605977774, 0.79526639, 1.00000002e+20, 1.00000002e+20, -1.06592965, -4.1814146, -1.77056515, 0.022428399, -0.69365263, -0.719960392, 1.00000002e+20, 1.00000002e+20, -1.66565347, -2.25531197, 1.97789991, -0.318166882, 0.926918328, -0.19897753, 1.00000002e+20, 1.00000002e+20, -4.17120934, -1.13087535, 1.63262057, 0.753594637, -0.548286557, 0.362597257, 1.00000002e+20, 1.00000002e+20, -2.80709958, 2.30934477, -0.611981928, -0.0495426208, 0.951891065, -0.302404761, 1.00000002e+20, 1.00000002e+20, 0.918775976, 1.22713006, -0.491451651, 0.616486013, -0.678927362, -0.398751318, 1.00000002e+20, 1.00000002e+20, 3.41207242, 4.1386447, -1.70612705, 0.772370279, 0.136810213, -0.620263755, 1.00000002e+20, 1.00000002e+20, 6.05847836, 3.16293192, 0.106711589, 0.954955518...}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$31 = {-6.37703133, -0.15917775, 2.07686019, 1, -5.13446379, 3.13012314, -3.12758756, 4.61874079e-05, -1.39120269, -0.282357693, -4.48581266, 0.364444405, -1.59268308, 0.136248946, -3.79538965, 0.163783208, -5.57865524, -1.57433856, -3.27822185, 0.101278536, -5.25107861, -1.39046776, -2.98478031, 0.0493987165, -5.60599899, -1.73025858, -3.43705273, 0.321327448, 0.827990413, -0.224653125, 3.00674343, 0.002420353, -0.0888296366, 0.325733662, 1.46868432, 0.00202747923, 0.188547134, 2.27204323, 4.3912282, 0.243476376, 0.233741522, 1.88623381, 2.37110186, 0.627639055, -0.735849321, 1.47080398, 4.174891, 0.0838420764, -0.979936004, 1.28127193, 2.11245537, 0.0510945842, -0.265216947, 5.0791297, -0.721963644, 0.858409464, 1.20468438, 3.69250345, -0.928133845, 1.00000064e-10, -0.610300064, 4.84284496, -1.14045405, 0.140046984, 3.38006353, 3.24831676, 2.79421926, 0.0192172918, 4.68314886, 4.0941205, 2.63091779, 0.11000336, 5.15274334, 5.07332993, 3.01372027, 0.279702604, 3.37146282, 4.52118349, 2.10257053, 0.0816046372, 3.93484902, 5.6290288, 2.90408421, 0.366364509, 2.61522508, 4.88715839, 3.09749579, 0.14370963, 4.80480099, -0.500490427, 1.24423146, 0.954300523, 4.67730427, -0.919241071, 0.530965626, 0.00579898944, 5.47757339, -0.891382813, 0.757425845, 0.040768411...}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$32 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555bba4c8, cutoff=7, aligned_pos1=0x555555b75aa0, pos1_stride=pos1_stride@entry=8, id1=0x555555bc5730, aligned_pos2=0x555555bc6b10, pos2_stride=pos2_stride@entry=4, id2=0x555555b9f610) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555555e9208 in InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555bba438) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x00005555555e94a1 in (anonymous namespace)::EnvironmentCoverage::compute_value (this=0x555555bba3e0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:318
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555bba2d8, cutoff=7, aligned_pos1=0x555555b75df0, pos1_stride=pos1_stride@entry=8, id1=0x555555bc5540, aligned_pos2=0x555555bc6920, pos2_stride=pos2_stride@entry=4, id2=0x555555b9f420) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555555e9208 in InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555bba248) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x00005555555e94a1 in (anonymous namespace)::EnvironmentCoverage::compute_value (this=0x555555bba1f0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:318
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555c1970 in upside_main (argc=<optimized out>, argv=<optimized out>, verbose=verbose@entry=1) at /home/okleinmann/projects/upside2-md/src/main.cpp:900
 --- GDB_CAPTURE_HIT_END ---
 
-Breakpoint 1.1, PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555c085f8, cutoff=9, aligned_pos1=0x555555c13000, pos1_stride=pos1_stride@entry=8, id1=0x555555c11340, aligned_pos2=0x555555c13270, pos2_stride=pos2_stride@entry=4, id2=0x555555bc7290) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Breakpoint 1.1, PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555c08408, cutoff=9, aligned_pos1=0x555555c12e10, pos1_stride=pos1_stride@entry=8, id1=0x555555c11150, aligned_pos2=0x555555c13080, pos2_stride=pos2_stride@entry=4, id2=0x555555bc70a0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$9 = 9
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$33 = 9
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555c085f8
+this = 0x555555c08408
 cutoff = 9
-aligned_pos1 = 0x555555c13000
+aligned_pos1 = 0x555555c12e10
 pos1_stride = 8
-id1 = 0x555555c11340
-aligned_pos2 = 0x555555c13270
+id1 = 0x555555c11150
+aligned_pos2 = 0x555555c13080
 pos2_stride = 4
-id2 = 0x555555bc7290
+id2 = 0x555555bc70a0
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555c085f8
+VARIABLE: this = 0x555555c08408
 DEREF: *this = {
   n_elem1 = 10,
   n_elem2 = 36,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555c13580
+    get() = 0x555555c13390
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555c15400
+    get() = 0x555555c15210
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555c159d0
+    get() = 0x555555c157e0
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555c15fa0
+    get() = 0x555555c15db0
   },
   n_edge = 0,
   cache_valid = false,
   cache_buffer = 2.80000019,
   cache_cutoff = 0,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x555555c12de0
+    get() = 0x555555c12bf0
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x555555c13b50
+    get() = 0x555555c13960
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555c13e60
+    get() = 0x555555c13c70
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555bc71c0
+    get() = 0x555555bc6fd0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555c16570
+    get() = 0x555555c16380
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555c16b40
+    get() = 0x555555c16950
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555c17110
+    get() = 0x555555c16f20
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555c176e0
+    get() = 0x555555c174f0
   },
   cache_n_edge = 0
 }
@@ -1220,56 +1301,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 10
 MEMBER: this->.n_elem2 = 36
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555c13580
+  get() = 0x555555c13390
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555c15400
+  get() = 0x555555c15210
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555c159d0
+  get() = 0x555555c157e0
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555c15fa0
+  get() = 0x555555c15db0
 }
 MEMBER: this->.n_edge = 0
 MEMBER: this->.cache_valid = false
 MEMBER: this->.cache_buffer = 2.80000019
 MEMBER: this->.cache_cutoff = 0
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x555555c12de0
+  get() = 0x555555c12bf0
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x555555c13b50
+  get() = 0x555555c13960
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555c13e60
+  get() = 0x555555c13c70
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555bc71c0
+  get() = 0x555555bc6fd0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555c16570
+  get() = 0x555555c16380
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555c16b40
+  get() = 0x555555c16950
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555c17110
+  get() = 0x555555c16f20
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555c176e0
+  get() = 0x555555c174f0
 }
 MEMBER: this->.cache_n_edge = 0
 VARIABLE: cutoff = 9
-VARIABLE: aligned_pos1 = 0x555555c13000
+VARIABLE: aligned_pos1 = 0x555555c12e10
 DEREF: *aligned_pos1 = -6.78608704
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x555555c11340
+VARIABLE: id1 = 0x555555c11150
 DEREF: *id1 = 0
-VARIABLE: aligned_pos2 = 0x555555c13270
+VARIABLE: aligned_pos2 = 0x555555c13080
 DEREF: *aligned_pos2 = -6.37703133
 VARIABLE: pos2_stride = 4
-VARIABLE: id2 = 0x555555bc7290
+VARIABLE: id2 = 0x555555bc70a0
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -1291,91 +1372,101 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$34 = {-6.78608704, 1.14393878, 2.16954017, -0.237715632, 0.961168885, 0.140163049, 1.00000002e+20, 1.00000002e+20, -4.0316391, 0.287030101, -2.22881246, -0.183683932, 0.127069116, -0.974737287, 1.00000002e+20, 1.00000002e+20, -0.108612061, 1.12470055, 2.32662439, 0.478847504, -0.375102043, 0.7937271, 1.00000002e+20, 1.00000002e+20, 0.502098799, 5.11576796, -2.035218, -0.343250066, 0.861389935, -0.374415308, 1.00000002e+20, 1.00000002e+20, 3.92085147, 4.07102346, 2.45670581, -0.0324799865, -0.00267234445, 0.999468684, 1.00000002e+20, 1.00000002e+20, 4.99245644, -0.572952747, 0.717642248, -0.0848762691, -0.792465329, 0.603981733, 1.00000002e+20, 1.00000002e+20, 4.10108089, 0.383915544, -4.33509445, 0.746445239, 0.00944498181, -0.665379584, 1.00000002e+20, 1.00000002e+20, 1.86123073, -3.77681637, -2.02259541, 0.645585716, -0.752018929, 0.132987589, 1.00000002e+20, 1.00000002e+20, -3.23281002, -4.60814047, -0.483783662, -0.722188473, -0.643325448, -0.254116774, 1.00000002e+20, 1.00000002e+20, -0.936414301, -2.19666314, 4.41876507, -0.0988800824, 0.773607433, 0.625901461, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$35 = {-6.37703133, -0.15917775, 2.07686019, 1, -5.13446379, 3.13012314, -3.12758756, 4.61874079e-05, -1.39120269, -0.282357693, -4.48581266, 0.364444405, -1.59268308, 0.136248946, -3.79538965, 0.163783208, -5.57865524, -1.57433856, -3.27822185, 0.101278536, -5.25107861, -1.39046776, -2.98478031, 0.0493987165, -5.60599899, -1.73025858, -3.43705273, 0.321327448, 0.827990413, -0.224653125, 3.00674343, 0.002420353, -0.0888296366, 0.325733662, 1.46868432, 0.00202747923, 0.188547134, 2.27204323, 4.3912282, 0.243476376, 0.233741522, 1.88623381, 2.37110186, 0.627639055, -0.735849321, 1.47080398, 4.174891, 0.0838420764, -0.979936004, 1.28127193, 2.11245537, 0.0510945842, -0.265216947, 5.0791297, -0.721963644, 0.858409464, 1.20468438, 3.69250345, -0.928133845, 1.00000064e-10, -0.610300064, 4.84284496, -1.14045405, 0.140046984, 3.38006353, 3.24831676, 2.79421926, 0.0192172918, 4.68314886, 4.0941205, 2.63091779, 0.11000336, 5.15274334, 5.07332993, 3.01372027, 0.279702604, 3.37146282, 4.52118349, 2.10257053, 0.0816046372, 3.93484902, 5.6290288, 2.90408421, 0.366364509, 2.61522508, 4.88715839, 3.09749579, 0.14370963, 4.80480099, -0.500490427, 1.24423146, 0.954300523, 4.67730427, -0.919241071, 0.530965626, 0.00579898944, 5.47757339, -0.891382813, 0.757425845, 0.040768411...}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$36 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555c085f8, cutoff=9, aligned_pos1=0x555555c13000, pos1_stride=pos1_stride@entry=8, id1=0x555555c11340, aligned_pos2=0x555555c13270, pos2_stride=pos2_stride@entry=4, id2=0x555555bc7290) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555555e9208 in InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555c08568) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x00005555555e94a1 in (anonymous namespace)::EnvironmentCoverage::compute_value (this=0x555555c08510, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:318
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555c08408, cutoff=9, aligned_pos1=0x555555c12e10, pos1_stride=pos1_stride@entry=8, id1=0x555555c11150, aligned_pos2=0x555555c13080, pos2_stride=pos2_stride@entry=4, id2=0x555555bc70a0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555555e9208 in InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555c08378) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x00005555555e94a1 in (anonymous namespace)::EnvironmentCoverage::compute_value (this=0x555555c08320, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:318
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555c1970 in upside_main (argc=<optimized out>, argv=<optimized out>, verbose=verbose@entry=1) at /home/okleinmann/projects/upside2-md/src/main.cpp:900
 --- GDB_CAPTURE_HIT_END ---
-[New Thread 0x7ffff58c16c0 (LWP 32870)]
-[New Thread 0x7ffff50c06c0 (LWP 32871)]
-[New Thread 0x7ffff48bf6c0 (LWP 32872)]
-[New Thread 0x7ffff40be6c0 (LWP 32873)]
-[New Thread 0x7ffff38bd6c0 (LWP 32874)]
-[New Thread 0x7ffff30bc6c0 (LWP 32875)]
-[New Thread 0x7ffff28bb6c0 (LWP 32876)]
-[New Thread 0x7ffff20ba6c0 (LWP 32877)]
-[New Thread 0x7ffff18b96c0 (LWP 32878)]
-[New Thread 0x7ffff10b86c0 (LWP 32879)]
-[New Thread 0x7ffff08b76c0 (LWP 32880)]
-[New Thread 0x7ffff00b66c0 (LWP 32881)]
-[New Thread 0x7fffef8b56c0 (LWP 32882)]
-[New Thread 0x7fffef0b46c0 (LWP 32883)]
-[New Thread 0x7fffee8b36c0 (LWP 32884)]
-[New Thread 0x7fffee0b26c0 (LWP 32885)]
-[New Thread 0x7fffed8b16c0 (LWP 32886)]
-[New Thread 0x7fffed0b06c0 (LWP 32887)]
-[New Thread 0x7fffec8af6c0 (LWP 32888)]
+[New Thread 0x7ffff58c16c0 (LWP 45690)]
+[New Thread 0x7ffff50c06c0 (LWP 45691)]
+[New Thread 0x7ffff48bf6c0 (LWP 45692)]
+[New Thread 0x7ffff40be6c0 (LWP 45693)]
+[New Thread 0x7ffff38bd6c0 (LWP 45694)]
+[New Thread 0x7ffff30bc6c0 (LWP 45695)]
+[New Thread 0x7ffff28bb6c0 (LWP 45696)]
+[New Thread 0x7ffff20ba6c0 (LWP 45697)]
+[New Thread 0x7ffff18b96c0 (LWP 45698)]
+[New Thread 0x7ffff10b86c0 (LWP 45699)]
+[New Thread 0x7ffff08b76c0 (LWP 45700)]
+[New Thread 0x7ffff00b66c0 (LWP 45701)]
+[New Thread 0x7fffef8b56c0 (LWP 45702)]
+[New Thread 0x7fffef0b46c0 (LWP 45703)]
+[New Thread 0x7fffee8b36c0 (LWP 45704)]
+[New Thread 0x7fffee0b26c0 (LWP 45705)]
+[New Thread 0x7fffed8b16c0 (LWP 45706)]
+[New Thread 0x7fffed0b06c0 (LWP 45707)]
+[New Thread 0x7fffec8af6c0 (LWP 45708)]
 
-Thread 1 "upside" hit Breakpoint 1.13, PairlistComputation<true>::find_edges<(anonymous namespace)::acceptable_backbone_pair> (this=this@entry=0x5555557da6b0, cutoff=6.91850281, aligned_pos1=0x555555c845a0, pos1_stride=4, id1=0x55555583c9f0, aligned_pos2=0x555555c845a0, pos2_stride=4, id2=0x55555583c9f0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Thread 1 "upside" hit Breakpoint 1.13, PairlistComputation<true>::find_edges<(anonymous namespace)::acceptable_backbone_pair> (this=this@entry=0x5555557da830, cutoff=6.91850281, aligned_pos1=0x555555c84320, pos1_stride=4, id1=0x55555583cb70, aligned_pos2=0x555555c84320, pos2_stride=4, id2=0x55555583cb70) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$10 = 10
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$37 = 10
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x5555557da6b0
+this = 0x5555557da830
 cutoff = 6.91850281
-aligned_pos1 = 0x555555c845a0
+aligned_pos1 = 0x555555c84320
 pos1_stride = 4
-id1 = 0x55555583c9f0
-aligned_pos2 = 0x555555c845a0
+id1 = 0x55555583cb70
+aligned_pos2 = 0x555555c84320
 pos2_stride = 4
-id2 = 0x55555583c9f0
+id2 = 0x55555583cb70
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x5555557da6b0
+VARIABLE: this = 0x5555557da830
 DEREF: *this = {
   n_elem1 = 10,
   n_elem2 = 10,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x55555582ba50
+    get() = 0x55555582bbd0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x55555582afb0
+    get() = 0x55555582b130
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555557aeed0
+    get() = 0x5555557af050
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555557aee00
+    get() = 0x5555557aef80
   },
   n_edge = 20,
   cache_valid = true,
   cache_buffer = 1,
   cache_cutoff = 7.91850281,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x55555583ca40
+    get() = 0x55555583cbc0
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x55555583cb50
+    get() = 0x55555583ccd0
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x55555582e490
+    get() = 0x55555582e610
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555557ff440
+    get() = 0x5555557ff5c0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555764e70
+    get() = 0x555555764df0
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555557628a0
+    get() = 0x555555762820
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555763270
+    get() = 0x5555557631f0
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x55555583cc60
+    get() = 0x55555583cde0
   },
   cache_n_edge = 23
 }
@@ -1383,56 +1474,56 @@ THIS_TYPE: this type: PairlistComputation<true>
 MEMBER: this->.n_elem1 = 10
 MEMBER: this->.n_elem2 = 10
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x55555582ba50
+  get() = 0x55555582bbd0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x55555582afb0
+  get() = 0x55555582b130
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555557aeed0
+  get() = 0x5555557af050
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555557aee00
+  get() = 0x5555557aef80
 }
 MEMBER: this->.n_edge = 20
 MEMBER: this->.cache_valid = true
 MEMBER: this->.cache_buffer = 1
 MEMBER: this->.cache_cutoff = 7.91850281
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x55555583ca40
+  get() = 0x55555583cbc0
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x55555583cb50
+  get() = 0x55555583ccd0
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x55555582e490
+  get() = 0x55555582e610
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555557ff440
+  get() = 0x5555557ff5c0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555764e70
+  get() = 0x555555764df0
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555557628a0
+  get() = 0x555555762820
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555763270
+  get() = 0x5555557631f0
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x55555583cc60
+  get() = 0x55555583cde0
 }
 MEMBER: this->.cache_n_edge = 23
 VARIABLE: cutoff = 6.91850281
-VARIABLE: aligned_pos1 = 0x555555c845a0
+VARIABLE: aligned_pos1 = 0x555555c84320
 DEREF: *aligned_pos1 = -5.95233345
 VARIABLE: pos1_stride = 4
-VARIABLE: id1 = 0x55555583c9f0
+VARIABLE: id1 = 0x55555583cb70
 DEREF: *id1 = 0
-VARIABLE: aligned_pos2 = 0x555555c845a0
+VARIABLE: aligned_pos2 = 0x555555c84320
 DEREF: *aligned_pos2 = -5.95233345
 VARIABLE: pos2_stride = 4
-VARIABLE: id2 = 0x55555583c9f0
+VARIABLE: id2 = 0x55555583cb70
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -1454,72 +1545,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$38 = {-5.95233345, -0.601000011, 2.12300014, 0, -3.82566643, 0.465666711, -0.313666701, 0, -0.838999987, 1.50566673, 0.576333344, 0, 1.21099997, 3.69233322, -0.933666706, 0, 3.82766676, 3.65566635, 0.569666684, 0, 4.71433353, 0.895666778, -0.510333359, 0, 2.88433337, 0.0156667233, -2.87699986, 0, 0.754333377, -2.19766688, -1.87033343, 0, -1.579, -3.73433375, 0.00966668129, 0, -1.19566667, -3.69766688, 3.22633362, 0}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$39 = {-5.95233345, -0.601000011, 2.12300014, 0, -3.82566643, 0.465666711, -0.313666701, 0, -0.838999987, 1.50566673, 0.576333344, 0, 1.21099997, 3.69233322, -0.933666706, 0, 3.82766676, 3.65566635, 0.569666684, 0, 4.71433353, 0.895666778, -0.510333359, 0, 2.88433337, 0.0156667233, -2.87699986, 0, 0.754333377, -2.19766688, -1.87033343, 0, -1.579, -3.73433375, 0.00966668129, 0, -1.19566667, -3.69766688, 3.22633362, 0}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$40 = true
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<true>::find_edges<(anonymous namespace)::acceptable_backbone_pair> (this=this@entry=0x5555557da6b0, cutoff=6.91850281, aligned_pos1=0x555555c845a0, pos1_stride=4, id1=0x55555583c9f0, aligned_pos2=0x555555c845a0, pos2_stride=4, id2=0x55555583c9f0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x0000555555687ab3 in BackbonePairs::compute_value (this=0x5555557da660, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/backbone_steric.cpp:102
+#0  PairlistComputation<true>::find_edges<(anonymous namespace)::acceptable_backbone_pair> (this=this@entry=0x5555557da830, cutoff=6.91850281, aligned_pos1=0x555555c84320, pos1_stride=4, id1=0x55555583cb70, aligned_pos2=0x555555c84320, pos2_stride=4, id2=0x55555583cb70) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x0000555555687ab3 in BackbonePairs::compute_value (this=0x5555557da7e0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/backbone_steric.cpp:102
 #2  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #3  0x00005555555bac36 in upside_main._omp_fn.0(void) () at /home/okleinmann/projects/upside2-md/src/main.cpp:948
 #4  0x00007ffff78d50b6 in GOMP_parallel () from /lib/x86_64-linux-gnu/libgomp.so.1
 --- GDB_CAPTURE_HIT_END ---
 
-Thread 1 "upside" hit Breakpoint 1.6, PairlistComputation<false>::find_edges<(anonymous namespace)::ProteinHBondInteraction::acceptable_id_pair> (this=this@entry=0x555555848a50, cutoff=3.5, aligned_pos1=0x5555558c9870, pos1_stride=pos1_stride@entry=8, id1=0x5555558cb760, aligned_pos2=0x5555558cb7b0, pos2_stride=pos2_stride@entry=8, id2=0x5555558cb500) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Thread 1 "upside" hit Breakpoint 1.6, PairlistComputation<false>::find_edges<(anonymous namespace)::ProteinHBondInteraction::acceptable_id_pair> (this=this@entry=0x555555848bd0, cutoff=3.5, aligned_pos1=0x5555558c99f0, pos1_stride=pos1_stride@entry=8, id1=0x5555558cb8e0, aligned_pos2=0x5555558cb930, pos2_stride=pos2_stride@entry=8, id2=0x5555558cb680) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$11 = 11
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$41 = 11
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555848a50
+this = 0x555555848bd0
 cutoff = 3.5
-aligned_pos1 = 0x5555558c9870
+aligned_pos1 = 0x5555558c99f0
 pos1_stride = 8
-id1 = 0x5555558cb760
-aligned_pos2 = 0x5555558cb7b0
+id1 = 0x5555558cb8e0
+aligned_pos2 = 0x5555558cb930
 pos2_stride = 8
-id2 = 0x5555558cb500
+id2 = 0x5555558cb680
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555848a50
+VARIABLE: this = 0x555555848bd0
 DEREF: *this = {
   n_elem1 = 8,
   n_elem2 = 9,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cb550
+    get() = 0x5555558cb6d0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cb9c0
+    get() = 0x5555558cbb40
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cbb10
+    get() = 0x5555558cbc90
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cbc60
+    get() = 0x5555558cbde0
   },
   n_edge = 10,
   cache_valid = true,
   cache_buffer = 1.70000005,
   cache_cutoff = 5.19999981,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x5555558cbdb0
+    get() = 0x5555558cbf30
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x5555558cbec0
+    get() = 0x5555558cc040
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cbfd0
+    get() = 0x5555558cc150
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cc020
+    get() = 0x5555558cc1a0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cc070
+    get() = 0x5555558cc1f0
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cc1c0
+    get() = 0x5555558cc340
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cd8b0
+    get() = 0x5555558cda30
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cda00
+    get() = 0x5555558cdb80
   },
   cache_n_edge = 17
 }
@@ -1527,56 +1628,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 8
 MEMBER: this->.n_elem2 = 9
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cb550
+  get() = 0x5555558cb6d0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cb9c0
+  get() = 0x5555558cbb40
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cbb10
+  get() = 0x5555558cbc90
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cbc60
+  get() = 0x5555558cbde0
 }
 MEMBER: this->.n_edge = 10
 MEMBER: this->.cache_valid = true
 MEMBER: this->.cache_buffer = 1.70000005
 MEMBER: this->.cache_cutoff = 5.19999981
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x5555558cbdb0
+  get() = 0x5555558cbf30
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x5555558cbec0
+  get() = 0x5555558cc040
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cbfd0
+  get() = 0x5555558cc150
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cc020
+  get() = 0x5555558cc1a0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cc070
+  get() = 0x5555558cc1f0
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cc1c0
+  get() = 0x5555558cc340
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cd8b0
+  get() = 0x5555558cda30
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cda00
+  get() = 0x5555558cdb80
 }
 MEMBER: this->.cache_n_edge = 17
 VARIABLE: cutoff = 3.5
-VARIABLE: aligned_pos1 = 0x5555558c9870
+VARIABLE: aligned_pos1 = 0x5555558c99f0
 DEREF: *aligned_pos1 = -5.66885424
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x5555558cb760
+VARIABLE: id1 = 0x5555558cb8e0
 DEREF: *id1 = 1
-VARIABLE: aligned_pos2 = 0x5555558cb7b0
+VARIABLE: aligned_pos2 = 0x5555558cb930
 DEREF: *aligned_pos2 = -4.17120934
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x5555558cb500
+VARIABLE: id2 = 0x5555558cb680
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -1598,72 +1699,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$42 = {-5.66885424, 0.65845114, -0.259232789, -0.764986157, 0.544830799, -0.343446314, 1.00000002e+20, 1.00000002e+20, -1.81063712, -0.10071262, 0.865022779, 0.0284425989, -0.954218984, 0.297753245, 1.00000002e+20, 1.00000002e+20, 1.93304849, 3.81345892, 0.895142317, -0.785551071, -0.131296456, 0.604707241, 1.00000002e+20, 1.00000002e+20, 3.49375653, 1.6463567, 0.532758355, -0.95520097, -0.139367431, 0.261089057, 1.00000002e+20, 1.00000002e+20, 2.95413399, 1.0802263, -1.38677168, -0.579772055, 0.478666216, 0.659350395, 1.00000002e+20, 1.00000002e+20, 1.56805325, -0.797739506, -1.56716549, -0.0185000245, 0.605977774, 0.795266509, 1.00000002e+20, 1.00000002e+20, -1.06592977, -4.1814146, -1.77056515, 0.0224283393, -0.69365263, -0.719960392, 1.00000002e+20, 1.00000002e+20, -1.66565347, -2.25531197, 1.97790003, -0.318166882, 0.926918447, -0.198977381, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$43 = {-4.17120934, -1.13087523, 1.63262057, 0.753594637, -0.548286557, 0.362597257, 1.00000002e+20, 1.00000002e+20, -2.80709958, 2.30934501, -0.611981988, -0.0495426282, 0.951891124, -0.302404821, 1.00000002e+20, 1.00000002e+20, 0.918776035, 1.22713006, -0.491451681, 0.616486013, -0.678927362, -0.398751318, 1.00000002e+20, 1.00000002e+20, 3.41207242, 4.1386447, -1.70612705, 0.772370279, 0.136810213, -0.620263755, 1.00000002e+20, 1.00000002e+20, 6.05847836, 3.16293192, 0.106711626, 0.954955518, 0.16446121, -0.247006714, 1.00000002e+20, 1.00000002e+20, 5.41466522, -0.310462087, -2.42082214, 0.597041965, -0.48343721, -0.640179098, 1.00000002e+20, 1.00000002e+20, 2.26970243, -1.7176559, -4.33383846, 0.0285234787, -0.594077349, -0.80390209, 1.00000002e+20, 1.00000002e+20, -0.185046807, -1.74580669, -0.238571689, 0.000499848276, 0.705801129, 0.708409905, 1.00000002e+20, 1.00000002e+20, -1.11906636, -5.16866207, 1.47199643, 0.311774433, -0.93359828, 0.176610038, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$44 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::ProteinHBondInteraction::acceptable_id_pair> (this=this@entry=0x555555848a50, cutoff=3.5, aligned_pos1=0x5555558c9870, pos1_stride=pos1_stride@entry=8, id1=0x5555558cb760, aligned_pos2=0x5555558cb7b0, pos2_stride=pos2_stride@entry=8, id2=0x5555558cb500) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x0000555555603aa7 in InteractionGraph<(anonymous namespace)::ProteinHBondInteraction>::compute_edges<>(void) (this=this@entry=0x5555558489c0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x0000555555603ddf in ProteinHBond::compute_value (this=0x555555848980, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:393
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::ProteinHBondInteraction::acceptable_id_pair> (this=this@entry=0x555555848bd0, cutoff=3.5, aligned_pos1=0x5555558c99f0, pos1_stride=pos1_stride@entry=8, id1=0x5555558cb8e0, aligned_pos2=0x5555558cb930, pos2_stride=pos2_stride@entry=8, id2=0x5555558cb680) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x0000555555603aa7 in InteractionGraph<(anonymous namespace)::ProteinHBondInteraction>::compute_edges<>(void) (this=this@entry=0x555555848b40) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x0000555555603ddf in ProteinHBond::compute_value (this=0x555555848b00, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:393
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555bac36 in upside_main._omp_fn.0(void) () at /home/okleinmann/projects/upside2-md/src/main.cpp:948
 --- GDB_CAPTURE_HIT_END ---
 
-Thread 1 "upside" hit Breakpoint 1.2, PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x5555559546f8, cutoff=4, aligned_pos1=0x555555943640, pos1_stride=pos1_stride@entry=8, id1=0x555555943020, aligned_pos2=0x555555943850, pos2_stride=pos2_stride@entry=8, id2=0x555555943450) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Thread 1 "upside" hit Breakpoint 1.2, PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555954878, cutoff=4, aligned_pos1=0x5555559437c0, pos1_stride=pos1_stride@entry=8, id1=0x5555559431a0, aligned_pos2=0x5555559439d0, pos2_stride=pos2_stride@entry=8, id2=0x5555559435d0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$12 = 12
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$45 = 12
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x5555559546f8
+this = 0x555555954878
 cutoff = 4
-aligned_pos1 = 0x555555943640
+aligned_pos1 = 0x5555559437c0
 pos1_stride = 8
-id1 = 0x555555943020
-aligned_pos2 = 0x555555943850
+id1 = 0x5555559431a0
+aligned_pos2 = 0x5555559439d0
 pos2_stride = 8
-id2 = 0x555555943450
+id2 = 0x5555559435d0
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x5555559546f8
+VARIABLE: this = 0x555555954878
 DEREF: *this = {
   n_elem1 = 8,
   n_elem2 = 9,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555943a60
+    get() = 0x555555943be0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555943bb0
+    get() = 0x555555943d30
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555943d00
+    get() = 0x555555943e80
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555943e50
+    get() = 0x555555943fd0
   },
   n_edge = 6,
   cache_valid = true,
   cache_buffer = 1.79999995,
   cache_cutoff = 5.80000019,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x555555943fa0
+    get() = 0x555555944120
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x5555559440b0
+    get() = 0x555555944230
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555559441c0
+    get() = 0x555555944340
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555944210
+    get() = 0x555555944390
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x5555559458d0
+    get() = 0x555555945a50
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555945a20
+    get() = 0x555555945ba0
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555945b70
+    get() = 0x555555945cf0
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555945cc0
+    get() = 0x555555945e40
   },
   cache_n_edge = 13
 }
@@ -1671,56 +1782,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 8
 MEMBER: this->.n_elem2 = 9
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555943a60
+  get() = 0x555555943be0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555943bb0
+  get() = 0x555555943d30
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555943d00
+  get() = 0x555555943e80
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555943e50
+  get() = 0x555555943fd0
 }
 MEMBER: this->.n_edge = 6
 MEMBER: this->.cache_valid = true
 MEMBER: this->.cache_buffer = 1.79999995
 MEMBER: this->.cache_cutoff = 5.80000019
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x555555943fa0
+  get() = 0x555555944120
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x5555559440b0
+  get() = 0x555555944230
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555559441c0
+  get() = 0x555555944340
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555944210
+  get() = 0x555555944390
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x5555559458d0
+  get() = 0x555555945a50
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555945a20
+  get() = 0x555555945ba0
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555945b70
+  get() = 0x555555945cf0
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555945cc0
+  get() = 0x555555945e40
 }
 MEMBER: this->.cache_n_edge = 13
 VARIABLE: cutoff = 4
-VARIABLE: aligned_pos1 = 0x555555943640
+VARIABLE: aligned_pos1 = 0x5555559437c0
 DEREF: *aligned_pos1 = -5.66885424
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x555555943020
+VARIABLE: id1 = 0x5555559431a0
 DEREF: *id1 = 1
-VARIABLE: aligned_pos2 = 0x555555943850
+VARIABLE: aligned_pos2 = 0x5555559439d0
 DEREF: *aligned_pos2 = -4.17120934
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x555555943450
+VARIABLE: id2 = 0x5555559435d0
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -1742,72 +1853,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$46 = {-5.66885424, 0.65845114, -0.259232789, -0.764986157, 0.544830799, -0.343446314, 1.00000002e+20, 1.00000002e+20, -1.81063712, -0.10071262, 0.865022779, 0.0284425989, -0.954218984, 0.297753245, 1.00000002e+20, 1.00000002e+20, 1.93304849, 3.81345892, 0.895142317, -0.785551071, -0.131296456, 0.604707241, 1.00000002e+20, 1.00000002e+20, 3.49375653, 1.6463567, 0.532758355, -0.95520097, -0.139367431, 0.261089057, 1.00000002e+20, 1.00000002e+20, 2.95413399, 1.0802263, -1.38677168, -0.579772055, 0.478666216, 0.659350395, 1.00000002e+20, 1.00000002e+20, 1.56805325, -0.797739506, -1.56716549, -0.0185000245, 0.605977774, 0.795266509, 1.00000002e+20, 1.00000002e+20, -1.06592977, -4.1814146, -1.77056515, 0.0224283393, -0.69365263, -0.719960392, 1.00000002e+20, 1.00000002e+20, -1.66565347, -2.25531197, 1.97790003, -0.318166882, 0.926918447, -0.198977381, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$47 = {-4.17120934, -1.13087523, 1.63262057, 0.753594637, -0.548286557, 0.362597257, 1.00000002e+20, 1.00000002e+20, -2.80709958, 2.30934501, -0.611981988, -0.0495426282, 0.951891124, -0.302404821, 1.00000002e+20, 1.00000002e+20, 0.918776035, 1.22713006, -0.491451681, 0.616486013, -0.678927362, -0.398751318, 1.00000002e+20, 1.00000002e+20, 3.41207242, 4.1386447, -1.70612705, 0.772370279, 0.136810213, -0.620263755, 1.00000002e+20, 1.00000002e+20, 6.05847836, 3.16293192, 0.106711626, 0.954955518, 0.16446121, -0.247006714, 1.00000002e+20, 1.00000002e+20, 5.41466522, -0.310462087, -2.42082214, 0.597041965, -0.48343721, -0.640179098, 1.00000002e+20, 1.00000002e+20, 2.26970243, -1.7176559, -4.33383846, 0.0285234787, -0.594077349, -0.80390209, 1.00000002e+20, 1.00000002e+20, -0.185046807, -1.74580669, -0.238571689, 0.000499848276, 0.705801129, 0.708409905, 1.00000002e+20, 1.00000002e+20, -1.11906636, -5.16866207, 1.47199643, 0.311774433, -0.93359828, 0.176610038, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$48 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x5555559546f8, cutoff=4, aligned_pos1=0x555555943640, pos1_stride=pos1_stride@entry=8, id1=0x555555943020, aligned_pos2=0x555555943850, pos2_stride=pos2_stride@entry=8, id2=0x555555943450) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555555e8dc5 in InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555954668) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x00005555555e905f in (anonymous namespace)::HbondEnvironmentCoverage::compute_value (this=0x555555954630, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:365
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555954878, cutoff=4, aligned_pos1=0x5555559437c0, pos1_stride=pos1_stride@entry=8, id1=0x5555559431a0, aligned_pos2=0x5555559439d0, pos2_stride=pos2_stride@entry=8, id2=0x5555559435d0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555555e8dc5 in InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x5555559547e8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x00005555555e905f in (anonymous namespace)::HbondEnvironmentCoverage::compute_value (this=0x5555559547b0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:365
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555bac36 in upside_main._omp_fn.0(void) () at /home/okleinmann/projects/upside2-md/src/main.cpp:948
 --- GDB_CAPTURE_HIT_END ---
 
-Thread 1 "upside" hit Breakpoint 1.2, PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555984018, cutoff=4, aligned_pos1=0x5555559e2120, pos1_stride=pos1_stride@entry=8, id1=0x5555559df6d0, aligned_pos2=0x5555559df7f0, pos2_stride=pos2_stride@entry=8, id2=0x5555559df720) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Thread 1 "upside" hit Breakpoint 1.2, PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555984198, cutoff=4, aligned_pos1=0x5555559e22a0, pos1_stride=pos1_stride@entry=8, id1=0x5555559dfb20, aligned_pos2=0x5555559e0d70, pos2_stride=pos2_stride@entry=8, id2=0x5555559df850) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$13 = 13
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$49 = 13
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555984018
+this = 0x555555984198
 cutoff = 4
-aligned_pos1 = 0x5555559e2120
+aligned_pos1 = 0x5555559e22a0
 pos1_stride = 8
-id1 = 0x5555559df6d0
-aligned_pos2 = 0x5555559df7f0
+id1 = 0x5555559dfb20
+aligned_pos2 = 0x5555559e0d70
 pos2_stride = 8
-id2 = 0x5555559df720
+id2 = 0x5555559df850
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555984018
+VARIABLE: this = 0x555555984198
 DEREF: *this = {
   n_elem1 = 9,
   n_elem2 = 8,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x5555559e0bf0
+    get() = 0x5555559e0f80
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555559e0d40
+    get() = 0x5555559e10d0
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555559e0e90
+    get() = 0x5555559e1220
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555559e0fe0
+    get() = 0x5555559e1370
   },
   n_edge = 6,
   cache_valid = true,
   cache_buffer = 1.79999995,
   cache_cutoff = 5.80000019,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x5555559e1130
+    get() = 0x5555559e14c0
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x5555559e1240
+    get() = 0x5555559e24b0
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555559e1350
+    get() = 0x5555559df8a0
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555559e13a0
+    get() = 0x5555559e15d0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x5555559e2330
+    get() = 0x5555559e25c0
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555559e2480
+    get() = 0x5555559e2710
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555559e25d0
+    get() = 0x5555559e2860
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555559e2720
+    get() = 0x5555559e29b0
   },
   cache_n_edge = 13
 }
@@ -1815,56 +1936,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 9
 MEMBER: this->.n_elem2 = 8
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x5555559e0bf0
+  get() = 0x5555559e0f80
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555559e0d40
+  get() = 0x5555559e10d0
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555559e0e90
+  get() = 0x5555559e1220
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555559e0fe0
+  get() = 0x5555559e1370
 }
 MEMBER: this->.n_edge = 6
 MEMBER: this->.cache_valid = true
 MEMBER: this->.cache_buffer = 1.79999995
 MEMBER: this->.cache_cutoff = 5.80000019
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x5555559e1130
+  get() = 0x5555559e14c0
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x5555559e1240
+  get() = 0x5555559e24b0
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555559e1350
+  get() = 0x5555559df8a0
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555559e13a0
+  get() = 0x5555559e15d0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x5555559e2330
+  get() = 0x5555559e25c0
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555559e2480
+  get() = 0x5555559e2710
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555559e25d0
+  get() = 0x5555559e2860
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555559e2720
+  get() = 0x5555559e29b0
 }
 MEMBER: this->.cache_n_edge = 13
 VARIABLE: cutoff = 4
-VARIABLE: aligned_pos1 = 0x5555559e2120
+VARIABLE: aligned_pos1 = 0x5555559e22a0
 DEREF: *aligned_pos1 = -4.17120934
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x5555559df6d0
+VARIABLE: id1 = 0x5555559dfb20
 DEREF: *id1 = 0
-VARIABLE: aligned_pos2 = 0x5555559df7f0
+VARIABLE: aligned_pos2 = 0x5555559e0d70
 DEREF: *aligned_pos2 = -5.66885424
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x5555559df720
+VARIABLE: id2 = 0x5555559df850
 DEREF: *id2 = 1
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -1886,72 +2007,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$50 = {-4.17120934, -1.13087523, 1.63262057, 0.753594637, -0.548286557, 0.362597257, 1.00000002e+20, 1.00000002e+20, -2.80709958, 2.30934501, -0.611981988, -0.0495426282, 0.951891124, -0.302404821, 1.00000002e+20, 1.00000002e+20, 0.918776035, 1.22713006, -0.491451681, 0.616486013, -0.678927362, -0.398751318, 1.00000002e+20, 1.00000002e+20, 3.41207242, 4.1386447, -1.70612705, 0.772370279, 0.136810213, -0.620263755, 1.00000002e+20, 1.00000002e+20, 6.05847836, 3.16293192, 0.106711626, 0.954955518, 0.16446121, -0.247006714, 1.00000002e+20, 1.00000002e+20, 5.41466522, -0.310462087, -2.42082214, 0.597041965, -0.48343721, -0.640179098, 1.00000002e+20, 1.00000002e+20, 2.26970243, -1.7176559, -4.33383846, 0.0285234787, -0.594077349, -0.80390209, 1.00000002e+20, 1.00000002e+20, -0.185046807, -1.74580669, -0.238571689, 0.000499848276, 0.705801129, 0.708409905, 1.00000002e+20, 1.00000002e+20, -1.11906636, -5.16866207, 1.47199643, 0.311774433, -0.93359828, 0.176610038, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$51 = {-5.66885424, 0.65845114, -0.259232789, -0.764986157, 0.544830799, -0.343446314, 1.00000002e+20, 1.00000002e+20, -1.81063712, -0.10071262, 0.865022779, 0.0284425989, -0.954218984, 0.297753245, 1.00000002e+20, 1.00000002e+20, 1.93304849, 3.81345892, 0.895142317, -0.785551071, -0.131296456, 0.604707241, 1.00000002e+20, 1.00000002e+20, 3.49375653, 1.6463567, 0.532758355, -0.95520097, -0.139367431, 0.261089057, 1.00000002e+20, 1.00000002e+20, 2.95413399, 1.0802263, -1.38677168, -0.579772055, 0.478666216, 0.659350395, 1.00000002e+20, 1.00000002e+20, 1.56805325, -0.797739506, -1.56716549, -0.0185000245, 0.605977774, 0.795266509, 1.00000002e+20, 1.00000002e+20, -1.06592977, -4.1814146, -1.77056515, 0.0224283393, -0.69365263, -0.719960392, 1.00000002e+20, 1.00000002e+20, -1.66565347, -2.25531197, 1.97790003, -0.318166882, 0.926918447, -0.198977381, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$52 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555984018, cutoff=4, aligned_pos1=0x5555559e2120, pos1_stride=pos1_stride@entry=8, id1=0x5555559df6d0, aligned_pos2=0x5555559df7f0, pos2_stride=pos2_stride@entry=8, id2=0x5555559df720) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555555e8dc5 in InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555983f88) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x00005555555e905f in (anonymous namespace)::HbondEnvironmentCoverage::compute_value (this=0x555555983f50, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:365
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HbondEnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555984198, cutoff=4, aligned_pos1=0x5555559e22a0, pos1_stride=pos1_stride@entry=8, id1=0x5555559dfb20, aligned_pos2=0x5555559e0d70, pos2_stride=pos2_stride@entry=8, id2=0x5555559df850) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555555e8dc5 in InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555984108) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x00005555555e905f in (anonymous namespace)::HbondEnvironmentCoverage::compute_value (this=0x5555559840d0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:365
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555bac36 in upside_main._omp_fn.0(void) () at /home/okleinmann/projects/upside2-md/src/main.cpp:948
 --- GDB_CAPTURE_HIT_END ---
 
-Thread 1 "upside" hit Breakpoint 1.7, PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555965cb8, cutoff=4.99999952, aligned_pos1=0x555555a19ed0, pos1_stride=pos1_stride@entry=8, id1=0x555555a19b90, aligned_pos2=0x555555a1a2e0, pos2_stride=pos2_stride@entry=8, id2=0x555555905e50) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Thread 1 "upside" hit Breakpoint 1.7, PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555965e38, cutoff=4.99999952, aligned_pos1=0x555555a1a150, pos1_stride=pos1_stride@entry=8, id1=0x555555a19db0, aligned_pos2=0x555555a1a560, pos2_stride=pos2_stride@entry=8, id2=0x555555905fd0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$14 = 14
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$53 = 14
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555965cb8
+this = 0x555555965e38
 cutoff = 4.99999952
-aligned_pos1 = 0x555555a19ed0
+aligned_pos1 = 0x555555a1a150
 pos1_stride = 8
-id1 = 0x555555a19b90
-aligned_pos2 = 0x555555a1a2e0
+id1 = 0x555555a19db0
+aligned_pos2 = 0x555555a1a560
 pos2_stride = 8
-id2 = 0x555555905e50
+id2 = 0x555555905fd0
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555965cb8
+VARIABLE: this = 0x555555965e38
 DEREF: *this = {
   n_elem1 = 17,
   n_elem2 = 36,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555a1c090
+    get() = 0x555555a1c2b0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555a1ca60
+    get() = 0x555555a1cc80
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555a1d430
+    get() = 0x555555a1d650
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555a1de00
+    get() = 0x555555a1e020
   },
   n_edge = 40,
   cache_valid = true,
   cache_buffer = 2,
   cache_cutoff = 6.99999952,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x555555a19cc0
+    get() = 0x555555a19ee0
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x555555a1e7d0
+    get() = 0x555555a1e9f0
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555a1a8f0
+    get() = 0x555555a1ab70
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555840470
+    get() = 0x5555558405f0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555a1eae0
+    get() = 0x555555a1ed00
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555a1f4b0
+    get() = 0x555555a1f6d0
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555a1fe80
+    get() = 0x555555a200a0
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555a20850
+    get() = 0x555555a20a70
   },
   cache_n_edge = 112
 }
@@ -1959,56 +2090,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 17
 MEMBER: this->.n_elem2 = 36
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555a1c090
+  get() = 0x555555a1c2b0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555a1ca60
+  get() = 0x555555a1cc80
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555a1d430
+  get() = 0x555555a1d650
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555a1de00
+  get() = 0x555555a1e020
 }
 MEMBER: this->.n_edge = 40
 MEMBER: this->.cache_valid = true
 MEMBER: this->.cache_buffer = 2
 MEMBER: this->.cache_cutoff = 6.99999952
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x555555a19cc0
+  get() = 0x555555a19ee0
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x555555a1e7d0
+  get() = 0x555555a1e9f0
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555a1a8f0
+  get() = 0x555555a1ab70
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555840470
+  get() = 0x5555558405f0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555a1eae0
+  get() = 0x555555a1ed00
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555a1f4b0
+  get() = 0x555555a1f6d0
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555a1fe80
+  get() = 0x555555a200a0
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555a20850
+  get() = 0x555555a20a70
 }
 MEMBER: this->.cache_n_edge = 112
 VARIABLE: cutoff = 4.99999952
-VARIABLE: aligned_pos1 = 0x555555a19ed0
+VARIABLE: aligned_pos1 = 0x555555a1a150
 DEREF: *aligned_pos1 = -5.66885424
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x555555a19b90
+VARIABLE: id1 = 0x555555a19db0
 DEREF: *id1 = 1
-VARIABLE: aligned_pos2 = 0x555555a1a2e0
+VARIABLE: aligned_pos2 = 0x555555a1a560
 DEREF: *aligned_pos2 = -6.37703133
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x555555905e50
+VARIABLE: id2 = 0x555555905fd0
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -2030,72 +2161,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$54 = {-5.66885424, 0.65845114, -0.259232789, -0.764986157, 0.544830799, -0.343446314, 0, 1.00000002e+20, -1.81063712, -0.10071262, 0.865022779, 0.0284425989, -0.954218984, 0.297753245, 0.00829660892, 1.00000002e+20, 1.93304849, 3.81345892, 0.895142317, -0.785551071, -0.131296456, 0.604707241, 0, 1.00000002e+20, 3.49375653, 1.6463567, 0.532758355, -0.95520097, -0.139367431, 0.261089057, 5.27501106e-05, 1.00000002e+20, 2.95413399, 1.0802263, -1.38677168, -0.579772055, 0.478666216, 0.659350395, 0.720860243, 1.00000002e+20, 1.56805325, -0.797739506, -1.56716549, -0.0185000245, 0.605977774, 0.795266509, 0.699054718, 1.00000002e+20, -1.06592977, -4.1814146, -1.77056515, 0.0224283393, -0.69365263, -0.719960392, 0, 1.00000002e+20, -1.66565347, -2.25531197, 1.97790003, -0.318166882, 0.926918447, -0.198977381, 0.0560789108, 1.00000002e+20, -4.17120934, -1.13087523, 1.63262057, 0.753594637, -0.548286557, 0.362597257, 0.0560801625, 1.00000002e+20, -2.80709958, 2.30934501, -0.611981988, -0.0495426282, 0.951891124, -0.302404821, 0, 1.00000002e+20, 0.918776035, 1.22713006, -0.491451681, 0.616486013, -0.678927362, -0.398751318, 0.915998638, 1.00000002e+20, 3.41207242, 4.1386447, -1.70612705, 0.772370279, 0.136810213, -0.620263755, 0, 1.00000002e+20, 6.05847836, 3.16293192, 0.106711626, 0.954955518...}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$55 = {-6.37703133, -0.159177482, 2.07686019, -0.323963583, 0.934393883, 0.148176908, 1.00000002e+20, 1.00000002e+20, -5.13446283, 3.13012052, -3.12758875, 0.0226616859, 0.303990155, 0.952404916, 1.00000002e+20, 1.00000002e+20, -1.39120197, -0.282360017, -4.48581028, -0.526636958, 0.21736826, 0.821829259, 1.00000002e+20, 1.00000002e+20, -1.59268284, 0.136247098, -3.79538822, 0.640212655, 0.367949039, 0.674344063, 1.00000002e+20, 1.00000002e+20, -5.57865334, -1.57433987, -3.27822065, -0.251223028, 0.16814208, 0.95321244, 1.00000002e+20, 1.00000002e+20, -5.25107718, -1.39046931, -2.98477888, 0.903744102, -0.391896844, -0.172226876, 1.00000002e+20, 1.00000002e+20, -5.60599756, -1.73026037, -3.43705177, 0.519578755, 0.429256052, 0.738766432, 1.00000002e+20, 1.00000002e+20, 0.827989578, -0.22465086, 3.00674558, 0.0635844171, -0.758469701, -0.648598373, 1.00000002e+20, 1.00000002e+20, -0.0888297558, 0.325734496, 1.46868539, 0.608897746, -0.6978333, 0.377188772, 1.00000002e+20, 1.00000002e+20, 0.188544154, 2.27204561, 4.3912282, 0.893925846, 0.106141075, -0.435465038, 1.00000002e+20, 1.00000002e+20, 0.233740091, 1.88623524, 2.37110209, 0.577684343, 0.481067419, 0.659434676, 1.00000002e+20, 1.00000002e+20, -0.735851645, 1.47080612, 4.174891, -0.944180548, -0.120429486, -0.306625068, 1.00000002e+20, 1.00000002e+20, -0.979936957, 1.28127277, 2.11245561, -0.248236179...}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$56 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555965cb8, cutoff=4.99999952, aligned_pos1=0x555555a19ed0, pos1_stride=pos1_stride@entry=8, id1=0x555555a19b90, aligned_pos2=0x555555a1a2e0, pos2_stride=pos2_stride@entry=8, id2=0x555555905e50) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555556046f5 in InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555965c28) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x00005555556049a1 in HBondCoverage::compute_value (this=0x555555965bf0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:454
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555965e38, cutoff=4.99999952, aligned_pos1=0x555555a1a150, pos1_stride=pos1_stride@entry=8, id1=0x555555a19db0, aligned_pos2=0x555555a1a560, pos2_stride=pos2_stride@entry=8, id2=0x555555905fd0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555556046f5 in InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555965da8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x00005555556049a1 in HBondCoverage::compute_value (this=0x555555965d70, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:454
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555bac36 in upside_main._omp_fn.0(void) () at /home/okleinmann/projects/upside2-md/src/main.cpp:948
 --- GDB_CAPTURE_HIT_END ---
 
-Thread 1 "upside" hit Breakpoint 1.7, PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x5555559ef7d8, cutoff=4.99999952, aligned_pos1=0x555555a70de0, pos1_stride=pos1_stride@entry=8, id1=0x555555a5f470, aligned_pos2=0x555555a711f0, pos2_stride=pos2_stride@entry=8, id2=0x555555a1aa50) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Thread 1 "upside" hit Breakpoint 1.7, PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x5555559f0d98, cutoff=4.99999952, aligned_pos1=0x555555a71110, pos1_stride=pos1_stride@entry=8, id1=0x555555a5f7c0, aligned_pos2=0x555555a71520, pos2_stride=pos2_stride@entry=8, id2=0x555555a3aff0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$15 = 15
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$57 = 15
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x5555559ef7d8
+this = 0x5555559f0d98
 cutoff = 4.99999952
-aligned_pos1 = 0x555555a70de0
+aligned_pos1 = 0x555555a71110
 pos1_stride = 8
-id1 = 0x555555a5f470
-aligned_pos2 = 0x555555a711f0
+id1 = 0x555555a5f7c0
+aligned_pos2 = 0x555555a71520
 pos2_stride = 8
-id2 = 0x555555a1aa50
+id2 = 0x555555a3aff0
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x5555559ef7d8
+VARIABLE: this = 0x5555559f0d98
 DEREF: *this = {
   n_elem1 = 30,
   n_elem2 = 36,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555a72f80
+    get() = 0x555555a732d0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555a74090
+    get() = 0x555555a743e0
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555a751a0
+    get() = 0x555555a754f0
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555a762b0
+    get() = 0x555555a76600
   },
   n_edge = 45,
   cache_valid = true,
   cache_buffer = 2,
   cache_cutoff = 6.99999952,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x555555a70bd0
+    get() = 0x555555a70f00
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x555555a773c0
+    get() = 0x555555a77710
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555a70960
+    get() = 0x555555a70cb0
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555a1a980
+    get() = 0x555555a1ac00
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555a776d0
+    get() = 0x555555a77a20
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555a787e0
+    get() = 0x555555a78b30
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555a798f0
+    get() = 0x555555a79c40
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555a7aa00
+    get() = 0x555555a7ad50
   },
   cache_n_edge = 168
 }
@@ -2103,56 +2244,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 30
 MEMBER: this->.n_elem2 = 36
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555a72f80
+  get() = 0x555555a732d0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555a74090
+  get() = 0x555555a743e0
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555a751a0
+  get() = 0x555555a754f0
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555a762b0
+  get() = 0x555555a76600
 }
 MEMBER: this->.n_edge = 45
 MEMBER: this->.cache_valid = true
 MEMBER: this->.cache_buffer = 2
 MEMBER: this->.cache_cutoff = 6.99999952
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x555555a70bd0
+  get() = 0x555555a70f00
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x555555a773c0
+  get() = 0x555555a77710
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555a70960
+  get() = 0x555555a70cb0
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555a1a980
+  get() = 0x555555a1ac00
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555a776d0
+  get() = 0x555555a77a20
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555a787e0
+  get() = 0x555555a78b30
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555a798f0
+  get() = 0x555555a79c40
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555a7aa00
+  get() = 0x555555a7ad50
 }
 MEMBER: this->.cache_n_edge = 168
 VARIABLE: cutoff = 4.99999952
-VARIABLE: aligned_pos1 = 0x555555a70de0
+VARIABLE: aligned_pos1 = 0x555555a71110
 DEREF: *aligned_pos1 = -6.98670292
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x555555a5f470
+VARIABLE: id1 = 0x555555a5f7c0
 DEREF: *id1 = 0
-VARIABLE: aligned_pos2 = 0x555555a711f0
+VARIABLE: aligned_pos2 = 0x555555a71520
 DEREF: *aligned_pos2 = -6.37703133
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x555555a1aa50
+VARIABLE: id2 = 0x555555a3aff0
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -2174,72 +2315,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$58 = {-6.98670292, -1.11748457, 1.35042286, -0.128091723, 0.484990299, -0.865088284, 0, 1.00000002e+20, -6.70136309, 0.941284001, 2.1466074, -0.190924093, 0.979558468, -0.0633554757, 0, 1.00000002e+20, -4.68128586, -0.489978701, 0.843941569, -0.339652121, 0.466032654, -0.816976666, 0, 1.00000002e+20, -3.26384497, -0.80260402, -0.21674341, 0.824439585, -0.111134291, -0.554929852, 0, 1.00000002e+20, -3.99281645, 0.293434083, -2.01149893, 0.0250059366, 0.140036643, -0.989829838, 0, 1.00000002e+20, -2.32799864, 1.44941437, -0.0832253546, 0.736924231, -0.304567456, -0.603473365, 0, 1.00000002e+20, -1.4561795, 2.66116643, 1.04265797, 0.639888287, 0.657596111, 0.397629827, 0, 1.00000002e+20, -0.192770302, 1.1881485, 2.13254905, 0.605944216, -0.21051991, 0.767145514, 0, 1.00000002e+20, 0.511489987, 2.26857924, -0.349957228, 0.485713005, 0.679488957, 0.549887955, 0, 1.00000002e+20, 1.22309554, 2.81255627, -2.01041937, 0.553162456, 0.322262973, -0.768217206, 0, 1.00000002e+20, 0.590655804, 4.94490099, -1.92688751, -0.156971842, 0.868421257, -0.470323652, 0, 1.00000002e+20, 2.98514652, 4.01376963, -0.819835067, 0.386692882, 0.248931259, -0.887976229, 0, 1.00000002e+20, 4.37946415, 4.88650465, 0.231869161, 0.901075423...}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$59 = {-6.37703133, -0.159177482, 2.07686019, -0.323963583, 0.934393883, 0.148176908, 1.00000002e+20, 1.00000002e+20, -5.13446283, 3.13012052, -3.12758875, 0.0226616859, 0.303990155, 0.952404916, 1.00000002e+20, 1.00000002e+20, -1.39120197, -0.282360017, -4.48581028, -0.526636958, 0.21736826, 0.821829259, 1.00000002e+20, 1.00000002e+20, -1.59268284, 0.136247098, -3.79538822, 0.640212655, 0.367949039, 0.674344063, 1.00000002e+20, 1.00000002e+20, -5.57865334, -1.57433987, -3.27822065, -0.251223028, 0.16814208, 0.95321244, 1.00000002e+20, 1.00000002e+20, -5.25107718, -1.39046931, -2.98477888, 0.903744102, -0.391896844, -0.172226876, 1.00000002e+20, 1.00000002e+20, -5.60599756, -1.73026037, -3.43705177, 0.519578755, 0.429256052, 0.738766432, 1.00000002e+20, 1.00000002e+20, 0.827989578, -0.22465086, 3.00674558, 0.0635844171, -0.758469701, -0.648598373, 1.00000002e+20, 1.00000002e+20, -0.0888297558, 0.325734496, 1.46868539, 0.608897746, -0.6978333, 0.377188772, 1.00000002e+20, 1.00000002e+20, 0.188544154, 2.27204561, 4.3912282, 0.893925846, 0.106141075, -0.435465038, 1.00000002e+20, 1.00000002e+20, 0.233740091, 1.88623524, 2.37110209, 0.577684343, 0.481067419, 0.659434676, 1.00000002e+20, 1.00000002e+20, -0.735851645, 1.47080612, 4.174891, -0.944180548, -0.120429486, -0.306625068, 1.00000002e+20, 1.00000002e+20, -0.979936957, 1.28127277, 2.11245561, -0.248236179...}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$60 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x5555559ef7d8, cutoff=4.99999952, aligned_pos1=0x555555a70de0, pos1_stride=pos1_stride@entry=8, id1=0x555555a5f470, aligned_pos2=0x555555a711f0, pos2_stride=pos2_stride@entry=8, id2=0x555555a1aa50) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555556046f5 in InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x5555559ef748) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x00005555556049a1 in HBondCoverage::compute_value (this=0x5555559ef710, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:454
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::HBondCoverageInteraction::acceptable_id_pair> (this=this@entry=0x5555559f0d98, cutoff=4.99999952, aligned_pos1=0x555555a71110, pos1_stride=pos1_stride@entry=8, id1=0x555555a5f7c0, aligned_pos2=0x555555a71520, pos2_stride=pos2_stride@entry=8, id2=0x555555a3aff0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555556046f5 in InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x5555559f0d08) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x00005555556049a1 in HBondCoverage::compute_value (this=0x5555559f0cd0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:454
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555bac36 in upside_main._omp_fn.0(void) () at /home/okleinmann/projects/upside2-md/src/main.cpp:948
 --- GDB_CAPTURE_HIT_END ---
 
-Thread 1 "upside" hit Breakpoint 1.8, PairlistComputation<true>::find_edges<&PosQuadSplineInteraction::acceptable_id_pair> (this=this@entry=0x555555b6d9e0, cutoff=6.99999905, aligned_pos1=0x555555b72930, pos1_stride=pos1_stride@entry=8, id1=0x555555a70a80, aligned_pos2=0x555555b72930, pos2_stride=pos2_stride@entry=8, id2=0x555555a70a80) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Thread 1 "upside" hit Breakpoint 1.8, PairlistComputation<true>::find_edges<&PosQuadSplineInteraction::acceptable_id_pair> (this=this@entry=0x555555b6dd30, cutoff=6.99999905, aligned_pos1=0x555555b72c80, pos1_stride=pos1_stride@entry=8, id1=0x555555a70dd0, aligned_pos2=0x555555b72c80, pos2_stride=pos2_stride@entry=8, id2=0x555555a70dd0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$16 = 16
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$61 = 16
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555b6d9e0
+this = 0x555555b6dd30
 cutoff = 6.99999905
-aligned_pos1 = 0x555555b72930
+aligned_pos1 = 0x555555b72c80
 pos1_stride = 8
-id1 = 0x555555a70a80
-aligned_pos2 = 0x555555b72930
+id1 = 0x555555a70dd0
+aligned_pos2 = 0x555555b72c80
 pos2_stride = 8
-id2 = 0x555555a70a80
+id2 = 0x555555a70dd0
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555b6d9e0
+VARIABLE: this = 0x555555b6dd30
 DEREF: *this = {
   n_elem1 = 36,
   n_elem2 = 36,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555b56c50
+    get() = 0x555555b56fa0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555b576a0
+    get() = 0x555555b579f0
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555b580f0
+    get() = 0x555555b58440
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555b58b40
+    get() = 0x555555b58e90
   },
   n_edge = 211,
   cache_valid = true,
   cache_buffer = 2.39999986,
   cache_cutoff = 9.39999866,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x555555b72f40
+    get() = 0x555555b73290
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x555555b73250
+    get() = 0x555555b735a0
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x55555583f810
+    get() = 0x55555583f990
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x55555583ce00
+    get() = 0x55555583cf80
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555b59590
+    get() = 0x555555b598e0
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555b59fe0
+    get() = 0x555555b5a330
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555b5aa30
+    get() = 0x555555b5ad80
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555b5b480
+    get() = 0x555555b5b7d0
   },
   cache_n_edge = 381
 }
@@ -2247,56 +2398,56 @@ THIS_TYPE: this type: PairlistComputation<true>
 MEMBER: this->.n_elem1 = 36
 MEMBER: this->.n_elem2 = 36
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555b56c50
+  get() = 0x555555b56fa0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555b576a0
+  get() = 0x555555b579f0
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555b580f0
+  get() = 0x555555b58440
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555b58b40
+  get() = 0x555555b58e90
 }
 MEMBER: this->.n_edge = 211
 MEMBER: this->.cache_valid = true
 MEMBER: this->.cache_buffer = 2.39999986
 MEMBER: this->.cache_cutoff = 9.39999866
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x555555b72f40
+  get() = 0x555555b73290
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x555555b73250
+  get() = 0x555555b735a0
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x55555583f810
+  get() = 0x55555583f990
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x55555583ce00
+  get() = 0x55555583cf80
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555b59590
+  get() = 0x555555b598e0
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555b59fe0
+  get() = 0x555555b5a330
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555b5aa30
+  get() = 0x555555b5ad80
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555b5b480
+  get() = 0x555555b5b7d0
 }
 MEMBER: this->.cache_n_edge = 381
 VARIABLE: cutoff = 6.99999905
-VARIABLE: aligned_pos1 = 0x555555b72930
+VARIABLE: aligned_pos1 = 0x555555b72c80
 DEREF: *aligned_pos1 = -6.37703133
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x555555a70a80
+VARIABLE: id1 = 0x555555a70dd0
 DEREF: *id1 = 16
-VARIABLE: aligned_pos2 = 0x555555b72930
+VARIABLE: aligned_pos2 = 0x555555b72c80
 DEREF: *aligned_pos2 = -6.37703133
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x555555a70a80
+VARIABLE: id2 = 0x555555a70dd0
 DEREF: *id2 = 16
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -2318,72 +2469,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$62 = {-6.37703133, -0.159177482, 2.07686019, -0.323963583, 0.934393883, 0.148176908, 1.00000002e+20, 1.00000002e+20, -5.13446283, 3.13012052, -3.12758875, 0.0226616859, 0.303990155, 0.952404916, 1.00000002e+20, 1.00000002e+20, -1.39120197, -0.282360017, -4.48581028, -0.526636958, 0.21736826, 0.821829259, 1.00000002e+20, 1.00000002e+20, -1.59268284, 0.136247098, -3.79538822, 0.640212655, 0.367949039, 0.674344063, 1.00000002e+20, 1.00000002e+20, -5.57865334, -1.57433987, -3.27822065, -0.251223028, 0.16814208, 0.95321244, 1.00000002e+20, 1.00000002e+20, -5.25107718, -1.39046931, -2.98477888, 0.903744102, -0.391896844, -0.172226876, 1.00000002e+20, 1.00000002e+20, -5.60599756, -1.73026037, -3.43705177, 0.519578755, 0.429256052, 0.738766432, 1.00000002e+20, 1.00000002e+20, 0.827989578, -0.22465086, 3.00674558, 0.0635844171, -0.758469701, -0.648598373, 1.00000002e+20, 1.00000002e+20, -0.0888297558, 0.325734496, 1.46868539, 0.608897746, -0.6978333, 0.377188772, 1.00000002e+20, 1.00000002e+20, 0.188544154, 2.27204561, 4.3912282, 0.893925846, 0.106141075, -0.435465038, 1.00000002e+20, 1.00000002e+20, 0.233740091, 1.88623524, 2.37110209, 0.577684343, 0.481067419, 0.659434676, 1.00000002e+20, 1.00000002e+20, -0.735851645, 1.47080612, 4.174891, -0.944180548, -0.120429486, -0.306625068, 1.00000002e+20, 1.00000002e+20, -0.979936957, 1.28127277, 2.11245561, -0.248236179...}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$63 = {-6.37703133, -0.159177482, 2.07686019, -0.323963583, 0.934393883, 0.148176908, 1.00000002e+20, 1.00000002e+20, -5.13446283, 3.13012052, -3.12758875, 0.0226616859, 0.303990155, 0.952404916, 1.00000002e+20, 1.00000002e+20, -1.39120197, -0.282360017, -4.48581028, -0.526636958, 0.21736826, 0.821829259, 1.00000002e+20, 1.00000002e+20, -1.59268284, 0.136247098, -3.79538822, 0.640212655, 0.367949039, 0.674344063, 1.00000002e+20, 1.00000002e+20, -5.57865334, -1.57433987, -3.27822065, -0.251223028, 0.16814208, 0.95321244, 1.00000002e+20, 1.00000002e+20, -5.25107718, -1.39046931, -2.98477888, 0.903744102, -0.391896844, -0.172226876, 1.00000002e+20, 1.00000002e+20, -5.60599756, -1.73026037, -3.43705177, 0.519578755, 0.429256052, 0.738766432, 1.00000002e+20, 1.00000002e+20, 0.827989578, -0.22465086, 3.00674558, 0.0635844171, -0.758469701, -0.648598373, 1.00000002e+20, 1.00000002e+20, -0.0888297558, 0.325734496, 1.46868539, 0.608897746, -0.6978333, 0.377188772, 1.00000002e+20, 1.00000002e+20, 0.188544154, 2.27204561, 4.3912282, 0.893925846, 0.106141075, -0.435465038, 1.00000002e+20, 1.00000002e+20, 0.233740091, 1.88623524, 2.37110209, 0.577684343, 0.481067419, 0.659434676, 1.00000002e+20, 1.00000002e+20, -0.735851645, 1.47080612, 4.174891, -0.944180548, -0.120429486, -0.306625068, 1.00000002e+20, 1.00000002e+20, -0.979936957, 1.28127277, 2.11245561, -0.248236179...}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$64 = true
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<true>::find_edges<&PosQuadSplineInteraction::acceptable_id_pair> (this=this@entry=0x555555b6d9e0, cutoff=6.99999905, aligned_pos1=0x555555b72930, pos1_stride=pos1_stride@entry=8, id1=0x555555a70a80, aligned_pos2=0x555555b72930, pos2_stride=pos2_stride@entry=8, id2=0x555555a70a80) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555556188cf in InteractionGraph<PosQuadSplineInteraction>::compute_edges<false> (this=this@entry=0x555555b6d950) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x000055555561a9f3 in RotamerSidechain<PosQuadSplineInteraction>::fill_holders (this=this@entry=0x555555b6d920) at /home/okleinmann/projects/upside2-md/src/rotamer.cpp:890
-#3  0x000055555561c81e in RotamerSidechain<PosQuadSplineInteraction>::compute_value (this=0x555555b6d920, mode=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/rotamer.cpp:843
+#0  PairlistComputation<true>::find_edges<&PosQuadSplineInteraction::acceptable_id_pair> (this=this@entry=0x555555b6dd30, cutoff=6.99999905, aligned_pos1=0x555555b72c80, pos1_stride=pos1_stride@entry=8, id1=0x555555a70dd0, aligned_pos2=0x555555b72c80, pos2_stride=pos2_stride@entry=8, id2=0x555555a70dd0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555556188cf in InteractionGraph<PosQuadSplineInteraction>::compute_edges<false> (this=this@entry=0x555555b6dca0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x000055555561a9f3 in RotamerSidechain<PosQuadSplineInteraction>::fill_holders (this=this@entry=0x555555b6dc70) at /home/okleinmann/projects/upside2-md/src/rotamer.cpp:890
+#3  0x000055555561c81e in RotamerSidechain<PosQuadSplineInteraction>::compute_value (this=0x555555b6dc70, mode=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/rotamer.cpp:843
 #4  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 --- GDB_CAPTURE_HIT_END ---
 
-Thread 1 "upside" hit Breakpoint 1.1, PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555bba4c8, cutoff=7, aligned_pos1=0x555555b75aa0, pos1_stride=pos1_stride@entry=8, id1=0x555555bc5730, aligned_pos2=0x555555bc6b10, pos2_stride=pos2_stride@entry=4, id2=0x555555b9f610) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Thread 1 "upside" hit Breakpoint 1.1, PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555bba2d8, cutoff=7, aligned_pos1=0x555555b75df0, pos1_stride=pos1_stride@entry=8, id1=0x555555bc5540, aligned_pos2=0x555555bc6920, pos2_stride=pos2_stride@entry=4, id2=0x555555b9f420) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$17 = 17
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$65 = 17
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555bba4c8
+this = 0x555555bba2d8
 cutoff = 7
-aligned_pos1 = 0x555555b75aa0
+aligned_pos1 = 0x555555b75df0
 pos1_stride = 8
-id1 = 0x555555bc5730
-aligned_pos2 = 0x555555bc6b10
+id1 = 0x555555bc5540
+aligned_pos2 = 0x555555bc6920
 pos2_stride = 4
-id2 = 0x555555b9f610
+id2 = 0x555555b9f420
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555bba4c8
+VARIABLE: this = 0x555555bba2d8
 DEREF: *this = {
   n_elem1 = 17,
   n_elem2 = 36,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555bc8250
+    get() = 0x555555bc8060
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555bc8c20
+    get() = 0x555555bc8a30
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555bc95f0
+    get() = 0x555555bc9400
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555bc9fc0
+    get() = 0x555555bc9dd0
   },
   n_edge = 112,
   cache_valid = true,
   cache_buffer = 2.4000001,
   cache_cutoff = 9.39999962,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x555555bc8040
+    get() = 0x555555bc7e50
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x555555bc6e20
+    get() = 0x555555bc6c30
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555bc7130
+    get() = 0x555555bc6f40
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555b65980
+    get() = 0x555555b65cd0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555bca990
+    get() = 0x555555bca7a0
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555bcb360
+    get() = 0x555555bcb170
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555bcbd30
+    get() = 0x555555bcbb40
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555bcc700
+    get() = 0x555555bcc510
   },
   cache_n_edge = 238
 }
@@ -2391,56 +2552,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 17
 MEMBER: this->.n_elem2 = 36
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555bc8250
+  get() = 0x555555bc8060
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555bc8c20
+  get() = 0x555555bc8a30
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555bc95f0
+  get() = 0x555555bc9400
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555bc9fc0
+  get() = 0x555555bc9dd0
 }
 MEMBER: this->.n_edge = 112
 MEMBER: this->.cache_valid = true
 MEMBER: this->.cache_buffer = 2.4000001
 MEMBER: this->.cache_cutoff = 9.39999962
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x555555bc8040
+  get() = 0x555555bc7e50
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x555555bc6e20
+  get() = 0x555555bc6c30
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555bc7130
+  get() = 0x555555bc6f40
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555b65980
+  get() = 0x555555b65cd0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555bca990
+  get() = 0x555555bca7a0
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555bcb360
+  get() = 0x555555bcb170
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555bcbd30
+  get() = 0x555555bcbb40
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555bcc700
+  get() = 0x555555bcc510
 }
 MEMBER: this->.cache_n_edge = 238
 VARIABLE: cutoff = 7
-VARIABLE: aligned_pos1 = 0x555555b75aa0
+VARIABLE: aligned_pos1 = 0x555555b75df0
 DEREF: *aligned_pos1 = -5.66885424
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x555555bc5730
+VARIABLE: id1 = 0x555555bc5540
 DEREF: *id1 = 1
-VARIABLE: aligned_pos2 = 0x555555bc6b10
+VARIABLE: aligned_pos2 = 0x555555bc6920
 DEREF: *aligned_pos2 = -6.37703133
 VARIABLE: pos2_stride = 4
-VARIABLE: id2 = 0x555555b9f610
+VARIABLE: id2 = 0x555555b9f420
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -2462,72 +2623,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$66 = {-5.66885424, 0.65845114, -0.259232789, -0.764986157, 0.544830799, -0.343446314, 1.00000002e+20, 1.00000002e+20, -1.81063712, -0.10071262, 0.865022779, 0.0284425989, -0.954218984, 0.297753245, 1.00000002e+20, 1.00000002e+20, 1.93304849, 3.81345892, 0.895142317, -0.785551071, -0.131296456, 0.604707241, 1.00000002e+20, 1.00000002e+20, 3.49375653, 1.6463567, 0.532758355, -0.95520097, -0.139367431, 0.261089057, 1.00000002e+20, 1.00000002e+20, 2.95413399, 1.0802263, -1.38677168, -0.579772055, 0.478666216, 0.659350395, 1.00000002e+20, 1.00000002e+20, 1.56805325, -0.797739506, -1.56716549, -0.0185000245, 0.605977774, 0.795266509, 1.00000002e+20, 1.00000002e+20, -1.06592977, -4.1814146, -1.77056515, 0.0224283393, -0.69365263, -0.719960392, 1.00000002e+20, 1.00000002e+20, -1.66565347, -2.25531197, 1.97790003, -0.318166882, 0.926918447, -0.198977381, 1.00000002e+20, 1.00000002e+20, -4.17120934, -1.13087523, 1.63262057, 0.753594637, -0.548286557, 0.362597257, 1.00000002e+20, 1.00000002e+20, -2.80709958, 2.30934501, -0.611981988, -0.0495426282, 0.951891124, -0.302404821, 1.00000002e+20, 1.00000002e+20, 0.918776035, 1.22713006, -0.491451681, 0.616486013, -0.678927362, -0.398751318, 1.00000002e+20, 1.00000002e+20, 3.41207242, 4.1386447, -1.70612705, 0.772370279, 0.136810213, -0.620263755, 1.00000002e+20, 1.00000002e+20, 6.05847836, 3.16293192, 0.106711626, 0.954955518...}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$67 = {-6.37703133, -0.159177482, 2.07686019, 1, -5.13446283, 3.13012052, -3.12758875, 4.61874079e-05, -1.39120197, -0.282360017, -4.48581028, 0.364444405, -1.59268284, 0.136247098, -3.79538822, 0.163783208, -5.57865334, -1.57433987, -3.27822065, 0.101278536, -5.25107718, -1.39046931, -2.98477888, 0.0493987165, -5.60599756, -1.73026037, -3.43705177, 0.321327448, 0.827989578, -0.22465086, 3.00674558, 0.002420353, -0.0888297558, 0.325734496, 1.46868539, 0.00202747923, 0.188544154, 2.27204561, 4.3912282, 0.243476376, 0.233740091, 1.88623524, 2.37110209, 0.627639055, -0.735851645, 1.47080612, 4.174891, 0.0838420764, -0.979936957, 1.28127277, 2.11245561, 0.0510945842, -0.265216827, 5.0791297, -0.7219643, 0.858409464, 1.20468438, 3.69250345, -0.928133845, 1.00000064e-10, -0.610299826, 4.84284496, -1.14045477, 0.140046984, 3.38006353, 3.24831676, 2.79421926, 0.0192172918, 4.68314886, 4.0941205, 2.63091779, 0.11000336, 5.15274334, 5.07332993, 3.01372027, 0.279702604, 3.37146282, 4.52118349, 2.10257053, 0.0816046372, 3.93484902, 5.6290288, 2.90408444, 0.366364509, 2.61522508, 4.88715839, 3.09749579, 0.14370963, 4.80479908, -0.500490725, 1.24423242, 0.954300523, 4.67730236, -0.919241369, 0.530966222, 0.00579898944, 5.47757196, -0.891383827, 0.757427037, 0.040768411...}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$68 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555bba4c8, cutoff=7, aligned_pos1=0x555555b75aa0, pos1_stride=pos1_stride@entry=8, id1=0x555555bc5730, aligned_pos2=0x555555bc6b10, pos2_stride=pos2_stride@entry=4, id2=0x555555b9f610) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555555e9208 in InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555bba438) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x00005555555e94a1 in (anonymous namespace)::EnvironmentCoverage::compute_value (this=0x555555bba3e0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:318
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555bba2d8, cutoff=7, aligned_pos1=0x555555b75df0, pos1_stride=pos1_stride@entry=8, id1=0x555555bc5540, aligned_pos2=0x555555bc6920, pos2_stride=pos2_stride@entry=4, id2=0x555555b9f420) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555555e9208 in InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555bba248) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x00005555555e94a1 in (anonymous namespace)::EnvironmentCoverage::compute_value (this=0x555555bba1f0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:318
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555bac36 in upside_main._omp_fn.0(void) () at /home/okleinmann/projects/upside2-md/src/main.cpp:948
 --- GDB_CAPTURE_HIT_END ---
 
-Thread 1 "upside" hit Breakpoint 1.1, PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555c085f8, cutoff=9, aligned_pos1=0x555555c13000, pos1_stride=pos1_stride@entry=8, id1=0x555555c11340, aligned_pos2=0x555555c13270, pos2_stride=pos2_stride@entry=4, id2=0x555555bc7290) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Thread 1 "upside" hit Breakpoint 1.1, PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555c08408, cutoff=9, aligned_pos1=0x555555c12e10, pos1_stride=pos1_stride@entry=8, id1=0x555555c11150, aligned_pos2=0x555555c13080, pos2_stride=pos2_stride@entry=4, id2=0x555555bc70a0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$18 = 18
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$69 = 18
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555c085f8
+this = 0x555555c08408
 cutoff = 9
-aligned_pos1 = 0x555555c13000
+aligned_pos1 = 0x555555c12e10
 pos1_stride = 8
-id1 = 0x555555c11340
-aligned_pos2 = 0x555555c13270
+id1 = 0x555555c11150
+aligned_pos2 = 0x555555c13080
 pos2_stride = 4
-id2 = 0x555555bc7290
+id2 = 0x555555bc70a0
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555c085f8
+VARIABLE: this = 0x555555c08408
 DEREF: *this = {
   n_elem1 = 10,
   n_elem2 = 36,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555c13580
+    get() = 0x555555c13390
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555c15400
+    get() = 0x555555c15210
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555c159d0
+    get() = 0x555555c157e0
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555c15fa0
+    get() = 0x555555c15db0
   },
   n_edge = 95,
   cache_valid = true,
   cache_buffer = 2.80000019,
   cache_cutoff = 11.8000002,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x555555c12de0
+    get() = 0x555555c12bf0
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x555555c13b50
+    get() = 0x555555c13960
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555c13e60
+    get() = 0x555555c13c70
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555bc71c0
+    get() = 0x555555bc6fd0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555c16570
+    get() = 0x555555c16380
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x555555c16b40
+    get() = 0x555555c16950
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555c17110
+    get() = 0x555555c16f20
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x555555c176e0
+    get() = 0x555555c174f0
   },
   cache_n_edge = 177
 }
@@ -2535,56 +2706,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 10
 MEMBER: this->.n_elem2 = 36
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555c13580
+  get() = 0x555555c13390
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555c15400
+  get() = 0x555555c15210
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555c159d0
+  get() = 0x555555c157e0
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555c15fa0
+  get() = 0x555555c15db0
 }
 MEMBER: this->.n_edge = 95
 MEMBER: this->.cache_valid = true
 MEMBER: this->.cache_buffer = 2.80000019
 MEMBER: this->.cache_cutoff = 11.8000002
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x555555c12de0
+  get() = 0x555555c12bf0
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x555555c13b50
+  get() = 0x555555c13960
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555c13e60
+  get() = 0x555555c13c70
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555bc71c0
+  get() = 0x555555bc6fd0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555c16570
+  get() = 0x555555c16380
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x555555c16b40
+  get() = 0x555555c16950
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555c17110
+  get() = 0x555555c16f20
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x555555c176e0
+  get() = 0x555555c174f0
 }
 MEMBER: this->.cache_n_edge = 177
 VARIABLE: cutoff = 9
-VARIABLE: aligned_pos1 = 0x555555c13000
+VARIABLE: aligned_pos1 = 0x555555c12e10
 DEREF: *aligned_pos1 = -6.78608704
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x555555c11340
+VARIABLE: id1 = 0x555555c11150
 DEREF: *id1 = 0
-VARIABLE: aligned_pos2 = 0x555555c13270
+VARIABLE: aligned_pos2 = 0x555555c13080
 DEREF: *aligned_pos2 = -6.37703133
 VARIABLE: pos2_stride = 4
-VARIABLE: id2 = 0x555555bc7290
+VARIABLE: id2 = 0x555555bc70a0
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -2606,72 +2777,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$70 = {-6.78608704, 1.1439395, 2.16954017, -0.237715542, 0.961169243, 0.140163034, 1.00000002e+20, 1.00000002e+20, -4.03163815, 0.287028909, -2.22881174, -0.183683604, 0.1270684, -0.974737167, 1.00000002e+20, 1.00000002e+20, -0.108613133, 1.12470198, 2.32662487, 0.478847146, -0.375101358, 0.793727577, 1.00000002e+20, 1.00000002e+20, 0.502099037, 5.11576748, -2.03521824, -0.343249977, 0.861389756, -0.374415517, 1.00000002e+20, 1.00000002e+20, 3.92085147, 4.07102346, 2.45670581, -0.0324799865, -0.00267234445, 0.999468684, 1.00000002e+20, 1.00000002e+20, 4.99245453, -0.572953284, 0.717642963, -0.084877193, -0.792465448, 0.603981912, 1.00000002e+20, 1.00000002e+20, 4.10108089, 0.383915603, -4.33509445, 0.746445239, 0.00944498181, -0.665379584, 1.00000002e+20, 1.00000002e+20, 1.86123133, -3.77681684, -2.02259469, 0.645585954, -0.752018988, 0.132988006, 1.00000002e+20, 1.00000002e+20, -3.23281002, -4.60814047, -0.483783662, -0.722188473, -0.643325448, -0.254116774, 1.00000002e+20, 1.00000002e+20, -0.936414301, -2.19666314, 4.41876507, -0.0988800824, 0.773607433, 0.625901461, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$71 = {-6.37703133, -0.159177482, 2.07686019, 1, -5.13446283, 3.13012052, -3.12758875, 4.61874079e-05, -1.39120197, -0.282360017, -4.48581028, 0.364444405, -1.59268284, 0.136247098, -3.79538822, 0.163783208, -5.57865334, -1.57433987, -3.27822065, 0.101278536, -5.25107718, -1.39046931, -2.98477888, 0.0493987165, -5.60599756, -1.73026037, -3.43705177, 0.321327448, 0.827989578, -0.22465086, 3.00674558, 0.002420353, -0.0888297558, 0.325734496, 1.46868539, 0.00202747923, 0.188544154, 2.27204561, 4.3912282, 0.243476376, 0.233740091, 1.88623524, 2.37110209, 0.627639055, -0.735851645, 1.47080612, 4.174891, 0.0838420764, -0.979936957, 1.28127277, 2.11245561, 0.0510945842, -0.265216827, 5.0791297, -0.7219643, 0.858409464, 1.20468438, 3.69250345, -0.928133845, 1.00000064e-10, -0.610299826, 4.84284496, -1.14045477, 0.140046984, 3.38006353, 3.24831676, 2.79421926, 0.0192172918, 4.68314886, 4.0941205, 2.63091779, 0.11000336, 5.15274334, 5.07332993, 3.01372027, 0.279702604, 3.37146282, 4.52118349, 2.10257053, 0.0816046372, 3.93484902, 5.6290288, 2.90408444, 0.366364509, 2.61522508, 4.88715839, 3.09749579, 0.14370963, 4.80479908, -0.500490725, 1.24423242, 0.954300523, 4.67730236, -0.919241369, 0.530966222, 0.00579898944, 5.47757196, -0.891383827, 0.757427037, 0.040768411...}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$72 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555c085f8, cutoff=9, aligned_pos1=0x555555c13000, pos1_stride=pos1_stride@entry=8, id1=0x555555c11340, aligned_pos2=0x555555c13270, pos2_stride=pos2_stride@entry=4, id2=0x555555bc7290) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x00005555555e9208 in InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555c08568) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x00005555555e94a1 in (anonymous namespace)::EnvironmentCoverage::compute_value (this=0x555555c08510, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:318
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::EnvironmentCoverageInteraction::acceptable_id_pair> (this=this@entry=0x555555c08408, cutoff=9, aligned_pos1=0x555555c12e10, pos1_stride=pos1_stride@entry=8, id1=0x555555c11150, aligned_pos2=0x555555c13080, pos2_stride=pos2_stride@entry=4, id2=0x555555bc70a0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x00005555555e9208 in InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::compute_edges<>(void) (this=this@entry=0x555555c08378) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x00005555555e94a1 in (anonymous namespace)::EnvironmentCoverage::compute_value (this=0x555555c08320, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/environment.cpp:318
 #3  0x000055555566b6ef in DerivEngine::compute (this=this@entry=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
 #4  0x00005555555bac36 in upside_main._omp_fn.0(void) () at /home/okleinmann/projects/upside2-md/src/main.cpp:948
 --- GDB_CAPTURE_HIT_END ---
 
-Thread 1 "upside" hit Breakpoint 1.13, PairlistComputation<true>::find_edges<(anonymous namespace)::acceptable_backbone_pair> (this=this@entry=0x5555557da6b0, cutoff=6.91850281, aligned_pos1=0x555555c845a0, pos1_stride=4, id1=0x55555583c9f0, aligned_pos2=0x555555c845a0, pos2_stride=4, id2=0x55555583c9f0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Thread 1 "upside" hit Breakpoint 1.13, PairlistComputation<true>::find_edges<(anonymous namespace)::acceptable_backbone_pair> (this=this@entry=0x5555557da830, cutoff=6.91850281, aligned_pos1=0x555555c84320, pos1_stride=4, id1=0x55555583cb70, aligned_pos2=0x555555c84320, pos2_stride=4, id2=0x55555583cb70) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$19 = 19
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$73 = 19
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x5555557da6b0
+this = 0x5555557da830
 cutoff = 6.91850281
-aligned_pos1 = 0x555555c845a0
+aligned_pos1 = 0x555555c84320
 pos1_stride = 4
-id1 = 0x55555583c9f0
-aligned_pos2 = 0x555555c845a0
+id1 = 0x55555583cb70
+aligned_pos2 = 0x555555c84320
 pos2_stride = 4
-id2 = 0x55555583c9f0
+id2 = 0x55555583cb70
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x5555557da6b0
+VARIABLE: this = 0x5555557da830
 DEREF: *this = {
   n_elem1 = 10,
   n_elem2 = 10,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x55555582ba50
+    get() = 0x55555582bbd0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x55555582afb0
+    get() = 0x55555582b130
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555557aeed0
+    get() = 0x5555557af050
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555557aee00
+    get() = 0x5555557aef80
   },
   n_edge = 20,
   cache_valid = true,
   cache_buffer = 1,
   cache_cutoff = 7.91850281,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x55555583ca40
+    get() = 0x55555583cbc0
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x55555583cb50
+    get() = 0x55555583ccd0
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x55555582e490
+    get() = 0x55555582e610
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555557ff440
+    get() = 0x5555557ff5c0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x555555764e70
+    get() = 0x555555764df0
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555557628a0
+    get() = 0x555555762820
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x555555763270
+    get() = 0x5555557631f0
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x55555583cc60
+    get() = 0x55555583cde0
   },
   cache_n_edge = 23
 }
@@ -2679,56 +2860,56 @@ THIS_TYPE: this type: PairlistComputation<true>
 MEMBER: this->.n_elem1 = 10
 MEMBER: this->.n_elem2 = 10
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x55555582ba50
+  get() = 0x55555582bbd0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x55555582afb0
+  get() = 0x55555582b130
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555557aeed0
+  get() = 0x5555557af050
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555557aee00
+  get() = 0x5555557aef80
 }
 MEMBER: this->.n_edge = 20
 MEMBER: this->.cache_valid = true
 MEMBER: this->.cache_buffer = 1
 MEMBER: this->.cache_cutoff = 7.91850281
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x55555583ca40
+  get() = 0x55555583cbc0
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x55555583cb50
+  get() = 0x55555583ccd0
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x55555582e490
+  get() = 0x55555582e610
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555557ff440
+  get() = 0x5555557ff5c0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x555555764e70
+  get() = 0x555555764df0
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555557628a0
+  get() = 0x555555762820
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x555555763270
+  get() = 0x5555557631f0
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x55555583cc60
+  get() = 0x55555583cde0
 }
 MEMBER: this->.cache_n_edge = 23
 VARIABLE: cutoff = 6.91850281
-VARIABLE: aligned_pos1 = 0x555555c845a0
+VARIABLE: aligned_pos1 = 0x555555c84320
 DEREF: *aligned_pos1 = -5.95233345
 VARIABLE: pos1_stride = 4
-VARIABLE: id1 = 0x55555583c9f0
+VARIABLE: id1 = 0x55555583cb70
 DEREF: *id1 = 0
-VARIABLE: aligned_pos2 = 0x555555c845a0
+VARIABLE: aligned_pos2 = 0x555555c84320
 DEREF: *aligned_pos2 = -5.95233345
 VARIABLE: pos2_stride = 4
-VARIABLE: id2 = 0x55555583c9f0
+VARIABLE: id2 = 0x55555583cb70
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -2750,72 +2931,82 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$74 = {-5.95233345, -0.601000011, 2.12300014, 0, -3.82566643, 0.465666711, -0.313666701, 0, -0.838999987, 1.50566673, 0.576333344, 0, 1.21099997, 3.69233322, -0.933666706, 0, 3.82766676, 3.65566635, 0.569666684, 0, 4.71433353, 0.895666778, -0.510333359, 0, 2.88433337, 0.0156667233, -2.87699986, 0, 0.754333377, -2.19766688, -1.87033343, 0, -1.579, -3.73433375, 0.00966668129, 0, -1.19566667, -3.69766688, 3.22633362, 0}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$75 = {-5.95233345, -0.601000011, 2.12300014, 0, -3.82566643, 0.465666711, -0.313666701, 0, -0.838999987, 1.50566673, 0.576333344, 0, 1.21099997, 3.69233322, -0.933666706, 0, 3.82766676, 3.65566635, 0.569666684, 0, 4.71433353, 0.895666778, -0.510333359, 0, 2.88433337, 0.0156667233, -2.87699986, 0, 0.754333377, -2.19766688, -1.87033343, 0, -1.579, -3.73433375, 0.00966668129, 0, -1.19566667, -3.69766688, 3.22633362, 0}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$76 = true
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<true>::find_edges<(anonymous namespace)::acceptable_backbone_pair> (this=this@entry=0x5555557da6b0, cutoff=6.91850281, aligned_pos1=0x555555c845a0, pos1_stride=4, id1=0x55555583c9f0, aligned_pos2=0x555555c845a0, pos2_stride=4, id2=0x55555583c9f0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x0000555555687ab3 in BackbonePairs::compute_value (this=0x5555557da660, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/backbone_steric.cpp:102
+#0  PairlistComputation<true>::find_edges<(anonymous namespace)::acceptable_backbone_pair> (this=this@entry=0x5555557da830, cutoff=6.91850281, aligned_pos1=0x555555c84320, pos1_stride=4, id1=0x55555583cb70, aligned_pos2=0x555555c84320, pos2_stride=4, id2=0x55555583cb70) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x0000555555687ab3 in BackbonePairs::compute_value (this=0x5555557da7e0, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/backbone_steric.cpp:102
 #2  0x000055555566b6ef in DerivEngine::compute (this=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
-#3  0x00005555555c4806 in operator() (pot_buffer=0x55555577d240, __closure=0x5555557807d8) at /home/okleinmann/projects/upside2-md/src/main.cpp:828
-#4  SpecializedSingleLogger<double, upside_main(int, char const* const*, int)::<lambda(double*)> >::collect_samples(void) (this=0x555555780790) at /home/okleinmann/projects/upside2-md/src/state_logger.h:43
+#3  0x00005555555c4806 in operator() (pot_buffer=0x55555577d300, __closure=0x555555780898) at /home/okleinmann/projects/upside2-md/src/main.cpp:828
+#4  SpecializedSingleLogger<double, upside_main(int, char const* const*, int)::<lambda(double*)> >::collect_samples(void) (this=0x555555780850) at /home/okleinmann/projects/upside2-md/src/state_logger.h:43
 --- GDB_CAPTURE_HIT_END ---
 
-Thread 1 "upside" hit Breakpoint 1.6, PairlistComputation<false>::find_edges<(anonymous namespace)::ProteinHBondInteraction::acceptable_id_pair> (this=this@entry=0x555555848a50, cutoff=3.5, aligned_pos1=0x5555558c9870, pos1_stride=pos1_stride@entry=8, id1=0x5555558cb760, aligned_pos2=0x5555558cb7b0, pos2_stride=pos2_stride@entry=8, id2=0x5555558cb500) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+Thread 1 "upside" hit Breakpoint 1.6, PairlistComputation<false>::find_edges<(anonymous namespace)::ProteinHBondInteraction::acceptable_id_pair> (this=this@entry=0x555555848bd0, cutoff=3.5, aligned_pos1=0x5555558c99f0, pos1_stride=pos1_stride@entry=8, id1=0x5555558cb8e0, aligned_pos2=0x5555558cb930, pos2_stride=pos2_stride@entry=8, id2=0x5555558cb680) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
 213	        void find_edges(float cutoff,
 --- GDB_CAPTURE_HIT_START ---
-HIT_NUMBER:$20 = 20
-LOCATION: Hit at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+HIT_NUMBER:$77 = 20
+LOCATION: Hit at src/interaction_graph.h:213
 === ARGUMENTS ===
-this = 0x555555848a50
+this = 0x555555848bd0
 cutoff = 3.5
-aligned_pos1 = 0x5555558c9870
+aligned_pos1 = 0x5555558c99f0
 pos1_stride = 8
-id1 = 0x5555558cb760
-aligned_pos2 = 0x5555558cb7b0
+id1 = 0x5555558cb8e0
+aligned_pos2 = 0x5555558cb930
 pos2_stride = 8
-id2 = 0x5555558cb500
+id2 = 0x5555558cb680
 === DEREFERENCED_ARGUMENTS ===
-VARIABLE: this = 0x555555848a50
+VARIABLE: this = 0x555555848bd0
 DEREF: *this = {
   n_elem1 = 8,
   n_elem2 = 9,
   edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cb550
+    get() = 0x5555558cb6d0
   },
   edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cb9c0
+    get() = 0x5555558cbb40
   },
   edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cbb10
+    get() = 0x5555558cbc90
   },
   edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cbc60
+    get() = 0x5555558cbde0
   },
   n_edge = 10,
   cache_valid = true,
   cache_buffer = 1.70000005,
   cache_cutoff = 5.19999981,
   cache_pos1 = std::unique_ptr<float []> = {
-    get() = 0x5555558cbdb0
+    get() = 0x5555558cbf30
   },
   cache_pos2 = std::unique_ptr<float []> = {
-    get() = 0x5555558cbec0
+    get() = 0x5555558cc040
   },
   cache_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cbfd0
+    get() = 0x5555558cc150
   },
   cache_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cc020
+    get() = 0x5555558cc1a0
   },
   cache_edge_indices1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cc070
+    get() = 0x5555558cc1f0
   },
   cache_edge_indices2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cc1c0
+    get() = 0x5555558cc340
   },
   cache_edge_id1 = std::unique_ptr<int []> = {
-    get() = 0x5555558cd8b0
+    get() = 0x5555558cda30
   },
   cache_edge_id2 = std::unique_ptr<int []> = {
-    get() = 0x5555558cda00
+    get() = 0x5555558cdb80
   },
   cache_n_edge = 17
 }
@@ -2823,56 +3014,56 @@ THIS_TYPE: this type: PairlistComputation<false>
 MEMBER: this->.n_elem1 = 8
 MEMBER: this->.n_elem2 = 9
 MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cb550
+  get() = 0x5555558cb6d0
 }
 MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cb9c0
+  get() = 0x5555558cbb40
 }
 MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cbb10
+  get() = 0x5555558cbc90
 }
 MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cbc60
+  get() = 0x5555558cbde0
 }
 MEMBER: this->.n_edge = 10
 MEMBER: this->.cache_valid = true
 MEMBER: this->.cache_buffer = 1.70000005
 MEMBER: this->.cache_cutoff = 5.19999981
 MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
-  get() = 0x5555558cbdb0
+  get() = 0x5555558cbf30
 }
 MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
-  get() = 0x5555558cbec0
+  get() = 0x5555558cc040
 }
 MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cbfd0
+  get() = 0x5555558cc150
 }
 MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cc020
+  get() = 0x5555558cc1a0
 }
 MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cc070
+  get() = 0x5555558cc1f0
 }
 MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cc1c0
+  get() = 0x5555558cc340
 }
 MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
-  get() = 0x5555558cd8b0
+  get() = 0x5555558cda30
 }
 MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
-  get() = 0x5555558cda00
+  get() = 0x5555558cdb80
 }
 MEMBER: this->.cache_n_edge = 17
 VARIABLE: cutoff = 3.5
-VARIABLE: aligned_pos1 = 0x5555558c9870
+VARIABLE: aligned_pos1 = 0x5555558c99f0
 DEREF: *aligned_pos1 = -5.66885424
 VARIABLE: pos1_stride = 8
-VARIABLE: id1 = 0x5555558cb760
+VARIABLE: id1 = 0x5555558cb8e0
 DEREF: *id1 = 1
-VARIABLE: aligned_pos2 = 0x5555558cb7b0
+VARIABLE: aligned_pos2 = 0x5555558cb930
 DEREF: *aligned_pos2 = -4.17120934
 VARIABLE: pos2_stride = 8
-VARIABLE: id2 = 0x5555558cb500
+VARIABLE: id2 = 0x5555558cb680
 DEREF: *id2 = 0
 === LOCAL_VARIABLES ===
 ne = <optimized out>
@@ -2894,11 +3085,21 @@ LOCAL: cutoff2 = {
 LOCAL: acceptable = <optimized out>
 LOCAL: n_extra = <optimized out>
 LOCAL: invalid_mask = <optimized out>
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+$78 = {-5.66885424, 0.65845114, -0.259232789, -0.764986157, 0.544830799, -0.343446314, 1.00000002e+20, 1.00000002e+20, -1.81063712, -0.10071262, 0.865022779, 0.0284425989, -0.954218984, 0.297753245, 1.00000002e+20, 1.00000002e+20, 1.93304849, 3.81345892, 0.895142317, -0.785551071, -0.131296456, 0.604707241, 1.00000002e+20, 1.00000002e+20, 3.49375653, 1.6463567, 0.532758355, -0.95520097, -0.139367431, 0.261089057, 1.00000002e+20, 1.00000002e+20, 2.95413399, 1.0802263, -1.38677168, -0.579772055, 0.478666216, 0.659350395, 1.00000002e+20, 1.00000002e+20, 1.56805325, -0.797739506, -1.56716549, -0.0185000245, 0.605977774, 0.795266509, 1.00000002e+20, 1.00000002e+20, -1.06592977, -4.1814146, -1.77056515, 0.0224283393, -0.69365263, -0.719960392, 1.00000002e+20, 1.00000002e+20, -1.66565347, -2.25531197, 1.97790003, -0.318166882, 0.926918447, -0.198977381, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_1_END:
+CUSTOM_POS_ARRAY_2_START:
+$79 = {-4.17120934, -1.13087523, 1.63262057, 0.753594637, -0.548286557, 0.362597257, 1.00000002e+20, 1.00000002e+20, -2.80709958, 2.30934501, -0.611981988, -0.0495426282, 0.951891124, -0.302404821, 1.00000002e+20, 1.00000002e+20, 0.918776035, 1.22713006, -0.491451681, 0.616486013, -0.678927362, -0.398751318, 1.00000002e+20, 1.00000002e+20, 3.41207242, 4.1386447, -1.70612705, 0.772370279, 0.136810213, -0.620263755, 1.00000002e+20, 1.00000002e+20, 6.05847836, 3.16293192, 0.106711626, 0.954955518, 0.16446121, -0.247006714, 1.00000002e+20, 1.00000002e+20, 5.41466522, -0.310462087, -2.42082214, 0.597041965, -0.48343721, -0.640179098, 1.00000002e+20, 1.00000002e+20, 2.26970243, -1.7176559, -4.33383846, 0.0285234787, -0.594077349, -0.80390209, 1.00000002e+20, 1.00000002e+20, -0.185046807, -1.74580669, -0.238571689, 0.000499848276, 0.705801129, 0.708409905, 1.00000002e+20, 1.00000002e+20, -1.11906636, -5.16866207, 1.47199643, 0.311774433, -0.93359828, 0.176610038, 1.00000002e+20, 1.00000002e+20}
+CUSTOM_POS_ARRAY_2_END:
+CUSTOM_SYMMETRY_START:
+$80 = false
+CUSTOM_SYMMETRY_END:
 === BACKTRACE ===
-#0  PairlistComputation<false>::find_edges<(anonymous namespace)::ProteinHBondInteraction::acceptable_id_pair> (this=this@entry=0x555555848a50, cutoff=3.5, aligned_pos1=0x5555558c9870, pos1_stride=pos1_stride@entry=8, id1=0x5555558cb760, aligned_pos2=0x5555558cb7b0, pos2_stride=pos2_stride@entry=8, id2=0x5555558cb500) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
-#1  0x0000555555603aa7 in InteractionGraph<(anonymous namespace)::ProteinHBondInteraction>::compute_edges<>(void) (this=this@entry=0x5555558489c0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
-#2  0x0000555555603ddf in ProteinHBond::compute_value (this=0x555555848980, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:393
+#0  PairlistComputation<false>::find_edges<(anonymous namespace)::ProteinHBondInteraction::acceptable_id_pair> (this=this@entry=0x555555848bd0, cutoff=3.5, aligned_pos1=0x5555558c99f0, pos1_stride=pos1_stride@entry=8, id1=0x5555558cb8e0, aligned_pos2=0x5555558cb930, pos2_stride=pos2_stride@entry=8, id2=0x5555558cb680) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:213
+#1  0x0000555555603aa7 in InteractionGraph<(anonymous namespace)::ProteinHBondInteraction>::compute_edges<>(void) (this=this@entry=0x555555848b40) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:471
+#2  0x0000555555603ddf in ProteinHBond::compute_value (this=0x555555848b00, mode=<optimized out>) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:393
 #3  0x000055555566b6ef in DerivEngine::compute (this=0x55555575b060, mode=mode@entry=PotentialAndDerivMode) at /home/okleinmann/projects/upside2-md/src/deriv_engine.cpp:244
-#4  0x00005555555c4806 in operator() (pot_buffer=0x55555577d240, __closure=0x5555557807d8) at /home/okleinmann/projects/upside2-md/src/main.cpp:828
+#4  0x00005555555c4806 in operator() (pot_buffer=0x55555577d300, __closure=0x555555780898) at /home/okleinmann/projects/upside2-md/src/main.cpp:828
 --- GDB_CAPTURE_HIT_END ---
 Max hits reached. Stopping execution.
