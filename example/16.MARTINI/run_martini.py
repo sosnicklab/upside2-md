@@ -23,12 +23,12 @@ print(f"Testing epsilon = {martini_epsilon:.3f} UPSIDE units = {martini_epsilon 
 
 # Simulation parameters
 T              = 0.8  # Temperature (UPSIDE units)
-duration       = 10000  # Total simulation steps  
+duration       = 1000  # Total simulation steps  
 frame_interval = 50   # Output every N steps
 dt             = 0.001  # Time step
 
 # Wall box size (Angstroms) 
-wall_box_size = 5.0
+wall_box_size = 20.0
 
 #----------------------------------------------------------------------
 ## Setup directories
