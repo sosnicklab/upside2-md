@@ -27,8 +27,8 @@ duration       = 1000  # Total simulation steps
 frame_interval = 50   # Output every N steps
 dt             = 0.001  # Time step
 
-# Wall box size (Angstroms) 
-wall_box_size = 20.0
+# Wall box size (Angstroms) - should contain centered particles  
+wall_box_size = 25
 
 #----------------------------------------------------------------------
 ## Setup directories
@@ -60,6 +60,30 @@ initial_positions = np.array(initial_positions)
 n_atoms = len(initial_positions)
 
 print(f"Loaded {n_atoms} atoms from PDB")
+
+# Check initial particle range
+pos_min = np.min(initial_positions, axis=0)
+pos_max = np.max(initial_positions, axis=0)
+pos_range = pos_max - pos_min
+print(f"Initial position range: X=[{pos_min[0]:.1f}, {pos_max[0]:.1f}], Y=[{pos_min[1]:.1f}, {pos_max[1]:.1f}], Z=[{pos_min[2]:.1f}, {pos_max[2]:.1f}]")
+print(f"Position range: X={pos_range[0]:.1f}, Y={pos_range[1]:.1f}, Z={pos_range[2]:.1f} Angstroms")
+
+# Center the particles around origin
+center = (pos_max + pos_min) / 2
+initial_positions -= center
+print(f"Centered particles around origin. New center: {np.mean(initial_positions, axis=0)}")
+
+# Check if particles fit within wall boundaries
+new_min = np.min(initial_positions, axis=0)
+new_max = np.max(initial_positions, axis=0)
+max_coord = np.max(np.abs([new_min, new_max]))
+print(f"After centering, max coordinate magnitude: {max_coord:.1f} Angstroms")
+
+if max_coord > wall_box_size:
+    print(f"WARNING: Particles extend beyond wall boundaries (±{wall_box_size} Angstroms)")
+    print(f"Consider increasing wall_box_size to at least {max_coord + 2:.1f} Angstroms")
+else:
+    print(f"Particles fit within wall boundaries (±{wall_box_size} Angstroms)")
 
 # Create HDF5 input file
 input_file = "{}/test.up".format(input_dir)

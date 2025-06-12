@@ -226,34 +226,65 @@ struct WallReflectPotential : public PotentialNode
             auto p = load_vec<3>(pos1, na);
             bool reflected = false;
             
-            // Check and reflect against walls
+            // Check and reflect against walls with improved logic
             // X dimension
             if (p.x() < wall_xlo) {
-                p.x() = wall_xlo + (wall_xlo - p.x());
+                float distance_outside = wall_xlo - p.x();
+                // For reasonable distances, use reflection; for large distances, clamp near wall
+                if (distance_outside < (wall_xhi - wall_xlo)) {
+                    p.x() = wall_xlo + distance_outside;  // Standard reflection
+                } else {
+                    p.x() = wall_xlo + 0.1f;  // Place just inside wall
+                }
                 reflected = true;
             }
             if (p.x() > wall_xhi) {
-                p.x() = wall_xhi - (p.x() - wall_xhi);
+                float distance_outside = p.x() - wall_xhi;
+                if (distance_outside < (wall_xhi - wall_xlo)) {
+                    p.x() = wall_xhi - distance_outside;  // Standard reflection
+                } else {
+                    p.x() = wall_xhi - 0.1f;  // Place just inside wall
+                }
                 reflected = true;
             }
             
             // Y dimension  
             if (p.y() < wall_ylo) {
-                p.y() = wall_ylo + (wall_ylo - p.y());
+                float distance_outside = wall_ylo - p.y();
+                if (distance_outside < (wall_yhi - wall_ylo)) {
+                    p.y() = wall_ylo + distance_outside;
+                } else {
+                    p.y() = wall_ylo + 0.1f;
+                }
                 reflected = true;
             }
             if (p.y() > wall_yhi) {
-                p.y() = wall_yhi - (p.y() - wall_yhi);
+                float distance_outside = p.y() - wall_yhi;
+                if (distance_outside < (wall_yhi - wall_ylo)) {
+                    p.y() = wall_yhi - distance_outside;
+                } else {
+                    p.y() = wall_yhi - 0.1f;
+                }
                 reflected = true;
             }
             
             // Z dimension
             if (p.z() < wall_zlo) {
-                p.z() = wall_zlo + (wall_zlo - p.z());
+                float distance_outside = wall_zlo - p.z();
+                if (distance_outside < (wall_zhi - wall_zlo)) {
+                    p.z() = wall_zlo + distance_outside;
+                } else {
+                    p.z() = wall_zlo + 0.1f;
+                }
                 reflected = true;
             }
             if (p.z() > wall_zhi) {
-                p.z() = wall_zhi - (p.z() - wall_zhi);
+                float distance_outside = p.z() - wall_zhi;
+                if (distance_outside < (wall_zhi - wall_zlo)) {
+                    p.z() = wall_zhi - distance_outside;
+                } else {
+                    p.z() = wall_zhi - 0.1f;
+                }
                 reflected = true;
             }
             
