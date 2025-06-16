@@ -24,6 +24,5 @@ compile_commands.json
 source.sh
 **inputs/
 **outputs/
-.vscode/
+*.vscode/
 .venv/
-.DS_Store
