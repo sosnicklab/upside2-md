@@ -147,7 +147,7 @@ with tb.open_file(input_file, 'w') as t:
     martini_group._v_attrs.initialized = True
     
     # Create wall potential group
-    wall_group = t.create_group(potential_grp, 'wall_reflect_potential')
+    wall_group = t.create_group(potential_grp, 'periodic_boundary_potential')
     wall_group._v_attrs.arguments = np.array([b'pos'])
     wall_group._v_attrs.wall_xlo = -wall_box_size
     wall_group._v_attrs.wall_xhi = wall_box_size

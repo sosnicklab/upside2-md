@@ -197,108 +197,82 @@ struct DihedralSpring : public PotentialNode
 };
 static RegisterNodeType<DihedralSpring,1> dihedral_spring_node("dihedral_spring");
 
-struct WallReflectPotential : public PotentialNode
+struct PeriodicBoundaryPotential : public PotentialNode
 {
     int n_atom;
     CoordNode& pos;
     
-    // Wall parameters
-    float wall_xlo, wall_xhi, wall_ylo, wall_yhi, wall_zlo, wall_zhi;
+    // Box parameters
+    float box_x, box_y, box_z;
     
-    WallReflectPotential(hid_t grp, CoordNode& pos_):
+    PeriodicBoundaryPotential(hid_t grp, CoordNode& pos_):
         PotentialNode(), n_atom(pos_.n_elem), pos(pos_)
     {
-        wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-        wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-        wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-        wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-        wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-        wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
+        // Read box dimensions from attributes
+        float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
+        float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
+        float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
+        float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
+        float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
+        float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
+        
+        // Calculate box dimensions
+        box_x = wall_xhi - wall_xlo;
+        box_y = wall_yhi - wall_ylo;
+        box_z = wall_zhi - wall_zlo;
     }
 
     virtual void compute_value(ComputeMode mode) {
-        Timer timer(string("wall_reflect_potential"));
+        Timer timer(string("periodic_boundary_potential"));
         
         VecArray pos1 = pos.output;
         
-        // Apply wall reflections - hard constraint, no forces needed
+        // Apply periodic boundary conditions
         for(int na=0; na<n_atom; ++na) {
             auto p = load_vec<3>(pos1, na);
-            bool reflected = false;
+            bool wrapped = false;
             
-            // Check and reflect against walls with improved logic
             // X dimension
-            if (p.x() < wall_xlo) {
-                float distance_outside = wall_xlo - p.x();
-                // For reasonable distances, use reflection; for large distances, clamp near wall
-                if (distance_outside < (wall_xhi - wall_xlo)) {
-                    p.x() = wall_xlo + distance_outside;  // Standard reflection
-                } else {
-                    p.x() = wall_xlo + 0.1f;  // Place just inside wall
-                }
-                reflected = true;
+            if (p.x() < 0) {
+                p.x() += box_x;
+                wrapped = true;
             }
-            if (p.x() > wall_xhi) {
-                float distance_outside = p.x() - wall_xhi;
-                if (distance_outside < (wall_xhi - wall_xlo)) {
-                    p.x() = wall_xhi - distance_outside;  // Standard reflection
-                } else {
-                    p.x() = wall_xhi - 0.1f;  // Place just inside wall
-                }
-                reflected = true;
+            if (p.x() >= box_x) {
+                p.x() -= box_x;
+                wrapped = true;
             }
             
-            // Y dimension  
-            if (p.y() < wall_ylo) {
-                float distance_outside = wall_ylo - p.y();
-                if (distance_outside < (wall_yhi - wall_ylo)) {
-                    p.y() = wall_ylo + distance_outside;
-                } else {
-                    p.y() = wall_ylo + 0.1f;
-                }
-                reflected = true;
+            // Y dimension
+            if (p.y() < 0) {
+                p.y() += box_y;
+                wrapped = true;
             }
-            if (p.y() > wall_yhi) {
-                float distance_outside = p.y() - wall_yhi;
-                if (distance_outside < (wall_yhi - wall_ylo)) {
-                    p.y() = wall_yhi - distance_outside;
-                } else {
-                    p.y() = wall_yhi - 0.1f;
-                }
-                reflected = true;
+            if (p.y() >= box_y) {
+                p.y() -= box_y;
+                wrapped = true;
             }
             
             // Z dimension
-            if (p.z() < wall_zlo) {
-                float distance_outside = wall_zlo - p.z();
-                if (distance_outside < (wall_zhi - wall_zlo)) {
-                    p.z() = wall_zlo + distance_outside;
-                } else {
-                    p.z() = wall_zlo + 0.1f;
-                }
-                reflected = true;
+            if (p.z() < 0) {
+                p.z() += box_z;
+                wrapped = true;
             }
-            if (p.z() > wall_zhi) {
-                float distance_outside = p.z() - wall_zhi;
-                if (distance_outside < (wall_zhi - wall_zlo)) {
-                    p.z() = wall_zhi - distance_outside;
-                } else {
-                    p.z() = wall_zhi - 0.1f;
-                }
-                reflected = true;
+            if (p.z() >= box_z) {
+                p.z() -= box_z;
+                wrapped = true;
             }
             
-            // Store reflected position
-            if (reflected) {
+            // Store wrapped position
+            if (wrapped) {
                 store_vec<3>(pos1, na, p);
             }
         }
         
-        // No potential energy contribution from hard walls
+        // No potential energy contribution from periodic boundaries
         potential = 0.f;
     }
 };
-static RegisterNodeType<WallReflectPotential,1> wall_reflect_potential_node("wall_reflect_potential");
+static RegisterNodeType<PeriodicBoundaryPotential,1> periodic_boundary_potential_node("periodic_boundary_potential");
 
 struct MartiniPotential : public PotentialNode
 {
