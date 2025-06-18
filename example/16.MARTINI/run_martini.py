@@ -18,6 +18,7 @@ base_dir       = './'
 # MARTINI parameters
 martini_epsilon = 1.715293655572  # Test with overflow protection
 martini_sigma   = 4.7  # MARTINI water sigma (Angstroms)
+#martini_sigma   = 0.47  # MARTINI water sigma (Angstroms)
 
 print(f"Testing epsilon = {martini_epsilon:.3f} UPSIDE units = {martini_epsilon * 2.332:.3f} kJ/mol with overflow protection")
 
@@ -25,10 +26,10 @@ print(f"Testing epsilon = {martini_epsilon:.3f} UPSIDE units = {martini_epsilon 
 T              = 0.8  # Temperature (UPSIDE units)
 duration       = 1000  # Total simulation steps  
 frame_interval = 50   # Output every N steps
-dt             = 0.001  # Time step
+dt             = 0.01  # Time step
 
 # Wall box size (Angstroms) - should contain centered particles  
-wall_box_size = 25
+wall_box_size = 23
 
 #----------------------------------------------------------------------
 ## Setup directories
