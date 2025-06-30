@@ -34,32 +34,47 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #if R123_USE_SSE
 
-#if R123_USE_X86INTRIN_H
-#include <x86intrin.h>
+#if R123_USE_SSE
+
+// For Apple Silicon (ARM64) - use sse2neon.h
+#if defined(__APPLE__) && defined(__arm64__)
+    #if R123_USE_XMMINTRIN_H || R123_USE_EMMINTRIN_H || R123_USE_SMMINTRIN_H
+        #include <sse2neon.h>
+    #endif
+#else
+    // Normal x86_64 includes
+    #if R123_USE_X86INTRIN_H
+        #include <x86intrin.h>
+    #endif
+    #if R123_USE_IA32INTRIN_H
+        #include <ia32intrin.h>
+    #endif
+    #if R123_USE_XMMINTRIN_H
+        #include <xmmintrin.h>
+    #endif
+    #if R123_USE_EMMINTRIN_H
+        #include <emmintrin.h>
+    #endif
+    #if R123_USE_SMMINTRIN_H
+        #include <smmintrin.h>
+    #endif
 #endif
-#if R123_USE_IA32INTRIN_H
-#include <ia32intrin.h>
-#endif
-#if R123_USE_XMMINTRIN_H
-#include <xmmintrin.h>
-#endif
-#if R123_USE_EMMINTRIN_H
-#include <emmintrin.h>
-#endif
-#if R123_USE_SMMINTRIN_H
-#include <smmintrin.h>
-#endif
+
 #if R123_USE_WMMINTRIN_H
-#include <wmmintrin.h>
+    #include <wmmintrin.h>
 #endif
 #if R123_USE_INTRIN_H
-#include <intrin.h>
+    #include <intrin.h>
 #endif
+
 #ifdef __cplusplus
-#include <iostream>
-#include <limits>
-#include <stdexcept>
+    #include <iostream>
+    #include <limits>
+    #include <stdexcept>
 #endif
+
+#endif // R123_USE_SSE
+
 
 #if R123_USE_ASM_GNU
 
