@@ -2,11 +2,22 @@
 #include "timing.h"
 #include "state_logger.h"
 #include <iostream>
+#include <H5Apublic.h> // for H5Aexists
 
 using namespace h5;
 using namespace std;
 //Bond, Angle and Dihedral the same format in MARTINI 10.1021/jp071097f
 //Missing: Proper Dihedral from 10.1021/ct700324x (might not need if only exist in protein model)
+
+// Helper to check if an HDF5 attribute exists
+inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* attr_name) {
+    hid_t obj_id = H5Oopen(loc_id, obj_name, H5P_DEFAULT);
+    if (obj_id < 0) return false;
+    htri_t exists = H5Aexists(obj_id, attr_name);
+    H5Oclose(obj_id);
+    return exists > 0;
+}
+
 struct DistSpring : public PotentialNode
 {
     struct Params {
@@ -283,6 +294,7 @@ struct MartiniPotential : public PotentialNode
     vector<pair<int,int>> pairs;
     
     float epsilon, sigma, lj_cutoff, coul_cutoff, dielectric;
+    bool force_cap;
     
     MartiniPotential(hid_t grp, CoordNode& pos_):
         PotentialNode(), n_atom(pos_.n_elem), pos(pos_)
@@ -295,6 +307,10 @@ struct MartiniPotential : public PotentialNode
         lj_cutoff   = read_attribute<float>(grp, ".", "lj_cutoff");
         coul_cutoff = read_attribute<float>(grp, ".", "coul_cutoff");
         dielectric  = read_attribute<float>(grp, ".", "dielectric");
+        force_cap = true;
+        if(attribute_exists(grp, ".", "force_cap")) {
+            force_cap = read_attribute<int>(grp, ".", "force_cap") != 0;
+        }
         
         auto n_pair = get_dset_size(2, grp, "pairs")[0];
         check_size(grp, "coefficients", n_pair, 4);
@@ -360,10 +376,12 @@ struct MartiniPotential : public PotentialNode
                     auto deriv = 24.f * eps / (effective_dist * effective_dist) * (2.f * sig_r12 - sig_r6);
                     
                     // Cap maximum force magnitude to prevent integration instability
-                    float max_force_magnitude = 1000.0f * eps;  // Reasonable force limit
-                    float force_mag = mag(deriv * dr);
-                    if(force_mag > max_force_magnitude) {
-                        deriv = deriv * (max_force_magnitude / force_mag);
+                    if(force_cap) {
+                        float max_force_magnitude = 1000.0f * eps;  // Reasonable force limit
+                        float force_mag = mag(deriv * dr);
+                        if(force_mag > max_force_magnitude) {
+                            deriv = deriv * (max_force_magnitude / force_mag);
+                        }
                     }
                     
                     // Only apply if potential and derivative are finite

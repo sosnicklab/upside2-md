@@ -20,6 +20,16 @@ martini_epsilon = 1.715293655572  # Test with overflow protection
 martini_sigma   = 4.7  # MARTINI water sigma (Angstroms)
 #martini_sigma   = 0.47  # MARTINI water sigma (Angstroms)
 
+# Softened LJ parameters for minimization
+soft_epsilon = martini_epsilon * 0.1  # 10x softer
+soft_sigma = martini_sigma * 1.1      # 10% larger
+
+# Minimization parameters
+minimization_steps = 1000
+minimization_T = 0.01  # Very low temperature for minimization
+minimization_dt = 0.01
+minimization_frame_interval = 100
+
 print(f"Testing epsilon = {martini_epsilon:.3f} UPSIDE units = {martini_epsilon * 2.332:.3f} kJ/mol with overflow protection")
 
 # Simulation parameters
@@ -86,15 +96,108 @@ if max_coord > wall_box_size:
 else:
     print(f"Particles fit within wall boundaries (±{wall_box_size} Angstroms)")
 
-# Create HDF5 input file
-input_file = "{}/test.up".format(input_dir)
+# Create HDF5 input file for minimization
+min_input_file = f"{input_dir}/minimize.up"
 
-with tb.open_file(input_file, 'w') as t:
+with tb.open_file(min_input_file, 'w') as t:
     input_grp = t.create_group(t.root, 'input')
-    
-    # Position array
     pos = np.zeros((n_atoms, 3, 1), dtype='f4')
     pos[:,:,0] = initial_positions
+    pos_array = t.create_array(input_grp, 'pos', obj=pos)
+    pos_array._v_attrs.arguments = np.array([b'pos'])
+    pos_array._v_attrs.shape = pos.shape
+    pos_array._v_attrs.n_atoms = n_atoms
+    pos_array._v_attrs.n_frames = 1
+    pos_array._v_attrs.dim = 3
+    pos_array._v_attrs.initialized = True
+    velocity = np.zeros((n_atoms, 3), dtype='f4')
+    vel_array = t.create_array(input_grp, 'vel', obj=velocity)
+    vel_array._v_attrs.arguments = np.array([b'vel'])
+    vel_array._v_attrs.shape = velocity.shape
+    vel_array._v_attrs.n_atoms = n_atoms
+    vel_array._v_attrs.dim = 3
+    vel_array._v_attrs.initialized = True
+    mass = np.ones(n_atoms, dtype='f4') * 1.0
+    mass_array = t.create_array(input_grp, 'mass', obj=mass)
+    mass_array._v_attrs.arguments = np.array([b'mass'])
+    mass_array._v_attrs.shape = mass.shape
+    mass_array._v_attrs.n_atoms = n_atoms
+    mass_array._v_attrs.initialized = True
+    atoms = np.arange(n_atoms, dtype=int)
+    type_array = t.create_array(input_grp, 'type', obj=atoms)
+    type_array._v_attrs.arguments = np.array([b'type'])
+    type_array._v_attrs.shape = atoms.shape
+    type_array._v_attrs.n_atoms = n_atoms
+    type_array._v_attrs.initialized = True
+    potential_grp = t.create_group(input_grp, 'potential')
+    martini_group = t.create_group(potential_grp, 'martini_potential')
+    martini_group._v_attrs.arguments = np.array([b'pos'])
+    martini_group._v_attrs.potential_type = b'lj_coulomb'
+    martini_group._v_attrs.epsilon = soft_epsilon
+    martini_group._v_attrs.sigma = soft_sigma
+    martini_group._v_attrs.lj_cutoff = 12.0
+    martini_group._v_attrs.coul_cutoff = 12.0
+    martini_group._v_attrs.dielectric = 15.0
+    martini_group._v_attrs.n_types = 1
+    martini_group._v_attrs.n_params = 4
+    martini_group._v_attrs.cutoff = 12.0
+    martini_group._v_attrs.cache_buffer = 1.0
+    martini_group._v_attrs.initialized = True
+    martini_group._v_attrs.force_cap = 1  # Enable force capping for minimization
+    wall_group = t.create_group(potential_grp, 'periodic_boundary_potential')
+    wall_group._v_attrs.arguments = np.array([b'pos'])
+    wall_group._v_attrs.wall_xlo = -wall_box_size
+    wall_group._v_attrs.wall_xhi = wall_box_size
+    wall_group._v_attrs.wall_ylo = -wall_box_size
+    wall_group._v_attrs.wall_yhi = wall_box_size
+    wall_group._v_attrs.wall_zlo = -wall_box_size
+    wall_group._v_attrs.wall_zhi = wall_box_size
+    wall_group._v_attrs.initialized = True
+    t.create_array(martini_group, 'atom_indices', obj=atoms)
+    t.create_array(martini_group, 'charges', obj=np.zeros(n_atoms))
+    pairs_list = []
+    for i in range(n_atoms):
+        for j in range(i+1, n_atoms):
+            pairs_list.append([i, j])
+    pairs_array = np.array(pairs_list, dtype=int)
+    n_pairs = len(pairs_list)
+    coeff_array = np.zeros((n_pairs, 4))
+    for i in range(n_pairs):
+        coeff_array[i] = [soft_epsilon, soft_sigma, 0.0, 0.0]
+    pairs_data = t.create_array(martini_group, 'pairs', obj=pairs_array)
+    pairs_data._v_attrs.initialized = True
+    coeff_data = t.create_array(martini_group, 'coefficients', obj=coeff_array)
+    coeff_data._v_attrs.initialized = True
+
+print(f"Created minimization input with {n_pairs} LJ pairs")
+
+# Run minimization
+min_run_dir = f"{output_dir}/minimize"
+if not os.path.exists(min_run_dir):
+    os.makedirs(min_run_dir)
+min_h5_file = f"{min_run_dir}/minimize.run.up"
+with tb.open_file(min_input_file, 'r') as src:
+    with tb.open_file(min_h5_file, 'w') as dst:
+        src.copy_children(src.root, dst.root, recursive=True)
+min_cmd = f"{upside_path}/obj/upside {min_h5_file} --duration {minimization_steps} --frame-interval {minimization_frame_interval} --temperature {minimization_T} --time-step {minimization_dt} --seed 12345"
+print(f"\nRunning minimization:\n  Command: {min_cmd}")
+min_result = sp.run(min_cmd, shell=True)
+if min_result.returncode != 0:
+    print("Minimization failed!")
+    sys.exit(1)
+else:
+    print("Minimization completed successfully!")
+
+# Extract minimized positions from minimization output
+with tb.open_file(min_h5_file, 'r') as t:
+    min_pos = t.root.input.pos[:,:,-1]  # Last frame
+
+# Create HDF5 input file for production MD (overwrite initial_positions with min_pos)
+input_file = "{}/test.up".format(input_dir)
+with tb.open_file(input_file, 'w') as t:
+    input_grp = t.create_group(t.root, 'input')
+    pos = np.zeros((n_atoms, 3, 1), dtype='f4')
+    pos[:,:,0] = min_pos  # Use minimized positions
     
     pos_array = t.create_array(input_grp, 'pos', obj=pos)
     pos_array._v_attrs.arguments = np.array([b'pos'])
@@ -146,6 +249,7 @@ with tb.open_file(input_file, 'w') as t:
     martini_group._v_attrs.cutoff = 12.0
     martini_group._v_attrs.cache_buffer = 1.0
     martini_group._v_attrs.initialized = True
+    martini_group._v_attrs.force_cap = 0  # Disable force capping for normal MD
     
     # Create wall potential group
     wall_group = t.create_group(potential_grp, 'periodic_boundary_potential')
