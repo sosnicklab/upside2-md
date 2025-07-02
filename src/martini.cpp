@@ -8,6 +8,8 @@ using namespace h5;
 using namespace std;
 //Bond, Angle and Dihedral the same format in MARTINI 10.1021/jp071097f
 //Missing: Proper Dihedral from 10.1021/ct700324x (might not need if only exist in protein model)
+//Coulomb interactions can be softened using Slater potential: V(r) = q1*q2/r * (1 - (1 + αr/2) * exp(-αr))
+//Reference: LAMMPS pair_coul_slater_cut implementation
 
 // Helper to check if an HDF5 attribute exists
 inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* attr_name) {
@@ -295,6 +297,8 @@ struct MartiniPotential : public PotentialNode
     
     float epsilon, sigma, lj_cutoff, coul_cutoff, dielectric;
     bool force_cap;
+    bool coulomb_soften;
+    float slater_alpha;
     
     MartiniPotential(hid_t grp, CoordNode& pos_):
         PotentialNode(), n_atom(pos_.n_elem), pos(pos_)
@@ -310,6 +314,22 @@ struct MartiniPotential : public PotentialNode
         force_cap = true;
         if(attribute_exists(grp, ".", "force_cap")) {
             force_cap = read_attribute<int>(grp, ".", "force_cap") != 0;
+        }
+        
+        // Coulomb softening parameters
+        coulomb_soften = false;
+        if(attribute_exists(grp, ".", "coulomb_soften")) {
+            coulomb_soften = read_attribute<int>(grp, ".", "coulomb_soften") != 0;
+        }
+        
+        slater_alpha = 0.0f;
+        if(coulomb_soften) {
+            if(attribute_exists(grp, ".", "slater_alpha")) {
+                slater_alpha = read_attribute<float>(grp, ".", "slater_alpha");
+            } else {
+                // Default value if not specified
+                slater_alpha = 1.0f;
+            }
         }
         
         auto n_pair = get_dset_size(2, grp, "pairs")[0];
@@ -395,8 +415,25 @@ struct MartiniPotential : public PotentialNode
             // Coulomb potential
             if(qi != 0.f && qj != 0.f && dist < coul_cutoff) {
                 const float ke = 332.0636f;  // Coulomb constant in UPSIDE units
-                auto coul_pot = ke * qi * qj / (dielectric * dist);
-                auto deriv = -coul_pot / dist2;
+                float coul_pot, deriv;
+                
+                if(coulomb_soften && slater_alpha > 0.0f) {
+                    // Slater softened Coulomb potential
+                    // V(r) = q1*q2/r * (1 - (1 + αr/2) * exp(-αr))
+                    float alpha_r = slater_alpha * dist;
+                    float exp_alpha_r = expf(-alpha_r);
+                    float soften_factor = 1.0f - (1.0f + alpha_r * 0.5f) * exp_alpha_r;
+                    
+                    coul_pot = ke * qi * qj * soften_factor / (dielectric * dist);
+                    
+                    // Derivative: dV/dr = q1*q2 * [-(1 - (1 + αr/2) * exp(-αr))/r^2 + α/2 * exp(-αr)/r]
+                    float d_soften_dr = slater_alpha * 0.5f * exp_alpha_r / dist;
+                    deriv = -ke * qi * qj * (soften_factor / dist2 - d_soften_dr) / dielectric;
+                } else {
+                    // Standard Coulomb potential
+                    coul_pot = ke * qi * qj / (dielectric * dist);
+                    deriv = -coul_pot / dist2;
+                }
                 
                 // Only apply if potential and derivative are finite
                 if(std::isfinite(coul_pot) && std::isfinite(deriv)) {

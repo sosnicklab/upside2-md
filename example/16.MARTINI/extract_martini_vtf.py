@@ -59,12 +59,18 @@ def main():
         print(f"Mean position: {np.mean(pos)}")
         print(f"Std position: {np.std(pos)}")
         
+        # Read atom types from HDF5 input/type
+        atom_types = t['input/type'][:].astype(str)
+        martini_to_vtf = {'P4': 'W', 'Qd': 'NA', 'Qa': 'CL'}
+        
         # Create output file
         with open(output_file, 'w') as f:
             if output_format == 'vtf':
                 # Write VTF structure section with atom types and radii
                 for i in range(n_particles):
-                    f.write(f"atom {i} name W type W radius 2.0 resid {i} resname WAT segid s0\n")
+                    mtype = atom_types[i]
+                    vtf_name = martini_to_vtf.get(mtype, mtype)
+                    f.write(f"atom {i} name {vtf_name} type {vtf_name} radius 2.0 resid {i} resname {vtf_name} segid s0\n")
             else:  # PDB format
                 # Write PDB header
                 f.write("TITLE     MARTINI WATER SIMULATION\n")

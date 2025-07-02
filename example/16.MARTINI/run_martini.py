@@ -41,6 +41,9 @@ dt             = 0.01  # Time step
 # Wall box size (Angstroms) - should contain centered particles  
 wall_box_size = 23
 
+
+martini_table = {'Qda': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 4.5, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.0, 'P1': 5.0, 'Nda': 5.0, 'Nd': 5.0, 'Na': 5.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'Qd': {'Qda': 5.6, 'Qd': 5.0, 'Qa': 5.6, 'Q0': 4.5, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.0, 'P1': 5.0, 'Nda': 5.0, 'Nd': 4.0, 'Na': 5.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'Qa': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.0, 'Q0': 4.5, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.0, 'P1': 5.0, 'Nda': 5.0, 'Nd': 5.0, 'Na': 4.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'Q0': {'Qda': 4.5, 'Qd': 4.5, 'Qa': 4.5, 'Q0': 3.5, 'P5': 5.0, 'P4': 5.6, 'P3': 5.0, 'P2': 4.5, 'P1': 4.0, 'Nda': 4.0, 'Nd': 4.0, 'Na': 4.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'P5': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 5.0, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.6, 'P1': 5.6, 'Nda': 5.0, 'Nd': 5.0, 'Na': 5.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.7, 'C2': 2.3, 'C1': 2.0}, 'P4': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 5.6, 'P5': 5.6, 'P4': 5.0, 'P3': 5.0, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.0, 'Nd': 4.0, 'Na': 4.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.7, 'C2': 2.3, 'C1': 2.0}, 'P3': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 5.0, 'P5': 5.6, 'P4': 5.0, 'P3': 5.0, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 3.1, 'C2': 2.7, 'C1': 2.3}, 'P2': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 5.0, 'Q0': 4.5, 'P5': 5.6, 'P4': 4.5, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 4.0, 'C5': 3.5, 'C4': 3.5, 'C3': 3.1, 'C2': 2.7, 'C1': 2.3}, 'P1': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 5.0, 'Q0': 4.0, 'P5': 5.6, 'P4': 4.5, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 4.0, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 2.7}, 'Nda': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 5.0, 'Q0': 4.0, 'P5': 5.0, 'P4': 4.0, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 2.7, 'C2': 2.7, 'C1': 2.7}, 'Nd': {'Qda': 5.0, 'Qd': 4.0, 'Qa': 5.0, 'Q0': 4.0, 'P5': 5.0, 'P4': 4.0, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.0, 'Na': 4.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 2.7, 'C2': 2.7, 'C1': 2.7}, 'Na': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 4.0, 'Q0': 4.0, 'P5': 5.0, 'P4': 4.0, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.0, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 2.7, 'C2': 2.7, 'C1': 2.7}, 'N0': {'Qda': 3.5, 'Qd': 3.5, 'Qa': 3.5, 'Q0': 3.5, 'P5': 3.5, 'P4': 3.5, 'P3': 3.5, 'P2': 4.0, 'P1': 4.0, 'Nda': 3.5, 'Nd': 3.5, 'Na': 3.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 2.7}, 'C5': {'Qda': 3.1, 'Qd': 3.1, 'Qa': 3.1, 'Q0': 3.1, 'P5': 3.1, 'P4': 3.1, 'P3': 3.5, 'P2': 3.5, 'P1': 3.5, 'Nda': 3.5, 'Nd': 3.5, 'Na': 3.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 3.1}, 'C4': {'Qda': 2.7, 'Qd': 2.7, 'Qa': 2.7, 'Q0': 2.7, 'P5': 2.7, 'P4': 2.7, 'P3': 3.1, 'P2': 3.5, 'P1': 3.5, 'Nda': 3.1, 'Nd': 3.1, 'Na': 3.1, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 3.1}, 'C3': {'Qda': 2.3, 'Qd': 2.3, 'Qa': 2.3, 'Q0': 2.3, 'P5': 2.7, 'P4': 2.7, 'P3': 3.1, 'P2': 3.1, 'P1': 3.5, 'Nda': 2.7, 'Nd': 2.7, 'Na': 2.7, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.5, 'C1': 3.5}, 'C2': {'Qda': 2.0, 'Qd': 2.0, 'Qa': 2.0, 'Q0': 2.0, 'P5': 2.3, 'P4': 2.3, 'P3': 2.7, 'P2': 2.7, 'P1': 3.1, 'Nda': 2.7, 'Nd': 2.7, 'Na': 2.7, 'N0': 3.1, 'C5': 3.1, 'C4': 3.1, 'C3': 3.5, 'C2': 3.5, 'C1': 3.5}, 'C1': {'Qda': 2.0, 'Qd': 2.0, 'Qa': 2.0, 'Q0': 2.0, 'P5': 2.0, 'P4': 2.0, 'P3': 2.3, 'P2': 2.3, 'P1': 2.7, 'Nda': 2.7, 'Nd': 2.7, 'Na': 2.7, 'N0': 2.7, 'C5': 3.1, 'C4': 3.1, 'C3': 3.5, 'C2': 3.5, 'C1': 3.5}}
+
 #----------------------------------------------------------------------
 ## Setup directories
 #----------------------------------------------------------------------
@@ -58,8 +61,13 @@ for direc in make_dirs:
 ## Create input structure
 #----------------------------------------------------------------------
 
-# Read initial positions from PDB
+# Read initial positions and atom types from PDB
 initial_positions = []
+atom_types = []
+charges = []
+# Mapping: W -> P4, NA -> Qd, CL -> Qa
+pdb_to_martini = {'W': 'P4', 'NA': 'Qd', 'CL': 'Qa'}
+martini_charges = {'P4': 0.0, 'Qd': 1.0, 'Qa': -1.0}
 with open("input.pdb", 'r') as f:
     for line in f:
         if line.startswith('ATOM'):
@@ -67,8 +75,18 @@ with open("input.pdb", 'r') as f:
             y = float(line[38:46])
             z = float(line[46:54])
             initial_positions.append([x, y, z])
+            pdb_name = line[12:16].strip().upper()
+            # Assign MARTINI type
+            if pdb_name in pdb_to_martini:
+                mtype = pdb_to_martini[pdb_name]
+            else:
+                mtype = 'P4'  # Default to P4 (water)
+            atom_types.append(mtype)
+            charges.append(martini_charges.get(mtype, 0.0))
 initial_positions = np.array(initial_positions)
 n_atoms = len(initial_positions)
+atom_types = np.array(atom_types)
+charges = np.array(charges)
 
 print(f"Loaded {n_atoms} atoms from PDB")
 
@@ -123,12 +141,18 @@ with tb.open_file(min_input_file, 'w') as t:
     mass_array._v_attrs.shape = mass.shape
     mass_array._v_attrs.n_atoms = n_atoms
     mass_array._v_attrs.initialized = True
-    atoms = np.arange(n_atoms, dtype=int)
-    type_array = t.create_array(input_grp, 'type', obj=atoms)
+    # Store MARTINI type as string array
+    type_array = t.create_array(input_grp, 'type', obj=atom_types.astype('S4'))
     type_array._v_attrs.arguments = np.array([b'type'])
-    type_array._v_attrs.shape = atoms.shape
+    type_array._v_attrs.shape = atom_types.shape
     type_array._v_attrs.n_atoms = n_atoms
     type_array._v_attrs.initialized = True
+    # Store charges
+    charge_array = t.create_array(input_grp, 'charges', obj=charges)
+    charge_array._v_attrs.arguments = np.array([b'charges'])
+    charge_array._v_attrs.shape = charges.shape
+    charge_array._v_attrs.n_atoms = n_atoms
+    charge_array._v_attrs.initialized = True
     potential_grp = t.create_group(input_grp, 'potential')
     martini_group = t.create_group(potential_grp, 'martini_potential')
     martini_group._v_attrs.arguments = np.array([b'pos'])
@@ -153,23 +177,38 @@ with tb.open_file(min_input_file, 'w') as t:
     wall_group._v_attrs.wall_zlo = -wall_box_size
     wall_group._v_attrs.wall_zhi = wall_box_size
     wall_group._v_attrs.initialized = True
-    t.create_array(martini_group, 'atom_indices', obj=atoms)
-    t.create_array(martini_group, 'charges', obj=np.zeros(n_atoms))
+    t.create_array(martini_group, 'atom_indices', obj=np.arange(n_atoms))
+    t.create_array(martini_group, 'charges', obj=charges)
+    # Create pairs and coefficients (LJ and Coulomb)
     pairs_list = []
+    coeff_array = []
     for i in range(n_atoms):
         for j in range(i+1, n_atoms):
             pairs_list.append([i, j])
+            type_i = atom_types[i]
+            type_j = atom_types[j]
+            # Get epsilon from table and convert to simulation units
+            epsilon_table = martini_table[type_i][type_j]
+            epsilon_sim = epsilon_table / 2.914952774272
+            # Use softened params for minimization
+            if 'minimize' in min_input_file:
+                epsilon = epsilon_sim * 0.1
+                sigma_val = 4.7 * 1.1
+            else:
+                epsilon = epsilon_sim
+                sigma_val = 4.7
+            q1 = charges[i]
+            q2 = charges[j]
+            # [epsilon, sigma, q1, q2] for both LJ and Coulomb
+            coeff_array.append([epsilon, sigma_val, q1, q2])
     pairs_array = np.array(pairs_list, dtype=int)
-    n_pairs = len(pairs_list)
-    coeff_array = np.zeros((n_pairs, 4))
-    for i in range(n_pairs):
-        coeff_array[i] = [soft_epsilon, soft_sigma, 0.0, 0.0]
+    coeff_array = np.array(coeff_array)
     pairs_data = t.create_array(martini_group, 'pairs', obj=pairs_array)
     pairs_data._v_attrs.initialized = True
     coeff_data = t.create_array(martini_group, 'coefficients', obj=coeff_array)
     coeff_data._v_attrs.initialized = True
 
-print(f"Created minimization input with {n_pairs} LJ pairs")
+print(f"Created minimization input with {len(pairs_list)} LJ pairs")
 
 # Run minimization
 min_run_dir = f"{output_dir}/minimize"
@@ -225,10 +264,9 @@ with tb.open_file(input_file, 'w') as t:
     mass_array._v_attrs.initialized = True
 
     # Type array
-    atoms = np.arange(n_atoms, dtype=int)
-    type_array = t.create_array(input_grp, 'type', obj=atoms)
+    type_array = t.create_array(input_grp, 'type', obj=atom_types.astype('S4'))
     type_array._v_attrs.arguments = np.array([b'type'])
-    type_array._v_attrs.shape = atoms.shape
+    type_array._v_attrs.shape = atom_types.shape
     type_array._v_attrs.n_atoms = n_atoms
     type_array._v_attrs.initialized = True
 
@@ -263,28 +301,39 @@ with tb.open_file(input_file, 'w') as t:
     wall_group._v_attrs.initialized = True
     
     # Add atom indices and charges for MARTINI
-    t.create_array(martini_group, 'atom_indices', obj=atoms)
-    t.create_array(martini_group, 'charges', obj=np.zeros(n_atoms))
+    t.create_array(martini_group, 'atom_indices', obj=np.arange(n_atoms))
+    t.create_array(martini_group, 'charges', obj=charges)
     
-    # Create pairs and coefficients
+    # Create pairs and coefficients (LJ and Coulomb)
     pairs_list = []
+    coeff_array = []
     for i in range(n_atoms):
         for j in range(i+1, n_atoms):
             pairs_list.append([i, j])
-
+            type_i = atom_types[i]
+            type_j = atom_types[j]
+            # Get epsilon from table and convert to simulation units
+            epsilon_table = martini_table[type_i][type_j]
+            epsilon_sim = epsilon_table / 2.914952774272
+            # Use softened params for minimization
+            if 'minimize' in min_input_file:
+                epsilon = epsilon_sim * 0.1
+                sigma_val = 4.7 * 1.1
+            else:
+                epsilon = epsilon_sim
+                sigma_val = 4.7
+            q1 = charges[i]
+            q2 = charges[j]
+            # [epsilon, sigma, q1, q2] for both LJ and Coulomb
+            coeff_array.append([epsilon, sigma_val, q1, q2])
     pairs_array = np.array(pairs_list, dtype=int)
-    n_pairs = len(pairs_list)
-
-    coeff_array = np.zeros((n_pairs, 4))
-    for i in range(n_pairs):
-        coeff_array[i] = [martini_epsilon, martini_sigma, 0.0, 0.0]
-    
+    coeff_array = np.array(coeff_array)
     pairs_data = t.create_array(martini_group, 'pairs', obj=pairs_array)
     pairs_data._v_attrs.initialized = True
     coeff_data = t.create_array(martini_group, 'coefficients', obj=coeff_array)
     coeff_data._v_attrs.initialized = True
 
-print(f"Created input with {n_pairs} LJ pairs")
+print(f"Created input with {len(pairs_list)} LJ pairs")
 
 #----------------------------------------------------------------------
 ## Run MD Simulation 
