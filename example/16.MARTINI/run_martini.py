@@ -20,6 +20,8 @@ martini_epsilon = 1.715293655572  # Test with overflow protection
 martini_sigma   = 4.7  # MARTINI water sigma (Angstroms)
 #martini_sigma   = 0.47  # MARTINI water sigma (Angstroms)
 
+dielectric_constant = 15.0  # Default MARTINI dielectric, user can change
+
 # Softened LJ parameters for minimization
 soft_epsilon = martini_epsilon * 0.1  # 10x softer
 soft_sigma = martini_sigma * 1.1      # 10% larger
@@ -161,7 +163,7 @@ with tb.open_file(min_input_file, 'w') as t:
     martini_group._v_attrs.sigma = soft_sigma
     martini_group._v_attrs.lj_cutoff = 12.0
     martini_group._v_attrs.coul_cutoff = 12.0
-    martini_group._v_attrs.dielectric = 15.0
+    martini_group._v_attrs.dielectric = dielectric_constant
     martini_group._v_attrs.n_types = 1
     martini_group._v_attrs.n_params = 4
     martini_group._v_attrs.cutoff = 12.0
@@ -281,7 +283,7 @@ with tb.open_file(input_file, 'w') as t:
     martini_group._v_attrs.sigma = martini_sigma
     martini_group._v_attrs.lj_cutoff = 12.0
     martini_group._v_attrs.coul_cutoff = 12.0
-    martini_group._v_attrs.dielectric = 15.0
+    martini_group._v_attrs.dielectric = dielectric_constant
     martini_group._v_attrs.n_types = 1
     martini_group._v_attrs.n_params = 4
     martini_group._v_attrs.cutoff = 12.0
