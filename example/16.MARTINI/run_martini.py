@@ -26,12 +26,18 @@ dielectric_constant = 15.0  # Default MARTINI dielectric, user can change
 soft_epsilon = martini_epsilon * 0.1  # 10x softer
 soft_sigma = martini_sigma * 1.1      # 10% larger
 
+# Box dimensions (Angstroms) - now configurable
+x_len = 23.0  # Box length in X direction (Angstroms)
+y_len = 23.0  # Box length in Y direction (Angstroms)  
+z_len = 23.0  # Box length in Z direction (Angstroms)
+
 # Minimization parameters
 minimization_steps = 1000
 minimization_T = 0.01  # Very low temperature for minimization
 minimization_dt = 0.01
 minimization_frame_interval = 100
 
+print(f"Box dimensions: X={x_len:.1f}, Y={y_len:.1f}, Z={z_len:.1f} Angstroms")
 print(f"Testing epsilon = {martini_epsilon:.3f} UPSIDE units = {martini_epsilon * 2.332:.3f} kJ/mol with overflow protection")
 
 # Simulation parameters
@@ -39,9 +45,6 @@ T              = 0.8  # Temperature (UPSIDE units)
 duration       = 1000  # Total simulation steps  
 frame_interval = 50   # Output every N steps
 dt             = 0.01  # Time step
-
-# Wall box size (Angstroms) - should contain centered particles  
-wall_box_size = 23
 
 
 martini_table = {'Qda': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 4.5, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.0, 'P1': 5.0, 'Nda': 5.0, 'Nd': 5.0, 'Na': 5.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'Qd': {'Qda': 5.6, 'Qd': 5.0, 'Qa': 5.6, 'Q0': 4.5, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.0, 'P1': 5.0, 'Nda': 5.0, 'Nd': 4.0, 'Na': 5.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'Qa': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.0, 'Q0': 4.5, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.0, 'P1': 5.0, 'Nda': 5.0, 'Nd': 5.0, 'Na': 4.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'Q0': {'Qda': 4.5, 'Qd': 4.5, 'Qa': 4.5, 'Q0': 3.5, 'P5': 5.0, 'P4': 5.6, 'P3': 5.0, 'P2': 4.5, 'P1': 4.0, 'Nda': 4.0, 'Nd': 4.0, 'Na': 4.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'P5': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 5.0, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.6, 'P1': 5.6, 'Nda': 5.0, 'Nd': 5.0, 'Na': 5.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.7, 'C2': 2.3, 'C1': 2.0}, 'P4': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 5.6, 'P5': 5.6, 'P4': 5.0, 'P3': 5.0, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.0, 'Nd': 4.0, 'Na': 4.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.7, 'C2': 2.3, 'C1': 2.0}, 'P3': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 5.0, 'P5': 5.6, 'P4': 5.0, 'P3': 5.0, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 3.1, 'C2': 2.7, 'C1': 2.3}, 'P2': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 5.0, 'Q0': 4.5, 'P5': 5.6, 'P4': 4.5, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 4.0, 'C5': 3.5, 'C4': 3.5, 'C3': 3.1, 'C2': 2.7, 'C1': 2.3}, 'P1': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 5.0, 'Q0': 4.0, 'P5': 5.6, 'P4': 4.5, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 4.0, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 2.7}, 'Nda': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 5.0, 'Q0': 4.0, 'P5': 5.0, 'P4': 4.0, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 2.7, 'C2': 2.7, 'C1': 2.7}, 'Nd': {'Qda': 5.0, 'Qd': 4.0, 'Qa': 5.0, 'Q0': 4.0, 'P5': 5.0, 'P4': 4.0, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.0, 'Na': 4.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 2.7, 'C2': 2.7, 'C1': 2.7}, 'Na': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 4.0, 'Q0': 4.0, 'P5': 5.0, 'P4': 4.0, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.0, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 2.7, 'C2': 2.7, 'C1': 2.7}, 'N0': {'Qda': 3.5, 'Qd': 3.5, 'Qa': 3.5, 'Q0': 3.5, 'P5': 3.5, 'P4': 3.5, 'P3': 3.5, 'P2': 4.0, 'P1': 4.0, 'Nda': 3.5, 'Nd': 3.5, 'Na': 3.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 2.7}, 'C5': {'Qda': 3.1, 'Qd': 3.1, 'Qa': 3.1, 'Q0': 3.1, 'P5': 3.1, 'P4': 3.1, 'P3': 3.5, 'P2': 3.5, 'P1': 3.5, 'Nda': 3.5, 'Nd': 3.5, 'Na': 3.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 3.1}, 'C4': {'Qda': 2.7, 'Qd': 2.7, 'Qa': 2.7, 'Q0': 2.7, 'P5': 2.7, 'P4': 2.7, 'P3': 3.1, 'P2': 3.5, 'P1': 3.5, 'Nda': 3.1, 'Nd': 3.1, 'Na': 3.1, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 3.1}, 'C3': {'Qda': 2.3, 'Qd': 2.3, 'Qa': 2.3, 'Q0': 2.3, 'P5': 2.7, 'P4': 2.7, 'P3': 3.1, 'P2': 3.1, 'P1': 3.5, 'Nda': 2.7, 'Nd': 2.7, 'Na': 2.7, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.5, 'C1': 3.5}, 'C2': {'Qda': 2.0, 'Qd': 2.0, 'Qa': 2.0, 'Q0': 2.0, 'P5': 2.3, 'P4': 2.3, 'P3': 2.7, 'P2': 2.7, 'P1': 3.1, 'Nda': 2.7, 'Nd': 2.7, 'Na': 2.7, 'N0': 3.1, 'C5': 3.1, 'C4': 3.1, 'C3': 3.5, 'C2': 3.5, 'C1': 3.5}, 'C1': {'Qda': 2.0, 'Qd': 2.0, 'Qa': 2.0, 'Q0': 2.0, 'P5': 2.0, 'P4': 2.0, 'P3': 2.3, 'P2': 2.3, 'P1': 2.7, 'Nda': 2.7, 'Nd': 2.7, 'Na': 2.7, 'N0': 2.7, 'C5': 3.1, 'C4': 3.1, 'C3': 3.5, 'C2': 3.5, 'C1': 3.5}}
@@ -104,17 +107,18 @@ center = (pos_max + pos_min) / 2
 initial_positions -= center
 print(f"Centered particles around origin. New center: {np.mean(initial_positions, axis=0)}")
 
-# Check if particles fit within wall boundaries
+# Check if particles fit within box boundaries
 new_min = np.min(initial_positions, axis=0)
 new_max = np.max(initial_positions, axis=0)
+half_box = np.array([x_len/2, y_len/2, z_len/2])
 max_coord = np.max(np.abs([new_min, new_max]))
 print(f"After centering, max coordinate magnitude: {max_coord:.1f} Angstroms")
 
-if max_coord > wall_box_size:
-    print(f"WARNING: Particles extend beyond wall boundaries (±{wall_box_size} Angstroms)")
-    print(f"Consider increasing wall_box_size to at least {max_coord + 2:.1f} Angstroms")
+if np.any(np.abs(new_min) > half_box) or np.any(np.abs(new_max) > half_box):
+    print(f"WARNING: Particles extend beyond box boundaries (±{half_box} Angstroms)")
+    print(f"Consider increasing box dimensions")
 else:
-    print(f"Particles fit within wall boundaries (±{wall_box_size} Angstroms)")
+    print(f"Particles fit within box boundaries (±{half_box} Angstroms)")
 
 # Create HDF5 input file for minimization
 min_input_file = f"{input_dir}/minimize.up"
@@ -170,14 +174,18 @@ with tb.open_file(min_input_file, 'w') as t:
     martini_group._v_attrs.cache_buffer = 1.0
     martini_group._v_attrs.initialized = True
     martini_group._v_attrs.force_cap = 1  # Enable force capping for minimization
+    
+    # Set box dimensions using new format
+    martini_group._v_attrs.x_len = x_len
+    martini_group._v_attrs.y_len = y_len
+    martini_group._v_attrs.z_len = z_len
+    
     wall_group = t.create_group(potential_grp, 'periodic_boundary_potential')
     wall_group._v_attrs.arguments = np.array([b'pos'])
-    wall_group._v_attrs.wall_xlo = -wall_box_size
-    wall_group._v_attrs.wall_xhi = wall_box_size
-    wall_group._v_attrs.wall_ylo = -wall_box_size
-    wall_group._v_attrs.wall_yhi = wall_box_size
-    wall_group._v_attrs.wall_zlo = -wall_box_size
-    wall_group._v_attrs.wall_zhi = wall_box_size
+    # Set box dimensions using new format
+    wall_group._v_attrs.x_len = x_len
+    wall_group._v_attrs.y_len = y_len
+    wall_group._v_attrs.z_len = z_len
     wall_group._v_attrs.initialized = True
     t.create_array(martini_group, 'atom_indices', obj=np.arange(n_atoms))
     t.create_array(martini_group, 'charges', obj=charges)
@@ -291,15 +299,18 @@ with tb.open_file(input_file, 'w') as t:
     martini_group._v_attrs.initialized = True
     martini_group._v_attrs.force_cap = 0  # Disable force capping for normal MD
     
+    # Set box dimensions using new format
+    martini_group._v_attrs.x_len = x_len
+    martini_group._v_attrs.y_len = y_len
+    martini_group._v_attrs.z_len = z_len
+    
     # Create wall potential group
     wall_group = t.create_group(potential_grp, 'periodic_boundary_potential')
     wall_group._v_attrs.arguments = np.array([b'pos'])
-    wall_group._v_attrs.wall_xlo = -wall_box_size
-    wall_group._v_attrs.wall_xhi = wall_box_size
-    wall_group._v_attrs.wall_ylo = -wall_box_size
-    wall_group._v_attrs.wall_yhi = wall_box_size
-    wall_group._v_attrs.wall_zlo = -wall_box_size
-    wall_group._v_attrs.wall_zhi = wall_box_size
+    # Set box dimensions using new format
+    wall_group._v_attrs.x_len = x_len
+    wall_group._v_attrs.y_len = y_len
+    wall_group._v_attrs.z_len = z_len
     wall_group._v_attrs.initialized = True
     
     # Add atom indices and charges for MARTINI

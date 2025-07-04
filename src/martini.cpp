@@ -20,6 +20,18 @@ inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* att
     return exists > 0;
 }
 
+// Helper for minimum image convention in a rectangular box
+inline Vec<3,float> minimum_image_rect(const Vec<3,float>& dr, float box_x, float box_y, float box_z) {
+    Vec<3,float> out = dr;
+    if (out.x() >  0.5f * box_x) out.x() -= box_x;
+    if (out.x() < -0.5f * box_x) out.x() += box_x;
+    if (out.y() >  0.5f * box_y) out.y() -= box_y;
+    if (out.y() < -0.5f * box_y) out.y() += box_y;
+    if (out.z() >  0.5f * box_z) out.z() -= box_z;
+    if (out.z() < -0.5f * box_z) out.z() += box_z;
+    return out;
+}
+
 struct DistSpring : public PotentialNode
 {
     struct Params {
@@ -222,17 +234,28 @@ struct PeriodicBoundaryPotential : public PotentialNode
         PotentialNode(), n_atom(pos_.n_elem), pos(pos_)
     {
         // Read box dimensions from attributes
-        float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-        float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-        float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-        float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-        float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-        float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
-        
-        // Calculate box dimensions
-        box_x = wall_xhi - wall_xlo;
-        box_y = wall_yhi - wall_ylo;
-        box_z = wall_zhi - wall_zlo;
+        // Support both individual dimensions and legacy wall_box_size
+        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
+            // New format: separate x, y, z dimensions
+            box_x = read_attribute<float>(grp, ".", "x_len");
+            box_y = read_attribute<float>(grp, ".", "y_len");
+            box_z = read_attribute<float>(grp, ".", "z_len");
+            std::cout << "PERIODIC: Using new box format - X=" << box_x << ", Y=" << box_y << ", Z=" << box_z << std::endl;
+        } else {
+            // Legacy format: wall boundaries
+            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
+            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
+            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
+            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
+            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
+            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
+            
+            // Calculate box dimensions
+            box_x = wall_xhi - wall_xlo;
+            box_y = wall_yhi - wall_ylo;
+            box_z = wall_zhi - wall_zlo;
+            std::cout << "PERIODIC: Using legacy box format - X=" << box_x << ", Y=" << box_y << ", Z=" << box_z << std::endl;
+        }
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -299,6 +322,8 @@ struct MartiniPotential : public PotentialNode
     bool force_cap;
     bool coulomb_soften;
     float slater_alpha;
+    // Box dimensions for minimum image
+    float box_x, box_y, box_z;
     
     MartiniPotential(hid_t grp, CoordNode& pos_):
         PotentialNode(), n_atom(pos_.n_elem), pos(pos_)
@@ -330,6 +355,28 @@ struct MartiniPotential : public PotentialNode
                 // Default value if not specified
                 slater_alpha = 1.0f;
             }
+        }
+        
+        // Read box dimensions (same as PeriodicBoundaryPotential)
+        // Support both individual dimensions and legacy wall_box_size
+        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
+            // New format: separate x, y, z dimensions
+            box_x = read_attribute<float>(grp, ".", "x_len");
+            box_y = read_attribute<float>(grp, ".", "y_len");
+            box_z = read_attribute<float>(grp, ".", "z_len");
+            std::cout << "MARTINI: Using new box format - X=" << box_x << ", Y=" << box_y << ", Z=" << box_z << std::endl;
+        } else {
+            // Legacy format: wall boundaries
+            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
+            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
+            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
+            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
+            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
+            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
+            box_x = wall_xhi - wall_xlo;
+            box_y = wall_yhi - wall_ylo;
+            box_z = wall_zhi - wall_zlo;
+            std::cout << "MARTINI: Using legacy box format - X=" << box_x << ", Y=" << box_y << ", Z=" << box_z << std::endl;
         }
         
         auto n_pair = get_dset_size(2, grp, "pairs")[0];
@@ -371,7 +418,8 @@ struct MartiniPotential : public PotentialNode
             
             auto p1 = load_vec<3>(pos1, i);
             auto p2 = load_vec<3>(pos1, j);
-            auto dr = p1 - p2;
+            // Apply minimum image convention for rectangular box
+            auto dr = minimum_image_rect(p1 - p2, box_x, box_y, box_z);
             auto dist2 = mag2(dr);
             auto dist = sqrtf(dist2);
             
