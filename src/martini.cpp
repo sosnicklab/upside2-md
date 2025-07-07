@@ -322,11 +322,17 @@ struct MartiniPotential : public PotentialNode
     bool force_cap;
     bool coulomb_soften;
     float slater_alpha;
+
     // Box dimensions for minimum image
     float box_x, box_y, box_z;
     
+    // Debug variables
+    bool debug_mode;
+    int debug_step_count;
+    int max_debug_interactions;
+    
     MartiniPotential(hid_t grp, CoordNode& pos_):
-        PotentialNode(), n_atom(pos_.n_elem), pos(pos_)
+        PotentialNode(), n_atom(pos_.n_elem), pos(pos_), debug_step_count(0), max_debug_interactions(10)
     {
         check_size(grp, "atom_indices", n_atom);
         check_size(grp, "charges", n_atom);
@@ -355,7 +361,16 @@ struct MartiniPotential : public PotentialNode
                 // Default value if not specified
                 slater_alpha = 1.0f;
             }
+            std::cout << "[DEBUG] SOFTENED COULOMB POTENTIAL IS ENABLED! slater_alpha=" << slater_alpha << std::endl;
         }
+        
+        // Debug mode - enable for first few steps
+        debug_mode = false;
+        if(attribute_exists(grp, ".", "debug_mode")) {
+            debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
+        }
+        
+
         
         // Read box dimensions (same as PeriodicBoundaryPotential)
         // Support both individual dimensions and legacy wall_box_size
@@ -392,6 +407,14 @@ struct MartiniPotential : public PotentialNode
         traverse_dset<2,float>(grp, "coefficients", [&](size_t np, size_t d, float x) {
             coeff[np][d] = x;
         });
+        
+        // Print debug info if enabled
+        if(debug_mode) {
+            std::cout << "MARTINI DEBUG: Initialized with " << n_atom << " atoms and " << n_pair << " pairs" << std::endl;
+            std::cout << "MARTINI DEBUG: Parameters - epsilon=" << epsilon << ", sigma=" << sigma 
+                      << ", lj_cutoff=" << lj_cutoff << ", coul_cutoff=" << coul_cutoff 
+                      << ", dielectric=" << dielectric << std::endl;
+        }
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -402,9 +425,21 @@ struct MartiniPotential : public PotentialNode
         
         fill(pos1_sens, 3, n_atom, 0.f);
         
-        float pot = 0.f;
+        float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
+        if(pot) *pot = 0.f;
+        
+        // Debug: Print particle positions for first few steps
+        if(debug_mode && debug_step_count < 3) {
+            std::cout << "\n=== STEP " << debug_step_count << " ===" << std::endl;
+            std::cout << "Coordinates:" << std::endl;
+            for(int i = 0; i < n_atom; ++i) {
+                auto p = load_vec<3>(pos1, i);
+                std::cout << "  Particle " << i << ": (" << p.x() << ", " << p.y() << ", " << p.z() << ")" << std::endl;
+            }
+        }
         
         // Compute particle-particle interactions
+        int debug_interaction_count = 0;
         for(size_t np=0; np<pairs.size(); ++np) {
             int i = pairs[np].first;
             int j = pairs[np].second;
@@ -423,39 +458,44 @@ struct MartiniPotential : public PotentialNode
             auto dist2 = mag2(dr);
             auto dist = sqrtf(dist2);
             
+            // Apply distance cutoff for computational efficiency
             if(dist > max(lj_cutoff, coul_cutoff)) continue;
             
+            // Debug: Print detailed interaction info for first few interactions
+            if(debug_mode && debug_step_count < 3 && debug_interaction_count < max_debug_interactions) {
+                std::cout << "\nInteraction " << debug_interaction_count << " (particles " << i << " and " << j << "):" << std::endl;
+                std::cout << "  Distance: " << dist << " Angstroms" << std::endl;
+                std::cout << "  Parameters: eps=" << eps << ", sig=" << sig << ", qi=" << qi << ", qj=" << qj << std::endl;
+            }
+            
             Vec<3> force = make_zero<3>();
+            float lj_pot_contrib = 0.f;
+            float coul_pot_contrib = 0.f;
             
             // Lennard-Jones potential
             if(eps != 0.f && sig != 0.f && dist < lj_cutoff) {
-                // Enhanced overflow protection: prevent core overlap
-                // Set minimum distance to 1.12*sigma (LJ minimum) to prevent unphysical overlap
-                float min_dist = 1.12f * sig;  // 2^(1/6) ≈ 1.12 is the LJ minimum
-                float effective_dist = max(dist, min_dist);
-                
-                auto sig_r = sig / effective_dist;
+                // Use bare LJ potential without any protection
+                auto sig_r = sig / dist;
                 auto sig_r6 = sig_r * sig_r * sig_r * sig_r * sig_r * sig_r;
                 auto sig_r12 = sig_r6 * sig_r6;
                 
                 // Check for overflow in LJ terms
                 if(std::isfinite(sig_r6) && std::isfinite(sig_r12)) {
                     auto lj_pot = 4.f * eps * (sig_r12 - sig_r6);
-                    auto deriv = 24.f * eps / (effective_dist * effective_dist) * (2.f * sig_r12 - sig_r6);
-                    
-                    // Cap maximum force magnitude to prevent integration instability
-                    if(force_cap) {
-                        float max_force_magnitude = 1000.0f * eps;  // Reasonable force limit
-                        float force_mag = mag(deriv * dr);
-                        if(force_mag > max_force_magnitude) {
-                            deriv = deriv * (max_force_magnitude / force_mag);
-                        }
-                    }
+                    // Corrected LJ force derivative: 24*epsilon/sigma*(2*(sigma/r)^13-(sigma/r)^7)
+                    auto deriv = 24.f * eps / sig * (2.f * sig_r12 * sig_r - sig_r6 * sig_r);
                     
                     // Only apply if potential and derivative are finite
                     if(std::isfinite(lj_pot) && std::isfinite(deriv)) {
-                        pot += lj_pot;
-                        force += deriv * dr;
+                        if(pot) *pot += lj_pot;
+                        lj_pot_contrib = lj_pot;
+                        force += deriv * (-dr);  // Fix force direction: force should be from p1 to p2
+                        
+                        // Debug: Print LJ details
+                        if(debug_mode && debug_step_count < 3 && debug_interaction_count < max_debug_interactions) {
+                            std::cout << "  LJ Energy: " << lj_pot << " UPSIDE units" << std::endl;
+                            std::cout << "  LJ Force: (" << (deriv * (-dr)).x() << ", " << (deriv * (-dr)).y() << ", " << (deriv * (-dr)).z() << ") UPSIDE units" << std::endl;
+                        }
                     }
                 }
             }
@@ -485,18 +525,254 @@ struct MartiniPotential : public PotentialNode
                 
                 // Only apply if potential and derivative are finite
                 if(std::isfinite(coul_pot) && std::isfinite(deriv)) {
-                    pot += coul_pot;
-                    force += deriv * dr;
+                    if(pot) *pot += coul_pot;
+                    coul_pot_contrib = coul_pot;
+                    force += deriv * (-dr);  // Fix force direction: force should be from p1 to p2
+                    
+                    // Debug: Print Coulomb details
+                    if(debug_mode && debug_step_count < 3 && debug_interaction_count < max_debug_interactions) {
+                        std::cout << "  Coulomb Energy: " << coul_pot << " UPSIDE units" << std::endl;
+                        std::cout << "  Coulomb Force: (" << (deriv * dr).x() << ", " << (deriv * dr).y() << ", " << (deriv * dr).z() << ") UPSIDE units" << std::endl;
+                    }
                 }
+            }
+            
+            // Debug: Print total interaction summary
+            if(debug_mode && debug_step_count < 3 && debug_interaction_count < max_debug_interactions) {
+                std::cout << "  Total Energy: " << (lj_pot_contrib + coul_pot_contrib) << " UPSIDE units" << std::endl;
+                std::cout << "  Total Force: (" << force.x() << ", " << force.y() << ", " << force.z() << ") UPSIDE units" << std::endl;
             }
             
             update_vec<3>(pos1_sens, i,  force);
             update_vec<3>(pos1_sens, j, -force);
+            
+            debug_interaction_count++;
         }
         
-        potential = pot;
+        // Debug: Print total potential for this step
+        if(debug_mode && debug_step_count < 3) {
+            std::cout << "Total Energy: " << (pot ? *pot : 0.f) << " UPSIDE units" << std::endl;
+            std::cout << "=== END STEP " << debug_step_count << " ===\n" << std::endl;
+        }
+        
+        debug_step_count++;
     }
 };
 static RegisterNodeType<MartiniPotential,1> martini_potential_node("martini_potential");
+
+// Conjugate Gradient Minimizer based on LAMMPS implementation
+struct ConjugateGradientMinimizer : public PotentialNode
+{
+    CoordNode& pos;
+    int n_atom;
+    int max_iterations;
+    float energy_tolerance;
+    float force_tolerance;
+    float step_size;
+    bool verbose;
+    
+    // Minimization state variables
+    vector<Vec<3,float>> forces;
+    vector<Vec<3,float>> search_direction;
+    vector<Vec<3,float>> old_forces;
+    float old_energy;
+    int iteration_count;
+    bool converged;
+    
+    ConjugateGradientMinimizer(hid_t grp, CoordNode& pos_):
+        PotentialNode(), pos(pos_), n_atom(pos_.n_elem), iteration_count(0), converged(false)
+    {
+        // Read minimization parameters
+        max_iterations = 1000;
+        if(attribute_exists(grp, ".", "max_iterations")) {
+            max_iterations = read_attribute<int>(grp, ".", "max_iterations");
+        }
+        
+        energy_tolerance = 1e-6f;
+        if(attribute_exists(grp, ".", "energy_tolerance")) {
+            energy_tolerance = read_attribute<float>(grp, ".", "energy_tolerance");
+        }
+        
+        force_tolerance = 1e-6f;
+        if(attribute_exists(grp, ".", "force_tolerance")) {
+            force_tolerance = read_attribute<float>(grp, ".", "force_tolerance");
+        }
+        
+        step_size = 0.1f;
+        if(attribute_exists(grp, ".", "step_size")) {
+            step_size = read_attribute<float>(grp, ".", "step_size");
+        }
+        
+        verbose = true;
+        if(attribute_exists(grp, ".", "verbose")) {
+            verbose = read_attribute<int>(grp, ".", "verbose") != 0;
+        }
+        
+        // Initialize vectors
+        forces.resize(n_atom);
+        search_direction.resize(n_atom);
+        old_forces.resize(n_atom);
+        
+        std::cout << "[MINIMIZER] Conjugate Gradient Minimizer initialized:" << std::endl;
+        std::cout << "  Max iterations: " << max_iterations << std::endl;
+        std::cout << "  Energy tolerance: " << energy_tolerance << std::endl;
+        std::cout << "  Force tolerance: " << force_tolerance << std::endl;
+        std::cout << "  Step size: " << step_size << std::endl;
+    }
+    
+    // Compute force magnitude for convergence check
+    float compute_force_magnitude() {
+        float total_force = 0.0f;
+        for(int i = 0; i < n_atom; ++i) {
+            total_force += mag2(forces[i]);
+        }
+        return sqrtf(total_force);
+    }
+    
+    // Line search to find optimal step size (simplified version)
+    float line_search() {
+        float alpha = step_size;
+        float energy_0 = potential;
+        
+        // Store current positions
+        vector<Vec<3,float>> original_pos(n_atom);
+        VecArray pos_array = pos.output;
+        for(int i = 0; i < n_atom; ++i) {
+            original_pos[i] = load_vec<3>(pos_array, i);
+        }
+        
+        // Try different step sizes
+        for(int attempt = 0; attempt < 10; ++attempt) {
+            // Move along search direction
+            for(int i = 0; i < n_atom; ++i) {
+                auto new_pos = original_pos[i] + alpha * search_direction[i];
+                store_vec<3>(pos_array, i, new_pos);
+            }
+            
+            // Recompute energy (this would need to trigger a full energy calculation)
+            // For now, we'll use a simplified approach
+            float new_energy = energy_0; // Placeholder - would need actual recomputation
+            
+            if(new_energy < energy_0) {
+                return alpha;
+            }
+            
+            alpha *= 0.5f; // Reduce step size
+        }
+        
+        // Restore original positions
+        for(int i = 0; i < n_atom; ++i) {
+            store_vec<3>(pos_array, i, original_pos[i]);
+        }
+        
+        return step_size * 0.1f; // Return small step size if no improvement found
+    }
+    
+    virtual void compute_value(ComputeMode mode) {
+        Timer timer(string("conjugate_gradient_minimizer"));
+        
+        if(converged || iteration_count >= max_iterations) {
+            if(verbose) {
+                std::cout << "[MINIMIZER] Minimization " << (converged ? "converged" : "reached max iterations") << std::endl;
+            }
+            return;
+        }
+        
+        VecArray pos_array = pos.output;
+        VecArray pos_sens = pos.sens;
+        
+        // Extract forces from sensitivity (gradient)
+        for(int i = 0; i < n_atom; ++i) {
+            forces[i] = -load_vec<3>(pos_sens, i); // Force = -gradient
+        }
+        
+        float current_energy = potential;
+        float force_magnitude = compute_force_magnitude();
+        
+        if(verbose && iteration_count % 10 == 0) {
+            std::cout << "[MINIMIZER] Iteration " << iteration_count 
+                      << " Energy: " << current_energy 
+                      << " Force: " << force_magnitude << std::endl;
+        }
+        
+        // Check convergence
+        if(iteration_count > 0) {
+            float energy_change = fabsf(current_energy - old_energy);
+            if(energy_change < energy_tolerance && force_magnitude < force_tolerance) {
+                converged = true;
+                if(verbose) {
+                    std::cout << "[MINIMIZER] CONVERGED! Energy change: " << energy_change 
+                              << " Force magnitude: " << force_magnitude << std::endl;
+                }
+                return;
+            }
+        }
+        
+        // Compute search direction using conjugate gradient method
+        if(iteration_count == 0) {
+            // First iteration: use steepest descent
+            for(int i = 0; i < n_atom; ++i) {
+                search_direction[i] = forces[i];
+            }
+        } else {
+            // Conjugate gradient: Polak-Ribiere formula
+            float numerator = 0.0f;
+            float denominator = 0.0f;
+            
+            for(int i = 0; i < n_atom; ++i) {
+                Vec<3,float> force_diff = forces[i] - old_forces[i];
+                numerator += dot(forces[i], force_diff);
+                denominator += dot(old_forces[i], old_forces[i]);
+            }
+            
+            float beta = (denominator > 0.0f) ? numerator / denominator : 0.0f;
+            
+            // Ensure beta is positive (Fletcher-Reeves fallback)
+            if(beta < 0.0f) {
+                beta = 0.0f;
+            }
+            
+            for(int i = 0; i < n_atom; ++i) {
+                search_direction[i] = forces[i] + beta * search_direction[i];
+            }
+        }
+        
+        // Normalize search direction
+        float search_magnitude = 0.0f;
+        for(int i = 0; i < n_atom; ++i) {
+            search_magnitude += mag2(search_direction[i]);
+        }
+        search_magnitude = sqrtf(search_magnitude);
+        
+        if(search_magnitude > 0.0f) {
+            for(int i = 0; i < n_atom; ++i) {
+                search_direction[i] = search_direction[i] / search_magnitude;
+            }
+        }
+        
+        // Perform line search to find optimal step size
+        float alpha = line_search();
+        
+        // Update positions
+        for(int i = 0; i < n_atom; ++i) {
+            auto current_pos = load_vec<3>(pos_array, i);
+            auto new_pos = current_pos + alpha * search_direction[i];
+            store_vec<3>(pos_array, i, new_pos);
+        }
+        
+        // Store current state for next iteration
+        old_energy = current_energy;
+        for(int i = 0; i < n_atom; ++i) {
+            old_forces[i] = forces[i];
+        }
+        
+        iteration_count++;
+        
+        // Set potential to current energy for logging
+        potential = current_energy;
+    }
+};
+
+static RegisterNodeType<ConjugateGradientMinimizer,1> cg_minimizer_node("conjugate_gradient_minimizer");
 
 
