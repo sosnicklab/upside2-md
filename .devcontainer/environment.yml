@@ -1,0 +1,44 @@
+# .devcontainer/environment.yml
+# Optimized for fast dependency resolution with Miniforge/mamba
+
+name: upside2-env
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # --- Build tools ---
+  # Installing these via conda ensures that packages requiring compilation
+  # (like prody, mdtraj) have the correct C/C++ compilers and Python headers.
+  - c-compiler
+  - cxx-compiler
+  - make
+
+  # --- Core Python and Packages ---
+  - python=3.11
+  
+  # --- Scientific Computing Stack ---
+  # Updated numpy constraint for better compatibility with recent packages
+  - numpy>=1.21,<1.26
+  - scipy
+  - pandas
+  
+  # --- HDF5 and related packages ---
+  - pytables
+  - h5py
+  
+  # --- Statistical and analysis packages ---
+  - pymbar
+  
+  # --- Project-specific dependencies ---
+  # These are now installed directly from conda-forge for better compatibility
+  - mdtraj
+  - prody
+
+  # --- Development and utility tools ---
+  - setuptools
+  - pip
+  
+  # --- Pip section ---
+  # Keep minimal; only for packages not available on conda-forge
+  - pip: []

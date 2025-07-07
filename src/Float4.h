@@ -3,9 +3,15 @@
 
 // Author: John Jumper
 
+#if defined(__APPLE__) && defined(__arm64__)
+// ARM Mac (M1/M2/M3) - Use SSE2NEON
+#include <sse2neon.h>
+#else
+// Other architectures (e.g., x86_64) - Use XMMintrin
 #include <xmmintrin.h>
 #include <smmintrin.h>
 #include <immintrin.h>
+#endif
     
 enum class Alignment {unaligned, aligned};
 
@@ -301,10 +307,17 @@ struct alignas(16) Float4
             return min(min(broadcast<0>(), broadcast<1>()), min(broadcast<2>(),broadcast<3>()));
         }
 
-        float x() const { float val; _MM_EXTRACT_FLOAT(val, vec, 0); return val;}
-        float y() const { float val; _MM_EXTRACT_FLOAT(val, vec, 1); return val;}
-        float z() const { float val; _MM_EXTRACT_FLOAT(val, vec, 2); return val;}
-        float w() const { float val; _MM_EXTRACT_FLOAT(val, vec, 3); return val;}
+        #if defined(__APPLE__) && defined(__arm64__)
+            float x() const { return vgetq_lane_f32(vec, 0); }
+            float y() const { return vgetq_lane_f32(vec, 1); }
+            float z() const { return vgetq_lane_f32(vec, 2); }
+            float w() const { return vgetq_lane_f32(vec, 3); }
+        #else
+            float x() const { float val; _MM_EXTRACT_FLOAT(val, vec, 0); return val; }
+            float y() const { float val; _MM_EXTRACT_FLOAT(val, vec, 1); return val; }
+            float z() const { float val; _MM_EXTRACT_FLOAT(val, vec, 2); return val; }
+            float w() const { float val; _MM_EXTRACT_FLOAT(val, vec, 3); return val; }
+        #endif
 
         friend Int4;
         friend void transpose4(Float4&, Float4&, Float4&, Float4&);
