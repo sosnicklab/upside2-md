@@ -3,6 +3,13 @@ run/
 bin/
 data/
 doc/
+.vscode/
+.venv/
+build/.cmake/
+build/build.ninja
+build/cmake_install.cmake
+build/Makefile
+tests/build/
 *~
 *.swp
 *.vtf
@@ -15,6 +22,9 @@ a.out
 *.s
 .clang_complete
 CMakeCache.txt
+tests/records/temp_capture_args.gdb
+tests/records/test_gdb.gdb
+gmon.out
 CMakeFiles/
 *.bak
 *.DS_Store

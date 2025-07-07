@@ -1,0 +1,112 @@
+Starting breakpoint at src/interaction_graph.h:182
+Breakpoint 1 at 0x81b60: src/interaction_graph.h:182. (12 locations)
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+
+Breakpoint 1.7, PairlistComputation<false>::change_cache_buffer (new_buffer=1.70000005, this=0x555555848bd0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182
+182	        void change_cache_buffer(float new_buffer) {cache_buffer=new_buffer;}
+--- GDB_CAPTURE_HIT_START ---
+HIT_NUMBER:$1 = 1
+LOCATION: Hit at src/interaction_graph.h:182
+=== ARGUMENTS ===
+new_buffer = 1.70000005
+this = 0x555555848bd0
+=== DEREFERENCED_ARGUMENTS ===
+VARIABLE: new_buffer = 1.70000005
+VARIABLE: this = 0x555555848bd0
+DEREF: *this = {
+  n_elem1 = 8,
+  n_elem2 = 9,
+  edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x5555558cb6d0
+  },
+  edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x5555558cbb40
+  },
+  edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x5555558cbc90
+  },
+  edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x5555558cbde0
+  },
+  n_edge = 0,
+  cache_valid = false,
+  cache_buffer = 1,
+  cache_cutoff = 0,
+  cache_pos1 = std::unique_ptr<float []> = {
+    get() = 0x5555558cbf30
+  },
+  cache_pos2 = std::unique_ptr<float []> = {
+    get() = 0x5555558cc040
+  },
+  cache_id1 = std::unique_ptr<int []> = {
+    get() = 0x5555558cc150
+  },
+  cache_id2 = std::unique_ptr<int []> = {
+    get() = 0x5555558cc1a0
+  },
+  cache_edge_indices1 = std::unique_ptr<int []> = {
+    get() = 0x5555558cc1f0
+  },
+  cache_edge_indices2 = std::unique_ptr<int []> = {
+    get() = 0x5555558cc340
+  },
+  cache_edge_id1 = std::unique_ptr<int []> = {
+    get() = 0x5555558cda30
+  },
+  cache_edge_id2 = std::unique_ptr<int []> = {
+    get() = 0x5555558cdb80
+  },
+  cache_n_edge = 0
+}
+THIS_TYPE: this type: PairlistComputation<false>
+MEMBER: this->.n_elem1 = 8
+MEMBER: this->.n_elem2 = 9
+MEMBER: this->.edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x5555558cb6d0
+}
+MEMBER: this->.edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x5555558cbb40
+}
+MEMBER: this->.edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x5555558cbc90
+}
+MEMBER: this->.edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x5555558cbde0
+}
+MEMBER: this->.n_edge = 0
+MEMBER: this->.cache_valid = false
+MEMBER: this->.cache_buffer = 1
+MEMBER: this->.cache_cutoff = 0
+MEMBER: this->.cache_pos1 = std::unique_ptr<float []> = {
+  get() = 0x5555558cbf30
+}
+MEMBER: this->.cache_pos2 = std::unique_ptr<float []> = {
+  get() = 0x5555558cc040
+}
+MEMBER: this->.cache_id1 = std::unique_ptr<int []> = {
+  get() = 0x5555558cc150
+}
+MEMBER: this->.cache_id2 = std::unique_ptr<int []> = {
+  get() = 0x5555558cc1a0
+}
+MEMBER: this->.cache_edge_indices1 = std::unique_ptr<int []> = {
+  get() = 0x5555558cc1f0
+}
+MEMBER: this->.cache_edge_indices2 = std::unique_ptr<int []> = {
+  get() = 0x5555558cc340
+}
+MEMBER: this->.cache_edge_id1 = std::unique_ptr<int []> = {
+  get() = 0x5555558cda30
+}
+MEMBER: this->.cache_edge_id2 = std::unique_ptr<int []> = {
+  get() = 0x5555558cdb80
+}
+MEMBER: this->.cache_n_edge = 0
+=== LOCAL_VARIABLES ===
+No locals.
+=== DEREFERENCED_LOCALS ===
+=== CUSTOM_COMMANDS ===
+CUSTOM_POS_ARRAY_1_START:
+/home/okleinmann/projects/upside2-md//tests/records/temp_capture_args.gdb:157: Error in sourced command file:
+No symbol "aligned_pos1" in current context.
