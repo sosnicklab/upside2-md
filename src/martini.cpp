@@ -489,7 +489,7 @@ struct MartiniPotential : public PotentialNode
                     if(std::isfinite(lj_pot) && std::isfinite(deriv)) {
                         if(pot) *pot += lj_pot;
                         lj_pot_contrib = lj_pot;
-                        force += deriv * (-dr);  // Fix force direction: force should be from p1 to p2
+                        force += (deriv/dist) * (-dr);  // FIXED: Use unit vector, not displacement vector
                         
                         // Debug: Print LJ details
                         if(debug_mode && debug_step_count < 3 && debug_interaction_count < max_debug_interactions) {
@@ -527,7 +527,7 @@ struct MartiniPotential : public PotentialNode
                 if(std::isfinite(coul_pot) && std::isfinite(deriv)) {
                     if(pot) *pot += coul_pot;
                     coul_pot_contrib = coul_pot;
-                    force += deriv * (-dr);  // Fix force direction: force should be from p1 to p2
+                    force += (deriv/dist) * (-dr);  // FIXED: Use unit vector, not displacement vector
                     
                     // Debug: Print Coulomb details
                     if(debug_mode && debug_step_count < 3 && debug_interaction_count < max_debug_interactions) {

@@ -1,5 +1,5 @@
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip 
-pip install --upgrade h5py tables
+pip install --upgrade h5py tables matplotlib
 deactivate
