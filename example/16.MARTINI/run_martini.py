@@ -497,6 +497,9 @@ with tb.open_file(min_input_file, 'w') as t:
         bond_group = t.create_group(potential_grp, 'dist_spring')
         bond_group._v_attrs.arguments = np.array([b'pos'])
         bond_group._v_attrs.initialized = True
+        bond_group._v_attrs.x_len = x_len
+        bond_group._v_attrs.y_len = y_len
+        bond_group._v_attrs.z_len = z_len
         
         bonds_array = np.array(bonds_list, dtype=int)
         bond_lengths_array = np.array(bond_lengths_list, dtype='f4')
@@ -515,6 +518,9 @@ with tb.open_file(min_input_file, 'w') as t:
         angle_group = t.create_group(potential_grp, 'angle_spring')
         angle_group._v_attrs.arguments = np.array([b'pos'])
         angle_group._v_attrs.initialized = True
+        angle_group._v_attrs.x_len = x_len
+        angle_group._v_attrs.y_len = y_len
+        angle_group._v_attrs.z_len = z_len
         
         angles_array = np.array(angles_list, dtype=int)
         angle_equil_dp_array = np.array(angle_equil_dp_list, dtype='f4')
@@ -765,6 +771,9 @@ with tb.open_file(input_file, 'w') as t:
         bond_group = t.create_group(potential_grp, 'dist_spring')
         bond_group._v_attrs.arguments = np.array([b'pos'])
         bond_group._v_attrs.initialized = True
+        bond_group._v_attrs.x_len = x_len
+        bond_group._v_attrs.y_len = y_len
+        bond_group._v_attrs.z_len = z_len
         
         bonds_array = np.array(bonds_list, dtype=int)
         bond_lengths_array = np.array(bond_lengths_list, dtype='f4')
@@ -783,6 +792,9 @@ with tb.open_file(input_file, 'w') as t:
         angle_group = t.create_group(potential_grp, 'angle_spring')
         angle_group._v_attrs.arguments = np.array([b'pos'])
         angle_group._v_attrs.initialized = True
+        angle_group._v_attrs.x_len = x_len
+        angle_group._v_attrs.y_len = y_len
+        angle_group._v_attrs.z_len = z_len
         
         angles_array = np.array(angles_list, dtype=int)
         angle_equil_dp_array = np.array(angle_equil_dp_list, dtype='f4')

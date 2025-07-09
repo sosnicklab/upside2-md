@@ -194,8 +194,12 @@ struct AngleSpring : public PotentialNode
             // Apply minimum image convention for periodic boundaries
             auto disp1 = minimum_image_rect(make_vec3(atom1.x(), atom1.y(), atom1.z()) - make_vec3(atom3.x(), atom3.y(), atom3.z()), box_x, box_y, box_z);
             auto disp2 = minimum_image_rect(make_vec3(atom2.x(), atom2.y(), atom2.z()) - make_vec3(atom3.x(), atom3.y(), atom3.z()), box_x, box_y, box_z);
-            auto x1 = Float4(disp1.x(), disp1.y(), disp1.z(), 0.0f); auto inv_d1 = inv_mag(x1); auto x1h = x1*inv_d1;
-            auto x2 = Float4(disp2.x(), disp2.y(), disp2.z(), 0.0f); auto inv_d2 = inv_mag(x2); auto x2h = x2*inv_d2;
+            
+            // Create Float4 from displacement vectors using temporary arrays
+            float temp1[4] = {disp1.x(), disp1.y(), disp1.z(), 0.0f};
+            float temp2[4] = {disp2.x(), disp2.y(), disp2.z(), 0.0f};
+            auto x1 = Float4(temp1); auto inv_d1 = inv_mag(x1); auto x1h = x1*inv_d1;
+            auto x2 = Float4(temp2); auto inv_d2 = inv_mag(x2); auto x2h = x2*inv_d2;
 
             auto dp = dot(x1h, x2h);
             auto force_prefactor = Float4(p.spring_constant) * (dp - Float4(p.equil_dp));
@@ -285,13 +289,16 @@ struct DihedralSpring : public PotentialNode
             
             // Apply minimum image for bonds 0-1, 2-1, 3-2
             auto disp01 = minimum_image_rect(make_vec3(x_orig[0].x(), x_orig[0].y(), x_orig[0].z()) - make_vec3(x[1].x(), x[1].y(), x[1].z()), box_x, box_y, box_z);
-            x[0] = Float4(x[1].x() + disp01.x(), x[1].y() + disp01.y(), x[1].z() + disp01.z(), 0.0f);
+            float temp01[4] = {x[1].x() + disp01.x(), x[1].y() + disp01.y(), x[1].z() + disp01.z(), 0.0f};
+            x[0] = Float4(temp01);
             
             auto disp21 = minimum_image_rect(make_vec3(x_orig[2].x(), x_orig[2].y(), x_orig[2].z()) - make_vec3(x[1].x(), x[1].y(), x[1].z()), box_x, box_y, box_z);
-            x[2] = Float4(x[1].x() + disp21.x(), x[1].y() + disp21.y(), x[1].z() + disp21.z(), 0.0f);
+            float temp21[4] = {x[1].x() + disp21.x(), x[1].y() + disp21.y(), x[1].z() + disp21.z(), 0.0f};
+            x[2] = Float4(temp21);
             
             auto disp32 = minimum_image_rect(make_vec3(x_orig[3].x(), x_orig[3].y(), x_orig[3].z()) - make_vec3(x[2].x(), x[2].y(), x[2].z()), box_x, box_y, box_z);
-            x[3] = Float4(x[2].x() + disp32.x(), x[2].y() + disp32.y(), x[2].z() + disp32.z(), 0.0f);
+            float temp32[4] = {x[2].x() + disp32.x(), x[2].y() + disp32.y(), x[2].z() + disp32.z(), 0.0f};
+            x[3] = Float4(temp32);
 
             Float4 d[4];
             float dihedral = dihedral_germ(x[0],x[1],x[2],x[3], d[0],d[1],d[2],d[3]).x();
