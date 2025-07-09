@@ -1,6 +1,6 @@
 REMARK 417 418 419 420 421                                                            
 REMARK   DATE:     7/ 2/25     17:56:19      CREATED BY USER: charmm-gui              
-CRYST1   30.046   30.046   90.000  90.00  90.00  90.00 P 1           1
+CRYST1   25.046   25.046   85.000  90.00  90.00  90.00 P 1           1
 ATOM      1  NC3 DOPC    1      12.646  18.049  62.621  1.00  1.70      MEMB
 ATOM      2  PO4 DOPC    1      14.249  14.521  60.379  1.00  1.07      MEMB
 ATOM      3  GL1 DOPC    1      14.852  16.496  56.371  1.00  0.92      MEMB
