@@ -68,11 +68,19 @@ dopc_bonds = [
 ]
 
 # Bond parameters (length in nm, force constant in kJ/mol/nm^2)
-bond_lengths = [0.47, 0.47, 0.37, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47]  # nm
+bond_lengths_nm = [0.47, 0.47, 0.37, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47]  # nm
 bond_force_constants_martini = [1250, 1250, 1250, 1250, 1250, 1250, 1250, 1250, 1250, 1250, 1250]  # kJ/mol/nm^2
 
-# Convert MARTINI force constants to UPSIDE units: kJ/(mol nm^2) -> E_up/Å^2
-bond_force_constants = [k / 291.4952774272 for k in bond_force_constants_martini]  # E_up/Å^2
+# Convert MARTINI units to UPSIDE units:
+# Bond lengths: nm -> Angstroms (multiply by 10)
+bond_lengths = [L * 10.0 for L in bond_lengths_nm]  # Convert nm to Angstroms
+
+# Bond force constants: kJ/(mol·nm^2) -> E_up/Å^2
+# Need to convert both energy (kJ/mol -> E_up) and length (nm^2 -> Å^2)
+# Since 1 nm = 10 Å, then 1 nm^2 = 100 Å^2
+# Conversion: kJ/(mol·nm^2) = kJ/(mol·100Å^2) = (kJ/mol)/100Å^2
+# Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)
+bond_force_constants = [k / (2.914952774272 * 100.0) for k in bond_force_constants_martini]  # E_up/Å^2
 
 # MARTINI angle parameters for DOPC (from topology file)
 # Format: [atom1, atom2, atom3] where atom2 is the central atom
@@ -90,10 +98,23 @@ angle_values_martini = [120.0, 180.0, 180.0, 120.0, 180.0, 180.0, 120.0, 180.0] 
 angle_force_constants_martini = [25.0, 25.0, 25.0, 45.0, 25.0, 25.0, 45.0, 25.0]  # kJ/mol/rad²
 
 # Convert angle parameters to UPSIDE units
-# Note: AngleSpring uses dot product (cosine) as equilibrium value
+# Note: AngleSpring uses dot product (cosine) as equilibrium value and implements E = 1/2*K*(cos(theta)-cos(theta_0))^2
 import math
 angle_equil_dp = [math.cos(math.radians(angle)) for angle in angle_values_martini]  # cosine of angle
+
+# Angle force constants: kJ/(mol·rad^2) -> E_up/rad^2
+# Only need energy conversion (angles are dimensionless)
+# Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)
 angle_force_constants = [k / 2.914952774272 for k in angle_force_constants_martini]  # E_up/rad²
+
+# Print unit conversion summary for verification
+print(f"\n=== MARTINI Unit Conversions ===")
+print(f"Bond lengths (nm -> Å): {bond_lengths_nm[0]:.2f} nm -> {bond_lengths[0]:.1f} Å")
+print(f"Bond force constants (kJ/mol/nm² -> E_up/Å²): {bond_force_constants_martini[0]} -> {bond_force_constants[0]:.6f}")
+print(f"Angle equilibrium (degrees -> cosine): {angle_values_martini[0]}° -> {angle_equil_dp[0]:.6f}")
+print(f"Angle force constants (kJ/mol/rad² -> E_up/rad²): {angle_force_constants_martini[0]} -> {angle_force_constants[0]:.6f}")
+print(f"Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)")
+print(f"Length conversion: 1 nm = 10 Å, so 1 nm² = 100 Å²")
 
 # Two-stage minimization option to preserve bilayer structure
 skip_minimization = False  # Set to True if bilayer is already well-structured
