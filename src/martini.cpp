@@ -44,6 +44,9 @@ struct DistSpring : public PotentialNode
     CoordNode& pos;
     vector<Params> params;
     vector<int> bonded_atoms;
+    
+    // Box dimensions for minimum image
+    float box_x, box_y, box_z;
 
     DistSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
@@ -60,6 +63,26 @@ struct DistSpring : public PotentialNode
         traverse_dset<1,float>(grp, "equil_dist",   [&](size_t i,           float x) {p[i].equil_dist = x;});
         traverse_dset<1,float>(grp, "spring_const", [&](size_t i,           float x) {p[i].spring_constant = x;});
         traverse_dset<1,int>  (grp, "bonded_atoms", [&](size_t i,           int   x) {bonded_atoms.push_back(x);});
+
+        // Read box dimensions (same as MartiniPotential)
+        // Support both individual dimensions and legacy wall_box_size
+        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
+            // New format: separate x, y, z dimensions
+            box_x = read_attribute<float>(grp, ".", "x_len");
+            box_y = read_attribute<float>(grp, ".", "y_len");
+            box_z = read_attribute<float>(grp, ".", "z_len");
+        } else {
+            // Legacy format: wall boundaries
+            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
+            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
+            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
+            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
+            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
+            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
+            box_x = wall_xhi - wall_xlo;
+            box_y = wall_yhi - wall_ylo;
+            box_z = wall_zhi - wall_zlo;
+        }
 
         if(logging(LOG_DETAILED))
             default_logger->add_logger<float>("nonbonded_spring_energy", {1}, [&](float* buffer) {
@@ -91,7 +114,8 @@ struct DistSpring : public PotentialNode
             auto x1 = load_vec<3>(posc, p.atom[0]);
             auto x2 = load_vec<3>(posc, p.atom[1]);
 
-            auto disp = x1 - x2;
+            // Apply minimum image convention for periodic boundaries
+            auto disp = minimum_image_rect(x1 - x2, box_x, box_y, box_z);
             auto deriv = p.spring_constant * (1.f - p.equil_dist*inv_mag(disp)) * disp;
             if(pot) *pot += 0.5f * p.spring_constant * sqr(mag(disp) - p.equil_dist);
 
@@ -114,6 +138,9 @@ struct AngleSpring : public PotentialNode
     int n_elem;
     CoordNode& pos;
     vector<Params> params;
+    
+    // Box dimensions for minimum image
+    float box_x, box_y, box_z;
 
     AngleSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
@@ -128,6 +155,26 @@ struct AngleSpring : public PotentialNode
         traverse_dset<2,int>  (grp, "id",           [&](size_t i, size_t j, int   x) { p[i].atom[j] = x;});
         traverse_dset<1,float>(grp, "equil_dist",   [&](size_t i,           float x) { p[i].equil_dp = x;});
         traverse_dset<1,float>(grp, "spring_const", [&](size_t i,           float x) { p[i].spring_constant = x;});
+
+        // Read box dimensions (same as MartiniPotential)
+        // Support both individual dimensions and legacy wall_box_size
+        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
+            // New format: separate x, y, z dimensions
+            box_x = read_attribute<float>(grp, ".", "x_len");
+            box_y = read_attribute<float>(grp, ".", "y_len");
+            box_z = read_attribute<float>(grp, ".", "z_len");
+        } else {
+            // Legacy format: wall boundaries
+            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
+            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
+            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
+            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
+            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
+            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
+            box_x = wall_xhi - wall_xlo;
+            box_y = wall_yhi - wall_ylo;
+            box_z = wall_zhi - wall_zlo;
+        }
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -144,8 +191,11 @@ struct AngleSpring : public PotentialNode
             auto atom2 = Float4(posc + 4*p.atom[1]);
             auto atom3 = Float4(posc + 4*p.atom[2]);
 
-            auto x1 = atom1 - atom3; auto inv_d1 = inv_mag(x1); auto x1h = x1*inv_d1;
-            auto x2 = atom2 - atom3; auto inv_d2 = inv_mag(x2); auto x2h = x2*inv_d2;
+            // Apply minimum image convention for periodic boundaries
+            auto disp1 = minimum_image_rect(make_vec3(atom1.x(), atom1.y(), atom1.z()) - make_vec3(atom3.x(), atom3.y(), atom3.z()), box_x, box_y, box_z);
+            auto disp2 = minimum_image_rect(make_vec3(atom2.x(), atom2.y(), atom2.z()) - make_vec3(atom3.x(), atom3.y(), atom3.z()), box_x, box_y, box_z);
+            auto x1 = Float4(disp1.x(), disp1.y(), disp1.z(), 0.0f); auto inv_d1 = inv_mag(x1); auto x1h = x1*inv_d1;
+            auto x2 = Float4(disp2.x(), disp2.y(), disp2.z(), 0.0f); auto inv_d2 = inv_mag(x2); auto x2h = x2*inv_d2;
 
             auto dp = dot(x1h, x2h);
             auto force_prefactor = Float4(p.spring_constant) * (dp - Float4(p.equil_dp));
@@ -176,6 +226,9 @@ struct DihedralSpring : public PotentialNode
     int n_elem;
     CoordNode& pos;
     vector<Params> params;
+    
+    // Box dimensions for minimum image
+    float box_x, box_y, box_z;
 
     DihedralSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
@@ -190,6 +243,26 @@ struct DihedralSpring : public PotentialNode
         traverse_dset<2,int>  (grp, "id",           [&](size_t i, size_t j, int   x) {p[i].atom[j]  =x;});
         traverse_dset<1,float>(grp, "equil_dist",   [&](size_t i,           float x) {p[i].equil_dihedral =x;});
         traverse_dset<1,float>(grp, "spring_const", [&](size_t i,           float x) {p[i].spring_constant=x;});
+
+        // Read box dimensions (same as MartiniPotential)
+        // Support both individual dimensions and legacy wall_box_size
+        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
+            // New format: separate x, y, z dimensions
+            box_x = read_attribute<float>(grp, ".", "x_len");
+            box_y = read_attribute<float>(grp, ".", "y_len");
+            box_z = read_attribute<float>(grp, ".", "z_len");
+        } else {
+            // Legacy format: wall boundaries
+            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
+            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
+            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
+            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
+            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
+            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
+            box_x = wall_xhi - wall_xlo;
+            box_y = wall_yhi - wall_ylo;
+            box_z = wall_zhi - wall_zlo;
+        }
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -202,8 +275,23 @@ struct DihedralSpring : public PotentialNode
 
         for(int nt=0; nt<n_elem; ++nt) {
             const auto& p = params[nt];
+            Float4 x_orig[4];
+            for(int na: range(4)) x_orig[na] = Float4(posc + 4*params[nt].atom[na]);
+
+            // Apply minimum image convention for periodic boundaries
+            // For dihedral, we need to ensure all bonds use minimum image
             Float4 x[4];
-            for(int na: range(4)) x[na] = Float4(posc + 4*params[nt].atom[na]);
+            x[1] = x_orig[1]; // Use atom 1 as reference
+            
+            // Apply minimum image for bonds 0-1, 2-1, 3-2
+            auto disp01 = minimum_image_rect(make_vec3(x_orig[0].x(), x_orig[0].y(), x_orig[0].z()) - make_vec3(x[1].x(), x[1].y(), x[1].z()), box_x, box_y, box_z);
+            x[0] = Float4(x[1].x() + disp01.x(), x[1].y() + disp01.y(), x[1].z() + disp01.z(), 0.0f);
+            
+            auto disp21 = minimum_image_rect(make_vec3(x_orig[2].x(), x_orig[2].y(), x_orig[2].z()) - make_vec3(x[1].x(), x[1].y(), x[1].z()), box_x, box_y, box_z);
+            x[2] = Float4(x[1].x() + disp21.x(), x[1].y() + disp21.y(), x[1].z() + disp21.z(), 0.0f);
+            
+            auto disp32 = minimum_image_rect(make_vec3(x_orig[3].x(), x_orig[3].y(), x_orig[3].z()) - make_vec3(x[2].x(), x[2].y(), x[2].z()), box_x, box_y, box_z);
+            x[3] = Float4(x[2].x() + disp32.x(), x[2].y() + disp32.y(), x[2].z() + disp32.z(), 0.0f);
 
             Float4 d[4];
             float dihedral = dihedral_germ(x[0],x[1],x[2],x[3], d[0],d[1],d[2],d[3]).x();
