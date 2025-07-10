@@ -42,8 +42,8 @@ minimizer_verbose = True
 
 # Simulation parameters - optimized for stability
 T              = 0.86  # Temperature (UPSIDE units) - proper MARTINI temperature ~300K  
-duration       = 1000  # Total simulation steps
-frame_interval = 50   # Output every N steps
+duration       = 5000  # Total simulation steps (production run)
+frame_interval = 20   # Output every N steps (more frames for better trajectory)
 dt             = 0.001  # Time step - reduced for stability with lipids
 thermostat_timescale = 5.0  # Thermostat timescale (default Langevin damping)
 
@@ -53,9 +53,9 @@ martini_table = {'Qda': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 4.5, 'P5': 5.6,
 martini_epsilon_table = martini_table['P4']['P4']  # P4-P4 interaction strength (kJ/mol)
 martini_epsilon = martini_epsilon_table / 2.914952774272  # Convert to UPSIDE units
 
-# Softened LJ parameters for minimization
-soft_epsilon = martini_epsilon * 0.5  # 2x softer (less aggressive than before)
-soft_sigma = martini_sigma * 1.05     # 5% larger (less aggressive than before)
+# Soft MARTINI LJ parameters for initial minimization (even after pre-separation)
+soft_epsilon = martini_epsilon * 0.1  # 10x softer for initial minimization
+soft_sigma = martini_sigma * 1.2      # 20% larger for initial minimization
 
 # DOPC lipid topology from MARTINI v2.0
 # DOPC bead types: NC3(Q0), PO4(Qa), GL1(Na), GL2(Na), C1A(C1), D2A(C3), C3A(C1), C4A(C1), C1B(C1), D2B(C3), C3B(C1), C4B(C1)
@@ -119,17 +119,20 @@ print(f"Length conversion: 1 nm = 10 Å, so 1 nm² = 100 Å²")
 # Two-stage minimization option to preserve bilayer structure
 skip_minimization = False  # Set to True if bilayer is already well-structured
 
+# Enable all interactions now that PBC wrapping is fixed
+skip_bonds_and_angles = False  # Re-enable bonded interactions
+
 # Stage 1: Hold lipids, minimize water/ions
-stage1_steps = 300
-stage1_T = 0.001
-stage1_dt = 0.005
-stage1_frame_interval = 50
+stage1_steps = 100
+stage1_T = 0.1   # Much higher temperature for better equilibration
+stage1_dt = 0.0001  # Much smaller time step for stability
+stage1_frame_interval = 10  # Reasonable frame interval
 
 # Stage 2: Minimize everything gently
 stage2_steps = 200
-stage2_T = 0.0005  # Even gentler
-stage2_dt = 0.005
-stage2_frame_interval = 50
+stage2_T = 0.05   # Gentle but not too low
+stage2_dt = 0.0001  # Small time step for stability
+stage2_frame_interval = 20  # Reasonable frame interval
 
 # These prints will be moved to after box dimensions are read from PDB
 
@@ -288,23 +291,189 @@ pos_range = pos_max - pos_min
 print(f"Initial position range: X=[{pos_min[0]:.1f}, {pos_max[0]:.1f}], Y=[{pos_min[1]:.1f}, {pos_max[1]:.1f}], Z=[{pos_min[2]:.1f}, {pos_max[2]:.1f}]")
 print(f"Position range: X={pos_range[0]:.1f}, Y={pos_range[1]:.1f}, Z={pos_range[2]:.1f} Angstroms")
 
-# Center the particles around origin for better periodic boundary handling
-center = (pos_max + pos_min) / 2
-initial_positions -= center
-print(f"Centered particles around origin. New center: {np.mean(initial_positions, axis=0)}")
+# Apply periodic boundary conditions to initial positions
+# Wrap particles that are outside the box back into the box
+print(f"Box dimensions: X=[0, {x_len:.1f}], Y=[0, {y_len:.1f}], Z=[0, {z_len:.1f}] Angstroms")
 
-# Check if particles fit within box boundaries
-new_min = np.min(initial_positions, axis=0)
-new_max = np.max(initial_positions, axis=0)
-half_box = np.array([x_len/2, y_len/2, z_len/2])
-max_coord = np.max(np.abs([new_min, new_max]))
-print(f"After centering, max coordinate magnitude: {max_coord:.1f} Angstroms")
+# Check initial particle range before wrapping
+pos_min = np.min(initial_positions, axis=0)
+pos_max = np.max(initial_positions, axis=0)
+print(f"Initial particle range BEFORE wrapping:")
+print(f"  X=[{pos_min[0]:.1f}, {pos_max[0]:.1f}] (range: {pos_max[0]-pos_min[0]:.1f} Å)")
+print(f"  Y=[{pos_min[1]:.1f}, {pos_max[1]:.1f}] (range: {pos_max[1]-pos_min[1]:.1f} Å)")
+print(f"  Z=[{pos_min[2]:.1f}, {pos_max[2]:.1f}] (range: {pos_max[2]-pos_min[2]:.1f} Å)")
 
-if np.any(np.abs(new_min) > half_box) or np.any(np.abs(new_max) > half_box):
-    print(f"WARNING: Particles extend beyond box boundaries (±{half_box} Angstroms)")
-    print(f"Consider increasing box dimensions")
+# Apply periodic boundary conditions to wrap particles into the box
+# For a box from [0, L], wrap coordinates using: x = x - L * floor(x / L)
+wrapped_positions = initial_positions.copy()
+
+# X dimension
+wrapped_positions[:, 0] = wrapped_positions[:, 0] - x_len * np.floor(wrapped_positions[:, 0] / x_len)
+# Y dimension  
+wrapped_positions[:, 1] = wrapped_positions[:, 1] - y_len * np.floor(wrapped_positions[:, 1] / y_len)
+# Z dimension
+wrapped_positions[:, 2] = wrapped_positions[:, 2] - z_len * np.floor(wrapped_positions[:, 2] / z_len)
+
+# Update initial_positions with wrapped coordinates
+initial_positions = wrapped_positions
+
+# Check particle range after wrapping
+pos_min_wrapped = np.min(initial_positions, axis=0)
+pos_max_wrapped = np.max(initial_positions, axis=0)
+print(f"Particle range AFTER wrapping:")
+print(f"  X=[{pos_min_wrapped[0]:.1f}, {pos_max_wrapped[0]:.1f}] (range: {pos_max_wrapped[0]-pos_min_wrapped[0]:.1f} Å)")
+print(f"  Y=[{pos_min_wrapped[1]:.1f}, {pos_max_wrapped[1]:.1f}] (range: {pos_max_wrapped[1]-pos_min_wrapped[1]:.1f} Å)")
+print(f"  Z=[{pos_min_wrapped[2]:.1f}, {pos_max_wrapped[2]:.1f}] (range: {pos_max_wrapped[2]-pos_min_wrapped[2]:.1f} Å)")
+
+# Check for any particles still outside the box (should not happen after wrapping)
+outside_x = np.any((initial_positions[:, 0] < 0) | (initial_positions[:, 0] >= x_len))
+outside_y = np.any((initial_positions[:, 1] < 0) | (initial_positions[:, 1] >= y_len))
+outside_z = np.any((initial_positions[:, 2] < 0) | (initial_positions[:, 2] >= z_len))
+
+if outside_x or outside_y or outside_z:
+    print(f"ERROR: Some particles still outside box after wrapping!")
 else:
-    print(f"Particles fit within box boundaries (±{half_box} Angstroms)")
+    print(f"All particles now within box boundaries")
+
+# Check for severe overlaps and pre-separate particles
+print("\n=== OVERLAP ANALYSIS AND PRE-SEPARATION ===")
+min_distances = []
+severe_overlaps = []
+overlap_threshold = 2.0  # Severe overlap if distance < 2.0 Å
+
+for i in range(n_atoms):
+    for j in range(i+1, n_atoms):
+        dx = initial_positions[i, 0] - initial_positions[j, 0]
+        dy = initial_positions[i, 1] - initial_positions[j, 1] 
+        dz = initial_positions[i, 2] - initial_positions[j, 2]
+        
+        # Apply minimum image convention for distance calculation
+        if dx > x_len/2: dx -= x_len
+        elif dx < -x_len/2: dx += x_len
+        if dy > y_len/2: dy -= y_len
+        elif dy < -y_len/2: dy += y_len
+        if dz > z_len/2: dz -= z_len
+        elif dz < -z_len/2: dz += z_len
+        
+        distance = np.sqrt(dx*dx + dy*dy + dz*dz)
+        min_distances.append(distance)
+        
+        if distance < overlap_threshold:
+            severe_overlaps.append((i, j, distance))
+
+print(f"Minimum inter-particle distance: {min(min_distances):.3f} Å")
+print(f"Number of severe overlaps (< {overlap_threshold} Å): {len(severe_overlaps)}")
+
+if severe_overlaps:
+    print(f"Pre-separating {len(severe_overlaps)} severely overlapping particle pairs...")
+    
+    # Iterative pre-separation with increasing force
+    max_iterations = 3
+    separation_forces = [0.3, 0.6, 1.0]  # Progressively stronger forces
+    
+    for iteration in range(max_iterations):
+        separation_force = separation_forces[iteration]
+        print(f"\n--- Iteration {iteration + 1}: separation force = {separation_force} ---")
+        
+        # Find current overlaps
+        current_overlaps = []
+        for i in range(n_atoms):
+            for j in range(i+1, n_atoms):
+                dx = initial_positions[i, 0] - initial_positions[j, 0]
+                dy = initial_positions[i, 1] - initial_positions[j, 1] 
+                dz = initial_positions[i, 2] - initial_positions[j, 2]
+                
+                # Apply minimum image convention
+                if dx > x_len/2: dx -= x_len
+                elif dx < -x_len/2: dx += x_len
+                if dy > y_len/2: dy -= y_len
+                elif dy < -y_len/2: dy += y_len
+                if dz > z_len/2: dz -= z_len
+                elif dz < -z_len/2: dz += z_len
+                
+                distance = np.sqrt(dx*dx + dy*dy + dz*dz)
+                if distance < overlap_threshold:
+                    current_overlaps.append((i, j, distance))
+        
+        if not current_overlaps:
+            print("No more severe overlaps - stopping iterations")
+            break
+        
+        print(f"Processing {len(current_overlaps)} overlaps...")
+        
+        # Show some overlaps
+        for i, j, dist in current_overlaps[:5]:  # Show first 5 overlaps
+            print(f"  Overlap: particles {i} and {j}, distance={dist:.3f} Å, types={atom_types[i]}-{atom_types[j]}")
+        
+        # Apply separation to all overlaps
+        for i, j, dist in current_overlaps:
+            # Calculate displacement vector (with minimum image)
+            dx = initial_positions[i, 0] - initial_positions[j, 0]
+            dy = initial_positions[i, 1] - initial_positions[j, 1]
+            dz = initial_positions[i, 2] - initial_positions[j, 2]
+            
+            if dx > x_len/2: dx -= x_len
+            elif dx < -x_len/2: dx += x_len
+            if dy > y_len/2: dy -= y_len
+            elif dy < -y_len/2: dy += y_len  
+            if dz > z_len/2: dz -= z_len
+            elif dz < -z_len/2: dz += z_len
+            
+            # Unit vector pointing from j to i
+            if dist > 0:
+                ux = dx / dist
+                uy = dy / dist
+                uz = dz / dist
+                
+                # Desired minimum distance (target separation)
+                target_dist = max(3.5, martini_sigma * 0.9)  # At least 3.5 Å or 90% of sigma
+                
+                # Calculate how much to move each particle
+                move_dist = (target_dist - dist) * separation_force
+                
+                # Move both particles apart along the displacement vector
+                initial_positions[i, 0] += ux * move_dist * 0.5
+                initial_positions[i, 1] += uy * move_dist * 0.5
+                initial_positions[i, 2] += uz * move_dist * 0.5
+                
+                initial_positions[j, 0] -= ux * move_dist * 0.5
+                initial_positions[j, 1] -= uy * move_dist * 0.5
+                initial_positions[j, 2] -= uz * move_dist * 0.5
+        
+        # Re-wrap particles after separation
+        initial_positions[:, 0] = initial_positions[:, 0] - x_len * np.floor(initial_positions[:, 0] / x_len)
+        initial_positions[:, 1] = initial_positions[:, 1] - y_len * np.floor(initial_positions[:, 1] / y_len)
+        initial_positions[:, 2] = initial_positions[:, 2] - z_len * np.floor(initial_positions[:, 2] / z_len)
+        
+        print(f"After iteration {iteration + 1}: {len(current_overlaps)} overlaps processed")
+    
+    # Final check for remaining overlaps
+    final_overlaps = []
+    for i in range(n_atoms):
+        for j in range(i+1, n_atoms):
+            dx = initial_positions[i, 0] - initial_positions[j, 0]
+            dy = initial_positions[i, 1] - initial_positions[j, 1]
+            dz = initial_positions[i, 2] - initial_positions[j, 2]
+            
+            if dx > x_len/2: dx -= x_len
+            elif dx < -x_len/2: dx += x_len
+            if dy > y_len/2: dy -= y_len
+            elif dy < -y_len/2: dy += y_len
+            if dz > z_len/2: dz -= z_len
+            elif dz < -z_len/2: dz += z_len
+            
+            distance = np.sqrt(dx*dx + dy*dy + dz*dz)
+            if distance < overlap_threshold:
+                final_overlaps.append((i, j, distance))
+    
+    print(f"\nFinal result: {len(final_overlaps)} severe overlaps remaining")
+    if final_overlaps:
+        print("WARNING: Some severe overlaps remain - system may still be unstable")
+        print("  Consider even softer LJ parameters for initial relaxation")
+    else:
+        print("All severe overlaps eliminated - system should be stable now!")
+else:
+    print("No severe overlaps detected - system should be stable")
 
 # Bilayer structure analysis if lipids are present
 if dopc_residues:
@@ -333,12 +502,12 @@ if dopc_residues:
         print(f"Estimated bilayer thickness: {bilayer_thickness:.1f} Å")
         
         if bilayer_thickness > 30 and bilayer_thickness < 60:
-            print("✓ Bilayer structure appears reasonable")
+            print("Bilayer structure appears reasonable")
         else:
-            print("⚠ Bilayer structure may need attention")
+            print("WARNING: Bilayer structure may need attention")
             print("   Consider setting skip_minimization = True")
     else:
-        print("⚠ Could not identify bilayer headgroups")
+        print("WARNING: Could not identify bilayer headgroups")
 
 # Create bonds list for DOPC lipids
 bonds_list = []
@@ -384,9 +553,14 @@ for lipid_id in dopc_residues:
 print(f"Created {len(angles_list)} angles for {len(dopc_residues)} DOPC lipids")
 
 # --- MINIMIZATION: Create minimization input with softened parameters ---
-print("\nCreating minimization input with softened LJ parameters...")
-print(f"Soft epsilon: {soft_epsilon:.6f} (10x softer)")
-print(f"Soft sigma: {soft_sigma:.2f} Angstroms (10% larger)")
+print("\nCreating minimization input with pre-separated positions...")
+print(f"Soft epsilon: {soft_epsilon:.6f} (10x softer than {martini_epsilon:.6f})")
+print(f"Soft sigma: {soft_sigma:.2f} Angstroms (20% larger than {martini_sigma:.2f})")
+print(f"Coulomb interactions: ENABLED")
+if skip_bonds_and_angles:
+    print("DEBUG: Using only non-bonded interactions (bonds/angles skipped)")
+else:
+    print("Using full MARTINI force field (LJ + Coulomb + bonds + angles)")
 
 min_input_file = f"{input_dir}/minimize.up"
 with tb.open_file(min_input_file, 'w') as t:
@@ -434,8 +608,8 @@ with tb.open_file(min_input_file, 'w') as t:
     martini_group = t.create_group(potential_grp, 'martini_potential')
     martini_group._v_attrs.arguments = np.array([b'pos'])
     martini_group._v_attrs.potential_type = b'lj_coulomb'
-    martini_group._v_attrs.epsilon = soft_epsilon  # Use softened epsilon for minimization
-    martini_group._v_attrs.sigma = soft_sigma      # Use larger sigma for minimization
+    martini_group._v_attrs.epsilon = soft_epsilon  # Use soft epsilon for minimization
+    martini_group._v_attrs.sigma = soft_sigma      # Use soft sigma for minimization
     martini_group._v_attrs.lj_cutoff = 12.0
     martini_group._v_attrs.coul_cutoff = 12.0
     martini_group._v_attrs.dielectric = dielectric_constant
@@ -462,15 +636,16 @@ with tb.open_file(min_input_file, 'w') as t:
     pairs_list = []
     coeff_array = []
     
-    # Create set of bonded pairs for exclusion
+    # Create set of bonded pairs for exclusion (only if using bonds)
     bonded_pairs = set()
-    for bond in bonds_list:
-        bonded_pairs.add((min(bond[0], bond[1]), max(bond[0], bond[1])))
+    if not skip_bonds_and_angles:
+        for bond in bonds_list:
+            bonded_pairs.add((min(bond[0], bond[1]), max(bond[0], bond[1])))
     
     for i in range(n_atoms):
         for j in range(i+1, n_atoms):
-            # Skip if atoms are directly bonded (1-2 exclusion)
-            if (i, j) in bonded_pairs:
+            # Skip if atoms are directly bonded (1-2 exclusion) - only when using bonds
+            if not skip_bonds_and_angles and (i, j) in bonded_pairs:
                 continue
                 
             pairs_list.append([i, j])
@@ -479,11 +654,11 @@ with tb.open_file(min_input_file, 'w') as t:
             # Get epsilon from table and convert to simulation units
             epsilon_table = martini_table[type_i][type_j]
             epsilon_sim = epsilon_table / 2.914952774272
-            # Use softened params for minimization
-            epsilon = epsilon_sim * 0.5  # Less aggressive softening
-            sigma_val = soft_sigma  # Use softened sigma
-            q1 = charges[i]
-            q2 = charges[j]
+            # Use soft parameters for initial minimization
+            epsilon = epsilon_sim * 0.1  # Use soft epsilon
+            sigma_val = soft_sigma  # Use soft sigma
+            q1 = charges[i]  # Coulomb interactions enabled
+            q2 = charges[j]  # Coulomb interactions enabled
             coeff_array.append([epsilon, sigma_val, q1, q2])
     pairs_array = np.array(pairs_list, dtype=int)
     coeff_array = np.array(coeff_array)
@@ -493,7 +668,7 @@ with tb.open_file(min_input_file, 'w') as t:
     coeff_data._v_attrs.initialized = True
     
     # Add bond potential for DOPC lipids using MARTINI dist_spring
-    if bonds_list:
+    if bonds_list and not skip_bonds_and_angles:
         bond_group = t.create_group(potential_grp, 'dist_spring')
         bond_group._v_attrs.arguments = np.array([b'pos'])
         bond_group._v_attrs.initialized = True
@@ -514,7 +689,7 @@ with tb.open_file(min_input_file, 'w') as t:
         t.create_array(bond_group, 'bonded_atoms', obj=bonded_atoms)
     
     # Add angle potential for DOPC lipids using MARTINI angle_spring
-    if angles_list:
+    if angles_list and not skip_bonds_and_angles:
         angle_group = t.create_group(potential_grp, 'angle_spring')
         angle_group._v_attrs.arguments = np.array([b'pos'])
         angle_group._v_attrs.initialized = True
@@ -530,7 +705,14 @@ with tb.open_file(min_input_file, 'w') as t:
         t.create_array(angle_group, 'equil_dist', obj=angle_equil_dp_array)
         t.create_array(angle_group, 'spring_const', obj=angle_force_constants_array)
 
-print(f"Created minimization input with {len(pairs_list)} non-bonded pairs and {len(bonds_list)} bonds")
+# Count how many bonded interactions were actually added
+bonds_added = len(bonds_list) if bonds_list and not skip_bonds_and_angles else 0
+angles_added = len(angles_list) if angles_list and not skip_bonds_and_angles else 0
+
+if skip_bonds_and_angles:
+    print(f"DEBUG: Skipped all bonded interactions for debugging")
+
+print(f"Created minimization input with {len(pairs_list)} non-bonded pairs and {bonds_added} bonds and {angles_added} angles")
 
 # --- RUN MINIMIZATION ---
 if skip_minimization:
@@ -737,15 +919,16 @@ with tb.open_file(input_file, 'w') as t:
     pairs_list = []
     coeff_array = []
     
-    # Create set of bonded pairs for exclusion
+    # Create set of bonded pairs for exclusion (only if using bonds)
     bonded_pairs = set()
-    for bond in bonds_list:
-        bonded_pairs.add((min(bond[0], bond[1]), max(bond[0], bond[1])))
+    if not skip_bonds_and_angles:
+        for bond in bonds_list:
+            bonded_pairs.add((min(bond[0], bond[1]), max(bond[0], bond[1])))
     
     for i in range(n_atoms):
         for j in range(i+1, n_atoms):
-            # Skip if atoms are directly bonded (1-2 exclusion)
-            if (i, j) in bonded_pairs:
+            # Skip if atoms are directly bonded (1-2 exclusion) - only when using bonds
+            if not skip_bonds_and_angles and (i, j) in bonded_pairs:
                 continue
                 
             pairs_list.append([i, j])
@@ -754,10 +937,10 @@ with tb.open_file(input_file, 'w') as t:
             # Get epsilon from table and convert to simulation units
             epsilon_table = martini_table[type_i][type_j]
             epsilon_sim = epsilon_table / 2.914952774272
-            epsilon = epsilon_sim  # Use full MARTINI epsilon for MD
+            epsilon = epsilon_sim  # Use normal MARTINI epsilon for MD
             sigma_val = martini_sigma  # Use standard sigma for MD
-            q1 = charges[i]
-            q2 = charges[j]
+            q1 = charges[i]  # Restore Coulomb interactions
+            q2 = charges[j]  # Restore Coulomb interactions
             coeff_array.append([epsilon, sigma_val, q1, q2])
     pairs_array = np.array(pairs_list, dtype=int)
     coeff_array = np.array(coeff_array)
@@ -767,7 +950,7 @@ with tb.open_file(input_file, 'w') as t:
     coeff_data._v_attrs.initialized = True
     
     # Add bond potential for DOPC lipids using MARTINI dist_spring
-    if bonds_list:
+    if bonds_list and not skip_bonds_and_angles:
         bond_group = t.create_group(potential_grp, 'dist_spring')
         bond_group._v_attrs.arguments = np.array([b'pos'])
         bond_group._v_attrs.initialized = True
@@ -788,7 +971,7 @@ with tb.open_file(input_file, 'w') as t:
         t.create_array(bond_group, 'bonded_atoms', obj=bonded_atoms)
     
     # Add angle potential for DOPC lipids using MARTINI angle_spring
-    if angles_list:
+    if angles_list and not skip_bonds_and_angles:
         angle_group = t.create_group(potential_grp, 'angle_spring')
         angle_group._v_attrs.arguments = np.array([b'pos'])
         angle_group._v_attrs.initialized = True
@@ -804,7 +987,11 @@ with tb.open_file(input_file, 'w') as t:
         t.create_array(angle_group, 'equil_dist', obj=angle_equil_dp_array)
         t.create_array(angle_group, 'spring_const', obj=angle_force_constants_array)
 
-print(f"Created MD input with {len(pairs_list)} non-bonded pairs and {len(bonds_list)} bonds using minimized positions")
+# Count how many bonded interactions were actually added for MD
+bonds_added_md = len(bonds_list) if bonds_list and not skip_bonds_and_angles else 0
+angles_added_md = len(angles_list) if angles_list and not skip_bonds_and_angles else 0
+
+print(f"Created MD input with {len(pairs_list)} non-bonded pairs and {bonds_added_md} bonds and {angles_added_md} angles using minimized positions")
 
 #----------------------------------------------------------------------
 ## Run MD Simulation
@@ -829,6 +1016,10 @@ if dopc_residues:
 else:
     print(f"  Simple water system: {len(water_residues)} water molecules")
 
+# Run production MD simulation
+print(f"Running production MD simulation...")
+# Use the original duration setting for production
+
 # Run simulation
 upside_opts = (
     "{} "
@@ -845,12 +1036,6 @@ cmd = "{}/obj/upside {}".format(upside_path, upside_opts)
 
 print(f"Command: {cmd}")
 result = sp.run(cmd, shell=True)
-
-if result.returncode != 0:
-    print("Simulation failed!")
-    print("Return code:", result.returncode)
-else:
-    print("Simulation completed successfully!")
 
 #----------------------------------------------------------------------
 ## Convert trajectory to VTF format for visualization
