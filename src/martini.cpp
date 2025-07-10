@@ -414,6 +414,7 @@ struct MartiniPotential : public PotentialNode
     vector<pair<int,int>> pairs;
     
     float epsilon, sigma, lj_cutoff, coul_cutoff, dielectric;
+    float coulomb_constant;
     bool force_cap;
     bool coulomb_soften;
     float slater_alpha;
@@ -437,6 +438,12 @@ struct MartiniPotential : public PotentialNode
         lj_cutoff   = read_attribute<float>(grp, ".", "lj_cutoff");
         coul_cutoff = read_attribute<float>(grp, ".", "coul_cutoff");
         dielectric  = read_attribute<float>(grp, ".", "dielectric");
+        
+        // Read Coulomb constant - use converted value from Python if available, otherwise use standard value
+        coulomb_constant = 332.0636f; // Default standard value
+        if(attribute_exists(grp, ".", "coulomb_constant")) {
+            coulomb_constant = read_attribute<float>(grp, ".", "coulomb_constant");
+        }
         force_cap = true;
         if(attribute_exists(grp, ".", "force_cap")) {
             force_cap = read_attribute<int>(grp, ".", "force_cap") != 0;
@@ -597,7 +604,7 @@ struct MartiniPotential : public PotentialNode
             
             // Coulomb potential
             if(qi != 0.f && qj != 0.f && dist < coul_cutoff) {
-                const float ke = 332.0636f;  // Coulomb constant in UPSIDE units
+                const float ke = coulomb_constant;  // Coulomb constant (units converted in Python)
                 float coul_pot, deriv;
                 
                 if(coulomb_soften && slater_alpha > 0.0f) {

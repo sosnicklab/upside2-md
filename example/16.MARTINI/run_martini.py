@@ -53,6 +53,13 @@ martini_table = {'Qda': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 4.5, 'P5': 5.6,
 martini_epsilon_table = martini_table['P4']['P4']  # P4-P4 interaction strength (kJ/mol)
 martini_epsilon = martini_epsilon_table / 2.914952774272  # Convert to UPSIDE units
 
+# Convert Coulomb constant from kcal/mol to UPSIDE units
+# Standard Coulomb constant: 332.0636 kcal/mol
+# Convert: kcal/mol -> kJ/mol -> UPSIDE units
+coulomb_constant_kcal = 332.0636  # kcal/mol
+coulomb_constant_kj = coulomb_constant_kcal * 4.184  # kJ/mol
+coulomb_constant_upside = coulomb_constant_kj / 2.914952774272  # UPSIDE units
+
 # Soft MARTINI LJ parameters for initial minimization (even after pre-separation)
 soft_epsilon = martini_epsilon * 0.1  # 10x softer for initial minimization
 soft_sigma = martini_sigma * 1.2      # 20% larger for initial minimization
@@ -113,6 +120,7 @@ print(f"Bond lengths (nm -> Å): {bond_lengths_nm[0]:.2f} nm -> {bond_lengths[0]
 print(f"Bond force constants (kJ/mol/nm² -> E_up/Å²): {bond_force_constants_martini[0]} -> {bond_force_constants[0]:.6f}")
 print(f"Angle equilibrium (degrees -> cosine): {angle_values_martini[0]}° -> {angle_equil_dp[0]:.6f}")
 print(f"Angle force constants (kJ/mol/rad² -> E_up/rad²): {angle_force_constants_martini[0]} -> {angle_force_constants[0]:.6f}")
+print(f"Coulomb constant (kcal/mol -> E_up): {coulomb_constant_kcal:.4f} -> {coulomb_constant_upside:.1f}")
 print(f"Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)")
 print(f"Length conversion: 1 nm = 10 Å, so 1 nm² = 100 Å²")
 
@@ -613,6 +621,7 @@ with tb.open_file(min_input_file, 'w') as t:
     martini_group._v_attrs.lj_cutoff = 12.0
     martini_group._v_attrs.coul_cutoff = 12.0
     martini_group._v_attrs.dielectric = dielectric_constant
+    martini_group._v_attrs.coulomb_constant = coulomb_constant_upside  # Pre-converted to UPSIDE units
     martini_group._v_attrs.n_types = 1
     martini_group._v_attrs.n_params = 4
     martini_group._v_attrs.cutoff = 12.0
@@ -896,6 +905,7 @@ with tb.open_file(input_file, 'w') as t:
     martini_group._v_attrs.lj_cutoff = 12.0
     martini_group._v_attrs.coul_cutoff = 12.0
     martini_group._v_attrs.dielectric = dielectric_constant
+    martini_group._v_attrs.coulomb_constant = coulomb_constant_upside  # Pre-converted to UPSIDE units
     martini_group._v_attrs.n_types = 1
     martini_group._v_attrs.n_params = 4
     martini_group._v_attrs.cutoff = 12.0
