@@ -439,8 +439,8 @@ struct MartiniPotential : public PotentialNode
         coul_cutoff = read_attribute<float>(grp, ".", "coul_cutoff");
         dielectric  = read_attribute<float>(grp, ".", "dielectric");
         
-        // Read Coulomb constant - use converted value from Python if available, otherwise use standard value
-        coulomb_constant = 332.0636f; // Default standard value
+        // Read Coulomb constant - use converted value from Python if available, otherwise use unit conversion value
+        coulomb_constant = 476.6f; // Default value (21.831807297541² for unit conversion with 4πϵ₀ = 1)
         if(attribute_exists(grp, ".", "coulomb_constant")) {
             coulomb_constant = read_attribute<float>(grp, ".", "coulomb_constant");
         }

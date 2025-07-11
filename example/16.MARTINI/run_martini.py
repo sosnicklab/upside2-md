@@ -25,7 +25,7 @@ z_len = None  # Will be set from CRYST1 record
 
 # MARTINI parameters - will be calculated from table below
 martini_sigma   = 4.7  # MARTINI water sigma (Angstroms)
-dielectric_constant = 15.0  # Default MARTINI dielectric, user can change
+dielectric_constant = 15.0  # MARTINI dielectric constant (standard value)
 
 # Minimization parameters
 minimization_steps = 1000
@@ -53,12 +53,10 @@ martini_table = {'Qda': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 4.5, 'P5': 5.6,
 martini_epsilon_table = martini_table['P4']['P4']  # P4-P4 interaction strength (kJ/mol)
 martini_epsilon = martini_epsilon_table / 2.914952774272  # Convert to UPSIDE units
 
-# Convert Coulomb constant from kcal/mol to UPSIDE units
-# Standard Coulomb constant: 332.0636 kcal/mol
-# Convert: kcal/mol -> kJ/mol -> UPSIDE units
-coulomb_constant_kcal = 332.0636  # kcal/mol
-coulomb_constant_kj = coulomb_constant_kcal * 4.184  # kJ/mol
-coulomb_constant_upside = coulomb_constant_kj / 2.914952774272  # UPSIDE units
+# Unit conversion: set 4πϵ₀ = 1
+# Each unit charge (1 or -1) corresponds to 21.831807297541 after conversion
+charge_conversion_factor = 21.831807297541
+coulomb_constant_upside = charge_conversion_factor**2  # This gives us the effective Coulomb constant
 
 # Soft MARTINI LJ parameters for initial minimization (even after pre-separation)
 soft_epsilon = martini_epsilon * 0.1  # 10x softer for initial minimization
@@ -120,7 +118,7 @@ print(f"Bond lengths (nm -> Å): {bond_lengths_nm[0]:.2f} nm -> {bond_lengths[0]
 print(f"Bond force constants (kJ/mol/nm² -> E_up/Å²): {bond_force_constants_martini[0]} -> {bond_force_constants[0]:.6f}")
 print(f"Angle equilibrium (degrees -> cosine): {angle_values_martini[0]}° -> {angle_equil_dp[0]:.6f}")
 print(f"Angle force constants (kJ/mol/rad² -> E_up/rad²): {angle_force_constants_martini[0]} -> {angle_force_constants[0]:.6f}")
-print(f"Coulomb constant (kcal/mol -> E_up): {coulomb_constant_kcal:.4f} -> {coulomb_constant_upside:.1f}")
+print(f"Coulomb constant (unit conversion): {coulomb_constant_upside:.1f} (charge_factor² = {charge_conversion_factor:.1f}²)")
 print(f"Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)")
 print(f"Length conversion: 1 nm = 10 Å, so 1 nm² = 100 Å²")
 
