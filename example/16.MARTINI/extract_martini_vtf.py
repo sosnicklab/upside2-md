@@ -206,11 +206,12 @@ def main():
                     radius = radius_map.get(vtf_name, 2.0)
                     resid = residue_ids[i] if i < len(residue_ids) else 1
                     
-                    # Determine residue name based on residue ID
-                    if resid in dopc_residues:  # DOPC lipids
-                        resname = 'DOPC'
-                    elif mtype == 'P4':  # Water
+                    # Determine residue name based on atom type FIRST, then residue ID
+                    # This prevents water molecules (P4) from being misidentified as lipids due to residue ID overlap
+                    if mtype == 'P4':  # Water - check atom type FIRST
                         resname = 'WAT'
+                    elif resid in dopc_residues:  # DOPC lipids
+                        resname = 'DOPC'
                     else:  # Ions
                         resname = 'ION'
                     

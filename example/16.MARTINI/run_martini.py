@@ -123,7 +123,7 @@ print(f"Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)")
 print(f"Length conversion: 1 nm = 10 Å, so 1 nm² = 100 Å²")
 
 # Two-stage minimization option to preserve bilayer structure
-skip_minimization = False  # Set to True if bilayer is already well-structured
+skip_minimization = True  # Set to True if bilayer is already well-structured
 
 # Enable all interactions now that PBC wrapping is fixed
 skip_bonds_and_angles = False  # Re-enable bonded interactions
@@ -371,113 +371,11 @@ print(f"Minimum inter-particle distance: {min(min_distances):.3f} Å")
 print(f"Number of severe overlaps (< {overlap_threshold} Å): {len(severe_overlaps)}")
 
 if severe_overlaps:
-    print(f"Pre-separating {len(severe_overlaps)} severely overlapping particle pairs...")
-    
-    # Iterative pre-separation with increasing force
-    max_iterations = 3
-    separation_forces = [0.3, 0.6, 1.0]  # Progressively stronger forces
-    
-    for iteration in range(max_iterations):
-        separation_force = separation_forces[iteration]
-        print(f"\n--- Iteration {iteration + 1}: separation force = {separation_force} ---")
-        
-        # Find current overlaps
-        current_overlaps = []
-        for i in range(n_atoms):
-            for j in range(i+1, n_atoms):
-                dx = initial_positions[i, 0] - initial_positions[j, 0]
-                dy = initial_positions[i, 1] - initial_positions[j, 1] 
-                dz = initial_positions[i, 2] - initial_positions[j, 2]
-                
-                # Apply minimum image convention
-                if dx > x_len/2: dx -= x_len
-                elif dx < -x_len/2: dx += x_len
-                if dy > y_len/2: dy -= y_len
-                elif dy < -y_len/2: dy += y_len
-                if dz > z_len/2: dz -= z_len
-                elif dz < -z_len/2: dz += z_len
-                
-                distance = np.sqrt(dx*dx + dy*dy + dz*dz)
-                if distance < overlap_threshold:
-                    current_overlaps.append((i, j, distance))
-        
-        if not current_overlaps:
-            print("No more severe overlaps - stopping iterations")
-            break
-        
-        print(f"Processing {len(current_overlaps)} overlaps...")
-        
-        # Show some overlaps
-        for i, j, dist in current_overlaps[:5]:  # Show first 5 overlaps
-            print(f"  Overlap: particles {i} and {j}, distance={dist:.3f} Å, types={atom_types[i]}-{atom_types[j]}")
-        
-        # Apply separation to all overlaps
-        for i, j, dist in current_overlaps:
-            # Calculate displacement vector (with minimum image)
-            dx = initial_positions[i, 0] - initial_positions[j, 0]
-            dy = initial_positions[i, 1] - initial_positions[j, 1]
-            dz = initial_positions[i, 2] - initial_positions[j, 2]
-            
-            if dx > x_len/2: dx -= x_len
-            elif dx < -x_len/2: dx += x_len
-            if dy > y_len/2: dy -= y_len
-            elif dy < -y_len/2: dy += y_len  
-            if dz > z_len/2: dz -= z_len
-            elif dz < -z_len/2: dz += z_len
-            
-            # Unit vector pointing from j to i
-            if dist > 0:
-                ux = dx / dist
-                uy = dy / dist
-                uz = dz / dist
-                
-                # Desired minimum distance (target separation)
-                target_dist = max(3.5, martini_sigma * 0.9)  # At least 3.5 Å or 90% of sigma
-                
-                # Calculate how much to move each particle
-                move_dist = (target_dist - dist) * separation_force
-                
-                # Move both particles apart along the displacement vector
-                initial_positions[i, 0] += ux * move_dist * 0.5
-                initial_positions[i, 1] += uy * move_dist * 0.5
-                initial_positions[i, 2] += uz * move_dist * 0.5
-                
-                initial_positions[j, 0] -= ux * move_dist * 0.5
-                initial_positions[j, 1] -= uy * move_dist * 0.5
-                initial_positions[j, 2] -= uz * move_dist * 0.5
-        
-        # Re-wrap particles after separation
-        initial_positions[:, 0] = initial_positions[:, 0] - x_len * np.floor(initial_positions[:, 0] / x_len)
-        initial_positions[:, 1] = initial_positions[:, 1] - y_len * np.floor(initial_positions[:, 1] / y_len)
-        initial_positions[:, 2] = initial_positions[:, 2] - z_len * np.floor(initial_positions[:, 2] / z_len)
-        
-        print(f"After iteration {iteration + 1}: {len(current_overlaps)} overlaps processed")
-    
-    # Final check for remaining overlaps
-    final_overlaps = []
-    for i in range(n_atoms):
-        for j in range(i+1, n_atoms):
-            dx = initial_positions[i, 0] - initial_positions[j, 0]
-            dy = initial_positions[i, 1] - initial_positions[j, 1]
-            dz = initial_positions[i, 2] - initial_positions[j, 2]
-            
-            if dx > x_len/2: dx -= x_len
-            elif dx < -x_len/2: dx += x_len
-            if dy > y_len/2: dy -= y_len
-            elif dy < -y_len/2: dy += y_len
-            if dz > z_len/2: dz -= z_len
-            elif dz < -z_len/2: dz += z_len
-            
-            distance = np.sqrt(dx*dx + dy*dy + dz*dz)
-            if distance < overlap_threshold:
-                final_overlaps.append((i, j, distance))
-    
-    print(f"\nFinal result: {len(final_overlaps)} severe overlaps remaining")
-    if final_overlaps:
-        print("WARNING: Some severe overlaps remain - system may still be unstable")
-        print("  Consider even softer LJ parameters for initial relaxation")
-    else:
-        print("All severe overlaps eliminated - system should be stable now!")
+    print(f"WARNING: {len(severe_overlaps)} severe overlaps detected but pre-separation is DISABLED")
+    print("  System may be unstable - consider enabling pre-separation or using softer parameters")
+    print("  First 10 overlaps:")
+    for i, j, dist in severe_overlaps[:10]:
+        print(f"    Particles {i} ({atom_types[i]}) and {j} ({atom_types[j]}): {dist:.3f} Å")
 else:
     print("No severe overlaps detected - system should be stable")
 
@@ -639,22 +537,54 @@ with tb.open_file(min_input_file, 'w') as t:
     t.create_array(martini_group, 'charges', obj=charges)
     
     # Create pairs and coefficients for non-bonded interactions
-    # Exclude 1-2 interactions (directly bonded atoms) as per MARTINI nrexcl=1
+    # Exclude 1-2, 1-3, 1-4 interactions as per MARTINI nrexcl=1
     pairs_list = []
     coeff_array = []
     
-    # Create set of bonded pairs for exclusion (only if using bonds)
-    bonded_pairs = set()
+    # Create sets of bonded pairs for exclusions
+    bonded_pairs_12 = set()  # Directly bonded (1-2)
+    bonded_pairs_13 = set()  # 1-3 interactions  
+    bonded_pairs_14 = set()  # 1-4 interactions
+    
+    # Add 1-2 exclusions from bond list
     if not skip_bonds_and_angles:
         for bond in bonds_list:
-            bonded_pairs.add((min(bond[0], bond[1]), max(bond[0], bond[1])))
+            bonded_pairs_12.add((min(bond[0], bond[1]), max(bond[0], bond[1])))
     
+    # Add 1-3 exclusions from angle list
+    if not skip_bonds_and_angles:
+        for angle in angles_list:
+            # Add 1-3 pairs from angles
+            bonded_pairs_13.add((min(angle[0], angle[2]), max(angle[0], angle[2])))
+    
+    # For particles without explicit bonds, exclude very close particles as 1-2
+    close_threshold = 2.5  # Å - particles closer than this are considered "bonded"
     for i in range(n_atoms):
         for j in range(i+1, n_atoms):
-            # Skip if atoms are directly bonded (1-2 exclusion) - only when using bonds
-            if not skip_bonds_and_angles and (i, j) in bonded_pairs:
+            # Skip if already in bonded sets
+            if (i, j) in bonded_pairs_12 or (i, j) in bonded_pairs_13 or (i, j) in bonded_pairs_14:
                 continue
-                
+            
+            # Check distance for implicit 1-2 exclusions
+            dx = initial_positions[i, 0] - initial_positions[j, 0]
+            dy = initial_positions[i, 1] - initial_positions[j, 1] 
+            dz = initial_positions[i, 2] - initial_positions[j, 2]
+            
+            # Apply minimum image convention
+            if dx > x_len/2: dx -= x_len
+            elif dx < -x_len/2: dx += x_len
+            if dy > y_len/2: dy -= y_len
+            elif dy < -y_len/2: dy += y_len
+            if dz > z_len/2: dz -= z_len
+            elif dz < -z_len/2: dz += z_len
+            
+            distance = np.sqrt(dx*dx + dy*dy + dz*dz)
+            
+            # Exclude very close particles as 1-2 interactions
+            if distance < close_threshold:
+                bonded_pairs_12.add((i, j))
+                continue
+            
             pairs_list.append([i, j])
             type_i = atom_types[i]
             type_j = atom_types[j]
@@ -923,32 +853,65 @@ with tb.open_file(input_file, 'w') as t:
     t.create_array(martini_group, 'charges', obj=charges)
     
     # Create pairs and coefficients for non-bonded interactions
-    # Exclude 1-2 interactions (directly bonded atoms) as per MARTINI nrexcl=1
+    # Exclude 1-2, 1-3, 1-4 interactions as per MARTINI nrexcl=1
     pairs_list = []
     coeff_array = []
     
-    # Create set of bonded pairs for exclusion (only if using bonds)
-    bonded_pairs = set()
+    # Create sets of bonded pairs for exclusions
+    bonded_pairs_12 = set()  # Directly bonded (1-2)
+    bonded_pairs_13 = set()  # 1-3 interactions  
+    bonded_pairs_14 = set()  # 1-4 interactions
+    
+    # Add 1-2 exclusions from bond list
     if not skip_bonds_and_angles:
         for bond in bonds_list:
-            bonded_pairs.add((min(bond[0], bond[1]), max(bond[0], bond[1])))
+            bonded_pairs_12.add((min(bond[0], bond[1]), max(bond[0], bond[1])))
     
+    # Add 1-3 exclusions from angle list
+    if not skip_bonds_and_angles:
+        for angle in angles_list:
+            # Add 1-3 pairs from angles
+            bonded_pairs_13.add((min(angle[0], angle[2]), max(angle[0], angle[2])))
+    
+    # For particles without explicit bonds, exclude very close particles as 1-2
+    close_threshold = 2.5  # Å - particles closer than this are considered "bonded"
     for i in range(n_atoms):
         for j in range(i+1, n_atoms):
-            # Skip if atoms are directly bonded (1-2 exclusion) - only when using bonds
-            if not skip_bonds_and_angles and (i, j) in bonded_pairs:
+            # Skip if already in bonded sets
+            if (i, j) in bonded_pairs_12 or (i, j) in bonded_pairs_13 or (i, j) in bonded_pairs_14:
                 continue
-                
+            
+            # Check distance for implicit 1-2 exclusions
+            dx = initial_positions[i, 0] - initial_positions[j, 0]
+            dy = initial_positions[i, 1] - initial_positions[j, 1] 
+            dz = initial_positions[i, 2] - initial_positions[j, 2]
+            
+            # Apply minimum image convention
+            if dx > x_len/2: dx -= x_len
+            elif dx < -x_len/2: dx += x_len
+            if dy > y_len/2: dy -= y_len
+            elif dy < -y_len/2: dy += y_len
+            if dz > z_len/2: dz -= z_len
+            elif dz < -z_len/2: dz += z_len
+            
+            distance = np.sqrt(dx*dx + dy*dy + dz*dz)
+            
+            # Exclude very close particles as 1-2 interactions
+            if distance < close_threshold:
+                bonded_pairs_12.add((i, j))
+                continue
+            
             pairs_list.append([i, j])
             type_i = atom_types[i]
             type_j = atom_types[j]
             # Get epsilon from table and convert to simulation units
             epsilon_table = martini_table[type_i][type_j]
             epsilon_sim = epsilon_table / 2.914952774272
-            epsilon = epsilon_sim  # Use normal MARTINI epsilon for MD
-            sigma_val = martini_sigma  # Use standard sigma for MD
-            q1 = charges[i]  # Restore Coulomb interactions
-            q2 = charges[j]  # Restore Coulomb interactions
+            # Use full MARTINI parameters for production MD
+            epsilon = epsilon_sim  # Use full MARTINI epsilon
+            sigma_val = martini_sigma  # Use full MARTINI sigma
+            q1 = charges[i]  # Coulomb interactions enabled
+            q2 = charges[j]  # Coulomb interactions enabled
             coeff_array.append([epsilon, sigma_val, q1, q2])
     pairs_array = np.array(pairs_list, dtype=int)
     coeff_array = np.array(coeff_array)
