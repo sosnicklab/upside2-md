@@ -123,7 +123,7 @@ print(f"Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)")
 print(f"Length conversion: 1 nm = 10 Å, so 1 nm² = 100 Å²")
 
 # Two-stage minimization option to preserve bilayer structure
-skip_minimization = True  # Set to True if bilayer is already well-structured
+skip_minimization = False  # Enable minimization for better structure
 
 # Enable all interactions now that PBC wrapping is fixed
 skip_bonds_and_angles = False  # Re-enable bonded interactions
@@ -131,13 +131,13 @@ skip_bonds_and_angles = False  # Re-enable bonded interactions
 # Stage 1: Hold lipids, minimize water/ions
 stage1_steps = 100
 stage1_T = 0.1   # Much higher temperature for better equilibration
-stage1_dt = 0.0001  # Much smaller time step for stability
+stage1_dt = 0.001  # Larger time step for faster minimization
 stage1_frame_interval = 10  # Reasonable frame interval
 
 # Stage 2: Minimize everything gently
 stage2_steps = 200
 stage2_T = 0.05   # Gentle but not too low
-stage2_dt = 0.0001  # Small time step for stability
+stage2_dt = 0.001  # Larger time step for faster minimization
 stage2_frame_interval = 20  # Reasonable frame interval
 
 # These prints will be moved to after box dimensions are read from PDB
