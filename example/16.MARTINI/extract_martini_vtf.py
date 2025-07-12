@@ -98,18 +98,20 @@ def main():
         n_frame = len(t['output/pos'])
         print(f"Number of frames: {n_frame}")
         
-        # Get position data shape
-        pos = t['output/pos'][0]
-        n_particles = pos.shape[1]
+        # Get position data shape from input (first frame should use input positions)
+        input_pos = t['input/pos'][:]
+        if len(input_pos.shape) == 3:  # (n_atoms, 3, n_frames)
+            input_pos = input_pos[:, :, 0]  # Take first frame
+        n_particles = input_pos.shape[0]
         print(f"Number of particles: {n_particles}")
-        print(f"Position data shape: {pos.shape}")
+        print(f"Input position data shape: {input_pos.shape}")
         
-        # Print debug info for first frame
-        print("\nFirst frame statistics:")
-        print(f"Min position: {np.min(pos)}")
-        print(f"Max position: {np.max(pos)}")
-        print(f"Mean position: {np.mean(pos)}")
-        print(f"Std position: {np.std(pos)}")
+        # Print debug info for input frame
+        print("\nInput frame statistics:")
+        print(f"Min position: {np.min(input_pos)}")
+        print(f"Max position: {np.max(input_pos)}")
+        print(f"Mean position: {np.mean(input_pos)}")
+        print(f"Std position: {np.std(input_pos)}")
         
         # Read box dimensions from HDF5 file
         # Check different potential groups for box dimensions
@@ -141,6 +143,11 @@ def main():
         # Read atom types and residue IDs from HDF5 input
         atom_types = t['input/type'][:].astype(str)
         residue_ids = t['input/residue_ids'][:] if 'residue_ids' in t['input'] else np.ones(n_particles, dtype=int)
+        
+        # Debug: Print first 10 atom types and Z positions as read from .up
+        print("\n[DEBUG] First 10 atoms in VTF input (.up):")
+        for i in range(10):
+            print(f"  Atom {i}: type={atom_types[i]}, Z={input_pos[i,2]:.2f} Å")
         
         print(f"Atom types found: {set(atom_types)}")
         print(f"Number of unique residues: {len(set(residue_ids))}")
@@ -268,19 +275,24 @@ def main():
             
             # Write frames
             for frame in range(n_frame):
-                pos = t['output/pos'][frame]
-                
-                # Reshape position data to (n_particles, 3)
-                frame_pos = pos[0].reshape(n_particles, 3)
-                
-                # Check for NaN values and replace with last valid frame
-                if np.isnan(frame_pos).any():
-                    if frame > 0:
-                        valid_pos = t['output/pos'][frame-1][0].reshape(n_particles, 3)
-                        frame_pos = np.where(np.isnan(frame_pos), valid_pos, frame_pos)
-                    else:
-                        print(f"Warning: NaN values in first frame, replacing with zeros")
-                        frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
+                if frame == 0:
+                    # Use input positions for the first frame (initial structure)
+                    frame_pos = input_pos
+                else:
+                    # Use output positions for subsequent frames (simulation trajectory)
+                    pos = t['output/pos'][frame]
+                    
+                    # Reshape position data to (n_particles, 3)
+                    frame_pos = pos[0].reshape(n_particles, 3)
+                    
+                    # Check for NaN values and replace with last valid frame
+                    if np.isnan(frame_pos).any():
+                        if frame > 0:
+                            valid_pos = t['output/pos'][frame-1][0].reshape(n_particles, 3)
+                            frame_pos = np.where(np.isnan(frame_pos), valid_pos, frame_pos)
+                        else:
+                            print(f"Warning: NaN values in first frame, replacing with zeros")
+                            frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
                 
                 # Write frame in appropriate format
                 if output_format == 'vtf':

@@ -317,8 +317,16 @@ wrapped_positions = initial_positions.copy()
 wrapped_positions[:, 0] = wrapped_positions[:, 0] - x_len * np.floor(wrapped_positions[:, 0] / x_len)
 # Y dimension  
 wrapped_positions[:, 1] = wrapped_positions[:, 1] - y_len * np.floor(wrapped_positions[:, 1] / y_len)
-# Z dimension
-wrapped_positions[:, 2] = wrapped_positions[:, 2] - z_len * np.floor(wrapped_positions[:, 2] / z_len)
+
+# Z dimension - preserve bilayer structure by simple shift instead of wrapping
+# The PDB has correct bilayer structure, just shift to positive coordinates
+z_min = np.min(initial_positions[:, 2])
+if z_min < 0:
+    z_shift = -z_min + 1.0  # Shift by 1 Å to ensure positive coordinates
+    wrapped_positions[:, 2] = initial_positions[:, 2] + z_shift
+    print(f"Shifted Z coordinates by {z_shift:.1f} Å to preserve bilayer structure")
+else:
+    wrapped_positions[:, 2] = initial_positions[:, 2]
 
 # Update initial_positions with wrapped coordinates
 initial_positions = wrapped_positions
@@ -963,6 +971,14 @@ bonds_added_md = len(bonds_list) if bonds_list and not skip_bonds_and_angles els
 angles_added_md = len(angles_list) if angles_list and not skip_bonds_and_angles else 0
 
 print(f"Created MD input with {len(pairs_list)} non-bonded pairs and {bonds_added_md} bonds and {angles_added_md} angles using minimized positions")
+
+# Debug: Print first 10 atom types and Z positions in MD input
+with tb.open_file(input_file, 'r') as t:
+    types = t.root.input.type[:].astype(str)
+    pos = t.root.input.pos[:,:,0]
+    print("\n[DEBUG] First 10 atoms in MD input (.up):")
+    for i in range(10):
+        print(f"  Atom {i}: type={types[i]}, Z={pos[i,2]:.2f} Å")
 
 #----------------------------------------------------------------------
 ## Run MD Simulation
