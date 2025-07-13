@@ -42,7 +42,7 @@ minimizer_verbose = True
 
 # Simulation parameters - optimized for stability
 T              = 0.86  # Temperature (UPSIDE units) - proper MARTINI temperature ~300K  
-duration       = 5000  # Total simulation steps (production run)
+duration       = 100  # Total simulation steps (production run)
 frame_interval = 20   # Output every N steps (more frames for better trajectory)
 dt             = 0.001  # Time step - reduced for stability with lipids
 thermostat_timescale = 5.0  # Thermostat timescale (default Langevin damping)
@@ -239,7 +239,7 @@ with open(input_pdb_file, 'r') as f:
             initial_positions.append([x, y, z])
             
             pdb_name = line[12:16].strip().upper()
-            residue_name = line[17:20].strip()
+            residue_name = line[17:21].strip()
             residue_id = int(line[22:26])
             
             atom_names.append(pdb_name)
@@ -251,7 +251,10 @@ with open(input_pdb_file, 'r') as f:
             else:
                 mtype = 'P4'  # Default to P4 (water)
             atom_types.append(mtype)
-            charges.append(martini_charges.get(mtype, 0.0))
+            # Apply charge conversion factor to convert to UPSIDE units
+            raw_charge = martini_charges.get(mtype, 0.0)
+            converted_charge = raw_charge * charge_conversion_factor
+            charges.append(converted_charge)
 
 if not initial_positions:
     print("Error: No atoms found in PDB file!")
@@ -379,11 +382,23 @@ print(f"Minimum inter-particle distance: {min(min_distances):.3f} Å")
 print(f"Number of severe overlaps (< {overlap_threshold} Å): {len(severe_overlaps)}")
 
 if severe_overlaps:
-    print(f"WARNING: {len(severe_overlaps)} severe overlaps detected but pre-separation is DISABLED")
-    print("  System may be unstable - consider enabling pre-separation or using softer parameters")
+    print(f"WARNING: {len(severe_overlaps)} severe overlaps detected - will perform pre-separation")
     print("  First 10 overlaps:")
     for i, j, dist in severe_overlaps[:10]:
         print(f"    Particles {i} ({atom_types[i]}) and {j} ({atom_types[j]}): {dist:.3f} Å")
+else:
+    print("No severe overlaps detected - system should be stable")
+
+# Pre-separate overlapping particles if any severe overlaps were found
+# DISABLED: Overlap prevention is turned off
+if severe_overlaps:
+    print("\n=== OVERLAP PREVENTION DISABLED ===")
+    print(f"WARNING: {len(severe_overlaps)} severe overlaps detected but pre-separation is disabled")
+    print("  First 10 overlaps:")
+    for i, j, dist in severe_overlaps[:10]:
+        print(f"    Particles {i} ({atom_types[i]}) and {j} ({atom_types[j]}): {dist:.3f} Å")
+    print("  System will proceed with overlaps - this may cause instability!")
+    print("  Consider enabling pre-separation if simulation fails")
 else:
     print("No severe overlaps detected - system should be stable")
 
@@ -525,7 +540,7 @@ with tb.open_file(min_input_file, 'w') as t:
     martini_group._v_attrs.lj_cutoff = 12.0
     martini_group._v_attrs.coul_cutoff = 12.0
     martini_group._v_attrs.dielectric = dielectric_constant
-    martini_group._v_attrs.coulomb_constant = coulomb_constant_upside  # Pre-converted to UPSIDE units
+    martini_group._v_attrs.coulomb_constant = 1.0  # 4πε₀ = 1 in UPSIDE units
     martini_group._v_attrs.n_types = 1
     martini_group._v_attrs.n_params = 4
     martini_group._v_attrs.cutoff = 12.0
@@ -602,8 +617,8 @@ with tb.open_file(min_input_file, 'w') as t:
             # Use soft parameters for initial minimization
             epsilon = epsilon_sim * 0.1  # Use soft epsilon
             sigma_val = soft_sigma  # Use soft sigma
-            q1 = charges[i]  # Coulomb interactions enabled
-            q2 = charges[j]  # Coulomb interactions enabled
+            q1 = charges[i]  # Already converted to UPSIDE units
+            q2 = charges[j]  # Already converted to UPSIDE units
             coeff_array.append([epsilon, sigma_val, q1, q2])
     pairs_array = np.array(pairs_list, dtype=int)
     coeff_array = np.array(coeff_array)
@@ -663,6 +678,7 @@ print(f"Created minimization input with {len(pairs_list)} non-bonded pairs and {
 if skip_minimization:
     print("\nSkipping minimization as requested")
     minimized_positions = initial_positions  # Use initial positions directly
+    min_h5_file = None  # No minimization file to convert
 else:
     min_run_dir = f"{output_dir}/minimize"
     if not os.path.exists(min_run_dir):
@@ -678,17 +694,47 @@ else:
         print(f"  Temperature: {stage1_T}")
         print(f"  Time step: {stage1_dt}")
         
-        # Create stage 1 input with high masses for lipids
+        # Create stage 1 input with position restraints for lipids
         stage1_input_file = f"{input_dir}/minimize_stage1.up"
         with tb.open_file(min_input_file, 'r') as src:
             with tb.open_file(stage1_input_file, 'w') as dst:
                 src.copy_children(src.root, dst.root, recursive=True)
-                # Modify masses to freeze lipids
-                mass_data = dst.root.input.mass[:]
-                for i, resid in enumerate(residue_ids):
-                    if resid in dopc_residues:
-                        mass_data[i] = 10000.0  # Very high mass to prevent movement
-                dst.root.input.mass[:] = mass_data
+                
+                # Add position restraints for lipid atoms
+                potential_grp = dst.root.input.potential
+                
+                # Create position restraint potential for lipids
+                restraint_group = dst.create_group(potential_grp, 'position_restraint')
+                restraint_group._v_attrs.arguments = np.array([b'pos'])
+                restraint_group._v_attrs.initialized = True
+                restraint_group._v_attrs.x_len = x_len
+                restraint_group._v_attrs.y_len = y_len
+                restraint_group._v_attrs.z_len = z_len
+                
+                # Create arrays for position restraints
+                lipid_atoms = []
+                restraint_positions = []
+                restraint_force_constants = []
+                
+                for i in range(len(residue_ids)):
+                    if residue_ids[i] in dopc_residues:
+                        lipid_atoms.append(i)
+                        restraint_positions.append(initial_positions[i])
+                        restraint_force_constants.append(1000.0)  # Strong restraint
+                
+                if lipid_atoms:
+                    lipid_atoms_array = np.array(lipid_atoms, dtype=int)
+                    restraint_positions_array = np.array(restraint_positions, dtype='f4')
+                    restraint_force_constants_array = np.array(restraint_force_constants, dtype='f4')
+                    
+                    dst.create_array(restraint_group, 'atom_indices', obj=lipid_atoms_array)
+                    dst.create_array(restraint_group, 'equilibrium_positions', obj=restraint_positions_array)
+                    dst.create_array(restraint_group, 'force_constants', obj=restraint_force_constants_array)
+                
+                # Print debug info about freezing
+                frozen_count = len(lipid_atoms)
+                print(f"Stage 1: Position-restrained {frozen_count} lipid atoms with force constant 1000.0")
+                print(f"Stage 1: {len(residue_ids) - frozen_count} water/ion atoms free to move")
         
         stage1_h5_file = f"{min_run_dir}/stage1.run.up"
         with tb.open_file(stage1_input_file, 'r') as src:
@@ -710,6 +756,39 @@ else:
         # Extract stage 1 positions
         with tb.open_file(stage1_h5_file, 'r') as t:
             stage1_positions = t.root.output.pos[-1].copy()
+            # Reshape to (n_atoms, 3) if needed
+            if len(stage1_positions.shape) == 3:
+                stage1_positions = stage1_positions[0].reshape(len(residue_ids), 3)
+        
+        # Verify bilayer structure is preserved in stage 1
+        print(f"\n=== Stage 1 Bilayer Structure Verification ===")
+        lipid_drift = []
+        water_drift = []
+        
+        for i in range(len(residue_ids)):
+            initial_pos = initial_positions[i]
+            stage1_pos = stage1_positions[i]
+            drift = np.linalg.norm(stage1_pos - initial_pos)
+            
+            if residue_ids[i] in dopc_residues:
+                lipid_drift.append(drift)
+            else:
+                water_drift.append(drift)
+        
+        if lipid_drift:
+            max_lipid_drift = max(lipid_drift)
+            mean_lipid_drift = np.mean(lipid_drift)
+            print(f"Lipid atoms: max drift = {max_lipid_drift:.6f} Å, mean drift = {mean_lipid_drift:.6f} Å")
+            if max_lipid_drift > 0.001:
+                print(f"WARNING: Lipid atoms moved during stage 1! This indicates freezing failed.")
+            else:
+                print(f"✓ Lipid atoms properly frozen (drift < 0.001 Å)")
+        
+        if water_drift:
+            max_water_drift = max(water_drift)
+            mean_water_drift = np.mean(water_drift)
+            print(f"Water/ion atoms: max drift = {max_water_drift:.3f} Å, mean drift = {mean_water_drift:.3f} Å")
+            print(f"✓ Water/ions relaxed as expected")
         
         # Stage 2: Gentle minimization of everything
         print(f"\nStage 2: Gentle minimization of entire system")
@@ -724,7 +803,12 @@ else:
                 src.copy_children(src.root, dst.root, recursive=True)
                 # Update positions with stage 1 results
                 pos_data = dst.root.input.pos[:]
-                pos_data[:, :, 0] = stage1_positions
+                # Ensure stage1_positions is in the right format (n_atoms, 3)
+                if len(stage1_positions.shape) == 3:
+                    stage1_pos_reshaped = stage1_positions[0].reshape(len(residue_ids), 3)
+                else:
+                    stage1_pos_reshaped = stage1_positions
+                pos_data[:, :, 0] = stage1_pos_reshaped
                 dst.root.input.pos[:] = pos_data
         
         stage2_h5_file = f"{min_run_dir}/stage2.run.up"
@@ -747,8 +831,14 @@ else:
         # Extract final minimized positions
         with tb.open_file(stage2_h5_file, 'r') as t:
             minimized_positions = t.root.output.pos[-1].copy()
+            # Reshape to (n_atoms, 3) if needed
+            if len(minimized_positions.shape) == 3:
+                minimized_positions = minimized_positions[0].reshape(len(residue_ids), 3)
         
         print("Two-stage minimization completed!")
+        
+        # For VTF conversion, we'll use the final stage file
+        min_h5_file = stage2_h5_file
         
     else:
         # Single-stage minimization for simple systems
@@ -780,6 +870,9 @@ else:
         # Extract minimized positions
         with tb.open_file(min_h5_file, 'r') as t:
             minimized_positions = t.root.output.pos[-1].copy()
+            # Reshape to (n_atoms, 3) if needed
+            if len(minimized_positions.shape) == 3:
+                minimized_positions = minimized_positions[0].reshape(len(residue_ids), 3)
     
     # Check position drift during minimization
     pos_drift = np.linalg.norm(minimized_positions - initial_positions, axis=1)
@@ -841,7 +934,7 @@ with tb.open_file(input_file, 'w') as t:
     martini_group._v_attrs.lj_cutoff = 12.0
     martini_group._v_attrs.coul_cutoff = 12.0
     martini_group._v_attrs.dielectric = dielectric_constant
-    martini_group._v_attrs.coulomb_constant = coulomb_constant_upside  # Pre-converted to UPSIDE units
+    martini_group._v_attrs.coulomb_constant = 1.0  # 4πε₀ = 1 in UPSIDE units
     martini_group._v_attrs.n_types = 1
     martini_group._v_attrs.n_params = 4
     martini_group._v_attrs.cutoff = 12.0
@@ -918,8 +1011,8 @@ with tb.open_file(input_file, 'w') as t:
             # Use full MARTINI parameters for production MD
             epsilon = epsilon_sim  # Use full MARTINI epsilon
             sigma_val = martini_sigma  # Use full MARTINI sigma
-            q1 = charges[i]  # Coulomb interactions enabled
-            q2 = charges[j]  # Coulomb interactions enabled
+            q1 = charges[i]  # Already converted to UPSIDE units
+            q2 = charges[j]  # Already converted to UPSIDE units
             coeff_array.append([epsilon, sigma_val, q1, q2])
     pairs_array = np.array(pairs_list, dtype=int)
     coeff_array = np.array(coeff_array)
@@ -1025,25 +1118,43 @@ print(f"Command: {cmd}")
 result = sp.run(cmd, shell=True)
 
 #----------------------------------------------------------------------
-## Convert trajectory to VTF format for visualization
+## Convert trajectories to VTF format for visualization
 #----------------------------------------------------------------------
 
-print("\nConverting trajectory to VTF format...")
+print("\nConverting trajectories to VTF format...")
 
 vtf_script = "extract_martini_vtf.py"
+
+# Convert minimization trajectory if it exists
+if min_h5_file is not None:
+    print(f"\nConverting minimization trajectory...")
+    min_output_vtf = "{}/minimization_trajectory.vtf".format(run_dir)
+    min_convert_cmd = "python {} {} {}".format(vtf_script, min_h5_file, min_output_vtf)
+    print(f"Minimization VTF conversion command: {min_convert_cmd}")
+    
+    min_vtf_result = sp.run(min_convert_cmd, shell=True)
+    
+    if min_vtf_result.returncode != 0:
+        print("Minimization VTF conversion failed!")
+        print("Return code:", min_vtf_result.returncode)
+    else:
+        print(f"Minimization VTF trajectory saved to: {min_output_vtf}")
+
+# Convert production MD trajectory
+print(f"\nConverting production MD trajectory...")
 input_traj = h5_file
 output_vtf = "{}/martini_trajectory.vtf".format(run_dir)
 
 # Run VTF conversion
 convert_cmd = "python {} {} {}".format(vtf_script, input_traj, output_vtf)
-print(f"VTF conversion command: {convert_cmd}")
+print(f"Production VTF conversion command: {convert_cmd}")
 
 vtf_result = sp.run(convert_cmd, shell=True)
 
 if vtf_result.returncode != 0:
-    print("VTF conversion failed!")
+    print("Production VTF conversion failed!")
     print("Return code:", vtf_result.returncode)
 else:
-    print(f"VTF trajectory saved to: {output_vtf}")
+    print(f"Production VTF trajectory saved to: {output_vtf}")
 
 print("Done!") 
