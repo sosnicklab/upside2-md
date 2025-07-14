@@ -361,12 +361,21 @@ def main():
                         # Shift initial PDB positions to centered box convention
                         center_shift = np.array([x_len/2, y_len/2, z_len/2])
                         frame_pos = pdb_positions - center_shift
+                        # Debug print for frame 0
+                        print(f"[DEBUG] Frame 0 (PDB after centering): mean={frame_pos.mean(axis=0)}, min={frame_pos.min(axis=0)}, max={frame_pos.max(axis=0)}")
                     else:
                         # Use output positions for simulation frames (frame-1 because we added initial frame)
                         pos = t['output/pos'][frame-1]
                         
                         # Reshape position data to (n_particles, 3)
                         frame_pos = pos[0].reshape(n_particles, 3)
+                        
+                        # Apply periodic boundary conditions to wrap all atoms into the box
+                        frame_pos[:, 0] = frame_pos[:, 0] - x_len * np.floor(frame_pos[:, 0] / x_len)
+                        frame_pos[:, 1] = frame_pos[:, 1] - y_len * np.floor(frame_pos[:, 1] / y_len)
+                        frame_pos[:, 2] = frame_pos[:, 2] - z_len * np.floor(frame_pos[:, 2] / z_len)
+                        # Shift to center at origin
+                        frame_pos -= np.array([x_len/2, y_len/2, z_len/2])
                         
                         # Check for NaN values and replace with last valid frame
                         if np.isnan(frame_pos).any():
@@ -433,6 +442,13 @@ def main():
                         
                         # Reshape position data to (n_particles, 3)
                         frame_pos = pos[0].reshape(n_particles, 3)
+                        
+                        # Apply PBC wrapping (same as in run_martini.py)
+                        frame_pos[:, 0] = frame_pos[:, 0] - x_len * np.floor(frame_pos[:, 0] / x_len)
+                        frame_pos[:, 1] = frame_pos[:, 1] - y_len * np.floor(frame_pos[:, 1] / y_len)
+                        frame_pos[:, 2] = frame_pos[:, 2] - z_len * np.floor(frame_pos[:, 2] / z_len)
+                        # Shift to center at origin
+                        frame_pos -= np.array([x_len/2, y_len/2, z_len/2])
                         
                         # Check for NaN values and replace with last valid frame
                         if np.isnan(frame_pos).any():
