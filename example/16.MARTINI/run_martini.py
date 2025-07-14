@@ -440,6 +440,11 @@ print("\nSkipping minimization as requested")
 minimized_positions = initial_positions  # Use initial positions directly
 min_h5_file = None  # No minimization file to convert
 
+# === Center the box at (0,0,0) for UPSIDE simulation ===
+center_shift = np.array([x_len/2, y_len/2, z_len/2])
+initial_positions = initial_positions - center_shift
+print(f"Shifted all coordinates by -L/2 to center box at (0,0,0): shift = {center_shift}")
+
 # --- CREATE MD INPUT WITH MINIMIZED POSITIONS ---
 print("Creating MD input with minimized positions and full MARTINI parameters...")
 input_file = f"{input_dir}/test.up"

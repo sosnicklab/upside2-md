@@ -358,23 +358,9 @@ def main():
                         
                         pdb_positions = np.array(pdb_positions)
                         
-                        # Apply PBC wrapping (same as in run_martini.py)
-                        wrapped_positions = pdb_positions.copy()
-                        
-                        # X dimension wrapping
-                        wrapped_positions[:, 0] = wrapped_positions[:, 0] - x_len * np.floor(wrapped_positions[:, 0] / x_len)
-                        # Y dimension wrapping  
-                        wrapped_positions[:, 1] = wrapped_positions[:, 1] - y_len * np.floor(wrapped_positions[:, 1] / y_len)
-                        
-                        # Z dimension - simple shift (no wrapping)
-                        z_min = np.min(pdb_positions[:, 2])
-                        if z_min < 0:
-                            z_shift = -z_min + 1.0
-                            wrapped_positions[:, 2] = pdb_positions[:, 2] + z_shift
-                        else:
-                            wrapped_positions[:, 2] = pdb_positions[:, 2]
-                        
-                        frame_pos = wrapped_positions
+                        # Shift initial PDB positions to centered box convention
+                        center_shift = np.array([x_len/2, y_len/2, z_len/2])
+                        frame_pos = pdb_positions - center_shift
                     else:
                         # Use output positions for simulation frames (frame-1 because we added initial frame)
                         pos = t['output/pos'][frame-1]

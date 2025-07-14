@@ -324,6 +324,8 @@ struct PeriodicBoundaryPotential : public PotentialNode
     
     // Box parameters
     float box_x, box_y, box_z;
+    // Static box dimensions for PBC wrapping
+    static float static_box_x, static_box_y, static_box_z;
     
     PeriodicBoundaryPotential(hid_t grp, CoordNode& pos_):
         PotentialNode(), n_atom(pos_.n_elem), pos(pos_)
@@ -357,48 +359,27 @@ struct PeriodicBoundaryPotential : public PotentialNode
         Timer timer(string("periodic_boundary_potential"));
         
         VecArray pos1 = pos.output;
-        
-        // Apply periodic boundary conditions
+        float half_x = 0.5f * box_x;
+        float half_y = 0.5f * box_y;
+        float half_z = 0.5f * box_z;
+        // Apply periodic boundary conditions (centered box convention)
         for(int na=0; na<n_atom; ++na) {
             auto p = load_vec<3>(pos1, na);
             bool wrapped = false;
-            
-            // X dimension
-            if (p.x() < 0) {
-                p.x() += box_x;
-                wrapped = true;
-            }
-            if (p.x() >= box_x) {
-                p.x() -= box_x;
-                wrapped = true;
-            }
-            
-            // Y dimension
-            if (p.y() < 0) {
-                p.y() += box_y;
-                wrapped = true;
-            }
-            if (p.y() >= box_y) {
-                p.y() -= box_y;
-                wrapped = true;
-            }
-            
-            // Z dimension
-            if (p.z() < 0) {
-                p.z() += box_z;
-                wrapped = true;
-            }
-            if (p.z() >= box_z) {
-                p.z() -= box_z;
-                wrapped = true;
-            }
-            
+            // X dimension: wrap into [-L/2, +L/2]
+            while (p.x() < -half_x) { p.x() += box_x; wrapped = true; }
+            while (p.x() >= half_x) { p.x() -= box_x; wrapped = true; }
+            // Y dimension: wrap into [-L/2, +L/2]
+            while (p.y() < -half_y) { p.y() += box_y; wrapped = true; }
+            while (p.y() >= half_y) { p.y() -= box_y; wrapped = true; }
+            // Z dimension: wrap into [-L/2, +L/2]
+            while (p.z() < -half_z) { p.z() += box_z; wrapped = true; }
+            while (p.z() >= half_z) { p.z() -= box_z; wrapped = true; }
             // Store wrapped position
             if (wrapped) {
                 store_vec<3>(pos1, na, p);
             }
         }
-        
         // No potential energy contribution from periodic boundaries
         potential = 0.f;
     }
@@ -661,6 +642,32 @@ struct MartiniPotential : public PotentialNode
     }
 };
 static RegisterNodeType<MartiniPotential,1> martini_potential_node("martini_potential");
+
+// Static method to apply PBC wrapping to positions
+static bool apply_pbc_wrapping(VecArray pos, int n_atoms) {
+    bool any_wrapped = false;
+    float half_x = 0.5f * PeriodicBoundaryPotential::static_box_x;
+    float half_y = 0.5f * PeriodicBoundaryPotential::static_box_y;
+    float half_z = 0.5f * PeriodicBoundaryPotential::static_box_z;
+    for(int na=0; na<n_atoms; ++na) {
+        auto p = load_vec<3>(pos, na);
+        bool wrapped = false;
+        // X dimension: wrap into [-L/2, +L/2]
+        while (p.x() < -half_x) { p.x() += PeriodicBoundaryPotential::static_box_x; wrapped = true; }
+        while (p.x() >= half_x) { p.x() -= PeriodicBoundaryPotential::static_box_x; wrapped = true; }
+        // Y dimension: wrap into [-L/2, +L/2]
+        while (p.y() < -half_y) { p.y() += PeriodicBoundaryPotential::static_box_y; wrapped = true; }
+        while (p.y() >= half_y) { p.y() -= PeriodicBoundaryPotential::static_box_y; wrapped = true; }
+        // Z dimension: wrap into [-L/2, +L/2]
+        while (p.z() < -half_z) { p.z() += PeriodicBoundaryPotential::static_box_z; wrapped = true; }
+        while (p.z() >= half_z) { p.z() -= PeriodicBoundaryPotential::static_box_z; wrapped = true; }
+        if (wrapped) {
+            store_vec<3>(pos, na, p);
+            any_wrapped = true;
+        }
+    }
+    return any_wrapped;
+}
 
 // Conjugate Gradient Minimizer based on LAMMPS implementation
 struct ConjugateGradientMinimizer : public PotentialNode
