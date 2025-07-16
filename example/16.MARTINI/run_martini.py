@@ -107,15 +107,17 @@ angle_force_constants_martini = [25.0, 25.0, 25.0, 45.0, 25.0, 25.0, 45.0, 25.0]
 import math
 angle_equil_deg = angle_values_martini  # Keep angles in degrees
 
-# Angle force constants: keep original MARTINI values (no conversion)
-angle_force_constants = angle_force_constants_martini  # Keep original values
+# Angle force constants: kJ/(mol·deg^2) -> E_up/deg^2
+# Apply energy conversion factor (angles stay in degrees)
+# Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)
+angle_force_constants = [k / energy_conversion_factor for k in angle_force_constants_martini]  # E_up/deg²
 
 # Print unit conversion summary for verification
 print(f"\n=== MARTINI Unit Conversions ===")
 print(f"Bond lengths (nm -> Å): {bond_lengths_nm[0]:.2f} nm -> {bond_lengths[0]:.1f} Å")
 print(f"Bond force constants (kJ/mol/nm² -> E_up/Å²): {bond_force_constants_martini[0]} -> {bond_force_constants[0]:.6f}")
 print(f"Angle equilibrium (degrees): {angle_values_martini[0]}°")
-print(f"Angle force constants (kJ/mol/rad²): {angle_force_constants_martini[0]} (unchanged)")
+print(f"Angle force constants (kJ/mol/deg² -> E_up/deg²): {angle_force_constants_martini[0]} -> {angle_force_constants[0]:.6f}")
 print(f"Coulomb constant (unit conversion): {coulomb_constant_upside:.1f} (charge_factor² = {charge_conversion_factor:.1f}²)")
 print(f"Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)")
 print(f"Length conversion: 1 nm = 10 Å, so 1 nm² = 100 Å²")
