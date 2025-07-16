@@ -2,6 +2,7 @@ import sys, os, shutil
 import subprocess as sp
 import numpy as np
 import tables as tb
+from collections import Counter
 
 # Get UPSIDE home directory
 upside_path = os.environ['UPSIDE_HOME']
@@ -185,6 +186,33 @@ if not os.path.exists(input_pdb_file):
     print(f"Error: Input PDB file '{input_pdb_file}' not found!")
     sys.exit(1)
 
+# === Read ATOM records from PDB and populate arrays ===
+with open(input_pdb_file, 'r') as f:
+    for line in f:
+        if line.startswith('ATOM'):
+            x = float(line[30:38])
+            y = float(line[38:46])
+            z = float(line[46:54])
+            initial_positions.append([x, y, z])
+            atom_name = line[12:16].strip().upper()
+            atom_names.append(atom_name)
+            residue_id = int(line[22:26])
+            residue_ids.append(residue_id)
+            # Map to MARTINI type
+            martini_type = pdb_to_martini.get(atom_name, 'P4')  # Default to water if not found
+            atom_types.append(martini_type)
+            charge = martini_charges.get(martini_type, 0.0)
+            charges.append(charge)
+
+# Convert lists to numpy arrays
+initial_positions = np.array(initial_positions, dtype=float)
+atom_types = np.array(atom_types)
+# Convert charges to UPSIDE units
+charges = np.array(charges, dtype=float) * charge_conversion_factor
+residue_ids = np.array(residue_ids, dtype=int)
+atom_names = np.array(atom_names)
+n_atoms = len(initial_positions)
+
 # Read box dimensions from CRYST1 record in PDB file
 print(f"Reading box dimensions from {input_pdb_file}...")
 with open(input_pdb_file, 'r') as f:
@@ -230,70 +258,86 @@ elif x_len < 30 or y_len < 30:
 else:
     print("Medium box detected - suitable for standard bilayer patches")
 
-with open(input_pdb_file, 'r') as f:
+# --- Molecule extraction based on topology ---
+# Define number of particles per molecule type from topology
+# DOPC bead names (for topology)
+DOPC_NAMES = ['NC3', 'PO4', 'GL1', 'GL2', 'C1A', 'D2A', 'C3A', 'C4A', 'C1B', 'D2B', 'C3B', 'C4B']
+
+# --- Molecule extraction based on topology ---
+MOLECULE_SIZES = {
+    'DOPC': len(DOPC_NAMES),  # 12 for DOPC
+    'WATER': 1,              # 1 for water
+    'NA': 1,                 # 1 for sodium ion
+    'CL': 1                  # 1 for chloride ion
+}
+
+# Parse PDB and group atoms into molecules by expected size
+molecules = []
+current_atoms = []
+current_indices = []
+current_resnames = []
+atom_idx = 0
+with open(input_pdb_file) as f:
     for line in f:
-        if line.startswith('ATOM'):
-            x = float(line[30:38])
-            y = float(line[38:46])
-            z = float(line[46:54])
-            initial_positions.append([x, y, z])
-            
-            pdb_name = line[12:16].strip().upper()
-            residue_name = line[17:21].strip()
-            residue_id = int(line[22:26])
-            
-            atom_names.append(pdb_name)
-            residue_ids.append(residue_id)
-            
-            # Assign MARTINI type
-            if pdb_name in pdb_to_martini:
-                mtype = pdb_to_martini[pdb_name]
-            else:
-                mtype = 'P4'  # Default to P4 (water)
-            atom_types.append(mtype)
-            # Apply charge conversion factor to convert to UPSIDE units
-            raw_charge = martini_charges.get(mtype, 0.0)
-            converted_charge = raw_charge * charge_conversion_factor
-            charges.append(converted_charge)
-
-if not initial_positions:
-    print("Error: No atoms found in PDB file!")
-    sys.exit(1)
-
-initial_positions = np.array(initial_positions)
-n_atoms = len(initial_positions)
-atom_types = np.array(atom_types)
-charges = np.array(charges)
-residue_ids = np.array(residue_ids)
-atom_names = np.array(atom_names)
-
-# Instead of just residue_ids, track (residue_name, residue_id) for each atom
-residue_keys = []  # (residue_name, residue_id) for each atom
-for i in range(n_atoms):
-    residue_keys.append((atom_names[i], residue_ids[i]))
-residue_keys = np.array(residue_keys)
-
-print(f"Loaded {n_atoms} atoms from PDB")
-print(f"Found {len(set(residue_ids))} residues")
+        if not line.startswith('ATOM'):
+            continue
+        resname = line[17:20].strip().upper()
+        atom_name = line[12:16].strip().upper()
+        current_atoms.append(atom_name)
+        current_indices.append(atom_idx)
+        current_resnames.append(resname)
+        # Try to identify molecule type by current_atoms
+        if len(current_atoms) == 12 and sorted(current_atoms) == sorted(DOPC_NAMES):
+            molecules.append(('DOPC', current_atoms.copy(), current_indices.copy()))
+            current_atoms = []
+            current_indices = []
+            current_resnames = []
+        elif len(current_atoms) == 1 and current_atoms[0] == 'W':
+            molecules.append(('WATER', current_atoms.copy(), current_indices.copy()))
+            current_atoms = []
+            current_indices = []
+            current_resnames = []
+        elif len(current_atoms) == 1 and current_atoms[0] == 'NA':
+            molecules.append(('NA', current_atoms.copy(), current_indices.copy()))
+            current_atoms = []
+            current_indices = []
+            current_resnames = []
+        elif len(current_atoms) == 1 and current_atoms[0] == 'CL':
+            molecules.append(('CL', current_atoms.copy(), current_indices.copy()))
+            current_atoms = []
+            current_indices = []
+            current_resnames = []
+        atom_idx += 1
+# If any atoms remain, treat as unknown molecule
+if current_atoms:
+    molecules.append(('UNKNOWN', current_atoms.copy(), current_indices.copy()))
+# Now, molecules is a list of (moltype, [atom_names], [pdb_line_indices])
+# DOPC extraction: find DOPC molecules
+dopc_molecules = [m for m in molecules if m[0] == 'DOPC']
 
 # Count different molecule types based on residue analysis
 # Classify molecules by unique (residue_name, residue_id) pairs
-unique_residues = set(tuple(x) for x in residue_keys)
+# Remove all code that references residue_keys and unique_residues
+# All molecule logic should use molecules and dopc_molecules
+# (No references to residue_keys or unique_residues remain)
+# ... existing code ...
+
+# Group by residue ID for DOPC
+unique_resids = set(residue_ids)
 dopc_residues = []
 water_residues = []
 ion_residues = []
-for rkey in unique_residues:
-    # Get all atoms for this molecule
-    residue_atoms = np.where((residue_keys[:,0] == rkey[0]) & (residue_keys[:,1].astype(int) == int(rkey[1])))[0]
+print("Residue ID to atom names mapping:")
+for resid in set(residue_ids):
+    residue_atoms = np.where(residue_ids == resid)[0]
     residue_atom_names = [atom_names[i] for i in residue_atoms]
-    
-    # Check if this residue contains DOPC atoms
-    if any(name in ['NC3', 'PO4', 'GL1', 'GL2', 'C1A', 'D2A', 'C3A', 'C4A', 'C1B', 'D2B', 'C3B', 'C4B'] for name in residue_atom_names):
-        dopc_residues.append(rkey)
-    elif all(name == 'W' for name in residue_atom_names):
-        water_residues.append(rkey)
-    elif all(name in ['NA', 'CL'] for name in residue_atom_names):
-        ion_residues.append(rkey)
+    print(f"Residue {resid}: {residue_atom_names}")
+    if sorted(residue_atom_names) == sorted(DOPC_NAMES):
+        dopc_residues.append(resid)
+    elif sorted(residue_atom_names) == sorted(['W']):
+        water_residues.append(resid)
+    elif sorted(residue_atom_names) == sorted(['NA', 'CL']):
+        ion_residues.append(resid)
 
 print(f"DOPC lipids: {len(dopc_residues)}")
 print(f"Water molecules: {len(water_residues)}")
@@ -404,33 +448,34 @@ angles_list = []
 angle_equil_deg_list = []
 angle_force_constants_list = []
 
-for rkey in dopc_residues:
-    # Get atoms for this DOPC residue
-    residue_atoms = np.where((residue_keys[:,0] == rkey[0]) & (residue_keys[:,1].astype(int) == int(rkey[1])))[0]
-    if len(residue_atoms) != 12:
-        print(f"Warning: DOPC residue {rkey} has {len(residue_atoms)} atoms, expected 12")
-        continue
-    
+# When building bonds/angles, iterate over dopc_molecules
+for mol in dopc_molecules:
+    _, atom_names_mol, atom_indices = mol
+    # Map DOPC_NAMES to atom_indices for this molecule
+    name_to_idx = {name: idx for name, idx in zip(atom_names_mol, atom_indices)}
     # Create bonds for this lipid
     for i, (bond_idx1, bond_idx2) in enumerate(dopc_bonds):
-        atom1 = residue_atoms[bond_idx1]
-        atom2 = residue_atoms[bond_idx2]
+        atom1_name = DOPC_NAMES[bond_idx1]
+        atom2_name = DOPC_NAMES[bond_idx2]
+        atom1 = name_to_idx[atom1_name]
+        atom2 = name_to_idx[atom2_name]
         bonds_list.append([atom1, atom2])
         bond_lengths_list.append(bond_lengths[i])
         bond_force_constants_list.append(bond_force_constants[i])
-    
     # Create angles for this lipid
     for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(angle_atoms_martini):
-        atom1 = residue_atoms[angle_idx1]
-        atom2 = residue_atoms[angle_idx2]
-        atom3 = residue_atoms[angle_idx3]
+        atom1_name = DOPC_NAMES[angle_idx1]
+        atom2_name = DOPC_NAMES[angle_idx2]
+        atom3_name = DOPC_NAMES[angle_idx3]
+        atom1 = name_to_idx[atom1_name]
+        atom2 = name_to_idx[atom2_name]
+        atom3 = name_to_idx[atom3_name]
         angles_list.append([atom1, atom2, atom3])
         angle_equil_deg_list.append(angle_equil_deg[i])
         angle_force_constants_list.append(angle_force_constants[i])
 
-print(f"Created {len(bonds_list)} bonds for {len(dopc_residues)} DOPC lipids")
-
-print(f"Created {len(angles_list)} angles for {len(dopc_residues)} DOPC lipids")
+print(f"Created {len(bonds_list)} bonds for {len(dopc_molecules)} DOPC lipids")
+print(f"Created {len(angles_list)} angles for {len(dopc_molecules)} DOPC lipids")
 
 # Skip minimization entirely - use original structure
 print("\n=== SKIPPING MINIMIZATION ===")
@@ -445,6 +490,14 @@ min_h5_file = None  # No minimization file to convert
 center_shift = np.array([x_len/2, y_len/2, z_len/2])
 initial_positions = initial_positions - center_shift
 print(f"Shifted all coordinates by -L/2 to center box at (0,0,0): shift = {center_shift}")
+
+# --- Assign unique residue IDs for each molecule (for .up file) ---
+residue_ids = np.zeros(len(atom_names), dtype=int)
+for unique_id, mol in enumerate(molecules):
+    _, _, atom_indices = mol
+    for idx in atom_indices:
+        residue_ids[idx] = unique_id
+# Now residue_ids is a per-atom array, with a unique value for each molecule
 
 # --- CREATE MD INPUT WITH MINIMIZED POSITIONS ---
 print("Creating MD input with minimized positions and full MARTINI parameters...")
@@ -520,54 +573,24 @@ with tb.open_file(input_file, 'w') as t:
     t.create_array(martini_group, 'charges', obj=charges)
     
     # Create pairs and coefficients for non-bonded interactions
-    # Exclude 1-2, 1-3, 1-4 interactions as per MARTINI nrexcl=1
+    # Exclude only 1-2 interactions as per MARTINI nrexcl=1
     pairs_list = []
     coeff_array = []
-    
-    # Create sets of bonded pairs for exclusions
+
+    # Create set of bonded pairs for 1-2 exclusions
     bonded_pairs_12 = set()  # Directly bonded (1-2)
-    bonded_pairs_13 = set()  # 1-3 interactions  
-    bonded_pairs_14 = set()  # 1-4 interactions
-    
+
     # Add 1-2 exclusions from bond list
     if not skip_bonds_and_angles:
         for bond in bonds_list:
             bonded_pairs_12.add((min(bond[0], bond[1]), max(bond[0], bond[1])))
-    
-    # Add 1-3 exclusions from angle list
-    if not skip_bonds_and_angles:
-        for angle in angles_list:
-            # Add 1-3 pairs from angles
-            bonded_pairs_13.add((min(angle[0], angle[2]), max(angle[0], angle[2])))
-    
-    # For particles without explicit bonds, exclude very close particles as 1-2
-    close_threshold = 2.5  # Å - particles closer than this are considered "bonded"
+
+    # Generate all unique pairs (i < j), excluding only 1-2 bonded pairs
     for i in range(n_atoms):
         for j in range(i+1, n_atoms):
-            # Skip if already in bonded sets
-            if (i, j) in bonded_pairs_12 or (i, j) in bonded_pairs_13 or (i, j) in bonded_pairs_14:
+            # Skip if already in bonded set (1-2 exclusion only)
+            if (i, j) in bonded_pairs_12:
                 continue
-            
-            # Check distance for implicit 1-2 exclusions
-            dx = initial_positions[i, 0] - initial_positions[j, 0]
-            dy = initial_positions[i, 1] - initial_positions[j, 1] 
-            dz = initial_positions[i, 2] - initial_positions[j, 2]
-            
-            # Apply minimum image convention
-            if dx > x_len/2: dx -= x_len
-            elif dx < -x_len/2: dx += x_len
-            if dy > y_len/2: dy -= y_len
-            elif dy < -y_len/2: dy += y_len
-            if dz > z_len/2: dz -= z_len
-            elif dz < -z_len/2: dz += z_len
-            
-            distance = np.sqrt(dx*dx + dy*dy + dz*dz)
-            
-            # Exclude very close particles as 1-2 interactions
-            if distance < close_threshold:
-                bonded_pairs_12.add((i, j))
-                continue
-            
             pairs_list.append([i, j])
             type_i = atom_types[i]
             type_j = atom_types[j]
