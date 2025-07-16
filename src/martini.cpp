@@ -131,7 +131,7 @@ struct AngleSpring : public PotentialNode
 {
     struct Params {
         index_t atom[3];
-        float equil_dp;
+        float equil_angle_deg; // store equilibrium angle in degrees
         float spring_constant;
     };
 
@@ -148,23 +148,20 @@ struct AngleSpring : public PotentialNode
     {
         int n_dep = 3;  // number of atoms that each term depends on 
         check_size(grp, "id",              n_elem, n_dep);
-        check_size(grp, "equil_dist",        n_elem);
-        check_size(grp, "spring_const", n_elem);
+        check_size(grp, "equil_angle_deg", n_elem); // now expects degrees
+        check_size(grp, "spring_const",    n_elem);
 
         auto& p = params;
-        traverse_dset<2,int>  (grp, "id",           [&](size_t i, size_t j, int   x) { p[i].atom[j] = x;});
-        traverse_dset<1,float>(grp, "equil_dist",   [&](size_t i,           float x) { p[i].equil_dp = x;});
-        traverse_dset<1,float>(grp, "spring_const", [&](size_t i,           float x) { p[i].spring_constant = x;});
+        traverse_dset<2,int>  (grp, "id",              [&](size_t i, size_t j, int   x) { p[i].atom[j] = x;});
+        traverse_dset<1,float>(grp, "equil_angle_deg", [&](size_t i,           float x) { p[i].equil_angle_deg = x;});
+        traverse_dset<1,float>(grp, "spring_const",    [&](size_t i,           float x) { p[i].spring_constant = x;});
 
         // Read box dimensions (same as MartiniPotential)
-        // Support both individual dimensions and legacy wall_box_size
         if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
-            // New format: separate x, y, z dimensions
             box_x = read_attribute<float>(grp, ".", "x_len");
             box_y = read_attribute<float>(grp, ".", "y_len");
             box_z = read_attribute<float>(grp, ".", "z_len");
         } else {
-            // Legacy format: wall boundaries
             float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
             float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
             float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
@@ -192,27 +189,54 @@ struct AngleSpring : public PotentialNode
             auto atom3 = Float4(posc + 4*p.atom[2]);
 
             // Apply minimum image convention for periodic boundaries
-            auto disp1 = minimum_image_rect(make_vec3(atom1.x(), atom1.y(), atom1.z()) - make_vec3(atom3.x(), atom3.y(), atom3.z()), box_x, box_y, box_z);
-            auto disp2 = minimum_image_rect(make_vec3(atom2.x(), atom2.y(), atom2.z()) - make_vec3(atom3.x(), atom3.y(), atom3.z()), box_x, box_y, box_z);
-            
-            // Create Float4 from displacement vectors using temporary arrays
-            float temp1[4] = {disp1.x(), disp1.y(), disp1.z(), 0.0f};
-            float temp2[4] = {disp2.x(), disp2.y(), disp2.z(), 0.0f};
-            auto x1 = Float4(temp1); auto inv_d1 = inv_mag(x1); auto x1h = x1*inv_d1;
-            auto x2 = Float4(temp2); auto inv_d2 = inv_mag(x2); auto x2h = x2*inv_d2;
+            auto disp1 = minimum_image_rect(make_vec3(atom1.x(), atom1.y(), atom1.z()) - make_vec3(atom2.x(), atom2.y(), atom2.z()), box_x, box_y, box_z);
+            auto disp2 = minimum_image_rect(make_vec3(atom3.x(), atom3.y(), atom3.z()) - make_vec3(atom2.x(), atom2.y(), atom2.z()), box_x, box_y, box_z);
 
-            auto dp = dot(x1h, x2h);
-            auto force_prefactor = Float4(p.spring_constant) * (dp - Float4(p.equil_dp));
+            // Normalize vectors
+            float norm1 = sqrtf(disp1.x()*disp1.x() + disp1.y()*disp1.y() + disp1.z()*disp1.z());
+            float norm2 = sqrtf(disp2.x()*disp2.x() + disp2.y()*disp2.y() + disp2.z()*disp2.z());
+            if(norm1 == 0.f || norm2 == 0.f) continue; // avoid division by zero
+            float dp = (disp1.x()*disp2.x() + disp1.y()*disp2.y() + disp1.z()*disp2.z()) / (norm1 * norm2);
+            dp = std::max(-1.0f, std::min(1.0f, dp)); // clamp for safety
+            float theta_rad = acosf(dp);
+            float theta_deg = theta_rad * 180.0f / M_PI;
+            float delta = theta_deg - p.equil_angle_deg;
 
-            auto d1 = force_prefactor * (x2h - x1h*dp) * inv_d1;
-            auto d2 = force_prefactor * (x1h - x2h*dp) * inv_d2;
-            auto d3 = -d1-d2;
+            // Potential energy
+            if(pot) *pot += 0.5f * p.spring_constant * delta * delta;
 
-            d1.update(pos_sens + 4*p.atom[0]);
-            d2.update(pos_sens + 4*p.atom[1]);
-            d3.update(pos_sens + 4*p.atom[2]);
+            // Force calculation (chain rule)
+            // dE/dtheta = k * (theta_deg - theta0_deg)
+            // dtheta/dcos = -180/pi/sqrt(1-dp^2)
+            float dE_dtheta = p.spring_constant * delta; // in deg
+            float dtheta_dcos = -180.0f / M_PI / sqrtf(1.0f - dp*dp); // deg per unit cos
+            float dE_ddp = dE_dtheta * dtheta_dcos; // chain rule
 
-            if(pot) *pot += 0.5f * p.spring_constant * sqr(dp.x()-p.equil_dp);
+            // Now distribute forces to atoms
+            // See e.g. GROMACS manual for angle force distribution
+            // Let a = atom1, b = atom2 (vertex), c = atom3
+            // r1 = a-b, r2 = c-b
+            // f_a = dE_ddp * ( (r2/|r2| - dp*r1/|r1|) / |r1| )
+            // f_c = dE_ddp * ( (r1/|r1| - dp*r2/|r2|) / |r2| )
+            // f_b = -f_a - f_c
+            float3 r1 = disp1;
+            float3 r2 = disp2;
+            float3 r1h = r1 / norm1;
+            float3 r2h = r2 / norm2;
+            float3 fa = dE_ddp * (r2h - dp * r1h) / norm1;
+            float3 fc = dE_ddp * (r1h - dp * r2h) / norm2;
+            float3 fb = -fa - fc;
+
+            // Update forces
+            pos_sens[4*p.atom[0]+0] += fa.x();
+            pos_sens[4*p.atom[0]+1] += fa.y();
+            pos_sens[4*p.atom[0]+2] += fa.z();
+            pos_sens[4*p.atom[1]+0] += fb.x();
+            pos_sens[4*p.atom[1]+1] += fb.y();
+            pos_sens[4*p.atom[1]+2] += fb.z();
+            pos_sens[4*p.atom[2]+0] += fc.x();
+            pos_sens[4*p.atom[2]+1] += fc.y();
+            pos_sens[4*p.atom[2]+2] += fc.z();
         }
     }
 };
