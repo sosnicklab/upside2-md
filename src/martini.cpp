@@ -198,19 +198,19 @@ struct AngleSpring : public PotentialNode
             if(norm1 == 0.f || norm2 == 0.f) continue; // avoid division by zero
             float dp = (disp1.x()*disp2.x() + disp1.y()*disp2.y() + disp1.z()*disp2.z()) / (norm1 * norm2);
             dp = std::max(-1.0f, std::min(1.0f, dp)); // clamp for safety
-            float theta_rad = acosf(dp);
-            float theta_deg = theta_rad * 180.0f / M_PI;
-            float cos_theta_deg = cosf(theta_deg * M_PI / 180.0f); // cos of angle in degrees
-            float cos_theta0_deg = cosf(p.equil_angle_deg * M_PI / 180.0f); // cos of equilibrium angle in degrees
-            float delta_cos = cos_theta_deg - cos_theta0_deg;
+            float theta_rad = acosf(dp); // needed for force calculation
+            float cos_theta_rad = dp;
+            float theta0_rad = p.equil_angle_deg * M_PI / 180.0f; // convert theta0 from deg to rad
+            float cos_theta0_rad = cosf(theta0_rad);
+            float delta_cos = cos_theta_rad - cos_theta0_rad;
 
-            // Potential energy: 1/2*K*(cos(theta_deg)-cos(theta0_deg))^2
+            // Potential energy: 1/2*K*(cos(theta_rad)-cos(theta0_rad))^2
             if(pot) *pot += 0.5f * p.spring_constant * delta_cos * delta_cos;
 
             // Force calculation (chain rule)
-            // dE/dtheta = K * (cos(theta_deg) - cos(theta0_deg)) * dcos(theta_deg)/dtheta
-            // dcos(theta_deg)/dtheta = -sin(theta_deg) * (180/pi) (since theta_deg = theta_rad * 180/pi)
-            float dE_dtheta = p.spring_constant * delta_cos * (-sinf(theta_deg * M_PI / 180.0f)) * (180.0f / M_PI);
+            // dE/dtheta = K * (cos(theta_rad) - cos(theta0_rad)) * dcos(theta_rad)/dtheta
+            // dcos(theta_rad)/dtheta = -sin(theta_rad)
+            float dE_dtheta = p.spring_constant * delta_cos * (-sinf(theta_rad));
             // dtheta/dcos = -1/sqrt(1-dp^2)
             float dtheta_ddp = -1.0f / sqrtf(1.0f - dp*dp);
             float dE_ddp = dE_dtheta * dtheta_ddp;

@@ -100,7 +100,7 @@ angle_atoms_martini = [
     [9, 10, 11]  # D2B-C3B-C4B (180.0°)
 ]
 angle_values_martini = [120.0, 180.0, 180.0, 120.0, 180.0, 180.0, 120.0, 180.0]  # degrees
-angle_force_constants_martini = [25.0, 25.0, 25.0, 45.0, 25.0, 25.0, 45.0, 25.0]  # kJ/mol/rad²
+angle_force_constants_martini = [25.0, 25.0, 25.0, 45.0, 25.0, 25.0, 45.0, 25.0]  # kJ/mol
 
 # Convert angle parameters to UPSIDE units
 # Note: Updated AngleSpring now uses degrees directly, not cosines
