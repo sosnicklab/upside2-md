@@ -200,31 +200,35 @@ struct AngleSpring : public PotentialNode
             dp = std::max(-1.0f, std::min(1.0f, dp)); // clamp for safety
             float theta_rad = acosf(dp);
             float theta_deg = theta_rad * 180.0f / M_PI;
-            float delta = theta_deg - p.equil_angle_deg;
+            float cos_theta_deg = cosf(theta_deg * M_PI / 180.0f); // cos of angle in degrees
+            float cos_theta0_deg = cosf(p.equil_angle_deg * M_PI / 180.0f); // cos of equilibrium angle in degrees
+            float delta_cos = cos_theta_deg - cos_theta0_deg;
 
-            // Potential energy
-            if(pot) *pot += 0.5f * p.spring_constant * delta * delta;
+            // Potential energy: 1/2*K*(cos(theta_deg)-cos(theta0_deg))^2
+            if(pot) *pot += 0.5f * p.spring_constant * delta_cos * delta_cos;
 
             // Force calculation (chain rule)
-            // dE/dtheta = k * (theta_deg - theta0_deg)
-            // dtheta/dcos = -180/pi/sqrt(1-dp^2)
-            float dE_dtheta = p.spring_constant * delta; // in deg
-            float dtheta_dcos = -180.0f / M_PI / sqrtf(1.0f - dp*dp); // deg per unit cos
-            float dE_ddp = dE_dtheta * dtheta_dcos; // chain rule
+            // dE/dtheta = K * (cos(theta_deg) - cos(theta0_deg)) * dcos(theta_deg)/dtheta
+            // dcos(theta_deg)/dtheta = -sin(theta_deg) * (180/pi) (since theta_deg = theta_rad * 180/pi)
+            float dE_dtheta = p.spring_constant * delta_cos * (-sinf(theta_deg * M_PI / 180.0f)) * (180.0f / M_PI);
+            // dtheta/dcos = -1/sqrt(1-dp^2)
+            float dtheta_ddp = -1.0f / sqrtf(1.0f - dp*dp);
+            float dE_ddp = dE_dtheta * dtheta_ddp;
 
-            // Now distribute forces to atoms
-            // See e.g. GROMACS manual for angle force distribution
-            // Let a = atom1, b = atom2 (vertex), c = atom3
-            // r1 = a-b, r2 = c-b
-            // f_a = dE_ddp * ( (r2/|r2| - dp*r1/|r1|) / |r1| )
-            // f_c = dE_ddp * ( (r1/|r1| - dp*r2/|r2|) / |r2| )
-            // f_b = -f_a - f_c
+            // Now distribute forces to atoms (same as before)
             float3 r1 = disp1;
             float3 r2 = disp2;
             float3 r1h = r1 / norm1;
             float3 r2h = r2 / norm2;
-            float3 fa = dE_ddp * (r2h - dp * r1h) / norm1;
-            float3 fc = dE_ddp * (r1h - dp * r2h) / norm2;
+            float inv_norm1 = 1.0f / norm1;
+            float inv_norm2 = 1.0f / norm2;
+            float inv_norm1_sq = inv_norm1 * inv_norm1;
+            float inv_norm2_sq = inv_norm2 * inv_norm2;
+            float inv_norm1_norm2 = inv_norm1 * inv_norm2;
+            float3 dcos_dr1 = (r2 - r1 * (dp * inv_norm1_sq)) * inv_norm1_norm2;
+            float3 dcos_dr2 = (r1 - r2 * (dp * inv_norm2_sq)) * inv_norm1_norm2;
+            float3 fa = dE_ddp * dcos_dr1;
+            float3 fc = dE_ddp * dcos_dr2;
             float3 fb = -fa - fc;
 
             // Update forces
