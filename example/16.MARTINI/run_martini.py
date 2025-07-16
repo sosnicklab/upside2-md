@@ -103,21 +103,19 @@ angle_values_martini = [120.0, 180.0, 180.0, 120.0, 180.0, 180.0, 120.0, 180.0] 
 angle_force_constants_martini = [25.0, 25.0, 25.0, 45.0, 25.0, 25.0, 45.0, 25.0]  # kJ/mol/rad²
 
 # Convert angle parameters to UPSIDE units
-# Note: AngleSpring uses dot product (cosine) as equilibrium value and implements E = 1/2*K*(cos(theta)-cos(theta_0))^2
+# Note: Updated AngleSpring now uses degrees directly, not cosines
 import math
-angle_equil_dp = [math.cos(math.radians(angle)) for angle in angle_values_martini]  # cosine of angle
+angle_equil_deg = angle_values_martini  # Keep angles in degrees
 
-# Angle force constants: kJ/(mol·rad^2) -> E_up/rad^2
-# Only need energy conversion (angles are dimensionless)
-# Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)
-angle_force_constants = [k / energy_conversion_factor for k in angle_force_constants_martini]  # E_up/rad²
+# Angle force constants: keep original MARTINI values (no conversion)
+angle_force_constants = angle_force_constants_martini  # Keep original values
 
 # Print unit conversion summary for verification
 print(f"\n=== MARTINI Unit Conversions ===")
 print(f"Bond lengths (nm -> Å): {bond_lengths_nm[0]:.2f} nm -> {bond_lengths[0]:.1f} Å")
 print(f"Bond force constants (kJ/mol/nm² -> E_up/Å²): {bond_force_constants_martini[0]} -> {bond_force_constants[0]:.6f}")
-print(f"Angle equilibrium (degrees -> cosine): {angle_values_martini[0]}° -> {angle_equil_dp[0]:.6f}")
-print(f"Angle force constants (kJ/mol/rad² -> E_up/rad²): {angle_force_constants_martini[0]} -> {angle_force_constants[0]:.6f}")
+print(f"Angle equilibrium (degrees): {angle_values_martini[0]}°")
+print(f"Angle force constants (kJ/mol/rad²): {angle_force_constants_martini[0]} (unchanged)")
 print(f"Coulomb constant (unit conversion): {coulomb_constant_upside:.1f} (charge_factor² = {charge_conversion_factor:.1f}²)")
 print(f"Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)")
 print(f"Length conversion: 1 nm = 10 Å, so 1 nm² = 100 Å²")
@@ -390,46 +388,39 @@ if dopc_residues:
     else:
         print("WARNING: Could not identify bilayer headgroups")
 
-# Create bonds list for DOPC lipids
+# Create bonds and angles for DOPC lipids
 bonds_list = []
 bond_lengths_list = []
 bond_force_constants_list = []
-
-for lipid_id in dopc_residues:
-    # Find atoms belonging to this lipid
-    lipid_atoms = np.where(residue_ids == lipid_id)[0]
-    # Filter to only include DOPC atoms in the right order
-    dopc_atoms = [i for i in lipid_atoms if atom_names[i] in ['NC3', 'PO4', 'GL1', 'GL2', 'C1A', 'D2A', 'C3A', 'C4A', 'C1B', 'D2B', 'C3B', 'C4B']]
-    if len(dopc_atoms) == 12:  # DOPC has 12 beads
-        # Add bonds for this lipid
-        for i, (bond_idx1, bond_idx2) in enumerate(dopc_bonds):
-            atom1 = dopc_atoms[bond_idx1]
-            atom2 = dopc_atoms[bond_idx2]
-            bonds_list.append([atom1, atom2])
-            bond_lengths_list.append(bond_lengths[i])
-            bond_force_constants_list.append(bond_force_constants[i])
-
-print(f"Created {len(bonds_list)} bonds for {len(dopc_residues)} DOPC lipids")
-
-# Create angles list for DOPC lipids
 angles_list = []
-angle_equil_dp_list = []
+angle_equil_deg_list = []
 angle_force_constants_list = []
 
-for lipid_id in dopc_residues:
-    # Find atoms belonging to this lipid
-    lipid_atoms = np.where(residue_ids == lipid_id)[0]
-    # Filter to only include DOPC atoms in the right order
-    dopc_atoms = [i for i in lipid_atoms if atom_names[i] in ['NC3', 'PO4', 'GL1', 'GL2', 'C1A', 'D2A', 'C3A', 'C4A', 'C1B', 'D2B', 'C3B', 'C4B']]
-    if len(dopc_atoms) == 12:  # DOPC has 12 beads
-        # Add angles for this lipid
-        for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(angle_atoms_martini):
-            atom1 = dopc_atoms[angle_idx1]
-            atom2 = dopc_atoms[angle_idx2]  # Central atom
-            atom3 = dopc_atoms[angle_idx3]
-            angles_list.append([atom1, atom2, atom3])
-            angle_equil_dp_list.append(angle_equil_dp[i])
-            angle_force_constants_list.append(angle_force_constants[i])
+for rid in dopc_residues:
+    # Get atoms for this DOPC residue
+    residue_atoms = np.where(residue_ids == rid)[0]
+    if len(residue_atoms) != 12:
+        print(f"Warning: DOPC residue {rid} has {len(residue_atoms)} atoms, expected 12")
+        continue
+    
+    # Create bonds for this lipid
+    for i, (bond_idx1, bond_idx2) in enumerate(dopc_bonds):
+        atom1 = residue_atoms[bond_idx1]
+        atom2 = residue_atoms[bond_idx2]
+        bonds_list.append([atom1, atom2])
+        bond_lengths_list.append(bond_lengths[i])
+        bond_force_constants_list.append(bond_force_constants[i])
+    
+    # Create angles for this lipid
+    for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(angle_atoms_martini):
+        atom1 = residue_atoms[angle_idx1]
+        atom2 = residue_atoms[angle_idx2]
+        atom3 = residue_atoms[angle_idx3]
+        angles_list.append([atom1, atom2, atom3])
+        angle_equil_deg_list.append(angle_equil_deg[i])
+        angle_force_constants_list.append(angle_force_constants[i])
+
+print(f"Created {len(bonds_list)} bonds for {len(dopc_residues)} DOPC lipids")
 
 print(f"Created {len(angles_list)} angles for {len(dopc_residues)} DOPC lipids")
 
@@ -619,11 +610,11 @@ with tb.open_file(input_file, 'w') as t:
         angle_group._v_attrs.z_len = z_len
         
         angles_array = np.array(angles_list, dtype=int)
-        angle_equil_dp_array = np.array(angle_equil_dp_list, dtype='f4')
+        angle_equil_deg_array = np.array(angle_equil_deg_list, dtype='f4')
         angle_force_constants_array = np.array(angle_force_constants_list, dtype='f4')
         
         t.create_array(angle_group, 'id', obj=angles_array)
-        t.create_array(angle_group, 'equil_dist', obj=angle_equil_dp_array)
+        t.create_array(angle_group, 'equil_angle_deg', obj=angle_equil_deg_array)
         t.create_array(angle_group, 'spring_const', obj=angle_force_constants_array)
 
 # Count how many bonded interactions were actually added for MD
