@@ -267,27 +267,33 @@ charges = np.array(charges)
 residue_ids = np.array(residue_ids)
 atom_names = np.array(atom_names)
 
+# Instead of just residue_ids, track (residue_name, residue_id) for each atom
+residue_keys = []  # (residue_name, residue_id) for each atom
+for i in range(n_atoms):
+    residue_keys.append((atom_names[i], residue_ids[i]))
+residue_keys = np.array(residue_keys)
+
 print(f"Loaded {n_atoms} atoms from PDB")
 print(f"Found {len(set(residue_ids))} residues")
 
 # Count different molecule types based on residue analysis
+# Classify molecules by unique (residue_name, residue_id) pairs
+unique_residues = set(tuple(x) for x in residue_keys)
 dopc_residues = []
 water_residues = []
 ion_residues = []
-
-# Classify residues properly
-for rid in set(residue_ids):
-    # Get all atoms for this residue
-    residue_atoms = np.where(residue_ids == rid)[0]
+for rkey in unique_residues:
+    # Get all atoms for this molecule
+    residue_atoms = np.where((residue_keys[:,0] == rkey[0]) & (residue_keys[:,1].astype(int) == int(rkey[1])))[0]
     residue_atom_names = [atom_names[i] for i in residue_atoms]
     
     # Check if this residue contains DOPC atoms
     if any(name in ['NC3', 'PO4', 'GL1', 'GL2', 'C1A', 'D2A', 'C3A', 'C4A', 'C1B', 'D2B', 'C3B', 'C4B'] for name in residue_atom_names):
-        dopc_residues.append(rid)
+        dopc_residues.append(rkey)
     elif all(name == 'W' for name in residue_atom_names):
-        water_residues.append(rid)
+        water_residues.append(rkey)
     elif all(name in ['NA', 'CL'] for name in residue_atom_names):
-        ion_residues.append(rid)
+        ion_residues.append(rkey)
 
 print(f"DOPC lipids: {len(dopc_residues)}")
 print(f"Water molecules: {len(water_residues)}")
@@ -398,11 +404,11 @@ angles_list = []
 angle_equil_deg_list = []
 angle_force_constants_list = []
 
-for rid in dopc_residues:
+for rkey in dopc_residues:
     # Get atoms for this DOPC residue
-    residue_atoms = np.where(residue_ids == rid)[0]
+    residue_atoms = np.where((residue_keys[:,0] == rkey[0]) & (residue_keys[:,1].astype(int) == int(rkey[1])))[0]
     if len(residue_atoms) != 12:
-        print(f"Warning: DOPC residue {rid} has {len(residue_atoms)} atoms, expected 12")
+        print(f"Warning: DOPC residue {rkey} has {len(residue_atoms)} atoms, expected 12")
         continue
     
     # Create bonds for this lipid
