@@ -472,7 +472,7 @@ struct MartiniPotential : public PotentialNode
                 // Default value if not specified
                 slater_alpha = 1.0f;
             }
-            std::cout << "[DEBUG] SOFTENED COULOMB POTENTIAL IS ENABLED! slater_alpha=" << slater_alpha << std::endl;
+
         }
         
         // Debug mode - enable for first few steps
@@ -519,13 +519,7 @@ struct MartiniPotential : public PotentialNode
             coeff[np][d] = x;
         });
         
-        // Print debug info if enabled
-        if(debug_mode) {
-            std::cout << "MARTINI DEBUG: Initialized with " << n_atom << " atoms and " << n_pair << " pairs" << std::endl;
-            std::cout << "MARTINI DEBUG: Parameters - epsilon=" << epsilon << ", sigma=" << sigma 
-                      << ", lj_cutoff=" << lj_cutoff << ", coul_cutoff=" << coul_cutoff 
-                      << ", dielectric=" << dielectric << std::endl;
-        }
+
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -539,15 +533,7 @@ struct MartiniPotential : public PotentialNode
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
         if(pot) *pot = 0.f;
         
-        // Debug: Print particle positions for first few steps
-        if(debug_mode && debug_step_count < 3) {
-            std::cout << "\n=== STEP " << debug_step_count << " ===" << std::endl;
-            std::cout << "Coordinates:" << std::endl;
-            for(int i = 0; i < n_atom; ++i) {
-                auto p = load_vec<3>(pos1, i);
-                std::cout << "  Particle " << i << ": (" << p.x() << ", " << p.y() << ", " << p.z() << ")" << std::endl;
-            }
-        }
+
         
         // Compute particle-particle interactions
         int debug_interaction_count = 0;
@@ -572,12 +558,7 @@ struct MartiniPotential : public PotentialNode
             // Apply distance cutoff for computational efficiency
             if(dist > max(lj_cutoff, coul_cutoff)) continue;
             
-            // Debug: Print detailed interaction info for first few interactions
-            if(debug_mode && debug_step_count < 3 && debug_interaction_count < max_debug_interactions) {
-                std::cout << "\nInteraction " << debug_interaction_count << " (particles " << i << " and " << j << "):" << std::endl;
-                std::cout << "  Distance: " << dist << " Angstroms" << std::endl;
-                std::cout << "  Parameters: eps=" << eps << ", sig=" << sig << ", qi=" << qi << ", qj=" << qj << std::endl;
-            }
+
             
             Vec<3> force = make_zero<3>();
             float lj_pot_contrib = 0.f;
@@ -602,11 +583,7 @@ struct MartiniPotential : public PotentialNode
                         lj_pot_contrib = lj_pot;
                         force += (deriv/dist) * (-dr);  // FIXED: Use unit vector, not displacement vector
                         
-                        // Debug: Print LJ details
-                        if(debug_mode && debug_step_count < 3 && debug_interaction_count < max_debug_interactions) {
-                            std::cout << "  LJ Energy: " << lj_pot << " UPSIDE units" << std::endl;
-                            std::cout << "  LJ Force: (" << (deriv * (-dr)).x() << ", " << (deriv * (-dr)).y() << ", " << (deriv * (-dr)).z() << ") UPSIDE units" << std::endl;
-                        }
+
                     }
                 }
             }
@@ -640,19 +617,11 @@ struct MartiniPotential : public PotentialNode
                     coul_pot_contrib = coul_pot;
                     force += (deriv/dist) * (-dr);  // FIXED: Use unit vector, not displacement vector
                     
-                    // Debug: Print Coulomb details
-                    if(debug_mode && debug_step_count < 3 && debug_interaction_count < max_debug_interactions) {
-                        std::cout << "  Coulomb Energy: " << coul_pot << " UPSIDE units" << std::endl;
-                        std::cout << "  Coulomb Force: (" << (deriv * dr).x() << ", " << (deriv * dr).y() << ", " << (deriv * dr).z() << ") UPSIDE units" << std::endl;
-                    }
+
                 }
             }
             
-            // Debug: Print total interaction summary
-            if(debug_mode && debug_step_count < 3 && debug_interaction_count < max_debug_interactions) {
-                std::cout << "  Total Energy: " << (lj_pot_contrib + coul_pot_contrib) << " UPSIDE units" << std::endl;
-                std::cout << "  Total Force: (" << force.x() << ", " << force.y() << ", " << force.z() << ") UPSIDE units" << std::endl;
-            }
+
             
             update_vec<3>(pos1_sens, i,  force);
             update_vec<3>(pos1_sens, j, -force);
@@ -660,11 +629,7 @@ struct MartiniPotential : public PotentialNode
             debug_interaction_count++;
         }
         
-        // Debug: Print total potential for this step
-        if(debug_mode && debug_step_count < 3) {
-            std::cout << "Total Energy: " << (pot ? *pot : 0.f) << " UPSIDE units" << std::endl;
-            std::cout << "=== END STEP " << debug_step_count << " ===\n" << std::endl;
-        }
+
         
         debug_step_count++;
     }

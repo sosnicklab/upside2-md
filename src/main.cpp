@@ -486,9 +486,9 @@ try {
             false, 0.05, "float", cmd);
 
     ValueArg<string> integrator_arg("", "integrator", 
-            "Use this option to control which Integrator are used.  Available levels are v(verlet) or mv(multi-step verlet). "
+            "Use this option to control which Integrator are used.  Available levels are v(verlet), mv(multi-step verlet), or vv(velocity verlet). "
             "Default is verlet.",
-            false, "", "v, mv ", cmd);
+            false, "", "v, mv, vv ", cmd);
     ValueArg<int> inner_step_arg("", "inner-step", "inner step for the integrator", false, 3, "int", cmd);
 
     ValueArg<string> input_arg("i", "input", "h5df input file for position", false, "not_Defined_By_user", "string", cmd);
@@ -523,6 +523,12 @@ try {
             " To restart the trajectory, make sure to copy the end momentum of last run to input.mom (similar to the pos treatment when restarting):"
             " check examples for continue the simulation",
             cmd, false);
+    SwitchArg disable_initial_thermalization_arg("", "disable-initial-thermalization",
+        "Disable initial thermalization of velocities. Use this to start with zero velocities.",
+        cmd, false);
+    SwitchArg disable_thermostat_arg("", "disable-thermostat",
+        "Disable thermostat entirely. Use this to run without any velocity control.",
+        cmd, false);
     ValueArg<string> set_param_arg("", "set-param", "Developer use only", false, "", "param_arg", cmd);
     UnlabeledMultiArg<string> config_args("config_files","configuration .h5 files", true, "h5_files");
     cmd.add(config_args);
@@ -787,19 +793,25 @@ try {
                         traverse_dset<3,float>(sys->input.get(), "/input/mom", [&](size_t na, size_t d, size_t ns, float x) { 
                             sys->mom(d,na) = x;});
                     }
-                    else throw  string("input h5 file doesn't have input.mom group, can't restart using the momentum!");
+                    else {
+                        throw  string("input h5 file doesn't have input.mom group, can't restart using the momentum!");
+                    }
                 }
                 else {
                     if (h5_exists(sys->config.get(), "input/mom")) {
                         traverse_dset<3,float>(sys->config.get(), "/input/mom", [&](size_t na, size_t d, size_t ns, float x) { 
-                                sys->mom(d,na) = x;});
+                            sys->mom(d,na) = x;});
                     }
-                    else throw  string("input h5 file doesn't have input.mom group, can't restart using the momentum!");
+                    else {
+                        throw  string("input h5 file doesn't have input.mom group, can't restart using the momentum!");
+                    }
                 }
             }
             else {
                 for(int d: range(3)) for(int na: range(sys->n_atom)) sys->mom(d,na) = 0.f;
-                sys->thermostat.apply(sys->mom, sys->n_atom); // initial thermalization if it's a fresh start
+                if (!disable_initial_thermalization_arg.getValue()) {
+                    sys->thermostat.apply(sys->mom, sys->n_atom); // initial thermalization if it's a fresh start
+                }
             }
 
 
@@ -809,6 +821,13 @@ try {
                     for(int na=0; na<sys->n_atom; ++na) 
                     for(int d=0; d<3; ++d) 
                     pos_buffer[na*3 + d] = pos_array(d,na);
+                    });
+            // Add force logger to capture forces for analysis
+            sys->logger->add_logger<float>("force", {1, sys->n_atom, 3}, [sys](float* force_buffer) {
+                    VecArray force_array = sys->engine.pos->sens;
+                    for(int na=0; na<sys->n_atom; ++na) 
+                    for(int d=0; d<3; ++d) 
+                    force_buffer[na*3 + d] = force_array(d,na);
                     });
             if (record_momentum_arg.getValue()) { // record the momentum if requested, with the same frequency as the position recording
                 sys->logger->add_logger<float>("mom", {1, sys->n_atom, 3}, [sys](float* mom_buffer) {
@@ -944,6 +963,7 @@ try {
                         sys.mc_samplers.execute(sys.random_seed, nr, sys.temperature, sys.engine);
 
                     if(!frame_interval || !(nr%frame_interval)) {
+                        
                         if(do_recenter) recenter(sys.engine.pos->output, xy_recenter_only, sys.n_atom);
                         sys.engine.compute(PotentialAndDerivMode);
                         sys.logger->collect_samples();
@@ -968,10 +988,11 @@ try {
                     }
 
                     if(!dense_output_interval || !(nr%dense_output_interval)) {
+                        
                         sys.logger->collect_dense_samples();
                     }
 
-                    if(!(nr%thermostat_interval)) {
+                    if(!(nr%thermostat_interval) && !disable_thermostat_arg.getValue()) {
                         // Handle simulated annealing if applicable
                         if(anneal_factor != 1.)
                             sys.set_temperature(anneal_temp(sys.initial_temperature, inner_step*dt*(sys.round_num+1)));
@@ -980,6 +1001,8 @@ try {
 
                     if  (integrator_arg.getValue() == "mv" )
                         sys.engine.integration_cycle(sys.mom, dt, inner_step);
+                    else if (integrator_arg.getValue() == "vv" )
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::VelocityVerlet);
                     else
                         sys.engine.integration_cycle(sys.mom, dt);
 

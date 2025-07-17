@@ -38,6 +38,13 @@ recenter(
         int n_atom //!< number of atoms
         );
 
+//! \brief Remove center-of-mass velocity to prevent drift
+void
+remove_com_velocity(
+        VecArray mom, //!< [inout] momentum
+        int n_atom //!< number of atoms
+        );
+
 //! \brief Whether to compute potential value as well as its derivative
 enum ComputeMode {
     DerivMode = 0, //!< Only derivative must be computed correctly (potential may not be correct)
@@ -246,7 +253,7 @@ struct DerivEngine
     void build_integrator_levels(bool print_info, float dt, int inner_step);
 
     //! \brief Integration scheme (i.e. position and velocity update weights) to use
-    enum IntegratorType {Verlet=0, Predescu=1};
+    enum IntegratorType {Verlet=0, Predescu=1, VelocityVerlet=2};
 
     //! \brief Perform a full integration cycle (3 time steps)
     //!

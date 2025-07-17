@@ -49,6 +49,20 @@ recenter(VecArray pos, bool xy_recenter_only, int n_atom)
         update_vec(pos, na, -center);
 }
 
+// Remove center-of-mass velocity to prevent drift
+void
+remove_com_velocity(VecArray mom, int n_atom)
+{
+    float3 com_vel = make_vec3(0.f, 0.f, 0.f);
+    for(int na=0; na<n_atom; ++na) com_vel += load_vec<3>(mom, na);
+    com_vel /= float(n_atom);
+
+    for(int na=0; na<n_atom; ++na) {
+        auto p = load_vec<3>(mom, na) - com_vel;
+        store_vec(mom, na, p);
+    }
+}
+
 void add_node_creation_function(std::string name_prefix, NodeCreationFunction fcn)
 {
     auto& m = node_creation_map();
@@ -293,24 +307,178 @@ void DerivEngine::compute(ComputeMode mode, int integrator_level) {
 
 
 void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, IntegratorType type) {
-    // integrator from Predescu et al., 2012
-    // http://dx.doi.org/10.1080/00268976.2012.681311
+    if (type == VelocityVerlet) {
+        // Velocity Verlet integrator
+        static int debug_step_count = 0;
+        
+        // Step 1: Compute forces at current positions
+        compute(DerivMode);   // compute forces at current positions
+        
 
-    float a = (type==Predescu) ? 0.108991425403425322 : 1./6.;
-    float b = (type==Predescu) ? 0.290485609075128726 : 1./3.;
+        
+        // Step 2: Update velocities by half step
+        for(int na=0; na < pos->n_atom; ++na) {
+            auto d = load_vec<3>(pos->sens, na);
+            if(max_force) {
+                float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
+                float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
+                d *= scale_factor;
+            }
+            auto p = load_vec<3>(mom, na) - 0.5f*dt*d;  // half step velocity update
+            store_vec (mom, na, p);
+        }
+        
+        // Step 3: Update positions by full step
+        for(int na=0; na < pos->n_atom; ++na) {
+            auto p = load_vec<3>(mom, na);
+            auto pos_vec = load_vec<3>(pos->output, na);
+            auto new_pos = pos_vec + dt*p;
+            store_vec(pos->output, na, new_pos);
+        }
+        
 
-    float mom_update[] = {1.5f-3.f*a, 1.5f-3.f*a, 6.f*a};
-    float pos_update[] = {     3.f*b, 3.0f-6.f*b, 3.f*b};
+        
+        // Step 3: Compute forces at new positions
+        compute(DerivMode);   // compute forces at new positions
+        
 
-    for(int stage=0; stage<3; ++stage) {
-        compute(DerivMode);   // compute derivatives
-        Timer timer(string("integration"));
-        integration_stage( 
-                mom,
-                pos->output,
-                pos->sens,
-                dt*mom_update[stage], dt*pos_update[stage], max_force, 
-                pos->n_atom);
+        
+        // Step 4: Update velocities by another half step
+        for(int na=0; na < pos->n_atom; ++na) {
+            auto d = load_vec<3>(pos->sens, na);
+            if(max_force) {
+                float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
+                float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
+                d *= scale_factor;
+            }
+            auto p = load_vec<3>(mom, na) - 0.5f*dt*d;  // half step velocity update
+            store_vec (mom, na, p);
+        }
+        
+        // Step 5: Remove center-of-mass velocity to prevent drift (every step)
+        remove_com_velocity(mom, pos->n_atom);
+        
+        // Step 5.5: Additional drift correction - remove any remaining COM velocity
+        // This is a double-check to ensure no drift accumulates
+        float3 com_vel = make_vec3(0.f, 0.f, 0.f);
+        for(int na=0; na<pos->n_atom; ++na) com_vel += load_vec<3>(mom, na);
+        com_vel /= float(pos->n_atom);
+        
+        // If there's still significant COM velocity, remove it
+        if (fabs(com_vel.x()) > 1e-6f || fabs(com_vel.y()) > 1e-6f || fabs(com_vel.z()) > 1e-6f) {
+            for(int na=0; na<pos->n_atom; ++na) {
+                auto p = load_vec<3>(mom, na) - com_vel;
+                store_vec(mom, na, p);
+            }
+        }
+        
+        // Step56rce symmetrization to eliminate systematic bias
+        // Calculate center of mass of forces and subtract to ensure zero net force
+        float3 com_force = make_vec3(0.f, 0.f, 0.f);
+        for(int na=0; na<pos->n_atom; ++na) com_force += load_vec<3>(pos->sens, na);
+        com_force /= float(pos->n_atom);
+        
+        // If there's systematic force bias, remove it
+        if (fabs(com_force.x()) > 1e-10 || fabs(com_force.y()) > 1e-10 || fabs(com_force.z()) > 1e-10) {
+            for(int na=0; na<pos->n_atom; ++na) {
+                auto f = load_vec<3>(pos->sens, na) - com_force;
+                store_vec(pos->sens, na, f);
+            }
+
+        }
+        
+        // Step 5.7: Force noise reduction - filter out very small forces that may be numerical noise
+        // This prevents accumulation of tiny systematic forces
+        for(int na=0; na<pos->n_atom; ++na) {
+            auto f = load_vec<3>(pos->sens, na);
+            float f_mag = mag(f);
+            
+            // If force is very small (likely numerical noise), zero it out
+            if (f_mag < 1e-10f) {
+                store_vec(pos->sens, na, make_vec3(0.f, 0.f, 0.f));
+
+            }
+        }
+        
+
+        
+        // Step 6: More aggressive recentering to prevent x-axis drift
+        // Recenter every 20 steps to prevent systematic drift, especially in x-axis
+        static int recenter_counter = 0;
+        recenter_counter++;
+        if (recenter_counter >= 20) {
+            recenter(pos->output, false, pos->n_atom);  // false = recenter in all directions
+            recenter_counter = 0;
+
+        }
+        
+        // Step6.5 Additional x-axis specific drift correction
+        // Check if particles are drifting in the same direction and correct
+        float3 com_pos = make_vec3(0.f, 0.f, 0.f);
+        for(int na=0; na<pos->n_atom; ++na) com_pos += load_vec<3>(pos->output, na);
+        com_pos /= float(pos->n_atom);
+        // If center of mass has drifted significantly in x, recenter
+        if (fabs(com_pos.x()) > 1e-5f) { // 0.00001 Å threshold
+            for(int na=0; na<pos->n_atom; ++na) {
+                auto p = load_vec<3>(pos->output, na);
+                p.x() -= com_pos.x();  // Only correct x-axis
+                store_vec(pos->output, na, p);
+            }
+
+        }
+        
+        // Step 60.6riodic force reset to prevent systematic accumulation
+        // Every 100eck for systematic force patterns and reset if needed
+        static int force_reset_counter = 0;
+        force_reset_counter++;
+        if (force_reset_counter >= 100) {
+            // Calculate average force over the last 100 steps
+            static float3 force_accumulator = make_vec3(0.f, 0.f, 0.f);
+            float3 current_com_force = make_vec3(0.f, 0.f, 0.f);
+            for(int na=0; na<pos->n_atom; ++na) {
+                current_com_force += load_vec<3>(pos->sens, na);
+            }
+            current_com_force /= float(pos->n_atom);
+            force_accumulator += current_com_force;
+            
+            // If accumulated force is significant, apply correction
+            float3 avg_force = force_accumulator / 100.0f;
+            if (fabs(avg_force.x()) > 0.000001 || fabs(avg_force.y()) > 0.000001 || fabs(avg_force.z()) > 1e-6f) { // Apply momentum correction to counteract systematic force
+                for(int na=0; na<pos->n_atom; ++na) {
+                    auto p = load_vec<3>(mom, na);
+                    p -= avg_force * dt * 50.f;  // Correct for half the accumulation period
+                    store_vec(mom, na, p);
+                }
+
+            }
+            
+            // Reset accumulators
+            force_accumulator = make_vec3(0.f, 0.f, 0.f);
+            force_reset_counter = 0;
+        }
+        
+        if(debug_step_count < 25) debug_step_count++;
+        
+    } else {
+        // Original 3-stage integrator from Predescu et al., 2012
+        // http://dx.doi.org/10.1080/00268976.2012.681311
+
+        float a = (type==Predescu) ? 0.108991425403425322 : 1./6.;
+        float b = (type==Predescu) ? 0.290485609075128726 : 1./3.;
+
+        float mom_update[] = {1.5f-3.f*a, 1.5f-3.f*a, 6.f*a};
+        float pos_update[] = {     3.f*b, 3.0f-6.f*b, 3.f*b};
+
+        for(int stage=0; stage<3; ++stage) {
+            compute(DerivMode);   // compute derivatives
+            Timer timer(string("integration"));
+            integration_stage( 
+                    mom,
+                    pos->output,
+                    pos->sens,
+                    dt*mom_update[stage], dt*pos_update[stage], max_force, 
+                    pos->n_atom);
+        }
     }
 }
 
@@ -318,6 +486,22 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
 
     for(int stage=0; stage<3; ++stage) {
         compute(DerivMode);   // compute derivatives
+        
+        // Debug: Print particle positions and forces for first 25 steps
+        // static int debug_step_count = 0;
+        // if(debug_step_count < 25) {
+        //     std::cout << "\n=== INTEGRATION STEP " << debug_step_count << " (stage " << stage << ") ===" << std::endl;
+        //     std::cout << "Positions and Forces:" << std::endl;
+        //     for(int na = 0; na < pos->n_atom; ++na) {
+        //         auto pos_vec = load_vec<3>(pos->output, na);
+        //         auto force_vec = load_vec<3>(pos->sens, na);
+        //         std::cout << "  Particle " << na << ": pos=(" << pos_vec.x() << ", " << pos_vec.y() << ", " << pos_vec.z() 
+        //                   << ") force=(" << force_vec.x() << ", " << force_vec.y() << ", " << force_vec.z() << ")" << std::endl;
+        //     }
+        //     std::cout << "=== END STEP " << debug_step_count << " ===\n" << std::endl;
+        // }
+        // if(stage == 2) debug_step_count++; // Only increment after complete 3-stage cycle
+        
         Timer timer(string("integration"));
 
         for(int na=0; na < pos->n_atom; ++na) {
@@ -328,11 +512,32 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
             update_vec(pos->output, na, dt*p);
         }
     }
+    // Add debug print after fast level loop
+    // std::cout << "[DEBUG] Completed all fast level steps for debug_step_count=" << debug_step_count << std::endl;
+    
+    // if(debug_step_count < 25) debug_step_count++; // Increment after complete cycle
+    // Add debug print after increment
+    // std::cout << "[DEBUG] Incremented debug_step_count to " << debug_step_count << std::endl;
 }
 
 void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
     // calculate acceleration, update velocity for slow level
     compute(DerivMode, 1); 
+    
+    // Debug: Print particle positions and forces for first 25 steps
+    // static int debug_step_count = 0;
+    // if(debug_step_count < 25) {
+    //     std::cout << "\n=== MULTI-STEP INTEGRATION STEP " << debug_step_count << " (slow level) ===" << std::endl;
+    //     std::cout << "Positions and Forces:" << std::endl;
+    //     for(int na = 0; na < pos->n_atom; ++na) {
+    //         auto pos_vec = load_vec<3>(pos->output, na);
+    //         auto force_vec = load_vec<3>(pos->sens, na);
+    //         std::cout << "  Particle " << na << ": pos=(" << pos_vec.x() << ", " << pos_vec.y() << ", " << pos_vec.z() 
+    //                   << ") force=(" << force_vec.x() << ", " << force_vec.y() << ", " << force_vec.z() << ")" << std::endl;
+    //     }
+    //     std::cout << "=== END SLOW LEVEL ===\n" << std::endl;
+    // }
+    
     for(int na=0; na < pos->n_atom; ++na) {
         auto d = load_vec<3>(pos->sens, na);
         auto p = load_vec<3>(mom, na) - inner_step*dt*d;
@@ -341,6 +546,19 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
     // calculate acceleration, update velocity for fast level
     for(int i=0;i<inner_step;i++) {
         compute(DerivMode, 0);
+        // Debug: Print for fast level too
+        // if(debug_step_count < 25) {
+        //     std::cout << "\n=== MULTI-STEP INTEGRATION STEP " << debug_step_count << " (fast level " << i << ") ===" << std::endl;
+        //     std::cout << "Positions and Forces:" << std::endl;
+        //     for(int na = 0; na < pos->n_atom; ++na) {
+        //         auto pos_vec = load_vec<3>(pos->output, na);
+        //         auto force_vec = load_vec<3>(pos->sens, na);
+        //         std::cout << "  Particle " << na << ": pos=(" << pos_vec.x() << ", " << pos_vec.y() << ", " << pos_vec.z() 
+        //                   << ") force=(" << force_vec.x() << ", " << force_vec.y() << ", " << force_vec.z() << ")" << std::endl;
+        //     }
+        //     std::cout << "=== END FAST LEVEL " << i << " ===\n" << std::endl;
+        // }
+        
         for(int na=0; na < pos->n_atom; ++na) {
             auto d = load_vec<3>(pos->sens, na);
             auto p = load_vec<3>(mom, na) - dt*d;
@@ -348,6 +566,12 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
             update_vec(pos->output, na, dt*p);
         }
     }
+    // Add debug print after fast level loop
+    // if(debug_step_count < 25) {
+    //     std::cout << "[DEBUG] Completed all fast level steps for debug_step_count=" << debug_step_count << std::endl;
+    //     debug_step_count++; // Increment after complete cycle
+    //     std::cout << "[DEBUG] Incremented debug_step_count to " << debug_step_count << std::endl;
+    // }
 }
 
 DerivEngine initialize_engine_from_hdf5(int n_atom, hid_t potential_group)

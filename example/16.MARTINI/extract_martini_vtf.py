@@ -135,8 +135,16 @@ def main():
         
         # Get position data shape from input (first frame should use input positions)
         input_pos = t['input/pos'][:]
+        print(f"Raw input position data shape: {input_pos.shape}")
+        
+        # Handle different position data formats
         if len(input_pos.shape) == 3:  # (n_atoms, 3, n_frames)
             input_pos = input_pos[:, :, 0]  # Take first frame
+        elif len(input_pos.shape) == 2:  # (n_atoms, 3)
+            input_pos = input_pos
+        else:
+            raise ValueError(f"Unexpected input position shape: {input_pos.shape}")
+            
         n_particles = input_pos.shape[0]
         print(f"Number of particles: {n_particles}")
         print(f"Input position data shape: {input_pos.shape}")
@@ -179,15 +187,6 @@ def main():
         atom_types = t['input/type'][:].astype(str)
         residue_ids = t['input/residue_ids'][:] if 'residue_ids' in t['input'] else np.ones(n_particles, dtype=int)
         
-        # Debug: Print first 10 atom types and Z positions as read from .up
-        print("\n[DEBUG] First 10 atoms in VTF input (.up):")
-        for i in range(10):
-            print(f"  Atom {i}: type={atom_types[i]}, Z={input_pos[i,2]:.2f} Å")
-        
-        print(f"Atom types found: {set(atom_types)}")
-        print(f"Number of unique residues: {len(set(residue_ids))}")
-        print(f"Residue ID range: {min(residue_ids)} to {max(residue_ids)}")
-        
         # Count DOPC atoms by residue
         dopc_residues = set()
         if pdb_residue_names is not None:
@@ -200,9 +199,6 @@ def main():
             for i, mtype in enumerate(atom_types):
                 if mtype in ['Q0', 'Qa', 'Na', 'C1', 'C3']:  # DOPC bead types
                     dopc_residues.add(residue_ids[i])
-        
-        print(f"DOPC residues found: {sorted(dopc_residues)}")
-        print(f"Number of DOPC residues: {len(dopc_residues)}")
         
         # MARTINI to VTF mapping with colors and radii
         martini_to_vtf = {
@@ -248,148 +244,62 @@ def main():
                 f.write("# VTF file generated from MARTINI bilayer simulation\n")
                 f.write("# Structure section\n")
                 
+                # Write atom types (VTF format doesn't support color/radius in atom records)
                 for i in range(n_particles):
                     mtype = atom_types[i]
-                    resid = residue_ids[i] if i < len(residue_ids) else 1
+                    vtf_type = martini_to_vtf.get(mtype, mtype)
+                    f.write(f"atom {i} name {vtf_type}\n")
+                
+                # Write bonds if available
+                if 'input/potential/dist_spring' in t:
+                    bond_group = t['input/potential/dist_spring']
+                    if 'id' in bond_group:
+                        bonds = bond_group['id'][:]
+                        for bond in bonds:
+                            f.write(f"bond {bond[0]}:{bond[1]}\n")
+                
+                # Write box information
+                f.write(f"pbc {x_len} {y_len} {z_len}\n")
+                
+                half_box = np.array([x_len/2, y_len/2, z_len/2])
+                # Skip the initial PDB frame since the first simulation frame already contains the properly centered structure
+                frame_start = 1
+                for frame in range(frame_start, n_frame + 1):
+                    pos = t['output/pos'][frame-1]
                     
-                    # Use MARTINI type mapping from HDF5 file (correct approach)
-                    if mtype == 'P4':  # Water
-                        vtf_name = 'W'
-                        resname = 'WAT'
-                    elif mtype == 'Qd':  # Sodium
-                        vtf_name = 'NA'
-                        resname = 'NA'
-                    elif mtype == 'Qa' and resid > 200:  # Chloride (high residue IDs)
-                        vtf_name = 'CL'
-                        resname = 'CL'
-                    elif mtype == 'Qa' and resid in dopc_residues:  # Phosphate in DOPC
-                        vtf_name = 'PO4'
-                        resname = 'DOPC'
-                    elif resid in dopc_residues:  # Other DOPC atoms
-                        vtf_name = martini_to_vtf.get(mtype, mtype)
-                        resname = 'DOPC'
-                    else:  # Unknown ions or other molecules
-                        vtf_name = martini_to_vtf.get(mtype, mtype)
-                        resname = 'ION'
-                    
-                    # Map atom names to colors and radii
-                    color = color_map.get(vtf_name, 'white')
-                    radius = radius_map.get(vtf_name, 2.0)
-                    
-                    f.write(f"atom {i} name {vtf_name} type {vtf_name} radius {radius:.1f} resid {resid} resname {resname} segid s0\n")
-                
-                # Add periodic boundary conditions to VTF
-                # VTF format: pbc <a> <b> <c> [alpha] [beta] [gamma]
-                # For orthorhombic box: alpha=beta=gamma=90.0
-                f.write(f"\npbc {x_len:.3f} {y_len:.3f} {z_len:.3f} 90.0 90.0 90.0\n")
-                f.write("# Periodic boundary conditions enabled\n")
-                
-                # Add bonds for DOPC lipids
-                f.write("\n# Bonds section\n")
-                bond_count = 0
-                
-                # Use PDB residue IDs if available, otherwise use HDF5 residue IDs
-                bond_residue_ids = pdb_residue_ids if pdb_residue_ids is not None else residue_ids
-                
-                # Ensure bond_residue_ids is a numpy array
-                if not isinstance(bond_residue_ids, np.ndarray):
-                    bond_residue_ids = np.array(bond_residue_ids)
-                
-                for resid in dopc_residues:
-                    # Find atoms belonging to this lipid
-                    lipid_atoms = np.where(bond_residue_ids == resid)[0]
-                    
-                    if len(lipid_atoms) >= 12:  # DOPC has 12 beads
-                        # Sort atoms by their index to ensure proper order
-                        lipid_atoms = sorted(lipid_atoms)
-                        
-                        # Take first 12 atoms if there are more
-                        lipid_atoms = lipid_atoms[:12]
-                        
-                        # Verify we have the right atom types for DOPC
-                        lipid_types = [atom_types[i] for i in lipid_atoms]
-                        expected_types = ['Q0', 'Qa', 'Na', 'Na', 'C1', 'C3', 'C1', 'C1', 'C1', 'C3', 'C1', 'C1']
-                        
-                        # Check if types match (allowing for some flexibility)
-                        type_matches = sum(1 for i, (actual, expected) in enumerate(zip(lipid_types, expected_types)) if actual == expected)
-                        
-                        if type_matches >= 8:  # At least 8 out of 12 types should match
-                            # DOPC bonds: NC3-PO4, PO4-GL1, GL1-GL2, GL1-C1A, C1A-D2A, D2A-C3A, C3A-C4A, GL2-C1B, C1B-D2B, D2B-C3B, C3B-C4B
-                            bonds = [
-                                (lipid_atoms[0], lipid_atoms[1]),   # NC3-PO4
-                                (lipid_atoms[1], lipid_atoms[2]),   # PO4-GL1
-                                (lipid_atoms[2], lipid_atoms[3]),   # GL1-GL2
-                                (lipid_atoms[2], lipid_atoms[4]),   # GL1-C1A
-                                (lipid_atoms[4], lipid_atoms[5]),   # C1A-D2A
-                                (lipid_atoms[5], lipid_atoms[6]),   # D2A-C3A
-                                (lipid_atoms[6], lipid_atoms[7]),   # C3A-C4A
-                                (lipid_atoms[3], lipid_atoms[8]),   # GL2-C1B
-                                (lipid_atoms[8], lipid_atoms[9]),   # C1B-D2B
-                                (lipid_atoms[9], lipid_atoms[10]),  # D2B-C3B
-                                (lipid_atoms[10], lipid_atoms[11])  # C3B-C4B
-                            ]
-                            for atom1, atom2 in bonds:
-                                f.write(f"bond {atom1}:{atom2}\n")
-                                bond_count += 1
+                    # Handle different output position data formats
+                    if len(pos.shape) == 3:  # (n_frames, n_atoms, 3) or (n_atoms, 3, n_frames)
+                        if pos.shape[0] == 1:  # (1, n_atoms, 3) - single frame
+                            frame_pos = pos[0]  # Take first frame
+                        elif pos.shape[2] == 3:  # (n_atoms, 3, n_frames)
+                            frame_pos = pos[:, :, 0]  # Take first frame
                         else:
-                            print(f"Warning: Lipid residue {resid} has unexpected atom types: {lipid_types}")
-                            print(f"  Expected: {expected_types}")
-                            print(f"  Only {type_matches}/12 types match")
+                            raise ValueError(f"Unexpected 3D position shape: {pos.shape}")
+                    elif len(pos.shape) == 2:  # (n_atoms, 3)
+                        frame_pos = pos
+                    elif len(pos.shape) == 1:  # Flattened array
+                        frame_pos = pos.reshape(n_particles, 3)
                     else:
-                        print(f"Warning: Lipid residue {resid} has {len(lipid_atoms)} atoms, expected 12")
-                
-                print(f"Added {bond_count} bonds for lipid molecules")
-                
-                # Write frames starting with initial PDB structure
-                for frame in range(n_frame + 1):  # +1 to include initial structure
-                    if frame == 0:
-                        # Frame 0: Initial PDB structure (before any simulation)
-                        print(f"Writing initial PDB structure as frame 0...")
-                        
-                        # Read PDB positions and apply same processing as run_martini.py
-                        pdb_positions = []
-                        with open('input.pdb', 'r') as pdb_f:
-                            for line in pdb_f:
-                                if line.startswith('ATOM'):
-                                    x = float(line[30:38])
-                                    y = float(line[38:46])
-                                    z = float(line[46:54])
-                                    pdb_positions.append([x, y, z])
-                        
-                        pdb_positions = np.array(pdb_positions)
-                        
-                        # Shift initial PDB positions to centered box convention
-                        center_shift = np.array([x_len/2, y_len/2, z_len/2])
-                        frame_pos = pdb_positions - center_shift
-                        # Debug print for frame 0
-                        print(f"[DEBUG] Frame 0 (PDB after centering): mean={frame_pos.mean(axis=0)}, min={frame_pos.min(axis=0)}, max={frame_pos.max(axis=0)}")
-                    else:
-                        # Use output positions for simulation frames (frame-1 because we added initial frame)
-                        pos = t['output/pos'][frame-1]
-                        
-                        # Reshape position data to (n_particles, 3)
-                        frame_pos = pos[0].reshape(n_particles, 3)
-                        
-                        # Apply periodic boundary conditions to wrap all atoms into the box
-                        frame_pos[:, 0] = frame_pos[:, 0] - x_len * np.floor(frame_pos[:, 0] / x_len)
-                        frame_pos[:, 1] = frame_pos[:, 1] - y_len * np.floor(frame_pos[:, 1] / y_len)
-                        frame_pos[:, 2] = frame_pos[:, 2] - z_len * np.floor(frame_pos[:, 2] / z_len)
-                        # Shift to center at origin
-                        frame_pos -= np.array([x_len/2, y_len/2, z_len/2])
-                        
-                        # Check for NaN values and replace with last valid frame
-                        if np.isnan(frame_pos).any():
-                            if frame > 1:  # frame > 1 because we added initial frame
-                                valid_pos = t['output/pos'][frame-2][0].reshape(n_particles, 3)
-                                frame_pos = np.where(np.isnan(frame_pos), valid_pos, frame_pos)
-                            else:
-                                print(f"Warning: NaN values in first simulation frame, replacing with zeros")
-                                frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
+                        raise ValueError(f"Unexpected output position shape: {pos.shape}")
                     
-                    # Write frame in VTF format
+
+                    
+                    # Apply PBC wrapping to centered box convention [-L/2, L/2]
+                    frame_pos = (frame_pos + half_box) % (2*half_box) - half_box
+                    
+                    if np.isnan(frame_pos).any():
+                        if frame > 1:
+                            valid_pos = t['output/pos'][frame-2]
+                            if len(valid_pos.shape) == 3:
+                                valid_pos = valid_pos[:, :, 0]
+                            elif len(valid_pos.shape) == 1:
+                                valid_pos = valid_pos.reshape(n_particles, 3)
+                            valid_pos = (valid_pos + half_box) % (2*half_box) - half_box
+                            frame_pos = np.where(np.isnan(frame_pos), valid_pos, frame_pos)
+                        else:
+                            print(f"Warning: NaN values in first simulation frame, replacing with zeros")
+                            frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
                     write_vtf_frame(f, frame_pos, frame)
-                    
-                    # Print progress every 100 frames
                     if frame % 100 == 0:
                         print(f"Processed frame {frame}/{n_frame}")
                 
@@ -440,20 +350,34 @@ def main():
                         # Use output positions for simulation frames (frame-1 because we added initial frame)
                         pos = t['output/pos'][frame-1]
                         
-                        # Reshape position data to (n_particles, 3)
-                        frame_pos = pos[0].reshape(n_particles, 3)
+                        # Handle different output position data formats
+                        if len(pos.shape) == 3:  # (n_frames, n_atoms, 3) or (n_atoms, 3, n_frames)
+                            if pos.shape[0] == 1:  # (1, n_atoms, 3) - single frame
+                                frame_pos = pos[0]  # Take first frame
+                            elif pos.shape[2] == 3:  # (n_atoms, 3, n_frames)
+                                frame_pos = pos[:, :, 0]  # Take first frame
+                            else:
+                                raise ValueError(f"Unexpected 3D position shape: {pos.shape}")
+                        elif len(pos.shape) == 2:  # (n_atoms, 3)
+                            frame_pos = pos
+                        elif len(pos.shape) == 1:  # Flattened array
+                            frame_pos = pos.reshape(n_particles, 3)
+                        else:
+                            raise ValueError(f"Unexpected output position shape: {pos.shape}")
                         
-                        # Apply PBC wrapping (same as in run_martini.py)
-                        frame_pos[:, 0] = frame_pos[:, 0] - x_len * np.floor(frame_pos[:, 0] / x_len)
-                        frame_pos[:, 1] = frame_pos[:, 1] - y_len * np.floor(frame_pos[:, 1] / y_len)
-                        frame_pos[:, 2] = frame_pos[:, 2] - z_len * np.floor(frame_pos[:, 2] / z_len)
-                        # Shift to center at origin
-                        frame_pos -= np.array([x_len/2, y_len/2, z_len/2])
+                        # Apply PBC wrapping to centered box convention [-L/2, L/2]
+                        half_box = np.array([x_len/2, y_len/2, z_len/2])
+                        frame_pos = (frame_pos + half_box) % (2*half_box) - half_box
                         
                         # Check for NaN values and replace with last valid frame
                         if np.isnan(frame_pos).any():
                             if frame > 1:  # frame > 1 because we added initial frame
-                                valid_pos = t['output/pos'][frame-2][0].reshape(n_particles, 3)
+                                valid_pos = t['output/pos'][frame-2]
+                                if len(valid_pos.shape) == 3:
+                                    valid_pos = valid_pos[:, :, 0]
+                                elif len(valid_pos.shape) == 1:
+                                    valid_pos = valid_pos.reshape(n_particles, 3)
+                                valid_pos = (valid_pos + half_box) % (2*half_box) - half_box
                                 frame_pos = np.where(np.isnan(frame_pos), valid_pos, frame_pos)
                             else:
                                 print(f"Warning: NaN values in first simulation frame, replacing with zeros")

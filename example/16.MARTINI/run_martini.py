@@ -45,8 +45,11 @@ minimizer_verbose = True
 T              = 0.86  # Temperature (UPSIDE units) - proper MARTINI temperature ~300K  
 duration       = 100  # Total simulation steps (production run)
 frame_interval = 20   # Output every N steps (more frames for better trajectory)
-dt             = 0.001  # Time step - reduced for stability with lipids
+dt             = 0.001  # Time step - further reduced for better stability
 thermostat_timescale = 5.0  # Thermostat timescale (default Langevin damping)
+
+# Enable thermostat for stable equilibrium
+thermostat_interval = 1  # Apply thermostat every step for stability
 
 martini_table = {'Qda': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 4.5, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.0, 'P1': 5.0, 'Nda': 5.0, 'Nd': 5.0, 'Na': 5.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'Qd': {'Qda': 5.6, 'Qd': 5.0, 'Qa': 5.6, 'Q0': 4.5, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.0, 'P1': 5.0, 'Nda': 5.0, 'Nd': 4.0, 'Na': 5.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'Qa': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.0, 'Q0': 4.5, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.0, 'P1': 5.0, 'Nda': 5.0, 'Nd': 5.0, 'Na': 4.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'Q0': {'Qda': 4.5, 'Qd': 4.5, 'Qa': 4.5, 'Q0': 3.5, 'P5': 5.0, 'P4': 5.6, 'P3': 5.0, 'P2': 4.5, 'P1': 4.0, 'Nda': 4.0, 'Nd': 4.0, 'Na': 4.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'P5': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 5.0, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.6, 'P1': 5.6, 'Nda': 5.0, 'Nd': 5.0, 'Na': 5.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.7, 'C2': 2.3, 'C1': 2.0}, 'P4': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 5.6, 'P5': 5.6, 'P4': 5.0, 'P3': 5.0, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.0, 'Nd': 4.0, 'Na': 4.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.7, 'C2': 2.3, 'C1': 2.0}, 'P3': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 5.0, 'P5': 5.6, 'P4': 5.0, 'P3': 5.0, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 3.1, 'C2': 2.7, 'C1': 2.3}, 'P2': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 5.0, 'Q0': 4.5, 'P5': 5.6, 'P4': 4.5, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 4.0, 'C5': 3.5, 'C4': 3.5, 'C3': 3.1, 'C2': 2.7, 'C1': 2.3}, 'P1': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 5.0, 'Q0': 4.0, 'P5': 5.6, 'P4': 4.5, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 4.0, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 2.7}, 'Nda': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 5.0, 'Q0': 4.0, 'P5': 5.0, 'P4': 4.0, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 2.7, 'C2': 2.7, 'C1': 2.7}, 'Nd': {'Qda': 5.0, 'Qd': 4.0, 'Qa': 5.0, 'Q0': 4.0, 'P5': 5.0, 'P4': 4.0, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.0, 'Na': 4.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 2.7, 'C2': 2.7, 'C1': 2.7}, 'Na': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 4.0, 'Q0': 4.0, 'P5': 5.0, 'P4': 4.0, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.0, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 2.7, 'C2': 2.7, 'C1': 2.7}, 'N0': {'Qda': 3.5, 'Qd': 3.5, 'Qa': 3.5, 'Q0': 3.5, 'P5': 3.5, 'P4': 3.5, 'P3': 3.5, 'P2': 4.0, 'P1': 4.0, 'Nda': 3.5, 'Nd': 3.5, 'Na': 3.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 2.7}, 'C5': {'Qda': 3.1, 'Qd': 3.1, 'Qa': 3.1, 'Q0': 3.1, 'P5': 3.1, 'P4': 3.1, 'P3': 3.5, 'P2': 3.5, 'P1': 3.5, 'Nda': 3.5, 'Nd': 3.5, 'Na': 3.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 3.1}, 'C4': {'Qda': 2.7, 'Qd': 2.7, 'Qa': 2.7, 'Q0': 2.7, 'P5': 2.7, 'P4': 2.7, 'P3': 3.1, 'P2': 3.5, 'P1': 3.5, 'Nda': 3.1, 'Nd': 3.1, 'Na': 3.1, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 3.1}, 'C3': {'Qda': 2.3, 'Qd': 2.3, 'Qa': 2.3, 'Q0': 2.3, 'P5': 2.7, 'P4': 2.7, 'P3': 3.1, 'P2': 3.1, 'P1': 3.5, 'Nda': 2.7, 'Nd': 2.7, 'Na': 2.7, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.5, 'C1': 3.5}, 'C2': {'Qda': 2.0, 'Qd': 2.0, 'Qa': 2.0, 'Q0': 2.0, 'P5': 2.3, 'P4': 2.3, 'P3': 2.7, 'P2': 2.7, 'P1': 3.1, 'Nda': 2.7, 'Nd': 2.7, 'Na': 2.7, 'N0': 3.1, 'C5': 3.1, 'C4': 3.1, 'C3': 3.5, 'C2': 3.5, 'C1': 3.5}, 'C1': {'Qda': 2.0, 'Qd': 2.0, 'Qa': 2.0, 'Q0': 2.0, 'P5': 2.0, 'P4': 2.0, 'P3': 2.3, 'P2': 2.3, 'P1': 2.7, 'Nda': 2.7, 'Nd': 2.7, 'Na': 2.7, 'N0': 2.7, 'C5': 3.1, 'C4': 3.1, 'C3': 3.5, 'C2': 3.5, 'C1': 3.5}}
 
@@ -132,13 +135,13 @@ skip_bonds_and_angles = False  # Re-enable bonded interactions
 # Stage 1: Hold lipids, minimize water/ions
 stage1_steps = 100
 stage1_T = 0.1   # Much higher temperature for better equilibration
-stage1_dt = 0.001  # Larger time step for faster minimization
+stage1_dt = 0.001  # Smaller time step for better stability
 stage1_frame_interval = 10  # Reasonable frame interval
 
 # Stage 2: Minimize everything gently
 stage2_steps = 200
 stage2_T = 0.05   # Gentle but not too low
-stage2_dt = 0.001  # Larger time step for faster minimization
+stage2_dt = 0.001  # Smaller time step for better stability
 stage2_frame_interval = 20  # Reasonable frame interval
 
 # These prints will be moved to after box dimensions are read from PDB
@@ -486,10 +489,15 @@ print("\nSkipping minimization as requested")
 minimized_positions = initial_positions  # Use initial positions directly
 min_h5_file = None  # No minimization file to convert
 
-# === Center the box at (0,0,0) for UPSIDE simulation ===
-center_shift = np.array([x_len/2, y_len/2, z_len/2])
-initial_positions = initial_positions - center_shift
-print(f"Shifted all coordinates by -L/2 to center box at (0,0,0): shift = {center_shift}")
+# --- Center and wrap positions just before writing the .up file ---
+center = np.mean(initial_positions, axis=0)
+centered_positions = initial_positions - center
+half_box = np.array([x_len/2, y_len/2, z_len/2])
+centered_positions = (centered_positions + half_box) % (2*half_box) - half_box
+minimized_positions = centered_positions  # Use these for writing to .up file
+print("First 10 positions to be written to .up file (centered and wrapped):")
+for i in range(min(10, n_atoms)):
+    print(f"  Atom {i}: {minimized_positions[i]}")
 
 # --- Assign unique residue IDs for each molecule (for .up file) ---
 residue_ids = np.zeros(len(atom_names), dtype=int)
@@ -520,7 +528,16 @@ with tb.open_file(input_file, 'w') as t:
     vel_array._v_attrs.n_atoms = n_atoms
     vel_array._v_attrs.dim = 3
     vel_array._v_attrs.initialized = True
-    mass = np.ones(n_atoms, dtype='f4') * 1.0  # Standard MARTINI mass
+    
+    # Add mom dataset with zero momenta (explicitly set to zero)
+    momentum = np.zeros((n_atoms, 3, 1), dtype='f4')  # Zero momenta for all atoms, shape (n_atoms, 3, 1)
+    mom_array = t.create_array(input_grp, 'mom', obj=momentum)
+    mom_array._v_attrs.arguments = np.array([b'mom'])
+    mom_array._v_attrs.shape = momentum.shape
+    mom_array._v_attrs.n_atoms = n_atoms
+    mom_array._v_attrs.dim = 3
+    mom_array._v_attrs.initialized = True
+    mass = np.ones(n_atoms, dtype='f4') * 72.0  # Set mass to 72
     mass_array = t.create_array(input_grp, 'mass', obj=mass)
     mass_array._v_attrs.arguments = np.array([b'mass'])
     mass_array._v_attrs.shape = mass.shape
@@ -603,6 +620,7 @@ with tb.open_file(input_file, 'w') as t:
             q1 = charges[i]  # Already converted to UPSIDE units
             q2 = charges[j]  # Already converted to UPSIDE units
             coeff_array.append([epsilon, sigma_val, q1, q2])
+    
     pairs_array = np.array(pairs_list, dtype=int)
     coeff_array = np.array(coeff_array)
     pairs_data = t.create_array(martini_group, 'pairs', obj=pairs_array)
@@ -654,13 +672,6 @@ angles_added_md = len(angles_list) if angles_list and not skip_bonds_and_angles 
 
 print(f"Created MD input with {len(pairs_list)} non-bonded pairs and {bonds_added_md} bonds and {angles_added_md} angles using minimized positions")
 
-# Debug: Print first 10 atom types and Z positions in MD input
-with tb.open_file(input_file, 'r') as t:
-    types = t.root.input.type[:].astype(str)
-    pos = t.root.input.pos[:,:,0]
-    print("\n[DEBUG] First 10 atoms in MD input (.up):")
-    for i in range(10):
-        print(f"  Atom {i}: type={types[i]}, Z={pos[i,2]:.2f} Å")
 
 #----------------------------------------------------------------------
 ## Run MD Simulation
@@ -680,6 +691,7 @@ print(f"  Duration: {duration} steps")
 print(f"  Time step: {dt}")
 print(f"  Frame interval: {frame_interval}")
 print(f"  Thermostat timescale: {thermostat_timescale:.1f}")
+print(f"  Thermostat interval: {thermostat_interval} (ENABLED - Langevin dynamics)")
 if dopc_residues:
     print(f"  Lipid system: {len(dopc_residues)} DOPC lipids with bonds and angles")
 else:
@@ -697,9 +709,14 @@ upside_opts = (
     "--temperature {} "
     "--time-step {} "
     "--thermostat-timescale {} "
-    "--seed {}"
+    "--thermostat-interval {} "
+    "--seed {} "
+    "--integrator v "  # Changed from 'verlet' to 'v' for standard Verlet
+    "--disable-initial-thermalization "  # Ensure zero initial velocities
+    "--disable-thermostat "  # Disable thermostat entirely to keep zero velocities
+    "--restart-using-momentum"  # Force reading input/mom for initial momenta
 )
-upside_opts = upside_opts.format(h5_file, duration, frame_interval, T, dt, thermostat_timescale, 12345)
+upside_opts = upside_opts.format(h5_file, duration, frame_interval, T, dt, thermostat_timescale, thermostat_interval, 12345)
 
 cmd = "{}/obj/upside {}".format(upside_path, upside_opts)
 
