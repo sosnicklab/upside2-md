@@ -261,90 +261,78 @@ elif x_len < 30 or y_len < 30:
 else:
     print("Medium box detected - suitable for standard bilayer patches")
 
-# --- Molecule extraction based on topology ---
-# Define number of particles per molecule type from topology
-# DOPC bead names (for topology)
-DOPC_NAMES = ['NC3', 'PO4', 'GL1', 'GL2', 'C1A', 'D2A', 'C3A', 'C4A', 'C1B', 'D2B', 'C3B', 'C4B']
-
-# --- Molecule extraction based on topology ---
-MOLECULE_SIZES = {
-    'DOPC': len(DOPC_NAMES),  # 12 for DOPC
-    'WATER': 1,              # 1 for water
-    'NA': 1,                 # 1 for sodium ion
-    'CL': 1                  # 1 for chloride ion
-}
-
-# Parse PDB and group atoms into molecules by expected size
+# --- Molecule extraction based on residue ID and residue name ---
+# Parse PDB and group atoms into molecules by residue ID and residue name
 molecules = []
+current_resid = None
+current_resname = None
 current_atoms = []
 current_indices = []
-current_resnames = []
 atom_idx = 0
+
 with open(input_pdb_file) as f:
     for line in f:
         if not line.startswith('ATOM'):
             continue
+        
         resname = line[17:20].strip().upper()
+        resid = int(line[22:26])
         atom_name = line[12:16].strip().upper()
+        
+        # If we encounter a new residue, save the previous molecule and start a new one
+        if current_resid is not None and (resid != current_resid or resname != current_resname):
+            # Determine molecule type based on residue name
+            if current_resname == 'DOPC':
+                moltype = 'DOPC'
+            elif current_resname == 'W':
+                moltype = 'WATER'
+            elif current_resname == 'NA':
+                moltype = 'NA'
+            elif current_resname == 'CL':
+                moltype = 'CL'
+            else:
+                moltype = 'UNKNOWN'
+            
+            molecules.append((moltype, current_atoms.copy(), current_indices.copy()))
+            current_atoms = []
+            current_indices = []
+        
+        # Add current atom to the molecule
         current_atoms.append(atom_name)
         current_indices.append(atom_idx)
-        current_resnames.append(resname)
-        # Try to identify molecule type by current_atoms
-        if len(current_atoms) == 12 and sorted(current_atoms) == sorted(DOPC_NAMES):
-            molecules.append(('DOPC', current_atoms.copy(), current_indices.copy()))
-            current_atoms = []
-            current_indices = []
-            current_resnames = []
-        elif len(current_atoms) == 1 and current_atoms[0] == 'W':
-            molecules.append(('WATER', current_atoms.copy(), current_indices.copy()))
-            current_atoms = []
-            current_indices = []
-            current_resnames = []
-        elif len(current_atoms) == 1 and current_atoms[0] == 'NA':
-            molecules.append(('NA', current_atoms.copy(), current_indices.copy()))
-            current_atoms = []
-            current_indices = []
-            current_resnames = []
-        elif len(current_atoms) == 1 and current_atoms[0] == 'CL':
-            molecules.append(('CL', current_atoms.copy(), current_indices.copy()))
-            current_atoms = []
-            current_indices = []
-            current_resnames = []
+        current_resid = resid
+        current_resname = resname
         atom_idx += 1
-# If any atoms remain, treat as unknown molecule
+
+# Don't forget the last molecule
 if current_atoms:
-    molecules.append(('UNKNOWN', current_atoms.copy(), current_indices.copy()))
+    if current_resname == 'DOPC':
+        moltype = 'DOPC'
+    elif current_resname == 'W':
+        moltype = 'WATER'
+    elif current_resname == 'NA':
+        moltype = 'NA'
+    elif current_resname == 'CL':
+        moltype = 'CL'
+    else:
+        moltype = 'UNKNOWN'
+    
+    molecules.append((moltype, current_atoms.copy(), current_indices.copy()))
+
 # Now, molecules is a list of (moltype, [atom_names], [pdb_line_indices])
 # DOPC extraction: find DOPC molecules
 dopc_molecules = [m for m in molecules if m[0] == 'DOPC']
 
-# Count different molecule types based on residue analysis
-# Classify molecules by unique (residue_name, residue_id) pairs
-# Remove all code that references residue_keys and unique_residues
-# All molecule logic should use molecules and dopc_molecules
-# (No references to residue_keys or unique_residues remain)
-# ... existing code ...
+# Count different molecule types based on new molecule parsing
+dopc_count = len([m for m in molecules if m[0] == 'DOPC'])
+water_count = len([m for m in molecules if m[0] == 'WATER'])
+na_count = len([m for m in molecules if m[0] == 'NA'])
+cl_count = len([m for m in molecules if m[0] == 'CL'])
 
-# Group by residue ID for DOPC
-unique_resids = set(residue_ids)
-dopc_residues = []
-water_residues = []
-ion_residues = []
-print("Residue ID to atom names mapping:")
-for resid in set(residue_ids):
-    residue_atoms = np.where(residue_ids == resid)[0]
-    residue_atom_names = [atom_names[i] for i in residue_atoms]
-    print(f"Residue {resid}: {residue_atom_names}")
-    if sorted(residue_atom_names) == sorted(DOPC_NAMES):
-        dopc_residues.append(resid)
-    elif sorted(residue_atom_names) == sorted(['W']):
-        water_residues.append(resid)
-    elif sorted(residue_atom_names) == sorted(['NA', 'CL']):
-        ion_residues.append(resid)
-
-print(f"DOPC lipids: {len(dopc_residues)}")
-print(f"Water molecules: {len(water_residues)}")
-print(f"Ions: {len(ion_residues)}")
+print(f"DOPC lipids: {dopc_count}")
+print(f"Water molecules: {water_count}")
+print(f"Sodium ions: {na_count}")
+print(f"Chloride ions: {cl_count}")
 
 # Check initial particle range
 pos_min = np.min(initial_positions, axis=0)
@@ -410,7 +398,7 @@ print("\n=== SKIPPING OVERLAP CHECKING AND PRE-SEPARATION ===")
 print("Using original PDB structure without modification")
 
 # Bilayer structure analysis if lipids are present
-if dopc_residues:
+if dopc_count > 0:
     print("\n=== Bilayer Structure Analysis ===")
     nc3_atoms = [i for i, name in enumerate(atom_names) if name == 'NC3']
     po4_atoms = [i for i, name in enumerate(atom_names) if name == 'PO4']
@@ -442,6 +430,9 @@ if dopc_residues:
             print("   Consider setting skip_minimization = True")
     else:
         print("WARNING: Could not identify bilayer headgroups")
+
+# DOPC bead names (for topology)
+DOPC_NAMES = ['NC3', 'PO4', 'GL1', 'GL2', 'C1A', 'D2A', 'C3A', 'C4A', 'C1B', 'D2B', 'C3B', 'C4B']
 
 # Create bonds and angles for DOPC lipids
 bonds_list = []
@@ -477,8 +468,33 @@ for mol in dopc_molecules:
         angle_equil_deg_list.append(angle_equil_deg[i])
         angle_force_constants_list.append(angle_force_constants[i])
 
-print(f"Created {len(bonds_list)} bonds for {len(dopc_molecules)} DOPC lipids")
-print(f"Created {len(angles_list)} angles for {len(dopc_molecules)} DOPC lipids")
+print(f"Created {len(bonds_list)} bonds for {dopc_count} DOPC lipids")
+print(f"Created {len(angles_list)} angles for {dopc_count} DOPC lipids")
+
+# Show bond and angle structure for first DOPC molecule as example
+if dopc_molecules:
+    print(f"\n=== DOPC Bond/Angle Structure (example from first molecule) ===")
+    first_dopc = dopc_molecules[0]
+    _, atom_names_mol, atom_indices = first_dopc
+    name_to_idx = {name: idx for name, idx in zip(atom_names_mol, atom_indices)}
+    
+    print("Bonds:")
+    for i, (bond_idx1, bond_idx2) in enumerate(dopc_bonds[:5]):  # Show first 5 bonds
+        atom1_name = DOPC_NAMES[bond_idx1]
+        atom2_name = DOPC_NAMES[bond_idx2]
+        atom1 = name_to_idx[atom1_name]
+        atom2 = name_to_idx[atom2_name]
+        print(f"  {i+1}: {atom1_name}({atom1}) - {atom2_name}({atom2})")
+    
+    print("Angles:")
+    for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(angle_atoms_martini[:5]):  # Show first 5 angles
+        atom1_name = DOPC_NAMES[angle_idx1]
+        atom2_name = DOPC_NAMES[angle_idx2]
+        atom3_name = DOPC_NAMES[angle_idx3]
+        atom1 = name_to_idx[atom1_name]
+        atom2 = name_to_idx[atom2_name]
+        atom3 = name_to_idx[atom3_name]
+        print(f"  {i+1}: {atom1_name}({atom1}) - {atom2_name}({atom2}) - {atom3_name}({atom3})")
 
 # Skip minimization entirely - use original structure
 print("\n=== SKIPPING MINIMIZATION ===")
@@ -506,6 +522,22 @@ for unique_id, mol in enumerate(molecules):
     for idx in atom_indices:
         residue_ids[idx] = unique_id
 # Now residue_ids is a per-atom array, with a unique value for each molecule
+
+# Print molecule summary for verification
+print(f"\n=== Molecule Summary ===")
+mol_counts = {}
+for moltype, atom_names_mol, _ in molecules:
+    if moltype not in mol_counts:
+        mol_counts[moltype] = 0
+    mol_counts[moltype] += 1
+
+for moltype, count in mol_counts.items():
+    print(f"{moltype}: {count} molecules")
+
+# Compact molecule structure debug output
+print(f"\n=== Molecule Structures ===")
+for i, (moltype, atom_names_mol, atom_indices) in enumerate(molecules):
+    print(f"Molecule {i+1}: {moltype} - Atoms: {atom_names_mol}")
 
 # --- CREATE MD INPUT WITH MINIMIZED POSITIONS ---
 print("Creating MD input with minimized positions and full MARTINI parameters...")
@@ -691,11 +723,10 @@ print(f"  Duration: {duration} steps")
 print(f"  Time step: {dt}")
 print(f"  Frame interval: {frame_interval}")
 print(f"  Thermostat timescale: {thermostat_timescale:.1f}")
-print(f"  Thermostat interval: {thermostat_interval} (ENABLED - Langevin dynamics)")
-if dopc_residues:
-    print(f"  Lipid system: {len(dopc_residues)} DOPC lipids with bonds and angles")
+if dopc_count > 0:
+    print(f"  Lipid system: {dopc_count} DOPC lipids with bonds and angles")
 else:
-    print(f"  Simple water system: {len(water_residues)} water molecules")
+    print(f"  Simple water system: {water_count} water molecules")
 
 # Run production MD simulation
 print(f"Running production MD simulation...")
