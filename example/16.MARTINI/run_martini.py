@@ -71,14 +71,20 @@ coulomb_constant_upside = charge_conversion_factor**2  # This gives us the effec
 dopc_bead_types = ['Q0', 'Qa', 'Na', 'Na', 'C1', 'C3', 'C1', 'C1', 'C1', 'C3', 'C1', 'C1']
 dopc_charges = [1.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-# DOPC bonds (1-indexed, convert to 0-indexed)
-dopc_bonds = [
-    (0, 1), (1, 2), (2, 3), (2, 4), (4, 5), (5, 6), (6, 7), (3, 8), (8, 9), (9, 10), (10, 11)
-]
+# Import topology reader
+from read_martini_topology import read_martini_bonds, read_martini_angles
 
-# Bond parameters (length in nm, force constant in kJ/mol/nm^2)
-bond_lengths_nm = [0.47, 0.47, 0.37, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47]  # nm
-bond_force_constants_martini = [1250, 1250, 1250, 1250, 1250, 1250, 1250, 1250, 1250, 1250, 1250]  # kJ/mol/nm^2
+# Read DOPC bond topology from parameter file
+itp_file = "martini_v2.0_lipids_all_201506.itp"
+dopc_bonds_1indexed, bond_lengths_nm, bond_force_constants_martini = read_martini_bonds(itp_file, "DOPC")
+
+# Convert 1-indexed to 0-indexed for internal use
+dopc_bonds = [(b[0]-1, b[1]-1) for b in dopc_bonds_1indexed]
+
+print(f"Read {len(dopc_bonds)} bonds from MARTINI parameter file")
+print(f"Bonds (0-indexed): {dopc_bonds}")
+
+# Bond parameters are now read from the parameter file above
 
 # Convert MARTINI units to UPSIDE units:
 # Bond lengths: nm -> Angstroms (multiply by 10)
@@ -91,20 +97,14 @@ bond_lengths = [L * 10.0 for L in bond_lengths_nm]  # Convert nm to Angstroms
 # Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)
 bond_force_constants = [k / (energy_conversion_factor * 100.0) for k in bond_force_constants_martini]  # E_up/Å^2
 
-# MARTINI angle parameters for DOPC (from topology file)
-# Format: [atom1, atom2, atom3] where atom2 is the central atom
-angle_atoms_martini = [
-    [1, 2, 3],   # PO4-GL1-GL2 (120.0°)
-    [1, 2, 4],   # PO4-GL1-C1A (180.0°)
-    [2, 4, 5],   # GL1-C1A-D2A (180.0°)
-    [4, 5, 6],   # C1A-D2A-C3A (120.0°)
-    [5, 6, 7],   # D2A-C3A-C4A (180.0°)
-    [3, 8, 9],   # GL2-C1B-D2B (180.0°)
-    [8, 9, 10],  # C1B-D2B-C3B (120.0°)
-    [9, 10, 11]  # D2B-C3B-C4B (180.0°)
-]
-angle_values_martini = [120.0, 180.0, 180.0, 120.0, 180.0, 180.0, 120.0, 180.0]  # degrees
-angle_force_constants_martini = [25.0, 25.0, 25.0, 45.0, 25.0, 25.0, 45.0, 25.0]  # kJ/mol
+# Read DOPC angle topology from parameter file
+dopc_angles_1indexed, angle_values_martini, angle_force_constants_martini = read_martini_angles(itp_file, "DOPC")
+
+# Convert 1-indexed to 0-indexed for internal use
+angle_atoms_martini = [(a[0]-1, a[1]-1, a[2]-1) for a in dopc_angles_1indexed]
+
+print(f"Read {len(angle_atoms_martini)} angles from MARTINI parameter file")
+print(f"Angles (0-indexed): {angle_atoms_martini}")
 
 # Convert angle parameters to UPSIDE units
 # Note: Updated AngleSpring now uses degrees directly, not cosines
@@ -632,13 +632,18 @@ with tb.open_file(input_file, 'w') as t:
     # Add 1-2 exclusions from bond list
     if not skip_bonds_and_angles:
         for bond in bonds_list:
-            bonded_pairs_12.add((min(bond[0], bond[1]), max(bond[0], bond[1])))
+            sorted_bond = (min(bond[0], bond[1]), max(bond[0], bond[1]))
+            bonded_pairs_12.add(sorted_bond)
+    else:
+        print("WARNING: Bonds and angles are disabled - no 1-2 exclusions will be applied!")
 
     # Generate all unique pairs (i < j), excluding only 1-2 bonded pairs
+    excluded_count = 0
     for i in range(n_atoms):
         for j in range(i+1, n_atoms):
             # Skip if already in bonded set (1-2 exclusion only)
             if (i, j) in bonded_pairs_12:
+                excluded_count += 1
                 continue
             pairs_list.append([i, j])
             type_i = atom_types[i]
@@ -655,6 +660,7 @@ with tb.open_file(input_file, 'w') as t:
     
     pairs_array = np.array(pairs_list, dtype=int)
     coeff_array = np.array(coeff_array)
+    print(f"Excluded {excluded_count} 1-2 bonded pairs from non-bonded interactions")
     pairs_data = t.create_array(martini_group, 'pairs', obj=pairs_array)
     pairs_data._v_attrs.initialized = True
     coeff_data = t.create_array(martini_group, 'coefficients', obj=coeff_array)
