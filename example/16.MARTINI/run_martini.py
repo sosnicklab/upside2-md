@@ -122,7 +122,7 @@ print(f"Bond lengths (nm -> Å): {bond_lengths_nm[0]:.2f} nm -> {bond_lengths[0]
 print(f"Bond force constants (kJ/mol/nm² -> E_up/Å²): {bond_force_constants_martini[0]} -> {bond_force_constants[0]:.6f}")
 print(f"Angle equilibrium (degrees): {angle_values_martini[0]}°")
 print(f"Angle force constants (kJ/mol/deg² -> E_up/deg²): {angle_force_constants_martini[0]} -> {angle_force_constants[0]:.6f}")
-print(f"Coulomb constant (unit conversion): {coulomb_constant_upside:.1f} (charge_factor² = {charge_conversion_factor:.1f}²)")
+print(f"Coulomb constant: 476.6 (standard value for unit conversion)")
 print(f"Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)")
 print(f"Length conversion: 1 nm = 10 Å, so 1 nm² = 100 Å²")
 
@@ -210,8 +210,8 @@ with open(input_pdb_file, 'r') as f:
 # Convert lists to numpy arrays
 initial_positions = np.array(initial_positions, dtype=float)
 atom_types = np.array(atom_types)
-# Convert charges to UPSIDE units
-charges = np.array(charges, dtype=float) * charge_conversion_factor
+# Keep charges in standard units (1.0, -1.0) - coulomb_constant will handle the conversion
+charges = np.array(charges, dtype=float)
 residue_ids = np.array(residue_ids, dtype=int)
 atom_names = np.array(atom_names)
 n_atoms = len(initial_positions)
@@ -602,7 +602,7 @@ with tb.open_file(input_file, 'w') as t:
     martini_group._v_attrs.lj_cutoff = 12.0
     martini_group._v_attrs.coul_cutoff = 12.0
     martini_group._v_attrs.dielectric = dielectric_constant
-    martini_group._v_attrs.coulomb_constant = 1.0  # 4πε₀ = 1 in UPSIDE units
+    martini_group._v_attrs.coulomb_constant = 476.6  # Standard Coulomb constant for unit conversion
     martini_group._v_attrs.n_types = 1
     martini_group._v_attrs.n_params = 4
     martini_group._v_attrs.cutoff = 12.0
@@ -649,8 +649,8 @@ with tb.open_file(input_file, 'w') as t:
             # Use full MARTINI parameters for production MD
             epsilon = epsilon_sim  # Use full MARTINI epsilon
             sigma_val = martini_sigma  # Use full MARTINI sigma
-            q1 = charges[i]  # Already converted to UPSIDE units
-            q2 = charges[j]  # Already converted to UPSIDE units
+            q1 = charges[i]  # Standard units (1.0, -1.0)
+            q2 = charges[j]  # Standard units (1.0, -1.0)
             coeff_array.append([epsilon, sigma_val, q1, q2])
     
     pairs_array = np.array(pairs_list, dtype=int)
