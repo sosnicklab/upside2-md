@@ -3,8 +3,8 @@ import h5py
 import numpy as np
 from collections import defaultdict
 
-# Use the same charge conversion factor as in run_martini.py
-CHARGE_CONVERSION_FACTOR = 21.831807297541
+# Charges are now in standard units (1.0, -1.0) - no conversion needed
+CHARGE_CONVERSION_FACTOR = 1.0
 
 # DOPC bead names (for topology)
 DOPC_NAMES = ['NC3', 'PO4', 'GL1', 'GL2', 'C1A', 'D2A', 'C3A', 'C4A', 'C1B', 'D2B', 'C3B', 'C4B']
@@ -41,10 +41,10 @@ def print_pair_interactions(h5):
     coeffs = h5['input/potential/martini_potential/coefficients'][:]
     for i, (a, b) in enumerate(pairs):
         epsilon, sigma, q1, q2 = coeffs[i]
-        # Convert charges to proper units
-        q1_real = q1 / CHARGE_CONVERSION_FACTOR
-        q2_real = q2 / CHARGE_CONVERSION_FACTOR
-        print(f"Pair: ({a}, {b}) | epsilon={epsilon:.3f}, sigma={sigma:.3f}, q1={q1_real:.2f}e, q2={q2_real:.2f}e (raw: {q1:.2f}, {q2:.2f})")
+        # Charges are already in standard units (1.0, -1.0)
+        q1_real = q1
+        q2_real = q2
+        print(f"Pair: ({a}, {b}) | epsilon={epsilon:.3f}, sigma={sigma:.3f}, q1={q1_real:.2f}e, q2={q2_real:.2f}e")
     print(f"Total pair interactions: {len(pairs)}\n")
 
 
