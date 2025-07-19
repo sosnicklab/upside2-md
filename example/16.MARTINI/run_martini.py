@@ -66,16 +66,18 @@ coulomb_constant_upside = charge_conversion_factor**2  # This gives us the effec
 
 # Use full MARTINI parameters (no softening needed since we skip minimization)
 
-# DOPC lipid topology from MARTINI v2.0
-# DOPC bead types: NC3(Q0), PO4(Qa), GL1(Na), GL2(Na), C1A(C1), D2A(C3), C3A(C1), C4A(C1), C1B(C1), D2B(C3), C3B(C1), C4B(C1)
-dopc_bead_types = ['Q0', 'Qa', 'Na', 'Na', 'C1', 'C3', 'C1', 'C1', 'C1', 'C3', 'C1', 'C1']
-dopc_charges = [1.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-
 # Import topology reader
-from read_martini_topology import read_martini_bonds, read_martini_angles
+from read_martini_topology import read_martini_atoms, read_martini_bonds, read_martini_angles
+
+# Read DOPC topology from parameter file
+itp_file = "martini_v2.0_lipids_all_201506.itp"
+dopc_bead_types, dopc_charges = read_martini_atoms(itp_file, "DOPC")
+
+print(f"Read DOPC topology from {itp_file}:")
+print(f"  Bead types: {dopc_bead_types}")
+print(f"  Charges: {dopc_charges}")
 
 # Read DOPC bond topology from parameter file
-itp_file = "martini_v2.0_lipids_all_201506.itp"
 dopc_bonds_1indexed, bond_lengths_nm, bond_force_constants_martini = read_martini_bonds(itp_file, "DOPC")
 
 # Convert 1-indexed to 0-indexed for internal use
@@ -282,7 +284,7 @@ with open(input_pdb_file) as f:
         # If we encounter a new residue, save the previous molecule and start a new one
         if current_resid is not None and (resid != current_resid or resname != current_resname):
             # Determine molecule type based on residue name
-            if current_resname == 'DOPC':
+            if current_resname == 'DOPC' or current_resname == 'DOP':  # Handle truncated residue names
                 moltype = 'DOPC'
             elif current_resname == 'W':
                 moltype = 'WATER'
@@ -292,6 +294,8 @@ with open(input_pdb_file) as f:
                 moltype = 'CL'
             else:
                 moltype = 'UNKNOWN'
+            
+
             
             molecules.append((moltype, current_atoms.copy(), current_indices.copy()))
             current_atoms = []
@@ -306,7 +310,7 @@ with open(input_pdb_file) as f:
 
 # Don't forget the last molecule
 if current_atoms:
-    if current_resname == 'DOPC':
+    if current_resname == 'DOPC' or current_resname == 'DOP':  # Handle truncated residue names
         moltype = 'DOPC'
     elif current_resname == 'W':
         moltype = 'WATER'
@@ -316,6 +320,8 @@ if current_atoms:
         moltype = 'CL'
     else:
         moltype = 'UNKNOWN'
+    
+
     
     molecules.append((moltype, current_atoms.copy(), current_indices.copy()))
 
@@ -333,6 +339,8 @@ print(f"DOPC lipids: {dopc_count}")
 print(f"Water molecules: {water_count}")
 print(f"Sodium ions: {na_count}")
 print(f"Chloride ions: {cl_count}")
+
+
 
 # Check initial particle range
 pos_min = np.min(initial_positions, axis=0)
