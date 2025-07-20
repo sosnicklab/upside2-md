@@ -44,7 +44,7 @@ minimizer_step_size = 0.01  # Lowered from 0.1 for stability
 minimizer_verbose = True
 
 # Simulation parameters - optimized for stability
-T              = 0.86  # Temperature (UPSIDE units) - proper MARTINI temperature ~300K  
+T              = 0.86  # Temperature (UPSIDE units) - increased to see temperature effects  
 duration       = 100  # Total simulation steps (production run)
 frame_interval = 20   # Output every N steps (more frames for better trajectory)
 dt             = 0.001  # Time step - further reduced for better stability
@@ -771,7 +771,7 @@ upside_opts = (
     "--seed {} "
     "--integrator v "  # Changed from 'verlet' to 'v' for standard Verlet
     "--disable-initial-thermalization "  # Ensure zero initial velocities
-    "--disable-thermostat "  # Disable thermostat entirely to keep zero velocities
+    # "--disable-thermostat "  # ENABLE thermostat to see temperature effects
     "--restart-using-momentum"  # Force reading input/mom for initial momenta
 )
 upside_opts = upside_opts.format(h5_file, duration, frame_interval, T, dt, thermostat_timescale, thermostat_interval, 12345)
