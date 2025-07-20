@@ -623,6 +623,7 @@ with tb.open_file(input_file, 'w') as t:
     martini_group._v_attrs.cache_buffer = 1.0
     martini_group._v_attrs.initialized = True
     martini_group._v_attrs.force_cap = 0  # Disable force capping for MD
+    martini_group._v_attrs.mass_scale = 1.0 / 72.0  # Mass scaling for MARTINI (mass = 72)
     martini_group._v_attrs.x_len = x_len
     martini_group._v_attrs.y_len = y_len
     martini_group._v_attrs.z_len = z_len
@@ -687,6 +688,7 @@ with tb.open_file(input_file, 'w') as t:
             
         bond_group._v_attrs.arguments = np.array([b'pos'])
         bond_group._v_attrs.initialized = True
+        bond_group._v_attrs.mass_scale = 1.0 / 72.0  # Mass scaling for MARTINI (mass = 72)
         bond_group._v_attrs.x_len = x_len
         bond_group._v_attrs.y_len = y_len
         bond_group._v_attrs.z_len = z_len
@@ -710,6 +712,7 @@ with tb.open_file(input_file, 'w') as t:
             
         angle_group._v_attrs.arguments = np.array([b'pos'])
         angle_group._v_attrs.initialized = True
+        angle_group._v_attrs.mass_scale = 1.0 / 72.0  # Mass scaling for MARTINI (mass = 72)
         angle_group._v_attrs.x_len = x_len
         angle_group._v_attrs.y_len = y_len
         angle_group._v_attrs.z_len = z_len

@@ -53,6 +53,7 @@ struct DihedralSpring : public PotentialNode
     
     // Box dimensions for minimum image
     float box_x, box_y, box_z;
+    float mass_scale;  // Mass scaling factor for forces (1/mass)
 
     DihedralSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
@@ -86,6 +87,12 @@ struct DihedralSpring : public PotentialNode
             box_x = wall_xhi - wall_xlo;
             box_y = wall_yhi - wall_ylo;
             box_z = wall_zhi - wall_zlo;
+        }
+        
+        // Mass scaling for MARTINI force field (mass = 72.0)
+        mass_scale = 1.0f / 72.0f;  // Default MARTINI mass
+        if(attribute_exists(grp, ".", "mass_scale")) {
+            mass_scale = read_attribute<float>(grp, ".", "mass_scale");
         }
     }
 
@@ -128,7 +135,7 @@ struct DihedralSpring : public PotentialNode
             displacement = (displacement> M_PI_F) ? displacement-2.f*M_PI_F : displacement;
             displacement = (displacement<-M_PI_F) ? displacement+2.f*M_PI_F : displacement;
 
-            auto s = Float4(p.spring_constant * displacement);
+            auto s = Float4(p.spring_constant * displacement * mass_scale);
             for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
 
             if(pot) *pot += 0.5f * p.spring_constant * sqr(displacement);
@@ -248,6 +255,7 @@ struct MartiniPotential : public PotentialNode
     bool force_cap;
     bool coulomb_soften;
     float slater_alpha;
+    float mass_scale;  // Mass scaling factor for forces (1/mass)
 
     // Box dimensions for minimum image
     float box_x, box_y, box_z;
@@ -315,6 +323,12 @@ struct MartiniPotential : public PotentialNode
         debug_mode = false;
         if(attribute_exists(grp, ".", "debug_mode")) {
             debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
+        }
+        
+        // Mass scaling for MARTINI force field (mass = 72.0)
+        mass_scale = 1.0f / 72.0f;  // Default MARTINI mass
+        if(attribute_exists(grp, ".", "mass_scale")) {
+            mass_scale = read_attribute<float>(grp, ".", "mass_scale");
         }
         
         // Read box dimensions (same as MartiniPotential)
@@ -403,6 +417,7 @@ struct MartiniPotential : public PotentialNode
         std::cout << "  LJ range: " << lj_r_min << " to " << lj_r_max << " Angstroms" << std::endl;
         std::cout << "  Coulomb range: " << coul_r_min << " to " << coul_r_max << " Angstroms" << std::endl;
         std::cout << "  Coulomb constant: " << coulomb_constant << ", Dielectric: " << dielectric << std::endl;
+        std::cout << "  Mass scale: " << mass_scale << " (mass = " << (1.0f/mass_scale) << ")" << std::endl;
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -496,8 +511,9 @@ struct MartiniPotential : public PotentialNode
                 }
             }
             
-            update_vec<3>(pos1_sens, i,  force);
-            update_vec<3>(pos1_sens, j, -force);
+            // Apply mass scaling to forces (divide by mass)
+            update_vec<3>(pos1_sens, i,  force * mass_scale);
+            update_vec<3>(pos1_sens, j, -force * mass_scale);
         }
         
         debug_step_count++;
@@ -529,6 +545,7 @@ struct DistSpring : public PotentialNode
     // Spline parameters
     float bond_r_min, bond_r_max, bond_r_scale;
     float max_spring;  // Store max spring constant for scaling
+    float mass_scale;  // Mass scaling factor for forces (1/mass)
 
     DistSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
@@ -578,6 +595,12 @@ struct DistSpring : public PotentialNode
         
         // Store max_spring as member variable
         this->max_spring = max_spring;
+        
+        // Mass scaling for MARTINI force field (mass = 72.0)
+        mass_scale = 1.0f / 72.0f;  // Default MARTINI mass
+        if(attribute_exists(grp, ".", "mass_scale")) {
+            mass_scale = read_attribute<float>(grp, ".", "mass_scale");
+        }
         
         // Set spline range to cover typical bond length variations
         bond_r_min = std::max(0.1f, min_equil * 0.5f);  // Minimum distance
@@ -651,13 +674,13 @@ struct DistSpring : public PotentialNode
                 
                 if(pot) *pot += actual_pot;
                 
-                // Apply force
-                auto deriv = (actual_force/dist) * disp;
+                // Apply force with mass scaling
+                auto deriv = (actual_force/dist) * disp * mass_scale;
                 update_vec(pos_sens, p.atom[0],  deriv);
                 update_vec(pos_sens, p.atom[1], -deriv);
             } else {
                 // Fallback to direct calculation for out-of-range distances
-                auto deriv = p.spring_constant * (1.f - p.equil_dist*inv_mag(disp)) * disp;
+                auto deriv = p.spring_constant * (1.f - p.equil_dist*inv_mag(disp)) * disp * mass_scale;
                 if(pot) *pot += 0.5f * p.spring_constant * sqr(mag(disp) - p.equil_dist);
                 update_vec(pos_sens, p.atom[0],  deriv);
                 update_vec(pos_sens, p.atom[1], -deriv);
@@ -690,6 +713,7 @@ struct AngleSpring : public PotentialNode
     // Spline parameters
     float angle_cos_min, angle_cos_max, angle_cos_scale;
     float max_spring;  // Store max spring constant for scaling
+    float mass_scale;  // Mass scaling factor for forces (1/mass)
 
     AngleSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
@@ -737,6 +761,12 @@ struct AngleSpring : public PotentialNode
         
         // Store max_spring as member variable
         this->max_spring = max_spring;
+        
+        // Mass scaling for MARTINI force field (mass = 72.0)
+        mass_scale = 1.0f / 72.0f;  // Default MARTINI mass
+        if(attribute_exists(grp, ".", "mass_scale")) {
+            mass_scale = read_attribute<float>(grp, ".", "mass_scale");
+        }
         
         // Set spline range for cosine of angles (cos ranges from -1 to 1)
         angle_cos_min = -1.0f;  // cos(180°) = -1
@@ -843,16 +873,16 @@ struct AngleSpring : public PotentialNode
                 float3 fc = dE_ddp * dcos_dr2;
                 float3 fb = -fa - fc;
 
-                // Update forces
-                pos_sens[4*p.atom[0]+0] += fa.x();
-                pos_sens[4*p.atom[0]+1] += fa.y();
-                pos_sens[4*p.atom[0]+2] += fa.z();
-                pos_sens[4*p.atom[1]+0] += fb.x();
-                pos_sens[4*p.atom[1]+1] += fb.y();
-                pos_sens[4*p.atom[1]+2] += fb.z();
-                pos_sens[4*p.atom[2]+0] += fc.x();
-                pos_sens[4*p.atom[2]+1] += fc.y();
-                pos_sens[4*p.atom[2]+2] += fc.z();
+                // Update forces with mass scaling
+                pos_sens[4*p.atom[0]+0] += fa.x() * mass_scale;
+                pos_sens[4*p.atom[0]+1] += fa.y() * mass_scale;
+                pos_sens[4*p.atom[0]+2] += fa.z() * mass_scale;
+                pos_sens[4*p.atom[1]+0] += fb.x() * mass_scale;
+                pos_sens[4*p.atom[1]+1] += fb.y() * mass_scale;
+                pos_sens[4*p.atom[1]+2] += fb.z() * mass_scale;
+                pos_sens[4*p.atom[2]+0] += fc.x() * mass_scale;
+                pos_sens[4*p.atom[2]+1] += fc.y() * mass_scale;
+                pos_sens[4*p.atom[2]+2] += fc.z() * mass_scale;
             } else {
                 // Fallback to direct calculation for out-of-range angles
                 float theta_rad = acosf(dp);
@@ -879,15 +909,15 @@ struct AngleSpring : public PotentialNode
                 float3 fc = dE_ddp * dcos_dr2;
                 float3 fb = -fa - fc;
 
-                pos_sens[4*p.atom[0]+0] += fa.x();
-                pos_sens[4*p.atom[0]+1] += fa.y();
-                pos_sens[4*p.atom[0]+2] += fa.z();
-                pos_sens[4*p.atom[1]+0] += fb.x();
-                pos_sens[4*p.atom[1]+1] += fb.y();
-                pos_sens[4*p.atom[1]+2] += fb.z();
-                pos_sens[4*p.atom[2]+0] += fc.x();
-                pos_sens[4*p.atom[2]+1] += fc.y();
-                pos_sens[4*p.atom[2]+2] += fc.z();
+                pos_sens[4*p.atom[0]+0] += fa.x() * mass_scale;
+                pos_sens[4*p.atom[0]+1] += fa.y() * mass_scale;
+                pos_sens[4*p.atom[0]+2] += fa.z() * mass_scale;
+                pos_sens[4*p.atom[1]+0] += fb.x() * mass_scale;
+                pos_sens[4*p.atom[1]+1] += fb.y() * mass_scale;
+                pos_sens[4*p.atom[1]+2] += fb.z() * mass_scale;
+                pos_sens[4*p.atom[2]+0] += fc.x() * mass_scale;
+                pos_sens[4*p.atom[2]+1] += fc.y() * mass_scale;
+                pos_sens[4*p.atom[2]+2] += fc.z() * mass_scale;
             }
         }
     }
