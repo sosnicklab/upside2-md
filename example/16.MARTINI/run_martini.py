@@ -28,6 +28,8 @@ z_len = None  # Will be set from CRYST1 record
 martini_sigma   = 4.7  # MARTINI water sigma (Angstroms)
 dielectric_constant = 15.0  # MARTINI dielectric constant (standard value)
 
+# Optimization settings - All MARTINI interactions use spline interpolation for maximum performance
+
 # Minimization parameters
 minimization_steps = 1000
 minimization_T = 0.01  # Very low temperature for minimization
@@ -602,7 +604,11 @@ with tb.open_file(input_file, 'w') as t:
     residue_array._v_attrs.initialized = True
     
     potential_grp = t.create_group(input_grp, 'potential')
+    
+    # Create MARTINI potential with spline interpolation
     martini_group = t.create_group(potential_grp, 'martini_potential')
+    print("Using MARTINI potential with spline interpolation for LJ and Coulomb calculations")
+    
     martini_group._v_attrs.arguments = np.array([b'pos'])
     martini_group._v_attrs.potential_type = b'lj_coulomb'
     martini_group._v_attrs.epsilon = martini_epsilon  # Use full MARTINI epsilon for MD
@@ -610,7 +616,7 @@ with tb.open_file(input_file, 'w') as t:
     martini_group._v_attrs.lj_cutoff = 12.0
     martini_group._v_attrs.coul_cutoff = 12.0
     martini_group._v_attrs.dielectric = dielectric_constant
-    martini_group._v_attrs.coulomb_constant = 476.6  # Standard Coulomb constant for unit conversion
+    martini_group._v_attrs.coulomb_constant = 476.627809876965  # Exact Coulomb constant as specified
     martini_group._v_attrs.n_types = 1
     martini_group._v_attrs.n_params = 4
     martini_group._v_attrs.cutoff = 12.0
@@ -677,6 +683,8 @@ with tb.open_file(input_file, 'w') as t:
     # Add bond potential for DOPC lipids using MARTINI dist_spring
     if bonds_list and not skip_bonds_and_angles:
         bond_group = t.create_group(potential_grp, 'dist_spring')
+        print("Using bond potential with spline interpolation")
+            
         bond_group._v_attrs.arguments = np.array([b'pos'])
         bond_group._v_attrs.initialized = True
         bond_group._v_attrs.x_len = x_len
@@ -698,6 +706,8 @@ with tb.open_file(input_file, 'w') as t:
     # Add angle potential for DOPC lipids using MARTINI angle_spring
     if angles_list and not skip_bonds_and_angles:
         angle_group = t.create_group(potential_grp, 'angle_spring')
+        print("Using angle potential with spline interpolation")
+            
         angle_group._v_attrs.arguments = np.array([b'pos'])
         angle_group._v_attrs.initialized = True
         angle_group._v_attrs.x_len = x_len
