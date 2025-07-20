@@ -403,8 +403,8 @@ struct MartiniPotential : public PotentialNode
             // Coulomb potential: k*q1*q2/(dielectric*r) for unit charges (q1=q2=1)
             coul_pot_data[i] = coulomb_constant / (dielectric * r);
             
-            // Coulomb force derivative: -k*q1*q2/(dielectric*r^2) for unit charges
-            coul_force_data[i] = -coulomb_constant / (dielectric * r * r);
+            // Coulomb force derivative: k*q1*q2/(dielectric*r^2) for unit charges (positive for repulsion)
+            coul_force_data[i] = coulomb_constant / (dielectric * r * r);
         }
         
         // Fit splines
@@ -507,7 +507,7 @@ struct MartiniPotential : public PotentialNode
                 // Only apply if potential and force are finite
                 if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag)) {
                     if(pot) *pot += coul_pot;
-                    force += (coul_force_mag/dist) * (-dr);  // Use unit vector
+                    force += (coul_force_mag/dist) * (-dr);  // Fixed: add negative sign for correct direction
                 }
             }
             

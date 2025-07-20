@@ -36,53 +36,9 @@ def write_pdb_frame(f, pos, frame_num, atom_types, residue_ids, x_len, y_len, z_
             resname = pdb_residue_names[i]
             resid = pdb_residue_ids[i]
         else:
-            # Fallback to MARTINI type mapping
-            if mtype == 'Q0':  # NC3 (choline)
-                atom_name = 'NC3'
-                resname = 'DOPC'
-            elif mtype == 'Qa':  # PO4 (phosphate) or CL (chloride)
-                if resid > 200:  # Chloride (high residue IDs)
-                    atom_name = 'CL'
-                    resname = 'CL'
-                else:  # Phosphate in DOPC
-                    atom_name = 'PO4'
-                    resname = 'DOPC'
-            elif mtype == 'Na':  # GL1/GL2 (glycerol)
-                atom_name = 'GL1' if i % 12 < 6 else 'GL2'
-                resname = 'DOPC'
-            elif mtype == 'C1':  # Carbon beads
-                if 'C1A' in str(i) or i % 12 == 4:
-                    atom_name = 'C1A'
-                elif 'C1B' in str(i) or i % 12 == 8:
-                    atom_name = 'C1B'
-                elif 'C3A' in str(i) or i % 12 == 6:
-                    atom_name = 'C3A'
-                elif 'C4A' in str(i) or i % 12 == 7:
-                    atom_name = 'C4A'
-                elif 'C3B' in str(i) or i % 12 == 10:
-                    atom_name = 'C3B'
-                elif 'C4B' in str(i) or i % 12 == 11:
-                    atom_name = 'C4B'
-                else:
-                    atom_name = 'C1'
-                resname = 'DOPC'
-            elif mtype == 'C3':  # D2A/D2B (double bond)
-                if 'D2A' in str(i) or i % 12 == 5:
-                    atom_name = 'D2A'
-                elif 'D2B' in str(i) or i % 12 == 9:
-                    atom_name = 'D2B'
-                else:
-                    atom_name = 'D2'
-                resname = 'DOPC'
-            elif mtype == 'P4':  # Water
-                atom_name = 'W'
-                resname = 'WAT'
-            elif mtype == 'Qd':  # Sodium
-                atom_name = 'NA'
-                resname = 'NA'
-            else:
-                atom_name = mtype
-                resname = 'UNK'
+            # If no PDB file available, use a simple fallback
+            atom_name = mtype
+            resname = 'UNK'
         
         f.write(f"ATOM  {i+1:5d} {atom_name:>4} {resname:3} A{resid:4d}    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n")
     f.write("ENDMDL\n")
@@ -200,42 +156,55 @@ def main():
                 if mtype in ['Q0', 'Qa', 'Na', 'C1', 'C3']:  # DOPC bead types
                     dopc_residues.add(residue_ids[i])
         
-        # MARTINI to VTF mapping with colors and radii
-        martini_to_vtf = {
-            # DOPC lipid beads
-            'Q0': 'NC3',   # Choline (blue)
-            'Qa': 'PO4',   # Phosphate (red) - will be overridden for chloride
-            'Na': 'GL',    # Glycerol (green)
-            'C1': 'C1',    # Carbon (gray)
-            'C3': 'C3',    # Double bond carbon (yellow)
-            # Water and ions
-            'P4': 'W',     # Water (cyan)
-            'Qd': 'NA',    # Sodium (orange)
-        }
+        # Use PDB atom names directly for VTF mapping
+        # This ensures we use the actual topology from the input PDB file
         
-        # Color mapping for VTF
-        color_map = {
-            'NC3': 'blue',
-            'PO4': 'red', 
-            'GL': 'green',
-            'C1': 'gray',
-            'C3': 'yellow',
-            'W': 'cyan',
-            'NA': 'orange',
-            'CL': 'purple'
-        }
+        # Color mapping for VTF - use actual PDB atom names
+        color_map = {}
+        radius_map = {}
         
-        # Radius mapping for VTF
-        radius_map = {
-            'NC3': 2.5,   # Choline head
-            'PO4': 2.5,   # Phosphate head
-            'GL': 2.0,    # Glycerol
-            'C1': 1.8,    # Carbon
-            'C3': 1.8,    # Double bond carbon
-            'W': 1.5,     # Water
-            'NA': 2.0,    # Sodium
-            'CL': 2.0     # Chloride
-        }
+        # If we have PDB data, build color/radius maps from actual atom names
+        if pdb_atom_names is not None:
+            unique_atom_names = set(pdb_atom_names)
+            for atom_name in unique_atom_names:
+                if atom_name == 'NC3':
+                    color_map[atom_name] = 'blue'
+                    radius_map[atom_name] = 2.5
+                elif atom_name == 'PO4':
+                    color_map[atom_name] = 'red'
+                    radius_map[atom_name] = 2.5
+                elif atom_name in ['GL1', 'GL2']:
+                    color_map[atom_name] = 'green'
+                    radius_map[atom_name] = 2.0
+                elif atom_name in ['C1A', 'C1B', 'C3A', 'C3B', 'C4A', 'C4B']:
+                    color_map[atom_name] = 'gray'
+                    radius_map[atom_name] = 1.8
+                elif atom_name in ['D2A', 'D2B']:
+                    color_map[atom_name] = 'yellow'
+                    radius_map[atom_name] = 1.8
+                elif atom_name == 'W':
+                    color_map[atom_name] = 'cyan'
+                    radius_map[atom_name] = 1.5
+                elif atom_name == 'NA':
+                    color_map[atom_name] = 'orange'
+                    radius_map[atom_name] = 2.0
+                elif atom_name == 'CL':
+                    color_map[atom_name] = 'purple'
+                    radius_map[atom_name] = 2.0
+                else:
+                    # Default for unknown atom types
+                    color_map[atom_name] = 'white'
+                    radius_map[atom_name] = 1.5
+        else:
+            # Fallback for when no PDB file is available
+            color_map = {
+                'Q0': 'blue', 'Qa': 'red', 'Na': 'green', 'C1': 'gray', 'C3': 'yellow',
+                'P4': 'cyan', 'Qd': 'orange'
+            }
+            radius_map = {
+                'Q0': 2.5, 'Qa': 2.5, 'Na': 2.0, 'C1': 1.8, 'C3': 1.8,
+                'P4': 1.5, 'Qd': 2.0
+            }
         
         # Create output file
         with open(output_file, 'w') as f:
@@ -244,11 +213,13 @@ def main():
                 f.write("# VTF file generated from MARTINI bilayer simulation\n")
                 f.write("# Structure section\n")
                 
-                # Write atom types (VTF format doesn't support color/radius in atom records)
+                # Write atom types using PDB atom names if available, otherwise use MARTINI types
                 for i in range(n_particles):
-                    mtype = atom_types[i]
-                    vtf_type = martini_to_vtf.get(mtype, mtype)
-                    f.write(f"atom {i} name {vtf_type}\n")
+                    if pdb_atom_names is not None and i < len(pdb_atom_names):
+                        atom_name = pdb_atom_names[i]
+                    else:
+                        atom_name = atom_types[i]
+                    f.write(f"atom {i} name {atom_name}\n")
                 
                 # Write bonds if available
                 if 'input/potential/dist_spring' in t:
