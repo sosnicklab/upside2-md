@@ -356,6 +356,9 @@ struct MartiniPotential : public PotentialNode
             std::cout << "MARTINI: Using legacy box format - X=" << box_x << ", Y=" << box_y << ", Z=" << box_z << std::endl;
         }
         
+        // Print box size for debug
+        std::cout << "[DEBUG] MartiniPotential box_x=" << box_x << " box_y=" << box_y << " box_z=" << box_z << std::endl;
+
         auto n_pair = get_dset_size(2, grp, "pairs")[0];
         check_size(grp, "coefficients", n_pair, 4);
         
@@ -498,6 +501,10 @@ struct MartiniPotential : public PotentialNode
             auto dr = minimum_image_rect(p1 - p2, box_x, box_y, box_z);
             auto dist2 = mag2(dr);
             auto dist = sqrtf(dist2);
+            // DEBUG: Print pairwise info for first few steps
+            if (debug_mode && debug_step_count < 5) {
+                std::cout << "[DEBUG] Pair " << i << "-" << j << " dr=(" << dr.x() << "," << dr.y() << "," << dr.z() << ") dist=" << dist << std::endl;
+            }
             
             // Apply distance cutoff for computational efficiency
             if(dist > max(lj_cutoff, coul_cutoff)) continue;

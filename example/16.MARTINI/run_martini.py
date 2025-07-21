@@ -774,7 +774,7 @@ upside_opts = (
     "--seed {} "
     "--integrator v "  # Changed from 'verlet' to 'v' for standard Verlet
     "--disable-initial-thermalization "  # Ensure zero initial velocities
-    # "--disable-thermostat "  # ENABLE thermostat to see temperature effects
+    "--disable-thermostat "  # DISABLE thermostat to see pure dynamics
     "--restart-using-momentum"  # Force reading input/mom for initial momenta
 )
 upside_opts = upside_opts.format(h5_file, duration, frame_interval, T, dt, thermostat_timescale, thermostat_interval, 12345)
