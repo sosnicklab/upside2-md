@@ -4,6 +4,9 @@
 #include "spline.h"
 #include <iostream>
 #include <H5Apublic.h> // for H5Aexists
+#include <fstream> // For file writing
+#include <cmath> // For pow, cosf, sinf, acosf
+#include <set> // For std::set
 
 using namespace h5;
 using namespace std;
@@ -412,6 +415,51 @@ struct MartiniPotential : public PotentialNode
         lj_force_spline.fit_spline(lj_force_data.data());
         coul_potential_spline.fit_spline(coul_pot_data.data());
         coul_force_spline.fit_spline(coul_force_data.data());
+
+        // Debug: Write all unique spline tables to a single file if debug_mode is enabled
+        if (debug_mode) {
+            std::ofstream out("all_splines.txt");
+            // --- LJ splines for each unique (epsilon, sigma) ---
+            std::set<std::pair<float, float>> lj_params;
+            for (const auto& c : coeff) {
+                if (c[0] != 0.f && c[1] != 0.f) lj_params.insert({c[0], c[1]});
+            }
+            for (const auto& p : lj_params) {
+                float epsilon = p.first, sigma = p.second;
+                out << "# LJ Spline\n# epsilon=" << epsilon << ", sigma=" << sigma << ", r_min=" << 0.5f * sigma << ", r_max=" << lj_cutoff << "\n";
+                out << "# r potential force\n";
+                int n_pts = 10;
+                for (int i = 0; i < n_pts; ++i) {
+                    float r = 0.5f * sigma + i * (lj_cutoff - 0.5f * sigma) / (n_pts - 1);
+                    float sig_r = sigma / r;
+                    float sig_r6 = pow(sig_r, 6);
+                    float sig_r12 = sig_r6 * sig_r6;
+                    float pot = 4.0 * epsilon * (sig_r12 - sig_r6);
+                    float force = 24.0 * epsilon / sigma * (2.0 * sig_r12 * sig_r - sig_r6 * sig_r);
+                    out << r << " " << pot << " " << force << "\n";
+                }
+                out << "\n";
+            }
+            // --- Coulomb splines for each unique q1*q2 ---
+            std::set<float> qq_params;
+            for (const auto& c : coeff) {
+                float qq = c[2] * c[3];
+                if (qq != 0.f) qq_params.insert(qq);
+            }
+            for (float qq : qq_params) {
+                out << "# Coulomb Spline\n# q1q2=" << qq << ", dielectric=" << dielectric << ", coulomb_constant=" << coulomb_constant << ", r_min=0.5, r_max=" << coul_cutoff << "\n";
+                out << "# r potential force\n";
+                int n_pts = 10;
+                for (int i = 0; i < n_pts; ++i) {
+                    float r = 0.5f + i * (coul_cutoff - 0.5f) / (n_pts - 1);
+                    float pot = coulomb_constant * qq / (dielectric * r);
+                    float force = coulomb_constant * qq / (dielectric * r * r);
+                    out << r << " " << pot << " " << force << "\n";
+                }
+                out << "\n";
+            }
+            out.close();
+        }
         
         std::cout << "MARTINI: Initialized splines with 1000 knots" << std::endl;
         std::cout << "  LJ range: " << lj_r_min << " to " << lj_r_max << " Angstroms" << std::endl;
@@ -546,6 +594,7 @@ struct DistSpring : public PotentialNode
     float bond_r_min, bond_r_max, bond_r_scale;
     float max_spring;  // Store max spring constant for scaling
     float mass_scale;  // Mass scaling factor for forces (1/mass)
+    bool debug_mode;   // Debug flag for writing splines
 
     DistSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
@@ -601,6 +650,11 @@ struct DistSpring : public PotentialNode
         if(attribute_exists(grp, ".", "mass_scale")) {
             mass_scale = read_attribute<float>(grp, ".", "mass_scale");
         }
+        // Debug mode for spline output
+        debug_mode = false;
+        if(attribute_exists(grp, ".", "debug_mode")) {
+            debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
+        }
         
         // Set spline range to cover typical bond length variations
         bond_r_min = std::max(0.1f, min_equil * 0.5f);  // Minimum distance
@@ -629,6 +683,28 @@ struct DistSpring : public PotentialNode
         // Fit splines
         bond_potential_spline.fit_spline(bond_pot_data.data());
         bond_force_spline.fit_spline(bond_force_data.data());
+
+        // Debug: Write all unique bond splines to a single file if debug_mode is enabled
+        if (debug_mode) {
+            std::ofstream out("all_splines.txt", std::ios::app);
+            // Collect unique (k, r0)
+            std::set<std::pair<float, float>> bond_params;
+            for (const auto& p : params) bond_params.insert({p.spring_constant, p.equil_dist});
+            for (const auto& bp : bond_params) {
+                float k = bp.first, r0 = bp.second;
+                out << "# Bond Spline\n# k=" << k << ", r0=" << r0 << "\n";
+                out << "# r potential force\n";
+                int n_pts = 10;
+                for (int i = 0; i < n_pts; ++i) {
+                    float r = std::max(0.1f, r0 * 0.5f) + i * (r0 * 2.0f - std::max(0.1f, r0 * 0.5f)) / (n_pts - 1);
+                    float pot = 0.5f * k * (r - r0) * (r - r0);
+                    float force = k * (r - r0);
+                    out << r << " " << pot << " " << force << "\n";
+                }
+                out << "\n";
+            }
+            out.close();
+        }
         
         std::cout << "BONDS: Initialized splines with 1000 knots" << std::endl;
         std::cout << "  Bond range: " << bond_r_min << " to " << bond_r_max << " Angstroms" << std::endl;
@@ -714,6 +790,7 @@ struct AngleSpring : public PotentialNode
     float angle_cos_min, angle_cos_max, angle_cos_scale;
     float max_spring;  // Store max spring constant for scaling
     float mass_scale;  // Mass scaling factor for forces (1/mass)
+    bool debug_mode;   // Debug flag for writing splines
 
     AngleSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
@@ -767,6 +844,11 @@ struct AngleSpring : public PotentialNode
         if(attribute_exists(grp, ".", "mass_scale")) {
             mass_scale = read_attribute<float>(grp, ".", "mass_scale");
         }
+        // Debug mode for spline output
+        debug_mode = false;
+        if(attribute_exists(grp, ".", "debug_mode")) {
+            debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
+        }
         
         // Set spline range for cosine of angles (cos ranges from -1 to 1)
         angle_cos_min = -1.0f;  // cos(180°) = -1
@@ -799,6 +881,29 @@ struct AngleSpring : public PotentialNode
         // Fit splines
         angle_potential_spline.fit_spline(angle_pot_data.data());
         angle_force_spline.fit_spline(angle_force_data.data());
+
+        // Debug: Write all unique angle splines to a single file if debug_mode is enabled
+        if (debug_mode) {
+            std::ofstream out("all_splines.txt", std::ios::app);
+            // Collect unique (k, theta0)
+            std::set<std::pair<float, float>> angle_params;
+            for (const auto& p : params) angle_params.insert({p.spring_constant, p.equil_angle_deg});
+            for (const auto& ap : angle_params) {
+                float k = ap.first, theta0 = ap.second;
+                out << "# Angle Spline\n# k=" << k << ", theta0_deg=" << theta0 << "\n";
+                out << "# theta_deg potential force\n";
+                int n_pts = 10;
+                for (int i = 0; i < n_pts; ++i) {
+                    float theta = 180.0f * i / (n_pts - 1);
+                    float delta = cosf(theta * M_PI / 180.0f) - cosf(theta0 * M_PI / 180.0f);
+                    float pot = 0.5f * k * delta * delta;
+                    float force = k * delta;
+                    out << theta << " " << pot << " " << force << "\n";
+                }
+                out << "\n";
+            }
+            out.close();
+        }
         
         std::cout << "ANGLES: Initialized splines with 1000 knots" << std::endl;
         std::cout << "  Angle range: " << min_angle << " to " << max_angle << " degrees" << std::endl;
