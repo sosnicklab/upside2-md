@@ -418,7 +418,8 @@ struct MartiniPotential : public PotentialNode
 
         // Debug: Write all unique spline tables to a single file if debug_mode is enabled
         if (debug_mode) {
-            std::ofstream out("all_splines.txt");
+            std::ofstream out("all_splines.txt", std::ios::app);
+            out << "# All spline values below are divided by 72.0 (mass correction)\n";
             // --- LJ splines for each unique (epsilon, sigma) ---
             std::set<std::pair<float, float>> lj_params;
             for (const auto& c : coeff) {
@@ -434,8 +435,8 @@ struct MartiniPotential : public PotentialNode
                     float sig_r = sigma / r;
                     float sig_r6 = pow(sig_r, 6);
                     float sig_r12 = sig_r6 * sig_r6;
-                    float pot = 4.0 * epsilon * (sig_r12 - sig_r6);
-                    float force = 24.0 * epsilon / sigma * (2.0 * sig_r12 * sig_r - sig_r6 * sig_r);
+                    float pot = 4.0 * epsilon * (sig_r12 - sig_r6) / 72.0;
+                    float force = 24.0 * epsilon / sigma * (2.0 * sig_r12 * sig_r - sig_r6 * sig_r) / 72.0;
                     out << r << " " << pot << " " << force << "\n";
                 }
                 out << "\n";
@@ -452,8 +453,8 @@ struct MartiniPotential : public PotentialNode
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
                     float r = 0.5f + i * (coul_cutoff - 0.5f) / (n_pts - 1);
-                    float pot = coulomb_constant * qq / (dielectric * r);
-                    float force = coulomb_constant * qq / (dielectric * r * r);
+                    float pot = coulomb_constant * qq / (dielectric * r) / 72.0;
+                    float force = coulomb_constant * qq / (dielectric * r * r) / 72.0;
                     out << r << " " << pot << " " << force << "\n";
                 }
                 out << "\n";
@@ -686,7 +687,8 @@ struct DistSpring : public PotentialNode
 
         // Debug: Write all unique bond splines to a single file if debug_mode is enabled
         if (debug_mode) {
-            std::ofstream out("all_splines.txt", std::ios::app);
+            std::ofstream out("bond_splines.txt", std::ios::app);
+            out << "# All spline values below are divided by 72.0 (mass correction)\n";
             // Collect unique (k, r0)
             std::set<std::pair<float, float>> bond_params;
             for (const auto& p : params) bond_params.insert({p.spring_constant, p.equil_dist});
@@ -697,8 +699,8 @@ struct DistSpring : public PotentialNode
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
                     float r = std::max(0.1f, r0 * 0.5f) + i * (r0 * 2.0f - std::max(0.1f, r0 * 0.5f)) / (n_pts - 1);
-                    float pot = 0.5f * k * (r - r0) * (r - r0);
-                    float force = k * (r - r0);
+                    float pot = 0.5f * k * (r - r0) * (r - r0) / 72.0;
+                    float force = k * (r - r0) / 72.0;
                     out << r << " " << pot << " " << force << "\n";
                 }
                 out << "\n";
@@ -884,7 +886,8 @@ struct AngleSpring : public PotentialNode
 
         // Debug: Write all unique angle splines to a single file if debug_mode is enabled
         if (debug_mode) {
-            std::ofstream out("all_splines.txt", std::ios::app);
+            std::ofstream out("angle_splines.txt", std::ios::app);
+            out << "# All spline values below are divided by 72.0 (mass correction)\n";
             // Collect unique (k, theta0)
             std::set<std::pair<float, float>> angle_params;
             for (const auto& p : params) angle_params.insert({p.spring_constant, p.equil_angle_deg});
@@ -896,8 +899,8 @@ struct AngleSpring : public PotentialNode
                 for (int i = 0; i < n_pts; ++i) {
                     float theta = 180.0f * i / (n_pts - 1);
                     float delta = cosf(theta * M_PI / 180.0f) - cosf(theta0 * M_PI / 180.0f);
-                    float pot = 0.5f * k * delta * delta;
-                    float force = k * delta;
+                    float pot = 0.5f * k * delta * delta / 72.0;
+                    float force = k * delta / 72.0;
                     out << theta << " " << pot << " " << force << "\n";
                 }
                 out << "\n";
