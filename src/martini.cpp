@@ -502,9 +502,9 @@ struct MartiniPotential : public PotentialNode
             auto dist2 = mag2(dr);
             auto dist = sqrtf(dist2);
             // DEBUG: Print pairwise info for first few steps
-            if (debug_mode && debug_step_count < 5) {
-                std::cout << "[DEBUG] Pair " << i << "-" << j << " dr=(" << dr.x() << "," << dr.y() << "," << dr.z() << ") dist=" << dist << std::endl;
-            }
+            // if (debug_mode && debug_step_count < 5) {
+            //     std::cout << "[DEBUG] Pair " << i << "-" << j << " dr=(" << dr.x() << "," << dr.y() << "," << dr.z() << ") dist=" << dist << std::endl;
+            // }
             
             // Apply distance cutoff for computational efficiency
             if(dist > max(lj_cutoff, coul_cutoff)) continue;
