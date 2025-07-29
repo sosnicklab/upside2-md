@@ -44,11 +44,12 @@ minimizer_step_size = 0.01  # Lowered from 0.1 for stability
 minimizer_verbose = True
 
 # Simulation parameters - optimized for stability
-T              = 0.86  # Temperature (UPSIDE units) - increased to see temperature effects  
-duration       = 100  # Total simulation steps (production run)
+T              = 0.1  # Temperature (UPSIDE units) - increased to see temperature effects  
+duration       = 5000  # Total simulation steps (production run)
 frame_interval = 20   # Output every N steps (more frames for better trajectory)
 dt             = 0.001  # Time step - further reduced for better stability
-thermostat_timescale = 5.0  # Thermostat timescale (default Langevin damping)
+#thermostat_timescale = 0.135  # Thermostat timescale (default Langevin damping)
+thermostat_timescale = 0.001  # Thermostat timescale (default Langevin damping)
 
 # Enable thermostat for stable equilibrium
 thermostat_interval = 1  # Apply thermostat every step for stability
@@ -774,8 +775,7 @@ upside_opts = (
     "--seed {} "
     "--integrator v "  # Changed from 'verlet' to 'v' for standard Verlet
     "--disable-initial-thermalization "  # Ensure zero initial velocities
-    "--disable-thermostat "  # DISABLE thermostat to see pure dynamics
-    "--restart-using-momentum"  # Force reading input/mom for initial momenta
+    "--restart-using-momentum "  # Force reading input/mom for initial momenta
 )
 upside_opts = upside_opts.format(h5_file, duration, frame_interval, T, dt, thermostat_timescale, thermostat_interval, 12345)
 
