@@ -1,18 +1,40 @@
 #!/bin/bash
 
-export MY_PYTHON=/opt/homebrew/Cellar/python@3.13/3.13.3 # change it according to your environment
-export EIGEN_HOME=/opt/homebrew/Cellar/eigen/3.4.0_1/include/eigen3 # change it according to your environment
+# Universal Apple Silicon environment setup for UPSIDE2
+# Works with M1, M2, M3, M4 Macs
 
-export UPSIDE_HOME="/Users/yinhan/Documents/upside2-md"
+# Detect and set Python path dynamically
+if [ -d "/opt/homebrew/Cellar/python@3.13" ]; then
+    # Find the latest Python 3.13 version
+    PYTHON_VERSION=$(ls /opt/homebrew/Cellar/python@3.13 | sort -V | tail -1)
+    export MY_PYTHON="/opt/homebrew/Cellar/python@3.13/$PYTHON_VERSION"
+elif [ -d "/opt/homebrew/Cellar/python@3.12" ]; then
+    # Fallback to Python 3.12
+    PYTHON_VERSION=$(ls /opt/homebrew/Cellar/python@3.12 | sort -V | tail -1)
+    export MY_PYTHON="/opt/homebrew/Cellar/python@3.12/$PYTHON_VERSION"
+elif [ -d "/opt/homebrew/Cellar/python@3.11" ]; then
+    # Fallback to Python 3.11
+    PYTHON_VERSION=$(ls /opt/homebrew/Cellar/python@3.11 | sort -V | tail -1)
+    export MY_PYTHON="/opt/homebrew/Cellar/python@3.11/$PYTHON_VERSION"
+else
+    echo "Warning: No Python 3.x found in Homebrew Cellar, using system Python"
+    export MY_PYTHON="/usr/bin"
+fi
 
+# Set UPSIDE_HOME - this will be replaced by the install script
+export UPSIDE_HOME="UP_PATH"
+
+# Set up PATH and PYTHONPATH
 export PATH="$MY_PYTHON/bin:$PATH"
 export PATH=$UPSIDE_HOME/obj:$PATH
 export PYTHONPATH=$UPSIDE_HOME/py:$PYTHONPATH
 
+# Set up Homebrew paths
 export CMAKE_PREFIX_PATH="$(brew --prefix)"
 export EIGEN_HOME=$(brew --prefix eigen)/include/eigen3
 export HDF5_ROOT=$(brew --prefix hdf5)
 
+# OpenMP configuration for Apple Silicon
 export OpenMP_CXX_FLAGS="-Xpreprocessor -fopenmp -I$(brew --prefix libomp)/include"
 export OpenMP_CXX_LIB_NAMES="omp"
 export OpenMP_C_FLAGS="-Xpreprocessor -fopenmp -I$(brew --prefix libomp)/include"
@@ -22,10 +44,20 @@ export LDFLAGS="-L$(brew --prefix libomp)/lib"
 export CPPFLAGS="-I$(brew --prefix libomp)/include"
 export CMAKE_PREFIX_PATH="$(brew --prefix libomp):$CMAKE_PREFIX_PATH"
 
+# Additional library paths
 export CPLUS_INCLUDE_PATH=$(brew --prefix libomp)/include:$CPLUS_INCLUDE_PATH
 export LIBRARY_PATH=$(brew --prefix libomp)/lib:$LIBRARY_PATH
 export LD_LIBRARY_PATH=$(brew --prefix libomp)/lib:$LD_LIBRARY_PATH
 
+# Set up compiler paths
 export PATH="$(brew --prefix binutils)/bin:$PATH"
 export CC=$(which gcc)
 export CXX=$(which g++)
+
+# Verify critical components
+echo "Environment setup for Apple Silicon Mac:"
+echo "  Python: $MY_PYTHON"
+echo "  Eigen: $EIGEN_HOME"
+echo "  HDF5: $HDF5_ROOT"
+echo "  Compiler: $CXX"
+echo "  Architecture: $(uname -m)"
