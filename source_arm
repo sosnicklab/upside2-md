@@ -61,3 +61,4 @@ echo "  Eigen: $EIGEN_HOME"
 echo "  HDF5: $HDF5_ROOT"
 echo "  Compiler: $CXX"
 echo "  Architecture: $(uname -m)"
+ 
