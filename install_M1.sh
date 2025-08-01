@@ -13,8 +13,8 @@ else
     exit 1
 fi
 
-# Set the project path - update this to match your installation
-upside_path="/Users/yinhan/Documents/upside2-md"
+# Set the project path dynamically based on current directory
+upside_path="$(pwd)"
 
 # Copy and configure the ARM source file
 cp source_arm source.sh
