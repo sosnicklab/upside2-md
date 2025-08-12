@@ -1327,28 +1327,42 @@ try {
 }
 
 int main(int argc, const char* const * argv) {
+    // Check if this is a help request before initializing MPI
+    bool is_help_request = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            is_help_request = true;
+            break;
+        }
+    }
+    
+    if (is_help_request) {
+        // For help requests, just run upside_main without MPI to avoid MPI issues
+        return upside_main(argc, argv);
+    }
+    
 #ifdef USE_MPI
     // Initialize MPI
     int provided;
     MPI_Init_thread(&argc, const_cast<char***>(&argv), MPI_THREAD_FUNNELED, &provided);
-    
+
     // Get MPI rank and size
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
-    
+
     // Only rank 0 should print to stdout/stderr initially
     if (rank != 0) {
         // Redirect stdout and stderr to /dev/null for non-root ranks
         freopen("/dev/null", "w", stdout);
         freopen("/dev/null", "w", stderr);
     }
-    
+
     int result = upside_main(argc, argv);
-    
+
     // Finalize MPI
     MPI_Finalize();
-    
+
     return result;
 #else
     return upside_main(argc, argv);

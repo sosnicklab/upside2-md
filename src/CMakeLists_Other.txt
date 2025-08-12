@@ -5,6 +5,16 @@ set (CMAKE_MODULE_PATH "../cmake;${CMAKE_MODULE_PATH}")
 find_package(HDF5 REQUIRED COMPONENTS C)
 find_package(OpenMP QUIET)
 
+# Add MPI support
+find_package(MPI REQUIRED)
+if(MPI_CXX_FOUND)
+    message(STATUS "MPI found: ${MPI_CXX_LIBRARIES}")
+    add_definitions(-DUSE_MPI)
+else()
+    message(WARNING "MPI not found, building without MPI support")
+    add_definitions(-DNO_MPI)
+endif()
+
 set(ARCH "native" CACHE STRING "architecture to use for -march flag to compiler")
 
 set(DEBUG_FLAGS "-g")
@@ -49,7 +59,11 @@ set (ENGINE_SRC
 add_executable (upside ${ENGINE_SRC})
 
 INCLUDE_DIRECTORIES (${HDF5_INCLUDE_DIRS})
-target_link_libraries(upside stdc++ ${HDF5_LIBRARIES})
+if(MPI_CXX_FOUND)
+    target_link_libraries(upside stdc++ ${HDF5_LIBRARIES} ${MPI_CXX_LIBRARIES})
+else()
+    target_link_libraries(upside stdc++ ${HDF5_LIBRARIES})
+endif()
 
 find_package(Eigen3 REQUIRED)
 include_directories(SYSTEM ${EIGEN3_INCLUDE_DIR})
@@ -62,7 +76,11 @@ set_target_properties(upside_calculation PROPERTIES
     COMPILE_FLAGS "-DPARAM_DERIV"
     OUTPUT_NAME   "upside")
 
-target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES})
+if(MPI_CXX_FOUND)
+    target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES} ${MPI_CXX_LIBRARIES})
+else()
+    target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES})
+endif()
 
 add_executable(compute_rotamer_centers generate_from_rotamer.cpp compute_rotamer_centers.cpp h5_support.cpp)
 target_link_libraries(compute_rotamer_centers stdc++ m ${HDF5_LIBRARIES})
