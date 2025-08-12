@@ -31,7 +31,7 @@ dielectric_constant = 15.0  # MARTINI dielectric constant (standard value)
 # Optimization settings - All MARTINI interactions use spline interpolation for maximum performance
 
 # Minimization parameters
-minimization_steps = 1000
+minimization_steps = 5000
 minimization_T = 0.01  # Very low temperature for minimization
 minimization_dt = 0.01
 minimization_frame_interval = 100
@@ -44,12 +44,20 @@ minimizer_step_size = 0.01  # Lowered from 0.1 for stability
 minimizer_verbose = True
 
 # Simulation parameters - optimized for stability
-T              = 0.1  # Temperature (UPSIDE units) - increased to see temperature effects  
-duration       = 5000  # Total simulation steps (production run)
+T              = 0.8  # Temperature (UPSIDE units) - increased to see temperature effects  
+duration       = 1000  # Total simulation steps (production run)
 frame_interval = 20   # Output every N steps (more frames for better trajectory)
-dt             = 0.001  # Time step - further reduced for better stability
-#thermostat_timescale = 0.135  # Thermostat timescale (default Langevin damping)
-thermostat_timescale = 0.001  # Thermostat timescale (default Langevin damping)
+dt             = 0.01  # Time step - further reduced for better stability
+thermostat_timescale = 0.135  # Thermostat timescale (default Langevin damping)
+#thermostat_timescale = 0.001  # Thermostat timescale (default Langevin damping)
+
+# NPT ensemble parameters for lipid bilayer simulation
+pressure = 0.0  # Target pressure (UPSIDE units) - 0 for atmospheric pressure
+barostat_timescale = 0.001  # Very conservative barostat timescale for pressure coupling
+barostat_interval = 1.0  # Less frequent barostat application for stability
+
+# Option to disable barostat for testing (set to True to disable)
+disable_barostat = False  # Set to True to run NVT instead of NPT
 
 # Enable thermostat for stable equilibrium
 thermostat_interval = 1  # Apply thermostat every step for stability
@@ -748,22 +756,33 @@ with tb.open_file(input_file, 'r') as src:
     with tb.open_file(h5_file, 'w') as dst:
         src.copy_children(src.root, dst.root, recursive=True)
 
-print(f"\nRunning MD simulation:")
+print(f"\nRunning NPT MD simulation:")
 print(f"  Temperature: {T:.2f} UPSIDE units = {T * 350.59:.1f} K")
+print(f"  Pressure: {pressure:.2f} UPSIDE units")
 print(f"  Duration: {duration} steps")
 print(f"  Time step: {dt}")
 print(f"  Frame interval: {frame_interval}")
 print(f"  Thermostat timescale: {thermostat_timescale:.1f}")
+print(f"  Barostat timescale: {barostat_timescale:.1f}")
+print(f"  Barostat interval: {barostat_interval:.1f}")
 if dopc_count > 0:
     print(f"  Lipid system: {dopc_count} DOPC lipids with bonds and angles")
 else:
     print(f"  Simple water system: {water_count} water molecules")
 
 # Run production MD simulation
-print(f"Running production MD simulation...")
+print(f"Running production NPT MD simulation...")
 # Use the original duration setting for production
 
 # Run simulation
+# Choose integrator based on barostat setting
+if disable_barostat:
+    integrator = "vv"  # Use Velocity Verlet for NVT
+    print("Using NVT ensemble (Velocity Verlet integrator)")
+else:
+    integrator = "npt"  # Use NPT ensemble
+    print("Using NPT ensemble (NPT integrator)")
+
 upside_opts = (
     "{} "
     "--duration {} "
@@ -772,12 +791,15 @@ upside_opts = (
     "--time-step {} "
     "--thermostat-timescale {} "
     "--thermostat-interval {} "
+    "--pressure {} "
+    "--barostat-timescale {} "
+    "--barostat-interval {} "
     "--seed {} "
-    "--integrator v "  # Changed from 'verlet' to 'v' for standard Verlet
+    "--integrator {} "  # Use selected integrator
     "--disable-initial-thermalization "  # Ensure zero initial velocities
     "--restart-using-momentum "  # Force reading input/mom for initial momenta
 )
-upside_opts = upside_opts.format(h5_file, duration, frame_interval, T, dt, thermostat_timescale, thermostat_interval, 12345)
+upside_opts = upside_opts.format(h5_file, duration, frame_interval, T, dt, thermostat_timescale, thermostat_interval, pressure, barostat_timescale, barostat_interval, 12345, integrator)
 
 cmd = "{}/obj/upside {}".format(upside_path, upside_opts)
 

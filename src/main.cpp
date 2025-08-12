@@ -108,12 +108,39 @@ struct System {
     MultipleMonteCarloSampler mc_samplers;
     VecArrayStorage mom; // momentum
     OrnsteinUhlenbeckThermostat thermostat;
+    
+    // Barostat for NPT ensemble
+    float pressure;
+    float barostat_timescale;
+    float barostat_interval;
+    float box_scale_factor;
+    float box_scale_velocity;
+    float box_scale_mass;
+    bool use_barostat;
+    
     uint64_t round_num;
-    System(): round_num(0) {}
+    System(): round_num(0), pressure(0.0), barostat_timescale(1.0), barostat_interval(0.1), 
+              box_scale_factor(1.0), box_scale_velocity(0.0), box_scale_mass(1.0), use_barostat(false) {}
 
     void set_temperature(float new_temp) {
         temperature = new_temp;
         thermostat.set_temp(temperature);
+    }
+    
+    void set_pressure(float new_pressure) {
+        pressure = new_pressure;
+    }
+    
+    void set_barostat_timescale(float new_timescale) {
+        barostat_timescale = new_timescale;
+    }
+    
+    void set_barostat_interval(float new_interval) {
+        barostat_interval = new_interval;
+    }
+    
+    void enable_barostat(bool enable) {
+        use_barostat = enable;
     }
 };
 
@@ -477,6 +504,15 @@ try {
     ValueArg<double> thermostat_timescale_arg("", "thermostat-timescale", "timescale for the thermostat", 
             false, 5., "float", cmd);
 
+    // Barostat parameters for NPT ensemble
+    ValueArg<double> pressure_arg("", "pressure", "target pressure for NPT ensemble (in UPSIDE units)", 
+            false, 0.0, "float", cmd);
+    ValueArg<double> barostat_timescale_arg("", "barostat-timescale", "timescale for the barostat", 
+            false, 1.0, "float", cmd);
+    ValueArg<double> barostat_interval_arg("", "barostat-interval", 
+            "simulation time between applications of the barostat", 
+            false, 0.1, "float", cmd);
+
     ValueArg<double> curvature_changer_interval_arg("", "curvature-changer-interval", 
             "simulation time between applications of curvature change (0 means no curvature change, default 0.)", 
             false, 0., "float", cmd);
@@ -486,9 +522,9 @@ try {
             false, 0.05, "float", cmd);
 
     ValueArg<string> integrator_arg("", "integrator", 
-            "Use this option to control which Integrator are used.  Available levels are v(verlet), mv(multi-step verlet), or vv(velocity verlet). "
+            "Use this option to control which Integrator are used.  Available levels are v(verlet), mv(multi-step verlet), vv(velocity verlet), or npt(NPT ensemble). "
             "Default is verlet.",
-            false, "", "v, mv, vv ", cmd);
+            false, "", "v, mv, vv, npt ", cmd);
     ValueArg<int> inner_step_arg("", "inner-step", "inner step for the integrator", false, 3, "int", cmd);
 
     ValueArg<string> input_arg("i", "input", "h5df input file for position", false, "not_Defined_By_user", "string", cmd);
@@ -564,6 +600,7 @@ try {
         bool passed_time_lim = false;
         uint64_t n_round = round(duration / (inner_step*dt));
         int thermostat_interval = max(1.,round(thermostat_interval_arg.getValue() / (inner_step*dt))); //  FIXME inner_step
+        int barostat_interval = max(1.,round(barostat_interval_arg.getValue() / (inner_step*dt))); // Barostat interval
         int frame_interval = max(1.,round(frame_interval_arg.getValue() / (inner_step*dt)));
         int dense_output_interval = max(1.,round(dense_frame_interval_arg.getValue() / (inner_step*dt)));
 
@@ -786,6 +823,14 @@ try {
             sys->set_temperature(sys->initial_temperature);
             sys->thermostat.set_delta_t(thermostat_interval*inner_step*dt);  // set true thermostat interval  //  FIXME inner_step
 
+            // Initialize barostat parameters for NPT ensemble
+            if(integrator_arg.getValue() == "npt") {
+                sys->set_pressure(pressure_arg.getValue());
+                sys->set_barostat_timescale(barostat_timescale_arg.getValue());
+                sys->set_barostat_interval(barostat_interval_arg.getValue());
+                sys->enable_barostat(true);
+            }
+
             sys->mom.reset(3, sys->n_atom);
             if (restart_using_momentum_arg.getValue()) { // initialize momentum using input.mom if requested
                 if (user_defined_input) {
@@ -999,10 +1044,50 @@ try {
                         sys.thermostat.apply(sys.mom, sys.n_atom);
                     }
 
+                    // Apply barostat for NPT ensemble - very conservative approach
+                    if(integrator_arg.getValue() == "npt" && sys.use_barostat && !(nr%barostat_interval)) {
+                        // Very conservative Berendsen barostat implementation
+                        // Only apply very small corrections to prevent instability
+                        
+                        // Calculate current pressure (simplified)
+                        float current_pressure = 0.0;
+                        float volume = 1.0; // Assuming unit volume for now
+                        
+                        // Calculate pressure from forces and positions (virial theorem)
+                        for(int na=0; na<sys.n_atom; ++na) {
+                            auto force = load_vec<3>(sys.engine.pos->sens, na);
+                            auto pos = load_vec<3>(sys.engine.pos->output, na);
+                            current_pressure += dot(force, pos);
+                        }
+                        current_pressure /= (3.0 * volume);
+                        
+                        // Apply very conservative pressure coupling
+                        float pressure_diff = sys.pressure - current_pressure;
+                        
+                        // Use very small coupling constant to prevent instability
+                        float coupling_constant = 0.001f; // Very small coupling
+                        float scale_factor = 1.0 + coupling_constant * pressure_diff * dt;
+                        
+                        // Limit the scale factor to prevent extreme changes
+                        scale_factor = std::max(0.99f, std::min(1.01f, scale_factor));
+                        
+                        // Apply scaling only if the change is significant enough
+                        if (fabs(scale_factor - 1.0f) > 1e-6f) {
+                            // Scale positions conservatively
+                            for(int na=0; na<sys.n_atom; ++na) {
+                                auto pos = load_vec<3>(sys.engine.pos->output, na);
+                                pos *= scale_factor;
+                                store_vec(sys.engine.pos->output, na, pos);
+                            }
+                        }
+                    }
+
                     if  (integrator_arg.getValue() == "mv" )
                         sys.engine.integration_cycle(sys.mom, dt, inner_step);
                     else if (integrator_arg.getValue() == "vv" )
                         sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::VelocityVerlet);
+                    else if (integrator_arg.getValue() == "npt" )
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::NPT);
                     else
                         sys.engine.integration_cycle(sys.mom, dt);
 

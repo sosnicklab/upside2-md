@@ -459,6 +459,41 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
         
         if(debug_step_count < 25) debug_step_count++;
         
+    } else if (type == NPT) {
+        // NPT ensemble integrator - simplified for stability
+        // Use standard Velocity Verlet without aggressive corrections
+        
+        // Step 1: Compute forces at current positions
+        compute(DerivMode);
+        
+        // Step 2: Update velocities by half step
+        for(int na=0; na < pos->n_atom; ++na) {
+            auto d = load_vec<3>(pos->sens, na);
+            auto p = load_vec<3>(mom, na) - 0.5f*dt*d;
+            store_vec (mom, na, p);
+        }
+        
+        // Step 3: Update positions by full step
+        for(int na=0; na < pos->n_atom; ++na) {
+            auto p = load_vec<3>(mom, na);
+            auto pos_vec = load_vec<3>(pos->output, na);
+            auto new_pos = pos_vec + dt*p;
+            store_vec(pos->output, na, new_pos);
+        }
+        
+        // Step 4: Compute forces at new positions
+        compute(DerivMode);
+        
+        // Step 5: Update velocities by another half step
+        for(int na=0; na < pos->n_atom; ++na) {
+            auto d = load_vec<3>(pos->sens, na);
+            auto p = load_vec<3>(mom, na) - 0.5f*dt*d;
+            store_vec (mom, na, p);
+        }
+        
+        // Step 6: Simple COM velocity removal (less aggressive)
+        remove_com_velocity(mom, pos->n_atom);
+        
     } else {
         // Original 3-stage integrator from Predescu et al., 2012
         // http://dx.doi.org/10.1080/00268976.2012.681311

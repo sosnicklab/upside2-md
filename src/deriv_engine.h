@@ -253,7 +253,7 @@ struct DerivEngine
     void build_integrator_levels(bool print_info, float dt, int inner_step);
 
     //! \brief Integration scheme (i.e. position and velocity update weights) to use
-    enum IntegratorType {Verlet=0, Predescu=1, VelocityVerlet=2};
+    enum IntegratorType {Verlet=0, Predescu=1, VelocityVerlet=2, NPT=3};
 
     //! \brief Perform a full integration cycle (3 time steps)
     //!
