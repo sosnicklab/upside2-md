@@ -22,6 +22,10 @@
 #include <omp.h>
 #endif
 
+#ifdef USE_MPI
+#include <mpi.h>
+#endif
+
 using namespace std;
 using namespace h5;
 
@@ -621,7 +625,63 @@ try {
 
         h5_noerr(H5Eset_auto(H5E_DEFAULT, nullptr, nullptr));
         vector<string> config_paths = config_args.getValue();
+        
+#ifdef USE_MPI
+        // Get MPI rank and size
+        int rank, size;
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+        MPI_Comm_size(MPI_COMM_WORLD, &size);
+        
+        // Distribute systems across MPI ranks
+        int total_systems = config_paths.size();
+        
+        int systems_per_rank = total_systems / size;
+        int extra_systems = total_systems % size;
+        
+        int my_start = rank * systems_per_rank + min(rank, extra_systems);
+        int my_end = my_start + systems_per_rank + (rank < extra_systems ? 1 : 0);
+        int my_systems = my_end - my_start;
+        
+        // If we have fewer systems than ranks, only use the first few ranks
+        if (total_systems < size) {
+            if (rank >= total_systems) {
+                // This rank has no work to do, but must still participate in MPI
+                if(verbose) printf("Rank %d: No systems assigned, participating in MPI only\n", rank);
+                // Don't exit early - let the rank participate in MPI but skip simulation
+                my_systems = 0;
+                my_start = 0;
+                my_end = 0;
+            } else {
+                // Only use the first total_systems ranks
+                size = total_systems;
+            }
+        }
+        
+        if(verbose && rank == 0) {
+            printf("MPI distribution: %d ranks, %d total systems\n", size, total_systems);
+            for(int r = 0; r < size; r++) {
+                int r_start = r * systems_per_rank + min(r, extra_systems);
+                int r_end = r_start + systems_per_rank + (r < extra_systems ? 1 : 0);
+                printf("  Rank %d: systems %d-%d (%d systems)\n", r, r_start, r_end-1, r_end-r_start);
+            }
+        }
+        
+        // Create systems vector for this rank
+        vector<System> systems(my_systems);
+        vector<string> my_config_paths;
+        for(int i = my_start; i < my_end; i++) {
+            my_config_paths.push_back(config_paths[i]);
+        }
+        
+        // Ensure we have at least one system to process
+        if (my_systems == 0) {
+            if(verbose) printf("Rank %d: No systems assigned, participating in MPI only\n", rank);
+            // Don't exit early - let the rank participate in MPI but skip simulation
+        }
+#else
         vector<System> systems(config_paths.size());
+        vector<string> my_config_paths = config_paths;
+#endif
 
         auto temperature_strings = split_string(temperature_arg.getValue(), ",");
         if(temperature_strings.size() != 1u && temperature_strings.size() != systems.size()) 
@@ -629,7 +689,12 @@ try {
                     +to_string(systems.size())+" systems");
 
         for(int ns: range(systems.size())) {
+#ifdef USE_MPI
+            int global_ns = my_start + ns;
+            float T = stod_strict(temperature_strings.size()>1u ? temperature_strings[global_ns] : temperature_strings[0]);
+#else
             float T = stod_strict(temperature_strings.size()>1u ? temperature_strings[ns] : temperature_strings[0]);
+#endif
             systems[ns].initial_temperature = T;
         }
 
@@ -666,16 +731,28 @@ try {
                 throw string("Received "+to_string(output_strings.size())+" outputs but have "
                         +to_string(systems.size())+" systems");
 
-            for(int ns: range(systems.size())) 
-                outputs[ns] = output_strings.size()>1u ? output_strings[ns] : output_strings[0];
+                    for(int ns: range(systems.size())) {
+#ifdef USE_MPI
+            int global_ns = my_start + ns;
+            outputs[ns] = output_strings.size()>1u ? output_strings[global_ns] : output_strings[0];
+#else
+            outputs[ns] = output_strings.size()>1u ? output_strings[ns] : output_strings[0];
+#endif
+        }
 
             user_defined_output = true;
         }
 
         auto out_base = output_base_arg.getValue();
         if (out_base != "not_Defined_By_user")  {
-            for(int ns: range(systems.size())) 
-                outputs[ns] = out_base + "_" + to_string(ns) + ".h5";
+                    for(int ns: range(systems.size())) {
+#ifdef USE_MPI
+            int global_ns = my_start + ns;
+            outputs[ns] = out_base + "_" + to_string(global_ns) + ".h5";
+#else
+            outputs[ns] = out_base + "_" + to_string(ns) + ".h5";
+#endif
+        }
             user_defined_output = true;
         }
         
@@ -690,15 +767,27 @@ try {
                 throw string("Received "+to_string(input_strings.size())+" inputs but have "
                         +to_string(systems.size())+" systems");
 
-            for(int ns: range(systems.size())) 
+            for(int ns: range(systems.size())) {
+#ifdef USE_MPI
+                int global_ns = my_start + ns;
+                inputs[ns] = input_strings.size()>1u ? input_strings[global_ns] : input_strings[0];
+#else
                 inputs[ns] = input_strings.size()>1u ? input_strings[ns] : input_strings[0];
+#endif
+            }
 
             user_defined_input = true;
         }
         auto in_base = input_base_arg.getValue();
         if (in_base != "not_Defined_By_user")  {
-            for(int ns: range(systems.size())) 
-                inputs[ns] = in_base + "_" + to_string(ns) + ".h5";
+                    for(int ns: range(systems.size())) {
+#ifdef USE_MPI
+            int global_ns = my_start + ns;
+            inputs[ns] = in_base + "_" + to_string(global_ns) + ".h5";
+#else
+            inputs[ns] = in_base + "_" + to_string(ns) + ".h5";
+#endif
+        }
             user_defined_input = true;
         }
         int replica_interval = 0;
@@ -722,19 +811,24 @@ try {
         #pragma omp critical
         for(int ns=0; ns<n_system; ++ns) try {
             System* sys = &systems[ns];  // a pointer here makes later lambda's more natural
+#ifdef USE_MPI
+            int global_ns = my_start + ns;
+            sys->random_seed = base_random_seed + global_ns;
+#else
             sys->random_seed = base_random_seed + ns;
+#endif
 
             try {
                 if (user_defined_output) {
                     sys->config = h5_obj(H5Fclose,
-                        H5Fopen(config_paths[ns].c_str(), H5F_ACC_RDONLY, H5P_DEFAULT));
+                        H5Fopen(my_config_paths[ns].c_str(), H5F_ACC_RDONLY, H5P_DEFAULT));
                 }
                 else {
                     sys->config = h5_obj(H5Fclose,
-                        H5Fopen(config_paths[ns].c_str(), H5F_ACC_RDWR, H5P_DEFAULT));
+                        H5Fopen(my_config_paths[ns].c_str(), H5F_ACC_RDWR, H5P_DEFAULT));
                 }
             } catch(string &s) {
-                throw string("Unable to open configuration file at ") + config_paths[ns];
+                throw string("Unable to open configuration file at ") + my_config_paths[ns];
             }
 
             if (user_defined_input) {
@@ -804,7 +898,7 @@ try {
                 traverse_dset<3,float>(sys->config.get(), "/input/pos", [&](size_t na, size_t d, size_t ns, float x) { 
                         sys->engine.pos->output(d,na) = x;});
 
-            if(verbose) printf("%s\nn_atom %i\n\n", config_paths[ns].c_str(), sys->n_atom);
+            if(verbose) printf("%s\nn_atom %i\n\n", my_config_paths[ns].c_str(), sys->n_atom);
 
             if(potential_deriv_agreement_arg.getValue()){
                 sys->engine.compute(PotentialAndDerivMode);
@@ -976,7 +1070,22 @@ try {
         // we need to run everyone until the next synchronization event
         // a little care is needed if we are multiplexing the events
         auto tstart = chrono::high_resolution_clock::now();
-        while(systems[0].round_num < n_round && received_signal==NO_SIGNAL) {
+        
+#ifdef USE_MPI
+        // Synchronize all ranks before starting simulation
+        MPI_Barrier(MPI_COMM_WORLD);
+        if(verbose && rank == 0) printf("Starting MPI simulation with %d ranks\n", size);
+#endif
+        
+        // Ensure we have systems to process
+        if (systems.empty()) {
+            if(verbose) printf("Rank %d: No systems to process, participating in MPI only\n", rank);
+            // Don't exit early - let the rank participate in MPI but skip simulation
+        }
+        
+        // Only run simulation if we have systems to process
+        if (!systems.empty()) {
+            while(systems[0].round_num < n_round && received_signal==NO_SIGNAL) {
             int last_start = systems[0].round_num;
             #pragma omp parallel for schedule(static,1)
             for(int ns=0; ns<int(systems.size()); ++ns) {
@@ -1101,10 +1210,19 @@ try {
             if(received_signal!=NO_SIGNAL) break;
             if(passed_time_lim) break;
 
-            if(replica_interval && !(systems[0].round_num % replica_interval))
+            if(replica_interval && !(systems[0].round_num % replica_interval)) {
+#ifdef USE_MPI
+                // For MPI, we need to gather all system data for replica exchange
+                // This is a simplified approach - in a full implementation, we'd need
+                // to gather positions, momenta, and other state data from all ranks
+                if(verbose && rank == 0) printf("Replica exchange not yet implemented for MPI\n");
+#else
                 replex->attempt_swaps(base_random_seed, systems[0].round_num, systems, exchange_criterion);
+#endif
+            }
 
         }
+        }  // End of if (!systems.empty())
 
 
 
@@ -1113,13 +1231,13 @@ try {
         for(auto& sys: systems) sys.logger = shared_ptr<H5Logger>(); // release shared_ptr, which also flushes data during destructor
 
         auto elapsed = chrono::duration<double>(std::chrono::high_resolution_clock::now() - tstart).count();
-        if(verbose)
+        if(verbose && !systems.empty())
             printf("\n\nfinished in %.1f seconds (%.2f us/systems/step, %.1e simulation_time_unit/hour)\n",
                 elapsed,
                 elapsed*1e6/systems.size()/systems[0].round_num/inner_step, 
                 systems[0].round_num*inner_step*dt/elapsed * 3600.); 
 
-        if(verbose) printf("\navg_kinetic_energy/1.5kT");
+        if(verbose && !systems.empty()) printf("\navg_kinetic_energy/1.5kT");
         for(auto& sys: systems) {
             double sum_kinetic = 0.;
             long n_kinetic = 0l;
@@ -1141,7 +1259,7 @@ try {
 
             if(verbose) printf(" % .3f", sum_kinetic/n_kinetic / (1.5*sys.temperature));
         }
-        if(verbose) printf("\n");
+        if(verbose && !systems.empty()) printf("\n");
 
         // FIXME this code should be moved into MC sampler code
         try {
@@ -1209,5 +1327,30 @@ try {
 }
 
 int main(int argc, const char* const * argv) {
+#ifdef USE_MPI
+    // Initialize MPI
+    int provided;
+    MPI_Init_thread(&argc, const_cast<char***>(&argv), MPI_THREAD_FUNNELED, &provided);
+    
+    // Get MPI rank and size
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    
+    // Only rank 0 should print to stdout/stderr initially
+    if (rank != 0) {
+        // Redirect stdout and stderr to /dev/null for non-root ranks
+        freopen("/dev/null", "w", stdout);
+        freopen("/dev/null", "w", stderr);
+    }
+    
+    int result = upside_main(argc, argv);
+    
+    // Finalize MPI
+    MPI_Finalize();
+    
+    return result;
+#else
     return upside_main(argc, argv);
+#endif
 }

@@ -774,6 +774,10 @@ else:
 print(f"Running production NPT MD simulation...")
 # Use the original duration setting for production
 
+# MPI support
+use_mpi = True  # Set to True to use MPI
+mpi_ranks = 2   # Number of MPI ranks to use (reduced for testing)
+
 # Run simulation
 # Choose integrator based on barostat setting
 if disable_barostat:
@@ -782,6 +786,28 @@ if disable_barostat:
 else:
     integrator = "npt"  # Use NPT ensemble
     print("Using NPT ensemble (NPT integrator)")
+
+# Choose execution method
+if use_mpi:
+    print(f"Using MPI with {mpi_ranks} ranks")
+    mpi_cmd = f"mpirun -np {mpi_ranks}"
+    
+    # Create multiple copies of the system for MPI parallelization
+    import shutil
+    import os
+    
+    # Create multiple system files
+    system_files = []
+    for i in range(mpi_ranks):
+        copy_file = f".//outputs/martini_test/test.run.{i}.up"
+        shutil.copy2(h5_file, copy_file)
+        system_files.append(copy_file)
+    
+    h5_file = " ".join(system_files)
+    print(f"Created {mpi_ranks} system copies for MPI parallelization")
+else:
+    print("Using single-process execution")
+    mpi_cmd = ""
 
 upside_opts = (
     "{} "
@@ -801,7 +827,10 @@ upside_opts = (
 )
 upside_opts = upside_opts.format(h5_file, duration, frame_interval, T, dt, thermostat_timescale, thermostat_interval, pressure, barostat_timescale, barostat_interval, 12345, integrator)
 
-cmd = "{}/obj/upside {}".format(upside_path, upside_opts)
+if use_mpi:
+    cmd = "{} {}/obj/upside {}".format(mpi_cmd, upside_path, upside_opts)
+else:
+    cmd = "{}/obj/upside {}".format(upside_path, upside_opts)
 
 print(f"Command: {cmd}")
 result = sp.run(cmd, shell=True)
@@ -818,7 +847,11 @@ vtf_script = "extract_martini_vtf.py"
 
 # Convert production MD trajectory
 print(f"\nConverting production MD trajectory...")
-input_traj = h5_file
+if use_mpi and mpi_ranks > 1:
+    # For MPI, convert only the first system's trajectory
+    input_traj = system_files[0] if 'system_files' in locals() else h5_file.split()[0]
+else:
+    input_traj = h5_file
 output_vtf = "{}/martini_trajectory.vtf".format(run_dir)
 
 # Run VTF conversion

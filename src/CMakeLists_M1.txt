@@ -7,6 +7,16 @@ find_package(Eigen3 REQUIRED NO_MODULE)
 include_directories(${EIGEN3_INCLUDE_DIRS})
 find_package(OpenMP REQUIRED)
 
+# Add MPI support
+find_package(MPI REQUIRED)
+if(MPI_CXX_FOUND)
+    message(STATUS "MPI found: ${MPI_CXX_LIBRARIES}")
+    add_definitions(-DUSE_MPI)
+else()
+    message(WARNING "MPI not found, building without MPI support")
+    add_definitions(-DNO_MPI)
+endif()
+
 set(ARCH "native" CACHE STRING "architecture to use for -march flag to compiler")
 set(DEBUG_FLAGS "-g")
 
@@ -57,14 +67,22 @@ add_executable(upside ${ENGINE_SRC})
 INCLUDE_DIRECTORIES(${HDF5_INCLUDE_DIRS})
 
 # Now we can link libraries
-target_link_libraries(upside stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
+if(MPI_CXX_FOUND)
+    target_link_libraries(upside stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX ${MPI_CXX_LIBRARIES})
+else()
+    target_link_libraries(upside stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
+endif()
 
 # Create the shared library
 add_library(upside_calculation SHARED engine_c_library.cpp ${ENGINE_SRC})
 set_target_properties(upside_calculation PROPERTIES COMPILE_FLAGS "-DPARAM_DERIV" OUTPUT_NAME "upside")
 
 # Link OpenMP with shared library
-target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
+if(MPI_CXX_FOUND)
+    target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX ${MPI_CXX_LIBRARIES})
+else()
+    target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
+endif()
 
 # Other executables
 add_executable(compute_rotamer_centers generate_from_rotamer.cpp compute_rotamer_centers.cpp h5_support.cpp)
