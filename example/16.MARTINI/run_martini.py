@@ -62,13 +62,26 @@ disable_barostat = False  # Set to True to run NVT instead of NPT
 # Enable thermostat for stable equilibrium
 thermostat_interval = 1  # Apply thermostat every step for stability
 
-martini_table = {'Qda': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 4.5, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.0, 'P1': 5.0, 'Nda': 5.0, 'Nd': 5.0, 'Na': 5.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'Qd': {'Qda': 5.6, 'Qd': 5.0, 'Qa': 5.6, 'Q0': 4.5, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.0, 'P1': 5.0, 'Nda': 5.0, 'Nd': 4.0, 'Na': 5.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'Qa': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.0, 'Q0': 4.5, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.0, 'P1': 5.0, 'Nda': 5.0, 'Nd': 5.0, 'Na': 4.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'Q0': {'Qda': 4.5, 'Qd': 4.5, 'Qa': 4.5, 'Q0': 3.5, 'P5': 5.0, 'P4': 5.6, 'P3': 5.0, 'P2': 4.5, 'P1': 4.0, 'Nda': 4.0, 'Nd': 4.0, 'Na': 4.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.3, 'C2': 2.0, 'C1': 2.0}, 'P5': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 5.0, 'P5': 5.6, 'P4': 5.6, 'P3': 5.6, 'P2': 5.6, 'P1': 5.6, 'Nda': 5.0, 'Nd': 5.0, 'Na': 5.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.7, 'C2': 2.3, 'C1': 2.0}, 'P4': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 5.6, 'P5': 5.6, 'P4': 5.0, 'P3': 5.0, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.0, 'Nd': 4.0, 'Na': 4.0, 'N0': 3.5, 'C5': 3.1, 'C4': 2.7, 'C3': 2.7, 'C2': 2.3, 'C1': 2.0}, 'P3': {'Qda': 5.6, 'Qd': 5.6, 'Qa': 5.6, 'Q0': 5.0, 'P5': 5.6, 'P4': 5.0, 'P3': 5.0, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 3.1, 'C2': 2.7, 'C1': 2.3}, 'P2': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 5.0, 'Q0': 4.5, 'P5': 5.6, 'P4': 4.5, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 4.0, 'C5': 3.5, 'C4': 3.5, 'C3': 3.1, 'C2': 2.7, 'C1': 2.3}, 'P1': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 5.0, 'Q0': 4.0, 'P5': 5.6, 'P4': 4.5, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 4.0, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 2.7}, 'Nda': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 5.0, 'Q0': 4.0, 'P5': 5.0, 'P4': 4.0, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 2.7, 'C2': 2.7, 'C1': 2.7}, 'Nd': {'Qda': 5.0, 'Qd': 4.0, 'Qa': 5.0, 'Q0': 4.0, 'P5': 5.0, 'P4': 4.0, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.0, 'Na': 4.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 2.7, 'C2': 2.7, 'C1': 2.7}, 'Na': {'Qda': 5.0, 'Qd': 5.0, 'Qa': 4.0, 'Q0': 4.0, 'P5': 5.0, 'P4': 4.0, 'P3': 4.5, 'P2': 4.5, 'P1': 4.5, 'Nda': 4.5, 'Nd': 4.5, 'Na': 4.0, 'N0': 3.5, 'C5': 3.5, 'C4': 3.1, 'C3': 2.7, 'C2': 2.7, 'C1': 2.7}, 'N0': {'Qda': 3.5, 'Qd': 3.5, 'Qa': 3.5, 'Q0': 3.5, 'P5': 3.5, 'P4': 3.5, 'P3': 3.5, 'P2': 4.0, 'P1': 4.0, 'Nda': 3.5, 'Nd': 3.5, 'Na': 3.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 2.7}, 'C5': {'Qda': 3.1, 'Qd': 3.1, 'Qa': 3.1, 'Q0': 3.1, 'P5': 3.1, 'P4': 3.1, 'P3': 3.5, 'P2': 3.5, 'P1': 3.5, 'Nda': 3.5, 'Nd': 3.5, 'Na': 3.5, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 3.1}, 'C4': {'Qda': 2.7, 'Qd': 2.7, 'Qa': 2.7, 'Q0': 2.7, 'P5': 2.7, 'P4': 2.7, 'P3': 3.1, 'P2': 3.5, 'P1': 3.5, 'Nda': 3.1, 'Nd': 3.1, 'Na': 3.1, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.1, 'C1': 3.1}, 'C3': {'Qda': 2.3, 'Qd': 2.3, 'Qa': 2.3, 'Q0': 2.3, 'P5': 2.7, 'P4': 2.7, 'P3': 3.1, 'P2': 3.1, 'P1': 3.5, 'Nda': 2.7, 'Nd': 2.7, 'Na': 2.7, 'N0': 3.5, 'C5': 3.5, 'C4': 3.5, 'C3': 3.5, 'C2': 3.5, 'C1': 3.5}, 'C2': {'Qda': 2.0, 'Qd': 2.0, 'Qa': 2.0, 'Q0': 2.0, 'P5': 2.3, 'P4': 2.3, 'P3': 2.7, 'P2': 2.7, 'P1': 3.1, 'Nda': 2.7, 'Nd': 2.7, 'Na': 2.7, 'N0': 3.1, 'C5': 3.1, 'C4': 3.1, 'C3': 3.5, 'C2': 3.5, 'C1': 3.5}, 'C1': {'Qda': 2.0, 'Qd': 2.0, 'Qa': 2.0, 'Q0': 2.0, 'P5': 2.0, 'P4': 2.0, 'P3': 2.3, 'P2': 2.3, 'P1': 2.7, 'Nda': 2.7, 'Nd': 2.7, 'Na': 2.7, 'N0': 2.7, 'C5': 3.1, 'C4': 3.1, 'C3': 3.5, 'C2': 3.5, 'C1': 3.5}}
+# Import topology reader for MARTINI 3.00
+from read_martini3_topology import read_martini3_atoms, read_martini3_bonds, read_martini3_angles, read_martini3_nonbond_params
 
-# Calculate MARTINI epsilon from table for P4 (water) interactions
+# Read MARTINI 3.00 nonbonded parameters
+main_itp_file = "ff3.00/martini_v3.0.0.itp"
+martini3_table = read_martini3_nonbond_params(main_itp_file)
+
+# Calculate MARTINI 3.00 epsilon from table for P4 (water) interactions
 
 energy_conversion_factor = 2.914952774272
-martini_epsilon_table = martini_table['P4']['P4']  # P4-P4 interaction strength (kJ/mol)
-martini_epsilon = martini_epsilon_table / energy_conversion_factor  # Convert to UPSIDE units
+# Get P4-P4 interaction from MARTINI 3.00 table (sigma, epsilon)
+if ('P4', 'P4') in martini3_table:
+    martini_sigma_table, martini_epsilon_table = martini3_table[('P4', 'P4')]
+    martini_epsilon = martini_epsilon_table / energy_conversion_factor  # Convert to UPSIDE units
+    print(f"Found P4-P4 interaction in MARTINI 3.00 table: sigma={martini_sigma_table:.3f} nm, epsilon={martini_epsilon_table:.3f} kJ/mol")
+else:
+    # Fallback to default values if P4 not found
+    martini_epsilon_table = 4.48  # Default P4-P4 epsilon from MARTINI 3.00
+    martini_epsilon = martini_epsilon_table / energy_conversion_factor
+    print(f"P4-P4 interaction not found in table, using default epsilon={martini_epsilon_table:.3f} kJ/mol")
 
 # Unit conversion: set 4πϵ₀ = 1
 # Each unit charge (1 or -1) corresponds to 21.831807297541 after conversion
@@ -77,19 +90,16 @@ coulomb_constant_upside = charge_conversion_factor**2  # This gives us the effec
 
 # Use full MARTINI parameters (no softening needed since we skip minimization)
 
-# Import topology reader
-from read_martini_topology import read_martini_atoms, read_martini_bonds, read_martini_angles
-
-# Read DOPC topology from parameter file
-itp_file = "martini_v2.0_lipids_all_201506.itp"
-dopc_bead_types, dopc_charges = read_martini_atoms(itp_file, "DOPC")
+# Read DOPC topology from MARTINI 3.00 phospholipids file
+itp_file = "ff3.00/martini_v3.0.0_phospholipids_v1.itp"
+dopc_bead_types, dopc_charges = read_martini3_atoms(itp_file, "DOPC")
 
 print(f"Read DOPC topology from {itp_file}:")
 print(f"  Bead types: {dopc_bead_types}")
 print(f"  Charges: {dopc_charges}")
 
-# Read DOPC bond topology from parameter file
-dopc_bonds_1indexed, bond_lengths_nm, bond_force_constants_martini = read_martini_bonds(itp_file, "DOPC")
+# Read DOPC bond topology from MARTINI 3.00 phospholipids file
+dopc_bonds_1indexed, bond_lengths_nm, bond_force_constants_martini = read_martini3_bonds(itp_file, "DOPC")
 
 # Convert 1-indexed to 0-indexed for internal use
 dopc_bonds = [(b[0]-1, b[1]-1) for b in dopc_bonds_1indexed]
@@ -110,8 +120,8 @@ bond_lengths = [L * 10.0 for L in bond_lengths_nm]  # Convert nm to Angstroms
 # Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)
 bond_force_constants = [k / (energy_conversion_factor * 100.0) for k in bond_force_constants_martini]  # E_up/Å^2
 
-# Read DOPC angle topology from parameter file
-dopc_angles_1indexed, angle_values_martini, angle_force_constants_martini = read_martini_angles(itp_file, "DOPC")
+# Read DOPC angle topology from MARTINI 3.00 phospholipids file
+dopc_angles_1indexed, angle_values_martini, angle_force_constants_martini = read_martini3_angles(itp_file, "DOPC")
 
 # Convert 1-indexed to 0-indexed for internal use
 angle_atoms_martini = [(a[0]-1, a[1]-1, a[2]-1) for a in dopc_angles_1indexed]
@@ -131,10 +141,16 @@ angle_force_constants = [k / energy_conversion_factor for k in angle_force_const
 
 # Print unit conversion summary for verification
 print(f"\n=== MARTINI Unit Conversions ===")
-print(f"Bond lengths (nm -> Å): {bond_lengths_nm[0]:.2f} nm -> {bond_lengths[0]:.1f} Å")
-print(f"Bond force constants (kJ/mol/nm² -> E_up/Å²): {bond_force_constants_martini[0]} -> {bond_force_constants[0]:.6f}")
-print(f"Angle equilibrium (degrees): {angle_values_martini[0]}°")
-print(f"Angle force constants (kJ/mol/deg² -> E_up/deg²): {angle_force_constants_martini[0]} -> {angle_force_constants[0]:.6f}")
+if bond_lengths_nm:
+    print(f"Bond lengths (nm -> Å): {bond_lengths_nm[0]:.2f} nm -> {bond_lengths[0]:.1f} Å")
+    print(f"Bond force constants (kJ/mol/nm² -> E_up/Å²): {bond_force_constants_martini[0]} -> {bond_force_constants[0]:.6f}")
+else:
+    print("No bonds found - bond parameters not available")
+if angle_values_martini:
+    print(f"Angle equilibrium (degrees): {angle_values_martini[0]}°")
+    print(f"Angle force constants (kJ/mol/deg² -> E_up/deg²): {angle_force_constants_martini[0]} -> {angle_force_constants[0]:.6f}")
+else:
+    print("No angles found - angle parameters not available")
 print(f"Coulomb constant: 476.6 (standard value for unit conversion)")
 print(f"Energy conversion factor: 2.914952774272 (kJ/mol -> E_up)")
 print(f"Length conversion: 1 nm = 10 Å, so 1 nm² = 100 Å²")
@@ -183,19 +199,19 @@ charges = []
 residue_ids = []
 atom_names = []
 
-# Enhanced mapping for different molecule types
+# Enhanced mapping for different molecule types (MARTINI 3.00)
 pdb_to_martini = {
-    # DOPC lipid beads
-    'NC3': 'Q0', 'PO4': 'Qa', 'GL1': 'Na', 'GL2': 'Na', 
-    'C1A': 'C1', 'D2A': 'C3', 'C3A': 'C1', 'C4A': 'C1',
-    'C1B': 'C1', 'D2B': 'C3', 'C3B': 'C1', 'C4B': 'C1',
-    # Water and ions
+    # DOPC lipid beads (MARTINI 3.00 bead types)
+    'NC3': 'Q1', 'PO4': 'Q5', 'GL1': 'SN4a', 'GL2': 'N4a', 
+    'C1A': 'C1', 'D2A': 'C4h', 'C3A': 'C1', 'C4A': 'C1',
+    'C1B': 'C1', 'D2B': 'C4h', 'C3B': 'C1', 'C4B': 'C1',
+    # Water and ions (MARTINI 3.00)
     'W': 'P4', 'NA': 'Qd', 'CL': 'Qa'
 }
 
 martini_charges = {
-    'Q0': 1.0, 'Qa': -1.0, 'Na': 0.0, 'C1': 0.0, 'C3': 0.0,
-    'P4': 0.0, 'Qd': 1.0
+    'Q1': 1.0, 'Q5': -1.0, 'SN4a': 0.0, 'N4a': 0.0, 'C1': 0.0, 'C4h': 0.0,
+    'P4': 0.0, 'Qd': 1.0, 'Qa': -1.0
 }
 
 if not os.path.exists(input_pdb_file):
@@ -260,7 +276,7 @@ if x_len is None or y_len is None or z_len is None:
 print(f"\n=== System Parameters ===")
 print(f"Box dimensions: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
 print(f"Box volume: {x_len * y_len * z_len:.1f} Å³")
-print(f"P4-P4 epsilon from MARTINI table: {martini_epsilon_table:.1f} kJ/mol")
+print(f"P4-P4 epsilon from MARTINI 3.00 table: {martini_epsilon_table:.1f} kJ/mol")
 print(f"Converted to UPSIDE units: {martini_epsilon:.6f}")
 print(f"Equivalent in kJ/mol: {martini_epsilon * 2.332:.3f} kJ/mol")
 print(f"Temperature: {T:.2f} UPSIDE units = {T * 350.59:.1f} K")
@@ -450,7 +466,7 @@ if dopc_count > 0:
     else:
         print("WARNING: Could not identify bilayer headgroups")
 
-# DOPC bead names (for topology)
+# DOPC bead names (for topology) - MARTINI 3.00
 DOPC_NAMES = ['NC3', 'PO4', 'GL1', 'GL2', 'C1A', 'D2A', 'C3A', 'C4A', 'C1B', 'D2B', 'C3B', 'C4B']
 
 # Create bonds and angles for DOPC lipids
@@ -673,12 +689,20 @@ with tb.open_file(input_file, 'w') as t:
             pairs_list.append([i, j])
             type_i = atom_types[i]
             type_j = atom_types[j]
-            # Get epsilon from table and convert to simulation units
-            epsilon_table = martini_table[type_i][type_j]
-            epsilon_sim = epsilon_table / energy_conversion_factor
-            # Use full MARTINI parameters for production MD
-            epsilon = epsilon_sim  # Use full MARTINI epsilon
-            sigma_val = martini_sigma  # Use full MARTINI sigma
+            # Get epsilon and sigma from MARTINI 3.00 table and convert to simulation units
+            if (type_i, type_j) in martini3_table:
+                sigma_table, epsilon_table = martini3_table[(type_i, type_j)]
+                # Convert sigma from nm to Angstroms
+                sigma_val = sigma_table * 10.0
+                epsilon_sim = epsilon_table / energy_conversion_factor
+            else:
+                # Fallback to default values if interaction not found
+                print(f"WARNING: Interaction {type_i}-{type_j} not found in MARTINI 3.00 table, using defaults")
+                sigma_val = martini_sigma  # Use default sigma
+                epsilon_sim = martini_epsilon  # Use default epsilon
+            
+            # Use full MARTINI 3.00 parameters for production MD
+            epsilon = epsilon_sim
             q1 = charges[i]  # Standard units (1.0, -1.0)
             q2 = charges[j]  # Standard units (1.0, -1.0)
             coeff_array.append([epsilon, sigma_val, q1, q2])
