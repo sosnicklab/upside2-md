@@ -1,0 +1,49 @@
+// .devcontainer/devcontainer.json
+{
+    "name": "Upside2 Dev Environment",
+
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "..", // Build context is the parent directory
+        "args": {
+            // -- BUILD ARGUMENT TO CHOOSE ENVIRONMENT --
+            // To use the fast environment, uncomment the following line and rebuild the container.
+            // "INSTALL_TYPE": "fast"
+        }
+    },
+
+    // --- KEY SETTINGS FOR USER EXPERIENCE ---
+    "containerEnv": {
+        "UPSIDE_HOME": "/workspaces/${localWorkspaceFolderBasename}",
+        "INSTALL_TYPE": "${buildArg:INSTALL_TYPE:-slow}"
+    },
+
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/${localWorkspaceFolderBasename},type=bind,consistency=cached",
+    "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+
+    "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+    // --- VS CODE CUSTOMIZATIONS ---
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "python.defaultInterpreterPath": "/opt/conda/envs/upside2-env/bin/python",
+                "terminal.integrated.defaultProfile.linux": "bash",
+                "terminal.integrated.profiles.linux": {
+                    "bash": {
+                        "path": "/usr/local/bin/entrypoint.sh",
+                        "args": []
+                    }
+                }
+            },
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-vscode.cpptools",
+                "ms-azuretools.vscode-docker"
+            ]
+        }
+    },
+    "remoteUser": "user"
+}
+//

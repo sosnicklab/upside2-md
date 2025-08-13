@@ -14,7 +14,6 @@ else()
     message(WARNING "MPI not found, building without MPI support")
     add_definitions(-DNO_MPI)
 endif()
-
 set(ARCH "native" CACHE STRING "architecture to use for -march flag to compiler")
 
 set(DEBUG_FLAGS "-g")
