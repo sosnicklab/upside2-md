@@ -775,7 +775,7 @@ print(f"Running production NPT MD simulation...")
 # Use the original duration setting for production
 
 # MPI support
-use_mpi = True  # Set to True to use MPI
+use_mpi = False  # Set to False for serial execution (development)
 mpi_ranks = 2   # Number of MPI ranks to use (reduced for testing)
 
 # Run simulation
