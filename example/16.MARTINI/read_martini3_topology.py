@@ -18,8 +18,9 @@ def read_martini3_nonbond_params(itp_file):
     
     # Find the nonbond_params section
     in_nonbond_params = False
+    param_count = 0
     
-    for line in lines:
+    for i, line in enumerate(lines):
         line = line.strip()
         
         # Check for nonbond_params section start
@@ -27,13 +28,15 @@ def read_martini3_nonbond_params(itp_file):
             in_nonbond_params = True
             continue
         elif line.startswith('[') and line.endswith(']') and line != '[ nonbond_params ]' and line != '[nonbond_params]':
+            if in_nonbond_params:
+                break
             in_nonbond_params = False
             continue
         
         # Parse nonbond_params lines
         if in_nonbond_params and line and not line.startswith(';'):
             parts = line.split()
-            if len(parts) >= 6:
+            if len(parts) >= 5:
                 type1 = parts[0]
                 type2 = parts[1]
                 func = int(parts[2])
@@ -43,6 +46,9 @@ def read_martini3_nonbond_params(itp_file):
                 # Store both orientations for easy lookup
                 martini_table[(type1, type2)] = (sigma, epsilon)
                 martini_table[(type2, type1)] = (sigma, epsilon)
+                param_count += 1
+                
+
     
     print(f"Read {len(martini_table)//2} unique nonbonded parameter pairs from MARTINI 3.00")
     return martini_table

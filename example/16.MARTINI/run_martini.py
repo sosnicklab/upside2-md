@@ -69,22 +69,22 @@ from read_martini3_topology import read_martini3_atoms, read_martini3_bonds, rea
 main_itp_file = "ff3.00/martini_v3.0.0.itp"
 martini3_table = read_martini3_nonbond_params(main_itp_file)
 
-# Calculate MARTINI 3.00 epsilon and sigma from table for P4 (water) interactions
+# Calculate MARTINI 3.00 epsilon and sigma from table for W (water) interactions
 
 energy_conversion_factor = 2.914952774272
-# Get P4-P4 interaction from MARTINI 3.00 table (sigma, epsilon)
-if ('P4', 'P4') in martini3_table:
-    martini_sigma_table, martini_epsilon_table = martini3_table[('P4', 'P4')]
+# Get W-W interaction from MARTINI 3.00 table (sigma, epsilon)
+if ('W', 'W') in martini3_table:
+    martini_sigma_table, martini_epsilon_table = martini3_table[('W', 'W')]
     martini_epsilon = martini_epsilon_table / energy_conversion_factor  # Convert to UPSIDE units
     martini_sigma = martini_sigma_table * 10.0  # Convert nm to Angstroms
-    print(f"Found P4-P4 interaction in MARTINI 3.00 table: sigma={martini_sigma_table:.3f} nm ({martini_sigma:.1f} Å), epsilon={martini_epsilon_table:.3f} kJ/mol")
+    print(f"Found W-W interaction in MARTINI 3.00 table: sigma={martini_sigma_table:.3f} nm ({martini_sigma:.1f} Å), epsilon={martini_epsilon_table:.3f} kJ/mol")
 else:
-    # Fallback to default values if P4 not found
-    martini_epsilon_table = 4.48  # Default P4-P4 epsilon from MARTINI 3.00
-    martini_sigma_table = 0.47  # Default P4-P4 sigma from MARTINI 3.00 (nm)
+    # Fallback to default values if W-W not found
+    martini_epsilon_table = 4.65  # Default W-W epsilon from MARTINI 3.00
+    martini_sigma_table = 0.47  # Default W-W sigma from MARTINI 3.00 (nm)
     martini_epsilon = martini_epsilon_table / energy_conversion_factor
     martini_sigma = martini_sigma_table * 10.0  # Convert nm to Angstroms
-    print(f"P4-P4 interaction not found in table, using default sigma={martini_sigma_table:.3f} nm ({martini_sigma:.1f} Å), epsilon={martini_epsilon_table:.3f} kJ/mol")
+    print(f"W-W interaction not found in table, using default sigma={martini_sigma_table:.3f} nm ({martini_sigma:.1f} Å), epsilon={martini_epsilon_table:.3f} kJ/mol")
 
 # Unit conversion: set 4πϵ₀ = 1
 # Each unit charge (1 or -1) corresponds to 21.831807297541 after conversion
@@ -100,6 +100,22 @@ dopc_bead_types, dopc_charges = read_martini3_atoms(itp_file, "DOPC")
 print(f"Read DOPC topology from {itp_file}:")
 print(f"  Bead types: {dopc_bead_types}")
 print(f"  Charges: {dopc_charges}")
+
+# Read ion topologies from MARTINI 3.00 ions file
+ions_itp_file = "ff3.00/martini_v3.0.0_ions_v1.itp"
+na_bead_types, na_charges = read_martini3_atoms(ions_itp_file, "NA")
+cl_bead_types, cl_charges = read_martini3_atoms(ions_itp_file, "CL")
+
+print(f"Read ion topologies from {ions_itp_file}:")
+print(f"  NA bead types: {na_bead_types}, charges: {na_charges}")
+print(f"  CL bead types: {cl_bead_types}, charges: {cl_charges}")
+
+# Read water topology from MARTINI 3.00 solvents file
+solvents_itp_file = "ff3.00/martini_v3.0.0_solvents_v1.itp"
+water_bead_types, water_charges = read_martini3_atoms(solvents_itp_file, "W")
+
+print(f"Read water topology from {solvents_itp_file}:")
+print(f"  W bead types: {water_bead_types}, charges: {water_charges}")
 
 # Read DOPC bond topology from MARTINI 3.00 phospholipids file
 dopc_bonds_1indexed, bond_lengths_nm, bond_force_constants_martini = read_martini3_bonds(itp_file, "DOPC")
@@ -208,13 +224,13 @@ pdb_to_martini = {
     'NC3': 'Q1', 'PO4': 'Q5', 'GL1': 'SN4a', 'GL2': 'N4a', 
     'C1A': 'C1', 'D2A': 'C4h', 'C3A': 'C1', 'C4A': 'C1',
     'C1B': 'C1', 'D2B': 'C4h', 'C3B': 'C1', 'C4B': 'C1',
-    # Water and ions (MARTINI 3.00)
-    'W': 'P4', 'NA': 'Qd', 'CL': 'Qa'
+    # Water and ions (MARTINI 3.00) - updated to correct bead types
+    'W': 'W', 'NA': 'TQ5', 'CL': 'TQ5'
 }
 
 martini_charges = {
     'Q1': 1.0, 'Q5': -1.0, 'SN4a': 0.0, 'N4a': 0.0, 'C1': 0.0, 'C4h': 0.0,
-    'P4': 0.0, 'Qd': 1.0, 'Qa': -1.0
+    'W': 0.0, 'TQ5': 0.0  # Charges will be set from topology files
 }
 
 if not os.path.exists(input_pdb_file):
@@ -233,10 +249,37 @@ with open(input_pdb_file, 'r') as f:
             atom_names.append(atom_name)
             residue_id = int(line[22:26])
             residue_ids.append(residue_id)
-            # Map to MARTINI type
-            martini_type = pdb_to_martini.get(atom_name, 'P4')  # Default to water if not found
+            residue_name = line[17:20].strip().upper()
+            
+            # Map to MARTINI type based on residue name and atom name
+            if residue_name == 'DOPC' or residue_name == 'DOP':
+                # For DOPC, use the topology from parameter file
+                if atom_name in dopc_bead_types:
+                    atom_idx = dopc_bead_types.index(atom_name)
+                    martini_type = dopc_bead_types[atom_idx]
+                    charge = dopc_charges[atom_idx]
+                else:
+                    # Fallback to mapping
+                    martini_type = pdb_to_martini.get(atom_name, 'W')
+                    charge = 0.0
+            elif residue_name == 'W':
+                # Water - use topology from parameter file
+                martini_type = water_bead_types[0] if water_bead_types else 'W'
+                charge = water_charges[0] if water_charges else 0.0
+            elif residue_name == 'NA':
+                # Sodium ion - use topology from parameter file
+                martini_type = na_bead_types[0] if na_bead_types else 'TQ5'
+                charge = na_charges[0] if na_charges else 1.0
+            elif residue_name == 'CL':
+                # Chloride ion - use topology from parameter file
+                martini_type = cl_bead_types[0] if cl_bead_types else 'TQ5'
+                charge = cl_charges[0] if cl_charges else -1.0
+            else:
+                # Fallback to mapping
+                martini_type = pdb_to_martini.get(atom_name, 'W')
+                charge = martini_charges.get(martini_type, 0.0)
+            
             atom_types.append(martini_type)
-            charge = martini_charges.get(martini_type, 0.0)
             charges.append(charge)
 
 # Convert lists to numpy arrays
@@ -247,6 +290,19 @@ charges = np.array(charges, dtype=float)
 residue_ids = np.array(residue_ids, dtype=int)
 atom_names = np.array(atom_names)
 n_atoms = len(initial_positions)
+
+# Verify charges are set correctly
+print(f"\n=== Charge Verification ===")
+na_indices = [i for i, name in enumerate(atom_names) if name == 'NA']
+cl_indices = [i for i, name in enumerate(atom_names) if name == 'CL']
+print(f"NA atoms (indices): {na_indices}")
+print(f"CL atoms (indices): {cl_indices}")
+if na_indices:
+    print(f"NA charges: {[charges[i] for i in na_indices]}")
+    print(f"NA bead types: {[atom_types[i] for i in na_indices]}")
+if cl_indices:
+    print(f"CL charges: {[charges[i] for i in cl_indices]}")
+    print(f"CL bead types: {[atom_types[i] for i in cl_indices]}")
 
 # Read box dimensions from CRYST1 record in PDB file
 print(f"Reading box dimensions from {input_pdb_file}...")
@@ -279,8 +335,8 @@ if x_len is None or y_len is None or z_len is None:
 print(f"\n=== System Parameters ===")
 print(f"Box dimensions: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
 print(f"Box volume: {x_len * y_len * z_len:.1f} Å³")
-print(f"P4-P4 sigma from MARTINI 3.00 table: {martini_sigma_table:.3f} nm ({martini_sigma:.1f} Å)")
-print(f"P4-P4 epsilon from MARTINI 3.00 table: {martini_epsilon_table:.1f} kJ/mol")
+print(f"W-W sigma from MARTINI 3.00 table: {martini_sigma_table:.3f} nm ({martini_sigma:.1f} Å)")
+print(f"W-W epsilon from MARTINI 3.00 table: {martini_epsilon_table:.1f} kJ/mol")
 print(f"Converted to UPSIDE units: {martini_epsilon:.6f}")
 print(f"Equivalent in kJ/mol: {martini_epsilon * 2.332:.3f} kJ/mol")
 print(f"Temperature: {T:.2f} UPSIDE units = {T * 350.59:.1f} K")
