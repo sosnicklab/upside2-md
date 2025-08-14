@@ -257,3 +257,41 @@ def read_martini3_angles(itp_file, molecule_name):
     
     print(f"Read {len(angles_1indexed)} angles for {molecule_name} from MARTINI 3.00")
     return angles_1indexed, angle_values_deg, angle_force_constants
+
+
+def read_martini3_masses(itp_file):
+    """
+    Read bead masses from MARTINI 3.00 .itp file.
+    
+    Args:
+        itp_file (str): Path to the .itp file
+        
+    Returns:
+        dict: Dictionary mapping bead types to masses
+    """
+    masses = {}
+    
+    if not os.path.exists(itp_file):
+        print(f"Error: MARTINI 3.00 topology file '{itp_file}' not found!")
+        return masses
+    
+    with open(itp_file, 'r') as f:
+        for line in f:
+            line = line.strip()
+            
+            # Skip comments and empty lines
+            if line.startswith(';') or not line:
+                continue
+                
+            # Parse bead type lines: bead_type mass charge atom_type charge_group
+            parts = line.split()
+            if len(parts) >= 2:
+                try:
+                    bead_type = parts[0]
+                    mass = float(parts[1])
+                    masses[bead_type] = mass
+                except (ValueError, IndexError):
+                    continue
+    
+    print(f"Read {len(masses)} bead masses from MARTINI 3.00")
+    return masses

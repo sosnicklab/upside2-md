@@ -63,7 +63,7 @@ disable_barostat = False  # Set to True to run NVT instead of NPT
 thermostat_interval = 1  # Apply thermostat every step for stability
 
 # Import topology reader for MARTINI 3.00
-from read_martini3_topology import read_martini3_atoms, read_martini3_bonds, read_martini3_angles, read_martini3_nonbond_params
+from read_martini3_topology import read_martini3_atoms, read_martini3_bonds, read_martini3_angles, read_martini3_nonbond_params, read_martini3_masses
 
 # Read MARTINI 3.00 nonbonded parameters
 main_itp_file = "ff3.00/martini_v3.0.0.itp"
@@ -116,6 +116,13 @@ water_bead_types, water_charges = read_martini3_atoms(solvents_itp_file, "W")
 
 print(f"Read water topology from {solvents_itp_file}:")
 print(f"  W bead types: {water_bead_types}, charges: {water_charges}")
+
+# Read bead masses from MARTINI 3.00 main file
+martini_masses = read_martini3_masses(main_itp_file)
+print(f"Read bead masses from {main_itp_file}:")
+for bead_type in ['W', 'TQ5', 'Q1', 'Q5', 'SN4a', 'N4a', 'C1', 'C4h']:
+    if bead_type in martini_masses:
+        print(f"  {bead_type}: {martini_masses[bead_type]}")
 
 # Read DOPC bond topology from MARTINI 3.00 phospholipids file
 dopc_bonds_1indexed, bond_lengths_nm, bond_force_constants_martini = read_martini3_bonds(itp_file, "DOPC")
@@ -660,12 +667,41 @@ with tb.open_file(input_file, 'w') as t:
     mom_array._v_attrs.n_atoms = n_atoms
     mom_array._v_attrs.dim = 3
     mom_array._v_attrs.initialized = True
-    mass = np.ones(n_atoms, dtype='f4') * 72.0  # Set mass to 72
+    # Assign masses based on bead types from MARTINI 3.00 topology
+    # UPSIDE expects masses relative to a reference mass (72.0 for MARTINI)
+    mass = np.zeros(n_atoms, dtype='f4')
+    reference_mass = 72.0  # Reference mass for MARTINI
+    for i, bead_type in enumerate(atom_types):
+        if bead_type in martini_masses:
+            # Normalize mass relative to reference mass
+            mass[i] = martini_masses[bead_type] / reference_mass
+        else:
+            # Fallback to default mass if bead type not found
+            mass[i] = 1.0  # Normalized to reference mass
+            print(f"WARNING: Bead type '{bead_type}' not found in mass table, using default normalized mass 1.0")
     mass_array = t.create_array(input_grp, 'mass', obj=mass)
     mass_array._v_attrs.arguments = np.array([b'mass'])
     mass_array._v_attrs.shape = mass.shape
     mass_array._v_attrs.n_atoms = n_atoms
     mass_array._v_attrs.initialized = True
+    
+    # Print mass distribution for verification
+    unique_masses, mass_counts = np.unique(mass, return_counts=True)
+    print(f"Mass distribution:")
+    for m, count in zip(unique_masses, mass_counts):
+        print(f"  Mass {m}: {count} atoms")
+    
+    # Print mass for each bead type
+    print(f"\nMass per bead type:")
+    bead_type_masses = {}
+    for i, bead_type in enumerate(atom_types):
+        if bead_type not in bead_type_masses:
+            bead_type_masses[bead_type] = mass[i]
+    
+    for bead_type in sorted(bead_type_masses.keys()):
+        normalized_mass = bead_type_masses[bead_type]
+        actual_mass = normalized_mass * reference_mass
+        print(f"  {bead_type}: {normalized_mass:.3f} (normalized), {actual_mass:.1f} (actual mass units)")
     type_array = t.create_array(input_grp, 'type', obj=atom_types.astype('S4'))
     type_array._v_attrs.arguments = np.array([b'type'])
     type_array._v_attrs.shape = atom_types.shape
@@ -704,7 +740,7 @@ with tb.open_file(input_file, 'w') as t:
     martini_group._v_attrs.cache_buffer = 1.0
     martini_group._v_attrs.initialized = True
     martini_group._v_attrs.force_cap = 0  # Disable force capping for MD
-    martini_group._v_attrs.mass_scale = 1.0 / 72.0  # Mass scaling for MARTINI (mass = 72)
+    martini_group._v_attrs.mass_scale = 1.0 / 72.0  # Mass scaling for MARTINI (reference mass = 72)
     martini_group._v_attrs.x_len = x_len
     martini_group._v_attrs.y_len = y_len
     martini_group._v_attrs.z_len = z_len
@@ -778,7 +814,7 @@ with tb.open_file(input_file, 'w') as t:
             
         bond_group._v_attrs.arguments = np.array([b'pos'])
         bond_group._v_attrs.initialized = True
-        bond_group._v_attrs.mass_scale = 1.0 / 72.0  # Mass scaling for MARTINI (mass = 72)
+        bond_group._v_attrs.mass_scale = 1.0 / 72.0  # Mass scaling for MARTINI (reference mass = 72)
         bond_group._v_attrs.x_len = x_len
         bond_group._v_attrs.y_len = y_len
         bond_group._v_attrs.z_len = z_len
@@ -803,7 +839,7 @@ with tb.open_file(input_file, 'w') as t:
             
         angle_group._v_attrs.arguments = np.array([b'pos'])
         angle_group._v_attrs.initialized = True
-        angle_group._v_attrs.mass_scale = 1.0 / 72.0  # Mass scaling for MARTINI (mass = 72)
+        angle_group._v_attrs.mass_scale = 1.0 / 72.0  # Mass scaling for MARTINI (reference mass = 72)
         angle_group._v_attrs.x_len = x_len
         angle_group._v_attrs.y_len = y_len
         angle_group._v_attrs.z_len = z_len
