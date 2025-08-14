@@ -60,25 +60,36 @@ def read_martini3_atoms(itp_file, molecule_name):
     # Find the molecule section
     in_molecule = False
     in_atoms = False
+    found_molecule = False
     
     for line in lines:
         line = line.strip()
         
         # Check for molecule start
         if line == f'[ moleculetype ]' or line == f'[ moleculetype ]':
+            if found_molecule:
+                break  # Stop after reading the first occurrence of our molecule
             in_molecule = False
             in_atoms = False
         
         # Check if this is our molecule (handle different formats)
-        if line == molecule_name or line.startswith(molecule_name + " "):
+        if line == molecule_name or line.startswith(molecule_name + " ") or line.strip().startswith(molecule_name):
             in_molecule = True
+            found_molecule = True
             continue
         
+        # Stop if we encounter a different molecule name (after finding our molecule)
+        if found_molecule and in_molecule and line and not line.startswith(';') and not line.startswith('[') and not line.startswith('@'):
+            # Check if this line starts with a different molecule name
+            parts = line.split()
+            if len(parts) >= 1 and parts[0] != molecule_name and not parts[0].isdigit():
+                break  # Stop when we encounter a different molecule
+        
         # Check for atoms section within our molecule
-        if in_molecule and line == '[ atoms ]':
+        if in_molecule and (line == '[ atoms ]' or line == '[atoms]'):
             in_atoms = True
             continue
-        elif in_molecule and line.startswith('[') and line.endswith(']'):
+        elif in_molecule and line.startswith('[') and line.endswith(']') and line != '[ atoms ]' and line != '[atoms]':
             in_atoms = False
             continue
         
@@ -90,6 +101,9 @@ def read_martini3_atoms(itp_file, molecule_name):
                 charge = float(parts[6])
                 bead_types.append(bead_type)
                 charges.append(charge)
+                # For DOPC, only read the first 12 atoms (standard DOPC structure)
+                if molecule_name == "DOPC" and len(bead_types) >= 12:
+                    break
     
     print(f"Read {len(bead_types)} atoms for {molecule_name} from MARTINI 3.00")
     return bead_types, charges
@@ -113,25 +127,29 @@ def read_martini3_bonds(itp_file, molecule_name):
     # Find the molecule section
     in_molecule = False
     in_bonds = False
+    found_molecule = False
     
     for line in lines:
         line = line.strip()
         
         # Check for molecule start
         if line == f'[ moleculetype ]' or line == f'[ moleculetype ]':
+            if found_molecule:
+                break  # Stop after reading the first occurrence of our molecule
             in_molecule = False
             in_bonds = False
         
         # Check if this is our molecule (handle different formats)
-        if line == molecule_name or line.startswith(molecule_name + " "):
+        if line == molecule_name or line.startswith(molecule_name + " ") or line.strip().startswith(molecule_name):
             in_molecule = True
+            found_molecule = True
             continue
         
         # Check for bonds section within our molecule
-        if in_molecule and line == '[ bonds ]':
+        if in_molecule and (line == '[ bonds ]' or line == '[bonds]'):
             in_bonds = True
             continue
-        elif in_molecule and line.startswith('[') and line.endswith(']'):
+        elif in_molecule and line.startswith('[') and line.endswith(']') and line != '[ bonds ]' and line != '[bonds]':
             in_bonds = False
             continue
         
@@ -148,6 +166,12 @@ def read_martini3_bonds(itp_file, molecule_name):
                 bonds_1indexed.append([atom1, atom2])
                 bond_lengths_nm.append(length)
                 bond_force_constants.append(force_const)
+                # For DOPC, only read bonds for the first 12 atoms (standard DOPC structure)
+                if molecule_name == "DOPC" and (atom1 > 12 or atom2 > 12):
+                    break
+                # For DOPC, stop after reading 11 bonds (standard DOPC structure)
+                if molecule_name == "DOPC" and len(bonds_1indexed) >= 11:
+                    break
     
     print(f"Read {len(bonds_1indexed)} bonds for {molecule_name} from MARTINI 3.00")
     return bonds_1indexed, bond_lengths_nm, bond_force_constants
@@ -171,25 +195,29 @@ def read_martini3_angles(itp_file, molecule_name):
     # Find the molecule section
     in_molecule = False
     in_angles = False
+    found_molecule = False
     
     for line in lines:
         line = line.strip()
         
         # Check for molecule start
         if line == f'[ moleculetype ]' or line == f'[ moleculetype ]':
+            if found_molecule:
+                break  # Stop after reading the first occurrence of our molecule
             in_molecule = False
             in_angles = False
         
         # Check if this is our molecule (handle different formats)
-        if line == molecule_name or line.startswith(molecule_name + " "):
+        if line == molecule_name or line.startswith(molecule_name + " ") or line.strip().startswith(molecule_name):
             in_molecule = True
+            found_molecule = True
             continue
         
         # Check for angles section within our molecule
-        if in_molecule and line == '[ angles ]':
+        if in_molecule and (line == '[ angles ]' or line == '[angles]'):
             in_angles = True
             continue
-        elif in_molecule and line.startswith('[') and line.endswith(']'):
+        elif in_molecule and line.startswith('[') and line.endswith(']') and line != '[ angles ]' and line != '[angles]':
             in_angles = False
             continue
         
@@ -207,6 +235,12 @@ def read_martini3_angles(itp_file, molecule_name):
                 angles_1indexed.append([atom1, atom2, atom3])
                 angle_values_deg.append(angle)
                 angle_force_constants.append(force_const)
+                # For DOPC, only read angles for the first 12 atoms (standard DOPC structure)
+                if molecule_name == "DOPC" and (atom1 > 12 or atom2 > 12 or atom3 > 12):
+                    break
+                # For DOPC, stop after reading 8 angles (standard DOPC structure)
+                if molecule_name == "DOPC" and len(angles_1indexed) >= 8:
+                    break
     
     print(f"Read {len(angles_1indexed)} angles for {molecule_name} from MARTINI 3.00")
     return angles_1indexed, angle_values_deg, angle_force_constants

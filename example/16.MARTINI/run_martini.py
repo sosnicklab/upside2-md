@@ -25,7 +25,7 @@ y_len = None  # Will be set from CRYST1 record
 z_len = None  # Will be set from CRYST1 record
 
 # MARTINI parameters - will be calculated from table below
-martini_sigma   = 4.7  # MARTINI water sigma (Angstroms)
+# martini_sigma will be set from MARTINI 3.00 table
 dielectric_constant = 15.0  # MARTINI dielectric constant (standard value)
 
 # Optimization settings - All MARTINI interactions use spline interpolation for maximum performance
@@ -69,19 +69,22 @@ from read_martini3_topology import read_martini3_atoms, read_martini3_bonds, rea
 main_itp_file = "ff3.00/martini_v3.0.0.itp"
 martini3_table = read_martini3_nonbond_params(main_itp_file)
 
-# Calculate MARTINI 3.00 epsilon from table for P4 (water) interactions
+# Calculate MARTINI 3.00 epsilon and sigma from table for P4 (water) interactions
 
 energy_conversion_factor = 2.914952774272
 # Get P4-P4 interaction from MARTINI 3.00 table (sigma, epsilon)
 if ('P4', 'P4') in martini3_table:
     martini_sigma_table, martini_epsilon_table = martini3_table[('P4', 'P4')]
     martini_epsilon = martini_epsilon_table / energy_conversion_factor  # Convert to UPSIDE units
-    print(f"Found P4-P4 interaction in MARTINI 3.00 table: sigma={martini_sigma_table:.3f} nm, epsilon={martini_epsilon_table:.3f} kJ/mol")
+    martini_sigma = martini_sigma_table * 10.0  # Convert nm to Angstroms
+    print(f"Found P4-P4 interaction in MARTINI 3.00 table: sigma={martini_sigma_table:.3f} nm ({martini_sigma:.1f} Å), epsilon={martini_epsilon_table:.3f} kJ/mol")
 else:
     # Fallback to default values if P4 not found
     martini_epsilon_table = 4.48  # Default P4-P4 epsilon from MARTINI 3.00
+    martini_sigma_table = 0.47  # Default P4-P4 sigma from MARTINI 3.00 (nm)
     martini_epsilon = martini_epsilon_table / energy_conversion_factor
-    print(f"P4-P4 interaction not found in table, using default epsilon={martini_epsilon_table:.3f} kJ/mol")
+    martini_sigma = martini_sigma_table * 10.0  # Convert nm to Angstroms
+    print(f"P4-P4 interaction not found in table, using default sigma={martini_sigma_table:.3f} nm ({martini_sigma:.1f} Å), epsilon={martini_epsilon_table:.3f} kJ/mol")
 
 # Unit conversion: set 4πϵ₀ = 1
 # Each unit charge (1 or -1) corresponds to 21.831807297541 after conversion
@@ -276,6 +279,7 @@ if x_len is None or y_len is None or z_len is None:
 print(f"\n=== System Parameters ===")
 print(f"Box dimensions: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
 print(f"Box volume: {x_len * y_len * z_len:.1f} Å³")
+print(f"P4-P4 sigma from MARTINI 3.00 table: {martini_sigma_table:.3f} nm ({martini_sigma:.1f} Å)")
 print(f"P4-P4 epsilon from MARTINI 3.00 table: {martini_epsilon_table:.1f} kJ/mol")
 print(f"Converted to UPSIDE units: {martini_epsilon:.6f}")
 print(f"Equivalent in kJ/mol: {martini_epsilon * 2.332:.3f} kJ/mol")
