@@ -291,18 +291,7 @@ residue_ids = np.array(residue_ids, dtype=int)
 atom_names = np.array(atom_names)
 n_atoms = len(initial_positions)
 
-# Verify charges are set correctly
-print(f"\n=== Charge Verification ===")
-na_indices = [i for i, name in enumerate(atom_names) if name == 'NA']
-cl_indices = [i for i, name in enumerate(atom_names) if name == 'CL']
-print(f"NA atoms (indices): {na_indices}")
-print(f"CL atoms (indices): {cl_indices}")
-if na_indices:
-    print(f"NA charges: {[charges[i] for i in na_indices]}")
-    print(f"NA bead types: {[atom_types[i] for i in na_indices]}")
-if cl_indices:
-    print(f"CL charges: {[charges[i] for i in cl_indices]}")
-    print(f"CL bead types: {[atom_types[i] for i in cl_indices]}")
+
 
 # Read box dimensions from CRYST1 record in PDB file
 print(f"Reading box dimensions from {input_pdb_file}...")
