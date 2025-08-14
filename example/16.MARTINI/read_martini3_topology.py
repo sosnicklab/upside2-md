@@ -1,46 +1,51 @@
+#!/usr/bin/env python3
+
 import os
-import re
 
 def read_martini3_nonbond_params(itp_file):
     """
-    Read MARTINI 3.00 nonbonded parameters from the main itp file
-    Returns a dictionary mapping (type1, type2) -> (sigma, epsilon)
+    Read MARTINI 3.00 nonbonded parameters from the main .itp file
+    Returns a dictionary mapping (type1, type2) tuples to (sigma, epsilon) values
     """
-    martini3_table = {}
+    martini_table = {}
     
     if not os.path.exists(itp_file):
         print(f"Error: MARTINI 3.00 parameter file '{itp_file}' not found!")
-        return martini3_table
+        return martini_table
     
     with open(itp_file, 'r') as f:
         lines = f.readlines()
     
     # Find the nonbond_params section
-    in_nonbond_section = False
+    in_nonbond_params = False
+    
     for line in lines:
         line = line.strip()
-        if line == '[ nonbond_params ]':
-            in_nonbond_section = True
+        
+        # Check for nonbond_params section start
+        if line == '[ nonbond_params ]' or line == '[nonbond_params]':
+            in_nonbond_params = True
             continue
-        elif line.startswith('[') and line.endswith(']'):
-            in_nonbond_section = False
+        elif line.startswith('[') and line.endswith(']') and line != '[ nonbond_params ]' and line != '[nonbond_params]':
+            in_nonbond_params = False
             continue
         
-        if in_nonbond_section and line and not line.startswith(';'):
-            # Parse line: type1 type2 func sigma epsilon
+        # Parse nonbond_params lines
+        if in_nonbond_params and line and not line.startswith(';'):
             parts = line.split()
-            if len(parts) >= 5:
+            if len(parts) >= 6:
                 type1 = parts[0]
                 type2 = parts[1]
-                sigma = float(parts[3])
-                epsilon = float(parts[4])
+                func = int(parts[2])
+                sigma = float(parts[3])  # nm
+                epsilon = float(parts[4])  # kJ/mol
                 
-                # Store both directions for symmetric interactions
-                martini3_table[(type1, type2)] = (sigma, epsilon)
-                martini3_table[(type2, type1)] = (sigma, epsilon)
+                # Store both orientations for easy lookup
+                martini_table[(type1, type2)] = (sigma, epsilon)
+                martini_table[(type2, type1)] = (sigma, epsilon)
     
-    print(f"Read {len(martini3_table)//2} unique nonbonded parameter pairs from MARTINI 3.00")
-    return martini3_table
+    print(f"Read {len(martini_table)//2} unique nonbonded parameter pairs from MARTINI 3.00")
+    return martini_table
 
 def read_martini3_atoms(itp_file, molecule_name):
     """
@@ -101,9 +106,7 @@ def read_martini3_atoms(itp_file, molecule_name):
                 charge = float(parts[6])
                 bead_types.append(bead_type)
                 charges.append(charge)
-                # For DOPC, only read the first 12 atoms (standard DOPC structure)
-                if molecule_name == "DOPC" and len(bead_types) >= 12:
-                    break
+                # Read all atoms for the molecule - no hardcoded limits
     
     print(f"Read {len(bead_types)} atoms for {molecule_name} from MARTINI 3.00")
     return bead_types, charges
@@ -145,6 +148,13 @@ def read_martini3_bonds(itp_file, molecule_name):
             found_molecule = True
             continue
         
+        # Stop if we encounter a different molecule name (after finding our molecule)
+        if found_molecule and in_molecule and line and not line.startswith(';') and not line.startswith('[') and not line.startswith('@'):
+            # Check if this line starts with a different molecule name
+            parts = line.split()
+            if len(parts) >= 1 and parts[0] != molecule_name and not parts[0].isdigit():
+                break  # Stop when we encounter a different molecule
+        
         # Check for bonds section within our molecule
         if in_molecule and (line == '[ bonds ]' or line == '[bonds]'):
             in_bonds = True
@@ -166,12 +176,7 @@ def read_martini3_bonds(itp_file, molecule_name):
                 bonds_1indexed.append([atom1, atom2])
                 bond_lengths_nm.append(length)
                 bond_force_constants.append(force_const)
-                # For DOPC, only read bonds for the first 12 atoms (standard DOPC structure)
-                if molecule_name == "DOPC" and (atom1 > 12 or atom2 > 12):
-                    break
-                # For DOPC, stop after reading 11 bonds (standard DOPC structure)
-                if molecule_name == "DOPC" and len(bonds_1indexed) >= 11:
-                    break
+                # Read all bonds for the molecule - no hardcoded limits
     
     print(f"Read {len(bonds_1indexed)} bonds for {molecule_name} from MARTINI 3.00")
     return bonds_1indexed, bond_lengths_nm, bond_force_constants
@@ -213,6 +218,13 @@ def read_martini3_angles(itp_file, molecule_name):
             found_molecule = True
             continue
         
+        # Stop if we encounter a different molecule name (after finding our molecule)
+        if found_molecule and in_molecule and line and not line.startswith(';') and not line.startswith('[') and not line.startswith('@'):
+            # Check if this line starts with a different molecule name
+            parts = line.split()
+            if len(parts) >= 1 and parts[0] != molecule_name and not parts[0].isdigit():
+                break  # Stop when we encounter a different molecule
+        
         # Check for angles section within our molecule
         if in_molecule and (line == '[ angles ]' or line == '[angles]'):
             in_angles = True
@@ -235,12 +247,7 @@ def read_martini3_angles(itp_file, molecule_name):
                 angles_1indexed.append([atom1, atom2, atom3])
                 angle_values_deg.append(angle)
                 angle_force_constants.append(force_const)
-                # For DOPC, only read angles for the first 12 atoms (standard DOPC structure)
-                if molecule_name == "DOPC" and (atom1 > 12 or atom2 > 12 or atom3 > 12):
-                    break
-                # For DOPC, stop after reading 8 angles (standard DOPC structure)
-                if molecule_name == "DOPC" and len(angles_1indexed) >= 8:
-                    break
+                # Read all angles for the molecule - no hardcoded limits
     
     print(f"Read {len(angles_1indexed)} angles for {molecule_name} from MARTINI 3.00")
     return angles_1indexed, angle_values_deg, angle_force_constants

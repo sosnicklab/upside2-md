@@ -470,10 +470,7 @@ if dopc_count > 0:
     else:
         print("WARNING: Could not identify bilayer headgroups")
 
-# DOPC bead names (for topology) - MARTINI 3.00
-DOPC_NAMES = ['NC3', 'PO4', 'GL1', 'GL2', 'C1A', 'D2A', 'C3A', 'C4A', 'C1B', 'D2B', 'C3B', 'C4B']
-
-# Create bonds and angles for DOPC lipids
+# Create bonds and angles for DOPC lipids using dynamic topology from parameter files
 bonds_list = []
 bond_lengths_list = []
 bond_force_constants_list = []
@@ -484,28 +481,35 @@ angle_force_constants_list = []
 # When building bonds/angles, iterate over dopc_molecules
 for mol in dopc_molecules:
     _, atom_names_mol, atom_indices = mol
-    # Map DOPC_NAMES to atom_indices for this molecule
+    # Map atom names to indices for this molecule
     name_to_idx = {name: idx for name, idx in zip(atom_names_mol, atom_indices)}
-    # Create bonds for this lipid
+    
+    # Create bonds for this lipid using the actual topology from parameter files
     for i, (bond_idx1, bond_idx2) in enumerate(dopc_bonds):
-        atom1_name = DOPC_NAMES[bond_idx1]
-        atom2_name = DOPC_NAMES[bond_idx2]
-        atom1 = name_to_idx[atom1_name]
-        atom2 = name_to_idx[atom2_name]
-        bonds_list.append([atom1, atom2])
-        bond_lengths_list.append(bond_lengths[i])
-        bond_force_constants_list.append(bond_force_constants[i])
-    # Create angles for this lipid
+        # Use 0-indexed bond indices to get atom names from the topology
+        if bond_idx1 < len(dopc_bead_types) and bond_idx2 < len(dopc_bead_types):
+            atom1_name = atom_names_mol[bond_idx1]  # Use actual atom names from PDB
+            atom2_name = atom_names_mol[bond_idx2]  # Use actual atom names from PDB
+            atom1 = name_to_idx[atom1_name]
+            atom2 = name_to_idx[atom2_name]
+            bonds_list.append([atom1, atom2])
+            bond_lengths_list.append(bond_lengths[i])
+            bond_force_constants_list.append(bond_force_constants[i])
+    
+    # Create angles for this lipid using the actual topology from parameter files
     for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(angle_atoms_martini):
-        atom1_name = DOPC_NAMES[angle_idx1]
-        atom2_name = DOPC_NAMES[angle_idx2]
-        atom3_name = DOPC_NAMES[angle_idx3]
-        atom1 = name_to_idx[atom1_name]
-        atom2 = name_to_idx[atom2_name]
-        atom3 = name_to_idx[atom3_name]
-        angles_list.append([atom1, atom2, atom3])
-        angle_equil_deg_list.append(angle_equil_deg[i])
-        angle_force_constants_list.append(angle_force_constants[i])
+        # Use 0-indexed angle indices to get atom names from the topology
+        if (angle_idx1 < len(dopc_bead_types) and angle_idx2 < len(dopc_bead_types) and 
+            angle_idx3 < len(dopc_bead_types)):
+            atom1_name = atom_names_mol[angle_idx1]  # Use actual atom names from PDB
+            atom2_name = atom_names_mol[angle_idx2]  # Use actual atom names from PDB
+            atom3_name = atom_names_mol[angle_idx3]  # Use actual atom names from PDB
+            atom1 = name_to_idx[atom1_name]
+            atom2 = name_to_idx[atom2_name]
+            atom3 = name_to_idx[atom3_name]
+            angles_list.append([atom1, atom2, atom3])
+            angle_equil_deg_list.append(angle_equil_deg[i])
+            angle_force_constants_list.append(angle_force_constants[i])
 
 print(f"Created {len(bonds_list)} bonds for {dopc_count} DOPC lipids")
 print(f"Created {len(angles_list)} angles for {dopc_count} DOPC lipids")
@@ -519,21 +523,24 @@ if dopc_molecules:
     
     print("Bonds:")
     for i, (bond_idx1, bond_idx2) in enumerate(dopc_bonds[:5]):  # Show first 5 bonds
-        atom1_name = DOPC_NAMES[bond_idx1]
-        atom2_name = DOPC_NAMES[bond_idx2]
-        atom1 = name_to_idx[atom1_name]
-        atom2 = name_to_idx[atom2_name]
-        print(f"  {i+1}: {atom1_name}({atom1}) - {atom2_name}({atom2})")
+        if bond_idx1 < len(atom_names_mol) and bond_idx2 < len(atom_names_mol):
+            atom1_name = atom_names_mol[bond_idx1]
+            atom2_name = atom_names_mol[bond_idx2]
+            atom1 = name_to_idx[atom1_name]
+            atom2 = name_to_idx[atom2_name]
+            print(f"  {i+1}: {atom1_name}({atom1}) - {atom2_name}({atom2})")
     
     print("Angles:")
     for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(angle_atoms_martini[:5]):  # Show first 5 angles
-        atom1_name = DOPC_NAMES[angle_idx1]
-        atom2_name = DOPC_NAMES[angle_idx2]
-        atom3_name = DOPC_NAMES[angle_idx3]
-        atom1 = name_to_idx[atom1_name]
-        atom2 = name_to_idx[atom2_name]
-        atom3 = name_to_idx[atom3_name]
-        print(f"  {i+1}: {atom1_name}({atom1}) - {atom2_name}({atom2}) - {atom3_name}({atom3})")
+        if (angle_idx1 < len(atom_names_mol) and angle_idx2 < len(atom_names_mol) and 
+            angle_idx3 < len(atom_names_mol)):
+            atom1_name = atom_names_mol[angle_idx1]
+            atom2_name = atom_names_mol[angle_idx2]
+            atom3_name = atom_names_mol[angle_idx3]
+            atom1 = name_to_idx[atom1_name]
+            atom2 = name_to_idx[atom2_name]
+            atom3 = name_to_idx[atom3_name]
+            print(f"  {i+1}: {atom1_name}({atom1}) - {atom2_name}({atom2}) - {atom3_name}({atom3})")
 
 # Skip minimization entirely - use original structure
 print("\n=== SKIPPING MINIMIZATION ===")
