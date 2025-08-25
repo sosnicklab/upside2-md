@@ -1,0 +1,346 @@
+[
+  {
+    "hit_number": null,
+    "location": null,
+    "args": {
+      "new_buffer": "1.70000005",
+      "this": "0x555555848a50"
+    },
+    "backtrace": [
+      "#0  PairlistComputation<false>::change_cache_buffer (new_buffer=1.70000005, this=0x555555848a50) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182",
+      "#1  InteractionGraph<(anonymous namespace)::ProteinHBondInteraction>::update_cutoffs (this=this@entry=0x5555558489c0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408",
+      "#2  0x0000555555607c5e in InteractionGraph<(anonymous namespace)::ProteinHBondInteraction>::InteractionGraph (this=0x5555558489c0, grp=144115188075855890, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371",
+      "#3  0x000055555560b2b0 in ProteinHBond::ProteinHBond (this=0x555555848980, grp=144115188075855890, infer_=...) at /home/okleinmann/projects/upside2-md/src/hbond.cpp:367",
+      "#4  0x000055555560b3ef in RegisterNodeType<ProteinHBond, 1>::RegisterNodeType(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)::{lambda(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&)#1}::operator()(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&) const (__closure=<optimized out>, grp=144115188075855890, args=std::vector of length 1, capacity 1 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:331"
+    ],
+    "dereferenced_args": {
+      "new_buffer": "1.70000005",
+      "this": "0x555555848a50",
+      "this_type": "this type: PairlistComputation<false>"
+    },
+    "this_members": {
+      "this->.n_elem1": "8",
+      "this->.n_elem2": "9",
+      "this->.edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.edge_id1": "std::unique_ptr<int []> = {",
+      "this->.edge_id2": "std::unique_ptr<int []> = {",
+      "this->.n_edge": "0",
+      "this->.cache_valid": "false",
+      "this->.cache_buffer": "1",
+      "this->.cache_cutoff": "0",
+      "this->.cache_pos1": "std::unique_ptr<float []> = {",
+      "this->.cache_pos2": "std::unique_ptr<float []> = {",
+      "this->.cache_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_n_edge": "0"
+    },
+    "test_output_of_./build/testbridge": "",
+    "test_output_change_cache_buffer": "symmetric: 1.70000005\nnon_symmetric: 1.70000005\n"
+  },
+  {
+    "hit_number": null,
+    "location": null,
+    "args": {
+      "new_buffer": "1.79999995",
+      "this": "0x5555559546f8"
+    },
+    "backtrace": [
+      "#0  PairlistComputation<false>::change_cache_buffer (new_buffer=1.79999995, this=0x5555559546f8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182",
+      "#1  InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::update_cutoffs (this=this@entry=0x555555954668) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408",
+      "#2  0x00005555555f00b2 in InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::InteractionGraph (this=0x555555954668, grp=144115188075855894, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371",
+      "#3  0x00005555555f5381 in (anonymous namespace)::HbondEnvironmentCoverage::HbondEnvironmentCoverage (this=0x555555954630, grp=144115188075855894, pos1_=..., pos2_=...) at /home/okleinmann/projects/upside2-md/src/environment.cpp:355",
+      "#4  0x00005555555f5457 in operator() (__closure=<optimized out>, grp=144115188075855894, args=std::vector of length 2, capacity 2 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:342"
+    ],
+    "dereferenced_args": {
+      "new_buffer": "1.79999995",
+      "this": "0x5555559546f8",
+      "this_type": "this type: PairlistComputation<false>"
+    },
+    "this_members": {
+      "this->.n_elem1": "8",
+      "this->.n_elem2": "9",
+      "this->.edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.edge_id1": "std::unique_ptr<int []> = {",
+      "this->.edge_id2": "std::unique_ptr<int []> = {",
+      "this->.n_edge": "0",
+      "this->.cache_valid": "false",
+      "this->.cache_buffer": "1",
+      "this->.cache_cutoff": "0",
+      "this->.cache_pos1": "std::unique_ptr<float []> = {",
+      "this->.cache_pos2": "std::unique_ptr<float []> = {",
+      "this->.cache_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_n_edge": "0"
+    },
+    "test_output_of_./build/testbridge": "",
+    "test_output_change_cache_buffer": "symmetric: 1.79999995\nnon_symmetric: 1.79999995\n"
+  },
+  {
+    "hit_number": null,
+    "location": null,
+    "args": {
+      "new_buffer": "1.79999995",
+      "this": "0x555555984018"
+    },
+    "backtrace": [
+      "#0  PairlistComputation<false>::change_cache_buffer (new_buffer=1.79999995, this=0x555555984018) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182",
+      "#1  InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::update_cutoffs (this=this@entry=0x555555983f88) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408",
+      "#2  0x00005555555f00b2 in InteractionGraph<(anonymous namespace)::HbondEnvironmentCoverageInteraction>::InteractionGraph (this=0x555555983f88, grp=144115188075855895, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371",
+      "#3  0x00005555555f5381 in (anonymous namespace)::HbondEnvironmentCoverage::HbondEnvironmentCoverage (this=0x555555983f50, grp=144115188075855895, pos1_=..., pos2_=...) at /home/okleinmann/projects/upside2-md/src/environment.cpp:355",
+      "#4  0x00005555555f5457 in operator() (__closure=<optimized out>, grp=144115188075855895, args=std::vector of length 2, capacity 2 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:342"
+    ],
+    "dereferenced_args": {
+      "new_buffer": "1.79999995",
+      "this": "0x555555984018",
+      "this_type": "this type: PairlistComputation<false>"
+    },
+    "this_members": {
+      "this->.n_elem1": "9",
+      "this->.n_elem2": "8",
+      "this->.edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.edge_id1": "std::unique_ptr<int []> = {",
+      "this->.edge_id2": "std::unique_ptr<int []> = {",
+      "this->.n_edge": "0",
+      "this->.cache_valid": "false",
+      "this->.cache_buffer": "1",
+      "this->.cache_cutoff": "0",
+      "this->.cache_pos1": "std::unique_ptr<float []> = {",
+      "this->.cache_pos2": "std::unique_ptr<float []> = {",
+      "this->.cache_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_n_edge": "0"
+    },
+    "test_output_of_./build/testbridge": "",
+    "test_output_change_cache_buffer": "symmetric: 1.79999995\nnon_symmetric: 1.79999995\n"
+  },
+  {
+    "hit_number": null,
+    "location": null,
+    "args": {
+      "new_buffer": "2",
+      "this": "0x555555965cb8"
+    },
+    "backtrace": [
+      "#0  PairlistComputation<false>::change_cache_buffer (new_buffer=2, this=0x555555965cb8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182",
+      "#1  InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::update_cutoffs (this=this@entry=0x555555965c28) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408",
+      "#2  0x0000555555609158 in InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::InteractionGraph (this=0x555555965c28, grp=144115188075855896, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371",
+      "#3  0x00005555556097f2 in HBondCoverage::HBondCoverage (this=0x555555965bf0, grp=144115188075855896, infer_=..., sidechains_=warning: RTTI symbol not found for class '(anonymous namespace)::PlacementNode<(anonymous namespace)::FixedPlacement<6>, ((anonymous namespace)::PlaceT)2, ((anonymous namespace)::PlaceT)1>'",
+      "#4  0x00005555556098cf in RegisterNodeType<HBondCoverage, 2>::RegisterNodeType(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)::{lambda(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&)#1}::operator()(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&) const (__closure=<optimized out>, grp=144115188075855896, args=std::vector of length 2, capacity 2 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:342"
+    ],
+    "dereferenced_args": {
+      "new_buffer": "2",
+      "this": "0x555555965cb8",
+      "this_type": "this type: PairlistComputation<false>"
+    },
+    "this_members": {
+      "this->.n_elem1": "17",
+      "this->.n_elem2": "36",
+      "this->.edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.edge_id1": "std::unique_ptr<int []> = {",
+      "this->.edge_id2": "std::unique_ptr<int []> = {",
+      "this->.n_edge": "0",
+      "this->.cache_valid": "false",
+      "this->.cache_buffer": "1",
+      "this->.cache_cutoff": "7.55507697e+31",
+      "this->.cache_pos1": "std::unique_ptr<float []> = {",
+      "this->.cache_pos2": "std::unique_ptr<float []> = {",
+      "this->.cache_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_n_edge": "0"
+    },
+    "test_output_of_./build/testbridge": "",
+    "test_output_change_cache_buffer": "symmetric: 2.00000000\nnon_symmetric: 2.00000000\n"
+  },
+  {
+    "hit_number": null,
+    "location": null,
+    "args": {
+      "new_buffer": "2",
+      "this": "0x5555559ef7d8"
+    },
+    "backtrace": [
+      "#0  PairlistComputation<false>::change_cache_buffer (new_buffer=2, this=0x5555559ef7d8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182",
+      "#1  InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::update_cutoffs (this=this@entry=0x5555559ef748) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408",
+      "#2  0x0000555555609158 in InteractionGraph<(anonymous namespace)::HBondCoverageInteraction>::InteractionGraph (this=0x5555559ef748, grp=144115188075855897, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371",
+      "#3  0x00005555556097f2 in HBondCoverage::HBondCoverage (this=0x5555559ef710, grp=144115188075855897, infer_=warning: RTTI symbol not found for class '(anonymous namespace)::PlacementNode<(anonymous namespace)::FixedPlacement<7>, ((anonymous namespace)::PlaceT)2, ((anonymous namespace)::PlaceT)1, ((anonymous namespace)::PlaceT)0>'",
+      "#4  0x00005555556098cf in RegisterNodeType<HBondCoverage, 2>::RegisterNodeType(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)::{lambda(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&)#1}::operator()(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&) const (__closure=<optimized out>, grp=144115188075855897, args=std::vector of length 2, capacity 2 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:342"
+    ],
+    "dereferenced_args": {
+      "new_buffer": "2",
+      "this": "0x5555559ef7d8",
+      "this_type": "this type: PairlistComputation<false>"
+    },
+    "this_members": {
+      "this->.n_elem1": "30",
+      "this->.n_elem2": "36",
+      "this->.edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.edge_id1": "std::unique_ptr<int []> = {",
+      "this->.edge_id2": "std::unique_ptr<int []> = {",
+      "this->.n_edge": "0",
+      "this->.cache_valid": "false",
+      "this->.cache_buffer": "1",
+      "this->.cache_cutoff": "7.55507697e+31",
+      "this->.cache_pos1": "std::unique_ptr<float []> = {",
+      "this->.cache_pos2": "std::unique_ptr<float []> = {",
+      "this->.cache_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_n_edge": "0"
+    },
+    "test_output_of_./build/testbridge": "",
+    "test_output_change_cache_buffer": "symmetric: 2.00000000\nnon_symmetric: 2.00000000\n"
+  },
+  {
+    "hit_number": null,
+    "location": null,
+    "args": {
+      "new_buffer": "2.39999986",
+      "this": "0x555555b6d9e0"
+    },
+    "backtrace": [
+      "#0  PairlistComputation<true>::change_cache_buffer (new_buffer=2.39999986, this=0x555555b6d9e0) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182",
+      "#1  InteractionGraph<PosQuadSplineInteraction>::update_cutoffs (this=this@entry=0x555555b6d950) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408",
+      "#2  0x0000555555611393 in InteractionGraph<PosQuadSplineInteraction>::InteractionGraph (this=0x555555b6d950, grp=144115188075855901, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371",
+      "#3  0x0000555555614500 in RotamerSidechain<PosQuadSplineInteraction>::RotamerSidechain (this=0x555555b6d920, grp=144115188075855900, pos_node_=warning: RTTI symbol not found for class '(anonymous namespace)::PlacementNode<(anonymous namespace)::FixedPlacement<6>, ((anonymous namespace)::PlaceT)2, ((anonymous namespace)::PlaceT)1>'",
+      "#4  0x0000555555615209 in RegisterRotamerSidechain<PosQuadSplineInteraction>::RegisterRotamerSidechain(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)::{lambda(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&)#1}::operator()(long, std::vector<CoordNode*, std::allocator<CoordNode*> > const&) const (__closure=<optimized out>, grp=144115188075855900, args=std::vector of length 4, capacity 4 = {...}) at /home/okleinmann/projects/upside2-md/src/rotamer.cpp:1178"
+    ],
+    "dereferenced_args": {
+      "new_buffer": "2.39999986",
+      "this": "0x555555b6d9e0",
+      "this_type": "this type: PairlistComputation<true>"
+    },
+    "this_members": {
+      "this->.n_elem1": "36",
+      "this->.n_elem2": "36",
+      "this->.edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.edge_id1": "std::unique_ptr<int []> = {",
+      "this->.edge_id2": "std::unique_ptr<int []> = {",
+      "this->.n_edge": "0",
+      "this->.cache_valid": "false",
+      "this->.cache_buffer": "1",
+      "this->.cache_cutoff": "0",
+      "this->.cache_pos1": "std::unique_ptr<float []> = {",
+      "this->.cache_pos2": "std::unique_ptr<float []> = {",
+      "this->.cache_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_n_edge": "0"
+    },
+    "test_output_of_./build/testbridge": "",
+    "test_output_change_cache_buffer": "symmetric: 2.39999986\nnon_symmetric: 2.39999986\n"
+  },
+  {
+    "hit_number": null,
+    "location": null,
+    "args": {
+      "new_buffer": "2.4000001",
+      "this": "0x555555bba4c8"
+    },
+    "backtrace": [
+      "#0  PairlistComputation<false>::change_cache_buffer (new_buffer=2.4000001, this=0x555555bba4c8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182",
+      "#1  InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::update_cutoffs (this=this@entry=0x555555bba438) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408",
+      "#2  0x00005555555eebb7 in InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::InteractionGraph (this=0x555555bba438, grp=144115188075855904, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371",
+      "#3  0x00005555555f4f05 in (anonymous namespace)::EnvironmentCoverage::EnvironmentCoverage (this=0x555555bba3e0, grp=144115188075855904, cb_pos_=..., weighted_sidechains_=...) at /usr/include/c++/12/bits/new_allocator.h:90",
+      "#4  0x00005555555f5047 in operator() (__closure=<optimized out>, grp=144115188075855904, args=std::vector of length 2, capacity 2 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:342"
+    ],
+    "dereferenced_args": {
+      "new_buffer": "2.4000001",
+      "this": "0x555555bba4c8",
+      "this_type": "this type: PairlistComputation<false>"
+    },
+    "this_members": {
+      "this->.n_elem1": "17",
+      "this->.n_elem2": "36",
+      "this->.edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.edge_id1": "std::unique_ptr<int []> = {",
+      "this->.edge_id2": "std::unique_ptr<int []> = {",
+      "this->.n_edge": "0",
+      "this->.cache_valid": "false",
+      "this->.cache_buffer": "1",
+      "this->.cache_cutoff": "0",
+      "this->.cache_pos1": "std::unique_ptr<float []> = {",
+      "this->.cache_pos2": "std::unique_ptr<float []> = {",
+      "this->.cache_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_n_edge": "0"
+    },
+    "test_output_of_./build/testbridge": "",
+    "test_output_change_cache_buffer": "symmetric: 2.40000010\nnon_symmetric: 2.40000010\n"
+  },
+  {
+    "hit_number": null,
+    "location": null,
+    "args": {
+      "new_buffer": "2.80000019",
+      "this": "0x555555c085f8"
+    },
+    "backtrace": [
+      "#0  PairlistComputation<false>::change_cache_buffer (new_buffer=2.80000019, this=0x555555c085f8) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:182",
+      "#1  InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::update_cutoffs (this=this@entry=0x555555c08568) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:408",
+      "#2  0x00005555555eebb7 in InteractionGraph<(anonymous namespace)::EnvironmentCoverageInteraction>::InteractionGraph (this=0x555555c08568, grp=144115188075855905, pos_node1_=<optimized out>, pos_node2_=<optimized out>) at /home/okleinmann/projects/upside2-md/src/interaction_graph.h:371",
+      "#3  0x00005555555f4f05 in (anonymous namespace)::EnvironmentCoverage::EnvironmentCoverage (this=0x555555c08510, grp=144115188075855905, cb_pos_=warning: RTTI symbol not found for class '(anonymous namespace)::PlacementNode<(anonymous namespace)::FixedPlacement<6>, ((anonymous namespace)::PlaceT)2, ((anonymous namespace)::PlaceT)1>'",
+      "#4  0x00005555555f5047 in operator() (__closure=<optimized out>, grp=144115188075855905, args=std::vector of length 2, capacity 2 = {...}) at /home/okleinmann/projects/upside2-md/src/deriv_engine.h:342"
+    ],
+    "dereferenced_args": {
+      "new_buffer": "2.80000019",
+      "this": "0x555555c085f8",
+      "this_type": "this type: PairlistComputation<false>"
+    },
+    "this_members": {
+      "this->.n_elem1": "10",
+      "this->.n_elem2": "36",
+      "this->.edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.edge_id1": "std::unique_ptr<int []> = {",
+      "this->.edge_id2": "std::unique_ptr<int []> = {",
+      "this->.n_edge": "0",
+      "this->.cache_valid": "false",
+      "this->.cache_buffer": "1",
+      "this->.cache_cutoff": "0",
+      "this->.cache_pos1": "std::unique_ptr<float []> = {",
+      "this->.cache_pos2": "std::unique_ptr<float []> = {",
+      "this->.cache_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_indices2": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id1": "std::unique_ptr<int []> = {",
+      "this->.cache_edge_id2": "std::unique_ptr<int []> = {",
+      "this->.cache_n_edge": "0"
+    },
+    "test_output_of_./build/testbridge": "",
+    "test_output_change_cache_buffer": "symmetric: 2.80000019\nnon_symmetric: 2.80000019\n"
+  }
+]

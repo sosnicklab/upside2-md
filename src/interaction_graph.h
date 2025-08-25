@@ -28,10 +28,20 @@ static T&& message(const std::string& s, T&& x) {
     return std::forward<T>(x);
 }
 
+#ifdef TEST_HOOKS
+    // Forward declaration of the PairlistComputation Testing Class
+    template <bool symmetric>
+    class PairlistComputationTestBridge;
+#endif
 
 template <bool symmetric>
 struct PairlistComputation {
     typedef Int4(*acceptable_id_pair_t)(const Int4&,const Int4&);
+    
+    #ifdef TEST_HOOKS
+        friend class PairlistComputationTestBridge<symmetric>;
+    #endif
+
     public:
         const int n_elem1, n_elem2;
         std::unique_ptr<int32_t[]>  edge_indices1, edge_indices2;
