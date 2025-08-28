@@ -145,28 +145,28 @@ if "${CMD[@]}" 2>&1 | tee "$LOG_FILE"; then
     
     # Generate VTF file
     if python extract_martini_vtf.py "$OUTPUT_FILE" "$VTF_FILE" "$INPUT_FILE"; then
-        echo "✅ VTF file generated successfully: $VTF_FILE"
+        echo "VTF file generated successfully: $VTF_FILE"
         VTF_SIZE=$(du -h "$VTF_FILE" | cut -f1)
         echo "  VTF file size: $VTF_SIZE"
     else
-        echo "❌ VTF file generation failed!"
+        echo "VTF file generation failed!"
     fi
     
     # Generate PDB file
     if python extract_martini_vtf.py "$OUTPUT_FILE" "$PDB_FILE" "$INPUT_FILE"; then
-        echo "✅ PDB file generated successfully: $PDB_FILE"
+        echo "PDB file generated successfully: $PDB_FILE"
         PDB_SIZE=$(du -h "$PDB_FILE" | cut -f1)
         echo "  PDB file size: $PDB_SIZE"
     else
-        echo "❌ PDB file generation failed!"
+        echo "PDB file generation failed!"
     fi
     
     echo
     echo "=== Complete Workflow Summary ==="
-    echo "✅ Input preparation: Complete"
-    echo "✅ Interaction table optimization: Complete"
-    echo "✅ NPT simulation: Complete"
-    echo "✅ VTF/PDB visualization: Complete"
+    echo "Input preparation: Complete"
+    echo "Interaction table optimization: Complete"
+    echo "NPT simulation: Complete"
+    echo "VTF/PDB visualization: Complete"
     echo
     echo "Files generated:"
     echo "  Input: $INPUT_FILE"
@@ -176,7 +176,7 @@ if "${CMD[@]}" 2>&1 | tee "$LOG_FILE"; then
     echo "  PDB visualization: $PDB_FILE"
     echo "  Log file: $LOG_FILE"
     echo
-    echo "🎉 MARTINI 3.0 optimized simulation complete!"
+    echo "MARTINI 3.0 optimized simulation complete!"
     echo "You can now visualize the results using VMD or other molecular visualization software."
 else
     echo "ERROR: Simulation failed!"
