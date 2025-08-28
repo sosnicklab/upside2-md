@@ -360,18 +360,81 @@ struct MartiniPotential : public PotentialNode
         std::cout << "[DEBUG] MartiniPotential box_x=" << box_x << " box_y=" << box_y << " box_z=" << box_z << std::endl;
 
         auto n_pair = get_dset_size(2, grp, "pairs")[0];
-        check_size(grp, "coefficients", n_pair, 4);
         
-        pairs.resize(n_pair);
-        traverse_dset<2,int>(grp, "pairs", [&](size_t np, size_t d, int x) {
-            if(d == 0) pairs[np].first = x;
-            else pairs[np].second = x;
-        });
+        // Check if we have the optimized format (coefficient_indices) or the original format
+        bool optimized_format = false;
+        if(attribute_exists(grp, ".", "optimized_format")) {
+            optimized_format = read_attribute<int>(grp, ".", "optimized_format") != 0;
+        }
         
-        coeff.resize(n_pair);
-        traverse_dset<2,float>(grp, "coefficients", [&](size_t np, size_t d, float x) {
-            coeff[np][d] = x;
-        });
+        if(optimized_format) {
+            // Optimized format: unique coefficients + indices
+            std::cout << "MARTINI: Using optimized interaction table format" << std::endl;
+            
+            // Load unique coefficients
+            auto n_unique_coeff = get_dset_size(2, grp, "coefficients")[0];
+            check_size(grp, "coefficient_indices", n_pair);
+            
+            std::vector<array<float,4>> unique_coeff;
+            unique_coeff.resize(n_unique_coeff);
+            traverse_dset<2,float>(grp, "coefficients", [&](size_t nc, size_t d, float x) {
+                unique_coeff[nc][d] = x;
+            });
+            
+            // Load coefficient indices
+            std::vector<long> coeff_indices;
+            coeff_indices.resize(n_pair);
+            traverse_dset<1,long>(grp, "coefficient_indices", [&](size_t np, long x) {
+                coeff_indices[np] = x;
+            });
+            
+            // Load pairs
+            pairs.resize(n_pair);
+            traverse_dset<2,int>(grp, "pairs", [&](size_t np, size_t d, int x) {
+                if(d == 0) pairs[np].first = x;
+                else pairs[np].second = x;
+            });
+            
+            // Reconstruct full coefficient array from indices
+            coeff.resize(n_pair);
+            for(size_t np = 0; np < n_pair; ++np) {
+                long idx = coeff_indices[np];
+                if(idx >= 0 && idx < (long)n_unique_coeff) {
+                    coeff[np] = unique_coeff[idx];
+                } else {
+                    std::cerr << "ERROR: Invalid coefficient index " << idx << " for pair " << np << std::endl;
+                    coeff[np] = {0.0f, 0.0f, 0.0f, 0.0f};
+                }
+            }
+            
+            // Debug: Print first few coefficients to verify reconstruction
+            std::cout << "MARTINI: Debug - First 5 reconstructed coefficients:" << std::endl;
+            for(size_t i = 0; i < std::min(size_t(5), size_t(n_pair)); ++i) {
+                std::cout << "  Pair " << i << " (atoms " << pairs[i].first << "-" << pairs[i].second 
+                          << "): idx=" << (int)coeff_indices[i] << " coeff=[" 
+                          << coeff[i][0] << ", " << coeff[i][1] << ", " << coeff[i][2] << ", " << coeff[i][3] << "]" << std::endl;
+            }
+            
+            std::cout << "MARTINI: Loaded " << n_unique_coeff << " unique coefficients for " << n_pair << " pairs" << std::endl;
+            std::cout << "MARTINI: Compression ratio: " << (float)n_pair / n_unique_coeff << "x" << std::endl;
+            
+        } else {
+            // Original format: full coefficient array
+            std::cout << "MARTINI: Using original interaction table format" << std::endl;
+            
+            check_size(grp, "coefficients", n_pair, 4);
+            
+            pairs.resize(n_pair);
+            traverse_dset<2,int>(grp, "pairs", [&](size_t np, size_t d, int x) {
+                if(d == 0) pairs[np].first = x;
+                else pairs[np].second = x;
+            });
+            
+            coeff.resize(n_pair);
+            traverse_dset<2,float>(grp, "coefficients", [&](size_t np, size_t d, float x) {
+                coeff[np][d] = x;
+            });
+        }
         
         // Initialize spline parameters
         lj_r_min = 0.5f * sigma;  // Minimum distance for spline
