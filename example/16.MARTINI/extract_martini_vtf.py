@@ -44,12 +44,14 @@ def write_pdb_frame(f, pos, frame_num, atom_types, residue_ids, x_len, y_len, z_
     f.write("ENDMDL\n")
 
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: python extract_martini_vtf.py <input.up> <output.vtf/pdb>")
+    if len(sys.argv) < 3 or len(sys.argv) > 4:
+        print("Usage: python extract_martini_vtf.py <input.up> <output.vtf/pdb> [input_file_for_structure]")
+        print("  If input_file_for_structure is not provided, will try to use input.up for structure data")
         sys.exit(1)
 
     input_file = sys.argv[1]
     output_file = sys.argv[2]
+    input_file_for_structure = sys.argv[3] if len(sys.argv) == 4 else input_file
     output_format = output_file.split('.')[-1].lower()
 
     if output_format not in ['vtf', 'pdb']:
@@ -57,7 +59,7 @@ def main():
         sys.exit(1)
 
     # Read original PDB file to get proper atom names and residue information
-    pdb_file = 'input.pdb'
+    pdb_file = 'pdb/1rkl.MARTINI.pdb'
     if not os.path.exists(pdb_file):
         print(f"Warning: Original PDB file '{pdb_file}' not found. Using MARTINI type mapping.")
         pdb_atom_names = None
@@ -83,14 +85,17 @@ def main():
         print(f"Residue types found: {set(pdb_residue_names)}")
         print(f"Residue ID range: {min(pdb_residue_ids)} to {max(pdb_residue_ids)}")
 
-    # Open the HDF5 file
-    with h5py.File(input_file, 'r') as t:
-        # Get the number of frames
-        n_frame = len(t['output/pos'])
+    # Open the HDF5 files
+    with h5py.File(input_file, 'r') as t, h5py.File(input_file_for_structure, 'r') as t_struct:
+        # Get the number of frames (support input-only files without /output/pos)
+        if 'output/pos' in t:
+            n_frame = len(t['output/pos'])
+        else:
+            n_frame = 1
         print(f"Number of frames: {n_frame}")
         
         # Get position data shape from input (first frame should use input positions)
-        input_pos = t['input/pos'][:]
+        input_pos = t_struct['input/pos'][:]
         print(f"Raw input position data shape: {input_pos.shape}")
         
         # Handle different position data formats
@@ -117,8 +122,8 @@ def main():
         x_len = y_len = z_len = None
         
         # Try to read from martini_potential group
-        if 'input/potential/martini_potential' in t:
-            potential_group = t['input/potential/martini_potential']
+        if 'input/potential/martini_potential' in t_struct:
+            potential_group = t_struct['input/potential/martini_potential']
             if 'x_len' in potential_group.attrs:
                 x_len = potential_group.attrs['x_len']
                 y_len = potential_group.attrs['y_len'] 
@@ -126,8 +131,8 @@ def main():
                 print(f"Found box dimensions from martini_potential: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
         
         # Try to read from periodic_boundary_potential group as fallback
-        if x_len is None and 'input/potential/periodic_boundary_potential' in t:
-            pbc_group = t['input/potential/periodic_boundary_potential']
+        if x_len is None and 'input/potential/periodic_boundary_potential' in t_struct:
+            pbc_group = t_struct['input/potential/periodic_boundary_potential']
             if 'x_len' in pbc_group.attrs:
                 x_len = pbc_group.attrs['x_len']
                 y_len = pbc_group.attrs['y_len']
@@ -140,8 +145,8 @@ def main():
             print(f"WARNING: No box dimensions found in HDF5 file! Using defaults: {x_len:.1f} x {y_len:.1f} x {z_len:.1f} Å")
         
         # Read atom types and residue IDs from HDF5 input
-        atom_types = t['input/type'][:].astype(str)
-        residue_ids = t['input/residue_ids'][:] if 'residue_ids' in t['input'] else np.ones(n_particles, dtype=int)
+        atom_types = t_struct['input/type'][:].astype(str)
+        residue_ids = t_struct['input/residue_ids'][:] if 'residue_ids' in t_struct['input'] else np.ones(n_particles, dtype=int)
         
         # Count DOPC atoms by residue
         dopc_residues = set()
@@ -290,7 +295,7 @@ def main():
                         
                         # Read PDB positions and apply same processing as run_martini.py
                         pdb_positions = []
-                        with open('input.pdb', 'r') as pdb_f:
+                        with open('pdb/1rkl.MARTINI.pdb', 'r') as pdb_f:
                             for line in pdb_f:
                                 if line.startswith('ATOM'):
                                     x = float(line[30:38])
