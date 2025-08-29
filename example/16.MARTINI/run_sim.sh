@@ -13,7 +13,7 @@ RUN_DIR="outputs/martini_test"
 INPUT_FILE="${INPUTS_DIR}/${PDB_ID}.up"   # normalized input path
 OUTPUT_FILE="${RUN_DIR}/test.run.optimized.up"
 LOG_FILE="${RUN_DIR}/test.run.optimized.log"
-VTF_FILE="${OUTPUTS_DIR}/${PDB_ID}.vtf"   # normalized VTF path
+VTF_FILE="${RUN_DIR}/${PDB_ID}.vtf"   # VTF in run directory
 
 # Check if UPSIDE_HOME is set
 if [ -z "$UPSIDE_HOME" ]; then
@@ -145,7 +145,7 @@ else
     exit 1
 fi
 
-# Step 4: Generate VTF at outputs/pdb_id.vtf
+# Step 4: Generate VTF at RUN_DIR/pdb_id.vtf
 echo
 echo "=== Step 4: Generating VTF ==="
 echo "Generating VTF file: $VTF_FILE"
