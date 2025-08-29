@@ -607,7 +607,7 @@ def main():
         mom_array._v_attrs.initialized = True
         
         # Create mass array (required by UPSIDE)
-        mass = np.ones(n_atoms, dtype='f4')  # Default mass of 1.0 (normalized)
+        mass = np.full(n_atoms, 72.0, dtype='f4')  # MARTINI mass of 72.0
         mass_array = t.create_array(input_grp, 'mass', obj=mass)
         mass_array._v_attrs.arguments = np.array([b'mass'])
         mass_array._v_attrs.shape = mass.shape

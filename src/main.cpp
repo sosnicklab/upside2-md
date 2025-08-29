@@ -119,12 +119,14 @@ struct System {
     float barostat_interval;
     float box_scale_factor;
     float box_scale_velocity;
-    float box_scale_mass;
     bool use_barostat;
+    
+    // Particle masses
+    VecArrayStorage particle_masses;
     
     uint64_t round_num;
     System(): round_num(0), pressure(0.0), barostat_timescale(1.0), barostat_interval(0.1), 
-              box_scale_factor(1.0), box_scale_velocity(0.0), box_scale_mass(1.0), use_barostat(false) {}
+              box_scale_factor(1.0), box_scale_velocity(0.0), use_barostat(false) {}
 
     void set_temperature(float new_temp) {
         temperature = new_temp;
@@ -517,8 +519,7 @@ try {
             "simulation time between applications of the barostat", 
             false, 0.1, "float", cmd);
 
-    ValueArg<double> mass_arg("", "mass", "mass parameter for velocity calculations (default 1.0)", 
-            false, 1.0, "float", cmd);
+
 
     ValueArg<double> curvature_changer_interval_arg("", "curvature-changer-interval", 
             "simulation time between applications of curvature change (0 means no curvature change, default 0.)", 
@@ -701,11 +702,7 @@ try {
             systems[ns].initial_temperature = T;
         }
 
-        // Set mass parameter for all systems
-        float mass_value = mass_arg.getValue();
-        for(int ns: range(systems.size())) {
-            systems[ns].box_scale_mass = mass_value;
-        }
+
 
         double anneal_factor = anneal_factor_arg.getValue();
         double anneal_duration = anneal_duration_arg.getValue();
@@ -935,6 +932,7 @@ try {
             }
 
             sys->mom.reset(3, sys->n_atom);
+            sys->particle_masses.reset(1, sys->n_atom);
             if (restart_using_momentum_arg.getValue()) { // initialize momentum using input.mom if requested
                 if (user_defined_input) {
                     if (h5_exists(sys->input.get(), "input/mom")) {
@@ -950,13 +948,55 @@ try {
                         traverse_dset<3,float>(sys->config.get(), "/input/mom", [&](size_t na, size_t d, size_t ns, float x) { 
                             sys->mom(d,na) = x;});
                     }
+                    
+                    // Read particle masses
+                    if (user_defined_input) {
+                        if (h5_exists(sys->input.get(), "input/mass")) {
+                            traverse_dset<1,float>(sys->input.get(), "/input/mass", [&](size_t na, float x) { 
+                                sys->particle_masses(0,na) = x;});
+                        }
+                        else {
+                            // Default mass of 1.0 for all particles
+                            for(int na=0; na<sys->n_atom; ++na) sys->particle_masses(0,na) = 1.0f;
+                        }
+                    }
                     else {
-                        throw  string("input h5 file doesn't have input.mom group, can't restart using the momentum!");
+                        if (h5_exists(sys->config.get(), "input/mass")) {
+                            traverse_dset<1,float>(sys->config.get(), "/input/mass", [&](size_t na, float x) { 
+                                sys->particle_masses(0,na) = x;});
+                        }
+                        else {
+                            // Default mass of 1.0 for all particles
+                            for(int na=0; na<sys->n_atom; ++na) sys->particle_masses(0,na) = 1.0f;
+                        }
                     }
                 }
             }
             else {
                 for(int d: range(3)) for(int na: range(sys->n_atom)) sys->mom(d,na) = 0.f;
+                
+                // Read particle masses
+                if (user_defined_input) {
+                    if (h5_exists(sys->input.get(), "input/mass")) {
+                        traverse_dset<1,float>(sys->input.get(), "/input/mass", [&](size_t na, float x) { 
+                            sys->particle_masses(0,na) = x;});
+                    }
+                    else {
+                        // Default mass of 1.0 for all particles
+                        for(int na=0; na<sys->n_atom; ++na) sys->particle_masses(0,na) = 1.0f;
+                    }
+                }
+                else {
+                    if (h5_exists(sys->config.get(), "input/mass")) {
+                        traverse_dset<1,float>(sys->config.get(), "/input/mass", [&](size_t na, float x) { 
+                            sys->particle_masses(0,na) = x;});
+                    }
+                    else {
+                        // Default mass of 1.0 for all particles
+                        for(int na=0; na<sys->n_atom; ++na) sys->particle_masses(0,na) = 1.0f;
+                    }
+                }
+                
                 if (!disable_initial_thermalization_arg.getValue()) {
                     sys->thermostat.apply(sys->mom, sys->n_atom); // initial thermalization if it's a fresh start
                 }
@@ -1201,13 +1241,13 @@ try {
                     }
 
                     if  (integrator_arg.getValue() == "mv" )
-                        sys.engine.integration_cycle(sys.mom, dt, inner_step, sys.box_scale_mass);
+                        sys.engine.integration_cycle(sys.mom, dt, inner_step, sys.particle_masses);
                     else if (integrator_arg.getValue() == "vv" )
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::VelocityVerlet, sys.box_scale_mass);
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::VelocityVerlet, sys.particle_masses);
                     else if (integrator_arg.getValue() == "npt" )
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::NPT, sys.box_scale_mass);
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::NPT, sys.particle_masses);
                     else
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::Verlet, sys.box_scale_mass);
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::Verlet, sys.particle_masses);
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
                         curvature_changer->attempt_change(base_random_seed, sys.round_num, sys, relative_curvature_radius_change);
