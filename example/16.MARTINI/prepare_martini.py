@@ -658,7 +658,7 @@ def main():
         martini_potential._v_attrs.x_len = x_len
         martini_potential._v_attrs.y_len = y_len
         martini_potential._v_attrs.z_len = z_len
-        martini_potential._v_attrs.debug_mode = 1
+        martini_potential._v_attrs.debug_mode = 1  # Enable spline table generation
         
         # Create periodic boundary potential
         wall_group = t.create_group(potential_grp, 'periodic_boundary_potential')
@@ -777,7 +777,7 @@ def main():
             bond_group._v_attrs.x_len = x_len
             bond_group._v_attrs.y_len = y_len
             bond_group._v_attrs.z_len = z_len
-            bond_group._v_attrs.debug_mode = 1
+            bond_group._v_attrs.debug_mode = 1  # Enable spline table generation
 
             t.create_array(bond_group, 'id', obj=np.array(bonds_list, dtype=int))
             t.create_array(bond_group, 'equil_dist', obj=np.array(bond_lengths_list, dtype='f4'))
@@ -794,7 +794,7 @@ def main():
             angle_group._v_attrs.x_len = x_len
             angle_group._v_attrs.y_len = y_len
             angle_group._v_attrs.z_len = z_len
-            angle_group._v_attrs.debug_mode = 1
+            angle_group._v_attrs.debug_mode = 1  # Enable spline table generation
 
             t.create_array(angle_group, 'id', obj=np.array(angles_list, dtype=int))
             t.create_array(angle_group, 'equil_angle_deg', obj=np.array(angle_equil_deg_list, dtype='f4'))
@@ -809,7 +809,7 @@ def main():
             dihedral_group._v_attrs.x_len = x_len
             dihedral_group._v_attrs.y_len = y_len
             dihedral_group._v_attrs.z_len = z_len
-            dihedral_group._v_attrs.debug_mode = 1
+            dihedral_group._v_attrs.debug_mode = 1  # Enable spline table generation
 
             t.create_array(dihedral_group, 'id', obj=np.array(dihedrals_list, dtype=int))
             # Some builds of UPSIDE expect 'equil_dist' for this potential; write both names for compatibility

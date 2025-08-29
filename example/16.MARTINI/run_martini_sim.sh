@@ -43,7 +43,7 @@ echo "UPSIDE executable: $UPSIDE_EXECUTABLE"
 echo
 
 # Simulation parameters (from original run_martini.py)
-DURATION=200
+DURATION=1000
 FRAME_INTERVAL=20
 TEMPERATURE=0.8
 TIME_STEP=0.01

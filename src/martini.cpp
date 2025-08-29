@@ -57,10 +57,20 @@ struct DihedralSpring : public PotentialNode
     // Box dimensions for minimum image
     float box_x, box_y, box_z;
     float mass_scale;  // Mass scaling factor for forces (1/mass)
+    
+    // Spline interpolation for dihedral potential
+    LayeredClampedSpline1D<1> dihedral_potential_spline;
+    LayeredClampedSpline1D<1> dihedral_force_spline;
+    
+    // Spline parameters
+    float dihedral_min, dihedral_max, dihedral_scale;
+    float max_spring;  // Store max spring constant for scaling
+    bool debug_mode;   // Debug flag for writing splines
 
     DihedralSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
-        n_elem(get_dset_size(2, grp, "id")[0]), pos(pos_), params(n_elem)
+        n_elem(get_dset_size(2, grp, "id")[0]), pos(pos_), params(n_elem),
+        dihedral_potential_spline(1, 1000), dihedral_force_spline(1, 1000)
     {
         int n_dep = 4;  // number of atoms that each term depends on 
         check_size(grp, "id",           n_elem, n_dep);
@@ -97,6 +107,89 @@ struct DihedralSpring : public PotentialNode
         if(attribute_exists(grp, ".", "mass_scale")) {
             mass_scale = read_attribute<float>(grp, ".", "mass_scale");
         }
+        
+        // Debug mode for spline output
+        debug_mode = false;
+        if(attribute_exists(grp, ".", "debug_mode")) {
+            debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
+        }
+        
+        // Initialize spline parameters for dihedral potential
+        // Find the range of equilibrium dihedrals and spring constants
+        float min_dihedral = std::numeric_limits<float>::max();
+        float max_dihedral = std::numeric_limits<float>::lowest();
+        float max_spring = std::numeric_limits<float>::lowest();
+        
+        for(const auto& p : params) {
+            min_dihedral = std::min(min_dihedral, p.equil_dihedral);
+            max_dihedral = std::max(max_dihedral, p.equil_dihedral);
+            max_spring = std::max(max_spring, p.spring_constant);
+        }
+        
+        // Store max_spring as member variable
+        this->max_spring = max_spring;
+        
+        // Set spline range for dihedral angles (typically -π to π radians)
+        dihedral_min = -M_PI_F;  // -180°
+        dihedral_max = M_PI_F;   // +180°
+        dihedral_scale = 999.0f / (dihedral_max - dihedral_min);
+        
+        // Generate spline data for dihedral potential (using average spring constant)
+        std::vector<double> dihedral_pot_data(1000);
+        std::vector<double> dihedral_force_data(1000);
+        
+        for(int i = 0; i < 1000; ++i) {
+            float phi = dihedral_min + i * (dihedral_max - dihedral_min) / 999.0f;
+            
+            // Use average equilibrium dihedral and spring constant for spline
+            float avg_dihedral = (min_dihedral + max_dihedral) * 0.5f;
+            float avg_spring = max_spring * 0.5f;  // Use half of max for safety
+            
+            // Dihedral potential: 0.5 * k * (phi - phi0)^2
+            float delta_phi = phi - avg_dihedral;
+            // Handle periodic boundary conditions for dihedrals
+            if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
+            if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
+            
+            dihedral_pot_data[i] = 0.5 * avg_spring * delta_phi * delta_phi;
+            
+            // Dihedral force: k * (phi - phi0)
+            dihedral_force_data[i] = avg_spring * delta_phi;
+        }
+        
+        // Fit splines
+        dihedral_potential_spline.fit_spline(dihedral_pot_data.data());
+        dihedral_force_spline.fit_spline(dihedral_force_data.data());
+
+        // Debug: Write all unique dihedral splines to a single file if debug_mode is enabled
+        if (debug_mode) {
+            std::ofstream out("dihedral_splines.txt", std::ios::app);
+            out << "# All spline values below are divided by 72.0 (mass correction)\n";
+            // Collect unique (k, phi0)
+            std::set<std::pair<float, float>> dihedral_params;
+            for (const auto& p : params) dihedral_params.insert({p.spring_constant, p.equil_dihedral});
+            for (const auto& dp : dihedral_params) {
+                float k = dp.first, phi0 = dp.second;
+                out << "# Dihedral Spline\n# k=" << k << ", phi0_rad=" << phi0 << "\n";
+                out << "# phi_rad potential force\n";
+                int n_pts = 10;
+                for (int i = 0; i < n_pts; ++i) {
+                    float phi = -M_PI_F + i * 2.0f * M_PI_F / (n_pts - 1);
+                    float delta_phi = phi - phi0;
+                    if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
+                    if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
+                    float pot = 0.5f * k * delta_phi * delta_phi / 72.0;
+                    float force = k * delta_phi / 72.0;
+                    out << phi << " " << pot << " " << force << "\n";
+                }
+                out << "\n";
+            }
+            out.close();
+        }
+        
+        std::cout << "DIHEDRALS: Initialized splines with 1000 knots" << std::endl;
+        std::cout << "  Dihedral range: " << min_dihedral << " to " << max_dihedral << " radians" << std::endl;
+        std::cout << "  Spline range: " << dihedral_min << " to " << dihedral_max << " radians" << std::endl;
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -133,15 +226,44 @@ struct DihedralSpring : public PotentialNode
             Float4 d[4];
             float dihedral = dihedral_germ(x[0],x[1],x[2],x[3], d[0],d[1],d[2],d[3]).x();
 
-            // determine minimum periodic image (can be off by at most 2pi)
-            float displacement = dihedral - p.equil_dihedral;
-            displacement = (displacement> M_PI_F) ? displacement-2.f*M_PI_F : displacement;
-            displacement = (displacement<-M_PI_F) ? displacement+2.f*M_PI_F : displacement;
+            // Use spline interpolation for dihedral potential and force
+            if(dihedral >= dihedral_min && dihedral <= dihedral_max) {
+                float phi_coord = (dihedral - dihedral_min) * dihedral_scale;
+                
+                // Get potential and force from spline
+                float pot_result[2];
+                dihedral_potential_spline.evaluate_value_and_deriv(pot_result, 0, phi_coord);
+                float dihedral_pot = pot_result[1];
+                
+                float force_result[2];
+                dihedral_force_spline.evaluate_value_and_deriv(force_result, 0, phi_coord);
+                float dihedral_force_mag = force_result[1];
+                
+                // Scale by actual spring constant and equilibrium dihedral
+                float delta_phi = dihedral - p.equil_dihedral;
+                // Handle periodic boundary conditions for dihedrals
+                if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
+                if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
+                
+                float actual_pot = 0.5f * p.spring_constant * delta_phi * delta_phi;
+                float actual_force = p.spring_constant * delta_phi;
+                
+                if(pot) *pot += actual_pot;
+                
+                // Apply force with mass scaling
+                auto s = Float4(actual_force * mass_scale);
+                for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
+            } else {
+                // Fallback to direct calculation for out-of-range dihedrals
+                float displacement = dihedral - p.equil_dihedral;
+                displacement = (displacement> M_PI_F) ? displacement-2.f*M_PI_F : displacement;
+                displacement = (displacement<-M_PI_F) ? displacement+2.f*M_PI_F : displacement;
 
-            auto s = Float4(p.spring_constant * displacement * mass_scale);
-            for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
-
-            if(pot) *pot += 0.5f * p.spring_constant * sqr(displacement);
+                if(pot) *pot += 0.5f * p.spring_constant * sqr(displacement);
+                
+                auto s = Float4(p.spring_constant * displacement * mass_scale);
+                for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
+            }
         }
     }
 };
