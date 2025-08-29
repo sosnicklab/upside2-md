@@ -118,6 +118,7 @@ CMD=(
     "--barostat-interval" "$BAROSTAT_INTERVAL"
     "--seed" "$SEED"
     "--integrator" "$INTEGRATOR"
+    "--mass" "72.0"
     "--disable-initial-thermalization"
     "--restart-using-momentum"
     "--output" "$OUTPUT_FILE"

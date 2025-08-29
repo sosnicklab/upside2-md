@@ -517,6 +517,9 @@ try {
             "simulation time between applications of the barostat", 
             false, 0.1, "float", cmd);
 
+    ValueArg<double> mass_arg("", "mass", "mass parameter for velocity calculations (default 1.0)", 
+            false, 1.0, "float", cmd);
+
     ValueArg<double> curvature_changer_interval_arg("", "curvature-changer-interval", 
             "simulation time between applications of curvature change (0 means no curvature change, default 0.)", 
             false, 0., "float", cmd);
@@ -696,6 +699,12 @@ try {
             float T = stod_strict(temperature_strings.size()>1u ? temperature_strings[ns] : temperature_strings[0]);
 #endif
             systems[ns].initial_temperature = T;
+        }
+
+        // Set mass parameter for all systems
+        float mass_value = mass_arg.getValue();
+        for(int ns: range(systems.size())) {
+            systems[ns].box_scale_mass = mass_value;
         }
 
         double anneal_factor = anneal_factor_arg.getValue();
@@ -1192,13 +1201,13 @@ try {
                     }
 
                     if  (integrator_arg.getValue() == "mv" )
-                        sys.engine.integration_cycle(sys.mom, dt, inner_step);
+                        sys.engine.integration_cycle(sys.mom, dt, inner_step, sys.box_scale_mass);
                     else if (integrator_arg.getValue() == "vv" )
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::VelocityVerlet);
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::VelocityVerlet, sys.box_scale_mass);
                     else if (integrator_arg.getValue() == "npt" )
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::NPT);
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::NPT, sys.box_scale_mass);
                     else
-                        sys.engine.integration_cycle(sys.mom, dt);
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::Verlet, sys.box_scale_mass);
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
                         curvature_changer->attempt_change(base_random_seed, sys.round_num, sys, relative_curvature_radius_change);

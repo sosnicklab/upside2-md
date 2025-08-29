@@ -258,9 +258,8 @@ struct DerivEngine
     //! \brief Perform a full integration cycle (3 time steps)
     //!
     //! See integration_stage for details.
-    void integration_cycle(VecArray mom, float dt, float max_force, IntegratorType type = Verlet);
-    void integration_cycle(VecArray mom, float dt);
-    void integration_cycle(VecArray mom, float dt, int inner_step);
+    void integration_cycle(VecArray mom, float dt, float max_force, IntegratorType type = Verlet, float mass = 1.0f);
+    void integration_cycle(VecArray mom, float dt, int inner_step, float mass = 1.0f);
 };
 
 //! \brief Count the number hbonds for a system

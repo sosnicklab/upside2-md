@@ -306,7 +306,7 @@ void DerivEngine::compute(ComputeMode mode, int integrator_level) {
 }
 
 
-void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, IntegratorType type) {
+void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, IntegratorType type, float mass) {
     if (type == VelocityVerlet) {
         // Velocity Verlet integrator
         static int debug_step_count = 0;
@@ -324,7 +324,8 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
                 float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
                 d *= scale_factor;
             }
-            auto p = load_vec<3>(mom, na) - 0.5f*dt*d;  // half step velocity update
+            // Apply mass scaling to velocity update
+            auto p = load_vec<3>(mom, na) - 0.5f*dt*d/mass;  // half step velocity update with mass
             store_vec (mom, na, p);
         }
         
@@ -351,7 +352,8 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
                 float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
                 d *= scale_factor;
             }
-            auto p = load_vec<3>(mom, na) - 0.5f*dt*d;  // half step velocity update
+            // Apply mass scaling to velocity update
+            auto p = load_vec<3>(mom, na) - 0.5f*dt*d/mass;  // half step velocity update with mass
             store_vec (mom, na, p);
         }
         
@@ -469,7 +471,8 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
         // Step 2: Update velocities by half step
         for(int na=0; na < pos->n_atom; ++na) {
             auto d = load_vec<3>(pos->sens, na);
-            auto p = load_vec<3>(mom, na) - 0.5f*dt*d;
+            // Apply mass scaling to velocity update
+            auto p = load_vec<3>(mom, na) - 0.5f*dt*d/mass;
             store_vec (mom, na, p);
         }
         
@@ -487,7 +490,8 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
         // Step 5: Update velocities by another half step
         for(int na=0; na < pos->n_atom; ++na) {
             auto d = load_vec<3>(pos->sens, na);
-            auto p = load_vec<3>(mom, na) - 0.5f*dt*d;
+            // Apply mass scaling to velocity update
+            auto p = load_vec<3>(mom, na) - 0.5f*dt*d/mass;
             store_vec (mom, na, p);
         }
         
@@ -517,45 +521,9 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
     }
 }
 
-void DerivEngine::integration_cycle(VecArray mom, float dt) {
 
-    for(int stage=0; stage<3; ++stage) {
-        compute(DerivMode);   // compute derivatives
-        
-        // Debug: Print particle positions and forces for first 25 steps
-        // static int debug_step_count = 0;
-        // if(debug_step_count < 25) {
-        //     std::cout << "\n=== INTEGRATION STEP " << debug_step_count << " (stage " << stage << ") ===" << std::endl;
-        //     std::cout << "Positions and Forces:" << std::endl;
-        //     for(int na = 0; na < pos->n_atom; ++na) {
-        //         auto pos_vec = load_vec<3>(pos->output, na);
-        //         auto force_vec = load_vec<3>(pos->sens, na);
-        //         std::cout << "  Particle " << na << ": pos=(" << pos_vec.x() << ", " << pos_vec.y() << ", " << pos_vec.z() 
-        //                   << ") force=(" << force_vec.x() << ", " << force_vec.y() << ", " << force_vec.z() << ")" << std::endl;
-        //     }
-        //     std::cout << "=== END STEP " << debug_step_count << " ===\n" << std::endl;
-        // }
-        // if(stage == 2) debug_step_count++; // Only increment after complete 3-stage cycle
-        
-        Timer timer(string("integration"));
 
-        for(int na=0; na < pos->n_atom; ++na) {
-            // assumes unit mass for all particles
-            auto d = load_vec<3>(pos->sens, na);
-            auto p = load_vec<3>(mom, na) - dt*d;
-            store_vec (mom,   na, p);
-            update_vec(pos->output, na, dt*p);
-        }
-    }
-    // Add debug print after fast level loop
-    // std::cout << "[DEBUG] Completed all fast level steps for debug_step_count=" << debug_step_count << std::endl;
-    
-    // if(debug_step_count < 25) debug_step_count++; // Increment after complete cycle
-    // Add debug print after increment
-    // std::cout << "[DEBUG] Incremented debug_step_count to " << debug_step_count << std::endl;
-}
-
-void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
+void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step, float mass) {
     // calculate acceleration, update velocity for slow level
     compute(DerivMode, 1); 
     
@@ -575,7 +543,7 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
     
     for(int na=0; na < pos->n_atom; ++na) {
         auto d = load_vec<3>(pos->sens, na);
-        auto p = load_vec<3>(mom, na) - inner_step*dt*d;
+        auto p = load_vec<3>(mom, na) - inner_step*dt*d/mass;
         store_vec (mom,   na, p);
     }
     // calculate acceleration, update velocity for fast level
@@ -596,7 +564,7 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
         
         for(int na=0; na < pos->n_atom; ++na) {
             auto d = load_vec<3>(pos->sens, na);
-            auto p = load_vec<3>(mom, na) - dt*d;
+            auto p = load_vec<3>(mom, na) - dt*d/mass;
             store_vec (mom,   na, p);
             update_vec(pos->output, na, dt*p);
         }

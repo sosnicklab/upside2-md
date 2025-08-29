@@ -654,7 +654,7 @@ def main():
         martini_potential._v_attrs.cache_buffer = 1.0
         martini_potential._v_attrs.initialized = True
         martini_potential._v_attrs.force_cap = 0
-        martini_potential._v_attrs.mass_scale = 1.0 / 72.0
+
         martini_potential._v_attrs.x_len = x_len
         martini_potential._v_attrs.y_len = y_len
         martini_potential._v_attrs.z_len = z_len
@@ -773,7 +773,7 @@ def main():
             bond_group = t.create_group(potential_grp, 'dist_spring')
             bond_group._v_attrs.arguments = np.array([b'pos'])
             bond_group._v_attrs.initialized = True
-            bond_group._v_attrs.mass_scale = 1.0 / 72.0
+
             bond_group._v_attrs.x_len = x_len
             bond_group._v_attrs.y_len = y_len
             bond_group._v_attrs.z_len = z_len
@@ -790,7 +790,7 @@ def main():
             angle_group = t.create_group(potential_grp, 'angle_spring')
             angle_group._v_attrs.arguments = np.array([b'pos'])
             angle_group._v_attrs.initialized = True
-            angle_group._v_attrs.mass_scale = 1.0 / 72.0
+
             angle_group._v_attrs.x_len = x_len
             angle_group._v_attrs.y_len = y_len
             angle_group._v_attrs.z_len = z_len
@@ -805,7 +805,7 @@ def main():
             dihedral_group = t.create_group(potential_grp, 'dihedral_spring')
             dihedral_group._v_attrs.arguments = np.array([b'pos'])
             dihedral_group._v_attrs.initialized = True
-            dihedral_group._v_attrs.mass_scale = 1.0 / 72.0
+
             dihedral_group._v_attrs.x_len = x_len
             dihedral_group._v_attrs.y_len = y_len
             dihedral_group._v_attrs.z_len = z_len
