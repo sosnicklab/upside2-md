@@ -134,27 +134,14 @@ struct DihedralSpring : public PotentialNode
         dihedral_max = M_PI_F;   // +180°
         dihedral_scale = 999.0f / (dihedral_max - dihedral_min);
         
-        // Generate spline data for dihedral potential (using average spring constant)
+        // Use a parameterless canonical spline: pot = 0.5 * (delta_phi)^2, force = (delta_phi)
+        // with delta_phi in [-pi, pi]
         std::vector<double> dihedral_pot_data(1000);
         std::vector<double> dihedral_force_data(1000);
-        
         for(int i = 0; i < 1000; ++i) {
-            float phi = dihedral_min + i * (dihedral_max - dihedral_min) / 999.0f;
-            
-            // Use average equilibrium dihedral and spring constant for spline
-            float avg_dihedral = (min_dihedral + max_dihedral) * 0.5f;
-            float avg_spring = max_spring * 0.5f;  // Use half of max for safety
-            
-            // Dihedral potential: 0.5 * k * (phi - phi0)^2
-            float delta_phi = phi - avg_dihedral;
-            // Handle periodic boundary conditions for dihedrals
-            if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
-            if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
-            
-            dihedral_pot_data[i] = 0.5 * avg_spring * delta_phi * delta_phi;
-            
-            // Dihedral force: k * (phi - phi0)
-            dihedral_force_data[i] = avg_spring * delta_phi;
+            float delta_phi = dihedral_min + i * (dihedral_max - dihedral_min) / 999.0f;
+            dihedral_pot_data[i] = 0.5 * delta_phi * delta_phi;
+            dihedral_force_data[i] = delta_phi;
         }
         
         // Fit splines
@@ -227,8 +214,12 @@ struct DihedralSpring : public PotentialNode
             float dihedral = dihedral_germ(x[0],x[1],x[2],x[3], d[0],d[1],d[2],d[3]).x();
 
             // Use spline interpolation for dihedral potential and force
-            if(dihedral >= dihedral_min && dihedral <= dihedral_max) {
-                float phi_coord = (dihedral - dihedral_min) * dihedral_scale;
+            // Use delta phi relative to equilibrium
+            float delta_phi = dihedral - p.equil_dihedral;
+            if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
+            if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
+            if(delta_phi >= dihedral_min && delta_phi <= dihedral_max) {
+                float phi_coord = (delta_phi - dihedral_min) * dihedral_scale;
                 
                 // Get potential and force from spline
                 float pot_result[2];
@@ -237,21 +228,13 @@ struct DihedralSpring : public PotentialNode
                 
                 float force_result[2];
                 dihedral_force_spline.evaluate_value_and_deriv(force_result, 0, phi_coord);
-                float dihedral_force_mag = force_result[1];
-                
-                // Scale by actual spring constant and equilibrium dihedral
-                float delta_phi = dihedral - p.equil_dihedral;
-                // Handle periodic boundary conditions for dihedrals
-                if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
-                if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
-                
-                float actual_pot = 0.5f * p.spring_constant * delta_phi * delta_phi;
-                float actual_force = p.spring_constant * delta_phi;
-                
-                if(pot) *pot += actual_pot;
-                
-                // Apply force with mass scaling
-                auto s = Float4(actual_force * mass_scale);
+                float dE_ddelta = force_result[1] * dihedral_scale; // d(0.5*delta^2)/ddelta = delta
+                float dihedral_force_mag = p.spring_constant * dE_ddelta;
+                // Use spline-evaluated potential and force
+                if(pot) *pot += p.spring_constant * dihedral_pot;
+
+                // Apply force with mass scaling (dihedral_force_mag corresponds to dE/dphi)
+                auto s = Float4(dihedral_force_mag * mass_scale);
                 for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
             } else {
                 // Fallback to direct calculation for out-of-range dihedrals
@@ -785,6 +768,8 @@ struct DistSpring : public PotentialNode
     
     // Spline parameters
     float bond_r_min, bond_r_max, bond_r_scale;
+    // Canonical delta-r spline domain (shared across bonds)
+    float bond_delta_min, bond_delta_max, bond_delta_scale;
     float max_spring;  // Store max spring constant for scaling
     float mass_scale;  // Mass scaling factor for forces (1/mass)
     bool debug_mode;   // Debug flag for writing splines
@@ -849,28 +834,18 @@ struct DistSpring : public PotentialNode
             debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
         }
         
-        // Set spline range to cover typical bond length variations
-        bond_r_min = std::max(0.1f, min_equil * 0.5f);  // Minimum distance
-        bond_r_max = max_equil * 2.0f;                  // Maximum distance
-        bond_r_scale = 999.0f / (bond_r_max - bond_r_min);
-        
-        // Generate spline data for bond potential (using average spring constant)
+        // Define and store a GLOBAL delta-r domain shared by all bonds
+        bond_delta_min = bond_r_min - max_equil; // smallest possible (r - r0)
+        bond_delta_max = bond_r_max - min_equil; // largest possible (r - r0)
+        bond_delta_scale = 999.0f / (bond_delta_max - bond_delta_min);
+
+        // Generate canonical spline in delta-r: pot=0.5*delta^2, force=delta
         std::vector<double> bond_pot_data(1000);
         std::vector<double> bond_force_data(1000);
-        
         for(int i = 0; i < 1000; ++i) {
-            float r = bond_r_min + i * (bond_r_max - bond_r_min) / 999.0f;
-            
-            // Use average equilibrium distance and spring constant for spline
-            float avg_equil = (min_equil + max_equil) * 0.5f;
-            float avg_spring = max_spring * 0.5f;  // Use half of max for safety
-            
-            // Bond potential: 0.5 * k * (r - r0)^2
-            float delta_r = r - avg_equil;
-            bond_pot_data[i] = 0.5 * avg_spring * delta_r * delta_r;
-            
-            // Bond force: k * (r - r0)
-            bond_force_data[i] = avg_spring * delta_r;
+            float delta_r = bond_delta_min + i * (bond_delta_max - bond_delta_min) / 999.0f;
+            bond_pot_data[i] = 0.5 * delta_r * delta_r;
+            bond_force_data[i] = delta_r;
         }
         
         // Fit splines
@@ -923,29 +898,26 @@ struct DistSpring : public PotentialNode
             auto disp = minimum_image_rect(x1 - x2, box_x, box_y, box_z);
             float dist = mag(disp);
             
-            // Use spline interpolation for bond potential and force
-            if(dist >= bond_r_min && dist <= bond_r_max) {
-                float r_coord = (dist - bond_r_min) * bond_r_scale;
+            // Use spline interpolation for bond potential and force (in delta-r space)
+            float delta_r = dist - p.equil_dist;
+            if(delta_r >= bond_delta_min && delta_r <= bond_delta_max) {
+                float r_coord = (delta_r - bond_delta_min) * bond_delta_scale;
                 
                 // Get potential and force from spline
                 float pot_result[2];
                 bond_potential_spline.evaluate_value_and_deriv(pot_result, 0, r_coord);
-                float bond_pot = pot_result[1];
+                float bond_pot = pot_result[1]; // canonical energy
                 
                 float force_result[2];
                 bond_force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
-                float bond_force_mag = force_result[1];
+                // dE/ddelta = force_spline' * dcoord/ddelta
+                float bond_force_mag = force_result[1] * bond_delta_scale;
                 
-                // Scale by actual spring constant and equilibrium distance
-                float scale_factor = p.spring_constant / (max_spring * 0.5f);  // Normalize to spline
-                float delta_r = dist - p.equil_dist;
-                float actual_pot = 0.5f * p.spring_constant * delta_r * delta_r;
-                float actual_force = p.spring_constant * delta_r;
+                // Scale by spring constant to match parameterized harmonic
+                if(pot) *pot += p.spring_constant * bond_pot;
                 
-                if(pot) *pot += actual_pot;
-                
-                // Apply force with mass scaling
-                auto deriv = (actual_force/dist) * disp * mass_scale;
+                // Apply force: F = -dE/dr, here dE/dr = k * dE/ddelta * ddelta/dr with ddelta/dr = 1
+                auto deriv = (p.spring_constant * bond_force_mag / dist) * disp * mass_scale;
                 update_vec(pos_sens, p.atom[0],  deriv);
                 update_vec(pos_sens, p.atom[1], -deriv);
             } else {
@@ -1049,27 +1021,13 @@ struct AngleSpring : public PotentialNode
         angle_cos_max = 1.0f;   // cos(0°) = 1
         angle_cos_scale = 999.0f / (angle_cos_max - angle_cos_min);
         
-        // Generate spline data for angle potential (using average spring constant)
+        // Canonical spline for angles: pot = 0.5*(delta_cos)^2, force = (delta_cos)
         std::vector<double> angle_pot_data(1000);
         std::vector<double> angle_force_data(1000);
-        
         for(int i = 0; i < 1000; ++i) {
-            float cos_theta = angle_cos_min + i * (angle_cos_max - angle_cos_min) / 999.0f;
-            
-            // Use average equilibrium angle and spring constant for spline
-            float avg_angle_deg = (min_angle + max_angle) * 0.5f;
-            float avg_spring = max_spring * 0.5f;  // Use half of max for safety
-            
-            // Convert to radians and calculate cos
-            float avg_angle_rad = avg_angle_deg * M_PI / 180.0f;
-            float cos_avg = cosf(avg_angle_rad);
-            
-            // Angle potential: 0.5 * k * (cos(theta) - cos(theta0))^2
-            float delta_cos = cos_theta - cos_avg;
-            angle_pot_data[i] = 0.5 * avg_spring * delta_cos * delta_cos;
-            
-            // Angle force: k * (cos(theta) - cos(theta0))
-            angle_force_data[i] = avg_spring * delta_cos;
+            float delta_cos = angle_cos_min + i * (angle_cos_max - angle_cos_min) / 999.0f;
+            angle_pot_data[i] = 0.5 * delta_cos * delta_cos;
+            angle_force_data[i] = delta_cos;
         }
         
         // Fit splines
@@ -1141,21 +1099,14 @@ struct AngleSpring : public PotentialNode
                 
                 float force_result[2];
                 angle_force_spline.evaluate_value_and_deriv(force_result, 0, cos_coord);
-                float angle_force_mag = force_result[1];
+                float angle_force_mag = force_result[1] * angle_cos_scale; // dE/d(cos) = (dE/dcoord) * dcoord/dcos
                 
-                // Scale by actual spring constant and equilibrium angle
-                float scale_factor = p.spring_constant / (max_spring * 0.5f);  // Normalize to spline
-                float theta0_rad = p.equil_angle_deg * M_PI / 180.0f;
-                float cos_theta0 = cosf(theta0_rad);
-                float delta_cos = dp - cos_theta0;
-                float actual_pot = 0.5f * p.spring_constant * delta_cos * delta_cos;
-                float actual_force = p.spring_constant * delta_cos;
+                // Use spline-evaluated potential
+                if(pot) *pot += angle_pot;
                 
-                if(pot) *pot += actual_pot;
-                
-                // Force calculation (same as original)
+                // Convert spline dE/d(cos) to forces on atoms
                 float theta_rad = acosf(dp);
-                float dE_dtheta = actual_force * (-sinf(theta_rad));
+                float dE_dtheta = angle_force_mag * (-sinf(theta_rad));
                 float dtheta_ddp = -1.0f / sqrtf(1.0f - dp*dp);
                 float dE_ddp = dE_dtheta * dtheta_ddp;
 
