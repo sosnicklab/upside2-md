@@ -16,9 +16,16 @@ fi
 # Set the project path dynamically based on current directory
 upside_path="$(pwd)"
 
-# Copy and configure the ARM source file
+# Remove existing source.sh and generate a fresh one from template
+echo "Generating fresh source.sh from template..."
+if [ -f "source.sh" ]; then
+    echo "Backing up existing source.sh to source.sh.backup"
+    cp source.sh source.sh.backup
+fi
+rm -f source.sh
 cp source_arm source.sh
 sed -i '' "s|UP_PATH|$upside_path|g" source.sh
+echo "Generated source.sh with path: $upside_path"
 
 # Source the environment
 source source.sh

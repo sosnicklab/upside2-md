@@ -54,10 +54,11 @@ export PATH="$(brew --prefix binutils)/bin:$PATH"
 export CC=$(which gcc)
 export CXX=$(which g++)
 
-# Verify critical components
-echo "Environment setup for Apple Silicon Mac:"
-echo "  Python: $MY_PYTHON"
-echo "  Eigen: $EIGEN_HOME"
-echo "  HDF5: $HDF5_ROOT"
-echo "  Compiler: $CXX"
-echo "  Architecture: $(uname -m)"
+# Verify critical components (silent mode)
+# Uncomment the lines below if you want to see environment information
+# echo "Environment setup for Apple Silicon Mac:"
+# echo "  Python: $MY_PYTHON"
+# echo "  Eigen: $EIGEN_HOME"
+# echo "  HDF5: $HDF5_ROOT"
+# echo "  Compiler: $CXX"
+# echo "  Architecture: $(uname -m)"
