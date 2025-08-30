@@ -198,6 +198,36 @@ def read_protein_itp_exclusions(itp_path: str):
     
     return exclusions
 
+def read_martini_masses(ff_file):
+    """Read atom type masses from MARTINI force field file"""
+    masses = {}
+    if not os.path.exists(ff_file):
+        print(f"Warning: Force field file {ff_file} not found, using default mass 72.0")
+        return masses
+    
+    in_atomtypes = False
+    with open(ff_file, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith('[ atomtypes ]'):
+                in_atomtypes = True
+                continue
+            elif line.startswith('['):
+                in_atomtypes = False
+                continue
+            
+            if in_atomtypes and line and not line.startswith(';'):
+                parts = line.split()
+                if len(parts) >= 2:
+                    atom_type = parts[0]
+                    try:
+                        mass = float(parts[1])
+                        masses[atom_type] = mass
+                    except ValueError:
+                        continue
+    
+    return masses
+
 def main():
     # Get UPSIDE home directory
     upside_path = os.environ['UPSIDE_HOME']
@@ -245,8 +275,10 @@ def main():
     water_bead_types = ['W']
     water_charges = [0.0]
     
-    # Read bead masses
+    # Read bead masses from force field file
     mass_file = "ff3.00/martini_v3.0.0.itp"
+    martini_masses = read_martini_masses(mass_file)
+    print(f"Read {len(martini_masses)} atom type masses from force field file")
     
     # Read DOPC bonds and angles
     dopc_bonds = [(0, 1), (1, 2), (2, 3), (2, 4), (4, 5), (5, 6), (6, 7), (3, 8), (8, 9), (9, 10), (10, 11)]
@@ -607,7 +639,11 @@ def main():
         mom_array._v_attrs.initialized = True
         
         # Create mass array (required by UPSIDE)
-        mass = np.full(n_atoms, 72.0, dtype='f4')  # MARTINI mass of 72.0
+        mass = np.zeros(n_atoms, dtype='f4')
+        for i, atom_type in enumerate(atom_types):
+            # Get mass from force field file, default to 72.0 if not found
+            mass[i] = martini_masses.get(atom_type, 72.0)
+        
         mass_array = t.create_array(input_grp, 'mass', obj=mass)
         mass_array._v_attrs.arguments = np.array([b'mass'])
         mass_array._v_attrs.shape = mass.shape
