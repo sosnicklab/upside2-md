@@ -44,14 +44,16 @@ def write_pdb_frame(f, pos, frame_num, atom_types, residue_ids, x_len, y_len, z_
     f.write("ENDMDL\n")
 
 def main():
-    if len(sys.argv) < 3 or len(sys.argv) > 4:
-        print("Usage: python extract_martini_vtf.py <input.up> <output.vtf/pdb> [input_file_for_structure]")
+    if len(sys.argv) < 3 or len(sys.argv) > 5:
+        print("Usage: python extract_martini_vtf.py <input.up> <output.vtf/pdb> [input_file_for_structure] [pdb_id]")
         print("  If input_file_for_structure is not provided, will try to use input.up for structure data")
+        print("  If pdb_id is not provided, will use default '1rkl'")
         sys.exit(1)
 
     input_file = sys.argv[1]
     output_file = sys.argv[2]
-    input_file_for_structure = sys.argv[3] if len(sys.argv) == 4 else input_file
+    input_file_for_structure = sys.argv[3] if len(sys.argv) >= 4 else input_file
+    pdb_id = sys.argv[4] if len(sys.argv) == 5 else '1rkl'
     output_format = output_file.split('.')[-1].lower()
 
     if output_format not in ['vtf', 'pdb']:
@@ -59,7 +61,7 @@ def main():
         sys.exit(1)
 
     # Read original PDB file to get proper atom names and residue information
-    pdb_file = 'pdb/1rkl.MARTINI.pdb'
+    pdb_file = f'pdb/{pdb_id}.MARTINI.pdb'
     if not os.path.exists(pdb_file):
         print(f"Warning: Original PDB file '{pdb_file}' not found. Using MARTINI type mapping.")
         pdb_atom_names = None
@@ -295,7 +297,7 @@ def main():
                         
                         # Read PDB positions and apply same processing as run_martini.py
                         pdb_positions = []
-                        with open('pdb/1rkl.MARTINI.pdb', 'r') as pdb_f:
+                        with open(f'pdb/{pdb_id}.MARTINI.pdb', 'r') as pdb_f:
                             for line in pdb_f:
                                 if line.startswith('ATOM'):
                                     x = float(line[30:38])

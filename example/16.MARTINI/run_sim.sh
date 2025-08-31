@@ -5,8 +5,28 @@
 
 set -e  # Exit on any error
 
+# =============================================================================
+# USER CONFIGURATION - Set your PDB ID here
+# =============================================================================
+# Change this value to use a different PDB file (e.g., "bilayer", "protein", etc.)
+# The script will look for pdb/{PDB_ID}.MARTINI.pdb
+PDB_ID="bilayer"
+# =============================================================================
+
+# Command line argument overrides the configuration above
+if [ $# -eq 1 ]; then
+    PDB_ID="$1"
+    echo "Command line argument overrides configuration: using PDB ID: $PDB_ID"
+elif [ $# -gt 1 ]; then
+    echo "Usage: $0 [PDB_ID]"
+    echo "  PDB_ID: The PDB identifier (optional, overrides configuration)"
+    echo "  Configuration PDB ID: $PDB_ID"
+    exit 1
+else
+    echo "Using configured PDB ID: $PDB_ID"
+fi
+
 # Configuration
-PDB_ID="1rkl"
 INPUTS_DIR="inputs"
 OUTPUTS_DIR="outputs"
 RUN_DIR="outputs/martini_test"
@@ -69,10 +89,10 @@ echo
 
 # Step 1: Prepare input files (produce example/16.MARTINI/outputs/martini_test/test.input.up)
 echo "=== Step 1: Preparing Input Files ==="
-echo "Running prepare_martini.py..."
+echo "Running prepare_martini.py with PDB ID: $PDB_ID"
 source ../../source.sh
 
-python prepare_martini.py
+python prepare_martini.py "$PDB_ID"
 
 PREPARED_FILE_PATH="${RUN_DIR}/test.input.up"
 if [ ! -f "$PREPARED_FILE_PATH" ]; then
@@ -149,7 +169,7 @@ fi
 echo
 echo "=== Step 4: Generating VTF ==="
 echo "Generating VTF file: $VTF_FILE"
-if python extract_martini_vtf.py "$OUTPUT_FILE" "$VTF_FILE" "$INPUT_FILE"; then
+if python extract_martini_vtf.py "$OUTPUT_FILE" "$VTF_FILE" "$INPUT_FILE" "$PDB_ID"; then
     VTF_SIZE=$(du -h "$VTF_FILE" | cut -f1)
     echo "VTF file generated successfully: $VTF_FILE ($VTF_SIZE)"
 else

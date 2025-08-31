@@ -232,8 +232,14 @@ def main():
     # Get UPSIDE home directory
     upside_path = os.environ['UPSIDE_HOME']
     
+    # Check command line arguments
+    if len(sys.argv) > 1:
+        pdb_id = sys.argv[1]
+    else:
+        pdb_id = '1rkl'
+        print("No PDB ID provided, using default: 1rkl")
+    
     # Configuration
-    pdb_id = '1rkl'
     strict_from_martini_pdb = True
     include_protein = True
     
