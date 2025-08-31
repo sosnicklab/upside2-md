@@ -10,6 +10,7 @@
 
 using namespace h5;
 using namespace std;
+
 //Bond, Angle and Dihedral the same format in MARTINI 10.1021/jp071097f
 //Missing: Proper Dihedral from 10.1021/ct700324x (might not need if only exist in protein model)
 //Coulomb interactions can be softened using Slater potential: V(r) = q1*q2/r * (1 - (1 + αr/2) * exp(-αr))
@@ -283,6 +284,11 @@ struct PeriodicBoundaryPotential : public PotentialNode
             box_z = wall_zhi - wall_zlo;
             std::cout << "PERIODIC: Using legacy box format - X=" << box_x << ", Y=" << box_y << ", Z=" << box_z << std::endl;
         }
+        
+        // Initialize static variables for global access
+        static_box_x = box_x;
+        static_box_y = box_y;
+        static_box_z = box_z;
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -317,6 +323,11 @@ struct PeriodicBoundaryPotential : public PotentialNode
 static RegisterNodeType<PeriodicBoundaryPotential,1> periodic_boundary_potential_node("periodic_boundary_potential");
 
 
+
+// Static member variable definitions
+float PeriodicBoundaryPotential::static_box_x = 0.0f;
+float PeriodicBoundaryPotential::static_box_y = 0.0f;
+float PeriodicBoundaryPotential::static_box_z = 0.0f;
 
 // Static method to apply PBC wrapping to positions
 static bool apply_pbc_wrapping(VecArray pos, int n_atoms) {
