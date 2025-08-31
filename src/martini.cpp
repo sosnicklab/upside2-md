@@ -532,11 +532,11 @@ struct MartiniPotential : public PotentialNode
         }
         
         // Initialize spline parameters
-        lj_r_min = 0.5f * sigma;  // Minimum distance for spline
+        lj_r_min = 0.0f;          // Minimum distance for spline (full range)
         lj_r_max = lj_cutoff;     // Maximum distance for spline
         lj_r_scale = 999.0f / (lj_r_max - lj_r_min);
         
-        coul_r_min = 0.5f;        // Minimum distance for Coulomb spline (Angstroms)
+        coul_r_min = 0.0f;        // Minimum distance for Coulomb spline (full range)
         coul_r_max = coul_cutoff; // Maximum distance for Coulomb spline
         coul_r_scale = 999.0f / (coul_r_max - coul_r_min);
         
@@ -546,6 +546,8 @@ struct MartiniPotential : public PotentialNode
         
         for(int i = 0; i < 1000; ++i) {
             float r = lj_r_min + i * (lj_r_max - lj_r_min) / 999.0f;
+            // Protect against division by zero
+            if (r < 1e-6f) r = 1e-6f;
             float sig_r = sigma / r;
             float sig_r6 = sig_r * sig_r * sig_r * sig_r * sig_r * sig_r;
             float sig_r12 = sig_r6 * sig_r6;
@@ -563,6 +565,8 @@ struct MartiniPotential : public PotentialNode
         
         for(int i = 0; i < 1000; ++i) {
             float r = coul_r_min + i * (coul_r_max - coul_r_min) / 999.0f;
+            // Protect against division by zero
+            if (r < 1e-6f) r = 1e-6f;
             
             // Coulomb potential: k*q1*q2/(dielectric*r) for unit charges (q1=q2=1)
             coul_pot_data[i] = coulomb_constant / (dielectric * r);
@@ -588,11 +592,13 @@ struct MartiniPotential : public PotentialNode
             }
             for (const auto& p : lj_params) {
                 float epsilon = p.first, sigma = p.second;
-                out << "# LJ Spline\n# epsilon=" << epsilon << ", sigma=" << sigma << ", r_min=" << 0.5f * sigma << ", r_max=" << lj_cutoff << "\n";
+                out << "# LJ Spline\n# epsilon=" << epsilon << ", sigma=" << sigma << ", r_min=0.0, r_max=" << lj_cutoff << "\n";
                 out << "# r potential force\n";
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
-                    float r = 0.5f * sigma + i * (lj_cutoff - 0.5f * sigma) / (n_pts - 1);
+                    float r = i * lj_cutoff / (n_pts - 1);
+                    // Protect against division by zero
+                    if (r < 1e-6f) r = 1e-6f;
                     float sig_r = sigma / r;
                     float sig_r6 = pow(sig_r, 6);
                     float sig_r12 = sig_r6 * sig_r6;
@@ -609,11 +615,13 @@ struct MartiniPotential : public PotentialNode
                 if (qq != 0.f) qq_params.insert(qq);
             }
             for (float qq : qq_params) {
-                out << "# Coulomb Spline\n# q1q2=" << qq << ", dielectric=" << dielectric << ", coulomb_constant=" << coulomb_constant << ", r_min=0.5, r_max=" << coul_cutoff << "\n";
+                out << "# Coulomb Spline\n# q1q2=" << qq << ", dielectric=" << dielectric << ", coulomb_constant=" << coulomb_constant << ", r_min=0.0, r_max=" << coul_cutoff << "\n";
                 out << "# r potential force\n";
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
-                    float r = 0.5f + i * (coul_cutoff - 0.5f) / (n_pts - 1);
+                    float r = i * coul_cutoff / (n_pts - 1);
+                    // Protect against division by zero
+                    if (r < 1e-6f) r = 1e-6f;
                     float pot = coulomb_constant * qq / (dielectric * r) / 72.0;
                     float force = coulomb_constant * qq / (dielectric * r * r) / 72.0;
                     out << r << " " << pot << " " << force << "\n";
@@ -812,7 +820,10 @@ struct DistSpring : public PotentialNode
         // Store max_spring as member variable
         this->max_spring = max_spring;
         
-
+        // Initialize bond spline range (full range from 0 to maximum possible distance)
+        bond_r_min = 0.0f;  // Minimum bond distance
+        bond_r_max = std::max(2.0f * max_equil, 10.0f);  // Maximum bond distance (at least 2x max equilibrium or 10A)
+        
         // Debug mode for spline output
         debug_mode = false;
         if(attribute_exists(grp, ".", "debug_mode")) {
@@ -850,7 +861,9 @@ struct DistSpring : public PotentialNode
                 out << "# r potential force\n";
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
-                    float r = std::max(0.1f, r0 * 0.5f) + i * (r0 * 2.0f - std::max(0.1f, r0 * 0.5f)) / (n_pts - 1);
+                    float r = i * (r0 * 2.0f) / (n_pts - 1);
+                    // Protect against very small distances
+                    if (r < 1e-6f) r = 1e-6f;
                     float pot = 0.5f * k * (r - r0) * (r - r0) / 72.0;
                     float force = k * (r - r0) / 72.0;
                     out << r << " " << pot << " " << force << "\n";
