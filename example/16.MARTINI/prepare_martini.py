@@ -198,6 +198,182 @@ def read_protein_itp_exclusions(itp_path: str):
     
     return exclusions
 
+def parse_itp_file(itp_file, target_molecule=None):
+    """
+    Universal ITP parser to read MARTINI topology files.
+    Returns a dictionary with parsed sections: atoms, bonds, angles, dihedrals, etc.
+    If target_molecule is specified, only returns data for that specific molecule type.
+    """
+    topology = {
+        'atoms': [],
+        'bonds': [], 
+        'angles': [],
+        'dihedrals': [],
+        'exclusions': [],
+        'moleculetype': None,
+        'molecules': {}  # Store multiple molecule types
+    }
+    
+    if not os.path.exists(itp_file):
+        print(f"Warning: ITP file {itp_file} not found")
+        return topology
+    
+    current_section = None
+    current_molecule = None
+    current_mol_data = None
+    
+    with open(itp_file, 'r') as f:
+        for line in f:
+            line = line.strip()
+            
+            # Skip empty lines and comments
+            if not line or line.startswith(';'):
+                continue
+            
+            # Check for section headers
+            if line.startswith('[') and line.endswith(']'):
+                section_name = line[1:-1].strip().lower()
+                current_section = section_name
+                continue
+            
+            # Parse based on current section
+            if current_section == 'moleculetype':
+                parts = line.split()
+                if len(parts) >= 1:
+                    current_molecule = parts[0]
+                    if topology['moleculetype'] is None:
+                        topology['moleculetype'] = current_molecule
+                    
+                    # Initialize data structure for this molecule
+                    current_mol_data = {
+                        'atoms': [],
+                        'bonds': [],
+                        'angles': [],
+                        'dihedrals': [],
+                        'exclusions': []
+                    }
+                    topology['molecules'][current_molecule] = current_mol_data
+            
+            elif current_section == 'atoms' and current_mol_data is not None:
+                parts = line.split()
+                if len(parts) >= 6:
+                    try:
+                        atom_data = {
+                            'id': int(parts[0]),
+                            'type': parts[1],
+                            'resnr': int(parts[2]),
+                            'residue': parts[3],
+                            'atom': parts[4],
+                            'cgnr': int(parts[5]),
+                            'charge': 0.0,
+                            'mass': 0.0
+                        }
+                        # Parse charge and mass more carefully
+                        # Charge is typically in column 6 (0-indexed), mass in column 7
+                        if len(parts) >= 7:
+                            try:
+                                atom_data['charge'] = float(parts[6])
+                            except ValueError:
+                                pass
+                        if len(parts) >= 8:
+                            try:
+                                atom_data['mass'] = float(parts[7])
+                            except ValueError:
+                                pass
+                        current_mol_data['atoms'].append(atom_data)
+                        topology['atoms'].append(atom_data)
+                    except (ValueError, IndexError):
+                        continue
+            
+            elif current_section == 'bonds' and current_mol_data is not None:
+                parts = line.split()
+                if len(parts) >= 3:
+                    try:
+                        bond_data = {
+                            'i': int(parts[0]) - 1,  # Convert to 0-indexed
+                            'j': int(parts[1]) - 1,
+                            'func': int(parts[2]),
+                            'r0': 0.0,
+                            'k': 0.0
+                        }
+                        if len(parts) >= 5:
+                            bond_data['r0'] = float(parts[3])  # nm
+                            bond_data['k'] = float(parts[4])   # kJ/mol/nm²
+                        current_mol_data['bonds'].append(bond_data)
+                        topology['bonds'].append(bond_data)
+                    except (ValueError, IndexError):
+                        continue
+            
+            elif current_section == 'angles' and current_mol_data is not None:
+                parts = line.split()
+                if len(parts) >= 6:  # Need at least i j k func theta0 force_k
+                    try:
+                        angle_data = {
+                            'i': int(parts[0]) - 1,  # Convert to 0-indexed
+                            'j': int(parts[1]) - 1,
+                            'k': int(parts[2]) - 1,
+                            'func': int(parts[3]),
+                            'theta0': float(parts[4]),  # degrees
+                            'force_k': float(parts[5])  # kJ/mol/rad² (renamed to avoid conflict)
+                        }
+                        current_mol_data['angles'].append(angle_data)
+                        topology['angles'].append(angle_data)
+                    except (ValueError, IndexError):
+                        continue
+            
+            elif current_section == 'dihedrals' and current_mol_data is not None:
+                parts = line.split()
+                if len(parts) >= 5:
+                    try:
+                        dihedral_data = {
+                            'i': int(parts[0]) - 1,  # Convert to 0-indexed
+                            'j': int(parts[1]) - 1,
+                            'k': int(parts[2]) - 1,
+                            'l': int(parts[3]) - 1,
+                            'func': int(parts[4]),
+                            'phi0': 0.0,
+                            'k': 0.0,
+                            'mult': 1
+                        }
+                        if len(parts) >= 7:
+                            dihedral_data['phi0'] = float(parts[5])  # degrees
+                            dihedral_data['k'] = float(parts[6])     # kJ/mol
+                        if len(parts) >= 8:
+                            dihedral_data['mult'] = int(parts[7])
+                        current_mol_data['dihedrals'].append(dihedral_data)
+                        topology['dihedrals'].append(dihedral_data)
+                    except (ValueError, IndexError):
+                        continue
+            
+            elif current_section == 'exclusions' and current_mol_data is not None:
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        # Convert to 0-indexed and add all pairs
+                        atoms = [int(part)-1 for part in parts]
+                        for i in range(len(atoms)):
+                            for j in range(i+1, len(atoms)):
+                                exclusion = (atoms[i], atoms[j])
+                                current_mol_data['exclusions'].append(exclusion)
+                                topology['exclusions'].append(exclusion)
+                    except ValueError:
+                        continue
+    
+    # If target_molecule is specified, return only that molecule's data
+    if target_molecule and target_molecule in topology['molecules']:
+        mol_data = topology['molecules'][target_molecule]
+        return {
+            'atoms': mol_data['atoms'],
+            'bonds': mol_data['bonds'],
+            'angles': mol_data['angles'],
+            'dihedrals': mol_data['dihedrals'],
+            'exclusions': mol_data['exclusions'],
+            'moleculetype': target_molecule,
+            'molecules': {target_molecule: mol_data}
+        }
+    
+    return topology
+
 def read_martini_masses(ff_file):
     """Read atom type masses from MARTINI force field file"""
     masses = {}
@@ -264,36 +440,83 @@ def main():
         # Default fallback parameters
         martini_table[('P2', 'P2')] = (0.47, 4.25)  # Default P2-P2 interaction
     
-    # Read DOPC topology
+    # Parse DOPC topology from ITP file
     dopc_param_file = "ff3.00/martini_v3.0.0_phospholipids_v1.itp"
-    dopc_bead_types = ['Q1', 'Q5', 'SN4a', 'N4a', 'C1', 'C4h', 'C1', 'C1', 'C1', 'C4h', 'C1', 'C1']
-    dopc_charges = [1.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    # First check what molecules are available
+    full_topology = parse_itp_file(dopc_param_file)
+    print(f"Available molecules in {dopc_param_file}: {list(full_topology['molecules'].keys())}")
     
-    # Read ion topologies
+    # Try to find DOPC or similar molecule
+    dopc_molecule = None
+    for mol_name in full_topology['molecules'].keys():
+        if 'DOPC' in mol_name.upper() or 'DOP' in mol_name.upper():
+            dopc_molecule = mol_name
+            break
+    
+    if dopc_molecule:
+        dopc_topology = parse_itp_file(dopc_param_file, dopc_molecule)
+        print(f"Using molecule type: {dopc_molecule}")
+    else:
+        # Fallback to first molecule if DOPC not found
+        if full_topology['molecules']:
+            dopc_molecule = list(full_topology['molecules'].keys())[0]
+            dopc_topology = parse_itp_file(dopc_param_file, dopc_molecule)
+            print(f"DOPC not found, using first available molecule: {dopc_molecule}")
+        else:
+            dopc_topology = full_topology
+    
+    dopc_bead_types = [atom['type'] for atom in dopc_topology['atoms']]
+    dopc_charges = [atom['charge'] for atom in dopc_topology['atoms']]
+    print(f"Read DOPC topology: {len(dopc_bead_types)} bead types from {dopc_param_file}")
+    
+    # Parse ion topologies from ITP file
     ion_param_file = "ff3.00/martini_v3.0.0_ions_v1.itp"
-    na_bead_types = ['TQ5']
-    na_charges = [1.0]
-    cl_bead_types = ['TQ5']
-    cl_charges = [-1.0]
+    ion_topology = parse_itp_file(ion_param_file)
+    # Extract NA and CL atoms specifically
+    na_atoms = [atom for atom in ion_topology['atoms'] if atom['residue'].upper() == 'NA']
+    cl_atoms = [atom for atom in ion_topology['atoms'] if atom['residue'].upper() == 'CL']
+    na_bead_types = [atom['type'] for atom in na_atoms] if na_atoms else ['TQ5']
+    na_charges = [atom['charge'] for atom in na_atoms] if na_atoms else [1.0]
+    cl_bead_types = [atom['type'] for atom in cl_atoms] if cl_atoms else ['TQ5']
+    cl_charges = [atom['charge'] for atom in cl_atoms] if cl_atoms else [-1.0]
+    print(f"Read ion topology: NA={len(na_bead_types)} types, CL={len(cl_bead_types)} types from {ion_param_file}")
     
-    # Read water topology
+    # Parse water topology from ITP file
     water_param_file = "ff3.00/martini_v3.0.0_solvents_v1.itp"
-    water_bead_types = ['W']
-    water_charges = [0.0]
+    water_topology = parse_itp_file(water_param_file)
+    water_atoms = [atom for atom in water_topology['atoms'] if atom['residue'].upper() == 'W']
+    water_bead_types = [atom['type'] for atom in water_atoms] if water_atoms else ['W']
+    water_charges = [atom['charge'] for atom in water_atoms] if water_atoms else [0.0]
+    print(f"Read water topology: {len(water_bead_types)} bead types from {water_param_file}")
     
     # Read bead masses from force field file
     mass_file = "ff3.00/martini_v3.0.0.itp"
     martini_masses = read_martini_masses(mass_file)
     print(f"Read {len(martini_masses)} atom type masses from force field file")
     
-    # Read DOPC bonds and angles
-    dopc_bonds = [(0, 1), (1, 2), (2, 3), (2, 4), (4, 5), (5, 6), (6, 7), (3, 8), (8, 9), (9, 10), (10, 11)]
-    dopc_bond_lengths = [0.40, 0.42, 0.312, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47]  # nm
-    dopc_bond_force_constants = [7000.0, 1350.0, 2500.0, 5000.0, 3800.0, 3800.0, 3800.0, 3600.0, 3800.0, 3800.0, 3800.0]  # kJ/mol/nm²
+    # Read DOPC bonds and angles from parsed topology
+    dopc_bonds = [(bond['i'], bond['j']) for bond in dopc_topology['bonds']]
+    dopc_bond_lengths = [bond['r0'] for bond in dopc_topology['bonds']]  # nm
+    dopc_bond_force_constants = [bond['k'] for bond in dopc_topology['bonds']]  # kJ/mol/nm²
     
-    angle_atoms_martini = [(1, 2, 3), (1, 2, 4), (2, 4, 5), (4, 5, 6), (5, 6, 7), (3, 8, 9), (8, 9, 10), (9, 10, 11)]
-    angle_equil_deg = [108.0, 139.1, 180.0, 120.0, 180.0, 180.0, 180.0, 180.0]  # degrees
-    angle_force_constants = [21.5, 31.2, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0]  # kJ/mol/deg²
+    dopc_angles = [(angle['i'], angle['j'], angle['k']) for angle in dopc_topology['angles']]
+    dopc_angle_equil_deg = [angle['theta0'] for angle in dopc_topology['angles']]  # degrees
+    dopc_angle_force_constants = [angle['force_k'] for angle in dopc_topology['angles']]  # kJ/mol/rad²
+    
+    print(f"Read DOPC connectivity: {len(dopc_bonds)} bonds, {len(dopc_angles)} angles")
+    
+    # Fallback to hardcoded values if topology parsing failed
+    if not dopc_bonds:
+        print("Warning: No DOPC bonds found in topology, using fallback values")
+        dopc_bonds = [(0, 1), (1, 2), (2, 3), (2, 4), (4, 5), (5, 6), (6, 7), (3, 8), (8, 9), (9, 10), (10, 11)]
+        dopc_bond_lengths = [0.40, 0.42, 0.312, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47]  # nm
+        dopc_bond_force_constants = [7000.0, 1350.0, 2500.0, 5000.0, 3800.0, 3800.0, 3800.0, 3600.0, 3800.0, 3800.0, 3800.0]  # kJ/mol/nm²
+    
+    if not dopc_angles:
+        print("Warning: No DOPC angles found in topology, using fallback values")
+        dopc_angles = [(1, 2, 3), (1, 2, 4), (2, 4, 5), (4, 5, 6), (5, 6, 7), (3, 8, 9), (8, 9, 10), (9, 10, 11)]
+        dopc_angle_equil_deg = [108.0, 139.1, 180.0, 120.0, 180.0, 180.0, 180.0, 180.0]  # degrees
+        dopc_angle_force_constants = [21.5, 31.2, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0]  # kJ/mol/deg²
     
     # Unit conversions
     energy_conversion = 2.914952774272  # kJ/mol → E_up
@@ -465,32 +688,53 @@ def main():
     current_resid = None
     current_resname = None
     
+    # Define protein residue names
+    protein_residues = {'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE', 
+                       'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL'}
+    
     for i, (resid, resname, atom_name) in enumerate(zip(residue_ids, residue_names, atom_names)):
+        # Determine molecule type
+        if resname in protein_residues:
+            mol_type = 'PROTEIN'
+        else:
+            # Normalize DOP (resname in PDB) to DOPC for reporting and selection
+            mol_type = 'DOPC' if resname == 'DOP' else resname
+            
         if resid != current_resid:
             if current_mol_atoms:
-                molecules.append((current_resname, current_mol_atoms, current_mol_indices))
+                molecules.append((current_mol_type, current_mol_atoms, current_mol_indices))
             current_mol_atoms = [atom_name]
             current_mol_names = [atom_name]
             current_mol_indices = [i]
             current_resid = resid
             current_resname = resname
+            current_mol_type = mol_type
         else:
             current_mol_atoms.append(atom_name)
             current_mol_indices.append(i)
     
     if current_mol_atoms:
-        molecules.append((current_resname, current_mol_atoms, current_mol_indices))
+        molecules.append((current_mol_type, current_mol_atoms, current_mol_indices))
     
-    # Count molecules
-    mol_counts = Counter(mol[0] for mol in molecules)
-    dopc_count = mol_counts.get('DOP', 0)  # DOP is the residue name, not DOPC
+    # Count molecules by type, but group all protein residues together
+    mol_counts = Counter()
+    protein_residue_count = 0
+    
+    for mol_type, _, _ in molecules:
+        if mol_type == 'PROTEIN':
+            protein_residue_count += 1
+        else:
+            mol_counts[mol_type] += 1
+    
+    if protein_residue_count > 0:
+        mol_counts['PROTEIN'] = f"1 chain ({protein_residue_count} residues)"
+    
+    dopc_count = mol_counts.get('DOPC', 0)
     water_count = mol_counts.get('W', 0)
     
     print(f"\n=== Molecule Summary ===")
     for moltype, count in mol_counts.items():
         print(f"{moltype}: {count} molecules")
-    
-
     
     # Create bonds and angles
     print(f"\n=== Creating Connectivity ===")
@@ -507,7 +751,7 @@ def main():
     dihedral_force_constants_list = []
     
     # Create DOPC bonds and angles
-    dopc_molecules = [mol for mol in molecules if mol[0] == 'DOP']  # DOP is the residue name, not DOPC
+    dopc_molecules = [mol for mol in molecules if mol[0] == 'DOPC']  # unified label
     
     for mol_idx, (_, atom_names_mol, atom_indices) in enumerate(dopc_molecules):
         name_to_idx = {name: idx for name, idx in zip(atom_names_mol, atom_indices)}
@@ -524,7 +768,7 @@ def main():
                 bond_force_constants_list.append(dopc_bond_force_constants[i] * bond_conversion)  # kJ/mol/nm² to E_up/Å²
         
         # Create angles for this lipid
-        for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(angle_atoms_martini):
+        for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(dopc_angles):
             if (angle_idx1 < len(dopc_bead_types) and angle_idx2 < len(dopc_bead_types) and 
                 angle_idx3 < len(dopc_bead_types)):
                 atom1_name = atom_names_mol[angle_idx1]
@@ -534,8 +778,8 @@ def main():
                 atom2 = name_to_idx[atom2_name]
                 atom3 = name_to_idx[atom3_name]
                 angles_list.append([atom1, atom2, atom3])
-                angle_equil_deg_list.append(angle_equil_deg[i])
-                angle_force_constants_list.append(angle_force_constants[i] * angle_conversion)  # kJ/mol/deg² to E_up/deg²
+                angle_equil_deg_list.append(dopc_angle_equil_deg[i])
+                angle_force_constants_list.append(dopc_angle_force_constants[i] * angle_conversion)  # kJ/mol/deg² to E_up/deg²
     
     print(f"Created {len(bonds_list)} bonds for {dopc_count} DOPC lipids")
     print(f"Created {len(angles_list)} angles for {dopc_count} DOPC lipids")
