@@ -161,6 +161,7 @@ CMD_SOFT=(
     "--seed" "$SEED"
     "--integrator" "$INTEGRATOR"
     "--disable-initial-thermalization"
+    "--disable-z-recentering"
 )
 echo "Command (soft): ${CMD_SOFT[*]}"
 START_TIME_SOFT=$(date +%s)
@@ -225,6 +226,7 @@ PYEOF
         "--seed" "$SEED"
         "--integrator" "$INTEGRATOR"
         "--disable-initial-thermalization"
+        "--disable-z-recentering"
     )
     echo "Command (regular): ${CMD_REG[*]}"
     START_TIME_REG=$(date +%s)

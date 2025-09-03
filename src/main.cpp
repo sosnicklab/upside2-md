@@ -1165,9 +1165,9 @@ try {
                     if(nr && mc_interval && !(nr%mc_interval)) 
                         sys.mc_samplers.execute(sys.random_seed, nr, sys.temperature, sys.engine);
 
+                    // Recenter every step to prevent global COM drift (XY-only if requested)
+                    if(do_recenter) recenter(sys.engine.pos->output, xy_recenter_only, sys.n_atom);
                     if(!frame_interval || !(nr%frame_interval)) {
-                        
-                        if(do_recenter) recenter(sys.engine.pos->output, xy_recenter_only, sys.n_atom);
                         sys.engine.compute(PotentialAndDerivMode);
                         sys.logger->collect_samples();
 
