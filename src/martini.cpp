@@ -543,20 +543,23 @@ struct MartiniPotential : public PotentialNode
         }
         
         // Initialize spline parameters
-        lj_r_min = 0.5f * sigma;  // Minimum distance for spline
+        // Change range to (0, r_max) for tabulation
+        lj_r_min = 0.0f;          // Minimum distance for spline
         lj_r_max = lj_cutoff;     // Maximum distance for spline
-        lj_r_scale = 999.0f / (lj_r_max - lj_r_min);
+        lj_r_scale = (lj_r_max > 0.0f) ? (999.0f / (lj_r_max - lj_r_min)) : 0.0f;
         
-        coul_r_min = 0.5f;        // Minimum distance for Coulomb spline (Angstroms)
+        coul_r_min = 0.0f;        // Minimum distance for Coulomb spline (Angstroms)
         coul_r_max = coul_cutoff; // Maximum distance for Coulomb spline
-        coul_r_scale = 999.0f / (coul_r_max - coul_r_min);
+        coul_r_scale = (coul_r_max > 0.0f) ? (999.0f / (coul_r_max - coul_r_min)) : 0.0f;
         
         // Generate spline data for LJ potential
         std::vector<double> lj_pot_data(1000);
         std::vector<double> lj_force_data(1000);
         
         for(int i = 0; i < 1000; ++i) {
-            float r = lj_r_min + i * (lj_r_max - lj_r_min) / 999.0f;
+            float r = i * (lj_r_max - lj_r_min) / 999.0f; // starts at 0
+            // avoid singularity at r=0 by using a very small epsilon
+            if(r == 0.0f) r = 1.0e-6f;
             float sig_r = sigma / r;
             float sig_r6 = sig_r * sig_r * sig_r * sig_r * sig_r * sig_r;
             float sig_r12 = sig_r6 * sig_r6;
@@ -573,7 +576,9 @@ struct MartiniPotential : public PotentialNode
         std::vector<double> coul_force_data(1000);
         
         for(int i = 0; i < 1000; ++i) {
-            float r = coul_r_min + i * (coul_r_max - coul_r_min) / 999.0f;
+            float r = i * (coul_r_max - coul_r_min) / 999.0f; // starts at 0
+            // avoid singularity at r=0 by using a very small epsilon
+            if(r == 0.0f) r = 1.0e-6f;
             
             // Coulomb potential: k*q1*q2/(dielectric*r) for unit charges (q1=q2=1)
             coul_pot_data[i] = coulomb_constant / (dielectric * r);
@@ -599,11 +604,12 @@ struct MartiniPotential : public PotentialNode
             }
             for (const auto& p : lj_params) {
                 float epsilon = p.first, sigma = p.second;
-                out << "# LJ Spline\n# epsilon=" << epsilon << ", sigma=" << sigma << ", r_min=" << 0.5f * sigma << ", r_max=" << lj_cutoff << "\n";
+                out << "# LJ Spline\n# epsilon=" << epsilon << ", sigma=" << sigma << ", r_min=" << 0.0f << ", r_max=" << lj_cutoff << "\n";
                 out << "# r potential force\n";
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
-                    float r = 0.5f * sigma + i * (lj_cutoff - 0.5f * sigma) / (n_pts - 1);
+                    float r = 0.0f + i * (lj_cutoff - 0.0f) / (n_pts - 1);
+                    if(r == 0.0f) r = 1.0e-6f;
                     float sig_r = sigma / r;
                     float sig_r6 = pow(sig_r, 6);
                     float sig_r12 = sig_r6 * sig_r6;
@@ -620,11 +626,12 @@ struct MartiniPotential : public PotentialNode
                 if (qq != 0.f) qq_params.insert(qq);
             }
             for (float qq : qq_params) {
-                out << "# Coulomb Spline\n# q1q2=" << qq << ", dielectric=" << dielectric << ", coulomb_constant=" << coulomb_constant << ", r_min=0.5, r_max=" << coul_cutoff << "\n";
+                out << "# Coulomb Spline\n# q1q2=" << qq << ", dielectric=" << dielectric << ", coulomb_constant=" << coulomb_constant << ", r_min=0.0, r_max=" << coul_cutoff << "\n";
                 out << "# r potential force\n";
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
-                    float r = 0.5f + i * (coul_cutoff - 0.5f) / (n_pts - 1);
+                    float r = 0.0f + i * (coul_cutoff - 0.0f) / (n_pts - 1);
+                    if(r == 0.0f) r = 1.0e-6f;
                     float pot = coulomb_constant * qq / (dielectric * r) / 72.0;
                     float force = coulomb_constant * qq / (dielectric * r * r) / 72.0;
                     out << r << " " << pot << " " << force << "\n";
@@ -681,9 +688,9 @@ struct MartiniPotential : public PotentialNode
             Vec<3> force = make_zero<3>();
             
             // Lennard-Jones potential using spline interpolation
-            if(eps != 0.f && sig != 0.f && dist < lj_cutoff && dist >= lj_r_min) {
+            if(eps != 0.f && sig != 0.f && dist < lj_cutoff) {
                 // Use spline interpolation for LJ potential and force
-                float r_coord = (dist - lj_r_min) * lj_r_scale;
+                float r_coord = dist * lj_r_scale;
                 
                 float lj_result[2];
                 lj_potential_spline.evaluate_value_and_deriv(lj_result, 0, r_coord);
@@ -701,7 +708,7 @@ struct MartiniPotential : public PotentialNode
             }
             
             // Coulomb potential using spline interpolation
-            if(qi != 0.f && qj != 0.f && dist < coul_cutoff && dist >= coul_r_min) {
+            if(qi != 0.f && qj != 0.f && dist < coul_cutoff) {
                 float coul_pot, coul_force_mag;
                 
                 if(coulomb_soften && slater_alpha > 0.0f) {
@@ -718,7 +725,7 @@ struct MartiniPotential : public PotentialNode
                     coul_force_mag = -coulomb_constant * qi * qj * (soften_factor / dist2 - d_soften_dr) / dielectric;
                 } else {
                     // Use spline interpolation for standard Coulomb potential
-                    float r_coord = (dist - coul_r_min) * coul_r_scale;
+                    float r_coord = dist * coul_r_scale;
                     
                     float coul_result[2];
                     coul_potential_spline.evaluate_value_and_deriv(coul_result, 0, r_coord);
@@ -830,8 +837,19 @@ struct DistSpring : public PotentialNode
             debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
         }
         
-        // Define and store a GLOBAL delta-r domain shared by all bonds
-        bond_delta_min = bond_r_min - max_equil; // smallest possible (r - r0)
+        // Define the bond r-range to start at 0 and extend to r_max
+        bond_r_min = 0.0f;
+        // Prefer an attribute if provided; otherwise choose a conservative default
+        if(attribute_exists(grp, ".", "bond_r_max")) {
+            bond_r_max = read_attribute<float>(grp, ".", "bond_r_max");
+        } else {
+            // heuristic default: at least 2x the largest equilibrium distance or 5 Å
+            bond_r_max = std::max(2.0f * max_equil, 5.0f);
+        }
+        bond_r_scale = (bond_r_max > bond_r_min) ? (999.0f / (bond_r_max - bond_r_min)) : 0.0f;
+
+        // Define and store a GLOBAL delta-r domain shared by all bonds corresponding to r in [0, bond_r_max]
+        bond_delta_min = bond_r_min - max_equil; // smallest possible (r - r0) with r_min=0
         bond_delta_max = bond_r_max - min_equil; // largest possible (r - r0)
         bond_delta_scale = 999.0f / (bond_delta_max - bond_delta_min);
 
