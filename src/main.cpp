@@ -609,6 +609,8 @@ try {
         uint64_t n_round = round(duration / (inner_step*dt));
         // Calculate thermostat interval: how many inner steps between thermostat applications
         // thermostat_interval_arg is in time units, convert to number of inner steps
+        // For proper Langevin dynamics, delta_t should be << timescale
+        // thermostat_interval_arg is in time units, convert to number of inner steps
         // For proper Langevin dynamics, delta_t should be << timescale (0.135)
         // We want delta_t ≈ timescale/10 = 0.0135
         // So thermostat_interval ≈ 0.0135 / (inner_step * dt) ≈ 0.0135 / 0.03 ≈ 0.45
