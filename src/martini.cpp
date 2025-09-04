@@ -594,6 +594,13 @@ struct MartiniPotential : public PotentialNode
             // work in reduced coordinate x = r/sigma with sigma=1 for table
             float x = i * (lj_x_max - lj_x_min) / 999.0f; // starts at 0
             if(x == 0.0f) x = 1.0e-6f;
+
+            // Check for numerical stability - avoid very small x values for regular LJ
+            if(!lj_soften || lj_soften_alpha <= 0.0f) {
+                // For regular LJ, prevent numerical issues at small distances
+                if(x < 0.1f) x = 0.1f;  // Minimum r/sigma = 0.1 to avoid numerical issues
+            }
+
             if(lj_soften && lj_soften_alpha > 0.0f) {
                 // Soft-core LJ in reduced units: t = x^6 + alpha; V = 4*(1/t^2 - 1/t)
                 float x2 = x * x;
@@ -633,6 +640,13 @@ struct MartiniPotential : public PotentialNode
             float r = i * (coul_r_max - coul_r_min) / 999.0f; // starts at 0
             // avoid singularity at r=0 by using a very small epsilon
             if(r == 0.0f) r = 1.0e-6f;
+
+            // Check for numerical stability - avoid very small r values for regular Coulomb
+            if(!coulomb_soften || slater_alpha <= 0.0f) {
+                // For regular Coulomb, prevent numerical issues at small distances
+                if(r < 0.1f) r = 0.1f;  // Minimum r = 0.1 Å to avoid numerical issues
+            }
+
             if(coulomb_soften && slater_alpha > 0.0f) {
                 // Slater softened Coulomb for unit charges
                 float alpha_r = slater_alpha * r;
@@ -800,16 +814,17 @@ struct MartiniPotential : public PotentialNode
                 
                 float lj_result[2];
                 lj_potential_spline.evaluate_value_and_deriv(lj_result, 0, r_coord);
-                // scale potential by epsilon_pair (table already includes /72.0 scaling)
+                // scale potential by epsilon_pair (table already includes /12.0 scaling)
                 float lj_pot = lj_result[1] * eps;
 
                 float force_result[2];
                 lj_force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
-                // scale radial force by epsilon/sigma (table already includes /72.0 scaling)
+                // scale radial force by epsilon/sigma (table already includes /12.0 scaling)
                 float lj_force_mag = force_result[1] * (eps / sig);
                 
-                // Only apply if potential and force are finite
-                if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag)) {
+                // Only apply if potential and force are finite and reasonable
+                if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag) &&
+                   std::isfinite(lj_result[1]) && std::isfinite(force_result[1])) {
                     if(pot) *pot += lj_pot;
                     // lj_force_mag is tabulated as -dV/dr. pos->sens stores gradient dE/dx.
                     // Gradient on i: (dV/dr) * r_hat = -( -dV/dr ) * r_hat = -(lj_force_mag) * r_hat
@@ -823,14 +838,15 @@ struct MartiniPotential : public PotentialNode
                 float r_coord = dist * coul_r_scale;
                 float coul_result[2];
                 coul_potential_spline.evaluate_value_and_deriv(coul_result, 0, r_coord);
-                float coul_pot = coul_result[1] * qi * qj;  // Scale by actual charges (table already includes /72.0 scaling)
+                float coul_pot = coul_result[1] * qi * qj;  // Scale by actual charges (table already includes /12.0 scaling)
 
                 float force_result[2];
                 coul_force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
-                float coul_force_mag = force_result[1] * qi * qj;  // Scale by actual charges (table already includes /72.0 scaling)
+                float coul_force_mag = force_result[1] * qi * qj;  // Scale by actual charges (table already includes /12.0 scaling)
                 
-                // Only apply if potential and force are finite
-                if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag)) {
+                // Only apply if potential and force are finite and reasonable
+                if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag) &&
+                   std::isfinite(coul_result[1]) && std::isfinite(force_result[1])) {
                     if(pot) *pot += coul_pot;
                     // coul_force_mag is tabulated as -dV/dr; accumulate gradient as above
                     force += (coul_force_mag/dist) * (-dr);
