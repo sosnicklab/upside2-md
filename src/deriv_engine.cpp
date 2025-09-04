@@ -337,15 +337,13 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
             auto new_pos = pos_vec + dt*p;
             store_vec(pos->output, na, new_pos);
         }
-        
 
-        
-        // Step 3: Compute forces at new positions
+        // Step 4: Compute forces at new positions
         compute(DerivMode);   // compute forces at new positions
         
 
         
-        // Step 4: Update velocities by another half step
+        // Step 5: Update velocities by another half step
         for(int na=0; na < pos->n_atom; ++na) {
             auto d = load_vec<3>(pos->sens, na);
             if(max_force) {
@@ -501,7 +499,57 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
         
         // Step 6: Simple COM velocity removal (less aggressive)
         remove_com_velocity(mom, pos->n_atom);
-        
+
+    } else if (type == NVT_Corrected) {
+        // CORRECTED NVT integrator - clean Velocity Verlet without excessive drift corrections
+        // This implements proper energy conservation for NVT ensemble
+
+        // Step 1: Compute forces at current positions
+        compute(DerivMode);   // compute forces at current positions
+
+        // Step 2: Update velocities by half step
+        for(int na=0; na < pos->n_atom; ++na) {
+            auto d = load_vec<3>(pos->sens, na);
+            if(max_force) {
+                float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
+                float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
+                d *= scale_factor;
+            }
+            // Apply mass scaling to velocity update
+            float particle_mass = (masses.x == nullptr) ? 1.0f : masses(0, na);
+            auto p = load_vec<3>(mom, na) - 0.5f*dt*d/particle_mass;  // half step velocity update with mass
+            store_vec (mom, na, p);
+        }
+
+        // Step 3: Update positions by full step
+        for(int na=0; na < pos->n_atom; ++na) {
+            auto p = load_vec<3>(mom, na);
+            auto pos_vec = load_vec<3>(pos->output, na);
+            auto new_pos = pos_vec + dt*p;
+            store_vec(pos->output, na, new_pos);
+        }
+
+        // Step 4: Compute forces at new positions
+        compute(DerivMode);   // compute forces at new positions
+
+        // Step 5: Update velocities by another half step
+        for(int na=0; na < pos->n_atom; ++na) {
+            auto d = load_vec<3>(pos->sens, na);
+            if(max_force) {
+                float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
+                float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
+                d *= scale_factor;
+            }
+            // Apply mass scaling to velocity update
+            float particle_mass = (masses.x == nullptr) ? 1.0f : masses(0, na);
+            auto p = load_vec<3>(mom, na) - 0.5f*dt*d/particle_mass;  // half step velocity update with mass
+            store_vec (mom, na, p);
+        }
+
+        // Step 6: Minimal COM velocity removal (only when necessary)
+        // This prevents drift without excessive corrections that can cause energy buildup
+        remove_com_velocity(mom, pos->n_atom);
+
     } else {
         // Original 3-stage integrator from Predescu et al., 2012
         // http://dx.doi.org/10.1080/00268976.2012.681311

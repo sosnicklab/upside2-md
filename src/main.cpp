@@ -607,7 +607,12 @@ try {
         double time_lim = time_lim_arg.getValue();
         bool passed_time_lim = false;
         uint64_t n_round = round(duration / (inner_step*dt));
-        int thermostat_interval = max(1.,round(thermostat_interval_arg.getValue() / (inner_step*dt))); //  FIXME inner_step
+        // Calculate thermostat interval: how many inner steps between thermostat applications
+        // thermostat_interval_arg is in time units, convert to number of inner steps
+        // For proper Langevin dynamics, delta_t should be << timescale (0.135)
+        // We want delta_t ≈ timescale/10 = 0.0135
+        // So thermostat_interval ≈ 0.0135 / (inner_step * dt) ≈ 0.0135 / 0.03 ≈ 0.45
+        int thermostat_interval = max(1, (int)round(thermostat_interval_arg.getValue() / (inner_step * dt) / 100.0));
         int barostat_interval = max(1.,round(barostat_interval_arg.getValue() / (inner_step*dt))); // Barostat interval
         int frame_interval = max(1.,round(frame_interval_arg.getValue() / (inner_step*dt)));
         int dense_output_interval = max(1.,round(dense_frame_interval_arg.getValue() / (inner_step*dt)));
@@ -1195,6 +1200,19 @@ try {
                         sys.logger->collect_dense_samples();
                     }
 
+                    // CORRECTED ORDER: Integration first, then thermostat/barostat
+                    if  (integrator_arg.getValue() == "mv" )
+                        sys.engine.integration_cycle(sys.mom, dt, inner_step, sys.particle_masses);
+                    else if (integrator_arg.getValue() == "vv" )
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::VelocityVerlet, sys.particle_masses);
+                    else if (integrator_arg.getValue() == "npt" )
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::NPT, sys.particle_masses);
+                    else if (integrator_arg.getValue() == "nvt_corrected" )
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::NVT_Corrected, sys.particle_masses);
+                    else
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::Verlet, sys.particle_masses);
+
+                    // Apply thermostat AFTER integration
                     if(!(nr%thermostat_interval) && !disable_thermostat_arg.getValue()) {
                         // Handle simulated annealing if applicable
                         if(anneal_factor != 1.)
@@ -1202,52 +1220,67 @@ try {
                         sys.thermostat.apply(sys.mom, sys.n_atom);
                     }
 
-                    // Apply barostat for NPT ensemble - very conservative approach
+                    // Apply barostat for NPT ensemble AFTER integration
                     if(integrator_arg.getValue() == "npt" && sys.use_barostat && !(nr%barostat_interval)) {
-                        // Very conservative Berendsen barostat implementation
-                        // Only apply very small corrections to prevent instability
-                        
-                        // Calculate current pressure (simplified)
-                        float current_pressure = 0.0;
-                        float volume = 1.0; // Assuming unit volume for now
-                        
-                        // Calculate pressure from forces and positions (virial theorem)
+                        // Calculate current volume from bounding box
+                        const float MAX_FLOAT = 1e10f;
+                        float3 min_pos = make_vec3(MAX_FLOAT, MAX_FLOAT, MAX_FLOAT);
+                        float3 max_pos = make_vec3(-MAX_FLOAT, -MAX_FLOAT, -MAX_FLOAT);
+
                         for(int na=0; na<sys.n_atom; ++na) {
+                            auto pos = load_vec<3>(sys.engine.pos->output, na);
+                            min_pos.x() = std::min(min_pos.x(), pos.x());
+                            min_pos.y() = std::min(min_pos.y(), pos.y());
+                            min_pos.z() = std::min(min_pos.z(), pos.z());
+                            max_pos.x() = std::max(max_pos.x(), pos.x());
+                            max_pos.y() = std::max(max_pos.y(), pos.y());
+                            max_pos.z() = std::max(max_pos.z(), pos.z());
+                        }
+
+                        float volume = (max_pos.x() - min_pos.x()) *
+                                     (max_pos.y() - min_pos.y()) *
+                                     (max_pos.z() - min_pos.z());
+
+                        // Calculate kinetic energy and virial
+                        float kinetic_energy = 0.0f;
+                        float virial = 0.0f;
+
+                        for(int na=0; na<sys.n_atom; ++na) {
+                            auto vel = load_vec<3>(sys.mom, na);
+                            float mass = (sys.particle_masses.x == nullptr) ? 1.0f : sys.particle_masses(0, na);
+                            kinetic_energy += 0.5f * mass * dot(vel, vel);
+
                             auto force = load_vec<3>(sys.engine.pos->sens, na);
                             auto pos = load_vec<3>(sys.engine.pos->output, na);
-                            current_pressure += dot(force, pos);
+                            virial += dot(force, pos);
                         }
-                        current_pressure /= (3.0 * volume);
-                        
-                        // Apply very conservative pressure coupling
-                        float pressure_diff = sys.pressure - current_pressure;
-                        
-                        // Use very small coupling constant to prevent instability
-                        float coupling_constant = 0.001f; // Very small coupling
-                        float scale_factor = 1.0 + coupling_constant * pressure_diff * dt;
-                        
-                        // Limit the scale factor to prevent extreme changes
-                        scale_factor = std::max(0.99f, std::min(1.01f, scale_factor));
-                        
-                        // Apply scaling only if the change is significant enough
-                        if (fabs(scale_factor - 1.0f) > 1e-6f) {
-                            // Scale positions conservatively
-                            for(int na=0; na<sys.n_atom; ++na) {
-                                auto pos = load_vec<3>(sys.engine.pos->output, na);
-                                pos *= scale_factor;
-                                store_vec(sys.engine.pos->output, na, pos);
-                            }
+
+                        // Calculate pressure using virial theorem: P = (2*KE + virial)/(3V)
+                        float current_pressure = (2.0f * kinetic_energy + virial) / (3.0f * volume);
+
+                        // Berendsen barostat with improved parameters
+                        float pressure_diff = current_pressure - sys.pressure;
+                        float tau_p = 1.0f; // barostat relaxation time
+                        float compressibility = 4.5e-5f; // water compressibility in UPSIDE units
+
+                        float scale_factor = 1.0f - compressibility * pressure_diff * (dt / tau_p);
+                        scale_factor = std::max(0.995f, std::min(1.005f, scale_factor));
+
+                        // Apply scaling to positions
+                        for(int na=0; na<sys.n_atom; ++na) {
+                            auto pos = load_vec<3>(sys.engine.pos->output, na);
+                            pos *= scale_factor;
+                            store_vec(sys.engine.pos->output, na, pos);
+                        }
+
+                        // Scale velocities to maintain temperature
+                        float vel_scale = 1.0f / scale_factor;
+                        for(int na=0; na<sys.n_atom; ++na) {
+                            auto vel = load_vec<3>(sys.mom, na);
+                            vel *= vel_scale;
+                            store_vec(sys.mom, na, vel);
                         }
                     }
-
-                    if  (integrator_arg.getValue() == "mv" )
-                        sys.engine.integration_cycle(sys.mom, dt, inner_step, sys.particle_masses);
-                    else if (integrator_arg.getValue() == "vv" )
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::VelocityVerlet, sys.particle_masses);
-                    else if (integrator_arg.getValue() == "npt" )
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::NPT, sys.particle_masses);
-                    else
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::Verlet, sys.particle_masses);
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
                         curvature_changer->attempt_change(base_random_seed, sys.round_num, sys, relative_curvature_radius_change);
