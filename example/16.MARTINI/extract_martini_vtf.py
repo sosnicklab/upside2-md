@@ -89,12 +89,14 @@ def main():
 
     # Open the HDF5 files
     with h5py.File(input_file, 'r') as t, h5py.File(input_file_for_structure, 'r') as t_struct:
-        # Get the number of frames (support input-only files without /output/pos)
-        if 'output/pos' in t:
-            n_frame = len(t['output/pos'])
-        else:
-            n_frame = 1
-        print(f"Number of frames: {n_frame}")
+        # Get the number of frames from both softened and regular stages
+        n_frame_soft = len(t['output_soft/pos']) if 'output_soft/pos' in t else 0
+        n_frame_regular = len(t['output/pos']) if 'output/pos' in t else 0
+        n_frame_total = n_frame_soft + n_frame_regular
+
+        print(f"Number of softened frames: {n_frame_soft}")
+        print(f"Number of regular frames: {n_frame_regular}")
+        print(f"Total simulation frames: {n_frame_total}")
         
         # Get position data shape from input (first frame should use input positions)
         input_pos = t_struct['input/pos'][:]
@@ -240,11 +242,17 @@ def main():
                 f.write(f"pbc {x_len} {y_len} {z_len}\n")
                 
                 half_box = np.array([x_len/2, y_len/2, z_len/2])
-                # Skip the initial PDB frame since the first simulation frame already contains the properly centered structure
-                frame_start = 1
-                for frame in range(frame_start, n_frame + 1):
-                    pos = t['output/pos'][frame-1]
-                    
+
+                # Function to get frame positions from either softened or regular stage
+                def get_frame_pos(frame_idx):
+                    if frame_idx < n_frame_soft:
+                        # Read from softened stage
+                        pos = t['output_soft/pos'][frame_idx]
+                    else:
+                        # Read from regular stage
+                        regular_idx = frame_idx - n_frame_soft
+                        pos = t['output/pos'][regular_idx]
+
                     # Handle different output position data formats
                     if len(pos.shape) == 3:  # (n_frames, n_atoms, 3) or (n_atoms, 3, n_frames)
                         if pos.shape[0] == 1:  # (1, n_atoms, 3) - single frame
@@ -259,28 +267,70 @@ def main():
                         frame_pos = pos.reshape(n_particles, 3)
                     else:
                         raise ValueError(f"Unexpected output position shape: {pos.shape}")
-                    
 
-                    
+                    return frame_pos
+
+                # Include initial PDB frame as frame 0
+                print("Writing initial PDB structure as frame 0...")
+                pdb_positions = []
+                protein_indices = []
+
+                with open(f'pdb/{pdb_id}.MARTINI.pdb', 'r') as pdb_f:
+                    atom_idx = 0
+                    for line in pdb_f:
+                        if line.startswith('ATOM'):
+                            x = float(line[30:38])
+                            y = float(line[38:46])
+                            z = float(line[46:54])
+                            pdb_positions.append([x, y, z])
+
+                            # Identify protein atoms (exclude water, lipids, ions)
+                            residue_name = line[17:21].strip()
+                            if residue_name not in ['W', 'DOPC', 'NA', 'CL'] and residue_name.isupper():
+                                protein_indices.append(atom_idx)
+                            atom_idx += 1
+
+                pdb_positions = np.array(pdb_positions)
+                protein_positions = pdb_positions[protein_indices]
+
+                # Calculate protein center of geometry
+                protein_center = np.mean(protein_positions, axis=0)
+                print(f"Protein center: {protein_center}")
+
+                # Shift all coordinates to center protein at origin
+                centered_positions = pdb_positions - protein_center
+
+                # Apply minimal PBC wrapping (only for atoms that crossed boundaries)
+                wrapped_positions = centered_positions.copy()
+                wrapped_positions[:, 0] = wrapped_positions[:, 0] - x_len * np.round(wrapped_positions[:, 0] / x_len)
+                wrapped_positions[:, 1] = wrapped_positions[:, 1] - y_len * np.round(wrapped_positions[:, 1] / y_len)
+                wrapped_positions[:, 2] = wrapped_positions[:, 2] - z_len * np.round(wrapped_positions[:, 2] / z_len)
+
+                # Write initial PDB frame
+                write_vtf_frame(f, wrapped_positions, 0)
+
+                # Write simulation frames from both softened and regular stages
+                for frame in range(1, n_frame_total + 1):
+                    frame_pos = get_frame_pos(frame - 1)  # frame-1 because we start from frame 1
+
                     # Apply PBC wrapping to centered box convention [-L/2, L/2]
                     frame_pos = (frame_pos + half_box) % (2*half_box) - half_box
-                    
+
                     if np.isnan(frame_pos).any():
                         if frame > 1:
-                            valid_pos = t['output/pos'][frame-2]
-                            if len(valid_pos.shape) == 3:
-                                valid_pos = valid_pos[:, :, 0]
-                            elif len(valid_pos.shape) == 1:
-                                valid_pos = valid_pos.reshape(n_particles, 3)
-                            valid_pos = (valid_pos + half_box) % (2*half_box) - half_box
-                            frame_pos = np.where(np.isnan(frame_pos), valid_pos, frame_pos)
+                            # Get previous valid frame from the same stage
+                            prev_frame_idx = frame - 2
+                            if prev_frame_idx >= 0:
+                                valid_pos = get_frame_pos(prev_frame_idx)
+                                valid_pos = (valid_pos + half_box) % (2*half_box) - half_box
+                                frame_pos = np.where(np.isnan(frame_pos), valid_pos, frame_pos)
                         else:
                             print(f"Warning: NaN values in first simulation frame, replacing with zeros")
                             frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
                     write_vtf_frame(f, frame_pos, frame)
                     if frame % 100 == 0:
-                        print(f"Processed frame {frame}/{n_frame}")
-                
+                        print(f"Processed frame {frame}/{n_frame_total}")
+
             else:  # PDB format
                 # Write PDB header
                 f.write("TITLE     MARTINI LIPID BILAYER SIMULATION\n")
@@ -289,84 +339,101 @@ def main():
                 f.write("REMARK    CONTAINS DOPC LIPIDS, WATER, AND IONS\n")
                 f.write(f"REMARK    BOX DIMENSIONS: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Angstroms\n")
                 
+                # Function to get frame positions from either softened or regular stage (for PDB)
+                def get_frame_pos_pdb(frame_idx):
+                    if frame_idx < n_frame_soft:
+                        # Read from softened stage
+                        pos = t['output_soft/pos'][frame_idx]
+                    else:
+                        # Read from regular stage
+                        regular_idx = frame_idx - n_frame_soft
+                        pos = t['output/pos'][regular_idx]
+
+                    # Handle different output position data formats
+                    if len(pos.shape) == 3:  # (n_frames, n_atoms, 3) or (n_atoms, 3, n_frames)
+                        if pos.shape[0] == 1:  # (1, n_atoms, 3) - single frame
+                            frame_pos = pos[0]  # Take first frame
+                        elif pos.shape[2] == 3:  # (n_atoms, 3, n_frames)
+                            frame_pos = pos[:, :, 0]  # Take first frame
+                        else:
+                            raise ValueError(f"Unexpected 3D position shape: {pos.shape}")
+                    elif len(pos.shape) == 2:  # (n_atoms, 3)
+                        frame_pos = pos
+                    elif len(pos.shape) == 1:  # Flattened array
+                        frame_pos = pos.reshape(n_particles, 3)
+                    else:
+                        raise ValueError(f"Unexpected output position shape: {pos.shape}")
+
+                    return frame_pos
+
                 # Write frames for PDB format
-                for frame in range(n_frame + 1):  # +1 to include initial structure
+                for frame in range(n_frame_total + 1):  # +1 to include initial structure
                     if frame == 0:
                         # Frame 0: Initial PDB structure (before any simulation)
                         print(f"Writing initial PDB structure as frame 0...")
-                        
-                        # Read PDB positions and apply same processing as run_martini.py
+
+                        # Read PDB positions and center protein properly
                         pdb_positions = []
+                        protein_indices = []
+
                         with open(f'pdb/{pdb_id}.MARTINI.pdb', 'r') as pdb_f:
+                            atom_idx = 0
                             for line in pdb_f:
                                 if line.startswith('ATOM'):
                                     x = float(line[30:38])
                                     y = float(line[38:46])
                                     z = float(line[46:54])
                                     pdb_positions.append([x, y, z])
-                        
+
+                                    # Identify protein atoms (exclude water, lipids, ions)
+                                    residue_name = line[17:21].strip()
+                                    if residue_name not in ['W', 'DOPC', 'NA', 'CL'] and residue_name.isupper():
+                                        protein_indices.append(atom_idx)
+                                    atom_idx += 1
+
                         pdb_positions = np.array(pdb_positions)
-                        
-                        # Apply PBC wrapping (same as in run_martini.py)
-                        wrapped_positions = pdb_positions.copy()
-                        
-                        # X dimension wrapping
-                        wrapped_positions[:, 0] = wrapped_positions[:, 0] - x_len * np.floor(wrapped_positions[:, 0] / x_len)
-                        # Y dimension wrapping  
-                        wrapped_positions[:, 1] = wrapped_positions[:, 1] - y_len * np.floor(wrapped_positions[:, 1] / y_len)
-                        
-                        # Z dimension - simple shift (no wrapping)
-                        z_min = np.min(pdb_positions[:, 2])
-                        if z_min < 0:
-                            z_shift = -z_min + 1.0
-                            wrapped_positions[:, 2] = pdb_positions[:, 2] + z_shift
-                        else:
-                            wrapped_positions[:, 2] = pdb_positions[:, 2]
-                        
+                        protein_positions = pdb_positions[protein_indices]
+
+                        # Calculate protein center of geometry
+                        protein_center = np.mean(protein_positions, axis=0)
+
+                        # Shift all coordinates to center protein at origin
+                        centered_positions = pdb_positions - protein_center
+
+                        # Apply minimal PBC wrapping (only for atoms that crossed boundaries)
+                        wrapped_positions = centered_positions.copy()
+                        wrapped_positions[:, 0] = wrapped_positions[:, 0] - x_len * np.round(wrapped_positions[:, 0] / x_len)
+                        wrapped_positions[:, 1] = wrapped_positions[:, 1] - y_len * np.round(wrapped_positions[:, 1] / y_len)
+                        wrapped_positions[:, 2] = wrapped_positions[:, 2] - z_len * np.round(wrapped_positions[:, 2] / z_len)
+
                         frame_pos = wrapped_positions
                     else:
-                        # Use output positions for simulation frames (frame-1 because we added initial frame)
-                        pos = t['output/pos'][frame-1]
-                        
-                        # Handle different output position data formats
-                        if len(pos.shape) == 3:  # (n_frames, n_atoms, 3) or (n_atoms, 3, n_frames)
-                            if pos.shape[0] == 1:  # (1, n_atoms, 3) - single frame
-                                frame_pos = pos[0]  # Take first frame
-                            elif pos.shape[2] == 3:  # (n_atoms, 3, n_frames)
-                                frame_pos = pos[:, :, 0]  # Take first frame
-                            else:
-                                raise ValueError(f"Unexpected 3D position shape: {pos.shape}")
-                        elif len(pos.shape) == 2:  # (n_atoms, 3)
-                            frame_pos = pos
-                        elif len(pos.shape) == 1:  # Flattened array
-                            frame_pos = pos.reshape(n_particles, 3)
-                        else:
-                            raise ValueError(f"Unexpected output position shape: {pos.shape}")
-                        
+                        # Use positions from both stages for simulation frames (frame-1 because we added initial frame)
+                        frame_pos = get_frame_pos_pdb(frame - 1)
+
                         # Apply PBC wrapping to centered box convention [-L/2, L/2]
                         half_box = np.array([x_len/2, y_len/2, z_len/2])
                         frame_pos = (frame_pos + half_box) % (2*half_box) - half_box
-                        
+
                         # Check for NaN values and replace with last valid frame
                         if np.isnan(frame_pos).any():
                             if frame > 1:  # frame > 1 because we added initial frame
-                                valid_pos = t['output/pos'][frame-2]
-                                if len(valid_pos.shape) == 3:
-                                    valid_pos = valid_pos[:, :, 0]
-                                elif len(valid_pos.shape) == 1:
-                                    valid_pos = valid_pos.reshape(n_particles, 3)
-                                valid_pos = (valid_pos + half_box) % (2*half_box) - half_box
-                                frame_pos = np.where(np.isnan(frame_pos), valid_pos, frame_pos)
+                                # Get previous valid frame from the same stage
+                                prev_frame_idx = frame - 2
+                                if prev_frame_idx >= 0:
+                                    valid_pos = get_frame_pos_pdb(prev_frame_idx)
+                                    valid_pos = (valid_pos + half_box) % (2*half_box) - half_box
+                                    frame_pos = np.where(np.isnan(frame_pos), valid_pos, frame_pos)
                             else:
                                 print(f"Warning: NaN values in first simulation frame, replacing with zeros")
                                 frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
-                    
+
                     # Write frame in PDB format
                     write_pdb_frame(f, frame_pos, frame, atom_types, residue_ids, x_len, y_len, z_len, pdb_atom_names, pdb_residue_names, pdb_residue_ids)
-                    
+
                     # Print progress every 100 frames
                     if frame % 100 == 0:
-                        print(f"Processed frame {frame}/{n_frame}")
+                        print(f"Processed frame {frame}/{n_frame_total}")
 
 if __name__ == "__main__":
     main() 

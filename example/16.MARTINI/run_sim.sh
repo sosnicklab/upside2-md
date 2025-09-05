@@ -10,7 +10,7 @@ set -e  # Exit on any error
 # =============================================================================
 # Change this value to use a different PDB file (e.g., "bilayer", "protein", etc.)
 # The script will look for pdb/{PDB_ID}.MARTINI.pdb
-PDB_ID="bilayer"
+PDB_ID="1rkl"
 # =============================================================================
 
 # Command line argument overrides the configuration above
@@ -68,7 +68,7 @@ echo
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR"
 
 # Simulation parameters (from original run_martini.py)
-DURATION=200
+DURATION=2000
 FRAME_INTERVAL=20
 TEMPERATURE=0.8
 TIME_STEP=0.01
