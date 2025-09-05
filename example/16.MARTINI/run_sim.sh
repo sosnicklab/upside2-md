@@ -10,7 +10,7 @@ set -e  # Exit on any error
 # =============================================================================
 # Change this value to use a different PDB file (e.g., "bilayer", "protein", etc.)
 # The script will look for pdb/{PDB_ID}.MARTINI.pdb
-PDB_ID="1rkl"
+PDB_ID="bilayer"
 # =============================================================================
 
 # Command line argument overrides the configuration above
