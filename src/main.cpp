@@ -1189,9 +1189,9 @@ try {
                         Rg = sqrtf(Rg/sys.n_atom);
 
                         if(verbose) printf(
-                                "%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg %5.1f A, potential % 8.2f\n", 
-                                duration_print_width, nr*double(dt*inner_step), 
-                                duration_print_width, duration, 
+                                "%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg %5.1f A, potential % 8.2f\n",
+                                duration_print_width, nr*double(dt*inner_step),
+                                duration_print_width, duration,
                                 ns, sys.temperature,
                                 get_n_hbond(sys.engine), Rg, sys.engine.potential);
                         fflush(stdout);
@@ -1254,7 +1254,7 @@ try {
 
                             auto force = load_vec<3>(sys.engine.pos->sens, na);
                             auto pos = load_vec<3>(sys.engine.pos->output, na);
-                            virial += dot(force, pos);
+                            virial -= dot(force, pos); // Corrected: virial = -sum(r · F)
                         }
 
                         // Calculate pressure using virial theorem: P = (2*KE + virial)/(3V)

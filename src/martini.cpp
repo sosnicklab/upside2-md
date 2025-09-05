@@ -1135,11 +1135,21 @@ struct AngleSpring : public PotentialNode
             debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
         }
         
-        // Set spline range for cosine of angles (cos ranges from -1 to 1)
-        angle_cos_min = -1.0f;  // cos(180°) = -1
-        angle_cos_max = 1.0f;   // cos(0°) = 1
+        // Set spline range for delta_cos = cos(θ) - cos(θ₀)
+        // Find the range of cos(equilibrium angles) to set proper delta_cos bounds
+        float min_cos_equil = 1.0f;  // cos(0°) = 1
+        float max_cos_equil = -1.0f; // cos(180°) = -1
+        for(const auto& p : params) {
+            float cos_equil = cosf(p.equil_angle_deg * M_PI / 180.0f);
+            min_cos_equil = std::min(min_cos_equil, cos_equil);
+            max_cos_equil = std::max(max_cos_equil, cos_equil);
+        }
+
+        // Set conservative bounds for delta_cos
+        angle_cos_min = -2.0f;  // Allow for angles deviating significantly from equilibrium
+        angle_cos_max = 2.0f;
         angle_cos_scale = 999.0f / (angle_cos_max - angle_cos_min);
-        
+
         // Canonical spline for angles: pot = 0.5*(delta_cos)^2, force = (delta_cos)
         std::vector<double> angle_pot_data(1000);
         std::vector<double> angle_force_data(1000);
@@ -1208,8 +1218,11 @@ struct AngleSpring : public PotentialNode
             dp = std::max(-1.0f, std::min(1.0f, dp)); // clamp for safety
             
             // Use spline interpolation for angle potential and force
-            if(dp >= angle_cos_min && dp <= angle_cos_max) {
-                float cos_coord = (dp - angle_cos_min) * angle_cos_scale;
+            // Calculate delta_cos = cos(θ) - cos(θ₀)
+            float cos_equil = cosf(p.equil_angle_deg * M_PI / 180.0f);
+            float delta_cos = dp - cos_equil;
+            if(delta_cos >= angle_cos_min && delta_cos <= angle_cos_max) {
+                float cos_coord = (delta_cos - angle_cos_min) * angle_cos_scale;
                 
                 // Get potential and force from spline
                 float pot_result[2];
@@ -1221,11 +1234,11 @@ struct AngleSpring : public PotentialNode
                 float angle_force_mag = force_result[1] * angle_cos_scale; // dE/d(cos) = (dE/dcoord) * dcoord/dcos
                 
                 // Use spline-evaluated potential
-                if(pot) *pot += angle_pot;
-                
+                if(pot) *pot += p.spring_constant * angle_pot;
+
                 // Convert spline dE/d(cos) to forces on atoms
                 float theta_rad = acosf(dp);
-                float dE_dtheta = angle_force_mag * (-sinf(theta_rad));
+                float dE_dtheta = p.spring_constant * angle_force_mag * (-sinf(theta_rad));
                 float dtheta_ddp = -1.0f / sqrtf(1.0f - dp*dp);
                 float dE_ddp = dE_dtheta * dtheta_ddp;
 
