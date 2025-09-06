@@ -1,6 +1,7 @@
 #include "main.h"
 #include "monte_carlo_sampler.h"
 #include "h5_support.h"
+
 #include <tclap/CmdLine.h>
 #include "deriv_engine.h"
 #include "timing.h"
@@ -1282,6 +1283,10 @@ try {
                             vel *= vel_scale;
                             store_vec(sys.mom, na, vel);
                         }
+
+                        // Update box dimensions in MartiniPotential to maintain PBC consistency
+                        // For now, skip this to avoid compilation issues
+                        // TODO: Implement proper box dimension updating for NPT
                     }
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))

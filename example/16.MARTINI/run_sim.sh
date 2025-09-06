@@ -105,7 +105,7 @@ export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
 echo "Softening options (env): UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ:-0} UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA:-0.1} UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-0} UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-0.0} UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-0}"
 source ../../source.sh
 
-python prepare_martini.py "$PDB_ID"
+python3 prepare_martini.py "$PDB_ID"
 
 PREPARED_FILE_PATH="${RUN_DIR}/test.input.up"
 if [ ! -f "$PREPARED_FILE_PATH" ]; then
@@ -122,7 +122,7 @@ echo
 # Step 2: Optimize the interaction table (overwrite inputs/pdb_id.up)
 echo "=== Step 2: Optimizing Interaction Table ==="
 TMP_OPT_FILE="${INPUT_FILE}.tmp"
-python optimize_interaction_table.py "$INPUT_FILE" "$TMP_OPT_FILE"
+python3 optimize_interaction_table.py "$INPUT_FILE" "$TMP_OPT_FILE"
 
 if [ ! -f "$TMP_OPT_FILE" ]; then
     echo "ERROR: Optimization failed - optimized file not created!"
@@ -176,7 +176,7 @@ fi
 
 # Stage 3.2: If requested, prepare restart from softened end state and disable softening in INPUT_FILE
 if [ "$SOFT_RUN_MODE" = "soft_then_regular" ] && [ "$REMAINING_STEPS" -gt 0 ]; then
-python - "$INPUT_FILE" << 'PYEOF'
+python3 - "$INPUT_FILE" << 'PYEOF'
 import sys, h5py
 path = sys.argv[1]
 with h5py.File(path, 'r+') as f:
@@ -251,7 +251,7 @@ echo "=== Simulation Complete! ==="
 echo
 echo "=== Step 4: Generating VTF ==="
 echo "Generating VTF file: $VTF_FILE"
-if python extract_martini_vtf.py "$INPUT_FILE" "$VTF_FILE" "$INPUT_FILE" "$PDB_ID"; then
+if python3 extract_martini_vtf.py "$INPUT_FILE" "$VTF_FILE" "$INPUT_FILE" "$PDB_ID"; then
     VTF_SIZE=$(du -h "$VTF_FILE" | cut -f1)
     echo "VTF file generated successfully: $VTF_FILE ($VTF_SIZE)"
 else
