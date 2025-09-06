@@ -280,55 +280,29 @@ def main():
 
                     return frame_pos
 
-                # Write initial frame with protein centering (like original PDB frame)
-                print("Writing initial structure as frame 0 with protein centering...")
+                # Skip frame 0 (PDB structure) - start directly with simulation frames
+                print("Skipping frame 0, starting with simulation frames...")
 
-                # Read PDB file to get the initial structure
-                pdb_positions = []
-                centered_positions = None
-
-                if pdb_atom_names is not None:  # Only if we have PDB data
-                    with open(f'pdb/{pdb_id}.MARTINI.pdb', 'r') as pdb_f:
-                        for line in pdb_f:
-                            if line.startswith('ATOM'):
-                                x = float(line[30:38])
-                                y = float(line[38:46])
-                                z = float(line[46:54])
-                                pdb_positions.append([x, y, z])
-
-                    pdb_positions = np.array(pdb_positions)
-
-                    # Center PDB coordinates to (0,0,0)
-                    pdb_center = np.mean(pdb_positions, axis=0)
-                    centered_positions = pdb_positions - pdb_center
-
-                    # Write PDB structure as first frame
-                    write_vtf_frame(f, centered_positions, 0)
-                else:
-                    # Fallback: center HDF5 coordinates
-                    input_center = np.mean(input_pos, axis=0)
-                    centered_positions = input_pos - input_center
-                    write_vtf_frame(f, centered_positions, 0)
-
-                # Write frame 1 as the first simulation frame
-                first_sim_pos = get_frame_pos(0)  # Get first simulation frame
-                first_sim_pos = (first_sim_pos + half_box) % (2*half_box) - half_box
-                write_vtf_frame(f, first_sim_pos, 1)
-
-                # Write the rest of the simulation frames
-                for frame in range(2, n_frame_total + 1):  # Start from frame 2
-                    frame_pos = get_frame_pos(frame - 1)  # frame-1 because we used frame 0 for frame 1
+                # Write simulation frames starting from frame 0
+                for frame in range(n_frame_total):  # Start from frame 0
+                    frame_pos = get_frame_pos(frame)  # Get simulation frame directly
 
                     # Apply PBC wrapping to centered box convention [-L/2, L/2]
                     frame_pos = (frame_pos + half_box) % (2*half_box) - half_box
 
                     if np.isnan(frame_pos).any():
-                        print(f"Warning: NaN values in frame {frame}, replacing with previous frame")
-                        frame_pos = np.where(np.isnan(frame_pos), first_sim_pos, frame_pos)
+                        if frame > 0:
+                            # Get previous valid frame
+                            prev_frame_pos = get_frame_pos(frame - 1)
+                            prev_frame_pos = (prev_frame_pos + half_box) % (2*half_box) - half_box
+                            frame_pos = np.where(np.isnan(frame_pos), prev_frame_pos, frame_pos)
+                        else:
+                            print(f"Warning: NaN values in frame {frame}, replacing with zeros")
+                            frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
 
                     write_vtf_frame(f, frame_pos, frame)
                     if frame % 100 == 0:
-                        print(f"Processed frame {frame}/{n_frame_total}")
+                        print(f"Processed frame {frame}/{n_frame_total - 1}")
 
             else:  # PDB format
                 # Write PDB header
@@ -365,55 +339,27 @@ def main():
 
                     return frame_pos
 
-                # Write frames for PDB format
-                for frame in range(n_frame_total + 1):  # +1 to include initial structure
-                    if frame == 0:
-                        # Frame 0: Initial structure with protein centering
-                        print(f"Writing initial structure as frame 0 with protein centering...")
+                # Skip frame 0 (PDB structure) - start directly with simulation frames
+                print("Skipping frame 0, starting with simulation frames...")
 
-                        # Read PDB file to get the initial structure
-                        pdb_positions = []
+                # Write simulation frames starting from frame 0
+                for frame in range(n_frame_total):  # Start from frame 0
+                    frame_pos = get_frame_pos_pdb(frame)  # Get simulation frame directly
 
-                        if pdb_atom_names is not None:  # Only if we have PDB data
-                            with open(f'pdb/{pdb_id}.MARTINI.pdb', 'r') as pdb_f:
-                                for line in pdb_f:
-                                    if line.startswith('ATOM'):
-                                        x = float(line[30:38])
-                                        y = float(line[38:46])
-                                        z = float(line[46:54])
-                                        pdb_positions.append([x, y, z])
+                    # Apply PBC wrapping to centered box convention [-L/2, L/2]
+                    half_box = np.array([x_len/2, y_len/2, z_len/2])
+                    frame_pos = (frame_pos + half_box) % (2*half_box) - half_box
 
-                            pdb_positions = np.array(pdb_positions)
-
-                            # Center PDB coordinates to (0,0,0)
-                            pdb_center = np.mean(pdb_positions, axis=0)
-                            centered_positions = pdb_positions - pdb_center
+                    # Check for NaN values and replace with last valid frame
+                    if np.isnan(frame_pos).any():
+                        if frame > 0:
+                            # Get previous valid frame from the same stage
+                            prev_frame_pos = get_frame_pos_pdb(frame - 1)
+                            prev_frame_pos = (prev_frame_pos + half_box) % (2*half_box) - half_box
+                            frame_pos = np.where(np.isnan(frame_pos), prev_frame_pos, frame_pos)
                         else:
-                            # Fallback: center HDF5 coordinates
-                            input_center = np.mean(input_pos, axis=0)
-                            centered_positions = input_pos - input_center
-
-                        frame_pos = centered_positions
-                    else:
-                        # Use positions from both stages for simulation frames (frame-1 because we added initial frame)
-                        frame_pos = get_frame_pos_pdb(frame - 1)
-
-                        # Apply PBC wrapping to centered box convention [-L/2, L/2]
-                        half_box = np.array([x_len/2, y_len/2, z_len/2])
-                        frame_pos = (frame_pos + half_box) % (2*half_box) - half_box
-
-                        # Check for NaN values and replace with last valid frame
-                        if np.isnan(frame_pos).any():
-                            if frame > 1:  # frame > 1 because we added initial frame
-                                # Get previous valid frame from the same stage
-                                prev_frame_idx = frame - 2
-                                if prev_frame_idx >= 0:
-                                    valid_pos = get_frame_pos_pdb(prev_frame_idx)
-                                    valid_pos = (valid_pos + half_box) % (2*half_box) - half_box
-                                    frame_pos = np.where(np.isnan(frame_pos), valid_pos, frame_pos)
-                            else:
-                                print(f"Warning: NaN values in first simulation frame, replacing with zeros")
-                                frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
+                            print(f"Warning: NaN values in first simulation frame, replacing with zeros")
+                            frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
 
                     # Write frame in PDB format
                     write_pdb_frame(f, frame_pos, frame, atom_types, residue_ids, x_len, y_len, z_len, pdb_atom_names, pdb_residue_names, pdb_residue_ids)
