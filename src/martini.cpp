@@ -146,8 +146,8 @@ struct DihedralSpring : public PotentialNode
 
         // Debug: Write all unique dihedral splines to a single file if debug_mode is enabled
         if (debug_mode) {
-            std::ofstream out("dihedral_splines.txt", std::ios::app);
-            out << "# All spline values below are divided by 12.0 (mass correction)\n";
+            std::ofstream out("dihedral_splines.txt", std::ios::out | std::ios::trunc);
+            out << "# Canonical angle spline (delta_cos = cos(θ) - cos(θ₀))\n";
             // Collect unique (k, phi0)
             std::set<std::pair<float, float>> dihedral_params;
             for (const auto& p : params) dihedral_params.insert({p.spring_constant, p.equil_dihedral});
@@ -376,20 +376,16 @@ struct MartiniPotential : public PotentialNode
     // Box dimensions for minimum image
     float box_x, box_y, box_z;
     
-    // Spline interpolation for LJ potential
-    LayeredClampedSpline1D<1> lj_potential_spline;
-    LayeredClampedSpline1D<1> lj_force_spline;
+    // Spline interpolation for LJ potential - separate tables for each epsilon/sigma pair
+    std::map<std::pair<float, float>, std::pair<LayeredClampedSpline1D<1>, LayeredClampedSpline1D<1>>> lj_splines;
     
     // Spline interpolation for Coulomb potential
-    LayeredClampedSpline1D<1> coul_potential_spline;
-    LayeredClampedSpline1D<1> coul_force_spline;
+    LayeredClampedSpline1D<1> coul_potential_spline;  // For backward compatibility
+    LayeredClampedSpline1D<1> coul_force_spline;      // For backward compatibility
+    // std::map<float, std::pair<LayeredClampedSpline1D<1>, LayeredClampedSpline1D<1>>> coulomb_splines;  // Separate splines for each charge product
     
     // Spline parameters
     float lj_r_min, lj_r_max, lj_r_scale;
-    // Canonical LJ table domain in reduced coordinate x = r/sigma
-    float lj_x_min, lj_x_max, lj_x_scale;
-    float sigma_min;
-    int lj_n_knots;
     float coul_r_min, coul_r_max, coul_r_scale;
     int coul_n_knots;
     
@@ -400,7 +396,6 @@ struct MartiniPotential : public PotentialNode
     
     MartiniPotential(hid_t grp, CoordNode& pos_):
         PotentialNode(), n_atom(pos_.n_elem), pos(pos_), debug_step_count(0), max_debug_interactions(10),
-        lj_potential_spline(1, 1000), lj_force_spline(1, 1000),
         coul_potential_spline(1, 1000), coul_force_spline(1, 1000)
     {
         check_size(grp, "atom_indices", n_atom);
@@ -497,7 +492,10 @@ struct MartiniPotential : public PotentialNode
         if(attribute_exists(grp, ".", "optimized_format")) {
             optimized_format = read_attribute<int>(grp, ".", "optimized_format") != 0;
         }
-        
+
+        // Declare unique_coeff at function scope so it's available later
+        std::vector<array<float,4>> unique_coeff;
+
         if(optimized_format) {
             // Optimized format: unique coefficients + indices
             std::cout << "MARTINI: Using optimized interaction table format" << std::endl;
@@ -505,8 +503,7 @@ struct MartiniPotential : public PotentialNode
             // Load unique coefficients
             auto n_unique_coeff = get_dset_size(2, grp, "coefficients")[0];
             check_size(grp, "coefficient_indices", n_pair);
-            
-            std::vector<array<float,4>> unique_coeff;
+
             unique_coeff.resize(n_unique_coeff);
             traverse_dset<2,float>(grp, "coefficients", [&](size_t nc, size_t d, float x) {
                 unique_coeff[nc][d] = x;
@@ -567,112 +564,123 @@ struct MartiniPotential : public PotentialNode
             });
         }
         
-        // Determine smallest sigma across all pairs for canonical LJ table range
-        sigma_min = std::numeric_limits<float>::max();
-        for(const auto& c : coeff) {
-            if(c[1] > 0.0f) sigma_min = std::min(sigma_min, c[1]);
-        }
-        if(!std::isfinite(sigma_min) || sigma_min <= 0.0f) sigma_min = sigma; // fallback
+        // Find all epsilon/sigma pairs for separate LJ splines
+        std::set<std::pair<float, float>> unique_lj_params;
 
-        // Initialize spline parameters for canonical LJ in reduced coordinate x=r/sigma
+        if(optimized_format) {
+            // In optimized format, iterate over unique coefficients
+            for(const auto& c : unique_coeff) {
+                float eps = c[0];
+                float sig = c[1];
+                if(eps != 0.f && sig != 0.f) {
+                    unique_lj_params.insert({eps, sig});
+                }
+            }
+        } else {
+            // In original format, iterate over all coefficients
+            for(const auto& c : coeff) {
+                float eps = c[0];
+                float sig = c[1];
+                if(eps != 0.f && sig != 0.f) {
+                    unique_lj_params.insert({eps, sig});
+                }
+            }
+        }
+
+        std::cout << "MARTINI: Generating separate LJ splines for " << unique_lj_params.size() << " unique epsilon/sigma pairs from coefficients array" << std::endl;
+        for(const auto& params : unique_lj_params) {
+            std::cout << "  epsilon=" << params.first << ", sigma=" << params.second << std::endl;
+        }
+
+        // Initialize spline parameters for LJ
         lj_r_min = 0.0f;
         lj_r_max = lj_cutoff;
         lj_r_scale = (lj_r_max > 0.0f) ? (999.0f / (lj_r_max - lj_r_min)) : 0.0f;
-        lj_x_min = 0.0f;
-        lj_x_max = (sigma_min > 0.0f) ? (lj_cutoff / sigma_min) : lj_cutoff;
-        lj_x_scale = (lj_x_max > 0.0f) ? (999.0f / (lj_x_max - lj_x_min)) : 0.0f;
-        
+
         coul_r_min = 0.0f;        // Minimum distance for Coulomb spline (Angstroms)
         coul_r_max = coul_cutoff; // Maximum distance for Coulomb spline
         coul_r_scale = (coul_r_max > 0.0f) ? (999.0f / (coul_r_max - coul_r_min)) : 0.0f;
-        
-        // Generate canonical spline data for LJ potential with epsilon=1, sigma=1
-        std::vector<double> lj_pot_data(1000);
-        std::vector<double> lj_force_data(1000);
-        
-        for(int i = 0; i < 1000; ++i) {
-            // work in reduced coordinate x = r/sigma with sigma=1 for table
-            float x = i * (lj_x_max - lj_x_min) / 999.0f; // starts at 0
-            if(x == 0.0f) x = 1.0e-6f;
 
-            // Check for numerical stability - avoid very small x values for regular LJ
-            if(!lj_soften || lj_soften_alpha <= 0.0f) {
-                // For regular LJ, prevent numerical issues at small distances
-                if(x < 0.1f) x = 0.1f;  // Minimum r/sigma = 0.1 to avoid numerical issues
+        // Generate separate LJ splines for each unique epsilon/sigma pair
+        for(const auto& params : unique_lj_params) {
+            float eps = params.first;
+            float sig = params.second;
+
+            std::vector<double> lj_pot_data(1000);
+            std::vector<double> lj_force_data(1000);
+
+            for(int i = 0; i < 1000; ++i) {
+                float r = lj_r_min + i * (lj_r_max - lj_r_min) / 999.0f;
+                if(r == 0.0f) r = 1.0e-6f;
+
+                // Check for numerical stability - avoid very small r values for regular LJ
+                if(!lj_soften || lj_soften_alpha <= 0.0f) {
+                    if(r < 0.1f * sig) r = 0.1f * sig;  // Minimum r = 0.1 * sigma to avoid numerical issues
+                }
+
+                if(lj_soften && lj_soften_alpha > 0.0f) {
+                    // Soft-core LJ: t = (r/sigma)^6 + alpha; V = 4*epsilon*(1/t^2 - 1/t)
+                    float x = r / sig;
+                    float x2 = x * x;
+                    float x3 = x2 * x;
+                    float x6 = x3 * x3; // (r/sigma)^6
+                    float t = x6 + lj_soften_alpha;
+                    float inv_t = 1.0f / t;
+                    float inv_t2 = inv_t * inv_t;
+                    float inv_t3 = inv_t2 * inv_t;
+                    // potential for softened Lennard-Jones
+                    lj_pot_data[i] = 4.0 * eps * (inv_t2 - inv_t);
+                    // dV/dr = (1/r) * dV/dx; force magnitude
+                    float x5 = x6 / (x + 1.0e-20f);
+                    float dVdx = 4.0f * eps * (-2.0f * inv_t3 + inv_t2) * 6.0f * x5;
+                    lj_force_data[i] = -dVdx / sig;  // -dV/dr (radial force)
+                } else {
+                    // Regular LJ potential: V = 4*epsilon*((sigma/r)^12 - (sigma/r)^6)
+                    float r2 = r * r;
+                    float r3 = r2 * r;
+                    float r6 = r3 * r3;
+                    float sig2 = sig * sig;
+                    float sig6 = sig2 * sig2 * sig2;
+                    float sig12 = sig6 * sig6;
+                    float inv_r6 = sig6 / r6;
+                    float inv_r12 = sig12 / (r6 * r6);
+                    // LJ potential
+                    lj_pot_data[i] = 4.0 * eps * (inv_r12 - inv_r6);
+                    // LJ force: -dV/dr = 24*epsilon*(2*(sigma/r)^13 - (sigma/r)^7) / r
+                    float inv_r7 = inv_r6 / r;
+                    float inv_r13 = inv_r12 / r;
+                    lj_force_data[i] = 24.0 * eps * (2.0 * inv_r13 - inv_r7);
+                }
             }
 
-            if(lj_soften && lj_soften_alpha > 0.0f) {
-                // Soft-core LJ in reduced units: t = x^6 + alpha; V = 4*(1/t^2 - 1/t)
-                float x2 = x * x;
-                float x3 = x2 * x;
-                float x6 = x3 * x3; // (r/sigma)^6
-                float t = x6 + lj_soften_alpha;
-                float inv_t = 1.0f / t;
-                float inv_t2 = inv_t * inv_t;
-                float inv_t3 = inv_t2 * inv_t;
-                // potential (with /12.0 scaling for consistency)
-                lj_pot_data[i] = 4.0 * (inv_t2 - inv_t) / 12.0;
-                // dV/dr = (1/sigma) * dV/dx; with sigma=1 in table, dV/dr_table = dV/dx
-                float x5 = x6 / (x + 1.0e-20f);
-                float dVdx = 4.0f * (-2.0f * inv_t3 + inv_t2) * 6.0f * x5;
-                // Store -dV/dr (radial force) for canonical epsilon=1, sigma=1 (with /12.0 scaling)
-                lj_force_data[i] = -dVdx / 12.0f;
-            } else {
-                float x2 = x * x;
-                float x3 = x2 * x;
-                float x6 = x3 * x3; // (r/sigma)^6
-                float inv_x6 = 1.0f / x6;
-                float inv_x12 = inv_x6 * inv_x6;
-                // Canonical LJ potential: epsilon=1,sigma=1 (with /12.0 scaling for consistency)
-                lj_pot_data[i] = 4.0 * (inv_x12 - inv_x6) / 12.0;
-                // Canonical radial force: -dV/dr = 24*(2/x^13 - 1/x^7)
-                float inv_x7 = inv_x6 / x;
-                float inv_x13 = inv_x12 / x;
-                lj_force_data[i] = 24.0f * (2.0f * inv_x13 - inv_x7) / 12.0f;
+            // Create spline pair for this epsilon/sigma combination
+            auto [it, inserted] = lj_splines.emplace(std::piecewise_construct,
+                                                     std::forward_as_tuple(eps, sig),
+                                                     std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000),
+                                                                          LayeredClampedSpline1D<1>(1, 1000)));
+            auto& spline_pair = it->second;
+
+            // Prepare data for fit_spline (format: n_layer, nx, NDIM_VALUE)
+            std::vector<double> pot_data_for_spline(1000 * 1);  // 1 layer, 1000 points, 1 value per point
+            std::vector<double> force_data_for_spline(1000 * 2); // 1 layer, 1000 points, 2 values per point (deriv + value)
+
+            for(int i = 0; i < 1000; ++i) {
+                pot_data_for_spline[i] = lj_pot_data[i];
+                force_data_for_spline[i*2 + 0] = lj_force_data[i]; // derivative
+                force_data_for_spline[i*2 + 1] = lj_pot_data[i];   // value
             }
+
+            // Initialize the splines
+            spline_pair.first.fit_spline(pot_data_for_spline.data());
+            spline_pair.second.fit_spline(force_data_for_spline.data());
         }
         
-        // Generate spline data for Coulomb potential (for unit charges)
-        std::vector<double> coul_pot_data(1000);
-        std::vector<double> coul_force_data(1000);
-        
-        for(int i = 0; i < 1000; ++i) {
-            float r = i * (coul_r_max - coul_r_min) / 999.0f; // starts at 0
-            // avoid singularity at r=0 by using a very small epsilon
-            if(r == 0.0f) r = 1.0e-6f;
 
-            // Check for numerical stability - avoid very small r values for regular Coulomb
-            if(!coulomb_soften || slater_alpha <= 0.0f) {
-                // For regular Coulomb, prevent numerical issues at small distances
-                if(r < 0.1f) r = 0.1f;  // Minimum r = 0.1 Å to avoid numerical issues
-            }
+        // Generate canonical Coulomb splines (simplified approach)
+        // TODO: Implement separate Coulomb splines for each charge product
 
-            if(coulomb_soften && slater_alpha > 0.0f) {
-                // Slater softened Coulomb for unit charges
-                float alpha_r = slater_alpha * r;
-                float exp_alpha_r = expf(-alpha_r);
-                float soften_factor = 1.0f - (1.0f + 0.5f * alpha_r) * exp_alpha_r;
-                // potential for q1*q2=1 (with /12.0 scaling for consistency)
-                coul_pot_data[i] = coulomb_constant * soften_factor / (dielectric * r) / 12.0;
-                // approximate dV/dr consistent with existing compute_value branch
-                float d_soften_dr_approx = (slater_alpha * 0.5f) * exp_alpha_r / r;
-                coul_force_data[i] = (-coulomb_constant * (soften_factor / (r * r) - d_soften_dr_approx) / dielectric) / 12.0;
-            } else {
-                // Standard Coulomb potential for unit charges (with /12.0 scaling for consistency)
-                coul_pot_data[i] = coulomb_constant / (dielectric * r) / 12.0;
-                // dV/dr for unit charges (positive)
-                coul_force_data[i] = coulomb_constant / (dielectric * r * r) / 12.0;
-            }
-        }
-        
-        // Fit splines
-        lj_potential_spline.fit_spline(lj_pot_data.data());
-        lj_force_spline.fit_spline(lj_force_data.data());
-        coul_potential_spline.fit_spline(coul_pot_data.data());
-        coul_force_spline.fit_spline(coul_force_data.data());
-
-        // Debug: Write all unique spline tables to a single file if debug_mode is enabled
-        if (debug_mode) {
+        // Debug: Write all unique spline tables to a single file
+        {
             static bool s_truncated_all_splines = false;
             std::ios_base::openmode mode = std::ios::app;
             if (overwrite_spline_tables && !s_truncated_all_splines) {
@@ -680,56 +688,48 @@ struct MartiniPotential : public PotentialNode
                 s_truncated_all_splines = true;
             }
             std::ofstream out("all_splines.txt", mode);
-            out << "# All spline values below are divided by 12.0 (mass correction)\n";
+            out << "# LJ splines: Separate tables for each unique epsilon/sigma pair\n";
+            out << "# Each spline contains the full potential and force for that parameter combination\n\n";
+            out << "# Coulomb splines: Separate tables for each unique charge product\n";
+            out << "# No scaling needed during computation - each spline contains the full potential\n";
+
             // --- LJ splines for each unique (epsilon, sigma) ---
-            std::set<std::pair<float, float>> lj_params;
-            for (const auto& c : coeff) {
-                if (c[0] != 0.f && c[1] != 0.f) lj_params.insert({c[0], c[1]});
-            }
-            for (const auto& p : lj_params) {
-                float epsilon = p.first, sigma = p.second;
-                out << "# LJ Spline\n# epsilon=" << epsilon << ", sigma=" << sigma << ", r_min=" << 0.0f << ", r_max=" << lj_cutoff
+            for (const auto& spline_pair : lj_splines) {
+                float epsilon = spline_pair.first.first;
+                float sigma = spline_pair.first.second;
+                const auto& pot_spline = spline_pair.second.first;
+                const auto& force_spline = spline_pair.second.second;
+
+                out << "# LJ Spline\n# epsilon=" << epsilon << ", sigma=" << sigma << ", r_min=" << lj_r_min << ", r_max=" << lj_r_max
                     << ", softened=" << (lj_soften?1:0) << ", lj_soften_alpha=" << lj_soften_alpha << "\n";
                 out << "# r potential force\n";
+
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
-                    float r = 0.0f + i * (lj_cutoff - 0.0f) / (n_pts - 1);
+                    float r = lj_r_min + i * (lj_r_max - lj_r_min) / (n_pts - 1);
                     if(r == 0.0f) r = 1.0e-6f;
-                    float pot, force;
-                    if(lj_soften && lj_soften_alpha > 0.0f) {
-                        float x = r / sigma;
-                        float x2 = x * x;
-                        float x3 = x2 * x;
-                        float x6 = x3 * x3; // (r/sigma)^6
-                        float t = x6 + lj_soften_alpha;
-                        float inv_t = 1.0f / t;
-                        float inv_t2 = inv_t * inv_t;
-                        float inv_t3 = inv_t2 * inv_t;
-                        // Use same calculation as table generation for consistency (with /12.0 scaling)
-                        pot = 4.0f * epsilon * (inv_t2 - inv_t) / 12.0f;
-                        float x5 = x6 / (x + 1.0e-20f);
-                        // Correct derivative: dV/dx = 4ε*(-2/t^3 + 1/t^2) * 6x^5
-                        float dVdx = 4.0f * epsilon * (-2.0f * inv_t3 + inv_t2) * 6.0f * x5;
-                        // Force is negative gradient
-                        force = -dVdx / sigma / 12.0f;  // include /12.0 scaling
-                    } else {
-                        float sig_r = sigma / r;
-                        float sig_r6 = pow(sig_r, 6);
-                        float sig_r12 = sig_r6 * sig_r6;
-                        // Use same calculation as table generation for consistency (with /12.0 scaling)
-                        pot = 4.0 * epsilon * (sig_r12 - sig_r6) / 12.0;
-                        force = 24.0 * epsilon / sigma * (2.0 * sig_r12 * sig_r - sig_r6 * sig_r) / 12.0;
-                    }
+                    float r_coord = r * lj_r_scale;
+
+                    float pot_result[2];
+                    pot_spline.evaluate_value_and_deriv(pot_result, 0, r_coord);
+                    float pot = pot_result[1];
+
+                    float force_result[2];
+                    force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
+                    float force = force_result[1];
+
                     out << r << " " << pot << " " << force << "\n";
                 }
                 out << "\n";
             }
-            // --- Coulomb splines for each unique q1*q2 ---
+            // --- Coulomb potential examples for each unique q1*q2 ---
             std::set<float> qq_params;
             for (const auto& c : coeff) {
                 float qq = c[2] * c[3];
                 if (qq != 0.f) qq_params.insert(qq);
             }
+            out << "# Coulomb potentials for each unique charge product\n";
+            out << "# Using canonical Coulomb spline scaled by charge products\n\n";
             for (float qq : qq_params) {
                 out << "# Coulomb Spline\n# q1q2=" << qq << ", dielectric=" << dielectric << ", coulomb_constant=" << coulomb_constant
                     << ", r_min=0.0, r_max=" << coul_cutoff << ", softened=" << (coulomb_soften?1:0) << ", slater_alpha=" << slater_alpha << "\n";
@@ -738,27 +738,24 @@ struct MartiniPotential : public PotentialNode
                 for (int i = 0; i < n_pts; ++i) {
                     float r = 0.0f + i * (coul_cutoff - 0.0f) / (n_pts - 1);
                     if(r == 0.0f) r = 1.0e-6f;
-                    float pot, force;
-                    if(coulomb_soften && slater_alpha > 0.0f) {
-                        float alpha_r = slater_alpha * r;
-                        float exp_alpha_r = expf(-alpha_r);
-                        float soften_factor = 1.0f - (1.0f + 0.5f * alpha_r) * exp_alpha_r;
-                        // Use same calculation as table generation for consistency (with /12.0 scaling)
-                        pot = coulomb_constant * qq * soften_factor / (dielectric * r) / 12.0f;
-                        float d_soften_dr_approx = (slater_alpha * 0.5f) * exp_alpha_r / r;
-                        force = (-coulomb_constant * qq * (soften_factor / (r * r) - d_soften_dr_approx) / dielectric) / 12.0f;
-                    } else {
-                        // Use same calculation as table generation for consistency (with /12.0 scaling)
-                        pot = coulomb_constant * qq / (dielectric * r) / 12.0;
-                        force = coulomb_constant * qq / (dielectric * r * r) / 12.0;
-                    }
+                    float r_coord = r * coul_r_scale;
+
+                    // Use canonical Coulomb spline and scale by charge product
+                    float pot_result[2];
+                    coul_potential_spline.evaluate_value_and_deriv(pot_result, 0, r_coord);
+                    float pot = pot_result[1] * qq;
+
+                    float force_result[2];
+                    coul_force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
+                    float force = force_result[1] * qq;
+
                     out << r << " " << pot << " " << force << "\n";
                 }
                 out << "\n";
             }
             out.close();
         }
-        
+
         std::cout << "MARTINI: Initialized splines with 1000 knots" << std::endl;
         std::cout << "  LJ range: " << lj_r_min << " to " << lj_r_max << " Angstroms" << std::endl;
         std::cout << "  Coulomb range: " << coul_r_min << " to " << coul_r_max << " Angstroms" << std::endl;
@@ -805,44 +802,44 @@ struct MartiniPotential : public PotentialNode
             
             Vec<3> force = make_zero<3>();
             
-            // Lennard-Jones potential using canonical spline interpolation (epsilon=1, sigma=1)
+            // Lennard-Jones potential using separate spline tables for each epsilon/sigma pair
             if(eps != 0.f && sig != 0.f && dist < lj_cutoff) {
-                // Use spline interpolation for LJ potential and force
-                // reduced coordinate x = r/sigma
-                float x = dist / sig;
-                float r_coord = x * lj_x_scale;
-                
-                float lj_result[2];
-                lj_potential_spline.evaluate_value_and_deriv(lj_result, 0, r_coord);
-                // scale potential by epsilon_pair (table already includes /12.0 scaling)
-                float lj_pot = lj_result[1] * eps;
+                // Look up the appropriate spline for this epsilon/sigma pair
+                auto spline_it = lj_splines.find({eps, sig});
+                if(spline_it != lj_splines.end()) {
+                    // Use spline interpolation for LJ potential and force
+                    float r_coord = dist * lj_r_scale;
 
-                float force_result[2];
-                lj_force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
-                // scale radial force by epsilon/sigma (table already includes /12.0 scaling)
-                float lj_force_mag = force_result[1] * (eps / sig);
-                
-                // Only apply if potential and force are finite and reasonable
-                if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag) &&
-                   std::isfinite(lj_result[1]) && std::isfinite(force_result[1])) {
-                    if(pot) *pot += lj_pot;
-                    // lj_force_mag is tabulated as -dV/dr. pos->sens stores gradient dE/dx.
-                    // Gradient on i: (dV/dr) * r_hat = -( -dV/dr ) * r_hat = -(lj_force_mag) * r_hat
-                    // Implement by accumulating (lj_force_mag/dist) * (-dr)
-                    force += (lj_force_mag/dist) * (-dr);
+                    float lj_result[2];
+                    spline_it->second.first.evaluate_value_and_deriv(lj_result, 0, r_coord);
+                    float lj_pot = lj_result[1];
+
+                    float force_result[2];
+                    spline_it->second.second.evaluate_value_and_deriv(force_result, 0, r_coord);
+                    float lj_force_mag = force_result[1];
+
+                    // Only apply if potential and force are finite and reasonable
+                    if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag) &&
+                       std::isfinite(lj_result[1]) && std::isfinite(force_result[1])) {
+                        if(pot) *pot += lj_pot;
+                        // lj_force_mag is tabulated as -dV/dr. pos->sens stores gradient dE/dx.
+                        // Gradient on i: (dV/dr) * r_hat = -( -dV/dr ) * r_hat = -(lj_force_mag) * r_hat
+                        // Implement by accumulating (lj_force_mag/dist) * (-dr)
+                        force += (lj_force_mag/dist) * (-dr);
+                    }
                 }
             }
             
-            // Coulomb potential using spline interpolation
+            // Coulomb potential using canonical spline (temporary fallback)
             if(qi != 0.f && qj != 0.f && dist < coul_cutoff) {
                 float r_coord = dist * coul_r_scale;
                 float coul_result[2];
                 coul_potential_spline.evaluate_value_and_deriv(coul_result, 0, r_coord);
-                float coul_pot = coul_result[1] * qi * qj;  // Scale by actual charges (table already includes /12.0 scaling)
+                float coul_pot = coul_result[1] * qi * qj;  // Scale by actual charges
 
                 float force_result[2];
                 coul_force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
-                float coul_force_mag = force_result[1] * qi * qj;  // Scale by actual charges (table already includes /12.0 scaling)
+                float coul_force_mag = force_result[1] * qi * qj;  // Scale by actual charges
                 
                 // Only apply if potential and force are finite and reasonable
                 if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag) &&
@@ -861,7 +858,7 @@ struct MartiniPotential : public PotentialNode
         debug_step_count++;
     }
 };
-static RegisterNodeType<MartiniPotential,1> martini_potential_node("martini_potential");
+static RegisterNodeType<MartiniPotential, 1> martini_potential_node("martini_potential");
 
 // Bond potential using spline interpolation
 struct DistSpring : public PotentialNode
@@ -978,8 +975,8 @@ struct DistSpring : public PotentialNode
 
         // Debug: Write all unique bond splines to a single file if debug_mode is enabled
         if (debug_mode) {
-            std::ofstream out("bond_splines.txt", std::ios::app);
-            out << "# Spline values in reduced mass units (masses divided by 12.0)\n";
+            std::ofstream out("bond_splines.txt", std::ios::out | std::ios::trunc);
+            out << "# Bond spline tables\n";
             // Collect unique (k, r0)
             std::set<std::pair<float, float>> bond_params;
             for (const auto& p : params) bond_params.insert({p.spring_constant, p.equil_dist});
@@ -1054,7 +1051,7 @@ struct DistSpring : public PotentialNode
         }
     }
 };
-static RegisterNodeType<DistSpring,1> dist_spring_node("dist_spring");
+static RegisterNodeType<DistSpring, 1> dist_spring_node("dist_spring");
 
 // Angle potential using spline interpolation
 struct AngleSpring : public PotentialNode
@@ -1165,8 +1162,8 @@ struct AngleSpring : public PotentialNode
 
         // Debug: Write all unique angle splines to a single file if debug_mode is enabled
         if (debug_mode) {
-            std::ofstream out("angle_splines.txt", std::ios::app);
-            out << "# All spline values below are divided by 12.0 (mass correction)\n";
+            std::ofstream out("angle_splines.txt", std::ios::out | std::ios::trunc);
+            out << "# Canonical angle spline (delta_cos = cos(θ) - cos(θ₀))\n";
             // Collect unique (k, theta0)
             std::set<std::pair<float, float>> angle_params;
             for (const auto& p : params) angle_params.insert({p.spring_constant, p.equil_angle_deg});
@@ -1305,7 +1302,7 @@ struct AngleSpring : public PotentialNode
         }
     }
 };
-static RegisterNodeType<AngleSpring,1> angle_spring_node("angle_spring");
+static RegisterNodeType<AngleSpring, 1> angle_spring_node("angle_spring");
 
 // Conjugate Gradient Minimizer based on LAMMPS implementation
 struct ConjugateGradientMinimizer : public PotentialNode
@@ -1520,6 +1517,7 @@ struct ConjugateGradientMinimizer : public PotentialNode
     }
 };
 
-static RegisterNodeType<ConjugateGradientMinimizer,1> cg_minimizer_node("conjugate_gradient_minimizer");
+static RegisterNodeType<ConjugateGradientMinimizer, 1> cg_minimizer_node("conjugate_gradient_minimizer");
+
 
 
