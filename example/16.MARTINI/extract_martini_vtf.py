@@ -53,7 +53,17 @@ def main():
     input_file = sys.argv[1]
     output_file = sys.argv[2]
     input_file_for_structure = sys.argv[3] if len(sys.argv) >= 4 else input_file
-    pdb_id = sys.argv[4] if len(sys.argv) == 5 else '1rkl'
+
+    # Auto-detect PDB file based on input file name
+    if len(sys.argv) >= 5:
+        pdb_id = sys.argv[4]
+    else:
+        # Try to infer PDB ID from input file name
+        input_basename = os.path.basename(input_file)
+        if 'bilayer' in input_basename.lower():
+            pdb_id = 'bilayer'
+        else:
+            pdb_id = '1rkl'  # fallback default
     output_format = output_file.split('.')[-1].lower()
 
     if output_format not in ['vtf', 'pdb']:
@@ -270,63 +280,52 @@ def main():
 
                     return frame_pos
 
-                # Include initial PDB frame as frame 0
-                print("Writing initial PDB structure as frame 0...")
+                # Write initial frame with protein centering (like original PDB frame)
+                print("Writing initial structure as frame 0 with protein centering...")
+
+                # Read PDB file to get the initial structure
                 pdb_positions = []
-                protein_indices = []
+                centered_positions = None
 
-                with open(f'pdb/{pdb_id}.MARTINI.pdb', 'r') as pdb_f:
-                    atom_idx = 0
-                    for line in pdb_f:
-                        if line.startswith('ATOM'):
-                            x = float(line[30:38])
-                            y = float(line[38:46])
-                            z = float(line[46:54])
-                            pdb_positions.append([x, y, z])
+                if pdb_atom_names is not None:  # Only if we have PDB data
+                    with open(f'pdb/{pdb_id}.MARTINI.pdb', 'r') as pdb_f:
+                        for line in pdb_f:
+                            if line.startswith('ATOM'):
+                                x = float(line[30:38])
+                                y = float(line[38:46])
+                                z = float(line[46:54])
+                                pdb_positions.append([x, y, z])
 
-                            # Identify protein atoms (exclude water, lipids, ions)
-                            residue_name = line[17:21].strip()
-                            if residue_name not in ['W', 'DOPC', 'NA', 'CL'] and residue_name.isupper():
-                                protein_indices.append(atom_idx)
-                            atom_idx += 1
+                    pdb_positions = np.array(pdb_positions)
 
-                pdb_positions = np.array(pdb_positions)
-                protein_positions = pdb_positions[protein_indices]
+                    # Center PDB coordinates to (0,0,0)
+                    pdb_center = np.mean(pdb_positions, axis=0)
+                    centered_positions = pdb_positions - pdb_center
 
-                # Calculate protein center of geometry
-                protein_center = np.mean(protein_positions, axis=0)
-                print(f"Protein center: {protein_center}")
+                    # Write PDB structure as first frame
+                    write_vtf_frame(f, centered_positions, 0)
+                else:
+                    # Fallback: center HDF5 coordinates
+                    input_center = np.mean(input_pos, axis=0)
+                    centered_positions = input_pos - input_center
+                    write_vtf_frame(f, centered_positions, 0)
 
-                # Shift all coordinates to center protein at origin
-                centered_positions = pdb_positions - protein_center
+                # Write frame 1 as the first simulation frame
+                first_sim_pos = get_frame_pos(0)  # Get first simulation frame
+                first_sim_pos = (first_sim_pos + half_box) % (2*half_box) - half_box
+                write_vtf_frame(f, first_sim_pos, 1)
 
-                # Apply minimal PBC wrapping (only for atoms that crossed boundaries)
-                wrapped_positions = centered_positions.copy()
-                wrapped_positions[:, 0] = wrapped_positions[:, 0] - x_len * np.round(wrapped_positions[:, 0] / x_len)
-                wrapped_positions[:, 1] = wrapped_positions[:, 1] - y_len * np.round(wrapped_positions[:, 1] / y_len)
-                wrapped_positions[:, 2] = wrapped_positions[:, 2] - z_len * np.round(wrapped_positions[:, 2] / z_len)
-
-                # Write initial PDB frame
-                write_vtf_frame(f, wrapped_positions, 0)
-
-                # Write simulation frames from both softened and regular stages
-                for frame in range(1, n_frame_total + 1):
-                    frame_pos = get_frame_pos(frame - 1)  # frame-1 because we start from frame 1
+                # Write the rest of the simulation frames
+                for frame in range(2, n_frame_total + 1):  # Start from frame 2
+                    frame_pos = get_frame_pos(frame - 1)  # frame-1 because we used frame 0 for frame 1
 
                     # Apply PBC wrapping to centered box convention [-L/2, L/2]
                     frame_pos = (frame_pos + half_box) % (2*half_box) - half_box
 
                     if np.isnan(frame_pos).any():
-                        if frame > 1:
-                            # Get previous valid frame from the same stage
-                            prev_frame_idx = frame - 2
-                            if prev_frame_idx >= 0:
-                                valid_pos = get_frame_pos(prev_frame_idx)
-                                valid_pos = (valid_pos + half_box) % (2*half_box) - half_box
-                                frame_pos = np.where(np.isnan(frame_pos), valid_pos, frame_pos)
-                        else:
-                            print(f"Warning: NaN values in first simulation frame, replacing with zeros")
-                            frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
+                        print(f"Warning: NaN values in frame {frame}, replacing with previous frame")
+                        frame_pos = np.where(np.isnan(frame_pos), first_sim_pos, frame_pos)
+
                     write_vtf_frame(f, frame_pos, frame)
                     if frame % 100 == 0:
                         print(f"Processed frame {frame}/{n_frame_total}")
@@ -369,44 +368,32 @@ def main():
                 # Write frames for PDB format
                 for frame in range(n_frame_total + 1):  # +1 to include initial structure
                     if frame == 0:
-                        # Frame 0: Initial PDB structure (before any simulation)
-                        print(f"Writing initial PDB structure as frame 0...")
+                        # Frame 0: Initial structure with protein centering
+                        print(f"Writing initial structure as frame 0 with protein centering...")
 
-                        # Read PDB positions and center protein properly
+                        # Read PDB file to get the initial structure
                         pdb_positions = []
-                        protein_indices = []
 
-                        with open(f'pdb/{pdb_id}.MARTINI.pdb', 'r') as pdb_f:
-                            atom_idx = 0
-                            for line in pdb_f:
-                                if line.startswith('ATOM'):
-                                    x = float(line[30:38])
-                                    y = float(line[38:46])
-                                    z = float(line[46:54])
-                                    pdb_positions.append([x, y, z])
+                        if pdb_atom_names is not None:  # Only if we have PDB data
+                            with open(f'pdb/{pdb_id}.MARTINI.pdb', 'r') as pdb_f:
+                                for line in pdb_f:
+                                    if line.startswith('ATOM'):
+                                        x = float(line[30:38])
+                                        y = float(line[38:46])
+                                        z = float(line[46:54])
+                                        pdb_positions.append([x, y, z])
 
-                                    # Identify protein atoms (exclude water, lipids, ions)
-                                    residue_name = line[17:21].strip()
-                                    if residue_name not in ['W', 'DOPC', 'NA', 'CL'] and residue_name.isupper():
-                                        protein_indices.append(atom_idx)
-                                    atom_idx += 1
+                            pdb_positions = np.array(pdb_positions)
 
-                        pdb_positions = np.array(pdb_positions)
-                        protein_positions = pdb_positions[protein_indices]
+                            # Center PDB coordinates to (0,0,0)
+                            pdb_center = np.mean(pdb_positions, axis=0)
+                            centered_positions = pdb_positions - pdb_center
+                        else:
+                            # Fallback: center HDF5 coordinates
+                            input_center = np.mean(input_pos, axis=0)
+                            centered_positions = input_pos - input_center
 
-                        # Calculate protein center of geometry
-                        protein_center = np.mean(protein_positions, axis=0)
-
-                        # Shift all coordinates to center protein at origin
-                        centered_positions = pdb_positions - protein_center
-
-                        # Apply minimal PBC wrapping (only for atoms that crossed boundaries)
-                        wrapped_positions = centered_positions.copy()
-                        wrapped_positions[:, 0] = wrapped_positions[:, 0] - x_len * np.round(wrapped_positions[:, 0] / x_len)
-                        wrapped_positions[:, 1] = wrapped_positions[:, 1] - y_len * np.round(wrapped_positions[:, 1] / y_len)
-                        wrapped_positions[:, 2] = wrapped_positions[:, 2] - z_len * np.round(wrapped_positions[:, 2] / z_len)
-
-                        frame_pos = wrapped_positions
+                        frame_pos = centered_positions
                     else:
                         # Use positions from both stages for simulation frames (frame-1 because we added initial frame)
                         frame_pos = get_frame_pos_pdb(frame - 1)
