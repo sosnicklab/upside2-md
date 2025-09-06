@@ -379,10 +379,8 @@ struct MartiniPotential : public PotentialNode
     // Spline interpolation for LJ potential - separate tables for each epsilon/sigma pair
     std::map<std::pair<float, float>, std::pair<LayeredClampedSpline1D<1>, LayeredClampedSpline1D<1>>> lj_splines;
     
-    // Spline interpolation for Coulomb potential
-    LayeredClampedSpline1D<1> coul_potential_spline;  // For backward compatibility
-    LayeredClampedSpline1D<1> coul_force_spline;      // For backward compatibility
-    // std::map<float, std::pair<LayeredClampedSpline1D<1>, LayeredClampedSpline1D<1>>> coulomb_splines;  // Separate splines for each charge product
+    // Spline interpolation for Coulomb potential - separate tables for each charge product
+    std::map<float, std::pair<LayeredClampedSpline1D<1>, LayeredClampedSpline1D<1>>> coulomb_splines;
     
     // Spline parameters
     float lj_r_min, lj_r_max, lj_r_scale;
@@ -395,8 +393,7 @@ struct MartiniPotential : public PotentialNode
     int max_debug_interactions;
     
     MartiniPotential(hid_t grp, CoordNode& pos_):
-        PotentialNode(), n_atom(pos_.n_elem), pos(pos_), debug_step_count(0), max_debug_interactions(10),
-        coul_potential_spline(1, 1000), coul_force_spline(1, 1000)
+        PotentialNode(), n_atom(pos_.n_elem), pos(pos_), debug_step_count(0), max_debug_interactions(10)
     {
         check_size(grp, "atom_indices", n_atom);
         check_size(grp, "charges", n_atom);
@@ -676,8 +673,78 @@ struct MartiniPotential : public PotentialNode
         }
         
 
-        // Generate canonical Coulomb splines (simplified approach)
-        // TODO: Implement separate Coulomb splines for each charge product
+        // Generate separate Coulomb splines for each unique charge product
+        std::set<float> unique_charge_products;
+        if(optimized_format) {
+            // In optimized format, look at unique coefficients
+            for(const auto& c : unique_coeff) {
+                float qq = c[2] * c[3];
+                if(std::abs(qq) > 1e-10f) {  // Use small epsilon for floating point comparison
+                    unique_charge_products.insert(qq);
+                }
+            }
+        } else {
+            // In original format, look at all coefficients
+            for(const auto& c : coeff) {
+                float qq = c[2] * c[3];
+                if(std::abs(qq) > 1e-10f) {  // Use small epsilon for floating point comparison
+                    unique_charge_products.insert(qq);
+                }
+            }
+        }
+
+        std::cout << "MARTINI: Generating separate Coulomb splines for " << unique_charge_products.size() << " unique charge products" << std::endl;
+
+        // Generate separate Coulomb splines for each unique charge product
+        for(float qq : unique_charge_products) {
+            std::vector<double> coul_pot_data_for_spline(1000 * 1);  // 1 layer, 1000 points, 1 value per point
+            std::vector<double> coul_force_data_for_spline(1000 * 2); // 1 layer, 1000 points, 2 values per point (deriv + value)
+
+            for(int i = 0; i < 1000; ++i) {
+                float r = coul_r_min + i * (coul_r_max - coul_r_min) / 999.0f;
+                if(r == 0.0f) r = 1.0e-6f;
+
+                // Coulomb potential: V = qq / (dielectric * r)
+                float potential = qq / (dielectric * r);
+                // Coulomb force: -dV/dr = -qq / (dielectric * r²)
+                float force = qq / (dielectric * r * r);
+
+                // Apply softening if enabled
+                if(coulomb_soften) {
+                    // Slater softening: V(r) = qq/r * (1 - (1 + αr/2) * exp(-αr))
+                    float alpha_r = slater_alpha * r;
+                    float exp_term = expf(-alpha_r);
+                    float soft_factor = 1.0f - (1.0f + alpha_r * 0.5f) * exp_term;
+
+                    // Softened potential
+                    coul_pot_data_for_spline[i] = potential * soft_factor;
+
+                    // Softened force (derivative of softened potential)
+                    float d_soft_dr = slater_alpha * exp_term * (1.0f + alpha_r * 0.5f) - 0.5f * slater_alpha * alpha_r * exp_term;
+                    float softened_force = force * soft_factor - potential * d_soft_dr;
+
+                    coul_force_data_for_spline[i*2 + 0] = softened_force; // derivative
+                    coul_force_data_for_spline[i*2 + 1] = potential * soft_factor; // value
+                } else {
+                    coul_pot_data_for_spline[i] = potential;
+                    coul_force_data_for_spline[i*2 + 0] = force; // derivative
+                    coul_force_data_for_spline[i*2 + 1] = potential; // value
+                }
+            }
+
+            // Create spline pair for this charge product
+            auto [coulomb_it, coulomb_inserted] = coulomb_splines.emplace(std::piecewise_construct,
+                                                                          std::forward_as_tuple(qq),
+                                                                          std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000),
+                                                                                                LayeredClampedSpline1D<1>(1, 1000)));
+            auto& coulomb_spline_pair = coulomb_it->second;
+
+            // Initialize the splines
+            coulomb_spline_pair.first.fit_spline(coul_pot_data_for_spline.data());
+            coulomb_spline_pair.second.fit_spline(coul_force_data_for_spline.data());
+        }
+
+        std::cout << "MARTINI: Generated " << coulomb_splines.size() << " Coulomb splines" << std::endl;
 
         // Debug: Write all unique spline tables to a single file
         {
@@ -722,32 +789,29 @@ struct MartiniPotential : public PotentialNode
                 }
                 out << "\n";
             }
-            // --- Coulomb potential examples for each unique q1*q2 ---
-            std::set<float> qq_params;
-            for (const auto& c : coeff) {
-                float qq = c[2] * c[3];
-                if (qq != 0.f) qq_params.insert(qq);
-            }
-            out << "# Coulomb potentials for each unique charge product\n";
-            out << "# Using canonical Coulomb spline scaled by charge products\n\n";
-            for (float qq : qq_params) {
+            // --- Coulomb splines for each unique charge product ---
+            for (const auto& coulomb_pair : coulomb_splines) {
+                float qq = coulomb_pair.first;
+                const auto& pot_spline = coulomb_pair.second.first;
+                const auto& force_spline = coulomb_pair.second.second;
+
                 out << "# Coulomb Spline\n# q1q2=" << qq << ", dielectric=" << dielectric << ", coulomb_constant=" << coulomb_constant
-                    << ", r_min=0.0, r_max=" << coul_cutoff << ", softened=" << (coulomb_soften?1:0) << ", slater_alpha=" << slater_alpha << "\n";
+                    << ", r_min=" << coul_r_min << ", r_max=" << coul_r_max << ", softened=" << (coulomb_soften?1:0) << ", slater_alpha=" << slater_alpha << "\n";
                 out << "# r potential force\n";
+
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
-                    float r = 0.0f + i * (coul_cutoff - 0.0f) / (n_pts - 1);
+                    float r = coul_r_min + i * (coul_r_max - coul_r_min) / (n_pts - 1);
                     if(r == 0.0f) r = 1.0e-6f;
                     float r_coord = r * coul_r_scale;
 
-                    // Use canonical Coulomb spline and scale by charge product
                     float pot_result[2];
-                    coul_potential_spline.evaluate_value_and_deriv(pot_result, 0, r_coord);
-                    float pot = pot_result[1] * qq;
+                    pot_spline.evaluate_value_and_deriv(pot_result, 0, r_coord);
+                    float pot = pot_result[1];
 
                     float force_result[2];
-                    coul_force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
-                    float force = force_result[1] * qq;
+                    force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
+                    float force = force_result[1];
 
                     out << r << " " << pot << " " << force << "\n";
                 }
@@ -830,23 +894,35 @@ struct MartiniPotential : public PotentialNode
                 }
             }
             
-            // Coulomb potential using canonical spline (temporary fallback)
+            // Coulomb potential using separate spline tables for each charge product
             if(qi != 0.f && qj != 0.f && dist < coul_cutoff) {
-                float r_coord = dist * coul_r_scale;
-                float coul_result[2];
-                coul_potential_spline.evaluate_value_and_deriv(coul_result, 0, r_coord);
-                float coul_pot = coul_result[1] * qi * qj;  // Scale by actual charges
+                float qq = qi * qj;
+                // DEBUG: Check charge product
+                // if(debug_step_count < 5) std::cout << "COULOMB: Looking for q1*q2=" << qq << " (qi=" << qi << ", qj=" << qj << ")" << std::endl;
 
-                float force_result[2];
-                coul_force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
-                float coul_force_mag = force_result[1] * qi * qj;  // Scale by actual charges
-                
-                // Only apply if potential and force are finite and reasonable
-                if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag) &&
-                   std::isfinite(coul_result[1]) && std::isfinite(force_result[1])) {
-                    if(pot) *pot += coul_pot;
-                    // coul_force_mag is tabulated as -dV/dr; accumulate gradient as above
-                    force += (coul_force_mag/dist) * (-dr);
+                // Look up the appropriate spline for this charge product
+                auto coulomb_it = coulomb_splines.find(qq);
+                if(coulomb_it != coulomb_splines.end()) {
+                    // DEBUG: Uncomment to check Coulomb computation
+                    // std::cout << "COULOMB: Using spline for q1*q2=" << qq << " at r=" << dist << std::endl;
+                    // Use spline interpolation for Coulomb potential and force
+                    float r_coord = dist * coul_r_scale;
+
+                    float coul_result[2];
+                    coulomb_it->second.first.evaluate_value_and_deriv(coul_result, 0, r_coord);
+                    float coul_pot = coul_result[1];
+
+                    float force_result[2];
+                    coulomb_it->second.second.evaluate_value_and_deriv(force_result, 0, r_coord);
+                    float coul_force_mag = force_result[1];
+
+                    // Only apply if potential and force are finite and reasonable
+                    if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag) &&
+                       std::isfinite(coul_result[1]) && std::isfinite(force_result[1])) {
+                        if(pot) *pot += coul_pot;
+                        // coul_force_mag is tabulated as -dV/dr; accumulate gradient as above
+                        force += (coul_force_mag/dist) * (-dr);
+                    }
                 }
             }
             

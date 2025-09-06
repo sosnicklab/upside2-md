@@ -68,7 +68,7 @@ echo
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR"
 
 # Simulation parameters (from original run_martini.py)
-DURATION=2000
+DURATION=1000
 FRAME_INTERVAL=20
 TEMPERATURE=0.8
 TIME_STEP=0.01
@@ -80,7 +80,7 @@ PRESSURE=0.068840452044
 BAROSTAT_TIMESCALE=0.001
 BAROSTAT_INTERVAL=1.0
 SEED=12345
-INTEGRATOR="nvt"
+INTEGRATOR="npt"
 
 echo "Simulation parameters:"
 echo "  Duration: $DURATION steps"
