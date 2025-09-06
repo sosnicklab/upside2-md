@@ -161,8 +161,8 @@ struct DihedralSpring : public PotentialNode
                     float delta_phi = phi - phi0;
                     if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
                     if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
-                    float pot = 0.5f * k * delta_phi * delta_phi / 72.0;
-                    float force = k * delta_phi / 72.0;
+                    float pot = 0.5f * k * delta_phi * delta_phi;
+                    float force = k * delta_phi;
                     out << phi << " " << pot << " " << force << "\n";
                 }
                 out << "\n";
@@ -979,7 +979,7 @@ struct DistSpring : public PotentialNode
         // Debug: Write all unique bond splines to a single file if debug_mode is enabled
         if (debug_mode) {
             std::ofstream out("bond_splines.txt", std::ios::app);
-            out << "# All spline values below are divided by 12.0 (mass correction)\n";
+            out << "# Spline values in reduced mass units (masses divided by 12.0)\n";
             // Collect unique (k, r0)
             std::set<std::pair<float, float>> bond_params;
             for (const auto& p : params) bond_params.insert({p.spring_constant, p.equil_dist});
@@ -990,8 +990,8 @@ struct DistSpring : public PotentialNode
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
                     float r = std::max(0.1f, r0 * 0.5f) + i * (r0 * 2.0f - std::max(0.1f, r0 * 0.5f)) / (n_pts - 1);
-                    float pot = 0.5f * k * (r - r0) * (r - r0) / 72.0;
-                    float force = k * (r - r0) / 72.0;
+                    float pot = 0.5f * k * (r - r0) * (r - r0);
+                    float force = k * (r - r0);
                     out << r << " " << pot << " " << force << "\n";
                 }
                 out << "\n";
@@ -1178,8 +1178,8 @@ struct AngleSpring : public PotentialNode
                 for (int i = 0; i < n_pts; ++i) {
                     float theta = 180.0f * i / (n_pts - 1);
                     float delta = cosf(theta * M_PI / 180.0f) - cosf(theta0 * M_PI / 180.0f);
-                    float pot = 0.5f * k * delta * delta / 72.0;
-                    float force = k * delta / 72.0;
+                    float pot = 0.5f * k * delta * delta;
+                    float force = k * delta;
                     out << theta << " " << pot << " " << force << "\n";
                 }
                 out << "\n";

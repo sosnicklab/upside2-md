@@ -892,7 +892,8 @@ def main():
         mass = np.zeros(n_atoms, dtype='f4')
         for i, atom_type in enumerate(atom_types):
             # Get mass from force field file, default to 72.0 if not found
-            mass[i] = martini_masses.get(atom_type, 72.0)
+            # Divide by 12.0 for reduced mass units (1 unit = 12 g/mol)
+            mass[i] = martini_masses.get(atom_type, 72.0) / 12.0
         
         mass_array = t.create_array(input_grp, 'mass', obj=mass)
         mass_array._v_attrs.arguments = np.array([b'mass'])
