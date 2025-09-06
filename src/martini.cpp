@@ -614,6 +614,9 @@ struct MartiniPotential : public PotentialNode
                 if(!lj_soften || lj_soften_alpha <= 0.0f) {
                     if(r < 0.1f * sig) r = 0.1f * sig;  // Minimum r = 0.1 * sigma to avoid numerical issues
                 }
+                
+                // Use scaled coordinates for spline fitting (same as spline evaluation)
+                float r_coord = r * lj_r_scale;
 
                 if(lj_soften && lj_soften_alpha > 0.0f) {
                     // Soft-core LJ: t = (r/sigma)^6 + alpha; V = 4*epsilon*(1/t^2 - 1/t)
@@ -627,10 +630,10 @@ struct MartiniPotential : public PotentialNode
                     float inv_t3 = inv_t2 * inv_t;
                     // potential for softened Lennard-Jones
                     lj_pot_data[i] = 4.0 * eps * (inv_t2 - inv_t);
-                    // dV/dr = (1/r) * dV/dx; force magnitude
-                    float x5 = x6 / (x + 1.0e-20f);
-                    float dVdx = 4.0f * eps * (-2.0f * inv_t3 + inv_t2) * 6.0f * x5;
-                    lj_force_data[i] = -dVdx / sig;  // -dV/dr (radial force)
+                    // dV/dr = 24*epsilon*(2/t^3 - 1/t^2) * r^5/sigma^6
+                    float x5 = x2 * x3;  // x^5 = x^2 * x^3
+                    float dVdx = 24.0f * eps * (2.0f * inv_t3 - inv_t2) * x5;
+                    lj_force_data[i] = dVdx / sig;  // dV/dr (radial force)
                 } else {
                     // Regular LJ potential: V = 4*epsilon*((sigma/r)^12 - (sigma/r)^6)
                     float r2 = r * r;
@@ -643,10 +646,10 @@ struct MartiniPotential : public PotentialNode
                     float inv_r12 = sig12 / (r6 * r6);
                     // LJ potential
                     lj_pot_data[i] = 4.0 * eps * (inv_r12 - inv_r6);
-                    // LJ force: -dV/dr = 24*epsilon*(2*(sigma/r)^13 - (sigma/r)^7) / r
-                    float inv_r7 = inv_r6 / r;
-                    float inv_r13 = inv_r12 / r;
-                    lj_force_data[i] = 24.0 * eps * (2.0 * inv_r13 - inv_r7);
+                    // LJ force: F = 48*epsilon*(sigma^12/r^13 - 0.5*sigma^6/r^7)
+                    float inv_r7 = sig6 / (r6 * r);  // sigma^6 / r^7
+                    float inv_r13 = sig12 / (r6 * r6 * r);  // sigma^12 / r^13
+                    lj_force_data[i] = 48.0 * eps * (inv_r13 - 0.5 * inv_r7);
                 }
             }
 
@@ -662,6 +665,10 @@ struct MartiniPotential : public PotentialNode
             std::vector<double> force_data_for_spline(1000 * 2); // 1 layer, 1000 points, 2 values per point (deriv + value)
 
             for(int i = 0; i < 1000; ++i) {
+                float r = lj_r_min + i * (lj_r_max - lj_r_min) / 999.0f;
+                if(r == 0.0f) r = 1.0e-6f;
+                float r_coord = r * lj_r_scale;
+                
                 pot_data_for_spline[i] = lj_pot_data[i];
                 force_data_for_spline[i*2 + 0] = lj_force_data[i]; // derivative
                 force_data_for_spline[i*2 + 1] = lj_pot_data[i];   // value
@@ -670,6 +677,7 @@ struct MartiniPotential : public PotentialNode
             // Initialize the splines
             spline_pair.first.fit_spline(pot_data_for_spline.data());
             spline_pair.second.fit_spline(force_data_for_spline.data());
+            
         }
         
 
@@ -783,7 +791,8 @@ struct MartiniPotential : public PotentialNode
 
                     float force_result[2];
                     force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
-                    float force = force_result[1];
+                    float force = force_result[0];  // Use derivative (force), not value
+
 
                     out << r << " " << pot << " " << force << "\n";
                 }
@@ -811,7 +820,7 @@ struct MartiniPotential : public PotentialNode
 
                     float force_result[2];
                     force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
-                    float force = force_result[1];
+                    float force = force_result[0];  // Use derivative (force), not value
 
                     out << r << " " << pot << " " << force << "\n";
                 }
