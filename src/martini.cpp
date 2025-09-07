@@ -889,7 +889,7 @@ struct MartiniPotential : public PotentialNode
 
                     float force_result[2];
                     spline_it->second.second.evaluate_value_and_deriv(force_result, 0, r_coord);
-                    float lj_force_mag = force_result[1];
+                    float lj_force_mag = force_result[0];  // Use index 0 for derivative (force)
 
                     // Only apply if potential and force are finite and reasonable
                     if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag) &&
@@ -923,7 +923,7 @@ struct MartiniPotential : public PotentialNode
 
                     float force_result[2];
                     coulomb_it->second.second.evaluate_value_and_deriv(force_result, 0, r_coord);
-                    float coul_force_mag = force_result[1];
+                    float coul_force_mag = force_result[0];  // Use index 0 for derivative (force)
 
                     // Only apply if potential and force are finite and reasonable
                     if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag) &&
