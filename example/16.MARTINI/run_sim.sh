@@ -207,7 +207,7 @@ else
         echo "=== Step 3: Running Two-Stage Simulation (softened -> regular) ==="
     fi
 
-    SOFT_STEPS=1000
+    SOFT_STEPS=100
     REMAINING_STEPS=$(( DURATION > SOFT_STEPS ? DURATION - SOFT_STEPS : 0 ))
 
 # Stage 3.1: softened run (writes to INPUT_FILE:/output)

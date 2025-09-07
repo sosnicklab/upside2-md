@@ -683,7 +683,7 @@ struct MartiniPotential : public PotentialNode
             if (inserted) {
                 // Prepare data for fit_spline (format: n_layer, nx, NDIM_VALUE)
                 std::vector<double> pot_data_for_spline(1000 * 1);  // 1 layer, 1000 points, 1 value per point
-                std::vector<double> force_data_for_spline(1000 * 2); // 1 layer, 1000 points, 2 values per point (deriv + value)
+                std::vector<double> force_data_for_spline(1000 * 1); // 1 layer, 1000 points, 1 value per point
 
             for(int i = 0; i < 1000; ++i) {
                 float r = lj_r_min + i * (lj_r_max - lj_r_min) / 999.0f;
@@ -790,7 +790,10 @@ struct MartiniPotential : public PotentialNode
             out << "# LJ splines: Separate tables for each unique epsilon/sigma pair\n";
             out << "# Each spline contains the full potential and force for that parameter combination\n\n";
             out << "# Coulomb splines: Separate tables for each unique charge product\n";
-            out << "# No scaling needed during computation - each spline contains the full potential\n";
+            out << "# No scaling needed during computation - each spline contains the full potential\n\n";
+            out << "# Bond splines: Harmonic potential for bond distances\n";
+            out << "# Angle splines: Cosine-based potential for bond angles\n";
+            out << "# Dihedral splines: Harmonic potential for dihedral angles\n";
 
             // --- LJ splines for each unique (epsilon, sigma) ---
             for (const auto& spline_pair : lj_splines) {
@@ -852,6 +855,30 @@ struct MartiniPotential : public PotentialNode
                 }
                 out << "\n";
             }
+            
+            // Add bond and angle splines to the main output file
+            // Read and append bond splines if they exist
+            std::ifstream bond_file("bond_splines.txt");
+            if (bond_file.is_open()) {
+                out << "\n# === BOND SPLINES ===\n";
+                std::string line;
+                while (std::getline(bond_file, line)) {
+                    out << line << "\n";
+                }
+                bond_file.close();
+            }
+            
+            // Read and append angle splines if they exist
+            std::ifstream angle_file("angle_splines.txt");
+            if (angle_file.is_open()) {
+                out << "\n# === ANGLE SPLINES ===\n";
+                std::string line;
+                while (std::getline(angle_file, line)) {
+                    out << line << "\n";
+                }
+                angle_file.close();
+            }
+            
             out.close();
         }
 
@@ -1091,20 +1118,22 @@ struct DistSpring : public PotentialNode
         // Debug: Write all unique bond splines to a single file if debug_mode is enabled
         if (debug_mode) {
             std::ofstream out("bond_splines.txt", std::ios::out | std::ios::trunc);
-            out << "# Bond spline tables\n";
+            out << "# Bond splines: Two-particle interactions (atom1-atom2)\n";
+            out << "# Forces are applied to both atoms: F1 = -F2 (equal and opposite)\n";
+            out << "# Force magnitude shows the magnitude of force on each atom\n";
             // Collect unique (k, r0)
             std::set<std::pair<float, float>> bond_params;
             for (const auto& p : params) bond_params.insert({p.spring_constant, p.equil_dist});
             for (const auto& bp : bond_params) {
                 float k = bp.first, r0 = bp.second;
                 out << "# Bond Spline\n# k=" << k << ", r0=" << r0 << "\n";
-                out << "# r potential force\n";
+                out << "# r potential force_magnitude (applied to both atoms)\n";
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
                     float r = std::max(0.1f, r0 * 0.5f) + i * (r0 * 2.0f - std::max(0.1f, r0 * 0.5f)) / (n_pts - 1);
                     float pot = 0.5f * k * (r - r0) * (r - r0);
-                    float force = k * (r - r0);
-                    out << r << " " << pot << " " << force << "\n";
+                    float force_magnitude = std::abs(k * (r - r0)); // Magnitude of force on each atom
+                    out << r << " " << pot << " " << force_magnitude << "\n";
                 }
                 out << "\n";
             }
@@ -1276,21 +1305,32 @@ struct AngleSpring : public PotentialNode
         // Debug: Write all unique angle splines to a single file if debug_mode is enabled
         if (debug_mode) {
             std::ofstream out("angle_splines.txt", std::ios::out | std::ios::trunc);
-            out << "# Canonical angle spline (delta_cos = cos(θ) - cos(θ₀))\n";
+            out << "# Angle splines: Three-particle interactions (atom1-atom2-atom3)\n";
+            out << "# Forces are distributed to all three atoms: F1, F2, F3\n";
+            out << "# Force magnitude shows the magnitude of force on each atom\n";
             // Collect unique (k, theta0)
             std::set<std::pair<float, float>> angle_params;
             for (const auto& p : params) angle_params.insert({p.spring_constant, p.equil_angle_deg});
             for (const auto& ap : angle_params) {
                 float k = ap.first, theta0 = ap.second;
                 out << "# Angle Spline\n# k=" << k << ", theta0_deg=" << theta0 << "\n";
-                out << "# theta_deg potential force\n";
+                out << "# theta_deg potential force_magnitude (applied to all 3 atoms)\n";
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
                     float theta = 180.0f * i / (n_pts - 1);
-                    float delta = cosf(theta * M_PI / 180.0f) - cosf(theta0 * M_PI / 180.0f);
-                    float pot = 0.5f * k * delta * delta;
-                    float force = k * delta;
-                    out << theta << " " << pot << " " << force << "\n";
+                    float cos_theta = cosf(theta * M_PI / 180.0f);
+                    float cos_theta0 = cosf(theta0 * M_PI / 180.0f);
+                    float delta_cos = cos_theta - cos_theta0;
+                    float pot = 0.5f * k * delta_cos * delta_cos;
+                    
+                    // Calculate force magnitude that would be applied to each atom
+                    // This is the magnitude of the force vector for each of the three atoms
+                    float dE_dtheta = k * delta_cos * (-sinf(theta * M_PI / 180.0f));
+                    float dtheta_dcos = -1.0f / sqrtf(1.0f - cos_theta * cos_theta);
+                    float dE_dcos = dE_dtheta * dtheta_dcos;
+                    float force_magnitude = std::abs(dE_dcos); // Magnitude of force on each atom
+                    
+                    out << theta << " " << pot << " " << force_magnitude << "\n";
                 }
                 out << "\n";
             }
