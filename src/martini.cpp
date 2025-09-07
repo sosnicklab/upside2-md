@@ -735,14 +735,15 @@ struct MartiniPotential : public PotentialNode
                 if(r == 0.0f) r = 1.0e-6f;
                 float r_coord = i;  // Use loop index as spline coordinate [0, 999]
 
-                // Coulomb potential: V = qq / (dielectric * r)
-                float potential = qq / (dielectric * r);
-                // Coulomb force: -dV/dr = -qq / (dielectric * r²)
-                float force = qq / (dielectric * r * r);
+                // Coulomb potential: V = k * qq / r, where k = 0.317753479522
+                float coulomb_k = 0.317753479522f;
+                float potential = coulomb_k * qq / r;
+                // Coulomb force: -dV/dr = k * qq / r²
+                float force = coulomb_k * qq / (r * r);
 
                 // Apply softening if enabled
                 if(coulomb_soften) {
-                    // Slater softening: V(r) = qq/r * (1 - (1 + αr/2) * exp(-αr))
+                    // Slater softening: V(r) = k*qq/r * (1 - (1 + αr/2) * exp(-αr))
                     float alpha_r = slater_alpha * r;
                     float exp_term = expf(-alpha_r);
                     float soft_factor = 1.0f - (1.0f + alpha_r * 0.5f) * exp_term;
@@ -832,8 +833,7 @@ struct MartiniPotential : public PotentialNode
                 const auto& pot_spline = coulomb_pair.second.first;
                 const auto& force_spline = coulomb_pair.second.second;
 
-                out << "# Coulomb Spline\n# q1q2=" << qq << ", dielectric=" << dielectric << ", coulomb_constant=" << coulomb_constant
-                    << ", r_min=" << coul_r_min << ", r_max=" << coul_r_max << ", softened=" << (coulomb_soften?1:0) << ", slater_alpha=" << slater_alpha << "\n";
+                out << "# Coulomb Spline\n# q1q2=" << qq << ", k=0.317753479522, r_min=" << coul_r_min << ", r_max=" << coul_r_max << ", softened=" << (coulomb_soften?1:0) << ", slater_alpha=" << slater_alpha << "\n";
                 out << "# r potential force\n";
 
                 int n_pts = 10;
@@ -885,7 +885,7 @@ struct MartiniPotential : public PotentialNode
         std::cout << "MARTINI: Initialized splines with 1000 knots" << std::endl;
         std::cout << "  LJ range: " << lj_r_min << " to " << lj_r_max << " Angstroms" << std::endl;
         std::cout << "  Coulomb range: " << coul_r_min << " to " << coul_r_max << " Angstroms" << std::endl;
-        std::cout << "  Coulomb constant: " << coulomb_constant << ", Dielectric: " << dielectric << std::endl;
+        std::cout << "  Coulomb k: 0.317753479522, Dielectric: " << dielectric << std::endl;
 
     }
 
