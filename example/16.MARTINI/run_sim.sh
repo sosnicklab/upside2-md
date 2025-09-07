@@ -2,16 +2,34 @@
 
 # MARTINI 3.0 Optimized Simulation Script
 # Complete workflow: prepare input, optimize interaction table, run simulation, generate VTF
+#
+# POTENTIAL MODE TOGGLE:
+# - Set POTENTIAL_MODE="soft" (default) for softened potentials (two-stage simulation)
+# - Set POTENTIAL_MODE="regular" for regular potentials only (single-stage simulation)
+# - Can be overridden via environment: POTENTIAL_MODE=regular ./run_sim.sh
 
 set -e  # Exit on any error
 
 # =============================================================================
-# USER CONFIGURATION - Set your PDB ID here
+# USER CONFIGURATION - Set your PDB ID and potential mode here
 # =============================================================================
 # Change this value to use a different PDB file (e.g., "bilayer", "protein", etc.)
 # The script will look for pdb/{PDB_ID}.MARTINI.pdb
 PDB_ID="bilayer"
+
+# POTENTIAL MODE TOGGLE
+# Set to "soft" to use softened potentials (default)
+# Set to "regular" to use regular potentials only
+# Can be overridden via environment variable: POTENTIAL_MODE=regular ./run_sim.sh
+POTENTIAL_MODE="${POTENTIAL_MODE:-soft}"
 # =============================================================================
+
+# Validate potential mode
+if [ "$POTENTIAL_MODE" != "soft" ] && [ "$POTENTIAL_MODE" != "regular" ]; then
+    echo "ERROR: Invalid POTENTIAL_MODE: $POTENTIAL_MODE"
+    echo "Valid options: 'soft' or 'regular'"
+    exit 1
+fi
 
 # Command line argument overrides the configuration above
 if [ $# -eq 1 ]; then
@@ -21,10 +39,13 @@ elif [ $# -gt 1 ]; then
     echo "Usage: $0 [PDB_ID]"
     echo "  PDB_ID: The PDB identifier (optional, overrides configuration)"
     echo "  Configuration PDB ID: $PDB_ID"
+    echo "  Potential mode: $POTENTIAL_MODE"
     exit 1
 else
     echo "Using configured PDB ID: $PDB_ID"
 fi
+
+echo "Potential mode: $POTENTIAL_MODE"
 
 # Configuration
 INPUTS_DIR="inputs"
@@ -95,14 +116,24 @@ echo
 # Step 1: Prepare input files (produce example/16.MARTINI/outputs/martini_test/test.input.up)
 echo "=== Step 1: Preparing Input Files ==="
 echo "Running prepare_martini.py with PDB ID: $PDB_ID"
-## Enable softened potentials by default unless already set in the environment
-# Gentle defaults to just resolve steric clashes; override via env as needed
-export UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ:-1}
-export UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA:-0.01}
-export UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-0}
-export UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-0.0}
+
+# Set softening options based on potential mode
+if [ "$POTENTIAL_MODE" = "soft" ]; then
+    echo "Using softened potentials"
+    export UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ:-1}
+    export UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA:-0.01}
+    export UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-0}
+    export UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-0.0}
+else
+    echo "Using regular potentials"
+    export UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ:-0}
+    export UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA:-0.0}
+    export UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-0}
+    export UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-0.0}
+fi
+
 export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
-echo "Softening options (env): UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ:-0} UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA:-0.1} UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-0} UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-0.0} UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-0}"
+echo "Potential options (env): UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ} UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA} UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB} UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA} UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES}"
 source ../../source.sh
 
 python3 prepare_martini.py "$PDB_ID"
@@ -136,14 +167,48 @@ echo "  Optimized input: $INPUT_FILE ($OPTIMIZED_SIZE)"
 echo
 
 # Step 3: Simulation run
-if [ "$SOFT_RUN_MODE" = "soft_only" ]; then
-echo "=== Step 3: Running Softened-Only Simulation ==="
+if [ "$POTENTIAL_MODE" = "regular" ]; then
+    echo "=== Step 3: Running Regular Potential Simulation ==="
+    echo "Running for $DURATION steps with regular potentials"
+    
+    # Single stage: regular potential for full duration
+    CMD_REG=(
+        "$UPSIDE_EXECUTABLE"
+        "$INPUT_FILE"
+        "--duration" "$DURATION"
+        "--frame-interval" "$FRAME_INTERVAL"
+        "--temperature" "$TEMPERATURE"
+        "--time-step" "$TIME_STEP"
+        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+        "--pressure" "$PRESSURE"
+        "--barostat-timescale" "$BAROSTAT_TIMESCALE"
+        "--barostat-interval" "$BAROSTAT_INTERVAL"
+        "--seed" "$SEED"
+        "--integrator" "$INTEGRATOR"
+        "--disable-initial-thermalization"
+        "--disable-z-recentering"
+    )
+    echo "Command (regular): ${CMD_REG[*]}"
+    START_TIME=$(date +%s)
+    if "${CMD_REG[@]}" 2>&1 | tee "$LOG_FILE"; then
+        END_TIME=$(date +%s)
+        echo "Regular simulation completed in $((END_TIME - START_TIME)) seconds"
+    else
+        echo "ERROR: Regular simulation failed!"
+        exit 1
+    fi
+    
 else
-echo "=== Step 3: Running Two-Stage Simulation (softened -> regular) ==="
-fi
+    # Soft potential mode (original two-stage logic)
+    if [ "$SOFT_RUN_MODE" = "soft_only" ]; then
+        echo "=== Step 3: Running Softened-Only Simulation ==="
+    else
+        echo "=== Step 3: Running Two-Stage Simulation (softened -> regular) ==="
+    fi
 
-SOFT_STEPS=1000
-REMAINING_STEPS=$(( DURATION > SOFT_STEPS ? DURATION - SOFT_STEPS : 0 ))
+    SOFT_STEPS=1000
+    REMAINING_STEPS=$(( DURATION > SOFT_STEPS ? DURATION - SOFT_STEPS : 0 ))
 
 # Stage 3.1: softened run (writes to INPUT_FILE:/output)
 echo "-- Stage 1: Softened potential for $SOFT_STEPS steps --"
@@ -243,6 +308,8 @@ elif [ "$SOFT_RUN_MODE" = "soft_only" ]; then
 else
     echo "Skipping regular stage: REMAINING_STEPS=0"
 fi
+
+fi  # End of POTENTIAL_MODE check
 
 echo
 echo "=== Simulation Complete! ==="
