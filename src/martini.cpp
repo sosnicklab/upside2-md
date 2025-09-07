@@ -63,7 +63,7 @@ struct DihedralSpring : public PotentialNode
     LayeredClampedSpline1D<1> dihedral_force_spline;
     
     // Spline parameters
-    float dihedral_min, dihedral_max, dihedral_scale;
+    float dihedral_min, dihedral_max;
     float max_spring;  // Store max spring constant for scaling
     bool debug_mode;   // Debug flag for writing splines
 
@@ -128,7 +128,6 @@ struct DihedralSpring : public PotentialNode
         // Set spline range for dihedral angles (typically -π to π radians)
         dihedral_min = -M_PI_F;  // -180°
         dihedral_max = M_PI_F;   // +180°
-        dihedral_scale = 999.0f / (dihedral_max - dihedral_min);
         
         // Use a parameterless canonical spline: pot = 0.5 * (delta_phi)^2, force = (delta_phi)
         // with delta_phi in [-pi, pi]
@@ -215,7 +214,7 @@ struct DihedralSpring : public PotentialNode
             if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
             if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
             if(delta_phi >= dihedral_min && delta_phi <= dihedral_max) {
-                float phi_coord = (delta_phi - dihedral_min) * dihedral_scale;
+                float phi_coord = delta_phi;
                 
                 // Get potential and force from spline
                 float pot_result[2];
@@ -224,7 +223,7 @@ struct DihedralSpring : public PotentialNode
                 
                 float force_result[2];
                 dihedral_force_spline.evaluate_value_and_deriv(force_result, 0, phi_coord);
-                float dE_ddelta = force_result[1] * dihedral_scale; // d(0.5*delta^2)/ddelta = delta
+                float dE_ddelta = force_result[1];
                 float dihedral_force_mag = p.spring_constant * dE_ddelta;
                 // Use spline-evaluated potential and force
                 if(pot) *pot += p.spring_constant * dihedral_pot;
@@ -383,8 +382,10 @@ struct MartiniPotential : public PotentialNode
     std::map<float, std::pair<LayeredClampedSpline1D<1>, LayeredClampedSpline1D<1>>> coulomb_splines;
     
     // Spline parameters
-    float lj_r_min, lj_r_max, lj_r_scale;
-    float coul_r_min, coul_r_max, coul_r_scale;
+    float lj_r_min, lj_r_max;
+    float lj_r_shift, lj_r_scale;  // Coordinate transformation parameters
+    float coul_r_min, coul_r_max;
+    float coul_r_shift, coul_r_scale;  // Coordinate transformation parameters
     int coul_n_knots;
     
     // Debug variables
@@ -589,14 +590,20 @@ struct MartiniPotential : public PotentialNode
             std::cout << "  epsilon=" << params.first << ", sigma=" << params.second << std::endl;
         }
 
-        // Initialize spline parameters for LJ
+        // Initialize spline parameters for LJ - fixed domain [0, 12]
         lj_r_min = 0.0f;
-        lj_r_max = lj_cutoff;
-        lj_r_scale = (lj_r_max > 0.0f) ? (999.0f / (lj_r_max - lj_r_min)) : 0.0f;
+        lj_r_max = 12.0f;  // Fixed domain for all LJ interactions
+        
+        // Coordinate transformation parameters (following membrane spline pattern)
+        lj_r_shift = -lj_r_min;  // shift to make coordinate system start at 0
+        lj_r_scale = 999.0f / (lj_r_max + lj_r_shift);  // scale to [0, 999]
 
         coul_r_min = 0.0f;        // Minimum distance for Coulomb spline (Angstroms)
-        coul_r_max = coul_cutoff; // Maximum distance for Coulomb spline
-        coul_r_scale = (coul_r_max > 0.0f) ? (999.0f / (coul_r_max - coul_r_min)) : 0.0f;
+        coul_r_max = 12.0f;       // Fixed domain for all Coulomb interactions
+        
+        // Coordinate transformation parameters for Coulomb
+        coul_r_shift = -coul_r_min;  // shift to make coordinate system start at 0
+        coul_r_scale = 999.0f / (coul_r_max + coul_r_shift);  // scale to [0, 999]
 
         // Generate separate LJ splines for each unique epsilon/sigma pair
         for(const auto& params : unique_lj_params) {
@@ -615,8 +622,8 @@ struct MartiniPotential : public PotentialNode
                     if(r < 0.1f * sig) r = 0.1f * sig;  // Minimum r = 0.1 * sigma to avoid numerical issues
                 }
                 
-                // Use scaled coordinates for spline fitting (same as spline evaluation)
-                float r_coord = r * lj_r_scale;
+                // Use loop index as spline coordinate [0, 999] (spline system expects this)
+                float r_coord = i;
 
                 if(lj_soften && lj_soften_alpha > 0.0f) {
                     // Soft-core LJ: t = (r/sigma)^6 + alpha; V = 4*epsilon*(1/t^2 - 1/t)
@@ -630,10 +637,16 @@ struct MartiniPotential : public PotentialNode
                     float inv_t3 = inv_t2 * inv_t;
                     // potential for softened Lennard-Jones
                     lj_pot_data[i] = 4.0 * eps * (inv_t2 - inv_t);
-                    // dV/dr = 24*epsilon*(2/t^3 - 1/t^2) * r^5/sigma^6
+                    // dV/dr = -24*epsilon*(2/t^3 - 1/t^2) * r^5/sigma^6
                     float x5 = x2 * x3;  // x^5 = x^2 * x^3
                     float dVdx = 24.0f * eps * (2.0f * inv_t3 - inv_t2) * x5;
-                    lj_force_data[i] = dVdx / sig;  // dV/dr (radial force)
+                    float physical_force = -dVdx / sig;  // -dV/dr (radial force, negative gradient)
+                    
+                    // Convert physical derivative to spline coordinate derivative
+                    // dE/d(spline_coord) = dE/d(physical_coord) * d(physical_coord)/d(spline_coord)
+                    // d(physical_coord)/d(spline_coord) = (lj_r_max - lj_r_min) / 999.0
+                    float coord_scale = 999.0f / (lj_r_max - lj_r_min);
+                    lj_force_data[i] = physical_force / coord_scale; // Store spline coordinate derivative
                 } else {
                     // Regular LJ potential: V = 4*epsilon*((sigma/r)^12 - (sigma/r)^6)
                     float r2 = r * r;
@@ -646,10 +659,16 @@ struct MartiniPotential : public PotentialNode
                     float inv_r12 = sig12 / (r6 * r6);
                     // LJ potential
                     lj_pot_data[i] = 4.0 * eps * (inv_r12 - inv_r6);
-                    // LJ force: F = 48*epsilon*(sigma^12/r^13 - 0.5*sigma^6/r^7)
+                    // LJ force: F = -48*epsilon*(sigma^12/r^13 - 0.5*sigma^6/r^7)
                     float inv_r7 = sig6 / (r6 * r);  // sigma^6 / r^7
                     float inv_r13 = sig12 / (r6 * r6 * r);  // sigma^12 / r^13
-                    lj_force_data[i] = 48.0 * eps * (inv_r13 - 0.5 * inv_r7);
+                    float physical_force = -48.0 * eps * (inv_r13 - 0.5 * inv_r7);
+                    
+                    // Convert physical derivative to spline coordinate derivative
+                    // dE/d(spline_coord) = dE/d(physical_coord) * d(physical_coord)/d(spline_coord)
+                    // d(physical_coord)/d(spline_coord) = (lj_r_max - lj_r_min) / 999.0
+                    float coord_scale = 999.0f / (lj_r_max - lj_r_min);
+                    lj_force_data[i] = physical_force / coord_scale; // Store spline coordinate derivative
                 }
             }
 
@@ -660,23 +679,26 @@ struct MartiniPotential : public PotentialNode
                                                                           LayeredClampedSpline1D<1>(1, 1000)));
             auto& spline_pair = it->second;
 
-            // Prepare data for fit_spline (format: n_layer, nx, NDIM_VALUE)
-            std::vector<double> pot_data_for_spline(1000 * 1);  // 1 layer, 1000 points, 1 value per point
-            std::vector<double> force_data_for_spline(1000 * 2); // 1 layer, 1000 points, 2 values per point (deriv + value)
+            // Only compute spline data if this is a new parameter set
+            if (inserted) {
+                // Prepare data for fit_spline (format: n_layer, nx, NDIM_VALUE)
+                std::vector<double> pot_data_for_spline(1000 * 1);  // 1 layer, 1000 points, 1 value per point
+                std::vector<double> force_data_for_spline(1000 * 2); // 1 layer, 1000 points, 2 values per point (deriv + value)
 
             for(int i = 0; i < 1000; ++i) {
                 float r = lj_r_min + i * (lj_r_max - lj_r_min) / 999.0f;
                 if(r == 0.0f) r = 1.0e-6f;
-                float r_coord = r * lj_r_scale;
+                float r_coord = i;  // Use spline coordinate directly
                 
                 pot_data_for_spline[i] = lj_pot_data[i];
-                force_data_for_spline[i*2 + 0] = lj_force_data[i]; // derivative
-                force_data_for_spline[i*2 + 1] = lj_pot_data[i];   // value
+                force_data_for_spline[i] = lj_pot_data[i]; // Store potential values for force spline
+                
             }
-
-            // Initialize the splines
+            
+            // Initialize the splines (only once after all data is prepared)
             spline_pair.first.fit_spline(pot_data_for_spline.data());
             spline_pair.second.fit_spline(force_data_for_spline.data());
+            }
             
         }
         
@@ -706,11 +728,12 @@ struct MartiniPotential : public PotentialNode
         // Generate separate Coulomb splines for each unique charge product
         for(float qq : unique_charge_products) {
             std::vector<double> coul_pot_data_for_spline(1000 * 1);  // 1 layer, 1000 points, 1 value per point
-            std::vector<double> coul_force_data_for_spline(1000 * 2); // 1 layer, 1000 points, 2 values per point (deriv + value)
+            std::vector<double> coul_force_data_for_spline(1000 * 1); // 1 layer, 1000 points, 1 value per point
 
             for(int i = 0; i < 1000; ++i) {
                 float r = coul_r_min + i * (coul_r_max - coul_r_min) / 999.0f;
                 if(r == 0.0f) r = 1.0e-6f;
+                float r_coord = i;  // Use loop index as spline coordinate [0, 999]
 
                 // Coulomb potential: V = qq / (dielectric * r)
                 float potential = qq / (dielectric * r);
@@ -729,14 +752,15 @@ struct MartiniPotential : public PotentialNode
 
                     // Softened force (derivative of softened potential)
                     float d_soft_dr = slater_alpha * exp_term * (1.0f + alpha_r * 0.5f) - 0.5f * slater_alpha * alpha_r * exp_term;
-                    float softened_force = force * soft_factor - potential * d_soft_dr;
+                    float physical_force = force * soft_factor - potential * d_soft_dr;
 
-                    coul_force_data_for_spline[i*2 + 0] = softened_force; // derivative
-                    coul_force_data_for_spline[i*2 + 1] = potential * soft_factor; // value
+                    // Store potential values for force spline
+                    coul_force_data_for_spline[i] = potential * soft_factor; // value
                 } else {
                     coul_pot_data_for_spline[i] = potential;
-                    coul_force_data_for_spline[i*2 + 0] = force; // derivative
-                    coul_force_data_for_spline[i*2 + 1] = potential; // value
+                    
+                    // Store potential values for force spline
+                    coul_force_data_for_spline[i] = potential; // value
                 }
             }
 
@@ -783,7 +807,7 @@ struct MartiniPotential : public PotentialNode
                 for (int i = 0; i < n_pts; ++i) {
                     float r = lj_r_min + i * (lj_r_max - lj_r_min) / (n_pts - 1);
                     if(r == 0.0f) r = 1.0e-6f;
-                    float r_coord = r * lj_r_scale;
+                    float r_coord = (r - lj_r_min) / (lj_r_max - lj_r_min) * 999.0f;
 
                     float pot_result[2];
                     pot_spline.evaluate_value_and_deriv(pot_result, 0, r_coord);
@@ -791,7 +815,8 @@ struct MartiniPotential : public PotentialNode
 
                     float force_result[2];
                     force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
-                    float force = force_result[0];  // Use derivative (force), not value
+                    float coord_scale = 999.0f / (lj_r_max - lj_r_min);
+                    float force = force_result[0] * coord_scale;  // Scale derivative to physical coordinates
 
 
                     out << r << " " << pot << " " << force << "\n";
@@ -812,7 +837,7 @@ struct MartiniPotential : public PotentialNode
                 for (int i = 0; i < n_pts; ++i) {
                     float r = coul_r_min + i * (coul_r_max - coul_r_min) / (n_pts - 1);
                     if(r == 0.0f) r = 1.0e-6f;
-                    float r_coord = r * coul_r_scale;
+                    float r_coord = (r - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
 
                     float pot_result[2];
                     pot_spline.evaluate_value_and_deriv(pot_result, 0, r_coord);
@@ -820,7 +845,8 @@ struct MartiniPotential : public PotentialNode
 
                     float force_result[2];
                     force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
-                    float force = force_result[0];  // Use derivative (force), not value
+                    float coord_scale = 999.0f / (coul_r_max - coul_r_min);
+                    float force = force_result[0] * coord_scale;  // Scale derivative to physical coordinates
 
                     out << r << " " << pot << " " << force << "\n";
                 }
@@ -881,7 +907,8 @@ struct MartiniPotential : public PotentialNode
                 auto spline_it = lj_splines.find({eps, sig});
                 if(spline_it != lj_splines.end()) {
                     // Use spline interpolation for LJ potential and force
-                    float r_coord = dist * lj_r_scale;
+                    // Transform physical distance to spline coordinate [0, 999]
+                    float r_coord = (dist - lj_r_min) / (lj_r_max - lj_r_min) * 999.0f;
 
                     float lj_result[2];
                     spline_it->second.first.evaluate_value_and_deriv(lj_result, 0, r_coord);
@@ -889,16 +916,19 @@ struct MartiniPotential : public PotentialNode
 
                     float force_result[2];
                     spline_it->second.second.evaluate_value_and_deriv(force_result, 0, r_coord);
-                    float lj_force_mag = force_result[0];  // Use index 0 for derivative (force)
+                    // Derivative is already in physical coordinates (we stored spline coordinate derivatives)
+                    float coord_scale = 999.0f / (lj_r_max - lj_r_min);
+                    float lj_force_mag = force_result[0] * coord_scale;  // Convert from spline to physical coordinates
+                    
 
                     // Only apply if potential and force are finite and reasonable
                     if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag) &&
                        std::isfinite(lj_result[1]) && std::isfinite(force_result[1])) {
                         if(pot) *pot += lj_pot;
                         // lj_force_mag is tabulated as -dV/dr. pos->sens stores gradient dE/dx.
-                        // Gradient on i: (dV/dr) * r_hat = -( -dV/dr ) * r_hat = -(lj_force_mag) * r_hat
-                        // Implement by accumulating (lj_force_mag/dist) * (-dr)
-                        force += (lj_force_mag/dist) * (-dr);
+                        // Gradient on i: (dV/dr) * r_hat = -(-dV/dr) * r_hat = lj_force_mag * r_hat
+                        // Implement by accumulating (lj_force_mag/dist) * dr
+                        force += (lj_force_mag/dist) * dr;
                     }
                 }
             }
@@ -915,7 +945,8 @@ struct MartiniPotential : public PotentialNode
                     // DEBUG: Uncomment to check Coulomb computation
                     // std::cout << "COULOMB: Using spline for q1*q2=" << qq << " at r=" << dist << std::endl;
                     // Use spline interpolation for Coulomb potential and force
-                    float r_coord = dist * coul_r_scale;
+                    // Transform physical distance to spline coordinate [0, 999]
+                    float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
 
                     float coul_result[2];
                     coulomb_it->second.first.evaluate_value_and_deriv(coul_result, 0, r_coord);
@@ -923,7 +954,9 @@ struct MartiniPotential : public PotentialNode
 
                     float force_result[2];
                     coulomb_it->second.second.evaluate_value_and_deriv(force_result, 0, r_coord);
-                    float coul_force_mag = force_result[0];  // Use index 0 for derivative (force)
+                    // Convert from spline coordinate derivative to physical coordinate derivative
+                    float coord_scale = 999.0f / (coul_r_max - coul_r_min);
+                    float coul_force_mag = force_result[0] * coord_scale;  // Convert from spline to physical coordinates
 
                     // Only apply if potential and force are finite and reasonable
                     if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag) &&
@@ -967,9 +1000,9 @@ struct DistSpring : public PotentialNode
     LayeredClampedSpline1D<1> bond_force_spline;
     
     // Spline parameters
-    float bond_r_min, bond_r_max, bond_r_scale;
+    float bond_r_min, bond_r_max;
     // Canonical delta-r spline domain (shared across bonds)
-    float bond_delta_min, bond_delta_max, bond_delta_scale;
+    float bond_delta_min, bond_delta_max;
     float max_spring;  // Store max spring constant for scaling
     bool debug_mode;   // Debug flag for writing splines
 
@@ -1038,12 +1071,9 @@ struct DistSpring : public PotentialNode
             // heuristic default: at least 2x the largest equilibrium distance or 5 Å
             bond_r_max = std::max(2.0f * max_equil, 5.0f);
         }
-        bond_r_scale = (bond_r_max > bond_r_min) ? (999.0f / (bond_r_max - bond_r_min)) : 0.0f;
-
         // Define and store a GLOBAL delta-r domain shared by all bonds corresponding to r in [0, bond_r_max]
         bond_delta_min = bond_r_min - max_equil; // smallest possible (r - r0) with r_min=0
         bond_delta_max = bond_r_max - min_equil; // largest possible (r - r0)
-        bond_delta_scale = 999.0f / (bond_delta_max - bond_delta_min);
 
         // Generate canonical spline in delta-r: pot=0.5*delta^2, force=delta
         std::vector<double> bond_pot_data(1000);
@@ -1107,7 +1137,7 @@ struct DistSpring : public PotentialNode
             // Use spline interpolation for bond potential and force (in delta-r space)
             float delta_r = dist - p.equil_dist;
             if(delta_r >= bond_delta_min && delta_r <= bond_delta_max) {
-                float r_coord = (delta_r - bond_delta_min) * bond_delta_scale;
+                float r_coord = delta_r;
                 
                 // Get potential and force from spline
                 float pot_result[2];
@@ -1116,8 +1146,7 @@ struct DistSpring : public PotentialNode
                 
                 float force_result[2];
                 bond_force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
-                // dE/ddelta = force_spline' * dcoord/ddelta
-                float bond_force_mag = force_result[1] * bond_delta_scale;
+                float bond_force_mag = force_result[1];
                 
                 // Scale by spring constant to match parameterized harmonic
                 if(pot) *pot += p.spring_constant * bond_pot;
@@ -1159,7 +1188,7 @@ struct AngleSpring : public PotentialNode
     LayeredClampedSpline1D<1> angle_force_spline;
     
     // Spline parameters
-    float angle_cos_min, angle_cos_max, angle_cos_scale;
+    float angle_cos_min, angle_cos_max;
     float max_spring;  // Store max spring constant for scaling
     bool debug_mode;   // Debug flag for writing splines
 
@@ -1230,7 +1259,6 @@ struct AngleSpring : public PotentialNode
         // Set conservative bounds for delta_cos
         angle_cos_min = -2.0f;  // Allow for angles deviating significantly from equilibrium
         angle_cos_max = 2.0f;
-        angle_cos_scale = 999.0f / (angle_cos_max - angle_cos_min);
 
         // Canonical spline for angles: pot = 0.5*(delta_cos)^2, force = (delta_cos)
         std::vector<double> angle_pot_data(1000);
@@ -1304,7 +1332,7 @@ struct AngleSpring : public PotentialNode
             float cos_equil = cosf(p.equil_angle_deg * M_PI / 180.0f);
             float delta_cos = dp - cos_equil;
             if(delta_cos >= angle_cos_min && delta_cos <= angle_cos_max) {
-                float cos_coord = (delta_cos - angle_cos_min) * angle_cos_scale;
+                float cos_coord = delta_cos;
                 
                 // Get potential and force from spline
                 float pot_result[2];
@@ -1313,7 +1341,7 @@ struct AngleSpring : public PotentialNode
                 
                 float force_result[2];
                 angle_force_spline.evaluate_value_and_deriv(force_result, 0, cos_coord);
-                float angle_force_mag = force_result[1] * angle_cos_scale; // dE/d(cos) = (dE/dcoord) * dcoord/dcos
+                float angle_force_mag = force_result[1];
                 
                 // Use spline-evaluated potential
                 if(pot) *pot += p.spring_constant * angle_pot;
