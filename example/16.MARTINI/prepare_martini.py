@@ -933,8 +933,8 @@ def main():
         martini_potential._v_attrs.sigma = 4.7    # Default MARTINI sigma
         martini_potential._v_attrs.lj_cutoff = 12.0
         martini_potential._v_attrs.coul_cutoff = 12.0
-        martini_potential._v_attrs.dielectric = 15.0
-        martini_potential._v_attrs.coulomb_constant = 476.627809876965
+        # dielectric constant is now included in the Coulomb k constant (31.775347952181)
+        # coulomb_constant is now hardcoded as 31.775347952181 in the C++ code
         martini_potential._v_attrs.n_types = 1
         martini_potential._v_attrs.n_params = 4
         martini_potential._v_attrs.cutoff = 12.0

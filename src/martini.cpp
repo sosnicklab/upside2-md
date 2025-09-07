@@ -363,8 +363,7 @@ struct MartiniPotential : public PotentialNode
     vector<array<float,4>> coeff;
     vector<pair<int,int>> pairs;
     
-    float epsilon, sigma, lj_cutoff, coul_cutoff, dielectric;
-    float coulomb_constant;
+    float epsilon, sigma, lj_cutoff, coul_cutoff;
     bool force_cap;
     bool coulomb_soften;
     float slater_alpha;
@@ -403,13 +402,9 @@ struct MartiniPotential : public PotentialNode
         sigma       = read_attribute<float>(grp, ".", "sigma");  
         lj_cutoff   = read_attribute<float>(grp, ".", "lj_cutoff");
         coul_cutoff = read_attribute<float>(grp, ".", "coul_cutoff");
-        dielectric  = read_attribute<float>(grp, ".", "dielectric");
+        // dielectric constant is now included in the Coulomb k constant (31.775347952181)
         
-        // Read Coulomb constant - use converted value from Python if available, otherwise use unit conversion value
-        coulomb_constant = 476.6f; // Default value (21.831807297541² for unit conversion with 4πϵ₀ = 1)
-        if(attribute_exists(grp, ".", "coulomb_constant")) {
-            coulomb_constant = read_attribute<float>(grp, ".", "coulomb_constant");
-        }
+        // Coulomb constant is now hardcoded as 31.775347952181 in the potential calculation
         force_cap = true;
         if(attribute_exists(grp, ".", "force_cap")) {
             force_cap = read_attribute<int>(grp, ".", "force_cap") != 0;
@@ -735,8 +730,8 @@ struct MartiniPotential : public PotentialNode
                 if(r == 0.0f) r = 1.0e-6f;
                 float r_coord = i;  // Use loop index as spline coordinate [0, 999]
 
-                // Coulomb potential: V = k * qq / r, where k = 0.317753479522
-                float coulomb_k = 0.317753479522f;
+                // Coulomb potential: V = k * qq / r, where k = 31.775347952181 (includes epsilon_r=15)
+                float coulomb_k = 31.775347952181f;
                 float potential = coulomb_k * qq / r;
                 // Coulomb force: -dV/dr = k * qq / r²
                 float force = coulomb_k * qq / (r * r);
@@ -833,7 +828,7 @@ struct MartiniPotential : public PotentialNode
                 const auto& pot_spline = coulomb_pair.second.first;
                 const auto& force_spline = coulomb_pair.second.second;
 
-                out << "# Coulomb Spline\n# q1q2=" << qq << ", k=0.317753479522, r_min=" << coul_r_min << ", r_max=" << coul_r_max << ", softened=" << (coulomb_soften?1:0) << ", slater_alpha=" << slater_alpha << "\n";
+                out << "# Coulomb Spline\n# q1q2=" << qq << ", k=31.775347952181, r_min=" << coul_r_min << ", r_max=" << coul_r_max << ", softened=" << (coulomb_soften?1:0) << ", slater_alpha=" << slater_alpha << "\n";
                 out << "# r potential force\n";
 
                 int n_pts = 10;
@@ -885,7 +880,7 @@ struct MartiniPotential : public PotentialNode
         std::cout << "MARTINI: Initialized splines with 1000 knots" << std::endl;
         std::cout << "  LJ range: " << lj_r_min << " to " << lj_r_max << " Angstroms" << std::endl;
         std::cout << "  Coulomb range: " << coul_r_min << " to " << coul_r_max << " Angstroms" << std::endl;
-        std::cout << "  Coulomb k: 0.317753479522, Dielectric: " << dielectric << std::endl;
+        std::cout << "  Coulomb k: 31.775347952181 (includes epsilon_r=15)" << std::endl;
 
     }
 
