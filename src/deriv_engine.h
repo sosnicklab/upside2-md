@@ -114,6 +114,11 @@ struct PotentialNode : public DerivComputation
     //!
     //! The propagate_deriv function is never called for potential nodes
     virtual void propagate_deriv() {};
+    
+    //! \brief Update box dimensions for NPT barostat
+    //!
+    //! Default implementation does nothing. Override in derived classes that use box dimensions.
+    virtual void update_box_dimensions(float scale_factor) {}
 };
 
 

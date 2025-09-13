@@ -1,6 +1,10 @@
 #include "main.h"
 #include "monte_carlo_sampler.h"
 #include "h5_support.h"
+#include "deriv_engine.h"
+
+// Forward declaration for box dimension update function
+void update_box_dimensions(float scale_factor);
 
 #include <tclap/CmdLine.h>
 #include "deriv_engine.h"
@@ -615,7 +619,7 @@ try {
         // For proper Langevin dynamics, delta_t should be << timescale (0.135)
         // We want delta_t ≈ timescale/10 = 0.0135
         // So thermostat_interval ≈ 0.0135 / (inner_step * dt) ≈ 0.0135 / 0.03 ≈ 0.45
-        int thermostat_interval = max(1, (int)round(thermostat_interval_arg.getValue() / (inner_step * dt) / 100.0));
+        int thermostat_interval = max(1, (int)round(thermostat_interval_arg.getValue() / (inner_step * dt)));
         int barostat_interval = max(1.,round(barostat_interval_arg.getValue() / (inner_step*dt))); // Barostat interval
         int frame_interval = max(1.,round(frame_interval_arg.getValue() / (inner_step*dt)));
         int dense_output_interval = max(1.,round(dense_frame_interval_arg.getValue() / (inner_step*dt)));
@@ -1266,7 +1270,7 @@ try {
                         float tau_p = 1.0f; // barostat relaxation time
                         float compressibility = 4.5e-5f; // water compressibility in UPSIDE units
 
-                        float scale_factor = 1.0f - compressibility * pressure_diff * (dt / tau_p);
+                        float scale_factor = 1.0f - compressibility * pressure_diff * (barostat_interval * dt / tau_p);
                         scale_factor = std::max(0.995f, std::min(1.005f, scale_factor));
 
                         // Apply scaling to positions
@@ -1284,9 +1288,16 @@ try {
                             store_vec(sys.mom, na, vel);
                         }
 
-                        // Update box dimensions in MartiniPotential to maintain PBC consistency
-                        // For now, skip this to avoid compilation issues
-                        // TODO: Implement proper box dimension updating for NPT
+                        // Update box dimensions to maintain PBC consistency
+                        update_box_dimensions(scale_factor);
+                        
+                        // Update box dimensions in all potential classes
+                        for(auto &n: sys.engine.nodes) {
+                            // Cast to PotentialNode and call virtual method
+                            if(auto* pot_node = dynamic_cast<PotentialNode*>(n.computation.get())) {
+                                pot_node->update_box_dimensions(scale_factor);
+                            }
+                        }
                     }
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))

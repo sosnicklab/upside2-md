@@ -244,6 +244,13 @@ struct DihedralSpring : public PotentialNode
             }
         }
     }
+    
+    // Method to update box dimensions for NPT barostat
+    void update_box_dimensions(float scale_factor) override {
+        box_x *= scale_factor;
+        box_y *= scale_factor;
+        box_z *= scale_factor;
+    }
 };
 static RegisterNodeType<DihedralSpring,1> dihedral_spring_node("dihedral_spring");
 
@@ -327,6 +334,20 @@ static RegisterNodeType<PeriodicBoundaryPotential,1> periodic_boundary_potential
 float PeriodicBoundaryPotential::static_box_x = 0.0f;
 float PeriodicBoundaryPotential::static_box_y = 0.0f;
 float PeriodicBoundaryPotential::static_box_z = 0.0f;
+
+// Function to update box dimensions for NPT barostat
+void update_box_dimensions(float scale_factor) {
+    // Update static box dimensions used by PeriodicBoundaryPotential
+    PeriodicBoundaryPotential::static_box_x *= scale_factor;
+    PeriodicBoundaryPotential::static_box_y *= scale_factor;
+    PeriodicBoundaryPotential::static_box_z *= scale_factor;
+    
+    // Note: Individual potential classes (MartiniPotential, DistSpring, AngleSpring)
+    // also store their own box dimensions that need to be updated.
+    // This requires access to the potential instances, which is not available here.
+    // The proper solution would be to add an update_box_dimensions method to each
+    // potential class and call it from the main simulation loop.
+}
 
 // Static method to apply PBC wrapping to positions
 static bool apply_pbc_wrapping(VecArray pos, int n_atoms) {
@@ -686,7 +707,7 @@ struct MartiniPotential : public PotentialNode
                 float r_coord = i;  // Use spline coordinate directly
                 
                 pot_data_for_spline[i] = lj_pot_data[i];
-                force_data_for_spline[i] = lj_pot_data[i]; // Store potential values for force spline
+                force_data_for_spline[i] = lj_force_data[i]; // Store force values for force spline
                 
             }
             
@@ -750,13 +771,13 @@ struct MartiniPotential : public PotentialNode
                     float d_soft_dr = slater_alpha * exp_term * (1.0f + alpha_r * 0.5f) - 0.5f * slater_alpha * alpha_r * exp_term;
                     float physical_force = force * soft_factor - potential * d_soft_dr;
 
-                    // Store potential values for force spline
-                    coul_force_data_for_spline[i] = potential * soft_factor; // value
+                    // Store force values for force spline
+                    coul_force_data_for_spline[i] = physical_force; // force
                 } else {
                     coul_pot_data_for_spline[i] = potential;
                     
-                    // Store potential values for force spline
-                    coul_force_data_for_spline[i] = potential; // value
+                    // Store force values for force spline
+                    coul_force_data_for_spline[i] = force; // force
                 }
             }
 
@@ -815,7 +836,7 @@ struct MartiniPotential : public PotentialNode
                     float force_result[2];
                     force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
                     float coord_scale = 999.0f / (lj_r_max - lj_r_min);
-                    float force = force_result[0] * coord_scale;  // Scale derivative to physical coordinates
+                    float force = force_result[1] * coord_scale;  // Scale value to physical coordinates
 
 
                     out << r << " " << pot << " " << force << "\n";
@@ -844,7 +865,7 @@ struct MartiniPotential : public PotentialNode
                     float force_result[2];
                     force_spline.evaluate_value_and_deriv(force_result, 0, r_coord);
                     float coord_scale = 999.0f / (coul_r_max - coul_r_min);
-                    float force = force_result[0] * coord_scale;  // Scale derivative to physical coordinates
+                    float force = force_result[1] * coord_scale;  // Scale value to physical coordinates
 
                     out << r << " " << pot << " " << force << "\n";
                 }
@@ -940,7 +961,7 @@ struct MartiniPotential : public PotentialNode
                     spline_it->second.second.evaluate_value_and_deriv(force_result, 0, r_coord);
                     // Derivative is already in physical coordinates (we stored spline coordinate derivatives)
                     float coord_scale = 999.0f / (lj_r_max - lj_r_min);
-                    float lj_force_mag = force_result[0] * coord_scale;  // Convert from spline to physical coordinates
+                    float lj_force_mag = force_result[1] * coord_scale;  // Convert from spline to physical coordinates
                     
 
                     // Only apply if potential and force are finite and reasonable
@@ -978,14 +999,14 @@ struct MartiniPotential : public PotentialNode
                     coulomb_it->second.second.evaluate_value_and_deriv(force_result, 0, r_coord);
                     // Convert from spline coordinate derivative to physical coordinate derivative
                     float coord_scale = 999.0f / (coul_r_max - coul_r_min);
-                    float coul_force_mag = force_result[0] * coord_scale;  // Convert from spline to physical coordinates
+                    float coul_force_mag = force_result[1] * coord_scale;  // Convert from spline to physical coordinates
 
                     // Only apply if potential and force are finite and reasonable
                     if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag) &&
                        std::isfinite(coul_result[1]) && std::isfinite(force_result[1])) {
                         if(pot) *pot += coul_pot;
                         // coul_force_mag is tabulated as -dV/dr; accumulate gradient as above
-                        force += (coul_force_mag/dist) * (-dr);
+                        force += (coul_force_mag/dist) * dr;
                     }
                 }
             }
@@ -996,6 +1017,13 @@ struct MartiniPotential : public PotentialNode
         }
         
         debug_step_count++;
+    }
+    
+    // Method to update box dimensions for NPT barostat
+    void update_box_dimensions(float scale_factor) override {
+        box_x *= scale_factor;
+        box_y *= scale_factor;
+        box_z *= scale_factor;
     }
 };
 static RegisterNodeType<MartiniPotential, 1> martini_potential_node("martini_potential");
@@ -1187,6 +1215,13 @@ struct DistSpring : public PotentialNode
                 update_vec(pos_sens, p.atom[1], -deriv);
             }
         }
+    }
+    
+    // Method to update box dimensions for NPT barostat
+    void update_box_dimensions(float scale_factor) override {
+        box_x *= scale_factor;
+        box_y *= scale_factor;
+        box_z *= scale_factor;
     }
 };
 static RegisterNodeType<DistSpring, 1> dist_spring_node("dist_spring");
@@ -1448,6 +1483,13 @@ struct AngleSpring : public PotentialNode
                 pos_sens[4*p.atom[2]+2] += fc.z();
             }
         }
+    }
+    
+    // Method to update box dimensions for NPT barostat
+    void update_box_dimensions(float scale_factor) override {
+        box_x *= scale_factor;
+        box_y *= scale_factor;
+        box_z *= scale_factor;
     }
 };
 static RegisterNodeType<AngleSpring, 1> angle_spring_node("angle_spring");
