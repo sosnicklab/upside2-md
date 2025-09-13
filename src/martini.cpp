@@ -678,7 +678,7 @@ struct MartiniPotential : public PotentialNode
                     // LJ force: F = -48*epsilon*(sigma^12/r^13 - 0.5*sigma^6/r^7)
                     float inv_r7 = sig6 / (r6 * r);  // sigma^6 / r^7
                     float inv_r13 = sig12 / (r6 * r6 * r);  // sigma^12 / r^13
-                    float physical_force = -48.0 * eps * (inv_r13 - 0.5 * inv_r7);
+                    float physical_force = 48.0 * eps * (inv_r13 - 0.5 * inv_r7);
                     
                     // Convert physical derivative to spline coordinate derivative
                     // dE/d(spline_coord) = dE/d(physical_coord) * d(physical_coord)/d(spline_coord)
