@@ -378,8 +378,10 @@ def read_martini_masses(ff_file):
     """Read atom type masses from MARTINI force field file"""
     masses = {}
     if not os.path.exists(ff_file):
-        print(f"Warning: Force field file {ff_file} not found, using default mass 72.0")
-        return masses
+        raise ValueError(f"FATAL ERROR: Force field file '{ff_file}' not found.\n"
+                        f"  This file is required for atom type masses.\n"
+                        f"  Please ensure the MARTINI force field file exists and is readable.\n"
+                        f"  Aborting to prevent incorrect simulation results.")
     
     in_atomtypes = False
     with open(ff_file, 'r') as f:
@@ -435,10 +437,10 @@ def main():
     martini_table = read_martini3_nonbond_params(martini_param_file)
     
     if not martini_table:
-        print("Warning: Could not read MARTINI parameters, using default values")
-        martini_table = {}
-        # Default fallback parameters
-        martini_table[('P2', 'P2')] = (0.47, 4.25)  # Default P2-P2 interaction
+        raise ValueError(f"FATAL ERROR: Could not read MARTINI parameters from '{martini_param_file}'\n"
+                        f"  This file is required for proper force field parameterization.\n"
+                        f"  Please ensure the MARTINI 3.0 parameter file exists and is readable.\n"
+                        f"  Aborting to prevent incorrect simulation results.")
     
     # Parse DOPC topology from ITP file
     dopc_param_file = "ff3.00/martini_v3.0.0_phospholipids_v1.itp"
@@ -457,17 +459,19 @@ def main():
         dopc_topology = parse_itp_file(dopc_param_file, dopc_molecule)
         print(f"Using molecule type: {dopc_molecule}")
     else:
-        # Fallback to first molecule if DOPC not found
-        if full_topology['molecules']:
-            dopc_molecule = list(full_topology['molecules'].keys())[0]
-            dopc_topology = parse_itp_file(dopc_param_file, dopc_molecule)
-            print(f"DOPC not found, using first available molecule: {dopc_molecule}")
-        else:
-            dopc_topology = full_topology
+        available_molecules = list(full_topology['molecules'].keys())
+        raise ValueError(f"FATAL ERROR: DOPC molecule not found in '{dopc_param_file}'.\n"
+                        f"  Available molecules: {available_molecules}\n"
+                        f"  Please ensure DOPC is defined in the phospholipid parameter file.\n"
+                        f"  Aborting to prevent incorrect simulation results.")
     
     dopc_bead_types = [atom['type'] for atom in dopc_topology['atoms']]
     dopc_charges = [atom['charge'] for atom in dopc_topology['atoms']]
+    # Create mapping from atom names to bead types and charges
+    dopc_atom_to_type = {atom['atom']: atom['type'] for atom in dopc_topology['atoms']}
+    dopc_atom_to_charge = {atom['atom']: atom['charge'] for atom in dopc_topology['atoms']}
     print(f"Read DOPC topology: {len(dopc_bead_types)} bead types from {dopc_param_file}")
+    print(f"DOPC atom name mapping: {dopc_atom_to_type}")
     
     # Parse ion topologies from ITP file
     ion_param_file = "ff3.00/martini_v3.0.0_ions_v1.itp"
@@ -505,18 +509,18 @@ def main():
     
     print(f"Read DOPC connectivity: {len(dopc_bonds)} bonds, {len(dopc_angles)} angles")
     
-    # Fallback to hardcoded values if topology parsing failed
+    # Validate that required topology data was found
     if not dopc_bonds:
-        print("Warning: No DOPC bonds found in topology, using fallback values")
-        dopc_bonds = [(0, 1), (1, 2), (2, 3), (2, 4), (4, 5), (5, 6), (6, 7), (3, 8), (8, 9), (9, 10), (10, 11)]
-        dopc_bond_lengths = [0.40, 0.42, 0.312, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47, 0.47]  # nm
-        dopc_bond_force_constants = [7000.0, 1350.0, 2500.0, 5000.0, 3800.0, 3800.0, 3800.0, 3600.0, 3800.0, 3800.0, 3800.0]  # kJ/mol/nm²
+        raise ValueError(f"FATAL ERROR: No DOPC bonds found in topology from '{dopc_param_file}'.\n"
+                        f"  This indicates incomplete molecule definition.\n"
+                        f"  Please ensure DOPC bonds are properly defined in the phospholipid parameter file.\n"
+                        f"  Aborting to prevent incorrect simulation results.")
     
     if not dopc_angles:
-        print("Warning: No DOPC angles found in topology, using fallback values")
-        dopc_angles = [(1, 2, 3), (1, 2, 4), (2, 4, 5), (4, 5, 6), (5, 6, 7), (3, 8, 9), (8, 9, 10), (9, 10, 11)]
-        dopc_angle_equil_deg = [108.0, 139.1, 180.0, 120.0, 180.0, 180.0, 180.0, 180.0]  # degrees
-        dopc_angle_force_constants = [21.5, 31.2, 35.0, 35.0, 35.0, 35.0, 35.0, 35.0]  # kJ/mol/deg²
+        raise ValueError(f"FATAL ERROR: No DOPC angles found in topology from '{dopc_param_file}'.\n"
+                        f"  This indicates incomplete molecule definition.\n"
+                        f"  Please ensure DOPC angles are properly defined in the phospholipid parameter file.\n"
+                        f"  Aborting to prevent incorrect simulation results.")
     
     # Unit conversions
     energy_conversion = 2.914952774272  # kJ/mol → E_up
@@ -618,30 +622,48 @@ def main():
                 if (residue_id, role) in protein_topo_map:
                     martini_type, charge = protein_topo_map[(residue_id, role)]
                 else:
-                    # Fallback to alias to standard MARTINI type
-                    martini_type = protein_bead_alias.get(atom_name, 'P2')
-                    charge = 0.0
+                    # Raise error for unknown protein atom
+                    raise ValueError(f"FATAL ERROR: Unknown protein atom '{atom_name}' in residue '{residue_name}'.\n"
+                                   f"  Available protein bead aliases: {sorted(protein_bead_alias.keys())}\n"
+                                   f"  This indicates incomplete protein topology mapping.\n"
+                                   f"  Aborting to prevent incorrect simulation results.")
             elif residue_name == 'DOPC' or residue_name == 'DOP':
                 # For DOPC, use the topology from parameter file
-                if atom_name in dopc_bead_types:
-                    atom_idx = dopc_bead_types.index(atom_name)
-                    martini_type = dopc_bead_types[atom_idx]
-                    charge = dopc_charges[atom_idx]
+                if atom_name in dopc_atom_to_type:
+                    martini_type = dopc_atom_to_type[atom_name]
+                    charge = dopc_atom_to_charge[atom_name]
                 else:
-                    martini_type = pdb_to_martini.get(atom_name, atom_name)
-                    charge = martini_charges.get(martini_type, 0.0)
+                    available_atom_names = sorted(dopc_atom_to_type.keys())
+                    raise ValueError(f"FATAL ERROR: Unknown DOPC atom '{atom_name}' in residue '{residue_name}'.\n"
+                                   f"  Available DOPC atom names: {available_atom_names}\n"
+                                   f"  This indicates incomplete DOPC topology mapping.\n"
+                                   f"  Aborting to prevent incorrect simulation results.")
             elif residue_name == 'W':
-                martini_type = water_bead_types[0] if water_bead_types else 'W'
+                if not water_bead_types:
+                    raise ValueError(f"FATAL ERROR: No water bead types found in topology.\n"
+                                   f"  This indicates incomplete water parameter file.\n"
+                                   f"  Aborting to prevent incorrect simulation results.")
+                martini_type = water_bead_types[0]
                 charge = water_charges[0] if water_charges else 0.0
             elif residue_name == 'NA':
-                martini_type = na_bead_types[0] if na_bead_types else 'TQ5'
+                if not na_bead_types:
+                    raise ValueError(f"FATAL ERROR: No sodium bead types found in topology.\n"
+                                   f"  This indicates incomplete ion parameter file.\n"
+                                   f"  Aborting to prevent incorrect simulation results.")
+                martini_type = na_bead_types[0]
                 charge = na_charges[0] if na_charges else 1.0
             elif residue_name == 'CL':
-                martini_type = cl_bead_types[0] if cl_bead_types else 'TQ5'
+                if not cl_bead_types:
+                    raise ValueError(f"FATAL ERROR: No chloride bead types found in topology.\n"
+                                   f"  This indicates incomplete ion parameter file.\n"
+                                   f"  Aborting to prevent incorrect simulation results.")
+                martini_type = cl_bead_types[0]
                 charge = cl_charges[0] if cl_charges else -1.0
             else:
-                martini_type = protein_bead_alias.get(atom_name, pdb_to_martini.get(atom_name, atom_name))
-                charge = martini_charges.get(martini_type, 0.0)
+                raise ValueError(f"FATAL ERROR: Unknown residue type '{residue_name}' for atom '{atom_name}'.\n"
+                               f"  Supported residue types: PROTEIN, DOPC, W, NA, CL\n"
+                               f"  This indicates incomplete system definition.\n"
+                               f"  Aborting to prevent incorrect simulation results.")
             
             atom_types.append(martini_type)
             charges.append(charge)
@@ -891,9 +913,14 @@ def main():
         # Create mass array (required by UPSIDE)
         mass = np.zeros(n_atoms, dtype='f4')
         for i, atom_type in enumerate(atom_types):
-            # Get mass from force field file, default to 72.0 if not found
+            # Get mass from force field file, raise error if not found
+            if atom_type not in martini_masses:
+                raise ValueError(f"FATAL ERROR: Mass not found for atom type '{atom_type}' (atom index {i}).\n"
+                                f"  Available atom types with masses: {sorted(martini_masses.keys())}\n"
+                                f"  This indicates incomplete force field parameters.\n"
+                                f"  Aborting to prevent incorrect simulation results.")
             # Divide by 12.0 for reduced mass units (1 unit = 12 g/mol)
-            mass[i] = martini_masses.get(atom_type, 72.0) / 12.0
+            mass[i] = martini_masses[atom_type] / 12.0
         
         mass_array = t.create_array(input_grp, 'mass', obj=mass)
         mass_array._v_attrs.arguments = np.array([b'mass'])
@@ -1055,9 +1082,13 @@ def main():
                 elif (type2, type1) in martini_table:
                     sigma_nm, epsilon_kj = martini_table[(type2, type1)]
                 else:
-                    # Fallback to default parameters if not found
-                    sigma_nm = 0.47  # nm
-                    epsilon_kj = 4.25  # kJ/mol
+                    # Raise error for missing interaction parameters
+                    available_types = sorted(set([t[0] for t in martini_table.keys()] + [t[1] for t in martini_table.keys()]))
+                    raise ValueError(f"FATAL ERROR: Missing interaction parameters for bead type pair ({type1}, {type2})\n"
+                                   f"  Atom indices: {i} ({type1}) - {j} ({type2})\n"
+                                   f"  This indicates incomplete MARTINI force field parameters.\n"
+                                   f"  Available bead types in parameter table: {available_types}\n"
+                                   f"  Aborting to prevent incorrect simulation results.")
                 
                 # Convert to UPSIDE units
                 epsilon = epsilon_kj / energy_conversion  # kJ/mol → E_up
