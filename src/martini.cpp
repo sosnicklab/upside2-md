@@ -970,8 +970,8 @@ struct MartiniPotential : public PotentialNode
                         if(pot) *pot += lj_pot;
                         // lj_force_mag is tabulated as -dV/dr. pos->sens stores gradient dE/dx.
                         // Gradient on i: (dV/dr) * r_hat = -(-dV/dr) * r_hat = lj_force_mag * r_hat
-                        // Implement by accumulating (lj_force_mag/dist) * dr
-                        force += (lj_force_mag/dist) * dr;
+                        // But since lj_force_mag = -dV/dr, we need to negate it to get the correct force direction
+                        force += -(lj_force_mag/dist) * dr;
                     }
                 }
             }
