@@ -73,10 +73,11 @@ def optimize_interaction_table(input_file, output_file):
                 coefficient_to_index[coeff_tuple] = len(unique_coefficients)
                 unique_coefficients.append(coeff)
 
-        # Then, create index array for each pair
-        for i in range(len(pairs)):
-            # All pairs use the same coefficient (index 0) for water
-            pair_to_coefficient_index.append(0)
+        # Then, create the index array for each pair by looking up its coefficient
+        for coeff in coefficients:
+            coeff_tuple = tuple(coeff)
+            # Append the index corresponding to the unique coefficient
+            pair_to_coefficient_index.append(coefficient_to_index[coeff_tuple])
         
         # Convert to numpy arrays
         unique_coefficients = np.array(unique_coefficients)
@@ -118,10 +119,17 @@ def optimize_interaction_table(input_file, output_file):
         
         # Test reconstruction
         reconstructed_coefficients = unique_coefficients[pair_to_coefficient_index]
-        # Note: original coefficients may have different shape due to duplicates
         print(f"  Original coefficients shape: {coefficients.shape}")
         print(f"  Reconstructed coefficients shape: {reconstructed_coefficients.shape}")
-        print("  Reconstruction test: SKIPPED (different shapes due to optimization)")
+        
+        # Verify reconstruction is correct
+        if np.array_equal(coefficients, reconstructed_coefficients):
+            print("  Reconstruction test: PASSED - All coefficients correctly reconstructed")
+        else:
+            print("  Reconstruction test: FAILED - Coefficients do not match!")
+            print(f"    Original first 5: {coefficients[:5]}")
+            print(f"    Reconstructed first 5: {reconstructed_coefficients[:5]}")
+            raise ValueError("Optimization failed: reconstructed coefficients do not match original")
         
         print("\n" + "=" * 80)
         print("OPTIMIZATION COMPLETE")
