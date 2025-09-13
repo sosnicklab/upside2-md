@@ -1012,8 +1012,9 @@ struct MartiniPotential : public PotentialNode
             }
             
             // Apply mass scaling to forces (divide by mass)
-            update_vec<3>(pos1_sens, i,  force);
-            update_vec<3>(pos1_sens, j, -force);
+            // Store gradient (∇E = -F) in pos_sens for UPSIDE integrator
+            update_vec<3>(pos1_sens, i, -force);
+            update_vec<3>(pos1_sens, j,  force);
         }
         
         debug_step_count++;
