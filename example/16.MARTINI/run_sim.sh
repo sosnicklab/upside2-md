@@ -121,8 +121,8 @@ if [ "$POTENTIAL_MODE" = "soft" ]; then
     echo "Using softened potentials"
     export UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ:-1}
     export UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA:-0.01}
-    export UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-0}
-    export UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-0.0}
+    export UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-1}
+    export UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-1.0}
 else
     echo "Using regular potentials"
     export UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ:-0}

@@ -655,7 +655,7 @@ struct MartiniPotential : public PotentialNode
                     lj_pot_data[i] = 4.0 * eps * (inv_t2 - inv_t);
                     // dV/dr = -24*epsilon*(2/t^3 - 1/t^2) * r^5/sigma^6
                     float x5 = x2 * x3;  // x^5 = x^2 * x^3
-                    float dVdx = 24.0f * eps * (2.0f * inv_t3 - inv_t2) * x5;
+                    float dVdx = 24.0f * eps * (inv_t2 - 2.0f * inv_t3) * x5;
                     float physical_force = -dVdx / sig;  // -dV/dr (radial force, negative gradient)
                     
                     // Convert physical derivative to spline coordinate derivative
@@ -675,7 +675,7 @@ struct MartiniPotential : public PotentialNode
                     float inv_r12 = sig12 / (r6 * r6);
                     // LJ potential
                     lj_pot_data[i] = 4.0 * eps * (inv_r12 - inv_r6);
-                    // LJ force: F = -48*epsilon*(sigma^12/r^13 - 0.5*sigma^6/r^7)
+                    // LJ force: F = -dV/dr = +48*epsilon*(sigma^12/r^13 - 0.5*sigma^6/r^7)
                     float inv_r7 = sig6 / (r6 * r);  // sigma^6 / r^7
                     float inv_r13 = sig12 / (r6 * r6 * r);  // sigma^12 / r^13
                     float physical_force = 48.0 * eps * (inv_r13 - 0.5 * inv_r7);
@@ -968,10 +968,9 @@ struct MartiniPotential : public PotentialNode
                     if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag) &&
                        std::isfinite(lj_result[1]) && std::isfinite(force_result[1])) {
                         if(pot) *pot += lj_pot;
-                        // lj_force_mag is tabulated as -dV/dr. pos->sens stores gradient dE/dx.
-                        // Gradient on i: (dV/dr) * r_hat = -(-dV/dr) * r_hat = lj_force_mag * r_hat
-                        // But since lj_force_mag = -dV/dr, we need to negate it to get the correct force direction
-                        force += -(lj_force_mag/dist) * dr;
+                        // lj_force_mag is now correctly tabulated as -dV/dr (physical force)
+                        // Accumulate the physical force directly
+                        force += (lj_force_mag/dist) * dr;
                     }
                 }
             }
@@ -1005,7 +1004,8 @@ struct MartiniPotential : public PotentialNode
                     if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag) &&
                        std::isfinite(coul_result[1]) && std::isfinite(force_result[1])) {
                         if(pot) *pot += coul_pot;
-                        // coul_force_mag is tabulated as -dV/dr; accumulate gradient as above
+                        // coul_force_mag is tabulated as -dV/dr (physical force)
+                        // Accumulate the physical force directly
                         force += (coul_force_mag/dist) * dr;
                     }
                 }
