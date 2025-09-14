@@ -100,7 +100,9 @@ PRESSURE=0.000020652136
 BAROSTAT_TIMESCALE=1.0
 BAROSTAT_INTERVAL=1.0
 SEED=12345
-INTEGRATOR="npt"
+# Use nvt_corrected integrator for proper energy conservation
+# This avoids the problematic ad-hoc corrections in the standard VelocityVerlet
+INTEGRATOR="nvt_corrected"
 
 echo "Simulation parameters:"
 echo "  Duration: $DURATION steps"
