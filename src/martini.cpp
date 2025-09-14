@@ -142,14 +142,15 @@ struct DihedralSpring : public PotentialNode
         // Debug: Write all unique dihedral splines to a single file if debug_mode is enabled
         if (debug_mode) {
             std::ofstream out("dihedral_splines.txt", std::ios::out | std::ios::trunc);
-            out << "# Canonical angle spline (delta_cos = cos(θ) - cos(θ₀))\n";
+            out << "# Canonical dihedral spline (delta_phi = phi - phi0)\n";
+            out << "# Forces are calculated as analytical derivatives of the potential\n";
             // Collect unique (k, phi0)
             std::set<std::pair<float, float>> dihedral_params;
             for (const auto& p : params) dihedral_params.insert({p.spring_constant, p.equil_dihedral});
             for (const auto& dp : dihedral_params) {
                 float k = dp.first, phi0 = dp.second;
                 out << "# Dihedral Spline\n# k=" << k << ", phi0_rad=" << phi0 << "\n";
-                out << "# phi_rad potential force\n";
+                out << "# phi_rad potential\n";
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
                     float phi = -M_PI_F + i * 2.0f * M_PI_F / (n_pts - 1);
@@ -157,8 +158,7 @@ struct DihedralSpring : public PotentialNode
                     if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
                     if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
                     float pot = 0.5f * k * delta_phi * delta_phi;
-                    float force = k * delta_phi;
-                    out << phi << " " << pot << " " << force << "\n";
+                    out << phi << " " << pot << "\n";
                 }
                 out << "\n";
             }
@@ -742,12 +742,13 @@ struct MartiniPotential : public PotentialNode
             }
             std::ofstream out("all_splines.txt", mode);
             out << "# LJ splines: Separate tables for each unique epsilon/sigma pair\n";
-            out << "# Each spline contains the full potential and force for that parameter combination\n\n";
+            out << "# Each spline contains only the potential - forces calculated as analytical derivatives\n\n";
             out << "# Coulomb splines: Separate tables for each unique charge product\n";
-            out << "# No scaling needed during computation - each spline contains the full potential\n\n";
+            out << "# Each spline contains only the potential - forces calculated as analytical derivatives\n\n";
             out << "# Bond splines: Harmonic potential for bond distances\n";
             out << "# Angle splines: Cosine-based potential for bond angles\n";
             out << "# Dihedral splines: Harmonic potential for dihedral angles\n";
+            out << "# All forces are calculated as analytical derivatives of the potential splines\n";
 
             // --- LJ splines for each unique (epsilon, sigma) ---
             for (const auto& spline_pair : lj_splines) {
@@ -757,7 +758,7 @@ struct MartiniPotential : public PotentialNode
 
                 out << "# LJ Spline\n# epsilon=" << epsilon << ", sigma=" << sigma << ", r_min=" << lj_r_min << ", r_max=" << lj_r_max
                     << ", softened=" << (lj_soften?1:0) << ", lj_soften_alpha=" << lj_soften_alpha << "\n";
-                out << "# r potential force\n";
+                out << "# r potential\n";
 
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
@@ -768,13 +769,8 @@ struct MartiniPotential : public PotentialNode
                     float result[2];
                     spline.evaluate_value_and_deriv(result, 0, r_coord);
                     float pot = result[1];  // Index 1 is the value
-                    float deriv_spline = result[0];  // Index 0 is the derivative w.r.t. spline coordinate
-                    
-                    // Convert derivative from spline coordinate to physical coordinate (dE/dr)
-                    float coord_scale = 999.0f / (lj_r_max - lj_r_min);
-                    float force = -deriv_spline * coord_scale;  // Force is negative gradient
 
-                    out << r << " " << pot << " " << force << "\n";
+                    out << r << " " << pot << "\n";
                 }
                 out << "\n";
             }
@@ -784,7 +780,7 @@ struct MartiniPotential : public PotentialNode
                 const auto& spline = coulomb_pair.second;
 
                 out << "# Coulomb Spline\n# q1q2=" << qq << ", k=31.775347952181, r_min=" << coul_r_min << ", r_max=" << coul_r_max << ", softened=" << (coulomb_soften?1:0) << ", slater_alpha=" << slater_alpha << "\n";
-                out << "# r potential force\n";
+                out << "# r potential\n";
 
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
@@ -795,13 +791,8 @@ struct MartiniPotential : public PotentialNode
                     float result[2];
                     spline.evaluate_value_and_deriv(result, 0, r_coord);
                     float pot = result[1];  // Index 1 is the value
-                    float deriv_spline = result[0];  // Index 0 is the derivative w.r.t. spline coordinate
-                    
-                    // Convert derivative from spline coordinate to physical coordinate (dE/dr)
-                    float coord_scale = 999.0f / (coul_r_max - coul_r_min);
-                    float force = -deriv_spline * coord_scale;  // Force is negative gradient
 
-                    out << r << " " << pot << " " << force << "\n";
+                    out << r << " " << pot << "\n";
                 }
                 out << "\n";
             }
@@ -1080,21 +1071,19 @@ struct DistSpring : public PotentialNode
         if (debug_mode) {
             std::ofstream out("bond_splines.txt", std::ios::out | std::ios::trunc);
             out << "# Bond splines: Two-particle interactions (atom1-atom2)\n";
-            out << "# Forces are applied to both atoms: F1 = -F2 (equal and opposite)\n";
-            out << "# Force magnitude shows the magnitude of force on each atom\n";
+            out << "# Forces are calculated as analytical derivatives of the potential\n";
             // Collect unique (k, r0)
             std::set<std::pair<float, float>> bond_params;
             for (const auto& p : params) bond_params.insert({p.spring_constant, p.equil_dist});
             for (const auto& bp : bond_params) {
                 float k = bp.first, r0 = bp.second;
                 out << "# Bond Spline\n# k=" << k << ", r0=" << r0 << "\n";
-                out << "# r potential force_magnitude (applied to both atoms)\n";
+                out << "# r potential\n";
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
                     float r = std::max(0.1f, r0 * 0.5f) + i * (r0 * 2.0f - std::max(0.1f, r0 * 0.5f)) / (n_pts - 1);
                     float pot = 0.5f * k * (r - r0) * (r - r0);
-                    float force_magnitude = std::abs(k * (r - r0)); // Magnitude of force on each atom
-                    out << r << " " << pot << " " << force_magnitude << "\n";
+                    out << r << " " << pot << "\n";
                 }
                 out << "\n";
             }
@@ -1268,15 +1257,14 @@ struct AngleSpring : public PotentialNode
         if (debug_mode) {
             std::ofstream out("angle_splines.txt", std::ios::out | std::ios::trunc);
             out << "# Angle splines: Three-particle interactions (atom1-atom2-atom3)\n";
-            out << "# Forces are distributed to all three atoms: F1, F2, F3\n";
-            out << "# Force magnitude shows the magnitude of force on each atom\n";
+            out << "# Forces are calculated as analytical derivatives of the potential\n";
             // Collect unique (k, theta0)
             std::set<std::pair<float, float>> angle_params;
             for (const auto& p : params) angle_params.insert({p.spring_constant, p.equil_angle_deg});
             for (const auto& ap : angle_params) {
                 float k = ap.first, theta0 = ap.second;
                 out << "# Angle Spline\n# k=" << k << ", theta0_deg=" << theta0 << "\n";
-                out << "# theta_deg potential force_magnitude (applied to all 3 atoms)\n";
+                out << "# theta_deg potential\n";
                 int n_pts = 10;
                 for (int i = 0; i < n_pts; ++i) {
                     float theta = 180.0f * i / (n_pts - 1);
@@ -1285,14 +1273,7 @@ struct AngleSpring : public PotentialNode
                     float delta_cos = cos_theta - cos_theta0;
                     float pot = 0.5f * k * delta_cos * delta_cos;
                     
-                    // Calculate force magnitude that would be applied to each atom
-                    // This is the magnitude of the force vector for each of the three atoms
-                    float dE_dtheta = k * delta_cos * (-sinf(theta * M_PI / 180.0f));
-                    float dtheta_dcos = -1.0f / sqrtf(1.0f - cos_theta * cos_theta);
-                    float dE_dcos = dE_dtheta * dtheta_dcos;
-                    float force_magnitude = std::abs(dE_dcos); // Magnitude of force on each atom
-                    
-                    out << theta << " " << pot << " " << force_magnitude << "\n";
+                    out << theta << " " << pot << "\n";
                 }
                 out << "\n";
             }
