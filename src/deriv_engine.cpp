@@ -253,6 +253,10 @@ void DerivEngine::build_integrator_levels( bool print_info, float dt, int inner_
 void DerivEngine::compute(ComputeMode mode) {
     if(mode == PotentialAndDerivMode) potential = 0.f;
 
+    // --- ADDED: Zero out the main position sensitivity (force) array before accumulating new forces ---
+    // This ensures that all force contributions (bonded and non-bonded) are properly summed
+    fill(pos->sens, 0.f);
+
     for(int i : germ_exec_levels) {
         auto& n = nodes[i];
         n.computation->compute_value(mode);

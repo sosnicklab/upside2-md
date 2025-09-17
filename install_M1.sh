@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "Setting up UPSIDE2 for Apple Silicon Mac (M1/M2/M3/M4) with GCC 11..."
+echo "Setting up UPSIDE2 for Apple Silicon Mac (M1/M2/M3/M4) with Apple Clang..."
 echo `pwd`
 
 # Detect Apple Silicon and set appropriate variables
@@ -50,13 +50,13 @@ echo "Cleaning previous build..."
 rm -rf obj/*
 cd obj
 
-# Configure with Apple Silicon optimized settings using GCC 11
-echo "Configuring CMake for Apple Silicon with GCC 11..."
+# Configure with Apple Silicon optimized settings using Apple Clang
+echo "Configuring CMake for Apple Silicon with Apple Clang..."
 cmake ../src/ \
   -DEIGEN3_INCLUDE_DIR=$EIGEN_HOME \
   -DCMAKE_OSX_ARCHITECTURES=$ARCH_TYPE \
-  -DCMAKE_CXX_COMPILER=g++-11 \
-  -DCMAKE_C_COMPILER=gcc-11 \
+  -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
+  -DCMAKE_C_COMPILER=/usr/bin/gcc \
   -DCMAKE_CXX_FLAGS="-std=c++11" \
   -DCMAKE_C_FLAGS="" \
   -DOpenMP_CXX_FLAGS="$OpenMP_CXX_FLAGS" \

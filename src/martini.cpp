@@ -836,7 +836,9 @@ struct MartiniPotential : public PotentialNode
         VecArray pos1      = pos.output;
         VecArray pos1_sens = pos.sens;
         
-        fill(pos1_sens, 3, n_atom, 0.f);
+        // --- REMOVED: fill(pos1_sens, 3, n_atom, 0.f); ---
+        // This line was incorrectly zeroing the force array, erasing all bonded forces
+        // Force array initialization is now handled centrally in DerivEngine::compute()
         
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
         if(pot) *pot = 0.f;
