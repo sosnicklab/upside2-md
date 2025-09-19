@@ -983,6 +983,20 @@ def main():
         soften_lj = int(os.environ.get('UPSIDE_SOFTEN_LJ', '0'))
         lj_alpha = float(os.environ.get('UPSIDE_LJ_ALPHA', '1.0'))
         overwrite_splines = int(os.environ.get('UPSIDE_OVERWRITE_SPLINES', '0'))
+        
+        # PME configuration via environment variables
+        # UPSIDE_USE_PME: 1 to enable Particle Mesh Ewald for long-range Coulomb
+        # UPSIDE_PME_ALPHA: PME screening parameter (default: 0.2)
+        # UPSIDE_PME_RCUT: Real space cutoff in Angstroms (default: 10.0)
+        # UPSIDE_PME_NX/NY/NZ: Grid dimensions (default: 32, should be powers of 2)
+        # UPSIDE_PME_ORDER: B-spline interpolation order (default: 4)
+        use_pme = int(os.environ.get('UPSIDE_USE_PME', '0'))
+        pme_alpha = float(os.environ.get('UPSIDE_PME_ALPHA', '0.2'))
+        pme_rcut = float(os.environ.get('UPSIDE_PME_RCUT', '10.0'))
+        pme_nx = int(os.environ.get('UPSIDE_PME_NX', '32'))
+        pme_ny = int(os.environ.get('UPSIDE_PME_NY', '32'))
+        pme_nz = int(os.environ.get('UPSIDE_PME_NZ', '32'))
+        pme_order = int(os.environ.get('UPSIDE_PME_ORDER', '4'))
 
         martini_potential._v_attrs.coulomb_soften = soften_coul
         if soften_coul:
@@ -991,6 +1005,15 @@ def main():
         if soften_lj:
             martini_potential._v_attrs.lj_soften_alpha = lj_alpha
         martini_potential._v_attrs.overwrite_spline_tables = overwrite_splines
+        
+        # PME configuration
+        martini_potential._v_attrs.use_pme = use_pme
+        if use_pme:
+            martini_potential._v_attrs.pme_alpha = pme_alpha
+            martini_potential._v_attrs.pme_rcut = pme_rcut
+            print(f"PME enabled: alpha={pme_alpha}, rcut={pme_rcut}, grid={pme_nx}x{pme_ny}x{pme_nz}, order={pme_order}")
+        else:
+            print("PME disabled: using standard Coulomb cutoff")
 
         martini_potential._v_attrs.debug_mode = 1  # Enable spline table generation
         
@@ -1001,6 +1024,23 @@ def main():
         wall_group._v_attrs.y_len = y_len
         wall_group._v_attrs.z_len = z_len
         wall_group._v_attrs.initialized = True
+        
+        # Create PME node if enabled
+        if use_pme:
+            pme_group = t.create_group(potential_grp, 'particle_mesh_ewald')
+            pme_group._v_attrs.arguments = np.array([b'pos'])
+            pme_group._v_attrs.x_len = x_len
+            pme_group._v_attrs.y_len = y_len
+            pme_group._v_attrs.z_len = z_len
+            pme_group._v_attrs.pme_alpha = pme_alpha
+            pme_group._v_attrs.pme_rcut = pme_rcut
+            pme_group._v_attrs.pme_nx = pme_nx
+            pme_group._v_attrs.pme_ny = pme_ny
+            pme_group._v_attrs.pme_nz = pme_nz
+            pme_group._v_attrs.pme_order = pme_order
+            
+            # Copy charges from martini_potential
+            t.create_array(pme_group, 'charges', obj=charges)
         
         # Create atom indices and charges arrays for the potential
         t.create_array(martini_potential, 'atom_indices', obj=np.arange(n_atoms))

@@ -7,6 +7,12 @@
 # - Set POTENTIAL_MODE="soft" (default) for softened potentials (two-stage simulation)
 # - Set POTENTIAL_MODE="regular" for regular potentials only (single-stage simulation)
 # - Can be overridden via environment: POTENTIAL_MODE=regular ./run_sim.sh
+#
+# PME CONFIGURATION:
+# - Set USE_PME="1" (default) to enable Particle Mesh Ewald for long-range Coulomb interactions
+# - Set USE_PME="0" to use standard short-range Coulomb cutoff
+# - Can be overridden via environment: USE_PME=0 ./run_sim.sh
+# - PME provides O(N log N) scaling for large systems vs O(N²) for standard cutoff
 
 set -e  # Exit on any error
 
@@ -22,12 +28,25 @@ PDB_ID="bilayer"
 # Set to "regular" to use regular potentials only
 # Can be overridden via environment variable: POTENTIAL_MODE=regular ./run_sim.sh
 POTENTIAL_MODE="${POTENTIAL_MODE:-soft}"
+
+# PME CONFIGURATION
+# Set to "1" to enable Particle Mesh Ewald for long-range Coulomb interactions
+# Set to "0" to use standard short-range Coulomb cutoff
+# Can be overridden via environment variable: USE_PME=1 ./run_sim.sh
+USE_PME="${USE_PME:-1}"
 # =============================================================================
 
 # Validate potential mode
 if [ "$POTENTIAL_MODE" != "soft" ] && [ "$POTENTIAL_MODE" != "regular" ]; then
     echo "ERROR: Invalid POTENTIAL_MODE: $POTENTIAL_MODE"
     echo "Valid options: 'soft' or 'regular'"
+    exit 1
+fi
+
+# Validate PME setting
+if [ "$USE_PME" != "0" ] && [ "$USE_PME" != "1" ]; then
+    echo "ERROR: Invalid USE_PME: $USE_PME"
+    echo "Valid options: '0' (disable) or '1' (enable)"
     exit 1
 fi
 
@@ -46,6 +65,7 @@ else
 fi
 
 echo "Potential mode: $POTENTIAL_MODE"
+echo "PME enabled: $USE_PME"
 
 # Configuration
 INPUTS_DIR="inputs"
@@ -134,7 +154,18 @@ else
 fi
 
 export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
+
+# PME configuration
+export UPSIDE_USE_PME=${USE_PME}
+export UPSIDE_PME_ALPHA=${UPSIDE_PME_ALPHA:-0.2}
+export UPSIDE_PME_RCUT=${UPSIDE_PME_RCUT:-10.0}
+export UPSIDE_PME_NX=${UPSIDE_PME_NX:-32}
+export UPSIDE_PME_NY=${UPSIDE_PME_NY:-32}
+export UPSIDE_PME_NZ=${UPSIDE_PME_NZ:-32}
+export UPSIDE_PME_ORDER=${UPSIDE_PME_ORDER:-4}
+
 echo "Potential options (env): UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ} UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA} UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB} UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA} UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES}"
+echo "PME options (env): UPSIDE_USE_PME=${UPSIDE_USE_PME} UPSIDE_PME_ALPHA=${UPSIDE_PME_ALPHA} UPSIDE_PME_RCUT=${UPSIDE_PME_RCUT} UPSIDE_PME_NX=${UPSIDE_PME_NX} UPSIDE_PME_NY=${UPSIDE_PME_NY} UPSIDE_PME_NZ=${UPSIDE_PME_NZ} UPSIDE_PME_ORDER=${UPSIDE_PME_ORDER}"
 source ../../source.sh
 
 python3 prepare_martini.py "$PDB_ID"

@@ -7,6 +7,9 @@
 #include <fstream> // For file writing
 #include <cmath> // For pow, cosf, sinf, acosf
 #include <set> // For std::set
+#include <complex> // For complex numbers in PME
+#include <vector> // For PME grid operations
+#include <algorithm> // For PME algorithms
 
 using namespace h5;
 using namespace std;
@@ -369,6 +372,488 @@ static bool apply_pbc_wrapping(VecArray pos, int n_atoms) {
     return any_wrapped;
 }
 
+// Simple 1D FFT implementation for PME
+class SimpleFFT {
+public:
+    static void fft1d(std::vector<std::complex<float>>& data) {
+        int n = data.size();
+        if (n <= 1) return;
+        
+        // Cooley-Tukey FFT algorithm
+        std::vector<std::complex<float>> even(n/2), odd(n/2);
+        for (int i = 0; i < n/2; ++i) {
+            even[i] = data[2*i];
+            odd[i] = data[2*i + 1];
+        }
+        
+        fft1d(even);
+        fft1d(odd);
+        
+        for (int i = 0; i < n/2; ++i) {
+            std::complex<float> t = std::polar(1.0f, -2.0f * M_PI_F * i / n) * odd[i];
+            data[i] = even[i] + t;
+            data[i + n/2] = even[i] - t;
+        }
+    }
+    
+    static void ifft1d(std::vector<std::complex<float>>& data) {
+        // Conjugate the input
+        for (auto& x : data) {
+            x = std::conj(x);
+        }
+        
+        // Apply forward FFT
+        fft1d(data);
+        
+        // Conjugate and normalize
+        int n = data.size();
+        for (auto& x : data) {
+            x = std::conj(x) / static_cast<float>(n);
+        }
+    }
+    
+    static void fft3d(std::vector<std::vector<std::vector<std::complex<float>>>>& data) {
+        int nx = data.size();
+        int ny = data[0].size();
+        int nz = data[0][0].size();
+        
+        // FFT along x direction
+        for (int j = 0; j < ny; ++j) {
+            for (int k = 0; k < nz; ++k) {
+                std::vector<std::complex<float>> x_slice(nx);
+                for (int i = 0; i < nx; ++i) {
+                    x_slice[i] = data[i][j][k];
+                }
+                fft1d(x_slice);
+                for (int i = 0; i < nx; ++i) {
+                    data[i][j][k] = x_slice[i];
+                }
+            }
+        }
+        
+        // FFT along y direction
+        for (int i = 0; i < nx; ++i) {
+            for (int k = 0; k < nz; ++k) {
+                std::vector<std::complex<float>> y_slice(ny);
+                for (int j = 0; j < ny; ++j) {
+                    y_slice[j] = data[i][j][k];
+                }
+                fft1d(y_slice);
+                for (int j = 0; j < ny; ++j) {
+                    data[i][j][k] = y_slice[j];
+                }
+            }
+        }
+        
+        // FFT along z direction
+        for (int i = 0; i < nx; ++i) {
+            for (int j = 0; j < ny; ++j) {
+                std::vector<std::complex<float>> z_slice(nz);
+                for (int k = 0; k < nz; ++k) {
+                    z_slice[k] = data[i][j][k];
+                }
+                fft1d(z_slice);
+                for (int k = 0; k < nz; ++k) {
+                    data[i][j][k] = z_slice[k];
+                }
+            }
+        }
+    }
+    
+    static void ifft3d(std::vector<std::vector<std::vector<std::complex<float>>>>& data) {
+        int nx = data.size();
+        int ny = data[0].size();
+        int nz = data[0][0].size();
+        
+        // IFFT along z direction
+        for (int i = 0; i < nx; ++i) {
+            for (int j = 0; j < ny; ++j) {
+                std::vector<std::complex<float>> z_slice(nz);
+                for (int k = 0; k < nz; ++k) {
+                    z_slice[k] = data[i][j][k];
+                }
+                ifft1d(z_slice);
+                for (int k = 0; k < nz; ++k) {
+                    data[i][j][k] = z_slice[k];
+                }
+            }
+        }
+        
+        // IFFT along y direction
+        for (int i = 0; i < nx; ++i) {
+            for (int k = 0; k < nz; ++k) {
+                std::vector<std::complex<float>> y_slice(ny);
+                for (int j = 0; j < ny; ++j) {
+                    y_slice[j] = data[i][j][k];
+                }
+                ifft1d(y_slice);
+                for (int j = 0; j < ny; ++j) {
+                    data[i][j][k] = y_slice[j];
+                }
+            }
+        }
+        
+        // IFFT along x direction
+        for (int j = 0; j < ny; ++j) {
+            for (int k = 0; k < nz; ++k) {
+                std::vector<std::complex<float>> x_slice(nx);
+                for (int i = 0; i < nx; ++i) {
+                    x_slice[i] = data[i][j][k];
+                }
+                ifft1d(x_slice);
+                for (int i = 0; i < nx; ++i) {
+                    data[i][j][k] = x_slice[i];
+                }
+            }
+        }
+    }
+};
+
+// B-spline interpolation for PME charge assignment
+class BSplineInterpolation {
+public:
+    static float bspline3(float x) {
+        // Third-order B-spline
+        x = fabsf(x);
+        if (x < 1.0f) {
+            return (2.0f/3.0f) - x*x + 0.5f*x*x*x;
+        } else if (x < 2.0f) {
+            float t = 2.0f - x;
+            return t*t*t / 6.0f;
+        }
+        return 0.0f;
+    }
+    
+    static void assign_charges_to_grid(const std::vector<Vec<3,float>>& positions,
+                                     const std::vector<float>& charges,
+                                     std::vector<std::vector<std::vector<float>>>& grid,
+                                     float box_x, float box_y, float box_z,
+                                     int nx, int ny, int nz) {
+        // Clear grid
+        for (int i = 0; i < nx; ++i) {
+            for (int j = 0; j < ny; ++j) {
+                for (int k = 0; k < nz; ++k) {
+                    grid[i][j][k] = 0.0f;
+                }
+            }
+        }
+        
+        float dx = box_x / nx;
+        float dy = box_y / ny;
+        float dz = box_z / nz;
+        
+        // Assign charges to grid using B-spline interpolation
+        for (size_t p = 0; p < positions.size(); ++p) {
+            const auto& pos = positions[p];
+            float q = charges[p];
+            
+            // Convert to grid coordinates
+            float gx = (pos.x() + 0.5f * box_x) / dx;
+            float gy = (pos.y() + 0.5f * box_y) / dy;
+            float gz = (pos.z() + 0.5f * box_z) / dz;
+            
+            // Find grid points within B-spline support
+            int ix_start = static_cast<int>(floorf(gx - 2.0f));
+            int iy_start = static_cast<int>(floorf(gy - 2.0f));
+            int iz_start = static_cast<int>(floorf(gz - 2.0f));
+            
+            for (int ix = ix_start; ix <= ix_start + 4; ++ix) {
+                for (int iy = iy_start; iy <= iy_start + 4; ++iy) {
+                    for (int iz = iz_start; iz <= iz_start + 4; ++iz) {
+                        // Apply periodic boundary conditions
+                        int i = ((ix % nx) + nx) % nx;
+                        int j = ((iy % ny) + ny) % ny;
+                        int k = ((iz % nz) + nz) % nz;
+                        
+                        // Calculate B-spline weights
+                        float wx = bspline3(gx - ix);
+                        float wy = bspline3(gy - iy);
+                        float wz = bspline3(gz - iz);
+                        
+                        // Add charge contribution
+                        grid[i][j][k] += q * wx * wy * wz;
+                    }
+                }
+            }
+        }
+    }
+    
+    static void interpolate_forces_from_grid(const std::vector<Vec<3,float>>& positions,
+                                           const std::vector<std::vector<std::vector<Vec<3,float>>>>& force_grid,
+                                           std::vector<Vec<3,float>>& forces,
+                                           float box_x, float box_y, float box_z,
+                                           int nx, int ny, int nz) {
+        float dx = box_x / nx;
+        float dy = box_y / ny;
+        float dz = box_z / nz;
+        
+        for (size_t p = 0; p < positions.size(); ++p) {
+            const auto& pos = positions[p];
+            Vec<3,float> force = make_zero<3>();
+            
+            // Convert to grid coordinates
+            float gx = (pos.x() + 0.5f * box_x) / dx;
+            float gy = (pos.y() + 0.5f * box_y) / dy;
+            float gz = (pos.z() + 0.5f * box_z) / dz;
+            
+            // Find grid points within B-spline support
+            int ix_start = static_cast<int>(floorf(gx - 2.0f));
+            int iy_start = static_cast<int>(floorf(gy - 2.0f));
+            int iz_start = static_cast<int>(floorf(gz - 2.0f));
+            
+            for (int ix = ix_start; ix <= ix_start + 4; ++ix) {
+                for (int iy = iy_start; iy <= iy_start + 4; ++iy) {
+                    for (int iz = iz_start; iz <= iz_start + 4; ++iz) {
+                        // Apply periodic boundary conditions
+                        int i = ((ix % nx) + nx) % nx;
+                        int j = ((iy % ny) + ny) % ny;
+                        int k = ((iz % nz) + nz) % nz;
+                        
+                        // Calculate B-spline weights
+                        float wx = bspline3(gx - ix);
+                        float wy = bspline3(gy - iy);
+                        float wz = bspline3(gz - iz);
+                        
+                        // Add force contribution
+                        force += force_grid[i][j][k] * wx * wy * wz;
+                    }
+                }
+            }
+            
+            forces[p] = force;
+        }
+    }
+};
+
+// Particle Mesh Ewald (PME) implementation for long-range Coulomb interactions
+struct ParticleMeshEwald : public PotentialNode
+{
+    int n_atom;
+    CoordNode& pos;
+    
+    // Box dimensions
+    float box_x, box_y, box_z;
+    float volume;
+    
+    // PME parameters
+    float alpha;           // Ewald parameter (screening parameter)
+    float rcut;            // Real space cutoff
+    int nx, ny, nz;        // Grid dimensions
+    int order;             // B-spline interpolation order
+    
+    // Charge data
+    vector<float> charges;
+    
+    // PME grids
+    vector<vector<vector<float>>> charge_grid;
+    vector<vector<vector<complex<float>>>> potential_grid;
+    vector<vector<vector<Vec<3,float>>>> force_grid;
+    
+    // Precomputed factors
+    float coulomb_k;       // Coulomb constant
+    float alpha_sqrt_pi;   // α/sqrt(π)
+    
+    ParticleMeshEwald(hid_t grp, CoordNode& pos_):
+        PotentialNode(), n_atom(pos_.n_elem), pos(pos_), coulomb_k(31.775347952181f)
+    {
+        // Read box dimensions
+        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
+            box_x = read_attribute<float>(grp, ".", "x_len");
+            box_y = read_attribute<float>(grp, ".", "y_len");
+            box_z = read_attribute<float>(grp, ".", "z_len");
+        } else {
+            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
+            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
+            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
+            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
+            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
+            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
+            box_x = wall_xhi - wall_xlo;
+            box_y = wall_yhi - wall_ylo;
+            box_z = wall_zhi - wall_zlo;
+        }
+        
+        volume = box_x * box_y * box_z;
+        
+        // Read charges
+        check_size(grp, "charges", n_atom);
+        charges.resize(n_atom);
+        traverse_dset<1,float>(grp, "charges", [&](size_t i, float q) {
+            charges[i] = q;
+        });
+        
+        // PME parameters
+        alpha = 0.2f;  // Default Ewald parameter
+        if(attribute_exists(grp, ".", "pme_alpha")) {
+            alpha = read_attribute<float>(grp, ".", "pme_alpha");
+        }
+        
+        rcut = 10.0f;  // Default real space cutoff
+        if(attribute_exists(grp, ".", "pme_rcut")) {
+            rcut = read_attribute<float>(grp, ".", "pme_rcut");
+        }
+        
+        // Grid dimensions (should be powers of 2 for efficient FFT)
+        nx = 32;  // Default grid size
+        if(attribute_exists(grp, ".", "pme_nx")) {
+            nx = read_attribute<int>(grp, ".", "pme_nx");
+        }
+        
+        ny = 32;
+        if(attribute_exists(grp, ".", "pme_ny")) {
+            ny = read_attribute<int>(grp, ".", "pme_ny");
+        }
+        
+        nz = 32;
+        if(attribute_exists(grp, ".", "pme_nz")) {
+            nz = read_attribute<int>(grp, ".", "pme_nz");
+        }
+        
+        order = 4;  // B-spline interpolation order
+        if(attribute_exists(grp, ".", "pme_order")) {
+            order = read_attribute<int>(grp, ".", "pme_order");
+        }
+        
+        // Precompute factors
+        alpha_sqrt_pi = alpha / sqrtf(M_PI);
+        
+        // Initialize grids
+        charge_grid.resize(nx, vector<vector<float>>(ny, vector<float>(nz, 0.0f)));
+        potential_grid.resize(nx, vector<vector<complex<float>>>(ny, vector<complex<float>>(nz, 0.0f)));
+        force_grid.resize(nx, vector<vector<Vec<3,float>>>(ny, vector<Vec<3,float>>(nz, make_zero<3>())));
+        
+        std::cout << "PME: Initialized with alpha=" << alpha << ", rcut=" << rcut << std::endl;
+        std::cout << "PME: Box dimensions: " << box_x << " x " << box_y << " x " << box_z << std::endl;
+        std::cout << "PME: Grid dimensions: " << nx << " x " << ny << " x " << nz << std::endl;
+        std::cout << "PME: B-spline order: " << order << std::endl;
+    }
+    
+    virtual void compute_value(ComputeMode mode) {
+        Timer timer(string("particle_mesh_ewald"));
+        
+        VecArray pos1 = pos.output;
+        VecArray pos1_sens = pos.sens;
+        
+        float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
+        if(pot) *pot = 0.f;
+        
+        // Extract positions
+        vector<Vec<3,float>> positions(n_atom);
+        for(int i = 0; i < n_atom; ++i) {
+            positions[i] = load_vec<3>(pos1, i);
+        }
+        
+        // Step 1: Assign charges to grid using B-spline interpolation
+        BSplineInterpolation::assign_charges_to_grid(positions, charges, charge_grid, 
+                                                    box_x, box_y, box_z, nx, ny, nz);
+        
+        // Step 2: Convert charge grid to complex format for FFT
+        for(int i = 0; i < nx; ++i) {
+            for(int j = 0; j < ny; ++j) {
+                for(int k = 0; k < nz; ++k) {
+                    potential_grid[i][j][k] = complex<float>(charge_grid[i][j][k], 0.0f);
+                }
+            }
+        }
+        
+        // Step 3: Forward 3D FFT
+        SimpleFFT::fft3d(potential_grid);
+        
+        // Step 4: Solve Poisson's equation in reciprocal space
+        float dx = box_x / nx;
+        float dy = box_y / ny;
+        float dz = box_z / nz;
+        
+        for(int i = 0; i < nx; ++i) {
+            for(int j = 0; j < ny; ++j) {
+                for(int k = 0; k < nz; ++k) {
+                    // Calculate k-vector components
+                    float kx = (i <= nx/2) ? 2.0f * M_PI * i / box_x : 2.0f * M_PI * (i - nx) / box_x;
+                    float ky = (j <= ny/2) ? 2.0f * M_PI * j / box_y : 2.0f * M_PI * (j - ny) / box_y;
+                    float kz = (k <= nz/2) ? 2.0f * M_PI * k / box_z : 2.0f * M_PI * (k - nz) / box_z;
+                    
+                    float k_sq = kx*kx + ky*ky + kz*kz;
+                    
+                    if(k_sq > 0.0f) {
+                        // Green's function: G(k) = 1/k² * exp(-k²/(4α²))
+                        float green = expf(-k_sq / (4.0f * alpha * alpha)) / k_sq;
+                        potential_grid[i][j][k] *= green;
+                    } else {
+                        // Handle k=0 case (should be zero for neutral systems)
+                        potential_grid[i][j][k] = 0.0f;
+                    }
+                }
+            }
+        }
+        
+        // Step 5: Inverse 3D FFT
+        SimpleFFT::ifft3d(potential_grid);
+        
+        // Step 6: Calculate potential energy
+        float recip_pot = 0.0f;
+        for(int i = 0; i < nx; ++i) {
+            for(int j = 0; j < ny; ++j) {
+                for(int k = 0; k < nz; ++k) {
+                    recip_pot += charge_grid[i][j][k] * potential_grid[i][j][k].real();
+                }
+            }
+        }
+        recip_pot *= 0.5f * coulomb_k / volume;
+        
+        // Step 7: Calculate forces on grid
+        for(int i = 0; i < nx; ++i) {
+            for(int j = 0; j < ny; ++j) {
+                for(int k = 0; k < nz; ++k) {
+                    // Calculate gradients using finite differences
+                    int ip = (i + 1) % nx;
+                    int im = (i - 1 + nx) % nx;
+                    int jp = (j + 1) % ny;
+                    int jm = (j - 1 + ny) % ny;
+                    int kp = (k + 1) % nz;
+                    int km = (k - 1 + nz) % nz;
+                    
+                    float fx = (potential_grid[ip][j][k].real() - potential_grid[im][j][k].real()) / (2.0f * dx);
+                    float fy = (potential_grid[i][jp][k].real() - potential_grid[i][jm][k].real()) / (2.0f * dy);
+                    float fz = (potential_grid[i][j][kp].real() - potential_grid[i][j][km].real()) / (2.0f * dz);
+                    
+                    force_grid[i][j][k] = make_vec3(-fx, -fy, -fz) * coulomb_k;
+                }
+            }
+        }
+        
+        // Step 8: Interpolate forces back to particles
+        vector<Vec<3,float>> recip_forces(n_atom, make_zero<3>());
+        BSplineInterpolation::interpolate_forces_from_grid(positions, force_grid, recip_forces,
+                                                          box_x, box_y, box_z, nx, ny, nz);
+        
+        // Step 9: Self-interaction correction
+        float self_correction = 0.0f;
+        for(int i = 0; i < n_atom; ++i) {
+            self_correction += charges[i] * charges[i];
+        }
+        self_correction *= alpha_sqrt_pi;
+        
+        // Total reciprocal space potential
+        recip_pot -= self_correction;
+        
+        if(pot) *pot += recip_pot;
+        
+        // Apply forces
+        for(int i = 0; i < n_atom; ++i) {
+            update_vec<3>(pos1_sens, i, -recip_forces[i]);
+        }
+    }
+    
+    // Method to update box dimensions for NPT barostat
+    void update_box_dimensions(float scale_factor) override {
+        box_x *= scale_factor;
+        box_y *= scale_factor;
+        box_z *= scale_factor;
+        volume = box_x * box_y * box_z;
+    }
+};
+static RegisterNodeType<ParticleMeshEwald, 1> pme_node("particle_mesh_ewald");
+
 // MARTINI potential using spline interpolation for LJ and Coulomb calculations
 struct MartiniPotential : public PotentialNode
 {
@@ -385,6 +870,11 @@ struct MartiniPotential : public PotentialNode
     bool lj_soften;
     float lj_soften_alpha;
     bool overwrite_spline_tables;
+    
+    // PME parameters
+    bool use_pme;
+    float pme_alpha;
+    float pme_rcut;
 
     // Box dimensions for minimum image
     float box_x, box_y, box_z;
@@ -465,6 +955,22 @@ struct MartiniPotential : public PotentialNode
         overwrite_spline_tables = false;
         if(attribute_exists(grp, ".", "overwrite_spline_tables")) {
             overwrite_spline_tables = read_attribute<int>(grp, ".", "overwrite_spline_tables") != 0;
+        }
+        
+        // PME parameters
+        use_pme = false;
+        if(attribute_exists(grp, ".", "use_pme")) {
+            use_pme = read_attribute<int>(grp, ".", "use_pme") != 0;
+        }
+        
+        pme_alpha = 0.2f;  // Default PME parameter
+        if(attribute_exists(grp, ".", "pme_alpha")) {
+            pme_alpha = read_attribute<float>(grp, ".", "pme_alpha");
+        }
+        
+        pme_rcut = 10.0f;  // Default real space cutoff
+        if(attribute_exists(grp, ".", "pme_rcut")) {
+            pme_rcut = read_attribute<float>(grp, ".", "pme_rcut");
         }
 
         
@@ -827,6 +1333,11 @@ struct MartiniPotential : public PotentialNode
         std::cout << "  LJ range: " << lj_r_min << " to " << lj_r_max << " Angstroms" << std::endl;
         std::cout << "  Coulomb range: " << coul_r_min << " to " << coul_r_max << " Angstroms" << std::endl;
         std::cout << "  Coulomb k: 31.775347952181 (includes epsilon_r=15)" << std::endl;
+        if(use_pme) {
+            std::cout << "  PME enabled: alpha=" << pme_alpha << ", rcut=" << pme_rcut << std::endl;
+        } else {
+            std::cout << "  PME disabled: using standard Coulomb cutoff" << std::endl;
+        }
 
     }
 
@@ -911,37 +1422,55 @@ struct MartiniPotential : public PotentialNode
                 // DEBUG: Check charge product
                 // if(debug_step_count < 5) std::cout << "COULOMB: Looking for q1*q2=" << qq << " (qi=" << qi << ", qj=" << qj << ")" << std::endl;
 
-                // Look up the appropriate spline for this charge product
-                auto coulomb_it = coulomb_splines.find(qq);
-                if(coulomb_it != coulomb_splines.end()) {
-                    // DEBUG: Uncomment to check Coulomb computation
-                    // std::cout << "COULOMB: Using spline for q1*q2=" << qq << " at r=" << dist << std::endl;
-                    // Use spline interpolation for Coulomb potential and force
-                    // Transform physical distance to spline coordinate [0, 999]
-                    float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
-
-                    float coul_result[2];
-                    // CORRECT: Call evaluate_value_and_deriv only on the potential spline
-                    coulomb_it->second.evaluate_value_and_deriv(coul_result, 0, r_coord);
-
-                    float coul_pot = coul_result[1];           // Index 1 is the value
-                    float coul_deriv_spline = coul_result[0];   // Index 0 is the derivative w.r.t. spline coordinate
-
-                    // Convert derivative from spline coordinate to physical coordinate (dE/dr)
-                    // dE/dr = dE/d(coord) * d(coord)/dr
-                    float coord_scale = 999.0f / (coul_r_max - coul_r_min);
-                    float dE_dr = coul_deriv_spline * coord_scale;
+                float coul_pot = 0.0f;
+                float coul_force_mag = 0.0f;
+                
+                if(use_pme && dist < pme_rcut) {
+                    // Real space part of PME: V = k * qq * erfc(α*r) / r
+                    float coulomb_k = 31.775347952181f;
+                    float alpha_r = pme_alpha * dist;
+                    float erfc_alpha_r = erfc(alpha_r);
                     
-                    // The force is the negative gradient: F = -dE/dr
-                    float coul_force_mag = -dE_dr;
+                    // Potential: V = k * qq * erfc(α*r) / r
+                    coul_pot = coulomb_k * qq * erfc_alpha_r / dist;
+                    
+                    // Force: F = -k * qq * (erfc(α*r)/r² + 2*α*exp(-α²r²)/(√π*r))
+                    float exp_term = 2.0f * pme_alpha * expf(-alpha_r * alpha_r) / sqrtf(M_PI);
+                    coul_force_mag = -coulomb_k * qq * (erfc_alpha_r / (dist * dist) + exp_term / dist);
+                } else {
+                    // Standard Coulomb potential (short-range only or when Ewald is disabled)
+                    // Look up the appropriate spline for this charge product
+                    auto coulomb_it = coulomb_splines.find(qq);
+                    if(coulomb_it != coulomb_splines.end()) {
+                        // DEBUG: Uncomment to check Coulomb computation
+                        // std::cout << "COULOMB: Using spline for q1*q2=" << qq << " at r=" << dist << std::endl;
+                        // Use spline interpolation for Coulomb potential and force
+                        // Transform physical distance to spline coordinate [0, 999]
+                        float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
 
-                    // Only apply if potential and force are finite and reasonable
-                    if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag)) {
-                        if(pot) *pot += coul_pot;
-                        // coul_force_mag is now correctly calculated as -dV/dr (physical force)
-                        // Accumulate the physical force directly
-                        force += (coul_force_mag/dist) * dr;
+                        float coul_result[2];
+                        // CORRECT: Call evaluate_value_and_deriv only on the potential spline
+                        coulomb_it->second.evaluate_value_and_deriv(coul_result, 0, r_coord);
+
+                        coul_pot = coul_result[1];           // Index 1 is the value
+                        float coul_deriv_spline = coul_result[0];   // Index 0 is the derivative w.r.t. spline coordinate
+
+                        // Convert derivative from spline coordinate to physical coordinate (dE/dr)
+                        // dE/dr = dE/d(coord) * d(coord)/dr
+                        float coord_scale = 999.0f / (coul_r_max - coul_r_min);
+                        float dE_dr = coul_deriv_spline * coord_scale;
+                        
+                        // The force is the negative gradient: F = -dE/dr
+                        coul_force_mag = -dE_dr;
                     }
+                }
+
+                // Only apply if potential and force are finite and reasonable
+                if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag)) {
+                    if(pot) *pot += coul_pot;
+                    // coul_force_mag is now correctly calculated as -dV/dr (physical force)
+                    // Accumulate the physical force directly
+                    force += (coul_force_mag/dist) * dr;
                 }
             }
             
