@@ -554,6 +554,134 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
         // This prevents drift without excessive corrections that can cause energy buildup
         remove_com_velocity(mom, pos->n_atom);
 
+    } else if (type == Minimize) {
+        // Energy minimization integrator - steepest descent with line search
+        // This implements energy minimization using the regular potential
+        
+        // Step 1: Compute forces and energy at current positions
+        compute(PotentialAndDerivMode);   // compute both forces and energy at current positions
+        
+        // Step 2: Calculate force magnitude for convergence check
+        float total_force_sq = 0.0f;
+        for(int na=0; na < pos->n_atom; ++na) {
+            auto force = load_vec<3>(pos->sens, na);
+            total_force_sq += mag2(force);
+        }
+        float force_magnitude = sqrtf(total_force_sq);
+        
+        // Step 3: Check for convergence (force tolerance)
+        // These will be set by the main function via global variables
+        extern float g_min_energy_tolerance;
+        extern float g_min_force_tolerance;
+        extern float g_min_step_size;
+        extern int g_min_max_iterations;
+        extern int g_min_iteration_count;
+        extern float g_min_old_energy;
+        extern bool g_min_converged;
+        
+        static float energy_tolerance = g_min_energy_tolerance;
+        static float force_tolerance = g_min_force_tolerance;
+        static float step_size = g_min_step_size;
+        static int max_iterations = g_min_max_iterations;
+        static int iteration_count = g_min_iteration_count;
+        static float old_energy = g_min_old_energy;
+        static bool converged = g_min_converged;
+        
+        // Get current energy (now properly computed)
+        float current_energy = potential;
+        
+        // Check convergence
+        if(iteration_count > 0) {
+            float energy_change = fabsf(current_energy - old_energy);
+            if(energy_change < energy_tolerance && force_magnitude < force_tolerance) {
+                converged = true;
+                g_min_converged = true;
+                std::cout << "[MINIMIZER] CONVERGED! Energy change: " << energy_change 
+                          << " Force magnitude: " << force_magnitude << std::endl;
+                return; // Exit minimization
+            }
+        }
+        
+        // Check max iterations
+        if(iteration_count >= max_iterations) {
+            static bool max_iterations_reported = false;
+            if(!max_iterations_reported) {
+                std::cout << "[MINIMIZER] Reached maximum iterations: " << max_iterations << std::endl;
+                max_iterations_reported = true;
+            }
+            return;
+        }
+        
+        // Step 4: Update positions using steepest descent with force scaling
+        // Move in direction of negative gradient (force direction)
+        
+        // Check if forces are too large - if so, exit minimization
+        if (force_magnitude > 1e10f) {
+            std::cout << "[MINIMIZER] Forces too large (" << force_magnitude << "), exiting minimization" << std::endl;
+            g_min_converged = true;
+            return;
+        }
+        
+        // Calculate adaptive step size based on force magnitude
+        float adaptive_step_size = step_size;
+        
+        // Very conservative step size scaling
+        if (force_magnitude > 1e8f) {
+            adaptive_step_size = 1e-8f; // Extremely small step
+        } else if (force_magnitude > 1e6f) {
+            adaptive_step_size = 1e-7f; // Very small step
+        } else if (force_magnitude > 1e4f) {
+            adaptive_step_size = 1e-6f; // Small step
+        } else if (force_magnitude > 1e3f) {
+            adaptive_step_size = 1e-5f; // Small step
+        } else if (force_magnitude > 100.0f) {
+            adaptive_step_size = 1e-4f; // Small step
+        } else if (force_magnitude > 10.0f) {
+            adaptive_step_size = step_size * 0.01f; // Reduce step size significantly
+        }
+        
+        // Additional safety check - never use step size larger than 0.001
+        if (adaptive_step_size > 0.001f) {
+            adaptive_step_size = 0.001f;
+        }
+        
+        // Scale forces to prevent instability
+        float force_scale = 1.0f;
+        if (force_magnitude > 1000.0f) {
+            force_scale = 1000.0f / force_magnitude; // Scale down large forces
+        }
+        
+        for(int na=0; na < pos->n_atom; ++na) {
+            auto force = load_vec<3>(pos->sens, na);
+            auto pos_vec = load_vec<3>(pos->output, na);
+            
+            // Scale force and apply step (move in direction of negative gradient)
+            auto scaled_force = force_scale * force;
+            auto new_pos = pos_vec - adaptive_step_size * scaled_force;
+            store_vec(pos->output, na, new_pos);
+        }
+        
+        // Step 5: Store current state for next iteration
+        old_energy = current_energy;
+        iteration_count++;
+        g_min_iteration_count = iteration_count;
+        g_min_old_energy = old_energy;
+        
+        // Print progress every 10 iterations for debugging (reduced verbosity)
+        if(iteration_count % 10 == 0 || iteration_count <= 5) {
+            std::cout << "[MINIMIZER] Iteration " << iteration_count 
+                      << " Energy: " << current_energy 
+                      << " Force: " << force_magnitude 
+                      << " Energy change: " << (iteration_count > 0 ? fabsf(current_energy - old_energy) : 0.0f) 
+                      << " Step size: " << adaptive_step_size 
+                      << " Force scale: " << force_scale << std::endl;
+        }
+        
+        // Zero out momenta for minimization (no kinetic energy)
+        for(int na=0; na < pos->n_atom; ++na) {
+            store_vec(mom, na, make_vec3(0.f, 0.f, 0.f));
+        }
+
     } else {
         // Original 3-stage integrator from Predescu et al., 2012
         // http://dx.doi.org/10.1080/00268976.2012.681311

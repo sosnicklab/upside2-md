@@ -6,6 +6,15 @@
 // Forward declaration for box dimension update function
 void update_box_dimensions(float scale_factor);
 
+// Global variables for minimization parameters
+float g_min_energy_tolerance = 1e-6f;
+float g_min_force_tolerance = 1e-6f;
+float g_min_step_size = 0.1f;
+int g_min_max_iterations = 1000;
+int g_min_iteration_count = 0;
+float g_min_old_energy = 0.0f;
+bool g_min_converged = false;
+
 #include <tclap/CmdLine.h>
 #include "deriv_engine.h"
 #include "timing.h"
@@ -535,10 +544,17 @@ try {
             false, 0.05, "float", cmd);
 
     ValueArg<string> integrator_arg("", "integrator", 
-            "Use this option to control which Integrator are used.  Available levels are v(verlet), mv(multi-step verlet), vv(velocity verlet), or npt(NPT ensemble). "
+            "Use this option to control which Integrator are used.  Available levels are v(verlet), mv(multi-step verlet), vv(velocity verlet), npt(NPT ensemble), nvt_corrected(NVT corrected), or minimize(energy minimization). "
             "Default is verlet.",
-            false, "", "v, mv, vv, npt ", cmd);
+            false, "", "v, mv, vv, npt, nvt_corrected, minimize", cmd);
     ValueArg<int> inner_step_arg("", "inner-step", "inner step for the integrator", false, 3, "int", cmd);
+
+    // Minimization-specific arguments
+    SwitchArg minimize_mode_arg("", "minimize", "Run in energy minimization mode", cmd, false);
+    ValueArg<int> min_max_iterations_arg("", "min-max-iterations", "Maximum iterations for minimization", false, 1000, "int", cmd);
+    ValueArg<double> min_energy_tolerance_arg("", "min-energy-tolerance", "Energy convergence tolerance for minimization", false, 1e-6, "double", cmd);
+    ValueArg<double> min_force_tolerance_arg("", "min-force-tolerance", "Force convergence tolerance for minimization", false, 1e-6, "double", cmd);
+    ValueArg<double> min_step_size_arg("", "min-step-size", "Step size for minimization", false, 0.1, "double", cmd);
 
     ValueArg<string> input_arg("i", "input", "h5df input file for position", false, "not_Defined_By_user", "string", cmd);
     ValueArg<string> input_base_arg("", "input-base", "h5df input files base for positions", false, "not_Defined_By_user", "string_list", cmd);
@@ -607,6 +623,23 @@ try {
         int inner_step = 3;
         if  (integrator_arg.getValue() == "mv" )
             inner_step = inner_step_arg.getValue();
+
+        // Set up minimization parameters if in minimize mode
+        if (minimize_mode_arg.getValue() || integrator_arg.getValue() == "minimize") {
+            g_min_max_iterations = min_max_iterations_arg.getValue();
+            g_min_energy_tolerance = min_energy_tolerance_arg.getValue();
+            g_min_force_tolerance = min_force_tolerance_arg.getValue();
+            g_min_step_size = min_step_size_arg.getValue();
+            g_min_iteration_count = 0;
+            g_min_old_energy = 0.0f;
+            g_min_converged = false;
+            
+            std::cout << "[MINIMIZATION] Minimization mode enabled with parameters:" << std::endl;
+            std::cout << "  Max iterations: " << g_min_max_iterations << std::endl;
+            std::cout << "  Energy tolerance: " << g_min_energy_tolerance << std::endl;
+            std::cout << "  Force tolerance: " << g_min_force_tolerance << std::endl;
+            std::cout << "  Step size: " << g_min_step_size << std::endl;
+        }
 
         double duration = duration_arg.getValue();
         double time_lim = time_lim_arg.getValue();
@@ -1216,7 +1249,40 @@ try {
                         sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::NPT, sys.particle_masses);
                     else if (integrator_arg.getValue() == "nvt_corrected" )
                         sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::NVT_Corrected, sys.particle_masses);
-                    else
+                    else if (integrator_arg.getValue() == "minimize" ) {
+                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::Minimize, sys.particle_masses);
+                        // Check for minimization convergence and exit early
+                        if (g_min_converged) {
+                            std::cout << "[MINIMIZATION] Early exit due to convergence" << std::endl;
+                            
+                            // Write minimized coordinates back to input file
+                            std::cout << "[MINIMIZATION] Writing minimized coordinates back to input file..." << std::endl;
+                            try {
+                                // Open the input file for writing
+                                auto input_file = h5::open_file(const_cast<char*>(my_config_paths[ns].c_str()), H5F_ACC_RDWR);
+                                auto input_group = h5::open_group(input_file.get(), "/input");
+                                auto pos_dset = h5::h5_obj(H5Dclose, H5Dopen2(input_group.get(), "pos", H5P_DEFAULT));
+                                
+                                // Write the minimized coordinates back to the input file
+                                for(int na=0; na < sys.engine.pos->n_atom; ++na) {
+                                    auto pos_vec = load_vec<3>(sys.engine.pos->output, na);
+                                    float pos_array[3] = {pos_vec[0], pos_vec[1], pos_vec[2]};
+                                    hsize_t start[3] = {static_cast<hsize_t>(na), 0, 0};
+                                    hsize_t count[3] = {1, 3, 1};
+                                    auto mem_space = h5::h5_obj(H5Sclose, H5Screate_simple(3, count, NULL));
+                                    auto file_space = h5::h5_obj(H5Sclose, H5Dget_space(pos_dset.get()));
+                                    h5::h5_noerr(H5Sselect_hyperslab(file_space.get(), H5S_SELECT_SET, start, NULL, count, NULL));
+                                    h5::h5_noerr(H5Dwrite(pos_dset.get(), H5T_NATIVE_FLOAT, mem_space.get(), file_space.get(), H5P_DEFAULT, pos_array));
+                                }
+                                std::cout << "[MINIMIZATION] Successfully wrote minimized coordinates to input file" << std::endl;
+                            } catch(const std::string& e) {
+                                std::cout << "[MINIMIZATION] Warning: Failed to write coordinates back to input file: " << e << std::endl;
+                            }
+                            
+                            do_break = true;
+                            break;
+                        }
+                    } else
                         sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::Verlet, sys.particle_masses);
 
                     // Apply thermostat AFTER integration
@@ -1324,7 +1390,34 @@ try {
         }
         }  // End of if (!systems.empty())
 
-
+        // Write minimized coordinates back to input file if minimization was used
+        if (integrator_arg.getValue() == "minimize" && !systems.empty()) {
+            std::cout << "[MINIMIZATION] Writing minimized coordinates back to input file..." << std::endl;
+            for(size_t ns = 0; ns < systems.size(); ++ns) {
+                auto& sys = systems[ns];
+                try {
+                    // Open the input file for writing
+                    auto input_file = h5::open_file(const_cast<char*>(my_config_paths[ns].c_str()), H5F_ACC_RDWR);
+                    auto input_group = h5::open_group(input_file.get(), "/input");
+                    auto pos_dset = h5::h5_obj(H5Dclose, H5Dopen2(input_group.get(), "pos", H5P_DEFAULT));
+                    
+                    // Write the minimized coordinates back to the input file
+                    for(int na=0; na < sys.engine.pos->n_atom; ++na) {
+                        auto pos_vec = load_vec<3>(sys.engine.pos->output, na);
+                        float pos_array[3] = {pos_vec[0], pos_vec[1], pos_vec[2]};
+                        hsize_t start[3] = {static_cast<hsize_t>(na), 0, 0};
+                        hsize_t count[3] = {1, 3, 1};
+                        auto mem_space = h5::h5_obj(H5Sclose, H5Screate_simple(3, count, NULL));
+                        auto file_space = h5::h5_obj(H5Sclose, H5Dget_space(pos_dset.get()));
+                        h5::h5_noerr(H5Sselect_hyperslab(file_space.get(), H5S_SELECT_SET, start, NULL, count, NULL));
+                        h5::h5_noerr(H5Dwrite(pos_dset.get(), H5T_NATIVE_FLOAT, mem_space.get(), file_space.get(), H5P_DEFAULT, pos_array));
+                    }
+                    std::cout << "[MINIMIZATION] Successfully wrote minimized coordinates to input file" << std::endl;
+                } catch(const std::string& e) {
+                    std::cout << "[MINIMIZATION] Warning: Failed to write coordinates back to input file: " << e << std::endl;
+                }
+            }
+        }
 
         if(received_signal!=NO_SIGNAL) {fprintf(stderr, "Received early termination signal\n");}
         if(passed_time_lim) {fprintf(stderr, "Passed time limit\n");}

@@ -258,14 +258,25 @@ struct DerivEngine
     void build_integrator_levels(bool print_info, float dt, int inner_step);
 
     //! \brief Integration scheme (i.e. position and velocity update weights) to use
-    enum IntegratorType {Verlet=0, Predescu=1, VelocityVerlet=2, NPT=3, NVT_Corrected=4};
+    enum IntegratorType {Verlet=0, Predescu=1, VelocityVerlet=2, NPT=3, NVT_Corrected=4, Minimize=5};
 
     //! \brief Perform a full integration cycle (3 time steps)
     //!
     //! See integration_stage for details.
     void integration_cycle(VecArray mom, float dt, float max_force, IntegratorType type = Verlet, VecArray masses = VecArray());
+    
+    //! \brief Perform a full integration cycle with inner step parameter
     void integration_cycle(VecArray mom, float dt, int inner_step, VecArray masses = VecArray());
 };
+
+// Global variables for minimization parameters
+extern float g_min_energy_tolerance;
+extern float g_min_force_tolerance;
+extern float g_min_step_size;
+extern int g_min_max_iterations;
+extern int g_min_iteration_count;
+extern float g_min_old_energy;
+extern bool g_min_converged;
 
 //! \brief Count the number hbonds for a system
 double get_n_hbond(DerivEngine &engine);

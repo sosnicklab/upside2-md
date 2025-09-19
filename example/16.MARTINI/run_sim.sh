@@ -34,6 +34,18 @@ POTENTIAL_MODE="${POTENTIAL_MODE:-soft}"
 # Set to "0" to use standard short-range Coulomb cutoff
 # Can be overridden via environment variable: USE_PME=1 ./run_sim.sh
 USE_PME="${USE_PME:-1}"
+
+# MINIMIZATION CONFIGURATION
+# Set to "1" to enable energy minimization between softened and regular potential stages
+# Set to "0" to skip minimization
+# Can be overridden via environment variable: ENABLE_MINIMIZATION=1 ./run_sim.sh
+ENABLE_MINIMIZATION="${ENABLE_MINIMIZATION:-1}"
+
+# Minimization parameters (can be overridden via environment variables)
+MIN_MAX_ITERATIONS="${MIN_MAX_ITERATIONS:-1000}"
+MIN_ENERGY_TOLERANCE="${MIN_ENERGY_TOLERANCE:-1e-6}"
+MIN_FORCE_TOLERANCE="${MIN_FORCE_TOLERANCE:-1e-6}"
+MIN_STEP_SIZE="${MIN_STEP_SIZE:-0.1}"
 # =============================================================================
 
 # Validate potential mode
@@ -46,6 +58,13 @@ fi
 # Validate PME setting
 if [ "$USE_PME" != "0" ] && [ "$USE_PME" != "1" ]; then
     echo "ERROR: Invalid USE_PME: $USE_PME"
+    echo "Valid options: '0' (disable) or '1' (enable)"
+    exit 1
+fi
+
+# Validate minimization setting
+if [ "$ENABLE_MINIMIZATION" != "0" ] && [ "$ENABLE_MINIMIZATION" != "1" ]; then
+    echo "ERROR: Invalid ENABLE_MINIMIZATION: $ENABLE_MINIMIZATION"
     echo "Valid options: '0' (disable) or '1' (enable)"
     exit 1
 fi
@@ -66,6 +85,7 @@ fi
 
 echo "Potential mode: $POTENTIAL_MODE"
 echo "PME enabled: $USE_PME"
+echo "Minimization enabled: $ENABLE_MINIMIZATION"
 
 # Configuration
 INPUTS_DIR="inputs"
@@ -306,6 +326,48 @@ with h5py.File(path, 'r+') as f:
     else:
         pot.attrs['lj_soften'] = 0
 PYEOF
+
+# Stage 3.2.5: Energy minimization with regular potential (if enabled)
+if [ "$ENABLE_MINIMIZATION" = "1" ]; then
+    echo "-- Stage 2.5: Energy minimization with regular potential --"
+    echo "Performing energy minimization to optimize structure before regular simulation"
+    MINIMIZATION_START=$(date +%s)
+
+    echo "Minimization parameters:"
+    echo "  Max iterations: $MIN_MAX_ITERATIONS"
+    echo "  Energy tolerance: $MIN_ENERGY_TOLERANCE"
+    echo "  Force tolerance: $MIN_FORCE_TOLERANCE"
+    echo "  Step size: $MIN_STEP_SIZE"
+
+    # Run minimization using UPSIDE minimize mode
+    # Note: UPSIDE will update the input file with minimized coordinates
+    CMD_MIN=(
+        "$UPSIDE_EXECUTABLE"
+        "$INPUT_FILE"
+        "--duration" "$MIN_MAX_ITERATIONS"
+        "--temperature" "0.0"
+        "--time-step" "$MIN_STEP_SIZE"
+        "--frame-interval" "1"
+        "--integrator" "minimize"
+        "--min-max-iterations" "$MIN_MAX_ITERATIONS"
+        "--min-energy-tolerance" "$MIN_ENERGY_TOLERANCE"
+        "--min-force-tolerance" "$MIN_FORCE_TOLERANCE"
+        "--min-step-size" "$MIN_STEP_SIZE"
+        "--disable-initial-thermalization"
+        "--disable-recentering"
+    )
+    echo "Command (minimize): ${CMD_MIN[*]}"
+    if "${CMD_MIN[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+        MINIMIZATION_END=$(date +%s)
+        echo "Energy minimization completed in $((MINIMIZATION_END - MINIMIZATION_START)) seconds"
+        echo "Minimized coordinates have been written to $INPUT_FILE"
+    else
+        echo "ERROR: Energy minimization failed!"
+        exit 1
+    fi
+else
+    echo "-- Stage 2.5: Skipping energy minimization (ENABLE_MINIMIZATION=0) --"
+fi
 
 # Stage 3.3: regular run for remaining steps (writes to INPUT_FILE:/output)
     echo "-- Stage 2: Regular potential for $REMAINING_STEPS steps --"
