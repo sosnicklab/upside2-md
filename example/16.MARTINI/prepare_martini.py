@@ -414,8 +414,10 @@ def main():
     if len(sys.argv) > 1:
         pdb_id = sys.argv[1]
     else:
-        pdb_id = '1rkl'
-        print("No PDB ID provided, using default: 1rkl")
+        raise ValueError("FATAL ERROR: No PDB ID provided as command line argument.\n"
+                        f"  Usage: python {sys.argv[0]} <pdb_id>\n"
+                        f"  Example: python {sys.argv[0]} 1rkl\n"
+                        f"  Aborting to prevent incorrect simulation results.")
     
     # Configuration
     strict_from_martini_pdb = True
@@ -477,20 +479,23 @@ def main():
     ion_param_file = "ff3.00/martini_v3.0.0_ions_v1.itp"
     ion_topology = parse_itp_file(ion_param_file)
     # Extract NA and CL atoms specifically
-    na_atoms = [atom for atom in ion_topology['atoms'] if atom['residue'].upper() == 'NA']
-    cl_atoms = [atom for atom in ion_topology['atoms'] if atom['residue'].upper() == 'CL']
-    na_bead_types = [atom['type'] for atom in na_atoms] if na_atoms else ['TQ5']
-    na_charges = [atom['charge'] for atom in na_atoms] if na_atoms else [1.0]
-    cl_bead_types = [atom['type'] for atom in cl_atoms] if cl_atoms else ['TQ5']
-    cl_charges = [atom['charge'] for atom in cl_atoms] if cl_atoms else [-1.0]
+    # In MARTINI ion ITP files, residue name is "ION" and atom name is "NA" or "CL"
+    na_atoms = [atom for atom in ion_topology['atoms'] if atom['atom'].upper() == 'NA']
+    cl_atoms = [atom for atom in ion_topology['atoms'] if atom['atom'].upper() == 'CL']
+    
+    # For standard ions, use the first occurrence (standard chloride is TQ5, not SQ5n which is for acetate)
+    na_bead_types = [na_atoms[0]['type']] if na_atoms else []
+    na_charges = [na_atoms[0]['charge']] if na_atoms else []
+    cl_bead_types = [cl_atoms[0]['type']] if cl_atoms else []  # Use first CL (TQ5), not acetate CL (SQ5n)
+    cl_charges = [cl_atoms[0]['charge']] if cl_atoms else []
     print(f"Read ion topology: NA={len(na_bead_types)} types, CL={len(cl_bead_types)} types from {ion_param_file}")
     
     # Parse water topology from ITP file
     water_param_file = "ff3.00/martini_v3.0.0_solvents_v1.itp"
     water_topology = parse_itp_file(water_param_file)
     water_atoms = [atom for atom in water_topology['atoms'] if atom['residue'].upper() == 'W']
-    water_bead_types = [atom['type'] for atom in water_atoms] if water_atoms else ['W']
-    water_charges = [atom['charge'] for atom in water_atoms] if water_atoms else [0.0]
+    water_bead_types = [atom['type'] for atom in water_atoms]
+    water_charges = [atom['charge'] for atom in water_atoms]
     print(f"Read water topology: {len(water_bead_types)} bead types from {water_param_file}")
     
     # Read bead masses from force field file
@@ -644,21 +649,21 @@ def main():
                                    f"  This indicates incomplete water parameter file.\n"
                                    f"  Aborting to prevent incorrect simulation results.")
                 martini_type = water_bead_types[0]
-                charge = water_charges[0] if water_charges else 0.0
+                charge = water_charges[0]
             elif residue_name == 'NA':
                 if not na_bead_types:
                     raise ValueError(f"FATAL ERROR: No sodium bead types found in topology.\n"
                                    f"  This indicates incomplete ion parameter file.\n"
                                    f"  Aborting to prevent incorrect simulation results.")
                 martini_type = na_bead_types[0]
-                charge = na_charges[0] if na_charges else 1.0
+                charge = na_charges[0]
             elif residue_name == 'CL':
                 if not cl_bead_types:
                     raise ValueError(f"FATAL ERROR: No chloride bead types found in topology.\n"
                                    f"  This indicates incomplete ion parameter file.\n"
                                    f"  Aborting to prevent incorrect simulation results.")
                 martini_type = cl_bead_types[0]
-                charge = cl_charges[0] if cl_charges else -1.0
+                charge = cl_charges[0]
             else:
                 raise ValueError(f"FATAL ERROR: Unknown residue type '{residue_name}' for atom '{atom_name}'.\n"
                                f"  Supported residue types: PROTEIN, DOPC, W, NA, CL\n"
@@ -690,11 +695,10 @@ def main():
                     print(f"Found CRYST1 record: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
                     break
         else:
-            x_len = 50.0
-            y_len = 50.0
-            z_len = 50.0
-            print(f"WARNING: No CRYST1 record found in PDB file!")
-            print(f"Using default box dimensions: X={x_len:.1f}, Y={y_len:.1f}, Z={z_len:.1f} Angstroms")
+            raise ValueError(f"FATAL ERROR: No CRYST1 record found in PDB file '{input_pdb_file}'.\n"
+                           f"  Box dimensions are required for proper simulation setup.\n"
+                           f"  Please ensure the PDB file contains a CRYST1 record with box dimensions.\n"
+                           f"  Aborting to prevent incorrect simulation results.")
     
     # Print system parameters
     print(f"\n=== System Parameters ===")
@@ -956,8 +960,8 @@ def main():
         martini_potential = t.create_group(potential_grp, 'martini_potential')
         martini_potential._v_attrs.arguments = np.array([b'pos'])
         martini_potential._v_attrs.potential_type = b'lj_coulomb'
-        martini_potential._v_attrs.epsilon = 4.7  # Default MARTINI epsilon
-        martini_potential._v_attrs.sigma = 4.7    # Default MARTINI sigma
+        # Note: epsilon and sigma attributes are required by C++ interface but not used in computation
+        # They will be calculated from the coefficients array after it's created
         martini_potential._v_attrs.lj_cutoff = 12.0
         martini_potential._v_attrs.coul_cutoff = 12.0
         # dielectric constant is now included in the Coulomb k constant (31.775347952181)
@@ -1144,6 +1148,26 @@ def main():
 
         t.create_array(martini_potential, 'pairs', obj=np.array(pairs_list, dtype=int))
         t.create_array(martini_potential, 'coefficients', obj=np.array(coeff_array, dtype='f4'))
+        
+        # Calculate representative epsilon and sigma from the coefficients array
+        # These are required by the C++ interface but not used in computation
+        if coeff_array:
+            # Use the most common epsilon and sigma values from the coefficients
+            epsilon_values = [coeff[0] for coeff in coeff_array]  # epsilon values
+            sigma_values = [coeff[1] for coeff in coeff_array]    # sigma values
+            
+            # Use the median values as representative
+            epsilon_values.sort()
+            sigma_values.sort()
+            median_epsilon = epsilon_values[len(epsilon_values)//2]
+            median_sigma = sigma_values[len(sigma_values)//2]
+            
+            martini_potential._v_attrs.epsilon = median_epsilon
+            martini_potential._v_attrs.sigma = median_sigma
+        else:
+            raise ValueError("FATAL ERROR: No interaction coefficients found.\n"
+                           f"  This indicates no non-bonded interactions were defined.\n"
+                           f"  Aborting to prevent incorrect simulation results.")
 
         # Add bonded potentials mirroring original run_martini.py
         # Bonds: dist_spring
