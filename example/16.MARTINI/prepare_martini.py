@@ -972,6 +972,23 @@ def main():
         martini_potential._v_attrs.cache_buffer = 1.0
         martini_potential._v_attrs.initialized = True
         martini_potential._v_attrs.force_cap = 0
+        
+        # PME configuration for long-range Coulomb interactions
+        use_pme = int(os.environ.get('UPSIDE_USE_PME', '1'))
+        pme_alpha = float(os.environ.get('UPSIDE_PME_ALPHA', '0.2'))
+        pme_rcut = float(os.environ.get('UPSIDE_PME_RCUT', '10.0'))
+        pme_nx = int(os.environ.get('UPSIDE_PME_NX', '32'))
+        pme_ny = int(os.environ.get('UPSIDE_PME_NY', '32'))
+        pme_nz = int(os.environ.get('UPSIDE_PME_NZ', '32'))
+        pme_order = int(os.environ.get('UPSIDE_PME_ORDER', '4'))
+        
+        martini_potential._v_attrs.use_pme = use_pme
+        martini_potential._v_attrs.pme_alpha = pme_alpha
+        martini_potential._v_attrs.pme_rcut = pme_rcut
+        martini_potential._v_attrs.pme_nx = pme_nx
+        martini_potential._v_attrs.pme_ny = pme_ny
+        martini_potential._v_attrs.pme_nz = pme_nz
+        martini_potential._v_attrs.pme_order = pme_order
 
         martini_potential._v_attrs.x_len = x_len
         martini_potential._v_attrs.y_len = y_len

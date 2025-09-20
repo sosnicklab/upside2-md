@@ -596,19 +596,21 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
             if(energy_change < energy_tolerance && force_magnitude < force_tolerance) {
                 converged = true;
                 g_min_converged = true;
-                std::cout << "[MINIMIZER] CONVERGED! Energy change: " << energy_change 
-                          << " Force magnitude: " << force_magnitude << std::endl;
+                // Debug output removed as requested
+                // std::cout << "[MINIMIZER] CONVERGED! Energy change: " << energy_change 
+                //           << " Force magnitude: " << force_magnitude << std::endl;
                 return; // Exit minimization
             }
         }
         
         // Check max iterations
         if(iteration_count >= max_iterations) {
-            static bool max_iterations_reported = false;
-            if(!max_iterations_reported) {
-                std::cout << "[MINIMIZER] Reached maximum iterations: " << max_iterations << std::endl;
-                max_iterations_reported = true;
-            }
+            // Debug output removed as requested
+            // static bool max_iterations_reported = false;
+            // if(!max_iterations_reported) {
+            //     std::cout << "[MINIMIZER] Reached maximum iterations: " << max_iterations << std::endl;
+            //     max_iterations_reported = true;
+            // }
             return;
         }
         
@@ -617,7 +619,8 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
         
         // Check if forces are too large - if so, exit minimization
         if (force_magnitude > 1e10f) {
-            std::cout << "[MINIMIZER] Forces too large (" << force_magnitude << "), exiting minimization" << std::endl;
+            // Debug output removed as requested
+            // std::cout << "[MINIMIZER] Forces too large (" << force_magnitude << "), exiting minimization" << std::endl;
             g_min_converged = true;
             return;
         }
@@ -667,15 +670,15 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
         g_min_iteration_count = iteration_count;
         g_min_old_energy = old_energy;
         
-        // Print progress every 10 iterations for debugging (reduced verbosity)
-        if(iteration_count % 10 == 0 || iteration_count <= 5) {
-            std::cout << "[MINIMIZER] Iteration " << iteration_count 
-                      << " Energy: " << current_energy 
-                      << " Force: " << force_magnitude 
-                      << " Energy change: " << (iteration_count > 0 ? fabsf(current_energy - old_energy) : 0.0f) 
-                      << " Step size: " << adaptive_step_size 
-                      << " Force scale: " << force_scale << std::endl;
-        }
+        // Debug output removed as requested
+        // if(iteration_count % 10 == 0 || iteration_count <= 5) {
+        //     std::cout << "[MINIMIZER] Iteration " << iteration_count 
+        //               << " Energy: " << current_energy 
+        //               << " Force: " << force_magnitude 
+        //               << " Energy change: " << (iteration_count > 0 ? fabsf(current_energy - old_energy) : 0.0f) 
+        //               << " Step size: " << adaptive_step_size 
+        //               << " Force scale: " << force_scale << std::endl;
+        // }
         
         // Zero out momenta for minimization (no kinetic energy)
         for(int na=0; na < pos->n_atom; ++na) {
