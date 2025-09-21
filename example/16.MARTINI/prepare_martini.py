@@ -575,25 +575,6 @@ def main():
     protein_bonds, protein_angles, protein_dihedrals = read_protein_itp_connectivity(protein_itp)
     protein_exclusions = read_protein_itp_exclusions(protein_itp)
     
-    # Protein bead type aliases
-    protein_bead_alias = {
-        'BB': 'P2', 'SC1': 'P5', 'SC2': 'SC2', 'SC3': 'SC3', 'SC4': 'SC4',
-        'SP1': 'SP1', 'SP2': 'SP2', 'SP5': 'SP5', 'TP1': 'TP1', 'TP2': 'TP2',
-        'TC3': 'TC3', 'TC4': 'TC4', 'TC5': 'TC5', 'TN5a': 'TN5a', 'TN6': 'TN6',
-        'TN6d': 'TN6d', 'SQ5n': 'SQ5n', 'Q5n': 'Q5n', 'C6': 'C6'
-    }
-    
-    # Standard MARTINI mappings
-    pdb_to_martini = {
-        'NC3': 'Q1', 'PO4': 'Q5', 'GL1': 'SN4a', 'GL2': 'N4a',
-        'C1A': 'C1', 'C2A': 'C4h', 'C3A': 'C1', 'C4A': 'C1',
-        'C1B': 'C1', 'C2B': 'C4h', 'C3B': 'C1', 'C4B': 'C1'
-    }
-    
-    martini_charges = {
-        'Q1': 1.0, 'Q5': -1.0, 'SN4a': 0.0, 'N4a': 0.0,
-        'C1': 0.0, 'C4h': 0.0, 'W': 0.0, 'TQ5': 1.0
-    }
     
     with open(input_pdb_file, 'r') as f:
         for line in f:
@@ -629,8 +610,8 @@ def main():
                 else:
                     # Raise error for unknown protein atom
                     raise ValueError(f"FATAL ERROR: Unknown protein atom '{atom_name}' in residue '{residue_name}'.\n"
-                                   f"  Available protein bead aliases: {sorted(protein_bead_alias.keys())}\n"
-                                   f"  This indicates incomplete protein topology mapping.\n"
+                                   f"  This indicates incomplete protein topology mapping in the ITP file.\n"
+                                   f"  Please ensure the protein topology file '{protein_itp}' contains proper mapping for this atom.\n"
                                    f"  Aborting to prevent incorrect simulation results.")
             elif residue_name == 'DOPC' or residue_name == 'DOP':
                 # For DOPC, use the topology from parameter file
