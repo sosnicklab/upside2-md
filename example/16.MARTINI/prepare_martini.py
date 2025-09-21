@@ -687,7 +687,7 @@ def main():
     print(f"Box volume: {x_len * y_len * z_len:.1f} Å³")
     print(f"Total atoms: {n_atoms}")
     
-    # Group atoms into molecules
+    # Group atoms into molecules by residue ID and residue name
     molecules = []
     current_mol_atoms = []
     current_mol_names = []
@@ -707,7 +707,8 @@ def main():
             # Normalize DOP (resname in PDB) to DOPC for reporting and selection
             mol_type = 'DOPC' if resname == 'DOP' else resname
             
-        if resid != current_resid:
+        # Start new molecule if residue ID OR residue name changes
+        if resid != current_resid or resname != current_resname:
             if current_mol_atoms:
                 molecules.append((current_mol_type, current_mol_atoms, current_mol_indices))
             current_mol_atoms = [atom_name]
@@ -722,6 +723,19 @@ def main():
     
     if current_mol_atoms:
         molecules.append((current_mol_type, current_mol_atoms, current_mol_indices))
+    
+    # Validate that each molecule contains only atoms of the same residue type
+    print(f"\n=== Validating Molecule Integrity ===")
+    for i, (mol_type, atoms, indices) in enumerate(molecules):
+        residue_names_in_mol = [residue_names[idx] for idx in indices]
+        unique_resnames = set(residue_names_in_mol)
+        if len(unique_resnames) > 1:
+            raise ValueError(f"FATAL ERROR: Molecule {i} contains mixed residue types: {unique_resnames}\n"
+                           f"  This indicates incorrect molecule grouping.\n"
+                           f"  Molecule atoms: {atoms}\n"
+                           f"  Residue names: {residue_names_in_mol}\n"
+                           f"  Aborting to prevent incorrect simulation results.")
+        print(f"Molecule {i} ({mol_type}): {len(atoms)} atoms, residue type: {list(unique_resnames)[0]} ✓")
     
     # Count molecules by type, but group all protein residues together
     mol_counts = Counter()
@@ -742,6 +756,15 @@ def main():
     print(f"\n=== Molecule Summary ===")
     for moltype, count in mol_counts.items():
         print(f"{moltype}: {count} molecules")
+    
+    # Debug: Show first few molecules to verify proper separation
+    print(f"\n=== Molecule Details (first 10) ===")
+    for i, (mol_type, atoms, indices) in enumerate(molecules[:10]):
+        print(f"Molecule {i}: {mol_type} with {len(atoms)} atoms (indices {indices[0]}-{indices[-1]})")
+        print(f"  Atoms: {atoms}")
+        print(f"  Residue IDs: {[residue_ids[idx] for idx in indices]}")
+        print(f"  Residue Names: {[residue_names[idx] for idx in indices]}")
+        print()
     
     # Create bonds and angles
     print(f"\n=== Creating Connectivity ===")
@@ -1052,10 +1075,8 @@ def main():
         pairs_list = []
         coeff_array = []
         
-        # Create sets for different exclusion levels
+        # Create sets for exclusions (MARTINI uses nrexcl=1, so only 1-2 exclusions)
         bonded_pairs_12 = set()  # Directly bonded (1-2) - full exclusion
-        bonded_pairs_13 = set()  # Connected by angles (1-3) - full exclusion
-        bonded_pairs_14 = set()  # Connected by dihedrals (1-4) - scaled interaction
         additional_exclusions = set()  # Additional exclusions from ITP file
         
         # Add 1-2 exclusions from bond list
@@ -1063,42 +1084,23 @@ def main():
             sorted_bond = (min(bond[0], bond[1]), max(bond[0], bond[1]))
             bonded_pairs_12.add(sorted_bond)
         
-        # Add 1-3 exclusions from angle list
-        for angle in angles_list:
-            # Atoms 0 and 2 in angle are 1-3 connected
-            sorted_pair = (min(angle[0], angle[2]), max(angle[0], angle[2]))
-            bonded_pairs_13.add(sorted_pair)
-        
-        # Add 1-4 pairs from dihedral list
-        for dihedral in dihedrals_list:
-            # Atoms 0 and 3 in dihedral are 1-4 connected
-            sorted_pair = (min(dihedral[0], dihedral[3]), max(dihedral[0], dihedral[3]))
-            bonded_pairs_14.add(sorted_pair)
-        
         # Add additional exclusions from protein ITP file
         if protein_exclusions:
             for exclusion in protein_exclusions:
                 sorted_exclusion = (min(exclusion[0], exclusion[1]), max(exclusion[0], exclusion[1]))
                 additional_exclusions.add(sorted_exclusion)
         
-        # Generate all unique pairs (i < j) with proper exclusions
+        # Generate all unique pairs (i < j) with proper exclusions (nrexcl=1)
         excluded_12_count = 0
-        excluded_13_count = 0
         excluded_additional_count = 0
-        scaled_14_count = 0
         
         for i in range(n_atoms):
             for j in range(i + 1, n_atoms):
                 pair = (i, j)
                 
-                # Skip 1-2 pairs (full exclusion)
+                # Skip 1-2 pairs (full exclusion) - nrexcl=1
                 if pair in bonded_pairs_12:
                     excluded_12_count += 1
-                    continue
-                
-                # Skip 1-3 pairs (full exclusion)
-                if pair in bonded_pairs_13:
-                    excluded_13_count += 1
                     continue
                 
                 # Skip additional exclusions from ITP file
@@ -1106,11 +1108,8 @@ def main():
                     excluded_additional_count += 1
                     continue
                 
-                # Scale 1-4 pairs (typically 0.5 scaling factor)
+                # No scaling needed for MARTINI (nrexcl=1)
                 scale_factor = 1.0
-                if pair in bonded_pairs_14:
-                    scale_factor = 0.5  # Standard 1-4 scaling
-                    scaled_14_count += 1
                 
                 pairs_list.append([i, j])
                 
@@ -1139,10 +1138,8 @@ def main():
                 q2 = charges[j] * scale_factor
                 coeff_array.append([epsilon * scale_factor, sigma, q1, q2])
         
-        print(f"Excluded {excluded_12_count} 1-2 bonded pairs from non-bonded interactions")
-        print(f"Excluded {excluded_13_count} 1-3 angle-connected pairs from non-bonded interactions")
+        print(f"Excluded {excluded_12_count} 1-2 bonded pairs from non-bonded interactions (nrexcl=1)")
         print(f"Excluded {excluded_additional_count} additional pairs from ITP exclusions")
-        print(f"Scaled {scaled_14_count} 1-4 dihedral-connected pairs with factor 0.5")
 
         t.create_array(martini_potential, 'pairs', obj=np.array(pairs_list, dtype=int))
         t.create_array(martini_potential, 'coefficients', obj=np.array(coeff_array, dtype='f4'))
@@ -1236,10 +1233,8 @@ def main():
         f.write(f"Protein dihedrals: {protein_dihedral_count}\n")
         f.write(f"DOPC lipids: {dopc_count}\n")
         f.write(f"Water molecules: {water_count}\n")
-        f.write(f"1-2 exclusions: {excluded_12_count}\n")
-        f.write(f"1-3 exclusions: {excluded_13_count}\n")
+        f.write(f"1-2 exclusions (nrexcl=1): {excluded_12_count}\n")
         f.write(f"Additional exclusions: {excluded_additional_count}\n")
-        f.write(f"1-4 scaled pairs: {scaled_14_count}\n")
     
     print(f"Preparation summary saved to: {summary_file}")
 
