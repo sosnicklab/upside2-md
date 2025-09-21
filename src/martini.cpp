@@ -1424,6 +1424,8 @@ struct MartiniPotential : public PotentialNode
             
             // Coulomb potential using single spline for each charge product
             if(qi != 0.f && qj != 0.f && dist < coul_cutoff) {
+                // DEBUG: Check cutoff behavior
+                // if(debug_step_count < 5) std::cout << "COULOMB: dist=" << dist << ", coul_cutoff=" << coul_cutoff << ", dist < coul_cutoff=" << (dist < coul_cutoff) << std::endl;
                 float qq = qi * qj;
                 // DEBUG: Check charge product
                 // if(debug_step_count < 5) std::cout << "COULOMB: Looking for q1*q2=" << qq << " (qi=" << qi << ", qj=" << qj << ")" << std::endl;
@@ -1450,24 +1452,34 @@ struct MartiniPotential : public PotentialNode
                     if(coulomb_it != coulomb_splines.end()) {
                         // DEBUG: Uncomment to check Coulomb computation
                         // std::cout << "COULOMB: Using spline for q1*q2=" << qq << " at r=" << dist << std::endl;
-                        // Use spline interpolation for Coulomb potential and force
-                        // Transform physical distance to spline coordinate [0, 999]
-                        float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
-
-                        float coul_result[2];
-                        // CORRECT: Call evaluate_value_and_deriv only on the potential spline
-                        coulomb_it->second.evaluate_value_and_deriv(coul_result, 0, r_coord);
-
-                        coul_pot = coul_result[1];           // Index 1 is the value
-                        float coul_deriv_spline = coul_result[0];   // Index 0 is the derivative w.r.t. spline coordinate
-
-                        // Convert derivative from spline coordinate to physical coordinate (dE/dr)
-                        // dE/dr = dE/d(coord) * d(coord)/dr
-                        float coord_scale = 999.0f / (coul_r_max - coul_r_min);
-                        float dE_dr = coul_deriv_spline * coord_scale;
                         
-                        // The force is the negative gradient: F = -dE/dr
-                        coul_force_mag = -dE_dr;
+                        // Check if distance is within spline range before evaluation
+                        if(dist >= coul_r_min && dist <= coul_r_max) {
+                            // DEBUG: Check spline range
+                            // if(debug_step_count < 5) std::cout << "COULOMB SPLINE: dist=" << dist << ", coul_r_min=" << coul_r_min << ", coul_r_max=" << coul_r_max << ", within_range=" << (dist >= coul_r_min && dist <= coul_r_max) << std::endl;
+                            // Use spline interpolation for Coulomb potential and force
+                            // Transform physical distance to spline coordinate [0, 999]
+                            float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
+
+                            float coul_result[2];
+                            // CORRECT: Call evaluate_value_and_deriv only on the potential spline
+                            coulomb_it->second.evaluate_value_and_deriv(coul_result, 0, r_coord);
+
+                            coul_pot = coul_result[1];           // Index 1 is the value
+                            float coul_deriv_spline = coul_result[0];   // Index 0 is the derivative w.r.t. spline coordinate
+
+                            // Convert derivative from spline coordinate to physical coordinate (dE/dr)
+                            // dE/dr = dE/d(coord) * d(coord)/dr
+                            float coord_scale = 999.0f / (coul_r_max - coul_r_min);
+                            float dE_dr = coul_deriv_spline * coord_scale;
+                            
+                            // The force is the negative gradient: F = -dE/dr
+                            coul_force_mag = -dE_dr;
+                        } else {
+                            // Distance is outside spline range - no interaction
+                            coul_pot = 0.0f;
+                            coul_force_mag = 0.0f;
+                        }
                     }
                 }
 
