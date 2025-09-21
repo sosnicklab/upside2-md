@@ -213,13 +213,19 @@ struct DihedralSpring : public PotentialNode
             if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
             if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
             if(delta_phi >= dihedral_min && delta_phi <= dihedral_max) {
-                float phi_coord = delta_phi;
+                // Transform delta_phi to spline coordinate [0, 999] (same as other splines)
+                float phi_coord = (delta_phi - dihedral_min) / (dihedral_max - dihedral_min) * 999.0f;
                 
                 // Get potential and force from single spline
                 float result[2];
                 dihedral_potential_spline.evaluate_value_and_deriv(result, 0, phi_coord);
                 float dihedral_pot = result[1]; // Index 1 is the value
-                float dE_ddelta = result[0]; // Index 0 is the derivative w.r.t. delta_phi
+                float dE_ddelta_spline = result[0]; // Index 0 is the derivative w.r.t. spline coordinate
+                
+                // Convert derivative from spline coordinate to physical coordinate (dE/d(delta_phi))
+                // dE/d(delta_phi) = dE/d(coord) * d(coord)/d(delta_phi)
+                float coord_scale = 999.0f / (dihedral_max - dihedral_min);
+                float dE_ddelta = dE_ddelta_spline * coord_scale;
                 float dihedral_force_mag = p.spring_constant * dE_ddelta;
                 
                 // Use spline-evaluated potential and force
@@ -1647,19 +1653,26 @@ struct DistSpring : public PotentialNode
             // Use spline interpolation for bond potential and force (in delta-r space)
             float delta_r = dist - p.equil_dist;
             if(delta_r >= bond_delta_min && delta_r <= bond_delta_max) {
-                float r_coord = delta_r;
+                // Transform delta_r to spline coordinate [0, 999] (same as LJ and Coulomb splines)
+                float r_coord = (delta_r - bond_delta_min) / (bond_delta_max - bond_delta_min) * 999.0f;
                 
                 // Get potential and force from single spline
                 float result[2];
                 bond_potential_spline.evaluate_value_and_deriv(result, 0, r_coord);
                 float bond_pot = result[1]; // Index 1 is the value
-                float bond_deriv = result[0]; // Index 0 is the derivative w.r.t. delta_r
+                float bond_deriv_spline = result[0]; // Index 0 is the derivative w.r.t. spline coordinate
+                
+                
+                // Convert derivative from spline coordinate to physical coordinate (dE/d(delta_r))
+                // dE/d(delta_r) = dE/d(coord) * d(coord)/d(delta_r)
+                float coord_scale = 999.0f / (bond_delta_max - bond_delta_min);
+                float bond_deriv = bond_deriv_spline * coord_scale;
                 
                 // Scale by spring constant to match parameterized harmonic
                 if(pot) *pot += p.spring_constant * bond_pot;
                 
-                // Apply force: F = -dE/dr, here dE/dr = k * dE/ddelta * ddelta/dr with ddelta/dr = 1
-                // The derivative is already dE/d(delta_r), so we use it directly
+                // Apply force: F = -dE/dr, here dE/dr = k * dE/d(delta_r) * d(delta_r)/dr with d(delta_r)/dr = 1
+                // The derivative is now correctly dE/d(delta_r), so we use it directly
                 auto deriv = (p.spring_constant * bond_deriv / dist) * disp;
                 update_vec(pos_sens, p.atom[0],  deriv);
                 update_vec(pos_sens, p.atom[1], -deriv);
@@ -1846,13 +1859,19 @@ struct AngleSpring : public PotentialNode
             float cos_equil = cosf(p.equil_angle_deg * M_PI / 180.0f);
             float delta_cos = dp - cos_equil;
             if(delta_cos >= angle_cos_min && delta_cos <= angle_cos_max) {
-                float cos_coord = delta_cos;
+                // Transform delta_cos to spline coordinate [0, 999] (same as other splines)
+                float cos_coord = (delta_cos - angle_cos_min) / (angle_cos_max - angle_cos_min) * 999.0f;
                 
                 // Get potential and force from single spline
                 float result[2];
                 angle_potential_spline.evaluate_value_and_deriv(result, 0, cos_coord);
                 float angle_pot = result[1]; // Index 1 is the value
-                float angle_deriv = result[0]; // Index 0 is the derivative w.r.t. delta_cos
+                float angle_deriv_spline = result[0]; // Index 0 is the derivative w.r.t. spline coordinate
+                
+                // Convert derivative from spline coordinate to physical coordinate (dE/d(delta_cos))
+                // dE/d(delta_cos) = dE/d(coord) * d(coord)/d(delta_cos)
+                float coord_scale = 999.0f / (angle_cos_max - angle_cos_min);
+                float angle_deriv = angle_deriv_spline * coord_scale;
                 
                 // Use spline-evaluated potential
                 if(pot) *pot += p.spring_constant * angle_pot;
