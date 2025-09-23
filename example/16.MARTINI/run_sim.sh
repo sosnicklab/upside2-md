@@ -35,17 +35,8 @@ POTENTIAL_MODE="${POTENTIAL_MODE:-soft}"
 # Can be overridden via environment variable: USE_PME=1 ./run_sim.sh
 USE_PME="${USE_PME:-1}"
 
-# MINIMIZATION CONFIGURATION
-# Set to "1" to enable energy minimization between softened and regular potential stages
-# Set to "0" to skip minimization
-# Can be overridden via environment variable: ENABLE_MINIMIZATION=1 ./run_sim.sh
-ENABLE_MINIMIZATION="${ENABLE_MINIMIZATION:-1}"
-
-# Minimization parameters (can be overridden via environment variables)
-MIN_MAX_ITERATIONS="${MIN_MAX_ITERATIONS:-1000}"
-MIN_ENERGY_TOLERANCE="${MIN_ENERGY_TOLERANCE:-1e-6}"
-MIN_FORCE_TOLERANCE="${MIN_FORCE_TOLERANCE:-1e-6}"
-MIN_STEP_SIZE="${MIN_STEP_SIZE:-0.1}"
+# THERMOSTAT INTERVAL (optional; set default if unset)
+THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
 # =============================================================================
 
 # Validate potential mode
@@ -62,12 +53,6 @@ if [ "$USE_PME" != "0" ] && [ "$USE_PME" != "1" ]; then
     exit 1
 fi
 
-# Validate minimization setting
-if [ "$ENABLE_MINIMIZATION" != "0" ] && [ "$ENABLE_MINIMIZATION" != "1" ]; then
-    echo "ERROR: Invalid ENABLE_MINIMIZATION: $ENABLE_MINIMIZATION"
-    echo "Valid options: '0' (disable) or '1' (enable)"
-    exit 1
-fi
 
 # Command line argument overrides the configuration above
 if [ $# -eq 1 ]; then
@@ -85,7 +70,7 @@ fi
 
 echo "Potential mode: $POTENTIAL_MODE"
 echo "PME enabled: $USE_PME"
-echo "Minimization enabled: $ENABLE_MINIMIZATION"
+echo "Thermostat interval: $THERMOSTAT_INTERVAL"
 
 # Configuration
 INPUTS_DIR="inputs"
@@ -136,14 +121,12 @@ TIME_STEP=0.01
 THERMOSTAT_TIMESCALE=0.135
 #THERMOSTAT_TIMESCALE=5
 #THERMOSTAT_INTERVAL=-1
-PRESSURE=0.000020652136
-BAROSTAT_TIMESCALE=1.0
-BAROSTAT_INTERVAL=1.0
 SEED=12345
-# Use nvt_corrected integrator for proper energy conservation
-# This avoids the problematic ad-hoc corrections in the standard VelocityVerlet
-#INTEGRATOR="nvt_corrected"
-INTEGRATOR="npt"
+# Integrators: allow separate choices for softened/min/min and regular stages
+INTEGRATOR_SOFT="${INTEGRATOR_SOFT:-nvtc}"
+INTEGRATOR_MIN="${INTEGRATOR_MIN:-nvtc}"
+INTEGRATOR_REG="${INTEGRATOR_REG:-nvtc}"
+MAX_FORCE="${MAX_FORCE:-50}"
 
 echo "Simulation parameters:"
 echo "  Duration: $DURATION steps"
@@ -151,8 +134,7 @@ echo "  Frame interval: $FRAME_INTERVAL steps"
 echo "  Temperature: $TEMPERATURE UPSIDE units (~280 K)"
 echo "  Time step: $TIME_STEP"
 echo "  Thermostat timescale: $THERMOSTAT_TIMESCALE"
-echo "  Pressure: $PRESSURE UPSIDE units (1 bar = 0.000020652136 Å⁻³)"
-echo "  Integrator: $INTEGRATOR"
+echo "  Integrators: soft=$INTEGRATOR_SOFT, min=$INTEGRATOR_MIN, reg=$INTEGRATOR_REG"
 echo
 
 # Step 1: Prepare input files (produce example/16.MARTINI/outputs/martini_test/test.input.up)
@@ -234,12 +216,9 @@ if [ "$POTENTIAL_MODE" = "regular" ]; then
         "--time-step" "$TIME_STEP"
         "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
         "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-        "--pressure" "$PRESSURE"
-        "--barostat-timescale" "$BAROSTAT_TIMESCALE"
-        "--barostat-interval" "$BAROSTAT_INTERVAL"
         "--seed" "$SEED"
         "--integrator" "$INTEGRATOR"
-        "--disable-initial-thermalization"
+        "--max-force" "$MAX_FORCE"
         "--disable-recentering"
     )
     echo "Command (regular): ${CMD_REG[*]}"
@@ -274,12 +253,9 @@ CMD_SOFT=(
     "--time-step" "$TIME_STEP"
     "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
     "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-    "--pressure" "$PRESSURE"
-    "--barostat-timescale" "$BAROSTAT_TIMESCALE"
-    "--barostat-interval" "$BAROSTAT_INTERVAL"
     "--seed" "$SEED"
-    "--integrator" "$INTEGRATOR"
-    "--disable-initial-thermalization"
+    "--integrator" "$INTEGRATOR_SOFT"
+    "--max-force" "$MAX_FORCE"
     "--disable-recentering"
 )
 echo "Command (soft): ${CMD_SOFT[*]}"
@@ -328,50 +304,35 @@ with h5py.File(path, 'r+') as f:
         pot.attrs['lj_soften'] = 0
 PYEOF
 
-# Stage 3.2.5: Energy minimization with regular potential (if enabled)
-if [ "$ENABLE_MINIMIZATION" = "1" ]; then
-    echo "-- Stage 2.5: Energy minimization with regular potential --"
-    echo "Performing energy minimization to optimize structure before regular simulation"
-    MINIMIZATION_START=$(date +%s)
-
-    echo "Minimization parameters:"
-    echo "  Max iterations: $MIN_MAX_ITERATIONS"
-    echo "  Energy tolerance: $MIN_ENERGY_TOLERANCE"
-    echo "  Force tolerance: $MIN_FORCE_TOLERANCE"
-    echo "  Step size: $MIN_STEP_SIZE"
-
-    # Run minimization using UPSIDE minimize mode
-    # Note: UPSIDE will update the input file with minimized coordinates
+# Stage 3.2.5: Energy minimization between soft and regular
+    echo "-- Stage 2: Minimization (pre-regular) --"
     CMD_MIN=(
         "$UPSIDE_EXECUTABLE"
         "$INPUT_FILE"
-        "--duration" "$MIN_MAX_ITERATIONS"
-        "--temperature" "0.0"
-        "--time-step" "$MIN_STEP_SIZE"
-        "--frame-interval" "1"
-        "--integrator" "minimize"
-        "--min-max-iterations" "$MIN_MAX_ITERATIONS"
-        "--min-energy-tolerance" "$MIN_ENERGY_TOLERANCE"
-        "--min-force-tolerance" "$MIN_FORCE_TOLERANCE"
-        "--min-step-size" "$MIN_STEP_SIZE"
-        "--disable-initial-thermalization"
+        "--duration" "0"                # run only minimization then exit
+        "--frame-interval" "$FRAME_INTERVAL"
+        "--temperature" "$TEMPERATURE"
+        "--time-step" "$TIME_STEP"
+        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+        "--seed" "$SEED"
+        "--integrator" "$INTEGRATOR_MIN"
+        "--max-force" "${MAX_FORCE_MIN:-20}"
+        "--minimize"                  # enable minimization
+        "--min-max-iter" "1000"
+        "--min-energy-tol" "1e-6"
+        "--min-force-tol" "1e-3"
+        "--min-step" "0.1"
         "--disable-recentering"
     )
-    echo "Command (minimize): ${CMD_MIN[*]}"
-    if "${CMD_MIN[@]}" 2>&1 | tee -a "$LOG_FILE"; then
-        MINIMIZATION_END=$(date +%s)
-        echo "Energy minimization completed in $((MINIMIZATION_END - MINIMIZATION_START)) seconds"
-        echo "Minimized coordinates have been written to $INPUT_FILE"
-    else
-        echo "ERROR: Energy minimization failed!"
+    echo "Command (min): ${CMD_MIN[*]}"
+    if ! "${CMD_MIN[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+        echo "ERROR: Minimization stage failed!"
         exit 1
     fi
-else
-    echo "-- Stage 2.5: Skipping energy minimization (ENABLE_MINIMIZATION=0) --"
-fi
 
 # Stage 3.3: regular run for remaining steps (writes to INPUT_FILE:/output)
-    echo "-- Stage 2: Regular potential for $REMAINING_STEPS steps --"
+    echo "-- Stage 3: Regular potential for $REMAINING_STEPS steps --"
     CMD_REG=(
         "$UPSIDE_EXECUTABLE"
         "$INPUT_FILE"
@@ -381,12 +342,9 @@ fi
         "--time-step" "$TIME_STEP"
         "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
         "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-        "--pressure" "$PRESSURE"
-        "--barostat-timescale" "$BAROSTAT_TIMESCALE"
-        "--barostat-interval" "$BAROSTAT_INTERVAL"
         "--seed" "$SEED"
-        "--integrator" "$INTEGRATOR"
-        "--disable-initial-thermalization"
+        "--integrator" "$INTEGRATOR_REG"
+        "--max-force" "$MAX_FORCE"
         "--disable-recentering"
     )
     echo "Command (regular): ${CMD_REG[*]}"

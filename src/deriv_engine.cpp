@@ -49,20 +49,6 @@ recenter(VecArray pos, bool xy_recenter_only, int n_atom)
         update_vec(pos, na, -center);
 }
 
-// Remove center-of-mass velocity to prevent drift
-void
-remove_com_velocity(VecArray mom, int n_atom)
-{
-    float3 com_vel = make_vec3(0.f, 0.f, 0.f);
-    for(int na=0; na<n_atom; ++na) com_vel += load_vec<3>(mom, na);
-    com_vel /= float(n_atom);
-
-    for(int na=0; na<n_atom; ++na) {
-        auto p = load_vec<3>(mom, na) - com_vel;
-        store_vec(mom, na, p);
-    }
-}
-
 void add_node_creation_function(std::string name_prefix, NodeCreationFunction fcn)
 {
     auto& m = node_creation_map();
@@ -253,10 +239,6 @@ void DerivEngine::build_integrator_levels( bool print_info, float dt, int inner_
 void DerivEngine::compute(ComputeMode mode) {
     if(mode == PotentialAndDerivMode) potential = 0.f;
 
-    // --- ADDED: Zero out the main position sensitivity (force) array before accumulating new forces ---
-    // This ensures that all force contributions (bonded and non-bonded) are properly summed
-    fill(pos->sens, 0.f);
-
     for(int i : germ_exec_levels) {
         auto& n = nodes[i];
         n.computation->compute_value(mode);
@@ -310,460 +292,62 @@ void DerivEngine::compute(ComputeMode mode, int integrator_level) {
 }
 
 
-void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, IntegratorType type, VecArray masses) {
-    if (type == VelocityVerlet) {
-        // Velocity Verlet integrator
-        static int debug_step_count = 0;
-        
-        // Step 1: Compute forces at current positions
-        compute(DerivMode);   // compute forces at current positions
-        
+void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, IntegratorType type) {
+    // integrator from Predescu et al., 2012
+    // http://dx.doi.org/10.1080/00268976.2012.681311
 
-        
-        // Step 2: Update velocities by half step
+    float a = (type==Predescu) ? 0.108991425403425322 : 1./6.;
+    float b = (type==Predescu) ? 0.290485609075128726 : 1./3.;
+
+    float mom_update[] = {1.5f-3.f*a, 1.5f-3.f*a, 6.f*a};
+    float pos_update[] = {     3.f*b, 3.0f-6.f*b, 3.f*b};
+
+    for(int stage=0; stage<3; ++stage) {
+        compute(DerivMode);   // compute derivatives
+        Timer timer(string("integration"));
+        integration_stage( 
+                mom,
+                pos->output,
+                pos->sens,
+                dt*mom_update[stage], dt*pos_update[stage], max_force, 
+                pos->n_atom);
+    }
+}
+
+void DerivEngine::integration_cycle(VecArray mom, float dt) {
+
+    for(int stage=0; stage<3; ++stage) {
+        compute(DerivMode);   // compute derivatives
+        Timer timer(string("integration"));
+
         for(int na=0; na < pos->n_atom; ++na) {
+            // assumes unit mass for all particles
             auto d = load_vec<3>(pos->sens, na);
-            if(max_force) {
-                float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
-                float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
-                d *= scale_factor;
-            }
-            // Apply mass scaling to velocity update
-            float particle_mass = (masses.x == nullptr) ? 1.0f : masses(0, na);
-            auto p = load_vec<3>(mom, na) - 0.5f*dt*d/particle_mass;  // half step velocity update with mass
-            store_vec (mom, na, p);
-        }
-        
-        // Step 3: Update positions by full step
-        for(int na=0; na < pos->n_atom; ++na) {
-            auto p = load_vec<3>(mom, na);
-            auto pos_vec = load_vec<3>(pos->output, na);
-            auto new_pos = pos_vec + dt*p;
-            store_vec(pos->output, na, new_pos);
-        }
-
-        // Step 4: Compute forces at new positions
-        compute(DerivMode);   // compute forces at new positions
-        
-
-        
-        // Step 5: Update velocities by another half step
-        for(int na=0; na < pos->n_atom; ++na) {
-            auto d = load_vec<3>(pos->sens, na);
-            if(max_force) {
-                float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
-                float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
-                d *= scale_factor;
-            }
-            // Apply mass scaling to velocity update
-            float particle_mass = (masses.x == nullptr) ? 1.0f : masses(0, na);
-            auto p = load_vec<3>(mom, na) - 0.5f*dt*d/particle_mass;  // half step velocity update with mass
-            store_vec (mom, na, p);
-        }
-        
-        // Step 5: Remove center-of-mass velocity to prevent drift (every step)
-        remove_com_velocity(mom, pos->n_atom);
-        
-        // Step 5.5: Additional drift correction - remove any remaining COM velocity
-        // This is a double-check to ensure no drift accumulates
-        float3 com_vel = make_vec3(0.f, 0.f, 0.f);
-        for(int na=0; na<pos->n_atom; ++na) com_vel += load_vec<3>(mom, na);
-        com_vel /= float(pos->n_atom);
-        
-        // If there's still significant COM velocity, remove it
-        if (fabs(com_vel.x()) > 1e-6f || fabs(com_vel.y()) > 1e-6f || fabs(com_vel.z()) > 1e-6f) {
-            for(int na=0; na<pos->n_atom; ++na) {
-                auto p = load_vec<3>(mom, na) - com_vel;
-                store_vec(mom, na, p);
-            }
-        }
-        
-        // Step56rce symmetrization to eliminate systematic bias
-        // Calculate center of mass of forces and subtract to ensure zero net force
-        float3 com_force = make_vec3(0.f, 0.f, 0.f);
-        for(int na=0; na<pos->n_atom; ++na) com_force += load_vec<3>(pos->sens, na);
-        com_force /= float(pos->n_atom);
-        
-        // If there's systematic force bias, remove it
-        if (fabs(com_force.x()) > 1e-10 || fabs(com_force.y()) > 1e-10 || fabs(com_force.z()) > 1e-10) {
-            for(int na=0; na<pos->n_atom; ++na) {
-                auto f = load_vec<3>(pos->sens, na) - com_force;
-                store_vec(pos->sens, na, f);
-            }
-
-        }
-        
-        // Step 5.7: Force noise reduction - filter out very small forces that may be numerical noise
-        // This prevents accumulation of tiny systematic forces
-        for(int na=0; na<pos->n_atom; ++na) {
-            auto f = load_vec<3>(pos->sens, na);
-            float f_mag = mag(f);
-            
-            // If force is very small (likely numerical noise), zero it out
-            if (f_mag < 1e-10f) {
-                store_vec(pos->sens, na, make_vec3(0.f, 0.f, 0.f));
-
-            }
-        }
-        
-
-        
-        // Step 6: More aggressive recentering to prevent x-axis drift
-        // Recenter every 20 steps to prevent systematic drift, especially in x-axis
-        static int recenter_counter = 0;
-        recenter_counter++;
-        if (recenter_counter >= 20) {
-            recenter(pos->output, false, pos->n_atom);  // false = recenter in all directions
-            recenter_counter = 0;
-
-        }
-        
-        // Step6.5 Additional x-axis specific drift correction
-        // Check if particles are drifting in the same direction and correct
-        float3 com_pos = make_vec3(0.f, 0.f, 0.f);
-        for(int na=0; na<pos->n_atom; ++na) com_pos += load_vec<3>(pos->output, na);
-        com_pos /= float(pos->n_atom);
-        // If center of mass has drifted significantly in x, recenter
-        if (fabs(com_pos.x()) > 1e-5f) { // 0.00001 Å threshold
-            for(int na=0; na<pos->n_atom; ++na) {
-                auto p = load_vec<3>(pos->output, na);
-                p.x() -= com_pos.x();  // Only correct x-axis
-                store_vec(pos->output, na, p);
-            }
-
-        }
-        
-        // Step 60.6riodic force reset to prevent systematic accumulation
-        // Every 100eck for systematic force patterns and reset if needed
-        static int force_reset_counter = 0;
-        force_reset_counter++;
-        if (force_reset_counter >= 100) {
-            // Calculate average force over the last 100 steps
-            static float3 force_accumulator = make_vec3(0.f, 0.f, 0.f);
-            float3 current_com_force = make_vec3(0.f, 0.f, 0.f);
-            for(int na=0; na<pos->n_atom; ++na) {
-                current_com_force += load_vec<3>(pos->sens, na);
-            }
-            current_com_force /= float(pos->n_atom);
-            force_accumulator += current_com_force;
-            
-            // If accumulated force is significant, apply correction
-            float3 avg_force = force_accumulator / 100.0f;
-            if (fabs(avg_force.x()) > 0.000001 || fabs(avg_force.y()) > 0.000001 || fabs(avg_force.z()) > 1e-6f) { // Apply momentum correction to counteract systematic force
-                for(int na=0; na<pos->n_atom; ++na) {
-                    auto p = load_vec<3>(mom, na);
-                    p -= avg_force * dt * 50.f;  // Correct for half the accumulation period
-                    store_vec(mom, na, p);
-                }
-
-            }
-            
-            // Reset accumulators
-            force_accumulator = make_vec3(0.f, 0.f, 0.f);
-            force_reset_counter = 0;
-        }
-        
-        if(debug_step_count < 25) debug_step_count++;
-        
-    } else if (type == NPT) {
-        // NPT ensemble integrator - simplified for stability
-        // Use standard Velocity Verlet without aggressive corrections
-        
-        // Step 1: Compute forces at current positions
-        compute(DerivMode);
-        
-        // Step 2: Update velocities by half step
-        for(int na=0; na < pos->n_atom; ++na) {
-            auto d = load_vec<3>(pos->sens, na);
-            // Apply mass scaling to velocity update
-            float particle_mass = (masses.x == nullptr) ? 1.0f : masses(0, na);
-            auto p = load_vec<3>(mom, na) - 0.5f*dt*d/particle_mass;
-            store_vec (mom, na, p);
-        }
-        
-        // Step 3: Update positions by full step
-        for(int na=0; na < pos->n_atom; ++na) {
-            auto p = load_vec<3>(mom, na);
-            auto pos_vec = load_vec<3>(pos->output, na);
-            auto new_pos = pos_vec + dt*p;
-            store_vec(pos->output, na, new_pos);
-        }
-        
-        // Step 4: Compute forces at new positions
-        compute(DerivMode);
-        
-        // Step 5: Update velocities by another half step
-        for(int na=0; na < pos->n_atom; ++na) {
-            auto d = load_vec<3>(pos->sens, na);
-            // Apply mass scaling to velocity update
-            float particle_mass = (masses.x == nullptr) ? 1.0f : masses(0, na);
-            auto p = load_vec<3>(mom, na) - 0.5f*dt*d/particle_mass;
-            store_vec (mom, na, p);
-        }
-        
-        // Step 6: Simple COM velocity removal (less aggressive)
-        remove_com_velocity(mom, pos->n_atom);
-
-    } else if (type == NVT_Corrected) {
-        // CORRECTED NVT integrator - clean Velocity Verlet without excessive drift corrections
-        // This implements proper energy conservation for NVT ensemble
-
-        // Step 1: Compute forces at current positions
-        compute(DerivMode);   // compute forces at current positions
-
-        // Step 2: Update velocities by half step
-        for(int na=0; na < pos->n_atom; ++na) {
-            auto d = load_vec<3>(pos->sens, na);
-            if(max_force) {
-                float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
-                float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
-                d *= scale_factor;
-            }
-            // Apply mass scaling to velocity update
-            float particle_mass = (masses.x == nullptr) ? 1.0f : masses(0, na);
-            auto p = load_vec<3>(mom, na) - 0.5f*dt*d/particle_mass;  // half step velocity update with mass
-            store_vec (mom, na, p);
-        }
-
-        // Step 3: Update positions by full step
-        for(int na=0; na < pos->n_atom; ++na) {
-            auto p = load_vec<3>(mom, na);
-            auto pos_vec = load_vec<3>(pos->output, na);
-            auto new_pos = pos_vec + dt*p;
-            store_vec(pos->output, na, new_pos);
-        }
-
-        // Step 4: Compute forces at new positions
-        compute(DerivMode);   // compute forces at new positions
-
-        // Step 5: Update velocities by another half step
-        for(int na=0; na < pos->n_atom; ++na) {
-            auto d = load_vec<3>(pos->sens, na);
-            if(max_force) {
-                float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
-                float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
-                d *= scale_factor;
-            }
-            // Apply mass scaling to velocity update
-            float particle_mass = (masses.x == nullptr) ? 1.0f : masses(0, na);
-            auto p = load_vec<3>(mom, na) - 0.5f*dt*d/particle_mass;  // half step velocity update with mass
-            store_vec (mom, na, p);
-        }
-
-        // Step 6: Minimal COM velocity removal (only when necessary)
-        // This prevents drift without excessive corrections that can cause energy buildup
-        remove_com_velocity(mom, pos->n_atom);
-
-    } else if (type == Minimize) {
-        // Energy minimization integrator - steepest descent with line search
-        // This implements energy minimization using the regular potential
-        
-        // Step 1: Compute forces and energy at current positions
-        compute(PotentialAndDerivMode);   // compute both forces and energy at current positions
-        
-        // Step 2: Calculate force magnitude for convergence check
-        float total_force_sq = 0.0f;
-        for(int na=0; na < pos->n_atom; ++na) {
-            auto force = load_vec<3>(pos->sens, na);
-            total_force_sq += mag2(force);
-        }
-        float force_magnitude = sqrtf(total_force_sq);
-        
-        // Step 3: Check for convergence (force tolerance)
-        // These will be set by the main function via global variables
-        extern float g_min_energy_tolerance;
-        extern float g_min_force_tolerance;
-        extern float g_min_step_size;
-        extern int g_min_max_iterations;
-        extern int g_min_iteration_count;
-        extern float g_min_old_energy;
-        extern bool g_min_converged;
-        
-        static float energy_tolerance = g_min_energy_tolerance;
-        static float force_tolerance = g_min_force_tolerance;
-        static float step_size = g_min_step_size;
-        static int max_iterations = g_min_max_iterations;
-        static int iteration_count = g_min_iteration_count;
-        static float old_energy = g_min_old_energy;
-        static bool converged = g_min_converged;
-        
-        // Get current energy (now properly computed)
-        float current_energy = potential;
-        
-        // Check convergence
-        if(iteration_count > 0) {
-            float energy_change = fabsf(current_energy - old_energy);
-            if(energy_change < energy_tolerance && force_magnitude < force_tolerance) {
-                converged = true;
-                g_min_converged = true;
-                // Debug output removed as requested
-                // std::cout << "[MINIMIZER] CONVERGED! Energy change: " << energy_change 
-                //           << " Force magnitude: " << force_magnitude << std::endl;
-                return; // Exit minimization
-            }
-        }
-        
-        // Check max iterations
-        if(iteration_count >= max_iterations) {
-            // Debug output removed as requested
-            // static bool max_iterations_reported = false;
-            // if(!max_iterations_reported) {
-            //     std::cout << "[MINIMIZER] Reached maximum iterations: " << max_iterations << std::endl;
-            //     max_iterations_reported = true;
-            // }
-            return;
-        }
-        
-        // Step 4: Update positions using steepest descent with force scaling
-        // Move in direction of negative gradient (force direction)
-        
-        // Check if forces are too large - if so, exit minimization
-        if (force_magnitude > 1e10f) {
-            // Debug output removed as requested
-            // std::cout << "[MINIMIZER] Forces too large (" << force_magnitude << "), exiting minimization" << std::endl;
-            g_min_converged = true;
-            return;
-        }
-        
-        // Calculate adaptive step size based on force magnitude
-        float adaptive_step_size = step_size;
-        
-        // Very conservative step size scaling
-        if (force_magnitude > 1e8f) {
-            adaptive_step_size = 1e-8f; // Extremely small step
-        } else if (force_magnitude > 1e6f) {
-            adaptive_step_size = 1e-7f; // Very small step
-        } else if (force_magnitude > 1e4f) {
-            adaptive_step_size = 1e-6f; // Small step
-        } else if (force_magnitude > 1e3f) {
-            adaptive_step_size = 1e-5f; // Small step
-        } else if (force_magnitude > 100.0f) {
-            adaptive_step_size = 1e-4f; // Small step
-        } else if (force_magnitude > 10.0f) {
-            adaptive_step_size = step_size * 0.01f; // Reduce step size significantly
-        }
-        
-        // Additional safety check - never use step size larger than 0.001
-        if (adaptive_step_size > 0.001f) {
-            adaptive_step_size = 0.001f;
-        }
-        
-        // Scale forces to prevent instability
-        float force_scale = 1.0f;
-        if (force_magnitude > 1000.0f) {
-            force_scale = 1000.0f / force_magnitude; // Scale down large forces
-        }
-        
-        for(int na=0; na < pos->n_atom; ++na) {
-            auto force = load_vec<3>(pos->sens, na);
-            auto pos_vec = load_vec<3>(pos->output, na);
-            
-            // Scale force and apply step (move in direction of negative gradient)
-            auto scaled_force = force_scale * force;
-            auto new_pos = pos_vec - adaptive_step_size * scaled_force;
-            store_vec(pos->output, na, new_pos);
-        }
-        
-        // Step 5: Store current state for next iteration
-        old_energy = current_energy;
-        iteration_count++;
-        g_min_iteration_count = iteration_count;
-        g_min_old_energy = old_energy;
-        
-        // Debug output removed as requested
-        // if(iteration_count % 10 == 0 || iteration_count <= 5) {
-        //     std::cout << "[MINIMIZER] Iteration " << iteration_count 
-        //               << " Energy: " << current_energy 
-        //               << " Force: " << force_magnitude 
-        //               << " Energy change: " << (iteration_count > 0 ? fabsf(current_energy - old_energy) : 0.0f) 
-        //               << " Step size: " << adaptive_step_size 
-        //               << " Force scale: " << force_scale << std::endl;
-        // }
-        
-        // Zero out momenta for minimization (no kinetic energy)
-        for(int na=0; na < pos->n_atom; ++na) {
-            store_vec(mom, na, make_vec3(0.f, 0.f, 0.f));
-        }
-
-    } else {
-        // Original 3-stage integrator from Predescu et al., 2012
-        // http://dx.doi.org/10.1080/00268976.2012.681311
-
-        float a = (type==Predescu) ? 0.108991425403425322 : 1./6.;
-        float b = (type==Predescu) ? 0.290485609075128726 : 1./3.;
-
-        float mom_update[] = {1.5f-3.f*a, 1.5f-3.f*a, 6.f*a};
-        float pos_update[] = {     3.f*b, 3.0f-6.f*b, 3.f*b};
-
-        for(int stage=0; stage<3; ++stage) {
-            compute(DerivMode);   // compute derivatives
-            Timer timer(string("integration"));
-            integration_stage( 
-                    mom,
-                    pos->output,
-                    pos->sens,
-                    dt*mom_update[stage], dt*pos_update[stage], max_force, 
-                    pos->n_atom);
+            auto p = load_vec<3>(mom, na) - dt*d;
+            store_vec (mom,   na, p);
+            update_vec(pos->output, na, dt*p);
         }
     }
 }
 
-
-
-void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step, VecArray masses) {
+void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
     // calculate acceleration, update velocity for slow level
     compute(DerivMode, 1); 
-    
-    // Debug: Print particle positions and forces for first 25 steps
-    // static int debug_step_count = 0;
-    // if(debug_step_count < 25) {
-    //     std::cout << "\n=== MULTI-STEP INTEGRATION STEP " << debug_step_count << " (slow level) ===" << std::endl;
-    //     std::cout << "Positions and Forces:" << std::endl;
-    //     for(int na = 0; na < pos->n_atom; ++na) {
-    //         auto pos_vec = load_vec<3>(pos->output, na);
-    //         auto force_vec = load_vec<3>(pos->sens, na);
-    //         std::cout << "  Particle " << na << ": pos=(" << pos_vec.x() << ", " << pos_vec.y() << ", " << pos_vec.z() 
-    //                   << ") force=(" << force_vec.x() << ", " << force_vec.y() << ", " << force_vec.z() << ")" << std::endl;
-    //     }
-    //     std::cout << "=== END SLOW LEVEL ===\n" << std::endl;
-    // }
-    
     for(int na=0; na < pos->n_atom; ++na) {
         auto d = load_vec<3>(pos->sens, na);
-        float particle_mass = (masses.x == nullptr) ? 1.0f : masses(0, na);
-        auto p = load_vec<3>(mom, na) - inner_step*dt*d/particle_mass;
+        auto p = load_vec<3>(mom, na) - inner_step*dt*d;
         store_vec (mom,   na, p);
     }
     // calculate acceleration, update velocity for fast level
     for(int i=0;i<inner_step;i++) {
         compute(DerivMode, 0);
-        // Debug: Print for fast level too
-        // if(debug_step_count < 25) {
-        //     std::cout << "\n=== MULTI-STEP INTEGRATION STEP " << debug_step_count << " (fast level " << i << ") ===" << std::endl;
-        //     std::cout << "Positions and Forces:" << std::endl;
-        //     for(int na = 0; na < pos->n_atom; ++na) {
-        //         auto pos_vec = load_vec<3>(pos->output, na);
-        //         auto force_vec = load_vec<3>(pos->sens, na);
-        //         std::cout << "  Particle " << na << ": pos=(" << pos_vec.x() << ", " << pos_vec.y() << ", " << pos_vec.z() 
-        //                   << ") force=(" << force_vec.x() << ", " << force_vec.y() << ", " << force_vec.z() << ")" << std::endl;
-        //     }
-        //     std::cout << "=== END FAST LEVEL " << i << " ===\n" << std::endl;
-        // }
-        
         for(int na=0; na < pos->n_atom; ++na) {
             auto d = load_vec<3>(pos->sens, na);
-            float particle_mass = (masses.x == nullptr) ? 1.0f : masses(0, na);
-            auto p = load_vec<3>(mom, na) - dt*d/particle_mass;
+            auto p = load_vec<3>(mom, na) - dt*d;
             store_vec (mom,   na, p);
             update_vec(pos->output, na, dt*p);
         }
     }
-    // Add debug print after fast level loop
-    // if(debug_step_count < 25) {
-    //     std::cout << "[DEBUG] Completed all fast level steps for debug_step_count=" << debug_step_count << std::endl;
-    //     debug_step_count++; // Increment after complete cycle
-    //     std::cout << "[DEBUG] Incremented debug_step_count to " << debug_step_count << std::endl;
-    // }
 }
 
 DerivEngine initialize_engine_from_hdf5(int n_atom, hid_t potential_group)

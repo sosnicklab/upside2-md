@@ -249,7 +249,7 @@ struct DihedralSpring : public PotentialNode
     }
     
     // Method to update box dimensions for NPT barostat
-    void update_box_dimensions(float scale_factor) override {
+    void update_box_dimensions(float scale_factor) {
         box_x *= scale_factor;
         box_y *= scale_factor;
         box_z *= scale_factor;
@@ -307,19 +307,19 @@ struct PeriodicBoundaryPotential : public PotentialNode
         float half_x = 0.5f * box_x;
         float half_y = 0.5f * box_y;
         float half_z = 0.5f * box_z;
-        // Apply periodic boundary conditions (centered box convention)
+            // Apply periodic boundary conditions (centered box convention)
         for(int na=0; na<n_atom; ++na) {
             auto p = load_vec<3>(pos1, na);
             bool wrapped = false;
             // X dimension: wrap into [-L/2, +L/2]
-            while (p.x() < -half_x) { p.x() += box_x; wrapped = true; }
-            while (p.x() >= half_x) { p.x() -= box_x; wrapped = true; }
+                if (p.x() < -half_x) { p.x() += box_x; wrapped = true; }
+                else if (p.x() >= half_x) { p.x() -= box_x; wrapped = true; }
             // Y dimension: wrap into [-L/2, +L/2]
-            while (p.y() < -half_y) { p.y() += box_y; wrapped = true; }
-            while (p.y() >= half_y) { p.y() -= box_y; wrapped = true; }
+                if (p.y() < -half_y) { p.y() += box_y; wrapped = true; }
+                else if (p.y() >= half_y) { p.y() -= box_y; wrapped = true; }
             // Z dimension: wrap into [-L/2, +L/2]
-            while (p.z() < -half_z) { p.z() += box_z; wrapped = true; }
-            while (p.z() >= half_z) { p.z() -= box_z; wrapped = true; }
+                if (p.z() < -half_z) { p.z() += box_z; wrapped = true; }
+                else if (p.z() >= half_z) { p.z() -= box_z; wrapped = true; }
             // Store wrapped position
             if (wrapped) {
                 store_vec<3>(pos1, na, p);
@@ -851,7 +851,7 @@ struct ParticleMeshEwald : public PotentialNode
     }
     
     // Method to update box dimensions for NPT barostat
-    void update_box_dimensions(float scale_factor) override {
+    void update_box_dimensions(float scale_factor) {
         box_x *= scale_factor;
         box_y *= scale_factor;
         box_z *= scale_factor;
@@ -1361,6 +1361,7 @@ struct MartiniPotential : public PotentialNode
         if(pot) *pot = 0.f;
         
         // Compute particle-particle interactions
+        const float kMinDistance = 1.0e-6f;
         for(size_t np=0; np<pairs.size(); ++np) {
             int i = pairs[np].first;
             int j = pairs[np].second;
@@ -1377,7 +1378,7 @@ struct MartiniPotential : public PotentialNode
             // Apply minimum image convention for rectangular box
             auto dr = minimum_image_rect(p1 - p2, box_x, box_y, box_z);
             auto dist2 = mag2(dr);
-            auto dist = sqrtf(dist2);
+            auto dist = sqrtf(max(dist2, kMinDistance));
             // DEBUG: Print pairwise info for first few steps
             // if (debug_mode && debug_step_count < 5) {
             //     std::cout << "[DEBUG] Pair " << i << "-" << j << " dr=(" << dr.x() << "," << dr.y() << "," << dr.z() << ") dist=" << dist << std::endl;
@@ -1445,41 +1446,32 @@ struct MartiniPotential : public PotentialNode
                     // Force: F = -k * qq * (erfc(α*r)/r² + 2*α*exp(-α²r²)/(√π*r))
                     float exp_term = 2.0f * pme_alpha * expf(-alpha_r * alpha_r) / sqrtf(M_PI);
                     coul_force_mag = -coulomb_k * qq * (erfc_alpha_r / (dist * dist) + exp_term / dist);
+                    // tame near-cutoff discontinuity
+                    if(dist > 0.95f*pme_rcut) {
+                        float rc = pme_rcut;
+                        float erfc_rc = erfc(pme_alpha * rc);
+                        float vcut = coulomb_k * qq * erfc_rc / rc;
+                        coul_pot -= vcut;
+                    }
                 } else {
                     // Standard Coulomb potential (short-range only or when Ewald is disabled)
-                    // Look up the appropriate spline for this charge product
+                    // Prefer the spline evaluation (legacy behavior) when available
                     auto coulomb_it = coulomb_splines.find(qq);
-                    if(coulomb_it != coulomb_splines.end()) {
-                        // DEBUG: Uncomment to check Coulomb computation
-                        // std::cout << "COULOMB: Using spline for q1*q2=" << qq << " at r=" << dist << std::endl;
-                        
-                        // Check if distance is within spline range before evaluation
-                        if(dist >= coul_r_min && dist <= coul_r_max) {
-                            // DEBUG: Check spline range
-                            // if(debug_step_count < 5) std::cout << "COULOMB SPLINE: dist=" << dist << ", coul_r_min=" << coul_r_min << ", coul_r_max=" << coul_r_max << ", within_range=" << (dist >= coul_r_min && dist <= coul_r_max) << std::endl;
-                            // Use spline interpolation for Coulomb potential and force
-                            // Transform physical distance to spline coordinate [0, 999]
-                            float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
-
-                            float coul_result[2];
-                            // CORRECT: Call evaluate_value_and_deriv only on the potential spline
-                            coulomb_it->second.evaluate_value_and_deriv(coul_result, 0, r_coord);
-
-                            coul_pot = coul_result[1];           // Index 1 is the value
-                            float coul_deriv_spline = coul_result[0];   // Index 0 is the derivative w.r.t. spline coordinate
-
-                            // Convert derivative from spline coordinate to physical coordinate (dE/dr)
-                            // dE/dr = dE/d(coord) * d(coord)/dr
-                            float coord_scale = 999.0f / (coul_r_max - coul_r_min);
-                            float dE_dr = coul_deriv_spline * coord_scale;
-                            
-                            // The force is the negative gradient: F = -dE/dr
-                            coul_force_mag = -dE_dr;
-                        } else {
-                            // Distance is outside spline range - no interaction
-                            coul_pot = 0.0f;
-                            coul_force_mag = 0.0f;
-                        }
+                    if(coulomb_it != coulomb_splines.end() && dist >= coul_r_min && dist <= coul_r_max) {
+                        float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
+                        float coul_result[2];
+                        coulomb_it->second.evaluate_value_and_deriv(coul_result, 0, r_coord);
+                        coul_pot = coul_result[1];
+                        float coul_deriv_spline = coul_result[0];
+                        float coord_scale = 999.0f / (coul_r_max - coul_r_min);
+                        float dE_dr = coul_deriv_spline * coord_scale;
+                        coul_force_mag = -dE_dr;
+                    } else {
+                        // Fallback to analytical Coulomb without softening
+                        float coulomb_k = 31.775347952181f;
+                        coul_pot = coulomb_k * qq / dist;
+                        float dV_dr = -coulomb_k * qq / (dist * dist);
+                        coul_force_mag = -dV_dr;
                     }
                 }
 
@@ -1502,7 +1494,7 @@ struct MartiniPotential : public PotentialNode
     }
     
     // Method to update box dimensions for NPT barostat
-    void update_box_dimensions(float scale_factor) override {
+    void update_box_dimensions(float scale_factor) {
         box_x *= scale_factor;
         box_y *= scale_factor;
         box_z *= scale_factor;
@@ -1699,7 +1691,7 @@ struct DistSpring : public PotentialNode
     }
     
     // Method to update box dimensions for NPT barostat
-    void update_box_dimensions(float scale_factor) override {
+    void update_box_dimensions(float scale_factor) {
         box_x *= scale_factor;
         box_y *= scale_factor;
         box_z *= scale_factor;
@@ -1956,7 +1948,7 @@ struct AngleSpring : public PotentialNode
     }
     
     // Method to update box dimensions for NPT barostat
-    void update_box_dimensions(float scale_factor) override {
+    void update_box_dimensions(float scale_factor) {
         box_x *= scale_factor;
         box_y *= scale_factor;
         box_z *= scale_factor;
@@ -2229,4 +2221,148 @@ extern "C" {
 }
 
 
+
+// Explicit registrar to ensure node types are available at runtime
+// Even if some linkers strip unused static objects, this guarantees registration
+namespace {
+struct MartiniNodeRegistrar {
+    MartiniNodeRegistrar() {
+        auto& m = node_creation_map();
+        if(m.find("martini_potential") == m.end()) {
+            add_node_creation_function("martini_potential", [](hid_t grp, const ArgList& args) {
+                check_arguments_length(args,1);
+                return new MartiniPotential(grp, *args[0]);
+            });
+        }
+        if(m.find("dist_spring") == m.end()) {
+            add_node_creation_function("dist_spring", [](hid_t grp, const ArgList& args) {
+                check_arguments_length(args,1);
+                return new DistSpring(grp, *args[0]);
+            });
+        }
+        if(m.find("angle_spring") == m.end()) {
+            add_node_creation_function("angle_spring", [](hid_t grp, const ArgList& args) {
+                check_arguments_length(args,1);
+                return new AngleSpring(grp, *args[0]);
+            });
+        }
+        if(m.find("dihedral_spring") == m.end()) {
+            add_node_creation_function("dihedral_spring", [](hid_t grp, const ArgList& args) {
+                check_arguments_length(args,1);
+                return new DihedralSpring(grp, *args[0]);
+            });
+        }
+        if(m.find("periodic_boundary_potential") == m.end()) {
+            add_node_creation_function("periodic_boundary_potential", [](hid_t grp, const ArgList& args) {
+                check_arguments_length(args,1);
+                return new PeriodicBoundaryPotential(grp, *args[0]);
+            });
+        }
+        if(m.find("particle_mesh_ewald") == m.end()) {
+            add_node_creation_function("particle_mesh_ewald", [](hid_t grp, const ArgList& args) {
+                check_arguments_length(args,1);
+                return new ParticleMeshEwald(grp, *args[0]);
+            });
+        }
+    }
+};
+static MartiniNodeRegistrar s_martini_node_registrar;
+}
+
+// Lightweight pre-run minimization using gradient descent with backtracking
+void martini_run_minimization(DerivEngine& engine,
+                                          int max_iterations,
+                                          double energy_tolerance,
+                                          double force_tolerance,
+                                          double initial_step_size,
+                                          int verbose)
+{
+    engine.compute(PotentialAndDerivMode);
+    double prev_potential = engine.potential;
+    if(verbose) printf("MIN: Initial potential %.6f\n", prev_potential);
+
+    const int n_atom = engine.pos->n_elem;
+    VecArray position = engine.pos->output;
+
+    auto grad_norm = [&]() -> double {
+        double sum = 0.0;
+        for(int i=0;i<n_atom;++i){
+            float3 g = load_vec<3>(engine.pos->sens, i);
+            sum += double(g.x())*g.x() + double(g.y())*g.y() + double(g.z())*g.z();
+        }
+        return sqrt(sum);
+    };
+
+    std::vector<float> saved_pos(3*n_atom);
+    std::vector<float> descent(3*n_atom);
+
+    int iter = 0;
+    double step = initial_step_size;
+    while(iter < max_iterations){
+        // Save positions and build descent = -grad
+        for(int i=0;i<n_atom;++i){
+            float3 p = load_vec<3>(position, i);
+            saved_pos[3*i+0] = p.x();
+            saved_pos[3*i+1] = p.y();
+            saved_pos[3*i+2] = p.z();
+            float3 g = load_vec<3>(engine.pos->sens, i);
+            descent[3*i+0] = -g.x();
+            descent[3*i+1] = -g.y();
+            descent[3*i+2] = -g.z();
+        }
+
+        double gnorm = grad_norm();
+        if(gnorm < force_tolerance){
+            if(verbose) printf("MIN: Converged by force tol |grad|=%.3g at iter %d\n", gnorm, iter);
+            break;
+        }
+
+        // Backtracking line search
+        double alpha = step;
+        const double min_alpha = 1e-6;
+        bool accepted = false;
+        double best_pot = prev_potential;
+        while(alpha >= min_alpha){
+            for(int i=0;i<n_atom;++i){
+                auto p = make_vec3(
+                    saved_pos[3*i+0] + float(alpha)*descent[3*i+0],
+                    saved_pos[3*i+1] + float(alpha)*descent[3*i+1],
+                    saved_pos[3*i+2] + float(alpha)*descent[3*i+2]
+                );
+                store_vec<3>(position, i, p);
+            }
+            engine.compute(PotentialAndDerivMode);
+            if(engine.potential <= best_pot){
+                best_pot = engine.potential;
+                accepted = true;
+                break;
+            }
+            alpha *= 0.5;
+        }
+
+        if(!accepted){
+            // restore and stop
+            for(int i=0;i<n_atom;++i){
+                auto p = make_vec3(saved_pos[3*i+0], saved_pos[3*i+1], saved_pos[3*i+2]);
+                store_vec<3>(position, i, p);
+            }
+            if(verbose) printf("MIN: Line search failed; stopping at iter %d\n", iter);
+            break;
+        }
+
+        double dE = prev_potential - best_pot;
+        if(verbose && !(iter%10)){
+            printf("MIN: iter %4d step %.3g E %.6f dE %.3g |grad| %.3g\n", iter, alpha, best_pot, dE, gnorm);
+        }
+        if(dE >= 0.0 && fabs(dE) < energy_tolerance){
+            if(verbose) printf("MIN: Converged by energy tol dE=%.3g at iter %d\n", dE, iter);
+            break;
+        }
+
+        prev_potential = best_pot;
+        step = std::min(2.0*alpha, step*1.5);
+        ++iter;
+    }
+    if(verbose) printf("MIN: Final potential %.6f after %d iterations\n", prev_potential, iter);
+}
 

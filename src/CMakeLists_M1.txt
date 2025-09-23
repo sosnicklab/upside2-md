@@ -7,16 +7,7 @@ find_package(Eigen3 REQUIRED NO_MODULE)
 include_directories(${EIGEN3_INCLUDE_DIRS})
 find_package(OpenMP REQUIRED)
 
-# Add MPI support
-find_package(MPI REQUIRED)
-if(MPI_CXX_FOUND)
-    message(STATUS "MPI found: ${MPI_CXX_LIBRARIES}")
-    add_definitions(-DUSE_MPI)
-else()
-    message(WARNING "MPI not found, building without MPI support")
-    add_definitions(-DNO_MPI)
-endif()
-set(ARCH "armv8-a" CACHE STRING "architecture to use for -march flag to compiler")
+set(ARCH "native" CACHE STRING "architecture to use for -march flag to compiler")
 set(DEBUG_FLAGS "-g")
 
 set(OMP_FLAGS "${OpenMP_CXX_FLAGS}")
@@ -35,6 +26,7 @@ link_directories(/opt/homebrew/opt/libomp/lib)
 
 set(ENGINE_SRC 
     main.cpp
+    martini.cpp
     environment.cpp
     hbond.cpp 
     rotamer.cpp
@@ -58,30 +50,21 @@ set(ENGINE_SRC
     thermostat.cpp
     h5_support.cpp 
     state_logger.cpp
-    monte_carlo_sampler.cpp
-    martini.cpp)
+    monte_carlo_sampler.cpp)
 
 # Create the `upside` executable
 add_executable(upside ${ENGINE_SRC})
 INCLUDE_DIRECTORIES(${HDF5_INCLUDE_DIRS})
 
 # Now we can link libraries
-if(MPI_CXX_FOUND)
-    target_link_libraries(upside stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX ${MPI_CXX_LIBRARIES})
-else()
-    target_link_libraries(upside stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
-endif()
+target_link_libraries(upside stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
 
 # Create the shared library
 add_library(upside_calculation SHARED engine_c_library.cpp ${ENGINE_SRC})
 set_target_properties(upside_calculation PROPERTIES COMPILE_FLAGS "-DPARAM_DERIV" OUTPUT_NAME "upside")
 
 # Link OpenMP with shared library
-if(MPI_CXX_FOUND)
-    target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX ${MPI_CXX_LIBRARIES})
-else()
-    target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
-endif()
+target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
 
 # Other executables
 add_executable(compute_rotamer_centers generate_from_rotamer.cpp compute_rotamer_centers.cpp h5_support.cpp)

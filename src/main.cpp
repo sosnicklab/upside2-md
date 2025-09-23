@@ -1,20 +1,6 @@
 #include "main.h"
 #include "monte_carlo_sampler.h"
 #include "h5_support.h"
-#include "deriv_engine.h"
-
-// Forward declaration for box dimension update function
-void update_box_dimensions(float scale_factor);
-
-// Global variables for minimization parameters
-float g_min_energy_tolerance = 1e-6f;
-float g_min_force_tolerance = 1e-6f;
-float g_min_step_size = 0.1f;
-int g_min_max_iterations = 1000;
-int g_min_iteration_count = 0;
-float g_min_old_energy = 0.0f;
-bool g_min_converged = false;
-
 #include <tclap/CmdLine.h>
 #include "deriv_engine.h"
 #include "timing.h"
@@ -31,14 +17,9 @@ bool g_min_converged = false;
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
-#include <cstring>
 
 #if defined(_OPENMP)
 #include <omp.h>
-#endif
-
-#ifdef USE_MPI
-#include <mpi.h>
 #endif
 
 using namespace std;
@@ -127,41 +108,12 @@ struct System {
     MultipleMonteCarloSampler mc_samplers;
     VecArrayStorage mom; // momentum
     OrnsteinUhlenbeckThermostat thermostat;
-    
-    // Barostat for NPT ensemble
-    float pressure;
-    float barostat_timescale;
-    float barostat_interval;
-    float box_scale_factor;
-    float box_scale_velocity;
-    bool use_barostat;
-    
-    // Particle masses
-    VecArrayStorage particle_masses;
-    
     uint64_t round_num;
-    System(): round_num(0), pressure(0.0), barostat_timescale(1.0), barostat_interval(0.1), 
-              box_scale_factor(1.0), box_scale_velocity(0.0), use_barostat(false) {}
+    System(): round_num(0) {}
 
     void set_temperature(float new_temp) {
         temperature = new_temp;
         thermostat.set_temp(temperature);
-    }
-    
-    void set_pressure(float new_pressure) {
-        pressure = new_pressure;
-    }
-    
-    void set_barostat_timescale(float new_timescale) {
-        barostat_timescale = new_timescale;
-    }
-    
-    void set_barostat_interval(float new_interval) {
-        barostat_interval = new_interval;
-    }
-    
-    void enable_barostat(bool enable) {
-        use_barostat = enable;
     }
 };
 
@@ -525,17 +477,6 @@ try {
     ValueArg<double> thermostat_timescale_arg("", "thermostat-timescale", "timescale for the thermostat", 
             false, 5., "float", cmd);
 
-    // Barostat parameters for NPT ensemble
-    ValueArg<double> pressure_arg("", "pressure", "target pressure for NPT ensemble (in UPSIDE units)", 
-            false, 0.0, "float", cmd);
-    ValueArg<double> barostat_timescale_arg("", "barostat-timescale", "timescale for the barostat", 
-            false, 1.0, "float", cmd);
-    ValueArg<double> barostat_interval_arg("", "barostat-interval", 
-            "simulation time between applications of the barostat", 
-            false, 0.1, "float", cmd);
-
-
-
     ValueArg<double> curvature_changer_interval_arg("", "curvature-changer-interval", 
             "simulation time between applications of curvature change (0 means no curvature change, default 0.)", 
             false, 0., "float", cmd);
@@ -545,17 +486,17 @@ try {
             false, 0.05, "float", cmd);
 
     ValueArg<string> integrator_arg("", "integrator", 
-            "Use this option to control which Integrator are used.  Available levels are v(verlet), mv(multi-step verlet), vv(velocity verlet), npt(NPT ensemble), nvt_corrected(NVT corrected), or minimize(energy minimization). "
-            "Default is verlet.",
-            false, "", "v, mv, vv, npt, nvt_corrected, minimize", cmd);
+            "Use this option to control which Integrator are used.  Available: v (Verlet), mv (multi-step Verlet), nvtc (NVT-corrected). "
+            "Default is Verlet.",
+            false, "", "v, mv, nvtc", cmd);
     ValueArg<int> inner_step_arg("", "inner-step", "inner step for the integrator", false, 3, "int", cmd);
-
-    // Minimization-specific arguments
-    SwitchArg minimize_mode_arg("", "minimize", "Run in energy minimization mode", cmd, false);
-    ValueArg<int> min_max_iterations_arg("", "min-max-iterations", "Maximum iterations for minimization", false, 1000, "int", cmd);
-    ValueArg<double> min_energy_tolerance_arg("", "min-energy-tolerance", "Energy convergence tolerance for minimization", false, 1e-6, "double", cmd);
-    ValueArg<double> min_force_tolerance_arg("", "min-force-tolerance", "Force convergence tolerance for minimization", false, 1e-6, "double", cmd);
-    ValueArg<double> min_step_size_arg("", "min-step-size", "Step size for minimization", false, 0.1, "double", cmd);
+    ValueArg<double> max_force_arg("", "max-force", "Clip forces to this max magnitude per-particle (0 disables; used by nvtc)", false, 0.0, "float", cmd);
+    // Minimization controls (ported from prior branch)
+    SwitchArg enable_min_arg("", "minimize", "Run an energy minimization before MD", cmd, false);
+    ValueArg<int> min_max_iter_arg("", "min-max-iter", "Minimization max iterations", false, 1000, "int", cmd);
+    ValueArg<double> min_energy_tol_arg("", "min-energy-tol", "Minimization energy tolerance", false, 1e-6, "float", cmd);
+    ValueArg<double> min_force_tol_arg("", "min-force-tol", "Minimization force tolerance", false, 1e-6, "float", cmd);
+    ValueArg<double> min_step_arg("", "min-step", "Minimization initial step size", false, 0.1, "float", cmd);
 
     ValueArg<string> input_arg("i", "input", "h5df input file for position", false, "not_Defined_By_user", "string", cmd);
     ValueArg<string> input_base_arg("", "input-base", "h5df input files base for positions", false, "not_Defined_By_user", "string_list", cmd);
@@ -589,12 +530,6 @@ try {
             " To restart the trajectory, make sure to copy the end momentum of last run to input.mom (similar to the pos treatment when restarting):"
             " check examples for continue the simulation",
             cmd, false);
-    SwitchArg disable_initial_thermalization_arg("", "disable-initial-thermalization",
-        "Disable initial thermalization of velocities. Use this to start with zero velocities.",
-        cmd, false);
-    SwitchArg disable_thermostat_arg("", "disable-thermostat",
-        "Disable thermostat entirely. Use this to run without any velocity control.",
-        cmd, false);
     ValueArg<string> set_param_arg("", "set-param", "Developer use only", false, "", "param_arg", cmd);
     UnlabeledMultiArg<string> config_args("config_files","configuration .h5 files", true, "h5_files");
     cmd.add(config_args);
@@ -621,40 +556,15 @@ try {
 
 
         float dt = time_step_arg.getValue();
-        int inner_step = 3;
+        int inner_step = 1;
         if  (integrator_arg.getValue() == "mv" )
             inner_step = inner_step_arg.getValue();
-
-        // Set up minimization parameters if in minimize mode
-        if (minimize_mode_arg.getValue() || integrator_arg.getValue() == "minimize") {
-            g_min_max_iterations = min_max_iterations_arg.getValue();
-            g_min_energy_tolerance = min_energy_tolerance_arg.getValue();
-            g_min_force_tolerance = min_force_tolerance_arg.getValue();
-            g_min_step_size = min_step_size_arg.getValue();
-            g_min_iteration_count = 0;
-            g_min_old_energy = 0.0f;
-            g_min_converged = false;
-            
-            std::cout << "[MINIMIZATION] Minimization mode enabled with parameters:" << std::endl;
-            std::cout << "  Max iterations: " << g_min_max_iterations << std::endl;
-            std::cout << "  Energy tolerance: " << g_min_energy_tolerance << std::endl;
-            std::cout << "  Force tolerance: " << g_min_force_tolerance << std::endl;
-            std::cout << "  Step size: " << g_min_step_size << std::endl;
-        }
 
         double duration = duration_arg.getValue();
         double time_lim = time_lim_arg.getValue();
         bool passed_time_lim = false;
         uint64_t n_round = round(duration / (inner_step*dt));
-        // Calculate thermostat interval: how many inner steps between thermostat applications
-        // thermostat_interval_arg is in time units, convert to number of inner steps
-        // For proper Langevin dynamics, delta_t should be << timescale
-        // thermostat_interval_arg is in time units, convert to number of inner steps
-        // For proper Langevin dynamics, delta_t should be << timescale (0.135)
-        // We want delta_t ≈ timescale/10 = 0.0135
-        // So thermostat_interval ≈ 0.0135 / (inner_step * dt) ≈ 0.0135 / 0.03 ≈ 0.45
-        int thermostat_interval = max(1, (int)round(thermostat_interval_arg.getValue() / (inner_step * dt)));
-        int barostat_interval = max(1.,round(barostat_interval_arg.getValue() / (inner_step*dt))); // Barostat interval
+        int thermostat_interval = max(1.,round(thermostat_interval_arg.getValue() / (inner_step*dt))); //  FIXME inner_step
         int frame_interval = max(1.,round(frame_interval_arg.getValue() / (inner_step*dt)));
         int dense_output_interval = max(1.,round(dense_frame_interval_arg.getValue() / (inner_step*dt)));
 
@@ -675,63 +585,7 @@ try {
 
         h5_noerr(H5Eset_auto(H5E_DEFAULT, nullptr, nullptr));
         vector<string> config_paths = config_args.getValue();
-        
-#ifdef USE_MPI
-        // Get MPI rank and size
-        int rank, size;
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        MPI_Comm_size(MPI_COMM_WORLD, &size);
-        
-        // Distribute systems across MPI ranks
-        int total_systems = config_paths.size();
-        
-        int systems_per_rank = total_systems / size;
-        int extra_systems = total_systems % size;
-        
-        int my_start = rank * systems_per_rank + min(rank, extra_systems);
-        int my_end = my_start + systems_per_rank + (rank < extra_systems ? 1 : 0);
-        int my_systems = my_end - my_start;
-        
-        // If we have fewer systems than ranks, only use the first few ranks
-        if (total_systems < size) {
-            if (rank >= total_systems) {
-                // This rank has no work to do, but must still participate in MPI
-                if(verbose) printf("Rank %d: No systems assigned, participating in MPI only\n", rank);
-                // Don't exit early - let the rank participate in MPI but skip simulation
-                my_systems = 0;
-                my_start = 0;
-                my_end = 0;
-            } else {
-                // Only use the first total_systems ranks
-                size = total_systems;
-            }
-        }
-        
-        if(verbose && rank == 0) {
-            printf("MPI distribution: %d ranks, %d total systems\n", size, total_systems);
-            for(int r = 0; r < size; r++) {
-                int r_start = r * systems_per_rank + min(r, extra_systems);
-                int r_end = r_start + systems_per_rank + (r < extra_systems ? 1 : 0);
-                printf("  Rank %d: systems %d-%d (%d systems)\n", r, r_start, r_end-1, r_end-r_start);
-            }
-        }
-        
-        // Create systems vector for this rank
-        vector<System> systems(my_systems);
-        vector<string> my_config_paths;
-        for(int i = my_start; i < my_end; i++) {
-            my_config_paths.push_back(config_paths[i]);
-        }
-        
-        // Ensure we have at least one system to process
-        if (my_systems == 0) {
-            if(verbose) printf("Rank %d: No systems assigned, participating in MPI only\n", rank);
-            // Don't exit early - let the rank participate in MPI but skip simulation
-        }
-#else
         vector<System> systems(config_paths.size());
-        vector<string> my_config_paths = config_paths;
-#endif
 
         auto temperature_strings = split_string(temperature_arg.getValue(), ",");
         if(temperature_strings.size() != 1u && temperature_strings.size() != systems.size()) 
@@ -739,16 +593,9 @@ try {
                     +to_string(systems.size())+" systems");
 
         for(int ns: range(systems.size())) {
-#ifdef USE_MPI
-            int global_ns = my_start + ns;
-            float T = stod_strict(temperature_strings.size()>1u ? temperature_strings[global_ns] : temperature_strings[0]);
-#else
             float T = stod_strict(temperature_strings.size()>1u ? temperature_strings[ns] : temperature_strings[0]);
-#endif
             systems[ns].initial_temperature = T;
         }
-
-
 
         double anneal_factor = anneal_factor_arg.getValue();
         double anneal_duration = anneal_duration_arg.getValue();
@@ -783,28 +630,16 @@ try {
                 throw string("Received "+to_string(output_strings.size())+" outputs but have "
                         +to_string(systems.size())+" systems");
 
-                    for(int ns: range(systems.size())) {
-#ifdef USE_MPI
-            int global_ns = my_start + ns;
-            outputs[ns] = output_strings.size()>1u ? output_strings[global_ns] : output_strings[0];
-#else
-            outputs[ns] = output_strings.size()>1u ? output_strings[ns] : output_strings[0];
-#endif
-        }
+            for(int ns: range(systems.size())) 
+                outputs[ns] = output_strings.size()>1u ? output_strings[ns] : output_strings[0];
 
             user_defined_output = true;
         }
 
         auto out_base = output_base_arg.getValue();
         if (out_base != "not_Defined_By_user")  {
-                    for(int ns: range(systems.size())) {
-#ifdef USE_MPI
-            int global_ns = my_start + ns;
-            outputs[ns] = out_base + "_" + to_string(global_ns) + ".h5";
-#else
-            outputs[ns] = out_base + "_" + to_string(ns) + ".h5";
-#endif
-        }
+            for(int ns: range(systems.size())) 
+                outputs[ns] = out_base + "_" + to_string(ns) + ".h5";
             user_defined_output = true;
         }
         
@@ -819,27 +654,15 @@ try {
                 throw string("Received "+to_string(input_strings.size())+" inputs but have "
                         +to_string(systems.size())+" systems");
 
-            for(int ns: range(systems.size())) {
-#ifdef USE_MPI
-                int global_ns = my_start + ns;
-                inputs[ns] = input_strings.size()>1u ? input_strings[global_ns] : input_strings[0];
-#else
+            for(int ns: range(systems.size())) 
                 inputs[ns] = input_strings.size()>1u ? input_strings[ns] : input_strings[0];
-#endif
-            }
 
             user_defined_input = true;
         }
         auto in_base = input_base_arg.getValue();
         if (in_base != "not_Defined_By_user")  {
-                    for(int ns: range(systems.size())) {
-#ifdef USE_MPI
-            int global_ns = my_start + ns;
-            inputs[ns] = in_base + "_" + to_string(global_ns) + ".h5";
-#else
-            inputs[ns] = in_base + "_" + to_string(ns) + ".h5";
-#endif
-        }
+            for(int ns: range(systems.size())) 
+                inputs[ns] = in_base + "_" + to_string(ns) + ".h5";
             user_defined_input = true;
         }
         int replica_interval = 0;
@@ -863,24 +686,19 @@ try {
         #pragma omp critical
         for(int ns=0; ns<n_system; ++ns) try {
             System* sys = &systems[ns];  // a pointer here makes later lambda's more natural
-#ifdef USE_MPI
-            int global_ns = my_start + ns;
-            sys->random_seed = base_random_seed + global_ns;
-#else
             sys->random_seed = base_random_seed + ns;
-#endif
 
             try {
                 if (user_defined_output) {
                     sys->config = h5_obj(H5Fclose,
-                        H5Fopen(my_config_paths[ns].c_str(), H5F_ACC_RDONLY, H5P_DEFAULT));
+                        H5Fopen(config_paths[ns].c_str(), H5F_ACC_RDONLY, H5P_DEFAULT));
                 }
                 else {
                     sys->config = h5_obj(H5Fclose,
-                        H5Fopen(my_config_paths[ns].c_str(), H5F_ACC_RDWR, H5P_DEFAULT));
+                        H5Fopen(config_paths[ns].c_str(), H5F_ACC_RDWR, H5P_DEFAULT));
                 }
             } catch(string &s) {
-                throw string("Unable to open configuration file at ") + my_config_paths[ns];
+                throw string("Unable to open configuration file at ") + config_paths[ns];
             }
 
             if (user_defined_input) {
@@ -950,7 +768,7 @@ try {
                 traverse_dset<3,float>(sys->config.get(), "/input/pos", [&](size_t na, size_t d, size_t ns, float x) { 
                         sys->engine.pos->output(d,na) = x;});
 
-            if(verbose) printf("%s\nn_atom %i\n\n", my_config_paths[ns].c_str(), sys->n_atom);
+            if(verbose) printf("%s\nn_atom %i\n\n", config_paths[ns].c_str(), sys->n_atom);
 
             if(potential_deriv_agreement_arg.getValue()){
                 sys->engine.compute(PotentialAndDerivMode);
@@ -969,83 +787,26 @@ try {
             sys->set_temperature(sys->initial_temperature);
             sys->thermostat.set_delta_t(thermostat_interval*inner_step*dt);  // set true thermostat interval  //  FIXME inner_step
 
-            // Initialize barostat parameters for NPT ensemble
-            if(integrator_arg.getValue() == "npt") {
-                sys->set_pressure(pressure_arg.getValue());
-                sys->set_barostat_timescale(barostat_timescale_arg.getValue());
-                sys->set_barostat_interval(barostat_interval_arg.getValue());
-                sys->enable_barostat(true);
-            }
-
             sys->mom.reset(3, sys->n_atom);
-            sys->particle_masses.reset(1, sys->n_atom);
             if (restart_using_momentum_arg.getValue()) { // initialize momentum using input.mom if requested
                 if (user_defined_input) {
                     if (h5_exists(sys->input.get(), "input/mom")) {
                         traverse_dset<3,float>(sys->input.get(), "/input/mom", [&](size_t na, size_t d, size_t ns, float x) { 
                             sys->mom(d,na) = x;});
                     }
-                    else {
-                        throw  string("input h5 file doesn't have input.mom group, can't restart using the momentum!");
-                    }
+                    else throw  string("input h5 file doesn't have input.mom group, can't restart using the momentum!");
                 }
                 else {
                     if (h5_exists(sys->config.get(), "input/mom")) {
                         traverse_dset<3,float>(sys->config.get(), "/input/mom", [&](size_t na, size_t d, size_t ns, float x) { 
-                            sys->mom(d,na) = x;});
+                                sys->mom(d,na) = x;});
                     }
-                    
-                    // Read particle masses
-                    if (user_defined_input) {
-                        if (h5_exists(sys->input.get(), "input/mass")) {
-                            traverse_dset<1,float>(sys->input.get(), "/input/mass", [&](size_t na, float x) { 
-                                sys->particle_masses(0,na) = x;});
-                        }
-                        else {
-                            // Default mass of 1.0 for all particles
-                            for(int na=0; na<sys->n_atom; ++na) sys->particle_masses(0,na) = 1.0f;
-                        }
-                    }
-                    else {
-                        if (h5_exists(sys->config.get(), "input/mass")) {
-                            traverse_dset<1,float>(sys->config.get(), "/input/mass", [&](size_t na, float x) { 
-                                sys->particle_masses(0,na) = x;});
-                        }
-                        else {
-                            // Default mass of 1.0 for all particles
-                            for(int na=0; na<sys->n_atom; ++na) sys->particle_masses(0,na) = 1.0f;
-                        }
-                    }
+                    else throw  string("input h5 file doesn't have input.mom group, can't restart using the momentum!");
                 }
             }
             else {
                 for(int d: range(3)) for(int na: range(sys->n_atom)) sys->mom(d,na) = 0.f;
-                
-                // Read particle masses
-                if (user_defined_input) {
-                    if (h5_exists(sys->input.get(), "input/mass")) {
-                        traverse_dset<1,float>(sys->input.get(), "/input/mass", [&](size_t na, float x) { 
-                            sys->particle_masses(0,na) = x;});
-                    }
-                    else {
-                        // Default mass of 1.0 for all particles
-                        for(int na=0; na<sys->n_atom; ++na) sys->particle_masses(0,na) = 1.0f;
-                    }
-                }
-                else {
-                    if (h5_exists(sys->config.get(), "input/mass")) {
-                        traverse_dset<1,float>(sys->config.get(), "/input/mass", [&](size_t na, float x) { 
-                            sys->particle_masses(0,na) = x;});
-                    }
-                    else {
-                        // Default mass of 1.0 for all particles
-                        for(int na=0; na<sys->n_atom; ++na) sys->particle_masses(0,na) = 1.0f;
-                    }
-                }
-                
-                if (!disable_initial_thermalization_arg.getValue()) {
-                    sys->thermostat.apply(sys->mom, sys->n_atom); // initial thermalization if it's a fresh start
-                }
+                sys->thermostat.apply(sys->mom, sys->n_atom); // initial thermalization if it's a fresh start
             }
 
 
@@ -1055,13 +816,6 @@ try {
                     for(int na=0; na<sys->n_atom; ++na) 
                     for(int d=0; d<3; ++d) 
                     pos_buffer[na*3 + d] = pos_array(d,na);
-                    });
-            // Add force logger to capture forces for analysis
-            sys->logger->add_logger<float>("force", {1, sys->n_atom, 3}, [sys](float* force_buffer) {
-                    VecArray force_array = sys->engine.pos->sens;
-                    for(int na=0; na<sys->n_atom; ++na) 
-                    for(int d=0; d<3; ++d) 
-                    force_buffer[na*3 + d] = force_array(d,na);
                     });
             if (record_momentum_arg.getValue()) { // record the momentum if requested, with the same frequency as the position recording
                 sys->logger->add_logger<float>("mom", {1, sys->n_atom, 3}, [sys](float* mom_buffer) {
@@ -1148,12 +902,30 @@ try {
         }
         if(verbose) printf("\n");
 
-        if(verbose) printf("Initial potential energy:");
+            if(verbose) printf("Initial potential energy:");
         for(System& sys: systems) {
             sys.engine.compute(PotentialAndDerivMode);
             if(verbose) printf(" %.2f", sys.engine.potential);
         }
         if(verbose) printf("\n");
+
+            // Optional pre-run minimization
+            if(enable_min_arg.getValue()) {
+                void martini_run_minimization(DerivEngine&, int, double, double, double, int);
+                int it = min_max_iter_arg.getValue();
+                double etol = min_energy_tol_arg.getValue();
+                double ftol = min_force_tol_arg.getValue();
+                double mstep = min_step_arg.getValue();
+                if(verbose) printf("\nMINIMIZATION: starting...\n");
+                for(System& sys: systems) {
+                    martini_run_minimization(sys.engine, it, etol, ftol, mstep, verbose);
+                    // Save a frame immediately after minimization so downstream stages can pick it up
+                    // This ensures /output/pos exists even if duration is 0
+                    sys.engine.compute(PotentialAndDerivMode);
+                    sys.logger->collect_samples();
+                }
+                if(verbose) printf("MINIMIZATION: done\n\n");
+            }
 
 
         // Install signal handlers to dump state only when the simulation has really started.  This is intended to prevent
@@ -1165,22 +937,7 @@ try {
         // we need to run everyone until the next synchronization event
         // a little care is needed if we are multiplexing the events
         auto tstart = chrono::high_resolution_clock::now();
-        
-#ifdef USE_MPI
-        // Synchronize all ranks before starting simulation
-        MPI_Barrier(MPI_COMM_WORLD);
-        if(verbose && rank == 0) printf("Starting MPI simulation with %d ranks\n", size);
-#endif
-        
-        // Ensure we have systems to process
-        if (systems.empty()) {
-            if(verbose) printf("Rank %d: No systems to process, participating in MPI only\n", rank);
-            // Don't exit early - let the rank participate in MPI but skip simulation
-        }
-        
-        // Only run simulation if we have systems to process
-        if (!systems.empty()) {
-            while(systems[0].round_num < n_round && received_signal==NO_SIGNAL) {
+        while(systems[0].round_num < n_round && received_signal==NO_SIGNAL) {
             int last_start = systems[0].round_num;
             #pragma omp parallel for schedule(static,1)
             for(int ns=0; ns<int(systems.size()); ++ns) {
@@ -1211,9 +968,8 @@ try {
                     if(nr && mc_interval && !(nr%mc_interval)) 
                         sys.mc_samplers.execute(sys.random_seed, nr, sys.temperature, sys.engine);
 
-                    // Recenter every step to prevent global COM drift (XY-only if requested)
-                    if(do_recenter) recenter(sys.engine.pos->output, xy_recenter_only, sys.n_atom);
                     if(!frame_interval || !(nr%frame_interval)) {
+                        if(do_recenter) recenter(sys.engine.pos->output, xy_recenter_only, sys.n_atom);
                         sys.engine.compute(PotentialAndDerivMode);
                         sys.logger->collect_samples();
 
@@ -1228,143 +984,33 @@ try {
                         Rg = sqrtf(Rg/sys.n_atom);
 
                         if(verbose) printf(
-                                "%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg %5.1f A, potential % 8.2f\n",
-                                duration_print_width, nr*double(dt*inner_step),
-                                duration_print_width, duration,
+                                "%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg %5.1f A, potential % 8.2f\n", 
+                                duration_print_width, nr*double(dt*inner_step), 
+                                duration_print_width, duration, 
                                 ns, sys.temperature,
                                 get_n_hbond(sys.engine), Rg, sys.engine.potential);
                         fflush(stdout);
                     }
 
                     if(!dense_output_interval || !(nr%dense_output_interval)) {
-                        
                         sys.logger->collect_dense_samples();
                     }
 
-                    // CORRECTED ORDER: Integration first, then thermostat/barostat
-                    if  (integrator_arg.getValue() == "mv" )
-                        sys.engine.integration_cycle(sys.mom, dt, inner_step, sys.particle_masses);
-                    else if (integrator_arg.getValue() == "vv" )
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::VelocityVerlet, sys.particle_masses);
-                    else if (integrator_arg.getValue() == "npt" )
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::NPT, sys.particle_masses);
-                    else if (integrator_arg.getValue() == "nvt_corrected" )
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::NVT_Corrected, sys.particle_masses);
-                    else if (integrator_arg.getValue() == "minimize" ) {
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::Minimize, sys.particle_masses);
-                        // Check for minimization convergence and exit early
-                        if (g_min_converged) {
-                            std::cout << "[MINIMIZATION] Early exit due to convergence" << std::endl;
-                            
-                            // Write minimized coordinates back to input file
-                            std::cout << "[MINIMIZATION] Writing minimized coordinates back to input file..." << std::endl;
-                            try {
-                                // Open the input file for writing
-                                auto input_file = h5::open_file(const_cast<char*>(my_config_paths[ns].c_str()), H5F_ACC_RDWR);
-                                auto input_group = h5::open_group(input_file.get(), "/input");
-                                auto pos_dset = h5::h5_obj(H5Dclose, H5Dopen2(input_group.get(), "pos", H5P_DEFAULT));
-                                
-                                // Write the minimized coordinates back to the input file
-                                for(int na=0; na < sys.engine.pos->n_atom; ++na) {
-                                    auto pos_vec = load_vec<3>(sys.engine.pos->output, na);
-                                    float pos_array[3] = {pos_vec[0], pos_vec[1], pos_vec[2]};
-                                    hsize_t start[3] = {static_cast<hsize_t>(na), 0, 0};
-                                    hsize_t count[3] = {1, 3, 1};
-                                    auto mem_space = h5::h5_obj(H5Sclose, H5Screate_simple(3, count, NULL));
-                                    auto file_space = h5::h5_obj(H5Sclose, H5Dget_space(pos_dset.get()));
-                                    h5::h5_noerr(H5Sselect_hyperslab(file_space.get(), H5S_SELECT_SET, start, NULL, count, NULL));
-                                    h5::h5_noerr(H5Dwrite(pos_dset.get(), H5T_NATIVE_FLOAT, mem_space.get(), file_space.get(), H5P_DEFAULT, pos_array));
-                                }
-                                std::cout << "[MINIMIZATION] Successfully wrote minimized coordinates to input file" << std::endl;
-                            } catch(const std::string& e) {
-                                std::cout << "[MINIMIZATION] Warning: Failed to write coordinates back to input file: " << e << std::endl;
-                            }
-                            
-                            do_break = true;
-                            break;
-                        }
-                    } else
-                        sys.engine.integration_cycle(sys.mom, dt, 0.0f, DerivEngine::Verlet, sys.particle_masses);
-
-                    // Apply thermostat AFTER integration
-                    if(!(nr%thermostat_interval) && !disable_thermostat_arg.getValue()) {
+                    if(!(nr%thermostat_interval)) {
                         // Handle simulated annealing if applicable
                         if(anneal_factor != 1.)
                             sys.set_temperature(anneal_temp(sys.initial_temperature, inner_step*dt*(sys.round_num+1)));
                         sys.thermostat.apply(sys.mom, sys.n_atom);
                     }
 
-                    // Apply barostat for NPT ensemble AFTER integration
-                    if(integrator_arg.getValue() == "npt" && sys.use_barostat && !(nr%barostat_interval)) {
-                        // Calculate current volume from bounding box
-                        const float MAX_FLOAT = 1e10f;
-                        float3 min_pos = make_vec3(MAX_FLOAT, MAX_FLOAT, MAX_FLOAT);
-                        float3 max_pos = make_vec3(-MAX_FLOAT, -MAX_FLOAT, -MAX_FLOAT);
-
-                        for(int na=0; na<sys.n_atom; ++na) {
-                            auto pos = load_vec<3>(sys.engine.pos->output, na);
-                            min_pos.x() = std::min(min_pos.x(), pos.x());
-                            min_pos.y() = std::min(min_pos.y(), pos.y());
-                            min_pos.z() = std::min(min_pos.z(), pos.z());
-                            max_pos.x() = std::max(max_pos.x(), pos.x());
-                            max_pos.y() = std::max(max_pos.y(), pos.y());
-                            max_pos.z() = std::max(max_pos.z(), pos.z());
-                        }
-
-                        float volume = (max_pos.x() - min_pos.x()) *
-                                     (max_pos.y() - min_pos.y()) *
-                                     (max_pos.z() - min_pos.z());
-
-                        // Calculate kinetic energy and virial
-                        float kinetic_energy = 0.0f;
-                        float virial = 0.0f;
-
-                        for(int na=0; na<sys.n_atom; ++na) {
-                            auto vel = load_vec<3>(sys.mom, na);
-                            float mass = (sys.particle_masses.x == nullptr) ? 1.0f : sys.particle_masses(0, na);
-                            kinetic_energy += 0.5f * mass * dot(vel, vel);
-
-                            auto force = load_vec<3>(sys.engine.pos->sens, na);
-                            auto pos = load_vec<3>(sys.engine.pos->output, na);
-                            virial -= dot(force, pos); // Corrected: virial = -sum(r · F)
-                        }
-
-                        // Calculate pressure using virial theorem: P = (2*KE + virial)/(3V)
-                        float current_pressure = (2.0f * kinetic_energy + virial) / (3.0f * volume);
-
-                        // Berendsen barostat with improved parameters
-                        float pressure_diff = current_pressure - sys.pressure;
-                        float tau_p = 1.0f; // barostat relaxation time
-                        float compressibility = 4.5e-5f; // water compressibility in UPSIDE units
-
-                        float scale_factor = 1.0f - compressibility * pressure_diff * (barostat_interval * dt / tau_p);
-                        scale_factor = std::max(0.995f, std::min(1.005f, scale_factor));
-
-                        // Apply scaling to positions
-                        for(int na=0; na<sys.n_atom; ++na) {
-                            auto pos = load_vec<3>(sys.engine.pos->output, na);
-                            pos *= scale_factor;
-                            store_vec(sys.engine.pos->output, na, pos);
-                        }
-
-                        // Scale velocities to maintain temperature
-                        float vel_scale = 1.0f / scale_factor;
-                        for(int na=0; na<sys.n_atom; ++na) {
-                            auto vel = load_vec<3>(sys.mom, na);
-                            vel *= vel_scale;
-                            store_vec(sys.mom, na, vel);
-                        }
-
-                        // Update box dimensions to maintain PBC consistency
-                        update_box_dimensions(scale_factor);
-                        
-                        // Update box dimensions in all potential classes
-                        for(auto &n: sys.engine.nodes) {
-                            // Cast to PotentialNode and call virtual method
-                            if(auto* pot_node = dynamic_cast<PotentialNode*>(n.computation.get())) {
-                                pot_node->update_box_dimensions(scale_factor);
-                            }
-                        }
+                    if  (integrator_arg.getValue() == "mv" ) {
+                        sys.engine.integration_cycle(sys.mom, dt, inner_step);
+                    } else if (integrator_arg.getValue() == "nvtc" ) {
+                        float mf = static_cast<float>(max_force_arg.getValue());
+                        sys.engine.integration_cycle(sys.mom, dt, mf, DerivEngine::Predescu);
+                    } else {
+                        // Default simple Verlet step. Ensure we still progress even if forces are tiny.
+                        sys.engine.integration_cycle(sys.mom, dt);
                     }
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
@@ -1377,61 +1023,25 @@ try {
             if(received_signal!=NO_SIGNAL) break;
             if(passed_time_lim) break;
 
-            if(replica_interval && !(systems[0].round_num % replica_interval)) {
-#ifdef USE_MPI
-                // For MPI, we need to gather all system data for replica exchange
-                // This is a simplified approach - in a full implementation, we'd need
-                // to gather positions, momenta, and other state data from all ranks
-                if(verbose && rank == 0) printf("Replica exchange not yet implemented for MPI\n");
-#else
+            if(replica_interval && !(systems[0].round_num % replica_interval))
                 replex->attempt_swaps(base_random_seed, systems[0].round_num, systems, exchange_criterion);
-#endif
-            }
 
         }
-        }  // End of if (!systems.empty())
 
-        // Write minimized coordinates back to input file if minimization was used
-        if (integrator_arg.getValue() == "minimize" && !systems.empty()) {
-            std::cout << "[MINIMIZATION] Writing minimized coordinates back to input file..." << std::endl;
-            for(size_t ns = 0; ns < systems.size(); ++ns) {
-                auto& sys = systems[ns];
-                try {
-                    // Open the input file for writing
-                    auto input_file = h5::open_file(const_cast<char*>(my_config_paths[ns].c_str()), H5F_ACC_RDWR);
-                    auto input_group = h5::open_group(input_file.get(), "/input");
-                    auto pos_dset = h5::h5_obj(H5Dclose, H5Dopen2(input_group.get(), "pos", H5P_DEFAULT));
-                    
-                    // Write the minimized coordinates back to the input file
-                    for(int na=0; na < sys.engine.pos->n_atom; ++na) {
-                        auto pos_vec = load_vec<3>(sys.engine.pos->output, na);
-                        float pos_array[3] = {pos_vec[0], pos_vec[1], pos_vec[2]};
-                        hsize_t start[3] = {static_cast<hsize_t>(na), 0, 0};
-                        hsize_t count[3] = {1, 3, 1};
-                        auto mem_space = h5::h5_obj(H5Sclose, H5Screate_simple(3, count, NULL));
-                        auto file_space = h5::h5_obj(H5Sclose, H5Dget_space(pos_dset.get()));
-                        h5::h5_noerr(H5Sselect_hyperslab(file_space.get(), H5S_SELECT_SET, start, NULL, count, NULL));
-                        h5::h5_noerr(H5Dwrite(pos_dset.get(), H5T_NATIVE_FLOAT, mem_space.get(), file_space.get(), H5P_DEFAULT, pos_array));
-                    }
-                    std::cout << "[MINIMIZATION] Successfully wrote minimized coordinates to input file" << std::endl;
-                } catch(const std::string& e) {
-                    std::cout << "[MINIMIZATION] Warning: Failed to write coordinates back to input file: " << e << std::endl;
-                }
-            }
-        }
+
 
         if(received_signal!=NO_SIGNAL) {fprintf(stderr, "Received early termination signal\n");}
         if(passed_time_lim) {fprintf(stderr, "Passed time limit\n");}
         for(auto& sys: systems) sys.logger = shared_ptr<H5Logger>(); // release shared_ptr, which also flushes data during destructor
 
         auto elapsed = chrono::duration<double>(std::chrono::high_resolution_clock::now() - tstart).count();
-        if(verbose && !systems.empty())
+        if(verbose)
             printf("\n\nfinished in %.1f seconds (%.2f us/systems/step, %.1e simulation_time_unit/hour)\n",
                 elapsed,
                 elapsed*1e6/systems.size()/systems[0].round_num/inner_step, 
                 systems[0].round_num*inner_step*dt/elapsed * 3600.); 
 
-        if(verbose && !systems.empty()) printf("\navg_kinetic_energy/1.5kT");
+        if(verbose) printf("\navg_kinetic_energy/1.5kT");
         for(auto& sys: systems) {
             double sum_kinetic = 0.;
             long n_kinetic = 0l;
@@ -1453,7 +1063,7 @@ try {
 
             if(verbose) printf(" % .3f", sum_kinetic/n_kinetic / (1.5*sys.temperature));
         }
-        if(verbose && !systems.empty()) printf("\n");
+        if(verbose) printf("\n");
 
         // FIXME this code should be moved into MC sampler code
         try {
@@ -1521,44 +1131,5 @@ try {
 }
 
 int main(int argc, const char* const * argv) {
-    // Check if this is a help request before initializing MPI
-    bool is_help_request = false;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            is_help_request = true;
-            break;
-        }
-    }
-    
-    if (is_help_request) {
-        // For help requests, just run upside_main without MPI to avoid MPI issues
-        return upside_main(argc, argv);
-    }
-    
-#ifdef USE_MPI
-    // Initialize MPI
-    int provided;
-    MPI_Init_thread(&argc, const_cast<char***>(&argv), MPI_THREAD_FUNNELED, &provided);
-
-    // Get MPI rank and size
-    int rank, size;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-
-    // Only rank 0 should print to stdout/stderr initially
-    if (rank != 0) {
-        // Redirect stdout and stderr to /dev/null for non-root ranks
-        freopen("/dev/null", "w", stdout);
-        freopen("/dev/null", "w", stderr);
-    }
-
-    int result = upside_main(argc, argv);
-
-    // Finalize MPI
-    MPI_Finalize();
-
-    return result;
-#else
     return upside_main(argc, argv);
-#endif
 }
