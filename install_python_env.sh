@@ -8,7 +8,7 @@ python3 -m venv .venv
 # Activate virtual environment and install packages
 source .venv/bin/activate
 pip install --upgrade pip 
-pip install --upgrade h5py tables matplotlib mdtraj pymbar jax pandas prody
+pip install --upgrade h5py tables matplotlib mdtraj pymbar jax pandas ProDy
 deactivate
 
 echo "Python environment setup completed!"
