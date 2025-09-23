@@ -31,6 +31,7 @@ bool g_min_converged = false;
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
+#include <cstring>
 
 #if defined(_OPENMP)
 #include <omp.h>
