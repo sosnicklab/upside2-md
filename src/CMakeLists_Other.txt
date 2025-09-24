@@ -38,6 +38,7 @@ set (ENGINE_SRC
     backbone_steric.cpp 
     eig.cpp 
     membrane_potential.cpp
+    martini.cpp
     surface.cpp
     timing.cpp 
     thermostat.cpp
