@@ -114,7 +114,7 @@ echo
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR"
 
 # Simulation parameters (from original run_martini.py)
-DURATION=20000
+DURATION=5000
 FRAME_INTERVAL=20
 TEMPERATURE=0.8
 TIME_STEP=0.01
