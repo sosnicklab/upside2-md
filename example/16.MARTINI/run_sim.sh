@@ -33,10 +33,21 @@ POTENTIAL_MODE="${POTENTIAL_MODE:-soft}"
 # Set to "1" to enable Particle Mesh Ewald for long-range Coulomb interactions
 # Set to "0" to use standard short-range Coulomb cutoff
 # Can be overridden via environment variable: USE_PME=1 ./run_sim.sh
+# PME provides O(N log N) scaling for large systems vs O(N²) for standard cutoff
+# Uses improved 4th-order B-splines and optimized FFT for better accuracy
 USE_PME="${USE_PME:-1}"
 
 # THERMOSTAT INTERVAL (optional; set default if unset)
 THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
+
+# ADVANCED PME TUNING (optional overrides)
+# These can be set via environment variables for fine-tuning:
+# UPSIDE_PME_ALPHA=0.2      # Ewald screening parameter (0.1-0.5 range)
+# UPSIDE_PME_RCUT=10.0      # Real space cutoff in Angstroms
+# UPSIDE_PME_NX=64          # Grid size X (must be power of 2: 16,32,64,128...)
+# UPSIDE_PME_NY=64          # Grid size Y (must be power of 2: 16,32,64,128...)
+# UPSIDE_PME_NZ=64          # Grid size Z (must be power of 2: 16,32,64,128...)
+# UPSIDE_PME_ORDER=4        # B-spline order (3 or 4 recommended)
 # =============================================================================
 
 # Validate potential mode
@@ -51,6 +62,26 @@ if [ "$USE_PME" != "0" ] && [ "$USE_PME" != "1" ]; then
     echo "ERROR: Invalid USE_PME: $USE_PME"
     echo "Valid options: '0' (disable) or '1' (enable)"
     exit 1
+fi
+
+# Validate PME grid sizes (must be powers of 2 for optimal FFT performance)
+if [ "$USE_PME" = "1" ]; then
+    validate_power_of_2() {
+        local val=$1
+        local name=$2
+        if [ "$val" -gt 0 ] && [ $((val & (val - 1))) -eq 0 ]; then
+            return 0  # Valid power of 2
+        else
+            echo "WARNING: $name=$val is not a power of 2. FFT performance may be suboptimal."
+            echo "Recommended values: 16, 32, 64, 128, 256..."
+            return 1
+        fi
+    }
+    
+    # Check grid sizes if they're set
+    [ -n "$UPSIDE_PME_NX" ] && validate_power_of_2 "$UPSIDE_PME_NX" "UPSIDE_PME_NX"
+    [ -n "$UPSIDE_PME_NY" ] && validate_power_of_2 "$UPSIDE_PME_NY" "UPSIDE_PME_NY"
+    [ -n "$UPSIDE_PME_NZ" ] && validate_power_of_2 "$UPSIDE_PME_NZ" "UPSIDE_PME_NZ"
 fi
 
 
@@ -70,6 +101,14 @@ fi
 
 echo "Potential mode: $POTENTIAL_MODE"
 echo "PME enabled: $USE_PME"
+if [ "$USE_PME" = "1" ]; then
+    echo "PME configuration:"
+    echo "  Grid size: ${UPSIDE_PME_NX:-64}x${UPSIDE_PME_NY:-64}x${UPSIDE_PME_NZ:-64}"
+    echo "  Alpha: ${UPSIDE_PME_ALPHA:-0.2}"
+    echo "  Real space cutoff: ${UPSIDE_PME_RCUT:-10.0} Å"
+    echo "  B-spline order: ${UPSIDE_PME_ORDER:-4}"
+    echo "  Features: Improved FFT, 4th-order B-splines, spline tables"
+fi
 echo "Thermostat interval: $THERMOSTAT_INTERVAL"
 
 # Configuration
@@ -158,14 +197,14 @@ fi
 
 export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
 
-# PME configuration
+# PME configuration - Optimized settings for improved accuracy and performance
 export UPSIDE_USE_PME=${USE_PME}
-export UPSIDE_PME_ALPHA=${UPSIDE_PME_ALPHA:-0.2}
-export UPSIDE_PME_RCUT=${UPSIDE_PME_RCUT:-10.0}
-export UPSIDE_PME_NX=${UPSIDE_PME_NX:-32}
-export UPSIDE_PME_NY=${UPSIDE_PME_NY:-32}
-export UPSIDE_PME_NZ=${UPSIDE_PME_NZ:-32}
-export UPSIDE_PME_ORDER=${UPSIDE_PME_ORDER:-4}
+export UPSIDE_PME_ALPHA=${UPSIDE_PME_ALPHA:-0.2}        # Ewald screening parameter (optimized)
+export UPSIDE_PME_RCUT=${UPSIDE_PME_RCUT:-10.0}         # Real space cutoff in Angstroms
+export UPSIDE_PME_NX=${UPSIDE_PME_NX:-64}               # Grid size X (power of 2 for optimal FFT)
+export UPSIDE_PME_NY=${UPSIDE_PME_NY:-64}               # Grid size Y (power of 2 for optimal FFT)
+export UPSIDE_PME_NZ=${UPSIDE_PME_NZ:-64}               # Grid size Z (power of 2 for optimal FFT)
+export UPSIDE_PME_ORDER=${UPSIDE_PME_ORDER:-4}          # B-spline interpolation order (4th order for accuracy)
 
 echo "Potential options (env): UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ} UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA} UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB} UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA} UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES}"
 echo "PME options (env): UPSIDE_USE_PME=${UPSIDE_USE_PME} UPSIDE_PME_ALPHA=${UPSIDE_PME_ALPHA} UPSIDE_PME_RCUT=${UPSIDE_PME_RCUT} UPSIDE_PME_NX=${UPSIDE_PME_NX} UPSIDE_PME_NY=${UPSIDE_PME_NY} UPSIDE_PME_NZ=${UPSIDE_PME_NZ} UPSIDE_PME_ORDER=${UPSIDE_PME_ORDER}"

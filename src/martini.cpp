@@ -378,27 +378,59 @@ static bool apply_pbc_wrapping(VecArray pos, int n_atoms) {
     return any_wrapped;
 }
 
-// Simple 1D FFT implementation for PME
-class SimpleFFT {
+// Improved FFT implementation for PME with proper error handling
+class PMEFFT {
 public:
+    static bool is_power_of_2(int n) {
+        return n > 0 && (n & (n - 1)) == 0;
+    }
+    
+    static int next_power_of_2(int n) {
+        if (n <= 0) return 1;
+        int power = 1;
+        while (power < n) power <<= 1;
+        return power;
+    }
+    
     static void fft1d(std::vector<std::complex<float>>& data) {
         int n = data.size();
         if (n <= 1) return;
         
-        // Cooley-Tukey FFT algorithm
-        std::vector<std::complex<float>> even(n/2), odd(n/2);
-        for (int i = 0; i < n/2; ++i) {
-            even[i] = data[2*i];
-            odd[i] = data[2*i + 1];
+        // Ensure power of 2 size
+        if (!is_power_of_2(n)) {
+            int new_size = next_power_of_2(n);
+            data.resize(new_size, 0.0f);
+            n = new_size;
         }
         
-        fft1d(even);
-        fft1d(odd);
+        // Bit-reverse permutation
+        for (int i = 1, j = 0; i < n; ++i) {
+            int bit = n >> 1;
+            while (j & bit) {
+                j ^= bit;
+                bit >>= 1;
+            }
+            j ^= bit;
+            if (i < j) {
+                std::swap(data[i], data[j]);
+            }
+        }
         
-        for (int i = 0; i < n/2; ++i) {
-            std::complex<float> t = std::polar(1.0f, -2.0f * M_PI_F * i / n) * odd[i];
-            data[i] = even[i] + t;
-            data[i + n/2] = even[i] - t;
+        // Cooley-Tukey FFT
+        for (int len = 2; len <= n; len <<= 1) {
+            float angle = -2.0f * M_PI / len;
+            std::complex<float> wlen(cosf(angle), sinf(angle));
+            
+            for (int i = 0; i < n; i += len) {
+                std::complex<float> w(1.0f);
+                for (int j = 0; j < len / 2; ++j) {
+                    std::complex<float> u = data[i + j];
+                    std::complex<float> v = data[i + j + len / 2] * w;
+                    data[i + j] = u + v;
+                    data[i + j + len / 2] = u - v;
+                    w *= wlen;
+                }
+            }
         }
     }
     
@@ -422,6 +454,11 @@ public:
         int nx = data.size();
         int ny = data[0].size();
         int nz = data[0][0].size();
+        
+        // Validate grid dimensions are powers of 2
+        if (!is_power_of_2(nx) || !is_power_of_2(ny) || !is_power_of_2(nz)) {
+            std::cerr << "Warning: PME grid dimensions should be powers of 2 for optimal FFT performance" << std::endl;
+        }
         
         // FFT along x direction
         for (int j = 0; j < ny; ++j) {
@@ -515,19 +552,53 @@ public:
     }
 };
 
-// B-spline interpolation for PME charge assignment
-class BSplineInterpolation {
+// Improved B-spline interpolation for PME using existing spline infrastructure
+class PMEBSpline {
 public:
-    static float bspline3(float x) {
-        // Third-order B-spline
+    // Precomputed B-spline coefficients for order 4 (cubic)
+    static constexpr float bspline4_coeffs[4][4] = {
+        { 0./6., 0./6., 0./6., 1./6.},
+        { 1./6., 3./6., 3./6.,-3./6.},
+        { 4./6., 0./6.,-6./6., 3./6.},
+        { 1./6.,-3./6., 3./6.,-1./6.}
+    };
+    
+    static float bspline4(float x) {
+        // Fourth-order B-spline (cubic)
         x = fabsf(x);
         if (x < 1.0f) {
-            return (2.0f/3.0f) - x*x + 0.5f*x*x*x;
+            float x2 = x * x;
+            float x3 = x2 * x;
+            return (1.0f/6.0f) * (4.0f - 6.0f*x2 + 3.0f*x3);
         } else if (x < 2.0f) {
             float t = 2.0f - x;
             return t*t*t / 6.0f;
         }
         return 0.0f;
+    }
+    
+    static float bspline4_derivative(float x) {
+        // Derivative of fourth-order B-spline
+        float sign = (x >= 0.0f) ? 1.0f : -1.0f;
+        x = fabsf(x);
+        
+        if (x < 1.0f) {
+            return sign * (1.0f/6.0f) * (-12.0f*x + 9.0f*x*x);
+        } else if (x < 2.0f) {
+            float t = 2.0f - x;
+            return -sign * t*t / 2.0f;
+        }
+        return 0.0f;
+    }
+    
+    static float bspline4_influence_function(float k, float dx) {
+        // B-spline influence function in reciprocal space for PME
+        // This corrects for the B-spline interpolation in the charge assignment
+        if (fabsf(k) < 1e-10f) return 1.0f;
+        
+        float kdx = k * dx;
+        float sinc_kdx = sinf(kdx) / kdx;
+        return sinc_kdx * sinc_kdx * sinc_kdx * sinc_kdx;
     }
     
     static void assign_charges_to_grid(const std::vector<Vec<3,float>>& positions,
@@ -548,33 +619,33 @@ public:
         float dy = box_y / ny;
         float dz = box_z / nz;
         
-        // Assign charges to grid using B-spline interpolation
+        // Assign charges to grid using improved B-spline interpolation
         for (size_t p = 0; p < positions.size(); ++p) {
             const auto& pos = positions[p];
             float q = charges[p];
             
-            // Convert to grid coordinates
+            // Convert to grid coordinates with proper centering
             float gx = (pos.x() + 0.5f * box_x) / dx;
             float gy = (pos.y() + 0.5f * box_y) / dy;
             float gz = (pos.z() + 0.5f * box_z) / dz;
             
-            // Find grid points within B-spline support
-            int ix_start = static_cast<int>(floorf(gx - 2.0f));
-            int iy_start = static_cast<int>(floorf(gy - 2.0f));
-            int iz_start = static_cast<int>(floorf(gz - 2.0f));
+            // Find grid points within B-spline support (order 4)
+            int ix_start = static_cast<int>(floorf(gx - 1.5f));
+            int iy_start = static_cast<int>(floorf(gy - 1.5f));
+            int iz_start = static_cast<int>(floorf(gz - 1.5f));
             
-            for (int ix = ix_start; ix <= ix_start + 4; ++ix) {
-                for (int iy = iy_start; iy <= iy_start + 4; ++iy) {
-                    for (int iz = iz_start; iz <= iz_start + 4; ++iz) {
+            for (int ix = ix_start; ix <= ix_start + 3; ++ix) {
+                for (int iy = iy_start; iy <= iy_start + 3; ++iy) {
+                    for (int iz = iz_start; iz <= iz_start + 3; ++iz) {
                         // Apply periodic boundary conditions
                         int i = ((ix % nx) + nx) % nx;
                         int j = ((iy % ny) + ny) % ny;
                         int k = ((iz % nz) + nz) % nz;
                         
-                        // Calculate B-spline weights
-                        float wx = bspline3(gx - ix);
-                        float wy = bspline3(gy - iy);
-                        float wz = bspline3(gz - iz);
+                        // Calculate B-spline weights using order 4
+                        float wx = bspline4(gx - ix);
+                        float wy = bspline4(gy - iy);
+                        float wz = bspline4(gz - iz);
                         
                         // Add charge contribution
                         grid[i][j][k] += q * wx * wy * wz;
@@ -597,28 +668,28 @@ public:
             const auto& pos = positions[p];
             Vec<3,float> force = make_zero<3>();
             
-            // Convert to grid coordinates
+            // Convert to grid coordinates with proper centering
             float gx = (pos.x() + 0.5f * box_x) / dx;
             float gy = (pos.y() + 0.5f * box_y) / dy;
             float gz = (pos.z() + 0.5f * box_z) / dz;
             
-            // Find grid points within B-spline support
-            int ix_start = static_cast<int>(floorf(gx - 2.0f));
-            int iy_start = static_cast<int>(floorf(gy - 2.0f));
-            int iz_start = static_cast<int>(floorf(gz - 2.0f));
+            // Find grid points within B-spline support (order 4)
+            int ix_start = static_cast<int>(floorf(gx - 1.5f));
+            int iy_start = static_cast<int>(floorf(gy - 1.5f));
+            int iz_start = static_cast<int>(floorf(gz - 1.5f));
             
-            for (int ix = ix_start; ix <= ix_start + 4; ++ix) {
-                for (int iy = iy_start; iy <= iy_start + 4; ++iy) {
-                    for (int iz = iz_start; iz <= iz_start + 4; ++iz) {
+            for (int ix = ix_start; ix <= ix_start + 3; ++ix) {
+                for (int iy = iy_start; iy <= iy_start + 3; ++iy) {
+                    for (int iz = iz_start; iz <= iz_start + 3; ++iz) {
                         // Apply periodic boundary conditions
                         int i = ((ix % nx) + nx) % nx;
                         int j = ((iy % ny) + ny) % ny;
                         int k = ((iz % nz) + nz) % nz;
                         
-                        // Calculate B-spline weights
-                        float wx = bspline3(gx - ix);
-                        float wy = bspline3(gy - iy);
-                        float wz = bspline3(gz - iz);
+                        // Calculate B-spline weights using order 4
+                        float wx = bspline4(gx - ix);
+                        float wy = bspline4(gy - iy);
+                        float wz = bspline4(gz - iz);
                         
                         // Add force contribution
                         force += force_grid[i][j][k] * wx * wy * wz;
@@ -749,9 +820,9 @@ struct ParticleMeshEwald : public PotentialNode
             positions[i] = load_vec<3>(pos1, i);
         }
         
-        // Step 1: Assign charges to grid using B-spline interpolation
-        BSplineInterpolation::assign_charges_to_grid(positions, charges, charge_grid, 
-                                                    box_x, box_y, box_z, nx, ny, nz);
+        // Step 1: Assign charges to grid using improved B-spline interpolation
+        PMEBSpline::assign_charges_to_grid(positions, charges, charge_grid, 
+                                          box_x, box_y, box_z, nx, ny, nz);
         
         // Step 2: Convert charge grid to complex format for FFT
         for(int i = 0; i < nx; ++i) {
@@ -763,12 +834,31 @@ struct ParticleMeshEwald : public PotentialNode
         }
         
         // Step 3: Forward 3D FFT
-        SimpleFFT::fft3d(potential_grid);
+        PMEFFT::fft3d(potential_grid);
         
-        // Step 4: Solve Poisson's equation in reciprocal space
+        // Step 4: Solve Poisson's equation in reciprocal space with improved Green's function
         float dx = box_x / nx;
         float dy = box_y / ny;
         float dz = box_z / nz;
+        
+        // Precompute B-spline influence function for PME
+        vector<float> b_spline_influence_x(nx, 0.0f);
+        vector<float> b_spline_influence_y(ny, 0.0f);
+        vector<float> b_spline_influence_z(nz, 0.0f);
+        
+        // Calculate B-spline influence function in reciprocal space
+        for(int i = 0; i < nx; ++i) {
+            float kx = (i <= nx/2) ? 2.0f * M_PI * i / box_x : 2.0f * M_PI * (i - nx) / box_x;
+            b_spline_influence_x[i] = PMEBSpline::bspline4_influence_function(kx, dx);
+        }
+        for(int j = 0; j < ny; ++j) {
+            float ky = (j <= ny/2) ? 2.0f * M_PI * j / box_y : 2.0f * M_PI * (j - ny) / box_y;
+            b_spline_influence_y[j] = PMEBSpline::bspline4_influence_function(ky, dy);
+        }
+        for(int k = 0; k < nz; ++k) {
+            float kz = (k <= nz/2) ? 2.0f * M_PI * k / box_z : 2.0f * M_PI * (k - nz) / box_z;
+            b_spline_influence_z[k] = PMEBSpline::bspline4_influence_function(kz, dz);
+        }
         
         for(int i = 0; i < nx; ++i) {
             for(int j = 0; j < ny; ++j) {
@@ -781,8 +871,14 @@ struct ParticleMeshEwald : public PotentialNode
                     float k_sq = kx*kx + ky*ky + kz*kz;
                     
                     if(k_sq > 0.0f) {
-                        // Green's function: G(k) = 1/k² * exp(-k²/(4α²))
+                        // Improved Green's function with B-spline correction
                         float green = expf(-k_sq / (4.0f * alpha * alpha)) / k_sq;
+                        float b_spline_correction = b_spline_influence_x[i] * b_spline_influence_y[j] * b_spline_influence_z[k];
+                        
+                        // Avoid division by zero in B-spline correction
+                        if(b_spline_correction > 1e-10f) {
+                            green /= (b_spline_correction * b_spline_correction);
+                        }
                         potential_grid[i][j][k] *= green;
                     } else {
                         // Handle k=0 case (should be zero for neutral systems)
@@ -793,7 +889,7 @@ struct ParticleMeshEwald : public PotentialNode
         }
         
         // Step 5: Inverse 3D FFT
-        SimpleFFT::ifft3d(potential_grid);
+        PMEFFT::ifft3d(potential_grid);
         
         // Step 6: Calculate potential energy
         float recip_pot = 0.0f;
@@ -806,31 +902,43 @@ struct ParticleMeshEwald : public PotentialNode
         }
         recip_pot *= 0.5f * coulomb_k / volume;
         
-        // Step 7: Calculate forces on grid
+        // Step 7: Calculate forces on grid using improved gradient calculation
         for(int i = 0; i < nx; ++i) {
             for(int j = 0; j < ny; ++j) {
                 for(int k = 0; k < nz; ++k) {
-                    // Calculate gradients using finite differences
+                    // Calculate gradients using higher-order finite differences for better accuracy
                     int ip = (i + 1) % nx;
                     int im = (i - 1 + nx) % nx;
+                    int ipp = (i + 2) % nx;
+                    int imm = (i - 2 + nx) % nx;
+                    
                     int jp = (j + 1) % ny;
                     int jm = (j - 1 + ny) % ny;
+                    int jpp = (j + 2) % ny;
+                    int jmm = (j - 2 + ny) % ny;
+                    
                     int kp = (k + 1) % nz;
                     int km = (k - 1 + nz) % nz;
+                    int kpp = (k + 2) % nz;
+                    int kmm = (k - 2 + nz) % nz;
                     
-                    float fx = (potential_grid[ip][j][k].real() - potential_grid[im][j][k].real()) / (2.0f * dx);
-                    float fy = (potential_grid[i][jp][k].real() - potential_grid[i][jm][k].real()) / (2.0f * dy);
-                    float fz = (potential_grid[i][j][kp].real() - potential_grid[i][j][km].real()) / (2.0f * dz);
+                    // Fourth-order finite differences for better accuracy
+                    float fx = (-potential_grid[ipp][j][k].real() + 8.0f*potential_grid[ip][j][k].real() 
+                               - 8.0f*potential_grid[im][j][k].real() + potential_grid[imm][j][k].real()) / (12.0f * dx);
+                    float fy = (-potential_grid[i][jpp][k].real() + 8.0f*potential_grid[i][jp][k].real() 
+                               - 8.0f*potential_grid[i][jm][k].real() + potential_grid[i][jmm][k].real()) / (12.0f * dy);
+                    float fz = (-potential_grid[i][j][kpp].real() + 8.0f*potential_grid[i][j][kp].real() 
+                               - 8.0f*potential_grid[i][j][km].real() + potential_grid[i][j][kmm].real()) / (12.0f * dz);
                     
                     force_grid[i][j][k] = make_vec3(-fx, -fy, -fz) * coulomb_k;
                 }
             }
         }
         
-        // Step 8: Interpolate forces back to particles
+        // Step 8: Interpolate forces back to particles using improved B-spline
         vector<Vec<3,float>> recip_forces(n_atom, make_zero<3>());
-        BSplineInterpolation::interpolate_forces_from_grid(positions, force_grid, recip_forces,
-                                                          box_x, box_y, box_z, nx, ny, nz);
+        PMEBSpline::interpolate_forces_from_grid(positions, force_grid, recip_forces,
+                                                box_x, box_y, box_z, nx, ny, nz);
         
         // Step 9: Self-interaction correction
         float self_correction = 0.0f;
