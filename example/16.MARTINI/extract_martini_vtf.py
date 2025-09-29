@@ -99,14 +99,11 @@ def main():
 
     # Open the HDF5 files
     with h5py.File(input_file, 'r') as t, h5py.File(input_file_for_structure, 'r') as t_struct:
-        # Get the number of frames from both softened and regular stages
-        n_frame_soft = len(t['output_soft/pos']) if 'output_soft/pos' in t else 0
+        # Count frames exclusively from PRODUCTION (regular) stage
         n_frame_regular = len(t['output/pos']) if 'output/pos' in t else 0
-        n_frame_total = n_frame_soft + n_frame_regular
+        n_frame_total = n_frame_regular
 
-        print(f"Number of softened frames: {n_frame_soft}")
-        print(f"Number of regular frames: {n_frame_regular}")
-        print(f"Total simulation frames: {n_frame_total}")
+        print(f"Number of production (regular) frames: {n_frame_regular}")
         
         # Get position data shape from input (first frame should use input positions)
         input_pos = t_struct['input/pos'][:]
@@ -131,29 +128,32 @@ def main():
         print(f"Mean position: {np.mean(input_pos)}")
         print(f"Std position: {np.std(input_pos)}")
         
-        # Read box dimensions from HDF5 file
-        # Check different potential groups for box dimensions
+        # Read equilibrated box dimensions if present; otherwise fall back to input attrs
         x_len = y_len = z_len = None
-        
-        # Try to read from martini_potential group
-        if 'input/potential/martini_potential' in t_struct:
+        if 'equilibrated_box' in t:
+            boxgrp = t['equilibrated_box']
+            if all(k in boxgrp.attrs for k in ('x_len','y_len','z_len')):
+                x_len = float(boxgrp.attrs['x_len'])
+                y_len = float(boxgrp.attrs['y_len'])
+                z_len = float(boxgrp.attrs['z_len'])
+                print(f"Using equilibrated box: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
+
+        if x_len is None and 'input/potential/martini_potential' in t_struct:
             potential_group = t_struct['input/potential/martini_potential']
-            if 'x_len' in potential_group.attrs:
-                x_len = potential_group.attrs['x_len']
-                y_len = potential_group.attrs['y_len'] 
-                z_len = potential_group.attrs['z_len']
+            if all(k in potential_group.attrs for k in ('x_len','y_len','z_len')):
+                x_len = float(potential_group.attrs['x_len'])
+                y_len = float(potential_group.attrs['y_len'])
+                z_len = float(potential_group.attrs['z_len'])
                 print(f"Found box dimensions from martini_potential: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
-        
-        # Try to read from periodic_boundary_potential group as fallback
+
         if x_len is None and 'input/potential/periodic_boundary_potential' in t_struct:
             pbc_group = t_struct['input/potential/periodic_boundary_potential']
-            if 'x_len' in pbc_group.attrs:
-                x_len = pbc_group.attrs['x_len']
-                y_len = pbc_group.attrs['y_len']
-                z_len = pbc_group.attrs['z_len']
+            if all(k in pbc_group.attrs for k in ('x_len','y_len','z_len')):
+                x_len = float(pbc_group.attrs['x_len'])
+                y_len = float(pbc_group.attrs['y_len'])
+                z_len = float(pbc_group.attrs['z_len'])
                 print(f"Found box dimensions from periodic_boundary_potential: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
-        
-        # Use default values if not found
+
         if x_len is None:
             x_len = y_len = z_len = 50.0
             print(f"WARNING: No box dimensions found in HDF5 file! Using defaults: {x_len:.1f} x {y_len:.1f} x {z_len:.1f} Å")
@@ -253,15 +253,9 @@ def main():
                 
                 half_box = np.array([x_len/2, y_len/2, z_len/2])
 
-                # Function to get frame positions from either softened or regular stage
+                # Function to get frame positions from production (regular) stage only
                 def get_frame_pos(frame_idx):
-                    if frame_idx < n_frame_soft:
-                        # Read from softened stage
-                        pos = t['output_soft/pos'][frame_idx]
-                    else:
-                        # Read from regular stage
-                        regular_idx = frame_idx - n_frame_soft
-                        pos = t['output/pos'][regular_idx]
+                    pos = t['output/pos'][frame_idx]
 
                     # Handle different output position data formats
                     if len(pos.shape) == 3:  # (n_frames, n_atoms, 3) or (n_atoms, 3, n_frames)
@@ -280,12 +274,9 @@ def main():
 
                     return frame_pos
 
-                # Skip frame 0 (PDB structure) - start directly with simulation frames
-                print("Skipping frame 0, starting with simulation frames...")
-
-                # Write simulation frames starting from frame 0
-                for frame in range(n_frame_total):  # Start from frame 0
-                    frame_pos = get_frame_pos(frame)  # Get simulation frame directly
+                # Write only production frames
+                for frame in range(n_frame_total):
+                    frame_pos = get_frame_pos(frame)
 
                     # Apply PBC wrapping to centered box convention [-L/2, L/2]
                     frame_pos = (frame_pos + half_box) % (2*half_box) - half_box
@@ -312,15 +303,9 @@ def main():
                 f.write("REMARK    CONTAINS DOPC LIPIDS, WATER, AND IONS\n")
                 f.write(f"REMARK    BOX DIMENSIONS: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Angstroms\n")
                 
-                # Function to get frame positions from either softened or regular stage (for PDB)
+                # Function to get frame positions from production (regular) stage only (for PDB)
                 def get_frame_pos_pdb(frame_idx):
-                    if frame_idx < n_frame_soft:
-                        # Read from softened stage
-                        pos = t['output_soft/pos'][frame_idx]
-                    else:
-                        # Read from regular stage
-                        regular_idx = frame_idx - n_frame_soft
-                        pos = t['output/pos'][regular_idx]
+                    pos = t['output/pos'][frame_idx]
 
                     # Handle different output position data formats
                     if len(pos.shape) == 3:  # (n_frames, n_atoms, 3) or (n_atoms, 3, n_frames)
@@ -339,12 +324,9 @@ def main():
 
                     return frame_pos
 
-                # Skip frame 0 (PDB structure) - start directly with simulation frames
-                print("Skipping frame 0, starting with simulation frames...")
-
-                # Write simulation frames starting from frame 0
-                for frame in range(n_frame_total):  # Start from frame 0
-                    frame_pos = get_frame_pos_pdb(frame)  # Get simulation frame directly
+                # Write only production frames
+                for frame in range(n_frame_total):
+                    frame_pos = get_frame_pos_pdb(frame)
 
                     # Apply PBC wrapping to centered box convention [-L/2, L/2]
                     half_box = np.array([x_len/2, y_len/2, z_len/2])

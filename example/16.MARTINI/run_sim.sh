@@ -167,6 +167,11 @@ INTEGRATOR_MIN="${INTEGRATOR_MIN:-nvtc}"
 INTEGRATOR_REG="${INTEGRATOR_REG:-nvtc}"
 MAX_FORCE="${MAX_FORCE:-50}"
 
+# Minimization stage lengths (in MD steps)
+# First: softened potential steps; Second: regular potential steps
+MIN_SOFT_STEPS="${MIN_SOFT_STEPS:-500}"
+MIN_REG_STEPS="${MIN_REG_STEPS:-500}"
+
 echo "Simulation parameters:"
 echo "  Duration: $DURATION steps"
 echo "  Frame interval: $FRAME_INTERVAL steps"
@@ -278,11 +283,13 @@ else
         echo "=== Step 3: Running Two-Stage Simulation (softened -> regular) ==="
     fi
 
-    SOFT_STEPS=100
-    REMAINING_STEPS=$(( DURATION > SOFT_STEPS ? DURATION - SOFT_STEPS : 0 ))
+    # Minimization stage configuration
+    SOFT_STEPS="$MIN_SOFT_STEPS"
+    REG_MIN_STEPS="$MIN_REG_STEPS"
+    PRODUCTION_STEPS="$DURATION"
 
-# Stage 3.1: softened run (writes to INPUT_FILE:/output)
-echo "-- Stage 1: Softened potential for $SOFT_STEPS steps --"
+# Stage 3.1: softened minimization sub-stage (writes to INPUT_FILE:/output)
+echo "-- Stage 1A (min): Softened potential for $SOFT_STEPS steps --"
 CMD_SOFT=(
     "$UPSIDE_EXECUTABLE"
     "$INPUT_FILE"
@@ -297,31 +304,31 @@ CMD_SOFT=(
     "--max-force" "$MAX_FORCE"
     "--disable-recentering"
 )
-echo "Command (soft): ${CMD_SOFT[*]}"
+echo "Command (min-soft): ${CMD_SOFT[*]}"
 START_TIME_SOFT=$(date +%s)
 if "${CMD_SOFT[@]}" 2>&1 | tee "$LOG_FILE"; then
     END_TIME_SOFT=$(date +%s)
-    echo "Softened run completed in $((END_TIME_SOFT - START_TIME_SOFT)) seconds"
+    echo "Minimization softened sub-stage completed in $((END_TIME_SOFT - START_TIME_SOFT)) seconds"
 else
     echo "ERROR: Softened stage failed!"
     exit 1
 fi
 
-# Stage 3.2: If requested, prepare restart from softened end state and disable softening in INPUT_FILE
+# Stage 3.2: Prepare restart from softened end state and disable softening in INPUT_FILE
 if [ "$SOFT_RUN_MODE" = "soft_then_regular" ] && [ "$REMAINING_STEPS" -gt 0 ]; then
 python3 - "$INPUT_FILE" << 'PYEOF'
 import sys, h5py
 path = sys.argv[1]
 with h5py.File(path, 'r+') as f:
-    # Move /output -> /output_soft (keep softened logs)
-    if 'output_soft' in f:
-        del f['output_soft']
+    # Move /output -> /output_min_soft (keep softened logs for reference)
+    if 'output_min_soft' in f:
+        del f['output_min_soft']
     if 'output' in f:
-        f.move('output', 'output_soft')
+        f.move('output', 'output_min_soft')
     else:
         raise SystemExit('No /output found after softened run')
     # Copy last frame positions to /input/pos (shape: [n_atom, 3, 1])
-    pos = f['/output_soft/pos']
+    pos = f['/output_min_soft/pos']
     last = pos.shape[0]-1
     last_pos = pos[last]
     # Handle possible systems axis: last_pos could be [1, n_atom, 3]
@@ -343,12 +350,12 @@ with h5py.File(path, 'r+') as f:
         pot.attrs['lj_soften'] = 0
 PYEOF
 
-# Stage 3.2.5: Energy minimization between soft and regular
-    echo "-- Stage 2: Minimization (pre-regular) --"
-    CMD_MIN=(
+    # Stage 3.2.5: regular minimization sub-stage by short MD with regular potentials
+    echo "-- Stage 1B (min): Regular potential for $REG_MIN_STEPS steps --"
+    CMD_MINREG=(
         "$UPSIDE_EXECUTABLE"
         "$INPUT_FILE"
-        "--duration" "0"                # run only minimization then exit
+        "--duration" "$REG_MIN_STEPS"
         "--frame-interval" "$FRAME_INTERVAL"
         "--temperature" "$TEMPERATURE"
         "--time-step" "$TIME_STEP"
@@ -356,26 +363,76 @@ PYEOF
         "--thermostat-interval" "$THERMOSTAT_INTERVAL"
         "--seed" "$SEED"
         "--integrator" "$INTEGRATOR_MIN"
-        "--max-force" "${MAX_FORCE_MIN:-20}"
-        "--minimize"                  # enable minimization
-        "--min-max-iter" "1000"
-        "--min-energy-tol" "1e-6"
-        "--min-force-tol" "1e-3"
-        "--min-step" "0.1"
+        "--max-force" "$MAX_FORCE"
         "--disable-recentering"
     )
-    echo "Command (min): ${CMD_MIN[*]}"
-    if ! "${CMD_MIN[@]}" 2>&1 | tee -a "$LOG_FILE"; then
-        echo "ERROR: Minimization stage failed!"
+    echo "Command (min-reg): ${CMD_MINREG[*]}"
+    if ! "${CMD_MINREG[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+        echo "ERROR: Regular sub-stage of minimization failed!"
         exit 1
     fi
 
-# Stage 3.3: regular run for remaining steps (writes to INPUT_FILE:/output)
-    echo "-- Stage 3: Regular potential for $REMAINING_STEPS steps --"
+    # Persist minimization end-state and equilibrated box
+python3 - "$INPUT_FILE" << 'PYEOF'
+import sys, h5py
+path = sys.argv[1]
+with h5py.File(path, 'r+') as f:
+    # Move /output -> /output_min_reg (keep short-regular logs)
+    if 'output_min_reg' in f:
+        del f['output_min_reg']
+    if 'output' in f:
+        f.move('output', 'output_min_reg')
+    else:
+        raise SystemExit('No /output found after regular minimization sub-stage')
+
+    # Copy last frame positions to /input/pos
+    pos = f['/output_min_reg/pos']
+    last = pos.shape[0]-1
+    last_pos = pos[last]
+    if last_pos.ndim == 3 and last_pos.shape[0] == 1:
+        last_pos = last_pos[0]
+    ipos = f['/input/pos']
+    if ipos.shape[0] != last_pos.shape[0] or ipos.shape[1] != last_pos.shape[1]:
+        raise SystemExit('Shape mismatch between output pos and input pos after regular sub-stage')
+    ipos[...] = last_pos[:, :, None]
+
+    # Read current box from potential attrs (assumes engine updated attrs during NPT)
+    pot = f['/input/potential/martini_potential']
+    x = float(pot.attrs['x_len']) if 'x_len' in pot.attrs else None
+    y = float(pot.attrs['y_len']) if 'y_len' in pot.attrs else None
+    z = float(pot.attrs['z_len']) if 'z_len' in pot.attrs else None
+    if None in (x, y, z):
+        # Fallback to periodic_boundary_potential
+        pbc = f['/input/potential/periodic_boundary_potential']
+        x = float(pbc.attrs['x_len'])
+        y = float(pbc.attrs['y_len'])
+        z = float(pbc.attrs['z_len'])
+
+    # Store equilibrated box for downstream tools
+    if 'equilibrated_box' in f:
+        del f['equilibrated_box']
+    g = f.create_group('equilibrated_box')
+    g.attrs['x_len'] = x
+    g.attrs['y_len'] = y
+    g.attrs['z_len'] = z
+
+    # Also ensure both potentials carry equilibrated box attrs
+    pot.attrs['x_len'] = x
+    pot.attrs['y_len'] = y
+    pot.attrs['z_len'] = z
+    if '/input/potential/periodic_boundary_potential' in f:
+        p = f['/input/potential/periodic_boundary_potential']
+        p.attrs['x_len'] = x
+        p.attrs['y_len'] = y
+        p.attrs['z_len'] = z
+PYEOF
+
+# Stage 3.3: production run with regular potentials (writes to /output)
+    echo "-- Stage 2: Production (regular) for $PRODUCTION_STEPS steps --"
     CMD_REG=(
         "$UPSIDE_EXECUTABLE"
         "$INPUT_FILE"
-        "--duration" "$REMAINING_STEPS"
+        "--duration" "$PRODUCTION_STEPS"
         "--frame-interval" "$FRAME_INTERVAL"
         "--temperature" "$TEMPERATURE"
         "--time-step" "$TIME_STEP"
