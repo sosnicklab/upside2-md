@@ -153,10 +153,10 @@ echo
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR"
 
 # Simulation parameters (from original run_martini.py)
-DURATION=5000
+DURATION=2000
 FRAME_INTERVAL=20
 TEMPERATURE=0.8
-TIME_STEP=0.01
+TIME_STEP=0.1
 THERMOSTAT_TIMESCALE=0.135
 #THERMOSTAT_TIMESCALE=5
 #THERMOSTAT_INTERVAL=-1
@@ -287,6 +287,7 @@ else
     SOFT_STEPS="$MIN_SOFT_STEPS"
     REG_MIN_STEPS="$MIN_REG_STEPS"
     PRODUCTION_STEPS="$DURATION"
+    REMAINING_STEPS="$PRODUCTION_STEPS"
 
 # Stage 3.1: softened minimization sub-stage (writes to INPUT_FILE:/output)
 echo "-- Stage 1A (min): Softened potential for $SOFT_STEPS steps --"
