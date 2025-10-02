@@ -975,7 +975,8 @@ def main():
         martini_potential._v_attrs.cutoff = 12.0
         martini_potential._v_attrs.cache_buffer = 1.0
         martini_potential._v_attrs.initialized = True
-        martini_potential._v_attrs.force_cap = 0
+        force_cap = float(os.environ.get('UPSIDE_FORCE_CAP', '50'))
+        martini_potential._v_attrs.force_cap = force_cap
         
         # PME configuration for long-range Coulomb interactions
         use_pme = int(os.environ.get('UPSIDE_USE_PME', '1'))
@@ -1078,12 +1079,10 @@ def main():
         #   Therefore 1 bar (1e5 Pa) = (1e5)/(energy_conversion*1.66054e9) E_up/Å^3.
         #   Compressibility (1/bar) -> (1 / (E_up/Å^3)) by dividing by the same factor.
         N_A = 6.02214076e23
-        kjmol_to_j_per_mol = 1000.0
-        pa_per_eup_per_a3 = energy_conversion * (kjmol_to_j_per_mol / N_A) / 1.0e-30  # = energy_conversion * 1.66054e9
-        eup_per_a3_per_bar = 1.0e5 / pa_per_eup_per_a3
+        eup_per_a3_per_bar = 100 / energy_conversion * N_A / (10**30)
 
         # GROMACS parameters to convert
-        gmx_tau_p_ps = 5.0
+        gmx_tau_p_ps = 15.0
         gmx_ref_p_xy_bar = 1.0
         gmx_ref_p_z_bar  = 1.0
         gmx_beta_bar_inv = 3.0e-4
@@ -1095,10 +1094,11 @@ def main():
         # Convert pressures and compressibility
         target_p_xy_up = gmx_ref_p_xy_bar * eup_per_a3_per_bar
         target_p_z_up  = gmx_ref_p_z_bar  * eup_per_a3_per_bar
-        beta_up_inv = gmx_beta_bar_inv / eup_per_a3_per_bar  # 1/(E_up/Å^3)
+        beta_scale = float(os.environ.get('UPSIDE_NPT_BETA_SCALE', '0.1'))
+        beta_up_inv = (gmx_beta_bar_inv * beta_scale) / eup_per_a3_per_bar  # scaled 1/(E_up/Å^3)
 
-        # Interval: allow override; otherwise keep a sensible default (50 steps)
-        npt_int = int(os.environ.get('UPSIDE_NPT_INTERVAL', '50'))
+        # Interval: allow override; otherwise keep a gentler default (200 steps)
+        npt_int = int(os.environ.get('UPSIDE_NPT_INTERVAL', '200'))
 
         # Optional env overrides for flexibility
         tau_p_up = float(os.environ.get('UPSIDE_NPT_TAU', str(tau_p_up)))
@@ -1126,7 +1126,7 @@ def main():
         print(f"  tau_p: {gmx_tau_p_ps} ps → {tau_p_up} time_units (ps_per_up={ps_per_up})")
         print(f"  1 bar = {eup_per_a3_per_bar:.6e} E_up/Å^3 (energy_conversion={energy_conversion})")
         print(f"  ref_p: Pxy={gmx_ref_p_xy_bar} bar → {target_p_xy_up:.6e} E_up/Å^3, Pz={gmx_ref_p_z_bar} bar → {target_p_z_up:.6e} E_up/Å^3")
-        print(f"  compressibility: {gmx_beta_bar_inv} 1/bar → {beta_up_inv:.6e} 1/(E_up/Å^3)")
+        print(f"  compressibility: {gmx_beta_bar_inv} 1/bar * scale {beta_scale} → {beta_up_inv:.6e} 1/(E_up/Å^3)")
 
         # Create atom indices and charges arrays for the potential
         t.create_array(martini_potential, 'atom_indices', obj=np.arange(n_atoms))

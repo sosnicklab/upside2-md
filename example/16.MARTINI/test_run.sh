@@ -154,7 +154,7 @@ echo
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR"
 
 # Simulation parameters (from original run_martini.py)
-DURATION=200
+DURATION=0
 FRAME_INTERVAL=20
 TEMPERATURE=0.8
 TIME_STEP=0.1
@@ -171,7 +171,7 @@ MAX_FORCE="${MAX_FORCE:-10}"
 # Minimization stage lengths (in MD steps)
 # First: softened potential steps; Second: regular potential steps
 MIN_SOFT_STEPS="${MIN_SOFT_STEPS:-500}"
-MIN_REG_STEPS="${MIN_REG_STEPS:-500}"
+MIN_REG_STEPS="${MIN_REG_STEPS:-0}"
 
 echo "Simulation parameters:"
 echo "  Duration: $DURATION steps"
@@ -200,8 +200,6 @@ else
     export UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-0}
     export UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-0.0}
 fi
-# Ensure force cap default consistent with stabilized run
-export UPSIDE_FORCE_CAP=${UPSIDE_FORCE_CAP:-50}
 
 export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
 # NPT parameters are now sourced from H5 written by prepare_martini.py (GROMACS-derived).

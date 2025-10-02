@@ -1028,10 +1028,12 @@ try {
                         sys.engine.integration_cycle(sys.mom, dt);
                     }
 
-                    // Apply semi-isotropic barostat at configured interval
-                    martini_npt::maybe_apply_barostat(sys.engine, sys.mom, sys.n_atom,
-                                                      sys.round_num, dt, inner_step, verbose,
-                                                      do_print);
+                    // Apply semi-isotropic barostat at configured interval; skip changing box at step 0
+                    if(sys.round_num>0) {
+                        martini_npt::maybe_apply_barostat(sys.engine, sys.mom, sys.n_atom,
+                                                          sys.round_num, dt, inner_step, verbose,
+                                                          do_print);
+                    }
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
                         curvature_changer->attempt_change(base_random_seed, sys.round_num, sys, relative_curvature_radius_change);

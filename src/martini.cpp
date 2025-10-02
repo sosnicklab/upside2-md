@@ -49,6 +49,7 @@ struct BarostatSettings {
     float tau_p = 5.0f;           // time constant
     float compressibility = 4.5e-5f; // 1/pressure (typical liquid, unit-consistent)
     bool  debug = true;
+    bool  prefer_shrink_first = true; // on first application, avoid any expansion
 };
 
 // Simple container per-system (mirrors System in main.cpp)
@@ -56,6 +57,9 @@ struct BarostatState {
     BarostatSettings settings;
     // Cache current box for prints/debug
     float box_x = 0.f, box_y = 0.f, box_z = 0.f;
+    // Optional masses for kinetic tensor
+    std::vector<float> masses;
+    bool has_applied_once = false;
 };
 
 // Global registry mapping DerivEngine* to BarostatState
@@ -100,33 +104,42 @@ static void apply_semi_isotropic_scaling(DerivEngine& engine, float scale_xy, fl
         p.z() *= scale_z;
         store_vec<3>(pos, i, p);
     }
-    // Update cached box on known MARTINI nodes
+    // Update cached box on known MARTINI nodes (implemented after type definitions)
     martini_update_node_boxes(engine, scale_xy, scale_z);
 }
 
 // Compute instantaneous pressures using kinetic contribution only as a robust
 // baseline: P = (2/3V) K for each subspace. We partition kinetic energy by
 // components to estimate lateral vs normal pressure.
-static void estimate_pressure_kinetic_only(const VecArray& mom,
-                                           int n_atom,
-                                           float T,
-                                           float V,
-                                           float& p_xy,
-                                           float& p_z) {
+static void estimate_pressure_tensor(const VecArray& mom,
+                                     const VecArray& pos,
+                                     const VecArray& sens,
+                                     const std::vector<float>& masses,
+                                     int n_atom,
+                                     float V,
+                                     float& pxx, float& pyy, float& pzz) {
+    // Kinetic tensor: Kaa = sum_i p_a^2/m_i
     double kx=0., ky=0., kz=0.;
     for(int i=0;i<n_atom;++i) {
-        auto m = load_vec<3>(mom, i);
-        kx += 0.5*double(m.x()*m.x());
-        ky += 0.5*double(m.y()*m.y());
-        kz += 0.5*double(m.z()*m.z());
+        auto pm = load_vec<3>(mom, i);
+        double mi = (i < (int)masses.size() && masses[i] > 0.f) ? masses[i] : 1.0;
+        kx += double(pm.x()*pm.x())/mi;
+        ky += double(pm.y()*pm.y())/mi;
+        kz += double(pm.z()*pm.z())/mi;
     }
-    // Split kinetic energies; effective volumes for xy and z use full V
-    // Semi-isotropic target acts on lateral (xy plane) vs normal (z axis)
-    float Kxy = float(kx+ky);
-    float Kz  = float(kz);
-    // Prefactors: lateral has 2 dof, normal has 1 dof
-    p_xy = (2.f/ (2.f*V)) * (2.f*Kxy/3.f); // scaled similar to ideal-gas
-    p_z  = (2.f/ (1.f*V)) * (2.f*Kz /3.f);
+    // Virial tensor diagonal via atomic form: Waa = sum_i r_a F_a
+    double wxx=0., wyy=0., wzz=0.;
+    for(int i=0;i<n_atom;++i) {
+        auto r = load_vec<3>(pos, i);
+        auto grad = load_vec<3>(sens, i); // grad = dE/dx
+        auto F = make_vec3(-grad.x(), -grad.y(), -grad.z());
+        wxx += double(r.x()*F.x());
+        wyy += double(r.y()*F.y());
+        wzz += double(r.z()*F.z());
+    }
+    pxx = float((kx + wxx) / V);
+    pyy = float((ky + wyy) / V);
+    pzz = float((kz + wzz) / V);
 }
 
 // Main entry: initialize per-system barostat state (called when engine created)
@@ -151,6 +164,13 @@ void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
     auto& st = g_baro_state[&engine];
     st.settings = s;
     st.box_x = bx; st.box_y = by; st.box_z = bz;
+    // Load masses if available
+    try {
+        if(h5_exists(config_root, "/input/mass")) {
+            st.masses.clear();
+            traverse_dset<1,float>(config_root, "/input/mass", [&](size_t i, float m){ st.masses.push_back(m); });
+        }
+    } catch(...) {}
 }
 
 // Apply barostat if interval matches. dt is outer integrator step, inner_step included by caller.
@@ -176,9 +196,14 @@ void maybe_apply_barostat(DerivEngine& engine,
     if(bx==0.f || by==0.f || bz==0.f) return; // need a box
     float V = volume_xyz(bx,by,bz);
 
-    // Estimate instantaneous pressures
-    float pxy_inst=0.f, pz_inst=0.f;
-    estimate_pressure_kinetic_only(mom, n_atom, 0.f, V, pxy_inst, pz_inst);
+    // Compute forces (gradient) to get virial; do a fresh compute for accuracy at interval
+    engine.compute(PotentialAndDerivMode);
+    VecArray pos = engine.pos->output;
+    VecArray sens = engine.pos->sens;
+    float pxx=0.f,pyy=0.f,pzz=0.f;
+    estimate_pressure_tensor(mom, pos, sens, it->second.masses, n_atom, V, pxx, pyy, pzz);
+    float pxy_inst = 0.5f*(pxx+pyy);
+    float pz_inst  = pzz;
 
     // Berendsen scale factor: scale = 1 - beta*dt/tau*(P_target - P)
     float delta_t = dt*inner_step;
@@ -189,13 +214,33 @@ void maybe_apply_barostat(DerivEngine& engine,
         float factor_xy = 1.f - beta * (delta_t / s.tau_p) * (s.target_p_xy - pxy_inst);
         float factor_z  = 1.f - beta * (delta_t / s.tau_p) * (s.target_p_z  - pz_inst);
         // For lengths, scale as factor^(1/dim). Lateral acts on 2 dims
-        scale_xy = powf(std::max(0.5f, std::min(1.5f, factor_xy)), 1.f/2.f);
-        scale_z  = powf(std::max(0.5f, std::min(1.5f, factor_z )), 1.f/1.f);
+        factor_xy = std::max(0.98f, std::min(1.02f, factor_xy));
+        factor_z  = std::max(0.98f, std::min(1.02f, factor_z));
+        scale_xy = powf(factor_xy, 1.f/2.f);
+        scale_z  = powf(factor_z,  1.f/1.f);
+        // Clamp final length scales more tightly to ensure stability
+        scale_xy = std::max(0.998f, std::min(1.002f, scale_xy));
+        scale_z  = std::max(0.998f, std::min(1.002f, scale_z));
+        // Monotonic shrink guard: if pressure below target, do not expand on that axis
+        if(pxy_inst < s.target_p_xy) scale_xy = std::min(scale_xy, 1.0f);
+        if(pz_inst  < s.target_p_z ) scale_z  = std::min(scale_z,  1.0f);
     } else {
         float p_inst = (2.f*pxy_inst + pz_inst)/3.f;
         float factor = 1.f - beta * (delta_t / s.tau_p) * ( ((s.target_p_xy*2.f + s.target_p_z)/3.f) - p_inst);
-        float sc = powf(std::max(0.5f, std::min(1.5f, factor)), 1.f/3.f);
+        factor = std::max(0.98f, std::min(1.02f, factor));
+        float sc = powf(factor, 1.f/3.f);
+        sc = std::max(0.998f, std::min(1.002f, sc));
         scale_xy = sc; scale_z = sc;
+        if(p_inst < (2.f*s.target_p_xy + s.target_p_z)/3.f) {
+            float scc = std::min(sc, 1.0f);
+            scale_xy = scc; scale_z = scc;
+        }
+    }
+
+    // First application policy: if requested, bias to shrinking only (avoid any expansion)
+    if(!st.has_applied_once && s.prefer_shrink_first) {
+        scale_xy = std::min(scale_xy, 1.0f);
+        scale_z  = std::min(scale_z,  1.0f);
     }
 
     // Apply scaling
@@ -203,9 +248,13 @@ void maybe_apply_barostat(DerivEngine& engine,
 
     // Update cached box and print occasionally in existing cadence
     st.box_x = bx * scale_xy; st.box_y = by * scale_xy; st.box_z = bz * scale_z;
+    // Optionally avoid momentum rescaling to reduce kinetic bursts during box changes
+    // Leave positions and box scaled; skip momentum scaling
+    // (If momentum scaling exists elsewhere, ensure it is behind a feature flag.)
+    st.has_applied_once = true;
     if(verbose && s.debug && print_now) {
-        printf(" [NPT] step %.0f scale_xy %.4f scale_z %.4f | Pxy %.3f -> %.3f, Pz %.3f -> %.3f | box %.2f %.2f %.2f\n",
-               double(round_num*delta_t), scale_xy, scale_z,
+        printf(" [NPT] t %.3f scale_xy %.4f scale_z %.4f | Pxy %.3e tgt %.3e, Pz %.3e tgt %.3e | box %.2f %.2f %.2f\n",
+               double((round_num)*delta_t), scale_xy, scale_z,
                pxy_inst, s.target_p_xy, pz_inst, s.target_p_z,
                st.box_x, st.box_y, st.box_z);
         fflush(stdout);
@@ -499,6 +548,14 @@ struct PeriodicBoundaryPotential : public PotentialNode
         static_box_y = box_y;
         static_box_z = box_z;
     }
+    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
+        box_x *= scale_xy;
+        box_y *= scale_xy;
+        box_z *= scale_z;
+        static_box_x = box_x;
+        static_box_y = box_y;
+        static_box_z = box_z;
+    }
 
     virtual void compute_value(ComputeMode mode) {
         Timer timer(string("periodic_boundary_potential"));
@@ -546,26 +603,12 @@ void martini_update_node_boxes(DerivEngine& engine, float scale_xy, float scale_
         PeriodicBoundaryPotential::static_box_y *= scale_xy;
         PeriodicBoundaryPotential::static_box_z *= scale_z;
     }
-    // Update H5 attributes for nodes that store box dims
+    // Update objects' internal cached dimensions where possible
     for(auto &n: engine.nodes) {
-        auto upd = [&](hid_t grp) {
-            try {
-                float bx = read_attribute<float>(grp, ".", "x_len");
-                float by = read_attribute<float>(grp, ".", "y_len");
-                float bz = read_attribute<float>(grp, ".", "z_len");
-                bx *= scale_xy; by *= scale_xy; bz *= scale_z;
-                // Store back as strings to avoid type template bloat
-                write_string_attribute(grp, ".", "x_len", std::to_string(bx));
-                write_string_attribute(grp, ".", "y_len", std::to_string(by));
-                write_string_attribute(grp, ".", "z_len", std::to_string(bz));
-            } catch(...) {}
-        };
-        try {
-            // DerivEngine::Node does not store H5 id; instead use names relative to input/potential
-            // We cannot reopen config H5 from here; barostat keeps cached sizes for debug only.
-            // So we only update static PBC box and positions; nodes themselves read from members.
-            (void)upd; // suppress unused in some builds
-        } catch(...) {}
+        if(is_prefix(n.name, "periodic_boundary_potential")) {
+            auto* comp = dynamic_cast<PotentialNode*>(n.computation.get());
+            (void)comp; // already handled via static
+        }
     }
 }
 
