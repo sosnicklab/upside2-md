@@ -208,14 +208,14 @@ void maybe_apply_barostat(DerivEngine& engine,
     float pxy_inst = 0.5f*(pxx+pyy);
     float pz_inst  = pzz;
 
-    // Berendsen scale factor: scale = 1 - beta*dt/tau*(P_target - P)
+    // Berendsen scale factor: scale = 1 - beta*dt/tau*(P_inst - P_target)
     float delta_t = dt*inner_step;
     float beta = s.compressibility;
     float scale_xy = 1.0f;
     float scale_z  = 1.0f;
     if(s.semi_isotropic) {
-        float factor_xy = 1.f - beta * (delta_t / s.tau_p) * (s.target_p_xy - pxy_inst);
-        float factor_z  = 1.f - beta * (delta_t / s.tau_p) * (s.target_p_z  - pz_inst);
+        float factor_xy = 1.f - beta * (delta_t / s.tau_p) * (pxy_inst - s.target_p_xy);
+        float factor_z  = 1.f - beta * (delta_t / s.tau_p) * (pz_inst  - s.target_p_z);
         // For lengths, scale as factor^(1/dim). Lateral acts on 2 dims
         factor_xy = std::max(0.98f, std::min(1.02f, factor_xy));
         factor_z  = std::max(0.98f, std::min(1.02f, factor_z));
@@ -229,7 +229,7 @@ void maybe_apply_barostat(DerivEngine& engine,
         if(pz_inst  < s.target_p_z ) scale_z  = std::min(scale_z,  1.0f);
     } else {
         float p_inst = (2.f*pxy_inst + pz_inst)/3.f;
-        float factor = 1.f - beta * (delta_t / s.tau_p) * ( ((s.target_p_xy*2.f + s.target_p_z)/3.f) - p_inst);
+        float factor = 1.f - beta * (delta_t / s.tau_p) * (p_inst - ((s.target_p_xy*2.f + s.target_p_z)/3.f));
         factor = std::max(0.98f, std::min(1.02f, factor));
         float sc = powf(factor, 1.f/3.f);
         sc = std::max(0.998f, std::min(1.002f, sc));
