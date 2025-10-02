@@ -385,7 +385,7 @@ with h5py.File('inputs/bilayer.up', 'r') as f:
         print('No /output_min_soft/box found, using original dimensions')
         x, y, z = 30.101, 30.101, 85.0
 
-# Update input H5 file with equilibrated box dimensions
+# Update input H5 file with equilibrated box dimensions and particle coordinates
 with h5py.File('inputs/bilayer.up', 'r+') as f:
     # Also ensure both potentials carry equilibrated box attrs (both new and legacy)
     pot = f['/input/potential/martini_potential']
@@ -403,6 +403,40 @@ with h5py.File('inputs/bilayer.up', 'r+') as f:
         p.attrs['x_len'] = x
         p.attrs['y_len'] = y
         p.attrs['z_len'] = z
+    
+    # Update particle coordinates to match new box dimensions
+    # Read original box dimensions from PDB
+    original_x, original_y, original_z = 30.101, 30.101, 85.0
+    
+    # Calculate scaling factors
+    scale_x = x / original_x
+    scale_y = y / original_y  
+    scale_z = z / original_z
+    
+    # Update particle coordinates in /input/pos
+    if '/input/pos' in f:
+        pos_data = f['/input/pos']
+        if pos_data.ndim == 3:  # (n_atoms, 3, 1) format
+            # Scale coordinates
+            pos_data[:, 0, :] *= scale_x  # x coordinates
+            pos_data[:, 1, :] *= scale_y  # y coordinates  
+            pos_data[:, 2, :] *= scale_z  # z coordinates
+            print(f'Scaled particle coordinates by factors: {scale_x:.3f} x {scale_y:.3f} x {scale_z:.3f}')
+        else:
+            print('Warning: Unexpected position data format, skipping coordinate scaling')
+    
+    # Update particle velocities in /input/vel to match new box dimensions
+    if '/input/vel' in f:
+        vel_data = f['/input/vel']
+        if vel_data.ndim == 3:  # (n_atoms, 3, 1) format
+            # Scale velocities by the same factors as coordinates
+            vel_data[:, 0, :] *= scale_x  # x velocities
+            vel_data[:, 1, :] *= scale_y  # y velocities  
+            vel_data[:, 2, :] *= scale_z  # z velocities
+            print(f'Scaled particle velocities by factors: {scale_x:.3f} x {scale_y:.3f} x {scale_z:.3f}')
+        else:
+            print('Warning: Unexpected velocity data format, skipping velocity scaling')
+    
     # Create equilibrated box group for reference
     if '/equilibrated_box' in f:
         del f['/equilibrated_box']
