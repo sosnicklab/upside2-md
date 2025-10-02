@@ -40,6 +40,9 @@ void martini_update_node_boxes(DerivEngine& engine, float scale_xy, float scale_
 
 namespace martini_npt {
 
+// Forward declaration; implemented after barostat state
+void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz);
+
 struct BarostatSettings {
     bool  enabled = false;
     bool  semi_isotropic = true;
@@ -258,6 +261,18 @@ void maybe_apply_barostat(DerivEngine& engine,
                pxy_inst, s.target_p_xy, pz_inst, s.target_p_z,
                st.box_x, st.box_y, st.box_z);
         fflush(stdout);
+    }
+}
+
+// Implement box query now that g_baro_state is defined
+void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz) {
+    bx = by = bz = 0.f;
+    std::lock_guard<std::mutex> lk(g_baro_mutex);
+    auto it = g_baro_state.find(const_cast<DerivEngine*>(&engine));
+    if(it != g_baro_state.end() && it->second.settings.enabled) {
+        bx = it->second.box_x;
+        by = it->second.box_y;
+        bz = it->second.box_z;
     }
 }
 

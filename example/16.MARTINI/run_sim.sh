@@ -320,7 +320,6 @@ else
     exit 1
 fi
 
-
 # Stage 3.2: Prepare restart from softened end state and disable softening in INPUT_FILE
 if [ "$SOFT_RUN_MODE" = "soft_then_regular" ] && [ "$REMAINING_STEPS" -gt 0 ]; then
 python3 - "$INPUT_FILE" << 'PYEOF'
@@ -378,8 +377,6 @@ PYEOF
         echo "ERROR: Regular sub-stage of minimization failed!"
         exit 1
     fi
-
-    # (No log-based box capture; rely on engine-updated attrs written in H5)
 
     # Persist minimization end-state and equilibrated box
 python3 - "$INPUT_FILE" << 'PYEOF'

@@ -36,6 +36,7 @@ namespace martini_npt {
                               int inner_step,
                               int verbose,
                               bool print_now);
+    void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz);
 }
 // If any stop signal is received (currently we trap sigterm and sigint)
 // we increment any_stop_signal_received.
@@ -913,6 +914,19 @@ try {
             float* temperature_pointer = &(systems[ns].temperature);
             systems[ns].logger->add_logger<double>("temperature", {1}, [temperature_pointer](double* temperature_buffer) {
                     temperature_buffer[0] = *temperature_pointer;});
+            // Also record box dimensions per frame as dense logger
+            System& sys = systems[ns];
+            sys.logger->add_dense_logger<float>("box", {1,3}, [&sys](float* box_buffer){
+                float bx=0.f,by=0.f,bz=0.f;
+                martini_npt::get_current_box(sys.engine, bx, by, bz);
+                // Only log if NPT is enabled and box is valid
+                if(bx>0.f && by>0.f && bz>0.f) {
+                    box_buffer[0] = bx; box_buffer[1] = by; box_buffer[2] = bz;
+                } else {
+                    // Leave zeros to avoid misleading data under NVT
+                    box_buffer[0] = 0.f; box_buffer[1] = 0.f; box_buffer[2] = 0.f;
+                }
+            });
         }
         if(verbose) printf("\n");
 
