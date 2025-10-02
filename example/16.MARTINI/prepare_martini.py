@@ -975,7 +975,7 @@ def main():
         martini_potential._v_attrs.cutoff = 12.0
         martini_potential._v_attrs.cache_buffer = 1.0
         martini_potential._v_attrs.initialized = True
-        force_cap = float(os.environ.get('UPSIDE_FORCE_CAP', '50'))
+        force_cap = float(os.environ.get('UPSIDE_FORCE_CAP', '0'))
         martini_potential._v_attrs.force_cap = force_cap
         
         # PME configuration for long-range Coulomb interactions

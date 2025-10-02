@@ -166,7 +166,7 @@ SEED=12345
 INTEGRATOR_SOFT="${INTEGRATOR_SOFT:-nptc}"
 INTEGRATOR_MIN="${INTEGRATOR_MIN:-nptc}"
 INTEGRATOR_REG="${INTEGRATOR_REG:-nptc}"
-MAX_FORCE="${MAX_FORCE:-10}"
+MAX_FORCE="${MAX_FORCE:-}"
 
 # Minimization stage lengths (in MD steps)
 # First: softened potential steps; Second: regular potential steps
@@ -265,9 +265,9 @@ if [ "$POTENTIAL_MODE" = "regular" ]; then
         "--thermostat-interval" "$THERMOSTAT_INTERVAL"
         "--seed" "$SEED"
         "--integrator" "$INTEGRATOR"
-        "--max-force" "$MAX_FORCE"
         "--disable-recentering"
     )
+    [ -n "$MAX_FORCE" ] && CMD_REG+=("--max-force" "$MAX_FORCE")
     echo "Command (regular): ${CMD_REG[*]}"
     START_TIME=$(date +%s)
     if "${CMD_REG[@]}" 2>&1 | tee "$LOG_FILE"; then
@@ -305,9 +305,9 @@ CMD_SOFT=(
     "--thermostat-interval" "$THERMOSTAT_INTERVAL"
     "--seed" "$SEED"
     "--integrator" "$INTEGRATOR_SOFT"
-    "--max-force" "$MAX_FORCE"
     "--disable-recentering"
 )
+[ -n "$MAX_FORCE" ] && CMD_SOFT+=("--max-force" "$MAX_FORCE")
 echo "Command (min-soft): ${CMD_SOFT[*]}"
 START_TIME_SOFT=$(date +%s)
 if "${CMD_SOFT[@]}" 2>&1 | tee "$LOG_FILE"; then
@@ -367,9 +367,9 @@ PYEOF
         "--thermostat-interval" "$THERMOSTAT_INTERVAL"
         "--seed" "$SEED"
         "--integrator" "$INTEGRATOR_MIN"
-        "--max-force" "$MAX_FORCE"
         "--disable-recentering"
     )
+    [ -n "$MAX_FORCE" ] && CMD_MINREG+=("--max-force" "$MAX_FORCE")
     echo "Command (min-reg): ${CMD_MINREG[*]}"
     if ! "${CMD_MINREG[@]}" 2>&1 | tee -a "$LOG_FILE"; then
         echo "ERROR: Regular sub-stage of minimization failed!"
@@ -444,9 +444,9 @@ PYEOF
         "--thermostat-interval" "$THERMOSTAT_INTERVAL"
         "--seed" "$SEED"
         "--integrator" "$INTEGRATOR_REG"
-        "--max-force" "$MAX_FORCE"
         "--disable-recentering"
     )
+    [ -n "$MAX_FORCE" ] && CMD_REG+=("--max-force" "$MAX_FORCE")
     echo "Command (regular): ${CMD_REG[*]}"
     START_TIME_REG=$(date +%s)
     if "${CMD_REG[@]}" 2>&1 | tee -a "$LOG_FILE"; then
