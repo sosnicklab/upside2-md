@@ -1081,8 +1081,8 @@ def main():
         N_A = 6.02214076e23
         eup_per_a3_per_bar = 100 / energy_conversion * N_A / (10**30)
 
-        # GROMACS parameters to convert
-        gmx_tau_p_ps = 15.0
+        # GROMACS parameters to convert (more aggressive for vacuum hole elimination)
+        gmx_tau_p_ps = 2.0  # Faster response (was 15.0)
         gmx_ref_p_xy_bar = 1.0
         gmx_ref_p_z_bar  = 1.0
         gmx_beta_bar_inv = 3.0e-4
@@ -1094,11 +1094,11 @@ def main():
         # Convert pressures and compressibility
         target_p_xy_up = gmx_ref_p_xy_bar * eup_per_a3_per_bar
         target_p_z_up  = gmx_ref_p_z_bar  * eup_per_a3_per_bar
-        beta_scale = float(os.environ.get('UPSIDE_NPT_BETA_SCALE', '0.1'))
+        beta_scale = float(os.environ.get('UPSIDE_NPT_BETA_SCALE', '1.0'))  # More aggressive (was 0.1)
         beta_up_inv = (gmx_beta_bar_inv * beta_scale) / eup_per_a3_per_bar  # scaled 1/(E_up/Å^3)
 
-        # Interval: allow override; otherwise keep a gentler default (200 steps)
-        npt_int = int(os.environ.get('UPSIDE_NPT_INTERVAL', '200'))
+        # Interval: allow override; more frequent for faster response (50 steps)
+        npt_int = int(os.environ.get('UPSIDE_NPT_INTERVAL', '50'))
 
         # Optional env overrides for flexibility
         tau_p_up = float(os.environ.get('UPSIDE_NPT_TAU', str(tau_p_up)))
