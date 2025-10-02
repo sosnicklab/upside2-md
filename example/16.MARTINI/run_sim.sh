@@ -206,6 +206,8 @@ fi
 export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
 # NPT parameters are now sourced from H5 written by prepare_martini.py (GROMACS-derived).
 # You can still override via env if needed, but we avoid setting defaults here.
+# Enable NPT by default for MARTINI simulations
+export UPSIDE_NPT_ENABLE=${UPSIDE_NPT_ENABLE:-1}
 
 # PME configuration - Optimized settings for improved accuracy and performance
 export UPSIDE_USE_PME=${USE_PME}
@@ -356,6 +358,65 @@ with h5py.File(path, 'r+') as f:
         pot.attrs['lj_soften'] = 0
 PYEOF
 
+    # Update box dimensions between Stage 1A and Stage 1B (if NPT was used)
+    if [ "$UPSIDE_NPT_ENABLE" = "1" ]; then
+        echo "Updating box dimensions between Stage 1A and Stage 1B..."
+        python3 -c "
+import h5py
+import numpy as np
+
+# Read equilibrated box from output H5 file
+with h5py.File('inputs/bilayer.up', 'r') as f:
+    # Try to read from output_min_soft first (most recent)
+    if '/output_min_soft/box' in f:
+        box_data = f['/output_min_soft/box']
+        if len(box_data) > 0:
+            # Handle 3D array format (time, 1, xyz)
+            last_box = box_data[-1]  # Last box dimensions
+            if last_box.ndim == 2 and last_box.shape[0] == 1:
+                x, y, z = last_box[0]  # Extract from (1, 3) array
+            else:
+                x, y, z = last_box  # Direct (3,) array
+            print(f'Read equilibrated box from /output_min_soft: {x:.3f} x {y:.3f} x {z:.3f} Å')
+        else:
+            print('No box data in /output_min_soft, using original dimensions')
+            x, y, z = 30.101, 30.101, 85.0
+    else:
+        print('No /output_min_soft/box found, using original dimensions')
+        x, y, z = 30.101, 30.101, 85.0
+
+# Update input H5 file with equilibrated box dimensions
+with h5py.File('inputs/bilayer.up', 'r+') as f:
+    # Also ensure both potentials carry equilibrated box attrs (both new and legacy)
+    pot = f['/input/potential/martini_potential']
+    pot.attrs['box_x'] = x
+    pot.attrs['box_y'] = y
+    pot.attrs['box_z'] = z
+    pot.attrs['x_len'] = x
+    pot.attrs['y_len'] = y
+    pot.attrs['z_len'] = z
+    if '/input/potential/periodic_boundary_potential' in f:
+        p = f['/input/potential/periodic_boundary_potential']
+        p.attrs['box_x'] = x
+        p.attrs['box_y'] = y
+        p.attrs['box_z'] = z
+        p.attrs['x_len'] = x
+        p.attrs['y_len'] = y
+        p.attrs['z_len'] = z
+    # Create equilibrated box group for reference
+    if '/equilibrated_box' in f:
+        del f['/equilibrated_box']
+    eq_grp = f.create_group('/equilibrated_box')
+    eq_grp.attrs['x'] = x
+    eq_grp.attrs['y'] = y
+    eq_grp.attrs['z'] = z
+    print(f'Updated input H5 with equilibrated box: {x:.3f} x {y:.3f} x {z:.3f} Å')
+"
+        echo "Box dimensions updated successfully"
+    else
+        echo "NPT not enabled, skipping box dimension updates"
+    fi
+
     # Stage 3.2.5: regular minimization sub-stage by short MD with regular potentials
     echo "-- Stage 1B (min): Regular potential for $REG_MIN_STEPS steps --"
     CMD_MINREG=(
@@ -402,17 +463,39 @@ with h5py.File(path, 'r+') as f:
         raise SystemExit('Shape mismatch between output pos and input pos after regular sub-stage')
     ipos[...] = last_pos[:, :, None]
 
-    # Read current box from potential attrs (assumes engine updated attrs during NPT)
-    pot = f['/input/potential/martini_potential']
-    x = float(pot.attrs['x_len']) if 'x_len' in pot.attrs else None
-    y = float(pot.attrs['y_len']) if 'y_len' in pot.attrs else None
-    z = float(pot.attrs['z_len']) if 'z_len' in pot.attrs else None
+    # Read equilibrated box dimensions from output H5 file (logged by barostat)
+    # Try to read from the most recent output stage
+    x = y = z = None
+    output_stages = ['/output_min_soft', '/output_min_reg', '/output']
+    for stage in output_stages:
+        if stage in f and 'box' in f[stage]:
+            box_data = f[stage]['box']
+            if len(box_data) > 0:
+                # Get the last box dimensions from this stage
+                last_box = box_data[-1, 0, :]  # Shape is (n_frames, 1, 3)
+                x, y, z = float(last_box[0]), float(last_box[1]), float(last_box[2])
+                print(f"Read equilibrated box from {stage}: {x:.3f} x {y:.3f} x {z:.3f} Å")
+                break
+    
+    # Fallback to reading from input potential attributes if no output found
     if None in (x, y, z):
-        # Fallback to periodic_boundary_potential
-        pbc = f['/input/potential/periodic_boundary_potential']
-        x = float(pbc.attrs['x_len'])
-        y = float(pbc.attrs['y_len'])
-        z = float(pbc.attrs['z_len'])
+        print("No output box data found, reading from input potential attributes...")
+        pot = f['/input/potential/martini_potential']
+        # Try new barostat attributes first (box_x, box_y, box_z)
+        x = float(pot.attrs['box_x']) if 'box_x' in pot.attrs else None
+        y = float(pot.attrs['box_y']) if 'box_y' in pot.attrs else None
+        z = float(pot.attrs['box_z']) if 'box_z' in pot.attrs else None
+        if None in (x, y, z):
+            # Fallback to legacy attributes (x_len, y_len, z_len)
+            x = float(pot.attrs['x_len']) if 'x_len' in pot.attrs else None
+            y = float(pot.attrs['y_len']) if 'y_len' in pot.attrs else None
+            z = float(pot.attrs['z_len']) if 'z_len' in pot.attrs else None
+        if None in (x, y, z):
+            # Final fallback to periodic_boundary_potential
+            pbc = f['/input/potential/periodic_boundary_potential']
+            x = float(pbc.attrs['box_x']) if 'box_x' in pbc.attrs else float(pbc.attrs['x_len'])
+            y = float(pbc.attrs['box_y']) if 'box_y' in pbc.attrs else float(pbc.attrs['y_len'])
+            z = float(pbc.attrs['box_z']) if 'box_z' in pbc.attrs else float(pbc.attrs['z_len'])
 
     # Store equilibrated box for downstream tools
     if 'equilibrated_box' in f:
@@ -422,12 +505,19 @@ with h5py.File(path, 'r+') as f:
     g.attrs['y_len'] = y
     g.attrs['z_len'] = z
 
-    # Also ensure both potentials carry equilibrated box attrs
+    # Also ensure both potentials carry equilibrated box attrs (both new and legacy)
+    pot = f['/input/potential/martini_potential']
+    pot.attrs['box_x'] = x
+    pot.attrs['box_y'] = y
+    pot.attrs['box_z'] = z
     pot.attrs['x_len'] = x
     pot.attrs['y_len'] = y
     pot.attrs['z_len'] = z
     if '/input/potential/periodic_boundary_potential' in f:
         p = f['/input/potential/periodic_boundary_potential']
+        p.attrs['box_x'] = x
+        p.attrs['box_y'] = y
+        p.attrs['box_z'] = z
         p.attrs['x_len'] = x
         p.attrs['y_len'] = y
         p.attrs['z_len'] = z

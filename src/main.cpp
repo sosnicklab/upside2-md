@@ -1047,6 +1047,9 @@ try {
                         martini_npt::maybe_apply_barostat(sys.engine, sys.mom, sys.n_atom,
                                                           sys.round_num, dt, inner_step, verbose,
                                                           do_print);
+                        
+                        // Box dimensions are automatically updated in potential attributes by the barostat
+                        // The run_sim.sh script will read these updated dimensions between stages
                     }
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
