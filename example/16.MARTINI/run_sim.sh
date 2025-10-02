@@ -163,9 +163,9 @@ THERMOSTAT_TIMESCALE=0.135
 #THERMOSTAT_INTERVAL=-1
 SEED=12345
 # Integrators: allow separate choices for softened/min/min and regular stages
-INTEGRATOR_SOFT="${INTEGRATOR_SOFT:-nvtc}"
-INTEGRATOR_MIN="${INTEGRATOR_MIN:-nvtc}"
-INTEGRATOR_REG="${INTEGRATOR_REG:-nvtc}"
+INTEGRATOR_SOFT="${INTEGRATOR_SOFT:-nptc}"
+INTEGRATOR_MIN="${INTEGRATOR_MIN:-nptc}"
+INTEGRATOR_REG="${INTEGRATOR_REG:-nptc}"
 MAX_FORCE="${MAX_FORCE:-50}"
 
 # Minimization stage lengths (in MD steps)

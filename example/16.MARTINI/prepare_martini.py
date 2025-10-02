@@ -1068,26 +1068,65 @@ def main():
             t.create_array(pme_group, 'charges', obj=charges)
         
         # --- NPT BAROSTAT CONFIGURATION (/input/barostat) ---
-        # Read settings from environment variables with sensible defaults
-        # Enable via UPSIDE_NPT_ENABLE=1
-        npt_enable = int(os.environ.get('UPSIDE_NPT_ENABLE', '0'))
+        # Use provided GROMACS settings and convert to UPSIDE units.
+        # Given settings:
+        #   Pcoupl=berendsen, Pcoupltype=semiisotropic, tau_p=5.0 ps,
+        #   compressibility=3e-4 1/bar (both components), ref_p=1.0 bar (xy,z)
+        # Conversion to UPSIDE:
+        #   UPSIDE pressure unit is E_up/Å^3. Using energy_conversion (kJ/mol per E_up):
+        #   1 E_up/Å^3 = energy_conversion * (1000 J/mol) / N_A / 1e-30 m^3 = energy_conversion * 1.66054e9 Pa
+        #   Therefore 1 bar (1e5 Pa) = (1e5)/(energy_conversion*1.66054e9) E_up/Å^3.
+        #   Compressibility (1/bar) -> (1 / (E_up/Å^3)) by dividing by the same factor.
+        N_A = 6.02214076e23
+        kjmol_to_j_per_mol = 1000.0
+        pa_per_eup_per_a3 = energy_conversion * (kjmol_to_j_per_mol / N_A) / 1.0e-30  # = energy_conversion * 1.66054e9
+        eup_per_a3_per_bar = 1.0e5 / pa_per_eup_per_a3
+
+        # GROMACS parameters to convert
+        gmx_tau_p_ps = 5.0
+        gmx_ref_p_xy_bar = 1.0
+        gmx_ref_p_z_bar  = 1.0
+        gmx_beta_bar_inv = 3.0e-4
+
+        # Time conversion: allow user to specify ps per UPSIDE time unit; default 1 ps per unit
+        ps_per_up = float(os.environ.get('UPSIDE_PS_PER_TIMEUNIT', '1.0'))
+        tau_p_up = gmx_tau_p_ps / ps_per_up
+
+        # Convert pressures and compressibility
+        target_p_xy_up = gmx_ref_p_xy_bar * eup_per_a3_per_bar
+        target_p_z_up  = gmx_ref_p_z_bar  * eup_per_a3_per_bar
+        beta_up_inv = gmx_beta_bar_inv / eup_per_a3_per_bar  # 1/(E_up/Å^3)
+
+        # Interval: allow override; otherwise keep a sensible default (50 steps)
+        npt_int = int(os.environ.get('UPSIDE_NPT_INTERVAL', '50'))
+
+        # Optional env overrides for flexibility
+        tau_p_up = float(os.environ.get('UPSIDE_NPT_TAU', str(tau_p_up)))
+        target_p_xy_up = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', f"{target_p_xy_up}"))
+        target_p_z_up  = float(os.environ.get('UPSIDE_NPT_TARGET_PZ',  f"{target_p_z_up}"))
+        beta_up_inv    = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', f"{beta_up_inv}"))
+
+        # Enable NPT and semi-isotropic by default for these settings
+        npt_enable = int(os.environ.get('UPSIDE_NPT_ENABLE', '1'))
         npt_semi   = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
-        npt_tau    = float(os.environ.get('UPSIDE_NPT_TAU', '5.0'))
-        npt_int    = int(os.environ.get('UPSIDE_NPT_INTERVAL', '50'))
-        npt_beta   = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '4.5e-5'))
-        npt_pxy    = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '1.0'))
-        npt_pz     = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '1.0'))
         npt_debug  = int(os.environ.get('UPSIDE_NPT_DEBUG', '1'))
 
+        # Write to H5
         baro_grp = t.create_group(input_grp, 'barostat')
         baro_grp._v_attrs.enable = npt_enable
         baro_grp._v_attrs.semi_isotropic = npt_semi
-        baro_grp._v_attrs.tau_p = npt_tau
+        baro_grp._v_attrs.tau_p = tau_p_up
         baro_grp._v_attrs.interval = npt_int
-        baro_grp._v_attrs.compressibility = npt_beta
-        baro_grp._v_attrs.target_p_xy = npt_pxy
-        baro_grp._v_attrs.target_p_z = npt_pz
+        baro_grp._v_attrs.compressibility = beta_up_inv
+        baro_grp._v_attrs.target_p_xy = target_p_xy_up
+        baro_grp._v_attrs.target_p_z = target_p_z_up
         baro_grp._v_attrs.debug = npt_debug
+
+        print("NPT (from GROMACS) → UPSIDE units:")
+        print(f"  tau_p: {gmx_tau_p_ps} ps → {tau_p_up} time_units (ps_per_up={ps_per_up})")
+        print(f"  1 bar = {eup_per_a3_per_bar:.6e} E_up/Å^3 (energy_conversion={energy_conversion})")
+        print(f"  ref_p: Pxy={gmx_ref_p_xy_bar} bar → {target_p_xy_up:.6e} E_up/Å^3, Pz={gmx_ref_p_z_bar} bar → {target_p_z_up:.6e} E_up/Å^3")
+        print(f"  compressibility: {gmx_beta_bar_inv} 1/bar → {beta_up_inv:.6e} 1/(E_up/Å^3)")
 
         # Create atom indices and charges arrays for the potential
         t.create_array(martini_potential, 'atom_indices', obj=np.arange(n_atoms))
