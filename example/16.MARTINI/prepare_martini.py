@@ -980,7 +980,7 @@ def main():
         
         # PME configuration for long-range Coulomb interactions
         use_pme = int(os.environ.get('UPSIDE_USE_PME', '1'))
-        pme_alpha = float(os.environ.get('UPSIDE_PME_ALPHA', '0.1'))
+        pme_alpha = float(os.environ.get('UPSIDE_PME_ALPHA', '0.05'))
         pme_rcut = float(os.environ.get('UPSIDE_PME_RCUT', '10.0'))
         pme_nx = int(os.environ.get('UPSIDE_PME_NX', '32'))
         pme_ny = int(os.environ.get('UPSIDE_PME_NY', '32'))
@@ -1017,7 +1017,7 @@ def main():
         # UPSIDE_PME_NX/NY/NZ: Grid dimensions (default: 32, should be powers of 2)
         # UPSIDE_PME_ORDER: B-spline interpolation order (default: 4)
         use_pme = int(os.environ.get('UPSIDE_USE_PME', '0'))
-        pme_alpha = float(os.environ.get('UPSIDE_PME_ALPHA', '0.1'))
+        pme_alpha = float(os.environ.get('UPSIDE_PME_ALPHA', '0.05'))
         pme_rcut = float(os.environ.get('UPSIDE_PME_RCUT', '10.0'))
         pme_nx = int(os.environ.get('UPSIDE_PME_NX', '32'))
         pme_ny = int(os.environ.get('UPSIDE_PME_NY', '32'))
