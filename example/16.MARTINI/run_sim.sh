@@ -110,6 +110,7 @@ if [ "$USE_PME" = "1" ]; then
     echo "  Features: Improved FFT, 4th-order B-splines, spline tables"
 fi
 echo "Thermostat interval: $THERMOSTAT_INTERVAL"
+echo "Barostat (NPT): ${UPSIDE_NPT_ENABLE:-0} (semi=${UPSIDE_NPT_SEMI:-1} tau=${UPSIDE_NPT_TAU:-5.0} interval=${UPSIDE_NPT_INTERVAL:-50} Pxy=${UPSIDE_NPT_TARGET_PXY:-1.0} Pz=${UPSIDE_NPT_TARGET_PZ:-1.0})"
 
 # Configuration
 INPUTS_DIR="inputs"
@@ -201,6 +202,16 @@ else
 fi
 
 export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
+
+# Enable NPT by default for bilayer: semi-isotropic Berendsen
+export UPSIDE_NPT_ENABLE=${UPSIDE_NPT_ENABLE:-1}
+export UPSIDE_NPT_SEMI=${UPSIDE_NPT_SEMI:-1}
+export UPSIDE_NPT_TAU=${UPSIDE_NPT_TAU:-5.0}
+export UPSIDE_NPT_INTERVAL=${UPSIDE_NPT_INTERVAL:-50}
+export UPSIDE_NPT_COMPRESSIBILITY=${UPSIDE_NPT_COMPRESSIBILITY:-4.5e-5}
+export UPSIDE_NPT_TARGET_PXY=${UPSIDE_NPT_TARGET_PXY:-1.0}
+export UPSIDE_NPT_TARGET_PZ=${UPSIDE_NPT_TARGET_PZ:-1.0}
+export UPSIDE_NPT_DEBUG=${UPSIDE_NPT_DEBUG:-1}
 
 # PME configuration - Optimized settings for improved accuracy and performance
 export UPSIDE_USE_PME=${USE_PME}

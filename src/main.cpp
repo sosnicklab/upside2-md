@@ -25,6 +25,18 @@
 using namespace std;
 using namespace h5;
 
+// ---- NPT Barostat hooks (implemented in martini.cpp) ----
+namespace martini_npt {
+    void register_barostat_for_engine(hid_t config_root, DerivEngine& engine);
+    void maybe_apply_barostat(DerivEngine& engine,
+                              const VecArray& mom,
+                              int n_atom,
+                              uint64_t round_num,
+                              float dt,
+                              int inner_step,
+                              int verbose,
+                              bool print_now);
+}
 // If any stop signal is received (currently we trap sigterm and sigint)
 // we increment any_stop_signal_received.
 constexpr sig_atomic_t NO_SIGNAL = -1;  // FIXME is this a valid sentinel value?
@@ -753,6 +765,8 @@ try {
 
             auto potential_group = open_group(sys->config.get(), "/input/potential");
             sys->engine = initialize_engine_from_hdf5(sys->n_atom, potential_group.get());
+            // Register barostat settings for this engine (read from H5)
+            martini_npt::register_barostat_for_engine(sys->config.get(), sys->engine);
             if  (integrator_arg.getValue() == "mv" )
                 sys->engine.build_integrator_levels(true, dt, inner_step );
 
@@ -968,7 +982,8 @@ try {
                     if(nr && mc_interval && !(nr%mc_interval)) 
                         sys.mc_samplers.execute(sys.random_seed, nr, sys.temperature, sys.engine);
 
-                    if(!frame_interval || !(nr%frame_interval)) {
+                    bool do_print = (!frame_interval || !(nr%frame_interval));
+                    if(do_print) {
                         if(do_recenter) recenter(sys.engine.pos->output, xy_recenter_only, sys.n_atom);
                         sys.engine.compute(PotentialAndDerivMode);
                         sys.logger->collect_samples();
@@ -1012,6 +1027,11 @@ try {
                         // Default simple Verlet step. Ensure we still progress even if forces are tiny.
                         sys.engine.integration_cycle(sys.mom, dt);
                     }
+
+                    // Apply semi-isotropic barostat at configured interval
+                    martini_npt::maybe_apply_barostat(sys.engine, sys.mom, sys.n_atom,
+                                                      sys.round_num, dt, inner_step, verbose,
+                                                      do_print);
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
                         curvature_changer->attempt_change(base_random_seed, sys.round_num, sys, relative_curvature_radius_change);

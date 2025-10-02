@@ -1067,6 +1067,28 @@ def main():
             # Copy charges from martini_potential
             t.create_array(pme_group, 'charges', obj=charges)
         
+        # --- NPT BAROSTAT CONFIGURATION (/input/barostat) ---
+        # Read settings from environment variables with sensible defaults
+        # Enable via UPSIDE_NPT_ENABLE=1
+        npt_enable = int(os.environ.get('UPSIDE_NPT_ENABLE', '0'))
+        npt_semi   = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
+        npt_tau    = float(os.environ.get('UPSIDE_NPT_TAU', '5.0'))
+        npt_int    = int(os.environ.get('UPSIDE_NPT_INTERVAL', '50'))
+        npt_beta   = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '4.5e-5'))
+        npt_pxy    = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '1.0'))
+        npt_pz     = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '1.0'))
+        npt_debug  = int(os.environ.get('UPSIDE_NPT_DEBUG', '1'))
+
+        baro_grp = t.create_group(input_grp, 'barostat')
+        baro_grp._v_attrs.enable = npt_enable
+        baro_grp._v_attrs.semi_isotropic = npt_semi
+        baro_grp._v_attrs.tau_p = npt_tau
+        baro_grp._v_attrs.interval = npt_int
+        baro_grp._v_attrs.compressibility = npt_beta
+        baro_grp._v_attrs.target_p_xy = npt_pxy
+        baro_grp._v_attrs.target_p_z = npt_pz
+        baro_grp._v_attrs.debug = npt_debug
+
         # Create atom indices and charges arrays for the potential
         t.create_array(martini_potential, 'atom_indices', obj=np.arange(n_atoms))
         t.create_array(martini_potential, 'charges', obj=charges)
