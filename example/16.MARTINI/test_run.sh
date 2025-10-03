@@ -21,7 +21,7 @@ set -e  # Exit on any error
 # =============================================================================
 # Change this value to use a different PDB file (e.g., "bilayer", "protein", etc.)
 # The script will look for pdb/{PDB_ID}.MARTINI.pdb
-PDB_ID="bilayer"
+PDB_ID="1rkl"
 
 # POTENTIAL MODE TOGGLE
 # Set to "soft" to use softened potentials (default)
@@ -154,8 +154,8 @@ echo
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR"
 
 # Simulation parameters (from original run_martini.py)
-DURATION=0
-FRAME_INTERVAL=20
+DURATION=3
+FRAME_INTERVAL=1
 TEMPERATURE=0.8
 TIME_STEP=0.1
 THERMOSTAT_TIMESCALE=0.135
@@ -171,7 +171,7 @@ MAX_FORCE="${MAX_FORCE:-}"
 # Minimization stage lengths (in MD steps)
 # First: softened potential steps; Second: regular potential steps
 MIN_SOFT_STEPS="${MIN_SOFT_STEPS:-500}"
-MIN_REG_STEPS="${MIN_REG_STEPS:-0}"
+MIN_REG_STEPS="${MIN_REG_STEPS:-500}"
 
 echo "Simulation parameters:"
 echo "  Duration: $DURATION steps"
@@ -200,10 +200,14 @@ else
     export UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-0}
     export UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-0.0}
 fi
+# Ensure force cap default consistent with stabilized run
+# export UPSIDE_FORCE_CAP=${UPSIDE_FORCE_CAP:-50}
 
 export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
 # NPT parameters are now sourced from H5 written by prepare_martini.py (GROMACS-derived).
 # You can still override via env if needed, but we avoid setting defaults here.
+# Enable NPT by default for MARTINI simulations
+export UPSIDE_NPT_ENABLE=${UPSIDE_NPT_ENABLE:-1}
 
 # PME configuration - Optimized settings for improved accuracy and performance
 export UPSIDE_USE_PME=${USE_PME}
@@ -264,7 +268,7 @@ if [ "$POTENTIAL_MODE" = "regular" ]; then
         "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
         "--thermostat-interval" "$THERMOSTAT_INTERVAL"
         "--seed" "$SEED"
-        "--integrator" "$INTEGRATOR"
+        "--integrator" "$INTEGRATOR_REG"
         "--disable-recentering"
     )
     [ -n "$MAX_FORCE" ] && CMD_REG+=("--max-force" "$MAX_FORCE")
@@ -279,189 +283,39 @@ if [ "$POTENTIAL_MODE" = "regular" ]; then
     fi
     
 else
-    # Soft potential mode (original two-stage logic)
-    if [ "$SOFT_RUN_MODE" = "soft_only" ]; then
-        echo "=== Step 3: Running Softened-Only Simulation ==="
-    else
-        echo "=== Step 3: Running Two-Stage Simulation (softened -> regular) ==="
-    fi
+    # Minimization mode: minimization + production in single run
+    echo "=== Step 3: Running Single-Stage Simulation (minimization + production) ==="
 
-    # Minimization stage configuration
-    SOFT_STEPS="$MIN_SOFT_STEPS"
-    REG_MIN_STEPS="$MIN_REG_STEPS"
-    PRODUCTION_STEPS="$DURATION"
-    REMAINING_STEPS="$PRODUCTION_STEPS"
-
-# Stage 3.1: softened minimization sub-stage (writes to INPUT_FILE:/output)
-echo "-- Stage 1A (min): Softened potential for $SOFT_STEPS steps --"
-CMD_SOFT=(
-    "$UPSIDE_EXECUTABLE"
-    "$INPUT_FILE"
-    "--duration" "$SOFT_STEPS"
-    "--frame-interval" "$FRAME_INTERVAL"
-    "--temperature" "$TEMPERATURE"
-    "--time-step" "$TIME_STEP"
-    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-    "--seed" "$SEED"
-    "--integrator" "$INTEGRATOR_SOFT"
-    "--disable-recentering"
-)
-[ -n "$MAX_FORCE" ] && CMD_SOFT+=("--max-force" "$MAX_FORCE")
-echo "Command (min-soft): ${CMD_SOFT[*]}"
-START_TIME_SOFT=$(date +%s)
-if "${CMD_SOFT[@]}" 2>&1 | tee "$LOG_FILE"; then
-    END_TIME_SOFT=$(date +%s)
-    echo "Minimization softened sub-stage completed in $((END_TIME_SOFT - START_TIME_SOFT)) seconds"
-else
-    echo "ERROR: Softened stage failed!"
-    exit 1
-fi
-
-# Stage 3.2: Prepare restart from softened end state and disable softening in INPUT_FILE
-if [ "$SOFT_RUN_MODE" = "soft_then_regular" ] && [ "$REMAINING_STEPS" -gt 0 ]; then
-python3 - "$INPUT_FILE" << 'PYEOF'
-import sys, h5py
-path = sys.argv[1]
-with h5py.File(path, 'r+') as f:
-    # Move /output -> /output_min_soft (keep softened logs for reference)
-    if 'output_min_soft' in f:
-        del f['output_min_soft']
-    if 'output' in f:
-        f.move('output', 'output_min_soft')
-    else:
-        raise SystemExit('No /output found after softened run')
-    # Copy last frame positions to /input/pos (shape: [n_atom, 3, 1])
-    pos = f['/output_min_soft/pos']
-    last = pos.shape[0]-1
-    last_pos = pos[last]
-    # Handle possible systems axis: last_pos could be [1, n_atom, 3]
-    if last_pos.ndim == 3 and last_pos.shape[0] == 1:
-        last_pos = last_pos[0]
-    ipos = f['/input/pos']
-    if ipos.shape[0] != last_pos.shape[0] or ipos.shape[1] != last_pos.shape[1]:
-        raise SystemExit('Shape mismatch between output pos and input pos')
-    ipos[...] = last_pos[:, :, None]
-    # Disable softening attributes for regular run
-    pot = f['/input/potential/martini_potential']
-    if 'coulomb_soften' in pot.attrs:
-        pot.attrs.modify('coulomb_soften', 0)
-    else:
-        pot.attrs['coulomb_soften'] = 0
-    if 'lj_soften' in pot.attrs:
-        pot.attrs.modify('lj_soften', 0)
-    else:
-        pot.attrs['lj_soften'] = 0
-PYEOF
-
-    # Stage 3.2.5: regular minimization sub-stage by short MD with regular potentials
-    echo "-- Stage 1B (min): Regular potential for $REG_MIN_STEPS steps --"
-    CMD_MINREG=(
+    # Single stage: Minimization + Production
+    echo "-- Stage 1: Minimization + Production for $DURATION steps --"
+    CMD_MIN_PROD=(
         "$UPSIDE_EXECUTABLE"
         "$INPUT_FILE"
-        "--duration" "$REG_MIN_STEPS"
+        "--duration" "$DURATION"
         "--frame-interval" "$FRAME_INTERVAL"
         "--temperature" "$TEMPERATURE"
         "--time-step" "$TIME_STEP"
         "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
         "--thermostat-interval" "$THERMOSTAT_INTERVAL"
         "--seed" "$SEED"
-        "--integrator" "$INTEGRATOR_MIN"
+        "--integrator" "$INTEGRATOR_SOFT"
         "--disable-recentering"
+        "--minimize"
+        "--min-max-iter" "1000"
+        "--min-energy-tol" "1e-6"
+        "--min-force-tol" "1e-3"
+        "--min-step" "0.01"
     )
-    [ -n "$MAX_FORCE" ] && CMD_MINREG+=("--max-force" "$MAX_FORCE")
-    echo "Command (min-reg): ${CMD_MINREG[*]}"
-    if ! "${CMD_MINREG[@]}" 2>&1 | tee -a "$LOG_FILE"; then
-        echo "ERROR: Regular sub-stage of minimization failed!"
-        exit 1
-    fi
-
-    # Persist minimization end-state and equilibrated box
-python3 - "$INPUT_FILE" << 'PYEOF'
-import sys, h5py
-path = sys.argv[1]
-with h5py.File(path, 'r+') as f:
-    # Move /output -> /output_min_reg (keep short-regular logs)
-    if 'output_min_reg' in f:
-        del f['output_min_reg']
-    if 'output' in f:
-        f.move('output', 'output_min_reg')
-    else:
-        raise SystemExit('No /output found after regular minimization sub-stage')
-
-    # Copy last frame positions to /input/pos
-    pos = f['/output_min_reg/pos']
-    last = pos.shape[0]-1
-    last_pos = pos[last]
-    if last_pos.ndim == 3 and last_pos.shape[0] == 1:
-        last_pos = last_pos[0]
-    ipos = f['/input/pos']
-    if ipos.shape[0] != last_pos.shape[0] or ipos.shape[1] != last_pos.shape[1]:
-        raise SystemExit('Shape mismatch between output pos and input pos after regular sub-stage')
-    ipos[...] = last_pos[:, :, None]
-
-    # Read current box from potential attrs (assumes engine updated attrs during NPT)
-    pot = f['/input/potential/martini_potential']
-    x = float(pot.attrs['x_len']) if 'x_len' in pot.attrs else None
-    y = float(pot.attrs['y_len']) if 'y_len' in pot.attrs else None
-    z = float(pot.attrs['z_len']) if 'z_len' in pot.attrs else None
-    if None in (x, y, z):
-        # Fallback to periodic_boundary_potential
-        pbc = f['/input/potential/periodic_boundary_potential']
-        x = float(pbc.attrs['x_len'])
-        y = float(pbc.attrs['y_len'])
-        z = float(pbc.attrs['z_len'])
-
-    # Store equilibrated box for downstream tools
-    if 'equilibrated_box' in f:
-        del f['equilibrated_box']
-    g = f.create_group('equilibrated_box')
-    g.attrs['x_len'] = x
-    g.attrs['y_len'] = y
-    g.attrs['z_len'] = z
-
-    # Also ensure both potentials carry equilibrated box attrs
-    pot.attrs['x_len'] = x
-    pot.attrs['y_len'] = y
-    pot.attrs['z_len'] = z
-    if '/input/potential/periodic_boundary_potential' in f:
-        p = f['/input/potential/periodic_boundary_potential']
-        p.attrs['x_len'] = x
-        p.attrs['y_len'] = y
-        p.attrs['z_len'] = z
-PYEOF
-
-# Stage 3.3: production run with regular potentials (writes to /output)
-    echo "-- Stage 2: Production (regular) for $PRODUCTION_STEPS steps --"
-    CMD_REG=(
-        "$UPSIDE_EXECUTABLE"
-        "$INPUT_FILE"
-        "--duration" "$PRODUCTION_STEPS"
-        "--frame-interval" "$FRAME_INTERVAL"
-        "--temperature" "$TEMPERATURE"
-        "--time-step" "$TIME_STEP"
-        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-        "--seed" "$SEED"
-        "--integrator" "$INTEGRATOR_REG"
-        "--disable-recentering"
-    )
-    [ -n "$MAX_FORCE" ] && CMD_REG+=("--max-force" "$MAX_FORCE")
-    echo "Command (regular): ${CMD_REG[*]}"
-    START_TIME_REG=$(date +%s)
-    if "${CMD_REG[@]}" 2>&1 | tee -a "$LOG_FILE"; then
-        END_TIME_REG=$(date +%s)
-        echo "Regular run completed in $((END_TIME_REG - START_TIME_REG)) seconds"
+    [ -n "$MAX_FORCE" ] && CMD_MIN_PROD+=("--max-force" "$MAX_FORCE")
+    echo "Command (minimization + production): ${CMD_MIN_PROD[*]}"
+    START_TIME_TOTAL=$(date +%s)
+    if "${CMD_MIN_PROD[@]}" 2>&1 | tee "$LOG_FILE"; then
+        END_TIME_TOTAL=$(date +%s)
+        echo "Minimization + Production completed in $((END_TIME_TOTAL - START_TIME_TOTAL)) seconds"
     else
-        echo "ERROR: Regular stage failed!"
+        echo "ERROR: Minimization + Production stage failed!"
         exit 1
     fi
-elif [ "$SOFT_RUN_MODE" = "soft_only" ]; then
-    echo "Skipping regular stage: SOFT_RUN_MODE=soft_only"
-else
-    echo "Skipping regular stage: REMAINING_STEPS=0"
-fi
-
 fi  # End of POTENTIAL_MODE check
 
 echo
