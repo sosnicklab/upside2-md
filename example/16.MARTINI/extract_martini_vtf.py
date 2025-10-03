@@ -3,6 +3,7 @@
 import sys, os
 import numpy as np
 import h5py
+import re
 from datetime import datetime
 
 # Get UPSIDE home directory
@@ -130,7 +131,64 @@ def main():
         
         # Read equilibrated box dimensions if present; otherwise fall back to input attrs
         x_len = y_len = z_len = None
-        if 'equilibrated_box' in t:
+        
+        # First, try to read from simulation output (equilibrated box dimensions)
+        if 'output/box' in t:
+            box_data = t['output/box'][:]
+            if len(box_data) > 0:
+                # Get the last (most recent) box dimensions from the simulation
+                last_box = box_data[-1]
+                if len(last_box.shape) == 2 and last_box.shape[1] == 3:  # (time, 3) format
+                    x_len = float(last_box[0, 0])  # x dimension
+                    y_len = float(last_box[0, 1])  # y dimension  
+                    z_len = float(last_box[0, 2])  # z dimension
+                    print(f"Using equilibrated box from simulation output: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
+                elif len(last_box.shape) == 1 and len(last_box) == 3:  # (3,) format
+                    x_len = float(last_box[0])
+                    y_len = float(last_box[1])
+                    z_len = float(last_box[2])
+                    print(f"Using equilibrated box from simulation output: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
+        
+        # If no box data in HDF5, try to extract from log file
+        if x_len is None:
+            # Look for log file in the same directory as the input file
+            log_file = input_file.replace('.up', '.log')
+            if not os.path.exists(log_file):
+                # Try alternative log file names
+                log_file = input_file.replace('inputs/', 'outputs/martini_test/').replace('.up', '.log')
+                if not os.path.exists(log_file):
+                    log_file = input_file.replace('inputs/', 'outputs/martini_test/').replace('.up', '.optimized.log')
+                    if not os.path.exists(log_file):
+                        # Try the test.run.optimized.log pattern
+                        log_file = input_file.replace('inputs/', 'outputs/martini_test/').replace('bilayer.up', 'test.run.optimized.log')
+            
+            if os.path.exists(log_file):
+                print(f"Reading box dimensions from log file: {log_file}")
+                try:
+                    with open(log_file, 'r') as f:
+                        lines = f.readlines()
+                    
+                    # Look for the last NPT box line in the log
+                    last_box_line = None
+                    for line in reversed(lines):
+                        if '[NPT]' in line and 'box' in line:
+                            last_box_line = line
+                            break
+                    
+                    if last_box_line:
+                        # Parse box dimensions from log line like:
+                        # [NPT] t 1980.000 scale_xy 1.0000 scale_z 0.9965 | Pxy -4.147e-04 tgt 2.066e-05, Pz 1.198e-02 tgt 2.066e-05 | box 28.36 28.36 70.56
+                        box_match = re.search(r'box\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)', last_box_line)
+                        if box_match:
+                            x_len = float(box_match.group(1))
+                            y_len = float(box_match.group(2))
+                            z_len = float(box_match.group(3))
+                            print(f"Using equilibrated box from log file: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
+                except Exception as e:
+                    print(f"Warning: Could not read box dimensions from log file: {e}")
+        
+        # Fallback to equilibrated_box group if present
+        if x_len is None and 'equilibrated_box' in t:
             boxgrp = t['equilibrated_box']
             if all(k in boxgrp.attrs for k in ('x_len','y_len','z_len')):
                 x_len = float(boxgrp.attrs['x_len'])
@@ -138,6 +196,7 @@ def main():
                 z_len = float(boxgrp.attrs['z_len'])
                 print(f"Using equilibrated box: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
 
+        # Fallback to input potential attributes
         if x_len is None and 'input/potential/martini_potential' in t_struct:
             potential_group = t_struct['input/potential/martini_potential']
             if all(k in potential_group.attrs for k in ('x_len','y_len','z_len')):
