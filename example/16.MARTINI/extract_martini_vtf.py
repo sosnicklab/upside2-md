@@ -44,6 +44,69 @@ def write_pdb_frame(f, pos, frame_num, atom_types, residue_ids, x_len, y_len, z_
         f.write(f"ATOM  {i+1:5d} {atom_name:>4} {resname:3} A{resid:4d}    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n")
     f.write("ENDMDL\n")
 
+def centralize_system(frame_pos, atom_types, residue_ids, x_len, y_len, z_len):
+    """
+    Centralize the system by keeping the lipid bilayer centered in Z direction.
+    Handle water molecules that flow over box boundaries by redistributing them evenly.
+    """
+    # Find lipid atoms (DOPC residues)
+    lipid_mask = np.array([res_name == 'DOP' for res_name in residue_ids])
+    water_mask = np.array([res_name == 'W' for res_name in residue_ids])
+    
+    if np.any(lipid_mask):
+        # Calculate the center of mass of lipids in Z direction
+        lipid_z_positions = frame_pos[lipid_mask, 2]
+        lipid_z_center = np.mean(lipid_z_positions)
+        
+        # Calculate the shift needed to center lipids at Z=0
+        z_shift = -lipid_z_center
+        
+        # Apply shift to all atoms
+        frame_pos[:, 2] += z_shift
+        
+        # Handle water molecules that are now outside the box
+        half_z = z_len / 2.0
+        
+        # Find water molecules outside the box
+        water_outside_positive = water_mask & (frame_pos[:, 2] > half_z)
+        water_outside_negative = water_mask & (frame_pos[:, 2] < -half_z)
+        
+        # Count water molecules on each side
+        n_water_positive = np.sum(water_outside_positive)
+        n_water_negative = np.sum(water_outside_negative)
+        
+        if n_water_positive > 0 or n_water_negative > 0:
+            # Redistribute water molecules evenly on both sides
+            total_water_outside = n_water_positive + n_water_negative
+            
+            if total_water_outside > 0:
+                # Calculate target positions for water redistribution
+                # Place half on positive side, half on negative side
+                n_water_top = total_water_outside // 2
+                n_water_bottom = total_water_outside - n_water_top
+                
+                # Get indices of water molecules outside the box
+                water_outside_indices = np.where(water_outside_positive | water_outside_negative)[0]
+                
+                if len(water_outside_indices) > 0:
+                    # Redistribute water molecules
+                    if n_water_top > 0:
+                        # Place some water molecules in the top half
+                        top_indices = water_outside_indices[:n_water_top]
+                        frame_pos[top_indices, 2] = np.random.uniform(0.0, half_z, n_water_top)
+                    
+                    if n_water_bottom > 0:
+                        # Place remaining water molecules in the bottom half
+                        bottom_indices = water_outside_indices[n_water_top:]
+                        frame_pos[bottom_indices, 2] = np.random.uniform(-half_z, 0.0, n_water_bottom)
+        
+        # Apply periodic boundary conditions to keep all atoms within the box
+        frame_pos[:, 0] = ((frame_pos[:, 0] + x_len/2) % x_len) - x_len/2
+        frame_pos[:, 1] = ((frame_pos[:, 1] + y_len/2) % y_len) - y_len/2
+        frame_pos[:, 2] = ((frame_pos[:, 2] + z_len/2) % z_len) - z_len/2
+    
+    return frame_pos
+
 def main():
     if len(sys.argv) < 3 or len(sys.argv) > 5:
         print("Usage: python extract_martini_vtf.py <input.up> <output.vtf/pdb> [input_file_for_structure] [pdb_id]")
@@ -350,6 +413,9 @@ def main():
                             print(f"Warning: NaN values in frame {frame}, replacing with zeros")
                             frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
 
+                    # Centralize the system: keep lipid bilayer centered in Z
+                    frame_pos = centralize_system(frame_pos, atom_types, residue_ids, x_len, y_len, z_len)
+
                     write_vtf_frame(f, frame_pos, frame)
                     if frame % 100 == 0:
                         print(f"Processed frame {frame}/{n_frame_total - 1}")
@@ -401,6 +467,9 @@ def main():
                         else:
                             print(f"Warning: NaN values in first simulation frame, replacing with zeros")
                             frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
+
+                    # Centralize the system: keep lipid bilayer centered in Z
+                    frame_pos = centralize_system(frame_pos, atom_types, residue_ids, x_len, y_len, z_len)
 
                     # Write frame in PDB format
                     write_pdb_frame(f, frame_pos, frame, atom_types, residue_ids, x_len, y_len, z_len, pdb_atom_names, pdb_residue_names, pdb_residue_ids)
