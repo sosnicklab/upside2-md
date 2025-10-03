@@ -361,7 +361,7 @@ PYEOF
     # Update box dimensions between Stage 1A and Stage 1B (if NPT was used)
     if [ "$UPSIDE_NPT_ENABLE" = "1" ]; then
         echo "Updating box dimensions between Stage 1A and Stage 1B..."
-        python3 -c "
+        python3 << 'PYEOF'
 import h5py
 import numpy as np
 
@@ -404,38 +404,53 @@ with h5py.File('inputs/bilayer.up', 'r+') as f:
         p.attrs['y_len'] = y
         p.attrs['z_len'] = z
     
-    # Update particle coordinates to match new box dimensions
-    # Read original box dimensions from PDB
-    original_x, original_y, original_z = 30.101, 30.101, 85.0
+    # Use original box dimensions to maintain stability with equilibrated coordinates
+    # The equilibrated coordinates from Stage 1A are optimized for the original box size
+    print("Using original box dimensions to maintain stability with equilibrated coordinates")
+    original_x, original_y, original_z = 30.101, 30.101, 85.000
+    pot.attrs['box_x'] = original_x
+    pot.attrs['box_y'] = original_y
+    pot.attrs['box_z'] = original_z
+    pot.attrs['x_len'] = original_x
+    pot.attrs['y_len'] = original_y
+    pot.attrs['z_len'] = original_z
+    if '/input/potential/periodic_boundary_potential' in f:
+        p.attrs['box_x'] = original_x
+        p.attrs['box_y'] = original_y
+        p.attrs['box_z'] = original_z
+        p.attrs['x_len'] = original_x
+        p.attrs['y_len'] = original_y
+        p.attrs['z_len'] = original_z
     
-    # Calculate scaling factors
-    scale_x = x / original_x
-    scale_y = y / original_y  
-    scale_z = z / original_z
-    
-    # Update particle coordinates in /input/pos
-    if '/input/pos' in f:
-        pos_data = f['/input/pos']
-        if pos_data.ndim == 3:  # (n_atoms, 3, 1) format
-            # Scale coordinates
-            pos_data[:, 0, :] *= scale_x  # x coordinates
-            pos_data[:, 1, :] *= scale_y  # y coordinates  
-            pos_data[:, 2, :] *= scale_z  # z coordinates
-            print(f'Scaled particle coordinates by factors: {scale_x:.3f} x {scale_y:.3f} x {scale_z:.3f}')
+    # Transfer equilibrated coordinates from Stage 1A to Stage 1B
+    if '/output_min_soft/pos' in f:
+        pos_data = f['/output_min_soft/pos']
+        if len(pos_data) > 0:
+            # Get the last frame of equilibrated coordinates
+            last_pos = pos_data[-1]  # Shape: (1, n_atoms, 3) or (n_atoms, 3)
+            print(f'Transferring equilibrated coordinates from Stage 1A (shape: {last_pos.shape})')
+            
+            # Handle different coordinate data formats
+            if last_pos.ndim == 3 and last_pos.shape[0] == 1:
+                # Shape is (1, n_atoms, 3), extract (n_atoms, 3)
+                coord_data = last_pos[0]
+            else:
+                # Shape is already (n_atoms, 3)
+                coord_data = last_pos
+            
+            print(f'Extracted coordinates shape: {coord_data.shape}')
+            
+            # Update input coordinates with equilibrated coordinates
+            if '/input/pos' in f:
+                del f['/input/pos']
+            # UPSIDE expects shape [n_atom, 3, 1], so add the third dimension
+            coord_data_3d = coord_data[:, :, None]  # Shape: (n_atom, 3, 1)
+            f.create_dataset('/input/pos', data=coord_data_3d)
+            print("Updated input coordinates with equilibrated coordinates from Stage 1A")
         else:
-            print('Warning: Unexpected position data format, skipping coordinate scaling')
-    
-    # Update particle velocities in /input/vel to match new box dimensions
-    if '/input/vel' in f:
-        vel_data = f['/input/vel']
-        if vel_data.ndim == 3:  # (n_atoms, 3, 1) format
-            # Scale velocities by the same factors as coordinates
-            vel_data[:, 0, :] *= scale_x  # x velocities
-            vel_data[:, 1, :] *= scale_y  # y velocities  
-            vel_data[:, 2, :] *= scale_z  # z velocities
-            print(f'Scaled particle velocities by factors: {scale_x:.3f} x {scale_y:.3f} x {scale_z:.3f}')
-        else:
-            print('Warning: Unexpected velocity data format, skipping velocity scaling')
+            print("No position data in /output_min_soft, keeping original coordinates")
+    else:
+        print("No /output_min_soft/pos found, keeping original coordinates")
     
     # Create equilibrated box group for reference
     if '/equilibrated_box' in f:
@@ -445,14 +460,20 @@ with h5py.File('inputs/bilayer.up', 'r+') as f:
     eq_grp.attrs['y'] = y
     eq_grp.attrs['z'] = z
     print(f'Updated input H5 with equilibrated box: {x:.3f} x {y:.3f} x {z:.3f} Å')
-"
+PYEOF
         echo "Box dimensions updated successfully"
     else
         echo "NPT not enabled, skipping box dimension updates"
     fi
 
-    # Stage 3.2.5: regular minimization sub-stage by short MD with regular potentials
-    echo "-- Stage 1B (min): Regular potential for $REG_MIN_STEPS steps --"
+    # Stage 3.2.5: Use softened potentials throughout
+    echo "-- Stage 1B (min): Softened potential for $REG_MIN_STEPS steps --"
+    # Use softened parameters throughout
+    export UPSIDE_SOFTEN_LJ=1
+    export UPSIDE_LJ_ALPHA=0.2
+    export UPSIDE_SOFTEN_COULOMB=1
+    export UPSIDE_SLATER_ALPHA=2.0
+    
     CMD_MINREG=(
         "$UPSIDE_EXECUTABLE"
         "$INPUT_FILE"
@@ -467,9 +488,9 @@ with h5py.File('inputs/bilayer.up', 'r+') as f:
         "--disable-recentering"
     )
     [ -n "$MAX_FORCE" ] && CMD_MINREG+=("--max-force" "$MAX_FORCE")
-    echo "Command (min-reg): ${CMD_MINREG[*]}"
+    echo "Command (min-transition): ${CMD_MINREG[*]}"
     if ! "${CMD_MINREG[@]}" 2>&1 | tee -a "$LOG_FILE"; then
-        echo "ERROR: Regular sub-stage of minimization failed!"
+        echo "ERROR: Transition sub-stage of minimization failed!"
         exit 1
     fi
 
