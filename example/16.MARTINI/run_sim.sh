@@ -154,7 +154,7 @@ echo
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR"
 
 # Simulation parameters (from original run_martini.py)
-DURATION=200
+DURATION=2000
 FRAME_INTERVAL=20
 TEMPERATURE=0.8
 TIME_STEP=0.1
@@ -283,332 +283,39 @@ if [ "$POTENTIAL_MODE" = "regular" ]; then
     fi
     
 else
-    # Soft potential mode (original two-stage logic)
-    if [ "$SOFT_RUN_MODE" = "soft_only" ]; then
-        echo "=== Step 3: Running Softened-Only Simulation ==="
-    else
-        echo "=== Step 3: Running Two-Stage Simulation (softened -> regular) ==="
-    fi
+    # Minimization mode: minimization + production in single run
+    echo "=== Step 3: Running Single-Stage Simulation (minimization + production) ==="
 
-    # Minimization stage configuration
-    SOFT_STEPS="$MIN_SOFT_STEPS"
-    REG_MIN_STEPS="$MIN_REG_STEPS"
-    PRODUCTION_STEPS="$DURATION"
-    REMAINING_STEPS="$PRODUCTION_STEPS"
-
-# Stage 3.1: softened minimization sub-stage (writes to INPUT_FILE:/output)
-echo "-- Stage 1A (min): Softened potential for $SOFT_STEPS steps --"
-CMD_SOFT=(
-    "$UPSIDE_EXECUTABLE"
-    "$INPUT_FILE"
-    "--duration" "$SOFT_STEPS"
-    "--frame-interval" "$FRAME_INTERVAL"
-    "--temperature" "$TEMPERATURE"
-    "--time-step" "$TIME_STEP"
-    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-    "--seed" "$SEED"
-    "--integrator" "$INTEGRATOR_SOFT"
-    "--disable-recentering"
-)
-[ -n "$MAX_FORCE" ] && CMD_SOFT+=("--max-force" "$MAX_FORCE")
-echo "Command (min-soft): ${CMD_SOFT[*]}"
-START_TIME_SOFT=$(date +%s)
-if "${CMD_SOFT[@]}" 2>&1 | tee "$LOG_FILE"; then
-    END_TIME_SOFT=$(date +%s)
-    echo "Minimization softened sub-stage completed in $((END_TIME_SOFT - START_TIME_SOFT)) seconds"
-else
-    echo "ERROR: Softened stage failed!"
-    exit 1
-fi
-
-# Stage 3.2: Prepare restart from softened end state and disable softening in INPUT_FILE
-if [ "$SOFT_RUN_MODE" = "soft_then_regular" ] && [ "$REMAINING_STEPS" -gt 0 ]; then
-python3 - "$INPUT_FILE" << 'PYEOF'
-import sys, h5py
-path = sys.argv[1]
-with h5py.File(path, 'r+') as f:
-    # Move /output -> /output_min_soft (keep softened logs for reference)
-    if 'output_min_soft' in f:
-        del f['output_min_soft']
-    if 'output' in f:
-        f.move('output', 'output_min_soft')
-    else:
-        raise SystemExit('No /output found after softened run')
-    # Copy last frame positions to /input/pos (shape: [n_atom, 3, 1])
-    pos = f['/output_min_soft/pos']
-    last = pos.shape[0]-1
-    last_pos = pos[last]
-    # Handle possible systems axis: last_pos could be [1, n_atom, 3]
-    if last_pos.ndim == 3 and last_pos.shape[0] == 1:
-        last_pos = last_pos[0]
-    ipos = f['/input/pos']
-    if ipos.shape[0] != last_pos.shape[0] or ipos.shape[1] != last_pos.shape[1]:
-        raise SystemExit('Shape mismatch between output pos and input pos')
-    ipos[...] = last_pos[:, :, None]
-    # Disable softening attributes for regular run
-    pot = f['/input/potential/martini_potential']
-    if 'coulomb_soften' in pot.attrs:
-        pot.attrs.modify('coulomb_soften', 0)
-    else:
-        pot.attrs['coulomb_soften'] = 0
-    if 'lj_soften' in pot.attrs:
-        pot.attrs.modify('lj_soften', 0)
-    else:
-        pot.attrs['lj_soften'] = 0
-PYEOF
-
-    # Update box dimensions between Stage 1A and Stage 1B (if NPT was used)
-    if [ "$UPSIDE_NPT_ENABLE" = "1" ]; then
-        echo "Updating box dimensions between Stage 1A and Stage 1B..."
-        python3 << 'PYEOF'
-import h5py
-import numpy as np
-
-# Read equilibrated box from output H5 file
-with h5py.File('inputs/bilayer.up', 'r') as f:
-    # Try to read from output_min_soft first (most recent)
-    if '/output_min_soft/box' in f:
-        box_data = f['/output_min_soft/box']
-        if len(box_data) > 0:
-            # Handle 3D array format (time, 1, xyz)
-            last_box = box_data[-1]  # Last box dimensions
-            if last_box.ndim == 2 and last_box.shape[0] == 1:
-                x, y, z = last_box[0]  # Extract from (1, 3) array
-            else:
-                x, y, z = last_box  # Direct (3,) array
-            print(f'Read equilibrated box from /output_min_soft: {x:.3f} x {y:.3f} x {z:.3f} Å')
-        else:
-            print('No box data in /output_min_soft, using original dimensions')
-            x, y, z = 30.101, 30.101, 85.0
-    else:
-        print('No /output_min_soft/box found, using original dimensions')
-        x, y, z = 30.101, 30.101, 85.0
-
-# Update input H5 file with equilibrated box dimensions and particle coordinates
-with h5py.File('inputs/bilayer.up', 'r+') as f:
-    # Also ensure both potentials carry equilibrated box attrs (both new and legacy)
-    pot = f['/input/potential/martini_potential']
-    pot.attrs['box_x'] = x
-    pot.attrs['box_y'] = y
-    pot.attrs['box_z'] = z
-    pot.attrs['x_len'] = x
-    pot.attrs['y_len'] = y
-    pot.attrs['z_len'] = z
-    if '/input/potential/periodic_boundary_potential' in f:
-        p = f['/input/potential/periodic_boundary_potential']
-        p.attrs['box_x'] = x
-        p.attrs['box_y'] = y
-        p.attrs['box_z'] = z
-        p.attrs['x_len'] = x
-        p.attrs['y_len'] = y
-        p.attrs['z_len'] = z
-    
-    # Use original box dimensions to maintain stability with equilibrated coordinates
-    # The equilibrated coordinates from Stage 1A are optimized for the original box size
-    print("Using original box dimensions to maintain stability with equilibrated coordinates")
-    original_x, original_y, original_z = 30.101, 30.101, 85.000
-    pot.attrs['box_x'] = original_x
-    pot.attrs['box_y'] = original_y
-    pot.attrs['box_z'] = original_z
-    pot.attrs['x_len'] = original_x
-    pot.attrs['y_len'] = original_y
-    pot.attrs['z_len'] = original_z
-    if '/input/potential/periodic_boundary_potential' in f:
-        p.attrs['box_x'] = original_x
-        p.attrs['box_y'] = original_y
-        p.attrs['box_z'] = original_z
-        p.attrs['x_len'] = original_x
-        p.attrs['y_len'] = original_y
-        p.attrs['z_len'] = original_z
-    
-    # Transfer equilibrated coordinates from Stage 1A to Stage 1B
-    if '/output_min_soft/pos' in f:
-        pos_data = f['/output_min_soft/pos']
-        if len(pos_data) > 0:
-            # Get the last frame of equilibrated coordinates
-            last_pos = pos_data[-1]  # Shape: (1, n_atoms, 3) or (n_atoms, 3)
-            print(f'Transferring equilibrated coordinates from Stage 1A (shape: {last_pos.shape})')
-            
-            # Handle different coordinate data formats
-            if last_pos.ndim == 3 and last_pos.shape[0] == 1:
-                # Shape is (1, n_atoms, 3), extract (n_atoms, 3)
-                coord_data = last_pos[0]
-            else:
-                # Shape is already (n_atoms, 3)
-                coord_data = last_pos
-            
-            print(f'Extracted coordinates shape: {coord_data.shape}')
-            
-            # Update input coordinates with equilibrated coordinates
-            if '/input/pos' in f:
-                del f['/input/pos']
-            # UPSIDE expects shape [n_atom, 3, 1], so add the third dimension
-            coord_data_3d = coord_data[:, :, None]  # Shape: (n_atom, 3, 1)
-            f.create_dataset('/input/pos', data=coord_data_3d)
-            print("Updated input coordinates with equilibrated coordinates from Stage 1A")
-        else:
-            print("No position data in /output_min_soft, keeping original coordinates")
-    else:
-        print("No /output_min_soft/pos found, keeping original coordinates")
-    
-    # Create equilibrated box group for reference
-    if '/equilibrated_box' in f:
-        del f['/equilibrated_box']
-    eq_grp = f.create_group('/equilibrated_box')
-    eq_grp.attrs['x'] = x
-    eq_grp.attrs['y'] = y
-    eq_grp.attrs['z'] = z
-    print(f'Updated input H5 with equilibrated box: {x:.3f} x {y:.3f} x {z:.3f} Å')
-PYEOF
-        echo "Box dimensions updated successfully"
-    else
-        echo "NPT not enabled, skipping box dimension updates"
-    fi
-
-    # Stage 3.2.5: Use softened potentials throughout
-    echo "-- Stage 1B (min): Softened potential for $REG_MIN_STEPS steps --"
-    # Use softened parameters throughout
-    export UPSIDE_SOFTEN_LJ=1
-    export UPSIDE_LJ_ALPHA=0.2
-    export UPSIDE_SOFTEN_COULOMB=1
-    export UPSIDE_SLATER_ALPHA=2.0
-    
-    CMD_MINREG=(
+    # Single stage: Minimization + Production
+    echo "-- Stage 1: Minimization + Production for $DURATION steps --"
+    CMD_MIN_PROD=(
         "$UPSIDE_EXECUTABLE"
         "$INPUT_FILE"
-        "--duration" "$REG_MIN_STEPS"
+        "--duration" "$DURATION"
         "--frame-interval" "$FRAME_INTERVAL"
         "--temperature" "$TEMPERATURE"
         "--time-step" "$TIME_STEP"
         "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
         "--thermostat-interval" "$THERMOSTAT_INTERVAL"
         "--seed" "$SEED"
-        "--integrator" "$INTEGRATOR_MIN"
+        "--integrator" "$INTEGRATOR_SOFT"
         "--disable-recentering"
+        "--minimize"
+        "--min-max-iter" "1000"
+        "--min-energy-tol" "1e-6"
+        "--min-force-tol" "1e-3"
+        "--min-step" "0.01"
     )
-    [ -n "$MAX_FORCE" ] && CMD_MINREG+=("--max-force" "$MAX_FORCE")
-    echo "Command (min-transition): ${CMD_MINREG[*]}"
-    if ! "${CMD_MINREG[@]}" 2>&1 | tee -a "$LOG_FILE"; then
-        echo "ERROR: Transition sub-stage of minimization failed!"
-        exit 1
-    fi
-
-    # Persist minimization end-state and equilibrated box
-python3 - "$INPUT_FILE" << 'PYEOF'
-import sys, h5py
-path = sys.argv[1]
-with h5py.File(path, 'r+') as f:
-    # Move /output -> /output_min_reg (keep short-regular logs)
-    if 'output_min_reg' in f:
-        del f['output_min_reg']
-    if 'output' in f:
-        f.move('output', 'output_min_reg')
-    else:
-        raise SystemExit('No /output found after regular minimization sub-stage')
-
-    # Copy last frame positions to /input/pos
-    pos = f['/output_min_reg/pos']
-    last = pos.shape[0]-1
-    last_pos = pos[last]
-    if last_pos.ndim == 3 and last_pos.shape[0] == 1:
-        last_pos = last_pos[0]
-    ipos = f['/input/pos']
-    if ipos.shape[0] != last_pos.shape[0] or ipos.shape[1] != last_pos.shape[1]:
-        raise SystemExit('Shape mismatch between output pos and input pos after regular sub-stage')
-    ipos[...] = last_pos[:, :, None]
-
-    # Read equilibrated box dimensions from output H5 file (logged by barostat)
-    # Try to read from the most recent output stage
-    x = y = z = None
-    output_stages = ['/output_min_soft', '/output_min_reg', '/output']
-    for stage in output_stages:
-        if stage in f and 'box' in f[stage]:
-            box_data = f[stage]['box']
-            if len(box_data) > 0:
-                # Get the last box dimensions from this stage
-                last_box = box_data[-1, 0, :]  # Shape is (n_frames, 1, 3)
-                x, y, z = float(last_box[0]), float(last_box[1]), float(last_box[2])
-                print(f"Read equilibrated box from {stage}: {x:.3f} x {y:.3f} x {z:.3f} Å")
-                break
-    
-    # Fallback to reading from input potential attributes if no output found
-    if None in (x, y, z):
-        print("No output box data found, reading from input potential attributes...")
-        pot = f['/input/potential/martini_potential']
-        # Try new barostat attributes first (box_x, box_y, box_z)
-        x = float(pot.attrs['box_x']) if 'box_x' in pot.attrs else None
-        y = float(pot.attrs['box_y']) if 'box_y' in pot.attrs else None
-        z = float(pot.attrs['box_z']) if 'box_z' in pot.attrs else None
-        if None in (x, y, z):
-            # Fallback to legacy attributes (x_len, y_len, z_len)
-            x = float(pot.attrs['x_len']) if 'x_len' in pot.attrs else None
-            y = float(pot.attrs['y_len']) if 'y_len' in pot.attrs else None
-            z = float(pot.attrs['z_len']) if 'z_len' in pot.attrs else None
-        if None in (x, y, z):
-            # Final fallback to periodic_boundary_potential
-            pbc = f['/input/potential/periodic_boundary_potential']
-            x = float(pbc.attrs['box_x']) if 'box_x' in pbc.attrs else float(pbc.attrs['x_len'])
-            y = float(pbc.attrs['box_y']) if 'box_y' in pbc.attrs else float(pbc.attrs['y_len'])
-            z = float(pbc.attrs['box_z']) if 'box_z' in pbc.attrs else float(pbc.attrs['z_len'])
-
-    # Store equilibrated box for downstream tools
-    if 'equilibrated_box' in f:
-        del f['equilibrated_box']
-    g = f.create_group('equilibrated_box')
-    g.attrs['x_len'] = x
-    g.attrs['y_len'] = y
-    g.attrs['z_len'] = z
-
-    # Also ensure both potentials carry equilibrated box attrs (both new and legacy)
-    pot = f['/input/potential/martini_potential']
-    pot.attrs['box_x'] = x
-    pot.attrs['box_y'] = y
-    pot.attrs['box_z'] = z
-    pot.attrs['x_len'] = x
-    pot.attrs['y_len'] = y
-    pot.attrs['z_len'] = z
-    if '/input/potential/periodic_boundary_potential' in f:
-        p = f['/input/potential/periodic_boundary_potential']
-        p.attrs['box_x'] = x
-        p.attrs['box_y'] = y
-        p.attrs['box_z'] = z
-        p.attrs['x_len'] = x
-        p.attrs['y_len'] = y
-        p.attrs['z_len'] = z
-PYEOF
-
-# Stage 3.3: production run with regular potentials (writes to /output)
-    echo "-- Stage 2: Production (regular) for $PRODUCTION_STEPS steps --"
-    CMD_REG=(
-        "$UPSIDE_EXECUTABLE"
-        "$INPUT_FILE"
-        "--duration" "$PRODUCTION_STEPS"
-        "--frame-interval" "$FRAME_INTERVAL"
-        "--temperature" "$TEMPERATURE"
-        "--time-step" "$TIME_STEP"
-        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-        "--seed" "$SEED"
-        "--integrator" "$INTEGRATOR_REG"
-        "--disable-recentering"
-    )
-    [ -n "$MAX_FORCE" ] && CMD_REG+=("--max-force" "$MAX_FORCE")
-    echo "Command (regular): ${CMD_REG[*]}"
-    START_TIME_REG=$(date +%s)
-    if "${CMD_REG[@]}" 2>&1 | tee -a "$LOG_FILE"; then
-        END_TIME_REG=$(date +%s)
-        echo "Regular run completed in $((END_TIME_REG - START_TIME_REG)) seconds"
+    [ -n "$MAX_FORCE" ] && CMD_MIN_PROD+=("--max-force" "$MAX_FORCE")
+    echo "Command (minimization + production): ${CMD_MIN_PROD[*]}"
+    START_TIME_TOTAL=$(date +%s)
+    if "${CMD_MIN_PROD[@]}" 2>&1 | tee "$LOG_FILE"; then
+        END_TIME_TOTAL=$(date +%s)
+        echo "Minimization + Production completed in $((END_TIME_TOTAL - START_TIME_TOTAL)) seconds"
     else
-        echo "ERROR: Regular stage failed!"
+        echo "ERROR: Minimization + Production stage failed!"
         exit 1
     fi
-elif [ "$SOFT_RUN_MODE" = "soft_only" ]; then
-    echo "Skipping regular stage: SOFT_RUN_MODE=soft_only"
-else
-    echo "Skipping regular stage: REMAINING_STEPS=0"
-fi
-
 fi  # End of POTENTIAL_MODE check
 
 echo
