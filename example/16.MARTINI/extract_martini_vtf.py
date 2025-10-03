@@ -50,60 +50,57 @@ def centralize_system(frame_pos, atom_types, residue_ids, x_len, y_len, z_len):
     Handle water molecules that flow over box boundaries by redistributing them evenly.
     """
     # Find lipid atoms (DOPC residues)
-    lipid_mask = np.array([res_name == 'DOP' for res_name in residue_ids])
+    lipid_mask = np.array([res_name == 'DOPC' for res_name in residue_ids])
     water_mask = np.array([res_name == 'W' for res_name in residue_ids])
+    
     
     if np.any(lipid_mask):
         # Calculate the center of mass of lipids in Z direction
         lipid_z_positions = frame_pos[lipid_mask, 2]
         lipid_z_center = np.mean(lipid_z_positions)
-        
         # Calculate the shift needed to center lipids at Z=0
         z_shift = -lipid_z_center
         
         # Apply shift to all atoms
         frame_pos[:, 2] += z_shift
         
-        # Handle water molecules that are now outside the box
+        # Improve water distribution around the centered bilayer
         half_z = z_len / 2.0
         
-        # Find water molecules outside the box
-        water_outside_positive = water_mask & (frame_pos[:, 2] > half_z)
-        water_outside_negative = water_mask & (frame_pos[:, 2] < -half_z)
+        # Get all water molecule indices
+        water_indices = np.where(water_mask)[0]
+        n_water = len(water_indices)
         
-        # Count water molecules on each side
-        n_water_positive = np.sum(water_outside_positive)
-        n_water_negative = np.sum(water_outside_negative)
-        
-        if n_water_positive > 0 or n_water_negative > 0:
-            # Redistribute water molecules evenly on both sides
-            total_water_outside = n_water_positive + n_water_negative
+        if n_water > 0:
+            # Calculate the lipid bilayer thickness (approximate)
+            lipid_z_positions = frame_pos[lipid_mask, 2]
+            bilayer_thickness = np.max(lipid_z_positions) - np.min(lipid_z_positions)
+            bilayer_margin = bilayer_thickness * 0.5  # Add some margin around bilayer
             
-            if total_water_outside > 0:
-                # Calculate target positions for water redistribution
-                # Place half on positive side, half on negative side
-                n_water_top = total_water_outside // 2
-                n_water_bottom = total_water_outside - n_water_top
-                
-                # Get indices of water molecules outside the box
-                water_outside_indices = np.where(water_outside_positive | water_outside_negative)[0]
-                
-                if len(water_outside_indices) > 0:
-                    # Redistribute water molecules
-                    if n_water_top > 0:
-                        # Place some water molecules in the top half
-                        top_indices = water_outside_indices[:n_water_top]
-                        frame_pos[top_indices, 2] = np.random.uniform(0.0, half_z, n_water_top)
-                    
-                    if n_water_bottom > 0:
-                        # Place remaining water molecules in the bottom half
-                        bottom_indices = water_outside_indices[n_water_top:]
-                        frame_pos[bottom_indices, 2] = np.random.uniform(-half_z, 0.0, n_water_bottom)
+            # Define water regions: above and below the bilayer
+            water_above_center = bilayer_margin
+            water_below_center = -bilayer_margin
+            
+            # Split water molecules evenly between above and below the bilayer
+            n_water_above = n_water // 2
+            n_water_below = n_water - n_water_above
+            
+            # Redistribute water molecules
+            if n_water_above > 0:
+                # Place water above the bilayer
+                above_indices = water_indices[:n_water_above]
+                frame_pos[above_indices, 2] = np.random.uniform(water_above_center, half_z, n_water_above)
+            
+            if n_water_below > 0:
+                # Place water below the bilayer
+                below_indices = water_indices[n_water_above:]
+                frame_pos[below_indices, 2] = np.random.uniform(-half_z, water_below_center, n_water_below)
         
         # Apply periodic boundary conditions to keep all atoms within the box
         frame_pos[:, 0] = ((frame_pos[:, 0] + x_len/2) % x_len) - x_len/2
         frame_pos[:, 1] = ((frame_pos[:, 1] + y_len/2) % y_len) - y_len/2
         frame_pos[:, 2] = ((frame_pos[:, 2] + z_len/2) % z_len) - z_len/2
+        
     
     return frame_pos
 
@@ -414,7 +411,7 @@ def main():
                             frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
 
                     # Centralize the system: keep lipid bilayer centered in Z
-                    frame_pos = centralize_system(frame_pos, atom_types, residue_ids, x_len, y_len, z_len)
+                    frame_pos = centralize_system(frame_pos, atom_types, pdb_residue_names, x_len, y_len, z_len)
 
                     write_vtf_frame(f, frame_pos, frame)
                     if frame % 100 == 0:
@@ -469,7 +466,7 @@ def main():
                             frame_pos = np.where(np.isnan(frame_pos), 0.0, frame_pos)
 
                     # Centralize the system: keep lipid bilayer centered in Z
-                    frame_pos = centralize_system(frame_pos, atom_types, residue_ids, x_len, y_len, z_len)
+                    frame_pos = centralize_system(frame_pos, atom_types, pdb_residue_names, x_len, y_len, z_len)
 
                     # Write frame in PDB format
                     write_pdb_frame(f, frame_pos, frame, atom_types, residue_ids, x_len, y_len, z_len, pdb_atom_names, pdb_residue_names, pdb_residue_ids)
