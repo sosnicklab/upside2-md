@@ -112,6 +112,28 @@ static void apply_semi_isotropic_scaling(DerivEngine& engine, float scale_xy, fl
         p.z() *= scale_z;
         store_vec<3>(pos, i, p);
     }
+    
+    // Apply PBC to ensure all particles are within the scaled box boundaries
+    // This is crucial to avoid unrealistic coordinates after box scaling
+    // Note: This function is called from within a locked context, so we don't need to lock again
+    auto it = g_baro_state.find(&engine);
+    if(it != g_baro_state.end()) {
+        float bx = it->second.box_x * scale_xy;
+        float by = it->second.box_y * scale_xy;
+        float bz = it->second.box_z * scale_z;
+        
+        // Apply PBC to all particles using the simple fmodf approach
+        // This ensures particles are wrapped into the new box boundaries
+        for(int i=0;i<n_atom;++i) {
+            auto p = load_vec<3>(pos, i);
+            // Wrap coordinates to [-box/2, +box/2]
+            p.x() = fmodf(p.x() + bx/2.0f, bx) - bx/2.0f;
+            p.y() = fmodf(p.y() + by/2.0f, by) - by/2.0f;
+            p.z() = fmodf(p.z() + bz/2.0f, bz) - bz/2.0f;
+            store_vec<3>(pos, i, p);
+        }
+    }
+    
     // Update cached box on known MARTINI nodes (implemented after type definitions)
     martini_update_node_boxes(engine, scale_xy, scale_z);
 }
@@ -567,6 +589,12 @@ struct DihedralSpring : public PotentialNode
         box_y *= scale_factor;
         box_z *= scale_factor;
     }
+    
+    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
+        box_x *= scale_xy;
+        box_y *= scale_xy;
+        box_z *= scale_z;
+    }
 };
 static RegisterNodeType<DihedralSpring,1> dihedral_spring_node("dihedral_spring");
 
@@ -661,19 +689,16 @@ float PeriodicBoundaryPotential::static_box_z = 0.0f;
 
 // Update node boxes helper used by barostat
 void martini_update_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
-    // Update static for PBC first
+    // Update static box dimensions for PBC - this is the most critical update
     if(PeriodicBoundaryPotential::static_box_x>0.f) {
         PeriodicBoundaryPotential::static_box_x *= scale_xy;
         PeriodicBoundaryPotential::static_box_y *= scale_xy;
         PeriodicBoundaryPotential::static_box_z *= scale_z;
     }
-    // Update objects' internal cached dimensions where possible
-    for(auto &n: engine.nodes) {
-        if(is_prefix(n.name, "periodic_boundary_potential")) {
-            auto* comp = dynamic_cast<PotentialNode*>(n.computation.get());
-            (void)comp; // already handled via static
-        }
-    }
+    
+    // Note: Individual potential nodes will be updated by their own methods
+    // when they are instantiated. The static box dimensions are the most critical
+    // for PBC wrapping and are already updated above.
 }
 
 // Static method to apply PBC wrapping to positions
@@ -1287,6 +1312,13 @@ struct ParticleMeshEwald : public PotentialNode
         box_x *= scale_factor;
         box_y *= scale_factor;
         box_z *= scale_factor;
+        volume = box_x * box_y * box_z;
+    }
+    
+    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
+        box_x *= scale_xy;
+        box_y *= scale_xy;
+        box_z *= scale_z;
         volume = box_x * box_y * box_z;
     }
 };
@@ -1931,6 +1963,12 @@ struct MartiniPotential : public PotentialNode
         box_y *= scale_factor;
         box_z *= scale_factor;
     }
+    
+    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
+        box_x *= scale_xy;
+        box_y *= scale_xy;
+        box_z *= scale_z;
+    }
 };
 static RegisterNodeType<MartiniPotential, 1> martini_potential_node("martini_potential");
 
@@ -2127,6 +2165,12 @@ struct DistSpring : public PotentialNode
         box_x *= scale_factor;
         box_y *= scale_factor;
         box_z *= scale_factor;
+    }
+    
+    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
+        box_x *= scale_xy;
+        box_y *= scale_xy;
+        box_z *= scale_z;
     }
 };
 static RegisterNodeType<DistSpring, 1> dist_spring_node("dist_spring");
@@ -2384,6 +2428,12 @@ struct AngleSpring : public PotentialNode
         box_x *= scale_factor;
         box_y *= scale_factor;
         box_z *= scale_factor;
+    }
+    
+    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
+        box_x *= scale_xy;
+        box_y *= scale_xy;
+        box_z *= scale_z;
     }
 };
 static RegisterNodeType<AngleSpring, 1> angle_spring_node("angle_spring");
