@@ -63,6 +63,11 @@ struct BarostatState {
     // Optional masses for kinetic tensor
     std::vector<float> masses;
     bool has_applied_once = false;
+    // Equilibrium detection
+    float prev_box_x = 0.f, prev_box_y = 0.f, prev_box_z = 0.f;
+    int equilibrium_count = 0;
+    static constexpr int EQUILIBRIUM_THRESHOLD = 5;  // Number of consecutive small changes to consider equilibrium
+    static constexpr float EQUILIBRIUM_TOLERANCE = 0.001f;  // 0.1% change tolerance
 };
 
 // Global registry mapping DerivEngine* to BarostatState
@@ -221,9 +226,9 @@ void maybe_apply_barostat(DerivEngine& engine,
         factor_z  = std::max(0.98f, std::min(1.02f, factor_z));
         scale_xy = powf(factor_xy, 1.f/2.f);
         scale_z  = powf(factor_z,  1.f/1.f);
-        // Clamp final length scales more tightly to ensure stability
-        scale_xy = std::max(0.998f, std::min(1.002f, scale_xy));
-        scale_z  = std::max(0.998f, std::min(1.002f, scale_z));
+        // Clamp final length scales - more aggressive for fast initial response
+        scale_xy = std::max(0.995f, std::min(1.005f, scale_xy));
+        scale_z  = std::max(0.995f, std::min(1.005f, scale_z));
         // Monotonic shrink guard: if pressure below target, do not expand on that axis
         if(pxy_inst < s.target_p_xy) scale_xy = std::min(scale_xy, 1.0f);
         if(pz_inst  < s.target_p_z ) scale_z  = std::min(scale_z,  1.0f);
@@ -232,7 +237,7 @@ void maybe_apply_barostat(DerivEngine& engine,
         float factor = 1.f - beta * (delta_t / s.tau_p) * (p_inst - ((s.target_p_xy*2.f + s.target_p_z)/3.f));
         factor = std::max(0.98f, std::min(1.02f, factor));
         float sc = powf(factor, 1.f/3.f);
-        sc = std::max(0.998f, std::min(1.002f, sc));
+        sc = std::max(0.995f, std::min(1.005f, sc));
         scale_xy = sc; scale_z = sc;
         if(p_inst < (2.f*s.target_p_xy + s.target_p_z)/3.f) {
             float scc = std::min(sc, 1.0f);
@@ -246,15 +251,54 @@ void maybe_apply_barostat(DerivEngine& engine,
         scale_z  = std::min(scale_z,  1.0f);
     }
 
-    // Apply scaling
-    apply_semi_isotropic_scaling(engine, scale_xy, scale_z);
+    // Check for equilibrium before applying scaling
+    bool at_equilibrium = false;
+    if(st.has_applied_once) {
+        // Calculate relative change in box dimensions
+        float rel_change_x = fabs(st.box_x - st.prev_box_x) / st.prev_box_x;
+        float rel_change_y = fabs(st.box_y - st.prev_box_y) / st.prev_box_y;
+        float rel_change_z = fabs(st.box_z - st.prev_box_z) / st.prev_box_z;
+        
+        // Check if all dimensions have small changes
+        if(rel_change_x < st.EQUILIBRIUM_TOLERANCE && 
+           rel_change_y < st.EQUILIBRIUM_TOLERANCE && 
+           rel_change_z < st.EQUILIBRIUM_TOLERANCE) {
+            st.equilibrium_count++;
+        } else {
+            st.equilibrium_count = 0;  // Reset if any dimension changed significantly
+        }
+        
+        // If we've had small changes for several consecutive steps, we're at equilibrium
+        if(st.equilibrium_count >= st.EQUILIBRIUM_THRESHOLD) {
+            at_equilibrium = true;
+            if(print_now && verbose) {
+                printf(" [EQUILIBRIUM] Box dimensions stabilized - stopping barostat changes\n");
+            }
+        }
+    }
+    
+    // Store previous box dimensions for next comparison
+    st.prev_box_x = st.box_x;
+    st.prev_box_y = st.box_y;
+    st.prev_box_z = st.box_z;
 
-    // Update cached box and print occasionally in existing cadence
-    st.box_x = bx * scale_xy; st.box_y = by * scale_xy; st.box_z = bz * scale_z;
-    // Optionally avoid momentum rescaling to reduce kinetic bursts during box changes
-    // Leave positions and box scaled; skip momentum scaling
-    // (If momentum scaling exists elsewhere, ensure it is behind a feature flag.)
-    st.has_applied_once = true;
+    // Only apply scaling if not at equilibrium
+    if(!at_equilibrium) {
+        // Apply scaling
+        apply_semi_isotropic_scaling(engine, scale_xy, scale_z);
+
+        // Update cached box and print occasionally in existing cadence
+        st.box_x = bx * scale_xy; st.box_y = by * scale_xy; st.box_z = bz * scale_z;
+        // Optionally avoid momentum rescaling to reduce kinetic bursts during box changes
+        // Leave positions and box scaled; skip momentum scaling
+        // (If momentum scaling exists elsewhere, ensure it is behind a feature flag.)
+        st.has_applied_once = true;
+    } else {
+        // At equilibrium - no changes to box dimensions
+        if(print_now && verbose) {
+            printf(" [EQUILIBRIUM] No box changes applied - system at equilibrium\n");
+        }
+    }
     
     // Update H5 file attributes with new box dimensions for persistence between stages
     // This ensures the next simulation stage reads the correct equilibrated box dimensions
