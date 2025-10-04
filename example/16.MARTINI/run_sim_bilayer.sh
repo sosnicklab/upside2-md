@@ -21,7 +21,7 @@ set -e  # Exit on any error
 # =============================================================================
 # Change this value to use a different PDB file (e.g., "bilayer", "protein", etc.)
 # The script will look for pdb/{PDB_ID}.MARTINI.pdb
-PDB_ID="1rkl"
+PDB_ID="bilayer"
 
 # POTENTIAL MODE TOGGLE
 # Set to "soft" to use softened potentials (default)
@@ -154,10 +154,10 @@ echo
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR"
 
 # Simulation parameters (from original run_martini.py)
-DURATION=3
-FRAME_INTERVAL=1
+DURATION=5000
+FRAME_INTERVAL=20
 TEMPERATURE=0.8
-TIME_STEP=0.1
+TIME_STEP=0.01
 THERMOSTAT_TIMESCALE=0.135
 #THERMOSTAT_TIMESCALE=5
 #THERMOSTAT_INTERVAL=-1
