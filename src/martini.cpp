@@ -15,6 +15,111 @@
 using namespace h5;
 using namespace std;
 
+// ===================== FIX RIGID FUNCTIONALITY =====================
+// Implementation of fix rigid constraints for both minimization and MD
+// This allows certain atoms to be held fixed at their initial positions
+
+namespace martini_fix_rigid {
+
+// Global registry for fix rigid constraints per engine
+static std::mutex g_fix_rigid_mutex;
+static std::map<DerivEngine*, std::vector<int>> g_fixed_atoms;
+
+// Read fix rigid settings from H5 configuration
+std::vector<int> read_fix_rigid_settings(hid_t root) {
+    std::vector<int> fixed_atoms;
+    try {
+        if(h5_exists(root, "/input/fix_rigid")) {
+            auto grp = open_group(root, "/input/fix_rigid");
+            int enable = read_attribute<int>(grp.get(), ".", "enable", 0);
+            if(enable) {
+                // Read atom indices to fix
+                if(h5_exists(grp.get(), "atom_indices")) {
+                    traverse_dset<1,int>(grp.get(), "atom_indices", [&](size_t i, int atom_idx) {
+                        fixed_atoms.push_back(atom_idx);
+                    });
+                }
+            }
+        }
+    } catch(...) { 
+        // Return empty vector if no fix rigid settings found
+    }
+    return fixed_atoms;
+}
+
+// Register fix rigid constraints for an engine
+void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    auto fixed_atoms = read_fix_rigid_settings(config_root);
+    if(!fixed_atoms.empty()) {
+        g_fixed_atoms[&engine] = fixed_atoms;
+    }
+}
+
+// Apply fix rigid constraints during minimization
+void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    auto it = g_fixed_atoms.find(&engine);
+    if(it != g_fixed_atoms.end()) {
+        const auto& fixed_atoms = it->second;
+        for(int atom_idx : fixed_atoms) {
+            if(atom_idx >= 0 && atom_idx < engine.pos->n_atom) {
+                // Zero out forces on fixed atoms
+                deriv(0, atom_idx) = 0.0f;
+                deriv(1, atom_idx) = 0.0f;
+                deriv(2, atom_idx) = 0.0f;
+            }
+        }
+    }
+}
+
+// Apply fix rigid constraints during MD (zero forces and velocities)
+void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    auto it = g_fixed_atoms.find(&engine);
+    if(it != g_fixed_atoms.end()) {
+        const auto& fixed_atoms = it->second;
+        for(int atom_idx : fixed_atoms) {
+            if(atom_idx >= 0 && atom_idx < engine.pos->n_atom) {
+                // Zero out forces on fixed atoms
+                deriv(0, atom_idx) = 0.0f;
+                deriv(1, atom_idx) = 0.0f;
+                deriv(2, atom_idx) = 0.0f;
+                
+                // Zero out velocities on fixed atoms
+                if(mom.row_width > 0) {
+                    mom(0, atom_idx) = 0.0f;
+                    mom(1, atom_idx) = 0.0f;
+                    mom(2, atom_idx) = 0.0f;
+                }
+            }
+        }
+    }
+}
+
+// Check if an atom is fixed
+bool is_atom_fixed(const DerivEngine& engine, int atom_idx) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    auto it = g_fixed_atoms.find(const_cast<DerivEngine*>(&engine));
+    if(it != g_fixed_atoms.end()) {
+        const auto& fixed_atoms = it->second;
+        return std::find(fixed_atoms.begin(), fixed_atoms.end(), atom_idx) != fixed_atoms.end();
+    }
+    return false;
+}
+
+// Get list of fixed atoms for an engine
+std::vector<int> get_fixed_atoms(const DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    auto it = g_fixed_atoms.find(const_cast<DerivEngine*>(&engine));
+    if(it != g_fixed_atoms.end()) {
+        return it->second;
+    }
+    return std::vector<int>();
+}
+
+} // namespace martini_fix_rigid
+
 // ===================== NPT BAROSTAT SUPPORT (MARTINI) =====================
 // Semi-isotropic Berendsen barostat helpers implemented here to satisfy
 // requirement to place all logic in martini.cpp.
@@ -2781,6 +2886,9 @@ void martini_run_minimization(DerivEngine& engine,
     int iter = 0;
     double step = initial_step_size;
     while(iter < max_iterations){
+        // Apply fix rigid constraints to forces before building descent
+        martini_fix_rigid::apply_fix_rigid_minimization(engine, position, engine.pos->sens);
+        
         // Save positions and build descent = -grad
         for(int i=0;i<n_atom;++i){
             float3 p = load_vec<3>(position, i);
@@ -2847,4 +2955,5 @@ void martini_run_minimization(DerivEngine& engine,
     }
     if(verbose) printf("MIN: Final potential %.6f after %d iterations\n", prev_potential, iter);
 }
+
 

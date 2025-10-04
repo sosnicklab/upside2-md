@@ -38,6 +38,13 @@ namespace martini_npt {
                               bool print_now);
     void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz);
 }
+
+// ---- Fix Rigid hooks (implemented in martini.cpp) ----
+namespace martini_fix_rigid {
+    void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine);
+    void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv);
+    void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom);
+}
 // If any stop signal is received (currently we trap sigterm and sigint)
 // we increment any_stop_signal_received.
 constexpr sig_atomic_t NO_SIGNAL = -1;  // FIXME is this a valid sentinel value?
@@ -768,6 +775,8 @@ try {
             sys->engine = initialize_engine_from_hdf5(sys->n_atom, potential_group.get());
             // Register barostat settings for this engine (read from H5)
             martini_npt::register_barostat_for_engine(sys->config.get(), sys->engine);
+            // Register fix rigid settings for this engine (read from H5)
+            martini_fix_rigid::register_fix_rigid_for_engine(sys->config.get(), sys->engine);
             if  (integrator_arg.getValue() == "mv" )
                 sys->engine.build_integrator_levels(true, dt, inner_step );
 
@@ -1041,6 +1050,9 @@ try {
                         // Default simple Verlet step. Ensure we still progress even if forces are tiny.
                         sys.engine.integration_cycle(sys.mom, dt);
                     }
+
+                    // Apply fix rigid constraints after integration
+                    martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.engine.pos->sens, sys.mom);
 
                     // Apply semi-isotropic barostat at configured interval; skip changing box at step 0
                     if(sys.round_num>0) {

@@ -936,6 +936,27 @@ def main():
         mass_array._v_attrs.n_atoms = n_atoms
         mass_array._v_attrs.initialized = True
         
+        # Create fix rigid configuration for protein atoms during minimization
+        # This will fix protein backbone atoms to prevent large movements during minimization
+        protein_atom_indices = []
+        for i, res_name in enumerate(residue_names):
+            if res_name in ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE', 
+                           'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL']:
+                protein_atom_indices.append(i)
+        
+        if protein_atom_indices:
+            # Create fix rigid group
+            fix_rigid_grp = t.create_group(input_grp, 'fix_rigid')
+            fix_rigid_grp._v_attrs.enable = 1
+            
+            # Add protein atom indices to fix
+            protein_indices_array = np.array(protein_atom_indices, dtype='i4')
+            t.create_array(fix_rigid_grp, 'atom_indices', obj=protein_indices_array)
+            
+            print(f"Fix rigid enabled for {len(protein_atom_indices)} protein atoms during minimization")
+        else:
+            print("No protein atoms found - fix rigid not enabled")
+        
         # Create type array
         type_array = t.create_array(input_grp, 'type', obj=atom_types.astype('S4'))
         type_array._v_attrs.arguments = np.array([b'type'])
