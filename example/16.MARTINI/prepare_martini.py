@@ -99,20 +99,40 @@ def read_protein_itp_topology(itp_path: str):
     return topo_by_res_and_role
 
 def read_protein_itp_connectivity(itp_path: str):
-    """Read bonds, angles, and dihedrals from protein ITP file"""
+    """Read bonds, angles, dihedrals, constraints, and position restraints from protein ITP file"""
     bonds = []
     angles = []
     dihedrals = []
+    constraints = []
+    position_restraints = []
     
     if not os.path.exists(itp_path):
-        return bonds, angles, dihedrals
+        return bonds, angles, dihedrals, constraints, position_restraints
     
     current_section = None
+    in_normang_section = False
+    in_nonnormang_section = False
+    
     with open(itp_path, 'r') as f:
         for raw in f:
             line = raw.strip()
             if not line or line.startswith(';'):
                 continue
+            
+            # Handle preprocessor directives for angles
+            if line.startswith('#ifdef NORMANG'):
+                in_normang_section = True
+                in_nonnormang_section = False
+                continue
+            elif line.startswith('#ifndef NORMANG'):
+                in_normang_section = False
+                in_nonnormang_section = True
+                continue
+            elif line.startswith('#endif'):
+                in_normang_section = False
+                in_nonnormang_section = False
+                continue
+            
             if line.startswith('['):
                 section = line.lower()
                 if 'bonds' in section:
@@ -121,6 +141,10 @@ def read_protein_itp_connectivity(itp_path: str):
                     current_section = 'angles'
                 elif 'dihedrals' in section:
                     current_section = 'dihedrals'
+                elif 'constraints' in section:
+                    current_section = 'constraints'
+                elif 'position_restraints' in section:
+                    current_section = 'position_restraints'
                 else:
                     current_section = None
                 continue
@@ -143,12 +167,34 @@ def read_protein_itp_connectivity(itp_path: str):
                         bonds.append((i, j, r0, k))
                 elif current_section == 'angles':
                     # Format: i j k func theta0 k
-                    i, j, k = int(parts[0])-1, int(parts[1])-1, int(parts[2])-1
-                    func = int(parts[3])
-                    if func == 2 and len(parts) >= 6:  # Harmonic angle
-                        theta0 = float(parts[4])  # degrees
-                        k = float(parts[5])       # kJ/mol/rad²
-                        angles.append((i, j, k, theta0, k))
+                    # Only process angles in the first NORMANG section, ignore the second NONNORMANG section
+                    if in_normang_section and not in_nonnormang_section:
+                        i, j, k = int(parts[0])-1, int(parts[1])-1, int(parts[2])-1
+                        func = int(parts[3])
+                        if func == 2 and len(parts) >= 6:  # Harmonic angle
+                            theta0 = float(parts[4])  # degrees
+                            k = float(parts[5])       # kJ/mol/rad²
+                            angles.append((i, j, k, theta0, k))
+                    # Skip all other angles (regular angles section and NONNORMANG section)
+                elif current_section == 'constraints':
+                    # Format: i j func r0
+                    # These should be treated as bonds with large spring constants
+                    i, j = int(parts[0])-1, int(parts[1])-1  # Convert to 0-indexed
+                    func = int(parts[2])
+                    if func == 1 and len(parts) >= 4:  # Constraint
+                        r0 = float(parts[3])  # nm
+                        k = 1000000.0  # Large spring constant as requested
+                        constraints.append((i, j, r0, k))
+                elif current_section == 'position_restraints':
+                    # Format: i func fx fy fz
+                    # These should be treated as fix rigid for the specified particles
+                    i = int(parts[0])-1  # Convert to 0-indexed
+                    func = int(parts[1])
+                    if func == 1 and len(parts) >= 5:  # Position restraint
+                        fx = float(parts[2]) if parts[2] != 'POSRES_FC' else 1000.0
+                        fy = float(parts[3]) if parts[3] != 'POSRES_FC' else 1000.0
+                        fz = float(parts[4]) if parts[4] != 'POSRES_FC' else 1000.0
+                        position_restraints.append((i, fx, fy, fz))
                 elif current_section == 'dihedrals':
                     # Format: i j k l func phi0 k mult
                     atom_i, atom_j, atom_k, atom_l = int(parts[0])-1, int(parts[1])-1, int(parts[2])-1, int(parts[3])-1
@@ -164,7 +210,7 @@ def read_protein_itp_connectivity(itp_path: str):
             except (ValueError, IndexError):
                 continue
     
-    return bonds, angles, dihedrals
+    return bonds, angles, dihedrals, constraints, position_restraints
 
 def read_protein_itp_exclusions(itp_path: str):
     """Read exclusions from protein ITP file"""
@@ -572,7 +618,7 @@ def main():
     # Load protein topology mapping and connectivity if available
     protein_itp = f"pdb/{pdb_id.lower()}_proa.itp"
     protein_topo_map = read_protein_itp_topology(protein_itp)
-    protein_bonds, protein_angles, protein_dihedrals = read_protein_itp_connectivity(protein_itp)
+    protein_bonds, protein_angles, protein_dihedrals, protein_constraints, protein_position_restraints = read_protein_itp_connectivity(protein_itp)
     protein_exclusions = read_protein_itp_exclusions(protein_itp)
     
     
@@ -818,10 +864,12 @@ def main():
     protein_bond_count = 0
     protein_angle_count = 0
     protein_dihedral_count = 0
+    protein_constraint_count = 0
     
-    if protein_bonds:
+    if protein_bonds or protein_constraints:
         print(f"\n=== Protein Connectivity from {protein_itp} ===")
         print(f"Found {len(protein_bonds)} bonds, {len(protein_angles)} angles, {len(protein_dihedrals)} dihedrals")
+        print(f"Found {len(protein_constraints)} constraints, {len(protein_position_restraints)} position restraints")
         
         # Add protein bonds to the bond list
         for i, j, r0_nm, k_kj in protein_bonds:
@@ -834,6 +882,18 @@ def main():
             bond_lengths_list.append(r0_angstrom)
             bond_force_constants_list.append(k_upside)
             protein_bond_count += 1
+        
+        # Add protein constraints as bonds with large spring constants
+        for i, j, r0_nm, k_kj in protein_constraints:
+            # Convert MARTINI units to UPSIDE units
+            r0_angstrom = r0_nm * 10.0  # nm to Å
+            k_upside = k_kj * bond_conversion  # kJ/mol/nm² to E_up/Å²
+            
+            # Add to bond list
+            bonds_list.append([i, j])
+            bond_lengths_list.append(r0_angstrom)
+            bond_force_constants_list.append(k_upside)
+            protein_constraint_count += 1
         
         # Add protein angles to the angle list
         for i, j, k, theta0_deg, k_kj in protein_angles:
@@ -860,6 +920,7 @@ def main():
             protein_dihedral_count += 1
         
         print(f"Added {protein_bond_count} protein bonds")
+        print(f"Added {protein_constraint_count} protein constraints (as bonds with large spring constants)")
         print(f"Added {protein_angle_count} protein angles")
         print(f"Added {protein_dihedral_count} protein dihedrals")
     else:
@@ -937,12 +998,21 @@ def main():
         mass_array._v_attrs.initialized = True
         
         # Create fix rigid configuration for protein atoms during minimization
-        # This will fix protein backbone atoms to prevent large movements during minimization
+        # Use position restraints from ITP file if available, otherwise fix all protein atoms
         protein_atom_indices = []
-        for i, res_name in enumerate(residue_names):
-            if res_name in ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE', 
-                           'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL']:
+        
+        if protein_position_restraints:
+            # Use specific atoms from position_restraints section
+            for i, fx, fy, fz in protein_position_restraints:
                 protein_atom_indices.append(i)
+            print(f"Using position restraints from ITP file: {len(protein_atom_indices)} atoms")
+        else:
+            # Fallback: fix all protein atoms
+            for i, res_name in enumerate(residue_names):
+                if res_name in ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE', 
+                               'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL']:
+                    protein_atom_indices.append(i)
+            print(f"Using all protein atoms for fix rigid: {len(protein_atom_indices)} atoms")
         
         if protein_atom_indices:
             # Create fix rigid group
@@ -1311,6 +1381,7 @@ def main():
         f.write(f"Total angles: {len(angles_list)}\n")
         f.write(f"Total dihedrals: {len(dihedrals_list)}\n")
         f.write(f"Protein bonds: {protein_bond_count}\n")
+        f.write(f"Protein constraints: {protein_constraint_count}\n")
         f.write(f"Protein angles: {protein_angle_count}\n")
         f.write(f"Protein dihedrals: {protein_dihedral_count}\n")
         f.write(f"DOPC lipids: {dopc_count}\n")
