@@ -378,28 +378,26 @@ void maybe_apply_barostat(DerivEngine& engine,
         scale_z  = std::min(scale_z,  1.0f);
     }
 
-    // Check for equilibrium before applying scaling
+    // Check for pressure equilibrium (not box dimension equilibrium)
     bool at_equilibrium = false;
     if(st.has_applied_once) {
-        // Calculate relative change in box dimensions
-        float rel_change_x = fabs(st.box_x - st.prev_box_x) / st.prev_box_x;
-        float rel_change_y = fabs(st.box_y - st.prev_box_y) / st.prev_box_y;
-        float rel_change_z = fabs(st.box_z - st.prev_box_z) / st.prev_box_z;
+        // Calculate pressure deviations from target
+        float pxy_deviation = fabs(pxy_inst - s.target_p_xy) / s.target_p_xy;
+        float pz_deviation = fabs(pz_inst - s.target_p_z) / s.target_p_z;
         
-        // Check if all dimensions have small changes
-        if(rel_change_x < st.EQUILIBRIUM_TOLERANCE && 
-           rel_change_y < st.EQUILIBRIUM_TOLERANCE && 
-           rel_change_z < st.EQUILIBRIUM_TOLERANCE) {
+        // Check if pressures are close to target (within 5% tolerance)
+        const float PRESSURE_TOLERANCE = 0.05f;  // 5% pressure tolerance
+        if(pxy_deviation < PRESSURE_TOLERANCE && pz_deviation < PRESSURE_TOLERANCE) {
             st.equilibrium_count++;
         } else {
-            st.equilibrium_count = 0;  // Reset if any dimension changed significantly
+            st.equilibrium_count = 0;  // Reset if pressure is far from target
         }
         
-        // If we've had small changes for several consecutive steps, we're at equilibrium
+        // If pressures have been close to target for several consecutive steps, we're at equilibrium
         if(st.equilibrium_count >= st.EQUILIBRIUM_THRESHOLD) {
             at_equilibrium = true;
             if(print_now && verbose) {
-                printf(" [EQUILIBRIUM] Box dimensions stabilized - stopping barostat changes\n");
+                printf(" [EQUILIBRIUM] Pressure converged to target - stopping barostat changes\n");
             }
         }
     }
