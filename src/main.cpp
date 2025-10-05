@@ -45,6 +45,7 @@ namespace martini_fix_rigid {
     void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv);
     void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom);
 }
+
 // If any stop signal is received (currently we trap sigterm and sigint)
 // we increment any_stop_signal_received.
 constexpr sig_atomic_t NO_SIGNAL = -1;  // FIXME is this a valid sentinel value?
@@ -777,6 +778,8 @@ try {
             martini_npt::register_barostat_for_engine(sys->config.get(), sys->engine);
             // Register fix rigid settings for this engine (read from H5)
             martini_fix_rigid::register_fix_rigid_for_engine(sys->config.get(), sys->engine);
+            // Register stage-specific parameters for this engine (read from H5)
+            martini_stage_params::register_stage_params_for_engine(&sys->engine, sys->config.get());
             if  (integrator_arg.getValue() == "mv" )
                 sys->engine.build_integrator_levels(true, dt, inner_step );
 
@@ -955,7 +958,11 @@ try {
                 double mstep = min_step_arg.getValue();
                 if(verbose) printf("\nMINIMIZATION: starting...\n");
                 for(System& sys: systems) {
+                    // Switch to minimization stage before minimization
+                    martini_stage_params::switch_simulation_stage(&sys.engine, "minimization");
                     martini_run_minimization(sys.engine, it, etol, ftol, mstep, verbose);
+                    // Switch to production stage after minimization
+                    martini_stage_params::switch_simulation_stage(&sys.engine, "production");
                     // Save a frame immediately after minimization so downstream stages can pick it up
                     // This ensures /output/pos exists even if duration is 0
                     sys.engine.compute(PotentialAndDerivMode);
@@ -1053,6 +1060,10 @@ try {
 
                     // Apply fix rigid constraints after integration
                     martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.engine.pos->sens, sys.mom);
+                    
+                    // Apply stage-specific parameters
+                    martini_stage_params::apply_stage_bond_params(sys.engine);
+                    martini_stage_params::apply_stage_angle_params(sys.engine);
 
                     // Apply semi-isotropic barostat at configured interval; skip changing box at step 0
                     if(sys.round_num>0) {

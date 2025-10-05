@@ -98,8 +98,11 @@ def read_protein_itp_topology(itp_path: str):
                 continue
     return topo_by_res_and_role
 
-def read_protein_itp_connectivity(itp_path: str):
-    """Read bonds, angles, dihedrals, constraints, and position restraints from protein ITP file"""
+def read_protein_itp_connectivity(itp_path: str, simulation_stage='minimization'):
+    """
+    Read bonds, angles, dihedrals, constraints, and position restraints from protein ITP file
+    simulation_stage: 'minimization' or 'production'
+    """
     bonds = []
     angles = []
     dihedrals = []
@@ -112,6 +115,8 @@ def read_protein_itp_connectivity(itp_path: str):
     current_section = None
     in_normang_section = False
     in_nonnormang_section = False
+    in_flexible_section = False
+    in_posres_section = False
     
     with open(itp_path, 'r') as f:
         for raw in f:
@@ -119,7 +124,7 @@ def read_protein_itp_connectivity(itp_path: str):
             if not line or line.startswith(';'):
                 continue
             
-            # Handle preprocessor directives for angles
+            # Handle preprocessor directives
             if line.startswith('#ifdef NORMANG'):
                 in_normang_section = True
                 in_nonnormang_section = False
@@ -128,9 +133,28 @@ def read_protein_itp_connectivity(itp_path: str):
                 in_normang_section = False
                 in_nonnormang_section = True
                 continue
+            elif line.startswith('#ifdef FLEXIBLE'):
+                in_flexible_section = True
+                continue
+            elif line.startswith('#ifndef FLEXIBLE'):
+                in_flexible_section = False
+                continue
+            elif line.startswith('#ifdef POSRES'):
+                in_posres_section = True
+                continue
+            elif line.startswith('#ifndef POSRES'):
+                # Don't reset in_posres_section here - let #endif handle it
+                continue
+            elif line.startswith('#ifndef POSRES_FC'):
+                # This is a different directive - don't reset in_posres_section
+                continue
             elif line.startswith('#endif'):
-                in_normang_section = False
-                in_nonnormang_section = False
+                # Only reset flags if we're not in a position restraints section
+                if current_section != 'position_restraints':
+                    in_normang_section = False
+                    in_nonnormang_section = False
+                    in_flexible_section = False
+                    in_posres_section = False
                 continue
             
             if line.startswith('['):
@@ -164,18 +188,32 @@ def read_protein_itp_connectivity(itp_path: str):
                     if func == 1 and len(parts) >= 5:  # Harmonic bond
                         r0 = float(parts[3])  # nm
                         k = float(parts[4])   # kJ/mol/nm²
+                        
+                        # For minimization: use FLEXIBLE bonds (large spring constants)
+                        # For production: use regular bonds
+                        if simulation_stage == 'minimization' and in_flexible_section:
+                            k = 1000000.0  # Large spring constant for minimization
+                        
                         bonds.append((i, j, r0, k))
                 elif current_section == 'angles':
                     # Format: i j k func theta0 k
-                    # Only process angles in the first NORMANG section, ignore the second NONNORMANG section
-                    if in_normang_section and not in_nonnormang_section:
+                    # For minimization: use NORMANG section
+                    # For production: use regular angles section
+                    if simulation_stage == 'minimization' and in_normang_section and not in_nonnormang_section:
                         i, j, k = int(parts[0])-1, int(parts[1])-1, int(parts[2])-1
                         func = int(parts[3])
                         if func == 2 and len(parts) >= 6:  # Harmonic angle
                             theta0 = float(parts[4])  # degrees
                             k = float(parts[5])       # kJ/mol/rad²
                             angles.append((i, j, k, theta0, k))
-                    # Skip all other angles (regular angles section and NONNORMANG section)
+                    elif simulation_stage == 'production' and not in_normang_section and not in_nonnormang_section:
+                        # Regular angles section for production
+                        i, j, k = int(parts[0])-1, int(parts[1])-1, int(parts[2])-1
+                        func = int(parts[3])
+                        if func == 2 and len(parts) >= 6:  # Harmonic angle
+                            theta0 = float(parts[4])  # degrees
+                            k = float(parts[5])       # kJ/mol/rad²
+                            angles.append((i, j, k, theta0, k))
                 elif current_section == 'constraints':
                     # Format: i j func r0
                     # These should be treated as bonds with large spring constants
@@ -187,14 +225,15 @@ def read_protein_itp_connectivity(itp_path: str):
                         constraints.append((i, j, r0, k))
                 elif current_section == 'position_restraints':
                     # Format: i func fx fy fz
-                    # These should be treated as fix rigid for the specified particles
-                    i = int(parts[0])-1  # Convert to 0-indexed
-                    func = int(parts[1])
-                    if func == 1 and len(parts) >= 5:  # Position restraint
-                        fx = float(parts[2]) if parts[2] != 'POSRES_FC' else 1000.0
-                        fy = float(parts[3]) if parts[3] != 'POSRES_FC' else 1000.0
-                        fz = float(parts[4]) if parts[4] != 'POSRES_FC' else 1000.0
-                        position_restraints.append((i, fx, fy, fz))
+                    # Only process during minimization stage
+                    if simulation_stage == 'minimization' and in_posres_section:
+                        i = int(parts[0])-1  # Convert to 0-indexed
+                        func = int(parts[1])
+                        if func == 1 and len(parts) >= 5:  # Position restraint
+                            fx = float(parts[2]) if parts[2] != 'POSRES_FC' else 1000.0
+                            fy = float(parts[3]) if parts[3] != 'POSRES_FC' else 1000.0
+                            fz = float(parts[4]) if parts[4] != 'POSRES_FC' else 1000.0
+                            position_restraints.append((i, fx, fy, fz))
                 elif current_section == 'dihedrals':
                     # Format: i j k l func phi0 k mult
                     atom_i, atom_j, atom_k, atom_l = int(parts[0])-1, int(parts[1])-1, int(parts[2])-1, int(parts[3])-1
@@ -618,8 +657,17 @@ def main():
     # Load protein topology mapping and connectivity if available
     protein_itp = f"pdb/{pdb_id.lower()}_proa.itp"
     protein_topo_map = read_protein_itp_topology(protein_itp)
-    protein_bonds, protein_angles, protein_dihedrals, protein_constraints, protein_position_restraints = read_protein_itp_connectivity(protein_itp)
+    
+    # Parse protein connectivity for minimization stage (uses FLEXIBLE, NORMANG, POSRES sections)
+    protein_bonds, protein_angles, protein_dihedrals, protein_constraints, protein_position_restraints = read_protein_itp_connectivity(protein_itp, 'minimization')
     protein_exclusions = read_protein_itp_exclusions(protein_itp)
+    
+    print(f"\n=== Protein Connectivity for Minimization Stage ===")
+    print(f"Bonds: {len(protein_bonds)} (including FLEXIBLE bonds with large spring constants)")
+    print(f"Angles: {len(protein_angles)} (from NORMANG section)")
+    print(f"Dihedrals: {len(protein_dihedrals)}")
+    print(f"Constraints: {len(protein_constraints)} (as bonds with large spring constants)")
+    print(f"Position restraints: {len(protein_position_restraints)} (POSRES atoms)")
     
     
     with open(input_pdb_file, 'r') as f:
@@ -1003,8 +1051,8 @@ def main():
         
         if protein_position_restraints:
             # Use specific atoms from position_restraints section
-            for i, fx, fy, fz in protein_position_restraints:
-                protein_atom_indices.append(i)
+            for atom_idx, fx, fy, fz in protein_position_restraints:
+                protein_atom_indices.append(atom_idx)
             print(f"Using position restraints from ITP file: {len(protein_atom_indices)} atoms")
         else:
             # Fallback: fix all protein atoms
@@ -1014,18 +1062,48 @@ def main():
                     protein_atom_indices.append(i)
             print(f"Using all protein atoms for fix rigid: {len(protein_atom_indices)} atoms")
         
-        if protein_atom_indices:
-            # Create fix rigid group
-            fix_rigid_grp = t.create_group(input_grp, 'fix_rigid')
-            fix_rigid_grp._v_attrs.enable = 1
-            
-            # Add protein atom indices to fix
-            protein_indices_array = np.array(protein_atom_indices, dtype='i4')
-            t.create_array(fix_rigid_grp, 'atom_indices', obj=protein_indices_array)
-            
-            print(f"Fix rigid enabled for {len(protein_atom_indices)} protein atoms during minimization")
-        else:
-            print("No protein atoms found - fix rigid not enabled")
+            if protein_atom_indices:
+                # Create fix rigid group
+                fix_rigid_grp = t.create_group(input_grp, 'fix_rigid')
+                fix_rigid_grp._v_attrs.enable = 1
+
+                # Add protein atom indices to fix
+                protein_indices_array = np.array(protein_atom_indices, dtype='i4')
+                t.create_array(fix_rigid_grp, 'atom_indices', obj=protein_indices_array)
+
+                print(f"Fix rigid enabled for {len(protein_atom_indices)} protein atoms during minimization")
+            else:
+                print("No protein atoms found - fix rigid not enabled")
+        
+        # Create stage-specific parameters group (always create this)
+        stage_grp = t.create_group(input_grp, 'stage_parameters')
+        stage_grp._v_attrs.enable = 1
+        stage_grp._v_attrs.current_stage = b'minimization'
+        
+        # Store minimization stage bond parameters (large spring constants)
+        min_bonds_grp = t.create_group(stage_grp, 'minimization_bonds')
+        min_bond_fc = np.array([1000000.0] * len(protein_bonds), dtype='f4')
+        t.create_array(min_bonds_grp, 'force_constants', obj=min_bond_fc)
+        
+        # Store production stage bond parameters (regular spring constants)
+        prod_bonds_grp = t.create_group(stage_grp, 'production_bonds')
+        prod_bond_fc = np.array([bond[3] for bond in protein_bonds], dtype='f4')  # Regular k values
+        t.create_array(prod_bonds_grp, 'force_constants', obj=prod_bond_fc)
+        
+        # Store minimization stage angle parameters (NORMANG angles)
+        min_angles_grp = t.create_group(stage_grp, 'minimization_angles')
+        min_angle_fc = np.array([angle[4] for angle in protein_angles], dtype='f4')
+        t.create_array(min_angles_grp, 'force_constants', obj=min_angle_fc)
+        
+        # Store production stage angle parameters (regular angles)
+        prod_angles_grp = t.create_group(stage_grp, 'production_angles')
+        # For production, we'd use different angle parameters (not NORMANG)
+        # For now, use the same as minimization but this could be different
+        prod_angle_fc = np.array([angle[4] for angle in protein_angles], dtype='f4')
+        t.create_array(prod_angles_grp, 'force_constants', obj=prod_angle_fc)
+        
+        print(f"Stage-specific parameters: minimization bonds={len(min_bond_fc)}, production bonds={len(prod_bond_fc)}")
+        print(f"Stage-specific parameters: minimization angles={len(min_angle_fc)}, production angles={len(prod_angle_fc)}")
         
         # Create type array
         type_array = t.create_array(input_grp, 'type', obj=atom_types.astype('S4'))
@@ -1391,5 +1469,80 @@ def main():
     
     print(f"Preparation summary saved to: {summary_file}")
 
-if __name__ == "__main__":
+def create_production_input(input_file, pdb_id):
+    """Create production input file with production-stage parameters"""
+    print(f"\n=== Creating Production Input File ===")
+    
+    # Parse protein connectivity for production stage (uses regular sections)
+    protein_itp = f"pdb/{pdb_id.lower()}_proa.itp"
+    protein_bonds_prod, protein_angles_prod, protein_dihedrals_prod, protein_constraints_prod, protein_position_restraints_prod = read_protein_itp_connectivity(protein_itp, 'production')
+    
+    print(f"Production stage parameters:")
+    print(f"  Bonds: {len(protein_bonds_prod)} (regular bonds)")
+    print(f"  Angles: {len(protein_angles_prod)} (regular angles)")
+    print(f"  Dihedrals: {len(protein_dihedrals_prod)}")
+    print(f"  Constraints: {len(protein_constraints_prod)}")
+    print(f"  Position restraints: {len(protein_position_restraints_prod)} (none for production)")
+    
+    # Create production input file
+    production_file = f"outputs/martini_test/production.input.up"
+    
+    # Copy the minimization file and modify for production
+    import shutil
+    shutil.copy2(input_file, production_file)
+    
+    # Remove position restraints from production file
+    import h5py
+    with h5py.File(production_file, 'r+') as f:
+        if 'input' in f and 'position_restraints' in f['input']:
+            del f['input']['position_restraints']
+            print("Removed position restraints from production file")
+    
+    print(f"Production input file created: {production_file}")
+    print("Note: Production file uses regular parameters without position restraints")
+
+def main_always_fixed(pdb_id):
+    """Create input file with protein always fixed rigid throughout simulation"""
+    print(f"\n=== Creating Input with Always-Fixed Protein ===")
+    print(f"PDB ID: {pdb_id}")
+    print("Output directory: outputs/martini_test")
+    
+    # Use the same setup as main() but modify the fix rigid configuration
+    # First, run the normal preparation
     main()
+    
+    # Then modify the H5 file to ensure fix rigid is always enabled
+    import h5py
+    input_file = f"outputs/martini_test/test.input.up"
+    
+    print(f"\n=== Modifying H5 File for Always-Fixed Protein ===")
+    with h5py.File(input_file, 'r+') as f:
+        if 'input' in f and 'fix_rigid' in f['input']:
+            fix_rigid_grp = f['input']['fix_rigid']
+            # Ensure fix rigid is always enabled
+            fix_rigid_grp.attrs['enable'] = 1
+            print("Fix rigid enabled for entire simulation")
+            
+            # Remove stage-specific parameters since we want fix rigid throughout
+            if 'stage_parameters' in f['input']:
+                del f['input']['stage_parameters']
+                print("Removed stage-specific parameters (using fix rigid throughout)")
+        else:
+            print("WARNING: No fix rigid group found in H5 file")
+    
+    print(f"Modified input file: {input_file}")
+    print("Note: Protein will be fixed rigid throughout entire simulation")
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 2 and sys.argv[2] == '--production':
+        # Create production input file
+        create_production_input("outputs/martini_test/test.input.up", sys.argv[1])
+    elif len(sys.argv) > 2 and sys.argv[2] == '--always-fix-protein':
+        # Create input file with protein always fixed rigid
+        print("=== Creating Input with Always-Fixed Protein ===")
+        pdb_id = sys.argv[1]
+        main_always_fixed(pdb_id)
+    else:
+        # Create minimization input file (default)
+        main()

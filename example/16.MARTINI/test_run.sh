@@ -29,6 +29,12 @@ PDB_ID="1rkl"
 # Can be overridden via environment variable: POTENTIAL_MODE=regular ./run_sim.sh
 POTENTIAL_MODE="${POTENTIAL_MODE:-soft}"
 
+# STAGE MODE TOGGLE
+# Set to "multi_stage" to use stage-specific parameters (minimization vs production)
+# Set to "single_stage" to use same parameters throughout
+# Can be overridden via environment variable: STAGE_MODE=multi_stage ./run_sim.sh
+STAGE_MODE="${STAGE_MODE:-multi_stage}"
+
 # PME CONFIGURATION
 # Set to "1" to enable Particle Mesh Ewald for long-range Coulomb interactions
 # Set to "0" to use standard short-range Coulomb cutoff
@@ -54,6 +60,13 @@ THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
 if [ "$POTENTIAL_MODE" != "soft" ] && [ "$POTENTIAL_MODE" != "regular" ]; then
     echo "ERROR: Invalid POTENTIAL_MODE: $POTENTIAL_MODE"
     echo "Valid options: 'soft' or 'regular'"
+    exit 1
+fi
+
+# Validate stage mode
+if [ "$STAGE_MODE" != "multi_stage" ] && [ "$STAGE_MODE" != "single_stage" ]; then
+    echo "ERROR: Invalid STAGE_MODE: $STAGE_MODE"
+    echo "Valid options: 'multi_stage' or 'single_stage'"
     exit 1
 fi
 
@@ -100,6 +113,7 @@ else
 fi
 
 echo "Potential mode: $POTENTIAL_MODE"
+echo "Stage mode: $STAGE_MODE"
 echo "PME enabled: $USE_PME"
 if [ "$USE_PME" = "1" ]; then
     echo "PME configuration:"
@@ -185,6 +199,7 @@ echo
 # Step 1: Prepare input files (produce example/16.MARTINI/outputs/martini_test/test.input.up)
 echo "=== Step 1: Preparing Input Files ==="
 echo "Running prepare_martini.py with PDB ID: $PDB_ID"
+echo "Stage mode: $STAGE_MODE"
 
 # Set softening options based on potential mode
 if [ "$POTENTIAL_MODE" = "soft" ]; then
@@ -209,6 +224,16 @@ export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
 # Enable NPT by default for MARTINI simulations
 export UPSIDE_NPT_ENABLE=${UPSIDE_NPT_ENABLE:-1}
 
+# Stage-specific parameter configuration
+if [ "$STAGE_MODE" = "multi_stage" ]; then
+    echo "Enabling stage-specific parameters (minimization vs production)"
+    export UPSIDE_STAGE_PARAMS_ENABLE=${UPSIDE_STAGE_PARAMS_ENABLE:-1}
+    export UPSIDE_STAGE_PARAMS_MODE=${UPSIDE_STAGE_PARAMS_MODE:-auto}
+else
+    echo "Using single-stage parameters"
+    export UPSIDE_STAGE_PARAMS_ENABLE=${UPSIDE_STAGE_PARAMS_ENABLE:-0}
+fi
+
 # PME configuration - Optimized settings for improved accuracy and performance
 export UPSIDE_USE_PME=${USE_PME}
 export UPSIDE_PME_ALPHA=${UPSIDE_PME_ALPHA:-0.2}        # Ewald screening parameter (optimized)
@@ -219,6 +244,7 @@ export UPSIDE_PME_NZ=${UPSIDE_PME_NZ:-64}               # Grid size Z (power of 
 export UPSIDE_PME_ORDER=${UPSIDE_PME_ORDER:-4}          # B-spline interpolation order (4th order for accuracy)
 
 echo "Potential options (env): UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ} UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA} UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB} UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA} UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES}"
+echo "Stage options (env): UPSIDE_STAGE_PARAMS_ENABLE=${UPSIDE_STAGE_PARAMS_ENABLE} UPSIDE_STAGE_PARAMS_MODE=${UPSIDE_STAGE_PARAMS_MODE}"
 echo "PME options (env): UPSIDE_USE_PME=${UPSIDE_USE_PME} UPSIDE_PME_ALPHA=${UPSIDE_PME_ALPHA} UPSIDE_PME_RCUT=${UPSIDE_PME_RCUT} UPSIDE_PME_NX=${UPSIDE_PME_NX} UPSIDE_PME_NY=${UPSIDE_PME_NY} UPSIDE_PME_NZ=${UPSIDE_PME_NZ} UPSIDE_PME_ORDER=${UPSIDE_PME_ORDER}"
 source ../../source.sh
 
@@ -306,6 +332,11 @@ else
         "--min-force-tol" "1e-3"
         "--min-step" "0.01"
     )
+    
+    # Stage-specific parameters are handled automatically via H5 file configuration
+    if [ "$STAGE_MODE" = "multi_stage" ]; then
+        echo "  Multi-stage parameters enabled: minimization stage with fix rigid, production stage with regular parameters"
+    fi
     [ -n "$MAX_FORCE" ] && CMD_MIN_PROD+=("--max-force" "$MAX_FORCE")
     echo "Command (minimization + production): ${CMD_MIN_PROD[*]}"
     START_TIME_TOTAL=$(date +%s)
