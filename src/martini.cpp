@@ -257,7 +257,12 @@ static void estimate_pressure_tensor(const VecArray& mom,
     double kx=0., ky=0., kz=0.;
     for(int i=0;i<n_atom;++i) {
         auto pm = load_vec<3>(mom, i);
-        double mi = (i < (int)masses.size() && masses[i] > 0.f) ? masses[i] : 1.0;
+        if(i >= (int)masses.size() || masses[i] <= 0.f) {
+            printf("ERROR: Missing or invalid mass for atom %d (mass[%d]=%.6f, masses.size()=%zu)\n", 
+                   i, i, (i < (int)masses.size()) ? masses[i] : -1.0f, masses.size());
+            exit(1);
+        }
+        double mi = masses[i];
         kx += double(pm.x()*pm.x())/mi;
         ky += double(pm.y()*pm.y())/mi;
         kz += double(pm.z()*pm.z())/mi;
