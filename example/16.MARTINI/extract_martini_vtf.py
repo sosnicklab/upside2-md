@@ -202,12 +202,22 @@ def main():
                     x_len = float(last_box[0, 0])  # x dimension
                     y_len = float(last_box[0, 1])  # y dimension  
                     z_len = float(last_box[0, 2])  # z dimension
-                    print(f"Using equilibrated box from simulation output: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
+                    # Check if box dimensions are valid (non-zero)
+                    if x_len > 0 and y_len > 0 and z_len > 0:
+                        print(f"Using equilibrated box from simulation output: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
+                    else:
+                        print(f"Invalid box dimensions from simulation output: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å (likely NVT simulation)")
+                        x_len = y_len = z_len = None
                 elif len(last_box.shape) == 1 and len(last_box) == 3:  # (3,) format
                     x_len = float(last_box[0])
                     y_len = float(last_box[1])
                     z_len = float(last_box[2])
-                    print(f"Using equilibrated box from simulation output: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
+                    # Check if box dimensions are valid (non-zero)
+                    if x_len > 0 and y_len > 0 and z_len > 0:
+                        print(f"Using equilibrated box from simulation output: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
+                    else:
+                        print(f"Invalid box dimensions from simulation output: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å (likely NVT simulation)")
+                        x_len = y_len = z_len = None
         
         # If no box data in HDF5, try to extract from log file
         if x_len is None:
@@ -273,9 +283,25 @@ def main():
                 z_len = float(pbc_group.attrs['z_len'])
                 print(f"Found box dimensions from periodic_boundary_potential: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
 
+        # Final fallback: try to read from PDB file
+        if x_len is None and pdb_file is not None:
+            try:
+                with open(pdb_file, 'r') as f:
+                    for line in f:
+                        if line.startswith('CRYST1'):
+                            parts = line.split()
+                            if len(parts) >= 4:
+                                x_len = float(parts[1])
+                                y_len = float(parts[2])
+                                z_len = float(parts[3])
+                                print(f"Using original box dimensions from PDB file: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
+                                break
+            except Exception as e:
+                print(f"Warning: Could not read box dimensions from PDB file: {e}")
+        
         if x_len is None:
             x_len = y_len = z_len = 50.0
-            print(f"WARNING: No box dimensions found in HDF5 file! Using defaults: {x_len:.1f} x {y_len:.1f} x {z_len:.1f} Å")
+            print(f"WARNING: No box dimensions found! Using defaults: {x_len:.1f} x {y_len:.1f} x {z_len:.1f} Å")
         
         # Read atom types and residue IDs from HDF5 input
         atom_types = t_struct['input/type'][:].astype(str)

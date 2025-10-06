@@ -1,5 +1,6 @@
 #include "deriv_engine.h"
 #include "timing.h"
+#include "main.h"
 #include <map>
 #include <algorithm>
 #include <memory>
@@ -305,12 +306,34 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
     for(int stage=0; stage<3; ++stage) {
         compute(DerivMode);   // compute derivatives
         Timer timer(string("integration"));
-        integration_stage( 
-                mom,
-                pos->output,
-                pos->sens,
-                dt*mom_update[stage], dt*pos_update[stage], max_force, 
-                pos->n_atom);
+        
+        // Check if MARTINI masses are available and use mass-aware integrator
+        if(martini_masses::has_masses(this)) {
+            // Use MARTINI mass-aware integrator
+            for(int na=0; na < pos->n_atom; ++na) {
+                // Get mass for this atom from MARTINI mass storage
+                float mass = martini_masses::get_mass(this, na);
+
+                auto d = load_vec<3>(pos->sens, na);
+                if(max_force) {
+                    float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
+                    float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
+                    d *= scale_factor;
+                }
+
+                auto p = load_vec<3>(mom, na) - dt*mom_update[stage]*d;
+                store_vec (mom, na, p);
+                update_vec(pos->output, na, (dt*pos_update[stage]/mass)*p);
+            }
+        } else {
+            // Use standard integrator (assumes unit mass)
+            integration_stage( 
+                    mom,
+                    pos->output,
+                    pos->sens,
+                    dt*mom_update[stage], dt*pos_update[stage], max_force, 
+                    pos->n_atom);
+        }
     }
 }
 
@@ -320,12 +343,27 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
         compute(DerivMode);   // compute derivatives
         Timer timer(string("integration"));
 
-        for(int na=0; na < pos->n_atom; ++na) {
-            // assumes unit mass for all particles
-            auto d = load_vec<3>(pos->sens, na);
-            auto p = load_vec<3>(mom, na) - dt*d;
-            store_vec (mom,   na, p);
-            update_vec(pos->output, na, dt*p);
+        // Check if MARTINI masses are available and use mass-aware integrator
+        if(martini_masses::has_masses(this)) {
+            // Use MARTINI mass-aware integrator
+            for(int na=0; na < pos->n_atom; ++na) {
+                // Get mass for this atom from MARTINI mass storage
+                float mass = martini_masses::get_mass(this, na);
+
+                auto d = load_vec<3>(pos->sens, na);
+
+                auto p = load_vec<3>(mom, na) - dt*d;
+                store_vec (mom, na, p);
+                update_vec(pos->output, na, (dt/mass)*p);
+            }
+        } else {
+            // Use standard integrator (assumes unit mass)
+            for(int na=0; na < pos->n_atom; ++na) {
+                auto d = load_vec<3>(pos->sens, na);
+                auto p = load_vec<3>(mom, na) - dt*d;
+                store_vec (mom,   na, p);
+                update_vec(pos->output, na, dt*p);
+            }
         }
     }
 }
@@ -333,19 +371,45 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
 void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
     // calculate acceleration, update velocity for slow level
     compute(DerivMode, 1); 
-    for(int na=0; na < pos->n_atom; ++na) {
-        auto d = load_vec<3>(pos->sens, na);
-        auto p = load_vec<3>(mom, na) - inner_step*dt*d;
-        store_vec (mom,   na, p);
-    }
-    // calculate acceleration, update velocity for fast level
-    for(int i=0;i<inner_step;i++) {
-        compute(DerivMode, 0);
+    
+    // Check if MARTINI masses are available and use mass-aware integrator
+    if(martini_masses::has_masses(this)) {
+        // Use MARTINI mass-aware integrator for slow level
+        for(int na=0; na < pos->n_atom; ++na) {
+            float mass = martini_masses::get_mass(this, na);
+            auto d = load_vec<3>(pos->sens, na);
+            auto p = load_vec<3>(mom, na) - inner_step*dt*d;
+            store_vec (mom, na, p);
+        }
+        
+        // calculate acceleration, update velocity for fast level
+        for(int i=0;i<inner_step;i++) {
+            compute(DerivMode, 0);
+            for(int na=0; na < pos->n_atom; ++na) {
+                float mass = martini_masses::get_mass(this, na);
+                auto d = load_vec<3>(pos->sens, na);
+                auto p = load_vec<3>(mom, na) - dt*d;
+                store_vec (mom, na, p);
+                update_vec(pos->output, na, (dt/mass)*p);
+            }
+        }
+    } else {
+        // Use standard integrator (assumes unit mass) for slow level
         for(int na=0; na < pos->n_atom; ++na) {
             auto d = load_vec<3>(pos->sens, na);
-            auto p = load_vec<3>(mom, na) - dt*d;
+            auto p = load_vec<3>(mom, na) - inner_step*dt*d;
             store_vec (mom,   na, p);
-            update_vec(pos->output, na, dt*p);
+        }
+        
+        // calculate acceleration, update velocity for fast level
+        for(int i=0;i<inner_step;i++) {
+            compute(DerivMode, 0);
+            for(int na=0; na < pos->n_atom; ++na) {
+                auto d = load_vec<3>(pos->sens, na);
+                auto p = load_vec<3>(mom, na) - dt*d;
+                store_vec (mom,   na, p);
+                update_vec(pos->output, na, dt*p);
+            }
         }
     }
 }
