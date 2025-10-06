@@ -776,6 +776,8 @@ try {
             sys->engine = initialize_engine_from_hdf5(sys->n_atom, potential_group.get());
             // Register barostat settings for this engine (read from H5)
             martini_npt::register_barostat_for_engine(sys->config.get(), sys->engine);
+            // Load masses for MARTINI integrators (read from H5)
+            martini_masses::load_masses_for_engine(&sys->engine, sys->config.get());
             // Register fix rigid settings for this engine (read from H5)
             martini_fix_rigid::register_fix_rigid_for_engine(sys->config.get(), sys->engine);
             // Register stage-specific parameters for this engine (read from H5)

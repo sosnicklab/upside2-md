@@ -17,3 +17,11 @@ namespace martini_stage_params {
     void apply_stage_angle_params(DerivEngine& engine);
     void clear_stage_params_for_engine(DerivEngine* engine);
 }
+
+// Mass storage declarations for MARTINI integrators
+namespace martini_masses {
+    void load_masses_for_engine(DerivEngine* engine, hid_t config_root);
+    float get_mass(DerivEngine* engine, int atom_index);
+    void clear_masses_for_engine(DerivEngine* engine);
+    bool has_masses(DerivEngine* engine);
+}

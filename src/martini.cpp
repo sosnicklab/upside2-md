@@ -120,6 +120,98 @@ std::vector<int> get_fixed_atoms(const DerivEngine& engine) {
 
 } // namespace martini_fix_rigid
 
+// ===================== MASS STORAGE FOR INTEGRATORS =====================
+// Global mass storage for MARTINI integrators to use proper masses instead of unit mass
+
+namespace martini_masses {
+    static std::mutex g_mass_mutex;
+    static std::map<DerivEngine*, std::vector<float>> g_masses;
+    
+    // Load masses from H5 file for a given engine
+    void load_masses_for_engine(DerivEngine* engine, hid_t config_root) {
+        std::lock_guard<std::mutex> lk(g_mass_mutex);
+        auto& masses = g_masses[engine];
+        masses.clear();
+        
+        try {
+            if(h5_exists(config_root, "/input/mass")) {
+                traverse_dset<1,float>(config_root, "/input/mass", [&](size_t i, float m){ masses.push_back(m); });
+            }
+        } catch(...) {
+            // Silently handle errors
+        }
+    }
+    
+    // Get mass for a specific atom
+    float get_mass(DerivEngine* engine, int atom_index) {
+        std::lock_guard<std::mutex> lk(g_mass_mutex);
+        auto it = g_masses.find(engine);
+        if(it == g_masses.end()) {
+            printf("ERROR: No mass data found for engine %p\n", engine);
+            return 1.0f; // fallback to unit mass
+        }
+        if(atom_index >= (int)it->second.size()) {
+            printf("ERROR: Atom index %d out of range for mass array (size %zu)\n", atom_index, it->second.size());
+            return 1.0f; // fallback to unit mass
+        }
+        return it->second[atom_index];
+    }
+    
+    // Clean up masses for an engine
+    void clear_masses_for_engine(DerivEngine* engine) {
+        std::lock_guard<std::mutex> lk(g_mass_mutex);
+        g_masses.erase(engine);
+    }
+    
+    // MARTINI-specific integrator functions that use proper masses
+    void martini_integration_stage(
+            DerivEngine* engine,
+            VecArray mom,
+            VecArray pos,
+            const VecArray deriv,
+            float vel_factor,
+            float pos_factor,
+            float max_force,
+            int n_atom) {
+        for(int na=0; na<n_atom; ++na) {
+            // Get mass for this atom from MARTINI mass storage
+            float mass = get_mass(engine, na);
+
+            auto d = load_vec<3>(deriv, na);
+            if(max_force) {
+                float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
+                float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
+                d *= scale_factor;
+            }
+
+            // Apply mass scaling: F = ma, so a = F/m
+            d /= mass;
+
+            auto p = load_vec<3>(mom, na) - vel_factor*d;
+            store_vec (mom, na, p);
+            update_vec(pos, na, pos_factor*p);
+        }
+    }
+    
+    // MARTINI-specific integration cycle that uses masses
+    void martini_integration_cycle(
+            DerivEngine* engine,
+            VecArray mom, 
+            float dt) {
+        // This is a placeholder for now - in a full implementation,
+        // this would need to be integrated into the main simulation loop
+        // to replace the standard integrator when MARTINI masses are available
+        printf("MARTINI: Mass-aware integrator would be used here\n");
+    }
+    
+    // Check if MARTINI masses are available for an engine
+    bool has_masses(DerivEngine* engine) {
+        std::lock_guard<std::mutex> lk(g_mass_mutex);
+        auto it = g_masses.find(engine);
+        return (it != g_masses.end() && !it->second.empty());
+    }
+}
+
 // ===================== NPT BAROSTAT SUPPORT (MARTINI) =====================
 // Semi-isotropic Berendsen barostat helpers implemented here to satisfy
 // requirement to place all logic in martini.cpp.
