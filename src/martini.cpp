@@ -2512,114 +2512,79 @@ struct AngleSpring : public PotentialNode
     virtual void compute_value(ComputeMode mode) {
         Timer timer(string("angle_spring"));
 
-        float* posc = pos.output.x.get();
-        float* pos_sens = pos.sens.x.get();
+        VecArray posc = pos.output;
+        VecArray pos_sens = pos.sens;
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
         if(pot) *pot = 0.f;
 
         for(int nt=0; nt<n_elem; ++nt) {
             auto& p = params[nt];
-            auto atom1 = Float4(posc + 4*p.atom[0]);
-            auto atom2 = Float4(posc + 4*p.atom[1]);
-            auto atom3 = Float4(posc + 4*p.atom[2]);
-
-            // Apply minimum image convention for periodic boundaries
-            auto disp1 = minimum_image_rect(make_vec3(atom1.x(), atom1.y(), atom1.z()) - make_vec3(atom2.x(), atom2.y(), atom2.z()), box_x, box_y, box_z);
-            auto disp2 = minimum_image_rect(make_vec3(atom3.x(), atom3.y(), atom3.z()) - make_vec3(atom2.x(), atom2.y(), atom2.z()), box_x, box_y, box_z);
-
-            // Normalize vectors
-            float norm1 = sqrtf(disp1.x()*disp1.x() + disp1.y()*disp1.y() + disp1.z()*disp1.z());
-            float norm2 = sqrtf(disp2.x()*disp2.x() + disp2.y()*disp2.y() + disp2.z()*disp2.z());
-            if(norm1 == 0.f || norm2 == 0.f) continue; // avoid division by zero
-            float dp = (disp1.x()*disp2.x() + disp1.y()*disp2.y() + disp1.z()*disp2.z()) / (norm1 * norm2);
-            dp = std::max(-1.0f, std::min(1.0f, dp)); // clamp for safety
             
-            // Use spline interpolation for angle potential and force
-            // Calculate delta_cos = cos(θ) - cos(θ₀)
-            float cos_equil = cosf(p.equil_angle_deg * M_PI / 180.0f);
-            float delta_cos = dp - cos_equil;
-            if(delta_cos >= angle_cos_min && delta_cos <= angle_cos_max) {
-                // Transform delta_cos to spline coordinate [0, 999] (same as other splines)
-                float cos_coord = (delta_cos - angle_cos_min) / (angle_cos_max - angle_cos_min) * 999.0f;
-                
-                // Get potential and force from single spline
-                float result[2];
-                angle_potential_spline.evaluate_value_and_deriv(result, 0, cos_coord);
-                float angle_pot = result[1]; // Index 1 is the value
-                float angle_deriv_spline = result[0]; // Index 0 is the derivative w.r.t. spline coordinate
-                
-                // Convert derivative from spline coordinate to physical coordinate (dE/d(delta_cos))
-                // dE/d(delta_cos) = dE/d(coord) * d(coord)/d(delta_cos)
-                float coord_scale = 999.0f / (angle_cos_max - angle_cos_min);
-                float angle_deriv = angle_deriv_spline * coord_scale;
-                
-                // Use spline-evaluated potential
-                if(pot) *pot += p.spring_constant * angle_pot;
+            // Step 1: Reconstruct atomic positions to form an unbroken chain
+            auto x_orig1 = load_vec<3>(posc, p.atom[0]);
+            auto x_orig2 = load_vec<3>(posc, p.atom[1]);
+            auto x_orig3 = load_vec<3>(posc, p.atom[2]);
 
-                // Convert spline dE/d(cos) to forces on atoms
-                // The derivative is dE/d(delta_cos), so we use it directly
-                float dE_ddp = p.spring_constant * angle_deriv;
+            auto x2 = x_orig2;
+            auto x1 = x2 + minimum_image_rect(x_orig1 - x2, box_x, box_y, box_z);
+            auto x3 = x2 + minimum_image_rect(x_orig3 - x2, box_x, box_y, box_z);
 
-                // Distribute forces to atoms
-                float3 r1 = disp1;
-                float3 r2 = disp2;
-                float inv_norm1 = 1.0f / norm1;
-                float inv_norm2 = 1.0f / norm2;
-                float inv_norm1_sq = inv_norm1 * inv_norm1;
-                float inv_norm2_sq = inv_norm2 * inv_norm2;
-                float inv_norm1_norm2 = inv_norm1 * inv_norm2;
-                float3 dcos_dr1 = (r2 - r1 * (dp * inv_norm1_sq)) * inv_norm1_norm2;
-                float3 dcos_dr2 = (r1 - r2 * (dp * inv_norm2_sq)) * inv_norm1_norm2;
-                float3 fa = dE_ddp * dcos_dr1;
-                float3 fc = dE_ddp * dcos_dr2;
-                float3 fb = -fa - fc;
+            // Step 2: Calculate vectors and angle from reconstructed positions
+            auto disp1 = x1 - x2;
+            auto disp2 = x3 - x2;
 
-                // Update forces
-                pos_sens[4*p.atom[0]+0] += fa.x();
-                pos_sens[4*p.atom[0]+1] += fa.y();
-                pos_sens[4*p.atom[0]+2] += fa.z();
-                pos_sens[4*p.atom[1]+0] += fb.x();
-                pos_sens[4*p.atom[1]+1] += fb.y();
-                pos_sens[4*p.atom[1]+2] += fb.z();
-                pos_sens[4*p.atom[2]+0] += fc.x();
-                pos_sens[4*p.atom[2]+1] += fc.y();
-                pos_sens[4*p.atom[2]+2] += fc.z();
-            } else {
-                // Fallback to direct calculation for out-of-range angles
-                float theta_rad = acosf(dp);
-                float theta0_rad = p.equil_angle_deg * M_PI / 180.0f;
-                float cos_theta0_rad = cosf(theta0_rad);
-                float delta_cos = dp - cos_theta0_rad;
+            float norm1_sq = mag2(disp1);
+            float norm2_sq = mag2(disp2);
+            if(norm1_sq == 0.f || norm2_sq == 0.f) continue;
 
-                if(pot) *pot += 0.5f * p.spring_constant * delta_cos * delta_cos;
+            float norm1 = sqrtf(norm1_sq);
+            float norm2 = sqrtf(norm2_sq);
+            float dot_p = dot(disp1, disp2);
+            float dp = dot_p / (norm1 * norm2); // This is cos(theta)
+            dp = std::max(-1.0f, std::min(1.0f, dp)); // Clamp for safety
 
-                float dE_dtheta = p.spring_constant * delta_cos * (-sinf(theta_rad));
-                float dtheta_ddp = -1.0f / sqrtf(1.0f - dp*dp);
-                float dE_ddp = dE_dtheta * dtheta_ddp;
+            float theta = acosf(dp); // The actual angle in radians
 
-                float3 r1 = disp1;
-                float3 r2 = disp2;
-                float inv_norm1 = 1.0f / norm1;
-                float inv_norm2 = 1.0f / norm2;
-                float inv_norm1_sq = inv_norm1 * inv_norm1;
-                float inv_norm2_sq = inv_norm2 * inv_norm2;
-                float inv_norm1_norm2 = inv_norm1 * inv_norm2;
-                float3 dcos_dr1 = (r2 - r1 * (dp * inv_norm1_sq)) * inv_norm1_norm2;
-                float3 dcos_dr2 = (r1 - r2 * (dp * inv_norm2_sq)) * inv_norm1_norm2;
-                float3 fa = dE_ddp * dcos_dr1;
-                float3 fc = dE_ddp * dcos_dr2;
-                float3 fb = -fa - fc;
+            // Step 3: Calculate potential and derivative based on V = 1/2 * k * (theta - theta_0)^2
+            float equil_angle_rad = p.equil_angle_deg * M_PI / 180.0f;
+            float delta_theta = theta - equil_angle_rad;
 
-                pos_sens[4*p.atom[0]+0] += fa.x();
-                pos_sens[4*p.atom[0]+1] += fa.y();
-                pos_sens[4*p.atom[0]+2] += fa.z();
-                pos_sens[4*p.atom[1]+0] += fb.x();
-                pos_sens[4*p.atom[1]+1] += fb.y();
-                pos_sens[4*p.atom[1]+2] += fb.z();
-                pos_sens[4*p.atom[2]+0] += fc.x();
-                pos_sens[4*p.atom[2]+1] += fc.y();
-                pos_sens[4*p.atom[2]+2] += fc.z();
-            }
+            // Handle periodicity of angles
+            if (delta_theta > M_PI) delta_theta -= 2.0f * M_PI;
+            if (delta_theta < -M_PI) delta_theta += 2.0f * M_PI;
+
+            if (pot) *pot += 0.5f * p.spring_constant * delta_theta * delta_theta;
+
+            // Step 4: Calculate forces using the chain rule: F = -dV/dx = -(dV/d(theta)) * (d(theta)/dx)
+            float dV_dtheta = p.spring_constant * delta_theta;
+            
+            // The derivative d(theta)/d(cos(theta)) = -1 / sin(theta)
+            float sin_theta = sqrtf(1.0f - dp*dp);
+            if (sin_theta < 1e-6f) continue; // Avoid division by zero for linear angles
+            
+            float dtheta_ddp = -1.0f / sin_theta;
+            
+            // Combine to get dV/d(cos(theta))
+            float dV_ddp = dV_dtheta * dtheta_ddp;
+            
+            // Use standard formulas to get forces on atoms from dV/d(cos(theta))
+            float3 r1 = disp1;
+            float3 r2 = disp2;
+            float inv_norm1 = 1.0f / norm1;
+            float inv_norm2 = 1.0f / norm2;
+
+            float3 dcos_dr1 = (r2 * inv_norm1 - r1 * (dot_p * inv_norm1 / norm1_sq)) * inv_norm2;
+            float3 dcos_dr2 = (r1 * inv_norm2 - r2 * (dot_p * inv_norm2 / norm2_sq)) * inv_norm1;
+            
+            // Gradient on atoms 1 and 3 (dE/dx)
+            float3 grad_a = dV_ddp * dcos_dr1;
+            float3 grad_c = dV_ddp * dcos_dr2;
+            // Gradient on atom 2
+            float3 grad_b = -grad_a - grad_c;
+
+            update_vec(pos_sens, p.atom[0], grad_a);
+            update_vec(pos_sens, p.atom[1], grad_b);
+            update_vec(pos_sens, p.atom[2], grad_c);
         }
     }
     
