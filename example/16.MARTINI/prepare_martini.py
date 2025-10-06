@@ -1248,7 +1248,8 @@ def main():
         #   Therefore 1 bar (1e5 Pa) = (1e5)/(energy_conversion*1.66054e9) E_up/Å^3.
         #   Compressibility (1/bar) -> (1 / (E_up/Å^3)) by dividing by the same factor.
         N_A = 6.02214076e23
-        eup_per_a3_per_bar = 100 / energy_conversion * N_A / (10**30)
+        #eup_per_a3_per_bar = 100 / energy_conversion * N_A / (10**30)
+        eup_per_a3_per_bar = 0.006373
 
         # GROMACS parameters to convert (aggressive initial response, then equilibrium)
         gmx_tau_p_ps = 5.0  # Fast initial response to reach equilibrium quickly
