@@ -1949,7 +1949,7 @@ struct MartiniPotential : public PotentialNode
             out << "# Coulomb splines: Separate tables for each unique charge product\n";
             out << "# Each spline contains only the potential - forces calculated as analytical derivatives\n\n";
             out << "# Bond splines: Harmonic potential for bond distances\n";
-            out << "# Angle splines: Cosine-based potential for bond angles\n";
+            out << "# Angle splines: Cosine-based harmonic potential V = 0.5*k*(cos(θ)-cos(θ₀))²\n";
             out << "# Dihedral splines: Harmonic potential for dihedral angles\n";
             out << "# All forces are calculated as analytical derivatives of the potential splines\n";
 
@@ -2546,7 +2546,7 @@ struct AngleSpring : public PotentialNode
         angle_cos_min = -2.0f;  // Allow for angles deviating significantly from equilibrium
         angle_cos_max = 2.0f;
 
-        // Canonical spline for angles: pot = 0.5*(delta_cos)^2
+        // Canonical spline for angles: pot = 0.5*(delta_cos)^2 (cosine-based harmonic potential)
         std::vector<double> angle_pot_data(1000);
         for(int i = 0; i < 1000; ++i) {
             float delta_cos = angle_cos_min + i * (angle_cos_max - angle_cos_min) / 999.0f;
@@ -2559,7 +2559,7 @@ struct AngleSpring : public PotentialNode
         // Debug: Write all unique angle splines to a single file if debug_mode is enabled
         if (debug_mode) {
             std::ofstream out("angle_splines.txt", std::ios::out | std::ios::trunc);
-            out << "# Angle splines: Three-particle interactions (atom1-atom2-atom3)\n";
+            out << "# Angle splines: Cosine-based harmonic potential V = 0.5*k*(cos(θ)-cos(θ₀))²\n";
             out << "# Forces are calculated as analytical derivatives of the potential\n";
             // Collect unique (k, theta0)
             std::set<std::pair<float, float>> angle_params;
@@ -2624,27 +2624,15 @@ struct AngleSpring : public PotentialNode
 
             float theta = acosf(dp); // The actual angle in radians
 
-            // Step 3: Calculate potential and derivative based on V = 1/2 * k * (theta - theta_0)^2
+            // Step 3: Calculate potential and derivative based on V = 1/2 * k * (cos(theta) - cos(theta_0))^2
             float equil_angle_rad = p.equil_angle_deg * M_PI / 180.0f;
-            float delta_theta = theta - equil_angle_rad;
+            float cos_theta0 = cosf(equil_angle_rad);
+            float delta_cos = dp - cos_theta0; // dp is cos(theta)
 
-            // Handle periodicity of angles
-            if (delta_theta > M_PI) delta_theta -= 2.0f * M_PI;
-            if (delta_theta < -M_PI) delta_theta += 2.0f * M_PI;
+            if (pot) *pot += 0.5f * p.spring_constant * delta_cos * delta_cos;
 
-            if (pot) *pot += 0.5f * p.spring_constant * delta_theta * delta_theta;
-
-            // Step 4: Calculate forces using the chain rule: F = -dV/dx = -(dV/d(theta)) * (d(theta)/dx)
-            float dV_dtheta = p.spring_constant * delta_theta;
-            
-            // The derivative d(theta)/d(cos(theta)) = -1 / sin(theta)
-            float sin_theta = sqrtf(1.0f - dp*dp);
-            if (sin_theta < 1e-6f) continue; // Avoid division by zero for linear angles
-            
-            float dtheta_ddp = -1.0f / sin_theta;
-            
-            // Combine to get dV/d(cos(theta))
-            float dV_ddp = dV_dtheta * dtheta_ddp;
+            // Step 4: Calculate forces using the chain rule: F = -dV/dx = -(dV/d(cos(theta))) * (d(cos(theta))/dx)
+            float dV_dcos = p.spring_constant * delta_cos;
             
             // Use standard formulas to get forces on atoms from dV/d(cos(theta))
             float3 r1 = disp1;
@@ -2656,8 +2644,8 @@ struct AngleSpring : public PotentialNode
             float3 dcos_dr2 = (r1 * inv_norm2 - r2 * (dot_p * inv_norm2 / norm2_sq)) * inv_norm1;
             
             // Gradient on atoms 1 and 3 (dE/dx)
-            float3 grad_a = dV_ddp * dcos_dr1;
-            float3 grad_c = dV_ddp * dcos_dr2;
+            float3 grad_a = dV_dcos * dcos_dr1;
+            float3 grad_c = dV_dcos * dcos_dr2;
             // Gradient on atom 2
             float3 grad_b = -grad_a - grad_c;
 
