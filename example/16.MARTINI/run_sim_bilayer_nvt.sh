@@ -157,33 +157,75 @@ echo
 # Ensure directories
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR"
 
-# Simulation parameters (from original run_martini.py)
-DURATION=1000
+# GROMACS MARTINI Simulation Stages Parameters
+# Following CHARMM-GUI GROMACS MARTINI protocol exactly
+
+# Stage 1: Minimization (steps 6.0 & 6.1)
+MIN_STEPS_1=5000    # Step 6.0: 5000 steps (soft potentials)
+MIN_STEPS_2=5000    # Step 6.1: 5000 steps (regular potentials)
+
+# Stage 2: Equilibration with restraints (steps 6.2-6.6)
+# Step 6.2: Strong restraints (1000 fc, 200 bilayer fc)
+EQ_STEPS_1=500     # 500,000 steps / 1000 = 500 steps (for testing)
+EQ_DT_1=0.002
+EQ_RESTRAINT_1=1000
+EQ_BILAYER_RESTRAINT_1=200
+
+# Step 6.3: Medium restraints (500 fc, 100 bilayer fc)
+EQ_STEPS_2=200     # 200,000 steps / 1000 = 200 steps (for testing)
+EQ_DT_2=0.005
+EQ_RESTRAINT_2=500
+EQ_BILAYER_RESTRAINT_2=100
+
+# Step 6.4: Weak restraints (250 fc, 50 bilayer fc)
+EQ_STEPS_3=100     # 100,000 steps / 1000 = 100 steps (for testing)
+EQ_DT_3=0.010
+EQ_RESTRAINT_3=250
+EQ_BILAYER_RESTRAINT_3=50
+
+# Step 6.5: Very weak restraints (100 fc, 20 bilayer fc)
+EQ_STEPS_4=50      # 50,000 steps / 1000 = 50 steps (for testing)
+EQ_DT_4=0.015
+EQ_RESTRAINT_4=100
+EQ_BILAYER_RESTRAINT_4=20
+
+# Step 6.6: Final equilibration (50 fc, 10 bilayer fc)
+EQ_STEPS_5=50      # 50,000 steps / 1000 = 50 steps (for testing)
+EQ_DT_5=0.020
+EQ_RESTRAINT_5=50
+EQ_BILAYER_RESTRAINT_5=10
+
+# Stage 3: Production (step 7) - Set to 20 for testing (original: 1,500,000 steps)
+PRODUCTION_STEPS=20
+PRODUCTION_DT=0.020
+
+# Common parameters
 FRAME_INTERVAL=20
-TEMPERATURE=0.8
-TIME_STEP=0.1
+TEMPERATURE=0.8  # ~303.15 K in UPSIDE units
 THERMOSTAT_TIMESCALE=0.135
-#THERMOSTAT_TIMESCALE=5
-#THERMOSTAT_INTERVAL=-1
 SEED=12345
+
 # Integrators: NVT ensemble (constant volume, no barostat)
-INTEGRATOR_SOFT="${INTEGRATOR_SOFT:-nvtc}"
 INTEGRATOR_MIN="${INTEGRATOR_MIN:-nvtc}"
-INTEGRATOR_REG="${INTEGRATOR_REG:-nvtc}"
+INTEGRATOR_EQ="${INTEGRATOR_EQ:-nvtc}"
+INTEGRATOR_PROD="${INTEGRATOR_PROD:-nvtc}"
 MAX_FORCE="${MAX_FORCE:-}"
 
-# Minimization stage lengths (in MD steps)
-# First: softened potential steps; Second: regular potential steps
-MIN_SOFT_STEPS="${MIN_SOFT_STEPS:-500}"
-MIN_REG_STEPS="${MIN_REG_STEPS:-500}"
-
-echo "Simulation parameters:"
-echo "  Duration: $DURATION steps"
-echo "  Frame interval: $FRAME_INTERVAL steps"
-echo "  Temperature: $TEMPERATURE UPSIDE units (~280 K)"
-echo "  Time step: $TIME_STEP"
+echo "GROMACS MARTINI Simulation Stages:"
+echo "  Stage 1: Minimization"
+echo "    - Step 6.0: ${MIN_STEPS_1} steps (SOFT potentials)"
+echo "    - Step 6.1: ${MIN_STEPS_2} steps (REGULAR potentials)"
+echo "  Stage 2: Equilibration with restraints (5 stages)"
+echo "    - Step 6.2: Strong restraints (${EQ_RESTRAINT_1} fc, ${EQ_BILAYER_RESTRAINT_1} bilayer fc, ${EQ_STEPS_1} steps, dt=${EQ_DT_1})"
+echo "    - Step 6.3: Medium restraints (${EQ_RESTRAINT_2} fc, ${EQ_BILAYER_RESTRAINT_2} bilayer fc, ${EQ_STEPS_2} steps, dt=${EQ_DT_2})"
+echo "    - Step 6.4: Weak restraints (${EQ_RESTRAINT_3} fc, ${EQ_BILAYER_RESTRAINT_3} bilayer fc, ${EQ_STEPS_3} steps, dt=${EQ_DT_3})"
+echo "    - Step 6.5: Very weak restraints (${EQ_RESTRAINT_4} fc, ${EQ_BILAYER_RESTRAINT_4} bilayer fc, ${EQ_STEPS_4} steps, dt=${EQ_DT_4})"
+echo "    - Step 6.6: Final equilibration (${EQ_RESTRAINT_5} fc, ${EQ_BILAYER_RESTRAINT_5} bilayer fc, ${EQ_STEPS_5} steps, dt=${EQ_DT_5})"
+echo "  Stage 3: Production (Step 7)"
+echo "    - Production: ${PRODUCTION_STEPS} steps (REGULAR potentials, no restraints, dt=${PRODUCTION_DT})"
+echo "  Temperature: $TEMPERATURE UPSIDE units (~303.15 K)"
 echo "  Thermostat timescale: $THERMOSTAT_TIMESCALE"
-echo "  Integrators: soft=$INTEGRATOR_SOFT, min=$INTEGRATOR_MIN, reg=$INTEGRATOR_REG (NVT ensemble)"
+echo "  Integrators: min=$INTEGRATOR_MIN, eq=$INTEGRATOR_EQ, prod=$INTEGRATOR_PROD (NVT ensemble)"
 echo
 
 # Step 1: Prepare input files (produce example/16.MARTINI/outputs/martini_test/test.input.up)
@@ -223,6 +265,7 @@ export UPSIDE_PME_ORDER=${UPSIDE_PME_ORDER:-4}          # B-spline interpolation
 echo "Potential options (env): UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ} UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA} UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB} UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA} UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES}"
 echo "PME options (env): UPSIDE_USE_PME=${UPSIDE_USE_PME} UPSIDE_PME_ALPHA=${UPSIDE_PME_ALPHA} UPSIDE_PME_RCUT=${UPSIDE_PME_RCUT} UPSIDE_PME_NX=${UPSIDE_PME_NX} UPSIDE_PME_NY=${UPSIDE_PME_NY} UPSIDE_PME_NZ=${UPSIDE_PME_NZ} UPSIDE_PME_ORDER=${UPSIDE_PME_ORDER}"
 source ../../source.sh
+source ../../.venv/bin/activate
 
 python3 prepare_martini.py "$PDB_ID"
 
@@ -254,105 +297,289 @@ echo "Optimization complete!"
 echo "  Optimized input: $INPUT_FILE ($OPTIMIZED_SIZE)"
 echo
 
-# Step 3: Simulation run
-if [ "$POTENTIAL_MODE" = "regular" ]; then
-    echo "=== Step 3: Running Regular Potential Simulation ==="
-    echo "Running for $DURATION steps with regular potentials"
-    
-    # Single stage: regular potential for full duration
-    CMD_REG=(
-        "$UPSIDE_EXECUTABLE"
-        "$INPUT_FILE"
-        "--duration" "$DURATION"
-        "--frame-interval" "$FRAME_INTERVAL"
-        "--temperature" "$TEMPERATURE"
-        "--time-step" "$TIME_STEP"
-        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-        "--seed" "$SEED"
-        "--integrator" "$INTEGRATOR_REG"
-        "--disable-recentering"
-    )
-    [ -n "$MAX_FORCE" ] && CMD_REG+=("--max-force" "$MAX_FORCE")
-    echo "Command (regular): ${CMD_REG[*]}"
-    START_TIME=$(date +%s)
-    if "${CMD_REG[@]}" 2>&1 | tee "$LOG_FILE"; then
-        END_TIME=$(date +%s)
-        echo "Regular simulation completed in $((END_TIME - START_TIME)) seconds"
-    else
-        echo "ERROR: Regular simulation failed!"
-        exit 1
-    fi
-    
+# Step 3: GROMACS MARTINI Simulation Stages
+echo "=== Step 3: Running GROMACS MARTINI Simulation Stages ==="
+
+# Stage 1: Minimization (steps 6.0 & 6.1)
+echo "-- Stage 1: Minimization (Steps 6.0 & 6.1) --"
+
+# Step 6.0: First minimization with SOFT potentials (GROMACS free-energy = yes)
+echo "Step 6.0: First minimization (${MIN_STEPS_1} steps) with SOFT potentials"
+export UPSIDE_SOFTEN_LJ=1
+export UPSIDE_LJ_ALPHA=0.2
+export UPSIDE_SOFTEN_COULOMB=1
+export UPSIDE_SLATER_ALPHA=2.0
+
+CMD_MIN1=(
+    "$UPSIDE_EXECUTABLE"
+    "$INPUT_FILE"
+    "--duration" "0"
+    "--frame-interval" "$FRAME_INTERVAL"
+    "--temperature" "$TEMPERATURE"
+    "--time-step" "0.001"
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+    "--seed" "$SEED"
+    "--integrator" "$INTEGRATOR_MIN"
+    "--disable-recentering"
+    "--minimize"
+    "--min-max-iter" "$MIN_STEPS_1"
+    "--min-energy-tol" "1e-6"
+    "--min-force-tol" "1e-3"
+    "--min-step" "0.01"
+)
+[ -n "$MAX_FORCE" ] && CMD_MIN1+=("--max-force" "$MAX_FORCE")
+echo "Command (minimization 6.0): ${CMD_MIN1[*]}"
+echo "Using SOFT potentials: LJ_ALPHA=${UPSIDE_LJ_ALPHA}, SLATER_ALPHA=${UPSIDE_SLATER_ALPHA}"
+START_TIME_MIN1=$(date +%s)
+if "${CMD_MIN1[@]}" 2>&1 | tee "$LOG_FILE"; then
+    END_TIME_MIN1=$(date +%s)
+    echo "Minimization 6.0 completed in $((END_TIME_MIN1 - START_TIME_MIN1)) seconds"
+    # Copy final structure from output to input for next stage
+    echo "Preparing structure for next stage..."
+    TMP_FILE="${INPUT_FILE}.tmp"
+    python3 ../../py/generate_restart_config.py "$INPUT_FILE" "$TMP_FILE"
+    mv "$TMP_FILE" "$INPUT_FILE"
 else
-    # Two-stage mode: softened minimization + regular production
-    echo "=== Step 3: Running Two-Stage Simulation (softened minimization + regular production) ==="
+    echo "ERROR: Minimization 6.0 failed!"
+    exit 1
+fi
 
-    # Stage 1: Minimization with softened potentials
-    echo "-- Stage 1: Minimization with softened potentials --"
-    CMD_MIN=(
-        "$UPSIDE_EXECUTABLE"
-        "$INPUT_FILE"
-        "--duration" "0"
-        "--frame-interval" "$FRAME_INTERVAL"
-        "--temperature" "$TEMPERATURE"
-        "--time-step" "$TIME_STEP"
-        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-        "--seed" "$SEED"
-        "--integrator" "$INTEGRATOR_MIN"
-        "--disable-recentering"
-        "--minimize"
-        "--min-max-iter" "1000"
-        "--min-energy-tol" "1e-6"
-        "--min-force-tol" "1e-3"
-        "--min-step" "0.01"
-    )
-    [ -n "$MAX_FORCE" ] && CMD_MIN+=("--max-force" "$MAX_FORCE")
-    echo "Command (minimization): ${CMD_MIN[*]}"
-    START_TIME_MIN=$(date +%s)
-    if "${CMD_MIN[@]}" 2>&1 | tee "$LOG_FILE"; then
-        END_TIME_MIN=$(date +%s)
-        echo "Minimization completed in $((END_TIME_MIN - START_TIME_MIN)) seconds"
-    else
-        echo "ERROR: Minimization stage failed!"
-        exit 1
-    fi
+# Step 6.1: Second minimization with REGULAR potentials (GROMACS free-energy = no)
+echo "Step 6.1: Second minimization (${MIN_STEPS_2} steps) with REGULAR potentials"
+export UPSIDE_SOFTEN_LJ=0
+export UPSIDE_LJ_ALPHA=0.0
+export UPSIDE_SOFTEN_COULOMB=0
+export UPSIDE_SLATER_ALPHA=0.0
 
-    # Stage 2: Production with regular potentials
-    echo "-- Stage 2: Production with regular potentials --"
-    
-    # Switch to regular potentials for production
-    export UPSIDE_SOFTEN_LJ=0
-    export UPSIDE_LJ_ALPHA=0.0
-    export UPSIDE_SOFTEN_COULOMB=0
-    export UPSIDE_SLATER_ALPHA=0.0
-    
-    CMD_PROD=(
-        "$UPSIDE_EXECUTABLE"
-        "$INPUT_FILE"
-        "--duration" "$DURATION"
-        "--frame-interval" "$FRAME_INTERVAL"
-        "--temperature" "$TEMPERATURE"
-        "--time-step" "$TIME_STEP"
-        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-        "--seed" "$SEED"
-        "--integrator" "$INTEGRATOR_REG"
-        "--disable-recentering"
-    )
-    [ -n "$MAX_FORCE" ] && CMD_PROD+=("--max-force" "$MAX_FORCE")
-    echo "Command (production): ${CMD_PROD[*]}"
-    echo "Using regular potentials for production stage"
-    START_TIME_PROD=$(date +%s)
-    if "${CMD_PROD[@]}" 2>&1 | tee -a "$LOG_FILE"; then
-        END_TIME_PROD=$(date +%s)
-        echo "Production completed in $((END_TIME_PROD - START_TIME_PROD)) seconds"
-    else
-        echo "ERROR: Production stage failed!"
-        exit 1
-    fi
-fi  # End of POTENTIAL_MODE check
+CMD_MIN2=(
+    "$UPSIDE_EXECUTABLE"
+    "$INPUT_FILE"
+    "--duration" "0"
+    "--frame-interval" "$FRAME_INTERVAL"
+    "--temperature" "$TEMPERATURE"
+    "--time-step" "0.001"
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+    "--seed" "$SEED"
+    "--integrator" "$INTEGRATOR_MIN"
+    "--disable-recentering"
+    "--minimize"
+    "--min-max-iter" "$MIN_STEPS_2"
+    "--min-energy-tol" "1e-6"
+    "--min-force-tol" "1e-3"
+    "--min-step" "0.01"
+)
+[ -n "$MAX_FORCE" ] && CMD_MIN2+=("--max-force" "$MAX_FORCE")
+echo "Command (minimization 6.1): ${CMD_MIN2[*]}"
+echo "Using REGULAR potentials: LJ_ALPHA=${UPSIDE_LJ_ALPHA}, SLATER_ALPHA=${UPSIDE_SLATER_ALPHA}"
+START_TIME_MIN2=$(date +%s)
+if "${CMD_MIN2[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+    END_TIME_MIN2=$(date +%s)
+    echo "Minimization 6.1 completed in $((END_TIME_MIN2 - START_TIME_MIN2)) seconds"
+    # Copy final structure from output to input for next stage
+    echo "Preparing structure for next stage..."
+    TMP_FILE="${INPUT_FILE}.tmp"
+    python3 ../../py/generate_restart_config.py "$INPUT_FILE" "$TMP_FILE"
+    mv "$TMP_FILE" "$INPUT_FILE"
+else
+    echo "ERROR: Minimization 6.1 failed!"
+    exit 1
+fi
+
+# Stage 2: Equilibration with restraints (steps 6.2-6.6)
+echo "-- Stage 2: Equilibration with Restraints (Steps 6.2-6.6) --"
+echo "Switching to regular potentials for equilibration stages"
+
+# Switch to regular potentials for equilibration
+export UPSIDE_SOFTEN_LJ=0
+export UPSIDE_LJ_ALPHA=0.0
+export UPSIDE_SOFTEN_COULOMB=0
+export UPSIDE_SLATER_ALPHA=0.0
+echo "Using regular potentials: LJ_ALPHA=${UPSIDE_LJ_ALPHA}, SLATER_ALPHA=${UPSIDE_SLATER_ALPHA}"
+
+# Step 6.2: Strong restraints
+echo "Step 6.2: Strong restraints (${EQ_RESTRAINT_1} fc, ${EQ_BILAYER_RESTRAINT_1} bilayer fc, ${EQ_STEPS_1} steps, dt=${EQ_DT_1})"
+CMD_EQ1=(
+    "$UPSIDE_EXECUTABLE"
+    "$INPUT_FILE"
+    "--duration" "$EQ_STEPS_1"
+    "--frame-interval" "$FRAME_INTERVAL"
+    "--temperature" "$TEMPERATURE"
+    "--time-step" "$EQ_DT_1"
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+    "--seed" "$SEED"
+    "--integrator" "$INTEGRATOR_EQ"
+    "--disable-recentering"
+)
+[ -n "$MAX_FORCE" ] && CMD_EQ1+=("--max-force" "$MAX_FORCE")
+echo "Command (equilibration 6.2): ${CMD_EQ1[*]}"
+START_TIME_EQ1=$(date +%s)
+if "${CMD_EQ1[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+    END_TIME_EQ1=$(date +%s)
+    echo "Equilibration 6.2 completed in $((END_TIME_EQ1 - START_TIME_EQ1)) seconds"
+    # Copy final structure from output to input for next stage
+    echo "Preparing structure for next stage..."
+    TMP_FILE="${INPUT_FILE}.tmp"
+    python3 ../../py/generate_restart_config.py "$INPUT_FILE" "$TMP_FILE"
+    mv "$TMP_FILE" "$INPUT_FILE"
+else
+    echo "ERROR: Equilibration 6.2 failed!"
+    exit 1
+fi
+
+# Step 6.3: Medium restraints
+echo "Step 6.3: Medium restraints (${EQ_RESTRAINT_2} fc, ${EQ_BILAYER_RESTRAINT_2} bilayer fc, ${EQ_STEPS_2} steps, dt=${EQ_DT_2})"
+CMD_EQ2=(
+    "$UPSIDE_EXECUTABLE"
+    "$INPUT_FILE"
+    "--duration" "$EQ_STEPS_2"
+    "--frame-interval" "$FRAME_INTERVAL"
+    "--temperature" "$TEMPERATURE"
+    "--time-step" "$EQ_DT_2"
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+    "--seed" "$SEED"
+    "--integrator" "$INTEGRATOR_EQ"
+    "--disable-recentering"
+)
+[ -n "$MAX_FORCE" ] && CMD_EQ2+=("--max-force" "$MAX_FORCE")
+echo "Command (equilibration 6.3): ${CMD_EQ2[*]}"
+START_TIME_EQ2=$(date +%s)
+if "${CMD_EQ2[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+    END_TIME_EQ2=$(date +%s)
+    echo "Equilibration 6.3 completed in $((END_TIME_EQ2 - START_TIME_EQ2)) seconds"
+    # Copy final structure from output to input for next stage
+    echo "Preparing structure for next stage..."
+    TMP_FILE="${INPUT_FILE}.tmp"
+    python3 ../../py/generate_restart_config.py "$INPUT_FILE" "$TMP_FILE"
+    mv "$TMP_FILE" "$INPUT_FILE"
+else
+    echo "ERROR: Equilibration 6.3 failed!"
+    exit 1
+fi
+
+# Step 6.4: Weak restraints
+echo "Step 6.4: Weak restraints (${EQ_RESTRAINT_3} fc, ${EQ_BILAYER_RESTRAINT_3} bilayer fc, ${EQ_STEPS_3} steps, dt=${EQ_DT_3})"
+CMD_EQ3=(
+    "$UPSIDE_EXECUTABLE"
+    "$INPUT_FILE"
+    "--duration" "$EQ_STEPS_3"
+    "--frame-interval" "$FRAME_INTERVAL"
+    "--temperature" "$TEMPERATURE"
+    "--time-step" "$EQ_DT_3"
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+    "--seed" "$SEED"
+    "--integrator" "$INTEGRATOR_EQ"
+    "--disable-recentering"
+)
+[ -n "$MAX_FORCE" ] && CMD_EQ3+=("--max-force" "$MAX_FORCE")
+echo "Command (equilibration 6.4): ${CMD_EQ3[*]}"
+START_TIME_EQ3=$(date +%s)
+if "${CMD_EQ3[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+    END_TIME_EQ3=$(date +%s)
+    echo "Equilibration 6.4 completed in $((END_TIME_EQ3 - START_TIME_EQ3)) seconds"
+    # Copy final structure from output to input for next stage
+    echo "Preparing structure for next stage..."
+    TMP_FILE="${INPUT_FILE}.tmp"
+    python3 ../../py/generate_restart_config.py "$INPUT_FILE" "$TMP_FILE"
+    mv "$TMP_FILE" "$INPUT_FILE"
+else
+    echo "ERROR: Equilibration 6.4 failed!"
+    exit 1
+fi
+
+# Step 6.5: Very weak restraints
+echo "Step 6.5: Very weak restraints (${EQ_RESTRAINT_4} fc, ${EQ_BILAYER_RESTRAINT_4} bilayer fc, ${EQ_STEPS_4} steps, dt=${EQ_DT_4})"
+CMD_EQ4=(
+    "$UPSIDE_EXECUTABLE"
+    "$INPUT_FILE"
+    "--duration" "$EQ_STEPS_4"
+    "--frame-interval" "$FRAME_INTERVAL"
+    "--temperature" "$TEMPERATURE"
+    "--time-step" "$EQ_DT_4"
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+    "--seed" "$SEED"
+    "--integrator" "$INTEGRATOR_EQ"
+    "--disable-recentering"
+)
+[ -n "$MAX_FORCE" ] && CMD_EQ4+=("--max-force" "$MAX_FORCE")
+echo "Command (equilibration 6.5): ${CMD_EQ4[*]}"
+START_TIME_EQ4=$(date +%s)
+if "${CMD_EQ4[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+    END_TIME_EQ4=$(date +%s)
+    echo "Equilibration 6.5 completed in $((END_TIME_EQ4 - START_TIME_EQ4)) seconds"
+    # Copy final structure from output to input for next stage
+    echo "Preparing structure for next stage..."
+    TMP_FILE="${INPUT_FILE}.tmp"
+    python3 ../../py/generate_restart_config.py "$INPUT_FILE" "$TMP_FILE"
+    mv "$TMP_FILE" "$INPUT_FILE"
+else
+    echo "ERROR: Equilibration 6.5 failed!"
+    exit 1
+fi
+
+# Step 6.6: Final equilibration
+echo "Step 6.6: Final equilibration (${EQ_RESTRAINT_5} fc, ${EQ_BILAYER_RESTRAINT_5} bilayer fc, ${EQ_STEPS_5} steps, dt=${EQ_DT_5})"
+CMD_EQ5=(
+    "$UPSIDE_EXECUTABLE"
+    "$INPUT_FILE"
+    "--duration" "$EQ_STEPS_5"
+    "--frame-interval" "$FRAME_INTERVAL"
+    "--temperature" "$TEMPERATURE"
+    "--time-step" "$EQ_DT_5"
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+    "--seed" "$SEED"
+    "--integrator" "$INTEGRATOR_EQ"
+    "--disable-recentering"
+)
+[ -n "$MAX_FORCE" ] && CMD_EQ5+=("--max-force" "$MAX_FORCE")
+echo "Command (equilibration 6.6): ${CMD_EQ5[*]}"
+START_TIME_EQ5=$(date +%s)
+if "${CMD_EQ5[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+    END_TIME_EQ5=$(date +%s)
+    echo "Equilibration 6.6 completed in $((END_TIME_EQ5 - START_TIME_EQ5)) seconds"
+    # Copy final structure from output to input for next stage
+    echo "Preparing structure for next stage..."
+    TMP_FILE="${INPUT_FILE}.tmp"
+    python3 ../../py/generate_restart_config.py "$INPUT_FILE" "$TMP_FILE"
+    mv "$TMP_FILE" "$INPUT_FILE"
+else
+    echo "ERROR: Equilibration 6.6 failed!"
+    exit 1
+fi
+
+# Stage 3: Production (step 7)
+echo "-- Stage 3: Production (Step 7) --"
+echo "Production run (${PRODUCTION_STEPS} steps, dt=${PRODUCTION_DT}) with regular potentials"
+echo "Using regular potentials: LJ_ALPHA=${UPSIDE_LJ_ALPHA}, SLATER_ALPHA=${UPSIDE_SLATER_ALPHA}"
+CMD_PROD=(
+    "$UPSIDE_EXECUTABLE"
+    "$INPUT_FILE"
+    "--duration" "$PRODUCTION_STEPS"
+    "--frame-interval" "$FRAME_INTERVAL"
+    "--temperature" "$TEMPERATURE"
+    "--time-step" "$PRODUCTION_DT"
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+    "--seed" "$SEED"
+    "--integrator" "$INTEGRATOR_PROD"
+    "--disable-recentering"
+)
+[ -n "$MAX_FORCE" ] && CMD_PROD+=("--max-force" "$MAX_FORCE")
+echo "Command (production): ${CMD_PROD[*]}"
+START_TIME_PROD=$(date +%s)
+if "${CMD_PROD[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+    END_TIME_PROD=$(date +%s)
+    echo "Production completed in $((END_TIME_PROD - START_TIME_PROD)) seconds"
+else
+    echo "ERROR: Production failed!"
+    exit 1
+fi
 
 echo
 echo "=== Simulation Complete! ==="
@@ -370,17 +597,14 @@ else
 fi
 
 echo
-echo "=== Complete Workflow Summary ==="
+echo "=== Complete GROMACS MARTINI Workflow Summary ==="
 echo "Unified input/output file: $INPUT_FILE ($(du -h "$INPUT_FILE" | cut -f1))"
-if [ "$POTENTIAL_MODE" = "soft" ]; then
-    echo "  Two-stage simulation completed:"
-    echo "    Stage 1: Minimization with softened potentials"
-    echo "    Stage 2: Production with regular potentials"
-    echo "  Results saved under: /output in $INPUT_FILE"
-else
-    echo "  Single-stage simulation with regular potentials completed"
-    echo "  Results saved under: /output in $INPUT_FILE"
-fi
+echo "  GROMACS MARTINI simulation stages completed:"
+echo "    Step 6.0: Minimization with SOFT potentials (free-energy = yes)"
+echo "    Step 6.1: Minimization with REGULAR potentials (free-energy = no)"
+echo "    Steps 6.2-6.6: Equilibration with REGULAR potentials + restraints"
+echo "    Step 7: Production with REGULAR potentials (no restraints)"
+echo "  Results saved under: /output in $INPUT_FILE"
 echo "VTF: $VTF_FILE ($VTF_SIZE)"
 echo
 echo "Done."
