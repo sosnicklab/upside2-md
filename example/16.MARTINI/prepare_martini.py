@@ -1211,6 +1211,7 @@ def main():
             print("PME disabled: using standard Coulomb cutoff")
 
         martini_potential._v_attrs.debug_mode = 1  # Enable spline table generation
+        martini_potential._v_attrs.force_debug_mode = 1  # Enable force debugging for charged particles
         
         # Create periodic boundary potential
         wall_group = t.create_group(potential_grp, 'periodic_boundary_potential')

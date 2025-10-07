@@ -1567,8 +1567,15 @@ struct MartiniPotential : public PotentialNode
     int debug_step_count;
     int max_debug_interactions;
     
+    // Force debugging for specific particles
+    bool force_debug_mode;
+    std::vector<int> debug_particle_indices;
+    std::ofstream force_debug_file;
+    int force_debug_step_count;
+    
     MartiniPotential(hid_t grp, CoordNode& pos_):
-        PotentialNode(), n_atom(pos_.n_elem), pos(pos_), debug_step_count(0), max_debug_interactions(10)
+        PotentialNode(), n_atom(pos_.n_elem), pos(pos_), debug_step_count(0), max_debug_interactions(10),
+        force_debug_mode(false), force_debug_step_count(0)
     {
         check_size(grp, "atom_indices", n_atom);
         check_size(grp, "charges", n_atom);
@@ -1619,6 +1626,26 @@ struct MartiniPotential : public PotentialNode
         debug_mode = false;
         if(attribute_exists(grp, ".", "debug_mode")) {
             debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
+        }
+        
+        // Force debugging mode - enable to track forces on specific particles
+        force_debug_mode = false;
+        if(attribute_exists(grp, ".", "force_debug_mode")) {
+            force_debug_mode = read_attribute<int>(grp, ".", "force_debug_mode") != 0;
+        }
+        
+        // Initialize force debugging if enabled
+        if(force_debug_mode) {
+            force_debug_file.open("force_debug.txt", std::ios::out | std::ios::trunc);
+            force_debug_file << "# Force debugging for charged particles\n";
+            force_debug_file << "# Format: step particle_index force_type force_x force_y force_z potential\n";
+            
+            // Find charged particles (NC3, PO4, NA, CL)
+            debug_particle_indices.clear();
+            for(int i = 0; i < n_atom; ++i) {
+                // We'll identify charged particles by their charges
+                // This will be set up after we read the charges
+            }
         }
         
         // Optionally overwrite existing spline table output files (debug text files)
@@ -2024,6 +2051,11 @@ struct MartiniPotential : public PotentialNode
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
         if(pot) *pot = 0.f;
         
+        // Initialize force debugging for this step
+        if(force_debug_mode && force_debug_step_count < 100) { // Debug first 100 steps
+            force_debug_file << "# Step " << force_debug_step_count << "\n";
+        }
+        
         // Compute particle-particle interactions
         const float kMinDistance = 1.0e-6f;
         for(size_t np=0; np<pairs.size(); ++np) {
@@ -2148,6 +2180,43 @@ struct MartiniPotential : public PotentialNode
                 }
             }
             
+            // Force debugging output for charged particles
+            if(force_debug_mode && force_debug_step_count < 100) {
+                // Check if either particle is charged (has non-zero charge)
+                bool i_charged = (qi != 0.0f);
+                bool j_charged = (qj != 0.0f);
+                
+                if(i_charged || j_charged) {
+                    // Output LJ forces
+                    if(eps != 0.f && sig != 0.f && dist < lj_cutoff) {
+                        if(i_charged) {
+                            force_debug_file << force_debug_step_count << " " << i << " LJ " 
+                                            << -force.x() << " " << -force.y() << " " << -force.z() << " " 
+                                            << (pot ? *pot : 0.0f) << "\n";
+                        }
+                        if(j_charged) {
+                            force_debug_file << force_debug_step_count << " " << j << " LJ " 
+                                            << force.x() << " " << force.y() << " " << force.z() << " " 
+                                            << (pot ? *pot : 0.0f) << "\n";
+                        }
+                    }
+                    
+                    // Output Coulomb forces
+                    if(qi != 0.f && qj != 0.f && dist < coul_cutoff) {
+                        if(i_charged) {
+                            force_debug_file << force_debug_step_count << " " << i << " COULOMB " 
+                                            << -force.x() << " " << -force.y() << " " << -force.z() << " " 
+                                            << (pot ? *pot : 0.0f) << "\n";
+                        }
+                        if(j_charged) {
+                            force_debug_file << force_debug_step_count << " " << j << " COULOMB " 
+                                            << force.x() << " " << force.y() << " " << force.z() << " " 
+                                            << (pot ? *pot : 0.0f) << "\n";
+                        }
+                    }
+                }
+            }
+            
             // Apply mass scaling to forces (divide by mass)
             // Store gradient (∇E = -F) in pos_sens for UPSIDE integrator
             update_vec<3>(pos1_sens, i, -force);
@@ -2155,6 +2224,16 @@ struct MartiniPotential : public PotentialNode
         }
         
         debug_step_count++;
+        if(force_debug_mode) {
+            force_debug_step_count++;
+        }
+    }
+    
+    // Destructor to close force debug file
+    ~MartiniPotential() {
+        if(force_debug_file.is_open()) {
+            force_debug_file.close();
+        }
     }
     
     // Method to update box dimensions for NPT barostat
