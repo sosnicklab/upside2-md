@@ -162,8 +162,8 @@ DURATION=1000
 FRAME_INTERVAL=20
 TEMPERATURE=0.8
 TIME_STEP=0.1
-#THERMOSTAT_TIMESCALE=0.135
-THERMOSTAT_TIMESCALE=5
+THERMOSTAT_TIMESCALE=0.135
+#THERMOSTAT_TIMESCALE=5
 #THERMOSTAT_INTERVAL=-1
 SEED=12345
 # Integrators: NVT ensemble (constant volume, no barostat)
@@ -285,12 +285,50 @@ if [ "$POTENTIAL_MODE" = "regular" ]; then
     fi
     
 else
-    # Minimization mode: minimization + production in single run
-    echo "=== Step 3: Running Single-Stage Simulation (minimization + production) ==="
+    # Two-stage mode: softened minimization + regular production
+    echo "=== Step 3: Running Two-Stage Simulation (softened minimization + regular production) ==="
 
-    # Single stage: Minimization + Production
-    echo "-- Stage 1: Minimization + Production for $DURATION steps --"
-    CMD_MIN_PROD=(
+    # Stage 1: Minimization with softened potentials
+    echo "-- Stage 1: Minimization with softened potentials --"
+    CMD_MIN=(
+        "$UPSIDE_EXECUTABLE"
+        "$INPUT_FILE"
+        "--duration" "$MIN_SOFT_STEPS"
+        "--frame-interval" "$FRAME_INTERVAL"
+        "--temperature" "$TEMPERATURE"
+        "--time-step" "$TIME_STEP"
+        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+        "--seed" "$SEED"
+        "--integrator" "$INTEGRATOR_MIN"
+        "--disable-recentering"
+        "--minimize"
+        "--min-max-iter" "1000"
+        "--min-energy-tol" "1e-6"
+        "--min-force-tol" "1e-3"
+        "--min-step" "0.01"
+    )
+    [ -n "$MAX_FORCE" ] && CMD_MIN+=("--max-force" "$MAX_FORCE")
+    echo "Command (minimization): ${CMD_MIN[*]}"
+    START_TIME_MIN=$(date +%s)
+    if "${CMD_MIN[@]}" 2>&1 | tee "$LOG_FILE"; then
+        END_TIME_MIN=$(date +%s)
+        echo "Minimization completed in $((END_TIME_MIN - START_TIME_MIN)) seconds"
+    else
+        echo "ERROR: Minimization stage failed!"
+        exit 1
+    fi
+
+    # Stage 2: Production with regular potentials
+    echo "-- Stage 2: Production with regular potentials --"
+    
+    # Switch to regular potentials for production
+    export UPSIDE_SOFTEN_LJ=0
+    export UPSIDE_LJ_ALPHA=0.0
+    export UPSIDE_SOFTEN_COULOMB=0
+    export UPSIDE_SLATER_ALPHA=0.0
+    
+    CMD_PROD=(
         "$UPSIDE_EXECUTABLE"
         "$INPUT_FILE"
         "--duration" "$DURATION"
@@ -300,22 +338,18 @@ else
         "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
         "--thermostat-interval" "$THERMOSTAT_INTERVAL"
         "--seed" "$SEED"
-        "--integrator" "$INTEGRATOR_SOFT"
+        "--integrator" "$INTEGRATOR_REG"
         "--disable-recentering"
-        "--minimize"
-        "--min-max-iter" "1000"
-        "--min-energy-tol" "1e-6"
-        "--min-force-tol" "1e-3"
-        "--min-step" "0.01"
     )
-    [ -n "$MAX_FORCE" ] && CMD_MIN_PROD+=("--max-force" "$MAX_FORCE")
-    echo "Command (minimization + production): ${CMD_MIN_PROD[*]}"
-    START_TIME_TOTAL=$(date +%s)
-    if "${CMD_MIN_PROD[@]}" 2>&1 | tee "$LOG_FILE"; then
-        END_TIME_TOTAL=$(date +%s)
-        echo "Minimization + Production completed in $((END_TIME_TOTAL - START_TIME_TOTAL)) seconds"
+    [ -n "$MAX_FORCE" ] && CMD_PROD+=("--max-force" "$MAX_FORCE")
+    echo "Command (production): ${CMD_PROD[*]}"
+    echo "Using regular potentials for production stage"
+    START_TIME_PROD=$(date +%s)
+    if "${CMD_PROD[@]}" 2>&1 | tee -a "$LOG_FILE"; then
+        END_TIME_PROD=$(date +%s)
+        echo "Production completed in $((END_TIME_PROD - START_TIME_PROD)) seconds"
     else
-        echo "ERROR: Minimization + Production stage failed!"
+        echo "ERROR: Production stage failed!"
         exit 1
     fi
 fi  # End of POTENTIAL_MODE check
@@ -338,8 +372,15 @@ fi
 echo
 echo "=== Complete Workflow Summary ==="
 echo "Unified input/output file: $INPUT_FILE ($(du -h "$INPUT_FILE" | cut -f1))"
-echo "  Softened stage saved under: /output_soft in $INPUT_FILE"
-echo "  Regular stage saved under: /output in $INPUT_FILE"
+if [ "$POTENTIAL_MODE" = "soft" ]; then
+    echo "  Two-stage simulation completed:"
+    echo "    Stage 1: Minimization with softened potentials"
+    echo "    Stage 2: Production with regular potentials"
+    echo "  Results saved under: /output in $INPUT_FILE"
+else
+    echo "  Single-stage simulation with regular potentials completed"
+    echo "  Results saved under: /output in $INPUT_FILE"
+fi
 echo "VTF: $VTF_FILE ($VTF_SIZE)"
 echo
 echo "Done."
