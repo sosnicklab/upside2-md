@@ -293,7 +293,7 @@ else
     CMD_MIN=(
         "$UPSIDE_EXECUTABLE"
         "$INPUT_FILE"
-        "--duration" "$MIN_SOFT_STEPS"
+        "--duration" "0"
         "--frame-interval" "$FRAME_INTERVAL"
         "--temperature" "$TEMPERATURE"
         "--time-step" "$TIME_STEP"
