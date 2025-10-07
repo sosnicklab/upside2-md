@@ -196,7 +196,7 @@ EQ_RESTRAINT_5=50
 EQ_BILAYER_RESTRAINT_5=10
 
 # Stage 3: Production (step 7) - Set to 20 for testing (original: 1,500,000 steps)
-PRODUCTION_STEPS=20
+PRODUCTION_STEPS=2000
 PRODUCTION_DT=0.020
 
 # Common parameters
