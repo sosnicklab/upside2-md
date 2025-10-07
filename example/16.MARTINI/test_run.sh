@@ -21,7 +21,7 @@ set -e  # Exit on any error
 # =============================================================================
 # Change this value to use a different PDB file (e.g., "bilayer", "protein", etc.)
 # The script will look for pdb/{PDB_ID}.MARTINI.pdb
-PDB_ID="bilayer"
+PDB_ID="1rkl"
 
 # POTENTIAL MODE TOGGLE
 # Set to "soft" to use softened potentials (default)
@@ -34,12 +34,6 @@ POTENTIAL_MODE="${POTENTIAL_MODE:-soft}"
 # Set to "single_stage" to use same parameters throughout
 # Can be overridden via environment variable: STAGE_MODE=multi_stage ./run_sim.sh
 STAGE_MODE="${STAGE_MODE:-multi_stage}"
-
-# PROTEIN FIX RIGID MODE
-# Set to "always_fixed" to keep protein fixed rigid throughout entire simulation
-# Set to "stage_dependent" to use fix rigid only during minimization (default)
-# Can be overridden via environment variable: PROTEIN_FIX_MODE=always_fixed ./run_sim.sh
-PROTEIN_FIX_MODE="${PROTEIN_FIX_MODE:-stage_dependent}"
 
 # PME CONFIGURATION
 # Set to "1" to enable Particle Mesh Ewald for long-range Coulomb interactions
@@ -73,13 +67,6 @@ fi
 if [ "$STAGE_MODE" != "multi_stage" ] && [ "$STAGE_MODE" != "single_stage" ]; then
     echo "ERROR: Invalid STAGE_MODE: $STAGE_MODE"
     echo "Valid options: 'multi_stage' or 'single_stage'"
-    exit 1
-fi
-
-# Validate protein fix mode
-if [ "$PROTEIN_FIX_MODE" != "always_fixed" ] && [ "$PROTEIN_FIX_MODE" != "stage_dependent" ]; then
-    echo "ERROR: Invalid PROTEIN_FIX_MODE: $PROTEIN_FIX_MODE"
-    echo "Valid options: 'always_fixed' or 'stage_dependent'"
     exit 1
 fi
 
@@ -127,7 +114,6 @@ fi
 
 echo "Potential mode: $POTENTIAL_MODE"
 echo "Stage mode: $STAGE_MODE"
-echo "Protein fix mode: $PROTEIN_FIX_MODE"
 echo "PME enabled: $USE_PME"
 if [ "$USE_PME" = "1" ]; then
     echo "PME configuration:"
@@ -182,8 +168,8 @@ echo
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR"
 
 # Simulation parameters (from original run_martini.py)
-DURATION=1000
-FRAME_INTERVAL=20
+DURATION=10
+FRAME_INTERVAL=2
 TEMPERATURE=0.8
 TIME_STEP=0.01
 THERMOSTAT_TIMESCALE=0.135
@@ -214,7 +200,6 @@ echo
 echo "=== Step 1: Preparing Input Files ==="
 echo "Running prepare_martini.py with PDB ID: $PDB_ID"
 echo "Stage mode: $STAGE_MODE"
-echo "Protein fix mode: $PROTEIN_FIX_MODE"
 
 # Set softening options based on potential mode
 if [ "$POTENTIAL_MODE" = "soft" ]; then
@@ -263,12 +248,7 @@ echo "Stage options (env): UPSIDE_STAGE_PARAMS_ENABLE=${UPSIDE_STAGE_PARAMS_ENAB
 echo "PME options (env): UPSIDE_USE_PME=${UPSIDE_USE_PME} UPSIDE_PME_ALPHA=${UPSIDE_PME_ALPHA} UPSIDE_PME_RCUT=${UPSIDE_PME_RCUT} UPSIDE_PME_NX=${UPSIDE_PME_NX} UPSIDE_PME_NY=${UPSIDE_PME_NY} UPSIDE_PME_NZ=${UPSIDE_PME_NZ} UPSIDE_PME_ORDER=${UPSIDE_PME_ORDER}"
 source ../../source.sh
 
-# Pass protein fix mode to prepare_martini.py
-if [ "$PROTEIN_FIX_MODE" = "always_fixed" ]; then
-    python3 prepare_martini.py "$PDB_ID" --always-fix-protein
-else
-    python3 prepare_martini.py "$PDB_ID"
-fi
+python3 prepare_martini.py "$PDB_ID"
 
 PREPARED_FILE_PATH="${RUN_DIR}/test.input.up"
 if [ ! -f "$PREPARED_FILE_PATH" ]; then
