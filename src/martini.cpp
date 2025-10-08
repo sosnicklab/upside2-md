@@ -2586,6 +2586,7 @@ struct AngleSpring : public PotentialNode
         std::cout << "ANGLES: Initialized splines with 1000 knots" << std::endl;
         std::cout << "  Angle range: " << min_angle << " to " << max_angle << " degrees" << std::endl;
         std::cout << "  Cosine range: " << angle_cos_min << " to " << angle_cos_max << std::endl;
+        std::cout << "  Note: Equilibrium angles stored in degrees, converted to radians for cosine calculation" << std::endl;
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -2622,12 +2623,11 @@ struct AngleSpring : public PotentialNode
             float dp = dot_p / (norm1 * norm2); // This is cos(theta)
             dp = std::max(-1.0f, std::min(1.0f, dp)); // Clamp for safety
 
-            float theta = acosf(dp); // The actual angle in radians
-
             // Step 3: Calculate potential and derivative based on V = 1/2 * k * (cos(theta) - cos(theta_0))^2
+            // Convert equilibrium angle from degrees to radians, then to cosine
             float equil_angle_rad = p.equil_angle_deg * M_PI / 180.0f;
             float cos_theta0 = cosf(equil_angle_rad);
-            float delta_cos = dp - cos_theta0; // dp is cos(theta)
+            float delta_cos = dp - cos_theta0; // dp is cos(theta), cos_theta0 is cos(theta_0)
 
             if (pot) *pot += 0.5f * p.spring_constant * delta_cos * delta_cos;
 
