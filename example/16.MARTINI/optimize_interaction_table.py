@@ -37,9 +37,7 @@ def optimize_interaction_table(input_file, output_file):
             if bonded_type in src['input/potential']:
                 src['input/potential'][bonded_type].copy(src['input/potential'][bonded_type], dst['input/potential'])
         
-        # Copy periodic boundary
-        if 'periodic_boundary_potential' in src['input/potential']:
-            src['input/potential/periodic_boundary_potential'].copy(src['input/potential/periodic_boundary_potential'], dst['input/potential'])
+        # Periodic boundary potential removed - using NVT ensemble without boundaries
         
         # Optimize martini potential
         print("Optimizing martini potential...")

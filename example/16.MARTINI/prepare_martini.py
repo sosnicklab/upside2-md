@@ -1213,91 +1213,11 @@ def main():
         martini_potential._v_attrs.debug_mode = 1  # Enable spline table generation
         martini_potential._v_attrs.force_debug_mode = 1  # Enable force debugging for charged particles
         
-        # Create periodic boundary potential
-        wall_group = t.create_group(potential_grp, 'periodic_boundary_potential')
-        wall_group._v_attrs.arguments = np.array([b'pos'])
-        wall_group._v_attrs.x_len = x_len
-        wall_group._v_attrs.y_len = y_len
-        wall_group._v_attrs.z_len = z_len
-        wall_group._v_attrs.initialized = True
+        # Periodic boundary potential removed - using NVT ensemble without boundaries
         
-        # Create PME node if enabled
-        if use_pme:
-            pme_group = t.create_group(potential_grp, 'particle_mesh_ewald')
-            pme_group._v_attrs.arguments = np.array([b'pos'])
-            pme_group._v_attrs.x_len = x_len
-            pme_group._v_attrs.y_len = y_len
-            pme_group._v_attrs.z_len = z_len
-            pme_group._v_attrs.pme_alpha = pme_alpha
-            pme_group._v_attrs.pme_rcut = pme_rcut
-            pme_group._v_attrs.pme_nx = pme_nx
-            pme_group._v_attrs.pme_ny = pme_ny
-            pme_group._v_attrs.pme_nz = pme_nz
-            pme_group._v_attrs.pme_order = pme_order
-            
-            # Copy charges from martini_potential
-            t.create_array(pme_group, 'charges', obj=charges)
+        # PME node creation removed - using Coulomb spline tables instead
         
-        # --- NPT BAROSTAT CONFIGURATION (/input/barostat) ---
-        # Use provided GROMACS settings and convert to UPSIDE units.
-        # Given settings:
-        #   Pcoupl=berendsen, Pcoupltype=semiisotropic, tau_p=5.0 ps,
-        #   compressibility=3e-4 1/bar (both components), ref_p=1.0 bar (xy,z)
-        # Conversion to UPSIDE:
-        #   UPSIDE pressure unit is E_up/Å^3. Using energy_conversion (kJ/mol per E_up):
-        #   1 E_up/Å^3 = energy_conversion * (1000 J/mol) / N_A / 1e-30 m^3 = energy_conversion * 1.66054e9 Pa
-        #   Therefore 1 bar (1e5 Pa) = (1e5)/(energy_conversion*1.66054e9) E_up/Å^3.
-        #   Compressibility (1/bar) -> (1 / (E_up/Å^3)) by dividing by the same factor.
-        N_A = 6.02214076e23
-        #eup_per_a3_per_bar = 100 / energy_conversion * N_A / (10**30)
-        eup_per_a3_per_bar = 0.006373
-
-        # GROMACS parameters to convert (aggressive initial response, then equilibrium)
-        gmx_tau_p_ps = 5.0  # Fast initial response to reach equilibrium quickly
-        gmx_ref_p_xy_bar = 1.0
-        gmx_ref_p_z_bar  = 1.0
-        gmx_beta_bar_inv = 3.0e-4
-
-        # Time conversion: allow user to specify ps per UPSIDE time unit; default 1 ps per unit
-        ps_per_up = float(os.environ.get('UPSIDE_PS_PER_TIMEUNIT', '1.0'))
-        tau_p_up = gmx_tau_p_ps / ps_per_up
-
-        # Convert pressures and compressibility
-        target_p_xy_up = gmx_ref_p_xy_bar * eup_per_a3_per_bar
-        target_p_z_up  = gmx_ref_p_z_bar  * eup_per_a3_per_bar
-        beta_scale = float(os.environ.get('UPSIDE_NPT_BETA_SCALE', '1.0'))  # More aggressive for fast response
-        beta_up_inv = (gmx_beta_bar_inv * beta_scale) / eup_per_a3_per_bar  # scaled 1/(E_up/Å^3)
-
-        # Interval: allow override; frequent for fast response (50 steps)
-        npt_int = int(os.environ.get('UPSIDE_NPT_INTERVAL', '50'))
-
-        # Optional env overrides for flexibility
-        tau_p_up = float(os.environ.get('UPSIDE_NPT_TAU', str(tau_p_up)))
-        target_p_xy_up = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', f"{target_p_xy_up}"))
-        target_p_z_up  = float(os.environ.get('UPSIDE_NPT_TARGET_PZ',  f"{target_p_z_up}"))
-        beta_up_inv    = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', f"{beta_up_inv}"))
-
-        # Enable NPT and semi-isotropic by default for these settings
-        npt_enable = int(os.environ.get('UPSIDE_NPT_ENABLE', '1'))
-        npt_semi   = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
-        npt_debug  = int(os.environ.get('UPSIDE_NPT_DEBUG', '1'))
-
-        # Write to H5
-        baro_grp = t.create_group(input_grp, 'barostat')
-        baro_grp._v_attrs.enable = npt_enable
-        baro_grp._v_attrs.semi_isotropic = npt_semi
-        baro_grp._v_attrs.tau_p = tau_p_up
-        baro_grp._v_attrs.interval = npt_int
-        baro_grp._v_attrs.compressibility = beta_up_inv
-        baro_grp._v_attrs.target_p_xy = target_p_xy_up
-        baro_grp._v_attrs.target_p_z = target_p_z_up
-        baro_grp._v_attrs.debug = npt_debug
-
-        print("NPT (from GROMACS) → UPSIDE units:")
-        print(f"  tau_p: {gmx_tau_p_ps} ps → {tau_p_up} time_units (ps_per_up={ps_per_up})")
-        print(f"  1 bar = {eup_per_a3_per_bar:.6e} E_up/Å^3 (energy_conversion={energy_conversion})")
-        print(f"  ref_p: Pxy={gmx_ref_p_xy_bar} bar → {target_p_xy_up:.6e} E_up/Å^3, Pz={gmx_ref_p_z_bar} bar → {target_p_z_up:.6e} E_up/Å^3")
-        print(f"  compressibility: {gmx_beta_bar_inv} 1/bar * scale {beta_scale} → {beta_up_inv:.6e} 1/(E_up/Å^3)")
+        # NPT barostat configuration removed - using NVT ensemble without boundaries
 
         # Create atom indices and charges arrays for the potential
         t.create_array(martini_potential, 'atom_indices', obj=np.arange(n_atoms))

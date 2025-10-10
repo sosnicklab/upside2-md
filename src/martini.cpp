@@ -212,342 +212,7 @@ namespace martini_masses {
     }
 }
 
-// ===================== NPT BAROSTAT SUPPORT (MARTINI) =====================
-// Semi-isotropic Berendsen barostat helpers implemented here to satisfy
-// requirement to place all logic in martini.cpp.
-//
-// H5 configuration expected at: /input/barostat (group)
-//   attrs:
-//     enable            (int, 0/1)
-//     target_p_xy       (float)   target lateral pressure (UP units)
-//     target_p_z        (float)   target normal pressure  (UP units)
-//     tau_p             (float)   barostat time constant (time units)
-//     interval          (int)     apply every N integrator steps
-//     compressibility   (float)   isothermal compressibility (1/pressure)
-//     semi_isotropic    (int)     1 = scale x,y together; z separately
-//     debug             (int)     enable prints alongside existing output
-//
-// Note: We implement a pragmatic pressure estimator using kinetic term and
-//       a simple virial approximation from accumulated forces (if available).
-//       For stability, we default to using kinetic contribution only unless
-//       caller provides instantaneous potential/forces accumulation hooks.
-
-// Forward declaration: implemented later after MARTINI node classes
-void martini_update_node_boxes(DerivEngine& engine, float scale_xy, float scale_z);
-
-namespace martini_npt {
-
-// Forward declaration; implemented after barostat state
-void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz);
-
-struct BarostatSettings {
-    bool  enabled = false;
-    bool  semi_isotropic = true;
-    int   interval = 0;           // steps between applications
-    float target_p_xy = 1.0f;     // UP units
-    float target_p_z  = 1.0f;     // UP units
-    float tau_p = 5.0f;           // time constant
-    float compressibility = 4.5e-5f; // 1/pressure (typical liquid, unit-consistent)
-    bool  debug = true;
-    bool  prefer_shrink_first = true; // on first application, avoid any expansion
-};
-
-// Simple container per-system (mirrors System in main.cpp)
-struct BarostatState {
-    BarostatSettings settings;
-    // Cache current box for prints/debug
-    float box_x = 0.f, box_y = 0.f, box_z = 0.f;
-    // Optional masses for kinetic tensor
-    std::vector<float> masses;
-    bool has_applied_once = false;
-    // Equilibrium detection
-    float prev_box_x = 0.f, prev_box_y = 0.f, prev_box_z = 0.f;
-    int equilibrium_count = 0;
-    static constexpr int EQUILIBRIUM_THRESHOLD = 5;  // Number of consecutive small changes to consider equilibrium
-    static constexpr float EQUILIBRIUM_TOLERANCE = 0.001f;  // 0.1% change tolerance
-};
-
-// Global registry mapping DerivEngine* to BarostatState
-static std::mutex g_baro_mutex;
-static std::map<DerivEngine*, BarostatState> g_baro_state;
-
-static inline float volume_xyz(float x, float y, float z) { return x*y*z; }
-
-// Attempt to read barostat settings from H5 config
-static BarostatSettings read_barostat_settings(hid_t root) {
-    BarostatSettings s;
-    try {
-        if(h5_exists(root, "/input/barostat")) {
-            auto grp = open_group(root, "/input/barostat");
-            int en = read_attribute<int>(grp.get(), ".", "enable", 0);
-            s.enabled = (en != 0);
-            s.semi_isotropic = (read_attribute<int>(grp.get(), ".", "semi_isotropic", 1) != 0);
-            s.interval = read_attribute<int>(grp.get(), ".", "interval", 50);
-            s.target_p_xy = read_attribute<float>(grp.get(), ".", "target_p_xy", 1.0f);
-            s.target_p_z  = read_attribute<float>(grp.get(), ".", "target_p_z",  1.0f);
-            s.tau_p = read_attribute<float>(grp.get(), ".", "tau_p", 5.0f);
-            s.compressibility = read_attribute<float>(grp.get(), ".", "compressibility", 4.5e-5f);
-            s.debug = (read_attribute<int>(grp.get(), ".", "debug", 1) != 0);
-        }
-    } catch(...) { /* default values already set */ }
-    return s;
-}
-
-// No-op stub retained for compatibility; we rely on cached H5-derived box.
-static void get_current_box_from_engine(DerivEngine&, float& bx, float& by, float& bz) { (void)bx; (void)by; (void)bz; }
-
-// Apply uniform or semi-isotropic scaling to coordinates and update all known
-// potential nodes' cached box dimensions.
-static void apply_semi_isotropic_scaling(DerivEngine& engine, float scale_xy, float scale_z) {
-    // Scale coordinates
-    VecArray pos = engine.pos->output;
-    int n_atom = engine.pos->n_elem;
-    for(int i=0;i<n_atom;++i) {
-        auto p = load_vec<3>(pos, i);
-        p.x() *= scale_xy;
-        p.y() *= scale_xy;
-        p.z() *= scale_z;
-        store_vec<3>(pos, i, p);
-    }
-    
-    // Apply PBC to ensure all particles are within the scaled box boundaries
-    // This is crucial to avoid unrealistic coordinates after box scaling
-    // Note: This function is called from within a locked context, so we don't need to lock again
-    auto it = g_baro_state.find(&engine);
-    if(it != g_baro_state.end()) {
-        float bx = it->second.box_x * scale_xy;
-        float by = it->second.box_y * scale_xy;
-        float bz = it->second.box_z * scale_z;
-        
-        // Apply PBC to all particles using the simple fmodf approach
-        // This ensures particles are wrapped into the new box boundaries
-        for(int i=0;i<n_atom;++i) {
-            auto p = load_vec<3>(pos, i);
-            // Wrap coordinates to [-box/2, +box/2]
-            p.x() = fmodf(p.x() + bx/2.0f, bx) - bx/2.0f;
-            p.y() = fmodf(p.y() + by/2.0f, by) - by/2.0f;
-            p.z() = fmodf(p.z() + bz/2.0f, bz) - bz/2.0f;
-            store_vec<3>(pos, i, p);
-        }
-    }
-    
-    // Update cached box on known MARTINI nodes (implemented after type definitions)
-    martini_update_node_boxes(engine, scale_xy, scale_z);
-}
-
-// Compute instantaneous pressures using kinetic contribution only as a robust
-// baseline: P = (2/3V) K for each subspace. We partition kinetic energy by
-// components to estimate lateral vs normal pressure.
-static void estimate_pressure_tensor(const VecArray& mom,
-                                     const VecArray& pos,
-                                     const VecArray& sens,
-                                     const std::vector<float>& masses,
-                                     int n_atom,
-                                     float V,
-                                     float& pxx, float& pyy, float& pzz) {
-    // Kinetic tensor: Kaa = sum_i p_a^2/m_i
-    double kx=0., ky=0., kz=0.;
-    for(int i=0;i<n_atom;++i) {
-        auto pm = load_vec<3>(mom, i);
-        if(i >= (int)masses.size() || masses[i] <= 0.f) {
-            printf("ERROR: Missing or invalid mass for atom %d (mass[%d]=%.6f, masses.size()=%zu)\n", 
-                   i, i, (i < (int)masses.size()) ? masses[i] : -1.0f, masses.size());
-            exit(1);
-        }
-        double mi = masses[i];
-        kx += double(pm.x()*pm.x())/mi;
-        ky += double(pm.y()*pm.y())/mi;
-        kz += double(pm.z()*pm.z())/mi;
-    }
-    // Virial tensor diagonal via atomic form: Waa = sum_i r_a F_a
-    double wxx=0., wyy=0., wzz=0.;
-    for(int i=0;i<n_atom;++i) {
-        auto r = load_vec<3>(pos, i);
-        auto grad = load_vec<3>(sens, i); // grad = dE/dx
-        auto F = make_vec3(-grad.x(), -grad.y(), -grad.z());
-        wxx += double(r.x()*F.x());
-        wyy += double(r.y()*F.y());
-        wzz += double(r.z()*F.z());
-    }
-    pxx = float((kx + wxx) / V);
-    pyy = float((ky + wyy) / V);
-    pzz = float((kz + wzz) / V);
-}
-
-// Main entry: initialize per-system barostat state (called when engine created)
-void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
-    BarostatSettings s = read_barostat_settings(config_root);
-    if(!s.enabled) return;
-    float bx=0.f,by=0.f,bz=0.f;
-    try {
-        if(h5_exists(config_root, "/input/potential/periodic_boundary_potential")) {
-            auto grp = open_group(config_root, "/input/potential/periodic_boundary_potential");
-            bx = read_attribute<float>(grp.get(), ".", "x_len");
-            by = read_attribute<float>(grp.get(), ".", "y_len");
-            bz = read_attribute<float>(grp.get(), ".", "z_len");
-        } else if(h5_exists(config_root, "/input/potential/martini_potential")) {
-            auto grp = open_group(config_root, "/input/potential/martini_potential");
-            bx = read_attribute<float>(grp.get(), ".", "x_len");
-            by = read_attribute<float>(grp.get(), ".", "y_len");
-            bz = read_attribute<float>(grp.get(), ".", "z_len");
-        }
-    } catch(...) { bx=by=bz=0.f; }
-    std::lock_guard<std::mutex> lk(g_baro_mutex);
-    auto& st = g_baro_state[&engine];
-    st.settings = s;
-    st.box_x = bx; st.box_y = by; st.box_z = bz;
-    // Load masses if available
-    try {
-        if(h5_exists(config_root, "/input/mass")) {
-            st.masses.clear();
-            traverse_dset<1,float>(config_root, "/input/mass", [&](size_t i, float m){ st.masses.push_back(m); });
-        }
-    } catch(...) {}
-}
-
-// Apply barostat if interval matches. dt is outer integrator step, inner_step included by caller.
-void maybe_apply_barostat(DerivEngine& engine,
-                          const VecArray& mom,
-                          int n_atom,
-                          uint64_t round_num,
-                          float dt,
-                          int inner_step,
-                          int verbose,
-                          bool print_now) {
-    std::lock_guard<std::mutex> lk(g_baro_mutex);
-    auto it = g_baro_state.find(&engine);
-    if(it == g_baro_state.end()) return;
-    auto& st = it->second;
-    auto& s = st.settings;
-    if(!s.enabled) return;
-    if(s.interval <= 0) return;
-    if(round_num==0 || (round_num % s.interval)!=0) return;
-
-    // Determine current box
-    float bx=st.box_x, by=st.box_y, bz=st.box_z;
-    if(bx==0.f || by==0.f || bz==0.f) return; // need a box
-    float V = volume_xyz(bx,by,bz);
-
-    // Compute forces (gradient) to get virial; do a fresh compute for accuracy at interval
-    engine.compute(PotentialAndDerivMode);
-    VecArray pos = engine.pos->output;
-    VecArray sens = engine.pos->sens;
-    float pxx=0.f,pyy=0.f,pzz=0.f;
-    estimate_pressure_tensor(mom, pos, sens, it->second.masses, n_atom, V, pxx, pyy, pzz);
-    float pxy_inst = 0.5f*(pxx+pyy);
-    float pz_inst  = pzz;
-
-    // Berendsen scale factor: scale = 1 - beta*dt/tau*(P_inst - P_target)
-    float delta_t = dt*inner_step;
-    float beta = s.compressibility;
-    float scale_xy = 1.0f;
-    float scale_z  = 1.0f;
-    if(s.semi_isotropic) {
-        float factor_xy = 1.f - beta * (delta_t / s.tau_p) * (pxy_inst - s.target_p_xy);
-        float factor_z  = 1.f - beta * (delta_t / s.tau_p) * (pz_inst  - s.target_p_z);
-        // For lengths, scale as factor^(1/dim). Lateral acts on 2 dims
-        factor_xy = std::max(0.98f, std::min(1.02f, factor_xy));
-        factor_z  = std::max(0.98f, std::min(1.02f, factor_z));
-        scale_xy = powf(factor_xy, 1.f/2.f);
-        scale_z  = powf(factor_z,  1.f/1.f);
-        // Clamp final length scales - more aggressive for fast initial response
-        scale_xy = std::max(0.995f, std::min(1.005f, scale_xy));
-        scale_z  = std::max(0.995f, std::min(1.005f, scale_z));
-        // Monotonic shrink guard: if pressure below target, do not expand on that axis
-        if(pxy_inst < s.target_p_xy) scale_xy = std::min(scale_xy, 1.0f);
-        if(pz_inst  < s.target_p_z ) scale_z  = std::min(scale_z,  1.0f);
-    } else {
-        float p_inst = (2.f*pxy_inst + pz_inst)/3.f;
-        float factor = 1.f - beta * (delta_t / s.tau_p) * (p_inst - ((s.target_p_xy*2.f + s.target_p_z)/3.f));
-        factor = std::max(0.98f, std::min(1.02f, factor));
-        float sc = powf(factor, 1.f/3.f);
-        sc = std::max(0.995f, std::min(1.005f, sc));
-        scale_xy = sc; scale_z = sc;
-        if(p_inst < (2.f*s.target_p_xy + s.target_p_z)/3.f) {
-            float scc = std::min(sc, 1.0f);
-            scale_xy = scc; scale_z = scc;
-        }
-    }
-
-    // First application policy: if requested, bias to shrinking only (avoid any expansion)
-    if(!st.has_applied_once && s.prefer_shrink_first) {
-        scale_xy = std::min(scale_xy, 1.0f);
-        scale_z  = std::min(scale_z,  1.0f);
-    }
-
-    // Check for pressure equilibrium (not box dimension equilibrium)
-    bool at_equilibrium = false;
-    if(st.has_applied_once) {
-        // Calculate pressure deviations from target
-        float pxy_deviation = fabs(pxy_inst - s.target_p_xy) / s.target_p_xy;
-        float pz_deviation = fabs(pz_inst - s.target_p_z) / s.target_p_z;
-        
-        // Check if pressures are close to target (within 5% tolerance)
-        const float PRESSURE_TOLERANCE = 0.05f;  // 5% pressure tolerance
-        if(pxy_deviation < PRESSURE_TOLERANCE && pz_deviation < PRESSURE_TOLERANCE) {
-            st.equilibrium_count++;
-        } else {
-            st.equilibrium_count = 0;  // Reset if pressure is far from target
-        }
-        
-        // If pressures have been close to target for several consecutive steps, we're at equilibrium
-        if(st.equilibrium_count >= st.EQUILIBRIUM_THRESHOLD) {
-            at_equilibrium = true;
-            if(print_now && verbose) {
-                printf(" [EQUILIBRIUM] Pressure converged to target - stopping barostat changes\n");
-            }
-        }
-    }
-    
-    // Store previous box dimensions for next comparison
-    st.prev_box_x = st.box_x;
-    st.prev_box_y = st.box_y;
-    st.prev_box_z = st.box_z;
-
-    // Only apply scaling if not at equilibrium
-    if(!at_equilibrium) {
-        // Apply scaling
-        apply_semi_isotropic_scaling(engine, scale_xy, scale_z);
-
-        // Update cached box and print occasionally in existing cadence
-        st.box_x = bx * scale_xy; st.box_y = by * scale_xy; st.box_z = bz * scale_z;
-        // Optionally avoid momentum rescaling to reduce kinetic bursts during box changes
-        // Leave positions and box scaled; skip momentum scaling
-        // (If momentum scaling exists elsewhere, ensure it is behind a feature flag.)
-        st.has_applied_once = true;
-    } else {
-        // At equilibrium - no changes to box dimensions
-        if(print_now && verbose) {
-            printf(" [EQUILIBRIUM] No box changes applied - system at equilibrium\n");
-        }
-    }
-    
-    // Update H5 file attributes with new box dimensions for persistence between stages
-    // This ensures the next simulation stage reads the correct equilibrated box dimensions
-    // Note: This is a simplified approach - in practice, we'd need access to the H5 file path
-    // For now, the box dimensions are logged to /output/box and the script reads from there
-    if(verbose && s.debug && print_now) {
-        printf(" [NPT] t %.3f scale_xy %.4f scale_z %.4f | Pxy %.3e tgt %.3e, Pz %.3e tgt %.3e | box %.2f %.2f %.2f\n",
-               double((round_num)*delta_t), scale_xy, scale_z,
-               pxy_inst, s.target_p_xy, pz_inst, s.target_p_z,
-               st.box_x, st.box_y, st.box_z);
-        fflush(stdout);
-    }
-}
-
-// Implement box query now that g_baro_state is defined
-void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz) {
-    bx = by = bz = 0.f;
-    std::lock_guard<std::mutex> lk(g_baro_mutex);
-    auto it = g_baro_state.find(const_cast<DerivEngine*>(&engine));
-    if(it != g_baro_state.end() && it->second.settings.enabled) {
-        bx = it->second.box_x;
-        by = it->second.box_y;
-        bz = it->second.box_z;
-    }
-}
-
-} // namespace martini_npt
+// NPT barostat removed - using NVT ensemble without boundaries
 
 //Bond, Angle and Dihedral the same format in MARTINI 10.1021/jp071097f
 //Missing: Proper Dihedral from 10.1021/ct700324x (might not need if only exist in protein model)
@@ -563,17 +228,7 @@ inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* att
     return exists > 0;
 }
 
-// Helper for minimum image convention in a rectangular box
-inline Vec<3,float> minimum_image_rect(const Vec<3,float>& dr, float box_x, float box_y, float box_z) {
-    Vec<3,float> out = dr;
-    if (out.x() >  0.5f * box_x) out.x() -= box_x;
-    if (out.x() < -0.5f * box_x) out.x() += box_x;
-    if (out.y() >  0.5f * box_y) out.y() -= box_y;
-    if (out.y() < -0.5f * box_y) out.y() += box_y;
-    if (out.z() >  0.5f * box_z) out.z() -= box_z;
-    if (out.z() < -0.5f * box_z) out.z() += box_z;
-    return out;
-}
+// Minimum image convention removed - using NVT ensemble without boundaries
 
 
 
@@ -726,18 +381,10 @@ struct DihedralSpring : public PotentialNode
             Float4 x[4];
             x[1] = x_orig[1]; // Use atom 1 as reference
             
-            // Apply minimum image for bonds 0-1, 2-1, 3-2
-            auto disp01 = minimum_image_rect(make_vec3(x_orig[0].x(), x_orig[0].y(), x_orig[0].z()) - make_vec3(x[1].x(), x[1].y(), x[1].z()), box_x, box_y, box_z);
-            float temp01[4] = {x[1].x() + disp01.x(), x[1].y() + disp01.y(), x[1].z() + disp01.z(), 0.0f};
-            x[0] = Float4(temp01);
-            
-            auto disp21 = minimum_image_rect(make_vec3(x_orig[2].x(), x_orig[2].y(), x_orig[2].z()) - make_vec3(x[1].x(), x[1].y(), x[1].z()), box_x, box_y, box_z);
-            float temp21[4] = {x[1].x() + disp21.x(), x[1].y() + disp21.y(), x[1].z() + disp21.z(), 0.0f};
-            x[2] = Float4(temp21);
-            
-            auto disp32 = minimum_image_rect(make_vec3(x_orig[3].x(), x_orig[3].y(), x_orig[3].z()) - make_vec3(x[2].x(), x[2].y(), x[2].z()), box_x, box_y, box_z);
-            float temp32[4] = {x[2].x() + disp32.x(), x[2].y() + disp32.y(), x[2].z() + disp32.z(), 0.0f};
-            x[3] = Float4(temp32);
+            // Direct distance calculation without PBC
+            x[0] = x_orig[0];
+            x[2] = x_orig[2];
+            x[3] = x_orig[3];
 
             Float4 d[4];
             float dihedral = dihedral_germ(x[0],x[1],x[2],x[3], d[0],d[1],d[2],d[3]).x();
@@ -783,746 +430,17 @@ struct DihedralSpring : public PotentialNode
         }
     }
     
-    // Method to update box dimensions for NPT barostat
-    void update_box_dimensions(float scale_factor) {
-        box_x *= scale_factor;
-        box_y *= scale_factor;
-        box_z *= scale_factor;
-    }
-    
-    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
-        box_x *= scale_xy;
-        box_y *= scale_xy;
-        box_z *= scale_z;
-    }
+    // Box dimension update methods removed - using NVT ensemble without boundaries
 };
 static RegisterNodeType<DihedralSpring,1> dihedral_spring_node("dihedral_spring");
 
-struct PeriodicBoundaryPotential : public PotentialNode
-{
-    int n_atom;
-    CoordNode& pos;
-    
-    // Box parameters
-    float box_x, box_y, box_z;
-    // Static box dimensions for PBC wrapping
-    static float static_box_x, static_box_y, static_box_z;
-    
-    PeriodicBoundaryPotential(hid_t grp, CoordNode& pos_):
-        PotentialNode(), n_atom(pos_.n_elem), pos(pos_)
-    {
-        // Read box dimensions from attributes
-        // Support both individual dimensions and legacy wall_box_size
-        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
-            // New format: separate x, y, z dimensions
-            box_x = read_attribute<float>(grp, ".", "x_len");
-            box_y = read_attribute<float>(grp, ".", "y_len");
-            box_z = read_attribute<float>(grp, ".", "z_len");
-            std::cout << "PERIODIC: Using new box format - X=" << box_x << ", Y=" << box_y << ", Z=" << box_z << std::endl;
-        } else {
-            // Legacy format: wall boundaries
-            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
-            
-            // Calculate box dimensions
-            box_x = wall_xhi - wall_xlo;
-            box_y = wall_yhi - wall_ylo;
-            box_z = wall_zhi - wall_zlo;
-            std::cout << "PERIODIC: Using legacy box format - X=" << box_x << ", Y=" << box_y << ", Z=" << box_z << std::endl;
-        }
-        
-        // Initialize static variables for global access
-        static_box_x = box_x;
-        static_box_y = box_y;
-        static_box_z = box_z;
-    }
-    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
-        box_x *= scale_xy;
-        box_y *= scale_xy;
-        box_z *= scale_z;
-        static_box_x = box_x;
-        static_box_y = box_y;
-        static_box_z = box_z;
-    }
+// PBC implementation removed - using NVT ensemble without boundaries
 
-    virtual void compute_value(ComputeMode mode) {
-        Timer timer(string("periodic_boundary_potential"));
-        
-        VecArray pos1 = pos.output;
-        float half_x = 0.5f * box_x;
-        float half_y = 0.5f * box_y;
-        float half_z = 0.5f * box_z;
-            // Apply periodic boundary conditions (centered box convention)
-        for(int na=0; na<n_atom; ++na) {
-            auto p = load_vec<3>(pos1, na);
-            bool wrapped = false;
-            // X dimension: wrap into [-L/2, +L/2]
-                if (p.x() < -half_x) { p.x() += box_x; wrapped = true; }
-                else if (p.x() >= half_x) { p.x() -= box_x; wrapped = true; }
-            // Y dimension: wrap into [-L/2, +L/2]
-                if (p.y() < -half_y) { p.y() += box_y; wrapped = true; }
-                else if (p.y() >= half_y) { p.y() -= box_y; wrapped = true; }
-            // Z dimension: wrap into [-L/2, +L/2]
-                if (p.z() < -half_z) { p.z() += box_z; wrapped = true; }
-                else if (p.z() >= half_z) { p.z() -= box_z; wrapped = true; }
-            // Store wrapped position
-            if (wrapped) {
-                store_vec<3>(pos1, na, p);
-            }
-        }
-        // No potential energy contribution from periodic boundaries
-        potential = 0.f;
-    }
-};
-static RegisterNodeType<PeriodicBoundaryPotential,1> periodic_boundary_potential_node("periodic_boundary_potential");
+// PME FFT implementation removed - using Coulomb spline tables instead
 
+// PME B-spline implementation removed - using Coulomb spline tables instead
 
-
-// Static member variable definitions
-float PeriodicBoundaryPotential::static_box_x = 0.0f;
-float PeriodicBoundaryPotential::static_box_y = 0.0f;
-float PeriodicBoundaryPotential::static_box_z = 0.0f;
-
-// Update node boxes helper used by barostat
-void martini_update_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
-    // Update static box dimensions for PBC - this is the most critical update
-    if(PeriodicBoundaryPotential::static_box_x>0.f) {
-        PeriodicBoundaryPotential::static_box_x *= scale_xy;
-        PeriodicBoundaryPotential::static_box_y *= scale_xy;
-        PeriodicBoundaryPotential::static_box_z *= scale_z;
-    }
-    
-    // Note: Individual potential nodes will be updated by their own methods
-    // when they are instantiated. The static box dimensions are the most critical
-    // for PBC wrapping and are already updated above.
-}
-
-// Static method to apply PBC wrapping to positions
-static bool apply_pbc_wrapping(VecArray pos, int n_atoms) {
-    bool any_wrapped = false;
-    float half_x = 0.5f * PeriodicBoundaryPotential::static_box_x;
-    float half_y = 0.5f * PeriodicBoundaryPotential::static_box_y;
-    float half_z = 0.5f * PeriodicBoundaryPotential::static_box_z;
-    for(int na=0; na<n_atoms; ++na) {
-        auto p = load_vec<3>(pos, na);
-        bool wrapped = false;
-        // X dimension: wrap into [-L/2, +L/2]
-        while (p.x() < -half_x) { p.x() += PeriodicBoundaryPotential::static_box_x; wrapped = true; }
-        while (p.x() >= half_x) { p.x() -= PeriodicBoundaryPotential::static_box_x; wrapped = true; }
-        // Y dimension: wrap into [-L/2, +L/2]
-        while (p.y() < -half_y) { p.y() += PeriodicBoundaryPotential::static_box_y; wrapped = true; }
-        while (p.y() >= half_y) { p.y() -= PeriodicBoundaryPotential::static_box_y; wrapped = true; }
-        // Z dimension: wrap into [-L/2, +L/2]
-        while (p.z() < -half_z) { p.z() += PeriodicBoundaryPotential::static_box_z; wrapped = true; }
-        while (p.z() >= half_z) { p.z() -= PeriodicBoundaryPotential::static_box_z; wrapped = true; }
-        if (wrapped) {
-            store_vec<3>(pos, na, p);
-            any_wrapped = true;
-        }
-    }
-    return any_wrapped;
-}
-
-// Improved FFT implementation for PME with proper error handling
-class PMEFFT {
-public:
-    static bool is_power_of_2(int n) {
-        return n > 0 && (n & (n - 1)) == 0;
-    }
-    
-    static int next_power_of_2(int n) {
-        if (n <= 0) return 1;
-        int power = 1;
-        while (power < n) power <<= 1;
-        return power;
-    }
-    
-    static void fft1d(std::vector<std::complex<float>>& data) {
-        int n = data.size();
-        if (n <= 1) return;
-        
-        // Ensure power of 2 size
-        if (!is_power_of_2(n)) {
-            int new_size = next_power_of_2(n);
-            data.resize(new_size, 0.0f);
-            n = new_size;
-        }
-        
-        // Bit-reverse permutation
-        for (int i = 1, j = 0; i < n; ++i) {
-            int bit = n >> 1;
-            while (j & bit) {
-                j ^= bit;
-                bit >>= 1;
-            }
-            j ^= bit;
-            if (i < j) {
-                std::swap(data[i], data[j]);
-            }
-        }
-        
-        // Cooley-Tukey FFT
-        for (int len = 2; len <= n; len <<= 1) {
-            float angle = -2.0f * M_PI / len;
-            std::complex<float> wlen(cosf(angle), sinf(angle));
-            
-            for (int i = 0; i < n; i += len) {
-                std::complex<float> w(1.0f);
-                for (int j = 0; j < len / 2; ++j) {
-                    std::complex<float> u = data[i + j];
-                    std::complex<float> v = data[i + j + len / 2] * w;
-                    data[i + j] = u + v;
-                    data[i + j + len / 2] = u - v;
-                    w *= wlen;
-                }
-            }
-        }
-    }
-    
-    static void ifft1d(std::vector<std::complex<float>>& data) {
-        // Conjugate the input
-        for (auto& x : data) {
-            x = std::conj(x);
-        }
-        
-        // Apply forward FFT
-        fft1d(data);
-        
-        // Conjugate and normalize
-        int n = data.size();
-        for (auto& x : data) {
-            x = std::conj(x) / static_cast<float>(n);
-        }
-    }
-    
-    static void fft3d(std::vector<std::vector<std::vector<std::complex<float>>>>& data) {
-        int nx = data.size();
-        int ny = data[0].size();
-        int nz = data[0][0].size();
-        
-        // Validate grid dimensions are powers of 2
-        if (!is_power_of_2(nx) || !is_power_of_2(ny) || !is_power_of_2(nz)) {
-            std::cerr << "Warning: PME grid dimensions should be powers of 2 for optimal FFT performance" << std::endl;
-        }
-        
-        // FFT along x direction
-        for (int j = 0; j < ny; ++j) {
-            for (int k = 0; k < nz; ++k) {
-                std::vector<std::complex<float>> x_slice(nx);
-                for (int i = 0; i < nx; ++i) {
-                    x_slice[i] = data[i][j][k];
-                }
-                fft1d(x_slice);
-                for (int i = 0; i < nx; ++i) {
-                    data[i][j][k] = x_slice[i];
-                }
-            }
-        }
-        
-        // FFT along y direction
-        for (int i = 0; i < nx; ++i) {
-            for (int k = 0; k < nz; ++k) {
-                std::vector<std::complex<float>> y_slice(ny);
-                for (int j = 0; j < ny; ++j) {
-                    y_slice[j] = data[i][j][k];
-                }
-                fft1d(y_slice);
-                for (int j = 0; j < ny; ++j) {
-                    data[i][j][k] = y_slice[j];
-                }
-            }
-        }
-        
-        // FFT along z direction
-        for (int i = 0; i < nx; ++i) {
-            for (int j = 0; j < ny; ++j) {
-                std::vector<std::complex<float>> z_slice(nz);
-                for (int k = 0; k < nz; ++k) {
-                    z_slice[k] = data[i][j][k];
-                }
-                fft1d(z_slice);
-                for (int k = 0; k < nz; ++k) {
-                    data[i][j][k] = z_slice[k];
-                }
-            }
-        }
-    }
-    
-    static void ifft3d(std::vector<std::vector<std::vector<std::complex<float>>>>& data) {
-        int nx = data.size();
-        int ny = data[0].size();
-        int nz = data[0][0].size();
-        
-        // IFFT along z direction
-        for (int i = 0; i < nx; ++i) {
-            for (int j = 0; j < ny; ++j) {
-                std::vector<std::complex<float>> z_slice(nz);
-                for (int k = 0; k < nz; ++k) {
-                    z_slice[k] = data[i][j][k];
-                }
-                ifft1d(z_slice);
-                for (int k = 0; k < nz; ++k) {
-                    data[i][j][k] = z_slice[k];
-                }
-            }
-        }
-        
-        // IFFT along y direction
-        for (int i = 0; i < nx; ++i) {
-            for (int k = 0; k < nz; ++k) {
-                std::vector<std::complex<float>> y_slice(ny);
-                for (int j = 0; j < ny; ++j) {
-                    y_slice[j] = data[i][j][k];
-                }
-                ifft1d(y_slice);
-                for (int j = 0; j < ny; ++j) {
-                    data[i][j][k] = y_slice[j];
-                }
-            }
-        }
-        
-        // IFFT along x direction
-        for (int j = 0; j < ny; ++j) {
-            for (int k = 0; k < nz; ++k) {
-                std::vector<std::complex<float>> x_slice(nx);
-                for (int i = 0; i < nx; ++i) {
-                    x_slice[i] = data[i][j][k];
-                }
-                ifft1d(x_slice);
-                for (int i = 0; i < nx; ++i) {
-                    data[i][j][k] = x_slice[i];
-                }
-            }
-        }
-    }
-};
-
-// Improved B-spline interpolation for PME using existing spline infrastructure
-class PMEBSpline {
-public:
-    // Precomputed B-spline coefficients for order 4 (cubic)
-    static constexpr float bspline4_coeffs[4][4] = {
-        { 0./6., 0./6., 0./6., 1./6.},
-        { 1./6., 3./6., 3./6.,-3./6.},
-        { 4./6., 0./6.,-6./6., 3./6.},
-        { 1./6.,-3./6., 3./6.,-1./6.}
-    };
-    
-    static float bspline4(float x) {
-        // Fourth-order B-spline (cubic)
-        x = fabsf(x);
-        if (x < 1.0f) {
-            float x2 = x * x;
-            float x3 = x2 * x;
-            return (1.0f/6.0f) * (4.0f - 6.0f*x2 + 3.0f*x3);
-        } else if (x < 2.0f) {
-            float t = 2.0f - x;
-            return t*t*t / 6.0f;
-        }
-        return 0.0f;
-    }
-    
-    static float bspline4_derivative(float x) {
-        // Derivative of fourth-order B-spline
-        float sign = (x >= 0.0f) ? 1.0f : -1.0f;
-        x = fabsf(x);
-        
-        if (x < 1.0f) {
-            return sign * (1.0f/6.0f) * (-12.0f*x + 9.0f*x*x);
-        } else if (x < 2.0f) {
-            float t = 2.0f - x;
-            return -sign * t*t / 2.0f;
-        }
-        return 0.0f;
-    }
-    
-    static float bspline4_influence_function(float k, float dx) {
-        // B-spline influence function in reciprocal space for PME
-        // This corrects for the B-spline interpolation in the charge assignment
-        if (fabsf(k) < 1e-10f) return 1.0f;
-        
-        float kdx = k * dx;
-        float sinc_kdx = sinf(kdx) / kdx;
-        return sinc_kdx * sinc_kdx * sinc_kdx * sinc_kdx;
-    }
-    
-    static void assign_charges_to_grid(const std::vector<Vec<3,float>>& positions,
-                                     const std::vector<float>& charges,
-                                     std::vector<std::vector<std::vector<float>>>& grid,
-                                     float box_x, float box_y, float box_z,
-                                     int nx, int ny, int nz) {
-        // Clear grid
-        for (int i = 0; i < nx; ++i) {
-            for (int j = 0; j < ny; ++j) {
-                for (int k = 0; k < nz; ++k) {
-                    grid[i][j][k] = 0.0f;
-                }
-            }
-        }
-        
-        float dx = box_x / nx;
-        float dy = box_y / ny;
-        float dz = box_z / nz;
-        
-        // Assign charges to grid using improved B-spline interpolation
-        for (size_t p = 0; p < positions.size(); ++p) {
-            const auto& pos = positions[p];
-            float q = charges[p];
-            
-            // Convert to grid coordinates with proper centering
-            float gx = (pos.x() + 0.5f * box_x) / dx;
-            float gy = (pos.y() + 0.5f * box_y) / dy;
-            float gz = (pos.z() + 0.5f * box_z) / dz;
-            
-            // Find grid points within B-spline support (order 4)
-            int ix_start = static_cast<int>(floorf(gx - 1.5f));
-            int iy_start = static_cast<int>(floorf(gy - 1.5f));
-            int iz_start = static_cast<int>(floorf(gz - 1.5f));
-            
-            for (int ix = ix_start; ix <= ix_start + 3; ++ix) {
-                for (int iy = iy_start; iy <= iy_start + 3; ++iy) {
-                    for (int iz = iz_start; iz <= iz_start + 3; ++iz) {
-                        // Apply periodic boundary conditions
-                        int i = ((ix % nx) + nx) % nx;
-                        int j = ((iy % ny) + ny) % ny;
-                        int k = ((iz % nz) + nz) % nz;
-                        
-                        // Calculate B-spline weights using order 4
-                        float wx = bspline4(gx - ix);
-                        float wy = bspline4(gy - iy);
-                        float wz = bspline4(gz - iz);
-                        
-                        // Add charge contribution
-                        grid[i][j][k] += q * wx * wy * wz;
-                    }
-                }
-            }
-        }
-    }
-    
-    static void interpolate_forces_from_grid(const std::vector<Vec<3,float>>& positions,
-                                           const std::vector<std::vector<std::vector<Vec<3,float>>>>& force_grid,
-                                           std::vector<Vec<3,float>>& forces,
-                                           float box_x, float box_y, float box_z,
-                                           int nx, int ny, int nz) {
-        float dx = box_x / nx;
-        float dy = box_y / ny;
-        float dz = box_z / nz;
-        
-        for (size_t p = 0; p < positions.size(); ++p) {
-            const auto& pos = positions[p];
-            Vec<3,float> force = make_zero<3>();
-            
-            // Convert to grid coordinates with proper centering
-            float gx = (pos.x() + 0.5f * box_x) / dx;
-            float gy = (pos.y() + 0.5f * box_y) / dy;
-            float gz = (pos.z() + 0.5f * box_z) / dz;
-            
-            // Find grid points within B-spline support (order 4)
-            int ix_start = static_cast<int>(floorf(gx - 1.5f));
-            int iy_start = static_cast<int>(floorf(gy - 1.5f));
-            int iz_start = static_cast<int>(floorf(gz - 1.5f));
-            
-            for (int ix = ix_start; ix <= ix_start + 3; ++ix) {
-                for (int iy = iy_start; iy <= iy_start + 3; ++iy) {
-                    for (int iz = iz_start; iz <= iz_start + 3; ++iz) {
-                        // Apply periodic boundary conditions
-                        int i = ((ix % nx) + nx) % nx;
-                        int j = ((iy % ny) + ny) % ny;
-                        int k = ((iz % nz) + nz) % nz;
-                        
-                        // Calculate B-spline weights using order 4
-                        float wx = bspline4(gx - ix);
-                        float wy = bspline4(gy - iy);
-                        float wz = bspline4(gz - iz);
-                        
-                        // Add force contribution
-                        force += force_grid[i][j][k] * wx * wy * wz;
-                    }
-                }
-            }
-            
-            forces[p] = force;
-        }
-    }
-};
-
-// Particle Mesh Ewald (PME) implementation for long-range Coulomb interactions
-struct ParticleMeshEwald : public PotentialNode
-{
-    int n_atom;
-    CoordNode& pos;
-    
-    // Box dimensions
-    float box_x, box_y, box_z;
-    float volume;
-    
-    // PME parameters
-    float alpha;           // Ewald parameter (screening parameter)
-    float rcut;            // Real space cutoff
-    int nx, ny, nz;        // Grid dimensions
-    int order;             // B-spline interpolation order
-    
-    // Charge data
-    vector<float> charges;
-    
-    // PME grids
-    vector<vector<vector<float>>> charge_grid;
-    vector<vector<vector<complex<float>>>> potential_grid;
-    vector<vector<vector<Vec<3,float>>>> force_grid;
-    
-    // Precomputed factors
-    float coulomb_k;       // Coulomb constant
-    float alpha_sqrt_pi;   // α/sqrt(π)
-    
-    ParticleMeshEwald(hid_t grp, CoordNode& pos_):
-        PotentialNode(), n_atom(pos_.n_elem), pos(pos_), coulomb_k(31.775347952181f)
-    {
-        // Read box dimensions
-        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
-            box_x = read_attribute<float>(grp, ".", "x_len");
-            box_y = read_attribute<float>(grp, ".", "y_len");
-            box_z = read_attribute<float>(grp, ".", "z_len");
-        } else {
-            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
-            box_x = wall_xhi - wall_xlo;
-            box_y = wall_yhi - wall_ylo;
-            box_z = wall_zhi - wall_zlo;
-        }
-        
-        volume = box_x * box_y * box_z;
-        
-        // Read charges
-        check_size(grp, "charges", n_atom);
-        charges.resize(n_atom);
-        traverse_dset<1,float>(grp, "charges", [&](size_t i, float q) {
-            charges[i] = q;
-        });
-        
-        // PME parameters
-        alpha = 0.2f;  // Default Ewald parameter
-        if(attribute_exists(grp, ".", "pme_alpha")) {
-            alpha = read_attribute<float>(grp, ".", "pme_alpha");
-        }
-        
-        rcut = 10.0f;  // Default real space cutoff
-        if(attribute_exists(grp, ".", "pme_rcut")) {
-            rcut = read_attribute<float>(grp, ".", "pme_rcut");
-        }
-        
-        // Grid dimensions (should be powers of 2 for efficient FFT)
-        nx = 32;  // Default grid size
-        if(attribute_exists(grp, ".", "pme_nx")) {
-            nx = read_attribute<int>(grp, ".", "pme_nx");
-        }
-        
-        ny = 32;
-        if(attribute_exists(grp, ".", "pme_ny")) {
-            ny = read_attribute<int>(grp, ".", "pme_ny");
-        }
-        
-        nz = 32;
-        if(attribute_exists(grp, ".", "pme_nz")) {
-            nz = read_attribute<int>(grp, ".", "pme_nz");
-        }
-        
-        order = 4;  // B-spline interpolation order
-        if(attribute_exists(grp, ".", "pme_order")) {
-            order = read_attribute<int>(grp, ".", "pme_order");
-        }
-        
-        // Precompute factors
-        alpha_sqrt_pi = alpha / sqrtf(M_PI);
-        
-        // Initialize grids
-        charge_grid.resize(nx, vector<vector<float>>(ny, vector<float>(nz, 0.0f)));
-        potential_grid.resize(nx, vector<vector<complex<float>>>(ny, vector<complex<float>>(nz, 0.0f)));
-        force_grid.resize(nx, vector<vector<Vec<3,float>>>(ny, vector<Vec<3,float>>(nz, make_zero<3>())));
-        
-        std::cout << "PME: Initialized with alpha=" << alpha << ", rcut=" << rcut << std::endl;
-        std::cout << "PME: Box dimensions: " << box_x << " x " << box_y << " x " << box_z << std::endl;
-        std::cout << "PME: Grid dimensions: " << nx << " x " << ny << " x " << nz << std::endl;
-        std::cout << "PME: B-spline order: " << order << std::endl;
-    }
-    
-    virtual void compute_value(ComputeMode mode) {
-        Timer timer(string("particle_mesh_ewald"));
-        
-        VecArray pos1 = pos.output;
-        VecArray pos1_sens = pos.sens;
-        
-        float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
-        if(pot) *pot = 0.f;
-        
-        // Extract positions
-        vector<Vec<3,float>> positions(n_atom);
-        for(int i = 0; i < n_atom; ++i) {
-            positions[i] = load_vec<3>(pos1, i);
-        }
-        
-        // Step 1: Assign charges to grid using improved B-spline interpolation
-        PMEBSpline::assign_charges_to_grid(positions, charges, charge_grid, 
-                                          box_x, box_y, box_z, nx, ny, nz);
-        
-        // Step 2: Convert charge grid to complex format for FFT
-        for(int i = 0; i < nx; ++i) {
-            for(int j = 0; j < ny; ++j) {
-                for(int k = 0; k < nz; ++k) {
-                    potential_grid[i][j][k] = complex<float>(charge_grid[i][j][k], 0.0f);
-                }
-            }
-        }
-        
-        // Step 3: Forward 3D FFT
-        PMEFFT::fft3d(potential_grid);
-        
-        // Step 4: Solve Poisson's equation in reciprocal space with improved Green's function
-        float dx = box_x / nx;
-        float dy = box_y / ny;
-        float dz = box_z / nz;
-        
-        // Precompute B-spline influence function for PME
-        vector<float> b_spline_influence_x(nx, 0.0f);
-        vector<float> b_spline_influence_y(ny, 0.0f);
-        vector<float> b_spline_influence_z(nz, 0.0f);
-        
-        // Calculate B-spline influence function in reciprocal space
-        for(int i = 0; i < nx; ++i) {
-            float kx = (i <= nx/2) ? 2.0f * M_PI * i / box_x : 2.0f * M_PI * (i - nx) / box_x;
-            b_spline_influence_x[i] = PMEBSpline::bspline4_influence_function(kx, dx);
-        }
-        for(int j = 0; j < ny; ++j) {
-            float ky = (j <= ny/2) ? 2.0f * M_PI * j / box_y : 2.0f * M_PI * (j - ny) / box_y;
-            b_spline_influence_y[j] = PMEBSpline::bspline4_influence_function(ky, dy);
-        }
-        for(int k = 0; k < nz; ++k) {
-            float kz = (k <= nz/2) ? 2.0f * M_PI * k / box_z : 2.0f * M_PI * (k - nz) / box_z;
-            b_spline_influence_z[k] = PMEBSpline::bspline4_influence_function(kz, dz);
-        }
-        
-        for(int i = 0; i < nx; ++i) {
-            for(int j = 0; j < ny; ++j) {
-                for(int k = 0; k < nz; ++k) {
-                    // Calculate k-vector components
-                    float kx = (i <= nx/2) ? 2.0f * M_PI * i / box_x : 2.0f * M_PI * (i - nx) / box_x;
-                    float ky = (j <= ny/2) ? 2.0f * M_PI * j / box_y : 2.0f * M_PI * (j - ny) / box_y;
-                    float kz = (k <= nz/2) ? 2.0f * M_PI * k / box_z : 2.0f * M_PI * (k - nz) / box_z;
-                    
-                    float k_sq = kx*kx + ky*ky + kz*kz;
-                    
-                    if(k_sq > 0.0f) {
-                        // Improved Green's function with B-spline correction
-                        float green = expf(-k_sq / (4.0f * alpha * alpha)) / k_sq;
-                        float b_spline_correction = b_spline_influence_x[i] * b_spline_influence_y[j] * b_spline_influence_z[k];
-                        
-                        // Avoid division by zero in B-spline correction
-                        if(b_spline_correction > 1e-10f) {
-                            green /= (b_spline_correction * b_spline_correction);
-                        }
-                        potential_grid[i][j][k] *= green;
-                    } else {
-                        // Handle k=0 case (should be zero for neutral systems)
-                        potential_grid[i][j][k] = 0.0f;
-                    }
-                }
-            }
-        }
-        
-        // Step 5: Inverse 3D FFT
-        PMEFFT::ifft3d(potential_grid);
-        
-        // Step 6: Calculate potential energy
-        float recip_pot = 0.0f;
-        for(int i = 0; i < nx; ++i) {
-            for(int j = 0; j < ny; ++j) {
-                for(int k = 0; k < nz; ++k) {
-                    recip_pot += charge_grid[i][j][k] * potential_grid[i][j][k].real();
-                }
-            }
-        }
-        recip_pot *= 0.5f * coulomb_k / volume;
-        
-        // Step 7: Calculate forces on grid using improved gradient calculation
-        for(int i = 0; i < nx; ++i) {
-            for(int j = 0; j < ny; ++j) {
-                for(int k = 0; k < nz; ++k) {
-                    // Calculate gradients using higher-order finite differences for better accuracy
-                    int ip = (i + 1) % nx;
-                    int im = (i - 1 + nx) % nx;
-                    int ipp = (i + 2) % nx;
-                    int imm = (i - 2 + nx) % nx;
-                    
-                    int jp = (j + 1) % ny;
-                    int jm = (j - 1 + ny) % ny;
-                    int jpp = (j + 2) % ny;
-                    int jmm = (j - 2 + ny) % ny;
-                    
-                    int kp = (k + 1) % nz;
-                    int km = (k - 1 + nz) % nz;
-                    int kpp = (k + 2) % nz;
-                    int kmm = (k - 2 + nz) % nz;
-                    
-                    // Fourth-order finite differences for better accuracy
-                    float fx = (-potential_grid[ipp][j][k].real() + 8.0f*potential_grid[ip][j][k].real() 
-                               - 8.0f*potential_grid[im][j][k].real() + potential_grid[imm][j][k].real()) / (12.0f * dx);
-                    float fy = (-potential_grid[i][jpp][k].real() + 8.0f*potential_grid[i][jp][k].real() 
-                               - 8.0f*potential_grid[i][jm][k].real() + potential_grid[i][jmm][k].real()) / (12.0f * dy);
-                    float fz = (-potential_grid[i][j][kpp].real() + 8.0f*potential_grid[i][j][kp].real() 
-                               - 8.0f*potential_grid[i][j][km].real() + potential_grid[i][j][kmm].real()) / (12.0f * dz);
-                    
-                    force_grid[i][j][k] = make_vec3(-fx, -fy, -fz) * coulomb_k;
-                }
-            }
-        }
-        
-        // Step 8: Interpolate forces back to particles using improved B-spline
-        vector<Vec<3,float>> recip_forces(n_atom, make_zero<3>());
-        PMEBSpline::interpolate_forces_from_grid(positions, force_grid, recip_forces,
-                                                box_x, box_y, box_z, nx, ny, nz);
-        
-        // Step 9: Self-interaction correction
-        float self_correction = 0.0f;
-        for(int i = 0; i < n_atom; ++i) {
-            self_correction += charges[i] * charges[i];
-        }
-        self_correction *= alpha_sqrt_pi;
-        
-        // Total reciprocal space potential
-        recip_pot -= self_correction;
-        
-        if(pot) *pot += recip_pot;
-        
-        // Apply forces
-        for(int i = 0; i < n_atom; ++i) {
-            update_vec<3>(pos1_sens, i, -recip_forces[i]);
-        }
-    }
-    
-    // Method to update box dimensions for NPT barostat
-    void update_box_dimensions(float scale_factor) {
-        box_x *= scale_factor;
-        box_y *= scale_factor;
-        box_z *= scale_factor;
-        volume = box_x * box_y * box_z;
-    }
-    
-    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
-        box_x *= scale_xy;
-        box_y *= scale_xy;
-        box_z *= scale_z;
-        volume = box_x * box_y * box_z;
-    }
-};
-static RegisterNodeType<ParticleMeshEwald, 1> pme_node("particle_mesh_ewald");
+// PME implementation removed - using Coulomb spline tables instead
 
 // MARTINI potential using spline interpolation for LJ and Coulomb calculations
 struct MartiniPotential : public PotentialNode
@@ -1541,13 +459,8 @@ struct MartiniPotential : public PotentialNode
     float lj_soften_alpha;
     bool overwrite_spline_tables;
     
-    // PME parameters
-    bool use_pme;
-    float pme_alpha;
-    float pme_rcut;
-
-    // Box dimensions for minimum image
-    float box_x, box_y, box_z;
+    // PME parameters removed - using Coulomb spline tables instead
+    // Box dimensions removed - using NVT ensemble without boundaries
     
     // Spline interpolation for LJ potential - single spline for each epsilon/sigma pair
     std::map<std::pair<float, float>, LayeredClampedSpline1D<1>> lj_splines;
@@ -1654,47 +567,10 @@ struct MartiniPotential : public PotentialNode
             overwrite_spline_tables = read_attribute<int>(grp, ".", "overwrite_spline_tables") != 0;
         }
         
-        // PME parameters
-        use_pme = false;
-        if(attribute_exists(grp, ".", "use_pme")) {
-            use_pme = read_attribute<int>(grp, ".", "use_pme") != 0;
-        }
-        
-        pme_alpha = 0.2f;  // Default PME parameter
-        if(attribute_exists(grp, ".", "pme_alpha")) {
-            pme_alpha = read_attribute<float>(grp, ".", "pme_alpha");
-        }
-        
-        pme_rcut = 10.0f;  // Default real space cutoff
-        if(attribute_exists(grp, ".", "pme_rcut")) {
-            pme_rcut = read_attribute<float>(grp, ".", "pme_rcut");
-        }
+        // PME parameters removed - using Coulomb spline tables instead
 
         
-        // Read box dimensions (same as MartiniPotential)
-        // Support both individual dimensions and legacy wall_box_size
-        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
-            // New format: separate x, y, z dimensions
-            box_x = read_attribute<float>(grp, ".", "x_len");
-            box_y = read_attribute<float>(grp, ".", "y_len");
-            box_z = read_attribute<float>(grp, ".", "z_len");
-            std::cout << "MARTINI: Using new box format - X=" << box_x << ", Y=" << box_y << ", Z=" << box_z << std::endl;
-        } else {
-            // Legacy format: wall boundaries
-            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
-            box_x = wall_xhi - wall_xlo;
-            box_y = wall_yhi - wall_ylo;
-            box_z = wall_zhi - wall_zlo;
-            std::cout << "MARTINI: Using legacy box format - X=" << box_x << ", Y=" << box_y << ", Z=" << box_z << std::endl;
-        }
-        
-        // Print box size for debug
-        std::cout << "[DEBUG] MartiniPotential box_x=" << box_x << " box_y=" << box_y << " box_z=" << box_z << std::endl;
+        // Box dimensions removed - using NVT ensemble without boundaries
 
         auto n_pair = get_dset_size(2, grp, "pairs")[0];
         
@@ -2030,11 +906,7 @@ struct MartiniPotential : public PotentialNode
         std::cout << "  LJ range: " << lj_r_min << " to " << lj_r_max << " Angstroms" << std::endl;
         std::cout << "  Coulomb range: " << coul_r_min << " to " << coul_r_max << " Angstroms" << std::endl;
         std::cout << "  Coulomb k: 31.775347952181 (includes epsilon_r=15)" << std::endl;
-        if(use_pme) {
-            std::cout << "  PME enabled: alpha=" << pme_alpha << ", rcut=" << pme_rcut << std::endl;
-        } else {
-            std::cout << "  PME disabled: using standard Coulomb cutoff" << std::endl;
-        }
+        std::cout << "  Using Coulomb spline tables for electrostatic interactions" << std::endl;
 
     }
 
@@ -2071,8 +943,8 @@ struct MartiniPotential : public PotentialNode
             
             auto p1 = load_vec<3>(pos1, i);
             auto p2 = load_vec<3>(pos1, j);
-            // Apply minimum image convention for rectangular box
-            auto dr = minimum_image_rect(p1 - p2, box_x, box_y, box_z);
+            // Direct distance calculation without PBC
+            auto dr = p1 - p2;
             auto dist2 = mag2(dr);
             auto dist = sqrtf(max(dist2, kMinDistance));
             // DEBUG: Print pairwise info for first few steps
@@ -2130,27 +1002,7 @@ struct MartiniPotential : public PotentialNode
                 float coul_pot = 0.0f;
                 float coul_force_mag = 0.0f;
                 
-                if(use_pme && dist < pme_rcut) {
-                    // Real space part of PME: V = k * qq * erfc(α*r) / r
-                    float coulomb_k = 31.775347952181f;
-                    float alpha_r = pme_alpha * dist;
-                    float erfc_alpha_r = erfc(alpha_r);
-                    
-                    // Potential: V = k * qq * erfc(α*r) / r
-                    coul_pot = coulomb_k * qq * erfc_alpha_r / dist;
-                    
-                    // Force: F = -k * qq * (erfc(α*r)/r² + 2*α*exp(-α²r²)/(√π*r))
-                    float exp_term = 2.0f * pme_alpha * expf(-alpha_r * alpha_r) / sqrtf(M_PI);
-                    coul_force_mag = -coulomb_k * qq * (erfc_alpha_r / (dist * dist) + exp_term / dist);
-                    // tame near-cutoff discontinuity
-                    if(dist > 0.95f*pme_rcut) {
-                        float rc = pme_rcut;
-                        float erfc_rc = erfc(pme_alpha * rc);
-                        float vcut = coulomb_k * qq * erfc_rc / rc;
-                        coul_pot -= vcut;
-                    }
-                } else {
-                    // Standard Coulomb potential (short-range only or when Ewald is disabled)
+                // Standard Coulomb potential using spline tables
                     // Prefer the spline evaluation (legacy behavior) when available
                     auto coulomb_it = coulomb_splines.find(qq);
                     if(coulomb_it != coulomb_splines.end() && dist >= coul_r_min && dist <= coul_r_max) {
@@ -2169,7 +1021,6 @@ struct MartiniPotential : public PotentialNode
                         float dV_dr = -coulomb_k * qq / (dist * dist);
                         coul_force_mag = -dV_dr;
                     }
-                }
 
                 // Only apply if potential and force are finite and reasonable
                 if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag)) {
@@ -2180,74 +1031,16 @@ struct MartiniPotential : public PotentialNode
                 }
             }
             
-            // Force debugging output for charged particles
-            if(force_debug_mode && force_debug_step_count < 100) {
-                // Check if either particle is charged (has non-zero charge)
-                bool i_charged = (qi != 0.0f);
-                bool j_charged = (qj != 0.0f);
-                
-                if(i_charged || j_charged) {
-                    // Output LJ forces
-                    if(eps != 0.f && sig != 0.f && dist < lj_cutoff) {
-                        if(i_charged) {
-                            force_debug_file << force_debug_step_count << " " << i << " LJ " 
-                                            << -force.x() << " " << -force.y() << " " << -force.z() << " " 
-                                            << (pot ? *pot : 0.0f) << "\n";
-                        }
-                        if(j_charged) {
-                            force_debug_file << force_debug_step_count << " " << j << " LJ " 
-                                            << force.x() << " " << force.y() << " " << force.z() << " " 
-                                            << (pot ? *pot : 0.0f) << "\n";
-                        }
-                    }
-                    
-                    // Output Coulomb forces
-                    if(qi != 0.f && qj != 0.f && dist < coul_cutoff) {
-                        if(i_charged) {
-                            force_debug_file << force_debug_step_count << " " << i << " COULOMB " 
-                                            << -force.x() << " " << -force.y() << " " << -force.z() << " " 
-                                            << (pot ? *pot : 0.0f) << "\n";
-                        }
-                        if(j_charged) {
-                            force_debug_file << force_debug_step_count << " " << j << " COULOMB " 
-                                            << force.x() << " " << force.y() << " " << force.z() << " " 
-                                            << (pot ? *pot : 0.0f) << "\n";
-                        }
-                    }
-                }
-            }
-            
             // Apply mass scaling to forces (divide by mass)
             // Store gradient (∇E = -F) in pos_sens for UPSIDE integrator
             update_vec<3>(pos1_sens, i, -force);
             update_vec<3>(pos1_sens, j,  force);
         }
-        
-        debug_step_count++;
-        if(force_debug_mode) {
-            force_debug_step_count++;
-        }
     }
     
-    // Destructor to close force debug file
-    ~MartiniPotential() {
-        if(force_debug_file.is_open()) {
-            force_debug_file.close();
-        }
-    }
+    // Destructor removed - no debug file needed for NVT ensemble
     
-    // Method to update box dimensions for NPT barostat
-    void update_box_dimensions(float scale_factor) {
-        box_x *= scale_factor;
-        box_y *= scale_factor;
-        box_z *= scale_factor;
-    }
-    
-    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
-        box_x *= scale_xy;
-        box_y *= scale_xy;
-        box_z *= scale_z;
-    }
+    // Box dimension update methods removed - using NVT ensemble without boundaries
 };
 static RegisterNodeType<MartiniPotential, 1> martini_potential_node("martini_potential");
 
@@ -2399,8 +1192,8 @@ struct DistSpring : public PotentialNode
             auto x1 = load_vec<3>(posc, p.atom[0]);
             auto x2 = load_vec<3>(posc, p.atom[1]);
 
-            // Apply minimum image convention for periodic boundaries
-            auto disp = minimum_image_rect(x1 - x2, box_x, box_y, box_z);
+            // Direct distance calculation without PBC
+            auto disp = x1 - x2;
             float dist = mag(disp);
             
             // Use spline interpolation for bond potential and force (in delta-r space)
@@ -2439,18 +1232,7 @@ struct DistSpring : public PotentialNode
         }
     }
     
-    // Method to update box dimensions for NPT barostat
-    void update_box_dimensions(float scale_factor) {
-        box_x *= scale_factor;
-        box_y *= scale_factor;
-        box_z *= scale_factor;
-    }
-    
-    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
-        box_x *= scale_xy;
-        box_y *= scale_xy;
-        box_z *= scale_z;
-    }
+    // Box dimension update methods removed - using NVT ensemble without boundaries
 };
 static RegisterNodeType<DistSpring, 1> dist_spring_node("dist_spring");
 
@@ -2606,8 +1388,8 @@ struct AngleSpring : public PotentialNode
             auto x_orig3 = load_vec<3>(posc, p.atom[2]);
 
             auto x2 = x_orig2;
-            auto x1 = x2 + minimum_image_rect(x_orig1 - x2, box_x, box_y, box_z);
-            auto x3 = x2 + minimum_image_rect(x_orig3 - x2, box_x, box_y, box_z);
+            auto x1 = x_orig1;
+            auto x3 = x_orig3;
 
             // Step 2: Calculate vectors and angle from reconstructed positions
             auto disp1 = x1 - x2;
@@ -2655,18 +1437,7 @@ struct AngleSpring : public PotentialNode
         }
     }
     
-    // Method to update box dimensions for NPT barostat
-    void update_box_dimensions(float scale_factor) {
-        box_x *= scale_factor;
-        box_y *= scale_factor;
-        box_z *= scale_factor;
-    }
-    
-    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
-        box_x *= scale_xy;
-        box_y *= scale_xy;
-        box_z *= scale_z;
-    }
+    // Box dimension update methods removed - using NVT ensemble without boundaries
 };
 static RegisterNodeType<AngleSpring, 1> angle_spring_node("angle_spring");
 
@@ -2966,18 +1737,7 @@ struct MartiniNodeRegistrar {
                 return new DihedralSpring(grp, *args[0]);
             });
         }
-        if(m.find("periodic_boundary_potential") == m.end()) {
-            add_node_creation_function("periodic_boundary_potential", [](hid_t grp, const ArgList& args) {
-                check_arguments_length(args,1);
-                return new PeriodicBoundaryPotential(grp, *args[0]);
-            });
-        }
-        if(m.find("particle_mesh_ewald") == m.end()) {
-            add_node_creation_function("particle_mesh_ewald", [](hid_t grp, const ArgList& args) {
-                check_arguments_length(args,1);
-                return new ParticleMeshEwald(grp, *args[0]);
-            });
-        }
+        // PBC and PME node creation functions removed - using NVT ensemble without boundaries
     }
 };
 static MartiniNodeRegistrar s_martini_node_registrar;

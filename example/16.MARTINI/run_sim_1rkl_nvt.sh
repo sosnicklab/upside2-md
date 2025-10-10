@@ -29,7 +29,7 @@ set -e  # Exit on any error
 # =============================================================================
 # Change this value to use a different PDB file (e.g., "bilayer", "protein", etc.)
 # The script will look for pdb/{PDB_ID}.MARTINI.pdb
-PDB_ID="bilayer"
+PDB_ID="1rkl"
 
 # POTENTIAL MODE TOGGLE
 # Set to "soft" to use softened potentials (default)

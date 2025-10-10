@@ -275,13 +275,7 @@ def main():
                 z_len = float(potential_group.attrs['z_len'])
                 print(f"Found box dimensions from martini_potential: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
 
-        if x_len is None and 'input/potential/periodic_boundary_potential' in t_struct:
-            pbc_group = t_struct['input/potential/periodic_boundary_potential']
-            if all(k in pbc_group.attrs for k in ('x_len','y_len','z_len')):
-                x_len = float(pbc_group.attrs['x_len'])
-                y_len = float(pbc_group.attrs['y_len'])
-                z_len = float(pbc_group.attrs['z_len'])
-                print(f"Found box dimensions from periodic_boundary_potential: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å")
+        # Periodic boundary potential removed - using NVT ensemble without boundaries
 
         # Final fallback: try to read from PDB file
         if x_len is None and pdb_file is not None:

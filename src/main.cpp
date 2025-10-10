@@ -25,19 +25,7 @@
 using namespace std;
 using namespace h5;
 
-// ---- NPT Barostat hooks (implemented in martini.cpp) ----
-namespace martini_npt {
-    void register_barostat_for_engine(hid_t config_root, DerivEngine& engine);
-    void maybe_apply_barostat(DerivEngine& engine,
-                              const VecArray& mom,
-                              int n_atom,
-                              uint64_t round_num,
-                              float dt,
-                              int inner_step,
-                              int verbose,
-                              bool print_now);
-    void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz);
-}
+// NPT barostat removed - using NVT ensemble only
 
 // ---- Fix Rigid hooks (implemented in martini.cpp) ----
 namespace martini_fix_rigid {
@@ -774,8 +762,7 @@ try {
 
             auto potential_group = open_group(sys->config.get(), "/input/potential");
             sys->engine = initialize_engine_from_hdf5(sys->n_atom, potential_group.get());
-            // Register barostat settings for this engine (read from H5)
-            martini_npt::register_barostat_for_engine(sys->config.get(), sys->engine);
+            // NPT barostat removed - using NVT ensemble only
             // Load masses for MARTINI integrators (read from H5)
             martini_masses::load_masses_for_engine(&sys->engine, sys->config.get());
             // Register fix rigid settings for this engine (read from H5)
@@ -928,19 +915,7 @@ try {
             float* temperature_pointer = &(systems[ns].temperature);
             systems[ns].logger->add_logger<double>("temperature", {1}, [temperature_pointer](double* temperature_buffer) {
                     temperature_buffer[0] = *temperature_pointer;});
-            // Also record box dimensions per frame as dense logger
-            System& sys = systems[ns];
-            sys.logger->add_dense_logger<float>("box", {1,3}, [&sys](float* box_buffer){
-                float bx=0.f,by=0.f,bz=0.f;
-                martini_npt::get_current_box(sys.engine, bx, by, bz);
-                // Only log if NPT is enabled and box is valid
-                if(bx>0.f && by>0.f && bz>0.f) {
-                    box_buffer[0] = bx; box_buffer[1] = by; box_buffer[2] = bz;
-                } else {
-                    // Leave zeros to avoid misleading data under NVT
-                    box_buffer[0] = 0.f; box_buffer[1] = 0.f; box_buffer[2] = 0.f;
-                }
-            });
+            // Box dimensions removed - using NVT ensemble without boundaries
         }
         if(verbose) printf("\n");
 
@@ -1067,15 +1042,7 @@ try {
                     martini_stage_params::apply_stage_bond_params(sys.engine);
                     martini_stage_params::apply_stage_angle_params(sys.engine);
 
-                    // Apply semi-isotropic barostat at configured interval; skip changing box at step 0
-                    if(sys.round_num>0) {
-                        martini_npt::maybe_apply_barostat(sys.engine, sys.mom, sys.n_atom,
-                                                          sys.round_num, dt, inner_step, verbose,
-                                                          do_print);
-                        
-                        // Box dimensions are automatically updated in potential attributes by the barostat
-                        // The run_sim.sh script will read these updated dimensions between stages
-                    }
+                    // NPT barostat removed - using NVT ensemble without boundaries
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
                         curvature_changer->attempt_change(base_random_seed, sys.round_num, sys, relative_curvature_radius_change);
