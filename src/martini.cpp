@@ -242,6 +242,7 @@ struct DihedralSpring : public PotentialNode
         index_t atom[4];
         float equil_dihedral;
         float spring_constant;
+        int dihedral_type;  // 1=periodic, 2=harmonic
     };
 
     int n_elem;
@@ -273,6 +274,13 @@ struct DihedralSpring : public PotentialNode
         traverse_dset<2,int>  (grp, "id",           [&](size_t i, size_t j, int   x) {p[i].atom[j]  =x;});
         traverse_dset<1,float>(grp, "equil_dist",   [&](size_t i,           float x) {p[i].equil_dihedral =x;});
         traverse_dset<1,float>(grp, "spring_const", [&](size_t i,           float x) {p[i].spring_constant=x;});
+        // Read dihedral type (1=periodic, 2=harmonic), default to periodic if not present
+        if(attribute_exists(grp, ".", "dihedral_type")) {
+            traverse_dset<1,int>(grp, "dihedral_type", [&](size_t i, int x) {p[i].dihedral_type = x;});
+        } else {
+            // Default to periodic dihedrals for backward compatibility
+            for(auto& param : params) param.dihedral_type = 1;
+        }
 
         // Read box dimensions (same as MartiniPotential)
         // Support both individual dimensions and legacy wall_box_size
@@ -321,12 +329,13 @@ struct DihedralSpring : public PotentialNode
         dihedral_min = -M_PI_F;  // -180°
         dihedral_max = M_PI_F;   // +180°
         
-        // Use a parameterless canonical spline: pot = 0.5 * (delta_phi)^2
-        // with delta_phi in [-pi, pi]
+        // Use periodic dihedral potential: V = k * (1 + cos(n*phi - phi0))
+        // For MARTINI, n=1 (multiplicity=1) and phi0 is the equilibrium angle
+        // We'll use a canonical spline for V = 1 + cos(phi - phi0)
         std::vector<double> dihedral_pot_data(1000);
         for(int i = 0; i < 1000; ++i) {
-            float delta_phi = dihedral_min + i * (dihedral_max - dihedral_min) / 999.0f;
-            dihedral_pot_data[i] = 0.5 * delta_phi * delta_phi;
+            float phi = dihedral_min + i * (dihedral_max - dihedral_min) / 999.0f;
+            dihedral_pot_data[i] = 1.0 + cos(phi);  // Canonical form: 1 + cos(phi)
         }
         
         // Fit spline
@@ -335,7 +344,7 @@ struct DihedralSpring : public PotentialNode
         // Debug: Write all unique dihedral splines to a single file if debug_mode is enabled
         if (debug_mode) {
             std::ofstream out("dihedral_splines.txt", std::ios::out | std::ios::trunc);
-            out << "# Canonical dihedral spline (delta_phi = phi - phi0)\n";
+            out << "# Periodic dihedral spline: V = k * (1 + cos(phi - phi0))\n";
             out << "# Forces are calculated as analytical derivatives of the potential\n";
             // Collect unique (k, phi0)
             std::set<std::pair<float, float>> dihedral_params;
@@ -350,7 +359,7 @@ struct DihedralSpring : public PotentialNode
                     float delta_phi = phi - phi0;
                     if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
                     if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
-                    float pot = 0.5f * k * delta_phi * delta_phi;
+                    float pot = k * (1.0f + cos(delta_phi));  // Periodic form: k * (1 + cos(phi - phi0))
                     out << phi << " " << pot << "\n";
                 }
                 out << "\n";
@@ -389,42 +398,56 @@ struct DihedralSpring : public PotentialNode
             Float4 d[4];
             float dihedral = dihedral_germ(x[0],x[1],x[2],x[3], d[0],d[1],d[2],d[3]).x();
 
-            // Use spline interpolation for dihedral potential and force
-            // Use delta phi relative to equilibrium
+            // Use appropriate dihedral potential based on type
             float delta_phi = dihedral - p.equil_dihedral;
             if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
             if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
-            if(delta_phi >= dihedral_min && delta_phi <= dihedral_max) {
-                // Transform delta_phi to spline coordinate [0, 999] (same as other splines)
-                float phi_coord = (delta_phi - dihedral_min) / (dihedral_max - dihedral_min) * 999.0f;
-                
-                // Get potential and force from single spline
-                float result[2];
-                dihedral_potential_spline.evaluate_value_and_deriv(result, 0, phi_coord);
-                float dihedral_pot = result[1]; // Index 1 is the value
-                float dE_ddelta_spline = result[0]; // Index 0 is the derivative w.r.t. spline coordinate
-                
-                // Convert derivative from spline coordinate to physical coordinate (dE/d(delta_phi))
-                // dE/d(delta_phi) = dE/d(coord) * d(coord)/d(delta_phi)
-                float coord_scale = 999.0f / (dihedral_max - dihedral_min);
-                float dE_ddelta = dE_ddelta_spline * coord_scale;
-                float dihedral_force_mag = p.spring_constant * dE_ddelta;
-                
-                // Use spline-evaluated potential and force
-                if(pot) *pot += p.spring_constant * dihedral_pot;
+            
+            if(p.dihedral_type == 1) {
+                // Periodic dihedral: V = k * (1 + cos(phi - phi0))
+                if(delta_phi >= dihedral_min && delta_phi <= dihedral_max) {
+                    // Transform delta_phi to spline coordinate [0, 999]
+                    float phi_coord = (delta_phi - dihedral_min) / (dihedral_max - dihedral_min) * 999.0f;
+                    
+                    // Get potential and force from spline
+                    float result[2];
+                    dihedral_potential_spline.evaluate_value_and_deriv(result, 0, phi_coord);
+                    float dihedral_pot = result[1]; // Index 1 is the value (1 + cos(delta_phi))
+                    float dE_ddelta_spline = result[0]; // Index 0 is the derivative
+                    
+                    // Convert derivative from spline coordinate to physical coordinate
+                    float coord_scale = 999.0f / (dihedral_max - dihedral_min);
+                    float dE_ddelta = dE_ddelta_spline * coord_scale;
+                    float dihedral_force_mag = p.spring_constant * dE_ddelta;
+                    
+                    // Use periodic dihedral potential: V = k * (1 + cos(phi - phi0))
+                    if(pot) *pot += p.spring_constant * dihedral_pot;
 
-                // Apply force with mass scaling (dihedral_force_mag corresponds to dE/dphi)
-                auto s = Float4(dihedral_force_mag);
+                    // Apply force with mass scaling (dihedral_force_mag corresponds to dE/dphi)
+                    auto s = Float4(dihedral_force_mag);
+                    for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
+                } else {
+                    // Fallback to direct calculation for out-of-range periodic dihedrals
+                    if(pot) *pot += p.spring_constant * (1.0f + cos(delta_phi));
+                    
+                    // Force is the derivative of V = k * (1 + cos(phi - phi0))
+                    // dV/dphi = k * (-sin(phi - phi0)) = -k * sin(delta_phi)
+                    auto s = Float4(-p.spring_constant * sin(delta_phi));
+                    for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
+                }
+            } else if(p.dihedral_type == 2) {
+                // Harmonic dihedral: V = 0.5 * k * (phi - phi0)²
+                if(pot) *pot += 0.5f * p.spring_constant * delta_phi * delta_phi;
+                
+                // Force is the derivative of V = 0.5 * k * (phi - phi0)²
+                // dV/dphi = k * (phi - phi0) = k * delta_phi
+                auto s = Float4(p.spring_constant * delta_phi);
                 for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
             } else {
-                // Fallback to direct calculation for out-of-range dihedrals
-                float displacement = dihedral - p.equil_dihedral;
-                displacement = (displacement> M_PI_F) ? displacement-2.f*M_PI_F : displacement;
-                displacement = (displacement<-M_PI_F) ? displacement+2.f*M_PI_F : displacement;
-
-                if(pot) *pot += 0.5f * p.spring_constant * sqr(displacement);
+                // Unknown dihedral type - use harmonic as fallback
+                if(pot) *pot += 0.5f * p.spring_constant * delta_phi * delta_phi;
                 
-                auto s = Float4(p.spring_constant * displacement);
+                auto s = Float4(p.spring_constant * delta_phi);
                 for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
             }
         }
@@ -826,7 +849,7 @@ struct MartiniPotential : public PotentialNode
             out << "# Each spline contains only the potential - forces calculated as analytical derivatives\n\n";
             out << "# Bond splines: Harmonic potential for bond distances\n";
             out << "# Angle splines: Cosine-based harmonic potential V = 0.5*k*(cos(θ)-cos(θ₀))²\n";
-            out << "# Dihedral splines: Harmonic potential for dihedral angles\n";
+            out << "# Dihedral splines: Periodic potential V = k * (1 + cos(phi - phi0)) for dihedral angles\n";
             out << "# All forces are calculated as analytical derivatives of the potential splines\n";
 
             // --- LJ splines for each unique (epsilon, sigma) ---
@@ -1020,7 +1043,7 @@ struct MartiniPotential : public PotentialNode
                         coul_pot = coulomb_k * qq / dist;
                         float dV_dr = -coulomb_k * qq / (dist * dist);
                         coul_force_mag = -dV_dr;
-                    }
+                }
 
                 // Only apply if potential and force are finite and reasonable
                 if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag)) {

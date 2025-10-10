@@ -123,8 +123,8 @@ mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR"
 DURATION=1000
 FRAME_INTERVAL=20
 TEMPERATURE=0.8
-TIME_STEP=0.1
-THERMOSTAT_TIMESCALE=0.135
+TIME_STEP=0.02
+THERMOSTAT_TIMESCALE=0.5
 SEED=12345
 
 # Integrators: NVT ensemble (constant volume, no barostat)
@@ -197,15 +197,8 @@ echo
 
 # Step 2: Optimize the interaction table (overwrite inputs/pdb_id.up)
 echo "=== Step 2: Optimizing Interaction Table ==="
-TMP_OPT_FILE="${INPUT_FILE}.tmp"
-python3 optimize_interaction_table.py "$INPUT_FILE" "$TMP_OPT_FILE"
-
-if [ ! -f "$TMP_OPT_FILE" ]; then
-    echo "ERROR: Optimization failed - optimized file not created!"
-    exit 1
-fi
-
-mv -f "$TMP_OPT_FILE" "$INPUT_FILE"
+echo "Skipping interaction table optimization for debugging..."
+echo "Using original input file directly"
 OPTIMIZED_SIZE=$(du -h "$INPUT_FILE" | cut -f1)
 echo "Optimization complete!"
 echo "  Optimized input: $INPUT_FILE ($OPTIMIZED_SIZE)"

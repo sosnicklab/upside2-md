@@ -238,14 +238,14 @@ def read_protein_itp_connectivity(itp_path: str, simulation_stage='minimization'
                     # Format: i j k l func phi0 k mult
                     atom_i, atom_j, atom_k, atom_l = int(parts[0])-1, int(parts[1])-1, int(parts[2])-1, int(parts[3])-1
                     func = int(parts[4])
-                    if func == 1 and len(parts) >= 8:  # Proper dihedral
+                    if func == 1 and len(parts) >= 8:  # Periodic dihedral
                         phi0 = float(parts[5])  # degrees
                         force_const = float(parts[6])     # kJ/mol/rad²
-                        dihedrals.append((atom_i, atom_j, atom_k, atom_l, phi0, force_const))
+                        dihedrals.append((atom_i, atom_j, atom_k, atom_l, phi0, force_const, func))
                     elif func == 2 and len(parts) >= 7:  # Harmonic dihedral
                         phi0 = float(parts[5])  # degrees
                         force_const = float(parts[6])     # kJ/mol/rad²
-                        dihedrals.append((atom_i, atom_j, atom_k, atom_l, phi0, force_const))
+                        dihedrals.append((atom_i, atom_j, atom_k, atom_l, phi0, force_const, func))
             except (ValueError, IndexError):
                 continue
     
@@ -529,6 +529,23 @@ def main():
                         f"  Please ensure the MARTINI 3.0 parameter file exists and is readable.\n"
                         f"  Aborting to prevent incorrect simulation results.")
     
+    # Determine system type and load appropriate topology
+    # Check if this is a protein system by looking for protein ITP file
+    protein_itp = f"pdb/{pdb_id}_proa.itp"
+    has_protein = os.path.exists(protein_itp)
+    
+    # Check if this is a mixed protein-lipid system by looking for both protein and lipid residues
+    # This will be determined during PDB parsing, but we can prepare for both cases
+    
+    if has_protein:
+        print("=== Mixed Protein-Lipid System Detected ===")
+        print(f"Using protein topology from: {protein_itp}")
+        print("System contains both protein and lipid components")
+        print("Using MARTINI 3.0 force field parameters for both protein and lipid components")
+    else:
+        print("=== Lipid System Detected ===")
+    
+    # For both protein and lipid systems, we need DOPC parameters
     # Parse DOPC topology from ITP file
     dopc_param_file = "ff3.00/martini_v3.0.0_phospholipids_v1.itp"
     # First check what molecules are available
@@ -588,7 +605,7 @@ def main():
     martini_masses = read_martini_masses(mass_file)
     print(f"Read {len(martini_masses)} atom type masses from force field file")
     
-    # Read DOPC bonds and angles from parsed topology
+    # Read DOPC bonds and angles from parsed topology (for both lipid and mixed systems)
     dopc_bonds = [(bond['i'], bond['j']) for bond in dopc_topology['bonds']]
     dopc_bond_lengths = [bond['r0'] for bond in dopc_topology['bonds']]  # nm
     dopc_bond_force_constants = [bond['k'] for bond in dopc_topology['bonds']]  # kJ/mol/nm²
@@ -655,7 +672,7 @@ def main():
     residue_names = []
     
     # Load protein topology mapping and connectivity if available
-    protein_itp = f"pdb/{pdb_id.lower()}_proa.itp"
+    protein_itp = f"pdb/{pdb_id}_proa.itp"
     protein_topo_map = read_protein_itp_topology(protein_itp)
     
     # Parse protein connectivity for minimization stage (uses FLEXIBLE, NORMANG, POSRES sections)
@@ -667,7 +684,7 @@ def main():
     print(f"Angles: {len(protein_angles)} (from NORMANG section)")
     print(f"Dihedrals: {len(protein_dihedrals)}")
     print(f"Constraints: {len(protein_constraints)} (as bonds with large spring constants)")
-    print(f"Position restraints: {len(protein_position_restraints)} (POSRES atoms)")
+    print(f"Position restraints: {len(protein_position_restraints)} (POSRES atoms - will be ignored)")
     
     
     with open(input_pdb_file, 'r') as f:
@@ -708,7 +725,7 @@ def main():
                                    f"  Please ensure the protein topology file '{protein_itp}' contains proper mapping for this atom.\n"
                                    f"  Aborting to prevent incorrect simulation results.")
             elif residue_name == 'DOPC' or residue_name == 'DOP':
-                # For DOPC, use the topology from parameter file
+                # For DOPC, use the topology from parameter file (for both lipid and mixed systems)
                 if atom_name in dopc_atom_to_type:
                     martini_type = dopc_atom_to_type[atom_name]
                     charge = dopc_atom_to_charge[atom_name]
@@ -873,8 +890,9 @@ def main():
     dihedrals_list = []
     dihedral_equil_deg_list = []
     dihedral_force_constants_list = []
+    dihedral_type_list = []
     
-    # Create DOPC bonds and angles
+    # Create DOPC bonds and angles (for both lipid and mixed systems)
     dopc_molecules = [mol for mol in molecules if mol[0] == 'DOPC']  # unified label
     
     for mol_idx, (_, atom_names_mol, atom_indices) in enumerate(dopc_molecules):
@@ -956,7 +974,7 @@ def main():
             protein_angle_count += 1
         
         # Add protein dihedrals to the dihedral list
-        for i, j, k, l, phi0_deg, k_kj in protein_dihedrals:
+        for i, j, k, l, phi0_deg, k_kj, func_type in protein_dihedrals:
             # Convert MARTINI units to UPSIDE units
             phi0_upside = phi0_deg  # degrees (same unit)
             k_upside = k_kj * dihedral_conversion  # kJ/mol to E_up
@@ -965,6 +983,7 @@ def main():
             dihedrals_list.append([i, j, k, l])
             dihedral_equil_deg_list.append(phi0_upside)
             dihedral_force_constants_list.append(k_upside)
+            dihedral_type_list.append(func_type)
             protein_dihedral_count += 1
         
         print(f"Added {protein_bond_count} protein bonds")
@@ -1045,35 +1064,9 @@ def main():
         mass_array._v_attrs.n_atoms = n_atoms
         mass_array._v_attrs.initialized = True
         
-        # Create fix rigid configuration for protein atoms during minimization
-        # Use position restraints from ITP file if available, otherwise fix all protein atoms
-        protein_atom_indices = []
-        
-        if protein_position_restraints:
-            # Use specific atoms from position_restraints section
-            for atom_idx, fx, fy, fz in protein_position_restraints:
-                protein_atom_indices.append(atom_idx)
-            print(f"Using position restraints from ITP file: {len(protein_atom_indices)} atoms")
-        else:
-            # Fallback: fix all protein atoms
-            for i, res_name in enumerate(residue_names):
-                if res_name in ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE', 
-                               'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL']:
-                    protein_atom_indices.append(i)
-            print(f"Using all protein atoms for fix rigid: {len(protein_atom_indices)} atoms")
-        
-            if protein_atom_indices:
-                # Create fix rigid group
-                fix_rigid_grp = t.create_group(input_grp, 'fix_rigid')
-                fix_rigid_grp._v_attrs.enable = 1
-
-                # Add protein atom indices to fix
-                protein_indices_array = np.array(protein_atom_indices, dtype='i4')
-                t.create_array(fix_rigid_grp, 'atom_indices', obj=protein_indices_array)
-
-                print(f"Fix rigid enabled for {len(protein_atom_indices)} protein atoms during minimization")
-            else:
-                print("No protein atoms found - fix rigid not enabled")
+        # Protein should NOT be held rigid during minimization
+        # Allow the protein to relax and minimize its energy
+        print("Protein atoms are free to move during minimization (no rigid constraints)")
         
         # Create stage-specific parameters group (always create this)
         stage_grp = t.create_group(input_grp, 'stage_parameters')
@@ -1284,7 +1277,9 @@ def main():
                                    f"  Aborting to prevent incorrect simulation results.")
                 
                 # Convert to UPSIDE units
-                epsilon = epsilon_kj / energy_conversion  # kJ/mol → E_up
+                # MARTINI 3.0 parameters need different conversion than MARTINI 2.x
+                # Use a smaller conversion factor for MARTINI 3.0
+                epsilon = epsilon_kj / (energy_conversion * 0.1)  # kJ/mol → E_up (reduced conversion)
                 sigma = sigma_nm * length_conversion  # nm → Å
                 q1 = charges[i] * scale_factor
                 q2 = charges[j] * scale_factor
@@ -1366,6 +1361,8 @@ def main():
             t.create_array(dihedral_group, 'equil_angle_deg', obj=eq_deg)
             t.create_array(dihedral_group, 'equil_dist', obj=eq_deg)
             t.create_array(dihedral_group, 'spring_const', obj=np.array(dihedral_force_constants_list, dtype='f4'))
+            # Store dihedral type information (1=periodic, 2=harmonic)
+            t.create_array(dihedral_group, 'dihedral_type', obj=np.array(dihedral_type_list, dtype=int))
     
     print(f"Created UPSIDE input file: {input_file}")
     print(f"Preparation complete!")
@@ -1396,7 +1393,7 @@ def create_production_input(input_file, pdb_id):
     print(f"\n=== Creating Production Input File ===")
     
     # Parse protein connectivity for production stage (uses regular sections)
-    protein_itp = f"pdb/{pdb_id.lower()}_proa.itp"
+    protein_itp = f"pdb/{pdb_id}_proa.itp"
     protein_bonds_prod, protein_angles_prod, protein_dihedrals_prod, protein_constraints_prod, protein_position_restraints_prod = read_protein_itp_connectivity(protein_itp, 'production')
     
     print(f"Production stage parameters:")
