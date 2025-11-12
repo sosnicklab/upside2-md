@@ -9,6 +9,15 @@ import argparse
 import prody  # for PDB reading
 import re
 
+# Amino acid three-letter to one-letter code dictionary
+three_letter_to_one_letter = {
+    'ALA': 'A', 'ARG': 'R', 'ASN': 'N', 'ASP': 'D',
+    'CYS': 'C', 'GLN': 'Q', 'GLU': 'E', 'GLY': 'G',
+    'HIS': 'H', 'ILE': 'I', 'LEU': 'L', 'LYS': 'K',
+    'MET': 'M', 'PHE': 'F', 'PRO': 'P', 'SER': 'S',
+    'THR': 'T', 'TRP': 'W', 'TYR': 'Y', 'VAL': 'V'
+}
+
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
@@ -160,6 +169,54 @@ def parse_dihedrals(content):
                 'parameters': [float(x) for x in fields[5:]]
             })
     return dihedrals
+
+
+def convert_coordinates(coordinates, topology):
+    """
+    Convert coordinates from MARTINI format to Upside format
+    Args:
+        coordinates: dictionary mapping particle names to coordinates
+        topology: dictionary containing topology information
+    Returns:
+        initial_structure: backbone coordinates in Upside format
+    """
+    # Get list of atoms from topology
+    atoms = topology.get('atoms', [])
+
+    # Initialize initial_structure as 3D array: (n_atom, 3, 1)
+    n_atom = len(atoms)
+    initial_structure = np.zeros((n_atom, 3, 1), dtype=np.float32)
+
+    # Iterate through atoms and assign coordinates
+    for i, atom in enumerate(atoms):
+        # Create a key that matches the coordinate keys in the coordinates dictionary
+        # The coordinate keys are in the format "resname_atomname"
+        key = f"{atom['residue']}_{atom['atom']}"
+
+        if key in coordinates:
+            initial_structure[i, :, 0] = coordinates[key]
+        else:
+            # Use center of mass if atom coordinates not found
+            eprint(f"WARNING: Coordinates for {key} not found in PDB file")
+            initial_structure[i, :, 0] = np.zeros(3)
+
+    return initial_structure
+
+
+def convert_interactions(interactions, topology):
+    """
+    Convert interactions from MARTINI format to Upside format
+    Args:
+        interactions: dictionary containing interaction parameters
+        topology: dictionary containing topology information
+    Returns:
+        upside_interactions: converted interaction parameters
+    """
+    # This is a placeholder - implement the actual conversion later
+    # For now, just return the interactions as-is
+    eprint("WARNING: convert_interactions is a placeholder implementation")
+    return interactions
+
 
 def convert_to_upside_format(pdb_data, itp_data):
     """
