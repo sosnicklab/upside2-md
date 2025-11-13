@@ -9,7 +9,8 @@
       "mcp__serena__list_dir",
       "mcp__serena__read_file",
       "mcp__serena__get_symbols_overview",
-      "mcp__serena__search_for_pattern"
+      "mcp__serena__search_for_pattern",
+      "mcp__serena__execute_shell_command"
     ],
     "deny": [],
     "ask": []
