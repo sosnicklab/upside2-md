@@ -21,7 +21,7 @@ set(CMAKE_OSX_ARCHITECTURES arm64)
 
 include_directories(SYSTEM "include")
 include_directories(/opt/homebrew/include)
-include_directories(/opt/homebrew/include/eigen3) 
+include_directories(/opt/homebrew/opt/eigen@3/include/eigen3)
 link_directories(/opt/homebrew/opt/libomp/lib)
 
 set(ENGINE_SRC 
