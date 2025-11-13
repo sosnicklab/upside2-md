@@ -107,3 +107,5 @@ The `example/` directory contains tutorials for various use cases:
 ## Dependencies
 - **C++**: CMake 2.8+, C++11 compiler, HDF5 1.8+, Eigen 3.0+
 - **Python**: Python 3.7+, Numpy, Scipy, PyTables, Prody, MDTraj (optional)
+- for compling this project, run install_M1.sh at project root
+- for running any script in this project, source source.sh and .venv/bin/activate at project root
