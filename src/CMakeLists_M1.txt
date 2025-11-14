@@ -3,8 +3,10 @@
 
 set(CMAKE_MODULE_PATH "../cmake;${CMAKE_MODULE_PATH}")
 find_package(HDF5 REQUIRED COMPONENTS C)
-find_package(Eigen3 REQUIRED NO_MODULE)
-include_directories(${EIGEN3_INCLUDE_DIRS})
+# Use Eigen 3 instead of Eigen 5 to avoid isfinite_impl error
+find_package(Eigen3 REQUIRED)
+set(EIGEN3_INCLUDE_DIR "/opt/homebrew/Cellar/eigen@3/3.4.1/include/eigen3")
+include_directories(${EIGEN3_INCLUDE_DIR})
 find_package(OpenMP REQUIRED)
 
 set(ARCH "native" CACHE STRING "architecture to use for -march flag to compiler")
