@@ -14,7 +14,11 @@
       "mcp__serena__replace_regex",
       "mcp__serena__find_symbol",
       "mcp__serena__edit_memory",
-      "mcp__serena__write_memory"
+      "mcp__serena__write_memory",
+      "Bash(xargs:*)",
+      "Bash(python3:*)",
+      "Bash(chmod:*)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

@@ -109,3 +109,4 @@ The `example/` directory contains tutorials for various use cases:
 - **Python**: Python 3.7+, Numpy, Scipy, PyTables, Prody, MDTraj (optional)
 - for compling this project, run install_M1.sh at project root
 - for running any script in this project, source source.sh and .venv/bin/activate at project root
+- Do not make any change without user specify a mission.
