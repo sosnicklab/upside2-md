@@ -55,7 +55,7 @@ def prepare_simulation_input():
 
         # prepare_martini.py requires only PDB ID as argument (it looks for pdb/{PDB_ID}.MARTINI.pdb internally)
         print(f"Preparing initial input file: {input_file}")
-        cmd = f"python prepare_martini.py {PDB_FILE}"
+        cmd = f"python3 prepare_martini.py {PDB_FILE}"
         run_command(cmd)
 
         # Move the generated input file to the expected location

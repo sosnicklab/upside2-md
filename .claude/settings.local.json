@@ -18,7 +18,8 @@
       "Bash(xargs:*)",
       "Bash(python3:*)",
       "Bash(chmod:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(source:*)"
     ],
     "deny": [],
     "ask": []
