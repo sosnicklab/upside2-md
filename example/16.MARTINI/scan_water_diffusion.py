@@ -32,7 +32,7 @@ if not is_present:
     THERMOSTAT_TIMESCALES = np.sort(np.append(THERMOSTAT_TIMESCALES, target))
 DURATION = 10000  # Simulation duration (steps)
 FRAME_INTERVAL = 50  # Frame saving interval
-PDB_FILE = "pdb/water.MARTINI.pdb"  # Input PDB file
+PDB_FILE = "water"  # PDB ID (for prepare_martini.py, it will look for pdb/water.MARTINI.pdb)
 RUN_PREFIX = "water_diffusion_scan"  # Prefix for output directories
 
 def run_command(cmd, cwd=None):
@@ -50,9 +50,28 @@ def prepare_simulation_input():
     input_file = "inputs/water.up"
 
     if not os.path.exists(input_file):
+        # Create inputs directory if it doesn't exist
+        os.makedirs("inputs", exist_ok=True)
+
+        # prepare_martini.py requires only PDB ID as argument (it looks for pdb/{PDB_ID}.MARTINI.pdb internally)
         print(f"Preparing initial input file: {input_file}")
-        cmd = f"python prepare_martini.py -f {PDB_FILE} -o {input_file}"
+        cmd = f"python prepare_martini.py {PDB_FILE}"
         run_command(cmd)
+
+        # Move the generated input file to the expected location
+        generated_file = f"outputs/martini_test/{PDB_FILE}.MARTINI.pdb.up"  # prepare_martini.py generates this
+        if os.path.exists(generated_file):
+            os.rename(generated_file, input_file)
+        else:
+            # Check if the output file name is different
+            print(f"Warning: Expected generated file not found: {generated_file}")
+            print("Checking for possible output files...")
+            generated_files = [f for f in os.listdir("outputs/martini_test") if f.endswith(".up")]
+            if generated_files:
+                os.rename(f"outputs/martini_test/{generated_files[0]}", input_file)
+                print(f"Found and renamed: {generated_files[0]}")
+            else:
+                raise FileNotFoundError(f"Could not find the generated .up file")
 
     return input_file
 
