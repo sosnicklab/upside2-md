@@ -165,7 +165,7 @@ if len(water_traj) > 0 and water_traj.n_atoms > 1:
 
     if len(bulk_indices) > 0:
         bulk_traj = water_traj.atom_slice(bulk_indices)
-        print(f"Selected {len(bulk_indices)} bulk water atoms (excluded {water_traj.n_atoms - len(bulk_indices)} edge atoms)")
+        print(f"Selected {{len(bulk_indices)}} bulk water atoms (excluded {{water_traj.n_atoms - len(bulk_indices)}} edge atoms)")
     else:
         print("Warning: No bulk water atoms found, using all atoms")
 
@@ -182,47 +182,14 @@ if len(times) >= 2:
     with open("diffusion_rate.txt", "w") as f:
         f.write(f"Temperature: {temperature:.3f} reduced units\\n")
         f.write(f"ThermostatTimescale: {tau:.3f} reduced units\\n")
-        f.write(f"DiffusionRate: {D_cm2s:.9f} cm²/s\\n")
-        f.write(f"MSDSlope: {slope:.6f} nm²/ps\\n")
-        f.write(f"MSDIntercept: {intercept:.6f} nm²\\n")
-        f.write(f"BulkWaterAtoms: {bulk_traj.n_atoms}\\n")
-        f.write(f"TotalWaterAtoms: {water_traj.n_atoms}\\n")
-    print(f"Completed simulation T={temperature:.3f}, tau={tau:.3f}: D={D_cm2s:.9f} cm²/s")
+        f.write(f"DiffusionRate: {{D_cm2s:.9f}} cm²/s\\n")
+        f.write(f"MSDSlope: {{slope:.6f}} nm²/ps\\n")
+        f.write(f"MSDIntercept: {{intercept:.6f}} nm²\\n")
+        f.write(f"BulkWaterAtoms: {{bulk_traj.n_atoms}}\\n")
+        f.write(f"TotalWaterAtoms: {{water_traj.n_atoms}}\\n")
+    print(f"Completed simulation T={temperature:.3f}, tau={tau:.3f}: D={{D_cm2s:.9f}} cm²/s")
 EOF
-'
-import os
-import sys
-sys.path.append(os.path.abspath('../../../py'))
-import mdtraj as md
-import mdtraj_upside as mu
-import numpy as np
 
-# Load trajectory
-traj_file = "water.run.up"
-traj = mu.load_upside_traj(traj_file, traj_file)
-
-# Select water atoms
-water_sel = traj.top.select("resname W")
-water_traj = traj.atom_slice(water_sel)
-
-# Calculate MSD
-msd = md.compute_msd(water_traj, select="all", window=100)
-times = traj.time
-
-# Calculate diffusion rate using Einstein relation (D = slope/6)
-if len(times) >= 2:
-    slope, intercept = np.polyfit(times[1:], msd[1:], 1)
-    D_cm2s = (slope / 6.0) * 1e-5  # Convert nm²/ps to cm²/s
-
-    # Write result
-    with open("diffusion_rate.txt", "w") as f:
-        f.write(f"Temperature: {temperature:.3f} reduced units\\n")
-        f.write(f"ThermostatTimescale: {tau:.3f} reduced units\\n")
-        f.write(f"DiffusionRate: {D_cm2s:.9f} cm²/s\\n")
-        f.write(f"MSDSlope: {slope:.6f} nm²/ps\\n")
-        f.write(f"MSDIntercept: {intercept:.6f} nm²\\n")
-    print(f"Completed simulation T={temperature:.3f}, tau={tau:.3f}: D={D_cm2s:.9f} cm²/s")
-EOF
 """
 
     script_name = os.path.join(run_dir, "run_simulation.sh")

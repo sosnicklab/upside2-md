@@ -19,7 +19,8 @@
       "Bash(python3:*)",
       "Bash(chmod:*)",
       "Bash(python:*)",
-      "Bash(source:*)"
+      "Bash(source:*)",
+      "mcp__serena__replace_content"
     ],
     "deny": [],
     "ask": []
