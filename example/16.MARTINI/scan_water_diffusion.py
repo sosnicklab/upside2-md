@@ -88,9 +88,8 @@ def generate_simulation_script(temperature, tau):
     # Simulation command
     upside_binary = os.path.join(UPSIDE_HOME, "obj", "upside")
     input_file = os.path.abspath("inputs/water.up")
-    # Output files will be written in the current directory (run_dir)
+    # Output file will be written in the current directory (run_dir)
     output_file = "water.run.up"
-    log_file = "water.run.log"
 
     # Build command with thermostat timescale
     cmd = [
@@ -100,7 +99,6 @@ def generate_simulation_script(temperature, tau):
         f"--temperature {temperature:.3f}",
         f"--thermostat-timescale {tau:.3f}",
         f"--output {output_file}",
-        f"--log-file {log_file}",
         f"{input_file}"
     ]
 

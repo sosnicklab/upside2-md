@@ -24,7 +24,11 @@
       "Bash(export UPSIDE_HOME=/Users/yinhan/Documents/upside2-md:*)",
       "Bash(__NEW_LINE__ export UPSIDE_HOME=/Users/yinhan/Documents/upside2-md)",
       "Bash(__NEW_LINE__ grep -A 20 \"# Run the simulation\" water_diffusion_scan/T0p600_tau0p000/run_simulation.sh)",
-      "Bash(__NEW_LINE__ rm -rf water_diffusion_scan run_scan.slurm slurm_output inputs/water.up)"
+      "Bash(__NEW_LINE__ rm -rf water_diffusion_scan run_scan.slurm slurm_output inputs/water.up)",
+      "Bash(__NEW_LINE__ grep -i \"log-file\\|logfile\" /Users/yinhan/Documents/upside2-md/src/main.cpp)",
+      "Bash(__NEW_LINE__ grep -A 100 \"command line options\" /Users/yinhan/Documents/upside2-md/src/main.cpp)",
+      "Bash(__NEW_LINE__ grep -n -A 20 \"TCLAP::\" /Users/yinhan/Documents/upside2-md/src/main.cpp)",
+      "Bash(__NEW_LINE__ grep -n -B 10 -A 100 \"upside_main\" /Users/yinhan/Documents/upside2-md/src/main.cpp)"
     ],
     "deny": [],
     "ask": []
