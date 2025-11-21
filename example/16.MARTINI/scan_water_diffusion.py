@@ -195,6 +195,10 @@ EOF
 
 def generate_slurm_script(all_scripts):
     """Generate a SLURM job array script to run all simulations in parallel"""
+    # Create the scripts array line properly without using inner f-strings
+    scripts_array_line = 'scripts=(' + ' '.join(all_scripts) + ')'
+
+    # Now build the full SLURM script content
     slurm_content = f"""#!/bin/bash
 # SLURM job array for water diffusion parameter scan
 
@@ -209,7 +213,7 @@ def generate_slurm_script(all_scripts):
 cd "$(dirname "$0")"
 
 # Execute the corresponding simulation script
-scripts=({'"'+'","'.join(all_scripts)+'"'})
+{scripts_array_line}
 script=${{scripts[$SLURM_ARRAY_TASK_ID]}}
 bash "$script"
 """

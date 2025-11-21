@@ -21,7 +21,8 @@
       "Bash(python:*)",
       "Bash(source:*)",
       "mcp__serena__replace_content",
-      "Bash(export UPSIDE_HOME=/Users/yinhan/Documents/upside2-md:*)"
+      "Bash(export UPSIDE_HOME=/Users/yinhan/Documents/upside2-md:*)",
+      "Bash(__NEW_LINE__ export UPSIDE_HOME=/Users/yinhan/Documents/upside2-md)"
     ],
     "deny": [],
     "ask": []
