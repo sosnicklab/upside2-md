@@ -20,7 +20,8 @@
       "Bash(chmod:*)",
       "Bash(python:*)",
       "Bash(source:*)",
-      "mcp__serena__replace_content"
+      "mcp__serena__replace_content",
+      "Bash(export UPSIDE_HOME=/Users/yinhan/Documents/upside2-md:*)"
     ],
     "deny": [],
     "ask": []

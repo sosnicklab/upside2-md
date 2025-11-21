@@ -109,17 +109,9 @@ def generate_simulation_script(temperature, tau):
 
 set -e
 
-# Change to the run directory
-cd "$(dirname "$0")"
-cd {run_dir}
-
-# Run the simulation
-{' '.join(cmd)}
-
-#!/bin/bash
-# Simulation run script for T={temperature:.3f}, tau={tau:.3f}
-
-set -e
+# Source the environment setup and activate virtual environment
+source {UPSIDE_HOME}/source.sh
+source {UPSIDE_HOME}/.venv/bin/activate
 
 # Change to the run directory
 cd "$(dirname "$0")"
