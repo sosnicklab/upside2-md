@@ -87,9 +87,10 @@ def generate_simulation_script(temperature, tau):
 
     # Simulation command
     upside_binary = os.path.join(UPSIDE_HOME, "obj", "upside")
-    input_file = "inputs/water.up"
-    output_file = os.path.join(run_dir, "water.run.up")
-    log_file = os.path.join(run_dir, "water.run.log")
+    input_file = os.path.abspath("inputs/water.up")
+    # Output files will be written in the current directory (run_dir)
+    output_file = "water.run.up"
+    log_file = "water.run.log"
 
     # Build command with thermostat timescale
     cmd = [
@@ -115,7 +116,6 @@ source {UPSIDE_HOME}/.venv/bin/activate
 
 # Change to the run directory
 cd "$(dirname "$0")"
-cd {run_dir}
 
 # Run the simulation
 {' '.join(cmd)}
@@ -195,8 +195,10 @@ EOF
 
 def generate_slurm_script(all_scripts):
     """Generate a SLURM job array script to run all simulations in parallel"""
-    # Create the scripts array line properly without using inner f-strings
-    scripts_array_line = 'scripts=(' + ' '.join(all_scripts) + ')'
+    # Create the scripts array line with absolute paths
+    import os
+    all_scripts_absolute = [os.path.abspath(script) for script in all_scripts]
+    scripts_array_line = 'scripts=(' + ' '.join(all_scripts_absolute) + ')'
 
     # Now build the full SLURM script content
     slurm_content = f"""#!/bin/bash
