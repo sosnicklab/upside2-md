@@ -1,20 +1,20 @@
 import os
-import subprocess
-import numpy as np
+import sys
 
 # Configuration
+# Update these paths to match your exact cluster setup if they differ
 base_dir = "/home/yinhanw/project/yinhan/upside2-md/example/16.MARTINI/water_diffusion"
-# Ensure this is the absolute path to your input file
-input_file = "/project/trsosnic/yinhan/upside2-md/example/16.MARTINI/inputs/water.up" 
+input_file = "/project/trsosnic/yinhan/upside2-md/example/16.MARTINI/inputs/water.up"
 upside_exec = "/home/yinhanw/project/yinhan/upside2-md/obj/upside"
 source_script = "/home/yinhanw/project/yinhan/upside2-md/source.sh"
 venv_activate = "/home/yinhanw/project/yinhan/upside2-md/.venv/bin/activate"
 
-# Simulation parameters
-temperatures = [0.600] # Add more temperatures as needed
-taus = [0.000]         # Add more timescales as needed (0.000 = Andersen thermostat / Langevin)
+# --- SIMULATION PARAMETERS ---
+# Restore your full range of parameters here
+temperatures = [0.600, 0.620, 0.640, 0.660, 0.680, 0.700] 
+taus = [0.000] 
 
-# Create base directory if it doesn't exist
+# Create base directory
 if not os.path.exists(base_dir):
     os.makedirs(base_dir)
 
@@ -27,8 +27,8 @@ for T in temperatures:
         if not os.path.exists(run_dir):
             os.makedirs(run_dir)
             
-        # Define the script content
-        # Note: We use {input_file} inside the f-string to inject the path
+        # Generate the script content
+        # FIX: We inject {input_file} into the Python block below
         script_content = f"""#!/bin/bash
 # Simulation run script for T={T:.3f}, tau={tau:.3f}
 
@@ -55,9 +55,9 @@ import numpy as np
 
 # Load trajectory
 traj_file = "water.run.up"
-top_file = "{input_file}"  # <--- FIX: Injected input file path for topology
+top_file = "{input_file}"  # <--- FIX: Point to the actual input file for topology
 
-# Load Upside trajectory using input file for topology and run file for coordinates
+# Load Upside trajectory (using top_file for topology, traj_file for coordinates)
 traj = mu.load_upside_traj(traj_file, top_file)
 
 # Select water atoms
@@ -66,27 +66,27 @@ water_traj = traj.atom_slice(water_sel)
 
 # Filter out edge particles (system is non-periodic)
 bulk_traj = water_traj
-
 if len(water_traj) > 0 and water_traj.n_atoms > 1:
     # Parameters for bulk water selection
-    neighbor_cutoff = 0.5  # nm
-    bulk_neighbor_threshold = 3 
+    neighbor_cutoff = 0.5  # nm (5 Å)
+    bulk_neighbor_threshold = 3  # At least 3 neighbors to be considered bulk
 
     # Compute neighbors for all atoms in the first frame
     neighbors = md.compute_neighbors(water_traj, cutoff=neighbor_cutoff,
                                      query_indices=range(water_traj.n_atoms),
                                      haystack_indices=None, frame=0)
 
+    # Count neighbors for each atom
     neighbor_counts = [len(nbrs) for nbrs in neighbors]
+
+    # Select bulk atoms
     bulk_indices = [i for i, count in enumerate(neighbor_counts) if count >= bulk_neighbor_threshold]
 
-    # <--- FIX: Robust fallback logic
-    if len(bulk_indices) > 5:
+    if len(bulk_indices) > 0:
         bulk_traj = water_traj.atom_slice(bulk_indices)
         print(f"Selected {{len(bulk_indices)}} bulk water atoms (excluded {{water_traj.n_atoms - len(bulk_indices)}} edge atoms)")
     else:
-        print("Warning: Too few bulk atoms found (small system?), using all water atoms.")
-        bulk_traj = water_traj
+        print("Warning: No bulk water atoms found, using all atoms")
 
 # Calculate MSD
 msd = md.compute_msd(bulk_traj, select="all", window=100)
@@ -110,15 +110,11 @@ if len(times) >= 2:
 EOF
 """
         
-        # Write the script
+        # Write the script file
         script_path = os.path.join(run_dir, "run_simulation.sh")
         with open(script_path, "w") as f:
             f.write(script_content)
         
         # Make executable
         os.chmod(script_path, 0o755)
-        
-        print(f"Generated script for T={T:.3f}, tau={tau:.3f} in {run_dir}")
-        
-        # Optional: Submit to slurm or run locally
-        # subprocess.run(["sbatch", script_path])
+        print(f"Generated script for T={T:.3f}, tau={tau:.3f}")
