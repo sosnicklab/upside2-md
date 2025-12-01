@@ -1,159 +1,115 @@
-#!/usr/bin/env python3
-"""
-Plotting Script for Water Diffusion Parameter Scan Results
-"""
-
 import os
 import re
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import linregress
 
-RUN_PREFIX = "water_diffusion_scan"
+# --- CONFIGURATION ---
+# Correct path to your simulation results
+RUN_PREFIX = "/home/yinhanw/project/yinhan/upside2-md/example/16.MARTINI/water_diffusion"
+TARGET_TAU = 0.135  # The specific thermostat interval you want to analyze
 
-def read_results():
+def read_results(base_path):
     """Read all diffusion rate results from the scan directories"""
     results = []
+    # Regex to match folder names like T0p600_tau0p000
     pattern = re.compile(r'T([0-9]+p[0-9]+)_tau([0-9]+p[0-9]+)')
 
-    # Find all run directories
-    if not os.path.exists(RUN_PREFIX):
-        print(f"Error: Results directory '{RUN_PREFIX}' not found!")
-        print("Please run the parameter scan first.")
+    if not os.path.exists(base_path):
+        print(f"Error: Results directory '{base_path}' not found!")
         return []
 
-    for run_dir in os.listdir(RUN_PREFIX):
+    print(f"Scanning directory: {base_path}")
+    
+    # Iterate over all directories
+    for run_dir in sorted(os.listdir(base_path)):
         match = pattern.match(run_dir)
         if match:
+            # Parse parameters from folder name
             temp_str = match.group(1).replace("p", ".")
             tau_str = match.group(2).replace("p", ".")
             temperature = float(temp_str)
             tau = float(tau_str)
 
-            # Read diffusion rate from the result file
-            result_file = os.path.join(RUN_PREFIX, run_dir, "diffusion_rate.txt")
+            result_file = os.path.join(base_path, run_dir, "diffusion_rate.txt")
+            
             if os.path.exists(result_file):
                 d = None
-                bulk_atoms = None
-                total_atoms = None
-
                 with open(result_file, "r") as f:
                     for line in f:
                         line = line.strip()
+                        # Robustly parse "DiffusionRate: X.XXXX cm^2/s"
                         if line.startswith("DiffusionRate:"):
-                            d = float(line.split(":")[1].strip().split()[0])
-                        elif line.startswith("BulkWaterAtoms:"):
-                            bulk_atoms = int(line.split(":")[1].strip())
-                        elif line.startswith("TotalWaterAtoms:"):
-                            total_atoms = int(line.split(":")[1].strip())
-
+                            parts = line.split(":")
+                            if len(parts) > 1:
+                                value_part = parts[1].strip().split()[0] # Get number before units
+                                try:
+                                    d = float(value_part)
+                                except ValueError:
+                                    pass
+                
                 if d is not None:
-                    results.append((temperature, tau, d, bulk_atoms, total_atoms))
+                    results.append({'T': temperature, 'tau': tau, 'D': d})
+                    print(f"  [Loaded] T={temperature:.3f}, tau={tau:.3f} -> D={d:.3e}")
+            else:
+                 # Directory exists but job might not have finished/written result yet
+                 pass
 
     return results
 
-def plot_temperature_vs_diffusion(results):
-    """Plot temperature vs. diffusion rate and fit a line"""
-    if not results:
+def plot_diffusion_vs_temp_fixed_tau(results, target_tau):
+    """Plot Diffusion vs Temp for a specific Tau"""
+    
+    # Filter results for the target tau (using epsilon for float comparison)
+    subset = [r for r in results if abs(r['tau'] - target_tau) < 1e-4]
+    
+    # Sort by temperature for clean plotting
+    subset.sort(key=lambda x: x['T'])
+    
+    if not subset:
+        print(f"\n[Warning] No results found for tau = {target_tau}")
+        
+        # Show what IS available to help debug
+        available_taus = sorted(list(set(r['tau'] for r in results)))
+        print(f"Available thermostat timescales found: {available_taus}")
         return
 
-    temperatures, taus, diff_rates, _, _ = zip(*results)
+    temps = [r['T'] for r in subset]
+    diffs = [r['D'] for r in subset]
 
-    # Create scatter plot
-    plt.figure(figsize=(10, 6))
-    plt.scatter(temperatures, diff_rates, c='blue', alpha=0.7, label='Data')
-
-    # Fit linear regression
-    slope, intercept, r_value, p_value, std_err = linregress(temperatures, diff_rates)
-    fit_line = slope * np.array(temperatures) + intercept
-
-    # Plot the fit
-    plt.plot(temperatures, fit_line, c='red', lw=2, label=f'Fit: D = {slope:.6f}T + {intercept:.6f}\nR² = {r_value**2:.6f}')
+    # Plotting
+    plt.figure(figsize=(8, 6))
+    plt.plot(temps, diffs, 'o-', linewidth=2, markersize=8, label=f'tau={target_tau}')
+    
+    # Optional: Linear Fit
+    if len(temps) > 1:
+        slope, intercept, r_value, _, _ = linregress(temps, diffs)
+        fit_line = [slope * t + intercept for t in temps]
+        plt.plot(temps, fit_line, '--', color='red', label=f'Fit: R²={r_value**2:.3f}')
 
     plt.xlabel('Temperature (reduced units)', fontsize=12)
     plt.ylabel('Diffusion Rate (cm²/s)', fontsize=12)
-    plt.title('Temperature vs. Water Diffusion Rate', fontsize=14)
-    plt.legend(fontsize=11)
+    plt.title(f'Water Diffusion vs Temperature (tau={target_tau})', fontsize=14)
     plt.grid(True, alpha=0.3)
+    plt.legend()
     plt.tight_layout()
-
-    # Save plot
-    plt.savefig('temperature_vs_diffusion.pdf', dpi=300, bbox_inches='tight')
-    plt.savefig('temperature_vs_diffusion.png', dpi=300, bbox_inches='tight')
-    plt.close()
-
-    # Print fit results
-    print("=== TEMPERATURE vs. DIFFUSION RATE ===")
-    print(f"Fit equation: D = {slope:.6f} * T + {intercept:.6f}")
-    print(f"R-squared: {r_value**2:.6f}")
-    print(f"Standard error: {std_err:.6f}")
-    print(f"P-value: {p_value:.6f}")
-    print()
-
-def plot_thermostat_timescale_vs_diffusion(results):
-    """Plot thermostat timescale vs. diffusion rate and fit a line"""
-    if not results:
-        return
-
-    temperatures, taus, diff_rates, _, _ = zip(*results)
-
-    # Create scatter plot
-    plt.figure(figsize=(10, 6))
-    plt.scatter(taus, diff_rates, c='green', alpha=0.7, label='Data')
-
-    # Fit linear regression
-    slope, intercept, r_value, p_value, std_err = linregress(taus, diff_rates)
-    fit_line = slope * np.array(taus) + intercept
-
-    # Plot the fit
-    plt.plot(taus, fit_line, c='red', lw=2, label=f'Fit: D = {slope:.6f}τ + {intercept:.6f}\nR² = {r_value**2:.6f}')
-
-    plt.xlabel('Thermostat Timescale (reduced units)', fontsize=12)
-    plt.ylabel('Diffusion Rate (cm²/s)', fontsize=12)
-    plt.title('Thermostat Timescale vs. Water Diffusion Rate', fontsize=14)
-    plt.legend(fontsize=11)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-
-    # Save plot
-    plt.savefig('thermostat_timescale_vs_diffusion.pdf', dpi=300, bbox_inches='tight')
-    plt.savefig('thermostat_timescale_vs_diffusion.png', dpi=300, bbox_inches='tight')
-    plt.close()
-
-    # Print fit results
-    print("=== THERMOSTAT TIMESCALE vs. DIFFUSION RATE ===")
-    print(f"Fit equation: D = {slope:.6f} * τ + {intercept:.6f}")
-    print(f"R-squared: {r_value**2:.6f}")
-    print(f"Standard error: {std_err:.6f}")
-    print(f"P-value: {p_value:.6f}")
-    print()
+    
+    # Save output
+    output_filename = f'diffusion_vs_T_tau{target_tau:.3f}.png'.replace('.', 'p')
+    plt.savefig(output_filename, dpi=300)
+    print(f"\n[Success] Plot saved to {output_filename}")
 
 def main():
-    print("=== PLOTTING DIFFUSION RATE RESULTS ===")
-    print()
-
-    # Read all results
-    results = read_results()
-
+    print("=== ANALYSIS STARTED ===")
+    results = read_results(RUN_PREFIX)
+    
     if not results:
-        print("No results found!")
+        print("No results parsed. Check if simulations completed.")
         return
 
-    print(f"Found {len(results)} results")
-    print()
-
-    # Plot temperature vs diffusion
-    plot_temperature_vs_diffusion(results)
-
-    # Plot thermostat timescale vs diffusion
-    plot_thermostat_timescale_vs_diffusion(results)
-
-    print("=== PLOTTING COMPLETE ===")
-    print("Generated plots:")
-    print("  - temperature_vs_diffusion.pdf/png")
-    print("  - thermostat_timescale_vs_diffusion.pdf/png")
-    print()
-    print("Done!")
+    # Plot specific request
+    print(f"\n--- Plotting for Target Tau = {TARGET_TAU} ---")
+    plot_diffusion_vs_temp_fixed_tau(results, target_tau=TARGET_TAU)
 
 if __name__ == "__main__":
     main()
