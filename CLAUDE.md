@@ -110,3 +110,4 @@ The `example/` directory contains tutorials for various use cases:
 - for compling this project, run install_M1.sh at project root
 - for running any script in this project, source source.sh and .venv/bin/activate at project root
 - Do not make any change without user specify a mission.
+- Read ./example/16.MARTINI/extract_martini_vtf.py for input and output file structures.
