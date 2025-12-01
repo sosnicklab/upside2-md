@@ -11,8 +11,9 @@ source_script = "/home/yinhanw/project/yinhan/upside2-md/source.sh"
 venv_activate = "/home/yinhanw/project/yinhan/upside2-md/.venv/bin/activate"
 
 # --- PARAMETERS ---
-temperatures = np.arange(0.500, 1.000, 0.020)
-taus = [0.000, 0.010, 0.020, 0.050, 0.100, 0.200, 0.500, 1.000, 2.000, 5.000, 10.000]
+temperatures = np.arange(0.600, 1.001, 0.02)
+taus_1 = np.append(np.arange(1, 5.1, 0.5), 0.135)
+taus = np.sort(np.append(np.arange(0.0, 0.21, 0.01), taus_1))
 
 # --- SCRIPT GENERATION ---
 
