@@ -30,7 +30,7 @@ for T in temperatures:
         if not os.path.exists(run_dir):
             os.makedirs(run_dir)
             
-        # Embedded Python script with 10000 steps + 10% Skip Logic
+        # Embedded Python script with High Precision + Native Units
         script_content = f"""#!/bin/bash
 # Simulation run script for T={T:.3f}, tau={tau:.3f}
 
@@ -42,7 +42,7 @@ source {venv_activate}
 
 cd "$(dirname "$0")"
 
-# Run Simulation (Duration restored to 10000)
+# Run Simulation (Duration 10000 steps)
 {upside_exec} --duration 10000 --frame-interval 50 --temperature {T:.3f} --thermostat-timescale {tau:.3f} --output water.run.up {input_file}
 
 # Calculate Diffusion
@@ -163,17 +163,20 @@ if n_frames > (start_frame + 2):
     slope, intercept = np.polyfit(fit_time, fit_msd, 1)
     
     # D = Slope / 6
-    # Conversion: nm^2/ps -> cm^2/s using 1e-5 scaling
-    D_cm2s = (slope / 6.0) * 1e-5 
+    # Unit: nm^2 / ps (Native units)
+    D_nm2ps = slope / 6.0
 
+    # Write Result with High Precision (.12e = 12 decimal places)
     with open("diffusion_rate.txt", "w") as f:
         f.write(f"Temperature: {T:.3f} reduced units\\n")
         f.write(f"ThermostatTimescale: {tau:.3f} reduced units\\n")
-        f.write(f"DiffusionRate: {{D_cm2s:.9f}} cm^2/s\\n")
-        f.write(f"MSDSlope: {{slope:.6f}} nm^2/ps\\n")
+        f.write(f"DiffusionRate: {{D_nm2ps:.12e}} nm^2/ps\\n")
+        f.write(f"MSDSlope: {{slope:.12e}} nm^2/ps\\n")
         f.write(f"AnalysisStartFrame: {{start_frame}}\\n")
         f.write(f"BulkMethod: {{'Neighbors' if len(bulk_indices) > 10 and 'neighbor_counts' in locals() and len([x for x in neighbor_counts if x>=3]) > 10 else 'CenterOfMass'}}\\n")
-    print(f"Completed T={T:.3f}, tau={tau:.3f}: D={{D_cm2s:.9f}} cm^2/s (Skipped first {{start_frame}} frames)")
+    
+    # Print high precision to stdout as well
+    print(f"Completed T={T:.3f}, tau={tau:.3f}: D={{D_nm2ps:.12e}} nm^2/ps (Skipped first {{start_frame}} frames)")
 else:
     print("Not enough frames.")
 EOF
