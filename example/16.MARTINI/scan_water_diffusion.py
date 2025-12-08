@@ -10,8 +10,11 @@ upside_exec = "/home/yinhanw/project/yinhan/upside2-md/obj/upside"
 source_script = "/home/yinhanw/project/yinhan/upside2-md/source.sh"
 venv_activate = "/home/yinhanw/project/yinhan/upside2-md/.venv/bin/activate"
 
-# --- PARAMETERS ---
+# --- PARAMETERS (UPDATED) ---
+# Temperature Range: 0.600 to 1.000 (step 0.02)
 temperatures = np.arange(0.600, 1.001, 0.02)
+
+# Tau Range: 0.0-0.2 (step 0.01) + 1.0-5.0 (step 0.5) + 0.135
 taus_1 = np.append(np.arange(1, 5.1, 0.5), 0.135)
 taus = np.sort(np.append(np.arange(0.0, 0.21, 0.01), taus_1))
 
@@ -30,7 +33,7 @@ for T in temperatures:
         if not os.path.exists(run_dir):
             os.makedirs(run_dir)
             
-        # Embedded Python script with High Precision + Native Units
+        # Embedded Python script with STRICT Edge Exclusion + High Precision
         script_content = f"""#!/bin/bash
 # Simulation run script for T={T:.3f}, tau={tau:.3f}
 
@@ -59,14 +62,24 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 traj_file = "water.run.up"
 
-# --- HELPER: CUSTOM MSD ---
+# --- HELPER: CUSTOM MSD WITH DRIFT REMOVAL ---
 def calculate_msd(traj):
     xyz = traj.xyz
     n_frames = xyz.shape[0]
     msd = np.zeros(n_frames)
+    
+    # 1. REMOVE CENTER OF MASS DRIFT
+    # Critical for droplets: calculate diffusion RELATIVE to the droplet center
+    # Calculate COM for each frame
+    com = np.mean(xyz, axis=1) # Shape: (n_frames, 3)
+    # Subtract COM from coords (broadcasting)
+    xyz_centered = xyz - com[:, np.newaxis, :]
+    
+    # 2. CALCULATE WINDOWED MSD
     # Loop over time lags (tau)
     for tau in range(1, n_frames):
-        diff = xyz[tau:] - xyz[:-tau]
+        # Displacement using centered coordinates
+        diff = xyz_centered[tau:] - xyz_centered[:-tau]
         sq_dist = np.sum(diff**2, axis=-1)
         msd[tau] = np.mean(sq_dist)
     return msd
@@ -127,22 +140,24 @@ if len(water_traj) > 0 and water_traj.n_atoms > 1:
     neighbor_counts = [len(nbrs) for nbrs in neighbors]
     bulk_indices = [i for i, count in enumerate(neighbor_counts) if count >= bulk_threshold]
 
-    if len(bulk_indices) > 10:
+    if len(bulk_indices) > 20:
         bulk_traj = water_traj.atom_slice(bulk_indices)
         print(f"Selected {{len(bulk_indices)}} bulk atoms (Neighbor method).")
     else:
         # Strategy B: Center of Mass Core (Fallback)
+        # Calculates distance of every atom from the Center of Mass
+        # STRICTLY selects only the inner 50% to ensure NO EDGES are included.
         xyz0 = water_traj.xyz[0]
         com = np.mean(xyz0, axis=0)
         dists = np.linalg.norm(xyz0 - com, axis=1)
         
-        # Keep inner 80%
+        # Sort by distance and keep inner 50% (Safe Core)
         sorted_indices = np.argsort(dists)
-        n_keep = int(0.8 * len(dists))
+        n_keep = int(0.50 * len(dists)) 
         bulk_indices = sorted_indices[:n_keep]
         
         bulk_traj = water_traj.atom_slice(bulk_indices)
-        print(f"Selected {{len(bulk_indices)}} core atoms (Center-of-Mass method).")
+        print(f"Selected {{len(bulk_indices)}} core atoms (Center-of-Mass method, Inner 50%).")
 
 if bulk_traj is None:
     print("Warning: Bulk selection failed. Using all atoms.")
@@ -173,9 +188,9 @@ if n_frames > (start_frame + 2):
         f.write(f"DiffusionRate: {{D_nm2ps:.12e}} nm^2/ps\\n")
         f.write(f"MSDSlope: {{slope:.12e}} nm^2/ps\\n")
         f.write(f"AnalysisStartFrame: {{start_frame}}\\n")
-        f.write(f"BulkMethod: {{'Neighbors' if len(bulk_indices) > 10 and 'neighbor_counts' in locals() and len([x for x in neighbor_counts if x>=3]) > 10 else 'CenterOfMass'}}\\n")
+        f.write(f"BulkMethod: {{'Neighbors' if len(bulk_indices) > 20 and 'neighbor_counts' in locals() and len([x for x in neighbor_counts if x>=3]) > 20 else 'CenterOfMass_50pct'}}\\n")
     
-    # Print high precision to stdout as well
+    # Print high precision to stdout
     print(f"Completed T={T:.3f}, tau={tau:.3f}: D={{D_nm2ps:.12e}} nm^2/ps (Skipped first {{start_frame}} frames)")
 else:
     print("Not enough frames.")
