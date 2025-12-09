@@ -45,8 +45,8 @@ source {venv_activate}
 
 cd "$(dirname "$0")"
 
-# Run Simulation (Duration 10000 steps)
-{upside_exec} --duration 10000 --frame-interval 50 --temperature {T:.3f} --thermostat-timescale {tau:.3f} --output water.run.up {input_file}
+# Run Simulation (Duration 200000 steps)
+{upside_exec} --duration 200000 --frame-interval 100 --temperature {T:.3f} --thermostat-timescale {tau:.3f} --output water.run.up {input_file}
 
 # Calculate Diffusion
 python - << 'EOF'
