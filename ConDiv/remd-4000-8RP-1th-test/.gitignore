@@ -1,2 +1,4 @@
 upside_input/*
 venv/*
+*.output
+
