@@ -472,14 +472,15 @@ def main_loop(state_str, max_iter):
             state['epoch'] += 1
 
     for i in range(max_iter):
-        if hasattr(state_str, 'encode'): # Handle string vs bytes input
-             # If path, read it
+        if hasattr(state_str, 'encode'): # Handle string path input
              if os.path.exists(state_str):
                  with open(state_str, 'rb') as f:
                      state = cp.load(f)
              else:
-                 # Assume it's a pickle string (rare in py3, usually bytes)
-                 state = cp.loads(state_str)
+                 # --- NEW ERROR HANDLING ---
+                 raise FileNotFoundError(f"Checkpoint file not found: {state_str}\n"
+                                         "Did you run the 'initialize' mode first?")
+                 # --------------------------
         else:
              state = cp.loads(state_str)
 
