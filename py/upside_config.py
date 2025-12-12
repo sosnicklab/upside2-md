@@ -397,7 +397,7 @@ def write_CB(fasta):
 def write_rama_coord():
     grp = t.create_group(potential, 'rama_coord')
     grp._v_attrs.arguments = np.array([b'pos'])
-    n_res = n_atom/3
+    n_res = n_atom // 3
     N_id = 3*np.arange(n_res)
     id = np.column_stack((N_id-1,N_id,N_id+1,N_id+2,N_id+3))
     id[id>=n_atom] = -1  # last atom is non-existent (as is first)
@@ -405,7 +405,7 @@ def write_rama_coord():
     create_array(grp, 'id', id)
 
 def write_rama_coord2():
-    n_res = n_atom/3
+    n_res = n_atom // 3
     N_id = 3*np.arange(n_res)
     id1 = np.column_stack((N_id-1,N_id,N_id+1,N_id+2))
     id2 = np.column_stack((N_id,N_id+1,N_id+2,N_id+3))
@@ -823,7 +823,7 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
         sheet_basin   = sigmoid_lessthan(phi,0.*deg) * (sigmoid_lessthan(psi,-100.*deg) + sigmoid_lessthan(50.*deg,psi))
 
         f = (ln.split() for ln in open(secstr_bias))
-        assert f.next() == 'residue secstr energy'.split()
+        assert next(f) == 'residue secstr energy'.split()
         for residue,secstr,energy in f:
             residue = int(residue)
             energy = float(energy)
@@ -1267,7 +1267,7 @@ def write_rotamer_backbone(fasta, coverage_library, sc_node_name):
 
     # create the oriented backbone atoms
     bb_index  = np.arange(3*n_res)
-    bb_resnum = bb_index/3
+    bb_resnum = bb_index // 3
     grp = t.create_group(potential, 'placement_fixed_point_vector_scalar')
     grp._v_attrs.arguments = np.array([b'affine_alignment'])
     create_array(grp, 'affine_residue',  bb_resnum)
@@ -1516,7 +1516,7 @@ def write_bb_environment(fasta, environment_library, sc_node_name, bb_env_fn, us
         # group 2 is the H
         create_array(cgrp, 'index2', np.arange(n_res*3))
         create_array(cgrp, 'type2',  np.arange(n_res*3)*0)
-        create_array(cgrp, 'id2',    np.arange(n_res*3)/3)
+        create_array(cgrp, 'id2',    np.arange(n_res*3) //3)
 
     # cat them 
     pgrp = t.create_group(potential, 'cat_pos_bb_coverage')
