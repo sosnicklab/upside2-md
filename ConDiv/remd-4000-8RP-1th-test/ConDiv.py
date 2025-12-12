@@ -264,7 +264,7 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
     for nm,t in minibatch[::-1]:
         # Removed srun and slurm specific flags.
         # Added python call directly.
-        args = ['python3', worker_path,
+        args = [sys.executable, worker_path,
                 'worker', nm, direc, t.fasta, t.init_path, str(t.n_res), t.chi,
                 cp.dumps(d_obj_param_files, protocol=0).decode('latin1'), # Decode for arg passing if needed
                 str(sim_time)]

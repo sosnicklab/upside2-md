@@ -1,22 +1,34 @@
 #!/bin/bash
 
-# Define where you are working
-X=$(pwd)
-Y=test_00
+# Define current directory variables
+WORK_DIR=$(pwd)
+VENV_PYTHON="$WORK_DIR/venv/bin/python3"
 
-# Initialization
-# If you haven't initialized yet, uncomment the lines below:
-# mode=initialize
-# initial_param=init_param       # Folder with initial parameters
-# upside_input_dir=upside_input  # Folder with protein inputs
-# pdb_list=pdb_list              # File with list of PDBs
-# python3 ConDiv.py $mode $initial_param $upside_input_dir $pdb_list $X/$Y | tee $X/$Y_init.output
+# Assuming your compiled engine is in 'obj' relative to this folder,
+# or typically one level up if ConDiv is in a subfolder.
+# Adjust "../obj" if your object folder is elsewhere.
+UPSIDE_LIB="$WORK_DIR/../obj" 
 
-# Training Loop
-# Runs locally on the M1 (srun removed)
+# Check if venv python exists
+if [ ! -f "$VENV_PYTHON" ]; then
+    echo "Error: Virtual environment not found at $VENV_PYTHON"
+    echo "Please run setup_venv.sh first."
+    exit 1
+fi
+
+# Export PYTHONPATH so Python finds the C++ extension and local src
+# We add WORK_DIR (for ConDiv imports) and UPSIDE_LIB (for the engine)
+export PYTHONPATH="$WORK_DIR:$UPSIDE_LIB:$PYTHONPATH"
+
+# Setup Run Parameters
+# If 'test_00' logic is required, adjust path variables below. 
+# Here we assume we are running IN the folder containing the checkpoint.
 mode=restart
-checkpoint=$X/$Y/initial_checkpoint.pkl
+checkpoint="$WORK_DIR/initial_checkpoint.pkl"
 step=40
 
-# Run
-python3 ConDiv.py $mode $checkpoint $step | tee -a $X/$Y.output
+# Run using the VENV python
+echo "Running ConDiv with: $VENV_PYTHON"
+echo "PYTHONPATH: $PYTHONPATH"
+
+$VENV_PYTHON ConDiv.py $mode $checkpoint $step | tee -a "$WORK_DIR/run.output"
