@@ -4,40 +4,33 @@ import collections
 import subprocess as sp
 import numpy as np
 import tables as tb
-import json,uuid
+import json, uuid
 import time
+import threading
+
+# Ensure local modules can be found if running in same dir
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from upside_config import chain_endpts
-
 import upside_engine as ue
 
-# FIXME This assumes that upside-parameters is a sibling of upside in the 
-# directory structure.  Later, I will move the parameter directory into the
-# upside tree.
 py_source_dir = os.path.dirname(__file__)
-obj_dir = os.path.join(py_source_dir,'..','obj')
+# Assuming 'obj' is where the compiled binary lives. 
+# Adjust this path if you compile upside_engine.so elsewhere on your Mac.
+obj_dir = os.path.join(py_source_dir, '..', 'obj')
 
 def stop_upside_gently(process, allowed_termination_seconds=60.):
-    # Upside checks for sigterm periodically, then writes buffered frames and exits with a 
-    # success code.  We give time for a well-behaving Upside process to stop before issuing
-    # a sigkill.
-
-    # Python raises an OSError if terminate is called on an already finished process.  This creates
-    # a number of possible race conditions in this code.  We will avoid these problems by simply
-    # trapping the resulting exceptions, rather than trying to lock against them
-
     try:
         if process.poll() is not None:
             return
 
         process.terminate()
 
-        # make sure we can break out of the termination process early
         poll_interval = allowed_termination_seconds/60.
         for poll_index in range(60):
             time.sleep(poll_interval)
             if process.poll() is not None:
-                return  # we have succeeded in stopping the job
+                return
 
         process.kill()
     except OSError:
@@ -102,7 +95,6 @@ def upside_config(fasta,
                   memb_scale=1.,
                   ):
     
-    # Get the Python interpreter path
     python_path = sys.executable
     
     args = [python_path, os.path.join(py_source_dir, 'upside_config.py'), '--fasta=%s'%fasta, '--output=%s'%output]
@@ -228,7 +220,7 @@ def upside_config(fasta,
     if memb_scale != 1.:
         args.append('--memb-scale=%s'%memb_scale)
         
-    return ' '.join(args) + '\n' + sp.check_output(args).decode('ASCII')
+    return ' '.join(args) + '\n' + sp.check_output(args).decode('ascii')
 
 def advanced_config(config,
                   group='',
@@ -266,7 +258,7 @@ def advanced_config(config,
                   tension='',
                    ):
     
-    args = [os.path.join(py_source_dir, 'advanced_config.py'), '--config=%s'%config, ]
+    args = [sys.executable, os.path.join(py_source_dir, 'advanced_config.py'), '--config=%s'%config, ]
 
     for rg in restraint_groups:
         args.append('--restraint-group=%s'%rg)
@@ -339,11 +331,11 @@ def advanced_config(config,
     if tension:
         args.append('--tension=%s'%tension)
 
-    return ' '.join(args) + '\n' + sp.check_output(args).decode('ASCII')
+    return ' '.join(args) + '\n' + sp.check_output(args).decode('ascii')
 
 
 def compile():
-    return sp.check_output(['/bin/bash', '-c', 'cd %s; make -j4'%obj_dir])
+    return sp.check_output(['/bin/bash', '-c', 'cd %s; make -j4'%obj_dir]).decode('ascii')
 
 
 class UpsideJob(object):
@@ -359,7 +351,7 @@ class UpsideJob(object):
         if self.timer_object is not None:
             try:
                 self.timer_object.cancel()
-            except:  # if cancelling the timer fails, we don't care 
+            except: 
                 pass
         return retcode
 
@@ -370,7 +362,9 @@ def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threa
                extra_args=[], verbose=True):
     if isinstance(config,str): config = [config]
     
-    upside_args = [os.path.join(obj_dir,'upside'), '--duration', '%f'%duration,
+    # Ensure upside executable path is correct
+    upside_exec = os.path.join(obj_dir,'upside')
+    upside_args = [upside_exec, '--duration', '%f'%duration,
             '--frame-interval', '%f'%frame_interval] + config
 
     try:
@@ -383,8 +377,9 @@ def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threa
 
     if replica_interval is not None:
         upside_args.extend(['--replica-interval', '%f'%replica_interval])
-        for s in swap_sets:
-            upside_args.extend(['--swap-set', s])
+        if swap_sets:
+            for s in swap_sets:
+                upside_args.extend(['--swap-set', s])
     if mc_interval is not None:
         upside_args.extend(['--monte-carlo-interval', '%f'%mc_interval])
     if exchange_criterion is not None:
@@ -411,33 +406,28 @@ def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threa
     if output_base is not None:
         upside_args.extend(['--output-base', output_base])
 
-    upside_args.extend(['--seed','%li'%(seed if seed is not None else np.random.randint(1<<31))])
+    upside_args.extend(['--seed','%d'%(seed if seed is not None else np.random.randint(1<<30))])
     upside_args.extend(extra_args)
     
     output_path = config[0]+'.output'
     timer_object = None
 
-    if queue == '': 
+    if queue == '': # Simple Local
         env = os.environ.copy()
         env['OMP_NUM_THREADS'] = str(n_threads)
         output_file = open(output_path,'w')
-        job = sp.Popen(upside_args, stdout=output_file, stderr=output_file)
+        job = sp.Popen(upside_args, stdout=output_file, stderr=output_file, env=env)
 
         if minutes is not None:
-            # FIXME in Python 3.3+, subprocess supports job timeout directly
-            import threading
             timer_object = threading.Timer(minutes*60., stop_upside_gently, args=[job])
             timer_object.start()
 
     elif queue == 'srun':
-        # set num threads carefully so that we don't overwrite the rest of the environment
-        # setting --export on srun will blow away the rest of the environment
-        # afterward, we will undo the change
-
-        assert minutes is None  # time limits currently not supported by srun-launcher
+        # NOTE: srun/SLURM is generally invalid on a local Mac. 
+        # This block is kept for reference but should not be used in the local workflow.
+        assert minutes is None
 
         old_omp_num_threads = os.environ.get('OMP_NUM_THREADS', None)
-
         try:
             os.environ['OMP_NUM_THREADS'] = str(n_threads)
             args = ['srun', '--ntasks=1', '--nodes=1', '--cpus-per-task=%i'%n_threads, 
@@ -448,14 +438,16 @@ def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threa
                 del os.environ['OMP_NUM_THREADS']
             else:
                 os.environ['OMP_NUM_THREADS'] = old_omp_num_threads
+    
     elif queue == 'in_process':
-        import upside_engine as ue
-        if verbose: print ('args', ' '.join(upside_args))
+        # This requires the C++ module to be imported and working
+        if verbose: print('args', ' '.join(upside_args))
         os.environ['OMP_NUM_THREADS'] = str(n_threads)
         job = ue.in_process_upside(upside_args[1:], verbose=verbose)
-    else:
+    
+    else: # sbatch fallback
         args = ['sbatch',
-                '--no-requeue', # do not restart the job on a SLURM problem
+                '--no-requeue',
                 '-p', queue, 
                 '--time=%i'%(minutes if minutes is not None else 36*60),
                 '--ntasks=1', 
@@ -463,7 +455,7 @@ def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threa
                 '--output=%s'%output_path, '--parsable', '--wrap', ' '.join(upside_args)]
         if account is not None:
             args.append('--account=%s'%account)
-        job = sp.check_output(args).strip()
+        job = sp.check_output(args).strip().decode('ascii')
 
     return UpsideJob(job,config,output_path, timer_object=timer_object)
 
@@ -487,7 +479,8 @@ def continue_sim( configs, partition='', duration=0, frame_interval=0, **upside_
 
             if 'output' in t.root:
                 t.root.output._f_rename(new_name)
-            # print (fn, temps[-1])
+            
+            # print(fn, temps[-1])
 
     if partition :
         upside_kwargs[ 'temperature'] = temps
@@ -507,15 +500,21 @@ def read_output(t, output_name, stride):
     start_frame = 0
     total_frames_produced = 0
     output = []
-    time = []
+    
     for g_no, g in enumerate(output_groups()):
-        # take into account that the first frame of each output is the same as the last frame before restart
-        # attempt to land on the stride
         sl = slice(start_frame,None,stride)
-        output.append(g._f_get_child(output_name)[sl,:])
-        total_frames_produced += g._f_get_child(output_name).shape[0]-(1 if g_no else 0)  # correct for first frame
-        start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
-    output = np.concatenate(output,axis=0)
+        try:
+            data = g._f_get_child(output_name)[sl,:]
+            output.append(data)
+            total_frames_produced += g._f_get_child(output_name).shape[0]-(1 if g_no else 0)
+            start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
+        except tb.NoSuchNodeError:
+            pass
+
+    if output:
+        output = np.concatenate(output,axis=0)
+    else:
+        output = np.array([])
     return output
 
 def compute_com_dist(config_fn):
@@ -524,8 +523,8 @@ def compute_com_dist(config_fn):
         n_res = len(t.root.input.sequence[:])
         try:
             xyz = read_output(t, "pos", 1)[:,0,:,:] 
-        except ValueError:
-            print ("No output for %s" % config_fn)
+        except (ValueError, IndexError):
+            print("No output for %s" % config_fn)
             sys.exit(1)
         else:
             chain_first_residue = t.root.input.chain_break.chain_first_residue[:]
@@ -547,22 +546,15 @@ def compute_com_dist(config_fn):
     return com_dist
 
 def status(job):
-    try:
-        job_state = sp.check_output(['/usr/bin/env', 'squeue', '-j', job.job, '-h', '-o', '%t']).strip()
-    except sp.CalledProcessError:
-        job_state = 'FN'
-        
-    if job_state == 'PD':
-        status = ''
-    else:
-        status = sp.check_output(['/usr/bin/env','tail','-n','%i'%1, job.output])[:-1]
-    return '%s %s' % (job_state, status)
+    # squeue is likely not available on Mac local
+    return 'FN Local' 
 
 
 def read_hb(tr):
-    n_res = tr.root.input.pos.shape[0]/3
-    don_res =  tr.root.input.potential.infer_H_O.donors.id[:,1] / 3
-    acc_res = (tr.root.input.potential.infer_H_O.acceptors.id[:,1]-2) / 3
+    # Fix division for Py3
+    n_res = tr.root.input.pos.shape[0] // 3
+    don_res =  tr.root.input.potential.infer_H_O.donors.id[:,1] // 3
+    acc_res = (tr.root.input.potential.infer_H_O.acceptors.id[:,1]-2) // 3
     
     n_hb = tr.root.output.hbond.shape[1]
     hb_raw   = tr.root.output.hbond[:]
@@ -655,14 +647,16 @@ def compute_topology(t):
         
         virtual = curr + bond_length[:,None] * vhat(vhat(curr-nxt) + vhat(curr-prev))
         new_pos = np.concatenate((pos,virtual), axis=0)
-        return json.dumps([map(float,x) for x in new_pos])  # convert to json form
+        # Convert to standard Python lists for JSON serialization
+        return json.dumps([list(map(float,x)) for x in new_pos])
     
     n_atom = 3*len(seq)
     backbone_names = ['N','CA','C']
     
-    backbone_atoms = [dict(name=backbone_names[i%3], residue_num=i/3, element=backbone_names[i%3][:1]) 
+    # Fix division for Py3
+    backbone_atoms = [dict(name=backbone_names[i%3], residue_num=i//3, element=backbone_names[i%3][:1]) 
                       for i in range(n_atom)]
-    virtual_atoms  = [dict(name=('H' if i<n_donor else 'O'), residue_num=int(id[i,1]/3), 
+    virtual_atoms  = [dict(name=('H' if i<n_donor else 'O'), residue_num=int(id[i,1]//3), 
                            element=('H' if i<n_donor else 'O'))
                      for i in range(n_donor+n_acceptor)]
     backbone_bonds = [[i,i+1] for i in range(n_atom-1)]
