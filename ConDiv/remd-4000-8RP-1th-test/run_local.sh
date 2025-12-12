@@ -4,10 +4,11 @@
 WORK_DIR=$(pwd)
 VENV_PYTHON="$WORK_DIR/venv/bin/python3"
 
-# Assuming your compiled engine is in 'obj' relative to this folder,
-# or typically one level up if ConDiv is in a subfolder.
-# Adjust "../obj" if your object folder is elsewhere.
-UPSIDE_LIB="$WORK_DIR/../obj" 
+# Path math: Assuming we are in projectroot/ConDiv/folder
+# We need to reach projectroot/obj and projectroot/py
+PROJECT_ROOT="$WORK_DIR/../.."
+UPSIDE_LIB="$PROJECT_ROOT/obj"
+UPSIDE_PY="$PROJECT_ROOT/py"
 
 # Check if venv python exists
 if [ ! -f "$VENV_PYTHON" ]; then
@@ -16,13 +17,14 @@ if [ ! -f "$VENV_PYTHON" ]; then
     exit 1
 fi
 
-# Export PYTHONPATH so Python finds the C++ extension and local src
-# We add WORK_DIR (for ConDiv imports) and UPSIDE_LIB (for the engine)
-export PYTHONPATH="$WORK_DIR:$UPSIDE_LIB:$PYTHONPATH"
+# Export PYTHONPATH
+# 1. WORK_DIR: for ConDiv.py itself
+# 2. UPSIDE_LIB: for upside_engine.so
+# 3. UPSIDE_PY: for rotamer_parameter_estimation.py (projectroot/py)
+# 4. PROJECT_ROOT/src: (Optional) if you saved source files there instead of py
+export PYTHONPATH="$WORK_DIR:$UPSIDE_LIB:$UPSIDE_PY:$PROJECT_ROOT/src:$PYTHONPATH"
 
 # Setup Run Parameters
-# If 'test_00' logic is required, adjust path variables below. 
-# Here we assume we are running IN the folder containing the checkpoint.
 mode=restart
 checkpoint="$WORK_DIR/initial_checkpoint.pkl"
 step=40
