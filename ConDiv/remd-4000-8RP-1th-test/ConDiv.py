@@ -412,17 +412,23 @@ def main_worker():
     hb = param_files['hb']
     sheet_mix = param_files['sheet']
     
+    # Calculate project root for correct pathing
+    project_root = os.path.abspath(os.path.join(os.getcwd(), "../.."))
+
+    # Map ConDiv keys to run_upside.py keys
     kwargs = dict(
-            environment               = param_files['env'],
-            rotamer_interaction_param = param_files['rot'],
-            placement                 = param_files['rot'],
-            init = init_path,
-            hbond = hb,
-            dynamic_1body=True,
-            sheet_mix_energy=sheet_mix,
-            # Update paths for M1 location
-            rama_pot = "/Users/yourusername/upside/parameters/common/rama.dat",
-            reference_rama='/Users/yourusername/upside/parameters/common/rama_reference.pkl',)
+            environment_potential = param_files['env'],    # Changed from 'environment'
+            rotamer_interaction   = param_files['rot'],    # Changed from 'rotamer_interaction_param'
+            rotamer_placement     = param_files['rot'],    # Changed from 'placement'
+            initial_structure     = init_path,             # Changed from 'init'
+            hbond_energy          = hb,                    # Changed from 'hbond'
+            dynamic_rotamer_1body = True,                  # Changed from 'dynamic_1body'
+            rama_sheet_mix_energy = sheet_mix,             # Changed from 'sheet_mix_energy'
+            
+            # Paths to common files
+            rama_library          = os.path.join(project_root, "parameters/common/rama.dat"),
+            reference_state_rama  = os.path.join(project_root, "parameters/common/rama_reference.pkl"),
+    )
     
     T = 0.80 * (1. + np.sqrt(100./n_res)*0.020*np.arange(n_threads-1))**2
     T = np.concatenate((T[0:1],T))
