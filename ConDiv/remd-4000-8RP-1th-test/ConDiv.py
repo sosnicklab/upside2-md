@@ -407,8 +407,10 @@ def main_worker():
     n_frame = 250.
     frame_interval = int(sim_time / n_frame)
 
-    with open(param_files['hb'])    as f: hb        = float(f.read())
-    with open(param_files['sheet']) as f: sheet_mix = float(f.read())
+    #with open(param_files['hb'])    as f: hb        = float(f.read())
+    #with open(param_files['sheet']) as f: sheet_mix = float(f.read())
+    hb = param_files['hb']
+    sheet_mix = param_files['sheet']
     
     kwargs = dict(
             environment               = param_files['env'],
