@@ -76,17 +76,30 @@ class Update(UpdateBase):
     def __truediv__(self, other): return self._do_binary(other, lambda a, b: a / b) # Py3 div
 
 def print_param(param):
-    print(f'hb    {param.hb:.3f}')
-    print(f'sheet {param.sheet:.3f}')
+    # Handle hb (might be numpy scalar or float)
+    print(f'hb    {float(param.hb):.3f}')
+    
+    # Handle sheet (Scalar vs Vector)
+    if np.ndim(param.sheet) == 0:
+        print(f'sheet {float(param.sheet):.3f}')
+    else:
+        print(f'sheet (mean) {np.mean(param.sheet):.3f}')
+
     print('env')
     
     # Check if param.env is a tensor or numpy array
     env_data = param.env
-    if hasattr(env_data, 'detach'): env_data = env_data.detach().numpy()
+    if hasattr(env_data, 'detach'): 
+        env_data = env_data.detach().numpy()
         
-    env_dict = dict(zip(resnames, env_data[:, 1::2]))
-    for r in hydrophobicity_order:
-        print('   ', r, env_dict[r])
+    # Ensure env_data has expected dimensions before zipping
+    # (Just a safeguard against shape mismatches during init)
+    try:
+        env_dict = dict(zip(resnames, env_data[:, 1::2]))
+        for r in hydrophobicity_order:
+            print('   ', r, env_dict[r])
+    except IndexError:
+        print('    (Environment parameters not fully initialized yet)')
 
 def get_d_obj_torch():
     """
@@ -186,9 +199,10 @@ if not is_worker:
         init_param_files = dict(
                 env = os.path.join(init_dir, 'environment.h5'),
                 rot = os.path.join(init_dir, 'sidechain.h5'),
-                hb  = os.path.join(init_dir, 'hbond'),
+                hb  = os.path.join(init_dir, 'hbond.h5'),
                 sheet  = os.path.join(init_dir, 'sheet'))
 
+        # Read Rotamers
         with tb.open_file(init_param_files['rot']) as t:
             rotp = t.root.pair_interaction[:]
             covp = t.root.coverage_interaction[:]
@@ -197,16 +211,22 @@ if not is_worker:
             rotposp = t.root.rotamer_center_fixed[:]
             rotscalarp = np.zeros((rotposp.shape[0],))
 
+        # Read Environment
         with tb.open_file(init_param_files['env']) as t:
             env = t.root.energies[:,:-1]
 
-        with open(init_param_files['hb']) as f: hb = float(f.read())
-        with open(init_param_files['sheet']) as f: sheet = float(f.read())
+        # Read HBond (H5 format)
+        with tb.open_file(init_param_files['hb']) as t:
+            hb_val = t.root.parameter[0] 
+
+        # --- CHANGED: Read Sheet using numpy (handles vectors) ---
+        sheet = np.loadtxt(init_param_files['sheet'])
+        # -------------------------------------------------------
 
         param = Update(*([None]*6))._replace(
                 env = env,
                 rot = rp.pack_param(rotp, covp, hydp, hydplp, rotposp, rotscalarp[:,None]),
-                hb  = hb,
+                hb  = hb_val,
                 sheet = sheet)
         return param, init_param_files
 
@@ -214,6 +234,7 @@ if not is_worker:
     def expand_param(params, orig_param_files, new_param_files):
         rotp, covp, hydp, hydplp, rotposp, rotscalarp = rp.unpack_params(params.rot)
 
+        # Write Rotamer H5
         shutil.copyfile(orig_param_files['rot'], new_param_files['rot'])
         with tb.open_file(new_param_files['rot'], 'a') as t:
             t.root.pair_interaction[:]       = rotp
@@ -222,9 +243,22 @@ if not is_worker:
             t.root.hydrophobe_placement[:]   = hydplp
             t.root.rotamer_center_fixed[:]   = rotposp
 
-        with open(new_param_files['hb'], 'w') as f:    print(params.hb, file=f)
-        with open(new_param_files['sheet'], 'w') as f: print(params.sheet, file=f)
+        # Write HBond H5
+        shutil.copyfile(orig_param_files['hb'], new_param_files['hb'])
+        with tb.open_file(new_param_files['hb'], 'a') as t:
+            p = t.root.parameter[:]
+            p[0] = params.hb
+            t.root.parameter[:] = p
+        
+        # --- CHANGED: Write Sheet using numpy (handles vectors) ---
+        # If it's a scalar, make it iterable for savetxt or just save it
+        if np.ndim(params.sheet) == 0:
+            with open(new_param_files['sheet'], 'w') as f: print(params.sheet, file=f)
+        else:
+            np.savetxt(new_param_files['sheet'], params.sheet)
+        # --------------------------------------------------------
 
+        # Write Environment H5
         shutil.copyfile(orig_param_files['env'], new_param_files['env'])
         with tb.open_file(new_param_files['env'], 'a') as t:
             tmp = np.zeros(t.root.energies.shape)

@@ -15,7 +15,7 @@ export PYTHONPATH="$X:$UPSIDE_LIB:$UPSIDE_PY:$PROJECT_ROOT/src:$PYTHONPATH"
 
 # Initialization Parameters
 mode=initialize
-initial_param="../../parameters/ff_2.1"       # Folder with initial parameters (Must exist)
+initial_param="init_param"       # Folder with initial parameters (Must exist)
 upside_input_dir=upside_input  # Folder with protein inputs (Must exist)
 pdb_list=pdb_list              # File with list of PDBs (Must exist)
 
