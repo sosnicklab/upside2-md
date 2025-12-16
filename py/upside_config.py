@@ -2276,12 +2276,27 @@ def main():
     if args.initial_structure:
         # Explicitly allow pickle loading
         init_pos = np.load(args.initial_structure, allow_pickle=True, encoding='latin1')
-        assert init_pos.shape == (n_atom, 3)
+        
+        # FIX: Handle (N, 3, 1) shape if present
+        if init_pos.ndim == 3 and init_pos.shape[2] == 1:
+            init_pos = init_pos[:, :, 0]
 
+        # Debug message if assertion is about to fail
+        if init_pos.shape != (n_atom, 3):
+            eprint(f"Error: Shape mismatch for {args.initial_structure}")
+            eprint(f"  Expected: ({n_atom}, 3) based on FASTA length {n_res}")
+            eprint(f"  Actual:   {init_pos.shape}")
+
+        assert init_pos.shape == (n_atom, 3)
     if args.target_structure:
         def f():
             # little function closure to protect the namespace from ever seeing the target structure
             target_pos = np.load(args.target_structure, allow_pickle=True, encoding='latin1')
+            
+            # FIX: Handle (N, 3, 1) shape
+            if target_pos.ndim == 3 and target_pos.shape[2] == 1:
+                target_pos = target_pos[:, :, 0]
+
             assert target_pos.shape == (n_atom, 3)
             g_target = t.create_group(t.root, 'target')
             target_pos = target_pos[:,:,None]
