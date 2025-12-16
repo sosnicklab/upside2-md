@@ -2274,13 +2274,14 @@ def main():
     #---------------------------------------------
 
     if args.initial_structure:
-        init_pos = np.load(args.initial_structure)
+        # Explicitly allow pickle loading
+        init_pos = np.load(args.initial_structure, allow_pickle=True, encoding='latin1')
         assert init_pos.shape == (n_atom, 3)
 
     if args.target_structure:
         def f():
             # little function closure to protect the namespace from ever seeing the target structure
-            target_pos = np.load(args.target_structure)
+            target_pos = np.load(args.target_structure, allow_pickle=True, encoding='latin1')
             assert target_pos.shape == (n_atom, 3)
             g_target = t.create_group(t.root, 'target')
             target_pos = target_pos[:,:,None]
