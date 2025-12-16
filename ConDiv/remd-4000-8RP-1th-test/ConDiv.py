@@ -441,9 +441,50 @@ def main_worker():
         for i in range(1,len(T)):
             shutil.copyfile(config_base, configs[i])
 
-        kwargs['restraint_groups'] = ['0-%i'%(n_res-1)]
-        kwargs['restraint_spring'] = native_restraint_strength
-        ru.upside_config(fasta, configs[0], **kwargs)
+        # Build command manually to bypass ru.upside_config wrapper limitations
+        # 1. Base arguments from kwargs
+        upside_config_script = os.path.join(os.path.dirname(ru.__file__), 'upside_config.py')
+        
+        cmd = [sys.executable, upside_config_script]
+        
+        # Add mapped kwargs as flags
+        # Note: We need to convert the keys back to CLI flags. 
+        # This mapping must match what we fixed in Step 13.
+        key_map = {
+            'environment_potential': '--environment-potential',
+            'rotamer_interaction': '--rotamer-interaction',
+            'rotamer_placement': '--rotamer-placement',
+            'initial_structure': '--initial-structure',
+            'hbond_energy': '--hbond-energy',
+            'rama_sheet_mix_energy': '--rama-sheet-mixing-energy',
+            'rama_library': '--rama-library',
+            'reference_state_rama': '--reference-state-rama',
+            'dynamic_rotamer_1body': '--dynamic-rotamer-1body'
+        }
+
+        # Add standard flags
+        cmd.append(f'--fasta={fasta}')
+        cmd.append(f'--output={configs[0]}')
+        
+        for k, v in kwargs.items():
+            if k in key_map:
+                if v is True: # Bool flags like dynamic-rotamer-1body
+                    cmd.append(key_map[k])
+                elif v is not None:
+                    cmd.append(f'{key_map[k]}={v}')
+
+        # Add Restraint flags
+        # Restraining all residues 0 to N-1
+        cmd.append(f'--restraint-group=0-{n_res-1}')
+        cmd.append(f'--restraint-spring={native_restraint_strength}')
+
+        # Run it
+        try:
+            sp.check_output(cmd, stderr=sp.STDOUT)
+        except sp.CalledProcessError as e:
+            print("Error generating restrained config:")
+            print(e.output.decode('ascii'))
+            raise RuntimeError('CONFIG_FAIL_RESTRAINT')
     except tb.NoSuchNodeError:
         raise RuntimeError('CONFIG_FAIL')
     

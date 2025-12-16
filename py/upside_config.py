@@ -1601,6 +1601,48 @@ def write_surface_coord(fasta_seq, method, thickness, included_list=[], zbuffer=
     create_array( grp, 'index_cb',        index_cb+n_res*3 )
     create_array( grp, 'auxiliary_point', np.array(auxiliary_point) )
 
+def write_restraint(pos, groups, k):
+    # Flatten groups
+    if isinstance(groups, list):
+        if len(groups) == 0: return
+        all_res = []
+        for g in groups:
+            if isinstance(g, str):
+                all_res.append(parse_segments(g))
+            else:
+                all_res.append(g)
+        if len(all_res) > 0:
+            residues = np.unique(np.concatenate(all_res))
+        else:
+            return
+    else:
+        residues = groups
+
+    # Indices
+    atom_indices = residues * 3 + 1
+    
+    # Check bounds
+    if np.max(atom_indices) >= pos.shape[0]:
+        raise ValueError("Restraint indices exceed number of atoms.")
+
+    ref_pos = pos[atom_indices]
+    
+    grp = t.create_group(potential, 'Spring_pos')
+    grp._v_attrs.arguments = np.array([b'pos'])
+    grp._v_attrs.integrator_level = 0
+    grp._v_attrs.dim1 = 0
+    grp._v_attrs.pbc  = 0
+    grp._v_attrs.box_len = 0
+    
+    create_array(grp, 'id', atom_indices)
+    create_array(grp, 'equil_pos', ref_pos)
+    
+    # --- ADDED: Missing equil_dist array (set to 0 for pinning) ---
+    create_array(grp, 'equil_dist', np.zeros(len(atom_indices)))
+    # --------------------------------------------------------------
+    
+    create_array(grp, 'spring_const', np.ones(len(atom_indices)) * k)
+
 def write_membrane_potential(
         fasta_seq, membrane_potential_fpath, membrane_thickness, environment_potential, membrane_exposed_criterion, membrane_exclude_residues, hbond_exclude_residues):
 
@@ -2241,6 +2283,10 @@ def main():
     parser.add_argument('--env-scale', default=1., type=float, help='Scaling for environment potentials')
     parser.add_argument('--rot-scale', default=1., type=float, help='Scaling for rotamer pair potential')
     parser.add_argument('--memb-scale', default=1., type=float, help='Scaling for membrane potential')
+    parser.add_argument('--restraint-group', action='append', default=[], type=parse_segments,
+            help='Residues to restrain (e.g. 0-10,15). Can be specified multiple times.')
+    parser.add_argument('--restraint-spring', default=1.0, type=float,
+            help='Spring constant for restraints.')
 
     args = parser.parse_args()
 
@@ -2566,6 +2612,12 @@ def main():
             create_array(grp, 'pivot_atom',    pivot_atom[non_terminal_residue])
             create_array(grp, 'pivot_restype', potential.rama_map_pot.rama_map_id_all[:][non_terminal_residue])
             create_array(grp, 'pivot_range',   np.column_stack((grp.pivot_atom[:,4]+1,np.zeros(sum(non_terminal_residue),'i')+n_atom)))
+
+    if args.restraint_group:
+        if not args.initial_structure:
+            parser.error("--restraint-group requires --initial-structure to define reference positions.")
+        # FIX: init_pos is already (N, 3), just pass it directly
+        write_restraint(init_pos, args.restraint_group, args.restraint_spring)
 
     # Scale potential if requested
     apply_param_scale(args.hb_scale, args.env_scale, args.rot_scale, args.memb_scale)
