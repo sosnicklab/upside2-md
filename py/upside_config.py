@@ -1632,16 +1632,20 @@ def write_restraint(pos, groups, k):
     grp._v_attrs.integrator_level = 0
     grp._v_attrs.dim1 = 0
     grp._v_attrs.pbc  = 0
-    grp._v_attrs.box_len = 0
+    
+    # FIX 1: Ensure box_len is an integer (matching Spring_bond behavior)
+    grp._v_attrs.box_len = 0 
     
     create_array(grp, 'id', atom_indices)
-    create_array(grp, 'equil_pos', ref_pos)
     
-    # --- ADDED: Missing equil_dist array (set to 0 for pinning) ---
-    create_array(grp, 'equil_dist', np.zeros(len(atom_indices)))
-    # --------------------------------------------------------------
+    # FIX 2: Explicitly cast positions to float32 (f4)
+    # The engine expects coordinate arrays to be 32-bit floats. 
+    # Passing 64-bit causes memory corruption.
+    create_array(grp, 'equil_pos', ref_pos.astype('f4'))
     
-    create_array(grp, 'spring_const', np.ones(len(atom_indices)) * k)
+    # FIX 3: Explicitly cast distance/constants to float32 (f4)
+    create_array(grp, 'equil_dist', np.zeros(len(atom_indices), dtype='f4'))
+    create_array(grp, 'spring_const', (np.ones(len(atom_indices)) * k).astype('f4'))
 
 def write_membrane_potential(
         fasta_seq, membrane_potential_fpath, membrane_thickness, environment_potential, membrane_exposed_criterion, membrane_exclude_residues, hbond_exclude_residues):
