@@ -30,7 +30,7 @@ import upside_engine as ue
 np.set_printoptions(precision=2, suppress=True)
 
 ## Important parameters
-n_threads = 2  # Reduced for M1 local run (M1 has 8 cores, 4 is safe)
+n_threads = 12  # Reduced for M1 local run (M1 has 8 cores, 4 is safe)
 native_restraint_strength = 1./3.**2
 rmsd_k = 15
 minibatch_size = 12
