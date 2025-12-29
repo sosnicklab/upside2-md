@@ -9,6 +9,9 @@ PROJECT_ROOT="$WORK_DIR/../.."
 UPSIDE_LIB="$PROJECT_ROOT/obj"
 UPSIDE_PY="$PROJECT_ROOT/py"
 
+# Source the user's venv as requested
+source "$WORK_DIR/venv/bin/activate"
+
 # Export PYTHONPATH
 export PYTHONPATH="$WORK_DIR:$UPSIDE_LIB:$UPSIDE_PY:$PROJECT_ROOT/src:$PYTHONPATH"
 
@@ -22,7 +25,7 @@ checkpoint="$WORK_DIR/test_00/initial_checkpoint.pkl"
 step=40
 
 # Run using the VENV python
-echo "Running ConDiv with: $VENV_PYTHON"
+echo "Running ConDiv with: python3 (from venv)"
 echo "Checkpoint: $checkpoint"
 
-$VENV_PYTHON ConDiv.py $mode $checkpoint $step | tee -a "$WORK_DIR/run.output"
+python3 -u ConDiv.py $mode $checkpoint $step 2>&1 | tee -a "$WORK_DIR/run.output"

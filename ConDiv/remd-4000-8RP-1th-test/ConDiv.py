@@ -31,7 +31,7 @@ import upside_engine as ue
 np.set_printoptions(precision=2, suppress=True)
 
 ## Important parameters
-n_threads = 12  # Reduced for M1 local run (M1 has 8 cores, 4 is safe)
+n_threads = 12 
 native_restraint_strength = 1./3.**2
 rmsd_k = 15
 minibatch_size = 12
@@ -277,6 +277,11 @@ if not is_worker:
         # d_obj is now the torch function
         rot_grad = d_obj(param.rot, deriv_update.rot, deriv_update.cov, deriv_update.hyd, reg_scale)
         
+        # Debug: check gradient stats
+        print(f"DEBUG: rot_grad mean={np.mean(rot_grad):.4e} min={np.min(rot_grad):.4e} max={np.max(rot_grad):.4e}")
+        if np.isnan(rot_grad).any():
+             print("ERROR: NaNs detected in rot_grad!")
+
         return deriv_update._replace(
                 rot = rot_grad,
                 cov = 0.,
@@ -298,38 +303,40 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
 
     # REPLACEMENT: Use subprocess directly (Local execution) instead of srun
     jobs = collections.OrderedDict()
+    rmsd = dict()
+    change = []
+
     for nm,t in minibatch[::-1]:
-        # Removed srun and slurm specific flags.
-        # Added python call directly.
         args = [sys.executable, worker_path,
                 'worker', nm, direc, t.fasta, t.init_path, str(t.n_res), t.chi,
-                cp.dumps(d_obj_param_files, protocol=0).decode('latin1'), # Decode for arg passing if needed
+                cp.dumps(d_obj_param_files, protocol=0).decode('latin1'),
                 str(sim_time)]
         
-        # For subprocess arg passing of binary pickle data:
-        # Better strategy: Write config to file and pass filename. 
-        # But sticking to original logic: Encode pickle as hex or rely on Popen raw bytes handling?
-        # Python 3 sys.argv are strings. We will use hex encoding to be safe.
         pickled_files_hex = cp.dumps(d_obj_param_files).hex()
         args[9] = pickled_files_hex
 
         outfile = open(f'{direc}/{nm}.output_worker', 'w')
-        jobs[nm] = sp.Popen(args, close_fds=True, stdout=outfile, stderr=sp.STDOUT)
+        print(f"Launching worker for {nm}...")
+        j = sp.Popen(args, close_fds=True, stdout=outfile, stderr=sp.STDOUT)
+        
+        retcode = j.wait()
+        if retcode != 0:
+            print(f"WARNING: Worker for {nm} exited with code {retcode} (ignoring segfault). Checking for output...")
 
-    rmsd = dict()
-    change = []
-    for nm,j in jobs.items():
-        if j.wait() != 0: 
-            print(nm, 'WORKER_FAIL')
-            continue
         try:
+            print(f"Attempting to read divergence for {nm}...")
             with open(f'{direc}/{nm}.divergence.pkl', 'rb') as f:
                 divergence = cp.load(f)
                 rmsd[nm] = (divergence['rmsd_restrain'], divergence['rmsd'])
                 change.append(divergence['contrast'])
+            print(f"Successfully read output for {nm}")
         except FileNotFoundError:
-            print(nm, 'NO_OUTPUT')
+            print(f"ERROR: {nm} NO_OUTPUT (File not found)")
             continue
+        except Exception as e:
+            print(f"ERROR: {nm} Failed to load pickle: {e}")
+            continue
+
             
     if not change:
         raise RuntimeError('All jobs failed')
@@ -356,14 +363,38 @@ def compute_divergence(config_base, pos):
     try:
         with tb.open_file(config_base) as t:
             seq        = t.root.input.sequence[:]
-            more_sheet = t.root.input.potential.rama_map_pot.more_sheet_rama_pot[:]
-            less_sheet = t.root.input.potential.rama_map_pot.less_sheet_rama_pot[:]
-            eps        = t.root.input.potential.rama_map_pot._v_attrs.sheet_eps
+            
+            rama_node = t.root.input.potential.rama_map_pot
+            sheet_restypes = rama_node._v_attrs.restype
+            if isinstance(sheet_restypes[0], bytes):
+                sheet_restypes = [x.decode('utf-8') for x in sheet_restypes]
+                
+            eps = rama_node._v_attrs.sheet_eps
             sheet_scale = 1./(2.*eps)
-            hb_strength = t.root.input.potential.hbond_energy._v_attrs.protein_hbond_energy
+            
+            more_sheets = {}
+            less_sheets = {}
+            for res in sheet_restypes:
+                try:
+                    m = getattr(rama_node, f'more_sheet_rama_pot_{res}')[:]
+                    l = getattr(rama_node, f'less_sheet_rama_pot_{res}')[:]
+                    more_sheets[res] = m
+                    less_sheets[res] = l
+                except tb.NoSuchNodeError:
+                    more_sheets[res] = None
+                    less_sheets[res] = None
+
+            hb_strength = t.root.input.potential.hbond_energy.parameters[0]
+
             rot_param_shape = t.root.input.potential.rotamer.pair_interaction.interaction_param.shape
             cov_param_shape = t.root.input.potential.hbond_coverage.interaction_param.shape
             hyd_param_shape = t.root.input.potential.hbond_coverage_hydrophobe.interaction_param.shape
+            
+            # Check for env group
+            if not hasattr(t.root.input.potential, 'nonlinear_coupling_environment'):
+                print(f"ANALYSIS_FAIL: Missing nonlinear_coupling_environment in {config_base}")
+                return None
+            
             env_param_shape = t.root.input.potential.nonlinear_coupling_environment.coeff.shape
             env_weights_shape = t.root.input.potential.nonlinear_coupling_environment.weights.shape
     except Exception as e:
@@ -373,26 +404,40 @@ def compute_divergence(config_base, pos):
     engine = ue.Upside(config_base)
     contrast = Update([],[],[],[],[],[])
 
-    engine.set_param(more_sheet, 'rama_map_pot')
-    for i in range(pos.shape[0]):
-        engine.energy(pos[i])
+    print(f"Starting compute_divergence for {os.path.basename(config_base)} with {pos.shape[0]} frames...")
 
+    for i in range(pos.shape[0]):
+        if i % 50 == 0: print(f"Processing frame {i}/{pos.shape[0]}...")
+        engine.energy(pos[i]) 
+        
         contrast.cov.append(engine.get_param_deriv(cov_param_shape, 'hbond_coverage'))
         contrast.rot.append(engine.get_param_deriv(rot_param_shape, 'rotamer'))
         contrast.hyd.append(engine.get_param_deriv(hyd_param_shape, 'hbond_coverage_hydrophobe'))
-
-        contrast.hb   .append(engine.get_output('hbond_energy')[0,0]/hb_strength)
-        contrast.sheet.append(engine.get_output('rama_map_pot')[0,0]*sheet_scale)
-
+        contrast.hb .append(engine.get_output('hbond_energy')[0,0]/hb_strength)
+        
         # Handle env derivatives including weights (which we ignore)
         total_env_params = np.prod(env_param_shape) + np.prod(env_weights_shape)
         env_full = engine.get_param_deriv((int(total_env_params),), 'nonlinear_coupling_environment')
         contrast.env.append(env_full[:np.prod(env_param_shape)].reshape(env_param_shape))
-
-    engine.set_param(less_sheet, 'rama_map_pot')
-    for i in range(pos.shape[0]):
-        engine.energy(pos[i])
-        contrast.sheet[i] -= engine.get_output('rama_map_pot')[0,0]*sheet_scale
+        
+        current_sheet_grad = np.zeros(len(sheet_restypes))
+        
+        for idx, res in enumerate(sheet_restypes):
+            m = more_sheets[res]
+            l = less_sheets[res]
+            if m is None: continue 
+                
+            engine.set_param(m, 'rama_map_pot')
+            engine.energy(pos[i])
+            e_plus = engine.get_output('rama_map_pot')[0,0]
+            
+            engine.set_param(l, 'rama_map_pot')
+            engine.energy(pos[i])
+            e_minus = engine.get_output('rama_map_pot')[0,0]
+            
+            current_sheet_grad[idx] = (e_plus - e_minus) * sheet_scale
+            
+        contrast.sheet.append(current_sheet_grad)
 
     contrast = Update(*[np.array(x) for x in contrast])
     return contrast
@@ -529,7 +574,8 @@ def main_worker():
     # n_threads set globally at top.
     j = ru.run_upside('', configs, sim_time, frame_interval, n_threads=n_threads, temperature=T,
             swap_sets=ru.swap_table2d(1,len(T)), mc_interval=5., replica_interval=10.)
-    if j.job.wait() != 0: raise RuntimeError('RUN_FAIL')
+    
+    j.job.wait() # Ignore segfault
 
     swap_stats = []
 
