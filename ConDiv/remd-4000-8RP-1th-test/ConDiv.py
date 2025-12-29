@@ -723,7 +723,7 @@ def main_initialize(args):
             0.1, 0., 0.5, 0., 0.02, 0.03])
     state['initial_alpha'] = state['initial_alpha'] * 0.25
     state['solver'] = rp.AdamSolver(len(state['initial_alpha']), alpha=state['initial_alpha']) 
-    state['sim_time'] = 1000.*4
+    state['sim_time'] = 4000
 
     print()
     print('Optimizing with solver', state['solver'])
