@@ -13,7 +13,8 @@ import socket
 import torch  # Replaces Theano
 
 # Ensure local modules are found
-rp_path = '/Users/yourusername/upside/src' # UPDATE THIS PATH FOR YOUR MAC
+# Ensure local modules are found
+rp_path = os.path.abspath(os.path.join(os.getcwd(), "../..", "src")) 
 if rp_path not in sys.path:
     sys.path.append(rp_path)
 
@@ -412,6 +413,7 @@ def main_worker():
 
     n_frame = 250.
     frame_interval = int(sim_time / n_frame)
+    if frame_interval < 1: frame_interval = 1
 
     #with open(param_files['hb'])    as f: hb        = float(f.read())
     #with open(param_files['sheet']) as f: sheet_mix = float(f.read())
@@ -430,18 +432,45 @@ def main_worker():
             hbond_energy          = hb,                    # Changed from 'hbond'
             dynamic_rotamer_1body = True,                  # Changed from 'dynamic_1body'
             rama_sheet_mix_energy = sheet_mix,             # Changed from 'sheet_mix_energy'
+            rama_param_deriv      = True,
+            environment_potential_type = "0",  
             
             # Paths to common files
             rama_library          = os.path.join(project_root, "parameters/common/rama.dat"),
             reference_state_rama  = os.path.join(project_root, "parameters/common/rama_reference.pkl"),
     )
     
-    T = 0.80 * (1. + np.sqrt(100./n_res)*0.020*np.arange(n_threads-1))**2
-    T = np.concatenate((T[0:1],T))
+    if n_threads < 2:
+        T = np.array([0.80, 0.80])
+    else:
+        T = 0.80 * (1. + np.sqrt(100./n_res)*0.020*np.arange(n_threads-1))**2
+        T = np.concatenate((T[0:1],T))
 
     try:
         config_base = '%s/%s.base.h5' % (direc,code)
         ru.upside_config(fasta, config_base, **kwargs)
+
+        # --- FIX: Patch metadata by reading from source file ---
+        try:
+            # 1. Read inv_dx from source
+            src_env_path = param_files['env']
+            with tb.open_file(src_env_path, 'r') as t_src:
+                # Assuming source structure is typically root.energies
+                if hasattr(t_src.root.energies._v_attrs, 'inv_dx'):
+                    src_inv_dx = t_src.root.energies._v_attrs.inv_dx
+                else:
+                    # Fallback calculation: 18 knots (17 intervals) over 12A range
+                    src_inv_dx = 17.0 / 12.0 # ~1.4167
+            
+            # 2. Write inv_dx to config_base
+            with tb.open_file(config_base, 'r+') as t_dst:
+                env_node = t_dst.root.input.potential.nonlinear_coupling_environment.coeff
+                env_node._v_attrs.inv_dx = src_inv_dx
+                print(f"Patched {code} env metadata: inv_dx set to {src_inv_dx}")
+                
+        except Exception as e:
+            print(f"Warning: Failed to patch env metadata for {code}: {e}")
+        # -----------------------------------------------------
 
         configs = [re.sub(r'\.base\.h5','.run.%i.h5'%i_rs, config_base) for i_rs in range(len(T))]
         for i in range(1,len(T)):
@@ -465,7 +494,9 @@ def main_worker():
             'rama_sheet_mix_energy': '--rama-sheet-mixing-energy',
             'rama_library': '--rama-library',
             'reference_state_rama': '--reference-state-rama',
-            'dynamic_rotamer_1body': '--dynamic-rotamer-1body'
+            'dynamic_rotamer_1body': '--dynamic-rotamer-1body',
+            'rama_param_deriv': '--rama-param-deriv',
+            'environment_potential_type': '--environment-potential-type'
         }
 
         # Add standard flags
