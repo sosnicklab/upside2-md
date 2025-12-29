@@ -315,14 +315,17 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
         pickled_files_hex = cp.dumps(d_obj_param_files).hex()
         args[9] = pickled_files_hex
 
+        # Launch all workers first, store them in the jobs dict
         outfile = open(f'{direc}/{nm}.output_worker', 'w')
         print(f"Launching worker for {nm}...")
         j = sp.Popen(args, close_fds=True, stdout=outfile, stderr=sp.STDOUT)
-        
+        jobs[nm] = j
+
+    # After launching all workers, wait for each to finish and collect results
+    for nm, j in jobs.items():
         retcode = j.wait()
         if retcode != 0:
             print(f"WARNING: Worker for {nm} exited with code {retcode} (ignoring segfault). Checking for output...")
-
         try:
             print(f"Attempting to read divergence for {nm}...")
             with open(f'{direc}/{nm}.divergence.pkl', 'rb') as f:
@@ -336,7 +339,6 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
         except Exception as e:
             print(f"ERROR: {nm} Failed to load pickle: {e}")
             continue
-
             
     if not change:
         raise RuntimeError('All jobs failed')
