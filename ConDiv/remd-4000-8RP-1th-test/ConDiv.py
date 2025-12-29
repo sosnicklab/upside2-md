@@ -364,6 +364,7 @@ def compute_divergence(config_base, pos):
             cov_param_shape = t.root.input.potential.hbond_coverage.interaction_param.shape
             hyd_param_shape = t.root.input.potential.hbond_coverage_hydrophobe.interaction_param.shape
             env_param_shape = t.root.input.potential.nonlinear_coupling_environment.coeff.shape
+            env_weights_shape = t.root.input.potential.nonlinear_coupling_environment.weights.shape
     except Exception as e:
         print(os.path.basename(config_base)[:5],'ANALYSIS_FAIL',e)
         return None
@@ -382,7 +383,10 @@ def compute_divergence(config_base, pos):
         contrast.hb   .append(engine.get_output('hbond_energy')[0,0]/hb_strength)
         contrast.sheet.append(engine.get_output('rama_map_pot')[0,0]*sheet_scale)
 
-        contrast.env.append(engine.get_param_deriv(env_param_shape, 'nonlinear_coupling_environment'))
+        # Handle env derivatives including weights (which we ignore)
+        total_env_params = np.prod(env_param_shape) + np.prod(env_weights_shape)
+        env_full = engine.get_param_deriv((int(total_env_params),), 'nonlinear_coupling_environment')
+        contrast.env.append(env_full[:np.prod(env_param_shape)].reshape(env_param_shape))
 
     engine.set_param(less_sheet, 'rama_map_pot')
     for i in range(pos.shape[0]):

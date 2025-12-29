@@ -289,7 +289,6 @@ def compute_divergence(config_base, pos):
         with tb.open_file(config_base) as t:
             seq        = t.root.input.sequence[:]
             
-            # --- Handle Per-Residue Sheet Derivatives ---
             rama_node = t.root.input.potential.rama_map_pot
             sheet_restypes = rama_node._v_attrs.restype
             if isinstance(sheet_restypes[0], bytes):
@@ -309,18 +308,20 @@ def compute_divergence(config_base, pos):
                 except tb.NoSuchNodeError:
                     more_sheets[res] = None
                     less_sheets[res] = None
-            # --------------------------------------------
 
-            # --- FIX 5: Read HBond Strength from parameters array instead of attributes ---
-            # Was: hb_strength = t.root.input.potential.hbond_energy._v_attrs.protein_hbond_energy
-            # Now: read from the parameters array (index 0 is the strength)
             hb_strength = t.root.input.potential.hbond_energy.parameters[0]
-            # --------------------------------------------------------------------------
 
             rot_param_shape = t.root.input.potential.rotamer.pair_interaction.interaction_param.shape
             cov_param_shape = t.root.input.potential.hbond_coverage.interaction_param.shape
             hyd_param_shape = t.root.input.potential.hbond_coverage_hydrophobe.interaction_param.shape
+            
+            # Check for env group
+            if not hasattr(t.root.input.potential, 'nonlinear_coupling_environment'):
+                print(f"ANALYSIS_FAIL: Missing nonlinear_coupling_environment in {config_base}")
+                return None
+            
             env_param_shape = t.root.input.potential.nonlinear_coupling_environment.coeff.shape
+            env_weights_shape = t.root.input.potential.nonlinear_coupling_environment.weights.shape
     except Exception as e:
         print(os.path.basename(config_base)[:5],'ANALYSIS_FAIL',e)
         return None
@@ -329,24 +330,24 @@ def compute_divergence(config_base, pos):
     contrast = Update([],[],[],[],[],[])
 
     for i in range(pos.shape[0]):
-        # 1. Compute Analytical Derivatives (Rot, Cov, Hyd, Env, HB)
-        engine.energy(pos[i]) # Use default map
+        engine.energy(pos[i]) 
         
         contrast.cov.append(engine.get_param_deriv(cov_param_shape, 'hbond_coverage'))
         contrast.rot.append(engine.get_param_deriv(rot_param_shape, 'rotamer'))
         contrast.hyd.append(engine.get_param_deriv(hyd_param_shape, 'hbond_coverage_hydrophobe'))
         contrast.hb .append(engine.get_output('hbond_energy')[0,0]/hb_strength)
-        contrast.env.append(engine.get_param_deriv(env_param_shape, 'nonlinear_coupling_environment'))
         
-        # 2. Compute Finite Difference Derivatives for Sheet (Vector of 20)
+        # Handle env derivatives including weights (which we ignore)
+        total_env_params = np.prod(env_param_shape) + np.prod(env_weights_shape)
+        env_full = engine.get_param_deriv((int(total_env_params),), 'nonlinear_coupling_environment')
+        contrast.env.append(env_full[:np.prod(env_param_shape)].reshape(env_param_shape))
+        
         current_sheet_grad = np.zeros(len(sheet_restypes))
         
         for idx, res in enumerate(sheet_restypes):
             m = more_sheets[res]
             l = less_sheets[res]
-            
-            if m is None: 
-                continue 
+            if m is None: continue 
                 
             engine.set_param(m, 'rama_map_pot')
             engine.energy(pos[i])
@@ -393,6 +394,7 @@ def main_worker():
             dynamic_rotamer_1body = True,
             rama_sheet_mix_energy = sheet_mix,
             rama_param_deriv      = True,
+            environment_potential_type = "0",  
             rama_library          = os.path.join(project_root, "parameters/common/rama.dat"),
             reference_state_rama  = os.path.join(project_root, "parameters/common/rama_reference.pkl"),
     )
@@ -406,6 +408,28 @@ def main_worker():
     try:
         config_base = '%s/%s.base.h5' % (direc,code)
         ru.upside_config(fasta, config_base, **kwargs)
+
+        # --- FIX: Patch metadata by reading from source file ---
+        try:
+            # 1. Read inv_dx from source
+            src_env_path = param_files['env']
+            with tb.open_file(src_env_path, 'r') as t_src:
+                # Assuming source structure is typically root.energies
+                if hasattr(t_src.root.energies._v_attrs, 'inv_dx'):
+                    src_inv_dx = t_src.root.energies._v_attrs.inv_dx
+                else:
+                    # Fallback calculation: 18 knots (17 intervals) over 12A range
+                    src_inv_dx = 17.0 / 12.0 # ~1.4167
+            
+            # 2. Write inv_dx to config_base
+            with tb.open_file(config_base, 'r+') as t_dst:
+                env_node = t_dst.root.input.potential.nonlinear_coupling_environment.coeff
+                env_node._v_attrs.inv_dx = src_inv_dx
+                print(f"Patched {code} env metadata: inv_dx set to {src_inv_dx}")
+                
+        except Exception as e:
+            print(f"Warning: Failed to patch env metadata for {code}: {e}")
+        # -----------------------------------------------------
 
         configs = [re.sub(r'\.base\.h5','.run.%i.h5'%i_rs, config_base) for i_rs in range(len(T))]
         for i in range(1,len(T)):
@@ -424,7 +448,8 @@ def main_worker():
             'rama_library': '--rama-library',
             'reference_state_rama': '--reference-state-rama',
             'dynamic_rotamer_1body': '--dynamic-rotamer-1body',
-            'rama_param_deriv': '--rama-param-deriv'
+            'rama_param_deriv': '--rama-param-deriv',
+            'environment_potential_type': '--environment-potential-type'
         }
 
         cmd.append(f'--fasta={fasta}')
@@ -452,7 +477,7 @@ def main_worker():
     j = ru.run_upside('', configs, sim_time, frame_interval, n_threads=n_threads, temperature=T,
             swap_sets=ru.swap_table2d(1,len(T)), mc_interval=5., replica_interval=10.)
     
-    j.job.wait() # Ignore segfault on exit
+    j.job.wait() # Ignore segfault
 
     swap_stats = []
 
