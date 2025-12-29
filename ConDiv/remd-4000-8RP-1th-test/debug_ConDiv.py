@@ -3,22 +3,20 @@ import sys, os
 import numpy as np
 import subprocess as sp
 import tables as tb
-import pickle as cp  # Replaces cPickle
+import pickle as cp
 from glob import glob
 import re
 import shutil
 import collections
 import time
 import socket
-import torch  # Replaces Theano
+import torch
 
 # Ensure local modules are found
-rp_path = '/Users/yourusername/upside/src' # UPDATE THIS PATH FOR YOUR MAC
+rp_path = os.path.abspath(os.path.join(os.getcwd(), "../..", "src")) 
 if rp_path not in sys.path:
     sys.path.append(rp_path)
 
-# Mock check for worker to avoid imports if running strictly as worker
-# (Adjust based on how your modules are structured in Py3)
 is_worker = __name__ == '__main__' and len(sys.argv) > 1 and sys.argv[1] == 'worker'
 
 if not is_worker:
@@ -29,11 +27,14 @@ import upside_engine as ue
 
 np.set_printoptions(precision=2, suppress=True)
 
-## Important parameters
-n_threads = 12  # Reduced for M1 local run (M1 has 8 cores, 4 is safe)
+## --- DEBUG SETTINGS ---
+n_threads = 1        # Use 1 thread to avoid Mac OpenMP crashes
+minibatch_size = 1   # Process 1 protein at a time
+debug_sim_time = 500.0
+## ----------------------
+
 native_restraint_strength = 1./3.**2
 rmsd_k = 15
-minibatch_size = 12
 
 resnames = ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY',
             'HIS', 'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER',
@@ -48,7 +49,6 @@ UpdateBase = collections.namedtuple('UpdateBase', 'env cov rot hyd hb sheet'.spl
 
 class Update(UpdateBase):
     def __init__(self, *args, **kwargs):
-        # Handle namedtuple init in Py3 cleanly
         pass
 
     def _do_binary(self, other, op):
@@ -73,27 +73,20 @@ class Update(UpdateBase):
     def __add__(self, other): return self._do_binary(other, lambda a, b: a + b)
     def __sub__(self, other): return self._do_binary(other, lambda a, b: a - b)
     def __mul__(self, other): return self._do_binary(other, lambda a, b: a * b)
-    def __truediv__(self, other): return self._do_binary(other, lambda a, b: a / b) # Py3 div
+    def __truediv__(self, other): return self._do_binary(other, lambda a, b: a / b)
 
 def print_param(param):
-    # Handle hb (might be numpy scalar or float)
     print(f'hb    {float(param.hb):.3f}')
-    
-    # Handle sheet (Scalar vs Vector)
     if np.ndim(param.sheet) == 0:
         print(f'sheet {float(param.sheet):.3f}')
     else:
         print(f'sheet (mean) {np.mean(param.sheet):.3f}')
 
     print('env')
-    
-    # Check if param.env is a tensor or numpy array
     env_data = param.env
     if hasattr(env_data, 'detach'): 
         env_data = env_data.detach().numpy()
         
-    # Ensure env_data has expected dimensions before zipping
-    # (Just a safeguard against shape mismatches during init)
     try:
         env_dict = dict(zip(resnames, env_data[:, 1::2]))
         for r in hydrophobicity_order:
@@ -102,20 +95,6 @@ def print_param(param):
         print('    (Environment parameters not fully initialized yet)')
 
 def get_d_obj_torch():
-    """
-    Replaces get_d_obj (Theano) with PyTorch logic.
-    Assumes rp modules now provide PyTorch Tensors or compatible numpy arrays.
-    """
-    
-    # NOTE: You must update 'rp' to expose these as torch.Tensors or conversion will be needed here.
-    # For now, we wrap them assuming they are numpy arrays.
-    def to_t(x): return torch.tensor(x, dtype=torch.float64, requires_grad=False)
-    
-    # We assume rp.unpack_*_expr were Theano variables. 
-    # In PyTorch, we need the logic that generated those expressions.
-    # Since we don't have rp source, we assume rp.unpack_params can be used 
-    # to reconstruct the inputs for the energy function.
-
     def student_t_neglog(t, scale, nu):
         return 0.5 * (nu + 1.) * torch.log(1. + (1. / (nu * scale**2)) * t**2)
 
@@ -125,7 +104,6 @@ def get_d_obj_torch():
     def lower_bound(x, lb):
         return torch.where(x < lb, 1e0 * (x - lb)**2, torch.zeros_like(x))
 
-    # Grid setup (Fixed constants)
     r_for_cov_energy = torch.arange(1, rp.n_knot_hb - 1) * rp.hb_dr
     r_for_rot_energy = torch.arange(1, rp.n_knot_sc - 1) * rp.sc_dr
     r_for_hyd_energy = torch.arange(1, rp.n_knot_hb - 1) * rp.hb_dr
@@ -135,27 +113,13 @@ def get_d_obj_torch():
     hyd_expect = 5. * cutoff_func(r_for_hyd_energy - 1., 0.2)
 
     def compute_grad(lparam_np, rot_coupling, cov_coupling, hyd_coupling, reg_scale):
-        # Convert inputs to torch tensors
         lparam = torch.tensor(lparam_np, dtype=torch.float64, requires_grad=True)
         rot_c = torch.tensor(rot_coupling, dtype=torch.float64)
         cov_c = torch.tensor(cov_coupling, dtype=torch.float64)
         hyd_c = torch.tensor(hyd_coupling, dtype=torch.float64)
         
-        # Unpack parameters using rp logic (needs rp to support torch or we manually slice)
-        # Note: This relies on rp.unpack_params returning Tensors if we pass it a Tensor
-        # If rp is purely numpy, this section requires the splines to be rewritten in Torch.
-        # Placeholder: We assume rp.quadspline_energy works with Torch tensors.
-        
-        # 1. Unpack params from flat lparam
-        # This part depends heavily on rp.unpack_params implementation.
-        # Assuming it splits lparam into the specific interaction tensors.
-        #unpacked = rp.unpack_params_pytorch(lparam) # You must implement this in rp
-        #cov_expr, rot_expr, hyd_expr = unpacked['cov'], unpacked['rot'], unpacked['hyd']
-
         rot_expr, cov_expr, hyd_expr, _, _, _ = rp.unpack_params_pytorch(lparam)
         
-        # 2. Calculate Energies
-        # You need a torch implementation of quadspline_energy in rp
         hb_n_knot = (rp.n_knot_angular, rp.n_knot_angular, rp.n_knot_hb, rp.n_knot_hb)
         sc_n_knot = (rp.n_knot_angular, rp.n_knot_angular, rp.n_knot_sc, rp.n_knot_sc)
         
@@ -163,7 +127,6 @@ def get_d_obj_torch():
         rot_energy = rp.quadspline_energy_torch(rot_expr, sc_n_knot)
         hyd_energy = rp.quadspline_energy_torch(hyd_expr, hb_n_knot)
 
-        # 3. Regularization
         cov_reg = student_t_neglog(cov_energy - cov_expect[None, None, :, None, None], 200., 3.).sum() / reg_scale
         rot_reg = student_t_neglog(rot_energy - rot_expect[None, None, :, None, None], 200., 3.).sum() / reg_scale
         hyd_reg = student_t_neglog(hyd_energy - hyd_expect[None, None, :, None, None], 200., 3.).sum() / reg_scale
@@ -173,29 +136,18 @@ def get_d_obj_torch():
                     lower_bound(rot_energy, -6.).sum() +
                     lower_bound(hyd_energy, -6.).sum())
 
-        # 4. Objective
         obj_expr = ((rot_c * rot_expr).sum() +
                     (cov_c * cov_expr).sum() +
                     (hyd_c * hyd_expr).sum() +
                     reg_expr)
 
-        # 5. Backward
         obj_expr.backward()
         return lparam.grad.detach().numpy()
 
     return compute_grad
 
-
 if not is_worker:
-    # d_obj = get_d_obj() # OLD THEANO
-    # d_obj = get_d_obj_torch() # NEW TORCH (Requires rp updates)
-    # For now, we mock d_obj so the script compiles, but it will fail at runtime if rp isn't fixed.
-    print("WARNING: Using PyTorch placeholder. Ensure rotamer_parameter_estimation is updated.")
-    try:
-        d_obj = get_d_obj_torch()
-    except Exception as e:
-        print(f"Could not load Torch objective: {e}")
-        d_obj = None
+    d_obj = get_d_obj_torch()
 
     def get_init_param(init_dir):
         init_param_files = dict(
@@ -204,7 +156,6 @@ if not is_worker:
                 hb  = os.path.join(init_dir, 'hbond.h5'),
                 sheet  = os.path.join(init_dir, 'sheet'))
 
-        # Read Rotamers
         with tb.open_file(init_param_files['rot']) as t:
             rotp = t.root.pair_interaction[:]
             covp = t.root.coverage_interaction[:]
@@ -213,17 +164,13 @@ if not is_worker:
             rotposp = t.root.rotamer_center_fixed[:]
             rotscalarp = np.zeros((rotposp.shape[0],))
 
-        # Read Environment
         with tb.open_file(init_param_files['env']) as t:
             env = t.root.energies[:,:-1]
 
-        # Read HBond (H5 format)
         with tb.open_file(init_param_files['hb']) as t:
             hb_val = t.root.parameter[0] 
 
-        # --- CHANGED: Read Sheet using numpy (handles vectors) ---
         sheet = np.loadtxt(init_param_files['sheet'])
-        # -------------------------------------------------------
 
         param = Update(*([None]*6))._replace(
                 env = env,
@@ -232,11 +179,9 @@ if not is_worker:
                 sheet = sheet)
         return param, init_param_files
 
-
     def expand_param(params, orig_param_files, new_param_files):
         rotp, covp, hydp, hydplp, rotposp, rotscalarp = rp.unpack_params(params.rot)
 
-        # Write Rotamer H5
         shutil.copyfile(orig_param_files['rot'], new_param_files['rot'])
         with tb.open_file(new_param_files['rot'], 'a') as t:
             t.root.pair_interaction[:]       = rotp
@@ -245,22 +190,17 @@ if not is_worker:
             t.root.hydrophobe_placement[:]   = hydplp
             t.root.rotamer_center_fixed[:]   = rotposp
 
-        # Write HBond H5
         shutil.copyfile(orig_param_files['hb'], new_param_files['hb'])
         with tb.open_file(new_param_files['hb'], 'a') as t:
             p = t.root.parameter[:]
             p[0] = params.hb
             t.root.parameter[:] = p
         
-        # --- CHANGED: Write Sheet using numpy (handles vectors) ---
-        # If it's a scalar, make it iterable for savetxt or just save it
         if np.ndim(params.sheet) == 0:
             with open(new_param_files['sheet'], 'w') as f: print(params.sheet, file=f)
         else:
             np.savetxt(new_param_files['sheet'], params.sheet)
-        # --------------------------------------------------------
 
-        # Write Environment H5
         shutil.copyfile(orig_param_files['env'], new_param_files['env'])
         with tb.open_file(new_param_files['env'], 'a') as t:
             tmp = np.zeros(t.root.energies.shape)
@@ -268,12 +208,10 @@ if not is_worker:
             tmp[:,-1]  = tmp[:,-3]
             t.root.energies[:] = tmp
 
-
     def backprop_deriv(param, deriv_update, reg_scale):
         envd = deriv_update.env[:,:-1].copy()
         envd[:,-2] += deriv_update.env[:,-1]
         
-        # d_obj is now the torch function
         rot_grad = d_obj(param.rot, deriv_update.rot, deriv_update.cov, deriv_update.hyd, reg_scale)
         
         return deriv_update._replace(
@@ -282,11 +220,9 @@ if not is_worker:
                 hyd = 0.,
                 env = envd)
 
-
 def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, solver, reg_scale, sim_time):
     if not os.path.exists(direc): os.mkdir(direc)
-    print(direc)
-    print()
+    print(f"Running minibatch in {direc}")
 
     d_obj_param_files = dict([(k,os.path.join(direc, 'nesterov_temp__'+os.path.basename(x))) 
         for k,x in initial_param_files.items()])
@@ -295,44 +231,41 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
     with open(os.path.join(direc,'sim_time'),'w') as f:
             print(sim_time, file=f)
 
-    # REPLACEMENT: Use subprocess directly (Local execution) instead of srun
     jobs = collections.OrderedDict()
     for nm,t in minibatch[::-1]:
-        # Removed srun and slurm specific flags.
-        # Added python call directly.
         args = [sys.executable, worker_path,
                 'worker', nm, direc, t.fasta, t.init_path, str(t.n_res), t.chi,
-                cp.dumps(d_obj_param_files, protocol=0).decode('latin1'), # Decode for arg passing if needed
+                cp.dumps(d_obj_param_files, protocol=0).decode('latin1'),
                 str(sim_time)]
         
-        # For subprocess arg passing of binary pickle data:
-        # Better strategy: Write config to file and pass filename. 
-        # But sticking to original logic: Encode pickle as hex or rely on Popen raw bytes handling?
-        # Python 3 sys.argv are strings. We will use hex encoding to be safe.
         pickled_files_hex = cp.dumps(d_obj_param_files).hex()
         args[9] = pickled_files_hex
 
         outfile = open(f'{direc}/{nm}.output_worker', 'w')
+        print(f"Launching worker for {nm}...")
         jobs[nm] = sp.Popen(args, close_fds=True, stdout=outfile, stderr=sp.STDOUT)
 
     rmsd = dict()
     change = []
+    
     for nm,j in jobs.items():
-        if j.wait() != 0: 
-            print(nm, 'WORKER_FAIL')
-            continue
+        retcode = j.wait()
+        if retcode != 0:
+            print(f"WARNING: Worker for {nm} exited with code {retcode} (ignoring segfault). Checking for output...")
+        
         try:
             with open(f'{direc}/{nm}.divergence.pkl', 'rb') as f:
                 divergence = cp.load(f)
                 rmsd[nm] = (divergence['rmsd_restrain'], divergence['rmsd'])
                 change.append(divergence['contrast'])
         except FileNotFoundError:
-            print(nm, 'NO_OUTPUT')
+            print(nm, 'NO_OUTPUT (Real Failure)')
             continue
             
     if not change:
-        raise RuntimeError('All jobs failed')
+        raise RuntimeError('All jobs failed (No output generated)')
 
+    print("Workers finished. Computing gradients...")
     d_param = backprop_deriv(param, Update(*[np.sum(x,axis=0) for x in zip(*change)]), reg_scale)
 
     with open(f'{direc}/rmsd.pkl', 'wb') as f:
@@ -355,11 +288,35 @@ def compute_divergence(config_base, pos):
     try:
         with tb.open_file(config_base) as t:
             seq        = t.root.input.sequence[:]
-            more_sheet = t.root.input.potential.rama_map_pot.more_sheet_rama_pot[:]
-            less_sheet = t.root.input.potential.rama_map_pot.less_sheet_rama_pot[:]
-            eps        = t.root.input.potential.rama_map_pot._v_attrs.sheet_eps
+            
+            # --- Handle Per-Residue Sheet Derivatives ---
+            rama_node = t.root.input.potential.rama_map_pot
+            sheet_restypes = rama_node._v_attrs.restype
+            if isinstance(sheet_restypes[0], bytes):
+                sheet_restypes = [x.decode('utf-8') for x in sheet_restypes]
+                
+            eps = rama_node._v_attrs.sheet_eps
             sheet_scale = 1./(2.*eps)
-            hb_strength = t.root.input.potential.hbond_energy._v_attrs.protein_hbond_energy
+            
+            more_sheets = {}
+            less_sheets = {}
+            for res in sheet_restypes:
+                try:
+                    m = getattr(rama_node, f'more_sheet_rama_pot_{res}')[:]
+                    l = getattr(rama_node, f'less_sheet_rama_pot_{res}')[:]
+                    more_sheets[res] = m
+                    less_sheets[res] = l
+                except tb.NoSuchNodeError:
+                    more_sheets[res] = None
+                    less_sheets[res] = None
+            # --------------------------------------------
+
+            # --- FIX 5: Read HBond Strength from parameters array instead of attributes ---
+            # Was: hb_strength = t.root.input.potential.hbond_energy._v_attrs.protein_hbond_energy
+            # Now: read from the parameters array (index 0 is the strength)
+            hb_strength = t.root.input.potential.hbond_energy.parameters[0]
+            # --------------------------------------------------------------------------
+
             rot_param_shape = t.root.input.potential.rotamer.pair_interaction.interaction_param.shape
             cov_param_shape = t.root.input.potential.hbond_coverage.interaction_param.shape
             hyd_param_shape = t.root.input.potential.hbond_coverage_hydrophobe.interaction_param.shape
@@ -371,23 +328,37 @@ def compute_divergence(config_base, pos):
     engine = ue.Upside(config_base)
     contrast = Update([],[],[],[],[],[])
 
-    engine.set_param(more_sheet, 'rama_map_pot')
     for i in range(pos.shape[0]):
-        engine.energy(pos[i])
-
+        # 1. Compute Analytical Derivatives (Rot, Cov, Hyd, Env, HB)
+        engine.energy(pos[i]) # Use default map
+        
         contrast.cov.append(engine.get_param_deriv(cov_param_shape, 'hbond_coverage'))
         contrast.rot.append(engine.get_param_deriv(rot_param_shape, 'rotamer'))
         contrast.hyd.append(engine.get_param_deriv(hyd_param_shape, 'hbond_coverage_hydrophobe'))
-
-        contrast.hb   .append(engine.get_output('hbond_energy')[0,0]/hb_strength)
-        contrast.sheet.append(engine.get_output('rama_map_pot')[0,0]*sheet_scale)
-
+        contrast.hb .append(engine.get_output('hbond_energy')[0,0]/hb_strength)
         contrast.env.append(engine.get_param_deriv(env_param_shape, 'nonlinear_coupling_environment'))
-
-    engine.set_param(less_sheet, 'rama_map_pot')
-    for i in range(pos.shape[0]):
-        engine.energy(pos[i])
-        contrast.sheet[i] -= engine.get_output('rama_map_pot')[0,0]*sheet_scale
+        
+        # 2. Compute Finite Difference Derivatives for Sheet (Vector of 20)
+        current_sheet_grad = np.zeros(len(sheet_restypes))
+        
+        for idx, res in enumerate(sheet_restypes):
+            m = more_sheets[res]
+            l = less_sheets[res]
+            
+            if m is None: 
+                continue 
+                
+            engine.set_param(m, 'rama_map_pot')
+            engine.energy(pos[i])
+            e_plus = engine.get_output('rama_map_pot')[0,0]
+            
+            engine.set_param(l, 'rama_map_pot')
+            engine.energy(pos[i])
+            e_minus = engine.get_output('rama_map_pot')[0,0]
+            
+            current_sheet_grad[idx] = (e_plus - e_minus) * sheet_scale
+            
+        contrast.sheet.append(current_sheet_grad)
 
     contrast = Update(*[np.array(x) for x in contrast])
     return contrast
@@ -402,38 +373,35 @@ def main_worker():
     init_path   = sys.argv[5]
     n_res       = int(sys.argv[6])
     chi         = sys.argv[7]
-    # Decode hex pickle from argument
     param_files = cp.loads(bytes.fromhex(sys.argv[8]))
     sim_time    = float(sys.argv[9])
 
     n_frame = 250.
     frame_interval = int(sim_time / n_frame)
+    if frame_interval < 1: frame_interval = 1
 
-    #with open(param_files['hb'])    as f: hb        = float(f.read())
-    #with open(param_files['sheet']) as f: sheet_mix = float(f.read())
     hb = param_files['hb']
     sheet_mix = param_files['sheet']
-    
-    # Calculate project root for correct pathing
     project_root = os.path.abspath(os.path.join(os.getcwd(), "../.."))
 
-    # Map ConDiv keys to run_upside.py keys
     kwargs = dict(
-            environment_potential = param_files['env'],    # Changed from 'environment'
-            rotamer_interaction   = param_files['rot'],    # Changed from 'rotamer_interaction_param'
-            rotamer_placement     = param_files['rot'],    # Changed from 'placement'
-            initial_structure     = init_path,             # Changed from 'init'
-            hbond_energy          = hb,                    # Changed from 'hbond'
-            dynamic_rotamer_1body = True,                  # Changed from 'dynamic_1body'
-            rama_sheet_mix_energy = sheet_mix,             # Changed from 'sheet_mix_energy'
-            
-            # Paths to common files
+            environment_potential = param_files['env'],
+            rotamer_interaction   = param_files['rot'],
+            rotamer_placement     = param_files['rot'],
+            initial_structure     = init_path,
+            hbond_energy          = hb,
+            dynamic_rotamer_1body = True,
+            rama_sheet_mix_energy = sheet_mix,
+            rama_param_deriv      = True,
             rama_library          = os.path.join(project_root, "parameters/common/rama.dat"),
             reference_state_rama  = os.path.join(project_root, "parameters/common/rama_reference.pkl"),
     )
     
-    T = 0.80 * (1. + np.sqrt(100./n_res)*0.020*np.arange(n_threads-1))**2
-    T = np.concatenate((T[0:1],T))
+    if n_threads < 2:
+        T = np.array([0.80, 0.80])
+    else:
+        T = 0.80 * (1. + np.sqrt(100./n_res)*0.020*np.arange(n_threads-1))**2
+        T = np.concatenate((T[0:1],T))
 
     try:
         config_base = '%s/%s.base.h5' % (direc,code)
@@ -443,15 +411,9 @@ def main_worker():
         for i in range(1,len(T)):
             shutil.copyfile(config_base, configs[i])
 
-        # Build command manually to bypass ru.upside_config wrapper limitations
-        # 1. Base arguments from kwargs
         upside_config_script = os.path.join(os.path.dirname(ru.__file__), 'upside_config.py')
         
         cmd = [sys.executable, upside_config_script]
-        
-        # Add mapped kwargs as flags
-        # Note: We need to convert the keys back to CLI flags. 
-        # This mapping must match what we fixed in Step 13.
         key_map = {
             'environment_potential': '--environment-potential',
             'rotamer_interaction': '--rotamer-interaction',
@@ -461,26 +423,23 @@ def main_worker():
             'rama_sheet_mix_energy': '--rama-sheet-mixing-energy',
             'rama_library': '--rama-library',
             'reference_state_rama': '--reference-state-rama',
-            'dynamic_rotamer_1body': '--dynamic-rotamer-1body'
+            'dynamic_rotamer_1body': '--dynamic-rotamer-1body',
+            'rama_param_deriv': '--rama-param-deriv'
         }
 
-        # Add standard flags
         cmd.append(f'--fasta={fasta}')
         cmd.append(f'--output={configs[0]}')
         
         for k, v in kwargs.items():
             if k in key_map:
-                if v is True: # Bool flags like dynamic-rotamer-1body
+                if v is True:
                     cmd.append(key_map[k])
                 elif v is not None:
                     cmd.append(f'{key_map[k]}={v}')
 
-        # Add Restraint flags
-        # Restraining all residues 0 to N-1
         cmd.append(f'--restraint-group=0-{n_res-1}')
         cmd.append(f'--restraint-spring={native_restraint_strength}')
 
-        # Run it
         try:
             sp.check_output(cmd, stderr=sp.STDOUT)
         except sp.CalledProcessError as e:
@@ -490,11 +449,10 @@ def main_worker():
     except tb.NoSuchNodeError:
         raise RuntimeError('CONFIG_FAIL')
     
-    # Run Upside
-    # n_threads set globally at top.
     j = ru.run_upside('', configs, sim_time, frame_interval, n_threads=n_threads, temperature=T,
             swap_sets=ru.swap_table2d(1,len(T)), mc_interval=5., replica_interval=10.)
-    if j.job.wait() != 0: raise RuntimeError('RUN_FAIL')
+    
+    j.job.wait() # Ignore segfault on exit
 
     swap_stats = []
 
@@ -524,7 +482,7 @@ def main_worker():
     divergence['swap_stats'] = np.array(swap_stats)
 
     for fn in [config_base] + configs:
-        os.remove(fn)
+        if os.path.exists(fn): os.remove(fn)
 
     with open('%s/%s.divergence.pkl' % (direc,code),'wb') as f:
         cp.dump(divergence, f, -1)
@@ -535,7 +493,6 @@ def main_loop(state_str, max_iter):
         print('#########################################')
         print('####      EPOCH %2i MINIBATCH %2i      ####' % (state['epoch'],state['i_mb']))
         print('#########################################')
-        print()
         sys.stdout.flush()
     
         tstart = time.time()
@@ -548,7 +505,6 @@ def main_loop(state_str, max_iter):
                 state['solver'], state['n_prot']*1., state['sim_time'])
         print()
         print('%.0f seconds elapsed this minibatch'%(time.time()-tstart))
-        print()
         sys.stdout.flush()
 
         state['i_mb'] += 1
@@ -557,25 +513,22 @@ def main_loop(state_str, max_iter):
             state['epoch'] += 1
 
     for i in range(max_iter):
-        if hasattr(state_str, 'encode'): # Handle string path input
+        if hasattr(state_str, 'encode'): 
              if os.path.exists(state_str):
                  with open(state_str, 'rb') as f:
                      state = cp.load(f)
              else:
-                 # --- NEW ERROR HANDLING ---
-                 raise FileNotFoundError(f"Checkpoint file not found: {state_str}\n"
-                                         "Did you run the 'initialize' mode first?")
-                 # --------------------------
+                 raise FileNotFoundError(f"Checkpoint file not found: {state_str}\n")
         else:
              state = cp.loads(state_str)
 
+        state['sim_time'] = debug_sim_time 
+
         main_loop_iteration(state)
         
-        # Save state
         with open(os.path.join(state['mb_direc'], 'checkpoint.pkl'),'wb') as f:
             cp.dump(state, f, -1)
         
-        # Reload state from bytes for next iter to ensure consistency
         state_str = cp.dumps(state, -1)
 
 
@@ -600,7 +553,7 @@ def main_initialize(args):
             base = os.path.join(state['protein_dir'], code)
 
             with open(base+'.initial.pkl', 'rb') as f:
-                native_pos = cp.load(f, encoding='latin1')[:,:,0] # Handle Py2 numpy pickles
+                native_pos = cp.load(f, encoding='latin1')[:,:,0] 
                 n_res = len(native_pos)//3
 
             max_sep = np.sqrt(np.sum(np.diff(native_pos,axis=0)**2,axis=-1)).max()
@@ -619,36 +572,32 @@ def main_initialize(args):
 
     training_list = sorted(list(training_set.items()), key=lambda x: (x[1].n_res,x[0]))
     np.random.shuffle(training_list)
+    
+    # DEBUG: Reduce to 1 protein
+    print("DEBUG MODE: Reducing training set to 1 protein.")
+    training_list = training_list[:1]
 
-    minibatch_excess = len(training_list)%minibatch_size
-    if minibatch_excess: training_list = training_list[:-minibatch_excess]
-    n_minibatch = len(training_list)//minibatch_size
-    state['minibatches'] = [training_list[i::n_minibatch] for i in range(n_minibatch)]
-    state['n_prot'] = n_minibatch*minibatch_size
-    print('Constructed %i minibatches of size %i (%i proteins)' % (n_minibatch, minibatch_size, state['n_prot']))
+    state['minibatches'] = [training_list] 
+    state['n_prot'] = len(training_list)
+    
+    print('Constructed %i minibatches of size %i (%i proteins)' % (1, 1, state['n_prot']))
 
 
     if state['init_dir'] != 'cached':
-        print('about to get init')
         state['param'], state['init_param_files'] = get_init_param(state['init_dir'])
-        print('found init')
         with open(os.path.join(state['base_dir'], 'condiv_init.pkl'),'wb') as f:
             cp.dump((state['init_dir'],state['param'],state['init_param_files']),f,-1)
     else:
         with open(os.path.join(state['base_dir'], 'condiv_init.pkl'), 'rb') as f:
             state['init_dir'],state['param'],state['init_param_files'] = cp.load(f)
 
-    state['initial_alpha'] = Update(*[
-            0.1, 0., 0.5, 0., 0.02, 0.03])
-    state['initial_alpha'] = state['initial_alpha'] * 0.25
+    state['initial_alpha'] = Update(*[0.1, 0., 0.5, 0., 0.02, 0.03]) * 0.25
     state['solver'] = rp.AdamSolver(len(state['initial_alpha']), alpha=state['initial_alpha']) 
-    state['sim_time'] = 1000.*4
+    
+    state['sim_time'] = debug_sim_time
 
-    print()
     print('Optimizing with solver', state['solver'])
-    print()
     print_param(state['param'])
-    print()
 
     state['epoch'] = 0
     state['i_mb'] = 0
@@ -659,9 +608,7 @@ if __name__ == '__main__':
         main_worker()
 
     elif sys.argv[1] == 'restart':
-        assert len(sys.argv[1:]) == 3
         print('Running as PID %i on host %s' % (os.getpid(), socket.gethostname()))
-        # Restart expects a checkpoint FILE path now
         main_loop(sys.argv[2], int(sys.argv[3]))
 
     elif sys.argv[1] == 'initialize':
