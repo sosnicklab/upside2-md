@@ -2,3 +2,5 @@ upside_input/*
 venv/*
 *.output
 test_*/*
+.claude
+PROMPT.md

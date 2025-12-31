@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import sys, os
+os.environ['OMP_NUM_THREADS'] = '1'  # Prevent threading conflicts
+
 import numpy as np
 import subprocess as sp
 import tables as tb
@@ -749,7 +751,61 @@ def main_initialize(args):
     state['i_mb'] = 0
     return state
 
+
+def main_debug():
+    """Debug mode: Run with 1 protein for 1000.0 simulation time (about 100 steps)"""
+    
+    # Set hardcoded paths as requested in the prompt
+    init_dir = "/Users/yinhan/Documents/upside2-md/parameters/ff_2.1"
+    protein_dir = "/Users/yinhan/Documents/upside2-md/training_set"
+    protein_list = os.path.join(os.path.dirname(__file__), "pdb_list")  # Use the pdb_list in current directory
+    base_dir = os.path.join(os.path.dirname(__file__), "debug_mode_run")
+    
+    # Call main_initialize with these parameters
+    args = [init_dir, protein_dir, protein_list, base_dir]
+    state = main_initialize(args)
+    
+    # Modify state for debug mode
+    state['minibatch_size'] = 1
+    state['sim_time'] = 1000.0  # 100 steps
+    
+    # Load only one protein from the training set
+    print("\n=== DEBUG MODE: Loading only 1 protein from training set ===")
+    # Take the first protein from the first minibatch
+    first_protein = state['minibatches'][0][0]
+    state['minibatches'] = [[first_protein]]  # Create a single minibatch with just one protein
+    
+    # Save the modified state
+    debug_checkpoint = os.path.join(base_dir, "debug_initial_checkpoint.pkl")
+    with open(debug_checkpoint, 'wb') as f:
+        cp.dump(state, f, -1)
+    
+    print("\n=== DEBUG MODE: Running simulation with 100 steps ===")
+    print(f"Debug checkpoint saved at: {debug_checkpoint}")
+    print(f"Simulation time set to: {state['sim_time']}")
+    print(f"Number of proteins: 1")
+    
+    # Run one iteration of the main loop
+    main_loop(cp.dumps(state, -1), 1)
+
+
 if __name__ == '__main__':
+    # Run debug mode by default if no mode is specified
+    if len(sys.argv) < 2 or sys.argv[1] not in ['worker', 'restart', 'initialize']:
+        main_debug()
+    elif sys.argv[1] == 'worker':
+        main_worker()
+
+    elif sys.argv[1] == 'restart':
+        assert len(sys.argv[1:]) == 3
+        print('Running as PID %i on host %s' % (os.getpid(), socket.gethostname()))
+        # Restart expects a checkpoint FILE path now
+        main_loop(sys.argv[2], int(sys.argv[3]))
+
+    elif sys.argv[1] == 'initialize':
+        initial_state = main_initialize(sys.argv[2:])
+        with open(os.path.join(initial_state['base_dir'],'initial_checkpoint.pkl'),'wb') as f:
+            cp.dump(initial_state, f, -1)
     if sys.argv[1] == 'worker':
         main_worker()
 
