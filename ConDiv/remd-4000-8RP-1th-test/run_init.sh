@@ -2,7 +2,9 @@
 
 # Define paths
 X=$(pwd)
+WORK_DIR=$(pwd)
 Y=test_00
+source "$WORK_DIR/venv/bin/activate"
 
 # Ensure venv matches your setup
 VENV_PYTHON="$X/venv/bin/python3"

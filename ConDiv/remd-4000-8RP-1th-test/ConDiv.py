@@ -31,7 +31,7 @@ import upside_engine as ue
 np.set_printoptions(precision=2, suppress=True)
 
 ## Important parameters
-n_threads = 12 
+n_threads = 12
 native_restraint_strength = 1./3.**2
 rmsd_k = 15
 minibatch_size = 12
@@ -271,8 +271,12 @@ if not is_worker:
 
 
     def backprop_deriv(param, deriv_update, reg_scale):
-        envd = deriv_update.env[:,:-1].copy()
-        envd[:,-2] += deriv_update.env[:,-1]
+        # Robust handling for env array dimensions
+        if hasattr(deriv_update.env, 'ndim') and deriv_update.env.ndim > 1:
+            envd = deriv_update.env[:, :-1].copy()
+            envd[:, -2] += deriv_update.env[:, -1]
+        else:
+            envd = np.copy(deriv_update.env)
         
         # d_obj is now the torch function
         rot_grad = d_obj(param.rot, deriv_update.rot, deriv_update.cov, deriv_update.hyd, reg_scale)
@@ -588,13 +592,21 @@ def main_worker():
 
     with tb.open_file(configs[1]) as t:
         o = t.root.output
-        pos_free     = o.pos[int(n_frame/2):,0]
-        swap_stats.extend(o.replica_cumulative_swaps[-1] - o.replica_cumulative_swaps[int(n_frame/2)])
+        pos_free = o.pos[int(n_frame/2):,0]
+        # Safely compute swap stats if enough frames are available
+        if len(o.replica_cumulative_swaps) > int(n_frame/2):
+            swap_stats.extend(o.replica_cumulative_swaps[-1] - o.replica_cumulative_swaps[int(n_frame/2)])
+        else:
+            # Fallback: use zeros of appropriate shape
+            swap_stats.extend(np.zeros_like(o.replica_cumulative_swaps[0]))
 
-    for nrep in range(3,len(T),2):
+    for nrep in range(3, len(T), 2):
         with tb.open_file(configs[nrep]) as t:
             o = t.root.output
-            swap_stats.extend(o.replica_cumulative_swaps[-1] - o.replica_cumulative_swaps[int(n_frame/2)])
+            if len(o.replica_cumulative_swaps) > int(n_frame/2):
+                swap_stats.extend(o.replica_cumulative_swaps[-1] - o.replica_cumulative_swaps[int(n_frame/2)])
+            else:
+                swap_stats.extend(np.zeros_like(o.replica_cumulative_swaps[0]))
 
     divergence = dict()
     alldiv = compute_divergence(config_base, np.concatenate([pos_restrain,pos_free],axis=0))
