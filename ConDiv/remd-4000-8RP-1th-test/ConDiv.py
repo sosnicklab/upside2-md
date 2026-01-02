@@ -14,6 +14,9 @@ import time
 import socket
 import torch  # Replaces Theano
 
+class ExplosionError(Exception):
+    pass
+
 # Ensure local modules are found
 # Ensure local modules are found
 rp_path = os.path.abspath(os.path.join(os.getcwd(), "../..", "src")) 
@@ -282,6 +285,11 @@ if not is_worker:
         
         # d_obj is now the torch function
         rot_grad = d_obj(param.rot, deriv_update.rot, deriv_update.cov, deriv_update.hyd, reg_scale)
+
+        # Cap gradients at +/- 1.0 (or 5.0). 
+        # This prevents infinite repulsion forces from updating the parameters.
+        print(f"DEBUG: Max rot_grad before clip: {np.max(np.abs(rot_grad)):.4e}")
+        rot_grad = np.clip(rot_grad, -1.0, 1.0)
         
         # Debug: check gradient stats
         print(f"DEBUG: rot_grad mean={np.mean(rot_grad):.4e} min={np.min(rot_grad):.4e} max={np.max(rot_grad):.4e}")
@@ -336,6 +344,14 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
             print(f"Attempting to read divergence for {nm}...")
             with open(f'{direc}/{nm}.divergence.pkl', 'rb') as f:
                 divergence = cp.load(f)
+
+                # Check the magnitude of the Rotamer gradient
+                # If > 1000.0, the physics has likely blown up.
+                grad_norm = np.linalg.norm(divergence['contrast'].rot) 
+                if grad_norm > 1000.0 or np.isnan(grad_norm):
+                    print(f"CRITICAL FAIL: Protein {nm} exploded (Grad Norm: {grad_norm:.2e})")
+                    raise ExplosionError(f"Gradient explosion detected in protein {nm}")
+
                 rmsd[nm] = (divergence['rmsd_restrain'], divergence['rmsd'])
                 change.append(divergence['contrast'])
             print(f"Successfully read output for {nm}")
@@ -626,7 +642,7 @@ def main_worker():
     with open('%s/%s.divergence.pkl' % (direc,code),'wb') as f:
         cp.dump(divergence, f, -1)
 
-
+"""
 def main_loop(state_str, max_iter):
     def main_loop_iteration(state):
         print('#########################################')
@@ -674,6 +690,76 @@ def main_loop(state_str, max_iter):
         
         # Reload state from bytes for next iter to ensure consistency
         state_str = cp.dumps(state, -1)
+"""
+def main_loop(state_str, max_iter):
+    # Load state initially
+    if hasattr(state_str, 'encode'): 
+         if os.path.exists(state_str):
+             with open(state_str, 'rb') as f: state = cp.load(f)
+         else: raise FileNotFoundError(f"Checkpoint {state_str} not found")
+    else: state = cp.loads(state_str)
+
+    # We need a copy of the "safe" state to revert to if things blow up
+    safe_state_param = state['param'] 
+
+    for i in range(max_iter):
+        
+        # --- RETRY LOOP ---
+        while True:
+            try:
+                print('#########################################')
+                print('####      EPOCH %2i MINIBATCH %2i      ####' % (state['epoch'],state['i_mb']))
+                print('#########################################')
+                
+                tstart = time.time()
+                state['mb_direc'] = os.path.join(state['base_dir'],'epoch_%02i_minibatch_%02i'%(state['epoch'],state['i_mb']))
+                if os.path.exists(state['mb_direc']): shutil.rmtree(state['mb_direc'], ignore_errors=True)
+                
+                # Try to run the minibatch
+                # NOTE: We pass 'safe_state_param', not 'state['param']' to ensure we start from a clean slate
+                new_param = run_minibatch(state['worker_path'], safe_state_param, state['init_param_files'],
+                        state['mb_direc'], state['minibatches'][state['i_mb']],
+                        state['solver'], state['n_prot']*1., state['sim_time'])
+                
+                # If we get here, it succeeded! 
+                state['param'] = new_param       # Update the official param
+                safe_state_param = new_param     # Update our "safe" backup
+                break                            # Exit the Retry Loop
+                
+            except ExplosionError as e:
+                print(f"\n!!! EXPLOSION DETECTED: {e} !!!")
+                print("!!! ACTION: Reducing Learning Rate by 50% and Retrying Batch !!!\n")
+                
+                # 1. Adjust Parameters (Reduce Learning Rate)
+                # Assuming state['solver'] is an AdamSolver instance
+                # We multiply its alpha (learning rate) by 0.5
+                state['solver'].alpha = state['solver'].alpha * 0.5
+                print(f"NEW LEARNING RATE: {state['solver'].alpha}")
+                
+                # 2. Restart (Cleanup)
+                # We do NOT update state['i_mb']. We simply loop back.
+                # 'safe_state_param' has NOT been updated, so we automatically revert to the start of the batch.
+                if os.path.exists(state['mb_direc']):
+                    shutil.rmtree(state['mb_direc'], ignore_errors=True)
+                
+                # Optional: If Learning rate gets too small, abort completely
+                if np.max(state['solver'].alpha) < 1e-6:
+                    raise RuntimeError("Learning rate dropped too low. Training is impossible.")
+                
+                time.sleep(2) # Breathe before retrying
+        # ------------------
+
+        print('%.0f seconds elapsed this minibatch'%(time.time()-tstart))
+        sys.stdout.flush()
+
+        state['i_mb'] += 1
+        if state['i_mb'] >= len(state['minibatches']):
+            state['i_mb'] = 0
+            state['epoch'] += 1
+        
+        # Save checkpoint
+        with open(os.path.join(state['mb_direc'], 'checkpoint.pkl'),'wb') as f:
+            cp.dump(state, f, -1)
 
 
 def main_initialize(args):
@@ -737,7 +823,7 @@ def main_initialize(args):
 
     state['initial_alpha'] = Update(*[
             0.1, 0., 0.5, 0., 0.02, 0.03])
-    state['initial_alpha'] = state['initial_alpha'] * 0.25
+    state['initial_alpha'] = state['initial_alpha'] * 0.025
     state['solver'] = rp.AdamSolver(len(state['initial_alpha']), alpha=state['initial_alpha']) 
     state['sim_time'] = 4000
 
