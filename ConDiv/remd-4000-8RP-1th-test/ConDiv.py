@@ -40,6 +40,7 @@ n_threads = 12
 native_restraint_strength = 1./3.**2
 rmsd_k = 15
 minibatch_size = 24
+max_parallel_jobs = 12
 
 resnames = ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY',
             'HIS', 'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER',
@@ -318,51 +319,57 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
 
     # REPLACEMENT: Use subprocess directly (Local execution) instead of srun
     jobs = collections.OrderedDict()
+
     rmsd = dict()
     change = []
-
-    for nm,t in minibatch[::-1]:
-        args = [sys.executable, worker_path,
-                'worker', nm, direc, t.fasta, t.init_path, str(t.n_res), t.chi,
-                cp.dumps(d_obj_param_files, protocol=0).decode('latin1'),
-                str(sim_time)]
+    
+    # Split the minibatch into manageable chunks
+    # This prevents running out of memory/cores
+    for i in range(0, len(minibatch), max_parallel_jobs):
+        chunk = minibatch[i : i + max_parallel_jobs]
+        jobs = collections.OrderedDict()
         
-        pickled_files_hex = cp.dumps(d_obj_param_files).hex()
-        args[9] = pickled_files_hex
+        print(f"--- Running chunk {i//max_parallel_jobs + 1} ({len(chunk)} proteins) ---")
 
-        # Launch all workers first, store them in the jobs dict
-        outfile = open(f'{direc}/{nm}.output_worker', 'w')
-        print(f"Launching worker for {nm}...")
-        j = sp.Popen(args, close_fds=True, stdout=outfile, stderr=sp.STDOUT)
-        jobs[nm] = j
+        # 1. LAUNCH CHUNK
+        for nm,t in chunk:
+            args = [sys.executable, worker_path,
+                    'worker', nm, direc, t.fasta, t.init_path, str(t.n_res), t.chi,
+                    cp.dumps(d_obj_param_files, protocol=0).decode('latin1'),
+                    str(sim_time)]
+            
+            pickled_files_hex = cp.dumps(d_obj_param_files).hex()
+            args[9] = pickled_files_hex
 
-    # After launching all workers, wait for each to finish and collect results
-    for nm, j in jobs.items():
-        retcode = j.wait()
-        if retcode != 0:
-            print(f"WARNING: Worker for {nm} exited with code {retcode} (ignoring segfault). Checking for output...")
-        try:
-            print(f"Attempting to read divergence for {nm}...")
-            with open(f'{direc}/{nm}.divergence.pkl', 'rb') as f:
-                divergence = cp.load(f)
+            outfile = open(f'{direc}/{nm}.output_worker', 'w')
+            j = sp.Popen(args, close_fds=True, stdout=outfile, stderr=sp.STDOUT)
+            jobs[nm] = j
 
-                # Check the magnitude of the Rotamer gradient
-                # If > 1000.0, the physics has likely blown up.
-                grad_norm = np.linalg.norm(divergence['contrast'].rot) 
-                if grad_norm > 1000.0 or np.isnan(grad_norm):
-                    print(f"CRITICAL FAIL: Protein {nm} exploded (Grad Norm: {grad_norm:.2e})")
-                    raise ExplosionError(f"Gradient explosion detected in protein {nm}")
+        # 2. COLLECT CHUNK (Wait for these to finish before starting next chunk)
+        for nm, j in jobs.items():
+            retcode = j.wait()
+            if retcode != 0:
+                print(f"WARNING: Worker for {nm} exited with code {retcode}.")
+            try:
+                # print(f"Reading output for {nm}...") # Optional: Comment out to reduce clutter
+                with open(f'{direc}/{nm}.divergence.pkl', 'rb') as f:
+                    divergence = cp.load(f)
 
-                rmsd[nm] = (divergence['rmsd_restrain'], divergence['rmsd'])
-                change.append(divergence['contrast'])
-            print(f"Successfully read output for {nm}")
-        except FileNotFoundError:
-            print(f"ERROR: {nm} NO_OUTPUT (File not found)")
-            continue
-            raise ExplosionError(f"Worker crashed for {nm}")
-        except Exception as e:
-            print(f"ERROR: {nm} Failed to load pickle: {e}")
-            continue
+                    # Explosion Check
+                    grad_norm = np.linalg.norm(divergence['contrast'].rot) 
+                    if grad_norm > 1000.0 or np.isnan(grad_norm):
+                        raise ExplosionError(f"Gradient explosion detected in {nm}")
+
+                    rmsd[nm] = (divergence['rmsd_restrain'], divergence['rmsd'])
+                    change.append(divergence['contrast'])
+            except FileNotFoundError:
+                # raise ExplosionError(f"Worker crashed for {nm}")
+                # For safety, let's treat missing files as explosions to trigger retry
+                raise ExplosionError(f"Worker crashed (no output) for {nm}")
+            except Exception as e:
+                raise ExplosionError(f"Error reading output for {nm}: {e}")
+        
+        # End of Chunk Loop - The code loops back to launch the next 12
             
     if not change:
         raise RuntimeError('All jobs failed')
