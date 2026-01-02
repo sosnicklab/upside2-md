@@ -294,7 +294,8 @@ if not is_worker:
         # Debug: check gradient stats
         print(f"DEBUG: rot_grad mean={np.mean(rot_grad):.4e} min={np.min(rot_grad):.4e} max={np.max(rot_grad):.4e}")
         if np.isnan(rot_grad).any():
-             print("ERROR: NaNs detected in rot_grad!")
+             print("CRITICAL FAIL: NaNs detected in gradient!")
+             raise ExplosionError("Gradient contains NaNs")
 
         return deriv_update._replace(
                 rot = rot_grad,
@@ -303,82 +304,114 @@ if not is_worker:
                 env = envd)
 
 
-def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, solver, reg_scale, sim_time):
+def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, solver, sim_time):
     if not os.path.exists(direc): os.mkdir(direc)
-    print(direc)
-    print()
+    print direc
+    print 
 
     d_obj_param_files = dict([(k,os.path.join(direc, 'nesterov_temp__'+os.path.basename(x))) 
         for k,x in initial_param_files.items()])
     expand_param(param+solver.update_for_d_obj(), initial_param_files, d_obj_param_files)
 
     with open(os.path.join(direc,'sim_time'),'w') as f:
-            print(sim_time, file=f)
+            print >>f, sim_time
 
-    # REPLACEMENT: Use subprocess directly (Local execution) instead of srun
     jobs = collections.OrderedDict()
-    rmsd = dict()
-    change = []
-
     for nm,t in minibatch[::-1]:
-        args = [sys.executable, worker_path,
-                'worker', nm, direc, t.fasta, t.init_path, str(t.n_res), t.chi,
-                cp.dumps(d_obj_param_files, protocol=0).decode('latin1'),
-                str(sim_time)]
+        args = ['srun', '--nodes=1', '--ntasks=1', '--cpus-per-task=%i'%n_threads, '--slurmd-debug=0', 
+                '--output=%s/%s.output_worker'%(direc,nm), 
+                worker_path,
+                'worker', nm, direc, t.fasta, t.native_path, t.breakfile_path, t.thickness, t.nail_file,
+                t.init_path, str(t.n_res), t.chi, cp.dumps(d_obj_param_files), str(sim_time)]
+        jobs[nm] = sp.Popen(args, close_fds=True)
+
+    rmsd = dict()
+    com  = dict()
+    change = []
+    
+    # --- MODIFIED JOB COLLECTION LOOP ---
+    for nm,j in jobs.items():
+        if j.wait() != 0: 
+            print nm, 'WORKER_FAIL'
+            # If the worker failed with non-zero exit code, it might be a crash/explosion
+            # You can choose to raise ExplosionError here too if 'WORKER_FAIL' implies a crash
+            # For now, we proceed to try reading the pickle file.
         
-        pickled_files_hex = cp.dumps(d_obj_param_files).hex()
-        args[9] = pickled_files_hex
-
-        # Launch all workers first, store them in the jobs dict
-        outfile = open(f'{direc}/{nm}.output_worker', 'w')
-        print(f"Launching worker for {nm}...")
-        j = sp.Popen(args, close_fds=True, stdout=outfile, stderr=sp.STDOUT)
-        jobs[nm] = j
-
-    # After launching all workers, wait for each to finish and collect results
-    for nm, j in jobs.items():
-        retcode = j.wait()
-        if retcode != 0:
-            print(f"WARNING: Worker for {nm} exited with code {retcode} (ignoring segfault). Checking for output...")
         try:
-            print(f"Attempting to read divergence for {nm}...")
-            with open(f'{direc}/{nm}.divergence.pkl', 'rb') as f:
+            with open('%s/%s.divergence.pkl'%(direc,nm), 'rb') as f:
                 divergence = cp.load(f)
+                
+                # --- NEW: Check for Explosion ---
+                # Check for NaNs
+                contrast = divergence['contrast']
+                if any(np.isnan(x).any() for x in [contrast.cb, contrast.icb, contrast.hb, contrast.ihb] if x is not None):
+                    print f"CRITICAL FAIL: {nm} contains NaNs in gradient."
+                    raise ExplosionError(f"NaNs detected in protein {nm}")
 
-                # Check the magnitude of the Rotamer gradient
-                # If > 1000.0, the physics has likely blown up.
-                grad_norm = np.linalg.norm(divergence['contrast'].rot) 
-                if grad_norm > 1000.0 or np.isnan(grad_norm):
-                    print(f"CRITICAL FAIL: Protein {nm} exploded (Grad Norm: {grad_norm:.2e})")
+                # Check Gradient Norm (Sum of squares of all membrane terms)
+                # We flatten the arrays to compute a global norm for this protein
+                grad_sq_sum = 0.0
+                for comp in [contrast.cb, contrast.icb, contrast.hb, contrast.ihb]:
+                    if comp is not None:
+                        grad_sq_sum += np.sum(comp**2)
+                grad_norm = np.sqrt(grad_sq_sum)
+
+                if grad_norm > 500.0:
+                    print f"CRITICAL FAIL: {nm} exploded (Grad Norm: {grad_norm:.2e})"
                     raise ExplosionError(f"Gradient explosion detected in protein {nm}")
+                # --------------------------------
 
                 rmsd[nm] = (divergence['rmsd_restrain'], divergence['rmsd'])
+                com[nm]  = (divergence['com_restrain'],  divergence['com'])
                 change.append(divergence['contrast'])
-            print(f"Successfully read output for {nm}")
-        except FileNotFoundError:
-            print(f"ERROR: {nm} NO_OUTPUT (File not found)")
-            continue
-        except Exception as e:
-            print(f"ERROR: {nm} Failed to load pickle: {e}")
-            continue
-            
+
+        except (FileNotFoundError, IOError):
+            # This handles the case where the worker crashed and didn't write the pickle file
+            print f"CRITICAL FAIL: {nm} NO_OUTPUT (Worker crashed, likely explosion)"
+            raise ExplosionError(f"Worker crashed for {nm}")
+    # ------------------------------------
+
     if not change:
         raise RuntimeError('All jobs failed')
 
-    d_param = backprop_deriv(param, Update(*[np.sum(x,axis=0) for x in zip(*change)]), reg_scale)
-
-    with open(f'{direc}/rmsd.pkl', 'wb') as f:
+    with open('%s/rmsd.pkl' % (direc,),'w') as f:
         cp.dump(rmsd, f, -1)
-    print()
-    print('Median RMSD %.2f %.2f' % tuple(np.median(np.array(list(rmsd.values())), axis=0)))
+    print 
+    print 'Median RMSD %.2f %.2f' % tuple(np.median(np.array(rmsd.values()), axis=0))
+    print 'Median COM %.2f %.2f' % tuple(np.median(np.array(com.values()), axis=0))
 
+    ## Update the parameters
     new_param_files = dict([(k,os.path.join(direc, os.path.basename(x))) for k,x in initial_param_files.items()])
+
+    # 1. Sum the gradients
+    d_param = Update(*[np.sum(x,axis=0) for x in zip(*change)])
+    
+    # --- NEW CODE: Gradient Clipping ---
+    # Clip gradients to a safe range (e.g. -1.0 to 1.0) to prevent explosions
+    # We iterate over the fields (cb, icb, hb, ihb) and clip if they exist
+    clip_threshold = 1.0
+    clipped_components = []
+    for component in [d_param.cb, d_param.icb, d_param.hb, d_param.ihb]:
+        if component is not None:
+            # Print warning if we are clipping massive values
+            grad_max = np.max(np.abs(component))
+            if grad_max > clip_threshold:
+                print "WARNING: Clipping massive gradient (Max: %.2f)" % grad_max
+            
+            clipped_components.append(np.clip(component, -clip_threshold, clip_threshold))
+        else:
+            clipped_components.append(None)
+    
+    # Reconstruct d_param with clipped values
+    d_param = Update(*clipped_components)
+
     new_param = param+solver.update_step(d_param)
+    #solver.update_step(d_param)
     expand_param(new_param, initial_param_files, new_param_files)
     solver.log_state(direc)
 
-    print()
-    print_param(new_param)
+    print
+    #print_param(new_param)
 
     return new_param
 
@@ -715,6 +748,17 @@ def main_loop(state_str, max_iter):
                 state['mb_direc'] = os.path.join(state['base_dir'],'epoch_%02i_minibatch_%02i'%(state['epoch'],state['i_mb']))
                 if os.path.exists(state['mb_direc']): shutil.rmtree(state['mb_direc'], ignore_errors=True)
                 
+
+                # Gradually increase simulation time to prevent early explosions
+                if state['epoch'] < 5:
+                    current_sim_time = 500.0
+                elif state['epoch'] < 10:
+                    current_sim_time = 1000.0
+                else:
+                    current_sim_time = state['sim_time']  # Default (2000.0)
+                    
+                print 'Current Simulation Time:', current_sim_time
+
                 # Try to run the minibatch
                 # NOTE: We pass 'safe_state_param', not 'state['param']' to ensure we start from a clean slate
                 new_param = run_minibatch(state['worker_path'], safe_state_param, state['init_param_files'],
