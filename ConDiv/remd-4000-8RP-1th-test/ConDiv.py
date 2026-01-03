@@ -376,15 +376,30 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
 
     d_param = backprop_deriv(param, Update(*[np.sum(x,axis=0) for x in zip(*change)]), reg_scale)
 
-    # Safety Clip: clamp all gradients to +/- 1.0
+    # --- NEW: Global Norm Rescaling (Preserves Physics Direction) ---
+    # 1. Calculate the total norm of the gradient vector
+    total_norm_sq = 0.0
     for field in ['cov', 'rot', 'hyd', 'env', 'hb', 'sheet']:
         val = getattr(d_param, field)
         if val is not None:
-            # Clip in place
-            clipped = np.clip(val, -1.0, 1.0)
-            # Use _replace for namedtuple if needed, or direct set if it's a class
-            # Since Update is a namedtuple subclass in your code, we reconstruct:
-            d_param = d_param._replace(**{field: clipped})
+            total_norm_sq += np.sum(val**2)
+    total_norm = np.sqrt(total_norm_sq)
+
+    # 2. Rescale if the norm exceeds a safe threshold (e.g., 1.0)
+    #    This allows you to use a high Learning Rate safely.
+    #    If the gradient is huge (1000.0), it gets scaled down to 1.0,
+    #    but the RATIO between parameters remains perfect.
+    max_grad_norm = 1.0
+    if total_norm > max_grad_norm:
+        scale_factor = max_grad_norm / total_norm
+        print(f"WARNING: Rescaling massive gradient (Norm: {total_norm:.2f} -> {max_grad_norm})")
+        
+        for field in ['cov', 'rot', 'hyd', 'env', 'hb', 'sheet']:
+            val = getattr(d_param, field)
+            if val is not None:
+                scaled_val = val * scale_factor
+                d_param = d_param._replace(**{field: scaled_val})
+    # -------------------------------------------------------------
 
     with open(f'{direc}/rmsd.pkl', 'wb') as f:
         cp.dump(rmsd, f, -1)
@@ -852,7 +867,7 @@ def main_initialize(args):
     state['initial_alpha'] = Update(*[
             0.1, 0., 0.5, 0., 0.02, 0.03])
     #state['initial_alpha'] = state['initial_alpha'] * 0.025
-    state['initial_alpha'] = state['initial_alpha'] * 0.2
+    state['initial_alpha'] = state['initial_alpha'] * 0.05
     state['solver'] = rp.AdamSolver(len(state['initial_alpha']), alpha=state['initial_alpha']) 
     state['sim_time'] = 4000
 
