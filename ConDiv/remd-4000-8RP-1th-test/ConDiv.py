@@ -857,6 +857,10 @@ def main_initialize(args):
     if state['init_dir'] != 'cached':
         print('about to get init')
         state['param'], state['init_param_files'] = get_init_param(state['init_dir'])
+
+        print("!!! APPLYING WEAK START (Scaling parameters to 1%) !!!")
+        state['param'] = state['param'] * 0.01
+
         print('found init')
         with open(os.path.join(state['base_dir'], 'condiv_init.pkl'),'wb') as f:
             cp.dump((state['init_dir'],state['param'],state['init_param_files']),f,-1)
