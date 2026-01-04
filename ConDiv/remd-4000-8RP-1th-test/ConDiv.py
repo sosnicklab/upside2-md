@@ -36,7 +36,7 @@ import upside_engine as ue
 np.set_printoptions(precision=2, suppress=True)
 
 ## Important parameters
-n_threads = 12
+n_threads = 1
 native_restraint_strength = 1./3.**2
 rmsd_k = 15
 minibatch_size = 12
@@ -859,7 +859,8 @@ def main_initialize(args):
         state['param'], state['init_param_files'] = get_init_param(state['init_dir'])
 
         print("!!! APPLYING WEAK START (Scaling parameters to 1%) !!!")
-        state['param'] = state['param'] * 0.01
+        #state['param'] = state['param'] * 0.01
+        state['param'] = state['param']
 
         print('found init')
         with open(os.path.join(state['base_dir'], 'condiv_init.pkl'),'wb') as f:
@@ -871,7 +872,7 @@ def main_initialize(args):
     state['initial_alpha'] = Update(*[
             0.1, 0., 0.5, 0., 0.02, 0.03])
     #state['initial_alpha'] = state['initial_alpha'] * 0.025
-    state['initial_alpha'] = state['initial_alpha'] * 0.1
+    state['initial_alpha'] = state['initial_alpha'] * 0.5
     state['solver'] = rp.AdamSolver(len(state['initial_alpha']), alpha=state['initial_alpha']) 
     state['sim_time'] = 4000
 
