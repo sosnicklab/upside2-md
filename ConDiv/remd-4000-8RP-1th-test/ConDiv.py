@@ -751,8 +751,10 @@ def main_loop(state_str, max_iter):
                                 
                 # Curriculum: Ramp up time to prevent early explosions
                 if state['epoch'] < 5:
-                    current_sim_time = 500.0
+                    current_sim_time = 100.0  
                 elif state['epoch'] < 10:
+                    current_sim_time = 500.0   # Step up to 500 later
+                elif state['epoch'] < 15:
                     current_sim_time = 1000.0
                 else:
                     current_sim_time = state['sim_time']
