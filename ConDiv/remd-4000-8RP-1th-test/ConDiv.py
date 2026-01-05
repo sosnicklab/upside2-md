@@ -357,9 +357,8 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
 
                     # Explosion Check
                     grad_norm = np.linalg.norm(divergence['contrast'].rot) 
-                    if grad_norm > 1000.0 or np.isnan(grad_norm):
-                        # RAISE ERROR to force the Smart Retry to fix the parameters
-                        raise ExplosionError(f"Gradient explosion detected in {nm}")
+                    if np.isnan(grad_norm):
+                        raise ExplosionError(f"Gradient is NaN (Simulation crashed) in {nm}")
 
                     rmsd[nm] = (divergence['rmsd_restrain'], divergence['rmsd'])
                     change.append(divergence['contrast'])
@@ -834,7 +833,7 @@ def main_initialize(args):
                 
         training_set = dict()
         excluded_prot = []
-        blacklist = ['1slj', '1b9w', '2rhf', '1l3p']
+        blacklist = []
         for code in sorted(protein_names):
             if code in blacklist:
                 print(f"Skipping blacklisted protein: {code}")
