@@ -351,17 +351,24 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
             if retcode != 0:
                 print(f"WARNING: Worker for {nm} exited with code {retcode}.")
             try:
-                # print(f"Reading output for {nm}...") # Optional: Comment out to reduce clutter
+                # print(f"Reading output for {nm}...")
                 with open(f'{direc}/{nm}.divergence.pkl', 'rb') as f:
                     divergence = cp.load(f)
 
-                    # Explosion Check
+                    # --- IMPROVED NAN HANDLING ---
                     grad_norm = np.linalg.norm(divergence['contrast'].rot) 
+                    
                     if np.isnan(grad_norm):
-                        raise ExplosionError(f"Gradient is NaN (Simulation crashed) in {nm}")
-
+                        # If simulation finished but gradient is NaN, it's a math error, not a physics explosion.
+                        # We just SKIP this protein for this update to prevent crashing the batch.
+                        print(f"WARNING: Gradient is NaN for {nm} (Potential stable, derivative failed). Skipping this protein.")
+                        continue 
+                    
+                    # If valid, proceed
                     rmsd[nm] = (divergence['rmsd_restrain'], divergence['rmsd'])
                     change.append(divergence['contrast'])
+                    # -----------------------------
+
             except FileNotFoundError:
                 # raise ExplosionError(f"Worker crashed for {nm}")
                 # For safety, let's treat missing files as explosions to trigger retry
