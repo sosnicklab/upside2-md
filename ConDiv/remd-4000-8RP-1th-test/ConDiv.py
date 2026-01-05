@@ -876,7 +876,8 @@ def main_initialize(args):
 
         print("!!! APPLYING WEAK START (Scaling parameters to 1%) !!!")
         #state['param'] = state['param'] * 0.01
-        state['param'] = state['param']
+        state['param'] = state['param'] * 0.5
+        state['param'] = state['param'] * 0.5
 
         print('found init')
         with open(os.path.join(state['base_dir'], 'condiv_init.pkl'),'wb') as f:
