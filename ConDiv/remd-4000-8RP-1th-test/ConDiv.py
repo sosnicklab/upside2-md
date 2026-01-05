@@ -773,13 +773,16 @@ def main_loop(state_str, max_iter):
                 
             except ExplosionError as e:
                 print(f"\n!!! EXPLOSION DETECTED: {e} !!!")
-                print("!!! ACTION: Reducing Learning Rate by 50% and Retrying Batch !!!\n")
                 
-                # 1. Adjust Parameters (Reduce Learning Rate)
-                # Assuming state['solver'] is an AdamSolver instance
-                # We multiply its alpha (learning rate) by 0.5
-                state['solver'].alpha = state['solver'].alpha * 0.5
-                print(f"NEW LEARNING RATE: {state['solver'].alpha}")
+                print("!!! ACTION: Softening parameters by 10% and Retrying !!!")
+                
+                # 1. Soften the PHYSICS (Fixes the crash)
+                # We reduce the force field intensity to let atoms relax.
+                safe_state_param = safe_state_param * 0.9
+                state['param'] = safe_state_param 
+                
+                # 2. Reduce the LEARNING (Prevents re-breaking it)
+                state['solver'].alpha = state['solver'].alpha * 0.8
                 
                 # 2. Restart (Cleanup)
                 # We do NOT update state['i_mb']. We simply loop back.
