@@ -877,7 +877,7 @@ def main_initialize(args):
     state['initial_alpha'] = Update(*[
             0.1, 0., 0.5, 0., 0.02, 0.03])
     #state['initial_alpha'] = state['initial_alpha'] * 0.025
-    state['initial_alpha'] = state['initial_alpha'] * 0.05
+    state['initial_alpha'] = state['initial_alpha'] * 0.025
     state['solver'] = rp.AdamSolver(len(state['initial_alpha']), alpha=state['initial_alpha']) 
     state['sim_time'] = 4000
 
