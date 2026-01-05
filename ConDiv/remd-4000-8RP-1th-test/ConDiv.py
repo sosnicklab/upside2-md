@@ -39,7 +39,7 @@ np.set_printoptions(precision=2, suppress=True)
 n_threads = 1
 native_restraint_strength = 1./3.**2
 rmsd_k = 15
-minibatch_size = 24
+minibatch_size = 12
 max_parallel_jobs = 12
 
 resnames = ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY',
@@ -784,11 +784,6 @@ def main_loop(state_str, max_iter):
                 #    We act aggressively to save the run.
                 safe_state_param = safe_state_param * 0.8
                 state['param'] = safe_state_param 
-                
-                # 2. Shorten Simulation Time (Critical Fix)
-                #    If it exploded, it needs a shorter leash to generate a valid gradient.
-                #    We set it to 100.0 (approx 100 steps) for this retry.
-                current_sim_time = 100.0 
                 
                 # 3. Slightly reduce Learning Rate
                 state['solver'].alpha = state['solver'].alpha * 0.9
