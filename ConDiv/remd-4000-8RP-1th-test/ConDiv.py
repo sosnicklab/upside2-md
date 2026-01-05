@@ -759,13 +759,7 @@ def main_loop(state_str, max_iter):
                 state['mb_direc'] = os.path.join(state['base_dir'],'epoch_%02i_minibatch_%02i'%(state['epoch'],state['i_mb']))
                 if os.path.exists(state['mb_direc']): shutil.rmtree(state['mb_direc'], ignore_errors=True)
                                 
-                # Curriculum: Start at 500.0 steps (No short leash)
-                if state['epoch'] < 10:
-                    current_sim_time = 500.0   
-                elif state['epoch'] < 15:
-                    current_sim_time = 1000.0
-                else:
-                    current_sim_time = state['sim_time']
+                current_sim_time = state['sim_time']
                 print(f"Current Sim Time: {current_sim_time}")
 
                 # RUN WORKER
@@ -875,9 +869,8 @@ def main_initialize(args):
         state['param'], state['init_param_files'] = get_init_param(state['init_dir'])
 
         print("!!! APPLYING WEAK START (Scaling parameters to 1%) !!!")
-        #state['param'] = state['param'] * 0.01
-        state['param'] = state['param'] * 0.5
-        state['param'] = state['param'] * 0.5
+        state['param'] = state['param'] * 0.01
+        #state['param'] = state['param']
 
         print('found init')
         with open(os.path.join(state['base_dir'], 'condiv_init.pkl'),'wb') as f:
