@@ -39,7 +39,7 @@ np.set_printoptions(precision=2, suppress=True)
 n_threads = 1
 native_restraint_strength = 1./3.**2
 rmsd_k = 15
-minibatch_size = 12
+minibatch_size = 24
 max_parallel_jobs = 12
 
 resnames = ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY',
@@ -358,6 +358,7 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
                     # Explosion Check
                     grad_norm = np.linalg.norm(divergence['contrast'].rot) 
                     if grad_norm > 1000.0 or np.isnan(grad_norm):
+                        # RAISE ERROR to force the Smart Retry to fix the parameters
                         raise ExplosionError(f"Gradient explosion detected in {nm}")
 
                     rmsd[nm] = (divergence['rmsd_restrain'], divergence['rmsd'])
@@ -773,28 +774,29 @@ def main_loop(state_str, max_iter):
                 
             except ExplosionError as e:
                 print(f"\n!!! EXPLOSION DETECTED: {e} !!!")
+                print("!!! ACTION: Stabilizing Run (Lower Params + Shorter Time) !!!")
                 
-                print("!!! ACTION: Softening parameters by 10% and Retrying !!!")
-                
-                # 1. Soften the PHYSICS (Fixes the crash)
-                # We reduce the force field intensity to let atoms relax.
-                safe_state_param = safe_state_param * 0.9
+                # 1. Soften Parameters (Reduce forces by 20%)
+                #    We act aggressively to save the run.
+                safe_state_param = safe_state_param * 0.8
                 state['param'] = safe_state_param 
                 
-                # 2. Reduce the LEARNING (Prevents re-breaking it)
-                state['solver'].alpha = state['solver'].alpha * 0.8
+                # 2. Shorten Simulation Time (Critical Fix)
+                #    If it exploded, it needs a shorter leash to generate a valid gradient.
+                #    We set it to 100.0 (approx 100 steps) for this retry.
+                current_sim_time = 100.0 
                 
-                # 2. Restart (Cleanup)
-                # We do NOT update state['i_mb']. We simply loop back.
-                # 'safe_state_param' has NOT been updated, so we automatically revert to the start of the batch.
+                # 3. Slightly reduce Learning Rate
+                state['solver'].alpha = state['solver'].alpha * 0.9
+
                 if os.path.exists(state['mb_direc']):
                     shutil.rmtree(state['mb_direc'], ignore_errors=True)
                 
-                # Optional: If Learning rate gets too small, abort completely
-                if np.max(state['solver'].alpha) < 1e-6:
-                    raise RuntimeError("Learning rate dropped too low. Training is impossible.")
+                # Check for total failure
+                if hasattr(state['solver'].alpha, 'env') and state['solver'].alpha.env[0] < 1e-9:
+                     raise RuntimeError("Optimization failed: Parameters scaled to zero.")
                 
-                time.sleep(2) # Breathe before retrying
+                time.sleep(1)
         # ------------------
 
         print('%.0f seconds elapsed this minibatch'%(time.time()-tstart))
@@ -864,8 +866,8 @@ def main_initialize(args):
         state['param'], state['init_param_files'] = get_init_param(state['init_dir'])
 
         print("!!! APPLYING WEAK START (Scaling parameters to 1%) !!!")
-        #state['param'] = state['param'] * 0.01
-        state['param'] = state['param']
+        state['param'] = state['param'] * 0.01
+        #state['param'] = state['param']
 
         print('found init')
         with open(os.path.join(state['base_dir'], 'condiv_init.pkl'),'wb') as f:
