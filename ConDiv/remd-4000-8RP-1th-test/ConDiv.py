@@ -793,8 +793,13 @@ def main_loop(state_str, max_iter):
                     shutil.rmtree(state['mb_direc'], ignore_errors=True)
                 
                 # Check for total failure
-                if hasattr(state['solver'].alpha, 'env') and state['solver'].alpha.env[0] < 1e-9:
-                     raise RuntimeError("Optimization failed: Parameters scaled to zero.")
+                if hasattr(state['solver'].alpha, 'env'):
+                    val = state['solver'].alpha.env
+                    # Handle both scalar (float) and array cases safely
+                    if np.ndim(val) == 0:
+                        if val < 1e-9: raise RuntimeError("Optimization failed: Parameters scaled to zero.")
+                    else:
+                        if val[0] < 1e-9: raise RuntimeError("Optimization failed: Parameters scaled to zero.")
                 
                 time.sleep(1)
         # ------------------
