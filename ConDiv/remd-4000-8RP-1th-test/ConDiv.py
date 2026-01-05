@@ -834,7 +834,11 @@ def main_initialize(args):
                 
         training_set = dict()
         excluded_prot = []
+        blacklist = ['1slj']
         for code in sorted(protein_names):
+            if code in blacklist:
+                print(f"Skipping blacklisted protein: {code}")
+                continue
             base = os.path.join(state['protein_dir'], code)
 
             with open(base+'.initial.pkl', 'rb') as f:
