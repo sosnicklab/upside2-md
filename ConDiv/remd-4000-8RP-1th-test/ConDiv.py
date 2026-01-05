@@ -746,6 +746,9 @@ def main_loop(state_str, max_iter):
     for i in range(max_iter):
         
         # --- RETRY LOOP ---
+        retry_count = 0
+        max_retries = 5
+
         while True:
             try:
                 print('#########################################')
@@ -756,49 +759,47 @@ def main_loop(state_str, max_iter):
                 state['mb_direc'] = os.path.join(state['base_dir'],'epoch_%02i_minibatch_%02i'%(state['epoch'],state['i_mb']))
                 if os.path.exists(state['mb_direc']): shutil.rmtree(state['mb_direc'], ignore_errors=True)
                                 
-                # Curriculum: Ramp up time to prevent early explosions
+                # Curriculum: Start at 500.0 steps (No short leash)
                 if state['epoch'] < 10:
-                    current_sim_time = 500.0   # Step up to 500 later
+                    current_sim_time = 500.0   
                 elif state['epoch'] < 15:
                     current_sim_time = 1000.0
                 else:
                     current_sim_time = state['sim_time']
                 print(f"Current Sim Time: {current_sim_time}")
 
-                # Try to run the minibatch
-                # NOTE: We pass 'safe_state_param', not 'state['param']' to ensure we start from a clean slate
+                # RUN WORKER
                 new_param = run_minibatch(state['worker_path'], safe_state_param, state['init_param_files'],
                         state['mb_direc'], state['minibatches'][state['i_mb']],
                         state['solver'], state['n_prot']*1., current_sim_time)
                 
-                # If we get here, it succeeded! 
-                state['param'] = new_param       # Update the official param
-                safe_state_param = new_param     # Update our "safe" backup
-                break                            # Exit the Retry Loop
+                # Success! Update state
+                state['param'] = new_param       
+                safe_state_param = new_param     
+                break                            
                 
             except ExplosionError as e:
                 print(f"\n!!! EXPLOSION DETECTED: {e} !!!")
-                print("!!! ACTION: Stabilizing Run (Lower Params + Shorter Time) !!!")
                 
-                # 1. Soften Parameters (Reduce forces by 20%)
-                #    We act aggressively to save the run.
+                retry_count += 1
+                if retry_count > max_retries:
+                    print(f"!!! CRITICAL FAILURE: Batch failed {max_retries} times. Aborting batch.")
+                    state['param'] = safe_state_param # Restore clean params
+                    break 
+
+                print("!!! ACTION: Softening Parameters (Physics only). Retrying !!!")
+                
+                # 1. Soften Parameters (Reduce forces by 20% to resolve clashes)
                 safe_state_param = safe_state_param * 0.8
                 state['param'] = safe_state_param 
                 
-                # 3. Slightly reduce Learning Rate
-                state['solver'].alpha = state['solver'].alpha * 0.9
-
+                # 2. DO NOT change Learning Rate (alpha)
+                # state['solver'].alpha = state['solver'].alpha * 0.9  <-- DELETED
+                
+                # 3. Time remains 500.0
+                
                 if os.path.exists(state['mb_direc']):
                     shutil.rmtree(state['mb_direc'], ignore_errors=True)
-                
-                # Check for total failure
-                if hasattr(state['solver'].alpha, 'env'):
-                    val = state['solver'].alpha.env
-                    # Handle both scalar (float) and array cases safely
-                    if np.ndim(val) == 0:
-                        if val < 1e-9: raise RuntimeError("Optimization failed: Parameters scaled to zero.")
-                    else:
-                        if val[0] < 1e-9: raise RuntimeError("Optimization failed: Parameters scaled to zero.")
                 
                 time.sleep(1)
         # ------------------
