@@ -834,7 +834,7 @@ def main_initialize(args):
                 
         training_set = dict()
         excluded_prot = []
-        blacklist = ['1slj']
+        blacklist = ['1slj', '1b9w', '2rhf']
         for code in sorted(protein_names):
             if code in blacklist:
                 print(f"Skipping blacklisted protein: {code}")
