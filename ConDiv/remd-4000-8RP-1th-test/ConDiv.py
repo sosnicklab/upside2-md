@@ -37,7 +37,8 @@ np.set_printoptions(precision=2, suppress=True)
 
 ## Important parameters
 n_threads = 1
-native_restraint_strength = 1./3.**2
+#native_restraint_strength = 1./3.**2
+native_restraint_strength = 10
 rmsd_k = 15
 minibatch_size = 12
 max_parallel_jobs = 12
@@ -868,11 +869,28 @@ def main_initialize(args):
         print('about to get init')
         state['param'], state['init_param_files'] = get_init_param(state['init_dir'])
 
-        print("!!! APPLYING WEAK START (Scaling parameters to 1%) !!!")
-        #state['param'] = state['param'] * 0.01
-        state['param'] = state['param']
+        print("!!! APPLYING SELECTIVE SCALING !!!")
 
+        # 1. Scale down 'Environment' and 'Sidechains' (The Explosion Makers)
+        # These are responsible for the hydrophobic collapse. 
+        # Reducing them to 10% makes the physics 'soft' and safe.
+        new_env = state['param'].env * 0.10
+        new_rot = state['param'].rot * 0.10
+        
+        # 2. Keep 'H-Bond' and 'Sheet' at Original Strength (The Structure Holders)
+        new_hb = state['param'].hb * 1.0  
+        new_sheet = state['param'].sheet * 1.0
+
+        # Apply the update
+        state['param'] = state['param']._replace(
+            env=new_env, 
+            rot=new_rot, 
+            hb=new_hb, 
+            sheet=new_sheet
+        )
+        
         print('found init')
+
         with open(os.path.join(state['base_dir'], 'condiv_init.pkl'),'wb') as f:
             cp.dump((state['init_dir'],state['param'],state['init_param_files']),f,-1)
     else:
