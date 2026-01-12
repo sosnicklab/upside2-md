@@ -37,8 +37,8 @@ np.set_printoptions(precision=2, suppress=True)
 
 ## Important parameters
 n_threads = 1
-#native_restraint_strength = 1./3.**2
-native_restraint_strength = 10
+native_restraint_strength = 1./3.**2
+#native_restraint_strength = 10
 rmsd_k = 15
 minibatch_size = 12
 max_parallel_jobs = 12
