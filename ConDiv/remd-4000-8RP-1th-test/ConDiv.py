@@ -1031,19 +1031,3 @@ if __name__ == '__main__':
         initial_state = main_initialize(sys.argv[2:])
         with open(os.path.join(initial_state['base_dir'],'initial_checkpoint.pkl'),'wb') as f:
             cp.dump(initial_state, f, -1)
-    if sys.argv[1] == 'worker':
-        main_worker()
-
-    elif sys.argv[1] == 'restart':
-        assert len(sys.argv[1:]) == 3
-        print('Running as PID %i on host %s' % (os.getpid(), socket.gethostname()))
-        # Restart expects a checkpoint FILE path now
-        main_loop(sys.argv[2], int(sys.argv[3]))
-
-    elif sys.argv[1] == 'initialize':
-        initial_state = main_initialize(sys.argv[2:])
-        with open(os.path.join(initial_state['base_dir'],'initial_checkpoint.pkl'),'wb') as f:
-            cp.dump(initial_state, f, -1)
-
-    else:
-        raise RuntimeError('Illegal mode %s'%sys.argv[1])
