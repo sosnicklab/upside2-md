@@ -306,7 +306,7 @@ if not is_worker:
                 env = envd)
 
 
-def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, solver, reg_scale, sim_time):
+def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, solver, reg_scale, sim_time, restraint_strength=1/3**2):
     if not os.path.exists(direc): os.mkdir(direc)
     print(direc)
     print()
@@ -337,7 +337,8 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
             args = [sys.executable, worker_path,
                     'worker', nm, direc, t.fasta, t.init_path, str(t.n_res), t.chi,
                     cp.dumps(d_obj_param_files, protocol=0).decode('latin1'),
-                    str(sim_time)]
+                    str(sim_time),
+                    str(restraint_strength)]
             
             pickled_files_hex = cp.dumps(d_obj_param_files).hex()
             args[9] = pickled_files_hex
@@ -522,6 +523,11 @@ def main_worker():
     param_files = cp.loads(bytes.fromhex(sys.argv[8]))
     sim_time    = float(sys.argv[9])
 
+    try:
+        restraint_strength = float(sys.argv[10])
+    except IndexError:
+        restraint_strength = 2.5
+
     n_frame = 250.
     frame_interval = int(sim_time / n_frame)
     if frame_interval < 1: frame_interval = 1
@@ -623,8 +629,11 @@ def main_worker():
 
         # Add Restraint flags
         # Restraining all residues 0 to N-1
+        #cmd.append(f'--restraint-group=0-{n_res-1}')
+        #cmd.append(f'--restraint-spring={native_restraint_strength}')
+
         cmd.append(f'--restraint-group=0-{n_res-1}')
-        cmd.append(f'--restraint-spring={native_restraint_strength}')
+        cmd.append(f'--restraint-spring={restraint_strength}')
 
         # Run it
         try:
@@ -764,9 +773,11 @@ def main_loop(state_str, max_iter):
                 print(f"Current Sim Time: {current_sim_time}")
 
                 # RUN WORKER
+                # Pass state['restraint_strength'] to the function
                 new_param = run_minibatch(state['worker_path'], safe_state_param, state['init_param_files'],
                         state['mb_direc'], state['minibatches'][state['i_mb']],
-                        state['solver'], state['n_prot']*1., current_sim_time)
+                        state['solver'], state['n_prot']*1., current_sim_time,
+                        restraint_strength=state['restraint_strength']) # <--- UPDATED
                 
                 # Success! Update state
                 state['param'] = new_param       
@@ -874,8 +885,8 @@ def main_initialize(args):
         # 1. Scale down 'Environment' and 'Sidechains' (The Explosion Makers)
         # These are responsible for the hydrophobic collapse. 
         # Reducing them to 10% makes the physics 'soft' and safe.
-        new_env = state['param'].env * 0.10
-        new_rot = state['param'].rot * 0.10
+        new_env = state['param'].env * 0.01
+        new_rot = state['param'].rot * 0.01
         
         # 2. Keep 'H-Bond' and 'Sheet' at Original Strength (The Structure Holders)
         new_hb = state['param'].hb * 1.0  
@@ -909,6 +920,57 @@ def main_initialize(args):
     print()
     print_param(state['param'])
     print()
+
+    # --- AUTO-CALIBRATION SEQUENCE ---
+    print("\n###############################################")
+    print("####   CALIBRATING RESTRAINT STRENGTH      ####")
+    print("###############################################")
+    
+    target_rmsd = 1.0
+    current_k = 2.5  # Theoretical starting point for RMSD=1.0
+    calibration_batch = state['minibatches'][0][:12] # Use first 12 proteins
+    
+    # Create a temp directory for calibration
+    calib_dir = os.path.join(state['base_dir'], 'calibration_test')
+    if os.path.exists(calib_dir): shutil.rmtree(calib_dir)
+    
+    # Single iteration adjustment is usually enough for harmonic springs
+    print(f"Running calibration batch with Initial k = {current_k:.2f}...")
+    
+    # We use a shorter time (500) just to check equilibrium RMSD
+    try:
+        # Note: We ignore the returned 'new_param' because we aren't training yet
+        run_minibatch(state['worker_path'], state['param'], state['init_param_files'],
+                      calib_dir, calibration_batch, state['solver'], 
+                      state['n_prot']*1., 500.0, restraint_strength=current_k)
+        
+        # Read the resulting RMSDs
+        with open(f'{calib_dir}/rmsd.pkl', 'rb') as f:
+            rmsds = cp.load(f)
+        
+        # Calculate median Teacher RMSD (System 0)
+        # rmsds[code] = (rmsd_restrain, rmsd_free)
+        measured_rmsd = np.median([x[0] for x in rmsds.values()])
+        print(f"Measured Median RMSD: {measured_rmsd:.3f} A")
+        
+        # Physics correction: k is proportional to 1/RMSD^2
+        # k_new = k_old * (RMSD_measured / RMSD_target)^2
+        new_k = current_k * (measured_rmsd / target_rmsd)**2
+        
+        # Safety clamps (Don't let it go crazy)
+        new_k = max(0.5, min(new_k, 20.0))
+        
+        print(f"Adjusting Restraint Strength: {current_k:.2f} -> {new_k:.2f}")
+        state['restraint_strength'] = new_k
+        
+    except Exception as e:
+        print(f"Calibration failed ({e}). Defaulting to 1/9")
+        state['restraint_strength'] = 1/3**2
+
+    # Cleanup
+    if os.path.exists(calib_dir): shutil.rmtree(calib_dir)
+    print(f"Final Calibrated Restraint Strength: {state['restraint_strength']:.3f}")
+    print("###############################################\n")
 
     state['epoch'] = 0
     state['i_mb'] = 0
