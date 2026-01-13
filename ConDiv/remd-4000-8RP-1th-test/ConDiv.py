@@ -647,7 +647,13 @@ def main_worker():
     with tb.open_file(configs[0]) as t:
         target = t.root.input.pos[:,:,0]
         o = t.root.output
-        pos_restrain = o.pos[int(n_frame/2):,0]
+        #pos_restrain = o.pos[int(n_frame/2):,0]
+
+        # We ignore the actual restrained simulation (which might explode/drift).
+        # We force the "Target" to be the exact Native Structure.
+        # Reshape target from (N_atoms, 3) to (1, N_atoms, 3) to look like a 1-frame trajectory.
+        # +================Do this only during first round to set up files================
+        pos_restrain = target[None, :, :]
 
     with tb.open_file(configs[1]) as t:
         o = t.root.output
