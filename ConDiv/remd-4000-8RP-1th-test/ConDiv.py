@@ -38,7 +38,6 @@ np.set_printoptions(precision=2, suppress=True)
 ## Important parameters
 n_threads = 1
 native_restraint_strength = 1./3.**2
-#native_restraint_strength = 10
 rmsd_k = 15
 minibatch_size = 12
 max_parallel_jobs = 12
@@ -876,10 +875,7 @@ def main_initialize(args):
         new_sheet = state['param'].sheet * 0.0
         
         # 2. Set H-Bond to Strong Glue (3.0)
-        if np.ndim(state['param'].hb) == 0:
-            new_hb = 3.0
-        else:
-            new_hb = np.ones_like(state['param'].hb) * 3.0
+        new_hb = 0
 
         # 3. Apply
         state['param'] = state['param']._replace(
