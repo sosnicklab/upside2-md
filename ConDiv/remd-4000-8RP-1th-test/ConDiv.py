@@ -866,22 +866,22 @@ def main_initialize(args):
 
 
     if state['init_dir'] != 'cached':
-        print('about to get init')
         state['param'], state['init_param_files'] = get_init_param(state['init_dir'])
 
-        print("!!! APPLYING SELECTIVE SCALING !!!")
-
-        # 1. Scale down 'Environment' and 'Sidechains' (The Explosion Makers)
-        # These are responsible for the hydrophobic collapse. 
-        # Reducing them to 10% makes the physics 'soft' and safe.
-        new_env = state['param'].env * 0.0
-        new_rot = state['param'].rot * 0.0
+        print("!!! APPLYING SAFE MEMORY WIPE !!!")
         
-        # 2. Keep 'H-Bond' and 'Sheet' at Original Strength (The Structure Holders)
-        new_hb = state['param'].hb * 1.0  
-        new_sheet = state['param'].sheet * 1.0
+        # 1. Zero out parameters in MEMORY
+        new_env = state['param'].env * 0.0
+        new_rot = state['param'].rot * 0.0 
+        new_sheet = state['param'].sheet * 0.0
+        
+        # 2. Set H-Bond to Strong Glue (3.0)
+        if np.ndim(state['param'].hb) == 0:
+            new_hb = 3.0
+        else:
+            new_hb = np.ones_like(state['param'].hb) * 3.0
 
-        # Apply the update
+        # 3. Apply
         state['param'] = state['param']._replace(
             env=new_env, 
             rot=new_rot, 
