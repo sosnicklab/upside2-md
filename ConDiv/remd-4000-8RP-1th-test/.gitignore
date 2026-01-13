@@ -1,4 +1,4 @@
-upside_input/*
+#upside_input/*
 venv/*
 *.output
 test_*/*
