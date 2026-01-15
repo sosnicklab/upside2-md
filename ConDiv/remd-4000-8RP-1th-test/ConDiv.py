@@ -875,7 +875,7 @@ def main_initialize(args):
         new_sheet = state['param'].sheet * 0.0
         
         # 2. Set H-Bond to Strong Glue (3.0)
-        new_hb = 0
+        new_hb = 3
 
         # 3. Apply
         state['param'] = state['param']._replace(
