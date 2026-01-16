@@ -38,6 +38,7 @@ np.set_printoptions(precision=2, suppress=True)
 ## Important parameters
 n_threads = 1
 native_restraint_strength = 1./3.**2
+#native_restraint_strength = 1000
 rmsd_k = 15
 minibatch_size = 12
 max_parallel_jobs = 12
@@ -867,6 +868,7 @@ def main_initialize(args):
     if state['init_dir'] != 'cached':
         state['param'], state['init_param_files'] = get_init_param(state['init_dir'])
 
+        """
         print("!!! APPLYING SAFE MEMORY WIPE !!!")
         
         # 1. Zero out parameters in MEMORY
@@ -881,9 +883,10 @@ def main_initialize(args):
         state['param'] = state['param']._replace(
             env=new_env, 
             rot=new_rot, 
-            hb=new_hb, 
+            #hb=new_hb, 
             sheet=new_sheet
         )
+        """
         
         print('found init')
 
