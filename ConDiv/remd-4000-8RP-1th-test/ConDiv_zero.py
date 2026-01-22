@@ -16,7 +16,6 @@ import rotamer_parameter_estimation as rp
 np.set_printoptions(precision=2, suppress=True)
 
 # --- Definitions required for Unpickling ---
-# These must match ConDiv.py exactly so pickle can load the state object
 resnames = ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY',
             'HIS', 'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER',
             'THR', 'TRP', 'TYR', 'VAL']
@@ -123,7 +122,10 @@ def main_zero_descent(state_str, n_steps=100):
         param = state['param']
         
         # Gradient = Current Parameters (L2 minimization)
-        d_param = param
+        # FIX: The solver crashes if it receives 'None' for cov/hyd.
+        # We replace any None fields with 0.0 float.
+        d_param_clean = [p if p is not None else 0.0 for p in param]
+        d_param = Update(*d_param_clean)
         
         # Update via Adam
         update_vec = state['solver'].update_step(d_param)
