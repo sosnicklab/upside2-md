@@ -38,7 +38,6 @@ np.set_printoptions(precision=2, suppress=True)
 ## Important parameters
 n_threads = 1
 native_restraint_strength = 1./3.**2
-#native_restraint_strength = 1000
 rmsd_k = 15
 minibatch_size = 12
 max_parallel_jobs = 12
@@ -522,8 +521,15 @@ def main_worker():
     param_files = cp.loads(bytes.fromhex(sys.argv[8]))
     sim_time    = float(sys.argv[9])
 
-    n_frame = 250.
-    frame_interval = int(sim_time / n_frame)
+    target_frames = 250.
+    if sim_time < target_frames:
+        # If sim_time is short (e.g. 100), save every step
+        frame_interval = 1.0
+        n_frame = sim_time
+    else:
+        # Standard behavior
+        frame_interval = int(sim_time / target_frames)
+        n_frame = target_frames
     if frame_interval < 1: frame_interval = 1
 
     #with open(param_files['hb'])    as f: hb        = float(f.read())
@@ -649,6 +655,7 @@ def main_worker():
         target = t.root.input.pos[:,:,0]
         o = t.root.output
         pos_restrain = o.pos[int(n_frame/2):,0]
+        #pos_restrain = target[None, :, :]
 
     with tb.open_file(configs[1]) as t:
         o = t.root.output
@@ -902,6 +909,7 @@ def main_initialize(args):
     state['initial_alpha'] = state['initial_alpha'] * 0.25
     state['solver'] = rp.AdamSolver(len(state['initial_alpha']), alpha=state['initial_alpha']) 
     state['sim_time'] = 4000
+    #state['sim_time'] = 100
 
     print()
     print('Optimizing with solver', state['solver'])
