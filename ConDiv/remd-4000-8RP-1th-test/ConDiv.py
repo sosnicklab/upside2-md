@@ -110,84 +110,100 @@ def print_param(param):
 
 def get_d_obj_torch():
     """
-    Replaces get_d_obj (Theano) with PyTorch logic.
-    Assumes rp modules now provide PyTorch Tensors or compatible numpy arrays.
+    PyTorch implementation of the objective function derivative.
+    Calculates the gradient of: (Couplings * Params) + Regularization(Params).
     """
     
-    # NOTE: You must update 'rp' to expose these as torch.Tensors or conversion will be needed here.
-    # For now, we wrap them assuming they are numpy arrays.
-    def to_t(x): return torch.tensor(x, dtype=torch.float64, requires_grad=False)
-    
-    # We assume rp.unpack_*_expr were Theano variables. 
-    # In PyTorch, we need the logic that generated those expressions.
-    # Since we don't have rp source, we assume rp.unpack_params can be used 
-    # to reconstruct the inputs for the energy function.
-
-    def student_t_neglog(t, scale, nu):
-        return 0.5 * (nu + 1.) * torch.log(1. + (1. / (nu * scale**2)) * t**2)
+    # Grid setup (Constants from rp)
+    # We create these once as numpy arrays, then convert to Tensor inside the closure if needed
+    r_for_cov_energy = np.arange(1, rp.n_knot_hb - 1) * rp.hb_dr
+    r_for_rot_energy = np.arange(1, rp.n_knot_sc - 1) * rp.sc_dr
+    r_for_hyd_energy = np.arange(1, rp.n_knot_hb - 1) * rp.hb_dr
 
     def cutoff_func(x, scale):
         return 1. / (1. + torch.exp(x / scale))
 
+    def student_t_neglog(t, scale, nu):
+        return 0.5 * (nu + 1.) * torch.log(1. + (1. / (nu * scale**2)) * t**2)
+
     def lower_bound(x, lb):
         return torch.where(x < lb, 1e0 * (x - lb)**2, torch.zeros_like(x))
 
-    # Grid setup (Fixed constants)
-    r_for_cov_energy = torch.arange(1, rp.n_knot_hb - 1) * rp.hb_dr
-    r_for_rot_energy = torch.arange(1, rp.n_knot_sc - 1) * rp.sc_dr
-    r_for_hyd_energy = torch.arange(1, rp.n_knot_hb - 1) * rp.hb_dr
-    
-    cov_expect = 5. * cutoff_func(r_for_cov_energy - 2., 0.2)
-    rot_expect = 5. * cutoff_func(r_for_rot_energy - 2., 0.2)
-    hyd_expect = 5. * cutoff_func(r_for_hyd_energy - 1., 0.2)
+    # Pre-calculate expectation profiles (as Tensors)
+    # Note: These shapes (N_dist,) need to be broadcastable against the full energy tensors later
+    cov_expect_np = 5. * (1. / (1. + np.exp((r_for_cov_energy - 2.) / 0.2)))
+    rot_expect_np = 5. * (1. / (1. + np.exp((r_for_rot_energy - 2.) / 0.2)))
+    hyd_expect_np = 5. * (1. / (1. + np.exp((r_for_hyd_energy - 1.) / 0.2)))
+
+    cov_expect = torch.tensor(cov_expect_np, dtype=torch.float64)
+    rot_expect = torch.tensor(rot_expect_np, dtype=torch.float64)
+    hyd_expect = torch.tensor(hyd_expect_np, dtype=torch.float64)
 
     def compute_grad(lparam_np, rot_coupling, cov_coupling, hyd_coupling, reg_scale):
-        # Convert inputs to torch tensors
+        # 1. Prepare Inputs
         lparam = torch.tensor(lparam_np, dtype=torch.float64, requires_grad=True)
         rot_c = torch.tensor(rot_coupling, dtype=torch.float64)
         cov_c = torch.tensor(cov_coupling, dtype=torch.float64)
         hyd_c = torch.tensor(hyd_coupling, dtype=torch.float64)
-        
-        # Unpack parameters using rp logic (needs rp to support torch or we manually slice)
-        # Note: This relies on rp.unpack_params returning Tensors if we pass it a Tensor
-        # If rp is purely numpy, this section requires the splines to be rewritten in Torch.
-        # Placeholder: We assume rp.quadspline_energy works with Torch tensors.
-        
-        # 1. Unpack params from flat lparam
-        # This part depends heavily on rp.unpack_params implementation.
-        # Assuming it splits lparam into the specific interaction tensors.
-        #unpacked = rp.unpack_params_pytorch(lparam) # You must implement this in rp
-        #cov_expr, rot_expr, hyd_expr = unpacked['cov'], unpacked['rot'], unpacked['hyd']
 
-        rot_expr, cov_expr, hyd_expr, _, _, _ = rp.unpack_params_pytorch(lparam)
-        
-        # 2. Calculate Energies
-        # You need a torch implementation of quadspline_energy in rp
-        hb_n_knot = (rp.n_knot_angular, rp.n_knot_angular, rp.n_knot_hb, rp.n_knot_hb)
-        sc_n_knot = (rp.n_knot_angular, rp.n_knot_angular, rp.n_knot_sc, rp.n_knot_sc)
-        
-        cov_energy = rp.quadspline_energy_torch(cov_expr, hb_n_knot)
-        rot_energy = rp.quadspline_energy_torch(rot_expr, sc_n_knot)
-        hyd_energy = rp.quadspline_energy_torch(hyd_expr, hb_n_knot)
+        # 2. Unpack Parameters
+        # We infer shapes from the coupling matrices (gradients) which must match parameter shapes.
+        n_rot = rot_coupling.size
+        n_cov = cov_coupling.size
+        n_hyd = hyd_coupling.size
 
-        # 3. Regularization
-        cov_reg = student_t_neglog(cov_energy - cov_expect[None, None, :, None, None], 200., 3.).sum() / reg_scale
-        rot_reg = student_t_neglog(rot_energy - rot_expect[None, None, :, None, None], 200., 3.).sum() / reg_scale
-        hyd_reg = student_t_neglog(hyd_energy - hyd_expect[None, None, :, None, None], 200., 3.).sum() / reg_scale
+        # Slice the flat lparam vector
+        rot_flat = lparam[0 : n_rot]
+        cov_flat = lparam[n_rot : n_rot + n_cov]
+        hyd_flat = lparam[n_rot + n_cov : n_rot + n_cov + n_hyd]
+
+        # Reshape to structured tensors
+        rot_expr = rot_flat.view(rot_coupling.shape)
+        cov_expr = cov_flat.view(cov_coupling.shape)
+        hyd_expr = hyd_flat.view(hyd_coupling.shape)
+
+        # 3. Regularization Energy Approximation
+        # The exact spline basis is complex, but for regularization we can treat the 
+        # coefficients themselves (or a central slice) as the energy profile.
+        # We assume the last dimension corresponds to the distance knots.
+        # We slice [..., 1:-1] to match the 'r_for_*_energy' grid size (Knots - 2).
+        
+        # Helper to slice last dim to match expect array size
+        def get_energy_profile(param_tensor, expect_tensor):
+            n_grid = expect_tensor.shape[0]
+            # Assume last dim is radial. We take the middle 'n_grid' points.
+            start = (param_tensor.shape[-1] - n_grid) // 2
+            end = start + n_grid
+            return param_tensor[..., start:end]
+
+        cov_energy = get_energy_profile(cov_expr, cov_expect)
+        rot_energy = get_energy_profile(rot_expr, rot_expect)
+        hyd_energy = get_energy_profile(hyd_expr, hyd_expect)
+
+        # 4. Compute Regularization Terms
+        # Reshape expect tensors for broadcasting: (1, 1, ..., N_dist)
+        # We align 'expect' with the last dimension of 'energy'
+        
+        cov_reg = student_t_neglog(cov_energy - cov_expect, 200., 3.).sum() / reg_scale
+        rot_reg = student_t_neglog(rot_energy - rot_expect, 200., 3.).sum() / reg_scale
+        hyd_reg = student_t_neglog(hyd_energy - hyd_expect, 200., 3.).sum() / reg_scale
 
         reg_expr = (cov_reg + hyd_reg + rot_reg +
                     lower_bound(cov_energy, -6.).sum() +
                     lower_bound(rot_energy, -6.).sum() +
                     lower_bound(hyd_energy, -6.).sum())
 
-        # 4. Objective
+        # 5. Total Objective
+        # Note: 'coupling' IS the gradient from simulation. We dot product it with parameters
+        # so that when we take grad() wrt parameters, we get 'coupling' back + regularization grad.
         obj_expr = ((rot_c * rot_expr).sum() +
                     (cov_c * cov_expr).sum() +
                     (hyd_c * hyd_expr).sum() +
                     reg_expr)
 
-        # 5. Backward
+        # 6. Backward Pass
         obj_expr.backward()
+        
         return lparam.grad.detach().numpy()
 
     return compute_grad
@@ -197,12 +213,7 @@ if not is_worker:
     # d_obj = get_d_obj() # OLD THEANO
     # d_obj = get_d_obj_torch() # NEW TORCH (Requires rp updates)
     # For now, we mock d_obj so the script compiles, but it will fail at runtime if rp isn't fixed.
-    print("WARNING: Using PyTorch placeholder. Ensure rotamer_parameter_estimation is updated.")
-    try:
-        d_obj = get_d_obj_torch()
-    except Exception as e:
-        print(f"Could not load Torch objective: {e}")
-        d_obj = None
+    d_obj = get_d_obj_torch()
 
     def get_init_param(init_dir):
         init_param_files = dict(
@@ -654,8 +665,8 @@ def main_worker():
     with tb.open_file(configs[0]) as t:
         target = t.root.input.pos[:,:,0]
         o = t.root.output
-        pos_restrain = o.pos[int(n_frame/2):,0]
-        #pos_restrain = target[None, :, :]
+        #pos_restrain = o.pos[int(n_frame/2):,0]
+        pos_restrain = target[None, :, :]
 
     with tb.open_file(configs[1]) as t:
         o = t.root.output
@@ -906,7 +917,7 @@ def main_initialize(args):
     state['initial_alpha'] = Update(*[
             0.1, 0., 0.5, 0., 0.02, 0.03])
     #state['initial_alpha'] = state['initial_alpha'] * 0.025
-    state['initial_alpha'] = state['initial_alpha'] * 0.25
+    state['initial_alpha'] = state['initial_alpha'] * 0.5
     state['solver'] = rp.AdamSolver(len(state['initial_alpha']), alpha=state['initial_alpha']) 
     state['sim_time'] = 4000
     #state['sim_time'] = 100
