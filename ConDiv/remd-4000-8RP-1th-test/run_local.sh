@@ -20,6 +20,11 @@ mode=restart
 
 # --- FIX: Point to the subdirectory (test_00) where init wrote the file ---
 checkpoint="$WORK_DIR/test_00/initial_checkpoint.pkl"
+latest_dir=$(ls -d "$WORK_DIR"/test_00/epoch_*_minibatch_* 2>/dev/null | sort | tail -n 1)
+if [ ! -z "$latest_dir" ] && [ -f "$latest_dir/checkpoint.pkl" ]; then
+    echo "Found newer checkpoint in: $latest_dir"
+    checkpoint="$latest_dir/checkpoint.pkl"
+fi
 # ------------------------------------------------------------------------
 
 step=40
