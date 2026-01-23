@@ -192,6 +192,8 @@ def get_d_obj_torch():
 
         return rp.pack_param(d_rot, d_cov, d_hyd, d_hydplp, d_rotpos, d_rotscalar)
 
+    return compute_grad
+
 
 if not is_worker:
     # d_obj = get_d_obj() # OLD THEANO
