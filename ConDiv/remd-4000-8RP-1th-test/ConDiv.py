@@ -665,8 +665,8 @@ def main_worker():
     with tb.open_file(configs[0]) as t:
         target = t.root.input.pos[:,:,0]
         o = t.root.output
-        #pos_restrain = o.pos[int(n_frame/2):,0]
-        pos_restrain = target[None, :, :]
+        pos_restrain = o.pos[int(n_frame/2):,0]
+        #pos_restrain = target[None, :, :]
 
     with tb.open_file(configs[1]) as t:
         o = t.root.output
@@ -919,8 +919,8 @@ def main_initialize(args):
     #state['initial_alpha'] = state['initial_alpha'] * 0.025
     state['initial_alpha'] = state['initial_alpha'] * 0.5
     state['solver'] = rp.AdamSolver(len(state['initial_alpha']), alpha=state['initial_alpha']) 
-    state['sim_time'] = 4000
-    #state['sim_time'] = 100
+    #state['sim_time'] = 4000
+    state['sim_time'] = 100
 
     print()
     print('Optimizing with solver', state['solver'])

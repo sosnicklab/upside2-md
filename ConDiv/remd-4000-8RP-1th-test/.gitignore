@@ -3,4 +3,3 @@ venv/*
 *.output
 test_*/*
 .claude
-PROMPT.md
