@@ -651,8 +651,8 @@ def main_worker():
     with tb.open_file(configs[0]) as t:
         target = t.root.input.pos[:,:,0]
         o = t.root.output
-        pos_restrain = o.pos[int(n_frame/2):,0]
-        #pos_restrain = target[None, :, :]
+        #pos_restrain = o.pos[int(n_frame/2):,0]
+        pos_restrain = target[None, :, :]
 
     with tb.open_file(configs[1]) as t:
         o = t.root.output

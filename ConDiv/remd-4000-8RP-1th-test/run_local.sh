@@ -9,7 +9,7 @@ PROJECT_ROOT="$WORK_DIR/../.."
 UPSIDE_LIB="$PROJECT_ROOT/obj"
 UPSIDE_PY="$PROJECT_ROOT/py"
 
-# Source the user's venv as requested
+# Source the user's venv
 source "$WORK_DIR/venv/bin/activate"
 
 # Export PYTHONPATH
@@ -17,20 +17,30 @@ export PYTHONPATH="$WORK_DIR:$UPSIDE_LIB:$UPSIDE_PY:$PROJECT_ROOT/src:$PYTHONPAT
 
 # Setup Run Parameters
 mode=restart
+step=40
 
-# --- FIX: Point to the subdirectory (test_00) where init wrote the file ---
+# --- AUTO-RESUME LOGIC --------------------------------------------------
+# 1. Default to the initial checkpoint (Start from 0)
 checkpoint="$WORK_DIR/test_00/initial_checkpoint.pkl"
-latest_dir=$(ls -d "$WORK_DIR"/test_00/epoch_*_minibatch_* 2>/dev/null | sort | tail -n 1)
-if [ ! -z "$latest_dir" ] && [ -f "$latest_dir/checkpoint.pkl" ]; then
-    echo "Found newer checkpoint in: $latest_dir"
-    checkpoint="$latest_dir/checkpoint.pkl"
+
+# 2. Look for the latest "epoch_XX_minibatch_XX" folder
+#    'sort' ensures epoch_01 comes after epoch_00, and 'tail -n 1' grabs the last one.
+latest_dir=$(ls -d "$WORK_DIR/test_00"/epoch_*_minibatch_* 2>/dev/null | sort | tail -n 1)
+
+# 3. If a later folder exists AND contains a checkpoint, use it instead.
+if [ ! -z "$latest_dir" ]; then
+    if [ -f "$latest_dir/checkpoint.pkl" ]; then
+        echo "--> Found Resume Point: $latest_dir"
+        checkpoint="$latest_dir/checkpoint.pkl"
+    else
+        echo "--> Latest folder empty or corrupt. Falling back to previous or initial."
+    fi
 fi
 # ------------------------------------------------------------------------
 
-step=40
-
 # Run using the VENV python
 echo "Running ConDiv with: python3 (from venv)"
-echo "Checkpoint: $checkpoint"
+echo "Loading Checkpoint: $checkpoint"
 
-python3 -u ConDiv.py $mode $checkpoint $step 2>&1 | tee -a "$WORK_DIR/run.output"
+# NOTE: Added quotes around "$checkpoint" to handle paths safely
+python3 -u ConDiv.py $mode "$checkpoint" $step 2>&1 | tee -a "$WORK_DIR/run.output"
