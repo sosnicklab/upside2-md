@@ -17,30 +17,28 @@ export PYTHONPATH="$WORK_DIR:$UPSIDE_LIB:$UPSIDE_PY:$PROJECT_ROOT/src:$PYTHONPAT
 
 # Setup Run Parameters
 mode=restart
-step=40
+step=76  # Run exactly 40 batches, then STOP.
 
-# --- AUTO-RESUME LOGIC --------------------------------------------------
-# 1. Default to the initial checkpoint (Start from 0)
+# --- RESUME LOGIC (Fixes Rollback) --------------------------------------
+# 1. Default to the initial checkpoint (Epoch 0)
 checkpoint="$WORK_DIR/test_00/initial_checkpoint.pkl"
 
-# 2. Look for the latest "epoch_XX_minibatch_XX" folder
-#    'sort' ensures epoch_01 comes after epoch_00, and 'tail -n 1' grabs the last one.
-latest_dir=$(ls -d "$WORK_DIR/test_00"/epoch_*_minibatch_* 2>/dev/null | sort | tail -n 1)
+# 2. Get all epoch folders, sorted by Time (newest first)
+#    ls -t orders by modification time, so we check the most recent attempts first.
+all_dirs=$(ls -td "$WORK_DIR/test_00"/epoch_*_minibatch_* 2>/dev/null)
 
-# 3. If a later folder exists AND contains a checkpoint, use it instead.
-if [ ! -z "$latest_dir" ]; then
-    if [ -f "$latest_dir/checkpoint.pkl" ]; then
-        echo "--> Found Resume Point: $latest_dir"
-        checkpoint="$latest_dir/checkpoint.pkl"
-    else
-        echo "--> Latest folder empty or corrupt. Falling back to previous or initial."
+# 3. Find the first folder that actually contains a checkpoint file
+for d in $all_dirs; do
+    if [ -f "$d/checkpoint.pkl" ]; then
+        echo "--> Resuming from: $d"
+        checkpoint="$d/checkpoint.pkl"
+        break  # We found the latest valid save. Stop searching.
     fi
-fi
+done
 # ------------------------------------------------------------------------
 
 # Run using the VENV python
 echo "Running ConDiv with: python3 (from venv)"
 echo "Loading Checkpoint: $checkpoint"
 
-# NOTE: Added quotes around "$checkpoint" to handle paths safely
 python3 -u ConDiv.py $mode "$checkpoint" $step 2>&1 | tee -a "$WORK_DIR/run.output"
