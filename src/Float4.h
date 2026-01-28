@@ -209,15 +209,37 @@ struct alignas(16) Float4
         Float4 rsqrt() const { 
             // one round of newton-raphson, see online documentation for _mm_rsqrt_ps for details
             Float4 a = _mm_rsqrt_ps(vec);   // 12-bit approximation
+#if defined(__APPLE__) && defined(__arm64__)
+            // SSE2NEON's rsqrt uses a different approximation table than Intel.
+            // To match x86_64 force field behavior, we need the result to converge
+            // to the same final value. Two NR iterations provide sufficient precision.
+            // First iteration
+            a = Float4(1.5f)*a - (Float4(0.5f)*(*this)) * a * (a*a);
+            // Second iteration for full convergence
+            a = Float4(1.5f)*a - (Float4(0.5f)*(*this)) * a * (a*a);
+            return a;
+#else
             return Float4(1.5f)*a - (Float4(0.5f)*(*this)) * a * (a*a);
+#endif
         }
         Float4 rcp() const {
             // one round of newton-raphson, see online documentation for _mm_rcp_ps for details
             auto x = approx_rcp();
+#if defined(__APPLE__) && defined(__arm64__)
+            // SSE2NEON's rcp uses a different approximation table than Intel.
+            // Two NR iterations provide sufficient precision to match x86_64.
+            // First iteration
+            x = x*(Float4(2.f) - (*this)*x);
+            // Second iteration for full convergence
+            x = x*(Float4(2.f) - (*this)*x);
+            return x;
+#else
             return x*(Float4(2.f) - (*this)*x);
+#endif
         }
         // Float4 sqrt() const {return (*this) * this->rsqrt();}  // faster than _mm_sqrt_ps but NaN for vec==0.
         Float4 sqrt() const {return _mm_sqrt_ps(vec);}
+
 
         Float4 abs()  const {
             // this function assumes well-behaved, finite floats
