@@ -2,6 +2,8 @@
 
 echo "Setting up universal Python environment for UPSIDE2..."
 
+rm -rf .venv
+
 # Create virtual environment in the root directory
 python3.10 -m venv .venv
 
