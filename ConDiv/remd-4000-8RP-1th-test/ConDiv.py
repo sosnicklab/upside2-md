@@ -37,10 +37,11 @@ np.set_printoptions(precision=2, suppress=True)
 
 ## Important parameters
 n_threads = 1
-native_restraint_strength = 1./3.**2
+#native_restraint_strength = 1./3.**2
+native_restraint_strength = 0
 rmsd_k = 15
-minibatch_size = 12
-max_parallel_jobs = 12
+minibatch_size = 36
+max_parallel_jobs = 18
 
 resnames = ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY',
             'HIS', 'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER',
@@ -651,8 +652,8 @@ def main_worker():
     with tb.open_file(configs[0]) as t:
         target = t.root.input.pos[:,:,0]
         o = t.root.output
-        pos_restrain = o.pos[int(n_frame/2):,0]
-        #pos_restrain = target[None, :, :]
+        #pos_restrain = o.pos[int(n_frame/2):,0]
+        pos_restrain = target[None, :, :]
 
     with tb.open_file(configs[1]) as t:
         o = t.root.output
@@ -876,9 +877,9 @@ def main_initialize(args):
         print("!!! APPLYING SAFE MEMORY WIPE !!!")
         
         # 1. Zero out parameters in MEMORY
-        new_env = state['param'].env * 0.0
-        new_rot = state['param'].rot * 0.0 
-        new_sheet = state['param'].sheet * 0.0
+        new_env = state['param'].env * 0.0 + 0.5
+        new_rot = state['param'].rot * 0.0 + 0.5
+        new_sheet = state['param'].sheet * 0.0 + 0.5
         
         # 2. Set H-Bond to Strong Glue (3.0)
         new_hb = 3
@@ -907,8 +908,8 @@ def main_initialize(args):
     #state['initial_alpha'] = state['initial_alpha'] * 1
     #state['initial_alpha'] = state['initial_alpha'] * 1
     state['solver'] = rp.AdamSolver(len(state['initial_alpha']), alpha=state['initial_alpha']) 
-    state['sim_time'] = 4000
-    #state['sim_time'] = 100
+    #state['sim_time'] = 4000
+    state['sim_time'] = 100
 
     print()
     print('Optimizing with solver', state['solver'])
