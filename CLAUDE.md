@@ -10,12 +10,10 @@ Upside is a molecular dynamics simulation package for protein folding and confor
 ### Installation & Build
 ```bash
 # Install dependencies and compile C++ core
-./install.sh
+./install_M1.sh
+then
+./install_python_env.sh
 
-# Alternative: Manual build
-source source.sh  # Sets up environment variables
-rm -rf obj/* && cd obj && cmake ../src/ && make
-```
 
 ### Simulation Workflow
 ```bash
