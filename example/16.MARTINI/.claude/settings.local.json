@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source:*)",
+      "Bash(source .venv/bin/activate)",
+      "mcp__serena__activate_project",
+      "mcp__serena__check_onboarding_performed",
+      "mcp__serena__onboarding",
+      "mcp__serena__list_dir",
+      "mcp__serena__read_file",
+      "mcp__serena__write_memory",
+      "mcp__serena__think_about_whether_you_are_done",
+      "mcp__serena__replace_content",
+      "mcp__serena__execute_shell_command",
+      "mcp__serena__create_text_file"
+    ]
+  }
+}
