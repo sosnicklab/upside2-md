@@ -1098,6 +1098,29 @@ def main():
         print(f"Stage-specific parameters: minimization bonds={len(min_bond_fc)}, production bonds={len(prod_bond_fc)}")
         print(f"Stage-specific parameters: minimization angles={len(min_angle_fc)}, production angles={len(prod_angle_fc)}")
         
+        # ===================== NPT BAROSTAT CONFIGURATION =====================
+        # Create barostat configuration group for NPT simulations
+        # Settings are read from environment variables (set by run_sim_bilayer.sh)
+        barostat_enable = int(os.environ.get('UPSIDE_NPT_ENABLE', '0'))
+        if barostat_enable:
+            print(f"\n=== Creating NPT Barostat Configuration ===")
+            barostat_grp = t.create_group(input_grp, 'barostat')
+            barostat_grp._v_attrs.enable = barostat_enable
+            barostat_grp._v_attrs.target_p_xy = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '1.0'))
+            barostat_grp._v_attrs.target_p_z = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '1.0'))
+            barostat_grp._v_attrs.tau_p = float(os.environ.get('UPSIDE_NPT_TAU', '1.0'))
+            barostat_grp._v_attrs.compressibility = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '4.5e-5'))
+            barostat_grp._v_attrs.interval = int(os.environ.get('UPSIDE_NPT_INTERVAL', '10'))
+            barostat_grp._v_attrs.semi_isotropic = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
+            barostat_grp._v_attrs.debug = int(os.environ.get('UPSIDE_NPT_DEBUG', '1'))
+            print(f"  Enabled: {barostat_enable}")
+            print(f"  Target Pxy: {barostat_grp._v_attrs.target_p_xy}")
+            print(f"  Target Pz: {barostat_grp._v_attrs.target_p_z}")
+            print(f"  Tau_p: {barostat_grp._v_attrs.tau_p}")
+            print(f"  Interval: {barostat_grp._v_attrs.interval} steps")
+        else:
+            print(f"\n=== NPT Barostat Disabled (NVT mode) ===")
+        
         # Create type array
         type_array = t.create_array(input_grp, 'type', obj=atom_types.astype('S4'))
         type_array._v_attrs.arguments = np.array([b'type'])

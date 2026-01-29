@@ -1,346 +1,256 @@
 #!/bin/bash
 
-# MARTINI 3.0 Optimized Simulation Script
-# Complete workflow: prepare input, optimize interaction table, run simulation, generate VTF
+# MARTINI 3.0 Complete Multi-Stage Simulation Workflow
+# Stages: Prepare -> Minimization -> NPT Equilibration -> NVT Production -> VTF Generation
+# Each stage uses the output checkpoint from the previous stage as its starting point.
 #
-# POTENTIAL MODE TOGGLE:
-# - Set POTENTIAL_MODE="soft" (default) for softened potentials (two-stage simulation)
-# - Set POTENTIAL_MODE="regular" for regular potentials only (single-stage simulation)
-# - Can be overridden via environment: POTENTIAL_MODE=regular ./run_sim.sh
-#
-# PME CONFIGURATION:
-# - Set USE_PME="1" (default) to enable Particle Mesh Ewald for long-range Coulomb interactions
-# - Set USE_PME="0" to use standard short-range Coulomb cutoff
-# - Can be overridden via environment: USE_PME=0 ./run_sim.sh
-# - PME provides O(N log N) scaling for large systems vs O(N²) for standard cutoff
+# ENVIRONMENT VARIABLES:
+#   PDB_ID                - PDB identifier (default: bilayer)
+#   UPSIDE_NPT_ENABLE     - Enable NPT barostat (1=NPT for equilibration)
+#   UPSIDE_NPT_TARGET_PXY - Target lateral pressure (reduced units)
+#   UPSIDE_NPT_TARGET_PZ  - Target normal pressure (reduced units)
+#   UPSIDE_NPT_TAU        - Barostat time constant
+#   UPSIDE_NPT_INTERVAL   - Steps between barostat applications
 
 set -e  # Exit on any error
 
 # =============================================================================
-# USER CONFIGURATION - Set your PDB ID and potential mode here
+# USER CONFIGURATION
 # =============================================================================
-# Change this value to use a different PDB file (e.g., "bilayer", "protein", etc.)
-# The script will look for pdb/{PDB_ID}.MARTINI.pdb
-PDB_ID="bilayer"
+PDB_ID="${PDB_ID:-bilayer}"
 
-# POTENTIAL MODE TOGGLE
-# Set to "soft" to use softened potentials (default)
-# Set to "regular" to use regular potentials only
-# Can be overridden via environment variable: POTENTIAL_MODE=regular ./run_sim.sh
-POTENTIAL_MODE="${POTENTIAL_MODE:-soft}"
-
-# PME CONFIGURATION
-# Set to "1" to enable Particle Mesh Ewald for long-range Coulomb interactions
-# Set to "0" to use standard short-range Coulomb cutoff
-# Can be overridden via environment variable: USE_PME=1 ./run_sim.sh
-# PME provides O(N log N) scaling for large systems vs O(N²) for standard cutoff
-# Uses improved 4th-order B-splines and optimized FFT for better accuracy
-USE_PME="${USE_PME:-1}"
-
-# THERMOSTAT INTERVAL (optional; set default if unset)
-THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
-
-# ADVANCED PME TUNING (optional overrides)
-# These can be set via environment variables for fine-tuning:
-# UPSIDE_PME_ALPHA=0.2      # Ewald screening parameter (0.1-0.5 range)
-# UPSIDE_PME_RCUT=10.0      # Real space cutoff in Angstroms
-# UPSIDE_PME_NX=64          # Grid size X (must be power of 2: 16,32,64,128...)
-# UPSIDE_PME_NY=64          # Grid size Y (must be power of 2: 16,32,64,128...)
-# UPSIDE_PME_NZ=64          # Grid size Z (must be power of 2: 16,32,64,128...)
-# UPSIDE_PME_ORDER=4        # B-spline order (3 or 4 recommended)
-# =============================================================================
-
-# Validate potential mode
-if [ "$POTENTIAL_MODE" != "soft" ] && [ "$POTENTIAL_MODE" != "regular" ]; then
-    echo "ERROR: Invalid POTENTIAL_MODE: $POTENTIAL_MODE"
-    echo "Valid options: 'soft' or 'regular'"
-    exit 1
-fi
-
-# Validate PME setting
-if [ "$USE_PME" != "0" ] && [ "$USE_PME" != "1" ]; then
-    echo "ERROR: Invalid USE_PME: $USE_PME"
-    echo "Valid options: '0' (disable) or '1' (enable)"
-    exit 1
-fi
-
-# Validate PME grid sizes (must be powers of 2 for optimal FFT performance)
-if [ "$USE_PME" = "1" ]; then
-    validate_power_of_2() {
-        local val=$1
-        local name=$2
-        if [ "$val" -gt 0 ] && [ $((val & (val - 1))) -eq 0 ]; then
-            return 0  # Valid power of 2
-        else
-            echo "WARNING: $name=$val is not a power of 2. FFT performance may be suboptimal."
-            echo "Recommended values: 16, 32, 64, 128, 256..."
-            return 1
-        fi
-    }
-    
-    # Check grid sizes if they're set
-    [ -n "$UPSIDE_PME_NX" ] && validate_power_of_2 "$UPSIDE_PME_NX" "UPSIDE_PME_NX"
-    [ -n "$UPSIDE_PME_NY" ] && validate_power_of_2 "$UPSIDE_PME_NY" "UPSIDE_PME_NY"
-    [ -n "$UPSIDE_PME_NZ" ] && validate_power_of_2 "$UPSIDE_PME_NZ" "UPSIDE_PME_NZ"
-fi
-
-
-# Command line argument overrides the configuration above
-if [ $# -eq 1 ]; then
-    PDB_ID="$1"
-    echo "Command line argument overrides configuration: using PDB ID: $PDB_ID"
-elif [ $# -gt 1 ]; then
-    echo "Usage: $0 [PDB_ID]"
-    echo "  PDB_ID: The PDB identifier (optional, overrides configuration)"
-    echo "  Configuration PDB ID: $PDB_ID"
-    echo "  Potential mode: $POTENTIAL_MODE"
-    exit 1
-else
-    echo "Using configured PDB ID: $PDB_ID"
-fi
-
-echo "Potential mode: $POTENTIAL_MODE"
-echo "PME enabled: $USE_PME"
-if [ "$USE_PME" = "1" ]; then
-    echo "PME configuration:"
-    echo "  Grid size: ${UPSIDE_PME_NX:-64}x${UPSIDE_PME_NY:-64}x${UPSIDE_PME_NZ:-64}"
-    echo "  Alpha: ${UPSIDE_PME_ALPHA:-0.2}"
-    echo "  Real space cutoff: ${UPSIDE_PME_RCUT:-10.0} Å"
-    echo "  B-spline order: ${UPSIDE_PME_ORDER:-4}"
-    echo "  Features: Improved FFT, 4th-order B-splines, spline tables"
-fi
-echo "Thermostat interval: $THERMOSTAT_INTERVAL"
-echo "Barostat (NPT): ${UPSIDE_NPT_ENABLE:-auto} (semi=${UPSIDE_NPT_SEMI:-auto} tau=${UPSIDE_NPT_TAU:-auto} interval=${UPSIDE_NPT_INTERVAL:-auto} Pxy=${UPSIDE_NPT_TARGET_PXY:-auto} Pz=${UPSIDE_NPT_TARGET_PZ:-auto})"
-
-# Configuration
+# Directories
 INPUTS_DIR="inputs"
 OUTPUTS_DIR="outputs"
 RUN_DIR="outputs/martini_test"
-INPUT_FILE="${INPUTS_DIR}/${PDB_ID}.up"   # normalized input path
-OUTPUT_FILE="${RUN_DIR}/test.run.optimized.up"
-LOG_FILE="${RUN_DIR}/test.run.optimized.log"
-VTF_FILE="${RUN_DIR}/${PDB_ID}.vtf"   # VTF in run directory
+CHECKPOINT_DIR="${RUN_DIR}/checkpoints"
 
-# Softening run mode: soft_only or soft_then_regular (can override via env SOFT_RUN_MODE)
-SOFT_RUN_MODE="${SOFT_RUN_MODE:-soft_then_regular}"
+# Filenames
+INPUT_FILE="${INPUTS_DIR}/${PDB_ID}.up"
+MINIMIZED_FILE="${CHECKPOINT_DIR}/${PDB_ID}.minimized.up"
+NPT_FILE="${CHECKPOINT_DIR}/${PDB_ID}.npt.up"
+NVT_FILE="${CHECKPOINT_DIR}/${PDB_ID}.nvt.up"
+VTF_FILE="${RUN_DIR}/${PDB_ID}.vtf"
+LOG_DIR="${RUN_DIR}/logs"
 
-# Check if UPSIDE_HOME is set
-if [ -z "$UPSIDE_HOME" ]; then
-    echo "ERROR: UPSIDE_HOME environment variable is not set!"
-    echo "Please set it to your UPSIDE installation directory."
-    exit 1
-fi
-
-UPSIDE_HOME="$UPSIDE_HOME"
-UPSIDE_EXECUTABLE="${UPSIDE_HOME}/obj/upside"
-
-# Check if UPSIDE executable exists
-if [ ! -f "$UPSIDE_EXECUTABLE" ]; then
-    echo "ERROR: UPSIDE executable not found: $UPSIDE_EXECUTABLE"
-    echo "Please build UPSIDE first."
-    exit 1
-fi
-
-echo "=== MARTINI 3.0 Complete Optimized Workflow ==="
-echo "PDB ID: $PDB_ID"
-echo "Normalized input: $INPUT_FILE"
-echo "Simulation output: $OUTPUT_FILE"
-echo "Log file: $LOG_FILE"
-echo "VTF file: $VTF_FILE"
-echo "UPSIDE executable: $UPSIDE_EXECUTABLE"
-echo
-
-# Ensure directories
-mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR"
-
-# Simulation parameters (from original run_martini.py)
-DURATION=1000
-FRAME_INTERVAL=20
+# Simulation parameters
 TEMPERATURE=0.8
 TIME_STEP=0.1
 THERMOSTAT_TIMESCALE=0.135
-#THERMOSTAT_TIMESCALE=5
-#THERMOSTAT_INTERVAL=-1
+THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
 SEED=12345
-# Integrators: allow separate choices for softened/min/min and regular stages
-INTEGRATOR_SOFT="${INTEGRATOR_SOFT:-nptc}"
-INTEGRATOR_MIN="${INTEGRATOR_MIN:-nptc}"
-INTEGRATOR_REG="${INTEGRATOR_REG:-nptc}"
-MAX_FORCE="${MAX_FORCE:-}"
 
-# Minimization stage lengths (in MD steps)
-# First: softened potential steps; Second: regular potential steps
-MIN_SOFT_STEPS="${MIN_SOFT_STEPS:-500}"
-MIN_REG_STEPS="${MIN_REG_STEPS:-500}"
+# Stage durations (in MD steps)
+MIN_STEPS="${MIN_STEPS:-500}"
+NPT_STEPS="${NPT_STEPS:-2000}"
+NVT_STEPS="${NVT_STEPS:-5000}"
+FRAME_INTERVAL="${FRAME_INTERVAL:-20}"
 
-echo "Simulation parameters:"
-echo "  Duration: $DURATION steps"
-echo "  Frame interval: $FRAME_INTERVAL steps"
-echo "  Temperature: $TEMPERATURE UPSIDE units (~280 K)"
-echo "  Time step: $TIME_STEP"
-echo "  Thermostat timescale: $THERMOSTAT_TIMESCALE"
-echo "  Integrators: soft=$INTEGRATOR_SOFT, min=$INTEGRATOR_MIN, reg=$INTEGRATOR_REG"
+# Softening parameters for minimization
+export UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ:-1}
+export UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA:-0.2}
+export UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-1}
+export UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-2.0}
+
+# =============================================================================
+# VALIDATION
+# =============================================================================
+if [ -z "$UPSIDE_HOME" ]; then
+    echo "ERROR: UPSIDE_HOME environment variable is not set!"
+    exit 1
+fi
+
+UPSIDE_EXECUTABLE="${UPSIDE_HOME}/obj/upside"
+if [ ! -f "$UPSIDE_EXECUTABLE" ]; then
+    echo "ERROR: UPSIDE executable not found: $UPSIDE_EXECUTABLE"
+    exit 1
+fi
+
+# Create directories
+mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR"
+
+echo "=== MARTINI 3.0 Multi-Stage Workflow ==="
+echo "PDB ID: $PDB_ID"
+echo "Stages: Prepare -> Minimization -> NPT -> NVT -> VTF"
+echo "  MIN_STEPS:  $MIN_STEPS"
+echo "  NPT_STEPS:  $NPT_STEPS"
+echo "  NVT_STEPS:  $NVT_STEPS"
 echo
 
-# Step 1: Prepare input files (produce example/16.MARTINI/outputs/martini_test/test.input.up)
-echo "=== Step 1: Preparing Input Files ==="
-echo "Running prepare_martini.py with PDB ID: $PDB_ID"
-
-# Set softening options based on potential mode
-if [ "$POTENTIAL_MODE" = "soft" ]; then
-    echo "Using softened potentials"
-    export UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ:-1}
-    export UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA:-0.2}
-    export UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-1}
-    export UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-2.0}
-else
-    echo "Using regular potentials"
-    export UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ:-0}
-    export UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA:-0.0}
-    export UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-0}
-    export UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-0.0}
-fi
-# Ensure force cap default consistent with stabilized run
-# export UPSIDE_FORCE_CAP=${UPSIDE_FORCE_CAP:-50}
-
-export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
-# NPT parameters are now sourced from H5 written by prepare_martini.py (GROMACS-derived).
-# You can still override via env if needed, but we avoid setting defaults here.
-# Enable NPT by default for MARTINI simulations
-export UPSIDE_NPT_ENABLE=${UPSIDE_NPT_ENABLE:-1}
-
-# PME configuration - Optimized settings for improved accuracy and performance
-export UPSIDE_USE_PME=${USE_PME}
-export UPSIDE_PME_ALPHA=${UPSIDE_PME_ALPHA:-0.2}        # Ewald screening parameter (optimized)
-export UPSIDE_PME_RCUT=${UPSIDE_PME_RCUT:-10.0}         # Real space cutoff in Angstroms
-export UPSIDE_PME_NX=${UPSIDE_PME_NX:-64}               # Grid size X (power of 2 for optimal FFT)
-export UPSIDE_PME_NY=${UPSIDE_PME_NY:-64}               # Grid size Y (power of 2 for optimal FFT)
-export UPSIDE_PME_NZ=${UPSIDE_PME_NZ:-64}               # Grid size Z (power of 2 for optimal FFT)
-export UPSIDE_PME_ORDER=${UPSIDE_PME_ORDER:-4}          # B-spline interpolation order (4th order for accuracy)
-
-echo "Potential options (env): UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ} UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA} UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB} UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA} UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES}"
-echo "PME options (env): UPSIDE_USE_PME=${UPSIDE_USE_PME} UPSIDE_PME_ALPHA=${UPSIDE_PME_ALPHA} UPSIDE_PME_RCUT=${UPSIDE_PME_RCUT} UPSIDE_PME_NX=${UPSIDE_PME_NX} UPSIDE_PME_NY=${UPSIDE_PME_NY} UPSIDE_PME_NZ=${UPSIDE_PME_NZ} UPSIDE_PME_ORDER=${UPSIDE_PME_ORDER}"
+# =============================================================================
+# STAGE 1: PREPARE INPUT FILES
+# =============================================================================
+echo "=== Stage 1: Preparing Input Files ==="
 source ../../source.sh
 source ../../.venv/bin/activate
 
+# Prepare with softened potentials enabled (for minimization compatibility)
+export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
 python3 prepare_martini.py "$PDB_ID"
 
-PREPARED_FILE_PATH="${RUN_DIR}/test.input.up"
-if [ ! -f "$PREPARED_FILE_PATH" ]; then
-    echo "ERROR: Input preparation failed - file not found: $PREPARED_FILE_PATH"
+PREPARED_FILE="${RUN_DIR}/test.input.up"
+if [ ! -f "$PREPARED_FILE" ]; then
+    echo "ERROR: Input preparation failed - file not found: $PREPARED_FILE"
     exit 1
 fi
 
-# Normalize to inputs/pdb_id.up
-cp -f "$PREPARED_FILE_PATH" "$INPUT_FILE"
-INPUT_SIZE=$(du -h "$INPUT_FILE" | cut -f1)
-echo "Input normalized to: $INPUT_FILE ($INPUT_SIZE)"
+# Copy to normalized location
+cp -f "$PREPARED_FILE" "$INPUT_FILE"
+echo "Input prepared: $INPUT_FILE ($(du -h "$INPUT_FILE" | cut -f1))"
 echo
 
-# Step 2: Optimize the interaction table (overwrite inputs/pdb_id.up)
-echo "=== Step 2: Optimizing Interaction Table ==="
-TMP_OPT_FILE="${INPUT_FILE}.tmp"
-python3 optimize_interaction_table.py "$INPUT_FILE" "$TMP_OPT_FILE"
+# =============================================================================
+# STAGE 2: ENERGY MINIMIZATION
+# =============================================================================
+echo "=== Stage 2: Energy Minimization ==="
+echo "Running $MIN_STEPS steps with softened potentials"
+echo "Input:  $INPUT_FILE"
+echo "Output: $MINIMIZED_FILE"
 
-if [ ! -f "$TMP_OPT_FILE" ]; then
-    echo "ERROR: Optimization failed - optimized file not created!"
-    exit 1
-fi
+CMD_MIN=(
+    "$UPSIDE_EXECUTABLE"
+    "$INPUT_FILE"
+    "--duration" "$MIN_STEPS"
+    "--frame-interval" "$FRAME_INTERVAL"
+    "--temperature" "$TEMPERATURE"
+    "--time-step" "$TIME_STEP"
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+    "--seed" "$SEED"
+    "--integrator" "vel_verlet"
+    "--disable-recentering"
+    "--minimize"
+    "--min-max-iter" "1000"
+    "--min-energy-tol" "1e-6"
+    "--min-force-tol" "1e-3"
+    "--min-step" "0.01"
+)
 
-mv -f "$TMP_OPT_FILE" "$INPUT_FILE"
-OPTIMIZED_SIZE=$(du -h "$INPUT_FILE" | cut -f1)
-echo "Optimization complete!"
-echo "  Optimized input: $INPUT_FILE ($OPTIMIZED_SIZE)"
-echo
-
-# Step 3: Simulation run
-if [ "$POTENTIAL_MODE" = "regular" ]; then
-    echo "=== Step 3: Running Regular Potential Simulation ==="
-    echo "Running for $DURATION steps with regular potentials"
-    
-    # Single stage: regular potential for full duration
-    CMD_REG=(
-        "$UPSIDE_EXECUTABLE"
-        "$INPUT_FILE"
-        "--duration" "$DURATION"
-        "--frame-interval" "$FRAME_INTERVAL"
-        "--temperature" "$TEMPERATURE"
-        "--time-step" "$TIME_STEP"
-        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-        "--seed" "$SEED"
-        "--integrator" "$INTEGRATOR_REG"
-        "--disable-recentering"
-    )
-    [ -n "$MAX_FORCE" ] && CMD_REG+=("--max-force" "$MAX_FORCE")
-    echo "Command (regular): ${CMD_REG[*]}"
-    START_TIME=$(date +%s)
-    if "${CMD_REG[@]}" 2>&1 | tee "$LOG_FILE"; then
-        END_TIME=$(date +%s)
-        echo "Regular simulation completed in $((END_TIME - START_TIME)) seconds"
-    else
-        echo "ERROR: Regular simulation failed!"
-        exit 1
-    fi
-    
+START_TIME=$(date +%s)
+if "${CMD_MIN[@]}" 2>&1 | tee "${LOG_DIR}/minimization.log"; then
+    END_TIME=$(date +%s)
+    echo "Minimization completed in $((END_TIME - START_TIME)) seconds"
 else
-    # Minimization mode: minimization + production in single run
-    echo "=== Step 3: Running Single-Stage Simulation (minimization + production) ==="
+    echo "ERROR: Minimization failed!"
+    exit 1
+fi
 
-    # Single stage: Minimization + Production
-    echo "-- Stage 1: Minimization + Production for $DURATION steps --"
-    CMD_MIN_PROD=(
-        "$UPSIDE_EXECUTABLE"
-        "$INPUT_FILE"
-        "--duration" "$DURATION"
-        "--frame-interval" "$FRAME_INTERVAL"
-        "--temperature" "$TEMPERATURE"
-        "--time-step" "$TIME_STEP"
-        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-        "--seed" "$SEED"
-        "--integrator" "$INTEGRATOR_SOFT"
-        "--disable-recentering"
-        "--minimize"
-        "--min-max-iter" "1000"
-        "--min-energy-tol" "1e-6"
-        "--min-force-tol" "1e-3"
-        "--min-step" "0.01"
-    )
-    [ -n "$MAX_FORCE" ] && CMD_MIN_PROD+=("--max-force" "$MAX_FORCE")
-    echo "Command (minimization + production): ${CMD_MIN_PROD[*]}"
-    START_TIME_TOTAL=$(date +%s)
-    if "${CMD_MIN_PROD[@]}" 2>&1 | tee "$LOG_FILE"; then
-        END_TIME_TOTAL=$(date +%s)
-        echo "Minimization + Production completed in $((END_TIME_TOTAL - START_TIME_TOTAL)) seconds"
-    else
-        echo "ERROR: Minimization + Production stage failed!"
-        exit 1
-    fi
-fi  # End of POTENTIAL_MODE check
-
+# Save minimized checkpoint (input file was modified in-place)
+cp -f "$INPUT_FILE" "$MINIMIZED_FILE"
+echo "Minimized checkpoint: $MINIMIZED_FILE"
 echo
-echo "=== Simulation Complete! ==="
 
-# Step 4: Generate VTF at RUN_DIR/pdb_id.vtf from the unified .up file
+# =============================================================================
+# STAGE 3: NPT EQUILIBRATION (pressure coupling enabled)
+# =============================================================================
+echo "=== Stage 3: NPT Equilibration ==="
+echo "Running $NPT_STEPS steps with Berendsen barostat"
+echo "Input:  $MINIMIZED_FILE"
+echo "Output: $NPT_FILE"
+
+# Enable NPT for this stage
+export UPSIDE_NPT_ENABLE=1
+export UPSIDE_NPT_TARGET_PXY=${UPSIDE_NPT_TARGET_PXY:-1.0}
+export UPSIDE_NPT_TARGET_PZ=${UPSIDE_NPT_TARGET_PZ:-1.0}
+export UPSIDE_NPT_TAU=${UPSIDE_NPT_TAU:-1.0}
+export UPSIDE_NPT_INTERVAL=${UPSIDE_NPT_INTERVAL:-10}
+
+echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=${UPSIDE_NPT_TAU} interval=${UPSIDE_NPT_INTERVAL}"
+
+# Work from minimized checkpoint
+cp -f "$MINIMIZED_FILE" "$NPT_FILE"
+
+CMD_NPT=(
+    "$UPSIDE_EXECUTABLE"
+    "$NPT_FILE"
+    "--duration" "$NPT_STEPS"
+    "--frame-interval" "$FRAME_INTERVAL"
+    "--temperature" "$TEMPERATURE"
+    "--time-step" "$TIME_STEP"
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+    "--seed" "$SEED"
+    "--integrator" "vel_verlet"
+    "--disable-recentering"
+    "--continue"
+)
+
+START_TIME=$(date +%s)
+if "${CMD_NPT[@]}" 2>&1 | tee "${LOG_DIR}/npt_equilibration.log"; then
+    END_TIME=$(date +%s)
+    echo "NPT equilibration completed in $((END_TIME - START_TIME)) seconds"
+else
+    echo "ERROR: NPT equilibration failed!"
+    exit 1
+fi
+
+echo "NPT checkpoint: $NPT_FILE"
 echo
-echo "=== Step 4: Generating VTF ==="
-echo "Generating VTF file: $VTF_FILE"
-if python3 extract_martini_vtf.py "$INPUT_FILE" "$VTF_FILE" "$INPUT_FILE" "$PDB_ID"; then
+
+# =============================================================================
+# STAGE 4: NVT PRODUCTION (fixed volume)
+# =============================================================================
+echo "=== Stage 4: NVT Production ==="
+echo "Running $NVT_STEPS steps with fixed volume (NPT disabled)"
+echo "Input:  $NPT_FILE"
+echo "Output: $NVT_FILE"
+
+# Disable NPT for production
+export UPSIDE_NPT_ENABLE=0
+
+# Work from NPT checkpoint
+cp -f "$NPT_FILE" "$NVT_FILE"
+
+CMD_NVT=(
+    "$UPSIDE_EXECUTABLE"
+    "$NVT_FILE"
+    "--duration" "$NVT_STEPS"
+    "--frame-interval" "$FRAME_INTERVAL"
+    "--temperature" "$TEMPERATURE"
+    "--time-step" "$TIME_STEP"
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+    "--seed" "$SEED"
+    "--integrator" "vel_verlet"
+    "--disable-recentering"
+    "--continue"
+)
+
+START_TIME=$(date +%s)
+if "${CMD_NVT[@]}" 2>&1 | tee "${LOG_DIR}/nvt_production.log"; then
+    END_TIME=$(date +%s)
+    echo "NVT production completed in $((END_TIME - START_TIME)) seconds"
+else
+    echo "ERROR: NVT production failed!"
+    exit 1
+fi
+
+echo "NVT production checkpoint: $NVT_FILE"
+echo
+
+# =============================================================================
+# STAGE 5: VTF GENERATION
+# =============================================================================
+echo "=== Stage 5: Generating VTF ==="
+echo "Extracting trajectory from: $NVT_FILE"
+echo "Output VTF: $VTF_FILE"
+
+if python3 extract_martini_vtf.py "$NVT_FILE" "$VTF_FILE" "$NVT_FILE" "$PDB_ID"; then
     VTF_SIZE=$(du -h "$VTF_FILE" | cut -f1)
-    echo "VTF file generated successfully: $VTF_FILE ($VTF_SIZE)"
+    echo "VTF file generated: $VTF_FILE ($VTF_SIZE)"
 else
-    echo "ERROR: VTF file generation failed!"
+    echo "ERROR: VTF generation failed!"
     exit 1
 fi
 
 echo
-echo "=== Complete Workflow Summary ==="
-echo "Unified input/output file: $INPUT_FILE ($(du -h "$INPUT_FILE" | cut -f1))"
-echo "  Softened stage saved under: /output_soft in $INPUT_FILE"
-echo "  Regular stage saved under: /output in $INPUT_FILE"
-echo "VTF: $VTF_FILE ($VTF_SIZE)"
+echo "=== Workflow Complete ==="
+echo "Checkpoints:"
+echo "  Prepared:   $INPUT_FILE"
+echo "  Minimized:  $MINIMIZED_FILE"
+echo "  NPT:        $NPT_FILE"
+echo "  NVT:        $NVT_FILE"
+echo "Trajectory:   $VTF_FILE"
 echo
+echo "To visualize: vmd $VTF_FILE"
 echo "Done."
-
-

@@ -22,10 +22,27 @@
 #include <omp.h>
 #endif
 
+#include "box.h"  // Simulation box PBC and NPT barostat
+
 using namespace std;
 using namespace h5;
 
-// NPT barostat removed - using NVT ensemble only
+// ---- NPT barostat hooks (implemented in box.cpp) ----
+namespace simulation_box {
+    namespace npt {
+        void register_barostat_for_engine(hid_t config_root, DerivEngine& engine);
+        void maybe_apply_barostat(DerivEngine& engine,
+                                  const VecArray& mom,
+                                  int n_atom,
+                                  uint64_t round_num,
+                                  float dt,
+                                  int inner_step,
+                                  int verbose,
+                                  bool print_now);
+        void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz);
+        bool is_enabled(const DerivEngine& engine);
+    }
+}
 
 // ---- Fix Rigid hooks (implemented in martini.cpp) ----
 namespace martini_fix_rigid {
@@ -762,7 +779,8 @@ try {
 
             auto potential_group = open_group(sys->config.get(), "/input/potential");
             sys->engine = initialize_engine_from_hdf5(sys->n_atom, potential_group.get());
-            // NPT barostat removed - using NVT ensemble only
+            // Register NPT barostat for this engine (reads settings from H5)
+            simulation_box::npt::register_barostat_for_engine(sys->config.get(), sys->engine);
             // Load masses for MARTINI integrators (read from H5)
             martini_masses::load_masses_for_engine(&sys->engine, sys->config.get());
             // Register fix rigid settings for this engine (read from H5)
@@ -1042,7 +1060,13 @@ try {
                     martini_stage_params::apply_stage_bond_params(sys.engine);
                     martini_stage_params::apply_stage_angle_params(sys.engine);
 
-                    // NPT barostat removed - using NVT ensemble without boundaries
+                    // Apply NPT barostat if enabled (skip step 0 to allow initial relaxation)
+                    if(nr > 0) {
+                        bool print_baro = do_print;  // Print barostat info at same frequency as frame output
+                        simulation_box::npt::maybe_apply_barostat(sys.engine, sys.mom, sys.n_atom,
+                                                                   nr, dt, inner_step,
+                                                                   verbose, print_baro);
+                    }
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
                         curvature_changer->attempt_change(base_random_seed, sys.round_num, sys, relative_curvature_radius_change);

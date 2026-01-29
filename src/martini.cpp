@@ -11,6 +11,7 @@
 #include <complex> // For complex numbers in PME
 #include <vector> // For PME grid operations
 #include <algorithm> // For PME algorithms
+#include "box.h" // For PBC minimum_image function
 
 using namespace h5;
 using namespace std;
@@ -386,14 +387,40 @@ struct DihedralSpring : public PotentialNode
             for(int na: range(4)) x_orig[na] = Float4(posc + 4*params[nt].atom[na]);
 
             // Apply minimum image convention for periodic boundaries
-            // For dihedral, we need to ensure all bonds use minimum image
+            // Reconstruct chain: use atom 1 as reference, apply PBC to get other atoms
             Float4 x[4];
             x[1] = x_orig[1]; // Use atom 1 as reference
             
-            // Direct distance calculation without PBC
-            x[0] = x_orig[0];
-            x[2] = x_orig[2];
-            x[3] = x_orig[3];
+            // Apply PBC minimum image to reconstruct unbroken chain
+            // Atom 0 relative to atom 1
+            float dx0 = x_orig[0].x() - x_orig[1].x();
+            float dy0 = x_orig[0].y() - x_orig[1].y();
+            float dz0 = x_orig[0].z() - x_orig[1].z();
+            simulation_box::minimum_image_scalar(dx0, dy0, dz0, box_x, box_y, box_z);
+            {
+                alignas(16) float disp0[4] = {dx0, dy0, dz0, 0.f};
+                x[0] = x[1] + Float4(disp0);
+            }
+            
+            // Atom 2 relative to atom 1
+            float dx2 = x_orig[2].x() - x_orig[1].x();
+            float dy2 = x_orig[2].y() - x_orig[1].y();
+            float dz2 = x_orig[2].z() - x_orig[1].z();
+            simulation_box::minimum_image_scalar(dx2, dy2, dz2, box_x, box_y, box_z);
+            {
+                alignas(16) float disp2[4] = {dx2, dy2, dz2, 0.f};
+                x[2] = x[1] + Float4(disp2);
+            }
+            
+            // Atom 3 relative to atom 2 (chain: 0-1-2-3)
+            float dx3 = x_orig[3].x() - x_orig[2].x();
+            float dy3 = x_orig[3].y() - x_orig[2].y();
+            float dz3 = x_orig[3].z() - x_orig[2].z();
+            simulation_box::minimum_image_scalar(dx3, dy3, dz3, box_x, box_y, box_z);
+            {
+                alignas(16) float disp3[4] = {dx3, dy3, dz3, 0.f};
+                x[3] = x[2] + Float4(disp3);
+            }
 
             Float4 d[4];
             float dihedral = dihedral_germ(x[0],x[1],x[2],x[3], d[0],d[1],d[2],d[3]).x();
@@ -1215,8 +1242,8 @@ struct DistSpring : public PotentialNode
             auto x1 = load_vec<3>(posc, p.atom[0]);
             auto x2 = load_vec<3>(posc, p.atom[1]);
 
-            // Direct distance calculation without PBC
-            auto disp = x1 - x2;
+            // Apply PBC minimum image convention for distance calculation
+            auto disp = simulation_box::minimum_image(x1 - x2, box_x, box_y, box_z);
             float dist = mag(disp);
             
             // Use spline interpolation for bond potential and force (in delta-r space)
@@ -1405,7 +1432,7 @@ struct AngleSpring : public PotentialNode
         for(int nt=0; nt<n_elem; ++nt) {
             auto& p = params[nt];
             
-            // Step 1: Reconstruct atomic positions to form an unbroken chain
+            // Step 1: Load atomic positions
             auto x_orig1 = load_vec<3>(posc, p.atom[0]);
             auto x_orig2 = load_vec<3>(posc, p.atom[1]);
             auto x_orig3 = load_vec<3>(posc, p.atom[2]);
@@ -1414,9 +1441,9 @@ struct AngleSpring : public PotentialNode
             auto x1 = x_orig1;
             auto x3 = x_orig3;
 
-            // Step 2: Calculate vectors and angle from reconstructed positions
-            auto disp1 = x1 - x2;
-            auto disp2 = x3 - x2;
+            // Step 2: Calculate vectors with PBC minimum image convention
+            auto disp1 = simulation_box::minimum_image(x1 - x2, box_x, box_y, box_z);
+            auto disp2 = simulation_box::minimum_image(x3 - x2, box_x, box_y, box_z);
 
             float norm1_sq = mag2(disp1);
             float norm2_sq = mag2(disp2);
