@@ -4,21 +4,10 @@
 # Works with M1, M2, M3, M4 Macs
 
 # Detect and set Python path dynamically
-if [ -d "/opt/homebrew/Cellar/python@3.13" ]; then
+if [ -d "/opt/homebrew/Cellar/python@3.10" ]; then
     # Find the latest Python 3.13 version
-    PYTHON_VERSION=$(ls /opt/homebrew/Cellar/python@3.13 | sort -V | tail -1)
-    export MY_PYTHON="/opt/homebrew/Cellar/python@3.13/$PYTHON_VERSION"
-elif [ -d "/opt/homebrew/Cellar/python@3.12" ]; then
-    # Fallback to Python 3.12
-    PYTHON_VERSION=$(ls /opt/homebrew/Cellar/python@3.12 | sort -V | tail -1)
-    export MY_PYTHON="/opt/homebrew/Cellar/python@3.12/$PYTHON_VERSION"
-elif [ -d "/opt/homebrew/Cellar/python@3.11" ]; then
-    # Fallback to Python 3.11
-    PYTHON_VERSION=$(ls /opt/homebrew/Cellar/python@3.11 | sort -V | tail -1)
-    export MY_PYTHON="/opt/homebrew/Cellar/python@3.11/$PYTHON_VERSION"
-else
-    echo "Warning: No Python 3.x found in Homebrew Cellar, using system Python"
-    export MY_PYTHON="/usr/bin"
+    PYTHON_VERSION=$(ls /opt/homebrew/Cellar/python@3.10 | sort -V | tail -1)
+    export MY_PYTHON="/opt/homebrew/Cellar/python@3.10/$PYTHON_VERSION"
 fi
 
 # Set UPSIDE_HOME - this will be replaced by the install script
