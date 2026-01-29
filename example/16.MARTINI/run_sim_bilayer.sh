@@ -159,6 +159,8 @@ echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=
 
 # Work from minimized checkpoint
 cp -f "$MINIMIZED_FILE" "$NPT_FILE"
+# Set initial position in NPT file to last frame from minimization
+python3 set_initial_position.py "$MINIMIZED_FILE" "$NPT_FILE"
 
 CMD_NPT=(
     "$UPSIDE_EXECUTABLE"
@@ -172,7 +174,6 @@ CMD_NPT=(
     "--seed" "$SEED"
     "--integrator" "vel_verlet"
     "--disable-recentering"
-    "--continue"
 )
 
 START_TIME=$(date +%s)
@@ -200,6 +201,8 @@ export UPSIDE_NPT_ENABLE=0
 
 # Work from NPT checkpoint
 cp -f "$NPT_FILE" "$NVT_FILE"
+# Set initial position in NVT file to last frame from NPT
+python3 set_initial_position.py "$NPT_FILE" "$NVT_FILE"
 
 CMD_NVT=(
     "$UPSIDE_EXECUTABLE"
@@ -213,7 +216,6 @@ CMD_NVT=(
     "--seed" "$SEED"
     "--integrator" "vel_verlet"
     "--disable-recentering"
-    "--continue"
 )
 
 START_TIME=$(date +%s)
@@ -229,17 +231,43 @@ echo "NVT production checkpoint: $NVT_FILE"
 echo
 
 # =============================================================================
-# STAGE 5: VTF GENERATION
+# STAGE 5: VTF GENERATION (ALL STAGES)
 # =============================================================================
-echo "=== Stage 5: Generating VTF ==="
-echo "Extracting trajectory from: $NVT_FILE"
-echo "Output VTF: $VTF_FILE"
+echo "=== Stage 5: Generating VTF Files for All Stages ==="
 
-if python3 extract_martini_vtf.py "$NVT_FILE" "$VTF_FILE" "$NVT_FILE" "$PDB_ID"; then
-    VTF_SIZE=$(du -h "$VTF_FILE" | cut -f1)
-    echo "VTF file generated: $VTF_FILE ($VTF_SIZE)"
+# Minimization VTF
+MIN_VTF_FILE="${RUN_DIR}/${PDB_ID}.minimized.vtf"
+echo "Extracting minimization trajectory from: $MINIMIZED_FILE"
+echo "Output VTF: $MIN_VTF_FILE"
+if python3 extract_martini_vtf.py "$MINIMIZED_FILE" "$MIN_VTF_FILE" "$MINIMIZED_FILE" "$PDB_ID"; then
+    MIN_VTF_SIZE=$(du -h "$MIN_VTF_FILE" | cut -f1)
+    echo "Minimization VTF generated: $MIN_VTF_FILE ($MIN_VTF_SIZE)"
 else
-    echo "ERROR: VTF generation failed!"
+    echo "ERROR: Minimization VTF generation failed!"
+    exit 1
+fi
+
+# NPT VTF
+NPT_VTF_FILE="${RUN_DIR}/${PDB_ID}.npt.vtf"
+echo "Extracting NPT trajectory from: $NPT_FILE"
+echo "Output VTF: $NPT_VTF_FILE"
+if python3 extract_martini_vtf.py "$NPT_FILE" "$NPT_VTF_FILE" "$NPT_FILE" "$PDB_ID"; then
+    NPT_VTF_SIZE=$(du -h "$NPT_VTF_FILE" | cut -f1)
+    echo "NPT VTF generated: $NPT_VTF_FILE ($NPT_VTF_SIZE)"
+else
+    echo "ERROR: NPT VTF generation failed!"
+    exit 1
+fi
+
+# NVT VTF
+NVT_VTF_FILE="${RUN_DIR}/${PDB_ID}.nvt.vtf"
+echo "Extracting NVT trajectory from: $NVT_FILE"
+echo "Output VTF: $NVT_VTF_FILE"
+if python3 extract_martini_vtf.py "$NVT_FILE" "$NVT_VTF_FILE" "$NVT_FILE" "$PDB_ID"; then
+    NVT_VTF_SIZE=$(du -h "$NVT_VTF_FILE" | cut -f1)
+    echo "NVT VTF generated: $NVT_VTF_FILE ($NVT_VTF_SIZE)"
+else
+    echo "ERROR: NVT VTF generation failed!"
     exit 1
 fi
 
@@ -250,7 +278,10 @@ echo "  Prepared:   $INPUT_FILE"
 echo "  Minimized:  $MINIMIZED_FILE"
 echo "  NPT:        $NPT_FILE"
 echo "  NVT:        $NVT_FILE"
-echo "Trajectory:   $VTF_FILE"
+echo "Trajectories:"
+echo "  Minimization: $MIN_VTF_FILE"
+echo "  NPT:          $NPT_VTF_FILE"
+echo "  NVT:          $NVT_VTF_FILE"
 echo
 echo "To visualize: vmd $VTF_FILE"
 echo "Done."
