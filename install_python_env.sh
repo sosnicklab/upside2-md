@@ -2,8 +2,10 @@
 
 echo "Setting up universal Python environment for UPSIDE2..."
 
+rm -rf .venv
+
 # Create virtual environment in the root directory
-python3.13 -m venv .venv
+python3.10 -m venv .venv
 
 # Activate virtual environment and install packages
 source .venv/bin/activate
