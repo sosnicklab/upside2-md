@@ -1013,22 +1013,61 @@ try {
                         sys.engine.compute(PotentialAndDerivMode);
                         sys.logger->collect_samples();
 
-                        double Rg = 0.f;
-                        float3 com = make_vec3(0.f, 0.f, 0.f);
-                        for(int na=0; na<sys.n_atom; ++na)
-                            com += load_vec<3>(sys.engine.pos->output, na);
-                        com *= 1.f/sys.n_atom;
+                        // Read sequence to determine n_residues
+                        int n_res = 0;
+                        try {
+                            auto seq_dset = get_dset_size(1, sys.config.get(), "/input/sequence");
+                            n_res = seq_dset[0];
+                        } catch(...) {
+                            n_res = 0; // No sequence = pure MARTINI
+                        }
 
-                        for(int na=0; na<sys.n_atom; ++na) 
-                            Rg += mag2(load_vec<3>(sys.engine.pos->output,na)-com);
-                        Rg = sqrtf(Rg/sys.n_atom);
+                        int n_backbone = 3 * n_res;
+                        double Rg = -1.0; // Default to N/A
 
-                        if(verbose) printf(
-                                "%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg %5.1f A, potential % 8.2f\n", 
-                                duration_print_width, nr*double(dt*inner_step), 
-                                duration_print_width, duration, 
-                                ns, sys.temperature,
-                                get_n_hbond(sys.engine), Rg, sys.engine.potential);
+                        // Only calculate Rg if we have backbone atoms
+                        if(n_backbone > 0 && sys.n_atom >= n_backbone) {
+                            float3 com = make_vec3(0.f, 0.f, 0.f);
+                            for(int na=0; na<n_backbone; ++na)
+                                com += load_vec<3>(sys.engine.pos->output, na);
+                            com *= 1.f/n_backbone;
+
+                            Rg = 0.f;
+                            for(int na=0; na<n_backbone; ++na)
+                                Rg += mag2(load_vec<3>(sys.engine.pos->output,na)-com);
+                            Rg = sqrtf(Rg/n_backbone);
+                        }
+
+                        // Check if NPT is enabled and get box dimensions
+                        bool npt_enabled = simulation_box::npt::is_enabled(sys.engine);
+                        float box_x = 0.f, box_y = 0.f, box_z = 0.f;
+
+                        if(npt_enabled) {
+                            simulation_box::npt::get_current_box(sys.engine, box_x, box_y, box_z);
+                        }
+
+                        // Print with conditional Rg and NPT info
+                        if(verbose) {
+                            printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg ",
+                                   duration_print_width, nr*double(dt*inner_step),
+                                   duration_print_width, duration,
+                                   ns, sys.temperature,
+                                   get_n_hbond(sys.engine));
+
+                            if(Rg < 0.0) {
+                                printf("  N/A");
+                            } else {
+                                printf("%5.1f A", Rg);
+                            }
+
+                            printf(", potential % 8.2f", sys.engine.potential);
+
+                            if(npt_enabled && box_x > 0.f) {
+                                printf(" | box %.1f %.1f %.1f", box_x, box_y, box_z);
+                            }
+
+                            printf("\n");
+                        }
                         fflush(stdout);
                     }
 
