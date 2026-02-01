@@ -30,21 +30,6 @@ echo "Generated source.sh with path: $upside_path"
 # Source the environment
 source source.sh
 
-# Set up OpenMP environment variables explicitly
-LIBOMP_PREFIX=$(brew --prefix libomp)
-export OpenMP_CXX_FLAGS="-Xpreprocessor -fopenmp -I$LIBOMP_PREFIX/include"
-export OpenMP_CXX_LIB_NAMES="omp"
-export OpenMP_C_FLAGS="-Xpreprocessor -fopenmp -I$LIBOMP_PREFIX/include"
-export OpenMP_C_LIB_NAMES="omp"
-export OpenMP_omp_LIBRARY="$LIBOMP_PREFIX/lib/libomp.dylib"
-export CMAKE_PREFIX_PATH="$LIBOMP_PREFIX:$CMAKE_PREFIX_PATH"
-
-echo "OpenMP configuration:"
-echo "  LIBOMP_PREFIX: $LIBOMP_PREFIX"
-echo "  OpenMP_CXX_FLAGS: $OpenMP_CXX_FLAGS"
-echo "  OpenMP_CXX_LIB_NAMES: $OpenMP_CXX_LIB_NAMES"
-echo "  OpenMP_omp_LIBRARY: $OpenMP_omp_LIBRARY"
-
 # Clean previous build
 echo "Cleaning previous build..."
 rm -rf obj/*
@@ -59,11 +44,6 @@ cmake ../src/ \
   -DCMAKE_C_COMPILER=/usr/bin/gcc \
   -DCMAKE_CXX_FLAGS="-std=c++11" \
   -DCMAKE_C_FLAGS="" \
-  -DOpenMP_CXX_FLAGS="$OpenMP_CXX_FLAGS" \
-  -DOpenMP_C_FLAGS="$OpenMP_C_FLAGS" \
-  -DOpenMP_CXX_LIB_NAMES="$OpenMP_CXX_LIB_NAMES" \
-  -DOpenMP_C_LIB_NAMES="$OpenMP_C_LIB_NAMES" \
-  -DOpenMP_omp_LIBRARY="$OpenMP_omp_LIBRARY" \
   -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"
 
 # Build with verbose output

@@ -7,7 +7,6 @@ find_package(HDF5 REQUIRED COMPONENTS C)
 find_package(Eigen3 REQUIRED)
 set(EIGEN3_INCLUDE_DIR "/opt/homebrew/Cellar/eigen@3/3.4.1/include/eigen3")
 include_directories(${EIGEN3_INCLUDE_DIR})
-find_package(OpenMP REQUIRED)
 
 # --- START CHANGE: Find Python for ConDiv ---
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
@@ -17,20 +16,18 @@ include_directories(${Python3_INCLUDE_DIRS})
 set(ARCH "native" CACHE STRING "architecture to use for -march flag to compiler")
 set(DEBUG_FLAGS "-g")
 
-set(OMP_FLAGS "${OpenMP_CXX_FLAGS}")
 set(DEFINES "-DR123_NO_SINCOS -Drestrict=__restrict__ -DNDEBUG")
 set(OPT "-O3 -ffast-math -fno-omit-frame-pointer -march=${ARCH}")
 set(WARN "-pedantic -Wall -Wno-strict-overflow -Wno-unused-function -Wno-unknown-pragmas")
 
-set(CMAKE_CXX_FLAGS "${OMP_FLAGS} ${CMAKE_CXX_FLAGS} ${DEBUG_FLAGS} -std=c++11 ${DEFINES} ${OPT} ${WARN}")
-set(CMAKE_EXE_LINKER_FLAGS "${OMP_FLAGS} ${CMAKE_EXE_LINKER_FLAGS}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${DEBUG_FLAGS} -std=c++11 ${DEFINES} ${OPT} ${WARN}")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
 set(CMAKE_OSX_ARCHITECTURES arm64)
 
 include_directories(SYSTEM "include")
 # This line was critical for finding sse2neon.h
 include_directories(/opt/homebrew/include)
 include_directories(/opt/homebrew/opt/eigen@3/include/eigen3)
-link_directories(/opt/homebrew/opt/libomp/lib)
 
 set(ENGINE_SRC 
     main.cpp
@@ -67,12 +64,12 @@ add_executable(upside ${ENGINE_SRC})
 INCLUDE_DIRECTORIES(${HDF5_INCLUDE_DIRS})
 
 # Now we can link libraries
-target_link_libraries(upside stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
+target_link_libraries(upside stdc++ ${HDF5_LIBRARIES})
 
 # Create the shared library (Legacy)
 add_library(upside_calculation SHARED ${ENGINE_SRC})
 set_target_properties(upside_calculation PROPERTIES COMPILE_FLAGS "-DPARAM_DERIV" OUTPUT_NAME "upside")
-target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX)
+target_link_libraries(upside_calculation stdc++ ${HDF5_LIBRARIES})
 
 # --- START CHANGE: Build Python Module for ConDiv ---
 # ConDiv imports "upside_engine". We build it as a MODULE.
@@ -87,7 +84,7 @@ else()
 endif()
 
 # Link Python libraries
-target_link_libraries(upside_engine stdc++ ${HDF5_LIBRARIES} OpenMP::OpenMP_CXX Python3::Python)
+target_link_libraries(upside_engine stdc++ ${HDF5_LIBRARIES} Python3::Python)
 # --- END CHANGE ---
 
 # Other executables

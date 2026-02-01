@@ -18,9 +18,6 @@
 #include <iostream>
 #include <cstdlib>
 
-#if defined(_OPENMP)
-#include <omp.h>
-#endif
 
 #include "box.h"  // Simulation box PBC and NPT barostat
 
@@ -709,7 +706,6 @@ try {
         // all exceptions.  To avoid crashing callers, we simply record the presence of an exception
         // then exit immediately after the block.
         bool error_exit_omp = false;
-        #pragma omp critical
         for(int ns=0; ns<n_system; ++ns) try {
             System* sys = &systems[ns];  // a pointer here makes later lambda's more natural
             sys->random_seed = base_random_seed + ns;
@@ -978,7 +974,6 @@ try {
         auto tstart = chrono::high_resolution_clock::now();
         while(systems[0].round_num < n_round && received_signal==NO_SIGNAL) {
             int last_start = systems[0].round_num;
-            #pragma omp parallel for schedule(static,1)
             for(int ns=0; ns<int(systems.size()); ++ns) {
                 System& sys = systems[ns];
                 for(bool do_break=false; (!do_break) && (sys.round_num<n_round); ++sys.round_num) {

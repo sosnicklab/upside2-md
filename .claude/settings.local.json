@@ -16,7 +16,14 @@
       "mcp__serena__edit_memory",
       "mcp__serena__write_memory",
       "Bash(grep:*)",
-      "Bash(make upside:*)"
+      "Bash(make upside:*)",
+      "mcp__serena__get_current_config",
+      "Bash(ls:*)",
+      "Bash(./install_M1.sh:*)",
+      "Bash(make:*)",
+      "Bash(otool:*)",
+      "Bash(./upside:*)",
+      "Bash(/Users/yinhan/Documents/upside2-md-dev/obj/upside:*)"
     ],
     "deny": [],
     "ask": []
