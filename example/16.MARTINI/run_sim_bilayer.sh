@@ -84,8 +84,9 @@ echo "=== Stage 1: Preparing Input Files ==="
 source ../../source.sh
 source ../../.venv/bin/activate
 
-# Prepare with softened potentials enabled (for minimization compatibility)
+# Prepare with NPT enabled (so barostat configuration is stored in input file)
 export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
+export UPSIDE_NPT_ENABLE=${UPSIDE_NPT_ENABLE:-1}
 python3 prepare_martini.py "$PDB_ID"
 
 PREPARED_FILE="${RUN_DIR}/test.input.up"
@@ -100,12 +101,20 @@ echo "Input prepared: $INPUT_FILE ($(du -h "$INPUT_FILE" | cut -f1))"
 echo
 
 # =============================================================================
-# STAGE 2: ENERGY MINIMIZATION
+# STAGE 2: ENERGY MINIMIZATION (effectively NVT)
 # =============================================================================
 echo "=== Stage 2: Energy Minimization ==="
-echo "Running $MIN_STEPS steps with softened potentials"
+echo "Running $MIN_STEPS steps with softened potentials (NVT)"
 echo "Input:  $INPUT_FILE"
 echo "Output: $MINIMIZED_FILE"
+
+# Remove barostat configuration to make minimization effectively NVT
+python3 - <<END
+import h5py
+with h5py.File("$INPUT_FILE", 'r+') as f:
+    if '/input/barostat' in f:
+        del f['/input/barostat']
+END
 
 CMD_MIN=(
     "$UPSIDE_EXECUTABLE"
@@ -159,6 +168,24 @@ echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=
 
 # Work from minimized checkpoint
 cp -f "$MINIMIZED_FILE" "$NPT_FILE"
+# Re-add barostat configuration for NPT equilibration
+python3 - <<END
+import h5py
+import numpy as np
+
+with h5py.File("$NPT_FILE", 'r+') as f:
+    # Create barostat group
+    if '/input/barostat' not in f:
+        barostat_grp = f.create_group('/input/barostat')
+        barostat_grp.attrs['enable'] = 1
+        barostat_grp.attrs['target_p_xy'] = float('${UPSIDE_NPT_TARGET_PXY:-1.0}')
+        barostat_grp.attrs['target_p_z'] = float('${UPSIDE_NPT_TARGET_PZ:-1.0}')
+        barostat_grp.attrs['tau_p'] = float('${UPSIDE_NPT_TAU:-1.0}')
+        barostat_grp.attrs['compressibility'] = 4.5e-5
+        barostat_grp.attrs['interval'] = int('${UPSIDE_NPT_INTERVAL:-10}')
+        barostat_grp.attrs['semi_isotropic'] = 1
+        barostat_grp.attrs['debug'] = 1
+END
 # Set initial position in NPT file to last frame from minimization
 python3 set_initial_position.py "$MINIMIZED_FILE" "$NPT_FILE"
 
@@ -201,6 +228,13 @@ export UPSIDE_NPT_ENABLE=0
 
 # Work from NPT checkpoint
 cp -f "$NPT_FILE" "$NVT_FILE"
+# Remove barostat configuration to disable NPT
+python3 - <<END
+import h5py
+with h5py.File("$NVT_FILE", 'r+') as f:
+    if '/input/barostat' in f:
+        del f['/input/barostat']
+END
 # Set initial position in NVT file to last frame from NPT
 python3 set_initial_position.py "$NPT_FILE" "$NVT_FILE"
 

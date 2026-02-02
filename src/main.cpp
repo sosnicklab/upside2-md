@@ -929,7 +929,32 @@ try {
             float* temperature_pointer = &(systems[ns].temperature);
             systems[ns].logger->add_logger<double>("temperature", {1}, [temperature_pointer](double* temperature_buffer) {
                     temperature_buffer[0] = *temperature_pointer;});
-            // Box dimensions removed - using NVT ensemble without boundaries
+
+            // Add NPT-specific loggers if barostat is enabled
+            if(simulation_box::npt::is_enabled(systems[ns].engine)) {
+                // Log box dimensions
+                systems[ns].logger->add_logger<float>("box", {3}, [ns, &systems](float* buffer) {
+                    float bx, by, bz;
+                    simulation_box::npt::get_current_box(systems[ns].engine, bx, by, bz);
+                    buffer[0] = bx;
+                    buffer[1] = by;
+                    buffer[2] = bz;
+                });
+
+                // Log pressure
+                systems[ns].logger->add_logger<float>("pressure", {2}, [ns, &systems](float* buffer) {
+                    float pxy, pz;
+                    simulation_box::npt::get_pressure(systems[ns].engine, pxy, pz);
+                    buffer[0] = pxy;
+                    buffer[1] = pz;
+                });
+
+                // Log volume
+                systems[ns].logger->add_logger<float>("volume", {1}, [ns, &systems](float* buffer) {
+                    float vol = simulation_box::npt::get_volume(systems[ns].engine);
+                    buffer[0] = vol;
+                });
+            }
         }
         if(verbose) printf("\n");
 

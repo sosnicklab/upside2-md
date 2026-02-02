@@ -61,6 +61,11 @@ struct BarostatState {
     int equilibrium_count = 0;
     static constexpr int EQUILIBRIUM_THRESHOLD = 5;
     static constexpr float EQUILIBRIUM_TOLERANCE = 0.001f;
+    // Last applied values for logging
+    float last_pxy_inst = 0.0f;
+    float last_pz_inst = 0.0f;
+    float last_scale_xy = 1.0f;
+    float last_scale_z = 1.0f;
 };
 
 // Initialize barostat for an engine (reads settings from H5)
@@ -84,6 +89,12 @@ void update_node_boxes(DerivEngine& engine, float scale_xy, float scale_z);
 
 // Check if barostat is enabled for this engine
 bool is_enabled(const DerivEngine& engine);
+
+// Get last calculated pressure values
+void get_pressure(const DerivEngine& engine, float& pxy, float& pz);
+
+// Get current box volume
+float get_volume(const DerivEngine& engine);
 
 } // namespace npt
 

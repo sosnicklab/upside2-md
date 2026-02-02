@@ -221,6 +221,10 @@ void maybe_apply_barostat(DerivEngine& engine,
     
     float pxy_inst = 0.5f * (pxx + pyy);
     float pz_inst = pzz;
+
+    // Store for logging
+    st.last_pxy_inst = pxy_inst;
+    st.last_pz_inst = pz_inst;
     
     // Berendsen scale factor
     float delta_t = dt * inner_step;
@@ -294,6 +298,10 @@ void maybe_apply_barostat(DerivEngine& engine,
         st.box_z = bz * scale_z;
         st.has_applied_once = true;
     }
+
+    // Store scale factors for logging
+    st.last_scale_xy = scale_xy;
+    st.last_scale_z = scale_z;
     
     if(verbose && s.debug && print_now) {
         printf(" [NPT] t %.3f scale_xy %.4f scale_z %.4f | Pxy %.3e tgt %.3e, Pz %.3e tgt %.3e | box %.2f %.2f %.2f\n",
@@ -332,6 +340,24 @@ void update_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
     (void)engine;
     (void)scale_xy;
     (void)scale_z;
+}
+
+void get_pressure(const DerivEngine& engine, float& pxy, float& pz) {
+    std::lock_guard<std::mutex> lk(g_baro_mutex);
+    auto it = g_baro_state.find(const_cast<DerivEngine*>(&engine));
+    if(it != g_baro_state.end() && it->second.settings.enabled) {
+        pxy = it->second.last_pxy_inst;
+        pz = it->second.last_pz_inst;
+    } else {
+        pxy = 0.0f;
+        pz = 0.0f;
+    }
+}
+
+float get_volume(const DerivEngine& engine) {
+    float bx, by, bz;
+    get_current_box(engine, bx, by, bz);
+    return bx * by * bz;
 }
 
 } // namespace npt
