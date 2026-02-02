@@ -21,3 +21,13 @@ source .venv/bin/activate
 source source.sh
 
 ```
+
+### Upside Unit Conversions
+
+| Quantity | Upside Unit | Standard Equivalent |
+| :--- | :--- | :--- |
+| **Energy** | 1 E_up | 2.914952774272 kJ/mol |
+| **Length** | 1 Angstrom | 1 Angstrom |
+| **Mass** | 1 m_up | 12 g/mol |
+| **Temperature** | 1.0 T_up | 350.588235 Kelvin |
+| **Pressure** | 0.000020933215 E_up / (Angstrom^3) | 1 atm |
