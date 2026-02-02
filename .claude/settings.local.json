@@ -30,7 +30,9 @@
       "Bash(python3:*)",
       "Bash(MIN_STEPS=10 NPT_STEPS=200 NVT_STEPS=10 FRAME_INTERVAL=10 ./run_sim_bilayer.sh:*)",
       "Bash(h5ls:*)",
-      "Bash(MIN_STEPS=10 NPT_STEPS=100 NVT_STEPS=10 ./run_sim_bilayer.sh:*)"
+      "Bash(MIN_STEPS=10 NPT_STEPS=100 NVT_STEPS=10 ./run_sim_bilayer.sh:*)",
+      "mcp__serena__read_memory",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []

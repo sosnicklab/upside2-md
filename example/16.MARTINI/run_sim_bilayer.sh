@@ -159,8 +159,11 @@ echo "Output: $NPT_FILE"
 
 # Enable NPT for this stage
 export UPSIDE_NPT_ENABLE=1
-export UPSIDE_NPT_TARGET_PXY=${UPSIDE_NPT_TARGET_PXY:-1.0}
-export UPSIDE_NPT_TARGET_PZ=${UPSIDE_NPT_TARGET_PZ:-1.0}
+# Pressure in Upside units (E_up/Angstrom^3, where E_up = kT)
+# Conversion: 1 bar = 0.000020659 E_up/Angstrom^3
+# This matches LAMMPS real units (1 bar = 0.986923 atm)
+export UPSIDE_NPT_TARGET_PXY=${UPSIDE_NPT_TARGET_PXY:-0.000020659}
+export UPSIDE_NPT_TARGET_PZ=${UPSIDE_NPT_TARGET_PZ:-0.000020659}
 export UPSIDE_NPT_TAU=${UPSIDE_NPT_TAU:-1.0}
 export UPSIDE_NPT_INTERVAL=${UPSIDE_NPT_INTERVAL:-10}
 
@@ -178,8 +181,8 @@ with h5py.File("$NPT_FILE", 'r+') as f:
     if '/input/barostat' not in f:
         barostat_grp = f.create_group('/input/barostat')
         barostat_grp.attrs['enable'] = 1
-        barostat_grp.attrs['target_p_xy'] = float('${UPSIDE_NPT_TARGET_PXY:-1.0}')
-        barostat_grp.attrs['target_p_z'] = float('${UPSIDE_NPT_TARGET_PZ:-1.0}')
+        barostat_grp.attrs['target_p_xy'] = float('${UPSIDE_NPT_TARGET_PXY:-0.000020659}')
+        barostat_grp.attrs['target_p_z'] = float('${UPSIDE_NPT_TARGET_PZ:-0.000020659}')
         barostat_grp.attrs['tau_p'] = float('${UPSIDE_NPT_TAU:-1.0}')
         barostat_grp.attrs['compressibility'] = 4.5e-5
         barostat_grp.attrs['interval'] = int('${UPSIDE_NPT_INTERVAL:-10}')

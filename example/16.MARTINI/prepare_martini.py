@@ -630,27 +630,37 @@ def main():
                         f"  Aborting to prevent incorrect simulation results.")
     
     # Unit conversions
-    energy_conversion = 2.914952774272  # kJ/mol → E_up
+    energy_conversion = 2.914952774272  # kJ/mol → E_up (kT at T=350.59K)
     length_conversion = 10.0  # nm → Å
-    
+
+    # Pressure conversion (for NPT simulations):
+    # 1 atm = 101325 Pa = 101.325 kJ/m³
+    # 1 atm = 1.01325e-28 kJ/Å³
+    # 1 atm = (1.01325e-28 kJ/Å³) × (6.02214e23 mol⁻¹) / (2.914952774272 kJ/mol)
+    # 1 atm = 0.000020933 E_up/Å³
+    # 1 bar = 0.986923 atm = 0.000020659 E_up/Å³
+    # For LAMMPS real units compatibility, use 1 bar = 0.000020659 E_up/Å³
+    pressure_conversion_bar_to_eup = 0.000020659  # bar → E_up/Å³
+
     # Bonds: kJ/mol/nm² → E_up/Å²
     # = (kJ/mol → E_up) / (nm² → Å²)
     # = (1/energy_conversion) / (length_conversion²)
     bond_conversion = 1.0 / (energy_conversion * length_conversion ** 2)  # ≈ 0.003406
-    
+
     # Angles: kJ/mol/deg² → E_up/deg²
     # = (kJ/mol → E_up) (degrees stay the same)
     angle_conversion = 1.0 / energy_conversion  # ≈ 0.343
-    
+
     # Dihedrals: kJ/mol → E_up
     dihedral_conversion = 1.0 / energy_conversion  # ≈ 0.343
-    
+
     print("\n=== MARTINI Unit Conversions ===")
     print(f"Bond lengths (nm -> Å): 0.40 nm -> 4.0 Å")
     print(f"Bond force constants (kJ/mol/nm² -> E_up/Å²): 7000.0 -> {7000.0 * bond_conversion:.3f}")
     print(f"Angle equilibrium (degrees): 108.0°")
     print(f"Angle force constants (kJ/mol/deg² -> E_up/deg²): 21.5 -> {21.5 * angle_conversion:.6f}")
     print(f"Dihedral force constants (kJ/mol -> E_up): 400.0 -> {400.0 * dihedral_conversion:.6f}")
+    print(f"Pressure (bar -> E_up/Å³): 1 bar -> {pressure_conversion_bar_to_eup:.9f}")
     print(f"Energy conversion factor: {energy_conversion} (kJ/mol -> E_up)")
     print(f"Length conversion: 1 nm = {length_conversion} Å, so 1 nm² = {length_conversion**2} Å²")
     print(f"Bond conversion factor: {bond_conversion:.6f} (divide by energy_conv × length_conv²)")
