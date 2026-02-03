@@ -72,7 +72,6 @@ mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR"
 echo "=== MARTINI 3.0 Multi-Stage Workflow ==="
 echo "PDB ID: $PDB_ID"
 echo "Stages: Prepare -> Minimization -> NPT -> NVT -> VTF"
-echo "  MIN_STEPS:  $MIN_STEPS"
 echo "  NPT_STEPS:  $NPT_STEPS"
 echo "  NVT_STEPS:  $NVT_STEPS"
 echo
@@ -101,32 +100,25 @@ echo "Input prepared: $INPUT_FILE ($(du -h "$INPUT_FILE" | cut -f1))"
 echo
 
 # =============================================================================
-# STAGE 2: ENERGY MINIMIZATION (effectively NVT)
+# STAGE 2: ENERGY MINIMIZATION
 # =============================================================================
 echo "=== Stage 2: Energy Minimization ==="
-echo "Running $MIN_STEPS steps with softened potentials (NVT)"
+echo "Running gradient descent minimization with softened potentials"
 echo "Input:  $INPUT_FILE"
 echo "Output: $MINIMIZED_FILE"
-
-# Remove barostat configuration to make minimization effectively NVT
-python3 - <<END
-import h5py
-with h5py.File("$INPUT_FILE", 'r+') as f:
-    if '/input/barostat' in f:
-        del f['/input/barostat']
-END
 
 CMD_MIN=(
     "$UPSIDE_EXECUTABLE"
     "$INPUT_FILE"
-    "--duration" "$MIN_STEPS"
-    "--frame-interval" "$FRAME_INTERVAL"
-    "--temperature" "$TEMPERATURE"
-    "--time-step" "$TIME_STEP"
-    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-    "--seed" "$SEED"
-    "--integrator" "vel_verlet"
+    # Required arguments even for minimization (executable parses all args before checking --minimize)
+    "--duration" "0"          # 0 duration means no MD steps after minimization
+    "--frame-interval" "1"    # Required by executable
+    "--temperature" "$TEMPERATURE"  # Required by executable
+    "--time-step" "$TIME_STEP"      # Required by executable
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"  # Required by executable
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"    # Required by executable
+    "--seed" "$SEED"          # Required by executable
+    "--integrator" "vel_verlet"    # Required by executable
     "--disable-recentering"
     "--minimize"
     "--min-max-iter" "1000"
@@ -157,7 +149,7 @@ echo "Running $NPT_STEPS steps with Berendsen barostat"
 echo "Input:  $MINIMIZED_FILE"
 echo "Output: $NPT_FILE"
 
-# Enable NPT for this stage
+# Enable NPT for equilibration stage
 export UPSIDE_NPT_ENABLE=1
 # Pressure in Upside units (E_up/Angstrom^3, where E_up = kT)
 # Conversion: 1 bar = 0.000020659 E_up/Angstrom^3
@@ -171,7 +163,7 @@ echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=
 
 # Work from minimized checkpoint
 cp -f "$MINIMIZED_FILE" "$NPT_FILE"
-# Re-add barostat configuration for NPT equilibration
+# Add barostat configuration for NPT equilibration
 python3 - <<END
 import h5py
 import numpy as np
