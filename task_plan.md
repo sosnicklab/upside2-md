@@ -6,7 +6,7 @@ This plan outlines the implementation of a multi-stage simulation workflow to re
 
 ## 1. Implement Advanced Pressure Coupling (C++)
 The current barostat is limited to the Berendsen algorithm. Production runs for bilayers require the Parrinello-Rahman barostat to ensure correct volume fluctuations and ensemble properties.
-- [ ] **Modify `box.cpp`**:
+- [ ] **Modify `src/box.cpp`**:
     - Add `ParrinelloRahman` to the `BarostatType` enumeration.
     - Implement the **Parrinello-Rahman** barostat by replicating the standard algorithm used in GROMACS or LAMMPS.
     - Ensure `semi_isotropic` coupling is supported to scale $X/Y$ (lateral) together and $Z$ (normal) independently.
@@ -14,13 +14,13 @@ The current barostat is limited to the Berendsen algorithm. Production runs for 
 
 ## 2. Implement Position Restraint Node (C++)
 This is required to support lipid headgroup restraints (`BILAYER_LIPIDHEAD_FC`) during equilibration stages.
-- [ ] **Modify `martini.cpp`**:
+- [ ] **Modify `src/martini.cpp`**:
     - Create a `PositionRestraint` potential node.
     - Apply a harmonic penalty $V = \frac{1}{2} k (r - r_{ref})^2$ to specified atom indices.
     - Use initial coordinates from `/input/pos` as the reference positions $r_{ref}$.
 
 ## 3. Update Preparation Script (Python)
-- [ ] **Modify `prepare_martini.py`**:
+- [ ] **Modify `example/16.MARTINI/prepare_martini.py`**:
     - **Lipid Head Selection**: Automatically identify `PO4` and `GL1` beads in DOPC for restraints.
     - **Step 6.0 Soft-core**: Enable soft-core potential handling via `UPSIDE_SOFTEN_LJ` and `UPSIDE_SOFTEN_COULOMB`.
     - **HDF5 Stage Map**: Create an 8-stage sequence in the HDF5 input:
@@ -32,7 +32,7 @@ This is required to support lipid headgroup restraints (`BILAYER_LIPIDHEAD_FC`) 
 
 
 ## 4. Workflow Orchestration (Bash)
-- [ ] **Refactor `run_sim_bilayer.sh`**:
+- [ ] **Refactor `example/16.MARTINI/run_sim_bilayer.sh`**:
     - Iterate through all 8 stages sequentially.
     - Use `set_initial_position.py` to chain the output of one stage to the input of the next.
     - Switch the `UPSIDE_BAROSTAT_TYPE` to Parrinello-Rahman only for Step 7.0.
