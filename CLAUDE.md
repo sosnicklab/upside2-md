@@ -31,3 +31,4 @@ source source.sh
 | **Mass** | 1 m_up | 12 g/mol |
 | **Temperature** | 1.0 T_up | 350.588235 Kelvin |
 | **Pressure** | 0.000020933215 E_up / (Angstrom^3) | 1 atm |
+| **Pressure** | 0.000020659477 E_up /(Angstrom^3) | 1 bar |
