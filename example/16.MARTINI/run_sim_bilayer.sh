@@ -152,6 +152,8 @@ echo "Input:  $MINIMIZED_FILE"
 echo "Output: $NPT_EQUIL_FILE"
 
 # Disable softened potentials for NPT equilibration (use hard particles)
+# NOTE: We need to modify the HDF5 file attributes directly, not just environment variables
+# because Upside reads these parameters from the HDF5 file, not from environment variables
 export UPSIDE_SOFTEN_LJ=0
 export UPSIDE_SOFTEN_COULOMB=0
 
@@ -166,9 +168,27 @@ export UPSIDE_NPT_INTERVAL=${UPSIDE_NPT_INTERVAL:-10}
 
 echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=${UPSIDE_NPT_TAU} interval=${UPSIDE_NPT_INTERVAL}"
 echo "Barostat type: Berendsen"
+echo "Using hard particles (disabling softened potentials)"
 
 # Work from minimized checkpoint
 cp -f "$MINIMIZED_FILE" "$NPT_EQUIL_FILE"
+
+# Disable softened potentials in the HDF5 file
+python3 - <<END
+import h5py
+
+with h5py.File("$NPT_EQUIL_FILE", 'r+') as f:
+    if '/input/potential/martini_potential' in f:
+        grp = f['/input/potential/martini_potential']
+        # Disable Coulomb softening (Slater softening)
+        grp.attrs['coulomb_soften'] = 0
+        # Disable LJ softening (soft-core LJ)
+        grp.attrs['lj_soften'] = 0
+        print("Disabled softened potentials in HDF5 file:")
+        print(f"  coulomb_soften = {grp.attrs['coulomb_soften']}")
+        print(f"  lj_soften = {grp.attrs['lj_soften']}")
+END
+
 # Set initial position in NPT file to last frame from minimization
 python3 set_initial_position.py "$MINIMIZED_FILE" "$NPT_EQUIL_FILE"
 
@@ -211,6 +231,7 @@ export UPSIDE_BAROSTAT_TYPE=1  # Parrinello-Rahman
 
 echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=${UPSIDE_NPT_TAU} interval=${UPSIDE_NPT_INTERVAL}"
 echo "Barostat type: Parrinello-Rahman"
+echo "Using hard particles (softened potentials already disabled)"
 
 # Work from equilibrated checkpoint
 cp -f "$NPT_EQUIL_FILE" "$NPT_PROD_FILE"
@@ -223,6 +244,17 @@ with h5py.File("$NPT_PROD_FILE", 'r+') as f:
     # Update barostat type to Parrinello-Rahman
     if '/input/barostat' in f:
         f['/input/barostat'].attrs['type'] = 1  # Parrinello-Rahman
+
+    # Ensure softened potentials are still disabled in production file
+    if '/input/potential/martini_potential' in f:
+        grp = f['/input/potential/martini_potential']
+        # Double-check Coulomb softening is disabled
+        grp.attrs['coulomb_soften'] = 0
+        # Double-check LJ softening is disabled
+        grp.attrs['lj_soften'] = 0
+        print("Verified softened potentials are disabled in production file:")
+        print(f"  coulomb_soften = {grp.attrs['coulomb_soften']}")
+        print(f"  lj_soften = {grp.attrs['lj_soften']}")
 
     # Get equilibrated box dimensions from last frame of output
     if '/output/box' in f:
