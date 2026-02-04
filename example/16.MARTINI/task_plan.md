@@ -1,29 +1,27 @@
 # Task Plan
 
 ## Project Goal
-Run and debug the MARTINI 3.0 8-stage bilayer equilibration workflow at `example/16.MARTINI/run_sim_bilayer_8stage.sh`.
+Fix the issue where softened particles weren't switching to hard particles after minimization in `run_sim_bilayer.sh`, and address the resulting system instability.
 
 ## Architecture & Key Decisions
-- **Problem 1**: `prepare_martini.py` had a hardcoded output directory (`outputs/martini_test/`) that didn't match the shell script's expected directory (`outputs/martini_8stage/`).
-- **Solution**: Modified `prepare_martini.py` to accept an optional output directory argument and updated the shell script to pass the correct directory.
+- **Problem 1**: Potential parameters were stored in HDF5 file attributes and not being updated during simulation, causing softened particles to remain active in subsequent stages.
+- **Solution**: Added Python code to directly modify HDF5 file attributes after each stage.
+- **Problem 2**: Sudden switch from fully softened to hard particles caused extreme potential values and system instability.
+- **Solution**: Implemented progressive softening reduction with two NPT equilibration stages.
 
 ## Execution Phases
-- [x] **Phase 1: Initial Setup**
-  - [x] Check project activation and onboarding status
-  - [x] Read the `run_sim_bilayer_8stage.sh` script
-  - [x] Check project structure and dependencies
-  - [x] Verify C++ core was compiled
-- [x] **Phase 2: Fix Output Directory Issue**
-  - [x] Modify `prepare_martini.py` to accept output directory parameter
-  - [x] Update `run_sim_bilayer_8stage.sh` to pass output directory
-- [x] **Phase 3: Run Workflow**
-  - [x] Run stages 0-6.1 (successfully completed)
-  - [x] Troubleshoot stage 6.2 (completed after long run)
-  - [x] Run stage 6.3 manually (completed)
-  - [x] Run stages 6.4-6.6 manually (completed)
-  - [x] Run stage 7.0 (Production with Parrinello-Rahman, completed)
-- [x] **Phase 4: Update Logs**
-  - [x] Update stage 6.4-7.0 logs with actual output
+- [x] **Phase 1: Identify Root Cause**
+  - [x] Examine run_sim_bilayer.sh script
+  - [x] Check how prepare_martini.py stores parameters in HDF5 file
+- [x] **Phase 2: Fix Softening Switching**
+  - [x] Add Python code to modify HDF5 attributes
+  - [x] Test the fix
+- [x] **Phase 3: Address System Instability**
+  - [x] Implement progressive softening reduction (two NPT equilibration stages)
+  - [x] Update script with new stages
+- [x] **Phase 4: Verify Fix**
+  - [x] Run simulation to ensure stable potential values
+  - [x] Check logs for softening parameter updates
 
 ## Known Errors / Blockers
-- **File name too long**: Occurred when processing stage 6.3. Fixed by running the stage manually.
+- **System Instability After Initial Fix**: Caused by sudden switch from fully softened to hard particles. Fixed by progressive softening reduction.

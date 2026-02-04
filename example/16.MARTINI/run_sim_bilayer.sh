@@ -31,6 +31,7 @@ CHECKPOINT_DIR="${RUN_DIR}/checkpoints"
 INPUT_FILE="${INPUTS_DIR}/${PDB_ID}.up"
 MINIMIZED_FILE="${CHECKPOINT_DIR}/${PDB_ID}.minimized.up"
 NPT_EQUIL_FILE="${CHECKPOINT_DIR}/${PDB_ID}.npt_equil.up"
+NPT_EQUIL_REDUCED_FILE="${CHECKPOINT_DIR}/${PDB_ID}.npt_equil_reduced.up"
 NPT_PROD_FILE="${CHECKPOINT_DIR}/${PDB_ID}.npt_prod.up"
 VTF_FILE="${RUN_DIR}/${PDB_ID}.vtf"
 LOG_DIR="${RUN_DIR}/logs"
@@ -44,6 +45,7 @@ SEED=12345
 
 # Stage durations (in MD steps)
 MIN_STEPS="${MIN_STEPS:-500}"
+NVT_EQUIL_STEPS="${NVT_EQUIL_STEPS:-1000}"
 NPT_EQUIL_STEPS="${NPT_EQUIL_STEPS:-2000}"
 NPT_PROD_STEPS="${NPT_PROD_STEPS:-5000}"
 FRAME_INTERVAL="${FRAME_INTERVAL:-20}"
@@ -73,9 +75,10 @@ mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR"
 
 echo "=== MARTINI 3.0 Bilayer Workflow (CHARMM-GUI Protocol) ==="
 echo "PDB ID: $PDB_ID"
-echo "Stages: Prepare -> Minimization -> NPT Equilibration (Berendsen) -> NPT Production (Parrinello-Rahman) -> VTF"
-echo "  NPT Equilibration:  $NPT_EQUIL_STEPS steps"
-echo "  NPT Production:     $NPT_PROD_STEPS steps"
+echo "Stages: Prepare -> Minimization -> NPT Equilibration (Softened, Berendsen) -> NPT Equilibration (Reduced Softening, Berendsen) -> NPT Production (Hard, Parrinello-Rahman) -> VTF"
+echo "  NPT Equilibration 1: $NPT_EQUIL_STEPS steps (softened potentials, lj_alpha=0.2, slater_alpha=2.0)"
+echo "  NPT Equilibration 2: $NPT_EQUIL_STEPS steps (reduced softening, lj_alpha=0.05, slater_alpha=0.5)"
+echo "  NPT Production:     $NPT_PROD_STEPS steps (hard particles)"
 echo
 
 # =============================================================================
@@ -144,18 +147,18 @@ echo "Minimized checkpoint: $MINIMIZED_FILE"
 echo
 
 # =============================================================================
-# STAGE 3: NPT EQUILIBRATION (Berendsen barostat)
+# STAGE 3: NPT EQUILIBRATION WITH SOFTENED POTENTIALS (Berendsen barostat)
 # =============================================================================
-echo "=== Stage 3: NPT Equilibration (Berendsen) ==="
-echo "Running $NPT_EQUIL_STEPS steps with Berendsen barostat"
+echo "=== Stage 3: NPT Equilibration (Softened Potentials, Berendsen) ==="
+echo "Running $NPT_EQUIL_STEPS steps with softened potentials to relax system"
 echo "Input:  $MINIMIZED_FILE"
 echo "Output: $NPT_EQUIL_FILE"
 
-# Disable softened potentials for NPT equilibration (use hard particles)
-# NOTE: We need to modify the HDF5 file attributes directly, not just environment variables
-# because Upside reads these parameters from the HDF5 file, not from environment variables
-export UPSIDE_SOFTEN_LJ=0
-export UPSIDE_SOFTEN_COULOMB=0
+# Keep softened potentials enabled for initial NPT equilibration
+export UPSIDE_SOFTEN_LJ=1
+export UPSIDE_SOFTEN_COULOMB=1
+export UPSIDE_LJ_ALPHA=0.2
+export UPSIDE_SLATER_ALPHA=2.0
 
 # Enable NPT with Berendsen barostat for equilibration
 export UPSIDE_NPT_ENABLE=1
@@ -168,25 +171,27 @@ export UPSIDE_NPT_INTERVAL=${UPSIDE_NPT_INTERVAL:-10}
 
 echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=${UPSIDE_NPT_TAU} interval=${UPSIDE_NPT_INTERVAL}"
 echo "Barostat type: Berendsen"
-echo "Using hard particles (disabling softened potentials)"
+echo "Using softened potentials (lj_alpha=0.2, slater_alpha=2.0)"
 
 # Work from minimized checkpoint
 cp -f "$MINIMIZED_FILE" "$NPT_EQUIL_FILE"
 
-# Disable softened potentials in the HDF5 file
+# Ensure softened potentials are still enabled in NPT file
 python3 - <<END
 import h5py
 
 with h5py.File("$NPT_EQUIL_FILE", 'r+') as f:
     if '/input/potential/martini_potential' in f:
         grp = f['/input/potential/martini_potential']
-        # Disable Coulomb softening (Slater softening)
-        grp.attrs['coulomb_soften'] = 0
-        # Disable LJ softening (soft-core LJ)
-        grp.attrs['lj_soften'] = 0
-        print("Disabled softened potentials in HDF5 file:")
+        grp.attrs['coulomb_soften'] = 1
+        grp.attrs['slater_alpha'] = 2.0
+        grp.attrs['lj_soften'] = 1
+        grp.attrs['lj_soften_alpha'] = 0.2
+        print("Softened potentials enabled in NPT file:")
         print(f"  coulomb_soften = {grp.attrs['coulomb_soften']}")
+        print(f"  slater_alpha = {grp.attrs['slater_alpha']}")
         print(f"  lj_soften = {grp.attrs['lj_soften']}")
+        print(f"  lj_soften_alpha = {grp.attrs['lj_soften_alpha']}")
 END
 
 # Set initial position in NPT file to last frame from minimization
@@ -224,18 +229,93 @@ echo
 echo "=== Stage 4: NPT Production (Parrinello-Rahman) ==="
 echo "Running $NPT_PROD_STEPS steps with Parrinello-Rahman barostat"
 echo "Input:  $NPT_EQUIL_FILE"
+echo "Output: $NPT_EQUIL_REDUCED_FILE"
+
+# Use reduced softening potentials for transition phase
+export UPSIDE_SOFTEN_LJ=1
+export UPSIDE_SOFTEN_COULOMB=1
+export UPSIDE_LJ_ALPHA=0.05  # Reduced from 0.2 to 0.05
+export UPSIDE_SLATER_ALPHA=0.5  # Reduced from 2.0 to 0.5
+
+# Keep Berendsen barostat for transition phase
+export UPSIDE_BAROSTAT_TYPE=0  # Berendsen
+
+echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=${UPSIDE_NPT_TAU} interval=${UPSIDE_NPT_INTERVAL}"
+echo "Barostat type: Berendsen"
+echo "Using reduced softened potentials (lj_alpha=0.05, slater_alpha=0.5)"
+
+# Work from previous NPT equilibration checkpoint
+cp -f "$NPT_EQUIL_FILE" "$NPT_EQUIL_REDUCED_FILE"
+
+# Set reduced softening potentials in the HDF5 file
+python3 - <<END
+import h5py
+
+with h5py.File("$NPT_EQUIL_REDUCED_FILE", 'r+') as f:
+    if '/input/potential/martini_potential' in f:
+        grp = f['/input/potential/martini_potential']
+        grp.attrs['coulomb_soften'] = 1
+        grp.attrs['slater_alpha'] = 0.5
+        grp.attrs['lj_soften'] = 1
+        grp.attrs['lj_soften_alpha'] = 0.05
+        print("Set reduced softened potentials in HDF5 file:")
+        print(f"  coulomb_soften = {grp.attrs['coulomb_soften']}")
+        print(f"  slater_alpha = {grp.attrs['slater_alpha']}")
+        print(f"  lj_soften = {grp.attrs['lj_soften']}")
+        print(f"  lj_soften_alpha = {grp.attrs['lj_soften_alpha']}")
+END
+
+# Set initial position in reduced softening file to last frame from previous equilibration
+python3 set_initial_position.py "$NPT_EQUIL_FILE" "$NPT_EQUIL_REDUCED_FILE"
+
+CMD_NPT_EQUIL_REDUCED=(
+    "$UPSIDE_EXECUTABLE"
+    "$NPT_EQUIL_REDUCED_FILE"
+    "--duration" "$NPT_EQUIL_STEPS"
+    "--frame-interval" "$FRAME_INTERVAL"
+    "--temperature" "$TEMPERATURE"
+    "--time-step" "$TIME_STEP"
+    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+    "--seed" "$SEED"
+    "--integrator" "vel_verlet"
+    "--disable-recentering"
+)
+
+START_TIME=$(date +%s)
+if "${CMD_NPT_EQUIL_REDUCED[@]}" 2>&1 | tee "${LOG_DIR}/npt_equilibration_reduced.log"; then
+    END_TIME=$(date +%s)
+    echo "NPT equilibration (reduced softening) completed in $((END_TIME - START_TIME)) seconds"
+else
+    echo "ERROR: NPT equilibration (reduced softening) failed!"
+    exit 1
+fi
+
+echo "NPT equilibration (reduced softening) checkpoint: $NPT_EQUIL_REDUCED_FILE"
+echo
+
+# =============================================================================
+# STAGE 5: NPT PRODUCTION (Hard, Parrinello-Rahman barostat)
+# =============================================================================
+echo "=== Stage 5: NPT Production (Hard, Parrinello-Rahman) ==="
+echo "Running $NPT_PROD_STEPS steps with Parrinello-Rahman barostat"
+echo "Input:  $NPT_EQUIL_REDUCED_FILE"
 echo "Output: $NPT_PROD_FILE"
 
 # Switch to Parrinello-Rahman barostat for production
 export UPSIDE_BAROSTAT_TYPE=1  # Parrinello-Rahman
 
+# Disable softened potentials for production (hard particles)
+export UPSIDE_SOFTEN_LJ=0
+export UPSIDE_SOFTEN_COULOMB=0
+
 echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=${UPSIDE_NPT_TAU} interval=${UPSIDE_NPT_INTERVAL}"
 echo "Barostat type: Parrinello-Rahman"
-echo "Using hard particles (softened potentials already disabled)"
+echo "Using hard particles (softened potentials disabled)"
 
-# Work from equilibrated checkpoint
-cp -f "$NPT_EQUIL_FILE" "$NPT_PROD_FILE"
-# Update barostat type to Parrinello-Rahman AND update box dimensions from equilibrated state
+# Work from reduced softening checkpoint
+cp -f "$NPT_EQUIL_REDUCED_FILE" "$NPT_PROD_FILE"
+# Update barostat type to Parrinello-Rahman AND update box dimensions from reduced softening stage
 python3 - <<END
 import h5py
 import numpy as np
@@ -245,21 +325,19 @@ with h5py.File("$NPT_PROD_FILE", 'r+') as f:
     if '/input/barostat' in f:
         f['/input/barostat'].attrs['type'] = 1  # Parrinello-Rahman
 
-    # Ensure softened potentials are still disabled in production file
+    # Disable softened potentials in production file
     if '/input/potential/martini_potential' in f:
         grp = f['/input/potential/martini_potential']
-        # Double-check Coulomb softening is disabled
         grp.attrs['coulomb_soften'] = 0
-        # Double-check LJ softening is disabled
         grp.attrs['lj_soften'] = 0
-        print("Verified softened potentials are disabled in production file:")
+        print("Disabled softened potentials in production file:")
         print(f"  coulomb_soften = {grp.attrs['coulomb_soften']}")
         print(f"  lj_soften = {grp.attrs['lj_soften']}")
 
     # Get equilibrated box dimensions from last frame of output
     if '/output/box' in f:
         last_box = f['/output/box'][-1]  # [x, y, z]
-        print(f"Updating box dimensions from equilibrated state: {last_box}")
+        print(f"Updating box dimensions from reduced softening state: {last_box}")
 
         # Update box dimensions in martini_potential attributes
         if '/input/potential/martini_potential' in f:
@@ -269,8 +347,8 @@ with h5py.File("$NPT_PROD_FILE", 'r+') as f:
             grp.attrs['z_len'] = float(last_box[2])
             print(f"Updated martini_potential: x_len={last_box[0]:.6f}, y_len={last_box[1]:.6f}, z_len={last_box[2]:.6f}")
 END
-# Set initial position in production file to last frame from equilibration
-python3 set_initial_position.py "$NPT_EQUIL_FILE" "$NPT_PROD_FILE"
+# Set initial position in production file to last frame from reduced softening equilibration
+python3 set_initial_position.py "$NPT_EQUIL_REDUCED_FILE" "$NPT_PROD_FILE"
 
 CMD_NPT_PROD=(
     "$UPSIDE_EXECUTABLE"
