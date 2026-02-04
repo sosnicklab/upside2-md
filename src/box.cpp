@@ -85,6 +85,15 @@ static BarostatSettings read_barostat_settings(hid_t root) {
                 s.semi_isotropic = read_attribute<int>(grp.get(), ".", "semi_isotropic") != 0;
             if(attribute_exists(grp.get(), ".", "debug"))
                 s.debug = read_attribute<int>(grp.get(), ".", "debug") != 0;
+            // Read barostat type: 0 = Berendsen (default), 1 = Parrinello-Rahman
+            if(attribute_exists(grp.get(), ".", "type")) {
+                int type_int = read_attribute<int>(grp.get(), ".", "type");
+                if(type_int == 1) {
+                    s.type = BarostatType::ParrinelloRahman;
+                } else {
+                    s.type = BarostatType::Berendsen;
+                }
+            }
         }
     } catch(...) {
         s.enabled = false;
@@ -119,29 +128,135 @@ static void estimate_pressure_tensor(const VecArray& mom,
     double kx = 0.0, ky = 0.0, kz = 0.0;
     // Virial contribution: -sum_i (r_i . F_i) where F = -deriv
     double wxx = 0.0, wyy = 0.0, wzz = 0.0;
-    
+
     for(int i = 0; i < n_atom; ++i) {
         float3 p = load_vec<3>(mom, i);
         float m = (masses.size() > (size_t)i) ? masses[i] : 1.0f;
         if(m <= 0.f) m = 1.0f;
-        
+
         kx += double(p.x() * p.x()) / m;
         ky += double(p.y() * p.y()) / m;
         kz += double(p.z() * p.z()) / m;
-        
+
         // Virial: r . (-deriv) = -r . sens (sens is gradient)
         float3 r = load_vec<3>(pos, i);
         float3 F = load_vec<3>(sens, i);
         F = make_vec3(-F.x(), -F.y(), -F.z()); // Force = -gradient
-        
+
         wxx += double(r.x() * F.x());
         wyy += double(r.y() * F.y());
         wzz += double(r.z() * F.z());
     }
-    
+
     pxx = float((kx + wxx) / V);
     pyy = float((ky + wyy) / V);
     pzz = float((kz + wzz) / V);
+}
+
+// Apply Berendsen barostat scaling
+static void apply_berendsen_barostat(BarostatState& st,
+                                     float pxy_inst, float pz_inst,
+                                     float delta_t,
+                                     float& scale_xy, float& scale_z) {
+    auto& s = st.settings;
+    float beta = s.compressibility;
+    scale_xy = 1.0f;
+    scale_z = 1.0f;
+
+    if(s.semi_isotropic) {
+        float factor_xy = 1.f - beta * (delta_t / s.tau_p) * (pxy_inst - s.target_p_xy);
+        float factor_z = 1.f - beta * (delta_t / s.tau_p) * (pz_inst - s.target_p_z);
+
+        // Clamp scale factors
+        factor_xy = std::max(0.98f, std::min(1.02f, factor_xy));
+        factor_z = std::max(0.98f, std::min(1.02f, factor_z));
+
+        scale_xy = powf(factor_xy, 0.5f);
+        scale_z = factor_z;
+
+        scale_xy = std::max(0.995f, std::min(1.005f, scale_xy));
+        scale_z = std::max(0.995f, std::min(1.005f, scale_z));
+
+        // Monotonic shrink guard
+        if(pxy_inst < s.target_p_xy) scale_xy = std::min(scale_xy, 1.0f);
+        if(pz_inst < s.target_p_z) scale_z = std::min(scale_z, 1.0f);
+    } else {
+        float p_inst = (2.f * pxy_inst + pz_inst) / 3.f;
+        float target_p = (2.f * s.target_p_xy + s.target_p_z) / 3.f;
+        float factor = 1.f - beta * (delta_t / s.tau_p) * (p_inst - target_p);
+        factor = std::max(0.98f, std::min(1.02f, factor));
+        float sc = powf(factor, 1.f / 3.f);
+        sc = std::max(0.995f, std::min(1.005f, sc));
+        scale_xy = sc;
+        scale_z = sc;
+    }
+
+    // First application policy
+    if(!st.has_applied_once && s.prefer_shrink_first) {
+        scale_xy = std::min(scale_xy, 1.0f);
+        scale_z = std::min(scale_z, 1.0f);
+    }
+}
+
+// Apply Parrinello-Rahman barostat
+static void apply_parrinello_rahman_barostat(BarostatState& st,
+                                             float pxy_inst, float pz_inst,
+                                             float delta_t,
+                                             float& scale_xy, float& scale_z) {
+    auto& s = st.settings;
+
+    // Barostat mass W = tau_p^2 / compressibility
+    // This gives the correct time scale for pressure relaxation
+    float W = s.tau_p * s.tau_p / s.compressibility;
+
+    // Update box velocities using pressure difference
+    // Correct Parrinello-Rahman equation: dv/dt = (1/W) * (P - P_target)
+    // Note: Volume V should NOT be in the numerator
+    float bx = st.box_x, by = st.box_y, bz = st.box_z;
+
+    if(s.semi_isotropic) {
+        // Lateral (xy) and normal (z) are independent
+        float dv_xy_dt = (1.0f / W) * (pxy_inst - s.target_p_xy);
+        float dv_z_dt = (1.0f / W) * (pz_inst - s.target_p_z);
+
+        // Update velocities
+        st.box_vel_xy += dv_xy_dt * delta_t;
+        st.box_vel_z += dv_z_dt * delta_t;
+
+        // Apply damping to prevent oscillations
+        float damping = 0.95f;
+        st.box_vel_xy *= damping;
+        st.box_vel_z *= damping;
+
+        // Compute scaling factors from velocities
+        // scale = exp(v * dt / box_dim)
+        // For small v*dt, scale ≈ 1 + v*dt/box_dim
+        float avg_box_xy = 0.5f * (bx + by);
+        scale_xy = 1.0f + (st.box_vel_xy * delta_t) / avg_box_xy;
+        scale_z = 1.0f + (st.box_vel_z * delta_t) / bz;
+
+        // Clamp to prevent instabilities
+        scale_xy = std::max(0.99f, std::min(1.01f, scale_xy));
+        scale_z = std::max(0.99f, std::min(1.01f, scale_z));
+    } else {
+        // Isotropic coupling
+        float p_inst = (2.f * pxy_inst + pz_inst) / 3.f;
+        float target_p = (2.f * s.target_p_xy + s.target_p_z) / 3.f;
+
+        float dv_dt = (1.0f / W) * (p_inst - target_p);
+        st.box_vel_xy += dv_dt * delta_t;
+        st.box_vel_z = st.box_vel_xy;
+
+        float damping = 0.95f;
+        st.box_vel_xy *= damping;
+        st.box_vel_z *= damping;
+
+        float avg_box = powf(bx * by * bz, 1.0f/3.0f);
+        float scale = 1.0f + (st.box_vel_xy * delta_t) / avg_box;
+        scale = std::max(0.99f, std::min(1.01f, scale));
+        scale_xy = scale;
+        scale_z = scale;
+    }
 }
 
 void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
@@ -183,8 +298,9 @@ void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
     } catch(...) {}
     
     if(s.debug) {
-        printf("[NPT] Barostat registered: box %.2f x %.2f x %.2f, target Pxy=%.3e Pz=%.3e, tau=%.2f, interval=%d\n",
-               bx, by, bz, s.target_p_xy, s.target_p_z, s.tau_p, s.interval);
+        const char* type_name = (s.type == BarostatType::ParrinelloRahman) ? "Parrinello-Rahman" : "Berendsen";
+        printf("[NPT] Barostat registered: %s, box %.2f x %.2f x %.2f, target Pxy=%.3e Pz=%.3e, tau=%.2f, interval=%d\n",
+               type_name, bx, by, bz, s.target_p_xy, s.target_p_z, s.tau_p, s.interval);
     }
 }
 
@@ -225,45 +341,18 @@ void maybe_apply_barostat(DerivEngine& engine,
     // Store for logging
     st.last_pxy_inst = pxy_inst;
     st.last_pz_inst = pz_inst;
-    
-    // Berendsen scale factor
+
+    // Calculate time step
     float delta_t = dt * inner_step;
-    float beta = s.compressibility;
+
+    // Apply appropriate barostat algorithm
     float scale_xy = 1.0f;
     float scale_z = 1.0f;
-    
-    if(s.semi_isotropic) {
-        float factor_xy = 1.f - beta * (delta_t / s.tau_p) * (pxy_inst - s.target_p_xy);
-        float factor_z = 1.f - beta * (delta_t / s.tau_p) * (pz_inst - s.target_p_z);
-        
-        // Clamp scale factors
-        factor_xy = std::max(0.98f, std::min(1.02f, factor_xy));
-        factor_z = std::max(0.98f, std::min(1.02f, factor_z));
-        
-        scale_xy = powf(factor_xy, 0.5f);
-        scale_z = factor_z;
-        
-        scale_xy = std::max(0.995f, std::min(1.005f, scale_xy));
-        scale_z = std::max(0.995f, std::min(1.005f, scale_z));
-        
-        // Monotonic shrink guard
-        if(pxy_inst < s.target_p_xy) scale_xy = std::min(scale_xy, 1.0f);
-        if(pz_inst < s.target_p_z) scale_z = std::min(scale_z, 1.0f);
+
+    if(s.type == BarostatType::ParrinelloRahman) {
+        apply_parrinello_rahman_barostat(st, pxy_inst, pz_inst, delta_t, scale_xy, scale_z);
     } else {
-        float p_inst = (2.f * pxy_inst + pz_inst) / 3.f;
-        float target_p = (2.f * s.target_p_xy + s.target_p_z) / 3.f;
-        float factor = 1.f - beta * (delta_t / s.tau_p) * (p_inst - target_p);
-        factor = std::max(0.98f, std::min(1.02f, factor));
-        float sc = powf(factor, 1.f / 3.f);
-        sc = std::max(0.995f, std::min(1.005f, sc));
-        scale_xy = sc;
-        scale_z = sc;
-    }
-    
-    // First application policy
-    if(!st.has_applied_once && s.prefer_shrink_first) {
-        scale_xy = std::min(scale_xy, 1.0f);
-        scale_z = std::min(scale_z, 1.0f);
+        apply_berendsen_barostat(st, pxy_inst, pz_inst, delta_t, scale_xy, scale_z);
     }
     
     // Check for equilibrium

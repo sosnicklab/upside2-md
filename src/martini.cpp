@@ -1491,6 +1491,76 @@ struct AngleSpring : public PotentialNode
 };
 static RegisterNodeType<AngleSpring, 1> angle_spring_node("angle_spring");
 
+// Position restraint potential for restraining atoms to reference positions
+// Applies harmonic penalty: V = 0.5 * k * (r - r_ref)^2
+struct PositionRestraint : public PotentialNode
+{
+    struct Params {
+        index_t atom_index;
+        Vec<3,float> ref_pos;
+        float spring_constant;
+    };
+
+    int n_elem;
+    CoordNode& pos;
+    vector<Params> params;
+
+    PositionRestraint(hid_t grp, CoordNode& pos_):
+        PotentialNode(),
+        n_elem(get_dset_size(1, grp, "restraint_indices")[0]), pos(pos_), params(n_elem)
+    {
+        check_size(grp, "restraint_indices", n_elem);
+        check_size(grp, "ref_pos", n_elem, 3);
+        check_size(grp, "spring_const", n_elem);
+
+        auto& p = params;
+        traverse_dset<1,int>(grp, "restraint_indices", [&](size_t i, int x) {p[i].atom_index = x;});
+        traverse_dset<2,float>(grp, "ref_pos", [&](size_t i, size_t j, float x) {
+            if(j == 0) p[i].ref_pos.x() = x;
+            else if(j == 1) p[i].ref_pos.y() = x;
+            else if(j == 2) p[i].ref_pos.z() = x;
+        });
+        traverse_dset<1,float>(grp, "spring_const", [&](size_t i, float x) {p[i].spring_constant = x;});
+
+        std::cout << "POSITION_RESTRAINT: Initialized " << n_elem << " restraints" << std::endl;
+        if(n_elem > 0) {
+            float min_k = std::numeric_limits<float>::max();
+            float max_k = std::numeric_limits<float>::lowest();
+            for(const auto& param : params) {
+                min_k = std::min(min_k, param.spring_constant);
+                max_k = std::max(max_k, param.spring_constant);
+            }
+            std::cout << "  Spring constant range: " << min_k << " to " << max_k << std::endl;
+        }
+    }
+
+    virtual void compute_value(ComputeMode mode) {
+        Timer timer(string("position_restraint"));
+
+        VecArray posc = pos.output;
+        VecArray pos_sens = pos.sens;
+        float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
+        if(pot) *pot = 0.f;
+
+        for(int nt=0; nt<n_elem; ++nt) {
+            auto& p = params[nt];
+
+            auto x = load_vec<3>(posc, p.atom_index);
+            auto disp = x - p.ref_pos;
+            float dist = mag(disp);
+
+            // Harmonic potential: V = 0.5 * k * |r - r_ref|^2
+            if(pot) *pot += 0.5f * p.spring_constant * dist * dist;
+
+            // Force: F = -k * (r - r_ref)
+            // Gradient (sens) = k * (r - r_ref)
+            auto deriv = p.spring_constant * disp;
+            update_vec(pos_sens, p.atom_index, deriv);
+        }
+    }
+};
+static RegisterNodeType<PositionRestraint, 1> position_restraint_node("restraint_position");
+
 // Conjugate Gradient Minimizer based on LAMMPS implementation
 struct ConjugateGradientMinimizer : public PotentialNode
 {

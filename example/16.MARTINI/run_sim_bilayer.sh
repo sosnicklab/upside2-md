@@ -1,16 +1,16 @@
 #!/bin/bash
 
-# MARTINI 3.0 Complete Multi-Stage Simulation Workflow
-# Stages: Prepare -> Minimization -> NPT Equilibration -> NVT Production -> VTF Generation
+# MARTINI 3.0 Bilayer Simulation Workflow (CHARMM-GUI Protocol)
+# Stages: Prepare -> Minimization -> NPT Equilibration (Berendsen) -> NPT Production (Parrinello-Rahman) -> VTF Generation
 # Each stage uses the output checkpoint from the previous stage as its starting point.
 #
 # ENVIRONMENT VARIABLES:
 #   PDB_ID                - PDB identifier (default: bilayer)
-#   UPSIDE_NPT_ENABLE     - Enable NPT barostat (1=NPT for equilibration)
-#   UPSIDE_NPT_TARGET_PXY - Target lateral pressure (reduced units)
-#   UPSIDE_NPT_TARGET_PZ  - Target normal pressure (reduced units)
-#   UPSIDE_NPT_TAU        - Barostat time constant
-#   UPSIDE_NPT_INTERVAL   - Steps between barostat applications
+#   UPSIDE_NPT_TARGET_PXY - Target lateral pressure (default: 0.000020659 = 1 bar)
+#   UPSIDE_NPT_TARGET_PZ  - Target normal pressure (default: 0.000020659 = 1 bar)
+#   UPSIDE_NPT_TAU        - Barostat time constant (default: 1.0)
+#   UPSIDE_NPT_INTERVAL   - Steps between barostat applications (default: 10)
+#   UPSIDE_BAROSTAT_TYPE  - Barostat type: 0=Berendsen, 1=Parrinello-Rahman
 
 set -e  # Exit on any error
 
@@ -28,8 +28,8 @@ CHECKPOINT_DIR="${RUN_DIR}/checkpoints"
 # Filenames
 INPUT_FILE="${INPUTS_DIR}/${PDB_ID}.up"
 MINIMIZED_FILE="${CHECKPOINT_DIR}/${PDB_ID}.minimized.up"
-NPT_FILE="${CHECKPOINT_DIR}/${PDB_ID}.npt.up"
-NVT_FILE="${CHECKPOINT_DIR}/${PDB_ID}.nvt.up"
+NPT_EQUIL_FILE="${CHECKPOINT_DIR}/${PDB_ID}.npt_equil.up"
+NPT_PROD_FILE="${CHECKPOINT_DIR}/${PDB_ID}.npt_prod.up"
 VTF_FILE="${RUN_DIR}/${PDB_ID}.vtf"
 LOG_DIR="${RUN_DIR}/logs"
 
@@ -42,8 +42,8 @@ SEED=12345
 
 # Stage durations (in MD steps)
 MIN_STEPS="${MIN_STEPS:-500}"
-NPT_STEPS="${NPT_STEPS:-2000}"
-NVT_STEPS="${NVT_STEPS:-5000}"
+NPT_EQUIL_STEPS="${NPT_EQUIL_STEPS:-2000}"
+NPT_PROD_STEPS="${NPT_PROD_STEPS:-5000}"
 FRAME_INTERVAL="${FRAME_INTERVAL:-20}"
 
 # Softening parameters for minimization
@@ -69,11 +69,11 @@ fi
 # Create directories
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR"
 
-echo "=== MARTINI 3.0 Multi-Stage Workflow ==="
+echo "=== MARTINI 3.0 Bilayer Workflow (CHARMM-GUI Protocol) ==="
 echo "PDB ID: $PDB_ID"
-echo "Stages: Prepare -> Minimization -> NPT -> NVT -> VTF"
-echo "  NPT_STEPS:  $NPT_STEPS"
-echo "  NVT_STEPS:  $NVT_STEPS"
+echo "Stages: Prepare -> Minimization -> NPT Equilibration (Berendsen) -> NPT Production (Parrinello-Rahman) -> VTF"
+echo "  NPT Equilibration:  $NPT_EQUIL_STEPS steps"
+echo "  NPT Production:     $NPT_PROD_STEPS steps"
 echo
 
 # =============================================================================
@@ -142,52 +142,34 @@ echo "Minimized checkpoint: $MINIMIZED_FILE"
 echo
 
 # =============================================================================
-# STAGE 3: NPT EQUILIBRATION (pressure coupling enabled)
+# STAGE 3: NPT EQUILIBRATION (Berendsen barostat)
 # =============================================================================
-echo "=== Stage 3: NPT Equilibration ==="
-echo "Running $NPT_STEPS steps with Berendsen barostat"
+echo "=== Stage 3: NPT Equilibration (Berendsen) ==="
+echo "Running $NPT_EQUIL_STEPS steps with Berendsen barostat"
 echo "Input:  $MINIMIZED_FILE"
-echo "Output: $NPT_FILE"
+echo "Output: $NPT_EQUIL_FILE"
 
-# Enable NPT for equilibration stage
+# Enable NPT with Berendsen barostat for equilibration
 export UPSIDE_NPT_ENABLE=1
-# Pressure in Upside units (E_up/Angstrom^3, where E_up = kT)
-# Conversion: 1 bar = 0.000020659 E_up/Angstrom^3
-# This matches LAMMPS real units (1 bar = 0.986923 atm)
+export UPSIDE_BAROSTAT_TYPE=0  # Berendsen
+# Pressure in Upside units: 1 bar = 0.000020659 E_up/Angstrom^3
 export UPSIDE_NPT_TARGET_PXY=${UPSIDE_NPT_TARGET_PXY:-0.000020659}
 export UPSIDE_NPT_TARGET_PZ=${UPSIDE_NPT_TARGET_PZ:-0.000020659}
 export UPSIDE_NPT_TAU=${UPSIDE_NPT_TAU:-1.0}
 export UPSIDE_NPT_INTERVAL=${UPSIDE_NPT_INTERVAL:-10}
 
 echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=${UPSIDE_NPT_TAU} interval=${UPSIDE_NPT_INTERVAL}"
+echo "Barostat type: Berendsen"
 
 # Work from minimized checkpoint
-cp -f "$MINIMIZED_FILE" "$NPT_FILE"
-# Add barostat configuration for NPT equilibration
-python3 - <<END
-import h5py
-import numpy as np
-
-with h5py.File("$NPT_FILE", 'r+') as f:
-    # Create barostat group
-    if '/input/barostat' not in f:
-        barostat_grp = f.create_group('/input/barostat')
-        barostat_grp.attrs['enable'] = 1
-        barostat_grp.attrs['target_p_xy'] = float('${UPSIDE_NPT_TARGET_PXY:-0.000020659}')
-        barostat_grp.attrs['target_p_z'] = float('${UPSIDE_NPT_TARGET_PZ:-0.000020659}')
-        barostat_grp.attrs['tau_p'] = float('${UPSIDE_NPT_TAU:-1.0}')
-        barostat_grp.attrs['compressibility'] = 4.5e-5
-        barostat_grp.attrs['interval'] = int('${UPSIDE_NPT_INTERVAL:-10}')
-        barostat_grp.attrs['semi_isotropic'] = 1
-        barostat_grp.attrs['debug'] = 1
-END
+cp -f "$MINIMIZED_FILE" "$NPT_EQUIL_FILE"
 # Set initial position in NPT file to last frame from minimization
-python3 set_initial_position.py "$MINIMIZED_FILE" "$NPT_FILE"
+python3 set_initial_position.py "$MINIMIZED_FILE" "$NPT_EQUIL_FILE"
 
-CMD_NPT=(
+CMD_NPT_EQUIL=(
     "$UPSIDE_EXECUTABLE"
-    "$NPT_FILE"
-    "--duration" "$NPT_STEPS"
+    "$NPT_EQUIL_FILE"
+    "--duration" "$NPT_EQUIL_STEPS"
     "--frame-interval" "$FRAME_INTERVAL"
     "--temperature" "$TEMPERATURE"
     "--time-step" "$TIME_STEP"
@@ -199,7 +181,7 @@ CMD_NPT=(
 )
 
 START_TIME=$(date +%s)
-if "${CMD_NPT[@]}" 2>&1 | tee "${LOG_DIR}/npt_equilibration.log"; then
+if "${CMD_NPT_EQUIL[@]}" 2>&1 | tee "${LOG_DIR}/npt_equilibration.log"; then
     END_TIME=$(date +%s)
     echo "NPT equilibration completed in $((END_TIME - START_TIME)) seconds"
 else
@@ -207,36 +189,55 @@ else
     exit 1
 fi
 
-echo "NPT checkpoint: $NPT_FILE"
+echo "NPT equilibration checkpoint: $NPT_EQUIL_FILE"
 echo
 
 # =============================================================================
-# STAGE 4: NVT PRODUCTION (fixed volume)
+# STAGE 4: NPT PRODUCTION (Parrinello-Rahman barostat)
 # =============================================================================
-echo "=== Stage 4: NVT Production ==="
-echo "Running $NVT_STEPS steps with fixed volume (NPT disabled)"
-echo "Input:  $NPT_FILE"
-echo "Output: $NVT_FILE"
+echo "=== Stage 4: NPT Production (Parrinello-Rahman) ==="
+echo "Running $NPT_PROD_STEPS steps with Parrinello-Rahman barostat"
+echo "Input:  $NPT_EQUIL_FILE"
+echo "Output: $NPT_PROD_FILE"
 
-# Disable NPT for production
-export UPSIDE_NPT_ENABLE=0
+# Switch to Parrinello-Rahman barostat for production
+export UPSIDE_BAROSTAT_TYPE=1  # Parrinello-Rahman
 
-# Work from NPT checkpoint
-cp -f "$NPT_FILE" "$NVT_FILE"
-# Remove barostat configuration to disable NPT
+echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=${UPSIDE_NPT_TAU} interval=${UPSIDE_NPT_INTERVAL}"
+echo "Barostat type: Parrinello-Rahman"
+
+# Work from equilibrated checkpoint
+cp -f "$NPT_EQUIL_FILE" "$NPT_PROD_FILE"
+# Update barostat type to Parrinello-Rahman AND update box dimensions from equilibrated state
 python3 - <<END
 import h5py
-with h5py.File("$NVT_FILE", 'r+') as f:
-    if '/input/barostat' in f:
-        del f['/input/barostat']
-END
-# Set initial position in NVT file to last frame from NPT
-python3 set_initial_position.py "$NPT_FILE" "$NVT_FILE"
+import numpy as np
 
-CMD_NVT=(
+with h5py.File("$NPT_PROD_FILE", 'r+') as f:
+    # Update barostat type to Parrinello-Rahman
+    if '/input/barostat' in f:
+        f['/input/barostat'].attrs['type'] = 1  # Parrinello-Rahman
+
+    # Get equilibrated box dimensions from last frame of output
+    if '/output/box' in f:
+        last_box = f['/output/box'][-1]  # [x, y, z]
+        print(f"Updating box dimensions from equilibrated state: {last_box}")
+
+        # Update box dimensions in martini_potential attributes
+        if '/input/potential/martini_potential' in f:
+            grp = f['/input/potential/martini_potential']
+            grp.attrs['x_len'] = float(last_box[0])
+            grp.attrs['y_len'] = float(last_box[1])
+            grp.attrs['z_len'] = float(last_box[2])
+            print(f"Updated martini_potential: x_len={last_box[0]:.6f}, y_len={last_box[1]:.6f}, z_len={last_box[2]:.6f}")
+END
+# Set initial position in production file to last frame from equilibration
+python3 set_initial_position.py "$NPT_EQUIL_FILE" "$NPT_PROD_FILE"
+
+CMD_NPT_PROD=(
     "$UPSIDE_EXECUTABLE"
-    "$NVT_FILE"
-    "--duration" "$NVT_STEPS"
+    "$NPT_PROD_FILE"
+    "--duration" "$NPT_PROD_STEPS"
     "--frame-interval" "$FRAME_INTERVAL"
     "--temperature" "$TEMPERATURE"
     "--time-step" "$TIME_STEP"
@@ -248,15 +249,15 @@ CMD_NVT=(
 )
 
 START_TIME=$(date +%s)
-if "${CMD_NVT[@]}" 2>&1 | tee "${LOG_DIR}/nvt_production.log"; then
+if "${CMD_NPT_PROD[@]}" 2>&1 | tee "${LOG_DIR}/npt_production.log"; then
     END_TIME=$(date +%s)
-    echo "NVT production completed in $((END_TIME - START_TIME)) seconds"
+    echo "NPT production completed in $((END_TIME - START_TIME)) seconds"
 else
-    echo "ERROR: NVT production failed!"
+    echo "ERROR: NPT production failed!"
     exit 1
 fi
 
-echo "NVT production checkpoint: $NVT_FILE"
+echo "NPT production checkpoint: $NPT_PROD_FILE"
 echo
 
 # =============================================================================
@@ -276,41 +277,41 @@ else
     exit 1
 fi
 
-# NPT VTF
-NPT_VTF_FILE="${RUN_DIR}/${PDB_ID}.npt.vtf"
-echo "Extracting NPT trajectory from: $NPT_FILE"
-echo "Output VTF: $NPT_VTF_FILE"
-if python3 extract_martini_vtf.py "$NPT_FILE" "$NPT_VTF_FILE" "$NPT_FILE" "$PDB_ID"; then
-    NPT_VTF_SIZE=$(du -h "$NPT_VTF_FILE" | cut -f1)
-    echo "NPT VTF generated: $NPT_VTF_FILE ($NPT_VTF_SIZE)"
+# NPT Equilibration VTF
+NPT_EQUIL_VTF_FILE="${RUN_DIR}/${PDB_ID}.npt_equil.vtf"
+echo "Extracting NPT equilibration trajectory from: $NPT_EQUIL_FILE"
+echo "Output VTF: $NPT_EQUIL_VTF_FILE"
+if python3 extract_martini_vtf.py "$NPT_EQUIL_FILE" "$NPT_EQUIL_VTF_FILE" "$NPT_EQUIL_FILE" "$PDB_ID"; then
+    NPT_EQUIL_VTF_SIZE=$(du -h "$NPT_EQUIL_VTF_FILE" | cut -f1)
+    echo "NPT equilibration VTF generated: $NPT_EQUIL_VTF_FILE ($NPT_EQUIL_VTF_SIZE)"
 else
-    echo "ERROR: NPT VTF generation failed!"
+    echo "ERROR: NPT equilibration VTF generation failed!"
     exit 1
 fi
 
-# NVT VTF
-NVT_VTF_FILE="${RUN_DIR}/${PDB_ID}.nvt.vtf"
-echo "Extracting NVT trajectory from: $NVT_FILE"
-echo "Output VTF: $NVT_VTF_FILE"
-if python3 extract_martini_vtf.py "$NVT_FILE" "$NVT_VTF_FILE" "$NVT_FILE" "$PDB_ID"; then
-    NVT_VTF_SIZE=$(du -h "$NVT_VTF_FILE" | cut -f1)
-    echo "NVT VTF generated: $NVT_VTF_FILE ($NVT_VTF_SIZE)"
+# NPT Production VTF
+NPT_PROD_VTF_FILE="${RUN_DIR}/${PDB_ID}.npt_prod.vtf"
+echo "Extracting NPT production trajectory from: $NPT_PROD_FILE"
+echo "Output VTF: $NPT_PROD_VTF_FILE"
+if python3 extract_martini_vtf.py "$NPT_PROD_FILE" "$NPT_PROD_VTF_FILE" "$NPT_PROD_FILE" "$PDB_ID"; then
+    NPT_PROD_VTF_SIZE=$(du -h "$NPT_PROD_VTF_FILE" | cut -f1)
+    echo "NPT production VTF generated: $NPT_PROD_VTF_FILE ($NPT_PROD_VTF_SIZE)"
 else
-    echo "ERROR: NVT VTF generation failed!"
+    echo "ERROR: NPT production VTF generation failed!"
     exit 1
 fi
 
 echo
 echo "=== Workflow Complete ==="
 echo "Checkpoints:"
-echo "  Prepared:   $INPUT_FILE"
-echo "  Minimized:  $MINIMIZED_FILE"
-echo "  NPT:        $NPT_FILE"
-echo "  NVT:        $NVT_FILE"
+echo "  Prepared:          $INPUT_FILE"
+echo "  Minimized:         $MINIMIZED_FILE"
+echo "  NPT Equilibration: $NPT_EQUIL_FILE"
+echo "  NPT Production:    $NPT_PROD_FILE"
 echo "Trajectories:"
-echo "  Minimization: $MIN_VTF_FILE"
-echo "  NPT:          $NPT_VTF_FILE"
-echo "  NVT:          $NVT_VTF_FILE"
+echo "  Minimization:      $MIN_VTF_FILE"
+echo "  NPT Equilibration: $NPT_EQUIL_VTF_FILE"
+echo "  NPT Production:    $NPT_PROD_VTF_FILE"
 echo
-echo "To visualize: vmd $VTF_FILE"
+echo "To visualize: vmd <vtf_file>"
 echo "Done."
