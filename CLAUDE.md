@@ -7,19 +7,19 @@ Upside is a molecular dynamics simulation package for protein folding and confor
 
 ## Common Commands
 
+### Environment Setup
+Crucial: You must run these commands from the project root before running anything in this project:
+```bash
+source .venv/bin/activate
+source source.sh
+
+```
+
 ### Installation & Build
 ```bash
 # Install dependencies and compile C++ core
 ./install_M1.sh
 ./install_python_env.sh
-```
-
-### Environment Setup
-Crucial: You must run these commands from the project root before running any scripts or simulations:
-```bash
-source .venv/bin/activate
-source source.sh
-
 ```
 
 ### Upside Unit Conversions
