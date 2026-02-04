@@ -1,4 +1,6 @@
 #!/bin/bash
+source ../../source.sh
+source ../../.venv/bin/activate
 
 # MARTINI 3.0 Bilayer Simulation Workflow (CHARMM-GUI Protocol)
 # Stages: Prepare -> Minimization -> NPT Equilibration (Berendsen) -> NPT Production (Parrinello-Rahman) -> VTF Generation
@@ -148,6 +150,10 @@ echo "=== Stage 3: NPT Equilibration (Berendsen) ==="
 echo "Running $NPT_EQUIL_STEPS steps with Berendsen barostat"
 echo "Input:  $MINIMIZED_FILE"
 echo "Output: $NPT_EQUIL_FILE"
+
+# Disable softened potentials for NPT equilibration (use hard particles)
+export UPSIDE_SOFTEN_LJ=0
+export UPSIDE_SOFTEN_COULOMB=0
 
 # Enable NPT with Berendsen barostat for equilibration
 export UPSIDE_NPT_ENABLE=1

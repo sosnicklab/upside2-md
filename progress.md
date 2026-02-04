@@ -194,6 +194,25 @@ if '/output/box' in f:
 
 **Impact**: The Parrinello-Rahman barostat will now initialize with the correct equilibrated box size, preventing the sudden expansion that was caused by starting from incorrect initial dimensions. This ensures smooth continuation of the simulation between stages.
 
+### 6. Softened Potentials Not Disabled After Minimization (2026-02-04)
+**Issue**: The `run_sim_bilayer.sh` script was setting softened potential parameters (UPSIDE_SOFTEN_LJ=1, UPSIDE_SOFTEN_COULOMB=1) for the minimization stage, but these parameters were not being disabled for subsequent NPT equilibration and production stages, causing them to use softened particles instead of hard particles.
+
+**Root Cause**: The软化参数 were set as global environment variables at the beginning of the script (lines 50-53) and were never reset to the default hard particle values (UPSIDE_SOFTEN_LJ=0, UPSIDE_SOFTEN_COULOMB=0) after the minimization stage.
+
+**Fix**: Added code to disable softened potentials before the NPT equilibration stage:
+```bash
+# Disable softened potentials for NPT equilibration (use hard particles)
+export UPSIDE_SOFTEN_LJ=0
+export UPSIDE_SOFTEN_COULOMB=0
+```
+
+**Files Modified**:
+- `example/16.MARTINI/run_sim_bilayer.sh`: Lines 147-151, added softened potentials disable code
+
+**Testing**: Ready for testing. The workflow should now use softened particles only during minimization and hard particles for all other stages.
+
+**Impact**: This ensures the simulation follows the correct CHARMM-GUI protocol where soft-core potentials are only used during the initial minimization stage to avoid atomic clashes, and hard particles are used for all subsequent MD stages to ensure realistic interactions.
+
 ## Next Steps (Optional Enhancements)
 1. Implement automatic lipid headgroup selection (PO4/GL1 beads)
 2. Add gradual restraint reduction across stages
