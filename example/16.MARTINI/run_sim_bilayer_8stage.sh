@@ -82,18 +82,32 @@ echo "=== Stage 0: Preparing Input Files ==="
 source ../../source.sh
 source ../../.venv/bin/activate
 
+# Use identical preparation flags as the working script
 export UPSIDE_OVERWRITE_SPLINES=1
 export UPSIDE_NPT_ENABLE=1
-export UPSIDE_BAROSTAT_TYPE=0  # Berendsen for equilibration stages
+export UPSIDE_BAROSTAT_TYPE=0
+export UPSIDE_SOFTEN_LJ=1
+export UPSIDE_LJ_ALPHA=0.2
+export UPSIDE_SOFTEN_COULOMB=1
+export UPSIDE_SLATER_ALPHA=2.0
+export UPSIDE_BAROSTAT_TYPE=0  # Use Berendsen for equilibration
 
+# Call preparation with exact same arguments as run_sim_bilayer.sh
 python3 prepare_martini.py "$PDB_ID"
 
-PREPARED_FILE="${RUN_DIR}/test.input.up"
+# The script run_sim_bilayer.sh expects the output at "outputs/martini_test/test.input.up"
+# but since you changed RUN_DIR, we must ensure we point to the correct file.
+# Note: verify if prepare_martini.py uses RUN_DIR or a hardcoded path.
+PREPARED_FILE="outputs/martini_test/test.input.up" 
 INPUT_FILE="${INPUTS_DIR}/${PDB_ID}.up"
 
 if [ ! -f "$PREPARED_FILE" ]; then
-    echo "ERROR: Input preparation failed - file not found: $PREPARED_FILE"
-    exit 1
+    # Fallback check for the specific RUN_DIR used in this script
+    PREPARED_FILE="${RUN_DIR}/test.input.up"
+    if [ ! -f "$PREPARED_FILE" ]; then
+        echo "ERROR: Input preparation failed - file not found: $PREPARED_FILE"
+        exit 1
+    fi
 fi
 
 cp -f "$PREPARED_FILE" "$INPUT_FILE"
@@ -147,6 +161,9 @@ echo
 # =============================================================================
 echo "=== Stage 6.1: Minimization without Soft-Core ==="
 
+export UPSIDE_SOFTEN_LJ=0
+export UPSIDE_SOFTEN_COULOMB=0
+
 STAGE_61_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.1.up"
 cp -f "$STAGE_60_FILE" "$STAGE_61_FILE"
 python3 set_initial_position.py "$STAGE_60_FILE" "$STAGE_61_FILE"
@@ -195,10 +212,10 @@ run_md_stage() {
 
     local stage_file="${CHECKPOINT_DIR}/${PDB_ID}.stage_${stage_name}.up"
 
-    echo "=== Stage ${stage_name}: MD Equilibration ==="
-    echo "  Timestep: ${timestep}"
-    echo "  Steps: ${steps}"
-    echo "  Barostat: $([ $barostat_type -eq 1 ] && echo 'Parrinello-Rahman' || echo 'Berendsen')"
+    echo "=== Stage ${stage_name}: MD Equilibration ===" >&2
+    echo "  Timestep: ${timestep}" >&2
+    echo "  Steps: ${steps}" >&2
+    echo "  Barostat: $([ $barostat_type -eq 1 ] && echo 'Parrinello-Rahman' || echo 'Berendsen')" >&2
 
     # Copy and update initial positions
     cp -f "$prev_file" "$stage_file"
@@ -227,12 +244,12 @@ END
     )
 
     if "${cmd[@]}" 2>&1 | tee "${LOG_DIR}/stage_${stage_name}.log"; then
-        echo "Stage ${stage_name} completed"
+        echo "Stage ${stage_name} completed" >&2
     else
-        echo "ERROR: Stage ${stage_name} failed!"
+        echo "ERROR: Stage ${stage_name} failed!" >&2
         exit 1
     fi
-    echo
+    echo >&2
 
     echo "$stage_file"
 }

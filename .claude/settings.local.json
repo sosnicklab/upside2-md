@@ -37,7 +37,14 @@
       "Bash(echo:*)",
       "Bash(chmod:*)",
       "Bash(./run_sim_bilayer.sh:*)",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "Bash(./run_sim_bilayer_8stage.sh:*)",
+      "Bash(ps:*)",
+      "Bash(kill:*)",
+      "Bash(gdb:*)",
+      "Bash(pstree:*)",
+      "Bash(wait:*)",
+      "Bash(wc:*)"
     ],
     "deny": [],
     "ask": []

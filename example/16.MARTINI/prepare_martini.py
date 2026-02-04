@@ -494,7 +494,7 @@ def read_martini_masses(ff_file):
 def main():
     # Get UPSIDE home directory
     upside_path = os.environ['UPSIDE_HOME']
-    
+
     # Check command line arguments
     if len(sys.argv) > 1:
         pdb_id = sys.argv[1]
@@ -503,14 +503,17 @@ def main():
                         f"  Usage: python {sys.argv[0]} <pdb_id>\n"
                         f"  Example: python {sys.argv[0]} 1rkl\n"
                         f"  Aborting to prevent incorrect simulation results.")
-    
+
+    # Get run directory from command line or use default
+    if len(sys.argv) > 2:
+        run_dir = sys.argv[2]
+    else:
+        run_dir = f"outputs/martini_test"
+    os.makedirs(run_dir, exist_ok=True)
+
     # Configuration
     strict_from_martini_pdb = True
     include_protein = True
-    
-    # Create output directory
-    run_dir = f"outputs/martini_test"
-    os.makedirs(run_dir, exist_ok=True)
     
     print("=== MARTINI 3.0 Protein-Lipid System Preparation ===")
     print(f"PDB ID: {pdb_id}")
@@ -1314,9 +1317,7 @@ def main():
                                    f"  Aborting to prevent incorrect simulation results.")
                 
                 # Convert to UPSIDE units
-                # MARTINI 3.0 parameters need different conversion than MARTINI 2.x
-                # Use a smaller conversion factor for MARTINI 3.0
-                epsilon = epsilon_kj / (energy_conversion * 0.1)  # kJ/mol → E_up (reduced conversion)
+                epsilon = epsilon_kj / energy_conversion  # kJ/mol → E_up
                 sigma = sigma_nm * length_conversion  # nm → Å
                 q1 = charges[i] * scale_factor
                 q2 = charges[j] * scale_factor
