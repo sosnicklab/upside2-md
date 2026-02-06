@@ -1,6 +1,22 @@
 # Session Progress Log
 
 ## Date: 2026-02-06
+- **Action**: Fix water simulation pressure coupling and compressibility
+- **Files Modified**:
+  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_water.sh`:
+    - Changed from semi-isotropic to isotropic pressure coupling (UPSIDE_NPT_SEMI=0)
+    - Updated compressibility to water's actual value: 2.1782 Å³/E_up (4.5e-5 bar⁻¹)
+- **Results**:
+  - Box dimensions now change uniformly across all axes during NPT simulation
+  - Pressure values are reasonable and fluctuate around target pressure (1 bar)
+  - Simulation runs without box collapse
+  - Final box dimensions: ~49.74 Å for all axes (consistent scaling)
+- **Notes**:
+  - Previous semi-isotropic coupling caused asymmetric box changes
+  - Incorrect compressibility value (14.52 Å³/E_up) was causing extreme box shrinkage
+  - Fixed by setting UPSIDE_NPT_COMPRESSIBILITY to 2.1782 Å³/E_up
+
+## Date: 2026-02-06
 
 - **Action**: Fix NPT barostat compressibility value to ensure box dimensions change
 - **Files Modified**:

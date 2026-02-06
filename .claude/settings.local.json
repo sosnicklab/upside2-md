@@ -56,7 +56,8 @@
       "Bash(do)",
       "Bash(done)",
       "Bash(./run_sim_bilayer_new.sh:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(./run_sim_water.sh:*)"
     ],
     "deny": [],
     "ask": []

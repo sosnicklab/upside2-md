@@ -1,7 +1,8 @@
 # Task Plan
 
 ## Project Goal
-Formalize the workflow logic of `run_sim_bilayer.sh` to ensure each simulation stage uses a separate `.up` file with appropriate parameters (including softened/hard potentials) and coordinates passed from previous stages.
+1. Formalize the workflow logic of `run_sim_bilayer.sh` to ensure each simulation stage uses a separate `.up` file with appropriate parameters (including softened/hard potentials) and coordinates passed from previous stages.
+2. Verify MARTINI water simulation behavior in NPT ensemble with correct isotropic pressure coupling and compressibility.
 
 ## Architecture & Key Decisions
 - **Per-Stage .up Files**: Each stage will have its own input .up file generated at the start of the stage
@@ -24,6 +25,11 @@ Formalize the workflow logic of `run_sim_bilayer.sh` to ensure each simulation s
   - [x] Run simulation to ensure all stages complete
   - [x] Check per-stage .up files are created correctly
   - [x] Verify softening parameters and barostat types are correctly set
+- [x] **Phase 4: Verify Water Simulation**
+  - [x] Create run_sim_water.sh with isotropic pressure coupling
+  - [x] Set correct compressibility for water (2.1782 Å³/E_up)
+  - [x] Run water simulation to verify uniform box behavior
+  - [x] Simulation completed successfully: all axes show consistent scaling
 
 ## Known Errors / Blockers
 - **HDF5 File Handling**: Ensure that the HDF5 library is available in the Python environment
