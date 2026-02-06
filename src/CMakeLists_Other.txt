@@ -20,6 +20,8 @@ include_directories(SYSTEM "include")
 
 set (ENGINE_SRC 
     main.cpp
+    martini.cpp
+    box.cpp
     environment.cpp
     hbond.cpp 
     rotamer.cpp
@@ -38,13 +40,13 @@ set (ENGINE_SRC
     backbone_steric.cpp 
     eig.cpp 
     membrane_potential.cpp
-    martini.cpp
     surface.cpp
     timing.cpp 
     thermostat.cpp
     h5_support.cpp 
     state_logger.cpp
-    monte_carlo_sampler.cpp)
+    monte_carlo_sampler.cpp
+    engine_c_library.cpp)
 
 add_executable (upside ${ENGINE_SRC})
 
