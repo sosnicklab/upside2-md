@@ -5,7 +5,8 @@
 - **Action**: Formalize workflow logic for run_sim_bilayer.sh to use per-stage .up files
 - **Files Modified**:
   - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/prepare_martini.py`: Added stage-specific parameterization, support for --stage flag, and per-stage softening/barostat settings
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_bilayer_new.sh`: Created new workflow with per-stage .up file generation, explicit parameterization, and proper stage separation
+  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_bilayer.sh`: Refactored to use per-stage .up files, explicit parameterization, and proper stage separation
+  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/set_initial_position.py`: Updated to transfer box dimensions between stages
 - **Results**:
   - All stages now use separate .up files generated at the start of each stage
   - Softening parameters and barostat types are correctly set for each stage:
@@ -15,9 +16,18 @@
     - npt_equil_reduced.up: lj_soften=1, lj_alpha=0.05, coulomb_soften=1, slater_alpha=0.5, barostat=Berendsen
     - npt_prod.up: lj_soften=0, coulomb_soften=0, barostat=Parrinello-Rahman
   - Potential values are stable in production stage (-4754.24 to -4760.52)
+  - All stages completed successfully:
+    - Minimization: 1000 iterations
+    - NPT Equilibration: 2000 steps
+    - NPT Equilibration (reduced softening): 2000 steps
+    - NPT Production: 5000 steps
+  - VTF files generated for all stages:
+    - bilayer.minimized.vtf (28K)
+    - bilayer.npt_equil.vtf (1.2M)
+    - bilayer.npt_prod.vtf (3.0M)
 - **Notes**:
   - Each stage now has its own input .up file generated at the start of the stage
-  - Coordinates are passed from previous stage's output using set_initial_position.py
+  - Coordinates and box dimensions are passed from previous stage's output using set_initial_position.py
   - The workflow is now more modular and maintainable
 
 ## Date: 2026-02-04
