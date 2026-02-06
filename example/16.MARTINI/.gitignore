@@ -1,3 +1,4 @@
 charmm-gui*/*
 *.txt
 ./output/*
+--stage

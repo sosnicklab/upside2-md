@@ -4,7 +4,7 @@ source ../../.venv/bin/activate
 
 # MARTINI 3.0 Bilayer Simulation Workflow (CHARMM-GUI Protocol)
 # Stages: Prepare -> Minimization -> NPT Equilibration (Berendsen) -> NPT Production (Parrinello-Rahman) -> VTF Generation
-# Each stage uses the output checkpoint from the previous stage as its starting point.
+# Each stage uses a separate .up file generated at the start of the stage
 #
 # ENVIRONMENT VARIABLES:
 #   PDB_ID                - PDB identifier (default: bilayer)
@@ -19,6 +19,21 @@ set -e  # Exit on any error
 # =============================================================================
 # USER CONFIGURATION
 # =============================================================================
+# Extract PDB_ID from command line arguments if provided
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        PDB_ID=*)
+            PDB_ID="${1#*=}"
+            shift
+            ;;
+        *)
+            echo "Unknown parameter $1"
+            exit 1
+            ;;
+    esac
+done
+
+# Default to bilayer if not specified
 PDB_ID="${PDB_ID:-bilayer}"
 
 # Directories
@@ -27,8 +42,8 @@ OUTPUTS_DIR="outputs"
 RUN_DIR="outputs/martini_test"
 CHECKPOINT_DIR="${RUN_DIR}/checkpoints"
 
-# Filenames
-INPUT_FILE="${INPUTS_DIR}/${PDB_ID}.up"
+# Filenames - per-stage .up files
+PREPARED_FILE="${CHECKPOINT_DIR}/${PDB_ID}.prepared.up"
 MINIMIZED_FILE="${CHECKPOINT_DIR}/${PDB_ID}.minimized.up"
 NPT_EQUIL_FILE="${CHECKPOINT_DIR}/${PDB_ID}.npt_equil.up"
 NPT_EQUIL_REDUCED_FILE="${CHECKPOINT_DIR}/${PDB_ID}.npt_equil_reduced.up"
@@ -49,12 +64,6 @@ NVT_EQUIL_STEPS="${NVT_EQUIL_STEPS:-1000}"
 NPT_EQUIL_STEPS="${NPT_EQUIL_STEPS:-2000}"
 NPT_PROD_STEPS="${NPT_PROD_STEPS:-5000}"
 FRAME_INTERVAL="${FRAME_INTERVAL:-20}"
-
-# Softening parameters for minimization
-export UPSIDE_SOFTEN_LJ=${UPSIDE_SOFTEN_LJ:-1}
-export UPSIDE_LJ_ALPHA=${UPSIDE_LJ_ALPHA:-0.2}
-export UPSIDE_SOFTEN_COULOMB=${UPSIDE_SOFTEN_COULOMB:-1}
-export UPSIDE_SLATER_ALPHA=${UPSIDE_SLATER_ALPHA:-2.0}
 
 # =============================================================================
 # VALIDATION
@@ -82,39 +91,44 @@ echo "  NPT Production:     $NPT_PROD_STEPS steps (hard particles)"
 echo
 
 # =============================================================================
-# STAGE 1: PREPARE INPUT FILES
+# STAGE 1: PREPARE INPUT FILE
 # =============================================================================
-echo "=== Stage 1: Preparing Input Files ==="
+echo "=== Stage 1: Preparing Input File (${PREPARED_FILE}) ==="
 source ../../source.sh
 source ../../.venv/bin/activate
 
 # Prepare with NPT enabled (so barostat configuration is stored in input file)
 export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
 export UPSIDE_NPT_ENABLE=${UPSIDE_NPT_ENABLE:-1}
-python3 prepare_martini.py "$PDB_ID"
+export UPSIDE_SIMULATION_STAGE="minimization"
+python3 prepare_martini.py "$PDB_ID" --stage "minimization" "$RUN_DIR"
 
-PREPARED_FILE="${RUN_DIR}/test.input.up"
-if [ ! -f "$PREPARED_FILE" ]; then
-    echo "ERROR: Input preparation failed - file not found: $PREPARED_FILE"
+# Move prepared file to checkpoint directory
+PREPARED_TMP="${RUN_DIR}/test.input.up"
+if [ -f "$PREPARED_TMP" ]; then
+    mv -f "$PREPARED_TMP" "$PREPARED_FILE"
+    echo "Input prepared: $PREPARED_FILE ($(du -h "$PREPARED_FILE" | cut -f1))"
+else
+    echo "ERROR: Input preparation failed - file not found: $PREPARED_TMP"
     exit 1
 fi
 
-# Copy to normalized location
-cp -f "$PREPARED_FILE" "$INPUT_FILE"
-echo "Input prepared: $INPUT_FILE ($(du -h "$INPUT_FILE" | cut -f1))"
 echo
 
 # =============================================================================
-# STAGE 2: ENERGY MINIMIZATION
+# STAGE 2: ENERGY MINIMIZATION (${MINIMIZED_FILE})
 # =============================================================================
-echo "=== Stage 2: Energy Minimization ==="
+echo "=== Stage 2: Energy Minimization (${MINIMIZED_FILE}) ==="
 echo "Running gradient descent minimization with softened potentials"
-echo "Input:  $INPUT_FILE"
+echo "Input:  $PREPARED_FILE"
 echo "Output: $MINIMIZED_FILE"
+
+# Copy prepared file to minimization file
+cp -f "$PREPARED_FILE" "$MINIMIZED_FILE"
 
 CMD_MIN=(
     "$UPSIDE_EXECUTABLE"
-    "$INPUT_FILE"
+    "$MINIMIZED_FILE"
     # Required arguments even for minimization (executable parses all args before checking --minimize)
     "--duration" "0"          # 0 duration means no MD steps after minimization
     "--frame-interval" "1"    # Required by executable
@@ -141,58 +155,29 @@ else
     exit 1
 fi
 
-# Save minimized checkpoint (input file was modified in-place)
-cp -f "$INPUT_FILE" "$MINIMIZED_FILE"
 echo "Minimized checkpoint: $MINIMIZED_FILE"
 echo
 
 # =============================================================================
 # STAGE 3: NPT EQUILIBRATION WITH SOFTENED POTENTIALS (Berendsen barostat)
 # =============================================================================
-echo "=== Stage 3: NPT Equilibration (Softened Potentials, Berendsen) ==="
+echo "=== Stage 3: NPT Equilibration (Softened Potentials, Berendsen) (${NPT_EQUIL_FILE}) ==="
 echo "Running $NPT_EQUIL_STEPS steps with softened potentials to relax system"
 echo "Input:  $MINIMIZED_FILE"
 echo "Output: $NPT_EQUIL_FILE"
 
-# Keep softened potentials enabled for initial NPT equilibration
-export UPSIDE_SOFTEN_LJ=1
-export UPSIDE_SOFTEN_COULOMB=1
-export UPSIDE_LJ_ALPHA=0.2
-export UPSIDE_SLATER_ALPHA=2.0
+# Generate NPT equilibration file with softened potentials
+export UPSIDE_SIMULATION_STAGE="npt_equil"
+python3 prepare_martini.py "$PDB_ID" --stage "npt_equil" "$RUN_DIR"
 
-# Enable NPT with Berendsen barostat for equilibration
-export UPSIDE_NPT_ENABLE=1
-export UPSIDE_BAROSTAT_TYPE=0  # Berendsen
-# Pressure in Upside units: 1 bar = 0.000020659 E_up/Angstrom^3
-export UPSIDE_NPT_TARGET_PXY=${UPSIDE_NPT_TARGET_PXY:-0.000020659}
-export UPSIDE_NPT_TARGET_PZ=${UPSIDE_NPT_TARGET_PZ:-0.000020659}
-export UPSIDE_NPT_TAU=${UPSIDE_NPT_TAU:-1.0}
-export UPSIDE_NPT_INTERVAL=${UPSIDE_NPT_INTERVAL:-10}
-
-echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=${UPSIDE_NPT_TAU} interval=${UPSIDE_NPT_INTERVAL}"
-echo "Barostat type: Berendsen"
-echo "Using softened potentials (lj_alpha=0.2, slater_alpha=2.0)"
-
-# Work from minimized checkpoint
-cp -f "$MINIMIZED_FILE" "$NPT_EQUIL_FILE"
-
-# Ensure softened potentials are still enabled in NPT file
-python3 - <<END
-import h5py
-
-with h5py.File("$NPT_EQUIL_FILE", 'r+') as f:
-    if '/input/potential/martini_potential' in f:
-        grp = f['/input/potential/martini_potential']
-        grp.attrs['coulomb_soften'] = 1
-        grp.attrs['slater_alpha'] = 2.0
-        grp.attrs['lj_soften'] = 1
-        grp.attrs['lj_soften_alpha'] = 0.2
-        print("Softened potentials enabled in NPT file:")
-        print(f"  coulomb_soften = {grp.attrs['coulomb_soften']}")
-        print(f"  slater_alpha = {grp.attrs['slater_alpha']}")
-        print(f"  lj_soften = {grp.attrs['lj_soften']}")
-        print(f"  lj_soften_alpha = {grp.attrs['lj_soften_alpha']}")
-END
+# Move prepared file to checkpoint directory
+NPT_EQUIL_TMP="${RUN_DIR}/test.input.up"
+if [ -f "$NPT_EQUIL_TMP" ]; then
+    mv -f "$NPT_EQUIL_TMP" "$NPT_EQUIL_FILE"
+else
+    echo "ERROR: NPT equilibration preparation failed - file not found: $NPT_EQUIL_TMP"
+    exit 1
+fi
 
 # Set initial position in NPT file to last frame from minimization
 python3 set_initial_position.py "$MINIMIZED_FILE" "$NPT_EQUIL_FILE"
@@ -224,46 +209,25 @@ echo "NPT equilibration checkpoint: $NPT_EQUIL_FILE"
 echo
 
 # =============================================================================
-# STAGE 4: NPT PRODUCTION (Parrinello-Rahman barostat)
+# STAGE 4: NPT PRODUCTION (Reduced Softening, Berendsen barostat)
 # =============================================================================
-echo "=== Stage 4: NPT Production (Parrinello-Rahman) ==="
-echo "Running $NPT_PROD_STEPS steps with Parrinello-Rahman barostat"
+echo "=== Stage 4: NPT Equilibration (Reduced Softening, Berendsen) (${NPT_EQUIL_REDUCED_FILE}) ==="
+echo "Running $NPT_EQUIL_STEPS steps with reduced softening potentials"
 echo "Input:  $NPT_EQUIL_FILE"
 echo "Output: $NPT_EQUIL_REDUCED_FILE"
 
-# Use reduced softening potentials for transition phase
-export UPSIDE_SOFTEN_LJ=1
-export UPSIDE_SOFTEN_COULOMB=1
-export UPSIDE_LJ_ALPHA=0.05  # Reduced from 0.2 to 0.05
-export UPSIDE_SLATER_ALPHA=0.5  # Reduced from 2.0 to 0.5
+# Generate NPT equilibration file with reduced softening potentials
+export UPSIDE_SIMULATION_STAGE="npt_equil_reduced"
+python3 prepare_martini.py "$PDB_ID" --stage "npt_equil_reduced" "$RUN_DIR"
 
-# Keep Berendsen barostat for transition phase
-export UPSIDE_BAROSTAT_TYPE=0  # Berendsen
-
-echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=${UPSIDE_NPT_TAU} interval=${UPSIDE_NPT_INTERVAL}"
-echo "Barostat type: Berendsen"
-echo "Using reduced softened potentials (lj_alpha=0.05, slater_alpha=0.5)"
-
-# Work from previous NPT equilibration checkpoint
-cp -f "$NPT_EQUIL_FILE" "$NPT_EQUIL_REDUCED_FILE"
-
-# Set reduced softening potentials in the HDF5 file
-python3 - <<END
-import h5py
-
-with h5py.File("$NPT_EQUIL_REDUCED_FILE", 'r+') as f:
-    if '/input/potential/martini_potential' in f:
-        grp = f['/input/potential/martini_potential']
-        grp.attrs['coulomb_soften'] = 1
-        grp.attrs['slater_alpha'] = 0.5
-        grp.attrs['lj_soften'] = 1
-        grp.attrs['lj_soften_alpha'] = 0.05
-        print("Set reduced softened potentials in HDF5 file:")
-        print(f"  coulomb_soften = {grp.attrs['coulomb_soften']}")
-        print(f"  slater_alpha = {grp.attrs['slater_alpha']}")
-        print(f"  lj_soften = {grp.attrs['lj_soften']}")
-        print(f"  lj_soften_alpha = {grp.attrs['lj_soften_alpha']}")
-END
+# Move prepared file to checkpoint directory
+NPT_EQUIL_REDUCED_TMP="${RUN_DIR}/test.input.up"
+if [ -f "$NPT_EQUIL_REDUCED_TMP" ]; then
+    mv -f "$NPT_EQUIL_REDUCED_TMP" "$NPT_EQUIL_REDUCED_FILE"
+else
+    echo "ERROR: NPT equilibration (reduced) preparation failed - file not found: $NPT_EQUIL_REDUCED_TMP"
+    exit 1
+fi
 
 # Set initial position in reduced softening file to last frame from previous equilibration
 python3 set_initial_position.py "$NPT_EQUIL_FILE" "$NPT_EQUIL_REDUCED_FILE"
@@ -297,56 +261,24 @@ echo
 # =============================================================================
 # STAGE 5: NPT PRODUCTION (Hard, Parrinello-Rahman barostat)
 # =============================================================================
-echo "=== Stage 5: NPT Production (Hard, Parrinello-Rahman) ==="
+echo "=== Stage 5: NPT Production (Hard, Parrinello-Rahman) (${NPT_PROD_FILE}) ==="
 echo "Running $NPT_PROD_STEPS steps with Parrinello-Rahman barostat"
 echo "Input:  $NPT_EQUIL_REDUCED_FILE"
 echo "Output: $NPT_PROD_FILE"
 
-# Switch to Parrinello-Rahman barostat for production
-export UPSIDE_BAROSTAT_TYPE=1  # Parrinello-Rahman
+# Generate NPT production file with hard potentials
+export UPSIDE_SIMULATION_STAGE="npt_prod"
+python3 prepare_martini.py "$PDB_ID" --stage "npt_prod" "$RUN_DIR"
 
-# Disable softened potentials for production (hard particles)
-export UPSIDE_SOFTEN_LJ=0
-export UPSIDE_SOFTEN_COULOMB=0
+# Move prepared file to checkpoint directory
+NPT_PROD_TMP="${RUN_DIR}/test.input.up"
+if [ -f "$NPT_PROD_TMP" ]; then
+    mv -f "$NPT_PROD_TMP" "$NPT_PROD_FILE"
+else
+    echo "ERROR: NPT production preparation failed - file not found: $NPT_PROD_TMP"
+    exit 1
+fi
 
-echo "NPT settings: Pxy=${UPSIDE_NPT_TARGET_PXY} Pz=${UPSIDE_NPT_TARGET_PZ} tau=${UPSIDE_NPT_TAU} interval=${UPSIDE_NPT_INTERVAL}"
-echo "Barostat type: Parrinello-Rahman"
-echo "Using hard particles (softened potentials disabled)"
-
-# Work from reduced softening checkpoint
-cp -f "$NPT_EQUIL_REDUCED_FILE" "$NPT_PROD_FILE"
-# Update barostat type to Parrinello-Rahman AND update box dimensions from reduced softening stage
-python3 - <<END
-import h5py
-import numpy as np
-
-with h5py.File("$NPT_PROD_FILE", 'r+') as f:
-    # Update barostat type to Parrinello-Rahman
-    if '/input/barostat' in f:
-        f['/input/barostat'].attrs['type'] = 1  # Parrinello-Rahman
-
-    # Disable softened potentials in production file
-    if '/input/potential/martini_potential' in f:
-        grp = f['/input/potential/martini_potential']
-        grp.attrs['coulomb_soften'] = 0
-        grp.attrs['lj_soften'] = 0
-        print("Disabled softened potentials in production file:")
-        print(f"  coulomb_soften = {grp.attrs['coulomb_soften']}")
-        print(f"  lj_soften = {grp.attrs['lj_soften']}")
-
-    # Get equilibrated box dimensions from last frame of output
-    if '/output/box' in f:
-        last_box = f['/output/box'][-1]  # [x, y, z]
-        print(f"Updating box dimensions from reduced softening state: {last_box}")
-
-        # Update box dimensions in martini_potential attributes
-        if '/input/potential/martini_potential' in f:
-            grp = f['/input/potential/martini_potential']
-            grp.attrs['x_len'] = float(last_box[0])
-            grp.attrs['y_len'] = float(last_box[1])
-            grp.attrs['z_len'] = float(last_box[2])
-            print(f"Updated martini_potential: x_len={last_box[0]:.6f}, y_len={last_box[1]:.6f}, z_len={last_box[2]:.6f}")
-END
 # Set initial position in production file to last frame from reduced softening equilibration
 python3 set_initial_position.py "$NPT_EQUIL_REDUCED_FILE" "$NPT_PROD_FILE"
 
@@ -377,9 +309,9 @@ echo "NPT production checkpoint: $NPT_PROD_FILE"
 echo
 
 # =============================================================================
-# STAGE 5: VTF GENERATION (ALL STAGES)
+# STAGE 6: VTF GENERATION (ALL STAGES)
 # =============================================================================
-echo "=== Stage 5: Generating VTF Files for All Stages ==="
+echo "=== Stage 6: Generating VTF Files for All Stages ==="
 
 # Minimization VTF
 MIN_VTF_FILE="${RUN_DIR}/${PDB_ID}.minimized.vtf"
@@ -420,7 +352,7 @@ fi
 echo
 echo "=== Workflow Complete ==="
 echo "Checkpoints:"
-echo "  Prepared:          $INPUT_FILE"
+echo "  Prepared:          $PREPARED_FILE"
 echo "  Minimized:         $MINIMIZED_FILE"
 echo "  NPT Equilibration: $NPT_EQUIL_FILE"
 echo "  NPT Production:    $NPT_PROD_FILE"

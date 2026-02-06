@@ -1,27 +1,31 @@
 # Task Plan
 
 ## Project Goal
-Fix the issue where softened particles weren't switching to hard particles after minimization in `run_sim_bilayer.sh`, and address the resulting system instability.
+Formalize the workflow logic of `run_sim_bilayer.sh` to ensure each simulation stage uses a separate `.up` file with appropriate parameters (including softened/hard potentials) and coordinates passed from previous stages.
 
 ## Architecture & Key Decisions
-- **Problem 1**: Potential parameters were stored in HDF5 file attributes and not being updated during simulation, causing softened particles to remain active in subsequent stages.
-- **Solution**: Added Python code to directly modify HDF5 file attributes after each stage.
-- **Problem 2**: Sudden switch from fully softened to hard particles caused extreme potential values and system instability.
-- **Solution**: Implemented progressive softening reduction with two NPT equilibration stages.
+- **Per-Stage .up Files**: Each stage will have its own input .up file generated at the start of the stage
+- **Parameter Inheritance**: Each stage's .up file will inherit coordinates from previous stage's output
+- **Explicit Parameterization**: All stage-specific parameters will be clearly defined in the shell script
+- **HDF5 Attribute Modification**: Python will be used to modify HDF5 attributes directly when generating stage files
 
 ## Execution Phases
-- [x] **Phase 1: Identify Root Cause**
-  - [x] Examine run_sim_bilayer.sh script
-  - [x] Check how prepare_martini.py stores parameters in HDF5 file
-- [x] **Phase 2: Fix Softening Switching**
-  - [x] Add Python code to modify HDF5 attributes
-  - [x] Test the fix
-- [x] **Phase 3: Address System Instability**
-  - [x] Implement progressive softening reduction (two NPT equilibration stages)
-  - [x] Update script with new stages
-- [x] **Phase 4: Verify Fix**
-  - [x] Run simulation to ensure stable potential values
-  - [x] Check logs for softening parameter updates
+- [x] **Phase 1: Modify prepare_martini.py**
+  - [x] Add support for generating stage-specific .up files
+  - [x] Add parameters for softening (lj_alpha, slater_alpha)
+  - [x] Add support for barostat configuration (Berendsen vs Parrinello-Rahman)
+  - [x] Improve error handling and validation
+- [x] **Phase 2: Modify run_sim_bilayer.sh**
+  - [x] Refactor to use per-stage .up files
+  - [x] Add explicit parameterization for each stage
+  - [x] Improve error handling and validation
+  - [x] Add stage-specific comments and documentation
+- [x] **Phase 3: Verify Workflow**
+  - [x] Run simulation to ensure all stages complete
+  - [x] Check per-stage .up files are created correctly
+  - [x] Verify softening parameters and barostat types are correctly set
 
 ## Known Errors / Blockers
-- **System Instability After Initial Fix**: Caused by sudden switch from fully softened to hard particles. Fixed by progressive softening reduction.
+- **HDF5 File Handling**: Ensure that the HDF5 library is available in the Python environment
+- **Permissions**: Ensure the script has execute permissions
+- **Stage Parameter Passing**: Ensure that stage-specific parameters are correctly passed to prepare_martini.py

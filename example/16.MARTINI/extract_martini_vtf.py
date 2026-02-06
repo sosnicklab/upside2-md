@@ -125,6 +125,11 @@ def main():
             pdb_id = 'bilayer'
         else:
             pdb_id = '1rkl'  # fallback default
+    
+    print(f"Extracting trajectory from: {input_file}")
+    print(f"Output file: {output_file}")
+    print(f"Structure source: {input_file_for_structure}")
+    print(f"PDB ID: {pdb_id}")
     output_format = output_file.split('.')[-1].lower()
 
     if output_format not in ['vtf', 'pdb']:

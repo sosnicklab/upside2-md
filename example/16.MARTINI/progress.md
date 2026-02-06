@@ -1,18 +1,26 @@
 # Session Progress Log
 
-## Date: 2026-02-04
+## Date: 2026-02-06
 
-- **Action**: Fix softened to hard particle switching issue in run_sim_bilayer.sh
+- **Action**: Formalize workflow logic for run_sim_bilayer.sh to use per-stage .up files
 - **Files Modified**:
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_bilayer.sh`: Added HDF5 attribute modification code, updated stage descriptions, added progressive softening stages
+  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/prepare_martini.py`: Added stage-specific parameterization, support for --stage flag, and per-stage softening/barostat settings
+  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_bilayer_new.sh`: Created new workflow with per-stage .up file generation, explicit parameterization, and proper stage separation
 - **Results**:
-  - Simulation now properly switches from softened to hard particles using progressive softening reduction
-  - Potential values are stable in production stage (-4721.86 to -4762.31)
+  - All stages now use separate .up files generated at the start of each stage
+  - Softening parameters and barostat types are correctly set for each stage:
+    - prepared.up: lj_soften=1, lj_alpha=0.2, coulomb_soften=1, slater_alpha=2.0, barostat=Berendsen
+    - minimized.up: lj_soften=1, lj_alpha=0.2, coulomb_soften=1, slater_alpha=2.0, barostat=Berendsen
+    - npt_equil.up: lj_soften=1, lj_alpha=0.2, coulomb_soften=1, slater_alpha=2.0, barostat=Berendsen
+    - npt_equil_reduced.up: lj_soften=1, lj_alpha=0.05, coulomb_soften=1, slater_alpha=0.5, barostat=Berendsen
+    - npt_prod.up: lj_soften=0, coulomb_soften=0, barostat=Parrinello-Rahman
+  - Potential values are stable in production stage (-4754.24 to -4760.52)
 - **Notes**:
-  - Implemented two NPT equilibration stages with reduced softening before production
-  - Added code to directly modify HDF5 file attributes to ensure softening parameters are correctly updated
+  - Each stage now has its own input .up file generated at the start of the stage
+  - Coordinates are passed from previous stage's output using set_initial_position.py
+  - The workflow is now more modular and maintainable
 
-## Date: 2026-02-03
+## Date: 2026-02-04
 
 - **Action**: Run and debug MARTINI 8-stage bilayer equilibration workflow
 - **Files Modified**:

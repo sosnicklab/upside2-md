@@ -491,7 +491,15 @@ def read_martini_masses(ff_file):
     
     return masses
 
-def main():
+def main(stage='minimization', run_dir=None):
+    """
+    Main preparation function with stage-specific parameterization
+    
+    Args:
+        stage: Simulation stage ('minimization', 'npt_equil', 'npt_equil_reduced', 'npt_prod')
+        run_dir: Optional run directory (default: outputs/martini_test)
+    """
+
     # Get UPSIDE home directory
     upside_path = os.environ['UPSIDE_HOME']
 
@@ -504,12 +512,53 @@ def main():
                         f"  Example: python {sys.argv[0]} 1rkl\n"
                         f"  Aborting to prevent incorrect simulation results.")
 
-    # Get run directory from command line or use default
-    if len(sys.argv) > 2:
-        run_dir = sys.argv[2]
-    else:
-        run_dir = f"outputs/martini_test"
+    # Get run directory from function parameter or use default
+    if run_dir is None:
+        if len(sys.argv) > 2 and sys.argv[2] != '--stage':
+            run_dir = sys.argv[2]
+        else:
+            run_dir = "outputs/martini_test"
     os.makedirs(run_dir, exist_ok=True)
+
+    # Get stage from environment variable or use default
+    stage = os.environ.get('UPSIDE_SIMULATION_STAGE', stage)
+    print(f"Preparing for stage: {stage}")
+
+    # Stage-specific parameterization
+    stage_params = {
+        'minimization': {
+            'lj_soften': 1,
+            'lj_alpha': 0.2,
+            'coulomb_soften': 1,
+            'slater_alpha': 2.0,
+            'barostat_type': 0  # Berendsen
+        },
+        'npt_equil': {
+            'lj_soften': 1,
+            'lj_alpha': 0.2,
+            'coulomb_soften': 1,
+            'slater_alpha': 2.0,
+            'barostat_type': 0  # Berendsen
+        },
+        'npt_equil_reduced': {
+            'lj_soften': 1,
+            'lj_alpha': 0.05,
+            'coulomb_soften': 1,
+            'slater_alpha': 0.5,
+            'barostat_type': 0  # Berendsen
+        },
+        'npt_prod': {
+            'lj_soften': 0,
+            'lj_alpha': 0.0,
+            'coulomb_soften': 0,
+            'slater_alpha': 0.0,
+            'barostat_type': 1  # Parrinello-Rahman
+        }
+    }
+
+    # Get parameters for current stage
+    params = stage_params.get(stage, stage_params['npt_prod'])
+
 
     # Configuration
     strict_from_martini_pdb = True
@@ -1128,7 +1177,7 @@ def main():
             barostat_grp._v_attrs.semi_isotropic = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
             barostat_grp._v_attrs.debug = int(os.environ.get('UPSIDE_NPT_DEBUG', '1'))
             # Barostat type: 0 = Berendsen (default), 1 = Parrinello-Rahman
-            barostat_grp._v_attrs.type = int(os.environ.get('UPSIDE_BAROSTAT_TYPE', '0'))
+            barostat_grp._v_attrs.type = params['barostat_type']
             print(f"  Enabled: {barostat_enable}")
             print(f"  Type: {'Parrinello-Rahman' if barostat_grp._v_attrs.type == 1 else 'Berendsen'}")
             print(f"  Target Pxy: {barostat_grp._v_attrs.target_p_xy} E_up/Angstrom^3 (~1 bar)")
@@ -1226,12 +1275,13 @@ def main():
         pme_nz = int(os.environ.get('UPSIDE_PME_NZ', '32'))
         pme_order = int(os.environ.get('UPSIDE_PME_ORDER', '4'))
 
-        martini_potential._v_attrs.coulomb_soften = soften_coul
-        if soften_coul:
-            martini_potential._v_attrs.slater_alpha = slater_alpha
-        martini_potential._v_attrs.lj_soften = soften_lj
-        if soften_lj:
-            martini_potential._v_attrs.lj_soften_alpha = lj_alpha
+        # Set stage-specific softening parameters
+        martini_potential._v_attrs.coulomb_soften = params['coulomb_soften']
+        if params['coulomb_soften']:
+            martini_potential._v_attrs.slater_alpha = params['slater_alpha']
+        martini_potential._v_attrs.lj_soften = params['lj_soften']
+        if params['lj_soften']:
+            martini_potential._v_attrs.lj_soften_alpha = params['lj_alpha']
         martini_potential._v_attrs.overwrite_spline_tables = overwrite_splines
         
         # PME configuration
@@ -1500,6 +1550,15 @@ if __name__ == "__main__":
         print("=== Creating Input with Always-Fixed Protein ===")
         pdb_id = sys.argv[1]
         main_always_fixed(pdb_id)
+    elif len(sys.argv) > 2 and sys.argv[2] == '--stage':
+        # Create stage-specific input file
+        if len(sys.argv) < 4:
+            print("Usage: python prepare_martini.py <pdb_id> --stage <stage_name> [run_dir]")
+            print("  Stages: minimization, npt_equil, npt_equil_reduced, npt_prod")
+            sys.exit(1)
+        stage = sys.argv[3]
+        run_dir = sys.argv[4] if len(sys.argv) > 4 else "outputs/martini_test"
+        main(stage=stage, run_dir=run_dir)
     else:
         # Create minimization input file (default)
         main()
