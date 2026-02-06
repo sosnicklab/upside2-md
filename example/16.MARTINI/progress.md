@@ -2,33 +2,16 @@
 
 ## Date: 2026-02-06
 
-- **Action**: Formalize workflow logic for run_sim_bilayer.sh to use per-stage .up files
+- **Action**: Fix NPT barostat compressibility value to ensure box dimensions change
 - **Files Modified**:
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/prepare_martini.py`: Added stage-specific parameterization, support for --stage flag, and per-stage softening/barostat settings
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_bilayer.sh`: Refactored to use per-stage .up files, explicit parameterization, and proper stage separation
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/set_initial_position.py`: Updated to transfer box dimensions between stages
+  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/prepare_martini.py`: Changed default compressibility from 4.5e-5 to 14.521180763676 (correct value for 3e-4 bar^(-1))
 - **Results**:
-  - All stages now use separate .up files generated at the start of each stage
-  - Softening parameters and barostat types are correctly set for each stage:
-    - prepared.up: lj_soften=1, lj_alpha=0.2, coulomb_soften=1, slater_alpha=2.0, barostat=Berendsen
-    - minimized.up: lj_soften=1, lj_alpha=0.2, coulomb_soften=1, slater_alpha=2.0, barostat=Berendsen
-    - npt_equil.up: lj_soften=1, lj_alpha=0.2, coulomb_soften=1, slater_alpha=2.0, barostat=Berendsen
-    - npt_equil_reduced.up: lj_soften=1, lj_alpha=0.05, coulomb_soften=1, slater_alpha=0.5, barostat=Berendsen
-    - npt_prod.up: lj_soften=0, coulomb_soften=0, barostat=Parrinello-Rahman
-  - Potential values are stable in production stage (-4754.24 to -4760.52)
-  - All stages completed successfully:
-    - Minimization: 1000 iterations
-    - NPT Equilibration: 2000 steps
-    - NPT Equilibration (reduced softening): 2000 steps
-    - NPT Production: 5000 steps
-  - VTF files generated for all stages:
-    - bilayer.minimized.vtf (28K)
-    - bilayer.npt_equil.vtf (1.2M)
-    - bilayer.npt_prod.vtf (3.0M)
+  - Box dimensions now change during NPT simulation stages
+  - Pressure values are more reasonable and fluctuate around target pressure
+  - Simulation progresses correctly with proper box scaling
 - **Notes**:
-  - Each stage now has its own input .up file generated at the start of the stage
-  - Coordinates and box dimensions are passed from previous stage's output using set_initial_position.py
-  - The workflow is now more modular and maintainable
+  - The compressibility value was incorrect in the previous version, leading to no box dimension changes
+  - The fix ensures that the barostat can properly scale the box to reach the target pressure
 
 ## Date: 2026-02-04
 
