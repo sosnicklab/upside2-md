@@ -1,22 +1,34 @@
 #!/bin/bash
-source ../../source.sh
-source ../../.venv/bin/activate
+set -e  # Exit on any error
 
 # MARTINI 3.0 Water Simulation Workflow
 # Stages: Prepare -> Minimization -> NPT Equilibration -> NPT Production -> VTF Generation
 
-set -e  # Exit on any error
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd "${SCRIPT_DIR}/../.." && pwd)
+
+VENV_ACTIVATE=${VENV_ACTIVATE:-"${REPO_ROOT}/.venv/bin/activate"}
+if [ -f "$VENV_ACTIVATE" ]; then
+    # shellcheck disable=SC1090
+    source "$VENV_ACTIVATE"
+else
+    echo "ERROR: Python venv not found at $VENV_ACTIVATE"
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "${REPO_ROOT}/source.sh"
 
 # =============================================================================
-# USER CONFIGURATION
+# USER CONFIGURATION (override via environment variables)
 # =============================================================================
-PDB_ID="water"
+PDB_ID=${PDB_ID:-"water"}
 
-# Directories
-INPUTS_DIR="inputs"
-OUTPUTS_DIR="outputs"
-RUN_DIR="outputs/martini_water_test"
-CHECKPOINT_DIR="${RUN_DIR}/checkpoints"
+WORK_DIR=${WORK_DIR:-"$PWD"}
+INPUTS_DIR=${INPUTS_DIR:-"${WORK_DIR}/inputs"}
+OUTPUTS_DIR=${OUTPUTS_DIR:-"${WORK_DIR}/outputs"}
+RUN_DIR=${RUN_DIR:-"${WORK_DIR}/outputs/martini_water_test"}
+CHECKPOINT_DIR=${CHECKPOINT_DIR:-"${RUN_DIR}/checkpoints"}
 
 # Filenames - per-stage .up files
 PREPARED_FILE="${CHECKPOINT_DIR}/${PDB_ID}.prepared.up"
@@ -27,24 +39,30 @@ VTF_FILE="${RUN_DIR}/${PDB_ID}.vtf"
 LOG_DIR="${RUN_DIR}/logs"
 
 # Simulation parameters
-TEMPERATURE=0.8
-TIME_STEP=0.1
-THERMOSTAT_TIMESCALE=0.135
-THERMOSTAT_INTERVAL="-1"
-SEED=12345
+TEMPERATURE=${TEMPERATURE:-0.8}
+TIME_STEP=${TIME_STEP:-0.1}
+THERMOSTAT_TIMESCALE=${THERMOSTAT_TIMESCALE:-0.135}
+THERMOSTAT_INTERVAL=${THERMOSTAT_INTERVAL:-"-1"}
+SEED=${SEED:-12345}
 
 # Stage durations (in MD steps)
-MIN_STEPS="500"
-NPT_EQUIL_STEPS="2000"
-NPT_PROD_STEPS="5000"
-FRAME_INTERVAL="20"
+MIN_STEPS=${MIN_STEPS:-"500"}
+NPT_EQUIL_STEPS=${NPT_EQUIL_STEPS:-"2000"}
+NPT_PROD_STEPS=${NPT_PROD_STEPS:-"5000"}
+FRAME_INTERVAL=${FRAME_INTERVAL:-"20"}
+
+GENERATE_VTF=${GENERATE_VTF:-1}
 
 # =============================================================================
 # VALIDATION
 # =============================================================================
 if [ -z "$UPSIDE_HOME" ]; then
-    echo "ERROR: UPSIDE_HOME environment variable is not set!"
-    exit 1
+    if [ -f "${REPO_ROOT}/obj/upside" ]; then
+        export UPSIDE_HOME="$REPO_ROOT"
+    else
+        echo "ERROR: UPSIDE_HOME environment variable is not set!"
+        exit 1
+    fi
 fi
 
 UPSIDE_EXECUTABLE="${UPSIDE_HOME}/obj/upside"
@@ -55,6 +73,7 @@ fi
 
 # Create directories
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR"
+cd "$WORK_DIR"
 
 echo "=== MARTINI 3.0 Water Simulation Workflow ===="
 echo "PDB ID: $PDB_ID"
@@ -67,16 +86,13 @@ echo
 # STAGE 1: PREPARE INPUT FILE
 # =============================================================================
 echo "=== Stage 1: Preparing Input File (${PREPARED_FILE}) ===="
-source ../../source.sh
-source ../../.venv/bin/activate
-
 # Prepare with NPT enabled (isotropic pressure coupling for water)
 export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
 export UPSIDE_NPT_ENABLE=${UPSIDE_NPT_ENABLE:-1}
 export UPSIDE_NPT_SEMI=${UPSIDE_NPT_SEMI:-0}  # Isotropic pressure coupling
 export UPSIDE_NPT_COMPRESSIBILITY=${UPSIDE_NPT_COMPRESSIBILITY:-2.1782}  # Water compressibility (4.5e-5 bar⁻¹)
 export UPSIDE_SIMULATION_STAGE="minimization"
-python3 prepare_martini.py "$PDB_ID" --stage "minimization" "$RUN_DIR"
+python3 "${SCRIPT_DIR}/prepare_martini.py" "$PDB_ID" --stage "minimization" "$RUN_DIR"
 
 # Move prepared file to checkpoint directory
 PREPARED_TMP="${RUN_DIR}/test.input.up"
@@ -144,7 +160,7 @@ echo "Output: $NPT_EQUIL_FILE"
 export UPSIDE_SIMULATION_STAGE="npt_equil"
 export UPSIDE_NPT_SEMI=${UPSIDE_NPT_SEMI:-0}  # Isotropic pressure coupling
 export UPSIDE_NPT_COMPRESSIBILITY=${UPSIDE_NPT_COMPRESSIBILITY:-2.1782}  # Water compressibility (4.5e-5 bar⁻¹)
-python3 prepare_martini.py "$PDB_ID" --stage "npt_equil" "$RUN_DIR"
+python3 "${SCRIPT_DIR}/prepare_martini.py" "$PDB_ID" --stage "npt_equil" "$RUN_DIR"
 
 # Move prepared file to checkpoint directory
 NPT_EQUIL_TMP="${RUN_DIR}/test.input.up"
@@ -156,7 +172,7 @@ else
 fi
 
 # Set initial position in NPT file to last frame from minimization
-python3 set_initial_position.py "$MINIMIZED_FILE" "$NPT_EQUIL_FILE"
+python3 "${SCRIPT_DIR}/set_initial_position.py" "$MINIMIZED_FILE" "$NPT_EQUIL_FILE"
 
 CMD_NPT_EQUIL=(
     "$UPSIDE_EXECUTABLE"
@@ -196,7 +212,7 @@ echo "Output: $NPT_PROD_FILE"
 export UPSIDE_SIMULATION_STAGE="npt_prod"
 export UPSIDE_NPT_SEMI=${UPSIDE_NPT_SEMI:-0}  # Isotropic pressure coupling
 export UPSIDE_NPT_COMPRESSIBILITY=${UPSIDE_NPT_COMPRESSIBILITY:-2.1782}  # Water compressibility (4.5e-5 bar⁻¹)
-python3 prepare_martini.py "$PDB_ID" --stage "npt_prod" "$RUN_DIR"
+python3 "${SCRIPT_DIR}/prepare_martini.py" "$PDB_ID" --stage "npt_prod" "$RUN_DIR"
 
 # Move prepared file to checkpoint directory
 NPT_PROD_TMP="${RUN_DIR}/test.input.up"
@@ -208,7 +224,7 @@ else
 fi
 
 # Set initial position in production file to last frame from equilibration
-python3 set_initial_position.py "$NPT_EQUIL_FILE" "$NPT_PROD_FILE"
+python3 "${SCRIPT_DIR}/set_initial_position.py" "$NPT_EQUIL_FILE" "$NPT_PROD_FILE"
 
 CMD_NPT_PROD=(
     "$UPSIDE_EXECUTABLE"
@@ -239,13 +255,26 @@ echo
 # =============================================================================
 # STAGE 5: VTF GENERATION (ALL STAGES)
 # =============================================================================
+if [ "$GENERATE_VTF" -ne 1 ]; then
+    echo "=== Stage 5: VTF Generation Skipped (GENERATE_VTF=$GENERATE_VTF) ===="
+    echo
+    echo "=== Workflow Complete ===="
+    echo "Checkpoints:"
+    echo "  Prepared:          $PREPARED_FILE"
+    echo "  Minimized:         $MINIMIZED_FILE"
+    echo "  NPT Equilibration: $NPT_EQUIL_FILE"
+    echo "  NPT Production:    $NPT_PROD_FILE"
+    echo "Done."
+    exit 0
+fi
+
 echo "=== Stage 5: Generating VTF Files for All Stages ===="
 
 # Minimization VTF
 MIN_VTF_FILE="${RUN_DIR}/${PDB_ID}.minimized.vtf"
 echo "Extracting minimization trajectory from: $MINIMIZED_FILE"
 echo "Output VTF: $MIN_VTF_FILE"
-if python3 extract_martini_vtf.py "$MINIMIZED_FILE" "$MIN_VTF_FILE" "$MINIMIZED_FILE" "$PDB_ID"; then
+if python3 "${SCRIPT_DIR}/extract_martini_vtf.py" "$MINIMIZED_FILE" "$MIN_VTF_FILE" "$MINIMIZED_FILE" "$PDB_ID"; then
     MIN_VTF_SIZE=$(du -h "$MIN_VTF_FILE" | cut -f1)
     echo "Minimization VTF generated: $MIN_VTF_FILE ($MIN_VTF_SIZE)"
 else
@@ -257,7 +286,7 @@ fi
 NPT_EQUIL_VTF_FILE="${RUN_DIR}/${PDB_ID}.npt_equil.vtf"
 echo "Extracting NPT equilibration trajectory from: $NPT_EQUIL_FILE"
 echo "Output VTF: $NPT_EQUIL_VTF_FILE"
-if python3 extract_martini_vtf.py "$NPT_EQUIL_FILE" "$NPT_EQUIL_VTF_FILE" "$NPT_EQUIL_FILE" "$PDB_ID"; then
+if python3 "${SCRIPT_DIR}/extract_martini_vtf.py" "$NPT_EQUIL_FILE" "$NPT_EQUIL_VTF_FILE" "$NPT_EQUIL_FILE" "$PDB_ID"; then
     NPT_EQUIL_VTF_SIZE=$(du -h "$NPT_EQUIL_VTF_FILE" | cut -f1)
     echo "NPT equilibration VTF generated: $NPT_EQUIL_VTF_FILE ($NPT_EQUIL_VTF_SIZE)"
 else
@@ -269,7 +298,7 @@ fi
 NPT_PROD_VTF_FILE="${RUN_DIR}/${PDB_ID}.npt_prod.vtf"
 echo "Extracting NPT production trajectory from: $NPT_PROD_FILE"
 echo "Output VTF: $NPT_PROD_VTF_FILE"
-if python3 extract_martini_vtf.py "$NPT_PROD_FILE" "$NPT_PROD_VTF_FILE" "$NPT_PROD_FILE" "$PDB_ID"; then
+if python3 "${SCRIPT_DIR}/extract_martini_vtf.py" "$NPT_PROD_FILE" "$NPT_PROD_VTF_FILE" "$NPT_PROD_FILE" "$PDB_ID"; then
     NPT_PROD_VTF_SIZE=$(du -h "$NPT_PROD_VTF_FILE" | cut -f1)
     echo "NPT production VTF generated: $NPT_PROD_VTF_FILE ($NPT_PROD_VTF_SIZE)"
 else

@@ -219,3 +219,14 @@ export UPSIDE_SOFTEN_COULOMB=0
 3. Create multi-stage HDF5 configuration system
 4. Add automated analysis scripts for pressure/volume
 5. Generate VTF trajectories for each stage
+
+### 7. MARTINI Water Diffusion Scan Workflow Updates (2026-02-06)
+**Actions**: Refactored the water diffusion scan generator to use `run_sim_water.sh`, added parameter overrides for batch runs, and updated plotting to be path-agnostic with minimal dependencies. Ensured diffusion analysis uses the last 50% of production frames.
+
+**Files Modified**:
+- `example/16.MARTINI/run_sim_water.sh`: Added robust repo/venv discovery, env overrides, script-relative Python calls, and optional VTF skipping for scans.
+- `example/16.MARTINI/scan_water_diffusion.py`: Generates Slurm array scripts that call `run_sim_water.sh` and computes diffusion from the last half of production.
+- `example/16.MARTINI/plot_diffusion_results.py`: Added CLI options, removed SciPy dependency, and improved output naming.
+- `task_plan.md`: Updated execution phase status.
+
+**Testing**: Not run (requires Slurm environment and simulation outputs).
