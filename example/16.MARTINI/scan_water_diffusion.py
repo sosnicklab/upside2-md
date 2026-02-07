@@ -91,7 +91,7 @@ def calculate_msd(xyz):
 
 pdb_id = os.environ.get("PDB_ID", "water")
 checkpoint_dir = os.environ.get("CHECKPOINT_DIR", "checkpoints")
-traj_file = os.path.join(checkpoint_dir, f"{pdb_id}.npt_prod.up")
+traj_file = os.path.join(checkpoint_dir, f"{{pdb_id}}.npt_prod.up")
 
 if not os.path.exists(traj_file):
     print(f"ERROR: production file not found: {traj_file}")
