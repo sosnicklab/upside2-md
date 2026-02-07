@@ -94,7 +94,7 @@ checkpoint_dir = os.environ.get("CHECKPOINT_DIR", "checkpoints")
 traj_file = os.path.join(checkpoint_dir, f"{{pdb_id}}.npt_prod.up")
 
 if not os.path.exists(traj_file):
-    print(f"ERROR: production file not found: {traj_file}")
+    print(f"ERROR: production file not found: {{traj_file}}")
     sys.exit(1)
 
 try:
@@ -111,14 +111,14 @@ try:
         elif xyz_raw.ndim == 3:
             xyz = xyz_raw
         else:
-            raise ValueError(f"Unexpected coordinate shape: {xyz_raw.shape}")
+            raise ValueError(f"Unexpected coordinate shape: {{xyz_raw.shape}}")
 
         if hasattr(f.root.output, "time"):
             time = f.root.output.time.read()
         else:
             time = np.arange(xyz.shape[0])
 except Exception as exc:
-    print(f"CRITICAL ERROR loading trajectory: {exc}")
+    print(f"CRITICAL ERROR loading trajectory: {{exc}}")
     sys.exit(1)
 
 n_frames = xyz.shape[0]
@@ -147,19 +147,19 @@ D_nm2ps = slope / 6.0
 
 output_path = os.path.join(os.getcwd(), "diffusion_rate.txt")
 with open(output_path, "w", encoding="utf-8") as f:
-    f.write(f"Temperature: {float(os.environ.get('TEMPERATURE', 'nan')):.3f} reduced units\\n")
+    f.write(f"Temperature: {{float(os.environ.get('TEMPERATURE', 'nan')):.3f}} reduced units\\n")
     f.write(
-        f"ThermostatTimescale: {float(os.environ.get('THERMOSTAT_TIMESCALE', 'nan')):.3f} reduced units\\n"
+        f"ThermostatTimescale: {{float(os.environ.get('THERMOSTAT_TIMESCALE', 'nan')):.3f}} reduced units\\n"
     )
-    f.write(f"DiffusionRate: {D_nm2ps:.12e} nm^2/ps\\n")
-    f.write(f"MSDSlope: {slope:.12e} nm^2/ps\\n")
-    f.write(f"AnalysisStartFrame: {start_frame}\\n")
-    f.write(f"AnalysisFrames: {xyz.shape[0]}\\n")
+    f.write(f"DiffusionRate: {{D_nm2ps:.12e}} nm^2/ps\\n")
+    f.write(f"MSDSlope: {{slope:.12e}} nm^2/ps\\n")
+    f.write(f"AnalysisStartFrame: {{start_frame}}\\n")
+    f.write(f"AnalysisFrames: {{xyz.shape[0]}}\\n")
 
 print(
-    f"Completed T={float(os.environ.get('TEMPERATURE', 'nan')):.3f}, "
-    f"tau={float(os.environ.get('THERMOSTAT_TIMESCALE', 'nan')):.3f}: "
-    f"D={D_nm2ps:.12e} nm^2/ps (Used last {xyz.shape[0]} frames)"
+    f"Completed T={{float(os.environ.get('TEMPERATURE', 'nan')):.3f}}, "
+    f"tau={{float(os.environ.get('THERMOSTAT_TIMESCALE', 'nan')):.3f}}: "
+    f"D={{D_nm2ps:.12e}} nm^2/ps (Used last {{xyz.shape[0]}} frames)"
 )
 PY
 """
