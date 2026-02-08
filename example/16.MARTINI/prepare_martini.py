@@ -462,14 +462,19 @@ def parse_itp_file(itp_file, target_molecule=None):
 def read_martini_masses(ff_file):
     """Read atom type masses from MARTINI force field file"""
     masses = {}
-    if not os.path.exists(ff_file):
+    # Get script directory to ensure correct path resolution
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    ff_file_path = os.path.join(SCRIPT_DIR, ff_file)
+    
+    if not os.path.exists(ff_file_path):
         raise ValueError(f"FATAL ERROR: Force field file '{ff_file}' not found.\n"
+                        f"  Full path: {ff_file_path}\n"
                         f"  This file is required for atom type masses.\n"
                         f"  Please ensure the MARTINI force field file exists and is readable.\n"
                         f"  Aborting to prevent incorrect simulation results.")
     
     in_atomtypes = False
-    with open(ff_file, 'r') as f:
+    with open(ff_file_path, 'r') as f:
         for line in f:
             line = line.strip()
             if line.startswith('[ atomtypes ]'):
