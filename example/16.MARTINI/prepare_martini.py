@@ -572,7 +572,9 @@ def main(stage='minimization', run_dir=None):
     print("\n=== Reading MARTINI 3.0 Parameters ===")
     
     # Read nonbonded parameters
-    martini_param_file = "ff3.00/martini_v3.0.0.itp"
+    import os
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    martini_param_file = os.path.join(SCRIPT_DIR, "ff3.00/martini_v3.0.0.itp")
     martini_table = read_martini3_nonbond_params(martini_param_file)
     
     if not martini_table:
@@ -583,7 +585,7 @@ def main(stage='minimization', run_dir=None):
     
     # Determine system type and load appropriate topology
     # Check if this is a protein system by looking for protein ITP file
-    protein_itp = f"pdb/{pdb_id}_proa.itp"
+    protein_itp = os.path.join(SCRIPT_DIR, f"pdb/{pdb_id}_proa.itp")
     has_protein = os.path.exists(protein_itp)
     
     # Check if this is a mixed protein-lipid system by looking for both protein and lipid residues
@@ -599,7 +601,7 @@ def main(stage='minimization', run_dir=None):
     
     # For both protein and lipid systems, we need DOPC parameters
     # Parse DOPC topology from ITP file
-    dopc_param_file = "ff3.00/martini_v3.0.0_phospholipids_v1.itp"
+    dopc_param_file = os.path.join(SCRIPT_DIR, "ff3.00/martini_v3.0.0_phospholipids_v1.itp")
     # First check what molecules are available
     full_topology = parse_itp_file(dopc_param_file)
     print(f"Available molecules in {dopc_param_file}: {list(full_topology['molecules'].keys())}")
@@ -630,7 +632,7 @@ def main(stage='minimization', run_dir=None):
     print(f"DOPC atom name mapping: {dopc_atom_to_type}")
     
     # Parse ion topologies from ITP file
-    ion_param_file = "ff3.00/martini_v3.0.0_ions_v1.itp"
+    ion_param_file = os.path.join(SCRIPT_DIR, "ff3.00/martini_v3.0.0_ions_v1.itp")
     ion_topology = parse_itp_file(ion_param_file)
     # Extract NA and CL atoms specifically
     # In MARTINI ion ITP files, residue name is "ION" and atom name is "NA" or "CL"
@@ -645,7 +647,7 @@ def main(stage='minimization', run_dir=None):
     print(f"Read ion topology: NA={len(na_bead_types)} types, CL={len(cl_bead_types)} types from {ion_param_file}")
     
     # Parse water topology from ITP file
-    water_param_file = "ff3.00/martini_v3.0.0_solvents_v1.itp"
+    water_param_file = os.path.join(SCRIPT_DIR, "ff3.00/martini_v3.0.0_solvents_v1.itp")
     water_topology = parse_itp_file(water_param_file)
     water_atoms = [atom for atom in water_topology['atoms'] if atom['residue'].upper() == 'W']
     water_bead_types = [atom['type'] for atom in water_atoms]
@@ -721,7 +723,7 @@ def main(stage='minimization', run_dir=None):
     
     # Read PDB file
     if strict_from_martini_pdb or include_protein:
-        input_pdb_file = f'pdb/{pdb_id}.MARTINI.pdb'
+        input_pdb_file = os.path.join(SCRIPT_DIR, f'pdb/{pdb_id}.MARTINI.pdb')
         print(f"\nUsing MARTINI PDB as base structure: {input_pdb_file}")
     
     # Read PDB and populate arrays
