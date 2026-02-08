@@ -55,6 +55,7 @@ def build_run_script_content(
 
     return f"""#!/bin/bash
 set -e
+set -o pipefail
 
 RUN_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_ACTIVATE="{venv_activate}"

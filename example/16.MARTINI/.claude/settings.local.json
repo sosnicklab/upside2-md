@@ -23,7 +23,8 @@
       "mcp__plugin_serena_serena__switch_modes",
       "mcp__plugin_serena_serena__replace_content",
       "mcp__plugin_serena_serena__execute_shell_command",
-      "Bash(h5ls:*)"
+      "Bash(h5ls:*)",
+      "mcp__plugin_serena_serena__find_file"
     ]
   }
 }

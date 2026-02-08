@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e  # Exit on any error
+set -o pipefail  # Exit on pipeline failure
 
 # MARTINI 3.0 Water Simulation Workflow
 # Stages: Prepare -> Minimization -> NPT Equilibration -> NPT Production -> VTF Generation
