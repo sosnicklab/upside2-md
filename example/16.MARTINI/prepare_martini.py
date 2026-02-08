@@ -572,7 +572,6 @@ def main(stage='minimization', run_dir=None):
     print("\n=== Reading MARTINI 3.0 Parameters ===")
     
     # Read nonbonded parameters
-    import os
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
     martini_param_file = os.path.join(SCRIPT_DIR, "ff3.00/martini_v3.0.0.itp")
     martini_table = read_martini3_nonbond_params(martini_param_file)

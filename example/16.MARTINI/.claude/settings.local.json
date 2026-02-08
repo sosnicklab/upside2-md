@@ -14,7 +14,15 @@
       "mcp__serena__execute_shell_command",
       "mcp__serena__create_text_file",
       "mcp__plugin_serena_serena__check_onboarding_performed",
-      "mcp__plugin_serena_serena__activate_project"
+      "mcp__plugin_serena_serena__activate_project",
+      "mcp__plugin_serena_serena__onboarding",
+      "mcp__plugin_serena_serena__list_dir",
+      "mcp__plugin_serena_serena__read_file",
+      "mcp__plugin_serena_serena__write_memory",
+      "mcp__plugin_serena_serena__think_about_whether_you_are_done",
+      "mcp__plugin_serena_serena__switch_modes",
+      "mcp__plugin_serena_serena__replace_content",
+      "mcp__plugin_serena_serena__execute_shell_command"
     ]
   }
 }
