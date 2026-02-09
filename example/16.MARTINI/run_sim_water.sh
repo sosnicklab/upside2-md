@@ -4,7 +4,6 @@ set -o pipefail  # Exit on pipeline failure
 
 # Load necessary modules (for Slurm)
 if command -v module &> /dev/null; then
-    module load gcc/11
     module load cmake
     module load openmpi
 fi
