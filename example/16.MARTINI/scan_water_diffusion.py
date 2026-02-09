@@ -179,7 +179,6 @@ def write_slurm_script(slurm_path, tasks_file, num_tasks, time_limit, cpus, part
         f"#SBATCH --array=1-{num_tasks}\n"
         f"{partition_line}\n"
         "# Load necessary modules\n"
-        "module load gcc/11\n"
         "module load cmake\n"
         "module load openmpi\n"
         "\n"
