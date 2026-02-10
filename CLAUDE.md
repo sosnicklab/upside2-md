@@ -5,7 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Overview
 Upside is a molecular dynamics simulation package for protein folding and conformational dynamics. It combines a fast C++ core with Python scripts for configuration and analysis.
 
-## Common Commands
+## Development Rules
+* **Backward Compatibility**: Modifications to C++ source files must not break existing function calls or the Python-to-C++ interface.
+* **Function Signatures**: When adding parameters to an existing function, the additional parameters must be optional (i.e., provide default values).
+* **Master Branch Parity**: The `master` branch is the gold standard; all modifications must produce results identical to those of the `master` branch for existing simulation configurations.
+* **Memory Layout**: Do not reorder existing member variables in classes accessed by Python to avoid memory corruption.
+* **Deprecation**: Mark old functions as deprecated instead of removing them to support legacy scripts.
 
 ### Environment Setup
 Crucial: You must run these commands from the project root before running anything in this project:
