@@ -1299,6 +1299,22 @@ def main(stage='minimization', run_dir=None):
         else:
             print("PME disabled: using standard Coulomb cutoff")
 
+        # Ewald summation configuration via environment variables
+        # UPSIDE_EWALD_ENABLE: 1 to enable Ewald summation for long-range Coulomb
+        # UPSIDE_EWALD_ALPHA: Ewald screening parameter in 1/Angstrom (default: 0.2)
+        # UPSIDE_EWALD_KMAX: k-space cutoff (default: 5)
+        ewald_enabled = int(os.environ.get('UPSIDE_EWALD_ENABLE', '0'))
+        ewald_alpha = float(os.environ.get('UPSIDE_EWALD_ALPHA', '0.2'))
+        ewald_kmax = int(os.environ.get('UPSIDE_EWALD_KMAX', '5'))
+
+        martini_potential._v_attrs.ewald_enabled = ewald_enabled
+        if ewald_enabled:
+            martini_potential._v_attrs.ewald_alpha = ewald_alpha
+            martini_potential._v_attrs.ewald_kmax = ewald_kmax
+            print(f"Ewald summation enabled: alpha={ewald_alpha} A^-1, kmax={ewald_kmax}")
+        else:
+            print("Ewald summation disabled")
+
         martini_potential._v_attrs.debug_mode = 1  # Enable spline table generation
         martini_potential._v_attrs.force_debug_mode = 1  # Enable force debugging for charged particles
         

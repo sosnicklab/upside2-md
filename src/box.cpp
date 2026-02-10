@@ -16,6 +16,9 @@
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
+#include <mutex>
+#include <map>
+#include <vector>
 
 using namespace h5;
 
@@ -450,5 +453,228 @@ float get_volume(const DerivEngine& engine) {
 }
 
 } // namespace npt
+
+// ===================== EWALD SUMMATION =====================
+namespace ewald {
+
+static std::mutex g_ewald_mutex;
+static std::map<DerivEngine*, EwaldState> g_ewald_state;
+
+static inline bool attribute_exists_ewald(hid_t loc_id, const char* obj_name, const char* attr_name) {
+    hid_t obj_id = H5Oopen(loc_id, obj_name, H5P_DEFAULT);
+    if (obj_id < 0) return false;
+    htri_t exists = H5Aexists(obj_id, attr_name);
+    H5Oclose(obj_id);
+    return exists > 0;
+}
+
+// Build k-vectors and prefactors for current box dimensions
+static void build_kvectors(EwaldState& st) {
+    auto& s = st.settings;
+    float bx = st.box_x, by = st.box_y, bz = st.box_z;
+    if(bx <= 0.f || by <= 0.f || bz <= 0.f) return;
+
+    float V = bx * by * bz;
+    float alpha = s.alpha;
+    float four_alpha2 = 4.0f * alpha * alpha;
+    int kmax = s.kmax;
+
+    st.kx.clear(); st.ky.clear(); st.kz.clear();
+    st.k2.clear(); st.k_prefactor.clear();
+
+    float twopi_bx = 2.0f * M_PI / bx;
+    float twopi_by = 2.0f * M_PI / by;
+    float twopi_bz = 2.0f * M_PI / bz;
+
+    for(int nx = -kmax; nx <= kmax; ++nx) {
+        for(int ny = -kmax; ny <= kmax; ++ny) {
+            for(int nz = -kmax; nz <= kmax; ++nz) {
+                if(nx == 0 && ny == 0 && nz == 0) continue;
+                float gx = nx * twopi_bx;
+                float gy = ny * twopi_by;
+                float gz = nz * twopi_bz;
+                float g2 = gx*gx + gy*gy + gz*gz;
+
+                float prefactor = (4.0f * M_PI / V) * expf(-g2 / four_alpha2) / g2;
+
+                st.kx.push_back(gx);
+                st.ky.push_back(gy);
+                st.kz.push_back(gz);
+                st.k2.push_back(g2);
+                st.k_prefactor.push_back(prefactor);
+            }
+        }
+    }
+
+    // Self-energy correction: -alpha/sqrt(pi) * sum_i q_i^2
+    double q2_sum = 0.0;
+    for(int i = 0; i < st.n_atom; ++i) {
+        q2_sum += double(st.charges[i]) * double(st.charges[i]);
+    }
+    st.self_energy = -s.coulomb_k * float(alpha / sqrtf(M_PI) * q2_sum);
+}
+
+void initialize_ewald(hid_t config_root, DerivEngine& engine) {
+    EwaldSettings s;
+    try {
+        if(h5_exists(config_root, "/input/potential/martini_potential")) {
+            auto grp = open_group(config_root, "/input/potential/martini_potential");
+            if(attribute_exists_ewald(grp.get(), ".", "ewald_enabled"))
+                s.enabled = read_attribute<int>(grp.get(), ".", "ewald_enabled") != 0;
+            if(!s.enabled) return;
+            if(attribute_exists_ewald(grp.get(), ".", "ewald_alpha"))
+                s.alpha = read_attribute<float>(grp.get(), ".", "ewald_alpha");
+            if(attribute_exists_ewald(grp.get(), ".", "ewald_kmax"))
+                s.kmax = read_attribute<int>(grp.get(), ".", "ewald_kmax");
+        } else {
+            return;
+        }
+    } catch(...) {
+        return;
+    }
+
+    // Read box dimensions
+    float bx = 0.f, by = 0.f, bz = 0.f;
+    try {
+        if(h5_exists(config_root, "/input/potential/martini_potential")) {
+            auto grp = open_group(config_root, "/input/potential/martini_potential");
+            bx = read_attribute<float>(grp.get(), ".", "x_len");
+            by = read_attribute<float>(grp.get(), ".", "y_len");
+            bz = read_attribute<float>(grp.get(), ".", "z_len");
+        }
+    } catch(...) {
+        bx = by = bz = 0.f;
+    }
+
+    // Read per-atom charges
+    int n_atom = engine.pos->n_elem;
+    std::vector<float> charges(n_atom, 0.f);
+    try {
+        if(h5_exists(config_root, "/input/potential/martini_potential")) {
+            auto grp = open_group(config_root, "/input/potential/martini_potential");
+            traverse_dset<1,float>(grp.get(), "charges", [&](size_t i, float q) {
+                if((int)i < n_atom) charges[i] = q;
+            });
+        }
+    } catch(...) {}
+
+    std::lock_guard<std::mutex> lk(g_ewald_mutex);
+    auto& st = g_ewald_state[&engine];
+    st.settings = s;
+    st.box_x = bx; st.box_y = by; st.box_z = bz;
+    st.n_atom = n_atom;
+    st.charges = std::move(charges);
+
+    build_kvectors(st);
+
+    printf("[EWALD] Initialized: alpha=%.4f kmax=%d box=%.2f x %.2f x %.2f  n_kvec=%d  self_energy=%.6f\n",
+           s.alpha, s.kmax, bx, by, bz, (int)st.kx.size(), st.self_energy);
+}
+
+void update_kvectors(DerivEngine& engine) {
+    std::lock_guard<std::mutex> lk(g_ewald_mutex);
+    auto it = g_ewald_state.find(&engine);
+    if(it == g_ewald_state.end()) return;
+    auto& st = it->second;
+    if(!st.settings.enabled) return;
+
+    // Sync box from NPT barostat
+    float bx, by, bz;
+    npt::get_current_box(engine, bx, by, bz);
+    if(bx > 0.f && by > 0.f && bz > 0.f) {
+        st.box_x = bx; st.box_y = by; st.box_z = bz;
+        build_kvectors(st);
+    }
+}
+
+void compute_ewald_reciprocal(DerivEngine& engine) {
+    std::lock_guard<std::mutex> lk(g_ewald_mutex);
+    auto it = g_ewald_state.find(&engine);
+    if(it == g_ewald_state.end()) return;
+    auto& st = it->second;
+    if(!st.settings.enabled) return;
+    if(st.kx.empty()) return;
+
+    int n_atom = st.n_atom;
+    int n_kvec = (int)st.kx.size();
+    float coulomb_k = st.settings.coulomb_k;
+
+    VecArray pos = engine.pos->output;
+    VecArray sens = engine.pos->sens;
+
+    // For each k-vector, compute structure factor S(k) = sum_i q_i * exp(i k.r_i)
+    // Energy = coulomb_k * sum_k prefactor * |S(k)|^2  +  self_energy
+    double E_recip = 0.0;
+
+    // Temporary per-atom force accumulators
+    std::vector<double> fx(n_atom, 0.0), fy(n_atom, 0.0), fz(n_atom, 0.0);
+
+    for(int m = 0; m < n_kvec; ++m) {
+        float gx = st.kx[m], gy = st.ky[m], gz = st.kz[m];
+        float pref = st.k_prefactor[m];
+
+        // Compute structure factor components
+        double S_re = 0.0, S_im = 0.0;
+        for(int i = 0; i < n_atom; ++i) {
+            float qi = st.charges[i];
+            if(qi == 0.f) continue;
+            float kr = gx * pos(0,i) + gy * pos(1,i) + gz * pos(2,i);
+            S_re += qi * cosf(kr);
+            S_im += qi * sinf(kr);
+        }
+
+        double S2 = S_re * S_re + S_im * S_im;
+        E_recip += pref * S2;
+
+        // Force on atom i: F_i = -dE/dr_i
+        // dE/dk = 2 * pref * (S_re * d(S_re)/dr_i + S_im * d(S_im)/dr_i)
+        // d(S_re)/dr_i = -q_i * sin(k.r_i) * k
+        // d(S_im)/dr_i =  q_i * cos(k.r_i) * k
+        // => dE/dr_i = 2 * pref * q_i * (S_im * cos(k.r_i) - S_re * sin(k.r_i)) * k
+        // Force = -dE/dr_i
+        for(int i = 0; i < n_atom; ++i) {
+            float qi = st.charges[i];
+            if(qi == 0.f) continue;
+            float kr = gx * pos(0,i) + gy * pos(1,i) + gz * pos(2,i);
+            float cos_kr = cosf(kr);
+            float sin_kr = sinf(kr);
+            // gradient component = 2 * pref * qi * (S_im*cos - S_re*sin)
+            double grad_scalar = 2.0 * pref * qi * (S_im * cos_kr - S_re * sin_kr);
+            // This is dE/d(component), force = -gradient
+            // But sens stores gradient (not force), so we ADD grad_scalar * k
+            fx[i] += grad_scalar * gx;
+            fy[i] += grad_scalar * gy;
+            fz[i] += grad_scalar * gz;
+        }
+    }
+
+    // Scale by coulomb_k and add to sens (gradient accumulator)
+    // sens stores -force = gradient of potential
+    for(int i = 0; i < n_atom; ++i) {
+        sens(0, i) += float(coulomb_k * fx[i]);
+        sens(1, i) += float(coulomb_k * fy[i]);
+        sens(2, i) += float(coulomb_k * fz[i]);
+    }
+
+    st.reciprocal_energy = float(coulomb_k * E_recip) + st.self_energy;
+
+    // Add reciprocal energy to engine potential
+    engine.potential += st.reciprocal_energy;
+}
+
+bool is_enabled(const DerivEngine& engine) {
+    std::lock_guard<std::mutex> lk(g_ewald_mutex);
+    auto it = g_ewald_state.find(const_cast<DerivEngine*>(&engine));
+    return it != g_ewald_state.end() && it->second.settings.enabled;
+}
+
+float get_reciprocal_energy(const DerivEngine& engine) {
+    std::lock_guard<std::mutex> lk(g_ewald_mutex);
+    auto it = g_ewald_state.find(const_cast<DerivEngine*>(&engine));
+    if(it != g_ewald_state.end()) return it->second.reciprocal_energy;
+    return 0.f;
+}
+
+} // namespace ewald
 
 } // namespace simulation_box

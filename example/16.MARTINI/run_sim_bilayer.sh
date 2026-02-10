@@ -100,6 +100,9 @@ source ../../.venv/bin/activate
 # Prepare with NPT enabled (so barostat configuration is stored in input file)
 export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
 export UPSIDE_NPT_ENABLE=${UPSIDE_NPT_ENABLE:-1}
+export UPSIDE_EWALD_ENABLE=${UPSIDE_EWALD_ENABLE:-0}
+export UPSIDE_EWALD_ALPHA=${UPSIDE_EWALD_ALPHA:-0.2}
+export UPSIDE_EWALD_KMAX=${UPSIDE_EWALD_KMAX:-5}
 export UPSIDE_SIMULATION_STAGE="minimization"
 python3 prepare_martini.py "$PDB_ID" --stage "minimization" "$RUN_DIR"
 

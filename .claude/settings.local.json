@@ -57,7 +57,9 @@
       "Bash(done)",
       "Bash(./run_sim_bilayer_new.sh:*)",
       "Bash(pkill:*)",
-      "Bash(./run_sim_water.sh:*)"
+      "Bash(./run_sim_water.sh:*)",
+      "mcp__plugin_serena_serena__get_symbols_overview",
+      "mcp__plugin_serena_serena__list_memories"
     ],
     "deny": [],
     "ask": []

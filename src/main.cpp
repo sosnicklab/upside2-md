@@ -37,7 +37,16 @@ namespace simulation_box {
                                   int verbose,
                                   bool print_now);
         void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz);
+        void get_pressure(const DerivEngine& engine, float& pxy, float& pz);
+        float get_volume(const DerivEngine& engine);
         bool is_enabled(const DerivEngine& engine);
+    }
+    namespace ewald {
+        void initialize_ewald(hid_t config_root, DerivEngine& engine);
+        void update_kvectors(DerivEngine& engine);
+        void compute_ewald_reciprocal(DerivEngine& engine);
+        bool is_enabled(const DerivEngine& engine);
+        float get_reciprocal_energy(const DerivEngine& engine);
     }
 }
 
@@ -777,6 +786,8 @@ try {
             sys->engine = initialize_engine_from_hdf5(sys->n_atom, potential_group.get());
             // Register NPT barostat for this engine (reads settings from H5)
             simulation_box::npt::register_barostat_for_engine(sys->config.get(), sys->engine);
+            // Initialize Ewald summation for this engine (reads settings from H5)
+            simulation_box::ewald::initialize_ewald(sys->config.get(), sys->engine);
             // Load masses for MARTINI integrators (read from H5)
             martini_masses::load_masses_for_engine(&sys->engine, sys->config.get());
             // Register fix rigid settings for this engine (read from H5)
@@ -955,6 +966,13 @@ try {
                     buffer[0] = vol;
                 });
             }
+
+            // Add Ewald reciprocal energy logger if enabled
+            if(simulation_box::ewald::is_enabled(systems[ns].engine)) {
+                systems[ns].logger->add_logger<float>("ewald_reciprocal_energy", {1}, [ns, &systems](float* buffer) {
+                    buffer[0] = simulation_box::ewald::get_reciprocal_energy(systems[ns].engine);
+                });
+            }
         }
         if(verbose) printf("\n");
 
@@ -1125,6 +1143,15 @@ try {
                         simulation_box::npt::maybe_apply_barostat(sys.engine, sys.mom, sys.n_atom,
                                                                    nr, dt, inner_step,
                                                                    verbose, print_baro);
+                        // Update Ewald k-vectors if box changed (NPT)
+                        if(simulation_box::npt::is_enabled(sys.engine) && simulation_box::ewald::is_enabled(sys.engine)) {
+                            simulation_box::ewald::update_kvectors(sys.engine);
+                        }
+                    }
+
+                    // Compute Ewald reciprocal-space contribution if enabled
+                    if(simulation_box::ewald::is_enabled(sys.engine)) {
+                        simulation_box::ewald::compute_ewald_reciprocal(sys.engine);
                     }
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))

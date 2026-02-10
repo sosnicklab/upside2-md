@@ -107,4 +107,44 @@ float get_volume(const DerivEngine& engine);
 
 } // namespace npt
 
+// ===================== EWALD SUMMATION =====================
+namespace ewald {
+
+struct EwaldSettings {
+    bool  enabled = false;
+    float alpha = 0.2f;          // Ewald screening parameter (1/Angstrom)
+    int   kmax = 5;              // k-space cutoff (number of k-vectors per dimension)
+    float coulomb_k = 31.775347952181f; // Coulomb constant (includes epsilon_r=15)
+};
+
+struct EwaldState {
+    EwaldSettings settings;
+    float box_x = 0.f, box_y = 0.f, box_z = 0.f;
+    int n_atom = 0;
+    std::vector<float> charges;       // per-atom charges
+    // Pre-computed k-vectors and their |k|^2
+    std::vector<float> kx, ky, kz;    // k-vector components
+    std::vector<float> k2;            // |k|^2
+    std::vector<float> k_prefactor;   // (4*pi/V) * exp(-k2/(4*alpha^2)) / k2
+    float self_energy = 0.f;          // Ewald self-energy correction (constant)
+    float reciprocal_energy = 0.f;    // last computed reciprocal energy
+};
+
+// Initialize Ewald state for an engine (reads charges + settings from H5)
+void initialize_ewald(hid_t config_root, DerivEngine& engine);
+
+// Recompute k-vector prefactors after box change (NPT)
+void update_kvectors(DerivEngine& engine);
+
+// Compute reciprocal-space energy and forces; adds to pos.sens
+void compute_ewald_reciprocal(DerivEngine& engine);
+
+// Query whether Ewald is enabled for this engine
+bool is_enabled(const DerivEngine& engine);
+
+// Get last computed reciprocal-space energy
+float get_reciprocal_energy(const DerivEngine& engine);
+
+} // namespace ewald
+
 } // namespace simulation_box

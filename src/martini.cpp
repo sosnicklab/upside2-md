@@ -505,6 +505,8 @@ struct MartiniPotential : public PotentialNode
     bool force_cap;
     bool coulomb_soften;
     float slater_alpha;
+    bool ewald_enabled;
+    float ewald_alpha;
     bool lj_soften;
     float lj_soften_alpha;
     bool overwrite_spline_tables;
@@ -571,6 +573,21 @@ struct MartiniPotential : public PotentialNode
             }
         }
         
+        // Ewald splitting parameters
+        ewald_enabled = false;
+        ewald_alpha = 0.0f;
+        if(attribute_exists(grp, ".", "ewald_enabled")) {
+            ewald_enabled = read_attribute<int>(grp, ".", "ewald_enabled") != 0;
+        }
+        if(ewald_enabled) {
+            if(attribute_exists(grp, ".", "ewald_alpha")) {
+                ewald_alpha = read_attribute<float>(grp, ".", "ewald_alpha");
+            } else {
+                ewald_alpha = 0.3f;  // default in inverse Angstroms
+            }
+            std::cout << "MARTINI: Ewald splitting enabled, alpha=" << ewald_alpha << " A^-1" << std::endl;
+        }
+
         // LJ softening parameters (soft-core LJ)
         lj_soften = false;
         if(attribute_exists(grp, ".", "lj_soften")) {
@@ -835,6 +852,11 @@ struct MartiniPotential : public PotentialNode
                 float coulomb_k = 31.775347952181f;
                 float potential = coulomb_k * qq / r;
 
+                // Apply Ewald erfc screening if enabled
+                if(ewald_enabled) {
+                    potential *= erfcf(ewald_alpha * r);
+                }
+
                 // Apply softening if enabled
                 if(coulomb_soften) {
                     // Slater softening: V(r) = k*qq/r * (1 - (1 + αr/2) * exp(-αr))
@@ -908,7 +930,7 @@ struct MartiniPotential : public PotentialNode
                 float qq = coulomb_pair.first;
                 const auto& spline = coulomb_pair.second;
 
-                out << "# Coulomb Spline\n# q1q2=" << qq << ", k=31.775347952181, r_min=" << coul_r_min << ", r_max=" << coul_r_max << ", softened=" << (coulomb_soften?1:0) << ", slater_alpha=" << slater_alpha << "\n";
+                out << "# Coulomb Spline\n# q1q2=" << qq << ", k=31.775347952181, r_min=" << coul_r_min << ", r_max=" << coul_r_max << ", softened=" << (coulomb_soften?1:0) << ", slater_alpha=" << slater_alpha << ", ewald=" << (ewald_enabled?1:0) << ", ewald_alpha=" << ewald_alpha << "\n";
                 out << "# r potential\n";
 
                 int n_pts = 10;
