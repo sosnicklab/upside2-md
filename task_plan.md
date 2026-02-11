@@ -1,18 +1,19 @@
-# Task: Debug NPT + Ewald explosion in MARTINI bilayer example
+# Task: Debug 1UBQ MARTINI workflow failure
 
 ## 1. Objective
-Identify and fix the source of pressure/particle blow-up in `example/16.MARTINI/run_sim_bilayer.sh` between commits `9829d3a70f0e6cee8e7f63a454179b4de87718e4` and `b819b310fcf400e9a815439bfe2b02d0d88cec93`, using correct physical unit conversions (no parameter fudging).
+Run `example/16.MARTINI/run_sim_1ubq.sh` and fix the NPT equilibration instability (NaN potential after ~20 steps).
 
 ## 2. Architecture & Key Decisions
-* **Scope of change**: Keep Ewald implementation and NPT logic intact; only adjust code where it is incorrect or mismatched to physical units.
-* **Debug focus**: Compare behavior across the two commits, inspect Ewald real/reciprocal/self terms, pressure tensor contributions, and unit conversions.
-* **Evidence-driven**: Use logs, diffs, and derived unit checks to pinpoint the regression instead of tuning parameters.
+* **Scope**: Fix workflow stability for 1UBQ without changing core simulation architecture.
+* **Source of truth**: Use existing MARTINI protein topology/mapping files already in the repo.
+* **Minimal change**: Prefer physically justified parameter updates over ad hoc tweaks.
+* **Gromacs alignment**: Mirror CHARMM-GUI Gromacs minimization controls and NPT barostat settings (tau_p, compressibility, isotropic) using Upside unit conversions.
 
 ## 3. Execution Phases
-- [x] Phase 1: Collect evidence (diffs, logs, relevant config inputs).
-- [x] Phase 2: Trace unit conversions and pressure/force contributions for NPT+Ewald.
-- [x] Phase 3: Implement minimal fix with unit-consistent logic.
-- [x] Phase 4: Validate with the bilayer workflow and document results.
+- [x] Phase 1: Inspect 1UBQ topology/mapping inputs and parser expectations.
+- [x] Phase 2: Implement minimal mapping/topology fix for missing atoms.
+- [ ] Phase 3: Re-run the workflow to confirm NPT equilibration is stable.
 
 ## 4. Known Errors / Blockers
-- None yet.
+- NPT equilibration produces NaN potential around step 20; barostat scales box upward with NaN pressure.
+- Current run with Gromacs-aligned minimization/barostat is in progress; no NaNs observed through 100 steps of NPT equilibration.
