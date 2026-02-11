@@ -26,6 +26,14 @@ namespace martini_fix_rigid {
 static std::mutex g_fix_rigid_mutex;
 static std::map<DerivEngine*, std::vector<int>> g_fixed_atoms;
 
+static void merge_fixed_atoms(DerivEngine& engine, const std::vector<int>& extra_atoms) {
+    if(extra_atoms.empty()) return;
+    auto& fixed_atoms = g_fixed_atoms[&engine];
+    fixed_atoms.insert(fixed_atoms.end(), extra_atoms.begin(), extra_atoms.end());
+    std::sort(fixed_atoms.begin(), fixed_atoms.end());
+    fixed_atoms.erase(std::unique(fixed_atoms.begin(), fixed_atoms.end()), fixed_atoms.end());
+}
+
 // Read fix rigid settings from H5 configuration
 std::vector<int> read_fix_rigid_settings(hid_t root) {
     std::vector<int> fixed_atoms;
@@ -48,13 +56,40 @@ std::vector<int> read_fix_rigid_settings(hid_t root) {
     return fixed_atoms;
 }
 
+std::vector<int> read_martini_backbone_hold(hid_t root, const std::string& atom_role_name) {
+    std::vector<int> fixed_atoms;
+    try {
+        if(atom_role_name.empty()) return fixed_atoms;
+        if(!h5_exists(root, "/input/atom_roles")) {
+            return fixed_atoms;
+        }
+        traverse_string_dset<1>(root, "/input/atom_roles", [&](size_t i, const std::string& name) {
+            if(name == atom_role_name) {
+                fixed_atoms.push_back(static_cast<int>(i));
+            }
+        });
+    } catch(...) {
+        return std::vector<int>();
+    }
+    return fixed_atoms;
+}
+
 // Register fix rigid constraints for an engine
 void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
     auto fixed_atoms = read_fix_rigid_settings(config_root);
-    if(!fixed_atoms.empty()) {
-        g_fixed_atoms[&engine] = fixed_atoms;
+    merge_fixed_atoms(engine, fixed_atoms);
+}
+
+void register_fix_rigid_backbone_for_engine(hid_t config_root, DerivEngine& engine, const std::string& atom_name) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    if(h5_exists(config_root, "/input/potential/martini_potential")) {
+        if(!h5_exists(config_root, "/input/atom_roles")) {
+            throw string("MARTINI backbone hold requires /input/atom_roles");
+        }
     }
+    auto fixed_atoms = read_martini_backbone_hold(config_root, atom_name);
+    merge_fixed_atoms(engine, fixed_atoms);
 }
 
 // Apply fix rigid constraints during minimization
@@ -544,6 +579,7 @@ struct MartiniPotential : public PotentialNode
     {
         check_size(grp, "atom_indices", n_atom);
         check_size(grp, "charges", n_atom);
+        check_size(grp, "/input/type", n_atom);
         
         epsilon     = read_attribute<float>(grp, ".", "epsilon");
         sigma       = read_attribute<float>(grp, ".", "sigma");  
@@ -2151,6 +2187,3 @@ void clear_stage_params_for_engine(DerivEngine* engine) {
 }
 
 } // namespace martini_stage_params
-
-
-

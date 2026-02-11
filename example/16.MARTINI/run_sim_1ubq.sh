@@ -147,6 +147,7 @@ CMD_MIN=(
     "--seed" "$SEED"          # Required by executable
     "--integrator" "vel_verlet"    # Required by executable
     "--disable-recentering"
+    "--martini-hold-backbone"
     "--minimize"
     "--min-max-iter" "$MIN_MAX_ITER"
     "--min-energy-tol" "1e-6"
@@ -202,6 +203,7 @@ CMD_NPT_EQUIL=(
     "--seed" "$SEED"
     "--integrator" "vel_verlet"
     "--disable-recentering"
+    "--martini-hold-backbone"
 )
 
 START_TIME=$(date +%s)
@@ -252,6 +254,7 @@ CMD_NPT_EQUIL_REDUCED=(
     "--seed" "$SEED"
     "--integrator" "vel_verlet"
     "--disable-recentering"
+    "--martini-hold-backbone"
 )
 
 START_TIME=$(date +%s)

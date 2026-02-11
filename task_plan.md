@@ -1,19 +1,17 @@
-# Task: Debug 1UBQ MARTINI workflow failure
+# Task: Add MARTINI backbone rigid hold
 
-## 1. Objective
-Run `example/16.MARTINI/run_sim_1ubq.sh` and fix the NPT equilibration instability (NaN potential after ~20 steps).
+## 1. Project Goal
+Implement a rigid hold for a group of particles (MARTINI protein backbone beads) in `src/martini.cpp`, expose a calling interface in `src/main.cpp`, and apply the rigid hold in `example/16.MARTINI/run_sim_1ubq.sh` before production (including minimization and soft-particle stages).
 
 ## 2. Architecture & Key Decisions
-* **Scope**: Fix workflow stability for 1UBQ without changing core simulation architecture.
-* **Source of truth**: Use existing MARTINI protein topology/mapping files already in the repo.
-* **Minimal change**: Prefer physically justified parameter updates over ad hoc tweaks.
-* **Gromacs alignment**: Mirror CHARMM-GUI Gromacs minimization controls and NPT barostat settings (tau_p, compressibility, isotropic) using Upside unit conversions.
+* **Scope**: Add a MARTINI-specific rigid-hold feature without changing existing simulation architecture.
+* **Interface**: Expose a minimal CLI/config entry point in `src/main.cpp` to activate the MARTINI backbone rigid hold, using explicit BB indices from input when available.
+* **Workflow**: Enable the hold in the example script prior to production, covering minimization and soft-particle stages.
 
 ## 3. Execution Phases
-- [x] Phase 1: Inspect 1UBQ topology/mapping inputs and parser expectations.
-- [x] Phase 2: Implement minimal mapping/topology fix for missing atoms.
-- [ ] Phase 3: Re-run the workflow to confirm NPT equilibration is stable.
+- [x] Phase 1: Inspect current MARTINI handling in `src/martini.cpp` and CLI/config wiring in `src/main.cpp`.
+- [x] Phase 2: Implement backbone rigid hold and plumb the interface.
+- [x] Phase 3: Update `example/16.MARTINI/run_sim_1ubq.sh` to enable the hold for minimization and soft-particle runs.
 
 ## 4. Known Errors / Blockers
-- NPT equilibration produces NaN potential around step 20; barostat scales box upward with NaN pressure.
-- Current run with Gromacs-aligned minimization/barostat is in progress; no NaNs observed through 100 steps of NPT equilibration.
+- None yet.

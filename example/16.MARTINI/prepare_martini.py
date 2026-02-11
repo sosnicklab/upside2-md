@@ -738,6 +738,8 @@ def main(stage='minimization', run_dir=None):
     residue_ids = []
     atom_names = []
     residue_names = []
+    chain_ids = []
+    seg_ids = []
     
     # Load protein topology mapping and connectivity if available
     protein_itp = f"pdb/{pdb_id}_proa.itp"
@@ -768,6 +770,10 @@ def main(stage='minimization', run_dir=None):
             residue_ids.append(residue_id)
             residue_name = line[17:20].strip().upper()
             residue_names.append(residue_name)
+            chain_id = line[21:22].strip()
+            chain_ids.append(chain_id)
+            seg_id = line[72:76].strip()
+            seg_ids.append(seg_id)
             
             
             
@@ -840,6 +846,8 @@ def main(stage='minimization', run_dir=None):
     residue_ids = np.array(residue_ids, dtype=int)
     atom_names = np.array(atom_names)
     residue_names = np.array(residue_names)
+    chain_ids = np.array(chain_ids)
+    seg_ids = np.array(seg_ids)
     n_atoms = len(initial_positions)
     
     # Read box dimensions from CRYST1 record
@@ -866,18 +874,24 @@ def main(stage='minimization', run_dir=None):
     print(f"Box volume: {x_len * y_len * z_len:.1f} Å³")
     print(f"Total atoms: {n_atoms}")
     
-    # Group atoms into molecules by residue ID and residue name
+    # Group atoms into molecules by chain (for proteins) or residue ID (for other molecules)
     molecules = []
     current_mol_atoms = []
     current_mol_names = []
     current_mol_indices = []
     current_resid = None
     current_resname = None
+    current_chain = None
     
     # Define protein residue names
     protein_residues = {'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE', 
                        'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL'}
     
+    def pick_chain_id(idx):
+        if seg_ids[idx]:
+            return seg_ids[idx]
+        return chain_ids[idx]
+
     for i, (resid, resname, atom_name) in enumerate(zip(residue_ids, residue_names, atom_names)):
         # Determine molecule type
         if resname in protein_residues:
@@ -886,8 +900,17 @@ def main(stage='minimization', run_dir=None):
             # Normalize DOP (resname in PDB) to DOPC for reporting and selection
             mol_type = 'DOPC' if resname == 'DOP' else resname
             
-        # Start new molecule if residue ID OR residue name changes
-        if resid != current_resid or resname != current_resname:
+        # Start new molecule if protein chain changes or residue ID/name changes for non-proteins
+        chain_id = pick_chain_id(i) if mol_type == 'PROTEIN' else ""
+        start_new = False
+        if mol_type == 'PROTEIN':
+            if chain_id != current_chain:
+                start_new = True
+        else:
+            if resid != current_resid or resname != current_resname:
+                start_new = True
+
+        if start_new:
             if current_mol_atoms:
                 molecules.append((current_mol_type, current_mol_atoms, current_mol_indices))
             current_mol_atoms = [atom_name]
@@ -896,38 +919,55 @@ def main(stage='minimization', run_dir=None):
             current_resid = resid
             current_resname = resname
             current_mol_type = mol_type
+            current_chain = chain_id
         else:
             current_mol_atoms.append(atom_name)
             current_mol_indices.append(i)
     
     if current_mol_atoms:
         molecules.append((current_mol_type, current_mol_atoms, current_mol_indices))
-    
-    # Validate that each molecule contains only atoms of the same residue type
+
+    # Build per-atom molecule indices
+    molecule_ids = np.zeros(n_atoms, dtype=np.int32)
+    for mol_idx, (_, _, atom_indices) in enumerate(molecules):
+        for atom_idx in atom_indices:
+            molecule_ids[atom_idx] = mol_idx
+
+    # Validate that each non-protein molecule contains only atoms of the same residue type
     print(f"\n=== Validating Molecule Integrity ===")
     for i, (mol_type, atoms, indices) in enumerate(molecules):
         residue_names_in_mol = [residue_names[idx] for idx in indices]
         unique_resnames = set(residue_names_in_mol)
-        if len(unique_resnames) > 1:
-            raise ValueError(f"FATAL ERROR: Molecule {i} contains mixed residue types: {unique_resnames}\n"
-                           f"  This indicates incorrect molecule grouping.\n"
-                           f"  Molecule atoms: {atoms}\n"
-                           f"  Residue names: {residue_names_in_mol}\n"
-                           f"  Aborting to prevent incorrect simulation results.")
-        print(f"Molecule {i} ({mol_type}): {len(atoms)} atoms, residue type: {list(unique_resnames)[0]} ✓")
+        if mol_type != 'PROTEIN':
+            if len(unique_resnames) > 1:
+                raise ValueError(f"FATAL ERROR: Molecule {i} contains mixed residue types: {unique_resnames}\n"
+                               f"  This indicates incorrect molecule grouping.\n"
+                               f"  Molecule atoms: {atoms}\n"
+                               f"  Residue names: {residue_names_in_mol}\n"
+                               f"  Aborting to prevent incorrect simulation results.")
+            print(f"Molecule {i} ({mol_type}): {len(atoms)} atoms, residue type: {list(unique_resnames)[0]} ✓")
+        else:
+            print(f"Molecule {i} ({mol_type}): {len(atoms)} atoms, residue type: mixed (protein chain) ✓")
     
     # Count molecules by type, but group all protein residues together
     mol_counts = Counter()
     protein_residue_count = 0
     
+    protein_residue_keys = set()
+    for resid, resname, idx in zip(residue_ids, residue_names, range(n_atoms)):
+        if resname in protein_residues:
+            protein_residue_keys.add((pick_chain_id(idx), resid))
+
     for mol_type, _, _ in molecules:
         if mol_type == 'PROTEIN':
-            protein_residue_count += 1
+            mol_counts[mol_type] += 1
         else:
             mol_counts[mol_type] += 1
     
+    protein_residue_count = len(protein_residue_keys)
     if protein_residue_count > 0:
-        mol_counts['PROTEIN'] = f"1 chain ({protein_residue_count} residues)"
+        protein_chains = mol_counts.get('PROTEIN', 0)
+        mol_counts['PROTEIN'] = f"{protein_chains} chain(s) ({protein_residue_count} residues)"
     
     dopc_count = mol_counts.get('DOPC', 0)
     water_count = mol_counts.get('W', 0)
@@ -1199,6 +1239,27 @@ def main(stage='minimization', run_dir=None):
         type_array._v_attrs.shape = atom_types.shape
         type_array._v_attrs.n_atoms = n_atoms
         type_array._v_attrs.initialized = True
+        type_array._v_attrs.description = b"Interaction matrix type names (e.g., C1, C2, Qa, Qd)"
+
+        # Store particle class per atom (protein/lipid/water/ion/other)
+        particle_class = np.empty(n_atoms, dtype='S10')
+        for i, resname in enumerate(residue_names):
+            if resname in protein_residues:
+                particle_class[i] = b"PROTEIN"
+            elif resname == 'DOP':
+                particle_class[i] = b"LIPID"
+            elif resname == 'W':
+                particle_class[i] = b"WATER"
+            elif resname in ('NA', 'CL'):
+                particle_class[i] = b"ION"
+            else:
+                particle_class[i] = b"OTHER"
+        particle_class_array = t.create_array(input_grp, 'particle_class', obj=particle_class)
+        particle_class_array._v_attrs.arguments = np.array([b'particle_class'])
+        particle_class_array._v_attrs.shape = particle_class.shape
+        particle_class_array._v_attrs.n_atoms = n_atoms
+        particle_class_array._v_attrs.initialized = True
+        particle_class_array._v_attrs.description = b"Per-atom class: PROTEIN, LIPID, WATER, ION, OTHER"
         
         # Create charges array
         charge_array = t.create_array(input_grp, 'charges', obj=charges)
@@ -1213,6 +1274,31 @@ def main(stage='minimization', run_dir=None):
         residue_array._v_attrs.shape = residue_ids.shape
         residue_array._v_attrs.n_atoms = n_atoms
         residue_array._v_attrs.initialized = True
+        residue_array._v_attrs.description = b"PDB residue indices per atom"
+
+        # Create molecule IDs array (per-atom molecule index)
+        molecule_array = t.create_array(input_grp, 'molecule_ids', obj=molecule_ids)
+        molecule_array._v_attrs.arguments = np.array([b'molecule_ids'])
+        molecule_array._v_attrs.shape = molecule_ids.shape
+        molecule_array._v_attrs.n_atoms = n_atoms
+        molecule_array._v_attrs.initialized = True
+        molecule_array._v_attrs.description = b"Per-atom molecule index (0-based, contiguous)"
+
+        # Store atom names for MARTINI-specific selections (e.g., BB backbone)
+        atom_name_array = t.create_array(input_grp, 'atom_names', obj=atom_names.astype('S4'))
+        atom_name_array._v_attrs.arguments = np.array([b'atom_names'])
+        atom_name_array._v_attrs.shape = atom_names.shape
+        atom_name_array._v_attrs.n_atoms = n_atoms
+        atom_name_array._v_attrs.initialized = True
+
+        # Store atom role names from PDB (BB, SC1, SC2, W, etc.)
+        atom_roles = atom_names.astype('S4')
+        atom_role_array = t.create_array(input_grp, 'atom_roles', obj=atom_roles)
+        atom_role_array._v_attrs.arguments = np.array([b'atom_roles'])
+        atom_role_array._v_attrs.shape = atom_roles.shape
+        atom_role_array._v_attrs.n_atoms = n_atoms
+        atom_role_array._v_attrs.initialized = True
+        atom_role_array._v_attrs.description = b"PDB atom role names (BB, SC1, SC2, W, etc.)"
         
         # Create potential group (required by UPSIDE)
         potential_grp = t.create_group(input_grp, 'potential')
