@@ -167,8 +167,8 @@ static void apply_berendsen_barostat(BarostatState& st,
     scale_z = 1.0f;
 
     if(s.semi_isotropic) {
-        float factor_xy = 1.f - beta * (delta_t / s.tau_p) * (pxy_inst - s.target_p_xy);
-        float factor_z = 1.f - beta * (delta_t / s.tau_p) * (pz_inst - s.target_p_z);
+        float factor_xy = 1.f + beta * (delta_t / s.tau_p) * (pxy_inst - s.target_p_xy);
+        float factor_z = 1.f + beta * (delta_t / s.tau_p) * (pz_inst - s.target_p_z);
 
         // Clamp scale factors
         factor_xy = std::max(0.98f, std::min(1.02f, factor_xy));
@@ -186,7 +186,7 @@ static void apply_berendsen_barostat(BarostatState& st,
     } else {
         float p_inst = (2.f * pxy_inst + pz_inst) / 3.f;
         float target_p = (2.f * s.target_p_xy + s.target_p_z) / 3.f;
-        float factor = 1.f - beta * (delta_t / s.tau_p) * (p_inst - target_p);
+        float factor = 1.f + beta * (delta_t / s.tau_p) * (p_inst - target_p);
         factor = std::max(0.98f, std::min(1.02f, factor));
         float sc = powf(factor, 1.f / 3.f);
         sc = std::max(0.995f, std::min(1.005f, sc));
