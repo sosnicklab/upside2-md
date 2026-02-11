@@ -140,57 +140,52 @@ def get_d_obj_torch():
     hyd_expect = torch.tensor(hyd_expect_np, dtype=torch.float64)
 
     def compute_grad(packed_param_np, rot_coupling, cov_coupling, hyd_coupling, reg_scale):
-        # 1. Unpack safely using rp (Fixes the shape mismatch error)
-        rotp_np, covp_np, hydp_np, hydplp_np, rotposp_np, rotscalarp_np = rp.unpack_params(packed_param_np)
-        
-        # 2. Convert optimized params to tensors
-        rot_expr = torch.tensor(rotp_np, dtype=torch.float64, requires_grad=True)
-        cov_expr = torch.tensor(covp_np, dtype=torch.float64, requires_grad=True)
-        hyd_expr = torch.tensor(hydp_np, dtype=torch.float64, requires_grad=True)
-        
-        # 3. Convert couplings to tensors
+        lparam = torch.tensor(packed_param_np, dtype=torch.float64, requires_grad=True)
+
+        rot_expr, cov_expr, hyd_expr, hydpl_expr, rotpos_expr, rotscalar_expr = rp.unpack_params(lparam)
+
         rot_c = torch.tensor(rot_coupling, dtype=torch.float64)
         cov_c = torch.tensor(cov_coupling, dtype=torch.float64)
         hyd_c = torch.tensor(hyd_coupling, dtype=torch.float64)
 
-        loss_parts = []
-        
-        # Helper: Only multiply if shapes match
-        def add_term(param_t, grad_t):
-            if param_t.shape == grad_t.shape:
-                return (param_t * grad_t).sum()
-            return torch.tensor(0.0, dtype=torch.float64)
+        if rot_expr.shape != rot_c.shape:
+            raise ValueError(f"rot shape mismatch: {rot_expr.shape} vs {rot_c.shape}")
+        if cov_expr.shape != cov_c.shape:
+            raise ValueError(f"cov shape mismatch: {cov_expr.shape} vs {cov_c.shape}")
+        if hyd_expr.shape != hyd_c.shape:
+            raise ValueError(f"hyd shape mismatch: {hyd_expr.shape} vs {hyd_c.shape}")
 
-        # 4. Objective Terms (Safe addition)
-        loss_parts.append(add_term(rot_expr, rot_c))
-        loss_parts.append(add_term(cov_expr, cov_c))
-        loss_parts.append(add_term(hyd_expr, hyd_c))
+        hb_n_knot = (rp.n_knot_angular, rp.n_knot_angular, rp.n_knot_hb, rp.n_knot_hb)
+        sc_n_knot = (rp.n_knot_angular, rp.n_knot_angular, rp.n_knot_sc, rp.n_knot_sc)
 
-        # ... [Keep your existing Regularization logic here] ...
-        # (Copy the regularization block from your original script, but use 
-        #  rot_expr/cov_expr instead of the sliced variables)
+        cov_energy = rp.quadspline_energy_torch(cov_expr, hb_n_knot)
+        rot_energy = rp.quadspline_energy_torch(rot_expr, sc_n_knot)
+        hyd_energy = rp.quadspline_energy_torch(hyd_expr, hb_n_knot)
 
-        # 5. Total Loss & Backward
-        total_loss = sum(loss_parts)
-        # If total_loss is just a 0 tensor (no shapes matched), backward() might fail.
-        # usually rot/cov match, so this is fine.
-        total_loss.backward()
+        reg_scale_t = torch.tensor(reg_scale, dtype=torch.float64)
 
-        # 6. Repack gradients
-        def get_grad(t, ref_np):
-            if t.grad is None: return np.zeros_like(ref_np)
-            return t.grad.detach().numpy()
+        cov_reg = student_t_neglog(cov_energy - cov_expect[None, None, :, None, None], 200., 3.).sum() / reg_scale_t
+        rot_reg = student_t_neglog(rot_energy - rot_expect[None, None, :, None, None], 200., 3.).sum() / reg_scale_t
+        hyd_reg = student_t_neglog(hyd_energy - hyd_expect[None, None, :, None, None], 200., 3.).sum() / reg_scale_t
 
-        d_rot = get_grad(rot_expr, rotp_np)
-        d_cov = get_grad(cov_expr, covp_np)
-        d_hyd = get_grad(hyd_expr, hydp_np)
-        
-        # These are not optimized here, return zeros
-        d_hydplp = np.zeros_like(hydplp_np)
-        d_rotpos = np.zeros_like(rotposp_np)
-        d_rotscalar = np.zeros_like(rotscalarp_np)
+        reg_expr = (
+            cov_reg +
+            hyd_reg +
+            rot_reg +
+            lower_bound(cov_energy, -6.).sum() +
+            lower_bound(rot_energy, -6.).sum() +
+            lower_bound(hyd_energy, -6.).sum()
+        )
 
-        return rp.pack_param(d_rot, d_cov, d_hyd, d_hydplp, d_rotpos, d_rotscalar)
+        obj_expr = (
+            (rot_c * rot_expr).sum() +
+            (cov_c * cov_expr).sum() +
+            (hyd_c * hyd_expr).sum() +
+            reg_expr
+        )
+
+        obj_expr.backward()
+        return lparam.grad.detach().numpy()
 
     return compute_grad
 
@@ -284,11 +279,6 @@ if not is_worker:
         # d_obj is now the torch function
         rot_grad = d_obj(param.rot, deriv_update.rot, deriv_update.cov, deriv_update.hyd, reg_scale)
 
-        # Cap gradients at +/- 1.0 (or 5.0). 
-        # This prevents infinite repulsion forces from updating the parameters.
-        print(f"DEBUG: Max rot_grad before clip: {np.max(np.abs(rot_grad)):.4e}")
-        rot_grad = np.clip(rot_grad, -1.0, 1.0)
-        
         # Debug: check gradient stats
         print(f"DEBUG: rot_grad mean={np.mean(rot_grad):.4e} min={np.min(rot_grad):.4e} max={np.max(rot_grad):.4e}")
         if np.isnan(rot_grad).any():
@@ -380,31 +370,6 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
 
     d_param = backprop_deriv(param, Update(*[np.sum(x,axis=0) for x in zip(*change)]), reg_scale)
 
-    # --- NEW: Global Norm Rescaling (Preserves Physics Direction) ---
-    # 1. Calculate the total norm of the gradient vector
-    total_norm_sq = 0.0
-    for field in ['cov', 'rot', 'hyd', 'env', 'hb', 'sheet']:
-        val = getattr(d_param, field)
-        if val is not None:
-            total_norm_sq += np.sum(val**2)
-    total_norm = np.sqrt(total_norm_sq)
-
-    # 2. Rescale if the norm exceeds a safe threshold (e.g., 1.0)
-    #    This allows you to use a high Learning Rate safely.
-    #    If the gradient is huge (1000.0), it gets scaled down to 1.0,
-    #    but the RATIO between parameters remains perfect.
-    max_grad_norm = 1.0
-    if total_norm > max_grad_norm:
-        scale_factor = max_grad_norm / total_norm
-        print(f"WARNING: Rescaling massive gradient (Norm: {total_norm:.2f} -> {max_grad_norm})")
-        
-        for field in ['cov', 'rot', 'hyd', 'env', 'hb', 'sheet']:
-            val = getattr(d_param, field)
-            if val is not None:
-                scaled_val = val * scale_factor
-                d_param = d_param._replace(**{field: scaled_val})
-    # -------------------------------------------------------------
-
     with open(f'{direc}/rmsd.pkl', 'wb') as f:
         cp.dump(rmsd, f, -1)
     print()
@@ -425,7 +390,9 @@ def compute_divergence(config_base, pos):
     try:
         with tb.open_file(config_base) as t:
             seq        = t.root.input.sequence[:]
-            
+            if len(seq) > 0 and isinstance(seq[0], bytes):
+                seq = [s.decode('utf-8') for s in seq]
+
             rama_node = t.root.input.potential.rama_map_pot
             sheet_restypes = rama_node._v_attrs.restype
             if isinstance(sheet_restypes[0], bytes):
@@ -433,20 +400,39 @@ def compute_divergence(config_base, pos):
                 
             eps = rama_node._v_attrs.sheet_eps
             sheet_scale = 1./(2.*eps)
-            
-            more_sheets = {}
-            less_sheets = {}
-            for res in sheet_restypes:
-                try:
-                    m = getattr(rama_node, f'more_sheet_rama_pot_{res}')[:]
-                    l = getattr(rama_node, f'less_sheet_rama_pot_{res}')[:]
-                    more_sheets[res] = m
-                    less_sheets[res] = l
-                except tb.NoSuchNodeError:
-                    more_sheets[res] = None
-                    less_sheets[res] = None
 
-            hb_strength = t.root.input.potential.hbond_energy.parameters[0]
+            has_global_sheet = hasattr(rama_node, 'more_sheet_rama_pot') and hasattr(rama_node, 'less_sheet_rama_pot')
+            if has_global_sheet:
+                more_sheet = rama_node.more_sheet_rama_pot[:]
+                less_sheet = rama_node.less_sheet_rama_pot[:]
+                more_sheets = {}
+                less_sheets = {}
+            else:
+                more_sheets = {}
+                less_sheets = {}
+                for res in sheet_restypes:
+                    if res != "PRO" and seq and res not in seq:
+                        more_sheets[res] = None
+                        less_sheets[res] = None
+                        continue
+                    if res == "PRO" and seq and ("PRO" not in seq and "CPR" not in seq):
+                        more_sheets[res] = None
+                        less_sheets[res] = None
+                        continue
+                    try:
+                        m = getattr(rama_node, f'more_sheet_rama_pot_{res}')[:]
+                        l = getattr(rama_node, f'less_sheet_rama_pot_{res}')[:]
+                        more_sheets[res] = m
+                        less_sheets[res] = l
+                    except tb.NoSuchNodeError:
+                        more_sheets[res] = None
+                        less_sheets[res] = None
+
+            hb_node = t.root.input.potential.hbond_energy
+            if hasattr(hb_node._v_attrs, 'protein_hbond_energy'):
+                hb_strength = hb_node._v_attrs.protein_hbond_energy
+            else:
+                hb_strength = hb_node.parameters[0]
 
             rot_param_shape = t.root.input.potential.rotamer.pair_interaction.interaction_param.shape
             cov_param_shape = t.root.input.potential.hbond_coverage.interaction_param.shape
@@ -469,37 +455,49 @@ def compute_divergence(config_base, pos):
     print(f"Starting compute_divergence for {os.path.basename(config_base)} with {pos.shape[0]} frames...")
 
     for i in range(pos.shape[0]):
-        if i % 50 == 0: print(f"Processing frame {i}/{pos.shape[0]}...")
-        engine.energy(pos[i]) 
-        
+        if i % 50 == 0:
+            print(f"Processing frame {i}/{pos.shape[0]}...")
+        engine.energy(pos[i])
+
         contrast.cov.append(engine.get_param_deriv(cov_param_shape, 'hbond_coverage'))
         contrast.rot.append(engine.get_param_deriv(rot_param_shape, 'rotamer'))
         contrast.hyd.append(engine.get_param_deriv(hyd_param_shape, 'hbond_coverage_hydrophobe'))
-        contrast.hb .append(engine.get_output('hbond_energy')[0,0]/hb_strength)
-        
+        contrast.hb.append(engine.get_output('hbond_energy')[0,0] / hb_strength)
+
         # Handle env derivatives including weights (which we ignore)
         total_env_params = np.prod(env_param_shape) + np.prod(env_weights_shape)
         env_full = engine.get_param_deriv((int(total_env_params),), 'nonlinear_coupling_environment')
         contrast.env.append(env_full[:np.prod(env_param_shape)].reshape(env_param_shape))
-        
-        current_sheet_grad = np.zeros(len(sheet_restypes))
-        
+
+    sheet_grad = np.zeros((pos.shape[0], len(sheet_restypes)))
+    if has_global_sheet:
+        engine.set_param(more_sheet, 'rama_map_pot')
+        for i in range(pos.shape[0]):
+            engine.energy(pos[i])
+            sheet_grad[i, 0] = engine.get_output('rama_map_pot')[0,0] * sheet_scale
+
+        engine.set_param(less_sheet, 'rama_map_pot')
+        for i in range(pos.shape[0]):
+            engine.energy(pos[i])
+            sheet_grad[i, 0] -= engine.get_output('rama_map_pot')[0,0] * sheet_scale
+    else:
         for idx, res in enumerate(sheet_restypes):
-            m = more_sheets[res]
-            l = less_sheets[res]
-            if m is None: continue 
-                
+            m = more_sheets.get(res)
+            l = less_sheets.get(res)
+            if m is None or l is None:
+                continue
+
             engine.set_param(m, 'rama_map_pot')
-            engine.energy(pos[i])
-            e_plus = engine.get_output('rama_map_pot')[0,0]
-            
+            for i in range(pos.shape[0]):
+                engine.energy(pos[i])
+                sheet_grad[i, idx] = engine.get_output('rama_map_pot')[0,0] * sheet_scale
+
             engine.set_param(l, 'rama_map_pot')
-            engine.energy(pos[i])
-            e_minus = engine.get_output('rama_map_pot')[0,0]
-            
-            current_sheet_grad[idx] = (e_plus - e_minus) * sheet_scale
-            
-        contrast.sheet.append(current_sheet_grad)
+            for i in range(pos.shape[0]):
+                engine.energy(pos[i])
+                sheet_grad[i, idx] -= engine.get_output('rama_map_pot')[0,0] * sheet_scale
+
+    contrast.sheet = list(sheet_grad)
 
     contrast = Update(*[np.array(x) for x in contrast])
     return contrast
