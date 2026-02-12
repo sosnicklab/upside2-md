@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import difflib
 import json
+import math
 import pickle
+import random
 import subprocess
 import sys
 import urllib.error
@@ -28,6 +31,35 @@ HEME_RESNAMES = {
     "HEO",
     "HEV",
 }
+MEMBRANE_TERMS = (
+    "membrane",
+    "transmembrane",
+    "lipid bilayer",
+    "micelle",
+    "nanodisc",
+)
+STANDARD_RESNAMES = {
+    "ALA",
+    "ARG",
+    "ASN",
+    "ASP",
+    "CYS",
+    "GLN",
+    "GLU",
+    "GLY",
+    "HIS",
+    "ILE",
+    "LEU",
+    "LYS",
+    "MET",
+    "PHE",
+    "PRO",
+    "SER",
+    "THR",
+    "TRP",
+    "TYR",
+    "VAL",
+}
 
 
 def parse_args():
@@ -37,9 +69,15 @@ def parse_args():
     p = argparse.ArgumentParser(
         description="Filter/download RCSB structures and prepare Upside input files."
     )
+    p.add_argument(
+        "--filter-profile",
+        choices=("contrastive", "sidechain"),
+        default="contrastive",
+        help="contrastive: 50-100 residues, sidechain: 50-500 residues.",
+    )
     p.add_argument("--output-root", default="rcsb_dataset", help="Output root directory")
-    p.add_argument("--min-residues", type=int, default=50, help="Minimum sequence length")
-    p.add_argument("--max-residues", type=int, default=151, help="Maximum sequence length")
+    p.add_argument("--min-residues", type=int, default=None, help="Minimum sequence length")
+    p.add_argument("--max-residues", type=int, default=None, help="Maximum sequence length")
     p.add_argument(
         "--max-candidates-per-class",
         type=int,
@@ -55,8 +93,26 @@ def parse_args():
     p.add_argument(
         "--xray-resolution-max",
         type=float,
-        default=2.5,
+        default=2.2,
         help="Max allowed X-ray resolution in angstrom",
+    )
+    p.add_argument(
+        "--seqid-threshold",
+        type=float,
+        default=0.30,
+        help="Maximum pairwise sequence similarity among accepted proteins.",
+    )
+    p.add_argument(
+        "--globularity-ransac-iter",
+        type=int,
+        default=400,
+        help="RANSAC iterations for globularity outlier filtering.",
+    )
+    p.add_argument(
+        "--globularity-threshold",
+        type=float,
+        default=0.12,
+        help="Residual threshold in log(Nres)-log(Rg) for globularity filtering.",
     )
     p.add_argument(
         "--nmr-model",
@@ -69,6 +125,19 @@ def parse_args():
         help="Path to PDB_to_initial_structure.py",
     )
     p.add_argument("--timeout", type=int, default=30, help="Network timeout in seconds")
+    p.add_argument(
+        "--exclude-membrane",
+        dest="exclude_membrane",
+        action="store_true",
+        help="Exclude membrane-related proteins based on RCSB metadata text fields (default: enabled).",
+    )
+    p.add_argument(
+        "--include-membrane",
+        dest="exclude_membrane",
+        action="store_false",
+        help="Disable membrane-related exclusion.",
+    )
+    p.set_defaults(exclude_membrane=True)
     return p.parse_args()
 
 
@@ -176,6 +245,30 @@ def extract_entry_filters(entry):
     return method_set, resolution, length, poly_types, deposit_date, deposit_year
 
 
+def is_membrane_related_entry(entry):
+    fields = []
+    struct = entry.get("struct", {})
+    struct_keywords = entry.get("struct_keywords", {})
+    exptl = entry.get("exptl", [])
+
+    if isinstance(struct, dict):
+        fields.append(str(struct.get("title", "")))
+    if isinstance(struct_keywords, dict):
+        fields.append(str(struct_keywords.get("pdbx_keywords", "")))
+        text = struct_keywords.get("text")
+        if isinstance(text, list):
+            fields.extend(str(x) for x in text)
+        else:
+            fields.append(str(text or ""))
+    if isinstance(exptl, list):
+        for e in exptl:
+            if isinstance(e, dict):
+                fields.append(str(e.get("details", "")))
+
+    blob = " ".join(fields).lower()
+    return any(term in blob for term in MEMBRANE_TERMS)
+
+
 def is_disallowed_identifier(pdb_id):
     up = pdb_id.upper()
     return up.startswith("AF_") or up.startswith("MA_")
@@ -205,6 +298,16 @@ def pdb_has_heme(pdb_file):
             if line.startswith("HETATM"):
                 resname = line[17:20].strip().upper()
                 if resname in HEME_RESNAMES:
+                    return True
+    return False
+
+
+def pdb_has_nonstandard_residue(pdb_file):
+    with open(pdb_file, "r", errors="replace") as f:
+        for line in f:
+            if line.startswith("ATOM  "):
+                resname = line[17:20].strip().upper()
+                if resname not in STANDARD_RESNAMES:
                     return True
     return False
 
@@ -264,6 +367,74 @@ def derived_n_res(base):
     return n_atom // 3
 
 
+def read_fasta_sequence(fasta_path):
+    seq = []
+    with open(fasta_path, "r", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith(">"):
+                continue
+            seq.append(line)
+    return "".join(seq)
+
+
+def seq_similarity(seq_a, seq_b):
+    return difflib.SequenceMatcher(a=seq_a, b=seq_b).ratio()
+
+
+def compute_rg_from_initial(base):
+    pkl_path = Path(str(base) + ".initial.pkl")
+    npy_path = Path(str(base) + ".initial.npy")
+    if pkl_path.exists():
+        with open(pkl_path, "rb") as f:
+            native_pos = pickle.load(f, encoding="latin1")[:, :, 0]
+    elif npy_path.exists():
+        native_pos = np.load(npy_path)
+    else:
+        raise FileNotFoundError(f"Missing initial structure for {base}")
+
+    ca = native_pos[1::3]
+    center = ca.mean(axis=0)
+    return float(np.sqrt(np.mean(np.sum((ca - center) ** 2, axis=1))))
+
+
+def globularity_keep_ids(records, n_iter=400, threshold=0.12):
+    # records contain: pdb_id, n_res, rg
+    if len(records) < 12:
+        return set(r["pdb_id"] for r in records)
+
+    x = np.array([math.log(float(r["n_res"])) for r in records], dtype=float)
+    y = np.array([math.log(float(r["rg"])) for r in records], dtype=float)
+    idx_all = list(range(len(records)))
+
+    best_inliers = None
+    best_count = -1
+    for _ in range(max(1, n_iter)):
+        i, j = random.sample(idx_all, 2)
+        if abs(x[j] - x[i]) < 1e-12:
+            continue
+        a = (y[j] - y[i]) / (x[j] - x[i])
+        b = y[i] - a * x[i]
+        resid = np.abs(y - (a * x + b))
+        inliers = resid <= threshold
+        count = int(np.sum(inliers))
+        if count > best_count:
+            best_count = count
+            best_inliers = inliers
+
+    if best_inliers is None or int(np.sum(best_inliers)) < 3:
+        return set(r["pdb_id"] for r in records)
+
+    x_in = x[best_inliers]
+    y_in = y[best_inliers]
+    A = np.vstack([x_in, np.ones_like(x_in)]).T
+    a_refit, b_refit = np.linalg.lstsq(A, y_in, rcond=None)[0]
+
+    resid_final = np.abs(y - (a_refit * x + b_refit))
+    keep = resid_final <= threshold
+    return set(records[i]["pdb_id"] for i in range(len(records)) if keep[i])
+
+
 def cleanup_generated(base):
     for ext in (".fasta", ".initial.pkl", ".initial.npy", ".chi", ".chain_breaks"):
         p = Path(str(base) + ext)
@@ -297,6 +468,7 @@ def write_index_csv(path, rows):
         w = csv.DictWriter(
             f,
             fieldnames=["pdb_id", "class", "deposit_date", "deposit_year", "method", "resolution", "length"],
+            extrasaction="ignore",
         )
         w.writeheader()
         w.writerows(rows)
@@ -304,6 +476,14 @@ def write_index_csv(path, rows):
 
 def main():
     args = parse_args()
+    if args.min_residues is None or args.max_residues is None:
+        if args.filter_profile == "contrastive":
+            args.min_residues = 50
+            args.max_residues = 100
+        else:
+            args.min_residues = 50
+            args.max_residues = 500
+
     converter = Path(args.converter).resolve()
     if not converter.exists():
         raise FileNotFoundError(f"Converter script not found: {converter}")
@@ -322,7 +502,9 @@ def main():
 
     accepted = {"xray": [], "nmr": []}
     accepted_rows = {"xray": [], "nmr": []}
+    accepted_sequences = []
     rows = []
+    kept_row_by_id = {}
 
     for class_name, ids in (("xray", xray_ids), ("nmr", nmr_ids)):
         for pdb_id in ids:
@@ -366,6 +548,10 @@ def main():
 
             if "protein" not in poly_types.lower():
                 row["reason"] = "not_protein_entry"
+                rows.append(row)
+                continue
+            if args.exclude_membrane and is_membrane_related_entry(entry):
+                row["reason"] = "membrane_related_entry"
                 rows.append(row)
                 continue
             if "dna" in poly_types.lower() or "rna" in poly_types.lower():
@@ -418,6 +604,11 @@ def main():
                 rows.append(row)
                 continue
 
+            if pdb_has_nonstandard_residue(pdb_file):
+                row["reason"] = "contains_nonstandard_residue"
+                rows.append(row)
+                continue
+
             try:
                 run_converter(
                     converter,
@@ -459,10 +650,26 @@ def main():
                 rows.append(row)
                 continue
 
+            seq = read_fasta_sequence(Path(str(out_base) + ".fasta"))
+            too_similar = False
+            for _, ref_seq in accepted_sequences:
+                if seq_similarity(seq, ref_seq) > args.seqid_threshold:
+                    too_similar = True
+                    break
+            if too_similar:
+                cleanup_generated(out_base)
+                row["reason"] = "seq_similarity_too_high"
+                rows.append(row)
+                continue
+
+            rg = compute_rg_from_initial(out_base)
+
             row["status"] = "keep"
             row["reason"] = ""
             rows.append(row)
+            kept_row_by_id[pdb_id] = row
             accepted[class_name].append(pdb_id)
+            accepted_sequences.append((pdb_id, seq))
             accepted_rows[class_name].append(
                 {
                     "pdb_id": pdb_id,
@@ -472,8 +679,33 @@ def main():
                     "method": row["method"],
                     "resolution": row["resolution"],
                     "length": str(n_res),
+                    "n_res": int(n_res),
+                    "rg": float(rg),
+                    "out_base": str(out_base),
                 }
             )
+
+    combined_records = accepted_rows["xray"] + accepted_rows["nmr"]
+    keep_ids = globularity_keep_ids(
+        combined_records,
+        n_iter=args.globularity_ransac_iter,
+        threshold=args.globularity_threshold,
+    )
+    for class_name in ("xray", "nmr"):
+        kept_ids = []
+        kept_meta = []
+        for r in accepted_rows[class_name]:
+            if r["pdb_id"] in keep_ids:
+                kept_ids.append(r["pdb_id"])
+                kept_meta.append(r)
+            else:
+                cleanup_generated(Path(r["out_base"]))
+                row = kept_row_by_id.get(r["pdb_id"])
+                if row is not None:
+                    row["status"] = "skip"
+                    row["reason"] = "globularity_outlier"
+        accepted[class_name] = kept_ids
+        accepted_rows[class_name] = kept_meta
 
     with open(manifest_path, "w", newline="") as f:
         w = csv.DictWriter(

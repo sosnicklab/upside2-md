@@ -31,3 +31,5 @@
 - 2026-02-12: Updated README output list to include new year-index files.
 - 2026-02-12: Verified `ConDiv_original.py` filter logic and aligned downloader more tightly by deriving `n_res` from converted structures (`initial.*`) and enforcing residue-range cutoff on derived value; retained original-style chain-break criterion `max_sep < 2.0`.
 - 2026-02-12: Added additional dataset filters in `prepare_rcsb_upside_input.py` to reject non-single-chain proteins and heme-containing structures before conversion.
+- 2026-02-12: Updated `prepare_rcsb_upside_input.py` to reflect user-specified historical criteria more closely: profile-based residue limits (contrastive/sidechain), X-ray resolution <= 2.2 A default, sequence-similarity filtering (~30%), globularity outlier removal (RANSAC-style), and non-standard residue exclusion.
+- 2026-02-12: Added membrane-protein exclusion to downloader via RCSB metadata keyword/title screening; default behavior now excludes membrane-related entries, with `--include-membrane` to disable.

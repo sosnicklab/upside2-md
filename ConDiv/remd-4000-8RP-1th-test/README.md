@@ -92,6 +92,7 @@ Example:
 source venv/bin/activate
 python3 prepare_rcsb_upside_input.py \
   --output-root rcsb_dataset \
+  --filter-profile contrastive \
   --max-candidates-per-class 1000 \
   --max-keep-per-class 250
 ```
@@ -110,12 +111,16 @@ Generated outputs:
 
 Default filters are aligned to current project data:
 
-- sequence length 50 to 151 residues
-- X-ray resolution <= 2.5 A
+- `contrastive` profile: sequence length 50 to 100 residues (`sidechain`: 50 to 500)
+- X-ray resolution <= 2.2 A
+- pairwise sequence similarity <= 30% (SequenceMatcher-based approximation)
+- globularity outlier removal on log(Nres)-log(Rg) with RANSAC-style fit
 - excludes non-protein / nucleic-acid-containing entries
 - excludes AlphaFold/ModelArchive-style identifiers (`AF_*`, `MA_*`)
 - excludes non-single-chain proteins
 - excludes heme-containing structures (e.g., `HEM`, `HEA`, `HEC`, `HEO`)
+- excludes structures containing non-standard amino-acid residues
+- excludes membrane-related proteins (keyword/title based metadata filter)
 - applies post-conversion chain-break filter (`max_sep < 2.0`)
 
 Conversion details:

@@ -11,3 +11,4 @@
   - sequence-length range in existing `upside_input` is 50 to 151 residues
   - chain-break exclusion criterion from `ConDiv.py`: `max_sep < 2.0`
 - 2026-02-12: In `ConDiv_original.py` training-set acceptance logic, the actual structural filter is applied after loading converted coordinates: keep only proteins with `max_sep < 2.0` (no chain breaks). No additional explicit biochemical/metadata filters are present there.
+- 2026-02-12: Original ConDiv training-set construction (`ConDiv_original.py`) explicitly enforces structural acceptance using converted coordinates (`max_sep < 2.0`), and derives `n_res` from converted structure; no direct metadata-based sequence-identity/globularity filters are coded in that script itself.
