@@ -16,3 +16,4 @@
 - 2026-02-12: Made `run_remote.sh` executable and validated script syntax with `bash -n`.
 - 2026-02-12: Added `README.md` documenting init flow, Slurm `run_remote.sh` submission/resume workflow, iteration overrides, and log locations.
 - 2026-02-12: Updated `README.md` with required cluster module loads (`gcc/12.2.0`, `cmake`, `openmpi`) before Slurm submission.
+- 2026-02-12: Added `add_NMR.md` with a future implementation plan for incorporating NMR ensembles into ConDiv training, including weighting, restraint strategy, and validation criteria.
