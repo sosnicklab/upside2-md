@@ -1,0 +1,6 @@
+ source venv/bin/activate
+  python3 prepare_rcsb_upside_input.py \
+    --output-root rcsb_dataset_all \
+    --max-candidates-per-class 200000 \
+    --max-keep-per-class 200000 \
+    --timeout 60

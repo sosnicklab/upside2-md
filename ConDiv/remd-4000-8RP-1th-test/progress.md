@@ -17,3 +17,17 @@
 - 2026-02-12: Added `README.md` documenting init flow, Slurm `run_remote.sh` submission/resume workflow, iteration overrides, and log locations.
 - 2026-02-12: Updated `README.md` with required cluster module loads (`gcc/12.2.0`, `cmake`, `openmpi`) before Slurm submission.
 - 2026-02-12: Added `add_NMR.md` with a future implementation plan for incorporating NMR ensembles into ConDiv training, including weighting, restraint strategy, and validation criteria.
+- 2026-02-12: Switched task focus to building an RCSB filter/download/preparation script for generating `upside_input`-format files, with separate X-ray vs NMR outputs.
+- 2026-02-12: Inspected existing `upside_input` and filter logic in `ConDiv.py`; confirmed expected files per entry (`.fasta`, `.chi`, `.initial.pkl`, `.states.pkl`) and chain-break filter (`max_sep < 2.0`).
+- 2026-02-12: Implemented `prepare_rcsb_upside_input.py` to query RCSB, separate X-ray/NMR, exclude AF_/MA_ identifiers, download PDB files, run `PDB_to_initial_structure.py`, apply chain-break filtering, and write `pdb_list_xray/nmr/combined` plus `manifest.csv`.
+- 2026-02-12: Added README usage docs for `prepare_rcsb_upside_input.py` and output layout.
+- 2026-02-12: Validation: script compiles and `--help` works in venv; live network run was blocked in this environment (DNS error).
+- 2026-02-12: Restored training input directory by copying `upside_input_bak/` to `upside_input/` (1826 files), so new training input path is available again.
+- 2026-02-12: Updated `prepare_rcsb_upside_input.py` to match `example/01.GettingStarted/0.run.sh` conversion path by running `PDB_to_initial_structure.py` with `--record-chain-breaks`.
+- 2026-02-12: Added post-conversion bridge from `.initial.npy` to training-compatible `.initial.pkl` and fixed chain-break checks to accept either representation.
+- 2026-02-12: Updated README conversion notes to state workflow parity with `0.run.sh` plus `.initial.pkl` generation for ConDiv training.
+- 2026-02-12: Audited conversion dependency chain (`py/PDB_to_initial_structure.py`) and updated `setup_venv.sh` to install `prody`, fixing `ModuleNotFoundError: prody` during input conversion.
+- 2026-02-12: Extended `prepare_rcsb_upside_input.py` to capture `deposit_date`/`deposit_year` from RCSB metadata and write year-aware index files (`structure_index_xray.csv`, `structure_index_nmr.csv`, `structure_index_combined.csv`) for future year cutoff filtering.
+- 2026-02-12: Updated README output list to include new year-index files.
+- 2026-02-12: Verified `ConDiv_original.py` filter logic and aligned downloader more tightly by deriving `n_res` from converted structures (`initial.*`) and enforcing residue-range cutoff on derived value; retained original-style chain-break criterion `max_sep < 2.0`.
+- 2026-02-12: Added additional dataset filters in `prepare_rcsb_upside_input.py` to reject non-single-chain proteins and heme-containing structures before conversion.

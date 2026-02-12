@@ -3,3 +3,5 @@ venv/*
 *.output
 test_*/*
 .claude
+rcsb_dataset_all/*
+upside_input_bak/*

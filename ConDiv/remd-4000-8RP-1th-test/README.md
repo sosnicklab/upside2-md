@@ -81,3 +81,45 @@ For local execution instead of Slurm:
 ```bash
 ./run_local.sh
 ```
+
+## Build New Dataset From RCSB (X-ray + NMR)
+
+Use `prepare_rcsb_upside_input.py` to query/filter RCSB, download structures, and generate Upside-format inputs.
+
+Example:
+
+```bash
+source venv/bin/activate
+python3 prepare_rcsb_upside_input.py \
+  --output-root rcsb_dataset \
+  --max-candidates-per-class 1000 \
+  --max-keep-per-class 250
+```
+
+Generated outputs:
+
+- `rcsb_dataset/xray/upside_input/` (accepted X-ray structures as `.fasta/.initial.pkl/.chi`)
+- `rcsb_dataset/nmr/upside_input/` (accepted NMR structures as `.fasta/.initial.pkl/.chi`)
+- `rcsb_dataset/lists/pdb_list_xray`
+- `rcsb_dataset/lists/pdb_list_nmr`
+- `rcsb_dataset/lists/pdb_list_combined`
+- `rcsb_dataset/lists/structure_index_xray.csv` (includes `deposit_year`)
+- `rcsb_dataset/lists/structure_index_nmr.csv` (includes `deposit_year`)
+- `rcsb_dataset/lists/structure_index_combined.csv` (includes `deposit_year`)
+- `rcsb_dataset/manifest.csv` (keep/skip reasons)
+
+Default filters are aligned to current project data:
+
+- sequence length 50 to 151 residues
+- X-ray resolution <= 2.5 A
+- excludes non-protein / nucleic-acid-containing entries
+- excludes AlphaFold/ModelArchive-style identifiers (`AF_*`, `MA_*`)
+- excludes non-single-chain proteins
+- excludes heme-containing structures (e.g., `HEM`, `HEA`, `HEC`, `HEO`)
+- applies post-conversion chain-break filter (`max_sep < 2.0`)
+
+Conversion details:
+
+- Uses the same initial conversion tool as `example/01.GettingStarted/0.run.sh`:
+  - `py/PDB_to_initial_structure.py ... --record-chain-breaks`
+- Then writes training-compatible `*.initial.pkl` from generated `*.initial.npy`.

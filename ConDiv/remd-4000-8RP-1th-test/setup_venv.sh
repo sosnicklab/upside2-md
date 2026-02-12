@@ -45,7 +45,8 @@ pip install cython numpy
 # Install tables explicitly with the flags
 HDF5_DIR=$HDF5_DIR pip install tables
 # Install remaining deps
-pip install scipy torch ipython
+# prody is required by py/PDB_to_initial_structure.py (used by input conversion)
+pip install scipy torch ipython prody
 
 # 6. Clean up
 find . -name "*.pyc" -delete

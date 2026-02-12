@@ -1,22 +1,23 @@
 # Project Goal
-Validate Python3/PyTorch/local modernization of the ConDiv workflow against the original Python2/Theano/Slurm implementation, debug runtime worker crashes, and add `run_remote.sh` for Slurm restart-based training rounds.
+Add a script that filters and downloads structures from RCSB, separates PDB/X-ray and NMR entries, excludes AlphaFold/ModelArchive-style computed structures, and prepares outputs in the same input format used under `upside_input/`.
 
 # Architecture & Key Decisions
-- Compare modernized vs original script behavior first, before applying any fix, to confirm whether the crash is due to modernization drift or environment/runtime issues.
-- Trace the worker launch path in `ConDiv.py` and helper scripts to identify the exact failing command and missing output/error handling.
-- Reproduce the failing worker (`1mg4`) directly to isolate root cause and avoid full expensive reruns.
-- Apply the smallest possible code changes that preserve intended original behavior.
+- Reuse existing project conventions for training inputs by inspecting current `upside_input/` and helper scripts, rather than inventing new formats.
+- Implement a standalone preparation script that can:
+  - query/filter RCSB entries,
+  - split X-ray vs NMR lists,
+  - download coordinate files,
+  - run existing Upside conversion tooling to generate `.fasta`, `.initial.pkl`, and `.chi`.
+- Keep filters configuration-driven via command-line arguments with safe defaults aligned to current dataset assumptions.
 
 # Execution Phases
-- [x] Phase 1: Baseline context and failure-path mapping
-- [x] Phase 2: Modernized vs original diff review for critical scripts
-- [x] Phase 3: Targeted reproduction of `1mg4` failure and root-cause confirmation
-- [x] Phase 4: Implement minimal fix and validate with focused rerun
-- [x] Phase 5: Summarize modernization validity and remaining risks
+- [x] Phase 1: Inspect existing dataset format and filter logic in project scripts
+- [x] Phase 2: Design RCSB filter/download/prep workflow and script interface
+- [x] Phase 3: Implement script and output structure separation (xray/nmr)
+- [x] Phase 4: Validate script usage and document run examples
 
 # Known Errors / Blockers
-- Initial observed failure: worker for `1mg4` exits with code 1 during epoch 0/minibatch 0/chunk 1.
-- Full end-to-end rerun after fixes has not been completed yet in this session (only static/syntax validation done).
+- Full live end-to-end API/download run could not be completed in this environment due DNS/network restriction; script was syntax/CLI validated only.
 
 # Revised Decisions
-- Add a Slurm-focused launcher script (`run_remote.sh`) that mirrors local resume semantics: always pick latest valid `checkpoint.pkl` and run a configurable number of restart iterations per submission.
+- Keep prior runtime fixes intact; extend repository with a new data-prep script for future dataset expansion.
