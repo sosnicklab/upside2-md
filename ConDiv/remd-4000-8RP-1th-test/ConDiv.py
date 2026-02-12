@@ -280,7 +280,8 @@ if not is_worker:
         rot_grad = d_obj(param.rot, deriv_update.rot, deriv_update.cov, deriv_update.hyd, reg_scale)
 
         # Debug: check gradient stats
-        print(f"DEBUG: rot_grad mean={np.mean(rot_grad):.4e} min={np.min(rot_grad):.4e} max={np.max(rot_grad):.4e}")
+        grad_norm = np.linalg.norm(rot_grad)
+        print(f"DEBUG: rot_grad norm={grad_norm:.4e} mean={np.mean(rot_grad):.4e} min={np.min(rot_grad):.4e} max={np.max(rot_grad):.4e}")
         if np.isnan(rot_grad).any():
              print("ERROR: NaNs detected in rot_grad!")
              raise ExplosionError("NaNs in gradient")
@@ -357,8 +358,13 @@ def run_minibatch(worker_path, param, initial_param_files, direc, minibatch, sol
                     # -----------------------------
 
             except FileNotFoundError:
-                # raise ExplosionError(f"Worker crashed for {nm}")
-                # For safety, let's treat missing files as explosions to trigger retry
+                worker_log = f'{direc}/{nm}.output_worker'
+                if os.path.exists(worker_log):
+                    print(f"--- Worker log excerpt for {nm} ({worker_log}) ---")
+                    with open(worker_log, 'r', errors='replace') as logf:
+                        for line in logf.readlines()[:40]:
+                            print(line.rstrip())
+                    print("--- End worker log excerpt ---")
                 raise ExplosionError(f"Worker crashed (no output) for {nm}")
             except Exception as e:
                 raise ExplosionError(f"Error reading output for {nm}: {e}")
@@ -497,7 +503,8 @@ def compute_divergence(config_base, pos):
                 engine.energy(pos[i])
                 sheet_grad[i, idx] -= engine.get_output('rama_map_pot')[0,0] * sheet_scale
 
-    contrast.sheet = list(sheet_grad)
+    for row in sheet_grad:
+        contrast.sheet.append(row)
 
     contrast = Update(*[np.array(x) for x in contrast])
     return contrast
@@ -973,19 +980,5 @@ if __name__ == '__main__':
         initial_state = main_initialize(sys.argv[2:])
         with open(os.path.join(initial_state['base_dir'],'initial_checkpoint.pkl'),'wb') as f:
             cp.dump(initial_state, f, -1)
-    if sys.argv[1] == 'worker':
-        main_worker()
-
-    elif sys.argv[1] == 'restart':
-        assert len(sys.argv[1:]) == 3
-        print('Running as PID %i on host %s' % (os.getpid(), socket.gethostname()))
-        # Restart expects a checkpoint FILE path now
-        main_loop(sys.argv[2], int(sys.argv[3]))
-
-    elif sys.argv[1] == 'initialize':
-        initial_state = main_initialize(sys.argv[2:])
-        with open(os.path.join(initial_state['base_dir'],'initial_checkpoint.pkl'),'wb') as f:
-            cp.dump(initial_state, f, -1)
-
     else:
         raise RuntimeError('Illegal mode %s'%sys.argv[1])

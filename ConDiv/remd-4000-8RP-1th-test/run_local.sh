@@ -40,7 +40,8 @@ done
 
 # Run using the VENV python
 echo "Running ConDiv with: python3 (from venv)"
+echo "Python executable: $VENV_PYTHON"
 echo "Loading Checkpoint: $checkpoint"
 
 # Run once. Stop sharp.
-python3 -u ConDiv.py $mode "$checkpoint" $step 2>&1 | tee -a "$WORK_DIR/run.output"
+"$VENV_PYTHON" -u ConDiv.py $mode "$checkpoint" $step 2>&1 | tee -a "$WORK_DIR/run.output"
