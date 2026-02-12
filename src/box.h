@@ -52,7 +52,9 @@ struct BarostatSettings {
     float target_p_xy = 1.0f;     // UP units
     float target_p_z  = 1.0f;     // UP units
     float tau_p = 5.0f;           // time constant
-    float compressibility = 4.5e-5f; // 1/pressure (typical liquid)
+    float compressibility_xy = 4.5e-5f; // 1/pressure in bilayer plane
+    float compressibility_z = 4.5e-5f;  // 1/pressure normal to bilayer
+    float compressibility = 4.5e-5f;    // legacy fallback (kept for compatibility)
     bool  debug = true;
     bool  prefer_shrink_first = true; // on first application, avoid any expansion
 };

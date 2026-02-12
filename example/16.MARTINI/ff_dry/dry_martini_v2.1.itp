@@ -1,0 +1,994 @@
+;;; DRY MARTINI v2.1
+;;; 2013/04/12
+
+[ defaults ]
+; no C6/C12! interaction between written as sigma/epsilon
+; nbfunct  comb-rule
+  1        2
+
+[ atomtypes ]
+; charged
+   Qda 72.0  0.000  A  0.0  0.0
+   Qd  72.0  0.000  A  0.0  0.0
+   Qa  72.0  0.000  A  0.0  0.0
+   Q0  72.0  0.000  A  0.0  0.0
+; polar
+   P5  72.0  0.000  A  0.0  0.0
+   P4  72.0  0.000  A  0.0  0.0
+   P3  72.0  0.000  A  0.0  0.0
+   P2  72.0  0.000  A  0.0  0.0
+   P1  72.0  0.000  A  0.0  0.0
+; neutral
+   Nda 72.0  0.000  A  0.0  0.0
+   Nd  72.0  0.000  A  0.0  0.0
+   Na  72.0  0.000  A  0.0  0.0
+   N0  72.0  0.000  A  0.0  0.0
+; apolar
+   C5  72.0  0.000  A  0.0  0.0
+   C4  72.0  0.000  A  0.0  0.0
+   C3  72.0  0.000  A  0.0  0.0
+   C2  72.0  0.000  A  0.0  0.0
+   C1  72.0  0.000  A  0.0  0.0
+; ring charged
+  SQda 45.0  0.000  A  0.0  0.0
+  SQd  45.0  0.000  A  0.0  0.0
+  SQa  45.0  0.000  A  0.0  0.0
+  SQ0  45.0  0.000  A  0.0  0.0
+; ring polar
+  SP5  45.0  0.000  A  0.0  0.0
+  SP4  45.0  0.000  A  0.0  0.0
+  SP3  45.0  0.000  A  0.0  0.0
+  SP2  45.0  0.000  A  0.0  0.0
+  SP1  45.0  0.000  A  0.0  0.0
+; ring neutral
+  SNda 45.0  0.000  A  0.0  0.0
+  SNd  45.0  0.000  A  0.0  0.0
+  SNa  45.0  0.000  A  0.0  0.0
+  SN0  45.0  0.000  A  0.0  0.0
+; ring apolar
+  SC5  45.0  0.000  A  0.0  0.0
+  SC4  45.0  0.000  A  0.0  0.0
+  SC3  45.0  0.000  A  0.0  0.0
+  SC2  45.0  0.000  A  0.0  0.0
+  SC1  45.0  0.000  A  0.0  0.0
+; special C1/C2 particles for amino-acids
+  AC2  72.0  0.000  A  0.0  0.0
+  AC1  72.0  0.000  A  0.0  0.0
+
+
+; MARTINI v2.1 as extracted from
+;
+;  S.J. Marrink, H.J. Risselada, S. Yefimov, D.P. Tieleman, A.H. de Vries.
+;  The MARTINI forcefield: coarse grained model for biomolecular simulations.
+;  JPC-B, 111:7812-7824, 2007.
+;
+; MARTINI v2.1 INTERACTION LEVELS (sigma/epsilon)
+;
+; 0    = 0.47  5.60  (supra attractive)
+; I    = 0.47  5.00  (attractive)
+; II   = 0.47  4.50  (almost attractive)
+; III  = 0.47  4.00  (semi attractive)
+; IV   = 0.47  3.50  (intermediate)
+; V    = 0.47  3.10  (almost intermediate)
+; VI   = 0.47  2.70  (semi repulsive)
+; VII  = 0.47  2.30  (almost repulsive)
+; VIII = 0.47  2.00  (repulsive)
+; IX   = 0.62  2.00  (super repulsive)
+;
+; MARTINI v2.1 INTERACTION LEVELS between ring particles (sigma reduced to 0.43, epsilon to 75%)
+;
+; 0    = 0.43  4.20  (supra attractive)
+; I    = 0.43  3.80  (attractive)
+; II   = 0.43  3.40  (almost attractive)
+; III  = 0.43  3.00  (semi attractive)
+; IV   = 0.43  2.60  (intermediate)
+; V    = 0.43  2.30  (almost intermediate)
+; VI   = 0.43  2.00  (semi repulsive)
+; VII  = 0.43  1.70  (almost repulsive)
+; VIII = 0.43  1.50  (repulsive)
+; IX   = 0.62  2.00  (super repulsive)
+;
+; MARTINI v2.1 INTERACTION MATRIX 
+;
+; +------+----+    +
+; | (S)Q | da |    | 0
+; |      | d  |    | 0    I
+; |      | a  |    | 0    0    I
+; |      | 0  |    | II   II   II   IV
+; +------+----+    +---------------------+
+; | (S)P | 5  |    | 0    0    0    I    | 0
+; |      | 4  |    | 0    0    0    0    | 0    I
+; |      | 3  |    | 0    0    0    I    | 0    I    I
+; |      | 2  |    | I    I    I    II   | 0    II   II   II
+; |      | 1  |    | I    I    I    III  | 0    II   II   II   II
+; +------+----+    +---------------------+--------------------------+
+; | (S)N | da |    | I    I    I    III  | I    III  II   II   II   | II
+; |      | d  |    | I    III  I    III  | I    III  II   II   II   | II   III
+; |      | a  |    | I    I    III  III  | I    III  II   II   II   | II   II   III
+; |      | 0  |    | IV   IV   IV   IV   | IV   IV   IV   III  III  | IV   IV   IV   IV
+; +------+----+    +---------------------+--------------------------+---------------------+
+; | (S)C | 5  |    | V    V    V    V    | V    V    IV   IV   IV   | IV   IV   IV   IV   | IV
+; |      | 4  |    | VI   VI   VI   VI   | VI   VI   V    IV   IV   | V    V    V    IV   | IV   IV
+; |      | 3  |    | VII  VII  VII  VII  | VI   VI   V    V    IV   | VI   VI   VI   IV   | IV   IV   IV
+; |      | 2  |    | IX   IX   IX   IX   | VII  VII  VI   VI   V    | VI   VI   VI   V    | V    V    IV   IV
+; |      | 1  |    | IX   IX   IX   IX   | VIII VIII VII  VII  VI   | VI   VI   VI   VI   | V    V    IV   IV   IV
+; +------+----+    +---------------------+--------------------------+---------------------+--------------------------+
+; |   AC | 2  |    | VIII VIII VIII VIII | VII  VII  VI   VI   V    | VI   VI   VI   V    | V    V    IV   IV   IV   | IV
+; |      | 1  |    | VIII VIII VIII VIII | VIII VIII VII  VII  VI   | VI   VI   VI   VI   | V    V    IV   IV   IV   | IV   IV
+; +------+----+    +---------------------+--------------------------+---------------------+--------------------------+-----------+
+;
+;                  +---------------------+--------------------------+---------------------+--------------------------+-----------+
+;                  | da   d    a    0    | 5    4    3    2    1    | da   d    a    0    | 5    4    3    2    1    | 2    1    |
+;                  +---------------------+--------------------------+---------------------+--------------------------+-----------+
+;                  | (S)Q                | (S)P                     | (S)N                | (S)C                     | AC        |
+;                  +---------------------+--------------------------+---------------------+--------------------------+-----------+
+
+
+; DRY MARTINI v2.1
+;
+; new levels introduced to fix the lack of (even more) repulsive interaction levels (everything gets more attractive due to the lowered entropy of the system)
+; new interaction matrix based on partition free energy calculations for each bead type (yes, partition into "dry solution")
+;
+; NEW DRY MARTINI v2.1 INTERACTION LEVELS (sigma/epsilon)
+;
+; 0                   (OBSOLETE; not used in dry martini)
+; I                   (OBSOLETE; not used in dry martini)
+; II   = 0.47  4.500  (almost attractive)
+; III  = 0.47  4.000  (semi attractive)
+; IV   = 0.47  3.500  (intermediate)
+; V    = 0.47  3.100  (almost intermediate)
+; VI   = 0.47  2.700  (semi repulsive)
+; VII  = 0.47  2.300  (almost repulsive)
+; VIII = 0.47  2.000  (repulsive)
+; IX   = 0.62  2.000  (super repulsive)
+; X    = 0.47  1.500  (NEW LEVEL)
+; XI   = 0.47  1.000  (NEW LEVEL)
+; XII  = 0.47  0.500  (NEW LEVEL)
+;
+; NEW DRY MARTINI v2.1 INTERACTION LEVELS between ring particles (sigma/epsilon scaled the same way as before)
+;
+; 0                   (OBSOLETE; not used in dry martini)
+; I                   (OBSOLETE; not used in dry martini)
+; II   = 0.43  3.400  (almost attractive)
+; III  = 0.43  3.000  (semi attractive)
+; IV   = 0.43  2.600  (intermediate)
+; V    = 0.43  2.300  (almost intermediate)
+; VI   = 0.43  2.000  (semi repulsive)
+; VII  = 0.43  1.700  (almost repulsive)
+; VIII = 0.43  1.500  (repulsive)
+; IX   = 0.62  2.000  (super repulsive)
+; X    = 0.43  1.125  (NEW LEVEL)
+; XI   = 0.43  0.750  (NEW LEVEL)
+; XII  = 0.43  0.375  (NEW LEVEL)
+;
+; REWRITTEN DRY MARTINI v2.1 INTERACTION MATRIX
+;
+; +------+----+    +
+; | (S)Q | da |    | VI    
+; |      | d  |    | VI   VII
+; |      | a  |    | VI   VI   VII
+; |      | 0  |    | VIII VIII VIII VIII
+; +------+----+    +---------------------+
+; | (S)P | 5  |    | XII  XII  XII  XII  | V
+; |      | 4  |    | XII  XII  XII  XII  | V    VI
+; |      | 3  |    | XII  XII  XII  XII  | V    VI   VI
+; |      | 2  |    | XII  XII  XII  XII  | V    VII  VII  VII
+; |      | 1  |    | XII  XII  XII  XII  | X    X    X    VIII VII
+; +------+----+    +---------------------+--------------------------+
+; | (S)N | da |    | XII  XII  XII  XII  | XII  XI   XI   XI   VII  | VI
+; |      | d  |    | XII  XII  XII  XII  | XII  XI   XI   XI   VII  | VI   VII
+; |      | a  |    | XII  XII  XII  XII  | XII  XI   XI   XI   VII  | VI   VI   VII
+; |      | 0  |    | XII  XII  XII  XII  | XII  XI   XI   XI   VII  | VII  VII  VII  V
+; +------+----+    +---------------------+--------------------------+---------------------+
+; | (S)C | 5  |    | XII  XII  XII  XII  | XII  XI   X    VI   VI   | VI   VI   VI   IV   | III
+; |      | 4  |    | XII  XII  XII  XII  | XII  XI   X    VI   VI   | VI   VI   VI   IV   | III  II
+; |      | 3  |    | XII  XII  XII  XII  | XII  XI   X    VII  VI   | VI   VI   VI   IV   | III  II   II
+; |      | 2  |    | IX   IX   IX   IX   | XII  XII  X    VIII VI   | VI   VI   VI   IV   | III  II   II   II
+; |      | 1  |    | IX   IX   IX   IX   | XII  XII  XI   X    VII  | VI   VI   VI   IV   | III  II   II   II   II
+; +------+----+    +---------------------+--------------------------+---------------------+--------------------------+
+; |   AC | 2  |    | VIII VIII VIII VIII | XII  XII  X    VIII VI   | VI   VI   VI   IV   | III  II   II   II   II   | II
+; |      | 1  |    | VIII VIII VIII VIII | XII  XII  XI   X    VII  | VI   VI   VI   IV   | III  II   II   II   II   | II   II
+; +------+----+    +---------------------+--------------------------+---------------------+--------------------------+-----------+
+;
+;                  +---------------------+--------------------------+---------------------+--------------------------+-----------+
+;                  | da   d    a    0    | 5    4    3    2    1    | da   d    a    0    | 5    4    3    2    1    | 2    1    |
+;                  +---------------------+--------------------------+---------------------+--------------------------+-----------+
+;                  | (S)Q                | (S)P                     | (S)N                | (S)C                     | AC        |
+;                  +---------------------+--------------------------+---------------------+--------------------------+-----------+
+; 
+; NEW SIGMAS FOR (S)Q*/(S)Q* INTERACTIONS
+; 
+; Q* and SQ* particles are seen as already hydrated in the dry martini model; interaction range between them are therefore scaled up
+;
+; 0.60 according to optimization of lipid headgroup properties; might not be optimal for anything else than lipids
+; 0.55 = 0.43*0.60/0.47 (proportionality rule)
+; 
+; sigma(Q*/Q*) = 0.60
+; sigma(Q*/SQ*) = 0.60
+; sigma(SQ*/SQ*) = 0.55
+
+
+; interactions levels between regular sized particles
+; #define  m_0        0.47  5.600
+; #define  m_I        0.47  5.000
+#define  m_II       0.47  4.500
+#define  m_III      0.47  4.000
+#define  m_IV       0.47  3.500
+#define  m_V        0.47  3.100
+#define  m_VI       0.47  2.700
+#define  m_VII      0.47  2.300
+#define  m_VIII     0.47  2.000
+#define  m_IX       0.62  2.000
+#define  m_X        0.47  1.500
+#define  m_XI       0.47  1.000
+#define  m_XII      0.47  0.500
+; regular sized charged particles
+#define  m_VI_qq    0.60  2.700
+#define  m_VII_qq   0.60  2.300
+#define  m_VIII_qq  0.60  2.000
+
+; interactions levels between ring sized particles
+; #define  m_s0        0.43  4.200
+; #define  m_sI        0.43  3.800
+#define  m_sII       0.43  3.400
+#define  m_sIII      0.43  3.000
+#define  m_sIV       0.43  2.600
+#define  m_sV        0.43  2.300
+#define  m_sVI       0.43  2.000
+#define  m_sVII      0.43  1.700
+#define  m_sVIII     0.43  1.500
+#define  m_sIX       0.62  2.000
+#define  m_sX        0.43  1.125
+#define  m_sXI       0.43  0.750
+#define  m_sXII      0.43  0.375
+; ring sized charged particles
+#define  m_sVI_qq    0.55  2.000
+#define  m_sVII_qq   0.55  1.700
+#define  m_sVIII_qq  0.55  1.500
+
+[ nonbond_params ]
+; self interactions
+   Qda Qda   1  m_VI_qq
+    Qd Qd    1  m_VII_qq
+    Qa Qa    1  m_VII_qq
+    Q0 Q0    1  m_VIII_qq
+    P5 P5    1  m_V
+    P4 P4    1  m_VI
+    P3 P3    1  m_VI
+    P2 P2    1  m_VII
+    P1 P1    1  m_VII
+   Nda Nda   1  m_VI
+    Nd Nd    1  m_VII
+    Na Na    1  m_VII
+    N0 N0    1  m_V
+    C5 C5    1  m_III
+    C4 C4    1  m_II
+    C3 C3    1  m_II
+    C2 C2    1  m_II
+    C1 C1    1  m_II
+  SQda SQda  1  m_sVI_qq
+   SQd SQd   1  m_sVII_qq
+   SQa SQa   1  m_sVII_qq
+   SQ0 SQ0   1  m_sVIII_qq
+   SP5 SP5   1  m_sV
+   SP4 SP4   1  m_sVI
+   SP3 SP3   1  m_sVI
+   SP2 SP2   1  m_sVII
+   SP1 SP1   1  m_sVII
+  SNda SNda  1  m_sVI
+   SNd SNd   1  m_sVII
+   SNa SNa   1  m_sVII
+   SN0 SN0   1  m_sV
+   SC5 SC5   1  m_sIII
+   SC4 SC4   1  m_sII
+   SC3 SC3   1  m_sII
+   SC2 SC2   1  m_sII
+   SC1 SC1   1  m_sII
+   AC2 AC2   1  m_II
+   AC1 AC1   1  m_II
+; cross interactions
+   Qda Qd    1  m_VI_qq
+   Qda Qa    1  m_VI_qq
+   Qda Q0    1  m_VIII_qq
+   Qda P5    1  m_XII
+   Qda P4    1  m_XII
+   Qda P3    1  m_XII
+   Qda P2    1  m_XII
+   Qda P1    1  m_XII
+   Qda Nda   1  m_XII
+   Qda Nd    1  m_XII
+   Qda Na    1  m_XII
+   Qda N0    1  m_XII
+   Qda C5    1  m_XII
+   Qda C4    1  m_XII
+   Qda C3    1  m_XII
+   Qda C2    1  m_IX
+   Qda C1    1  m_IX
+   Qda SQda  1  m_VI_qq
+   Qda SQd   1  m_VI_qq
+   Qda SQa   1  m_VI_qq
+   Qda SQ0   1  m_VIII_qq
+   Qda SP5   1  m_XII
+   Qda SP4   1  m_XII
+   Qda SP3   1  m_XII
+   Qda SP2   1  m_XII
+   Qda SP1   1  m_XII
+   Qda SNda  1  m_XII
+   Qda SNd   1  m_XII
+   Qda SNa   1  m_XII
+   Qda SN0   1  m_XII
+   Qda SC5   1  m_XII
+   Qda SC4   1  m_XII
+   Qda SC3   1  m_XII
+   Qda SC2   1  m_IX
+   Qda SC1   1  m_IX
+   Qda AC2   1  m_VIII
+   Qda AC1   1  m_VIII
+    Qd Qa    1  m_VI_qq
+    Qd Q0    1  m_VIII_qq
+    Qd P5    1  m_XII
+    Qd P4    1  m_XII
+    Qd P3    1  m_XII
+    Qd P2    1  m_XII
+    Qd P1    1  m_XII
+    Qd Nda   1  m_XII
+    Qd Nd    1  m_XII
+    Qd Na    1  m_XII
+    Qd N0    1  m_XII
+    Qd C5    1  m_XII
+    Qd C4    1  m_XII
+    Qd C3    1  m_XII
+    Qd C2    1  m_IX
+    Qd C1    1  m_IX
+    Qd SQda  1  m_VI_qq
+    Qd SQd   1  m_VII_qq
+    Qd SQa   1  m_VI_qq
+    Qd SQ0   1  m_VIII_qq
+    Qd SP5   1  m_XII
+    Qd SP4   1  m_XII
+    Qd SP3   1  m_XII
+    Qd SP2   1  m_XII
+    Qd SP1   1  m_XII
+    Qd SNda  1  m_XII
+    Qd SNd   1  m_XII
+    Qd SNa   1  m_XII
+    Qd SN0   1  m_XII
+    Qd SC5   1  m_XII
+    Qd SC4   1  m_XII
+    Qd SC3   1  m_XII
+    Qd SC2   1  m_IX
+    Qd SC1   1  m_IX
+    Qd AC2   1  m_VIII
+    Qd AC1   1  m_VIII
+    Qa Q0    1  m_VIII_qq
+    Qa P5    1  m_XII
+    Qa P4    1  m_XII
+    Qa P3    1  m_XII
+    Qa P2    1  m_XII
+    Qa P1    1  m_XII
+    Qa Nda   1  m_XII
+    Qa Nd    1  m_XII
+    Qa Na    1  m_XII
+    Qa N0    1  m_XII
+    Qa C5    1  m_XII
+    Qa C4    1  m_XII
+    Qa C3    1  m_XII
+    Qa C2    1  m_IX
+    Qa C1    1  m_IX
+    Qa SQda  1  m_VI_qq
+    Qa SQd   1  m_VI_qq
+    Qa SQa   1  m_VII_qq
+    Qa SQ0   1  m_VIII_qq
+    Qa SP5   1  m_XII
+    Qa SP4   1  m_XII
+    Qa SP3   1  m_XII
+    Qa SP2   1  m_XII
+    Qa SP1   1  m_XII
+    Qa SNda  1  m_XII
+    Qa SNd   1  m_XII
+    Qa SNa   1  m_XII
+    Qa SN0   1  m_XII
+    Qa SC5   1  m_XII
+    Qa SC4   1  m_XII
+    Qa SC3   1  m_XII
+    Qa SC2   1  m_IX
+    Qa SC1   1  m_IX
+    Qa AC2   1  m_VIII
+    Qa AC1   1  m_VIII
+    Q0 P5    1  m_XII
+    Q0 P4    1  m_XII
+    Q0 P3    1  m_XII
+    Q0 P2    1  m_XII
+    Q0 P1    1  m_XII
+    Q0 Nda   1  m_XII
+    Q0 Nd    1  m_XII
+    Q0 Na    1  m_XII
+    Q0 N0    1  m_XII
+    Q0 C5    1  m_XII
+    Q0 C4    1  m_XII
+    Q0 C3    1  m_XII
+    Q0 C2    1  m_IX
+    Q0 C1    1  m_IX
+    Q0 SQda  1  m_VIII_qq
+    Q0 SQd   1  m_VIII_qq
+    Q0 SQa   1  m_VIII_qq
+    Q0 SQ0   1  m_VIII_qq
+    Q0 SP5   1  m_XII
+    Q0 SP4   1  m_XII
+    Q0 SP3   1  m_XII
+    Q0 SP2   1  m_XII
+    Q0 SP1   1  m_XII
+    Q0 SNda  1  m_XII
+    Q0 SNd   1  m_XII
+    Q0 SNa   1  m_XII
+    Q0 SN0   1  m_XII
+    Q0 SC5   1  m_XII
+    Q0 SC4   1  m_XII
+    Q0 SC3   1  m_XII
+    Q0 SC2   1  m_IX
+    Q0 SC1   1  m_IX
+    Q0 AC2   1  m_VIII
+    Q0 AC1   1  m_VIII
+    P5 P4    1  m_V
+    P5 P3    1  m_V
+    P5 P2    1  m_V
+    P5 P1    1  m_X
+    P5 Nda   1  m_XII
+    P5 Nd    1  m_XII
+    P5 Na    1  m_XII
+    P5 N0    1  m_XII
+    P5 C5    1  m_XII
+    P5 C4    1  m_XII
+    P5 C3    1  m_XII
+    P5 C2    1  m_XII
+    P5 C1    1  m_XII
+    P5 SQda  1  m_XII
+    P5 SQd   1  m_XII
+    P5 SQa   1  m_XII
+    P5 SQ0   1  m_XII
+    P5 SP5   1  m_V
+    P5 SP4   1  m_V
+    P5 SP3   1  m_V
+    P5 SP2   1  m_V
+    P5 SP1   1  m_X
+    P5 SNda  1  m_XII
+    P5 SNd   1  m_XII
+    P5 SNa   1  m_XII
+    P5 SN0   1  m_XII
+    P5 SC5   1  m_XII
+    P5 SC4   1  m_XII
+    P5 SC3   1  m_XII
+    P5 SC2   1  m_XII
+    P5 SC1   1  m_XII
+    P5 AC2   1  m_XII
+    P5 AC1   1  m_XII
+    P4 P3    1  m_VI
+    P4 P2    1  m_VII
+    P4 P1    1  m_X
+    P4 Nda   1  m_XI
+    P4 Nd    1  m_XI
+    P4 Na    1  m_XI
+    P4 N0    1  m_XI
+    P4 C5    1  m_XI
+    P4 C4    1  m_XI
+    P4 C3    1  m_XI
+    P4 C2    1  m_XII
+    P4 C1    1  m_XII
+    P4 SQda  1  m_XII
+    P4 SQd   1  m_XII
+    P4 SQa   1  m_XII
+    P4 SQ0   1  m_XII
+    P4 SP5   1  m_V
+    P4 SP4   1  m_VI
+    P4 SP3   1  m_VI
+    P4 SP2   1  m_VII
+    P4 SP1   1  m_X
+    P4 SNda  1  m_XI
+    P4 SNd   1  m_XI
+    P4 SNa   1  m_XI
+    P4 SN0   1  m_XI
+    P4 SC5   1  m_XI
+    P4 SC4   1  m_XI
+    P4 SC3   1  m_XI
+    P4 SC2   1  m_XII
+    P4 SC1   1  m_XII
+    P4 AC2   1  m_XII
+    P4 AC1   1  m_XII
+    P3 P2    1  m_VII
+    P3 P1    1  m_X
+    P3 Nda   1  m_XI
+    P3 Nd    1  m_XI
+    P3 Na    1  m_XI
+    P3 N0    1  m_XI
+    P3 C5    1  m_X
+    P3 C4    1  m_X
+    P3 C3    1  m_X
+    P3 C2    1  m_X
+    P3 C1    1  m_XI
+    P3 SQda  1  m_XII
+    P3 SQd   1  m_XII
+    P3 SQa   1  m_XII
+    P3 SQ0   1  m_XII
+    P3 SP5   1  m_V
+    P3 SP4   1  m_VI
+    P3 SP3   1  m_VI
+    P3 SP2   1  m_VII
+    P3 SP1   1  m_X
+    P3 SNda  1  m_XI
+    P3 SNd   1  m_XI
+    P3 SNa   1  m_XI
+    P3 SN0   1  m_XI
+    P3 SC5   1  m_X
+    P3 SC4   1  m_X
+    P3 SC3   1  m_X
+    P3 SC2   1  m_X
+    P3 SC1   1  m_XI
+    P3 AC2   1  m_X
+    P3 AC1   1  m_XI
+    P2 P1    1  m_VIII
+    P2 Nda   1  m_XI
+    P2 Nd    1  m_XI
+    P2 Na    1  m_XI
+    P2 N0    1  m_XI
+    P2 C5    1  m_VI
+    P2 C4    1  m_VI
+    P2 C3    1  m_VII
+    P2 C2    1  m_VIII
+    P2 C1    1  m_X
+    P2 SQda  1  m_XII
+    P2 SQd   1  m_XII
+    P2 SQa   1  m_XII
+    P2 SQ0   1  m_XII
+    P2 SP5   1  m_V
+    P2 SP4   1  m_VII
+    P2 SP3   1  m_VII
+    P2 SP2   1  m_VII
+    P2 SP1   1  m_VIII
+    P2 SNda  1  m_VII
+    P2 SNd   1  m_VII
+    P2 SNa   1  m_VII
+    P2 SN0   1  m_VII
+    P2 SC5   1  m_VI
+    P2 SC4   1  m_VI
+    P2 SC3   1  m_VII
+    P2 SC2   1  m_VIII
+    P2 SC1   1  m_X
+    P2 AC2   1  m_VIII
+    P2 AC1   1  m_X
+    P1 Nda   1  m_VII
+    P1 Nd    1  m_VII
+    P1 Na    1  m_VII
+    P1 N0    1  m_VII
+    P1 C5    1  m_VI
+    P1 C4    1  m_VI
+    P1 C3    1  m_VI
+    P1 C2    1  m_VI
+    P1 C1    1  m_VII
+    P1 SQda  1  m_XII
+    P1 SQd   1  m_XII
+    P1 SQa   1  m_XII
+    P1 SQ0   1  m_XII
+    P1 SP5   1  m_X
+    P1 SP4   1  m_X
+    P1 SP3   1  m_X
+    P1 SP2   1  m_VIII
+    P1 SP1   1  m_VII
+    P1 SNda  1  m_VII
+    P1 SNd   1  m_VII
+    P1 SNa   1  m_VII
+    P1 SN0   1  m_VII
+    P1 SC5   1  m_VI
+    P1 SC4   1  m_VI
+    P1 SC3   1  m_VI
+    P1 SC2   1  m_VI
+    P1 SC1   1  m_VII
+    P1 AC2   1  m_VI
+    P1 AC1   1  m_VII
+   Nda Nd    1  m_VI
+   Nda Na    1  m_VI
+   Nda N0    1  m_VII
+   Nda C5    1  m_VI
+   Nda C4    1  m_VI
+   Nda C3    1  m_VI
+   Nda C2    1  m_VI
+   Nda C1    1  m_VI
+   Nda SQda  1  m_XII
+   Nda SQd   1  m_XII
+   Nda SQa   1  m_XII
+   Nda SQ0   1  m_XII
+   Nda SP5   1  m_XII
+   Nda SP4   1  m_XI
+   Nda SP3   1  m_XI
+   Nda SP2   1  m_XI
+   Nda SP1   1  m_VII
+   Nda SNda  1  m_VI
+   Nda SNd   1  m_VI
+   Nda SNa   1  m_VI
+   Nda SN0   1  m_VII
+   Nda SC5   1  m_VI
+   Nda SC4   1  m_VI
+   Nda SC3   1  m_VI
+   Nda SC2   1  m_VI
+   Nda SC1   1  m_VI
+   Nda AC2   1  m_VI
+   Nda AC1   1  m_VI
+    Nd Na    1  m_VI
+    Nd N0    1  m_VII
+    Nd C5    1  m_VI
+    Nd C4    1  m_VI
+    Nd C3    1  m_VI
+    Nd C2    1  m_VI
+    Nd C1    1  m_VI
+    Nd SQda  1  m_XII
+    Nd SQd   1  m_XII
+    Nd SQa   1  m_XII
+    Nd SQ0   1  m_XII
+    Nd SP5   1  m_XII
+    Nd SP4   1  m_XI
+    Nd SP3   1  m_XI
+    Nd SP2   1  m_XI
+    Nd SP1   1  m_VII
+    Nd SNda  1  m_VI
+    Nd SNd   1  m_VI
+    Nd SNa   1  m_VI
+    Nd SN0   1  m_VII
+    Nd SC5   1  m_VI
+    Nd SC4   1  m_VI
+    Nd SC3   1  m_VI
+    Nd SC2   1  m_VI
+    Nd SC1   1  m_VI
+    Nd AC2   1  m_VI
+    Nd AC1   1  m_VI
+    Na N0    1  m_VII
+    Na C5    1  m_VI
+    Na C4    1  m_VI
+    Na C3    1  m_VI
+    Na C2    1  m_VI
+    Na C1    1  m_VI
+    Na SQda  1  m_XII
+    Na SQd   1  m_XII
+    Na SQa   1  m_XII
+    Na SQ0   1  m_XII
+    Na SP5   1  m_XII
+    Na SP4   1  m_XI
+    Na SP3   1  m_XI
+    Na SP2   1  m_XI
+    Na SP1   1  m_VII
+    Na SNda  1  m_VI
+    Na SNd   1  m_VI
+    Na SNa   1  m_VI
+    Na SN0   1  m_VII
+    Na SC5   1  m_VI
+    Na SC4   1  m_VI
+    Na SC3   1  m_VI
+    Na SC2   1  m_VI
+    Na SC1   1  m_VI
+    Na AC2   1  m_VI
+    Na AC1   1  m_VI
+    N0 C5    1  m_IV
+    N0 C4    1  m_IV
+    N0 C3    1  m_IV
+    N0 C2    1  m_IV
+    N0 C1    1  m_IV
+    N0 SQda  1  m_XII
+    N0 SQd   1  m_XII
+    N0 SQa   1  m_XII
+    N0 SQ0   1  m_XII
+    N0 SP5   1  m_XII
+    N0 SP4   1  m_XI
+    N0 SP3   1  m_XI
+    N0 SP2   1  m_XI
+    N0 SP1   1  m_VII
+    N0 SNda  1  m_VI
+    N0 SNd   1  m_VI
+    N0 SNa   1  m_VI
+    N0 SN0   1  m_V
+    N0 SC5   1  m_IV
+    N0 SC4   1  m_IV
+    N0 SC3   1  m_IV
+    N0 SC2   1  m_IV
+    N0 SC1   1  m_IV
+    N0 AC2   1  m_IV
+    N0 AC1   1  m_IV
+    C5 C4    1  m_III
+    C5 C3    1  m_III
+    C5 C2    1  m_III
+    C5 C1    1  m_III
+    C5 SQda  1  m_XII
+    C5 SQd   1  m_XII
+    C5 SQa   1  m_XII
+    C5 SQ0   1  m_XII
+    C5 SP5   1  m_XII
+    C5 SP4   1  m_XI
+    C5 SP3   1  m_X
+    C5 SP2   1  m_VI
+    C5 SP1   1  m_VI
+    C5 SNda  1  m_VI
+    C5 SNd   1  m_VI
+    C5 SNa   1  m_VI
+    C5 SN0   1  m_VI
+    C5 SC5   1  m_III
+    C5 SC4   1  m_III
+    C5 SC3   1  m_III
+    C5 SC2   1  m_III
+    C5 SC1   1  m_III
+    C5 AC2   1  m_III
+    C5 AC1   1  m_III
+    C4 C3    1  m_II
+    C4 C2    1  m_II
+    C4 C1    1  m_II
+    C4 SQda  1  m_XII
+    C4 SQd   1  m_XII
+    C4 SQa   1  m_XII
+    C4 SQ0   1  m_XII
+    C4 SP5   1  m_XII
+    C4 SP4   1  m_XI
+    C4 SP3   1  m_XI
+    C4 SP2   1  m_VI
+    C4 SP1   1  m_VI
+    C4 SNda  1  m_VI
+    C4 SNd   1  m_VI
+    C4 SNa   1  m_VI
+    C4 SN0   1  m_IV
+    C4 SC5   1  m_II
+    C4 SC4   1  m_II
+    C4 SC3   1  m_II
+    C4 SC2   1  m_II
+    C4 SC1   1  m_II
+    C4 AC2   1  m_II
+    C4 AC1   1  m_II
+    C3 C2    1  m_II
+    C3 C1    1  m_II
+    C3 SQda  1  m_XII
+    C3 SQd   1  m_XII
+    C3 SQa   1  m_XII
+    C3 SQ0   1  m_XII
+    C3 SP5   1  m_XII
+    C3 SP4   1  m_XI
+    C3 SP3   1  m_X
+    C3 SP2   1  m_VII
+    C3 SP1   1  m_VI
+    C3 SNda  1  m_VI
+    C3 SNd   1  m_VI
+    C3 SNa   1  m_VI
+    C3 SN0   1  m_IV
+    C3 SC5   1  m_II
+    C3 SC4   1  m_II
+    C3 SC3   1  m_II
+    C3 SC2   1  m_II
+    C3 SC1   1  m_II
+    C3 AC2   1  m_II
+    C3 AC1   1  m_II
+    C2 C1    1  m_II
+    C2 SQda  1  m_IX
+    C2 SQd   1  m_IX
+    C2 SQa   1  m_IX
+    C2 SQ0   1  m_IX
+    C2 SP5   1  m_XII
+    C2 SP4   1  m_XII
+    C2 SP3   1  m_X
+    C2 SP2   1  m_VIII
+    C2 SP1   1  m_VI
+    C2 SNda  1  m_VI
+    C2 SNd   1  m_VI
+    C2 SNa   1  m_VI
+    C2 SN0   1  m_IV
+    C2 SC5   1  m_II
+    C2 SC4   1  m_II
+    C2 SC3   1  m_II
+    C2 SC2   1  m_II
+    C2 SC1   1  m_II
+    C2 AC2   1  m_II
+    C2 AC1   1  m_II
+    C1 SQda  1  m_IX
+    C1 SQd   1  m_IX
+    C1 SQa   1  m_IX
+    C1 SQ0   1  m_IX
+    C1 SP5   1  m_XII
+    C1 SP4   1  m_XII
+    C1 SP3   1  m_XI
+    C1 SP2   1  m_X
+    C1 SP1   1  m_VII
+    C1 SNda  1  m_VI
+    C1 SNd   1  m_VI
+    C1 SNa   1  m_VI
+    C1 SN0   1  m_IV
+    C1 SC5   1  m_II
+    C1 SC4   1  m_II
+    C1 SC3   1  m_II
+    C1 SC2   1  m_II
+    C1 SC1   1  m_II
+    C1 AC2   1  m_II
+    C1 AC1   1  m_II
+  SQda SQd   1  m_sVI_qq
+  SQda SQa   1  m_sVI_qq
+  SQda SQ0   1  m_sVIII_qq
+  SQda SP5   1  m_sXII
+  SQda SP4   1  m_sXII
+  SQda SP3   1  m_sXII
+  SQda SP2   1  m_sXII
+  SQda SP1   1  m_sXII
+  SQda SNda  1  m_sXII
+  SQda SNd   1  m_sXII
+  SQda SNa   1  m_sXII
+  SQda SN0   1  m_sXII
+  SQda SC5   1  m_sXII
+  SQda SC4   1  m_sXII
+  SQda SC3   1  m_sXII
+  SQda SC2   1  m_sIX
+  SQda SC1   1  m_sIX
+  SQda AC2   1  m_VIII
+  SQda AC1   1  m_VIII
+   SQd SQa   1  m_sVI_qq
+   SQd SQ0   1  m_sVIII_qq
+   SQd SP5   1  m_sXII
+   SQd SP4   1  m_sXII
+   SQd SP3   1  m_sXII
+   SQd SP2   1  m_sXII
+   SQd SP1   1  m_sXII
+   SQd SNda  1  m_sXII
+   SQd SNd   1  m_sXII
+   SQd SNa   1  m_sXII
+   SQd SN0   1  m_sXII
+   SQd SC5   1  m_sXII
+   SQd SC4   1  m_sXII
+   SQd SC3   1  m_sXII
+   SQd SC2   1  m_sIX
+   SQd SC1   1  m_sIX
+   SQd AC2   1  m_VIII
+   SQd AC1   1  m_VIII
+   SQa SQ0   1  m_sVIII_qq
+   SQa SP5   1  m_sXII
+   SQa SP4   1  m_sXII
+   SQa SP3   1  m_sXII
+   SQa SP2   1  m_sXII
+   SQa SP1   1  m_sXII
+   SQa SNda  1  m_sXII
+   SQa SNd   1  m_sXII
+   SQa SNa   1  m_sXII
+   SQa SN0   1  m_sXII
+   SQa SC5   1  m_sXII
+   SQa SC4   1  m_sXII
+   SQa SC3   1  m_sXII
+   SQa SC2   1  m_sIX
+   SQa SC1   1  m_sIX
+   SQa AC2   1  m_VIII
+   SQa AC1   1  m_VIII
+   SQ0 SP5   1  m_sXII
+   SQ0 SP4   1  m_sXII
+   SQ0 SP3   1  m_sXII
+   SQ0 SP2   1  m_sXII
+   SQ0 SP1   1  m_sXII
+   SQ0 SNda  1  m_sXII
+   SQ0 SNd   1  m_sXII
+   SQ0 SNa   1  m_sXII
+   SQ0 SN0   1  m_sXII
+   SQ0 SC5   1  m_sXII
+   SQ0 SC4   1  m_sXII
+   SQ0 SC3   1  m_sXII
+   SQ0 SC2   1  m_sIX
+   SQ0 SC1   1  m_sIX
+   SQ0 AC2   1  m_VIII
+   SQ0 AC1   1  m_VIII
+   SP5 SP4   1  m_sV
+   SP5 SP3   1  m_sV
+   SP5 SP2   1  m_sV
+   SP5 SP1   1  m_sX
+   SP5 SNda  1  m_sXII
+   SP5 SNd   1  m_sXII
+   SP5 SNa   1  m_sXII
+   SP5 SN0   1  m_sXII
+   SP5 SC5   1  m_sXII
+   SP5 SC4   1  m_sXII
+   SP5 SC3   1  m_sXII
+   SP5 SC2   1  m_sXII
+   SP5 SC1   1  m_sXII
+   SP5 AC2   1  m_XII
+   SP5 AC1   1  m_XII
+   SP4 SP3   1  m_sVI
+   SP4 SP2   1  m_sVII
+   SP4 SP1   1  m_sX
+   SP4 SNda  1  m_sXI
+   SP4 SNd   1  m_sXI
+   SP4 SNa   1  m_sXI
+   SP4 SN0   1  m_sXI
+   SP4 SC5   1  m_sXI
+   SP4 SC4   1  m_sXI
+   SP4 SC3   1  m_sXI
+   SP4 SC2   1  m_sXII
+   SP4 SC1   1  m_sXII
+   SP4 AC2   1  m_XII
+   SP4 AC1   1  m_XII
+   SP3 SP2   1  m_sVII
+   SP3 SP1   1  m_sX
+   SP3 SNda  1  m_sXI
+   SP3 SNd   1  m_sXI
+   SP3 SNa   1  m_sXI
+   SP3 SN0   1  m_sXI
+   SP3 SC5   1  m_sX
+   SP3 SC4   1  m_sX
+   SP3 SC3   1  m_sX
+   SP3 SC2   1  m_sX
+   SP3 SC1   1  m_sXI
+   SP3 AC2   1  m_X
+   SP3 AC1   1  m_XI
+   SP2 SP1   1  m_sVIII
+   SP2 SNda  1  m_sXI
+   SP2 SNd   1  m_sXI
+   SP2 SNa   1  m_sXI
+   SP2 SN0   1  m_sXI
+   SP2 SC5   1  m_sVI
+   SP2 SC4   1  m_sVI
+   SP2 SC3   1  m_sVII
+   SP2 SC2   1  m_sVIII
+   SP2 SC1   1  m_sX
+   SP2 AC2   1  m_VIII
+   SP2 AC1   1  m_X
+   SP1 SNda  1  m_sVII
+   SP1 SNd   1  m_sVII
+   SP1 SNa   1  m_sVII
+   SP1 SN0   1  m_sVII
+   SP1 SC5   1  m_sVI
+   SP1 SC4   1  m_sVI
+   SP1 SC3   1  m_sVI
+   SP1 SC2   1  m_sVI
+   SP1 SC1   1  m_sVII
+   SP1 AC2   1  m_VI
+   SP1 AC1   1  m_VII
+  SNda SNd   1  m_sVI
+  SNda SNa   1  m_sVI
+  SNda SN0   1  m_sVII
+  SNda SC5   1  m_sVI
+  SNda SC4   1  m_sVI
+  SNda SC3   1  m_sVI
+  SNda SC2   1  m_sVI
+  SNda SC1   1  m_sVI
+  SNda AC2   1  m_VI
+  SNda AC1   1  m_VI
+   SNd SNa   1  m_sVI
+   SNd SN0   1  m_sVII
+   SNd SC5   1  m_sVI
+   SNd SC4   1  m_sVI
+   SNd SC3   1  m_sVI
+   SNd SC2   1  m_sVI
+   SNd SC1   1  m_sVI
+   SNd AC2   1  m_VI
+   SNd AC1   1  m_VI
+   SNa SN0   1  m_sVII
+   SNa SC5   1  m_sVI
+   SNa SC4   1  m_sVI
+   SNa SC3   1  m_sVI
+   SNa SC2   1  m_sVI
+   SNa SC1   1  m_sVI
+   SNa AC2   1  m_VI
+   SNa AC1   1  m_VI
+   SN0 SC5   1  m_sIV
+   SN0 SC4   1  m_sIV
+   SN0 SC3   1  m_sIV
+   SN0 SC2   1  m_sIV
+   SN0 SC1   1  m_sIV
+   SN0 AC2   1  m_IV
+   SN0 AC1   1  m_IV
+   SC5 SC4   1  m_sIII
+   SC5 SC3   1  m_sIII
+   SC5 SC2   1  m_sIII
+   SC5 SC1   1  m_sIII
+   SC5 AC2   1  m_III
+   SC5 AC1   1  m_III
+   SC4 SC3   1  m_sII
+   SC4 SC2   1  m_sII
+   SC4 SC1   1  m_sII
+   SC4 AC2   1  m_II
+   SC4 AC1   1  m_II
+   SC3 SC2   1  m_sII
+   SC3 SC1   1  m_sII
+   SC3 AC2   1  m_II
+   SC3 AC1   1  m_II
+   SC2 SC1   1  m_sII
+   SC2 AC2   1  m_II
+   SC2 AC1   1  m_II
+   SC1 AC2   1  m_II
+   SC1 AC1   1  m_II
+   AC2 AC1   1  m_II
+
+;;; Jaakko & Clement

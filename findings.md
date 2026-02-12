@@ -1,15 +1,8 @@
 # Findings
 
-No external findings logged yet.
-# Gromacs CHARMM-GUI MARTINI (1ubq) .mdp settings (Downloads/charmm-gui-7077081595/gromacs)
-
-## Minimization
-- step4.0_minimization.mdp: integrator=steep, dt=0.020, nsteps=3000, tcoupl=v-rescale (tau_t=1.0, ref_t=303.15), Pcoupl=berendsen (tau_p=5.0, compressibility=4.5e-5, ref_p=1.0), reaction-field (epsilon_r=15, rcoulomb=1.1, rvdw=1.1), soft-core enabled (free-energy yes, init-lambda=0.01, sc-alpha=4, sc-power=2, sc-coul yes).
-- step4.1_minimization.mdp: integrator=steep, dt=0.020, nsteps=3000, same TC/P settings, no NORMANG define, no soft-core block.
-
-## Equilibration/Production
-- step4.2_equilibration.mdp: integrator=md, dt=0.020, nsteps=50000, Pcoupl=berendsen (tau_p=5.0, compressibility=4.5e-5).
-- step5_production.mdp: integrator=md, dt=0.020, nsteps=1000000, Pcoupl=Parrinello-Rahman (tau_p=12.0, compressibility=4.5e-5).
-
-## Unit conversion reference (Upside)
-- 4.5e-5 bar^-1 compressibility corresponds to 2.1782 Ang^3/E_up (from 3e-4 bar^-1 = 14.521180763676 Ang^3/E_up scaling).
+- 2026-02-12: Dry MARTINI Gromacs workflow files are present at `/Users/yinhan/Downloads/charmm-gui-7090685331/gromacs` with sequence: `step6.0_minimization.mdp`, `step6.1_minimization.mdp`, `step6.2` to `step6.6` equilibration, and `step7_production.mdp`.
+- 2026-02-12: Existing bilayer workflow script already performs staged minimization/equilibration/production but was tuned for prior MARTINI assumptions.
+- 2026-02-12: Dry MARTINI mdp settings indicate semi-isotropic coupling for relaxation (`tau-p=4.0`, membrane-plane compressibility equivalent to `3e-4 bar^-1`, normal-axis fixed for implicit systems) and a pressure-coupling strategy that transitions from Berendsen to Parrinello-Rahman as described in the paper note.
+- 2026-02-12: UPSIDE barostat previously used a single compressibility scalar for all axes; true dry MARTINI membrane coupling requires axis-specific compressibility (`xy` vs `z`).
+- 2026-02-12: `ff_dry` uses dry MARTINI v2.1 file names (`dry_martini_v2.1.itp`, `dry_martini_v2.1_lipids.itp`, `dry_martini_v2.1_ions.itp`) and macro-based aliases in `[ bonds ]`/`[ angles ]`, so parser support for `#define`-backed parameters is required.
+- 2026-02-12: Dry lipid ITP (`dry_martini_v2.1_lipids.itp`) relies on preprocessor branches (`#ifndef EXP_DOPC`/`#else`), and only one branch should be parsed.

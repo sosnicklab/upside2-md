@@ -1,0 +1,76 @@
+;;; DRY MARTINI v2.1
+;;; TOPOLOGIES FOR IONS  
+;;; 2013/08/07
+;
+; Note, ions are not to be taken too seriously using a CG presentation.
+; Long range electrostatic interactions are absent, and for small ions
+; The first hydration shell is considered an implicit part of the CG ion. 
+; And with dry martini there's not even water there.
+
+;;; CATIONS
+;;; NA+, K+, NC3+, 
+
+; HYDRATED SODIUM ION
+; Note, there's no difference between NA+ and K+ in MARTINI.
+
+[moleculetype]
+; molname       nrexcl
+  NA           1
+
+[atoms]
+; i type resnr residue atom cgnr charge
+  1 Qd   1     ION     NA   1    1.0 
+
+; HYDRATED POTASSIUM ION
+; Note, there's no difference between NA+ and K+ in MARTINI.
+
+[moleculetype]
+; molname       nrexcl
+  K            1
+
+[atoms]
+; i type resnr residue atom cgnr charge
+  1 Qd   1     ION     K    1    1.0 
+
+;;; CHOLINE ION 
+
+[moleculetype]
+; molname       nrexcl
+  NC3          1
+
+[atoms]
+; i type resnr residue atom cgnr charge
+  1 Q0   1     ION     NC3   1    1.0 
+
+;;; HYDRATED CALCIUM ION 
+;
+; Warning: this is untested, and likely not very realistic description of
+; a calcium ion. For a proper description of calcium, the solvation free
+; energy should be increased. This could be achieved in an ad-hoc manner
+; through increasing of the LJ well depth for water-calcium interactions.
+
+[moleculetype]
+; molname       nrexcl
+  CA           1
+
+[atoms]
+; i type resnr residue atom cgnr charge
+  1 Qd   1     ION     CA   1    2.0 
+
+
+
+;;; ANIONS
+;;; CL-
+
+; HYDRATED CHLORIDE ION
+
+[moleculetype]
+; molname       nrexcl
+  CL           1
+
+[atoms]
+; i type resnr residue atom cgnr charge
+  1 Qa   1     ION     CL   1   -1.0 
+
+
+;;; Jaakko & Clement

@@ -1,32 +1,32 @@
 # Progress Log
 
-- 2026-02-11: Initialized task files (`task_plan.md`, `findings.md`, `progress.md`).
-- 2026-02-11: Reviewed bilayer output log and diffs; traced barostat sign error; fixed Berendsen scaling sign in `src/box.cpp`.
-- 2026-02-11: Reviewed `example/16.MARTINI/bilayer_output_1.txt`; confirmed box dimensions change during NPT equilibration and stabilize during production.
-- 2026-02-11: Created `example/16.MARTINI/run_sim_1ubq.sh` from the bilayer workflow and set default PDB ID to 1ubq.
-- 2026-02-11: Ran `run_sim_1ubq.sh`; preparation failed because `pdb/1ubq_proa.itp` is missing, causing unknown protein atom mapping for MET BB.
-- 2026-02-11: Added CRYST1 record to `example/16.MARTINI/pdb/1ubq.MARTINI.pdb` (copied from AA PDB).
-- 2026-02-11: Re-ran `run_sim_1ubq.sh`; NPT equilibration hit NaN potential at step 20 and barostat expanded box.
-- 2026-02-11: Updated `example/16.MARTINI/run_sim_1ubq.sh` to use smaller time step and longer thermostat timescale.
-- 2026-02-11: Read CHARMM-GUI Gromacs .mdp files for 1ubq minimization/equilibration/production; noted minimization nsteps=3000, dt=0.020, Berendsen tau_p=5.0, compressibility=4.5e-5 bar^-1, and soft-core settings. Updated task_plan.md and findings.md accordingly.
-- 2026-02-11: Updated `run_sim_1ubq.sh` to use Gromacs-aligned NPT settings (tau_p=5.0, isotropic, compressibility=2.1782) and increased minimization iterations to 3000. Re-ran workflow; NPT equilibration progressed past 100 steps without NaNs (log shows stable potentials/pressures).
-- 2026-02-11: Re-ran `example/16.MARTINI/run_sim_1ubq.sh` to completion request; run is in progress (NPT equilibration step 80/2000 reached, no NaNs so far).
-- 2026-02-11: Continued run in foreground; NPT equilibration progressing slowly (reached step 80/2000 with stable energies/pressures, no NaNs).
-
-## 2026-02-11
-- Added MARTINI backbone rigid hold registration and atom-name selection in `src/martini.cpp`.
-- Added CLI switch `--martini-hold-backbone` and wiring in `src/main.cpp`.
-- Stored `atom_names` in MARTINI input generation for backbone selection in `example/16.MARTINI/prepare_martini.py`.
-- Enabled backbone hold for minimization and softened NPT equilibration stages in `example/16.MARTINI/run_sim_1ubq.sh`.
-- Tests not run (not requested).
-- Adjusted backbone selection to prefer explicit BB index dataset (`/input/martini_backbone_bb_indices`) sourced from PDB atom names in `example/16.MARTINI/prepare_martini.py`.
-- Updated MARTINI rigid hold reader in `src/martini.cpp` to use BB indices when present, with atom-name fallback.
-- Added H5 metadata arrays for atom roles, interaction type names, and per-atom particle class in `example/16.MARTINI/prepare_martini.py`.
-- Updated MARTINI backbone selection to use /input/atom_roles as the fallback (instead of /input/atom_names), keeping BB indices as preferred source.
-- Enforced MARTINI backbone hold requires /input/atom_roles or /input/martini_backbone_bb_indices when martini potential is present.
-- Enforced presence of /input/type for MARTINI potential initialization.
-- Removed /input/atom_roles generation; MARTINI backbone hold now relies solely on /input/martini_backbone_bb_indices.
-- Restored /input/atom_roles from PDB atom roles and removed BB-index dataset usage; backbone hold now derives BB selection from atom roles.
-- Switched atom_roles storage back to S4 dtype per request.
-- Added per-atom molecule index dataset (/input/molecule_ids) with description and added residue_ids description in MARTINI input writer.
-- Updated molecule grouping to keep protein chains intact (group by segid/chain), while non-proteins remain grouped by residue id; adjusted molecule validation and protein residue counting.
+## 2026-02-12
+- Reviewed existing `task_plan.md` and detected it targets an unrelated prior task.
+- Inspected current `example/16.MARTINI/run_sim_bilayer.sh` and confirmed multi-stage MARTINI workflow is already present.
+- Confirmed dry MARTINI Gromacs `.mdp` files exist at `/Users/yinhan/Downloads/charmm-gui-7090685331/gromacs` for minimization/equilibration/production.
+- Reinitialized planning/research/progress docs for the current dry MARTINI migration task.
+- Reworked `example/16.MARTINI/run_sim_bilayer.sh` to explicit dry MARTINI stages `6.0` to `7.0`, with per-stage checkpoints and Gromacs-aligned step counts/time steps.
+- Updated production-stage behavior in `run_sim_bilayer.sh` to configurable NPT with default Parrinello-Rahman (`PROD_70_NPT_ENABLE`, `PROD_70_BAROSTAT_TYPE`), and fixed same-input/output stage execution logic.
+- Extended `example/16.MARTINI/prepare_martini.py` to write axis-specific barostat attributes (`compressibility_xy`, `compressibility_z`) while preserving legacy `compressibility`.
+- Extended barostat settings in `src/box.h` and implemented axis-specific semi-isotropic coupling in `src/box.cpp` for both Berendsen and Parrinello-Rahman paths.
+- Fixed pressure-equilibrium relative-deviation computation in `src/box.cpp` to handle zero target pressure safely.
+- Validation: `bash -n example/16.MARTINI/run_sim_bilayer.sh` passed.
+- Validation: `python3 -m py_compile example/16.MARTINI/prepare_martini.py` passed.
+- Removed wet MARTINI fallback paths from `prepare_martini.py`; it now resolves force-field files as dry-only (`dry_martini_v2.1*.itp`).
+- Extended `parse_itp_file()` for dry MARTINI lipid topology parsing: added macro resolution for alias-based bond/angle parameters and minimal `#ifdef/#ifndef/#else/#endif` handling to avoid parsing inactive branches.
+- Set/kept `run_sim_bilayer.sh` force-field selection on `UPSIDE_MARTINI_FF_DIR=ff_dry`.
+- Validation: dry-mode smoke test succeeded (`UPSIDE_MARTINI_FF_DIR=ff_dry ... prepare_martini.py bilayer ...`) and produced `outputs/martini_test_smoke/test.input.up`.
+- Investigated early-stage explosion in stage 6.2 and confirmed generated NPT settings were active with `compressibility_xy=14.521...`, `compressibility_z=0.0`, but barostat interval was 1 and pressure quickly became non-finite.
+- Hardened `src/box.cpp` barostat numerics: skip NPT update on non-finite pressure; avoid NaN propagation when compressibility is zero (axis freeze) and when pressure/targets are non-finite.
+- Adjusted `run_sim_bilayer.sh` defaults for stability: `EQ_TIME_STEP=0.010`, `PROD_TIME_STEP=0.020`, `MIN_TIME_STEP=0.010`, `UPSIDE_NPT_INTERVAL=10`.
+- Added a safer 6.2->6.4 relaxation ramp in `run_sim_bilayer.sh`: stage 6.2 uses `npt_equil` (soft), stage 6.3 uses `npt_equil_reduced`, stage 6.4+ switch to hard `npt_prod` parameters with Berendsen.
+- Verified electrostatics path: real-space Coulomb still uses precomputed spline tables, while Ewald reciprocal term is computed separately in `box.cpp`.
+- Hardened spline usage in `src/martini.cpp` by adding quantized charge-product lookup (`coulomb_key_to_qq`) to avoid float-key misses that would trigger analytical Coulomb fallback unnecessarily.
+- Re-checked pressure/compressibility settings against CHARMM-GUI `.mdp` files and AGENTS/CLAUDE unit conversions.
+- Updated `run_sim_bilayer.sh` to use explicit conversion constants from docs: `BAR_TO_EUP=0.000020659477`, `COMP_3E4_BAR_INV_TO_A3_PER_EUP=14.521180763676`.
+- Updated NPT defaults to `Pxy=0` (tensionless), `Pz=1 bar` (explicit physical target), `compressibility_xy=3e-4 bar^-1`, `compressibility_z=0`.
+- Reduced `prepare_martini.py` console verbosity by removing per-molecule integrity lines, detailed molecule dumps, atom-name mapping prints, available-molecule list dumps, and first-10-position coordinate dumps.
+- Kept concise high-level summaries (system size, molecule counts, connectivity counts, file outputs) for run diagnostics.
+- Aligned implicit dry bilayer pressure defaults with paper/mdp semantics: set `UPSIDE_NPT_TARGET_PZ` default back to `0.0` and documented that `beta_z=0` makes z reference pressure inert.
+- Simplified NPT debug logging in `src/box.cpp` to print only time, scale factors, and box dimensions (removed pressure/target values from log line).
+- Updated runtime logging format per user request: removed `| box ...` from main step progress line in `src/main.cpp` and simplified NPT debug line to `[NPT] t ... box ...` in `src/box.cpp`.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-MARTINI 3.0 Protein-Lipid System Preparation Script
-Prepares simulation files for MARTINI 3.0 force field with protein topology support.
+Dry MARTINI Protein-Lipid System Preparation Script
+Prepares simulation files for dry MARTINI force field with protein topology support.
 """
 
 import os
@@ -12,24 +12,41 @@ from collections import Counter
 
 def read_martini3_nonbond_params(itp_file):
     """
-    Read MARTINI 3.00 nonbonded parameters from the main .itp file
+    Read MARTINI nonbonded parameters from the main .itp file
     Returns a dictionary mapping (type1, type2) tuples to (sigma, epsilon) values
     """
     martini_table = {}
     
     if not os.path.exists(itp_file):
-        print(f"Error: MARTINI 3.00 parameter file '{itp_file}' not found!")
+        print(f"Error: MARTINI parameter file '{itp_file}' not found!")
         return martini_table
     
     with open(itp_file, 'r') as f:
         lines = f.readlines()
     
+    # Parse #define macros for dry MARTINI style nonbond_params entries
+    macro_params = {}
+    for raw in lines:
+        line = raw.split(';', 1)[0].strip()
+        if not line.startswith('#define'):
+            continue
+        parts = line.split()
+        # Format: #define m_VI 0.47 2.700
+        if len(parts) >= 4:
+            macro_name = parts[1]
+            try:
+                sigma = float(parts[2])
+                epsilon = float(parts[3])
+                macro_params[macro_name] = (sigma, epsilon)
+            except ValueError:
+                continue
+
     # Find the nonbond_params section
     in_nonbond_params = False
     param_count = 0
     
     for i, line in enumerate(lines):
-        line = line.strip()
+        line = line.split(';', 1)[0].strip()
         
         # Check for nonbond_params section start
         if line == '[ nonbond_params ]' or line == '[nonbond_params]':
@@ -47,16 +64,41 @@ def read_martini3_nonbond_params(itp_file):
             if len(parts) >= 5:
                 type1 = parts[0]
                 type2 = parts[1]
-                func = int(parts[2])
-                sigma = float(parts[3])  # nm
-                epsilon = float(parts[4])  # kJ/mol
-                
+                try:
+                    _func = int(parts[2])
+                except ValueError:
+                    continue
+                try:
+                    sigma = float(parts[3])  # nm
+                    epsilon = float(parts[4])  # kJ/mol
+                except ValueError:
+                    # Dry MARTINI often uses a macro token in column 4
+                    macro = parts[3]
+                    if macro not in macro_params:
+                        continue
+                    sigma, epsilon = macro_params[macro]
+
                 # Store both orientations for easy lookup
                 martini_table[(type1, type2)] = (sigma, epsilon)
                 martini_table[(type2, type1)] = (sigma, epsilon)
                 param_count += 1
+            elif len(parts) >= 4:
+                # Alternative dry MARTINI format: type1 type2 func macro
+                type1 = parts[0]
+                type2 = parts[1]
+                try:
+                    _func = int(parts[2])
+                except ValueError:
+                    continue
+                macro = parts[3]
+                if macro not in macro_params:
+                    continue
+                sigma, epsilon = macro_params[macro]
+                martini_table[(type1, type2)] = (sigma, epsilon)
+                martini_table[(type2, type1)] = (sigma, epsilon)
+                param_count += 1
     
-    print(f"Read {len(martini_table)//2} unique nonbonded parameter pairs from MARTINI 3.00")
+    print(f"Read {len(martini_table)//2} unique nonbonded parameter pairs")
     return martini_table
 
 # --- Helpers: read MARTINI protein topology (ITP) for protein bead typing and connectivity ---
@@ -306,13 +348,80 @@ def parse_itp_file(itp_file, target_molecule=None):
     current_section = None
     current_molecule = None
     current_mol_data = None
+    macro_defs = {}
+    pp_stack = []
+    current_active = True
+
+    def parse_macro_value(tok, macro_index=None):
+        # Try direct float
+        try:
+            return float(tok)
+        except ValueError:
+            pass
+        # Try macro lookup
+        values = macro_defs.get(tok)
+        if values is None:
+            raise ValueError(f"Unknown macro '{tok}'")
+        if macro_index is None:
+            if not values:
+                raise ValueError(f"Macro '{tok}' has no values")
+            return values[0]
+        if macro_index < len(values):
+            return values[macro_index]
+        if values:
+            return values[-1]
+        raise ValueError(f"Macro '{tok}' has no values")
     
     with open(itp_file, 'r') as f:
         for line in f:
-            line = line.strip()
+            line = line.split(';', 1)[0].strip()
             
             # Skip empty lines and comments
-            if not line or line.startswith(';'):
+            if not line:
+                continue
+
+            # Handle a minimal preprocessor subset so dry MARTINI #ifndef/#else blocks
+            # resolve to a single active topology branch.
+            if line.startswith('#ifdef') or line.startswith('#ifndef'):
+                parts = line.split()
+                macro_name = parts[1] if len(parts) >= 2 else ""
+                is_defined = macro_name in macro_defs
+                cond = is_defined if line.startswith('#ifdef') else (not is_defined)
+                pp_stack.append((current_active, cond))
+                current_active = current_active and cond
+                continue
+            if line.startswith('#else'):
+                if pp_stack:
+                    parent_active, cond = pp_stack[-1]
+                    cond = not cond
+                    pp_stack[-1] = (parent_active, cond)
+                    current_active = parent_active and cond
+                continue
+            if line.startswith('#endif'):
+                if pp_stack:
+                    parent_active, _cond = pp_stack.pop()
+                    current_active = parent_active
+                continue
+            if not current_active:
+                continue
+
+            # Parse and store macro definitions used in dry MARTINI lipids
+            if line.startswith('#define'):
+                parts = line.split()
+                if len(parts) >= 3:
+                    macro_name = parts[1]
+                    macro_vals = []
+                    for tok in parts[2:]:
+                        try:
+                            macro_vals.append(float(tok))
+                        except ValueError:
+                            break
+                    if macro_vals:
+                        macro_defs[macro_name] = macro_vals
+                continue
+
+            # Ignore preprocessor directives like #ifdef/#ifndef/#endif/#include
+            if line.startswith('#'):
                 continue
             
             # Check for section headers
@@ -382,8 +491,12 @@ def parse_itp_file(itp_file, target_molecule=None):
                             'k': 0.0
                         }
                         if len(parts) >= 5:
-                            bond_data['r0'] = float(parts[3])  # nm
-                            bond_data['k'] = float(parts[4])   # kJ/mol/nm²
+                            bond_data['r0'] = parse_macro_value(parts[3], macro_index=0)  # nm
+                            bond_data['k'] = parse_macro_value(parts[4], macro_index=1)   # kJ/mol/nm²
+                        elif len(parts) >= 4:
+                            # Dry MARTINI alias form: i j func macro
+                            bond_data['r0'] = parse_macro_value(parts[3], macro_index=0)
+                            bond_data['k'] = parse_macro_value(parts[3], macro_index=1)
                         current_mol_data['bonds'].append(bond_data)
                         topology['bonds'].append(bond_data)
                     except (ValueError, IndexError):
@@ -391,16 +504,23 @@ def parse_itp_file(itp_file, target_molecule=None):
             
             elif current_section == 'angles' and current_mol_data is not None:
                 parts = line.split()
-                if len(parts) >= 6:  # Need at least i j k func theta0 force_k
+                if len(parts) >= 5:
                     try:
                         angle_data = {
                             'i': int(parts[0]) - 1,  # Convert to 0-indexed
                             'j': int(parts[1]) - 1,
                             'k': int(parts[2]) - 1,
                             'func': int(parts[3]),
-                            'theta0': float(parts[4]),  # degrees
-                            'force_k': float(parts[5])  # kJ/mol/rad² (renamed to avoid conflict)
+                            'theta0': 0.0,  # degrees
+                            'force_k': 0.0  # kJ/mol/rad²
                         }
+                        if len(parts) >= 6:
+                            angle_data['theta0'] = parse_macro_value(parts[4], macro_index=0)
+                            angle_data['force_k'] = parse_macro_value(parts[5], macro_index=1)
+                        else:
+                            # Dry MARTINI alias form: i j k func macro
+                            angle_data['theta0'] = parse_macro_value(parts[4], macro_index=0)
+                            angle_data['force_k'] = parse_macro_value(parts[4], macro_index=1)
                         current_mol_data['angles'].append(angle_data)
                         topology['angles'].append(angle_data)
                     except (ValueError, IndexError):
@@ -569,22 +689,40 @@ def main(stage='minimization', run_dir=None):
     strict_from_martini_pdb = True
     include_protein = True
     
-    print("=== MARTINI 3.0 Protein-Lipid System Preparation ===")
+    print("=== Dry MARTINI Protein-Lipid System Preparation ===")
     print(f"PDB ID: {pdb_id}")
     print(f"Output directory: {run_dir}")
     
-    # Read MARTINI parameter files
-    print("\n=== Reading MARTINI 3.0 Parameters ===")
-    
-    # Read nonbonded parameters
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    martini_param_file = os.path.join(SCRIPT_DIR, "ff3.00/martini_v3.0.0.itp")
+    # Read dry MARTINI parameter files
+    print("\n=== Reading Dry MARTINI Parameters ===")
+    ff_dir = os.environ.get('UPSIDE_MARTINI_FF_DIR', 'ff_dry')
+    ff_path = os.path.join(SCRIPT_DIR, ff_dir)
+
+    if not os.path.isdir(ff_path):
+        raise ValueError(f"FATAL ERROR: Force-field directory '{ff_path}' not found.\n"
+                        f"  Set UPSIDE_MARTINI_FF_DIR to a valid directory under {SCRIPT_DIR}.")
+
+    ff_files = sorted(os.listdir(ff_path))
+    print(f"Using force-field directory: {ff_path}")
+
+    def pick_ff_file(name, required=True):
+        path = os.path.join(ff_path, name)
+        if os.path.exists(path):
+            return path
+        if required:
+            raise ValueError(f"FATAL ERROR: Required dry MARTINI file '{name}' not found in '{ff_path}'.\n"
+                            f"  Available: {ff_files}")
+        return None
+
+    # Read nonbonded parameters
+    martini_param_file = pick_ff_file("dry_martini_v2.1.itp")
     martini_table = read_martini3_nonbond_params(martini_param_file)
     
     if not martini_table:
         raise ValueError(f"FATAL ERROR: Could not read MARTINI parameters from '{martini_param_file}'\n"
                         f"  This file is required for proper force field parameterization.\n"
-                        f"  Please ensure the MARTINI 3.0 parameter file exists and is readable.\n"
+                        f"  Please ensure the dry MARTINI parameter file exists and is readable.\n"
                         f"  Aborting to prevent incorrect simulation results.")
     
     # Determine system type and load appropriate topology
@@ -599,16 +737,14 @@ def main(stage='minimization', run_dir=None):
         print("=== Mixed Protein-Lipid System Detected ===")
         print(f"Using protein topology from: {protein_itp}")
         print("System contains both protein and lipid components")
-        print("Using MARTINI 3.0 force field parameters for both protein and lipid components")
+        print("Using dry MARTINI force field parameters for both protein and lipid components")
     else:
         print("=== Lipid System Detected ===")
     
     # For both protein and lipid systems, we need DOPC parameters
     # Parse DOPC topology from ITP file
-    dopc_param_file = os.path.join(SCRIPT_DIR, "ff3.00/martini_v3.0.0_phospholipids_v1.itp")
-    # First check what molecules are available
+    dopc_param_file = pick_ff_file("dry_martini_v2.1_lipids.itp")
     full_topology = parse_itp_file(dopc_param_file)
-    print(f"Available molecules in {dopc_param_file}: {list(full_topology['molecules'].keys())}")
     
     # Try to find DOPC or similar molecule
     dopc_molecule = None
@@ -619,7 +755,6 @@ def main(stage='minimization', run_dir=None):
     
     if dopc_molecule:
         dopc_topology = parse_itp_file(dopc_param_file, dopc_molecule)
-        print(f"Using molecule type: {dopc_molecule}")
     else:
         available_molecules = list(full_topology['molecules'].keys())
         raise ValueError(f"FATAL ERROR: DOPC molecule not found in '{dopc_param_file}'.\n"
@@ -633,33 +768,41 @@ def main(stage='minimization', run_dir=None):
     dopc_atom_to_type = {atom['atom']: atom['type'] for atom in dopc_topology['atoms']}
     dopc_atom_to_charge = {atom['atom']: atom['charge'] for atom in dopc_topology['atoms']}
     print(f"Read DOPC topology: {len(dopc_bead_types)} bead types from {dopc_param_file}")
-    print(f"DOPC atom name mapping: {dopc_atom_to_type}")
     
     # Parse ion topologies from ITP file
-    ion_param_file = os.path.join(SCRIPT_DIR, "ff3.00/martini_v3.0.0_ions_v1.itp")
-    ion_topology = parse_itp_file(ion_param_file)
-    # Extract NA and CL atoms specifically
-    # In MARTINI ion ITP files, residue name is "ION" and atom name is "NA" or "CL"
-    na_atoms = [atom for atom in ion_topology['atoms'] if atom['atom'].upper() == 'NA']
-    cl_atoms = [atom for atom in ion_topology['atoms'] if atom['atom'].upper() == 'CL']
-    
-    # For standard ions, use the first occurrence (standard chloride is TQ5, not SQ5n which is for acetate)
-    na_bead_types = [na_atoms[0]['type']] if na_atoms else []
-    na_charges = [na_atoms[0]['charge']] if na_atoms else []
-    cl_bead_types = [cl_atoms[0]['type']] if cl_atoms else []  # Use first CL (TQ5), not acetate CL (SQ5n)
-    cl_charges = [cl_atoms[0]['charge']] if cl_atoms else []
-    print(f"Read ion topology: NA={len(na_bead_types)} types, CL={len(cl_bead_types)} types from {ion_param_file}")
+    ion_param_file = pick_ff_file("dry_martini_v2.1_ions.itp", required=False)
+    if ion_param_file:
+        ion_topology = parse_itp_file(ion_param_file)
+        # Extract NA and CL atoms specifically
+        # In MARTINI ion ITP files, residue name is "ION" and atom name is "NA" or "CL"
+        na_atoms = [atom for atom in ion_topology['atoms'] if atom['atom'].upper() == 'NA']
+        cl_atoms = [atom for atom in ion_topology['atoms'] if atom['atom'].upper() == 'CL']
+        
+        # For standard ions, use the first occurrence (standard chloride is TQ5, not SQ5n which is for acetate)
+        na_bead_types = [na_atoms[0]['type']] if na_atoms else []
+        na_charges = [na_atoms[0]['charge']] if na_atoms else []
+        cl_bead_types = [cl_atoms[0]['type']] if cl_atoms else []  # Use first CL (TQ5), not acetate CL (SQ5n)
+        cl_charges = [cl_atoms[0]['charge']] if cl_atoms else []
+        print(f"Ion topology loaded: NA={len(na_bead_types)} type(s), CL={len(cl_bead_types)} type(s)")
+    else:
+        na_bead_types, na_charges = [], []
+        cl_bead_types, cl_charges = [], []
+        print("Ion topology file not found in selected FF")
     
     # Parse water topology from ITP file
-    water_param_file = os.path.join(SCRIPT_DIR, "ff3.00/martini_v3.0.0_solvents_v1.itp")
-    water_topology = parse_itp_file(water_param_file)
-    water_atoms = [atom for atom in water_topology['atoms'] if atom['residue'].upper() == 'W']
-    water_bead_types = [atom['type'] for atom in water_atoms]
-    water_charges = [atom['charge'] for atom in water_atoms]
-    print(f"Read water topology: {len(water_bead_types)} bead types from {water_param_file}")
+    water_param_file = pick_ff_file("dry_martini_v2.1_solvents.itp", required=False)
+    if water_param_file:
+        water_topology = parse_itp_file(water_param_file)
+        water_atoms = [atom for atom in water_topology['atoms'] if atom['residue'].upper() == 'W']
+        water_bead_types = [atom['type'] for atom in water_atoms]
+        water_charges = [atom['charge'] for atom in water_atoms]
+        print(f"Read water topology: {len(water_bead_types)} bead types from {water_param_file}")
+    else:
+        water_bead_types, water_charges = [], []
+        print("Water topology file not found in selected FF")
     
     # Read bead masses from force field file
-    mass_file = "ff3.00/martini_v3.0.0.itp"
+    mass_file = martini_param_file
     martini_masses = read_martini_masses(mass_file)
     print(f"Read {len(martini_masses)} atom type masses from force field file")
     
@@ -869,7 +1012,6 @@ def main(stage='minimization', run_dir=None):
                            f"  Aborting to prevent incorrect simulation results.")
     
     # Print system parameters
-    print(f"\n=== System Parameters ===")
     print(f"Box dimensions: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
     print(f"Box volume: {x_len * y_len * z_len:.1f} Å³")
     print(f"Total atoms: {n_atoms}")
@@ -934,7 +1076,6 @@ def main(stage='minimization', run_dir=None):
             molecule_ids[atom_idx] = mol_idx
 
     # Validate that each non-protein molecule contains only atoms of the same residue type
-    print(f"\n=== Validating Molecule Integrity ===")
     for i, (mol_type, atoms, indices) in enumerate(molecules):
         residue_names_in_mol = [residue_names[idx] for idx in indices]
         unique_resnames = set(residue_names_in_mol)
@@ -945,9 +1086,8 @@ def main(stage='minimization', run_dir=None):
                                f"  Molecule atoms: {atoms}\n"
                                f"  Residue names: {residue_names_in_mol}\n"
                                f"  Aborting to prevent incorrect simulation results.")
-            print(f"Molecule {i} ({mol_type}): {len(atoms)} atoms, residue type: {list(unique_resnames)[0]} ✓")
         else:
-            print(f"Molecule {i} ({mol_type}): {len(atoms)} atoms, residue type: mixed (protein chain) ✓")
+            pass
     
     # Count molecules by type, but group all protein residues together
     mol_counts = Counter()
@@ -975,15 +1115,6 @@ def main(stage='minimization', run_dir=None):
     print(f"\n=== Molecule Summary ===")
     for moltype, count in mol_counts.items():
         print(f"{moltype}: {count} molecules")
-    
-    # Debug: Show first few molecules to verify proper separation
-    print(f"\n=== Molecule Details (first 10) ===")
-    for i, (mol_type, atoms, indices) in enumerate(molecules[:10]):
-        print(f"Molecule {i}: {mol_type} with {len(atoms)} atoms (indices {indices[0]}-{indices[-1]})")
-        print(f"  Atoms: {atoms}")
-        print(f"  Residue IDs: {[residue_ids[idx] for idx in indices]}")
-        print(f"  Residue Names: {[residue_names[idx] for idx in indices]}")
-        print()
     
     # Create bonds and angles
     print(f"\n=== Creating Connectivity ===")
@@ -1113,10 +1244,6 @@ def main(stage='minimization', run_dir=None):
     centered_positions = (centered_positions + half_box) % (2*half_box) - half_box
     final_positions = centered_positions
     
-    print("First 10 positions (centered and wrapped):")
-    for i in range(min(10, n_atoms)):
-        print(f"  Atom {i}: {final_positions[i]}")
-    
     # Create UPSIDE input file
     print(f"\n=== Creating UPSIDE Input File ===")
     input_file = f"{run_dir}/test.input.up"
@@ -1218,7 +1345,16 @@ def main(stage='minimization', run_dir=None):
             barostat_grp._v_attrs.target_p_xy = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '0.000020659'))
             barostat_grp._v_attrs.target_p_z = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '0.000020659'))
             barostat_grp._v_attrs.tau_p = float(os.environ.get('UPSIDE_NPT_TAU', '1.0'))
-            barostat_grp._v_attrs.compressibility = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '14.521180763676'))
+            # Legacy isotropic compressibility (kept for compatibility)
+            legacy_compressibility = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '14.521180763676'))
+            barostat_grp._v_attrs.compressibility = legacy_compressibility
+            # Axis-specific compressibility for semi-isotropic membrane coupling
+            barostat_grp._v_attrs.compressibility_xy = float(
+                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_XY', str(legacy_compressibility))
+            )
+            barostat_grp._v_attrs.compressibility_z = float(
+                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_Z', str(legacy_compressibility))
+            )
             barostat_grp._v_attrs.interval = int(os.environ.get('UPSIDE_NPT_INTERVAL', '10'))
             barostat_grp._v_attrs.semi_isotropic = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
             barostat_grp._v_attrs.debug = int(os.environ.get('UPSIDE_NPT_DEBUG', '1'))
@@ -1228,6 +1364,8 @@ def main(stage='minimization', run_dir=None):
             print(f"  Type: {'Parrinello-Rahman' if barostat_grp._v_attrs.type == 1 else 'Berendsen'}")
             print(f"  Target Pxy: {barostat_grp._v_attrs.target_p_xy} E_up/Angstrom^3 (~1 bar)")
             print(f"  Target Pz: {barostat_grp._v_attrs.target_p_z} E_up/Angstrom^3 (~1 bar)")
+            print(f"  Compressibility XY: {barostat_grp._v_attrs.compressibility_xy} Angstrom^3/E_up")
+            print(f"  Compressibility Z: {barostat_grp._v_attrs.compressibility_z} Angstrom^3/E_up")
             print(f"  Tau_p: {barostat_grp._v_attrs.tau_p}")
             print(f"  Interval: {barostat_grp._v_attrs.interval} steps")
         else:

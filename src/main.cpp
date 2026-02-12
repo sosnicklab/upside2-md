@@ -1083,15 +1083,7 @@ try {
                             Rg = sqrtf(Rg/n_backbone);
                         }
 
-                        // Check if NPT is enabled and get box dimensions
-                        bool npt_enabled = simulation_box::npt::is_enabled(sys.engine);
-                        float box_x = 0.f, box_y = 0.f, box_z = 0.f;
-
-                        if(npt_enabled) {
-                            simulation_box::npt::get_current_box(sys.engine, box_x, box_y, box_z);
-                        }
-
-                        // Print with conditional Rg and NPT info
+                        // Print with conditional Rg info
                         if(verbose) {
                             printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg ",
                                    duration_print_width, nr*double(dt*inner_step),
@@ -1106,11 +1098,6 @@ try {
                             }
 
                             printf(", potential % 8.2f", sys.engine.potential);
-
-                            if(npt_enabled && box_x > 0.f) {
-                                printf(" | box %.1f %.1f %.1f", box_x, box_y, box_z);
-                            }
-
                             printf("\n");
                         }
                         fflush(stdout);

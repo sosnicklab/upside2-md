@@ -2,24 +2,17 @@
 source ../../source.sh
 source ../../.venv/bin/activate
 
-# MARTINI 3.0 Bilayer Simulation Workflow (CHARMM-GUI Protocol)
-# Stages: Prepare -> Minimization -> NPT Equilibration (Berendsen) -> NPT Production (Parrinello-Rahman) -> VTF Generation
-# Each stage uses a separate .up file generated at the start of the stage
-#
-# ENVIRONMENT VARIABLES:
-#   PDB_ID                - PDB identifier (default: bilayer)
-#   UPSIDE_NPT_TARGET_PXY - Target lateral pressure (default: 0.000020659 = 1 bar)
-#   UPSIDE_NPT_TARGET_PZ  - Target normal pressure (default: 0.000020659 = 1 bar)
-#   UPSIDE_NPT_TAU        - Barostat time constant (default: 1.0)
-#   UPSIDE_NPT_INTERVAL   - Steps between barostat applications (default: 10)
-#   UPSIDE_BAROSTAT_TYPE  - Barostat type: 0=Berendsen, 1=Parrinello-Rahman
+# Dry MARTINI bilayer workflow aligned to CHARMM-GUI Gromacs stages:
+# 6.0 soft-core minimization
+# 6.1 hard minimization
+# 6.2-6.6 hard equilibration (semi-isotropic Berendsen)
+# 7.0 hard production (configurable: Parrinello-Rahman by default)
 
-set -e  # Exit on any error
+set -euo pipefail
 
 # =============================================================================
 # USER CONFIGURATION
 # =============================================================================
-# Extract PDB_ID from command line arguments if provided
 while [[ $# -gt 0 ]]; do
     case $1 in
         PDB_ID=*)
@@ -33,43 +26,83 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Default to bilayer if not specified
 PDB_ID="${PDB_ID:-bilayer}"
 
-# Directories
 INPUTS_DIR="inputs"
 OUTPUTS_DIR="outputs"
 RUN_DIR="outputs/martini_test"
 CHECKPOINT_DIR="${RUN_DIR}/checkpoints"
-
-# Filenames - per-stage .up files
-PREPARED_FILE="${CHECKPOINT_DIR}/${PDB_ID}.prepared.up"
-MINIMIZED_FILE="${CHECKPOINT_DIR}/${PDB_ID}.minimized.up"
-NPT_EQUIL_FILE="${CHECKPOINT_DIR}/${PDB_ID}.npt_equil.up"
-NPT_EQUIL_REDUCED_FILE="${CHECKPOINT_DIR}/${PDB_ID}.npt_equil_reduced.up"
-NPT_PROD_FILE="${CHECKPOINT_DIR}/${PDB_ID}.npt_prod.up"
-VTF_FILE="${RUN_DIR}/${PDB_ID}.vtf"
 LOG_DIR="${RUN_DIR}/logs"
 
-# Simulation parameters
-TEMPERATURE=0.8
-TIME_STEP=0.1
-THERMOSTAT_TIMESCALE=0.135
-THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
-SEED=12345
+PREPARED_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.prepared.up"
+STAGE_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.up"
+PREPARED_61_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.1.prepared.up"
+STAGE_61_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.1.up"
+STAGE_62_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.2.up"
+PREPARED_63_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.3.prepared.up"
+STAGE_63_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.3.up"
+PREPARED_64_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.4.prepared.up"
+STAGE_64_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.4.up"
+STAGE_65_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.5.up"
+STAGE_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.up"
+PREPARED_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.prepared.up"
+STAGE_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.up"
 
-# Stage durations (in MD steps)
-MIN_STEPS="${MIN_STEPS:-500}"
-NVT_EQUIL_STEPS="${NVT_EQUIL_STEPS:-1000}"
-NPT_EQUIL_STEPS="${NPT_EQUIL_STEPS:-2000}"
-NPT_PROD_STEPS="${NPT_PROD_STEPS:-5000}"
-FRAME_INTERVAL="${FRAME_INTERVAL:-20}"
+# Temperature mapping: 303.15 K / 350.588235 K_per_T_up ~= 0.8647
+TEMPERATURE="${TEMPERATURE:-0.8647}"
+THERMOSTAT_TIMESCALE="${THERMOSTAT_TIMESCALE:-4.0}"
+THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
+SEED="${SEED:-7090685331}"
+
+# Gromacs nsteps from dry MARTINI mdp files
+MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-5000}"
+MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-5000}"
+EQ_62_NSTEPS="${EQ_62_NSTEPS:-50000}"
+EQ_63_NSTEPS="${EQ_63_NSTEPS:-50000}"
+EQ_64_NSTEPS="${EQ_64_NSTEPS:-50000}"
+EQ_65_NSTEPS="${EQ_65_NSTEPS:-50000}"
+EQ_66_NSTEPS="${EQ_66_NSTEPS:-50000}"
+PROD_70_NSTEPS="${PROD_70_NSTEPS:-1500000}"
+
+# dt from dry MARTINI mdp
+EQ_TIME_STEP="${EQ_TIME_STEP:-0.010}"
+PROD_TIME_STEP="${PROD_TIME_STEP:-0.020}"
+MIN_TIME_STEP="${MIN_TIME_STEP:-0.010}"
+
+# output cadence in integration steps (mdp uses 1000 for equil, 5000 for production)
+EQ_FRAME_STEPS="${EQ_FRAME_STEPS:-1000}"
+PROD_FRAME_STEPS="${PROD_FRAME_STEPS:-5000}"
+
+# Unit conversions from AGENTS.md / CLAUDE.md
+BAR_TO_EUP="${BAR_TO_EUP:-0.000020659477}"
+COMP_3E4_BAR_INV_TO_A3_PER_EUP="${COMP_3E4_BAR_INV_TO_A3_PER_EUP:-14.521180763676}"
+
+# NPT defaults for dry MARTINI implicit bilayer:
+# semi-isotropic, tensionless membrane (Pxy=0), fixed normal axis (beta_z=0).
+# With beta_z=0, the z reference pressure is inert; keep ref Pz=0 to match paper/Gromacs mdp.
+export UPSIDE_NPT_TARGET_PXY="${UPSIDE_NPT_TARGET_PXY:-0.0}"
+export UPSIDE_NPT_TARGET_PZ="${UPSIDE_NPT_TARGET_PZ:-0.0}"
+export UPSIDE_NPT_TAU="${UPSIDE_NPT_TAU:-4.0}"
+export UPSIDE_NPT_COMPRESSIBILITY="${UPSIDE_NPT_COMPRESSIBILITY:-$COMP_3E4_BAR_INV_TO_A3_PER_EUP}"
+export UPSIDE_NPT_COMPRESSIBILITY_XY="${UPSIDE_NPT_COMPRESSIBILITY_XY:-$COMP_3E4_BAR_INV_TO_A3_PER_EUP}"
+export UPSIDE_NPT_COMPRESSIBILITY_Z="${UPSIDE_NPT_COMPRESSIBILITY_Z:-0.0}"
+export UPSIDE_NPT_INTERVAL="${UPSIDE_NPT_INTERVAL:-10}"
+export UPSIDE_NPT_SEMI="${UPSIDE_NPT_SEMI:-1}"
+export UPSIDE_NPT_DEBUG="${UPSIDE_NPT_DEBUG:-1}"
+PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-1}"
+PROD_70_BAROSTAT_TYPE="${PROD_70_BAROSTAT_TYPE:-1}"
+
+export UPSIDE_OVERWRITE_SPLINES="${UPSIDE_OVERWRITE_SPLINES:-1}"
+export UPSIDE_EWALD_ENABLE="${UPSIDE_EWALD_ENABLE:-1}"
+export UPSIDE_EWALD_ALPHA="${UPSIDE_EWALD_ALPHA:-0.2}"
+export UPSIDE_EWALD_KMAX="${UPSIDE_EWALD_KMAX:-5}"
+export UPSIDE_MARTINI_FF_DIR="${UPSIDE_MARTINI_FF_DIR:-ff_dry}"
 
 # =============================================================================
 # VALIDATION
 # =============================================================================
-if [ -z "$UPSIDE_HOME" ]; then
-    echo "ERROR: UPSIDE_HOME environment variable is not set!"
+if [ -z "${UPSIDE_HOME:-}" ]; then
+    echo "ERROR: UPSIDE_HOME environment variable is not set"
     exit 1
 fi
 
@@ -79,290 +112,194 @@ if [ ! -f "$UPSIDE_EXECUTABLE" ]; then
     exit 1
 fi
 
-# Create directories
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR"
 
-echo "=== MARTINI 3.0 Bilayer Workflow (CHARMM-GUI Protocol) ==="
+duration_from_nsteps() {
+    local nsteps="$1"
+    local dt="$2"
+    awk -v n="$nsteps" -v d="$dt" 'BEGIN { printf "%.8f", n*d }'
+}
+
+set_barostat_type() {
+    local up_file="$1"
+    local barostat_type="$2"
+    python3 - "$up_file" "$barostat_type" << 'PY'
+import sys
+import tables as tb
+up_file = sys.argv[1]
+barostat_type = int(sys.argv[2])
+with tb.open_file(up_file, 'r+') as t:
+    if '/input/barostat' in t:
+        t.root.input.barostat._v_attrs.type = barostat_type
+PY
+}
+
+prepare_stage_file() {
+    local target_file="$1"
+    local prepare_stage="$2"
+    local npt_enable="$3"
+    local barostat_type="$4"
+
+    export UPSIDE_SIMULATION_STAGE="$prepare_stage"
+    export UPSIDE_NPT_ENABLE="$npt_enable"
+
+    python3 prepare_martini.py "$PDB_ID" --stage "$prepare_stage" "$RUN_DIR"
+
+    local prepared_tmp="${RUN_DIR}/test.input.up"
+    if [ ! -f "$prepared_tmp" ]; then
+        echo "ERROR: preparation failed for stage ${prepare_stage}: $prepared_tmp not found"
+        exit 1
+    fi
+
+    mv -f "$prepared_tmp" "$target_file"
+
+    if [ "$npt_enable" = "1" ]; then
+        set_barostat_type "$target_file" "$barostat_type"
+    fi
+}
+
+run_minimization_stage() {
+    local stage_label="$1"
+    local up_file="$2"
+    local max_iter="$3"
+
+    local log_file="${LOG_DIR}/stage_${stage_label}.log"
+    echo "=== Stage ${stage_label}: Minimization ==="
+    echo "Input/Output: $up_file"
+
+    local cmd=(
+        "$UPSIDE_EXECUTABLE"
+        "$up_file"
+        "--duration" "0"
+        "--frame-interval" "1"
+        "--temperature" "$TEMPERATURE"
+        "--time-step" "$MIN_TIME_STEP"
+        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+        "--seed" "$SEED"
+        "--integrator" "v"
+        "--disable-recentering"
+        "--minimize"
+        "--min-max-iter" "$max_iter"
+        "--min-energy-tol" "1e-6"
+        "--min-force-tol" "1e-3"
+        "--min-step" "0.01"
+    )
+
+    if ! "${cmd[@]}" 2>&1 | tee "$log_file"; then
+        echo "ERROR: Stage ${stage_label} failed"
+        exit 1
+    fi
+}
+
+run_md_stage() {
+    local stage_label="$1"
+    local input_file="$2"
+    local output_file="$3"
+    local nsteps="$4"
+    local dt="$5"
+    local frame_steps="$6"
+
+    local duration
+    duration="$(duration_from_nsteps "$nsteps" "$dt")"
+    local frame_interval
+    frame_interval="$(duration_from_nsteps "$frame_steps" "$dt")"
+
+    if [ "$input_file" != "$output_file" ]; then
+        cp -f "$input_file" "$output_file"
+        python3 set_initial_position.py "$input_file" "$output_file"
+    fi
+
+    local log_file="${LOG_DIR}/stage_${stage_label}.log"
+    echo "=== Stage ${stage_label}: MD ==="
+    echo "Input:  $input_file"
+    echo "Output: $output_file"
+    echo "nsteps=${nsteps}, dt=${dt}, duration=${duration}"
+
+    local cmd=(
+        "$UPSIDE_EXECUTABLE"
+        "$output_file"
+        "--duration" "$duration"
+        "--frame-interval" "$frame_interval"
+        "--temperature" "$TEMPERATURE"
+        "--time-step" "$dt"
+        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
+        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
+        "--seed" "$SEED"
+        "--integrator" "v"
+        "--disable-recentering"
+    )
+
+    if ! "${cmd[@]}" 2>&1 | tee "$log_file"; then
+        echo "ERROR: Stage ${stage_label} failed"
+        exit 1
+    fi
+}
+
+echo "=== Dry MARTINI Bilayer Workflow ==="
 echo "PDB ID: $PDB_ID"
-echo "Stages: Prepare -> Minimization -> NPT Equilibration (Softened, Berendsen) -> NPT Equilibration (Reduced Softening, Berendsen) -> NPT Production (Hard, Parrinello-Rahman) -> VTF"
-echo "  NPT Equilibration 1: $NPT_EQUIL_STEPS steps (softened potentials, lj_alpha=0.2, slater_alpha=2.0)"
-echo "  NPT Equilibration 2: $NPT_EQUIL_STEPS steps (reduced softening, lj_alpha=0.05, slater_alpha=0.5)"
-echo "  NPT Production:     $NPT_PROD_STEPS steps (hard particles)"
+echo "Sequence: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"
+echo "WARNING: Gromacs BILAYER_LIPIDHEAD_FC restraint ramp (200/100/50/20/10) is not yet implemented in prepare_martini.py; this script matches stage order, timesteps, and pressure-coupling behavior."
 echo
 
-# =============================================================================
-# STAGE 1: PREPARE INPUT FILE
-# =============================================================================
-echo "=== Stage 1: Preparing Input File (${PREPARED_FILE}) ==="
-source ../../source.sh
-source ../../.venv/bin/activate
+# 6.0: soft-core minimization, NPT on, Berendsen
+prepare_stage_file "$PREPARED_60_FILE" "minimization" "1" "0"
+cp -f "$PREPARED_60_FILE" "$STAGE_60_FILE"
+run_minimization_stage "6.0" "$STAGE_60_FILE" "$MIN_60_MAX_ITER"
 
-# Prepare with NPT enabled (so barostat configuration is stored in input file)
-export UPSIDE_OVERWRITE_SPLINES=${UPSIDE_OVERWRITE_SPLINES:-1}
-export UPSIDE_NPT_ENABLE=${UPSIDE_NPT_ENABLE:-1}
-export UPSIDE_EWALD_ENABLE=${UPSIDE_EWALD_ENABLE:-1}
-export UPSIDE_EWALD_ALPHA=${UPSIDE_EWALD_ALPHA:-0.2}
-export UPSIDE_EWALD_KMAX=${UPSIDE_EWALD_KMAX:-5}
-export UPSIDE_SIMULATION_STAGE="minimization"
-python3 prepare_martini.py "$PDB_ID" --stage "minimization" "$RUN_DIR"
+# 6.1: hard minimization, NPT on, Berendsen
+prepare_stage_file "$PREPARED_61_FILE" "npt_prod" "1" "0"
+cp -f "$PREPARED_61_FILE" "$STAGE_61_FILE"
+python3 set_initial_position.py "$STAGE_60_FILE" "$STAGE_61_FILE"
+run_minimization_stage "6.1" "$STAGE_61_FILE" "$MIN_61_MAX_ITER"
 
-# Move prepared file to checkpoint directory
-PREPARED_TMP="${RUN_DIR}/test.input.up"
-if [ -f "$PREPARED_TMP" ]; then
-    mv -f "$PREPARED_TMP" "$PREPARED_FILE"
-    echo "Input prepared: $PREPARED_FILE ($(du -h "$PREPARED_FILE" | cut -f1))"
-else
-    echo "ERROR: Input preparation failed - file not found: $PREPARED_TMP"
-    exit 1
-fi
+# 6.2-6.6: hard equilibration, NPT on, Berendsen
+# 6.2: soft potential (smoother start, compensates for missing lipid-head restraint ramp)
+prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "0"
+python3 set_initial_position.py "$STAGE_61_FILE" "$STAGE_62_FILE"
+run_md_stage "6.2" "$STAGE_62_FILE" "$STAGE_62_FILE" "$EQ_62_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 
-echo
+# 6.3: reduced softening
+prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "0"
+cp -f "$PREPARED_63_FILE" "$STAGE_63_FILE"
+python3 set_initial_position.py "$STAGE_62_FILE" "$STAGE_63_FILE"
+run_md_stage "6.3" "$STAGE_63_FILE" "$STAGE_63_FILE" "$EQ_63_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 
-# =============================================================================
-# STAGE 2: ENERGY MINIMIZATION (${MINIMIZED_FILE})
-# =============================================================================
-echo "=== Stage 2: Energy Minimization (${MINIMIZED_FILE}) ==="
-echo "Running gradient descent minimization with softened potentials"
-echo "Input:  $PREPARED_FILE"
-echo "Output: $MINIMIZED_FILE"
+# 6.4-6.6: hard potential with Berendsen
+prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "0"
+cp -f "$PREPARED_64_FILE" "$STAGE_64_FILE"
+python3 set_initial_position.py "$STAGE_63_FILE" "$STAGE_64_FILE"
+run_md_stage "6.4" "$STAGE_64_FILE" "$STAGE_64_FILE" "$EQ_64_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+run_md_stage "6.5" "$STAGE_64_FILE" "$STAGE_65_FILE" "$EQ_65_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+run_md_stage "6.6" "$STAGE_65_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 
-# Copy prepared file to minimization file
-cp -f "$PREPARED_FILE" "$MINIMIZED_FILE"
+# 7.0: hard production (default Parrinello-Rahman, set PROD_70_NPT_ENABLE=0 for NVT)
+prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "$PROD_70_BAROSTAT_TYPE"
+cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
+python3 set_initial_position.py "$STAGE_66_FILE" "$STAGE_70_FILE"
+run_md_stage "7.0" "$STAGE_70_FILE" "$STAGE_70_FILE" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
 
-CMD_MIN=(
-    "$UPSIDE_EXECUTABLE"
-    "$MINIMIZED_FILE"
-    # Required arguments even for minimization (executable parses all args before checking --minimize)
-    "--duration" "0"          # 0 duration means no MD steps after minimization
-    "--frame-interval" "1"    # Required by executable
-    "--temperature" "$TEMPERATURE"  # Required by executable
-    "--time-step" "$TIME_STEP"      # Required by executable
-    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"  # Required by executable
-    "--thermostat-interval" "$THERMOSTAT_INTERVAL"    # Required by executable
-    "--seed" "$SEED"          # Required by executable
-    "--integrator" "vel_verlet"    # Required by executable
-    "--disable-recentering"
-    "--minimize"
-    "--min-max-iter" "1000"
-    "--min-energy-tol" "1e-6"
-    "--min-force-tol" "1e-3"
-    "--min-step" "0.01"
-)
+# VTF outputs for key checkpoints
+VTF_61_FILE="${RUN_DIR}/${PDB_ID}.stage_6.1.vtf"
+VTF_66_FILE="${RUN_DIR}/${PDB_ID}.stage_6.6.vtf"
+VTF_70_FILE="${RUN_DIR}/${PDB_ID}.stage_7.0.vtf"
 
-START_TIME=$(date +%s)
-if "${CMD_MIN[@]}" 2>&1 | tee "${LOG_DIR}/minimization.log"; then
-    END_TIME=$(date +%s)
-    echo "Minimization completed in $((END_TIME - START_TIME)) seconds"
-else
-    echo "ERROR: Minimization failed!"
-    exit 1
-fi
-
-echo "Minimized checkpoint: $MINIMIZED_FILE"
-echo
-
-# =============================================================================
-# STAGE 3: NPT EQUILIBRATION WITH SOFTENED POTENTIALS (Berendsen barostat)
-# =============================================================================
-echo "=== Stage 3: NPT Equilibration (Softened Potentials, Berendsen) (${NPT_EQUIL_FILE}) ==="
-echo "Running $NPT_EQUIL_STEPS steps with softened potentials to relax system"
-echo "Input:  $MINIMIZED_FILE"
-echo "Output: $NPT_EQUIL_FILE"
-
-# Generate NPT equilibration file with softened potentials
-export UPSIDE_SIMULATION_STAGE="npt_equil"
-python3 prepare_martini.py "$PDB_ID" --stage "npt_equil" "$RUN_DIR"
-
-# Move prepared file to checkpoint directory
-NPT_EQUIL_TMP="${RUN_DIR}/test.input.up"
-if [ -f "$NPT_EQUIL_TMP" ]; then
-    mv -f "$NPT_EQUIL_TMP" "$NPT_EQUIL_FILE"
-else
-    echo "ERROR: NPT equilibration preparation failed - file not found: $NPT_EQUIL_TMP"
-    exit 1
-fi
-
-# Set initial position in NPT file to last frame from minimization
-python3 set_initial_position.py "$MINIMIZED_FILE" "$NPT_EQUIL_FILE"
-
-CMD_NPT_EQUIL=(
-    "$UPSIDE_EXECUTABLE"
-    "$NPT_EQUIL_FILE"
-    "--duration" "$NPT_EQUIL_STEPS"
-    "--frame-interval" "$FRAME_INTERVAL"
-    "--temperature" "$TEMPERATURE"
-    "--time-step" "$TIME_STEP"
-    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-    "--seed" "$SEED"
-    "--integrator" "vel_verlet"
-    "--disable-recentering"
-)
-
-START_TIME=$(date +%s)
-if "${CMD_NPT_EQUIL[@]}" 2>&1 | tee "${LOG_DIR}/npt_equilibration.log"; then
-    END_TIME=$(date +%s)
-    echo "NPT equilibration completed in $((END_TIME - START_TIME)) seconds"
-else
-    echo "ERROR: NPT equilibration failed!"
-    exit 1
-fi
-
-echo "NPT equilibration checkpoint: $NPT_EQUIL_FILE"
-echo
-
-# =============================================================================
-# STAGE 4: NPT PRODUCTION (Reduced Softening, Berendsen barostat)
-# =============================================================================
-echo "=== Stage 4: NPT Equilibration (Reduced Softening, Berendsen) (${NPT_EQUIL_REDUCED_FILE}) ==="
-echo "Running $NPT_EQUIL_STEPS steps with reduced softening potentials"
-echo "Input:  $NPT_EQUIL_FILE"
-echo "Output: $NPT_EQUIL_REDUCED_FILE"
-
-# Generate NPT equilibration file with reduced softening potentials
-export UPSIDE_SIMULATION_STAGE="npt_equil_reduced"
-python3 prepare_martini.py "$PDB_ID" --stage "npt_equil_reduced" "$RUN_DIR"
-
-# Move prepared file to checkpoint directory
-NPT_EQUIL_REDUCED_TMP="${RUN_DIR}/test.input.up"
-if [ -f "$NPT_EQUIL_REDUCED_TMP" ]; then
-    mv -f "$NPT_EQUIL_REDUCED_TMP" "$NPT_EQUIL_REDUCED_FILE"
-else
-    echo "ERROR: NPT equilibration (reduced) preparation failed - file not found: $NPT_EQUIL_REDUCED_TMP"
-    exit 1
-fi
-
-# Set initial position in reduced softening file to last frame from previous equilibration
-python3 set_initial_position.py "$NPT_EQUIL_FILE" "$NPT_EQUIL_REDUCED_FILE"
-
-CMD_NPT_EQUIL_REDUCED=(
-    "$UPSIDE_EXECUTABLE"
-    "$NPT_EQUIL_REDUCED_FILE"
-    "--duration" "$NPT_EQUIL_STEPS"
-    "--frame-interval" "$FRAME_INTERVAL"
-    "--temperature" "$TEMPERATURE"
-    "--time-step" "$TIME_STEP"
-    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-    "--seed" "$SEED"
-    "--integrator" "vel_verlet"
-    "--disable-recentering"
-)
-
-START_TIME=$(date +%s)
-if "${CMD_NPT_EQUIL_REDUCED[@]}" 2>&1 | tee "${LOG_DIR}/npt_equilibration_reduced.log"; then
-    END_TIME=$(date +%s)
-    echo "NPT equilibration (reduced softening) completed in $((END_TIME - START_TIME)) seconds"
-else
-    echo "ERROR: NPT equilibration (reduced softening) failed!"
-    exit 1
-fi
-
-echo "NPT equilibration (reduced softening) checkpoint: $NPT_EQUIL_REDUCED_FILE"
-echo
-
-# =============================================================================
-# STAGE 5: NPT PRODUCTION (Hard, Parrinello-Rahman barostat)
-# =============================================================================
-echo "=== Stage 5: NPT Production (Hard, Parrinello-Rahman) (${NPT_PROD_FILE}) ==="
-echo "Running $NPT_PROD_STEPS steps with Parrinello-Rahman barostat"
-echo "Input:  $NPT_EQUIL_REDUCED_FILE"
-echo "Output: $NPT_PROD_FILE"
-
-# Generate NPT production file with hard potentials
-export UPSIDE_SIMULATION_STAGE="npt_prod"
-python3 prepare_martini.py "$PDB_ID" --stage "npt_prod" "$RUN_DIR"
-
-# Move prepared file to checkpoint directory
-NPT_PROD_TMP="${RUN_DIR}/test.input.up"
-if [ -f "$NPT_PROD_TMP" ]; then
-    mv -f "$NPT_PROD_TMP" "$NPT_PROD_FILE"
-else
-    echo "ERROR: NPT production preparation failed - file not found: $NPT_PROD_TMP"
-    exit 1
-fi
-
-# Set initial position in production file to last frame from reduced softening equilibration
-python3 set_initial_position.py "$NPT_EQUIL_REDUCED_FILE" "$NPT_PROD_FILE"
-
-CMD_NPT_PROD=(
-    "$UPSIDE_EXECUTABLE"
-    "$NPT_PROD_FILE"
-    "--duration" "$NPT_PROD_STEPS"
-    "--frame-interval" "$FRAME_INTERVAL"
-    "--temperature" "$TEMPERATURE"
-    "--time-step" "$TIME_STEP"
-    "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-    "--thermostat-interval" "$THERMOSTAT_INTERVAL"
-    "--seed" "$SEED"
-    "--integrator" "vel_verlet"
-    "--disable-recentering"
-)
-
-START_TIME=$(date +%s)
-if "${CMD_NPT_PROD[@]}" 2>&1 | tee "${LOG_DIR}/npt_production.log"; then
-    END_TIME=$(date +%s)
-    echo "NPT production completed in $((END_TIME - START_TIME)) seconds"
-else
-    echo "ERROR: NPT production failed!"
-    exit 1
-fi
-
-echo "NPT production checkpoint: $NPT_PROD_FILE"
-echo
-
-# =============================================================================
-# STAGE 6: VTF GENERATION (ALL STAGES)
-# =============================================================================
-echo "=== Stage 6: Generating VTF Files for All Stages ==="
-
-# Minimization VTF
-MIN_VTF_FILE="${RUN_DIR}/${PDB_ID}.minimized.vtf"
-echo "Extracting minimization trajectory from: $MINIMIZED_FILE"
-echo "Output VTF: $MIN_VTF_FILE"
-if python3 extract_martini_vtf.py "$MINIMIZED_FILE" "$MIN_VTF_FILE" "$MINIMIZED_FILE" "$PDB_ID"; then
-    MIN_VTF_SIZE=$(du -h "$MIN_VTF_FILE" | cut -f1)
-    echo "Minimization VTF generated: $MIN_VTF_FILE ($MIN_VTF_SIZE)"
-else
-    echo "ERROR: Minimization VTF generation failed!"
-    exit 1
-fi
-
-# NPT Equilibration VTF
-NPT_EQUIL_VTF_FILE="${RUN_DIR}/${PDB_ID}.npt_equil.vtf"
-echo "Extracting NPT equilibration trajectory from: $NPT_EQUIL_FILE"
-echo "Output VTF: $NPT_EQUIL_VTF_FILE"
-if python3 extract_martini_vtf.py "$NPT_EQUIL_FILE" "$NPT_EQUIL_VTF_FILE" "$NPT_EQUIL_FILE" "$PDB_ID"; then
-    NPT_EQUIL_VTF_SIZE=$(du -h "$NPT_EQUIL_VTF_FILE" | cut -f1)
-    echo "NPT equilibration VTF generated: $NPT_EQUIL_VTF_FILE ($NPT_EQUIL_VTF_SIZE)"
-else
-    echo "ERROR: NPT equilibration VTF generation failed!"
-    exit 1
-fi
-
-# NPT Production VTF
-NPT_PROD_VTF_FILE="${RUN_DIR}/${PDB_ID}.npt_prod.vtf"
-echo "Extracting NPT production trajectory from: $NPT_PROD_FILE"
-echo "Output VTF: $NPT_PROD_VTF_FILE"
-if python3 extract_martini_vtf.py "$NPT_PROD_FILE" "$NPT_PROD_VTF_FILE" "$NPT_PROD_FILE" "$PDB_ID"; then
-    NPT_PROD_VTF_SIZE=$(du -h "$NPT_PROD_VTF_FILE" | cut -f1)
-    echo "NPT production VTF generated: $NPT_PROD_VTF_FILE ($NPT_PROD_VTF_SIZE)"
-else
-    echo "ERROR: NPT production VTF generation failed!"
-    exit 1
-fi
+python3 extract_martini_vtf.py "$STAGE_61_FILE" "$VTF_61_FILE" "$STAGE_61_FILE" "$PDB_ID"
+python3 extract_martini_vtf.py "$STAGE_66_FILE" "$VTF_66_FILE" "$STAGE_66_FILE" "$PDB_ID"
+python3 extract_martini_vtf.py "$STAGE_70_FILE" "$VTF_70_FILE" "$STAGE_70_FILE" "$PDB_ID"
 
 echo
 echo "=== Workflow Complete ==="
 echo "Checkpoints:"
-echo "  Prepared:          $PREPARED_FILE"
-echo "  Minimized:         $MINIMIZED_FILE"
-echo "  NPT Equilibration: $NPT_EQUIL_FILE"
-echo "  NPT Production:    $NPT_PROD_FILE"
-echo "Trajectories:"
-echo "  Minimization:      $MIN_VTF_FILE"
-echo "  NPT Equilibration: $NPT_EQUIL_VTF_FILE"
-echo "  NPT Production:    $NPT_PROD_VTF_FILE"
-echo
-echo "To visualize: vmd <vtf_file>"
-echo "Done."
+echo "  6.0: $STAGE_60_FILE"
+echo "  6.1: $STAGE_61_FILE"
+echo "  6.2: $STAGE_62_FILE"
+echo "  6.3: $STAGE_63_FILE"
+echo "  6.4: $STAGE_64_FILE"
+echo "  6.5: $STAGE_65_FILE"
+echo "  6.6: $STAGE_66_FILE"
+echo "  7.0: $STAGE_70_FILE"
+echo "VTF:"
+echo "  $VTF_61_FILE"
+echo "  $VTF_66_FILE"
+echo "  $VTF_70_FILE"

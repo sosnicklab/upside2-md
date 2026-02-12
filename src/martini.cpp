@@ -11,6 +11,7 @@
 #include <complex> // For complex numbers in PME
 #include <vector> // For PME grid operations
 #include <algorithm> // For PME algorithms
+#include <unordered_map>
 #include "box.h" // For PBC minimum_image function
 
 using namespace h5;
@@ -554,6 +555,8 @@ struct MartiniPotential : public PotentialNode
     
     // Spline interpolation for Coulomb potential - single spline for each charge product
     std::map<float, LayeredClampedSpline1D<1>> coulomb_splines;
+    // Quantized charge-product lookup to avoid float-key mismatches in the hot loop
+    std::unordered_map<int, float> coulomb_key_to_qq;
     
     // Spline parameters
     float lj_r_min, lj_r_max;
@@ -912,6 +915,8 @@ struct MartiniPotential : public PotentialNode
                                                                           std::forward_as_tuple(qq),
                                                                           std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
             auto& coulomb_spline = coulomb_it->second;
+            int qkey = int(lrintf(qq * 1000000.0f));
+            coulomb_key_to_qq[qkey] = qq;
 
             // Initialize the spline with potential data
             coulomb_spline.fit_spline(coul_pot_data_for_spline.data());
@@ -1111,8 +1116,15 @@ struct MartiniPotential : public PotentialNode
                 float coul_force_mag = 0.0f;
                 
                 // Standard Coulomb potential using spline tables
-                    // Prefer the spline evaluation (legacy behavior) when available
-                    auto coulomb_it = coulomb_splines.find(qq);
+                    // Prefer spline evaluation and use quantized key lookup first.
+                    auto coulomb_it = coulomb_splines.end();
+                    int qkey = int(lrintf(qq * 1000000.0f));
+                    auto qk_it = coulomb_key_to_qq.find(qkey);
+                    if(qk_it != coulomb_key_to_qq.end()) {
+                        coulomb_it = coulomb_splines.find(qk_it->second);
+                    } else {
+                        coulomb_it = coulomb_splines.find(qq);
+                    }
                     if(coulomb_it != coulomb_splines.end() && dist >= coul_r_min && dist <= coul_r_max) {
                         float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
                         float coul_result[2];
