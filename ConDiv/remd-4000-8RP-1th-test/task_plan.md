@@ -1,5 +1,5 @@
 # Project Goal
-Validate Python3/PyTorch/local modernization of the ConDiv workflow against the original Python2/Theano/Slurm implementation, and debug the worker crash (`1mg4` exits with code 1) in `run_local.sh`.
+Validate Python3/PyTorch/local modernization of the ConDiv workflow against the original Python2/Theano/Slurm implementation, debug runtime worker crashes, and add `run_remote.sh` for Slurm restart-based training rounds.
 
 # Architecture & Key Decisions
 - Compare modernized vs original script behavior first, before applying any fix, to confirm whether the crash is due to modernization drift or environment/runtime issues.
@@ -17,3 +17,6 @@ Validate Python3/PyTorch/local modernization of the ConDiv workflow against the 
 # Known Errors / Blockers
 - Initial observed failure: worker for `1mg4` exits with code 1 during epoch 0/minibatch 0/chunk 1.
 - Full end-to-end rerun after fixes has not been completed yet in this session (only static/syntax validation done).
+
+# Revised Decisions
+- Add a Slurm-focused launcher script (`run_remote.sh`) that mirrors local resume semantics: always pick latest valid `checkpoint.pkl` and run a configurable number of restart iterations per submission.

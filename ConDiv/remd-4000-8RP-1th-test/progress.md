@@ -12,3 +12,7 @@
 - 2026-02-12: Synced updated `ConDiv.py` into `test_00/ConDiv.py` and re-ran syntax validation (`py_compile`) successfully.
 - 2026-02-12: Added gradient L2 norm diagnostic in `backprop_deriv` debug print (`DEBUG: rot_grad norm=...`).
 - 2026-02-12: `test_00/` is currently absent in workspace, so sync/compile was validated on top-level `ConDiv.py` only for this edit.
+- 2026-02-12: Added `run_remote.sh` for Slurm usage with resume-from-latest-checkpoint semantics and configurable restart iterations (`$1` or `RUN_STEPS`, default 152).
+- 2026-02-12: Made `run_remote.sh` executable and validated script syntax with `bash -n`.
+- 2026-02-12: Added `README.md` documenting init flow, Slurm `run_remote.sh` submission/resume workflow, iteration overrides, and log locations.
+- 2026-02-12: Updated `README.md` with required cluster module loads (`gcc/12.2.0`, `cmake`, `openmpi`) before Slurm submission.
