@@ -7,14 +7,14 @@ import numpy as np
 def set_initial_position(input_file, output_file):
     # Open input file and get last frame's position and box dimensions
     with h5py.File(input_file, 'r') as f:
-        # Try to read from output/pos (if simulation has been run)
-        if '/output/pos' in f:
-            last_pos = f['/output/pos'][-1, 0, :, :]  # Last frame, first replica, all atoms, all coordinates
+        # Try to read from output/pos (if simulation has already produced frames)
+        if '/output/pos' in f and f['/output/pos'].shape[0] > 0:
+            last_pos = f['/output/pos'][-1, 0, :, :]  # Last frame, first replica
             last_pos = last_pos[:, :, np.newaxis]  # Add replica dimension (1)
         else:
-            # If no output/pos, read from input/pos (initial position)
-            last_pos = f['/input/pos'][:, :, 0]  # First frame from input
-            last_pos = last_pos[:, :, np.newaxis]  # Add replica dimension (1)
+            # Fallback when output exists but is empty (e.g. minimize-only runs)
+            last_pos = f['/input/pos'][:, :, 0]
+            last_pos = last_pos[:, :, np.newaxis]
 
         # Get last frame's box dimensions if available
         last_box = None
