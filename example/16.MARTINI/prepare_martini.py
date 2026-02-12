@@ -1527,15 +1527,21 @@ def main(stage='minimization', run_dir=None):
         # UPSIDE_EWALD_ENABLE: 1 to enable Ewald summation for long-range Coulomb
         # UPSIDE_EWALD_ALPHA: Ewald screening parameter in 1/Angstrom (default: 0.2)
         # UPSIDE_EWALD_KMAX: k-space cutoff (default: 5)
+        # UPSIDE_EWALD_USE_CARDINAL_BSPLINE: 1 to approximate trig via periodic cardinal cubic B-spline
+        # UPSIDE_EWALD_BSPLINE_GRID: lookup grid size for the periodic trig table
         ewald_enabled = int(os.environ.get('UPSIDE_EWALD_ENABLE', '0'))
         ewald_alpha = float(os.environ.get('UPSIDE_EWALD_ALPHA', '0.2'))
         ewald_kmax = int(os.environ.get('UPSIDE_EWALD_KMAX', '5'))
+        ewald_use_cardinal_bspline = int(os.environ.get('UPSIDE_EWALD_USE_CARDINAL_BSPLINE', '1'))
+        ewald_bspline_grid = int(os.environ.get('UPSIDE_EWALD_BSPLINE_GRID', '16384'))
 
         martini_potential._v_attrs.ewald_enabled = ewald_enabled
         if ewald_enabled:
             martini_potential._v_attrs.ewald_alpha = ewald_alpha
             martini_potential._v_attrs.ewald_kmax = ewald_kmax
-            print(f"Ewald summation enabled: alpha={ewald_alpha} A^-1, kmax={ewald_kmax}")
+            martini_potential._v_attrs.ewald_use_cardinal_bspline = ewald_use_cardinal_bspline
+            martini_potential._v_attrs.ewald_bspline_grid = ewald_bspline_grid
+            print(f"Ewald summation enabled: alpha={ewald_alpha} A^-1, kmax={ewald_kmax}, cardinal_bspline={ewald_use_cardinal_bspline}, grid={ewald_bspline_grid}")
         else:
             print("Ewald summation disabled")
 

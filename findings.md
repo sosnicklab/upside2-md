@@ -6,3 +6,5 @@
 - 2026-02-12: UPSIDE barostat previously used a single compressibility scalar for all axes; true dry MARTINI membrane coupling requires axis-specific compressibility (`xy` vs `z`).
 - 2026-02-12: `ff_dry` uses dry MARTINI v2.1 file names (`dry_martini_v2.1.itp`, `dry_martini_v2.1_lipids.itp`, `dry_martini_v2.1_ions.itp`) and macro-based aliases in `[ bonds ]`/`[ angles ]`, so parser support for `#define`-backed parameters is required.
 - 2026-02-12: Dry lipid ITP (`dry_martini_v2.1_lipids.itp`) relies on preprocessor branches (`#ifndef EXP_DOPC`/`#else`), and only one branch should be parsed.
+- 2026-02-12: Reciprocal Ewald path in `src/box.cpp` originally spent most cost in repeated `cosf/sinf` evaluations per atom per k-vector.
+- 2026-02-12: Added optional periodic cardinal cubic B-spline trig approximation (`ewald_use_cardinal_bspline`, `ewald_bspline_grid`) and per-k atom trig caching to reduce reciprocal-space compute cost while preserving the same summation structure.

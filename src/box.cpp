@@ -499,6 +499,12 @@ namespace ewald {
 
 static std::mutex g_ewald_mutex;
 static std::map<DerivEngine*, EwaldState> g_ewald_state;
+struct TrigSplineTable {
+    int n_grid = 0;
+    std::vector<float> cos_table;
+    std::vector<float> sin_table;
+};
+static TrigSplineTable g_trig_table;
 
 static inline bool attribute_exists_ewald(hid_t loc_id, const char* obj_name, const char* attr_name) {
     hid_t obj_id = H5Oopen(loc_id, obj_name, H5P_DEFAULT);
@@ -506,6 +512,55 @@ static inline bool attribute_exists_ewald(hid_t loc_id, const char* obj_name, co
     htri_t exists = H5Aexists(obj_id, attr_name);
     H5Oclose(obj_id);
     return exists > 0;
+}
+
+static inline int wrap_idx(int i, int n) {
+    int r = i % n;
+    return (r < 0) ? (r + n) : r;
+}
+
+static void ensure_trig_table(int n_grid) {
+    if(n_grid < 256) n_grid = 256;
+    if(g_trig_table.n_grid == n_grid && !g_trig_table.cos_table.empty()) return;
+    g_trig_table.n_grid = n_grid;
+    g_trig_table.cos_table.resize(n_grid);
+    g_trig_table.sin_table.resize(n_grid);
+    const float twopi = 2.0f * float(M_PI);
+    for(int i = 0; i < n_grid; ++i) {
+        float a = twopi * (float(i) / float(n_grid));
+        g_trig_table.cos_table[i] = cosf(a);
+        g_trig_table.sin_table[i] = sinf(a);
+    }
+}
+
+// Periodic cardinal cubic B-spline interpolation for sin/cos over [0, 2pi)
+static inline void sincos_cardinal_bspline(float theta, float& c_out, float& s_out) {
+    const int n = g_trig_table.n_grid;
+    const float inv_twopi = 1.0f / (2.0f * float(M_PI));
+    float u = theta * inv_twopi * float(n);
+    float uf = floorf(u);
+    int i = int(uf);
+    float t = u - uf;
+
+    float om = 1.0f - t;
+    float t2 = t * t;
+    float t3 = t2 * t;
+    float om3 = om * om * om;
+    // Cardinal cubic B-spline basis
+    float w0 = om3 / 6.0f;
+    float w1 = (3.0f * t3 - 6.0f * t2 + 4.0f) / 6.0f;
+    float w2 = (-3.0f * t3 + 3.0f * t2 + 3.0f * t + 1.0f) / 6.0f;
+    float w3 = t3 / 6.0f;
+
+    int i0 = wrap_idx(i - 1, n);
+    int i1 = wrap_idx(i, n);
+    int i2 = wrap_idx(i + 1, n);
+    int i3 = wrap_idx(i + 2, n);
+
+    c_out = w0 * g_trig_table.cos_table[i0] + w1 * g_trig_table.cos_table[i1] +
+            w2 * g_trig_table.cos_table[i2] + w3 * g_trig_table.cos_table[i3];
+    s_out = w0 * g_trig_table.sin_table[i0] + w1 * g_trig_table.sin_table[i1] +
+            w2 * g_trig_table.sin_table[i2] + w3 * g_trig_table.sin_table[i3];
 }
 
 // Build k-vectors and prefactors for current box dimensions
@@ -566,6 +621,10 @@ void initialize_ewald(hid_t config_root, DerivEngine& engine) {
                 s.alpha = read_attribute<float>(grp.get(), ".", "ewald_alpha");
             if(attribute_exists_ewald(grp.get(), ".", "ewald_kmax"))
                 s.kmax = read_attribute<int>(grp.get(), ".", "ewald_kmax");
+            if(attribute_exists_ewald(grp.get(), ".", "ewald_use_cardinal_bspline"))
+                s.use_cardinal_bspline = read_attribute<int>(grp.get(), ".", "ewald_use_cardinal_bspline") != 0;
+            if(attribute_exists_ewald(grp.get(), ".", "ewald_bspline_grid"))
+                s.bspline_grid = read_attribute<int>(grp.get(), ".", "ewald_bspline_grid");
         } else {
             return;
         }
@@ -606,9 +665,12 @@ void initialize_ewald(hid_t config_root, DerivEngine& engine) {
     st.charges = std::move(charges);
 
     build_kvectors(st);
+    if(s.use_cardinal_bspline) {
+        ensure_trig_table(s.bspline_grid);
+    }
 
-    printf("[EWALD] Initialized: alpha=%.4f kmax=%d box=%.2f x %.2f x %.2f  n_kvec=%d  self_energy=%.6f\n",
-           s.alpha, s.kmax, bx, by, bz, (int)st.kx.size(), st.self_energy);
+    printf("[EWALD] Initialized: alpha=%.4f kmax=%d box=%.2f x %.2f x %.2f n_kvec=%d self_energy=%.6f bspline=%d grid=%d\n",
+           s.alpha, s.kmax, bx, by, bz, (int)st.kx.size(), st.self_energy, s.use_cardinal_bspline ? 1 : 0, s.bspline_grid);
 }
 
 void update_kvectors(DerivEngine& engine) {
@@ -648,6 +710,8 @@ void compute_ewald_reciprocal(DerivEngine& engine) {
 
     // Temporary per-atom force accumulators
     std::vector<double> fx(n_atom, 0.0), fy(n_atom, 0.0), fz(n_atom, 0.0);
+    std::vector<float> cos_cache(n_atom, 0.0f), sin_cache(n_atom, 0.0f);
+    const bool use_bspline = st.settings.use_cardinal_bspline;
 
     for(int m = 0; m < n_kvec; ++m) {
         float gx = st.kx[m], gy = st.ky[m], gz = st.kz[m];
@@ -659,8 +723,17 @@ void compute_ewald_reciprocal(DerivEngine& engine) {
             float qi = st.charges[i];
             if(qi == 0.f) continue;
             float kr = gx * pos(0,i) + gy * pos(1,i) + gz * pos(2,i);
-            S_re += qi * cosf(kr);
-            S_im += qi * sinf(kr);
+            float c = 0.0f, s = 0.0f;
+            if(use_bspline) {
+                sincos_cardinal_bspline(kr, c, s);
+            } else {
+                c = cosf(kr);
+                s = sinf(kr);
+            }
+            cos_cache[i] = c;
+            sin_cache[i] = s;
+            S_re += qi * c;
+            S_im += qi * s;
         }
 
         double S2 = S_re * S_re + S_im * S_im;
@@ -675,9 +748,8 @@ void compute_ewald_reciprocal(DerivEngine& engine) {
         for(int i = 0; i < n_atom; ++i) {
             float qi = st.charges[i];
             if(qi == 0.f) continue;
-            float kr = gx * pos(0,i) + gy * pos(1,i) + gz * pos(2,i);
-            float cos_kr = cosf(kr);
-            float sin_kr = sinf(kr);
+            float cos_kr = cos_cache[i];
+            float sin_kr = sin_cache[i];
             // gradient component = 2 * pref * qi * (S_im*cos - S_re*sin)
             double grad_scalar = 2.0 * pref * qi * (S_im * cos_kr - S_re * sin_kr);
             // This is dE/d(component), force = -gradient

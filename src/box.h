@@ -117,6 +117,8 @@ struct EwaldSettings {
     float alpha = 0.2f;          // Ewald screening parameter (1/Angstrom)
     int   kmax = 5;              // k-space cutoff (number of k-vectors per dimension)
     float coulomb_k = 31.775347952181f; // Coulomb constant (includes epsilon_r=15)
+    bool  use_cardinal_bspline = true;  // approximate trig via periodic cubic B-spline
+    int   bspline_grid = 16384;         // lookup grid size for periodic trig table
 };
 
 struct EwaldState {

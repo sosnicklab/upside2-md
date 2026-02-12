@@ -30,3 +30,6 @@
 - Aligned implicit dry bilayer pressure defaults with paper/mdp semantics: set `UPSIDE_NPT_TARGET_PZ` default back to `0.0` and documented that `beta_z=0` makes z reference pressure inert.
 - Simplified NPT debug logging in `src/box.cpp` to print only time, scale factors, and box dimensions (removed pressure/target values from log line).
 - Updated runtime logging format per user request: removed `| box ...` from main step progress line in `src/main.cpp` and simplified NPT debug line to `[NPT] t ... box ...` in `src/box.cpp`.
+- Implemented cardinal B-spline accelerated reciprocal Ewald in `src/box.cpp`: added periodic trig lookup table, cubic cardinal B-spline interpolation for `sin/cos(k·r)`, and per-k atom trig caching to avoid repeated trig evaluations.
+- Added Ewald tuning settings in `src/box.h`: `use_cardinal_bspline` and `bspline_grid`.
+- Wired HDF5/env controls in `prepare_martini.py`: `UPSIDE_EWALD_USE_CARDINAL_BSPLINE` (default 1) and `UPSIDE_EWALD_BSPLINE_GRID` (default 16384).
