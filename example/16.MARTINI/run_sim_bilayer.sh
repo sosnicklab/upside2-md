@@ -30,9 +30,9 @@ PDB_ID="${PDB_ID:-bilayer}"
 
 INPUTS_DIR="inputs"
 OUTPUTS_DIR="outputs"
-RUN_DIR="outputs/martini_test"
-CHECKPOINT_DIR="${RUN_DIR}/checkpoints"
-LOG_DIR="${RUN_DIR}/logs"
+RUN_DIR="${RUN_DIR:-outputs/martini_test}"
+CHECKPOINT_DIR="${CHECKPOINT_DIR:-${RUN_DIR}/checkpoints}"
+LOG_DIR="${LOG_DIR:-${RUN_DIR}/logs}"
 
 PREPARED_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.prepared.up"
 STAGE_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.up"

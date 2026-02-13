@@ -67,3 +67,14 @@
 - Validation: `bash -n example/16.MARTINI/run_sim_bilayer.sh` passed.
 - Validation: `python3 -m py_compile example/16.MARTINI/prepare_martini.py` passed.
 - Validation: smoke prep for stage 6.2 confirms softening active (`lj_soften=1`, `coulomb_soften=1`, `lj_soften_alpha=0.2`, `slater_alpha=2.0`).
+- Added `example/16.MARTINI/scan_lipid_diffusion.py` to generate bilayer diffusion scan runs over temperature and thermostat timescale, analogous to `scan_water_diffusion.py`.
+- Implemented per-run analysis in generated scripts: load stage `7.0` trajectory, select PO4 beads, unwrap XY with minimum-image correction, remove COM XY motion, compute lateral MSD, fit `MSD(t)=4Dt+C` with 10% trimming, and report half-trajectory fit difference as error.
+- Added output-directory override support in `run_sim_bilayer.sh` (`RUN_DIR`, `CHECKPOINT_DIR`, `LOG_DIR`) so scan points can run in isolated directories.
+- Validation: `python3 -m py_compile example/16.MARTINI/scan_lipid_diffusion.py` passed.
+- Validation: scanner smoke generation (`--base-dir /tmp/lipid_diff_scan_smoke --temperatures 0.900 --taus 4.0`) created tasks, Slurm script, and run script successfully.
+- Validation: `bash -n example/16.MARTINI/run_sim_bilayer.sh` passed after env-override change.
+- Simplified `scan_lipid_diffusion.py` to no-argument usage: running `python3 example/16.MARTINI/scan_lipid_diffusion.py` now generates the full scan setup using in-file defaults (base dir, ranges, Slurm settings, optional overrides as constants).
+- Added `example/16.MARTINI/plot_lipid_diffusion_results.py` with no-argument usage: running `python3 example/16.MARTINI/plot_lipid_diffusion_results.py` scans default results directory and generates temperature/tau/heatmap plots when diffusion outputs exist.
+- Validation: `python3 -m py_compile example/16.MARTINI/scan_lipid_diffusion.py example/16.MARTINI/plot_lipid_diffusion_results.py` passed.
+- Validation: `python3 example/16.MARTINI/scan_lipid_diffusion.py` generated 24 scan run scripts + task list + Slurm script under `example/16.MARTINI/lipid_diffusion`.
+- Validation: `python3 example/16.MARTINI/plot_lipid_diffusion_results.py` executed successfully and correctly reported no diffusion results yet.

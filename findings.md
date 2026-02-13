@@ -13,3 +13,4 @@
 - 2026-02-13: Paper section 2.1 states implicit-solvent simulations should generally run in NVT; for periodic planar bilayers, semi-isotropic pressure coupling is used as an equilibration tool for area-per-lipid.
 - 2026-02-13: CHARMM-GUI dry bilayer `step7_production.mdp` sets `pcoupl = no` (NVT) for production, with pressure-coupling parameters retained but inactive.
 - 2026-02-13: CHARMM-GUI dry bilayer soft-core settings are present only in `step6.0_minimization.mdp` (`free-energy = yes`, `sc-alpha = 4`); stages `6.1`-`6.6` and `7.0` do not define soft-core/free-energy terms and are hard interaction stages.
+- 2026-02-13: Paper diffusion protocol for bilayers uses PO4 bead MSD, COM removal, linear fit `MSD(t)=4Dt+C` (2D lateral diffusion), excludes 10% of points at both ends of the MSD curve, and estimates uncertainty via difference between fits to first vs second halves.
