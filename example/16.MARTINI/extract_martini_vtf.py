@@ -165,8 +165,13 @@ def main():
 
     # Open the HDF5 files
     with h5py.File(input_file, 'r') as t, h5py.File(input_file_for_structure, 'r') as t_struct:
-        # Count frames exclusively from PRODUCTION (regular) stage
-        n_frame_regular = len(t['output/pos']) if 'output/pos' in t else 0
+        # Count frames from explicit simulation time when available.
+        if 'output/time' in t:
+            n_frame_regular = int(t['output/time'].shape[0])
+        elif 'output/pos' in t:
+            n_frame_regular = int(t['output/pos'].shape[0])
+        else:
+            n_frame_regular = 0
         n_frame_total = n_frame_regular
 
         print(f"Number of production (regular) frames: {n_frame_regular}")
@@ -397,25 +402,24 @@ def main():
                 
                 half_box = np.array([x_len/2, y_len/2, z_len/2])
 
+                pos_dataset = t['output/pos']
+
                 # Function to get frame positions from production (regular) stage only
                 def get_frame_pos(frame_idx):
-                    pos = t['output/pos'][frame_idx]
-
-                    # Handle different output position data formats
-                    if len(pos.shape) == 3:  # (n_frames, n_atoms, 3) or (n_atoms, 3, n_frames)
-                        if pos.shape[0] == 1:  # (1, n_atoms, 3) - single frame
-                            frame_pos = pos[0]  # Take first frame
-                        elif pos.shape[2] == 3:  # (n_atoms, 3, n_frames)
-                            frame_pos = pos[:, :, 0]  # Take first frame
-                        else:
-                            raise ValueError(f"Unexpected 3D position shape: {pos.shape}")
-                    elif len(pos.shape) == 2:  # (n_atoms, 3)
-                        frame_pos = pos
-                    elif len(pos.shape) == 1:  # Flattened array
+                    pos = pos_dataset[frame_idx]
+                    while len(pos.shape) > 2:
+                        pos = pos[0]
+                    if len(pos.shape) == 1:
                         frame_pos = pos.reshape(n_particles, 3)
+                    elif len(pos.shape) == 2:
+                        if pos.shape == (n_particles, 3):
+                            frame_pos = pos
+                        elif pos.shape == (3, n_particles):
+                            frame_pos = pos.T
+                        else:
+                            raise ValueError(f"Unexpected 2D output position shape: {pos.shape}")
                     else:
                         raise ValueError(f"Unexpected output position shape: {pos.shape}")
-
                     return frame_pos
 
                 # Write only production frames
@@ -450,25 +454,24 @@ def main():
                 f.write("REMARK    CONTAINS DOPC LIPIDS, WATER, AND IONS\n")
                 f.write(f"REMARK    BOX DIMENSIONS: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Angstroms\n")
                 
+                pos_dataset = t['output/pos']
+
                 # Function to get frame positions from production (regular) stage only (for PDB)
                 def get_frame_pos_pdb(frame_idx):
-                    pos = t['output/pos'][frame_idx]
-
-                    # Handle different output position data formats
-                    if len(pos.shape) == 3:  # (n_frames, n_atoms, 3) or (n_atoms, 3, n_frames)
-                        if pos.shape[0] == 1:  # (1, n_atoms, 3) - single frame
-                            frame_pos = pos[0]  # Take first frame
-                        elif pos.shape[2] == 3:  # (n_atoms, 3, n_frames)
-                            frame_pos = pos[:, :, 0]  # Take first frame
-                        else:
-                            raise ValueError(f"Unexpected 3D position shape: {pos.shape}")
-                    elif len(pos.shape) == 2:  # (n_atoms, 3)
-                        frame_pos = pos
-                    elif len(pos.shape) == 1:  # Flattened array
+                    pos = pos_dataset[frame_idx]
+                    while len(pos.shape) > 2:
+                        pos = pos[0]
+                    if len(pos.shape) == 1:
                         frame_pos = pos.reshape(n_particles, 3)
+                    elif len(pos.shape) == 2:
+                        if pos.shape == (n_particles, 3):
+                            frame_pos = pos
+                        elif pos.shape == (3, n_particles):
+                            frame_pos = pos.T
+                        else:
+                            raise ValueError(f"Unexpected 2D output position shape: {pos.shape}")
                     else:
                         raise ValueError(f"Unexpected output position shape: {pos.shape}")
-
                     return frame_pos
 
                 # Write only production frames

@@ -55,14 +55,14 @@ THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
 SEED="${SEED:-7090685331}"
 
 # Gromacs nsteps from dry MARTINI mdp files
-MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-5000}"
-MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-5000}"
-EQ_62_NSTEPS="${EQ_62_NSTEPS:-50000}"
-EQ_63_NSTEPS="${EQ_63_NSTEPS:-50000}"
-EQ_64_NSTEPS="${EQ_64_NSTEPS:-50000}"
-EQ_65_NSTEPS="${EQ_65_NSTEPS:-50000}"
-EQ_66_NSTEPS="${EQ_66_NSTEPS:-50000}"
-PROD_70_NSTEPS="${PROD_70_NSTEPS:-1500000}"
+MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-500}"
+MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-500}"
+EQ_62_NSTEPS="${EQ_62_NSTEPS:-500}"
+EQ_63_NSTEPS="${EQ_63_NSTEPS:-500}"
+EQ_64_NSTEPS="${EQ_64_NSTEPS:-500}"
+EQ_65_NSTEPS="${EQ_65_NSTEPS:-500}"
+EQ_66_NSTEPS="${EQ_66_NSTEPS:-500}"
+PROD_70_NSTEPS="${PROD_70_NSTEPS:-5000}"
 
 # dt from dry MARTINI mdp
 EQ_TIME_STEP="${EQ_TIME_STEP:-0.010}"
@@ -113,12 +113,6 @@ if [ ! -f "$UPSIDE_EXECUTABLE" ]; then
 fi
 
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR"
-
-duration_from_nsteps() {
-    local nsteps="$1"
-    local dt="$2"
-    awk -v n="$nsteps" -v d="$dt" 'BEGIN { printf "%.8f", n*d }'
-}
 
 set_barostat_type() {
     local up_file="$1"
@@ -200,10 +194,17 @@ run_md_stage() {
     local dt="$5"
     local frame_steps="$6"
 
-    local duration
-    duration="$(duration_from_nsteps "$nsteps" "$dt")"
-    local frame_interval
-    frame_interval="$(duration_from_nsteps "$frame_steps" "$dt")"
+    local duration="$nsteps"
+    local frame_interval="$frame_steps"
+
+    # Ensure short debug runs still emit trajectory frames.
+    if (( frame_interval >= nsteps )); then
+        frame_interval=$(( nsteps / 10 ))
+        if (( frame_interval < 1 )); then
+            frame_interval=1
+        fi
+        echo "NOTICE: frame_steps (${frame_steps}) >= nsteps (${nsteps}); using frame_interval=${frame_interval}"
+    fi
 
     if [ "$input_file" != "$output_file" ]; then
         cp -f "$input_file" "$output_file"
@@ -214,7 +215,7 @@ run_md_stage() {
     echo "=== Stage ${stage_label}: MD ==="
     echo "Input:  $input_file"
     echo "Output: $output_file"
-    echo "nsteps=${nsteps}, dt=${dt}, duration=${duration}"
+    echo "nsteps=${nsteps}, dt=${dt}, duration(steps)=${duration}"
 
     local cmd=(
         "$UPSIDE_EXECUTABLE"

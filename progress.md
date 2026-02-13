@@ -33,3 +33,12 @@
 - Implemented cardinal B-spline accelerated reciprocal Ewald in `src/box.cpp`: added periodic trig lookup table, cubic cardinal B-spline interpolation for `sin/cos(k·r)`, and per-k atom trig caching to avoid repeated trig evaluations.
 - Added Ewald tuning settings in `src/box.h`: `use_cardinal_bspline` and `bspline_grid`.
 - Wired HDF5/env controls in `prepare_martini.py`: `UPSIDE_EWALD_USE_CARDINAL_BSPLINE` (default 1) and `UPSIDE_EWALD_BSPLINE_GRID` (default 16384).
+- Updated `example/16.MARTINI/run_sim_bilayer.sh` to run MD stages by step count directly: `--duration` now uses `NSTEPS` and `--frame-interval` uses frame-step counts (no `dt * steps` conversion), matching dry MARTINI script semantics.
+- Validation: `bash -n example/16.MARTINI/run_sim_bilayer.sh` passed.
+- Investigated single-frame VTF outputs for `run_sim_bilayer.sh`: confirmed stage checkpoint files contained only one trajectory frame (`output/time` length = 1), so extraction could not produce more than one frame.
+- Root cause for current run data: frame cadence was not smaller than stage `NSTEPS` in short/debug runs (e.g., `--duration 500` with `--frame-interval 1000`), yielding only initial frame output.
+- Updated `example/16.MARTINI/run_sim_bilayer.sh` to clamp frame interval when needed: if `frame_steps >= nsteps`, it now uses `max(1, nsteps/10)` and prints a notice.
+- Hardened `example/16.MARTINI/extract_martini_vtf.py` frame handling: frame count now prefers `output/time`; frame extraction now robustly reduces higher-rank `output/pos` slices to `(n_atoms,3)` without assuming a single fixed rank/order.
+- Validation: `bash -n example/16.MARTINI/run_sim_bilayer.sh` passed.
+- Validation: `python3 -m py_compile example/16.MARTINI/extract_martini_vtf.py` passed.
+- Validation: extractor smoke test on matching multi-frame data (`1ubq.npt_equil.up`) produced 100 `timestep ordered` frames.
