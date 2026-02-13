@@ -28,3 +28,112 @@
   - Command: `source ../../.venv/bin/activate && source ../../source.sh && python3 scan_lipid_diffusion.py --base-dir lipid_diffusion_check`
   - Result: `Generated 651 simulation scripts.`
   - Verified `lipid_diffusion_check/tasks.txt` has 651 lines and `lipid_diffusion_check/run_scan.slurm` contains `#SBATCH --array=1-651`.
+
+## 2026-02-13 (Job 2: Protein-in-Bilayer Packing)
+- Captured user requirements for new workflow:
+  - Use martinize2-style coarse-graining algorithms for MARTINI 2.2 protein model.
+  - Add ions consistent with 0.15 M NaCl.
+  - Allow simulation box resizing after packing.
+- Drafted and stored implementation plan in `task_plan.md` for review before code changes.
+- Expanded hybrid architecture requirements:
+  - Production-only activation of Upside<->dry-MARTINI coupling.
+  - Protein rigid during pre-production.
+  - MARTINI BB computed from COM of Upside `N,CA,C,O` atoms (not vice versa).
+  - Intra-protein MARTINI interactions disabled entirely.
+  - Rotamer mapping used only for sidechain-environment coupling.
+- Replaced `task_plan.md` with detailed phased plan for schema, data prep, Upside runtime modifications, and validation.
+- Completed Phase 1 planning artifact: finalized proposed `.up` hybrid schema and execution boundaries (stage-gated activation, intra-protein MARTINI exclusions, BB-from-backbone COM mapping).
+- Added new requested item to plan: optional rigid-body drift mitigation for protein (frame-to-frame RMSD alignment/rotation removal mode), with explicit need to benchmark side effects and define where alignment is applied.
+- Decision confirmed: rigid-body alignment mode will affect coupling coordinates only; raw integrated coordinates remain unchanged in saved outputs.
+- Implemented Phase 2 data-preparation script: `prepare_hybrid_system.py`.
+  - Added CLI/config (`Config` dataclass) for protein/bilayer inputs, optional martinize command, packing cutoffs, salt concentration, box padding, and seed.
+  - Implemented PDB parsing/writing and protein insertion into bilayer frame.
+  - Implemented clash-based lipid pruning, box resizing, ion placement (neutralization + 0.15 M NaCl target), and packed MARTINI output writing.
+  - Implemented hybrid mapping export artifacts:
+    - `hybrid_mapping.h5` with `/input/hybrid_control`, `/input/hybrid_bb_map`, `/input/hybrid_env_topology`, and scaffold `/input/hybrid_sc_map`.
+    - `hybrid_bb_map.json` and `hybrid_prep_summary.json`.
+- Fixed runtime issues during validation:
+  - NumPy 2.0 incompatibility (`np.string_`) switched to byte-string attrs in HDF5.
+  - Corrected protein-CG extraction to avoid treating full-system MARTINI file as protein-only input.
+- Validation runs:
+  - `source ../../.venv/bin/activate && source ../../source.sh && python3 prepare_hybrid_system.py --protein-pdb pdb/1rkl.pdb --protein-cg-pdb pdb/1rkl.MARTINI.pdb --bilayer-pdb pdb/bilayer.MARTINI.pdb --output-dir outputs/hybrid_1rkl_test2`
+  - Output summary reports: protein CG atoms `68`, total atoms `1263`, BB map entries `31`, Na/Cl added `87/84` (protein charge `-3`, salt pairs `84`).
+  - HDF5 sanity checks passed for dataset presence and shapes.
+- Implemented Phase 3 (Upside hybrid input parsing + stage-gated flags) with minimal non-core source changes:
+  - `src/martini.cpp`:
+    - Added `martini_hybrid` runtime registry and HDF5 parser for `/input/hybrid_control`, `/input/hybrid_bb_map`, `/input/hybrid_env_topology`, and schema-check path for `/input/hybrid_sc_map`.
+    - Added validation for required datasets/shapes and atom-count consistency (`protein_membership` length must equal `n_atom`).
+    - Added stage-gated runtime state fields (`enabled`, `activation_stage`, `active`, `preprod_mode`, `exclude_intra_protein_martini`) and query helpers.
+    - Hooked hybrid active-flag updates into `martini_stage_params::switch_simulation_stage`.
+    - Updated stage-parameter default stage handling to read optional `/input/stage_parameters` attribute `current_stage` (default `production`).
+  - Minimal wiring outside `martini.cpp`:
+    - `src/main.h`: added forward declarations for `martini_hybrid` API.
+    - `src/main.cpp`: registered hybrid config for each engine after stage-parameter registration.
+- Build verification:
+  - Command: `cmake --build ../../obj -j4`
+  - Result: build completed successfully for `upside`, `upside_engine`, and `upside_calculation`.
+- Implemented Phase 4 hybrid coupling scaffolding in Upside with minimal source footprint (core changes concentrated in `src/martini.cpp`):
+  - Added hybrid runtime state sharing by engine and by coordinate node for use inside `MartiniPotential`.
+  - Added BB mapping payload loading (`bb_residue_index`, `atom_indices`, `atom_mask`, `weights`, `bb_atom_index`) plus fallback BB index inference from `/input/residue_ids` + `/input/atom_names|atom_roles`.
+  - Added env membership loading and active intra-protein interaction exclusion checks in MARTINI pair loop.
+  - Added BB COM refresh before MARTINI pair-force evaluation.
+  - Added BB-gradient projection to mapped atoms after MARTINI pair-force evaluation and zeroing of BB gradient.
+  - Kept coupling stage-gated by existing stage switch (`martini_stage_params::switch_simulation_stage`).
+- Updated data-prep export for Phase 4 compatibility:
+  - `prepare_hybrid_system.py` now writes `/input/hybrid_bb_map/bb_atom_index`.
+- Build and validation:
+  - Rebuilt C++ targets successfully: `cmake --build ../../obj -j4`.
+  - Regenerated hybrid mapping file and verified `bb_atom_index` dataset exists and is populated.
+- Implemented Phase 5 sidechain-environment mapping path with minimal integration footprint:
+  - `src/martini.cpp`:
+    - Extended `hybrid_sc_map` parsing to load runtime projection payloads:
+      `proxy_atom_index`, `rotamer_probability`, `proj_target_indices`, `proj_weights`.
+    - Added sidechain gradient projection function that maps proxy gradients to Upside target atoms and clears proxy gradients.
+    - Integrated sidechain projection into `MartiniPotential::compute_value` after MARTINI pair force accumulation and before BB projection.
+    - Reused existing intra-protein MARTINI pair exclusion so sidechain proxies only receive protein-environment MARTINI interactions in hybrid-active stage.
+  - `prepare_hybrid_system.py`:
+    - Added `collect_sc_map()` to export deterministic sidechain proxy mapping from MARTINI sidechain beads to residue `N,CA,C,O` targets.
+    - Updated HDF5 export to write non-empty `/input/hybrid_sc_map` datasets including `proxy_atom_index` and `rotamer_probability`.
+    - Added `sc_map_entries` to preparation summary.
+- Validation:
+  - Rebuild succeeded: `cmake --build ../../obj -j4`.
+  - Regenerated mapping and verified sidechain datasets and counts:
+    - `rotamer_id` shape `(37,)`, `proxy_atom_index` shape `(37,)`, `rotamer_probability` sum `37.0`, `proj_target_indices` shape `(37,4)`.
+- Implemented Phase 6 coupling-frame rigid-body drift mitigation + diagnostics in `src/martini.cpp`:
+  - Added optional hybrid control attributes:
+    - `coupling_align_enable` (0/1)
+    - `coupling_align_debug` (0/1)
+    - `coupling_align_interval` (int)
+  - Added coupling-only alignment transform builder based on BB-frame rigid transform between consecutive steps (rotation + translation), without modifying saved raw trajectories.
+  - In `MartiniPotential::compute_value`, when enabled and hybrid-active:
+    - Transforms protein coordinates into coupling frame for MARTINI pair-force evaluation.
+    - Rotates protein gradient contributions back to raw coordinate frame before accumulation.
+  - Added periodic diagnostic printout of coupling-frame drift (`rot_deg`, `trans`) controlled by debug interval.
+- Validation:
+  - Rebuild succeeded after implementation/fixes: `cmake --build ../../obj -j4`.
+- Added default alignment-control attrs to `prepare_hybrid_system.py` HDF5 export (`/input/hybrid_control`):
+  - `coupling_align_enable=0`, `coupling_align_debug=0`, `coupling_align_interval=100`.
+- Verified generated mapping contains these attrs (`outputs/hybrid_1rkl_test5/hybrid_mapping.h5`).
+- Completed Phase 7 close-out tasks:
+  - Added hybrid mapping validator utility: `validate_hybrid_mapping.py`.
+  - Added usage/testing documentation: `HYBRID_VALIDATION.md` (build checks, schema validation, runtime smoke flow, known limits).
+  - Ran schema validation successfully on `outputs/hybrid_1rkl_test5/hybrid_mapping.h5` with atom-count consistency check.
+  - Executed 1-step runtime smoke on synthetic hybrid `.up` input and confirmed hybrid parser/runtime activation path without crash.
+- Project state: implementation phases are complete; remaining work is extended physics benchmarking on longer production trajectories (documented as post-implementation validation).
+- Re-ran mapping validation from current workspace:
+  - Initial attempt used wrong flag (`--h5`) and failed with CLI usage error.
+  - Correct command succeeded:
+    `source ../../.venv/bin/activate && source ../../source.sh && python3 validate_hybrid_mapping.py outputs/hybrid_1rkl_test5/hybrid_mapping.h5 --n-atom 1263`
+  - Output summary: `n_atom=1263`, `n_protein=68`, `n_env=1195`, `n_bb=31`, `n_sc_rotamer_rows=37`.
+- Implemented missing pre-production rigid enforcement for hybrid mode in `../../src/martini.cpp`:
+  - Added stage-aware dynamic rigid atom set support inside `martini_fix_rigid`.
+  - Added hybrid-stage hooks to apply dynamic rigid atoms before production and release at production.
+  - Added automatic pre-production rigid set construction from hybrid metadata:
+    entire protein (`protein_membership>=0`) + selected lipid headgroup roles.
+- Updated lipid headgroup selection policy per request:
+  - Default/explicit pre-production headgroup roles now `PO4` only.
+  - Runtime default changed in `../../src/martini.cpp`.
+  - Mapping export now writes `preprod_lipid_headgroup_roles=PO4` in `prepare_hybrid_system.py`.
+- Rebuilt C++ targets successfully after changes:
+  - `cmake --build ../../obj -j4`
+  - Result: success for `upside`, `upside_engine`, `upside_calculation`.

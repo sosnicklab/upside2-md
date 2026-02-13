@@ -801,6 +801,8 @@ try {
             }
             // Register stage-specific parameters for this engine (read from H5)
             martini_stage_params::register_stage_params_for_engine(&sys->engine, sys->config.get());
+            // Register hybrid MARTINI/Upside metadata for this engine (read from H5)
+            martini_hybrid::register_hybrid_for_engine(sys->config.get(), sys->engine);
             if  (integrator_arg.getValue() == "mv" )
                 sys->engine.build_integrator_levels(true, dt, inner_step );
 

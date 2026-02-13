@@ -7,11 +7,13 @@
 #include <H5Apublic.h> // for H5Aexists
 #include <fstream> // For file writing
 #include <cmath> // For pow, cosf, sinf, acosf
+#include <cctype>
 #include <set> // For std::set
 #include <complex> // For complex numbers in PME
 #include <vector> // For PME grid operations
 #include <algorithm> // For PME algorithms
 #include <unordered_map>
+#include <memory>
 #include "box.h" // For PBC minimum_image function
 
 using namespace h5;
@@ -25,14 +27,35 @@ namespace martini_fix_rigid {
 
 // Global registry for fix rigid constraints per engine
 static std::mutex g_fix_rigid_mutex;
+static std::map<DerivEngine*, std::vector<int>> g_user_fixed_atoms;
+static std::map<DerivEngine*, std::vector<int>> g_dynamic_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_fixed_atoms;
+
+static void normalize_atom_list(std::vector<int>& atoms) {
+    std::sort(atoms.begin(), atoms.end());
+    atoms.erase(std::unique(atoms.begin(), atoms.end()), atoms.end());
+}
+
+static void rebuild_fixed_atoms(DerivEngine& engine) {
+    auto& merged = g_fixed_atoms[&engine];
+    merged.clear();
+    auto uit = g_user_fixed_atoms.find(&engine);
+    if(uit != g_user_fixed_atoms.end()) {
+        merged.insert(merged.end(), uit->second.begin(), uit->second.end());
+    }
+    auto dit = g_dynamic_fixed_atoms.find(&engine);
+    if(dit != g_dynamic_fixed_atoms.end()) {
+        merged.insert(merged.end(), dit->second.begin(), dit->second.end());
+    }
+    normalize_atom_list(merged);
+}
 
 static void merge_fixed_atoms(DerivEngine& engine, const std::vector<int>& extra_atoms) {
     if(extra_atoms.empty()) return;
-    auto& fixed_atoms = g_fixed_atoms[&engine];
+    auto& fixed_atoms = g_user_fixed_atoms[&engine];
     fixed_atoms.insert(fixed_atoms.end(), extra_atoms.begin(), extra_atoms.end());
-    std::sort(fixed_atoms.begin(), fixed_atoms.end());
-    fixed_atoms.erase(std::unique(fixed_atoms.begin(), fixed_atoms.end()), fixed_atoms.end());
+    normalize_atom_list(fixed_atoms);
+    rebuild_fixed_atoms(engine);
 }
 
 // Read fix rigid settings from H5 configuration
@@ -91,6 +114,20 @@ void register_fix_rigid_backbone_for_engine(hid_t config_root, DerivEngine& engi
     }
     auto fixed_atoms = read_martini_backbone_hold(config_root, atom_name);
     merge_fixed_atoms(engine, fixed_atoms);
+}
+
+void set_dynamic_fixed_atoms(DerivEngine& engine, const std::vector<int>& atom_indices) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    auto& dyn = g_dynamic_fixed_atoms[&engine];
+    dyn = atom_indices;
+    normalize_atom_list(dyn);
+    rebuild_fixed_atoms(engine);
+}
+
+void clear_dynamic_fixed_atoms(DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    g_dynamic_fixed_atoms.erase(&engine);
+    rebuild_fixed_atoms(engine);
 }
 
 // Apply fix rigid constraints during minimization
@@ -156,6 +193,626 @@ std::vector<int> get_fixed_atoms(const DerivEngine& engine) {
 }
 
 } // namespace martini_fix_rigid
+
+namespace martini_stage_params {
+std::string get_current_stage(DerivEngine* engine);
+}
+
+namespace martini_hybrid {
+static std::mutex g_hybrid_mutex;
+
+struct HybridRuntimeState {
+    bool has_config = false;
+    bool enabled = false;
+    bool active = false;
+    bool exclude_intra_protein_martini = true;
+    bool preprod_rigid = true;
+    std::string activation_stage = "production";
+    std::string preprod_mode = "rigid";
+    size_t n_bb = 0;
+    size_t n_env = 0;
+    std::vector<int> bb_residue_index;
+    std::vector<int> bb_atom_index;
+    std::vector<std::array<int,4>> atom_indices;
+    std::vector<std::array<int,4>> atom_mask;
+    std::vector<std::array<float,4>> weights;
+    std::vector<int> protein_membership;
+    std::vector<int> sc_proxy_atom_index;
+    std::vector<std::array<int,4>> sc_proj_target_indices;
+    std::vector<std::array<float,4>> sc_proj_weights;
+    std::vector<float> sc_rotamer_prob;
+    bool coupling_align_enable = false;
+    bool coupling_align_debug = false;
+    int coupling_align_interval = 100;
+    uint64_t coupling_align_step = 0;
+    bool has_prev_bb = false;
+    std::vector<std::array<float,3>> prev_bb_pos;
+    std::vector<int> preprod_fixed_atom_indices;
+};
+
+static std::map<DerivEngine*, std::shared_ptr<HybridRuntimeState>> g_hybrid_state;
+static std::map<const CoordNode*, std::shared_ptr<HybridRuntimeState>> g_hybrid_state_by_coord;
+
+static std::vector<std::string> split_csv_tokens(const std::string& s) {
+    auto trim_token = [](const std::string& in) {
+        size_t begin = 0;
+        while(begin < in.size() && (in[begin] == '\0' || std::isspace(static_cast<unsigned char>(in[begin])))) {
+            ++begin;
+        }
+        size_t end = in.size();
+        while(end > begin && (in[end - 1] == '\0' || std::isspace(static_cast<unsigned char>(in[end - 1])))) {
+            --end;
+        }
+        return in.substr(begin, end - begin);
+    };
+    std::vector<std::string> out;
+    std::string cur;
+    for(char c : s) {
+        if(c == ',') {
+            auto t = trim_token(cur);
+            if(!t.empty()) out.push_back(t);
+            cur.clear();
+        } else {
+            cur.push_back(c);
+        }
+    }
+    auto t = trim_token(cur);
+    if(!t.empty()) out.push_back(t);
+    return out;
+}
+
+static inline bool attribute_exists_hybrid(hid_t loc_id, const char* obj_name, const char* attr_name) {
+    hid_t obj_id = H5Oopen(loc_id, obj_name, H5P_DEFAULT);
+    if (obj_id < 0) return false;
+    htri_t exists = H5Aexists(obj_id, attr_name);
+    H5Oclose(obj_id);
+    return exists > 0;
+}
+
+static std::string trim_h5_string(const std::string& in) {
+    size_t begin = 0;
+    while(begin < in.size() && (in[begin] == '\0' || std::isspace(static_cast<unsigned char>(in[begin])))) {
+        ++begin;
+    }
+    size_t end = in.size();
+    while(end > begin && (in[end - 1] == '\0' || std::isspace(static_cast<unsigned char>(in[end - 1])))) {
+        --end;
+    }
+    return in.substr(begin, end - begin);
+}
+
+static std::string read_string_attribute_or_default(hid_t group, const char* attr_name, const std::string& fallback) {
+    if(!attribute_exists_hybrid(group, ".", attr_name)) return fallback;
+
+    auto attr = h5_obj(H5Aclose, H5Aopen(group, attr_name, H5P_DEFAULT));
+    auto dtype = h5_obj(H5Tclose, H5Aget_type(attr.get()));
+    if(H5Tis_variable_str(dtype.get())) {
+        char* raw = nullptr;
+        if(H5Aread(attr.get(), dtype.get(), &raw) < 0) return fallback;
+        std::string out = raw ? trim_h5_string(std::string(raw)) : fallback;
+        if(raw) H5free_memory(raw);
+        return out.empty() ? fallback : out;
+    }
+    size_t nchar = H5Tget_size(dtype.get());
+    if(nchar == 0) return fallback;
+
+    std::vector<char> data(nchar + 1, '\0');
+    h5_noerr(H5Aread(attr.get(), dtype.get(), data.data()));
+    auto out = trim_h5_string(std::string(data.data(), nchar));
+    return out.empty() ? fallback : out;
+}
+
+static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
+    HybridRuntimeState out;
+
+    if(!h5_exists(root, "/input/hybrid_control")) {
+        return out;
+    }
+    out.has_config = true;
+
+    auto ctrl = open_group(root, "/input/hybrid_control");
+    out.enabled = (read_attribute<int>(ctrl.get(), ".", "enable", 0) != 0);
+    out.activation_stage = read_string_attribute_or_default(ctrl.get(), "activation_stage", "production");
+    out.preprod_mode = read_string_attribute_or_default(ctrl.get(), "preprod_protein_mode", "rigid");
+    out.exclude_intra_protein_martini =
+        (read_attribute<int>(ctrl.get(), ".", "exclude_intra_protein_martini", 1) != 0);
+    out.preprod_rigid = (out.preprod_mode == "rigid");
+    out.coupling_align_enable = (read_attribute<int>(ctrl.get(), ".", "coupling_align_enable", 0) != 0);
+    out.coupling_align_debug = (read_attribute<int>(ctrl.get(), ".", "coupling_align_debug", 0) != 0);
+    out.coupling_align_interval = read_attribute<int>(ctrl.get(), ".", "coupling_align_interval", 100);
+    if(out.coupling_align_interval < 1) out.coupling_align_interval = 1;
+
+    if(!out.enabled) {
+        return out;
+    }
+
+    if(!h5_exists(root, "/input/hybrid_bb_map")) {
+        throw string("Hybrid mode enabled but /input/hybrid_bb_map is missing");
+    }
+    {
+        auto bb = open_group(root, "/input/hybrid_bb_map");
+        auto atom_idx_shape = get_dset_size(2, bb.get(), "atom_indices");
+        auto atom_mask_shape = get_dset_size(2, bb.get(), "atom_mask");
+        auto weights_shape = get_dset_size(2, bb.get(), "weights");
+        auto res_shape = get_dset_size(1, bb.get(), "bb_residue_index");
+        auto pid_shape = get_dset_size(1, bb.get(), "protein_id");
+        if(atom_idx_shape[1] != 4 || atom_mask_shape[1] != 4 || weights_shape[1] != 4) {
+            throw string("Hybrid BB map must use (n_bb,4) layout for atom_indices/atom_mask/weights");
+        }
+        if(atom_idx_shape[0] != atom_mask_shape[0] ||
+           atom_idx_shape[0] != weights_shape[0] ||
+           atom_idx_shape[0] != res_shape[0] ||
+           atom_idx_shape[0] != pid_shape[0]) {
+            throw string("Hybrid BB map datasets have inconsistent n_bb sizes");
+        }
+        out.n_bb = atom_idx_shape[0];
+        out.bb_residue_index.assign(out.n_bb, -1);
+        out.bb_atom_index.assign(out.n_bb, -1);
+        out.atom_indices.assign(out.n_bb, std::array<int,4>{{-1,-1,-1,-1}});
+        out.atom_mask.assign(out.n_bb, std::array<int,4>{{0,0,0,0}});
+        out.weights.assign(out.n_bb, std::array<float,4>{{0.f,0.f,0.f,0.f}});
+
+        traverse_dset<1,int>(bb.get(), "bb_residue_index", [&](size_t i, int v) {
+            out.bb_residue_index[i] = v;
+        });
+        traverse_dset<2,int>(bb.get(), "atom_indices", [&](size_t i, size_t j, int v) {
+            out.atom_indices[i][j] = v;
+        });
+        traverse_dset<2,int>(bb.get(), "atom_mask", [&](size_t i, size_t j, int v) {
+            out.atom_mask[i][j] = v;
+        });
+        traverse_dset<2,float>(bb.get(), "weights", [&](size_t i, size_t j, float v) {
+            out.weights[i][j] = v;
+        });
+        if(h5_exists(bb.get(), "bb_atom_index")) {
+            check_size(bb.get(), "bb_atom_index", out.n_bb);
+            traverse_dset<1,int>(bb.get(), "bb_atom_index", [&](size_t i, int v) {
+                out.bb_atom_index[i] = v;
+            });
+        }
+    }
+
+    if(h5_exists(root, "/input/hybrid_env_topology")) {
+        auto env = open_group(root, "/input/hybrid_env_topology");
+        auto env_idx_shape = get_dset_size(1, env.get(), "env_atom_indices");
+        auto member_shape = get_dset_size(1, env.get(), "protein_membership");
+        if(static_cast<int>(member_shape[0]) != n_atom) {
+            throw string("Hybrid env topology protein_membership length must match n_atom");
+        }
+        out.n_env = env_idx_shape[0];
+        out.protein_membership.assign(member_shape[0], -1);
+        traverse_dset<1,int>(env.get(), "protein_membership", [&](size_t i, int v) {
+            out.protein_membership[i] = v;
+        });
+    } else {
+        throw string("Hybrid mode enabled but /input/hybrid_env_topology is missing");
+    }
+
+    if(out.preprod_rigid && !out.protein_membership.empty()) {
+        std::set<std::string> lipid_head_roles{"PO4"};
+        std::string role_csv = read_string_attribute_or_default(
+            ctrl.get(), "preprod_lipid_headgroup_roles", "PO4");
+        auto role_tokens = split_csv_tokens(role_csv);
+        if(!role_tokens.empty()) {
+            lipid_head_roles.clear();
+            for(const auto& tok : role_tokens) lipid_head_roles.insert(tok);
+        }
+
+        std::vector<std::string> atom_roles(n_atom, "");
+        bool has_roles = false;
+        if(h5_exists(root, "/input/atom_roles")) {
+            has_roles = true;
+            traverse_string_dset<1>(root, "/input/atom_roles", [&](size_t i, const std::string& v) {
+                if(static_cast<int>(i) < n_atom) atom_roles[i] = trim_h5_string(v);
+            });
+        } else if(h5_exists(root, "/input/atom_names")) {
+            has_roles = true;
+            traverse_string_dset<1>(root, "/input/atom_names", [&](size_t i, const std::string& v) {
+                if(static_cast<int>(i) < n_atom) atom_roles[i] = trim_h5_string(v);
+            });
+        }
+
+        out.preprod_fixed_atom_indices.reserve(static_cast<size_t>(n_atom));
+        for(int i = 0; i < n_atom; ++i) {
+            bool is_protein = (i < (int)out.protein_membership.size() && out.protein_membership[i] >= 0);
+            bool is_head = false;
+            if(has_roles && i < (int)atom_roles.size()) {
+                is_head = (lipid_head_roles.count(atom_roles[i]) > 0);
+            }
+            if(is_protein || (is_head && !is_protein)) {
+                out.preprod_fixed_atom_indices.push_back(i);
+            }
+        }
+    }
+
+    if(h5_exists(root, "/input/hybrid_sc_map")) {
+        auto sc = open_group(root, "/input/hybrid_sc_map");
+        auto rotamer_shape = get_dset_size(1, sc.get(), "rotamer_id");
+        size_t n_rot = rotamer_shape[0];
+        if(n_rot > 0) {
+            check_size(sc.get(), "proxy_atom_index", n_rot);
+            check_size(sc.get(), "rotamer_probability", n_rot);
+            check_size(sc.get(), "proj_target_indices", n_rot, 4);
+            check_size(sc.get(), "proj_weights", n_rot, 4);
+            out.sc_proxy_atom_index.assign(n_rot, -1);
+            out.sc_proj_target_indices.assign(n_rot, std::array<int,4>{{-1,-1,-1,-1}});
+            out.sc_proj_weights.assign(n_rot, std::array<float,4>{{0.f,0.f,0.f,0.f}});
+            out.sc_rotamer_prob.assign(n_rot, 0.f);
+
+            traverse_dset<1,int>(sc.get(), "proxy_atom_index", [&](size_t i, int v) {
+                out.sc_proxy_atom_index[i] = v;
+            });
+            traverse_dset<1,float>(sc.get(), "rotamer_probability", [&](size_t i, float v) {
+                out.sc_rotamer_prob[i] = v;
+            });
+            traverse_dset<2,int>(sc.get(), "proj_target_indices", [&](size_t i, size_t j, int v) {
+                out.sc_proj_target_indices[i][j] = v;
+            });
+            traverse_dset<2,float>(sc.get(), "proj_weights", [&](size_t i, size_t j, float v) {
+                out.sc_proj_weights[i][j] = v;
+            });
+        }
+    }
+
+    // Fallback BB atom inference if bb_atom_index is absent.
+    bool need_infer_bb = false;
+    for(int idx : out.bb_atom_index) if(idx < 0) { need_infer_bb = true; break; }
+    if(need_infer_bb && h5_exists(root, "/input/residue_ids")) {
+        auto residue_shape = get_dset_size(1, root, "/input/residue_ids");
+        if(static_cast<int>(residue_shape[0]) == n_atom) {
+            std::vector<int> residue_ids(n_atom, -1);
+            traverse_dset<1,int>(root, "/input/residue_ids", [&](size_t i, int v) { residue_ids[i] = v; });
+
+            std::vector<std::string> atom_names(n_atom, "");
+            bool has_names = false;
+            if(h5_exists(root, "/input/atom_names")) {
+                has_names = true;
+                traverse_string_dset<1>(root, "/input/atom_names", [&](size_t i, const std::string& v) {
+                    atom_names[i] = trim_h5_string(v);
+                });
+            } else if(h5_exists(root, "/input/atom_roles")) {
+                has_names = true;
+                traverse_string_dset<1>(root, "/input/atom_roles", [&](size_t i, const std::string& v) {
+                    atom_names[i] = trim_h5_string(v);
+                });
+            }
+
+            if(has_names) {
+                for(size_t k = 0; k < out.n_bb; ++k) {
+                    if(out.bb_atom_index[k] >= 0) continue;
+                    int resid = out.bb_residue_index[k];
+                    for(int i = 0; i < n_atom; ++i) {
+                        if(residue_ids[i] == resid && atom_names[i] == "BB") {
+                            out.bb_atom_index[k] = i;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return out;
+}
+
+void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+    auto it = g_hybrid_state.find(engine);
+    if(it == g_hybrid_state.end()) return;
+    auto st = it->second;
+    if(!st) return;
+    if(!st->enabled) {
+        st->active = false;
+        martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
+        return;
+    }
+    st->active = (stage == st->activation_stage);
+    if(st->preprod_rigid && !st->active) {
+        martini_fix_rigid::set_dynamic_fixed_atoms(*engine, st->preprod_fixed_atom_indices);
+    } else {
+        martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
+    }
+}
+
+void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
+    auto parsed = read_hybrid_settings(config_root, engine.pos->n_elem);
+    auto current_stage = martini_stage_params::get_current_stage(&engine);
+    parsed.active = parsed.enabled && (current_stage == parsed.activation_stage);
+
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+    auto st = std::make_shared<HybridRuntimeState>(std::move(parsed));
+    g_hybrid_state[&engine] = st;
+    g_hybrid_state_by_coord[static_cast<const CoordNode*>(engine.pos)] = st;
+    if(st->enabled && st->preprod_rigid && !st->active) {
+        martini_fix_rigid::set_dynamic_fixed_atoms(engine, st->preprod_fixed_atom_indices);
+    } else {
+        martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
+    }
+    if(st->has_config && st->enabled) {
+        printf("Hybrid input parsed: activation_stage=%s preprod_mode=%s n_bb=%zu n_env=%zu exclude_intra=%d preprod_fixed=%zu\n",
+               st->activation_stage.c_str(),
+               st->preprod_mode.c_str(),
+               st->n_bb,
+               st->n_env,
+               st->exclude_intra_protein_martini ? 1 : 0,
+               st->preprod_fixed_atom_indices.size());
+    } else if(st->has_config) {
+        printf("Hybrid input present but disabled\n");
+    }
+}
+
+bool is_hybrid_enabled(const DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+    auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
+    return it != g_hybrid_state.end() && it->second && it->second->enabled;
+}
+
+bool is_hybrid_active(const DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+    auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
+    return it != g_hybrid_state.end() && it->second && it->second->active;
+}
+
+bool preproduction_requires_rigid(const DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+    auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
+    if(it == g_hybrid_state.end() || !it->second) return false;
+    return it->second->preprod_rigid;
+}
+
+std::shared_ptr<const HybridRuntimeState> get_state_for_coord(const CoordNode& coord) {
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+    auto it = g_hybrid_state_by_coord.find(&coord);
+    if(it == g_hybrid_state_by_coord.end()) return nullptr;
+    return it->second;
+}
+
+void refresh_bb_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom) {
+    if(!st.enabled || !st.active) return;
+    for(size_t k = 0; k < st.n_bb; ++k) {
+        int bb = st.bb_atom_index[k];
+        if(bb < 0 || bb >= n_atom) continue;
+
+        Vec<3> com = make_zero<3>();
+        float wsum = 0.f;
+        for(int d = 0; d < 4; ++d) {
+            if(st.atom_mask[k][d] == 0) continue;
+            int ai = st.atom_indices[k][d];
+            float w = st.weights[k][d];
+            if(ai < 0 || ai >= n_atom || w == 0.f) continue;
+            com += w * load_vec<3>(pos, ai);
+            wsum += w;
+        }
+        if(wsum > 0.f) {
+            if(fabsf(wsum - 1.0f) > 1e-6f) com *= (1.0f / wsum);
+            store_vec<3>(pos, bb, com);
+        }
+    }
+}
+
+struct CouplingAlignmentTransform {
+    bool enabled = false;
+    bool has_rotation = false;
+    float R[3][3];
+    std::array<float,3> t;
+    float rotation_angle_deg = 0.f;
+    float translation_norm = 0.f;
+};
+
+static inline std::array<float,3> apply_rot(const float R[3][3], const std::array<float,3>& v) {
+    return std::array<float,3>{
+        R[0][0] * v[0] + R[0][1] * v[1] + R[0][2] * v[2],
+        R[1][0] * v[0] + R[1][1] * v[1] + R[1][2] * v[2],
+        R[2][0] * v[0] + R[2][1] * v[1] + R[2][2] * v[2]
+    };
+}
+
+static inline std::array<float,3> apply_rot_T(const float R[3][3], const std::array<float,3>& v) {
+    return std::array<float,3>{
+        R[0][0] * v[0] + R[1][0] * v[1] + R[2][0] * v[2],
+        R[0][1] * v[0] + R[1][1] * v[1] + R[2][1] * v[2],
+        R[0][2] * v[0] + R[1][2] * v[1] + R[2][2] * v[2]
+    };
+}
+
+static inline std::array<float,3> vec_sub(const std::array<float,3>& a, const std::array<float,3>& b) {
+    return std::array<float,3>{a[0]-b[0], a[1]-b[1], a[2]-b[2]};
+}
+
+static inline std::array<float,3> vec_add(const std::array<float,3>& a, const std::array<float,3>& b) {
+    return std::array<float,3>{a[0]+b[0], a[1]+b[1], a[2]+b[2]};
+}
+
+static inline std::array<float,3> vec_scale(const std::array<float,3>& a, float s) {
+    return std::array<float,3>{a[0]*s, a[1]*s, a[2]*s};
+}
+
+static inline float vec_dot(const std::array<float,3>& a, const std::array<float,3>& b) {
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+}
+
+static inline std::array<float,3> vec_cross(const std::array<float,3>& a, const std::array<float,3>& b) {
+    return std::array<float,3>{
+        a[1]*b[2] - a[2]*b[1],
+        a[2]*b[0] - a[0]*b[2],
+        a[0]*b[1] - a[1]*b[0]
+    };
+}
+
+static inline float vec_norm(const std::array<float,3>& a) {
+    return sqrtf(vec_dot(a, a));
+}
+
+static inline std::array<float,3> vec_normalize(const std::array<float,3>& a) {
+    float n = vec_norm(a);
+    if(n <= 1e-8f) return std::array<float,3>{0.f,0.f,0.f};
+    return vec_scale(a, 1.f/n);
+}
+
+static inline bool build_frame_from_three(
+        const std::array<float,3>& p0,
+        const std::array<float,3>& p1,
+        const std::array<float,3>& p2,
+        float F[3][3]) {
+    auto e1 = vec_normalize(vec_sub(p1, p0));
+    auto v2 = vec_sub(p2, p0);
+    auto e3 = vec_cross(e1, v2);
+    float n3 = vec_norm(e3);
+    if(n3 <= 1e-8f) return false;
+    e3 = vec_scale(e3, 1.f/n3);
+    auto e2 = vec_cross(e3, e1);
+
+    // Columns are basis vectors.
+    F[0][0] = e1[0]; F[1][0] = e1[1]; F[2][0] = e1[2];
+    F[0][1] = e2[0]; F[1][1] = e2[1]; F[2][1] = e2[2];
+    F[0][2] = e3[0]; F[1][2] = e3[1]; F[2][2] = e3[2];
+    return true;
+}
+
+static inline void mat_mul(const float A[3][3], const float B[3][3], float C[3][3]) {
+    for(int i=0;i<3;++i) for(int j=0;j<3;++j) {
+        C[i][j] = 0.f;
+        for(int k=0;k<3;++k) C[i][j] += A[i][k]*B[k][j];
+    }
+}
+
+static inline void mat_transpose(const float A[3][3], float AT[3][3]) {
+    for(int i=0;i<3;++i) for(int j=0;j<3;++j) AT[i][j] = A[j][i];
+}
+
+CouplingAlignmentTransform build_coupling_alignment(HybridRuntimeState& st, VecArray pos, int n_atom) {
+    CouplingAlignmentTransform tr;
+    for(int i=0;i<3;++i){
+        for(int j=0;j<3;++j) tr.R[i][j] = (i==j ? 1.f : 0.f);
+    }
+    tr.t = std::array<float,3>{0.f, 0.f, 0.f};
+    if(!st.enabled || !st.active || !st.coupling_align_enable || st.n_bb < 3) return tr;
+
+    std::vector<int> bb_idx;
+    bb_idx.reserve(st.n_bb);
+    for(size_t k=0; k<st.n_bb; ++k) {
+        int bb = st.bb_atom_index[k];
+        if(bb >= 0 && bb < n_atom) bb_idx.push_back(bb);
+    }
+    if(bb_idx.size() < 3) return tr;
+
+    std::vector<std::array<float,3>> cur_bb(bb_idx.size());
+    for(size_t i=0; i<bb_idx.size(); ++i) {
+        auto v = load_vec<3>(pos, bb_idx[i]);
+        cur_bb[i] = std::array<float,3>{v[0], v[1], v[2]};
+    }
+
+    if(!st.has_prev_bb || st.prev_bb_pos.size() != bb_idx.size()) {
+        st.prev_bb_pos = cur_bb;
+        st.has_prev_bb = true;
+        return tr;
+    }
+
+    auto com_cur = std::array<float,3>{0.f,0.f,0.f};
+    auto com_prev = std::array<float,3>{0.f,0.f,0.f};
+    for(size_t i=0; i<cur_bb.size(); ++i) {
+        com_cur = vec_add(com_cur, cur_bb[i]);
+        com_prev = vec_add(com_prev, st.prev_bb_pos[i]);
+    }
+    float inv_n = 1.f / float(cur_bb.size());
+    com_cur = vec_scale(com_cur, inv_n);
+    com_prev = vec_scale(com_prev, inv_n);
+
+    float F_cur[3][3], F_prev[3][3], F_cur_T[3][3];
+    bool ok_frame = false;
+    for(size_t a=0; a+2<cur_bb.size(); ++a) {
+        auto c0 = cur_bb[a], c1 = cur_bb[a+1], c2 = cur_bb[a+2];
+        auto p0 = st.prev_bb_pos[a], p1 = st.prev_bb_pos[a+1], p2 = st.prev_bb_pos[a+2];
+        if(build_frame_from_three(c0, c1, c2, F_cur) && build_frame_from_three(p0, p1, p2, F_prev)) {
+            ok_frame = true;
+            break;
+        }
+    }
+    if(!ok_frame) {
+        st.prev_bb_pos = cur_bb;
+        return tr;
+    }
+
+    mat_transpose(F_cur, F_cur_T);
+    mat_mul(F_prev, F_cur_T, tr.R);
+    tr.has_rotation = true;
+
+    auto Rc = apply_rot(tr.R, com_cur);
+    tr.t = vec_sub(com_prev, Rc);
+    tr.translation_norm = vec_norm(tr.t);
+    float traceR = tr.R[0][0] + tr.R[1][1] + tr.R[2][2];
+    float c = 0.5f * (traceR - 1.f);
+    c = std::max(-1.f, std::min(1.f, c));
+    tr.rotation_angle_deg = acosf(c) * (180.f / float(M_PI));
+    tr.enabled = true;
+
+    st.prev_bb_pos = cur_bb;
+    st.coupling_align_step += 1;
+    if(st.coupling_align_debug && (st.coupling_align_step % uint64_t(st.coupling_align_interval) == 0)) {
+        printf("Hybrid coupling-align: step=%llu rot_deg=%.4f trans=%.4f\n",
+               (unsigned long long)st.coupling_align_step,
+               tr.rotation_angle_deg,
+               tr.translation_norm);
+    }
+    return tr;
+}
+
+void project_bb_gradient_if_active(const HybridRuntimeState& st, VecArray sens, int n_atom) {
+    if(!st.enabled || !st.active) return;
+    for(size_t k = 0; k < st.n_bb; ++k) {
+        int bb = st.bb_atom_index[k];
+        if(bb < 0 || bb >= n_atom) continue;
+        auto bb_grad = load_vec<3>(sens, bb);
+        for(int d = 0; d < 4; ++d) {
+            if(st.atom_mask[k][d] == 0) continue;
+            int ai = st.atom_indices[k][d];
+            float w = st.weights[k][d];
+            if(ai < 0 || ai >= n_atom || w == 0.f) continue;
+            update_vec<3>(sens, ai, w * bb_grad);
+        }
+        store_vec<3>(sens, bb, make_zero<3>());
+    }
+}
+
+void project_sc_gradient_if_active(const HybridRuntimeState& st, VecArray sens, int n_atom) {
+    if(!st.enabled || !st.active) return;
+    const size_t n_rot = st.sc_proxy_atom_index.size();
+    for(size_t r = 0; r < n_rot; ++r) {
+        int proxy = st.sc_proxy_atom_index[r];
+        if(proxy < 0 || proxy >= n_atom) continue;
+        float p = st.sc_rotamer_prob[r];
+        if(p <= 0.f) continue;
+        auto proxy_grad = load_vec<3>(sens, proxy);
+        for(int d = 0; d < 4; ++d) {
+            int ai = st.sc_proj_target_indices[r][d];
+            float w = st.sc_proj_weights[r][d];
+            if(ai < 0 || ai >= n_atom || w == 0.f) continue;
+            update_vec<3>(sens, ai, (p * w) * proxy_grad);
+        }
+        store_vec<3>(sens, proxy, make_zero<3>());
+    }
+}
+
+inline bool skip_pair_if_intra_protein(const HybridRuntimeState& st, int i, int j) {
+    if(!st.enabled || !st.active || !st.exclude_intra_protein_martini) return false;
+    if(i < 0 || j < 0) return false;
+    if(i >= (int)st.protein_membership.size() || j >= (int)st.protein_membership.size()) return false;
+    int pi = st.protein_membership[i];
+    int pj = st.protein_membership[j];
+    return (pi >= 0 && pj >= 0 && pi == pj);
+}
+
+void clear_hybrid_for_engine(DerivEngine* engine) {
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+    if(engine) {
+        martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
+    }
+    if(engine && engine->pos) {
+        g_hybrid_state_by_coord.erase(static_cast<const CoordNode*>(engine->pos));
+    }
+    g_hybrid_state.erase(engine);
+}
+} // namespace martini_hybrid
 
 // ===================== MASS STORAGE FOR INTEGRATORS =====================
 // Global mass storage for MARTINI integrators to use proper masses instead of unit mass
@@ -1028,6 +1685,13 @@ struct MartiniPotential : public PotentialNode
         
         VecArray pos1      = pos.output;
         VecArray pos1_sens = pos.sens;
+        auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
+        martini_hybrid::CouplingAlignmentTransform coupling_align;
+        if(hybrid_state) {
+            martini_hybrid::refresh_bb_positions_if_active(*hybrid_state, pos1, n_atom);
+            auto& mutable_hybrid = *const_cast<martini_hybrid::HybridRuntimeState*>(hybrid_state.get());
+            coupling_align = martini_hybrid::build_coupling_alignment(mutable_hybrid, pos1, n_atom);
+        }
         
         // --- REMOVED: fill(pos1_sens, 3, n_atom, 0.f); ---
         // This line was incorrectly zeroing the force array, erasing all bonded forces
@@ -1046,6 +1710,9 @@ struct MartiniPotential : public PotentialNode
         for(size_t np=0; np<pairs.size(); ++np) {
             int i = pairs[np].first;
             int j = pairs[np].second;
+            if(hybrid_state && martini_hybrid::skip_pair_if_intra_protein(*hybrid_state, i, j)) {
+                continue;
+            }
             
             auto eps   = coeff[np][0];
             auto sig   = coeff[np][1];
@@ -1056,6 +1723,27 @@ struct MartiniPotential : public PotentialNode
             
             auto p1 = load_vec<3>(pos1, i);
             auto p2 = load_vec<3>(pos1, j);
+            bool i_is_protein = false;
+            bool j_is_protein = false;
+            if(hybrid_state && i >= 0 && j >= 0 &&
+               i < (int)hybrid_state->protein_membership.size() &&
+               j < (int)hybrid_state->protein_membership.size()) {
+                i_is_protein = hybrid_state->protein_membership[i] >= 0;
+                j_is_protein = hybrid_state->protein_membership[j] >= 0;
+            }
+
+            if(coupling_align.enabled) {
+                if(i_is_protein) {
+                    auto p = std::array<float,3>{p1[0], p1[1], p1[2]};
+                    auto pa = martini_hybrid::vec_add(martini_hybrid::apply_rot(coupling_align.R, p), coupling_align.t);
+                    p1 = make_vec3(pa[0], pa[1], pa[2]);
+                }
+                if(j_is_protein) {
+                    auto p = std::array<float,3>{p2[0], p2[1], p2[2]};
+                    auto pa = martini_hybrid::vec_add(martini_hybrid::apply_rot(coupling_align.R, p), coupling_align.t);
+                    p2 = make_vec3(pa[0], pa[1], pa[2]);
+                }
+            }
             // Direct distance calculation without PBC
             auto dr = p1 - p2;
             auto dist2 = mag2(dr);
@@ -1153,8 +1841,27 @@ struct MartiniPotential : public PotentialNode
             
             // Apply mass scaling to forces (divide by mass)
             // Store gradient (∇E = -F) in pos_sens for UPSIDE integrator
-            update_vec<3>(pos1_sens, i, -force);
-            update_vec<3>(pos1_sens, j,  force);
+            auto gi = -force;
+            auto gj = force;
+            if(coupling_align.enabled) {
+                if(i_is_protein) {
+                    auto g = std::array<float,3>{gi[0], gi[1], gi[2]};
+                    auto gr = martini_hybrid::apply_rot_T(coupling_align.R, g);
+                    gi = make_vec3(gr[0], gr[1], gr[2]);
+                }
+                if(j_is_protein) {
+                    auto g = std::array<float,3>{gj[0], gj[1], gj[2]};
+                    auto gr = martini_hybrid::apply_rot_T(coupling_align.R, g);
+                    gj = make_vec3(gr[0], gr[1], gr[2]);
+                }
+            }
+            update_vec<3>(pos1_sens, i, gi);
+            update_vec<3>(pos1_sens, j, gj);
+        }
+
+        if(hybrid_state) {
+            martini_hybrid::project_sc_gradient_if_active(*hybrid_state, pos1_sens, n_atom);
+            martini_hybrid::project_bb_gradient_if_active(*hybrid_state, pos1_sens, n_atom);
         }
     }
     
@@ -2088,8 +2795,10 @@ StageParamData read_stage_param_settings(hid_t root) {
             if(enable) {
                 data.enabled = true;
                 
-                // Set default stage (will be overridden by switch_simulation_stage calls)
-                data.stage = "minimization";
+                // Set default stage and allow override from H5.
+                data.stage = "production";
+                data.stage = martini_hybrid::read_string_attribute_or_default(
+                    grp.get(), "current_stage", data.stage);
                 
                 // Read bond parameters for different stages
                 if(h5_exists(grp.get(), "minimization_bonds")) {
@@ -2159,6 +2868,7 @@ void switch_simulation_stage(DerivEngine* engine, const std::string& new_stage) 
     auto it = g_current_stage.find(engine);
     if(it != g_current_stage.end()) {
         it->second = new_stage;
+        martini_hybrid::update_stage_for_engine(engine, new_stage);
         printf("Switched to %s stage\n", new_stage.c_str());
     }
 }
