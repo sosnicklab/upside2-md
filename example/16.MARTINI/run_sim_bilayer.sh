@@ -6,7 +6,7 @@ source ../../.venv/bin/activate
 # 6.0 soft-core minimization
 # 6.1 hard minimization
 # 6.2-6.6 hard equilibration (semi-isotropic Berendsen)
-# 7.0 hard production (configurable: Parrinello-Rahman by default)
+# 7.0 hard production (NVT by default for implicit dry bilayer; optional NPT override)
 
 set -euo pipefail
 
@@ -43,7 +43,9 @@ PREPARED_63_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.3.prepared.up"
 STAGE_63_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.3.up"
 PREPARED_64_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.4.prepared.up"
 STAGE_64_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.4.up"
+PREPARED_65_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.5.prepared.up"
 STAGE_65_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.5.up"
+PREPARED_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.prepared.up"
 STAGE_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.up"
 PREPARED_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.prepared.up"
 STAGE_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.up"
@@ -89,7 +91,7 @@ export UPSIDE_NPT_COMPRESSIBILITY_Z="${UPSIDE_NPT_COMPRESSIBILITY_Z:-0.0}"
 export UPSIDE_NPT_INTERVAL="${UPSIDE_NPT_INTERVAL:-10}"
 export UPSIDE_NPT_SEMI="${UPSIDE_NPT_SEMI:-1}"
 export UPSIDE_NPT_DEBUG="${UPSIDE_NPT_DEBUG:-1}"
-PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-1}"
+PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-0}"
 PROD_70_BAROSTAT_TYPE="${PROD_70_BAROSTAT_TYPE:-1}"
 
 export UPSIDE_OVERWRITE_SPLINES="${UPSIDE_OVERWRITE_SPLINES:-1}"
@@ -133,9 +135,11 @@ prepare_stage_file() {
     local prepare_stage="$2"
     local npt_enable="$3"
     local barostat_type="$4"
+    local lipidhead_fc="${5:-0}"
 
     export UPSIDE_SIMULATION_STAGE="$prepare_stage"
     export UPSIDE_NPT_ENABLE="$npt_enable"
+    export UPSIDE_BILAYER_LIPIDHEAD_FC="$lipidhead_fc"
 
     python3 prepare_martini.py "$PDB_ID" --stage "$prepare_stage" "$RUN_DIR"
 
@@ -240,42 +244,48 @@ run_md_stage() {
 echo "=== Dry MARTINI Bilayer Workflow ==="
 echo "PDB ID: $PDB_ID"
 echo "Sequence: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"
-echo "WARNING: Gromacs BILAYER_LIPIDHEAD_FC restraint ramp (200/100/50/20/10) is not yet implemented in prepare_martini.py; this script matches stage order, timesteps, and pressure-coupling behavior."
+echo "Lipid-head restraint ramp: BILAYER_LIPIDHEAD_FC = 200/100/50/20/10 for stages 6.2-6.6 (disabled in production)."
 echo
 
 # 6.0: soft-core minimization, NPT on, Berendsen
-prepare_stage_file "$PREPARED_60_FILE" "minimization" "1" "0"
+prepare_stage_file "$PREPARED_60_FILE" "minimization" "1" "0" "0"
 cp -f "$PREPARED_60_FILE" "$STAGE_60_FILE"
 run_minimization_stage "6.0" "$STAGE_60_FILE" "$MIN_60_MAX_ITER"
 
 # 6.1: hard minimization, NPT on, Berendsen
-prepare_stage_file "$PREPARED_61_FILE" "npt_prod" "1" "0"
+prepare_stage_file "$PREPARED_61_FILE" "npt_prod" "1" "0" "0"
 cp -f "$PREPARED_61_FILE" "$STAGE_61_FILE"
 python3 set_initial_position.py "$STAGE_60_FILE" "$STAGE_61_FILE"
 run_minimization_stage "6.1" "$STAGE_61_FILE" "$MIN_61_MAX_ITER"
 
-# 6.2-6.6: hard equilibration, NPT on, Berendsen
-# 6.2: soft potential (smoother start, compensates for missing lipid-head restraint ramp)
-prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "0"
+# 6.2-6.6: equilibration, NPT on, Berendsen
+# 6.2: soft potential to stabilize the first post-minimization MD segment
+prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "0" "200"
 python3 set_initial_position.py "$STAGE_61_FILE" "$STAGE_62_FILE"
 run_md_stage "6.2" "$STAGE_62_FILE" "$STAGE_62_FILE" "$EQ_62_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 
-# 6.3: reduced softening
-prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "0"
+# 6.3: reduced softening before switching fully hard
+prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "0" "100"
 cp -f "$PREPARED_63_FILE" "$STAGE_63_FILE"
 python3 set_initial_position.py "$STAGE_62_FILE" "$STAGE_63_FILE"
 run_md_stage "6.3" "$STAGE_63_FILE" "$STAGE_63_FILE" "$EQ_63_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 
-# 6.4-6.6: hard potential with Berendsen
-prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "0"
+# 6.4-6.6: hard potential with Berendsen and lipid-head restraint ramp
+prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "0" "50"
 cp -f "$PREPARED_64_FILE" "$STAGE_64_FILE"
 python3 set_initial_position.py "$STAGE_63_FILE" "$STAGE_64_FILE"
 run_md_stage "6.4" "$STAGE_64_FILE" "$STAGE_64_FILE" "$EQ_64_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
-run_md_stage "6.5" "$STAGE_64_FILE" "$STAGE_65_FILE" "$EQ_65_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
-run_md_stage "6.6" "$STAGE_65_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+prepare_stage_file "$PREPARED_65_FILE" "npt_prod" "1" "0" "20"
+cp -f "$PREPARED_65_FILE" "$STAGE_65_FILE"
+python3 set_initial_position.py "$STAGE_64_FILE" "$STAGE_65_FILE"
+run_md_stage "6.5" "$STAGE_65_FILE" "$STAGE_65_FILE" "$EQ_65_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+prepare_stage_file "$PREPARED_66_FILE" "npt_prod" "1" "0" "10"
+cp -f "$PREPARED_66_FILE" "$STAGE_66_FILE"
+python3 set_initial_position.py "$STAGE_65_FILE" "$STAGE_66_FILE"
+run_md_stage "6.6" "$STAGE_66_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 
-# 7.0: hard production (default Parrinello-Rahman, set PROD_70_NPT_ENABLE=0 for NVT)
-prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "$PROD_70_BAROSTAT_TYPE"
+# 7.0: hard production (default NVT; set PROD_70_NPT_ENABLE=1 for NPT, barostat type via PROD_70_BAROSTAT_TYPE)
+prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "$PROD_70_BAROSTAT_TYPE" "0"
 cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
 python3 set_initial_position.py "$STAGE_66_FILE" "$STAGE_70_FILE"
 run_md_stage "7.0" "$STAGE_70_FILE" "$STAGE_70_FILE" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"

@@ -1568,7 +1568,7 @@ struct PositionRestraint : public PotentialNode
     struct Params {
         index_t atom_index;
         Vec<3,float> ref_pos;
-        float spring_constant;
+        Vec<3,float> spring_const_xyz;
     };
 
     int n_elem;
@@ -1581,7 +1581,12 @@ struct PositionRestraint : public PotentialNode
     {
         check_size(grp, "restraint_indices", n_elem);
         check_size(grp, "ref_pos", n_elem, 3);
-        check_size(grp, "spring_const", n_elem);
+        bool has_spring_const_xyz = h5_exists(grp, "spring_const_xyz");
+        if(has_spring_const_xyz) {
+            check_size(grp, "spring_const_xyz", n_elem, 3);
+        } else {
+            check_size(grp, "spring_const", n_elem);
+        }
 
         auto& p = params;
         traverse_dset<1,int>(grp, "restraint_indices", [&](size_t i, int x) {p[i].atom_index = x;});
@@ -1590,15 +1595,25 @@ struct PositionRestraint : public PotentialNode
             else if(j == 1) p[i].ref_pos.y() = x;
             else if(j == 2) p[i].ref_pos.z() = x;
         });
-        traverse_dset<1,float>(grp, "spring_const", [&](size_t i, float x) {p[i].spring_constant = x;});
+        if(has_spring_const_xyz) {
+            traverse_dset<2,float>(grp, "spring_const_xyz", [&](size_t i, size_t j, float x) {
+                if(j == 0) p[i].spring_const_xyz.x() = x;
+                else if(j == 1) p[i].spring_const_xyz.y() = x;
+                else if(j == 2) p[i].spring_const_xyz.z() = x;
+            });
+        } else {
+            traverse_dset<1,float>(grp, "spring_const", [&](size_t i, float x) {
+                p[i].spring_const_xyz = make_vec3(x, x, x);
+            });
+        }
 
         std::cout << "POSITION_RESTRAINT: Initialized " << n_elem << " restraints" << std::endl;
         if(n_elem > 0) {
             float min_k = std::numeric_limits<float>::max();
             float max_k = std::numeric_limits<float>::lowest();
             for(const auto& param : params) {
-                min_k = std::min(min_k, param.spring_constant);
-                max_k = std::max(max_k, param.spring_constant);
+                min_k = std::min(min_k, std::min(param.spring_const_xyz.x(), std::min(param.spring_const_xyz.y(), param.spring_const_xyz.z())));
+                max_k = std::max(max_k, std::max(param.spring_const_xyz.x(), std::max(param.spring_const_xyz.y(), param.spring_const_xyz.z())));
             }
             std::cout << "  Spring constant range: " << min_k << " to " << max_k << std::endl;
         }
@@ -1617,14 +1632,23 @@ struct PositionRestraint : public PotentialNode
 
             auto x = load_vec<3>(posc, p.atom_index);
             auto disp = x - p.ref_pos;
-            float dist = mag(disp);
 
-            // Harmonic potential: V = 0.5 * k * |r - r_ref|^2
-            if(pot) *pot += 0.5f * p.spring_constant * dist * dist;
+            // Harmonic potential with anisotropic force constants:
+            // V = 0.5 * (kx*dx^2 + ky*dy^2 + kz*dz^2)
+            if(pot) {
+                *pot += 0.5f * (
+                    p.spring_const_xyz.x() * disp.x() * disp.x() +
+                    p.spring_const_xyz.y() * disp.y() * disp.y() +
+                    p.spring_const_xyz.z() * disp.z() * disp.z()
+                );
+            }
 
-            // Force: F = -k * (r - r_ref)
-            // Gradient (sens) = k * (r - r_ref)
-            auto deriv = p.spring_constant * disp;
+            // Gradient (sens): dV/dx = kx*dx, dV/dy = ky*dy, dV/dz = kz*dz
+            auto deriv = make_vec3(
+                p.spring_const_xyz.x() * disp.x(),
+                p.spring_const_xyz.y() * disp.y(),
+                p.spring_const_xyz.z() * disp.z()
+            );
             update_vec(pos_sens, p.atom_index, deriv);
         }
     }

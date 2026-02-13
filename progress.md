@@ -42,3 +42,28 @@
 - Validation: `bash -n example/16.MARTINI/run_sim_bilayer.sh` passed.
 - Validation: `python3 -m py_compile example/16.MARTINI/extract_martini_vtf.py` passed.
 - Validation: extractor smoke test on matching multi-frame data (`1ubq.npt_equil.up`) produced 100 `timestep ordered` frames.
+- Verified against `/Users/yinhan/Downloads/charmm-gui-7090685331/gromacs`: bilayer lipid-head restraint ramp is required for stages 6.2-6.6 (`200/100/50/20/10`) and off in stage 7.0.
+- Implemented lipid-head restraint support in `prepare_martini.py`: parse ITP `[ position_restraints ]` with preprocessor define `BILAYER_LIPIDHEAD_FC`, create `/input/potential/restraint_position` in H5, and write anisotropic spring constants (`spring_const_xyz`) plus scalar compatibility field (`spring_const`).
+- Updated `src/martini.cpp` `PositionRestraint` to support anisotropic restraints via optional `spring_const_xyz` dataset, with backward-compatible fallback to scalar `spring_const`.
+- Updated `run_sim_bilayer.sh` stage wiring to pass stage-specific `UPSIDE_BILAYER_LIPIDHEAD_FC` and to prepare separate files for 6.4/6.5/6.6 so the 50->20->10 ramp actually changes across stages.
+- Validation: `bash -n example/16.MARTINI/run_sim_bilayer.sh` passed.
+- Validation: `python3 -m py_compile example/16.MARTINI/prepare_martini.py` passed.
+- Validation: smoke prep for stage 6.2 showed `/input/potential/restraint_position` present with 72 restraints and first spring `[0.0, 0.0, 0.686117...]` (converted from 200 kJ/mol/nm^2).
+- Validation: smoke prep for stage 7.0 showed `/input/potential/restraint_position` absent.
+- Fixed build failure in `src/martini.cpp` by replacing invalid `make_vec(...)` calls with `make_vec3(...)` in anisotropic position-restraint code paths.
+- Validation: `cmake --build obj -j4` completed successfully; targets `upside`, `upside_calculation`, and `upside_engine` built.
+- Remaining compiler output consists of existing warnings (no errors), including `%p` pointer-format pedantic warning and existing C++17 extension warnings in pre-existing code.
+- Re-verified production ensemble against paper + CHARMM-GUI: switched `run_sim_bilayer.sh` production default to NVT (`PROD_70_NPT_ENABLE=0`), while retaining optional NPT override (`PROD_70_NPT_ENABLE=1`, `PROD_70_BAROSTAT_TYPE`).
+- Updated script comments to reflect NVT-default production semantics for implicit dry bilayer.
+- Validation: `bash -n example/16.MARTINI/run_sim_bilayer.sh` passed.
+- Re-checked stage softening against `/Users/yinhan/Downloads/charmm-gui-7090685331/gromacs`: aligned workflow so only stage 6.0 uses soft-core behavior; stages 6.2-6.6 now use hard `npt_prod` preparation, and production 7.0 remains hard.
+- Updated `prepare_martini.py` stage parameter table so `npt_equil` and `npt_equil_reduced` are hard (no LJ/Coulomb softening), consistent with CHARMM-GUI stage definitions.
+- Validation: `bash -n example/16.MARTINI/run_sim_bilayer.sh` passed.
+- Validation: `python3 -m py_compile example/16.MARTINI/prepare_martini.py` passed.
+- Investigated user-reported stage 6.2 blow-up (`Initial potential energy ~2.1e14`): reproduced from `stage_6.2.log` after hard-only stage mapping change.
+- Identified regression cause: forcing hard `npt_prod` setup at stages 6.2/6.3 removed the stabilization transition and caused immediate post-minimization explosion.
+- Restored stabilized early-equilibration mapping in `run_sim_bilayer.sh`: stage 6.2 uses `npt_equil`, stage 6.3 uses `npt_equil_reduced`; stages 6.4-7.0 remain hard `npt_prod`.
+- Restored softening parameters for `prepare_martini.py` stages `npt_equil` and `npt_equil_reduced`.
+- Validation: `bash -n example/16.MARTINI/run_sim_bilayer.sh` passed.
+- Validation: `python3 -m py_compile example/16.MARTINI/prepare_martini.py` passed.
+- Validation: smoke prep for stage 6.2 confirms softening active (`lj_soften=1`, `coulomb_soften=1`, `lj_soften_alpha=0.2`, `slater_alpha=2.0`).

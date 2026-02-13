@@ -8,3 +8,8 @@
 - 2026-02-12: Dry lipid ITP (`dry_martini_v2.1_lipids.itp`) relies on preprocessor branches (`#ifndef EXP_DOPC`/`#else`), and only one branch should be parsed.
 - 2026-02-12: Reciprocal Ewald path in `src/box.cpp` originally spent most cost in repeated `cosf/sinf` evaluations per atom per k-vector.
 - 2026-02-12: Added optional periodic cardinal cubic B-spline trig approximation (`ewald_use_cardinal_bspline`, `ewald_bspline_grid`) and per-k atom trig caching to reduce reciprocal-space compute cost while preserving the same summation structure.
+- 2026-02-13: CHARMM-GUI dry MARTINI bilayer uses `BILAYER_LIPIDHEAD_FC` only in equilibration stages `step6.2` to `step6.6` with values `200/100/50/20/10` from `.mdp` `define` lines; production (`step7_production.mdp`) has no `BILAYER_LIPIDHEAD_FC` define.
+- 2026-02-13: In `toppar/dry_martini_v2.1_lipids.itp`, bilayer head-group restraint blocks are under `#ifdef BILAYER_LIPIDHEAD_FC` and apply anisotropic position restraints with `fx=0`, `fy=0`, `fz=BILAYER_LIPIDHEAD_FC`.
+- 2026-02-13: Paper section 2.1 states implicit-solvent simulations should generally run in NVT; for periodic planar bilayers, semi-isotropic pressure coupling is used as an equilibration tool for area-per-lipid.
+- 2026-02-13: CHARMM-GUI dry bilayer `step7_production.mdp` sets `pcoupl = no` (NVT) for production, with pressure-coupling parameters retained but inactive.
+- 2026-02-13: CHARMM-GUI dry bilayer soft-core settings are present only in `step6.0_minimization.mdp` (`free-energy = yes`, `sc-alpha = 4`); stages `6.1`-`6.6` and `7.0` do not define soft-core/free-energy terms and are hard interaction stages.

@@ -325,7 +325,7 @@ def read_protein_itp_exclusions(itp_path: str):
     
     return exclusions
 
-def parse_itp_file(itp_file, target_molecule=None):
+def parse_itp_file(itp_file, target_molecule=None, preprocessor_defines=None):
     """
     Universal ITP parser to read MARTINI topology files.
     Returns a dictionary with parsed sections: atoms, bonds, angles, dihedrals, etc.
@@ -336,6 +336,7 @@ def parse_itp_file(itp_file, target_molecule=None):
         'bonds': [], 
         'angles': [],
         'dihedrals': [],
+        'position_restraints': [],
         'exclusions': [],
         'moleculetype': None,
         'molecules': {}  # Store multiple molecule types
@@ -349,6 +350,12 @@ def parse_itp_file(itp_file, target_molecule=None):
     current_molecule = None
     current_mol_data = None
     macro_defs = {}
+    if preprocessor_defines:
+        for macro_name, macro_value in preprocessor_defines.items():
+            if isinstance(macro_value, (list, tuple)):
+                macro_defs[macro_name] = [float(x) for x in macro_value]
+            else:
+                macro_defs[macro_name] = [float(macro_value)]
     pp_stack = []
     current_active = True
 
@@ -444,6 +451,7 @@ def parse_itp_file(itp_file, target_molecule=None):
                         'bonds': [],
                         'angles': [],
                         'dihedrals': [],
+                        'position_restraints': [],
                         'exclusions': []
                     }
                     topology['molecules'][current_molecule] = current_mol_data
@@ -549,6 +557,22 @@ def parse_itp_file(itp_file, target_molecule=None):
                         topology['dihedrals'].append(dihedral_data)
                     except (ValueError, IndexError):
                         continue
+
+            elif current_section == 'position_restraints' and current_mol_data is not None:
+                parts = line.split()
+                if len(parts) >= 5:
+                    try:
+                        restraint_data = {
+                            'i': int(parts[0]) - 1,  # Convert to 0-indexed
+                            'func': int(parts[1]),
+                            'fx': parse_macro_value(parts[2]),
+                            'fy': parse_macro_value(parts[3]),
+                            'fz': parse_macro_value(parts[4]),
+                        }
+                        current_mol_data['position_restraints'].append(restraint_data)
+                        topology['position_restraints'].append(restraint_data)
+                    except (ValueError, IndexError):
+                        continue
             
             elif current_section == 'exclusions' and current_mol_data is not None:
                 parts = line.split()
@@ -572,6 +596,7 @@ def parse_itp_file(itp_file, target_molecule=None):
             'bonds': mol_data['bonds'],
             'angles': mol_data['angles'],
             'dihedrals': mol_data['dihedrals'],
+            'position_restraints': mol_data['position_restraints'],
             'exclusions': mol_data['exclusions'],
             'moleculetype': target_molecule,
             'molecules': {target_molecule: mol_data}
@@ -683,6 +708,7 @@ def main(stage='minimization', run_dir=None):
 
     # Get parameters for current stage
     params = stage_params.get(stage, stage_params['npt_prod'])
+    stage_lipidhead_fc = float(os.environ.get('UPSIDE_BILAYER_LIPIDHEAD_FC', '0'))
 
 
     # Configuration
@@ -744,7 +770,10 @@ def main(stage='minimization', run_dir=None):
     # For both protein and lipid systems, we need DOPC parameters
     # Parse DOPC topology from ITP file
     dopc_param_file = pick_ff_file("dry_martini_v2.1_lipids.itp")
-    full_topology = parse_itp_file(dopc_param_file)
+    lipid_preproc_defs = {}
+    if stage_lipidhead_fc > 0.0:
+        lipid_preproc_defs['BILAYER_LIPIDHEAD_FC'] = stage_lipidhead_fc
+    full_topology = parse_itp_file(dopc_param_file, preprocessor_defines=lipid_preproc_defs)
     
     # Try to find DOPC or similar molecule
     dopc_molecule = None
@@ -754,7 +783,9 @@ def main(stage='minimization', run_dir=None):
             break
     
     if dopc_molecule:
-        dopc_topology = parse_itp_file(dopc_param_file, dopc_molecule)
+        dopc_topology = parse_itp_file(
+            dopc_param_file, dopc_molecule, preprocessor_defines=lipid_preproc_defs
+        )
     else:
         available_molecules = list(full_topology['molecules'].keys())
         raise ValueError(f"FATAL ERROR: DOPC molecule not found in '{dopc_param_file}'.\n"
@@ -814,6 +845,7 @@ def main(stage='minimization', run_dir=None):
     dopc_angles = [(angle['i'], angle['j'], angle['k']) for angle in dopc_topology['angles']]
     dopc_angle_equil_deg = [angle['theta0'] for angle in dopc_topology['angles']]  # degrees
     dopc_angle_force_constants = [angle['force_k'] for angle in dopc_topology['angles']]  # kJ/mol/rad²
+    dopc_position_restraints = dopc_topology.get('position_restraints', [])
     
     print(f"Read DOPC connectivity: {len(dopc_bonds)} bonds, {len(dopc_angles)} angles")
     
@@ -1130,6 +1162,9 @@ def main(stage='minimization', run_dir=None):
     dihedral_equil_deg_list = []
     dihedral_force_constants_list = []
     dihedral_type_list = []
+    lipid_restraint_indices = []
+    lipid_restraint_ref_pos = []
+    lipid_restraint_spring_xyz = []
     
     # Create DOPC bonds and angles (for both lipid and mixed systems)
     dopc_molecules = [mol for mol in molecules if mol[0] == 'DOPC']  # unified label
@@ -1161,9 +1196,24 @@ def main(stage='minimization', run_dir=None):
                 angles_list.append([atom1, atom2, atom3])
                 angle_equil_deg_list.append(dopc_angle_equil_deg[i])
                 angle_force_constants_list.append(dopc_angle_force_constants[i] * angle_conversion)  # kJ/mol/deg² to E_up/deg²
+
+        # Apply stage-specific lipid head-group restraints from dry MARTINI topology
+        # (e.g., BILAYER_LIPIDHEAD_FC=200/100/50/20/10 for stages 6.2-6.6).
+        for restraint in dopc_position_restraints:
+            local_idx = restraint['i']
+            if 0 <= local_idx < len(atom_indices):
+                atom_idx = atom_indices[local_idx]
+                lipid_restraint_indices.append(atom_idx)
+                lipid_restraint_ref_pos.append(initial_positions[atom_idx].tolist())
+                lipid_restraint_spring_xyz.append([
+                    restraint['fx'] * bond_conversion,
+                    restraint['fy'] * bond_conversion,
+                    restraint['fz'] * bond_conversion,
+                ])
     
     print(f"Created {len(bonds_list)} bonds for {dopc_count} DOPC lipids")
     print(f"Created {len(angles_list)} angles for {dopc_count} DOPC lipids")
+    print(f"Created {len(lipid_restraint_indices)} lipid position restraints (BILAYER_LIPIDHEAD_FC={stage_lipidhead_fc:g})")
     
     # Create protein connectivity if available
     protein_bond_count = 0
@@ -1703,6 +1753,22 @@ def main(stage='minimization', run_dir=None):
             t.create_array(dihedral_group, 'spring_const', obj=np.array(dihedral_force_constants_list, dtype='f4'))
             # Store dihedral type information (1=periodic, 2=harmonic)
             t.create_array(dihedral_group, 'dihedral_type', obj=np.array(dihedral_type_list, dtype=int))
+
+        # Position restraints (dry MARTINI lipid-head ramp before production)
+        if lipid_restraint_indices:
+            restraint_group = t.create_group(potential_grp, 'restraint_position')
+            restraint_group._v_attrs.arguments = np.array([b'pos'])
+            restraint_group._v_attrs.initialized = True
+            t.create_array(
+                restraint_group, 'restraint_indices', obj=np.array(lipid_restraint_indices, dtype='i4')
+            )
+            t.create_array(
+                restraint_group, 'ref_pos', obj=np.array(lipid_restraint_ref_pos, dtype='f4')
+            )
+            spring_xyz = np.array(lipid_restraint_spring_xyz, dtype='f4')
+            t.create_array(restraint_group, 'spring_const_xyz', obj=spring_xyz)
+            # Backward-compatible scalar spring constant for older readers.
+            t.create_array(restraint_group, 'spring_const', obj=np.max(spring_xyz, axis=1).astype('f4'))
     
     print(f"Created UPSIDE input file: {input_file}")
     print(f"Preparation complete!")
