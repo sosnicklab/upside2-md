@@ -15,3 +15,16 @@
   - `outputs/martini_test/logs/npt_equilibration.log` shows completion with checkpoint write.
   - `outputs/martini_test/logs/npt_production.log` shows simulation startup (`0 / 20 ...` progress line).
   - Checkpoints produced: `1ubq.prepared.up`, `1ubq.minimized.up`, `1ubq.npt_equil.up`, `1ubq.npt_equil_reduced.up`, `1ubq.npt_prod.up`.
+
+## 2026-02-13
+- Investigated scan sweep mismatch between `scan_lipid_diffusion.py` and `scan_water_diffusion.py`.
+- Confirmed lipid previously used a narrow hardcoded grid (`T=0.75..1.00`, `tau=[1,2,4,8]`) while water used a broad scan grid.
+- Updated `scan_lipid_diffusion.py` with minimal parity changes:
+  - Added argparse-based entrypoint style matching water scan script.
+  - Changed `build_temperature_range()` to `np.arange(0.600, 1.001, 0.02)`.
+  - Changed `build_tau_range()` to merged low/high/special tau logic used by water scan.
+  - Kept bilayer-specific runtime script generation and diffusion-analysis logic unchanged.
+- Verification run:
+  - Command: `source ../../.venv/bin/activate && source ../../source.sh && python3 scan_lipid_diffusion.py --base-dir lipid_diffusion_check`
+  - Result: `Generated 651 simulation scripts.`
+  - Verified `lipid_diffusion_check/tasks.txt` has 651 lines and `lipid_diffusion_check/run_scan.slurm` contains `#SBATCH --array=1-651`.

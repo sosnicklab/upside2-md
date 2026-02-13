@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import os
 from pathlib import Path
 
@@ -25,13 +26,12 @@ DEFAULT_PROD_FRAME_STEPS = None
 
 
 def build_temperature_range():
-    # 0.75-1.00 reduced units, inclusive (5 points).
-    return np.arange(0.75, 1.001, 0.05)
+    return np.arange(0.600, 1.001, 0.02)
 
 
 def build_tau_range():
-    # Langevin timescales to scan in reduced units.
-    return np.array([1.0, 2.0, 4.0, 8.0], dtype=float)
+    taus_1 = np.append(np.arange(1, 5.1, 0.5), 0.135)
+    return np.sort(np.append(np.arange(0.0, 0.21, 0.01), taus_1))
 
 
 def format_folder_value(value):
@@ -325,8 +325,81 @@ def write_slurm_script(slurm_path, tasks_file, num_tasks, time_limit, cpus, part
 
 
 def main():
-    base_dir = DEFAULT_BASE_DIR.resolve()
-    run_sim_bilayer = DEFAULT_RUN_SCRIPT.resolve()
+    parser = argparse.ArgumentParser(
+        description="Generate Slurm array scripts for MARTINI lipid diffusion scans."
+    )
+    parser.add_argument(
+        "--base-dir",
+        default=str(DEFAULT_BASE_DIR),
+        help="Base output directory for scan runs.",
+    )
+    parser.add_argument(
+        "--run-script",
+        default=str(DEFAULT_RUN_SCRIPT),
+        help="Path to run_sim_bilayer.sh.",
+    )
+    parser.add_argument(
+        "--time-limit",
+        default=DEFAULT_TIME_LIMIT,
+        help="Slurm time limit (HH:MM:SS).",
+    )
+    parser.add_argument(
+        "--cpus",
+        type=int,
+        default=DEFAULT_CPUS,
+        help="CPUs per task.",
+    )
+    parser.add_argument(
+        "--partition",
+        default=DEFAULT_PARTITION,
+        help="Optional Slurm partition name.",
+    )
+    parser.add_argument(
+        "--pdb-id",
+        default=DEFAULT_PDB_ID,
+        help="PDB/system identifier passed to run_sim_bilayer.sh.",
+    )
+    parser.add_argument(
+        "--eq-nsteps",
+        type=int,
+        default=DEFAULT_EQ_NSTEPS,
+        help="Override equilibration stage nsteps.",
+    )
+    parser.add_argument(
+        "--prod-nsteps",
+        type=int,
+        default=DEFAULT_PROD_NSTEPS,
+        help="Override production stage nsteps.",
+    )
+    parser.add_argument(
+        "--eq-time-step",
+        type=float,
+        default=DEFAULT_EQ_TIME_STEP,
+        help="Override equilibration time step.",
+    )
+    parser.add_argument(
+        "--prod-time-step",
+        type=float,
+        default=DEFAULT_PROD_TIME_STEP,
+        help="Override production time step.",
+    )
+    parser.add_argument(
+        "--eq-frame-steps",
+        type=int,
+        default=DEFAULT_EQ_FRAME_STEPS,
+        help="Override equilibration frame-write interval.",
+    )
+    parser.add_argument(
+        "--prod-frame-steps",
+        type=int,
+        default=DEFAULT_PROD_FRAME_STEPS,
+        help="Override production frame-write interval.",
+    )
+
+    args = parser.parse_args()
+
+    base_dir = Path(args.base_dir).expanduser().resolve()
+    run_sim_bilayer = Path(args.run_script).expanduser().resolve()
     venv_activate = Path(os.environ.get("VENV_ACTIVATE", DEFAULT_VENV_ACTIVATE)).resolve()
 
     if not run_sim_bilayer.exists():
@@ -352,13 +425,13 @@ def main():
                 temperature=float(np.round(temp, 3)),
                 tau=float(np.round(tau, 3)),
                 run_dir=run_dir,
-                pdb_id=DEFAULT_PDB_ID,
-                eq_nsteps=DEFAULT_EQ_NSTEPS,
-                prod_nsteps=DEFAULT_PROD_NSTEPS,
-                eq_time_step=DEFAULT_EQ_TIME_STEP,
-                prod_time_step=DEFAULT_PROD_TIME_STEP,
-                eq_frame_steps=DEFAULT_EQ_FRAME_STEPS,
-                prod_frame_steps=DEFAULT_PROD_FRAME_STEPS,
+                pdb_id=args.pdb_id,
+                eq_nsteps=args.eq_nsteps,
+                prod_nsteps=args.prod_nsteps,
+                eq_time_step=args.eq_time_step,
+                prod_time_step=args.prod_time_step,
+                eq_frame_steps=args.eq_frame_steps,
+                prod_frame_steps=args.prod_frame_steps,
             )
             script_path.write_text(script_content, encoding="utf-8")
             script_path.chmod(0o755)
@@ -372,9 +445,9 @@ def main():
         slurm_script,
         tasks_file=tasks_file,
         num_tasks=len(run_scripts),
-        time_limit=DEFAULT_TIME_LIMIT,
-        cpus=DEFAULT_CPUS,
-        partition=DEFAULT_PARTITION,
+        time_limit=args.time_limit,
+        cpus=args.cpus,
+        partition=args.partition,
     )
 
     print(f"Generated {len(run_scripts)} simulation scripts.")
