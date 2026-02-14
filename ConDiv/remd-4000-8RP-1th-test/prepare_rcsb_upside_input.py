@@ -2,12 +2,15 @@
 import argparse
 import csv
 import difflib
+import http.client
 import json
 import math
 import pickle
 import random
+import socket
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -126,6 +129,18 @@ def parse_args():
     )
     p.add_argument("--timeout", type=int, default=30, help="Network timeout in seconds")
     p.add_argument(
+        "--network-retries",
+        type=int,
+        default=3,
+        help="Retry count for transient network failures (default: 3).",
+    )
+    p.add_argument(
+        "--network-retry-backoff",
+        type=float,
+        default=1.0,
+        help="Base backoff seconds between network retries (default: 1.0).",
+    )
+    p.add_argument(
         "--exclude-membrane",
         dest="exclude_membrane",
         action="store_true",
@@ -141,24 +156,67 @@ def parse_args():
     return p.parse_args()
 
 
-def post_json(url, payload, timeout):
+def _is_retryable_network_error(exc):
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in {408, 425, 429, 500, 502, 503, 504}
+    if isinstance(exc, urllib.error.URLError):
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, socket.timeout):
+            return True
+        if isinstance(reason, ConnectionResetError):
+            return True
+        if isinstance(reason, OSError):
+            return True
+        return False
+    return isinstance(
+        exc,
+        (http.client.IncompleteRead, http.client.RemoteDisconnected, TimeoutError, socket.timeout),
+    )
+
+
+def _read_url_bytes(req, timeout, retries, backoff):
+    attempt = 0
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except Exception as exc:
+            if attempt >= retries or not _is_retryable_network_error(exc):
+                raise
+            sleep_s = backoff * (2**attempt)
+            time.sleep(sleep_s)
+            attempt += 1
+
+
+def _network_error_reason(exc):
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"http_{exc.code}"
+    if isinstance(exc, urllib.error.URLError):
+        reason = getattr(exc, "reason", None)
+        return str(reason if reason is not None else exc)
+    if isinstance(exc, http.client.IncompleteRead):
+        return f"incomplete_read:{len(exc.partial)}"
+    return exc.__class__.__name__
+
+
+def post_json(url, payload, timeout, retries, backoff):
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.load(resp)
+    content = _read_url_bytes(req, timeout=timeout, retries=retries, backoff=backoff)
+    return json.loads(content.decode("utf-8"))
 
 
-def get_json(url, timeout):
+def get_json(url, timeout, retries, backoff):
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.load(resp)
+    content = _read_url_bytes(req, timeout=timeout, retries=retries, backoff=backoff)
+    return json.loads(content.decode("utf-8"))
 
 
-def fetch_candidate_ids(methods, max_candidates, timeout):
+def fetch_candidate_ids(methods, max_candidates, timeout, retries, backoff):
     ids = []
     page_size = min(1000, max_candidates)
     start = 0
@@ -185,7 +243,13 @@ def fetch_candidate_ids(methods, max_candidates, timeout):
             "request_options": {"paginate": {"start": start, "rows": page_size}},
         }
 
-        data = post_json(RCSB_SEARCH_URL, payload, timeout=timeout)
+        data = post_json(
+            RCSB_SEARCH_URL,
+            payload,
+            timeout=timeout,
+            retries=retries,
+            backoff=backoff,
+        )
         result_set = data.get("result_set", [])
         if not result_set:
             break
@@ -274,11 +338,10 @@ def is_disallowed_identifier(pdb_id):
     return up.startswith("AF_") or up.startswith("MA_")
 
 
-def download_pdb_file(pdb_id, out_path, timeout):
+def download_pdb_file(pdb_id, out_path, timeout, retries, backoff):
     url = RCSB_PDB_URL.format(pdb_id=pdb_id.upper())
     req = urllib.request.Request(url)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        content = resp.read()
+    content = _read_url_bytes(req, timeout=timeout, retries=retries, backoff=backoff)
     out_path.write_bytes(content)
 
 
@@ -492,9 +555,21 @@ def main():
     manifest_path = Path(args.output_root) / "manifest.csv"
 
     try:
-        xray_ids = fetch_candidate_ids(XRAY_METHODS, args.max_candidates_per_class, args.timeout)
-        nmr_ids = fetch_candidate_ids(NMR_METHODS, args.max_candidates_per_class, args.timeout)
-    except urllib.error.URLError as e:
+        xray_ids = fetch_candidate_ids(
+            XRAY_METHODS,
+            args.max_candidates_per_class,
+            args.timeout,
+            args.network_retries,
+            args.network_retry_backoff,
+        )
+        nmr_ids = fetch_candidate_ids(
+            NMR_METHODS,
+            args.max_candidates_per_class,
+            args.timeout,
+            args.network_retries,
+            args.network_retry_backoff,
+        )
+    except (urllib.error.URLError, urllib.error.HTTPError, http.client.IncompleteRead) as e:
         raise RuntimeError(
             f"Failed to query RCSB search API ({RCSB_SEARCH_URL}). "
             "Check network/DNS access from this machine."
@@ -529,13 +604,18 @@ def main():
                 continue
 
             try:
-                entry = get_json(RCSB_ENTRY_URL.format(pdb_id=pdb_id.upper()), timeout=args.timeout)
-            except urllib.error.URLError as e:
-                row["reason"] = f"entry_fetch_failed:{e.reason}"
-                rows.append(row)
-                continue
+                entry = get_json(
+                    RCSB_ENTRY_URL.format(pdb_id=pdb_id.upper()),
+                    timeout=args.timeout,
+                    retries=args.network_retries,
+                    backoff=args.network_retry_backoff,
+                )
             except urllib.error.HTTPError as e:
                 row["reason"] = f"entry_http_error:{e.code}"
+                rows.append(row)
+                continue
+            except (urllib.error.URLError, http.client.IncompleteRead) as e:
+                row["reason"] = f"entry_fetch_failed:{_network_error_reason(e)}"
                 rows.append(row)
                 continue
 
@@ -583,13 +663,19 @@ def main():
             out_base = upside_dir / pdb_id
 
             try:
-                download_pdb_file(pdb_id, pdb_file, timeout=args.timeout)
+                download_pdb_file(
+                    pdb_id,
+                    pdb_file,
+                    timeout=args.timeout,
+                    retries=args.network_retries,
+                    backoff=args.network_retry_backoff,
+                )
             except urllib.error.HTTPError as e:
                 row["reason"] = f"download_http_error:{e.code}"
                 rows.append(row)
                 continue
-            except urllib.error.URLError as e:
-                row["reason"] = f"download_failed:{e.reason}"
+            except (urllib.error.URLError, http.client.IncompleteRead) as e:
+                row["reason"] = f"download_failed:{_network_error_reason(e)}"
                 rows.append(row)
                 continue
 

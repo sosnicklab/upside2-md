@@ -33,3 +33,7 @@
 - 2026-02-12: Added additional dataset filters in `prepare_rcsb_upside_input.py` to reject non-single-chain proteins and heme-containing structures before conversion.
 - 2026-02-12: Updated `prepare_rcsb_upside_input.py` to reflect user-specified historical criteria more closely: profile-based residue limits (contrastive/sidechain), X-ray resolution <= 2.2 A default, sequence-similarity filtering (~30%), globularity outlier removal (RANSAC-style), and non-standard residue exclusion.
 - 2026-02-12: Added membrane-protein exclusion to downloader via RCSB metadata keyword/title screening; default behavior now excludes membrane-related entries, with `--include-membrane` to disable.
+- 2026-02-14: Debugged crash in `prepare_rcsb_upside_input.py` caused by unhandled `http.client.IncompleteRead` during `urllib` chunked reads when downloading PDB files.
+- 2026-02-14: Hardened network path in `prepare_rcsb_upside_input.py` by adding retry/backoff support for search POST, entry metadata GET, and PDB download reads; added CLI knobs `--network-retries` and `--network-retry-backoff`.
+- 2026-02-14: Updated row-level error handling to catch exhausted incomplete/URL transport failures and record manifest reasons (`entry_fetch_failed:*`, `download_failed:*`) instead of aborting the run.
+- 2026-02-14: Validation: `python3 -m py_compile prepare_rcsb_upside_input.py` passed; live network run not validated in this environment.

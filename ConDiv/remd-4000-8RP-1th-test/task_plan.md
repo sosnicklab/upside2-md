@@ -21,3 +21,22 @@ Add a script that filters and downloads structures from RCSB, separates PDB/X-ra
 
 # Revised Decisions
 - Keep prior runtime fixes intact; extend repository with a new data-prep script for future dataset expansion.
+- Add transient-network hardening to RCSB metadata/download calls so chunked transfer interruptions do not crash batch runs.
+
+## Active Debug Task (2026-02-14)
+
+### Project Goal
+Debug `prepare_rcsb_upside_input.py` crash caused by `http.client.IncompleteRead` during PDB download and keep batch processing resilient.
+
+### Architecture & Key Decisions
+- Keep the existing pipeline shape (fetch metadata -> download PDB -> convert/filter); do not alter dataset filtering semantics.
+- Add bounded retries with short backoff around network operations and treat incomplete/chunked read interruptions as retryable transport failures.
+- Preserve per-entry skip behavior: when retries are exhausted, mark the entry as skipped with a specific reason and continue.
+
+### Execution Phases
+- [x] Phase A: Confirm failing call path and identify unhandled exceptions.
+- [x] Phase B: Implement retry/backoff for network reads (entry fetch + PDB download).
+- [x] Phase C: Validate script syntax and log the fix.
+
+### Known Errors / Blockers
+- Live end-to-end validation is still limited by this environment's network restrictions.
