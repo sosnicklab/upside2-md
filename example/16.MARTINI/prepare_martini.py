@@ -932,6 +932,17 @@ def main(stage='minimization', run_dir=None):
     print(f"Position restraints: {len(protein_position_restraints)} (POSRES atoms - will be ignored)")
     
     
+    protein_residue_names = {
+        'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS',
+        'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP',
+        'TYR', 'VAL', 'HID', 'HIE', 'HIP', 'HSD', 'HSE', 'HSP', 'CYX'
+    }
+    # martinize outputs can renumber residues (e.g., start from 1) while the packed
+    # PDB can preserve original residue ids. Track sequential protein residues from
+    # the PDB stream so we can map roles against ITP resnr robustly.
+    protein_resseq_to_seqidx = {}
+    protein_seq_next = 1
+
     with open(input_pdb_file, 'r') as f:
         for line in f:
             if not line.startswith(('ATOM', 'HETATM')):
@@ -943,7 +954,9 @@ def main(stage='minimization', run_dir=None):
             atom_names.append(atom_name)
             residue_id = int(line[22:26])
             residue_ids.append(residue_id)
-            residue_name = line[17:20].strip().upper()
+            # Read 4-character residue field to support DOPC while preserving
+            # standard 3-letter protein residues (e.g., " ASN" -> "ASN").
+            residue_name = line[17:21].strip().upper()
             residue_names.append(residue_name)
             chain_id = line[21:22].strip()
             chain_ids.append(chain_id)
@@ -958,15 +971,29 @@ def main(stage='minimization', run_dir=None):
             z = float(line[46:54])
             initial_positions.append([x, y, z])
             
-            # Determine if this line corresponds to protein beads
-            is_protein = ('PROA' in line)
+            # Determine if this line corresponds to protein beads.
+            # Accept both legacy PROA-tagged MARTINI PDBs and martinize.py outputs
+            # that identify protein only by residue names/atom roles.
+            is_protein = (
+                ('PROA' in line) or
+                (residue_name in protein_residue_names) or
+                ((residue_id, atom_name) in protein_topo_map)
+            )
             
             # Map to MARTINI type based on context
             if is_protein:
                 # Prefer exact topology mapping by (resnr, role) when available
                 role = atom_name  # BB / SC1 / SC2 ... expected in our MARTINI PDB
+                res_key = (chain_id, residue_id, residue_name)
+                if res_key not in protein_resseq_to_seqidx:
+                    protein_resseq_to_seqidx[res_key] = protein_seq_next
+                    protein_seq_next += 1
+                seq_resnr = protein_resseq_to_seqidx[res_key]
+
                 if (residue_id, role) in protein_topo_map:
                     martini_type, charge = protein_topo_map[(residue_id, role)]
+                elif (seq_resnr, role) in protein_topo_map:
+                    martini_type, charge = protein_topo_map[(seq_resnr, role)]
                 else:
                     # Raise error for unknown protein atom
                     raise ValueError(f"FATAL ERROR: Unknown protein atom '{atom_name}' in residue '{residue_name}'.\n"

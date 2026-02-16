@@ -61,6 +61,24 @@ def main():
         if bb_atom_idx.shape != (n_bb,):
             raise ValueError("hybrid_bb_map/bb_atom_index must have shape (n_bb,)")
 
+        # Optional audit metadata for BB <- {N,CA,C,O} references.
+        if "reference_atom_names" in bb:
+            ref_names = bb["reference_atom_names"][:]
+            if ref_names.shape != (4,):
+                raise ValueError("hybrid_bb_map/reference_atom_names must have shape (4,)")
+        if "reference_atom_indices" in bb:
+            ref_idx = bb["reference_atom_indices"][:]
+            if ref_idx.shape != (n_bb, 4):
+                raise ValueError("hybrid_bb_map/reference_atom_indices must have shape (n_bb,4)")
+        if "reference_atom_coords" in bb:
+            ref_xyz = bb["reference_atom_coords"][:]
+            if ref_xyz.shape != (n_bb, 4, 3):
+                raise ValueError("hybrid_bb_map/reference_atom_coords must have shape (n_bb,4,3)")
+        if "bb_comment" in bb:
+            bb_comment = bb["bb_comment"][:]
+            if bb_comment.shape != (n_bb,):
+                raise ValueError("hybrid_bb_map/bb_comment must have shape (n_bb,)")
+
         for i in range(n_bb):
             mask = bb_mask[i].astype(bool)
             if mask.any():
@@ -97,6 +115,38 @@ def main():
             raise ValueError(
                 f"protein_membership length ({membership.shape[0]}) != expected n_atom ({args.n_atom})"
             )
+        n_atom = int(membership.shape[0])
+
+        # Enforce projection indices to be valid and protein-local in current coordinate space.
+        for i in range(n_bb):
+            bb_i = int(bb_atom_idx[i])
+            if bb_i < 0 or bb_i >= n_atom:
+                raise ValueError(f"BB proxy index out of bounds at row {i}: {bb_i}")
+            if membership[bb_i] < 0:
+                raise ValueError(f"BB proxy index is not protein atom at row {i}: {bb_i}")
+            for j in range(4):
+                if int(bb_mask[i, j]) == 0:
+                    continue
+                ai = int(bb_atom_map[i, j])
+                if ai < 0 or ai >= n_atom:
+                    raise ValueError(f"BB target index out of bounds at row {i}, col {j}: {ai}")
+                if membership[ai] < 0:
+                    raise ValueError(f"BB target index is not protein atom at row {i}, col {j}: {ai}")
+
+        for i in range(n_rot):
+            proxy_i = int(sc_proxy[i])
+            if proxy_i < 0 or proxy_i >= n_atom:
+                raise ValueError(f"SC proxy index out of bounds at row {i}: {proxy_i}")
+            if membership[proxy_i] < 0:
+                raise ValueError(f"SC proxy index is not protein atom at row {i}: {proxy_i}")
+            for j in range(4):
+                ai = int(sc_proj_i[i, j])
+                if ai < 0:
+                    continue
+                if ai >= n_atom:
+                    raise ValueError(f"SC target index out of bounds at row {i}, col {j}: {ai}")
+                if membership[ai] < 0:
+                    raise ValueError(f"SC target index is not protein atom at row {i}, col {j}: {ai}")
 
         n_protein = int(np.sum(membership >= 0))
         n_env = int(np.sum(membership < 0))

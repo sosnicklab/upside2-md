@@ -14,6 +14,7 @@
 #include <algorithm> // For PME algorithms
 #include <unordered_map>
 #include <memory>
+#include <limits>
 #include "box.h" // For PBC minimum_image function
 
 using namespace h5;
@@ -29,7 +30,9 @@ namespace martini_fix_rigid {
 static std::mutex g_fix_rigid_mutex;
 static std::map<DerivEngine*, std::vector<int>> g_user_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_dynamic_fixed_atoms;
+static std::map<DerivEngine*, std::vector<int>> g_dynamic_z_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_fixed_atoms;
+static std::map<DerivEngine*, std::vector<int>> g_z_fixed_atoms;
 
 static void normalize_atom_list(std::vector<int>& atoms) {
     std::sort(atoms.begin(), atoms.end());
@@ -48,6 +51,24 @@ static void rebuild_fixed_atoms(DerivEngine& engine) {
         merged.insert(merged.end(), dit->second.begin(), dit->second.end());
     }
     normalize_atom_list(merged);
+
+    auto& merged_z = g_z_fixed_atoms[&engine];
+    merged_z.clear();
+    auto zdit = g_dynamic_z_fixed_atoms.find(&engine);
+    if(zdit != g_dynamic_z_fixed_atoms.end()) {
+        merged_z.insert(merged_z.end(), zdit->second.begin(), zdit->second.end());
+    }
+    normalize_atom_list(merged_z);
+    if(!merged.empty() && !merged_z.empty()) {
+        std::vector<int> filtered;
+        filtered.reserve(merged_z.size());
+        for(int atom_idx : merged_z) {
+            if(!std::binary_search(merged.begin(), merged.end(), atom_idx)) {
+                filtered.push_back(atom_idx);
+            }
+        }
+        merged_z.swap(filtered);
+    }
 }
 
 static void merge_fixed_atoms(DerivEngine& engine, const std::vector<int>& extra_atoms) {
@@ -130,8 +151,23 @@ void clear_dynamic_fixed_atoms(DerivEngine& engine) {
     rebuild_fixed_atoms(engine);
 }
 
+void set_dynamic_z_fixed_atoms(DerivEngine& engine, const std::vector<int>& atom_indices) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    auto& dyn = g_dynamic_z_fixed_atoms[&engine];
+    dyn = atom_indices;
+    normalize_atom_list(dyn);
+    rebuild_fixed_atoms(engine);
+}
+
+void clear_dynamic_z_fixed_atoms(DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    g_dynamic_z_fixed_atoms.erase(&engine);
+    rebuild_fixed_atoms(engine);
+}
+
 // Apply fix rigid constraints during minimization
 void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv) {
+    (void)pos;
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
     auto it = g_fixed_atoms.find(&engine);
     if(it != g_fixed_atoms.end()) {
@@ -145,10 +181,20 @@ void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray de
             }
         }
     }
+    auto zit = g_z_fixed_atoms.find(&engine);
+    if(zit != g_z_fixed_atoms.end()) {
+        const auto& z_fixed_atoms = zit->second;
+        for(int atom_idx : z_fixed_atoms) {
+            if(atom_idx >= 0 && atom_idx < engine.pos->n_atom) {
+                deriv(2, atom_idx) = 0.0f;
+            }
+        }
+    }
 }
 
 // Apply fix rigid constraints during MD (zero forces and velocities)
 void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom) {
+    (void)pos;
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
     auto it = g_fixed_atoms.find(&engine);
     if(it != g_fixed_atoms.end()) {
@@ -164,6 +210,18 @@ void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecAr
                 if(mom.row_width > 0) {
                     mom(0, atom_idx) = 0.0f;
                     mom(1, atom_idx) = 0.0f;
+                    mom(2, atom_idx) = 0.0f;
+                }
+            }
+        }
+    }
+    auto zit = g_z_fixed_atoms.find(&engine);
+    if(zit != g_z_fixed_atoms.end()) {
+        const auto& z_fixed_atoms = zit->second;
+        for(int atom_idx : z_fixed_atoms) {
+            if(atom_idx >= 0 && atom_idx < engine.pos->n_atom) {
+                deriv(2, atom_idx) = 0.0f;
+                if(mom.row_width > 2) {
                     mom(2, atom_idx) = 0.0f;
                 }
             }
@@ -192,6 +250,15 @@ std::vector<int> get_fixed_atoms(const DerivEngine& engine) {
     return std::vector<int>();
 }
 
+std::vector<int> get_z_fixed_atoms(const DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    auto it = g_z_fixed_atoms.find(const_cast<DerivEngine*>(&engine));
+    if(it != g_z_fixed_atoms.end()) {
+        return it->second;
+    }
+    return std::vector<int>();
+}
+
 } // namespace martini_fix_rigid
 
 namespace martini_stage_params {
@@ -202,6 +269,14 @@ namespace martini_hybrid {
 static std::mutex g_hybrid_mutex;
 
 struct HybridRuntimeState {
+    struct PlacementStateGroup {
+        int residue = -1;
+        int rotamer = -1;
+        int n_rotamer = 0;
+        int node_id = -1;
+        std::vector<int> placement_rows;
+    };
+
     bool has_config = false;
     bool enabled = false;
     bool active = false;
@@ -217,10 +292,22 @@ struct HybridRuntimeState {
     std::vector<std::array<int,4>> atom_mask;
     std::vector<std::array<float,4>> weights;
     std::vector<int> protein_membership;
+    std::string rotamer_node_name;
+    std::string placement_node_name;
+    DerivComputation* rotamer_node = nullptr;
+    CoordNode* placement_node = nullptr;
     std::vector<int> sc_proxy_atom_index;
+    std::vector<int> sc_residue_index;
+    std::vector<int> sc_rotamer_id;
     std::vector<std::array<int,4>> sc_proj_target_indices;
     std::vector<std::array<float,4>> sc_proj_weights;
     std::vector<float> sc_rotamer_prob;
+    std::vector<std::array<float,3>> sc_local_pos;
+    std::vector<int> sc_row_bb_target;
+    std::vector<PlacementStateGroup> placement_state_groups;
+    std::unordered_map<int, std::vector<int>> placement_groups_by_residue;
+    std::vector<int> sc_row_to_placement_group;
+    std::unordered_map<int, std::vector<int>> sc_rows_by_proxy;
     bool coupling_align_enable = false;
     bool coupling_align_debug = false;
     int coupling_align_interval = 100;
@@ -228,10 +315,17 @@ struct HybridRuntimeState {
     bool has_prev_bb = false;
     std::vector<std::array<float,3>> prev_bb_pos;
     std::vector<int> preprod_fixed_atom_indices;
+    std::vector<int> preprod_z_fixed_atom_indices;
 };
 
 static std::map<DerivEngine*, std::shared_ptr<HybridRuntimeState>> g_hybrid_state;
 static std::map<const CoordNode*, std::shared_ptr<HybridRuntimeState>> g_hybrid_state_by_coord;
+
+static inline const std::vector<int>* find_sc_rows_for_proxy(const HybridRuntimeState& st, int proxy_idx) {
+    auto it = st.sc_rows_by_proxy.find(proxy_idx);
+    if(it == st.sc_rows_by_proxy.end()) return nullptr;
+    return &it->second;
+}
 
 static std::vector<std::string> split_csv_tokens(const std::string& s) {
     auto trim_token = [](const std::string& in) {
@@ -262,6 +356,14 @@ static std::vector<std::string> split_csv_tokens(const std::string& s) {
 }
 
 static inline bool attribute_exists_hybrid(hid_t loc_id, const char* obj_name, const char* attr_name) {
+    // H5Oopen(loc, ".") may alias the same underlying ID in some HDF5 builds.
+    // Closing that alias can invalidate the caller's group handle and cause
+    // downstream "error -1" / close-reference failures.
+    if(!obj_name || obj_name[0] == '\0' || (obj_name[0] == '.' && obj_name[1] == '\0')) {
+        htri_t exists = H5Aexists(loc_id, attr_name);
+        return exists > 0;
+    }
+
     hid_t obj_id = H5Oopen(loc_id, obj_name, H5P_DEFAULT);
     if (obj_id < 0) return false;
     htri_t exists = H5Aexists(obj_id, attr_name);
@@ -300,6 +402,241 @@ static std::string read_string_attribute_or_default(hid_t group, const char* att
     h5_noerr(H5Aread(attr.get(), dtype.get(), data.data()));
     auto out = trim_h5_string(std::string(data.data(), nchar));
     return out.empty() ? fallback : out;
+}
+
+struct DecodedRotamerId {
+    bool valid = false;
+    int rotamer = -1;
+    int n_rotamer = 0;
+    int node_id = -1;
+};
+
+static DecodedRotamerId decode_rotamer_id_value(int encoded_id) {
+    constexpr unsigned n_bit_rotamer = 4u;
+    constexpr unsigned selector = (1u << n_bit_rotamer) - 1u;
+    unsigned id = static_cast<unsigned>(encoded_id);
+    DecodedRotamerId out;
+    out.rotamer = static_cast<int>(id & selector);
+    id >>= n_bit_rotamer;
+    out.n_rotamer = static_cast<int>(id & selector);
+    id >>= n_bit_rotamer;
+    out.node_id = static_cast<int>(id);
+    out.valid = (out.n_rotamer > 0 && out.rotamer >= 0 && out.rotamer < out.n_rotamer);
+    return out;
+}
+
+static void read_placement_state_groups(hid_t root, HybridRuntimeState& out) {
+    out.placement_state_groups.clear();
+    out.placement_groups_by_residue.clear();
+    if(out.placement_node_name.empty()) return;
+
+    std::string grp_path = "/input/potential/" + out.placement_node_name;
+    std::string id_path = grp_path + "/id_seq";
+    std::string aff_path = grp_path + "/affine_residue";
+    if(!h5_exists(root, id_path.c_str()) || !h5_exists(root, aff_path.c_str())) return;
+
+    auto grp = open_group(root, grp_path.c_str());
+    auto id_shape = get_dset_size(1, grp.get(), "id_seq");
+    check_size(grp.get(), "affine_residue", id_shape[0]);
+
+    std::vector<int> id_seq(id_shape[0], 0);
+    std::vector<int> affine_residue(id_shape[0], -1);
+    traverse_dset<1,int>(grp.get(), "id_seq", [&](size_t i, int v) { id_seq[i] = v; });
+    traverse_dset<1,int>(grp.get(), "affine_residue", [&](size_t i, int v) { affine_residue[i] = v; });
+
+    struct Key {
+        int residue;
+        int rotamer;
+        int n_rotamer;
+        int node_id;
+        bool operator==(const Key& other) const {
+            return residue == other.residue &&
+                   rotamer == other.rotamer &&
+                   n_rotamer == other.n_rotamer &&
+                   node_id == other.node_id;
+        }
+    };
+    struct KeyHash {
+        size_t operator()(const Key& k) const {
+            size_t h = 1469598103934665603ull;
+            auto mix = [&](int x) {
+                h ^= static_cast<size_t>(x + 0x9e3779b9);
+                h *= 1099511628211ull;
+            };
+            mix(k.residue);
+            mix(k.rotamer);
+            mix(k.n_rotamer);
+            mix(k.node_id);
+            return h;
+        }
+    };
+
+    std::unordered_map<Key, int, KeyHash> key_to_group;
+    for(size_t i = 0; i < id_seq.size(); ++i) {
+        DecodedRotamerId decoded = decode_rotamer_id_value(id_seq[i]);
+        if(!decoded.valid) continue;
+        int residue = affine_residue[i];
+        if(residue < 0) continue;
+
+        Key key{residue, decoded.rotamer, decoded.n_rotamer, decoded.node_id};
+        auto it = key_to_group.find(key);
+        int group_index = -1;
+        if(it == key_to_group.end()) {
+            group_index = static_cast<int>(out.placement_state_groups.size());
+            key_to_group.emplace(key, group_index);
+            out.placement_state_groups.emplace_back();
+            auto& g = out.placement_state_groups.back();
+            g.residue = residue;
+            g.rotamer = decoded.rotamer;
+            g.n_rotamer = decoded.n_rotamer;
+            g.node_id = decoded.node_id;
+            out.placement_groups_by_residue[residue].push_back(group_index);
+        } else {
+            group_index = it->second;
+        }
+        out.placement_state_groups[group_index].placement_rows.push_back(static_cast<int>(i));
+    }
+
+    for(auto& kv : out.placement_groups_by_residue) {
+        auto& groups = kv.second;
+        std::sort(groups.begin(), groups.end(), [&](int a, int b) {
+            const auto& ga = out.placement_state_groups[a];
+            const auto& gb = out.placement_state_groups[b];
+            if(ga.rotamer != gb.rotamer) return ga.rotamer < gb.rotamer;
+            return ga.node_id < gb.node_id;
+        });
+    }
+}
+
+static void rebuild_sc_rows_by_proxy(HybridRuntimeState& out) {
+    out.sc_rows_by_proxy.clear();
+    for(size_t r = 0; r < out.sc_proxy_atom_index.size(); ++r) {
+        int proxy = out.sc_proxy_atom_index[r];
+        if(proxy >= 0) out.sc_rows_by_proxy[proxy].push_back(static_cast<int>(r));
+    }
+}
+
+static bool should_expand_sc_rows_from_placement(const HybridRuntimeState& out) {
+    if(out.sc_proxy_atom_index.empty()) return false;
+    if(out.sc_residue_index.size() != out.sc_proxy_atom_index.size()) return false;
+    if(out.placement_state_groups.empty()) return false;
+
+    std::unordered_map<int, int> rows_per_residue;
+    for(size_t r = 0; r < out.sc_residue_index.size(); ++r) {
+        rows_per_residue[out.sc_residue_index[r]] += 1;
+        if(!out.sc_rotamer_id.empty() && out.sc_rotamer_id[r] != 0) {
+            return false;
+        }
+    }
+    for(const auto& kv : rows_per_residue) {
+        if(kv.second > 1) return false;
+    }
+    return true;
+}
+
+static void assign_sc_rows_to_placement_groups(HybridRuntimeState& out) {
+    out.sc_row_to_placement_group.assign(out.sc_proxy_atom_index.size(), -1);
+    if(out.sc_proxy_atom_index.empty()) return;
+    if(out.sc_residue_index.size() != out.sc_proxy_atom_index.size()) return;
+    if(out.placement_state_groups.empty()) return;
+
+    for(size_t r = 0; r < out.sc_proxy_atom_index.size(); ++r) {
+        int resid = out.sc_residue_index[r];
+        auto it = out.placement_groups_by_residue.find(resid);
+        if(it == out.placement_groups_by_residue.end() || it->second.empty()) continue;
+
+        int desired_rotamer = (!out.sc_rotamer_id.empty() ? out.sc_rotamer_id[r] : 0);
+        int match_gid = -1;
+        for(int gid : it->second) {
+            if(gid < 0 || gid >= (int)out.placement_state_groups.size()) continue;
+            if(out.placement_state_groups[gid].rotamer == desired_rotamer) {
+                match_gid = gid;
+                break;
+            }
+        }
+        if(match_gid < 0 && it->second.size() == 1u) {
+            match_gid = it->second.front();
+        }
+        out.sc_row_to_placement_group[r] = match_gid;
+    }
+}
+
+static void expand_sc_rows_from_placement(HybridRuntimeState& out) {
+    assign_sc_rows_to_placement_groups(out);
+    if(!should_expand_sc_rows_from_placement(out)) return;
+
+    std::vector<int> proxy;
+    std::vector<int> residue;
+    std::vector<int> rotamer_id;
+    std::vector<std::array<int,4>> target;
+    std::vector<std::array<float,4>> wproj;
+    std::vector<float> prob;
+    std::vector<std::array<float,3>> lpos;
+    std::vector<int> row_to_group;
+
+    for(size_t r = 0; r < out.sc_proxy_atom_index.size(); ++r) {
+        int resid = out.sc_residue_index[r];
+        auto it = out.placement_groups_by_residue.find(resid);
+        if(it == out.placement_groups_by_residue.end() || it->second.empty()) {
+            proxy.push_back(out.sc_proxy_atom_index[r]);
+            residue.push_back(resid);
+            rotamer_id.push_back(!out.sc_rotamer_id.empty() ? out.sc_rotamer_id[r] : 0);
+            target.push_back(out.sc_proj_target_indices[r]);
+            wproj.push_back(out.sc_proj_weights[r]);
+            prob.push_back(out.sc_rotamer_prob[r]);
+            lpos.push_back(out.sc_local_pos[r]);
+            row_to_group.push_back(-1);
+            continue;
+        }
+
+        const auto& group_ids = it->second;
+        float uniform_prob = 1.0f / std::max<int>(1, group_ids.size());
+        for(int gid : group_ids) {
+            const auto& g = out.placement_state_groups[gid];
+            proxy.push_back(out.sc_proxy_atom_index[r]);
+            residue.push_back(resid);
+            rotamer_id.push_back(g.rotamer);
+            target.push_back(out.sc_proj_target_indices[r]);
+            wproj.push_back(out.sc_proj_weights[r]);
+            prob.push_back(uniform_prob);
+            lpos.push_back(out.sc_local_pos[r]);
+            row_to_group.push_back(gid);
+        }
+    }
+
+    out.sc_proxy_atom_index = std::move(proxy);
+    out.sc_residue_index = std::move(residue);
+    out.sc_rotamer_id = std::move(rotamer_id);
+    out.sc_proj_target_indices = std::move(target);
+    out.sc_proj_weights = std::move(wproj);
+    out.sc_rotamer_prob = std::move(prob);
+    out.sc_local_pos = std::move(lpos);
+    out.sc_row_to_placement_group = std::move(row_to_group);
+    rebuild_sc_rows_by_proxy(out);
+}
+
+static void build_sc_row_bb_targets(HybridRuntimeState& out) {
+    out.sc_row_bb_target.assign(out.sc_proxy_atom_index.size(), -1);
+    if(out.sc_residue_index.size() != out.sc_proxy_atom_index.size()) return;
+    if(out.bb_residue_index.empty() || out.bb_atom_index.empty()) return;
+
+    std::unordered_map<int, int> residue_to_bb;
+    residue_to_bb.reserve(out.bb_residue_index.size());
+    for(size_t k = 0; k < out.bb_residue_index.size() && k < out.bb_atom_index.size(); ++k) {
+        int resid = out.bb_residue_index[k];
+        int bb = out.bb_atom_index[k];
+        if(resid < 0 || bb < 0) continue;
+        if(residue_to_bb.find(resid) == residue_to_bb.end()) {
+            residue_to_bb[resid] = bb;
+        }
+    }
+
+    for(size_t r = 0; r < out.sc_residue_index.size(); ++r) {
+        auto it = residue_to_bb.find(out.sc_residue_index[r]);
+        if(it != residue_to_bb.end()) {
+            out.sc_row_bb_target[r] = it->second;
+        }
+    }
 }
 
 static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
@@ -413,14 +750,17 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         }
 
         out.preprod_fixed_atom_indices.reserve(static_cast<size_t>(n_atom));
+        out.preprod_z_fixed_atom_indices.reserve(static_cast<size_t>(n_atom));
         for(int i = 0; i < n_atom; ++i) {
             bool is_protein = (i < (int)out.protein_membership.size() && out.protein_membership[i] >= 0);
             bool is_head = false;
             if(has_roles && i < (int)atom_roles.size()) {
                 is_head = (lipid_head_roles.count(atom_roles[i]) > 0);
             }
-            if(is_protein || (is_head && !is_protein)) {
+            if(is_protein) {
                 out.preprod_fixed_atom_indices.push_back(i);
+            } else if(is_head) {
+                out.preprod_z_fixed_atom_indices.push_back(i);
             }
         }
     }
@@ -434,10 +774,16 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             check_size(sc.get(), "rotamer_probability", n_rot);
             check_size(sc.get(), "proj_target_indices", n_rot, 4);
             check_size(sc.get(), "proj_weights", n_rot, 4);
+            if(h5_exists(sc.get(), "local_pos")) {
+                check_size(sc.get(), "local_pos", n_rot, 3);
+            }
             out.sc_proxy_atom_index.assign(n_rot, -1);
             out.sc_proj_target_indices.assign(n_rot, std::array<int,4>{{-1,-1,-1,-1}});
             out.sc_proj_weights.assign(n_rot, std::array<float,4>{{0.f,0.f,0.f,0.f}});
             out.sc_rotamer_prob.assign(n_rot, 0.f);
+            out.sc_local_pos.assign(n_rot, std::array<float,3>{{0.f,0.f,0.f}});
+            out.sc_residue_index.assign(n_rot, -1);
+            out.sc_rotamer_id.assign(n_rot, 0);
 
             traverse_dset<1,int>(sc.get(), "proxy_atom_index", [&](size_t i, int v) {
                 out.sc_proxy_atom_index[i] = v;
@@ -445,14 +791,35 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             traverse_dset<1,float>(sc.get(), "rotamer_probability", [&](size_t i, float v) {
                 out.sc_rotamer_prob[i] = v;
             });
+            if(h5_exists(sc.get(), "residue_index")) {
+                check_size(sc.get(), "residue_index", n_rot);
+                traverse_dset<1,int>(sc.get(), "residue_index", [&](size_t i, int v) {
+                    out.sc_residue_index[i] = v;
+                });
+            }
+            if(h5_exists(sc.get(), "rotamer_id")) {
+                check_size(sc.get(), "rotamer_id", n_rot);
+                traverse_dset<1,int>(sc.get(), "rotamer_id", [&](size_t i, int v) {
+                    out.sc_rotamer_id[i] = v;
+                });
+            }
             traverse_dset<2,int>(sc.get(), "proj_target_indices", [&](size_t i, size_t j, int v) {
                 out.sc_proj_target_indices[i][j] = v;
             });
             traverse_dset<2,float>(sc.get(), "proj_weights", [&](size_t i, size_t j, float v) {
                 out.sc_proj_weights[i][j] = v;
             });
+            if(h5_exists(sc.get(), "local_pos")) {
+                traverse_dset<2,float>(sc.get(), "local_pos", [&](size_t i, size_t j, float v) {
+                    if(j < 3) out.sc_local_pos[i][j] = v;
+                });
+            }
+            rebuild_sc_rows_by_proxy(out);
         }
     }
+    read_placement_state_groups(root, out);
+    expand_sc_rows_from_placement(out);
+    build_sc_row_bb_targets(out);
 
     // Fallback BB atom inference if bb_atom_index is absent.
     bool need_infer_bb = false;
@@ -492,6 +859,51 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         }
     }
 
+    // Final hybrid mapping sanity checks in runtime index space.
+    if(!out.protein_membership.empty()) {
+        for(size_t k = 0; k < out.n_bb; ++k) {
+            int bb = out.bb_atom_index[k];
+            if(bb >= 0) {
+                if(bb >= n_atom) {
+                    throw string("Hybrid BB proxy index out of bounds");
+                }
+                if(out.protein_membership[bb] < 0) {
+                    throw string("Hybrid BB proxy index must be protein atom");
+                }
+            }
+            for(int d = 0; d < 4; ++d) {
+                if(out.atom_mask[k][d] == 0) continue;
+                int ai = out.atom_indices[k][d];
+                if(ai < 0 || ai >= n_atom) {
+                    throw string("Hybrid BB target index out of bounds");
+                }
+                if(out.protein_membership[ai] < 0) {
+                    throw string("Hybrid BB target index must be protein atom");
+                }
+            }
+        }
+
+        for(size_t r = 0; r < out.sc_proxy_atom_index.size(); ++r) {
+            int proxy = out.sc_proxy_atom_index[r];
+            if(proxy < 0 || proxy >= n_atom) {
+                throw string("Hybrid SC proxy index out of bounds");
+            }
+            if(out.protein_membership[proxy] < 0) {
+                throw string("Hybrid SC proxy index must be protein atom");
+            }
+            for(int d = 0; d < 4; ++d) {
+                int ai = out.sc_proj_target_indices[r][d];
+                if(ai < 0) continue;
+                if(ai >= n_atom) {
+                    throw string("Hybrid SC target index out of bounds");
+                }
+                if(out.protein_membership[ai] < 0) {
+                    throw string("Hybrid SC target index must be protein atom");
+                }
+            }
+        }
+    }
+
     return out;
 }
 
@@ -504,14 +916,81 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
     if(!st->enabled) {
         st->active = false;
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
+        martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
         return;
     }
     st->active = (stage == st->activation_stage);
     if(st->preprod_rigid && !st->active) {
         martini_fix_rigid::set_dynamic_fixed_atoms(*engine, st->preprod_fixed_atom_indices);
+        martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->preprod_z_fixed_atom_indices);
     } else {
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
+        martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
     }
+}
+
+static int find_node_index_for_name_or_prefix(DerivEngine& engine, const std::string& name_or_prefix) {
+    if(name_or_prefix.empty()) return -1;
+    int exact = engine.get_idx(name_or_prefix, false);
+    if(exact >= 0) return exact;
+    for(size_t i = 0; i < engine.nodes.size(); ++i) {
+        const auto& nm = engine.nodes[i].name;
+        if(nm.find(name_or_prefix) == 0) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+static bool add_parent_dependency(DerivEngine& engine, int child_idx, int parent_idx) {
+    if(child_idx < 0 || parent_idx < 0 || child_idx == parent_idx) return false;
+    auto& child = engine.nodes[child_idx];
+    if(std::find(child.parents.begin(), child.parents.end(), static_cast<size_t>(parent_idx)) != child.parents.end()) {
+        return false;
+    }
+    child.parents.push_back(static_cast<size_t>(parent_idx));
+    engine.nodes[parent_idx].children.push_back(static_cast<size_t>(child_idx));
+    return true;
+}
+
+static bool add_coord_dependencies(DerivEngine& engine, int child_idx) {
+    if(child_idx < 0 || child_idx >= static_cast<int>(engine.nodes.size())) return false;
+    bool changed = false;
+    for(size_t i = 0; i < engine.nodes.size(); ++i) {
+        int parent_idx = static_cast<int>(i);
+        if(parent_idx == child_idx) continue;
+        auto* coord = dynamic_cast<CoordNode*>(engine.nodes[i].computation.get());
+        if(!coord) continue;
+        changed |= add_parent_dependency(engine, child_idx, parent_idx);
+    }
+    return changed;
+}
+
+static std::string discover_rotamer_node_name_from_engine(const DerivEngine& engine) {
+    for(const auto& n : engine.nodes) {
+        if(n.name == "rotamer") return n.name;
+    }
+    for(const auto& n : engine.nodes) {
+        if(n.name.find("rotamer") == 0) return n.name;
+    }
+    return "";
+}
+
+static std::string discover_sc_placement_node_name_from_engine(const DerivEngine& engine) {
+    const std::vector<std::string> preferred{
+        "placement_fixed_point_vector_only",
+        "placement_point_vector_only"
+    };
+    for(const auto& pref : preferred) {
+        for(const auto& n : engine.nodes) {
+            if(n.name == pref) return n.name;
+        }
+    }
+    for(const auto& n : engine.nodes) {
+        if(n.name.find("placement") != 0) continue;
+        if(n.name.find("point_vector_only") == std::string::npos) continue;
+        if(n.name.find("_CB") != std::string::npos) continue;
+        return n.name;
+    }
+    return "";
 }
 
 void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
@@ -519,23 +998,63 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
     auto current_stage = martini_stage_params::get_current_stage(&engine);
     parsed.active = parsed.enabled && (current_stage == parsed.activation_stage);
 
-    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     auto st = std::make_shared<HybridRuntimeState>(std::move(parsed));
+    if(st->enabled) {
+        if(st->rotamer_node_name.empty()) {
+            st->rotamer_node_name = discover_rotamer_node_name_from_engine(engine);
+        }
+        if(st->placement_node_name.empty()) {
+            st->placement_node_name = discover_sc_placement_node_name_from_engine(engine);
+        }
+
+        int placement_idx = find_node_index_for_name_or_prefix(engine, st->placement_node_name);
+        if(placement_idx >= 0) {
+            st->placement_node = dynamic_cast<CoordNode*>(engine.nodes[placement_idx].computation.get());
+        }
+
+        int rotamer_idx = find_node_index_for_name_or_prefix(engine, st->rotamer_node_name);
+        if(rotamer_idx >= 0) {
+            st->rotamer_node = engine.nodes[rotamer_idx].computation.get();
+        }
+
+        bool changed_graph = false;
+        for(size_t i = 0; i < engine.nodes.size(); ++i) {
+            if(engine.nodes[i].name.find("martini_potential") != 0) continue;
+            changed_graph |= add_coord_dependencies(engine, static_cast<int>(i));
+            if(placement_idx >= 0) {
+                changed_graph |= add_parent_dependency(engine, static_cast<int>(i), placement_idx);
+            }
+            if(rotamer_idx >= 0) {
+                changed_graph |= add_parent_dependency(engine, static_cast<int>(i), rotamer_idx);
+            }
+        }
+        if(changed_graph) {
+            engine.build_exec_levels();
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     g_hybrid_state[&engine] = st;
     g_hybrid_state_by_coord[static_cast<const CoordNode*>(engine.pos)] = st;
     if(st->enabled && st->preprod_rigid && !st->active) {
         martini_fix_rigid::set_dynamic_fixed_atoms(engine, st->preprod_fixed_atom_indices);
+        martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
     } else {
         martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
+        martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
     }
     if(st->has_config && st->enabled) {
-        printf("Hybrid input parsed: activation_stage=%s preprod_mode=%s n_bb=%zu n_env=%zu exclude_intra=%d preprod_fixed=%zu\n",
+        printf("Hybrid input parsed: activation_stage=%s preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
                st->activation_stage.c_str(),
                st->preprod_mode.c_str(),
                st->n_bb,
                st->n_env,
+               st->sc_proxy_atom_index.size(),
+               st->placement_node_name.empty() ? "<none>" : st->placement_node_name.c_str(),
+               st->rotamer_node_name.empty() ? "<none>" : st->rotamer_node_name.c_str(),
                st->exclude_intra_protein_martini ? 1 : 0,
-               st->preprod_fixed_atom_indices.size());
+               st->preprod_fixed_atom_indices.size(),
+               st->preprod_z_fixed_atom_indices.size());
     } else if(st->has_config) {
         printf("Hybrid input present but disabled\n");
     }
@@ -757,12 +1276,61 @@ CouplingAlignmentTransform build_coupling_alignment(HybridRuntimeState& st, VecA
     return tr;
 }
 
+void refresh_sc_row_probabilities_from_rotamer(
+        const HybridRuntimeState& st,
+        std::vector<float>& row_probabilities) {
+    if(!st.enabled || !st.active) return;
+    if(!st.rotamer_node) return;
+    if(st.sc_row_to_placement_group.empty()) return;
+    if(row_probabilities.size() != st.sc_proxy_atom_index.size()) return;
+
+    std::vector<float> node_marginal;
+    std::vector<float> node_lookup;
+    try {
+        node_marginal = st.rotamer_node->get_value_by_name("node_marginal");
+        node_lookup = st.rotamer_node->get_value_by_name("node_lookup");
+    } catch(...) {
+        return;
+    }
+
+    if(node_lookup.size() % 2u) return;
+    const size_t n_node = node_lookup.size() / 2u;
+    if(node_marginal.size() != n_node * 6u) return;
+
+    std::unordered_map<long long, int> lookup;
+    lookup.reserve(n_node);
+    for(size_t i = 0; i < n_node; ++i) {
+        int n_rotamer = static_cast<int>(lrintf(node_lookup[2*i + 0]));
+        int node_id = static_cast<int>(lrintf(node_lookup[2*i + 1]));
+        long long key = (static_cast<long long>(n_rotamer) << 32) | static_cast<unsigned int>(node_id);
+        lookup[key] = static_cast<int>(i);
+    }
+
+    for(size_t r = 0; r < row_probabilities.size(); ++r) {
+        int gid = st.sc_row_to_placement_group[r];
+        if(gid < 0 || gid >= static_cast<int>(st.placement_state_groups.size())) continue;
+        const auto& g = st.placement_state_groups[gid];
+        if(g.rotamer < 0 || g.rotamer >= 6) continue;
+
+        long long key = (static_cast<long long>(g.n_rotamer) << 32) | static_cast<unsigned int>(g.node_id);
+        auto it = lookup.find(key);
+        if(it == lookup.end()) continue;
+
+        float p = node_marginal[static_cast<size_t>(it->second) * 6u + static_cast<size_t>(g.rotamer)];
+        if(std::isfinite(p) && p >= 0.f) {
+            row_probabilities[r] = p;
+        }
+    }
+}
+
 void project_bb_gradient_if_active(const HybridRuntimeState& st, VecArray sens, int n_atom) {
     if(!st.enabled || !st.active) return;
     for(size_t k = 0; k < st.n_bb; ++k) {
         int bb = st.bb_atom_index[k];
         if(bb < 0 || bb >= n_atom) continue;
         auto bb_grad = load_vec<3>(sens, bb);
+        // Clear first so self-target mappings preserve intended fraction instead of being canceled.
+        store_vec<3>(sens, bb, make_zero<3>());
         for(int d = 0; d < 4; ++d) {
             if(st.atom_mask[k][d] == 0) continue;
             int ai = st.atom_indices[k][d];
@@ -770,26 +1338,48 @@ void project_bb_gradient_if_active(const HybridRuntimeState& st, VecArray sens, 
             if(ai < 0 || ai >= n_atom || w == 0.f) continue;
             update_vec<3>(sens, ai, w * bb_grad);
         }
-        store_vec<3>(sens, bb, make_zero<3>());
     }
 }
 
-void project_sc_gradient_if_active(const HybridRuntimeState& st, VecArray sens, int n_atom) {
+void project_sc_gradient_if_active(
+        const HybridRuntimeState& st,
+        VecArray sens,
+        int n_atom,
+        const std::vector<std::array<float,3>>& row_proxy_grad) {
     if(!st.enabled || !st.active) return;
     const size_t n_rot = st.sc_proxy_atom_index.size();
-    for(size_t r = 0; r < n_rot; ++r) {
-        int proxy = st.sc_proxy_atom_index[r];
+    if(row_proxy_grad.size() != n_rot) return;
+    for(const auto& proxy_rows : st.sc_rows_by_proxy) {
+        int proxy = proxy_rows.first;
         if(proxy < 0 || proxy >= n_atom) continue;
-        float p = st.sc_rotamer_prob[r];
-        if(p <= 0.f) continue;
-        auto proxy_grad = load_vec<3>(sens, proxy);
-        for(int d = 0; d < 4; ++d) {
-            int ai = st.sc_proj_target_indices[r][d];
-            float w = st.sc_proj_weights[r][d];
-            if(ai < 0 || ai >= n_atom || w == 0.f) continue;
-            update_vec<3>(sens, ai, (p * w) * proxy_grad);
-        }
+
+        // Clear once per proxy. Multiple rotamer rows can share the same proxy.
         store_vec<3>(sens, proxy, make_zero<3>());
+        for(int r : proxy_rows.second) {
+            if(r < 0 || r >= (int)n_rot) continue;
+            Vec<3> proxy_grad = make_vec3(row_proxy_grad[r][0], row_proxy_grad[r][1], row_proxy_grad[r][2]);
+
+            // Prefer explicit SC projection targets/weights from hybrid_sc_map.
+            // In this workflow, these are prepared from martinize bonded topology.
+            bool projected = false;
+            for(int d = 0; d < 4; ++d) {
+                int ai = st.sc_proj_target_indices[r][d];
+                float w = st.sc_proj_weights[r][d];
+                if(ai < 0 || ai >= n_atom || w == 0.f) continue;
+                update_vec<3>(sens, ai, w * proxy_grad);
+                projected = true;
+            }
+            if(projected) {
+                continue;
+            }
+
+            // Fallback: transfer to corresponding residue MARTINI BB if
+            // explicit projection targets were unavailable.
+            int bb_target = (r < (int)st.sc_row_bb_target.size()) ? st.sc_row_bb_target[r] : -1;
+            if(bb_target >= 0 && bb_target < n_atom) {
+                update_vec<3>(sens, bb_target, proxy_grad);
+            }
+        }
     }
 }
 
@@ -806,6 +1396,7 @@ void clear_hybrid_for_engine(DerivEngine* engine) {
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     if(engine) {
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
+        martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
     }
     if(engine && engine->pos) {
         g_hybrid_state_by_coord.erase(static_cast<const CoordNode*>(engine->pos));
@@ -1707,20 +2298,182 @@ struct MartiniPotential : public PotentialNode
         
         // Compute particle-particle interactions
         const float kMinDistance = 1.0e-6f;
+        const bool use_probabilistic_sc = (
+            hybrid_state &&
+            hybrid_state->enabled &&
+            hybrid_state->active &&
+            !hybrid_state->sc_proxy_atom_index.empty());
+        std::vector<std::array<float,3>> sc_row_proxy_grad;
+        std::vector<float> sc_row_probability;
+        if(use_probabilistic_sc) {
+            sc_row_proxy_grad.assign(hybrid_state->sc_proxy_atom_index.size(), std::array<float,3>{{0.f,0.f,0.f}});
+            sc_row_probability = hybrid_state->sc_rotamer_prob;
+            martini_hybrid::refresh_sc_row_probabilities_from_rotamer(*hybrid_state, sc_row_probability);
+        }
+
+        auto eval_pair_force = [&](const Vec<3>& pa,
+                                   const Vec<3>& pb,
+                                   float eps,
+                                   float sig,
+                                   float qi,
+                                   float qj,
+                                   float& pair_potential,
+                                   Vec<3>& pair_force) -> bool {
+            auto dr = pa - pb;
+            auto dist2 = mag2(dr);
+            auto dist = sqrtf(max(dist2, kMinDistance));
+            if(dist > max(lj_cutoff, coul_cutoff)) return false;
+
+            pair_potential = 0.f;
+            pair_force = make_zero<3>();
+
+            if(eps != 0.f && sig != 0.f && dist < lj_cutoff) {
+                auto spline_it = lj_splines.find({eps, sig});
+                if(spline_it != lj_splines.end()) {
+                    float r_coord = (dist - lj_r_min) / (lj_r_max - lj_r_min) * 999.0f;
+                    float lj_result[2];
+                    spline_it->second.evaluate_value_and_deriv(lj_result, 0, r_coord);
+                    float lj_pot = lj_result[1];
+                    float lj_deriv_spline = lj_result[0];
+                    float coord_scale = 999.0f / (lj_r_max - lj_r_min);
+                    float dE_dr = lj_deriv_spline * coord_scale;
+                    float lj_force_mag = -dE_dr;
+                    if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag)) {
+                        pair_potential += lj_pot;
+                        pair_force += (lj_force_mag/dist) * dr;
+                    }
+                }
+            }
+
+            if(qi != 0.f && qj != 0.f && dist < coul_cutoff) {
+                float qq = qi * qj;
+                float coul_pot = 0.0f;
+                float coul_force_mag = 0.0f;
+
+                auto coulomb_it = coulomb_splines.end();
+                int qkey = int(lrintf(qq * 1000000.0f));
+                auto qk_it = coulomb_key_to_qq.find(qkey);
+                if(qk_it != coulomb_key_to_qq.end()) {
+                    coulomb_it = coulomb_splines.find(qk_it->second);
+                } else {
+                    coulomb_it = coulomb_splines.find(qq);
+                }
+                if(coulomb_it != coulomb_splines.end() && dist >= coul_r_min && dist <= coul_r_max) {
+                    float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
+                    float coul_result[2];
+                    coulomb_it->second.evaluate_value_and_deriv(coul_result, 0, r_coord);
+                    coul_pot = coul_result[1];
+                    float coul_deriv_spline = coul_result[0];
+                    float coord_scale = 999.0f / (coul_r_max - coul_r_min);
+                    float dE_dr = coul_deriv_spline * coord_scale;
+                    coul_force_mag = -dE_dr;
+                } else {
+                    float coulomb_k = 31.775347952181f;
+                    coul_pot = coulomb_k * qq / dist;
+                    float dV_dr = -coulomb_k * qq / (dist * dist);
+                    coul_force_mag = -dV_dr;
+                }
+
+                if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag)) {
+                    pair_potential += coul_pot;
+                    pair_force += (coul_force_mag/dist) * dr;
+                }
+            }
+            return true;
+        };
+
+        // Build per-rotamer projected SC position from protein targets + local offset.
+        // Prefer explicit Upside rotamer placement coordinates when available.
+        // Fallback to hybrid_sc_map projection targets for compatibility.
+        auto build_sc_row_proxy_pos = [&](int row, Vec<3>& out_pos) -> bool {
+            if(!hybrid_state) return false;
+            if(row < 0 || row >= (int)hybrid_state->sc_proj_target_indices.size()) return false;
+
+            if(hybrid_state->placement_node &&
+               row < (int)hybrid_state->sc_row_to_placement_group.size()) {
+                int gid = hybrid_state->sc_row_to_placement_group[row];
+                if(gid >= 0 && gid < (int)hybrid_state->placement_state_groups.size()) {
+                    const auto& g = hybrid_state->placement_state_groups[gid];
+                    VecArray pl_pos = hybrid_state->placement_node->output;
+                    Vec<3> centroid = make_zero<3>();
+                    float wsum = 0.f;
+                    for(int pi : g.placement_rows) {
+                        if(pi < 0 || pi >= hybrid_state->placement_node->n_elem) continue;
+                        Vec<3> p = make_vec3(pl_pos(0, pi), pl_pos(1, pi), pl_pos(2, pi));
+                        if(coupling_align.enabled) {
+                            auto raw = std::array<float,3>{p[0], p[1], p[2]};
+                            auto aligned = martini_hybrid::vec_add(
+                                martini_hybrid::apply_rot(coupling_align.R, raw),
+                                coupling_align.t);
+                            p = make_vec3(aligned[0], aligned[1], aligned[2]);
+                        }
+                        centroid += p;
+                        wsum += 1.f;
+                    }
+                    if(wsum > 0.f) {
+                        centroid *= (1.0f / wsum);
+                        if(row < (int)hybrid_state->sc_local_pos.size()) {
+                            auto local = hybrid_state->sc_local_pos[row];
+                            if(coupling_align.enabled) {
+                                local = martini_hybrid::apply_rot(coupling_align.R, local);
+                            }
+                            centroid += make_vec3(local[0], local[1], local[2]);
+                        }
+                        out_pos = centroid;
+                        return true;
+                    }
+                }
+            }
+
+            Vec<3> projected = make_zero<3>();
+            bool has_target = false;
+            for(int d = 0; d < 4; ++d) {
+                int ai = hybrid_state->sc_proj_target_indices[row][d];
+                float w = hybrid_state->sc_proj_weights[row][d];
+                if(ai < 0 || ai >= n_atom || w == 0.f) continue;
+
+                Vec<3> p = load_vec<3>(pos1, ai);
+                bool target_is_protein = (
+                    ai >= 0 &&
+                    ai < (int)hybrid_state->protein_membership.size() &&
+                    hybrid_state->protein_membership[ai] >= 0);
+                if(coupling_align.enabled && target_is_protein) {
+                    auto raw = std::array<float,3>{p[0], p[1], p[2]};
+                    auto aligned = martini_hybrid::vec_add(
+                        martini_hybrid::apply_rot(coupling_align.R, raw),
+                        coupling_align.t);
+                    p = make_vec3(aligned[0], aligned[1], aligned[2]);
+                }
+                projected += w * p;
+                has_target = true;
+            }
+            if(!has_target) return false;
+
+            if(row < (int)hybrid_state->sc_local_pos.size()) {
+                auto local = hybrid_state->sc_local_pos[row];
+                if(coupling_align.enabled) {
+                    local = martini_hybrid::apply_rot(coupling_align.R, local);
+                }
+                projected += make_vec3(local[0], local[1], local[2]);
+            }
+
+            out_pos = projected;
+            return true;
+        };
+
         for(size_t np=0; np<pairs.size(); ++np) {
             int i = pairs[np].first;
             int j = pairs[np].second;
             if(hybrid_state && martini_hybrid::skip_pair_if_intra_protein(*hybrid_state, i, j)) {
                 continue;
             }
-            
+
             auto eps   = coeff[np][0];
             auto sig   = coeff[np][1];
             auto qi    = coeff[np][2];
             auto qj    = coeff[np][3];
-            
             if(eps==0.f && sig==0.f && qi==0.f && qj==0.f) continue;
-            
+
             auto p1 = load_vec<3>(pos1, i);
             auto p2 = load_vec<3>(pos1, j);
             bool i_is_protein = false;
@@ -1744,103 +2497,89 @@ struct MartiniPotential : public PotentialNode
                     p2 = make_vec3(pa[0], pa[1], pa[2]);
                 }
             }
-            // Direct distance calculation without PBC
-            auto dr = p1 - p2;
-            auto dist2 = mag2(dr);
-            auto dist = sqrtf(max(dist2, kMinDistance));
-            // DEBUG: Print pairwise info for first few steps
-            // if (debug_mode && debug_step_count < 5) {
-            //     std::cout << "[DEBUG] Pair " << i << "-" << j << " dr=(" << dr.x() << "," << dr.y() << "," << dr.z() << ") dist=" << dist << std::endl;
-            // }
-            
-            // Apply distance cutoff for computational efficiency
-            if(dist > max(lj_cutoff, coul_cutoff)) continue;
-            
+
+            // Probabilistic SC force evaluation:
+            // evaluate proxy-env interactions for each rotamer-state position and
+            // project weighted proxy gradients back through per-rotamer mappings.
+            if(use_probabilistic_sc && hybrid_state) {
+                bool proxy_is_i = false;
+                int env_atom = -1;
+                const std::vector<int>* proxy_rows = nullptr;
+                if(i_is_protein && !j_is_protein) {
+                    proxy_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, i);
+                    proxy_is_i = true;
+                    env_atom = j;
+                } else if(j_is_protein && !i_is_protein) {
+                    proxy_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, j);
+                    proxy_is_i = false;
+                    env_atom = i;
+                }
+
+                if(proxy_rows && !proxy_rows->empty()) {
+                    float prob_sum = 0.f;
+                    for(int r : *proxy_rows) {
+                        if(r < 0 || r >= (int)sc_row_probability.size()) continue;
+                        prob_sum += std::max(0.f, sc_row_probability[r]);
+                    }
+                    if(prob_sum > 0.f) {
+                        float inv_prob_sum = 1.f / prob_sum;
+                        Vec<3> env_grad_total = make_zero<3>();
+                        auto env_pos = proxy_is_i ? p2 : p1;
+
+                        for(int r : *proxy_rows) {
+                            if(r < 0 || r >= (int)sc_row_probability.size()) continue;
+                            float pr = std::max(0.f, sc_row_probability[r]);
+                            if(pr <= 0.f) continue;
+                            float pnorm = pr * inv_prob_sum;
+
+                            Vec<3> proxy_pos = make_zero<3>();
+                            if(!build_sc_row_proxy_pos(r, proxy_pos)) {
+                                continue;
+                            }
+
+                            Vec<3> pair_force = make_zero<3>();
+                            float pair_pot = 0.f;
+                            Vec<3> pa = proxy_is_i ? proxy_pos : env_pos;
+                            Vec<3> pb = proxy_is_i ? env_pos : proxy_pos;
+                            if(!eval_pair_force(pa, pb, eps, sig, qi, qj, pair_pot, pair_force)) {
+                                continue;
+                            }
+
+                            if(pot) *pot += pnorm * pair_pot;
+
+                            auto gi = -pair_force;
+                            auto gj = pair_force;
+                            auto proxy_grad = proxy_is_i ? gi : gj;
+                            auto env_grad = proxy_is_i ? gj : gi;
+
+                            if(coupling_align.enabled) {
+                                auto gproxy = std::array<float,3>{proxy_grad[0], proxy_grad[1], proxy_grad[2]};
+                                auto gproxy_raw = martini_hybrid::apply_rot_T(coupling_align.R, gproxy);
+                                proxy_grad = make_vec3(gproxy_raw[0], gproxy_raw[1], gproxy_raw[2]);
+                            }
+
+                            env_grad_total += pnorm * env_grad;
+                            if(r < (int)sc_row_proxy_grad.size()) {
+                                sc_row_proxy_grad[r][0] += pnorm * proxy_grad[0];
+                                sc_row_proxy_grad[r][1] += pnorm * proxy_grad[1];
+                                sc_row_proxy_grad[r][2] += pnorm * proxy_grad[2];
+                            }
+                        }
+                        if(env_atom >= 0 && env_atom < n_atom) {
+                            update_vec<3>(pos1_sens, env_atom, env_grad_total);
+                        }
+                        continue;
+                    }
+                }
+            }
+
             Vec<3> force = make_zero<3>();
-            
-            // Lennard-Jones potential using single spline for each epsilon/sigma pair
-            if(eps != 0.f && sig != 0.f && dist < lj_cutoff) {
-                // Look up the appropriate spline for this epsilon/sigma pair
-                auto spline_it = lj_splines.find({eps, sig});
-                if(spline_it != lj_splines.end()) {
-                    // Use spline interpolation for LJ potential and force
-                    // Transform physical distance to spline coordinate [0, 999]
-                    float r_coord = (dist - lj_r_min) / (lj_r_max - lj_r_min) * 999.0f;
-
-                    float lj_result[2];
-                    // CORRECT: Call evaluate_value_and_deriv only on the potential spline
-                    spline_it->second.evaluate_value_and_deriv(lj_result, 0, r_coord);
-
-                    float lj_pot = lj_result[1];           // Index 1 is the value
-                    float lj_deriv_spline = lj_result[0];   // Index 0 is the derivative w.r.t. spline coordinate
-
-                    // Convert derivative from spline coordinate to physical coordinate (dE/dr)
-                    // dE/dr = dE/d(coord) * d(coord)/dr
-                    float coord_scale = 999.0f / (lj_r_max - lj_r_min);
-                    float dE_dr = lj_deriv_spline * coord_scale;
-                    
-                    // The force is the negative gradient: F = -dE/dr
-                    float lj_force_mag = -dE_dr;
-
-                    // Only apply if potential and force are finite and reasonable
-                    if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag)) {
-                        if(pot) *pot += lj_pot;
-                        // lj_force_mag is now correctly calculated as -dV/dr (physical force)
-                        // Accumulate the physical force directly
-                        force += (lj_force_mag/dist) * dr;
-                    }
-                }
+            float pair_pot = 0.f;
+            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, pair_pot, force)) {
+                continue;
             }
-            
-            // Coulomb potential using single spline for each charge product
-            if(qi != 0.f && qj != 0.f && dist < coul_cutoff) {
-                // DEBUG: Check cutoff behavior
-                // if(debug_step_count < 5) std::cout << "COULOMB: dist=" << dist << ", coul_cutoff=" << coul_cutoff << ", dist < coul_cutoff=" << (dist < coul_cutoff) << std::endl;
-                float qq = qi * qj;
-                // DEBUG: Check charge product
-                // if(debug_step_count < 5) std::cout << "COULOMB: Looking for q1*q2=" << qq << " (qi=" << qi << ", qj=" << qj << ")" << std::endl;
+            if(pot) *pot += pair_pot;
 
-                float coul_pot = 0.0f;
-                float coul_force_mag = 0.0f;
-                
-                // Standard Coulomb potential using spline tables
-                    // Prefer spline evaluation and use quantized key lookup first.
-                    auto coulomb_it = coulomb_splines.end();
-                    int qkey = int(lrintf(qq * 1000000.0f));
-                    auto qk_it = coulomb_key_to_qq.find(qkey);
-                    if(qk_it != coulomb_key_to_qq.end()) {
-                        coulomb_it = coulomb_splines.find(qk_it->second);
-                    } else {
-                        coulomb_it = coulomb_splines.find(qq);
-                    }
-                    if(coulomb_it != coulomb_splines.end() && dist >= coul_r_min && dist <= coul_r_max) {
-                        float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
-                        float coul_result[2];
-                        coulomb_it->second.evaluate_value_and_deriv(coul_result, 0, r_coord);
-                        coul_pot = coul_result[1];
-                        float coul_deriv_spline = coul_result[0];
-                        float coord_scale = 999.0f / (coul_r_max - coul_r_min);
-                        float dE_dr = coul_deriv_spline * coord_scale;
-                        coul_force_mag = -dE_dr;
-                    } else {
-                        // Fallback to analytical Coulomb without softening
-                        float coulomb_k = 31.775347952181f;
-                        coul_pot = coulomb_k * qq / dist;
-                        float dV_dr = -coulomb_k * qq / (dist * dist);
-                        coul_force_mag = -dV_dr;
-                }
-
-                // Only apply if potential and force are finite and reasonable
-                if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag)) {
-                    if(pot) *pot += coul_pot;
-                    // coul_force_mag is now correctly calculated as -dV/dr (physical force)
-                    // Accumulate the physical force directly
-                    force += (coul_force_mag/dist) * dr;
-                }
-            }
-            
-            // Apply mass scaling to forces (divide by mass)
-            // Store gradient (∇E = -F) in pos_sens for UPSIDE integrator
             auto gi = -force;
             auto gj = force;
             if(coupling_align.enabled) {
@@ -1860,7 +2599,7 @@ struct MartiniPotential : public PotentialNode
         }
 
         if(hybrid_state) {
-            martini_hybrid::project_sc_gradient_if_active(*hybrid_state, pos1_sens, n_atom);
+            martini_hybrid::project_sc_gradient_if_active(*hybrid_state, pos1_sens, n_atom, sc_row_proxy_grad);
             martini_hybrid::project_bb_gradient_if_active(*hybrid_state, pos1_sens, n_atom);
         }
     }

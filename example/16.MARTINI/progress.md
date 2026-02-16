@@ -137,3 +137,532 @@
 - Rebuilt C++ targets successfully after changes:
   - `cmake --build ../../obj -j4`
   - Result: success for `upside`, `upside_engine`, `upside_calculation`.
+
+## 2026-02-14 (Hybrid Double-Check Audit)
+- Re-read `task_plan.md` and audited implementation coverage across:
+  - `../../src/martini.cpp` hybrid parser/runtime path (activation gating, BB refresh/projection, sidechain projection, intra-protein exclusion, coupling alignment).
+  - `prepare_hybrid_system.py` mapping export path.
+  - `validate_hybrid_mapping.py` schema checks.
+- Ran fresh mapping generation for reproducible verification:
+  - `source ../../.venv/bin/activate && source ../../source.sh && python3 prepare_hybrid_system.py --protein-pdb pdb/1rkl.pdb --protein-cg-pdb pdb/1rkl.MARTINI.pdb --bilayer-pdb pdb/bilayer.MARTINI.pdb --output-dir outputs/hybrid_audit`
+- Ran current validator on generated mapping:
+  - `source ../../.venv/bin/activate && source ../../source.sh && python3 validate_hybrid_mapping.py outputs/hybrid_audit/hybrid_mapping.h5 --n-atom 1263`
+  - Result: passes (`n_atom=1263`, `n_protein=68`, `n_env=1195`, `n_bb=31`, `n_sc_rotamer_rows=37`).
+- Ran targeted index-space sanity script on generated mapping and found blocker:
+  - BB projection targets: `88/124` valid mapped indices are `>= n_protein (68)`.
+  - SC projection targets: `112/148` valid mapped indices are `>= n_protein (68)`.
+  - Interpretation: many projection targets point outside protein region (into environment atom range for this packed system).
+- Updated `task_plan.md` Known Errors / Blockers with:
+  - Mapping index-space mismatch between atomistic target indices and MARTINI packed coordinate indexing.
+  - Validation gap: missing bounds/protein-membership checks for BB/SC projection target indices.
+
+## 2026-02-14 (Hybrid Mapping Fix Implementation)
+- Implemented mapping index-space fix in `prepare_hybrid_system.py`:
+  - `collect_bb_map()` now emits MARTINI-space BB projection targets (`atom_indices=[bb_atom_index,-1,-1,-1]`, weights `1,0,0,0`).
+  - `collect_sc_map()` now emits MARTINI-space SC projection targets routed to residue BB (`proj_target_indices=[residue_bb_index,-1,-1,-1]`, weights `1,0,0,0`).
+- Strengthened mapping validation in `validate_hybrid_mapping.py`:
+  - Added bounds checks for BB/SC proxy and projection target indices against `protein_membership` length.
+  - Added protein-local checks requiring BB/SC proxies and all valid projection targets to satisfy `protein_membership>=0`.
+- Added runtime defensive checks in `../../src/martini.cpp` hybrid parser:
+  - Rejects out-of-bounds or non-protein BB/SC proxy and target indices at parse time.
+- Updated projection logic in `../../src/martini.cpp`:
+  - `project_bb_gradient_if_active` and `project_sc_gradient_if_active` now clear proxy gradients before redistribution, preventing self-target cancellation.
+- Verification:
+  - Regenerated mapping:
+    `source ../../.venv/bin/activate && source ../../source.sh && python3 prepare_hybrid_system.py --protein-pdb pdb/1rkl.pdb --protein-cg-pdb pdb/1rkl.MARTINI.pdb --bilayer-pdb pdb/bilayer.MARTINI.pdb --output-dir outputs/hybrid_fix`
+  - Validator pass:
+    `python3 validate_hybrid_mapping.py outputs/hybrid_fix/hybrid_mapping.h5 --n-atom 1263`
+    -> `n_atom=1263`, `n_protein=68`, `n_env=1195`, `n_bb=31`, `n_sc_rotamer_rows=37`.
+  - Target-space sanity check:
+    - BB targets outside protein: `0/31`
+    - SC targets outside protein: `0/37`
+  - Backward check against old bad mapping:
+    `python3 validate_hybrid_mapping.py outputs/hybrid_audit/hybrid_mapping.h5 --n-atom 1263`
+    now fails with `ValueError: BB target index is not protein atom ...`.
+  - Rebuild succeeded after C++ changes:
+    `cmake --build ../../obj -j4`
+    (warnings unchanged from existing code paths).
+
+## 2026-02-14 (Mass/Weight Audit)
+- Re-read `task_plan.md` and traced particle-mass flow in code:
+  - `prepare_martini.py` mass generation (`/input/mass`) and force-field lookup.
+  - `../../src/martini.cpp` mass loading (`martini_masses::load_masses_for_engine`).
+  - `../../src/deriv_engine.cpp` mass-aware integration updates.
+- Confirmed implementation logic:
+  - MARTINI masses are reduced by 12 at input generation (`mass[i] = ff_mass / 12.0`).
+  - If `/input/mass` exists, integration uses those masses (`x += dt * p / mass` path).
+  - If `/input/mass` does not exist, integrator uses unit-mass behavior.
+- Verified existing generated MARTINI checkpoints:
+  - `outputs/martini_test/checkpoints/bilayer.stage_*.up` have `/input/mass` all `6.0` (consistent with dry-MARTINI `72/12`).
+- Verified mixed-type reference input:
+  - `inputs/1rkl.up` mass values are `{6.0, 4.5, 3.0}` (all in reduced units, i.e., divided by 12 from source FF masses).
+- Attempted protein-inclusive regeneration for direct dry-MARTINI hybrid mass validation:
+  - Command: `python3 prepare_martini.py 1rkl --stage minimization outputs/masscheck_1rkl`
+  - Current blocker: fails on unknown DOPC atom `D2A` in `pdb/1rkl.MARTINI.pdb`.
+  - Additional mass-table mismatch identified: `pdb/1rkl_proa.itp` uses MARTINI3-style bead types (`TC*`,`TN*`,`SQ*`, etc.) not present in `ff_dry/dry_martini_v2.1.itp` mass table.
+
+## 2026-02-14 (Probabilistic Rotamer Force Path + Single-Rotamer C++ Removal)
+- Re-read `task_plan.md` and aligned implementation to remove deterministic/single-rotamer sidechain projection path in C++.
+- Updated `../../src/martini.cpp`:
+  - `project_sc_gradient_if_active(...)` now consumes only per-rotamer row gradients and projects them grouped by proxy (`sc_rows_by_proxy`).
+  - Removed old pointer/null fallback call behavior in `compute_value`; SC projection call now always uses row-gradient vector.
+  - Fixed multi-row/proxy projection correctness by clearing proxy force once per proxy before accumulating all rotamer-row projections.
+- Build/verification:
+  - Command: `source ../../.venv/bin/activate && source ../../source.sh && cmake --build ../../obj -j4`
+  - Initial sandbox attempt failed with write-permission error for `../../obj` (expected sandbox restriction).
+  - Re-ran with escalation; build succeeded for `upside`, `upside_calculation`, and `upside_engine`.
+  - No compile errors from the new rotamer projection changes; only pre-existing warnings remain.
+
+## 2026-02-14 (CPP-Only Probabilistic Projection Clarification + Runtime Update)
+- Applied user clarification: keep preparation scripts unchanged; implement probabilistic sidechain behavior only in Upside C++ runtime (production-stage hybrid coupling path).
+- Updated `../../src/martini.cpp` probabilistic SC pair evaluation:
+  - Per-rotamer SC positions are now built from mapping projection targets (`proj_target_indices`, `proj_weights`) plus per-row `local_pos`, rather than from raw MARTINI proxy atom coordinates.
+  - Added `build_sc_row_proxy_pos(...)` in `MartiniPotential::compute_value` to construct coupling-frame row positions directly from protein mapping targets.
+  - Removed remaining raw-proxy dependency in the probabilistic branch (only the MARTINI pair parameters and pair membership are taken from proxy/env pair definitions).
+- Rebuilt after C++ changes:
+  - `source ../../.venv/bin/activate && source ../../source.sh && cmake --build ../../obj -j4`
+  - Build succeeded (`upside`, `upside_engine`, `upside_calculation`), with only pre-existing warnings.
+
+## 2026-02-14 (Sidechain Placement Correction: Upside Placement + Live Rotamer Marginals)
+- Re-read `task_plan.md` and applied revised architecture in C++ runtime only (no preparation-script changes):
+  - Sidechain placement should come from Upside placement node per rotamer state.
+  - Probabilities should come from live Upside rotamer marginals in production.
+- Updated `../../src/martini.cpp`:
+  - Added hybrid runtime metadata for rotamer/placement integration:
+    - detects rotamer node (`rotamer*`) and sidechain placement node (`placement*_point_vector_only` excluding `_CB`) from H5.
+    - parses placement `id_seq` + `affine_residue` into per-residue/per-rotamer placement groups.
+  - Added runtime row-expansion path:
+    - when `hybrid_sc_map` is single-state per residue, expands rows in C++ to all available placement rotamer states for that residue.
+    - keeps projection targets/weights unchanged and records row-to-placement-group mapping.
+  - Added live probability refresh path:
+    - reads rotamer marginals every MARTINI compute via new rotamer logs (`node_lookup`, `node_marginal`).
+    - maps each SC row to `(n_rotamer,node_id,rotamer)` and updates row probability from current rotamer marginal.
+    - falls back to `hybrid_sc_map/rotamer_probability` when marginals are unavailable.
+  - Corrected SC coordinate source order in force loop:
+    - first uses placement-group centroid from `placement*_point_vector_only` output for each rotamer row.
+    - falls back to `hybrid_sc_map` projection targets + local offset when placement mapping is unavailable.
+  - Added runtime scheduling dependency wiring:
+    - registers rotamer/placement as parents of `martini_potential` so those nodes are computed before hybrid MARTINI coupling each step.
+- Updated `../../src/rotamer.cpp`:
+  - Added `get_value_by_name("node_lookup")` and `get_value_by_name("node_marginal")` for runtime access to current per-node rotamer marginals.
+- Build and runtime-facing checks:
+  - Build (with escalation due obj dir permissions):
+    `source ../../.venv/bin/activate && source ../../source.sh && cmake --build ../../obj -j4`
+    -> success (`upside`, `upside_engine`, `upside_calculation`), warnings unchanged from prior code.
+  - Verified new rotamer logs through Python engine API:
+    - config: `../../example/01.GettingStarted/inputs/1UBQ.up`
+    - `node_lookup` shape `(76,2)`, `node_marginal` shape `(76,6)`, marginal row sums = 1.
+  - Re-ran hybrid mapping validator for existing artifact:
+    `python3 validate_hybrid_mapping.py outputs/hybrid_fix/hybrid_mapping.h5 --n-atom 1263`
+    -> passes.
+- Final compatibility adjustment:
+  - Added C++ fallback mapping of existing SC rows to placement groups by `(residue_index, rotamer_id)` even when row expansion is not triggered.
+  - Rebuilt again after this adjustment (`cmake --build ../../obj -j4`) and re-verified `rotamer/node_lookup` + `rotamer/node_marginal` API access via `upside_engine.py`.
+- Sidechain-to-backbone force-transfer enforcement:
+  - Confirmed current generated mapping can contain SC projection targets pointing to SC proxy indices (not BB) due key-space mismatch between AA and CG residue keys.
+  - Updated `../../src/martini.cpp` to enforce runtime SC force projection onto corresponding residue MARTINI `BB` target (`sc_row_bb_target`) derived from `sc_residue_index` + `bb_residue_index/bb_atom_index`.
+  - Legacy `sc_proj_target_indices/sc_proj_weights` projection is now fallback-only when residue->BB lookup is unavailable.
+  - Rebuilt after enforcement (`cmake --build ../../obj -j4`) successfully.
+
+## 2026-02-14 (Integration-Cycle Audit vs Requested Hybrid Sequence)
+- Audited runtime step ordering in:
+  - `../../src/main.cpp` integration loop dispatch (`integration_cycle` call sites).
+  - `../../src/deriv_engine.cpp` compute/propagation and sub-step integration flow.
+  - `../../src/martini.cpp` hybrid coupling internals (BB refresh, per-rotamer SC env force, SC->BB transfer, BB->backbone projection).
+- Confirmed:
+  - Hybrid force path matches requested SC/BB/environment transfer semantics.
+  - SC probabilistic force is accumulated per rotamer row and transferred to corresponding residue BB first, then BB force is redistributed by BB map.
+  - Integration uses repeated force evaluations per timestep (3 stages for Verlet/Predescu or inner-step loops for multistep), so requested sequence occurs per sub-step rather than once per full outer timestep.
+
+## 2026-02-14 (BB Reference Metadata Export + MARTINI Scheduling Hardening)
+- Re-read `task_plan.md` and implemented the pending preparation/runtime updates requested for BB reference metadata and integration ordering.
+- Updated `prepare_hybrid_system.py`:
+  - Added BB reference metadata export in `/input/hybrid_bb_map`:
+    - `reference_atom_names` (`N,CA,C,O`)
+    - `reference_atom_indices` (`n_bb x 4`)
+    - `reference_atom_coords` (`n_bb x 4 x 3`)
+    - `bb_comment` (per-BB string)
+- Updated `validate_hybrid_mapping.py`:
+  - Added optional schema checks for the new BB reference/comment datasets (shape validation only; no runtime-index enforcement on reference fields).
+- Updated `../../src/martini.cpp`:
+  - Added runtime dependency wiring so each `martini_potential*` node depends on all `CoordNode` outputs, ensuring MARTINI coupling evaluates after coordinate-node updates in every integration sub-step.
+  - Kept explicit rotamer/placement dependencies in place.
+- Build/test results:
+  - Build attempt in sandbox failed due write permission in `obj/` (`Operation not permitted` on `compiler_depend.make.tmp*` files).
+  - Re-ran build with escalation and succeeded:
+    `source .venv/bin/activate && source source.sh && cmake --build obj -j4`
+  - Generated fresh mapping artifact:
+    `source ../../.venv/bin/activate && source ../../source.sh && python prepare_hybrid_system.py --protein-cg-pdb pdb/1rkl.MARTINI.pdb --output-dir outputs/hybrid_meta_cycle_check`
+  - Validator pass on regenerated mapping:
+    `python validate_hybrid_mapping.py outputs/hybrid_meta_cycle_check/hybrid_mapping.h5`
+    -> `n_atom=1263`, `n_protein=68`, `n_env=1195`, `n_bb=31`, `n_sc_rotamer_rows=37`.
+
+## 2026-02-15 (New End-to-End Script: run_sim_1rkl.sh)
+- Added new workflow driver script: `run_sim_1rkl.sh` (modeled after `run_sim_bilayer.sh`).
+- Script now automates full hybrid path from preparation to simulation to trajectory extraction:
+  - Stage 0 hybrid prep via `prepare_hybrid_system.py` (packed MARTINI + `hybrid_mapping.h5` export).
+  - Runtime MARTINI source file setup (`pdb/<runtime_id>.MARTINI.pdb`, matching protein ITP copy).
+  - Stage-wise `.up` generation via `prepare_martini.py` for 6.0 -> 7.0.
+  - Hybrid mapping injection into each stage file (`hybrid_control`, `hybrid_bb_map`, `hybrid_sc_map`, `hybrid_env_topology`).
+  - Stage label patching (`minimization` pre-production, `production` at stage 7.0) so production-only hybrid coupling is enabled only in production.
+  - Simulation runs and VTF extraction for stages 6.1, 6.6, and 7.0.
+- Added robust path behavior:
+  - Script resolves its own directory, sources env from absolute paths, then `cd`s to script directory so relative paths work regardless of caller cwd.
+  - Input path checks support both relative and absolute overrides.
+- Verification:
+  - `bash -n run_sim_1rkl.sh` passed.
+  - Set executable bit: `chmod +x run_sim_1rkl.sh`.
+- Smoke run (minimal steps) status:
+  - Command:
+    `RUN_DIR=outputs/martini_test_1rkl_hybrid_smoke MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 HYBRID_VALIDATE=1 bash run_sim_1rkl.sh`
+  - Fixed one script bug found by smoke:
+    - moved `set -euo pipefail` after env sourcing because `source.sh` reads unset vars under `-u`.
+  - Current runtime blocker remains upstream in force-field typing:
+    - `prepare_martini.py` aborts with `Mass not found for atom type 'Q5'` against current `ff_dry/dry_martini_v2.1.itp` mass table.
+
+## 2026-02-15 (martinize2 Enforcement + Compatibility Guard, superseded)
+- Updated `run_sim_1rkl.sh` to enforce MARTINI2-compatible protein topology generation for dry-MARTINI workflow:
+  - Added configurable martinize controls:
+    - `MARTINIZE_ENABLE` (default `1`)
+    - `MARTINIZE_FF` (default `martini22`)
+    - `MARTINIZE_FROM_FF` (default `charmm`)
+    - `MARTINIZE_CMD_TEMPLATE` (templated command with `{input},{cg_pdb},{top},{ff},{from_ff},{molname}`)
+  - Added `prepare_protein_inputs()` stage:
+    - runs `martinize2.py` when enabled
+    - resolves generated protein `.itp` from `.top` includes
+    - validates generated/provided protein bead types against `ff_dry/dry_martini_v2.1.itp` atomtype mass table before hybrid prep proceeds.
+- Fixed template-handling bug:
+  - Avoided bash `${...:-...}` brace conflict by assigning `MARTINIZE_CMD_TEMPLATE` default in a separate `if` block.
+- Validation:
+  - `bash -n run_sim_1rkl.sh` passes.
+  - With `MARTINIZE_ENABLE=0`, script now fails fast with explicit incompatible bead-type list (`Q5`, `TC*`, `TN*`, etc.) instead of failing later in `prepare_martini.py`.
+  - With default `MARTINIZE_ENABLE=1`, script correctly invokes martinize2 with `-ff martini22`; current local environment still lacks `vermouth`, so execution aborts early with explicit dependency hint.
+- Follow-up fixes:
+  - Corrected command-template handling for martinize placeholders (`{input}`, etc.) by avoiding bash `${...:-...}` parsing conflict.
+  - Relaxed upfront file validation so `PROTEIN_CG_PDB`/`PROTEIN_ITP` are required only when `MARTINIZE_ENABLE=0` (generated dynamically otherwise).
+
+## 2026-02-15 (Switch to martinize.py for MARTINI 2.2, no vermouth)
+- Replaced `run_sim_1rkl.sh` coarse-graining path from `martinize2.py` to local classic `martinize.py`:
+  - `MARTINIZE_SCRIPT` default is now `${SCRIPT_DIR}/martinize.py`.
+  - `run_martinize()` now runs `python3 martinize.py ... -ff martini22 -name PROA`.
+  - Removed `martinize2`/`vermouth` runtime dependency from this workflow path.
+- Kept dry-MARTINI compatibility guard:
+  - `prepare_protein_inputs()` still resolves generated `.itp` from `.top`.
+  - `assert_itp_types_have_masses()` still validates generated/provided ITP atom types against `ff_dry/dry_martini_v2.1.itp`.
+- Updated `prepare_martini.py` for martinize.py output alignment:
+  - Protein bead detection no longer depends only on `PROA` token in PDB lines.
+  - Added residue-sequence fallback mapping so martinize ITP `resnr` can map robustly when packed-PDB residue IDs differ.
+- Validation:
+  - Direct command:
+    `source ../../.venv/bin/activate && source ../../source.sh && python3 martinize.py -f pdb/1rkl.pdb -x outputs/martinize_py_validation/1rkl.MARTINI.pdb -o outputs/martinize_py_validation/1rkl.top -ff martini22 -name PROA`
+  - Log confirms forcefield selection:
+    `The martini22 forcefield will be used.`
+  - Generated protein ITP (`PROA_A.itp`) contains MARTINI2-style bead types (`Qa`, `Qd`, `P*`, `C*`) and no MARTINI3-only types (`Q5`, `TC*`, `TN*`, `SQ*`).
+
+## 2026-02-15 (Stage 6.0 HDF5 Failure Debug + Fix)
+- Investigated user-reported Stage 6.0 abort:
+  - `ERROR: error -1` followed by HDF5 close-ID diagnostics (`H5Gclose/H5Fclose`).
+- Isolated failure scope with direct run checks:
+  - `1rkl.stage_6.0.nohyb.up` (hybrid groups removed) runs successfully.
+  - Any file containing `/input/hybrid_control` triggered the failure, including minimal control-only variants.
+- Traced failure path into `../../src/martini.cpp` hybrid parser:
+  - Failure occurred during pre-runtime node-name discovery inside `read_hybrid_settings()`.
+  - Legacy HDF5 helper patterns using object-name `"."` in this path were brittle against current HDF5 behavior in this environment and produced raw `error -1` without context.
+- Implemented C++ fix in `../../src/martini.cpp`:
+  - Hardened `attribute_exists_hybrid()` so `"."` uses `H5Aexists(loc_id, ...)` directly (no object open/close aliasing risk).
+  - Removed HDF5-time node-name discovery from `read_hybrid_settings()` (`find_rotamer_node_name` / `find_sc_placement_node_name` path).
+  - Added runtime node discovery from `DerivEngine` graph in `register_hybrid_for_engine()`:
+    - `discover_rotamer_node_name_from_engine()`
+    - `discover_sc_placement_node_name_from_engine()` (prefers `placement_fixed_point_vector_only` / `placement_point_vector_only`, excludes `_CB`).
+- Rebuilt binaries:
+  - `source ../../.venv/bin/activate && source ../../source.sh && cmake --build ../../obj -j4`
+  - Build succeeded.
+- Verification:
+  - Previously failing `1rkl.stage_6.0.prepared.up` now runs successfully through minimization.
+  - Minimal full workflow smoke run now passes Stage 6.0/6.1/6.2/6.3/6.4/6.5/6.6/7.0 simulation stages with hybrid control present.
+  - Remaining downstream issue is separate: `extract_martini_vtf.py` raises boolean-mask size mismatch (`1260` vs `3758`) when using non-runtime structure mapping for this run.
+
+## 2026-02-15 (Hybrid Packing Geometry + Ion Count Corrections)
+- Addressed user-reported geometry/salinity issues in `prepare_hybrid_system.py`:
+  - Bilayer too small in XY for elongated protein.
+  - XY box edges not matching bilayer edges.
+  - Excessive NA/CL counts from full-box concentration estimate.
+- Implemented packing fixes:
+  - Added explicit lipid recognition helper for both `DOP` and `DOPC` (`lipid_resname`).
+  - Added bilayer tiling + cropping pipeline for lipids:
+    - `tile_and_crop_bilayer_lipids(...)`
+    - repeats bilayer lattice using CRYST1 tile lengths (fallback: lipid extents),
+    - crops by residue COM to target XY window.
+  - Target XY window now enforces at least one protein-length margin beyond each side of protein:
+    - `target_min = protein_min - protein_span - box_padding_xy`
+    - `target_max = protein_max + protein_span + box_padding_xy`
+  - Added XY box-edge lock to bilayer edges:
+    - `set_box_from_lipid_xy(...)` sets `box_x/box_y` from kept lipid extents and shifts all atoms so lipid min XY is exactly `0,0`.
+  - Removed global coordinate modulo wrap for all atoms (it was folding boundary lipids and breaking edge alignment).
+- Implemented ion-count correction:
+  - Added template calibration for effective ion-accessible volume:
+    - `infer_effective_ion_volume_fraction_from_template(...)`
+  - Updated salt-pair estimate to scale by this fraction:
+    - `estimate_salt_pairs(..., effective_volume_fraction=...)`
+  - Summary now records `ion_effective_volume_fraction`.
+- Updated workflow defaults:
+  - `run_sim_1rkl.sh`: `BOX_PADDING_XY` default changed from `15.0` to `0.0` (keeps minimum-margin requirement without unnecessary extra XY growth).
+- Validation:
+  - Regenerated packed system:
+    `python3 prepare_hybrid_system.py --output-dir outputs/hybrid_geom_fix_check2 ...`
+  - Verified geometry from `outputs/hybrid_geom_fix_check2/hybrid_packed.MARTINI.pdb`:
+    - protein spans: `x=34.612`, `y=11.844`
+    - required lipid spans (>=3x protein span): `x>=103.836`, `y>=35.532`
+    - actual lipid spans: `x=111.159`, `y=38.236` (passes)
+    - lipid edges exactly match box edges in XY (passes).
+  - Verified ion counts in summary:
+    - `salt_pairs_target=13`, `NA=16`, `CL=13` (down from prior ~95/92 scale).
+  - Syntax checks:
+    - `python3 -m py_compile prepare_hybrid_system.py` passed.
+    - `bash -n run_sim_1rkl.sh` passed.
+
+## 2026-02-15 (Square XY Box + DOP Naming Canonicalization)
+- Addressed new user constraints for generated `1rkl_hybrid.MARTINI.pdb`:
+  - XY must be square (set shorter side to longer side).
+  - Lipid naming must be `DOP` (not `DOPC`) in packed PDB output.
+- Updated `prepare_hybrid_system.py`:
+  - Added `canonical_lipid_resname(...)` and applied it during tiled lipid copy/output.
+  - Changed target XY planning to a square footprint:
+    - compute minimum required per-axis spans from protein extent + margin,
+    - use `square_side = max(required_x, required_y)`,
+    - crop target window to square centered on protein XY center.
+  - Updated box assignment to enforce exact square XY at write time:
+    - `set_box_from_lipid_xy(..., force_square_xy=True)` sets `box_x = box_y = max(lipid_span_x, lipid_span_y)`.
+- Validation run:
+  - `python3 prepare_hybrid_system.py ... --output-dir outputs/hybrid_square_check2`
+  - Resulting PDB metrics:
+    - `CRYST1`: `111.159 x 111.159 x 82.809` (XY square).
+    - Residues: `DOP=3892`, `DOPC=0`.
+    - Ions: `NA=41`, `CL=38` (`salt_pairs_target=38`, protein charge `-3`).
+- Updated generated runtime file:
+  - Copied `outputs/hybrid_square_check2/hybrid_packed.MARTINI.pdb` to `pdb/1rkl_hybrid.MARTINI.pdb`.
+
+## 2026-02-15 (Minimum Box Z = 3x Protein Z Span)
+- Added packed-box Z constraint in `prepare_hybrid_system.py`:
+  - `set_box_from_lipid_xy(...)` now accepts `min_box_z`.
+  - Main packing path computes `min_box_z_target = 3.0 * protein_z_span`.
+  - Final `box_z` is set to `max(current_box_z, min_box_z_target)`.
+- Added summary diagnostics:
+  - `protein_z_span`
+  - `min_box_z_target`
+- Validation:
+  - Generated `outputs/hybrid_square_z3_check/hybrid_packed.MARTINI.pdb`.
+  - Verified `CRYST1`: `111.159 x 111.159 x 110.196`.
+  - Verified protein Z span: `36.732`, so `3x = 110.196`.
+  - Confirmed `box_z >= 3x protein_z_span` (exact equality in this run).
+- Updated runtime file:
+  - Copied `outputs/hybrid_square_z3_check/hybrid_packed.MARTINI.pdb` to `pdb/1rkl_hybrid.MARTINI.pdb`.
+
+## 2026-02-15 (DOPC Name Preservation + 4-Character PDB Residue Handling)
+- Addressed lipid-name mismatch where `DOPC` was being truncated to `DOP`:
+  - `parse_pdb()` now reads residue names from `line[17:21]` (4-character support).
+  - `write_pdb()` now writes residue names with 4-character width.
+  - `canonical_lipid_resname()` now maps lipid inputs to `DOPC` (not `DOP`).
+  - Lipid chain fallback remains blank in output (no forced `A`/`B` chain), preserving template-style `DOPC    <resid>` records.
+- Regenerated packed output and replaced runtime file:
+  - Source: `outputs/hybrid_square_z3_dopc_fmt_check/hybrid_packed.MARTINI.pdb`
+  - Runtime target: `pdb/1rkl_hybrid.MARTINI.pdb`
+- Verified key line format:
+  - `ATOM     66  NC3 DOPC    1      ...`
+- Verified geometry constraints still hold after formatting fix:
+  - `CRYST1`: `111.159 x 111.159 x 110.196`
+  - `box_z >= 3x protein_z_span` (exact in this run).
+
+## 2026-02-15 (prepare_martini Residue Parse Compatibility Fix)
+- Resolved stage preparation failure:
+  - Error: `Unknown residue type 'AS' for atom 'SC1'` in `prepare_martini.py`.
+  - Root cause: `prepare_martini.py` parsed residue name using 3-char slice (`line[17:20]`), which truncated protein residues when reading 4-char residue-field PDB formatting (`" ASN"` -> `"AS"`).
+- Fix:
+  - Updated residue parsing to use 4-character residue field:
+    - `prepare_martini.py`: `residue_name = line[17:21].strip().upper()`
+- Verification:
+  - `python3 prepare_martini.py 1rkl_hybrid --stage minimization outputs/tmp_parse_fix` now succeeds.
+  - Molecule summary confirms correct residue classification:
+    - `PROTEIN: 1 chain(s) (31 residues)`
+    - `DOPC: 278 molecules`
+  - No unknown residue-type error after patch.
+
+## 2026-02-15 (Bilayer Z-Centering + Fixed-in-Space Preproduction Hold)
+- Updated packed-system Z placement in `prepare_hybrid_system.py`:
+  - `set_box_from_lipid_xy(...)` now centers lipid bilayer midplane at `box_z/2`.
+  - While centering, `box_z` is enlarged if needed so all atoms remain inside `[0, box_z]`.
+  - Existing minimum `box_z >= 3 * protein_z_span` rule remains enforced.
+  - Added summary diagnostics: `lipid_mid_z` and `box_half_z`.
+- Regenerated runtime packed PDB:
+  - `pdb/1rkl_hybrid.MARTINI.pdb` from `outputs/hybrid_zcenter_fixspace_check2/hybrid_packed.MARTINI.pdb`.
+  - Verified: `lipid_mid_z == box_half_z == 55.098` (exact), `CRYST1 Z=110.196`.
+- Updated C++ rigid-hold behavior for pre-production in `src/martini.cpp`:
+  - Added per-engine reference coordinates for fixed atoms at fixation time.
+  - `apply_fix_rigid_md(...)` now restores fixed atom positions to reference coordinates each step (in addition to zeroing forces/momenta).
+  - This converts pre-production rigid hold from “free rigid drift” to “fixed in space”.
+- Updated integration loop in `src/main.cpp`:
+  - Re-applies `apply_fix_rigid_md(...)` after barostat/box updates each MD step so fixed atoms remain anchored even under NPT scaling.
+- Build/verification:
+  - Rebuilt with `cmake --build ../../obj -j4` successfully.
+  - Runtime parse/log confirms hybrid preproduction fixed set is active (`preprod_fixed=343` in short check run).
+
+## 2026-02-15 (Packing Gap Reduction Around Protein)
+- Investigated user-observed protein–bilayer gap in `pdb/1rkl_hybrid.MARTINI.pdb`.
+- Quantified root cause:
+  - With previous default `--protein-lipid-cutoff 5.0`, nearest protein→lipid bead distance was ~`5.26 Å`, producing a visibly wide annular cavity.
+  - Lipid removal logic removes whole residues if any bead is within cutoff; high cutoff amplifies cavity size.
+- Adjustments made:
+  - `prepare_hybrid_system.py` default `--protein-lipid-cutoff` changed `5.0 -> 3.0`.
+  - `run_sim_1rkl.sh` default `PROTEIN_LIPID_CUTOFF` changed `5.0 -> 3.0`.
+  - Protein initial centering now uses lipid-only coordinates (not ions) for translation reference.
+- Validation after regeneration (`outputs/hybrid_gapfix_check/hybrid_packed.MARTINI.pdb`, copied to `pdb/1rkl_hybrid.MARTINI.pdb`):
+  - nearest protein→lipid bead distance: `~3.40 Å` (from `~5.26 Å`)
+  - median nearest distance: `~6.01 Å` (from `~8.67 Å`)
+  - bilayer Z-centering remains exact (`lipid_mid_z == box_z/2`).
+
+## 2026-02-16 (Stage 6.2 NaN Explosion Debug + Rigid Hold Stabilization)
+- Investigated user-reported Stage 6.2 immediate blow-up (`potential nan`, rapid XY box growth).
+- Verified script-level unit fix status:
+  - `run_sim_1rkl.sh` already converts step counts to Upside time units (`duration = nsteps * dt`, `frame_interval = frame_steps * dt`).
+  - User log (`--duration 500 --frame-interval 50`) was from an older invocation path.
+- Reproduced current failure on the same checkpoint with corrected time units:
+  - `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_6.2.up` still reached `nan` early when hybrid preproduction rigid mode was enabled.
+- Isolated fault domain by A/B control:
+  - Same `.up` with `/input/hybrid_control.enable=0` remained stable (no NaN).
+  - Confirms instability is in hybrid preproduction rigid handling, not baseline MARTINI stage setup.
+- First mitigation tested:
+  - Removed fixed-atom per-step coordinate rewrites from `src/martini.cpp` (`apply_fix_rigid_md` kept only force/momentum zeroing).
+  - This removed NaNs but did not keep fixed atoms stationary (`max_fixed_disp ~2.0 Å` over stage-equivalent run).
+- Final fix implemented:
+  - Added integration-level fixed-atom freeze path in `src/deriv_engine.cpp`:
+    - Build per-cycle fixed mask from `martini_fix_rigid::get_fixed_atoms(...)`.
+    - In all integration-cycle variants (standard and mass-aware), skip momentum/position updates for fixed atoms and force momentum to zero.
+  - Kept `src/martini.cpp::apply_fix_rigid_md` as force/momentum zeroing only (no hard position reset).
+  - This enforces true fixed-in-space behavior without destabilizing coordinate rewrites.
+- Rebuild:
+  - `cmake --build ../../obj -j4` succeeded.
+- Validation runs:
+  - Short replay (`--duration 0.5 --frame-interval 0.1`) on copied Stage 6.2 checkpoint: stable, no NaN.
+  - Stage-equivalent replay (`--duration 5 --frame-interval 0.5`): completed, no NaN, no barostat blow-up.
+  - Fixed-atom displacement check on output trajectory:
+    - `n_fixed=354`, `max_fixed_disp=0.0`, `mean_fixed_disp=0.0`.
+- Files modified in this debug/fix pass:
+  - `../../src/deriv_engine.cpp`
+  - `../../src/martini.cpp`
+  - `task_plan.md`
+
+## 2026-02-16 (PO4 Z-Only Constraint + Protein Full Fix in Preproduction)
+- Implemented requested preproduction constraint split:
+  - Protein atoms remain fully fixed in space (`x,y,z` locked).
+  - Lipid headgroup atoms (`PO4` roles) are constrained only along `z` (`x,y` free).
+- Updated rigid-constraint registry in `../../src/martini.cpp`:
+  - Added separate dynamic z-fixed atom set (`g_dynamic_z_fixed_atoms` / `g_z_fixed_atoms`).
+  - Added API functions:
+    - `set_dynamic_z_fixed_atoms(...)`
+    - `clear_dynamic_z_fixed_atoms(...)`
+    - `get_z_fixed_atoms(...)`
+  - Updated hybrid preproduction atom selection:
+    - `preprod_fixed_atom_indices` now includes only protein atoms.
+    - new `preprod_z_fixed_atom_indices` includes non-protein `PO4` atoms.
+  - Updated stage gating and cleanup to apply/clear both full-fixed and z-fixed sets.
+  - Updated hybrid parse log to report both counts:
+    - `preprod_fixed=<protein_count> preprod_zfixed=<po4_count>`.
+  - Updated constraint application:
+    - minimization: full-fixed zeroes all force components; z-fixed zeroes only `z` force.
+    - MD: full-fixed zeroes all force/momentum; z-fixed zeroes only `z` force/momentum.
+- Updated integrator enforcement in `../../src/deriv_engine.cpp`:
+  - Added z-fixed mask retrieval from `martini_fix_rigid::get_z_fixed_atoms(...)`.
+  - In all integration-cycle variants (mass-aware and unit-mass):
+    - full-fixed atoms skip all momentum/position updates.
+    - z-fixed atoms keep `x,y` updates, force `p_z=0`, and apply zero `z` displacement.
+- Build:
+  - `cmake --build ../../obj -j4` succeeded.
+- Validation run:
+  - Replayed Stage 6.2 checkpoint with hybrid preproduction active:
+    - command used duration/time units (`--duration 1.0 --frame-interval 0.1`).
+    - no NaN / no explosion; run completed.
+    - runtime log confirmed split sets: `preprod_fixed=65 preprod_zfixed=289`.
+  - Trajectory displacement checks from output H5:
+    - protein `max_disp = 0.0` (fully fixed in space).
+    - PO4 `max_abs_dz = 0.0` and `mean_abs_dz = 0.0` (z locked).
+    - PO4 `max_dxy = 3.978` and `mean_dxy = 0.779` (`x,y` remain mobile).
+
+## 2026-02-16 (Stage-Wise VTF Export + Mode 1/2 Support)
+- Implemented extractor mode support in `extract_martini_vtf.py`:
+  - Added CLI flag `--mode {1,2}`.
+  - `mode 1`: writes all MARTINI particles to VTF/PDB output.
+  - `mode 2`: writes non-protein MARTINI particles plus protein all-atom backbone (`N,CA,C,O`) rebuilt per BB from `input/hybrid_bb_map/reference_atom_coords` and live BB translations.
+- Refactored extraction logic for robustness:
+  - Added explicit handling for UPSIDE input/output position tensor layouts.
+  - Added resilient box-length inference from `output/box`, log fallback, MARTINI attrs, and CRYST1 fallback.
+  - Added bond remapping for filtered outputs and generated backbone bonds for mode 2 (`N-CA`, `CA-C`, `C-O`, and inter-residue `C-N`).
+  - Kept both `.vtf` and `.pdb` output support.
+- Updated workflow driver `run_sim_1rkl.sh`:
+  - Added `extract_stage_vtf()` helper.
+  - Generates VTF after every stage (`6.0`, `6.1`, `6.2`, `6.3`, `6.4`, `6.5`, `6.6`, `7.0`).
+  - Uses mode policy requested:
+    - stages `6.x` -> `--mode 1`
+    - stage `7.0` -> `--mode 2`
+  - Uses runtime packed PDB id (`$RUNTIME_PDB_ID`) for metadata alignment.
+- Verification:
+  - `python3 -m py_compile extract_martini_vtf.py` passed.
+  - `bash -n run_sim_1rkl.sh` passed.
+  - Functional extractor checks on existing stage file:
+    - mode 1 run succeeded (`4216` output particles).
+    - mode 2 run succeeded (`4275` output particles = non-protein MARTINI + backbone atoms).
+
+## 2026-02-16 (Step-Count Duration Control; dt-Independent Stage Length)
+- Implemented explicit step-count runtime control in `../../src/main.cpp`:
+  - Added new CLI option: `--duration-steps <int>`.
+  - `--duration-steps` now sets `n_round` directly (integration rounds), independent of `dt`.
+  - Preserved backward compatibility: if `--duration-steps` is not provided, legacy `--duration` (time-based) behavior is unchanged.
+  - `--duration` argument changed from required to optional; engine now requires either `--duration` or `--duration-steps`.
+  - Progress display now reports steps when `--duration-steps` is used.
+- Updated `run_sim_1rkl.sh` MD stage invocation:
+  - Uses `--duration-steps "$nsteps"` instead of time-converted `--duration`.
+  - Keeps frame interval handling unchanged.
+  - Stage log now prints `duration(steps)=...` and `frame_steps=...`.
+- Build/test:
+  - Rebuilt binaries successfully: `cmake --build ../../obj -j4`.
+  - Verified runtime behavior with a direct check:
+    - command: `... --duration-steps 20 --time-step 0.010 ...`
+    - output progress showed `0 / 20 ...`, confirming step-count mode is active and dt-independent for step count.
+
+## 2026-02-16 (Audit: MARTINI Nonbonded Interaction Source = dry_martini_v2.1.itp)
+- Performed source-path audit for MARTINI nonbonded setup:
+  - `prepare_martini.py` loads nonbonded pair parameters from `ff_dry/dry_martini_v2.1.itp` via `read_martini3_nonbond_params(...)`.
+  - Pair construction hard-fails on missing type-pair parameters (`ValueError`), so no silent fallback table is used.
+  - Runtime `../../src/martini.cpp` consumes only HDF5 `pairs` + `coefficients` for LJ/Coulomb pair evaluation.
+- Performed concrete coefficient consistency check on generated stage file:
+  - target: `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_6.2.up`
+  - result: `pairs=8881396`, `missing_pairs=0`, `eps_sigma_mismatch=0` against `ff_dry/dry_martini_v2.1.itp`.
+  - unique `(epsilon,sigma)` in `.up` all belonged to the dry table (`observed_not_in_expected=0`).
+- Clarified Coulomb path:
+  - LJ uses table-derived `epsilon/sigma`.
+  - Coulomb is computed from pair charges (`q_i*q_j`) with the MARTINI Coulomb constant / Ewald controls in `../../src/martini.cpp`.
+
+## 2026-02-16 (Fix: SC->BB Force Transfer Uses Martinize Bonded Topology Mapping)
+- Audited hybrid sidechain force flow:
+  - Probabilistic SC-environment pair forces use MARTINI pair coefficients (`epsilon/sigma/q`) from `martini_potential/coefficients`, sourced from `ff_dry/dry_martini_v2.1.itp`.
+  - Runtime SC->BB transfer was previously residue-BB direct and did not prefer bonded-topology projection metadata.
+- Implemented topology-driven transfer mapping in `prepare_hybrid_system.py`:
+  - Added `--protein-itp` input.
+  - Added martinize ITP parser for `[atoms]`, `[bonds]`, and `[constraints]` (constraints treated as very stiff edges).
+  - Added CG<->ITP index mapping with sequence-order-first alignment to handle residue index offsets between packed PDB and ITP.
+  - Added bonded-graph BB assignment for each SC proxy via shortest compliance path (`sum(1/k)`), using martinize bond force constants.
+  - `hybrid_sc_map/proj_target_indices` and `proj_weights` now explicitly encode this bonded-topology transfer mapping (default single BB target, weight 1.0).
+- Updated workflow wiring:
+  - `run_sim_1rkl.sh` now passes `--protein-itp "${PROTEIN_ITP_EFFECTIVE}"` to `prepare_hybrid_system.py`.
+- Updated runtime transfer preference in `../../src/martini.cpp`:
+  - `project_sc_gradient_if_active(...)` now applies explicit `hybrid_sc_map` projection targets/weights first.
+  - Residue-based BB lookup is retained as fallback only when explicit projection targets are unavailable.
+- Validation:
+  - `python3 -m py_compile prepare_hybrid_system.py` passed.
+  - `bash -n run_sim_1rkl.sh` passed.
+  - `cmake --build ../../obj -j4` passed.
+  - Bonded BB mapping sanity check on martinize outputs:
+    - `protein_cg_atoms=65`, `sc_nodes_mapped_to_bb_by_bonded_topology=34` (all SC proxies mapped).
+  - End-to-end prep smoke test with new `--protein-itp` completed:
+    - wrote `/tmp/hybrid_bonded_sc_map_check/hybrid_packed.MARTINI.pdb`
+    - wrote `/tmp/hybrid_bonded_sc_map_check/hybrid_mapping.h5`
+    - SC rows with missing primary BB target: `0`.

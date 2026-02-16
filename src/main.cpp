@@ -465,7 +465,10 @@ try {
     ValueArg<double> time_step_arg("", "time-step", "time step for integration (default 0.009)", 
             false, 0.009, "float", cmd);
     ValueArg<double> duration_arg("", "duration", "duration of simulation", 
-            true, -1., "float", cmd);
+            false, -1., "float", cmd);
+    ValueArg<int> duration_steps_arg("", "duration-steps",
+            "number of integration rounds to run (step count; overrides --duration when >=0)",
+            false, -1, "int", cmd);
     ValueArg<double> time_lim_arg("", "time-limit", "Run time limit of simulation in seconds (default unlimited)", 
             false, -1., "float", cmd);
     ValueArg<unsigned long> seed_arg("", "seed", "random seed (default 42)", 
@@ -597,9 +600,20 @@ try {
             inner_step = inner_step_arg.getValue();
 
         double duration = duration_arg.getValue();
+        int duration_steps = duration_steps_arg.getValue();
         double time_lim = time_lim_arg.getValue();
         bool passed_time_lim = false;
-        uint64_t n_round = round(duration / (inner_step*dt));
+        bool use_duration_steps = duration_steps >= 0;
+        uint64_t n_round = 0;
+        if(use_duration_steps) {
+            n_round = static_cast<uint64_t>(duration_steps);
+            duration = static_cast<double>(n_round) * inner_step * dt;
+        } else {
+            if(duration < 0.) {
+                throw string("Must provide either --duration or --duration-steps");
+            }
+            n_round = round(duration / (inner_step*dt));
+        }
         int thermostat_interval = max(1.,round(thermostat_interval_arg.getValue() / (inner_step*dt))); //  FIXME inner_step
         int frame_interval = max(1.,round(frame_interval_arg.getValue() / (inner_step*dt)));
         int dense_output_interval = max(1.,round(dense_frame_interval_arg.getValue() / (inner_step*dt)));
@@ -614,7 +628,8 @@ try {
             ? max(1,int(mc_interval_arg.getValue()/(inner_step*dt))) 
             : 0;
 
-        int duration_print_width = ceil(log(1+duration)/log(10));
+        double display_duration_total = use_duration_steps ? static_cast<double>(n_round) : duration;
+        int duration_print_width = ceil(log(1+display_duration_total)/log(10));
 
         bool do_recenter = !disable_recenter_arg.getValue();
         bool xy_recenter_only = do_recenter && disable_z_recenter_arg.getValue();
@@ -1087,9 +1102,12 @@ try {
 
                         // Print with conditional Rg info
                         if(verbose) {
+                            double display_elapsed = use_duration_steps
+                                ? static_cast<double>(nr)
+                                : nr*double(dt*inner_step);
                             printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg ",
-                                   duration_print_width, nr*double(dt*inner_step),
-                                   duration_print_width, duration,
+                                   duration_print_width, display_elapsed,
+                                   duration_print_width, display_duration_total,
                                    ns, sys.temperature,
                                    get_n_hbond(sys.engine));
 
@@ -1115,6 +1133,10 @@ try {
                             sys.set_temperature(anneal_temp(sys.initial_temperature, inner_step*dt*(sys.round_num+1)));
                         sys.thermostat.apply(sys.mom, sys.n_atom);
                     }
+
+                    // Enforce fixed-in-space constraints before integration so fixed atoms
+                    // do not receive a first-step kick from initialized/thermostatted momenta.
+                    martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.engine.pos->sens, sys.mom);
 
                     if  (integrator_arg.getValue() == "mv" ) {
                         sys.engine.integration_cycle(sys.mom, dt, inner_step);
@@ -1149,6 +1171,9 @@ try {
                     if(simulation_box::ewald::is_enabled(sys.engine)) {
                         simulation_box::ewald::compute_ewald_reciprocal(sys.engine);
                     }
+
+                    // Re-apply fixed-in-space constraints after barostat/box updates.
+                    martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.engine.pos->sens, sys.mom);
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
                         curvature_changer->attempt_change(base_random_seed, sys.round_num, sys, relative_curvature_radius_change);

@@ -11,6 +11,33 @@ using namespace h5;
 
 using namespace std;
 
+namespace martini_fix_rigid {
+std::vector<int> get_fixed_atoms(const DerivEngine& engine);
+std::vector<int> get_z_fixed_atoms(const DerivEngine& engine);
+}
+
+static std::vector<unsigned char> build_fixed_mask(const DerivEngine& engine, int n_atom) {
+    std::vector<unsigned char> mask(static_cast<size_t>(std::max(0, n_atom)), 0);
+    auto fixed_atoms = martini_fix_rigid::get_fixed_atoms(engine);
+    for(int atom_idx : fixed_atoms) {
+        if(atom_idx >= 0 && atom_idx < n_atom) {
+            mask[static_cast<size_t>(atom_idx)] = 1;
+        }
+    }
+    return mask;
+}
+
+static std::vector<unsigned char> build_z_fixed_mask(const DerivEngine& engine, int n_atom) {
+    std::vector<unsigned char> mask(static_cast<size_t>(std::max(0, n_atom)), 0);
+    auto z_fixed_atoms = martini_fix_rigid::get_z_fixed_atoms(engine);
+    for(int atom_idx : z_fixed_atoms) {
+        if(atom_idx >= 0 && atom_idx < n_atom) {
+            mask[static_cast<size_t>(atom_idx)] = 1;
+        }
+    }
+    return mask;
+}
+
 void
 integration_stage(
         VecArray mom,
@@ -19,12 +46,21 @@ integration_stage(
         float vel_factor,
         float pos_factor,
         float max_force,
-        int n_atom)
+        int n_atom,
+        const std::vector<unsigned char>* fixed_mask,
+        const std::vector<unsigned char>* z_fixed_mask)
 {
     for(int na=0; na<n_atom; ++na) {
+        if(fixed_mask && !fixed_mask->empty() && (*fixed_mask)[static_cast<size_t>(na)]) {
+            store_vec(mom, na, make_zero<3>());
+            continue;
+        }
+        bool z_fixed = (z_fixed_mask && !z_fixed_mask->empty() && (*z_fixed_mask)[static_cast<size_t>(na)]);
+
         // assumes unit mass for all particles
 
         auto d = load_vec<3>(deriv, na);
+        if(z_fixed) d.z() = 0.f;
         if(max_force) {
             float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
             float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
@@ -32,8 +68,13 @@ integration_stage(
         }
 
         auto p = load_vec<3>(mom, na) - vel_factor*d;
+        if(z_fixed) p.z() = 0.f;
         store_vec (mom, na, p);
-        update_vec(pos, na, pos_factor*p);
+        if(z_fixed) {
+            update_vec(pos, na, make_vec3(pos_factor*p.x(), pos_factor*p.y(), 0.f));
+        } else {
+            update_vec(pos, na, pos_factor*p);
+        }
     }
 }
 
@@ -297,6 +338,11 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
     // integrator from Predescu et al., 2012
     // http://dx.doi.org/10.1080/00268976.2012.681311
 
+    auto fixed_mask = build_fixed_mask(*this, pos->n_atom);
+    bool has_fixed = std::any_of(fixed_mask.begin(), fixed_mask.end(), [](unsigned char v) { return v != 0; });
+    auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
+    bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
+
     float a = (type==Predescu) ? 0.108991425403425322 : 1./6.;
     float b = (type==Predescu) ? 0.290485609075128726 : 1./3.;
 
@@ -311,10 +357,17 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
         if(martini_masses::has_masses(this)) {
             // Use MARTINI mass-aware integrator
             for(int na=0; na < pos->n_atom; ++na) {
+                if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
+                    store_vec(mom, na, make_zero<3>());
+                    continue;
+                }
+                bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
+
                 // Get mass for this atom from MARTINI mass storage
                 float mass = martini_masses::get_mass(this, na);
 
                 auto d = load_vec<3>(pos->sens, na);
+                if(z_fixed) d.z() = 0.f;
                 if(max_force) {
                     float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
                     float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
@@ -322,8 +375,14 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
                 }
 
                 auto p = load_vec<3>(mom, na) - dt*mom_update[stage]*d;
+                if(z_fixed) p.z() = 0.f;
                 store_vec (mom, na, p);
-                update_vec(pos->output, na, (dt*pos_update[stage]/mass)*p);
+                float scale = dt*pos_update[stage]/mass;
+                if(z_fixed) {
+                    update_vec(pos->output, na, make_vec3(scale*p.x(), scale*p.y(), 0.f));
+                } else {
+                    update_vec(pos->output, na, scale*p);
+                }
             }
         } else {
             // Use standard integrator (assumes unit mass)
@@ -332,12 +391,18 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
                     pos->output,
                     pos->sens,
                     dt*mom_update[stage], dt*pos_update[stage], max_force, 
-                    pos->n_atom);
+                    pos->n_atom,
+                    has_fixed ? &fixed_mask : nullptr,
+                    has_z_fixed ? &z_fixed_mask : nullptr);
         }
     }
 }
 
 void DerivEngine::integration_cycle(VecArray mom, float dt) {
+    auto fixed_mask = build_fixed_mask(*this, pos->n_atom);
+    bool has_fixed = std::any_of(fixed_mask.begin(), fixed_mask.end(), [](unsigned char v) { return v != 0; });
+    auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
+    bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
 
     for(int stage=0; stage<3; ++stage) {
         compute(DerivMode);   // compute derivatives
@@ -347,28 +412,58 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
         if(martini_masses::has_masses(this)) {
             // Use MARTINI mass-aware integrator
             for(int na=0; na < pos->n_atom; ++na) {
+                if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
+                    store_vec(mom, na, make_zero<3>());
+                    continue;
+                }
+                bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
+
                 // Get mass for this atom from MARTINI mass storage
                 float mass = martini_masses::get_mass(this, na);
 
                 auto d = load_vec<3>(pos->sens, na);
+                if(z_fixed) d.z() = 0.f;
 
                 auto p = load_vec<3>(mom, na) - dt*d;
+                if(z_fixed) p.z() = 0.f;
                 store_vec (mom, na, p);
-                update_vec(pos->output, na, (dt/mass)*p);
+                float scale = dt/mass;
+                if(z_fixed) {
+                    update_vec(pos->output, na, make_vec3(scale*p.x(), scale*p.y(), 0.f));
+                } else {
+                    update_vec(pos->output, na, scale*p);
+                }
             }
         } else {
             // Use standard integrator (assumes unit mass)
             for(int na=0; na < pos->n_atom; ++na) {
+                if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
+                    store_vec(mom, na, make_zero<3>());
+                    continue;
+                }
+                bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
+
                 auto d = load_vec<3>(pos->sens, na);
+                if(z_fixed) d.z() = 0.f;
                 auto p = load_vec<3>(mom, na) - dt*d;
+                if(z_fixed) p.z() = 0.f;
                 store_vec (mom,   na, p);
-                update_vec(pos->output, na, dt*p);
+                if(z_fixed) {
+                    update_vec(pos->output, na, make_vec3(dt*p.x(), dt*p.y(), 0.f));
+                } else {
+                    update_vec(pos->output, na, dt*p);
+                }
             }
         }
     }
 }
 
 void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
+    auto fixed_mask = build_fixed_mask(*this, pos->n_atom);
+    bool has_fixed = std::any_of(fixed_mask.begin(), fixed_mask.end(), [](unsigned char v) { return v != 0; });
+    auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
+    bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
+
     // calculate acceleration, update velocity for slow level
     compute(DerivMode, 1); 
     
@@ -376,9 +471,16 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
     if(martini_masses::has_masses(this)) {
         // Use MARTINI mass-aware integrator for slow level
         for(int na=0; na < pos->n_atom; ++na) {
-            float mass = martini_masses::get_mass(this, na);
+            if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
+                store_vec(mom, na, make_zero<3>());
+                continue;
+            }
+            bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
+
             auto d = load_vec<3>(pos->sens, na);
+            if(z_fixed) d.z() = 0.f;
             auto p = load_vec<3>(mom, na) - inner_step*dt*d;
+            if(z_fixed) p.z() = 0.f;
             store_vec (mom, na, p);
         }
         
@@ -386,18 +488,39 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
         for(int i=0;i<inner_step;i++) {
             compute(DerivMode, 0);
             for(int na=0; na < pos->n_atom; ++na) {
+                if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
+                    store_vec(mom, na, make_zero<3>());
+                    continue;
+                }
+                bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
+
                 float mass = martini_masses::get_mass(this, na);
                 auto d = load_vec<3>(pos->sens, na);
+                if(z_fixed) d.z() = 0.f;
                 auto p = load_vec<3>(mom, na) - dt*d;
+                if(z_fixed) p.z() = 0.f;
                 store_vec (mom, na, p);
-                update_vec(pos->output, na, (dt/mass)*p);
+                float scale = dt/mass;
+                if(z_fixed) {
+                    update_vec(pos->output, na, make_vec3(scale*p.x(), scale*p.y(), 0.f));
+                } else {
+                    update_vec(pos->output, na, scale*p);
+                }
             }
         }
     } else {
         // Use standard integrator (assumes unit mass) for slow level
         for(int na=0; na < pos->n_atom; ++na) {
+            if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
+                store_vec(mom, na, make_zero<3>());
+                continue;
+            }
+            bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
+
             auto d = load_vec<3>(pos->sens, na);
+            if(z_fixed) d.z() = 0.f;
             auto p = load_vec<3>(mom, na) - inner_step*dt*d;
+            if(z_fixed) p.z() = 0.f;
             store_vec (mom,   na, p);
         }
         
@@ -405,10 +528,22 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
         for(int i=0;i<inner_step;i++) {
             compute(DerivMode, 0);
             for(int na=0; na < pos->n_atom; ++na) {
+                if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
+                    store_vec(mom, na, make_zero<3>());
+                    continue;
+                }
+                bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
+
                 auto d = load_vec<3>(pos->sens, na);
+                if(z_fixed) d.z() = 0.f;
                 auto p = load_vec<3>(mom, na) - dt*d;
+                if(z_fixed) p.z() = 0.f;
                 store_vec (mom,   na, p);
-                update_vec(pos->output, na, dt*p);
+                if(z_fixed) {
+                    update_vec(pos->output, na, make_vec3(dt*p.x(), dt*p.y(), 0.f));
+                } else {
+                    update_vec(pos->output, na, dt*p);
+                }
             }
         }
     }

@@ -24,6 +24,11 @@
 
 using namespace h5;
 
+namespace martini_hybrid {
+bool preproduction_requires_rigid(const DerivEngine& engine);
+bool is_hybrid_active(const DerivEngine& engine);
+}
+
 // Local helper to check if an HDF5 attribute exists
 // (Mirrors the function in martini.cpp)
 static inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* attr_name) {
@@ -355,6 +360,15 @@ void maybe_apply_barostat(DerivEngine& engine,
     auto& st = it->second;
     auto& s = st.settings;
     if(!s.enabled) return;
+
+    // Hybrid preproduction can pin protein/PO4 atoms in absolute coordinates.
+    // Combining that with barostat coordinate scaling introduces artificial
+    // bond stretching and can destabilize integration. Skip NPT in this regime.
+    if(martini_hybrid::preproduction_requires_rigid(engine) &&
+       !martini_hybrid::is_hybrid_active(engine)) {
+        return;
+    }
+
     if(s.interval <= 0) return;
     if(round_num == 0 || (round_num % s.interval) != 0) return;
     
