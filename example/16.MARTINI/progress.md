@@ -258,6 +258,33 @@
 - Final compatibility adjustment:
   - Added C++ fallback mapping of existing SC rows to placement groups by `(residue_index, rotamer_id)` even when row expansion is not triggered.
   - Rebuilt again after this adjustment (`cmake --build ../../obj -j4`) and re-verified `rotamer/node_lookup` + `rotamer/node_marginal` API access via `upside_engine.py`.
+
+## 2026-02-16 (Production MARTINI Protein-Interaction Rule Audit)
+- Re-read `task_plan.md` and audited production-stage interaction gating in `../../src/martini.cpp`.
+- Confirmed runtime filters are applied in all relevant paths while hybrid is active:
+  - Nonbonded pair loop (`martini_potential`) via `skip_pair_if_intra_protein` and `allow_protein_pair_by_rule`.
+  - Bonded pair loop (`dist_spring`) via `allow_intra_protein_pair_if_active`.
+  - Multi-body bonded terms (`angle_spring`, `dihedral_spring`) via `allow_multibody_term_if_active`.
+- Verified stage gating metadata in checkpoints:
+  - `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_6.2.up`: `current_stage=minimization`, `activation_stage=production`.
+  - `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`: `current_stage=production`, `activation_stage=production`.
+- Ran direct production checkpoint census (`1rkl.stage_7.0.up`) using `/input/atom_roles`, `/input/residue_ids`, `/input/hybrid_env_topology/protein_membership`:
+  - Nonbonded intra-protein pairs (`/input/potential/martini_potential/pairs`):
+    - `BB-BB`: `435`, allowed by rule: `0`.
+    - `SC-SC`: `552`, allowed by rule: `0`.
+    - `BB-SC diff-res`: `1020`, allowed by rule: `0`.
+    - `BB-SC same-res`: `6`, allowed by rule: `6`.
+  - Bonded intra-protein pairs (`/input/potential/dist_spring/id`):
+    - `BB-BB`: `30`, allowed by rule: `0`.
+    - `SC-SC`: `9`, allowed by rule: `0`.
+    - `BB-SC same-res`: `28`, allowed by rule: `28`.
+  - Multi-body bonded terms:
+    - `angle_spring`: intra-protein terms `0`.
+    - `dihedral_spring`: intra-protein terms `3`, allowed by rule: `0` (all blocked).
+- Conclusion: production-stage runtime behavior matches requested rules:
+  1. No MARTINI BB-BB.
+  2. No MARTINI SC-SC.
+  3. MARTINI SC-BB only for same residue.
 - Sidechain-to-backbone force-transfer enforcement:
   - Confirmed current generated mapping can contain SC projection targets pointing to SC proxy indices (not BB) due key-space mismatch between AA and CG residue keys.
   - Updated `../../src/martini.cpp` to enforce runtime SC force projection onto corresponding residue MARTINI `BB` target (`sc_row_bb_target`) derived from `sc_residue_index` + `bb_residue_index/bb_atom_index`.
@@ -666,3 +693,47 @@
     - wrote `/tmp/hybrid_bonded_sc_map_check/hybrid_packed.MARTINI.pdb`
     - wrote `/tmp/hybrid_bonded_sc_map_check/hybrid_mapping.h5`
     - SC rows with missing primary BB target: `0`.
+
+## 2026-02-16 (Stage Gating Audit: Backbone/Hybrid Activation Only in Production)
+- Audited pre-production vs production activation path in C++ runtime:
+  - `register_hybrid_for_engine(...)` computes `active = (current_stage == activation_stage)`.
+  - Pre-production rigid mode applies full protein fixed-mask (`x,y,z`) while hybrid is inactive.
+  - MARTINI potential hybrid projections (`refresh_bb_positions_if_active`, SC probabilistic projection, BB/SC gradient projection) are all guarded by `st.active`.
+- Found and fixed a stage-transition edge case in minimization mode:
+  - `../../src/main.cpp` previously forced `switch_simulation_stage(..., \"production\")` after minimization.
+  - Updated behavior to restore the original pre-minimization stage instead.
+  - This prevents accidental production-only activation during pre-production minimization runs.
+- Added explicit runtime logging fields for verification:
+  - `current_stage` and `hybrid_active` are now printed in the hybrid parse line in `../../src/martini.cpp`.
+- Validation checks:
+  - Build passed: `cmake --build ../../obj -j4`.
+  - Pre-production file (`1rkl.stage_6.2.up`) reports:
+    - `current_stage=minimization`, `activation_stage=production`, `hybrid_active=0`.
+  - Production file (`1rkl.stage_7.0.up`) reports:
+    - `current_stage=production`, `activation_stage=production`, `hybrid_active=1`.
+  - Pre-production minimization run (`1rkl.stage_6.0.up --minimize`) now switches:
+    - `minimization -> minimization` (restored), not to `production`.
+  - Coordinate check on pre-production trajectory (`1rkl.stage_6.2.up`) confirms rigid hold:
+    - protein `max_disp=0.0`, `mean_disp=0.0`.
+
+## 2026-02-16 (Production Protein MARTINI Interaction Rules Enforced)
+- Requirement checked and implemented for production-stage protein MARTINI interactions:
+  - no BB-BB (bonded + nonbonded),
+  - no SC-SC (bonded + nonbonded),
+  - BB-SC only when both atoms belong to the same residue.
+- Runtime implementation updates in `../../src/martini.cpp`:
+  - Added atom role/residue metadata capture in hybrid runtime state (`atom_role_class`, `atom_residue_id`) from `/input/atom_roles` and `/input/residue_ids`.
+  - Added pair-rule helpers for protein intra-interactions and multibody filtering.
+  - Updated nonbonded pair skip logic (`skip_pair_if_intra_protein`) to apply selective rule instead of global intra-protein exclusion.
+  - Applied same rule to bonded/multibody terms during hybrid-active production:
+    - `dist_spring` filters disallowed protein pairs.
+    - `angle_spring` and `dihedral_spring` filter any term containing disallowed protein atom-pair combinations.
+- Build/test:
+  - Rebuilt successfully: `cmake --build ../../obj -j4`.
+  - Data-level audit on production file `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`:
+    - protein bonded pairs in file:
+      - BB-BB: `30`, SC-SC: `9`, BB-SC same-res: `28`.
+      - runtime rule keeps only BB-SC same-res; filters BB-BB + SC-SC.
+    - protein intra nonbonded pairs in file:
+      - total `2013`, BB-BB `435`, SC-SC `552`, BB-SC same-res `6`, BB-SC diff-res `1020`.
+      - runtime rule allows only `6` same-res BB-SC pairs; all others filtered.

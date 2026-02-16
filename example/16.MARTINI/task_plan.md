@@ -9,7 +9,7 @@
 - MARTINI protein backbone beads (`BB`) are computed from COM of mapped `N, CA, C, O` atoms each cycle; no per-step rebuilding of atoms from BB.
 - Dry-MARTINI forces on protein `BB`/mapped sidechain proxies are projected onto protein atoms/DOFs in Upside; Upside then applies its own force field update.
 - Hybrid force exchange is disabled before production stage; pre-production keeps protein rigid to relax environment.
-- All MARTINI interactions within the same protein are disabled to avoid double-counting protein internal physics already modeled by Upside.
+- In production-stage hybrid mode, MARTINI intra-protein interactions are selectively filtered to avoid double-counting protein internal physics already modeled by Upside: no BB-BB, no SC-SC, and BB-SC only for same residue.
 - Rotamer mapping is used only for protein-environment coupling, not protein-protein or intra-protein sidechain interactions.
 - Hybrid `.up` schema will add dedicated groups under `/input`: `hybrid_control`, `hybrid_bb_map`, `hybrid_sc_map`, and `hybrid_env_topology`.
 - Add optional rigid-body drift control for Upside protein motion in production: RMSD alignment or equivalent COM+rotation removal mode, enabled by configuration and evaluated for physical side effects.
@@ -37,7 +37,10 @@
 ## Revised Decisions
 - Hybrid coupling starts only at production stage; pre-production protein remains rigid.
 - Pre-production rigid hold keeps the entire protein fully fixed in space (`x,y,z`) while lipid `PO4` headgroup beads are constrained only along `z` (`x,y` remain free); other lipid beads remain unconstrained.
-- MARTINI intra-protein interactions are globally excluded for this hybrid mode.
+- MARTINI intra-protein interactions in production hybrid mode follow selective rules:
+  - no BB-BB (bonded or nonbonded),
+  - no SC-SC (bonded or nonbonded),
+  - BB-SC allowed only for same residue.
 - BB MARTINI positions are derived each cycle from COM of Upside `N,CA,C,O`; no inverse backbone reconstruction from BB.
 - Deterministic single-rotamer sidechain projection in C++ is removed; sidechain coupling uses per-rotamer probabilistic mapping rows from `hybrid_sc_map`.
 - Sidechain probabilistic projection/force evaluation is implemented in Upside C++ runtime and is active only during production-stage hybrid coupling; preparation scripts remain unchanged for pre-production rigid setup.
@@ -47,6 +50,7 @@
 - Probabilistic sidechain weights in production will use live Upside rotamer marginals from C++ runtime rotamer state when available, with fallback to static `hybrid_sc_map/rotamer_probability` only when rotamer marginals are unavailable.
 - Hybrid runtime may add ordering dependencies so rotamer/placement sidechain states are computed before MARTINI coupling each step; this is a scheduling change only (no Python preparation changes).
 - Sidechain-environment force transfer in hybrid production prefers explicit `hybrid_sc_map` projection targets/weights generated from martinize bonded topology, with residue-based MARTINI `BB` target lookup retained only as fallback.
+- Production-stage MARTINI protein interaction filtering is runtime-enforced in C++ (based on `protein_membership`, `atom_roles`, and `residue_ids`) so non-production stages remain unaffected while protein is rigid.
 - Preparation exports per-`BB` backbone reference metadata (`N,CA,C,O` atom indices/coordinates plus comment strings) in `hybrid_bb_map` for auditability; this metadata does not override runtime coordinate arrays unless explicitly mapped into runtime index space.
 - Runtime hybrid scheduling enforces `martini_potential` execution after all coordinate-node updates each integration sub-step, so MARTINI coupling always consumes the latest backbone-derived coordinates for that sub-step.
 - `run_sim_1rkl.sh` defaults to MARTINI2.2 protein coarse-graining via local `martinize.py` (`-ff martini22`) and performs a preflight protein-ITP-vs-dry-FF mass compatibility check to prevent silent MARTINI3/dry-MARTINI mixing.
@@ -65,3 +69,4 @@
 - VTF export is stage-wise: modes are `mode 1` (all MARTINI particles) for non-production stages and `mode 2` (non-protein MARTINI + protein all-atom backbone backmapped from `hybrid_bb_map`) for production stage.
 - Upside CLI supports `--duration-steps` for step-count-driven stage lengths, and `run_sim_1rkl.sh` uses it so stage step counts are independent of `dt`.
 - Sidechain-to-backbone force transfer mapping will prefer explicit `hybrid_sc_map` projection targets/weights (prepared from martinize.py protein bonded topology/force constants) with BB-residue lookup retained only as runtime fallback.
+- Minimization mode no longer forces a post-minimization stage switch to `production`; runtime now restores the pre-minimization stage label to prevent production-only hybrid/UpSide activation in pre-production stage files.

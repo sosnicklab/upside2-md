@@ -1016,11 +1016,14 @@ try {
                 double mstep = min_step_arg.getValue();
                 if(verbose) printf("\nMINIMIZATION: starting...\n");
                 for(System& sys: systems) {
+                    const std::string stage_before_min =
+                        martini_stage_params::get_current_stage(&sys.engine);
                     // Switch to minimization stage before minimization
                     martini_stage_params::switch_simulation_stage(&sys.engine, "minimization");
                     martini_run_minimization(sys.engine, it, etol, ftol, mstep, verbose);
-                    // Switch to production stage after minimization
-                    martini_stage_params::switch_simulation_stage(&sys.engine, "production");
+                    // Restore the pre-minimization stage so production-only logic
+                    // is not spuriously activated for pre-production files.
+                    martini_stage_params::switch_simulation_stage(&sys.engine, stage_before_min);
                     // Save a frame immediately after minimization so downstream stages can pick it up
                     // This ensures /output/pos exists even if duration is 0
                     sys.engine.compute(PotentialAndDerivMode);

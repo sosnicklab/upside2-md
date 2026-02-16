@@ -267,6 +267,11 @@ std::string get_current_stage(DerivEngine* engine);
 
 namespace martini_hybrid {
 static std::mutex g_hybrid_mutex;
+enum AtomRoleClass : unsigned char {
+    ROLE_OTHER = 0,
+    ROLE_BB = 1,
+    ROLE_SC = 2
+};
 
 struct HybridRuntimeState {
     struct PlacementStateGroup {
@@ -292,6 +297,8 @@ struct HybridRuntimeState {
     std::vector<std::array<int,4>> atom_mask;
     std::vector<std::array<float,4>> weights;
     std::vector<int> protein_membership;
+    std::vector<int> atom_residue_id;
+    std::vector<unsigned char> atom_role_class;
     std::string rotamer_node_name;
     std::string placement_node_name;
     DerivComputation* rotamer_node = nullptr;
@@ -353,6 +360,76 @@ static std::vector<std::string> split_csv_tokens(const std::string& s) {
     auto t = trim_token(cur);
     if(!t.empty()) out.push_back(t);
     return out;
+}
+
+static inline unsigned char classify_atom_role_name(const std::string& raw_name) {
+    size_t begin = 0;
+    while(begin < raw_name.size() &&
+          (raw_name[begin] == '\0' || std::isspace(static_cast<unsigned char>(raw_name[begin])))) {
+        ++begin;
+    }
+    size_t end = raw_name.size();
+    while(end > begin &&
+          (raw_name[end - 1] == '\0' || std::isspace(static_cast<unsigned char>(raw_name[end - 1])))) {
+        --end;
+    }
+    std::string name = raw_name.substr(begin, end - begin);
+    for(char& c : name) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    if(name == "BB") return ROLE_BB;
+    if(name.size() >= 2 && name[0] == 'S' && name[1] == 'C') return ROLE_SC;
+    return ROLE_OTHER;
+}
+
+static inline bool same_protein_membership_pair(const HybridRuntimeState& st, int i, int j) {
+    if(i < 0 || j < 0) return false;
+    if(i >= (int)st.protein_membership.size() || j >= (int)st.protein_membership.size()) return false;
+    int pi = st.protein_membership[i];
+    int pj = st.protein_membership[j];
+    return (pi >= 0 && pj >= 0 && pi == pj);
+}
+
+static inline bool same_residue_pair(const HybridRuntimeState& st, int i, int j) {
+    if(i < 0 || j < 0) return false;
+    if(i >= (int)st.atom_residue_id.size() || j >= (int)st.atom_residue_id.size()) return false;
+    int ri = st.atom_residue_id[i];
+    int rj = st.atom_residue_id[j];
+    return (ri >= 0 && rj >= 0 && ri == rj);
+}
+
+static inline unsigned char atom_role_class_at(const HybridRuntimeState& st, int i) {
+    if(i < 0 || i >= (int)st.atom_role_class.size()) return ROLE_OTHER;
+    return st.atom_role_class[i];
+}
+
+static inline bool allow_protein_pair_by_rule(const HybridRuntimeState& st, int i, int j) {
+    auto ri = atom_role_class_at(st, i);
+    auto rj = atom_role_class_at(st, j);
+    if(ri == ROLE_BB && rj == ROLE_BB) return false;
+    if(ri == ROLE_SC && rj == ROLE_SC) return false;
+    if((ri == ROLE_BB && rj == ROLE_SC) || (ri == ROLE_SC && rj == ROLE_BB)) {
+        return same_residue_pair(st, i, j);
+    }
+    // Any other protein-protein role combination is disallowed by default.
+    return false;
+}
+
+static inline bool allow_intra_protein_pair_if_active(const HybridRuntimeState& st, int i, int j) {
+    if(!st.enabled || !st.active) return true;
+    if(!same_protein_membership_pair(st, i, j)) return true;
+    return allow_protein_pair_by_rule(st, i, j);
+}
+
+static inline bool allow_multibody_term_if_active(const HybridRuntimeState& st, const index_t* atoms, int n_atom_dep) {
+    if(!st.enabled || !st.active) return true;
+    for(int a = 0; a < n_atom_dep; ++a) {
+        for(int b = a + 1; b < n_atom_dep; ++b) {
+            int ia = atoms[a];
+            int ib = atoms[b];
+            if(!same_protein_membership_pair(st, ia, ib)) continue;
+            if(!allow_protein_pair_by_rule(st, ia, ib)) return false;
+        }
+    }
+    return true;
 }
 
 static inline bool attribute_exists_hybrid(hid_t loc_id, const char* obj_name, const char* attr_name) {
@@ -725,6 +802,27 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         throw string("Hybrid mode enabled but /input/hybrid_env_topology is missing");
     }
 
+    out.atom_residue_id.assign(static_cast<size_t>(n_atom), -1);
+    if(h5_exists(root, "/input/residue_ids")) {
+        auto residue_shape = get_dset_size(1, root, "/input/residue_ids");
+        if(static_cast<int>(residue_shape[0]) == n_atom) {
+            traverse_dset<1,int>(root, "/input/residue_ids", [&](size_t i, int v) {
+                out.atom_residue_id[i] = v;
+            });
+        }
+    }
+
+    out.atom_role_class.assign(static_cast<size_t>(n_atom), ROLE_OTHER);
+    if(h5_exists(root, "/input/atom_roles")) {
+        traverse_string_dset<1>(root, "/input/atom_roles", [&](size_t i, const std::string& v) {
+            if(static_cast<int>(i) < n_atom) out.atom_role_class[i] = classify_atom_role_name(v);
+        });
+    } else if(h5_exists(root, "/input/atom_names")) {
+        traverse_string_dset<1>(root, "/input/atom_names", [&](size_t i, const std::string& v) {
+            if(static_cast<int>(i) < n_atom) out.atom_role_class[i] = classify_atom_role_name(v);
+        });
+    }
+
     if(out.preprod_rigid && !out.protein_membership.empty()) {
         std::set<std::string> lipid_head_roles{"PO4"};
         std::string role_csv = read_string_attribute_or_default(
@@ -1044,8 +1142,10 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
     }
     if(st->has_config && st->enabled) {
-        printf("Hybrid input parsed: activation_stage=%s preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
+        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
+               current_stage.c_str(),
                st->activation_stage.c_str(),
+               st->active ? 1 : 0,
                st->preprod_mode.c_str(),
                st->n_bb,
                st->n_env,
@@ -1385,11 +1485,7 @@ void project_sc_gradient_if_active(
 
 inline bool skip_pair_if_intra_protein(const HybridRuntimeState& st, int i, int j) {
     if(!st.enabled || !st.active || !st.exclude_intra_protein_martini) return false;
-    if(i < 0 || j < 0) return false;
-    if(i >= (int)st.protein_membership.size() || j >= (int)st.protein_membership.size()) return false;
-    int pi = st.protein_membership[i];
-    int pj = st.protein_membership[j];
-    return (pi >= 0 && pj >= 0 && pi == pj);
+    return !allow_intra_protein_pair_if_active(st, i, j);
 }
 
 void clear_hybrid_for_engine(DerivEngine* engine) {
@@ -1662,11 +1758,15 @@ struct DihedralSpring : public PotentialNode
 
         float* posc = pos.output.x.get();
         float* pos_sens = pos.sens.x.get();
+        auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
         if(pot) *pot = 0.f;
 
         for(int nt=0; nt<n_elem; ++nt) {
             const auto& p = params[nt];
+            if(hybrid_state && !martini_hybrid::allow_multibody_term_if_active(*hybrid_state, p.atom, 4)) {
+                continue;
+            }
             Float4 x_orig[4];
             for(int na: range(4)) x_orig[na] = Float4(posc + 4*params[nt].atom[na]);
 
@@ -2749,11 +2849,15 @@ struct DistSpring : public PotentialNode
 
         VecArray posc = pos.output;
         VecArray pos_sens = pos.sens;
+        auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
         if(pot) *pot = 0.f;
 
         for(int nt=0; nt<n_elem; ++nt) {
             auto& p = params[nt];
+            if(hybrid_state && !martini_hybrid::allow_intra_protein_pair_if_active(*hybrid_state, p.atom[0], p.atom[1])) {
+                continue;
+            }
 
             auto x1 = load_vec<3>(posc, p.atom[0]);
             auto x2 = load_vec<3>(posc, p.atom[1]);
@@ -2942,11 +3046,15 @@ struct AngleSpring : public PotentialNode
 
         VecArray posc = pos.output;
         VecArray pos_sens = pos.sens;
+        auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
         if(pot) *pot = 0.f;
 
         for(int nt=0; nt<n_elem; ++nt) {
             auto& p = params[nt];
+            if(hybrid_state && !martini_hybrid::allow_multibody_term_if_active(*hybrid_state, p.atom, 3)) {
+                continue;
+            }
             
             // Step 1: Load atomic positions
             auto x_orig1 = load_vec<3>(posc, p.atom[0]);
