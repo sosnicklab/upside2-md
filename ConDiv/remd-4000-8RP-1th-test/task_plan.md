@@ -40,3 +40,21 @@ Debug `prepare_rcsb_upside_input.py` crash caused by `http.client.IncompleteRead
 
 ### Known Errors / Blockers
 - Live end-to-end validation is still limited by this environment's network restrictions.
+
+## Active Debug Task (2026-02-16)
+
+### Project Goal
+Debug repeated `TypeError: model must be an integer, 1 is invalid` during NMR conversion and determine why accepted NMR count is zero.
+
+### Architecture & Key Decisions
+- Keep dataset filter semantics unchanged; isolate fix to argument typing at the converter boundary.
+- Enforce integer typing for model selectors in both caller (`prepare_rcsb_upside_input.py`) and callee (`py/PDB_to_initial_structure.py`) to prevent string propagation.
+- Use existing `manifest.csv` reason codes to identify where NMR entries were filtered out in the current run.
+
+### Execution Phases
+- [x] Phase A: Trace failure path for `--model` from NMR branch to ProDy parser.
+- [x] Phase B: Apply minimal typing fixes for model arguments.
+- [x] Phase C: Validate on local previously failing NMR samples and summarize filter-stage breakdown from manifest.
+
+### Known Errors / Blockers
+- `rcsb_dataset_all/manifest.csv` and list outputs were generated before this fix; a fresh full run is required to produce updated accepted-NMR counts.

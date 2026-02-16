@@ -105,7 +105,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('pdb', help='input .pdb file')
     parser.add_argument('basename', help='output basename')
-    parser.add_argument('--model', default=None, help='Choose only a specific model in the .pdb')
+    parser.add_argument('--model', type=int, default=None, help='Choose only a specific model in the .pdb')
     parser.add_argument('--chains', default='', 
             help='Comma-separated list of chains to parse (e.g. --chains=A,C,E). Default is all chains.')
     parser.add_argument('--allow-unexpected-chain-breaks', default=False, action='store_true', 

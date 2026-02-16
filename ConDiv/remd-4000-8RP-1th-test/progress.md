@@ -37,3 +37,9 @@
 - 2026-02-14: Hardened network path in `prepare_rcsb_upside_input.py` by adding retry/backoff support for search POST, entry metadata GET, and PDB download reads; added CLI knobs `--network-retries` and `--network-retry-backoff`.
 - 2026-02-14: Updated row-level error handling to catch exhausted incomplete/URL transport failures and record manifest reasons (`entry_fetch_failed:*`, `download_failed:*`) instead of aborting the run.
 - 2026-02-14: Validation: `python3 -m py_compile prepare_rcsb_upside_input.py` passed; live network run not validated in this environment.
+- 2026-02-16: Investigated repeated NMR traceback `TypeError: model must be an integer, 1 is invalid`; traced call chain `prepare_rcsb_upside_input.py -> py/PDB_to_initial_structure.py -> prody.parsePDB`.
+- 2026-02-16: Updated `prepare_rcsb_upside_input.py` so `--nmr-model` is parsed as `int` (default `1`) instead of string.
+- 2026-02-16: Updated `../../py/PDB_to_initial_structure.py` so `--model` is parsed as `int`; this fixes ProDy model-type mismatch.
+- 2026-02-16: Analyzed `rcsb_dataset_all/manifest.csv` and confirmed current run has `Accepted NMR: 0` with NMR skip reasons: `converter_failed` (7235), `length_out_of_range` (2821), `not_single_chain` (1670), `not_protein_entry` (1618), `membrane_related_entry` (1330), `contains_heme` (104), `download_http_error:404` (8).
+- 2026-02-16: Validation: converter re-run on 10 previously `converter_failed` NMR IDs (`6f3k`, `1m8m`, `1nh4`, `2jsv`, `2ju6`, `2jzz`, `2k0p`, `2kq4`, `2krj`, `2l3z`) succeeded 10/10 after model-type fix.
+- 2026-02-16: Validation: syntax check via in-memory `compile()` passed for `prepare_rcsb_upside_input.py` and `../../py/PDB_to_initial_structure.py`.

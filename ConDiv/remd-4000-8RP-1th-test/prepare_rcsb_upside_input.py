@@ -119,7 +119,8 @@ def parse_args():
     )
     p.add_argument(
         "--nmr-model",
-        default="1",
+        type=int,
+        default=1,
         help="Model index to extract from NMR PDB files (passed to PDB_to_initial_structure.py --model)",
     )
     p.add_argument(
