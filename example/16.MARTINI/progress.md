@@ -737,3 +737,15 @@
     - protein intra nonbonded pairs in file:
       - total `2013`, BB-BB `435`, SC-SC `552`, BB-SC same-res `6`, BB-SC diff-res `1020`.
       - runtime rule allows only `6` same-res BB-SC pairs; all others filtered.
+
+## 2026-02-16 (Utility: Production-Only Stage 7 Runner for Faster Debug)
+- Added `test_prod_run_sim_1rkl.sh` to run only production stage `7.0`, assuming stages `6.0-6.6` and hybrid-prep artifacts already exist.
+- Script behavior mirrors the production block in `run_sim_1rkl.sh`:
+  - validates required artifacts (`stage_6.6.up`, runtime hybrid PDB/ITP, `hybrid_mapping.h5`),
+  - prepares `stage_7.0.prepared.up` with production stage label and hybrid mapping injection,
+  - initializes `stage_7.0.up` from `stage_6.6.up`,
+  - runs production MD using `--duration-steps` and time-based frame interval conversion,
+  - extracts production VTF in mode `2`.
+- File permissions and syntax checks:
+  - `chmod +x test_prod_run_sim_1rkl.sh`
+  - `bash -n test_prod_run_sim_1rkl.sh` passed.
