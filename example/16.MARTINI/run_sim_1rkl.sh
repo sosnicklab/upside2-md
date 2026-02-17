@@ -103,8 +103,13 @@ EQ_FRAME_STEPS="${EQ_FRAME_STEPS:-1000}"
 PROD_FRAME_STEPS="${PROD_FRAME_STEPS:-5000}"
 
 COMP_3E4_BAR_INV_TO_A3_PER_EUP="${COMP_3E4_BAR_INV_TO_A3_PER_EUP:-14.521180763676}"
-export UPSIDE_NPT_TARGET_PXY="${UPSIDE_NPT_TARGET_PXY:-0.0}"
-export UPSIDE_NPT_TARGET_PZ="${UPSIDE_NPT_TARGET_PZ:-0.0}"
+# Unit conversion from AGENTS.md:
+#   1 bar = 0.000020659477 E_up / Angstrom^3
+BAR_1_TO_EUP_PER_A3="${BAR_1_TO_EUP_PER_A3:-0.000020659477}"
+NPT_REF_P_ZERO="${NPT_REF_P_ZERO:-0.0}"
+NPT_REF_P_ONE_BAR="${NPT_REF_P_ONE_BAR:-$BAR_1_TO_EUP_PER_A3}"
+export UPSIDE_NPT_TARGET_PXY="${UPSIDE_NPT_TARGET_PXY:-$NPT_REF_P_ZERO}"
+export UPSIDE_NPT_TARGET_PZ="${UPSIDE_NPT_TARGET_PZ:-$NPT_REF_P_ZERO}"
 export UPSIDE_NPT_TAU="${UPSIDE_NPT_TAU:-4.0}"
 export UPSIDE_NPT_COMPRESSIBILITY="${UPSIDE_NPT_COMPRESSIBILITY:-$COMP_3E4_BAR_INV_TO_A3_PER_EUP}"
 export UPSIDE_NPT_COMPRESSIBILITY_XY="${UPSIDE_NPT_COMPRESSIBILITY_XY:-$COMP_3E4_BAR_INV_TO_A3_PER_EUP}"
@@ -806,6 +811,27 @@ prepare_stage_file() {
     fi
 }
 
+set_stage_npt_targets() {
+    local stage_label="$1"
+    case "$stage_label" in
+        6.0|6.1)
+            # CHARMM-GUI step6.0/6.1 minimization.mdp: ref_p = 0.0 0.0
+            export UPSIDE_NPT_TARGET_PXY="$NPT_REF_P_ZERO"
+            export UPSIDE_NPT_TARGET_PZ="$NPT_REF_P_ZERO"
+            ;;
+        6.2|6.3|6.4|6.5|6.6)
+            # CHARMM-GUI step6.2-6.6 equilibration.mdp: ref_p defaults to 1 bar.
+            # semi-isotropic coupling keeps z compressibility at 0.0, so z scaling remains disabled.
+            export UPSIDE_NPT_TARGET_PXY="$NPT_REF_P_ONE_BAR"
+            export UPSIDE_NPT_TARGET_PZ="$NPT_REF_P_ONE_BAR"
+            ;;
+        *)
+            return
+            ;;
+    esac
+    echo "NPT targets for stage ${stage_label}: Pxy=${UPSIDE_NPT_TARGET_PXY}, Pz=${UPSIDE_NPT_TARGET_PZ} (E_up/Angstrom^3)"
+}
+
 run_minimization_stage() {
     local stage_label="$1"
     local up_file="$2"
@@ -915,12 +941,14 @@ echo
 prepare_hybrid_artifacts
 
 # 6.0: soft-core minimization (pre-production / hybrid inactive)
+set_stage_npt_targets "6.0"
 prepare_stage_file "$PREPARED_60_FILE" "minimization" "1" "0" "0" "minimization"
 cp -f "$PREPARED_60_FILE" "$STAGE_60_FILE"
 run_minimization_stage "6.0" "$STAGE_60_FILE" "$MIN_60_MAX_ITER"
 extract_stage_vtf "6.0" "$STAGE_60_FILE" "1"
 
 # 6.1: hard minimization (pre-production / hybrid inactive)
+set_stage_npt_targets "6.1"
 prepare_stage_file "$PREPARED_61_FILE" "npt_prod" "1" "0" "0" "minimization"
 cp -f "$PREPARED_61_FILE" "$STAGE_61_FILE"
 python3 set_initial_position.py "$STAGE_60_FILE" "$STAGE_61_FILE"
@@ -928,12 +956,14 @@ run_minimization_stage "6.1" "$STAGE_61_FILE" "$MIN_61_MAX_ITER"
 extract_stage_vtf "6.1" "$STAGE_61_FILE" "1"
 
 # 6.2: soft equilibration
+set_stage_npt_targets "6.2"
 prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "0" "200" "minimization"
 python3 set_initial_position.py "$STAGE_61_FILE" "$STAGE_62_FILE"
 run_md_stage "6.2" "$STAGE_62_FILE" "$STAGE_62_FILE" "$EQ_62_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 extract_stage_vtf "6.2" "$STAGE_62_FILE" "1"
 
 # 6.3: reduced softening equilibration
+set_stage_npt_targets "6.3"
 prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "0" "100" "minimization"
 cp -f "$PREPARED_63_FILE" "$STAGE_63_FILE"
 python3 set_initial_position.py "$STAGE_62_FILE" "$STAGE_63_FILE"
@@ -941,18 +971,21 @@ run_md_stage "6.3" "$STAGE_63_FILE" "$STAGE_63_FILE" "$EQ_63_NSTEPS" "$EQ_TIME_S
 extract_stage_vtf "6.3" "$STAGE_63_FILE" "1"
 
 # 6.4-6.6: hard equilibration with restraint ramp
+set_stage_npt_targets "6.4"
 prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "0" "50" "minimization"
 cp -f "$PREPARED_64_FILE" "$STAGE_64_FILE"
 python3 set_initial_position.py "$STAGE_63_FILE" "$STAGE_64_FILE"
 run_md_stage "6.4" "$STAGE_64_FILE" "$STAGE_64_FILE" "$EQ_64_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 extract_stage_vtf "6.4" "$STAGE_64_FILE" "1"
 
+set_stage_npt_targets "6.5"
 prepare_stage_file "$PREPARED_65_FILE" "npt_prod" "1" "0" "20" "minimization"
 cp -f "$PREPARED_65_FILE" "$STAGE_65_FILE"
 python3 set_initial_position.py "$STAGE_64_FILE" "$STAGE_65_FILE"
 run_md_stage "6.5" "$STAGE_65_FILE" "$STAGE_65_FILE" "$EQ_65_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 extract_stage_vtf "6.5" "$STAGE_65_FILE" "1"
 
+set_stage_npt_targets "6.6"
 prepare_stage_file "$PREPARED_66_FILE" "npt_prod" "1" "0" "10" "minimization"
 cp -f "$PREPARED_66_FILE" "$STAGE_66_FILE"
 python3 set_initial_position.py "$STAGE_65_FILE" "$STAGE_66_FILE"

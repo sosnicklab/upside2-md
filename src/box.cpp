@@ -24,9 +24,9 @@
 
 using namespace h5;
 
-namespace martini_hybrid {
-bool preproduction_requires_rigid(const DerivEngine& engine);
-bool is_hybrid_active(const DerivEngine& engine);
+namespace martini_fix_rigid {
+std::vector<int> get_fixed_atoms(const DerivEngine& engine);
+std::vector<int> get_z_fixed_atoms(const DerivEngine& engine);
 }
 
 // Local helper to check if an HDF5 attribute exists
@@ -126,11 +126,27 @@ static BarostatSettings read_barostat_settings(hid_t root) {
 static void apply_semi_isotropic_scaling(DerivEngine& engine, float scale_xy, float scale_z) {
     VecArray pos = engine.pos->output;
     int n_atom = engine.pos->n_elem;
-    
+
+    std::vector<unsigned char> fixed_mask(static_cast<size_t>(std::max(0, n_atom)), 0);
+    std::vector<unsigned char> z_fixed_mask(static_cast<size_t>(std::max(0, n_atom)), 0);
+    for(int atom_idx : martini_fix_rigid::get_fixed_atoms(engine)) {
+        if(atom_idx >= 0 && atom_idx < n_atom) {
+            fixed_mask[static_cast<size_t>(atom_idx)] = 1;
+        }
+    }
+    for(int atom_idx : martini_fix_rigid::get_z_fixed_atoms(engine)) {
+        if(atom_idx >= 0 && atom_idx < n_atom) {
+            z_fixed_mask[static_cast<size_t>(atom_idx)] = 1;
+        }
+    }
+
     for(int i = 0; i < n_atom; ++i) {
+        if(fixed_mask[static_cast<size_t>(i)]) continue;
         pos(0, i) *= scale_xy;
         pos(1, i) *= scale_xy;
-        pos(2, i) *= scale_z;
+        if(!z_fixed_mask[static_cast<size_t>(i)]) {
+            pos(2, i) *= scale_z;
+        }
     }
     
     // Also update node box dimensions
@@ -360,14 +376,6 @@ void maybe_apply_barostat(DerivEngine& engine,
     auto& st = it->second;
     auto& s = st.settings;
     if(!s.enabled) return;
-
-    // Hybrid preproduction can pin protein/PO4 atoms in absolute coordinates.
-    // Combining that with barostat coordinate scaling introduces artificial
-    // bond stretching and can destabilize integration. Skip NPT in this regime.
-    if(martini_hybrid::preproduction_requires_rigid(engine) &&
-       !martini_hybrid::is_hybrid_active(engine)) {
-        return;
-    }
 
     if(s.interval <= 0) return;
     if(round_num == 0 || (round_num % s.interval) != 0) return;

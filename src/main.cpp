@@ -142,13 +142,55 @@ struct System {
     VecArrayStorage mom; // momentum
     OrnsteinUhlenbeckThermostat thermostat;
     uint64_t round_num;
-    System(): round_num(0) {}
+    double cached_upside_potential;
+    double cached_martini_potential;
+    uint64_t cached_potential_round;
+    bool has_cached_potential;
+    System():
+        round_num(0),
+        cached_upside_potential(0.0),
+        cached_martini_potential(0.0),
+        cached_potential_round(0),
+        has_cached_potential(false) {}
 
     void set_temperature(float new_temp) {
         temperature = new_temp;
         thermostat.set_temp(temperature);
     }
 };
+
+static inline bool is_martini_potential_node_name(const std::string& name) {
+    return is_prefix("martini_potential", name) ||
+           is_prefix("dist_spring", name) ||
+           is_prefix("angle_spring", name) ||
+           is_prefix("dihedral_spring", name) ||
+           is_prefix("restraint_position", name);
+}
+
+static void split_engine_potential_terms(const DerivEngine& engine,
+                                         double& upside_potential,
+                                         double& martini_potential) {
+    upside_potential = 0.0;
+    martini_potential = 0.0;
+    for(const auto& n : engine.nodes) {
+        if(!n.computation->potential_term) continue;
+        const auto& pot_node = dynamic_cast<const PotentialNode&>(*n.computation.get());
+        if(is_martini_potential_node_name(n.name)) {
+            martini_potential += static_cast<double>(pot_node.potential);
+        } else {
+            upside_potential += static_cast<double>(pot_node.potential);
+        }
+    }
+}
+
+static void refresh_split_potential_cache(System& sys, bool recompute_engine) {
+    if(recompute_engine) {
+        sys.engine.compute(PotentialAndDerivMode);
+    }
+    split_engine_potential_terms(sys.engine, sys.cached_upside_potential, sys.cached_martini_potential);
+    sys.cached_potential_round = sys.round_num;
+    sys.has_cached_potential = true;
+}
 
 
 double stod_strict(const std::string& s) {
@@ -897,8 +939,13 @@ try {
                     kin_buffer[0] = (0.5/sys->n_atom)*sum_kin;  // kinetic_energy = (1/2) * <mom^2>
                     });
             sys->logger->add_logger<double>("potential", {1}, [sys](double* pot_buffer) {
-                    sys->engine.compute(PotentialAndDerivMode);
-                    pot_buffer[0] = sys->engine.potential;});
+                    refresh_split_potential_cache(*sys, true);
+                    pot_buffer[0] = sys->cached_upside_potential;});
+            sys->logger->add_logger<double>("martini_potential", {1}, [sys](double* pot_buffer) {
+                    if(!sys->has_cached_potential || sys->cached_potential_round != sys->round_num) {
+                        refresh_split_potential_cache(*sys, true);
+                    }
+                    pot_buffer[0] = sys->cached_martini_potential;});
             sys->logger->add_logger<double>("time", {}, [sys,dt,inner_step](double* time_buffer) {
                     *time_buffer=inner_step*dt*sys->round_num;});
 
@@ -1000,10 +1047,13 @@ try {
         }
         if(verbose) printf("\n");
 
-            if(verbose) printf("Initial potential energy:");
+            if(verbose) printf("Initial potential energy (Upside/MARTINI/Total):");
         for(System& sys: systems) {
             sys.engine.compute(PotentialAndDerivMode);
-            if(verbose) printf(" %.2f", sys.engine.potential);
+            double upside_pot = 0.0;
+            double martini_pot = 0.0;
+            split_engine_potential_terms(sys.engine, upside_pot, martini_pot);
+            if(verbose) printf(" %.2f/%.2f/%.2f", upside_pot, martini_pot, sys.engine.potential);
         }
         if(verbose) printf("\n");
 
@@ -1120,7 +1170,11 @@ try {
                                 printf("%5.1f A", Rg);
                             }
 
-                            printf(", potential % 8.2f", sys.engine.potential);
+                            double upside_pot = 0.0;
+                            double martini_pot = 0.0;
+                            split_engine_potential_terms(sys.engine, upside_pot, martini_pot);
+                            printf(", potential % 8.2f, martini_potential % 8.2f, total % 8.2f",
+                                   upside_pot, martini_pot, sys.engine.potential);
                             printf("\n");
                         }
                         fflush(stdout);

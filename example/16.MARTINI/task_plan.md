@@ -22,6 +22,8 @@
 - [x] Phase 5: Implement sidechain rotamer-environment mapping path with intra-protein MARTINI exclusions.
 - [x] Phase 6: Implement/benchmark rigid-body drift mitigation mode (frame-to-frame alignment option) and diagnostics.
 - [x] Phase 7: Validate correctness, stability, and energy/force accounting; document usage and limitations.
+- [x] Phase 8: Audit pre-production rigidity and potential-output semantics in `run_sim_1rkl.sh` workflow artifacts.
+- [x] Phase 9: Implement split potential logging (`Upside-only` vs `MARTINI`) and enforce pre-production NPT coupling to match CHARMM-GUI stage settings.
 
 ## Known Errors / Blockers
 - Requires concrete integration points in Upside C++ step loop and force modules.
@@ -37,6 +39,7 @@
 - After removing SC placement/probability fallback, production files lacking `rotamer` + `placement*_point_vector_only` nodes will fail fast in hybrid mode and must be regenerated with those nodes present.
 - Current stage-generation workflow (`prepare_martini.py` in `run_sim_1rkl.sh` / `test_prod_run_sim_1rkl.sh`) does not emit Upside `affine_alignment`/`placement_*`/`rotamer` nodes, so production-stage strict SC coupling fails unless scripts augment stage-7 files with these nodes.
 - Stage-7 script augmentation now injects required `affine_alignment`/`placement_fixed_*`/`rotamer` nodes with `ff_2.1/sidechain.h5` compatibility; previous production SIGBUS (degenerate affine triplets) is fixed. Remaining blocker is production-stage physical instability (rapid potential blow-up/NaN) rather than a runtime memory crash.
+- `output/potential` is a total-engine scalar (sum over active potential nodes), not a protein-only all-atom Upside-backbone channel; this can vary during pre-production even with rigid protein because environment terms evolve.
 
 ## Revised Decisions
 - Hybrid coupling starts only at production stage; pre-production protein remains rigid.
@@ -69,7 +72,7 @@
 - Pre-production rigid hold (protein + configured lipid headgroup roles, default `PO4`) is fixed in space, not only force-constrained.
 - Pre-production fixed-in-space enforcement uses an integration-level fixed-atom mask (skip momentum/position updates for fixed atoms) plus force/momentum zeroing; direct per-step coordinate rewrites are avoided to prevent early-step NaN instability.
 - Lipid-overlap removal for protein insertion uses a tighter default cutoff (`3.0 Å`) to avoid creating an artificially large annular cavity around the protein.
-- NPT barostat updates are skipped automatically during hybrid pre-production rigid-hold mode to avoid incompatible box scaling with fixed-in-space atoms.
+- NPT barostat updates in hybrid pre-production rigid mode remain enabled; scaling is applied only to unconstrained DOFs (protein fixed atoms are not scaled, z-fixed headgroups remain z-fixed).
 - `run_sim_1rkl.sh` converts requested MD steps to Upside CLI time units (`duration`, `frame-interval`) to avoid unintended 100x step inflation.
 - VTF export is stage-wise: modes are `mode 1` (all MARTINI particles) for non-production stages and `mode 2` (non-protein MARTINI + protein all-atom backbone backmapped from `hybrid_bb_map`) for production stage.
 - Upside CLI supports `--duration-steps` for step-count-driven stage lengths, and `run_sim_1rkl.sh` uses it so stage step counts are independent of `dt`.
@@ -79,3 +82,12 @@
 - Sidechain placement/probability fallback is removed in production hybrid mode: SC mapping requires live Upside `rotamer` and `placement*_point_vector_only` nodes, and static `hybrid_sc_map` fallback is no longer used for SC position/probability evaluation.
 - SC rotamer projection in production uses a residue-level rigid transform between reference and current rotamer placement frames so mapped SC geometry remains rigid across rotamer states.
 - Production-stage workflow scripts will explicitly augment stage-7 `.up` files with `affine_alignment`, `placement_fixed_point_vector_only`, `placement_fixed_scalar`, and `rotamer` nodes (built from sidechain library + current MARTINI protein mapping) before running production.
+- Pre-production rigid hold verification should use runtime hybrid metadata (`hybrid_control` + `protein_membership`) and trajectory displacement checks; presence of `/input/fix_rigid` datasets is not required because pre-production fixed masks are generated dynamically in C++ runtime.
+- Potential logging will be split:
+  - `output/potential`: non-MARTINI (Upside-side) potential contribution only.
+  - `output/martini_potential`: MARTINI potential contribution, preserving visibility of the previously observed scalar behavior for MARTINI stages.
+- Pre-production NPT coupling should follow CHARMM-GUI stage intent:
+  - stages `6.0-6.1`: `ref_p = 0.0 bar`, `tau_p = 4.0`, `compressibility = 3e-4 bar^-1 (xy), 0.0 (z)`.
+  - stages `6.2-6.6`: `ref_p = 1.0 bar` (semi-isotropic; `z` compressibility remains `0.0`), `tau_p = 4.0`, same compressibility.
+  - convert pressure to Upside units using `1 bar = 0.000020659477 E_up/Angstrom^3`.
+- Hybrid pre-production rigid hold and NPT are both enabled by scaling only unconstrained DOFs during barostat box/coordinate updates (fully fixed atoms remain fixed; z-fixed atoms keep fixed z).

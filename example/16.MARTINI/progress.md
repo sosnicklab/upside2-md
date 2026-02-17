@@ -861,3 +861,63 @@
 - Current status:
   - Bus error is resolved.
   - Production still shows rapid energy blow-up / NaN potential (physical stability issue), but no immediate runtime memory crash.
+
+## 2026-02-17 (Audit: Pre-Production Rigidity + Potential Output Semantics)
+- Traced workflow and runtime paths relevant to the user report:
+  - `run_sim_1rkl.sh` stage labels and extraction modes (`6.x -> minimization`, `7.0 -> production`, VTF mode `1` vs `2`).
+  - `../../src/main.cpp` logger wiring for `output/potential`.
+  - `../../src/deriv_engine.cpp` potential accumulation behavior.
+  - `../../src/martini.cpp` hybrid pre-production rigid-mask construction and stage gating.
+- Runtime artifact checks on `outputs/martini_test_1rkl_hybrid/checkpoints` and logs:
+  - Stage logs 6.0-6.6 report:
+    - `current_stage=minimization`
+    - `activation_stage=production`
+    - `hybrid_active=0`
+    - `preprod_mode=rigid`
+    - `preprod_fixed=65` (protein) and `preprod_zfixed=289` (`PO4`)
+  - Stage files 6.0-6.6 contain scalar `output/potential` datasets with shape `(n_frame, 1)` and no protein-only potential channel.
+- Quantitative rigidity verification (`h5py` checks):
+  - Protein displacement is exactly zero in all pre-production stages:
+    - stage 6.0-6.6: `max |r - r_ref| = 0.000000e+00 Å`
+    - cross-stage continuity 6.0->6.6 for protein: `max |stage_start - prev_stage_end| = 0.000000e+00 Å`
+  - `PO4` headgroup behavior matches z-only constraint:
+    - `max |dz| = 0.000000e+00 Å` while `|dx|, |dy|` are non-zero.
+- Conclusion recorded:
+  - Pre-production rigid hold is active and effective throughout stages 6.0-6.6.
+  - Reported potential drift is expected because `output/potential` is total system potential, not protein all-atom-backbone Upside-only potential.
+
+## 2026-02-17 (Potential Split + Pre-Production NPT/Pressure Fixes)
+- Implemented split potential logging in `../../src/main.cpp`:
+  - Added runtime split of potential terms into MARTINI vs non-MARTINI buckets by node prefix.
+  - Changed `output/potential` logger to record non-MARTINI (Upside-side) contribution.
+  - Added new `output/martini_potential` logger for MARTINI contribution.
+  - Updated verbose console print to include all three values:
+    - `potential` (Upside-side),
+    - `martini_potential`,
+    - `total` (engine sum).
+- Implemented pre-production NPT compatibility with rigid hold in `../../src/box.cpp`:
+  - Removed hard skip that previously disabled barostat updates when pre-production rigid mode was active.
+  - Updated semi-isotropic scaling to honor fixed masks:
+    - fully fixed atoms are not scaled,
+    - z-fixed atoms scale in `x/y` only (z unchanged).
+- Updated stage NPT targets in `run_sim_1rkl.sh` to follow CHARMM-GUI stage intent with explicit unit-converted values:
+  - Added `BAR_1_TO_EUP_PER_A3=0.000020659477`.
+  - Added `set_stage_npt_targets()` and wired calls before each stage 6.0-6.6 preparation:
+    - 6.0-6.1 use `0 bar`,
+    - 6.2-6.6 use `1 bar` (`semi-isotropic`, `compressibility_z=0` retained).
+- Validation run:
+  - Rebuilt binaries: `cmake --build ../../obj -j4` succeeded.
+  - Probe run on copied stage file:
+    - `../../obj/upside /tmp/1rkl.stage_6.2.npt_probe.up --duration-steps 100 ...`
+    - runtime output confirms split print and NPT update line:
+      - `Initial potential energy (Upside/MARTINI/Total): 0.00/290333.76/290333.75`
+      - `[NPT] t 0.500 box ...`
+  - H5 output verification on probe file:
+    - `output/martini_potential` dataset present.
+    - `output/potential` present and zero for this MARTINI-only stage (expected).
+    - `output/pressure` non-zero at later frame (`[0.00385833, -0.00927570]`).
+    - protein remained rigid (`max displacement = 0.0 A`).
+    - PO4 remained z-fixed (`max |dz| = 0.0 A`, non-zero `|dx|/|dy|`).
+  - Additional production-initialization probe (`--duration-steps 0`) on stage-7 copy:
+    - `Initial potential energy (Upside/MARTINI/Total): 177.63/153485216298.49/153485213696.00`
+    - confirms non-MARTINI bucket is populated when production rotamer/placement nodes are active.
