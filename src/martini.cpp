@@ -286,6 +286,7 @@ struct HybridRuntimeState {
     bool enabled = false;
     bool active = false;
     bool exclude_intra_protein_martini = true;
+    bool production_nonprotein_hard_sphere = true;
     bool preprod_rigid = true;
     std::string activation_stage = "production";
     std::string preprod_mode = "rigid";
@@ -730,6 +731,8 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.preprod_mode = read_string_attribute_or_default(ctrl.get(), "preprod_protein_mode", "rigid");
     out.exclude_intra_protein_martini =
         (read_attribute<int>(ctrl.get(), ".", "exclude_intra_protein_martini", 1) != 0);
+    out.production_nonprotein_hard_sphere =
+        (read_attribute<int>(ctrl.get(), ".", "production_nonprotein_hard_sphere", 1) != 0);
     out.preprod_rigid = (out.preprod_mode == "rigid");
     out.coupling_align_enable = (read_attribute<int>(ctrl.get(), ".", "coupling_align_enable", 0) != 0);
     out.coupling_align_debug = (read_attribute<int>(ctrl.get(), ".", "coupling_align_debug", 0) != 0);
@@ -1142,7 +1145,7 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
     }
     if(st->has_config && st->enabled) {
-        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
+        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d nonprotein_hs=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
                current_stage.c_str(),
                st->activation_stage.c_str(),
                st->active ? 1 : 0,
@@ -1153,6 +1156,7 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
                st->placement_node_name.empty() ? "<none>" : st->placement_node_name.c_str(),
                st->rotamer_node_name.empty() ? "<none>" : st->rotamer_node_name.c_str(),
                st->exclude_intra_protein_martini ? 1 : 0,
+               st->production_nonprotein_hard_sphere ? 1 : 0,
                st->preprod_fixed_atom_indices.size(),
                st->preprod_z_fixed_atom_indices.size());
     } else if(st->has_config) {
@@ -1429,6 +1433,20 @@ void project_bb_gradient_if_active(const HybridRuntimeState& st, VecArray sens, 
         int bb = st.bb_atom_index[k];
         if(bb < 0 || bb >= n_atom) continue;
         auto bb_grad = load_vec<3>(sens, bb);
+
+        float wsum = 0.f;
+        for(int d = 0; d < 4; ++d) {
+            if(st.atom_mask[k][d] == 0) continue;
+            int ai = st.atom_indices[k][d];
+            float w = st.weights[k][d];
+            if(ai < 0 || ai >= n_atom || w == 0.f) continue;
+            wsum += w;
+        }
+        if(wsum <= 0.f) {
+            continue;
+        }
+        float inv_wsum = 1.0f / wsum;
+
         // Clear first so self-target mappings preserve intended fraction instead of being canceled.
         store_vec<3>(sens, bb, make_zero<3>());
         for(int d = 0; d < 4; ++d) {
@@ -1436,7 +1454,7 @@ void project_bb_gradient_if_active(const HybridRuntimeState& st, VecArray sens, 
             int ai = st.atom_indices[k][d];
             float w = st.weights[k][d];
             if(ai < 0 || ai >= n_atom || w == 0.f) continue;
-            update_vec<3>(sens, ai, w * bb_grad);
+            update_vec<3>(sens, ai, (w * inv_wsum) * bb_grad);
         }
     }
 }
@@ -2411,21 +2429,44 @@ struct MartiniPotential : public PotentialNode
             martini_hybrid::refresh_sc_row_probabilities_from_rotamer(*hybrid_state, sc_row_probability);
         }
 
+        constexpr float wca_cutoff_factor = 1.122462048309373f; // 2^(1/6)
         auto eval_pair_force = [&](const Vec<3>& pa,
                                    const Vec<3>& pb,
                                    float eps,
                                    float sig,
                                    float qi,
                                    float qj,
+                                   bool hard_sphere_mode,
                                    float& pair_potential,
                                    Vec<3>& pair_force) -> bool {
             auto dr = pa - pb;
             auto dist2 = mag2(dr);
             auto dist = sqrtf(max(dist2, kMinDistance));
-            if(dist > max(lj_cutoff, coul_cutoff)) return false;
-
             pair_potential = 0.f;
             pair_force = make_zero<3>();
+
+            if(hard_sphere_mode) {
+                if(eps == 0.f || sig == 0.f) return false;
+                float rcut = wca_cutoff_factor * sig;
+                if(dist >= rcut) return false;
+                float eval_dist = std::max(dist, 0.1f * sig);
+
+                float sr = sig / eval_dist;
+                float sr2 = sr * sr;
+                float sr6 = sr2 * sr2 * sr2;
+                float sr12 = sr6 * sr6;
+
+                float wca_pot = 4.f * eps * (sr12 - sr6) + eps;
+                float wca_force_mag = 24.f * eps * (2.f * sr12 - sr6) / eval_dist;
+                if(std::isfinite(wca_pot) && std::isfinite(wca_force_mag)) {
+                    pair_potential = wca_pot;
+                    pair_force = (wca_force_mag / eval_dist) * dr;
+                    return true;
+                }
+                return false;
+            }
+
+            if(dist > max(lj_cutoff, coul_cutoff)) return false;
 
             if(eps != 0.f && sig != 0.f && dist < lj_cutoff) {
                 auto spline_it = lj_splines.find({eps, sig});
@@ -2479,7 +2520,7 @@ struct MartiniPotential : public PotentialNode
                     pair_force += (coul_force_mag/dist) * dr;
                 }
             }
-            return true;
+            return !(pair_potential == 0.f && mag2(pair_force) == 0.f);
         };
 
         // Build per-rotamer projected SC position from protein targets + local offset.
@@ -2597,6 +2638,15 @@ struct MartiniPotential : public PotentialNode
                     p2 = make_vec3(pa[0], pa[1], pa[2]);
                 }
             }
+            // Production-stage hybrid option: treat non-protein/non-protein
+            // MARTINI nonbonded as hard-sphere-like repulsion (WCA branch).
+            bool hard_sphere_pair = (
+                hybrid_state &&
+                hybrid_state->enabled &&
+                hybrid_state->active &&
+                hybrid_state->production_nonprotein_hard_sphere &&
+                !i_is_protein &&
+                !j_is_protein);
 
             // Probabilistic SC force evaluation:
             // evaluate proxy-env interactions for each rotamer-state position and
@@ -2641,7 +2691,7 @@ struct MartiniPotential : public PotentialNode
                             float pair_pot = 0.f;
                             Vec<3> pa = proxy_is_i ? proxy_pos : env_pos;
                             Vec<3> pb = proxy_is_i ? env_pos : proxy_pos;
-                            if(!eval_pair_force(pa, pb, eps, sig, qi, qj, pair_pot, pair_force)) {
+                            if(!eval_pair_force(pa, pb, eps, sig, qi, qj, false, pair_pot, pair_force)) {
                                 continue;
                             }
 
@@ -2675,7 +2725,7 @@ struct MartiniPotential : public PotentialNode
 
             Vec<3> force = make_zero<3>();
             float pair_pot = 0.f;
-            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, pair_pot, force)) {
+            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, hard_sphere_pair, pair_pot, force)) {
                 continue;
             }
             if(pot) *pot += pair_pot;

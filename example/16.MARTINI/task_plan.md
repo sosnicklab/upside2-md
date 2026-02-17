@@ -51,6 +51,7 @@
 - Hybrid runtime may add ordering dependencies so rotamer/placement sidechain states are computed before MARTINI coupling each step; this is a scheduling change only (no Python preparation changes).
 - Sidechain-environment force transfer in hybrid production prefers explicit `hybrid_sc_map` projection targets/weights generated from martinize bonded topology, with residue-based MARTINI `BB` target lookup retained only as fallback.
 - Production-stage MARTINI protein interaction filtering is runtime-enforced in C++ (based on `protein_membership`, `atom_roles`, and `residue_ids`) so non-production stages remain unaffected while protein is rigid.
+- Production-stage MARTINI nonbonded interactions for non-protein particles are hard-sphere-like (repulsive-only) while protein-involving MARTINI interactions remain dry-MARTINI for hybrid coupling.
 - Preparation exports per-`BB` backbone reference metadata (`N,CA,C,O` atom indices/coordinates plus comment strings) in `hybrid_bb_map` for auditability; this metadata does not override runtime coordinate arrays unless explicitly mapped into runtime index space.
 - Runtime hybrid scheduling enforces `martini_potential` execution after all coordinate-node updates each integration sub-step, so MARTINI coupling always consumes the latest backbone-derived coordinates for that sub-step.
 - `run_sim_1rkl.sh` defaults to MARTINI2.2 protein coarse-graining via local `martinize.py` (`-ff martini22`) and performs a preflight protein-ITP-vs-dry-FF mass compatibility check to prevent silent MARTINI3/dry-MARTINI mixing.
@@ -70,3 +71,4 @@
 - Upside CLI supports `--duration-steps` for step-count-driven stage lengths, and `run_sim_1rkl.sh` uses it so stage step counts are independent of `dt`.
 - Sidechain-to-backbone force transfer mapping will prefer explicit `hybrid_sc_map` projection targets/weights (prepared from martinize.py protein bonded topology/force constants) with BB-residue lookup retained only as runtime fallback.
 - Minimization mode no longer forces a post-minimization stage switch to `production`; runtime now restores the pre-minimization stage label to prevent production-only hybrid/UpSide activation in pre-production stage files.
+- Production-stage hard-sphere behavior is implemented in C++ MARTINI runtime as repulsive-only WCA-like nonbonded interactions for non-protein/non-protein pairs; this is controlled by `hybrid_control` and active only when hybrid is active.

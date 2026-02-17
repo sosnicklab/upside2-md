@@ -285,6 +285,33 @@
   1. No MARTINI BB-BB.
   2. No MARTINI SC-SC.
   3. MARTINI SC-BB only for same residue.
+
+## 2026-02-17 (Production Non-Protein Hard-Sphere Enforcement)
+- Re-read `task_plan.md` and audited current production-stage nonbonded behavior.
+- Verified current behavior before fix:
+  - Stage `7.0` had `lj_soften=0`, `coulomb_soften=0`, but still `potential_type=lj_coulomb`.
+  - `1rkl.stage_7.0.up` coefficients contain regular dry-MARTINI LJ eps/sigma values; this is not hard-sphere behavior.
+- Implemented runtime production-only hard-sphere-like mode in `../../src/martini.cpp`:
+  - Added `hybrid_control` flag `production_nonprotein_hard_sphere` (default `1`) into hybrid runtime state parsing.
+  - Added pair-mode branch in `MartiniPotential`:
+    - Non-protein/non-protein pairs in hybrid-active production use repulsive-only WCA-like interaction (no Coulomb).
+    - Protein-involving pairs continue using existing dry-MARTINI LJ+Coulomb path (for hybrid protein-environment coupling).
+  - Added runtime parse log field `nonprotein_hs=<0|1>` for traceability.
+- Updated mapping export in `prepare_hybrid_system.py`:
+  - `hybrid_control` now explicitly writes `production_nonprotein_hard_sphere=1`.
+- Build/test results:
+  - Rebuilt successfully: `cmake --build ../../obj -j4`.
+  - Production 1-step smoke (temp copy) shows hybrid parse with `nonprotein_hs=1` and stable run.
+  - Control comparison with same file but `production_nonprotein_hard_sphere=0` confirms toggle is effective (`nonprotein_hs=0` in parse log and different initial potential).
+
+## 2026-02-17 (BB Force Split by Weight Fractions)
+- Implemented BB->mapped-atom force projection as normalized weight fractions in `../../src/martini.cpp`:
+  - `project_bb_gradient_if_active(...)` now computes `wsum` over valid mapped targets.
+  - Applies `sens[target] += (w / wsum) * sens[bb]` rather than raw `w * sens[bb]`.
+  - Leaves BB gradient unchanged if no valid mapped targets exist (`wsum <= 0`) to avoid force loss.
+- This matches the rigid-composite distribution law (subobject force proportional to its weight share) and is consistent with BB position reconstruction normalization.
+- Rebuilt successfully after patch:
+  - `source ../../.venv/bin/activate && source ../../source.sh && cmake --build ../../obj -j4`
 - Sidechain-to-backbone force-transfer enforcement:
   - Confirmed current generated mapping can contain SC projection targets pointing to SC proxy indices (not BB) due key-space mismatch between AA and CG residue keys.
   - Updated `../../src/martini.cpp` to enforce runtime SC force projection onto corresponding residue MARTINI `BB` target (`sc_row_bb_target`) derived from `sc_residue_index` + `bb_residue_index/bb_atom_index`.
