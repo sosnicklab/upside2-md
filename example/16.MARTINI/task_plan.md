@@ -33,6 +33,10 @@
 - Packed-system mapping export currently uses MARTINI protein index-space proxy targets (BB self-targets; SC proxies targeting residue BB). Full direct Upside `N,CA,C,O` target index export into production `.up` remains a separate integration task.
 - Legacy static protein CG assets (`pdb/1rkl.MARTINI.pdb`, `pdb/1rkl_proa.itp`) are not reliable for dry-MARTINI compatibility; workflow mitigation is runtime MARTINI2 generation via `martinize.py -ff martini22`.
 - Stage 6.0 HDF5 close-ID runtime failure is resolved (hybrid-control parsing bug in C++ fixed); remaining workflow issue is downstream VTF extraction mismatch when using `extract_martini_vtf.py` with a non-runtime structure source.
+- Current `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_6.2.up` has no `rotamer` or `placement*_point_vector_only` nodes, so live probabilistic rotamer weighting is inactive there and hybrid sidechain rows remain static (`rotamer_id=0` fallback).
+- After removing SC placement/probability fallback, production files lacking `rotamer` + `placement*_point_vector_only` nodes will fail fast in hybrid mode and must be regenerated with those nodes present.
+- Current stage-generation workflow (`prepare_martini.py` in `run_sim_1rkl.sh` / `test_prod_run_sim_1rkl.sh`) does not emit Upside `affine_alignment`/`placement_*`/`rotamer` nodes, so production-stage strict SC coupling fails unless scripts augment stage-7 files with these nodes.
+- Stage-7 script augmentation now injects required `affine_alignment`/`placement_fixed_*`/`rotamer` nodes with `ff_2.1/sidechain.h5` compatibility; previous production SIGBUS (degenerate affine triplets) is fixed. Remaining blocker is production-stage physical instability (rapid potential blow-up/NaN) rather than a runtime memory crash.
 
 ## Revised Decisions
 - Hybrid coupling starts only at production stage; pre-production protein remains rigid.
@@ -72,3 +76,6 @@
 - Sidechain-to-backbone force transfer mapping will prefer explicit `hybrid_sc_map` projection targets/weights (prepared from martinize.py protein bonded topology/force constants) with BB-residue lookup retained only as runtime fallback.
 - Minimization mode no longer forces a post-minimization stage switch to `production`; runtime now restores the pre-minimization stage label to prevent production-only hybrid/UpSide activation in pre-production stage files.
 - Production-stage hard-sphere behavior is implemented in C++ MARTINI runtime as repulsive-only WCA-like nonbonded interactions for non-protein/non-protein pairs; this is controlled by `hybrid_control` and active only when hybrid is active.
+- Sidechain placement/probability fallback is removed in production hybrid mode: SC mapping requires live Upside `rotamer` and `placement*_point_vector_only` nodes, and static `hybrid_sc_map` fallback is no longer used for SC position/probability evaluation.
+- SC rotamer projection in production uses a residue-level rigid transform between reference and current rotamer placement frames so mapped SC geometry remains rigid across rotamer states.
+- Production-stage workflow scripts will explicitly augment stage-7 `.up` files with `affine_alignment`, `placement_fixed_point_vector_only`, `placement_fixed_scalar`, and `rotamer` nodes (built from sidechain library + current MARTINI protein mapping) before running production.

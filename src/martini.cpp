@@ -314,8 +314,10 @@ struct HybridRuntimeState {
     std::vector<int> sc_row_bb_target;
     std::vector<PlacementStateGroup> placement_state_groups;
     std::unordered_map<int, std::vector<int>> placement_groups_by_residue;
+    std::unordered_map<int, int> placement_reference_group_by_residue;
     std::vector<int> sc_row_to_placement_group;
     std::unordered_map<int, std::vector<int>> sc_rows_by_proxy;
+    bool sc_local_pos_initialized = false;
     bool coupling_align_enable = false;
     bool coupling_align_debug = false;
     int coupling_align_interval = 100;
@@ -506,6 +508,7 @@ static DecodedRotamerId decode_rotamer_id_value(int encoded_id) {
 static void read_placement_state_groups(hid_t root, HybridRuntimeState& out) {
     out.placement_state_groups.clear();
     out.placement_groups_by_residue.clear();
+    out.placement_reference_group_by_residue.clear();
     if(out.placement_node_name.empty()) return;
 
     std::string grp_path = "/input/potential/" + out.placement_node_name;
@@ -583,6 +586,16 @@ static void read_placement_state_groups(hid_t root, HybridRuntimeState& out) {
             if(ga.rotamer != gb.rotamer) return ga.rotamer < gb.rotamer;
             return ga.node_id < gb.node_id;
         });
+
+        int ref_gid = groups.front();
+        for(int gid : groups) {
+            if(gid < 0 || gid >= static_cast<int>(out.placement_state_groups.size())) continue;
+            if(out.placement_state_groups[gid].rotamer == 0) {
+                ref_gid = gid;
+                break;
+            }
+        }
+        out.placement_reference_group_by_residue[kv.first] = ref_gid;
     }
 }
 
@@ -599,15 +612,10 @@ static bool should_expand_sc_rows_from_placement(const HybridRuntimeState& out) 
     if(out.sc_residue_index.size() != out.sc_proxy_atom_index.size()) return false;
     if(out.placement_state_groups.empty()) return false;
 
-    std::unordered_map<int, int> rows_per_residue;
     for(size_t r = 0; r < out.sc_residue_index.size(); ++r) {
-        rows_per_residue[out.sc_residue_index[r]] += 1;
         if(!out.sc_rotamer_id.empty() && out.sc_rotamer_id[r] != 0) {
             return false;
         }
-    }
-    for(const auto& kv : rows_per_residue) {
-        if(kv.second > 1) return false;
     }
     return true;
 }
@@ -1108,6 +1116,13 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
             st->placement_node_name = discover_sc_placement_node_name_from_engine(engine);
         }
 
+        // Placement grouping depends on the resolved placement node name.
+        if(!st->placement_node_name.empty()) {
+            read_placement_state_groups(config_root, *st);
+            expand_sc_rows_from_placement(*st);
+            build_sc_row_bb_targets(*st);
+        }
+
         int placement_idx = find_node_index_for_name_or_prefix(engine, st->placement_node_name);
         if(placement_idx >= 0) {
             st->placement_node = dynamic_cast<CoordNode*>(engine.nodes[placement_idx].computation.get());
@@ -1116,6 +1131,28 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
         int rotamer_idx = find_node_index_for_name_or_prefix(engine, st->rotamer_node_name);
         if(rotamer_idx >= 0) {
             st->rotamer_node = engine.nodes[rotamer_idx].computation.get();
+        }
+
+        // Strict production behavior: no static fallback for probabilistic SC mapping.
+        if(st->active && !st->sc_proxy_atom_index.empty()) {
+            if(!st->placement_node || st->placement_node_name.empty()) {
+                throw string("Hybrid production SC coupling requires placement*_point_vector_only node");
+            }
+            if(!st->rotamer_node || st->rotamer_node_name.empty()) {
+                throw string("Hybrid production SC coupling requires rotamer node");
+            }
+            if(st->placement_state_groups.empty()) {
+                throw string("Hybrid production SC coupling requires placement rotamer-state groups");
+            }
+            if(st->sc_row_to_placement_group.size() != st->sc_proxy_atom_index.size()) {
+                throw string("Hybrid production SC coupling mapping is inconsistent (row/group size mismatch)");
+            }
+            for(size_t r = 0; r < st->sc_row_to_placement_group.size(); ++r) {
+                int gid = st->sc_row_to_placement_group[r];
+                if(gid < 0 || gid >= static_cast<int>(st->placement_state_groups.size())) {
+                    throw string("Hybrid production SC coupling has unmapped placement group row");
+                }
+            }
         }
 
         bool changed_graph = false;
@@ -1380,13 +1417,13 @@ CouplingAlignmentTransform build_coupling_alignment(HybridRuntimeState& st, VecA
     return tr;
 }
 
-void refresh_sc_row_probabilities_from_rotamer(
+bool refresh_sc_row_probabilities_from_rotamer(
         const HybridRuntimeState& st,
         std::vector<float>& row_probabilities) {
-    if(!st.enabled || !st.active) return;
-    if(!st.rotamer_node) return;
-    if(st.sc_row_to_placement_group.empty()) return;
-    if(row_probabilities.size() != st.sc_proxy_atom_index.size()) return;
+    if(!st.enabled || !st.active) return true;
+    if(!st.rotamer_node) return false;
+    if(st.sc_row_to_placement_group.empty()) return false;
+    if(row_probabilities.size() != st.sc_proxy_atom_index.size()) return false;
 
     std::vector<float> node_marginal;
     std::vector<float> node_lookup;
@@ -1394,12 +1431,12 @@ void refresh_sc_row_probabilities_from_rotamer(
         node_marginal = st.rotamer_node->get_value_by_name("node_marginal");
         node_lookup = st.rotamer_node->get_value_by_name("node_lookup");
     } catch(...) {
-        return;
+        return false;
     }
 
-    if(node_lookup.size() % 2u) return;
+    if(node_lookup.size() % 2u) return false;
     const size_t n_node = node_lookup.size() / 2u;
-    if(node_marginal.size() != n_node * 6u) return;
+    if(node_marginal.size() != n_node * 6u) return false;
 
     std::unordered_map<long long, int> lookup;
     lookup.reserve(n_node);
@@ -1412,19 +1449,22 @@ void refresh_sc_row_probabilities_from_rotamer(
 
     for(size_t r = 0; r < row_probabilities.size(); ++r) {
         int gid = st.sc_row_to_placement_group[r];
-        if(gid < 0 || gid >= static_cast<int>(st.placement_state_groups.size())) continue;
+        if(gid < 0 || gid >= static_cast<int>(st.placement_state_groups.size())) return false;
         const auto& g = st.placement_state_groups[gid];
-        if(g.rotamer < 0 || g.rotamer >= 6) continue;
+        if(g.rotamer < 0 || g.rotamer >= 6) return false;
 
         long long key = (static_cast<long long>(g.n_rotamer) << 32) | static_cast<unsigned int>(g.node_id);
         auto it = lookup.find(key);
-        if(it == lookup.end()) continue;
+        if(it == lookup.end()) return false;
 
         float p = node_marginal[static_cast<size_t>(it->second) * 6u + static_cast<size_t>(g.rotamer)];
         if(std::isfinite(p) && p >= 0.f) {
             row_probabilities[r] = p;
+        } else {
+            return false;
         }
     }
+    return true;
 }
 
 void project_bb_gradient_if_active(const HybridRuntimeState& st, VecArray sens, int n_atom) {
@@ -2395,11 +2435,12 @@ struct MartiniPotential : public PotentialNode
         VecArray pos1      = pos.output;
         VecArray pos1_sens = pos.sens;
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
+        auto* mutable_hybrid = static_cast<martini_hybrid::HybridRuntimeState*>(nullptr);
         martini_hybrid::CouplingAlignmentTransform coupling_align;
         if(hybrid_state) {
             martini_hybrid::refresh_bb_positions_if_active(*hybrid_state, pos1, n_atom);
-            auto& mutable_hybrid = *const_cast<martini_hybrid::HybridRuntimeState*>(hybrid_state.get());
-            coupling_align = martini_hybrid::build_coupling_alignment(mutable_hybrid, pos1, n_atom);
+            mutable_hybrid = const_cast<martini_hybrid::HybridRuntimeState*>(hybrid_state.get());
+            coupling_align = martini_hybrid::build_coupling_alignment(*mutable_hybrid, pos1, n_atom);
         }
         
         // --- REMOVED: fill(pos1_sens, 3, n_atom, 0.f); ---
@@ -2423,11 +2464,6 @@ struct MartiniPotential : public PotentialNode
             !hybrid_state->sc_proxy_atom_index.empty());
         std::vector<std::array<float,3>> sc_row_proxy_grad;
         std::vector<float> sc_row_probability;
-        if(use_probabilistic_sc) {
-            sc_row_proxy_grad.assign(hybrid_state->sc_proxy_atom_index.size(), std::array<float,3>{{0.f,0.f,0.f}});
-            sc_row_probability = hybrid_state->sc_rotamer_prob;
-            martini_hybrid::refresh_sc_row_probabilities_from_rotamer(*hybrid_state, sc_row_probability);
-        }
 
         constexpr float wca_cutoff_factor = 1.122462048309373f; // 2^(1/6)
         auto eval_pair_force = [&](const Vec<3>& pa,
@@ -2523,82 +2559,190 @@ struct MartiniPotential : public PotentialNode
             return !(pair_potential == 0.f && mag2(pair_force) == 0.f);
         };
 
-        // Build per-rotamer projected SC position from protein targets + local offset.
-        // Prefer explicit Upside rotamer placement coordinates when available.
-        // Fallback to hybrid_sc_map projection targets for compatibility.
-        auto build_sc_row_proxy_pos = [&](int row, Vec<3>& out_pos) -> bool {
-            if(!hybrid_state) return false;
-            if(row < 0 || row >= (int)hybrid_state->sc_proj_target_indices.size()) return false;
+        auto collect_placement_group_points = [&](int gid,
+                                                  std::vector<std::array<float,3>>& pts,
+                                                  std::array<float,3>& centroid) -> bool {
+            pts.clear();
+            centroid = std::array<float,3>{0.f, 0.f, 0.f};
+            if(!hybrid_state || !hybrid_state->placement_node) return false;
+            if(gid < 0 || gid >= (int)hybrid_state->placement_state_groups.size()) return false;
 
-            if(hybrid_state->placement_node &&
-               row < (int)hybrid_state->sc_row_to_placement_group.size()) {
-                int gid = hybrid_state->sc_row_to_placement_group[row];
-                if(gid >= 0 && gid < (int)hybrid_state->placement_state_groups.size()) {
-                    const auto& g = hybrid_state->placement_state_groups[gid];
-                    VecArray pl_pos = hybrid_state->placement_node->output;
-                    Vec<3> centroid = make_zero<3>();
-                    float wsum = 0.f;
-                    for(int pi : g.placement_rows) {
-                        if(pi < 0 || pi >= hybrid_state->placement_node->n_elem) continue;
-                        Vec<3> p = make_vec3(pl_pos(0, pi), pl_pos(1, pi), pl_pos(2, pi));
-                        if(coupling_align.enabled) {
-                            auto raw = std::array<float,3>{p[0], p[1], p[2]};
-                            auto aligned = martini_hybrid::vec_add(
-                                martini_hybrid::apply_rot(coupling_align.R, raw),
-                                coupling_align.t);
-                            p = make_vec3(aligned[0], aligned[1], aligned[2]);
-                        }
-                        centroid += p;
-                        wsum += 1.f;
-                    }
-                    if(wsum > 0.f) {
-                        centroid *= (1.0f / wsum);
-                        if(row < (int)hybrid_state->sc_local_pos.size()) {
-                            auto local = hybrid_state->sc_local_pos[row];
-                            if(coupling_align.enabled) {
-                                local = martini_hybrid::apply_rot(coupling_align.R, local);
-                            }
-                            centroid += make_vec3(local[0], local[1], local[2]);
-                        }
-                        out_pos = centroid;
-                        return true;
-                    }
-                }
-            }
-
-            Vec<3> projected = make_zero<3>();
-            bool has_target = false;
-            for(int d = 0; d < 4; ++d) {
-                int ai = hybrid_state->sc_proj_target_indices[row][d];
-                float w = hybrid_state->sc_proj_weights[row][d];
-                if(ai < 0 || ai >= n_atom || w == 0.f) continue;
-
-                Vec<3> p = load_vec<3>(pos1, ai);
-                bool target_is_protein = (
-                    ai >= 0 &&
-                    ai < (int)hybrid_state->protein_membership.size() &&
-                    hybrid_state->protein_membership[ai] >= 0);
-                if(coupling_align.enabled && target_is_protein) {
+            const auto& g = hybrid_state->placement_state_groups[gid];
+            VecArray pl_pos = hybrid_state->placement_node->output;
+            for(int pi : g.placement_rows) {
+                if(pi < 0 || pi >= hybrid_state->placement_node->n_elem) continue;
+                Vec<3> p = make_vec3(pl_pos(0, pi), pl_pos(1, pi), pl_pos(2, pi));
+                if(coupling_align.enabled) {
                     auto raw = std::array<float,3>{p[0], p[1], p[2]};
                     auto aligned = martini_hybrid::vec_add(
                         martini_hybrid::apply_rot(coupling_align.R, raw),
                         coupling_align.t);
                     p = make_vec3(aligned[0], aligned[1], aligned[2]);
                 }
-                projected += w * p;
-                has_target = true;
+                pts.push_back(std::array<float,3>{p[0], p[1], p[2]});
+                centroid[0] += p[0];
+                centroid[1] += p[1];
+                centroid[2] += p[2];
             }
-            if(!has_target) return false;
 
-            if(row < (int)hybrid_state->sc_local_pos.size()) {
-                auto local = hybrid_state->sc_local_pos[row];
-                if(coupling_align.enabled) {
-                    local = martini_hybrid::apply_rot(coupling_align.R, local);
+            if(pts.empty()) return false;
+            float inv_n = 1.f / float(pts.size());
+            centroid[0] *= inv_n;
+            centroid[1] *= inv_n;
+            centroid[2] *= inv_n;
+            return true;
+        };
+
+        auto compute_group_rigid_transform = [&](const std::vector<std::array<float,3>>& ref_pts,
+                                                 const std::array<float,3>& ref_centroid,
+                                                 const std::vector<std::array<float,3>>& tgt_pts,
+                                                 const std::array<float,3>& tgt_centroid,
+                                                 float R[3][3],
+                                                 std::array<float,3>& t) {
+            for(int i = 0; i < 3; ++i) {
+                for(int j = 0; j < 3; ++j) {
+                    R[i][j] = (i == j) ? 1.f : 0.f;
                 }
-                projected += make_vec3(local[0], local[1], local[2]);
             }
 
-            out_pos = projected;
+            size_t n = std::min(ref_pts.size(), tgt_pts.size());
+            if(n >= 3) {
+                float F_ref[3][3], F_tgt[3][3], F_ref_T[3][3];
+                bool ok_frame = false;
+                for(size_t a = 0; a + 2 < n; ++a) {
+                    if(martini_hybrid::build_frame_from_three(ref_pts[a], ref_pts[a+1], ref_pts[a+2], F_ref) &&
+                       martini_hybrid::build_frame_from_three(tgt_pts[a], tgt_pts[a+1], tgt_pts[a+2], F_tgt)) {
+                        ok_frame = true;
+                        break;
+                    }
+                }
+                if(ok_frame) {
+                    martini_hybrid::mat_transpose(F_ref, F_ref_T);
+                    martini_hybrid::mat_mul(F_tgt, F_ref_T, R);
+                }
+            }
+
+            auto Rc = martini_hybrid::apply_rot(R, ref_centroid);
+            t = martini_hybrid::vec_sub(tgt_centroid, Rc);
+        };
+
+        if(use_probabilistic_sc) {
+            if(!hybrid_state->placement_node || hybrid_state->placement_state_groups.empty()) {
+                throw string("Hybrid SC probabilistic coupling requires placement*_point_vector_only node data");
+            }
+            if(!hybrid_state->rotamer_node) {
+                throw string("Hybrid SC probabilistic coupling requires rotamer node data");
+            }
+            if(hybrid_state->sc_row_to_placement_group.size() != hybrid_state->sc_proxy_atom_index.size()) {
+                throw string("Hybrid SC mapping is inconsistent: row/group sizes differ");
+            }
+            for(size_t r = 0; r < hybrid_state->sc_row_to_placement_group.size(); ++r) {
+                int gid = hybrid_state->sc_row_to_placement_group[r];
+                if(gid < 0 || gid >= (int)hybrid_state->placement_state_groups.size()) {
+                    throw string("Hybrid SC mapping missing placement group assignment for SC row");
+                }
+                int resid = (r < hybrid_state->sc_residue_index.size()) ? hybrid_state->sc_residue_index[r] : -1;
+                if(hybrid_state->placement_reference_group_by_residue.find(resid) ==
+                   hybrid_state->placement_reference_group_by_residue.end()) {
+                    throw string("Hybrid SC mapping missing residue reference placement group");
+                }
+            }
+
+            if(mutable_hybrid && !mutable_hybrid->sc_local_pos_initialized) {
+                bool has_nonzero_local = false;
+                for(const auto& local : mutable_hybrid->sc_local_pos) {
+                    if(fabsf(local[0]) > 1e-6f || fabsf(local[1]) > 1e-6f || fabsf(local[2]) > 1e-6f) {
+                        has_nonzero_local = true;
+                        break;
+                    }
+                }
+                if(!has_nonzero_local) {
+                    std::unordered_map<int, std::array<float,3>> ref_centroid_by_residue;
+                    for(size_t r = 0; r < mutable_hybrid->sc_proxy_atom_index.size(); ++r) {
+                        int resid = mutable_hybrid->sc_residue_index[r];
+                        auto ref_it = mutable_hybrid->placement_reference_group_by_residue.find(resid);
+                        if(ref_it == mutable_hybrid->placement_reference_group_by_residue.end()) {
+                            throw string("Hybrid SC rigid initialization failed: missing reference placement group");
+                        }
+
+                        if(ref_centroid_by_residue.find(resid) == ref_centroid_by_residue.end()) {
+                            std::vector<std::array<float,3>> pts;
+                            std::array<float,3> ctr{0.f, 0.f, 0.f};
+                            if(!collect_placement_group_points(ref_it->second, pts, ctr)) {
+                                throw string("Hybrid SC rigid initialization failed: cannot read reference placement points");
+                            }
+                            ref_centroid_by_residue.emplace(resid, ctr);
+                        }
+
+                        int proxy = mutable_hybrid->sc_proxy_atom_index[r];
+                        if(proxy < 0 || proxy >= n_atom) {
+                            throw string("Hybrid SC rigid initialization failed: proxy index out of bounds");
+                        }
+                        Vec<3> p = load_vec<3>(pos1, proxy);
+                        bool proxy_is_protein = (
+                            proxy >= 0 &&
+                            proxy < (int)mutable_hybrid->protein_membership.size() &&
+                            mutable_hybrid->protein_membership[proxy] >= 0);
+                        if(coupling_align.enabled && proxy_is_protein) {
+                            auto raw = std::array<float,3>{p[0], p[1], p[2]};
+                            auto aligned = martini_hybrid::vec_add(
+                                martini_hybrid::apply_rot(coupling_align.R, raw),
+                                coupling_align.t);
+                            p = make_vec3(aligned[0], aligned[1], aligned[2]);
+                        }
+
+                        auto ctr = ref_centroid_by_residue[resid];
+                        mutable_hybrid->sc_local_pos[r] = std::array<float,3>{
+                            p[0] - ctr[0],
+                            p[1] - ctr[1],
+                            p[2] - ctr[2]
+                        };
+                    }
+                }
+                mutable_hybrid->sc_local_pos_initialized = true;
+            }
+
+            sc_row_proxy_grad.assign(hybrid_state->sc_proxy_atom_index.size(), std::array<float,3>{{0.f,0.f,0.f}});
+            sc_row_probability = hybrid_state->sc_rotamer_prob;
+            if(!martini_hybrid::refresh_sc_row_probabilities_from_rotamer(*hybrid_state, sc_row_probability)) {
+                throw string("Hybrid SC probabilistic coupling requires live rotamer probabilities for all SC rows");
+            }
+        }
+
+        // Build per-rotamer projected SC position from placement coordinates only.
+        // No fallback to static hybrid_sc_map projection targets.
+        auto build_sc_row_proxy_pos = [&](int row, Vec<3>& out_pos) -> bool {
+            if(!hybrid_state) return false;
+            if(!hybrid_state->placement_node) return false;
+            if(row < 0 || row >= (int)hybrid_state->sc_row_to_placement_group.size()) return false;
+            if(row >= (int)hybrid_state->sc_residue_index.size()) return false;
+
+            int gid = hybrid_state->sc_row_to_placement_group[row];
+            if(gid < 0 || gid >= (int)hybrid_state->placement_state_groups.size()) return false;
+
+            int resid = hybrid_state->sc_residue_index[row];
+            auto ref_it = hybrid_state->placement_reference_group_by_residue.find(resid);
+            if(ref_it == hybrid_state->placement_reference_group_by_residue.end()) return false;
+            int ref_gid = ref_it->second;
+
+            std::vector<std::array<float,3>> ref_pts, tgt_pts;
+            std::array<float,3> ref_centroid{0.f, 0.f, 0.f};
+            std::array<float,3> tgt_centroid{0.f, 0.f, 0.f};
+            if(!collect_placement_group_points(ref_gid, ref_pts, ref_centroid)) return false;
+            if(!collect_placement_group_points(gid, tgt_pts, tgt_centroid)) return false;
+
+            float R[3][3];
+            std::array<float,3> t{0.f, 0.f, 0.f};
+            compute_group_rigid_transform(ref_pts, ref_centroid, tgt_pts, tgt_centroid, R, t);
+
+            std::array<float,3> local{0.f, 0.f, 0.f};
+            if(row < (int)hybrid_state->sc_local_pos.size()) {
+                local = hybrid_state->sc_local_pos[row];
+            }
+
+            auto rotated = martini_hybrid::apply_rot(R, local);
+            auto mapped = martini_hybrid::vec_add(rotated, t);
+            out_pos = make_vec3(mapped[0], mapped[1], mapped[2]);
             return true;
         };
 

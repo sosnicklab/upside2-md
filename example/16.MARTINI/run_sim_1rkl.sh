@@ -121,6 +121,7 @@ export UPSIDE_EWALD_ALPHA="${UPSIDE_EWALD_ALPHA:-0.2}"
 export UPSIDE_EWALD_KMAX="${UPSIDE_EWALD_KMAX:-5}"
 export UPSIDE_MARTINI_FF_DIR="${UPSIDE_MARTINI_FF_DIR:-ff_dry}"
 MASS_FF_FILE="${MASS_FF_FILE:-${UPSIDE_MARTINI_FF_DIR}/dry_martini_v2.1.itp}"
+SIDECHAIN_LIBRARY="${SIDECHAIN_LIBRARY:-${UPSIDE_HOME}/parameters/ff_2.1/sidechain.h5}"
 
 # =============================================================================
 # VALIDATION
@@ -420,6 +421,323 @@ with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
 PY
 }
 
+augment_production_rotamer_nodes() {
+    local up_file="$1"
+    local protein_itp="$2"
+    local sidechain_lib="$3"
+    python3 - "$up_file" "$protein_itp" "$sidechain_lib" << 'PY'
+import os
+import sys
+import h5py
+import numpy as np
+
+up_file, protein_itp, sidechain_lib = sys.argv[1:4]
+
+if not os.path.exists(up_file):
+    raise SystemExit(f"ERROR: stage file not found: {up_file}")
+if not os.path.exists(protein_itp):
+    raise SystemExit(f"ERROR: protein ITP not found: {protein_itp}")
+if not os.path.exists(sidechain_lib):
+    raise SystemExit(f"ERROR: sidechain library not found: {sidechain_lib}")
+
+
+def parse_itp_residue_names(path):
+    resnames = []
+    seen = set()
+    in_atoms = False
+    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+        for raw in fh:
+            line = raw.split(";", 1)[0].strip()
+            if not line:
+                continue
+            low = line.lower()
+            if low == "[ atoms ]" or low == "[atoms]":
+                in_atoms = True
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                in_atoms = False
+                continue
+            if not in_atoms:
+                continue
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            try:
+                resnr = int(parts[2])
+            except ValueError:
+                continue
+            role = parts[4].strip().upper()
+            if role != "BB":
+                continue
+            if resnr in seen:
+                continue
+            seen.add(resnr)
+            resnames.append(parts[3].strip().upper())
+    return resnames
+
+
+def normalize_resname(name):
+    name = name.upper()
+    aliases = {
+        "HSD": "HIS",
+        "HSE": "HIS",
+        "HSP": "HIS",
+        "HID": "HIS",
+        "HIE": "HIS",
+        "HIP": "HIS",
+        "CYX": "CYS",
+    }
+    return aliases.get(name, name)
+
+
+with h5py.File(up_file, "r+") as up, h5py.File(sidechain_lib, "r") as sclib:
+    inp = up["/input"]
+    pot = inp["potential"]
+
+    if "hybrid_bb_map" not in inp:
+        raise ValueError("Missing /input/hybrid_bb_map in stage file")
+    if "hybrid_sc_map" not in inp:
+        raise ValueError("Missing /input/hybrid_sc_map in stage file")
+
+    bb_residue_raw = inp["hybrid_bb_map"]["bb_residue_index"][:].astype(np.int32)
+    bb_atom_idx_raw = inp["hybrid_bb_map"]["bb_atom_index"][:].astype(np.int32)
+    if bb_residue_raw.size == 0:
+        raise ValueError("hybrid_bb_map is empty")
+
+    residue_ids = []
+    residue_to_bb = {}
+    seen = set()
+    for resid, bb_idx in zip(bb_residue_raw.tolist(), bb_atom_idx_raw.tolist()):
+        rid = int(resid)
+        bi = int(bb_idx)
+        if rid not in seen:
+            residue_ids.append(rid)
+            seen.add(rid)
+        if rid not in residue_to_bb and bi >= 0:
+            residue_to_bb[rid] = bi
+
+    if not residue_ids:
+        raise ValueError("No protein residues found in hybrid_bb_map")
+
+    residue_to_sc = {}
+    sc_res = inp["hybrid_sc_map"]["residue_index"][:].astype(np.int32)
+    sc_proxy = inp["hybrid_sc_map"]["proxy_atom_index"][:].astype(np.int32)
+    for resid, proxy in zip(sc_res.tolist(), sc_proxy.tolist()):
+        rid = int(resid)
+        pi = int(proxy)
+        if rid not in residue_to_sc and pi >= 0:
+            residue_to_sc[rid] = pi
+
+    itp_resnames = [normalize_resname(x) for x in parse_itp_residue_names(protein_itp)]
+    if len(itp_resnames) != len(residue_ids):
+        raise ValueError(
+            f"ITP/BB residue count mismatch: ITP has {len(itp_resnames)} residues, "
+            f"hybrid_bb_map has {len(residue_ids)} residues"
+        )
+
+    restype_order = [x.decode("ascii") if isinstance(x, bytes) else str(x) for x in sclib["restype_order"][:]]
+    restype_num = {x: i for i, x in enumerate(restype_order)}
+    start_stop_bead = sclib["rotamer_start_stop_bead"][:].astype(np.int32)
+    rot_center_fixed = sclib["rotamer_center_fixed"][:].astype(np.float32)
+    if "rotamer_prob_fixed" in sclib:
+        rot_energy_fixed = sclib["rotamer_prob_fixed"][:].astype(np.float32).reshape(-1)
+    elif "rotamer_prob" in sclib:
+        rot_prob = sclib["rotamer_prob"][:].astype(np.float64)
+        if rot_prob.ndim != 3:
+            raise ValueError(
+                f"Unsupported rotamer_prob shape in {sidechain_lib}: {rot_prob.shape}"
+            )
+        # Convert phi/psi-dependent probabilities into a fixed one-body energy per layer.
+        rot_prob_mean = np.clip(rot_prob.mean(axis=(0, 1)), 1.0e-12, None)
+        rot_energy_fixed = (-np.log(rot_prob_mean)).astype(np.float32)
+    else:
+        raise ValueError(
+            f"Missing rotamer probability tables in {sidechain_lib}: "
+            "need rotamer_prob_fixed or rotamer_prob"
+        )
+    bead_order = [x.decode("ascii") if isinstance(x, bytes) else str(x) for x in sclib["bead_order"][:]]
+    bead_num = {x: i for i, x in enumerate(bead_order)}
+    pair_interaction = sclib["pair_interaction"][:].astype(np.float32)
+
+    n_bit_rotamer = 4
+    count_by_n_rot = {}
+    affine_residue = []
+    layer_index = []
+    beadtype_seq = []
+    id_seq = []
+
+    for rid, resname in zip(residue_ids, itp_resnames):
+        if resname not in restype_num:
+            raise ValueError(f"Residue '{resname}' not found in sidechain library")
+        rt = restype_num[resname]
+        start, stop, n_bead = [int(x) for x in start_stop_bead[rt]]
+        if n_bead <= 0 or stop <= start:
+            continue
+        n_rot = (stop - start) // n_bead
+        if n_rot <= 0:
+            continue
+
+        if n_rot not in count_by_n_rot:
+            count_by_n_rot[n_rot] = 0
+        base_id = (count_by_n_rot[n_rot] << n_bit_rotamer) + n_rot
+        count_by_n_rot[n_rot] += 1
+
+        n_rows = stop - start
+        for rel in range(n_rows):
+            lid = start + rel
+            layer_index.append(lid)
+            affine_residue.append(rid)
+            beadtype_seq.append(f"{resname}_{rel % n_bead}")
+            id_seq.append((rel // n_bead) + (base_id << n_bit_rotamer))
+
+    if not layer_index:
+        raise ValueError("No placement rows generated from sidechain library")
+
+    layer_index_arr = np.asarray(layer_index, dtype=np.int32)
+    affine_residue_arr = np.asarray(affine_residue, dtype=np.int32)
+    id_seq_arr = np.asarray(id_seq, dtype=np.int32)
+    beadtype_seq_arr = np.asarray([np.bytes_(x) for x in beadtype_seq], dtype="S16")
+    placement_scalar_data = rot_energy_fixed[layer_index_arr][:, None].astype(np.float32)
+
+    pos = inp["pos"][:, :, 0].astype(np.float32)
+    n_atom = int(pos.shape[0])
+
+    residue_to_order = {rid: i for i, rid in enumerate(residue_ids)}
+    fallback_rid = residue_ids[0]
+    bb_list_ordered = [int(residue_to_bb[rid]) for rid in residue_ids]
+
+    def unique_preserve(seq):
+        out = []
+        seen_local = set()
+        for x in seq:
+            xi = int(x)
+            if xi in seen_local:
+                continue
+            seen_local.add(xi)
+            out.append(xi)
+        return out
+
+    def pick_triplet(rid):
+        i = residue_to_order[rid]
+        bb = int(residue_to_bb[rid])
+        scp = int(residue_to_sc.get(rid, -1))
+
+        candidates = []
+        for off in (-2, -1, 1, 2, -3, 3):
+            j = i + off
+            if 0 <= j < len(residue_ids):
+                candidates.append(int(residue_to_bb[residue_ids[j]]))
+        if scp >= 0:
+            candidates.append(scp)
+        candidates.extend([bb_list_ordered[0], bb_list_ordered[-1]])
+        candidates = [x for x in unique_preserve(candidates) if 0 <= x < n_atom and x != bb]
+
+        if len(candidates) < 2:
+            for x in bb_list_ordered:
+                xi = int(x)
+                if 0 <= xi < n_atom and xi != bb and xi not in candidates:
+                    candidates.append(xi)
+                if len(candidates) >= 2:
+                    break
+        if len(candidates) < 2:
+            for x in range(n_atom):
+                if x != bb and x not in candidates:
+                    candidates.append(x)
+                if len(candidates) >= 2:
+                    break
+        if len(candidates) < 2:
+            raise ValueError(f"Unable to build affine triplet for residue {rid}")
+
+        best_pair = None
+        best_area = -1.0
+        for a in candidates:
+            for c in candidates:
+                if a == c:
+                    continue
+                area = np.linalg.norm(np.cross(pos[a] - pos[bb], pos[c] - pos[bb]))
+                if np.isfinite(area) and area > best_area:
+                    best_area = float(area)
+                    best_pair = (a, c)
+
+        if best_pair is None:
+            return int(candidates[0]), bb, int(candidates[1])
+        return int(best_pair[0]), bb, int(best_pair[1])
+
+    n_affine = int(max(residue_ids) + 1)
+    affine_atoms = np.zeros((n_affine, 3), dtype=np.int32)
+    affine_ref_geom = np.zeros((n_affine, 3, 3), dtype=np.float32)
+
+    fa, fb, fc = pick_triplet(fallback_rid)
+    for rid in range(n_affine):
+        affine_atoms[rid, :] = [fa, fb, fc]
+        ref = pos[[fa, fb, fc], :] - pos[[fa, fb, fc], :].mean(axis=0, keepdims=True)
+        affine_ref_geom[rid, :, :] = ref.astype(np.float32)
+
+    for rid in residue_ids:
+        a, b, c = pick_triplet(rid)
+        for idx in (a, b, c):
+            if idx < 0 or idx >= n_atom:
+                raise ValueError(f"Affine atom index out of bounds: residue {rid}, index {idx}, n_atom {n_atom}")
+        affine_atoms[rid, :] = [a, b, c]
+        ref = pos[[a, b, c], :] - pos[[a, b, c], :].mean(axis=0, keepdims=True)
+        affine_ref_geom[rid, :, :] = ref.astype(np.float32)
+
+    for node_name in [
+        "rotamer",
+        "placement_fixed_scalar",
+        "placement_fixed_point_vector_only",
+        "affine_alignment",
+    ]:
+        if node_name in pot:
+            del pot[node_name]
+
+    g_aff = pot.create_group("affine_alignment")
+    g_aff.attrs["arguments"] = np.array([b"pos"])
+    g_aff.create_dataset("atoms", data=affine_atoms, dtype=np.int32)
+    g_aff.create_dataset("ref_geom", data=affine_ref_geom, dtype=np.float32)
+
+    g_sc = pot.create_group("placement_fixed_point_vector_only")
+    g_sc.attrs["arguments"] = np.array([b"affine_alignment"])
+    g_sc.create_dataset("rama_residue", data=affine_residue_arr, dtype=np.int32)
+    g_sc.create_dataset("affine_residue", data=affine_residue_arr, dtype=np.int32)
+    g_sc.create_dataset("layer_index", data=layer_index_arr, dtype=np.int32)
+    g_sc.create_dataset("placement_data", data=rot_center_fixed[:, :6].astype(np.float32), dtype=np.float32)
+    g_sc.create_dataset("beadtype_seq", data=beadtype_seq_arr)
+    g_sc.create_dataset("id_seq", data=id_seq_arr, dtype=np.int32)
+    g_sc.create_dataset("fix_rotamer", data=np.zeros((0, 2), dtype=np.int32), dtype=np.int32)
+
+    g_pl = pot.create_group("placement_fixed_scalar")
+    g_pl.attrs["arguments"] = np.array([b"affine_alignment"])
+    g_pl.create_dataset("rama_residue", data=affine_residue_arr, dtype=np.int32)
+    g_pl.create_dataset("affine_residue", data=affine_residue_arr, dtype=np.int32)
+    g_pl.create_dataset("layer_index", data=layer_index_arr, dtype=np.int32)
+    g_pl.create_dataset("placement_data", data=placement_scalar_data, dtype=np.float32)
+
+    g_rot = pot.create_group("rotamer")
+    g_rot.attrs["arguments"] = np.array([b"placement_fixed_point_vector_only", b"placement_fixed_scalar"])
+    g_rot.attrs["integrator_level"] = np.int32(1)
+    g_rot.attrs["max_iter"] = np.int32(1000)
+    g_rot.attrs["tol"] = np.float32(1.0e-3)
+    g_rot.attrs["damping"] = np.float32(0.4)
+    g_rot.attrs["iteration_chunk_size"] = np.int32(2)
+
+    g_pair = g_rot.create_group("pair_interaction")
+    g_pair.create_dataset("interaction_param", data=pair_interaction, dtype=np.float32)
+    g_pair.create_dataset("index", data=np.arange(len(beadtype_seq), dtype=np.int32), dtype=np.int32)
+    g_pair.create_dataset(
+        "type",
+        data=np.asarray([bead_num[x] for x in beadtype_seq], dtype=np.int32),
+        dtype=np.int32,
+    )
+    g_pair.create_dataset("id", data=id_seq_arr, dtype=np.int32)
+
+    print(
+        f"Injected production rotamer nodes into {up_file}: "
+        f"n_res={len(residue_ids)} n_sc_rows={len(beadtype_seq)} n_affine={n_affine}"
+    )
+PY
+}
+
 prepare_hybrid_artifacts() {
     echo "=== Stage 0: Hybrid Packing + Mapping Export ==="
     prepare_protein_inputs
@@ -479,6 +797,9 @@ prepare_stage_file() {
     mv -f "$prepared_tmp" "$target_file"
     inject_hybrid_mapping "$target_file" "${HYBRID_MAPPING_FILE}"
     set_stage_label "$target_file" "$stage_label"
+    if [ "$stage_label" = "production" ]; then
+        augment_production_rotamer_nodes "$target_file" "${PROTEIN_ITP_EFFECTIVE}" "${SIDECHAIN_LIBRARY}"
+    fi
 
     if [ "$npt_enable" = "1" ]; then
         set_barostat_type "$target_file" "$barostat_type"

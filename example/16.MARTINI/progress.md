@@ -776,3 +776,88 @@
 - File permissions and syntax checks:
   - `chmod +x test_prod_run_sim_1rkl.sh`
   - `bash -n test_prod_run_sim_1rkl.sh` passed.
+
+## 2026-02-17 (Rotamer Numbering Consistency Audit)
+- Re-read `task_plan.md` and audited rotamer-state encoding/decoding paths across Python and C++:
+  - `../../py/upside_config.py` encodes `id_seq` as `(node_id << 8) | (n_rot << 4) | rot` with `n_bit_rotamer=4`.
+  - `../../src/rotamer.cpp` decodes IDs with the same bit layout and exposes runtime logs `node_lookup=[n_rotamer,node_id]` and `node_marginal` (6-wide rows, active states in `[0, n_rot)`).
+  - `../../src/martini.cpp` hybrid decode and probabilistic refresh use the same `(rot, n_rot, node_id)` convention.
+- Ran runtime cross-check on `../01.GettingStarted/inputs/1UBQ.up`:
+  - `placement_fixed_point_vector_only` rows: `296`
+  - decoded invalid rows: `0`
+  - unique placement keys `(n_rot,node_id)`: `76`
+  - rotamer `n_node`: `76`
+  - key mismatch counts: `placement_missing_in_lookup=0`, `lookup_missing_in_placement=0`
+  - row-level validity: `ok=296`, `bad=0`
+- Verified sidechain-library state indexing used by `predict_chi1.py`:
+  - `../../parameters/ff_2.1/sidechain.h5` `restype_and_chi_and_state[:,3]` spans `0..5` and starts at `0` for every restype (no 1-based offset).
+  - `predict_chi1.py` uses these state IDs directly as array indices (`probs[s]`), consistent with 0-based rotamer numbering.
+- Confirmed current `1rkl` stage checkpoint status:
+  - `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_6.2.up` has no `rotamer` or `placement*_point_vector_only` nodes.
+  - `hybrid_sc_map/rotamer_id` is single-state (`min=max=0`, all probabilities `1.0`), so live probabilistic rotamer weighting is not active in that file.
+
+## 2026-02-17 (Strict No-Fallback SC Mapping + Rigid Rotamer Transform)
+- Applied user-requested behavior in `../../src/martini.cpp`:
+  - Removed fallback SC placement/probability behavior in production hybrid coupling.
+  - Added strict production checks requiring both `rotamer` and `placement*_point_vector_only` runtime nodes for probabilistic SC mapping.
+  - Ensured placement groups are rebuilt after runtime node discovery (previously they were parsed before node-name discovery, yielding empty groups).
+  - Enabled SC row expansion for multi-bead residues (removed one-row-per-residue limitation in placement expansion gate).
+- Implemented rigid per-rotamer SC placement:
+  - Added residue reference placement-group selection (prefer rotamer `0`, else first group).
+  - Added rigid transform mapping from reference placement frame to current rotamer placement frame.
+  - SC row local offsets are initialized once from current proxy geometry when `hybrid_sc_map/local_pos` is zero, then transformed rigidly each step.
+  - SC position build now uses placement-only mapping; static `hybrid_sc_map` target-position fallback is removed.
+- Tightened probabilistic rotamer weighting:
+  - `refresh_sc_row_probabilities_from_rotamer(...)` now returns success/failure.
+  - MARTINI compute path now aborts if live rotamer probabilities cannot be resolved for every SC row.
+- Updated `task_plan.md` to record the revised strict behavior and new blocker implication for old stage files lacking rotamer/placement nodes.
+- Build and validation:
+  - Rebuilt successfully: `cmake --build ../../obj -j4`.
+  - Runtime sanity check on current production file:
+    - Command: `../../obj/upside outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up --duration-steps 0 ...`
+    - Result: expected fast-fail with `ERROR: Hybrid production SC coupling requires placement*_point_vector_only node`.
+
+## 2026-02-17 (Production Rotamer-Node Injection Bug Fix in Run Scripts)
+- Fixed production-stage augmentation logic in both workflow scripts:
+  - `run_sim_1rkl.sh`
+  - `test_prod_run_sim_1rkl.sh`
+- Root cause:
+  - augmentation code assumed `sidechain.h5` contains `rotamer_prob_fixed`, but current `ff_2.1/sidechain.h5` provides `rotamer_prob` only.
+  - this raised `KeyError` during stage-7 preparation, so production files were not augmented with rotamer/placement nodes.
+- Implemented fix:
+  - if `rotamer_prob_fixed` exists, use it directly as fixed scalar placement energy.
+  - otherwise derive fixed scalar energy from `rotamer_prob` by phi/psi averaging and `-log(mean_prob)` with clipping for numerical safety.
+- Validation:
+  - `bash -n run_sim_1rkl.sh` passed.
+  - `bash -n test_prod_run_sim_1rkl.sh` passed.
+  - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh` now injects nodes successfully:
+    - log shows `Injected production rotamer nodes ...`
+    - runtime log shows `placement_node=placement_fixed_point_vector_only rotamer_node=rotamer`.
+    - original error `Hybrid production SC coupling requires placement*_point_vector_only node` no longer occurs.
+  - Additional direct init check passed:
+    - `../../obj/upside ...stage_7.0.up --duration-steps 0 ...` exits cleanly with hybrid production parsing active.
+- Remaining issue observed (separate from missing-node bug):
+  - 1-step production run still crashes with `Bus error: 10` after entering integration; this indicates a runtime stability/memory issue after initialization, not a stage-7 node-injection failure.
+
+## 2026-02-17 (Bus Error Debug + Fix for Stage 7 Production)
+- Investigated crash report `~/Library/Logs/DiagnosticReports/upside-2026-02-17-003758.ips`.
+- Crash stack showed SIGBUS in rotamer spline evaluation path:
+  - `bead_interaction.h` -> `spline.h::deBoor_value_and_deriv` -> `rotamer.cpp::fill_holders`.
+- Root cause:
+  - NaN/invalid SC placement coordinates were generated from degenerate `affine_alignment` triplets in script-generated production nodes.
+  - Two residues had duplicate triplet endpoints (`a == c`), producing zero-area reference frames and invalid rotamer geometry.
+- Implemented fix in both scripts:
+  - `run_sim_1rkl.sh`
+  - `test_prod_run_sim_1rkl.sh`
+  - Replaced simple neighbor triplet selection with robust triplet construction:
+    - build candidate atoms from nearby BBs + SC proxy + global fallbacks,
+    - enforce distinct atoms (`a != bb != c`, `a != c`),
+    - choose the pair maximizing triangle area around BB to avoid near-collinear/degenerate frames.
+- Validation:
+  - `bash -n run_sim_1rkl.sh` passed.
+  - `bash -n test_prod_run_sim_1rkl.sh` passed.
+  - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh` completed without SIGBUS.
+  - `PROD_70_NSTEPS=10 PROD_FRAME_STEPS=10 ./test_prod_run_sim_1rkl.sh` completed without SIGBUS.
+- Current status:
+  - Bus error is resolved.
+  - Production still shows rapid energy blow-up / NaN potential (physical stability issue), but no immediate runtime memory crash.
