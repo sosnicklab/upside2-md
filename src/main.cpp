@@ -146,6 +146,7 @@ struct System {
     double cached_martini_potential;
     uint64_t cached_potential_round;
     bool has_cached_potential;
+    vector<int> rg_backbone_atom_indices;
     System():
         round_num(0),
         cached_upside_potential(0.0),
@@ -190,6 +191,76 @@ static void refresh_split_potential_cache(System& sys, bool recompute_engine) {
     split_engine_potential_terms(sys.engine, sys.cached_upside_potential, sys.cached_martini_potential);
     sys.cached_potential_round = sys.round_num;
     sys.has_cached_potential = true;
+}
+
+static vector<int> collect_rg_backbone_indices_from_hybrid_map(hid_t config_root, int n_atom) {
+    vector<int> out;
+    if(n_atom <= 0) return out;
+    if(!h5_exists(config_root, "/input/hybrid_bb_map/atom_indices")) return out;
+
+    vector<unsigned char> seen(static_cast<size_t>(n_atom), 0u);
+    try {
+        auto shape = get_dset_size(2, config_root, "/input/hybrid_bb_map/atom_indices");
+        if(shape.size() != 2u || shape[0] == 0u || shape[1] == 0u) return out;
+
+        const size_t n_row = shape[0];
+        const size_t n_col = shape[1];
+        vector<int> atom_indices(n_row*n_col, -1);
+        vector<int> atom_mask;
+        bool has_mask = h5_exists(config_root, "/input/hybrid_bb_map/atom_mask");
+        if(has_mask) {
+            auto mask_shape = get_dset_size(2, config_root, "/input/hybrid_bb_map/atom_mask");
+            if(mask_shape.size() != 2u || mask_shape[0] != n_row || mask_shape[1] != n_col) {
+                has_mask = false;
+            } else {
+                atom_mask.assign(n_row*n_col, 0);
+                traverse_dset<2,int>(config_root, "/input/hybrid_bb_map/atom_mask",
+                        [&](size_t i, size_t j, int v) { atom_mask[i*n_col + j] = v; });
+            }
+        }
+
+        traverse_dset<2,int>(config_root, "/input/hybrid_bb_map/atom_indices",
+                [&](size_t i, size_t j, int v) { atom_indices[i*n_col + j] = v; });
+
+        out.reserve(n_row*n_col);
+        for(size_t i = 0; i < n_row; ++i) {
+            for(size_t j = 0; j < n_col; ++j) {
+                if(has_mask && atom_mask[i*n_col + j] == 0) continue;
+                int ai = atom_indices[i*n_col + j];
+                if(ai < 0 || ai >= n_atom) continue;
+                if(!seen[static_cast<size_t>(ai)]) {
+                    seen[static_cast<size_t>(ai)] = 1u;
+                    out.push_back(ai);
+                }
+            }
+        }
+    } catch(...) {
+        out.clear();
+    }
+    return out;
+}
+
+static vector<int> collect_rg_backbone_indices_from_sequence(hid_t config_root, int n_atom) {
+    vector<int> out;
+    if(n_atom <= 0) return out;
+    if(!h5_exists(config_root, "/input/sequence")) return out;
+    try {
+        auto seq_shape = get_dset_size(1, config_root, "/input/sequence");
+        if(seq_shape.empty()) return out;
+        int n_res = static_cast<int>(seq_shape[0]);
+        int n_backbone = std::min(n_atom, 3*n_res);
+        out.reserve(n_backbone);
+        for(int na = 0; na < n_backbone; ++na) out.push_back(na);
+    } catch(...) {
+        out.clear();
+    }
+    return out;
+}
+
+static vector<int> collect_rg_backbone_indices(hid_t config_root, int n_atom) {
+    auto hybrid_indices = collect_rg_backbone_indices_from_hybrid_map(config_root, n_atom);
+    if(!hybrid_indices.empty()) return hybrid_indices;
+    return collect_rg_backbone_indices_from_sequence(config_root, n_atom);
 }
 
 
@@ -839,6 +910,7 @@ try {
                 pos_shape = get_dset_size(3, sys->input.get(), "/input/pos");
 
             sys->n_atom = pos_shape[0];
+            sys->rg_backbone_atom_indices = collect_rg_backbone_indices(sys->config.get(), sys->n_atom);
 
             if(pos_shape[1]!=3) throw string("invalid dimensions for initial position");
             if(pos_shape[2]!=1) throw string("must have n_system 1 from config");
@@ -1128,29 +1200,26 @@ try {
                         sys.engine.compute(PotentialAndDerivMode);
                         sys.logger->collect_samples();
 
-                        // Read sequence to determine n_residues
-                        int n_res = 0;
-                        try {
-                            auto seq_dset = get_dset_size(1, sys.config.get(), "/input/sequence");
-                            n_res = seq_dset[0];
-                        } catch(...) {
-                            n_res = 0; // No sequence = pure MARTINI
-                        }
-
-                        int n_backbone = 3 * n_res;
                         double Rg = -1.0; // Default to N/A
-
-                        // Only calculate Rg if we have backbone atoms
-                        if(n_backbone > 0 && sys.n_atom >= n_backbone) {
+                        const auto& rg_atoms = sys.rg_backbone_atom_indices;
+                        if(!rg_atoms.empty()) {
                             float3 com = make_vec3(0.f, 0.f, 0.f);
-                            for(int na=0; na<n_backbone; ++na)
-                                com += load_vec<3>(sys.engine.pos->output, na);
-                            com *= 1.f/n_backbone;
+                            int n_backbone = 0;
+                            for(int ai: rg_atoms) {
+                                if(ai < 0 || ai >= sys.n_atom) continue;
+                                com += load_vec<3>(sys.engine.pos->output, ai);
+                                ++n_backbone;
+                            }
 
-                            Rg = 0.f;
-                            for(int na=0; na<n_backbone; ++na)
-                                Rg += mag2(load_vec<3>(sys.engine.pos->output,na)-com);
-                            Rg = sqrtf(Rg/n_backbone);
+                            if(n_backbone > 0) {
+                                com *= 1.f/n_backbone;
+                                double rg2 = 0.0;
+                                for(int ai: rg_atoms) {
+                                    if(ai < 0 || ai >= sys.n_atom) continue;
+                                    rg2 += mag2(load_vec<3>(sys.engine.pos->output, ai)-com);
+                                }
+                                Rg = sqrt(rg2/n_backbone);
+                            }
                         }
 
                         // Print with conditional Rg info

@@ -862,6 +862,18 @@
   - Bus error is resolved.
   - Production still shows rapid energy blow-up / NaN potential (physical stability issue), but no immediate runtime memory crash.
 
+## 2026-02-17 (Rg Status-Line Fix: Use All-Atom Backbone Mapping)
+- Updated runtime status-line `Rg` calculation in `../../src/main.cpp` to avoid legacy `3*n_res` first-atom assumption.
+- Implemented per-system backbone atom index collection at initialization:
+  - primary source: `/input/hybrid_bb_map/atom_indices` + `/input/hybrid_bb_map/atom_mask` (captures mapped `N,CA,C,O` all-atom backbone indices),
+  - fallback: legacy `3*n_res` sequence-based indexing when hybrid mapping is absent.
+- Added cached `System::rg_backbone_atom_indices` and reused it during frame printout for `Rg` computation.
+- Validation:
+  - Rebuilt successfully: `cmake --build ../../obj -j4`.
+  - Production smoke run (`PROD_70_NSTEPS=1`) now prints numeric Rg:
+    - `... hbonds, Rg  12.6 A, potential ...`
+  - `Rg` no longer prints `N/A` in this hybrid workflow.
+
 ## 2026-02-17 (Audit: Pre-Production Rigidity + Potential Output Semantics)
 - Traced workflow and runtime paths relevant to the user report:
   - `run_sim_1rkl.sh` stage labels and extraction modes (`6.x -> minimization`, `7.0 -> production`, VTF mode `1` vs `2`).
