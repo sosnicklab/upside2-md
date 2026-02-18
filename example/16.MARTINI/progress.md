@@ -958,3 +958,31 @@
   - Additional production-initialization probe (`--duration-steps 0`) on stage-7 copy:
     - `Initial potential energy (Upside/MARTINI/Total): 177.63/153485216298.49/153485213696.00`
     - confirms non-MARTINI bucket is populated when production rotamer/placement nodes are active.
+
+## 2026-02-18 (Preparation Patch: Explicit SC Control Attrs)
+- Patched production-stage preparation in both workflow scripts:
+  - `run_sim_1rkl.sh`
+  - `test_prod_run_sim_1rkl.sh`
+- Added script-level configuration variables for SC coupling control attrs:
+  - `SC_ENV_LJ_FORCE_CAP` (default `25.0`)
+  - `SC_ENV_COUL_FORCE_CAP` (default `25.0`)
+  - `SC_ENV_RELAX_STEPS` (default `200`)
+  - `SC_ENV_RELAX_DT` (default `0.002`)
+  - `SC_ENV_RESTRAINT_K` (default `5.0`)
+  - `SC_ENV_MAX_DISPLACEMENT` (default `2.0`)
+- Added `set_hybrid_sc_controls()` helper to both scripts to write these values into `/input/hybrid_control` attrs in the prepared stage file.
+- Wired helper into `prepare_stage_file()` for production stage so attr injection happens during preparation, before production MD runs.
+- Validation:
+  - `bash -n run_sim_1rkl.sh` passed.
+  - `bash -n test_prod_run_sim_1rkl.sh` passed.
+  - `rg` checks confirm function presence and production-stage call sites in both scripts.
+  - Runtime preparation probe:
+    - `PROD_70_NSTEPS=0 PROD_FRAME_STEPS=1 bash test_prod_run_sim_1rkl.sh` completed.
+    - Stage-7 startup log reports explicit SC controls in parsed hybrid config:
+      - `sc_cap_lj=25.000`
+      - `sc_cap_coul=25.000`
+      - `sc_relax_steps=200`
+      - `sc_relax_dt=0.0020`
+      - `sc_rest_k=5.000`
+      - `sc_max_disp=2.000`
+  - HDF5 attribute check on regenerated `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` confirms all six SC control attrs are present under `/input/hybrid_control`.

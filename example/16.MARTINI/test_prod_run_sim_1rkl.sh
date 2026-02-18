@@ -68,6 +68,12 @@ export UPSIDE_EWALD_ALPHA="${UPSIDE_EWALD_ALPHA:-0.2}"
 export UPSIDE_EWALD_KMAX="${UPSIDE_EWALD_KMAX:-5}"
 export UPSIDE_MARTINI_FF_DIR="${UPSIDE_MARTINI_FF_DIR:-ff_dry}"
 SIDECHAIN_LIBRARY="${SIDECHAIN_LIBRARY:-${UPSIDE_HOME}/parameters/ff_2.1/sidechain.h5}"
+SC_ENV_LJ_FORCE_CAP="${SC_ENV_LJ_FORCE_CAP:-25.0}"
+SC_ENV_COUL_FORCE_CAP="${SC_ENV_COUL_FORCE_CAP:-25.0}"
+SC_ENV_RELAX_STEPS="${SC_ENV_RELAX_STEPS:-200}"
+SC_ENV_RELAX_DT="${SC_ENV_RELAX_DT:-0.002}"
+SC_ENV_RESTRAINT_K="${SC_ENV_RESTRAINT_K:-5.0}"
+SC_ENV_MAX_DISPLACEMENT="${SC_ENV_MAX_DISPLACEMENT:-2.0}"
 
 if [ -z "${UPSIDE_HOME:-}" ]; then
     echo "ERROR: UPSIDE_HOME environment variable is not set"
@@ -131,6 +137,38 @@ with h5py.File(up_file, "r+") as h5:
     grp = inp.require_group("stage_parameters")
     grp.attrs["enable"] = np.int8(1)
     grp.attrs["current_stage"] = np.bytes_(stage_label)
+PY
+}
+
+set_hybrid_sc_controls() {
+    local up_file="$1"
+    local lj_cap="$2"
+    local coul_cap="$3"
+    local relax_steps="$4"
+    local relax_dt="$5"
+    local rest_k="$6"
+    local max_disp="$7"
+    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$relax_dt" "$rest_k" "$max_disp" << 'PY'
+import sys
+import h5py
+import numpy as np
+
+up_file = sys.argv[1]
+lj_cap = float(sys.argv[2])
+coul_cap = float(sys.argv[3])
+relax_steps = int(sys.argv[4])
+relax_dt = float(sys.argv[5])
+rest_k = float(sys.argv[6])
+max_disp = float(sys.argv[7])
+
+with h5py.File(up_file, "r+") as h5:
+    grp = h5.require_group("input").require_group("hybrid_control")
+    grp.attrs["sc_env_lj_force_cap"] = np.float32(lj_cap)
+    grp.attrs["sc_env_coul_force_cap"] = np.float32(coul_cap)
+    grp.attrs["sc_env_relax_steps"] = np.int32(relax_steps)
+    grp.attrs["sc_env_relax_dt"] = np.float32(relax_dt)
+    grp.attrs["sc_env_restraint_k"] = np.float32(rest_k)
+    grp.attrs["sc_env_max_displacement"] = np.float32(max_disp)
 PY
 }
 
@@ -502,6 +540,14 @@ prepare_stage_file() {
     inject_hybrid_mapping "$target_file" "${HYBRID_MAPPING_FILE}"
     set_stage_label "$target_file" "$stage_label"
     if [ "$stage_label" = "production" ]; then
+        set_hybrid_sc_controls \
+            "$target_file" \
+            "$SC_ENV_LJ_FORCE_CAP" \
+            "$SC_ENV_COUL_FORCE_CAP" \
+            "$SC_ENV_RELAX_STEPS" \
+            "$SC_ENV_RELAX_DT" \
+            "$SC_ENV_RESTRAINT_K" \
+            "$SC_ENV_MAX_DISPLACEMENT"
         augment_production_rotamer_nodes "$target_file" "${RUNTIME_ITP_FILE}" "${SIDECHAIN_LIBRARY}"
     fi
 

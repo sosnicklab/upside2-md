@@ -93,3 +93,4 @@
 - Hybrid pre-production rigid hold and NPT are both enabled by scaling only unconstrained DOFs during barostat box/coordinate updates (fully fixed atoms remain fixed; z-fixed atoms keep fixed z).
 - Production probabilistic SC-environment coupling will cap LJ and Coulomb force magnitudes (configurable via `hybrid_control` attributes) to prevent force spikes.
 - Production probabilistic SC-environment coupling will run an inner SC-only relaxation loop (`200` steps by default) with fixed environment/backbone and SC restrained near mapped rotamer positions; only the final relaxed-step SC->BB force is projected back to backbone.
+- Production stage file preparation (`run_sim_1rkl.sh`, `test_prod_run_sim_1rkl.sh`) will explicitly set SC coupling control attrs in `/input/hybrid_control` (`sc_env_lj_force_cap`, `sc_env_coul_force_cap`, `sc_env_relax_steps`, `sc_env_relax_dt`, `sc_env_restraint_k`, `sc_env_max_displacement`) instead of relying on runtime defaults.
