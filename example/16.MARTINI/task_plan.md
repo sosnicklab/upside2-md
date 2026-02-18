@@ -39,6 +39,9 @@
 - After removing SC placement/probability fallback, production files lacking `rotamer` + `placement*_point_vector_only` nodes will fail fast in hybrid mode and must be regenerated with those nodes present.
 - Current stage-generation workflow (`prepare_martini.py` in `run_sim_1rkl.sh` / `test_prod_run_sim_1rkl.sh`) does not emit Upside `affine_alignment`/`placement_*`/`rotamer` nodes, so production-stage strict SC coupling fails unless scripts augment stage-7 files with these nodes.
 - Stage-7 script augmentation now injects required `affine_alignment`/`placement_fixed_*`/`rotamer` nodes with `ff_2.1/sidechain.h5` compatibility; previous production SIGBUS (degenerate affine triplets) is fixed. Remaining blocker is production-stage physical instability (rapid potential blow-up/NaN) rather than a runtime memory crash.
+- Fixed 2026-02-18: `../../src/martini.cpp` SC rigid mapping now restores target centroid when mapping centroid-relative `local` coordinates (`mapped = R*local + tgt_centroid`), removing the previously confirmed translation error.
+- Fixed 2026-02-18 follow-up: SC row-expansion now caps per-residue base proxy rows by placement-point capacity per rotamer (minimum placement group size), preventing over-expanded proxy rows from residues whose MARTINI proxy count exceeds placement representation.
+- Remaining blocker (post-fixes): long-horizon production stability/physical calibration still needs benchmarking; 20-step production probes are now finite and avoid previous `1e7-1e12` spike regimes, but extended trajectories still require validation.
 - `output/potential` is a total-engine scalar (sum over active potential nodes), not a protein-only all-atom Upside-backbone channel; this can vary during pre-production even with rigid protein because environment terms evolve.
 
 ## Revised Decisions
@@ -94,3 +97,7 @@
 - Production probabilistic SC-environment coupling will cap LJ and Coulomb force magnitudes (configurable via `hybrid_control` attributes) to prevent force spikes.
 - Production probabilistic SC-environment coupling will run an inner SC-only relaxation loop (`200` steps by default) with fixed environment/backbone and SC restrained near mapped rotamer positions; only the final relaxed-step SC->BB force is projected back to backbone.
 - Production stage file preparation (`run_sim_1rkl.sh`, `test_prod_run_sim_1rkl.sh`) will explicitly set SC coupling control attrs in `/input/hybrid_control` (`sc_env_lj_force_cap`, `sc_env_coul_force_cap`, `sc_env_relax_steps`, `sc_env_relax_dt`, `sc_env_restraint_k`, `sc_env_max_displacement`) instead of relying on runtime defaults.
+- Production SC rigid mapping in C++ must treat `sc_local_pos` as centroid-relative coordinates and re-add target centroid after rotation (`mapped = R*local + tgt_centroid`) to avoid frame-translation artifacts.
+- Production SC row handling in C++ must enforce per-residue proxy capacity from placement-point support and select the safest proxy subset each step (by environment-distance metric) when proxy rows exceed representable capacity.
+- For residues whose reference placement groups have fewer than 3 points (underdetermined rigid frame), SC local offsets are refreshed each step from current proxy coordinates.
+- Underdetermined-group SC target displacement relative to current proxy is capped by `sc_env_max_displacement` during mapped-position construction to prevent large rotamer-shift jumps.

@@ -317,6 +317,7 @@ struct HybridRuntimeState {
     std::unordered_map<int, int> placement_reference_group_by_residue;
     std::vector<int> sc_row_to_placement_group;
     std::unordered_map<int, std::vector<int>> sc_rows_by_proxy;
+    std::unordered_map<int, int> sc_proxy_limit_by_residue;
     bool sc_local_pos_initialized = false;
     bool coupling_align_enable = false;
     bool coupling_align_debug = false;
@@ -653,8 +654,28 @@ static void assign_sc_rows_to_placement_groups(HybridRuntimeState& out) {
     }
 }
 
+static std::unordered_map<int, int> compute_sc_proxy_limit_from_placement(const HybridRuntimeState& out) {
+    std::unordered_map<int, int> limit_by_residue;
+    for(const auto& kv : out.placement_groups_by_residue) {
+        int resid = kv.first;
+        int min_points = std::numeric_limits<int>::max();
+        for(int gid : kv.second) {
+            if(gid < 0 || gid >= static_cast<int>(out.placement_state_groups.size())) continue;
+            const auto& g = out.placement_state_groups[gid];
+            int n_points = static_cast<int>(g.placement_rows.size());
+            if(n_points <= 0) continue;
+            min_points = std::min(min_points, n_points);
+        }
+        if(min_points != std::numeric_limits<int>::max() && min_points > 0) {
+            limit_by_residue[resid] = min_points;
+        }
+    }
+    return limit_by_residue;
+}
+
 static void expand_sc_rows_from_placement(HybridRuntimeState& out) {
     assign_sc_rows_to_placement_groups(out);
+    out.sc_proxy_limit_by_residue = compute_sc_proxy_limit_from_placement(out);
     if(!should_expand_sc_rows_from_placement(out)) return;
 
     std::vector<int> proxy;
@@ -2741,6 +2762,51 @@ struct MartiniPotential : public PotentialNode
                 mutable_hybrid->sc_local_pos_initialized = true;
             }
 
+            if(mutable_hybrid) {
+                // With fewer than 3 placement points in the reference group, rigid
+                // frame orientation is underdetermined; refresh local offsets each
+                // step from current proxy coordinates to avoid stale-offset drift.
+                std::unordered_map<int, std::array<float,3>> ref_centroid_by_residue;
+                for(size_t r = 0; r < mutable_hybrid->sc_proxy_atom_index.size(); ++r) {
+                    if(r >= mutable_hybrid->sc_residue_index.size()) continue;
+                    int resid = mutable_hybrid->sc_residue_index[r];
+                    auto ref_it = mutable_hybrid->placement_reference_group_by_residue.find(resid);
+                    if(ref_it == mutable_hybrid->placement_reference_group_by_residue.end()) continue;
+                    int ref_gid = ref_it->second;
+                    if(ref_gid < 0 || ref_gid >= static_cast<int>(mutable_hybrid->placement_state_groups.size())) continue;
+                    if(mutable_hybrid->placement_state_groups[ref_gid].placement_rows.size() >= 3u) continue;
+
+                    if(ref_centroid_by_residue.find(resid) == ref_centroid_by_residue.end()) {
+                        std::vector<std::array<float,3>> pts;
+                        std::array<float,3> ctr{0.f, 0.f, 0.f};
+                        if(!collect_placement_group_points(ref_gid, pts, ctr)) continue;
+                        ref_centroid_by_residue.emplace(resid, ctr);
+                    }
+
+                    int proxy = mutable_hybrid->sc_proxy_atom_index[r];
+                    if(proxy < 0 || proxy >= n_atom) continue;
+                    Vec<3> p = load_vec<3>(pos1, proxy);
+                    bool proxy_is_protein = (
+                        proxy >= 0 &&
+                        proxy < static_cast<int>(mutable_hybrid->protein_membership.size()) &&
+                        mutable_hybrid->protein_membership[proxy] >= 0);
+                    if(coupling_align.enabled && proxy_is_protein) {
+                        auto raw = std::array<float,3>{p[0], p[1], p[2]};
+                        auto aligned = martini_hybrid::vec_add(
+                            martini_hybrid::apply_rot(coupling_align.R, raw),
+                            coupling_align.t);
+                        p = make_vec3(aligned[0], aligned[1], aligned[2]);
+                    }
+
+                    const auto& ctr = ref_centroid_by_residue[resid];
+                    mutable_hybrid->sc_local_pos[r] = std::array<float,3>{
+                        p[0] - ctr[0],
+                        p[1] - ctr[1],
+                        p[2] - ctr[2]
+                    };
+                }
+            }
+
             sc_row_proxy_grad.assign(hybrid_state->sc_proxy_atom_index.size(), std::array<float,3>{{0.f,0.f,0.f}});
             sc_row_probability = hybrid_state->sc_rotamer_prob;
             if(!martini_hybrid::refresh_sc_row_probabilities_from_rotamer(*hybrid_state, sc_row_probability)) {
@@ -2769,6 +2835,7 @@ struct MartiniPotential : public PotentialNode
             std::array<float,3> tgt_centroid{0.f, 0.f, 0.f};
             if(!collect_placement_group_points(ref_gid, ref_pts, ref_centroid)) return false;
             if(!collect_placement_group_points(gid, tgt_pts, tgt_centroid)) return false;
+            bool underdetermined_frame = (ref_pts.size() < 3u || tgt_pts.size() < 3u);
 
             float R[3][3];
             std::array<float,3> t{0.f, 0.f, 0.f};
@@ -2780,7 +2847,37 @@ struct MartiniPotential : public PotentialNode
             }
 
             auto rotated = martini_hybrid::apply_rot(R, local);
-            auto mapped = martini_hybrid::vec_add(rotated, t);
+            // `local` is stored relative to the reference-group centroid,
+            // so map it back by adding the target-group centroid.
+            auto mapped = martini_hybrid::vec_add(rotated, tgt_centroid);
+
+            if(underdetermined_frame && hybrid_state->sc_env_max_displacement > 0.f) {
+                int proxy = (row < static_cast<int>(hybrid_state->sc_proxy_atom_index.size()))
+                                ? hybrid_state->sc_proxy_atom_index[row]
+                                : -1;
+                if(proxy >= 0 && proxy < n_atom) {
+                    Vec<3> proxy_pos = load_vec<3>(pos1, proxy);
+                    bool proxy_is_protein = (
+                        proxy >= 0 &&
+                        proxy < static_cast<int>(hybrid_state->protein_membership.size()) &&
+                        hybrid_state->protein_membership[proxy] >= 0);
+                    if(coupling_align.enabled && proxy_is_protein) {
+                        auto raw = std::array<float,3>{proxy_pos[0], proxy_pos[1], proxy_pos[2]};
+                        auto aligned = martini_hybrid::vec_add(
+                            martini_hybrid::apply_rot(coupling_align.R, raw),
+                            coupling_align.t);
+                        proxy_pos = make_vec3(aligned[0], aligned[1], aligned[2]);
+                    }
+
+                    auto proxy_arr = std::array<float,3>{proxy_pos[0], proxy_pos[1], proxy_pos[2]};
+                    auto shift = martini_hybrid::vec_sub(mapped, proxy_arr);
+                    float shift_norm = martini_hybrid::vec_norm(shift);
+                    if(shift_norm > hybrid_state->sc_env_max_displacement && shift_norm > 1e-6f) {
+                        float scale = hybrid_state->sc_env_max_displacement / shift_norm;
+                        mapped = martini_hybrid::vec_add(proxy_arr, martini_hybrid::vec_scale(shift, scale));
+                    }
+                }
+            }
             out_pos = make_vec3(mapped[0], mapped[1], mapped[2]);
             return true;
         };
@@ -2802,6 +2899,98 @@ struct MartiniPotential : public PotentialNode
                 sc_row_target_pos[r] = std::array<float,3>{{proxy_pos[0], proxy_pos[1], proxy_pos[2]}};
                 sc_row_relaxed_pos[r] = sc_row_target_pos[r];
                 sc_row_valid[r] = 1u;
+            }
+
+            // If multiple MARTINI SC proxies map to a residue but placement can only
+            // represent a limited number of proxies, keep the safest proxies for the
+            // current step based on nearest environment distance.
+            if(!hybrid_state->sc_proxy_limit_by_residue.empty() &&
+               !hybrid_state->protein_membership.empty()) {
+                std::vector<int> env_atoms;
+                env_atoms.reserve(hybrid_state->protein_membership.size());
+                for(size_t ai = 0; ai < hybrid_state->protein_membership.size(); ++ai) {
+                    if(hybrid_state->protein_membership[ai] < 0) {
+                        env_atoms.push_back(static_cast<int>(ai));
+                    }
+                }
+
+                if(!env_atoms.empty()) {
+                    std::unordered_map<int, std::unordered_map<int, float>> proxy_safety_by_residue;
+                    for(size_t r = 0; r < n_sc_row; ++r) {
+                        if(!sc_row_valid[r]) continue;
+                        if(r >= hybrid_state->sc_residue_index.size()) continue;
+                        if(r >= hybrid_state->sc_proxy_atom_index.size()) continue;
+
+                        int resid = hybrid_state->sc_residue_index[r];
+                        auto lim_it = hybrid_state->sc_proxy_limit_by_residue.find(resid);
+                        if(lim_it == hybrid_state->sc_proxy_limit_by_residue.end()) continue;
+                        if(lim_it->second <= 0) continue;
+
+                        int proxy = hybrid_state->sc_proxy_atom_index[r];
+                        auto rp = make_vec3(
+                            sc_row_target_pos[r][0],
+                            sc_row_target_pos[r][1],
+                            sc_row_target_pos[r][2]);
+                        float min_d2 = std::numeric_limits<float>::max();
+                        for(int env_atom : env_atoms) {
+                            auto ep = load_vec<3>(pos1, env_atom);
+                            min_d2 = std::min(min_d2, mag2(rp - ep));
+                        }
+                        float min_dist = 0.f;
+                        if(min_d2 < std::numeric_limits<float>::max()) {
+                            min_dist = sqrtf(std::max(0.f, min_d2));
+                        }
+
+                        auto& proxy_safety = proxy_safety_by_residue[resid];
+                        auto ps_it = proxy_safety.find(proxy);
+                        if(ps_it == proxy_safety.end() || min_dist < ps_it->second) {
+                            proxy_safety[proxy] = min_dist;
+                        }
+                    }
+
+                    std::unordered_map<int, std::vector<int>> selected_proxies_by_residue;
+                    for(const auto& kv : proxy_safety_by_residue) {
+                        int resid = kv.first;
+                        auto lim_it = hybrid_state->sc_proxy_limit_by_residue.find(resid);
+                        if(lim_it == hybrid_state->sc_proxy_limit_by_residue.end()) continue;
+                        int limit = std::max(1, lim_it->second);
+
+                        std::vector<std::pair<float, int>> ranked;
+                        ranked.reserve(kv.second.size());
+                        for(const auto& ps : kv.second) {
+                            ranked.emplace_back(ps.second, ps.first); // (safety distance, proxy atom)
+                        }
+                        if(static_cast<int>(ranked.size()) <= limit) continue;
+
+                        std::sort(ranked.begin(), ranked.end(),
+                                  [](const std::pair<float,int>& a, const std::pair<float,int>& b) {
+                                      if(a.first != b.first) return a.first > b.first;
+                                      return a.second < b.second;
+                                  });
+
+                        auto& keep = selected_proxies_by_residue[resid];
+                        keep.reserve(limit);
+                        for(int i = 0; i < limit && i < static_cast<int>(ranked.size()); ++i) {
+                            keep.push_back(ranked[i].second);
+                        }
+                    }
+
+                    if(!selected_proxies_by_residue.empty()) {
+                        for(size_t r = 0; r < n_sc_row; ++r) {
+                            if(!sc_row_valid[r]) continue;
+                            if(r >= hybrid_state->sc_residue_index.size()) continue;
+                            if(r >= hybrid_state->sc_proxy_atom_index.size()) continue;
+                            int resid = hybrid_state->sc_residue_index[r];
+                            auto sel_it = selected_proxies_by_residue.find(resid);
+                            if(sel_it == selected_proxies_by_residue.end()) continue;
+                            int proxy = hybrid_state->sc_proxy_atom_index[r];
+                            const auto& keep = sel_it->second;
+                            if(std::find(keep.begin(), keep.end(), proxy) == keep.end()) {
+                                sc_row_valid[r] = 0u;
+                            }
+                        }
+                    }
+                }
             }
 
             for(const auto& kv : hybrid_state->sc_rows_by_proxy) {

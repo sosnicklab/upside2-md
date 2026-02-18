@@ -986,3 +986,92 @@
       - `sc_rest_k=5.000`
       - `sc_max_disp=2.000`
   - HDF5 attribute check on regenerated `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` confirms all six SC control attrs are present under `/input/hybrid_control`.
+
+## 2026-02-18 (Production Instability Isolation: 1-Step Stage-7 Run)
+- Reproduced requested one-step production run:
+  - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh`
+  - Observed startup energies:
+    - `Initial potential energy (Upside/MARTINI/Total): 177.63/2418077075941.53/2418077073408.00`
+  - Confirms instability is already present at step `0` and dominated by `martini_potential`.
+- Performed controlled toggles on copied stage-7 files (`--duration-steps 0`) to isolate source:
+  - Hybrid disabled (`/input/hybrid_control/enable=0`) -> MARTINI potential `-14740.32`.
+  - Hybrid enabled but `hybrid_sc_map/rotamer_id` set empty (`n_sc=0`) -> MARTINI potential `3155.49`.
+  - Hybrid enabled with SC mapping active (`n_sc=153`) -> MARTINI potential `2418077075941.53`.
+  - Conclusion: blow-up originates in production SC probabilistic coupling path, not generic MARTINI nonbonded or hard-sphere setting.
+- Ran SC-row ablation sweep (single-row `hybrid_sc_map` runs, `--duration-steps 0`) to identify dominant offender:
+  - Worst row: `row=6` (`residue_index=10`, `proxy_atom_index=13`, LEU SC1), `n_sc=3`, MARTINI potential `2417895410149.53`.
+  - Next largest rows are far smaller (`1.53e8`, `1.43e7`, ...), indicating one dominant pathological row.
+- Verified single-row dominance:
+  - Forcing only row `6` rotamer `2` (`n_sc=1`) still yields MARTINI potential `2417945479653.53`.
+- Root-cause analysis in C++ mapping math (`../../src/martini.cpp`):
+  - `build_sc_row_proxy_pos` uses `local = proxy - ref_centroid`, computes `t = tgt_centroid - R*ref_centroid`, then applies `mapped = R*local + t`.
+  - This is inconsistent for centroid-relative `local` coordinates (target centroid is not restored), creating large translation errors in mapped SC positions.
+  - For the dominant LEU row, this produces a near-overlap with lipid atom pair `(13,2050)` (`eps=0.92625856`, `sig=4.7`), with reconstructed distance ~`0.1715 Å` to DOPC `D3B`, which is sufficient to produce ~`1e12`-scale LJ repulsion.
+
+## 2026-02-18 (Fix Applied: SC Centroid Restore in C++)
+- Patched `../../src/martini.cpp` in `build_sc_row_proxy_pos(...)`:
+  - changed SC mapping from `mapped = R*local + t` to `mapped = R*local + tgt_centroid`.
+  - this matches `local` semantics (`proxy - ref_centroid`) and correctly restores target-frame translation.
+- Rebuilt binaries after patch:
+  - `source ../../.venv/bin/activate && source ../../source.sh && cmake --build ../../obj -j4`
+  - Build succeeded for `upside`, `upside_calculation`, `upside_engine` (warnings unchanged).
+- Re-ran 1-step production:
+  - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh`
+  - Initial energies changed from:
+    - before fix: MARTINI `2418077075941.53`
+    - after fix: MARTINI `451819211237.53`
+  - indicates substantial reduction (~5.35x lower), but instability remains.
+- Post-fix targeted checks:
+  - `n_sc=0` baseline remains stable: MARTINI `3155.49`.
+  - Former dominant row (`row=6`, `residue_index=10`, `proxy_atom_index=13`) is resolved:
+    - before fix (single-row): `2417895410149.53`
+    - after fix (single-row): `3155.02`.
+  - New dominant row after fix:
+    - `row=26` (`residue_index=26`, `proxy_atom_index=49`) single-row MARTINI `451816163813.53`.
+
+## 2026-02-18 (Follow-up Fix: SC Row-Expansion Capacity Guard)
+- Continued debug for remaining dominant row (`residue 26 / proxy 49`) showed a representation mismatch:
+  - placement groups for residue `26` carry only `1` placement point per rotamer state,
+  - but `hybrid_sc_map` base rows include `3` MARTINI proxies for that residue.
+- Control experiment on copied stage file:
+  - dropping residue-26 extra proxies (`48`, `49`) while keeping proxy `47` reduced step-0 MARTINI potential to `221225.53`.
+- Implemented runtime guard in `../../src/martini.cpp`:
+  - added `compute_sc_proxy_limit_from_placement(...)`.
+  - in `expand_sc_rows_from_placement(...)`, per-residue base proxy rows are capped by placement-point capacity per rotamer (minimum group size across placement groups).
+  - excess base proxy rows are skipped before rotamer-state expansion.
+- Rebuilt after code changes:
+  - `source ../../.venv/bin/activate && source ../../source.sh && cmake --build ../../obj -j4`
+  - build succeeded (`upside`, `upside_calculation`, `upside_engine`; existing warnings unchanged).
+- Validation after follow-up fix:
+  - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh`
+    - runtime reports `n_sc=117` (reduced from `153`).
+    - step-0 MARTINI potential: `219631.41` (no catastrophic startup blow-up).
+  - `PROD_70_NSTEPS=5 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh`
+    - run completed, all energies finite.
+    - MARTINI potential range observed in status lines: `1.16e5` to `5.46e6`.
+  - direct continuation probe:
+    - `../../obj/upside ... --duration-steps 20 ...`
+    - run completed, no NaN/crash.
+    - MARTINI potential remained finite; observed spikes up to `2.45e7` (still elevated but far below prior `1e11-1e12` startup regime).
+
+## 2026-02-18 (Continued Debug: Residual Spike Isolation + Additional Runtime Fixes)
+- Performed frame-accurate spike analysis using frozen-step-0 `local_pos` replay:
+  - identified that naive frame replay (`--duration-steps 0`) re-initializes `local_pos` and can hide true in-run spike states.
+  - reproduced spike frame potentials by forcing `local_pos` to step-0-derived values.
+- Leave-one-out ablation on spike frames isolated dominant contributor:
+  - frame `13` (`martini ~2.37e7`): dropping `row 15` (`residue_index=19`, `proxy_atom_index=31`) reduced MARTINI to `~5.16e3`.
+  - frame `17` (`martini ~1.44e9` in later variant): dropping the same row reduced MARTINI to `~5.14e4`.
+- Implemented additional runtime fixes in `../../src/martini.cpp`:
+  - Reworked SC proxy-capacity handling:
+    - preserved all expanded SC rows,
+    - added per-residue capacity map (`sc_proxy_limit_by_residue`),
+    - added per-step proxy subset selection by nearest-environment-distance safety metric when proxies exceed representable capacity.
+  - Added underdetermined-placement handling (`<3` reference points):
+    - refresh `sc_local_pos` every step from current proxy coordinates (instead of relying on stale one-time initialization),
+    - cap mapped displacement from current proxy by `sc_env_max_displacement` during SC target construction.
+- Build and validation:
+  - rebuilt after each patch: `cmake --build ../../obj -j4` (success).
+  - intermediate 20-step run after first added fix removed earlier mid-run `~2.4e7` spikes but produced a late spike (`~1.44e9`).
+  - after underdetermined local-refresh + displacement-cap patch:
+    - `PROD_70_NSTEPS=20 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh` completed with no NaN/crash,
+    - MARTINI potential stayed in a low finite band (`~8e3` to `~5.3e4`), with prior `1e7-1e9` spike regimes absent in this probe.
