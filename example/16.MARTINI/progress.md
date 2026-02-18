@@ -874,6 +874,31 @@
     - `... hbonds, Rg  12.6 A, potential ...`
   - `Rg` no longer prints `N/A` in this hybrid workflow.
 
+## 2026-02-17 (SC-Environment Stabilization: Force Caps + 200-Step Inner Relaxation)
+- Implemented requested production hybrid SC-environment stabilization in `../../src/martini.cpp`:
+  - Added SC-env force caps (LJ and Coulomb) applied specifically in probabilistic SC-environment interactions.
+  - Replaced single-evaluation SC-environment force path with an inner SC-only relaxation loop:
+    - environment and backbone coordinates are fixed during inner loop,
+    - SC rows are restrained near mapped rotamer positions,
+    - inner relaxation runs `200` steps by default,
+    - only final relaxed-step weighted SC force is projected back to BB/environment.
+- Added hybrid-control runtime parameters (with defaults) to `HybridRuntimeState` and parser:
+  - `sc_env_lj_force_cap` (default `25.0`)
+  - `sc_env_coul_force_cap` (default `25.0`)
+  - `sc_env_relax_steps` (default `200`)
+  - `sc_env_relax_dt` (default `0.002`)
+  - `sc_env_restraint_k` (default `5.0`)
+  - `sc_env_max_displacement` (default `2.0`)
+- Runtime startup log now prints these SC controls for auditability.
+- Validation:
+  - Rebuilt successfully: `cmake --build ../../obj -j4`.
+  - `PROD_70_NSTEPS=2` production smoke run:
+    - shows new controls in log (`sc_cap_lj`, `sc_cap_coul`, `sc_relax_steps=200`, etc.),
+    - no crash/NaN in the tested window.
+  - `PROD_70_NSTEPS=10` check:
+    - no immediate NaN explosion observed over 10 steps,
+    - MARTINI potential remains very large (physical calibration still needed).
+
 ## 2026-02-17 (Audit: Pre-Production Rigidity + Potential Output Semantics)
 - Traced workflow and runtime paths relevant to the user report:
   - `run_sim_1rkl.sh` stage labels and extraction modes (`6.x -> minimization`, `7.0 -> production`, VTF mode `1` vs `2`).

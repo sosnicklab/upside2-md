@@ -91,3 +91,5 @@
   - stages `6.2-6.6`: `ref_p = 1.0 bar` (semi-isotropic; `z` compressibility remains `0.0`), `tau_p = 4.0`, same compressibility.
   - convert pressure to Upside units using `1 bar = 0.000020659477 E_up/Angstrom^3`.
 - Hybrid pre-production rigid hold and NPT are both enabled by scaling only unconstrained DOFs during barostat box/coordinate updates (fully fixed atoms remain fixed; z-fixed atoms keep fixed z).
+- Production probabilistic SC-environment coupling will cap LJ and Coulomb force magnitudes (configurable via `hybrid_control` attributes) to prevent force spikes.
+- Production probabilistic SC-environment coupling will run an inner SC-only relaxation loop (`200` steps by default) with fixed environment/backbone and SC restrained near mapped rotamer positions; only the final relaxed-step SC->BB force is projected back to backbone.
