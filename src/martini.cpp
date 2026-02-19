@@ -3251,12 +3251,22 @@ struct MartiniPotential : public PotentialNode
                 Vec<3> env_pos = make_vec3(edge.env_pos[0], edge.env_pos[1], edge.env_pos[2]);
                 Vec<3> env_grad_total = make_zero<3>();
                 bool has_env_grad = false;
+                struct RowEval {
+                    int row = -1;
+                    float prior = 0.f;
+                    float pair_pot = 0.f;
+                    Vec<3> proxy_grad = make_zero<3>();
+                    Vec<3> env_grad = make_zero<3>();
+                };
+                std::vector<RowEval> evals;
+                evals.reserve(proxy_rows->size());
 
+                float min_pair_pot = 1.0e30f;
                 for(int r : *proxy_rows) {
                     if(r < 0 || r >= static_cast<int>(sc_row_relaxed_pos.size())) continue;
                     if(!sc_row_valid[r]) continue;
-                    float pnorm = sc_row_prob_norm[r];
-                    if(pnorm <= 0.f) continue;
+                    float prior = sc_row_prob_norm[r];
+                    if(prior <= 0.f) continue;
 
                     auto& rp = sc_row_relaxed_pos[r];
                     Vec<3> proxy_pos = make_vec3(rp[0], rp[1], rp[2]);
@@ -3271,7 +3281,6 @@ struct MartiniPotential : public PotentialNode
                                         hybrid_state->sc_env_coul_force_cap)) {
                         continue;
                     }
-                    if(pot) *pot += pnorm * pair_pot;
 
                     auto gi = -pair_force;
                     auto gj = pair_force;
@@ -3284,13 +3293,61 @@ struct MartiniPotential : public PotentialNode
                         proxy_grad = make_vec3(gproxy_raw[0], gproxy_raw[1], gproxy_raw[2]);
                     }
 
-                    if(r < static_cast<int>(sc_row_proxy_grad.size())) {
-                        sc_row_proxy_grad[r][0] += pnorm * proxy_grad[0];
-                        sc_row_proxy_grad[r][1] += pnorm * proxy_grad[1];
-                        sc_row_proxy_grad[r][2] += pnorm * proxy_grad[2];
+                    if(!std::isfinite(pair_pot)) continue;
+
+                    RowEval ev;
+                    ev.row = r;
+                    ev.prior = prior;
+                    ev.pair_pot = pair_pot;
+                    ev.proxy_grad = proxy_grad;
+                    ev.env_grad = env_grad;
+                    evals.push_back(ev);
+                    min_pair_pot = std::min(min_pair_pot, pair_pot);
+                }
+
+                if(!evals.empty() && std::isfinite(min_pair_pot) && min_pair_pot < 1.0e29f) {
+                    float z_shift = 0.f;
+                    for(const auto& ev : evals) {
+                        float shifted = ev.pair_pot - min_pair_pot;
+                        if(!std::isfinite(shifted)) continue;
+                        // Numerical stabilization for finite-math builds.
+                        shifted = std::max(0.f, std::min(shifted, 80.f));
+                        z_shift += ev.prior * expf(-shifted);
                     }
-                    env_grad_total += pnorm * env_grad;
-                    has_env_grad = true;
+
+                    if(z_shift > 1.0e-20f && std::isfinite(z_shift)) {
+                        if(pot) *pot += min_pair_pot - logf(z_shift);
+                        float inv_z = 1.f / z_shift;
+                        for(const auto& ev : evals) {
+                            float shifted = ev.pair_pot - min_pair_pot;
+                            if(!std::isfinite(shifted)) continue;
+                            shifted = std::max(0.f, std::min(shifted, 80.f));
+                            float w = ev.prior * expf(-shifted) * inv_z;
+                            if(!(w > 0.f) || !std::isfinite(w)) continue;
+
+                            if(ev.row >= 0 && ev.row < static_cast<int>(sc_row_proxy_grad.size())) {
+                                sc_row_proxy_grad[ev.row][0] += w * ev.proxy_grad[0];
+                                sc_row_proxy_grad[ev.row][1] += w * ev.proxy_grad[1];
+                                sc_row_proxy_grad[ev.row][2] += w * ev.proxy_grad[2];
+                            }
+                            env_grad_total += w * ev.env_grad;
+                            has_env_grad = true;
+                        }
+                    } else {
+                        // Degenerate softmax: fall back to prior-weighted accumulation.
+                        for(const auto& ev : evals) {
+                            float w = ev.prior;
+                            if(!(w > 0.f) || !std::isfinite(w)) continue;
+                            if(pot) *pot += w * ev.pair_pot;
+                            if(ev.row >= 0 && ev.row < static_cast<int>(sc_row_proxy_grad.size())) {
+                                sc_row_proxy_grad[ev.row][0] += w * ev.proxy_grad[0];
+                                sc_row_proxy_grad[ev.row][1] += w * ev.proxy_grad[1];
+                                sc_row_proxy_grad[ev.row][2] += w * ev.proxy_grad[2];
+                            }
+                            env_grad_total += w * ev.env_grad;
+                            has_env_grad = true;
+                        }
+                    }
                 }
 
                 if(has_env_grad && edge.env_atom >= 0 && edge.env_atom < n_atom) {

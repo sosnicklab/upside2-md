@@ -1344,3 +1344,30 @@
   - short production smoke passed: `PROD_70_NSTEPS=5 PROD_FRAME_STEPS=5 ./test_prod_run_sim_1rkl.sh`.
   - stage-7 pair-table audit confirms patched path is active for real data:
     - same-residue protein `SC-BB` pairs eligible for probabilistic weighting: `6`.
+
+## 2026-02-19 (Production Potential Fluctuation Root-Cause Debug + Fix)
+- Reproduced user-reported production-stage pathological MARTINI potential swings on controlled 200-step probes from the same stage-7 initial state:
+  - full SC probabilistic coupling (before fix): `martini_potential` `2.229e6 -> 2.443e7 (step 50) -> 1.215e5 (step 100) -> 1.509e4 (step 150)`.
+- Ruled out non-protein hard-sphere branch as primary source:
+  - toggled `production_nonprotein_hard_sphere` (`1` vs `0`) from identical initial checkpoint; both showed the same early large spikes.
+- Isolated source to SC probabilistic energy aggregation:
+  - disabling SC map rows (`n_sc=0`) removed the pathological regime immediately (`martini_potential` stayed `~2e3-3e3` in 200 steps).
+  - this showed the instability comes from probabilistic SC interaction accumulation, not the base MARTINI pair engine.
+- Root cause identified:
+  - SC probabilistic coupling used linear expectation over rotamer-state energies (`sum_r p_r E_r`) for each proxy-env pair.
+  - low-probability high-clash rotamers therefore contributed disproportionately large positive energies, destabilizing long production runs.
+- Implemented fix in `../../src/martini.cpp`:
+  - replaced linear per-edge averaging with Boltzmann-consistent free-energy mixing:
+    - potential contribution: `-log(sum_r p_r * exp(-E_r))`
+    - gradient weights: posterior `p_r * exp(-E_r)` normalized per edge.
+  - added finite-math-safe stabilization:
+    - shifted energies by per-edge minimum,
+    - clamped exponent argument range,
+    - floor on partition sum and finite checks with prior-weighted fallback only for degenerate numeric cases.
+- Rebuilt binary:
+  - `cmake --build ../../obj -j 8` passed.
+- Validation (post-fix):
+  - 200-step probe from same initial stage-7 state:
+    - `martini_potential` `4.687e3 (step 0)`, `3.812e3 (50)`, `2.912e3 (100)`, `4.103e3 (150)`, all finite.
+  - 600-step probe from fresh stage-7 state:
+    - stable through reported trouble window (`step 500`: `Rg=13.0 Å`, `martini_potential=1.147e4`, no blow-up/NaN).

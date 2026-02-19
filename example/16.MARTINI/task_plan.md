@@ -44,6 +44,7 @@
 - Fixed 2026-02-18: `../../src/martini.cpp` SC rigid mapping now restores target centroid when mapping centroid-relative `local` coordinates (`mapped = R*local + tgt_centroid`), removing the previously confirmed translation error.
 - Fixed 2026-02-18 follow-up: SC row-expansion now caps per-residue base proxy rows by placement-point capacity per rotamer (minimum placement group size), preventing over-expanded proxy rows from residues whose MARTINI proxy count exceeds placement representation.
 - Remaining blocker (post-fixes): long-horizon production stability/physical calibration still needs benchmarking; 20-step production probes are now finite and avoid previous `1e7-1e12` spike regimes, but extended trajectories still require validation.
+- Fixed 2026-02-19: production SC probabilistic coupling no longer uses linear `sum_r p_r E_r` aggregation; runtime now applies Boltzmann-consistent `-log sum_r p_r exp(-E_r)` mixing (with stabilized numerics), removing reproduced `1e5-1e7` short-horizon MARTINI potential spikes from low-probability clash rotamers.
 - `output/potential` is a total-engine scalar (sum over active potential nodes), not a protein-only all-atom Upside-backbone channel; this can vary during pre-production even with rigid protein because environment terms evolve.
 
 ## Revised Decisions
@@ -65,6 +66,7 @@
 - Production-stage MARTINI protein interaction filtering is runtime-enforced in C++ (based on `protein_membership`, `atom_roles`, and `residue_ids`) so non-production stages remain unaffected while protein is rigid.
 - Production-stage MARTINI nonbonded interactions for non-protein particles are hard-sphere-like (repulsive-only) while protein-involving MARTINI interactions remain dry-MARTINI for hybrid coupling.
 - Production probabilistic sidechain coupling includes allowed same-residue protein `SC-BB` interactions (not only protein-environment), with per-rotamer force/potential weighting from live `rotamer` marginals.
+- Production probabilistic sidechain MARTINI coupling (SC-environment and allowed same-residue SC-BB) must use Boltzmann-consistent free-energy mixing across rotamer states (`-log sum_r p_r exp(-E_r)`) instead of linear energy averaging (`sum_r p_r E_r`) to avoid instability from low-probability clash rotamers.
 - Preparation exports per-`BB` backbone reference metadata (`N,CA,C,O` atom indices/coordinates plus comment strings) in `hybrid_bb_map` using protein-AA PDB index space; stage-file injection maps these references into runtime coordinate carriers for active BB COM refresh and BB-force projection.
 - Runtime hybrid scheduling enforces `martini_potential` execution after all coordinate-node updates each integration sub-step, so MARTINI coupling always consumes the latest backbone-derived coordinates for that sub-step.
 - `run_sim_1rkl.sh` defaults to MARTINI2.2 protein coarse-graining via local `martinize.py` (`-ff martini22`) and performs a preflight protein-ITP-vs-dry-FF mass compatibility check to prevent silent MARTINI3/dry-MARTINI mixing.
