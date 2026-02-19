@@ -695,11 +695,85 @@ def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng):
     return placed
 
 
+def compute_backbone_com_alignment(protein_aa_atoms, protein_cg_atoms):
+    aa_by_res = defaultdict(dict)
+    for idx, atom in enumerate(protein_aa_atoms):
+        key = (atom["chain"], atom["resseq"], atom["icode"])
+        aa_by_res[key][atom["name"].strip().upper()] = idx
+
+    aa_points = []
+    cg_points = []
+    for atom in protein_cg_atoms:
+        if atom["name"].strip().upper() != "BB":
+            continue
+
+        found_key = None
+        key = (atom["chain"], atom["resseq"], atom["icode"])
+        if key in aa_by_res:
+            found_key = key
+        else:
+            cands = [k for k in aa_by_res.keys() if k[1] == atom["resseq"]]
+            if len(cands) == 1:
+                found_key = cands[0]
+        if found_key is None:
+            continue
+
+        idxs = [aa_by_res[found_key].get(nm, -1) for nm in BB_COMPONENT_NAMES]
+        valid = [int(i) for i in idxs if i is not None and int(i) >= 0]
+        if not valid:
+            continue
+
+        aa_xyz = np.array(
+            [[protein_aa_atoms[i]["x"], protein_aa_atoms[i]["y"], protein_aa_atoms[i]["z"]] for i in valid],
+            dtype=float,
+        )
+        aa_com = np.mean(aa_xyz, axis=0)
+        cg_bb = np.array([atom["x"], atom["y"], atom["z"]], dtype=float)
+        aa_points.append(aa_com)
+        cg_points.append(cg_bb)
+
+    if not aa_points:
+        return np.eye(3, dtype=float), np.zeros(3, dtype=float), 0.0, 0
+
+    p = np.array(aa_points, dtype=float)
+    q = np.array(cg_points, dtype=float)
+    p_center = np.mean(p, axis=0)
+    q_center = np.mean(q, axis=0)
+
+    # Use Kabsch when at least 3 matched COM points exist; otherwise
+    # keep identity rotation and use translation-only alignment.
+    if p.shape[0] >= 3:
+        p0 = p - p_center
+        q0 = q - q_center
+        cov = p0.T @ q0
+        u, _, vt = np.linalg.svd(cov)
+        rot = u @ vt
+        if np.linalg.det(rot) < 0.0:
+            vt[-1, :] *= -1.0
+            rot = u @ vt
+    else:
+        rot = np.eye(3, dtype=float)
+
+    trans = q_center - p_center @ rot
+    aligned = p @ rot + trans
+    rmsd = float(np.sqrt(np.mean(np.sum((aligned - q) ** 2, axis=1))))
+    return rot, trans, rmsd, int(p.shape[0])
+
+
 def collect_bb_map(protein_aa_atoms, protein_cg_atoms):
     aa_by_res = defaultdict(dict)
     for idx, atom in enumerate(protein_aa_atoms):
         key = (atom["chain"], atom["resseq"], atom["icode"])
         aa_by_res[key][atom["name"].strip().upper()] = idx
+
+    align_rot, align_trans, align_rmsd, align_n = compute_backbone_com_alignment(
+        protein_aa_atoms, protein_cg_atoms
+    )
+    if align_n > 0:
+        print(
+            "Backbone COM RMSD alignment (AA->MARTINI BB): "
+            f"n={align_n}, rmsd={align_rmsd:.4f} Å"
+        )
 
     bb_entries = []
     for cg_idx, atom in enumerate(protein_cg_atoms):
@@ -726,7 +800,9 @@ def collect_bb_map(protein_aa_atoms, protein_cg_atoms):
                 aa_coords.append([0.0, 0.0, 0.0])
             else:
                 aa_atom = protein_aa_atoms[ai]
-                aa_coords.append([float(aa_atom["x"]), float(aa_atom["y"]), float(aa_atom["z"])])
+                aa_vec = np.array([float(aa_atom["x"]), float(aa_atom["y"]), float(aa_atom["z"])], dtype=float)
+                aa_aligned = aa_vec @ align_rot + align_trans
+                aa_coords.append([float(aa_aligned[0]), float(aa_aligned[1]), float(aa_aligned[2])])
 
         # Active mapping is kept in protein-AA PDB index space.
         # Runtime conversion to stage-local indices is done during stage-file injection.
@@ -746,7 +822,8 @@ def collect_bb_map(protein_aa_atoms, protein_cg_atoms):
             weights = [w / wsum for w in raw_weights]
         bb_comment = (
             f"BB residue {atom['resseq']} chain '{atom['chain']}' "
-            f"ref N/CA/C/O idx={aa_idxs}; index_space=protein_aa_pdb_0based; w={weights}"
+            f"ref N/CA/C/O idx={aa_idxs}; index_space=protein_aa_pdb_0based; "
+            f"align_rmsd={align_rmsd:.4f}; w={weights}"
         )
         bb_entries.append(
             {

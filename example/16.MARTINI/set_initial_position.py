@@ -4,6 +4,53 @@ import sys
 import h5py
 import numpy as np
 
+def refresh_hybrid_reference_carriers(h5f, pos):
+    if '/input/hybrid_bb_map' not in h5f:
+        return pos
+
+    grp = h5f['/input/hybrid_bb_map']
+    required = ('bb_atom_index', 'atom_indices', 'weights', 'reference_atom_coords')
+    if not all((f'/input/hybrid_bb_map/{k}' in h5f) for k in required):
+        return pos
+
+    bb_idx = grp['bb_atom_index'][:].astype(np.int32)
+    comp_idx = grp['atom_indices'][:].astype(np.int32)
+    comp_w = grp['weights'][:].astype(np.float64)
+    ref_xyz = grp['reference_atom_coords'][:].astype(np.float64)
+
+    if comp_idx.ndim != 2 or comp_idx.shape[1] != 4:
+        return pos
+    if ref_xyz.shape != (comp_idx.shape[0], 4, 3):
+        return pos
+
+    n_atom = pos.shape[0]
+    for k in range(comp_idx.shape[0]):
+        bb = int(bb_idx[k]) if k < bb_idx.shape[0] else -1
+        if bb < 0 or bb >= n_atom:
+            continue
+
+        valid = (comp_idx[k] >= 0) & (comp_idx[k] < n_atom) & (comp_w[k] > 0.0)
+        if not np.any(valid):
+            continue
+
+        w = comp_w[k][valid]
+        wsum = float(np.sum(w))
+        if wsum <= 0.0:
+            continue
+        w = w / wsum
+
+        ref_pts = ref_xyz[k][valid]
+        ref_com = np.sum(ref_pts * w[:, None], axis=0)
+        bb_pos = pos[bb, :, 0].astype(np.float64)
+        shift = bb_pos - ref_com
+
+        target_idx = comp_idx[k][valid]
+        aligned = ref_pts + shift[None, :]
+        for ai, pxyz in zip(target_idx, aligned):
+            pos[int(ai), :, 0] = pxyz.astype(pos.dtype)
+
+    return pos
+
 def set_initial_position(input_file, output_file):
     # Open input file and get last frame's position and box dimensions
     with h5py.File(input_file, 'r') as f:
@@ -46,6 +93,10 @@ def set_initial_position(input_file, output_file):
             n_copy = min(source_n, target_n)
             merged[:n_copy, :, :] = last_pos[:n_copy, :, :]
             last_pos = merged
+
+        # If hybrid reference carriers are present in the target file, align them
+        # to the current BB proxy positions after stage handoff.
+        last_pos = refresh_hybrid_reference_carriers(f, last_pos)
 
         if '/input/pos' in f:
             del f['/input/pos']

@@ -96,7 +96,9 @@ EQ_66_NSTEPS="${EQ_66_NSTEPS:-500}"
 PROD_70_NSTEPS="${PROD_70_NSTEPS:-5000}"
 
 EQ_TIME_STEP="${EQ_TIME_STEP:-0.010}"
-PROD_TIME_STEP="${PROD_TIME_STEP:-0.020}"
+# Production runs with injected Upside all-atom backbone nodes; use a smaller
+# stable timestep than MARTINI-only stages.
+PROD_TIME_STEP="${PROD_TIME_STEP:-0.002}"
 MIN_TIME_STEP="${MIN_TIME_STEP:-0.010}"
 
 EQ_FRAME_STEPS="${EQ_FRAME_STEPS:-1000}"
@@ -635,6 +637,39 @@ with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
     bb_grp.attrs["reference_index_space"] = np.bytes_("protein_aa_pdb_0based")
     bb_grp.attrs["reference_index_offset"] = np.int32(ref_offset)
     bb_grp.attrs["reference_index_count"] = np.int32(max(0, n_ref_index))
+
+    # Rewrite SC projection targets to AA carrier indices (no MARTINI BB fallback).
+    sc_grp = dst_inp["hybrid_sc_map"]
+    sc_residue = sc_grp["residue_index"][:].astype(np.int32)
+    n_sc = int(sc_residue.shape[0])
+    sc_runtime_idx = np.full((n_sc, 4), -1, dtype=np.int32)
+    sc_runtime_w = np.zeros((n_sc, 4), dtype=np.float32)
+
+    residue_to_bb_row = {}
+    for k, resid in enumerate(bb_residue.tolist()):
+        residue_to_bb_row.setdefault(int(resid), int(k))
+
+    for r in range(n_sc):
+        resid = int(sc_residue[r])
+        if resid not in residue_to_bb_row:
+            raise ValueError(
+                f"{up_file}: hybrid_sc_map residue {resid} has no matching hybrid_bb_map row"
+            )
+        k = residue_to_bb_row[resid]
+        idx_row = bb_runtime_idx[k].astype(np.int32, copy=True)
+        w_row = bb_runtime_w[k].astype(np.float32, copy=True)
+        active = (idx_row >= 0) & (w_row > 0.0)
+        if not np.any(active):
+            raise ValueError(
+                f"{up_file}: hybrid_sc_map residue {resid} maps to empty AA carrier targets"
+            )
+        sc_runtime_idx[r] = idx_row
+        sc_runtime_w[r] = w_row
+
+    replace_dataset(sc_grp, "proj_target_indices", sc_runtime_idx)
+    replace_dataset(sc_grp, "proj_weights", sc_runtime_w)
+    sc_grp.attrs["target_index_space"] = np.bytes_("stage_runtime")
+    sc_grp.attrs["target_projection"] = np.bytes_("bb_component_carriers")
 
     membership = np.full((n_atom_aug,), -1, dtype=np.int32)
     membership[:base_n_atom] = src_mem

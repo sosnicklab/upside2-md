@@ -1039,8 +1039,11 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             if(out.protein_membership[proxy] < 0) {
                 throw string("Hybrid SC proxy index must be protein atom");
             }
+            bool has_explicit_target = false;
+            float wsum = 0.f;
             for(int d = 0; d < 4; ++d) {
                 int ai = out.sc_proj_target_indices[r][d];
+                float w = out.sc_proj_weights[r][d];
                 if(ai < 0) continue;
                 if(ai >= n_atom) {
                     throw string("Hybrid SC target index out of bounds");
@@ -1048,6 +1051,17 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
                 if(out.protein_membership[ai] < 0) {
                     throw string("Hybrid SC target index must be protein atom");
                 }
+                auto rc = atom_role_class_at(out, ai);
+                if(rc == ROLE_BB || rc == ROLE_SC) {
+                    throw string("Hybrid SC target index must be non-MARTINI carrier atom");
+                }
+                if(w > 0.f) {
+                    has_explicit_target = true;
+                    wsum += w;
+                }
+            }
+            if(!has_explicit_target || wsum <= 0.f) {
+                throw string("Hybrid SC row missing explicit nonzero projection targets");
             }
         }
     }
@@ -1578,13 +1592,7 @@ void project_sc_gradient_if_active(
             if(projected) {
                 continue;
             }
-
-            // Fallback: transfer to corresponding residue MARTINI BB if
-            // explicit projection targets were unavailable.
-            int bb_target = (r < (int)st.sc_row_bb_target.size()) ? st.sc_row_bb_target[r] : -1;
-            if(bb_target >= 0 && bb_target < n_atom) {
-                update_vec<3>(sens, bb_target, proxy_grad);
-            }
+            throw string("Hybrid SC force projection requires explicit non-MARTINI targets");
         }
     }
 }
@@ -3018,6 +3026,7 @@ struct MartiniPotential : public PotentialNode
             int proxy_atom = -1;
             int env_atom = -1;
             bool proxy_is_i = false;
+            bool env_is_protein = false;
             float eps = 0.f;
             float sig = 0.f;
             float qi = 0.f;
@@ -3080,17 +3089,38 @@ struct MartiniPotential : public PotentialNode
                 bool proxy_is_i = false;
                 int proxy_atom = -1;
                 int env_atom = -1;
+                bool env_is_protein = false;
                 const std::vector<int>* proxy_rows = nullptr;
-                if(i_is_protein && !j_is_protein) {
-                    proxy_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, i);
-                    proxy_is_i = true;
-                    proxy_atom = i;
-                    env_atom = j;
-                } else if(j_is_protein && !i_is_protein) {
-                    proxy_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, j);
-                    proxy_is_i = false;
-                    proxy_atom = j;
-                    env_atom = i;
+
+                auto select_proxy_rows = [&](int candidate_proxy,
+                                             int candidate_env,
+                                             bool candidate_proxy_is_i,
+                                             bool candidate_env_is_protein) {
+                    const auto* rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, candidate_proxy);
+                    if(!rows || rows->empty()) return false;
+
+                    if(candidate_env_is_protein) {
+                        if(!martini_hybrid::allow_intra_protein_pair_if_active(*hybrid_state, candidate_proxy, candidate_env)) {
+                            return false;
+                        }
+                        if(martini_hybrid::atom_role_class_at(*hybrid_state, candidate_env) != martini_hybrid::ROLE_BB) {
+                            return false;
+                        }
+                    }
+
+                    proxy_rows = rows;
+                    proxy_is_i = candidate_proxy_is_i;
+                    proxy_atom = candidate_proxy;
+                    env_atom = candidate_env;
+                    env_is_protein = candidate_env_is_protein;
+                    return true;
+                };
+
+                if(i_is_protein) {
+                    (void)select_proxy_rows(i, j, true, j_is_protein);
+                }
+                if(!proxy_rows && j_is_protein) {
+                    (void)select_proxy_rows(j, i, false, i_is_protein);
                 }
 
                 if(proxy_rows && !proxy_rows->empty()) {
@@ -3104,6 +3134,7 @@ struct MartiniPotential : public PotentialNode
                         edge.proxy_atom = proxy_atom;
                         edge.env_atom = env_atom;
                         edge.proxy_is_i = proxy_is_i;
+                        edge.env_is_protein = env_is_protein;
                         edge.eps = eps;
                         edge.sig = sig;
                         edge.qi = qi;
@@ -3263,6 +3294,11 @@ struct MartiniPotential : public PotentialNode
                 }
 
                 if(has_env_grad && edge.env_atom >= 0 && edge.env_atom < n_atom) {
+                    if(coupling_align.enabled && edge.env_is_protein) {
+                        auto g = std::array<float,3>{env_grad_total[0], env_grad_total[1], env_grad_total[2]};
+                        auto gr = martini_hybrid::apply_rot_T(coupling_align.R, g);
+                        env_grad_total = make_vec3(gr[0], gr[1], gr[2]);
+                    }
                     update_vec<3>(pos1_sens, edge.env_atom, env_grad_total);
                 }
             }

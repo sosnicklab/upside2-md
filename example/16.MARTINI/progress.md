@@ -1267,3 +1267,80 @@
 - Validation:
   - `./visualize_up_input.py` now saves to `inputs/1rkl_input_viz.png`.
   - no non-interactive `FigureCanvasAgg` show warning is emitted.
+
+## 2026-02-19 (Production Fallback Removal + Stability Debug/Fix)
+- Re-read `task_plan.md`, audited `run_sim_1rkl.sh`/`test_prod_run_sim_1rkl.sh` and reproduced production instability:
+  - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh`
+  - observed stage-7 jump (`martini_potential` from `~2.18e6` initial to `~4.80e7` at first MD step).
+- Identified remaining production fallback path:
+  - `/input/hybrid_sc_map/proj_target_indices` in stage-7 still pointed to MARTINI `BB` atoms.
+  - runtime `project_sc_gradient_if_active()` still had BB fallback when explicit SC targets were absent.
+- Patched workflow stage-file injection in both scripts:
+  - `run_sim_1rkl.sh`
+  - `test_prod_run_sim_1rkl.sh`
+  - `inject_hybrid_mapping()` now rewrites SC projection targets/weights to runtime AA carrier indices (`N/CA/C/O`) using rewritten `hybrid_bb_map` component mappings.
+  - adds SC mapping attrs:
+    - `target_index_space=stage_runtime`
+    - `target_projection=bb_component_carriers`
+- Patched runtime strictness in `../../src/martini.cpp`:
+  - removed SC->BB fallback in `project_sc_gradient_if_active()`.
+  - added strict SC target validation:
+    - each SC row must have explicit nonzero projection targets;
+    - SC targets cannot be MARTINI `BB`/`SC` role atoms.
+- Rebuilt C++:
+  - `cmake --build ../../obj -j4` succeeded.
+- Found additional root cause for immediate stage-7 instability:
+  - stage handoff left injected AA carrier coordinates stale when copying positions from stage 6.6 to stage 7.0.
+  - measured BB/carrier mismatch after handoff was ~`55.38 Å` RMS (`/tmp` probe).
+- Patched `set_initial_position.py`:
+  - added `refresh_hybrid_reference_carriers(...)` to realign injected carrier coordinates so each residue’s carrier COM matches current BB proxy position during handoff.
+  - post-fix mismatch probe: ~`3e-7 Å` RMS.
+- Post-fix validation:
+  - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh`
+    - first-step jump removed (`martini_potential` remained at initial scale `~2.21e6`).
+  - confirmed stage-7 SC projection targets are AA-only (`N/CA/C/O`), zero `BB`/`SC` targets.
+- Continued debug for remaining multi-step instability:
+  - with production timestep `0.020`, 20-step run still blew up later (`~step 12+`) even with SC rows disabled.
+  - isolated root cause: timestep mismatch after injecting stiff Upside all-atom backbone nodes into production stage.
+- Fixed production timestep defaults:
+  - `run_sim_1rkl.sh`: `PROD_TIME_STEP` default changed `0.020 -> 0.002`.
+  - `test_prod_run_sim_1rkl.sh`: `PROD_TIME_STEP` default changed `0.020 -> 0.002`.
+- Stability validation with new defaults/fixes:
+  - `bash -n run_sim_1rkl.sh` and `bash -n test_prod_run_sim_1rkl.sh` passed.
+  - `PROD_70_NSTEPS=5 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh` ran stably with `dt=0.002` and finite energies.
+  - direct 20-step probes at `dt=0.002` (with and without SC rows) remained stable and finite (no blow-up/NaN).
+
+## 2026-02-19 (Preparation Alignment: AA Backbone COM -> MARTINI BB)
+- Implemented preparation-time RMSD alignment in `prepare_hybrid_system.py`:
+  - Added `compute_backbone_com_alignment(...)` to fit a rigid transform (Kabsch) from all-atom residue backbone COM points (`N/CA/C/O`) to MARTINI `BB` positions.
+  - `collect_bb_map(...)` now applies this transform when writing `hybrid_bb_map/reference_atom_coords`.
+  - Added alignment diagnostics in preparation output and `bb_comment` (`align_rmsd=...`).
+- Validation:
+  - `python3 -m py_compile prepare_hybrid_system.py` passed.
+  - Ran generation:
+    - `python3 prepare_hybrid_system.py --protein-pdb pdb/1rkl.pdb --protein-cg-pdb pdb/1rkl_hybrid.MARTINI.pdb --protein-itp pdb/1rkl_hybrid_proa.itp --bilayer-pdb pdb/bilayer.MARTINI.pdb --output-dir /tmp/hybrid_align_check`
+  - Runtime output showed:
+    - `Backbone COM RMSD alignment (AA->MARTINI BB): n=31, rmsd=0.1030 Å`
+  - HDF5 check confirmed aligned coordinates are stored in `/input/hybrid_bb_map/reference_atom_coords` and comments include `align_rmsd=0.1030`.
+
+## 2026-02-19 (Rotamer Projection + Probabilistic SC-BB Weighting Audit/Fix)
+- Re-read `task_plan.md`, audited runtime hybrid coupling and stage-7 artifacts for:
+  - rotamer projection anchor frame (all-atom backbone carriers),
+  - live probabilistic weighting path.
+- Verified stage-7 data integrity on `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`:
+  - `/input/potential/affine_alignment/atoms` uses `N/CA/C` carrier roles only.
+  - `/input/hybrid_sc_map/proj_target_indices` nonzero targets are `N/CA/C/O` only.
+  - required nodes present: `rotamer`, `placement_fixed_point_vector_only`, `placement_fixed_scalar`, `affine_alignment`.
+- Verified live rotamer marginal source:
+  - `../../src/rotamer.cpp` exports `node_marginal` from `cur_belief` after `solve_for_marginals()`.
+  - `../../src/martini.cpp` refreshes SC row probabilities from `rotamer` node each MARTINI compute call.
+- Found and fixed a gap:
+  - before fix, probabilistic path covered only protein-vs-nonprotein SC interactions; allowed same-residue protein `SC-BB` pairs took deterministic MARTINI pair path.
+  - patched `../../src/martini.cpp` to route allowed same-residue protein `SC-BB` pairs through the same probabilistic per-rotamer weighting path.
+  - added frame-correct env-gradient back-rotation for protein BB partners when coupling alignment is enabled.
+- Rebuilt binary:
+  - `cmake --build ../../obj -j 8` (success).
+- Validation:
+  - short production smoke passed: `PROD_70_NSTEPS=5 PROD_FRAME_STEPS=5 ./test_prod_run_sim_1rkl.sh`.
+  - stage-7 pair-table audit confirms patched path is active for real data:
+    - same-residue protein `SC-BB` pairs eligible for probabilistic weighting: `6`.

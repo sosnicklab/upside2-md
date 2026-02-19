@@ -10,7 +10,7 @@
 - Dry-MARTINI forces on protein `BB`/mapped sidechain proxies are projected onto protein atoms/DOFs in Upside; Upside then applies its own force field update.
 - Hybrid force exchange is disabled before production stage; pre-production keeps protein rigid to relax environment.
 - In production-stage hybrid mode, MARTINI intra-protein interactions are selectively filtered to avoid double-counting protein internal physics already modeled by Upside: no BB-BB, no SC-SC, and BB-SC only for same residue.
-- Rotamer mapping is used only for protein-environment coupling, not protein-protein or intra-protein sidechain interactions.
+- Rotamer mapping is used for protein-environment coupling and for allowed same-residue protein `SC-BB` pairs in production so sidechain proxy forces are probability-weighted by live rotamer marginals.
 - Hybrid `.up` schema will add dedicated groups under `/input`: `hybrid_control`, `hybrid_bb_map`, `hybrid_sc_map`, and `hybrid_env_topology`.
 - Add optional rigid-body drift control for Upside protein motion in production: RMSD alignment or equivalent COM+rotation removal mode, enabled by configuration and evaluated for physical side effects.
 
@@ -25,6 +25,7 @@
 - [x] Phase 8: Audit pre-production rigidity and potential-output semantics in `run_sim_1rkl.sh` workflow artifacts.
 - [x] Phase 9: Implement split potential logging (`Upside-only` vs `MARTINI`) and enforce pre-production NPT coupling to match CHARMM-GUI stage settings.
 - [x] Phase 10: Add and validate a local `.up` input-visualization script (`visualize_up_input.py`) with direct executable invocation and sane defaults.
+- [x] Phase 11: Remove production-stage MARTINI fallback paths in hybrid SC force projection and fix stage handoff/production stability regressions.
 
 ## Known Errors / Blockers
 - Requires concrete integration points in Upside C++ step loop and force modules.
@@ -63,6 +64,7 @@
 - Sidechain-environment force transfer in hybrid production prefers explicit `hybrid_sc_map` projection targets/weights generated from martinize bonded topology, with residue-based MARTINI `BB` target lookup retained only as fallback.
 - Production-stage MARTINI protein interaction filtering is runtime-enforced in C++ (based on `protein_membership`, `atom_roles`, and `residue_ids`) so non-production stages remain unaffected while protein is rigid.
 - Production-stage MARTINI nonbonded interactions for non-protein particles are hard-sphere-like (repulsive-only) while protein-involving MARTINI interactions remain dry-MARTINI for hybrid coupling.
+- Production probabilistic sidechain coupling includes allowed same-residue protein `SC-BB` interactions (not only protein-environment), with per-rotamer force/potential weighting from live `rotamer` marginals.
 - Preparation exports per-`BB` backbone reference metadata (`N,CA,C,O` atom indices/coordinates plus comment strings) in `hybrid_bb_map` using protein-AA PDB index space; stage-file injection maps these references into runtime coordinate carriers for active BB COM refresh and BB-force projection.
 - Runtime hybrid scheduling enforces `martini_potential` execution after all coordinate-node updates each integration sub-step, so MARTINI coupling always consumes the latest backbone-derived coordinates for that sub-step.
 - `run_sim_1rkl.sh` defaults to MARTINI2.2 protein coarse-graining via local `martinize.py` (`-ff martini22`) and performs a preflight protein-ITP-vs-dry-FF mass compatibility check to prevent silent MARTINI3/dry-MARTINI mixing.
@@ -105,3 +107,7 @@
 - BB force transfer no longer allows BB self-target projection: runtime BB COM refresh and BB gradient projection skip `atom_indices == bb_atom_index`, and preparation emits mass-fraction component mappings for four BB components with nearest non-BB protein fallback only when direct all-atom component indices are unavailable in the active runtime index space.
 - Hybrid stage-file injection will materialize protein-AA backbone coordinate carriers (indexed by preserved PDB backbone indices via a fixed runtime offset), convert `hybrid_bb_map` active targets from PDB index space to these runtime carriers, and use those carriers for cycle-wise BB recomputation and BB-force projection.
 - Production stage preparation must generate Upside backbone force-field nodes directly inside the hybrid stage `.up` (single-file workflow) by invoking `upside_config` writer functions in-process; avoid generating/consuming a separate backbone reference `.up` template.
+- Production hybrid SC force transfer must target injected AA backbone carrier atoms (`N/CA/C/O`) in runtime index space; projection to MARTINI `BB`/`SC` atoms is disallowed.
+- Stage handoff (`set_initial_position.py`) must realign injected AA carrier coordinates to current stage BB proxy coordinates before production starts to avoid BB/carrier frame discontinuities.
+- Production-stage timestep for hybrid runs with injected Upside all-atom backbone nodes must default to `0.002` (not MARTINI-only `0.020`) to maintain integration stability.
+- During preparation, all-atom backbone reference coordinates (`N/CA/C/O`) are RMSD-aligned (Kabsch on residue backbone COMs) to MARTINI `BB` positions before writing `hybrid_bb_map/reference_atom_coords`.
