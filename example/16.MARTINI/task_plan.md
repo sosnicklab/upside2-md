@@ -24,6 +24,7 @@
 - [x] Phase 7: Validate correctness, stability, and energy/force accounting; document usage and limitations.
 - [x] Phase 8: Audit pre-production rigidity and potential-output semantics in `run_sim_1rkl.sh` workflow artifacts.
 - [x] Phase 9: Implement split potential logging (`Upside-only` vs `MARTINI`) and enforce pre-production NPT coupling to match CHARMM-GUI stage settings.
+- [x] Phase 10: Add and validate a local `.up` input-visualization script (`visualize_up_input.py`) with direct executable invocation and sane defaults.
 
 ## Known Errors / Blockers
 - Requires concrete integration points in Upside C++ step loop and force modules.

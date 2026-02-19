@@ -1244,3 +1244,26 @@
   - `bash -n test_prod_run_sim_1rkl.sh` passed.
   - Smoke run passed: `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash test_prod_run_sim_1rkl.sh`.
   - Stage-7 logs confirm hybrid production active with rotamer/placement nodes, and stage runs without requiring a separate backbone reference `.up` file.
+
+## 2026-02-19 (Input `.up` Visualization Script Fix)
+- Re-read `task_plan.md` and debugged user-saved `visualize_up_input.py`.
+- Reproduced immediate runtime failure:
+  - `SyntaxError: unterminated string literal` caused by wrapped lines in f-strings and function calls.
+- Patched `visualize_up_input.py`:
+  - fixed broken wrapped lines (`residue_ids` assignment, charge summary print, scatter calls).
+  - made input argument optional with default `inputs/1rkl.up`.
+  - kept direct executable invocation path (`./visualize_up_input.py`) by using project venv shebang `#!../../.venv/bin/python`.
+  - added writable matplotlib/fontconfig cache setup via `MPLCONFIGDIR` and `XDG_CACHE_HOME`.
+  - auto-selects `Agg` backend when running headless (`DISPLAY` absent), so PNG export works non-interactively.
+- Validation:
+  - `./visualize_up_input.py --output /tmp/1rkl_input_default.png` passed and wrote image.
+  - `./visualize_up_input.py inputs/1rkl.up --color-by type --point-size 4 --output /tmp/1rkl_input_type.png` passed and wrote image.
+  - script remains executable: `-rwxr-xr-x`.
+
+## 2026-02-19 (Visualization Script Save-Only Behavior)
+- Updated `visualize_up_input.py` to always save figures to file instead of calling `plt.show()`.
+- Added default output path behavior when `--output` is omitted:
+  - saves to `<input_basename>_input_viz.png` in the same directory as the input `.up`.
+- Validation:
+  - `./visualize_up_input.py` now saves to `inputs/1rkl_input_viz.png`.
+  - no non-interactive `FigureCanvasAgg` show warning is emitted.
