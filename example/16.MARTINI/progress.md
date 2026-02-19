@@ -987,6 +987,74 @@
       - `sc_max_disp=2.000`
   - HDF5 attribute check on regenerated `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` confirms all six SC control attrs are present under `/input/hybrid_control`.
 
+## 2026-02-19 (Production Instability Root-Cause Audit)
+- Investigated reported production-stage behavior in `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`:
+  - large MARTINI potential spikes,
+  - rapid protein-backbone disruption (Rg growth).
+- Artifact/structure checks:
+  - `n_atom=4216`, protein membership count `65` (MARTINI protein beads only), environment `4151`.
+  - Potential node set is MARTINI-centric (`dist_spring`, `angle_spring`, `dihedral_spring`, `martini_potential`) plus injected rotamer/placement nodes; no all-atom Upside backbone node family is present in this stage artifact.
+  - `hybrid_bb_map` and `hybrid_sc_map` projection entries are MARTINI-index mapped with weights `[1,0,0,0]` (no direct all-atom `N/CA/C/O` distribution in this artifact).
+- Trajectory diagnostics from stage-7 output frames:
+  - Protein Rg grows monotonically (`~12.95 Å` at step 0 to `~28.50 Å` at step 4500).
+  - Protein bond geometry strongly diverges from equilibrium:
+    - mean `|d - d0|` rises from `0.223 Å` (step 0) to `19.401 Å` (step 4500),
+    - max `|d - d0|` reaches `73.838 Å`.
+- C++ code-path root causes identified:
+  - Production hybrid filtering (`allow_protein_pair_by_rule`) disallows `BB-BB`; this rule is used not only in nonbonded MARTINI but also in bonded/multibody potentials:
+    - `DistSpring` skips pair if `allow_intra_protein_pair_if_active` fails,
+    - `AngleSpring`/`DihedralSpring` skip if `allow_multibody_term_if_active` fails.
+  - Net effect in current artifact: protein bonded constraints are skipped in production while no all-atom backbone force field is actively replacing them.
+  - SC force capping is force-only, not potential-only:
+    - `eval_pair_force` caps force vectors but still accumulates raw LJ/Coulomb potential, so short-distance SC-environment contacts can create large instantaneous potential spikes.
+- Quantitative spike support (pair scan on saved frames):
+  - protein-environment nearest contacts reach `~1.29–2.07 Å`,
+  - corresponding uncapped LJ pair potentials can be very large (`~1.7e7` at step 1500, `~1.2e5` at step 2000, before probabilistic weighting).
+  - This is consistent with observed total MARTINI potential volatility when weighted SC terms vary by rotamer probabilities.
+
+## 2026-02-19 (BB Mapping Audit: Reference AA vs Active Projection)
+- Re-checked preparation and runtime BB mapping flow against requested behavior.
+- Preparation (`prepare_hybrid_system.py`) currently writes:
+  - reference all-atom backbone metadata under `hybrid_bb_map`:
+    - `reference_atom_indices` (`N/CA/C/O`)
+    - `reference_atom_coords`
+    - `bb_comment`
+  - active projection mapping for runtime as MARTINI self-mapping:
+    - `atom_indices=[bb_atom_index,-1,-1,-1]`
+    - `weights=[1,0,0,0]`
+- Runtime (`src/martini.cpp`) consumes only active projection datasets (`atom_indices`, `atom_mask`, `weights`, `bb_atom_index`) for COM refresh and BB-force projection; reference AA metadata is not used in force transfer.
+- Verified in generated production artifact `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`:
+  - `reference_atom_indices` and `reference_atom_coords` are present.
+  - active `atom_indices` rows are MARTINI BB self-indices, and `weights` are `[1,0,0,0]`.
+- Net current behavior:
+  - BB force is projected back onto BB itself (self-target), not distributed to all-atom `N/CA/C/O` components.
+  - Requested “block of 4 components” force splitting is therefore not active in this artifact path.
+
+## 2026-02-19 (BB Force-Split Activation, No Direct-BB Projection)
+- Implemented preparation/runtime changes to disable direct BB force application and activate component-wise BB force transfer.
+- `prepare_hybrid_system.py` updates:
+  - Added BB component definitions (`N/CA/C/O` + mass ratios).
+  - `collect_bb_map()` now emits active `hybrid_bb_map/atom_indices` + `weights` for four component targets with normalized mass-fraction weights.
+  - Direct BB self-target entries (`atom_indices == bb_atom_index`) are excluded.
+  - Added nearest non-BB protein fallback selection to keep four active component targets when direct all-atom indices are not representable in current runtime index space.
+  - `bb_comment` now records both reference all-atom indices and active runtime targets/weights.
+- `src/martini.cpp` updates:
+  - `refresh_bb_positions_if_active()` skips BB self-target terms when rebuilding BB from component targets.
+  - `project_bb_gradient_if_active()` skips BB self-target terms when distributing BB gradient to component targets.
+  - Net: no BB self-force transfer path remains, even if legacy mappings still contain BB self-target terms.
+- Verification:
+  - Python compile check passed: `python3 -m py_compile prepare_hybrid_system.py`.
+  - C++ rebuild passed: `cmake --build ../../obj -j4`.
+  - Regenerated mapping validates: `validate_hybrid_mapping.py ... --n-atom 4216` -> OK.
+  - Regenerated mapping statistics:
+    - `n_bb=31`
+    - `rows_with_any_active_target=31`
+    - `rows_with_4_active_targets=31`
+    - `bb_self_target_terms=0`
+  - Activated in workflow output by regenerating `outputs/martini_test_1rkl_hybrid/hybrid_prep/hybrid_mapping.h5` and re-running `test_prod_run_sim_1rkl.sh` (`PROD_70_NSTEPS=0`), then confirming stage file `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` has:
+    - 31 BB rows, all 4-way active mappings,
+    - zero BB self-target terms.
+
 ## 2026-02-18 (Production Instability Isolation: 1-Step Stage-7 Run)
 - Reproduced requested one-step production run:
   - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh`
@@ -1075,3 +1143,104 @@
   - after underdetermined local-refresh + displacement-cap patch:
     - `PROD_70_NSTEPS=20 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh` completed with no NaN/crash,
     - MARTINI potential stayed in a low finite band (`~8e3` to `~5.3e4`), with prior `1e7-1e9` spike regimes absent in this probe.
+
+## 2026-02-19 (PDB N/CA/C/O Index Preservation + Runtime Carrier Mapping)
+- Re-checked user concern: stage artifacts used only MARTINI protein beads (`protein_membership=65`), so direct PDB `N/CA/C/O` indices were not usable as active runtime targets.
+- Updated `prepare_hybrid_system.py`:
+  - `collect_bb_map()` now stores active BB component indices in `protein_aa_pdb_0based` index space (no nearest-MARTINI fallback).
+  - Added `hybrid_bb_map` attrs:
+    - `atom_index_space=protein_aa_pdb_0based`
+    - `runtime_index_space=stage_runtime_after_injection`
+  - Applied the same translation shift to `protein_aa_atoms` as to MARTINI protein coordinates so `reference_atom_coords` are in the packed frame.
+- Updated `validate_hybrid_mapping.py`:
+  - Added BB index-space decoding.
+  - In `protein_aa_pdb_0based` mode, BB target validation uses non-negative reference-index checks (runtime bounds checks are deferred to stage-file injection/runtime mapping).
+  - Validator output now reports `bb_index_space`.
+- Reworked `inject_hybrid_mapping()` in both workflow scripts:
+  - `run_sim_1rkl.sh`
+  - `test_prod_run_sim_1rkl.sh`
+  - New behavior:
+    - copy hybrid groups as before;
+    - append AA reference-coordinate carrier particles to stage `/input` arrays using preserved PDB index space (`runtime_index = base_n_atom + pdb_index`);
+    - extend required per-atom datasets (`pos`, `mom`, `vel`, `mass`, `charges`, `type`, `atom_names`, `atom_roles`, `residue_ids`, `molecule_ids`, `particle_class`);
+    - extend `/input/potential/martini_potential/{atom_indices,charges}` lengths to match augmented `n_atom`;
+    - rewrite `/input/hybrid_bb_map/{atom_indices,atom_mask,weights}` to runtime carrier indices and mass-fraction weights;
+    - rewrite `/input/hybrid_env_topology/protein_membership` to augmented length and mark carriers as protein.
+- Patched `set_initial_position.py` to handle source/target atom-count mismatch:
+  - on mismatch, copy overlap and preserve target extra coordinates (prevents losing injected AA carriers when seeding from older checkpoints).
+- Validation and smoke checks:
+  - `python3 -m py_compile prepare_hybrid_system.py validate_hybrid_mapping.py set_initial_position.py` passed.
+  - `bash -n run_sim_1rkl.sh` and `bash -n test_prod_run_sim_1rkl.sh` passed.
+  - Generated and validated mapping:
+    - `python3 prepare_hybrid_system.py ... --output-dir outputs/hybrid_indexspace_check`
+    - `python3 validate_hybrid_mapping.py outputs/hybrid_indexspace_check/hybrid_mapping.h5`
+    - result reports `bb_index_space=protein_aa_pdb_0based`.
+  - Production-only prep smoke:
+    - `PROD_70_NSTEPS=0 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh` now succeeds.
+    - Stage file confirms:
+      - `n_atom=4449` (augmented from 4216),
+      - `reference_index_offset=4216`, `reference_index_count=233`,
+      - zero BB self-target terms,
+      - BB active mapping satisfies `atom_indices = offset + reference_atom_indices`.
+  - Reduced full-workflow smoke:
+    - `MIN_60_MAX_ITER=1 MIN_61_MAX_ITER=1 EQ_62_NSTEPS=0 EQ_63_NSTEPS=0 EQ_64_NSTEPS=0 EQ_65_NSTEPS=0 EQ_66_NSTEPS=0 PROD_70_NSTEPS=0 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 ./run_sim_1rkl.sh`
+    - completed through stage `7.0` with augmented `n_atom=4449` across checkpoints.
+  - Functional production-step check:
+    - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh`
+    - production stage executed for one step with hybrid active and augmented atom count (`n_atom=4449`) without initialization/runtime schema errors.
+
+## 2026-02-19 (Production Upside Backbone FF Integration Fix)
+- Re-read `task_plan.md` before edits and targeted the production-stage backbone FF activation path in workflow scripts.
+- Fixed `run_sim_1rkl.sh` production wiring:
+  - `prepare_hybrid_artifacts()` now calls `prepare_upside_backbone_reference`.
+  - production `augment_production_rotamer_nodes` call now passes `${UPSIDE_BACKBONE_REF_UP}` (required 4th arg).
+- Fixed `test_prod_run_sim_1rkl.sh` to match production backbone integration requirements:
+  - Added Upside backbone reference config/validation (`UPSIDE_BACKBONE_REF_*`, rama/hbond/reference-state paths).
+  - Added `prepare_upside_backbone_reference()` and invoked it before stage 7.0 preparation.
+  - Updated production node injection to require/reference the generated backbone `.up` and to copy/remap canonical backbone nodes (`Distance3D`, `Angle`, `Dihedral_*`, `Spring_*`, `rama_*`, `infer_H_O`, `protein_hbond`, `hbond_energy`, `backbone_pairs`).
+  - Updated production augment call to pass `${UPSIDE_BACKBONE_REF_UP}`.
+- Validation:
+  - `bash -n run_sim_1rkl.sh` passed.
+  - `bash -n test_prod_run_sim_1rkl.sh` passed.
+  - Smoke run: `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash test_prod_run_sim_1rkl.sh` completed stage prep/run without missing-node failure.
+  - HDF5 verification on `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` confirmed:
+    - required backbone nodes present in `/input/potential`.
+    - remapped backbone atom IDs are within runtime AA carrier range (`reference_index_offset=4216`, `reference_index_count=233`).
+    - stage atom count includes carriers (`n_atom=4449`).
+
+## 2026-02-19 (Rotamer-State Read Path Audit)
+- Re-read `task_plan.md` and audited production hybrid rotamer coupling path in C++.
+- Verified runtime binding/scheduling in `../../src/martini.cpp`:
+  - `register_hybrid_for_engine()` discovers/binds `rotamer` and placement nodes from live DerivEngine graph.
+  - Adds explicit dependency edges so `martini_potential*` depends on placement + rotamer + coord nodes.
+  - In production active mode, startup fails hard if rotamer/placement nodes are missing.
+- Verified live probability pull each MARTINI force evaluation:
+  - `MartiniPotential::compute_value()` calls `refresh_sc_row_probabilities_from_rotamer()` every call.
+  - That function reads `rotamer_node->get_value_by_name("node_marginal")` and `("node_lookup")` (no static fallback).
+  - If lookup/marginal mapping is incomplete or invalid, it returns false and production throws a fatal error.
+- Verified rotamer node semantics in `../../src/rotamer.cpp`:
+  - `compute_value(DerivMode|PotentialAndDerivMode)` solves marginals (`solve_for_marginals()`) each call.
+  - `get_value_by_name("node_marginal")` returns current `cur_belief` marginals from that solve.
+- Verified integration ordering behavior:
+  - Default `--integrator v` path calls `DerivEngine::compute(DerivMode)` each sub-step.
+  - Added dependencies ensure rotamer executes before martini potential in topological order for each sub-step.
+
+## 2026-02-19 (Single-File Upside Backbone FF Integration)
+- User requested removing separate backbone reference `.up` generation and integrating Upside backbone FF node generation directly into hybrid production-stage preparation.
+- Updated architecture record in `task_plan.md` Revised Decisions:
+  - production stage now generates backbone FF nodes in-place in the stage `.up` via `upside_config` writer functions (single-file workflow).
+- Implemented in both workflow scripts:
+  - `run_sim_1rkl.sh`
+  - `test_prod_run_sim_1rkl.sh`
+- `augment_production_rotamer_nodes` now:
+  - loads `upside_config.py` dynamically from `${UPSIDE_HOME}/py/upside_config.py`;
+  - creates backbone nodes directly in current stage file (`Distance3D`, `Angle`, `Dihedral_*`, `Spring_*`, `rama_coord`, `rama_map_pot`, `rama_map_pot_ref`, `infer_H_O`, `protein_hbond`, `hbond_energy`, `backbone_pairs`) using writer functions;
+  - remaps generated protein-local backbone atom indices to runtime AA carrier indices in the same stage file.
+- Removed secondary backbone-reference workflow usage from scripts:
+  - no call to `prepare_upside_backbone_reference` in execution path;
+  - removed corresponding variables/function definitions from both scripts to avoid hidden side path.
+- Validation:
+  - `bash -n run_sim_1rkl.sh` passed.
+  - `bash -n test_prod_run_sim_1rkl.sh` passed.
+  - Smoke run passed: `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash test_prod_run_sim_1rkl.sh`.
+  - Stage-7 logs confirm hybrid production active with rotamer/placement nodes, and stage runs without requiring a separate backbone reference `.up` file.

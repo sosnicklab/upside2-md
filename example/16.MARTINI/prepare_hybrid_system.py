@@ -15,6 +15,8 @@ import h5py
 import numpy as np
 
 NA_AVOGADRO = 6.02214076e23
+BB_COMPONENT_NAMES = ("N", "CA", "C", "O")
+BB_COMPONENT_MASSES = (14.0, 12.0, 12.0, 16.0)
 
 
 @dataclass
@@ -717,8 +719,7 @@ def collect_bb_map(protein_aa_atoms, protein_cg_atoms):
             continue
 
         # Reference all-atom backbone atom mapping (for audit/comment metadata).
-        bb_names = ["N", "CA", "C", "O"]
-        aa_idxs = [int(aa_by_res[found_key].get(nm, -1)) for nm in bb_names]
+        aa_idxs = [int(aa_by_res[found_key].get(nm, -1)) for nm in BB_COMPONENT_NAMES]
         aa_coords = []
         for ai in aa_idxs:
             if ai < 0:
@@ -727,14 +728,25 @@ def collect_bb_map(protein_aa_atoms, protein_cg_atoms):
                 aa_atom = protein_aa_atoms[ai]
                 aa_coords.append([float(aa_atom["x"]), float(aa_atom["y"]), float(aa_atom["z"])])
 
-        # Hybrid runtime coordinate arrays in this packed-system path are MARTINI-indexed.
-        # Keep BB projection targets in MARTINI protein index space by default.
-        idxs = [cg_idx, -1, -1, -1]
-        mask = [1, 0, 0, 0]
-        weights = [1.0, 0.0, 0.0, 0.0]
+        # Active mapping is kept in protein-AA PDB index space.
+        # Runtime conversion to stage-local indices is done during stage-file injection.
+        idxs = [-1, -1, -1, -1]
+        mask = [0, 0, 0, 0]
+        raw_weights = [0.0, 0.0, 0.0, 0.0]
+        for d, (ai, m) in enumerate(zip(aa_idxs, BB_COMPONENT_MASSES)):
+            if ai < 0:
+                continue
+            idxs[d] = int(ai)
+            mask[d] = 1
+            raw_weights[d] = float(m)
+
+        weights = [0.0, 0.0, 0.0, 0.0]
+        wsum = float(sum(raw_weights))
+        if wsum > 0.0:
+            weights = [w / wsum for w in raw_weights]
         bb_comment = (
             f"BB residue {atom['resseq']} chain '{atom['chain']}' "
-            f"ref N/CA/C/O idx={aa_idxs}"
+            f"ref N/CA/C/O idx={aa_idxs}; index_space=protein_aa_pdb_0based; w={weights}"
         )
         bb_entries.append(
             {
@@ -826,6 +838,8 @@ def write_hybrid_mapping_h5(
         ctrl.attrs["schema_version"] = np.int32(1)
 
         bb_grp = inp.create_group("hybrid_bb_map")
+        bb_grp.attrs["atom_index_space"] = b"protein_aa_pdb_0based"
+        bb_grp.attrs["runtime_index_space"] = b"stage_runtime_after_injection"
         bb_grp.create_dataset(
             "bb_residue_index",
             data=np.array([b["bb_resseq"] for b in bb_entries], dtype=np.int32),
@@ -950,8 +964,12 @@ def main():
     protein_xyz = coords(protein_cg_atoms)
     bilayer_center = center_of_mass(bilayer_xyz)
     protein_center = center_of_mass(protein_xyz)
-    translated = protein_xyz + (bilayer_center - protein_center)
+    shift = bilayer_center - protein_center
+    translated = protein_xyz + shift
     set_coords(protein_cg_atoms, translated)
+    if protein_aa_atoms:
+        protein_aa_xyz = coords(protein_aa_atoms)
+        set_coords(protein_aa_atoms, protein_aa_xyz + shift)
 
     protein_xyz = coords(protein_cg_atoms)
     pmin = protein_xyz.min(axis=0)

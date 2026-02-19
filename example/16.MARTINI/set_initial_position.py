@@ -38,6 +38,15 @@ def set_initial_position(input_file, output_file):
 
     # Open output file and write last frame's position to input/pos
     with h5py.File(output_file, 'r+') as f:
+        target_pos = f['/input/pos'][:]
+        target_n = target_pos.shape[0]
+        source_n = last_pos.shape[0]
+        if source_n != target_n:
+            merged = target_pos.copy()
+            n_copy = min(source_n, target_n)
+            merged[:n_copy, :, :] = last_pos[:n_copy, :, :]
+            last_pos = merged
+
         if '/input/pos' in f:
             del f['/input/pos']
         f.create_dataset('/input/pos', data=last_pos)

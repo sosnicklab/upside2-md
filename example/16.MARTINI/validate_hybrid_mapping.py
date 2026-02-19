@@ -18,6 +18,13 @@ def require_dataset(group, name):
         raise ValueError(f"Missing dataset: {group.name}/{name}")
     return group[name]
 
+def decode_attr_string(value, default=""):
+    if value is None:
+        return default
+    if isinstance(value, (bytes, np.bytes_)):
+        return value.decode("utf-8", errors="ignore")
+    return str(value)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Validate hybrid mapping HDF5 schema and index consistency.")
@@ -60,6 +67,8 @@ def main():
         n_bb = bb_atom_map.shape[0]
         if bb_atom_idx.shape != (n_bb,):
             raise ValueError("hybrid_bb_map/bb_atom_index must have shape (n_bb,)")
+        bb_index_space = decode_attr_string(bb.attrs.get("atom_index_space", "runtime_n_atom"))
+        bb_reference_space = (bb_index_space == "protein_aa_pdb_0based")
 
         # Optional audit metadata for BB <- {N,CA,C,O} references.
         if "reference_atom_names" in bb:
@@ -128,10 +137,14 @@ def main():
                 if int(bb_mask[i, j]) == 0:
                     continue
                 ai = int(bb_atom_map[i, j])
-                if ai < 0 or ai >= n_atom:
-                    raise ValueError(f"BB target index out of bounds at row {i}, col {j}: {ai}")
-                if membership[ai] < 0:
-                    raise ValueError(f"BB target index is not protein atom at row {i}, col {j}: {ai}")
+                if bb_reference_space:
+                    if ai < 0:
+                        raise ValueError(f"BB reference target index invalid at row {i}, col {j}: {ai}")
+                else:
+                    if ai < 0 or ai >= n_atom:
+                        raise ValueError(f"BB target index out of bounds at row {i}, col {j}: {ai}")
+                    if membership[ai] < 0:
+                        raise ValueError(f"BB target index is not protein atom at row {i}, col {j}: {ai}")
 
         for i in range(n_rot):
             proxy_i = int(sc_proxy[i])
@@ -152,7 +165,7 @@ def main():
         n_env = int(np.sum(membership < 0))
         print(f"OK: {p}")
         print(f"  n_atom={membership.shape[0]} n_protein={n_protein} n_env={n_env}")
-        print(f"  n_bb={n_bb} n_sc_rotamer_rows={n_rot}")
+        print(f"  n_bb={n_bb} n_sc_rotamer_rows={n_rot} bb_index_space={bb_index_space}")
 
 
 if __name__ == "__main__":

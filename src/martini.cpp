@@ -1285,6 +1285,7 @@ void refresh_bb_positions_if_active(const HybridRuntimeState& st, VecArray pos, 
             int ai = st.atom_indices[k][d];
             float w = st.weights[k][d];
             if(ai < 0 || ai >= n_atom || w == 0.f) continue;
+            if(ai == bb) continue;
             com += w * load_vec<3>(pos, ai);
             wsum += w;
         }
@@ -1525,6 +1526,7 @@ void project_bb_gradient_if_active(const HybridRuntimeState& st, VecArray sens, 
             int ai = st.atom_indices[k][d];
             float w = st.weights[k][d];
             if(ai < 0 || ai >= n_atom || w == 0.f) continue;
+            if(ai == bb) continue;
             wsum += w;
         }
         if(wsum <= 0.f) {
@@ -1539,6 +1541,7 @@ void project_bb_gradient_if_active(const HybridRuntimeState& st, VecArray sens, 
             int ai = st.atom_indices[k][d];
             float w = st.weights[k][d];
             if(ai < 0 || ai >= n_atom || w == 0.f) continue;
+            if(ai == bb) continue;
             update_vec<3>(sens, ai, (w * inv_wsum) * bb_grad);
         }
     }
