@@ -330,6 +330,8 @@ struct HybridRuntimeState {
     float sc_env_relax_dt = 0.002f;
     float sc_env_restraint_k = 5.0f;
     float sc_env_max_displacement = 2.0f;
+    float nonprotein_hs_force_cap = 100.0f;
+    float nonprotein_hs_potential_cap = 5000.0f;
     std::vector<std::array<float,3>> prev_bb_pos;
     std::vector<int> preprod_fixed_atom_indices;
     std::vector<int> preprod_z_fixed_atom_indices;
@@ -779,12 +781,18 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.sc_env_relax_dt = read_attribute<float>(ctrl.get(), ".", "sc_env_relax_dt", out.sc_env_relax_dt);
     out.sc_env_restraint_k = read_attribute<float>(ctrl.get(), ".", "sc_env_restraint_k", out.sc_env_restraint_k);
     out.sc_env_max_displacement = read_attribute<float>(ctrl.get(), ".", "sc_env_max_displacement", out.sc_env_max_displacement);
+    out.nonprotein_hs_force_cap =
+        read_attribute<float>(ctrl.get(), ".", "nonprotein_hs_force_cap", out.nonprotein_hs_force_cap);
+    out.nonprotein_hs_potential_cap =
+        read_attribute<float>(ctrl.get(), ".", "nonprotein_hs_potential_cap", out.nonprotein_hs_potential_cap);
     if(out.sc_env_lj_force_cap < 0.f) out.sc_env_lj_force_cap = 0.f;
     if(out.sc_env_coul_force_cap < 0.f) out.sc_env_coul_force_cap = 0.f;
     if(out.sc_env_relax_steps < 1) out.sc_env_relax_steps = 1;
     if(!std::isfinite(out.sc_env_relax_dt) || out.sc_env_relax_dt <= 0.f) out.sc_env_relax_dt = 0.002f;
     if(!std::isfinite(out.sc_env_restraint_k) || out.sc_env_restraint_k < 0.f) out.sc_env_restraint_k = 0.f;
     if(!std::isfinite(out.sc_env_max_displacement) || out.sc_env_max_displacement < 0.f) out.sc_env_max_displacement = 0.f;
+    if(out.nonprotein_hs_force_cap < 0.f) out.nonprotein_hs_force_cap = 0.f;
+    if(out.nonprotein_hs_potential_cap < 0.f) out.nonprotein_hs_potential_cap = 0.f;
 
     if(!out.enabled) {
         return out;
@@ -1235,7 +1243,7 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
     }
     if(st->has_config && st->enabled) {
-        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d nonprotein_hs=%d sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_relax_dt=%.4f sc_rest_k=%.3f sc_max_disp=%.3f preprod_fixed=%zu preprod_zfixed=%zu\n",
+        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d nonprotein_hs=%d hs_force_cap=%.3f hs_pot_cap=%.3f sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_relax_dt=%.4f sc_rest_k=%.3f sc_max_disp=%.3f preprod_fixed=%zu preprod_zfixed=%zu\n",
                current_stage.c_str(),
                st->activation_stage.c_str(),
                st->active ? 1 : 0,
@@ -1247,6 +1255,8 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
                st->rotamer_node_name.empty() ? "<none>" : st->rotamer_node_name.c_str(),
                st->exclude_intra_protein_martini ? 1 : 0,
                st->production_nonprotein_hard_sphere ? 1 : 0,
+               st->nonprotein_hs_force_cap,
+               st->nonprotein_hs_potential_cap,
                st->sc_env_lj_force_cap,
                st->sc_env_coul_force_cap,
                st->sc_env_relax_steps,
@@ -2541,7 +2551,9 @@ struct MartiniPotential : public PotentialNode
                                    float& pair_potential,
                                    Vec<3>& pair_force,
                                    float lj_force_cap_mag,
-                                   float coul_force_cap_mag) -> bool {
+                                   float coul_force_cap_mag,
+                                   float hs_force_cap_mag,
+                                   float hs_pot_cap_mag) -> bool {
             auto dr = pa - pb;
             auto dist2 = mag2(dr);
             auto dist = sqrtf(max(dist2, kMinDistance));
@@ -2563,7 +2575,11 @@ struct MartiniPotential : public PotentialNode
                 float wca_force_mag = 24.f * eps * (2.f * sr12 - sr6) / eval_dist;
                 if(std::isfinite(wca_pot) && std::isfinite(wca_force_mag)) {
                     pair_potential = wca_pot;
+                    if(hs_pot_cap_mag > 0.f && pair_potential > hs_pot_cap_mag) {
+                        pair_potential = hs_pot_cap_mag;
+                    }
                     pair_force = (wca_force_mag / eval_dist) * dr;
+                    cap_force_vector(pair_force, hs_force_cap_mag);
                     return true;
                 }
                 return false;
@@ -3149,7 +3165,13 @@ struct MartiniPotential : public PotentialNode
 
             Vec<3> force = make_zero<3>();
             float pair_pot = 0.f;
-            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, hard_sphere_pair, pair_pot, force, 0.f, 0.f)) {
+            float hs_force_cap = 0.f;
+            float hs_pot_cap = 0.f;
+            if(hard_sphere_pair && hybrid_state) {
+                hs_force_cap = hybrid_state->nonprotein_hs_force_cap;
+                hs_pot_cap = hybrid_state->nonprotein_hs_potential_cap;
+            }
+            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, hard_sphere_pair, pair_pot, force, 0.f, 0.f, hs_force_cap, hs_pot_cap)) {
                 continue;
             }
             if(pot) *pot += pair_pot;
@@ -3199,15 +3221,19 @@ struct MartiniPotential : public PotentialNode
                         if(!eval_pair_force(pa, pb, edge.eps, edge.sig, edge.qi, edge.qj, false,
                                             pair_pot, pair_force,
                                             hybrid_state->sc_env_lj_force_cap,
-                                            hybrid_state->sc_env_coul_force_cap)) {
+                                            hybrid_state->sc_env_coul_force_cap,
+                                            0.f,
+                                            0.f)) {
                             continue;
                         }
                         auto gi = -pair_force;
                         auto gj = pair_force;
                         auto proxy_grad = edge.proxy_is_i ? gi : gj;
-                        row_force[r][0] += proxy_grad[0];
-                        row_force[r][1] += proxy_grad[1];
-                        row_force[r][2] += proxy_grad[2];
+                        // `proxy_grad` is dE/dx. The inner SC relax loop integrates
+                        // positions with a force-like update, so use -dE/dx here.
+                        row_force[r][0] -= proxy_grad[0];
+                        row_force[r][1] -= proxy_grad[1];
+                        row_force[r][2] -= proxy_grad[2];
                     }
                 }
 
@@ -3278,7 +3304,9 @@ struct MartiniPotential : public PotentialNode
                     if(!eval_pair_force(pa, pb, edge.eps, edge.sig, edge.qi, edge.qj, false,
                                         pair_pot, pair_force,
                                         hybrid_state->sc_env_lj_force_cap,
-                                        hybrid_state->sc_env_coul_force_cap)) {
+                                        hybrid_state->sc_env_coul_force_cap,
+                                        0.f,
+                                        0.f)) {
                         continue;
                     }
 

@@ -1371,3 +1371,43 @@
     - `martini_potential` `4.687e3 (step 0)`, `3.812e3 (50)`, `2.912e3 (100)`, `4.103e3 (150)`, all finite.
   - 600-step probe from fresh stage-7 state:
     - stable through reported trouble window (`step 500`: `Rg=13.0 Å`, `martini_potential=1.147e4`, no blow-up/NaN).
+
+## 2026-02-20 (Production Instability Follow-up: SC Relaxation Sign Fix)
+- Re-read `task_plan.md` and investigated user-reported stage-7 instability (`martini_potential` spike near step 1000 with rapid hbonds loss).
+- Confirmed latest binary now includes hard-sphere cap controls in startup log:
+  - `hs_force_cap=100.000`, `hs_pot_cap=5000.000`.
+- Found and fixed a sign bug in `../../src/martini.cpp` SC inner relaxation loop:
+  - previous logic advanced SC proxy positions with `+dE/dx` (gradient ascent),
+  - patched to use force direction `-dE/dx` for the relaxation update.
+- Rebuilt C++:
+  - `cmake --build ../../obj -j4` (success).
+- Diagnostics:
+  - exact production settings (`sc_env_relax_steps=200`) now start from lower MARTINI energy on same input (`4686.84 -> 3436.05` at step 0).
+  - short fast diagnostic with same code path but `sc_env_relax_steps=20` and frequent reporting completed stably for 400 steps:
+    - step 50: `martini_potential=2980.32`
+    - step 100: `2444.70`
+    - step 200: `3084.59`
+    - step 300: `4886.27`
+    - step 350: `4496.45`
+    - no NaN/overflow observed in this probe.
+- Remaining work:
+  - long-horizon validation under exact production settings (`sc_env_relax_steps=200`, 5k steps) is still pending/running due runtime cost.
+
+## 2026-02-20 (Production Start Protein Placement Fix)
+- Investigated user-reported production-start artifact: protein appears at box corner and is visually PBC-split at stage 7 start.
+- Root cause identified in stage handoff:
+  - `set_initial_position.py` copied last frame positions from stage 6.6 to stage 7.0 without any production recentering.
+  - In checkpoint data, protein coordinates were near origin while box center was near `(Lx/2, Ly/2, Lz/2)`, so wrapped visualization placed protein near boundaries.
+- Implemented fix in `set_initial_position.py`:
+  - added `recenter_protein_for_production(...)` executed only when stage label is `production`;
+  - uses `/input/hybrid_bb_map/bb_atom_index` as protein reference set;
+  - computes protein BB center in periodic space via circular mean per axis;
+  - shifts all coordinates so BB center maps to box center, then wraps coordinates into `[0, L)`.
+- Validation:
+  - syntax check: `python3 -m py_compile set_initial_position.py` passed.
+  - handoff test:
+    - `python set_initial_position.py outputs/.../1rkl.stage_6.6.up /tmp/1rkl.stage_7.0.recenter_test.up`
+    - script log reported recenter action and updated box.
+  - post-check on `/tmp/1rkl.stage_7.0.recenter_test.up`:
+    - BB circular center matches target box center to numerical precision.
+    - BB coordinates are compact around box center rather than boundary-origin.

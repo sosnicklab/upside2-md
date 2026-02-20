@@ -45,7 +45,10 @@
 - Fixed 2026-02-18 follow-up: SC row-expansion now caps per-residue base proxy rows by placement-point capacity per rotamer (minimum placement group size), preventing over-expanded proxy rows from residues whose MARTINI proxy count exceeds placement representation.
 - Remaining blocker (post-fixes): long-horizon production stability/physical calibration still needs benchmarking; 20-step production probes are now finite and avoid previous `1e7-1e12` spike regimes, but extended trajectories still require validation.
 - Fixed 2026-02-19: production SC probabilistic coupling no longer uses linear `sum_r p_r E_r` aggregation; runtime now applies Boltzmann-consistent `-log sum_r p_r exp(-E_r)` mixing (with stabilized numerics), removing reproduced `1e5-1e7` short-horizon MARTINI potential spikes from low-probability clash rotamers.
+- Fixed 2026-02-20: SC inner relaxation loop now integrates with force direction (`-dE/dx`) instead of gradient-ascent (`+dE/dx`), addressing reproduced production energy blow-up from unstable SC relaxation dynamics.
+- Fixed 2026-02-20: stage handoff (`set_initial_position.py`) now recenters production-stage protein BB to box center using periodic circular-center estimation and global coordinate shift+wrap, preventing protein corner placement/PBC split at stage 7 start.
 - `output/potential` is a total-engine scalar (sum over active potential nodes), not a protein-only all-atom Upside-backbone channel; this can vary during pre-production even with rigid protein because environment terms evolve.
+- Remaining blocker: full long-horizon validation with exact production SC settings (`sc_env_relax_steps=200`) is still running/needs benchmarking; short diagnostics are improved but not yet a complete 5k-step confirmation.
 
 ## Revised Decisions
 - Hybrid coupling starts only at production stage; pre-production protein remains rigid.
@@ -101,6 +104,7 @@
 - Hybrid pre-production rigid hold and NPT are both enabled by scaling only unconstrained DOFs during barostat box/coordinate updates (fully fixed atoms remain fixed; z-fixed atoms keep fixed z).
 - Production probabilistic SC-environment coupling will cap LJ and Coulomb force magnitudes (configurable via `hybrid_control` attributes) to prevent force spikes.
 - Production probabilistic SC-environment coupling will run an inner SC-only relaxation loop (`200` steps by default) with fixed environment/backbone and SC restrained near mapped rotamer positions; only the final relaxed-step SC->BB force is projected back to backbone.
+- Inner SC relaxation integration treats `dE/dx` as gradient and advances positions using force direction (`x += dt * (-dE/dx)`), with restraint contribution in the same force convention.
 - Production stage file preparation (`run_sim_1rkl.sh`, `test_prod_run_sim_1rkl.sh`) will explicitly set SC coupling control attrs in `/input/hybrid_control` (`sc_env_lj_force_cap`, `sc_env_coul_force_cap`, `sc_env_relax_steps`, `sc_env_relax_dt`, `sc_env_restraint_k`, `sc_env_max_displacement`) instead of relying on runtime defaults.
 - Production SC rigid mapping in C++ must treat `sc_local_pos` as centroid-relative coordinates and re-add target centroid after rotation (`mapped = R*local + tgt_centroid`) to avoid frame-translation artifacts.
 - Production SC row handling in C++ must enforce per-residue proxy capacity from placement-point support and select the safest proxy subset each step (by environment-distance metric) when proxy rows exceed representable capacity.
@@ -111,5 +115,6 @@
 - Production stage preparation must generate Upside backbone force-field nodes directly inside the hybrid stage `.up` (single-file workflow) by invoking `upside_config` writer functions in-process; avoid generating/consuming a separate backbone reference `.up` template.
 - Production hybrid SC force transfer must target injected AA backbone carrier atoms (`N/CA/C/O`) in runtime index space; projection to MARTINI `BB`/`SC` atoms is disallowed.
 - Stage handoff (`set_initial_position.py`) must realign injected AA carrier coordinates to current stage BB proxy coordinates before production starts to avoid BB/carrier frame discontinuities.
+- Stage handoff (`set_initial_position.py`) must also recenter production-stage protein BB to box center (periodic circular-center on BB coordinates) and wrap coordinates back into the box before production integration.
 - Production-stage timestep for hybrid runs with injected Upside all-atom backbone nodes must default to `0.002` (not MARTINI-only `0.020`) to maintain integration stability.
 - During preparation, all-atom backbone reference coordinates (`N/CA/C/O`) are RMSD-aligned (Kabsch on residue backbone COMs) to MARTINI `BB` positions before writing `hybrid_bb_map/reference_atom_coords`.

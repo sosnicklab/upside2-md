@@ -81,6 +81,8 @@ SC_ENV_RELAX_STEPS="${SC_ENV_RELAX_STEPS:-200}"
 SC_ENV_RELAX_DT="${SC_ENV_RELAX_DT:-0.002}"
 SC_ENV_RESTRAINT_K="${SC_ENV_RESTRAINT_K:-5.0}"
 SC_ENV_MAX_DISPLACEMENT="${SC_ENV_MAX_DISPLACEMENT:-2.0}"
+NONPROTEIN_HS_FORCE_CAP="${NONPROTEIN_HS_FORCE_CAP:-100.0}"
+NONPROTEIN_HS_POTENTIAL_CAP="${NONPROTEIN_HS_POTENTIAL_CAP:-5000.0}"
 
 if [ -z "${UPSIDE_HOME:-}" ]; then
     echo "ERROR: UPSIDE_HOME environment variable is not set"
@@ -171,7 +173,9 @@ set_hybrid_sc_controls() {
     local relax_dt="$5"
     local rest_k="$6"
     local max_disp="$7"
-    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$relax_dt" "$rest_k" "$max_disp" << 'PY'
+    local hs_force_cap="$8"
+    local hs_pot_cap="$9"
+    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$relax_dt" "$rest_k" "$max_disp" "$hs_force_cap" "$hs_pot_cap" << 'PY'
 import sys
 import h5py
 import numpy as np
@@ -183,6 +187,8 @@ relax_steps = int(sys.argv[4])
 relax_dt = float(sys.argv[5])
 rest_k = float(sys.argv[6])
 max_disp = float(sys.argv[7])
+hs_force_cap = float(sys.argv[8])
+hs_pot_cap = float(sys.argv[9])
 
 with h5py.File(up_file, "r+") as h5:
     grp = h5.require_group("input").require_group("hybrid_control")
@@ -192,6 +198,8 @@ with h5py.File(up_file, "r+") as h5:
     grp.attrs["sc_env_relax_dt"] = np.float32(relax_dt)
     grp.attrs["sc_env_restraint_k"] = np.float32(rest_k)
     grp.attrs["sc_env_max_displacement"] = np.float32(max_disp)
+    grp.attrs["nonprotein_hs_force_cap"] = np.float32(hs_force_cap)
+    grp.attrs["nonprotein_hs_potential_cap"] = np.float32(hs_pot_cap)
 PY
 }
 
@@ -886,7 +894,9 @@ prepare_stage_file() {
             "$SC_ENV_RELAX_STEPS" \
             "$SC_ENV_RELAX_DT" \
             "$SC_ENV_RESTRAINT_K" \
-            "$SC_ENV_MAX_DISPLACEMENT"
+            "$SC_ENV_MAX_DISPLACEMENT" \
+            "$NONPROTEIN_HS_FORCE_CAP" \
+            "$NONPROTEIN_HS_POTENTIAL_CAP"
         augment_production_rotamer_nodes \
             "$target_file" \
             "${RUNTIME_ITP_FILE}" \

@@ -1,8 +1,65 @@
-
 #!/usr/bin/env python
 import sys
 import h5py
 import numpy as np
+
+TWOPI = 2.0 * np.pi
+
+
+def decode_stage_label(value):
+    if isinstance(value, (bytes, np.bytes_)):
+        return value.decode("utf-8", errors="ignore").strip().lower()
+    return str(value).strip().lower()
+
+
+def recenter_protein_for_production(h5f, pos, box_lengths):
+    """Recenters protein BB to box center in production handoff."""
+    if box_lengths is None:
+        return pos
+    if '/input/stage_parameters' not in h5f:
+        return pos
+    stage = decode_stage_label(h5f['/input/stage_parameters'].attrs.get('current_stage', b''))
+    if stage != 'production':
+        return pos
+    if '/input/hybrid_bb_map/bb_atom_index' not in h5f:
+        return pos
+
+    L = np.asarray(box_lengths, dtype=np.float64).reshape(3)
+    if not np.all(np.isfinite(L)) or np.any(L <= 0.0):
+        return pos
+
+    bb_idx = h5f['/input/hybrid_bb_map/bb_atom_index'][:].astype(np.int32)
+    bb_idx = bb_idx[(bb_idx >= 0) & (bb_idx < pos.shape[0])]
+    if bb_idx.size == 0:
+        return pos
+
+    bb_xyz = pos[bb_idx, :, 0].astype(np.float64)
+    bb_center = np.zeros(3, dtype=np.float64)
+    for ax in range(3):
+        coords = np.mod(bb_xyz[:, ax], L[ax])
+        angles = TWOPI * coords / L[ax]
+        s = np.mean(np.sin(angles))
+        c = np.mean(np.cos(angles))
+        if abs(s) < 1e-12 and abs(c) < 1e-12:
+            bb_center[ax] = float(np.mean(coords))
+        else:
+            ang = np.arctan2(s, c)
+            if ang < 0.0:
+                ang += TWOPI
+            bb_center[ax] = L[ax] * ang / TWOPI
+
+    target_center = 0.5 * L
+    delta = target_center - bb_center
+    pos[:, :, 0] = pos[:, :, 0] + delta.astype(pos.dtype, copy=False)[None, :]
+    pos[:, :, 0] = np.mod(pos[:, :, 0], L[None, :]).astype(pos.dtype, copy=False)
+
+    print(
+        "Recentered production protein BB to box center: "
+        f"before=({bb_center[0]:.3f}, {bb_center[1]:.3f}, {bb_center[2]:.3f}) "
+        f"target=({target_center[0]:.3f}, {target_center[1]:.3f}, {target_center[2]:.3f})"
+    )
+    return pos
+
 
 def refresh_hybrid_reference_carriers(h5f, pos):
     if '/input/hybrid_bb_map' not in h5f:
@@ -97,6 +154,7 @@ def set_initial_position(input_file, output_file):
         # If hybrid reference carriers are present in the target file, align them
         # to the current BB proxy positions after stage handoff.
         last_pos = refresh_hybrid_reference_carriers(f, last_pos)
+        last_pos = recenter_protein_for_production(f, last_pos, last_box)
 
         if '/input/pos' in f:
             del f['/input/pos']
