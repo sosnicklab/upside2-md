@@ -1411,3 +1411,19 @@
   - post-check on `/tmp/1rkl.stage_7.0.recenter_test.up`:
     - BB circular center matches target box center to numerical precision.
     - BB coordinates are compact around box center rather than boundary-origin.
+
+## 2026-02-20 (Mode-2 VTF Protein Corner/Split Display Fix)
+- User reported proteins still appearing at box corners after full rerun.
+- Verified actual production input is centered:
+  - in `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`, BB periodic circular center matches box center.
+  - therefore simulation handoff centering is active.
+- Isolated remaining issue to visualization/export path:
+  - `extract_martini_vtf.py` `centralize_system()` wrapped coordinates to `[-L/2, L/2]` without protein-centric XY shift.
+  - for mode 2 this made a centered protein appear split across boundaries (near-corner artifacts), although simulation coordinates were correct.
+- Patched `extract_martini_vtf.py`:
+  - when residue `PRO` exists (mode 2), compute periodic circular protein center and shift frame by that center before wrapping;
+  - keep legacy lipid-Z centering behavior for non-mode-2 outputs.
+- Validation:
+  - regenerated mode-2 VTF:
+    - `python extract_martini_vtf.py ... --mode 2`
+  - first-frame protein AA extents changed from near-box-spanning (`~117 Å` in x/y) to compact contiguous (`~34 x 10 x 33 Å`) around origin.

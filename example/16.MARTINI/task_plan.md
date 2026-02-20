@@ -47,6 +47,7 @@
 - Fixed 2026-02-19: production SC probabilistic coupling no longer uses linear `sum_r p_r E_r` aggregation; runtime now applies Boltzmann-consistent `-log sum_r p_r exp(-E_r)` mixing (with stabilized numerics), removing reproduced `1e5-1e7` short-horizon MARTINI potential spikes from low-probability clash rotamers.
 - Fixed 2026-02-20: SC inner relaxation loop now integrates with force direction (`-dE/dx`) instead of gradient-ascent (`+dE/dx`), addressing reproduced production energy blow-up from unstable SC relaxation dynamics.
 - Fixed 2026-02-20: stage handoff (`set_initial_position.py`) now recenters production-stage protein BB to box center using periodic circular-center estimation and global coordinate shift+wrap, preventing protein corner placement/PBC split at stage 7 start.
+- Fixed 2026-02-20: production mode-2 trajectory export (`extract_martini_vtf.py`) now recenters by periodic protein COM (residue `PRO`) before wrapping, preventing visualization-only PBC splitting that made centered proteins appear at box corners.
 - `output/potential` is a total-engine scalar (sum over active potential nodes), not a protein-only all-atom Upside-backbone channel; this can vary during pre-production even with rigid protein because environment terms evolve.
 - Remaining blocker: full long-horizon validation with exact production SC settings (`sc_env_relax_steps=200`) is still running/needs benchmarking; short diagnostics are improved but not yet a complete 5k-step confirmation.
 

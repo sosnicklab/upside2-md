@@ -141,12 +141,38 @@ def infer_box_lengths(traj_h5, struct_h5, pdb_file, input_file):
 
 def centralize_system(frame_pos, residue_names, x_len, y_len, z_len):
     out = np.array(frame_pos, copy=True)
+    box = np.array([x_len, y_len, z_len], dtype=np.float32)
+    half_box = 0.5 * box
+
+    protein_mask = None
     if residue_names is not None:
-        lipid_mask = np.array([name == "DOPC" for name in residue_names], dtype=bool)
-        if np.any(lipid_mask):
-            out[:, 2] -= np.mean(out[lipid_mask, 2])
-    half_box = np.array([x_len / 2.0, y_len / 2.0, z_len / 2.0], dtype=np.float32)
-    out = (out + half_box) % (2.0 * half_box) - half_box
+        residue_names = np.asarray(residue_names, dtype=object)
+        protein_mask = np.array([name == "PRO" for name in residue_names], dtype=bool)
+
+    # Mode 2 output marks backmapped protein as residue "PRO". Centering by
+    # periodic protein COM avoids boundary-split rendering artifacts.
+    if protein_mask is not None and np.any(protein_mask):
+        prot = np.mod(out[protein_mask], box[None, :])
+        protein_center = np.zeros(3, dtype=np.float64)
+        for ax in range(3):
+            angles = 2.0 * np.pi * prot[:, ax] / float(box[ax])
+            s = np.mean(np.sin(angles))
+            c = np.mean(np.cos(angles))
+            if abs(s) < 1e-12 and abs(c) < 1e-12:
+                protein_center[ax] = float(np.mean(prot[:, ax]))
+            else:
+                a = np.arctan2(s, c)
+                if a < 0.0:
+                    a += 2.0 * np.pi
+                protein_center[ax] = float(box[ax]) * a / (2.0 * np.pi)
+        out -= protein_center[None, :]
+    else:
+        if residue_names is not None:
+            lipid_mask = np.array([name == "DOPC" for name in residue_names], dtype=bool)
+            if np.any(lipid_mask):
+                out[:, 2] -= np.mean(out[lipid_mask, 2])
+
+    out = (out + half_box) % box - half_box
     return out
 
 
