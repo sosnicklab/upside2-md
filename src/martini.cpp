@@ -320,10 +320,13 @@ struct HybridRuntimeState {
     std::unordered_map<int, int> sc_proxy_limit_by_residue;
     bool sc_local_pos_initialized = false;
     bool coupling_align_enable = false;
+    bool integration_rmsd_align_enable = true;
     bool coupling_align_debug = false;
     int coupling_align_interval = 100;
     uint64_t coupling_align_step = 0;
+    uint64_t integration_align_step = 0;
     bool has_prev_bb = false;
+    bool has_prev_bb_rmsd = false;
     float sc_env_lj_force_cap = 25.0f;
     float sc_env_coul_force_cap = 25.0f;
     int sc_env_relax_steps = 200;
@@ -333,6 +336,7 @@ struct HybridRuntimeState {
     float nonprotein_hs_force_cap = 100.0f;
     float nonprotein_hs_potential_cap = 5000.0f;
     std::vector<std::array<float,3>> prev_bb_pos;
+    std::vector<std::array<float,3>> prev_bb_pos_rmsd;
     std::vector<int> preprod_fixed_atom_indices;
     std::vector<int> preprod_z_fixed_atom_indices;
 };
@@ -772,6 +776,8 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         (read_attribute<int>(ctrl.get(), ".", "production_nonprotein_hard_sphere", 1) != 0);
     out.preprod_rigid = (out.preprod_mode == "rigid");
     out.coupling_align_enable = (read_attribute<int>(ctrl.get(), ".", "coupling_align_enable", 0) != 0);
+    out.integration_rmsd_align_enable =
+        (read_attribute<int>(ctrl.get(), ".", "integration_rmsd_align_enable", 1) != 0);
     out.coupling_align_debug = (read_attribute<int>(ctrl.get(), ".", "coupling_align_debug", 0) != 0);
     out.coupling_align_interval = read_attribute<int>(ctrl.get(), ".", "coupling_align_interval", 100);
     if(out.coupling_align_interval < 1) out.coupling_align_interval = 1;
@@ -1083,13 +1089,24 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
     if(it == g_hybrid_state.end()) return;
     auto st = it->second;
     if(!st) return;
+    bool was_active = st->active;
     if(!st->enabled) {
         st->active = false;
+        st->has_prev_bb = false;
+        st->has_prev_bb_rmsd = false;
+        st->prev_bb_pos.clear();
+        st->prev_bb_pos_rmsd.clear();
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
         return;
     }
     st->active = (stage == st->activation_stage);
+    if(st->active != was_active) {
+        st->has_prev_bb = false;
+        st->has_prev_bb_rmsd = false;
+        st->prev_bb_pos.clear();
+        st->prev_bb_pos_rmsd.clear();
+    }
     if(st->preprod_rigid && !st->active) {
         martini_fix_rigid::set_dynamic_fixed_atoms(*engine, st->preprod_fixed_atom_indices);
         martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->preprod_z_fixed_atom_indices);
@@ -1243,7 +1260,7 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
     }
     if(st->has_config && st->enabled) {
-        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d nonprotein_hs=%d hs_force_cap=%.3f hs_pot_cap=%.3f sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_relax_dt=%.4f sc_rest_k=%.3f sc_max_disp=%.3f preprod_fixed=%zu preprod_zfixed=%zu\n",
+        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d nonprotein_hs=%d force_frame_align=%d integration_rmsd_align=%d hs_force_cap=%.3f hs_pot_cap=%.3f sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_relax_dt=%.4f sc_rest_k=%.3f sc_max_disp=%.3f preprod_fixed=%zu preprod_zfixed=%zu\n",
                current_stage.c_str(),
                st->activation_stage.c_str(),
                st->active ? 1 : 0,
@@ -1255,6 +1272,8 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
                st->rotamer_node_name.empty() ? "<none>" : st->rotamer_node_name.c_str(),
                st->exclude_intra_protein_martini ? 1 : 0,
                st->production_nonprotein_hard_sphere ? 1 : 0,
+               st->coupling_align_enable ? 1 : 0,
+               st->integration_rmsd_align_enable ? 1 : 0,
                st->nonprotein_hs_force_cap,
                st->nonprotein_hs_potential_cap,
                st->sc_env_lj_force_cap,
@@ -1410,6 +1429,138 @@ static inline void mat_transpose(const float A[3][3], float AT[3][3]) {
     for(int i=0;i<3;++i) for(int j=0;j<3;++j) AT[i][j] = A[j][i];
 }
 
+static inline void quat_to_rotmat(const std::array<double,4>& q, float R[3][3]) {
+    const double w = q[0], x = q[1], y = q[2], z = q[3];
+    const double ww = w*w, xx = x*x, yy = y*y, zz = z*z;
+    const double wx = w*x, wy = w*y, wz = w*z;
+    const double xy = x*y, xz = x*z, yz = y*z;
+
+    R[0][0] = static_cast<float>(ww + xx - yy - zz);
+    R[0][1] = static_cast<float>(2.0 * (xy - wz));
+    R[0][2] = static_cast<float>(2.0 * (xz + wy));
+    R[1][0] = static_cast<float>(2.0 * (xy + wz));
+    R[1][1] = static_cast<float>(ww - xx + yy - zz);
+    R[1][2] = static_cast<float>(2.0 * (yz - wx));
+    R[2][0] = static_cast<float>(2.0 * (xz - wy));
+    R[2][1] = static_cast<float>(2.0 * (yz + wx));
+    R[2][2] = static_cast<float>(ww - xx - yy + zz);
+}
+
+static bool build_kabsch_horn_transform(
+        const std::vector<std::array<float,3>>& cur_pts,
+        const std::vector<std::array<float,3>>& ref_pts,
+        float R[3][3],
+        std::array<float,3>& t,
+        float* rmsd_out = nullptr) {
+    for(int i = 0; i < 3; ++i) {
+        for(int j = 0; j < 3; ++j) {
+            R[i][j] = (i == j) ? 1.f : 0.f;
+        }
+    }
+    t = std::array<float,3>{0.f, 0.f, 0.f};
+    if(rmsd_out) *rmsd_out = 0.f;
+
+    const size_t n = std::min(cur_pts.size(), ref_pts.size());
+    if(n < 3) return false;
+
+    std::array<double,3> c_cur{{0.0, 0.0, 0.0}};
+    std::array<double,3> c_ref{{0.0, 0.0, 0.0}};
+    for(size_t i = 0; i < n; ++i) {
+        c_cur[0] += cur_pts[i][0];
+        c_cur[1] += cur_pts[i][1];
+        c_cur[2] += cur_pts[i][2];
+        c_ref[0] += ref_pts[i][0];
+        c_ref[1] += ref_pts[i][1];
+        c_ref[2] += ref_pts[i][2];
+    }
+    const double inv_n = 1.0 / static_cast<double>(n);
+    for(int d = 0; d < 3; ++d) {
+        c_cur[d] *= inv_n;
+        c_ref[d] *= inv_n;
+    }
+
+    // Cross-covariance: current -> reference.
+    double Sxx = 0.0, Sxy = 0.0, Sxz = 0.0;
+    double Syx = 0.0, Syy = 0.0, Syz = 0.0;
+    double Szx = 0.0, Szy = 0.0, Szz = 0.0;
+    for(size_t i = 0; i < n; ++i) {
+        const double xc = static_cast<double>(cur_pts[i][0]) - c_cur[0];
+        const double yc = static_cast<double>(cur_pts[i][1]) - c_cur[1];
+        const double zc = static_cast<double>(cur_pts[i][2]) - c_cur[2];
+        const double xr = static_cast<double>(ref_pts[i][0]) - c_ref[0];
+        const double yr = static_cast<double>(ref_pts[i][1]) - c_ref[1];
+        const double zr = static_cast<double>(ref_pts[i][2]) - c_ref[2];
+
+        Sxx += xc * xr; Sxy += xc * yr; Sxz += xc * zr;
+        Syx += yc * xr; Syy += yc * yr; Syz += yc * zr;
+        Szx += zc * xr; Szy += zc * yr; Szz += zc * zr;
+    }
+
+    const double traceS = Sxx + Syy + Szz;
+    double N[4][4];
+    N[0][0] = traceS;
+    N[0][1] = Syz - Szy;
+    N[0][2] = Szx - Sxz;
+    N[0][3] = Sxy - Syx;
+
+    N[1][0] = N[0][1];
+    N[1][1] = Sxx - Syy - Szz;
+    N[1][2] = Sxy + Syx;
+    N[1][3] = Szx + Sxz;
+
+    N[2][0] = N[0][2];
+    N[2][1] = N[1][2];
+    N[2][2] = -Sxx + Syy - Szz;
+    N[2][3] = Syz + Szy;
+
+    N[3][0] = N[0][3];
+    N[3][1] = N[1][3];
+    N[3][2] = N[2][3];
+    N[3][3] = -Sxx - Syy + Szz;
+
+    // Largest-eigenvector power iteration.
+    std::array<double,4> q{{1.0, 0.0, 0.0, 0.0}};
+    for(int it = 0; it < 40; ++it) {
+        std::array<double,4> qn{{0.0, 0.0, 0.0, 0.0}};
+        for(int i = 0; i < 4; ++i) {
+            for(int j = 0; j < 4; ++j) {
+                qn[i] += N[i][j] * q[j];
+            }
+        }
+        const double norm_qn = std::sqrt(
+            qn[0]*qn[0] + qn[1]*qn[1] + qn[2]*qn[2] + qn[3]*qn[3]);
+        if(!(norm_qn > 1.0e-14)) return false;
+        for(int i = 0; i < 4; ++i) {
+            q[i] = qn[i] / norm_qn;
+        }
+    }
+
+    quat_to_rotmat(q, R);
+    auto c_cur_f = std::array<float,3>{
+        static_cast<float>(c_cur[0]),
+        static_cast<float>(c_cur[1]),
+        static_cast<float>(c_cur[2])};
+    auto c_ref_f = std::array<float,3>{
+        static_cast<float>(c_ref[0]),
+        static_cast<float>(c_ref[1]),
+        static_cast<float>(c_ref[2])};
+    t = vec_sub(c_ref_f, apply_rot(R, c_cur_f));
+
+    if(rmsd_out) {
+        double sse = 0.0;
+        for(size_t i = 0; i < n; ++i) {
+            auto p = apply_rot(R, cur_pts[i]);
+            p = vec_add(p, t);
+            auto d = vec_sub(p, ref_pts[i]);
+            sse += static_cast<double>(d[0])*d[0]
+                 + static_cast<double>(d[1])*d[1]
+                 + static_cast<double>(d[2])*d[2];
+        }
+        *rmsd_out = static_cast<float>(std::sqrt(sse / static_cast<double>(n)));
+    }
+    return true;
+}
+
 CouplingAlignmentTransform build_coupling_alignment(HybridRuntimeState& st, VecArray pos, int n_atom) {
     CouplingAlignmentTransform tr;
     for(int i=0;i<3;++i){
@@ -1485,6 +1636,93 @@ CouplingAlignmentTransform build_coupling_alignment(HybridRuntimeState& st, VecA
                tr.translation_norm);
     }
     return tr;
+}
+
+void align_active_protein_coordinates(DerivEngine& engine, VecArray pos, VecArray mom) {
+    std::shared_ptr<HybridRuntimeState> st;
+    {
+        std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+        auto it = g_hybrid_state.find(&engine);
+        if(it == g_hybrid_state.end() || !it->second) return;
+        st = it->second;
+    }
+    if(!st->enabled || !st->active || !st->integration_rmsd_align_enable) return;
+    const int n_atom = engine.pos ? engine.pos->n_elem : 0;
+    if(n_atom <= 0 || st->n_bb < 3) return;
+
+    refresh_bb_positions_if_active(*st, pos, n_atom);
+
+    std::vector<int> bb_idx;
+    bb_idx.reserve(st->n_bb);
+    for(size_t k = 0; k < st->n_bb; ++k) {
+        int bb = st->bb_atom_index[k];
+        if(bb >= 0 && bb < n_atom) bb_idx.push_back(bb);
+    }
+    if(bb_idx.size() < 3) return;
+
+    std::vector<std::array<float,3>> cur_bb(bb_idx.size());
+    for(size_t i = 0; i < bb_idx.size(); ++i) {
+        auto p = load_vec<3>(pos, bb_idx[i]);
+        cur_bb[i] = std::array<float,3>{p[0], p[1], p[2]};
+    }
+
+    if(!st->has_prev_bb_rmsd || st->prev_bb_pos_rmsd.size() != cur_bb.size()) {
+        st->prev_bb_pos_rmsd = cur_bb;
+        st->has_prev_bb_rmsd = true;
+        return;
+    }
+
+    float R[3][3];
+    std::array<float,3> t{0.f, 0.f, 0.f};
+    float rmsd = 0.f;
+    if(!build_kabsch_horn_transform(cur_bb, st->prev_bb_pos_rmsd, R, t, &rmsd)) {
+        st->prev_bb_pos_rmsd = cur_bb;
+        st->has_prev_bb_rmsd = true;
+        return;
+    }
+
+    const size_t n_protein = std::min(static_cast<size_t>(n_atom), st->protein_membership.size());
+    bool any_protein = false;
+    for(size_t i = 0; i < n_protein; ++i) {
+        if(st->protein_membership[i] < 0) continue;
+        any_protein = true;
+
+        auto p = load_vec<3>(pos, static_cast<int>(i));
+        auto pa = std::array<float,3>{p[0], p[1], p[2]};
+        auto pt = vec_add(apply_rot(R, pa), t);
+        store_vec<3>(pos, static_cast<int>(i), make_vec3(pt[0], pt[1], pt[2]));
+
+        if(mom.row_width > 0) {
+            auto m = load_vec<3>(mom, static_cast<int>(i));
+            auto ma = std::array<float,3>{m[0], m[1], m[2]};
+            auto mr = apply_rot(R, ma);
+            store_vec<3>(mom, static_cast<int>(i), make_vec3(mr[0], mr[1], mr[2]));
+        }
+    }
+    if(!any_protein) return;
+
+    refresh_bb_positions_if_active(*st, pos, n_atom);
+    st->prev_bb_pos_rmsd.resize(bb_idx.size());
+    for(size_t i = 0; i < bb_idx.size(); ++i) {
+        auto p = load_vec<3>(pos, bb_idx[i]);
+        st->prev_bb_pos_rmsd[i] = std::array<float,3>{p[0], p[1], p[2]};
+    }
+    st->has_prev_bb_rmsd = true;
+    st->integration_align_step += 1;
+
+    if(st->coupling_align_debug &&
+       (st->integration_align_step % uint64_t(st->coupling_align_interval) == 0)) {
+        float traceR = R[0][0] + R[1][1] + R[2][2];
+        float c = 0.5f * (traceR - 1.f);
+        c = std::max(-1.f, std::min(1.f, c));
+        float rot_deg = acosf(c) * (180.f / float(M_PI));
+        float trans_norm = vec_norm(t);
+        printf("Hybrid integration RMSD-align: step=%llu rmsd=%.4f rot_deg=%.4f trans=%.4f\n",
+               (unsigned long long)st->integration_align_step,
+               rmsd,
+               rot_deg,
+               trans_norm);
+    }
 }
 
 bool refresh_sc_row_probabilities_from_rotamer(

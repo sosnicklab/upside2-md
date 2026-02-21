@@ -141,6 +141,7 @@ SC_ENV_RESTRAINT_K="${SC_ENV_RESTRAINT_K:-5.0}"
 SC_ENV_MAX_DISPLACEMENT="${SC_ENV_MAX_DISPLACEMENT:-2.0}"
 NONPROTEIN_HS_FORCE_CAP="${NONPROTEIN_HS_FORCE_CAP:-100.0}"
 NONPROTEIN_HS_POTENTIAL_CAP="${NONPROTEIN_HS_POTENTIAL_CAP:-5000.0}"
+INTEGRATION_RMSD_ALIGN_ENABLE="${INTEGRATION_RMSD_ALIGN_ENABLE:-1}"
 
 # =============================================================================
 # VALIDATION
@@ -426,7 +427,8 @@ set_hybrid_sc_controls() {
     local max_disp="$7"
     local hs_force_cap="$8"
     local hs_pot_cap="$9"
-    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$relax_dt" "$rest_k" "$max_disp" "$hs_force_cap" "$hs_pot_cap" << 'PY'
+    local rmsd_align_enable="${10}"
+    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$relax_dt" "$rest_k" "$max_disp" "$hs_force_cap" "$hs_pot_cap" "$rmsd_align_enable" << 'PY'
 import sys
 import h5py
 import numpy as np
@@ -440,6 +442,7 @@ rest_k = float(sys.argv[6])
 max_disp = float(sys.argv[7])
 hs_force_cap = float(sys.argv[8])
 hs_pot_cap = float(sys.argv[9])
+rmsd_align_enable = int(sys.argv[10])
 
 with h5py.File(up_file, "r+") as h5:
     grp = h5.require_group("input").require_group("hybrid_control")
@@ -451,6 +454,7 @@ with h5py.File(up_file, "r+") as h5:
     grp.attrs["sc_env_max_displacement"] = np.float32(max_disp)
     grp.attrs["nonprotein_hs_force_cap"] = np.float32(hs_force_cap)
     grp.attrs["nonprotein_hs_potential_cap"] = np.float32(hs_pot_cap)
+    grp.attrs["integration_rmsd_align_enable"] = np.int8(1 if rmsd_align_enable else 0)
 PY
 }
 
@@ -1186,7 +1190,8 @@ prepare_stage_file() {
             "$SC_ENV_RESTRAINT_K" \
             "$SC_ENV_MAX_DISPLACEMENT" \
             "$NONPROTEIN_HS_FORCE_CAP" \
-            "$NONPROTEIN_HS_POTENTIAL_CAP"
+            "$NONPROTEIN_HS_POTENTIAL_CAP" \
+            "$INTEGRATION_RMSD_ALIGN_ENABLE"
         augment_production_rotamer_nodes \
             "$target_file" \
             "${PROTEIN_ITP_EFFECTIVE}" \

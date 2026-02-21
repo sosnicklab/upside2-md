@@ -117,5 +117,6 @@
 - Production hybrid SC force transfer must target injected AA backbone carrier atoms (`N/CA/C/O`) in runtime index space; projection to MARTINI `BB`/`SC` atoms is disallowed.
 - Stage handoff (`set_initial_position.py`) must realign injected AA carrier coordinates to current stage BB proxy coordinates before production starts to avoid BB/carrier frame discontinuities.
 - Stage handoff (`set_initial_position.py`) must also recenter production-stage protein BB to box center (periodic circular-center on BB coordinates) and wrap coordinates back into the box before production integration.
+- Production hybrid integration applies in-place RMSD alignment of protein coordinates (BB-based Kabsch/Horn rigid transform) once at the start of each C++ integration cycle before force evaluation/update, so Upside backbone updates and hybrid coupling operate in a rotation-stabilized frame.
 - Production-stage timestep for hybrid runs with injected Upside all-atom backbone nodes must default to `0.002` (not MARTINI-only `0.020`) to maintain integration stability.
 - During preparation, all-atom backbone reference coordinates (`N/CA/C/O`) are RMSD-aligned (Kabsch on residue backbone COMs) to MARTINI `BB` positions before writing `hybrid_bb_map/reference_atom_coords`.

@@ -16,6 +16,10 @@ std::vector<int> get_fixed_atoms(const DerivEngine& engine);
 std::vector<int> get_z_fixed_atoms(const DerivEngine& engine);
 }
 
+namespace martini_hybrid {
+void align_active_protein_coordinates(DerivEngine& engine, VecArray pos, VecArray mom);
+}
+
 static std::vector<unsigned char> build_fixed_mask(const DerivEngine& engine, int n_atom) {
     std::vector<unsigned char> mask(static_cast<size_t>(std::max(0, n_atom)), 0);
     auto fixed_atoms = martini_fix_rigid::get_fixed_atoms(engine);
@@ -349,6 +353,8 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
     float mom_update[] = {1.5f-3.f*a, 1.5f-3.f*a, 6.f*a};
     float pos_update[] = {     3.f*b, 3.0f-6.f*b, 3.f*b};
 
+    // Stabilize protein frame once per integrator cycle before force evaluation.
+    martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
     for(int stage=0; stage<3; ++stage) {
         compute(DerivMode);   // compute derivatives
         Timer timer(string("integration"));
@@ -404,6 +410,8 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
     auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
     bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
 
+    // Stabilize protein frame once per integrator cycle before force evaluation.
+    martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
     for(int stage=0; stage<3; ++stage) {
         compute(DerivMode);   // compute derivatives
         Timer timer(string("integration"));
@@ -464,6 +472,8 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
     auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
     bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
 
+    // Stabilize protein frame once per integrator cycle before force evaluation.
+    martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
     // calculate acceleration, update velocity for slow level
     compute(DerivMode, 1); 
     

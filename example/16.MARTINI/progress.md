@@ -1427,3 +1427,19 @@
   - regenerated mode-2 VTF:
     - `python extract_martini_vtf.py ... --mode 2`
   - first-frame protein AA extents changed from near-box-spanning (`~117 Å` in x/y) to compact contiguous (`~34 x 10 x 33 Å`) around origin.
+
+## 2026-02-20 (Production RMSD Alignment Cadence Fix in C++ Integrator)
+- Re-read `task_plan.md` and checked C++ integration ordering for production RMSD alignment.
+- Found mismatch with requested behavior:
+  - `martini_hybrid::align_active_protein_coordinates(...)` was being called multiple times within a single `integration_cycle(...)` (per substage/inner fast step), not once per cycle.
+- Patched `../../src/deriv_engine.cpp`:
+  - `integration_cycle(mom, dt, max_force, type)`: align once before the 3-stage loop.
+  - `integration_cycle(mom, dt)`: align once before the 3-stage loop.
+  - `integration_cycle(mom, dt, inner_step)`: keep one align at cycle start; removed repeated align calls inside fast inner loop.
+- Updated `task_plan.md` revised decision text to match implementation:
+  - production RMSD alignment now explicitly defined as once at cycle start before force evaluation/update.
+- Build/validation:
+  - `cmake --build ../../obj -j4` succeeded.
+  - 5-step production probe on `/tmp/1rkl.stage_7.0.aligncheck.up` with `coupling_align_debug=1`, `coupling_align_interval=1`:
+    - runtime parsed `integration_rmsd_align=1`.
+    - printed `Hybrid integration RMSD-align` exactly 4 times over 5 steps (first step seeds reference), confirming one alignment event per integration cycle.
