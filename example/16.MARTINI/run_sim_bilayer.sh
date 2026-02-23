@@ -1,6 +1,9 @@
 #!/bin/bash
-source ../../source.sh
-source ../../.venv/bin/activate
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../../source.sh"
+source "${SCRIPT_DIR}/../../.venv/bin/activate"
+cd "${SCRIPT_DIR}"
 
 # Dry MARTINI bilayer workflow aligned to CHARMM-GUI Gromacs stages:
 # 6.0 soft-core minimization
@@ -27,6 +30,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 PDB_ID="${PDB_ID:-bilayer}"
+RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-${PDB_ID}}"
+UNIVERSAL_PREP_SCRIPT="${UNIVERSAL_PREP_SCRIPT:-${SCRIPT_DIR}/prepare_system.py}"
+RUNTIME_PDB_FILE="${RUNTIME_PDB_FILE:-${SCRIPT_DIR}/pdb/${RUNTIME_PDB_ID}.MARTINI.pdb}"
 
 INPUTS_DIR="inputs"
 OUTPUTS_DIR="outputs"
@@ -113,6 +119,14 @@ if [ ! -f "$UPSIDE_EXECUTABLE" ]; then
     echo "ERROR: UPSIDE executable not found: $UPSIDE_EXECUTABLE"
     exit 1
 fi
+if [ ! -f "${UNIVERSAL_PREP_SCRIPT}" ]; then
+    echo "ERROR: universal prep script not found: ${UNIVERSAL_PREP_SCRIPT}"
+    exit 1
+fi
+if [ ! -f "${RUNTIME_PDB_FILE}" ]; then
+    echo "ERROR: runtime MARTINI PDB not found: ${RUNTIME_PDB_FILE}"
+    exit 1
+fi
 
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR"
 
@@ -141,7 +155,14 @@ prepare_stage_file() {
     export UPSIDE_NPT_ENABLE="$npt_enable"
     export UPSIDE_BILAYER_LIPIDHEAD_FC="$lipidhead_fc"
 
-    python3 prepare_martini.py "$PDB_ID" --stage "$prepare_stage" "$RUN_DIR"
+    python3 "${UNIVERSAL_PREP_SCRIPT}" \
+        --mode "bilayer" \
+        --pdb-id "${RUNTIME_PDB_ID}" \
+        --runtime-pdb-output "${RUNTIME_PDB_FILE}" \
+        --prepare-structure 0 \
+        --stage "$prepare_stage" \
+        --run-dir "$RUN_DIR" \
+        --summary-json "${RUN_DIR}/stage_${prepare_stage}.summary.json"
 
     local prepared_tmp="${RUN_DIR}/test.input.up"
     if [ ! -f "$prepared_tmp" ]; then
@@ -243,6 +264,7 @@ run_md_stage() {
 
 echo "=== Dry MARTINI Bilayer Workflow ==="
 echo "PDB ID: $PDB_ID"
+echo "Universal prep: ${UNIVERSAL_PREP_SCRIPT} (mode=bilayer)"
 echo "Sequence: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"
 echo "Lipid-head restraint ramp: BILAYER_LIPIDHEAD_FC = 200/100/50/20/10 for stages 6.2-6.6 (disabled in production)."
 echo

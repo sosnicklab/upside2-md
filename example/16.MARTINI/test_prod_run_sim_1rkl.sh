@@ -32,9 +32,11 @@ CHECKPOINT_DIR="${CHECKPOINT_DIR:-${RUN_DIR}/checkpoints}"
 LOG_DIR="${LOG_DIR:-${RUN_DIR}/logs}"
 HYBRID_PREP_DIR="${HYBRID_PREP_DIR:-${RUN_DIR}/hybrid_prep}"
 PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/${PDB_ID}.pdb}"
+UNIVERSAL_PREP_SCRIPT="${UNIVERSAL_PREP_SCRIPT:-${SCRIPT_DIR}/prepare_system.py}"
+UNIVERSAL_PREP_MODE="${UNIVERSAL_PREP_MODE:-both}"
 
-RUNTIME_PDB_FILE="${RUNTIME_PDB_FILE:-${SCRIPT_DIR}/pdb/${RUNTIME_PDB_ID}.MARTINI.pdb}"
-RUNTIME_ITP_FILE="${RUNTIME_ITP_FILE:-${SCRIPT_DIR}/pdb/${RUNTIME_PDB_ID}_proa.itp}"
+RUNTIME_PDB_FILE="${RUNTIME_PDB_FILE:-${HYBRID_PREP_DIR}/${RUNTIME_PDB_ID}.MARTINI.pdb}"
+RUNTIME_ITP_FILE="${RUNTIME_ITP_FILE:-${HYBRID_PREP_DIR}/${RUNTIME_PDB_ID}_proa.itp}"
 HYBRID_MAPPING_FILE="${HYBRID_MAPPING_FILE:-${HYBRID_PREP_DIR}/hybrid_mapping.h5}"
 
 STAGE_66_FILE="${STAGE_66_FILE:-${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.up}"
@@ -109,6 +111,10 @@ if [ ! -f "${UPSIDE_HBOND_ENERGY}" ]; then
 fi
 if [ ! -f "${UPSIDE_REFERENCE_STATE_RAMA}" ]; then
     echo "ERROR: Upside reference-state rama file not found: ${UPSIDE_REFERENCE_STATE_RAMA}"
+    exit 1
+fi
+if [ ! -f "${UNIVERSAL_PREP_SCRIPT}" ]; then
+    echo "ERROR: universal prep script not found: ${UNIVERSAL_PREP_SCRIPT}"
     exit 1
 fi
 
@@ -879,7 +885,15 @@ prepare_stage_file() {
     export UPSIDE_NPT_ENABLE="$npt_enable"
     export UPSIDE_BILAYER_LIPIDHEAD_FC="$lipidhead_fc"
 
-    python3 prepare_martini.py "${RUNTIME_PDB_ID}" --stage "$prepare_stage" "$RUN_DIR"
+    python3 "${UNIVERSAL_PREP_SCRIPT}" \
+        --mode "${UNIVERSAL_PREP_MODE}" \
+        --pdb-id "${RUNTIME_PDB_ID}" \
+        --runtime-pdb-output "${RUNTIME_PDB_FILE}" \
+        --runtime-itp-output "${RUNTIME_ITP_FILE}" \
+        --prepare-structure 0 \
+        --stage "$prepare_stage" \
+        --run-dir "$RUN_DIR" \
+        --summary-json "${HYBRID_PREP_DIR}/stage_${prepare_stage}.summary.json"
 
     local prepared_tmp="${RUN_DIR}/test.input.up"
     if [ ! -f "$prepared_tmp" ]; then
@@ -985,6 +999,7 @@ extract_stage_vtf() {
 echo "=== Hybrid 1RKL Production-Only Runner ==="
 echo "Protein ID: $PDB_ID"
 echo "Runtime PDB ID: $RUNTIME_PDB_ID"
+echo "Universal prep: ${UNIVERSAL_PREP_SCRIPT} (mode=${UNIVERSAL_PREP_MODE})"
 echo "Assumed completed checkpoint: ${STAGE_66_FILE}"
 echo
 

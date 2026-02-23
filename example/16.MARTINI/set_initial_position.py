@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import sys
+import os
 import h5py
 import numpy as np
 
@@ -10,6 +11,14 @@ def decode_stage_label(value):
     if isinstance(value, (bytes, np.bytes_)):
         return value.decode("utf-8", errors="ignore").strip().lower()
     return str(value).strip().lower()
+
+
+def env_bool(name, default=False):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    return value not in ("0", "false", "no", "off", "")
 
 
 def recenter_protein_for_production(h5f, pos, box_lengths):
@@ -50,8 +59,10 @@ def recenter_protein_for_production(h5f, pos, box_lengths):
 
     target_center = 0.5 * L
     delta = target_center - bb_center
+    # Apply a rigid translation to all atoms without per-atom modulo wrapping.
+    # Per-atom wrapping can alter raw pair displacements in code paths that do
+    # not apply minimum-image, causing artificial energy jumps at stage handoff.
     pos[:, :, 0] = pos[:, :, 0] + delta.astype(pos.dtype, copy=False)[None, :]
-    pos[:, :, 0] = np.mod(pos[:, :, 0], L[None, :]).astype(pos.dtype, copy=False)
 
     print(
         "Recentered production protein BB to box center: "
@@ -109,6 +120,16 @@ def refresh_hybrid_reference_carriers(h5f, pos):
     return pos
 
 def set_initial_position(input_file, output_file):
+    strict_copy = env_bool("UPSIDE_SET_INITIAL_STRICT_COPY", False)
+    apply_refresh_hybrid = env_bool(
+        "UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS",
+        default=(not strict_copy),
+    )
+    apply_recenter_production = env_bool(
+        "UPSIDE_SET_INITIAL_RECENTER_PRODUCTION",
+        default=(not strict_copy),
+    )
+
     # Open input file and get last frame's position and box dimensions
     with h5py.File(input_file, 'r') as f:
         # Try to read from output/pos (if simulation has already produced frames)
@@ -151,10 +172,15 @@ def set_initial_position(input_file, output_file):
             merged[:n_copy, :, :] = last_pos[:n_copy, :, :]
             last_pos = merged
 
+        if strict_copy and not apply_refresh_hybrid and not apply_recenter_production:
+            print("Strict handoff mode: preserving exact coordinates from previous stage output.")
+
         # If hybrid reference carriers are present in the target file, align them
         # to the current BB proxy positions after stage handoff.
-        last_pos = refresh_hybrid_reference_carriers(f, last_pos)
-        last_pos = recenter_protein_for_production(f, last_pos, last_box)
+        if apply_refresh_hybrid:
+            last_pos = refresh_hybrid_reference_carriers(f, last_pos)
+        if apply_recenter_production:
+            last_pos = recenter_protein_for_production(f, last_pos, last_box)
 
         if '/input/pos' in f:
             del f['/input/pos']

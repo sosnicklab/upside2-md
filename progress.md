@@ -243,3 +243,167 @@
 - Updated pressure-tensor estimator to skip fully fixed atoms and skip z-component contributions for z-fixed atoms.
 - Updated barostat call path to build fixed/z-fixed masks and pass them into pressure estimation.
 - Validation: `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed.
+- Stage handoff continuity follow-up (2026-02-23): rechecked completed `example/16.MARTINI/outputs/martini_test_1rkl_rigid_dry` transitions by comparing `prev /output/pos` last frame vs `next /input/pos`.
+- Initial recheck confirmed only two non-exact transitions: `6.0 -> 6.1` (hybrid carrier refresh) and `6.6 -> 7.0` (production recenter shift); `6.1 -> 6.6` were exact.
+- Updated `example/16.MARTINI/set_initial_position.py`:
+- Added env-controlled strict mode `UPSIDE_SET_INITIAL_STRICT_COPY`.
+- In strict mode, stage handoff performs exact coordinate copy without hybrid carrier refresh or production recentering.
+- Updated `example/16.MARTINI/run_sim_1rkl_rigid_dry.sh`:
+- Added `STRICT_STAGE_HANDOFF` (default `1`).
+- Added `handoff_initial_position()` wrapper to call `set_initial_position.py` with strict mode.
+- Replaced all direct `python3 set_initial_position.py ...` calls in this workflow with the strict wrapper.
+- Applied in-place corrections to completed run stage inputs:
+- `UPSIDE_SET_INITIAL_STRICT_COPY=1 python3 example/16.MARTINI/set_initial_position.py ...stage_6.0.up ...stage_6.1.up`
+- `UPSIDE_SET_INITIAL_STRICT_COPY=1 python3 example/16.MARTINI/set_initial_position.py ...stage_6.6.up ...stage_7.0.up`
+- Validation:
+- `python3 -m py_compile example/16.MARTINI/set_initial_position.py` passed.
+- `bash -n example/16.MARTINI/run_sim_1rkl_rigid_dry.sh` passed.
+- Prepare-system-only follow-up (2026-02-23) after user correction:
+- Confirmed both workflows already use universal prep entrypoint `prepare_system.py`:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/run_sim_1rkl_rigid_dry.sh`
+- User intentionally removed `example/16.MARTINI/prepare_hybrid_system.py`; `prepare_system.py` import path broke.
+- Added new internal utility module:
+  - `example/16.MARTINI/prepare_system_lib.py` (copied reusable prep/mapping helpers formerly imported from deleted script).
+- Updated `example/16.MARTINI/prepare_system.py` imports to use `prepare_system_lib.py`.
+- Implemented AA-vs-BB preflight diagnostics/guard in `prepare_system_lib.py`:
+  - `collect_backbone_com_pairs(...)`
+  - `summarize_backbone_frame_alignment(...)`
+  - `validate_backbone_reference_frame(...)`
+  - metrics: matched residues, raw/translation-only/rigid RMSD, centroid shift, rotation angle, radius-of-gyration ratio, offset flag.
+- Wired strict preflight into `prepare_system.py` hybrid-mapping path (`--mode both` when mapping output is requested) before `collect_bb_map(...)`.
+- Extended prep summary output to include `backbone_frame_check` diagnostics.
+- Validation:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_lib.py` passed.
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl_rigid_dry.sh` passed.
+  - `prepare_system.py --mode both` smoke with 1RKL succeeded and printed preflight:
+    - matched=`31`, rigid_rmsd=`0.1030 Å`.
+  - Mismatch negative test (`1ubq.AA.pdb` with `1rkl_hybrid.MARTINI.pdb`) failed fast as intended:
+    - `ValueError` with `rigid_rmsd=10.7170 Å` above limit `1.5000 Å`.
+- Added explicit guard in `example/16.MARTINI/prepare_system_lib.py` to prevent direct workflow use (`Use prepare_system.py as the workflow preparation entrypoint.`).
+- Re-validated after guard:
+  - `python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_lib.py` passed.
+  - second `prepare_system.py --mode both` smoke run (`preflight_smoke2`) succeeded with the same preflight metrics.
+- Follow-up parity request (2026-02-23): port rigid-dry stage handoff/prep fixes into `run_sim_1rkl.sh`.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
+  - Added `STRICT_STAGE_HANDOFF` (default `1`).
+  - Added `handoff_initial_position(input, output)` wrapper:
+    - `UPSIDE_SET_INITIAL_STRICT_COPY="$STRICT_STAGE_HANDOFF" python3 set_initial_position.py ...`
+  - Replaced direct stage-transition calls with wrapper for all transitions, including:
+    - `6.0 -> 6.1`
+    - `6.6 -> 7.0`
+  - Updated `run_md_stage()` copy path to use wrapper instead of direct call.
+  - Added stage-0 prep passthrough controls for AA/BB preflight thresholds:
+    - `BB_AA_MIN_MATCHED_RESIDUES`
+    - `BB_AA_MAX_RIGID_RMSD`
+  - Passed these controls to `prepare_system.py` (`--bb-aa-min-matched-residues`, `--bb-aa-max-rigid-rmsd`).
+- Verified preparation-path parity:
+  - No `prepare_hybrid_system.py` references in `run_sim_1rkl.sh`, `run_sim_1rkl_rigid_dry.sh`, or `prepare_system.py`.
+- Validation:
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - `source .venv/bin/activate && source source.sh && cd example/16.MARTINI && python3 prepare_system.py --mode both ...` smoke succeeded, with backbone preflight diagnostics printed and summary written.
+- Single-entrypoint cleanup follow-up (2026-02-23): user requested one conversion script only.
+- Updated `example/16.MARTINI/prepare_system.py`:
+  - removed subprocess call to `prepare_martini.py`.
+  - `run_prepare_martini(...)` now imports `prepare_martini.main` and invokes conversion in-process with temporary runtime env overrides.
+- Updated `example/16.MARTINI/prepare_martini.py`:
+  - `main(...)` now accepts explicit `pdb_id` argument (legacy CLI fallback retained).
+  - `__main__` stage/default paths now pass explicit `pdb_id` into `main(...)`.
+- Finalized single-entrypoint enforcement:
+  - `example/16.MARTINI/prepare_martini.py` now exits immediately when run as a script (`Use prepare_system.py as the only conversion entrypoint.`), keeping it library-only for `prepare_system.py`.
+- User-requested hard cleanup (2026-02-23): removed `example/16.MARTINI/prepare_martini.py` completely.
+- Migration details:
+  - moved conversion implementation to `example/16.MARTINI/prepare_system_convert_lib.py`.
+  - updated `example/16.MARTINI/prepare_system.py` conversion import path to `prepare_system_convert_lib`.
+  - kept `prepare_system_convert_lib.py` runtime guard (`Use prepare_system.py as the only conversion entrypoint.`).
+- Double-check results:
+  - repo code search (`*.py`, `*.sh`) shows no `prepare_martini.py` usage/imports.
+  - `ls example/16.MARTINI | rg '^prepare_.*\\.py$'` now lists only:
+    - `prepare_system.py`
+    - `prepare_system_lib.py`
+    - `prepare_system_convert_lib.py`
+- Re-validation after deletion:
+  - `python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_convert_lib.py` passed.
+  - stage conversion smokes via `prepare_system.py` passed for `mode=bilayer` and `mode=both`.
+  - running `python3 prepare_system_convert_lib.py` (in project env) exits with entrypoint guard message.
+- Final consolidation per user rule (one script + one lib):
+  - merged conversion helpers from `prepare_system_convert_lib.py` into `prepare_system_lib.py`.
+  - updated `prepare_system.py` to import `convert_stage(...)` from `prepare_system_lib.py`.
+  - removed `prepare_system_convert_lib.py`.
+  - result under `example/16.MARTINI/` now has only:
+    - `prepare_system.py` (single entrypoint script)
+    - `prepare_system_lib.py` (single helper library)
+- Validation after final merge:
+  - `python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_lib.py` passed.
+  - `bash -n` passed for `run_sim_1rkl.sh`, `run_sim_1rkl_rigid_dry.sh`, `run_sim_bilayer.sh`, `test_prod_run_sim_1rkl.sh`.
+  - stage conversion smokes via `prepare_system.py` passed for `mode=bilayer` and `mode=both`.
+- Updated workflows to use `prepare_system.py` (no direct `prepare_martini.py` calls):
+  - `example/16.MARTINI/run_sim_bilayer.sh`:
+    - added `UNIVERSAL_PREP_SCRIPT`, `RUNTIME_PDB_ID`, `RUNTIME_PDB_FILE`.
+    - stage generation now calls `prepare_system.py --mode bilayer --prepare-structure 0 --stage ...`.
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh`:
+    - added `UNIVERSAL_PREP_SCRIPT`, `UNIVERSAL_PREP_MODE`.
+    - switched runtime file defaults to run-scoped `HYBRID_PREP_DIR` paths.
+    - stage generation now calls `prepare_system.py --mode both --prepare-structure 0 --stage ...`.
+- Verification:
+  - Repo-wide search shows no workflow/script callsites of `prepare_martini.py` remain.
+  - `python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_martini.py` passed.
+  - `bash -n example/16.MARTINI/run_sim_bilayer.sh example/16.MARTINI/test_prod_run_sim_1rkl.sh example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/run_sim_1rkl_rigid_dry.sh` passed.
+  - Stage conversion smoke (bilayer):
+    - `prepare_system.py --mode bilayer --prepare-structure 0 --stage minimization ...` succeeded.
+  - Stage conversion smoke (hybrid both):
+    - `prepare_system.py --mode both --prepare-structure 0 --stage minimization ...` succeeded.
+  - Re-validated after library-only guard:
+    - `python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_martini.py` passed.
+    - stage conversion smoke repeated successfully for bilayer and both modes through `prepare_system.py`.
+- User clarified required semantics: no production recenter for `6.6 -> 7.0`; only stage/table settings should change.
+- Updated `example/16.MARTINI/run_sim_1rkl_rigid_dry.sh` to remove `production_center` handoff mode usage and use strict handoff copy for `6.6 -> 7.0`.
+- Reapplied strict handoff to current run output:
+- `HDF5_USE_FILE_LOCKING=FALSE UPSIDE_SET_INITIAL_STRICT_COPY=1 python3 example/16.MARTINI/set_initial_position.py ...stage_6.6.up ...stage_7.0.up`
+- Verified `6.6 -> 7.0` transition exactness after correction: `max_abs=0`, `rms=0`, `nz=0`.
+- Potential sanity checks on temp copies with `--duration-steps 0`:
+- Stage `6.6` (last-frame coordinates): initial MARTINI/total potential `351.85` (matches user observation).
+- Stage `7.0` (same coordinates, strict handoff): initial MARTINI/total potential `-14003.33`.
+- Catastrophic jump to `~3e13` is removed; remaining difference reflects stage-parameter/table changes between `6.6` and `7.0`.
+- Re-ran stage `7.0` production on corrected centered input to update runtime outputs:
+- `cd example/16.MARTINI && ../../obj/upside outputs/martini_test_1rkl_rigid_dry/checkpoints/1rkl.stage_7.0.up --duration-steps 5000 --frame-interval 5 --temperature 0.8647 --time-step 0.010 --thermostat-timescale 4.0 --thermostat-interval -1 --seed 7090685331 --integrator v --disable-recentering`
+- Stage `7.0` rerun completed (`finished in 624.6 seconds`).
+- Regenerated production VTF:
+- `python3 extract_martini_vtf.py outputs/martini_test_1rkl_rigid_dry/checkpoints/1rkl.stage_7.0.up outputs/martini_test_1rkl_rigid_dry/1rkl.stage_7.0.vtf outputs/martini_test_1rkl_rigid_dry/checkpoints/1rkl.stage_7.0.up 1rkl_rigid_dry --mode 1`
+- Verified BB center from updated `stage_7.0` output remains at box center (frame 0 and frame 9):
+- min-image center delta `(~1e-6, ~1e-7, ~1e-7)` Angstrom.
+- User-direction correction follow-up (2026-02-23): remove production recenter requirement and enforce exact `6.6 -> 7.0` coordinate handoff.
+- Updated `example/16.MARTINI/run_sim_1rkl_rigid_dry.sh`:
+- Removed special `production_center` mode usage for `6.6 -> 7.0`; workflow now uses strict handoff copy there as well.
+- Re-applied strict handoff in current run output:
+- `HDF5_USE_FILE_LOCKING=FALSE UPSIDE_SET_INITIAL_STRICT_COPY=1 python3 example/16.MARTINI/set_initial_position.py ...stage_6.6.up ...stage_7.0.up`
+- Verified transition exactness:
+- `6.6 -> 7.0` now `max_abs=0`, `rms=0`, `nz=0`.
+- Performed quick 7.0 potential sanity check on a temp copy:
+- `../../obj/upside /tmp/1rkl.stage_7.0.potcheck.up --duration-steps 0 ...`
+- Initial potential reported `-14003.33` (no catastrophic jump).
+- Validation:
+- `python3 -m py_compile example/16.MARTINI/set_initial_position.py` passed.
+- `bash -n example/16.MARTINI/run_sim_1rkl_rigid_dry.sh` passed.
+- Post-correction continuity check: all transitions `6.0->6.1->6.2->6.3->6.4->6.5->6.6->7.0` are exact (`max_abs=0`, `rms=0`, `nz=0` for each transition).
+- Production-centering follow-up (2026-02-23): user reported `7.0` protein appears at box corners in rigid-dry workflow.
+- Root cause: previous strict-handoff change disabled production recenter during `6.6 -> 7.0`, so stage 7.0 input remained corner-wrapped from prior stage.
+- Updated `example/16.MARTINI/set_initial_position.py`:
+- Added granular env toggles:
+- `UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS` (default `!strict`)
+- `UPSIDE_SET_INITIAL_RECENTER_PRODUCTION` (default `!strict`)
+- Keeps backward-compatible defaults while allowing strict copy plus selective production recenter.
+- Updated `example/16.MARTINI/run_sim_1rkl_rigid_dry.sh`:
+- Added mode-aware `handoff_initial_position(input, output, mode)` wrapper.
+- `6.6 -> 7.0` now uses mode `production_center` with:
+- `UPSIDE_SET_INITIAL_STRICT_COPY=$STRICT_STAGE_HANDOFF`
+- `UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS=0`
+- `UPSIDE_SET_INITIAL_RECENTER_PRODUCTION=1`
+- Repaired current run handoff in-place:
+- `UPSIDE_SET_INITIAL_STRICT_COPY=1 UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS=0 UPSIDE_SET_INITIAL_RECENTER_PRODUCTION=1 python3 example/16.MARTINI/set_initial_position.py ...stage_6.6.up ...stage_7.0.up`
+- Verified BB center in `stage_7.0` input is now centered:
+- before recenter min-image delta from box center: `(-53.606, +55.420, -54.846)` Angstrom
+- after recenter min-image delta from box center: `(1.79e-06, 1.18e-07, -4.72e-07)` Angstrom
+- Validation:
+- `python3 -m py_compile example/16.MARTINI/set_initial_position.py` passed.
+- `bash -n example/16.MARTINI/run_sim_1rkl_rigid_dry.sh` passed.

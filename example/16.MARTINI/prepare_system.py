@@ -4,15 +4,15 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
 import numpy as np
 
-from prepare_hybrid_system import (
+from prepare_system_lib import (
     center_of_mass,
     collect_bb_map,
     collect_sc_map,
+    convert_stage,
     compute_lipid_residue_indices,
     coords,
     estimate_salt_pairs,
@@ -25,6 +25,7 @@ from prepare_hybrid_system import (
     remove_overlapping_lipids,
     set_box_from_lipid_xy,
     tile_and_crop_bilayer_lipids,
+    validate_backbone_reference_frame,
     write_hybrid_mapping_h5,
     write_pdb,
 )
@@ -38,15 +39,15 @@ def parse_args():
         description=(
             "Unified preparation script for bilayer-only, protein-only, or mixed "
             "protein+bilayer systems. Can optionally convert prepared structure "
-            "to UPSIDE input via prepare_martini.py."
+            "to UPSIDE input."
         )
     )
     parser.add_argument("--mode", choices=["bilayer", "protein", "both"], required=True)
-    parser.add_argument("--pdb-id", required=True, help="Runtime PDB id for prepare_martini.py")
+    parser.add_argument("--pdb-id", required=True, help="Runtime PDB id for stage conversion")
     parser.add_argument("--runtime-pdb-output", default=None)
     parser.add_argument("--runtime-itp-output", default=None)
     parser.add_argument("--prepare-structure", type=int, default=1, choices=[0, 1])
-    parser.add_argument("--stage", default=None, help="prepare_martini stage name")
+    parser.add_argument("--stage", default=None, help="stage name for UPSIDE input conversion")
     parser.add_argument("--run-dir", default="outputs/martini_test")
 
     parser.add_argument("--bilayer-pdb", default="pdb/bilayer.MARTINI.pdb")
@@ -65,6 +66,24 @@ def parse_args():
 
     parser.add_argument("--protein-lipid-cutoff", type=float, default=3.0)
     parser.add_argument("--protein-net-charge", type=int, default=None)
+    parser.add_argument(
+        "--bb-aa-min-matched-residues",
+        type=int,
+        default=8,
+        help=(
+            "Minimum matched residues required between AA backbone (N/CA/C/O) "
+            "and MARTINI BB for hybrid-mapping frame preflight."
+        ),
+    )
+    parser.add_argument(
+        "--bb-aa-max-rigid-rmsd",
+        type=float,
+        default=1.5,
+        help=(
+            "Maximum allowed rigid-fit RMSD (Angstrom) between AA backbone COM "
+            "and MARTINI BB in hybrid-mapping frame preflight."
+        ),
+    )
     parser.add_argument("--summary-json", default=None)
     return parser.parse_args()
 
@@ -410,6 +429,13 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
         elif runtime_itp.exists():
             protein_itp_for_map = runtime_itp
 
+        frame_diag = validate_backbone_reference_frame(
+            protein_aa_atoms,
+            protein_atoms,
+            min_matched_residues=max(1, int(args.bb_aa_min_matched_residues)),
+            max_rigid_rmsd=float(args.bb_aa_max_rigid_rmsd),
+            context=f"{protein_aa_pdb.name} -> {protein_cg_pdb.name}",
+        )
         bb_entries = collect_bb_map(protein_aa_atoms, protein_atoms)
         sc_entries = collect_sc_map(
             protein_aa_atoms,
@@ -431,6 +457,7 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
 
         mapping_summary["protein_aa_pdb"] = str(protein_aa_pdb)
         mapping_summary["mapping_h5"] = str(mapping_h5)
+        mapping_summary["backbone_frame_check"] = frame_diag
         mapping_summary["bb_map_entries"] = int(len(bb_entries))
         mapping_summary["sc_map_entries"] = int(len(sc_entries))
 
@@ -463,22 +490,32 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
     return summary
 
 
-def run_prepare_martini(args, runtime_pdb: Path, runtime_itp: Path):
-    cmd = [
-        "python3",
-        str(SCRIPT_DIR / "prepare_martini.py"),
-        args.pdb_id,
-        "--stage",
-        args.stage,
-        args.run_dir,
-    ]
-    env = os.environ.copy()
-    env["UPSIDE_RUNTIME_PDB_FILE"] = str(runtime_pdb)
+def run_stage_conversion(args, runtime_pdb: Path, runtime_itp: Path):
+    prev_pdb = os.environ.get("UPSIDE_RUNTIME_PDB_FILE")
+    prev_itp = os.environ.get("UPSIDE_RUNTIME_ITP_FILE")
+
+    os.environ["UPSIDE_RUNTIME_PDB_FILE"] = str(runtime_pdb)
     if args.mode in {"protein", "both"}:
-        env["UPSIDE_RUNTIME_ITP_FILE"] = str(runtime_itp)
+        os.environ["UPSIDE_RUNTIME_ITP_FILE"] = str(runtime_itp)
     else:
-        env.pop("UPSIDE_RUNTIME_ITP_FILE", None)
-    subprocess.run(cmd, cwd=str(SCRIPT_DIR), env=env, check=True)
+        os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
+
+    try:
+        convert_stage(
+            pdb_id=args.pdb_id,
+            stage=args.stage,
+            run_dir=args.run_dir,
+        )
+    finally:
+        if prev_pdb is None:
+            os.environ.pop("UPSIDE_RUNTIME_PDB_FILE", None)
+        else:
+            os.environ["UPSIDE_RUNTIME_PDB_FILE"] = prev_pdb
+
+        if prev_itp is None:
+            os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
+        else:
+            os.environ["UPSIDE_RUNTIME_ITP_FILE"] = prev_itp
 
 
 def write_summary(path: Path, payload):
@@ -524,7 +561,7 @@ def main():
                     "Provide --protein-itp when running with --prepare-structure 1."
                 )
             assert_protein_itp_mass_compatibility(runtime_itp)
-        run_prepare_martini(args, runtime_pdb, runtime_itp)
+        run_stage_conversion(args, runtime_pdb, runtime_itp)
         summary["upside_input"] = str(Path(args.run_dir).expanduser().resolve() / "test.input.up")
 
     if args.summary_json:

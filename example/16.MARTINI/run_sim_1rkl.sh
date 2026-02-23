@@ -85,12 +85,15 @@ PREP_SEED="${PREP_SEED:-2026}"
 PROTEIN_LIPID_MIN_GAP="${PROTEIN_LIPID_MIN_GAP:-4.5}"
 PROTEIN_LIPID_CUTOFF_STEP="${PROTEIN_LIPID_CUTOFF_STEP:-0.5}"
 PROTEIN_LIPID_CUTOFF_MAX="${PROTEIN_LIPID_CUTOFF_MAX:-8.0}"
+BB_AA_MIN_MATCHED_RESIDUES="${BB_AA_MIN_MATCHED_RESIDUES:-8}"
+BB_AA_MAX_RIGID_RMSD="${BB_AA_MAX_RIGID_RMSD:-1.5}"
 
 # Simulation controls
 TEMPERATURE="${TEMPERATURE:-0.8647}"
 THERMOSTAT_TIMESCALE="${THERMOSTAT_TIMESCALE:-4.0}"
 THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
 SEED="${SEED:-7090685331}"
+STRICT_STAGE_HANDOFF="${STRICT_STAGE_HANDOFF:-1}"
 
 MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-500}"
 MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-500}"
@@ -1174,6 +1177,8 @@ prepare_hybrid_artifacts() {
             --ion-cutoff "${ION_CUTOFF}" \
             --box-padding-xy "${BOX_PADDING_XY}" \
             --box-padding-z "${BOX_PADDING_Z}" \
+            --bb-aa-min-matched-residues "${BB_AA_MIN_MATCHED_RESIDUES}" \
+            --bb-aa-max-rigid-rmsd "${BB_AA_MAX_RIGID_RMSD}" \
             --seed "${PREP_SEED}" \
             --summary-json "${HYBRID_PREP_DIR}/hybrid_prep_summary.json"
 
@@ -1436,7 +1441,7 @@ run_md_stage() {
 
     if [ "$input_file" != "$output_file" ]; then
         cp -f "$input_file" "$output_file"
-        python3 set_initial_position.py "$input_file" "$output_file"
+        handoff_initial_position "$input_file" "$output_file"
     fi
 
     local log_file="${LOG_DIR}/stage_${stage_label}.log"
@@ -1463,6 +1468,14 @@ run_md_stage() {
         echo "ERROR: Stage ${stage_label} failed"
         exit 1
     fi
+}
+
+handoff_initial_position() {
+    local input_file="$1"
+    local output_file="$2"
+
+    UPSIDE_SET_INITIAL_STRICT_COPY="$STRICT_STAGE_HANDOFF" \
+        python3 set_initial_position.py "$input_file" "$output_file"
 }
 
 extract_stage_vtf() {
@@ -1498,14 +1511,14 @@ extract_stage_vtf "6.0" "$STAGE_60_FILE" "1"
 set_stage_npt_targets "6.1"
 prepare_stage_file "$PREPARED_61_FILE" "npt_prod" "1" "0" "0" "minimization"
 cp -f "$PREPARED_61_FILE" "$STAGE_61_FILE"
-python3 set_initial_position.py "$STAGE_60_FILE" "$STAGE_61_FILE"
+handoff_initial_position "$STAGE_60_FILE" "$STAGE_61_FILE"
 run_minimization_stage "6.1" "$STAGE_61_FILE" "$MIN_61_MAX_ITER"
 extract_stage_vtf "6.1" "$STAGE_61_FILE" "1"
 
 # 6.2: soft equilibration
 set_stage_npt_targets "6.2"
 prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "0" "200" "minimization"
-python3 set_initial_position.py "$STAGE_61_FILE" "$STAGE_62_FILE"
+handoff_initial_position "$STAGE_61_FILE" "$STAGE_62_FILE"
 run_md_stage "6.2" "$STAGE_62_FILE" "$STAGE_62_FILE" "$EQ_62_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 extract_stage_vtf "6.2" "$STAGE_62_FILE" "1"
 
@@ -1513,7 +1526,7 @@ extract_stage_vtf "6.2" "$STAGE_62_FILE" "1"
 set_stage_npt_targets "6.3"
 prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "0" "100" "minimization"
 cp -f "$PREPARED_63_FILE" "$STAGE_63_FILE"
-python3 set_initial_position.py "$STAGE_62_FILE" "$STAGE_63_FILE"
+handoff_initial_position "$STAGE_62_FILE" "$STAGE_63_FILE"
 run_md_stage "6.3" "$STAGE_63_FILE" "$STAGE_63_FILE" "$EQ_63_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 extract_stage_vtf "6.3" "$STAGE_63_FILE" "1"
 
@@ -1521,28 +1534,28 @@ extract_stage_vtf "6.3" "$STAGE_63_FILE" "1"
 set_stage_npt_targets "6.4"
 prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "0" "50" "minimization"
 cp -f "$PREPARED_64_FILE" "$STAGE_64_FILE"
-python3 set_initial_position.py "$STAGE_63_FILE" "$STAGE_64_FILE"
+handoff_initial_position "$STAGE_63_FILE" "$STAGE_64_FILE"
 run_md_stage "6.4" "$STAGE_64_FILE" "$STAGE_64_FILE" "$EQ_64_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 extract_stage_vtf "6.4" "$STAGE_64_FILE" "1"
 
 set_stage_npt_targets "6.5"
 prepare_stage_file "$PREPARED_65_FILE" "npt_prod" "1" "0" "20" "minimization"
 cp -f "$PREPARED_65_FILE" "$STAGE_65_FILE"
-python3 set_initial_position.py "$STAGE_64_FILE" "$STAGE_65_FILE"
+handoff_initial_position "$STAGE_64_FILE" "$STAGE_65_FILE"
 run_md_stage "6.5" "$STAGE_65_FILE" "$STAGE_65_FILE" "$EQ_65_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 extract_stage_vtf "6.5" "$STAGE_65_FILE" "1"
 
 set_stage_npt_targets "6.6"
 prepare_stage_file "$PREPARED_66_FILE" "npt_prod" "1" "0" "10" "minimization"
 cp -f "$PREPARED_66_FILE" "$STAGE_66_FILE"
-python3 set_initial_position.py "$STAGE_65_FILE" "$STAGE_66_FILE"
+handoff_initial_position "$STAGE_65_FILE" "$STAGE_66_FILE"
 run_md_stage "6.6" "$STAGE_66_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 extract_stage_vtf "6.6" "$STAGE_66_FILE" "1"
 
 # 7.0: production (hybrid active)
 prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "$PROD_70_BAROSTAT_TYPE" "0" "production"
 cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
-python3 set_initial_position.py "$STAGE_66_FILE" "$STAGE_70_FILE"
+handoff_initial_position "$STAGE_66_FILE" "$STAGE_70_FILE"
 run_md_stage "7.0" "$STAGE_70_FILE" "$STAGE_70_FILE" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
 extract_stage_vtf "7.0" "$STAGE_70_FILE" "2"
 
