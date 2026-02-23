@@ -10,6 +10,23 @@ import numpy as np
 import tables as tb
 from collections import Counter
 
+
+def runtime_input_pdb_path(script_dir, pdb_id):
+    """Resolve MARTINI PDB path with optional runtime override."""
+    override = os.environ.get("UPSIDE_RUNTIME_PDB_FILE", "").strip()
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    return os.path.join(script_dir, f"pdb/{pdb_id}.MARTINI.pdb")
+
+
+def runtime_protein_itp_path(script_dir, pdb_id):
+    """Resolve protein ITP path with optional runtime override."""
+    override = os.environ.get("UPSIDE_RUNTIME_ITP_FILE", "").strip()
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    return os.path.join(script_dir, f"pdb/{pdb_id}_proa.itp")
+
+
 def read_martini3_nonbond_params(itp_file):
     """
     Read MARTINI nonbonded parameters from the main .itp file
@@ -753,7 +770,7 @@ def main(stage='minimization', run_dir=None):
     
     # Determine system type and load appropriate topology
     # Check if this is a protein system by looking for protein ITP file
-    protein_itp = os.path.join(SCRIPT_DIR, f"pdb/{pdb_id}_proa.itp")
+    protein_itp = runtime_protein_itp_path(SCRIPT_DIR, pdb_id)
     has_protein = os.path.exists(protein_itp)
     
     # Check if this is a mixed protein-lipid system by looking for both protein and lipid residues
@@ -902,7 +919,7 @@ def main(stage='minimization', run_dir=None):
     
     # Read PDB file
     if strict_from_martini_pdb or include_protein:
-        input_pdb_file = os.path.join(SCRIPT_DIR, f'pdb/{pdb_id}.MARTINI.pdb')
+        input_pdb_file = runtime_input_pdb_path(SCRIPT_DIR, pdb_id)
         print(f"\nUsing MARTINI PDB as base structure: {input_pdb_file}")
     
     # Read PDB and populate arrays
@@ -917,7 +934,7 @@ def main(stage='minimization', run_dir=None):
     seg_ids = []
     
     # Load protein topology mapping and connectivity if available
-    protein_itp = f"pdb/{pdb_id}_proa.itp"
+    protein_itp = runtime_protein_itp_path(SCRIPT_DIR, pdb_id)
     protein_topo_map = read_protein_itp_topology(protein_itp)
     
     # Parse protein connectivity for minimization stage (uses FLEXIBLE, NORMANG, POSRES sections)
@@ -1826,7 +1843,8 @@ def create_production_input(input_file, pdb_id):
     print(f"\n=== Creating Production Input File ===")
     
     # Parse protein connectivity for production stage (uses regular sections)
-    protein_itp = f"pdb/{pdb_id}_proa.itp"
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    protein_itp = runtime_protein_itp_path(SCRIPT_DIR, pdb_id)
     protein_bonds_prod, protein_angles_prod, protein_dihedrals_prod, protein_constraints_prod, protein_position_restraints_prod = read_protein_itp_connectivity(protein_itp, 'production')
     
     print(f"Production stage parameters:")

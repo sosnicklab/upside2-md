@@ -43,9 +43,11 @@ PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/${PDB_ID}.pdb}"
 PROTEIN_CG_PDB="${PROTEIN_CG_PDB:-pdb/${PDB_ID}.MARTINI.pdb}"
 PROTEIN_ITP="${PROTEIN_ITP:-pdb/${PDB_ID}_proa.itp}"
 BILAYER_PDB="${BILAYER_PDB:-pdb/bilayer.MARTINI.pdb}"
+UNIVERSAL_PREP_SCRIPT="${UNIVERSAL_PREP_SCRIPT:-${SCRIPT_DIR}/prepare_system.py}"
+UNIVERSAL_PREP_MODE="${UNIVERSAL_PREP_MODE:-both}"
 
-RUNTIME_PDB_FILE="${SCRIPT_DIR}/pdb/${RUNTIME_PDB_ID}.MARTINI.pdb"
-RUNTIME_ITP_FILE="${SCRIPT_DIR}/pdb/${RUNTIME_PDB_ID}_proa.itp"
+RUNTIME_PDB_FILE="${RUNTIME_PDB_FILE:-${HYBRID_PREP_DIR}/${RUNTIME_PDB_ID}.MARTINI.pdb}"
+RUNTIME_ITP_FILE="${RUNTIME_ITP_FILE:-${HYBRID_PREP_DIR}/${RUNTIME_PDB_ID}_proa.itp}"
 HYBRID_MAPPING_FILE="${HYBRID_MAPPING_FILE:-${HYBRID_PREP_DIR}/hybrid_mapping.h5}"
 HYBRID_PACKED_PDB="${HYBRID_PACKED_PDB:-${HYBRID_PREP_DIR}/hybrid_packed.MARTINI.pdb}"
 HYBRID_VALIDATE="${HYBRID_VALIDATE:-1}"
@@ -72,13 +74,17 @@ STAGE_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.up"
 PREPARED_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.prepared.up"
 STAGE_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.up"
 
-# prepare_hybrid_system.py controls
+# Stage-0 hybrid structure prep controls
 SALT_MOLAR="${SALT_MOLAR:-0.15}"
-PROTEIN_LIPID_CUTOFF="${PROTEIN_LIPID_CUTOFF:-3.0}"
+# More conservative default exclusion to prevent lipids packed too close to protein surface.
+PROTEIN_LIPID_CUTOFF="${PROTEIN_LIPID_CUTOFF:-4.5}"
 ION_CUTOFF="${ION_CUTOFF:-4.0}"
 BOX_PADDING_XY="${BOX_PADDING_XY:-0.0}"
 BOX_PADDING_Z="${BOX_PADDING_Z:-20.0}"
 PREP_SEED="${PREP_SEED:-2026}"
+PROTEIN_LIPID_MIN_GAP="${PROTEIN_LIPID_MIN_GAP:-4.5}"
+PROTEIN_LIPID_CUTOFF_STEP="${PROTEIN_LIPID_CUTOFF_STEP:-0.5}"
+PROTEIN_LIPID_CUTOFF_MAX="${PROTEIN_LIPID_CUTOFF_MAX:-8.0}"
 
 # Simulation controls
 TEMPERATURE="${TEMPERATURE:-0.8647}"
@@ -139,6 +145,10 @@ SC_ENV_RELAX_STEPS="${SC_ENV_RELAX_STEPS:-200}"
 SC_ENV_RELAX_DT="${SC_ENV_RELAX_DT:-0.002}"
 SC_ENV_RESTRAINT_K="${SC_ENV_RESTRAINT_K:-5.0}"
 SC_ENV_MAX_DISPLACEMENT="${SC_ENV_MAX_DISPLACEMENT:-2.0}"
+SC_ENV_PO4_Z_CLAMP_ENABLE="${SC_ENV_PO4_Z_CLAMP_ENABLE:-1}"
+SC_ENV_PO4_Z_CLAMP_MODE="${SC_ENV_PO4_Z_CLAMP_MODE:-initial}"
+SC_ENV_ENERGY_DUMP_ENABLE="${SC_ENV_ENERGY_DUMP_ENABLE:-1}"
+SC_ENV_ENERGY_DUMP_STRIDE="${SC_ENV_ENERGY_DUMP_STRIDE:-1}"
 NONPROTEIN_HS_FORCE_CAP="${NONPROTEIN_HS_FORCE_CAP:-100.0}"
 NONPROTEIN_HS_POTENTIAL_CAP="${NONPROTEIN_HS_POTENTIAL_CAP:-5000.0}"
 INTEGRATION_RMSD_ALIGN_ENABLE="${INTEGRATION_RMSD_ALIGN_ENABLE:-1}"
@@ -192,6 +202,10 @@ if [ "${MARTINIZE_ENABLE}" = "0" ]; then
         echo "ERROR: protein ITP not found: ${PROTEIN_ITP}"
         exit 1
     fi
+fi
+if [ ! -f "${UNIVERSAL_PREP_SCRIPT}" ]; then
+    echo "ERROR: universal prep script not found: ${UNIVERSAL_PREP_SCRIPT}"
+    exit 1
 fi
 
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR" "$HYBRID_PREP_DIR"
@@ -428,7 +442,11 @@ set_hybrid_sc_controls() {
     local hs_force_cap="$8"
     local hs_pot_cap="$9"
     local rmsd_align_enable="${10}"
-    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$relax_dt" "$rest_k" "$max_disp" "$hs_force_cap" "$hs_pot_cap" "$rmsd_align_enable" << 'PY'
+    local po4_z_clamp_enable="${11}"
+    local po4_z_clamp_mode="${12}"
+    local sc_env_energy_dump_enable="${13}"
+    local sc_env_energy_dump_stride="${14}"
+    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$relax_dt" "$rest_k" "$max_disp" "$hs_force_cap" "$hs_pot_cap" "$rmsd_align_enable" "$po4_z_clamp_enable" "$po4_z_clamp_mode" "$sc_env_energy_dump_enable" "$sc_env_energy_dump_stride" << 'PY'
 import sys
 import h5py
 import numpy as np
@@ -443,6 +461,10 @@ max_disp = float(sys.argv[7])
 hs_force_cap = float(sys.argv[8])
 hs_pot_cap = float(sys.argv[9])
 rmsd_align_enable = int(sys.argv[10])
+po4_z_clamp_enable = int(sys.argv[11])
+po4_z_clamp_mode = sys.argv[12]
+sc_env_energy_dump_enable = int(sys.argv[13])
+sc_env_energy_dump_stride = int(sys.argv[14])
 
 with h5py.File(up_file, "r+") as h5:
     grp = h5.require_group("input").require_group("hybrid_control")
@@ -455,6 +477,10 @@ with h5py.File(up_file, "r+") as h5:
     grp.attrs["nonprotein_hs_force_cap"] = np.float32(hs_force_cap)
     grp.attrs["nonprotein_hs_potential_cap"] = np.float32(hs_pot_cap)
     grp.attrs["integration_rmsd_align_enable"] = np.int8(1 if rmsd_align_enable else 0)
+    grp.attrs["sc_env_po4_z_clamp_enabled"] = np.int8(1 if po4_z_clamp_enable else 0)
+    grp.attrs["sc_env_po4_z_clamp_mode"] = np.bytes_(po4_z_clamp_mode)
+    grp.attrs["sc_env_energy_dump_enabled"] = np.int8(1 if sc_env_energy_dump_enable else 0)
+    grp.attrs["sc_env_energy_dump_stride"] = np.int32(max(1, sc_env_energy_dump_stride))
 PY
 }
 
@@ -1125,23 +1151,120 @@ prepare_hybrid_artifacts() {
     echo "=== Stage 0: Hybrid Packing + Mapping Export ==="
     prepare_protein_inputs
 
-    python3 prepare_hybrid_system.py \
-        --protein-pdb "${PROTEIN_AA_PDB}" \
-        --protein-cg-pdb "${PROTEIN_CG_EFFECTIVE}" \
-        --protein-itp "${PROTEIN_ITP_EFFECTIVE}" \
-        --bilayer-pdb "${BILAYER_PDB}" \
-        --output-dir "${HYBRID_PREP_DIR}" \
-        --salt-molar "${SALT_MOLAR}" \
-        --protein-lipid-cutoff "${PROTEIN_LIPID_CUTOFF}" \
-        --ion-cutoff "${ION_CUTOFF}" \
-        --box-padding-xy "${BOX_PADDING_XY}" \
-        --box-padding-z "${BOX_PADDING_Z}" \
-        --seed "${PREP_SEED}"
+    local packing_cutoff="${PROTEIN_LIPID_CUTOFF}"
+    local packing_min_gap="nan"
 
-    if [ ! -f "${HYBRID_PACKED_PDB}" ]; then
-        echo "ERROR: hybrid packed PDB not found: ${HYBRID_PACKED_PDB}"
-        exit 1
-    fi
+    while true; do
+        echo "Hybrid packing attempt with protein-lipid cutoff: ${packing_cutoff} Å"
+
+        python3 "${UNIVERSAL_PREP_SCRIPT}" \
+            --mode "both" \
+            --pdb-id "${RUNTIME_PDB_ID}" \
+            --runtime-pdb-output "${HYBRID_PACKED_PDB}" \
+            --runtime-itp-output "${RUNTIME_ITP_FILE}" \
+            --prepare-structure 1 \
+            --protein-aa-pdb "${PROTEIN_AA_PDB}" \
+            --protein-cg-pdb "${PROTEIN_CG_EFFECTIVE}" \
+            --protein-itp "${PROTEIN_ITP_EFFECTIVE}" \
+            --hybrid-mapping-output "${HYBRID_MAPPING_FILE}" \
+            --hybrid-bb-map-json-output "${HYBRID_PREP_DIR}/hybrid_bb_map.json" \
+            --bilayer-pdb "${BILAYER_PDB}" \
+            --salt-molar "${SALT_MOLAR}" \
+            --protein-lipid-cutoff "${packing_cutoff}" \
+            --ion-cutoff "${ION_CUTOFF}" \
+            --box-padding-xy "${BOX_PADDING_XY}" \
+            --box-padding-z "${BOX_PADDING_Z}" \
+            --seed "${PREP_SEED}" \
+            --summary-json "${HYBRID_PREP_DIR}/hybrid_prep_summary.json"
+
+        if [ ! -f "${HYBRID_PACKED_PDB}" ]; then
+            echo "ERROR: hybrid packed PDB not found: ${HYBRID_PACKED_PDB}"
+            exit 1
+        fi
+
+        packing_min_gap="$(python3 - "${HYBRID_PACKED_PDB}" << 'PY'
+import sys
+import numpy as np
+
+pdb_file = sys.argv[1]
+protein_residues = {
+    "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS",
+    "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP",
+    "TYR", "VAL", "HID", "HIE", "HIP", "HSD", "HSE", "HSP", "CYX"
+}
+lipid_residues = {"DOP", "DOPC"}
+
+protein_xyz = []
+lipid_xyz = []
+with open(pdb_file, "r", encoding="utf-8", errors="ignore") as fh:
+    for line in fh:
+        if not line.startswith(("ATOM", "HETATM")):
+            continue
+        resname = line[17:21].strip().upper()
+        x = float(line[30:38])
+        y = float(line[38:46])
+        z = float(line[46:54])
+        if resname in protein_residues:
+            protein_xyz.append((x, y, z))
+        elif resname in lipid_residues:
+            lipid_xyz.append((x, y, z))
+
+if not protein_xyz or not lipid_xyz:
+    raise SystemExit("nan")
+
+protein_xyz = np.asarray(protein_xyz, dtype=float)
+lipid_xyz = np.asarray(lipid_xyz, dtype=float)
+
+min_d2 = float("inf")
+chunk = 2000
+for i in range(0, lipid_xyz.shape[0], chunk):
+    block = lipid_xyz[i:i + chunk]
+    d = block[:, None, :] - protein_xyz[None, :, :]
+    d2 = np.einsum("ijk,ijk->ij", d, d)
+    block_min = float(d2.min())
+    if block_min < min_d2:
+        min_d2 = block_min
+
+print(f"{min_d2 ** 0.5:.6f}")
+PY
+)"
+
+        if python3 - "${packing_min_gap}" "${PROTEIN_LIPID_MIN_GAP}" << 'PY'
+import sys
+observed = float(sys.argv[1])
+target = float(sys.argv[2])
+raise SystemExit(0 if observed >= target else 1)
+PY
+        then
+            echo "Hybrid packing accepted: min protein-lipid distance ${packing_min_gap} Å (target >= ${PROTEIN_LIPID_MIN_GAP} Å)"
+            break
+        fi
+
+        if python3 - "${packing_cutoff}" "${PROTEIN_LIPID_CUTOFF_MAX}" << 'PY'
+import sys
+cutoff = float(sys.argv[1])
+limit = float(sys.argv[2])
+raise SystemExit(0 if cutoff >= limit else 1)
+PY
+        then
+            echo "ERROR: hybrid packing still overpacked near protein."
+            echo "  Observed min protein-lipid distance: ${packing_min_gap} Å"
+            echo "  Target min distance: ${PROTEIN_LIPID_MIN_GAP} Å"
+            echo "  Reached cutoff limit: ${PROTEIN_LIPID_CUTOFF_MAX} Å"
+            echo "  Try increasing PROTEIN_LIPID_CUTOFF_MAX and/or BOX_PADDING_XY."
+            exit 1
+        fi
+
+        packing_cutoff="$(python3 - "${packing_cutoff}" "${PROTEIN_LIPID_CUTOFF_STEP}" << 'PY'
+import sys
+cutoff = float(sys.argv[1])
+step = float(sys.argv[2])
+print(f"{cutoff + step:.3f}")
+PY
+)"
+        echo "Hybrid packing too tight near protein (min ${packing_min_gap} Å). Retrying with cutoff ${packing_cutoff} Å."
+    done
+
     if [ ! -f "${HYBRID_MAPPING_FILE}" ]; then
         echo "ERROR: hybrid mapping file not found: ${HYBRID_MAPPING_FILE}"
         exit 1
@@ -1151,8 +1274,22 @@ prepare_hybrid_artifacts() {
         python3 validate_hybrid_mapping.py "${HYBRID_MAPPING_FILE}"
     fi
 
-    cp -f "${HYBRID_PACKED_PDB}" "${RUNTIME_PDB_FILE}"
-    cp -f "${PROTEIN_ITP_EFFECTIVE}" "${RUNTIME_ITP_FILE}"
+    if [ "$(python3 - "${HYBRID_PACKED_PDB}" "${RUNTIME_PDB_FILE}" << 'PY'
+import os
+import sys
+print(int(os.path.abspath(sys.argv[1]) == os.path.abspath(sys.argv[2])))
+PY
+)" = "0" ]; then
+        cp -f "${HYBRID_PACKED_PDB}" "${RUNTIME_PDB_FILE}"
+    fi
+    if [ "$(python3 - "${PROTEIN_ITP_EFFECTIVE}" "${RUNTIME_ITP_FILE}" << 'PY'
+import os
+import sys
+print(int(os.path.abspath(sys.argv[1]) == os.path.abspath(sys.argv[2])))
+PY
+)" = "0" ]; then
+        cp -f "${PROTEIN_ITP_EFFECTIVE}" "${RUNTIME_ITP_FILE}"
+    fi
     echo "Runtime MARTINI PDB: ${RUNTIME_PDB_FILE}"
     echo "Runtime protein ITP: ${RUNTIME_ITP_FILE}"
 }
@@ -1169,7 +1306,15 @@ prepare_stage_file() {
     export UPSIDE_NPT_ENABLE="$npt_enable"
     export UPSIDE_BILAYER_LIPIDHEAD_FC="$lipidhead_fc"
 
-    python3 prepare_martini.py "${RUNTIME_PDB_ID}" --stage "$prepare_stage" "$RUN_DIR"
+    python3 "${UNIVERSAL_PREP_SCRIPT}" \
+        --mode "${UNIVERSAL_PREP_MODE}" \
+        --pdb-id "${RUNTIME_PDB_ID}" \
+        --runtime-pdb-output "${RUNTIME_PDB_FILE}" \
+        --runtime-itp-output "${RUNTIME_ITP_FILE}" \
+        --prepare-structure 0 \
+        --stage "$prepare_stage" \
+        --run-dir "$RUN_DIR" \
+        --summary-json "${HYBRID_PREP_DIR}/stage_${prepare_stage}.summary.json"
 
     local prepared_tmp="${RUN_DIR}/test.input.up"
     if [ ! -f "$prepared_tmp" ]; then
@@ -1191,7 +1336,11 @@ prepare_stage_file() {
             "$SC_ENV_MAX_DISPLACEMENT" \
             "$NONPROTEIN_HS_FORCE_CAP" \
             "$NONPROTEIN_HS_POTENTIAL_CAP" \
-            "$INTEGRATION_RMSD_ALIGN_ENABLE"
+            "$INTEGRATION_RMSD_ALIGN_ENABLE" \
+            "$SC_ENV_PO4_Z_CLAMP_ENABLE" \
+            "$SC_ENV_PO4_Z_CLAMP_MODE" \
+            "$SC_ENV_ENERGY_DUMP_ENABLE" \
+            "$SC_ENV_ENERGY_DUMP_STRIDE"
         augment_production_rotamer_nodes \
             "$target_file" \
             "${PROTEIN_ITP_EFFECTIVE}" \
@@ -1331,6 +1480,7 @@ extract_stage_vtf() {
 echo "=== Hybrid 1RKL Dry MARTINI Workflow ==="
 echo "Protein ID: $PDB_ID"
 echo "Runtime PDB ID: $RUNTIME_PDB_ID"
+echo "Universal prep: ${UNIVERSAL_PREP_SCRIPT} (mode=${UNIVERSAL_PREP_MODE})"
 echo "Hybrid prep: $HYBRID_PREP_DIR"
 echo "Simulation stages: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"
 echo

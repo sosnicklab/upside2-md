@@ -78,3 +78,160 @@
 - Validation: `python3 -m py_compile example/16.MARTINI/scan_lipid_diffusion.py example/16.MARTINI/plot_lipid_diffusion_results.py` passed.
 - Validation: `python3 example/16.MARTINI/scan_lipid_diffusion.py` generated 24 scan run scripts + task list + Slurm script under `example/16.MARTINI/lipid_diffusion`.
 - Validation: `python3 example/16.MARTINI/plot_lipid_diffusion_results.py` executed successfully and correctly reported no diffusion results yet.
+
+## 2026-02-23
+- Re-read and reinitialized `task_plan.md` for a new task: add a bilayer-only workflow with the same stage process as `example/16.MARTINI/run_sim_1rkl.sh`.
+- Added `example/16.MARTINI/run_sim_bilayer_only_1rkl_process.sh`.
+- Implemented stage/process parity with `run_sim_1rkl.sh` for stages `6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0`, including:
+- Per-stage preparation using `prepare_martini.py`.
+- Per-stage position carry-over via `set_initial_position.py`.
+- Stage-specific NPT target switching (`6.0/6.1` at 0, `6.2-6.6` at 1 bar reference).
+- Per-stage VTF extraction through `extract_martini_vtf.py` (`mode 1` for 6.x, `mode 2` for 7.0).
+- Adapted the workflow to bilayer-only input by copying `pdb/bilayer.MARTINI.pdb` to a runtime PDB id before stage preparation; omitted hybrid-only mapping/injection steps.
+- Set executable permission on the new script.
+- Validation: `bash -n example/16.MARTINI/run_sim_bilayer_only_1rkl_process.sh` passed.
+- Runtime debugging after user report:
+- Reproduced stage `6.0` failure (`ERROR: error -1` with HDF5 close-ID diagnostics) for both `bilayer` and `bilayer_bilayer_only` stage files.
+- Confirmed hybrid stage file (`outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_6.0.up`) still runs, narrowing issue to non-hybrid path checks.
+- Isolated root cause to HDF5 existence checks under HDF5 2.0:
+- Missing intermediate paths (e.g., `/input/hybrid_bb_map/atom_indices` in bilayer-only files) produced negative return values that were treated as hard errors by `h5_exists(...)`.
+- Patched `src/h5_support.cpp`:
+- `h5_exists(...)` now treats missing-path negative returns as "not found" and suppresses internal HDF5 existence-check errors via `H5E_BEGIN_TRY`.
+- Hardened `node_names_in_group(...)` to iterate via explicit group handles instead of brittle by-name `"."` traversal.
+- Patched `src/martini.cpp`:
+- Hardened local `attribute_exists(...)` helper so `"."` uses `H5Aexists(loc_id, attr)` directly, avoiding group-handle invalidation from `H5Oopen(..., ".")`.
+- Rebuilt binaries: `cmake --build obj -j4` completed successfully.
+- Validation: direct minimization command now succeeds on bilayer stage file (`rc=0`) and prints normal MARTINI/NPT initialization and minimization output.
+- Follow-up script fix:
+- Updated `example/16.MARTINI/run_sim_bilayer_only_1rkl_process.sh` stage `7.0` VTF extraction from mode `2` to mode `1` (mode `2` requires hybrid mapping datasets not present in bilayer-only files).
+- Validation: `bash -n example/16.MARTINI/run_sim_bilayer_only_1rkl_process.sh` passed after update.
+- Validation: full smoke run completed end-to-end (`rc=0`) with short settings:
+- `RUN_DIR=outputs/martini_test_bilayer_only_1rkl_process_smoke2 MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 ./run_sim_bilayer_only_1rkl_process.sh`.
+- New request: enlarge bilayer in `run_sim_bilayer_only_1rkl_process.sh` using the same stage-0 prep-process lineage as `run_sim_1rkl.sh`, without protein insertion.
+- Added `example/16.MARTINI/prepare_bilayer_only_system.py`:
+- Reuses `prepare_hybrid_system.py` tiling/cropping, box construction, ion-count calibration, and ion-placement helpers.
+- Builds enlarged bilayer-only packed PDB (`bilayer_packed.MARTINI.pdb`) using configurable XY scale around the template bilayer center.
+- Regenerates Na/Cl from target concentration with the same effective-volume calibration path used in hybrid prep.
+- Writes prep summary (`bilayer_prep_summary.json`) with box, counts, and scaling metrics.
+- Updated `example/16.MARTINI/run_sim_bilayer_only_1rkl_process.sh`:
+- Added stage-0 bilayer expansion prep step before stage `6.0` (`BILAYER_PREP_ENABLE=1` default).
+- Added prep controls: `BILAYER_PREP_SCRIPT`, `BILAYER_PREP_DIR`, `BILAYER_PACKED_PDB`, `BILAYER_XY_SCALE`, `SALT_MOLAR`, `ION_CUTOFF`, `BOX_PADDING_Z`, `PREP_SEED`.
+- Runtime PDB is now sourced from packed enlarged bilayer output when prep is enabled.
+- Validation: `python3 -m py_compile example/16.MARTINI/prepare_bilayer_only_system.py` passed.
+- Validation: `bash -n example/16.MARTINI/run_sim_bilayer_only_1rkl_process.sh` passed.
+- Validation: prep helper smoke run succeeded:
+- `python3 example/16.MARTINI/prepare_bilayer_only_system.py --bilayer-pdb pdb/bilayer.MARTINI.pdb --output-dir outputs/bilayer_prep_smoke --xy-scale 1.3 ...`
+- Produced `outputs/bilayer_prep_smoke/bilayer_packed.MARTINI.pdb` and summary showing enlarged XY box (`85.978 x 85.978`) and increased lipid count (`173` DOPC molecules equivalent by atom count).
+- Validation: full short workflow smoke completed end-to-end with enlarged bilayer (`rc=0`):
+- `RUN_DIR=outputs/martini_test_bilayer_only_1rkl_process_expand_smoke BILAYER_XY_SCALE=1.3 MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 ./run_sim_bilayer_only_1rkl_process.sh`.
+- Continued 2026-02-23 unified-prep migration per user request: enforce a single prep entrypoint (`example/16.MARTINI/prepare_system.py`) for bilayer/protein/both conversion to UPSIDE input.
+- Updated `task_plan.md` architecture decisions to remove legacy `prepare_bilayer_only_system.py` path and formalize single-script behavior.
+- Patched `example/16.MARTINI/prepare_system.py`:
+- Added explicit protein-ITP atom-type compatibility pre-check against selected dry MARTINI FF mass table (`UPSIDE_MARTINI_FF_DIR`, `dry_martini_v2.1.itp`).
+- Added clear stage-conversion guard that requires runtime protein ITP for `mode=protein` and `mode=both`.
+- Added early, descriptive error pathway for incompatible protein ITP bead types (instead of deferred failure inside `prepare_martini.py`).
+- Validation: `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py` passed.
+- Validation: `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_bilayer_only_1rkl_process.sh` passed.
+- Validation (unified script, bilayer mode):
+- `python3 example/16.MARTINI/prepare_system.py --mode bilayer ... --stage minimization` succeeded and produced `outputs/unified_bilayer_regress/test.input.up`.
+- Validation (unified script, protein mode with dry-compatible ITP):
+- `python3 example/16.MARTINI/prepare_system.py --mode protein --protein-cg-pdb pdb/1rkl_hybrid.MARTINI.pdb --protein-itp pdb/1rkl_hybrid_proa.itp --stage minimization ...` succeeded and produced `outputs/unified_protein_regress/test.input.up`.
+- Validation (unified script, both mode with dry-compatible ITP):
+- `python3 example/16.MARTINI/prepare_system.py --mode both --protein-cg-pdb pdb/1rkl_hybrid.MARTINI.pdb --protein-itp pdb/1rkl_hybrid_proa.itp --stage minimization ...` succeeded and produced `outputs/unified_both_regress/test.input.up`.
+- Validation (expected incompatibility behavior):
+- `python3 example/16.MARTINI/prepare_system.py --mode protein --protein-cg-pdb pdb/1ubq.MARTINI.pdb --protein-itp pdb/1ubq_proa.itp --stage minimization ...` now fails immediately with explicit missing-type list from dry FF compatibility check.
+- Validation (workflow regression): full short smoke run of `example/16.MARTINI/run_sim_bilayer_only_1rkl_process.sh` completed (`rc=0`) with unified prep script path and enlarged bilayer (`BILAYER_XY_SCALE=1.3`, 1-step equilibration/production stages).
+- Follow-up request: ensure `example/16.MARTINI/run_sim_1rkl.sh` also uses the universal prep script.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
+- Added universal prep controls: `UNIVERSAL_PREP_SCRIPT` (default `prepare_system.py`) and `UNIVERSAL_PREP_MODE` (default `both`).
+- Added startup validation that the universal prep script exists.
+- Rewired stage input generation in `prepare_stage_file()` to call `prepare_system.py` (`--prepare-structure 0 --stage ...`) instead of direct `prepare_martini.py` invocation.
+- Preserved existing stage-0 hybrid packing/mapping export (`prepare_hybrid_system.py`) and all downstream hybrid mapping injection/production augmentation logic.
+- Added workflow banner line to print active universal prep script/mode for run traceability.
+- Validation: `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+- Validation: `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py` passed.
+- Validation: short end-to-end smoke run of `run_sim_1rkl.sh` completed successfully (`rc=0`) with universal prep stage path:
+- `RUN_DIR=outputs/martini_test_1rkl_universal_smoke MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 ./run_sim_1rkl.sh`.
+- New stability task (2026-02-23): address production blow-up risk in `example/16.MARTINI/run_sim_1rkl.sh` suspected to come from lipid overpacking around embedded protein.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh` packing controls:
+- Increased default `PROTEIN_LIPID_CUTOFF` from `3.0` to `4.5` Angstrom.
+- Added new tunables: `PROTEIN_LIPID_MIN_GAP` (default `4.5`), `PROTEIN_LIPID_CUTOFF_STEP` (default `0.5`), `PROTEIN_LIPID_CUTOFF_MAX` (default `8.0`).
+- Implemented stage-0 hybrid packing retry loop in `prepare_hybrid_artifacts()`:
+- After each `prepare_hybrid_system.py` run, compute minimum protein-lipid distance from packed PDB.
+- If min gap is below target, increment cutoff and repack automatically.
+- If max cutoff is reached without meeting target, fail early with explicit remediation hint.
+- Added acceptance log line with observed min protein-lipid distance for diagnostics.
+- Validation: `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+- Validation: short end-to-end smoke run completed successfully (`rc=0`) with new packing safeguards:
+- `RUN_DIR=outputs/martini_test_1rkl_gapfix_smoke MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 ./run_sim_1rkl.sh`.
+- Observed in run log: `Hybrid packing accepted: min protein-lipid distance 4.562366 Å (target >= 4.5 Å)`.
+- Resulting packed hybrid system in smoke had fewer lipids than previous default-cutoff runs (`DOPC: 280` vs prior `289`), consistent with reduced near-protein crowding.
+- New SC-bilayer stabilization task (2026-02-23): add eval-only bilayer PO4-z clamp for hybrid sidechain-vs-bilayer interactions and provide faster direct SC-bilayer energy dumps.
+- Updated `src/martini.cpp` hybrid runtime/config:
+- Added new hybrid control attrs: `sc_env_po4_z_clamp_enabled`, `sc_env_po4_z_clamp_mode`, `sc_env_energy_dump_enabled`, `sc_env_energy_dump_stride`.
+- Added PO4 environment mask build from atom roles (`PO4` on non-protein atoms), initial-z reference capture logic for clamp mode `initial`, and stage-transition reset of clamp/dump state.
+- Extended SC-env pair kernel evaluation to optionally return LJ/Coul components alongside total pair energy.
+- Added PO4-z clamped env geometry in SC probabilistic interaction edge build path; SC-env gradients now suppress env `z` contribution for clamped PO4 edges.
+- Added SC-env energy accumulators (`total`, `lj`, `coul`) updated in final SC-env evaluation pass and stored in hybrid runtime state.
+- Added hybrid runtime diagnostics print fields for new controls and PO4 mask count.
+- Updated `src/main.h` and `src/martini.cpp` hybrid interface:
+- Added `is_sc_env_energy_dump_enabled(...)` and `sample_sc_env_energy_for_logging(...)` for logger integration.
+- Updated `src/main.cpp` logger setup:
+- When enabled, create `/output/diagnostics` group and log `sc_env_energy_total`, `sc_env_energy_lj`, `sc_env_energy_coul` via native HDF5 earrays.
+- Implemented per-frame cache sharing across the three logger lambdas so sampling occurs once per frame.
+- Updated workflow wiring in `example/16.MARTINI/run_sim_1rkl.sh`:
+- Added production control env vars with defaults:
+- `SC_ENV_PO4_Z_CLAMP_ENABLE=1`, `SC_ENV_PO4_Z_CLAMP_MODE=initial`, `SC_ENV_ENERGY_DUMP_ENABLE=1`, `SC_ENV_ENERGY_DUMP_STRIDE=1`.
+- Extended `set_hybrid_sc_controls` to write new attrs into `/input/hybrid_control`.
+- Passed new attrs during stage `7.0` production file preparation.
+- Validation:
+- `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed.
+- `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+- Build emitted only pre-existing warnings unrelated to this patch (no new build failures).
+- Redundancy-removal follow-up (single prep entrypoint in `run_sim_1rkl.sh`):
+- Updated `example/16.MARTINI/prepare_system.py` so `--mode both --prepare-structure 1` can also export hybrid mapping artifacts directly:
+- Added optional CLI args: `--protein-aa-pdb`, `--hybrid-mapping-output`, `--hybrid-bb-map-json-output`, `--box-padding-xy`.
+- Reused mapping helpers from `prepare_hybrid_system.py` to write `hybrid_mapping.h5` without duplicating mapping logic.
+- Added `copy_if_different(...)` guard to avoid same-file copy failures during runtime-file wiring.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh` to remove stage-0 dependency on `prepare_hybrid_system.py` and call only `prepare_system.py`:
+- Stage-0 packing/mapping now produced by universal prep invocation.
+- Stage conversion (`prepare_stage_file`) continues using universal prep (`--prepare-structure 0`) for all stages.
+- Added safe runtime copy checks when source/destination paths are identical.
+- Validation:
+- `python3 -m py_compile example/16.MARTINI/prepare_system.py` passed.
+- `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+- `run_sim_1rkl.sh` no longer references `prepare_hybrid_system.py` (only `prepare_system.py` remains in executable flow).
+- End-to-end short smoke run completed successfully with single-prep flow (`rc=0`):
+- `RUN_DIR=outputs/martini_test_1rkl_singleprep_smoke MARTINIZE_ENABLE=0 PROTEIN_CG_PDB=pdb/1rkl_hybrid.MARTINI.pdb PROTEIN_ITP=pdb/1rkl_hybrid_proa.itp MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 ./run_sim_1rkl.sh`.
+- Input-preservation follow-up (2026-02-23): user requested keeping `example/16.MARTINI/pdb/1rkl_hybrid.MARTINI.pdb` unchanged as CHARMM-GUI source.
+- Root cause identified in `example/16.MARTINI/run_sim_1rkl.sh`: runtime defaults wrote directly to repository `pdb/`:
+- `RUNTIME_PDB_FILE="${SCRIPT_DIR}/pdb/${RUNTIME_PDB_ID}.MARTINI.pdb"` and `RUNTIME_ITP_FILE="${SCRIPT_DIR}/pdb/${RUNTIME_PDB_ID}_proa.itp"`.
+- With default `RUNTIME_PDB_ID=1rkl_hybrid`, stage-0 runtime copy updated tracked input file.
+- Fix applied in `example/16.MARTINI/run_sim_1rkl.sh`:
+- Runtime defaults now point to run-scoped paths:
+- `RUNTIME_PDB_FILE="${RUNTIME_PDB_FILE:-${HYBRID_PREP_DIR}/${RUNTIME_PDB_ID}.MARTINI.pdb}"`
+- `RUNTIME_ITP_FILE="${RUNTIME_ITP_FILE:-${HYBRID_PREP_DIR}/${RUNTIME_PDB_ID}_proa.itp}"`
+- Restored `example/16.MARTINI/pdb/1rkl_hybrid.MARTINI.pdb` to tracked `HEAD` content.
+- Validation:
+- `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+- `git diff -- example/16.MARTINI/pdb/1rkl_hybrid.MARTINI.pdb` shows no differences.
+- Hybrid mapping mismatch follow-up (2026-02-23): fixed `Hybrid mapping n_atom mismatch` during `run_sim_1rkl.sh` stage preparation.
+- Root cause:
+- `prepare_system.py` was preparing packed runtime files under run-scoped paths, but `prepare_martini.py` still read inputs from legacy `pdb/<pdb_id>.MARTINI.pdb` and `pdb/<pdb_id>_proa.itp`.
+- After restoring the CHARMM-GUI source PDB, stage conversion and mapping were built from different structures, causing atom-count mismatch at mapping injection.
+- Fixes:
+- Updated `example/16.MARTINI/prepare_martini.py`:
+- Added runtime path resolvers `runtime_input_pdb_path(...)` and `runtime_protein_itp_path(...)` with env overrides:
+- `UPSIDE_RUNTIME_PDB_FILE`
+- `UPSIDE_RUNTIME_ITP_FILE`
+- Replaced hardcoded legacy path usage in main preparation and production-connectivity path resolution with these helpers.
+- Updated `example/16.MARTINI/prepare_system.py`:
+- `run_prepare_martini(...)` now passes runtime path env overrides into `prepare_martini.py` subprocess.
+- Validation:
+- `python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_martini.py` passed.
+- `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+- Full short smoke run completed end-to-end (`rc=0`) with no mismatch:
+- `cd example/16.MARTINI && RUN_DIR=outputs/martini_test_1rkl_mismatch_fix_smoke MARTINIZE_ENABLE=0 PROTEIN_CG_PDB=pdb/1rkl_hybrid.MARTINI.pdb PROTEIN_ITP=pdb/1rkl_hybrid_proa.itp MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 ./run_sim_1rkl.sh`.
+- Observed runtime logs now consistently read:
+- `Using MARTINI PDB as base structure: .../outputs/.../hybrid_prep/1rkl_hybrid.MARTINI.pdb`
+- `Using protein topology from: .../outputs/.../hybrid_prep/1rkl_hybrid_proa.itp`

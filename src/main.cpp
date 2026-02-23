@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
+#include <array>
 
 
 #include "box.h"  // Simulation box PBC and NPT barostat
@@ -1114,6 +1115,40 @@ try {
             if(simulation_box::ewald::is_enabled(systems[ns].engine)) {
                 systems[ns].logger->add_logger<float>("ewald_reciprocal_energy", {1}, [ns, &systems](float* buffer) {
                     buffer[0] = simulation_box::ewald::get_reciprocal_energy(systems[ns].engine);
+                });
+            }
+
+            if(martini_hybrid::is_sc_env_energy_dump_enabled(systems[ns].engine)) {
+                ensure_group(systems[ns].logger->logging_group.get(), "diagnostics");
+                auto sc_env_cache = std::make_shared<std::array<float,3>>(std::array<float,3>{{0.f, 0.f, 0.f}});
+                auto sc_env_cache_valid = std::make_shared<bool>(false);
+                systems[ns].logger->add_logger<float>("diagnostics/sc_env_energy_total", {1}, [ns, &systems, sc_env_cache, sc_env_cache_valid](float* buffer) {
+                    float total = 0.f, lj = 0.f, coul = 0.f;
+                    if(martini_hybrid::sample_sc_env_energy_for_logging(systems[ns].engine, total, lj, coul)) {
+                        (*sc_env_cache)[0] = total;
+                        (*sc_env_cache)[1] = lj;
+                        (*sc_env_cache)[2] = coul;
+                        *sc_env_cache_valid = true;
+                        buffer[0] = total;
+                    } else {
+                        *sc_env_cache_valid = false;
+                        buffer[0] = 0.f;
+                    }
+                });
+                systems[ns].logger->add_logger<float>("diagnostics/sc_env_energy_lj", {1}, [sc_env_cache, sc_env_cache_valid](float* buffer) {
+                    if(*sc_env_cache_valid) {
+                        buffer[0] = (*sc_env_cache)[1];
+                    } else {
+                        buffer[0] = 0.f;
+                    }
+                });
+                systems[ns].logger->add_logger<float>("diagnostics/sc_env_energy_coul", {1}, [sc_env_cache, sc_env_cache_valid](float* buffer) {
+                    if(*sc_env_cache_valid) {
+                        buffer[0] = (*sc_env_cache)[2];
+                        *sc_env_cache_valid = false;
+                    } else {
+                        buffer[0] = 0.f;
+                    }
                 });
             }
         }

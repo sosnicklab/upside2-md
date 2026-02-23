@@ -333,6 +333,20 @@ struct HybridRuntimeState {
     float sc_env_relax_dt = 0.002f;
     float sc_env_restraint_k = 5.0f;
     float sc_env_max_displacement = 2.0f;
+    bool sc_env_po4_z_clamp_enabled = false;
+    std::string sc_env_po4_z_clamp_mode = "initial";
+    bool sc_env_energy_dump_enabled = false;
+    int sc_env_energy_dump_stride = 1;
+    std::vector<unsigned char> sc_env_po4_env_mask;
+    std::vector<float> sc_env_po4_z_reference;
+    bool sc_env_po4_z_reference_initialized = false;
+    float sc_env_energy_total = 0.f;
+    float sc_env_energy_lj = 0.f;
+    float sc_env_energy_coul = 0.f;
+    float sc_env_last_logged_total = 0.f;
+    float sc_env_last_logged_lj = 0.f;
+    float sc_env_last_logged_coul = 0.f;
+    uint64_t sc_env_log_counter = 0;
     float nonprotein_hs_force_cap = 100.0f;
     float nonprotein_hs_potential_cap = 5000.0f;
     std::vector<std::array<float,3>> prev_bb_pos;
@@ -343,6 +357,7 @@ struct HybridRuntimeState {
 
 static std::map<DerivEngine*, std::shared_ptr<HybridRuntimeState>> g_hybrid_state;
 static std::map<const CoordNode*, std::shared_ptr<HybridRuntimeState>> g_hybrid_state_by_coord;
+static std::string trim_h5_string(const std::string& in);
 
 static inline const std::vector<int>* find_sc_rows_for_proxy(const HybridRuntimeState& st, int proxy_idx) {
     auto it = st.sc_rows_by_proxy.find(proxy_idx);
@@ -378,6 +393,18 @@ static std::vector<std::string> split_csv_tokens(const std::string& s) {
     return out;
 }
 
+static std::string normalize_role_token(const std::string& raw) {
+    std::string out = trim_h5_string(raw);
+    for(char& c : out) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return out;
+}
+
+static std::string normalize_mode_token(const std::string& raw) {
+    std::string out = trim_h5_string(raw);
+    for(char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return out;
+}
+
 static inline unsigned char classify_atom_role_name(const std::string& raw_name) {
     size_t begin = 0;
     while(begin < raw_name.size() &&
@@ -394,6 +421,31 @@ static inline unsigned char classify_atom_role_name(const std::string& raw_name)
     if(name == "BB") return ROLE_BB;
     if(name.size() >= 2 && name[0] == 'S' && name[1] == 'C') return ROLE_SC;
     return ROLE_OTHER;
+}
+
+static inline bool is_env_po4_atom(const HybridRuntimeState& st, int atom) {
+    return atom >= 0 &&
+           atom < static_cast<int>(st.sc_env_po4_env_mask.size()) &&
+           st.sc_env_po4_env_mask[atom] != 0;
+}
+
+static void initialize_sc_env_po4_z_reference(
+        HybridRuntimeState& st,
+        VecArray pos,
+        int n_atom) {
+    if(!st.enabled || !st.active || !st.sc_env_po4_z_clamp_enabled) return;
+    if(st.sc_env_po4_z_clamp_mode != "initial") return;
+    if(st.sc_env_po4_z_reference_initialized &&
+       static_cast<int>(st.sc_env_po4_z_reference.size()) == n_atom) {
+        return;
+    }
+
+    st.sc_env_po4_z_reference.assign(static_cast<size_t>(n_atom), 0.f);
+    for(int i = 0; i < n_atom; ++i) {
+        if(!is_env_po4_atom(st, i)) continue;
+        st.sc_env_po4_z_reference[i] = pos(2, i);
+    }
+    st.sc_env_po4_z_reference_initialized = true;
 }
 
 static inline bool same_protein_membership_pair(const HybridRuntimeState& st, int i, int j) {
@@ -787,6 +839,14 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.sc_env_relax_dt = read_attribute<float>(ctrl.get(), ".", "sc_env_relax_dt", out.sc_env_relax_dt);
     out.sc_env_restraint_k = read_attribute<float>(ctrl.get(), ".", "sc_env_restraint_k", out.sc_env_restraint_k);
     out.sc_env_max_displacement = read_attribute<float>(ctrl.get(), ".", "sc_env_max_displacement", out.sc_env_max_displacement);
+    out.sc_env_po4_z_clamp_enabled =
+        (read_attribute<int>(ctrl.get(), ".", "sc_env_po4_z_clamp_enabled", out.sc_env_po4_z_clamp_enabled ? 1 : 0) != 0);
+    out.sc_env_po4_z_clamp_mode =
+        read_string_attribute_or_default(ctrl.get(), "sc_env_po4_z_clamp_mode", out.sc_env_po4_z_clamp_mode);
+    out.sc_env_energy_dump_enabled =
+        (read_attribute<int>(ctrl.get(), ".", "sc_env_energy_dump_enabled", out.sc_env_energy_dump_enabled ? 1 : 0) != 0);
+    out.sc_env_energy_dump_stride =
+        read_attribute<int>(ctrl.get(), ".", "sc_env_energy_dump_stride", out.sc_env_energy_dump_stride);
     out.nonprotein_hs_force_cap =
         read_attribute<float>(ctrl.get(), ".", "nonprotein_hs_force_cap", out.nonprotein_hs_force_cap);
     out.nonprotein_hs_potential_cap =
@@ -797,6 +857,10 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     if(!std::isfinite(out.sc_env_relax_dt) || out.sc_env_relax_dt <= 0.f) out.sc_env_relax_dt = 0.002f;
     if(!std::isfinite(out.sc_env_restraint_k) || out.sc_env_restraint_k < 0.f) out.sc_env_restraint_k = 0.f;
     if(!std::isfinite(out.sc_env_max_displacement) || out.sc_env_max_displacement < 0.f) out.sc_env_max_displacement = 0.f;
+    out.sc_env_po4_z_clamp_mode = normalize_mode_token(out.sc_env_po4_z_clamp_mode);
+    if(out.sc_env_po4_z_clamp_mode.empty()) out.sc_env_po4_z_clamp_mode = "initial";
+    if(out.sc_env_po4_z_clamp_mode != "initial") out.sc_env_po4_z_clamp_mode = "initial";
+    if(out.sc_env_energy_dump_stride < 1) out.sc_env_energy_dump_stride = 1;
     if(out.nonprotein_hs_force_cap < 0.f) out.nonprotein_hs_force_cap = 0.f;
     if(out.nonprotein_hs_potential_cap < 0.f) out.nonprotein_hs_potential_cap = 0.f;
 
@@ -887,6 +951,34 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         });
     }
 
+    std::vector<std::string> atom_roles(n_atom, "");
+    bool has_roles = false;
+    if(h5_exists(root, "/input/atom_roles")) {
+        has_roles = true;
+        traverse_string_dset<1>(root, "/input/atom_roles", [&](size_t i, const std::string& v) {
+            if(static_cast<int>(i) < n_atom) atom_roles[i] = normalize_role_token(v);
+        });
+    } else if(h5_exists(root, "/input/atom_names")) {
+        has_roles = true;
+        traverse_string_dset<1>(root, "/input/atom_names", [&](size_t i, const std::string& v) {
+            if(static_cast<int>(i) < n_atom) atom_roles[i] = normalize_role_token(v);
+        });
+    }
+
+    if(out.sc_env_po4_z_clamp_enabled && !out.protein_membership.empty()) {
+        out.sc_env_po4_env_mask.assign(static_cast<size_t>(n_atom), 0u);
+        if(has_roles) {
+            for(int i = 0; i < n_atom; ++i) {
+                bool is_protein = (i < (int)out.protein_membership.size() && out.protein_membership[i] >= 0);
+                if(is_protein) continue;
+                if(i >= (int)atom_roles.size()) continue;
+                if(atom_roles[i] == "PO4") {
+                    out.sc_env_po4_env_mask[i] = 1u;
+                }
+            }
+        }
+    }
+
     if(out.preprod_rigid && !out.protein_membership.empty()) {
         std::set<std::string> lipid_head_roles{"PO4"};
         std::string role_csv = read_string_attribute_or_default(
@@ -894,21 +986,7 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         auto role_tokens = split_csv_tokens(role_csv);
         if(!role_tokens.empty()) {
             lipid_head_roles.clear();
-            for(const auto& tok : role_tokens) lipid_head_roles.insert(tok);
-        }
-
-        std::vector<std::string> atom_roles(n_atom, "");
-        bool has_roles = false;
-        if(h5_exists(root, "/input/atom_roles")) {
-            has_roles = true;
-            traverse_string_dset<1>(root, "/input/atom_roles", [&](size_t i, const std::string& v) {
-                if(static_cast<int>(i) < n_atom) atom_roles[i] = trim_h5_string(v);
-            });
-        } else if(h5_exists(root, "/input/atom_names")) {
-            has_roles = true;
-            traverse_string_dset<1>(root, "/input/atom_names", [&](size_t i, const std::string& v) {
-                if(static_cast<int>(i) < n_atom) atom_roles[i] = trim_h5_string(v);
-            });
+            for(const auto& tok : role_tokens) lipid_head_roles.insert(normalize_role_token(tok));
         }
 
         out.preprod_fixed_atom_indices.reserve(static_cast<size_t>(n_atom));
@@ -1096,6 +1174,15 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->has_prev_bb_rmsd = false;
         st->prev_bb_pos.clear();
         st->prev_bb_pos_rmsd.clear();
+        st->sc_env_po4_z_reference.clear();
+        st->sc_env_po4_z_reference_initialized = false;
+        st->sc_env_energy_total = 0.f;
+        st->sc_env_energy_lj = 0.f;
+        st->sc_env_energy_coul = 0.f;
+        st->sc_env_last_logged_total = 0.f;
+        st->sc_env_last_logged_lj = 0.f;
+        st->sc_env_last_logged_coul = 0.f;
+        st->sc_env_log_counter = 0;
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
         return;
@@ -1106,6 +1193,15 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->has_prev_bb_rmsd = false;
         st->prev_bb_pos.clear();
         st->prev_bb_pos_rmsd.clear();
+        st->sc_env_po4_z_reference.clear();
+        st->sc_env_po4_z_reference_initialized = false;
+        st->sc_env_energy_total = 0.f;
+        st->sc_env_energy_lj = 0.f;
+        st->sc_env_energy_coul = 0.f;
+        st->sc_env_last_logged_total = 0.f;
+        st->sc_env_last_logged_lj = 0.f;
+        st->sc_env_last_logged_coul = 0.f;
+        st->sc_env_log_counter = 0;
     }
     if(st->preprod_rigid && !st->active) {
         martini_fix_rigid::set_dynamic_fixed_atoms(*engine, st->preprod_fixed_atom_indices);
@@ -1260,7 +1356,9 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
     }
     if(st->has_config && st->enabled) {
-        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d nonprotein_hs=%d force_frame_align=%d integration_rmsd_align=%d hs_force_cap=%.3f hs_pot_cap=%.3f sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_relax_dt=%.4f sc_rest_k=%.3f sc_max_disp=%.3f preprod_fixed=%zu preprod_zfixed=%zu\n",
+        size_t n_po4_env = 0;
+        for(auto flag : st->sc_env_po4_env_mask) if(flag) ++n_po4_env;
+        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d nonprotein_hs=%d force_frame_align=%d integration_rmsd_align=%d hs_force_cap=%.3f hs_pot_cap=%.3f sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_relax_dt=%.4f sc_rest_k=%.3f sc_max_disp=%.3f sc_po4_z_clamp=%d sc_po4_mode=%s sc_po4_env=%zu sc_energy_dump=%d sc_energy_stride=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
                current_stage.c_str(),
                st->activation_stage.c_str(),
                st->active ? 1 : 0,
@@ -1282,6 +1380,11 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
                st->sc_env_relax_dt,
                st->sc_env_restraint_k,
                st->sc_env_max_displacement,
+               st->sc_env_po4_z_clamp_enabled ? 1 : 0,
+               st->sc_env_po4_z_clamp_mode.c_str(),
+               n_po4_env,
+               st->sc_env_energy_dump_enabled ? 1 : 0,
+               st->sc_env_energy_dump_stride,
                st->preprod_fixed_atom_indices.size(),
                st->preprod_z_fixed_atom_indices.size());
     } else if(st->has_config) {
@@ -1299,6 +1402,36 @@ bool is_hybrid_active(const DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
     return it != g_hybrid_state.end() && it->second && it->second->active;
+}
+
+bool is_sc_env_energy_dump_enabled(const DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+    auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
+    if(it == g_hybrid_state.end() || !it->second) return false;
+    const auto& st = it->second;
+    return st->enabled && st->sc_env_energy_dump_enabled;
+}
+
+bool sample_sc_env_energy_for_logging(DerivEngine& engine, float& total, float& lj, float& coul) {
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+    auto it = g_hybrid_state.find(&engine);
+    if(it == g_hybrid_state.end() || !it->second) return false;
+    auto& st = it->second;
+    if(!st->enabled || !st->sc_env_energy_dump_enabled) return false;
+
+    st->sc_env_log_counter += 1;
+    bool emit_new = (st->sc_env_energy_dump_stride <= 1) ||
+                    ((st->sc_env_log_counter - 1) % static_cast<uint64_t>(st->sc_env_energy_dump_stride) == 0u);
+    if(emit_new) {
+        st->sc_env_last_logged_total = st->sc_env_energy_total;
+        st->sc_env_last_logged_lj = st->sc_env_energy_lj;
+        st->sc_env_last_logged_coul = st->sc_env_energy_coul;
+    }
+
+    total = st->sc_env_last_logged_total;
+    lj = st->sc_env_last_logged_lj;
+    coul = st->sc_env_last_logged_coul;
+    return true;
 }
 
 bool preproduction_requires_rigid(const DerivEngine& engine) {
@@ -1964,6 +2097,13 @@ namespace martini_masses {
 
 // Helper to check if an HDF5 attribute exists
 inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* attr_name) {
+    // H5Oopen(loc, ".") may alias the same ID in some HDF5 builds.
+    // Closing that alias can invalidate the caller's handle.
+    if(!obj_name || obj_name[0] == '\0' || (obj_name[0] == '.' && obj_name[1] == '\0')) {
+        htri_t exists = H5Aexists(loc_id, attr_name);
+        return exists > 0;
+    }
+
     hid_t obj_id = H5Oopen(loc_id, obj_name, H5P_DEFAULT);
     if (obj_id < 0) return false;
     htri_t exists = H5Aexists(obj_id, attr_name);
@@ -2745,6 +2885,14 @@ struct MartiniPotential : public PotentialNode
             martini_hybrid::refresh_bb_positions_if_active(*hybrid_state, pos1, n_atom);
             mutable_hybrid = const_cast<martini_hybrid::HybridRuntimeState*>(hybrid_state.get());
             coupling_align = martini_hybrid::build_coupling_alignment(*mutable_hybrid, pos1, n_atom);
+            if(mutable_hybrid) {
+                if(mutable_hybrid->sc_env_energy_dump_enabled) {
+                    mutable_hybrid->sc_env_energy_total = 0.f;
+                    mutable_hybrid->sc_env_energy_lj = 0.f;
+                    mutable_hybrid->sc_env_energy_coul = 0.f;
+                }
+                martini_hybrid::initialize_sc_env_po4_z_reference(*mutable_hybrid, pos1, n_atom);
+            }
         }
         
         // --- REMOVED: fill(pos1_sens, 3, n_atom, 0.f); ---
@@ -2766,6 +2914,9 @@ struct MartiniPotential : public PotentialNode
             hybrid_state->enabled &&
             hybrid_state->active &&
             !hybrid_state->sc_proxy_atom_index.empty());
+        float sc_env_energy_total = 0.f;
+        float sc_env_energy_lj = 0.f;
+        float sc_env_energy_coul = 0.f;
         std::vector<std::array<float,3>> sc_row_proxy_grad;
         std::vector<float> sc_row_probability;
 
@@ -2791,12 +2942,16 @@ struct MartiniPotential : public PotentialNode
                                    float lj_force_cap_mag,
                                    float coul_force_cap_mag,
                                    float hs_force_cap_mag,
-                                   float hs_pot_cap_mag) -> bool {
+                                   float hs_pot_cap_mag,
+                                   float* pair_lj_potential,
+                                   float* pair_coul_potential) -> bool {
             auto dr = pa - pb;
             auto dist2 = mag2(dr);
             auto dist = sqrtf(max(dist2, kMinDistance));
             pair_potential = 0.f;
             pair_force = make_zero<3>();
+            if(pair_lj_potential) *pair_lj_potential = 0.f;
+            if(pair_coul_potential) *pair_coul_potential = 0.f;
 
             if(hard_sphere_mode) {
                 if(eps == 0.f || sig == 0.f) return false;
@@ -2816,6 +2971,7 @@ struct MartiniPotential : public PotentialNode
                     if(hs_pot_cap_mag > 0.f && pair_potential > hs_pot_cap_mag) {
                         pair_potential = hs_pot_cap_mag;
                     }
+                    if(pair_lj_potential) *pair_lj_potential = pair_potential;
                     pair_force = (wca_force_mag / eval_dist) * dr;
                     cap_force_vector(pair_force, hs_force_cap_mag);
                     return true;
@@ -2840,6 +2996,7 @@ struct MartiniPotential : public PotentialNode
                         Vec<3> lj_force = (lj_force_mag/dist) * dr;
                         cap_force_vector(lj_force, lj_force_cap_mag);
                         pair_potential += lj_pot;
+                        if(pair_lj_potential) *pair_lj_potential += lj_pot;
                         pair_force += lj_force;
                     }
                 }
@@ -2878,6 +3035,7 @@ struct MartiniPotential : public PotentialNode
                     Vec<3> coul_force = (coul_force_mag/dist) * dr;
                     cap_force_vector(coul_force, coul_force_cap_mag);
                     pair_potential += coul_pot;
+                    if(pair_coul_potential) *pair_coul_potential += coul_pot;
                     pair_force += coul_force;
                 }
             }
@@ -3281,6 +3439,7 @@ struct MartiniPotential : public PotentialNode
             int env_atom = -1;
             bool proxy_is_i = false;
             bool env_is_protein = false;
+            bool env_z_clamped = false;
             float eps = 0.f;
             float sig = 0.f;
             float qi = 0.f;
@@ -3394,6 +3553,14 @@ struct MartiniPotential : public PotentialNode
                         edge.qi = qi;
                         edge.qj = qj;
                         auto env_pos = proxy_is_i ? p2 : p1;
+                        if(mutable_hybrid &&
+                           mutable_hybrid->sc_env_po4_z_clamp_enabled &&
+                           !env_is_protein &&
+                           martini_hybrid::is_env_po4_atom(*mutable_hybrid, env_atom) &&
+                           env_atom < static_cast<int>(mutable_hybrid->sc_env_po4_z_reference.size())) {
+                            env_pos[2] = mutable_hybrid->sc_env_po4_z_reference[env_atom];
+                            edge.env_z_clamped = true;
+                        }
                         edge.env_pos = std::array<float,3>{{env_pos[0], env_pos[1], env_pos[2]}};
                         sc_env_edges.push_back(edge);
                         continue;
@@ -3409,7 +3576,7 @@ struct MartiniPotential : public PotentialNode
                 hs_force_cap = hybrid_state->nonprotein_hs_force_cap;
                 hs_pot_cap = hybrid_state->nonprotein_hs_potential_cap;
             }
-            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, hard_sphere_pair, pair_pot, force, 0.f, 0.f, hs_force_cap, hs_pot_cap)) {
+            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, hard_sphere_pair, pair_pot, force, 0.f, 0.f, hs_force_cap, hs_pot_cap, nullptr, nullptr)) {
                 continue;
             }
             if(pot) *pot += pair_pot;
@@ -3461,7 +3628,9 @@ struct MartiniPotential : public PotentialNode
                                             hybrid_state->sc_env_lj_force_cap,
                                             hybrid_state->sc_env_coul_force_cap,
                                             0.f,
-                                            0.f)) {
+                                            0.f,
+                                            nullptr,
+                                            nullptr)) {
                             continue;
                         }
                         auto gi = -pair_force;
@@ -3519,6 +3688,8 @@ struct MartiniPotential : public PotentialNode
                     int row = -1;
                     float prior = 0.f;
                     float pair_pot = 0.f;
+                    float pair_lj = 0.f;
+                    float pair_coul = 0.f;
                     Vec<3> proxy_grad = make_zero<3>();
                     Vec<3> env_grad = make_zero<3>();
                 };
@@ -3539,12 +3710,16 @@ struct MartiniPotential : public PotentialNode
 
                     Vec<3> pair_force = make_zero<3>();
                     float pair_pot = 0.f;
+                    float pair_lj = 0.f;
+                    float pair_coul = 0.f;
                     if(!eval_pair_force(pa, pb, edge.eps, edge.sig, edge.qi, edge.qj, false,
                                         pair_pot, pair_force,
                                         hybrid_state->sc_env_lj_force_cap,
                                         hybrid_state->sc_env_coul_force_cap,
                                         0.f,
-                                        0.f)) {
+                                        0.f,
+                                        &pair_lj,
+                                        &pair_coul)) {
                         continue;
                     }
 
@@ -3552,6 +3727,9 @@ struct MartiniPotential : public PotentialNode
                     auto gj = pair_force;
                     auto proxy_grad = edge.proxy_is_i ? gi : gj;
                     auto env_grad = edge.proxy_is_i ? gj : gi;
+                    if(edge.env_z_clamped) {
+                        env_grad[2] = 0.f;
+                    }
 
                     if(coupling_align.enabled) {
                         auto gproxy = std::array<float,3>{proxy_grad[0], proxy_grad[1], proxy_grad[2]};
@@ -3565,6 +3743,8 @@ struct MartiniPotential : public PotentialNode
                     ev.row = r;
                     ev.prior = prior;
                     ev.pair_pot = pair_pot;
+                    ev.pair_lj = pair_lj;
+                    ev.pair_coul = pair_coul;
                     ev.proxy_grad = proxy_grad;
                     ev.env_grad = env_grad;
                     evals.push_back(ev);
@@ -3582,7 +3762,9 @@ struct MartiniPotential : public PotentialNode
                     }
 
                     if(z_shift > 1.0e-20f && std::isfinite(z_shift)) {
-                        if(pot) *pot += min_pair_pot - logf(z_shift);
+                        float free_energy = min_pair_pot - logf(z_shift);
+                        if(pot) *pot += free_energy;
+                        sc_env_energy_total += free_energy;
                         float inv_z = 1.f / z_shift;
                         for(const auto& ev : evals) {
                             float shifted = ev.pair_pot - min_pair_pot;
@@ -3596,6 +3778,8 @@ struct MartiniPotential : public PotentialNode
                                 sc_row_proxy_grad[ev.row][1] += w * ev.proxy_grad[1];
                                 sc_row_proxy_grad[ev.row][2] += w * ev.proxy_grad[2];
                             }
+                            sc_env_energy_lj += w * ev.pair_lj;
+                            sc_env_energy_coul += w * ev.pair_coul;
                             env_grad_total += w * ev.env_grad;
                             has_env_grad = true;
                         }
@@ -3605,11 +3789,14 @@ struct MartiniPotential : public PotentialNode
                             float w = ev.prior;
                             if(!(w > 0.f) || !std::isfinite(w)) continue;
                             if(pot) *pot += w * ev.pair_pot;
+                            sc_env_energy_total += w * ev.pair_pot;
                             if(ev.row >= 0 && ev.row < static_cast<int>(sc_row_proxy_grad.size())) {
                                 sc_row_proxy_grad[ev.row][0] += w * ev.proxy_grad[0];
                                 sc_row_proxy_grad[ev.row][1] += w * ev.proxy_grad[1];
                                 sc_row_proxy_grad[ev.row][2] += w * ev.proxy_grad[2];
                             }
+                            sc_env_energy_lj += w * ev.pair_lj;
+                            sc_env_energy_coul += w * ev.pair_coul;
                             env_grad_total += w * ev.env_grad;
                             has_env_grad = true;
                         }
@@ -3630,6 +3817,11 @@ struct MartiniPotential : public PotentialNode
         if(hybrid_state) {
             martini_hybrid::project_sc_gradient_if_active(*hybrid_state, pos1_sens, n_atom, sc_row_proxy_grad);
             martini_hybrid::project_bb_gradient_if_active(*hybrid_state, pos1_sens, n_atom);
+        }
+        if(mutable_hybrid && mutable_hybrid->sc_env_energy_dump_enabled) {
+            mutable_hybrid->sc_env_energy_total = sc_env_energy_total;
+            mutable_hybrid->sc_env_energy_lj = sc_env_energy_lj;
+            mutable_hybrid->sc_env_energy_coul = sc_env_energy_coul;
         }
     }
     

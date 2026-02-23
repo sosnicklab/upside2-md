@@ -49,9 +49,20 @@ bool h5_exists(hid_t base, const char* nm) {
     // There is some special case problem with '.', so we 
     // will always return true since base is assumed to exist
     if(nm==std::string(".")) return true; 
-    
-    return h5_noerr(H5Lexists(base, nm, H5P_DEFAULT)) &&
-        h5_noerr(H5Oexists_by_name(base, nm, H5P_DEFAULT));
+
+    // HDF5 2.0 may return negative values for missing intermediate path
+    // components (instead of a clean 0). Treat those as "not present".
+    htri_t link_exists = 0;
+    H5E_BEGIN_TRY {
+        link_exists = H5Lexists(base, nm, H5P_DEFAULT);
+    } H5E_END_TRY;
+    if(link_exists <= 0) return false;
+
+    htri_t obj_exists = 0;
+    H5E_BEGIN_TRY {
+        obj_exists = H5Oexists_by_name(base, nm, H5P_DEFAULT);
+    } H5E_END_TRY;
+    return obj_exists > 0;
 }
 
 bool read_attribute(void* attr_value_output, hid_t h5, const char* path, const char* attr_name, hid_t predtype)
@@ -278,21 +289,43 @@ std::vector<std::string>
 node_names_in_group(const hid_t loc, const std::string grp_name) {
     std::vector<std::string> names;
 
-    H5G_info_t info;
-    h5_noerr(H5Gget_info_by_name(loc, grp_name.c_str(), &info, H5P_DEFAULT));
+    // HDF5 by-name calls with "." can be brittle in some builds; iterate
+    // through an explicit group handle instead.
+    hid_t grp = -1;
+    bool close_grp = false;
+    if(grp_name.empty() || grp_name == ".") {
+        grp = loc;
+    } else {
+        grp = h5_noerr(H5Gopen2(loc, grp_name.c_str(), H5P_DEFAULT));
+        close_grp = true;
+    }
 
-    for(int i=0; i<int(info.nlinks); ++i) {
-        // 1+ is for NULL terminator
-        size_t name_size = 1 + h5_noerr(
-                 H5Lget_name_by_idx(loc, grp_name.c_str(), H5_INDEX_NAME, H5_ITER_INC, i,
-                    nullptr, 0, H5P_DEFAULT));
+    try {
+        H5G_info_t info;
+        h5_noerr(H5Gget_info(grp, &info));
 
-        auto tmp = std::unique_ptr<char[]>(new char[name_size]);
-        h5_noerr(H5Lget_name_by_idx(loc, grp_name.c_str(), H5_INDEX_NAME, H5_ITER_INC, i,
+        for(hsize_t i = 0; i < info.nlinks; ++i) {
+            ssize_t raw_len = H5Lget_name_by_idx(
+                    grp, ".", H5_INDEX_NAME, H5_ITER_INC, i,
+                    nullptr, 0, H5P_DEFAULT);
+            if(raw_len < 0) {
+                h5_noerr(static_cast<hid_t>(raw_len));
+            }
+
+            size_t name_size = 1u + static_cast<size_t>(raw_len); // include NULL terminator
+            auto tmp = std::unique_ptr<char[]>(new char[name_size]);
+            h5_noerr(H5Lget_name_by_idx(
+                    grp, ".", H5_INDEX_NAME, H5_ITER_INC, i,
                     tmp.get(), name_size, H5P_DEFAULT));
 
-        names.emplace_back(tmp.get());
+            names.emplace_back(tmp.get());
+        }
+    } catch(...) {
+        if(close_grp) H5Gclose(grp);
+        throw;
     }
+
+    if(close_grp) H5Gclose(grp);
     return names;
 }
 
