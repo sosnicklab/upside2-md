@@ -1443,3 +1443,21 @@
   - 5-step production probe on `/tmp/1rkl.stage_7.0.aligncheck.up` with `coupling_align_debug=1`, `coupling_align_interval=1`:
     - runtime parsed `integration_rmsd_align=1`.
     - printed `Hybrid integration RMSD-align` exactly 4 times over 5 steps (first step seeds reference), confirming one alignment event per integration cycle.
+
+## 2026-02-23 (Rigid Dry-MARTINI Workflow Variant: Protein Frozen Through Stage 7.0)
+- Re-read `task_plan.md` and implemented a separate workflow script:
+  - added `run_sim_1rkl_rigid_dry.sh` under `example/16.MARTINI/` (copied from `run_sim_1rkl.sh` and specialized for rigid-protein dry-MARTINI runs).
+- Key behavior changes in the new workflow:
+  - stage files now force `/input/hybrid_control/activation_stage` to a non-used token (`__hybrid_disabled__`) via `set_hybrid_activation_stage(...)`, while keeping `enable=1` and `preprod_protein_mode=rigid`.
+  - production-stage Upside node injection is disabled in this variant (no `augment_production_rotamer_nodes` call).
+  - production-stage SC control attribute injection is disabled in this variant (no `set_hybrid_sc_controls` call).
+  - stage `7.0` trajectory export uses VTF mode `1` (MARTINI-only) instead of mode `2` (no protein AA/SC back-mapping output).
+  - production timestep default is restored to MARTINI-only scale (`PROD_TIME_STEP=0.010`) for this rigid workflow.
+  - removed unnecessary validation checks for Upside backbone/rotamer library files that are no longer needed in this variant.
+- File changes:
+  - `run_sim_1rkl_rigid_dry.sh` (new workflow script).
+  - `task_plan.md` (added/closed Phase 12 and rigid-variant revised decisions).
+- Validation:
+  - shell syntax check passed: `bash -n run_sim_1rkl_rigid_dry.sh`.
+- Failures/fixes:
+  - no runtime failures encountered during script creation; changes were verified by diff and syntax check.

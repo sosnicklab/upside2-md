@@ -1,22 +1,24 @@
-# Task: Fix Hybrid Mapping Atom-Count Mismatch During Stage Preparation
+# Task: Audit and tighten rigid-hold energy coupling behavior in C++
 
 ## 1. Project Goal
-Resolve `Hybrid mapping n_atom mismatch` in `example/16.MARTINI/run_sim_1rkl.sh` by ensuring stage conversion reads the same runtime packed PDB/ITP that mapping export used.
+Verify rigid-hold behavior in `src/*` and address the likely energy-coupling path where held atoms can indirectly drive non-held atoms through the NPT pressure path.
 
 ## 2. Architecture & Key Decisions
 - Scope:
-  - Add runtime input-path overrides in `example/16.MARTINI/prepare_martini.py` via environment variables.
-  - Wire `example/16.MARTINI/prepare_system.py` to set those env vars when invoking `prepare_martini.py`.
+  - Inspect rigid-hold enforcement in `src/martini.cpp`, `src/deriv_engine.cpp`, `src/main.cpp`, and `src/box.cpp`.
+  - Keep interface and file format behavior unchanged.
+- Key decisions:
+  - Keep existing rigid-hold semantics (held atoms still interact unless explicitly decoupled).
+  - Patch only the NPT pressure estimator so constrained DOFs do not feed barostat scaling.
 - Revised Decisions:
-  - Keep existing positional CLI behavior of `prepare_martini.py`; only add optional env-based path overrides.
-  - Preserve fallback behavior to legacy `pdb/<pdb_id>.MARTINI.pdb` and `pdb/<pdb_id>_proa.itp` when overrides are absent.
+  - None yet.
 
 ## 3. Execution Phases
-- [x] Phase 1: Confirm mismatch root cause across `run_sim_1rkl.sh`, `prepare_system.py`, and `prepare_martini.py`.
-- [x] Phase 2: Implement runtime path override support in `prepare_martini.py`.
-- [x] Phase 3: Pass runtime override env vars from `prepare_system.py` subprocess call.
-- [x] Phase 4: Validate syntax and run focused reproduction/smoke check.
-- [x] Phase 5: Log outcomes in `progress.md`.
+- [x] Phase 1: Trace rigid-hold registration and enforcement in minimization/MD.
+- [x] Phase 2: Trace force, integration, and barostat call order for coupling paths.
+- [x] Phase 3: Implement minimal `src/box.cpp` fix to exclude constrained DOFs from pressure estimation.
+- [x] Phase 4: Build and run focused verification.
+- [x] Phase 5: Record results in `progress.md`.
 
 ## 4. Known Errors / Blockers
 - None currently.

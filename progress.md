@@ -235,3 +235,11 @@
 - Observed runtime logs now consistently read:
 - `Using MARTINI PDB as base structure: .../outputs/.../hybrid_prep/1rkl_hybrid.MARTINI.pdb`
 - `Using protein topology from: .../outputs/.../hybrid_prep/1rkl_hybrid_proa.itp`
+- Rigid-hold audit follow-up (2026-02-23): investigated user-reported energy coupling from held rigid atoms to non-held atoms in C++ runtime.
+- Traced rigid-hold enforcement in `src/martini.cpp`, integration path in `src/deriv_engine.cpp`, and main MD call order in `src/main.cpp`.
+- Confirmed current hold semantics: fixed atoms are frozen kinematically, but interaction forces between fixed and non-fixed atoms remain active by design.
+- Identified additional NPT coupling path in `src/box.cpp`: pressure estimation included constrained DOFs while coordinate scaling skips fixed atoms.
+- Patched `src/box.cpp`:
+- Updated pressure-tensor estimator to skip fully fixed atoms and skip z-component contributions for z-fixed atoms.
+- Updated barostat call path to build fixed/z-fixed masks and pass them into pressure estimation.
+- Validation: `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed.

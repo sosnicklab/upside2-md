@@ -2,6 +2,7 @@
 
 ## Project Goal
 - Define and implement a hybrid dry-MARTINI + Upside workflow where protein dynamics are handled by Upside, environment is handled by dry MARTINI, and coupling starts only at production stage.
+- Add a dedicated rigid dry-MARTINI workflow variant where the protein stays fixed for all stages (including stage 7.0), production-stage Upside coupling is never activated, and trajectory export avoids SC/backbone back-mapping.
 
 ## Architecture & Key Decisions
 - Data preparation includes packing OPM protein `pdb/1rkl.pdb` into MARTINI DOPC bilayer `pdb/bilayer.MARTINI.pdb`, with MARTINI 2.2 coarse-graining and 0.15 M NaCl ion placement.
@@ -26,6 +27,7 @@
 - [x] Phase 9: Implement split potential logging (`Upside-only` vs `MARTINI`) and enforce pre-production NPT coupling to match CHARMM-GUI stage settings.
 - [x] Phase 10: Add and validate a local `.up` input-visualization script (`visualize_up_input.py`) with direct executable invocation and sane defaults.
 - [x] Phase 11: Remove production-stage MARTINI fallback paths in hybrid SC force projection and fix stage handoff/production stability regressions.
+- [x] Phase 12: Add a separate rigid-protein workflow script derived from `run_sim_1rkl.sh` that disables production-stage Upside/SC paths and keeps dry-MARTINI rigid protein interactions through stage 7.0.
 
 ## Known Errors / Blockers
 - Requires concrete integration points in Upside C++ step loop and force modules.
@@ -120,3 +122,5 @@
 - Production hybrid integration applies in-place RMSD alignment of protein coordinates (BB-based Kabsch/Horn rigid transform) once at the start of each C++ integration cycle before force evaluation/update, so Upside backbone updates and hybrid coupling operate in a rotation-stabilized frame.
 - Production-stage timestep for hybrid runs with injected Upside all-atom backbone nodes must default to `0.002` (not MARTINI-only `0.020`) to maintain integration stability.
 - During preparation, all-atom backbone reference coordinates (`N/CA/C/O`) are RMSD-aligned (Kabsch on residue backbone COMs) to MARTINI `BB` positions before writing `hybrid_bb_map/reference_atom_coords`.
+- New workflow variant requirement: keep `hybrid_control` enabled for dynamic rigid-mask enforcement but set `activation_stage` to a non-used token so hybrid protein coupling is never active in any stage; this preserves rigid-protein dry-MARTINI interactions without production Upside force exchange.
+- New workflow variant requirement: do not inject production rotamer/backbone nodes and use VTF extraction mode `1` at stage 7.0 to disable SC/backbone back-mapping output.

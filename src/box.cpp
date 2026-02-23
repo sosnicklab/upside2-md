@@ -160,6 +160,8 @@ static void estimate_pressure_tensor(const VecArray& mom,
                                      const std::vector<float>& masses,
                                      int n_atom,
                                      float V,
+                                     const std::vector<unsigned char>* fixed_mask,
+                                     const std::vector<unsigned char>* z_fixed_mask,
                                      float& pxx, float& pyy, float& pzz) {
     // Kinetic contribution: sum_i (p_i^2 / m_i)
     double kx = 0.0, ky = 0.0, kz = 0.0;
@@ -167,13 +169,17 @@ static void estimate_pressure_tensor(const VecArray& mom,
     double wxx = 0.0, wyy = 0.0, wzz = 0.0;
 
     for(int i = 0; i < n_atom; ++i) {
+        bool is_fixed = (fixed_mask && !fixed_mask->empty() && (*fixed_mask)[static_cast<size_t>(i)]);
+        if(is_fixed) continue;
+        bool is_z_fixed = (z_fixed_mask && !z_fixed_mask->empty() && (*z_fixed_mask)[static_cast<size_t>(i)]);
+
         float3 p = load_vec<3>(mom, i);
         float m = (masses.size() > (size_t)i) ? masses[i] : 1.0f;
         if(m <= 0.f) m = 1.0f;
 
         kx += double(p.x() * p.x()) / m;
         ky += double(p.y() * p.y()) / m;
-        kz += double(p.z() * p.z()) / m;
+        if(!is_z_fixed) kz += double(p.z() * p.z()) / m;
 
         // Virial: r . (-deriv) = -r . sens (sens is gradient)
         float3 r = load_vec<3>(pos, i);
@@ -182,7 +188,7 @@ static void estimate_pressure_tensor(const VecArray& mom,
 
         wxx += double(r.x() * F.x());
         wyy += double(r.y() * F.y());
-        wzz += double(r.z() * F.z());
+        if(!is_z_fixed) wzz += double(r.z() * F.z());
     }
 
     pxx = float((kx + wxx) / V);
@@ -390,8 +396,23 @@ void maybe_apply_barostat(DerivEngine& engine,
     VecArray pos = engine.pos->output;
     VecArray sens = engine.pos->sens;
     
+    std::vector<unsigned char> fixed_mask(static_cast<size_t>(std::max(0, n_atom)), 0);
+    std::vector<unsigned char> z_fixed_mask(static_cast<size_t>(std::max(0, n_atom)), 0);
+    for(int atom_idx : martini_fix_rigid::get_fixed_atoms(engine)) {
+        if(atom_idx >= 0 && atom_idx < n_atom) {
+            fixed_mask[static_cast<size_t>(atom_idx)] = 1;
+        }
+    }
+    for(int atom_idx : martini_fix_rigid::get_z_fixed_atoms(engine)) {
+        if(atom_idx >= 0 && atom_idx < n_atom) {
+            z_fixed_mask[static_cast<size_t>(atom_idx)] = 1;
+        }
+    }
+
     float pxx = 0.f, pyy = 0.f, pzz = 0.f;
-    estimate_pressure_tensor(mom, pos, sens, st.masses, n_atom, V, pxx, pyy, pzz);
+    estimate_pressure_tensor(mom, pos, sens, st.masses, n_atom, V,
+                             &fixed_mask, &z_fixed_mask,
+                             pxx, pyy, pzz);
     
     float pxy_inst = 0.5f * (pxx + pyy);
     float pz_inst = pzz;
