@@ -88,6 +88,34 @@ def read_martini_pdb_metadata(pdb_file):
     )
 
 
+def infer_residue_names_from_class(atom_names, particle_class):
+    if particle_class is None:
+        return np.array(["UNK"] * len(atom_names), dtype=object)
+
+    lipid_atom_names = {
+        "NC3", "PO4", "GL1", "GL2", "C1A", "C2A", "D3A", "C4A", "C5A",
+        "C1B", "C2B", "D3B", "C4B", "C5B",
+    }
+    out = []
+    for aname, pclass in zip(atom_names, particle_class):
+        cls = str(pclass).upper()
+        an = str(aname).upper()
+        if cls == "PROTEIN":
+            out.append("PRO")
+        elif cls == "ION":
+            if an == "NA":
+                out.append("NA")
+            elif an == "CL":
+                out.append("CL")
+            else:
+                out.append("ION")
+        elif cls == "OTHER" and an in lipid_atom_names:
+            out.append("DOPC")
+        else:
+            out.append("UNK")
+    return np.array(out, dtype=object)
+
+
 def infer_box_lengths(traj_h5, struct_h5, pdb_file, input_file):
     x_len = y_len = z_len = None
 
@@ -147,7 +175,12 @@ def centralize_system(frame_pos, residue_names, x_len, y_len, z_len):
     protein_mask = None
     if residue_names is not None:
         residue_names = np.asarray(residue_names, dtype=object)
-        protein_mask = np.array([name == "PRO" for name in residue_names], dtype=bool)
+        protein_residues = {
+            "PRO", "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS",
+            "ILE", "LEU", "LYS", "MET", "PHE", "SER", "THR", "TRP", "TYR", "VAL",
+            "HID", "HIE", "HIP", "HSD", "HSE", "HSP", "CYX",
+        }
+        protein_mask = np.array([str(name).upper() in protein_residues for name in residue_names], dtype=bool)
 
     # Mode 2 output marks backmapped protein as residue "PRO". Centering by
     # periodic protein COM avoids boundary-split rendering artifacts.
@@ -215,21 +248,111 @@ def remap_bonds(bonds, index_map):
     return out
 
 
-def build_mode1_mapping(atom_names, residue_names, residue_ids, n_particles):
+def build_backbone_projection_map(struct_h5, input_pos):
+    if "input/hybrid_bb_map" not in struct_h5:
+        return None
+
+    bb = struct_h5["input/hybrid_bb_map"]
+    if "bb_atom_index" not in bb or "bb_residue_index" not in bb or "reference_atom_coords" not in bb:
+        return None
+
+    bb_atom_index = np.asarray(bb["bb_atom_index"][:], dtype=int)
+    bb_residue_index = np.asarray(bb["bb_residue_index"][:], dtype=int)
+    ref_coords = np.asarray(bb["reference_atom_coords"][:], dtype=np.float32)
+    if ref_coords.ndim != 3 or ref_coords.shape[1:] != (4, 3):
+        return None
+
+    if "reference_atom_names" in bb:
+        ref_atom_names = decode_str_array(bb["reference_atom_names"])
+    else:
+        ref_atom_names = np.array(["N", "CA", "C", "O"], dtype=object)
+
+    n_particles = input_pos.shape[0]
+    valid = (bb_atom_index >= 0) & (bb_atom_index < n_particles)
+    bb_atom_index = bb_atom_index[valid]
+    bb_residue_index = bb_residue_index[valid]
+    ref_coords = ref_coords[valid]
+    if bb_atom_index.size == 0:
+        return None
+
+    if "weights" in bb:
+        weights = np.asarray(bb["weights"][:], dtype=np.float32)
+        if weights.ndim != 2 or weights.shape[1] != 4:
+            weights = np.full((bb_atom_index.shape[0], 4), 0.25, dtype=np.float32)
+        else:
+            weights = weights[valid]
+    else:
+        weights = np.full((bb_atom_index.shape[0], 4), 0.25, dtype=np.float32)
+
+    wsum = np.sum(weights, axis=1, keepdims=True)
+    safe_wsum = np.where(wsum > 1.0e-8, wsum, 1.0)
+    weights = weights / safe_wsum
+    ref_anchor = np.sum(ref_coords * weights[:, :, None], axis=1)
+
     return {
-        "mode": 1,
-        "output_atom_names": np.array(atom_names, dtype=object),
-        "output_residue_names": np.array(residue_names, dtype=object),
-        "output_residue_ids": np.array(residue_ids, dtype=int),
-        "indices": np.arange(n_particles, dtype=int),
+        "bb_atom_index": bb_atom_index,
+        "bb_residue_index": bb_residue_index,
+        "ref_coords": ref_coords,
+        "ref_atom_names": np.array(ref_atom_names, dtype=object),
+        "weights": weights,
+        "ref_anchor": ref_anchor,
     }
 
 
-def build_mode2_mapping(struct_h5, input_pos, atom_names, residue_names, residue_ids):
+def build_mode1_mapping(
+    struct_h5,
+    input_pos,
+    atom_names,
+    residue_names,
+    residue_ids,
+    particle_class,
+    pdb_metadata=None,
+):
+    n_particles = input_pos.shape[0]
+    martini_indices = np.arange(n_particles, dtype=int)
+    if particle_class is not None:
+        keep_mask = np.array([pc != "PROTEINAA" for pc in particle_class], dtype=bool)
+        if np.any(~keep_mask):
+            martini_indices = np.where(keep_mask)[0]
+
+    if (
+        pdb_metadata is not None
+        and pdb_metadata[0] is not None
+        and pdb_metadata[0].shape[0] == martini_indices.shape[0]
+    ):
+        mart_atom_names, mart_res_names, mart_res_ids = pdb_metadata
+    else:
+        mart_atom_names = np.asarray(atom_names, dtype=object)[martini_indices]
+        mart_res_names = np.asarray(residue_names, dtype=object)[martini_indices]
+        mart_res_ids = np.asarray(residue_ids, dtype=int)[martini_indices]
+
+    bb_map = build_backbone_projection_map(struct_h5, input_pos)
+
+    out_atom_names = list(mart_atom_names)
+    out_res_names = list(mart_res_names)
+    out_res_ids = [int(x) for x in np.asarray(mart_res_ids, dtype=int)]
+    include_aa_backbone = bb_map is not None
+    if include_aa_backbone:
+        for resid in bb_map["bb_residue_index"]:
+            for aname in bb_map["ref_atom_names"]:
+                out_atom_names.append(str(aname))
+                out_res_names.append("PRO")
+                out_res_ids.append(int(resid))
+
+    return {
+        "mode": 1,
+        "martini_indices": martini_indices,
+        "include_aa_backbone": include_aa_backbone,
+        "bb_map": bb_map,
+        "output_atom_names": np.array(out_atom_names, dtype=object),
+        "output_residue_names": np.array(out_res_names, dtype=object),
+        "output_residue_ids": np.array(out_res_ids, dtype=int),
+    }
+
+
+def build_mode2_mapping(struct_h5, input_pos, atom_names, residue_names, residue_ids, pdb_metadata=None):
     if "input/hybrid_env_topology/protein_membership" not in struct_h5:
         raise ValueError("Mode 2 requires /input/hybrid_env_topology/protein_membership")
-    if "input/hybrid_bb_map" not in struct_h5:
-        raise ValueError("Mode 2 requires /input/hybrid_bb_map")
 
     protein_membership = np.asarray(struct_h5["input/hybrid_env_topology/protein_membership"][:], dtype=int)
     n_particles = input_pos.shape[0]
@@ -237,31 +360,27 @@ def build_mode2_mapping(struct_h5, input_pos, atom_names, residue_names, residue
         raise ValueError("protein_membership length mismatch")
 
     non_protein_idx = np.where(protein_membership < 0)[0]
+    bb_map = build_backbone_projection_map(struct_h5, input_pos)
+    if bb_map is None:
+        raise ValueError("Mode 2 requires /input/hybrid_bb_map with valid backbone entries")
 
-    bb = struct_h5["input/hybrid_bb_map"]
-    bb_atom_index = np.asarray(bb["bb_atom_index"][:], dtype=int)
-    bb_residue_index = np.asarray(bb["bb_residue_index"][:], dtype=int)
-    ref_coords = np.asarray(bb["reference_atom_coords"][:], dtype=np.float32)
-    if "reference_atom_names" in bb:
-        ref_atom_names = decode_str_array(bb["reference_atom_names"])
+    if (
+        pdb_metadata is not None
+        and pdb_metadata[0] is not None
+        and pdb_metadata[0].shape[0] == non_protein_idx.shape[0]
+    ):
+        env_atom_names, env_res_names, env_res_ids = pdb_metadata
     else:
-        ref_atom_names = np.array(["N", "CA", "C", "O"], dtype=object)
+        env_atom_names = np.asarray(atom_names, dtype=object)[non_protein_idx]
+        env_res_names = np.asarray(residue_names, dtype=object)[non_protein_idx]
+        env_res_ids = np.asarray(residue_ids, dtype=int)[non_protein_idx]
 
-    valid = (bb_atom_index >= 0) & (bb_atom_index < n_particles)
-    bb_atom_index = bb_atom_index[valid]
-    bb_residue_index = bb_residue_index[valid]
-    ref_coords = ref_coords[valid]
-    if bb_atom_index.size == 0:
-        raise ValueError("Mode 2 has no valid bb_atom_index entries")
+    out_atom_names = list(env_atom_names)
+    out_res_names = list(env_res_names)
+    out_res_ids = [int(x) for x in env_res_ids]
 
-    bb_ref_pos = input_pos[bb_atom_index]
-
-    out_atom_names = [atom_names[i] for i in non_protein_idx]
-    out_res_names = [residue_names[i] for i in non_protein_idx]
-    out_res_ids = [int(residue_ids[i]) for i in non_protein_idx]
-
-    for resid in bb_residue_index:
-        for aname in ref_atom_names:
+    for resid in bb_map["bb_residue_index"]:
+        for aname in bb_map["ref_atom_names"]:
             out_atom_names.append(str(aname))
             out_res_names.append("PRO")
             out_res_ids.append(int(resid))
@@ -269,10 +388,7 @@ def build_mode2_mapping(struct_h5, input_pos, atom_names, residue_names, residue
     return {
         "mode": 2,
         "non_protein_idx": non_protein_idx,
-        "bb_atom_index": bb_atom_index,
-        "bb_ref_pos": bb_ref_pos,
-        "ref_coords": ref_coords,
-        "ref_atom_names": np.array(ref_atom_names, dtype=object),
+        "bb_map": bb_map,
         "output_atom_names": np.array(out_atom_names, dtype=object),
         "output_residue_names": np.array(out_res_names, dtype=object),
         "output_residue_ids": np.array(out_res_ids, dtype=int),
@@ -293,16 +409,29 @@ def mode2_backbone_bonds(start_idx, n_bb):
     return bonds
 
 
-def assemble_mode1_frame(frame_pos, mapping):
-    return frame_pos[mapping["indices"]]
-
-
-def assemble_mode2_frame(frame_pos, mapping):
-    env_pos = frame_pos[mapping["non_protein_idx"]]
-    bb_cur = frame_pos[mapping["bb_atom_index"]]
-    delta = bb_cur - mapping["bb_ref_pos"]
-    aa_pos = mapping["ref_coords"] + delta[:, None, :]
+def reconstruct_backbone_aa(frame_pos, bb_map, box_lengths=None):
+    bb_cur = frame_pos[bb_map["bb_atom_index"]]
+    delta = bb_cur - bb_map["ref_anchor"]
+    if box_lengths is not None:
+        box = np.asarray(box_lengths, dtype=np.float32).reshape(1, 3)
+        safe_box = np.where(box > 0.0, box, 1.0)
+        delta = delta - safe_box * np.round(delta / safe_box)
+    aa_pos = bb_map["ref_coords"] + delta[:, None, :]
     aa_pos = aa_pos.reshape(-1, 3)
+    return aa_pos
+
+
+def assemble_mode1_frame(frame_pos, mapping, box_lengths=None):
+    martini_pos = frame_pos[mapping["martini_indices"]]
+    if not mapping.get("include_aa_backbone", False):
+        return martini_pos
+    aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"], box_lengths=box_lengths)
+    return np.vstack((martini_pos, aa_pos))
+
+
+def assemble_mode2_frame(frame_pos, mapping, box_lengths=None):
+    env_pos = frame_pos[mapping["non_protein_idx"]]
+    aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"], box_lengths=box_lengths)
     return np.vstack((env_pos, aa_pos))
 
 
@@ -310,7 +439,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description=(
             "Extract MARTINI trajectory into VTF/PDB.\n"
-            "mode 1: all MARTINI particles\n"
+            "mode 1: all MARTINI particles + protein all-atom backbone (N,CA,C,O)\n"
             "mode 2: non-protein MARTINI particles + protein all-atom backbone (N,CA,C,O)"
         )
     )
@@ -361,20 +490,37 @@ def main():
         else:
             residue_ids = np.arange(1, n_particles + 1, dtype=int)
 
-        pdb_atom_names, pdb_res_names, pdb_res_ids = read_martini_pdb_metadata(pdb_file)
-        if pdb_atom_names is not None and pdb_atom_names.shape[0] == n_particles:
-            base_atom_names = pdb_atom_names
-            base_res_names = pdb_res_names
-            base_res_ids = pdb_res_ids
+        if "input/particle_class" in s:
+            particle_class = decode_str_array(s["input/particle_class"])
+            if particle_class.shape[0] != n_particles:
+                particle_class = None
         else:
-            base_atom_names = atom_names
-            base_res_names = np.array(["UNK"] * n_particles, dtype=object)
-            base_res_ids = residue_ids
+            particle_class = None
+
+        inferred_res_names = infer_residue_names_from_class(atom_names, particle_class)
+
+        pdb_atom_names, pdb_res_names, pdb_res_ids = read_martini_pdb_metadata(pdb_file)
+        pdb_metadata = (pdb_atom_names, pdb_res_names, pdb_res_ids)
 
         if mode == 1:
-            mapping = build_mode1_mapping(base_atom_names, base_res_names, base_res_ids, n_particles)
+            mapping = build_mode1_mapping(
+                s,
+                input_pos,
+                atom_names,
+                inferred_res_names,
+                residue_ids,
+                particle_class,
+                pdb_metadata=pdb_metadata,
+            )
         else:
-            mapping = build_mode2_mapping(s, input_pos, base_atom_names, base_res_names, base_res_ids)
+            mapping = build_mode2_mapping(
+                s,
+                input_pos,
+                atom_names,
+                inferred_res_names,
+                residue_ids,
+                pdb_metadata=pdb_metadata,
+            )
 
         x_len, y_len, z_len = infer_box_lengths(t, s, pdb_file, input_file)
 
@@ -392,13 +538,18 @@ def main():
 
         dist_bonds = collect_dist_spring_bonds(s)
         if mode == 1:
-            out_bonds = [(int(i), int(j)) for i, j in dist_bonds]
+            mart_idx = mapping["martini_indices"]
+            idx_map = {int(old): int(new) for new, old in enumerate(mart_idx)}
+            out_bonds = remap_bonds(dist_bonds, idx_map)
+            if mapping.get("include_aa_backbone", False):
+                bb_start = len(mart_idx)
+                out_bonds.extend(mode2_backbone_bonds(bb_start, mapping["bb_map"]["bb_atom_index"].shape[0]))
         else:
             non_idx = mapping["non_protein_idx"]
             idx_map = {int(old): int(new) for new, old in enumerate(non_idx)}
             out_bonds = remap_bonds(dist_bonds, idx_map)
             bb_start = len(non_idx)
-            out_bonds.extend(mode2_backbone_bonds(bb_start, mapping["bb_atom_index"].shape[0]))
+            out_bonds.extend(mode2_backbone_bonds(bb_start, mapping["bb_map"]["bb_atom_index"].shape[0]))
 
         with open(output_file, "w", encoding="utf-8") as f:
             if fmt == "vtf":
@@ -422,9 +573,9 @@ def main():
                     frame = normalize_frame(pos_data[frame_idx], n_particles)
 
                 if mode == 1:
-                    out_frame = assemble_mode1_frame(frame, mapping)
+                    out_frame = assemble_mode1_frame(frame, mapping, box_lengths=(x_len, y_len, z_len))
                 else:
-                    out_frame = assemble_mode2_frame(frame, mapping)
+                    out_frame = assemble_mode2_frame(frame, mapping, box_lengths=(x_len, y_len, z_len))
 
                 out_frame = centralize_system(
                     out_frame,

@@ -258,6 +258,37 @@
 - Validation:
 - `python3 -m py_compile example/16.MARTINI/set_initial_position.py` passed.
 - `bash -n example/16.MARTINI/run_sim_1rkl_rigid_dry.sh` passed.
+- VTF AA-backbone artifact follow-up for `run_sim_1rkl_rigid_dry.sh` (2026-02-23):
+- User requirement clarified: mode 1 must include AA backbone in output.
+- Investigation on `outputs/martini_test_1rkl_rigid_dry/checkpoints/1rkl.stage_7.0.up` found:
+- `n_input=4323` with `particle_class` counts: `OTHER=3920`, `PROTEIN=65`, `ION=105`, `PROTEINAA=233`.
+- Only 124 AA backbone atoms are real (`31 residues * 4`); remaining `PROTEINAA` entries are sparse carrier placeholders, including zero-initialized points.
+- Existing extractor mode 1 emitted all 4323 particles directly, causing visible corner/origin artifacts from carrier placeholders and frame mismatch with PDB metadata.
+- Existing extractor mode 2 used `bb_cur - input_pos[bb_atom_index]` as displacement anchor, which is fragile after stage handoff updates.
+- Patched `example/16.MARTINI/extract_martini_vtf.py`:
+- Added robust protein residue detection in `centralize_system(...)` for standard amino-acid residue names (not only `PRO`).
+- Added `build_backbone_projection_map(...)` to parse and validate hybrid BB projection data once.
+- Mode 1 behavior updated to satisfy user requirement:
+- Output = all MARTINI particles (excluding raw `PROTEINAA` carriers) + reconstructed AA backbone (`N/CA/C/O`) from `hybrid_bb_map`.
+- No `AA` placeholder atoms are written.
+- Mode 2 behavior updated:
+- Uses the same reconstructed AA backbone projection map (no dependency on mutable `input/pos` BB reference coordinates).
+- Added minimum-image correction for per-residue BB displacement under periodic boundaries.
+- Updated mode 1 bond assembly:
+- Remaps dist-spring MARTINI bonds to the filtered MARTINI index set.
+- Appends reconstructed AA backbone bonds.
+- Validation:
+- `python3 -m py_compile example/16.MARTINI/extract_martini_vtf.py` passed.
+- Re-extraction on rigid-dry stage 7.0:
+- Mode 1: `Particles (input): 4323`, `Particles (output): 4214` (`4090 MARTINI + 124 AA backbone`).
+- Mode 2: `Particles (output): 4149` (`4025 non-protein MARTINI + 124 AA backbone`).
+- Confirmed mode 1 output now includes `N/CA/C/O` atoms and no `name AA` entries.
+- Confirmed no `0.000 0.000 0.000` carrier-origin artifacts in new mode 1 output.
+- Quantitative alignment check on mode 1 first frame (`1rkl.stage_7.0.mode1.fixed2.vtf`):
+- Reconstructed AA weighted-anchor to mapped BB distance mean `2.54e-4 Å`, max `5.59e-4 Å` (within formatting tolerance).
+- Regenerated canonical rigid-dry production VTF with fixed extractor:
+- `python3 extract_martini_vtf.py outputs/martini_test_1rkl_rigid_dry/checkpoints/1rkl.stage_7.0.up outputs/martini_test_1rkl_rigid_dry/1rkl.stage_7.0.vtf ... --mode 1`
+- Confirmed canonical file now includes `N/CA/C/O` AA backbone atoms, no `AA` placeholder atoms, and no origin `(0,0,0)` carrier artifacts.
 - Prepare-system-only follow-up (2026-02-23) after user correction:
 - Confirmed both workflows already use universal prep entrypoint `prepare_system.py`:
   - `example/16.MARTINI/run_sim_1rkl.sh`
