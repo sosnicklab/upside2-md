@@ -1,26 +1,28 @@
-# Task: Fix AA Backbone Corner Artifact in `run_sim_1rkl_rigid_dry.sh` VTF Output
+# Task: Create `run_sim_1rkl_new.sh` with Hybrid Active at Production
 
 ## 1. Project Goal
-Verify all-atom (AA) protein-backbone mapping remains properly aligned to dry-MARTINI backbone in production stage, and fix VTF extraction so mapped AA atoms are not rendered at simulation-box corners.
+Add a new workflow `example/16.MARTINI/run_sim_1rkl_new.sh`, based on `run_sim_1rkl_rigid_dry.sh`, that activates Upside hybrid at stage `7.0` and enables all designed hybrid production components.
 
 ## 2. Architecture & Key Decisions
 - Scope:
-  - Inspect production-stage hybrid mapping datasets in `.up` files and validate mapped AA backbone coordinates versus MARTINI BB anchors.
-  - Inspect `extract_martini_vtf.py` mode-2 coordinate handling for hybrid outputs.
-  - Patch extraction/mapping handling as needed, without changing simulation physics.
+  - Clone `run_sim_1rkl_rigid_dry.sh` into a new workflow script.
+  - Keep the same stage topology/process (`6.0 -> 7.0`).
+  - Enable hybrid activation at production stage.
+  - Enable production hybrid controls and rotamer/backbone augmentation.
 - Key decisions:
-  - Prefer fixing post-processing (`extract_martini_vtf.py`) if mapping in `.up` is already correct.
-  - If mapping data itself is inconsistent, patch upstream mapping/injection logic in workflow/prep path.
+  - Use `HYBRID_ACTIVATION_STAGE=production` as default in the new workflow.
+  - Keep preproduction rigid behavior via existing `preprod_protein_mode=rigid`.
+  - Use production handoff carrier refresh for `6.6 -> 7.0`.
+  - Use `PROD_TIME_STEP=0.002` and stage `7.0` VTF extraction mode `2`.
 - Revised Decisions:
-  - Keep `mode 1` output semantics as requested: include all MARTINI particles and AA backbone.
-  - Exclude raw `PROTEINAA` carrier particles from visualization and reconstruct AA backbone from `hybrid_bb_map` in extraction.
+  - Add explicit production hybrid assertion before running stage `7.0`.
 
 ## 3. Execution Phases
-- [x] Phase 1: Reproduce and inspect production `.up`/`.vtf` artifact for `run_sim_1rkl_rigid_dry.sh`.
-- [x] Phase 2: Validate AA-backbone mapping integrity in hybrid datasets.
-- [x] Phase 3: Patch VTF extraction (or mapping path) to correctly handle mapped AA coordinates.
-- [x] Phase 4: Re-run focused extraction/workflow checks to confirm corner artifact is gone.
-- [x] Phase 5: Log outcomes in `progress.md`.
+- [x] Phase 1: Inspect rigid-dry workflow and identify hybrid-disable points.
+- [x] Phase 2: Create new workflow script and switch activation defaults.
+- [x] Phase 3: Wire production hybrid stack (SC controls + rotamer nodes + handoff mode).
+- [x] Phase 4: Validate script syntax and run short smoke workflow.
+- [x] Phase 5: Log results in `progress.md`.
 
 ## 4. Known Errors / Blockers
 - None currently.

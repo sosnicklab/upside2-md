@@ -258,6 +258,52 @@
 - Validation:
 - `python3 -m py_compile example/16.MARTINI/set_initial_position.py` passed.
 - `bash -n example/16.MARTINI/run_sim_1rkl_rigid_dry.sh` passed.
+
+## 2026-02-24
+- Added new workflow `example/16.MARTINI/run_sim_1rkl_new.sh`, cloned from `run_sim_1rkl_rigid_dry.sh` and switched to hybrid-on-production behavior.
+- New workflow defaults:
+  - `RUNTIME_PDB_ID=${PDB_ID}_new`
+  - `RUN_DIR=outputs/martini_test_1rkl_new`
+  - `HYBRID_ACTIVATION_STAGE=production`
+  - `PROD_TIME_STEP=0.002`
+- Enabled full production hybrid stack in `prepare_stage_file()`:
+  - production SC/bilayer control attributes (`set_hybrid_sc_controls`)
+  - production rotamer/backbone node injection (`augment_production_rotamer_nodes`)
+- Added production-stage hybrid assertion function and wired it before stage `7.0` MD:
+  - verifies `current_stage=production`, `hybrid_control.enable=1`, `activation_stage=production`.
+- Updated stage handoff logic:
+  - added mode-aware `handoff_initial_position(...)`
+  - `6.6 -> 7.0` now uses `production_hybrid` mode with hybrid carrier refresh.
+- Updated stage `7.0` extraction to hybrid view (`extract_martini_vtf.py --mode 2`).
+- Validation:
+  - `bash -n example/16.MARTINI/run_sim_1rkl_new.sh` passed.
+  - End-to-end short smoke run passed:
+    - `cd example/16.MARTINI && RUN_DIR=outputs/martini_test_1rkl_new_smoke MARTINIZE_ENABLE=0 PROTEIN_CG_PDB=pdb/1rkl_hybrid.MARTINI.pdb PROTEIN_ITP=pdb/1rkl_hybrid_proa.itp MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 ./run_sim_1rkl_new.sh`
+  - Smoke-run `7.0` confirms hybrid fully active:
+    - `hybrid_active=1`, `n_sc=153`, `placement_node=placement_fixed_point_vector_only`, `rotamer_node=rotamer`, `sc_po4_z_clamp=1`, `sc_energy_dump=1`.
+
+## 2026-02-24
+- Follow-up on `run_sim_1rkl.sh` production jump (`6.6` ~`351.85` -> `7.0` first-step `~1.4e8`) with user requirement to keep hybrid enabled in `7.0`.
+- Re-checked existing production log and confirmed hybrid is already active in current `7.0` files:
+  - `Hybrid input parsed ... current_stage=production activation_stage=production hybrid_active=1`.
+- Re-validated targeted `6.6 -> 7.0` handoff on existing checkpoint files with hybrid active:
+  - source: `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_6.6.up`
+  - target prepared: `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.prepared.up`
+  - handoff: `UPSIDE_SET_INITIAL_STRICT_COPY=1 UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS=1 UPSIDE_SET_INITIAL_RECENTER_PRODUCTION=0 python3 example/16.MARTINI/set_initial_position.py ...`
+  - 1-step check: `obj/upside /tmp/1rkl.stage_7.0.usercheck.up --duration-steps 1 ...`
+  - result: `Initial ... MARTINI=3345.01`, `0 / 1 ... martini_potential 3345.01` (no catastrophic jump).
+- Patched `example/16.MARTINI/run_sim_1rkl.sh` to make stage-`7.0` hybrid activation explicit and fail-fast if misconfigured:
+  - added `set_hybrid_activation_stage()` to force `hybrid_control.enable=1` and `activation_stage=production` for production files.
+  - added `assert_hybrid_stage_active()` to verify `stage_parameters.current_stage=production`, `hybrid_control.enable=1`, and `hybrid_control.activation_stage=production`.
+  - wired call sequence in `7.0` path:
+    - prepare production file
+    - handoff from `6.6` with `production_hybrid` mode
+    - assert hybrid-active production attrs before running MD.
+- Validation:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - focused recheck file shows `stage production activation production enable 1`.
+  - focused 1-step run confirms `hybrid_active=1` and stable first-step potential (`martini_potential 3345.01`).
+
 - VTF AA-backbone artifact follow-up for `run_sim_1rkl_rigid_dry.sh` (2026-02-23):
 - User requirement clarified: mode 1 must include AA backbone in output.
 - Investigation on `outputs/martini_test_1rkl_rigid_dry/checkpoints/1rkl.stage_7.0.up` found:

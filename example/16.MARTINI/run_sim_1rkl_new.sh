@@ -6,12 +6,14 @@ source "${SCRIPT_DIR}/../../.venv/bin/activate"
 set -euo pipefail
 cd "${SCRIPT_DIR}"
 
-# Hybrid 1RKL workflow:
+# Hybrid-activated (production) dry-MARTINI 1RKL workflow:
 # 0) Hybrid preparation (packed MARTINI + hybrid mapping export)
 # 1) Stage input generation (dry MARTINI)
 # 2) Inject hybrid mapping into each stage .up file
-# 3) Run 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0
-# 4) Extract key VTF trajectories
+# 3) Keep preproduction rigid-mask behavior, but activate full hybrid stack at
+#    production stage (7.0).
+# 4) Run 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0
+# 5) Extract stage VTF trajectories
 
 # =============================================================================
 # USER CONFIGURATION
@@ -30,11 +32,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 PDB_ID="${PDB_ID:-1rkl}"
-RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-${PDB_ID}_hybrid}"
+RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-${PDB_ID}_new}"
 
 INPUTS_DIR="inputs"
 OUTPUTS_DIR="outputs"
-RUN_DIR="${RUN_DIR:-outputs/martini_test_1rkl_hybrid}"
+RUN_DIR="${RUN_DIR:-outputs/martini_test_1rkl_new}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-${RUN_DIR}/checkpoints}"
 LOG_DIR="${LOG_DIR:-${RUN_DIR}/logs}"
 HYBRID_PREP_DIR="${HYBRID_PREP_DIR:-${RUN_DIR}/hybrid_prep}"
@@ -51,6 +53,7 @@ RUNTIME_ITP_FILE="${RUNTIME_ITP_FILE:-${HYBRID_PREP_DIR}/${RUNTIME_PDB_ID}_proa.
 HYBRID_MAPPING_FILE="${HYBRID_MAPPING_FILE:-${HYBRID_PREP_DIR}/hybrid_mapping.h5}"
 HYBRID_PACKED_PDB="${HYBRID_PACKED_PDB:-${HYBRID_PREP_DIR}/hybrid_packed.MARTINI.pdb}"
 HYBRID_VALIDATE="${HYBRID_VALIDATE:-1}"
+HYBRID_ACTIVATION_STAGE="${HYBRID_ACTIVATION_STAGE:-production}"
 
 # martinize controls (MARTINI 2.x generation for dry-MARTINI compatibility)
 MARTINIZE_ENABLE="${MARTINIZE_ENABLE:-1}"
@@ -85,8 +88,6 @@ PREP_SEED="${PREP_SEED:-2026}"
 PROTEIN_LIPID_MIN_GAP="${PROTEIN_LIPID_MIN_GAP:-4.5}"
 PROTEIN_LIPID_CUTOFF_STEP="${PROTEIN_LIPID_CUTOFF_STEP:-0.5}"
 PROTEIN_LIPID_CUTOFF_MAX="${PROTEIN_LIPID_CUTOFF_MAX:-8.0}"
-BB_AA_MIN_MATCHED_RESIDUES="${BB_AA_MIN_MATCHED_RESIDUES:-8}"
-BB_AA_MAX_RIGID_RMSD="${BB_AA_MAX_RIGID_RMSD:-1.5}"
 
 # Simulation controls
 TEMPERATURE="${TEMPERATURE:-0.8647}"
@@ -95,18 +96,17 @@ THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
 SEED="${SEED:-7090685331}"
 STRICT_STAGE_HANDOFF="${STRICT_STAGE_HANDOFF:-1}"
 
-MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-500}"
-MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-500}"
-EQ_62_NSTEPS="${EQ_62_NSTEPS:-500}"
-EQ_63_NSTEPS="${EQ_63_NSTEPS:-500}"
-EQ_64_NSTEPS="${EQ_64_NSTEPS:-500}"
-EQ_65_NSTEPS="${EQ_65_NSTEPS:-500}"
-EQ_66_NSTEPS="${EQ_66_NSTEPS:-500}"
+MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-5000}"
+MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-5000}"
+EQ_62_NSTEPS="${EQ_62_NSTEPS:-5000}"
+EQ_63_NSTEPS="${EQ_63_NSTEPS:-5000}"
+EQ_64_NSTEPS="${EQ_64_NSTEPS:-5000}"
+EQ_65_NSTEPS="${EQ_65_NSTEPS:-5000}"
+EQ_66_NSTEPS="${EQ_66_NSTEPS:-5000}"
 PROD_70_NSTEPS="${PROD_70_NSTEPS:-5000}"
 
 EQ_TIME_STEP="${EQ_TIME_STEP:-0.010}"
-# Production runs with injected Upside all-atom backbone nodes; use a smaller
-# stable timestep than MARTINI-only stages.
+# Production includes injected Upside all-atom backbone and hybrid coupling.
 PROD_TIME_STEP="${PROD_TIME_STEP:-0.002}"
 MIN_TIME_STEP="${MIN_TIME_STEP:-0.010}"
 
@@ -144,7 +144,7 @@ UPSIDE_HBOND_ENERGY="${UPSIDE_HBOND_ENERGY:-${UPSIDE_HOME}/parameters/ff_2.1/hbo
 UPSIDE_REFERENCE_STATE_RAMA="${UPSIDE_REFERENCE_STATE_RAMA:-${UPSIDE_HOME}/parameters/common/rama_reference.pkl}"
 SC_ENV_LJ_FORCE_CAP="${SC_ENV_LJ_FORCE_CAP:-25.0}"
 SC_ENV_COUL_FORCE_CAP="${SC_ENV_COUL_FORCE_CAP:-25.0}"
-SC_ENV_RELAX_STEPS="${SC_ENV_RELAX_STEPS:-2000}"
+SC_ENV_RELAX_STEPS="${SC_ENV_RELAX_STEPS:-200}"
 SC_ENV_RELAX_DT="${SC_ENV_RELAX_DT:-0.002}"
 SC_ENV_RESTRAINT_K="${SC_ENV_RESTRAINT_K:-5.0}"
 SC_ENV_MAX_DISPLACEMENT="${SC_ENV_MAX_DISPLACEMENT:-2.0}"
@@ -176,18 +176,6 @@ if [ ! -f "${PROTEIN_AA_PDB}" ]; then
 fi
 if [ ! -f "${BILAYER_PDB}" ]; then
     echo "ERROR: bilayer PDB not found: ${BILAYER_PDB}"
-    exit 1
-fi
-if [ ! -f "${UPSIDE_RAMA_LIBRARY}" ]; then
-    echo "ERROR: Upside rama library not found: ${UPSIDE_RAMA_LIBRARY}"
-    exit 1
-fi
-if [ ! -f "${UPSIDE_HBOND_ENERGY}" ]; then
-    echo "ERROR: Upside hbond energy file not found: ${UPSIDE_HBOND_ENERGY}"
-    exit 1
-fi
-if [ ! -f "${UPSIDE_REFERENCE_STATE_RAMA}" ]; then
-    echo "ERROR: Upside reference-state rama file not found: ${UPSIDE_REFERENCE_STATE_RAMA}"
     exit 1
 fi
 if [ "${MARTINIZE_ENABLE}" = "1" ]; then
@@ -441,12 +429,14 @@ set_hybrid_activation_stage() {
 import sys
 import h5py
 import numpy as np
+
 up_file = sys.argv[1]
 activation_stage = sys.argv[2]
 with h5py.File(up_file, "r+") as h5:
     grp = h5.require_group("input").require_group("hybrid_control")
     grp.attrs["enable"] = np.int8(1)
     grp.attrs["activation_stage"] = np.bytes_(activation_stage)
+    grp.attrs["preprod_protein_mode"] = np.bytes_("rigid")
 PY
 }
 
@@ -1234,8 +1224,6 @@ prepare_hybrid_artifacts() {
             --ion-cutoff "${ION_CUTOFF}" \
             --box-padding-xy "${BOX_PADDING_XY}" \
             --box-padding-z "${BOX_PADDING_Z}" \
-            --bb-aa-min-matched-residues "${BB_AA_MIN_MATCHED_RESIDUES}" \
-            --bb-aa-max-rigid-rmsd "${BB_AA_MAX_RIGID_RMSD}" \
             --seed "${PREP_SEED}" \
             --summary-json "${HYBRID_PREP_DIR}/hybrid_prep_summary.json"
 
@@ -1386,9 +1374,9 @@ prepare_stage_file() {
 
     mv -f "$prepared_tmp" "$target_file"
     inject_hybrid_mapping "$target_file" "${HYBRID_MAPPING_FILE}"
+    set_hybrid_activation_stage "$target_file" "${HYBRID_ACTIVATION_STAGE}"
     set_stage_label "$target_file" "$stage_label"
     if [ "$stage_label" = "production" ]; then
-        set_hybrid_activation_stage "$target_file" "production"
         set_hybrid_sc_controls \
             "$target_file" \
             "$SC_ENV_LJ_FORCE_CAP" \
@@ -1537,7 +1525,7 @@ handoff_initial_position() {
     local recenter_production="0"
     if [ "$mode" = "production_hybrid" ]; then
         # Hybrid activates at stage 7.0; refresh AA carrier coordinates onto
-        # current BB anchors to avoid a first-step force/energy spike.
+        # current BB anchors to avoid first-step force/energy spikes.
         refresh_hybrid="1"
         recenter_production="0"
     fi
@@ -1560,9 +1548,10 @@ extract_stage_vtf() {
     python3 extract_martini_vtf.py "$stage_file" "$vtf_file" "$stage_file" "$RUNTIME_PDB_ID" --mode "$mode"
 }
 
-echo "=== Hybrid 1RKL Dry MARTINI Workflow ==="
+echo "=== Hybrid-Activated 1RKL Dry MARTINI Workflow ==="
 echo "Protein ID: $PDB_ID"
 echo "Runtime PDB ID: $RUNTIME_PDB_ID"
+echo "Hybrid activation stage: ${HYBRID_ACTIVATION_STAGE}"
 echo "Universal prep: ${UNIVERSAL_PREP_SCRIPT} (mode=${UNIVERSAL_PREP_MODE})"
 echo "Hybrid prep: $HYBRID_PREP_DIR"
 echo "Simulation stages: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"
@@ -1626,7 +1615,7 @@ extract_stage_vtf "6.6" "$STAGE_66_FILE" "1"
 prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "$PROD_70_BAROSTAT_TYPE" "0" "production"
 cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
 handoff_initial_position "$STAGE_66_FILE" "$STAGE_70_FILE" "production_hybrid"
-assert_hybrid_stage_active "$STAGE_70_FILE" "production" "production"
+assert_hybrid_stage_active "$STAGE_70_FILE" "production" "${HYBRID_ACTIVATION_STAGE}"
 run_md_stage "7.0" "$STAGE_70_FILE" "$STAGE_70_FILE" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
 extract_stage_vtf "7.0" "$STAGE_70_FILE" "2"
 
