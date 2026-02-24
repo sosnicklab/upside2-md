@@ -1461,3 +1461,35 @@
   - shell syntax check passed: `bash -n run_sim_1rkl_rigid_dry.sh`.
 - Failures/fixes:
   - no runtime failures encountered during script creation; changes were verified by diff and syntax check.
+
+## 2026-02-24 (Production Bilayer Disruption Root-Cause Isolation)
+- Investigated user-reported stage-7 production blow-up (`example/16.MARTINI/run_sim_1rkl.sh`, `logs/stage_7.0.log`) where `Rg` and MARTINI potential diverge after startup.
+- Confirmed from runtime log that the failing case is hybrid-active (`hybrid_active=1`) and includes production SC controls, but this alone did not establish the unstable subpath.
+- Ran controlled A/B probes from the same checkpoint (`outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.runtime_debug_hybrid_nosc.up`, `n_sc=0`) with identical MD settings (`20` steps, `dt=0.002`, frame every step):
+  - `hybrid_active=1`, `nonprotein_hs=1`: runaway (`Rg` ~`12.7 -> 6.3e4 Å` in 20 steps).
+  - `hybrid_active=1`, `nonprotein_hs=0`: same runaway trend.
+  - `hybrid_active=1`, `nonprotein_hs=0`, `integration_rmsd_align_enable=0`: same runaway trend.
+  - `hybrid_active=1`, `nonprotein_hs=0`, `exclude_intra_protein_martini=0`: same runaway trend.
+  - `hybrid_active=0` (via `activation_stage=__hybrid_disabled__` or `enable=0`): stable finite trajectory over the same probe.
+- Quantified BB-carrier mismatch at stage start:
+  - `1rkl.stage_7.0.runtime_debug_hybrid_nosc.up`: BB refresh displacement mean `55.37 Å` (max `55.45 Å`).
+  - `1rkl.stage_7.0.up`: BB refresh displacement near zero (mean `~0`, max `~1e-6 Å`).
+- Decisive isolation test:
+  - Kept hybrid active (`enable=1`, `activation_stage=production`, `n_sc=0`, `nonprotein_hs=0`, `integration_rmsd_align_enable=0`, `exclude_intra=0`) but zeroed `/input/hybrid_bb_map/atom_mask` (disabling effective BB refresh/projection coupling).
+  - Result: previously runaway probe became stable and finite over 20 steps.
+- Conclusion:
+  - The destabilizing source is the hybrid-active BB coupling path (`refresh_bb_positions_if_active` and BB gradient projection) in `../../src/martini.cpp`, not the non-protein hard-sphere toggle, SC environment relaxation, or integration RMSD alignment.
+
+## 2026-02-24 (AA Carrier Mass Scaling Patch in `run_sim_1rkl.sh`)
+- Re-read `task_plan.md` and patched stage-file injection mass assignment in `example/16.MARTINI/run_sim_1rkl.sh`.
+- Change details:
+  - added `BB_BEAD_MASS=72.0`, computed `BB_COMPONENT_SCALE = 72 / (14+12+12+16) = 72/54`.
+  - updated injected AA carrier mass formula from `component_mass/12` to `(72/54) * component_mass/12`.
+- Expected injected AA carrier masses are now:
+  - `N = 72/54 * 14/12 = 1.5556`
+  - `CA = 72/54 * 12/12 = 1.3333`
+  - `C = 72/54 * 12/12 = 1.3333`
+  - `O = 72/54 * 16/12 = 1.7778`
+- Validation:
+  - static formula check executed and matches expected values above.
+  - no full stage regeneration/production rerun was executed in this patch step.

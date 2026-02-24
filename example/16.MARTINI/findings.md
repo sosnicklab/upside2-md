@@ -12,3 +12,26 @@
   - Stages `6.2-6.6`: `Pcoupl=berendsen`, `Pcoupltype=semiisotropic`, `tau-p=4.0`, `compressibility=3e-4 0.0`; `ref_p` not explicit (GROMACS default `1.0 bar` behavior used for equilibration intent).
   - Stage `7`: `pcoupl=no`.
 - Unit conversion used (from AGENTS/CLAUDE project guidance): `1 bar = 0.000020659477 E_up/Angstrom^3`.
+
+## 2026-02-24 (Hybrid Production Blow-Up Isolation)
+- Controlled probes on `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.runtime_debug_hybrid_nosc.up` show that runaway expansion occurs whenever `hybrid_active=1`, even when:
+  - `n_sc=0` (SC probabilistic path effectively off),
+  - `production_nonprotein_hard_sphere=0`,
+  - `integration_rmsd_align_enable=0`,
+  - `exclude_intra_protein_martini=0`.
+- Equivalent probes with hybrid inactive (`activation_stage=__hybrid_disabled__` or `enable=0`) remain stable over the same settings.
+- Runtime diagnostics from the long failing run (`1rkl.stage_7.0.up`) indicate `diagnostics/sc_env_energy_total` remains O(10^2) while total MARTINI potential explodes to O(10^17), so SC env energy is not the dominant diverging term.
+- BB coupling-specific probe: zeroing `/input/hybrid_bb_map/atom_mask` while keeping hybrid active removes the runaway behavior, isolating instability to active BB coupling logic.
+- The unstable code path is centered in `../../src/martini.cpp`:
+  - `refresh_bb_positions_if_active(...)` (active-stage BB coordinate overwrite from mapped carriers),
+  - `project_bb_gradient_if_active(...)` (active-stage BB gradient redistribution/zeroing).
+
+## 2026-02-24 (BB/AA Carrier Mass Consistency)
+- BB bead mass was verified as `72/12 = 6.0` in runtime inputs, while injected AA backbone carriers were previously set to unscaled masses (`14/12`, `12/12`, `12/12`, `16/12`) summing to `54/12 = 4.5`.
+- To enforce carrier mass sum equal to BB mass, required scaling is `72/54`.
+- Effective carrier masses after applying `72/54` are:
+  - `N: 72/54 * 14/12 = 1.5556`
+  - `CA: 72/54 * 12/12 = 1.3333`
+  - `C: 72/54 * 12/12 = 1.3333`
+  - `O: 72/54 * 16/12 = 1.7778`
+- Implemented in `example/16.MARTINI/run_sim_1rkl.sh` by scaling injected `ref_mass` values in `inject_hybrid_mapping()`.

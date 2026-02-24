@@ -567,6 +567,9 @@ BB_COMPONENT_MASS = {
     "C": 12.0,
     "O": 16.0,
 }
+BB_BEAD_MASS = 72.0
+BB_COMPONENT_SUM = float(sum(BB_COMPONENT_MASS.values()))
+BB_COMPONENT_SCALE = (BB_BEAD_MASS / BB_COMPONENT_SUM) if BB_COMPONENT_SUM > 0.0 else 1.0
 DEFAULT_COMPONENT_NAMES = ("N", "CA", "C", "O")
 
 def as_text(x):
@@ -671,7 +674,8 @@ with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
                 ref_name[ref_idx] = pad_bytes(cname, name_dtype)
                 ref_role[ref_idx] = pad_bytes(cname, role_dtype)
                 ref_residue[ref_idx] = resid
-                ref_mass[ref_idx] = mass_dtype.type(BB_COMPONENT_MASS.get(cname, 12.0) / 12.0)
+                comp_mass = float(BB_COMPONENT_MASS.get(cname, 12.0))
+                ref_mass[ref_idx] = mass_dtype.type((BB_COMPONENT_SCALE * comp_mass) / 12.0)
 
         def append_input_dataset(name, appendix):
             if name not in dst_inp:

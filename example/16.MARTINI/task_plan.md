@@ -52,6 +52,7 @@
 - Fixed 2026-02-20: production mode-2 trajectory export (`extract_martini_vtf.py`) now recenters by periodic protein COM (residue `PRO`) before wrapping, preventing visualization-only PBC splitting that made centered proteins appear at box corners.
 - `output/potential` is a total-engine scalar (sum over active potential nodes), not a protein-only all-atom Upside-backbone channel; this can vary during pre-production even with rigid protein because environment terms evolve.
 - Remaining blocker: full long-horizon validation with exact production SC settings (`sc_env_relax_steps=200`) is still running/needs benchmarking; short diagnostics are improved but not yet a complete 5k-step confirmation.
+- New blocker (2026-02-24): production-stage instability is now isolated to the hybrid-active BB coupling path in `../../src/martini.cpp` (`refresh_bb_positions_if_active` + `project_bb_gradient_if_active`), not the non-protein hard-sphere toggle or SC environment loop. Hybrid-active runs with BB mapping enabled still show runaway expansion, while equivalent runs with active stage disabled or BB map masks zeroed remain stable.
 
 ## Revised Decisions
 - Hybrid coupling starts only at production stage; pre-production protein remains rigid.
@@ -124,3 +125,4 @@
 - During preparation, all-atom backbone reference coordinates (`N/CA/C/O`) are RMSD-aligned (Kabsch on residue backbone COMs) to MARTINI `BB` positions before writing `hybrid_bb_map/reference_atom_coords`.
 - New workflow variant requirement: keep `hybrid_control` enabled for dynamic rigid-mask enforcement but set `activation_stage` to a non-used token so hybrid protein coupling is never active in any stage; this preserves rigid-protein dry-MARTINI interactions without production Upside force exchange.
 - New workflow variant requirement: do not inject production rotamer/backbone nodes and use VTF extraction mode `1` at stage 7.0 to disable SC/backbone back-mapping output.
+- Stage-file injection in `run_sim_1rkl.sh` must scale AA backbone carrier masses by `72/54` so each `N/CA/C/O` carrier set sums to MARTINI `BB` mass `72/12`, giving per-carrier masses `N=1.56`, `CA=1.33`, `C=1.33`, `O=1.78` (Upside mass units).
