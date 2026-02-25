@@ -510,3 +510,27 @@
 - Removed deterministic pair fallback for SC-configured proxies when no active weighted rows are available, so SC pair interactions remain weight-driven only in probabilistic coupling branch.
 - Reverted prior temporary fallback behavior that injected proxy-coordinate fallback into SC row mapping after user clarification.
 - Validation: `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed (existing warnings only, no new build errors).
+- Follow-up rule update per user request: changed intra-protein pair allowance in `src/martini.cpp` so SC-SC interactions are allowed when residues differ, while same-residue SC-SC remains disallowed.
+- Validation: `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed after SC-SC rule change (existing warnings only).
+- Added SC-SC counterpart-weight force scaling in `src/martini.cpp`:
+  - Built per-proxy SC force weights from active SC-row probability mass.
+  - Applied asymmetric scaling in deterministic SC-SC pair updates: force on SC_i is multiplied by SC_j weight, and force on SC_j is multiplied by SC_i weight.
+  - Proxies with no active rows now receive zero SC force weight in this SC-SC scaling path.
+- Validation: `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed after SC-SC weighting change (existing warnings only).
+- Enforced strict rotamer-position locking for probabilistic SC rows in `src/martini.cpp` SC-env branch:
+  - SC-row interaction positions are now explicitly reset to mapped rotamer target positions before energy/gradient evaluation.
+  - Interaction-driven SC-row relaxation displacement is disabled in active path.
+- Validation: `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed after rotamer-lock enforcement (existing warnings only).
+- Follow-up fix for SC-SC probabilistic coupling gap in `src/martini.cpp`:
+  - Added probabilistic SC-SC edge routing (`ScScEdge`) in the pair loop so SC-SC pairs with probabilistic rows are evaluated in row space and do not fall back to direct proxy-pair force updates.
+  - Added SC-SC row-space force accumulation using rotamer-locked row coordinates (`sc_row_relaxed_pos = sc_row_target_pos`), with counterpart probability scaling:
+    - row force on SC_i scaled by SC_j proxy weight
+    - row force on SC_j scaled by SC_i proxy weight
+  - SC-SC row gradients are now accumulated into `sc_row_proxy_grad` and projected through existing `project_sc_gradient_if_active` flow.
+  - Updated probabilistic evaluation gate to run when either SC-env edges or SC-SC edges are present.
+- Validation: `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed after SC-SC row-space routing update (existing warnings only).
+- User reported instability ("simulation exploded") and requested SC-SC off.
+- Disabled protein SC-SC interactions in `src/martini.cpp`:
+  - Restored role gate to disallow `ROLE_SC`/`ROLE_SC` in `allow_protein_pair_by_rule`.
+  - Added explicit pair-loop skip for protein SC-SC pairs before probabilistic/deterministic nonbonded evaluation.
+- Validation: `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed after SC-SC disable change (existing warnings only).

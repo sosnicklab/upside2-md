@@ -3322,12 +3322,14 @@ struct MartiniPotential : public PotentialNode
         std::vector<std::array<float,3>> sc_row_relaxed_pos;
         std::vector<unsigned char> sc_row_valid;
         std::vector<float> sc_row_prob_norm;
+        std::vector<float> sc_proxy_force_weight;
         if(use_probabilistic_sc && hybrid_state) {
             const size_t n_sc_row = hybrid_state->sc_proxy_atom_index.size();
             sc_row_target_pos.assign(n_sc_row, std::array<float,3>{{0.f, 0.f, 0.f}});
             sc_row_relaxed_pos.assign(n_sc_row, std::array<float,3>{{0.f, 0.f, 0.f}});
             sc_row_valid.assign(n_sc_row, 0u);
             sc_row_prob_norm.assign(n_sc_row, 0.f);
+            sc_proxy_force_weight.assign(static_cast<size_t>(n_atom), 1.f);
 
             for(size_t r = 0; r < n_sc_row; ++r) {
                 Vec<3> proxy_pos = make_zero<3>();
@@ -3430,6 +3432,7 @@ struct MartiniPotential : public PotentialNode
             }
 
             for(const auto& kv : hybrid_state->sc_rows_by_proxy) {
+                int proxy_atom = kv.first;
                 std::vector<int> active_rows;
                 active_rows.reserve(kv.second.size());
                 float prob_sum = 0.f;
@@ -3442,7 +3445,12 @@ struct MartiniPotential : public PotentialNode
                         prob_sum += pr;
                     }
                 }
-                if(active_rows.empty()) continue;
+                if(active_rows.empty()) {
+                    if(proxy_atom >= 0 && proxy_atom < n_atom) {
+                        sc_proxy_force_weight[static_cast<size_t>(proxy_atom)] = 0.f;
+                    }
+                    continue;
+                }
                 if(prob_sum > 0.f) {
                     float inv_prob = 1.f / prob_sum;
                     for(int r : active_rows) {
@@ -3450,12 +3458,19 @@ struct MartiniPotential : public PotentialNode
                         if(!(std::isfinite(pr) && pr > 0.f)) continue;
                         sc_row_prob_norm[r] = pr * inv_prob;
                     }
+                    if(proxy_atom >= 0 && proxy_atom < n_atom) {
+                        sc_proxy_force_weight[static_cast<size_t>(proxy_atom)] =
+                            std::min(1.f, std::max(0.f, prob_sum));
+                    }
                 } else {
                     // Keep SC probabilistic coupling active even when incoming
                     // marginals are degenerate by assigning a uniform fallback.
                     float uniform = 1.f / static_cast<float>(active_rows.size());
                     for(int r : active_rows) {
                         sc_row_prob_norm[r] = uniform;
+                    }
+                    if(proxy_atom >= 0 && proxy_atom < n_atom) {
+                        sc_proxy_force_weight[static_cast<size_t>(proxy_atom)] = 1.f;
                     }
                 }
             }
@@ -3473,8 +3488,37 @@ struct MartiniPotential : public PotentialNode
             float qj = 0.f;
             std::array<float,3> env_pos{{0.f, 0.f, 0.f}};
         };
+        struct ScScEdge {
+            int proxy_i = -1;
+            int proxy_j = -1;
+            float eps = 0.f;
+            float sig = 0.f;
+            float qi = 0.f;
+            float qj = 0.f;
+        };
+        auto proxy_has_active_weighted_rows = [&](int proxy_atom) -> bool {
+            const auto* rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, proxy_atom);
+            if(!rows || rows->empty()) return false;
+            for(int r : *rows) {
+                if(r < 0 || r >= static_cast<int>(sc_row_prob_norm.size())) continue;
+                if(r >= static_cast<int>(sc_row_valid.size()) || !sc_row_valid[r]) continue;
+                float pr = sc_row_prob_norm[r];
+                if(std::isfinite(pr) && pr > 0.f) return true;
+            }
+            return false;
+        };
+        auto proxy_force_weight_at = [&](int proxy_atom) -> float {
+            float w = 1.f;
+            if(proxy_atom >= 0 && proxy_atom < static_cast<int>(sc_proxy_force_weight.size())) {
+                w = sc_proxy_force_weight[static_cast<size_t>(proxy_atom)];
+            }
+            if(!std::isfinite(w)) return 1.f;
+            return std::min(1.f, std::max(0.f, w));
+        };
         std::vector<ScEnvEdge> sc_env_edges;
+        std::vector<ScScEdge> sc_sc_edges;
         if(use_probabilistic_sc) sc_env_edges.reserve(pairs.size()/8 + 1);
+        if(use_probabilistic_sc) sc_sc_edges.reserve(pairs.size()/16 + 1);
 
         for(size_t np=0; np<pairs.size(); ++np) {
             int i = pairs[np].first;
@@ -3498,6 +3542,17 @@ struct MartiniPotential : public PotentialNode
                j < (int)hybrid_state->protein_membership.size()) {
                 i_is_protein = hybrid_state->protein_membership[i] >= 0;
                 j_is_protein = hybrid_state->protein_membership[j] >= 0;
+            }
+            auto i_role = hybrid_state
+                              ? martini_hybrid::atom_role_class_at(*hybrid_state, i)
+                              : martini_hybrid::ROLE_OTHER;
+            auto j_role = hybrid_state
+                              ? martini_hybrid::atom_role_class_at(*hybrid_state, j)
+                              : martini_hybrid::ROLE_OTHER;
+            if(i_is_protein && j_is_protein &&
+               i_role == martini_hybrid::ROLE_SC &&
+               j_role == martini_hybrid::ROLE_SC) {
+                continue;
             }
 
             if(coupling_align.enabled) {
@@ -3526,6 +3581,29 @@ struct MartiniPotential : public PotentialNode
             // evaluate proxy-env interactions for each rotamer-state position and
             // project weighted proxy gradients back through per-rotamer mappings.
             if(use_probabilistic_sc && hybrid_state) {
+                if(i_role == martini_hybrid::ROLE_SC && j_role == martini_hybrid::ROLE_SC) {
+                    const auto* i_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, i);
+                    const auto* j_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, j);
+                    bool i_has_rows = (i_rows && !i_rows->empty());
+                    bool j_has_rows = (j_rows && !j_rows->empty());
+                    if(i_has_rows || j_has_rows) {
+                        if(i_has_rows && j_has_rows &&
+                           proxy_has_active_weighted_rows(i) &&
+                           proxy_has_active_weighted_rows(j)) {
+                            ScScEdge edge;
+                            edge.proxy_i = i;
+                            edge.proxy_j = j;
+                            edge.eps = eps;
+                            edge.sig = sig;
+                            edge.qi = qi;
+                            edge.qj = qj;
+                            sc_sc_edges.push_back(edge);
+                        }
+                        // SC-SC probabilistic coupling stays in row space only.
+                        continue;
+                    }
+                }
+
                 bool proxy_is_i = false;
                 int proxy_atom = -1;
                 int env_atom = -1;
@@ -3634,83 +3712,13 @@ struct MartiniPotential : public PotentialNode
             update_vec<3>(pos1_sens, j, gj);
         }
 
-        if(use_probabilistic_sc && hybrid_state && !sc_env_edges.empty()) {
-            const int relax_steps = std::max(1, hybrid_state->sc_env_relax_steps);
-            const float relax_dt = hybrid_state->sc_env_relax_dt;
-            const float rest_k = hybrid_state->sc_env_restraint_k;
-            const float max_disp = hybrid_state->sc_env_max_displacement;
-            std::vector<std::array<float,3>> row_force(sc_row_relaxed_pos.size(), std::array<float,3>{{0.f,0.f,0.f}});
-
-            for(int rs = 0; rs < relax_steps; ++rs) {
-                std::fill(row_force.begin(), row_force.end(), std::array<float,3>{{0.f,0.f,0.f}});
-                for(const auto& edge : sc_env_edges) {
-                    const auto* proxy_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, edge.proxy_atom);
-                    if(!proxy_rows || proxy_rows->empty()) continue;
-                    Vec<3> env_pos = make_vec3(edge.env_pos[0], edge.env_pos[1], edge.env_pos[2]);
-                    for(int r : *proxy_rows) {
-                        if(r < 0 || r >= static_cast<int>(sc_row_relaxed_pos.size())) continue;
-                        if(!sc_row_valid[r]) continue;
-
-                        auto& rp = sc_row_relaxed_pos[r];
-                        Vec<3> proxy_pos = make_vec3(rp[0], rp[1], rp[2]);
-                        Vec<3> pa = edge.proxy_is_i ? proxy_pos : env_pos;
-                        Vec<3> pb = edge.proxy_is_i ? env_pos : proxy_pos;
-
-                        Vec<3> pair_force = make_zero<3>();
-                        float pair_pot = 0.f;
-                        if(!eval_pair_force(pa, pb, edge.eps, edge.sig, edge.qi, edge.qj, false,
-                                            pair_pot, pair_force,
-                                            hybrid_state->sc_env_lj_force_cap,
-                                            hybrid_state->sc_env_coul_force_cap,
-                                            0.f,
-                                            0.f,
-                                            nullptr,
-                                            nullptr)) {
-                            continue;
-                        }
-                        auto gi = -pair_force;
-                        auto gj = pair_force;
-                        auto proxy_grad = edge.proxy_is_i ? gi : gj;
-                        // `proxy_grad` is dE/dx. The inner SC relax loop integrates
-                        // positions with a force-like update, so use -dE/dx here.
-                        row_force[r][0] -= proxy_grad[0];
-                        row_force[r][1] -= proxy_grad[1];
-                        row_force[r][2] -= proxy_grad[2];
-                    }
-                }
-
-                for(size_t r = 0; r < sc_row_relaxed_pos.size(); ++r) {
-                    if(!sc_row_valid[r]) continue;
-                    auto& rp = sc_row_relaxed_pos[r];
-                    const auto& tp = sc_row_target_pos[r];
-                    float dx = rp[0] - tp[0];
-                    float dy = rp[1] - tp[1];
-                    float dz = rp[2] - tp[2];
-
-                    if(rest_k > 0.f) {
-                        row_force[r][0] += -rest_k * dx;
-                        row_force[r][1] += -rest_k * dy;
-                        row_force[r][2] += -rest_k * dz;
-                    }
-
-                    rp[0] += relax_dt * row_force[r][0];
-                    rp[1] += relax_dt * row_force[r][1];
-                    rp[2] += relax_dt * row_force[r][2];
-
-                    if(max_disp > 0.f) {
-                        float ndx = rp[0] - tp[0];
-                        float ndy = rp[1] - tp[1];
-                        float ndz = rp[2] - tp[2];
-                        float d2 = ndx*ndx + ndy*ndy + ndz*ndz;
-                        float max2 = max_disp * max_disp;
-                        if(d2 > max2 && d2 > 0.f) {
-                            float scale = max_disp / sqrtf(d2);
-                            rp[0] = tp[0] + ndx * scale;
-                            rp[1] = tp[1] + ndy * scale;
-                            rp[2] = tp[2] + ndz * scale;
-                        }
-                    }
-                }
+        if(use_probabilistic_sc && hybrid_state &&
+           (!sc_env_edges.empty() || !sc_sc_edges.empty())) {
+            // Keep each probabilistic SC at its mapped rotamer position for
+            // interaction evaluation. SC rows are not displaced by env/SC forces.
+            for(size_t r = 0; r < sc_row_relaxed_pos.size(); ++r) {
+                if(!sc_row_valid[r]) continue;
+                sc_row_relaxed_pos[r] = sc_row_target_pos[r];
             }
 
             for(const auto& edge : sc_env_edges) {
@@ -3845,6 +3853,72 @@ struct MartiniPotential : public PotentialNode
                         env_grad_total = make_vec3(gr[0], gr[1], gr[2]);
                     }
                     update_vec<3>(pos1_sens, edge.env_atom, env_grad_total);
+                }
+            }
+
+            for(const auto& edge : sc_sc_edges) {
+                const auto* i_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, edge.proxy_i);
+                const auto* j_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, edge.proxy_j);
+                if(!i_rows || i_rows->empty() || !j_rows || j_rows->empty()) continue;
+
+                float wi = proxy_force_weight_at(edge.proxy_i);
+                float wj = proxy_force_weight_at(edge.proxy_j);
+                if(!(wi > 0.f) && !(wj > 0.f)) continue;
+
+                for(int ri : *i_rows) {
+                    if(ri < 0 || ri >= static_cast<int>(sc_row_relaxed_pos.size())) continue;
+                    if(!sc_row_valid[ri]) continue;
+                    float pri = sc_row_prob_norm[ri];
+                    if(!(std::isfinite(pri) && pri > 0.f)) continue;
+                    auto& pi = sc_row_relaxed_pos[ri];
+                    Vec<3> pos_i = make_vec3(pi[0], pi[1], pi[2]);
+
+                    for(int rj : *j_rows) {
+                        if(rj < 0 || rj >= static_cast<int>(sc_row_relaxed_pos.size())) continue;
+                        if(!sc_row_valid[rj]) continue;
+                        float prj = sc_row_prob_norm[rj];
+                        if(!(std::isfinite(prj) && prj > 0.f)) continue;
+                        auto& pj = sc_row_relaxed_pos[rj];
+                        Vec<3> pos_j = make_vec3(pj[0], pj[1], pj[2]);
+
+                        Vec<3> pair_force = make_zero<3>();
+                        float pair_pot = 0.f;
+                        if(!eval_pair_force(pos_i, pos_j,
+                                            edge.eps, edge.sig, edge.qi, edge.qj, false,
+                                            pair_pot, pair_force,
+                                            0.f, 0.f, 0.f, 0.f,
+                                            nullptr, nullptr)) {
+                            continue;
+                        }
+
+                        float w_pair = pri * prj;
+                        if(!(std::isfinite(w_pair) && w_pair > 0.f)) continue;
+                        if(pot) *pot += w_pair * pair_pot;
+
+                        auto gi = -pair_force;
+                        auto gj = pair_force;
+                        if(coupling_align.enabled) {
+                            auto gi_arr = std::array<float,3>{gi[0], gi[1], gi[2]};
+                            auto gj_arr = std::array<float,3>{gj[0], gj[1], gj[2]};
+                            auto gi_raw = martini_hybrid::apply_rot_T(coupling_align.R, gi_arr);
+                            auto gj_raw = martini_hybrid::apply_rot_T(coupling_align.R, gj_arr);
+                            gi = make_vec3(gi_raw[0], gi_raw[1], gi_raw[2]);
+                            gj = make_vec3(gj_raw[0], gj_raw[1], gj_raw[2]);
+                        }
+
+                        float gi_scale = w_pair * wj;
+                        float gj_scale = w_pair * wi;
+                        if(ri >= 0 && ri < static_cast<int>(sc_row_proxy_grad.size()) && gi_scale > 0.f) {
+                            sc_row_proxy_grad[ri][0] += gi_scale * gi[0];
+                            sc_row_proxy_grad[ri][1] += gi_scale * gi[1];
+                            sc_row_proxy_grad[ri][2] += gi_scale * gi[2];
+                        }
+                        if(rj >= 0 && rj < static_cast<int>(sc_row_proxy_grad.size()) && gj_scale > 0.f) {
+                            sc_row_proxy_grad[rj][0] += gj_scale * gj[0];
+                            sc_row_proxy_grad[rj][1] += gj_scale * gj[1];
+                            sc_row_proxy_grad[rj][2] += gj_scale * gj[2];
+                        }
+                    }
                 }
             }
         }
