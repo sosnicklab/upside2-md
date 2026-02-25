@@ -1,40 +1,96 @@
-# Task: Enforce Weighted Hybrid SC Coupling Without Pair-Kernel Fallback
+# Infrastructure Plan: Hybrid-Cycle to AA-Backbone-in-Explicit-Lipid Runtime
 
-## 1. Project Goal
-Ensure hybrid SC probabilistic coupling always uses weighted SC-row interactions (including SC-BB and SC-env cases), while keeping interaction evaluation strictly on dry-MARTINI-side particles (no AA-carrier interaction fallback in the pair kernel).
+## Summary
+Implement Upside infrastructure so:
+1. `MARTINI protein` is used only to generate/relax initial training systems.
+2. Runtime physics for target simulations is driven by **Upside all-atom backbone + explicit lipid bilayer** interactions from a trained **RBM radial FF**.
+3. All trained FF parameters are stored in a single file: `explicit_bilayer.h5`.
 
-## 2. Architecture & Key Decisions
-- Scope:
-  - Inspect and patch hybrid SC coupling logic in `src/martini.cpp` only.
-  - Preserve existing hybrid schema and runtime node dependencies.
-  - Avoid changes to stage-file generation unless required.
-- Key decisions:
-  - Keep per-row probabilistic model; make weight normalization robust by enforcing fallback uniform weights when probability sums are degenerate.
-  - Keep probabilistic edge path active whenever SC proxy rows have valid weighted rows.
-  - Remove deterministic MARTINI pair fallback for SC-configured proxy rows when no active row weights are available in that step.
-  - Disable protein SC-SC nonbonded interactions (deterministic and probabilistic paths) to prevent instability.
-  - Enforce strict rotamer-position locking for probabilistic SC rows during interaction evaluation (no displacement by env/SC interaction-driven relaxation) for SC-env paths.
-- Revised Decisions:
-  - Use normalized row weights (`sc_row_prob_norm`) consistently for edge eligibility checks.
+## Core runtime architecture change
+Add two explicit operating modes in hybrid control:
 
-## 3. Execution Phases
-- [x] Phase 1: Keep strict placement-based SC-row mapping (no pair-kernel fallback to carrier/proxy coordinates).
-- [x] Phase 2: Patch SC-row probability normalization to guarantee nonzero per-proxy row weights when valid rows exist.
-- [x] Phase 3: Patch SC-edge selection to rely on normalized weights and preserve probabilistic routing.
-- [x] Phase 4: Build and run focused validation.
-- [x] Phase 5: Record outcomes in `progress.md` and task review.
+1. `bootstrap_martini_protein` (training prep mode)
+- MARTINI protein beads present.
+- protein rigid; lipids relax.
+- used only for generating stable initial states.
 
-## 4. Known Errors / Blockers
-- None currently.
+2. `aa_backbone_explicit_lipid` (target mode)
+- MARTINI protein beads are retained only as optional inert carriers for compatibility, but **excluded from force/energy/integration**.
+- active protein degrees of freedom are Upside AA carriers/backbone atoms.
+- all protein-lipid interactions come from trained RBM cross potential.
 
-## 5. Review
-- Implemented in `src/martini.cpp`:
-  - Hardened per-proxy SC-row probability normalization so that if valid rows exist but summed probability is degenerate/non-positive, weights fall back to a uniform distribution over valid rows.
-  - Updated SC probabilistic edge eligibility to use normalized per-row weights (`sc_row_prob_norm`) and valid-row masks.
-  - Removed deterministic SC pair fallback inside probabilistic SC selection: when a proxy is SC-configured but has no active weighted rows for the current step, that pair is skipped instead of evaluated through unweighted deterministic MARTINI fallback.
-  - Disabled SC-SC interactions by restoring role rule to `ROLE_SC/ROLE_SC -> false`.
-  - Added an explicit pair-loop guard to skip protein SC-SC nonbonded interactions before deterministic/probabilistic SC routing.
-  - Locked probabilistic SC row positions to their mapped rotamer targets during SC-env evaluation, disabling interaction-driven row displacement.
-- Validation:
-  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` succeeded.
-  - Build emitted only existing warnings; no new errors.
+This removes dependence on MARTINI protein interaction physics in the final model.
+
+## New potential infrastructure in Upside
+Implement a new node in `src/martini.cpp` (or split file), e.g. `martini_rbm_cross_potential`:
+
+1. Inputs
+- protein interaction sites:
+  - BB classes: `(AA, N/CA/C/O)` (80 classes)
+  - SC classes (existing Upside SC representation)
+- explicit lipid/environment MARTINI bead classes.
+- radial basis features (bins/spline basis) per pair.
+
+2. Energy
+- RBM-style radial coupling (Upside-style learnable node, not LJ/Coulomb table).
+
+3. Parameter API
+- fully implement `get_param`, `set_param`, `get_param_deriv`.
+- deterministic flatten/unflatten order.
+- gradient-compatible with existing `engine.get_param_deriv`.
+
+4. Gating/filtering in integration cycle
+- when mode = `aa_backbone_explicit_lipid`, skip MARTINI protein-protein and MARTINI protein-lipid pair contributions entirely.
+- keep lipid-lipid MARTINI interactions.
+- keep Upside internal protein terms.
+- apply RBM cross node for protein-lipid interactions.
+
+## `explicit_bilayer.h5` as single artifact
+Store only FF/state needed for reuse:
+
+1. `/meta`
+2. `/classes` (`martini_types`, `sc_types`, `bb_types`, radial basis metadata)
+3. `/rbm/sc` (W, hidden biases, optional visible biases)
+4. `/rbm/bb` (W, hidden biases, optional visible biases)
+5. `/views`
+- explicit effective tables:
+  - MARTINI type vs SC type vs radial basis
+  - MARTINI type vs BB `(AA,N/CA/C/O)` vs radial basis
+6. `/priors` and bounds
+7. optional `/system_maps` for reproducible class indexing
+
+## Training workflow (unchanged objective, updated infrastructure use)
+1. Read IDs from `/Users/yinhan/Documents/Train/upside_input/list`.
+2. Download OPM-oriented proteins.
+3. Build dry-MARTINI protein and pack in dry-MARTINI bilayer.
+4. Run rigid-protein lipid relaxation (`bootstrap_martini_protein`).
+5. Switch to training configs where contrasts/derivatives are taken from `martini_rbm_cross_potential`.
+6. CD updates write directly into `explicit_bilayer.h5`.
+
+## Integration-cycle implementation tasks
+1. Add mode switch handling in `hybrid_control` parsing and stage update logic.
+2. Add atom activity masks:
+- `active_protein_atoms` (Upside AA backbone/SC carriers)
+- `inactive_martini_protein_atoms` in target mode.
+3. In MARTINI pair loop:
+- hard-skip inactive MARTINI protein atoms.
+4. In force projection / BB refresh paths:
+- disable MARTINI-proxy refresh/projection when target mode is active.
+5. Ensure logging reports mode and active atom counts each stage.
+
+## Validation/test plan
+1. Unit
+- RBM node param roundtrip and FD gradient checks.
+- mode gating tests (pairs correctly skipped/kept by mode).
+2. Integration
+- bootstrap run relaxes lipids with rigid MARTINI protein.
+- target mode run shows no MARTINI-protein force contribution.
+- RBM cross term contributes finite energy/forces and updates in training.
+3. Regression
+- old MARTINI workflows unchanged when new mode/node disabled.
+
+## Assumptions locked
+1. Final production physics should not depend on MARTINI protein interaction terms.
+2. MARTINI protein may remain in files as inert compatibility carriers unless explicitly stripped.
+3. BB granularity remains AA-specific `N/CA/C/O`.
+4. Output remains single-file `explicit_bilayer.h5`.
