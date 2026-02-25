@@ -1,26 +1,35 @@
-# Task: Enforce RMSD Alignment for Per-Step AA Coordinate Updates
+# Task: Enforce Weighted Hybrid SC Coupling Without Pair-Kernel Fallback
 
 ## 1. Project Goal
-Ensure that all-atom coordinates updated during hybrid production integration are RMSD-aligned to the previous-step all-atom coordinates before they are applied, to remove rigid-body rotation drift.
+Ensure hybrid SC probabilistic coupling always uses weighted SC-row interactions (including SC-BB and SC-env cases), while keeping interaction evaluation strictly on dry-MARTINI-side particles (no AA-carrier interaction fallback in the pair kernel).
 
 ## 2. Architecture & Key Decisions
 - Scope:
-  - Inspect hybrid AA update path in C++ runtime (`src/martini.cpp` and related integration code).
-  - Verify whether per-step RMSD alignment already exists and whether it is applied at the correct point.
-  - Patch logic so updated AA coordinates are aligned against previous-step AA coordinates before commit.
-  - Keep behavior gated by existing hybrid control flags when appropriate.
+  - Inspect and patch hybrid SC coupling logic in `src/martini.cpp` only.
+  - Preserve existing hybrid schema and runtime node dependencies.
+  - Avoid changes to stage-file generation unless required.
 - Key decisions:
-  - Use previous-step AA backbone anchors as the alignment reference.
-  - Apply alignment in the integration update path (not only during output/extraction).
-  - Preserve existing workflow interfaces and configuration keys.
+  - Keep per-row probabilistic model; make weight normalization robust by enforcing fallback uniform weights when probability sums are degenerate.
+  - Keep probabilistic edge path active whenever SC proxy rows have valid weighted rows.
+  - Remove deterministic MARTINI pair fallback for SC-configured proxy rows when no active row weights are available in that step.
 - Revised Decisions:
-  - Invoke RMSD alignment before each force-evaluation/update substep in all integration-cycle variants.
+  - Use normalized row weights (`sc_row_prob_norm`) consistently for edge eligibility checks.
 
 ## 3. Execution Phases
-- [x] Phase 1: Locate current AA update + alignment code path in runtime.
-- [x] Phase 2: Implement/adjust per-step RMSD alignment-before-apply behavior.
-- [x] Phase 3: Build and run focused validation to confirm behavior.
-- [x] Phase 4: Record outcomes in `progress.md`.
+- [x] Phase 1: Keep strict placement-based SC-row mapping (no pair-kernel fallback to carrier/proxy coordinates).
+- [x] Phase 2: Patch SC-row probability normalization to guarantee nonzero per-proxy row weights when valid rows exist.
+- [x] Phase 3: Patch SC-edge selection to rely on normalized weights and preserve probabilistic routing.
+- [x] Phase 4: Build and run focused validation.
+- [x] Phase 5: Record outcomes in `progress.md` and task review.
 
 ## 4. Known Errors / Blockers
 - None currently.
+
+## 5. Review
+- Implemented in `src/martini.cpp`:
+  - Hardened per-proxy SC-row probability normalization so that if valid rows exist but summed probability is degenerate/non-positive, weights fall back to a uniform distribution over valid rows.
+  - Updated SC probabilistic edge eligibility to use normalized per-row weights (`sc_row_prob_norm`) and valid-row masks.
+  - Removed deterministic SC pair fallback inside probabilistic SC selection: when a proxy is SC-configured but has no active weighted rows for the current step, that pair is skipped instead of evaluated through unweighted deterministic MARTINI fallback.
+- Validation:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` succeeded.
+  - Build emitted only existing warnings; no new errors.

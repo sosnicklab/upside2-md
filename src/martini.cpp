@@ -3430,19 +3430,33 @@ struct MartiniPotential : public PotentialNode
             }
 
             for(const auto& kv : hybrid_state->sc_rows_by_proxy) {
+                std::vector<int> active_rows;
+                active_rows.reserve(kv.second.size());
                 float prob_sum = 0.f;
                 for(int r : kv.second) {
                     if(r < 0 || r >= static_cast<int>(n_sc_row)) continue;
                     if(!sc_row_valid[r]) continue;
-                    prob_sum += std::max(0.f, sc_row_probability[r]);
+                    active_rows.push_back(r);
+                    float pr = sc_row_probability[r];
+                    if(std::isfinite(pr) && pr > 0.f) {
+                        prob_sum += pr;
+                    }
                 }
-                if(prob_sum <= 0.f) continue;
-                float inv_prob = 1.f / prob_sum;
-                for(int r : kv.second) {
-                    if(r < 0 || r >= static_cast<int>(n_sc_row)) continue;
-                    if(!sc_row_valid[r]) continue;
-                    float pr = std::max(0.f, sc_row_probability[r]);
-                    sc_row_prob_norm[r] = pr * inv_prob;
+                if(active_rows.empty()) continue;
+                if(prob_sum > 0.f) {
+                    float inv_prob = 1.f / prob_sum;
+                    for(int r : active_rows) {
+                        float pr = sc_row_probability[r];
+                        if(!(std::isfinite(pr) && pr > 0.f)) continue;
+                        sc_row_prob_norm[r] = pr * inv_prob;
+                    }
+                } else {
+                    // Keep SC probabilistic coupling active even when incoming
+                    // marginals are degenerate by assigning a uniform fallback.
+                    float uniform = 1.f / static_cast<float>(active_rows.size());
+                    for(int r : active_rows) {
+                        sc_row_prob_norm[r] = uniform;
+                    }
                 }
             }
         }
@@ -3552,8 +3566,12 @@ struct MartiniPotential : public PotentialNode
                 if(proxy_rows && !proxy_rows->empty()) {
                     float prob_sum = 0.f;
                     for(int r : *proxy_rows) {
-                        if(r < 0 || r >= (int)sc_row_probability.size()) continue;
-                        prob_sum += std::max(0.f, sc_row_probability[r]);
+                        if(r < 0 || r >= static_cast<int>(sc_row_prob_norm.size())) continue;
+                        if(r >= static_cast<int>(sc_row_valid.size()) || !sc_row_valid[r]) continue;
+                        float pr = sc_row_prob_norm[r];
+                        if(std::isfinite(pr) && pr > 0.f) {
+                            prob_sum += pr;
+                        }
                     }
                     if(prob_sum > 0.f) {
                         ScEnvEdge edge;
@@ -3578,6 +3596,10 @@ struct MartiniPotential : public PotentialNode
                         sc_env_edges.push_back(edge);
                         continue;
                     }
+                    // This proxy is configured for probabilistic SC coupling but has
+                    // no active weighted rows in this step. Skip deterministic MARTINI
+                    // fallback so SC interactions remain weight-driven only.
+                    continue;
                 }
             }
 

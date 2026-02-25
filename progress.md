@@ -502,3 +502,11 @@
 - Validation:
 - `python3 -m py_compile example/16.MARTINI/set_initial_position.py` passed.
 - `bash -n example/16.MARTINI/run_sim_1rkl_rigid_dry.sh` passed.
+
+## 2026-02-25
+- Reviewed hybrid SC probabilistic coupling behavior in `src/martini.cpp` against user constraints on particle-interaction validity.
+- Implemented robust per-proxy SC row probability normalization fallback: if valid SC rows exist but probability sum is degenerate, assign uniform weights across valid rows.
+- Updated probabilistic SC edge eligibility to use normalized per-row weights (`sc_row_prob_norm`) plus valid-row masks.
+- Removed deterministic pair fallback for SC-configured proxies when no active weighted rows are available, so SC pair interactions remain weight-driven only in probabilistic coupling branch.
+- Reverted prior temporary fallback behavior that injected proxy-coordinate fallback into SC row mapping after user clarification.
+- Validation: `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed (existing warnings only, no new build errors).

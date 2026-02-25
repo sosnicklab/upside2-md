@@ -6,3 +6,4 @@
 - 2026-02-23: If user defines a canonical workflow entrypoint (here `prepare_system.py`), do not route execution through legacy prep scripts; keep helper code internal and preserve the requested entrypoint contract.
 - 2026-02-23: When users ask to reduce script chaos, enforce one operational script entrypoint in workflows and convert legacy scripts into import-only helpers instead of subprocess targets.
 - 2026-02-23: If user further requires one script + one lib, merge helper modules promptly and remove transitional helper files after dependency checks.
+- 2026-02-25: When user distinguishes "convert to MARTINI interaction representation" from "fallback behavior", do not add fallback paths that mask mapping gaps; keep pair-kernel semantics strict and validate interactions remain within the intended particle model.
