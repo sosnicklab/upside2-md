@@ -1785,22 +1785,35 @@ void align_active_protein_coordinates(DerivEngine& engine, VecArray pos, VecArra
 
     refresh_bb_positions_if_active(*st, pos, n_atom);
 
-    std::vector<int> bb_idx;
-    bb_idx.reserve(st->n_bb);
-    for(size_t k = 0; k < st->n_bb; ++k) {
-        int bb = st->bb_atom_index[k];
-        if(bb >= 0 && bb < n_atom) bb_idx.push_back(bb);
+    // Prefer protein AA carrier coordinates for RMSD alignment (ROLE_OTHER with
+    // protein membership). Fall back to MARTINI BB anchors if AA carriers are
+    // unavailable in this runtime state.
+    std::vector<int> ref_idx;
+    const size_t n_scan = std::min(static_cast<size_t>(n_atom), st->protein_membership.size());
+    ref_idx.reserve(n_scan);
+    for(size_t i = 0; i < n_scan; ++i) {
+        if(st->protein_membership[i] < 0) continue;
+        if(atom_role_class_at(*st, static_cast<int>(i)) != ROLE_OTHER) continue;
+        ref_idx.push_back(static_cast<int>(i));
     }
-    if(bb_idx.size() < 3) return;
+    if(ref_idx.size() < 3) {
+        ref_idx.clear();
+        ref_idx.reserve(st->n_bb);
+        for(size_t k = 0; k < st->n_bb; ++k) {
+            int bb = st->bb_atom_index[k];
+            if(bb >= 0 && bb < n_atom) ref_idx.push_back(bb);
+        }
+    }
+    if(ref_idx.size() < 3) return;
 
-    std::vector<std::array<float,3>> cur_bb(bb_idx.size());
-    for(size_t i = 0; i < bb_idx.size(); ++i) {
-        auto p = load_vec<3>(pos, bb_idx[i]);
-        cur_bb[i] = std::array<float,3>{p[0], p[1], p[2]};
+    std::vector<std::array<float,3>> cur_ref(ref_idx.size());
+    for(size_t i = 0; i < ref_idx.size(); ++i) {
+        auto p = load_vec<3>(pos, ref_idx[i]);
+        cur_ref[i] = std::array<float,3>{p[0], p[1], p[2]};
     }
 
-    if(!st->has_prev_bb_rmsd || st->prev_bb_pos_rmsd.size() != cur_bb.size()) {
-        st->prev_bb_pos_rmsd = cur_bb;
+    if(!st->has_prev_bb_rmsd || st->prev_bb_pos_rmsd.size() != cur_ref.size()) {
+        st->prev_bb_pos_rmsd = cur_ref;
         st->has_prev_bb_rmsd = true;
         return;
     }
@@ -1808,8 +1821,8 @@ void align_active_protein_coordinates(DerivEngine& engine, VecArray pos, VecArra
     float R[3][3];
     std::array<float,3> t{0.f, 0.f, 0.f};
     float rmsd = 0.f;
-    if(!build_kabsch_horn_transform(cur_bb, st->prev_bb_pos_rmsd, R, t, &rmsd)) {
-        st->prev_bb_pos_rmsd = cur_bb;
+    if(!build_kabsch_horn_transform(cur_ref, st->prev_bb_pos_rmsd, R, t, &rmsd)) {
+        st->prev_bb_pos_rmsd = cur_ref;
         st->has_prev_bb_rmsd = true;
         return;
     }
@@ -1835,9 +1848,9 @@ void align_active_protein_coordinates(DerivEngine& engine, VecArray pos, VecArra
     if(!any_protein) return;
 
     refresh_bb_positions_if_active(*st, pos, n_atom);
-    st->prev_bb_pos_rmsd.resize(bb_idx.size());
-    for(size_t i = 0; i < bb_idx.size(); ++i) {
-        auto p = load_vec<3>(pos, bb_idx[i]);
+    st->prev_bb_pos_rmsd.resize(ref_idx.size());
+    for(size_t i = 0; i < ref_idx.size(); ++i) {
+        auto p = load_vec<3>(pos, ref_idx[i]);
         st->prev_bb_pos_rmsd[i] = std::array<float,3>{p[0], p[1], p[2]};
     }
     st->has_prev_bb_rmsd = true;

@@ -259,6 +259,24 @@
 - `python3 -m py_compile example/16.MARTINI/set_initial_position.py` passed.
 - `bash -n example/16.MARTINI/run_sim_1rkl_rigid_dry.sh` passed.
 
+## 2026-02-25
+- User request: ensure AA coordinates are RMSD-aligned to previous-step AA frame before per-step integration updates to suppress rigid-body rotation drift in hybrid production.
+- Code audit:
+  - Verified RMSD alignment path exists in `src/martini.cpp` (`align_active_protein_coordinates`) using Kabsch/Horn against previous-step reference and applying rigid transform to protein coordinates + momenta.
+  - Verified integrator previously called this alignment once at integration-cycle entry.
+- Updated `src/deriv_engine.cpp`:
+  - Moved/expanded `martini_hybrid::align_active_protein_coordinates(...)` calls to run before each force-evaluation/update substep:
+    - 3-stage integrator loops (`integration_cycle(..., IntegratorType)` and `integration_cycle(..., float)`).
+    - RESPA path (`integration_cycle(..., int inner_step)`) for slow-level compute and each fast-level inner loop.
+  - This enforces RMSD frame-alignment immediately before each substep update use.
+- Updated `src/martini.cpp` alignment reference selection in `align_active_protein_coordinates(...)`:
+  - Prefer protein AA carrier coordinates (`protein_membership>=0` and `ROLE_OTHER`) as the RMSD fit reference set.
+  - Fall back to MARTINI BB anchors when AA carriers are unavailable.
+- Build/validation:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed.
+  - Focused runtime check (2-step production on temp stage-7 file with debug interval=1) confirms repeated per-substep alignment:
+    - log contains multiple `Hybrid integration RMSD-align: step=...` lines between `0 / 2` and `1 / 2` output steps.
+
 ## 2026-02-24
 - Added new workflow `example/16.MARTINI/run_sim_1rkl_new.sh`, cloned from `run_sim_1rkl_rigid_dry.sh` and switched to hybrid-on-production behavior.
 - New workflow defaults:

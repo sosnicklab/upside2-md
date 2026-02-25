@@ -1,28 +1,26 @@
-# Task: Create `run_sim_1rkl_new.sh` with Hybrid Active at Production
+# Task: Enforce RMSD Alignment for Per-Step AA Coordinate Updates
 
 ## 1. Project Goal
-Add a new workflow `example/16.MARTINI/run_sim_1rkl_new.sh`, based on `run_sim_1rkl_rigid_dry.sh`, that activates Upside hybrid at stage `7.0` and enables all designed hybrid production components.
+Ensure that all-atom coordinates updated during hybrid production integration are RMSD-aligned to the previous-step all-atom coordinates before they are applied, to remove rigid-body rotation drift.
 
 ## 2. Architecture & Key Decisions
 - Scope:
-  - Clone `run_sim_1rkl_rigid_dry.sh` into a new workflow script.
-  - Keep the same stage topology/process (`6.0 -> 7.0`).
-  - Enable hybrid activation at production stage.
-  - Enable production hybrid controls and rotamer/backbone augmentation.
+  - Inspect hybrid AA update path in C++ runtime (`src/martini.cpp` and related integration code).
+  - Verify whether per-step RMSD alignment already exists and whether it is applied at the correct point.
+  - Patch logic so updated AA coordinates are aligned against previous-step AA coordinates before commit.
+  - Keep behavior gated by existing hybrid control flags when appropriate.
 - Key decisions:
-  - Use `HYBRID_ACTIVATION_STAGE=production` as default in the new workflow.
-  - Keep preproduction rigid behavior via existing `preprod_protein_mode=rigid`.
-  - Use production handoff carrier refresh for `6.6 -> 7.0`.
-  - Use `PROD_TIME_STEP=0.002` and stage `7.0` VTF extraction mode `2`.
+  - Use previous-step AA backbone anchors as the alignment reference.
+  - Apply alignment in the integration update path (not only during output/extraction).
+  - Preserve existing workflow interfaces and configuration keys.
 - Revised Decisions:
-  - Add explicit production hybrid assertion before running stage `7.0`.
+  - Invoke RMSD alignment before each force-evaluation/update substep in all integration-cycle variants.
 
 ## 3. Execution Phases
-- [x] Phase 1: Inspect rigid-dry workflow and identify hybrid-disable points.
-- [x] Phase 2: Create new workflow script and switch activation defaults.
-- [x] Phase 3: Wire production hybrid stack (SC controls + rotamer nodes + handoff mode).
-- [x] Phase 4: Validate script syntax and run short smoke workflow.
-- [x] Phase 5: Log results in `progress.md`.
+- [x] Phase 1: Locate current AA update + alignment code path in runtime.
+- [x] Phase 2: Implement/adjust per-step RMSD alignment-before-apply behavior.
+- [x] Phase 3: Build and run focused validation to confirm behavior.
+- [x] Phase 4: Record outcomes in `progress.md`.
 
 ## 4. Known Errors / Blockers
 - None currently.
