@@ -2411,7 +2411,8 @@ struct MartiniPotential : public PotentialNode
     bool overwrite_spline_tables;
     
     // PME parameters removed - using Coulomb spline tables instead
-    // Box dimensions removed - using NVT ensemble without boundaries
+    // Box dimensions used for minimum-image pair displacements under PBC/NPT.
+    float box_x, box_y, box_z;
     
     // Spline interpolation for LJ potential - single spline for each epsilon/sigma pair
     std::map<std::pair<float, float>, LayeredClampedSpline1D<1>> lj_splines;
@@ -2539,7 +2540,26 @@ struct MartiniPotential : public PotentialNode
         // PME parameters removed - using Coulomb spline tables instead
 
         
-        // Box dimensions removed - using NVT ensemble without boundaries
+        // Read box dimensions for minimum-image displacements.
+        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
+            box_x = read_attribute<float>(grp, ".", "x_len");
+            box_y = read_attribute<float>(grp, ".", "y_len");
+            box_z = read_attribute<float>(grp, ".", "z_len");
+        } else if(attribute_exists(grp, ".", "wall_xlo") && attribute_exists(grp, ".", "wall_xhi") &&
+                  attribute_exists(grp, ".", "wall_ylo") && attribute_exists(grp, ".", "wall_yhi") &&
+                  attribute_exists(grp, ".", "wall_zlo") && attribute_exists(grp, ".", "wall_zhi")) {
+            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
+            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
+            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
+            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
+            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
+            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
+            box_x = wall_xhi - wall_xlo;
+            box_y = wall_yhi - wall_ylo;
+            box_z = wall_zhi - wall_zlo;
+        } else {
+            box_x = box_y = box_z = 0.f;
+        }
 
         auto n_pair = get_dset_size(2, grp, "pairs")[0];
         
@@ -2959,6 +2979,9 @@ struct MartiniPotential : public PotentialNode
                                    float* pair_lj_potential,
                                    float* pair_coul_potential) -> bool {
             auto dr = pa - pb;
+            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
+                dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
+            }
             auto dist2 = mag2(dr);
             auto dist = sqrtf(max(dist2, kMinDistance));
             pair_potential = 0.f;
@@ -4708,9 +4731,51 @@ extern "C" {
 // Explicit registrar to ensure node types are available at runtime
 // Even if some linkers strip unused static objects, this guarantees registration
 namespace {
+void update_martini_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
+    if(!std::isfinite(scale_xy) || !std::isfinite(scale_z)) return;
+    if(!(scale_xy > 0.f) || !(scale_z > 0.f)) return;
+
+    for(auto& n : engine.nodes) {
+        if(!n.computation) continue;
+        if(is_prefix("martini_potential", n.name)) {
+            if(auto* node = dynamic_cast<MartiniPotential*>(n.computation.get())) {
+                node->box_x *= scale_xy;
+                node->box_y *= scale_xy;
+                node->box_z *= scale_z;
+            }
+            continue;
+        }
+        if(is_prefix("dist_spring", n.name)) {
+            if(auto* node = dynamic_cast<DistSpring*>(n.computation.get())) {
+                node->box_x *= scale_xy;
+                node->box_y *= scale_xy;
+                node->box_z *= scale_z;
+            }
+            continue;
+        }
+        if(is_prefix("angle_spring", n.name)) {
+            if(auto* node = dynamic_cast<AngleSpring*>(n.computation.get())) {
+                node->box_x *= scale_xy;
+                node->box_y *= scale_xy;
+                node->box_z *= scale_z;
+            }
+            continue;
+        }
+        if(is_prefix("dihedral_spring", n.name)) {
+            if(auto* node = dynamic_cast<DihedralSpring*>(n.computation.get())) {
+                node->box_x *= scale_xy;
+                node->box_y *= scale_xy;
+                node->box_z *= scale_z;
+            }
+            continue;
+        }
+    }
+}
+
 struct MartiniNodeRegistrar {
     MartiniNodeRegistrar() {
         auto& m = node_creation_map();
+        simulation_box::npt::register_node_box_updater(update_martini_node_boxes);
         if(m.find("martini_potential") == m.end()) {
             add_node_creation_function("martini_potential", [](hid_t grp, const ArgList& args) {
                 check_arguments_length(args,1);

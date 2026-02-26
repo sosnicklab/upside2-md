@@ -79,8 +79,13 @@ struct BarostatState {
     float box_vel_z = 0.0f;   // box velocity for normal dimension
 };
 
+using NodeBoxUpdater = void (*)(DerivEngine& engine, float scale_xy, float scale_z);
+
 // Initialize barostat for an engine (reads settings from H5)
 void register_barostat_for_engine(hid_t config_root, DerivEngine& engine);
+
+// Register callback used to propagate NPT box scaling into node-local box caches.
+void register_node_box_updater(NodeBoxUpdater updater);
 
 // Apply barostat at configured interval
 void maybe_apply_barostat(DerivEngine& engine,

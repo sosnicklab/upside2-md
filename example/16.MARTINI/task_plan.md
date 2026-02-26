@@ -28,6 +28,7 @@
 - [x] Phase 10: Add and validate a local `.up` input-visualization script (`visualize_up_input.py`) with direct executable invocation and sane defaults.
 - [x] Phase 11: Remove production-stage MARTINI fallback paths in hybrid SC force projection and fix stage handoff/production stability regressions.
 - [x] Phase 12: Add a separate rigid-protein workflow script derived from `run_sim_1rkl.sh` that disables production-stage Upside/SC paths and keeps dry-MARTINI rigid protein interactions through stage 7.0.
+- [x] Phase 13: Debug/fix pre-production pressure coupling in stage 6.x to prevent nonphysical bilayer expansion/holes without changing physical target pressure units.
 
 ## Known Errors / Blockers
 - Requires concrete integration points in Upside C++ step loop and force modules.
@@ -53,6 +54,8 @@
 - `output/potential` is a total-engine scalar (sum over active potential nodes), not a protein-only all-atom Upside-backbone channel; this can vary during pre-production even with rigid protein because environment terms evolve.
 - Remaining blocker: full long-horizon validation with exact production SC settings (`sc_env_relax_steps=200`) is still running/needs benchmarking; short diagnostics are improved but not yet a complete 5k-step confirmation.
 - New blocker (2026-02-24): production-stage instability is now isolated to the hybrid-active BB coupling path in `../../src/martini.cpp` (`refresh_bb_positions_if_active` + `project_bb_gradient_if_active`), not the non-protein hard-sphere toggle or SC environment loop. Hybrid-active runs with BB mapping enabled still show runaway expansion, while equivalent runs with active stage disabled or BB map masks zeroed remain stable.
+- New blocker (2026-02-26): pre-production NPT stage 6.3 shows large transient XY expansion with bilayer holes while using correct physical target pressure (`1 bar = 0.000020659477 E_up/Angstrom^3`). Runtime barostat updates `output/box`, but force nodes retain stale internal box lengths within a stage because `simulation_box::npt::update_node_boxes(...)` is currently a no-op.
+- Remaining validation (2026-02-26): full 6.0->6.6 rerun with updated runtime is still pending; quick replays confirm the box-propagation fix works and no deadlock remains, but long-horizon membrane morphology needs fresh trajectory confirmation.
 
 ## Revised Decisions
 - Hybrid coupling starts only at production stage; pre-production protein remains rigid.
@@ -126,3 +129,4 @@
 - New workflow variant requirement: keep `hybrid_control` enabled for dynamic rigid-mask enforcement but set `activation_stage` to a non-used token so hybrid protein coupling is never active in any stage; this preserves rigid-protein dry-MARTINI interactions without production Upside force exchange.
 - New workflow variant requirement: do not inject production rotamer/backbone nodes and use VTF extraction mode `1` at stage 7.0 to disable SC/backbone back-mapping output.
 - Stage-file injection in `run_sim_1rkl.sh` must scale AA backbone carrier masses by `72/54` so each `N/CA/C/O` carrier set sums to MARTINI `BB` mass `72/12`, giving per-carrier masses `N=1.56`, `CA=1.33`, `C=1.33`, `O=1.78` (Upside mass units).
+- Runtime NPT box scaling must propagate to all MARTINI node-local box dimensions used by minimum-image calculations (`dist_spring`, `angle_spring`, `dihedral_spring`) during the same stage; reporting `output/box` alone is insufficient.

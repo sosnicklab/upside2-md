@@ -1493,3 +1493,57 @@
 - Validation:
   - static formula check executed and matches expected values above.
   - no full stage regeneration/production rerun was executed in this patch step.
+
+## 2026-02-26 (Stage-6.x Pressure Coupling Debug + Runtime Box-Propagation Fix)
+- Re-read `task_plan.md` and debugged user-reported pre-production bilayer hole issue in `run_sim_1rkl.sh` stage `6.3`.
+- Confirmed script/config physical units are correct (no pressure-parameter retuning):
+  - `target_p_xy = target_p_z = 2.0659477e-05 E_up/Angstrom^3` (`1 bar`),
+  - `compressibility_xy = 14.521180763676 Angstrom^3/E_up` (`3e-4 bar^-1`),
+  - `compressibility_z = 0.0`.
+- Reproduced stage-6.3 transient expansion from the same checkpoint:
+  - `60`-step replay (`/tmp/1rkl.stage_6.3.debug2.up`): `box_xy 111.08 -> 111.21`.
+  - `2000`-step replay (`/tmp/1rkl.stage_6.3.fix2000.up`): `box_xy 111.08 -> 116.54` at step `1000`.
+- Identified runtime implementation defect:
+  - `simulation_box::npt::update_node_boxes(...)` in `../../src/box.cpp` was a no-op, so NPT-scaled box state was not propagated to node-local box caches used by minimum-image bonded terms.
+- Implemented fix:
+  - `../../src/box.h`:
+    - added `NodeBoxUpdater` callback type and `register_node_box_updater(...)`.
+  - `../../src/box.cpp`:
+    - added atomic callback storage,
+    - wired `update_node_boxes(...)` to invoke registered callback.
+  - `../../src/martini.cpp`:
+    - added updater callback registration in `MartiniNodeRegistrar`,
+    - implemented MARTINI updater that scales `box_x/box_y/box_z` for:
+      - `dist_spring`,
+      - `angle_spring`,
+      - `dihedral_spring`.
+- Build and validation:
+  - `source ../../.venv/bin/activate && source ../../source.sh && cmake --build ../../obj -j4` succeeded.
+  - First implementation introduced a deadlock (barostat mutex re-entry inside updater lookup); fixed by switching updater lookup to lock-free atomic load/store.
+  - Post-fix replay completed without deadlock:
+    - `60`-step replay (`/tmp/1rkl.stage_6.3.fix60b.up`) produced expected NPT updates and matching pressure traces.
+- Additional experiment (reverted):
+  - tested interval-scaled barostat timestep (`delta_t *= interval`) in `box.cpp`;
+  - observed severe over-expansion in stage-6.3 replay (`111.08 -> 136.79` at step `1000`);
+  - reverted this change and retained only the node-box propagation fix.
+
+## 2026-02-26 (User-Requested Stage-6.3-Only Rerun from Existing Stage-6.2)
+- Ran exactly stage `6.3` only in `example/16.MARTINI` using existing stage-`6.2` result chain.
+- Procedure:
+  - reset `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_6.3.up` from `1rkl.stage_6.3.prepared.up`;
+  - strict handoff from `1rkl.stage_6.2.up` via `set_initial_position.py` (`UPSIDE_SET_INITIAL_STRICT_COPY=1`);
+  - reran stage `6.3` with original settings (`5000` steps, `dt=0.010`, frame interval `10`);
+  - regenerated VTF:
+    - `outputs/martini_test_1rkl_hybrid/1rkl.stage_6.3.vtf` (updated `2026-02-26 14:50:14`).
+- Runtime/log results (`outputs/martini_test_1rkl_hybrid/logs/stage_6.3.log`):
+  - `1000 / 5000`: box `111.95 x 111.95 x 110.20`;
+  - `2000 / 5000`: box `111.97 x 111.97 x 110.20`;
+  - `3000 / 5000`: box `112.02 x 112.02 x 110.20`;
+  - `4000 / 5000`: box `112.00 x 112.00 x 110.20`.
+- Saved trajectory stats from checkpoint:
+  - first box frame: `111.086 x 111.086 x 110.196`;
+  - last box frame: `112.001 x 112.001 x 110.196`;
+  - max box frame: `112.020 x 112.020 x 110.196`.
+- Comparison to previous problematic stage-6.3 run:
+  - prior `1000`-step sample in same workflow was `~116.50 x 116.50 x 110.20`;
+  - rerun after fix reduced early XY expansion by ~`4.55 Å`.

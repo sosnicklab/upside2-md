@@ -35,3 +35,34 @@
   - `C: 72/54 * 12/12 = 1.3333`
   - `O: 72/54 * 16/12 = 1.7778`
 - Implemented in `example/16.MARTINI/run_sim_1rkl.sh` by scaling injected `ref_mass` values in `inject_hybrid_mapping()`.
+
+## 2026-02-26 (Pre-production Pressure Coupling Debug)
+- Stage-6.3 runtime confirms physical pressure target setup is correct in Upside units:
+  - `target_p_xy = target_p_z = 2.0659477e-05 E_up/Angstrom^3` (`1 bar`),
+  - `compressibility_xy = 14.521180763676 Angstrom^3/E_up` (`3e-4 bar^-1`),
+  - `compressibility_z = 0.0` (semi-isotropic, no Z scaling).
+- Reproduced observed expansion regime from the same stage-6.3 checkpoint:
+  - short replay (`60` steps): `box_xy 111.08 -> 111.21` with positive instantaneous `Pxy ~ 1.47e-2 .. 3.06e-2 E_up/Angstrom^3`.
+  - longer replay (`2000` steps): `box_xy 111.08 -> 116.54` at step `1000`, matching user-visible transient over-expansion.
+- Root runtime defect found in NPT implementation:
+  - `simulation_box::npt::update_node_boxes(...)` was a no-op, so node-local box caches used by minimum-image bonded terms (`dist_spring`, `angle_spring`, `dihedral_spring`) were stale during intra-stage barostat scaling.
+- Implemented fix:
+  - Added barostat callback registration in `src/box.h`/`src/box.cpp`.
+  - Registered MARTINI-side callback in `src/martini.cpp` to scale node-local box lengths every NPT update.
+- Important follow-up from validation:
+  - An attempted `delta_t * interval` barostat-time aggregation was tested and reverted after it caused severe stage-6.3 over-expansion (`111.08 -> 136.79` at step `1000` in replay).
+  - Current patch keeps existing coupling strength and fixes only node-box propagation correctness.
+
+## 2026-02-26 (User-Directed Stage-6.3-Only Verification)
+- Ran stage-6.3 only from existing stage-6.2 chain (no stage-6.0/6.1/6.4+ rerun):
+  - reset `checkpoints/1rkl.stage_6.3.up` from `checkpoints/1rkl.stage_6.3.prepared.up`,
+  - strict handoff from `checkpoints/1rkl.stage_6.2.up`,
+  - reran `5000` steps and regenerated `outputs/martini_test_1rkl_hybrid/1rkl.stage_6.3.vtf`.
+- Observed stage-6.3 box evolution after periodic-nonbonded fix:
+  - initial: `111.086 x 111.086 x 110.196`,
+  - at `1000` steps: `111.95 x 111.95 x 110.20`,
+  - final frame: `112.001 x 112.001 x 110.196`,
+  - max over saved frames: `112.020 x 112.020 x 110.196`.
+- Comparison against pre-fix stage-6.3 behavior from same workflow:
+  - previous `1000`-step box sample was `~116.50 x 116.50 x 110.20`,
+  - current rerun reduces that early expansion by about `4.55 Å` in XY.

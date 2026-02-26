@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <map>
 #include <vector>
@@ -70,6 +71,7 @@ namespace npt {
 // Global registry mapping DerivEngine* to BarostatState
 static std::mutex g_baro_mutex;
 static std::map<DerivEngine*, BarostatState> g_baro_state;
+static std::atomic<NodeBoxUpdater> g_node_box_updater{nullptr};
 
 static inline float volume_xyz(float x, float y, float z) { return x * y * z; }
 static inline float pressure_rel_deviation(float value, float target) {
@@ -367,6 +369,10 @@ void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
     }
 }
 
+void register_node_box_updater(NodeBoxUpdater updater) {
+    g_node_box_updater.store(updater, std::memory_order_relaxed);
+}
+
 void maybe_apply_barostat(DerivEngine& engine,
                           const VecArray& mom,
                           int n_atom,
@@ -509,12 +515,8 @@ bool is_enabled(const DerivEngine& engine) {
 
 // Placeholder for updating node boxes - will be implemented in martini.cpp
 void update_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
-    // This function should update box dimensions in MartiniPotential and other nodes
-    // Implementation depends on how box dimensions are stored in these nodes
-    // For now, positions are scaled directly; nodes will read from engine state
-    (void)engine;
-    (void)scale_xy;
-    (void)scale_z;
+    NodeBoxUpdater updater = g_node_box_updater.load(std::memory_order_relaxed);
+    if(updater) updater(engine, scale_xy, scale_z);
 }
 
 void get_pressure(const DerivEngine& engine, float& pxy, float& pz) {
