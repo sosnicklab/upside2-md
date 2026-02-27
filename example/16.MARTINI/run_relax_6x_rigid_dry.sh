@@ -6,13 +6,13 @@ source "${SCRIPT_DIR}/../../.venv/bin/activate"
 set -euo pipefail
 cd "${SCRIPT_DIR}"
 
-# Rigid dry-MARTINI 1RKL workflow:
+# Rigid dry-MARTINI relaxation workflow (stages 6.0-6.6 only):
 # 0) Hybrid preparation (packed MARTINI + hybrid mapping export)
 # 1) Stage input generation (dry MARTINI)
 # 2) Inject hybrid mapping into each stage .up file
-# 3) Force hybrid activation off for all stages (including 7.0) while keeping
+# 3) Force hybrid activation off for all stages while keeping
 #    preproduction rigid-mask behavior active from hybrid metadata.
-# 4) Run 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0
+# 4) Run 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6
 # 5) Extract MARTINI-only VTF trajectories
 
 # =============================================================================
@@ -32,11 +32,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 PDB_ID="${PDB_ID:-1rkl}"
-RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-${PDB_ID}_rigid_dry}"
+RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-${PDB_ID}_relax66_rigid_dry}"
 
 INPUTS_DIR="inputs"
 OUTPUTS_DIR="outputs"
-RUN_DIR="${RUN_DIR:-outputs/martini_test_1rkl_rigid_dry}"
+RUN_DIR="${RUN_DIR:-outputs/martini_relax_6x_rigid_dry}"
 CHECKPOINT_DIR="${CHECKPOINT_DIR:-${RUN_DIR}/checkpoints}"
 LOG_DIR="${LOG_DIR:-${RUN_DIR}/logs}"
 HYBRID_PREP_DIR="${HYBRID_PREP_DIR:-${RUN_DIR}/hybrid_prep}"
@@ -74,8 +74,6 @@ PREPARED_65_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.5.prepared.up"
 STAGE_65_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.5.up"
 PREPARED_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.prepared.up"
 STAGE_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.up"
-PREPARED_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.prepared.up"
-STAGE_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.up"
 
 # Stage-0 hybrid structure prep controls
 SALT_MOLAR="${SALT_MOLAR:-0.15}"
@@ -96,22 +94,18 @@ THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
 SEED="${SEED:-7090685331}"
 STRICT_STAGE_HANDOFF="${STRICT_STAGE_HANDOFF:-1}"
 
-MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-500}"
-MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-500}"
-EQ_62_NSTEPS="${EQ_62_NSTEPS:-500}"
-EQ_63_NSTEPS="${EQ_63_NSTEPS:-500}"
-EQ_64_NSTEPS="${EQ_64_NSTEPS:-500}"
-EQ_65_NSTEPS="${EQ_65_NSTEPS:-500}"
-EQ_66_NSTEPS="${EQ_66_NSTEPS:-500}"
-PROD_70_NSTEPS="${PROD_70_NSTEPS:-5000}"
+MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-5000}"
+MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-5000}"
+EQ_62_NSTEPS="${EQ_62_NSTEPS:-5000}"
+EQ_63_NSTEPS="${EQ_63_NSTEPS:-5000}"
+EQ_64_NSTEPS="${EQ_64_NSTEPS:-5000}"
+EQ_65_NSTEPS="${EQ_65_NSTEPS:-5000}"
+EQ_66_NSTEPS="${EQ_66_NSTEPS:-5000}"
 
-EQ_TIME_STEP="${EQ_TIME_STEP:-0.010}"
-# Production stage in this workflow is still MARTINI-only with rigid protein.
-PROD_TIME_STEP="${PROD_TIME_STEP:-0.010}"
-MIN_TIME_STEP="${MIN_TIME_STEP:-0.010}"
+EQ_TIME_STEP="${EQ_TIME_STEP:-0.05}"
+MIN_TIME_STEP="${MIN_TIME_STEP:-0.05}"
 
 EQ_FRAME_STEPS="${EQ_FRAME_STEPS:-1000}"
-PROD_FRAME_STEPS="${PROD_FRAME_STEPS:-5000}"
 
 COMP_3E4_BAR_INV_TO_A3_PER_EUP="${COMP_3E4_BAR_INV_TO_A3_PER_EUP:-14.521180763676}"
 # Unit conversion from AGENTS.md:
@@ -128,8 +122,6 @@ export UPSIDE_NPT_COMPRESSIBILITY_Z="${UPSIDE_NPT_COMPRESSIBILITY_Z:-0.0}"
 export UPSIDE_NPT_INTERVAL="${UPSIDE_NPT_INTERVAL:-10}"
 export UPSIDE_NPT_SEMI="${UPSIDE_NPT_SEMI:-1}"
 export UPSIDE_NPT_DEBUG="${UPSIDE_NPT_DEBUG:-1}"
-PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-0}"
-PROD_70_BAROSTAT_TYPE="${PROD_70_BAROSTAT_TYPE:-1}"
 
 export UPSIDE_OVERWRITE_SPLINES="${UPSIDE_OVERWRITE_SPLINES:-1}"
 export UPSIDE_EWALD_ENABLE="${UPSIDE_EWALD_ENABLE:-1}"
@@ -1389,7 +1381,7 @@ run_minimization_stage() {
         "--min-max-iter" "$max_iter"
         "--min-energy-tol" "1e-6"
         "--min-force-tol" "1e-3"
-        "--min-step" "0.01"
+        "--min-step" "0.05"
     )
 
     if ! "${cmd[@]}" 2>&1 | tee "$log_file"; then
@@ -1471,13 +1463,13 @@ extract_stage_vtf() {
     python3 extract_martini_vtf.py "$stage_file" "$vtf_file" "$stage_file" "$RUNTIME_PDB_ID" --mode "$mode"
 }
 
-echo "=== Rigid 1RKL Dry MARTINI Workflow ==="
+echo "=== Rigid Dry MARTINI Relaxation Workflow (6.0-6.6) ==="
 echo "Protein ID: $PDB_ID"
 echo "Runtime PDB ID: $RUNTIME_PDB_ID"
 echo "Hybrid activation stage override: ${HYBRID_ACTIVATION_STAGE}"
 echo "Universal prep: ${UNIVERSAL_PREP_SCRIPT} (mode=${UNIVERSAL_PREP_MODE})"
 echo "Hybrid prep: $HYBRID_PREP_DIR"
-echo "Simulation stages: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"
+echo "Simulation stages: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6"
 echo
 
 prepare_hybrid_artifacts
@@ -1534,13 +1526,6 @@ handoff_initial_position "$STAGE_65_FILE" "$STAGE_66_FILE"
 run_md_stage "6.6" "$STAGE_66_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 extract_stage_vtf "6.6" "$STAGE_66_FILE" "1"
 
-# 7.0: production (hybrid inactive, protein remains rigid)
-prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "$PROD_70_BAROSTAT_TYPE" "0" "production"
-cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
-handoff_initial_position "$STAGE_66_FILE" "$STAGE_70_FILE"
-run_md_stage "7.0" "$STAGE_70_FILE" "$STAGE_70_FILE" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
-extract_stage_vtf "7.0" "$STAGE_70_FILE" "1"
-
 echo
 echo "=== Workflow Complete ==="
 echo "Hybrid prep:"
@@ -1554,7 +1539,6 @@ echo "  6.3: $STAGE_63_FILE"
 echo "  6.4: $STAGE_64_FILE"
 echo "  6.5: $STAGE_65_FILE"
 echo "  6.6: $STAGE_66_FILE"
-echo "  7.0: $STAGE_70_FILE"
 echo "VTF:"
 echo "  ${RUN_DIR}/${PDB_ID}.stage_6.0.vtf"
 echo "  ${RUN_DIR}/${PDB_ID}.stage_6.1.vtf"
@@ -1563,4 +1547,3 @@ echo "  ${RUN_DIR}/${PDB_ID}.stage_6.3.vtf"
 echo "  ${RUN_DIR}/${PDB_ID}.stage_6.4.vtf"
 echo "  ${RUN_DIR}/${PDB_ID}.stage_6.5.vtf"
 echo "  ${RUN_DIR}/${PDB_ID}.stage_6.6.vtf"
-echo "  ${RUN_DIR}/${PDB_ID}.stage_7.0.vtf"

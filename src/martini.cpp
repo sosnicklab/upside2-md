@@ -272,6 +272,11 @@ enum AtomRoleClass : unsigned char {
     ROLE_BB = 1,
     ROLE_SC = 2
 };
+enum HybridRuntimeMode : unsigned char {
+    RUNTIME_MODE_LEGACY_HYBRID = 0,
+    RUNTIME_MODE_DRY_MARTINI_PREP = 1,
+    RUNTIME_MODE_AA_BACKBONE_EXPLICIT_LIPID = 2
+};
 
 struct HybridRuntimeState {
     struct PlacementStateGroup {
@@ -290,6 +295,8 @@ struct HybridRuntimeState {
     bool preprod_rigid = true;
     std::string activation_stage = "production";
     std::string preprod_mode = "rigid";
+    HybridRuntimeMode prep_runtime_mode = RUNTIME_MODE_LEGACY_HYBRID;
+    HybridRuntimeMode active_runtime_mode = RUNTIME_MODE_LEGACY_HYBRID;
     size_t n_bb = 0;
     size_t n_env = 0;
     std::vector<int> bb_residue_index;
@@ -405,6 +412,46 @@ static std::string normalize_mode_token(const std::string& raw) {
     return out;
 }
 
+static inline const char* runtime_mode_name(HybridRuntimeMode mode) {
+    switch(mode) {
+        case RUNTIME_MODE_DRY_MARTINI_PREP: return "dry_martini_prep";
+        case RUNTIME_MODE_AA_BACKBONE_EXPLICIT_LIPID: return "aa_backbone_explicit_lipid";
+        default: return "legacy_hybrid";
+    }
+}
+
+static inline HybridRuntimeMode parse_runtime_mode_token(const std::string& raw, const char* attr_name) {
+    auto tok = normalize_mode_token(raw);
+    if(tok.empty() || tok == "legacy_hybrid" || tok == "legacy") {
+        return RUNTIME_MODE_LEGACY_HYBRID;
+    }
+    if(tok == "dry_martini_prep" || tok == "bootstrap_martini_protein") {
+        return RUNTIME_MODE_DRY_MARTINI_PREP;
+    }
+    if(tok == "aa_backbone_explicit_lipid" || tok == "aa_backbone") {
+        return RUNTIME_MODE_AA_BACKBONE_EXPLICIT_LIPID;
+    }
+    throw string("Invalid /input/hybrid_control mode value for ") + attr_name + ": " + raw;
+}
+
+static inline HybridRuntimeMode current_runtime_mode(const HybridRuntimeState& st) {
+    return st.active ? st.active_runtime_mode : st.prep_runtime_mode;
+}
+
+static inline bool atom_is_protein(const HybridRuntimeState& st, int atom) {
+    return atom >= 0 &&
+           atom < static_cast<int>(st.protein_membership.size()) &&
+           st.protein_membership[atom] >= 0;
+}
+
+static inline bool is_aa_backbone_explicit_lipid_mode(const HybridRuntimeState& st) {
+    return st.enabled && (current_runtime_mode(st) == RUNTIME_MODE_AA_BACKBONE_EXPLICIT_LIPID);
+}
+
+static inline bool is_dry_martini_prep_mode(const HybridRuntimeState& st) {
+    return st.enabled && (current_runtime_mode(st) == RUNTIME_MODE_DRY_MARTINI_PREP);
+}
+
 static inline unsigned char classify_atom_role_name(const std::string& raw_name) {
     size_t begin = 0;
     while(begin < raw_name.size() &&
@@ -482,13 +529,26 @@ static inline bool allow_protein_pair_by_rule(const HybridRuntimeState& st, int 
 }
 
 static inline bool allow_intra_protein_pair_if_active(const HybridRuntimeState& st, int i, int j) {
-    if(!st.enabled || !st.active) return true;
+    if(!st.enabled) return true;
+    if(is_aa_backbone_explicit_lipid_mode(st)) {
+        return !(atom_is_protein(st, i) || atom_is_protein(st, j));
+    }
+    if(is_dry_martini_prep_mode(st)) return true;
+    if(!st.active) return true;
     if(!same_protein_membership_pair(st, i, j)) return true;
     return allow_protein_pair_by_rule(st, i, j);
 }
 
 static inline bool allow_multibody_term_if_active(const HybridRuntimeState& st, const index_t* atoms, int n_atom_dep) {
-    if(!st.enabled || !st.active) return true;
+    if(!st.enabled) return true;
+    if(is_aa_backbone_explicit_lipid_mode(st)) {
+        for(int a = 0; a < n_atom_dep; ++a) {
+            if(atom_is_protein(st, static_cast<int>(atoms[a]))) return false;
+        }
+        return true;
+    }
+    if(is_dry_martini_prep_mode(st)) return true;
+    if(!st.active) return true;
     for(int a = 0; a < n_atom_dep; ++a) {
         for(int b = a + 1; b < n_atom_dep; ++b) {
             int ia = atoms[a];
@@ -822,6 +882,19 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.enabled = (read_attribute<int>(ctrl.get(), ".", "enable", 0) != 0);
     out.activation_stage = read_string_attribute_or_default(ctrl.get(), "activation_stage", "production");
     out.preprod_mode = read_string_attribute_or_default(ctrl.get(), "preprod_protein_mode", "rigid");
+    out.prep_runtime_mode = parse_runtime_mode_token(
+        read_string_attribute_or_default(ctrl.get(), "prep_runtime_mode", "legacy_hybrid"),
+        "prep_runtime_mode");
+    out.active_runtime_mode = parse_runtime_mode_token(
+        read_string_attribute_or_default(ctrl.get(), "active_runtime_mode", "legacy_hybrid"),
+        "active_runtime_mode");
+    if(attribute_exists_hybrid(ctrl.get(), ".", "runtime_mode")) {
+        auto fixed_mode = parse_runtime_mode_token(
+            read_string_attribute_or_default(ctrl.get(), "runtime_mode", "legacy_hybrid"),
+            "runtime_mode");
+        out.prep_runtime_mode = fixed_mode;
+        out.active_runtime_mode = fixed_mode;
+    }
     out.exclude_intra_protein_martini =
         (read_attribute<int>(ctrl.get(), ".", "exclude_intra_protein_martini", 1) != 0);
     out.production_nonprotein_hard_sphere =
@@ -1203,12 +1276,24 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->sc_env_last_logged_coul = 0.f;
         st->sc_env_log_counter = 0;
     }
-    if(st->preprod_rigid && !st->active) {
+    if(st->preprod_rigid && is_dry_martini_prep_mode(*st)) {
         martini_fix_rigid::set_dynamic_fixed_atoms(*engine, st->preprod_fixed_atom_indices);
         martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->preprod_z_fixed_atom_indices);
     } else {
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
+    }
+    if(st->enabled) {
+        size_t protein_atoms = 0;
+        for(int m : st->protein_membership) if(m >= 0) ++protein_atoms;
+        size_t env_atoms = st->protein_membership.size() - protein_atoms;
+        printf("Hybrid stage update: stage=%s active=%d runtime_mode=%s protein_atoms=%zu env_atoms=%zu fixed_atoms=%zu\n",
+               stage.c_str(),
+               st->active ? 1 : 0,
+               runtime_mode_name(current_runtime_mode(*st)),
+               protein_atoms,
+               env_atoms,
+               st->preprod_fixed_atom_indices.size());
     }
 }
 
@@ -1348,7 +1433,7 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     g_hybrid_state[&engine] = st;
     g_hybrid_state_by_coord[static_cast<const CoordNode*>(engine.pos)] = st;
-    if(st->enabled && st->preprod_rigid && !st->active) {
+    if(st->enabled && st->preprod_rigid && is_dry_martini_prep_mode(*st)) {
         martini_fix_rigid::set_dynamic_fixed_atoms(engine, st->preprod_fixed_atom_indices);
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
     } else {
@@ -1358,11 +1443,19 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
     if(st->has_config && st->enabled) {
         size_t n_po4_env = 0;
         for(auto flag : st->sc_env_po4_env_mask) if(flag) ++n_po4_env;
-        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d nonprotein_hs=%d force_frame_align=%d integration_rmsd_align=%d hs_force_cap=%.3f hs_pot_cap=%.3f sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_relax_dt=%.4f sc_rest_k=%.3f sc_max_disp=%.3f sc_po4_z_clamp=%d sc_po4_mode=%s sc_po4_env=%zu sc_energy_dump=%d sc_energy_stride=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
+        size_t protein_atoms = 0;
+        for(int m : st->protein_membership) if(m >= 0) ++protein_atoms;
+        size_t env_atoms = st->protein_membership.size() - protein_atoms;
+        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d runtime_mode=%s prep_mode=%s active_mode=%s preprod_mode=%s n_protein=%zu n_env_atoms=%zu n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d nonprotein_hs=%d force_frame_align=%d integration_rmsd_align=%d hs_force_cap=%.3f hs_pot_cap=%.3f sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_relax_dt=%.4f sc_rest_k=%.3f sc_max_disp=%.3f sc_po4_z_clamp=%d sc_po4_mode=%s sc_po4_env=%zu sc_energy_dump=%d sc_energy_stride=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
                current_stage.c_str(),
                st->activation_stage.c_str(),
                st->active ? 1 : 0,
+               runtime_mode_name(current_runtime_mode(*st)),
+               runtime_mode_name(st->prep_runtime_mode),
+               runtime_mode_name(st->active_runtime_mode),
                st->preprod_mode.c_str(),
+               protein_atoms,
+               env_atoms,
                st->n_bb,
                st->n_env,
                st->sc_proxy_atom_index.size(),
@@ -1992,7 +2085,11 @@ void project_sc_gradient_if_active(
 }
 
 inline bool skip_pair_if_intra_protein(const HybridRuntimeState& st, int i, int j) {
-    if(!st.enabled || !st.active || !st.exclude_intra_protein_martini) return false;
+    if(!st.enabled) return false;
+    if(is_aa_backbone_explicit_lipid_mode(st)) {
+        return !allow_intra_protein_pair_if_active(st, i, j);
+    }
+    if(!st.active || !st.exclude_intra_protein_martini) return false;
     return !allow_intra_protein_pair_if_active(st, i, j);
 }
 
@@ -2411,7 +2508,8 @@ struct MartiniPotential : public PotentialNode
     bool overwrite_spline_tables;
     
     // PME parameters removed - using Coulomb spline tables instead
-    // Box dimensions removed - using NVT ensemble without boundaries
+    // Box dimensions used for minimum-image pair displacements under PBC/NPT.
+    float box_x, box_y, box_z;
     
     // Spline interpolation for LJ potential - single spline for each epsilon/sigma pair
     std::map<std::pair<float, float>, LayeredClampedSpline1D<1>> lj_splines;
@@ -2539,7 +2637,26 @@ struct MartiniPotential : public PotentialNode
         // PME parameters removed - using Coulomb spline tables instead
 
         
-        // Box dimensions removed - using NVT ensemble without boundaries
+        // Read box dimensions for minimum-image displacements.
+        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
+            box_x = read_attribute<float>(grp, ".", "x_len");
+            box_y = read_attribute<float>(grp, ".", "y_len");
+            box_z = read_attribute<float>(grp, ".", "z_len");
+        } else if(attribute_exists(grp, ".", "wall_xlo") && attribute_exists(grp, ".", "wall_xhi") &&
+                  attribute_exists(grp, ".", "wall_ylo") && attribute_exists(grp, ".", "wall_yhi") &&
+                  attribute_exists(grp, ".", "wall_zlo") && attribute_exists(grp, ".", "wall_zhi")) {
+            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
+            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
+            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
+            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
+            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
+            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
+            box_x = wall_xhi - wall_xlo;
+            box_y = wall_yhi - wall_ylo;
+            box_z = wall_zhi - wall_zlo;
+        } else {
+            box_x = box_y = box_z = 0.f;
+        }
 
         auto n_pair = get_dset_size(2, grp, "pairs")[0];
         
@@ -2959,6 +3076,9 @@ struct MartiniPotential : public PotentialNode
                                    float* pair_lj_potential,
                                    float* pair_coul_potential) -> bool {
             auto dr = pa - pb;
+            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
+                dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
+            }
             auto dist2 = mag2(dr);
             auto dist = sqrtf(max(dist2, kMinDistance));
             pair_potential = 0.f;
@@ -3940,6 +4060,193 @@ struct MartiniPotential : public PotentialNode
 };
 static RegisterNodeType<MartiniPotential, 1> martini_potential_node("martini_potential");
 
+// RBM-style cross potential between protein and environment atom sets.
+// Energy is a class-conditioned radial basis expansion over pair distances.
+struct MartiniRBMCrossPotential : public PotentialNode
+{
+    int n_atom;
+    CoordNode& pos;
+
+    vector<int> protein_atom_indices;
+    vector<int> protein_class_index;
+    vector<int> env_atom_indices;
+    vector<int> env_class_index;
+    vector<float> radial_centers;
+    vector<float> radial_widths;
+
+    int n_protein_class;
+    int n_env_class;
+    int n_radial;
+    float cutoff;
+    float cutoff_sq;
+
+    vector<float> weights;
+    vector<float> weight_deriv;
+
+    MartiniRBMCrossPotential(hid_t grp, CoordNode& pos_) :
+        PotentialNode(),
+        n_atom(pos_.n_elem),
+        pos(pos_),
+        n_protein_class(0),
+        n_env_class(0),
+        n_radial(0),
+        cutoff(read_attribute<float>(grp, ".", "cutoff")),
+        cutoff_sq(cutoff * cutoff)
+    {
+        if(cutoff <= 0.f) {
+            throw string("martini_rbm_cross_potential requires positive cutoff");
+        }
+        if(!h5_exists(grp, "protein_atom_indices") ||
+           !h5_exists(grp, "protein_class_index") ||
+           !h5_exists(grp, "env_atom_indices") ||
+           !h5_exists(grp, "env_class_index") ||
+           !h5_exists(grp, "radial_centers") ||
+           !h5_exists(grp, "radial_widths") ||
+           !h5_exists(grp, "weights")) {
+            throw string("martini_rbm_cross_potential missing required dataset(s)");
+        }
+
+        auto p_shape = get_dset_size(1, grp, "protein_atom_indices");
+        auto e_shape = get_dset_size(1, grp, "env_atom_indices");
+        auto r_shape = get_dset_size(1, grp, "radial_centers");
+        check_size(grp, "protein_class_index", p_shape[0]);
+        check_size(grp, "env_class_index", e_shape[0]);
+        check_size(grp, "radial_widths", r_shape[0]);
+
+        protein_atom_indices.assign(static_cast<size_t>(p_shape[0]), 0);
+        protein_class_index.assign(static_cast<size_t>(p_shape[0]), 0);
+        env_atom_indices.assign(static_cast<size_t>(e_shape[0]), 0);
+        env_class_index.assign(static_cast<size_t>(e_shape[0]), 0);
+        radial_centers.assign(static_cast<size_t>(r_shape[0]), 0.f);
+        radial_widths.assign(static_cast<size_t>(r_shape[0]), 0.f);
+
+        traverse_dset<1,int>(grp, "protein_atom_indices", [&](size_t i, int x) {protein_atom_indices[i] = x;});
+        traverse_dset<1,int>(grp, "protein_class_index", [&](size_t i, int x) {protein_class_index[i] = x;});
+        traverse_dset<1,int>(grp, "env_atom_indices", [&](size_t i, int x) {env_atom_indices[i] = x;});
+        traverse_dset<1,int>(grp, "env_class_index", [&](size_t i, int x) {env_class_index[i] = x;});
+        traverse_dset<1,float>(grp, "radial_centers", [&](size_t i, float x) {radial_centers[i] = x;});
+        traverse_dset<1,float>(grp, "radial_widths", [&](size_t i, float x) {radial_widths[i] = x;});
+
+        for(float w : radial_widths) {
+            if(!(std::isfinite(w) && w > 0.f)) {
+                throw string("martini_rbm_cross_potential requires positive finite radial_widths");
+            }
+        }
+
+        n_radial = static_cast<int>(radial_centers.size());
+        for(int cls : protein_class_index) n_protein_class = std::max(n_protein_class, cls + 1);
+        for(int cls : env_class_index) n_env_class = std::max(n_env_class, cls + 1);
+        if(n_protein_class <= 0 || n_env_class <= 0 || n_radial <= 0) {
+            throw string("martini_rbm_cross_potential invalid class/radial dimensions");
+        }
+
+        auto w3 = get_dset_size(3, grp, "weights");
+        if(static_cast<int>(w3[0]) != n_protein_class ||
+           static_cast<int>(w3[1]) != n_env_class ||
+           static_cast<int>(w3[2]) != n_radial) {
+            throw string("martini_rbm_cross_potential/weights shape must match class and radial dimensions");
+        }
+
+        size_t n_weight = static_cast<size_t>(n_protein_class) *
+                          static_cast<size_t>(n_env_class) *
+                          static_cast<size_t>(n_radial);
+        weights.assign(n_weight, 0.f);
+        weight_deriv.assign(n_weight, 0.f);
+        traverse_dset<3,float>(grp, "weights", [&](size_t pc, size_t ec, size_t rk, float x) {
+            size_t idx = (pc * static_cast<size_t>(n_env_class) + ec) * static_cast<size_t>(n_radial) + rk;
+            weights[idx] = x;
+        });
+    }
+
+    inline size_t weight_index(int pclass, int eclass, int radial_idx) const {
+        return (static_cast<size_t>(pclass) * static_cast<size_t>(n_env_class) + static_cast<size_t>(eclass))
+               * static_cast<size_t>(n_radial) + static_cast<size_t>(radial_idx);
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        Timer timer(string("martini_rbm_cross_potential"));
+
+        float* pot = mode == PotentialAndDerivMode ? &potential : nullptr;
+        if(pot) *pot = 0.f;
+        std::fill(weight_deriv.begin(), weight_deriv.end(), 0.f);
+
+        auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
+        if(hybrid_state && hybrid_state->enabled &&
+           !martini_hybrid::is_aa_backbone_explicit_lipid_mode(*hybrid_state)) {
+            return;
+        }
+
+        VecArray posc = pos.output;
+        VecArray pos_sens = pos.sens;
+        constexpr float min_dist_sq = 1e-8f;
+
+        for(size_t pi = 0; pi < protein_atom_indices.size(); ++pi) {
+            int ai = protein_atom_indices[pi];
+            int pclass = protein_class_index[pi];
+            if(ai < 0 || ai >= n_atom) continue;
+            if(pclass < 0 || pclass >= n_protein_class) continue;
+
+            auto xi = load_vec<3>(posc, ai);
+            for(size_t ej = 0; ej < env_atom_indices.size(); ++ej) {
+                int aj = env_atom_indices[ej];
+                int eclass = env_class_index[ej];
+                if(aj < 0 || aj >= n_atom) continue;
+                if(eclass < 0 || eclass >= n_env_class) continue;
+
+                auto xj = load_vec<3>(posc, aj);
+                auto disp = xi - xj;
+                float r_sq = mag2(disp);
+                if(r_sq > cutoff_sq || r_sq < min_dist_sq) continue;
+
+                float r = sqrtf(r_sq);
+                float inv_r = 1.f / r;
+                float dE_dr = 0.f;
+
+                for(int rk = 0; rk < n_radial; ++rk) {
+                    float width = radial_widths[rk];
+                    float delta = (r - radial_centers[rk]) / width;
+                    float basis = expf(-0.5f * delta * delta);
+                    size_t widx = weight_index(pclass, eclass, rk);
+                    float w = weights[widx];
+
+                    if(pot) *pot += w * basis;
+                    weight_deriv[widx] += basis;
+
+                    float d_basis_dr = -(delta / width) * basis;
+                    dE_dr += w * d_basis_dr;
+                }
+
+                auto grad = (dE_dr * inv_r) * disp;
+                update_vec(pos_sens, ai, grad);
+                update_vec(pos_sens, aj, -grad);
+            }
+        }
+    }
+
+    virtual std::vector<float> get_param() const override {
+        return weights;
+    }
+
+    virtual void set_param(const std::vector<float>& new_params) override {
+        if(new_params.size() != weights.size()) {
+            throw string("martini_rbm_cross_potential set_param size mismatch");
+        }
+        weights = new_params;
+    }
+
+    #ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {
+        return weight_deriv;
+    }
+    #else
+    virtual std::vector<float> get_param_deriv() {
+        return weight_deriv;
+    }
+    #endif
+};
+static RegisterNodeType<MartiniRBMCrossPotential, 1>
+    martini_rbm_cross_potential_node("martini_rbm_cross_potential");
+
 // Bond potential using spline interpolation
 struct DistSpring : public PotentialNode
 {
@@ -4708,13 +5015,61 @@ extern "C" {
 // Explicit registrar to ensure node types are available at runtime
 // Even if some linkers strip unused static objects, this guarantees registration
 namespace {
+void update_martini_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
+    if(!std::isfinite(scale_xy) || !std::isfinite(scale_z)) return;
+    if(!(scale_xy > 0.f) || !(scale_z > 0.f)) return;
+
+    for(auto& n : engine.nodes) {
+        if(!n.computation) continue;
+        if(is_prefix("martini_potential", n.name)) {
+            if(auto* node = dynamic_cast<MartiniPotential*>(n.computation.get())) {
+                node->box_x *= scale_xy;
+                node->box_y *= scale_xy;
+                node->box_z *= scale_z;
+            }
+            continue;
+        }
+        if(is_prefix("dist_spring", n.name)) {
+            if(auto* node = dynamic_cast<DistSpring*>(n.computation.get())) {
+                node->box_x *= scale_xy;
+                node->box_y *= scale_xy;
+                node->box_z *= scale_z;
+            }
+            continue;
+        }
+        if(is_prefix("angle_spring", n.name)) {
+            if(auto* node = dynamic_cast<AngleSpring*>(n.computation.get())) {
+                node->box_x *= scale_xy;
+                node->box_y *= scale_xy;
+                node->box_z *= scale_z;
+            }
+            continue;
+        }
+        if(is_prefix("dihedral_spring", n.name)) {
+            if(auto* node = dynamic_cast<DihedralSpring*>(n.computation.get())) {
+                node->box_x *= scale_xy;
+                node->box_y *= scale_xy;
+                node->box_z *= scale_z;
+            }
+            continue;
+        }
+    }
+}
+
 struct MartiniNodeRegistrar {
     MartiniNodeRegistrar() {
         auto& m = node_creation_map();
+        simulation_box::npt::register_node_box_updater(update_martini_node_boxes);
         if(m.find("martini_potential") == m.end()) {
             add_node_creation_function("martini_potential", [](hid_t grp, const ArgList& args) {
                 check_arguments_length(args,1);
                 return new MartiniPotential(grp, *args[0]);
+            });
+        }
+        if(m.find("martini_rbm_cross_potential") == m.end()) {
+            add_node_creation_function("martini_rbm_cross_potential", [](hid_t grp, const ArgList& args) {
+                check_arguments_length(args,1);
+                return new MartiniRBMCrossPotential(grp, *args[0]);
             });
         }
         if(m.find("dist_spring") == m.end()) {

@@ -437,6 +437,8 @@ with h5py.File(up_file, "r+") as h5:
     grp.attrs["enable"] = np.int8(1)
     grp.attrs["activation_stage"] = np.bytes_(activation_stage)
     grp.attrs["preprod_protein_mode"] = np.bytes_("rigid")
+    grp.attrs["prep_runtime_mode"] = np.bytes_("dry_martini_prep")
+    grp.attrs["active_runtime_mode"] = np.bytes_("aa_backbone_explicit_lipid")
 PY
 }
 

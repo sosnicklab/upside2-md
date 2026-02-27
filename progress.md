@@ -534,3 +534,187 @@
   - Restored role gate to disallow `ROLE_SC`/`ROLE_SC` in `allow_protein_pair_by_rule`.
   - Added explicit pair-loop skip for protein SC-SC pairs before probabilistic/deterministic nonbonded evaluation.
 - Validation: `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed after SC-SC disable change (existing warnings only).
+
+## 2026-02-25 (Two-mode runtime implementation)
+- Reworked task tracking before implementation:
+  - Replaced `task_plan.md` with a phase-based two-mode runtime plan and explicit `src/` minimal-change constraints against `/Users/yinhan/Documents/upside2-md-master`.
+- Implemented two-mode hybrid runtime controls in `src/martini.cpp`:
+  - Added runtime mode parsing for `/input/hybrid_control` attrs:
+    - `prep_runtime_mode`
+    - `active_runtime_mode`
+    - optional override `runtime_mode`
+  - Added accepted tokens: `legacy_hybrid`, `dry_martini_prep` (alias `bootstrap_martini_protein`), `aa_backbone_explicit_lipid`.
+  - Added mode-aware gating logic:
+    - `aa_backbone_explicit_lipid`: skip MARTINI pair/multibody terms involving any protein atom.
+    - `dry_martini_prep`: keep MARTINI interactions and enforce rigid protein masks.
+    - `legacy_hybrid`: preserve prior active-stage gating behavior.
+  - Added runtime mode/stage logging with protein/env atom counts.
+  - Updated rigid-mask application to depend on active mode selection (not only `!active`).
+- Updated writer and workflow scripts to emit explicit two-mode attrs:
+  - `example/16.MARTINI/prepare_system_lib.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/run_sim_1rkl_new.sh`
+  - `example/16.MARTINI/run_sim_1rkl_rigid_dry.sh`
+- Updated schema validation:
+  - `example/16.MARTINI/validate_hybrid_mapping.py` now requires `prep_runtime_mode` and `active_runtime_mode`.
+- Verification and failures/fixes:
+  - Initial build attempt with existing `obj/` failed due stale cache path mismatch (`...upside2-md-hybrid/...`).
+  - Resolved by out-of-tree configure/build:
+    - `source .venv/bin/activate && source source.sh && cmake -S src -B /tmp/upside2-md-build && cmake --build /tmp/upside2-md-build -j4`
+  - Build completed successfully (warnings only).
+  - Python syntax checks passed:
+    - `python3 -m py_compile example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/validate_hybrid_mapping.py`
+  - Shell syntax checks passed:
+    - `bash -n example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/run_sim_1rkl_new.sh example/16.MARTINI/run_sim_1rkl_rigid_dry.sh`
+- Master parity note:
+  - `/Users/yinhan/Documents/upside2-md-master/src` does not contain `martini.cpp`, so direct file-level diff for MARTINI runtime code could not be performed against that clone.
+- Process hardening:
+  - Updated `lessons.md` to encode the new guardrail pattern for future tasks: minimal `src/` edits vs master, explicit feature gating via hybrid-control attrs, and mandatory parity-limit documentation.
+
+## 2026-02-25 (RBM Cross-Potential + Training/Data Prep)
+- Replaced `task_plan.md` scope from prior two-mode-only work to a dedicated RBM implementation plan with phase checklists and `src/` minimal-change guardrails.
+- Implemented new C++ potential node in `src/martini.cpp`:
+  - Added `MartiniRBMCrossPotential` with HDF5 schema loading for:
+    - `protein_atom_indices`, `protein_class_index`
+    - `env_atom_indices`, `env_class_index`
+    - `radial_centers`, `radial_widths`, `weights`
+    - attr `cutoff`
+  - Implemented class-conditioned Gaussian radial-basis cross-energy and force accumulation on `pos.sens`.
+  - Added trainable parameter APIs:
+    - `get_param`
+    - `set_param`
+    - `get_param_deriv` (guarded for `PARAM_DERIV` builds).
+  - Added registration in both places:
+    - static `RegisterNodeType<MartiniRBMCrossPotential,1>`
+    - explicit `MartiniNodeRegistrar` map insert for `martini_rbm_cross_potential`.
+- Added `example/16.MARTINI/train_rbm_cross_potential.py`:
+  - Supports input from manifest and/or direct `.up` paths.
+  - Derives protein/env classes from existing `.up` metadata (`atom_roles`, `particle_class`, optional hybrid membership).
+  - Trains RBM cross weights from positive-vs-shuffled-negative radial features.
+  - Writes artifact HDF5 (`meta`, `classes`, `rbm/cross`, compatibility views `rbm/bb`, `rbm/sc`, plus `views` and `priors`).
+  - Optional in-place injection of `/input/potential/martini_rbm_cross_potential` into each `.up`.
+  - Added help-mode dependency fallback so `--help` works even when `numpy/h5py` are absent in the default interpreter.
+- Added `example/16.MARTINI/download_and_prepare_training_inputs.py`:
+  - Reads PDB IDs from a list file.
+  - Downloads AA structures from OPM with RCSB fallback.
+  - Runs existing `prepare_system.py` (`mode=both`) per system.
+  - Produces manifest JSON (`systems`, `failed`) with generated `.up` paths for training.
+- Verification and fixes:
+  - Python syntax checks passed:
+    - `python3 -m py_compile example/16.MARTINI/train_rbm_cross_potential.py example/16.MARTINI/download_and_prepare_training_inputs.py`
+  - Build check:
+    - Initial `cmake --build obj -j4` failed due stale cache tied to another checkout.
+    - Configured and built in clean dir:
+      - `cmake -S src -B /tmp/upside2-md-build-rbm`
+      - `cmake --build /tmp/upside2-md-build-rbm -j4`
+    - Result: build succeeded (warnings only).
+  - CLI help dry-runs passed:
+    - `python3 example/16.MARTINI/train_rbm_cross_potential.py --help`
+    - `python3 example/16.MARTINI/download_and_prepare_training_inputs.py --help`
+  - Smoke test passed with synthetic `.up`:
+    - Trained 1 epoch and injected node into `/tmp/rbm_smoke.input.up`.
+    - Verified injected node weights shape `(2, 2, 4)` and artifact weights shape `(2, 2, 4)`.
+- Master-parity note for `src/`:
+  - Only `src/martini.cpp` changed in `src/` for this task.
+  - `/Users/yinhan/Documents/upside2-md-master/src/martini.cpp` is absent, so direct file-level parity diff for MARTINI code is not possible against the provided master clone.
+- Post-implementation robustness update:
+  - Enhanced `download_and_prepare_training_inputs.py` with interpreter resolution for `prepare_system.py` execution:
+    - Added `--prepare-python` override.
+    - Added auto-detection fallback that selects a Python executable with `numpy+h5py`.
+- Re-validated RBM training/injection smoke path after script refinements:
+  - `train_rbm_cross_potential.py` produced artifact and reinjected node successfully on synthetic input (`weights` shape remained `(2, 2, 4)`).
+- User correction applied for downloader behavior:
+  - `download_and_prepare_training_inputs.py` now follows the `run_sim_1rkl.sh` style workflow by default:
+    - download AA PDB,
+    - run `example/16.MARTINI/martinize.py`,
+    - resolve generated ITP from `.top`,
+    - then run `prepare_system.py`.
+  - Enforced martinize-first resolution when `--auto-martinize 1` (default), instead of preferring pre-existing CG/ITP templates.
+- Validation: `python3 -m py_compile example/16.MARTINI/download_and_prepare_training_inputs.py` passed; help output confirms martinize control flags are available.
+
+## 2026-02-26 (Downloader Reliability Follow-up)
+- Root-cause investigation for user-reported downloader failures:
+  - `martinize.py` failures (`4ryo`, `4x5m`, `4p79`) were caused by missing required atoms in residues from raw AA PDB chain composition.
+  - `prepare_system.py` mapping failure (`4dve` unknown `SC1`) was consistent with stale/incompatible runtime topology reuse after input changes.
+- Implemented robustness changes in `example/16.MARTINI/download_and_prepare_training_inputs.py`:
+  - Added AA preprocessing mode `--aa-clean-mode largest_complete_chain` (default) with `--min-complete-residues` threshold.
+  - Added residue-aware heavy-atom completeness filter by amino-acid type before martinization.
+  - Added alias handling for ILE sidechain naming (`CD` accepted as `CD1` for completeness checks).
+  - Added cache guard `top_was_generated_from(...)` so cached martinize outputs are reused only when `.top` references the exact AA input path used for current run.
+- Verification:
+  - Targeted rerun succeeded:
+    - `python3 example/16.MARTINI/download_and_prepare_training_inputs.py --list-file /tmp/rbm_retry_ids.list --output-root ./train-data --skip-existing 1`
+    - Result: `OK 4ryo`, `OK 4dve`, `Prepared systems: 2`, `Failed systems: 0`.
+  - Broader subset rerun (first 20 IDs from user list) completed with:
+    - `Prepared systems: 20`
+    - `Failed systems: 0`
+    - Included prior failures now passing (`4ryo`, `4x5m`, `4p79`, `4dve`).
+
+## 2026-02-26 (Batch Relaxation Script)
+- Added `example/16.MARTINI/batch_relax_rigid_dry.py`:
+  - Consumes `train-data/training_manifest.json` (or a provided manifest).
+  - Runs `example/16.MARTINI/run_sim_1rkl_rigid_dry.sh` per `pdb_id` with per-entry paths:
+    - `PROTEIN_AA_PDB` <- `aa_pdb_effective` / fallback `aa_pdb_downloaded`
+    - `PROTEIN_CG_PDB` <- `cg_pdb`
+    - `PROTEIN_ITP` <- `itp_file`
+  - Forces `MARTINIZE_ENABLE=0` so relax runs use the prepared MARTINI inputs directly.
+  - Emits per-system batch log: `<output-root>/<pdb_id>/batch_relax.log`.
+  - Writes relaxed manifest with `relaxed_up_file` (default `stage_6.6.up`) for training.
+  - For training-script compatibility, rewrites manifest `up_file` to the relaxed stage file and preserves original prep output as `prepared_up_file`.
+  - Supports resume via `--skip-existing 1`, target stage selection (`6.6`/`7.0`), filtering (`--only-pdb`), and env overrides (`--extra-env KEY=VALUE`).
+- Verification:
+  - `python3 -m py_compile example/16.MARTINI/batch_relax_rigid_dry.py` passed.
+  - `python3 example/16.MARTINI/batch_relax_rigid_dry.py --help` passed.
+  - Single-system smoke run succeeded (shortened stage counts via `--extra-env`):
+    - output root: `train-data/relax_batch_smoke`
+    - relaxed file produced: `train-data/relax_batch_smoke/1ors/checkpoints/1ors.stage_6.6.up`
+    - relaxed manifest written with `Relaxed systems: 1`, `Failed systems: 0`.
+  - Resume behavior check succeeded:
+    - rerun on same system reported `SKIPPED_EXISTING`.
+
+## 2026-02-26 (Standalone 6.0-6.6 Relax Script)
+- User correction required no dependency on `run_sim_1rkl_rigid_dry.sh` for batch relaxation.
+- Added standalone script:
+  - `example/16.MARTINI/run_relax_6x_rigid_dry.sh`
+  - Encodes rigid dry stage flow `6.0 -> 6.6` only (no `7.0` stage).
+  - Exports VTF for every stage `6.0..6.6`.
+  - Keeps hybrid prep + mapping injection path intact for rigid-protein behavior.
+- Updated batch runner defaults:
+  - `example/16.MARTINI/batch_relax_rigid_dry.py` now defaults `--run-script` to `run_relax_6x_rigid_dry.sh`.
+  - Locked `--target-stage` choices to `{6.6}`.
+  - Removed `--prod-70-nsteps` since stage `7.0` is out of scope.
+- Verification:
+  - `bash -n example/16.MARTINI/run_relax_6x_rigid_dry.sh` passed.
+  - `python3 -m py_compile example/16.MARTINI/batch_relax_rigid_dry.py` passed.
+  - Smoke run:
+    - `python3 example/16.MARTINI/batch_relax_rigid_dry.py --manifest train-data/training_manifest.json --output-root train-data/relax66_smoke --only-pdb 1ors --extra-env MIN_60_MAX_ITER=10 --extra-env MIN_61_MAX_ITER=10 --extra-env EQ_62_NSTEPS=10 --extra-env EQ_63_NSTEPS=10 --extra-env EQ_64_NSTEPS=10 --extra-env EQ_65_NSTEPS=10 --extra-env EQ_66_NSTEPS=10`
+    - Result: `OK 1ors`, relaxed manifest written.
+    - Output check: checkpoints include `stage_6.0..6.6`; VTF includes `stage_6.0..6.6.vtf`; no `stage_7.0.vtf`.
+
+## 2026-02-26 (Port Bugfixes From `upside2-md-martini`)
+- User requested port of fixes from `/Users/yinhan/Documents/upside2-md-martini` commit range:
+  - `dd111dbffd9ab4842860ea6628e4a966bda3a049 -> 12b944d1bc743ea1104757cb94d2b49277b8295a`
+- Identified source-code files in that range relevant to runtime behavior:
+  - `src/box.h`
+  - `src/box.cpp`
+  - `src/martini.cpp`
+- Applied ports in this branch:
+  - `src/box.h`:
+    - Added `NodeBoxUpdater` callback typedef.
+    - Added `register_node_box_updater(NodeBoxUpdater)` declaration.
+  - `src/box.cpp`:
+    - Added `std::atomic<NodeBoxUpdater>` global callback slot.
+    - Added `register_node_box_updater(...)` implementation.
+    - Changed `update_node_boxes(...)` from no-op placeholder to callback dispatch.
+  - `src/martini.cpp`:
+    - `MartiniPotential` now stores `box_x/box_y/box_z` and reads dimensions from node attributes (`x_len/y_len/z_len` or wall bounds fallback).
+    - Pair-force evaluation now applies minimum-image displacement under valid box lengths.
+    - Added `update_martini_node_boxes(...)` callback to scale cached box lengths for:
+      - `martini_potential`
+      - `dist_spring`
+      - `angle_spring`
+      - `dihedral_spring`
+    - Registered callback in `MartiniNodeRegistrar` via `simulation_box::npt::register_node_box_updater(...)`.
+- Verification:
+  - `cmake --build /tmp/upside2-md-build-rbm -j4` passed after applying the port.
+  - No new build errors introduced.

@@ -1012,6 +1012,8 @@ def write_hybrid_mapping_h5(
         ctrl.attrs["enable"] = np.int8(1)
         ctrl.attrs["activation_stage"] = b"production"
         ctrl.attrs["preprod_protein_mode"] = b"rigid"
+        ctrl.attrs["prep_runtime_mode"] = b"dry_martini_prep"
+        ctrl.attrs["active_runtime_mode"] = b"aa_backbone_explicit_lipid"
         ctrl.attrs["preprod_lipid_headgroup_roles"] = b"PO4"
         ctrl.attrs["exclude_intra_protein_martini"] = np.int8(1)
         ctrl.attrs["production_nonprotein_hard_sphere"] = np.int8(1)

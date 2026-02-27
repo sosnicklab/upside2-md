@@ -48,6 +48,8 @@ def main():
             "enable",
             "activation_stage",
             "preprod_protein_mode",
+            "prep_runtime_mode",
+            "active_runtime_mode",
             "exclude_intra_protein_martini",
             "schema_version",
         ]:
