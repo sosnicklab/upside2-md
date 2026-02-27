@@ -12,3 +12,4 @@
 - 2026-02-25: When user requires state-locked probabilistic coordinates (rotamer-locked SC rows), enforce it in the active interaction-evaluation path rather than relying on large restraint constants.
 - 2026-02-25: In probabilistic SC mode, do not leave SC-SC interactions on direct proxy force paths, because proxy forces are later cleared by row projection; route SC-SC through row-space gradient accumulation so interactions survive projection and stay rotamer-locked.
 - 2026-02-25: If SC-SC stabilization fails in practice, disable SC-SC at both policy and pair-loop gates immediately, instead of leaving partial SC-SC paths active.
+- 2026-02-27: After patching Python inside shell heredocs, inspect the rendered block for literal tab characters and run a targeted whitespace check; `bash -n` will not catch Python `TabError`s inside heredocs.

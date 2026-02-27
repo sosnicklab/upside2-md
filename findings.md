@@ -1,18 +1,21 @@
 # Findings
 
-- 2026-02-12: Dry MARTINI Gromacs workflow files are present at `/Users/yinhan/Downloads/charmm-gui-7090685331/gromacs` with sequence: `step6.0_minimization.mdp`, `step6.1_minimization.mdp`, `step6.2` to `step6.6` equilibration, and `step7_production.mdp`.
-- 2026-02-12: Existing bilayer workflow script already performs staged minimization/equilibration/production but was tuned for prior MARTINI assumptions.
-- 2026-02-12: Dry MARTINI mdp settings indicate semi-isotropic coupling for relaxation (`tau-p=4.0`, membrane-plane compressibility equivalent to `3e-4 bar^-1`, normal-axis fixed for implicit systems) and a pressure-coupling strategy that transitions from Berendsen to Parrinello-Rahman as described in the paper note.
-- 2026-02-12: UPSIDE barostat previously used a single compressibility scalar for all axes; true dry MARTINI membrane coupling requires axis-specific compressibility (`xy` vs `z`).
-- 2026-02-12: `ff_dry` uses dry MARTINI v2.1 file names (`dry_martini_v2.1.itp`, `dry_martini_v2.1_lipids.itp`, `dry_martini_v2.1_ions.itp`) and macro-based aliases in `[ bonds ]`/`[ angles ]`, so parser support for `#define`-backed parameters is required.
-- 2026-02-12: Dry lipid ITP (`dry_martini_v2.1_lipids.itp`) relies on preprocessor branches (`#ifndef EXP_DOPC`/`#else`), and only one branch should be parsed.
-- 2026-02-12: Reciprocal Ewald path in `src/box.cpp` originally spent most cost in repeated `cosf/sinf` evaluations per atom per k-vector.
-- 2026-02-12: Added optional periodic cardinal cubic B-spline trig approximation (`ewald_use_cardinal_bspline`, `ewald_bspline_grid`) and per-k atom trig caching to reduce reciprocal-space compute cost while preserving the same summation structure.
-- 2026-02-13: CHARMM-GUI dry MARTINI bilayer uses `BILAYER_LIPIDHEAD_FC` only in equilibration stages `step6.2` to `step6.6` with values `200/100/50/20/10` from `.mdp` `define` lines; production (`step7_production.mdp`) has no `BILAYER_LIPIDHEAD_FC` define.
-- 2026-02-13: In `toppar/dry_martini_v2.1_lipids.itp`, bilayer head-group restraint blocks are under `#ifdef BILAYER_LIPIDHEAD_FC` and apply anisotropic position restraints with `fx=0`, `fy=0`, `fz=BILAYER_LIPIDHEAD_FC`.
-- 2026-02-13: Paper section 2.1 states implicit-solvent simulations should generally run in NVT; for periodic planar bilayers, semi-isotropic pressure coupling is used as an equilibration tool for area-per-lipid.
-- 2026-02-13: CHARMM-GUI dry bilayer `step7_production.mdp` sets `pcoupl = no` (NVT) for production, with pressure-coupling parameters retained but inactive.
-- 2026-02-13: CHARMM-GUI dry bilayer soft-core settings are present only in `step6.0_minimization.mdp` (`free-energy = yes`, `sc-alpha = 4`); stages `6.1`-`6.6` and `7.0` do not define soft-core/free-energy terms and are hard interaction stages.
-- 2026-02-13: Paper diffusion protocol for bilayers uses PO4 bead MSD, COM removal, linear fit `MSD(t)=4Dt+C` (2D lateral diffusion), excludes 10% of points at both ends of the MSD curve, and estimates uncertainty via difference between fits to first vs second halves.
-- 2026-02-23: In current HDF5 2.0 behavior, `H5Lexists`/`H5Oexists_by_name` can return a negative error for missing intermediate path components (not just `0` for absent object), so existence checks must treat that case as "not found" instead of aborting.
-- 2026-02-23: `extract_martini_vtf.py` `mode 2` requires hybrid mapping datasets (e.g., `/input/hybrid_env_topology/protein_membership`); bilayer-only workflows without hybrid groups must use `mode 1`.
+- `py/upside_config.py` builds rotamer sidechains as placement rows keyed by residue, bead type, and an encoded `id_seq`; each allowed rotamer contributes one row per sidechain bead, and `--fix-rotamer` collapses a residue to a single state.
+- Sidechain placement and one-body energies are separate nodes:
+  - position/orientation comes from `placement_fixed_point_vector_only` or `placement_point_vector_only`
+  - scalar one-body energy comes from `placement_fixed_scalar` or `placement_scalar`
+- In the common dynamic-1body path, scalar energies are `-log(rotamer_prob(phi, psi, state))`; placement positions can also be Ramachandran-dependent in principle, but current `parameters/ff_2.1/sidechain.h5` contains `rotamer_center_fixed` and `rotamer_prob`, not `rotamer_center`.
+- `src/placement.cpp` applies an affine transform from the backbone-local frame (`affine_alignment`) to place each rotamer bead in Cartesian space; when Ramachandran-dependent placement is used, a 2D periodic spline over phi/psi supplies the local coordinates.
+- `py/upside_config.py` optionally adds `hbond_coverage` and `hbond_coverage_hydrophobe` as extra one-body inputs to the rotamer node, so the rotamer solver can include backbone-context terms beyond the library prior.
+- `src/rotamer.cpp` treats rotamers as a discrete graphical model over residues. The implementation is specialized for residues with `1`, `3`, or `6` states (`nodes1`, `nodes3`, `nodes6`).
+- One-body energies from all supplied probability/energy nodes are summed per rotamer state, then converted to Boltzmann weights. Pairwise sidechain interactions are evaluated from bead geometry and converted with `exp(-E_pair)` into edge factors before belief propagation.
+- Pair interaction kernels in `src/bead_interaction.h` reject interactions between states belonging to the same encoded residue/node by comparing the encoded IDs with the rotamer bits masked off.
+- `src/rotamer.cpp` solves the sidechain graph by damped belief propagation and exposes per-node marginals/free energies through logs such as `node_marginal`, `rotamer_free_energy`, and `rotamer_1body_energy`.
+- A separate path, `weighted_pos` in `src/environment.cpp`, combines sidechain coordinates with `exp(-placement_scalar)` weights for environment-style many-body terms. That node consumes placement energies directly, not the solved rotamer marginals from `rotamer.cpp`.
+- In `example/16.MARTINI/run_sim_1rkl.sh`, `augment_production_rotamer_nodes()` rebuilds rotamer `id_seq` with the same `n_bit_rotamer=4` encoding used by `py/upside_config.py`. Added validation now confirms, residue-by-residue, that decoded state ids are exactly `0..n_rot-1` and map to the expected sidechain-library layer blocks.
+- In `example/16.MARTINI/prepare_system_lib.py`, `collect_sc_map()` previously required an all-atom residue lookup even though it only emitted MARTINI-sidechain proxy rows. That AA gate was removed so SC row generation now follows the MARTINI 2.2 CG protein structure directly.
+- In `src/martini.cpp`, placement-state groups are decoded from the injected `id_seq`, then runtime validation now enforces:
+  - each residue's placement groups share one `node_id` and `n_rotamer`
+  - rotamer ids are unique and exactly contiguous `0..n_rot-1`
+  - any SC row `rotamer_id` matches an actual placement-group rotamer for that residue
+  - row-to-placement assignment does not silently renumber rotamers

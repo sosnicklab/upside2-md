@@ -948,12 +948,7 @@ def collect_bb_map(protein_aa_atoms, protein_cg_atoms):
     return bb_entries
 
 
-def collect_sc_map(protein_aa_atoms, protein_cg_atoms, protein_itp_path: Optional[Path] = None):
-    aa_by_res = defaultdict(dict)
-    for idx, atom in enumerate(protein_aa_atoms):
-        key = (atom["chain"], atom["resseq"], atom["icode"])
-        aa_by_res[key][atom["name"].strip().upper()] = idx
-
+def collect_sc_map(protein_cg_atoms, protein_itp_path: Optional[Path] = None):
     residue_to_bb = {}
     for cg_idx, atom in enumerate(protein_cg_atoms):
         if atom["name"].upper() != "BB":
@@ -969,12 +964,11 @@ def collect_sc_map(protein_aa_atoms, protein_cg_atoms, protein_itp_path: Optiona
         if atom_name == "BB":
             continue
         key = (atom["chain"], atom["resseq"], atom["icode"])
-        if key not in aa_by_res:
-            cands = [k for k in aa_by_res.keys() if k[1] == atom["resseq"]]
-            if len(cands) == 1:
-                key = cands[0]
-            else:
-                continue
+
+        # Follow the MARTINI 2.2 sidechain proxy layout directly. SC rows should
+        # reflect the coarse-grained structure rather than being gated by an
+        # all-atom residue table.
+        #
         # Route sidechain-proxy forces to backbone proxy in MARTINI index space.
         # Prefer bonded-topology BB assignment from martinize ITP (k-weighted shortest compliance path).
         # Fall back to residue BB if topology mapping is unavailable.
@@ -1232,7 +1226,6 @@ def main():
 
     bb_entries = collect_bb_map(protein_aa_atoms, protein_cg_atoms)
     sc_entries = collect_sc_map(
-        protein_aa_atoms,
         protein_cg_atoms,
         protein_itp_path=config.protein_itp,
     )

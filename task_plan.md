@@ -1,40 +1,28 @@
-# Task: Enforce Weighted Hybrid SC Coupling Without Pair-Kernel Fallback
+# Task Plan
 
-## 1. Project Goal
-Ensure hybrid SC probabilistic coupling always uses weighted SC-row interactions (including SC-BB and SC-env cases), while keeping interaction evaluation strictly on dry-MARTINI-side particles (no AA-carrier interaction fallback in the pair kernel).
+## Project Goal
+Audit and fix the dry-MARTINI Upside hybrid integration workflow so that:
+- sidechain rotamer numbering is preserved exactly through `example/16.MARTINI/run_sim_1rkl.sh` and `src/martini.cpp`
+- hybrid sidechain structure sourcing uses MARTINI 2.2 sidechain structure rather than all-atom structure where the current workflow is inconsistent
 
-## 2. Architecture & Key Decisions
-- Scope:
-  - Inspect and patch hybrid SC coupling logic in `src/martini.cpp` only.
-  - Preserve existing hybrid schema and runtime node dependencies.
-  - Avoid changes to stage-file generation unless required.
-- Key decisions:
-  - Keep per-row probabilistic model; make weight normalization robust by enforcing fallback uniform weights when probability sums are degenerate.
-  - Keep probabilistic edge path active whenever SC proxy rows have valid weighted rows.
-  - Remove deterministic MARTINI pair fallback for SC-configured proxy rows when no active row weights are available in that step.
-  - Disable protein SC-SC nonbonded interactions (deterministic and probabilistic paths) to prevent instability.
-  - Enforce strict rotamer-position locking for probabilistic SC rows during interaction evaluation (no displacement by env/SC interaction-driven relaxation) for SC-env paths.
-- Revised Decisions:
-  - Use normalized row weights (`sc_row_prob_norm`) consistently for edge eligibility checks.
+## Architecture & Key Decisions
+- Treat `parameters/ff_2.1/sidechain.h5` and `py/upside_config.py` as the source of truth for rotamer state numbering.
+- Compare script-time node injection and runtime decoding directly rather than inferring from prior notes.
+- Make the minimal change necessary to preserve numbering and switch structure sourcing without altering unrelated hybrid behavior.
+- Verify with concrete artifacts or targeted checks after editing.
 
-## 3. Execution Phases
-- [x] Phase 1: Keep strict placement-based SC-row mapping (no pair-kernel fallback to carrier/proxy coordinates).
-- [x] Phase 2: Patch SC-row probability normalization to guarantee nonzero per-proxy row weights when valid rows exist.
-- [x] Phase 3: Patch SC-edge selection to rely on normalized weights and preserve probabilistic routing.
-- [x] Phase 4: Build and run focused validation.
-- [x] Phase 5: Record outcomes in `progress.md` and task review.
+## Execution Phases
+- [x] Refresh task tracking files and read existing task context for the MARTINI hybrid workflow
+- [x] Inspect `run_sim_1rkl.sh` and `src/martini.cpp` for SC numbering and sidechain structure sourcing
+- [x] Implement minimal fixes for exact SC numbering and MARTINI 2.2 sidechain structure usage
+- [x] Verify with targeted checks and document findings
 
-## 4. Known Errors / Blockers
-- None currently.
+## Review
+- Confirmed that stage-7 rotamer injection already mirrors Upside's encoded `id_seq` layout; added explicit validation so numbering mismatches fail early.
+- Changed SC map generation to follow the MARTINI CG sidechain proxy structure directly instead of gating on all-atom residue lookup.
+- Added runtime validation in `src/martini.cpp` so placement-group numbering and SC row assignments must preserve exact 0-based rotamer ids.
+- Verified Python syntax, shell syntax, C++ build, and a targeted MARTINI-asset replay for SC map generation and rotamer numbering.
 
-## 5. Review
-- Implemented in `src/martini.cpp`:
-  - Hardened per-proxy SC-row probability normalization so that if valid rows exist but summed probability is degenerate/non-positive, weights fall back to a uniform distribution over valid rows.
-  - Updated SC probabilistic edge eligibility to use normalized per-row weights (`sc_row_prob_norm`) and valid-row masks.
-  - Removed deterministic SC pair fallback inside probabilistic SC selection: when a proxy is SC-configured but has no active weighted rows for the current step, that pair is skipped instead of evaluated through unweighted deterministic MARTINI fallback.
-  - Disabled SC-SC interactions by restoring role rule to `ROLE_SC/ROLE_SC -> false`.
-  - Added an explicit pair-loop guard to skip protein SC-SC nonbonded interactions before deterministic/probabilistic SC routing.
-  - Locked probabilistic SC row positions to their mapped rotamer targets during SC-env evaluation, disabling interaction-driven row displacement.
-- Validation:
-  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` succeeded.
-  - Build emitted only existing warnings; no new errors.
+## Known Errors / Blockers
+- Need to determine whether numbering drift occurs in stage-file injection, runtime placement-group decoding, or both.
+- Need to identify the exact current all-atom sidechain structure dependency before replacing it with MARTINI 2.2 structure.

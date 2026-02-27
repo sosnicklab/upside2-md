@@ -664,6 +664,101 @@ static void read_placement_state_groups(hid_t root, HybridRuntimeState& out) {
     }
 }
 
+static void validate_exact_sc_rotamer_numbering(const HybridRuntimeState& out) {
+    for(const auto& kv : out.placement_groups_by_residue) {
+        int residue = kv.first;
+        const auto& group_ids = kv.second;
+        if(group_ids.empty()) continue;
+
+        int expected_n_rot = -1;
+        int expected_node_id = -1;
+        std::vector<int> rotamers;
+        rotamers.reserve(group_ids.size());
+
+        for(int gid : group_ids) {
+            if(gid < 0 || gid >= static_cast<int>(out.placement_state_groups.size())) {
+                throw string("Hybrid SC numbering mismatch: invalid placement group index");
+            }
+            const auto& g = out.placement_state_groups[gid];
+            if(g.residue != residue) {
+                throw string("Hybrid SC numbering mismatch: placement group residue does not match lookup residue");
+            }
+            if(g.n_rotamer <= 0 || g.rotamer < 0 || g.rotamer >= g.n_rotamer) {
+                throw string("Hybrid SC numbering mismatch: invalid rotamer state encoding in placement groups");
+            }
+            if(g.placement_rows.empty()) {
+                throw string("Hybrid SC numbering mismatch: empty placement group");
+            }
+            if(expected_n_rot < 0) {
+                expected_n_rot = g.n_rotamer;
+                expected_node_id = g.node_id;
+            } else {
+                if(g.n_rotamer != expected_n_rot) {
+                    throw string("Hybrid SC numbering mismatch: residue has inconsistent n_rotamer across placement groups");
+                }
+                if(g.node_id != expected_node_id) {
+                    throw string("Hybrid SC numbering mismatch: residue has inconsistent placement node ids");
+                }
+            }
+            rotamers.push_back(g.rotamer);
+        }
+
+        std::sort(rotamers.begin(), rotamers.end());
+        auto unique_end = std::unique(rotamers.begin(), rotamers.end());
+        if(unique_end != rotamers.end()) {
+            throw string("Hybrid SC numbering mismatch: duplicate rotamer ids detected for residue ") + to_string(residue);
+        }
+        if(static_cast<int>(rotamers.size()) != expected_n_rot) {
+            throw string("Hybrid SC numbering mismatch: residue ") + to_string(residue) +
+                  string(" is missing placement states for exact 0-based numbering");
+        }
+        for(int rot = 0; rot < expected_n_rot; ++rot) {
+            if(rotamers[rot] != rot) {
+                throw string("Hybrid SC numbering mismatch: residue ") + to_string(residue) +
+                      string(" expected rotamer id ") + to_string(rot) +
+                      string(" but found ") + to_string(rotamers[rot]);
+            }
+        }
+    }
+
+    if(out.sc_rotamer_id.empty()) return;
+    if(out.sc_residue_index.size() != out.sc_rotamer_id.size()) {
+        throw string("Hybrid SC numbering mismatch: residue and rotamer-id row counts differ");
+    }
+    if(!out.sc_row_to_placement_group.empty() &&
+       out.sc_row_to_placement_group.size() != out.sc_rotamer_id.size()) {
+        throw string("Hybrid SC numbering mismatch: row-to-placement assignments do not match SC rows");
+    }
+
+    for(size_t r = 0; r < out.sc_rotamer_id.size(); ++r) {
+        int residue = out.sc_residue_index[r];
+        int rotamer = out.sc_rotamer_id[r];
+        auto it = out.placement_groups_by_residue.find(residue);
+        if(it == out.placement_groups_by_residue.end() || it->second.empty()) continue;
+
+        bool exact_match = false;
+        for(int gid : it->second) {
+            if(gid < 0 || gid >= static_cast<int>(out.placement_state_groups.size())) continue;
+            if(out.placement_state_groups[gid].rotamer == rotamer) {
+                exact_match = true;
+                break;
+            }
+        }
+        if(!exact_match) {
+            throw string("Hybrid SC numbering mismatch: SC row rotamer id does not exist for residue ") +
+                  to_string(residue);
+        }
+
+        if(!out.sc_row_to_placement_group.empty()) {
+            int gid = out.sc_row_to_placement_group[r];
+            if(gid >= 0 && gid < static_cast<int>(out.placement_state_groups.size()) &&
+               out.placement_state_groups[gid].rotamer != rotamer) {
+                throw string("Hybrid SC numbering mismatch: runtime SC row assignment changed rotamer numbering");
+            }
+        }
+    }
+}
+
 static void rebuild_sc_rows_by_proxy(HybridRuntimeState& out) {
     out.sc_rows_by_proxy.clear();
     for(size_t r = 0; r < out.sc_proxy_atom_index.size(); ++r) {
@@ -1060,6 +1155,7 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     read_placement_state_groups(root, out);
     expand_sc_rows_from_placement(out);
     build_sc_row_bb_targets(out);
+    validate_exact_sc_rotamer_numbering(out);
 
     // Fallback BB atom inference if bb_atom_index is absent.
     bool need_infer_bb = false;

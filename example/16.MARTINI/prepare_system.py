@@ -438,7 +438,6 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
         )
         bb_entries = collect_bb_map(protein_aa_atoms, protein_atoms)
         sc_entries = collect_sc_map(
-            protein_aa_atoms,
             protein_atoms,
             protein_itp_path=protein_itp_for_map,
         )

@@ -1064,6 +1064,42 @@ with h5py.File(up_file, "r+") as up, h5py.File(sidechain_lib, "r") as sclib:
     beadtype_seq_arr = np.asarray([np.bytes_(x) for x in beadtype_seq], dtype="S16")
     placement_scalar_data = rot_energy_fixed[layer_index_arr][:, None].astype(np.float32)
 
+    selector = (1 << n_bit_rotamer) - 1
+    decoded_rotamer = id_seq_arr & selector
+    decoded_n_rotamer = (id_seq_arr >> n_bit_rotamer) & selector
+
+    for rid, resname in zip(residue_ids, itp_resnames):
+        rt = restype_num[resname]
+        start, stop, n_bead = [int(x) for x in start_stop_bead[rt]]
+        n_rot = (stop - start) // n_bead
+        row_mask = (affine_residue_arr == rid)
+        if int(np.count_nonzero(row_mask)) != (stop - start):
+            raise ValueError(
+                f"Rotamer row count mismatch for residue {rid} {resname}: "
+                f"expected {stop - start}, got {int(np.count_nonzero(row_mask))}"
+            )
+        if not np.all(decoded_n_rotamer[row_mask] == n_rot):
+            raise ValueError(
+                f"Rotamer n_rot encoding mismatch for residue {rid} {resname}: "
+                f"expected {n_rot}, got {sorted(set(decoded_n_rotamer[row_mask].tolist()))}"
+            )
+        expected_rot = np.repeat(np.arange(n_rot, dtype=np.int32), n_bead)
+        actual_rot = np.sort(decoded_rotamer[row_mask])
+        if actual_rot.shape != expected_rot.shape or not np.array_equal(actual_rot, expected_rot):
+            raise ValueError(
+                f"Rotamer state numbering mismatch for residue {rid} {resname}: "
+                f"expected states {expected_rot.tolist()}, got {actual_rot.tolist()}"
+            )
+        for rot in range(n_rot):
+            rot_mask = row_mask & (decoded_rotamer == rot)
+            expected_layers = np.arange(start + rot * n_bead, start + (rot + 1) * n_bead, dtype=np.int32)
+            actual_layers = np.sort(layer_index_arr[rot_mask])
+            if actual_layers.shape != expected_layers.shape or not np.array_equal(actual_layers, expected_layers):
+                raise ValueError(
+                    f"Rotamer layer numbering mismatch for residue {rid} {resname} state {rot}: "
+                    f"expected layers {expected_layers.tolist()}, got {actual_layers.tolist()}"
+                )
+
     n_affine = int(max(residue_ids) + 1)
     affine_atoms = np.zeros((n_affine, 3), dtype=np.int32)
     affine_ref_geom = np.zeros((n_affine, 3, 3), dtype=np.float32)
