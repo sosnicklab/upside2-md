@@ -1,5 +1,18 @@
 # Progress Log
 
+## 2026-02-28
+- Started Slurm adaptation task for `example/16.MARTINI/run_relax_6x_rigid_dry.sh` workflow.
+- Reviewed existing `example/16.MARTINI/run_relax_6x_rigid_dry.sh` and confirmed it is a single-system stage runner, not the multi-system orchestration layer.
+- Reviewed `example/16.MARTINI/batch_relax_rigid_dry.py` and identified it as the correct integration point for Slurm submission and parallel execution across systems.
+- Reinitialized `task_plan.md` for the current Slurm workflow task and recorded new findings in `findings.md`.
+- Reworked `example/16.MARTINI/batch_relax_rigid_dry.py` to add `--runner slurm` with per-system wrapper-script generation, configurable `sbatch` options, optional `squeue` waiting, and additive submission metadata in the output manifest.
+- Preserved the existing local execution path as the default runner.
+- Validation: `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/batch_relax_rigid_dry.py` passed.
+- Validation: `source .venv/bin/activate && source source.sh && python3 example/16.MARTINI/batch_relax_rigid_dry.py --help` passed.
+- Validation: `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_relax_6x_rigid_dry.sh` passed.
+- Validation: Slurm dry-run with real manifest input passed and generated `/private/tmp/upside2-md-slurm-dryrun/1ors/submit_relax.slurm.sh` plus `/private/tmp/upside2-md-slurm-dryrun/relaxed_training_manifest.json`.
+- Sandbox limitation: live `sbatch`/`squeue` execution against a real Slurm scheduler was not performed here.
+
 ## 2026-02-12
 - Reviewed existing `task_plan.md` and detected it targets an unrelated prior task.
 - Inspected current `example/16.MARTINI/run_sim_bilayer.sh` and confirmed multi-stage MARTINI workflow is already present.
