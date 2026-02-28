@@ -1,5 +1,6 @@
 # Lessons
 
+- 2026-02-28: When a workflow still exposes transition knobs like `sc_env_relax_steps`, verify the live runtime path actually consumes them; do not assume a previously implemented relaxation/ramp is still active after later SC-coupling refactors.
 - 2026-02-23: For stage-transition workflows, do not introduce coordinate transforms (recentering, per-atom wrapping, carrier remapping) unless explicitly requested. Default to exact previous-stage last-frame handoff.
 - 2026-02-23: When user states intended stage semantics ("only update tables/settings"), preserve that exactly and avoid convenience logic that changes physical state.
 - 2026-02-23: If the user asks for stage parity (e.g., `6.6 -> 7.0`), validate by checking exact coordinate equality first, then evaluate energy differences as a separate effect of stage parameter changes.

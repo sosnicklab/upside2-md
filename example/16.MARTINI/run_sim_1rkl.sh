@@ -142,8 +142,10 @@ UPSIDE_RAMA_LIBRARY="${UPSIDE_RAMA_LIBRARY:-${UPSIDE_HOME}/parameters/common/ram
 UPSIDE_RAMA_SHEET_MIXING="${UPSIDE_RAMA_SHEET_MIXING:-${UPSIDE_HOME}/parameters/ff_2.1/sheet}"
 UPSIDE_HBOND_ENERGY="${UPSIDE_HBOND_ENERGY:-${UPSIDE_HOME}/parameters/ff_2.1/hbond.h5}"
 UPSIDE_REFERENCE_STATE_RAMA="${UPSIDE_REFERENCE_STATE_RAMA:-${UPSIDE_HOME}/parameters/common/rama_reference.pkl}"
+# Initial SC pair-force caps applied when production hybrid coupling turns on.
 SC_ENV_LJ_FORCE_CAP="${SC_ENV_LJ_FORCE_CAP:-25.0}"
 SC_ENV_COUL_FORCE_CAP="${SC_ENV_COUL_FORCE_CAP:-25.0}"
+# Number of production steps used to ramp SC-env and SC-BB forces from capped to uncapped.
 SC_ENV_RELAX_STEPS="${SC_ENV_RELAX_STEPS:-200}"
 SC_ENV_RELAX_DT="${SC_ENV_RELAX_DT:-0.002}"
 SC_ENV_RESTRAINT_K="${SC_ENV_RESTRAINT_K:-5.0}"

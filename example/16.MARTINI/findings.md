@@ -1,5 +1,15 @@
 # Findings
 
+## 2026-02-28 (SC Probability Weighting Re-Check)
+- The capped-to-uncapped force ramp added in `../../src/martini.cpp` does not replace or bypass the existing SC probability weighting path.
+- Live SC row probabilities are still refreshed from the rotamer node (`refresh_sc_row_probabilities_from_rotamer(...)`) and normalized per proxy into `sc_row_prob_norm`.
+- SC-env and allowed same-residue SC-BB interactions still use those normalized probabilities as priors in the Boltzmann mixture (`z_shift += prior * exp(-shifted)`, `w = prior * exp(-shifted) / z_shift`); the new `sc_force_uncap_mix` only blends capped and uncapped pair-force vectors inside `eval_pair_force(...)`.
+
+## 2026-02-28 (Production SC Force-Cap Transition Wiring)
+- Before this change, `../../src/martini.cpp` parsed `sc_env_lj_force_cap`, `sc_env_coul_force_cap`, and `sc_env_relax_steps`, but the active probabilistic SC coupling path always applied fixed force caps; `sc_env_relax_steps` did not affect SC-env or same-residue SC-BB pair evaluation.
+- The production SC coupling path now uses a per-activation runtime counter to compute an uncapped-force mix factor from `0.0 -> 1.0` over `sc_env_relax_steps` active production evaluations.
+- The ramp is applied only to SC-env and allowed same-residue SC-BB LJ/Coulomb pair forces, by blending each capped pair-force vector with its uncapped counterpart; hard-sphere and non-SC pair paths are unchanged.
+
 ## 2026-02-17 (Runtime Semantics Audit)
 - `output/potential` is logged in `../../src/main.cpp` via `sys->engine.potential`, and `../../src/deriv_engine.cpp` computes this as the sum over all active `potential_term` nodes. It is not a protein-only energy stream.
 - Pre-production rigid hold in hybrid mode is configured via `/input/hybrid_control` (`preprod_protein_mode=rigid`) and enforced dynamically in C++ (`../../src/martini.cpp`) using `protein_membership` and `atom_roles`; `/input/fix_rigid` does not need to exist in stage files for this path.

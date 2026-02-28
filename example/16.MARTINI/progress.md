@@ -1,5 +1,28 @@
 # Progress Log
 
+## 2026-02-28
+- Re-read `task_plan.md` and inspected the production SC coupling path in `../../src/martini.cpp` plus workflow controls in `run_sim_1rkl.sh`.
+- Confirmed root cause: `sc_env_relax_steps` was being written/parsing correctly but was no longer used in the active probabilistic SC interaction path, so production SC-env and same-residue SC-BB forces stayed at a fixed cap.
+- Modified `../../src/martini.cpp`:
+  - added a per-activation `sc_env_transition_step` counter to hybrid runtime state,
+  - reset that counter whenever hybrid activation toggles,
+  - computed a `0 -> 1` uncapped-force mix across `sc_env_relax_steps`,
+  - blended capped and uncapped LJ/Coulomb force vectors for SC-env and same-residue SC-BB interactions only.
+- Updated `run_sim_1rkl.sh` comments so the workflow documents `SC_ENV_LJ_FORCE_CAP` / `SC_ENV_COUL_FORCE_CAP` as initial caps and `SC_ENV_RELAX_STEPS` as the ramp duration.
+- Files modified:
+  - `../../src/martini.cpp`
+  - `run_sim_1rkl.sh`
+  - `task_plan.md`
+  - `findings.md`
+- Verification:
+  - `bash -n run_sim_1rkl.sh` -> passed.
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` -> passed; only pre-existing warnings remained (`%p` format warning, C++17 decomposition warning).
+- Remaining gap:
+  - No fresh long-horizon hybrid production replay was run in this session, so physical stability impact of the new ramp still needs runtime benchmarking.
+- Follow-up verification requested: re-checked whether SC interactions remain probability weighted after the new ramp.
+  - Confirmed by code inspection that live rotamer marginals still populate `sc_row_probability`, are normalized into `sc_row_prob_norm`, and still drive the SC-env/SC-BB Boltzmann weighting path.
+  - Confirmed the new `sc_force_uncap_mix` only affects force capping inside `eval_pair_force(...)`; it does not alter prior calculation, normalization, or softmax weighting.
+
 ## 2026-02-11
 - Initialized required workflow files: `task_plan.md`, `findings.md`, `progress.md`.
 - Prepared to reproduce failure for `run_sim_1ubq.sh`.

@@ -3,6 +3,7 @@
 ## Project Goal
 - Define and implement a hybrid dry-MARTINI + Upside workflow where protein dynamics are handled by Upside, environment is handled by dry MARTINI, and coupling starts only at production stage.
 - Add a dedicated rigid dry-MARTINI workflow variant where the protein stays fixed for all stages (including stage 7.0), production-stage Upside coupling is never activated, and trajectory export avoids SC/backbone back-mapping.
+- Replace the production-stage fixed SC force-cap hold with a 200-step transition from capped SC-env/SC-BB forces to regular dry-MARTINI LJ/Coulomb forces in `run_sim_1rkl.sh`.
 
 ## Architecture & Key Decisions
 - Data preparation includes packing OPM protein `pdb/1rkl.pdb` into MARTINI DOPC bilayer `pdb/bilayer.MARTINI.pdb`, with MARTINI 2.2 coarse-graining and 0.15 M NaCl ion placement.
@@ -29,6 +30,12 @@
 - [x] Phase 11: Remove production-stage MARTINI fallback paths in hybrid SC force projection and fix stage handoff/production stability regressions.
 - [x] Phase 12: Add a separate rigid-protein workflow script derived from `run_sim_1rkl.sh` that disables production-stage Upside/SC paths and keeps dry-MARTINI rigid protein interactions through stage 7.0.
 - [x] Phase 13: Debug/fix pre-production pressure coupling in stage 6.x to prevent nonphysical bilayer expansion/holes without changing physical target pressure units.
+- [x] Phase 14: Replace the production SC force-cap hold with a per-step ramp from capped to uncapped SC-env/SC-BB LJ/Coulomb forces and verify the workflow wiring.
+
+## Review
+- Implemented a production-stage SC transition schedule in `../../src/martini.cpp`: a per-activation counter now resets when hybrid activation changes, and SC-env plus allowed same-residue SC-BB pair forces blend from the configured capped force to the uncapped LJ/Coulomb force across `sc_env_relax_steps`.
+- Kept the workflow interface minimal: `example/16.MARTINI/run_sim_1rkl.sh` still writes the existing `sc_env_*` control attributes, with comments updated so `SC_ENV_LJ_FORCE_CAP`/`SC_ENV_COUL_FORCE_CAP` are documented as the initial caps and `SC_ENV_RELAX_STEPS` as the ramp window.
+- Verification completed in this session: `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed, and `cmake --build obj -j4` rebuilt successfully with only pre-existing warnings.
 
 ## Known Errors / Blockers
 - Requires concrete integration points in Upside C++ step loop and force modules.
@@ -56,6 +63,7 @@
 - New blocker (2026-02-24): production-stage instability is now isolated to the hybrid-active BB coupling path in `../../src/martini.cpp` (`refresh_bb_positions_if_active` + `project_bb_gradient_if_active`), not the non-protein hard-sphere toggle or SC environment loop. Hybrid-active runs with BB mapping enabled still show runaway expansion, while equivalent runs with active stage disabled or BB map masks zeroed remain stable.
 - New blocker (2026-02-26): pre-production NPT stage 6.3 shows large transient XY expansion with bilayer holes while using correct physical target pressure (`1 bar = 0.000020659477 E_up/Angstrom^3`). Runtime barostat updates `output/box`, but force nodes retain stale internal box lengths within a stage because `simulation_box::npt::update_node_boxes(...)` is currently a no-op.
 - Remaining validation (2026-02-26): full 6.0->6.6 rerun with updated runtime is still pending; quick replays confirm the box-propagation fix works and no deadlock remains, but long-horizon membrane morphology needs fresh trajectory confirmation.
+- Remaining validation (2026-02-28): the new production SC force-cap ramp is compile-verified and wired into stage-7 activation, but a fresh long-horizon hybrid production replay has not been run in this session.
 
 ## Revised Decisions
 - Hybrid coupling starts only at production stage; pre-production protein remains rigid.
@@ -110,8 +118,7 @@
   - convert pressure to Upside units using `1 bar = 0.000020659477 E_up/Angstrom^3`.
 - Hybrid pre-production rigid hold and NPT are both enabled by scaling only unconstrained DOFs during barostat box/coordinate updates (fully fixed atoms remain fixed; z-fixed atoms keep fixed z).
 - Production probabilistic SC-environment coupling will cap LJ and Coulomb force magnitudes (configurable via `hybrid_control` attributes) to prevent force spikes.
-- Production probabilistic SC-environment coupling will run an inner SC-only relaxation loop (`200` steps by default) with fixed environment/backbone and SC restrained near mapped rotamer positions; only the final relaxed-step SC->BB force is projected back to backbone.
-- Inner SC relaxation integration treats `dE/dx` as gradient and advances positions using force direction (`x += dt * (-dE/dx)`), with restraint contribution in the same force convention.
+- Production probabilistic sidechain coupling will use the configured `sc_env_relax_steps` window as a production-step transition schedule: SC-env and allowed same-residue SC-BB pair forces start from the configured force-capped values and ramp to uncapped LJ/Coulomb forces across that window after hybrid activation.
 - Production stage file preparation (`run_sim_1rkl.sh`, `test_prod_run_sim_1rkl.sh`) will explicitly set SC coupling control attrs in `/input/hybrid_control` (`sc_env_lj_force_cap`, `sc_env_coul_force_cap`, `sc_env_relax_steps`, `sc_env_relax_dt`, `sc_env_restraint_k`, `sc_env_max_displacement`) instead of relying on runtime defaults.
 - Production SC rigid mapping in C++ must treat `sc_local_pos` as centroid-relative coordinates and re-add target centroid after rotation (`mapped = R*local + tgt_centroid`) to avoid frame-translation artifacts.
 - Production SC row handling in C++ must enforce per-residue proxy capacity from placement-point support and select the safest proxy subset each step (by environment-distance metric) when proxy rows exceed representable capacity.

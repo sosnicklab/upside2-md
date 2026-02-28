@@ -337,6 +337,7 @@ struct HybridRuntimeState {
     std::string sc_env_po4_z_clamp_mode = "initial";
     bool sc_env_energy_dump_enabled = false;
     int sc_env_energy_dump_stride = 1;
+    uint64_t sc_env_transition_step = 0;
     std::vector<unsigned char> sc_env_po4_env_mask;
     std::vector<float> sc_env_po4_z_reference;
     bool sc_env_po4_z_reference_initialized = false;
@@ -1279,6 +1280,7 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->sc_env_last_logged_lj = 0.f;
         st->sc_env_last_logged_coul = 0.f;
         st->sc_env_log_counter = 0;
+        st->sc_env_transition_step = 0;
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
         return;
@@ -1298,6 +1300,7 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->sc_env_last_logged_lj = 0.f;
         st->sc_env_last_logged_coul = 0.f;
         st->sc_env_log_counter = 0;
+        st->sc_env_transition_step = 0;
     }
     if(st->preprod_rigid && !st->active) {
         martini_fix_rigid::set_dynamic_fixed_atoms(*engine, st->preprod_fixed_atom_indices);
@@ -1528,6 +1531,15 @@ bool sample_sc_env_energy_for_logging(DerivEngine& engine, float& total, float& 
     lj = st->sc_env_last_logged_lj;
     coul = st->sc_env_last_logged_coul;
     return true;
+}
+
+static float compute_sc_force_uncap_mix(const HybridRuntimeState& st) {
+    if(st.sc_env_relax_steps <= 1) return 1.f;
+
+    uint64_t final_ramp_step = static_cast<uint64_t>(st.sc_env_relax_steps - 1);
+    if(st.sc_env_transition_step >= final_ramp_step) return 1.f;
+
+    return float(st.sc_env_transition_step) / float(final_ramp_step);
 }
 
 bool preproduction_requires_rigid(const DerivEngine& engine) {
@@ -3043,6 +3055,14 @@ struct MartiniPotential : public PotentialNode
             hybrid_state->enabled &&
             hybrid_state->active &&
             !hybrid_state->sc_proxy_atom_index.empty());
+        float sc_force_uncap_mix = 1.f;
+        if(use_probabilistic_sc && mutable_hybrid) {
+            sc_force_uncap_mix = martini_hybrid::compute_sc_force_uncap_mix(*mutable_hybrid);
+            if(mode == PotentialAndDerivMode &&
+               mutable_hybrid->sc_env_transition_step < std::numeric_limits<uint64_t>::max()) {
+                mutable_hybrid->sc_env_transition_step += 1;
+            }
+        }
         float sc_env_energy_total = 0.f;
         float sc_env_energy_lj = 0.f;
         float sc_env_energy_coul = 0.f;
@@ -3070,6 +3090,7 @@ struct MartiniPotential : public PotentialNode
                                    Vec<3>& pair_force,
                                    float lj_force_cap_mag,
                                    float coul_force_cap_mag,
+                                   float capped_to_regular_mix,
                                    float hs_force_cap_mag,
                                    float hs_pot_cap_mag,
                                    float* pair_lj_potential,
@@ -3113,6 +3134,8 @@ struct MartiniPotential : public PotentialNode
 
             if(dist > max(lj_cutoff, coul_cutoff)) return false;
 
+            float cap_mix = std::max(0.f, std::min(capped_to_regular_mix, 1.f));
+
             if(eps != 0.f && sig != 0.f && dist < lj_cutoff) {
                 auto spline_it = lj_splines.find({eps, sig});
                 if(spline_it != lj_splines.end()) {
@@ -3125,8 +3148,14 @@ struct MartiniPotential : public PotentialNode
                     float dE_dr = lj_deriv_spline * coord_scale;
                     float lj_force_mag = -dE_dr;
                     if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag)) {
-                        Vec<3> lj_force = (lj_force_mag/dist) * dr;
-                        cap_force_vector(lj_force, lj_force_cap_mag);
+                        Vec<3> lj_force_uncapped = (lj_force_mag/dist) * dr;
+                        Vec<3> lj_force = lj_force_uncapped;
+                        if(lj_force_cap_mag > 0.f && cap_mix < 1.f) {
+                            cap_force_vector(lj_force, lj_force_cap_mag);
+                            if(cap_mix > 0.f) {
+                                lj_force = ((1.f - cap_mix) * lj_force) + (cap_mix * lj_force_uncapped);
+                            }
+                        }
                         pair_potential += lj_pot;
                         if(pair_lj_potential) *pair_lj_potential += lj_pot;
                         pair_force += lj_force;
@@ -3164,8 +3193,14 @@ struct MartiniPotential : public PotentialNode
                 }
 
                 if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag)) {
-                    Vec<3> coul_force = (coul_force_mag/dist) * dr;
-                    cap_force_vector(coul_force, coul_force_cap_mag);
+                    Vec<3> coul_force_uncapped = (coul_force_mag/dist) * dr;
+                    Vec<3> coul_force = coul_force_uncapped;
+                    if(coul_force_cap_mag > 0.f && cap_mix < 1.f) {
+                        cap_force_vector(coul_force, coul_force_cap_mag);
+                        if(cap_mix > 0.f) {
+                            coul_force = ((1.f - cap_mix) * coul_force) + (cap_mix * coul_force_uncapped);
+                        }
+                    }
                     pair_potential += coul_pot;
                     if(pair_coul_potential) *pair_coul_potential += coul_pot;
                     pair_force += coul_force;
@@ -3808,7 +3843,7 @@ struct MartiniPotential : public PotentialNode
                 hs_force_cap = hybrid_state->nonprotein_hs_force_cap;
                 hs_pot_cap = hybrid_state->nonprotein_hs_potential_cap;
             }
-            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, hard_sphere_pair, pair_pot, force, 0.f, 0.f, hs_force_cap, hs_pot_cap, nullptr, nullptr)) {
+            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, hard_sphere_pair, pair_pot, force, 0.f, 0.f, 1.f, hs_force_cap, hs_pot_cap, nullptr, nullptr)) {
                 continue;
             }
             if(pot) *pot += pair_pot;
@@ -3878,6 +3913,7 @@ struct MartiniPotential : public PotentialNode
                                         pair_pot, pair_force,
                                         hybrid_state->sc_env_lj_force_cap,
                                         hybrid_state->sc_env_coul_force_cap,
+                                        sc_force_uncap_mix,
                                         0.f,
                                         0.f,
                                         &pair_lj,
@@ -4005,7 +4041,7 @@ struct MartiniPotential : public PotentialNode
                         if(!eval_pair_force(pos_i, pos_j,
                                             edge.eps, edge.sig, edge.qi, edge.qj, false,
                                             pair_pot, pair_force,
-                                            0.f, 0.f, 0.f, 0.f,
+                                            0.f, 0.f, 1.f, 0.f, 0.f,
                                             nullptr, nullptr)) {
                             continue;
                         }
