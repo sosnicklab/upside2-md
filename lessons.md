@@ -17,3 +17,4 @@
 - 2026-02-26: When a MARTINI prep downloader reuses generated topology artifacts, gate cache hits on explicit AA-input provenance; never assume same PDB ID implies compatible `.top`/`.itp`.
 - 2026-02-26: For automated martinize runs on heterogeneous PDB sources, add deterministic AA sanitization (complete-residue chain selection) before martinization to avoid brittle missing-atom failures.
 - 2026-02-26: When a user requires batch stage workflows to be independent, create a standalone stage-specific runner script rather than wrapping or indirectly depending on a broader all-stage workflow script.
+- 2026-02-28: For Slurm workflow wrappers, do not assume cluster modules are preloaded; initialize the module system inside the job script and load the user-required modules explicitly before launching the payload.

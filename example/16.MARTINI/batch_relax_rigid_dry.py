@@ -314,6 +314,19 @@ def build_slurm_script(prepared):
     lines = [
         "#!/bin/bash",
         "set -euo pipefail",
+        'if ! command -v module >/dev/null 2>&1; then',
+        '    if [ -f /etc/profile.d/modules.sh ]; then',
+        '        source /etc/profile.d/modules.sh',
+        '    elif [ -f /usr/share/Modules/init/bash ]; then',
+        '        source /usr/share/Modules/init/bash',
+        '    fi',
+        'fi',
+        'if ! command -v module >/dev/null 2>&1; then',
+        '    echo "ERROR: environment modules are not available in this Slurm job" >&2',
+        '    exit 1',
+        'fi',
+        "module load cmake",
+        "module load openapi",
         f"cd {shlex.quote(str(prepared['run_script'].parent))}",
     ]
     for key in sorted(prepared["env_overrides"]):

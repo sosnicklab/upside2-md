@@ -12,6 +12,8 @@
 - Validation: `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_relax_6x_rigid_dry.sh` passed.
 - Validation: Slurm dry-run with real manifest input passed and generated `/private/tmp/upside2-md-slurm-dryrun/1ors/submit_relax.slurm.sh` plus `/private/tmp/upside2-md-slurm-dryrun/relaxed_training_manifest.json`.
 - Sandbox limitation: live `sbatch`/`squeue` execution against a real Slurm scheduler was not performed here.
+- Follow-up correction: updated generated Slurm wrapper to initialize environment modules if needed and run `module load cmake` plus `module load openapi` before invoking `run_relax_6x_rigid_dry.sh`.
+- Validation: regenerated `/private/tmp/upside2-md-slurm-dryrun/1ors/submit_relax.slurm.sh` and confirmed it contains the module-init block plus `module load cmake` and `module load openapi` before the workflow command.
 
 ## 2026-02-12
 - Reviewed existing `task_plan.md` and detected it targets an unrelated prior task.
