@@ -370,7 +370,7 @@ def build_slurm_script(prepared):
         '    exit 1',
         'fi',
         "module load cmake",
-        "module load openapi",
+        "module load openmpi",
         f"cd {shlex.quote(str(prepared['run_script'].parent))}",
     ]
     for key in sorted(prepared["env_overrides"]):
