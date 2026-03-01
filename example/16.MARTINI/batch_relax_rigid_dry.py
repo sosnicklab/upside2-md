@@ -415,7 +415,7 @@ def build_slurm_script(prepared):
         '    exit 1',
         'fi',
         "module load cmake",
-        "module load openapi",
+        "module load openmpi",
         'export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"',
         'export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"',
         'export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"',
