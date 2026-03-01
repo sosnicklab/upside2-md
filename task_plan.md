@@ -43,5 +43,13 @@ Make `example/16.MARTINI/run_relax_6x_rigid_dry.sh` usable in a Slurm workflow b
      `python3 example/16.MARTINI/batch_relax_rigid_dry.py --manifest train-data/training_manifest.json --runner slurm --dry-run 1 --slurm-wait 0 --limit 1 --output-root /tmp/upside2-md-slurm-dryrun`.
    - Dry-run generated `/private/tmp/upside2-md-slurm-dryrun/1ors/submit_relax.slurm.sh` with only the workflow-specific exported variables and the expected `sbatch` command in `/private/tmp/upside2-md-slurm-dryrun/1ors/batch_relax.log`.
    - Follow-up wrapper correction applied: generated Slurm scripts now initialize the module system when needed and run `module load cmake` plus `module load openapi` before the workflow payload.
+   - Root-cause follow-up applied for manifest portability:
+     - `example/16.MARTINI/download_and_prepare_training_inputs.py` now writes repo-relative paths for project-local artifacts.
+     - Existing `train-data/training_manifest.json` was normalized from absolute `/Users/yinhan/Documents/upside2-md/...` paths to `train-data/...` paths.
+     - `example/16.MARTINI/batch_relax_rigid_dry.py` retains relocation support so older absolute manifests still work after moving the repo.
+   - Relative-manifest dry-run passed:
+     `python3 example/16.MARTINI/batch_relax_rigid_dry.py --manifest train-data/training_manifest.json --runner slurm --dry-run 1 --slurm-wait 0 --limit 1 --output-root /tmp/upside2-md-slurm-relative-test`.
+   - Legacy-manifest relocation dry-run passed with synthetic moved-root manifest:
+     `/tmp/training_manifest.fake_root.json`.
 6. Remaining verification gap:
    - Real `sbatch`/`squeue` execution was not attempted in this sandbox, so live Slurm submission and wait-path completion must be exercised on the target cluster.

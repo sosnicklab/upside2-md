@@ -25,3 +25,5 @@
 - 2026-02-28: The correct parallelization point for rigid dry MARTINI relaxation is `example/16.MARTINI/batch_relax_rigid_dry.py`, which iterates over manifest systems; parallelizing internal stages would break stage dependencies.
 - 2026-02-28: To keep Slurm submission robust, generating per-system wrapper scripts is safer than packing many environment variables into `sbatch --wrap`.
 - 2026-02-28: Verified Slurm dry-run wrapper generation against `train-data/training_manifest.json`; generated wrapper scripts only need workflow-specific exports (`RUN_DIR`, protein input paths, `MARTINIZE_ENABLE=0`, `SEED`) before invoking `run_relax_6x_rigid_dry.sh`.
+- 2026-03-01: `train-data/training_manifest.json` originally stored absolute project-root paths for all generated artifacts (`aa_pdb_effective`, `cg_pdb`, `itp_file`, `runtime_pdb`, `up_file`, etc.), which breaks when the repo is moved to a different root on Slurm.
+- 2026-03-01: `example/16.MARTINI/download_and_prepare_training_inputs.py` should emit repo-relative paths for project-local artifacts; `example/16.MARTINI/batch_relax_rigid_dry.py` now resolves both those relative paths and legacy absolute manifests.

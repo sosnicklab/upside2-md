@@ -11,6 +11,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 def parse_args():
     script_dir = Path(__file__).resolve().parent
@@ -170,14 +172,54 @@ def load_manifest(path):
     return data, systems
 
 
-def require_path(entry, key):
-    raw = entry.get(key)
+def iter_relocated_candidates(path, manifest_path):
+    yield path
+
+    if not path.is_absolute():
+        yield (manifest_path.parent / path)
+        yield (PROJECT_ROOT / path)
+        return
+
+    parts = path.parts
+
+    root_name = PROJECT_ROOT.name
+    root_indices = [i for i, part in enumerate(parts) if part == root_name]
+    for idx in reversed(root_indices):
+        suffix = parts[idx + 1 :]
+        if suffix:
+            yield PROJECT_ROOT.joinpath(*suffix)
+
+    for anchor in ("train-data", "example", "parameters", "obj", "py"):
+        if anchor in parts:
+            idx = parts.index(anchor)
+            suffix = parts[idx:]
+            if suffix:
+                yield PROJECT_ROOT.joinpath(*suffix)
+
+
+def resolve_manifest_path(raw, manifest_path, key):
     if not raw:
         raise ValueError(f"Manifest entry missing '{key}'")
-    path = Path(raw).expanduser().resolve()
-    if not path.exists():
-        raise FileNotFoundError(f"Missing path for '{key}': {path}")
-    return path
+
+    original = Path(raw).expanduser()
+    seen = set()
+    for candidate in iter_relocated_candidates(original, manifest_path):
+        normalized = candidate.resolve(strict=False)
+        marker = str(normalized)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        if normalized.exists():
+            return normalized.resolve()
+
+    raise FileNotFoundError(
+        f"Missing path for '{key}': {original}. "
+        f"Tried original path plus relocation into project root {PROJECT_ROOT}"
+    )
+
+
+def require_path(entry, key, manifest_path):
+    return resolve_manifest_path(entry.get(key), manifest_path, key)
 
 
 def stage_file_path(output_root, pdb_id, stage):
@@ -191,15 +233,15 @@ def normalize_pdb_id(entry):
     return pdb_id
 
 
-def build_env(base_env, entry, output_root, args, extra_env):
+def build_env(base_env, entry, manifest_path, output_root, args, extra_env):
     pdb_id = normalize_pdb_id(entry)
-    aa_pdb = Path(
-        entry.get("aa_pdb_effective") or entry.get("aa_pdb_downloaded", "")
-    ).expanduser().resolve()
-    if not aa_pdb.exists():
-        raise FileNotFoundError(f"{pdb_id}: AA PDB not found: {aa_pdb}")
-    cg_pdb = require_path(entry, "cg_pdb")
-    itp_file = require_path(entry, "itp_file")
+    aa_pdb = resolve_manifest_path(
+        entry.get("aa_pdb_effective") or entry.get("aa_pdb_downloaded", ""),
+        manifest_path,
+        "aa_pdb_effective",
+    )
+    cg_pdb = require_path(entry, "cg_pdb", manifest_path)
+    itp_file = require_path(entry, "itp_file", manifest_path)
 
     run_dir = (output_root / pdb_id).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -230,7 +272,7 @@ def build_skip_result(pdb_id, run_dir, target_file, batch_log, args):
     }
 
 
-def prepare_run(entry, run_script, output_root, args, extra_env):
+def prepare_run(entry, manifest_path, run_script, output_root, args, extra_env):
     pdb_id = normalize_pdb_id(entry)
     target_file = stage_file_path(output_root, pdb_id, args.target_stage)
     run_dir = (output_root / pdb_id).resolve()
@@ -238,7 +280,9 @@ def prepare_run(entry, run_script, output_root, args, extra_env):
     if args.skip_existing and target_file.exists():
         return build_skip_result(pdb_id, run_dir, target_file, batch_log, args), None
 
-    env, env_overrides, run_dir = build_env(os.environ, entry, output_root, args, extra_env)
+    env, env_overrides, run_dir = build_env(
+        os.environ, entry, manifest_path, output_root, args, extra_env
+    )
     run_dir.mkdir(parents=True, exist_ok=True)
     return None, {
         "pdb_id": pdb_id,
@@ -565,7 +609,9 @@ def main():
             continue
 
         try:
-            skipped, prepared = prepare_run(entry, run_script, output_root, args, extra_env)
+            skipped, prepared = prepare_run(
+                entry, manifest_path, run_script, output_root, args, extra_env
+            )
             if skipped is not None:
                 relaxed_systems.append(merge_result(entry, skipped))
                 print(

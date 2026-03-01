@@ -12,6 +12,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 def parse_args():
     script_dir = Path(__file__).resolve().parent
@@ -518,19 +520,27 @@ def run_prepare_system(args, prepare_python, pdb_id, aa_pdb, cg_pdb, itp_file, o
         raise FileNotFoundError(f"Expected UPSIDE input missing after prep: {up_file}")
 
     return {
-        "up_file": str(up_file.resolve()),
-        "runtime_pdb": str(runtime_pdb.resolve()),
-        "runtime_itp": str(runtime_itp.resolve()),
-        "mapping_h5": str(mapping_h5.resolve()),
-        "mapping_json": str(mapping_json.resolve()),
-        "prep_summary": str(prep_summary.resolve()),
-        "run_dir": str(run_dir.resolve()),
+        "up_file": manifest_path_value(up_file),
+        "runtime_pdb": manifest_path_value(runtime_pdb),
+        "runtime_itp": manifest_path_value(runtime_itp),
+        "mapping_h5": manifest_path_value(mapping_h5),
+        "mapping_json": manifest_path_value(mapping_json),
+        "prep_summary": manifest_path_value(prep_summary),
+        "run_dir": manifest_path_value(run_dir),
     }
 
 
 def script_dir_from_prepare(prepare_script):
     # /.../example/16.MARTINI/prepare_system.py -> repo root is ../../
     return prepare_script.resolve().parents[2]
+
+
+def manifest_path_value(path):
+    path = Path(path).expanduser().resolve()
+    try:
+        return str(path.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(path)
 
 
 def main():
@@ -598,10 +608,10 @@ def main():
             )
             entry = {
                 "pdb_id": pdb_id,
-                "aa_pdb_downloaded": str(aa_pdb.resolve()),
-                "aa_pdb_effective": str(aa_pdb_effective.resolve()),
-                "cg_pdb": str(cg_pdb.resolve()),
-                "itp_file": str(itp_file.resolve()),
+                "aa_pdb_downloaded": manifest_path_value(aa_pdb),
+                "aa_pdb_effective": manifest_path_value(aa_pdb_effective),
+                "cg_pdb": manifest_path_value(cg_pdb),
+                "itp_file": manifest_path_value(itp_file),
                 "cg_source": cg_source,
                 "download_url": source_url,
             }
@@ -616,7 +626,7 @@ def main():
 
     manifest = {
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "list_file": str(list_file),
+        "list_file": manifest_path_value(list_file),
         "systems": systems,
         "failed": failed,
     }

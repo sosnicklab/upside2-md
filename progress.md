@@ -14,6 +14,13 @@
 - Sandbox limitation: live `sbatch`/`squeue` execution against a real Slurm scheduler was not performed here.
 - Follow-up correction: updated generated Slurm wrapper to initialize environment modules if needed and run `module load cmake` plus `module load openapi` before invoking `run_relax_6x_rigid_dry.sh`.
 - Validation: regenerated `/private/tmp/upside2-md-slurm-dryrun/1ors/submit_relax.slurm.sh` and confirmed it contains the module-init block plus `module load cmake` and `module load openapi` before the workflow command.
+- User follow-up identified the true root cause for missing AA PDBs on cluster: `train-data/training_manifest.json` still contained hard-coded absolute project-root paths.
+- Updated `example/16.MARTINI/download_and_prepare_training_inputs.py` so project-local manifest paths are written relative to the repo root instead of as absolute machine paths.
+- Normalized the existing `train-data/training_manifest.json` in place; project-local fields such as `aa_pdb_effective`, `cg_pdb`, `itp_file`, `runtime_pdb`, and `up_file` are now `train-data/...` relative paths.
+- Kept the relocation logic in `example/16.MARTINI/batch_relax_rigid_dry.py` so older absolute manifests remain readable after moving the repo.
+- Validation: `python3 -m py_compile example/16.MARTINI/download_and_prepare_training_inputs.py example/16.MARTINI/batch_relax_rigid_dry.py` passed.
+- Validation: Slurm dry-run with the normalized relative-path manifest passed and generated `/private/tmp/upside2-md-slurm-relative-test/1ors/submit_relax.slurm.sh`.
+- Validation: relocation dry-run with a synthetic fake-root manifest (`/tmp/training_manifest.fake_root.json`) also passed, confirming backward-compatible resolution of old absolute manifests.
 
 ## 2026-02-12
 - Reviewed existing `task_plan.md` and detected it targets an unrelated prior task.
