@@ -19,3 +19,5 @@
 - 2026-02-26: When a user requires batch stage workflows to be independent, create a standalone stage-specific runner script rather than wrapping or indirectly depending on a broader all-stage workflow script.
 - 2026-02-28: For Slurm workflow wrappers, do not assume cluster modules are preloaded; initialize the module system inside the job script and load the user-required modules explicitly before launching the payload.
 - 2026-03-01: For generated manifests that will be reused on other machines or cluster filesystems, do not serialize project-local artifact paths as absolute paths; store repo-relative paths and make readers tolerant of older absolute manifests.
+- 2026-03-01: For Slurm batch workflows that run Python/Numpy-heavy prep stages, do not rely on the cluster’s default memory limit; request explicit `--mem` in `sbatch` and cap BLAS/OpenMP threads in the wrapper to avoid avoidable cgroup OOMs.
+- 2026-03-01: When many Slurm jobs in the same workflow are likely to oversubscribe memory or scheduler quota, prefer one job array with a concurrency throttle (for example `%2`) over flooding the scheduler with many independent `sbatch` submissions.

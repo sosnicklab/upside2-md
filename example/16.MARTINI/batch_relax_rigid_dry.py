@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SLURM_MEM = "16G"
 
 
 def parse_args():
@@ -131,8 +132,26 @@ def parse_args():
     )
     parser.add_argument(
         "--slurm-mem",
-        default="",
-        help="Optional Slurm memory request, for example 8G.",
+        default=DEFAULT_SLURM_MEM,
+        help=(
+            "Slurm memory request for each submitted run. "
+            f"Default: {DEFAULT_SLURM_MEM}. Use 0 to omit --mem."
+        ),
+    )
+    parser.add_argument(
+        "--slurm-submit-mode",
+        choices=["array", "jobs"],
+        default="array",
+        help=(
+            "How Slurm work is submitted. 'array' submits one job array for all "
+            "selected systems; 'jobs' submits one independent job per system."
+        ),
+    )
+    parser.add_argument(
+        "--slurm-array-parallelism",
+        type=int,
+        default=2,
+        help="Maximum number of concurrent tasks when --slurm-submit-mode=array.",
     )
     parser.add_argument(
         "--slurm-job-name-prefix",
@@ -353,6 +372,32 @@ def slurm_job_name(pdb_id, prefix):
     return f"{prefix}-{token}"[:128]
 
 
+def array_job_name(prefix):
+    token = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in prefix)
+    return f"{token}-array"[:128]
+
+
+def normalized_slurm_mem(raw):
+    value = str(raw).strip()
+    if not value:
+        return None
+    if value.lower() in {"0", "none", "off", "false"}:
+        return None
+    return value
+
+
+def write_submission_log(prepared, runner, cmd, slurm_script, slurm_output, extra_lines=None):
+    with prepared["batch_log"].open("w", encoding="utf-8") as log_fh:
+        log_fh.write(f"# runner: {runner}\n")
+        log_fh.write(f"# submit_at: {datetime.now(timezone.utc).isoformat()}\n")
+        log_fh.write(f"# cmd: {' '.join(shlex.quote(x) for x in cmd)}\n")
+        log_fh.write(f"# slurm_script: {slurm_script}\n")
+        log_fh.write(f"# slurm_output: {slurm_output}\n")
+        if extra_lines:
+            for line in extra_lines:
+                log_fh.write(f"# {line}\n")
+
+
 def build_slurm_script(prepared):
     slurm_script = prepared["run_dir"] / "submit_relax.slurm.sh"
     lines = [
@@ -370,7 +415,13 @@ def build_slurm_script(prepared):
         '    exit 1',
         'fi',
         "module load cmake",
-        "module load openmpi",
+        "module load openapi",
+        'export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"',
+        'export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"',
+        'export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"',
+        'export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"',
+        'export VECLIB_MAXIMUM_THREADS="${VECLIB_MAXIMUM_THREADS:-1}"',
+        'export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"',
         f"cd {shlex.quote(str(prepared['run_script'].parent))}",
     ]
     for key in sorted(prepared["env_overrides"]):
@@ -384,8 +435,35 @@ def build_slurm_script(prepared):
     return slurm_script
 
 
+def build_slurm_array_script(array_script, task_file):
+    lines = [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        f'TASK_FILE={shlex.quote(str(task_file))}',
+        'if [ -z "${SLURM_ARRAY_TASK_ID:-}" ]; then',
+        '    echo "ERROR: SLURM_ARRAY_TASK_ID is not set" >&2',
+        "    exit 1",
+        "fi",
+        'mapfile -t TASK_WRAPPERS < "$TASK_FILE"',
+        'if [ "${#TASK_WRAPPERS[@]}" -eq 0 ]; then',
+        '    echo "ERROR: no task wrappers found in $TASK_FILE" >&2',
+        "    exit 1",
+        "fi",
+        'if [ "$SLURM_ARRAY_TASK_ID" -lt 0 ] || [ "$SLURM_ARRAY_TASK_ID" -ge "${#TASK_WRAPPERS[@]}" ]; then',
+        '    echo "ERROR: SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID is out of range" >&2',
+        "    exit 1",
+        "fi",
+        'TASK_WRAPPER="${TASK_WRAPPERS[$SLURM_ARRAY_TASK_ID]}"',
+        'bash "$TASK_WRAPPER"',
+    ]
+    array_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    array_script.chmod(0o755)
+    return array_script
+
+
 def build_sbatch_command(prepared, slurm_script, args):
     slurm_output = prepared["run_dir"] / "slurm-%j.out"
+    slurm_mem = normalized_slurm_mem(args.slurm_mem)
     cmd = [
         "sbatch",
         "--parsable",
@@ -408,8 +486,8 @@ def build_sbatch_command(prepared, slurm_script, args):
         cmd.extend(["--account", args.slurm_account])
     if args.slurm_partition:
         cmd.extend(["--partition", args.slurm_partition])
-    if args.slurm_mem:
-        cmd.extend(["--mem", args.slurm_mem])
+    if slurm_mem:
+        cmd.extend(["--mem", slurm_mem])
     for raw in args.slurm_extra_arg:
         pieces = shlex.split(raw)
         if not pieces:
@@ -419,15 +497,52 @@ def build_sbatch_command(prepared, slurm_script, args):
     return cmd, slurm_output
 
 
+def build_array_sbatch_command(array_dir, array_script, task_count, args):
+    if task_count <= 0:
+        raise ValueError("task_count must be positive for Slurm array submission")
+    slurm_output = array_dir / "slurm-%A_%a.out"
+    slurm_mem = normalized_slurm_mem(args.slurm_mem)
+    parallelism = max(1, int(args.slurm_array_parallelism))
+    array_spec = f"0-{task_count - 1}%{parallelism}"
+    cmd = [
+        "sbatch",
+        "--parsable",
+        "--job-name",
+        array_job_name(args.slurm_job_name_prefix),
+        "--output",
+        str(slurm_output),
+        "--chdir",
+        str(array_script.parent),
+        "--nodes",
+        "1",
+        "--ntasks",
+        "1",
+        "--cpus-per-task",
+        str(int(args.slurm_cpus_per_task)),
+        "--time",
+        str(args.slurm_time),
+        "--array",
+        array_spec,
+    ]
+    if args.slurm_account:
+        cmd.extend(["--account", args.slurm_account])
+    if args.slurm_partition:
+        cmd.extend(["--partition", args.slurm_partition])
+    if slurm_mem:
+        cmd.extend(["--mem", slurm_mem])
+    for raw in args.slurm_extra_arg:
+        pieces = shlex.split(raw)
+        if not pieces:
+            continue
+        cmd.extend(pieces)
+    cmd.append(str(array_script))
+    return cmd, slurm_output, array_spec
+
+
 def submit_one_slurm(prepared, args):
     slurm_script = build_slurm_script(prepared)
     cmd, slurm_output = build_sbatch_command(prepared, slurm_script, args)
-    with prepared["batch_log"].open("w", encoding="utf-8") as log_fh:
-        log_fh.write("# runner: slurm\n")
-        log_fh.write(f"# submit_at: {datetime.now(timezone.utc).isoformat()}\n")
-        log_fh.write(f"# cmd: {' '.join(shlex.quote(x) for x in cmd)}\n")
-        log_fh.write(f"# slurm_script: {slurm_script}\n")
-        log_fh.write(f"# slurm_output: {slurm_output}\n")
+    write_submission_log(prepared, "slurm_job", cmd, slurm_script, slurm_output)
 
     if args.dry_run:
         return {
@@ -486,6 +601,110 @@ def submit_one_slurm(prepared, args):
         "slurm_submit_cmd": cmd,
         "slurm_job_id": job_id,
     }
+
+
+def submit_slurm_array(prepared_runs, output_root, args):
+    if not prepared_runs:
+        return []
+
+    array_dir = (output_root / "_slurm_array").resolve()
+    array_dir.mkdir(parents=True, exist_ok=True)
+    task_file = array_dir / "task_wrappers.txt"
+    array_script = array_dir / "submit_relax_array.slurm.sh"
+
+    wrapper_paths = []
+    for task_index, prepared in enumerate(prepared_runs):
+        slurm_script = build_slurm_script(prepared)
+        wrapper_paths.append(str(slurm_script))
+        log_cmd = [
+            "sbatch",
+            "--array",
+            f"{task_index}",
+            str(array_script),
+        ]
+        write_submission_log(
+            prepared,
+            "slurm_array_task",
+            log_cmd,
+            slurm_script,
+            array_dir / "slurm-%A_%a.out",
+            extra_lines=[f"slurm_array_task_id: {task_index}"],
+        )
+
+    task_file.write_text("\n".join(wrapper_paths) + "\n", encoding="utf-8")
+    build_slurm_array_script(array_script, task_file)
+    cmd, slurm_output, array_spec = build_array_sbatch_command(
+        array_dir, array_script, len(prepared_runs), args
+    )
+
+    if args.dry_run:
+        job_id = None
+        status = "dry_run"
+        proc_stdout = ""
+        proc_stderr = ""
+    else:
+        require_command("sbatch")
+        proc = subprocess.run(
+            cmd,
+            cwd=str(array_script.parent),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        proc_stdout = proc.stdout
+        proc_stderr = proc.stderr
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Slurm array submission failed with exit {proc.returncode}: "
+                f"{proc.stderr.strip() or proc.stdout.strip()}"
+            )
+        job_id = proc.stdout.strip().split(";", 1)[0]
+        if not job_id:
+            raise RuntimeError("sbatch did not return a Slurm array job id")
+        status = "submitted"
+
+    for task_index, prepared in enumerate(prepared_runs):
+        with prepared["batch_log"].open("a", encoding="utf-8") as log_fh:
+            log_fh.write(f"# slurm_array_spec: {array_spec}\n")
+            log_fh.write(f"# slurm_array_script: {array_script}\n")
+            log_fh.write(f"# slurm_array_task_file: {task_file}\n")
+            log_fh.write(f"# slurm_array_submit_cmd: {' '.join(shlex.quote(x) for x in cmd)}\n")
+            log_fh.write(f"# slurm_array_task_id: {task_index}\n")
+            if job_id:
+                log_fh.write(f"# slurm_array_job_id: {job_id}\n")
+            if proc_stdout:
+                log_fh.write("# sbatch_stdout:\n")
+                log_fh.write(proc_stdout)
+                if not proc_stdout.endswith("\n"):
+                    log_fh.write("\n")
+            if proc_stderr:
+                log_fh.write("# sbatch_stderr:\n")
+                log_fh.write(proc_stderr)
+                if not proc_stderr.endswith("\n"):
+                    log_fh.write("\n")
+
+    submissions = []
+    for task_index, prepared in enumerate(prepared_runs):
+        submissions.append(
+            {
+                "pdb_id": prepared["pdb_id"],
+                "status": status,
+                "run_dir": str(prepared["run_dir"]),
+                "relaxed_stage": args.target_stage,
+                "relaxed_up_file": str(prepared["target_file"]),
+                "batch_log": str(prepared["batch_log"]),
+                "slurm_script": str(prepared["run_dir"] / "submit_relax.slurm.sh"),
+                "slurm_output": str(slurm_output),
+                "slurm_submit_cmd": cmd,
+                "slurm_job_id": job_id,
+                "slurm_submit_mode": "array",
+                "slurm_array_task_id": task_index,
+                "slurm_array_spec": array_spec,
+                "slurm_array_script": str(array_script),
+                "slurm_array_task_file": str(task_file),
+            }
+        )
+    return submissions
 
 
 def summarize_active_states(status_by_job):
@@ -596,10 +815,13 @@ def main():
     relaxed_systems = []
     submitted = []
     failed = []
+    pending_slurm = []
 
     total = len(systems)
     print(f"Systems selected: {total}")
     print(f"Runner: {args.runner}")
+    if args.runner == "slurm":
+        print(f"Slurm submit mode: {args.slurm_submit_mode}")
     for index, entry in enumerate(systems, start=1):
         try:
             pdb_id = normalize_pdb_id(entry)
@@ -629,20 +851,45 @@ def main():
                 )
                 continue
 
-            submission = submit_one_slurm(prepared, args)
-            submitted.append({"entry": entry, "submission": submission})
-            if submission["status"] == "dry_run":
-                print(
-                    f"[{index}/{total}] DRY_RUN {pdb_id}: "
-                    f"{' '.join(shlex.quote(x) for x in submission['slurm_submit_cmd'])}"
-                )
-            else:
-                print(
-                    f"[{index}/{total}] SUBMITTED {pdb_id}: job {submission['slurm_job_id']}"
-                )
+            pending_slurm.append({"entry": entry, "prepared": prepared, "index": index})
+            print(f"[{index}/{total}] READY {pdb_id}: queued for Slurm submission")
         except Exception as exc:
             failed.append({"pdb_id": pdb_id, "reason": str(exc)})
             print(f"[{index}/{total}] FAIL {pdb_id}: {exc}")
+
+    if args.runner == "slurm" and pending_slurm:
+        if args.slurm_submit_mode == "array":
+            prepared_runs = [item["prepared"] for item in pending_slurm]
+            entry_by_pdb = {item["prepared"]["pdb_id"]: item["entry"] for item in pending_slurm}
+            submissions = submit_slurm_array(prepared_runs, output_root, args)
+            for submission in submissions:
+                submitted.append(
+                    {"entry": entry_by_pdb[submission["pdb_id"]], "submission": submission}
+                )
+                if submission["status"] == "dry_run":
+                    print(
+                        f"[ARRAY] DRY_RUN {submission['pdb_id']}: task {submission['slurm_array_task_id']} "
+                        f"via {' '.join(shlex.quote(x) for x in submission['slurm_submit_cmd'])}"
+                    )
+                else:
+                    print(
+                        f"[ARRAY] SUBMITTED {submission['pdb_id']}: job {submission['slurm_job_id']} "
+                        f"task {submission['slurm_array_task_id']}"
+                    )
+        else:
+            for item in pending_slurm:
+                submission = submit_one_slurm(item["prepared"], args)
+                submitted.append({"entry": item["entry"], "submission": submission})
+                if submission["status"] == "dry_run":
+                    print(
+                        f"[{item['index']}/{total}] DRY_RUN {submission['pdb_id']}: "
+                        f"{' '.join(shlex.quote(x) for x in submission['slurm_submit_cmd'])}"
+                    )
+                else:
+                    print(
+                        f"[{item['index']}/{total}] SUBMITTED {submission['pdb_id']}: "
+                        f"job {submission['slurm_job_id']}"
+                    )
 
     if args.runner == "slurm" and args.slurm_wait and not args.dry_run and submitted:
         wait_for_slurm_jobs(
@@ -670,6 +917,10 @@ def main():
         "runner": args.runner,
         "dry_run": int(args.dry_run),
         "slurm_wait": int(args.slurm_wait),
+        "slurm_submit_mode": args.slurm_submit_mode if args.runner == "slurm" else "",
+        "slurm_array_parallelism": (
+            int(args.slurm_array_parallelism) if args.runner == "slurm" else 0
+        ),
         "input_system_count": int(len(input_manifest.get("systems", []))),
         "selected_system_count": int(total),
         "systems": relaxed_systems,

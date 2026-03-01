@@ -21,6 +21,20 @@
 - Validation: `python3 -m py_compile example/16.MARTINI/download_and_prepare_training_inputs.py example/16.MARTINI/batch_relax_rigid_dry.py` passed.
 - Validation: Slurm dry-run with the normalized relative-path manifest passed and generated `/private/tmp/upside2-md-slurm-relative-test/1ors/submit_relax.slurm.sh`.
 - Validation: relocation dry-run with a synthetic fake-root manifest (`/tmp/training_manifest.fake_root.json`) also passed, confirming backward-compatible resolution of old absolute manifests.
+- New Slurm stability follow-up: user hit cgroup OOM during stage-6.0 prep (`prepare_system.py --prepare-structure 0`) inside a submitted job.
+- Updated `example/16.MARTINI/batch_relax_rigid_dry.py` Slurm defaults:
+- `--slurm-mem` now defaults to `16G` and supports `0` to omit `--mem`.
+- Generated wrapper now exports `OMP_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`, `MKL_NUM_THREADS=1`, `NUMEXPR_NUM_THREADS=1`, `VECLIB_MAXIMUM_THREADS=1`, and `PYTHONUNBUFFERED=1`.
+- Corrected wrapper module line to `module load openapi` per user requirement.
+- Validation: `python3 -m py_compile example/16.MARTINI/batch_relax_rigid_dry.py` passed.
+- Validation: Slurm dry-run now emits `sbatch ... --mem 16G ...` and generated wrapper contains the single-thread env caps plus `module load cmake` / `module load openapi`.
+- User follow-up requested a single batch submission throttled to two concurrent systems.
+- Updated `example/16.MARTINI/batch_relax_rigid_dry.py` Slurm submission behavior:
+- Added `--slurm-submit-mode {array,jobs}` with default `array`.
+- Added `--slurm-array-parallelism` with default `2`.
+- Array mode now generates one shared launcher under `<output-root>/_slurm_array/` plus per-system wrapper scripts, and submits a single `sbatch --array=0-N%2 ...` command.
+- Validation: array dry-run with 3 systems passed and emitted `sbatch ... --array 0-2%2 --mem 16G ...`.
+- Validation: fallback per-job dry-run with `--slurm-submit-mode jobs` still passed.
 
 ## 2026-02-12
 - Reviewed existing `task_plan.md` and detected it targets an unrelated prior task.

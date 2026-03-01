@@ -6,7 +6,7 @@ Make `example/16.MARTINI/run_relax_6x_rigid_dry.sh` usable in a Slurm workflow b
 ## Architecture & Key Decisions
 1. Keep `example/16.MARTINI/run_relax_6x_rigid_dry.sh` as the single-system stage runner. It already encapsulates the required sequential stage handoff for one system.
 2. Add Slurm support in `example/16.MARTINI/batch_relax_rigid_dry.py`, because that is the layer that already iterates over multiple PDB systems.
-3. Submit one Slurm job per PDB system. Stages `6.0` to `6.6` remain sequential inside each job; parallelism is across systems.
+3. Default Slurm submission should be a single job array, with stages `6.0` to `6.6` sequential inside each task and concurrency throttled across systems. Keep per-system independent job submission available as an explicit fallback mode.
 4. Preserve the existing local execution path so current non-Slurm usage does not regress.
 5. Generate per-system Slurm wrapper scripts in each run directory instead of relying on large `sbatch --wrap` strings. This keeps quoting predictable and leaves an auditable job payload on disk.
 6. Support optional waiting/polling so the batch driver can either submit and return immediately or wait for all submitted jobs before writing the relaxed manifest.
@@ -26,14 +26,14 @@ Make `example/16.MARTINI/run_relax_6x_rigid_dry.sh` usable in a Slurm workflow b
 
 ## Review Criteria
 1. Existing local `batch_relax_rigid_dry.py` behavior still works without Slurm flags.
-2. Slurm mode submits one job per selected system and allows those jobs to execute in parallel.
+2. Slurm mode supports a single job-array submission with a configurable concurrency cap, and still allows per-system independent jobs as an explicit fallback.
 3. Each submitted job has a reproducible wrapper script and log path under its run directory.
 4. The relaxed manifest is produced correctly after local runs, and after Slurm runs when waiting is enabled.
 
 ## Review (This Run)
 1. Updated `example/16.MARTINI/batch_relax_rigid_dry.py` to support `--runner slurm` while keeping `--runner local` as the default path.
-2. Added Slurm submission controls for account, partition, walltime, CPUs, memory, job-name prefix, extra `sbatch` args, wait/poll behavior, and dry-run wrapper generation.
-3. Slurm mode now writes a per-system wrapper script (`submit_relax.slurm.sh`) and submission metadata (`batch_relax.log`) under each run directory, then submits one job per selected PDB system.
+2. Added Slurm submission controls for account, partition, walltime, CPUs, memory, job-name prefix, extra `sbatch` args, wait/poll behavior, dry-run wrapper generation, submission mode, and array concurrency cap.
+3. Slurm mode now defaults to a single job-array submission with a configurable throttle (`--slurm-array-parallelism`, default `2`), while preserving independent per-system jobs as `--slurm-submit-mode jobs`.
 4. When `--slurm-wait 1` is used, the batch driver polls `squeue` until all submitted jobs leave the queue and then validates that each expected `stage_6.6.up` output exists before adding it to the relaxed manifest.
 5. Validation completed in sandbox:
    - `python3 -m py_compile example/16.MARTINI/batch_relax_rigid_dry.py` passed.
@@ -51,5 +51,16 @@ Make `example/16.MARTINI/run_relax_6x_rigid_dry.sh` usable in a Slurm workflow b
      `python3 example/16.MARTINI/batch_relax_rigid_dry.py --manifest train-data/training_manifest.json --runner slurm --dry-run 1 --slurm-wait 0 --limit 1 --output-root /tmp/upside2-md-slurm-relative-test`.
    - Legacy-manifest relocation dry-run passed with synthetic moved-root manifest:
      `/tmp/training_manifest.fake_root.json`.
+   - Slurm OOM mitigation applied:
+     - `example/16.MARTINI/batch_relax_rigid_dry.py` now defaults `--slurm-mem` to `16G` and accepts `0` to omit the memory flag.
+     - Generated Slurm wrappers now export single-thread limits for common BLAS/OpenMP runtimes to reduce prep-stage memory overhead.
+     - Generated wrappers load `cmake` and `openapi` before launching the workflow payload.
+   - OOM-mitigation dry-run passed and emitted:
+     `sbatch ... --mem 16G ...`
+     plus wrapper exports for `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS`, and `VECLIB_MAXIMUM_THREADS`.
+   - Array-mode dry-run passed and emitted:
+     `sbatch ... --array 0-2%2 --mem 16G ...`
+     with launcher `/private/tmp/upside2-md-slurm-array-test/_slurm_array/submit_relax_array.slurm.sh`.
+   - Fallback per-job dry-run still passed with `--slurm-submit-mode jobs`.
 6. Remaining verification gap:
    - Real `sbatch`/`squeue` execution was not attempted in this sandbox, so live Slurm submission and wait-path completion must be exercised on the target cluster.
