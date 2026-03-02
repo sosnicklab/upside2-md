@@ -1,28 +1,27 @@
 # Task Plan
 
 ## Project Goal
-Audit and fix the dry-MARTINI Upside hybrid integration workflow so that:
-- sidechain rotamer numbering is preserved exactly through `example/16.MARTINI/run_sim_1rkl.sh` and `src/martini.cpp`
-- hybrid sidechain structure sourcing uses MARTINI 2.2 sidechain structure rather than all-atom structure where the current workflow is inconsistent
+Change the dry-MARTINI Upside hybrid workflow in `example/16.MARTINI/run_sim_1rkl.sh` so that:
+- SC-env, SC-BB, and env-BB LJ/Coulomb force-cap removal ramps over the first `100` production steps
+- bilayer `PO4` z-coordinate holding remains active for the first `150` production steps
+- the existing `200`-step hybrid interaction startup window otherwise stays unchanged
 
 ## Architecture & Key Decisions
-- Treat `parameters/ff_2.1/sidechain.h5` and `py/upside_config.py` as the source of truth for rotamer state numbering.
-- Compare script-time node injection and runtime decoding directly rather than inferring from prior notes.
-- Make the minimal change necessary to preserve numbering and switch structure sourcing without altering unrelated hybrid behavior.
-- Verify with concrete artifacts or targeted checks after editing.
+- Limit the change to workflow defaults in `example/16.MARTINI/run_sim_1rkl.sh` unless inspection shows the runtime cannot already represent separate windows.
+- Preserve the current hybrid-control attribute interface (`sc_env_relax_steps`, `sc_env_po4_z_hold_steps`) instead of introducing new controls.
+- Verify the runtime path consumes those attrs independently before deciding whether any C++ edit is necessary.
+- Keep the change minimal: update only the requested schedule and the comments that describe it.
 
 ## Execution Phases
-- [x] Refresh task tracking files and read existing task context for the MARTINI hybrid workflow
-- [x] Inspect `run_sim_1rkl.sh` and `src/martini.cpp` for SC numbering and sidechain structure sourcing
-- [x] Implement minimal fixes for exact SC numbering and MARTINI 2.2 sidechain structure usage
-- [x] Verify with targeted checks and document findings
-
-## Review
-- Confirmed that stage-7 rotamer injection already mirrors Upside's encoded `id_seq` layout; added explicit validation so numbering mismatches fail early.
-- Changed SC map generation to follow the MARTINI CG sidechain proxy structure directly instead of gating on all-atom residue lookup.
-- Added runtime validation in `src/martini.cpp` so placement-group numbering and SC row assignments must preserve exact 0-based rotamer ids.
-- Verified Python syntax, shell syntax, C++ build, and a targeted MARTINI-asset replay for SC map generation and rotamer numbering.
+- [x] Inspect the workflow script and runtime handling for SC relax steps and PO4 z-hold steps
+- [x] Refresh task tracking files for this schedule-change task
+- [x] Patch `example/16.MARTINI/run_sim_1rkl.sh` to use `100` relax steps and `150` PO4 z-hold steps
+- [x] Verify the edited workflow by checking the script text and shell syntax
 
 ## Known Errors / Blockers
-- Need to determine whether numbering drift occurs in stage-file injection, runtime placement-group decoding, or both.
-- Need to identify the exact current all-atom sidechain structure dependency before replacing it with MARTINI 2.2 structure.
+- None currently. The runtime already appears to parse and enforce separate `sc_env_relax_steps` and `sc_env_po4_z_hold_steps` values.
+
+## Review
+- Updated `example/16.MARTINI/run_sim_1rkl.sh` so `SC_ENV_RELAX_STEPS` now defaults to `100` while `SC_ENV_PO4_Z_HOLD_STEPS` is explicitly kept at `150`.
+- Kept `SC_ENV_BACKBONE_HOLD_STEPS` at `200`, preserving the existing startup interaction window outside the requested ramp change.
+- Verified the edited control block and ran `bash -n example/16.MARTINI/run_sim_1rkl.sh` successfully.

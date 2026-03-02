@@ -1,5 +1,12 @@
 # Findings
 
+- 2026-03-02: `example/16.MARTINI/run_sim_1rkl.sh` already injects independent hybrid-control attrs for `sc_env_relax_steps`, `sc_env_backbone_hold_steps`, and `sc_env_po4_z_hold_steps`; the workflow does not need a new control to decouple the force-cap ramp from the PO4 z hold.
+- 2026-03-02: `src/martini.cpp` already honors these windows separately:
+  - force-cap removal uses `sc_env_relax_steps`
+  - PO4 z-coordinate fixing uses `sc_env_po4_z_hold_steps`
+  - backbone hold uses `sc_env_backbone_hold_steps`
+- 2026-03-02: For the requested behavior change, a workflow-default edit in `example/16.MARTINI/run_sim_1rkl.sh` is sufficient; no runtime C++ change is required.
+
 - `py/upside_config.py` builds rotamer sidechains as placement rows keyed by residue, bead type, and an encoded `id_seq`; each allowed rotamer contributes one row per sidechain bead, and `--fix-rotamer` collapses a residue to a single state.
 - Sidechain placement and one-body energies are separate nodes:
   - position/orientation comes from `placement_fixed_point_vector_only` or `placement_point_vector_only`

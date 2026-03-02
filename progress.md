@@ -1,5 +1,17 @@
 # Progress Log
 
+- 2026-03-02: Re-scoped task tracking to the dry-MARTINI startup schedule change in `example/16.MARTINI/run_sim_1rkl.sh`.
+- 2026-03-02: Inspected the workflow and runtime path; confirmed the script already writes separate `sc_env_relax_steps` and `sc_env_po4_z_hold_steps` attrs, and `src/martini.cpp` already consumes them independently.
+- 2026-03-02: Planned a minimal workflow-only change: reduce the force-cap ramp default to `100` steps while keeping the PO4 z hold default at `150` steps.
+- 2026-03-02: Patched `example/16.MARTINI/run_sim_1rkl.sh`:
+  - `SC_ENV_RELAX_STEPS: 150 -> 100`
+  - `SC_ENV_PO4_Z_HOLD_STEPS: inherit relax -> 150`
+  - updated the nearby startup-window comment to match the new defaults
+- 2026-03-02: Verification:
+  - `sed -n '140,160p' example/16.MARTINI/run_sim_1rkl.sh` -> confirmed `100`-step relax ramp and `150`-step PO4 z hold
+  - `rg -n "SC_ENV_RELAX_STEPS|SC_ENV_PO4_Z_HOLD_STEPS" example/16.MARTINI/run_sim_1rkl.sh` -> confirmed the edited defaults and stage-7 argument wiring
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
+
 - Initialized task tracking files for the rotamer force-field explanation task.
 - Read `task_plan.md` and `lessons.md` before repository inspection.
 - Inspected README usage, `py/upside_config.py`, `src/placement.cpp`, `src/bead_interaction.h`, `src/rotamer.cpp`, and `src/environment.cpp` to trace rotamer representation and energy flow.
