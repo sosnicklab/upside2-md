@@ -329,7 +329,7 @@ struct HybridRuntimeState {
     bool has_prev_bb_rmsd = false;
     float sc_env_lj_force_cap = 25.0f;
     float sc_env_coul_force_cap = 25.0f;
-    int sc_env_relax_steps = 200;
+    int sc_env_relax_steps = 150;
     float sc_env_relax_dt = 0.002f;
     float sc_env_restraint_k = 5.0f;
     float sc_env_max_displacement = 2.0f;

@@ -76,3 +76,8 @@
 - Comparison against pre-fix stage-6.3 behavior from same workflow:
   - previous `1000`-step box sample was `~116.50 x 116.50 x 110.20`,
   - current rerun reduces that early expansion by about `4.55 Å` in XY.
+
+## 2026-03-02 (SC Cap-Removal Schedule Tightening)
+- The active SC force-mix function in `../../src/martini.cpp` already reaches full uncapped force when `sc_env_transition_step >= sc_env_relax_steps - 1`; no runtime algorithm change was required for the user's request.
+- Reducing the default `sc_env_relax_steps` from `200` to `150` is sufficient to leave at least the last `50` steps of the existing `200`-step SC-env/SC-BB interaction window on regular LJ/Coulomb forces.
+- Updated defaults in both `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh`, and aligned the runtime fallback default in `../../src/martini.cpp` to avoid mismatched behavior when the HDF5 control attribute is absent.

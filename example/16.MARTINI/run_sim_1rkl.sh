@@ -145,8 +145,9 @@ UPSIDE_REFERENCE_STATE_RAMA="${UPSIDE_REFERENCE_STATE_RAMA:-${UPSIDE_HOME}/param
 # Initial SC pair-force caps applied when production hybrid coupling turns on.
 SC_ENV_LJ_FORCE_CAP="${SC_ENV_LJ_FORCE_CAP:-25.0}"
 SC_ENV_COUL_FORCE_CAP="${SC_ENV_COUL_FORCE_CAP:-25.0}"
-# Number of production steps used to ramp SC-env and SC-BB forces from capped to uncapped.
-SC_ENV_RELAX_STEPS="${SC_ENV_RELAX_STEPS:-200}"
+# Number of production steps used to ramp SC-env and SC-BB forces from capped
+# to uncapped, leaving the remainder of the 200-step coupling window fully regular.
+SC_ENV_RELAX_STEPS="${SC_ENV_RELAX_STEPS:-150}"
 SC_ENV_RELAX_DT="${SC_ENV_RELAX_DT:-0.002}"
 SC_ENV_RESTRAINT_K="${SC_ENV_RESTRAINT_K:-5.0}"
 SC_ENV_MAX_DISPLACEMENT="${SC_ENV_MAX_DISPLACEMENT:-2.0}"

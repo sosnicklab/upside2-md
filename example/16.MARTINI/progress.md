@@ -1570,3 +1570,24 @@
 - Comparison to previous problematic stage-6.3 run:
   - prior `1000`-step sample in same workflow was `~116.50 x 116.50 x 110.20`;
   - rerun after fix reduced early XY expansion by ~`4.55 Å`.
+
+## 2026-03-02 (SC Force-Cap Removal by Step 150)
+- Re-read `task_plan.md` and adjusted the production SC cap-relax defaults so SC-env/SC-BB LJ and Coulomb force caps finish ramping out by step `150` instead of step `200`.
+- Files modified:
+  - `src/martini.cpp`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+- Changes made:
+  - runtime fallback default `sc_env_relax_steps: 200 -> 150`;
+  - production workflow default `SC_ENV_RELAX_STEPS: 200 -> 150`;
+  - test workflow default `SC_ENV_RELAX_STEPS: 200 -> 150`;
+  - updated workflow comment to state that the remainder of the 200-step coupling window stays fully uncapped.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed.
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed with only pre-existing warnings in `src/martini.cpp`.
+- Not run:
+  - no fresh stage-7 production replay was executed in this patch step.
