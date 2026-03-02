@@ -81,3 +81,33 @@
 - The active SC force-mix function in `../../src/martini.cpp` already reaches full uncapped force when `sc_env_transition_step >= sc_env_relax_steps - 1`; no runtime algorithm change was required for the user's request.
 - Reducing the default `sc_env_relax_steps` from `200` to `150` is sufficient to leave at least the last `50` steps of the existing `200`-step SC-env/SC-BB interaction window on regular LJ/Coulomb forces.
 - Updated defaults in both `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh`, and aligned the runtime fallback default in `../../src/martini.cpp` to avoid mismatched behavior when the HDF5 control attribute is absent.
+
+## 2026-03-02 (Rigid-Hold / PO4 Clamp Audit After 150-Step Ramp Change)
+- The production-stage `sc_env_transition_step` counter only drives the capped-to-uncapped force mix in `../../src/martini.cpp`; it does not gate protein rigid masks or PO4 z-clamp duration.
+- Protein rigid hold is currently pre-production only: when hybrid becomes active (`current_stage == activation_stage`), `../../src/martini.cpp` clears both dynamic fixed-atom and dynamic z-fixed-atom masks instead of keeping backbone/protein coordinates frozen.
+- The production PO4 z-clamp is not a true coordinate constraint and is not limited to 150 steps:
+  - it stores each environment `PO4` atom's initial `z` coordinate after hybrid activation,
+  - uses that stored `z` only when constructing SC-env interaction geometry,
+  - zeroes only the `z` component of the SC-env gradient on those `PO4` atoms,
+  - and remains enabled for the full active hybrid stage while `sc_env_po4_z_clamp_enabled=1`.
+
+## 2026-03-02 (Active-Stage Backbone / PO4 Hold Implementation)
+- Added explicit hybrid-control attributes for active-stage startup holds:
+  - `sc_env_backbone_hold_steps` default `200`,
+  - `sc_env_po4_z_hold_steps` default `150`.
+- The user clarified that the startup hold must not freeze the active Upside backbone carriers or the refreshed MARTINI `BB` coordinates in space.
+- Final semantics:
+  - during the first `200` active SC transition steps, protein still evolves through the normal Upside `N/CA/C/O -> BB refresh -> RMSD align` path,
+  - but BB and probabilistic SC coupling gradients are prevented from feeding back onto protein coordinates during that window,
+  - so startup coupling is one-way onto environment rather than a hard coordinate freeze on protein.
+- The PO4 hold atom set is derived from non-protein `atom_roles == "PO4"` and is enforced as an actual integrator/barostat z-fixed mask, not just an SC-interaction-space clamp.
+- Step counting semantics:
+  - `sc_env_transition_step` still increments from the SC coupling path during active production evaluations,
+  - hold-mask refresh is now applied at the end of each MD step from `../../src/main.cpp`, so the configured hold remains active for the full current step and drops only before the next one.
+- Active RMSD alignment remains enabled during the startup hold so new Upside backbone coordinates continue to define the refreshed active `BB` positions.
+- Validation from a 2-step production smoke (`example/16.MARTINI/test_prod_run_sim_1rkl.sh`):
+  - protein atoms (`protein_membership >= 0`): `2.064e-3 Å` max displacement between saved frames 0 and 1,
+  - active `BB` proxy atoms: `3.586e-4 Å` max displacement,
+  - active `N/CA/C/O` carrier targets from `hybrid_bb_map`: `2.064e-3 Å` max displacement,
+  - `PO4` z displacement: `0.0 Å`,
+  - `PO4` x/y displacement: nonzero (`1.268e-4 Å` max).

@@ -1335,6 +1335,7 @@ try {
 
                     // Re-apply fixed-in-space constraints after barostat/box updates.
                     martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.engine.pos->sens, sys.mom);
+                    martini_hybrid::refresh_transition_holds_for_engine(sys.engine);
 
                     if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
                         curvature_changer->attempt_change(base_random_seed, sys.round_num, sys, relative_curvature_radius_change);

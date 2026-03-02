@@ -1591,3 +1591,52 @@
   - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed with only pre-existing warnings in `src/martini.cpp`.
 - Not run:
   - no fresh stage-7 production replay was executed in this patch step.
+
+## 2026-03-02 (Audit of Protein/PO4 Holds During SC-env-BB Window)
+- Re-read `task_plan.md` and traced the runtime activation, fixed-mask, and PO4 z-clamp code in `src/martini.cpp` and `src/box.cpp` after the user asked to verify the hold semantics during the SC-env-BB transition window.
+- Findings:
+  - stage `7.0` is explicitly marked `production`, so hybrid is active during the SC-env/SC-BB transition window;
+  - once hybrid is active, dynamic fixed-atom and z-fixed-atom masks are cleared, so protein coordinates are not held rigid for the 200-step production SC transition;
+  - active-stage PO4 handling is an SC-env interaction-space z clamp only, not an integrator-level z-fixed coordinate constraint;
+  - that PO4 clamp is not limited by `sc_env_transition_step` or `sc_env_relax_steps`, so it persists for the full hybrid-active production stage when enabled.
+- Files inspected:
+  - `src/martini.cpp`
+  - `src/box.cpp`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+- Commands run:
+  - `rg -n "preprod_rigid|preprod_fixed|dynamic_fixed|protein_membership|sc_env_po4_z_clamp|z_fixed|PO4|sc_env_transition_step|sc_env_relax_steps|activation_stage" ...`
+  - targeted `sed` / `nl -ba` reads on the runtime/script code paths above.
+- Code changes:
+  - none.
+
+## 2026-03-02 (Patch Active-Stage Backbone / PO4 Holds)
+- Re-read `task_plan.md` and patched active production startup holds so the SC-env/SC-BB transition now enforces:
+  - one-way protein startup coupling for `200` SC transition steps while Upside backbone updates remain active,
+  - lipid `PO4` z coordinates fixed for the first `150` of those steps.
+- Files modified:
+  - `src/martini.cpp`
+  - `src/main.cpp`
+  - `src/main.h`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+- Changes made:
+  - added hybrid-control attrs/defaults `sc_env_backbone_hold_steps=200` and `sc_env_po4_z_hold_steps=150`;
+  - converted the production startup hold from an incorrect coordinate freeze into BB/SC gradient-feedback suppression for the first `200` SC transition steps;
+  - kept the active Upside backbone path live (`N/CA/C/O` carriers update, `BB` refresh remains active, RMSD alignment remains active);
+  - converted PO4 startup holding into a true active-stage z-fixed mask and limited the interaction-space z clamp to the configured 150-step window;
+  - refreshed active hold masks from `main.cpp` at the end of each MD step so PO4 z-hold release happens between steps rather than mid-step.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed.
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed with only pre-existing warnings.
+  - `source ../../.venv/bin/activate && source ../../source.sh && HDF5_USE_FILE_LOCKING=FALSE PROD_70_NSTEPS=2 PROD_FRAME_STEPS=1 ./test_prod_run_sim_1rkl.sh` completed and produced two saved production frames.
+  - Frame-to-frame checks on `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` showed:
+    - protein atoms: `2.064e-3 Å` max displacement,
+    - active `BB` proxies: `3.586e-4 Å` max displacement,
+    - active `N/CA/C/O` carriers: `2.064e-3 Å` max displacement,
+    - PO4 `z`: `0.0 Å` max displacement,
+    - PO4 `x/y`: `1.268e-4 Å` max displacement,
+    - confirming protein is no longer frozen in production while PO4 z startup holding still works.

@@ -1,5 +1,7 @@
 # Lessons
 
+- 2026-03-02: In hybrid startup windows, "hold protein rigid" may mean suppress environment-to-protein coupling feedback while still letting the Upside backbone/carrier update path and BB refresh/RMSD alignment run; do not translate that requirement into a hard coordinate freeze without checking the active dataflow.
+- 2026-03-02: When changing hybrid startup schedules, audit all coupled active-stage coordinate constraints (fixed masks, z-fixed masks, RMSD alignment, and interaction-space clamps); do not assume force-ramp edits preserve the user's intended hold semantics.
 - 2026-02-28: When a workflow still exposes transition knobs like `sc_env_relax_steps`, verify the live runtime path actually consumes them; do not assume a previously implemented relaxation/ramp is still active after later SC-coupling refactors.
 - 2026-02-23: For stage-transition workflows, do not introduce coordinate transforms (recentering, per-atom wrapping, carrier remapping) unless explicitly requested. Default to exact previous-stage last-frame handoff.
 - 2026-02-23: When user states intended stage semantics ("only update tables/settings"), preserve that exactly and avoid convenience logic that changes physical state.

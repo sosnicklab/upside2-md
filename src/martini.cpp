@@ -330,6 +330,8 @@ struct HybridRuntimeState {
     float sc_env_lj_force_cap = 25.0f;
     float sc_env_coul_force_cap = 25.0f;
     int sc_env_relax_steps = 150;
+    int sc_env_backbone_hold_steps = 200;
+    int sc_env_po4_z_hold_steps = 150;
     float sc_env_relax_dt = 0.002f;
     float sc_env_restraint_k = 5.0f;
     float sc_env_max_displacement = 2.0f;
@@ -341,6 +343,7 @@ struct HybridRuntimeState {
     std::vector<unsigned char> sc_env_po4_env_mask;
     std::vector<float> sc_env_po4_z_reference;
     bool sc_env_po4_z_reference_initialized = false;
+    std::vector<int> sc_env_po4_z_hold_atom_indices;
     float sc_env_energy_total = 0.f;
     float sc_env_energy_lj = 0.f;
     float sc_env_energy_coul = 0.f;
@@ -430,11 +433,26 @@ static inline bool is_env_po4_atom(const HybridRuntimeState& st, int atom) {
            st.sc_env_po4_env_mask[atom] != 0;
 }
 
+static inline bool active_sc_env_backbone_hold_enabled(const HybridRuntimeState& st) {
+    return st.enabled &&
+           st.active &&
+           st.sc_env_backbone_hold_steps > 0 &&
+           st.sc_env_transition_step < static_cast<uint64_t>(st.sc_env_backbone_hold_steps);
+}
+
+static inline bool active_sc_env_po4_z_hold_enabled(const HybridRuntimeState& st) {
+    return st.enabled &&
+           st.active &&
+           st.sc_env_po4_z_clamp_enabled &&
+           st.sc_env_po4_z_hold_steps > 0 &&
+           st.sc_env_transition_step < static_cast<uint64_t>(st.sc_env_po4_z_hold_steps);
+}
+
 static void initialize_sc_env_po4_z_reference(
         HybridRuntimeState& st,
         VecArray pos,
         int n_atom) {
-    if(!st.enabled || !st.active || !st.sc_env_po4_z_clamp_enabled) return;
+    if(!active_sc_env_po4_z_hold_enabled(st)) return;
     if(st.sc_env_po4_z_clamp_mode != "initial") return;
     if(st.sc_env_po4_z_reference_initialized &&
        static_cast<int>(st.sc_env_po4_z_reference.size()) == n_atom) {
@@ -932,6 +950,10 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.sc_env_lj_force_cap = read_attribute<float>(ctrl.get(), ".", "sc_env_lj_force_cap", out.sc_env_lj_force_cap);
     out.sc_env_coul_force_cap = read_attribute<float>(ctrl.get(), ".", "sc_env_coul_force_cap", out.sc_env_coul_force_cap);
     out.sc_env_relax_steps = read_attribute<int>(ctrl.get(), ".", "sc_env_relax_steps", out.sc_env_relax_steps);
+    out.sc_env_backbone_hold_steps =
+        read_attribute<int>(ctrl.get(), ".", "sc_env_backbone_hold_steps", out.sc_env_backbone_hold_steps);
+    out.sc_env_po4_z_hold_steps =
+        read_attribute<int>(ctrl.get(), ".", "sc_env_po4_z_hold_steps", out.sc_env_po4_z_hold_steps);
     out.sc_env_relax_dt = read_attribute<float>(ctrl.get(), ".", "sc_env_relax_dt", out.sc_env_relax_dt);
     out.sc_env_restraint_k = read_attribute<float>(ctrl.get(), ".", "sc_env_restraint_k", out.sc_env_restraint_k);
     out.sc_env_max_displacement = read_attribute<float>(ctrl.get(), ".", "sc_env_max_displacement", out.sc_env_max_displacement);
@@ -950,6 +972,8 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     if(out.sc_env_lj_force_cap < 0.f) out.sc_env_lj_force_cap = 0.f;
     if(out.sc_env_coul_force_cap < 0.f) out.sc_env_coul_force_cap = 0.f;
     if(out.sc_env_relax_steps < 1) out.sc_env_relax_steps = 1;
+    if(out.sc_env_backbone_hold_steps < 0) out.sc_env_backbone_hold_steps = 0;
+    if(out.sc_env_po4_z_hold_steps < 0) out.sc_env_po4_z_hold_steps = 0;
     if(!std::isfinite(out.sc_env_relax_dt) || out.sc_env_relax_dt <= 0.f) out.sc_env_relax_dt = 0.002f;
     if(!std::isfinite(out.sc_env_restraint_k) || out.sc_env_restraint_k < 0.f) out.sc_env_restraint_k = 0.f;
     if(!std::isfinite(out.sc_env_max_displacement) || out.sc_env_max_displacement < 0.f) out.sc_env_max_displacement = 0.f;
@@ -1097,6 +1121,15 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
                 out.preprod_fixed_atom_indices.push_back(i);
             } else if(is_head) {
                 out.preprod_z_fixed_atom_indices.push_back(i);
+            }
+        }
+    }
+
+    if(!out.sc_env_po4_env_mask.empty()) {
+        out.sc_env_po4_z_hold_atom_indices.reserve(out.sc_env_po4_env_mask.size());
+        for(int i = 0; i < n_atom; ++i) {
+            if(is_env_po4_atom(out, i)) {
+                out.sc_env_po4_z_hold_atom_indices.push_back(i);
             }
         }
     }
@@ -1307,7 +1340,11 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->preprod_z_fixed_atom_indices);
     } else {
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
-        martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
+        if(active_sc_env_po4_z_hold_enabled(*st)) {
+            martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->sc_env_po4_z_hold_atom_indices);
+        } else {
+            martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
+        }
     }
 }
 
@@ -1452,12 +1489,16 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
     } else {
         martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
-        martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
+        if(active_sc_env_po4_z_hold_enabled(*st)) {
+            martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->sc_env_po4_z_hold_atom_indices);
+        } else {
+            martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
+        }
     }
     if(st->has_config && st->enabled) {
         size_t n_po4_env = 0;
         for(auto flag : st->sc_env_po4_env_mask) if(flag) ++n_po4_env;
-        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d nonprotein_hs=%d force_frame_align=%d integration_rmsd_align=%d hs_force_cap=%.3f hs_pot_cap=%.3f sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_relax_dt=%.4f sc_rest_k=%.3f sc_max_disp=%.3f sc_po4_z_clamp=%d sc_po4_mode=%s sc_po4_env=%zu sc_energy_dump=%d sc_energy_stride=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
+        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d nonprotein_hs=%d force_frame_align=%d integration_rmsd_align=%d hs_force_cap=%.3f hs_pot_cap=%.3f sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_bb_hold_steps=%d sc_po4_z_hold_steps=%d sc_relax_dt=%.4f sc_rest_k=%.3f sc_max_disp=%.3f sc_po4_z_clamp=%d sc_po4_mode=%s sc_po4_env=%zu sc_energy_dump=%d sc_energy_stride=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
                current_stage.c_str(),
                st->activation_stage.c_str(),
                st->active ? 1 : 0,
@@ -1476,6 +1517,8 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
                st->sc_env_lj_force_cap,
                st->sc_env_coul_force_cap,
                st->sc_env_relax_steps,
+               st->sc_env_backbone_hold_steps,
+               st->sc_env_po4_z_hold_steps,
                st->sc_env_relax_dt,
                st->sc_env_restraint_k,
                st->sc_env_max_displacement,
@@ -1488,6 +1531,24 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
                st->preprod_z_fixed_atom_indices.size());
     } else if(st->has_config) {
         printf("Hybrid input present but disabled\n");
+    }
+}
+
+void refresh_transition_holds_for_engine(DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+    auto it = g_hybrid_state.find(&engine);
+    if(it == g_hybrid_state.end() || !it->second) return;
+    auto st = it->second;
+    if(st->preprod_rigid && !st->active) {
+        martini_fix_rigid::set_dynamic_fixed_atoms(engine, st->preprod_fixed_atom_indices);
+        martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
+        return;
+    }
+    martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
+    if(active_sc_env_po4_z_hold_enabled(*st)) {
+        martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->sc_env_po4_z_hold_atom_indices);
+    } else {
+        martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
     }
 }
 
@@ -2031,6 +2092,15 @@ bool refresh_sc_row_probabilities_from_rotamer(
 
 void project_bb_gradient_if_active(const HybridRuntimeState& st, VecArray sens, int n_atom) {
     if(!st.enabled || !st.active) return;
+    if(active_sc_env_backbone_hold_enabled(st)) {
+        for(size_t k = 0; k < st.n_bb; ++k) {
+            int bb = st.bb_atom_index[k];
+            if(bb >= 0 && bb < n_atom) {
+                store_vec<3>(sens, bb, make_zero<3>());
+            }
+        }
+        return;
+    }
     for(size_t k = 0; k < st.n_bb; ++k) {
         int bb = st.bb_atom_index[k];
         if(bb < 0 || bb >= n_atom) continue;
@@ -2071,6 +2141,15 @@ void project_sc_gradient_if_active(
     if(!st.enabled || !st.active) return;
     const size_t n_rot = st.sc_proxy_atom_index.size();
     if(row_proxy_grad.size() != n_rot) return;
+    if(active_sc_env_backbone_hold_enabled(st)) {
+        for(const auto& proxy_rows : st.sc_rows_by_proxy) {
+            int proxy = proxy_rows.first;
+            if(proxy >= 0 && proxy < n_atom) {
+                store_vec<3>(sens, proxy, make_zero<3>());
+            }
+        }
+        return;
+    }
     for(const auto& proxy_rows : st.sc_rows_by_proxy) {
         int proxy = proxy_rows.first;
         if(proxy < 0 || proxy >= n_atom) continue;
@@ -3817,7 +3896,7 @@ struct MartiniPotential : public PotentialNode
                         edge.qj = qj;
                         auto env_pos = proxy_is_i ? p2 : p1;
                         if(mutable_hybrid &&
-                           mutable_hybrid->sc_env_po4_z_clamp_enabled &&
+                           martini_hybrid::active_sc_env_po4_z_hold_enabled(*mutable_hybrid) &&
                            !env_is_protein &&
                            martini_hybrid::is_env_po4_atom(*mutable_hybrid, env_atom) &&
                            env_atom < static_cast<int>(mutable_hybrid->sc_env_po4_z_reference.size())) {

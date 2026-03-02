@@ -33,12 +33,15 @@
 - [x] Phase 13: Debug/fix pre-production pressure coupling in stage 6.x to prevent nonphysical bilayer expansion/holes without changing physical target pressure units.
 - [x] Phase 14: Replace the production SC force-cap hold with a per-step ramp from capped to uncapped SC-env/SC-BB LJ/Coulomb forces and verify the workflow wiring.
 - [x] Phase 15: Shorten the default SC cap-relax window so the production workflow reaches uncapped SC-env/SC-BB LJ/Coulomb forces by step 150 and verify the updated defaults.
+- [x] Phase 16: Add active-stage startup hold semantics so SC-env/SC-BB coupling stays one-way for protein over the first 200 steps while Upside-driven backbone updates remain live, and lipid `PO4` z stays fixed for the first 150 of those steps; verify on generated production frames.
 
 ## Review
 - Implemented a production-stage SC transition schedule in `../../src/martini.cpp`: a per-activation counter now resets when hybrid activation changes, and SC-env plus allowed same-residue SC-BB pair forces blend from the configured capped force to the uncapped LJ/Coulomb force across `sc_env_relax_steps`.
 - Kept the workflow interface minimal: `example/16.MARTINI/run_sim_1rkl.sh` still writes the existing `sc_env_*` control attributes, with comments updated so `SC_ENV_LJ_FORCE_CAP`/`SC_ENV_COUL_FORCE_CAP` are documented as the initial caps and `SC_ENV_RELAX_STEPS` as the ramp window.
 - Tightened the default ramp window to `150` steps in both the production workflow and runtime fallback, so the existing 200-step SC coupling period now leaves at least the last 50 steps on fully regular SC-env/SC-BB LJ and Coulomb forces without changing the blending logic.
+- Added active-stage startup gating in `../../src/martini.cpp`: for the first `200` completed SC transition steps, BB/SC coupling gradients are not fed back onto protein coordinates, while Upside-driven `N/CA/C/O` backbone carriers still update normally and continue to refresh/RMSD-align the MARTINI `BB` representation; lipid `PO4` atoms remain z-fixed for the first `150` steps.
 - Verification completed in this session: `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed, and `cmake --build obj -j4` rebuilt successfully with only pre-existing warnings.
+- Runtime verification completed in this session with `example/16.MARTINI/test_prod_run_sim_1rkl.sh`: a 2-step production smoke produced two saved frames where protein backbone/carrier atoms moved (`2.06e-3 Å` max on the carrier set), MARTINI `BB` proxies updated with them (`3.59e-4 Å` max), `PO4` z stayed fixed (`0.0 Å` max), and `PO4` x/y still moved (`1.27e-4 Å` max).
 
 ## Known Errors / Blockers
 - Requires concrete integration points in Upside C++ step loop and force modules.

@@ -148,6 +148,8 @@ SC_ENV_COUL_FORCE_CAP="${SC_ENV_COUL_FORCE_CAP:-25.0}"
 # Number of production steps used to ramp SC-env and SC-BB forces from capped
 # to uncapped, leaving the remainder of the 200-step coupling window fully regular.
 SC_ENV_RELAX_STEPS="${SC_ENV_RELAX_STEPS:-150}"
+SC_ENV_BACKBONE_HOLD_STEPS="${SC_ENV_BACKBONE_HOLD_STEPS:-200}"
+SC_ENV_PO4_Z_HOLD_STEPS="${SC_ENV_PO4_Z_HOLD_STEPS:-$SC_ENV_RELAX_STEPS}"
 SC_ENV_RELAX_DT="${SC_ENV_RELAX_DT:-0.002}"
 SC_ENV_RESTRAINT_K="${SC_ENV_RESTRAINT_K:-5.0}"
 SC_ENV_MAX_DISPLACEMENT="${SC_ENV_MAX_DISPLACEMENT:-2.0}"
@@ -499,17 +501,19 @@ set_hybrid_sc_controls() {
     local lj_cap="$2"
     local coul_cap="$3"
     local relax_steps="$4"
-    local relax_dt="$5"
-    local rest_k="$6"
-    local max_disp="$7"
-    local hs_force_cap="$8"
-    local hs_pot_cap="$9"
-    local rmsd_align_enable="${10}"
-    local po4_z_clamp_enable="${11}"
-    local po4_z_clamp_mode="${12}"
-    local sc_env_energy_dump_enable="${13}"
-    local sc_env_energy_dump_stride="${14}"
-    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$relax_dt" "$rest_k" "$max_disp" "$hs_force_cap" "$hs_pot_cap" "$rmsd_align_enable" "$po4_z_clamp_enable" "$po4_z_clamp_mode" "$sc_env_energy_dump_enable" "$sc_env_energy_dump_stride" << 'PY'
+    local backbone_hold_steps="$5"
+    local po4_z_hold_steps="$6"
+    local relax_dt="$7"
+    local rest_k="$8"
+    local max_disp="$9"
+    local hs_force_cap="${10}"
+    local hs_pot_cap="${11}"
+    local rmsd_align_enable="${12}"
+    local po4_z_clamp_enable="${13}"
+    local po4_z_clamp_mode="${14}"
+    local sc_env_energy_dump_enable="${15}"
+    local sc_env_energy_dump_stride="${16}"
+    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$backbone_hold_steps" "$po4_z_hold_steps" "$relax_dt" "$rest_k" "$max_disp" "$hs_force_cap" "$hs_pot_cap" "$rmsd_align_enable" "$po4_z_clamp_enable" "$po4_z_clamp_mode" "$sc_env_energy_dump_enable" "$sc_env_energy_dump_stride" << 'PY'
 import sys
 import h5py
 import numpy as np
@@ -518,22 +522,26 @@ up_file = sys.argv[1]
 lj_cap = float(sys.argv[2])
 coul_cap = float(sys.argv[3])
 relax_steps = int(sys.argv[4])
-relax_dt = float(sys.argv[5])
-rest_k = float(sys.argv[6])
-max_disp = float(sys.argv[7])
-hs_force_cap = float(sys.argv[8])
-hs_pot_cap = float(sys.argv[9])
-rmsd_align_enable = int(sys.argv[10])
-po4_z_clamp_enable = int(sys.argv[11])
-po4_z_clamp_mode = sys.argv[12]
-sc_env_energy_dump_enable = int(sys.argv[13])
-sc_env_energy_dump_stride = int(sys.argv[14])
+backbone_hold_steps = int(sys.argv[5])
+po4_z_hold_steps = int(sys.argv[6])
+relax_dt = float(sys.argv[7])
+rest_k = float(sys.argv[8])
+max_disp = float(sys.argv[9])
+hs_force_cap = float(sys.argv[10])
+hs_pot_cap = float(sys.argv[11])
+rmsd_align_enable = int(sys.argv[12])
+po4_z_clamp_enable = int(sys.argv[13])
+po4_z_clamp_mode = sys.argv[14]
+sc_env_energy_dump_enable = int(sys.argv[15])
+sc_env_energy_dump_stride = int(sys.argv[16])
 
 with h5py.File(up_file, "r+") as h5:
     grp = h5.require_group("input").require_group("hybrid_control")
     grp.attrs["sc_env_lj_force_cap"] = np.float32(lj_cap)
     grp.attrs["sc_env_coul_force_cap"] = np.float32(coul_cap)
     grp.attrs["sc_env_relax_steps"] = np.int32(relax_steps)
+    grp.attrs["sc_env_backbone_hold_steps"] = np.int32(max(0, backbone_hold_steps))
+    grp.attrs["sc_env_po4_z_hold_steps"] = np.int32(max(0, po4_z_hold_steps))
     grp.attrs["sc_env_relax_dt"] = np.float32(relax_dt)
     grp.attrs["sc_env_restraint_k"] = np.float32(rest_k)
     grp.attrs["sc_env_max_displacement"] = np.float32(max_disp)
@@ -1437,6 +1445,8 @@ prepare_stage_file() {
             "$SC_ENV_LJ_FORCE_CAP" \
             "$SC_ENV_COUL_FORCE_CAP" \
             "$SC_ENV_RELAX_STEPS" \
+            "$SC_ENV_BACKBONE_HOLD_STEPS" \
+            "$SC_ENV_PO4_Z_HOLD_STEPS" \
             "$SC_ENV_RELAX_DT" \
             "$SC_ENV_RESTRAINT_K" \
             "$SC_ENV_MAX_DISPLACEMENT" \
