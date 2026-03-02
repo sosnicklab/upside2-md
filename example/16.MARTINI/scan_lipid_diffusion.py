@@ -12,7 +12,7 @@ DEFAULT_BASE_DIR = SCRIPT_DIR / "lipid_diffusion"
 DEFAULT_RUN_SCRIPT = SCRIPT_DIR / "run_sim_bilayer.sh"
 DEFAULT_VENV_ACTIVATE = REPO_ROOT / ".venv" / "bin" / "activate"
 DEFAULT_PDB_ID = "bilayer"
-DEFAULT_TIME_LIMIT = "48:00:00"
+DEFAULT_TIME_LIMIT = "36:00:00"
 DEFAULT_CPUS = 1
 DEFAULT_PARTITION = ""
 
@@ -309,6 +309,11 @@ def write_slurm_script(slurm_path, tasks_file, num_tasks, time_limit, cpus, part
         f"#SBATCH --time={time_limit}\n"
         f"#SBATCH --array=1-{num_tasks}\n"
         f"{partition_line}\n"
+        "\n"
+        "module load cmake\n"
+        "module load openmpi\n"
+        "source /home/yinhanw/project/yinhan/upside2-md/source.sh\n"
+        "source /home/yinhanw/project/yinhan/upside2-md/.venv/bin/activate\n"
         "\n"
         f'TASK_LIST="{tasks_file}"\n'
         'SCRIPT_PATH=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$TASK_LIST")\n'
