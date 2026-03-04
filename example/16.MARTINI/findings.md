@@ -111,3 +111,29 @@
   - active `N/CA/C/O` carrier targets from `hybrid_bb_map`: `2.064e-3 Å` max displacement,
   - `PO4` z displacement: `0.0 Å`,
   - `PO4` x/y displacement: nonzero (`1.268e-4 Å` max).
+
+## 2026-03-03 (Production Startup Energy Build-Up Follow-Up)
+- The startup cap-removal logic previously only reached the probabilistic SC row-evaluation path; deterministic protein-env BB pairs were still evaluated with `eval_pair_force(..., 0.f, 0.f, 1.f, ...)`, so they bypassed the production startup force-cap transition entirely.
+- Advancing `sc_env_transition_step` only when `use_probabilistic_sc` is true was also too narrow for the intended startup-window semantics; the active production transition counter should advance for the full hybrid-active startup window.
+- A cap-magnitude experiment did not move the early production trend:
+  - replay with `SC_ENV_LJ_FORCE_CAP=50`, `SC_ENV_COUL_FORCE_CAP=50` matched the `25/25` replay through step `450`,
+  - indicating the observed startup energy build-up was not being limited by the `25`-force cap threshold itself.
+- A force-mix shape experiment also did not change the replay over the first `450` steps:
+  - replacing the linear uncapping schedule with a quadratic ease-in produced identical logged potentials in the targeted `500`-step replay,
+  - indicating the dominant startup issue was not the SC cap-release curve by itself.
+- The effective lever was the protein feedback hold:
+  - changing BB/SC gradient feedback onto protein from a hard `0` over the first `200` steps to a gradual `0 -> 1` ramp over `sc_env_backbone_hold_steps` strongly reduced the startup MARTINI potential.
+- Targeted production-only replay results (`test_prod_run_sim_1rkl.sh`, `500` steps, same seed and starting checkpoint):
+  - previous cap-only replay after deterministic BB-env capping:
+    - steps `50/100/150/200/300/400/450`: MARTINI potential `4070/3877/4149/4449/5468/6788/7784`
+  - new feedback-ramp replay:
+    - steps `50/100/150/200/300/400/450`: MARTINI potential `3777/3366/3115/3046/2992/2767/2764`
+- Interpretation:
+  - the dominant startup energy accumulation was coming from keeping protein-environment back-reaction fully off while the environment was already responding to the refreshed Upside-driven backbone;
+  - gradually restoring protein feedback over the same existing 200-step window dissipates that overlap energy much more effectively than only adjusting the startup SC force-cap parameters.
+- Full-horizon confirmation from the `5000`-step replay (`outputs/martini_test_1rkl_hybrid_phase17_full/logs/stage_7.0.log`):
+  - new MARTINI potential at `500/1000/1500/2000/2500/3000/3500/4000/4500`:
+    `2962/2607/2295/2187/2370/1936/1973/1884/1812`;
+  - user-reported original MARTINI potential:
+    `7117/23902/54017/94657/135397/183071/237411/340015/453706`;
+  - the new run remains in the `~1.8e3-3.0e3` range through the full stage instead of entering the previous monotonic runaway regime.

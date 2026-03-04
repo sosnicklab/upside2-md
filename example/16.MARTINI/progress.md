@@ -1640,3 +1640,70 @@
     - PO4 `z`: `0.0 Å` max displacement,
     - PO4 `x/y`: `1.268e-4 Å` max displacement,
     - confirming protein is no longer frozen in production while PO4 z startup holding still works.
+
+## 2026-03-03 (Production Startup Energy Build-Up Follow-Up)
+- Re-read `task_plan.md` and traced the active stage-7 startup force path after the user reported continued MARTINI potential build-up in production.
+- Confirmed by code inspection that:
+  - deterministic protein-env BB pairs were bypassing the startup cap-removal logic,
+  - `sc_env_transition_step` advancement was tied only to `use_probabilistic_sc`,
+  - BB/SC feedback to protein was still hard-zeroed during the full `200`-step startup window.
+- Modified `src/martini.cpp`:
+  - extended startup LJ/Coulomb cap-removal to deterministic protein-env BB pairs,
+  - advanced `sc_env_transition_step` for the full hybrid-active production startup window,
+  - replaced the hard startup protein-feedback hold with a gradual `0 -> 1` ramp over `sc_env_backbone_hold_steps` for both BB and SC gradient projection back onto Upside,
+  - kept live Upside backbone updates, RMSD alignment, and the `150`-step `PO4` z hold intact.
+- Aligned the shell workflow default back to `SC_ENV_RELAX_STEPS=150` in `example/16.MARTINI/run_sim_1rkl.sh` after finding it had drifted to `100`.
+- Intermediate experiments run:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> passed.
+  - `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> passed.
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` -> passed after each runtime edit; only pre-existing warnings remained.
+  - production-only replay (`1000` steps) after deterministic BB-env startup capping but before feedback-ramp change:
+    - run dir: `outputs/martini_test_1rkl_hybrid_phase17`
+    - MARTINI potential at steps `100/200/300/400/500/600/700/800/900`: `3877/4449/5468/6788/9221/10619/14153/18655/24539`
+  - cap-magnitude experiment (`500` steps, `SC_ENV_LJ_FORCE_CAP=50`, `SC_ENV_COUL_FORCE_CAP=50`):
+    - run dir: `outputs/martini_test_1rkl_hybrid_phase17_cap50`
+    - trend matched the `25/25` run through step `450`, so higher caps did not materially change early production behavior.
+  - force-mix shape experiment (`500` steps, quadratic uncapping curve):
+    - run dir: `outputs/martini_test_1rkl_hybrid_phase17_ease`
+    - logged potentials were unchanged through step `450`, so the startup cap-release curve was not the dominant limiter.
+  - final feedback-ramp validation (`500` steps):
+    - run dir: `outputs/martini_test_1rkl_hybrid_phase17_feedback`
+    - MARTINI potential at steps `50/100/150/200/250/300/350/400/450`:
+      `3777/3366/3115/3046/3021/2992/2825/2767/2764`
+- Conclusion from the targeted replays:
+  - softer force capping alone did not materially change the startup potential build-up,
+  - gradually restoring protein feedback over the same existing `200`-step startup window did.
+- Files modified in this follow-up:
+  - `src/martini.cpp`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-03-03 (Full 5000-Step Stage-7 Verification)
+- Re-read `task_plan.md` and ran the full production-only replay from the existing stage-6.6 checkpoint in a separate directory:
+  - run dir: `outputs/martini_test_1rkl_hybrid_phase17_full`
+  - command reused the existing hybrid prep assets and set `HDF5_USE_FILE_LOCKING=FALSE` to avoid HDF5 reopen contention.
+- Verification command:
+  - `source ../../.venv/bin/activate && source ../../source.sh && HDF5_USE_FILE_LOCKING=FALSE RUN_DIR=outputs/martini_test_1rkl_hybrid_phase17_full ... PROD_70_NSTEPS=5000 PROD_FRAME_STEPS=5000 ./test_prod_run_sim_1rkl.sh`
+- Runtime result:
+  - the full `5000`-step stage completed successfully;
+  - VTF extraction also completed successfully.
+- Logged MARTINI potential from `outputs/martini_test_1rkl_hybrid_phase17_full/logs/stage_7.0.log`:
+  - `500`: `2962.27`
+  - `1000`: `2607.43`
+  - `1500`: `2295.39`
+  - `2000`: `2187.21`
+  - `2500`: `2370.22`
+  - `3000`: `1936.09`
+  - `3500`: `1973.27`
+  - `4000`: `1883.63`
+  - `4500`: `1811.80`
+- Comparison against the user-reported original run:
+  - original `500/1000/1500/2000/2500/3000/3500/4000/4500`:
+    `7117.34/23902.37/54017.39/94657.35/135397.09/183071.19/237411.01/340015.00/453705.89`
+  - the patched run is lower by factors of `2.40x/9.17x/23.53x/43.28x/57.12x/94.56x/120.31x/180.51x/250.42x` at those same checkpoints.
+- Files modified after this verification:
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`

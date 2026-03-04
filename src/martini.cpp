@@ -440,12 +440,40 @@ static inline bool active_sc_env_backbone_hold_enabled(const HybridRuntimeState&
            st.sc_env_transition_step < static_cast<uint64_t>(st.sc_env_backbone_hold_steps);
 }
 
+static float compute_sc_backbone_feedback_mix(const HybridRuntimeState& st) {
+    if(!active_sc_env_backbone_hold_enabled(st)) return 1.f;
+    if(st.sc_env_backbone_hold_steps <= 1) return 1.f;
+
+    uint64_t final_hold_step = static_cast<uint64_t>(st.sc_env_backbone_hold_steps - 1);
+    if(st.sc_env_transition_step >= final_hold_step) return 1.f;
+    return float(st.sc_env_transition_step) / float(final_hold_step);
+}
+
+static inline bool active_sc_env_force_ramp_enabled(const HybridRuntimeState& st) {
+    return st.enabled &&
+           st.active &&
+           st.sc_env_relax_steps > 0 &&
+           st.sc_env_transition_step < static_cast<uint64_t>(st.sc_env_relax_steps);
+}
+
 static inline bool active_sc_env_po4_z_hold_enabled(const HybridRuntimeState& st) {
     return st.enabled &&
            st.active &&
            st.sc_env_po4_z_clamp_enabled &&
            st.sc_env_po4_z_hold_steps > 0 &&
            st.sc_env_transition_step < static_cast<uint64_t>(st.sc_env_po4_z_hold_steps);
+}
+
+static inline bool deterministic_startup_pair_cap_enabled(
+        const HybridRuntimeState& st,
+        bool i_is_protein,
+        bool j_is_protein,
+        unsigned char i_role,
+        unsigned char j_role) {
+    if(!active_sc_env_force_ramp_enabled(st)) return false;
+    if(i_is_protein == j_is_protein) return false;
+    unsigned char protein_role = i_is_protein ? i_role : j_role;
+    return protein_role == ROLE_BB || protein_role == ROLE_SC;
 }
 
 static void initialize_sc_env_po4_z_reference(
@@ -2092,7 +2120,8 @@ bool refresh_sc_row_probabilities_from_rotamer(
 
 void project_bb_gradient_if_active(const HybridRuntimeState& st, VecArray sens, int n_atom) {
     if(!st.enabled || !st.active) return;
-    if(active_sc_env_backbone_hold_enabled(st)) {
+    float feedback_mix = compute_sc_backbone_feedback_mix(st);
+    if(!(feedback_mix > 0.f)) {
         for(size_t k = 0; k < st.n_bb; ++k) {
             int bb = st.bb_atom_index[k];
             if(bb >= 0 && bb < n_atom) {
@@ -2104,7 +2133,7 @@ void project_bb_gradient_if_active(const HybridRuntimeState& st, VecArray sens, 
     for(size_t k = 0; k < st.n_bb; ++k) {
         int bb = st.bb_atom_index[k];
         if(bb < 0 || bb >= n_atom) continue;
-        auto bb_grad = load_vec<3>(sens, bb);
+        auto bb_grad = feedback_mix * load_vec<3>(sens, bb);
 
         float wsum = 0.f;
         for(int d = 0; d < 4; ++d) {
@@ -2141,7 +2170,8 @@ void project_sc_gradient_if_active(
     if(!st.enabled || !st.active) return;
     const size_t n_rot = st.sc_proxy_atom_index.size();
     if(row_proxy_grad.size() != n_rot) return;
-    if(active_sc_env_backbone_hold_enabled(st)) {
+    float feedback_mix = compute_sc_backbone_feedback_mix(st);
+    if(!(feedback_mix > 0.f)) {
         for(const auto& proxy_rows : st.sc_rows_by_proxy) {
             int proxy = proxy_rows.first;
             if(proxy >= 0 && proxy < n_atom) {
@@ -2158,7 +2188,8 @@ void project_sc_gradient_if_active(
         store_vec<3>(sens, proxy, make_zero<3>());
         for(int r : proxy_rows.second) {
             if(r < 0 || r >= (int)n_rot) continue;
-            Vec<3> proxy_grad = make_vec3(row_proxy_grad[r][0], row_proxy_grad[r][1], row_proxy_grad[r][2]);
+            Vec<3> proxy_grad = feedback_mix *
+                                make_vec3(row_proxy_grad[r][0], row_proxy_grad[r][1], row_proxy_grad[r][2]);
 
             // Prefer explicit SC projection targets/weights from hybrid_sc_map.
             // In this workflow, these are prepared from martinize bonded topology.
@@ -3129,13 +3160,15 @@ struct MartiniPotential : public PotentialNode
         
         // Compute particle-particle interactions
         const float kMinDistance = 1.0e-6f;
-        const bool use_probabilistic_sc = (
+        const bool active_hybrid_startup = (
             hybrid_state &&
             hybrid_state->enabled &&
-            hybrid_state->active &&
+            hybrid_state->active);
+        const bool use_probabilistic_sc = (
+            active_hybrid_startup &&
             !hybrid_state->sc_proxy_atom_index.empty());
         float sc_force_uncap_mix = 1.f;
-        if(use_probabilistic_sc && mutable_hybrid) {
+        if(active_hybrid_startup && mutable_hybrid) {
             sc_force_uncap_mix = martini_hybrid::compute_sc_force_uncap_mix(*mutable_hybrid);
             if(mode == PotentialAndDerivMode &&
                mutable_hybrid->sc_env_transition_step < std::numeric_limits<uint64_t>::max()) {
@@ -3918,11 +3951,28 @@ struct MartiniPotential : public PotentialNode
             float pair_pot = 0.f;
             float hs_force_cap = 0.f;
             float hs_pot_cap = 0.f;
+            float startup_lj_force_cap = 0.f;
+            float startup_coul_force_cap = 0.f;
+            float startup_cap_mix = 1.f;
             if(hard_sphere_pair && hybrid_state) {
                 hs_force_cap = hybrid_state->nonprotein_hs_force_cap;
                 hs_pot_cap = hybrid_state->nonprotein_hs_potential_cap;
             }
-            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, hard_sphere_pair, pair_pot, force, 0.f, 0.f, 1.f, hs_force_cap, hs_pot_cap, nullptr, nullptr)) {
+            if(hybrid_state &&
+               martini_hybrid::deterministic_startup_pair_cap_enabled(
+                   *hybrid_state, i_is_protein, j_is_protein, i_role, j_role)) {
+                startup_lj_force_cap = hybrid_state->sc_env_lj_force_cap;
+                startup_coul_force_cap = hybrid_state->sc_env_coul_force_cap;
+                startup_cap_mix = sc_force_uncap_mix;
+            }
+            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, hard_sphere_pair, pair_pot, force,
+                                startup_lj_force_cap,
+                                startup_coul_force_cap,
+                                startup_cap_mix,
+                                hs_force_cap,
+                                hs_pot_cap,
+                                nullptr,
+                                nullptr)) {
                 continue;
             }
             if(pot) *pot += pair_pot;

@@ -34,14 +34,29 @@
 - [x] Phase 14: Replace the production SC force-cap hold with a per-step ramp from capped to uncapped SC-env/SC-BB LJ/Coulomb forces and verify the workflow wiring.
 - [x] Phase 15: Shorten the default SC cap-relax window so the production workflow reaches uncapped SC-env/SC-BB LJ/Coulomb forces by step 150 and verify the updated defaults.
 - [x] Phase 16: Add active-stage startup hold semantics so SC-env/SC-BB coupling stays one-way for protein over the first 200 steps while Upside-driven backbone updates remain live, and lipid `PO4` z stays fixed for the first 150 of those steps; verify on generated production frames.
+- [x] Phase 17: Tighten production startup coupling stability by applying the capped-to-uncapped startup ramp consistently to deterministic protein-env BB coupling, and replace the hard startup protein-feedback hold with a gradual 200-step feedback ramp; verify the early production potential trend without adding steps.
 
 ## Review
 - Implemented a production-stage SC transition schedule in `../../src/martini.cpp`: a per-activation counter now resets when hybrid activation changes, and SC-env plus allowed same-residue SC-BB pair forces blend from the configured capped force to the uncapped LJ/Coulomb force across `sc_env_relax_steps`.
 - Kept the workflow interface minimal: `example/16.MARTINI/run_sim_1rkl.sh` still writes the existing `sc_env_*` control attributes, with comments updated so `SC_ENV_LJ_FORCE_CAP`/`SC_ENV_COUL_FORCE_CAP` are documented as the initial caps and `SC_ENV_RELAX_STEPS` as the ramp window.
 - Tightened the default ramp window to `150` steps in both the production workflow and runtime fallback, so the existing 200-step SC coupling period now leaves at least the last 50 steps on fully regular SC-env/SC-BB LJ and Coulomb forces without changing the blending logic.
-- Added active-stage startup gating in `../../src/martini.cpp`: for the first `200` completed SC transition steps, BB/SC coupling gradients are not fed back onto protein coordinates, while Upside-driven `N/CA/C/O` backbone carriers still update normally and continue to refresh/RMSD-align the MARTINI `BB` representation; lipid `PO4` atoms remain z-fixed for the first `150` steps.
+- Added active-stage startup gating in `../../src/martini.cpp`: Upside-driven `N/CA/C/O` backbone carriers still update normally and continue to refresh/RMSD-align the MARTINI `BB` representation, lipid `PO4` atoms remain z-fixed for the first `150` steps, and BB/SC coupling feedback onto protein now ramps from `0 -> 1` across the first `200` completed startup steps instead of switching on abruptly.
 - Verification completed in this session: `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed, and `cmake --build obj -j4` rebuilt successfully with only pre-existing warnings.
 - Runtime verification completed in this session with `example/16.MARTINI/test_prod_run_sim_1rkl.sh`: a 2-step production smoke produced two saved frames where protein backbone/carrier atoms moved (`2.06e-3 Å` max on the carrier set), MARTINI `BB` proxies updated with them (`3.59e-4 Å` max), `PO4` z stayed fixed (`0.0 Å` max), and `PO4` x/y still moved (`1.27e-4 Å` max).
+- New Phase 17 focus:
+  - the startup cap-removal logic currently applies only to the probabilistic SC path;
+  - deterministic protein-env BB coupling still evaluates uncapped in production from step 0;
+  - `sc_env_transition_step` advancement is narrower than intended because it is currently tied to `use_probabilistic_sc` rather than the full active startup-coupling window.
+- Phase 17 implementation/result:
+  - `sc_env_transition_step` now advances for the full active hybrid production window, not only when probabilistic SC rows are present;
+  - deterministic protein-env BB coupling now uses the same startup LJ/Coulomb cap-removal path as the probabilistic SC coupling;
+  - protein BB/SC force feedback onto Upside is no longer hard-zeroed for the first 200 steps; instead it ramps from `0 -> 1` across `sc_env_backbone_hold_steps`, while BB coordinates still continue to refresh from Upside and PO4 `z` stays fixed for the first 150 steps;
+  - targeted 500-step production replay (`outputs/martini_test_1rkl_hybrid_phase17_feedback`) reduced MARTINI potential from the previous cap-only replay’s `4070/3877/4149/4449/5468/6788/7784` at steps `50/100/150/200/300/400/450` down to `3777/3366/3115/3046/2992/2767/2764`.
+  - full 5000-step production replay (`outputs/martini_test_1rkl_hybrid_phase17_full`) stayed bounded for the whole stage:
+    - new MARTINI potential at `500/1000/1500/2000/2500/3000/3500/4000/4500`:
+      `2962/2607/2295/2187/2370/1936/1973/1884/1812`;
+    - user-reported original trace at the same steps:
+      `7117/23902/54017/94657/135397/183071/237411/340015/453706`.
 
 ## Known Errors / Blockers
 - Requires concrete integration points in Upside C++ step loop and force modules.
@@ -49,7 +64,7 @@
 - Phase 4 assumes valid BB mapping indices into current position array (`bb_atom_index` preferred; residue/name inference fallback may fail on nonstandard topologies).
 - Phase 5 probabilistic sidechain coupling is implemented in C++; remaining work is physical calibration/stability validation for production trajectories.
 - Phase 6 alignment uses BB-frame rigid transform between consecutive steps (not full Kabsch over all protein atoms); validate stability impact in Phase 7.
-- Phase 7 completed smoke/integrity validation; full long-horizon physical validation remains to be benchmarked on production trajectories.
+- Phase 7 completed smoke/integrity validation, and the targeted 5000-step stage-7 production replay for the startup energy-build-up issue now stays bounded; broader physical benchmarking beyond this corrected scenario remains future work.
 - Hybrid mapping export now stores BB component targets in protein-AA PDB index space; stage-file injection must convert this reference index space into runtime coordinate indices before simulation.
 - Legacy static protein CG assets (`pdb/1rkl.MARTINI.pdb`, `pdb/1rkl_proa.itp`) are not reliable for dry-MARTINI compatibility; workflow mitigation is runtime MARTINI2 generation via `martinize.py -ff martini22`.
 - Stage 6.0 HDF5 close-ID runtime failure is resolved (hybrid-control parsing bug in C++ fixed); remaining workflow issue is downstream VTF extraction mismatch when using `extract_martini_vtf.py` with a non-runtime structure source.
@@ -125,6 +140,8 @@
 - Hybrid pre-production rigid hold and NPT are both enabled by scaling only unconstrained DOFs during barostat box/coordinate updates (fully fixed atoms remain fixed; z-fixed atoms keep fixed z).
 - Production probabilistic SC-environment coupling will cap LJ and Coulomb force magnitudes (configurable via `hybrid_control` attributes) to prevent force spikes.
 - Production probabilistic sidechain coupling will use the configured `sc_env_relax_steps` window as a production-step transition schedule: SC-env and allowed same-residue SC-BB pair forces start from the configured force-capped values and ramp to uncapped LJ/Coulomb forces across that window after hybrid activation.
+- Production startup pair protection should apply consistently across the active protein-environment coupling window, including deterministic BB-env pairs, rather than only inside the probabilistic SC row-evaluation path.
+- Startup protein feedback should be softened by a ramp over `sc_env_backbone_hold_steps`, not by a hard all-or-nothing hold, so live Upside backbone updates can start dissipating production-stage protein-environment overlap energy during the same 200-step window.
 - Production stage file preparation (`run_sim_1rkl.sh`, `test_prod_run_sim_1rkl.sh`) will explicitly set SC coupling control attrs in `/input/hybrid_control` (`sc_env_lj_force_cap`, `sc_env_coul_force_cap`, `sc_env_relax_steps`, `sc_env_relax_dt`, `sc_env_restraint_k`, `sc_env_max_displacement`) instead of relying on runtime defaults.
 - Production SC rigid mapping in C++ must treat `sc_local_pos` as centroid-relative coordinates and re-add target centroid after rotation (`mapped = R*local + tgt_centroid`) to avoid frame-translation artifacts.
 - Production SC row handling in C++ must enforce per-residue proxy capacity from placement-point support and select the safest proxy subset each step (by environment-distance metric) when proxy rows exceed representable capacity.

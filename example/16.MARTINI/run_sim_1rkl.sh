@@ -146,9 +146,9 @@ UPSIDE_REFERENCE_STATE_RAMA="${UPSIDE_REFERENCE_STATE_RAMA:-${UPSIDE_HOME}/param
 SC_ENV_LJ_FORCE_CAP="${SC_ENV_LJ_FORCE_CAP:-25.0}"
 SC_ENV_COUL_FORCE_CAP="${SC_ENV_COUL_FORCE_CAP:-25.0}"
 # Number of production steps used to ramp startup SC-env / SC-BB / env-BB
-# LJ+Coulomb forces from capped to uncapped, leaving the last 100 steps of the
+# LJ+Coulomb forces from capped to uncapped, leaving the last 50 steps of the
 # 200-step coupling window fully regular while PO4 z remains held for 150 steps.
-SC_ENV_RELAX_STEPS="${SC_ENV_RELAX_STEPS:-100}"
+SC_ENV_RELAX_STEPS="${SC_ENV_RELAX_STEPS:-150}"
 SC_ENV_BACKBONE_HOLD_STEPS="${SC_ENV_BACKBONE_HOLD_STEPS:-200}"
 SC_ENV_PO4_Z_HOLD_STEPS="${SC_ENV_PO4_Z_HOLD_STEPS:-150}"
 SC_ENV_RELAX_DT="${SC_ENV_RELAX_DT:-0.002}"
