@@ -1,0 +1,36 @@
+ConDiv data manifest
+Generated: 2026-03-04 15:19:44 -0600
+Source: /Users/yinhan/Documents/Train
+Target: /Users/yinhan/Documents/upside2-md/ConDiv
+
+Copied directories/files:
+- param0
+- param1
+- param2
+- param3
+- upside_input
+- upside_input2
+- pdb_list
+- pdb_list2
+- get_dmemb.py
+- get_potential_3b.py
+- get_potential_3d.py
+- show_memb.py
+- show_memb0.py
+- show_memb_hb.py
+
+Size summary:
+4.0K	/Users/yinhan/Documents/upside2-md/ConDiv/pdb_list
+4.0K	/Users/yinhan/Documents/upside2-md/ConDiv/pdb_list2
+4.0K	/Users/yinhan/Documents/upside2-md/ConDiv/show_memb.py
+4.0K	/Users/yinhan/Documents/upside2-md/ConDiv/show_memb0.py
+4.0K	/Users/yinhan/Documents/upside2-md/ConDiv/show_memb_hb.py
+8.0K	/Users/yinhan/Documents/upside2-md/ConDiv/get_potential_3b.py
+8.0K	/Users/yinhan/Documents/upside2-md/ConDiv/get_potential_3d.py
+ 12K	/Users/yinhan/Documents/upside2-md/ConDiv/get_dmemb.py
+ 16K	/Users/yinhan/Documents/upside2-md/ConDiv/param0
+ 16K	/Users/yinhan/Documents/upside2-md/ConDiv/param1
+ 16K	/Users/yinhan/Documents/upside2-md/ConDiv/param2
+ 16K	/Users/yinhan/Documents/upside2-md/ConDiv/param3
+4.2M	/Users/yinhan/Documents/upside2-md/ConDiv/upside_input
+ 37M	/Users/yinhan/Documents/upside2-md/ConDiv/upside_input2

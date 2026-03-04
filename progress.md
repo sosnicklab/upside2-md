@@ -754,3 +754,43 @@
 - Verification:
   - `cmake --build /tmp/upside2-md-build-rbm -j4` passed after applying the port.
   - No new build errors introduced.
+
+## 2026-03-04
+- Reinitialized `task_plan.md` for a new task: modernize membrane ConDiv workflow under `ConDiv/` with M1+Slurm support and strict gradient validation.
+- Gathered baseline compatibility data:
+- Confirmed membrane parameter schema in `parameters/ff_2.1/membrane.h5` matches legacy `Train/param*/membrane.h5` expected by membrane ConDiv update logic.
+- Confirmed required training-data profile completeness (`upside_input2 + pdb_list2`) and optional chain-break gaps in `upside_input + pdb_list`.
+- Confirmed current Upside Python API/engine supports necessary membrane setup and derivative calls for finite-difference gradient validation.
+- Added new findings entries documenting force-field schema compatibility, API key mapping requirements, dataset completeness, and derivative-check feasibility.
+- Implemented new membrane ConDiv workflow under `ConDiv/`:
+- Copied inputs-only assets from `/Users/yinhan/Documents/Train`: `param0-3`, `upside_input`, `upside_input2`, `pdb_list`, `pdb_list2`, and helper scripts (`get_*`, `show_memb*`).
+- Added `ConDiv/data_manifest.txt` for copied-input provenance and size summary.
+- Added `ConDiv/ConDiv_mem.py` (Python 3 modernized membrane training script):
+- Added project-root autodiscovery + env overrides (`CONDIV_PROJECT_ROOT`, `CONDIV_FF_DIR`, threading/sim/minibatch controls).
+- Added checkpoint-safe pickling strategy for `Update`, `Target`, and `AdamSolver`.
+- Added worker launch mode support (`auto|local|srun`) with subprocess-based default.
+- Added chain-break compatibility conversion for one-line legacy chain-break files.
+- Switched membrane config wiring to `channel_membrane_potential` path for current Upside `cb_surf_membrane_potential`/`hb_surf_membrane_potential` topology.
+- Added runtime fallback for non-zero Upside exit codes when output frames are already written.
+- Added derivative-size fallback logic for current engine behavior (outer coeff derivative availability).
+- Added `ConDiv/check_membrane_gradient.py`:
+- Loads checkpoint state, reconstructs membrane params, generates validation config, and performs membrane finite-difference checks with derivative-size fallback.
+- Adds config-rebuild finite-difference fallback when in-engine perturbation yields non-finite energies.
+- Emits structured JSON reports with pass/fail summary.
+- Added runner scripts:
+- `ConDiv/run_init.sh` (default init from `parameters/ff_2.1`).
+- `ConDiv/run_local.sh` (resume latest checkpoint).
+- `ConDiv/run_remote.sh` (Slurm resume wrapper).
+- `ConDiv/run_validate_rounds.sh` (multi-round restart + gradient check loop).
+- `ConDiv/setup_venv.sh` (optional local venv bootstrap).
+- Added `ConDiv/README.md` with profile selection (`dimer3`, `legacy60`), M1/local/Slurm usage, and gradient-validation workflow.
+- Validation:
+- `source .venv/bin/activate && source source.sh && python3 -m py_compile ConDiv/ConDiv_mem.py ConDiv/check_membrane_gradient.py` passed.
+- `bash -n ConDiv/run_init.sh ConDiv/run_local.sh ConDiv/run_remote.sh ConDiv/run_validate_rounds.sh ConDiv/setup_venv.sh` passed.
+- Reduced smoke run completed:
+- `run_init.sh` with `BASE_DIR=/tmp/condiv_mem_smoke`, `CONDIV_MINIBATCH_SIZE=1`, `CONDIV_N_THREADS=2`, `CONDIV_SIM_TIME=5`.
+- `run_local.sh 1` completed and wrote minibatch checkpoint `/tmp/condiv_mem_smoke/epoch_00_minibatch_00/checkpoint.pkl`.
+- Smoke observation: numerical instability in reduced setup (`Median RMSD nan nan`; gradient stats contain NaNs).
+- Gradient-check execution:
+- `check_membrane_gradient.py --checkpoint /tmp/condiv_mem_smoke/epoch_00_minibatch_00/checkpoint.pkl` executed and wrote `/tmp/condiv_mem_smoke/gradient_round_1.json`.
+- Report result was `pass=false` under this reduced unstable smoke configuration.

@@ -1,66 +1,50 @@
-# MARTINI Relaxation Slurm Adaptation Plan
+# ConDiv Membrane Workflow Modernization Plan
 
 ## Project Goal
-Make `example/16.MARTINI/run_relax_6x_rigid_dry.sh` usable in a Slurm workflow by submitting all selected MARTINI relaxation runs as Slurm jobs so multiple systems can run in parallel.
+Build a new `/Users/yinhan/Documents/upside2-md/ConDiv` training workflow that modernizes the legacy membrane ConDiv pipeline from `/Users/yinhan/Documents/Train` to Python 3, runs on both M1 local and Slurm, and includes strict gradient validation for multi-round training from the current force field (`/Users/yinhan/Documents/upside2-md/parameters/ff_2.1`).
 
 ## Architecture & Key Decisions
-1. Keep `example/16.MARTINI/run_relax_6x_rigid_dry.sh` as the single-system stage runner. It already encapsulates the required sequential stage handoff for one system.
-2. Add Slurm support in `example/16.MARTINI/batch_relax_rigid_dry.py`, because that is the layer that already iterates over multiple PDB systems.
-3. Default Slurm submission should be a single job array, with stages `6.0` to `6.6` sequential inside each task and concurrency throttled across systems. Keep per-system independent job submission available as an explicit fallback mode.
-4. Preserve the existing local execution path so current non-Slurm usage does not regress.
-5. Generate per-system Slurm wrapper scripts in each run directory instead of relying on large `sbatch --wrap` strings. This keeps quoting predictable and leaves an auditable job payload on disk.
-6. Support optional waiting/polling so the batch driver can either submit and return immediately or wait for all submitted jobs before writing the relaxed manifest.
+1. Create a standalone membrane training entrypoint `ConDiv/ConDiv_mem.py` adapted from `Train/ConDiv.py`, preserving membrane objective/update logic while removing Python-2-only behavior.
+2. Keep training inputs local to `ConDiv/` by copying inputs-only assets (`param*`, `upside_input*`, `pdb_list*`, helper scripts) and excluding historical output directories.
+3. Default initialization source is current in-repo force field (`parameters/ff_2.1`), not legacy `param*`; legacy init dirs remain selectable via env/CLI.
+4. Worker launch model is configurable (`auto|local|srun`) with default `auto` resolving to local subprocess workers for cross-platform parity.
+5. Add a strict gradient checker using finite differences against `upside_engine` parameter derivatives for membrane nodes plus sanity checks.
+6. Add one orchestration script to run several restart rounds and validate gradients after each round.
 
 ## Execution Phases
-- [x] Inspect current rigid dry MARTINI workflow and identify the orchestration layer to change.
-- [x] Add Slurm runner CLI options and submission helpers to `batch_relax_rigid_dry.py`.
-- [x] Preserve existing direct local execution behavior.
-- [x] Add submission metadata and completion handling for Slurm jobs.
-- [x] Validate Python syntax and CLI help.
-- [x] Validate shell syntax for the single-system runner remains clean.
-- [x] Record verification results and operating assumptions.
+- [x] Phase 1: Reinitialize task docs and create `ConDiv/` workspace.
+- [x] Phase 2: Copy membrane inputs/scripts from `/Users/yinhan/Documents/Train` into `ConDiv/` (inputs-only scope).
+- [x] Phase 3: Implement `ConDiv/ConDiv_mem.py` with Python 3 modernization and current `run_upside` API compatibility.
+- [x] Phase 4: Implement cross-platform runner scripts (`run_init.sh`, `run_local.sh`, `run_remote.sh`, `setup_venv.sh`).
+- [x] Phase 5: Implement strict gradient checker and multi-round validation runner (`check_membrane_gradient.py`, `run_validate_rounds.sh`).
+- [x] Phase 6: Document usage in `ConDiv/README.md`.
+- [x] Phase 7: Run syntax/smoke validations and record results.
 
 ## Known Errors / Blockers
-1. Slurm commands may be unavailable inside the current sandbox, so full end-to-end job submission may not be executable here.
-2. Cluster-specific defaults such as account, partition, and memory cannot be hardcoded safely; the new interface must leave them configurable.
+1. Full Slurm execution cannot be proven inside this sandbox without a live scheduler.
+2. Full production-scale training is too expensive for sandbox verification; only reduced-step smoke checks are practical.
 
 ## Review Criteria
-1. Existing local `batch_relax_rigid_dry.py` behavior still works without Slurm flags.
-2. Slurm mode supports a single job-array submission with a configurable concurrency cap, and still allows per-system independent jobs as an explicit fallback.
-3. Each submitted job has a reproducible wrapper script and log path under its run directory.
-4. The relaxed manifest is produced correctly after local runs, and after Slurm runs when waiting is enabled.
+1. `ConDiv_mem.py` runs `initialize` and `restart` under Python 3 using current repo `py/` modules.
+2. Default workflow can initialize from `parameters/ff_2.1` and use copied membrane training inputs.
+3. Local and Slurm runner scripts support checkpoint resume behavior.
+4. Multi-round validation runner executes restart rounds and performs finite-difference membrane gradient checks each round.
+5. All new Python and shell scripts pass syntax checks.
 
 ## Review (This Run)
-1. Updated `example/16.MARTINI/batch_relax_rigid_dry.py` to support `--runner slurm` while keeping `--runner local` as the default path.
-2. Added Slurm submission controls for account, partition, walltime, CPUs, memory, job-name prefix, extra `sbatch` args, wait/poll behavior, dry-run wrapper generation, submission mode, and array concurrency cap.
-3. Slurm mode now defaults to a single job-array submission with a configurable throttle (`--slurm-array-parallelism`, default `2`), while preserving independent per-system jobs as `--slurm-submit-mode jobs`.
-4. When `--slurm-wait 1` is used, the batch driver polls `squeue` until all submitted jobs leave the queue and then validates that each expected `stage_6.6.up` output exists before adding it to the relaxed manifest.
-5. Validation completed in sandbox:
-   - `python3 -m py_compile example/16.MARTINI/batch_relax_rigid_dry.py` passed.
-   - `python3 example/16.MARTINI/batch_relax_rigid_dry.py --help` passed.
-   - `bash -n example/16.MARTINI/run_relax_6x_rigid_dry.sh` passed.
-   - Slurm dry-run on real manifest input passed:
-     `python3 example/16.MARTINI/batch_relax_rigid_dry.py --manifest train-data/training_manifest.json --runner slurm --dry-run 1 --slurm-wait 0 --limit 1 --output-root /tmp/upside2-md-slurm-dryrun`.
-   - Dry-run generated `/private/tmp/upside2-md-slurm-dryrun/1ors/submit_relax.slurm.sh` with only the workflow-specific exported variables and the expected `sbatch` command in `/private/tmp/upside2-md-slurm-dryrun/1ors/batch_relax.log`.
-   - Follow-up wrapper correction applied: generated Slurm scripts now initialize the module system when needed and run `module load cmake` plus `module load openapi` before the workflow payload.
-   - Root-cause follow-up applied for manifest portability:
-     - `example/16.MARTINI/download_and_prepare_training_inputs.py` now writes repo-relative paths for project-local artifacts.
-     - Existing `train-data/training_manifest.json` was normalized from absolute `/Users/yinhan/Documents/upside2-md/...` paths to `train-data/...` paths.
-     - `example/16.MARTINI/batch_relax_rigid_dry.py` retains relocation support so older absolute manifests still work after moving the repo.
-   - Relative-manifest dry-run passed:
-     `python3 example/16.MARTINI/batch_relax_rigid_dry.py --manifest train-data/training_manifest.json --runner slurm --dry-run 1 --slurm-wait 0 --limit 1 --output-root /tmp/upside2-md-slurm-relative-test`.
-   - Legacy-manifest relocation dry-run passed with synthetic moved-root manifest:
-     `/tmp/training_manifest.fake_root.json`.
-   - Slurm OOM mitigation applied:
-     - `example/16.MARTINI/batch_relax_rigid_dry.py` now defaults `--slurm-mem` to `16G` and accepts `0` to omit the memory flag.
-     - Generated Slurm wrappers now export single-thread limits for common BLAS/OpenMP runtimes to reduce prep-stage memory overhead.
-     - Generated wrappers load `cmake` and `openapi` before launching the workflow payload.
-   - OOM-mitigation dry-run passed and emitted:
-     `sbatch ... --mem 16G ...`
-     plus wrapper exports for `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS`, and `VECLIB_MAXIMUM_THREADS`.
-   - Array-mode dry-run passed and emitted:
-     `sbatch ... --array 0-2%2 --mem 16G ...`
-     with launcher `/private/tmp/upside2-md-slurm-array-test/_slurm_array/submit_relax_array.slurm.sh`.
-   - Fallback per-job dry-run still passed with `--slurm-submit-mode jobs`.
-6. Remaining verification gap:
-   - Real `sbatch`/`squeue` execution was not attempted in this sandbox, so live Slurm submission and wait-path completion must be exercised on the target cluster.
+1. Created `/Users/yinhan/Documents/upside2-md/ConDiv` and copied requested membrane training inputs/scripts from `/Users/yinhan/Documents/Train` (excluding historical output directories).
+2. Implemented `ConDiv/ConDiv_mem.py`:
+   - Python 3 migration of membrane ConDiv flow (`initialize/restart/worker`).
+   - Current Upside API mapping for force-field and membrane options.
+   - Local/Slurm worker launch modes (`auto|local|srun`).
+   - Checkpointing, gradient stats logging, and run-resume behavior.
+3. Implemented gradient validation and orchestration scripts:
+   - `ConDiv/check_membrane_gradient.py`
+   - `ConDiv/run_validate_rounds.sh`
+4. Added workflow scripts and docs:
+   - `run_init.sh`, `run_local.sh`, `run_remote.sh`, `setup_venv.sh`, `README.md`, `data_manifest.txt`.
+5. Validation results:
+   - `python3 -m py_compile ConDiv/ConDiv_mem.py ConDiv/check_membrane_gradient.py` passed.
+   - `bash -n` passed for all shell scripts in `ConDiv/`.
+   - Reduced smoke run (`initialize` + `restart 1`) completed in `/tmp/condiv_mem_smoke` with warning-level numerical instability (`Median RMSD nan nan`).
+   - Gradient checker executed and produced report JSON, but reported failure (`pass=false`) because sampled finite-difference points were non-finite in this reduced unstable smoke configuration.
