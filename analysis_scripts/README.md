@@ -1,0 +1,135 @@
+# Analysis Scripts
+
+This directory contains the post-setup analysis workflow for the Upside HDX/HXMS pipeline used in this repository.
+
+The scripts are not fully generic command-line tools. Most of them expect you to edit values near the top of the file first, especially:
+
+- `pdb_id`
+- `sim_id`
+- `n_rep`
+- `protein_state`
+- `HXMS_method`
+- temperature or frame-selection settings such as `start_frame`
+
+Most scripts assume you run them from the repository root, so paths like `./inputs`, `./outputs`, `./results`, and `./pdb` resolve correctly.
+
+## Expected Inputs
+
+Before using this workflow, you should already have:
+
+- prepared model/input files under `inputs/`
+- an HXMS raw uptake table under `pdb/<pdb_id>_rawuptake_HXMS.csv`
+- Upside trajectories under `outputs/<sim_id>/`
+- an active Python environment with the scientific stack used by the scripts
+- the Upside environment available for the shell scripts, usually through `source.sh` and `UPSIDE_HOME`
+
+## Typical Workflow
+
+The workflow has two preparation branches that later meet in the uptake comparison step:
+
+- experimental HXMS preprocessing branch
+- simulation trajectory/protection-state branch
+
+A practical run order is:
+
+1. Run `0.run_HXMS.py` to convert the raw HXMS uptake table into peptide-level normalized and stretched-exponential reference curves.
+2. Prepare the Upside `.up` configuration with `1.config.py`.
+3. Extract trajectory observables into `results/` with `2.traj_ana.sh`.
+4. Extract protection-state arrays with `3.get_protaction_states.sh`.
+5. Run `4.calc_D_uptake.py` to generate simulation-based peptide and whole-protein uptake curves.
+6. Run `5.analyze_D_uptake.py` to compare the HXMS outputs from step 1 with the simulated uptake outputs from step 5.
+7. Optionally run `6.plot_deltaG_vs_resid.py` for residue-level protection free-energy style summaries.
+
+If you specifically want the old HXMS-only preprocessing scripts, `0.run_normalized_D_HXMS.py` and `0.run_stretched_exp_HXMS.py` are still present, but `0.run_HXMS.py` is the preferred entry point.
+
+## Script Summary
+
+### `0.run_HXMS.py`
+
+Preferred HXMS preprocessing entry point.
+
+It reads the raw HXMS uptake table from `pdb/<pdb_id>_rawuptake_HXMS.csv`, groups data by protein state and peptide, then generates both:
+
+- normalized `%D` peptide uptake curves
+- stretched-exponential peptide fits
+
+It also writes the peptide ID table used later by the simulation-side scripts.
+
+### `0.run_normalized_D_HXMS.py`
+
+Legacy script for only the normalized `%D` HXMS workflow.
+
+Use this only if you specifically want the older standalone normalized-preprocessing path. In normal use, `0.run_HXMS.py` replaces it.
+
+### `0.run_stretched_exp_HXMS.py`
+
+Legacy script for only the stretched-exponential HXMS workflow.
+
+Use this only if you want the older standalone fit path. In normal use, `0.run_HXMS.py` replaces it.
+
+### `1.config.py`
+
+Builds the Upside configuration for the target system.
+
+It points Upside at the FASTA, chain-break file, force-field data, and optional initial structure, then writes the `.up` configuration used for the simulation and protection-state analysis steps.
+
+### `2.traj_ana.sh`
+
+Extracts trajectory-derived observables from the Upside run files.
+
+For each replica, it calls helper utilities to generate files in `results/` such as energy, radius of gyration, RMSD, hydrogen-bond, and trajectory-format outputs that later scripts consume.
+
+### `get_info_from_upside_traj.py`
+
+Helper script used by `2.traj_ana.sh`.
+
+It reads an Upside trajectory file and writes the core per-replica analysis arrays used by the later workflow, including:
+
+- `*_Energy.npy`
+- `*_Hbond.npy`
+- `*_Rmsd.npy`
+- `*_Rg.npy`
+- `*_T.npy`
+
+In the current version, the RMSD and radius-of-gyration calculations exclude residues 1 to 11.
+
+### `3.get_protaction_states.sh`
+
+Extracts protection-state arrays from Upside trajectories.
+
+For each replica, it calls `get_protection_state.py` and writes `*_PS.npy` plus residue index metadata used by the later uptake and free-energy analyses.
+
+### `4.calc_D_uptake.py`
+
+Computes simulated deuterium uptake from the simulation outputs.
+
+This script now contains both the original fixed-temperature workflow and the experimental/optimized workflow that was previously in `4.calc_D_uptake_DEV.py`. It reads the simulation observables and protection states, performs MBAR reweighting, computes peptide and whole-protein uptake curves, and writes the uptake plots/data used in downstream analysis.
+
+### `5.analyze_D_uptake.py`
+
+Compares HXMS-derived curves with the simulation-derived uptake curves.
+
+It loads the HXMS peptide curves produced by `0.run_HXMS.py` (or the legacy `0.run_*` scripts) and the simulation uptake outputs from `4.calc_D_uptake.py`, then computes comparisons such as peptide-level alignment and cooperativity-style summaries. The exact behavior depends on settings like `HXMS_method` and `protein_state`.
+
+### `6.plot_deltaG_vs_resid.py`
+
+Computes residue-level protection/stability summaries from the protection-state data.
+
+It reads the MBAR-reweighted simulation outputs, estimates residue-level `dG`-like values across selected temperatures and denaturant conditions, and writes residue-wise plots/CSV outputs.
+
+## Main Files Produced
+
+The exact outputs depend on the script settings, but the main file families are:
+
+- `outputs/<sim_id>/<pdb_id>_pep_ids.csv`
+- `outputs/<sim_id>/<pdb_id>_D_norm_uptake_*.npy`
+- `outputs/<sim_id>/<pdb_id>_stretch_exp_*.npy`
+- `results/*_Energy.npy`, `*_Rg.npy`, `*_Rmsd.npy`, `*_Hbond.npy`, `*_PS.npy`, `*.resid`
+- `results/D_uptake*.pdf`, `results/D_uptake*.png`, `results/*percentD*`
+
+## Practical Notes
+
+- Many scripts still contain hard-coded values. Check the header of each script before running it.
+- The pipeline mixes Python and shell scripts. Run the shell scripts in an environment where `UPSIDE_HOME` and the Upside helper scripts are available.
+- `5.analyze_D_uptake.py` and some legacy code paths still reference a local `function` helper module. If your working environment depends on that module, make sure it is available on `PYTHONPATH`.
+- The merged scripts in this repository are intended to reduce duplicated workflows, but the older scripts are kept here for reference.
