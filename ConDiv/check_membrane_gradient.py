@@ -12,7 +12,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Tuple
 
 import numpy as np
 import tables as tb
@@ -62,31 +62,43 @@ def _choose_target(state) -> Tuple[str, object]:
     return min(candidates, key=lambda x: x[1].n_res)
 
 
+def _resolve_active_param_size(engine, node_name: str, coeff_size: int, inner_size: int) -> int:
+    sizes_to_try = [coeff_size]
+    total_size = coeff_size + inner_size
+    if inner_size and total_size not in sizes_to_try:
+        sizes_to_try.append(total_size)
+
+    errors = []
+    for size in sizes_to_try:
+        try:
+            engine.get_param((size,), node_name)
+            return int(size)
+        except RuntimeError as exc:
+            errors.append(f"{size}: {exc}")
+
+    raise RuntimeError(
+        f"Unable to resolve active parameter size for node {node_name}. "
+        f"Tried {sizes_to_try}. Errors: {' | '.join(errors)}"
+    )
+
+
 def _finite_diff_node(
     engine,
     pos: np.ndarray,
     node_name: str,
-    primary_size: int,
-    fallback_size: int,
+    active_size: int,
     eps: float,
     samples: int,
     rng: np.random.Generator,
 ):
     engine.energy(pos)
-    try:
-        analytic = engine.get_param_deriv((primary_size,), node_name).astype(np.float64)
-        base_param = engine.get_param((primary_size,), node_name).astype(np.float64)
-        active_size = primary_size
-    except RuntimeError:
-        analytic = engine.get_param_deriv((fallback_size,), node_name).astype(np.float64)
-        base_param = engine.get_param((fallback_size,), node_name).astype(np.float64)
-        active_size = fallback_size
+    analytic = engine.get_param_deriv((active_size,), node_name).astype(np.float64)
+    base_param = engine.get_param((active_size,), node_name).astype(np.float64)
 
     n_sample = min(samples, active_size)
     idx = rng.choice(active_size, size=n_sample, replace=False)
 
     fd_vals = []
-    an_vals = []
     abs_err = []
     rel_err = []
 
@@ -119,14 +131,12 @@ def _finite_diff_node(
         re = ae / max(1e-6, abs(fd) + abs(an))
 
         fd_vals.append(fd)
-        an_vals.append(an)
         abs_err.append(ae)
         rel_err.append(re)
 
     engine.set_param(base_param.astype(np.float32), node_name)
 
     fd_vals = np.asarray(fd_vals, dtype=np.float64)
-    an_vals = np.asarray(an_vals, dtype=np.float64)
     abs_err = np.asarray(abs_err, dtype=np.float64)
     rel_err = np.asarray(rel_err, dtype=np.float64)
     n_used = int(fd_vals.size)
@@ -146,14 +156,40 @@ def _finite_diff_node(
     }
 
 
-def _get_analytic_vector(engine, node_name: str, primary_size: int, fallback_size: int):
-    try:
-        analytic = engine.get_param_deriv((primary_size,), node_name).astype(np.float64)
-        active_size = primary_size
-    except RuntimeError:
-        analytic = engine.get_param_deriv((fallback_size,), node_name).astype(np.float64)
-        active_size = fallback_size
-    return analytic, active_size
+def _get_analytic_vector(engine, node_name: str, active_size: int):
+    analytic = engine.get_param_deriv((active_size,), node_name).astype(np.float64)
+    return analytic
+
+
+def _perturb_membrane_file(
+    membrane_path: Path,
+    dataset_primary: str,
+    dataset_secondary: str,
+    primary_size: int,
+    index: int,
+    delta: float,
+) -> None:
+    with tb.open_file(str(membrane_path), "a") as t:
+        if index < primary_size:
+            arr = getattr(t.root, dataset_primary)[:]
+            flat = arr.reshape(-1)
+            flat[index] += delta
+            getattr(t.root, dataset_primary)[:] = flat.reshape(arr.shape)
+            return
+
+        if not dataset_secondary:
+            raise RuntimeError(
+                f"Index {index} falls into secondary parameter block but no secondary dataset is available"
+            )
+        sec_idx = index - primary_size
+        arr = getattr(t.root, dataset_secondary)[:]
+        flat = arr.reshape(-1)
+        if sec_idx < 0 or sec_idx >= flat.size:
+            raise RuntimeError(
+                f"Secondary index out of range: sec_idx={sec_idx}, size={flat.size}, index={index}"
+            )
+        flat[sec_idx] += delta
+        getattr(t.root, dataset_secondary)[:] = flat.reshape(arr.shape)
 
 
 def _finite_diff_by_rebuild(
@@ -163,7 +199,9 @@ def _finite_diff_by_rebuild(
     chain_break_compat: str,
     init_npy: str,
     base_membrane: str,
-    dataset_name: str,
+    dataset_primary: str,
+    dataset_secondary: str,
+    primary_size: int,
     node_name: str,
     analytic: np.ndarray,
     active_size: int,
@@ -172,29 +210,28 @@ def _finite_diff_by_rebuild(
     rng: np.random.Generator,
     tmp_dir: Path,
 ):
-    with tb.open_file(base_membrane) as t:
-        base_array = getattr(t.root, dataset_name)[:]
-
     n_sample = min(samples, active_size)
     idx = rng.choice(active_size, size=n_sample, replace=False)
 
     fd_vals = []
-    an_vals = []
     abs_err = []
     rel_err = []
 
     for i in idx:
         e_vals = {}
         for sign, tag in ((+1.0, "plus"), (-1.0, "minus")):
-            memb_path = tmp_dir / f"fd_{dataset_name}_{i}_{tag}.memb.h5"
+            memb_path = tmp_dir / f"fd_{dataset_primary}_{i}_{tag}.memb.h5"
             shutil.copyfile(base_membrane, memb_path)
-            with tb.open_file(str(memb_path), "a") as t:
-                arr = getattr(t.root, dataset_name)[:]
-                flat = arr.reshape(-1)
-                flat[i] += sign * eps
-                getattr(t.root, dataset_name)[:] = flat.reshape(arr.shape)
+            _perturb_membrane_file(
+                membrane_path=memb_path,
+                dataset_primary=dataset_primary,
+                dataset_secondary=dataset_secondary,
+                primary_size=primary_size,
+                index=int(i),
+                delta=float(sign * eps),
+            )
 
-            cfg_path = tmp_dir / f"fd_{dataset_name}_{i}_{tag}.cfg.h5"
+            cfg_path = tmp_dir / f"fd_{dataset_primary}_{i}_{tag}.cfg.h5"
             kwargs = mod._forcefield_kwargs(ff_dir, str(memb_path), str(target.thickness), chain_break_compat)
             mod.ru.upside_config(target.fasta, str(cfg_path), initial_structure=init_npy, **kwargs)
             mod.ru.advanced_config(
@@ -216,7 +253,6 @@ def _finite_diff_by_rebuild(
         re = ae / max(1e-6, abs(fd) + abs(an))
 
         fd_vals.append(fd)
-        an_vals.append(an)
         abs_err.append(ae)
         rel_err.append(re)
 
@@ -332,22 +368,36 @@ def main():
             ihb_shape = (0,)
         pos = t.root.input.pos[:, :, 0]
 
-    cb_total = int(np.prod(cb_shape) + np.prod(icb_shape))
     cb_coeff = int(np.prod(cb_shape))
-    hb_total = int(np.prod(hb_shape) + np.prod(ihb_shape))
+    cb_inner = int(np.prod(icb_shape))
+    cb_total = cb_coeff + cb_inner
     hb_coeff = int(np.prod(hb_shape))
+    hb_inner = int(np.prod(ihb_shape))
+    hb_total = hb_coeff + hb_inner
 
     engine = mod.ue.Upside(str(config_path))
     rng = np.random.default_rng(args.seed)
-    cb_analytic, cb_active = _get_analytic_vector(engine, cb_node, cb_total, cb_coeff)
-    hb_analytic, hb_active = _get_analytic_vector(engine, hb_node, hb_total, hb_coeff)
+    cb_active = _resolve_active_param_size(engine, cb_node, cb_coeff, cb_inner)
+    hb_active = _resolve_active_param_size(engine, hb_node, hb_coeff, hb_inner)
+    print(
+        json.dumps(
+            {
+                "dimension_check": {
+                    "cb": {"coeff": cb_coeff, "inner": cb_inner, "active": cb_active},
+                    "hb": {"coeff": hb_coeff, "inner": hb_inner, "active": hb_active},
+                }
+            },
+            indent=2,
+        )
+    )
+    cb_analytic = _get_analytic_vector(engine, cb_node, cb_active)
+    hb_analytic = _get_analytic_vector(engine, hb_node, hb_active)
 
     cb_report = _finite_diff_node(
         engine=engine,
         pos=pos,
         node_name=cb_node,
-        primary_size=cb_total,
-        fallback_size=cb_coeff,
+        active_size=cb_active,
         eps=args.fd_eps,
         samples=args.fd_samples,
         rng=rng,
@@ -360,7 +410,9 @@ def main():
             chain_break_compat=chain_break_compat,
             init_npy=str(init_npy),
             base_membrane=temp_param["memb"],
-            dataset_name="cb_energy",
+            dataset_primary="cb_energy",
+            dataset_secondary="icb_energy" if cb_active == cb_total and cb_inner else "",
+            primary_size=cb_coeff,
             node_name=cb_node,
             analytic=cb_analytic,
             active_size=cb_active,
@@ -374,8 +426,7 @@ def main():
         engine=engine,
         pos=pos,
         node_name=hb_node,
-        primary_size=hb_total,
-        fallback_size=hb_coeff,
+        active_size=hb_active,
         eps=args.fd_eps,
         samples=args.fd_samples,
         rng=rng,
@@ -388,7 +439,9 @@ def main():
             chain_break_compat=chain_break_compat,
             init_npy=str(init_npy),
             base_membrane=temp_param["memb"],
-            dataset_name="hb_energy",
+            dataset_primary="hb_energy",
+            dataset_secondary="ihb_energy" if hb_active == hb_total and hb_inner else "",
+            primary_size=hb_coeff,
             node_name=hb_node,
             analytic=hb_analytic,
             active_size=hb_active,
@@ -424,6 +477,10 @@ def main():
             "fd_samples": args.fd_samples,
             "rel_median_threshold": args.rel_median_threshold,
             "rel_max_threshold": args.rel_max_threshold,
+        },
+        "dimension_check": {
+            "cb": {"coeff": cb_coeff, "inner": cb_inner, "active": cb_active},
+            "hb": {"coeff": hb_coeff, "inner": hb_inner, "active": hb_active},
         },
         "cb": cb_report,
         "hb": hb_report,

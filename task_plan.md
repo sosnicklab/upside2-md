@@ -23,6 +23,17 @@ Build a new `/Users/yinhan/Documents/upside2-md/ConDiv` training workflow that m
 ## Known Errors / Blockers
 1. Full Slurm execution cannot be proven inside this sandbox without a live scheduler.
 2. Full production-scale training is too expensive for sandbox verification; only reduced-step smoke checks are practical.
+3. Follow-up correction required: membrane gradient and validation paths were probing oversized parameter vectors (outer+inner) even though this repo’s engine exposes trainable membrane vectors as outer-coeff-only for `cb_surf_membrane_potential`/`hb_surf_membrane_potential`.
+
+## Revised Decisions
+1. Enforce explicit model-dimension negotiation against engine `get_param` at runtime and use the resolved active size everywhere (`compute_divergence`, gradient checker).
+2. Add strict early shape checks between loaded membrane force-field datasets and checkpoint/model parameter tensors before training restarts.
+3. Treat inner membrane curves as derived data in this repo path unless engine explicitly reports trainable inner dimensions.
+
+## Follow-up Phase (Dimension Alignment)
+- [ ] Phase 8: Implement active membrane-parameter size negotiation and remove oversized derivative probes.
+- [ ] Phase 9: Add early force-field/model shape validation in initialization/checker paths.
+- [ ] Phase 10: Re-run reduced validation and verify no wrong-parameter-dimension errors appear.
 
 ## Review Criteria
 1. `ConDiv_mem.py` runs `initialize` and `restart` under Python 3 using current repo `py/` modules.

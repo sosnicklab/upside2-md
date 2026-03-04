@@ -90,6 +90,22 @@ class Config:
     max_parallel_workers: int
 
 
+@dataclass(frozen=True)
+class MembraneNodeSpec:
+    cb_node_name: str
+    hb_node_name: str
+    cb_coeff_shape: Tuple[int, ...]
+    cb_inner_shape: Tuple[int, ...]
+    hb_coeff_shape: Tuple[int, ...]
+    hb_inner_shape: Tuple[int, ...]
+    cb_coeff_size: int
+    cb_inner_size: int
+    hb_coeff_size: int
+    hb_inner_size: int
+    cb_active_size: int
+    hb_active_size: int
+
+
 def build_config() -> Config:
     ff_dir = Path(
         os.environ.get("CONDIV_FF_DIR", str(PROJECT_ROOT / "parameters" / "ff_2.1"))
@@ -282,6 +298,148 @@ def get_init_param(init_dir: str):
     return param, init_param_files
 
 
+def _shape_tuple(shape_like) -> Tuple[int, ...]:
+    return tuple(int(x) for x in shape_like)
+
+
+def _membrane_shapes_from_config(config_base: str) -> MembraneNodeSpec:
+    with tb.open_file(config_base) as t:
+        pot = t.root.input.potential
+        if hasattr(pot, "cb_surf_membrane_potential"):
+            cb_node_name = "cb_surf_membrane_potential"
+            hb_node_name = "hb_surf_membrane_potential"
+            cb_coeff_shape = _shape_tuple(pot.cb_surf_membrane_potential.coeff.shape)
+            cb_inner_shape = _shape_tuple(pot.cb_surf_membrane_potential.coeff_inner.shape)
+            hb_coeff_shape = _shape_tuple(pot.hb_surf_membrane_potential.coeff.shape)
+            hb_inner_shape = _shape_tuple(pot.hb_surf_membrane_potential.coeff_inner.shape)
+        else:
+            cb_node_name = "cb_membrane_potential"
+            hb_node_name = "hb_membrane_potential"
+            cb_coeff_shape = _shape_tuple(pot.cb_membrane_potential.coeff.shape)
+            cb_inner_shape = (0,)
+            hb_coeff_shape = _shape_tuple(pot.hb_membrane_potential.coeff.shape)
+            hb_inner_shape = (0,)
+
+    cb_coeff_size = int(np.prod(cb_coeff_shape))
+    cb_inner_size = int(np.prod(cb_inner_shape))
+    hb_coeff_size = int(np.prod(hb_coeff_shape))
+    hb_inner_size = int(np.prod(hb_inner_shape))
+
+    return MembraneNodeSpec(
+        cb_node_name=cb_node_name,
+        hb_node_name=hb_node_name,
+        cb_coeff_shape=cb_coeff_shape,
+        cb_inner_shape=cb_inner_shape,
+        hb_coeff_shape=hb_coeff_shape,
+        hb_inner_shape=hb_inner_shape,
+        cb_coeff_size=cb_coeff_size,
+        cb_inner_size=cb_inner_size,
+        hb_coeff_size=hb_coeff_size,
+        hb_inner_size=hb_inner_size,
+        cb_active_size=cb_coeff_size,
+        hb_active_size=hb_coeff_size,
+    )
+
+
+def _resolve_active_param_size(engine: ue.Upside, node_name: str, coeff_size: int, inner_size: int) -> int:
+    sizes_to_try = [coeff_size]
+    total_size = coeff_size + inner_size
+    if inner_size and total_size not in sizes_to_try:
+        sizes_to_try.append(total_size)
+
+    errors = []
+    for size in sizes_to_try:
+        try:
+            engine.get_param((size,), node_name)
+            return int(size)
+        except RuntimeError as exc:
+            errors.append(f"{size}: {exc}")
+
+    raise RuntimeError(
+        f"Unable to resolve active parameter size for node {node_name}. "
+        f"Tried {sizes_to_try}. Errors: {' | '.join(errors)}"
+    )
+
+
+def resolve_membrane_param_spec(config_base: str) -> MembraneNodeSpec:
+    raw = _membrane_shapes_from_config(config_base)
+    engine = ue.Upside(config_base)
+    cb_active = _resolve_active_param_size(engine, raw.cb_node_name, raw.cb_coeff_size, raw.cb_inner_size)
+    hb_active = _resolve_active_param_size(engine, raw.hb_node_name, raw.hb_coeff_size, raw.hb_inner_size)
+
+    valid_cb_sizes = {raw.cb_coeff_size, raw.cb_coeff_size + raw.cb_inner_size}
+    valid_hb_sizes = {raw.hb_coeff_size, raw.hb_coeff_size + raw.hb_inner_size}
+    if cb_active not in valid_cb_sizes:
+        raise RuntimeError(
+            f"Unexpected active size for {raw.cb_node_name}: {cb_active}; "
+            f"expected one of {sorted(valid_cb_sizes)}"
+        )
+    if hb_active not in valid_hb_sizes:
+        raise RuntimeError(
+            f"Unexpected active size for {raw.hb_node_name}: {hb_active}; "
+            f"expected one of {sorted(valid_hb_sizes)}"
+        )
+
+    return MembraneNodeSpec(
+        cb_node_name=raw.cb_node_name,
+        hb_node_name=raw.hb_node_name,
+        cb_coeff_shape=raw.cb_coeff_shape,
+        cb_inner_shape=raw.cb_inner_shape,
+        hb_coeff_shape=raw.hb_coeff_shape,
+        hb_inner_shape=raw.hb_inner_shape,
+        cb_coeff_size=raw.cb_coeff_size,
+        cb_inner_size=raw.cb_inner_size,
+        hb_coeff_size=raw.hb_coeff_size,
+        hb_inner_size=raw.hb_inner_size,
+        cb_active_size=cb_active,
+        hb_active_size=hb_active,
+    )
+
+
+def _validate_membrane_param_shapes(param: Update, membrane_file: str) -> None:
+    with tb.open_file(membrane_file) as t:
+        expected = {
+            "cb": _shape_tuple(t.root.cb_energy.shape),
+            "icb": _shape_tuple(t.root.icb_energy.shape),
+            "hb": _shape_tuple(t.root.hb_energy.shape),
+            "ihb": _shape_tuple(t.root.ihb_energy.shape),
+        }
+    actual = {
+        "cb": _shape_tuple(param.cb.shape),
+        "icb": _shape_tuple(param.icb.shape),
+        "hb": _shape_tuple(param.hb.shape),
+        "ihb": _shape_tuple(param.ihb.shape),
+    }
+    mismatched = [k for k in expected if expected[k] != actual[k]]
+    if mismatched:
+        details = "; ".join(f"{k}: expected {expected[k]}, got {actual[k]}" for k in mismatched)
+        raise RuntimeError(f"Membrane parameter shape mismatch against force field: {details}")
+
+
+def _validate_membrane_file_vs_model(config_base: str, membrane_file: str) -> MembraneNodeSpec:
+    spec = resolve_membrane_param_spec(config_base)
+    with tb.open_file(membrane_file) as t:
+        ff_shapes = {
+            "cb_coeff": _shape_tuple(t.root.cb_energy.shape),
+            "cb_inner": _shape_tuple(t.root.icb_energy.shape),
+            "hb_coeff": _shape_tuple(t.root.hb_energy.shape),
+            "hb_inner": _shape_tuple(t.root.ihb_energy.shape),
+        }
+
+    expected_shapes = {
+        "cb_coeff": spec.cb_coeff_shape,
+        "cb_inner": spec.cb_inner_shape,
+        "hb_coeff": spec.hb_coeff_shape,
+        "hb_inner": spec.hb_inner_shape,
+    }
+    mismatched = [k for k in ff_shapes if ff_shapes[k] != expected_shapes[k]]
+    if mismatched:
+        details = "; ".join(f"{k}: ff {ff_shapes[k]} vs model {expected_shapes[k]}" for k in mismatched)
+        raise RuntimeError(f"Membrane force-field/model dimension mismatch: {details}")
+
+    return spec
+
+
 def shift_inner_curve(param_inner: np.ndarray, param_outer: np.ndarray) -> np.ndarray:
     spoint = 8
     n_node = param_inner.size
@@ -382,58 +540,29 @@ def _prepare_chain_break_file(chain_break_path: str, output_path: str) -> str:
 
 def compute_divergence(config_base: str, pos: np.ndarray, mode: int = 0) -> Update:
     del mode
-    with tb.open_file(config_base) as t:
-        pot = t.root.input.potential
-        if hasattr(pot, "cb_surf_membrane_potential"):
-            cb_node_name = "cb_surf_membrane_potential"
-            hb_node_name = "hb_surf_membrane_potential"
-            cb_memb_shape = pot.cb_surf_membrane_potential.coeff.shape
-            icb_memb_shape = pot.cb_surf_membrane_potential.coeff_inner.shape
-            hb_memb_shape = pot.hb_surf_membrane_potential.coeff.shape
-            ihb_memb_shape = pot.hb_surf_membrane_potential.coeff_inner.shape
-        else:
-            cb_node_name = "cb_membrane_potential"
-            hb_node_name = "hb_membrane_potential"
-            cb_memb_shape = pot.cb_membrane_potential.coeff.shape
-            icb_memb_shape = (0,)
-            hb_memb_shape = pot.hb_membrane_potential.coeff.shape
-            ihb_memb_shape = (0,)
-
-    cb_memb_size = int(np.prod(cb_memb_shape))
-    icb_memb_size = int(np.prod(icb_memb_shape))
-    hb_memb_size = int(np.prod(hb_memb_shape))
-    ihb_memb_size = int(np.prod(ihb_memb_shape))
+    spec = resolve_membrane_param_spec(config_base)
 
     engine = ue.Upside(config_base)
     contrast = Update([], [], [], [])
 
     for i in range(pos.shape[0]):
         engine.energy(pos[i])
-        try:
-            dp_cb_memb = engine.get_param_deriv((cb_memb_size + icb_memb_size,), cb_node_name)
-            odp_cb_memb = dp_cb_memb[:cb_memb_size].reshape(cb_memb_shape)
-            idp_cb_memb = (
-                dp_cb_memb[cb_memb_size:].reshape(icb_memb_shape)
-                if icb_memb_size
-                else np.zeros(icb_memb_shape, dtype=np.float32)
-            )
-        except RuntimeError:
-            dp_cb_memb = engine.get_param_deriv((cb_memb_size,), cb_node_name)
-            odp_cb_memb = dp_cb_memb.reshape(cb_memb_shape)
-            idp_cb_memb = np.zeros(icb_memb_shape, dtype=np.float32)
 
-        try:
-            dp_hb_memb = engine.get_param_deriv((hb_memb_size + ihb_memb_size,), hb_node_name)
-            odp_hb_memb = dp_hb_memb[:hb_memb_size].reshape(hb_memb_shape)
-            idp_hb_memb = (
-                dp_hb_memb[hb_memb_size:].reshape(ihb_memb_shape)
-                if ihb_memb_size
-                else np.zeros(ihb_memb_shape, dtype=np.float32)
-            )
-        except RuntimeError:
-            dp_hb_memb = engine.get_param_deriv((hb_memb_size,), hb_node_name)
-            odp_hb_memb = dp_hb_memb.reshape(hb_memb_shape)
-            idp_hb_memb = np.zeros(ihb_memb_shape, dtype=np.float32)
+        dp_cb_memb = engine.get_param_deriv((spec.cb_active_size,), spec.cb_node_name)
+        if spec.cb_active_size == spec.cb_coeff_size:
+            odp_cb_memb = dp_cb_memb.reshape(spec.cb_coeff_shape)
+            idp_cb_memb = np.zeros(spec.cb_inner_shape, dtype=np.float32)
+        else:
+            odp_cb_memb = dp_cb_memb[: spec.cb_coeff_size].reshape(spec.cb_coeff_shape)
+            idp_cb_memb = dp_cb_memb[spec.cb_coeff_size :].reshape(spec.cb_inner_shape)
+
+        dp_hb_memb = engine.get_param_deriv((spec.hb_active_size,), spec.hb_node_name)
+        if spec.hb_active_size == spec.hb_coeff_size:
+            odp_hb_memb = dp_hb_memb.reshape(spec.hb_coeff_shape)
+            idp_hb_memb = np.zeros(spec.hb_inner_shape, dtype=np.float32)
+        else:
+            odp_hb_memb = dp_hb_memb[: spec.hb_coeff_size].reshape(spec.hb_coeff_shape)
+            idp_hb_memb = dp_hb_memb[spec.hb_coeff_size :].reshape(spec.hb_inner_shape)
 
         contrast.cb.append(odp_cb_memb)
         contrast.icb.append(idp_cb_memb)
@@ -705,6 +834,12 @@ def main_worker():
             restraint_groups=[f"0-{n_res - 1}"],
             restraint_spring_constant=CONFIG.native_restraint_strength,
         )
+        dim_spec = _validate_membrane_file_vs_model(configs[1], param_files["memb"])
+        print(
+            "Membrane dimensions "
+            f"cb(coeff={dim_spec.cb_coeff_size}, inner={dim_spec.cb_inner_size}, active={dim_spec.cb_active_size}) "
+            f"hb(coeff={dim_spec.hb_coeff_size}, inner={dim_spec.hb_inner_size}, active={dim_spec.hb_active_size})"
+        )
     except Exception as exc:
         raise RuntimeError(f"CONFIG_FAIL: {exc}") from exc
 
@@ -933,11 +1068,13 @@ def main_initialize(args):
 
     if state["init_dir"] != "cached":
         state["param"], state["init_param_files"] = get_init_param(state["init_dir"])
+        _validate_membrane_param_shapes(state["param"], state["init_param_files"]["memb"])
         with open(os.path.join(state["base_dir"], "condiv_init.pkl"), "wb") as fh:
             cp.dump((state["init_dir"], state["param"], state["init_param_files"]), fh, -1)
     else:
         with open(os.path.join(state["base_dir"], "condiv_init.pkl"), "rb") as fh:
             state["init_dir"], state["param"], state["init_param_files"] = cp.load(fh)
+        _validate_membrane_param_shapes(state["param"], state["init_param_files"]["memb"])
 
     state["initial_alpha"] = Update(0.02, 0.02, 0.02, 0.02) * CONFIG.alpha
     state["solver"] = AdamSolver(len(state["initial_alpha"]), alpha=state["initial_alpha"])
