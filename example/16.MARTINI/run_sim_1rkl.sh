@@ -51,6 +51,7 @@ RUNTIME_ITP_FILE="${RUNTIME_ITP_FILE:-${HYBRID_PREP_DIR}/${RUNTIME_PDB_ID}_proa.
 HYBRID_MAPPING_FILE="${HYBRID_MAPPING_FILE:-${HYBRID_PREP_DIR}/hybrid_mapping.h5}"
 HYBRID_PACKED_PDB="${HYBRID_PACKED_PDB:-${HYBRID_PREP_DIR}/hybrid_packed.MARTINI.pdb}"
 HYBRID_VALIDATE="${HYBRID_VALIDATE:-1}"
+HYBRID_PREPROD_ACTIVATION_STAGE="${HYBRID_PREPROD_ACTIVATION_STAGE:-__hybrid_disabled__}"
 
 # martinize controls (MARTINI 2.x generation for dry-MARTINI compatibility)
 MARTINIZE_ENABLE="${MARTINIZE_ENABLE:-1}"
@@ -453,6 +454,7 @@ with h5py.File(up_file, "r+") as h5:
     grp = h5.require_group("input").require_group("hybrid_control")
     grp.attrs["enable"] = np.int8(1)
     grp.attrs["activation_stage"] = np.bytes_(activation_stage)
+    grp.attrs["preprod_protein_mode"] = np.bytes_("rigid")
 PY
 }
 
@@ -1438,6 +1440,7 @@ prepare_stage_file() {
 
     mv -f "$prepared_tmp" "$target_file"
     inject_hybrid_mapping "$target_file" "${HYBRID_MAPPING_FILE}"
+    set_hybrid_activation_stage "$target_file" "${HYBRID_PREPROD_ACTIVATION_STAGE}"
     set_stage_label "$target_file" "$stage_label"
     if [ "$stage_label" = "production" ]; then
         set_hybrid_activation_stage "$target_file" "production"

@@ -1573,6 +1573,10 @@ void refresh_transition_holds_for_engine(DerivEngine& engine) {
         return;
     }
     martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
+    if(st->enabled && st->active &&
+       st->sc_env_transition_step < std::numeric_limits<uint64_t>::max()) {
+        st->sc_env_transition_step += 1;
+    }
     if(active_sc_env_po4_z_hold_enabled(*st)) {
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->sc_env_po4_z_hold_atom_indices);
     } else {
@@ -3170,10 +3174,6 @@ struct MartiniPotential : public PotentialNode
         float sc_force_uncap_mix = 1.f;
         if(active_hybrid_startup && mutable_hybrid) {
             sc_force_uncap_mix = martini_hybrid::compute_sc_force_uncap_mix(*mutable_hybrid);
-            if(mode == PotentialAndDerivMode &&
-               mutable_hybrid->sc_env_transition_step < std::numeric_limits<uint64_t>::max()) {
-                mutable_hybrid->sc_env_transition_step += 1;
-            }
         }
         float sc_env_energy_total = 0.f;
         float sc_env_energy_lj = 0.f;

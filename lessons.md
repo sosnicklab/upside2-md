@@ -1,5 +1,7 @@
 # Lessons
 
+- 2026-03-04: When users compare the first production-step energy between two workflows, do not stop at pre-production coordinate parity; reconstruct the exact `6.6 -> 7.0` handoff and toggle only the production activation state on the same file to separate coordinate effects from Hamiltonian changes.
+- 2026-03-03: For active-stage hold durations keyed off runtime counters, do not trust code-path intent alone; validate the exact hold window from saved per-step frames because the counter may advance more than once per MD step.
 - 2026-03-02: In hybrid startup windows, "hold protein rigid" may mean suppress environment-to-protein coupling feedback while still letting the Upside backbone/carrier update path and BB refresh/RMSD alignment run; do not translate that requirement into a hard coordinate freeze without checking the active dataflow.
 - 2026-03-02: When changing hybrid startup schedules, audit all coupled active-stage coordinate constraints (fixed masks, z-fixed masks, RMSD alignment, and interaction-space clamps); do not assume force-ramp edits preserve the user's intended hold semantics.
 - 2026-02-28: When a workflow still exposes transition knobs like `sc_env_relax_steps`, verify the live runtime path actually consumes them; do not assume a previously implemented relaxation/ramp is still active after later SC-coupling refactors.

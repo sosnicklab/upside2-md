@@ -35,6 +35,8 @@
 - [x] Phase 15: Shorten the default SC cap-relax window so the production workflow reaches uncapped SC-env/SC-BB LJ/Coulomb forces by step 150 and verify the updated defaults.
 - [x] Phase 16: Add active-stage startup hold semantics so SC-env/SC-BB coupling stays one-way for protein over the first 200 steps while Upside-driven backbone updates remain live, and lipid `PO4` z stays fixed for the first 150 of those steps; verify on generated production frames.
 - [x] Phase 17: Tighten production startup coupling stability by applying the capped-to-uncapped startup ramp consistently to deterministic protein-env BB coupling, and replace the hard startup protein-feedback hold with a gradual 200-step feedback ramp; verify the early production potential trend without adding steps.
+- [x] Phase 18: Audit `run_sim_1rkl.sh` pre-7.0 parity against `run_sim_1rkl_rigid_dry.sh` and make the pre-production hybrid-control activation semantics explicit in the hybrid workflow.
+- [x] Phase 19: Isolate the cause of the stage-7 initial-energy mismatch between `run_sim_1rkl.sh` and `run_sim_1rkl_rigid_dry.sh` using the same `6.6 -> 7.0` handoff coordinates.
 
 ## Review
 - Implemented a production-stage SC transition schedule in `../../src/martini.cpp`: a per-activation counter now resets when hybrid activation changes, and SC-env plus allowed same-residue SC-BB pair forces blend from the configured capped force to the uncapped LJ/Coulomb force across `sc_env_relax_steps`.
@@ -57,6 +59,25 @@
       `2962/2607/2295/2187/2370/1936/1973/1884/1812`;
     - user-reported original trace at the same steps:
       `7117/23902/54017/94657/135397/183071/237411/340015/453706`.
+- PO4 z-hold follow-up fix/result:
+  - moved `sc_env_transition_step` advancement from active MARTINI force evaluation into `refresh_transition_holds_for_engine(...)`, so startup windows now advance once per completed MD step instead of per force-evaluation call;
+  - targeted per-step replay (`outputs/martini_test_1rkl_hybrid_po4hold_fix`, `152` steps, `frame_steps=1`) now keeps non-protein `PO4` `z` exactly fixed through frame `150` (`0.0 Å` max absolute displacement) and first releases at frame `151` (`9.155e-05 Å`);
+  - in-plane `PO4` motion remains allowed during the hold window (`2.2728e-01 Å` max at frame `150`), matching the intended z-only hold semantics.
+- Phase 18 parity audit/result:
+  - stage `6.0-6.6` preparation/execution blocks in `run_sim_1rkl.sh` and `run_sim_1rkl_rigid_dry.sh` are the same with respect to stage type, NPT targets, MD/minimization calls, handoff sequencing, and VTF mode;
+  - existing generated checkpoints already confirm identical pre-7.0 physical state between workflows: stage `6.0`, `6.2`, and `6.6` final coordinates and box vectors match exactly between `outputs/martini_test_1rkl_hybrid` and `outputs/martini_test_1rkl_rigid_dry`;
+  - the remaining script-level difference before `7.0` was that the hybrid workflow relied on inherited `hybrid_control.activation_stage="production"` from mapping injection, while the rigid workflow explicitly overwrote pre-production stage files to `activation_stage="__hybrid_disabled__"` and `preprod_protein_mode="rigid"`;
+  - `run_sim_1rkl.sh` now applies that same explicit pre-production override to every prepared stage file, then switches stage `7.0` back to `activation_stage="production"` when writing the production file, so pre-7.0 stage metadata now matches the rigid workflow semantics rather than relying on an implicit inactive-by-stage-label mismatch.
+- Phase 19 initial-energy mismatch audit/result:
+  - the stage-7 prepared hybrid and rigid-dry files start from identical coordinate handoff state on the shared MARTINI coordinates; the first-step energy mismatch is not caused by stage `6.x` drift or by different `6.6 -> 7.0` positions;
+  - the hybrid stage-7 file contains additional Upside production potential nodes under `/input/potential` (`affine_alignment`, `backbone_pairs`, `hbond_energy`, `infer_H_O`, `placement_fixed_point_vector_only`, `placement_fixed_scalar`, `protein_hbond`, `rama_coord`, `rama_map_pot`, `rama_map_pot_ref`, `rotamer`) that are absent from the rigid-dry stage-7 file, and these contribute the extra `+663.56` non-MARTINI `potential` channel;
+  - the MARTINI sign flip is caused entirely by the stage-7 `hybrid_active=1` runtime path, not by coordinates:
+    - with the reconstructed hybrid handoff file left active, the first-step energy is `663.56 / 4268.90 / 4932.46`;
+    - with the same handoff file but only `activation_stage` changed to `__hybrid_disabled__`, the first-step energy becomes `663.56 / -19534.69 / -18871.13`;
+    - the MARTINI term therefore returns exactly to the rigid-dry value when hybrid activation is disabled, proving that the `+23803.59` MARTINI shift comes from the active hybrid MARTINI kernel.
+  - the active hybrid MARTINI kernel changes the Hamiltonian in two major ways at stage `7.0`:
+    - it removes most intra-protein MARTINI pairs (`BB-BB` off, `SC-SC` off, `BB-SC` only same residue),
+    - and it converts non-protein/non-protein MARTINI nonbonded interactions to hard-sphere-like repulsion while hybrid is active.
 
 ## Known Errors / Blockers
 - Requires concrete integration points in Upside C++ step loop and force modules.
