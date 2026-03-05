@@ -827,3 +827,19 @@
 - Final outcome:
 - Report: `/Users/yinhan/Documents/upside2-md-ConDiv/ConDiv/remd-4000-8RP-1th-test/validate_test_00/gradient_round_1.json`
 - Result: `"pass": true` with strict-FD node errors in tolerance (`hbond_coverage`/`hbond_coverage_hydrophobe`) and checker exit code `0`.
+
+## 2026-03-05 (Dry-MARTINI vs Upside Parameter Table)
+- Started execution-only task to locate and run the existing CSV generator for the dry-MARTINI to Upside force-field parameter table.
+- Re-read root `task_plan.md`, `lessons.md`, and `progress.md` before execution to align with current repo workflow rules.
+- Located the existing generator: `example/16.MARTINI/build_depth_interaction_table.py`.
+- Confirmed its default relative inputs/outputs require running from `example/16.MARTINI/`; default artifacts are `outputs/depth_interaction_table.csv` and `outputs/depth_interaction_table.meta.json`.
+- Execution:
+- `source .venv/bin/activate && source source.sh && cd example/16.MARTINI && python3 build_depth_interaction_table.py`
+- Result: exited `0` and printed:
+- `Wrote depth interaction table: outputs/depth_interaction_table.csv`
+- `Wrote metadata: outputs/depth_interaction_table.meta.json`
+- `Bilayer z_center = 42.484580 A`
+- `backbone_cb_energy=1`, `hbond_hb_energy=1`, `sidechain_term=0`, `sheet_term=0`
+- Artifact verification:
+- `example/16.MARTINI/outputs/depth_interaction_table.csv` exists with 15 lines total (header + 14 bead rows).
+- `example/16.MARTINI/outputs/depth_interaction_table.meta.json` exists and records the same input files plus `n_bead_names=14`.

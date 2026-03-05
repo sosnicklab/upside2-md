@@ -12,6 +12,7 @@ import _pickle as cPickle
 
 
 BACKBONE_NODES = [
+    "affine_alignment",
     "Distance3D",
     "Angle",
     "Dihedral_omega",
@@ -34,7 +35,6 @@ SIDECHAIN_NODES = [
     "placement_fixed_scalar",
     "placement_fixed_point_vector_only",
     "placement_point_vector_only",
-    "affine_alignment",
 ]
 
 
@@ -254,6 +254,7 @@ def write_backbone_nodes(
             mode="mixture",
             param_deriv=False,
         )
+        uc.write_affine_alignment(len(fasta_seq))
 
         ref_state_cor = np.log(cPickle.load(open(reference_state_rama, "rb"), encoding="latin1"))
         ref_state_cor -= ref_state_cor.mean()

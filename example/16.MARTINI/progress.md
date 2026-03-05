@@ -1,5 +1,83 @@
 # Progress Log
 
+## 2026-03-05 (Stage-7 Runtime Compatibility Fixes)
+- Fixed the missing `affine_alignment` dependency in backbone-only production node injection:
+  - `inject_backbone_only_nodes.py` now treats `affine_alignment` as a required backbone node instead of a removable sidechain node
+  - the injector now explicitly writes `affine_alignment` before creating `backbone_pairs`
+  - `validate_backbone_only_up.py` was updated accordingly: `affine_alignment` is now required and no longer forbidden
+- Fixed the `martini_rbm_cross_potential/weights` runtime shape mismatch:
+  - root cause: the injector was writing global sparse environment class IDs from the shared artifact, while the C++ loader infers class counts from the max class index present in the specific stage file
+  - `inject_backbone_cross_potential.py` now compresses the used protein/environment classes to dense local IDs and slices the weight tensor before writing the node
+  - for the 1RKL hybrid system, the injected cross node now uses only the six present dry types and writes `weights.shape = (4, 6, 12)` instead of `(4, 38, 12)`
+- Strengthened stage-file validation:
+  - `validate_backbone_only_up.py` now checks the injected cross-node schema directly in the `.up` file, including:
+    - required cross-node datasets
+    - atom-index bounds
+    - positive `radial_widths`
+    - `weights.shape == (max(protein_class_index)+1, max(env_class_index)+1, n_radial)`
+    - optional local `protein_classes` / `environment_classes` dataset length checks
+- Verification:
+  - `python3 -m py_compile inject_backbone_only_nodes.py inject_backbone_cross_potential.py validate_backbone_only_up.py` -> pass
+  - temp stage-7.0 production file check:
+    - copied `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.prepared.up` to `/tmp/backbone_affine_fix_test2.up`
+    - ran `inject_backbone_only_nodes.py ...` -> pass
+    - ran `inject_backbone_cross_potential.py --artifact parameters/ff_2.1/martini.h5 --up-files /tmp/backbone_affine_fix_test2.up` -> pass
+    - `validate_backbone_only_up.py /tmp/backbone_affine_fix_test2.up --cross-artifact parameters/ff_2.1/martini.h5` -> pass
+    - confirmed in-file cross-node layout:
+      - `protein_classes = ['N', 'CA', 'C', 'O']`
+      - `environment_classes = ['Qd', 'Qa', 'Q0', 'Na', 'C3', 'C1']`
+      - `weights.shape = (4, 6, 12)`
+  - one-step runtime smoke:
+    - `obj/upside /tmp/backbone_affine_fix_test2.up --duration-steps 1 ...` -> pass
+    - the previous startup failures are gone:
+      - no missing `affine_alignment` for `backbone_pairs`
+      - no `martini_rbm_cross_potential/weights shape` error
+    - runtime proceeded into MD and printed `0 / 1`
+  - residual note: the temp production smoke still shows a very large initial `martini_potential`, which is a separate physical/calibration issue from the startup/schema failures fixed here
+
+## 2026-03-05 (Cached `parameters/ff_2.1/martini.h5`)
+- Changed `run_sim_1rkl.sh` to use a shared cached cross-potential artifact by default:
+  - `BACKBONE_CROSS_TABLE_H5` now defaults to `${UPSIDE_HOME}/parameters/ff_2.1/martini.h5`
+  - added `BACKBONE_CROSS_REBUILD` flag (default `0`) so normal runs reuse the cached file and only rebuild on cache miss or explicit override
+- Updated stage-0.5 artifact preparation in `run_sim_1rkl.sh`:
+  - if `parameters/ff_2.1/martini.h5` exists, the workflow skips rebuilding and optionally validates the cached HDF5 plus any available CSV/JSON sidecar reports
+  - if the cache is missing or rebuild is forced, the script regenerates the depth/cross tables and writes the HDF5 artifact back into `parameters/ff_2.1/martini.h5`
+- Tightened production validation wiring:
+  - production-stage validator now always receives `--cross-artifact`
+  - `--cross-table-csv` and `--cross-table-meta` are passed only when those files exist, so cached-only runs do not fail on missing run-local reports
+- Installed the shared artifact:
+  - `parameters/ff_2.1/martini.h5`
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
+  - `python3 example/16.MARTINI/build_backbone_cross_interaction_table.py ... --output-h5 parameters/ff_2.1/martini.h5` -> pass
+  - `python3 example/16.MARTINI/validate_backbone_only_up.py --cross-artifact parameters/ff_2.1/martini.h5` -> pass
+  - temp production-file smoke test using only the shared cache path:
+    - `inject_backbone_only_nodes.py /tmp/backbone_dual_runtime_cache_test.up ...` -> pass
+    - `inject_backbone_cross_potential.py --artifact parameters/ff_2.1/martini.h5 --up-files /tmp/backbone_dual_runtime_cache_test.up` -> pass
+    - `validate_backbone_only_up.py /tmp/backbone_dual_runtime_cache_test.up --cross-artifact parameters/ff_2.1/martini.h5` -> pass (`n_atom=4323`, `n_res=31`, `env_types=38`, `n_radial=12`)
+
+## 2026-03-05 (Dual Dry-MARTINI / Upside Run-Script Wiring)
+- Updated `run_sim_1rkl.sh` so the workflow now wires the new production coupling path end to end:
+  - added a stage-0.5 artifact build step via `prepare_backbone_cross_artifacts` immediately after hybrid packing/mapping export
+  - kept stages `6.0-6.6` unchanged as pre-production dry-MARTINI preparation
+  - kept stage `7.0` production injection order aligned with the intended runtime: `inject_backbone_only_nodes.py` first, then `inject_backbone_cross_potential.py`
+- Tightened production validation in `run_sim_1rkl.sh`:
+  - `validate_backbone_only_up.py` is still run on production-stage prepared files
+  - cross-table validation flags are now appended only when `BACKBONE_CROSS_ENABLE=1`, so disabling the new cross potential does not create a false missing-file failure
+- Updated workflow messaging/comments:
+  - banner now states `Dual Dry-MARTINI / Upside 1RKL Workflow`
+  - production-mode summary explicitly says `dry-MARTINI bilayer + Upside backbone + backbone cross table`
+  - final completion summary prints depth/cross artifact paths when enabled
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
+  - `python3 example/16.MARTINI/build_depth_interaction_table.py ... --output-{csv,json} example/16.MARTINI/outputs/martini_test_1rkl_hybrid/...` -> pass
+  - `python3 example/16.MARTINI/build_backbone_cross_interaction_table.py ... --output-{csv,json,h5} example/16.MARTINI/outputs/martini_test_1rkl_hybrid/...` -> pass
+  - `python3 example/16.MARTINI/validate_backbone_only_up.py --table-* --cross-*` on the generated artifacts -> pass
+  - temporary production-file smoke test:
+    - first tried cross-node injection directly on an older saved `1rkl.stage_7.0.prepared.up` copy; validator failed because that old checkpoint still contained legacy `rotamer` nodes
+    - re-ran using the actual script sequence on a temp copy: `inject_backbone_only_nodes.py` then `inject_backbone_cross_potential.py`
+    - `validate_backbone_only_up.py` on that temp file with cross artifacts -> pass (`n_atom=4323`, `n_res=31`, `env_types=38`, `n_radial=12`)
+
 ## 2026-03-05 (Legacy Hybrid Workflow Hook Removal)
 - Completed removal of remaining legacy runtime hook paths from source:
   - `../../src/main.cpp`: removed fallback/legacy hybrid-backed RG backbone index hook path; sequence-only path remains.
@@ -1546,3 +1624,42 @@
   - `python -m py_compile inject_backbone_only_nodes.py build_depth_interaction_table.py validate_backbone_only_up.py` passed.
   - `python validate_backbone_only_up.py --table-csv ... --table-meta ...` passed.
   - `cmake --build obj -j 4` passed (warnings only, no new build errors).
+
+## 2026-03-05 (Radial Backbone Cross Table)
+- Re-read root and `example/16.MARTINI` task docs before implementation and aligned the new work to the backbone-only + dry-MARTINI table scope.
+- Locked implementation direction to:
+  - new radial cross-table generator,
+  - standalone injector for `martini_rbm_cross_potential`,
+  - validation support for CSV/JSON/HDF5 cross-table artifacts,
+  - reuse of the existing runtime artifact schema rather than adding a new C++ node.
+- Implemented `build_backbone_cross_interaction_table.py`:
+  - parses all 38 dry MARTINI atom types from `ff_dry/dry_martini_v2.1.itp`,
+  - reuses dry nonbonded `sigma/epsilon` pairs,
+  - aggregates the existing DOPC depth table by dry type,
+  - spans the DOPC trend over all dry types,
+  - builds arbitrary radial target curves from merged spline control points,
+  - fits the curves into the existing Gaussian-basis runtime artifact format.
+- Implemented `inject_backbone_cross_potential.py`:
+  - loads the generated HDF5 artifact,
+  - selects exact `N/CA/C/O` protein carrier roles from prepared `.up` files,
+  - classifies environment atoms by `/input/type`,
+  - injects `martini_rbm_cross_potential` into `/input/potential`.
+- Extended `validate_backbone_only_up.py`:
+  - added validation paths for cross-table CSV, metadata JSON, and runtime artifact HDF5,
+  - checks required columns/keys, class counts, schema, and tensor dimensions.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/build_backbone_cross_interaction_table.py example/16.MARTINI/inject_backbone_cross_potential.py example/16.MARTINI/validate_backbone_only_up.py` passed.
+  - `source .venv/bin/activate && source source.sh && python3 example/16.MARTINI/build_backbone_cross_interaction_table.py` passed.
+  - Generated:
+    - `example/16.MARTINI/outputs/backbone_cross_interaction_table.csv`
+    - `example/16.MARTINI/outputs/backbone_cross_interaction_table.meta.json`
+    - `example/16.MARTINI/outputs/backbone_cross_interaction_table.h5`
+  - Generator output summary:
+    - `Read 722 unique nonbonded parameter pairs`
+    - fit RMSE summary `min=0.051970 median=0.094174 max=0.237002`
+  - `source .venv/bin/activate && source source.sh && python3 example/16.MARTINI/validate_backbone_only_up.py --cross-table-csv example/16.MARTINI/outputs/backbone_cross_interaction_table.csv --cross-table-meta example/16.MARTINI/outputs/backbone_cross_interaction_table.meta.json --cross-artifact example/16.MARTINI/outputs/backbone_cross_interaction_table.h5` passed.
+  - Injection smoke check passed on temporary copy `/tmp/backbone_cross_inject_test.up` created from `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.prepared.up`:
+    - injected node `martini_rbm_cross_potential`
+    - `protein_atom_indices=124`
+    - `env_atom_indices=4025`
+    - `weights_shape=(4, 38, 12)`

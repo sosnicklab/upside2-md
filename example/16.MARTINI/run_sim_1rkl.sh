@@ -10,6 +10,7 @@ cd "${SCRIPT_DIR}"
 # 0) Hybrid preparation (packed MARTINI + hybrid mapping export)
 # 1) Stage input generation (dry MARTINI)
 # 2) Inject hybrid mapping into each stage .up file
+# 2.5) Build and inject radial backbone cross-table artifacts for production
 # 3) Run 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0
 # 4) Extract key VTF trajectories
 
@@ -73,6 +74,18 @@ PREPARED_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.prepared.up"
 STAGE_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.up"
 PREPARED_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.prepared.up"
 STAGE_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.up"
+
+DEPTH_TABLE_BUILDER="${DEPTH_TABLE_BUILDER:-${SCRIPT_DIR}/build_depth_interaction_table.py}"
+BACKBONE_CROSS_BUILDER="${BACKBONE_CROSS_BUILDER:-${SCRIPT_DIR}/build_backbone_cross_interaction_table.py}"
+BACKBONE_CROSS_INJECTOR="${BACKBONE_CROSS_INJECTOR:-${SCRIPT_DIR}/inject_backbone_cross_potential.py}"
+BACKBONE_ONLY_VALIDATOR="${BACKBONE_ONLY_VALIDATOR:-${SCRIPT_DIR}/validate_backbone_only_up.py}"
+BACKBONE_CROSS_ENABLE="${BACKBONE_CROSS_ENABLE:-1}"
+BACKBONE_CROSS_REBUILD="${BACKBONE_CROSS_REBUILD:-0}"
+DEPTH_TABLE_CSV="${DEPTH_TABLE_CSV:-${RUN_DIR}/depth_interaction_table.csv}"
+DEPTH_TABLE_META="${DEPTH_TABLE_META:-${RUN_DIR}/depth_interaction_table.meta.json}"
+BACKBONE_CROSS_TABLE_CSV="${BACKBONE_CROSS_TABLE_CSV:-${RUN_DIR}/backbone_cross_interaction_table.csv}"
+BACKBONE_CROSS_TABLE_META="${BACKBONE_CROSS_TABLE_META:-${RUN_DIR}/backbone_cross_interaction_table.meta.json}"
+BACKBONE_CROSS_TABLE_H5="${BACKBONE_CROSS_TABLE_H5:-${UPSIDE_HOME}/parameters/ff_2.1/martini.h5}"
 
 # Stage-0 hybrid structure prep controls
 SALT_MOLAR="${SALT_MOLAR:-0.15}"
@@ -194,6 +207,24 @@ if [ "${MARTINIZE_ENABLE}" = "0" ]; then
 fi
 if [ ! -f "${UNIVERSAL_PREP_SCRIPT}" ]; then
     echo "ERROR: universal prep script not found: ${UNIVERSAL_PREP_SCRIPT}"
+    exit 1
+fi
+if [ "${BACKBONE_CROSS_ENABLE}" = "1" ]; then
+    if [ ! -f "${DEPTH_TABLE_BUILDER}" ]; then
+        echo "ERROR: depth table builder not found: ${DEPTH_TABLE_BUILDER}"
+        exit 1
+    fi
+    if [ ! -f "${BACKBONE_CROSS_BUILDER}" ]; then
+        echo "ERROR: backbone cross-table builder not found: ${BACKBONE_CROSS_BUILDER}"
+        exit 1
+    fi
+    if [ ! -f "${BACKBONE_CROSS_INJECTOR}" ]; then
+        echo "ERROR: backbone cross-table injector not found: ${BACKBONE_CROSS_INJECTOR}"
+        exit 1
+    fi
+fi
+if [ "${HYBRID_VALIDATE}" = "1" ] && [ ! -f "${BACKBONE_ONLY_VALIDATOR}" ]; then
+    echo "ERROR: backbone validator not found: ${BACKBONE_ONLY_VALIDATOR}"
     exit 1
 fi
 
@@ -648,6 +679,81 @@ inject_backbone_only_production_nodes() {
         "${reference_state_rama}"
 }
 
+prepare_backbone_cross_artifacts() {
+    if [ "${BACKBONE_CROSS_ENABLE}" != "1" ]; then
+        return
+    fi
+
+    if [ "${BACKBONE_CROSS_REBUILD}" != "1" ] && [ -f "${BACKBONE_CROSS_TABLE_H5}" ]; then
+        echo "=== Stage 0.5: Reuse Cached Backbone Cross-Table Artifact ==="
+        echo "Using cached cross artifact: ${BACKBONE_CROSS_TABLE_H5}"
+        if [ "${HYBRID_VALIDATE}" = "1" ]; then
+            local validator_cmd=(
+                python3 "${BACKBONE_ONLY_VALIDATOR}"
+                --cross-artifact "${BACKBONE_CROSS_TABLE_H5}"
+            )
+            if [ -f "${BACKBONE_CROSS_TABLE_CSV}" ]; then
+                validator_cmd+=(
+                    --cross-table-csv "${BACKBONE_CROSS_TABLE_CSV}"
+                )
+            fi
+            if [ -f "${BACKBONE_CROSS_TABLE_META}" ]; then
+                validator_cmd+=(
+                    --cross-table-meta "${BACKBONE_CROSS_TABLE_META}"
+                )
+            fi
+            if [ -f "${DEPTH_TABLE_CSV}" ]; then
+                validator_cmd+=(
+                    --table-csv "${DEPTH_TABLE_CSV}"
+                )
+            fi
+            if [ -f "${DEPTH_TABLE_META}" ]; then
+                validator_cmd+=(
+                    --table-meta "${DEPTH_TABLE_META}"
+                )
+            fi
+            "${validator_cmd[@]}"
+        fi
+        return
+    fi
+
+    echo "=== Stage 0.5: Build Backbone Cross-Table Artifacts ==="
+    mkdir -p "$(dirname "${BACKBONE_CROSS_TABLE_H5}")"
+    python3 "${DEPTH_TABLE_BUILDER}" \
+        --bilayer-pdb "${BILAYER_PDB}" \
+        --lipid-itp "${SCRIPT_DIR}/ff_dry/dry_martini_v2.1_lipids.itp" \
+        --membrane-h5 "${UPSIDE_HOME}/parameters/ff_2.1/membrane.h5" \
+        --output-csv "${DEPTH_TABLE_CSV}" \
+        --output-json "${DEPTH_TABLE_META}"
+
+    python3 "${BACKBONE_CROSS_BUILDER}" \
+        --ff-itp "${SCRIPT_DIR}/ff_dry/dry_martini_v2.1.itp" \
+        --depth-table-csv "${DEPTH_TABLE_CSV}" \
+        --output-csv "${BACKBONE_CROSS_TABLE_CSV}" \
+        --output-json "${BACKBONE_CROSS_TABLE_META}" \
+        --output-h5 "${BACKBONE_CROSS_TABLE_H5}"
+
+    if [ "${HYBRID_VALIDATE}" = "1" ]; then
+        python3 "${BACKBONE_ONLY_VALIDATOR}" \
+            --table-csv "${DEPTH_TABLE_CSV}" \
+            --table-meta "${DEPTH_TABLE_META}" \
+            --cross-table-csv "${BACKBONE_CROSS_TABLE_CSV}" \
+            --cross-table-meta "${BACKBONE_CROSS_TABLE_META}" \
+            --cross-artifact "${BACKBONE_CROSS_TABLE_H5}"
+    fi
+}
+
+inject_backbone_cross_production_node() {
+    local up_file="$1"
+    if [ "${BACKBONE_CROSS_ENABLE}" != "1" ]; then
+        return
+    fi
+
+    python3 "${BACKBONE_CROSS_INJECTOR}" \
+        --artifact "${BACKBONE_CROSS_TABLE_H5}" \
+        --up-files "${up_file}"
+}
+
 prepare_hybrid_artifacts() {
     echo "=== Stage 0: Hybrid Packing + Mapping Export ==="
     prepare_protein_inputs
@@ -833,6 +939,29 @@ prepare_stage_file() {
             "${UPSIDE_RAMA_SHEET_MIXING}" \
             "${UPSIDE_HBOND_ENERGY}" \
             "${UPSIDE_REFERENCE_STATE_RAMA}"
+        inject_backbone_cross_production_node "$target_file"
+        if [ "${HYBRID_VALIDATE}" = "1" ]; then
+            local validator_cmd=(
+                python3 "${BACKBONE_ONLY_VALIDATOR}"
+                "$target_file"
+            )
+            if [ "${BACKBONE_CROSS_ENABLE}" = "1" ]; then
+                validator_cmd+=(
+                    --cross-artifact "${BACKBONE_CROSS_TABLE_H5}"
+                )
+                if [ -f "${BACKBONE_CROSS_TABLE_CSV}" ]; then
+                    validator_cmd+=(
+                        --cross-table-csv "${BACKBONE_CROSS_TABLE_CSV}"
+                    )
+                fi
+                if [ -f "${BACKBONE_CROSS_TABLE_META}" ]; then
+                    validator_cmd+=(
+                        --cross-table-meta "${BACKBONE_CROSS_TABLE_META}"
+                    )
+                fi
+            fi
+            "${validator_cmd[@]}"
+        fi
     fi
 
     if [ "$npt_enable" = "1" ]; then
@@ -980,15 +1109,17 @@ extract_stage_vtf() {
     python3 extract_martini_vtf.py "$stage_file" "$vtf_file" "$stage_file" "$RUNTIME_PDB_ID" --mode "$mode"
 }
 
-echo "=== Hybrid 1RKL Dry MARTINI Workflow ==="
+echo "=== Dual Dry-MARTINI / Upside 1RKL Workflow ==="
 echo "Protein ID: $PDB_ID"
 echo "Runtime PDB ID: $RUNTIME_PDB_ID"
 echo "Universal prep: ${UNIVERSAL_PREP_SCRIPT} (mode=${UNIVERSAL_PREP_MODE})"
 echo "Hybrid prep: $HYBRID_PREP_DIR"
 echo "Simulation stages: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"
+echo "Production mode: dry-MARTINI bilayer + Upside backbone + backbone cross table"
 echo
 
 prepare_hybrid_artifacts
+prepare_backbone_cross_artifacts
 
 # 6.0: soft-core minimization (pre-production / hybrid inactive)
 set_stage_npt_targets "6.0"
@@ -1042,7 +1173,7 @@ handoff_initial_position "$STAGE_65_FILE" "$STAGE_66_FILE"
 run_md_stage "6.6" "$STAGE_66_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 extract_stage_vtf "6.6" "$STAGE_66_FILE" "1"
 
-# 7.0: production (backbone-only)
+# 7.0: production (dry bilayer + Upside backbone + cross table)
 prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "$PROD_70_BAROSTAT_TYPE" "0" "production"
 cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
 handoff_initial_position "$STAGE_66_FILE" "$STAGE_70_FILE" "production_backbone"
@@ -1054,6 +1185,16 @@ echo "=== Workflow Complete ==="
 echo "Hybrid prep:"
 echo "  Packed PDB: ${HYBRID_PACKED_PDB}"
 echo "  Mapping:    ${HYBRID_MAPPING_FILE}"
+if [ "${BACKBONE_CROSS_ENABLE}" = "1" ]; then
+    echo "Cross-table artifacts:"
+    echo "  Cross H5:   ${BACKBONE_CROSS_TABLE_H5}"
+    if [ -f "${DEPTH_TABLE_CSV}" ]; then
+        echo "  Depth CSV:  ${DEPTH_TABLE_CSV}"
+    fi
+    if [ -f "${BACKBONE_CROSS_TABLE_CSV}" ]; then
+        echo "  Cross CSV:  ${BACKBONE_CROSS_TABLE_CSV}"
+    fi
+fi
 echo "Checkpoints:"
 echo "  6.0: $STAGE_60_FILE"
 echo "  6.1: $STAGE_61_FILE"

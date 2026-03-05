@@ -91,3 +91,31 @@ Generate a validation workflow under `/Users/yinhan/Documents/upside2-md-ConDiv/
    - Base dir: `/Users/yinhan/Documents/upside2-md-ConDiv/ConDiv/remd-4000-8RP-1th-test/validate_test_00`
    - Report: `/Users/yinhan/Documents/upside2-md-ConDiv/ConDiv/remd-4000-8RP-1th-test/validate_test_00/gradient_round_1.json`
    - Result: `pass=true`
+
+## Active Task (Dry-MARTINI vs Upside Parameter Table)
+
+### Goal
+Locate the existing script that generates the dry-MARTINI to Upside force-field parameter table as CSV, run it in the repo environment, and report the output artifact path.
+
+### Architecture & Key Decisions
+1. Reuse the existing in-repo generator script instead of recreating the table logic.
+2. Run from the project root with the required environment bootstrap (`source .venv/bin/activate && source source.sh`) to match repo expectations.
+3. Treat this task as execution-only unless the existing script is broken; do not change force-field code or mapping logic unless required to make the documented script run.
+
+### Execution Phases
+- [x] Phase B1: Locate the CSV generator script and confirm expected inputs/outputs.
+- [x] Phase B2: Run the script in the project environment.
+- [x] Phase B3: Verify the generated CSV path and capture any relevant console result.
+
+### Known Errors / Blockers (Active Task)
+1. None yet.
+
+### Review (Active Task)
+1. Ran `example/16.MARTINI/build_depth_interaction_table.py` from `example/16.MARTINI/` after sourcing `.venv/bin/activate` and `source.sh`.
+2. Generated artifacts:
+   - `example/16.MARTINI/outputs/depth_interaction_table.csv`
+   - `example/16.MARTINI/outputs/depth_interaction_table.meta.json`
+3. Verification results:
+   - Script exited successfully and reported `Bilayer z_center = 42.484580 A`.
+   - Metadata reports `backbone_cb_energy=true`, `hbond_hb_energy=true`, `sidechain_term=false`, `sheet_term=false`.
+   - CSV contains 15 lines total (header + 14 bead rows).

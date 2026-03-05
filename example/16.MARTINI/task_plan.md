@@ -167,3 +167,148 @@
 - New workflow variant requirement: keep `hybrid_control` enabled for dynamic rigid-mask enforcement but set `activation_stage` to a non-used token so hybrid protein coupling is never active in any stage; this preserves rigid-protein dry-MARTINI interactions without production Upside force exchange.
 - New workflow variant requirement: do not inject production rotamer/backbone nodes and use VTF extraction mode `1` at stage 7.0 to disable SC/backbone back-mapping output.
 - Stage-file injection in `run_sim_1rkl.sh` must scale AA backbone carrier masses by `72/54` so each `N/CA/C/O` carrier set sums to MARTINI `BB` mass `72/12`, giving per-carrier masses `N=1.56`, `CA=1.33`, `C=1.33`, `O=1.78` (Upside mass units).
+
+## Active Task (Radial Backbone Cross Table)
+
+### Goal
+- Implement a true distance-dependent dry-MARTINI vs Upside-backbone interaction-table workflow that uses the DOPC dry-type trend from `outputs/depth_interaction_table.csv` to span all dry-MARTINI types and emits a runtime-ready artifact for `martini_rbm_cross_potential`.
+
+### Architecture & Key Decisions (Active Task)
+- Keep the existing depth-table generator unchanged; use its DOPC bead-type aggregates as calibration inputs for the new cross table.
+- Runtime form is the existing Gaussian radial-basis node `martini_rbm_cross_potential`; no new C++ potential node is added in this run.
+- Backbone classes are the explicit injected AA roles `N`, `CA`, `C`, `O`.
+- Environment classes are dry-MARTINI `/input/type` values and must cover all 38 dry atom types from `ff_dry/dry_martini_v2.1.itp`.
+- The target radial curve is arbitrary smooth spline data, not LJ; dry-MARTINI `sigma/epsilon` are used only to span trend, well position, and role-specific scaling.
+- DOPC calibration uses bead-type aggregates from the existing depth table and sets both ranking and scale for extrapolation to uncovered dry types.
+
+### Execution Phases (Active Task)
+- [x] Phase H1: Add radial cross-table generator and artifact writer.
+- [x] Phase H2: Add standalone injector for prepared `.up` files using the generated artifact.
+- [x] Phase H3: Extend validation tooling for the new CSV/JSON/HDF5 artifacts.
+- [x] Phase H4: Run syntax and generation/injection verification and record results.
+
+### Known Errors / Blockers (Active Task)
+- None yet.
+
+### Review (Active Task)
+- Added new tooling:
+  - `build_backbone_cross_interaction_table.py`
+  - `inject_backbone_cross_potential.py`
+  - extended `validate_backbone_only_up.py` for cross-table CSV/JSON/HDF5 validation
+- Generated artifacts:
+  - `outputs/backbone_cross_interaction_table.csv`
+  - `outputs/backbone_cross_interaction_table.meta.json`
+  - `outputs/backbone_cross_interaction_table.h5`
+- Verification results:
+  - `python3 -m py_compile build_backbone_cross_interaction_table.py inject_backbone_cross_potential.py validate_backbone_only_up.py` passed.
+  - `python3 build_backbone_cross_interaction_table.py` passed and produced a `4 x 38 x 12` runtime weight tensor.
+  - `python3 validate_backbone_only_up.py --cross-table-csv ... --cross-table-meta ... --cross-artifact ...` passed.
+  - Injector check on a temporary copy of `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.prepared.up` passed and wrote a `martini_rbm_cross_potential` node with:
+    - `protein_atom_indices=124`
+    - `env_atom_indices=4025`
+    - `weights_shape=(4, 38, 12)`
+
+## Active Task (Dual Dry-MARTINI / Upside Runtime Wiring)
+
+### Goal
+- Update `run_sim_1rkl.sh` so the production-stage workflow actually runs the intended mixed simulation:
+  - dry-MARTINI potentials for bilayer/environment
+  - Upside all-atom-backbone potentials for protein
+  - `martini_rbm_cross_potential` from the new backbone cross-table artifact for protein-environment coupling
+
+### Architecture & Key Decisions
+- Keep pre-production stages `6.0-6.6` unchanged: dry-MARTINI preparation plus hybrid mapping only, with no injected Upside-backbone or cross-potential nodes.
+- Build the depth-table and radial backbone cross-table artifacts once per workflow run, immediately after hybrid packing/mapping generation and before stage file preparation.
+- Inject both production-only node sets into stage `7.0` prepared files:
+  - backbone-only Upside nodes from `inject_backbone_only_nodes.py`
+  - cross potential from `inject_backbone_cross_potential.py`
+- Rely on existing `aa_backbone_explicit_lipid` runtime behavior so `martini_potential` continues to cover bilayer/environment while suppressing protein-internal MARTINI interactions during production.
+- Validate only production-stage prepared files against the backbone/cross-table validator, because earlier stages intentionally lack the production-only nodes.
+
+### Execution Phases
+- [x] Phase I1: Finish `run_sim_1rkl.sh` call-site wiring for backbone cross-table artifact generation and production-node injection.
+- [x] Phase I2: Update workflow summary text/comments so stage `7.0` semantics are explicit.
+- [x] Phase I3: Run shell syntax and targeted artifact/injection validation, then record results.
+
+### Known Errors / Blockers
+- None yet.
+
+### Review
+- `run_sim_1rkl.sh` now calls `prepare_backbone_cross_artifacts` immediately after hybrid packing/mapping preparation, so depth-table and radial cross-table artifacts are built before any stage files are prepared.
+- Production-stage preparation (`stage_label=production`) now injects both backbone-only Upside nodes and `martini_rbm_cross_potential`; validation passes cross-table flags only when `BACKBONE_CROSS_ENABLE=1`.
+- Workflow messaging now makes the mixed runtime explicit:
+  - banner text updated to `Dual Dry-MARTINI / Upside`
+  - stage `7.0` comment updated to `dry bilayer + Upside backbone + cross table`
+  - completion summary now reports the generated depth/cross artifact paths
+- Verification completed:
+  - `bash -n run_sim_1rkl.sh` passed.
+  - `build_depth_interaction_table.py` and `build_backbone_cross_interaction_table.py` succeeded writing artifacts under `outputs/martini_test_1rkl_hybrid/`.
+  - `validate_backbone_only_up.py --table-* --cross-*` passed on those artifacts.
+  - Production-path smoke test passed on a temporary copy of `1rkl.stage_7.0.prepared.up` after applying the same injector order as the script (`inject_backbone_only_nodes.py` then `inject_backbone_cross_potential.py`).
+
+## Active Task (Cached MARTINI Hybrid Parameter File)
+
+### Goal
+- Move the runtime dry-MARTINI/Upside cross-interaction artifact into the shared parameter tree as `parameters/ff_2.1/martini.h5` so normal simulation runs reuse it instead of rebuilding it every time.
+
+### Architecture & Key Decisions
+- Treat `parameters/ff_2.1/martini.h5` as the default runtime artifact consumed by `inject_backbone_cross_potential.py`.
+- Keep the CSV/JSON outputs as optional build products in the run directory for inspection and regeneration only; they are no longer required for every run.
+- Default workflow behavior is cache-first:
+  - if `parameters/ff_2.1/martini.h5` exists, reuse it
+  - rebuild only when the file is missing or an explicit rebuild flag is set
+- Production-stage validation must tolerate cached-only runs by passing `--cross-artifact` always and only adding `--cross-table-csv/--cross-table-meta` when those files exist.
+
+### Execution Phases
+- [x] Phase J1: Update `run_sim_1rkl.sh` defaults and artifact-preparation logic for cached `parameters/ff_2.1/martini.h5`.
+- [x] Phase J2: Generate/install `parameters/ff_2.1/martini.h5`.
+- [x] Phase J3: Re-run syntax and targeted artifact/injection validation, then record results.
+
+### Known Errors / Blockers
+- None yet.
+
+### Review
+- `run_sim_1rkl.sh` now defaults `BACKBONE_CROSS_TABLE_H5` to `parameters/ff_2.1/martini.h5` via `${UPSIDE_HOME}/parameters/ff_2.1/martini.h5`.
+- Added cache-first behavior:
+  - if `martini.h5` exists and `BACKBONE_CROSS_REBUILD!=1`, the workflow reuses it and skips rebuilding depth/cross artifacts
+  - if the file is missing or `BACKBONE_CROSS_REBUILD=1`, the workflow rebuilds and writes the HDF5 artifact back to `parameters/ff_2.1/martini.h5`
+- Production-stage validation now always uses `--cross-artifact` and only passes `--cross-table-csv/--cross-table-meta` when those optional files exist, so cached-only runs do not fail due to missing run-local reports.
+- Installed shared runtime artifact:
+  - `parameters/ff_2.1/martini.h5`
+- Verification completed:
+  - `bash -n run_sim_1rkl.sh` passed.
+  - `build_backbone_cross_interaction_table.py ... --output-h5 parameters/ff_2.1/martini.h5` passed.
+  - `validate_backbone_only_up.py --cross-artifact parameters/ff_2.1/martini.h5` passed.
+  - Production-path smoke test on a temp `.up` copy passed using the shared artifact path:
+    - `inject_backbone_only_nodes.py`
+    - `inject_backbone_cross_potential.py --artifact parameters/ff_2.1/martini.h5`
+    - `validate_backbone_only_up.py ... --cross-artifact parameters/ff_2.1/martini.h5`
+
+## Active Task (Stage-7 Runtime Compatibility Fixes)
+
+### Goal
+- Fix the actual stage-7.0 runtime startup errors in the backbone-only + cross-potential production path so `run_sim_1rkl.sh` can launch MD without failing on missing node dependencies or cross-node shape mismatches.
+
+### Architecture & Key Decisions
+- `affine_alignment` is a required backbone dependency for `backbone_pairs`; it must be kept/generated in backbone-only production stage files and must not be classified as a forbidden sidechain node.
+- `martini_rbm_cross_potential` must use dense local class indices inside each injected `.up` file, because the C++ loader infers class counts from the max class index present in that file rather than from the artifact-wide class list.
+- Validation must check runtime-relevant graph/schema constraints, not only artifact presence:
+  - require `affine_alignment` alongside the other backbone nodes
+  - verify cross-node `weights.shape == (max(protein_class_index)+1, max(env_class_index)+1, n_radial)`
+
+### Execution Phases
+- [x] Phase K1: Restore `affine_alignment` in backbone-only node injection and align validation with that dependency.
+- [x] Phase K2: Dense-reindex injected cross-potential classes and update validation for runtime-compatible `weights` shapes.
+- [x] Phase K3: Re-run temp stage-7.0 injection plus one-step `upside` startup verification.
+
+### Known Errors / Blockers
+- One-step startup now succeeds, but the temp production smoke test still reports an extremely large initial `martini_potential`; that is a physical/calibration issue, not the startup/schema failure reported here.
+
+### Review
+- `inject_backbone_only_nodes.py` now treats `affine_alignment` as part of the required backbone node set and explicitly writes it before `backbone_pairs`.
+- `validate_backbone_only_up.py` now requires `affine_alignment` and validates injected `martini_rbm_cross_potential` node dimensions against the actual class indices stored in the stage file.
+- `inject_backbone_cross_potential.py` now compresses used protein/environment classes to dense local indices and slices the weight tensor accordingly before writing the node into a `.up` file.
+- Verification completed on a temp copy of `1rkl.stage_7.0.prepared.up`:
+  - backbone-only injection + cross injection passed validation
+  - injected cross node now uses `weights.shape == (4, 6, 12)` for the six dry types present in this system
+  - one-step `obj/upside` startup passed the previous `backbone_pairs -> affine_alignment` and `weights shape` failures and entered MD
