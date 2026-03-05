@@ -1,5 +1,38 @@
 # Progress Log
 
+## 2026-03-05 (Restore Pre-Production Rigid Control in `run_sim_1rkl.sh`)
+- Reintroduced explicit stage-file hybrid control metadata in `run_sim_1rkl.sh`:
+  - added workflow config knobs for the required control attrs:
+    - `HYBRID_CONTROL_ENABLE`
+    - `HYBRID_ACTIVATION_STAGE`
+    - `HYBRID_PREPROD_PROTEIN_MODE`
+    - `HYBRID_PREP_RUNTIME_MODE`
+    - `HYBRID_ACTIVE_RUNTIME_MODE`
+    - `HYBRID_PREPROD_LIPID_HEADGROUP_ROLES`
+  - added `set_hybrid_control()` to create/update `/input/hybrid_control` in prepared stage files
+  - `prepare_stage_file()` now calls `set_hybrid_control()` immediately after mapping injection and stage-label assignment, so stages `6.0-6.6` once again advertise `dry_martini_prep + rigid` pre-production behavior and stage `7.0` keeps explicit production activation metadata
+- Kept the current mapping schema/backbone-only workflow intact:
+  - `inject_hybrid_mapping()` still requires `hybrid_bb_map` and `hybrid_env_topology`
+  - it now preserves an optional mapping-provided `hybrid_control` group if present, but the workflow overwrites the runtime-critical attrs afterward
+- Updated workflow messaging/comments to reflect the restored semantics:
+  - banner now prints `Pre-production mode: rigid protein + dry-MARTINI environment`
+  - stage comments for `6.2-6.6` explicitly mention the rigid protein hold
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
+  - temp stage-file control injection using the script’s own new helper -> pass
+    - source-only preamble of `run_sim_1rkl.sh` was loaded
+    - `set_hybrid_control()` was run on a temp copy of `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_6.6.up`
+    - inspected attrs:
+      - `enable = 1`
+      - `activation_stage = production`
+      - `preprod_protein_mode = rigid`
+      - `prep_runtime_mode = dry_martini_prep`
+      - `active_runtime_mode = aa_backbone_explicit_lipid`
+      - `preprod_lipid_headgroup_roles = PO4`
+      - existing `current_stage = minimization` preserved
+  - noted current stale outputs:
+    - existing generated stage files in `outputs/martini_test_1rkl_hybrid/checkpoints/` still lack `/input/hybrid_control` because they predate this fix; rerun the workflow to regenerate them with the restored rigid-preproduction behavior
+
 ## 2026-03-05 (Stage-7 Runtime Compatibility Fixes)
 - Fixed the missing `affine_alignment` dependency in backbone-only production node injection:
   - `inject_backbone_only_nodes.py` now treats `affine_alignment` as a required backbone node instead of a removable sidechain node

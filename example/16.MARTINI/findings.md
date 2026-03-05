@@ -1,5 +1,14 @@
 # Findings
 
+## 2026-03-05 (Pre-Production Rigid Control Regression Root Cause)
+- Current generated stage files under `outputs/martini_test_1rkl_hybrid/checkpoints/` do not contain `/input/hybrid_control`; spot checks on `1rkl.stage_6.6.up` and `1rkl.stage_7.0.up` confirmed the group is absent.
+- The existing C++ pre-production rigid-mask logic in `../../src/martini.cpp` only activates when `/input/hybrid_control` exists with:
+  - `enable=1`
+  - `preprod_protein_mode=rigid`
+  - `prep_runtime_mode=dry_martini_prep`
+- `run_sim_1rkl.sh` had been reduced to injecting only `hybrid_bb_map` and `hybrid_env_topology`, so the workflow no longer emitted the control metadata required to freeze protein before production.
+- Restoring rigidity does not require a C++ change; it is sufficient for the workflow to synthesize `/input/hybrid_control` into each prepared stage file and set production activation explicitly (`activation_stage=production`, `active_runtime_mode=aa_backbone_explicit_lipid`).
+
 ## 2026-03-05 (Backbone-Only Workflow Schema Audit)
 - Workflow-level legacy hook sweep over `example/16.MARTINI` (`*.sh`, `*.py`) confirms removal of:
   - stage-activation/sc-control hook helpers (`set_hybrid_activation_stage`, `set_hybrid_sc_controls`, `assert_hybrid_stage_active`),

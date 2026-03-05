@@ -9,7 +9,7 @@ cd "${SCRIPT_DIR}"
 # Hybrid 1RKL workflow:
 # 0) Hybrid preparation (packed MARTINI + hybrid mapping export)
 # 1) Stage input generation (dry MARTINI)
-# 2) Inject hybrid mapping into each stage .up file
+# 2) Inject hybrid mapping + stage-control metadata into each stage .up file
 # 2.5) Build and inject radial backbone cross-table artifacts for production
 # 3) Run 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0
 # 4) Extract key VTF trajectories
@@ -107,6 +107,12 @@ THERMOSTAT_TIMESCALE="${THERMOSTAT_TIMESCALE:-4.0}"
 THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
 SEED="${SEED:-7090685331}"
 STRICT_STAGE_HANDOFF="${STRICT_STAGE_HANDOFF:-1}"
+HYBRID_CONTROL_ENABLE="${HYBRID_CONTROL_ENABLE:-1}"
+HYBRID_ACTIVATION_STAGE="${HYBRID_ACTIVATION_STAGE:-production}"
+HYBRID_PREPROD_PROTEIN_MODE="${HYBRID_PREPROD_PROTEIN_MODE:-rigid}"
+HYBRID_PREP_RUNTIME_MODE="${HYBRID_PREP_RUNTIME_MODE:-dry_martini_prep}"
+HYBRID_ACTIVE_RUNTIME_MODE="${HYBRID_ACTIVE_RUNTIME_MODE:-aa_backbone_explicit_lipid}"
+HYBRID_PREPROD_LIPID_HEADGROUP_ROLES="${HYBRID_PREPROD_LIPID_HEADGROUP_ROLES:-PO4}"
 
 MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-500}"
 MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-500}"
@@ -465,6 +471,9 @@ groups = [
     "hybrid_bb_map",
     "hybrid_env_topology",
 ]
+optional_groups = [
+    "hybrid_control",
+]
 
 BB_COMPONENT_MASS = {
     "N": 14.0,
@@ -507,6 +516,13 @@ with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
     for g in groups:
         if g not in src_inp:
             raise ValueError(f"Missing mapping group in {mapping_file}: /input/{g}")
+        if g in dst_inp:
+            del dst_inp[g]
+        src.copy(src_inp[g], dst_inp, name=g)
+
+    for g in optional_groups:
+        if g not in src_inp:
+            continue
         if g in dst_inp:
             del dst_inp[g]
         src.copy(src_inp[g], dst_inp, name=g)
@@ -653,6 +669,39 @@ with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
 
     if env_grp["protein_membership"].shape[0] != dst_inp["pos"].shape[0]:
         raise ValueError(f"{up_file}: hybrid_env_topology/protein_membership length mismatch after augmentation")
+PY
+}
+
+set_hybrid_control() {
+    local up_file="$1"
+    local enable="$2"
+    local activation_stage="$3"
+    local preprod_mode="$4"
+    local prep_runtime_mode="$5"
+    local active_runtime_mode="$6"
+    local preprod_headgroup_roles="$7"
+    python3 - "$up_file" "$enable" "$activation_stage" "$preprod_mode" "$prep_runtime_mode" "$active_runtime_mode" "$preprod_headgroup_roles" << 'PY'
+import sys
+import h5py
+import numpy as np
+
+up_file = sys.argv[1]
+enable = int(sys.argv[2])
+activation_stage = sys.argv[3]
+preprod_mode = sys.argv[4]
+prep_runtime_mode = sys.argv[5]
+active_runtime_mode = sys.argv[6]
+preprod_headgroup_roles = sys.argv[7]
+
+with h5py.File(up_file, "r+") as h5:
+    inp = h5.require_group("input")
+    grp = inp.require_group("hybrid_control")
+    grp.attrs["enable"] = np.int8(enable)
+    grp.attrs["activation_stage"] = np.bytes_(activation_stage)
+    grp.attrs["preprod_protein_mode"] = np.bytes_(preprod_mode)
+    grp.attrs["prep_runtime_mode"] = np.bytes_(prep_runtime_mode)
+    grp.attrs["active_runtime_mode"] = np.bytes_(active_runtime_mode)
+    grp.attrs["preprod_lipid_headgroup_roles"] = np.bytes_(preprod_headgroup_roles)
 PY
 }
 
@@ -930,6 +979,14 @@ prepare_stage_file() {
     mv -f "$prepared_tmp" "$target_file"
     inject_hybrid_mapping "$target_file" "${HYBRID_MAPPING_FILE}"
     set_stage_label "$target_file" "$stage_label"
+    set_hybrid_control \
+        "$target_file" \
+        "$HYBRID_CONTROL_ENABLE" \
+        "$HYBRID_ACTIVATION_STAGE" \
+        "$HYBRID_PREPROD_PROTEIN_MODE" \
+        "$HYBRID_PREP_RUNTIME_MODE" \
+        "$HYBRID_ACTIVE_RUNTIME_MODE" \
+        "$HYBRID_PREPROD_LIPID_HEADGROUP_ROLES"
     if [ "$stage_label" = "production" ]; then
         inject_backbone_only_production_nodes \
             "$target_file" \
@@ -1115,6 +1172,7 @@ echo "Runtime PDB ID: $RUNTIME_PDB_ID"
 echo "Universal prep: ${UNIVERSAL_PREP_SCRIPT} (mode=${UNIVERSAL_PREP_MODE})"
 echo "Hybrid prep: $HYBRID_PREP_DIR"
 echo "Simulation stages: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"
+echo "Pre-production mode: rigid protein + dry-MARTINI environment"
 echo "Production mode: dry-MARTINI bilayer + Upside backbone + backbone cross table"
 echo
 
@@ -1136,14 +1194,14 @@ handoff_initial_position "$STAGE_60_FILE" "$STAGE_61_FILE"
 run_minimization_stage "6.1" "$STAGE_61_FILE" "$MIN_61_MAX_ITER"
 extract_stage_vtf "6.1" "$STAGE_61_FILE" "1"
 
-# 6.2: soft equilibration
+# 6.2: soft equilibration with rigid protein hold
 set_stage_npt_targets "6.2"
 prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "0" "200" "minimization"
 handoff_initial_position "$STAGE_61_FILE" "$STAGE_62_FILE"
 run_md_stage "6.2" "$STAGE_62_FILE" "$STAGE_62_FILE" "$EQ_62_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 extract_stage_vtf "6.2" "$STAGE_62_FILE" "1"
 
-# 6.3: reduced softening equilibration
+# 6.3: reduced softening equilibration with rigid protein hold
 set_stage_npt_targets "6.3"
 prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "0" "100" "minimization"
 cp -f "$PREPARED_63_FILE" "$STAGE_63_FILE"
@@ -1151,7 +1209,7 @@ handoff_initial_position "$STAGE_62_FILE" "$STAGE_63_FILE"
 run_md_stage "6.3" "$STAGE_63_FILE" "$STAGE_63_FILE" "$EQ_63_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 extract_stage_vtf "6.3" "$STAGE_63_FILE" "1"
 
-# 6.4-6.6: hard equilibration with restraint ramp
+# 6.4-6.6: hard equilibration with restraint ramp and rigid protein hold
 set_stage_npt_targets "6.4"
 prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "0" "50" "minimization"
 cp -f "$PREPARED_64_FILE" "$STAGE_64_FILE"

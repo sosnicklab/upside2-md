@@ -312,3 +312,42 @@
   - backbone-only injection + cross injection passed validation
   - injected cross node now uses `weights.shape == (4, 6, 12)` for the six dry types present in this system
   - one-step `obj/upside` startup passed the previous `backbone_pairs -> affine_alignment` and `weights shape` failures and entered MD
+
+## Active Task (Pre-Production Rigid Control Restoration)
+
+### Goal
+- Restore the explicit stage-file control metadata in `run_sim_1rkl.sh` so stages `6.0-6.6` actually hold the protein rigid before the production stage while keeping stage `7.0` activation semantics unchanged.
+
+### Architecture & Key Decisions
+- Keep the current backbone-only mapping schema (`hybrid_bb_map` + `hybrid_env_topology`) as the required mapping payload.
+- Treat `/input/hybrid_control` as runtime control metadata that the workflow synthesizes directly into each prepared stage file instead of requiring it from the mapping export.
+- Preserve any optional `hybrid_control` group from the mapping file if present, then overwrite the workflow-critical attrs so behavior is deterministic:
+  - `enable=1`
+  - `activation_stage=production`
+  - `preprod_protein_mode=rigid`
+  - `prep_runtime_mode=dry_martini_prep`
+  - `active_runtime_mode=aa_backbone_explicit_lipid`
+  - `preprod_lipid_headgroup_roles=PO4`
+- Limit the fix to `run_sim_1rkl.sh`; do not change C++ runtime behavior for this request.
+
+### Execution Phases
+- [x] Phase L1: Patch `run_sim_1rkl.sh` to write the required `hybrid_control` attrs into every prepared stage file.
+- [x] Phase L2: Run syntax plus temp-HDF5 verification to confirm the generated control block is present and carries the intended values.
+- [x] Phase L3: Record the root cause and verification results in `findings.md` and `progress.md`.
+
+### Known Errors / Blockers
+- Existing generated stage files under `outputs/martini_test_1rkl_hybrid/checkpoints/` were produced before this fix and currently lack `/input/hybrid_control`; they must be regenerated to benefit from the restored rigid-preproduction behavior.
+
+### Review
+- `run_sim_1rkl.sh` now restores `/input/hybrid_control` directly into every prepared stage file after mapping injection and stage-label assignment.
+- The workflow writes the control attrs needed by the existing C++ rigid-mask logic:
+  - `enable=1`
+  - `activation_stage=production`
+  - `preprod_protein_mode=rigid`
+  - `prep_runtime_mode=dry_martini_prep`
+  - `active_runtime_mode=aa_backbone_explicit_lipid`
+  - `preprod_lipid_headgroup_roles=PO4`
+- `inject_hybrid_mapping()` also preserves an optional mapping-provided `hybrid_control` group if one appears in future artifacts, but the workflow still overwrites the required control attrs so stage semantics stay deterministic.
+- Verification completed:
+  - `bash -n run_sim_1rkl.sh` passed.
+  - A temp copy of `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_6.6.up` was updated via the new `set_hybrid_control()` helper from the script itself and then inspected with `h5py`; the resulting attrs matched the intended pre-production rigid / production activation settings while `current_stage` remained `minimization`.
