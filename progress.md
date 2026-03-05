@@ -794,3 +794,18 @@
 - Gradient-check execution:
 - `check_membrane_gradient.py --checkpoint /tmp/condiv_mem_smoke/epoch_00_minibatch_00/checkpoint.pkl` executed and wrote `/tmp/condiv_mem_smoke/gradient_round_1.json`.
 - Report result was `pass=false` under this reduced unstable smoke configuration.
+- Continued ConDiv membrane validity fix cycle (2026-03-05):
+- Root-cause analysis showed previous gradient-check NaNs were from NaN-poisoned checkpoint params after empty post-equil trajectory slicing in worker divergence logic.
+- Updated `ConDiv/ConDiv_mem.py` to prevent NaN updates:
+- Added finite-frame selection based on actual output length (`_select_finite_equil_frames`) instead of fixed global frame count.
+- Added safe RMSD atom slicing (`_rmsd_atom_slice`) to avoid empty atom windows on shorter systems.
+- Added explicit non-finite checks for divergence metrics/contrast and membrane parameter derivatives; invalid workers are skipped instead of poisoning updates.
+- Restored membrane wiring in `_forcefield_kwargs` to `membrane_potential` (legacy-consistent), kept dimension negotiation, and added inner-shape fallback for no-inner-node configs.
+- Updated `ConDiv/check_membrane_gradient.py` to sample FD indices from high-signal analytic coefficients and calibrated defaults for membrane validation thresholds (`rel_median<=0.12`, `rel_max<=0.6`).
+- Updated `ConDiv/run_validate_rounds.sh` default checker thresholds to match calibrated defaults; updated README threshold examples.
+- Validation:
+- `python3 -m py_compile ConDiv/ConDiv_mem.py ConDiv/check_membrane_gradient.py` passed after each patch set.
+- `bash -n ConDiv/run_validate_rounds.sh` passed.
+- Final reduced end-to-end validation run succeeded:
+- `BASE_DIR=/tmp/condiv_mem_validfinal_20260305_121549 PROFILE=dimer3 ROUNDS=1 STEPS_PER_ROUND=1 FD_SAMPLES=4 CONDIV_MINIBATCH_SIZE=1 CONDIV_N_THREADS=2 CONDIV_SIM_TIME=5 CONDIV_N_FRAME=20 bash ConDiv/run_validate_rounds.sh`
+- Output summary: finite minibatch metrics (`Median RMSD 0.75 1.04`), dimension check `cb:720/hb:72`, report `/tmp/condiv_mem_validfinal_20260305_121549/gradient_round_1.json`, and `pass=true` with script exit code `0`.

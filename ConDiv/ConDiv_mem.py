@@ -428,13 +428,18 @@ def _validate_membrane_file_vs_model(config_base: str, membrane_file: str) -> Me
 
     expected_shapes = {
         "cb_coeff": spec.cb_coeff_shape,
-        "cb_inner": spec.cb_inner_shape,
         "hb_coeff": spec.hb_coeff_shape,
-        "hb_inner": spec.hb_inner_shape,
     }
-    mismatched = [k for k in ff_shapes if ff_shapes[k] != expected_shapes[k]]
+    mismatched = [k for k in expected_shapes if ff_shapes[k] != expected_shapes[k]]
+    if spec.cb_inner_size > 0 and ff_shapes["cb_inner"] != spec.cb_inner_shape:
+        mismatched.append("cb_inner")
+    if spec.hb_inner_size > 0 and ff_shapes["hb_inner"] != spec.hb_inner_shape:
+        mismatched.append("hb_inner")
     if mismatched:
-        details = "; ".join(f"{k}: ff {ff_shapes[k]} vs model {expected_shapes[k]}" for k in mismatched)
+        details = "; ".join(
+            f"{k}: ff {ff_shapes[k]} vs model {expected_shapes.get(k, spec.cb_inner_shape if k == 'cb_inner' else spec.hb_inner_shape)}"
+            for k in mismatched
+        )
         raise RuntimeError(f"Membrane force-field/model dimension mismatch: {details}")
 
     return spec
@@ -510,7 +515,7 @@ def _forcefield_kwargs(ff_dir: str, membrane_file: str, thickness: str, chain_br
         rama_param_deriv=True,
         rama_library=str(common / "rama.dat"),
         reference_state_rama=str(common / "rama_reference.pkl"),
-        channel_membrane_potential=membrane_file,
+        membrane_potential=membrane_file,
         membrane_thickness=float(thickness),
         surface=True,
     )
@@ -538,9 +543,31 @@ def _prepare_chain_break_file(chain_break_path: str, output_path: str) -> str:
     return output_path
 
 
+def _fallback_inner_shapes_from_config(config_base: str) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
+    default_shapes = ((0,), (0,))
+    try:
+        with tb.open_file(config_base) as t:
+            args = t.root.input.args._v_attrs
+            membrane_file = getattr(args, "channel_membrane_potential", "") or getattr(args, "membrane_potential", "")
+        if not membrane_file or not os.path.exists(membrane_file):
+            return default_shapes
+        with tb.open_file(membrane_file) as mt:
+            return _shape_tuple(mt.root.icb_energy.shape), _shape_tuple(mt.root.ihb_energy.shape)
+    except Exception:
+        return default_shapes
+
+
 def compute_divergence(config_base: str, pos: np.ndarray, mode: int = 0) -> Update:
     del mode
     spec = resolve_membrane_param_spec(config_base)
+    cb_inner_shape = spec.cb_inner_shape
+    hb_inner_shape = spec.hb_inner_shape
+    if spec.cb_inner_size == 0 or spec.hb_inner_size == 0:
+        fb_cb_inner_shape, fb_hb_inner_shape = _fallback_inner_shapes_from_config(config_base)
+        if spec.cb_inner_size == 0:
+            cb_inner_shape = fb_cb_inner_shape
+        if spec.hb_inner_size == 0:
+            hb_inner_shape = fb_hb_inner_shape
 
     engine = ue.Upside(config_base)
     contrast = Update([], [], [], [])
@@ -551,7 +578,7 @@ def compute_divergence(config_base: str, pos: np.ndarray, mode: int = 0) -> Upda
         dp_cb_memb = engine.get_param_deriv((spec.cb_active_size,), spec.cb_node_name)
         if spec.cb_active_size == spec.cb_coeff_size:
             odp_cb_memb = dp_cb_memb.reshape(spec.cb_coeff_shape)
-            idp_cb_memb = np.zeros(spec.cb_inner_shape, dtype=np.float32)
+            idp_cb_memb = np.zeros(cb_inner_shape, dtype=np.float32)
         else:
             odp_cb_memb = dp_cb_memb[: spec.cb_coeff_size].reshape(spec.cb_coeff_shape)
             idp_cb_memb = dp_cb_memb[spec.cb_coeff_size :].reshape(spec.cb_inner_shape)
@@ -559,10 +586,14 @@ def compute_divergence(config_base: str, pos: np.ndarray, mode: int = 0) -> Upda
         dp_hb_memb = engine.get_param_deriv((spec.hb_active_size,), spec.hb_node_name)
         if spec.hb_active_size == spec.hb_coeff_size:
             odp_hb_memb = dp_hb_memb.reshape(spec.hb_coeff_shape)
-            idp_hb_memb = np.zeros(spec.hb_inner_shape, dtype=np.float32)
+            idp_hb_memb = np.zeros(hb_inner_shape, dtype=np.float32)
         else:
             odp_hb_memb = dp_hb_memb[: spec.hb_coeff_size].reshape(spec.hb_coeff_shape)
             idp_hb_memb = dp_hb_memb[spec.hb_coeff_size :].reshape(spec.hb_inner_shape)
+        if not np.isfinite(odp_cb_memb).all() or not np.isfinite(idp_cb_memb).all():
+            raise RuntimeError(f"NONFINITE_MEMBRANE_DERIV {spec.cb_node_name}")
+        if not np.isfinite(odp_hb_memb).all() or not np.isfinite(idp_hb_memb).all():
+            raise RuntimeError(f"NONFINITE_MEMBRANE_DERIV {spec.hb_node_name}")
 
         contrast.cb.append(odp_cb_memb)
         contrast.icb.append(idp_cb_memb)
@@ -577,6 +608,36 @@ def _safe_energy_component(engine: ue.Upside, node_name: str) -> float:
         return float(engine.get_output(node_name)[0, 0])
     except Exception:
         return float("nan")
+
+
+def _select_finite_equil_frames(pos: np.ndarray, equil_fraction: float) -> np.ndarray:
+    if pos.ndim != 3:
+        raise RuntimeError(f"Unexpected trajectory shape {pos.shape}, expected (n_frame,n_atom,3)")
+    n_frame = int(pos.shape[0])
+    if n_frame <= 0:
+        raise RuntimeError("No output frames available")
+
+    start = min(int(equil_fraction * n_frame), max(0, n_frame - 1))
+    sliced = pos[start:]
+    mask = np.isfinite(sliced).all(axis=(1, 2))
+    filtered = sliced[mask]
+    if filtered.shape[0] > 0:
+        return filtered
+
+    mask_all = np.isfinite(pos).all(axis=(1, 2))
+    filtered_all = pos[mask_all]
+    if filtered_all.shape[0] > 0:
+        return filtered_all
+
+    raise RuntimeError("No finite trajectory frames available")
+
+
+def _rmsd_atom_slice(n_atom: int, k: int) -> slice:
+    k_max = max(0, n_atom // 2 - 1)
+    k_eff = max(0, min(k, k_max))
+    if k_eff == 0:
+        return slice(None)
+    return slice(k_eff, -k_eff)
 
 
 def compute_frame_properties(argv):
@@ -742,9 +803,24 @@ def run_minibatch(
                 with open(f"{direc}/{nm}.divergence.pkl", "rb") as fh:
                     divergence = cp.load(fh)
 
+                metrics = np.array(
+                    [
+                        float(divergence["rmsd_restrain"]),
+                        float(divergence["rmsd"]),
+                        float(divergence["com_restrain"]),
+                        float(divergence["com"]),
+                    ],
+                    dtype=np.float64,
+                )
+                contrast = divergence["contrast"]
+                contrast_finite = all(np.isfinite(np.asarray(x)).all() for x in contrast)
+                if (not np.isfinite(metrics).all()) or (not contrast_finite):
+                    print(nm, "NONFINITE_DIVERGENCE")
+                    continue
+
                 rmsd[nm] = (divergence["rmsd_restrain"], divergence["rmsd"])
                 com[nm] = (divergence["com_restrain"], divergence["com"])
-                change.append(divergence["contrast"])
+                change.append(contrast)
             finally:
                 if outfile is not None:
                     outfile.close()
@@ -869,19 +945,19 @@ def main_worker():
 
     divergence = {}
     equil_fraction = 0.25
-    start = int(equil_fraction * CONFIG.n_frame)
 
     with tb.open_file(configs[0]) as t:
-        pos_restrain = t.root.output.pos[start:, 0]
+        pos_restrain = _select_finite_equil_frames(t.root.output.pos[:, 0], equil_fraction)
     with tb.open_file(configs[1]) as t:
-        pos_free = t.root.output.pos[start:, 0]
+        pos_free = _select_finite_equil_frames(t.root.output.pos[:, 0], equil_fraction)
 
     target = _load_native_positions(initial_structure_npy)
+    atom_slice = _rmsd_atom_slice(int(target.shape[0]), CONFIG.rmsd_k)
     divergence["rmsd_restrain"] = float(
-        ru.traj_rmsd(pos_restrain[:, CONFIG.rmsd_k : -CONFIG.rmsd_k], target[CONFIG.rmsd_k : -CONFIG.rmsd_k]).mean()
+        ru.traj_rmsd(pos_restrain[:, atom_slice], target[atom_slice]).mean()
     )
     divergence["rmsd"] = float(
-        ru.traj_rmsd(pos_free[:, CONFIG.rmsd_k : -CONFIG.rmsd_k], target[CONFIG.rmsd_k : -CONFIG.rmsd_k]).mean()
+        ru.traj_rmsd(pos_free[:, atom_slice], target[atom_slice]).mean()
     )
     divergence["com_restrain"] = float(pos_restrain[:, :, 2].mean())
     divergence["com"] = float(pos_free[:, :, 2].mean())
@@ -892,6 +968,16 @@ def main_worker():
     divergence["contrast"] = Update(
         *[x[:n_pos0].mean(axis=0) - x[n_pos0:].mean(axis=0) for x in all_div]
     )
+    metric_vals = np.array(
+        [divergence["rmsd_restrain"], divergence["rmsd"], divergence["com_restrain"], divergence["com"]],
+        dtype=np.float64,
+    )
+    if not np.isfinite(metric_vals).all():
+        raise RuntimeError("NONFINITE_DIVERGENCE_METRICS")
+    for term_name, term in zip(("cb", "icb", "hb", "ihb"), divergence["contrast"]):
+        if not np.isfinite(term).all():
+            raise RuntimeError(f"NONFINITE_DIVERGENCE_CONTRAST {term_name}")
+
     divergence["walltime"] = float(time.time() - tstart)
 
     if CONFIG.restart_from_last:

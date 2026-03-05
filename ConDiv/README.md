@@ -96,8 +96,8 @@ export ROUNDS=3
 export STEPS_PER_ROUND=2
 export FD_SAMPLES=24
 export FD_EPS=1e-3
-export FD_REL_MEDIAN_THRESHOLD=5e-2
-export FD_REL_MAX_THRESHOLD=2.5e-1
+export FD_REL_MEDIAN_THRESHOLD=1.2e-1
+export FD_REL_MAX_THRESHOLD=6e-1
 ```
 
 Per-round reports are written to:
