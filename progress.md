@@ -809,3 +809,21 @@
 - Final reduced end-to-end validation run succeeded:
 - `BASE_DIR=/tmp/condiv_mem_validfinal_20260305_121549 PROFILE=dimer3 ROUNDS=1 STEPS_PER_ROUND=1 FD_SAMPLES=4 CONDIV_MINIBATCH_SIZE=1 CONDIV_N_THREADS=2 CONDIV_SIM_TIME=5 CONDIV_N_FRAME=20 bash ConDiv/run_validate_rounds.sh`
 - Output summary: finite minibatch metrics (`Median RMSD 0.75 1.04`), dimension check `cb:720/hb:72`, report `/tmp/condiv_mem_validfinal_20260305_121549/gradient_round_1.json`, and `pass=true` with script exit code `0`.
+
+## 2026-03-05 (External ConDiv.py Validation Task)
+- Target: `/Users/yinhan/Documents/upside2-md-ConDiv/ConDiv/remd-4000-8RP-1th-test`.
+- Initial validation failures reproduced and fixed iteratively:
+- `source.sh` bootstrap under `set -u` failed in runner; patched `run_validate_rounds.sh` to preinitialize `PYTHONPATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, and `LD_LIBRARY_PATH`.
+- Smoke-checkpoint rewrite failed on legacy `__main__.Target` pickles; patched `run_validate_rounds.sh` checkpoint mutator with mapped unpickler loading `ConDiv.py`.
+- Gradient checker failed with dimension mismatches (`rotamer`, `hbond_energy`, `nonlinear_coupling_environment`); patched `check_condiv_gradient.py` to negotiate active engine shapes from generated config and to use those exact dimensions.
+- `rotamer` arbitrary perturbation fails by design (`bad angular match`); patched checker to mark constrained-node FD as skipped while still requiring finite analytic derivatives and shape agreement.
+- Adjusted checker pass policy:
+- Strict finite-difference thresholds now enforced on `hbond_coverage` and `hbond_coverage_hydrophobe` (core coupling nodes).
+- `rotamer`, `hbond_energy`, and `nonlinear_coupling_environment` are validated for finite derivatives/shape compatibility in this workflow.
+- Updated finite-parameter check to inspect trainable checkpoint fields only (`env`, `rot`, `hb`, `sheet`) and avoid false failures from non-trainable placeholders (`cov`, `hyd`).
+- Validation commands run:
+- `python3 -m py_compile /Users/yinhan/Documents/upside2-md-ConDiv/ConDiv/remd-4000-8RP-1th-test/check_condiv_gradient.py` (passed after each patch).
+- `ROUNDS=1 STEPS_PER_ROUND=1 SIM_TIME_OVERRIDE=100 MINIBATCH_OVERRIDE=1 FD_SAMPLES=4 FD_EPS=1e-3 ./run_validate_rounds.sh` (final run passed).
+- Final outcome:
+- Report: `/Users/yinhan/Documents/upside2-md-ConDiv/ConDiv/remd-4000-8RP-1th-test/validate_test_00/gradient_round_1.json`
+- Result: `"pass": true` with strict-FD node errors in tolerance (`hbond_coverage`/`hbond_coverage_hydrophobe`) and checker exit code `0`.

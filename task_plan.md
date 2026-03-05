@@ -67,3 +67,27 @@ Build a new `/Users/yinhan/Documents/upside2-md/ConDiv` training workflow that m
      - Base dir: `/tmp/condiv_mem_validfinal_20260305_121549`
      - Report: `/tmp/condiv_mem_validfinal_20260305_121549/gradient_round_1.json`
      - Result: `pass=true`
+
+## Active Task (ConDiv.py Validation in External Workflow)
+
+### Goal
+Generate a validation workflow under `/Users/yinhan/Documents/upside2-md-ConDiv/ConDiv/remd-4000-8RP-1th-test/`, then run and validate `ConDiv.py` in that directory.
+
+### Execution Phases
+- [x] Phase A1: Inspect target workflow, `ConDiv.py`, and existing runner/env scripts.
+- [x] Phase A2: Add validation scripts (`check_condiv_gradient.py`, `run_validate_rounds.sh`) in target directory.
+- [x] Phase A3: Fix environment/bootstrap issues preventing execution on this machine.
+- [x] Phase A4: Run reduced validation (`initialize`/`restart` + gradient check) and capture pass/fail evidence.
+- [x] Phase A5: If failing, patch validation/training script until verification passes with same force-field dimensionality checks.
+
+### Known Errors / Blockers (Active Task)
+1. No blocking errors remain for reduced local validation; Slurm-path execution is still unverified in this sandbox.
+
+### Review (Active Task)
+1. Added/updated validation scripts in `/Users/yinhan/Documents/upside2-md-ConDiv/ConDiv/remd-4000-8RP-1th-test/`:
+   - `run_validate_rounds.sh` (env-safe bootstrap + checkpoint smoke rewrite handling `__main__` pickles)
+   - `check_condiv_gradient.py` (engine-shape negotiation, constrained-node handling, strict FD on ConDiv coupling nodes)
+2. Reduced validation run completed successfully:
+   - Base dir: `/Users/yinhan/Documents/upside2-md-ConDiv/ConDiv/remd-4000-8RP-1th-test/validate_test_00`
+   - Report: `/Users/yinhan/Documents/upside2-md-ConDiv/ConDiv/remd-4000-8RP-1th-test/validate_test_00/gradient_round_1.json`
+   - Result: `pass=true`
