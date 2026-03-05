@@ -72,7 +72,7 @@ def recenter_protein_for_production(h5f, pos, box_lengths):
     return pos
 
 
-def refresh_hybrid_reference_carriers(h5f, pos):
+def refresh_backbone_reference_carriers(h5f, pos):
     if '/input/hybrid_bb_map' not in h5f:
         return pos
 
@@ -121,8 +121,8 @@ def refresh_hybrid_reference_carriers(h5f, pos):
 
 def set_initial_position(input_file, output_file):
     strict_copy = env_bool("UPSIDE_SET_INITIAL_STRICT_COPY", False)
-    apply_refresh_hybrid = env_bool(
-        "UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS",
+    apply_refresh_backbone = env_bool(
+        "UPSIDE_SET_INITIAL_REFRESH_BACKBONE_CARRIERS",
         default=(not strict_copy),
     )
     apply_recenter_production = env_bool(
@@ -172,13 +172,13 @@ def set_initial_position(input_file, output_file):
             merged[:n_copy, :, :] = last_pos[:n_copy, :, :]
             last_pos = merged
 
-        if strict_copy and not apply_refresh_hybrid and not apply_recenter_production:
+        if strict_copy and not apply_refresh_backbone and not apply_recenter_production:
             print("Strict handoff mode: preserving exact coordinates from previous stage output.")
 
-        # If hybrid reference carriers are present in the target file, align them
+        # If backbone reference carriers are present in the target file, align them
         # to the current BB proxy positions after stage handoff.
-        if apply_refresh_hybrid:
-            last_pos = refresh_hybrid_reference_carriers(f, last_pos)
+        if apply_refresh_backbone:
+            last_pos = refresh_backbone_reference_carriers(f, last_pos)
         if apply_recenter_production:
             last_pos = recenter_protein_for_production(f, last_pos, last_box)
 

@@ -1,5 +1,15 @@
 # Findings
 
+## 2026-03-05 (Backbone-Only Workflow Schema Audit)
+- Workflow-level legacy hook sweep over `example/16.MARTINI` (`*.sh`, `*.py`) confirms removal of:
+  - stage-activation/sc-control hook helpers (`set_hybrid_activation_stage`, `set_hybrid_sc_controls`, `assert_hybrid_stage_active`),
+  - legacy production handoff env var (`UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS`),
+  - legacy SC/hard-sphere/RMSD runtime knob wiring in shell workflows.
+- Active mapping workflow now uses only:
+  - `/input/hybrid_bb_map`
+  - `/input/hybrid_env_topology`
+- Mapping writer (`prepare_system_lib.py`) no longer emits legacy control/sidechain mapping groups, and mapping validator has been rewritten to this backbone-only schema.
+
 ## 2026-02-17 (Runtime Semantics Audit)
 - `output/potential` is logged in `../../src/main.cpp` via `sys->engine.potential`, and `../../src/deriv_engine.cpp` computes this as the sum over all active `potential_term` nodes. It is not a protein-only energy stream.
 - Pre-production rigid hold in hybrid mode is configured via `/input/hybrid_control` (`preprod_protein_mode=rigid`) and enforced dynamically in C++ (`../../src/martini.cpp`) using `protein_membership` and `atom_roles`; `/input/fix_rigid` does not need to exist in stage files for this path.
@@ -35,3 +45,23 @@
   - `C: 72/54 * 12/12 = 1.3333`
   - `O: 72/54 * 16/12 = 1.7778`
 - Implemented in `example/16.MARTINI/run_sim_1rkl.sh` by scaling injected `ref_mass` values in `inject_hybrid_mapping()`.
+
+## 2026-03-05 (Membrane Channel Audit + Depth-Table Assumptions)
+- `parameters/ff_2.1/membrane.h5` datasets present:
+  - `cb_energy` shape `(20, 2, 18)` with residue names `ALA..VAL`,
+  - `hb_energy` shape `(2, 2, 18)`,
+  - `icb_energy`, `ihb_energy`, `burial_nodes`, `names`.
+- No explicit sidechain/sheet membrane channels were found in this file:
+  - missing candidates: `sc_energy`, `sidechain_energy`, `sheet_energy`.
+- File attributes confirm z-grids used for interpolation:
+  - `cb_z_min=-17.0`, `cb_z_max=15.0`
+  - `hb_z_min=-33.0`, `hb_z_max=15.0`
+- Bilayer depth extraction from `example/16.MARTINI/pdb/bilayer.MARTINI.pdb`:
+  - lipid resnames present in template: `DOP` (plus ions `NA`, `CL`),
+  - per-bead depth computed as `|z-z_center|` with `z_center=42.484580 A`.
+- Produced interaction-table artifact (`outputs/depth_interaction_table.csv`) has 14 DOPC bead names with mapped MARTINI bead types from `dry_martini_v2.1_lipids.itp`.
+- Metadata artifact confirms current-term availability for this plan:
+  - `backbone_cb_energy=1`
+  - `hbond_hb_energy=1`
+  - `sidechain_term=0`
+  - `sheet_term=0`

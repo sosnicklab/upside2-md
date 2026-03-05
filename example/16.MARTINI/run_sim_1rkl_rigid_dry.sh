@@ -53,7 +53,6 @@ RUNTIME_ITP_FILE="${RUNTIME_ITP_FILE:-${HYBRID_PREP_DIR}/${RUNTIME_PDB_ID}_proa.
 HYBRID_MAPPING_FILE="${HYBRID_MAPPING_FILE:-${HYBRID_PREP_DIR}/hybrid_mapping.h5}"
 HYBRID_PACKED_PDB="${HYBRID_PACKED_PDB:-${HYBRID_PREP_DIR}/hybrid_packed.MARTINI.pdb}"
 HYBRID_VALIDATE="${HYBRID_VALIDATE:-1}"
-HYBRID_ACTIVATION_STAGE="${HYBRID_ACTIVATION_STAGE:-__hybrid_disabled__}"
 
 # martinize controls (MARTINI 2.x generation for dry-MARTINI compatibility)
 MARTINIZE_ENABLE="${MARTINIZE_ENABLE:-1}"
@@ -137,24 +136,10 @@ export UPSIDE_EWALD_ALPHA="${UPSIDE_EWALD_ALPHA:-0.2}"
 export UPSIDE_EWALD_KMAX="${UPSIDE_EWALD_KMAX:-5}"
 export UPSIDE_MARTINI_FF_DIR="${UPSIDE_MARTINI_FF_DIR:-ff_dry}"
 MASS_FF_FILE="${MASS_FF_FILE:-${UPSIDE_MARTINI_FF_DIR}/dry_martini_v2.1.itp}"
-SIDECHAIN_LIBRARY="${SIDECHAIN_LIBRARY:-${UPSIDE_HOME}/parameters/ff_2.1/sidechain.h5}"
 UPSIDE_RAMA_LIBRARY="${UPSIDE_RAMA_LIBRARY:-${UPSIDE_HOME}/parameters/common/rama.dat}"
 UPSIDE_RAMA_SHEET_MIXING="${UPSIDE_RAMA_SHEET_MIXING:-${UPSIDE_HOME}/parameters/ff_2.1/sheet}"
 UPSIDE_HBOND_ENERGY="${UPSIDE_HBOND_ENERGY:-${UPSIDE_HOME}/parameters/ff_2.1/hbond.h5}"
 UPSIDE_REFERENCE_STATE_RAMA="${UPSIDE_REFERENCE_STATE_RAMA:-${UPSIDE_HOME}/parameters/common/rama_reference.pkl}"
-SC_ENV_LJ_FORCE_CAP="${SC_ENV_LJ_FORCE_CAP:-25.0}"
-SC_ENV_COUL_FORCE_CAP="${SC_ENV_COUL_FORCE_CAP:-25.0}"
-SC_ENV_RELAX_STEPS="${SC_ENV_RELAX_STEPS:-200}"
-SC_ENV_RELAX_DT="${SC_ENV_RELAX_DT:-0.002}"
-SC_ENV_RESTRAINT_K="${SC_ENV_RESTRAINT_K:-5.0}"
-SC_ENV_MAX_DISPLACEMENT="${SC_ENV_MAX_DISPLACEMENT:-2.0}"
-SC_ENV_PO4_Z_CLAMP_ENABLE="${SC_ENV_PO4_Z_CLAMP_ENABLE:-1}"
-SC_ENV_PO4_Z_CLAMP_MODE="${SC_ENV_PO4_Z_CLAMP_MODE:-initial}"
-SC_ENV_ENERGY_DUMP_ENABLE="${SC_ENV_ENERGY_DUMP_ENABLE:-1}"
-SC_ENV_ENERGY_DUMP_STRIDE="${SC_ENV_ENERGY_DUMP_STRIDE:-1}"
-NONPROTEIN_HS_FORCE_CAP="${NONPROTEIN_HS_FORCE_CAP:-100.0}"
-NONPROTEIN_HS_POTENTIAL_CAP="${NONPROTEIN_HS_POTENTIAL_CAP:-5000.0}"
-INTEGRATION_RMSD_ALIGN_ENABLE="${INTEGRATION_RMSD_ALIGN_ENABLE:-1}"
 
 # =============================================================================
 # VALIDATION
@@ -422,79 +407,6 @@ with h5py.File(up_file, "r+") as h5:
 PY
 }
 
-set_hybrid_activation_stage() {
-    local up_file="$1"
-    local activation_stage="$2"
-    python3 - "$up_file" "$activation_stage" << 'PY'
-import sys
-import h5py
-import numpy as np
-
-up_file = sys.argv[1]
-activation_stage = sys.argv[2]
-with h5py.File(up_file, "r+") as h5:
-    grp = h5.require_group("input").require_group("hybrid_control")
-    grp.attrs["enable"] = np.int8(1)
-    grp.attrs["activation_stage"] = np.bytes_(activation_stage)
-    grp.attrs["preprod_protein_mode"] = np.bytes_("rigid")
-    grp.attrs["prep_runtime_mode"] = np.bytes_("dry_martini_prep")
-    grp.attrs["active_runtime_mode"] = np.bytes_("aa_backbone_explicit_lipid")
-PY
-}
-
-set_hybrid_sc_controls() {
-    local up_file="$1"
-    local lj_cap="$2"
-    local coul_cap="$3"
-    local relax_steps="$4"
-    local relax_dt="$5"
-    local rest_k="$6"
-    local max_disp="$7"
-    local hs_force_cap="$8"
-    local hs_pot_cap="$9"
-    local rmsd_align_enable="${10}"
-    local po4_z_clamp_enable="${11}"
-    local po4_z_clamp_mode="${12}"
-    local sc_env_energy_dump_enable="${13}"
-    local sc_env_energy_dump_stride="${14}"
-    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$relax_dt" "$rest_k" "$max_disp" "$hs_force_cap" "$hs_pot_cap" "$rmsd_align_enable" "$po4_z_clamp_enable" "$po4_z_clamp_mode" "$sc_env_energy_dump_enable" "$sc_env_energy_dump_stride" << 'PY'
-import sys
-import h5py
-import numpy as np
-
-up_file = sys.argv[1]
-lj_cap = float(sys.argv[2])
-coul_cap = float(sys.argv[3])
-relax_steps = int(sys.argv[4])
-relax_dt = float(sys.argv[5])
-rest_k = float(sys.argv[6])
-max_disp = float(sys.argv[7])
-hs_force_cap = float(sys.argv[8])
-hs_pot_cap = float(sys.argv[9])
-rmsd_align_enable = int(sys.argv[10])
-po4_z_clamp_enable = int(sys.argv[11])
-po4_z_clamp_mode = sys.argv[12]
-sc_env_energy_dump_enable = int(sys.argv[13])
-sc_env_energy_dump_stride = int(sys.argv[14])
-
-with h5py.File(up_file, "r+") as h5:
-    grp = h5.require_group("input").require_group("hybrid_control")
-    grp.attrs["sc_env_lj_force_cap"] = np.float32(lj_cap)
-    grp.attrs["sc_env_coul_force_cap"] = np.float32(coul_cap)
-    grp.attrs["sc_env_relax_steps"] = np.int32(relax_steps)
-    grp.attrs["sc_env_relax_dt"] = np.float32(relax_dt)
-    grp.attrs["sc_env_restraint_k"] = np.float32(rest_k)
-    grp.attrs["sc_env_max_displacement"] = np.float32(max_disp)
-    grp.attrs["nonprotein_hs_force_cap"] = np.float32(hs_force_cap)
-    grp.attrs["nonprotein_hs_potential_cap"] = np.float32(hs_pot_cap)
-    grp.attrs["integration_rmsd_align_enable"] = np.int8(1 if rmsd_align_enable else 0)
-    grp.attrs["sc_env_po4_z_clamp_enabled"] = np.int8(1 if po4_z_clamp_enable else 0)
-    grp.attrs["sc_env_po4_z_clamp_mode"] = np.bytes_(po4_z_clamp_mode)
-    grp.attrs["sc_env_energy_dump_enabled"] = np.int8(1 if sc_env_energy_dump_enable else 0)
-    grp.attrs["sc_env_energy_dump_stride"] = np.int32(max(1, sc_env_energy_dump_stride))
-PY
-}
-
 inject_hybrid_mapping() {
     local up_file="$1"
     local mapping_file="$2"
@@ -506,9 +418,7 @@ import numpy as np
 up_file = sys.argv[1]
 mapping_file = sys.argv[2]
 groups = [
-    "hybrid_control",
     "hybrid_bb_map",
-    "hybrid_sc_map",
     "hybrid_env_topology",
 ]
 
@@ -687,39 +597,6 @@ with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
     bb_grp.attrs["reference_index_offset"] = np.int32(ref_offset)
     bb_grp.attrs["reference_index_count"] = np.int32(max(0, n_ref_index))
 
-    # Rewrite SC projection targets to AA carrier indices (no MARTINI BB fallback).
-    sc_grp = dst_inp["hybrid_sc_map"]
-    sc_residue = sc_grp["residue_index"][:].astype(np.int32)
-    n_sc = int(sc_residue.shape[0])
-    sc_runtime_idx = np.full((n_sc, 4), -1, dtype=np.int32)
-    sc_runtime_w = np.zeros((n_sc, 4), dtype=np.float32)
-
-    residue_to_bb_row = {}
-    for k, resid in enumerate(bb_residue.tolist()):
-        residue_to_bb_row.setdefault(int(resid), int(k))
-
-    for r in range(n_sc):
-        resid = int(sc_residue[r])
-        if resid not in residue_to_bb_row:
-            raise ValueError(
-                f"{up_file}: hybrid_sc_map residue {resid} has no matching hybrid_bb_map row"
-            )
-        k = residue_to_bb_row[resid]
-        idx_row = bb_runtime_idx[k].astype(np.int32, copy=True)
-        w_row = bb_runtime_w[k].astype(np.float32, copy=True)
-        active = (idx_row >= 0) & (w_row > 0.0)
-        if not np.any(active):
-            raise ValueError(
-                f"{up_file}: hybrid_sc_map residue {resid} maps to empty AA carrier targets"
-            )
-        sc_runtime_idx[r] = idx_row
-        sc_runtime_w[r] = w_row
-
-    replace_dataset(sc_grp, "proj_target_indices", sc_runtime_idx)
-    replace_dataset(sc_grp, "proj_weights", sc_runtime_w)
-    sc_grp.attrs["target_index_space"] = np.bytes_("stage_runtime")
-    sc_grp.attrs["target_projection"] = np.bytes_("bb_component_carriers")
-
     membership = np.full((n_atom_aug,), -1, dtype=np.int32)
     membership[:base_n_atom] = src_mem
     if n_ref_index > 0:
@@ -731,431 +608,27 @@ with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
 PY
 }
 
-augment_production_rotamer_nodes() {
+inject_backbone_only_production_nodes() {
     local up_file="$1"
     local protein_itp="$2"
-    local sidechain_lib="$3"
-    local upside_home="$4"
-    local rama_library="$5"
-    local rama_sheet_mixing="$6"
-    local hbond_energy="$7"
-    local reference_state_rama="$8"
-    python3 - "$up_file" "$protein_itp" "$sidechain_lib" "$upside_home" "$rama_library" "$rama_sheet_mixing" "$hbond_energy" "$reference_state_rama" << 'PY'
-import os
-import sys
-import h5py
-import numpy as np
-import types
-import tables as tb
-import importlib.util
-import _pickle as cPickle
-
-up_file, protein_itp, sidechain_lib, upside_home, rama_library, rama_sheet_mixing, hbond_energy, reference_state_rama = sys.argv[1:9]
-
-if not os.path.exists(up_file):
-    raise SystemExit(f"ERROR: stage file not found: {up_file}")
-if not os.path.exists(protein_itp):
-    raise SystemExit(f"ERROR: protein ITP not found: {protein_itp}")
-if not os.path.exists(sidechain_lib):
-    raise SystemExit(f"ERROR: sidechain library not found: {sidechain_lib}")
-if not os.path.exists(rama_library):
-    raise SystemExit(f"ERROR: Upside rama library not found: {rama_library}")
-if not os.path.exists(rama_sheet_mixing):
-    raise SystemExit(f"ERROR: Upside rama sheet-mixing file not found: {rama_sheet_mixing}")
-if not os.path.exists(hbond_energy):
-    raise SystemExit(f"ERROR: Upside hbond energy file not found: {hbond_energy}")
-if not os.path.exists(reference_state_rama):
-    raise SystemExit(f"ERROR: Upside reference-state rama file not found: {reference_state_rama}")
-
-upside_config_py = os.path.join(upside_home, "py", "upside_config.py")
-if not os.path.exists(upside_config_py):
-    raise SystemExit(f"ERROR: upside_config.py not found: {upside_config_py}")
-
-spec = importlib.util.spec_from_file_location("upside_config_runtime", upside_config_py)
-uc = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(uc)
-
-
-def parse_itp_residue_names(path):
-    resnames = []
-    seen = set()
-    in_atoms = False
-    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-        for raw in fh:
-            line = raw.split(";", 1)[0].strip()
-            if not line:
-                continue
-            low = line.lower()
-            if low == "[ atoms ]" or low == "[atoms]":
-                in_atoms = True
-                continue
-            if line.startswith("[") and line.endswith("]"):
-                in_atoms = False
-                continue
-            if not in_atoms:
-                continue
-            parts = line.split()
-            if len(parts) < 5:
-                continue
-            try:
-                resnr = int(parts[2])
-            except ValueError:
-                continue
-            role = parts[4].strip().upper()
-            if role != "BB":
-                continue
-            if resnr in seen:
-                continue
-            seen.add(resnr)
-            resnames.append(parts[3].strip().upper())
-    return resnames
-
-
-def normalize_resname(name):
-    name = name.upper()
-    aliases = {
-        "HSD": "HIS",
-        "HSE": "HIS",
-        "HSP": "HIS",
-        "HID": "HIS",
-        "HIE": "HIS",
-        "HIP": "HIS",
-        "CYX": "CYS",
-    }
-    return aliases.get(name, name)
-
-def remap_atom_index_array(arr, atom_map):
-    out = arr.copy()
-    if out.size == 0:
-        return out
-    finite_mask = np.isfinite(out)
-    if not np.any(finite_mask):
-        return out
-    nonneg_mask = finite_mask & (out >= 0)
-    if not np.any(nonneg_mask):
-        return out
-    idx = out[nonneg_mask].astype(np.int64)
-    if np.any(idx >= atom_map.shape[0]):
-        raise ValueError(
-            f"Backbone atom remap index exceeds reference map size: "
-            f"max={int(idx.max())}, map_size={atom_map.shape[0]}"
-        )
-    mapped = atom_map[idx]
-    if np.any(mapped < 0):
-        bad = np.where(mapped < 0)[0][0]
-        raise ValueError(f"Backbone atom remap produced negative target for reference index {int(idx[bad])}")
-    out[nonneg_mask] = mapped.astype(out.dtype, copy=False)
-    return out
-
-BACKBONE_NODES = [
-    "Distance3D",
-    "Angle",
-    "Dihedral_omega",
-    "Dihedral_phi",
-    "Dihedral_psi",
-    "Spring_bond",
-    "Spring_angle",
-    "Spring_omega",
-    "rama_coord",
-    "rama_map_pot",
-    "rama_map_pot_ref",
-    "infer_H_O",
-    "protein_hbond",
-    "hbond_energy",
-    "backbone_pairs",
-]
-
-CANONICAL_AFFINE_REF = np.array(
-    [
-        [-1.19280531, -0.83127186, 0.0],  # N
-        [0.0, 0.0, 0.0],                  # CA
-        [1.25222632, -0.87268266, 0.0],   # C
-    ],
-    dtype=np.float32,
-)
-CANONICAL_AFFINE_REF -= CANONICAL_AFFINE_REF.mean(axis=0, keepdims=True)
-
-
-with h5py.File(up_file, "r+") as up, h5py.File(sidechain_lib, "r") as sclib:
-    inp = up["/input"]
-    pot = inp["potential"]
-
-    if "hybrid_bb_map" not in inp:
-        raise ValueError("Missing /input/hybrid_bb_map in stage file")
-    if "hybrid_sc_map" not in inp:
-        raise ValueError("Missing /input/hybrid_sc_map in stage file")
-
-    bb_grp = inp["hybrid_bb_map"]
-    bb_residue_raw = bb_grp["bb_residue_index"][:].astype(np.int32)
-    bb_atom_idx_raw = bb_grp["bb_atom_index"][:].astype(np.int32)
-    bb_ref_idx = (
-        bb_grp["reference_atom_indices"][:].astype(np.int32)
-        if "reference_atom_indices" in bb_grp
-        else None
-    )
-    ref_offset = int(bb_grp.attrs.get("reference_index_offset", -1))
-    if bb_residue_raw.size == 0:
-        raise ValueError("hybrid_bb_map is empty")
-
-    pos = inp["pos"][:, :, 0].astype(np.float32)
-    n_atom = int(pos.shape[0])
-
-    residue_ids = []
-    residue_to_bb = {}
-    seen = set()
-    for resid, bb_idx in zip(bb_residue_raw.tolist(), bb_atom_idx_raw.tolist()):
-        rid = int(resid)
-        bi = int(bb_idx)
-        if rid not in seen:
-            residue_ids.append(rid)
-            seen.add(rid)
-        if rid not in residue_to_bb and bi >= 0:
-            residue_to_bb[rid] = bi
-
-    if not residue_ids:
-        raise ValueError("No protein residues found in hybrid_bb_map")
-
-    residue_to_ncac = {}
-    if ref_offset >= 0 and bb_ref_idx is not None:
-        for resid, ref_row in zip(bb_residue_raw.tolist(), bb_ref_idx.tolist()):
-            rid = int(resid)
-            n_idx, ca_idx, c_idx = [int(ref_row[0]), int(ref_row[1]), int(ref_row[2])]
-            if n_idx < 0 or ca_idx < 0 or c_idx < 0:
-                continue
-            n_rt = ref_offset + n_idx
-            ca_rt = ref_offset + ca_idx
-            c_rt = ref_offset + c_idx
-            for idx in (n_rt, ca_rt, c_rt):
-                if idx < 0 or idx >= n_atom:
-                    raise ValueError(
-                        f"Backbone carrier index out of bounds for residue {rid}: "
-                        f"idx={idx}, n_atom={n_atom}, offset={ref_offset}"
-                    )
-            if rid not in residue_to_ncac:
-                residue_to_ncac[rid] = (n_rt, ca_rt, c_rt)
-    missing_backbone = [rid for rid in residue_ids if rid not in residue_to_ncac]
-    if missing_backbone:
-        raise ValueError(
-            f"Missing N/CA/C runtime mapping for residues: {missing_backbone[:8]} "
-            f"(total {len(missing_backbone)})."
-        )
-
-    itp_resnames = [normalize_resname(x) for x in parse_itp_residue_names(protein_itp)]
-    if len(itp_resnames) != len(residue_ids):
-        raise ValueError(
-            f"ITP/BB residue count mismatch: ITP has {len(itp_resnames)} residues, "
-            f"hybrid_bb_map has {len(residue_ids)} residues"
-        )
-
-    restype_order = [x.decode("ascii") if isinstance(x, bytes) else str(x) for x in sclib["restype_order"][:]]
-    restype_num = {x: i for i, x in enumerate(restype_order)}
-    start_stop_bead = sclib["rotamer_start_stop_bead"][:].astype(np.int32)
-    rot_center_fixed = sclib["rotamer_center_fixed"][:].astype(np.float32)
-    if "rotamer_prob_fixed" in sclib:
-        rot_energy_fixed = sclib["rotamer_prob_fixed"][:].astype(np.float32).reshape(-1)
-    elif "rotamer_prob" in sclib:
-        rot_prob = sclib["rotamer_prob"][:].astype(np.float64)
-        if rot_prob.ndim != 3:
-            raise ValueError(
-                f"Unsupported rotamer_prob shape in {sidechain_lib}: {rot_prob.shape}"
-            )
-        # Convert phi/psi-dependent probabilities into a fixed one-body energy per layer.
-        rot_prob_mean = np.clip(rot_prob.mean(axis=(0, 1)), 1.0e-12, None)
-        rot_energy_fixed = (-np.log(rot_prob_mean)).astype(np.float32)
-    else:
-        raise ValueError(
-            f"Missing rotamer probability tables in {sidechain_lib}: "
-            "need rotamer_prob_fixed or rotamer_prob"
-        )
-    bead_order = [x.decode("ascii") if isinstance(x, bytes) else str(x) for x in sclib["bead_order"][:]]
-    bead_num = {x: i for i, x in enumerate(bead_order)}
-    pair_interaction = sclib["pair_interaction"][:].astype(np.float32)
-
-    n_bit_rotamer = 4
-    count_by_n_rot = {}
-    affine_residue = []
-    layer_index = []
-    beadtype_seq = []
-    id_seq = []
-
-    for rid, resname in zip(residue_ids, itp_resnames):
-        if resname not in restype_num:
-            raise ValueError(f"Residue '{resname}' not found in sidechain library")
-        rt = restype_num[resname]
-        start, stop, n_bead = [int(x) for x in start_stop_bead[rt]]
-        if n_bead <= 0 or stop <= start:
-            continue
-        n_rot = (stop - start) // n_bead
-        if n_rot <= 0:
-            continue
-
-        if n_rot not in count_by_n_rot:
-            count_by_n_rot[n_rot] = 0
-        base_id = (count_by_n_rot[n_rot] << n_bit_rotamer) + n_rot
-        count_by_n_rot[n_rot] += 1
-
-        n_rows = stop - start
-        for rel in range(n_rows):
-            lid = start + rel
-            layer_index.append(lid)
-            affine_residue.append(rid)
-            beadtype_seq.append(f"{resname}_{rel % n_bead}")
-            id_seq.append((rel // n_bead) + (base_id << n_bit_rotamer))
-
-    if not layer_index:
-        raise ValueError("No placement rows generated from sidechain library")
-
-    layer_index_arr = np.asarray(layer_index, dtype=np.int32)
-    affine_residue_arr = np.asarray(affine_residue, dtype=np.int32)
-    id_seq_arr = np.asarray(id_seq, dtype=np.int32)
-    beadtype_seq_arr = np.asarray([np.bytes_(x) for x in beadtype_seq], dtype="S16")
-    placement_scalar_data = rot_energy_fixed[layer_index_arr][:, None].astype(np.float32)
-
-    n_affine = int(max(residue_ids) + 1)
-    affine_atoms = np.zeros((n_affine, 3), dtype=np.int32)
-    affine_ref_geom = np.zeros((n_affine, 3, 3), dtype=np.float32)
-
-    fa, fb, fc = residue_to_ncac[residue_ids[0]]
-    for rid in range(n_affine):
-        affine_atoms[rid, :] = [fa, fb, fc]
-        affine_ref_geom[rid, :, :] = CANONICAL_AFFINE_REF
-
-    for rid in residue_ids:
-        a, b, c = residue_to_ncac[rid]
-        affine_atoms[rid, :] = [a, b, c]
-        affine_ref_geom[rid, :, :] = CANONICAL_AFFINE_REF
-
-    for node_name in [
-        "rotamer",
-        "placement_fixed_scalar",
-        "placement_fixed_point_vector_only",
-        "affine_alignment",
-        *BACKBONE_NODES,
-    ]:
-        if node_name in pot:
-            del pot[node_name]
-
-    g_aff = pot.create_group("affine_alignment")
-    g_aff.attrs["arguments"] = np.array([b"pos"])
-    g_aff.create_dataset("atoms", data=affine_atoms, dtype=np.int32)
-    g_aff.create_dataset("ref_geom", data=affine_ref_geom, dtype=np.float32)
-
-    g_sc = pot.create_group("placement_fixed_point_vector_only")
-    g_sc.attrs["arguments"] = np.array([b"affine_alignment"])
-    g_sc.create_dataset("rama_residue", data=affine_residue_arr, dtype=np.int32)
-    g_sc.create_dataset("affine_residue", data=affine_residue_arr, dtype=np.int32)
-    g_sc.create_dataset("layer_index", data=layer_index_arr, dtype=np.int32)
-    g_sc.create_dataset("placement_data", data=rot_center_fixed[:, :6].astype(np.float32), dtype=np.float32)
-    g_sc.create_dataset("beadtype_seq", data=beadtype_seq_arr)
-    g_sc.create_dataset("id_seq", data=id_seq_arr, dtype=np.int32)
-    g_sc.create_dataset("fix_rotamer", data=np.zeros((0, 2), dtype=np.int32), dtype=np.int32)
-
-    g_pl = pot.create_group("placement_fixed_scalar")
-    g_pl.attrs["arguments"] = np.array([b"affine_alignment"])
-    g_pl.create_dataset("rama_residue", data=affine_residue_arr, dtype=np.int32)
-    g_pl.create_dataset("affine_residue", data=affine_residue_arr, dtype=np.int32)
-    g_pl.create_dataset("layer_index", data=layer_index_arr, dtype=np.int32)
-    g_pl.create_dataset("placement_data", data=placement_scalar_data, dtype=np.float32)
-
-    g_rot = pot.create_group("rotamer")
-    g_rot.attrs["arguments"] = np.array([b"placement_fixed_point_vector_only", b"placement_fixed_scalar"])
-    g_rot.attrs["integrator_level"] = np.int32(1)
-    g_rot.attrs["max_iter"] = np.int32(1000)
-    g_rot.attrs["tol"] = np.float32(1.0e-3)
-    g_rot.attrs["damping"] = np.float32(0.4)
-    g_rot.attrs["iteration_chunk_size"] = np.int32(2)
-
-    g_pair = g_rot.create_group("pair_interaction")
-    g_pair.create_dataset("interaction_param", data=pair_interaction, dtype=np.float32)
-    g_pair.create_dataset("index", data=np.arange(len(beadtype_seq), dtype=np.int32), dtype=np.int32)
-    g_pair.create_dataset(
-        "type",
-        data=np.asarray([bead_num[x] for x in beadtype_seq], dtype=np.int32),
-        dtype=np.int32,
-    )
-    g_pair.create_dataset("id", data=id_seq_arr, dtype=np.int32)
-
-    if "sequence" in inp:
-        del inp["sequence"]
-    seq_data = np.asarray([np.bytes_(x) for x in itp_resnames], dtype="S3")
-    inp.create_dataset("sequence", data=seq_data)
-
-    ref_n_atom = 3 * len(residue_ids)
-    atom_map = np.full((ref_n_atom,), -1, dtype=np.int64)
-    for i, rid in enumerate(residue_ids):
-        n_idx, ca_idx, c_idx = residue_to_ncac[rid]
-        atom_map[3 * i + 0] = n_idx
-        atom_map[3 * i + 1] = ca_idx
-        atom_map[3 * i + 2] = c_idx
-
-fasta_seq = np.array(itp_resnames)
-spring_args = types.SimpleNamespace(
-    bond_stiffness=48.0,
-    angle_stiffness=175.0,
-    omega_stiffness=30.0,
-)
-
-with tb.open_file(up_file, mode="a") as tf:
-    uc.t = tf
-    uc.potential = tf.root.input.potential
-    uc.n_atom = ref_n_atom
-    uc.n_chains = 1
-    uc.chain_starts = np.array([0], dtype=np.int32)
-    uc.use_intensive_memory = False
-
-    uc.write_dist_spring(spring_args)
-    uc.write_angle_spring(spring_args)
-    uc.write_omega_spring1(spring_args, fasta_seq)
-    uc.write_rama_map_pot(
-        fasta_seq,
-        rama_library,
-        rama_sheet_mixing,
-        secstr_bias='',
-        mode='mixture',
-        param_deriv=False,
-    )
-
-    ref_state_cor = np.log(cPickle.load(open(reference_state_rama, "rb"), encoding="latin1"))
-    ref_state_cor -= ref_state_cor.mean()
-    grp = tf.create_group(tf.root.input.potential, 'rama_map_pot_ref')
-    grp._v_attrs.arguments = np.array([b'rama_coord'])
-    grp._v_attrs.log_pot = 0
-    uc.create_array(grp, 'residue_id', obj=np.arange(len(fasta_seq), dtype=np.int32))
-    uc.create_array(grp, 'rama_map_id', obj=np.zeros(len(fasta_seq), dtype=np.int32))
-    uc.create_array(grp, 'rama_pot', obj=ref_state_cor[None])
-
-    uc.write_infer_H_O(fasta_seq, np.array([], dtype=np.int32))
-    uc.write_count_hbond(fasta_seq, False)
-    uc.write_short_hbond(fasta_seq, hbond_energy)
-    uc.write_rama_coord2()
-    uc.write_backbone_pair(fasta_seq)
-
-with h5py.File(up_file, "r+") as up:
-    pot = up["/input/potential"]
-    for node_name in BACKBONE_NODES:
-        if node_name not in pot:
-            raise ValueError(f"Missing generated backbone node in stage file {up_file}: {node_name}")
-
-    remap_datasets = [
-        ("Distance3D", "id"),
-        ("Angle", "id"),
-        ("Dihedral_omega", "id"),
-        ("Dihedral_phi", "id"),
-        ("Dihedral_psi", "id"),
-        ("rama_coord", "id"),
-        ("infer_H_O/donors", "id"),
-        ("infer_H_O/acceptors", "id"),
-    ]
-    for grp_name, dset_name in remap_datasets:
-        ds = pot[grp_name][dset_name]
-        ds[...] = remap_atom_index_array(ds[:], atom_map).astype(ds.dtype, copy=False)
-
-    print(
-        f"Injected production rotamer nodes into {up_file}: "
-            f"n_res={len(residue_ids)} n_sc_rows={len(beadtype_seq)} "
-            f"n_affine={n_affine} backbone_nodes={len(BACKBONE_NODES)}"
-    )
-PY
+    local upside_home="$3"
+    local rama_library="$4"
+    local rama_sheet_mixing="$5"
+    local hbond_energy="$6"
+    local reference_state_rama="$7"
+    local injector_script="${SCRIPT_DIR}/inject_backbone_only_nodes.py"
+    if [ ! -f "${injector_script}" ]; then
+        echo "ERROR: backbone injector script not found: ${injector_script}"
+        exit 1
+    fi
+    python3 "${injector_script}" \
+        "${up_file}" \
+        "${protein_itp}" \
+        "${upside_home}" \
+        "${rama_library}" \
+        "${rama_sheet_mixing}" \
+        "${hbond_energy}" \
+        "${reference_state_rama}"
 }
 
 prepare_hybrid_artifacts() {
@@ -1281,10 +754,6 @@ PY
         exit 1
     fi
 
-    if [ "${HYBRID_VALIDATE}" = "1" ]; then
-        python3 validate_hybrid_mapping.py "${HYBRID_MAPPING_FILE}"
-    fi
-
     if [ "$(python3 - "${HYBRID_PACKED_PDB}" "${RUNTIME_PDB_FILE}" << 'PY'
 import os
 import sys
@@ -1335,7 +804,6 @@ prepare_stage_file() {
 
     mv -f "$prepared_tmp" "$target_file"
     inject_hybrid_mapping "$target_file" "${HYBRID_MAPPING_FILE}"
-    set_hybrid_activation_stage "$target_file" "${HYBRID_ACTIVATION_STAGE}"
     set_stage_label "$target_file" "$stage_label"
 
     if [ "$npt_enable" = "1" ]; then
@@ -1474,7 +942,6 @@ extract_stage_vtf() {
 echo "=== Rigid 1RKL Dry MARTINI Workflow ==="
 echo "Protein ID: $PDB_ID"
 echo "Runtime PDB ID: $RUNTIME_PDB_ID"
-echo "Hybrid activation stage override: ${HYBRID_ACTIVATION_STAGE}"
 echo "Universal prep: ${UNIVERSAL_PREP_SCRIPT} (mode=${UNIVERSAL_PREP_MODE})"
 echo "Hybrid prep: $HYBRID_PREP_DIR"
 echo "Simulation stages: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"

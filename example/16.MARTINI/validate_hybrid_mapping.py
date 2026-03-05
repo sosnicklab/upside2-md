@@ -18,6 +18,7 @@ def require_dataset(group, name):
         raise ValueError(f"Missing dataset: {group.name}/{name}")
     return group[name]
 
+
 def decode_attr_string(value, default=""):
     if value is None:
         return default
@@ -27,8 +28,10 @@ def decode_attr_string(value, default=""):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate hybrid mapping HDF5 schema and index consistency.")
-    parser.add_argument("mapping_h5", type=Path, help="Path to hybrid mapping HDF5 file.")
+    parser = argparse.ArgumentParser(
+        description="Validate backbone-only mapping HDF5 schema and index consistency."
+    )
+    parser.add_argument("mapping_h5", type=Path, help="Path to mapping HDF5 file.")
     parser.add_argument("--n-atom", type=int, default=None, help="Optional expected n_atom value.")
     args = parser.parse_args()
 
@@ -38,23 +41,8 @@ def main():
 
     with h5py.File(p, "r") as h5:
         inp = require_group(h5, "/input")
-        ctrl = require_group(inp, "hybrid_control")
         bb = require_group(inp, "hybrid_bb_map")
-        sc = require_group(inp, "hybrid_sc_map")
         env = require_group(inp, "hybrid_env_topology")
-
-        # Required control attrs.
-        for attr in [
-            "enable",
-            "activation_stage",
-            "preprod_protein_mode",
-            "prep_runtime_mode",
-            "active_runtime_mode",
-            "exclude_intra_protein_martini",
-            "schema_version",
-        ]:
-            if attr not in ctrl.attrs:
-                raise ValueError(f"Missing hybrid_control attr: {attr}")
 
         bb_atom_idx = require_dataset(bb, "bb_atom_index")[:]
         bb_atom_map = require_dataset(bb, "atom_indices")[:]
@@ -70,9 +58,8 @@ def main():
         if bb_atom_idx.shape != (n_bb,):
             raise ValueError("hybrid_bb_map/bb_atom_index must have shape (n_bb,)")
         bb_index_space = decode_attr_string(bb.attrs.get("atom_index_space", "runtime_n_atom"))
-        bb_reference_space = (bb_index_space == "protein_aa_pdb_0based")
+        bb_reference_space = bb_index_space == "protein_aa_pdb_0based"
 
-        # Optional audit metadata for BB <- {N,CA,C,O} references.
         if "reference_atom_names" in bb:
             ref_names = bb["reference_atom_names"][:]
             if ref_names.shape != (4,):
@@ -97,28 +84,6 @@ def main():
                 if abs(wsum - 1.0) > 1e-4:
                     raise ValueError(f"BB weights do not sum to 1 for row {i}: {wsum}")
 
-        sc_proxy = require_dataset(sc, "proxy_atom_index")[:]
-        sc_prob = require_dataset(sc, "rotamer_probability")[:]
-        sc_proj_i = require_dataset(sc, "proj_target_indices")[:]
-        sc_proj_w = require_dataset(sc, "proj_weights")[:]
-
-        if sc_proj_i.ndim != 2 or sc_proj_i.shape[1] != 4:
-            raise ValueError("hybrid_sc_map/proj_target_indices must have shape (n_rot,4)")
-        if sc_proj_w.shape != sc_proj_i.shape:
-            raise ValueError("hybrid_sc_map/proj_weights must match proj_target_indices shape")
-        if sc_proxy.shape != sc_prob.shape:
-            raise ValueError("hybrid_sc_map/proxy_atom_index and rotamer_probability must have same shape")
-
-        n_rot = sc_proxy.shape[0]
-        for i in range(n_rot):
-            if sc_prob[i] < 0.0:
-                raise ValueError(f"Negative rotamer probability at row {i}")
-            valid = sc_proj_i[i] >= 0
-            if valid.any():
-                wsum = float(sc_proj_w[i][valid].sum())
-                if abs(wsum - 1.0) > 1e-4:
-                    raise ValueError(f"SC projection weights do not sum to 1 for row {i}: {wsum}")
-
         membership = require_dataset(env, "protein_membership")[:]
         if membership.ndim != 1:
             raise ValueError("hybrid_env_topology/protein_membership must be 1D")
@@ -128,7 +93,6 @@ def main():
             )
         n_atom = int(membership.shape[0])
 
-        # Enforce projection indices to be valid and protein-local in current coordinate space.
         for i in range(n_bb):
             bb_i = int(bb_atom_idx[i])
             if bb_i < 0 or bb_i >= n_atom:
@@ -148,26 +112,11 @@ def main():
                     if membership[ai] < 0:
                         raise ValueError(f"BB target index is not protein atom at row {i}, col {j}: {ai}")
 
-        for i in range(n_rot):
-            proxy_i = int(sc_proxy[i])
-            if proxy_i < 0 or proxy_i >= n_atom:
-                raise ValueError(f"SC proxy index out of bounds at row {i}: {proxy_i}")
-            if membership[proxy_i] < 0:
-                raise ValueError(f"SC proxy index is not protein atom at row {i}: {proxy_i}")
-            for j in range(4):
-                ai = int(sc_proj_i[i, j])
-                if ai < 0:
-                    continue
-                if ai >= n_atom:
-                    raise ValueError(f"SC target index out of bounds at row {i}, col {j}: {ai}")
-                if membership[ai] < 0:
-                    raise ValueError(f"SC target index is not protein atom at row {i}, col {j}: {ai}")
-
         n_protein = int(np.sum(membership >= 0))
         n_env = int(np.sum(membership < 0))
         print(f"OK: {p}")
         print(f"  n_atom={membership.shape[0]} n_protein={n_protein} n_env={n_env}")
-        print(f"  n_bb={n_bb} n_sc_rotamer_rows={n_rot} bb_index_space={bb_index_space}")
+        print(f"  n_bb={n_bb} bb_index_space={bb_index_space}")
 
 
 if __name__ == "__main__":

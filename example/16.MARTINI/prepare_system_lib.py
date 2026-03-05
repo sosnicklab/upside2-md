@@ -1008,20 +1008,6 @@ def write_hybrid_mapping_h5(
     with h5py.File(path, "w") as h5:
         inp = h5.create_group("input")
 
-        ctrl = inp.create_group("hybrid_control")
-        ctrl.attrs["enable"] = np.int8(1)
-        ctrl.attrs["activation_stage"] = b"production"
-        ctrl.attrs["preprod_protein_mode"] = b"rigid"
-        ctrl.attrs["prep_runtime_mode"] = b"dry_martini_prep"
-        ctrl.attrs["active_runtime_mode"] = b"aa_backbone_explicit_lipid"
-        ctrl.attrs["preprod_lipid_headgroup_roles"] = b"PO4"
-        ctrl.attrs["exclude_intra_protein_martini"] = np.int8(1)
-        ctrl.attrs["production_nonprotein_hard_sphere"] = np.int8(1)
-        ctrl.attrs["coupling_align_enable"] = np.int8(0)
-        ctrl.attrs["coupling_align_debug"] = np.int8(0)
-        ctrl.attrs["coupling_align_interval"] = np.int32(100)
-        ctrl.attrs["schema_version"] = np.int32(1)
-
         bb_grp = inp.create_group("hybrid_bb_map")
         bb_grp.attrs["atom_index_space"] = b"protein_aa_pdb_0based"
         bb_grp.attrs["runtime_index_space"] = b"stage_runtime_after_injection"
@@ -1069,49 +1055,6 @@ def write_hybrid_mapping_h5(
         bb_grp.create_dataset(
             "bb_comment",
             data=np.array([b["bb_comment"] for b in bb_entries], dtype=h5py.string_dtype(encoding="utf-8")),
-        )
-
-        sc_grp = inp.create_group("hybrid_sc_map")
-        n_sc = len(sc_entries)
-        sc_grp.create_dataset(
-            "residue_index",
-            data=np.array([x["residue_index"] for x in sc_entries], dtype=np.int32),
-        )
-        sc_grp.create_dataset(
-            "rotamer_offset",
-            data=np.arange(n_sc + 1, dtype=np.int32),
-        )
-        sc_grp.create_dataset(
-            "rotamer_id",
-            data=np.array([x["rotamer_id"] for x in sc_entries], dtype=np.int32),
-        )
-        sc_grp.create_dataset(
-            "proxy_type",
-            data=np.array([x["proxy_type"] for x in sc_entries], dtype=np.int32),
-        )
-        sc_grp.create_dataset(
-            "proxy_atom_index",
-            data=np.array([x["proxy_atom_index"] for x in sc_entries], dtype=np.int32),
-        )
-        sc_grp.create_dataset(
-            "rotamer_probability",
-            data=np.array([x["rotamer_prob"] for x in sc_entries], dtype=np.float32),
-        )
-        sc_grp.create_dataset(
-            "local_pos",
-            data=np.array([x["local_pos"] for x in sc_entries], dtype=np.float32).reshape(n_sc, 3),
-        )
-        sc_grp.create_dataset(
-            "proj_target_indices",
-            data=np.array([x["proj_target_indices"] for x in sc_entries], dtype=np.int32).reshape(n_sc, 4),
-        )
-        sc_grp.create_dataset(
-            "proj_weights",
-            data=np.array([x["proj_weights"] for x in sc_entries], dtype=np.float32).reshape(n_sc, 4),
-        )
-        sc_grp.create_dataset(
-            "protein_id",
-            data=np.array([x["protein_id"] for x in sc_entries], dtype=np.int32),
         )
 
         env_grp = inp.create_group("hybrid_env_topology")

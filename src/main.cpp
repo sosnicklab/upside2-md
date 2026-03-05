@@ -194,53 +194,6 @@ static void refresh_split_potential_cache(System& sys, bool recompute_engine) {
     sys.has_cached_potential = true;
 }
 
-static vector<int> collect_rg_backbone_indices_from_hybrid_map(hid_t config_root, int n_atom) {
-    vector<int> out;
-    if(n_atom <= 0) return out;
-    if(!h5_exists(config_root, "/input/hybrid_bb_map/atom_indices")) return out;
-
-    vector<unsigned char> seen(static_cast<size_t>(n_atom), 0u);
-    try {
-        auto shape = get_dset_size(2, config_root, "/input/hybrid_bb_map/atom_indices");
-        if(shape.size() != 2u || shape[0] == 0u || shape[1] == 0u) return out;
-
-        const size_t n_row = shape[0];
-        const size_t n_col = shape[1];
-        vector<int> atom_indices(n_row*n_col, -1);
-        vector<int> atom_mask;
-        bool has_mask = h5_exists(config_root, "/input/hybrid_bb_map/atom_mask");
-        if(has_mask) {
-            auto mask_shape = get_dset_size(2, config_root, "/input/hybrid_bb_map/atom_mask");
-            if(mask_shape.size() != 2u || mask_shape[0] != n_row || mask_shape[1] != n_col) {
-                has_mask = false;
-            } else {
-                atom_mask.assign(n_row*n_col, 0);
-                traverse_dset<2,int>(config_root, "/input/hybrid_bb_map/atom_mask",
-                        [&](size_t i, size_t j, int v) { atom_mask[i*n_col + j] = v; });
-            }
-        }
-
-        traverse_dset<2,int>(config_root, "/input/hybrid_bb_map/atom_indices",
-                [&](size_t i, size_t j, int v) { atom_indices[i*n_col + j] = v; });
-
-        out.reserve(n_row*n_col);
-        for(size_t i = 0; i < n_row; ++i) {
-            for(size_t j = 0; j < n_col; ++j) {
-                if(has_mask && atom_mask[i*n_col + j] == 0) continue;
-                int ai = atom_indices[i*n_col + j];
-                if(ai < 0 || ai >= n_atom) continue;
-                if(!seen[static_cast<size_t>(ai)]) {
-                    seen[static_cast<size_t>(ai)] = 1u;
-                    out.push_back(ai);
-                }
-            }
-        }
-    } catch(...) {
-        out.clear();
-    }
-    return out;
-}
-
 static vector<int> collect_rg_backbone_indices_from_sequence(hid_t config_root, int n_atom) {
     vector<int> out;
     if(n_atom <= 0) return out;
@@ -259,8 +212,6 @@ static vector<int> collect_rg_backbone_indices_from_sequence(hid_t config_root, 
 }
 
 static vector<int> collect_rg_backbone_indices(hid_t config_root, int n_atom) {
-    auto hybrid_indices = collect_rg_backbone_indices_from_hybrid_map(config_root, n_atom);
-    if(!hybrid_indices.empty()) return hybrid_indices;
     return collect_rg_backbone_indices_from_sequence(config_root, n_atom);
 }
 
@@ -931,8 +882,6 @@ try {
             }
             // Register stage-specific parameters for this engine (read from H5)
             martini_stage_params::register_stage_params_for_engine(&sys->engine, sys->config.get());
-            // Register hybrid MARTINI/Upside metadata for this engine (read from H5)
-            martini_hybrid::register_hybrid_for_engine(sys->config.get(), sys->engine);
             if  (integrator_arg.getValue() == "mv" )
                 sys->engine.build_integrator_levels(true, dt, inner_step );
 
@@ -1118,39 +1067,6 @@ try {
                 });
             }
 
-            if(martini_hybrid::is_sc_env_energy_dump_enabled(systems[ns].engine)) {
-                ensure_group(systems[ns].logger->logging_group.get(), "diagnostics");
-                auto sc_env_cache = std::make_shared<std::array<float,3>>(std::array<float,3>{{0.f, 0.f, 0.f}});
-                auto sc_env_cache_valid = std::make_shared<bool>(false);
-                systems[ns].logger->add_logger<float>("diagnostics/sc_env_energy_total", {1}, [ns, &systems, sc_env_cache, sc_env_cache_valid](float* buffer) {
-                    float total = 0.f, lj = 0.f, coul = 0.f;
-                    if(martini_hybrid::sample_sc_env_energy_for_logging(systems[ns].engine, total, lj, coul)) {
-                        (*sc_env_cache)[0] = total;
-                        (*sc_env_cache)[1] = lj;
-                        (*sc_env_cache)[2] = coul;
-                        *sc_env_cache_valid = true;
-                        buffer[0] = total;
-                    } else {
-                        *sc_env_cache_valid = false;
-                        buffer[0] = 0.f;
-                    }
-                });
-                systems[ns].logger->add_logger<float>("diagnostics/sc_env_energy_lj", {1}, [sc_env_cache, sc_env_cache_valid](float* buffer) {
-                    if(*sc_env_cache_valid) {
-                        buffer[0] = (*sc_env_cache)[1];
-                    } else {
-                        buffer[0] = 0.f;
-                    }
-                });
-                systems[ns].logger->add_logger<float>("diagnostics/sc_env_energy_coul", {1}, [sc_env_cache, sc_env_cache_valid](float* buffer) {
-                    if(*sc_env_cache_valid) {
-                        buffer[0] = (*sc_env_cache)[2];
-                        *sc_env_cache_valid = false;
-                    } else {
-                        buffer[0] = 0.f;
-                    }
-                });
-            }
         }
         if(verbose) printf("\n");
 

@@ -1,5 +1,46 @@
 # Task Plan
 
+## 2026-03-05 Reset: Backbone-Only + Depth Table
+
+### Project Goal (Current)
+- Remove legacy dry-MARTINI/Upside hybrid physical-interaction execution paths.
+- Keep simulation target as dry-MARTINI explicit bilayer plus Upside all-atom backbone only (`N,CA,C,O`).
+- Remove sidechain back-mapping/coupling from active production workflow.
+- Build a depth-dependent interaction-table artifact from membrane potential data (no PO4 anchoring).
+
+### Architecture & Key Decisions (Current)
+- `cb_energy` in `parameters/ff_2.1/membrane.h5` is used as the backbone channel.
+- `hb_energy` in `parameters/ff_2.1/membrane.h5` is used as the hydrogen-bond channel.
+- Sidechain term is deferred (no dedicated sidechain membrane channel currently in `membrane.h5`).
+- Sheet term is omitted for now (no explicit sheet channel in `membrane.h5`).
+- Depth coordinate is `|z - z_center|`, where `z_center` is bilayer center from lipid geometry; PO4 is not used as an anchor.
+- This run produces and validates interaction-table artifacts only; no runtime force-law injection of the new table yet.
+
+### Execution Phases (Current Run)
+- [x] Phase A: Disable core runtime hybrid hooks (`main.cpp`, `main.h`, `deriv_engine.cpp`) so legacy hybrid interaction paths are inactive.
+- [x] Phase B: Add backbone-only production node injection helper (no rotamer/sidechain mapping nodes).
+- [x] Phase C: Update example production workflow to use backbone-only injection and remove sidechain back-mapping activation.
+- [x] Phase D: Add depth interaction-table builder for DOPC bead types from bilayer geometry + membrane potential channels (`cb`, `hb`).
+- [x] Phase E: Add validation checks for backbone-only stage files and interaction-table outputs.
+- [x] Phase F: Run targeted validation (syntax/build/smoke checks) and document results in progress/findings logs.
+- [x] Phase G: Remove remaining legacy hybrid workflow hooks from shell/Python orchestration and keep backbone-only mapping schema (`hybrid_bb_map` + `hybrid_env_topology`) only.
+
+### Review (2026-03-05 Current Run)
+- Runtime hybrid registration/alignment hooks were removed from `src/main.h`, `src/main.cpp`, and `src/deriv_engine.cpp`.
+- Backbone-only stage injector was implemented in `inject_backbone_only_nodes.py` and now removes sidechain potential nodes.
+- Production workflow scripts (`run_sim_1rkl.sh`, `run_sim_1rkl_new.sh`) now call backbone-only injection; rotamer/placement augmentation blocks were removed.
+- Rigid/relax/prod test workflow scripts were cleaned to remove legacy activation/sc-control hooks and legacy handoff env toggles.
+- `inject_hybrid_mapping()` in active workflows now copies only backbone/environment mapping groups (`hybrid_bb_map`, `hybrid_env_topology`).
+- Mapping export/validation utilities were updated to backbone-only schema expectations (no workflow dependence on legacy control/SC mapping groups).
+- Depth table artifacts were generated successfully:
+  - `outputs/depth_interaction_table.csv`
+  - `outputs/depth_interaction_table.meta.json`
+- `membrane.h5` term check confirms:
+  - backbone (`cb_energy`) present
+  - hbond (`hb_energy`) present
+  - sidechain term absent
+  - sheet term absent
+
 ## Project Goal
 - Define and implement a hybrid dry-MARTINI + Upside workflow where protein dynamics are handled by Upside, environment is handled by dry MARTINI, and coupling starts only at production stage.
 - Add a dedicated rigid dry-MARTINI workflow variant where the protein stays fixed for all stages (including stage 7.0), production-stage Upside coupling is never activated, and trajectory export avoids SC/backbone back-mapping.

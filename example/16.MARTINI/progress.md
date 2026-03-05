@@ -1,5 +1,25 @@
 # Progress Log
 
+## 2026-03-05 (Legacy Hybrid Workflow Hook Removal)
+- Completed removal of remaining legacy runtime hook paths from source:
+  - `../../src/main.cpp`: removed fallback/legacy hybrid-backed RG backbone index hook path; sequence-only path remains.
+  - `../../src/main.h`, `../../src/deriv_engine.cpp`: verified no residual hybrid runtime hook declarations/calls.
+- Cleaned shell workflows to backbone-only orchestration:
+  - `run_sim_1rkl_new.sh` rebuilt from cleaned baseline, preserving `_new` defaults.
+  - `run_sim_1rkl_rigid_dry.sh` removed legacy activation/sc-control hook blocks and call sites.
+  - `run_relax_6x_rigid_dry.sh` rebuilt from cleaned rigid workflow and reduced to stages `6.0-6.6` only.
+  - `test_prod_run_sim_1rkl.sh` converted to production-only stage-7 runner reusing existing stage-6.6/runtime assets.
+- Cleaned Python workflow helpers:
+  - `set_initial_position.py`: removed old env hook `UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS`; uses `UPSIDE_SET_INITIAL_REFRESH_BACKBONE_CARRIERS`.
+  - `prepare_system_lib.py`: mapping writer no longer emits legacy control/SC mapping groups.
+  - `validate_hybrid_mapping.py`: rewritten to validate backbone-only mapping schema (`hybrid_bb_map`, `hybrid_env_topology`).
+  - `inject_backbone_only_nodes.py`, `validate_backbone_only_up.py`: removed legacy SC-map-specific workflow checks.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && bash -n ...` for all modified workflow scripts -> pass.
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile ...` for modified Python files -> pass.
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j 4` -> pass (existing warnings only).
+  - Legacy-hook grep sweep (`example/16.MARTINI`, `*.sh`/`*.py`) for removed symbols/groups -> no matches.
+
 ## 2026-02-11
 - Initialized required workflow files: `task_plan.md`, `findings.md`, `progress.md`.
 - Prepared to reproduce failure for `run_sim_1ubq.sh`.
@@ -1493,3 +1513,36 @@
 - Validation:
   - static formula check executed and matches expected values above.
   - no full stage regeneration/production rerun was executed in this patch step.
+
+## 2026-03-05 (Backbone-Only Reset + Depth Interaction Table)
+- Re-read `task_plan.md` reset section and continued implementation for phases A-F.
+- Completed core hybrid-hook deactivation in runtime entry/integration files:
+  - `src/main.h`: removed `martini_hybrid` declarations.
+  - `src/main.cpp`: removed hybrid registration/log sampling call path.
+  - `src/deriv_engine.cpp`: removed integration-cycle hybrid alignment hooks.
+- Replaced production-side rotamer/placement augmentation with backbone-only injection in workflow scripts:
+  - `run_sim_1rkl.sh`
+  - `run_sim_1rkl_new.sh`
+  - `run_sim_1rkl_rigid_dry.sh` (helper replaced for consistency; not invoked in rigid path).
+- Removed `hybrid_sc_map` ingestion/remapping from `inject_hybrid_mapping()` in all three workflow scripts, so stage files are mapped as backbone-only from the start.
+- Added and integrated backbone-only injector:
+  - `inject_backbone_only_nodes.py`
+  - now deletes sidechain potential nodes and removes `/input/hybrid_sc_map` from stage files.
+- Added depth-table generation utility:
+  - `build_depth_interaction_table.py`
+  - inputs: `pdb/bilayer.MARTINI.pdb`, `ff_dry/dry_martini_v2.1_lipids.itp`, `parameters/ff_2.1/membrane.h5`
+  - depth definition: `|z-z_center|` (explicitly no PO4 anchor)
+  - channels: `cb_energy` (backbone), `hb_energy` (hbond).
+- Added validation utility:
+  - `validate_backbone_only_up.py`
+  - validates backbone-only stage `.up` schema and depth-table artifacts.
+- Updated workflow defaults to disable PO4 anchoring by default:
+  - `SC_ENV_PO4_Z_CLAMP_ENABLE=0` in all three run scripts.
+- Generated artifacts:
+  - `example/16.MARTINI/outputs/depth_interaction_table.csv`
+  - `example/16.MARTINI/outputs/depth_interaction_table.meta.json`
+- Verification results:
+  - `bash -n run_sim_1rkl.sh run_sim_1rkl_new.sh run_sim_1rkl_rigid_dry.sh` passed.
+  - `python -m py_compile inject_backbone_only_nodes.py build_depth_interaction_table.py validate_backbone_only_up.py` passed.
+  - `python validate_backbone_only_up.py --table-csv ... --table-meta ...` passed.
+  - `cmake --build obj -j 4` passed (warnings only, no new build errors).
