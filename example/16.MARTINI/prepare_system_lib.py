@@ -1247,6 +1247,23 @@ def runtime_protein_itp_path(script_dir, pdb_id):
     return os.path.join(script_dir, f"pdb/{pdb_id}_proa.itp")
 
 
+def martini_pdb_has_protein_atoms(pdb_path):
+    protein_residue_names = {
+        'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS',
+        'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP',
+        'TYR', 'VAL', 'HID', 'HIE', 'HIP', 'HSD', 'HSE', 'HSP', 'CYX'
+    }
+    with open(pdb_path, 'r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            if not line.startswith(('ATOM', 'HETATM')):
+                continue
+            residue_name = line[17:21].strip().upper()
+            seg_id = line[72:76].strip().upper() if len(line) >= 76 else ''
+            if residue_name in protein_residue_names or seg_id.startswith('PRO'):
+                return True
+    return False
+
+
 def read_martini3_nonbond_params(itp_file):
     """
     Read MARTINI nonbonded parameters from the main .itp file
@@ -1951,7 +1968,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
 
     # Configuration
     strict_from_martini_pdb = True
-    include_protein = True
     
     print("=== Dry MARTINI Protein-Lipid System Preparation ===")
     print(f"PDB ID: {pdb_id}")
@@ -1989,10 +2005,18 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                         f"  Please ensure the dry MARTINI parameter file exists and is readable.\n"
                         f"  Aborting to prevent incorrect simulation results.")
     
-    # Determine system type and load appropriate topology
-    # Check if this is a protein system by looking for protein ITP file
+    input_pdb_file = runtime_input_pdb_path(SCRIPT_DIR, pdb_id)
     protein_itp = runtime_protein_itp_path(SCRIPT_DIR, pdb_id)
-    has_protein = os.path.exists(protein_itp)
+    pdb_has_protein = martini_pdb_has_protein_atoms(input_pdb_file)
+    has_protein = pdb_has_protein
+    protein_itp_exists = os.path.exists(protein_itp)
+
+    if has_protein and not protein_itp_exists:
+        raise ValueError(
+            f"FATAL ERROR: Runtime PDB '{input_pdb_file}' contains MARTINI protein atoms, "
+            f"but the required protein topology file is missing: '{protein_itp}'.\n"
+            f"  Provide a matching protein ITP or remove MARTINI protein atoms from the runtime PDB."
+        )
     
     # Check if this is a mixed protein-lipid system by looking for both protein and lipid residues
     # This will be determined during PDB parsing, but we can prepare for both cases
@@ -2003,7 +2027,9 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         print("System contains both protein and lipid components")
         print("Using dry MARTINI force field parameters for both protein and lipid components")
     else:
-        print("=== Lipid System Detected ===")
+        print("=== Environment-Only MARTINI System Detected ===")
+        if protein_itp_exists:
+            print(f"Ignoring protein topology file because runtime PDB has no MARTINI protein atoms: {protein_itp}")
     
     # For both protein and lipid systems, we need DOPC parameters
     # Parse DOPC topology from ITP file
@@ -2139,8 +2165,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     print(f"Dihedral conversion factor: {dihedral_conversion:.6f} (divide by energy_conv)")
     
     # Read PDB file
-    if strict_from_martini_pdb or include_protein:
-        input_pdb_file = runtime_input_pdb_path(SCRIPT_DIR, pdb_id)
+    if strict_from_martini_pdb:
         print(f"\nUsing MARTINI PDB as base structure: {input_pdb_file}")
     
     # Read PDB and populate arrays
@@ -2154,13 +2179,20 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     chain_ids = []
     seg_ids = []
     
-    # Load protein topology mapping and connectivity if available
-    protein_itp = runtime_protein_itp_path(SCRIPT_DIR, pdb_id)
-    protein_topo_map = read_protein_itp_topology(protein_itp)
-    
-    # Parse protein connectivity for minimization stage (uses FLEXIBLE, NORMANG, POSRES sections)
-    protein_bonds, protein_angles, protein_dihedrals, protein_constraints, protein_position_restraints = read_protein_itp_connectivity(protein_itp, 'minimization')
-    protein_exclusions = read_protein_itp_exclusions(protein_itp)
+    # Load protein topology mapping and connectivity only when the runtime PDB
+    # actually contains MARTINI protein atoms.
+    if has_protein:
+        protein_topo_map = read_protein_itp_topology(protein_itp)
+        protein_bonds, protein_angles, protein_dihedrals, protein_constraints, protein_position_restraints = read_protein_itp_connectivity(protein_itp, 'minimization')
+        protein_exclusions = read_protein_itp_exclusions(protein_itp)
+    else:
+        protein_topo_map = {}
+        protein_bonds = []
+        protein_angles = []
+        protein_dihedrals = []
+        protein_constraints = []
+        protein_position_restraints = []
+        protein_exclusions = []
     
     print(f"\n=== Protein Connectivity for Minimization Stage ===")
     print(f"Bonds: {len(protein_bonds)} (including FLEXIBLE bonds with large spring constants)")

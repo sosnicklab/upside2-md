@@ -299,6 +299,70 @@ def build_backbone_projection_map(struct_h5, input_pos):
     }
 
 
+def build_actual_backbone_carrier_map(struct_h5, input_pos, particle_class=None):
+    if "input/hybrid_bb_map" not in struct_h5:
+        return None
+
+    bb = struct_h5["input/hybrid_bb_map"]
+    if "reference_atom_indices" not in bb or "bb_residue_index" not in bb:
+        return None
+
+    ref_offset = int(bb.attrs.get("reference_index_offset", -1))
+    if ref_offset < 0:
+        return None
+
+    ref_idx = np.asarray(bb["reference_atom_indices"][:], dtype=int)
+    bb_residue_index = np.asarray(bb["bb_residue_index"][:], dtype=int)
+    if ref_idx.ndim != 2 or ref_idx.shape[1] != 4:
+        return None
+    if bb_residue_index.shape[0] != ref_idx.shape[0]:
+        return None
+
+    if "reference_atom_names" in bb:
+        ref_atom_names = decode_str_array(bb["reference_atom_names"])
+    else:
+        ref_atom_names = np.array(["N", "CA", "C", "O"], dtype=object)
+
+    n_particles = input_pos.shape[0]
+    aa_indices = []
+    aa_atom_names = []
+    aa_residue_names = []
+    aa_residue_ids = []
+
+    for resid, row in zip(bb_residue_index, ref_idx):
+        for aname, ref_atom_idx in zip(ref_atom_names, row):
+            idx = int(ref_atom_idx)
+            if idx < 0:
+                continue
+            rt_idx = ref_offset + idx
+            if rt_idx < 0 or rt_idx >= n_particles:
+                return None
+            if particle_class is not None and str(particle_class[rt_idx]).strip() != "PROTEINAA":
+                return None
+            aa_indices.append(rt_idx)
+            aa_atom_names.append(str(aname))
+            aa_residue_names.append("PRO")
+            aa_residue_ids.append(int(resid))
+
+    if not aa_indices:
+        return None
+
+    return {
+        "aa_indices": np.asarray(aa_indices, dtype=int),
+        "output_atom_names": np.asarray(aa_atom_names, dtype=object),
+        "output_residue_names": np.asarray(aa_residue_names, dtype=object),
+        "output_residue_ids": np.asarray(aa_residue_ids, dtype=int),
+        "n_backbone_res": int(bb_residue_index.shape[0]),
+    }
+
+
+def assemble_backbone_frame(frame_pos, mapping, box_lengths=None):
+    aa_indices = mapping.get("aa_indices")
+    if aa_indices is not None:
+        return frame_pos[aa_indices]
+    return reconstruct_backbone_aa(frame_pos, mapping["bb_map"], box_lengths=box_lengths)
+
+
 def build_mode1_mapping(
     struct_h5,
     input_pos,
@@ -309,8 +373,20 @@ def build_mode1_mapping(
     pdb_metadata=None,
 ):
     n_particles = input_pos.shape[0]
+    aa_map = build_actual_backbone_carrier_map(struct_h5, input_pos, particle_class=particle_class)
     martini_indices = np.arange(n_particles, dtype=int)
-    if particle_class is not None:
+    if aa_map is not None:
+        if "input/hybrid_env_topology/protein_membership" in struct_h5:
+            protein_membership = np.asarray(struct_h5["input/hybrid_env_topology/protein_membership"][:], dtype=int)
+            if protein_membership.shape[0] == n_particles:
+                martini_indices = np.where(protein_membership < 0)[0]
+        elif particle_class is not None:
+            keep_mask = np.array(
+                [(pc != "PROTEINAA" and pc != "PROTEIN") for pc in particle_class],
+                dtype=bool,
+            )
+            martini_indices = np.where(keep_mask)[0]
+    elif particle_class is not None:
         keep_mask = np.array([pc != "PROTEINAA" for pc in particle_class], dtype=bool)
         if np.any(~keep_mask):
             martini_indices = np.where(keep_mask)[0]
@@ -331,18 +407,28 @@ def build_mode1_mapping(
     out_atom_names = list(mart_atom_names)
     out_res_names = list(mart_res_names)
     out_res_ids = [int(x) for x in np.asarray(mart_res_ids, dtype=int)]
-    include_aa_backbone = bb_map is not None
+    include_aa_backbone = (aa_map is not None) or (bb_map is not None)
     if include_aa_backbone:
-        for resid in bb_map["bb_residue_index"]:
-            for aname in bb_map["ref_atom_names"]:
-                out_atom_names.append(str(aname))
-                out_res_names.append("PRO")
-                out_res_ids.append(int(resid))
+        if aa_map is not None:
+            out_atom_names.extend(aa_map["output_atom_names"].tolist())
+            out_res_names.extend(aa_map["output_residue_names"].tolist())
+            out_res_ids.extend([int(x) for x in aa_map["output_residue_ids"]])
+        else:
+            for resid in bb_map["bb_residue_index"]:
+                for aname in bb_map["ref_atom_names"]:
+                    out_atom_names.append(str(aname))
+                    out_res_names.append("PRO")
+                    out_res_ids.append(int(resid))
 
     return {
         "mode": 1,
         "martini_indices": martini_indices,
         "include_aa_backbone": include_aa_backbone,
+        "protein_source": "carrier" if aa_map is not None else ("reconstructed" if bb_map is not None else "none"),
+        "aa_indices": None if aa_map is None else aa_map["aa_indices"],
+        "n_backbone_res": 0 if not include_aa_backbone else (
+            aa_map["n_backbone_res"] if aa_map is not None else int(bb_map["bb_atom_index"].shape[0])
+        ),
         "bb_map": bb_map,
         "output_atom_names": np.array(out_atom_names, dtype=object),
         "output_residue_names": np.array(out_res_names, dtype=object),
@@ -360,9 +446,16 @@ def build_mode2_mapping(struct_h5, input_pos, atom_names, residue_names, residue
         raise ValueError("protein_membership length mismatch")
 
     non_protein_idx = np.where(protein_membership < 0)[0]
-    bb_map = build_backbone_projection_map(struct_h5, input_pos)
-    if bb_map is None:
-        raise ValueError("Mode 2 requires /input/hybrid_bb_map with valid backbone entries")
+    particle_class = None
+    if "input/particle_class" in struct_h5:
+        candidate = decode_str_array(struct_h5["input/particle_class"])
+        if candidate.shape[0] == n_particles:
+            particle_class = candidate
+
+    aa_map = build_actual_backbone_carrier_map(struct_h5, input_pos, particle_class=particle_class)
+    bb_map = None if aa_map is not None else build_backbone_projection_map(struct_h5, input_pos)
+    if aa_map is None and bb_map is None:
+        raise ValueError("Mode 2 requires explicit AA carriers or /input/hybrid_bb_map with valid backbone entries")
 
     if (
         pdb_metadata is not None
@@ -379,15 +472,23 @@ def build_mode2_mapping(struct_h5, input_pos, atom_names, residue_names, residue
     out_res_names = list(env_res_names)
     out_res_ids = [int(x) for x in env_res_ids]
 
-    for resid in bb_map["bb_residue_index"]:
-        for aname in bb_map["ref_atom_names"]:
-            out_atom_names.append(str(aname))
-            out_res_names.append("PRO")
-            out_res_ids.append(int(resid))
+    if aa_map is not None:
+        out_atom_names.extend(aa_map["output_atom_names"].tolist())
+        out_res_names.extend(aa_map["output_residue_names"].tolist())
+        out_res_ids.extend([int(x) for x in aa_map["output_residue_ids"]])
+    else:
+        for resid in bb_map["bb_residue_index"]:
+            for aname in bb_map["ref_atom_names"]:
+                out_atom_names.append(str(aname))
+                out_res_names.append("PRO")
+                out_res_ids.append(int(resid))
 
     return {
         "mode": 2,
         "non_protein_idx": non_protein_idx,
+        "protein_source": "carrier" if aa_map is not None else "reconstructed",
+        "aa_indices": None if aa_map is None else aa_map["aa_indices"],
+        "n_backbone_res": aa_map["n_backbone_res"] if aa_map is not None else int(bb_map["bb_atom_index"].shape[0]),
         "bb_map": bb_map,
         "output_atom_names": np.array(out_atom_names, dtype=object),
         "output_residue_names": np.array(out_res_names, dtype=object),
@@ -425,13 +526,13 @@ def assemble_mode1_frame(frame_pos, mapping, box_lengths=None):
     martini_pos = frame_pos[mapping["martini_indices"]]
     if not mapping.get("include_aa_backbone", False):
         return martini_pos
-    aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"], box_lengths=box_lengths)
+    aa_pos = assemble_backbone_frame(frame_pos, mapping, box_lengths=box_lengths)
     return np.vstack((martini_pos, aa_pos))
 
 
 def assemble_mode2_frame(frame_pos, mapping, box_lengths=None):
     env_pos = frame_pos[mapping["non_protein_idx"]]
-    aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"], box_lengths=box_lengths)
+    aa_pos = assemble_backbone_frame(frame_pos, mapping, box_lengths=box_lengths)
     return np.vstack((env_pos, aa_pos))
 
 
@@ -439,8 +540,9 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description=(
             "Extract MARTINI trajectory into VTF/PDB.\n"
-            "mode 1: all MARTINI particles + protein all-atom backbone (N,CA,C,O)\n"
-            "mode 2: non-protein MARTINI particles + protein all-atom backbone (N,CA,C,O)"
+            "mode 1: MARTINI environment + protein all-atom backbone (N,CA,C,O)\n"
+            "mode 2: non-protein MARTINI particles + protein all-atom backbone (N,CA,C,O)\n"
+            "When explicit PROTEINAA carriers are present, they are exported directly."
         )
     )
     parser.add_argument("input_up", help="trajectory .up file")
@@ -535,6 +637,7 @@ def main():
         print(f"Particles (output): {mapping['output_atom_names'].shape[0]}")
         print(f"Frames: {n_frame_total}")
         print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
+        print(f"Protein source: {mapping.get('protein_source', 'none')}")
 
         dist_bonds = collect_dist_spring_bonds(s)
         if mode == 1:
@@ -543,13 +646,13 @@ def main():
             out_bonds = remap_bonds(dist_bonds, idx_map)
             if mapping.get("include_aa_backbone", False):
                 bb_start = len(mart_idx)
-                out_bonds.extend(mode2_backbone_bonds(bb_start, mapping["bb_map"]["bb_atom_index"].shape[0]))
+                out_bonds.extend(mode2_backbone_bonds(bb_start, int(mapping["n_backbone_res"])))
         else:
             non_idx = mapping["non_protein_idx"]
             idx_map = {int(old): int(new) for new, old in enumerate(non_idx)}
             out_bonds = remap_bonds(dist_bonds, idx_map)
             bb_start = len(non_idx)
-            out_bonds.extend(mode2_backbone_bonds(bb_start, mapping["bb_map"]["bb_atom_index"].shape[0]))
+            out_bonds.extend(mode2_backbone_bonds(bb_start, int(mapping["n_backbone_res"])))
 
         with open(output_file, "w", encoding="utf-8") as f:
             if fmt == "vtf":

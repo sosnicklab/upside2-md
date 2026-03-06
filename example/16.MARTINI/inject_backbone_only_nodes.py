@@ -46,7 +46,7 @@ def parse_args():
         )
     )
     p.add_argument("up_file")
-    p.add_argument("protein_itp")
+    p.add_argument("protein_source")
     p.add_argument("upside_home")
     p.add_argument("rama_library")
     p.add_argument("rama_sheet_mixing")
@@ -102,6 +102,36 @@ def parse_itp_residue_names(path):
             seen.add(resnr)
             resnames.append(normalize_resname(parts[3]))
     return resnames
+
+
+def parse_pdb_residue_names(path):
+    aa_res = {
+        "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS",
+        "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP",
+        "TYR", "VAL", "HID", "HIE", "HIP", "HSD", "HSE", "HSP", "CYX",
+    }
+    resnames = []
+    seen = set()
+    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+        for raw in fh:
+            if not raw.startswith("ATOM"):
+                continue
+            resname = normalize_resname(raw[17:21])
+            if resname not in aa_res:
+                continue
+            key = (raw[21].strip(), int(raw[22:26]), raw[26].strip())
+            if key in seen:
+                continue
+            seen.add(key)
+            resnames.append(resname)
+    return resnames
+
+
+def parse_residue_names(path):
+    suffix = Path(path).suffix.lower()
+    if suffix == ".pdb":
+        return parse_pdb_residue_names(path)
+    return parse_itp_residue_names(path)
 
 
 def remap_atom_index_array(arr, atom_map):
@@ -301,7 +331,7 @@ def write_backbone_nodes(
 def main():
     args = parse_args()
     require_file(args.up_file)
-    require_file(args.protein_itp)
+    require_file(args.protein_source)
     require_file(args.rama_library)
     require_file(args.rama_sheet_mixing)
     require_file(args.hbond_energy)
@@ -309,7 +339,7 @@ def main():
 
     uc = load_upside_config(args.upside_home)
     residue_ids, residue_to_ncac = collect_runtime_ncac_mapping(args.up_file)
-    itp_resnames = parse_itp_residue_names(args.protein_itp)
+    itp_resnames = parse_residue_names(args.protein_source)
     ref_n_atom = write_backbone_nodes(
         uc=uc,
         up_file=args.up_file,

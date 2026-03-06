@@ -41,23 +41,14 @@ LOG_DIR="${LOG_DIR:-${RUN_DIR}/logs}"
 HYBRID_PREP_DIR="${HYBRID_PREP_DIR:-${RUN_DIR}/hybrid_prep}"
 
 PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/${PDB_ID}.pdb}"
-PROTEIN_CG_PDB="${PROTEIN_CG_PDB:-pdb/${PDB_ID}.MARTINI.pdb}"
-PROTEIN_ITP="${PROTEIN_ITP:-pdb/${PDB_ID}_proa.itp}"
 BILAYER_PDB="${BILAYER_PDB:-pdb/bilayer.MARTINI.pdb}"
 UNIVERSAL_PREP_SCRIPT="${UNIVERSAL_PREP_SCRIPT:-${SCRIPT_DIR}/prepare_system.py}"
 UNIVERSAL_PREP_MODE="${UNIVERSAL_PREP_MODE:-both}"
 
 RUNTIME_PDB_FILE="${RUNTIME_PDB_FILE:-${HYBRID_PREP_DIR}/${RUNTIME_PDB_ID}.MARTINI.pdb}"
-RUNTIME_ITP_FILE="${RUNTIME_ITP_FILE:-${HYBRID_PREP_DIR}/${RUNTIME_PDB_ID}_proa.itp}"
 HYBRID_MAPPING_FILE="${HYBRID_MAPPING_FILE:-${HYBRID_PREP_DIR}/hybrid_mapping.h5}"
 HYBRID_PACKED_PDB="${HYBRID_PACKED_PDB:-${HYBRID_PREP_DIR}/hybrid_packed.MARTINI.pdb}"
 HYBRID_VALIDATE="${HYBRID_VALIDATE:-1}"
-
-# martinize controls (MARTINI 2.x generation for dry-MARTINI compatibility)
-MARTINIZE_ENABLE="${MARTINIZE_ENABLE:-1}"
-MARTINIZE_FF="${MARTINIZE_FF:-martini22}"
-MARTINIZE_MOLNAME="${MARTINIZE_MOLNAME:-PROA}"
-MARTINIZE_SCRIPT="${MARTINIZE_SCRIPT:-${SCRIPT_DIR}/martinize.py}"
 
 PREPARED_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.prepared.up"
 STAGE_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.up"
@@ -113,6 +104,9 @@ HYBRID_PREPROD_PROTEIN_MODE="${HYBRID_PREPROD_PROTEIN_MODE:-rigid}"
 HYBRID_PREP_RUNTIME_MODE="${HYBRID_PREP_RUNTIME_MODE:-dry_martini_prep}"
 HYBRID_ACTIVE_RUNTIME_MODE="${HYBRID_ACTIVE_RUNTIME_MODE:-aa_backbone_explicit_lipid}"
 HYBRID_PREPROD_LIPID_HEADGROUP_ROLES="${HYBRID_PREPROD_LIPID_HEADGROUP_ROLES:-PO4}"
+PREPROD_FIX_RIGID_ENABLE="${PREPROD_FIX_RIGID_ENABLE:-1}"
+PREPROD_RIGID_ASSERT_ENABLE="${PREPROD_RIGID_ASSERT_ENABLE:-1}"
+PREPROD_RIGID_TOL="${PREPROD_RIGID_TOL:-1e-6}"
 
 MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-500}"
 MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-500}"
@@ -195,22 +189,6 @@ if [ ! -f "${UPSIDE_REFERENCE_STATE_RAMA}" ]; then
     echo "ERROR: Upside reference-state rama file not found: ${UPSIDE_REFERENCE_STATE_RAMA}"
     exit 1
 fi
-if [ "${MARTINIZE_ENABLE}" = "1" ]; then
-    if [ ! -f "${MARTINIZE_SCRIPT}" ]; then
-        echo "ERROR: martinize.py script not found: ${MARTINIZE_SCRIPT}"
-        exit 1
-    fi
-fi
-if [ "${MARTINIZE_ENABLE}" = "0" ]; then
-    if [ ! -f "${PROTEIN_CG_PDB}" ]; then
-        echo "ERROR: protein CG PDB not found: ${PROTEIN_CG_PDB}"
-        exit 1
-    fi
-    if [ ! -f "${PROTEIN_ITP}" ]; then
-        echo "ERROR: protein ITP not found: ${PROTEIN_ITP}"
-        exit 1
-    fi
-fi
 if [ ! -f "${UNIVERSAL_PREP_SCRIPT}" ]; then
     echo "ERROR: universal prep script not found: ${UNIVERSAL_PREP_SCRIPT}"
     exit 1
@@ -235,196 +213,6 @@ if [ "${HYBRID_VALIDATE}" = "1" ] && [ ! -f "${BACKBONE_ONLY_VALIDATOR}" ]; then
 fi
 
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR" "$HYBRID_PREP_DIR"
-
-PROTEIN_CG_EFFECTIVE="${PROTEIN_CG_PDB}"
-PROTEIN_ITP_EFFECTIVE="${PROTEIN_ITP}"
-
-run_martinize() {
-    local input_aa="$1"
-    local out_cg_pdb="$2"
-    local out_top="$3"
-
-    local script_abs input_abs cg_abs top_abs workdir
-    script_abs="$(python3 - "$MARTINIZE_SCRIPT" << 'PY'
-import os, sys
-print(os.path.abspath(sys.argv[1]))
-PY
-)"
-    input_abs="$(python3 - "$input_aa" << 'PY'
-import os, sys
-print(os.path.abspath(sys.argv[1]))
-PY
-)"
-    cg_abs="$(python3 - "$out_cg_pdb" << 'PY'
-import os, sys
-print(os.path.abspath(sys.argv[1]))
-PY
-)"
-    top_abs="$(python3 - "$out_top" << 'PY'
-import os, sys
-print(os.path.abspath(sys.argv[1]))
-PY
-)"
-    workdir="$(dirname "$top_abs")"
-    mkdir -p "$workdir"
-
-    echo "Running martinize.py command:"
-    echo "  python3 ${script_abs} -f ${input_abs} -x ${cg_abs} -o ${top_abs} -ff ${MARTINIZE_FF} -name ${MARTINIZE_MOLNAME}"
-    if ! (cd "$workdir" && python3 "$script_abs" -f "$input_abs" -x "$cg_abs" -o "$top_abs" -ff "$MARTINIZE_FF" -name "$MARTINIZE_MOLNAME"); then
-        echo "ERROR: martinize.py execution failed."
-        exit 1
-    fi
-}
-
-resolve_itp_from_top() {
-    local top_file="$1"
-    local out_path
-    out_path="$(python3 - "$top_file" << 'PY'
-import os, re, sys, glob
-top = os.path.abspath(sys.argv[1])
-base = os.path.dirname(top)
-cands = []
-with open(top, "r", encoding="utf-8", errors="ignore") as fh:
-    for ln in fh:
-        m = re.search(r'#include\s+"([^"]+\.itp)"', ln)
-        if not m:
-            continue
-        p = os.path.join(base, m.group(1))
-        if os.path.exists(p):
-            cands.append(p)
-
-def has_atoms(path):
-    txt = open(path, "r", encoding="utf-8", errors="ignore").read().lower()
-    return ("[ atoms ]" in txt) or ("[atoms]" in txt)
-
-for p in cands:
-    if has_atoms(p):
-        print(p)
-        sys.exit(0)
-
-for p in sorted(glob.glob(os.path.join(base, "*.itp"))):
-    if has_atoms(p):
-        print(p)
-        sys.exit(0)
-
-print("")
-PY
-)"
-    echo "${out_path}"
-}
-
-assert_itp_types_have_masses() {
-    local itp_file="$1"
-    local ff_file="$2"
-
-    python3 - "$itp_file" "$ff_file" << 'PY'
-import os, sys
-
-itp_file, ff_file = sys.argv[1], sys.argv[2]
-if not os.path.exists(itp_file):
-    raise SystemExit(f"ERROR: protein ITP not found: {itp_file}")
-if not os.path.exists(ff_file):
-    raise SystemExit(f"ERROR: mass force-field file not found: {ff_file}")
-
-masses = set()
-in_atomtypes = False
-with open(ff_file, "r", encoding="utf-8", errors="ignore") as fh:
-    for raw in fh:
-        line = raw.split(";", 1)[0].strip()
-        if not line:
-            continue
-        low = line.lower()
-        if low == "[ atomtypes ]" or low == "[atomtypes]":
-            in_atomtypes = True
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            in_atomtypes = False
-            continue
-        if in_atomtypes:
-            parts = line.split()
-            if len(parts) >= 2:
-                try:
-                    float(parts[1])
-                except ValueError:
-                    continue
-                masses.add(parts[0])
-
-types = set()
-in_atoms = False
-with open(itp_file, "r", encoding="utf-8", errors="ignore") as fh:
-    for raw in fh:
-        line = raw.split(";", 1)[0].strip()
-        if not line:
-            continue
-        low = line.lower()
-        if low == "[ atoms ]" or low == "[atoms]":
-            in_atoms = True
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            in_atoms = False
-            continue
-        if in_atoms:
-            parts = line.split()
-            if len(parts) >= 2:
-                types.add(parts[1])
-
-missing = sorted(t for t in types if t not in masses)
-if missing:
-    raise SystemExit(
-        "ERROR: protein ITP contains bead types missing in dry-MARTINI mass table.\n"
-        f"  ITP: {itp_file}\n"
-        f"  FF:  {ff_file}\n"
-        f"  Missing types: {missing}\n"
-        "Use MARTINI2-compatible martinize.py settings (e.g., MARTINIZE_FF=martini22)."
-    )
-
-print(f"Protein ITP mass compatibility OK: {itp_file}")
-PY
-}
-
-prepare_protein_inputs() {
-    local mass_ff_path="${SCRIPT_DIR}/${MASS_FF_FILE}"
-    if [ "${MARTINIZE_ENABLE}" = "1" ]; then
-        local martinize_dir="${RUN_DIR}/martinize"
-        mkdir -p "${martinize_dir}"
-        local cg_pdb="${martinize_dir}/${RUNTIME_PDB_ID}.MARTINI.pdb"
-        local top_file="${martinize_dir}/${RUNTIME_PDB_ID}.top"
-
-        run_martinize "${PROTEIN_AA_PDB}" "${cg_pdb}" "${top_file}"
-        if [ ! -f "${cg_pdb}" ]; then
-            echo "ERROR: martinize.py did not produce CG PDB: ${cg_pdb}"
-            exit 1
-        fi
-        if [ ! -f "${top_file}" ]; then
-            echo "ERROR: martinize.py did not produce topology file: ${top_file}"
-            exit 1
-        fi
-
-        local generated_itp
-        generated_itp="$(resolve_itp_from_top "${top_file}")"
-        if [ -z "${generated_itp}" ] || [ ! -f "${generated_itp}" ]; then
-            echo "ERROR: unable to resolve protein ITP from martinize.py output top: ${top_file}"
-            exit 1
-        fi
-
-        assert_itp_types_have_masses "${generated_itp}" "${mass_ff_path}"
-
-        PROTEIN_CG_EFFECTIVE="${cg_pdb}"
-        PROTEIN_ITP_EFFECTIVE="${generated_itp}"
-    else
-        if [ ! -f "${PROTEIN_CG_PDB}" ]; then
-            echo "ERROR: protein CG PDB not found: ${PROTEIN_CG_PDB}"
-            exit 1
-        fi
-        if [ ! -f "${PROTEIN_ITP}" ]; then
-            echo "ERROR: protein ITP not found: ${PROTEIN_ITP}"
-            exit 1
-        fi
-        assert_itp_types_have_masses "${PROTEIN_ITP}" "${mass_ff_path}"
-        PROTEIN_CG_EFFECTIVE="${PROTEIN_CG_PDB}"
-        PROTEIN_ITP_EFFECTIVE="${PROTEIN_ITP}"
-    fi
-}
 
 set_barostat_type() {
     local up_file="$1"
@@ -705,9 +493,147 @@ with h5py.File(up_file, "r+") as h5:
 PY
 }
 
+set_fix_rigid_from_membership() {
+    local up_file="$1"
+    local enable="$2"
+    python3 - "$up_file" "$enable" << 'PY'
+import sys
+import h5py
+import numpy as np
+
+up_file = sys.argv[1]
+enable = int(sys.argv[2])
+
+with h5py.File(up_file, "r+") as h5:
+    inp = h5.require_group("input")
+    if enable:
+        if "/input/hybrid_env_topology/protein_membership" not in h5:
+            raise ValueError(f"{up_file}: missing /input/hybrid_env_topology/protein_membership")
+        membership = h5["/input/hybrid_env_topology/protein_membership"][:].astype(np.int32)
+        protein_idx = np.where(membership >= 0)[0].astype(np.int32)
+        grp = inp.require_group("fix_rigid")
+        grp.attrs["enable"] = np.int8(1)
+        if "atom_indices" in grp:
+            del grp["atom_indices"]
+        grp.create_dataset("atom_indices", data=protein_idx)
+    else:
+        grp = inp.require_group("fix_rigid")
+        grp.attrs["enable"] = np.int8(0)
+        if "atom_indices" in grp:
+            del grp["atom_indices"]
+PY
+}
+
+assert_protein_rigid_stage() {
+    local stage_label="$1"
+    local up_file="$2"
+    local tol="${3:-$PREPROD_RIGID_TOL}"
+    if [ "${PREPROD_FIX_RIGID_ENABLE}" != "1" ] || [ "${PREPROD_RIGID_ASSERT_ENABLE}" != "1" ]; then
+        return
+    fi
+    python3 - "$stage_label" "$up_file" "$tol" << 'PY'
+import sys
+import h5py
+import numpy as np
+
+stage_label = sys.argv[1]
+up_file = sys.argv[2]
+tol = float(sys.argv[3])
+
+with h5py.File(up_file, "r") as h5:
+    if "/input/fix_rigid" not in h5:
+        raise SystemExit(f"ERROR: Stage {stage_label} missing /input/fix_rigid for rigid-protein validation")
+    fix_grp = h5["/input/fix_rigid"]
+    if int(fix_grp.attrs.get("enable", 0)) == 0:
+        raise SystemExit(f"ERROR: Stage {stage_label} has /input/fix_rigid disabled during rigid-protein validation")
+    if "/input/hybrid_env_topology/protein_membership" not in h5:
+        raise SystemExit(f"ERROR: Stage {stage_label} missing protein_membership for rigid validation")
+    if "/output/pos" not in h5 or h5["/output/pos"].shape[0] == 0:
+        raise SystemExit(f"ERROR: Stage {stage_label} has no output positions for rigid validation")
+
+    membership = h5["/input/hybrid_env_topology/protein_membership"][:].astype(np.int32)
+    protein_idx = np.where(membership >= 0)[0]
+    if protein_idx.size == 0:
+        raise SystemExit(f"ERROR: Stage {stage_label} has no protein atoms in protein_membership")
+
+    start = h5["/input/pos"][:, :, 0][protein_idx].astype(np.float64)
+    final = h5["/output/pos"][-1, 0, :, :][protein_idx].astype(np.float64)
+    disp = np.linalg.norm(final - start, axis=1)
+    max_disp = float(np.max(disp))
+    mean_disp = float(np.mean(disp))
+    print(
+        f"Rigid-protein check stage {stage_label}: "
+        f"n_protein={protein_idx.size} max_disp={max_disp:.6g} mean_disp={mean_disp:.6g} tol={tol:.6g}"
+    )
+    if not np.isfinite(max_disp) or max_disp > tol:
+        raise SystemExit(
+            f"ERROR: Stage {stage_label} moved protein atoms despite rigid hold "
+            f"(max_disp={max_disp:.6g}, tol={tol:.6g})"
+        )
+PY
+}
+
+assert_production_handoff_protein_particles() {
+    local source_file="$1"
+    local target_file="$2"
+    local tol="${3:-$PREPROD_RIGID_TOL}"
+    if [ "${PREPROD_RIGID_ASSERT_ENABLE}" != "1" ]; then
+        return
+    fi
+    python3 - "$source_file" "$target_file" "$tol" << 'PY'
+import sys
+import h5py
+import numpy as np
+
+source_file = sys.argv[1]
+target_file = sys.argv[2]
+tol = float(sys.argv[3])
+
+with h5py.File(source_file, "r") as src, h5py.File(target_file, "r") as dst:
+    if "/output/pos" not in src or src["/output/pos"].shape[0] == 0:
+        raise SystemExit(f"ERROR: handoff source has no output positions: {source_file}")
+    if "/input/hybrid_env_topology/protein_membership" not in src:
+        raise SystemExit(f"ERROR: handoff source missing protein_membership: {source_file}")
+    if "/input/hybrid_env_topology/protein_membership" not in dst:
+        raise SystemExit(f"ERROR: handoff target missing protein_membership: {target_file}")
+
+    src_mem = src["/input/hybrid_env_topology/protein_membership"][:].astype(np.int32)
+    dst_mem = dst["/input/hybrid_env_topology/protein_membership"][:].astype(np.int32)
+    compare_n = min(src_mem.shape[0], dst_mem.shape[0])
+    if compare_n <= 0:
+        raise SystemExit("ERROR: no overlapping atom range for production handoff validation")
+
+    carrier_offset = compare_n
+    if "/input/hybrid_bb_map" in dst:
+        carrier_offset = int(dst["/input/hybrid_bb_map"].attrs.get("reference_index_offset", compare_n))
+    carrier_offset = max(0, min(compare_n, carrier_offset))
+
+    protein_idx = np.where(src_mem[:carrier_offset] >= 0)[0]
+    if protein_idx.size == 0:
+        protein_idx = np.where(src_mem[:compare_n] >= 0)[0]
+    if protein_idx.size == 0:
+        raise SystemExit("ERROR: no protein particles found for production handoff validation")
+
+    src_pos = src["/output/pos"][-1, 0, :, :][protein_idx].astype(np.float64)
+    dst_pos = dst["/input/pos"][:, :, 0][protein_idx].astype(np.float64)
+    disp = np.linalg.norm(dst_pos - src_pos, axis=1)
+    max_disp = float(np.max(disp))
+    mean_disp = float(np.mean(disp))
+    print(
+        "Production handoff protein-particle check: "
+        f"n_protein={protein_idx.size} max_disp={max_disp:.6g} mean_disp={mean_disp:.6g} tol={tol:.6g}"
+    )
+    if not np.isfinite(max_disp) or max_disp > tol:
+        raise SystemExit(
+            f"ERROR: production handoff changed original protein particles "
+            f"(max_disp={max_disp:.6g}, tol={tol:.6g})"
+        )
+PY
+}
+
 inject_backbone_only_production_nodes() {
     local up_file="$1"
-    local protein_itp="$2"
+    local protein_source="$2"
     local upside_home="$3"
     local rama_library="$4"
     local rama_sheet_mixing="$5"
@@ -720,7 +646,7 @@ inject_backbone_only_production_nodes() {
     fi
     python3 "${injector_script}" \
         "${up_file}" \
-        "${protein_itp}" \
+        "${protein_source}" \
         "${upside_home}" \
         "${rama_library}" \
         "${rama_sheet_mixing}" \
@@ -805,7 +731,6 @@ inject_backbone_cross_production_node() {
 
 prepare_hybrid_artifacts() {
     echo "=== Stage 0: Hybrid Packing + Mapping Export ==="
-    prepare_protein_inputs
 
     local packing_cutoff="${PROTEIN_LIPID_CUTOFF}"
     local packing_min_gap="nan"
@@ -817,11 +742,8 @@ prepare_hybrid_artifacts() {
             --mode "both" \
             --pdb-id "${RUNTIME_PDB_ID}" \
             --runtime-pdb-output "${HYBRID_PACKED_PDB}" \
-            --runtime-itp-output "${RUNTIME_ITP_FILE}" \
             --prepare-structure 1 \
             --protein-aa-pdb "${PROTEIN_AA_PDB}" \
-            --protein-cg-pdb "${PROTEIN_CG_EFFECTIVE}" \
-            --protein-itp "${PROTEIN_ITP_EFFECTIVE}" \
             --hybrid-mapping-output "${HYBRID_MAPPING_FILE}" \
             --hybrid-bb-map-json-output "${HYBRID_PREP_DIR}/hybrid_bb_map.json" \
             --bilayer-pdb "${BILAYER_PDB}" \
@@ -840,50 +762,17 @@ prepare_hybrid_artifacts() {
             exit 1
         fi
 
-        packing_min_gap="$(python3 - "${HYBRID_PACKED_PDB}" << 'PY'
+        packing_min_gap="$(python3 - "${HYBRID_PREP_DIR}/hybrid_prep_summary.json" << 'PY'
+import json
+import math
 import sys
-import numpy as np
 
-pdb_file = sys.argv[1]
-protein_residues = {
-    "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS",
-    "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP",
-    "TYR", "VAL", "HID", "HIE", "HIP", "HSD", "HSE", "HSP", "CYX"
-}
-lipid_residues = {"DOP", "DOPC"}
-
-protein_xyz = []
-lipid_xyz = []
-with open(pdb_file, "r", encoding="utf-8", errors="ignore") as fh:
-    for line in fh:
-        if not line.startswith(("ATOM", "HETATM")):
-            continue
-        resname = line[17:21].strip().upper()
-        x = float(line[30:38])
-        y = float(line[38:46])
-        z = float(line[46:54])
-        if resname in protein_residues:
-            protein_xyz.append((x, y, z))
-        elif resname in lipid_residues:
-            lipid_xyz.append((x, y, z))
-
-if not protein_xyz or not lipid_xyz:
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    summary = json.load(fh)
+value = float(summary.get("min_protein_lipid_distance", float("nan")))
+if not math.isfinite(value):
     raise SystemExit("nan")
-
-protein_xyz = np.asarray(protein_xyz, dtype=float)
-lipid_xyz = np.asarray(lipid_xyz, dtype=float)
-
-min_d2 = float("inf")
-chunk = 2000
-for i in range(0, lipid_xyz.shape[0], chunk):
-    block = lipid_xyz[i:i + chunk]
-    d = block[:, None, :] - protein_xyz[None, :, :]
-    d2 = np.einsum("ijk,ijk->ij", d, d)
-    block_min = float(d2.min())
-    if block_min < min_d2:
-        min_d2 = block_min
-
-print(f"{min_d2 ** 0.5:.6f}")
+print(f"{value:.6f}")
 PY
 )"
 
@@ -933,19 +822,10 @@ import os
 import sys
 print(int(os.path.abspath(sys.argv[1]) == os.path.abspath(sys.argv[2])))
 PY
-)" = "0" ]; then
+    )" = "0" ]; then
         cp -f "${HYBRID_PACKED_PDB}" "${RUNTIME_PDB_FILE}"
     fi
-    if [ "$(python3 - "${PROTEIN_ITP_EFFECTIVE}" "${RUNTIME_ITP_FILE}" << 'PY'
-import os
-import sys
-print(int(os.path.abspath(sys.argv[1]) == os.path.abspath(sys.argv[2])))
-PY
-)" = "0" ]; then
-        cp -f "${PROTEIN_ITP_EFFECTIVE}" "${RUNTIME_ITP_FILE}"
-    fi
     echo "Runtime MARTINI PDB: ${RUNTIME_PDB_FILE}"
-    echo "Runtime protein ITP: ${RUNTIME_ITP_FILE}"
 }
 
 prepare_stage_file() {
@@ -964,7 +844,6 @@ prepare_stage_file() {
         --mode "${UNIVERSAL_PREP_MODE}" \
         --pdb-id "${RUNTIME_PDB_ID}" \
         --runtime-pdb-output "${RUNTIME_PDB_FILE}" \
-        --runtime-itp-output "${RUNTIME_ITP_FILE}" \
         --prepare-structure 0 \
         --stage "$prepare_stage" \
         --run-dir "$RUN_DIR" \
@@ -988,9 +867,14 @@ prepare_stage_file() {
         "$HYBRID_ACTIVE_RUNTIME_MODE" \
         "$HYBRID_PREPROD_LIPID_HEADGROUP_ROLES"
     if [ "$stage_label" = "production" ]; then
+        set_fix_rigid_from_membership "$target_file" "0"
+    elif [ "${PREPROD_FIX_RIGID_ENABLE}" = "1" ]; then
+        set_fix_rigid_from_membership "$target_file" "1"
+    fi
+    if [ "$stage_label" = "production" ]; then
         inject_backbone_only_production_nodes \
             "$target_file" \
-            "${PROTEIN_ITP_EFFECTIVE}" \
+            "${PROTEIN_AA_PDB}" \
             "${UPSIDE_HOME}" \
             "${UPSIDE_RAMA_LIBRARY}" \
             "${UPSIDE_RAMA_SHEET_MIXING}" \
@@ -1172,7 +1056,7 @@ echo "Runtime PDB ID: $RUNTIME_PDB_ID"
 echo "Universal prep: ${UNIVERSAL_PREP_SCRIPT} (mode=${UNIVERSAL_PREP_MODE})"
 echo "Hybrid prep: $HYBRID_PREP_DIR"
 echo "Simulation stages: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"
-echo "Pre-production mode: rigid protein + dry-MARTINI environment"
+echo "Pre-production mode: explicit fix_rigid protein hold + dry-MARTINI environment"
 echo "Production mode: dry-MARTINI bilayer + Upside backbone + backbone cross table"
 echo
 
@@ -1184,6 +1068,7 @@ set_stage_npt_targets "6.0"
 prepare_stage_file "$PREPARED_60_FILE" "minimization" "1" "0" "0" "minimization"
 cp -f "$PREPARED_60_FILE" "$STAGE_60_FILE"
 run_minimization_stage "6.0" "$STAGE_60_FILE" "$MIN_60_MAX_ITER"
+assert_protein_rigid_stage "6.0" "$STAGE_60_FILE"
 extract_stage_vtf "6.0" "$STAGE_60_FILE" "1"
 
 # 6.1: hard minimization (pre-production / hybrid inactive)
@@ -1192,6 +1077,7 @@ prepare_stage_file "$PREPARED_61_FILE" "npt_prod" "1" "0" "0" "minimization"
 cp -f "$PREPARED_61_FILE" "$STAGE_61_FILE"
 handoff_initial_position "$STAGE_60_FILE" "$STAGE_61_FILE"
 run_minimization_stage "6.1" "$STAGE_61_FILE" "$MIN_61_MAX_ITER"
+assert_protein_rigid_stage "6.1" "$STAGE_61_FILE"
 extract_stage_vtf "6.1" "$STAGE_61_FILE" "1"
 
 # 6.2: soft equilibration with rigid protein hold
@@ -1199,6 +1085,7 @@ set_stage_npt_targets "6.2"
 prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "0" "200" "minimization"
 handoff_initial_position "$STAGE_61_FILE" "$STAGE_62_FILE"
 run_md_stage "6.2" "$STAGE_62_FILE" "$STAGE_62_FILE" "$EQ_62_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+assert_protein_rigid_stage "6.2" "$STAGE_62_FILE"
 extract_stage_vtf "6.2" "$STAGE_62_FILE" "1"
 
 # 6.3: reduced softening equilibration with rigid protein hold
@@ -1207,6 +1094,7 @@ prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "0" "100" "minimi
 cp -f "$PREPARED_63_FILE" "$STAGE_63_FILE"
 handoff_initial_position "$STAGE_62_FILE" "$STAGE_63_FILE"
 run_md_stage "6.3" "$STAGE_63_FILE" "$STAGE_63_FILE" "$EQ_63_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+assert_protein_rigid_stage "6.3" "$STAGE_63_FILE"
 extract_stage_vtf "6.3" "$STAGE_63_FILE" "1"
 
 # 6.4-6.6: hard equilibration with restraint ramp and rigid protein hold
@@ -1215,6 +1103,7 @@ prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "0" "50" "minimization"
 cp -f "$PREPARED_64_FILE" "$STAGE_64_FILE"
 handoff_initial_position "$STAGE_63_FILE" "$STAGE_64_FILE"
 run_md_stage "6.4" "$STAGE_64_FILE" "$STAGE_64_FILE" "$EQ_64_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+assert_protein_rigid_stage "6.4" "$STAGE_64_FILE"
 extract_stage_vtf "6.4" "$STAGE_64_FILE" "1"
 
 set_stage_npt_targets "6.5"
@@ -1222,6 +1111,7 @@ prepare_stage_file "$PREPARED_65_FILE" "npt_prod" "1" "0" "20" "minimization"
 cp -f "$PREPARED_65_FILE" "$STAGE_65_FILE"
 handoff_initial_position "$STAGE_64_FILE" "$STAGE_65_FILE"
 run_md_stage "6.5" "$STAGE_65_FILE" "$STAGE_65_FILE" "$EQ_65_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+assert_protein_rigid_stage "6.5" "$STAGE_65_FILE"
 extract_stage_vtf "6.5" "$STAGE_65_FILE" "1"
 
 set_stage_npt_targets "6.6"
@@ -1229,12 +1119,14 @@ prepare_stage_file "$PREPARED_66_FILE" "npt_prod" "1" "0" "10" "minimization"
 cp -f "$PREPARED_66_FILE" "$STAGE_66_FILE"
 handoff_initial_position "$STAGE_65_FILE" "$STAGE_66_FILE"
 run_md_stage "6.6" "$STAGE_66_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+assert_protein_rigid_stage "6.6" "$STAGE_66_FILE"
 extract_stage_vtf "6.6" "$STAGE_66_FILE" "1"
 
 # 7.0: production (dry bilayer + Upside backbone + cross table)
 prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "$PROD_70_BAROSTAT_TYPE" "0" "production"
 cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
 handoff_initial_position "$STAGE_66_FILE" "$STAGE_70_FILE" "production_backbone"
+assert_production_handoff_protein_particles "$STAGE_66_FILE" "$STAGE_70_FILE"
 run_md_stage "7.0" "$STAGE_70_FILE" "$STAGE_70_FILE" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
 extract_stage_vtf "7.0" "$STAGE_70_FILE" "2"
 

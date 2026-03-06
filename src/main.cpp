@@ -54,7 +54,6 @@ namespace simulation_box {
 // ---- Fix Rigid hooks (implemented in martini.cpp) ----
 namespace martini_fix_rigid {
     void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine);
-    void register_fix_rigid_backbone_for_engine(hid_t config_root, DerivEngine& engine, const std::string& atom_name);
     void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv);
     void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom);
 }
@@ -631,9 +630,6 @@ try {
             " To restart the trajectory, make sure to copy the end momentum of last run to input.mom (similar to the pos treatment when restarting):"
             " check examples for continue the simulation",
             cmd, false);
-    SwitchArg martini_hold_backbone_arg("", "martini-hold-backbone",
-            "hold MARTINI protein backbone (BB) beads rigid (requires /input/atom_names)",
-            cmd, false);
     ValueArg<string> set_param_arg("", "set-param", "Developer use only", false, "", "param_arg", cmd);
     UnlabeledMultiArg<string> config_args("config_files","configuration .h5 files", true, "h5_files");
     cmd.add(config_args);
@@ -877,9 +873,6 @@ try {
             martini_masses::load_masses_for_engine(&sys->engine, sys->config.get());
             // Register fix rigid settings for this engine (read from H5)
             martini_fix_rigid::register_fix_rigid_for_engine(sys->config.get(), sys->engine);
-            if(martini_hold_backbone_arg.getValue()) {
-                martini_fix_rigid::register_fix_rigid_backbone_for_engine(sys->config.get(), sys->engine, "BB");
-            }
             // Register stage-specific parameters for this engine (read from H5)
             martini_stage_params::register_stage_params_for_engine(&sys->engine, sys->config.get());
             if  (integrator_arg.getValue() == "mv" )

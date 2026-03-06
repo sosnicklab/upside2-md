@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import shutil
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -102,12 +103,166 @@ def runtime_paths(args):
     return runtime_pdb, runtime_itp
 
 
+def runtime_pdb_has_martini_protein(runtime_pdb: Path) -> bool:
+    protein_residue_names = {
+        "ALA",
+        "ARG",
+        "ASN",
+        "ASP",
+        "CYS",
+        "GLN",
+        "GLU",
+        "GLY",
+        "HIS",
+        "ILE",
+        "LEU",
+        "LYS",
+        "MET",
+        "PHE",
+        "PRO",
+        "SER",
+        "THR",
+        "TRP",
+        "TYR",
+        "VAL",
+        "HID",
+        "HIE",
+        "HIP",
+        "HSD",
+        "HSE",
+        "HSP",
+        "CYX",
+    }
+    with runtime_pdb.open("r", encoding="utf-8", errors="ignore") as fh:
+        for line in fh:
+            if not line.startswith(("ATOM", "HETATM")):
+                continue
+            residue_name = line[17:21].strip().upper()
+            seg_id = line[72:76].strip().upper() if len(line) >= 76 else ""
+            if residue_name in protein_residue_names or seg_id.startswith("PRO"):
+                return True
+    return False
+
+
 def copy_if_different(src: Path, dst: Path):
     src_resolved = src.expanduser().resolve()
     dst_resolved = dst.expanduser().resolve()
     if src_resolved == dst_resolved:
         return
     shutil.copy2(src_resolved, dst_resolved)
+
+
+def infer_protein_charge_from_atoms(protein_atoms):
+    charged_res = {"ASP": -1, "GLU": -1, "LYS": 1, "ARG": 1}
+    seen = set()
+    total = 0
+    for atom in protein_atoms:
+        key = (atom["chain"], atom["resseq"], atom["icode"])
+        if key in seen:
+            continue
+        seen.add(key)
+        total += charged_res.get(atom["resname"].upper(), 0)
+    return total
+
+
+def extract_protein_aa_atoms(aa_atoms):
+    aa_res = {
+        "ALA",
+        "ARG",
+        "ASN",
+        "ASP",
+        "CYS",
+        "GLN",
+        "GLU",
+        "GLY",
+        "HIS",
+        "ILE",
+        "LEU",
+        "LYS",
+        "MET",
+        "PHE",
+        "PRO",
+        "SER",
+        "THR",
+        "TRP",
+        "TYR",
+        "VAL",
+        "HID",
+        "HIE",
+        "HIP",
+        "HSD",
+        "HSE",
+        "HSP",
+        "CYX",
+    }
+    protein_atoms = []
+    for atom in aa_atoms:
+        if atom["record"] != "ATOM":
+            continue
+        if atom["resname"].upper() not in aa_res:
+            continue
+        protein_atoms.append(atom)
+    if not protein_atoms:
+        raise ValueError("No protein amino-acid atoms found in AA PDB.")
+    return protein_atoms
+
+
+def collect_aa_backbone_entries(protein_aa_atoms):
+    comp_names = ("N", "CA", "C", "O")
+    comp_mass = {"N": 14.0, "CA": 12.0, "C": 12.0, "O": 16.0}
+    aa_by_res = defaultdict(dict)
+    residue_order = []
+    seen_res = set()
+
+    for atom in protein_aa_atoms:
+        key = (atom["chain"], atom["resseq"], atom["icode"])
+        if key not in seen_res:
+            residue_order.append(key)
+            seen_res.add(key)
+        aa_by_res[key][atom["name"].strip().upper()] = atom
+
+    entries = []
+    next_ref_idx = 0
+    for chain, resseq, icode in residue_order:
+        row_idx = []
+        row_mask = []
+        row_coords = []
+        row_mass = []
+        res_atoms = aa_by_res[(chain, resseq, icode)]
+        for name in comp_names:
+            atom = res_atoms.get(name)
+            if atom is None:
+                row_idx.append(-1)
+                row_mask.append(0)
+                row_coords.append([0.0, 0.0, 0.0])
+                row_mass.append(0.0)
+                continue
+            row_idx.append(next_ref_idx)
+            row_mask.append(1)
+            row_coords.append([float(atom["x"]), float(atom["y"]), float(atom["z"])])
+            row_mass.append(comp_mass[name])
+            next_ref_idx += 1
+
+        mass_sum = sum(row_mass)
+        if mass_sum > 0.0:
+            weights = [float(m / mass_sum) for m in row_mass]
+        else:
+            weights = [0.0, 0.0, 0.0, 0.0]
+
+        entries.append(
+            {
+                "bb_resseq": int(resseq),
+                "bb_atom_index": -1,
+                "atom_indices": list(row_idx),
+                "atom_mask": list(row_mask),
+                "weights": weights,
+                "reference_atom_indices": list(row_idx),
+                "reference_atom_coords": row_coords,
+                "bb_comment": "AA-only backbone carrier row (no MARTINI protein proxy)",
+            }
+        )
+
+    return entries
 
 
 def parse_itp_atom_types(itp_path: Path):
@@ -296,24 +451,41 @@ def prepare_protein_structure(args, runtime_pdb, runtime_itp):
 
 
 def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
-    if not args.protein_cg_pdb:
-        raise ValueError("--protein-cg-pdb is required for mode=both")
     if not args.bilayer_pdb:
         raise ValueError("--bilayer-pdb is required for mode=both")
+    if not args.protein_aa_pdb:
+        raise ValueError("--protein-aa-pdb is required for mode=both")
 
-    protein_cg_pdb = Path(args.protein_cg_pdb).expanduser().resolve()
     bilayer_pdb = Path(args.bilayer_pdb).expanduser().resolve()
-    if not protein_cg_pdb.exists():
-        raise FileNotFoundError(f"Protein CG PDB not found: {protein_cg_pdb}")
     if not bilayer_pdb.exists():
         raise FileNotFoundError(f"Bilayer PDB not found: {bilayer_pdb}")
+    protein_aa_pdb = Path(args.protein_aa_pdb).expanduser().resolve()
+    if not protein_aa_pdb.exists():
+        raise FileNotFoundError(f"Protein AA PDB not found: {protein_aa_pdb}")
 
-    protein_atoms_raw, _ = parse_pdb(protein_cg_pdb)
+    protein_aa_atoms_raw, _ = parse_pdb(protein_aa_pdb)
+    protein_aa_atoms = extract_protein_aa_atoms(protein_aa_atoms_raw)
+    if not protein_aa_atoms:
+        raise ValueError(f"No atoms found in protein AA PDB: {protein_aa_pdb}")
+
+    protein_cg_pdb = None
+    protein_atoms = None
+    runtime_protein_atoms = []
+    uses_martini_protein = bool(args.protein_cg_pdb)
+    if uses_martini_protein:
+        protein_cg_pdb = Path(args.protein_cg_pdb).expanduser().resolve()
+        if not protein_cg_pdb.exists():
+            raise FileNotFoundError(f"Protein CG PDB not found: {protein_cg_pdb}")
+        protein_atoms_raw, _ = parse_pdb(protein_cg_pdb)
+        protein_atoms = extract_protein_cg_atoms(protein_atoms_raw)
+        runtime_protein_atoms = protein_atoms
+        if not protein_atoms:
+            raise ValueError("No atoms found in protein CG PDB.")
+    else:
+        protein_atoms = protein_aa_atoms
+
     bilayer_atoms, bilayer_box = parse_pdb(bilayer_pdb)
-    protein_atoms = extract_protein_cg_atoms(protein_atoms_raw)
     bilayer_lipid_atoms = [a for a in bilayer_atoms if lipid_resname(a["resname"])]
-    if not protein_atoms:
-        raise ValueError("No atoms found in protein CG PDB.")
     if not bilayer_lipid_atoms:
         raise ValueError("No lipid residues found in bilayer template.")
 
@@ -325,6 +497,11 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
     protein_xyz = protein_xyz + shift
     for atom, c in zip(protein_atoms, protein_xyz):
         atom["x"], atom["y"], atom["z"] = float(c[0]), float(c[1]), float(c[2])
+    if uses_martini_protein:
+        protein_aa_xyz = coords(protein_aa_atoms)
+        protein_aa_xyz = protein_aa_xyz + shift
+        for atom, c in zip(protein_aa_atoms, protein_aa_xyz):
+            atom["x"], atom["y"], atom["z"] = float(c[0]), float(c[1]), float(c[2])
 
     pmin = protein_xyz.min(axis=0)
     pmax = protein_xyz.max(axis=0)
@@ -361,7 +538,8 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
         cutoff=float(args.protein_lipid_cutoff),
     )
 
-    packed_atoms = protein_atoms + bilayer_kept
+    packed_atoms = runtime_protein_atoms + bilayer_kept
+    packed_xyz_before_box = coords(packed_atoms)
     min_box_z_target = float(3.0 * pspan[2])
     box_lengths = set_box_from_lipid_xy(
         all_atoms=packed_atoms,
@@ -371,6 +549,28 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
         min_box_z=min_box_z_target,
         center_lipid_in_z=True,
     )
+    packed_xyz_after_box = coords(packed_atoms)
+    if packed_xyz_before_box.shape == packed_xyz_after_box.shape and packed_xyz_after_box.size:
+        box_shift = packed_xyz_after_box[0] - packed_xyz_before_box[0]
+        protein_aa_xyz = coords(protein_aa_atoms)
+        protein_aa_xyz = protein_aa_xyz + box_shift
+        for atom, c in zip(protein_aa_atoms, protein_aa_xyz):
+            atom["x"], atom["y"], atom["z"] = float(c[0]), float(c[1]), float(c[2])
+
+    protein_aa_xyz = coords(protein_aa_atoms)
+    lipid_kept_xyz = coords(bilayer_kept)
+    min_protein_lipid_distance = float("nan")
+    if protein_aa_xyz.size and lipid_kept_xyz.size:
+        min_d2 = float("inf")
+        chunk = 2000
+        for i in range(0, lipid_kept_xyz.shape[0], chunk):
+            block = lipid_kept_xyz[i:i + chunk]
+            d = block[:, None, :] - protein_aa_xyz[None, :, :]
+            d2 = np.einsum("ijk,ijk->ij", d, d)
+            block_min = float(d2.min())
+            if block_min < min_d2:
+                min_d2 = block_min
+        min_protein_lipid_distance = float(min_d2 ** 0.5)
 
     effective_vol_frac = infer_effective_ion_volume_fraction_from_template(
         bilayer_atoms=bilayer_atoms,
@@ -380,7 +580,7 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
     protein_charge = (
         int(args.protein_net_charge)
         if args.protein_net_charge is not None
-        else int(infer_protein_charge_from_cg(protein_atoms))
+        else int(infer_protein_charge_from_atoms(protein_aa_atoms))
     )
     salt_pairs = estimate_salt_pairs(
         box_lengths=box_lengths,
@@ -403,7 +603,7 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
     all_atoms = packed_atoms + ion_atoms
     write_pdb(runtime_pdb, all_atoms, box_lengths)
 
-    if args.protein_itp:
+    if uses_martini_protein and args.protein_itp:
         protein_itp = Path(args.protein_itp).expanduser().resolve()
         if not protein_itp.exists():
             raise FileNotFoundError(f"Protein ITP not found: {protein_itp}")
@@ -411,53 +611,50 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
 
     mapping_summary = {}
     if args.hybrid_mapping_output:
-        if not args.protein_aa_pdb:
-            raise ValueError(
-                "--protein-aa-pdb is required when --hybrid-mapping-output is provided."
-            )
-        protein_aa_pdb = Path(args.protein_aa_pdb).expanduser().resolve()
-        if not protein_aa_pdb.exists():
-            raise FileNotFoundError(f"Protein AA PDB not found: {protein_aa_pdb}")
-
-        protein_aa_atoms, _ = parse_pdb(protein_aa_pdb)
-        if not protein_aa_atoms:
-            raise ValueError(f"No atoms found in protein AA PDB: {protein_aa_pdb}")
-
         protein_itp_for_map = None
-        if args.protein_itp:
+        if uses_martini_protein and args.protein_itp:
             protein_itp_for_map = Path(args.protein_itp).expanduser().resolve()
-        elif runtime_itp.exists():
+        elif uses_martini_protein and runtime_itp.exists():
             protein_itp_for_map = runtime_itp
 
-        frame_diag = validate_backbone_reference_frame(
-            protein_aa_atoms,
-            protein_atoms,
-            min_matched_residues=max(1, int(args.bb_aa_min_matched_residues)),
-            max_rigid_rmsd=float(args.bb_aa_max_rigid_rmsd),
-            context=f"{protein_aa_pdb.name} -> {protein_cg_pdb.name}",
-        )
-        bb_entries = collect_bb_map(protein_aa_atoms, protein_atoms)
-        sc_entries = collect_sc_map(
-            protein_aa_atoms,
-            protein_atoms,
-            protein_itp_path=protein_itp_for_map,
-        )
+        frame_diag = None
+        if uses_martini_protein:
+            frame_diag = validate_backbone_reference_frame(
+                protein_aa_atoms,
+                protein_atoms,
+                min_matched_residues=max(1, int(args.bb_aa_min_matched_residues)),
+                max_rigid_rmsd=float(args.bb_aa_max_rigid_rmsd),
+                context=f"{protein_aa_pdb.name} -> {protein_cg_pdb.name}",
+            )
+            bb_entries = collect_bb_map(protein_aa_atoms, protein_atoms)
+            sc_entries = collect_sc_map(
+                protein_aa_atoms,
+                protein_atoms,
+                protein_itp_path=protein_itp_for_map,
+            )
+            env_atom_indices = list(range(len(runtime_protein_atoms), len(all_atoms)))
+            n_protein_atoms = len(runtime_protein_atoms)
+        else:
+            bb_entries = collect_aa_backbone_entries(protein_aa_atoms)
+            sc_entries = []
+            env_atom_indices = list(range(len(all_atoms)))
+            n_protein_atoms = 0
 
         mapping_h5 = Path(args.hybrid_mapping_output).expanduser().resolve()
         mapping_h5.parent.mkdir(parents=True, exist_ok=True)
-        env_atom_indices = list(range(len(protein_atoms), len(all_atoms)))
         write_hybrid_mapping_h5(
             mapping_h5,
             bb_entries=bb_entries,
             sc_entries=sc_entries,
             total_martini_atoms=len(all_atoms),
             env_atom_indices=env_atom_indices,
-            n_protein_atoms=len(protein_atoms),
+            n_protein_atoms=n_protein_atoms,
         )
 
         mapping_summary["protein_aa_pdb"] = str(protein_aa_pdb)
         mapping_summary["mapping_h5"] = str(mapping_h5)
-        mapping_summary["backbone_frame_check"] = frame_diag
+        if frame_diag is not None:
+            mapping_summary["backbone_frame_check"] = frame_diag
         mapping_summary["bb_map_entries"] = int(len(bb_entries))
         mapping_summary["sc_map_entries"] = int(len(sc_entries))
 
@@ -468,19 +665,23 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
 
     summary = {
         "mode": "both",
-        "input_protein_cg_pdb": str(protein_cg_pdb),
+        "protein_representation": "martini_cg_plus_upside_mapping" if uses_martini_protein else "upside_backbone_only",
+        "input_protein_cg_pdb": str(protein_cg_pdb) if protein_cg_pdb is not None else None,
+        "input_protein_aa_pdb": str(protein_aa_pdb),
         "input_bilayer_pdb": str(bilayer_pdb),
         "runtime_pdb": str(runtime_pdb),
-        "runtime_itp": str(runtime_itp) if args.protein_itp else None,
+        "runtime_itp": str(runtime_itp) if (uses_martini_protein and args.protein_itp) else None,
         "xy_scale": float(args.xy_scale),
         "base_xy_side_angstrom": float(base_side),
         "target_xy_side_angstrom": float(target_side),
         "box_angstrom": [float(v) for v in box_lengths],
         "protein_charge_used": int(protein_charge),
+        "min_protein_lipid_distance": float(min_protein_lipid_distance),
         "salt_pairs_target": int(salt_pairs),
         "na_added": int(n_na),
         "cl_added": int(n_cl),
-        "protein_atoms": int(len(protein_atoms)),
+        "protein_atoms_runtime": int(len(runtime_protein_atoms)),
+        "protein_atoms_reference": int(len(protein_aa_atoms)),
         "bilayer_atoms_kept": int(len(bilayer_kept)),
         "lipid_residues_removed": int(removed_lipids),
         "ion_atoms_added": int(len(ion_atoms)),
@@ -493,9 +694,10 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
 def run_stage_conversion(args, runtime_pdb: Path, runtime_itp: Path):
     prev_pdb = os.environ.get("UPSIDE_RUNTIME_PDB_FILE")
     prev_itp = os.environ.get("UPSIDE_RUNTIME_ITP_FILE")
+    uses_runtime_martini_protein = runtime_pdb_has_martini_protein(runtime_pdb)
 
     os.environ["UPSIDE_RUNTIME_PDB_FILE"] = str(runtime_pdb)
-    if args.mode in {"protein", "both"}:
+    if uses_runtime_martini_protein:
         os.environ["UPSIDE_RUNTIME_ITP_FILE"] = str(runtime_itp)
     else:
         os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
@@ -554,11 +756,11 @@ def main():
             )
 
     if args.stage:
-        if args.mode in {"protein", "both"}:
+        if runtime_pdb_has_martini_protein(runtime_pdb):
             if not runtime_itp.exists():
                 raise FileNotFoundError(
-                    f"Protein ITP required for mode={args.mode} stage conversion: {runtime_itp}. "
-                    "Provide --protein-itp when running with --prepare-structure 1."
+                    f"Protein ITP required for MARTINI-protein stage conversion: {runtime_itp}. "
+                    "Provide --protein-itp when the runtime PDB contains MARTINI protein atoms."
                 )
             assert_protein_itp_mass_compatibility(runtime_itp)
         run_stage_conversion(args, runtime_pdb, runtime_itp)

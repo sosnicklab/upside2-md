@@ -1,13 +1,121 @@
 # Findings
 
+## 2026-03-06 (AA-Only Workflow Cleanup Root Cause + Proof)
+- The remaining MARTINI-protein leak was not in `run_sim_1rkl.sh` anymore; it was in `prepare_system_lib.convert_stage()`, which treated any existing `pdb/{pdb_id}_proa.itp` as proof of a mixed protein-lipid system even when the runtime MARTINI PDB contained only lipids and ions.
+- That stale file-existence check caused stage conversion to:
+  - print `=== Mixed Protein-Lipid System Detected ===`
+  - load `pdb/1rkl_hybrid_proa.itp`
+  - add protein topology/connectivity assumptions back into an AA-only workflow
+- Fix implemented:
+  - `prepare_system_lib.py` now scans the runtime PDB itself for MARTINI protein atoms and only loads protein topology/connectivity when those atoms are actually present
+  - `prepare_system.py` now exports `UPSIDE_RUNTIME_ITP_FILE` only when the runtime PDB contains MARTINI protein atoms and only requires a protein ITP in that case
+- Reduced end-to-end rerun (`example/16.MARTINI/outputs/test_aa_only_workflow/`) proved the corrected behavior:
+  - stage converter repeatedly printed `=== Environment-Only MARTINI System Detected ===`
+  - stage converter printed `Ignoring protein topology file because runtime PDB has no MARTINI protein atoms: .../pdb/1rkl_hybrid_proa.itp`
+  - packed runtime MARTINI PDB `hybrid_prep/1rkl_hybrid.MARTINI.pdb` contained zero protein MARTINI atoms
+  - production checkpoint `checkpoints/1rkl.stage_7.0.up` had `particle_class_counts {'ION': 125, 'OTHER': 4424, 'PROTEINAA ': 124}`, so the only protein particles present at runtime were the injected AA carriers
+  - exported stage-7 VTF ended with `atom 4549 name N`, `atom 4550 name CA`, `atom 4551 name C`, `atom 4552 name O`, and continued in the same `N/CA/C/O` pattern through the final protein atoms, with no `BB` or `SC*` protein atoms present
+
+## 2026-03-06 (C++ MARTINI-Protein Runtime Removal + Rebuilt Proof)
+- The remaining C++ MARTINI-protein presentation was split into two pieces:
+  - `src/main.cpp` still exposed a MARTINI `BB` rigid-hold CLI hook/registration path
+  - `src/martini.cpp` still contained the dead `martini_hybrid` runtime layer with protein-membership state, BB refresh/projection, and old hybrid coupling machinery
+- Fix implemented:
+  - removed the `--martini-hold-backbone` CLI path and the `register_fix_rigid_backbone_for_engine(...)` registration from `src/main.cpp`
+  - removed `register_fix_rigid_backbone_for_engine(...)` and the entire dead `martini_hybrid` namespace from `src/martini.cpp`
+  - simplified the active MARTINI pair kernel so it no longer consults hybrid protein state or MARTINI-protein proxy logic; the only remaining protein/environment coupling path is the explicit backbone cross node
+- Post-fix source sweep:
+  - `rg` over `src/` found no remaining matches for `martini_hybrid::`, `HybridRuntimeState`, `protein_membership`, `register_fix_rigid_backbone_for_engine`, or `martini-hold-backbone`
+  - the only remaining protein-aware MARTINI code in `src/martini.cpp` is `martini_rbm_cross_potential`, which reads explicit `protein_atom_indices` and `protein_class_index` from injected production nodes and couples AA backbone carriers to environment atoms
+- Rebuild + rerun proof:
+  - `cmake --build obj -j 4` passed after the C++ cleanup
+  - reduced rerun `example/16.MARTINI/outputs/test_aa_only_cpp_cleanup/` completed through stage `7.0`
+  - pre-production stages `6.0-6.6` again printed `Rigid-protein check ... max_disp=0`
+  - production handoff again printed `Production handoff protein-particle check: n_protein=124 max_disp=0`
+  - packed runtime MARTINI PDB residue counts were exactly `{'DOPC': 4424, 'NA': 64, 'CL': 61}` with no protein residue present
+  - stage `7.0` particle classes were `{'OTHER': 4424, 'ION': 125, 'PROTEINAA': 124}`
+  - the tail of `1rkl.stage_7.0.vtf` remained `N/CA/C/O` only
+
 ## 2026-03-05 (Pre-Production Rigid Control Regression Root Cause)
-- Current generated stage files under `outputs/martini_test_1rkl_hybrid/checkpoints/` do not contain `/input/hybrid_control`; spot checks on `1rkl.stage_6.6.up` and `1rkl.stage_7.0.up` confirmed the group is absent.
+- Before the workflow patch on 2026-03-05, generated stage files under `outputs/martini_test_1rkl_hybrid/checkpoints/` did not contain `/input/hybrid_control`; spot checks on `1rkl.stage_6.6.up` and `1rkl.stage_7.0.up` confirmed the group was absent at that point.
 - The existing C++ pre-production rigid-mask logic in `../../src/martini.cpp` only activates when `/input/hybrid_control` exists with:
   - `enable=1`
   - `preprod_protein_mode=rigid`
   - `prep_runtime_mode=dry_martini_prep`
 - `run_sim_1rkl.sh` had been reduced to injecting only `hybrid_bb_map` and `hybrid_env_topology`, so the workflow no longer emitted the control metadata required to freeze protein before production.
 - Restoring rigidity does not require a C++ change; it is sufficient for the workflow to synthesize `/input/hybrid_control` into each prepared stage file and set production activation explicitly (`activation_stage=production`, `active_runtime_mode=aa_backbone_explicit_lipid`).
+
+## 2026-03-06 (Why Hybrid Control Still Did Not Freeze Pre-Production Protein)
+- After `/input/hybrid_control` was restored in current stage files, stage `6.6` still showed severe internal protein deformation relative to stage `6.0`; minimum-image pairwise backbone/carrier distances changed by tens of Angstroms, so this was not just translation or wrapping noise.
+- The active runtime binary still contains hybrid-control strings, but the current source/runtime path no longer registers hybrid state from `../../src/main.cpp`:
+  - `../../src/martini.cpp` still defines `martini_hybrid::register_hybrid_for_engine(...)`
+  - `../../src/main.cpp` no longer calls it
+  - therefore `/input/hybrid_control` attrs in `run_sim_1rkl.sh` stage files are inert for pre-production rigidity in the current workflow
+- The active and sufficient rigid mechanism is `/input/fix_rigid`, which is still registered in `../../src/main.cpp` and is honored by both:
+  - `martini_fix_rigid::apply_fix_rigid_{minimization,md}` in `../../src/martini.cpp`
+  - fixed-atom skipping during semi-isotropic barostat scaling in `../../src/box.cpp`
+- A short MD probe on a temp pre-production stage file with explicit `/input/fix_rigid` enabled kept all 298 protein atoms exactly stationary (`max_abs_displacement = 0.0` after 20 steps), confirming this is the correct workflow-level enforcement path.
+
+## 2026-03-06 (Direct C++ Audit: What Rigid-Hold Code Exists)
+- Yes, rigid-hold code exists in `src/*.cpp`.
+- Active/runtime-wired path:
+  - `../../src/main.cpp` registers `/input/fix_rigid` via `martini_fix_rigid::register_fix_rigid_for_engine(...)`
+  - `../../src/main.cpp` applies `martini_fix_rigid::apply_fix_rigid_md(...)` before integration, after integration, and again after barostat updates
+  - `../../src/martini.cpp` implements the `martini_fix_rigid` registry and the actual force/momentum zeroing
+  - `../../src/box.cpp` skips fixed atoms during semi-isotropic scaling, so fixed atoms are not deformed by the barostat
+  - `../../src/deriv_engine.cpp` builds fixed-atom masks from the same registry
+- Present but currently inactive path:
+  - `../../src/martini.cpp` still implements hybrid-driven pre-production rigidity through `martini_hybrid::register_hybrid_for_engine(...)` and `martini_hybrid::update_stage_for_engine(...)`
+  - `../../src/main.cpp` no longer declares or calls `register_hybrid_for_engine(...)`
+  - result: `/input/hybrid_control` pre-production rigid attrs are not consumed by the current runtime unless that registration hook is reconnected
+- Bottom line:
+  - C++ rigid-hold support is present
+  - the live mechanism is `fix_rigid`
+  - the hybrid-metadata rigid mechanism is dead code in the current main-program wiring
+
+## 2026-03-06 (Workflow-Proven Pre-Production Rigidity + Production Handoff)
+- `example/16.MARTINI/run_sim_1rkl.sh` now contains two runtime assertions:
+  - `assert_protein_rigid_stage(...)`
+    - checks that protein coordinates in `/input/pos` and the last `/output/pos` frame are identical after each stage `6.0-6.6`
+  - `assert_production_handoff_protein_particles(...)`
+    - checks that the original protein particles in `stage_7.0.up` match the last frame of `stage_6.6.up`
+    - excludes intentionally refreshed appended AA carrier atoms from this handoff comparison
+- Reduced end-to-end workflow run succeeded with the assertions enabled:
+  - run directory: `example/16.MARTINI/outputs/test_fix_rigid_verify2/`
+  - overrides used to keep runtime short:
+    - `MIN_60_MAX_ITER=5`
+    - `MIN_61_MAX_ITER=5`
+    - `EQ_62_NSTEPS=20`
+    - `EQ_63_NSTEPS=20`
+    - `EQ_64_NSTEPS=20`
+    - `EQ_65_NSTEPS=20`
+    - `EQ_66_NSTEPS=20`
+    - `PROD_70_NSTEPS=1`
+    - `EQ_FRAME_STEPS=10`
+    - `PROD_FRAME_STEPS=1`
+    - `BACKBONE_CROSS_ENABLE=0`
+- Observed script-side proof lines:
+  - `Rigid-protein check stage 6.0 ... max_disp=0`
+  - `Rigid-protein check stage 6.1 ... max_disp=0`
+  - `Rigid-protein check stage 6.2 ... max_disp=0`
+  - `Rigid-protein check stage 6.3 ... max_disp=0`
+  - `Rigid-protein check stage 6.4 ... max_disp=0`
+  - `Rigid-protein check stage 6.5 ... max_disp=0`
+  - `Rigid-protein check stage 6.6 ... max_disp=0`
+  - `Production handoff protein-particle check ... max_disp=0`
+- Interpretation:
+  - protein atoms did not move during any pre-production stage in the tested workflow run
+  - the protein state handed into production matched the rigid stage-6.6 endpoint for the original protein particles
+
+## 2026-03-06 (Fresh Confirmation on Current Script State)
+- A second reduced rerun against the current `run_sim_1rkl.sh` state also passed with the same assertions:
+  - run directory: `example/16.MARTINI/outputs/test_fix_rigid_verify3/`
+  - same reduced settings as the previous proof run (`MIN_60_MAX_ITER=5`, `MIN_61_MAX_ITER=5`, `EQ_62-66_NSTEPS=20`, `PROD_70_NSTEPS=1`, `BACKBONE_CROSS_ENABLE=0`)
+- Observed directly from the fresh rerun:
+  - stages `6.0-6.6` each printed `Rigid-protein check ... max_disp=0`
+  - the production transition printed `Production handoff protein-particle check: n_protein=65 max_disp=0`
+  - the workflow then completed through stage `7.0`
+- This removes ambiguity about stale artifacts: the currently checked-in workflow script itself now reproduces the rigid pre-production behavior on a fresh run.
 
 ## 2026-03-05 (Backbone-Only Workflow Schema Audit)
 - Workflow-level legacy hook sweep over `example/16.MARTINI` (`*.sh`, `*.py`) confirms removal of:

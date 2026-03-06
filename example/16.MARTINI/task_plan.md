@@ -1,5 +1,48 @@
 # Task Plan
 
+## 2026-03-06 Reset: AA-Only Protein Workflow Cleanup
+
+### Project Goal (Current)
+- Remove all workflow logic that converts protein structure into a MARTINI representation.
+- Keep the protein in pure Upside all-atom backbone form only (`N`, `CA`, `C`, `O`) through preparation, stage conversion, runtime, and export.
+- Keep MARTINI representation only for the environment (lipids, ions, solvent/beads as applicable).
+- Remove C++ runtime codepaths that still model or special-case protein as MARTINI particles.
+
+### Architecture & Key Decisions (Current)
+- The workflow must not call martinize, resolve protein MARTINI ITPs, or infer protein topology from MARTINI protein assets.
+- Hybrid mapping remains only as AA-backbone carrier/reference metadata plus environment topology metadata.
+- Stage conversion must treat the runtime MARTINI PDB as environment-only when no protein MARTINI topology is explicitly provided.
+- Production export must use the carried Upside backbone coordinates directly and must not reconstruct protein atoms from MARTINI `BB` beads.
+- The active C++ runtime must not register MARTINI-protein backbone hold hooks, hybrid protein-membership state, or MARTINI intra-protein filtering logic.
+- Protein/environment coupling must come only from explicit AA-backbone production nodes and not from MARTINI-protein proxy logic.
+
+### Execution Phases (Current Run)
+- [x] Phase A: Remove any residual protein-MARTINI auto-detection from stage conversion and production-node injection.
+- [x] Phase B: Verify workflow preparation emits environment-only runtime MARTINI assets plus AA-only protein reference/carrier metadata.
+- [x] Phase C: Run a reduced end-to-end workflow and confirm no MARTINI protein topology/conversion path is used.
+- [x] Phase D: Verify stage `7.0` exported protein contains only `N/CA/C/O` coordinates sourced from Upside carriers.
+- [x] Phase E: Remove remaining C++ MARTINI-protein runtime hooks and dead hybrid registration paths.
+- [x] Phase F: Rebuild, rerun a reduced end-to-end workflow, and record results in progress/findings logs.
+
+### Known Errors / Blockers (Current Run)
+- Reduced validation run still shows extremely large MARTINI energies later in equilibration/production. This task only removed protein MARTINI conversion paths and verified AA-only protein representation; it did not resolve the separate stability/energy issue.
+
+### Review (Current Run)
+- `prepare_system_lib.convert_stage()` now detects MARTINI protein presence from the runtime PDB instead of blindly keying off `*_proa.itp` file existence.
+- `prepare_system.py` now exports `UPSIDE_RUNTIME_ITP_FILE` only when the runtime PDB actually contains MARTINI protein atoms and only requires a protein ITP in that case.
+- Reduced workflow rerun `outputs/test_aa_only_workflow/` completed through stage `7.0` without using MARTINI protein topology:
+  - converter printed `Environment-Only MARTINI System Detected`
+  - converter printed `Ignoring protein topology file because runtime PDB has no MARTINI protein atoms`
+  - packed runtime MARTINI PDB contained zero protein atoms
+  - stage `7.0` runtime state contained `124` `PROTEINAA` particles and no MARTINI protein particles
+  - stage `7.0` VTF export ended with only `N/CA/C/O` protein atoms, with no `BB` or `SC*` protein proxies
+- C++ runtime cleanup is now also complete:
+  - `src/main.cpp` no longer exposes or registers the MARTINI `BB` rigid-hold hook
+  - `src/martini.cpp` no longer contains the dead `martini_hybrid` runtime layer or MARTINI-protein BB refresh/projection logic
+  - rebuilt binary `obj/upside` passed a fresh reduced rerun in `outputs/test_aa_only_cpp_cleanup/`
+  - the packed runtime MARTINI PDB in that rerun contained only environment residues (`DOPC`, `NA`, `CL`)
+  - stage `7.0` runtime state again contained only `PROTEINAA` protein particles, and the exported VTF again ended with `N/CA/C/O` atoms only
+
 ## 2026-03-05 Reset: Backbone-Only + Depth Table
 
 ### Project Goal (Current)
@@ -351,3 +394,148 @@
 - Verification completed:
   - `bash -n run_sim_1rkl.sh` passed.
   - A temp copy of `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_6.6.up` was updated via the new `set_hybrid_control()` helper from the script itself and then inspected with `h5py`; the resulting attrs matched the intended pre-production rigid / production activation settings while `current_stage` remained `minimization`.
+
+## Active Task (Explicit Pre-Production `fix_rigid` Enforcement)
+
+### Goal
+- Ensure `run_sim_1rkl.sh` actually keeps the protein backbone rigid through stages `6.0-6.6` in the currently active runtime, so stage `7.0` starts from an undeformed protein.
+
+### Architecture & Key Decisions
+- Root cause: the workflow was writing `/input/hybrid_control`, but the currently active runtime path no longer registers hybrid state from `src/main.cpp`, so those attrs were not consumed during stage `6.x` execution.
+- Use the already active `/input/fix_rigid` path instead of re-enabling dormant hybrid registration:
+  - pre-production stage files (`stage_label != production`) write `/input/fix_rigid` with `atom_indices = where(protein_membership >= 0)`
+  - production stage files write `/input/fix_rigid.enable = 0` and remove `atom_indices`
+- Keep the `hybrid_control` attrs in place for schema/runtime intent, but do not rely on them for pre-production rigidity in this workflow.
+- Limit the fix to `example/16.MARTINI/run_sim_1rkl.sh`; do not change C++ code for this request.
+
+### Execution Phases
+- [x] Phase M1: Add explicit pre-production `fix_rigid` stage-file injection in `run_sim_1rkl.sh`.
+- [x] Phase M2: Validate generated `fix_rigid` metadata for both pre-production and production stage semantics.
+- [x] Phase M3: Run a short pre-production MD probe and confirm zero protein displacement under the current binary.
+
+### Known Errors / Blockers
+- Existing generated stage files under `outputs/martini_test_1rkl_hybrid/checkpoints/` were produced before this fix and must be regenerated to pick up explicit `fix_rigid` enforcement.
+
+### Review
+- `run_sim_1rkl.sh` now writes `/input/fix_rigid` directly from `hybrid_env_topology/protein_membership` for pre-production stages and disables it for production.
+- This path uses the existing active runtime hooks (`register_fix_rigid_for_engine`, `apply_fix_rigid_md`, and barostat fixed-atom skipping in `src/box.cpp`) instead of the inactive hybrid-control registration path.
+- Verification completed:
+  - `bash -n run_sim_1rkl.sh` passed.
+  - temp pre-production stage-file metadata probe on `1rkl.stage_6.4.prepared.up` showed:
+    - `/input/fix_rigid.enable = 1`
+    - `atom_indices.shape[0] = 298`
+  - temp production stage-file metadata probe on `1rkl.stage_7.0.prepared.up` showed:
+    - `/input/fix_rigid.enable = 0`
+    - no `atom_indices` dataset
+  - short MD probe on a temp copy of `1rkl.stage_6.4.prepared.up` with `fix_rigid` enabled:
+    - `duration-steps = 20`
+    - protein displacement from `/input/pos` to last `/output/pos` frame was exactly zero (`max_abs_displacement = 0.0` over 298 protein atoms)
+
+## Active Task (C++ Rigid-Path Audit)
+
+### Goal
+- Confirm whether any rigid-hold code still exists in `src/*.cpp`, and distinguish active runtime hooks from dead/unregistered code paths.
+
+### Architecture & Key Decisions
+- Limit this task to source inspection; do not change C++ behavior in this audit.
+- Report the runtime split explicitly:
+  - live `fix_rigid` path
+  - dead hybrid-driven pre-production rigid path
+- Use exact source references so the next code change can target the correct call site instead of guessing from workflow metadata.
+
+### Execution Phases
+- [x] Phase N1: Search `src/*.cpp` / `src/*.h` for rigid/fix/hybrid stage-control hooks.
+- [x] Phase N2: Inspect exact call sites in `src/main.cpp`, `src/martini.cpp`, `src/box.cpp`, and `src/deriv_engine.cpp`.
+- [x] Phase N3: Record which rigid mechanisms are active vs inactive.
+
+### Review
+- Live rigid-hold code exists in C++:
+  - `src/martini.cpp`: `martini_fix_rigid` registry, `/input/fix_rigid` reader, and force/momentum zeroing
+  - `src/main.cpp`: registration of `fix_rigid` and repeated `apply_fix_rigid_md(...)` calls inside MD
+  - `src/box.cpp`: fixed-atom skipping during barostat scaling and pressure estimation
+  - `src/deriv_engine.cpp`: fixed-atom mask helpers
+- The hybrid-driven pre-production rigid path also exists in `src/martini.cpp`, but it is not currently wired from `src/main.cpp`:
+  - `martini_hybrid::register_hybrid_for_engine(...)` exists
+  - `martini_hybrid::update_stage_for_engine(...)` exists
+  - `src/main.cpp` does not declare or call `register_hybrid_for_engine(...)`
+- Conclusion:
+  - yes, there is hold-rigid code in `src/*.cpp`
+  - the active runtime-enforced mechanism is `fix_rigid`
+  - the hybrid-metadata-driven rigid path is currently dead unless `register_hybrid_for_engine(...)` is reconnected in `src/main.cpp`
+
+## Active Task (Workflow-Level Rigid + Handoff Guarantees)
+
+### Goal
+- Make `example/16.MARTINI/run_sim_1rkl.sh` prove during execution that the protein stays rigid in every pre-production stage and that the rigid protein state is handed unchanged into stage `7.0`.
+
+### Architecture & Key Decisions
+- Keep `/input/fix_rigid` as the runtime enforcement path.
+- Add workflow-level assertions instead of relying on offline inspection:
+  - `assert_protein_rigid_stage(...)` checks `/input/pos` vs last `/output/pos` for protein atoms after each stage `6.0-6.6`
+  - `assert_production_handoff_protein_particles(...)` checks `6.6` last-frame vs `7.0` input for original protein particles only, excluding intentionally refreshed appended AA carrier atoms
+- Reuse the same tolerance knob for both checks:
+  - `PREPROD_RIGID_ASSERT_ENABLE=1`
+  - `PREPROD_RIGID_TOL=1e-6`
+
+### Execution Phases
+- [x] Phase O1: Add per-stage rigid assertions to `run_sim_1rkl.sh`.
+- [x] Phase O2: Add a production-handoff assertion that ignores refreshed appended carrier atoms and checks original protein particles only.
+- [x] Phase O3: Run reduced end-to-end workflow tests and verify all rigid/handoff assertions pass.
+
+### Review
+- `run_sim_1rkl.sh` now contains:
+  - `assert_protein_rigid_stage(...)`
+  - `assert_production_handoff_protein_particles(...)`
+- Reduced end-to-end workflow run passed:
+  - command env:
+    - `RUN_DIR=outputs/test_fix_rigid_verify2`
+    - `MIN_60_MAX_ITER=5`
+    - `MIN_61_MAX_ITER=5`
+    - `EQ_62_NSTEPS=20`
+    - `EQ_63_NSTEPS=20`
+    - `EQ_64_NSTEPS=20`
+    - `EQ_65_NSTEPS=20`
+    - `EQ_66_NSTEPS=20`
+    - `PROD_70_NSTEPS=1`
+    - `EQ_FRAME_STEPS=10`
+    - `PROD_FRAME_STEPS=1`
+    - `BACKBONE_CROSS_ENABLE=0`
+- Assertions observed during the real script run:
+  - `Rigid-protein check stage 6.0 ... max_disp=0`
+  - `Rigid-protein check stage 6.1 ... max_disp=0`
+  - `Rigid-protein check stage 6.2 ... max_disp=0`
+  - `Rigid-protein check stage 6.3 ... max_disp=0`
+  - `Rigid-protein check stage 6.4 ... max_disp=0`
+  - `Rigid-protein check stage 6.5 ... max_disp=0`
+  - `Rigid-protein check stage 6.6 ... max_disp=0`
+  - `Production handoff protein-particle check ... max_disp=0`
+- Fresh rerun against the current script state also passed with the same proof lines:
+  - `RUN_DIR=outputs/test_fix_rigid_verify3`
+  - stages `6.0-6.6` again reported `max_disp=0`
+  - the `6.6 -> 7.0` handoff again reported `max_disp=0`
+  - the workflow completed through stage `7.0`
+- Supporting reduced-run artifacts:
+  - `example/16.MARTINI/outputs/test_fix_rigid_verify/`
+  - `example/16.MARTINI/outputs/test_fix_rigid_verify2/`
+  - `example/16.MARTINI/outputs/test_fix_rigid_verify3/`
+
+## Active Task (Production-Start Protein Representation)
+
+### Goal
+- Make the production-stage workflow display and validate the actual folded AA backbone carriers at stage start, instead of a residue-wise BB reconstruction that can make the protein appear broken.
+
+### Architecture & Key Decisions
+- Treat the user-visible production-start representation as the acceptance criterion.
+- Prefer actual appended `PROTEINAA` carrier coordinates when present in a stage file.
+- Keep BB-based reconstruction only as a fallback for older files that do not contain appended AA carriers.
+- Verify both:
+  - the stage `7.0` `.up` input contains the expected carrier coordinates
+  - the stage `7.0` VTF/PDB export path uses those carrier coordinates instead of reconstructing from BB anchors
+
+### Execution Phases
+- [ ] Phase P1: Audit `extract_martini_vtf.py` mode-2 protein path against production-stage `.up` carrier coordinates.
+- [ ] Phase P2: Patch export logic to prefer actual appended AA carriers when available.
+- [ ] Phase P3: Rerun a reduced workflow and verify the exported production-start protein matches the stage `7.0` carrier coordinates.
+
+### Known Errors / Blockers
+- None yet.
