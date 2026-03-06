@@ -42,8 +42,6 @@ A practical run order is:
 6. Run `5.analyze_D_uptake.py` to compare the HXMS outputs from step 1 with the simulated uptake outputs from step 5.
 7. Optionally run `6.plot_deltaG_vs_resid.py` for residue-level protection free-energy style summaries.
 
-For trajectories produced by other software, the adaptation happens at step 3 by updating `get_info_from_upside_traj.py` to read the extracted protein backbone trajectory and compute the required arrays.
-
 ## Script Summary
 
 ### `0.run_HXMS.py`
