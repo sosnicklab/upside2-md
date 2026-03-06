@@ -73,6 +73,7 @@ DEPTH_TABLE_META="${DEPTH_TABLE_META:-${RUN_DIR}/depth_interaction_table.meta.js
 BACKBONE_CROSS_TABLE_CSV="${BACKBONE_CROSS_TABLE_CSV:-${RUN_DIR}/backbone_cross_interaction_table.csv}"
 BACKBONE_CROSS_TABLE_META="${BACKBONE_CROSS_TABLE_META:-${RUN_DIR}/backbone_cross_interaction_table.meta.json}"
 BACKBONE_CROSS_TABLE_H5="${BACKBONE_CROSS_TABLE_H5:-${UPSIDE_HOME}/parameters/ff_2.1/martini.h5}"
+BACKBONE_CROSS_BUILD_SCRIPT="${BACKBONE_CROSS_BUILD_SCRIPT:-${SCRIPT_DIR}/build_martini_parameters.py}"
 
 # Stage-0 hybrid structure prep controls
 SALT_MOLAR="${SALT_MOLAR:-0.15}"
@@ -247,9 +248,7 @@ BB_COMPONENT_MASS = {
     "C": 12.0,
     "O": 16.0,
 }
-BB_BEAD_MASS = 72.0
 BB_COMPONENT_SUM = float(sum(BB_COMPONENT_MASS.values()))
-BB_COMPONENT_SCALE = (BB_BEAD_MASS / BB_COMPONENT_SUM) if BB_COMPONENT_SUM > 0.0 else 1.0
 DEFAULT_COMPONENT_NAMES = ("N", "CA", "C", "O")
 
 def as_text(x):
@@ -362,7 +361,7 @@ with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
                 ref_role[ref_idx] = pad_bytes(cname, role_dtype)
                 ref_residue[ref_idx] = resid
                 comp_mass = float(BB_COMPONENT_MASS.get(cname, 12.0))
-                ref_mass[ref_idx] = mass_dtype.type((BB_COMPONENT_SCALE * comp_mass) / 12.0)
+                ref_mass[ref_idx] = mass_dtype.type(comp_mass / BB_COMPONENT_SUM)
 
         def append_input_dataset(name, appendix):
             if name not in dst_inp:
@@ -636,62 +635,72 @@ prepare_backbone_cross_artifacts() {
         return
     fi
 
-    if [ "${BACKBONE_CROSS_REBUILD}" != "1" ] && [ -f "${BACKBONE_CROSS_TABLE_H5}" ]; then
-        echo "=== Stage 0.5: Reuse Cached Backbone Cross-Table Artifact ==="
-        echo "Using cached cross artifact: ${BACKBONE_CROSS_TABLE_H5}"
-        if [ "${HYBRID_VALIDATE}" = "1" ]; then
-            local validator_cmd=(
-                python3 "${UNIVERSAL_PREP_SCRIPT}" validate-backbone-only
-                --cross-artifact "${BACKBONE_CROSS_TABLE_H5}"
-            )
-            if [ -f "${BACKBONE_CROSS_TABLE_CSV}" ]; then
-                validator_cmd+=(
-                    --cross-table-csv "${BACKBONE_CROSS_TABLE_CSV}"
-                )
-            fi
-            if [ -f "${BACKBONE_CROSS_TABLE_META}" ]; then
-                validator_cmd+=(
-                    --cross-table-meta "${BACKBONE_CROSS_TABLE_META}"
-                )
-            fi
-            if [ -f "${DEPTH_TABLE_CSV}" ]; then
-                validator_cmd+=(
-                    --table-csv "${DEPTH_TABLE_CSV}"
-                )
-            fi
-            if [ -f "${DEPTH_TABLE_META}" ]; then
-                validator_cmd+=(
-                    --table-meta "${DEPTH_TABLE_META}"
-                )
-            fi
-            "${validator_cmd[@]}"
-        fi
-        return
+    if [ "${BACKBONE_CROSS_REBUILD}" = "1" ]; then
+        echo "ERROR: BACKBONE_CROSS_REBUILD is no longer supported inside run_sim_1rkl.sh"
+        echo "Run the standalone parameter builder first:"
+        echo "  python3 ${BACKBONE_CROSS_BUILD_SCRIPT}"
+        exit 1
     fi
 
-    echo "=== Stage 0.5: Build Backbone Cross-Table Artifacts ==="
-    mkdir -p "$(dirname "${BACKBONE_CROSS_TABLE_H5}")"
-    python3 "${UNIVERSAL_PREP_SCRIPT}" build-depth-table \
-        --bilayer-pdb "${BILAYER_PDB}" \
-        --lipid-itp "${SCRIPT_DIR}/ff_dry/dry_martini_v2.1_lipids.itp" \
-        --membrane-h5 "${UPSIDE_HOME}/parameters/ff_2.1/membrane.h5" \
-        --output-csv "${DEPTH_TABLE_CSV}" \
-        --output-json "${DEPTH_TABLE_META}"
+    if [ ! -f "${BACKBONE_CROSS_BUILD_SCRIPT}" ]; then
+        echo "ERROR: backbone cross builder script not found: ${BACKBONE_CROSS_BUILD_SCRIPT}"
+        exit 1
+    fi
 
-    python3 "${UNIVERSAL_PREP_SCRIPT}" build-backbone-cross-table \
-        --ff-itp "${SCRIPT_DIR}/ff_dry/dry_martini_v2.1.itp" \
-        --depth-table-csv "${DEPTH_TABLE_CSV}" \
-        --output-csv "${BACKBONE_CROSS_TABLE_CSV}" \
-        --output-json "${BACKBONE_CROSS_TABLE_META}" \
-        --output-h5 "${BACKBONE_CROSS_TABLE_H5}"
+    if [ ! -f "${BACKBONE_CROSS_TABLE_H5}" ]; then
+        echo "ERROR: prebuilt backbone cross artifact not found: ${BACKBONE_CROSS_TABLE_H5}"
+        echo "Run the standalone parameter builder first:"
+        echo "  python3 ${BACKBONE_CROSS_BUILD_SCRIPT}"
+        exit 1
+    fi
+
+    local cached_schema
+    cached_schema="$(
+        python3 - "${BACKBONE_CROSS_TABLE_H5}" <<'PY'
+import sys
+import h5py
+
+with h5py.File(sys.argv[1], "r") as h5:
+    print(str(h5["/meta"].attrs.get("schema", "")) if "/meta" in h5 else "")
+PY
+    )"
+
+    if [ "${cached_schema}" != "martini_backbone_spline_cross_v1" ]; then
+        echo "ERROR: backbone cross artifact schema is '${cached_schema:-unknown}', expected martini_backbone_spline_cross_v1"
+        echo "Rebuild the published artifact with:"
+        echo "  python3 ${BACKBONE_CROSS_BUILD_SCRIPT}"
+        exit 1
+    fi
+
+    echo "=== Stage 0.5: Use Prebuilt Backbone Cross-Table Artifact ==="
+    echo "Using prebuilt cross artifact: ${BACKBONE_CROSS_TABLE_H5}"
 
     if [ "${HYBRID_VALIDATE}" = "1" ]; then
-        python3 "${UNIVERSAL_PREP_SCRIPT}" validate-backbone-only \
-            --table-csv "${DEPTH_TABLE_CSV}" \
-            --table-meta "${DEPTH_TABLE_META}" \
-            --cross-table-csv "${BACKBONE_CROSS_TABLE_CSV}" \
-            --cross-table-meta "${BACKBONE_CROSS_TABLE_META}" \
+        local validator_cmd=(
+            python3 "${UNIVERSAL_PREP_SCRIPT}" validate-backbone-only
             --cross-artifact "${BACKBONE_CROSS_TABLE_H5}"
+        )
+        if [ -f "${BACKBONE_CROSS_TABLE_CSV}" ]; then
+            validator_cmd+=(
+                --cross-table-csv "${BACKBONE_CROSS_TABLE_CSV}"
+            )
+        fi
+        if [ -f "${BACKBONE_CROSS_TABLE_META}" ]; then
+            validator_cmd+=(
+                --cross-table-meta "${BACKBONE_CROSS_TABLE_META}"
+            )
+        fi
+        if [ -f "${DEPTH_TABLE_CSV}" ]; then
+            validator_cmd+=(
+                --table-csv "${DEPTH_TABLE_CSV}"
+            )
+        fi
+        if [ -f "${DEPTH_TABLE_META}" ]; then
+            validator_cmd+=(
+                --table-meta "${DEPTH_TABLE_META}"
+            )
+        fi
+        "${validator_cmd[@]}"
     fi
 }
 

@@ -1530,6 +1530,180 @@ struct MartiniRBMCrossPotential : public PotentialNode
 static RegisterNodeType<MartiniRBMCrossPotential, 1>
     martini_rbm_cross_potential_node("martini_rbm_cross_potential");
 
+// Direct spline-table cross potential between protein and environment atom sets.
+// Energy is evaluated from class-conditioned radial tables sampled on a uniform grid.
+struct MartiniSplineCrossPotential : public PotentialNode
+{
+    int n_atom;
+    CoordNode& pos;
+
+    vector<int> protein_atom_indices;
+    vector<int> protein_class_index;
+    vector<int> env_atom_indices;
+    vector<int> env_class_index;
+
+    int n_protein_class;
+    int n_env_class;
+    int n_knot;
+    float cutoff;
+    float cutoff_sq;
+    float radial_min;
+    float radial_step;
+
+    vector<float> table_values;
+    vector<float> table_deriv;
+    unique_ptr<LayeredClampedSpline1D<1>> spline_tables;
+
+    MartiniSplineCrossPotential(hid_t grp, CoordNode& pos_) :
+        PotentialNode(),
+        n_atom(pos_.n_elem),
+        pos(pos_),
+        n_protein_class(0),
+        n_env_class(0),
+        n_knot(0),
+        cutoff(read_attribute<float>(grp, ".", "cutoff")),
+        cutoff_sq(cutoff * cutoff),
+        radial_min(read_attribute<float>(grp, ".", "radial_min")),
+        radial_step(read_attribute<float>(grp, ".", "radial_step"))
+    {
+        if(!(cutoff > 0.f && std::isfinite(cutoff))) {
+            throw string("martini_spline_cross_potential requires positive finite cutoff");
+        }
+        if(!(std::isfinite(radial_min) && std::isfinite(radial_step) && radial_step > 0.f)) {
+            throw string("martini_spline_cross_potential requires finite radial_min and positive radial_step");
+        }
+        if(!h5_exists(grp, "protein_atom_indices") ||
+           !h5_exists(grp, "protein_class_index") ||
+           !h5_exists(grp, "env_atom_indices") ||
+           !h5_exists(grp, "env_class_index") ||
+           !h5_exists(grp, "table_values")) {
+            throw string("martini_spline_cross_potential missing required dataset(s)");
+        }
+
+        auto p_shape = get_dset_size(1, grp, "protein_atom_indices");
+        auto e_shape = get_dset_size(1, grp, "env_atom_indices");
+        check_size(grp, "protein_class_index", p_shape[0]);
+        check_size(grp, "env_class_index", e_shape[0]);
+
+        protein_atom_indices.assign(static_cast<size_t>(p_shape[0]), 0);
+        protein_class_index.assign(static_cast<size_t>(p_shape[0]), 0);
+        env_atom_indices.assign(static_cast<size_t>(e_shape[0]), 0);
+        env_class_index.assign(static_cast<size_t>(e_shape[0]), 0);
+
+        traverse_dset<1,int>(grp, "protein_atom_indices", [&](size_t i, int x) {protein_atom_indices[i] = x;});
+        traverse_dset<1,int>(grp, "protein_class_index", [&](size_t i, int x) {protein_class_index[i] = x;});
+        traverse_dset<1,int>(grp, "env_atom_indices", [&](size_t i, int x) {env_atom_indices[i] = x;});
+        traverse_dset<1,int>(grp, "env_class_index", [&](size_t i, int x) {env_class_index[i] = x;});
+
+        for(int cls : protein_class_index) n_protein_class = std::max(n_protein_class, cls + 1);
+        for(int cls : env_class_index) n_env_class = std::max(n_env_class, cls + 1);
+        if(n_protein_class <= 0 || n_env_class <= 0) {
+            throw string("martini_spline_cross_potential invalid class dimensions");
+        }
+
+        auto table_shape = get_dset_size(3, grp, "table_values");
+        if(static_cast<int>(table_shape[0]) != n_protein_class ||
+           static_cast<int>(table_shape[1]) != n_env_class) {
+            throw string("martini_spline_cross_potential/table_values shape must match class dimensions");
+        }
+        n_knot = static_cast<int>(table_shape[2]);
+        if(n_knot < 2) {
+            throw string("martini_spline_cross_potential requires at least two spline knots");
+        }
+
+        size_t n_table = static_cast<size_t>(n_protein_class) *
+                         static_cast<size_t>(n_env_class) *
+                         static_cast<size_t>(n_knot);
+        table_values.assign(n_table, 0.f);
+        table_deriv.assign(n_table, 0.f);
+        traverse_dset<3,float>(grp, "table_values", [&](size_t pc, size_t ec, size_t rk, float x) {
+            size_t idx = (pc * static_cast<size_t>(n_env_class) + ec) * static_cast<size_t>(n_knot) + rk;
+            table_values[idx] = x;
+        });
+
+        refit_splines();
+    }
+
+    inline int layer_index(int pclass, int eclass) const {
+        return pclass * n_env_class + eclass;
+    }
+
+    void refit_splines() {
+        spline_tables.reset(new LayeredClampedSpline1D<1>(n_protein_class * n_env_class, n_knot));
+        vector<double> fit_data(table_values.size(), 0.0);
+        for(size_t i = 0; i < table_values.size(); ++i) fit_data[i] = table_values[i];
+        spline_tables->fit_spline(fit_data.data());
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        Timer timer(string("martini_spline_cross_potential"));
+
+        float* pot = mode == PotentialAndDerivMode ? &potential : nullptr;
+        if(pot) *pot = 0.f;
+        std::fill(table_deriv.begin(), table_deriv.end(), 0.f);
+
+        VecArray posc = pos.output;
+        VecArray pos_sens = pos.sens;
+        constexpr float min_dist_sq = 1e-8f;
+
+        for(size_t pi = 0; pi < protein_atom_indices.size(); ++pi) {
+            int ai = protein_atom_indices[pi];
+            int pclass = protein_class_index[pi];
+            if(ai < 0 || ai >= n_atom) continue;
+            if(pclass < 0 || pclass >= n_protein_class) continue;
+
+            auto xi = load_vec<3>(posc, ai);
+            for(size_t ej = 0; ej < env_atom_indices.size(); ++ej) {
+                int aj = env_atom_indices[ej];
+                int eclass = env_class_index[ej];
+                if(aj < 0 || aj >= n_atom) continue;
+                if(eclass < 0 || eclass >= n_env_class) continue;
+
+                auto xj = load_vec<3>(posc, aj);
+                auto disp = xi - xj;
+                float r_sq = mag2(disp);
+                if(r_sq > cutoff_sq || r_sq < min_dist_sq) continue;
+
+                float r = sqrtf(r_sq);
+                float inv_r = 1.f / r;
+                float spline_coord = (r - radial_min) / radial_step;
+                float result[2] = {0.f, 0.f};
+                spline_tables->evaluate_value_and_deriv(result, layer_index(pclass, eclass), spline_coord);
+
+                if(pot) *pot += result[1];
+                float dE_dr = result[0] / radial_step;
+                auto grad = (dE_dr * inv_r) * disp;
+                update_vec(pos_sens, ai, grad);
+                update_vec(pos_sens, aj, -grad);
+            }
+        }
+    }
+
+    virtual std::vector<float> get_param() const override {
+        return table_values;
+    }
+
+    virtual void set_param(const std::vector<float>& new_params) override {
+        if(new_params.size() != table_values.size()) {
+            throw string("martini_spline_cross_potential set_param size mismatch");
+        }
+        table_values = new_params;
+        refit_splines();
+    }
+
+    #ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {
+        return table_deriv;
+    }
+    #else
+    virtual std::vector<float> get_param_deriv() {
+        return table_deriv;
+    }
+    #endif
+};
+static RegisterNodeType<MartiniSplineCrossPotential, 1>
+    martini_spline_cross_potential_node("martini_spline_cross_potential");
+
 // Bond potential using spline interpolation
 struct DistSpring : public PotentialNode
 {
@@ -2343,6 +2517,12 @@ struct MartiniNodeRegistrar {
             add_node_creation_function("martini_rbm_cross_potential", [](hid_t grp, const ArgList& args) {
                 check_arguments_length(args,1);
                 return new MartiniRBMCrossPotential(grp, *args[0]);
+            });
+        }
+        if(m.find("martini_spline_cross_potential") == m.end()) {
+            add_node_creation_function("martini_spline_cross_potential", [](hid_t grp, const ArgList& args) {
+                check_arguments_length(args,1);
+                return new MartiniSplineCrossPotential(grp, *args[0]);
             });
         }
         if(m.find("dist_spring") == m.end()) {

@@ -766,7 +766,23 @@ DOPC_COVERED_TYPES = ("Q0", "Qa", "Na", "C1", "C3")
 SIDECHAIN_DATASET_CANDIDATES = ("sc_energy", "sidechain_energy", "sidechain")
 SHEET_DATASET_CANDIDATES = ("sheet_energy", "sheet")
 ROLE_PROXIES = {"N": "Nd", "CA": "C3", "C": "P4", "O": "Na"}
+ROLE_TARGET_FIELDS = {
+    "N": "mean_hb_donor_attraction",
+    "CA": "mean_cb_value",
+    "C": "mean_cb_value",
+    "O": "mean_hb_acceptor_attraction",
+}
+ROLE_TARGET_DESCRIPTIONS = {
+    "N": "donor_hbond_mean",
+    "CA": "backbone_burial_mean",
+    "C": "backbone_burial_mean",
+    "O": "acceptor_hbond_mean",
+}
 BASE_PROXY = "P2"
+RBM_CROSS_SCHEMA = "martini_backbone_cross_v1"
+SPLINE_CROSS_SCHEMA = "martini_backbone_spline_cross_v1"
+RBM_CROSS_NODE_NAME = "martini_rbm_cross_potential"
+SPLINE_CROSS_NODE_NAME = "martini_spline_cross_potential"
 REQUIRED_DEPTH_TABLE_COLUMNS = (
     "bead_name",
     "bead_type",
@@ -1308,8 +1324,15 @@ def validate_up_file(path: Path):
                     f"min={int(idx.min())} max={int(idx.max())} n_atom={n_atom}"
                 )
 
-        if "martini_rbm_cross_potential" in pot:
-            cross = pot["martini_rbm_cross_potential"]
+        cross_nodes = [name for name in (RBM_CROSS_NODE_NAME, SPLINE_CROSS_NODE_NAME) if name in pot]
+        if len(cross_nodes) > 1:
+            raise ValueError(
+                "Only one backbone cross-potential node is allowed under /input/potential; "
+                f"found {cross_nodes}"
+            )
+
+        if RBM_CROSS_NODE_NAME in pot:
+            cross = pot[RBM_CROSS_NODE_NAME]
             required_cross = (
                 "protein_atom_indices",
                 "protein_class_index",
@@ -1322,7 +1345,7 @@ def validate_up_file(path: Path):
             for name in required_cross:
                 if name not in cross:
                     raise ValueError(
-                        f"Missing cross-potential dataset: /input/potential/martini_rbm_cross_potential/{name}"
+                        f"Missing cross-potential dataset: /input/potential/{RBM_CROSS_NODE_NAME}/{name}"
                     )
 
             protein_atom_indices = cross["protein_atom_indices"][:].astype(np.int64)
@@ -1367,6 +1390,76 @@ def validate_up_file(path: Path):
             if weights.shape != expected_shape:
                 raise ValueError(
                     f"Cross-potential weights shape mismatch: {weights.shape} vs expected {expected_shape}"
+                )
+
+        if SPLINE_CROSS_NODE_NAME in pot:
+            cross = pot[SPLINE_CROSS_NODE_NAME]
+            required_cross = (
+                "protein_atom_indices",
+                "protein_class_index",
+                "env_atom_indices",
+                "env_class_index",
+                "radial_grid",
+                "table_values",
+            )
+            for name in required_cross:
+                if name not in cross:
+                    raise ValueError(
+                        f"Missing cross-potential dataset: /input/potential/{SPLINE_CROSS_NODE_NAME}/{name}"
+                    )
+            for attr_name in ("cutoff", "radial_min", "radial_step"):
+                if attr_name not in cross.attrs:
+                    raise ValueError(
+                        f"Missing cross-potential attribute: /input/potential/{SPLINE_CROSS_NODE_NAME} attr {attr_name}"
+                    )
+
+            protein_atom_indices = cross["protein_atom_indices"][:].astype(np.int64)
+            protein_class_index = cross["protein_class_index"][:].astype(np.int64)
+            env_atom_indices = cross["env_atom_indices"][:].astype(np.int64)
+            env_class_index = cross["env_class_index"][:].astype(np.int64)
+            radial_grid = cross["radial_grid"][:]
+            table_values = cross["table_values"][:]
+            radial_min = float(cross.attrs["radial_min"])
+            radial_step = float(cross.attrs["radial_step"])
+            cutoff = float(cross.attrs["cutoff"])
+
+            if protein_atom_indices.ndim != 1 or protein_class_index.ndim != 1:
+                raise ValueError("Spline cross-potential protein index/class datasets must be rank-1")
+            if env_atom_indices.ndim != 1 or env_class_index.ndim != 1:
+                raise ValueError("Spline cross-potential environment index/class datasets must be rank-1")
+            if radial_grid.ndim != 1:
+                raise ValueError("Spline cross-potential radial_grid must be rank-1")
+            if table_values.ndim != 3:
+                raise ValueError("Spline cross-potential table_values must be rank-3")
+            if protein_atom_indices.shape[0] != protein_class_index.shape[0]:
+                raise ValueError("Spline cross-potential protein index/class length mismatch")
+            if env_atom_indices.shape[0] != env_class_index.shape[0]:
+                raise ValueError("Spline cross-potential environment index/class length mismatch")
+            if np.any(protein_atom_indices < 0) or np.any(protein_atom_indices >= n_atom):
+                raise ValueError("Spline cross-potential protein_atom_indices out of range")
+            if np.any(env_atom_indices < 0) or np.any(env_atom_indices >= n_atom):
+                raise ValueError("Spline cross-potential env_atom_indices out of range")
+            if np.any(protein_class_index < 0) or np.any(env_class_index < 0):
+                raise ValueError("Spline cross-potential class indices must be non-negative")
+            if not np.all(np.isfinite(radial_grid)) or not np.all(np.isfinite(table_values)):
+                raise ValueError("Spline cross-potential contains non-finite radial grid or table values")
+            if radial_grid.size == 0:
+                raise ValueError("Spline cross-potential radial_grid is empty")
+            if not np.isfinite(radial_min) or not np.isfinite(radial_step) or radial_step <= 0.0:
+                raise ValueError("Spline cross-potential radial_min/radial_step must be finite and radial_step positive")
+            if not np.isfinite(cutoff) or cutoff <= 0.0:
+                raise ValueError("Spline cross-potential cutoff must be finite and positive")
+            expected_grid = radial_min + radial_step * np.arange(radial_grid.shape[0], dtype=np.float64)
+            if not np.allclose(radial_grid, expected_grid, atol=1e-5):
+                raise ValueError("Spline cross-potential radial_grid must match radial_min + radial_step * i")
+            expected_shape = (
+                int(protein_class_index.max()) + 1 if protein_class_index.size else 0,
+                int(env_class_index.max()) + 1 if env_class_index.size else 0,
+                int(radial_grid.shape[0]),
+            )
+            if table_values.shape != expected_shape:
+                raise ValueError(
+                    f"Spline cross-potential table_values shape mismatch: {table_values.shape} vs expected {expected_shape}"
                 )
 
         seq = inp["sequence"][:]
@@ -1457,6 +1550,11 @@ def validate_table_meta(path: Path):
     for key in ("backbone_cb_energy", "hbond_hb_energy"):
         if key not in term_presence or not bool(term_presence[key]):
             raise ValueError(f"Metadata term_presence indicates missing required term: {key}")
+    if data.get("aggregation_mode") == "empirical_depth_samples":
+        if "type_sample_stats" not in data or not isinstance(data["type_sample_stats"], dict):
+            raise ValueError("Refined depth metadata missing type_sample_stats")
+        if "symmetry_report" not in data or not isinstance(data["symmetry_report"], dict):
+            raise ValueError("Refined depth metadata missing symmetry_report")
     return {"term_presence": term_presence}
 
 
@@ -1491,42 +1589,74 @@ def validate_cross_table_meta(path: Path):
     for key in ("min", "median", "max"):
         if key not in fit_summary or not np.isfinite(float(fit_summary[key])):
             raise ValueError(f"Cross-table metadata fit_rmse_summary missing/invalid {key}")
+    if "symmetry_report" in data and not isinstance(data["symmetry_report"], dict):
+        raise ValueError("Cross-table metadata symmetry_report must be a dict when present")
     return {"n_env_type": len(env_types), "fit_rmse_summary": fit_summary}
 
 
 def validate_cross_artifact(path: Path):
     with h5py.File(path, "r") as h5:
-        required = (
-            "/classes/protein",
-            "/classes/environment",
-            "/rbm/cross/radial_centers",
-            "/rbm/cross/radial_widths",
-            "/rbm/cross/weights",
-        )
+        required = ("/classes/protein", "/classes/environment", "/meta")
         for key in required:
             if key not in h5:
                 raise ValueError(f"Cross artifact missing {key}")
         protein_classes = decode_bytes_array(h5["/classes/protein"][:]).tolist()
         env_classes = decode_bytes_array(h5["/classes/environment"][:]).tolist()
-        centers = h5["/rbm/cross/radial_centers"][:]
-        widths = h5["/rbm/cross/radial_widths"][:]
-        weights = h5["/rbm/cross/weights"][:]
         schema = str(h5["/meta"].attrs.get("schema", ""))
-        if schema != "martini_backbone_cross_v1":
-            raise ValueError(f"Unexpected cross artifact schema: {schema}")
         if protein_classes != list(BACKBONE_CLASSES):
             raise ValueError(f"Cross artifact protein classes mismatch: {protein_classes}")
         if len(env_classes) != 38:
             raise ValueError(f"Cross artifact expected 38 environment classes, got {len(env_classes)}")
-        if centers.ndim != 1 or widths.ndim != 1:
-            raise ValueError("Cross artifact radial centers/widths must be rank-1")
-        if weights.shape != (len(BACKBONE_CLASSES), len(env_classes), centers.shape[0]):
-            raise ValueError(f"Cross artifact weights shape mismatch: {weights.shape}")
-        if not np.all(np.isfinite(centers)) or not np.all(np.isfinite(widths)) or not np.all(np.isfinite(weights)):
-            raise ValueError("Cross artifact contains non-finite values")
-        if np.any(widths <= 0.0):
-            raise ValueError("Cross artifact radial_widths must be positive")
-    return {"n_env_type": len(env_classes), "n_radial": int(centers.shape[0])}
+        if schema == RBM_CROSS_SCHEMA:
+            required = (
+                "/rbm/cross/radial_centers",
+                "/rbm/cross/radial_widths",
+                "/rbm/cross/weights",
+            )
+            for key in required:
+                if key not in h5:
+                    raise ValueError(f"Cross artifact missing {key}")
+            centers = h5["/rbm/cross/radial_centers"][:]
+            widths = h5["/rbm/cross/radial_widths"][:]
+            weights = h5["/rbm/cross/weights"][:]
+            if centers.ndim != 1 or widths.ndim != 1:
+                raise ValueError("Cross artifact radial centers/widths must be rank-1")
+            if weights.shape != (len(BACKBONE_CLASSES), len(env_classes), centers.shape[0]):
+                raise ValueError(f"Cross artifact weights shape mismatch: {weights.shape}")
+            if not np.all(np.isfinite(centers)) or not np.all(np.isfinite(widths)) or not np.all(np.isfinite(weights)):
+                raise ValueError("Cross artifact contains non-finite values")
+            if np.any(widths <= 0.0):
+                raise ValueError("Cross artifact radial_widths must be positive")
+            return {"schema": schema, "n_env_type": len(env_classes), "n_radial": int(centers.shape[0])}
+        if schema == SPLINE_CROSS_SCHEMA:
+            required = ("/spline/cross/radial_grid", "/spline/cross/table_values")
+            for key in required:
+                if key not in h5:
+                    raise ValueError(f"Cross artifact missing {key}")
+            cross = h5["/spline/cross"]
+            radial_grid = cross["radial_grid"][:]
+            table_values = cross["table_values"][:]
+            for attr_name in ("cutoff", "radial_min", "radial_step"):
+                if attr_name not in cross.attrs:
+                    raise ValueError(f"Cross artifact spline/cross missing attr {attr_name}")
+            cutoff = float(cross.attrs["cutoff"])
+            radial_min = float(cross.attrs["radial_min"])
+            radial_step = float(cross.attrs["radial_step"])
+            if radial_grid.ndim != 1:
+                raise ValueError("Cross artifact spline radial_grid must be rank-1")
+            if table_values.shape != (len(BACKBONE_CLASSES), len(env_classes), radial_grid.shape[0]):
+                raise ValueError(f"Cross artifact table_values shape mismatch: {table_values.shape}")
+            if not np.all(np.isfinite(radial_grid)) or not np.all(np.isfinite(table_values)):
+                raise ValueError("Cross artifact spline table contains non-finite values")
+            if not np.isfinite(cutoff) or cutoff <= 0.0:
+                raise ValueError("Cross artifact spline cutoff must be finite and positive")
+            if not np.isfinite(radial_step) or radial_step <= 0.0:
+                raise ValueError("Cross artifact spline radial_step must be finite and positive")
+            expected_grid = radial_min + radial_step * np.arange(radial_grid.shape[0], dtype=np.float64)
+            if not np.allclose(radial_grid, expected_grid, atol=1e-5):
+                raise ValueError("Cross artifact spline radial_grid must match radial_min + radial_step * i")
+            return {"schema": schema, "n_env_type": len(env_classes), "n_radial": int(radial_grid.shape[0])}
+        raise ValueError(f"Unexpected cross artifact schema: {schema}")
 
 
 def parse_lipid_itp_atom_types(path: Path, allowed_molecules):
@@ -1583,14 +1713,17 @@ def parse_bilayer_depths(path: Path, lipid_resnames):
         raise ValueError(f"No lipid atoms found in {path} for resnames {sorted(allowed)}")
     z_center = float(np.mean(np.asarray(all_lipid_z, dtype=np.float64)))
     stats = {}
+    signed_samples = {}
     for bead_name, values in bead_z.items():
-        arr = np.abs(np.asarray(values, dtype=np.float64) - z_center)
+        signed = np.asarray(values, dtype=np.float64) - z_center
+        arr = np.abs(signed)
         stats[bead_name] = {
             "count": int(arr.size),
             "mean_depth": float(np.mean(arr)),
             "std_depth": float(np.std(arr)),
         }
-    return z_center, stats
+        signed_samples[bead_name] = signed
+    return z_center, stats, signed_samples
 
 
 def load_membrane_channels(path: Path):
@@ -1611,22 +1744,27 @@ def load_membrane_channels(path: Path):
     return cb_z, hb_z, cb_energy, hb_energy, cb_names, term_presence
 
 
-def interp_symmetric(z_grid, values, depth):
-    depth = abs(float(depth))
-    yp = np.interp(depth, z_grid, values, left=float(values[0]), right=float(values[-1]))
-    yn = np.interp(-depth, z_grid, values, left=float(values[0]), right=float(values[-1]))
+def interp_raw(z_grid, values, z_value):
+    return float(np.interp(float(z_value), z_grid, values, left=float(values[0]), right=float(values[-1])))
+
+
+def interp_symmetric(z_grid, values, z_value):
+    depth = abs(float(z_value))
+    yp = interp_raw(z_grid, values, depth)
+    yn = interp_raw(z_grid, values, -depth)
     return 0.5 * (yp + yn)
 
 
-def evaluate_at_depth(depth, cb_z, hb_z, cb_energy, hb_energy):
-    cb_lvl0 = np.array([interp_symmetric(cb_z, cb_energy[i, 0, :], depth) for i in range(cb_energy.shape[0])])
-    cb_lvl1 = np.array([interp_symmetric(cb_z, cb_energy[i, 1, :], depth) for i in range(cb_energy.shape[0])])
+def evaluate_at_signed_depth(z_value, cb_z, hb_z, cb_energy, hb_energy, symmetrize=True):
+    interp = interp_symmetric if symmetrize else interp_raw
+    cb_lvl0 = np.array([interp(cb_z, cb_energy[i, 0, :], z_value) for i in range(cb_energy.shape[0])])
+    cb_lvl1 = np.array([interp(cb_z, cb_energy[i, 1, :], z_value) for i in range(cb_energy.shape[0])])
     hb_values = np.array(
         [
-            interp_symmetric(hb_z, hb_energy[0, 0, :], depth),
-            interp_symmetric(hb_z, hb_energy[0, 1, :], depth),
-            interp_symmetric(hb_z, hb_energy[1, 0, :], depth),
-            interp_symmetric(hb_z, hb_energy[1, 1, :], depth),
+            interp(hb_z, hb_energy[0, 0, :], z_value),
+            interp(hb_z, hb_energy[0, 1, :], z_value),
+            interp(hb_z, hb_energy[1, 0, :], z_value),
+            interp(hb_z, hb_energy[1, 1, :], z_value),
         ],
         dtype=np.float64,
     )
@@ -1639,6 +1777,124 @@ def evaluate_at_depth(depth, cb_z, hb_z, cb_energy, hb_energy):
         "hb_acceptor_unbound": float(hb_values[2]),
         "hb_acceptor_bound": float(hb_values[3]),
         "hb_mean": float(np.mean(hb_values)),
+    }
+
+
+def evaluate_at_depth(depth, cb_z, hb_z, cb_energy, hb_energy):
+    return evaluate_at_signed_depth(abs(float(depth)), cb_z, hb_z, cb_energy, hb_energy, symmetrize=True)
+
+
+def evaluate_at_signed_samples(z_values, cb_z, hb_z, cb_energy, hb_energy, symmetrize=True):
+    z_values = np.asarray(z_values, dtype=np.float64)
+    if z_values.size == 0:
+        raise ValueError("Cannot evaluate membrane channels on an empty sample set")
+    acc = defaultdict(list)
+    for z_value in z_values.tolist():
+        sample_values = evaluate_at_signed_depth(z_value, cb_z, hb_z, cb_energy, hb_energy, symmetrize=symmetrize)
+        for key, value in sample_values.items():
+            acc[key].append(float(value))
+    return {key: float(np.mean(np.asarray(values, dtype=np.float64))) for key, values in acc.items()}
+
+
+def pool_depth_samples_by_type(atom_to_type, bead_signed_samples):
+    pooled = defaultdict(list)
+    for bead_name, signed in bead_signed_samples.items():
+        bead_type = atom_to_type.get(bead_name, "UNKNOWN")
+        pooled[bead_type].extend(np.asarray(signed, dtype=np.float64).tolist())
+    return {bead_type: np.asarray(values, dtype=np.float64) for bead_type, values in pooled.items()}
+
+
+def summarize_depth_samples(sample_map, cb_z, hb_z, cb_energy, hb_energy):
+    summary = {}
+    for key, signed in sample_map.items():
+        signed = np.asarray(signed, dtype=np.float64)
+        if signed.size == 0:
+            continue
+        summary[key] = {
+            "n_samples": int(signed.size),
+            "mean_depth": float(np.mean(np.abs(signed))),
+            "std_depth": float(np.std(np.abs(signed))),
+            "mean_signed_depth": float(np.mean(signed)),
+            **evaluate_at_signed_samples(signed, cb_z, hb_z, cb_energy, hb_energy, symmetrize=True),
+        }
+    return summary
+
+
+def audit_curve_symmetry(z_grid, values, label):
+    overlap_depth = min(abs(float(z_grid[0])), abs(float(z_grid[-1])))
+    if overlap_depth <= 0.0:
+        return {
+            "label": label,
+            "max_abs_diff": 0.0,
+            "worst_depth": 0.0,
+            "value_pos": float(values[0]),
+            "value_neg": float(values[0]),
+        }
+    depths = np.linspace(0.0, overlap_depth, 151, dtype=np.float64)
+    diffs = []
+    values_pos = []
+    values_neg = []
+    for depth in depths.tolist():
+        pos = interp_raw(z_grid, values, depth)
+        neg = interp_raw(z_grid, values, -depth)
+        values_pos.append(pos)
+        values_neg.append(neg)
+        diffs.append(abs(pos - neg))
+    diffs = np.asarray(diffs, dtype=np.float64)
+    best_idx = int(np.argmax(diffs))
+    return {
+        "label": label,
+        "max_abs_diff": float(diffs[best_idx]),
+        "worst_depth": float(depths[best_idx]),
+        "value_pos": float(values_pos[best_idx]),
+        "value_neg": float(values_neg[best_idx]),
+    }
+
+
+def audit_membrane_symmetry(cb_z, hb_z, cb_energy, hb_energy, cb_names):
+    cb_rows = []
+    hb_rows = []
+    for residue_idx, residue_name in enumerate(cb_names):
+        for burial_idx in range(cb_energy.shape[1]):
+            cb_rows.append(
+                audit_curve_symmetry(
+                    cb_z,
+                    cb_energy[residue_idx, burial_idx, :],
+                    f"cb:{residue_name}:burial{burial_idx}",
+                )
+            )
+    hb_labels = (
+        ("donor_unbound", hb_energy[0, 0, :]),
+        ("donor_bound", hb_energy[0, 1, :]),
+        ("acceptor_unbound", hb_energy[1, 0, :]),
+        ("acceptor_bound", hb_energy[1, 1, :]),
+    )
+    for label, values in hb_labels:
+        hb_rows.append(audit_curve_symmetry(hb_z, values, f"hb:{label}"))
+
+    all_rows = cb_rows + hb_rows
+    global_worst = max(all_rows, key=lambda row: row["max_abs_diff"]) if all_rows else {
+        "label": "none",
+        "max_abs_diff": 0.0,
+        "worst_depth": 0.0,
+        "value_pos": 0.0,
+        "value_neg": 0.0,
+    }
+
+    def summarize(rows):
+        diffs = np.asarray([row["max_abs_diff"] for row in rows], dtype=np.float64)
+        return {
+            "n_curves": int(len(rows)),
+            "mean_max_abs_diff": float(np.mean(diffs)) if diffs.size else 0.0,
+            "median_max_abs_diff": float(np.median(diffs)) if diffs.size else 0.0,
+            "max_abs_diff": float(np.max(diffs)) if diffs.size else 0.0,
+        }
+
+    return {
+        "policy": "symmetrize_for_build_only",
+        "cb_summary": summarize(cb_rows),
+        "hb_summary": summarize(hb_rows),
+        "global_worst": global_worst,
     }
 
 
@@ -1675,11 +1931,20 @@ def aggregate_depth_table(path: Path):
             bead_type = row["bead_type"].strip()
             entry = per_type.setdefault(
                 bead_type,
-                {"count": 0, "depth_sum": 0.0, "hb_sum": 0.0, "cb_sum": 0.0},
+                {
+                    "count": 0,
+                    "depth_sum": 0.0,
+                    "hb_sum": 0.0,
+                    "hb_donor_sum": 0.0,
+                    "hb_acceptor_sum": 0.0,
+                    "cb_sum": 0.0,
+                },
             )
             entry["count"] += 1
             entry["depth_sum"] += float(row["mean_depth"])
             entry["hb_sum"] += -float(row["hb_mean"])
+            entry["hb_donor_sum"] += -0.5 * (float(row["hb_donor_unbound"]) + float(row["hb_donor_bound"]))
+            entry["hb_acceptor_sum"] += -0.5 * (float(row["hb_acceptor_unbound"]) + float(row["hb_acceptor_bound"]))
             entry["cb_sum"] += float(row["cb_backbone_mean"])
     if not per_type:
         raise ValueError(f"No rows parsed from {path}")
@@ -1690,37 +1955,136 @@ def aggregate_depth_table(path: Path):
             "n_rows": int(entry["count"]),
             "mean_depth": entry["depth_sum"] / count,
             "mean_hb_attraction": entry["hb_sum"] / count,
+            "mean_hb_donor_attraction": entry["hb_donor_sum"] / count,
+            "mean_hb_acceptor_attraction": entry["hb_acceptor_sum"] / count,
             "mean_cb_value": entry["cb_sum"] / count,
         }
     return out
 
 
 def pair_param(param_table, type1, type2):
-    if (type1, type2) not in param_table:
-        raise KeyError(f"Missing nonbonded parameter pair ({type1}, {type2})")
-    return param_table[(type1, type2)]
+    if (type1, type2) in param_table:
+        return param_table[(type1, type2)]
+    if (type2, type1) in param_table:
+        return param_table[(type2, type1)]
+    raise KeyError(f"Missing nonbonded parameter pair ({type1}, {type2})")
 
 
-def build_anchor_model(depth_by_type, param_table):
+def load_depth_targets(depth_table_csv: Path, depth_table_meta: Path | None):
+    depth_by_type = aggregate_depth_table(depth_table_csv)
+    if depth_table_meta is None:
+        return depth_by_type, {"source": "csv_only", "legacy_depth_by_type": depth_by_type}
+
+    meta = json.loads(depth_table_meta.read_text(encoding="utf-8"))
+    type_sample_stats = meta.get("type_sample_stats", {})
+    if not isinstance(type_sample_stats, dict) or not type_sample_stats:
+        return depth_by_type, {"source": "csv_only", "legacy_depth_by_type": depth_by_type}
+
+    refined = {}
+    comparison = {}
+    for bead_type, legacy in depth_by_type.items():
+        sample_stats = type_sample_stats.get(bead_type)
+        if not isinstance(sample_stats, dict):
+            refined[bead_type] = legacy
+            continue
+        refined_entry = {
+            "n_rows": int(legacy.get("n_rows", 0)),
+            "n_samples": int(sample_stats.get("n_samples", 0)),
+            "mean_depth": float(sample_stats.get("mean_depth", legacy["mean_depth"])),
+            "mean_hb_attraction": float(-sample_stats.get("hb_mean", -legacy["mean_hb_attraction"])),
+            "mean_hb_donor_attraction": float(
+                -0.5
+                * (
+                    sample_stats.get(
+                        "hb_donor_unbound",
+                        -legacy.get("mean_hb_donor_attraction", legacy["mean_hb_attraction"]),
+                    )
+                    + sample_stats.get(
+                        "hb_donor_bound",
+                        -legacy.get("mean_hb_donor_attraction", legacy["mean_hb_attraction"]),
+                    )
+                )
+            ),
+            "mean_hb_acceptor_attraction": float(
+                -0.5
+                * (
+                    sample_stats.get(
+                        "hb_acceptor_unbound",
+                        -legacy.get("mean_hb_acceptor_attraction", legacy["mean_hb_attraction"]),
+                    )
+                    + sample_stats.get(
+                        "hb_acceptor_bound",
+                        -legacy.get("mean_hb_acceptor_attraction", legacy["mean_hb_attraction"]),
+                    )
+                )
+            ),
+            "mean_cb_value": float(sample_stats.get("cb_backbone_mean", legacy["mean_cb_value"])),
+        }
+        refined[bead_type] = refined_entry
+        comparison[bead_type] = {
+            "legacy_mean_depth": float(legacy["mean_depth"]),
+            "refined_mean_depth": float(refined_entry["mean_depth"]),
+            "legacy_mean_hb_attraction": float(legacy["mean_hb_attraction"]),
+            "refined_mean_hb_attraction": float(refined_entry["mean_hb_attraction"]),
+            "legacy_mean_hb_donor_attraction": float(legacy.get("mean_hb_donor_attraction", legacy["mean_hb_attraction"])),
+            "refined_mean_hb_donor_attraction": float(refined_entry["mean_hb_donor_attraction"]),
+            "legacy_mean_hb_acceptor_attraction": float(legacy.get("mean_hb_acceptor_attraction", legacy["mean_hb_attraction"])),
+            "refined_mean_hb_acceptor_attraction": float(refined_entry["mean_hb_acceptor_attraction"]),
+            "legacy_mean_cb_value": float(legacy["mean_cb_value"]),
+            "refined_mean_cb_value": float(refined_entry["mean_cb_value"]),
+        }
+    return refined, {
+        "source": "empirical_samples",
+        "legacy_depth_by_type": depth_by_type,
+        "legacy_vs_refined": comparison,
+        "symmetry_report": meta.get("symmetry_report"),
+    }
+
+
+def compute_env_descriptor(env_type, atomtypes, param_table):
+    epsilons = []
+    for other_type in atomtypes:
+        _sigma, epsilon = pair_param(param_table, env_type, other_type)
+        epsilons.append(float(epsilon))
+    return float(np.mean(np.asarray(epsilons, dtype=np.float64)))
+
+
+def build_anchor_model(depth_by_type, atomtypes, param_table, target_field):
     required = ("Q0", "Qa", "Na", "C1", "C3")
     missing = [key for key in required if key not in depth_by_type]
     if missing:
         raise ValueError(f"Depth table is missing required DOPC dry types: {missing}")
-    q_depth = 0.5 * (
-        depth_by_type["Q0"]["mean_hb_attraction"] + depth_by_type["Qa"]["mean_hb_attraction"]
-    )
-    anchor_points = [
-        (pair_param(param_table, BASE_PROXY, "Q0")[1], q_depth, "Q"),
-        (pair_param(param_table, BASE_PROXY, "Na")[1], depth_by_type["Na"]["mean_hb_attraction"], "N"),
-        (pair_param(param_table, BASE_PROXY, "C1")[1], depth_by_type["C1"]["mean_hb_attraction"], "C_light"),
-        (pair_param(param_table, BASE_PROXY, "C3")[1], depth_by_type["C3"]["mean_hb_attraction"], "C_deep"),
-    ]
+    anchor_points = []
+    for bead_type in DOPC_COVERED_TYPES:
+        anchor_points.append(
+            (
+                compute_env_descriptor(bead_type, atomtypes, param_table),
+                float(depth_by_type[bead_type][target_field]),
+                bead_type,
+            )
+        )
+    anchor_points.sort(key=lambda item: item[0])
     x = np.asarray([item[0] for item in anchor_points], dtype=np.float64)
     y = np.asarray([item[1] for item in anchor_points], dtype=np.float64)
     labels = [item[2] for item in anchor_points]
     if np.any(np.diff(x) <= 0):
-        raise ValueError("Anchor epsilon values must be strictly increasing")
+        raise ValueError("Anchor dry-table descriptors must be strictly increasing")
     return x, y, labels
+
+
+def build_role_anchor_models(depth_by_type, atomtypes, param_table):
+    anchor_models = {}
+    for role in BACKBONE_CLASSES:
+        target_field = ROLE_TARGET_FIELDS[role]
+        anchor_x, anchor_y, anchor_labels = build_anchor_model(depth_by_type, atomtypes, param_table, target_field)
+        anchor_models[role] = {
+            "target_field": target_field,
+            "target_description": ROLE_TARGET_DESCRIPTIONS[role],
+            "x": anchor_x,
+            "y": anchor_y,
+            "labels": anchor_labels,
+        }
+    return anchor_models
 
 
 def pchip_slopes(x, y):
@@ -1842,81 +2206,95 @@ def decode_ring_scale(atom_type):
     return 0.75 if atom_type.startswith("S") else 1.0
 
 
-def build_cross_type_records(atomtypes, param_table, anchor_x, anchor_y, radial_grid, centers, widths, ridge):
+def build_cross_type_records(atomtypes, param_table, descriptor_by_type, anchor_models_by_role, radial_grid):
     rows = []
-    weight_tensor = np.zeros((len(BACKBONE_CLASSES), len(atomtypes), len(centers)), dtype=np.float32)
+    table_tensor = np.zeros((len(BACKBONE_CLASSES), len(atomtypes), len(radial_grid)), dtype=np.float32)
     pair_summaries = {}
     for env_index, env_type in enumerate(atomtypes):
         sigma_base, epsilon_base = pair_param(param_table, BASE_PROXY, env_type)
-        base_depth = interpolate_depth(epsilon_base, anchor_x, anchor_y) * decode_ring_scale(env_type)
+        descriptor = float(descriptor_by_type[env_type])
+        r_min = float((2.0 ** (1.0 / 6.0)) * sigma_base * 10.0)
         for role_index, role in enumerate(BACKBONE_CLASSES):
-            proxy = ROLE_PROXIES[role]
-            sigma_role, epsilon_role = (sigma_base, epsilon_base)
-            if (proxy, env_type) in param_table:
-                sigma_role, epsilon_role = param_table[(proxy, env_type)]
-            role_scale = np.clip(epsilon_role / epsilon_base, 0.6, 1.4) if epsilon_base > 0.0 else 1.0
-            well_depth = float(base_depth * role_scale)
-            r_min = float((2.0 ** (1.0 / 6.0)) * sigma_role * 10.0)
-            ctrl_x, ctrl_y = radial_control_points(r_min, well_depth, float(radial_grid[0]), float(radial_grid[-1]))
+            anchor_model = anchor_models_by_role[role]
+            base_depth = interpolate_depth(descriptor, anchor_model["x"], anchor_model["y"])
+            ctrl_x, ctrl_y = radial_control_points(r_min, base_depth, float(radial_grid[0]), float(radial_grid[-1]))
             target = pchip_interpolate(ctrl_x, ctrl_y, radial_grid)
-            weights, fitted, rmse = fit_gaussian_weights(target, centers, widths, radial_grid, ridge)
-            weight_tensor[role_index, env_index, :] = weights.astype(np.float32)
+            well_depth = float(base_depth)
+            table_tensor[role_index, env_index, :] = target.astype(np.float32)
             pair_summaries[f"{role}:{env_type}"] = {
                 "r_min_angstrom": r_min,
                 "well_depth": well_depth,
                 "base_depth": float(base_depth),
-                "role_scale": float(role_scale),
-                "sigma_nm": float(sigma_role),
+                "role_scale": 1.0,
+                "target_field": anchor_model["target_field"],
+                "target_description": anchor_model["target_description"],
+                "sigma_nm": float(sigma_base),
                 "epsilon_p2": float(epsilon_base),
-                "epsilon_proxy": float(epsilon_role),
-                "fit_rmse": rmse,
+                "epsilon_proxy": float(epsilon_base),
+                "dry_type_descriptor": float(descriptor),
+                "fit_rmse": 0.0,
                 "control_r": [float(x) for x in ctrl_x],
                 "control_v": [float(y) for y in ctrl_y],
             }
-            for r_value, target_value, fitted_value in zip(radial_grid, target, fitted):
+            for r_value, target_value in zip(radial_grid, target):
                 rows.append(
                     {
                         "protein_class": role,
                         "env_type": env_type,
                         "r_angstrom": float(r_value),
                         "target_potential": float(target_value),
-                        "fitted_potential": float(fitted_value),
+                        "fitted_potential": float(target_value),
                         "r_min_angstrom": r_min,
                         "well_depth": well_depth,
                         "base_depth": float(base_depth),
-                        "role_scale": float(role_scale),
-                        "sigma_nm": float(sigma_role),
+                        "role_scale": 1.0,
+                        "sigma_nm": float(sigma_base),
                         "epsilon_p2": float(epsilon_base),
-                        "epsilon_proxy": float(epsilon_role),
-                        "fit_rmse": rmse,
+                        "epsilon_proxy": float(epsilon_base),
+                        "fit_rmse": 0.0,
                     }
                 )
-    return rows, weight_tensor, pair_summaries
+    return rows, table_tensor, pair_summaries
 
 
 def build_overlap_report(depth_by_type, pair_summaries):
     overlap_rows = []
     predicted = []
     observed = []
+    role_correlations = {}
+    role_predicted = {role: [] for role in BACKBONE_CLASSES}
+    role_observed = {role: [] for role in BACKBONE_CLASSES}
     for env_type in DOPC_COVERED_TYPES:
         role_depths = [pair_summaries[f"{role}:{env_type}"]["well_depth"] for role in BACKBONE_CLASSES]
         predicted_value = float(np.mean(np.asarray(role_depths, dtype=np.float64)))
         observed_value = float(depth_by_type[env_type]["mean_hb_attraction"])
-        overlap_rows.append(
-            {
-                "env_type": env_type,
-                "observed_hb_attraction": observed_value,
-                "predicted_role_mean_well_depth": predicted_value,
-                "mean_depth": float(depth_by_type[env_type]["mean_depth"]),
-                "n_rows": int(depth_by_type[env_type]["n_rows"]),
-            }
-        )
+        row = {
+            "env_type": env_type,
+            "observed_hb_attraction": observed_value,
+            "predicted_role_mean_well_depth": predicted_value,
+            "mean_depth": float(depth_by_type[env_type]["mean_depth"]),
+            "n_rows": int(depth_by_type[env_type]["n_rows"]),
+            "n_samples": int(depth_by_type[env_type].get("n_samples", depth_by_type[env_type]["n_rows"])),
+        }
+        for role in BACKBONE_CLASSES:
+            target_field = ROLE_TARGET_FIELDS[role]
+            role_pred = float(pair_summaries[f"{role}:{env_type}"]["well_depth"])
+            role_obs = float(depth_by_type[env_type][target_field])
+            row[f"observed_{role}_target"] = role_obs
+            row[f"predicted_{role}_well_depth"] = role_pred
+            role_predicted[role].append(role_pred)
+            role_observed[role].append(role_obs)
+        overlap_rows.append(row)
         predicted.append(predicted_value)
         observed.append(observed_value)
     predicted_arr = np.asarray(predicted, dtype=np.float64)
     observed_arr = np.asarray(observed, dtype=np.float64)
     corr = float(np.corrcoef(predicted_arr, observed_arr)[0, 1]) if predicted_arr.size >= 2 else 1.0
-    return {"covered_types": overlap_rows, "pearson_r": corr}
+    for role in BACKBONE_CLASSES:
+        pred_arr = np.asarray(role_predicted[role], dtype=np.float64)
+        obs_arr = np.asarray(role_observed[role], dtype=np.float64)
+        role_correlations[role] = float(np.corrcoef(pred_arr, obs_arr)[0, 1]) if pred_arr.size >= 2 else 1.0
+    return {"covered_types": overlap_rows, "pearson_r": corr, "role_pearson_r": role_correlations}
 
 
 def write_csv_rows(path: Path, fieldnames, rows):
@@ -1927,12 +2305,12 @@ def write_csv_rows(path: Path, fieldnames, rows):
         writer.writerows(rows)
 
 
-def write_cross_artifact(path: Path, protein_classes, env_types, centers, widths, weights, metadata):
+def write_cross_artifact(path: Path, protein_classes, env_types, radial_grid, table_values, metadata):
     path.parent.mkdir(parents=True, exist_ok=True)
     str_dtype = h5py.string_dtype(encoding="utf-8")
     with h5py.File(path, "w") as h5:
         meta = h5.create_group("meta")
-        meta.attrs["schema"] = "martini_backbone_cross_v1"
+        meta.attrs["schema"] = SPLINE_CROSS_SCHEMA
         meta.attrs["radial_min"] = np.float32(metadata["radial_grid"]["min"])
         meta.attrs["radial_max"] = np.float32(metadata["radial_grid"]["max"])
         meta.attrs["sample_step"] = np.float32(metadata["radial_grid"]["step"])
@@ -1947,11 +2325,12 @@ def write_cross_artifact(path: Path, protein_classes, env_types, centers, widths
         classes.create_dataset("protein", data=np.asarray(protein_classes, dtype=str_dtype))
         classes.create_dataset("environment", data=np.asarray(env_types, dtype=str_dtype))
 
-        cross = h5.create_group("rbm").create_group("cross")
+        cross = h5.create_group("spline").create_group("cross")
         cross.attrs["cutoff"] = np.float32(metadata["radial_grid"]["max"])
-        cross.create_dataset("radial_centers", data=np.asarray(centers, dtype=np.float32))
-        cross.create_dataset("radial_widths", data=np.asarray(widths, dtype=np.float32))
-        cross.create_dataset("weights", data=np.asarray(weights, dtype=np.float32))
+        cross.attrs["radial_min"] = np.float32(metadata["radial_grid"]["min"])
+        cross.attrs["radial_step"] = np.float32(metadata["radial_grid"]["step"])
+        cross.create_dataset("radial_grid", data=np.asarray(radial_grid, dtype=np.float32))
+        cross.create_dataset("table_values", data=np.asarray(table_values, dtype=np.float32))
 
 
 def load_manifest_paths(manifest_path: Path):
@@ -2003,20 +2382,36 @@ def collect_cross_up_paths(manifest_path, up_files):
 
 def load_cross_artifact(path: Path):
     with h5py.File(path, "r") as h5:
+        schema = str(h5["/meta"].attrs.get("schema", ""))
         protein_classes = decode_bytes_array(h5["/classes/protein"][:]).tolist()
         env_classes = decode_bytes_array(h5["/classes/environment"][:]).tolist()
-        centers = h5["/rbm/cross/radial_centers"][:].astype(np.float32)
-        widths = h5["/rbm/cross/radial_widths"][:].astype(np.float32)
-        weights = h5["/rbm/cross/weights"][:].astype(np.float32)
-        cutoff = float(h5["/rbm/cross"].attrs["cutoff"])
-    return {
-        "protein_classes": protein_classes,
-        "environment_classes": env_classes,
-        "radial_centers": centers,
-        "radial_widths": widths,
-        "weights": weights,
-        "cutoff": cutoff,
-    }
+        if schema == RBM_CROSS_SCHEMA:
+            centers = h5["/rbm/cross/radial_centers"][:].astype(np.float32)
+            widths = h5["/rbm/cross/radial_widths"][:].astype(np.float32)
+            weights = h5["/rbm/cross/weights"][:].astype(np.float32)
+            cutoff = float(h5["/rbm/cross"].attrs["cutoff"])
+            return {
+                "schema": schema,
+                "protein_classes": protein_classes,
+                "environment_classes": env_classes,
+                "radial_centers": centers,
+                "radial_widths": widths,
+                "weights": weights,
+                "cutoff": cutoff,
+            }
+        if schema == SPLINE_CROSS_SCHEMA:
+            cross = h5["/spline/cross"]
+            return {
+                "schema": schema,
+                "protein_classes": protein_classes,
+                "environment_classes": env_classes,
+                "radial_grid": cross["radial_grid"][:].astype(np.float32),
+                "table_values": cross["table_values"][:].astype(np.float32),
+                "cutoff": float(cross.attrs["cutoff"]),
+                "radial_min": float(cross.attrs["radial_min"]),
+                "radial_step": float(cross.attrs["radial_step"]),
+            }
+    raise ValueError(f"Unsupported cross artifact schema in {path}: {schema}")
 
 
 def collect_cross_indices(up_path: Path, artifact):
@@ -2066,11 +2461,25 @@ def collect_cross_indices(up_path: Path, artifact):
 def inject_cross_node(up_path, artifact, protein_indices, protein_class_indices, env_indices, env_class_indices, overwrite_existing):
     with h5py.File(up_path, "r+") as h5:
         pot_grp = h5.require_group("input").require_group("potential")
-        node_name = "martini_rbm_cross_potential"
+        if artifact["schema"] == RBM_CROSS_SCHEMA:
+            node_name = RBM_CROSS_NODE_NAME
+            other_node_name = SPLINE_CROSS_NODE_NAME
+        elif artifact["schema"] == SPLINE_CROSS_SCHEMA:
+            node_name = SPLINE_CROSS_NODE_NAME
+            other_node_name = RBM_CROSS_NODE_NAME
+        else:
+            raise ValueError(f"Unsupported cross artifact schema for injection: {artifact['schema']}")
         if node_name in pot_grp:
             if not overwrite_existing:
                 raise ValueError(f"{up_path}: {node_name} already exists and overwrite is disabled")
             del pot_grp[node_name]
+        if other_node_name in pot_grp:
+            if not overwrite_existing:
+                raise ValueError(
+                    f"{up_path}: {other_node_name} already exists and overwrite is disabled; "
+                    f"remove the legacy cross node before injecting {node_name}"
+                )
+            del pot_grp[other_node_name]
         used_protein_classes = sorted(set(int(x) for x in protein_class_indices.tolist()))
         used_env_classes = sorted(set(int(x) for x in env_class_indices.tolist()))
         protein_reindex = {old: new for new, old in enumerate(used_protein_classes)}
@@ -2083,7 +2492,6 @@ def inject_cross_node(up_path, artifact, protein_indices, protein_class_indices,
             [env_reindex[int(x)] for x in env_class_indices.tolist()],
             dtype=np.int32,
         )
-        local_weights = artifact["weights"][used_protein_classes][:, used_env_classes, :].astype(np.float32, copy=False)
         grp = pot_grp.create_group(node_name)
         grp.attrs["arguments"] = np.asarray([b"pos"])
         grp.attrs["initialized"] = np.int8(1)
@@ -2092,9 +2500,17 @@ def inject_cross_node(up_path, artifact, protein_indices, protein_class_indices,
         grp.create_dataset("protein_class_index", data=local_protein_class_indices)
         grp.create_dataset("env_atom_indices", data=env_indices)
         grp.create_dataset("env_class_index", data=local_env_class_indices)
-        grp.create_dataset("radial_centers", data=artifact["radial_centers"])
-        grp.create_dataset("radial_widths", data=artifact["radial_widths"])
-        grp.create_dataset("weights", data=local_weights)
+        if artifact["schema"] == RBM_CROSS_SCHEMA:
+            local_weights = artifact["weights"][used_protein_classes][:, used_env_classes, :].astype(np.float32, copy=False)
+            grp.create_dataset("radial_centers", data=artifact["radial_centers"])
+            grp.create_dataset("radial_widths", data=artifact["radial_widths"])
+            grp.create_dataset("weights", data=local_weights)
+        else:
+            local_tables = artifact["table_values"][used_protein_classes][:, used_env_classes, :].astype(np.float32, copy=False)
+            grp.attrs["radial_min"] = np.float32(artifact["radial_min"])
+            grp.attrs["radial_step"] = np.float32(artifact["radial_step"])
+            grp.create_dataset("radial_grid", data=artifact["radial_grid"])
+            grp.create_dataset("table_values", data=local_tables)
         grp.create_dataset(
             "protein_classes",
             data=np.asarray([artifact["protein_classes"][idx] for idx in used_protein_classes], dtype=h5py.string_dtype("utf-8")),
@@ -2220,6 +2636,7 @@ def run_validate_backbone_only_command(argv):
     if cross_artifact_summary is not None:
         print(
             "  cross_artifact "
+            f"schema={cross_artifact_summary['schema']} "
             f"env_types={cross_artifact_summary['n_env_type']} "
             f"n_radial={cross_artifact_summary['n_radial']}"
         )
@@ -2238,10 +2655,15 @@ def run_build_depth_table_command(argv):
     lipid_itp = require_existing_file(args.lipid_itp)
     membrane_h5 = require_existing_file(args.membrane_h5)
     atom_to_type = parse_lipid_itp_atom_types(lipid_itp, args.lipid_resnames)
-    z_center, bead_depth_stats = parse_bilayer_depths(bilayer_pdb, args.lipid_resnames)
+    z_center, bead_depth_stats, bead_signed_samples = parse_bilayer_depths(bilayer_pdb, args.lipid_resnames)
     cb_z, hb_z, cb_energy, hb_energy, cb_names, term_presence = load_membrane_channels(membrane_h5)
+    bead_sample_stats = summarize_depth_samples(bead_signed_samples, cb_z, hb_z, cb_energy, hb_energy)
+    type_signed_samples = pool_depth_samples_by_type(atom_to_type, bead_signed_samples)
+    type_sample_stats = summarize_depth_samples(type_signed_samples, cb_z, hb_z, cb_energy, hb_energy)
+    symmetry_report = audit_membrane_symmetry(cb_z, hb_z, cb_energy, hb_energy, cb_names)
     rows = []
     for bead_name, stats in bead_depth_stats.items():
+        sample_stats = bead_sample_stats[bead_name]
         rows.append(
             {
                 "bead_name": bead_name,
@@ -2249,7 +2671,14 @@ def run_build_depth_table_command(argv):
                 "mean_depth": stats["mean_depth"],
                 "std_depth": stats["std_depth"],
                 "count": stats["count"],
-                **evaluate_at_depth(stats["mean_depth"], cb_z, hb_z, cb_energy, hb_energy),
+                "cb_backbone_burial0_mean": float(sample_stats["cb_backbone_burial0_mean"]),
+                "cb_backbone_burial1_mean": float(sample_stats["cb_backbone_burial1_mean"]),
+                "cb_backbone_mean": float(sample_stats["cb_backbone_mean"]),
+                "hb_donor_unbound": float(sample_stats["hb_donor_unbound"]),
+                "hb_donor_bound": float(sample_stats["hb_donor_bound"]),
+                "hb_acceptor_unbound": float(sample_stats["hb_acceptor_unbound"]),
+                "hb_acceptor_bound": float(sample_stats["hb_acceptor_bound"]),
+                "hb_mean": float(sample_stats["hb_mean"]),
             }
         )
     rows.sort(key=lambda row: row["mean_depth"], reverse=True)
@@ -2264,7 +2693,19 @@ def run_build_depth_table_command(argv):
         "n_bead_names": len(rows),
         "cb_residue_names": cb_names,
         "depth_definition": "|z - z_center| (no PO4 anchor)",
+        "aggregation_mode": "empirical_depth_samples",
         "term_presence": term_presence,
+        "bead_sample_stats": bead_sample_stats,
+        "type_sample_stats": type_sample_stats,
+        "bead_signed_depth_samples": {
+            key: [float(x) for x in np.asarray(values, dtype=np.float64).tolist()]
+            for key, values in bead_signed_samples.items()
+        },
+        "type_signed_depth_samples": {
+            key: [float(x) for x in np.asarray(values, dtype=np.float64).tolist()]
+            for key, values in type_signed_samples.items()
+        },
+        "symmetry_report": symmetry_report,
     }
     write_summary(args.output_json, metadata)
     print(f"Wrote depth interaction table: {args.output_csv}")
@@ -2278,6 +2719,7 @@ def run_build_backbone_cross_table_command(argv):
     parser = argparse.ArgumentParser(description="Build the backbone cross interaction table artifact.")
     parser.add_argument("--ff-itp", type=Path, default=SCRIPT_DIR / "ff_dry" / "dry_martini_v2.1.itp")
     parser.add_argument("--depth-table-csv", type=Path, default=SCRIPT_DIR / "outputs" / "depth_interaction_table.csv")
+    parser.add_argument("--depth-table-meta", type=Path, default=None)
     parser.add_argument("--output-csv", type=Path, default=SCRIPT_DIR / "outputs" / "backbone_cross_interaction_table.csv")
     parser.add_argument("--output-json", type=Path, default=SCRIPT_DIR / "outputs" / "backbone_cross_interaction_table.meta.json")
     parser.add_argument("--output-h5", type=Path, default=SCRIPT_DIR / "outputs" / "backbone_cross_interaction_table.h5")
@@ -2289,6 +2731,7 @@ def run_build_backbone_cross_table_command(argv):
     args = parser.parse_args(argv)
     ff_itp = require_existing_file(args.ff_itp)
     depth_table_csv = require_existing_file(args.depth_table_csv)
+    depth_table_meta = require_existing_file(args.depth_table_meta) if args.depth_table_meta is not None else None
     if args.radial_min <= 0.0 or args.radial_max <= args.radial_min:
         raise ValueError("Require 0 < radial_min < radial_max")
     if args.sample_step <= 0.0 or args.n_radial <= 0 or args.ridge < 0.0:
@@ -2296,33 +2739,51 @@ def run_build_backbone_cross_table_command(argv):
     repo_root = Path(__file__).resolve().parents[2]
     atomtypes = parse_dry_atomtypes(ff_itp)
     param_table = read_martini3_nonbond_params(str(ff_itp))
-    depth_by_type = aggregate_depth_table(depth_table_csv)
-    anchor_x, anchor_y, anchor_labels = build_anchor_model(depth_by_type, param_table)
+    depth_by_type, depth_target_info = load_depth_targets(depth_table_csv, depth_table_meta)
+    descriptor_by_type = {env_type: compute_env_descriptor(env_type, atomtypes, param_table) for env_type in atomtypes}
+    anchor_models_by_role = build_role_anchor_models(depth_by_type, atomtypes, param_table)
     radial_grid = np.arange(args.radial_min, args.radial_max + 0.5 * args.sample_step, args.sample_step)
     if radial_grid[-1] > args.radial_max:
         radial_grid[-1] = args.radial_max
-    centers = np.linspace(args.radial_min, args.radial_max, args.n_radial, dtype=np.float64)
-    widths = (
-        np.asarray([max(1.0, args.radial_max - args.radial_min)], dtype=np.float64)
-        if args.n_radial == 1
-        else np.full(args.n_radial, centers[1] - centers[0], dtype=np.float64)
-    )
-    rows, weight_tensor, pair_summaries = build_cross_type_records(
+    rows, table_tensor, pair_summaries = build_cross_type_records(
         atomtypes=atomtypes,
         param_table=param_table,
-        anchor_x=anchor_x,
-        anchor_y=anchor_y,
+        descriptor_by_type=descriptor_by_type,
+        anchor_models_by_role=anchor_models_by_role,
         radial_grid=radial_grid,
-        centers=centers,
-        widths=widths,
-        ridge=args.ridge,
     )
     overlap_report = build_overlap_report(depth_by_type, pair_summaries)
     fit_rmses = np.asarray([item["fit_rmse"] for item in pair_summaries.values()], dtype=np.float64)
+    legacy_vs_refined = depth_target_info.get("legacy_vs_refined", {})
+    anchor_targets_by_role = {}
+    for role in BACKBONE_CLASSES:
+        anchor_model = anchor_models_by_role[role]
+        role_targets = {}
+        for label, descriptor, well_depth in zip(anchor_model["labels"], anchor_model["x"], anchor_model["y"]):
+            role_targets[label] = {
+                "descriptor": float(descriptor),
+                "refined_well_depth": float(well_depth),
+                "target_field": anchor_model["target_field"],
+                "target_description": anchor_model["target_description"],
+            }
+            if label in legacy_vs_refined:
+                legacy_key = anchor_model["target_field"]
+                role_targets[label][f"legacy_{legacy_key}"] = float(
+                    legacy_vs_refined[label].get(legacy_key.replace("mean_", "legacy_mean_"), legacy_vs_refined[label]["legacy_mean_hb_attraction"])
+                )
+                role_targets[label][f"refined_{legacy_key}"] = float(
+                    legacy_vs_refined[label].get(legacy_key.replace("mean_", "refined_mean_"), role_targets[label]["refined_well_depth"])
+                )
+                role_targets[label][f"delta_{legacy_key}"] = (
+                    role_targets[label][f"refined_{legacy_key}"] - role_targets[label][f"legacy_{legacy_key}"]
+                )
+        anchor_targets_by_role[role] = role_targets
     metadata = {
+        "artifact_schema": SPLINE_CROSS_SCHEMA,
         "sources": {
             "ff_itp": repo_relative(ff_itp, repo_root),
             "depth_table_csv": repo_relative(depth_table_csv, repo_root),
+            "depth_table_meta": repo_relative(depth_table_meta, repo_root) if depth_table_meta is not None else None,
         },
         "protein_classes": list(BACKBONE_CLASSES),
         "environment_types": atomtypes,
@@ -2331,16 +2792,33 @@ def run_build_backbone_cross_table_command(argv):
             "max": float(args.radial_max),
             "step": float(args.sample_step),
             "n_samples": int(radial_grid.shape[0]),
-            "n_radial_basis": int(args.n_radial),
-            "ridge": float(args.ridge),
+            "representation": "direct_spline_table",
+            "legacy_rbm_settings": {
+                "n_radial_basis": int(args.n_radial),
+                "ridge": float(args.ridge),
+            },
         },
         "calibration": {
-            "anchor_labels": anchor_labels,
-            "anchor_epsilons": [float(x) for x in anchor_x],
-            "anchor_depths": [float(y) for y in anchor_y],
+            "descriptor_name": "mean_epsilon_to_all_dry_types",
+            "role_target_fields": ROLE_TARGET_FIELDS,
+            "role_target_descriptions": ROLE_TARGET_DESCRIPTIONS,
+            "anchor_models_by_role": {
+                role: {
+                    "target_field": anchor_models_by_role[role]["target_field"],
+                    "target_description": anchor_models_by_role[role]["target_description"],
+                    "anchor_labels": anchor_models_by_role[role]["labels"],
+                    "anchor_descriptors": [float(x) for x in anchor_models_by_role[role]["x"]],
+                    "anchor_depths": [float(y) for y in anchor_models_by_role[role]["y"]],
+                }
+                for role in BACKBONE_CLASSES
+            },
             "covered_depth_types": {key: depth_by_type[key] for key in DOPC_COVERED_TYPES if key in depth_by_type},
+            "anchor_targets_by_role": anchor_targets_by_role,
+            "legacy_vs_refined": legacy_vs_refined,
         },
         "role_proxies": ROLE_PROXIES,
+        "role_scaling": "channel_specific_anchor_models",
+        "type_descriptor": descriptor_by_type,
         "pair_summary": pair_summaries,
         "fit_rmse_summary": {
             "min": float(np.min(fit_rmses)),
@@ -2348,6 +2826,8 @@ def run_build_backbone_cross_table_command(argv):
             "max": float(np.max(fit_rmses)),
         },
         "overlap_report": overlap_report,
+        "symmetry_report": depth_target_info.get("symmetry_report"),
+        "depth_target_source": depth_target_info.get("source", "csv_only"),
     }
     write_csv_rows(args.output_csv, REQUIRED_CROSS_TABLE_COLUMNS, rows)
     write_summary(args.output_json, metadata)
@@ -2355,18 +2835,17 @@ def run_build_backbone_cross_table_command(argv):
         args.output_h5,
         BACKBONE_CLASSES,
         atomtypes,
-        centers,
-        widths,
-        weight_tensor,
+        radial_grid,
+        table_tensor,
         metadata,
     )
-    print(f"Wrote radial cross table CSV: {args.output_csv}")
-    print(f"Wrote radial cross table metadata: {args.output_json}")
-    print(f"Wrote radial cross table artifact: {args.output_h5}")
+    print(f"Wrote spline cross table CSV: {args.output_csv}")
+    print(f"Wrote spline cross table metadata: {args.output_json}")
+    print(f"Wrote spline cross table artifact: {args.output_h5}")
 
 
 def run_inject_backbone_cross_command(argv):
-    parser = argparse.ArgumentParser(description="Inject martini_rbm_cross_potential into prepared .up files.")
+    parser = argparse.ArgumentParser(description="Inject a MARTINI backbone cross-potential node into prepared .up files.")
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--up-files", nargs="*", default=[])
@@ -2391,8 +2870,9 @@ def run_inject_backbone_cross_command(argv):
             env_class_indices,
             bool(args.overwrite_existing),
         )
+        node_name = RBM_CROSS_NODE_NAME if artifact["schema"] == RBM_CROSS_SCHEMA else SPLINE_CROSS_NODE_NAME
         print(
-            f"Injected martini_rbm_cross_potential into {up_path} "
+            f"Injected {node_name} into {up_path} "
             f"(protein={protein_indices.size}, env={env_indices.size})"
         )
 

@@ -2637,8 +2637,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                                 f"  Available atom types with masses: {sorted(martini_masses.keys())}\n"
                                 f"  This indicates incomplete force field parameters.\n"
                                 f"  Aborting to prevent incorrect simulation results.")
-            # Divide by 12.0 for reduced mass units (1 unit = 12 g/mol)
-            mass[i] = martini_masses[atom_type] / 12.0
+            # Normalize dry-MARTINI bead masses so a standard 72 g/mol bead has unit mass.
+            mass[i] = martini_masses[atom_type] / 72.0
         
         mass_array = t.create_array(input_grp, 'mass', obj=mass)
         mass_array._v_attrs.arguments = np.array([b'mass'])

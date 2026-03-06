@@ -1970,3 +1970,78 @@
 - Outcome:
   - no regression found in the current workflow
   - no code changes were necessary
+
+## 2026-03-06 (Refined Dry-MARTINI <-> Upside Spline Cross Force Field)
+- Re-read the current task plan before implementation and kept the change scoped to the requested bridge refinement:
+  - empirical depth occupancy for `Q0/Qa/Na/C1/C3`,
+  - dry-table trend spanning across all dry types,
+  - direct distance-dependent spline tables,
+  - mass normalization to the `72 -> 1.0` convention.
+- Updated `example/16.MARTINI/prepare_system.py`:
+  - depth-table builder now stores bead/type signed depth samples, sample-based membrane averages, and a raw membrane asymmetry report,
+  - cross-table builder now consumes `--depth-table-meta`, uses the dry-table descriptor `mean_epsilon_to_all_dry_types`, keeps `Q0/Qa/Na/C1/C3` separate, and writes spline artifacts under schema `martini_backbone_spline_cross_v1`,
+  - validation and injection now dispatch on artifact schema and remove legacy RBM nodes when overwriting with the spline node.
+- Updated runtime and workflow wiring:
+  - added `martini_spline_cross_potential` to `src/martini.cpp`,
+  - changed `example/16.MARTINI/lib.py` to normalize dry-MARTINI masses by `72`,
+  - changed `example/16.MARTINI/run_sim_1rkl.sh` to normalize carrier masses by `54`, pass `--depth-table-meta`, and rebuild cached artifacts when the cached schema is still RBM.
+- Generated and validated fresh refined artifacts in `example/16.MARTINI/outputs/test_refined_cross_20260306/`:
+  - `depth_interaction_table.csv`
+  - `depth_interaction_table.meta.json`
+  - `backbone_cross_interaction_table.csv`
+  - `backbone_cross_interaction_table.meta.json`
+  - `backbone_cross_interaction_table.h5`
+- Verification results:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/lib.py` passed.
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j 4` passed.
+  - `validate-backbone-only` passed on the rebuilt depth/cross CSV+JSON+HDF5 artifacts.
+  - injection into copied `checkpoints/1rkl.stage_7.0.prepared.up` passed and wrote `martini_spline_cross_potential` with `protein=124`, `env=4549`.
+  - `validate-backbone-only` passed on the injected copied stage file.
+  - one-step `obj/upside ... --duration-steps 1 ...` completed successfully on the injected copied stage file, proving the new spline node registers and runs.
+- Diagnostic findings from the validation run:
+  - all four protein classes share identical spline tables in the new artifact,
+  - anchor descriptors stayed separate: `Q0=1.0526`, `Qa=1.1421`, `Na=1.8000`, `C3=2.5447`, `C1=2.7447`,
+  - symmetry audit worst case is `cb:ARG:burial0` with `max_abs_diff=5.32998` at `13.1 A`,
+  - normalization sanity checks are `72 -> 1.0`, `45 -> 0.625`, and carrier mass sum `1.0`.
+- Residual issue:
+  - the smoke-tested production file still reports a physically huge MARTINI energy on startup; the spline schema/runtime path is functioning, but the force-field calibration itself still needs further refinement.
+
+- Canonical artifact publish step:
+  - overwrote `parameters/ff_2.1/martini.h5` with `outputs/test_refined_cross_20260306/backbone_cross_interaction_table.h5`
+  - verified `validate-backbone-only --cross-artifact parameters/ff_2.1/martini.h5` passed
+  - verified destination schema is `martini_backbone_spline_cross_v1`
+  - verified destination SHA1 equals source SHA1 (`25c36a0589dbe79e1ef02d7486e9115e70dbac76`)
+
+- Separated parameter generation from the simulation workflow:
+  - added `example/16.MARTINI/build_martini_parameters.py` as the single standalone parameter-build/publish script,
+  - removed on-the-fly parameter generation from `example/16.MARTINI/run_sim_1rkl.sh`,
+  - left the run script with only prebuilt-artifact presence/schema checks and validation.
+- Standalone-builder verification:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/build_martini_parameters.py example/16.MARTINI/prepare_system.py example/16.MARTINI/lib.py` passed
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed
+  - `source .venv/bin/activate && source source.sh && python3 example/16.MARTINI/build_martini_parameters.py --output-dir example/16.MARTINI/outputs/test_parameter_builder_script_20260306 --publish-output example/16.MARTINI/outputs/test_parameter_builder_script_20260306/martini.published.h5` passed
+  - published test artifact validates as `martini_backbone_spline_cross_v1` with `38` environment classes
+
+## 2026-03-06 (Role-Specific Backbone Refinement for `O`)
+- Replaced the shared backbone-class target with role-specific channel targets in `example/16.MARTINI/prepare_system.py`:
+  - `N -> mean_hb_donor_attraction`
+  - `O -> mean_hb_acceptor_attraction`
+  - `CA/C -> mean_cb_value`
+- Kept the rest of the bridge intact:
+  - same dry-type descriptor span over all 38 dry types,
+  - same spline-table runtime schema,
+  - same standalone parameter-builder script and published `parameters/ff_2.1/martini.h5`.
+- Rebuilt and published with:
+  - `source .venv/bin/activate && source source.sh && python3 example/16.MARTINI/build_martini_parameters.py --output-dir example/16.MARTINI/outputs/test_o_role_refine_20260306 --publish-output parameters/ff_2.1/martini.h5`
+- Validation/results:
+  - builder output validated successfully (`cross_artifact schema=martini_backbone_spline_cross_v1 env_types=38 n_radial=101`)
+  - published `parameters/ff_2.1/martini.h5` matches the rebuilt artifact exactly (`SHA1 8c9f0542661c9ca7104e4d9423f30185d160e07b`)
+  - direct HDF5 check shows `O` is now different from `N/CA/C`:
+    - `max_diff_N_vs_O_Q0 = 2.1418`
+    - `well_min_N_Q0 = -1.2878`
+    - `well_min_O_Q0 = -3.4296`
+  - `CA` and `C` remain intentionally identical (`max_diff_CA_vs_C_Q0 = 0.0`)
+  - copied-stage injection + `validate-backbone-only` passed, and one-step `obj/upside` startup/run completed with the updated published artifact.
+- Residual issue:
+  - the production smoke test still reports the same very large MARTINI energy channel, so the role split fixes representation fidelity for `O` but does not yet solve the broader physical calibration problem.

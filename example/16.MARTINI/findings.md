@@ -258,3 +258,73 @@
   - the current workflow still enforces rigid protein hold during pre-production by the active `fix_rigid` path
   - the protein coordinates remain unchanged right up to the production handoff
   - the separate large MARTINI-energy instability remains present, but it is not a protein-drift or handoff-mutation regression
+
+## 2026-03-06 (Refined Spline Cross-Force-Field Build)
+- The dry-table descriptor `mean epsilon to all dry types` cleanly separates the five requested anchor types, unlike `epsilon(P2,type)` which leaves `Q0` and `Qa` degenerate:
+  - `Q0 = 1.0526315789473684`
+  - `Qa = 1.142105263157895`
+  - `Na = 1.8000000000000005`
+  - `C3 = 2.544736842105263`
+  - `C1 = 2.744736842105263`
+- Fresh refined artifact build in `example/16.MARTINI/outputs/test_refined_cross_20260306/` produced:
+  - depth metadata with `aggregation_mode=empirical_depth_samples`,
+  - per-bead and per-type sample summaries,
+  - raw signed depth samples,
+  - symmetry audit metadata,
+  - spline artifact schema `martini_backbone_spline_cross_v1`.
+- Symmetry audit on the current `parameters/ff_2.1/membrane.h5` shows the bilayer model is not symmetric:
+  - worst raw mismatch is `cb:ARG:burial0`
+  - `max_abs_diff = 5.329984533383209`
+  - worst sampled depth = `13.1 A`
+  - values at the worst point are `-0.40438` vs `4.92560`
+- The generated spline artifact contains identical `N/CA/C/O` tables by construction and was confirmed by direct HDF5 comparison (`allclose` exact within stored values).
+- Mass-normalization checks for the new convention:
+  - standard dry bead `72 / 72 = 1.0`
+  - ring bead `45 / 72 = 0.625`
+  - injected carrier masses are `N=14/54`, `CA=12/54`, `C=12/54`, `O=16/54`, summing to `1.0`
+- Migration detail discovered during validation:
+  - prepared production `.up` files may already contain legacy `martini_rbm_cross_potential`,
+  - when injecting the new spline node, the injector must remove the legacy node too; otherwise both cross-force terms coexist in the stage file.
+- Runtime validation result:
+  - a copied `1rkl.stage_7.0.prepared.up` accepted the new spline node, passed HDF5 validation, and completed a one-step `obj/upside` run,
+  - the startup MARTINI energy remains extremely large, so schema/runtime integration is working but physical calibration remains poor.
+- Canonical artifact publication result:
+  - `parameters/ff_2.1/martini.h5` has now been replaced with the refined spline artifact
+  - validated schema: `martini_backbone_spline_cross_v1`
+  - direct SHA1 comparison confirms it is byte-identical to `outputs/test_refined_cross_20260306/backbone_cross_interaction_table.h5`
+- Workflow-separation result:
+  - `run_sim_1rkl.sh` no longer contains the `build-depth-table` or `build-backbone-cross-table` calls,
+  - the simulation workflow now requires a prebuilt published artifact and points users to `example/16.MARTINI/build_martini_parameters.py` when the artifact is missing or outdated,
+  - the standalone builder script successfully reproduces the spline artifact and publishes a valid `martini.h5` outside the simulation workflow.
+
+## 2026-03-06 (User Feedback: Backbone `O` Is the Worst Case)
+- User-reported behavior: both the current spline-table version and the previous version perform especially badly for backbone `O` among `N/CA/C/O`.
+- This is consistent with the present builder design:
+  - `example/16.MARTINI/prepare_system.py` currently writes identical environment tables for all four backbone classes,
+  - the current anchor target is a single scalar derived from the averaged hydrogen-bond channel (`mean_hb_attraction`), not a role-specific donor/acceptor decomposition.
+- Technical implication:
+  - the current “all backbone classes identical” simplification is likely too aggressive,
+  - `O` should be treated separately in the next refinement, and the next model should probably use acceptor-specific membrane information for `O` instead of the shared averaged target used now.
+
+## 2026-03-06 (Role-Specific Backbone Calibration Applied)
+- The published builder now uses role-specific anchor targets:
+  - `N -> mean_hb_donor_attraction`
+  - `O -> mean_hb_acceptor_attraction`
+  - `CA/C -> mean_cb_value`
+- For the `Q0` anchor in the rebuilt metadata:
+  - `N` target field `mean_hb_donor_attraction = 0.16819868543005373`
+  - `CA` target field `mean_cb_value = 0.8677337670194787`
+  - `C` target field `mean_cb_value = 0.8677337670194787`
+  - `O` target field `mean_hb_acceptor_attraction = 0.44794905782531336`
+- Direct HDF5 checks on the rebuilt/published artifact show the role split took effect:
+  - schema remains `martini_backbone_spline_cross_v1`
+  - `max |N-O|` for the `Q0` spline table is `2.141817092895508`
+  - `max |CA-C|` for the `Q0` spline table is `0.0`
+  - `Q0` minima changed from shared to role-specific:
+    - `N = -1.287758231163025`
+    - `O = -3.4295754432678223`
+- The rebuilt artifact was published to `parameters/ff_2.1/martini.h5` and confirmed byte-identical to `example/16.MARTINI/outputs/test_o_role_refine_20260306/backbone_cross_interaction_table.h5` (`SHA1 8c9f0542661c9ca7104e4d9423f30185d160e07b`).
+- Runtime integration remained valid:
+  - injected copied production stage passed `validate-backbone-only`
+  - one-step `obj/upside` startup/run completed
+  - the very large MARTINI energy remained essentially unchanged, so the change corrected class differentiation but not the main physical instability.

@@ -518,6 +518,93 @@
   - dead hybrid-driven pre-production rigid path
 - Use exact source references so the next code change can target the correct call site instead of guessing from workflow metadata.
 
+## 2026-03-06 (Refine Dry-MARTINI <-> Upside Cross Force Field)
+
+### Project Goal (Current)
+- Replace the current approximate RBM cross-force-field builder with a refined dry-MARTINI-to-Upside workflow that:
+  - computes `Q0/Qa/Na/C1/C3` anchor targets from empirical DOPC depth occupancy
+  - audits but does not yet act on membrane asymmetry
+  - spans those anchors to all dry-MARTINI types through a dry-table trend instead of per-type fitting
+  - writes a true distance-dependent spline interaction for protein/environment pairs
+  - normalizes dry-MARTINI masses by dividing by `72`, with matching BB-carrier normalization
+
+### Architecture & Key Decisions (Current)
+- Keep the active shell workflow surface (`prepare_system.py`, `run_sim_1rkl.sh`) and extend it in place.
+- The refined build path uses empirical signed `z-z_center` samples from the DOPC template, not just per-type mean depths.
+- Membrane asymmetry is measured from raw `membrane.h5` curves and recorded in metadata, but the parameter build still uses a symmetrized evaluation for this pass.
+- Type spanning uses one global trend from dry-MARTINI interaction-table strength to Upside well depth; no per-type force fitting and no role-specific scaling.
+- Runtime cross interaction moves from `martini_rbm_cross_potential` to a new spline-table node; backward compatibility for legacy artifacts may remain in code, but the workflow should emit the new spline schema by default.
+- Distance dependence is represented as direct radial spline tables over a uniform distance grid.
+- The next refinement will no longer force identical backbone-class tables:
+  - `N` will use donor-channel anchor targets,
+  - `O` will use acceptor-channel anchor targets,
+  - `CA/C` will use burial-channel anchor targets.
+- Dry-MARTINI environment masses use `mass/72`; injected AA backbone carrier masses are normalized so each `N+CA+C+O` carrier set sums to `1.0`.
+- Parameter calculation and publication to `parameters/ff_2.1/martini.h5` must live in one standalone script under `example/16.MARTINI/` and must not be performed inside the simulation workflow.
+
+### Execution Phases (Current Run)
+- [x] Phase R1: Extend the depth-table builder with empirical sample pooling and symmetry-audit metadata.
+- [x] Phase R2: Replace the Python cross-table builder/output schema with global-trend spline tables and normalized carrier masses.
+- [x] Phase R3: Add the new C++ spline cross-potential node and injector/runtime wiring.
+- [x] Phase R4: Normalize dry-MARTINI stage masses to `mass/72` and align injected carrier masses to the same convention.
+- [x] Phase R5: Run targeted validation: Python syntax, C++ build, artifact validation, injection/startup smoke test, and mass sanity checks.
+
+### Known Errors / Blockers (Current Run)
+- The existing production physical-instability issue may still remain after the force-field representation change; this run only replaces the builder/runtime form and mass convention, not full physical calibration.
+- New user finding: the force field performs especially poorly for backbone `O`. This likely invalidates the current simplifying decision that all four backbone classes (`N/CA/C/O`) should share identical spline tables; the next refinement should split `O` back out, and likely reintroduce at least partial donor/acceptor role specificity.
+- New user requirement: parameter generation must be decoupled from `run_sim_1rkl.sh`; the workflow should consume a prebuilt `parameters/ff_2.1/martini.h5` instead of rebuilding it on demand.
+
+### Review (Current Run)
+- `example/16.MARTINI/prepare_system.py` now:
+  - builds depth rows from empirical signed depth samples instead of `V(mean_depth)`,
+  - records `type_sample_stats`, raw sample lists, and a raw membrane `V(+d)` vs `V(-d)` asymmetry audit,
+  - spans all 38 dry types from separate `Q0/Qa/Na/C1/C3` anchors using the dry-table descriptor `mean_epsilon_to_all_dry_types`,
+  - writes spline-table artifacts with schema `martini_backbone_spline_cross_v1`,
+  - validates and injects both legacy RBM and new spline artifacts, removing legacy cross nodes during overwrite.
+- `src/martini.cpp` now registers `martini_spline_cross_potential`, which loads direct radial tables, fits clamped 1D splines at startup, and evaluates protein-environment energy/forces from those spline tables.
+- `example/16.MARTINI/lib.py` now normalizes dry-MARTINI environment masses with `mass/72`.
+- `example/16.MARTINI/run_sim_1rkl.sh` now:
+  - normalizes injected AA carrier masses as `14/54`, `12/54`, `12/54`, `16/54`,
+  - consumes a prebuilt `parameters/ff_2.1/martini.h5` instead of building parameters inline,
+  - errors out with a pointer to the standalone builder script if the artifact is missing or has the wrong schema.
+- `example/16.MARTINI/build_martini_parameters.py` now provides the standalone parameter-build path:
+  - builds the empirical depth table,
+  - builds the spline cross artifact,
+  - validates the intermediate CSV/JSON/HDF5 artifacts,
+  - publishes the final runtime artifact to `parameters/ff_2.1/martini.h5` or another requested output path.
+- Validation completed in `example/16.MARTINI/outputs/test_refined_cross_20260306`:
+  - `python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/lib.py`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `cmake --build obj -j 4`
+  - rebuilt `depth_interaction_table.*` and `backbone_cross_interaction_table.*`
+  - `validate-backbone-only` passed on the rebuilt CSV/JSON/HDF5 artifacts
+  - injected `martini_spline_cross_potential` into a copied `1rkl.stage_7.0.prepared.up` and `validate-backbone-only` passed on the resulting stage file
+  - one-step `obj/upside` startup/run completed on the copied stage file with the new spline node active
+- Canonical runtime artifact update completed:
+  - copied `example/16.MARTINI/outputs/test_refined_cross_20260306/backbone_cross_interaction_table.h5`
+    to `parameters/ff_2.1/martini.h5`
+  - destination validates as `martini_backbone_spline_cross_v1`
+  - destination SHA1 matches the rebuilt refined artifact exactly
+- Standalone-builder validation completed:
+  - `python3 -m py_compile example/16.MARTINI/build_martini_parameters.py`
+  - `python3 example/16.MARTINI/build_martini_parameters.py --output-dir example/16.MARTINI/outputs/test_parameter_builder_script_20260306 --publish-output example/16.MARTINI/outputs/test_parameter_builder_script_20260306/martini.published.h5`
+  - published test artifact validates as `martini_backbone_spline_cross_v1` with `38` environment classes
+- Role-specific backbone refinement completed:
+  - rebuilt and published `parameters/ff_2.1/martini.h5` from `example/16.MARTINI/outputs/test_o_role_refine_20260306/backbone_cross_interaction_table.h5`
+  - builder now calibrates `N` from donor-channel anchors, `O` from acceptor-channel anchors, and `CA/C` from burial-channel anchors
+  - injected the updated published artifact into a copied `1rkl.stage_7.0.prepared.up`, `validate-backbone-only` passed, and one-step `obj/upside` startup/run still completed
+- Verified diagnostics:
+  - artifact schema: `martini_backbone_spline_cross_v1`
+  - `O` no longer shares the same spline table as `N/CA/C`
+  - `CA` and `C` remain intentionally identical
+  - example published-artifact differences:
+    - `max |N-O|` for `Q0` table = `2.1418`
+    - `max |CA-C|` for `Q0` table = `0.0`
+    - `Q0` well minima: `N=-1.2878`, `O=-3.4296`
+  - anchor descriptors remain distinct: `Q0=1.0526`, `Qa=1.1421`, `Na=1.8000`, `C3=2.5447`, `C1=2.7447`
+  - symmetry audit worst case from the current membrane model: `cb:ARG:burial0`, `max_abs_diff=5.32998` at `13.1 A`
+  - mass normalization sanity: `72 -> 1.0`, `45 -> 0.625`, carrier mass sum `N+CA+C+O = 1.0`
+
 ### Execution Phases
 - [x] Phase N1: Search `src/*.cpp` / `src/*.h` for rigid/fix/hybrid stage-control hooks.
 - [x] Phase N2: Inspect exact call sites in `src/main.cpp`, `src/martini.cpp`, `src/box.cpp`, and `src/deriv_engine.cpp`.
