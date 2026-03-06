@@ -614,3 +614,59 @@
 
 ### Known Errors / Blockers
 - None yet.
+
+## 2026-03-06 (Fresh Double-Check: Pre-Production Rigid Hold + Unchanged Production Handoff)
+
+### Goal
+- Re-verify the current `example/16.MARTINI/run_sim_1rkl.sh` state on a fresh reduced rerun.
+- Prove two things on newly generated artifacts:
+  - the protein remains rigid through stages `6.0-6.6`
+  - the original protein coordinates handed into stage `7.0` are unchanged from the `6.6` last frame
+
+### Architecture & Key Decisions
+- Do not patch the workflow unless the live rerun or direct HDF5 inspection finds a regression.
+- Use both:
+  - the script's built-in assertions (`assert_protein_rigid_stage`, `assert_production_handoff_protein_particles`)
+  - an independent post-run HDF5 check over the generated checkpoint files
+
+### Execution Phases
+- [x] Phase Q1: Re-read the live workflow code paths for `fix_rigid`, stage handoff, and production preparation.
+- [x] Phase Q2: Run a fresh reduced `6.0 -> 7.0` workflow from the current script.
+- [x] Phase Q3: Independently inspect the generated HDF5 stage files for rigid hold and exact `6.6 -> 7.0` protein-coordinate equality.
+
+### Known Errors / Blockers
+- The separate late-stage MARTINI environment instability still produces very large MARTINI energies, but it did not break the rigid-protein guarantee in this verification run.
+
+### Review
+- Fresh reduced rerun completed through stage `7.0`:
+  - run directory: `example/16.MARTINI/outputs/test_double_check_rigid_20260306/`
+  - overrides:
+    - `MIN_60_MAX_ITER=5`
+    - `MIN_61_MAX_ITER=5`
+    - `EQ_62_NSTEPS=20`
+    - `EQ_63_NSTEPS=20`
+    - `EQ_64_NSTEPS=20`
+    - `EQ_65_NSTEPS=20`
+    - `EQ_66_NSTEPS=20`
+    - `PROD_70_NSTEPS=1`
+    - `EQ_FRAME_STEPS=10`
+    - `PROD_FRAME_STEPS=1`
+    - `BACKBONE_CROSS_ENABLE=0`
+- Built-in workflow proof lines from the fresh run:
+  - `Rigid-protein check stage 6.0: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.1: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.2: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.3: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.4: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.5: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.6: n_protein=124 max_disp=0`
+  - `Production handoff protein-particle check: n_protein=124 max_disp=0`
+- Independent HDF5 post-check on the same artifacts confirmed:
+  - stages `6.0-6.6` each have `/input/fix_rigid enable=1`
+  - stages `6.0-6.6` each have `n_protein=124` and exact `input -> last output` protein-coordinate equality (`max_disp=0`)
+  - stage `7.0` has `production_fix_rigid=0` by design
+  - the original protein particles in `stage_7.0.up` match the `stage_6.6.up` last output exactly (`max_disp=0`)
+- Conclusion:
+  - current `run_sim_1rkl.sh` still holds the protein rigid before production
+  - the protein coordinates handed into production are unchanged
+  - no workflow code change was required

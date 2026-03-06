@@ -1939,3 +1939,34 @@
     - `protein_atom_indices=124`
     - `env_atom_indices=4025`
     - `weights_shape=(4, 38, 12)`
+
+## 2026-03-06 (Fresh Double-Check of Current `run_sim_1rkl.sh`)
+- Re-read `example/16.MARTINI/task_plan.md` and audited the live workflow code path before rerunning:
+  - confirmed `prepare_stage_file()` enables `/input/fix_rigid` for stages `6.0-6.6`
+  - confirmed `handoff_initial_position()` uses strict stage-copy semantics
+  - confirmed `assert_protein_rigid_stage()` and `assert_production_handoff_protein_particles()` are still wired into the active shell flow
+- Executed a fresh reduced rerun from `example/16.MARTINI`:
+  - command:
+    `source ../../.venv/bin/activate && source ../../source.sh && env RUN_DIR=outputs/test_double_check_rigid_20260306 MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=20 EQ_63_NSTEPS=20 EQ_64_NSTEPS=20 EQ_65_NSTEPS=20 EQ_66_NSTEPS=20 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=10 PROD_FRAME_STEPS=1 BACKBONE_CROSS_ENABLE=0 ./run_sim_1rkl.sh`
+  - workflow completed through stage `7.0`
+- Script-side proof observed during the fresh run:
+  - `Rigid-protein check stage 6.0: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.1: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.2: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.3: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.4: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.5: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.6: n_protein=124 max_disp=0`
+  - `Production handoff protein-particle check: n_protein=124 max_disp=0`
+- Ran an independent HDF5 audit on the generated checkpoint files:
+  - stages `6.0-6.6` each showed `/input/fix_rigid enable=1`
+  - stages `6.0-6.6` each showed `n_protein=124` and exact protein `input -> last output` equality (`max_disp=0`)
+  - stage `7.0` showed `production_fix_rigid=0`
+  - `stage_6.6.up` last protein positions matched `stage_7.0.up` input protein positions exactly (`max_disp=0`)
+- Modified files:
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+- Outcome:
+  - no regression found in the current workflow
+  - no code changes were necessary

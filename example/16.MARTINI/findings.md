@@ -235,3 +235,26 @@
   - `hbond_hb_energy=1`
   - `sidechain_term=0`
   - `sheet_term=0`
+
+## 2026-03-06 (Fresh Independent Verification of Current Rigid-Protein Workflow)
+- A fresh reduced rerun of the current checked-in `example/16.MARTINI/run_sim_1rkl.sh` completed through stage `7.0` in:
+  - `example/16.MARTINI/outputs/test_double_check_rigid_20260306/`
+- Fresh script-side proof lines from that run:
+  - `Rigid-protein check stage 6.0: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.1: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.2: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.3: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.4: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.5: n_protein=124 max_disp=0`
+  - `Rigid-protein check stage 6.6: n_protein=124 max_disp=0`
+  - `Production handoff protein-particle check: n_protein=124 max_disp=0`
+- Independent post-run HDF5 inspection on the generated checkpoints confirmed the same result without relying on shell logging:
+  - stages `6.0-6.6` each contain `/input/fix_rigid` with `enable=1`
+  - stages `6.0-6.6` each have `124` protein particles by `/input/hybrid_env_topology/protein_membership`
+  - for each pre-production stage, protein `input` coordinates equal the stage last `output` coordinates exactly (`max_disp=0`)
+  - stage `7.0` has `/input/fix_rigid enable=0`, so production is not accidentally still frozen
+  - the original protein particles in `stage_7.0.up` exactly match the `stage_6.6.up` last-frame protein coordinates (`max_disp=0`)
+- Interpretation:
+  - the current workflow still enforces rigid protein hold during pre-production by the active `fix_rigid` path
+  - the protein coordinates remain unchanged right up to the production handoff
+  - the separate large MARTINI-energy instability remains present, but it is not a protein-drift or handoff-mutation regression
