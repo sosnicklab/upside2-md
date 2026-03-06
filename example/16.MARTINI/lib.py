@@ -3158,4 +3158,4 @@ def main_always_fixed(pdb_id):
 
 
 if __name__ == "__main__":
-    raise SystemExit("Use prepare_system.py as the workflow preparation entrypoint.")
+    raise SystemExit("Use prepare_system.py as the workflow entrypoint.")

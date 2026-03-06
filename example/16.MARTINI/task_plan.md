@@ -1,5 +1,48 @@
 # Task Plan
 
+## 2026-03-06 Reset: Three-Script Workflow Cleanup
+
+### Project Goal (Current)
+- Reduce `example/16.MARTINI` to exactly three Python files:
+  - `prepare_system.py`
+  - `extract_martini_vtf.py`
+  - `lib.py`
+- Keep the existing workflow behavior, including the recent PDB-placement and AA-only protein fixes.
+- Remove direct shell/script dependencies on helper executables such as `set_initial_position.py`, `inject_backbone_only_nodes.py`, and the table-builder/validator scripts.
+
+### Architecture & Key Decisions (Current)
+- Rename `prepare_system_lib.py` to `lib.py` and keep the existing prep/stage-conversion logic there.
+- Move the active helper script entrypoints into `prepare_system.py` as subcommands, so the workflow has one operational Python command surface plus the VTF exporter.
+- Update `run_sim_1rkl.sh` and `run_sim_bilayer.sh` to call only `prepare_system.py` and `extract_martini_vtf.py`.
+- Delete obsolete Python scripts after the shell workflows no longer reference them.
+- Validate with syntax checks plus a workflow smoke test on the updated script surface, not just import checks.
+
+### Execution Phases (Current Run)
+- [x] Phase A: Rename the helper library to `lib.py` and add the required helper subcommands to `prepare_system.py`.
+- [x] Phase B: Update shell workflows to use only `prepare_system.py` and `extract_martini_vtf.py`.
+- [x] Phase C: Remove the extra Python files under `example/16.MARTINI`.
+- [x] Phase D: Run syntax/workflow validation and record the result.
+
+### Known Errors / Blockers (Current Run)
+- The pre-existing large MARTINI-energy instability in later stages remains out of scope for this cleanup.
+
+### Review (Current Run)
+- `example/16.MARTINI` now contains exactly three Python files: `prepare_system.py`, `extract_martini_vtf.py`, and `lib.py`.
+- `prepare_system_lib.py` was renamed to `lib.py`, and the active helper entrypoints were folded into `prepare_system.py` as subcommands:
+  - `handoff`
+  - `inject-backbone-only`
+  - `validate-backbone-only`
+  - `build-depth-table`
+  - `build-backbone-cross-table`
+  - `inject-backbone-cross`
+- `run_sim_1rkl.sh` and `run_sim_bilayer.sh` now call only `prepare_system.py` and `extract_martini_vtf.py`.
+- The obsolete helper scripts were deleted from `example/16.MARTINI`.
+- Validation passed:
+  - `python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/lib.py example/16.MARTINI/extract_martini_vtf.py`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/run_sim_bilayer.sh`
+  - reduced end-to-end rerun in `outputs/test_three_script_cleanup/` completed through stage `7.0` using the new subcommands, including table build, validation, backbone-node injection, handoff, cross-node injection, and VTF export
+  - the reduced rerun still showed the pre-existing large MARTINI energies in late pre-production, but the three-script workflow itself completed successfully
+
 ## 2026-03-06 Reset: Preserve PDB Bilayer Placement
 
 ### Project Goal (Current)

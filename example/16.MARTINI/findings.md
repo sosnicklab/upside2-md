@@ -1,5 +1,30 @@
 # Findings
 
+## 2026-03-06 (Three-Script Workflow Consolidation)
+- The active workflow dependency surface had already shrunk to six Python helper entrypoints:
+  - stage handoff
+  - backbone-only node injection
+  - backbone-only validation
+  - depth-table build
+  - backbone cross-table build
+  - backbone cross-node injection
+- Those helpers were only invoked from `run_sim_1rkl.sh` and `run_sim_bilayer.sh`; the remaining Python files in `example/16.MARTINI` were not part of the live workflow path.
+- Cleanest consolidation path:
+  - rename `prepare_system_lib.py` to `lib.py`
+  - keep structural prep/stage conversion in `lib.py`
+  - expose the six live helper behaviors as `prepare_system.py` subcommands
+  - delete the standalone helper scripts
+- Reduced rerun proof from `example/16.MARTINI/outputs/test_three_script_cleanup/`:
+  - `prepare_system.py build-depth-table` wrote the depth CSV/JSON successfully
+  - `prepare_system.py build-backbone-cross-table` rebuilt `parameters/ff_2.1/martini.h5`
+  - `prepare_system.py validate-backbone-only` passed on both table artifacts and the prepared production `.up`
+  - `prepare_system.py inject-backbone-only` and `prepare_system.py inject-backbone-cross` both executed successfully on stage `7.0`
+  - `prepare_system.py handoff` was exercised repeatedly by the workflow and preserved rigid-protein checks through stages `6.0-6.6`
+  - the workflow completed through stage `7.0` with only the three remaining Python files in the directory
+- One stale cleanup bug appeared during the first reduced rerun:
+  - `run_sim_1rkl.sh` still checked deleted `${DEPTH_TABLE_BUILDER}` / `${BACKBONE_CROSS_*}` variables in its validation preamble
+  - removing that dead variable check fixed the run immediately; no further deleted-script references remained in the active shell/workflow files
+
 ## 2026-03-06 (AA-Only Workflow Cleanup Root Cause + Proof)
 - The remaining MARTINI-protein leak was not in `run_sim_1rkl.sh` anymore; it was in `prepare_system_lib.convert_stage()`, which treated any existing `pdb/{pdb_id}_proa.itp` as proof of a mixed protein-lipid system even when the runtime MARTINI PDB contained only lipids and ions.
 - That stale file-existence check caused stage conversion to:

@@ -66,10 +66,6 @@ STAGE_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.up"
 PREPARED_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.prepared.up"
 STAGE_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.up"
 
-DEPTH_TABLE_BUILDER="${DEPTH_TABLE_BUILDER:-${SCRIPT_DIR}/build_depth_interaction_table.py}"
-BACKBONE_CROSS_BUILDER="${BACKBONE_CROSS_BUILDER:-${SCRIPT_DIR}/build_backbone_cross_interaction_table.py}"
-BACKBONE_CROSS_INJECTOR="${BACKBONE_CROSS_INJECTOR:-${SCRIPT_DIR}/inject_backbone_cross_potential.py}"
-BACKBONE_ONLY_VALIDATOR="${BACKBONE_ONLY_VALIDATOR:-${SCRIPT_DIR}/validate_backbone_only_up.py}"
 BACKBONE_CROSS_ENABLE="${BACKBONE_CROSS_ENABLE:-1}"
 BACKBONE_CROSS_REBUILD="${BACKBONE_CROSS_REBUILD:-0}"
 DEPTH_TABLE_CSV="${DEPTH_TABLE_CSV:-${RUN_DIR}/depth_interaction_table.csv}"
@@ -191,24 +187,6 @@ if [ ! -f "${UPSIDE_REFERENCE_STATE_RAMA}" ]; then
 fi
 if [ ! -f "${UNIVERSAL_PREP_SCRIPT}" ]; then
     echo "ERROR: universal prep script not found: ${UNIVERSAL_PREP_SCRIPT}"
-    exit 1
-fi
-if [ "${BACKBONE_CROSS_ENABLE}" = "1" ]; then
-    if [ ! -f "${DEPTH_TABLE_BUILDER}" ]; then
-        echo "ERROR: depth table builder not found: ${DEPTH_TABLE_BUILDER}"
-        exit 1
-    fi
-    if [ ! -f "${BACKBONE_CROSS_BUILDER}" ]; then
-        echo "ERROR: backbone cross-table builder not found: ${BACKBONE_CROSS_BUILDER}"
-        exit 1
-    fi
-    if [ ! -f "${BACKBONE_CROSS_INJECTOR}" ]; then
-        echo "ERROR: backbone cross-table injector not found: ${BACKBONE_CROSS_INJECTOR}"
-        exit 1
-    fi
-fi
-if [ "${HYBRID_VALIDATE}" = "1" ] && [ ! -f "${BACKBONE_ONLY_VALIDATOR}" ]; then
-    echo "ERROR: backbone validator not found: ${BACKBONE_ONLY_VALIDATOR}"
     exit 1
 fi
 
@@ -639,12 +617,11 @@ inject_backbone_only_production_nodes() {
     local rama_sheet_mixing="$5"
     local hbond_energy="$6"
     local reference_state_rama="$7"
-    local injector_script="${SCRIPT_DIR}/inject_backbone_only_nodes.py"
-    if [ ! -f "${injector_script}" ]; then
-        echo "ERROR: backbone injector script not found: ${injector_script}"
+    if [ ! -f "${UNIVERSAL_PREP_SCRIPT}" ]; then
+        echo "ERROR: prep script not found: ${UNIVERSAL_PREP_SCRIPT}"
         exit 1
     fi
-    python3 "${injector_script}" \
+    python3 "${UNIVERSAL_PREP_SCRIPT}" inject-backbone-only \
         "${up_file}" \
         "${protein_source}" \
         "${upside_home}" \
@@ -664,7 +641,7 @@ prepare_backbone_cross_artifacts() {
         echo "Using cached cross artifact: ${BACKBONE_CROSS_TABLE_H5}"
         if [ "${HYBRID_VALIDATE}" = "1" ]; then
             local validator_cmd=(
-                python3 "${BACKBONE_ONLY_VALIDATOR}"
+                python3 "${UNIVERSAL_PREP_SCRIPT}" validate-backbone-only
                 --cross-artifact "${BACKBONE_CROSS_TABLE_H5}"
             )
             if [ -f "${BACKBONE_CROSS_TABLE_CSV}" ]; then
@@ -694,14 +671,14 @@ prepare_backbone_cross_artifacts() {
 
     echo "=== Stage 0.5: Build Backbone Cross-Table Artifacts ==="
     mkdir -p "$(dirname "${BACKBONE_CROSS_TABLE_H5}")"
-    python3 "${DEPTH_TABLE_BUILDER}" \
+    python3 "${UNIVERSAL_PREP_SCRIPT}" build-depth-table \
         --bilayer-pdb "${BILAYER_PDB}" \
         --lipid-itp "${SCRIPT_DIR}/ff_dry/dry_martini_v2.1_lipids.itp" \
         --membrane-h5 "${UPSIDE_HOME}/parameters/ff_2.1/membrane.h5" \
         --output-csv "${DEPTH_TABLE_CSV}" \
         --output-json "${DEPTH_TABLE_META}"
 
-    python3 "${BACKBONE_CROSS_BUILDER}" \
+    python3 "${UNIVERSAL_PREP_SCRIPT}" build-backbone-cross-table \
         --ff-itp "${SCRIPT_DIR}/ff_dry/dry_martini_v2.1.itp" \
         --depth-table-csv "${DEPTH_TABLE_CSV}" \
         --output-csv "${BACKBONE_CROSS_TABLE_CSV}" \
@@ -709,7 +686,7 @@ prepare_backbone_cross_artifacts() {
         --output-h5 "${BACKBONE_CROSS_TABLE_H5}"
 
     if [ "${HYBRID_VALIDATE}" = "1" ]; then
-        python3 "${BACKBONE_ONLY_VALIDATOR}" \
+        python3 "${UNIVERSAL_PREP_SCRIPT}" validate-backbone-only \
             --table-csv "${DEPTH_TABLE_CSV}" \
             --table-meta "${DEPTH_TABLE_META}" \
             --cross-table-csv "${BACKBONE_CROSS_TABLE_CSV}" \
@@ -724,7 +701,7 @@ inject_backbone_cross_production_node() {
         return
     fi
 
-    python3 "${BACKBONE_CROSS_INJECTOR}" \
+    python3 "${UNIVERSAL_PREP_SCRIPT}" inject-backbone-cross \
         --artifact "${BACKBONE_CROSS_TABLE_H5}" \
         --up-files "${up_file}"
 }
@@ -883,7 +860,7 @@ prepare_stage_file() {
         inject_backbone_cross_production_node "$target_file"
         if [ "${HYBRID_VALIDATE}" = "1" ]; then
             local validator_cmd=(
-                python3 "${BACKBONE_ONLY_VALIDATOR}"
+                python3 "${UNIVERSAL_PREP_SCRIPT}" validate-backbone-only
                 "$target_file"
             )
             if [ "${BACKBONE_CROSS_ENABLE}" = "1" ]; then
@@ -1032,7 +1009,7 @@ handoff_initial_position() {
 
     UPSIDE_SET_INITIAL_STRICT_COPY="$STRICT_STAGE_HANDOFF" \
     UPSIDE_SET_INITIAL_REFRESH_BACKBONE_CARRIERS="$refresh_backbone" \
-        python3 set_initial_position.py "$input_file" "$output_file"
+        python3 "${UNIVERSAL_PREP_SCRIPT}" handoff "$input_file" "$output_file"
 }
 
 extract_stage_vtf() {
@@ -1044,7 +1021,7 @@ extract_stage_vtf() {
     echo "=== Stage ${stage_label}: VTF Extraction (mode ${mode}) ==="
     echo "Input:  $stage_file"
     echo "Output: $vtf_file"
-    python3 extract_martini_vtf.py "$stage_file" "$vtf_file" "$stage_file" "$RUNTIME_PDB_ID" --mode "$mode"
+    python3 "${SCRIPT_DIR}/extract_martini_vtf.py" "$stage_file" "$vtf_file" "$stage_file" "$RUNTIME_PDB_ID" --mode "$mode"
 }
 
 echo "=== Dual Dry-MARTINI / Upside 1RKL Workflow ==="

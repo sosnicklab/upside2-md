@@ -1,5 +1,61 @@
 # Progress Log
 
+## 2026-03-06 (Three-Script Workflow Cleanup)
+- Re-read `task_plan.md` after the user required `example/16.MARTINI` to contain only three Python files: `prepare_system.py`, `extract_martini_vtf.py`, and `lib.py`.
+- Modified files:
+  - `example/16.MARTINI/prepare_system.py`
+  - `example/16.MARTINI/lib.py` (renamed from `prepare_system_lib.py`)
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/run_sim_bilayer.sh`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+  - `lessons.md`
+- Deleted files:
+  - `example/16.MARTINI/batch_relax_rigid_dry.py`
+  - `example/16.MARTINI/build_backbone_cross_interaction_table.py`
+  - `example/16.MARTINI/build_depth_interaction_table.py`
+  - `example/16.MARTINI/download_and_prepare_training_inputs.py`
+  - `example/16.MARTINI/inject_backbone_cross_potential.py`
+  - `example/16.MARTINI/inject_backbone_only_nodes.py`
+  - `example/16.MARTINI/set_initial_position.py`
+  - `example/16.MARTINI/train_rbm_cross_potential.py`
+  - `example/16.MARTINI/validate_backbone_only_up.py`
+  - `example/16.MARTINI/validate_hybrid_mapping.py`
+- Code changes:
+  - renamed `prepare_system_lib.py` to `lib.py`
+  - changed `prepare_system.py` to import from `lib.py`
+  - folded the live helper workflow entrypoints into `prepare_system.py` as subcommands:
+    - `handoff`
+    - `inject-backbone-only`
+    - `validate-backbone-only`
+    - `build-depth-table`
+    - `build-backbone-cross-table`
+    - `inject-backbone-cross`
+  - updated `run_sim_1rkl.sh` and `run_sim_bilayer.sh` to call only `prepare_system.py` and `extract_martini_vtf.py`
+  - removed one stale deleted-script variable check from `run_sim_1rkl.sh` after the first reduced rerun exposed it (`DEPTH_TABLE_BUILDER` / `BACKBONE_CROSS_*` unbound-variable failure)
+- Validation:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/lib.py example/16.MARTINI/extract_martini_vtf.py` -> pass
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/run_sim_bilayer.sh` -> pass
+  - source sweep:
+    - `rg --files example/16.MARTINI -g '*.py'` -> exactly:
+      - `example/16.MARTINI/prepare_system.py`
+      - `example/16.MARTINI/extract_martini_vtf.py`
+      - `example/16.MARTINI/lib.py`
+    - `rg` over `run_sim_1rkl.sh`, `run_sim_bilayer.sh`, `prepare_system.py`, `lib.py`, and `extract_martini_vtf.py` found no remaining references to the deleted helper-script paths
+  - reduced end-to-end workflow rerun:
+    - command:
+      `source ../../.venv/bin/activate && source ../../source.sh && env RUN_DIR=outputs/test_three_script_cleanup MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=20 EQ_63_NSTEPS=20 EQ_64_NSTEPS=20 EQ_65_NSTEPS=20 EQ_66_NSTEPS=20 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=10 PROD_FRAME_STEPS=1 BACKBONE_CROSS_ENABLE=1 BACKBONE_CROSS_REBUILD=1 ./run_sim_1rkl.sh`
+    - completed through stage `7.0`
+    - rebuilt depth/cross artifacts successfully
+    - validated production `.up` successfully after backbone-only and cross-node injection
+    - preserved rigid-protein checks through pre-production and production handoff
+    - produced the expected stage VTF outputs using `extract_martini_vtf.py`
+- Outcome:
+  - the directory-level script surface is now reduced to the required three Python files
+  - the live hybrid workflow still runs successfully on that reduced surface
+  - the separate late-stage MARTINI-energy instability is still present but unchanged by this cleanup
+
 ## 2026-03-06 (PDB Placement Preservation + Recenter Removal)
 - Re-read `task_plan.md` after the user reported that the generated `stage_7.0.vtf` started with the protein sticking out of the bilayer and clarified the desired rule: if the protein is centered, the bilayer must move with it; no production-stage recentering should remain in the example Python flow.
 - Modified files:

@@ -233,7 +233,7 @@ run_md_stage() {
 
     if [ "$input_file" != "$output_file" ]; then
         cp -f "$input_file" "$output_file"
-        python3 set_initial_position.py "$input_file" "$output_file"
+        python3 "${UNIVERSAL_PREP_SCRIPT}" handoff "$input_file" "$output_file"
     fi
 
     local log_file="${LOG_DIR}/stage_${stage_label}.log"
@@ -277,39 +277,39 @@ run_minimization_stage "6.0" "$STAGE_60_FILE" "$MIN_60_MAX_ITER"
 # 6.1: hard minimization, NPT on, Berendsen
 prepare_stage_file "$PREPARED_61_FILE" "npt_prod" "1" "0" "0"
 cp -f "$PREPARED_61_FILE" "$STAGE_61_FILE"
-python3 set_initial_position.py "$STAGE_60_FILE" "$STAGE_61_FILE"
+python3 "${UNIVERSAL_PREP_SCRIPT}" handoff "$STAGE_60_FILE" "$STAGE_61_FILE"
 run_minimization_stage "6.1" "$STAGE_61_FILE" "$MIN_61_MAX_ITER"
 
 # 6.2-6.6: equilibration, NPT on, Berendsen
 # 6.2: soft potential to stabilize the first post-minimization MD segment
 prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "0" "200"
-python3 set_initial_position.py "$STAGE_61_FILE" "$STAGE_62_FILE"
+python3 "${UNIVERSAL_PREP_SCRIPT}" handoff "$STAGE_61_FILE" "$STAGE_62_FILE"
 run_md_stage "6.2" "$STAGE_62_FILE" "$STAGE_62_FILE" "$EQ_62_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 
 # 6.3: reduced softening before switching fully hard
 prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "0" "100"
 cp -f "$PREPARED_63_FILE" "$STAGE_63_FILE"
-python3 set_initial_position.py "$STAGE_62_FILE" "$STAGE_63_FILE"
+python3 "${UNIVERSAL_PREP_SCRIPT}" handoff "$STAGE_62_FILE" "$STAGE_63_FILE"
 run_md_stage "6.3" "$STAGE_63_FILE" "$STAGE_63_FILE" "$EQ_63_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 
 # 6.4-6.6: hard potential with Berendsen and lipid-head restraint ramp
 prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "0" "50"
 cp -f "$PREPARED_64_FILE" "$STAGE_64_FILE"
-python3 set_initial_position.py "$STAGE_63_FILE" "$STAGE_64_FILE"
+python3 "${UNIVERSAL_PREP_SCRIPT}" handoff "$STAGE_63_FILE" "$STAGE_64_FILE"
 run_md_stage "6.4" "$STAGE_64_FILE" "$STAGE_64_FILE" "$EQ_64_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 prepare_stage_file "$PREPARED_65_FILE" "npt_prod" "1" "0" "20"
 cp -f "$PREPARED_65_FILE" "$STAGE_65_FILE"
-python3 set_initial_position.py "$STAGE_64_FILE" "$STAGE_65_FILE"
+python3 "${UNIVERSAL_PREP_SCRIPT}" handoff "$STAGE_64_FILE" "$STAGE_65_FILE"
 run_md_stage "6.5" "$STAGE_65_FILE" "$STAGE_65_FILE" "$EQ_65_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 prepare_stage_file "$PREPARED_66_FILE" "npt_prod" "1" "0" "10"
 cp -f "$PREPARED_66_FILE" "$STAGE_66_FILE"
-python3 set_initial_position.py "$STAGE_65_FILE" "$STAGE_66_FILE"
+python3 "${UNIVERSAL_PREP_SCRIPT}" handoff "$STAGE_65_FILE" "$STAGE_66_FILE"
 run_md_stage "6.6" "$STAGE_66_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
 
 # 7.0: hard production (default NVT; set PROD_70_NPT_ENABLE=1 for NPT, barostat type via PROD_70_BAROSTAT_TYPE)
 prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "$PROD_70_BAROSTAT_TYPE" "0"
 cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
-python3 set_initial_position.py "$STAGE_66_FILE" "$STAGE_70_FILE"
+python3 "${UNIVERSAL_PREP_SCRIPT}" handoff "$STAGE_66_FILE" "$STAGE_70_FILE"
 run_md_stage "7.0" "$STAGE_70_FILE" "$STAGE_70_FILE" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
 
 # VTF outputs for key checkpoints
@@ -317,9 +317,9 @@ VTF_61_FILE="${RUN_DIR}/${PDB_ID}.stage_6.1.vtf"
 VTF_66_FILE="${RUN_DIR}/${PDB_ID}.stage_6.6.vtf"
 VTF_70_FILE="${RUN_DIR}/${PDB_ID}.stage_7.0.vtf"
 
-python3 extract_martini_vtf.py "$STAGE_61_FILE" "$VTF_61_FILE" "$STAGE_61_FILE" "$PDB_ID"
-python3 extract_martini_vtf.py "$STAGE_66_FILE" "$VTF_66_FILE" "$STAGE_66_FILE" "$PDB_ID"
-python3 extract_martini_vtf.py "$STAGE_70_FILE" "$VTF_70_FILE" "$STAGE_70_FILE" "$PDB_ID"
+python3 "${SCRIPT_DIR}/extract_martini_vtf.py" "$STAGE_61_FILE" "$VTF_61_FILE" "$STAGE_61_FILE" "$PDB_ID"
+python3 "${SCRIPT_DIR}/extract_martini_vtf.py" "$STAGE_66_FILE" "$VTF_66_FILE" "$STAGE_66_FILE" "$PDB_ID"
+python3 "${SCRIPT_DIR}/extract_martini_vtf.py" "$STAGE_70_FILE" "$VTF_70_FILE" "$STAGE_70_FILE" "$PDB_ID"
 
 echo
 echo "=== Workflow Complete ==="
