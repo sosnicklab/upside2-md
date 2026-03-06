@@ -1,5 +1,37 @@
 # Task Plan
 
+## 2026-03-06 Reset: Preserve PDB Bilayer Placement
+
+### Project Goal (Current)
+- Preserve the protein-bilayer placement implied by the input protein PDB when generating the initial hybrid system.
+- If the assembled system is translated to center it in the box, apply that translation to protein and bilayer together as one rigid body.
+- Remove production-stage recentering from the example Python workflow/export path so stage `7.0` VTF/PDB output shows the actual initial structure.
+
+### Architecture & Key Decisions (Current)
+- The prep path must no longer translate the protein to the bilayer template frame by itself.
+- Instead, the bilayer template is aligned into the protein PDB frame before tiling/cropping, and later box placement shifts the assembled system rigidly.
+- `set_initial_position.py` must not perform any production BB recentering; handoff is strict copy plus optional carrier refresh only.
+- `extract_martini_vtf.py` must not apply protein-centric visualization recentering or box-centering for production output; exported coordinates should match the stage file.
+- The example runtime continues to invoke `obj/upside` with `--disable-recentering`, so no workflow-stage C++ recentering is active.
+
+### Execution Phases (Current Run)
+- [x] Phase A: Remove prep-time protein-only translation and preserve the PDB placement by moving the bilayer frame instead.
+- [x] Phase B: Remove production-stage Python recentering from stage handoff and VTF export.
+- [x] Phase C: Run targeted validation and compare source PDB placement against packed/stage-7/exported coordinates.
+
+### Known Errors / Blockers (Current Run)
+- Initial placement/export bug is fixed, but later pre-production environment coordinates can still become badly distorted because of the separate large MARTINI-energy instability in stages `6.4-7.0`.
+
+### Review (Current Run)
+- `prepare_system.py` and `prepare_system_lib.py` no longer translate the protein into the bilayer template frame by itself; they align the bilayer template into the protein PDB frame and then let later box placement move the assembled system rigidly.
+- `prepare_system_lib.convert_stage()` no longer recenters/wraps MARTINI coordinates before writing `.up` stage files, so MARTINI particles and injected `PROTEINAA` carriers stay in the same coordinate frame.
+- `set_initial_position.py` no longer contains production BB recentering; stage handoff is now strict copy plus optional carrier refresh only.
+- `extract_martini_vtf.py` no longer applies protein-centric visualization recentering and now prepends the actual stage input frame before output frames.
+- Validation on `outputs/test_pdb_position_preserved2/` shows the initial packed/stage geometry is now aligned:
+  - stage `6.0` input protein-lipid center offset is only `[3.518, 0.500, -0.475]` Å
+  - regenerated `stage_7.0.vtf` frame `0` matches `stage_7.0.up` input coordinates within `5e-4` Å
+  - the previously referenced `outputs/martini_test_1rkl_hybrid/1rkl.stage_7.0.vtf` was regenerated and its frame `0` also now matches the stage input within `5e-4` Å
+
 ## 2026-03-06 Reset: AA-Only Protein Workflow Cleanup
 
 ### Project Goal (Current)

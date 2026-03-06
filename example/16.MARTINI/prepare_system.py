@@ -493,15 +493,11 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
     bilayer_xyz = coords(bilayer_lipid_atoms)
     bilayer_center = center_of_mass(bilayer_xyz)
     protein_center = center_of_mass(protein_xyz)
-    shift = bilayer_center - protein_center
-    protein_xyz = protein_xyz + shift
-    for atom, c in zip(protein_atoms, protein_xyz):
+    bilayer_alignment_shift = protein_center - bilayer_center
+    bilayer_all_xyz = coords(bilayer_atoms)
+    bilayer_all_xyz = bilayer_all_xyz + bilayer_alignment_shift
+    for atom, c in zip(bilayer_atoms, bilayer_all_xyz):
         atom["x"], atom["y"], atom["z"] = float(c[0]), float(c[1]), float(c[2])
-    if uses_martini_protein:
-        protein_aa_xyz = coords(protein_aa_atoms)
-        protein_aa_xyz = protein_aa_xyz + shift
-        for atom, c in zip(protein_aa_atoms, protein_aa_xyz):
-            atom["x"], atom["y"], atom["z"] = float(c[0]), float(c[1]), float(c[2])
 
     pmin = protein_xyz.min(axis=0)
     pmax = protein_xyz.max(axis=0)
@@ -671,6 +667,9 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
         "input_bilayer_pdb": str(bilayer_pdb),
         "runtime_pdb": str(runtime_pdb),
         "runtime_itp": str(runtime_itp) if (uses_martini_protein and args.protein_itp) else None,
+        "bilayer_alignment_shift_angstrom": [float(v) for v in bilayer_alignment_shift],
+        "input_protein_center_angstrom": [float(v) for v in protein_center],
+        "input_bilayer_center_angstrom": [float(v) for v in bilayer_center],
         "xy_scale": float(args.xy_scale),
         "base_xy_side_angstrom": float(base_side),
         "target_xy_side_angstrom": float(target_side),

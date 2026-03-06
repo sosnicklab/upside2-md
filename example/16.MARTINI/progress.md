@@ -1,5 +1,47 @@
 # Progress Log
 
+## 2026-03-06 (PDB Placement Preservation + Recenter Removal)
+- Re-read `task_plan.md` after the user reported that the generated `stage_7.0.vtf` started with the protein sticking out of the bilayer and clarified the desired rule: if the protein is centered, the bilayer must move with it; no production-stage recentering should remain in the example Python flow.
+- Modified files:
+  - `example/16.MARTINI/prepare_system.py`
+  - `example/16.MARTINI/prepare_system_lib.py`
+  - `example/16.MARTINI/set_initial_position.py`
+  - `example/16.MARTINI/extract_martini_vtf.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+  - `lessons.md`
+- Code changes:
+  - changed prep alignment so the bilayer template is shifted into the protein PDB frame instead of translating the protein by itself
+  - removed stage-conversion recenter/wrap logic from `prepare_system_lib.py` so `.up` stage files preserve the boxed runtime-PDB frame
+  - removed production recenter logic from `set_initial_position.py` and dropped the corresponding env var from `run_sim_1rkl.sh`
+  - removed protein-centric recentering from `extract_martini_vtf.py` and changed it to prepend the actual stage input frame before trajectory frames
+- Validation:
+  - `python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/set_initial_position.py example/16.MARTINI/extract_martini_vtf.py` -> pass
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
+  - fresh reduced rerun:
+    - command:
+      `source ../../.venv/bin/activate && source ../../source.sh && env RUN_DIR=outputs/test_pdb_position_preserved2 MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=20 EQ_63_NSTEPS=20 EQ_64_NSTEPS=20 EQ_65_NSTEPS=20 EQ_66_NSTEPS=20 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=10 PROD_FRAME_STEPS=1 BACKBONE_CROSS_ENABLE=0 ./run_sim_1rkl.sh`
+    - stage `6.0` input geometry after the fix:
+      - protein center `[59.972, 58.817, 57.250]`
+      - lipid center `[56.454, 58.318, 57.726]`
+      - offset `[3.518, 0.500, -0.475]` Å
+    - rigid checks still passed through pre-production and the `6.6 -> 7.0` handoff check still passed
+    - regenerated `outputs/test_pdb_position_preserved2/1rkl.stage_7.0.vtf` now contains `2` frames:
+      - frame `0` = actual `stage_7.0.up` input
+      - frame `1` = first saved `output/pos` frame
+    - direct equality check:
+      - new VTF frame `0` vs `stage_7.0.up` input `max_abs_diff = 5e-4`
+      - new VTF frame `1` vs `stage_7.0.up` first output `max_abs_diff = 5e-4`
+  - regenerated the user-referenced artifact:
+    - `python3 extract_martini_vtf.py outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up outputs/martini_test_1rkl_hybrid/1rkl.stage_7.0.vtf ... --mode 2`
+    - confirmed its new frame `0` matches the stage input within `5e-4`
+- Outcome:
+  - the initial structure is now generated/exported in the same boxed frame as the prepared PDB-derived system
+  - the VTF no longer hides or changes that frame with a production recenter transform
+  - remaining distortion seen later in stage `7.0` comes from the separate MARTINI-energy blow-up during late pre-production, not from the initial-structure generation/export path
+
 ## 2026-03-06 (C++ MARTINI-Protein Runtime Cleanup Completed)
 - Re-read `task_plan.md` and finished the pending C++ half of the AA-only cleanup after the user asked to remove MARTINI protein presentation from `src/*.cpp` as well.
 - Modified files:

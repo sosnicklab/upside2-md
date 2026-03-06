@@ -1024,17 +1024,14 @@ handoff_initial_position() {
     local mode="${3:-default}"
 
     local refresh_backbone="0"
-    local recenter_production="0"
     if [ "$mode" = "production_backbone" ]; then
         # Refresh AA carrier coordinates onto
         # current BB anchors to avoid a first-step force/energy spike.
         refresh_backbone="1"
-        recenter_production="0"
     fi
 
     UPSIDE_SET_INITIAL_STRICT_COPY="$STRICT_STAGE_HANDOFF" \
     UPSIDE_SET_INITIAL_REFRESH_BACKBONE_CARRIERS="$refresh_backbone" \
-    UPSIDE_SET_INITIAL_RECENTER_PRODUCTION="$recenter_production" \
         python3 set_initial_position.py "$input_file" "$output_file"
 }
 

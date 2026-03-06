@@ -16,6 +16,34 @@
   - production checkpoint `checkpoints/1rkl.stage_7.0.up` had `particle_class_counts {'ION': 125, 'OTHER': 4424, 'PROTEINAA ': 124}`, so the only protein particles present at runtime were the injected AA carriers
   - exported stage-7 VTF ended with `atom 4549 name N`, `atom 4550 name CA`, `atom 4551 name C`, `atom 4552 name O`, and continued in the same `N/CA/C/O` pattern through the final protein atoms, with no `BB` or `SC*` protein atoms present
 
+## 2026-03-06 (PDB Placement + Recenter Root Cause)
+- The user-visible “protein sticking out” in `1rkl.stage_7.0.vtf` came from two distinct frame bugs:
+  - prep/stage generation bugs:
+    - `prepare_system.py` / `prepare_system_lib.py` aligned the protein into the bilayer template frame instead of shifting the bilayer into the protein PDB frame
+    - `prepare_system_lib.convert_stage()` then re-centered MARTINI positions again when writing `.up` stage files
+    - later `inject_hybrid_mapping()` appended `PROTEINAA` carriers from the mapping/reference frame, so protein carriers and MARTINI lipids ended up in different coordinate frames even in fresh stage files
+  - export bug:
+    - `extract_martini_vtf.py` re-centered mode-2 output by periodic protein COM, so the VTF no longer showed the raw stage coordinates
+- Fix implemented:
+  - prep now shifts the bilayer template into the protein PDB frame instead of shifting the protein alone
+  - stage conversion now preserves the boxed runtime PDB coordinates and no longer recenters/wraps them before writing `.up`
+  - `set_initial_position.py` no longer has production BB recenter logic
+  - `extract_martini_vtf.py` no longer recenters output and now writes the actual stage input frame first
+- Proof from the fresh reduced run `example/16.MARTINI/outputs/test_pdb_position_preserved2/`:
+  - packed-system prep summary recorded the applied bilayer alignment shift:
+    - `[-25.227, -25.873, -42.056]` Å
+  - stage `6.0` input geometry is now aligned:
+    - protein center `[59.972, 58.817, 57.250]`
+    - lipid center `[56.454, 58.318, 57.726]`
+    - offset `[3.518, 0.500, -0.475]` Å
+  - regenerated `1rkl.stage_7.0.vtf` now matches the raw stage file exactly:
+    - frame `0` vs `stage_7.0.up` input `max_abs_diff = 5e-4 Å`
+    - frame `1` vs `stage_7.0.up` first output `max_abs_diff = 5e-4 Å`
+  - the previously referenced artifact `outputs/martini_test_1rkl_hybrid/1rkl.stage_7.0.vtf` was regenerated with the new exporter and its frame `0` also now matches its stage input within `5e-4 Å`
+- Separate remaining blocker:
+  - later stages can still generate very large MARTINI energies, and in the reduced rerun the stage `7.0` input lipid coordinates were already badly distorted by the time production started
+  - that is no longer a preparation/export-frame bug; it is the separate environment-side stability issue already observed in this workflow
+
 ## 2026-03-06 (C++ MARTINI-Protein Runtime Removal + Rebuilt Proof)
 - The remaining C++ MARTINI-protein presentation was split into two pieces:
   - `src/main.cpp` still exposed a MARTINI `BB` rigid-hold CLI hook/registration path

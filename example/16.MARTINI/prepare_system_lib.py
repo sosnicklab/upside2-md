@@ -1092,12 +1092,10 @@ def main():
     protein_xyz = coords(protein_cg_atoms)
     bilayer_center = center_of_mass(bilayer_xyz)
     protein_center = center_of_mass(protein_xyz)
-    shift = bilayer_center - protein_center
-    translated = protein_xyz + shift
-    set_coords(protein_cg_atoms, translated)
-    if protein_aa_atoms:
-        protein_aa_xyz = coords(protein_aa_atoms)
-        set_coords(protein_aa_atoms, protein_aa_xyz + shift)
+    bilayer_alignment_shift = protein_center - bilayer_center
+    if bilayer_atoms:
+        bilayer_all_xyz = coords(bilayer_atoms)
+        set_coords(bilayer_atoms, bilayer_all_xyz + bilayer_alignment_shift)
 
     protein_xyz = coords(protein_cg_atoms)
     pmin = protein_xyz.min(axis=0)
@@ -1201,6 +1199,9 @@ def main():
         "bilayer_pdb": str(config.bilayer_pdb),
         "output_pdb": str(packed_pdb),
         "mapping_h5": str(mapping_h5),
+        "bilayer_alignment_shift_angstrom": [float(v) for v in bilayer_alignment_shift],
+        "input_protein_center_angstrom": [float(v) for v in protein_center],
+        "input_bilayer_center_angstrom": [float(v) for v in bilayer_center],
         "box_angstrom": [float(v) for v in box_lengths],
         "lipid_mid_z": float(lipid_mid_z),
         "box_half_z": float(0.5 * box_lengths[2]),
@@ -2583,13 +2584,12 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     print(f"Total system angles: {len(angles_list)}")
     print(f"Total system dihedrals: {len(dihedrals_list)}")
     
-    # Center and wrap positions
+    # Preserve the boxed coordinates from the prepared runtime PDB.
+    # The prep step already places protein and bilayer in a common box frame;
+    # recentering here shifts MARTINI particles without applying the same
+    # transform to injected AA carriers later in the workflow.
     print(f"\n=== Preparing Final Structure ===")
-    center = np.mean(initial_positions, axis=0)
-    centered_positions = initial_positions - center
-    half_box = np.array([x_len/2, y_len/2, z_len/2])
-    centered_positions = (centered_positions + half_box) % (2*half_box) - half_box
-    final_positions = centered_positions
+    final_positions = np.array(initial_positions, copy=True)
     
     # Create UPSIDE input file
     print(f"\n=== Creating UPSIDE Input File ===")

@@ -167,46 +167,8 @@ def infer_box_lengths(traj_h5, struct_h5, pdb_file, input_file):
     return x_len, y_len, z_len
 
 
-def centralize_system(frame_pos, residue_names, x_len, y_len, z_len):
-    out = np.array(frame_pos, copy=True)
-    box = np.array([x_len, y_len, z_len], dtype=np.float32)
-    half_box = 0.5 * box
-
-    protein_mask = None
-    if residue_names is not None:
-        residue_names = np.asarray(residue_names, dtype=object)
-        protein_residues = {
-            "PRO", "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS",
-            "ILE", "LEU", "LYS", "MET", "PHE", "SER", "THR", "TRP", "TYR", "VAL",
-            "HID", "HIE", "HIP", "HSD", "HSE", "HSP", "CYX",
-        }
-        protein_mask = np.array([str(name).upper() in protein_residues for name in residue_names], dtype=bool)
-
-    # Mode 2 output marks backmapped protein as residue "PRO". Centering by
-    # periodic protein COM avoids boundary-split rendering artifacts.
-    if protein_mask is not None and np.any(protein_mask):
-        prot = np.mod(out[protein_mask], box[None, :])
-        protein_center = np.zeros(3, dtype=np.float64)
-        for ax in range(3):
-            angles = 2.0 * np.pi * prot[:, ax] / float(box[ax])
-            s = np.mean(np.sin(angles))
-            c = np.mean(np.cos(angles))
-            if abs(s) < 1e-12 and abs(c) < 1e-12:
-                protein_center[ax] = float(np.mean(prot[:, ax]))
-            else:
-                a = np.arctan2(s, c)
-                if a < 0.0:
-                    a += 2.0 * np.pi
-                protein_center[ax] = float(box[ax]) * a / (2.0 * np.pi)
-        out -= protein_center[None, :]
-    else:
-        if residue_names is not None:
-            lipid_mask = np.array([name == "DOPC" for name in residue_names], dtype=bool)
-            if np.any(lipid_mask):
-                out[:, 2] -= np.mean(out[lipid_mask, 2])
-
-    out = (out + half_box) % box - half_box
-    return out
+def preserve_system_coordinates(frame_pos):
+    return np.asarray(frame_pos, dtype=np.float32)
 
 
 def write_vtf_frame(fh, pos):
@@ -628,10 +590,11 @@ def main():
 
         if "output/pos" in t:
             pos_data = t["output/pos"]
-            n_frame_total = int(pos_data.shape[0])
+            n_output_frame = int(pos_data.shape[0])
         else:
             pos_data = None
-            n_frame_total = 1
+            n_output_frame = 0
+        n_frame_total = 1 + n_output_frame
 
         print(f"Particles (input): {n_particles}")
         print(f"Particles (output): {mapping['output_atom_names'].shape[0]}")
@@ -670,23 +633,17 @@ def main():
 
             prev_frame = None
             for frame_idx in range(n_frame_total):
-                if pos_data is None:
+                if frame_idx == 0:
                     frame = input_pos
                 else:
-                    frame = normalize_frame(pos_data[frame_idx], n_particles)
+                    frame = normalize_frame(pos_data[frame_idx - 1], n_particles)
 
                 if mode == 1:
                     out_frame = assemble_mode1_frame(frame, mapping, box_lengths=(x_len, y_len, z_len))
                 else:
                     out_frame = assemble_mode2_frame(frame, mapping, box_lengths=(x_len, y_len, z_len))
 
-                out_frame = centralize_system(
-                    out_frame,
-                    mapping["output_residue_names"],
-                    x_len,
-                    y_len,
-                    z_len,
-                )
+                out_frame = preserve_system_coordinates(out_frame)
 
                 if np.isnan(out_frame).any():
                     if prev_frame is None:
