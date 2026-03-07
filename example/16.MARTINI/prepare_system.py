@@ -34,6 +34,7 @@ from lib import (
     set_box_from_lipid_xy,
     tile_and_crop_bilayer_lipids,
     validate_backbone_reference_frame,
+    wrap_xyz_array_to_box,
     write_hybrid_mapping_h5,
     write_pdb,
 )
@@ -935,6 +936,20 @@ def set_initial_position(input_file, output_file):
 
         if apply_refresh_backbone:
             last_pos = refresh_backbone_reference_carriers(dst, last_pos)
+
+        if last_box is None and "/input/potential/martini_potential" in dst:
+            pot_grp = dst["/input/potential/martini_potential"]
+            if all(key in pot_grp.attrs for key in ("x_len", "y_len", "z_len")):
+                last_box = np.array(
+                    [
+                        pot_grp.attrs["x_len"],
+                        pot_grp.attrs["y_len"],
+                        pot_grp.attrs["z_len"],
+                    ]
+                )
+
+        if last_box is not None:
+            last_pos = wrap_xyz_array_to_box(last_pos, last_box)
 
         if "/input/pos" in dst:
             del dst["/input/pos"]

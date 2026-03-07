@@ -18,6 +18,7 @@
 #include <iostream>
 #include <cstdlib>
 #include <array>
+#include <cmath>
 
 
 #include "box.h"  // Simulation box PBC and NPT barostat
@@ -56,6 +57,32 @@ namespace martini_fix_rigid {
     void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine);
     void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv);
     void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom);
+}
+
+static bool read_static_box_from_config(hid_t config_root, float& bx, float& by, float& bz) {
+    bx = by = bz = 0.f;
+    try {
+        if(!h5_exists(config_root, "/input/potential/martini_potential")) return false;
+        auto grp = open_group(config_root, "/input/potential/martini_potential");
+        if(H5Aexists(grp.get(), "x_len") <= 0) return false;
+        if(H5Aexists(grp.get(), "y_len") <= 0) return false;
+        if(H5Aexists(grp.get(), "z_len") <= 0) return false;
+        bx = read_attribute<float>(grp.get(), ".", "x_len");
+        by = read_attribute<float>(grp.get(), ".", "y_len");
+        bz = read_attribute<float>(grp.get(), ".", "z_len");
+        return bx > 0.f && by > 0.f && bz > 0.f;
+    } catch(...) {
+        bx = by = bz = 0.f;
+        return false;
+    }
+}
+
+static inline float wrap_coord_into_box(float x, float box_len) {
+    if(!(box_len > 0.f)) return x;
+    x = std::fmod(x, box_len);
+    if(x < 0.f) x += box_len;
+    if(x >= box_len) x -= box_len;
+    return x;
 }
 
 // If any stop signal is received (currently we trap sigterm and sigint)
@@ -933,11 +960,30 @@ try {
 
 
             // we must capture the sys pointer by value here so that it is available later
-            sys->logger->add_logger<float>("pos", {1, sys->n_atom, 3}, [sys](float* pos_buffer) {
+            float static_box_x = 0.f, static_box_y = 0.f, static_box_z = 0.f;
+            const bool has_static_box =
+                read_static_box_from_config(sys->config.get(), static_box_x, static_box_y, static_box_z);
+            sys->logger->add_logger<float>("pos", {1, sys->n_atom, 3}, [sys, has_static_box, static_box_x, static_box_y, static_box_z](float* pos_buffer) {
                     VecArray pos_array = sys->engine.pos->output;
-                    for(int na=0; na<sys->n_atom; ++na) 
-                    for(int d=0; d<3; ++d) 
-                    pos_buffer[na*3 + d] = pos_array(d,na);
+                    float bx = static_box_x, by = static_box_y, bz = static_box_z;
+                    bool do_wrap = has_static_box;
+                    if(simulation_box::npt::is_enabled(sys->engine)) {
+                        simulation_box::npt::get_current_box(sys->engine, bx, by, bz);
+                        do_wrap = bx > 0.f && by > 0.f && bz > 0.f;
+                    }
+                    for(int na=0; na<sys->n_atom; ++na) {
+                        float x = pos_array(0, na);
+                        float y = pos_array(1, na);
+                        float z = pos_array(2, na);
+                        if(do_wrap) {
+                            x = wrap_coord_into_box(x, bx);
+                            y = wrap_coord_into_box(y, by);
+                            z = wrap_coord_into_box(z, bz);
+                        }
+                        pos_buffer[na*3 + 0] = x;
+                        pos_buffer[na*3 + 1] = y;
+                        pos_buffer[na*3 + 2] = z;
+                    }
                     });
             if (record_momentum_arg.getValue()) { // record the momentum if requested, with the same frequency as the position recording
                 sys->logger->add_logger<float>("mom", {1, sys->n_atom, 3}, [sys](float* mom_buffer) {

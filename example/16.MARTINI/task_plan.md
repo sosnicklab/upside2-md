@@ -1,5 +1,38 @@
 # Task Plan
 
+## 2026-03-06 Reset: Keep MARTINI Workflow Coordinates Inside Primary PBC Box
+
+### Project Goal (Current)
+- Verify whether the current `example/16.MARTINI/run_sim_1rkl.sh` workflow keeps all stage coordinates inside the active periodic box.
+- Fix the narrowest layer that lets particles appear outside the primary box during preparation, stage handoff, simulation output, or export.
+- Preserve the existing physical semantics: no protein-only recentering, no architecture drift, and no changes beyond what is needed for PBC containment.
+
+### Architecture & Key Decisions (Current)
+- Treat this as a coordinate-frame/boxing bug first, not a force-field bug.
+- Validate on fresh artifacts from the current workflow code, not older mixed-protein outputs that predate the AA-only cleanup.
+- Prefer a single canonical wrapping policy at workflow boundaries:
+  - prepared stage inputs should start inside the primary box
+  - stage handoff should keep positions in the current box
+  - exported trajectories should not make in-box coordinates look out-of-box
+- If runtime C++ output still leaks out of `[0, L)`, fix the minimal live boundary where wrapped coordinates are expected instead of reintroducing protein-centric recentering.
+
+### Execution Phases (Current Run)
+- [x] Phase A: Generate fresh current-code artifacts and identify the first boundary where coordinates leave `[0, L)`.
+- [x] Phase B: Implement the minimal PBC containment fix in the responsible workflow/runtime layer.
+- [x] Phase C: Re-run a reduced workflow and prove all particles remain inside the primary box for the checked stages/exports.
+
+### Known Errors / Blockers (Current Run)
+- Older `example/16.MARTINI/outputs/test_fix_rigid_verify*` artifacts still reflect pre-AA-only workflow states and cannot be used as the final correctness signal for this task.
+- The separate late-stage MARTINI instability is still present in stages `6.4+` and remains out of scope for this PBC containment fix.
+
+### Review (Current Run)
+- Added a shared coordinate wrapper in `lib.py` and applied it when stage conversion writes boxed coordinates into `.up` files.
+- Updated `prepare_system.py` handoff logic to wrap the carried last-frame coordinates after any backbone-carrier refresh and before writing the next stage input.
+- Updated `src/main.cpp` position logging so sampled `output/pos` frames are wrapped against the live NPT box or the static MARTINI box before being written to HDF5.
+- Reconfigured the local build directory with `cmake -S src -B obj` because the existing generated link rules referenced a missing HDF5 soname (`libhdf5.320.0.0.dylib`), then rebuilt successfully with `cmake --build obj -j 4`.
+- Fresh reduced rerun in `example/16.MARTINI/outputs/test_pbc_wrapped/` confirmed zero out-of-box atoms in both `/input/pos` and the last sampled `/output/pos` for stages `6.0`, `6.2`, `6.4`, `6.6`, and `7.0`.
+- Export verification also passed: `example/16.MARTINI/outputs/test_pbc_wrapped/1rkl.stage_7.0.vtf` had `0` out-of-box atoms in both frames.
+
 ## 2026-03-06 Reset: Three-Script Workflow Cleanup
 
 ### Project Goal (Current)

@@ -1,5 +1,52 @@
 # Progress Log
 
+## 2026-03-06 (PBC Primary-Box Containment for `run_sim_1rkl.sh`)
+- Re-read `example/16.MARTINI/task_plan.md` and treated the user report as a coordinate containment bug, not a force-field change request.
+- Fresh current-code diagnosis run:
+  - command:
+    `source ../../.venv/bin/activate && source ../../source.sh && env RUN_DIR=outputs/test_pbc_probe_current MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=20 EQ_63_NSTEPS=20 EQ_64_NSTEPS=20 EQ_65_NSTEPS=20 EQ_66_NSTEPS=20 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=10 PROD_FRAME_STEPS=1 BACKBONE_CROSS_ENABLE=0 ./run_sim_1rkl.sh`
+  - root-cause evidence from produced checkpoints:
+    - `stage_6.0.up` `/input/pos`: `3` out-of-box atoms
+    - `stage_6.0.up` last `/output/pos`: `12` out-of-box atoms
+    - `stage_6.2.up` last `/output/pos`: `19` out-of-box atoms
+    - `stage_6.4.up` last `/output/pos`: `3997` out-of-box atoms
+- Modified files:
+  - `example/16.MARTINI/lib.py`
+  - `example/16.MARTINI/prepare_system.py`
+  - `src/main.cpp`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+- Code changes:
+  - added `wrap_xyz_array_to_box(...)` in `example/16.MARTINI/lib.py`
+  - wrapped stage-conversion coordinates before writing boxed `.up` inputs
+  - wrapped stage handoff coordinates after optional backbone-carrier refresh and before writing the next stage `/input/pos`
+  - wrapped sampled `output/pos` coordinates in `src/main.cpp` against the live NPT box or static MARTINI box attrs before HDF5 logging
+- Validation:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/lib.py` -> pass
+  - first rebuild attempt:
+    - `source .venv/bin/activate && source source.sh && cmake --build obj -j 4`
+    - failed due stale generated link rule for missing `/opt/homebrew/opt/hdf5/lib/libhdf5.320.0.0.dylib`
+  - build refresh:
+    - `source .venv/bin/activate && source source.sh && cmake -S src -B obj` -> pass
+    - `source .venv/bin/activate && source source.sh && cmake --build obj -j 4` -> pass
+  - fresh post-fix reduced rerun:
+    - command:
+      `source ../../.venv/bin/activate && source ../../source.sh && env RUN_DIR=outputs/test_pbc_wrapped MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=20 EQ_63_NSTEPS=20 EQ_64_NSTEPS=20 EQ_65_NSTEPS=20 EQ_66_NSTEPS=20 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=10 PROD_FRAME_STEPS=1 BACKBONE_CROSS_ENABLE=0 ./run_sim_1rkl.sh`
+    - workflow completed through stage `7.0`
+    - sampled checkpoint audit after the fix:
+      - `stage_6.0.up`: `/input/pos` `0` bad, last `/output/pos` `0` bad
+      - `stage_6.2.up`: `/input/pos` `0` bad, last `/output/pos` `0` bad
+      - `stage_6.4.up`: `/input/pos` `0` bad, last `/output/pos` `0` bad
+      - `stage_6.6.up`: `/input/pos` `0` bad, last `/output/pos` `0` bad
+      - `stage_7.0.up`: `/input/pos` `0` bad, last `/output/pos` `0` bad
+    - exported trajectory audit:
+      - `outputs/test_pbc_wrapped/1rkl.stage_7.0.vtf` frame `0`: `0` out-of-box atoms
+      - `outputs/test_pbc_wrapped/1rkl.stage_7.0.vtf` frame `1`: `0` out-of-box atoms
+- Outcome:
+  - the current workflow now keeps sampled stage inputs, sampled stage outputs, and exported VTF frames inside the primary periodic box
+  - the separate large late-stage MARTINI potentials remain and are unchanged by this containment fix
+
 ## 2026-03-06 (Three-Script Workflow Cleanup)
 - Re-read `task_plan.md` after the user required `example/16.MARTINI` to contain only three Python files: `prepare_system.py`, `extract_martini_vtf.py`, and `lib.py`.
 - Modified files:

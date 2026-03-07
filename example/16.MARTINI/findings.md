@@ -1,5 +1,28 @@
 # Findings
 
+## 2026-03-06 (Primary-Box PBC Containment in Current `run_sim_1rkl.sh`)
+- Fresh current-code rerun root cause split across three boundaries:
+  - stage conversion copied boxed runtime-PDB coordinates verbatim into `.up`, including atoms exactly on the upper box face (`coord == L`), which are outside the half-open primary box convention `[0, L)`
+  - stage handoff copied the previous stage's sampled coordinates verbatim into the next stage input and refreshed AA backbone carriers without wrapping afterward
+  - `src/main.cpp` logged raw `engine.pos->output` into `/output/pos`, so sampled trajectories could drift slightly negative/above-box under PBC and later show very large out-of-box values once the known `6.4+` instability kicked in
+- Fresh pre-fix proof from `example/16.MARTINI/outputs/test_pbc_probe_current/`:
+  - `stage_6.0.up` had `3` out-of-box atoms already in `/input/pos`
+  - `stage_6.0.up` last sampled `/output/pos` frame had `12` out-of-box atoms
+  - `stage_6.2.up` last sampled frame had `19` out-of-box atoms
+  - `stage_6.4.up` last sampled frame had `3997` out-of-box atoms while the separate MARTINI instability exploded coordinates
+- Fix implemented:
+  - added `wrap_xyz_array_to_box(...)` in `lib.py`
+  - applied it in `lib.py::convert_stage()` before writing boxed `.up` input coordinates
+  - applied it in `prepare_system.py::set_initial_position()` after handoff/backbone refresh and before writing `/input/pos`
+  - changed the `pos` logger in `src/main.cpp` to wrap sampled coordinates against the live NPT box when present, otherwise against the static MARTINI box attrs
+- Build note:
+  - `cmake --build obj -j 4` initially failed because generated link rules still referenced `/opt/homebrew/opt/hdf5/lib/libhdf5.320.0.0.dylib`
+  - `cmake -S src -B obj` refreshed the build files to the installed HDF5 version and the rebuild then succeeded
+- Fresh post-fix proof from `example/16.MARTINI/outputs/test_pbc_wrapped/`:
+  - `stage_6.0.up`, `stage_6.2.up`, `stage_6.4.up`, `stage_6.6.up`, and `stage_7.0.up` each had `0` out-of-box atoms in both `/input/pos` and the last sampled `/output/pos`
+  - exported `1rkl.stage_7.0.vtf` had `0` out-of-box atoms in both frames
+  - the separate late-stage physical instability still exists, but it no longer escapes the sampled/exported primary-box coordinates in this workflow
+
 ## 2026-03-06 (Three-Script Workflow Consolidation)
 - The active workflow dependency surface had already shrunk to six Python helper entrypoints:
   - stage handoff

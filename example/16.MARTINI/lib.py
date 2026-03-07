@@ -171,6 +171,23 @@ def set_coords(atoms, xyz):
         atom["x"], atom["y"], atom["z"] = float(c[0]), float(c[1]), float(c[2])
 
 
+def wrap_xyz_array_to_box(xyz, box_lengths):
+    wrapped = np.array(xyz, copy=True)
+    box = np.asarray(box_lengths, dtype=wrapped.dtype).reshape(-1)
+    if box.shape != (3,) or np.any(box <= 0.0):
+        raise ValueError(f"Invalid box lengths for wrapping: {box_lengths}")
+
+    if wrapped.ndim == 2 and wrapped.shape[1] == 3:
+        np.mod(wrapped, box[None, :], out=wrapped)
+        return wrapped
+
+    if wrapped.ndim == 3 and wrapped.shape[1:] == (3, 1):
+        np.mod(wrapped[:, :, 0], box[None, :], out=wrapped[:, :, 0])
+        return wrapped
+
+    raise ValueError(f"Unsupported coordinate array shape for wrapping: {wrapped.shape}")
+
+
 def center_of_mass(xyz):
     return np.mean(xyz, axis=0)
 
@@ -2589,7 +2606,10 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     # recentering here shifts MARTINI particles without applying the same
     # transform to injected AA carriers later in the workflow.
     print(f"\n=== Preparing Final Structure ===")
-    final_positions = np.array(initial_positions, copy=True)
+    final_positions = wrap_xyz_array_to_box(
+        np.array(initial_positions, copy=True),
+        np.array([x_len, y_len, z_len], dtype=float),
+    )
     
     # Create UPSIDE input file
     print(f"\n=== Creating UPSIDE Input File ===")
