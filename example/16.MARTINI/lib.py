@@ -2666,9 +2666,11 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         mass_array._v_attrs.n_atoms = n_atoms
         mass_array._v_attrs.initialized = True
         
-        # Protein should NOT be held rigid during minimization
-        # Allow the protein to relax and minimize its energy
-        print("Protein atoms are free to move during minimization (no rigid constraints)")
+        # Stage conversion itself does not inject /input/fix_rigid here.
+        # The active pre-production workflow (`run_sim_1rkl.sh`) adds
+        # workflow-level rigid hold after stage-file preparation and keeps it
+        # on through stage 6.6.
+        print("Stage conversion leaves rigid-hold injection to the workflow; pre-production fix_rigid is applied later.")
         
         # Create stage-specific parameters group (always create this)
         stage_grp = t.create_group(input_grp, 'stage_parameters')
