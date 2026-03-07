@@ -2092,3 +2092,24 @@
   - copied-stage injection + `validate-backbone-only` passed, and one-step `obj/upside` startup/run completed with the updated published artifact.
 - Residual issue:
   - the production smoke test still reports the same very large MARTINI energy channel, so the role split fixes representation fidelity for `O` but does not yet solve the broader physical calibration problem.
+
+## 2026-03-06 (Production Rg Fix: Use `hybrid_bb_map` Instead of Legacy `3*n_res`)
+- Investigated the user-reported production-stage `Rg` jump after the recent workflow changes.
+- Traced the live print path in `../../src/main.cpp` and found a regression:
+  - `collect_rg_backbone_indices()` had reverted to the legacy sequence-only selector (`first 3*n_res atoms`)
+  - in the AA-only MARTINI workflow those first atoms are environment beads, not protein atoms
+- Confirmed against generated stage data in `outputs/test_pbc_wrapped/checkpoints/1rkl.stage_7.0.up`:
+  - `n_res=31`, so the legacy selector used atoms `0..92`
+  - all `0..92` atoms have `protein_membership < 0`
+  - `/input/hybrid_bb_map` contains `124` valid mapped protein-backbone atoms with indices `4549..4672`
+  - direct HDF5 `Rg` check on the same coordinates gave:
+    - legacy selector: `57.26 A`
+    - mapped backbone selector: `12.70 A`
+- Updated `../../src/main.cpp`:
+  - restored a dedicated `collect_rg_backbone_indices_from_hybrid_bb_map()` helper
+  - `Rg` selection now prefers `/input/hybrid_bb_map/{atom_indices,atom_mask}` and falls back to the legacy sequence-based selector only when mapping is absent
+- Verification:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j 4` passed
+  - one-step direct runtime probe on a copied production checkpoint passed:
+    - `source .venv/bin/activate && source source.sh && obj/upside example/16.MARTINI/outputs/test_rg_backbone_fix/1rkl.stage_7.0.up --duration-steps 1 --frame-interval 0.002 --temperature 0.8647 --time-step 0.002 --thermostat-timescale 4.0 --thermostat-interval -1 --seed 7090685331 --integrator v --disable-recentering`
+    - runtime printed `Rg  12.7 A` at step `0`

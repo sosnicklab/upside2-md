@@ -351,3 +351,17 @@
   - injected copied production stage passed `validate-backbone-only`
   - one-step `obj/upside` startup/run completed
   - the very large MARTINI energy remained essentially unchanged, so the change corrected class differentiation but not the main physical instability.
+
+## 2026-03-06 (Production Rg Regression: Legacy Selector Was Reading Environment Beads)
+- The active runtime `Rg` path in `../../src/main.cpp` had regressed to a legacy selector:
+  - `collect_rg_backbone_indices_from_sequence()` returned the first `3*n_res` particle indices
+  - `collect_rg_backbone_indices()` used that selector directly with no `hybrid_bb_map` override
+- In the current AA-only MARTINI workflow this is invalid because protein atoms are appended after the environment:
+  - in `outputs/test_pbc_wrapped/checkpoints/1rkl.stage_7.0.up`, `n_res = 31`, so the legacy selector used indices `0..92`
+  - those indices have `protein_membership < 0` for every selected particle, so they are all non-protein environment beads
+  - the explicit mapped protein-backbone atoms live in `/input/hybrid_bb_map/{atom_indices,atom_mask}` with `124` valid indices spanning `4549..4672`
+- Direct checkpoint measurement confirms the reporting error:
+  - same `stage_7.0.up` input coordinates give `Rg = 57.26 A` with the legacy `0..92` selector
+  - the mapped protein-backbone selector gives `Rg = 12.70 A`
+- Conclusion:
+  - the inflated first-step production `Rg` was a reporting-selection regression, not evidence that the rigid protein geometry had changed

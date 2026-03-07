@@ -237,7 +237,47 @@ static vector<int> collect_rg_backbone_indices_from_sequence(hid_t config_root, 
     return out;
 }
 
+static vector<int> collect_rg_backbone_indices_from_hybrid_bb_map(hid_t config_root, int n_atom) {
+    vector<int> out;
+    if(n_atom <= 0) return out;
+    if(!h5_exists(config_root, "/input/hybrid_bb_map/atom_indices")) return out;
+    if(!h5_exists(config_root, "/input/hybrid_bb_map/atom_mask")) return out;
+    try {
+        auto idx_shape  = get_dset_size(2, config_root, "/input/hybrid_bb_map/atom_indices");
+        auto mask_shape = get_dset_size(2, config_root, "/input/hybrid_bb_map/atom_mask");
+        if(idx_shape.size() != 2u || idx_shape != mask_shape) return out;
+
+        const size_t n_entry = idx_shape[0] * idx_shape[1];
+        vector<int> atom_indices(n_entry, -1);
+        vector<int> atom_mask(n_entry, 0);
+        traverse_dset<2,int>(config_root, "/input/hybrid_bb_map/atom_indices",
+                [&](size_t nr, size_t na, int x) {
+                    atom_indices[nr*idx_shape[1] + na] = x;
+                });
+        traverse_dset<2,int>(config_root, "/input/hybrid_bb_map/atom_mask",
+                [&](size_t nr, size_t na, int x) {
+                    atom_mask[nr*idx_shape[1] + na] = x;
+                });
+
+        vector<char> seen(n_atom, 0);
+        out.reserve(n_entry);
+        for(size_t i = 0; i < n_entry; ++i) {
+            if(!atom_mask[i]) continue;
+            int ai = atom_indices[i];
+            if(ai < 0 || ai >= n_atom) continue;
+            if(seen[ai]) continue;
+            seen[ai] = 1;
+            out.push_back(ai);
+        }
+    } catch(...) {
+        out.clear();
+    }
+    return out;
+}
+
 static vector<int> collect_rg_backbone_indices(hid_t config_root, int n_atom) {
+    auto out = collect_rg_backbone_indices_from_hybrid_bb_map(config_root, n_atom);
+    if(!out.empty()) return out;
     return collect_rg_backbone_indices_from_sequence(config_root, n_atom);
 }
 

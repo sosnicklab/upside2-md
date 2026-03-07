@@ -1,5 +1,37 @@
 # Task Plan
 
+## 2026-03-06 Reset: Restore Production Rg to Protein Backbone Only
+
+### Project Goal (Current)
+- Verify how production-stage `Rg` is calculated in the active `example/16.MARTINI/run_sim_1rkl.sh` workflow.
+- Fix the runtime status-line `Rg` so it reflects the protein backbone only in the AA-only MARTINI workflow.
+- Preserve the existing stage dynamics and PBC/output behavior; only correct the reporting path.
+
+### Architecture & Key Decisions (Current)
+- Treat this as a runtime reporting regression first, not as a physical deformation regression, because the user reports the protein remains rigid while `Rg` changes sharply.
+- Validate the active runtime selector against actual `stage_7.0` checkpoint data before changing the code.
+- Prefer the workflow's explicit backbone mapping (`/input/hybrid_bb_map`) over positional assumptions such as "first `3*n_res` atoms".
+- Keep a conservative fallback for non-hybrid inputs when the backbone mapping is absent.
+
+### Execution Phases (Current Run)
+- [x] Phase A: Trace the current runtime `Rg` path and compare it against generated production-stage checkpoint data.
+- [x] Phase B: Implement the minimal fix so runtime `Rg` uses mapped protein-backbone particles.
+- [x] Phase C: Rebuild and verify the first production-stage `Rg` printout on a reduced run.
+
+### Known Errors / Blockers (Current Run)
+- None yet.
+
+### Review (Current Run)
+- Root cause was a runtime reporting regression in `src/main.cpp`: `collect_rg_backbone_indices()` had fallen back to legacy `3*n_res` indexing.
+- In the active AA-only MARTINI workflow that selector pointed at particles `0..92`, which are environment beads, not protein atoms.
+- The generated production checkpoint `example/16.MARTINI/outputs/test_pbc_wrapped/checkpoints/1rkl.stage_7.0.up` contains the explicit protein-backbone mapping under `/input/hybrid_bb_map`:
+  - valid mapped backbone atoms: `124`
+  - mapped index range: `4549..4672`
+- `src/main.cpp` now prefers `/input/hybrid_bb_map/{atom_indices,atom_mask}` for `Rg` selection and falls back to the legacy sequence-based selector only when that mapping is absent.
+- Verification passed after rebuild:
+  - direct HDF5 check on `stage_7.0.up`: legacy selector `Rg = 57.26 A`, mapped backbone selector `Rg = 12.70 A`
+  - one-step runtime probe on a copied production checkpoint printed `Rg  12.7 A` at step `0`
+
 ## 2026-03-06 Reset: Keep MARTINI Workflow Coordinates Inside Primary PBC Box
 
 ### Project Goal (Current)
