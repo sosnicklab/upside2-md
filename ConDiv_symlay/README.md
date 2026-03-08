@@ -88,7 +88,7 @@ export CONDIV_SYMLAY_SUPPORT_MARGIN=0.5
 sbatch run_remote.sh 20
 ```
 
-`run_remote.sh` uses the same restart surface as `run_local.sh`, requests `16G` memory by default, resolves the real workflow directory from `SLURM_SUBMIT_DIR` / `CONDIV_PROJECT_ROOT` so Slurm spool-copy execution still finds the repo checkout, prefers `ConDiv_symlay/venv/bin/activate` when present (falling back to the project-root `.venv` in this checkout), sources `source.sh` from the project root, loads `cmake` and `openmpi` through the module system, and caps BLAS/OpenMP threads to keep worker launches predictable.
+`run_remote.sh` uses the same restart surface as `run_local.sh`, requests `16G` memory by default, resolves the real workflow directory from `SLURM_SUBMIT_DIR` / `CONDIV_PROJECT_ROOT` so Slurm spool-copy execution still finds the repo checkout, prefers `ConDiv_symlay/venv/bin/activate` when present (falling back to the project-root `.venv` in this checkout), sources `source.sh` from the project root, loads `python/3.11.9`, `cmake`, and `openmpi` through the module system, and caps BLAS/OpenMP threads to keep worker launches predictable.
 
 Inside Slurm, `WORKER_LAUNCH=auto` now resolves to `srun`. The wrapper also defaults:
 - `CONDIV_N_THREADS` to `${SLURM_CPUS_PER_TASK:-1}`

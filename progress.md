@@ -125,6 +125,8 @@
   - prefer `"$SCRIPT_DIR/venv/bin/activate"`
   - fall back to `"$PROJECT_ROOT/.venv/bin/activate"` only when the workflow-local venv is absent
   - keep `source "$PROJECT_ROOT/source.sh"` unchanged
+- Follow-up user correction: the Slurm wrapper must also `module load python/3.11.9`.
+- Updated `ConDiv_symlay/run_remote.sh` module block to load `python/3.11.9` before `cmake` and `openmpi`, and updated `ConDiv_symlay/README.md` to match.
 
 ## 2026-02-28
 - Started Slurm adaptation task for `example/16.MARTINI/run_relax_6x_rigid_dry.sh` workflow.

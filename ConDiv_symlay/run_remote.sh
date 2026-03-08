@@ -51,6 +51,7 @@ if [ -f /etc/profile.d/modules.sh ]; then
 fi
 
 if command -v module >/dev/null 2>&1; then
+  module load python/3.11.9
   module load cmake
   module load openmpi
 fi
