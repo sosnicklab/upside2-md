@@ -87,6 +87,9 @@ Build a new `/Users/yinhan/Documents/upside2-md/ConDiv_symlay` workflow cloned f
 10. Slurm spool-path follow-up:
    - `run_remote.sh` now resolves the real workflow directory from `CONDIV_PROJECT_ROOT` or `SLURM_SUBMIT_DIR` before falling back to `dirname "$0"`.
    - the batch job `cd`s into the resolved `ConDiv_symlay` directory before environment bootstrap and self-resubmission so spool-copy execution does not break repo-relative paths.
+11. Shared bootstrap follow-up:
+   - the project-root `source.sh` is now hardened for `set -u` and non-Homebrew environments so the Slurm wrapper does not fail after environment activation.
+   - `UPSIDE_HOME` is derived from the script location when unset, and optional path variables are appended safely.
 
 # ConDiv Membrane Workflow Modernization Plan
 

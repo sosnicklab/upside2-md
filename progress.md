@@ -128,6 +128,24 @@
 - Follow-up user correction: the Slurm wrapper must also `module load python/3.11.9`.
 - Updated `ConDiv_symlay/run_remote.sh` module block to load `python/3.11.9` before `cmake` and `openmpi`, and updated `ConDiv_symlay/README.md` to match.
 
+## 2026-03-08 (`source.sh` cluster bootstrap hardening)
+- User reported a new cluster failure after the wrapper fix: `/project/.../source.sh` raised `PYTHONPATH: unbound variable` under `set -u`.
+- Inspected the project-root `source.sh` and found several broader portability issues:
+  - optional env vars were expanded unguarded (`MY_PYTHON`, `PYTHONPATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, `LD_LIBRARY_PATH`)
+  - `UPSIDE_HOME` was still hard-coded
+  - Homebrew-specific exports ran unconditionally
+- Patched `source.sh` to:
+  - derive `UPSIDE_HOME` from the script location when unset
+  - guard optional env vars with `${VAR:+...}` / `${VAR:-}`
+  - prepend Homebrew paths only when `brew` exists
+  - keep Apple-Silicon behavior on this machine while allowing cluster use without Homebrew
+- Validation:
+  - `env -u PYTHONPATH -u MY_PYTHON -u CPLUS_INCLUDE_PATH -u LIBRARY_PATH -u LD_LIBRARY_PATH bash -lc 'set -eu; source /Users/yinhan/Documents/upside2-md/source.sh; echo OK_DEFAULT'` -> pass
+  - `PATH=/usr/bin:/bin /bin/bash -lc 'set -eu; source /Users/yinhan/Documents/upside2-md/source.sh; echo OK_NO_BREW'` -> pass
+  - spool-path smoke for `ConDiv_symlay/run_remote.sh 0` still passed after the `source.sh` change
+- User follow-up clarified that the failing `source.sh` on cluster is not the same as the local repo copy; it is a simpler script that still assumes `PYTHONPATH` is pre-defined.
+- Patched `ConDiv_symlay/run_remote.sh` to export `PYTHONPATH="${PYTHONPATH:-}"` immediately before sourcing `"$PROJECT_ROOT/source.sh"`, so the wrapper is robust against that cluster script under `set -u`.
+
 ## 2026-02-28
 - Started Slurm adaptation task for `example/16.MARTINI/run_relax_6x_rigid_dry.sh` workflow.
 - Reviewed existing `example/16.MARTINI/run_relax_6x_rigid_dry.sh` and confirmed it is a single-system stage runner, not the multi-system orchestration layer.

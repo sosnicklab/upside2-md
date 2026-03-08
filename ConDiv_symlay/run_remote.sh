@@ -69,6 +69,7 @@ if [ ! -f "$VENV_ACTIVATE" ]; then
 fi
 
 source "$VENV_ACTIVATE"
+export PYTHONPATH="${PYTHONPATH:-}"
 source "$PROJECT_ROOT/source.sh"
 
 export CONDIV_PROJECT_ROOT="$PROJECT_ROOT"
