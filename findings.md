@@ -1,6 +1,13 @@
 # Findings
 
 - 2026-03-07: `ConDiv_symlay/build_layer_manifest.py` had to parse 4-character lipid residue names from the bilayer PDB (`DOPC` in columns `17:21`), not the 3-character slice used in some other helpers. Using `17:20` silently dropped the terminal `C` and produced zero matched lipid atoms.
+- 2026-03-08: In `ConDiv_symlay`, increasing `#SBATCH --ntasks-per-node` alone does not increase live worker parallelism. Three additional conditions matter:
+  - restart must refresh `worker_launch`, `n_threads`, and `max_parallel_workers` from the current environment instead of stale checkpoint state
+  - Slurm launches must use `srun` job steps for workers, not local subprocesses
+  - actual concurrent jobs are capped by minibatch size, which is fixed when `initial_checkpoint.pkl` is created
+- 2026-03-08: The default `ConDiv_symlay/pdb_list2` profile contains 45 proteins, so even on a `48`-task Slurm allocation the maximum useful same-minibatch worker fanout is 45.
+- 2026-03-08: `ConDiv_symlay` now records one centralized training-progress entry per completed Slurm restart job in `training_progress.jsonl` and writes the current convergence decision to `training_status.json`. The auto-resubmission stop rule is a trailing window over those records, using total gradient norm plus total update norm thresholds.
+- 2026-03-08: Current reduced smoke checkpoints show total norms around `grad_norm_total ~ 5.33` and `update_norm_total ~ 0.43`, so the new default Slurm convergence thresholds (`1.0`, `0.05`) are intentionally stricter than the current early-training regime.
 - 2026-03-07: The new `ConDiv_symlay` task should use the repo-root tracking files (`task_plan.md`, `findings.md`, `progress.md`) because the workflow lives at `/Users/yinhan/Documents/upside2-md/ConDiv_symlay`, not under `example/16.MARTINI/`.
 - 2026-03-07: `ConDiv/` is already a self-contained membrane-training workflow with the required runner surface (`run_init.sh`, `run_local.sh`, `run_remote.sh`, `run_validate_rounds.sh`), helper scripts, bundled `param0..3`, `upside_input*`, `pdb_list*`, and a copied nested `venv/`.
 - 2026-03-07: `ConDiv/run_init.sh`, `run_local.sh`, `run_remote.sh`, and `run_validate_rounds.sh` all bootstrap the project-root `.venv` and `source.sh`, export `CONDIV_PROJECT_ROOT`, and support `WORKER_LAUNCH=auto|local|srun`; this is the correct portability surface to preserve in `ConDiv_symlay`.

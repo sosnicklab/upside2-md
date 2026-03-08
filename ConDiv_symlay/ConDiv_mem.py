@@ -861,8 +861,20 @@ def _has_output_frames(config_path: str) -> bool:
 
 def _choose_worker_launch(mode: str) -> str:
     if mode == "auto":
-        return "local"
+        return "srun" if os.environ.get("SLURM_JOB_ID") else "local"
     return mode
+
+
+def _apply_runtime_config(state: dict) -> dict:
+    state["project_root"] = str(CONFIG.project_root)
+    state["ff_dir"] = str(CONFIG.ff_dir)
+    state["worker_launch"] = CONFIG.worker_launch
+    state["n_threads"] = CONFIG.n_threads
+    state["max_parallel_workers"] = CONFIG.max_parallel_workers
+    state["symlay_dense_grid_size"] = CONFIG.symlay_dense_grid_size
+    state["symlay_support_margin"] = CONFIG.symlay_support_margin
+    state["symlay_projection_enabled"] = CONFIG.symlay_projection_enabled
+    return state
 
 
 def _run_worker_subprocess(
@@ -877,6 +889,7 @@ def _run_worker_subprocess(
     if launch_mode == "srun":
         cmd = [
             "srun",
+            "--exclusive",
             "--nodes=1",
             "--ntasks=1",
             f"--cpus-per-task={n_threads}",
@@ -920,6 +933,17 @@ def run_minibatch(
     max_parallel_workers = state.get("max_parallel_workers", 0)
     if max_parallel_workers <= 0:
         max_parallel_workers = len(minibatch)
+    max_parallel_workers = min(max_parallel_workers, len(minibatch))
+
+    print(
+        "Worker launch=%s, threads/worker=%i, max_parallel_workers=%i, minibatch_targets=%i"
+        % (
+            _choose_worker_launch(state["worker_launch"]),
+            int(state["n_threads"]),
+            max_parallel_workers,
+            len(minibatch),
+        )
+    )
 
     for chunk_start in range(0, len(minibatch), max_parallel_workers):
         chunk = minibatch[chunk_start : chunk_start + max_parallel_workers]
@@ -1004,6 +1028,22 @@ def run_minibatch(
         "update_norm_hb": float(np.linalg.norm(step_update[2])),
         "update_norm_ihb": float(np.linalg.norm(step_update[3])),
     }
+    grad_stats["grad_norm_total"] = float(
+        np.sqrt(
+            grad_stats["grad_norm_cb"] ** 2
+            + grad_stats["grad_norm_icb"] ** 2
+            + grad_stats["grad_norm_hb"] ** 2
+            + grad_stats["grad_norm_ihb"] ** 2
+        )
+    )
+    grad_stats["update_norm_total"] = float(
+        np.sqrt(
+            grad_stats["update_norm_cb"] ** 2
+            + grad_stats["update_norm_icb"] ** 2
+            + grad_stats["update_norm_hb"] ** 2
+            + grad_stats["update_norm_ihb"] ** 2
+        )
+    )
 
     new_param_files = {k: os.path.join(direc, os.path.basename(x)) for k, x in initial_param_files.items()}
     new_param = param + step_update
@@ -1212,6 +1252,7 @@ def main_loop(checkpoint_path: str, max_iter: int):
     checkpoint_path = os.path.abspath(checkpoint_path)
     for _ in range(max_iter):
         state = load_checkpoint(checkpoint_path)
+        state = _apply_runtime_config(state)
         state = main_loop_iteration(state)
         checkpoint_path = os.path.join(state["mb_direc"], "checkpoint.pkl")
         save_checkpoint(checkpoint_path, state)
@@ -1363,14 +1404,7 @@ def main_initialize(args):
     state["solver"] = AdamSolver(len(state["initial_alpha"]), alpha=state["initial_alpha"])
     state["sim_time"] = CONFIG.sim_time
 
-    state["project_root"] = str(CONFIG.project_root)
-    state["ff_dir"] = str(CONFIG.ff_dir)
-    state["worker_launch"] = CONFIG.worker_launch
-    state["n_threads"] = CONFIG.n_threads
-    state["max_parallel_workers"] = CONFIG.max_parallel_workers
-    state["symlay_dense_grid_size"] = CONFIG.symlay_dense_grid_size
-    state["symlay_support_margin"] = CONFIG.symlay_support_margin
-    state["symlay_projection_enabled"] = CONFIG.symlay_projection_enabled
+    state = _apply_runtime_config(state)
 
     print()
     print("Optimizing with solver", state["solver"])

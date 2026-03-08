@@ -73,6 +73,46 @@
     - `max symmetry residual 0.0942955`
     - `max projection residual 0.18805`
 
+## 2026-03-08 (Slurm fanout alignment)
+- Re-read `task_plan.md`, then audited `ConDiv_symlay/run_remote.sh` and `ConDiv_symlay/ConDiv_mem.py` after the Slurm wrapper was changed to `#SBATCH --ntasks-per-node=48`.
+- Confirmed the pre-patch behavior did not fully utilize that allocation:
+  - `auto` worker-launch mode still resolved to `local`
+  - restart reused `worker_launch`, `n_threads`, and `max_parallel_workers` from the checkpoint instead of current environment variables
+  - minibatch size remained the hard concurrency cap
+- Patched `ConDiv_symlay/ConDiv_mem.py` to:
+  - resolve `auto -> srun` when `SLURM_JOB_ID` is present
+  - refresh runtime worker settings from the current environment on every restart
+  - launch worker job steps with `srun --exclusive`
+  - print the effective worker fanout per minibatch
+- Patched `ConDiv_symlay/run_remote.sh` to:
+  - source `../.venv/bin/activate` and `../source.sh`
+  - load `cmake` and `openmpi` via the module system
+  - default `CONDIV_N_THREADS` from `${SLURM_CPUS_PER_TASK:-1}`
+  - default `CONDIV_MAX_PARALLEL_WORKERS` from the Slurm task count
+  - print the derived Slurm worker settings before restart
+- Updated `ConDiv_symlay/README.md` to document the new Slurm defaults and the fact that minibatch size is fixed at initialization and caps effective fanout.
+
+## 2026-03-08 (Auto-resubmitting Slurm training control)
+- Re-read `task_plan.md`, then inspected the existing gradient-stat path in `ConDiv_symlay/ConDiv_mem.py` and the Slurm wrapper to choose a concrete convergence signal.
+- Added `grad_norm_total` and `update_norm_total` to the per-minibatch `gradient_stats.json` emitted by `ConDiv_symlay/ConDiv_mem.py`.
+- Added new helper script `ConDiv_symlay/training_control.py` to:
+  - append one centralized JSONL progress record per completed Slurm restart job
+  - write `training_status.json`
+  - evaluate convergence over a trailing patience window using total gradient/update norms
+- Patched `ConDiv_symlay/run_remote.sh` to:
+  - expose convergence settings via env vars
+  - call `training_control.py` after each restart
+  - auto-resubmit itself with `sbatch --dependency=afterok:$SLURM_JOB_ID` until convergence, unless disabled or capped by `CONDIV_AUTO_MAX_SUBMISSIONS`
+- Updated `ConDiv_symlay/README.md` with the new progress files and convergence env vars.
+- Validation:
+  - `python3 -m py_compile ConDiv_symlay/ConDiv_mem.py ConDiv_symlay/training_control.py` -> pass
+  - `bash -n ConDiv_symlay/run_remote.sh` -> pass
+  - fake Slurm zero-step smoke:
+    `BASE_DIR=/tmp/condiv_symlay_validate_smoke SLURM_JOB_ID=12345 SLURM_NTASKS=48 SLURM_CPUS_PER_TASK=1 CONDIV_AUTO_RESUBMIT=1 CONDIV_CONVERGENCE_PATIENCE=2 bash ConDiv_symlay/run_remote.sh 0`
+    -> pass
+  - produced `/tmp/condiv_symlay_validate_smoke/training_progress.jsonl` with `grad_norm_total=5.330964942122397`, `update_norm_total=0.43293099572683164`
+  - produced `/tmp/condiv_symlay_validate_smoke/training_status.json` with `converged=false`, `reason=not_enough_history`
+
 ## 2026-02-28
 - Started Slurm adaptation task for `example/16.MARTINI/run_relax_6x_rigid_dry.sh` workflow.
 - Reviewed existing `example/16.MARTINI/run_relax_6x_rigid_dry.sh` and confirmed it is a single-system stage runner, not the multi-system orchestration layer.

@@ -29,6 +29,8 @@ Build a new `/Users/yinhan/Documents/upside2-md/ConDiv_symlay` workflow cloned f
 - [x] Phase 3: Patch `ConDiv_symlay/ConDiv_mem.py` to seed from the current `membrane.h5` and project every parameter update into the symmetric topology-slot subspace.
 - [x] Phase 4: Update the copied runner scripts/README to build the manifest, initialize the constrained seed, and run both gradient and constraint validation locally and via Slurm wrapper.
 - [x] Phase 5: Run syntax checks and reduced smoke validation (`run_init.sh`, `run_local.sh`, `run_validate_rounds.sh`) and record results.
+- [x] Phase 6: Align Slurm restart behavior with the allocated task fanout and required cluster bootstrap (`../source.sh`, `../.venv/bin/activate`, `module load cmake`, `module load openmpi`).
+- [x] Phase 7: Add convergence-aware Slurm auto-resubmission and a persistent training progress log/status file.
 
 ## Known Errors / Blockers
 1. Live Slurm scheduling cannot be proven inside this sandbox; only shell-level wrapper validation and local execution of the same script body are practical here.
@@ -73,6 +75,15 @@ Build a new `/Users/yinhan/Documents/upside2-md/ConDiv_symlay` workflow cloned f
    - symmetry threshold `0.1`
    - projection threshold `0.25`
    This keeps the validator aligned with the constrained clamped-spline representation while still rejecting support and major symmetry regressions.
+8. Slurm fanout follow-up:
+   - `ConDiv_mem.py` now refreshes runtime worker settings from the current environment on restart instead of keeping stale checkpoint copies.
+   - `auto` worker-launch mode now resolves to `srun` under Slurm, and worker steps use `srun --exclusive`.
+   - `run_remote.sh` now sources `../.venv/bin/activate` and `../source.sh`, loads `cmake` and `openmpi`, and defaults `CONDIV_N_THREADS` / `CONDIV_MAX_PARALLEL_WORKERS` from the Slurm allocation.
+   - full task-slot utilization is still limited by the minibatch size selected at `run_init.sh`; with the current default `pdb_list2`, the maximum useful fanout is 45 proteins.
+9. Training-control follow-up:
+   - `run_remote.sh` now writes centralized progress/state artifacts under `BASE_DIR` (`training_progress.jsonl`, `training_status.json`).
+   - convergence is evaluated on a trailing window of logged records using total gradient norm and total update norm thresholds, with defaults exposed as environment variables.
+   - when not converged, the Slurm wrapper resubmits itself with `sbatch --dependency=afterok:$SLURM_JOB_ID` and increments a resubmission counter.
 
 # ConDiv Membrane Workflow Modernization Plan
 

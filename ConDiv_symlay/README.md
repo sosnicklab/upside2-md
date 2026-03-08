@@ -69,9 +69,12 @@ export PROFILE=dimer3
 export BASE_DIR=/Users/yinhan/Documents/upside2-md/ConDiv_symlay/test_dimer3
 export INIT_FORCEFIELD_DIR=/Users/yinhan/Documents/upside2-md/parameters/ff_2.1
 export WORKER_LAUNCH=auto
+export CONDIV_MINIBATCH_SIZE=15
 export CONDIV_SYMLAY_DENSE_GRID_SIZE=801
 export CONDIV_SYMLAY_SUPPORT_MARGIN=0.5
 ```
+
+`CONDIV_MINIBATCH_SIZE` is fixed when `initial_checkpoint.pkl` is created. If you want larger Slurm fanout, set it before `./run_init.sh` and reinitialize the run directory. For the current default `pdb_list2`, there are 45 proteins total, so the practical upper bound is 45.
 
 ## Local Restart
 
@@ -85,7 +88,30 @@ export CONDIV_SYMLAY_SUPPORT_MARGIN=0.5
 sbatch run_remote.sh 20
 ```
 
-`run_remote.sh` uses the same restart surface as `run_local.sh`, requests `16G` memory by default, and caps BLAS/OpenMP threads to keep worker launches predictable.
+`run_remote.sh` uses the same restart surface as `run_local.sh`, requests `16G` memory by default, sources `../.venv/bin/activate` and `../source.sh`, loads `cmake` and `openmpi` through the module system, and caps BLAS/OpenMP threads to keep worker launches predictable.
+
+Inside Slurm, `WORKER_LAUNCH=auto` now resolves to `srun`. The wrapper also defaults:
+- `CONDIV_N_THREADS` to `${SLURM_CPUS_PER_TASK:-1}`
+- `CONDIV_MAX_PARALLEL_WORKERS` to the allocated Slurm task count
+
+Actual concurrent worker count is still limited by the current minibatch size.
+
+After each Slurm job, the wrapper:
+- appends one record to `<base_dir>/training_progress.jsonl`
+- writes the latest convergence summary to `<base_dir>/training_status.json`
+- resubmits itself with `afterok` until the convergence window passes
+
+Default convergence settings:
+
+```bash
+export CONDIV_CONVERGENCE_GRAD_NORM=1.0
+export CONDIV_CONVERGENCE_UPDATE_NORM=0.05
+export CONDIV_CONVERGENCE_PATIENCE=3
+export CONDIV_AUTO_RESUBMIT=1
+export CONDIV_AUTO_MAX_SUBMISSIONS=0
+```
+
+`CONDIV_AUTO_MAX_SUBMISSIONS=0` means no wrapper-imposed submission limit. Convergence is checked on the trailing `CONDIV_CONVERGENCE_PATIENCE` progress records, requiring every record in that window to satisfy both the total gradient-norm and total update-norm thresholds.
 
 ## Validation
 
