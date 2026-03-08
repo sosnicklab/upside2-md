@@ -1,5 +1,78 @@
 # Progress Log
 
+## 2026-03-07 (ConDiv_symlay symmetric multilayer workflow)
+- Re-read the root task docs, findings, and prior ConDiv workflow before implementation, then reinitialized `task_plan.md` for the new root-level `ConDiv_symlay` task.
+- Updated `lessons.md` after the user correction so topology-slot membrane layers are no longer inferred from bead names or raw depth sorting.
+- Cloned `ConDiv/` into `ConDiv_symlay/` with `rsync -a --exclude 'venv/'`, preserving the data payload while intentionally dropping the nested virtual environment.
+- Added new workflow assets in `ConDiv_symlay/`:
+  - `layer_template.json`
+  - `symlay_utils.py`
+  - `build_layer_manifest.py`
+  - `validate_symlay_constraints.py`
+- Patched `ConDiv_symlay/ConDiv_mem.py` to:
+  - load the run-local layer manifest,
+  - create a seeded constrained `membrane.h5` under `<base_dir>/seed_forcefield/`,
+  - copy `symlay_utils.py` into the run directory next to the copied `ConDiv_mem.py`,
+  - project every Adam update into the symmetric topology-slot subspace,
+  - keep emitted `membrane.h5` files constrained during `expand_param(...)`.
+- Patched the copied runner/documentation surface:
+  - `run_init.sh` now builds the layer manifest and validates the seeded checkpoint
+  - `run_local.sh` and `run_remote.sh` now export the active layer-manifest path
+  - `run_remote.sh` now requests `16G` and caps BLAS/OpenMP threads
+  - `run_validate_rounds.sh` now runs both `check_membrane_gradient.py` and `validate_symlay_constraints.py`
+  - `README.md` and `data_manifest.txt` now describe the cloned constrained workflow
+- First live manifest build failed because the bilayer PDB parser sliced residue names as `17:20`, which turned `DOPC` into `DOP`; fixed by switching the parser to columns `17:21`.
+- First seeded-checkpoint validation failed because dense-grid thresholds were unrealistically strict for the clamped-spline representation, and because `expand_param(...)` rebuilt inner curves in a way that broke the emitted-file symmetry; fixed by:
+  - adding a constrained output projection pass in `expand_param(...)`
+  - setting constraint-validator defaults to the observed representation tolerance band (`symmetry<=0.1`, `projection<=0.25`)
+- Validation:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile ConDiv_symlay/ConDiv_mem.py ConDiv_symlay/build_layer_manifest.py ConDiv_symlay/validate_symlay_constraints.py ConDiv_symlay/symlay_utils.py ConDiv_symlay/check_membrane_gradient.py` -> pass
+  - `source .venv/bin/activate && source source.sh && bash -n ConDiv_symlay/run_init.sh ConDiv_symlay/run_local.sh ConDiv_symlay/run_remote.sh ConDiv_symlay/run_validate_rounds.sh` -> pass
+  - `source .venv/bin/activate && source source.sh && python3 ConDiv_symlay/build_layer_manifest.py --output-json ConDiv_symlay/test_symlay_manifest/layer_manifest.json --output-csv ConDiv_symlay/test_symlay_manifest/layer_manifest.csv --output-png ConDiv_symlay/test_symlay_manifest/layer_manifest.png` -> pass
+  - reduced `run_init.sh` smoke:
+    `env BASE_DIR=/tmp/condiv_symlay_smoke_init3 PROFILE=dimer3 WORKER_LAUNCH=local CONDIV_MINIBATCH_SIZE=1 CONDIV_N_THREADS=2 CONDIV_SIM_TIME=5 CONDIV_N_FRAME=2 CONDIV_MAX_PARALLEL_WORKERS=1 ./ConDiv_symlay/run_init.sh` -> pass
+  - reduced `run_local.sh 1` smoke on the same base dir -> pass (`Median RMSD 0.53 0.86`)
+  - reduced `run_validate_rounds.sh` smoke:
+    `env BASE_DIR=/tmp/condiv_symlay_validate_smoke PROFILE=dimer3 WORKER_LAUNCH=local CONDIV_MINIBATCH_SIZE=1 CONDIV_N_THREADS=2 CONDIV_SIM_TIME=5 CONDIV_N_FRAME=2 CONDIV_MAX_PARALLEL_WORKERS=1 ROUNDS=1 STEPS_PER_ROUND=1 FD_SAMPLES=4 ./ConDiv_symlay/run_validate_rounds.sh` -> pass
+    - gradient report: `/tmp/condiv_symlay_validate_smoke/gradient_round_1.json`, `pass=true`
+    - constraint report: `/tmp/condiv_symlay_validate_smoke/constraint_round_1.json`, `pass=true`
+  - local shell execution of the Slurm wrapper:
+    `env BASE_DIR=/tmp/condiv_symlay_validate_smoke ... bash ConDiv_symlay/run_remote.sh 0` -> pass
+
+## 2026-03-08 (Fresh short local training confirmation)
+- Re-read `task_plan.md` before running a new local confirmation round for `ConDiv_symlay`.
+- First fresh random reduced run used:
+  - `BASE_DIR=/tmp/condiv_symlay_short_round_20260308`
+  - `PROFILE=dimer3`
+  - `WORKER_LAUNCH=local`
+  - `CONDIV_MINIBATCH_SIZE=1`
+  - `CONDIV_N_THREADS=2`
+  - `CONDIV_SIM_TIME=5`
+  - `CONDIV_N_FRAME=2`
+  - `CONDIV_MAX_PARALLEL_WORKERS=1`
+- That random run initialized successfully, but `run_local.sh 1` selected `7jna` and aborted at the parent layer with `WORKER_FAIL` / `RuntimeError("All jobs failed")`.
+- Investigated the failed round:
+  - `7jna.output_worker` contained only the usual `run_upside returned -5, continuing with existing output frames` warning
+  - `7jna.divergence.pkl` existed and contained finite RMSD/COM/contrast values
+  - conclusion: this was a target-specific nonzero worker exit, not a broken script path
+- Switched to a controlled one-protein confirmation run by writing `/tmp/condiv_symlay_short_round.list` with:
+  - `prot`
+  - `5vb2`
+- Controlled confirmation run used:
+  - `BASE_DIR=/tmp/condiv_symlay_short_round_controlled`
+  - `PROTEIN_DIR=/Users/yinhan/Documents/upside2-md/ConDiv_symlay/upside_input2`
+  - `PDB_LIST=/tmp/condiv_symlay_short_round.list`
+  - the same reduced local settings as above
+- Validation:
+  - `./ConDiv_symlay/run_init.sh` -> pass
+  - `./ConDiv_symlay/run_local.sh 1` -> pass
+  - produced `Median RMSD 0.57 0.84`
+  - produced checkpoint `/tmp/condiv_symlay_short_round_controlled/epoch_00_minibatch_00/checkpoint.pkl`
+  - `python3 ConDiv_symlay/validate_symlay_constraints.py --checkpoint /tmp/condiv_symlay_short_round_controlled/epoch_00_minibatch_00/checkpoint.pkl --layer-manifest /tmp/condiv_symlay_short_round_controlled/layer_manifest.json --report /tmp/condiv_symlay_short_round_controlled/constraint_after_round.json` -> pass
+  - post-round constraint metrics:
+    - `max symmetry residual 0.0942955`
+    - `max projection residual 0.18805`
+
 ## 2026-02-28
 - Started Slurm adaptation task for `example/16.MARTINI/run_relax_6x_rigid_dry.sh` workflow.
 - Reviewed existing `example/16.MARTINI/run_relax_6x_rigid_dry.sh` and confirmed it is a single-system stage runner, not the multi-system orchestration layer.

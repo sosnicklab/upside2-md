@@ -1,0 +1,90 @@
+{
+  "schema": "condiv_symlay_layer_template_v1",
+  "lipid_resname": "DOPC",
+  "bilayer_resnames": [
+    "DOPC"
+  ],
+  "half_type_sequence": [
+    "Q0",
+    "Qa",
+    "Na",
+    "C1",
+    "C3",
+    "C1",
+    "C1"
+  ],
+  "full_type_sequence": [
+    "Q0",
+    "Qa",
+    "Na",
+    "C1",
+    "C3",
+    "C1",
+    "C1",
+    "C1",
+    "C1",
+    "C3",
+    "C1",
+    "Na",
+    "Qa",
+    "Q0"
+  ],
+  "half_slots": [
+    {
+      "slot_id": "q0",
+      "type": "Q0",
+      "members": [
+        "NC3"
+      ]
+    },
+    {
+      "slot_id": "qa",
+      "type": "Qa",
+      "members": [
+        "PO4"
+      ]
+    },
+    {
+      "slot_id": "na",
+      "type": "Na",
+      "members": [
+        "GL1",
+        "GL2"
+      ]
+    },
+    {
+      "slot_id": "c1_outer",
+      "type": "C1",
+      "members": [
+        "C1A",
+        "C1B",
+        "C2A",
+        "C2B"
+      ]
+    },
+    {
+      "slot_id": "c3_mid",
+      "type": "C3",
+      "members": [
+        "D3A",
+        "D3B"
+      ]
+    },
+    {
+      "slot_id": "c1_inner_1",
+      "type": "C1",
+      "members": [
+        "C4A",
+        "C4B"
+      ]
+    },
+    {
+      "slot_id": "c1_inner_2",
+      "type": "C1",
+      "members": [
+        "C5A",
+        "C5B"
+      ]
+    }
+  ]
+}

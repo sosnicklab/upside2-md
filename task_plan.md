@@ -1,3 +1,79 @@
+# ConDiv_symlay Symmetric Topology-Slot Workflow Plan
+
+## Project Goal
+Build a new `/Users/yinhan/Documents/upside2-md/ConDiv_symlay` workflow cloned from `ConDiv` that:
+- initializes from the current in-repo `parameters/ff_2.1/membrane.h5`,
+- enforces a hard symmetric multilayer membrane constraint during training,
+- uses the corrected DOPC topology-slot layer model,
+- includes all scripts/data needed to run locally on M1 and through the existing Slurm wrapper surface.
+
+## Architecture & Key Decisions
+1. Clone `ConDiv/` into `ConDiv_symlay/`, excluding the nested `venv/`, and keep the same runner surface (`run_init.sh`, `run_local.sh`, `run_remote.sh`, `run_validate_rounds.sh`) plus the bundled `param*`, `upside_input*`, and helper scripts.
+2. Keep the training/runtime artifact as the standard `membrane.h5` schema (`cb_energy`, `icb_energy`, `hb_energy`, `ihb_energy`) so no downstream runtime changes are required.
+3. Add a DOPC topology-slot manifest builder in `ConDiv_symlay/` that derives the corrected half-bilayer slot sequence from the DOPC lipid ITP and bilayer PDB, then mirrors it into the full bilayer sequence.
+4. Use the user-corrected slot template as the hard multilayer basis:
+   - half bilayer: `Q0-Qa-Na-C1-C3-C1-C1`
+   - full bilayer: `Q0-Qa-Na-C1-C3-C1-C1-C1-C1-C3-C1-Na-Qa-Q0`
+5. Insert a hard projection step into the copied `ConDiv_mem.py` after every Adam update:
+   - decode spline coefficients to physical curve values,
+   - enforce even symmetry,
+   - project onto the topology-slot anchor basis in value space,
+   - solve back to clamped spline coefficients,
+   - keep `icb/ihb` consistent with the projected curves.
+6. Seed the run from the current published `membrane.h5`, but first convert it to a symmetric constrained seed file with symmetric supports wide enough to cover the DOPC slot depths.
+7. Add a dedicated constraint validator and run it alongside the existing gradient validator in `run_validate_rounds.sh`.
+
+## Execution Phases
+- [x] Phase 1: Reinitialize tracking docs for `ConDiv_symlay` and capture the corrected DOPC topology-slot findings.
+- [x] Phase 2: Clone `ConDiv/` into `ConDiv_symlay/` excluding `venv/`, and add the new layer-template/manifest/constraint-validator files.
+- [x] Phase 3: Patch `ConDiv_symlay/ConDiv_mem.py` to seed from the current `membrane.h5` and project every parameter update into the symmetric topology-slot subspace.
+- [x] Phase 4: Update the copied runner scripts/README to build the manifest, initialize the constrained seed, and run both gradient and constraint validation locally and via Slurm wrapper.
+- [x] Phase 5: Run syntax checks and reduced smoke validation (`run_init.sh`, `run_local.sh`, `run_validate_rounds.sh`) and record results.
+
+## Known Errors / Blockers
+1. Live Slurm scheduling cannot be proven inside this sandbox; only shell-level wrapper validation and local execution of the same script body are practical here.
+
+## Review Criteria
+1. `ConDiv_symlay/` is self-contained and does not rely on `ConDiv/venv/`.
+2. `run_init.sh` produces a topology-slot manifest plus a seeded symmetric `membrane.h5` before the initial checkpoint.
+3. The copied training loop writes only standard `membrane.h5` files but keeps every checkpoint in the symmetric multilayer subspace.
+4. `run_validate_rounds.sh` executes both the existing gradient check and the new symmetry/layer constraint check.
+5. Reduced local execution succeeds on this machine, and the Slurm wrapper remains syntactically valid and locally executable as a shell script.
+
+## Review (This Run)
+1. Created `/Users/yinhan/Documents/upside2-md/ConDiv_symlay` as a clone of `ConDiv/`, excluding the nested `venv/`, and kept the copied data payload (`param0..3`, `upside_input*`, `pdb_list*`, helper scripts).
+2. Added the symmetric-layer workflow assets:
+   - `layer_template.json`
+   - `symlay_utils.py`
+   - `build_layer_manifest.py`
+   - `validate_symlay_constraints.py`
+3. Patched `ConDiv_symlay/ConDiv_mem.py` to:
+   - seed from the current `parameters/ff_2.1/membrane.h5`,
+   - copy `symlay_utils.py` into the run directory alongside `ConDiv_mem.py`,
+   - project every update into the symmetric topology-slot subspace,
+   - keep emitted `membrane.h5` files in the constrained manifold during `expand_param(...)`.
+4. Updated the copied runner surface and docs:
+   - `run_init.sh` now builds the layer manifest and validates the seeded checkpoint
+   - `run_local.sh` and `run_remote.sh` now carry the manifest path through restart
+   - `run_validate_rounds.sh` now runs both the gradient checker and the new constraint validator
+   - `run_remote.sh` now includes explicit memory/thread caps for safer Slurm execution
+   - `README.md` and `data_manifest.txt` now describe the `ConDiv_symlay` workflow rather than the original unconstrained `ConDiv` clone
+5. Verified with reduced smoke runs:
+   - `python3 -m py_compile ConDiv_symlay/ConDiv_mem.py ConDiv_symlay/build_layer_manifest.py ConDiv_symlay/validate_symlay_constraints.py ConDiv_symlay/symlay_utils.py ConDiv_symlay/check_membrane_gradient.py`
+   - `bash -n ConDiv_symlay/run_init.sh ConDiv_symlay/run_local.sh ConDiv_symlay/run_remote.sh ConDiv_symlay/run_validate_rounds.sh`
+   - `python3 ConDiv_symlay/build_layer_manifest.py ...` produced `layer_manifest.json/csv/png` with the full type sequence `Q0-Qa-Na-C1-C3-C1-C1-C1-C1-C3-C1-Na-Qa-Q0`
+   - reduced `run_init.sh` passed in `/tmp/condiv_symlay_smoke_init3`
+   - reduced `run_local.sh 1` passed in `/tmp/condiv_symlay_smoke_init3`
+   - reduced `run_validate_rounds.sh` passed in `/tmp/condiv_symlay_validate_smoke`
+   - local shell execution of `bash ConDiv_symlay/run_remote.sh 0` passed against the generated checkpoint
+6. Seeded support ranges from the current `membrane.h5` became:
+   - `cb`: `[-21, 21]`
+   - `hb`: `[-33, 33]`
+7. Constraint-validation defaults were set to the spline representation’s observed tolerance band:
+   - symmetry threshold `0.1`
+   - projection threshold `0.25`
+   This keeps the validator aligned with the constrained clamped-spline representation while still rejecting support and major symmetry regressions.
+
 # ConDiv Membrane Workflow Modernization Plan
 
 ## Project Goal

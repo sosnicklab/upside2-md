@@ -1,5 +1,51 @@
 # Task Plan
 
+## 2026-03-07 Reset: DOPC Leaflet Depth Symmetry Audit
+
+### Project Goal (Current)
+- Add a dedicated diagnostic command to compare raw `membrane.h5` upper-leaflet and lower-leaflet potential values at the representative DOPC depths for `Q0`, `Qa`, `Na`, `C1`, and `C3`.
+- Produce reusable CSV, JSON, and PNG outputs without changing the existing depth-table builder, cross-table builder, or workflow runtime path.
+- Make the first step explicitly diagnostic: expose asymmetry rather than hiding it behind build-time symmetrization.
+
+### Architecture & Key Decisions (Current)
+- Implement this as a new `prepare_system.py analyze-depth-symmetry` subcommand instead of extending `build-depth-table`.
+- Reuse the existing center-based signed-depth extraction from the DOPC bilayer template (`z - z_center`) and keep the current no-PO4-anchor definition for this pass.
+- Evaluate raw membrane channels with `symmetrize=False` so the report captures leaflet asymmetry directly.
+- Report both:
+  - observed-leaflet values at the mean signed upper/lower depths for each covered dry type
+  - mirrored same-`|z|` comparisons to test whether `V(+d)` and `V(-d)` match at equal depth magnitude
+- Keep the first pass type-level for `Q0/Qa/Na/C1/C3`, but record contributing DOPC bead names for traceability.
+
+### Execution Phases (Current Run)
+- [x] Phase S1: Add task tracking notes and capture the observed DOPC depth asymmetry in findings.
+- [x] Phase S2: Implement `analyze-depth-symmetry` with CSV/JSON/PNG outputs in `prepare_system.py`.
+- [x] Phase S3: Run syntax and command-level verification on the new analysis path and record results.
+
+### Known Errors / Blockers (Current Run)
+- None yet.
+
+### Review (Current Run)
+- `example/16.MARTINI/prepare_system.py` now exposes a new `analyze-depth-symmetry` subcommand that:
+  - pools DOPC bead samples into `Q0/Qa/Na/C1/C3`,
+  - splits them into upper/lower leaflet signed depths,
+  - evaluates raw `membrane.h5` channels with `symmetrize=False`,
+  - reports both observed-leaflet and mirrored same-`|z|` comparisons,
+  - writes CSV, JSON, and PNG outputs.
+- The new JSON schema is `leaflet_depth_symmetry_audit_v1`.
+- The new PNG is a diagnostic figure only; it does not feed the cross-table builder or workflow runtime.
+- Verification passed:
+  - `python3 -m py_compile example/16.MARTINI/prepare_system.py`
+  - `python3 example/16.MARTINI/prepare_system.py analyze-depth-symmetry --bilayer-pdb example/16.MARTINI/pdb/bilayer.MARTINI.pdb --lipid-itp example/16.MARTINI/ff_dry/dry_martini_v2.1_lipids.itp --membrane-h5 parameters/ff_2.1/membrane.h5 --output-csv example/16.MARTINI/outputs/test_depth_symmetry_20260307/depth_symmetry_analysis.csv --output-json example/16.MARTINI/outputs/test_depth_symmetry_20260307/depth_symmetry_analysis.json --output-png example/16.MARTINI/outputs/test_depth_symmetry_20260307/depth_symmetry_analysis.png`
+- Produced artifacts:
+  - `example/16.MARTINI/outputs/test_depth_symmetry_20260307/depth_symmetry_analysis.csv`
+  - `example/16.MARTINI/outputs/test_depth_symmetry_20260307/depth_symmetry_analysis.json`
+  - `example/16.MARTINI/outputs/test_depth_symmetry_20260307/depth_symmetry_analysis.png`
+- Verified output content:
+  - CSV contains exactly 5 rows for `Q0`, `Qa`, `Na`, `C1`, `C3`
+  - JSON reports `schema=leaflet_depth_symmetry_audit_v1`
+  - direct code-path recomputation matches the written CSV/JSON values for checked fields
+  - representative asymmetry remained large, e.g. `Q0 observed_cb_backbone_mean_diff = 1.013489`
+
 ## 2026-03-07 Reset: Move Dry-MARTINI Nonbond Table Build into `martini.h5`
 
 ### Project Goal (Current)

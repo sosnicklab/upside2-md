@@ -1,5 +1,32 @@
 # Findings
 
+## 2026-03-07 (Raw `membrane.h5` Is Asymmetric at the Current DOPC Type Depths)
+- The existing depth-analysis helpers in `prepare_system.py` already separate two behaviors:
+  - raw leaflet evaluation via `evaluate_at_signed_depth(..., symmetrize=False)`
+  - build-time symmetrized evaluation via `evaluate_at_signed_depth(..., symmetrize=True)`
+- DOPC-covered dry-type pooling from `dry_martini_v2.1_lipids.itp` is currently:
+  - `Q0 -> [NC3]`
+  - `Qa -> [PO4]`
+  - `Na -> [GL1, GL2]`
+  - `C1 -> [C1A, C2A, C3A, C4A, C5A, C1B, C2B, C3B, C4B, C5B]`
+  - `C3 -> [D3A, D3B]`
+- Measured DOPC signed-depth means from `pdb/bilayer.MARTINI.pdb` are nearly symmetric in position but not identical in raw membrane value:
+  - `Q0`: upper `+19.7617 Å`, lower `-19.7719 Å`
+  - `Qa`: upper `+18.2691 Å`, lower `-18.1973 Å`
+  - `Na`: upper `+13.4868 Å`, lower `-13.6838 Å`
+  - `C1`: upper `+5.6998 Å`, lower `-5.4962 Å`
+  - `C3`: upper `+2.2064 Å`, lower `-2.5638 Å`
+- Direct raw-channel comparisons at those observed leaflet depths show large upper/lower mismatches, especially in the headgroup region. Representative differences:
+  - `Q0`: `cb_backbone_mean` diff `+1.0135`, `hb_donor_unbound` diff `+2.2133`
+  - `Qa`: `cb_backbone_mean` diff `+1.0135`, `hb_donor_unbound` diff `+2.2329`
+  - `Na`: `cb_backbone_mean` diff `+0.9709`, `hb_acceptor_unbound` diff `+1.2294`
+  - `C1`: `cb_backbone_mean` diff `+0.3229`
+  - `C3`: `cb_backbone_mean` diff `+0.1941`
+- Conclusion for the new diagnostic:
+  - the first report must expose raw `V(+d)` vs `V(-d)` directly,
+  - it should stay diagnostic-only for now,
+  - and it should not reuse the current symmetrized builder outputs if the goal is to test leaflet symmetry.
+
 ## 2026-03-07 (Published `martini.h5` Now Includes Dry-Dry Nonbond Parameters)
 - The published `parameters/ff_2.1/martini.h5` artifact is no longer cross-only. It now contains:
   - `/spline/cross` for the Upside backbone cross term

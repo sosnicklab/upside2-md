@@ -1,5 +1,52 @@
 # Findings
 
+- 2026-03-07: `ConDiv_symlay/build_layer_manifest.py` had to parse 4-character lipid residue names from the bilayer PDB (`DOPC` in columns `17:21`), not the 3-character slice used in some other helpers. Using `17:20` silently dropped the terminal `C` and produced zero matched lipid atoms.
+- 2026-03-07: The new `ConDiv_symlay` task should use the repo-root tracking files (`task_plan.md`, `findings.md`, `progress.md`) because the workflow lives at `/Users/yinhan/Documents/upside2-md/ConDiv_symlay`, not under `example/16.MARTINI/`.
+- 2026-03-07: `ConDiv/` is already a self-contained membrane-training workflow with the required runner surface (`run_init.sh`, `run_local.sh`, `run_remote.sh`, `run_validate_rounds.sh`), helper scripts, bundled `param0..3`, `upside_input*`, `pdb_list*`, and a copied nested `venv/`.
+- 2026-03-07: `ConDiv/run_init.sh`, `run_local.sh`, `run_remote.sh`, and `run_validate_rounds.sh` all bootstrap the project-root `.venv` and `source.sh`, export `CONDIV_PROJECT_ROOT`, and support `WORKER_LAUNCH=auto|local|srun`; this is the correct portability surface to preserve in `ConDiv_symlay`.
+- 2026-03-07: `ConDiv/ConDiv_mem.py` writes the standard `membrane.h5` arrays (`cb_energy`, `icb_energy`, `hb_energy`, `ihb_energy`) and copies itself into the run directory as `ConDiv_mem.py`, so the cloned workflow should keep that filename for checkpoint portability.
+- 2026-03-07: `ConDiv/ConDiv_mem.py` currently applies Adam updates directly to the four membrane parameter blocks and writes them through `expand_param(...)`; the hard symmetry/layer projection belongs between `new_param = param + step_update` and `expand_param(new_param, ...)`.
+- 2026-03-07: The stored `membrane.h5` arrays are clamped spline coefficients, not raw sampled values. Existing tooling evaluates them with `ue.clamped_spline_value(...)` and reconstructs them with `ue.clamped_spline_solve(...)`, so the new symmetric multilayer constraint must operate in sampled physical-curve space and solve back to coefficients.
+- 2026-03-07: The current published `parameters/ff_2.1/membrane.h5` has the same schema/shapes as `ConDiv/param0..3/membrane.h5` but asymmetric supports:
+  - `cb_energy` `(20, 2, 18)` with `cb_z_min=-17`, `cb_z_max=15`
+  - `hb_energy` `(2, 2, 18)` with `hb_z_min=-33`, `hb_z_max=15`
+- 2026-03-07: The user corrected the DOPC multilayer model from bead-name layers to a topology-slot model because DOPC is bifurcated at `Qa`. The canonical full-sequence type template to preserve is:
+  - `Q0-Qa-Na-C1-C3-C1-C1-C1-C1-C3-C1-Na-Qa-Q0`
+- 2026-03-07: For the current DOPC topology in `example/16.MARTINI/ff_dry/dry_martini_v2.1_lipids.itp`, the active bead names are:
+  - `NC3(Q0)`, `PO4(Qa)`, `GL1/GL2(Na)`, `C1A/C2A/D3A/C4A/C5A`, `C1B/C2B/D3B/C4B/C5B`
+- 2026-03-07: The user-corrected topology-slot basis implies repeated type slots are distinct by position, not by bead name. The natural current-DOPC slot membership for the first implementation is:
+  - `Q0 -> NC3`
+  - `Qa -> PO4`
+  - `Na -> GL1, GL2`
+  - outer `C1 -> C1A, C1B, C2A, C2B`
+  - `C3 -> D3A, D3B`
+  - inner `C1` slot 1 -> `C4A, C4B`
+  - inner `C1` slot 2 -> `C5A, C5B`
+- 2026-03-07: The observed DOPC bead depths in `example/16.MARTINI/pdb/bilayer.MARTINI.pdb` are not strictly depth-sorted by topology order, so the training manifest should preserve the canonical slot sequence for labeling while using the measured mean `|z-z_center|` values as the projection anchors.
+- 2026-03-07: The first working `ConDiv_symlay` manifest built the corrected full type sequence exactly:
+  - `Q0-Qa-Na-C1-C3-C1-C1-C1-C1-C3-C1-Na-Qa-Q0`
+  and measured positive projection depths (A):
+  - `2.157`, `2.373`, `4.666`, `7.781`, `13.585`, `18.233`, `19.767`
+- 2026-03-07: Seeding the current `parameters/ff_2.1/membrane.h5` into `ConDiv_symlay` expands the supports to:
+  - `cb`: `[-21, 21]`
+  - `hb`: `[-33, 33]`
+  while keeping the standard `membrane.h5` tensor shapes unchanged.
+- 2026-03-07: In the constrained clamped-spline representation, the written curves are not exactly piecewise-linear on a dense z-grid after `ue.clamped_spline_solve(...)`; practical residuals for the seeded constrained file were about:
+  - max symmetry residual `~0.089`
+  - max projection residual `~0.193`
+  so `ConDiv_symlay` constraint validation needs a tolerance band matched to the spline representation rather than near-zero dense-grid thresholds.
+- 2026-03-07: `ConDiv_symlay/ConDiv_mem.py::expand_param(...)` needed a second constrained projection pass on the emitted arrays, because the inner-curve rebuild (`shift_inner_curve`) otherwise broke symmetry in the written `membrane.h5` even when the in-memory checkpoint parameters were already projected.
+- 2026-03-07: Reduced smoke verification succeeded for the cloned workflow:
+  - `run_init.sh` passed in `/tmp/condiv_symlay_smoke_init3`
+  - `run_local.sh 1` passed in `/tmp/condiv_symlay_smoke_init3`
+  - `run_validate_rounds.sh` passed in `/tmp/condiv_symlay_validate_smoke`
+  - local shell execution of `bash ConDiv_symlay/run_remote.sh 0` passed against the produced checkpoint
+- 2026-03-08: A fresh random one-step local round can still fail at the parent level on a target-specific nonzero worker exit even when the worker writes a finite `*.divergence.pkl`; on the first fresh run, `7jna` returned nonzero after writing finite divergence metrics and the parent aborted with `All jobs failed`. For a deterministic “script works” confirmation, using a controlled one-protein list avoids random target instability.
+- 2026-03-08: A fresh controlled short round using only `5vb2` succeeded end-to-end in `/tmp/condiv_symlay_short_round_controlled`:
+  - `run_init.sh` passed
+  - `run_local.sh 1` passed with `Median RMSD 0.57 0.84`
+  - post-round `validate_symlay_constraints.py` passed on `epoch_00_minibatch_00/checkpoint.pkl`
+
 - 2026-02-12: Dry MARTINI Gromacs workflow files are present at `/Users/yinhan/Downloads/charmm-gui-7090685331/gromacs` with sequence: `step6.0_minimization.mdp`, `step6.1_minimization.mdp`, `step6.2` to `step6.6` equilibration, and `step7_production.mdp`.
 - 2026-02-12: Existing bilayer workflow script already performs staged minimization/equilibration/production but was tuned for prior MARTINI assumptions.
 - 2026-02-12: Dry MARTINI mdp settings indicate semi-isotropic coupling for relaxation (`tau-p=4.0`, membrane-plane compressibility equivalent to `3e-4 bar^-1`, normal-axis fixed for implicit systems) and a pressure-coupling strategy that transitions from Berendsen to Parrinello-Rahman as described in the paper note.

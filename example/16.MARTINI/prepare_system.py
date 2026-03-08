@@ -813,6 +813,13 @@ REQUIRED_DEPTH_TABLE_COLUMNS = (
     "hb_acceptor_bound",
     "hb_mean",
 )
+DEPTH_SYMMETRY_SCHEMA = "leaflet_depth_symmetry_audit_v1"
+DEPTH_SYMMETRY_CHANNEL_FIELDS = REQUIRED_DEPTH_TABLE_COLUMNS[5:]
+DEPTH_SYMMETRY_PLOT_FIELDS = (
+    "cb_backbone_mean",
+    "hb_donor_unbound",
+    "hb_acceptor_unbound",
+)
 REQUIRED_CROSS_TABLE_COLUMNS = (
     "protein_class",
     "env_type",
@@ -1938,6 +1945,327 @@ def summarize_depth_samples(sample_map, cb_z, hb_z, cb_energy, hb_energy):
     return summary
 
 
+def build_bead_names_by_type(atom_to_type, bead_signed_samples):
+    bead_names = defaultdict(list)
+    for bead_name, bead_type in atom_to_type.items():
+        bead_name = str(bead_name).strip().upper()
+        bead_type = str(bead_type).strip()
+        if bead_name not in bead_signed_samples:
+            continue
+        bead_names[bead_type].append(bead_name)
+    return {bead_type: sorted(names) for bead_type, names in bead_names.items()}
+
+
+def split_leaflet_signed_samples(signed_samples):
+    signed = np.asarray(signed_samples, dtype=np.float64)
+    zero_mask = np.isclose(signed, 0.0, atol=1e-8)
+    upper = signed[signed > 0.0]
+    lower = signed[signed < 0.0]
+    midplane = signed[zero_mask]
+    return upper, lower, midplane
+
+
+def compare_membrane_channels_at_depths(upper_depth, lower_depth, cb_z, hb_z, cb_energy, hb_energy):
+    upper_values = evaluate_at_signed_depth(upper_depth, cb_z, hb_z, cb_energy, hb_energy, symmetrize=False)
+    lower_values = evaluate_at_signed_depth(lower_depth, cb_z, hb_z, cb_energy, hb_energy, symmetrize=False)
+    channels = {}
+    for field in DEPTH_SYMMETRY_CHANNEL_FIELDS:
+        upper_value = float(upper_values[field])
+        lower_value = float(lower_values[field])
+        channels[field] = {
+            "upper": upper_value,
+            "lower": lower_value,
+            "diff_upper_minus_lower": float(upper_value - lower_value),
+        }
+    return {
+        "upper_depth": float(upper_depth),
+        "lower_depth": float(lower_depth),
+        "channels": channels,
+    }
+
+
+def analyze_depth_symmetry(type_signed_samples, bead_names_by_type, cb_z, hb_z, cb_energy, hb_energy):
+    results = []
+    for bead_type in DOPC_COVERED_TYPES:
+        if bead_type not in type_signed_samples:
+            raise ValueError(f"Missing signed samples for covered dry type {bead_type}")
+        signed = np.asarray(type_signed_samples[bead_type], dtype=np.float64)
+        upper, lower, midplane = split_leaflet_signed_samples(signed)
+        if upper.size == 0 or lower.size == 0:
+            raise ValueError(
+                f"Need both upper and lower leaflet samples for {bead_type}; "
+                f"got upper={upper.size} lower={lower.size}"
+            )
+
+        upper_mean_signed = float(np.mean(upper))
+        lower_mean_signed = float(np.mean(lower))
+        upper_mean_abs = float(np.mean(np.abs(upper)))
+        lower_mean_abs = float(np.mean(np.abs(lower)))
+
+        entry = {
+            "bead_type": bead_type,
+            "bead_names": bead_names_by_type.get(bead_type, []),
+            "sample_counts": {
+                "total": int(signed.size),
+                "upper": int(upper.size),
+                "lower": int(lower.size),
+                "midplane": int(midplane.size),
+            },
+            "sample_depths": {
+                "upper_mean_signed_depth": upper_mean_signed,
+                "lower_mean_signed_depth": lower_mean_signed,
+                "upper_mean_abs_depth": upper_mean_abs,
+                "lower_mean_abs_depth": lower_mean_abs,
+                "upper_std_abs_depth": float(np.std(np.abs(upper))),
+                "lower_std_abs_depth": float(np.std(np.abs(lower))),
+            },
+            "observed_leaflet": compare_membrane_channels_at_depths(
+                upper_mean_signed,
+                lower_mean_signed,
+                cb_z,
+                hb_z,
+                cb_energy,
+                hb_energy,
+            ),
+            "mirrored_upper_magnitude": {
+                "depth_magnitude": upper_mean_abs,
+                **compare_membrane_channels_at_depths(
+                    upper_mean_abs,
+                    -upper_mean_abs,
+                    cb_z,
+                    hb_z,
+                    cb_energy,
+                    hb_energy,
+                ),
+            },
+            "mirrored_lower_magnitude": {
+                "depth_magnitude": lower_mean_abs,
+                **compare_membrane_channels_at_depths(
+                    lower_mean_abs,
+                    -lower_mean_abs,
+                    cb_z,
+                    hb_z,
+                    cb_energy,
+                    hb_energy,
+                ),
+            },
+        }
+        results.append(entry)
+    return results
+
+
+def summarize_depth_symmetry_results(results):
+    summary = {}
+    comparison_labels = (
+        ("observed_leaflet", "observed_leaflet"),
+        ("mirrored_upper_magnitude", "mirrored_upper_magnitude"),
+        ("mirrored_lower_magnitude", "mirrored_lower_magnitude"),
+    )
+    for field in DEPTH_SYMMETRY_CHANNEL_FIELDS:
+        candidates = []
+        for entry in results:
+            for comparison_key, comparison_label in comparison_labels:
+                comparison = entry[comparison_key]
+                diff = float(comparison["channels"][field]["diff_upper_minus_lower"])
+                candidates.append(
+                    {
+                        "bead_type": entry["bead_type"],
+                        "comparison": comparison_label,
+                        "upper_depth": float(comparison["upper_depth"]),
+                        "lower_depth": float(comparison["lower_depth"]),
+                        "diff_upper_minus_lower": diff,
+                        "abs_diff": float(abs(diff)),
+                    }
+                )
+        summary[field] = max(candidates, key=lambda row: row["abs_diff"]) if candidates else {
+            "bead_type": "none",
+            "comparison": "none",
+            "upper_depth": 0.0,
+            "lower_depth": 0.0,
+            "diff_upper_minus_lower": 0.0,
+            "abs_diff": 0.0,
+        }
+    return summary
+
+
+def depth_symmetry_csv_fieldnames():
+    fieldnames = [
+        "bead_type",
+        "bead_names",
+        "total_count",
+        "upper_count",
+        "lower_count",
+        "midplane_count",
+        "upper_mean_signed_depth",
+        "lower_mean_signed_depth",
+        "upper_mean_abs_depth",
+        "lower_mean_abs_depth",
+        "upper_std_abs_depth",
+        "lower_std_abs_depth",
+        "observed_upper_depth",
+        "observed_lower_depth",
+        "mirrored_upper_magnitude_depth",
+        "mirrored_lower_magnitude_depth",
+    ]
+    prefixes = (
+        ("observed", "observed_leaflet"),
+        ("mirrored_upper_magnitude", "mirrored_upper_magnitude"),
+        ("mirrored_lower_magnitude", "mirrored_lower_magnitude"),
+    )
+    for prefix, _ in prefixes:
+        for field in DEPTH_SYMMETRY_CHANNEL_FIELDS:
+            fieldnames.extend(
+                [
+                    f"{prefix}_{field}_upper",
+                    f"{prefix}_{field}_lower",
+                    f"{prefix}_{field}_diff",
+                ]
+            )
+    return fieldnames
+
+
+def build_depth_symmetry_csv_rows(results):
+    rows = []
+    prefixes = (
+        ("observed", "observed_leaflet"),
+        ("mirrored_upper_magnitude", "mirrored_upper_magnitude"),
+        ("mirrored_lower_magnitude", "mirrored_lower_magnitude"),
+    )
+    for entry in results:
+        row = {
+            "bead_type": entry["bead_type"],
+            "bead_names": ",".join(entry["bead_names"]),
+            "total_count": int(entry["sample_counts"]["total"]),
+            "upper_count": int(entry["sample_counts"]["upper"]),
+            "lower_count": int(entry["sample_counts"]["lower"]),
+            "midplane_count": int(entry["sample_counts"]["midplane"]),
+            "upper_mean_signed_depth": float(entry["sample_depths"]["upper_mean_signed_depth"]),
+            "lower_mean_signed_depth": float(entry["sample_depths"]["lower_mean_signed_depth"]),
+            "upper_mean_abs_depth": float(entry["sample_depths"]["upper_mean_abs_depth"]),
+            "lower_mean_abs_depth": float(entry["sample_depths"]["lower_mean_abs_depth"]),
+            "upper_std_abs_depth": float(entry["sample_depths"]["upper_std_abs_depth"]),
+            "lower_std_abs_depth": float(entry["sample_depths"]["lower_std_abs_depth"]),
+            "observed_upper_depth": float(entry["observed_leaflet"]["upper_depth"]),
+            "observed_lower_depth": float(entry["observed_leaflet"]["lower_depth"]),
+            "mirrored_upper_magnitude_depth": float(entry["mirrored_upper_magnitude"]["depth_magnitude"]),
+            "mirrored_lower_magnitude_depth": float(entry["mirrored_lower_magnitude"]["depth_magnitude"]),
+        }
+        for prefix, key in prefixes:
+            comparison = entry[key]
+            for field in DEPTH_SYMMETRY_CHANNEL_FIELDS:
+                channel = comparison["channels"][field]
+                row[f"{prefix}_{field}_upper"] = float(channel["upper"])
+                row[f"{prefix}_{field}_lower"] = float(channel["lower"])
+                row[f"{prefix}_{field}_diff"] = float(channel["diff_upper_minus_lower"])
+        rows.append(row)
+    return rows
+
+
+def write_depth_symmetry_plot(output_png, results, cb_z, hb_z, cb_energy, hb_energy):
+    output_png = output_png.expanduser().resolve()
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+
+    cache_dir = output_png.parent / ".mpl-cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("MPLCONFIGDIR", str(cache_dir))
+    os.environ.setdefault("XDG_CACHE_HOME", str(cache_dir))
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    colors = {
+        "Q0": "#1f77b4",
+        "Qa": "#d62728",
+        "Na": "#2ca02c",
+        "C1": "#ff7f0e",
+        "C3": "#9467bd",
+    }
+    by_type = {entry["bead_type"]: entry for entry in results}
+    plot_curves = {
+        "cb_backbone_mean": {
+            "z": np.asarray(cb_z, dtype=np.float64),
+            "values": np.mean(np.asarray(cb_energy, dtype=np.float64), axis=(0, 1)),
+            "title": "Raw cb backbone mean",
+        },
+        "hb_donor_unbound": {
+            "z": np.asarray(hb_z, dtype=np.float64),
+            "values": np.asarray(hb_energy[0, 0, :], dtype=np.float64),
+            "title": "Raw hb donor unbound",
+        },
+        "hb_acceptor_unbound": {
+            "z": np.asarray(hb_z, dtype=np.float64),
+            "values": np.asarray(hb_energy[1, 0, :], dtype=np.float64),
+            "title": "Raw hb acceptor unbound",
+        },
+    }
+
+    fig, axes = plt.subplots(2, 2, figsize=(13.5, 8.5), constrained_layout=True)
+    depth_ax = axes[0, 0]
+    depth_ax.axvline(0.0, color="0.5", linestyle="--", linewidth=1.0)
+    y_positions = np.arange(len(DOPC_COVERED_TYPES), dtype=np.float64)
+    for y_pos, bead_type in zip(y_positions, DOPC_COVERED_TYPES):
+        entry = by_type[bead_type]
+        stats = entry["sample_depths"]
+        color = colors.get(bead_type, "#333333")
+        lower_depth = float(stats["lower_mean_signed_depth"])
+        upper_depth = float(stats["upper_mean_signed_depth"])
+        lower_spread = float(stats["lower_std_abs_depth"])
+        upper_spread = float(stats["upper_std_abs_depth"])
+        depth_ax.hlines(y_pos, lower_depth, upper_depth, color=color, linewidth=2.0, alpha=0.4)
+        depth_ax.errorbar(
+            [lower_depth],
+            [y_pos],
+            xerr=[lower_spread],
+            fmt="s",
+            color=color,
+            markersize=6,
+            capsize=3,
+        )
+        depth_ax.errorbar(
+            [upper_depth],
+            [y_pos],
+            xerr=[upper_spread],
+            fmt="o",
+            color=color,
+            markersize=6,
+            capsize=3,
+            label=bead_type,
+        )
+    depth_ax.set_yticks(y_positions)
+    depth_ax.set_yticklabels(DOPC_COVERED_TYPES)
+    depth_ax.set_xlabel("Signed depth z - z_center (A)")
+    depth_ax.set_title("DOPC representative leaflet depths")
+    depth_ax.grid(alpha=0.2, linewidth=0.6)
+    depth_ax.legend(loc="best", frameon=False, title="Dry type")
+
+    panel_axes = [axes[0, 1], axes[1, 0], axes[1, 1]]
+    for ax, field in zip(panel_axes, DEPTH_SYMMETRY_PLOT_FIELDS):
+        curve = plot_curves[field]
+        ax.plot(curve["z"], curve["values"], color="black", linewidth=2.0)
+        ax.axvline(0.0, color="0.5", linestyle="--", linewidth=1.0)
+        for bead_type in DOPC_COVERED_TYPES:
+            entry = by_type[bead_type]
+            stats = entry["sample_depths"]
+            observed = entry["observed_leaflet"]["channels"][field]
+            color = colors.get(bead_type, "#333333")
+            upper_depth = float(stats["upper_mean_signed_depth"])
+            lower_depth = float(stats["lower_mean_signed_depth"])
+            ax.axvline(upper_depth, color=color, linewidth=1.0, alpha=0.18)
+            ax.axvline(lower_depth, color=color, linewidth=1.0, alpha=0.18)
+            ax.scatter([upper_depth], [float(observed["upper"])], color=color, marker="o", s=36, zorder=3)
+            ax.scatter([lower_depth], [float(observed["lower"])], color=color, marker="s", s=36, zorder=3)
+        ax.set_title(f"{curve['title']} (o upper, s lower)")
+        ax.set_xlabel("Signed depth z - z_center (A)")
+        ax.set_ylabel("Potential value")
+        ax.grid(alpha=0.2, linewidth=0.6)
+
+    fig.suptitle("DOPC leaflet depth symmetry audit from raw membrane.h5", fontsize=13)
+    fig.savefig(output_png, dpi=200)
+    plt.close(fig)
+
+
 def audit_curve_symmetry(z_grid, values, label):
     overlap_depth = min(abs(float(z_grid[0])), abs(float(z_grid[-1])))
     if overlap_depth <= 0.0:
@@ -2907,6 +3235,77 @@ def run_build_depth_table_command(argv):
         print(f"  {key}={int(bool(value))}")
 
 
+def run_analyze_depth_symmetry_command(argv):
+    parser = argparse.ArgumentParser(
+        description=(
+            "Compare raw membrane.h5 upper/lower leaflet values at the representative "
+            "DOPC depths for Q0, Qa, Na, C1, and C3."
+        )
+    )
+    parser.add_argument("--bilayer-pdb", type=Path, default=Path("pdb/bilayer.MARTINI.pdb"))
+    parser.add_argument("--lipid-itp", type=Path, default=Path("ff_dry/dry_martini_v2.1_lipids.itp"))
+    parser.add_argument("--membrane-h5", type=Path, default=Path("../../parameters/ff_2.1/membrane.h5"))
+    parser.add_argument("--output-csv", type=Path, default=Path("outputs/depth_symmetry_analysis.csv"))
+    parser.add_argument("--output-json", type=Path, default=Path("outputs/depth_symmetry_analysis.json"))
+    parser.add_argument("--output-png", type=Path, default=Path("outputs/depth_symmetry_analysis.png"))
+    parser.add_argument("--lipid-resnames", nargs="+", default=["DOPC", "DOP"])
+    args = parser.parse_args(argv)
+
+    bilayer_pdb = require_existing_file(args.bilayer_pdb)
+    lipid_itp = require_existing_file(args.lipid_itp)
+    membrane_h5 = require_existing_file(args.membrane_h5)
+    output_csv = args.output_csv.expanduser().resolve()
+    output_json = args.output_json.expanduser().resolve()
+    output_png = args.output_png.expanduser().resolve()
+
+    atom_to_type = parse_lipid_itp_atom_types(lipid_itp, args.lipid_resnames)
+    z_center, bead_depth_stats, bead_signed_samples = parse_bilayer_depths(bilayer_pdb, args.lipid_resnames)
+    type_signed_samples = pool_depth_samples_by_type(atom_to_type, bead_signed_samples)
+    bead_names_by_type = build_bead_names_by_type(atom_to_type, bead_signed_samples)
+    cb_z, hb_z, cb_energy, hb_energy, cb_names, term_presence = load_membrane_channels(membrane_h5)
+    results = analyze_depth_symmetry(type_signed_samples, bead_names_by_type, cb_z, hb_z, cb_energy, hb_energy)
+    symmetry_report = audit_membrane_symmetry(cb_z, hb_z, cb_energy, hb_energy, cb_names)
+    diff_summary = summarize_depth_symmetry_results(results)
+
+    rows = build_depth_symmetry_csv_rows(results)
+    write_csv_rows(output_csv, depth_symmetry_csv_fieldnames(), rows)
+    write_depth_symmetry_plot(output_png, results, cb_z, hb_z, cb_energy, hb_energy)
+    write_summary(
+        output_json,
+        {
+            "schema": DEPTH_SYMMETRY_SCHEMA,
+            "analysis_mode": "raw_leaflet_depth_symmetry",
+            "bilayer_pdb": str(bilayer_pdb),
+            "lipid_itp": str(lipid_itp),
+            "membrane_h5": str(membrane_h5),
+            "lipid_resnames": [x.upper() for x in args.lipid_resnames],
+            "z_center": float(z_center),
+            "depth_definition": "|z - z_center| (no PO4 anchor)",
+            "covered_types": list(DOPC_COVERED_TYPES),
+            "channel_fields": list(DEPTH_SYMMETRY_CHANNEL_FIELDS),
+            "plot_fields": list(DEPTH_SYMMETRY_PLOT_FIELDS),
+            "term_presence": term_presence,
+            "bead_depth_stats": bead_depth_stats,
+            "bead_names_by_type": bead_names_by_type,
+            "type_results": results,
+            "global_max_abs_diff_by_channel": diff_summary,
+            "raw_curve_symmetry_report": symmetry_report,
+            "output_csv": str(output_csv),
+            "output_png": str(output_png),
+        },
+    )
+
+    print(f"Wrote depth symmetry CSV: {output_csv}")
+    print(f"Wrote depth symmetry JSON: {output_json}")
+    print(f"Wrote depth symmetry PNG: {output_png}")
+    for field in DEPTH_SYMMETRY_PLOT_FIELDS:
+        worst = diff_summary[field]
+        print(
+            f"  worst {field}: type={worst['bead_type']} comparison={worst['comparison']} "
+            f"abs_diff={worst['abs_diff']:.6f}"
+        )
+
+
 def run_build_backbone_cross_table_command(argv):
     parser = argparse.ArgumentParser(description="Build the backbone cross interaction table artifact.")
     parser.add_argument("--ff-itp", type=Path, default=SCRIPT_DIR / "ff_dry" / "dry_martini_v2.1.itp")
@@ -3088,6 +3487,7 @@ COMMANDS = {
     "inject-backbone-only": run_inject_backbone_only_command,
     "validate-backbone-only": run_validate_backbone_only_command,
     "validate-stage-potentials": run_validate_stage_potentials_command,
+    "analyze-depth-symmetry": run_analyze_depth_symmetry_command,
     "build-depth-table": run_build_depth_table_command,
     "build-backbone-cross-table": run_build_backbone_cross_table_command,
     "inject-backbone-cross": run_inject_backbone_cross_command,

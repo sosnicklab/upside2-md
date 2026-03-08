@@ -1,0 +1,171 @@
+{
+  "bilayer_resnames": [
+    "DOPC"
+  ],
+  "full_type_sequence": [
+    "Q0",
+    "Qa",
+    "Na",
+    "C1",
+    "C3",
+    "C1",
+    "C1",
+    "C1",
+    "C1",
+    "C3",
+    "C1",
+    "Na",
+    "Qa",
+    "Q0"
+  ],
+  "half_slots": [
+    {
+      "count_lower": 36,
+      "count_total": 72,
+      "count_upper": 36,
+      "lower_mean_signed_depth": -19.771885912698416,
+      "mean_abs_depth": 19.766805555555557,
+      "members": [
+        "NC3"
+      ],
+      "slot_id": "q0",
+      "slot_index": 0,
+      "std_abs_depth": 0.9085732985767979,
+      "type": "Q0",
+      "upper_mean_signed_depth": 19.761725198412694
+    },
+    {
+      "count_lower": 36,
+      "count_total": 72,
+      "count_upper": 36,
+      "lower_mean_signed_depth": -18.197274801587305,
+      "mean_abs_depth": 18.233194444444443,
+      "members": [
+        "PO4"
+      ],
+      "slot_id": "qa",
+      "slot_index": 1,
+      "std_abs_depth": 0.9092688544105141,
+      "type": "Qa",
+      "upper_mean_signed_depth": 18.269114087301585
+    },
+    {
+      "count_lower": 72,
+      "count_total": 144,
+      "count_upper": 72,
+      "lower_mean_signed_depth": -13.683844246031748,
+      "mean_abs_depth": 13.58534027777778,
+      "members": [
+        "GL1",
+        "GL2"
+      ],
+      "slot_id": "na",
+      "slot_index": 2,
+      "std_abs_depth": 1.4170395834170917,
+      "type": "Na",
+      "upper_mean_signed_depth": 13.486836309523804
+    },
+    {
+      "count_lower": 144,
+      "count_total": 288,
+      "count_upper": 144,
+      "lower_mean_signed_depth": -7.779747023809526,
+      "mean_abs_depth": 7.781416666666666,
+      "members": [
+        "C1A",
+        "C1B",
+        "C2A",
+        "C2B"
+      ],
+      "slot_id": "c1_outer",
+      "slot_index": 3,
+      "std_abs_depth": 2.708448535280452,
+      "type": "C1",
+      "upper_mean_signed_depth": 7.7830863095238065
+    },
+    {
+      "count_lower": 67,
+      "count_total": 144,
+      "count_upper": 77,
+      "lower_mean_signed_depth": -2.563849013859278,
+      "mean_abs_depth": 2.3727235863095237,
+      "members": [
+        "D3A",
+        "D3B"
+      ],
+      "slot_id": "c3_mid",
+      "slot_index": 4,
+      "std_abs_depth": 1.6200194154673688,
+      "type": "C3",
+      "upper_mean_signed_depth": 2.2064196428571394
+    },
+    {
+      "count_lower": 78,
+      "count_total": 144,
+      "count_upper": 66,
+      "lower_mean_signed_depth": -1.9352598443223479,
+      "mean_abs_depth": 2.157430307539683,
+      "members": [
+        "C4A",
+        "C4B"
+      ],
+      "slot_id": "c1_inner_1",
+      "slot_index": 5,
+      "std_abs_depth": 1.5409593357202147,
+      "type": "C1",
+      "upper_mean_signed_depth": 2.4199954004328976
+    },
+    {
+      "count_lower": 70,
+      "count_total": 144,
+      "count_upper": 74,
+      "lower_mean_signed_depth": -4.766608928571432,
+      "mean_abs_depth": 4.666129712301587,
+      "members": [
+        "C5A",
+        "C5B"
+      ],
+      "slot_id": "c1_inner_2",
+      "slot_index": 6,
+      "std_abs_depth": 2.374681585886674,
+      "type": "C1",
+      "upper_mean_signed_depth": 4.571081805019301
+    }
+  ],
+  "half_type_sequence": [
+    "Q0",
+    "Qa",
+    "Na",
+    "C1",
+    "C3",
+    "C1",
+    "C1"
+  ],
+  "lipid_resname": "DOPC",
+  "positive_projection_depths": [
+    2.157430307539683,
+    2.3727235863095237,
+    4.666129712301587,
+    7.781416666666666,
+    13.58534027777778,
+    18.233194444444443,
+    19.766805555555557
+  ],
+  "positive_projection_slot_ids": [
+    "c1_inner_1",
+    "c3_mid",
+    "c1_inner_2",
+    "c1_outer",
+    "na",
+    "qa",
+    "q0"
+  ],
+  "schema": "condiv_symlay_layer_manifest_v1",
+  "source": {
+    "bilayer_pdb": "example/16.MARTINI/pdb/bilayer.MARTINI.pdb",
+    "lipid_itp": "example/16.MARTINI/ff_dry/dry_martini_v2.1_lipids.itp",
+    "template": "ConDiv_symlay/layer_template.json"
+  },
+  "template_schema": "condiv_symlay_layer_template_v1",
+  "z_center": 42.48458035714286
+}

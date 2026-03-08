@@ -1,5 +1,37 @@
 # Progress Log
 
+## 2026-03-07 (DOPC leaflet depth symmetry diagnostic)
+- Re-read `example/16.MARTINI/task_plan.md` and implemented the user-requested first-step diagnostic as a standalone analysis command instead of changing the existing force-field build path.
+- Modified files:
+  - `example/16.MARTINI/prepare_system.py`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+- Code changes:
+  - added `prepare_system.py analyze-depth-symmetry`
+  - added helper logic to:
+    - map DOPC bead names onto `Q0/Qa/Na/C1/C3`
+    - split pooled signed depths into upper/lower leaflet samples
+    - evaluate raw membrane channels at observed upper/lower mean depths
+    - evaluate mirrored `V(+|z|)` vs `V(-|z|)` checks at each leaflet magnitude
+    - flatten the results into a wide CSV row per dry type
+    - write a headless matplotlib PNG showing representative depths and raw channel curves with sampled upper/lower markers
+  - kept the existing `build-depth-table`, cross-table builder, and workflow runtime unchanged
+- Verification:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py` -> pass
+  - `source .venv/bin/activate && source source.sh && python3 example/16.MARTINI/prepare_system.py analyze-depth-symmetry --bilayer-pdb example/16.MARTINI/pdb/bilayer.MARTINI.pdb --lipid-itp example/16.MARTINI/ff_dry/dry_martini_v2.1_lipids.itp --membrane-h5 parameters/ff_2.1/membrane.h5 --output-csv example/16.MARTINI/outputs/test_depth_symmetry_20260307/depth_symmetry_analysis.csv --output-json example/16.MARTINI/outputs/test_depth_symmetry_20260307/depth_symmetry_analysis.json --output-png example/16.MARTINI/outputs/test_depth_symmetry_20260307/depth_symmetry_analysis.png` -> pass
+  - generated artifact checks:
+    - CSV row count `5` with types `Q0/Qa/Na/C1/C3`
+    - JSON `schema=leaflet_depth_symmetry_audit_v1`
+    - PNG exists and is non-empty (`228118` bytes)
+    - direct recomputation matched written values for checked fields:
+      - `Q0 observed cb_backbone_mean diff = 1.0134894767347078`
+      - `Na mirrored-upper hb_acceptor_unbound diff = 1.2441841419426019`
+  - command summary lines reported:
+    - worst `cb_backbone_mean`: `Q0`, `observed_leaflet`, `abs_diff=1.013489`
+    - worst `hb_donor_unbound`: `Qa`, `observed_leaflet`, `abs_diff=2.232924`
+    - worst `hb_acceptor_unbound`: `Na`, `mirrored_upper_magnitude`, `abs_diff=1.244184`
+
 ## 2026-03-07 (Move dry-MARTINI nonbond lookup into published `martini.h5`)
 - Re-read `example/16.MARTINI/task_plan.md` and treated the request as a force-field artifact unification task, not a runtime form change.
 - Modified files:
