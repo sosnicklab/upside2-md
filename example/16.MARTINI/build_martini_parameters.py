@@ -14,8 +14,8 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
-            "Build refined dry-MARTINI/Upside parameter tables and publish the "
-            "runtime cross artifact to parameters/ff_2.1/martini.h5."
+            "Build the published MARTINI force-field artifact with both the "
+            "dry-dry nonbond table and the refined runtime backbone cross table."
         )
     )
     parser.add_argument(
@@ -114,6 +114,11 @@ def main(argv=None):
         ]
     )
 
+    prep.write_dry_nonbond_forcefield_artifact(
+        cross_h5,
+        args.ff_itp.expanduser().resolve(),
+    )
+
     if args.validate:
         prep.run_validate_backbone_only_command(
             [
@@ -140,7 +145,7 @@ def main(argv=None):
             ]
         )
 
-    print(f"Published martini cross artifact to: {publish_output}")
+    print(f"Published MARTINI force-field artifact to: {publish_output}")
     print(f"Build outputs written to: {output_dir}")
 
 

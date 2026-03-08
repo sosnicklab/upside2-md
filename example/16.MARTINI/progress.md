@@ -1,5 +1,100 @@
 # Progress Log
 
+## 2026-03-07 (Move dry-MARTINI nonbond lookup into published `martini.h5`)
+- Re-read `example/16.MARTINI/task_plan.md` and treated the request as a force-field artifact unification task, not a runtime form change.
+- Modified files:
+  - `example/16.MARTINI/lib.py`
+  - `example/16.MARTINI/prepare_system.py`
+  - `example/16.MARTINI/build_martini_parameters.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+- Code changes:
+  - added dry nonbond artifact helpers in `lib.py`:
+    - default published artifact path resolution
+    - `/dry/nonbond` writer
+    - `/dry/nonbond` loader
+  - changed `convert_stage()` to load dry-dry `epsilon/sigma` from `martini.h5` instead of parsing `dry_martini_v2.1.itp`
+  - kept dry ITP usage only for topology and atomtype masses
+  - extended `prepare_system.py` validation so published artifacts must include `martini_dry_nonbond_v1` with `38` dry types
+  - updated `build_martini_parameters.py` to append the dry nonbond section before publishing `martini.h5`
+  - updated `run_sim_1rkl.sh` to:
+    - export `UPSIDE_MARTINI_FORCEFIELD_H5`
+    - reject artifacts missing the dry nonbond section
+    - label the published file as a MARTINI force-field artifact
+- Verification:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/lib.py example/16.MARTINI/prepare_system.py example/16.MARTINI/build_martini_parameters.py` -> pass
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
+  - first builder rerun caught an internal ordering issue between `/classes/environment` and `/dry/nonbond/type_names`; fixed by writing dry nonbond matrices in the published environment-class order
+  - first reduced rerun caught one leftover `martini_param_file` reference in `convert_stage()`; fixed by pointing the mass-table read to `pick_ff_file("dry_martini_v2.1.itp")`
+  - rebuilt and published:
+    `source .venv/bin/activate && source source.sh && python3 example/16.MARTINI/build_martini_parameters.py --output-dir example/16.MARTINI/outputs/test_martini_ff_full_20260307 --publish-output parameters/ff_2.1/martini.h5`
+  - artifact sanity check:
+    - `dry_schema martini_dry_nonbond_v1`
+    - `dry_n_type 38`
+    - `dry_datasets ['epsilon_eup', 'sigma_angstrom', 'type_names']`
+    - `cross_schema martini_backbone_spline_cross_v1`
+  - reduced rerun completed through stage `7.0`:
+    `source ../../.venv/bin/activate && source ../../source.sh && env RUN_DIR=outputs/test_martini_ff_full_workflow MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=20 EQ_63_NSTEPS=20 EQ_64_NSTEPS=20 EQ_65_NSTEPS=20 EQ_66_NSTEPS=20 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=10 PROD_FRAME_STEPS=1 BACKBONE_CROSS_ENABLE=1 HYBRID_VALIDATE=1 ./run_sim_1rkl.sh`
+  - reduced rerun proof:
+    - stage `0.5` printed `Dry nonbond artifact schema: martini_dry_nonbond_v1 (38 types)`
+    - stage conversion printed `Using published MARTINI force-field artifact: /Users/yinhan/Documents/upside2-md/parameters/ff_2.1/martini.h5`
+    - `stage_7.0.prepared.up` validation printed `dry_schema=martini_dry_nonbond_v1 dry_types=38`
+    - workflow completed successfully through stage `7.0`
+
+## 2026-03-07 (Verify spline-form and distance dependence of the cross potential)
+- Re-read `example/16.MARTINI/task_plan.md` and treated the request as a runtime-potential-form audit.
+- Code/schema inspection:
+  - `rg -n "martini_spline_cross_potential|radial_grid|table_values|cutoff|radial_min|radial_step" example/16.MARTINI/prepare_system.py src`
+  - confirmed the builder/injector schema is spline-table based and the runtime node is `martini_spline_cross_potential`
+- C++ runtime inspection:
+  - `sed -n '1540,1698p' src/martini.cpp`
+  - confirmed the node computes pair distance `r`, maps it to spline coordinate `(r - radial_min) / radial_step`, and evaluates `spline_tables->evaluate_value_and_deriv(...)`
+- Live artifact/stage inspection:
+  - checked `parameters/ff_2.1/martini.h5:/spline/cross`
+  - checked `example/16.MARTINI/outputs/test_membrane_guard/checkpoints/1rkl.stage_7.0.prepared.up:/input/potential/martini_spline_cross_potential`
+  - observed datasets `radial_grid` and `table_values`, plus attrs `cutoff`, `radial_min`, `radial_step`
+  - confirmed no LJ/Coulomb-style per-pair parameter arrays for the cross term
+- Distance-dependence proof:
+  - artifact table shape `(4, 38, 101)` and injected stage table shape `(4, 6, 101)`
+  - representative stage table changed across radius from `-4.644858` at `2.0 Å` to `0.921922` near `4.7 Å` and decayed toward `0` near `12.0 Å`
+  - additional representative class pairs showed different minima/maxima at different radii, confirming the term is not constant in distance
+- No code changes were needed for this verification task.
+
+## 2026-03-07 (Runtime membrane-node guard for `run_sim_1rkl.sh`)
+- Re-read `example/16.MARTINI/task_plan.md` and treated the user concern as a runtime-potential audit, not a parameter-build change request.
+- Runtime/build split audit:
+  - `rg -n "membrane\\.h5|membrane_potential|cb_surf_membrane_potential|hb_surf_membrane_potential|membranelateral_potential|surface" example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/prepare_system.py example/16.MARTINI/lib.py py/upside_config.py src -g '!example/16.MARTINI/outputs/**'`
+  - confirmed `membrane.h5` appears in the offline `build-depth-table` CLI path, while `run_sim_1rkl.sh` points runtime bilayer/cross usage to `parameters/ff_2.1/martini.h5`
+- Generated-file inspection:
+  - `python3 - <<'PY' ...` on `example/16.MARTINI/outputs/test_role_proxy_rows_workflow/checkpoints/1rkl.stage_6.0.prepared.up`
+  - `python3 - <<'PY' ...` on `example/16.MARTINI/outputs/test_role_proxy_rows_workflow/checkpoints/1rkl.stage_7.0.prepared.up`
+  - both returned `[]` for membrane/surface runtime-node matches
+- Modified files:
+  - `example/16.MARTINI/prepare_system.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+  - `lessons.md`
+- Code changes:
+  - added `FORBIDDEN_MEMBRANE_RUNTIME_NODES` to `prepare_system.py`
+  - added `validate_stage_potential_nodes(...)` plus CLI subcommand `validate-stage-potentials`
+  - made `validate_up_file(...)` also reject membrane/surface runtime nodes
+  - updated `run_sim_1rkl.sh` to call `python3 prepare_system.py validate-stage-potentials "$target_file"` for every prepared stage when validation is enabled
+- Verification:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py` -> pass
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
+  - `source .venv/bin/activate && source source.sh && python3 example/16.MARTINI/prepare_system.py validate-stage-potentials example/16.MARTINI/outputs/test_role_proxy_rows_workflow/checkpoints/1rkl.stage_6.0.prepared.up` -> pass (`n_nodes=3`, `forbidden_membrane_nodes=0`)
+  - `source .venv/bin/activate && source source.sh && python3 example/16.MARTINI/prepare_system.py validate-stage-potentials example/16.MARTINI/outputs/test_role_proxy_rows_workflow/checkpoints/1rkl.stage_7.0.prepared.up` -> pass (`n_nodes=20`, `forbidden_membrane_nodes=0`)
+  - `source .venv/bin/activate && source source.sh && python3 example/16.MARTINI/prepare_system.py validate-backbone-only example/16.MARTINI/outputs/test_role_proxy_rows_workflow/checkpoints/1rkl.stage_7.0.prepared.up --cross-artifact parameters/ff_2.1/martini.h5` -> pass
+  - reduced rerun:
+    `source ../../.venv/bin/activate && source ../../source.sh && env RUN_DIR=outputs/test_membrane_guard MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=20 EQ_63_NSTEPS=20 EQ_64_NSTEPS=20 EQ_65_NSTEPS=20 EQ_66_NSTEPS=20 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=10 PROD_FRAME_STEPS=1 BACKBONE_CROSS_ENABLE=1 HYBRID_VALIDATE=1 ./run_sim_1rkl.sh`
+  - reduced rerun completed through stage `7.0`
+  - workflow validation output showed `forbidden_membrane_nodes=0` on prepared stages `6.0`, `6.1`, `6.2`, `6.3`, `6.4`, `6.5`, `6.6`, and `7.0`
+  - production-stage validation still passed with `cross_artifact schema=martini_backbone_spline_cross_v1 calibration_mode=role_specific_proxy_pair_rows_v1 descriptor_name=role_proxy_pair_epsilon_v1 env_types=38 n_radial=101`
+
 ## 2026-03-06 (PBC Primary-Box Containment for `run_sim_1rkl.sh`)
 - Re-read `example/16.MARTINI/task_plan.md` and treated the user report as a coordinate containment bug, not a force-field change request.
 - Fresh current-code diagnosis run:
@@ -2113,3 +2208,32 @@
   - one-step direct runtime probe on a copied production checkpoint passed:
     - `source .venv/bin/activate && source source.sh && obj/upside example/16.MARTINI/outputs/test_rg_backbone_fix/1rkl.stage_7.0.up --duration-steps 1 --frame-interval 0.002 --temperature 0.8647 --time-step 0.002 --thermostat-timescale 4.0 --thermostat-interval -1 --seed 7090685331 --integrator v --disable-recentering`
     - runtime printed `Rg  12.7 A` at step `0`
+
+## 2026-03-07 (Role-Specific Dry-MARTINI Proxy-Row Cross Calibration)
+- Replaced the previous shared-descriptor spline cross-table calibration in `example/16.MARTINI/prepare_system.py`.
+- New role proxy mapping used for dry-MARTINI row evaluation:
+  - `N -> Qd`
+  - `CA -> C1`
+  - `C -> C2`
+  - `O -> Qa`
+- Implementation changes:
+  - the descriptor for each role/environment pair is now `epsilon(proxy_role, env_type)` instead of the old shared `mean_epsilon_to_all_dry_types`,
+  - `r_min` now comes from the matching role-specific `sigma(proxy_role, env_type)` instead of the old shared `P2` proxy,
+  - duplicate DOPC anchor descriptors are merged before interpolation so repeated dry-table epsilon levels no longer abort the build,
+  - published HDF5 artifacts are stamped with:
+    - `calibration_mode = role_specific_proxy_pair_rows_v1`
+    - `descriptor_name = role_proxy_pair_epsilon_v1`
+- Updated workflow consumption:
+  - `example/16.MARTINI/run_sim_1rkl.sh` now reads `/meta/{schema,calibration_mode}` from the published cross artifact and rejects stale spline tables that do not use the new calibration mode.
+- Validation/build:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/build_martini_parameters.py` passed
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed
+  - `source .venv/bin/activate && source source.sh && python3 example/16.MARTINI/build_martini_parameters.py --output-dir example/16.MARTINI/outputs/test_role_proxy_rows_20260307 --publish-output parameters/ff_2.1/martini.h5` passed
+  - builder validation reported:
+    - `cross_meta env_types=38 calibration_mode=role_specific_proxy_pair_rows_v1 descriptor_name=role_proxy_pair_epsilon_v1`
+    - `cross_artifact schema=martini_backbone_spline_cross_v1 calibration_mode=role_specific_proxy_pair_rows_v1 descriptor_name=role_proxy_pair_epsilon_v1 env_types=38 n_radial=101`
+- Reduced workflow proof:
+  - `source ../../.venv/bin/activate && source ../../source.sh && env RUN_DIR=outputs/test_role_proxy_rows_workflow MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5 EQ_62_NSTEPS=20 EQ_63_NSTEPS=20 EQ_64_NSTEPS=20 EQ_65_NSTEPS=20 EQ_66_NSTEPS=20 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=10 PROD_FRAME_STEPS=1 BACKBONE_CROSS_ENABLE=1 ./run_sim_1rkl.sh`
+  - the workflow printed `Cross artifact calibration: role_specific_proxy_pair_rows_v1` at stage `0.5`
+  - stage `7.0.prepared.up` validation printed the same calibration mode and descriptor name from the published artifact
+  - stage `7.0` completed one production step and printed `Rg  12.7 A`

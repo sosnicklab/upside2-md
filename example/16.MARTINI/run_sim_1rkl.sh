@@ -10,7 +10,7 @@ cd "${SCRIPT_DIR}"
 # 0) Hybrid preparation (packed MARTINI + hybrid mapping export)
 # 1) Stage input generation (dry MARTINI)
 # 2) Inject hybrid mapping + stage-control metadata into each stage .up file
-# 2.5) Build and inject radial backbone cross-table artifacts for production
+# 2.5) Validate the published MARTINI force-field artifact and inject the production cross term
 # 3) Run 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0
 # 4) Extract key VTF trajectories
 
@@ -73,6 +73,7 @@ DEPTH_TABLE_META="${DEPTH_TABLE_META:-${RUN_DIR}/depth_interaction_table.meta.js
 BACKBONE_CROSS_TABLE_CSV="${BACKBONE_CROSS_TABLE_CSV:-${RUN_DIR}/backbone_cross_interaction_table.csv}"
 BACKBONE_CROSS_TABLE_META="${BACKBONE_CROSS_TABLE_META:-${RUN_DIR}/backbone_cross_interaction_table.meta.json}"
 BACKBONE_CROSS_TABLE_H5="${BACKBONE_CROSS_TABLE_H5:-${UPSIDE_HOME}/parameters/ff_2.1/martini.h5}"
+export UPSIDE_MARTINI_FORCEFIELD_H5="${UPSIDE_MARTINI_FORCEFIELD_H5:-${BACKBONE_CROSS_TABLE_H5}}"
 BACKBONE_CROSS_BUILD_SCRIPT="${BACKBONE_CROSS_BUILD_SCRIPT:-${SCRIPT_DIR}/build_martini_parameters.py}"
 
 # Stage-0 hybrid structure prep controls
@@ -146,7 +147,6 @@ export UPSIDE_EWALD_ENABLE="${UPSIDE_EWALD_ENABLE:-1}"
 export UPSIDE_EWALD_ALPHA="${UPSIDE_EWALD_ALPHA:-0.2}"
 export UPSIDE_EWALD_KMAX="${UPSIDE_EWALD_KMAX:-5}"
 export UPSIDE_MARTINI_FF_DIR="${UPSIDE_MARTINI_FF_DIR:-ff_dry}"
-MASS_FF_FILE="${MASS_FF_FILE:-${UPSIDE_MARTINI_FF_DIR}/dry_martini_v2.1.itp}"
 UPSIDE_RAMA_LIBRARY="${UPSIDE_RAMA_LIBRARY:-${UPSIDE_HOME}/parameters/common/rama.dat}"
 UPSIDE_RAMA_SHEET_MIXING="${UPSIDE_RAMA_SHEET_MIXING:-${UPSIDE_HOME}/parameters/ff_2.1/sheet}"
 UPSIDE_HBOND_ENERGY="${UPSIDE_HBOND_ENERGY:-${UPSIDE_HOME}/parameters/ff_2.1/hbond.h5}"
@@ -655,13 +655,26 @@ prepare_backbone_cross_artifacts() {
     fi
 
     local cached_schema
-    cached_schema="$(
+    local cached_calibration_mode
+    local cached_dry_schema
+    local cached_dry_n_type
+    IFS='|' read -r cached_schema cached_calibration_mode cached_dry_schema cached_dry_n_type <<<"$(
         python3 - "${BACKBONE_CROSS_TABLE_H5}" <<'PY'
 import sys
 import h5py
 
 with h5py.File(sys.argv[1], "r") as h5:
-    print(str(h5["/meta"].attrs.get("schema", "")) if "/meta" in h5 else "")
+    if "/meta" not in h5:
+        print("|||")
+    else:
+        meta = h5["/meta"]
+        dry = h5["/dry/nonbond"] if "/dry/nonbond" in h5 else None
+        print(
+            f"{str(meta.attrs.get('schema', ''))}|"
+            f"{str(meta.attrs.get('calibration_mode', ''))}|"
+            f"{str(dry.attrs.get('schema', '')) if dry is not None else ''}|"
+            f"{int(dry.attrs.get('n_type', 0)) if dry is not None else 0}"
+        )
 PY
     )"
 
@@ -671,9 +684,29 @@ PY
         echo "  python3 ${BACKBONE_CROSS_BUILD_SCRIPT}"
         exit 1
     fi
+    if [ "${cached_calibration_mode}" != "role_specific_proxy_pair_rows_v1" ]; then
+        echo "ERROR: backbone cross artifact calibration_mode is '${cached_calibration_mode:-unknown}', expected role_specific_proxy_pair_rows_v1"
+        echo "Rebuild and republish the updated artifact with:"
+        echo "  python3 ${BACKBONE_CROSS_BUILD_SCRIPT}"
+        exit 1
+    fi
+    if [ "${cached_dry_schema}" != "martini_dry_nonbond_v1" ]; then
+        echo "ERROR: MARTINI dry nonbond artifact schema is '${cached_dry_schema:-unknown}', expected martini_dry_nonbond_v1"
+        echo "Rebuild and republish the updated artifact with:"
+        echo "  python3 ${BACKBONE_CROSS_BUILD_SCRIPT}"
+        exit 1
+    fi
+    if [ "${cached_dry_n_type}" != "38" ]; then
+        echo "ERROR: MARTINI dry nonbond artifact type count is '${cached_dry_n_type:-unknown}', expected 38"
+        echo "Rebuild and republish the updated artifact with:"
+        echo "  python3 ${BACKBONE_CROSS_BUILD_SCRIPT}"
+        exit 1
+    fi
 
-    echo "=== Stage 0.5: Use Prebuilt Backbone Cross-Table Artifact ==="
-    echo "Using prebuilt cross artifact: ${BACKBONE_CROSS_TABLE_H5}"
+    echo "=== Stage 0.5: Use Prebuilt MARTINI Force-Field Artifact ==="
+    echo "Using prebuilt MARTINI force-field artifact: ${BACKBONE_CROSS_TABLE_H5}"
+    echo "Cross artifact calibration: ${cached_calibration_mode}"
+    echo "Dry nonbond artifact schema: ${cached_dry_schema} (${cached_dry_n_type} types)"
 
     if [ "${HYBRID_VALIDATE}" = "1" ]; then
         local validator_cmd=(
@@ -889,6 +922,10 @@ prepare_stage_file() {
             fi
             "${validator_cmd[@]}"
         fi
+    fi
+
+    if [ "${HYBRID_VALIDATE}" = "1" ]; then
+        python3 "${UNIVERSAL_PREP_SCRIPT}" validate-stage-potentials "$target_file"
     fi
 
     if [ "$npt_enable" = "1" ]; then
@@ -1119,8 +1156,8 @@ echo "Hybrid prep:"
 echo "  Packed PDB: ${HYBRID_PACKED_PDB}"
 echo "  Mapping:    ${HYBRID_MAPPING_FILE}"
 if [ "${BACKBONE_CROSS_ENABLE}" = "1" ]; then
-    echo "Cross-table artifacts:"
-    echo "  Cross H5:   ${BACKBONE_CROSS_TABLE_H5}"
+    echo "Force-field artifacts:"
+    echo "  MARTINI H5: ${BACKBONE_CROSS_TABLE_H5}"
     if [ -f "${DEPTH_TABLE_CSV}" ]; then
         echo "  Depth CSV:  ${DEPTH_TABLE_CSV}"
     fi

@@ -1,5 +1,161 @@
 # Task Plan
 
+## 2026-03-07 Reset: Move Dry-MARTINI Nonbond Table Build into `martini.h5`
+
+### Project Goal (Current)
+- Publish the pure dry-MARTINI dry-dry nonbond interaction table inside `parameters/ff_2.1/martini.h5` alongside the existing backbone cross table.
+- Remove the workflow-time dry nonbond parameter parsing/generation from `example/16.MARTINI/run_sim_1rkl.sh` / stage conversion.
+- Make the workflow consume the published `martini.h5` artifact for both:
+  - dry-MARTINI dry-dry environment interactions
+  - Upside backbone cross interactions
+
+### Architecture & Key Decisions (Current)
+- Keep `martini_potential` in the same runtime LJ/Coulomb coefficient form; only move the force-field source from `ff_dry/dry_martini_v2.1.itp` into the published HDF5 artifact.
+- Keep topology parsing in the workflow (`dry_martini_v2.1_lipids.itp`, ions, solvents, etc.), because the actual atom list and excluded pair list depend on the packed system.
+- Add a dry nonbond section to `martini.h5` and make stage conversion look up per-type `epsilon/sigma` from that section instead of reparsing the dry ITP at runtime.
+- Make the workflow reject stale artifacts that do not contain both the existing spline cross section and the new dry nonbond section.
+
+### Execution Phases (Current Run)
+- [x] Phase A: Add dry nonbond storage/validation to the published `martini.h5` artifact.
+- [x] Phase B: Switch stage conversion to consume the published dry nonbond section instead of `dry_martini_v2.1.itp`.
+- [x] Phase C: Update `run_sim_1rkl.sh` artifact validation/use path and rerun a reduced workflow.
+
+### Known Errors / Blockers (Current Run)
+- None.
+
+### Review (Current Run)
+- `parameters/ff_2.1/martini.h5` now carries both:
+  - the existing spline cross section under `/spline/cross`
+  - a new dry nonbond section under `/dry/nonbond`
+- The dry nonbond section is published in the same 38-type order as `/classes/environment` and stores:
+  - `type_names`
+  - `sigma_angstrom`
+  - `epsilon_eup`
+- `lib.py::convert_stage()` no longer parses `ff_dry/dry_martini_v2.1.itp` for nonbonded force-field parameters. It now:
+  - loads the published artifact from `UPSIDE_MARTINI_FORCEFIELD_H5` or the default `parameters/ff_2.1/martini.h5`
+  - looks up dry-dry `epsilon/sigma` from `/dry/nonbond`
+  - still uses `ff_dry` topology files for molecule topology and the dry ITP mass table
+- `run_sim_1rkl.sh` now:
+  - exports `UPSIDE_MARTINI_FORCEFIELD_H5` from the published `martini.h5` path
+  - rejects artifacts missing `martini_dry_nonbond_v1` or the expected 38 dry types
+  - labels the published file as the MARTINI force-field artifact rather than only a cross-table artifact
+- Validation passed:
+  - `python3 -m py_compile example/16.MARTINI/lib.py example/16.MARTINI/prepare_system.py example/16.MARTINI/build_martini_parameters.py`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `python3 example/16.MARTINI/build_martini_parameters.py --output-dir example/16.MARTINI/outputs/test_martini_ff_full_20260307 --publish-output parameters/ff_2.1/martini.h5`
+  - reduced rerun `example/16.MARTINI/outputs/test_martini_ff_full_workflow/` completed through stage `7.0`
+  - stage-conversion logs now show `Using published MARTINI force-field artifact: .../parameters/ff_2.1/martini.h5`
+  - stage `0.5` and stage `7.0.prepared.up` validation both confirmed `dry_schema=martini_dry_nonbond_v1 dry_types=38`
+
+## 2026-03-07 Reset: Verify Cross Potentials Remain Distance-Dependent Spline Tables
+
+### Project Goal (Current)
+- Verify that the workflow’s backbone cross potential still uses the published spline-table form, not a direct LJ/Coulomb parameter form.
+- Confirm the active runtime evaluation remains distance-dependent.
+- Distinguish this from the separate base `martini_potential`, which is the unchanged MARTINI environment term.
+
+### Architecture & Key Decisions (Current)
+- Inspect the actual published artifact, the injected `stage_7.0.prepared.up` node, and the live C++ evaluation path together.
+- Treat the question specifically as a form-of-potential audit for `martini_spline_cross_potential`, since that is the workflow term built from `martini.h5`.
+- If the base `martini_potential` appears in the stage file, report it separately rather than conflating it with the spline cross term.
+
+### Execution Phases (Current Run)
+- [x] Phase A: Inspect the artifact/schema and prepared production-stage node for the stored datasets and attributes.
+- [x] Phase B: Inspect the C++ runtime node to confirm how energy/force are evaluated.
+- [x] Phase C: Sample live table values to prove the stored potential changes with radial distance.
+
+### Known Errors / Blockers (Current Run)
+- None.
+
+### Review (Current Run)
+- The published artifact and injected production-stage node both use `radial_grid` plus `table_values`; no per-pair `epsilon`, `sigma`, or charge datasets are stored for the cross term.
+- `src/martini.cpp` evaluates `martini_spline_cross_potential` by converting pair distance `r` into a spline coordinate `(r - radial_min) / radial_step` and calling `spline_tables->evaluate_value_and_deriv(...)`.
+- Direct inspection of `parameters/ff_2.1/martini.h5` and `outputs/test_membrane_guard/checkpoints/1rkl.stage_7.0.prepared.up` showed non-constant 1D tables over `r`:
+  - artifact shape `(4, 38, 101)` over `r = 2.0..12.0 Å`
+  - injected stage shape `(4, 6, 101)` over `r = 2.0..12.0 Å`
+  - representative stage table values changed from `-4.644858` at `2.0 Å` to `0.921922` near `4.7 Å` and approached `0` near `12.0 Å`
+- The separate `martini_potential` runtime term still exists in the workflow and remains the original MARTINI environment term, which uses LJ/Coulomb splines internally. That is distinct from the new spline cross-table term.
+
+## 2026-03-07 Reset: Prove Workflow Does Not Apply membrane.h5 at Runtime
+
+### Project Goal (Current)
+- Verify that `example/16.MARTINI/run_sim_1rkl.sh` does not inject runtime membrane-potential nodes derived directly from `parameters/ff_2.1/membrane.h5`.
+- Prove the active workflow uses only the prebuilt `parameters/ff_2.1/martini.h5` artifact at runtime for bilayer-related terms.
+- Add a workflow guard so prepared stage files fail validation if membrane/surface runtime nodes appear alongside the MARTINI bilayer terms.
+
+### Architecture & Key Decisions (Current)
+- Keep the current separation of concerns:
+  - `membrane.h5` is an offline calibration input for parameter-building utilities.
+  - `run_sim_1rkl.sh` consumes only the published `martini.h5` runtime artifact.
+- Do not broaden the production-specific `validate-backbone-only` contract to pre-production files that lack the same metadata.
+- Add one generic stage-file validator for forbidden membrane/surface runtime nodes and call it for every prepared stage file from the workflow.
+
+### Execution Phases (Current Run)
+- [x] Phase A: Inspect the workflow/build call graph and generated stage files to determine whether `membrane.h5` enters runtime.
+- [x] Phase B: Add a minimal validator path that rejects membrane runtime nodes in prepared stage files.
+- [x] Phase C: Re-run targeted validation on existing prepared stage files and record the result.
+
+### Known Errors / Blockers (Current Run)
+- `validate-backbone-only` is intentionally production-specific and still rejects some pre-production stage files that do not carry `/input/sequence`.
+
+### Review (Current Run)
+- Verified the runtime/build split directly:
+  - `membrane.h5` remains only an offline input to `prepare_system.py build-depth-table`
+  - `run_sim_1rkl.sh` consumes `parameters/ff_2.1/martini.h5` via `BACKBONE_CROSS_TABLE_H5`
+- Added `FORBIDDEN_MEMBRANE_RUNTIME_NODES` plus a generic `validate-stage-potentials` command in `prepare_system.py`.
+- Updated `run_sim_1rkl.sh` to run `validate-stage-potentials` on every prepared stage file when `HYBRID_VALIDATE=1`.
+- Targeted validation passed:
+  - `python3 -m py_compile example/16.MARTINI/prepare_system.py`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `validate-stage-potentials` passed on existing `stage_6.0.prepared.up` and `stage_7.0.prepared.up`
+  - `validate-backbone-only` still passed on `stage_7.0.prepared.up`
+- Reduced end-to-end rerun `example/16.MARTINI/outputs/test_membrane_guard/` completed through stage `7.0` and printed `forbidden_membrane_nodes=0` for every prepared stage file, including `stage_7.0.prepared.up`.
+
+## 2026-03-07 Reset: Role-Specific Dry-MARTINI Row Calibration for Backbone Cross Force Field
+
+### Project Goal (Current)
+- Replace the current shared dry-table descriptor calibration with role-specific dry-MARTINI pair-row calibration for all backbone classes (`N`, `CA`, `C`, `O`) across all dry-MARTINI environment types.
+- Rebuild and publish `parameters/ff_2.1/martini.h5` from the updated calibration.
+- Ensure `example/16.MARTINI/run_sim_1rkl.sh` explicitly consumes and validates the updated published force-field artifact.
+
+### Architecture & Key Decisions (Current)
+- Use role-specific dry-MARTINI proxy rows to build the descriptor for each backbone class instead of the current shared `mean_epsilon_to_all_dry_types` descriptor.
+- Keep the membrane-side targets role-specific:
+  - `N -> hb donor`
+  - `O -> hb acceptor`
+  - `CA/C -> cb burial`
+- Use role-specific pair parameters when deriving both descriptor and radial minimum so the output table is chemically consistent per role.
+- Preserve the existing published-artifact workflow separation: parameter generation remains in the builder script, while `run_sim_1rkl.sh` consumes the published `martini.h5`.
+
+### Execution Phases (Current Run)
+- [x] Phase A: Audit the current calibration path and workflow artifact-consumption checks.
+- [x] Phase B: Implement role-specific pair-row calibration and update artifact metadata/validation.
+- [x] Phase C: Rebuild/publish `martini.h5` and verify the workflow uses the updated artifact.
+
+### Known Errors / Blockers (Current Run)
+- None yet.
+
+### Review (Current Run)
+- Updated the spline cross-table builder in `prepare_system.py` to use role-specific dry-MARTINI proxy rows instead of the old shared `mean_epsilon_to_all_dry_types` descriptor.
+- Chosen proxy rows for this pass:
+  - `N -> Qd`
+  - `CA -> C1`
+  - `C -> C2`
+  - `O -> Qa`
+- The builder now:
+  - derives the calibration descriptor from the role-specific pair epsilon `epsilon(env_type, proxy_role)`,
+  - derives `r_min` from the matching role-specific pair sigma,
+  - merges duplicate DOPC anchor descriptors before interpolation so coarse dry-table degeneracies do not abort the build.
+- Updated metadata/validation to stamp and require:
+  - `calibration_mode = role_specific_proxy_pair_rows_v1`
+  - `descriptor_name = role_proxy_pair_epsilon_v1`
+- Updated `run_sim_1rkl.sh` to reject stale spline artifacts that do not carry the new calibration mode and to print the accepted mode when the published artifact is used.
+- Rebuilt and published `parameters/ff_2.1/martini.h5` with the updated calibration via `example/16.MARTINI/build_martini_parameters.py`.
+- Reduced end-to-end workflow rerun in `example/16.MARTINI/outputs/test_role_proxy_rows_workflow/` completed through stage `7.0` with the updated published artifact:
+  - stage `0.5` printed `Cross artifact calibration: role_specific_proxy_pair_rows_v1`
+  - stage `7.0.prepared.up` validation confirmed the same calibration mode and descriptor name from the published artifact
+  - stage `7.0` one-step production run completed and printed `Rg  12.7 A`
+
 ## 2026-03-06 Reset: Restore Production Rg to Protein Backbone Only
 
 ### Project Goal (Current)

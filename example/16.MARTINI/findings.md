@@ -1,5 +1,86 @@
 # Findings
 
+## 2026-03-07 (Published `martini.h5` Now Includes Dry-Dry Nonbond Parameters)
+- The published `parameters/ff_2.1/martini.h5` artifact is no longer cross-only. It now contains:
+  - `/spline/cross` for the Upside backbone cross term
+  - `/dry/nonbond` for the pure dry-MARTINI dry-dry type interaction table
+- The new `/dry/nonbond` section stores:
+  - `type_names`
+  - `sigma_angstrom`
+  - `epsilon_eup`
+  with schema `martini_dry_nonbond_v1` and `38` dry types.
+- The dry nonbond type order is aligned to `/classes/environment`, so the published HDF5 has one canonical dry-type ordering across both sections.
+- Stage conversion in `lib.py` no longer reads `ff_dry/dry_martini_v2.1.itp` to build nonbonded interaction parameters at workflow runtime. It now loads the published dry nonbond section from `martini.h5` and uses that to populate `martini_potential/coefficients`.
+- The workflow still reads `ff_dry` topology assets for:
+  - lipid/ion/solvent molecule topology
+  - atomtype masses
+  so the change is specifically about removing runtime nonbond force-field generation, not all dry-MARTINI file reads.
+- Reduced end-to-end proof from `example/16.MARTINI/outputs/test_martini_ff_full_workflow/`:
+  - stage `0.5` printed `Dry nonbond artifact schema: martini_dry_nonbond_v1 (38 types)`
+  - every prep-stage conversion printed `Using published MARTINI force-field artifact: .../parameters/ff_2.1/martini.h5`
+  - the old `Read 722 unique nonbonded parameter pairs` line no longer appeared in stage-conversion logs
+  - the reduced workflow completed through stage `7.0`
+  - `stage_7.0.prepared.up` validation confirmed `dry_schema=martini_dry_nonbond_v1 dry_types=38`
+
+## 2026-03-07 (Cross Potential Form Is Still a Distance-Dependent Spline Table)
+- The published cross artifact `parameters/ff_2.1/martini.h5` stores the active cross term under `/spline/cross` with datasets:
+  - `radial_grid`
+  - `table_values`
+  and metadata:
+  - `cutoff`
+  - `radial_min`
+  - `radial_step`
+- The injected production-stage runtime node `martini_spline_cross_potential` in `1rkl.stage_7.0.prepared.up` stores only:
+  - `protein_atom_indices`
+  - `protein_class_index`
+  - `env_atom_indices`
+  - `env_class_index`
+  - `protein_classes`
+  - `environment_classes`
+  - `radial_grid`
+  - `table_values`
+  with attrs `cutoff`, `radial_min`, `radial_step`. It does not store LJ/Coulomb-style `epsilon`, `sigma`, or charge arrays for the cross term.
+- Runtime evaluation in `src/martini.cpp` for `martini_spline_cross_potential` is explicitly radial-spline based:
+  - compute pair distance `r = sqrt(r_sq)`
+  - map to spline coordinate `(r - radial_min) / radial_step`
+  - evaluate `spline_tables->evaluate_value_and_deriv(...)`
+  - convert spline derivative back to `dE/dr` and then to Cartesian force
+- Direct table checks:
+  - artifact shape: `(4, 38, 101)` on `r = 2.0..12.0 Å`
+  - injected production stage shape: `(4, 6, 101)` on `r = 2.0..12.0 Å`
+  - representative injected table values varied across radius, for example `[-4.644858, ..., -0.159999, 0.0]`
+  - representative class-pair extrema occurred at specific radii, e.g. pair `(0,0)` had minimum at `2.0 Å` and maximum near `4.7 Å`
+- Important distinction:
+  - `martini_spline_cross_potential` is the new tabulated distance-dependent Upside-style cross term
+  - `martini_potential` is still present as the unchanged MARTINI environment term and continues to use LJ/Coulomb splines internally for the environment interactions
+
+## 2026-03-07 (Workflow Runtime Does Not Use `membrane.h5`)
+- The only live `membrane.h5` reference in the MARTINI workflow codepath is the offline builder CLI option `prepare_system.py build-depth-table --membrane-h5`, defined at [prepare_system.py](/Users/yinhan/Documents/upside2-md/example/16.MARTINI/prepare_system.py).
+- The active workflow script [run_sim_1rkl.sh](/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_1rkl.sh) does not call `build-depth-table` and does not reference `membrane.h5`; it consumes only `BACKBONE_CROSS_TABLE_H5`, which defaults to `parameters/ff_2.1/martini.h5`.
+- Direct inspection of generated prepared stage files from `example/16.MARTINI/outputs/test_role_proxy_rows_workflow/` showed no membrane/surface runtime nodes in either `1rkl.stage_6.0.prepared.up` or `1rkl.stage_7.0.prepared.up`.
+- The checked production-stage potential group contained:
+  - `martini_potential`
+  - `martini_spline_cross_potential`
+  and did not contain:
+  - `membrane_potential`
+  - `cb_membrane_potential`
+  - `hb_membrane_potential`
+  - `cb_surf_membrane_potential`
+  - `hb_surf_membrane_potential`
+  - `membranelateral_potential`
+  - `surface`
+- To prevent a silent double-bilayer regression, `prepare_system.py` now exposes a generic `validate-stage-potentials` command that fails if any forbidden membrane/surface runtime node is present, and `run_sim_1rkl.sh` now calls it for every prepared stage file when `HYBRID_VALIDATE=1`.
+- Fresh reduced workflow proof from `example/16.MARTINI/outputs/test_membrane_guard/`:
+  - `stage_6.0.prepared.up`: `n_nodes=3`, `forbidden_membrane_nodes=0`
+  - `stage_6.1.prepared.up`: `n_nodes=3`, `forbidden_membrane_nodes=0`
+  - `stage_6.2.prepared.up`: `n_nodes=4`, `forbidden_membrane_nodes=0`
+  - `stage_6.3.prepared.up`: `n_nodes=4`, `forbidden_membrane_nodes=0`
+  - `stage_6.4.prepared.up`: `n_nodes=4`, `forbidden_membrane_nodes=0`
+  - `stage_6.5.prepared.up`: `n_nodes=4`, `forbidden_membrane_nodes=0`
+  - `stage_6.6.prepared.up`: `n_nodes=4`, `forbidden_membrane_nodes=0`
+  - `stage_7.0.prepared.up`: `n_nodes=20`, `forbidden_membrane_nodes=0`
+- The same reduced rerun still carries the separate late-stage MARTINI instability, but that instability occurs with the membrane-node guard clean and is therefore distinct from the duplicate-bilayer concern.
+
 ## 2026-03-06 (Primary-Box PBC Containment in Current `run_sim_1rkl.sh`)
 - Fresh current-code rerun root cause split across three boundaries:
   - stage conversion copied boxed runtime-PDB coordinates verbatim into `.up`, including atoms exactly on the upper box face (`coord == L`), which are outside the half-open primary box convention `[0, L)`
@@ -365,3 +446,28 @@
   - the mapped protein-backbone selector gives `Rg = 12.70 A`
 - Conclusion:
   - the inflated first-step production `Rg` was a reporting-selection regression, not evidence that the rigid protein geometry had changed
+
+## 2026-03-07 (Role-Specific Dry-MARTINI Proxy-Row Calibration Applied)
+- The previous spline cross-table builder still used one shared dry-table descriptor (`mean_epsilon_to_all_dry_types`) for every backbone role, then only changed the membrane-side target by role.
+- The updated builder now uses role-specific dry-MARTINI proxy rows directly:
+  - `N -> Qd`
+  - `CA -> C1`
+  - `C -> C2`
+  - `O -> Qa`
+- For each backbone role and environment dry type, the calibration descriptor is now:
+  - `descriptor(role, env_type) = epsilon(proxy_role, env_type)`
+- The radial minimum is now also role-specific:
+  - `r_min(role, env_type) = 2^(1/6) * sigma(proxy_role, env_type) * 10 Å`
+- Coarse dry-MARTINI degeneracies are real in the chosen DOPC anchor set (`Q0/Qa/Na/C1/C3`), so the builder now merges duplicate anchor descriptors before interpolation instead of requiring all anchor x-values to be strictly unique.
+- The published artifact and metadata are explicitly stamped with the new calibration identity:
+  - `calibration_mode = role_specific_proxy_pair_rows_v1`
+  - `descriptor_name = role_proxy_pair_epsilon_v1`
+- Published artifact result:
+  - `parameters/ff_2.1/martini.h5` validates successfully as
+    - schema `martini_backbone_spline_cross_v1`
+    - env types `38`
+    - `n_radial = 101`
+    - calibration mode `role_specific_proxy_pair_rows_v1`
+- Workflow-consumption result:
+  - `run_sim_1rkl.sh` now reads and checks the published HDF5 metadata before use and aborts if the calibration mode is not `role_specific_proxy_pair_rows_v1`
+  - reduced rerun `outputs/test_role_proxy_rows_workflow/` reached stage `7.0`, injected `martini_spline_cross_potential`, validated the published artifact in `stage_7.0.prepared.up`, and completed a one-step production run with `Rg 12.7 A`

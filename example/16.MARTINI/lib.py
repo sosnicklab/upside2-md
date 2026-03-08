@@ -20,6 +20,10 @@ import tables as tb
 NA_AVOGADRO = 6.02214076e23
 BB_COMPONENT_NAMES = ("N", "CA", "C", "O")
 BB_COMPONENT_MASSES = (14.0, 12.0, 12.0, 16.0)
+DRY_NONBOND_SCHEMA = "martini_dry_nonbond_v1"
+DRY_NONBOND_GROUP = "/dry/nonbond"
+E_UP_PER_KJ_MOL = 1.0 / 2.914952774272
+ANGSTROM_PER_NM = 10.0
 
 
 @dataclass
@@ -1373,6 +1377,108 @@ def read_martini3_nonbond_params(itp_file):
     print(f"Read {len(martini_table)//2} unique nonbonded parameter pairs")
     return martini_table
 
+
+def default_martini_forcefield_h5_path(script_dir):
+    override = os.environ.get("UPSIDE_MARTINI_FORCEFIELD_H5", "").strip()
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    return os.path.abspath(os.path.join(script_dir, "../../parameters/ff_2.1/martini.h5"))
+
+
+def build_dry_nonbond_matrices(martini_table, type_order=None):
+    table_types = {str(a) for pair in martini_table.keys() for a in pair}
+    if type_order is None:
+        type_names = sorted(table_types)
+    else:
+        type_names = [str(x) for x in type_order]
+        if set(type_names) != table_types:
+            missing = sorted(table_types.difference(type_names))
+            extra = sorted(set(type_names).difference(table_types))
+            raise ValueError(
+                "Provided dry nonbond type order does not match table types: "
+                f"missing={missing} extra={extra}"
+            )
+    if not type_names:
+        raise ValueError("Dry MARTINI nonbond table is empty")
+    n_type = len(type_names)
+    sigma_angstrom = np.zeros((n_type, n_type), dtype=np.float32)
+    epsilon_eup = np.zeros((n_type, n_type), dtype=np.float32)
+    for i, type1 in enumerate(type_names):
+        for j, type2 in enumerate(type_names):
+            if (type1, type2) not in martini_table:
+                raise KeyError(f"Missing dry MARTINI pair ({type1}, {type2})")
+            sigma_nm, epsilon_kj = martini_table[(type1, type2)]
+            sigma_angstrom[i, j] = np.float32(float(sigma_nm) * ANGSTROM_PER_NM)
+            epsilon_eup[i, j] = np.float32(float(epsilon_kj) * E_UP_PER_KJ_MOL)
+    return type_names, sigma_angstrom, epsilon_eup
+
+
+def write_dry_nonbond_artifact(h5_path, martini_table, source_itp, type_order=None):
+    type_names, sigma_angstrom, epsilon_eup = build_dry_nonbond_matrices(martini_table, type_order=type_order)
+    str_dtype = h5py.string_dtype(encoding="utf-8")
+    with h5py.File(h5_path, "a") as h5:
+        dry_grp = h5.require_group("dry")
+        if "nonbond" in dry_grp:
+            del dry_grp["nonbond"]
+        grp = dry_grp.create_group("nonbond")
+        grp.attrs["schema"] = DRY_NONBOND_SCHEMA
+        grp.attrs["source_itp"] = os.path.abspath(os.path.expanduser(str(source_itp)))
+        grp.attrs["n_type"] = np.int32(len(type_names))
+        grp.attrs["sigma_unit"] = "angstrom"
+        grp.attrs["epsilon_unit"] = "E_up"
+        grp.attrs["source_sigma_unit"] = "nm"
+        grp.attrs["source_epsilon_unit"] = "kJ/mol"
+        grp.attrs["sigma_scale_to_angstrom"] = np.float32(ANGSTROM_PER_NM)
+        grp.attrs["epsilon_scale_to_eup"] = np.float32(E_UP_PER_KJ_MOL)
+        grp.create_dataset("type_names", data=np.asarray(type_names, dtype=str_dtype))
+        grp.create_dataset("sigma_angstrom", data=sigma_angstrom)
+        grp.create_dataset("epsilon_eup", data=epsilon_eup)
+
+
+def load_dry_nonbond_artifact(h5_path):
+    with h5py.File(h5_path, "r") as h5:
+        if DRY_NONBOND_GROUP not in h5:
+            raise ValueError(f"Missing {DRY_NONBOND_GROUP} in MARTINI force-field artifact: {h5_path}")
+        grp = h5[DRY_NONBOND_GROUP]
+        schema = str(grp.attrs.get("schema", ""))
+        if schema != DRY_NONBOND_SCHEMA:
+            raise ValueError(
+                f"{h5_path}: {DRY_NONBOND_GROUP} schema is {schema!r}, expected {DRY_NONBOND_SCHEMA!r}"
+            )
+        for name in ("type_names", "sigma_angstrom", "epsilon_eup"):
+            if name not in grp:
+                raise ValueError(f"{h5_path}: {DRY_NONBOND_GROUP} missing dataset {name}")
+        type_names = [str(x) for x in grp["type_names"].asstr()[:].tolist()]
+        sigma_angstrom = grp["sigma_angstrom"][:].astype(np.float32)
+        epsilon_eup = grp["epsilon_eup"][:].astype(np.float32)
+        n_type = len(type_names)
+        if n_type == 0:
+            raise ValueError(f"{h5_path}: {DRY_NONBOND_GROUP}/type_names is empty")
+        expected_shape = (n_type, n_type)
+        if sigma_angstrom.shape != expected_shape:
+            raise ValueError(
+                f"{h5_path}: {DRY_NONBOND_GROUP}/sigma_angstrom shape {sigma_angstrom.shape} "
+                f"does not match {expected_shape}"
+            )
+        if epsilon_eup.shape != expected_shape:
+            raise ValueError(
+                f"{h5_path}: {DRY_NONBOND_GROUP}/epsilon_eup shape {epsilon_eup.shape} "
+                f"does not match {expected_shape}"
+            )
+        if not np.all(np.isfinite(sigma_angstrom)) or not np.all(np.isfinite(epsilon_eup)):
+            raise ValueError(f"{h5_path}: {DRY_NONBOND_GROUP} contains non-finite values")
+        if not np.allclose(sigma_angstrom, sigma_angstrom.T, atol=1e-6):
+            raise ValueError(f"{h5_path}: {DRY_NONBOND_GROUP}/sigma_angstrom must be symmetric")
+        if not np.allclose(epsilon_eup, epsilon_eup.T, atol=1e-6):
+            raise ValueError(f"{h5_path}: {DRY_NONBOND_GROUP}/epsilon_eup must be symmetric")
+        return {
+            "schema": schema,
+            "type_names": type_names,
+            "type_to_index": {name: i for i, name in enumerate(type_names)},
+            "sigma_angstrom": sigma_angstrom,
+            "epsilon_eup": epsilon_eup,
+        }
+
 # --- Helpers: read MARTINI protein topology (ITP) for protein bead typing and connectivity ---
 def read_protein_itp_topology(itp_path: str):
     topo_by_res_and_role = {}
@@ -1992,8 +2098,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     print(f"Output directory: {run_dir}")
     
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    # Read dry MARTINI parameter files
-    print("\n=== Reading Dry MARTINI Parameters ===")
+    # Read dry MARTINI topology assets and published nonbond table artifact
+    print("\n=== Reading Dry MARTINI Assets ===")
     ff_dir = os.environ.get('UPSIDE_MARTINI_FF_DIR', 'ff_dry')
     ff_path = os.path.join(SCRIPT_DIR, ff_dir)
 
@@ -2013,15 +2119,16 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                             f"  Available: {ff_files}")
         return None
 
-    # Read nonbonded parameters
-    martini_param_file = pick_ff_file("dry_martini_v2.1.itp")
-    martini_table = read_martini3_nonbond_params(martini_param_file)
-    
-    if not martini_table:
-        raise ValueError(f"FATAL ERROR: Could not read MARTINI parameters from '{martini_param_file}'\n"
-                        f"  This file is required for proper force field parameterization.\n"
-                        f"  Please ensure the dry MARTINI parameter file exists and is readable.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
+    martini_forcefield_h5 = default_martini_forcefield_h5_path(SCRIPT_DIR)
+    if not os.path.exists(martini_forcefield_h5):
+        raise ValueError(
+            f"FATAL ERROR: Published MARTINI force-field artifact not found: '{martini_forcefield_h5}'\n"
+            "  Run example/16.MARTINI/build_martini_parameters.py first.\n"
+            "  Aborting to prevent incorrect simulation results."
+        )
+    martini_nonbond = load_dry_nonbond_artifact(martini_forcefield_h5)
+    print(f"Using published MARTINI force-field artifact: {martini_forcefield_h5}")
+    print(f"Loaded {len(martini_nonbond['type_names'])} dry nonbond types from artifact")
     
     input_pdb_file = runtime_input_pdb_path(SCRIPT_DIR, pdb_id)
     protein_itp = runtime_protein_itp_path(SCRIPT_DIR, pdb_id)
@@ -2115,7 +2222,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         print("Water topology file not found in selected FF")
     
     # Read bead masses from force field file
-    mass_file = martini_param_file
+    mass_file = pick_ff_file("dry_martini_v2.1.itp")
     martini_masses = read_martini_masses(mass_file)
     print(f"Read {len(martini_masses)} atom type masses from force field file")
     
@@ -2973,23 +3080,18 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                 type1 = atom_types[i].decode('utf-8') if isinstance(atom_types[i], bytes) else str(atom_types[i])
                 type2 = atom_types[j].decode('utf-8') if isinstance(atom_types[j], bytes) else str(atom_types[j])
                 
-                # Look up MARTINI parameters for this bead type pair
-                if (type1, type2) in martini_table:
-                    sigma_nm, epsilon_kj = martini_table[(type1, type2)]
-                elif (type2, type1) in martini_table:
-                    sigma_nm, epsilon_kj = martini_table[(type2, type1)]
-                else:
+                if type1 not in martini_nonbond["type_to_index"] or type2 not in martini_nonbond["type_to_index"]:
                     # Raise error for missing interaction parameters
-                    available_types = sorted(set([t[0] for t in martini_table.keys()] + [t[1] for t in martini_table.keys()]))
+                    available_types = martini_nonbond["type_names"]
                     raise ValueError(f"FATAL ERROR: Missing interaction parameters for bead type pair ({type1}, {type2})\n"
                                    f"  Atom indices: {i} ({type1}) - {j} ({type2})\n"
-                                   f"  This indicates incomplete MARTINI force field parameters.\n"
+                                   f"  This indicates an incomplete MARTINI force-field artifact.\n"
                                    f"  Available bead types in parameter table: {available_types}\n"
                                    f"  Aborting to prevent incorrect simulation results.")
-                
-                # Convert to UPSIDE units
-                epsilon = epsilon_kj / energy_conversion  # kJ/mol → E_up
-                sigma = sigma_nm * length_conversion  # nm → Å
+                type1_idx = martini_nonbond["type_to_index"][type1]
+                type2_idx = martini_nonbond["type_to_index"][type2]
+                epsilon = float(martini_nonbond["epsilon_eup"][type1_idx, type2_idx])
+                sigma = float(martini_nonbond["sigma_angstrom"][type1_idx, type2_idx])
                 q1 = charges[i] * scale_factor
                 q2 = charges[j] * scale_factor
                 coeff_array.append([epsilon * scale_factor, sigma, q1, q2])

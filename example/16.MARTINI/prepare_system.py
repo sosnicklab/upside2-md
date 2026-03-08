@@ -16,6 +16,7 @@ import numpy as np
 import tables as tb
 
 from lib import (
+    DRY_NONBOND_SCHEMA,
     center_of_mass,
     collect_bb_map,
     collect_sc_map,
@@ -27,6 +28,7 @@ from lib import (
     infer_effective_ion_volume_fraction_from_template,
     infer_protein_charge_from_cg,
     lipid_resname,
+    load_dry_nonbond_artifact,
     parse_pdb,
     place_ions,
     read_martini3_nonbond_params,
@@ -35,6 +37,7 @@ from lib import (
     tile_and_crop_bilayer_lipids,
     validate_backbone_reference_frame,
     wrap_xyz_array_to_box,
+    write_dry_nonbond_artifact,
     write_hybrid_mapping_h5,
     write_pdb,
 )
@@ -762,11 +765,20 @@ SIDECHAIN_NODES = [
 
 REQUIRED_BACKBONE_NODES = tuple(BACKBONE_NODES)
 FORBIDDEN_SIDECHAIN_NODES = tuple(SIDECHAIN_NODES)
+FORBIDDEN_MEMBRANE_RUNTIME_NODES = (
+    "membrane_potential",
+    "cb_membrane_potential",
+    "hb_membrane_potential",
+    "cb_surf_membrane_potential",
+    "hb_surf_membrane_potential",
+    "membranelateral_potential",
+    "surface",
+)
 BACKBONE_CLASSES = ("N", "CA", "C", "O")
 DOPC_COVERED_TYPES = ("Q0", "Qa", "Na", "C1", "C3")
 SIDECHAIN_DATASET_CANDIDATES = ("sc_energy", "sidechain_energy", "sidechain")
 SHEET_DATASET_CANDIDATES = ("sheet_energy", "sheet")
-ROLE_PROXIES = {"N": "Nd", "CA": "C3", "C": "P4", "O": "Na"}
+ROLE_PROXIES = {"N": "Qd", "CA": "C1", "C": "C2", "O": "Qa"}
 ROLE_TARGET_FIELDS = {
     "N": "mean_hb_donor_attraction",
     "CA": "mean_cb_value",
@@ -779,7 +791,9 @@ ROLE_TARGET_DESCRIPTIONS = {
     "C": "backbone_burial_mean",
     "O": "acceptor_hbond_mean",
 }
-BASE_PROXY = "P2"
+ROLE_DESCRIPTOR_NAME = "role_proxy_pair_epsilon_v1"
+ROLE_RMIN_NAME = "role_proxy_pair_sigma_v1"
+CROSS_CALIBRATION_MODE = "role_specific_proxy_pair_rows_v1"
 RBM_CROSS_SCHEMA = "martini_backbone_cross_v1"
 SPLINE_CROSS_SCHEMA = "martini_backbone_spline_cross_v1"
 RBM_CROSS_NODE_NAME = "martini_rbm_cross_potential"
@@ -802,6 +816,7 @@ REQUIRED_DEPTH_TABLE_COLUMNS = (
 REQUIRED_CROSS_TABLE_COLUMNS = (
     "protein_class",
     "env_type",
+    "proxy_type",
     "r_angstrom",
     "target_potential",
     "fitted_potential",
@@ -810,8 +825,8 @@ REQUIRED_CROSS_TABLE_COLUMNS = (
     "base_depth",
     "role_scale",
     "sigma_nm",
-    "epsilon_p2",
-    "epsilon_proxy",
+    "epsilon_pair",
+    "descriptor_value",
     "fit_rmse",
 )
 
@@ -1294,6 +1309,23 @@ def main_prepare(argv=None):
     print(f"Preparation summary written to: {summary_path}")
 
 
+def validate_stage_potential_nodes(path: Path):
+    with h5py.File(path, "r") as h5:
+        if "/input" not in h5:
+            raise ValueError("Missing /input group")
+        inp = h5["/input"]
+        if "potential" not in inp:
+            raise ValueError("Missing /input/potential group")
+        pot = inp["potential"]
+        forbidden_nodes = [name for name in FORBIDDEN_MEMBRANE_RUNTIME_NODES if name in pot]
+        if forbidden_nodes:
+            raise ValueError(
+                "Forbidden membrane/surface runtime nodes present under /input/potential: "
+                f"{forbidden_nodes}"
+            )
+        return {"n_potential_nodes": len(pot.keys())}
+
+
 def validate_up_file(path: Path):
     with h5py.File(path, "r") as h5:
         if "/input" not in h5:
@@ -1308,6 +1340,12 @@ def validate_up_file(path: Path):
 
         n_atom = int(inp["pos"].shape[0])
         pot = inp["potential"]
+        forbidden_nodes = [name for name in FORBIDDEN_MEMBRANE_RUNTIME_NODES if name in pot]
+        if forbidden_nodes:
+            raise ValueError(
+                "Forbidden membrane/surface runtime nodes present under /input/potential: "
+                f"{forbidden_nodes}"
+            )
 
         for node in REQUIRED_BACKBONE_NODES:
             if node not in pot:
@@ -1531,8 +1569,9 @@ def validate_cross_table_csv(path: Path):
         for i, row in enumerate(rows):
             protein_class = row["protein_class"].strip()
             env_type = row["env_type"].strip()
-            if not protein_class or not env_type:
-                raise ValueError(f"Cross-table CSV row {i} has empty class/type")
+            proxy_type = row["proxy_type"].strip()
+            if not protein_class or not env_type or not proxy_type:
+                raise ValueError(f"Cross-table CSV row {i} has empty class/type/proxy")
             protein_classes.add(protein_class)
             env_types.add(env_type)
             key = (protein_class, env_type, row["r_angstrom"])
@@ -1540,7 +1579,7 @@ def validate_cross_table_csv(path: Path):
                 raise ValueError(f"Cross-table CSV duplicate row key: {key}")
             seen.add(key)
             for field in REQUIRED_CROSS_TABLE_COLUMNS:
-                if field in ("protein_class", "env_type"):
+                if field in ("protein_class", "env_type", "proxy_type"):
                     continue
                 value = float(row[field])
                 if not np.isfinite(value):
@@ -1597,6 +1636,16 @@ def validate_cross_table_meta(path: Path):
     calibration = data["calibration"]
     if "covered_depth_types" not in calibration:
         raise ValueError("Cross-table metadata calibration missing covered_depth_types")
+    if calibration.get("calibration_mode", "") != CROSS_CALIBRATION_MODE:
+        raise ValueError(
+            f"Cross-table metadata calibration_mode must be {CROSS_CALIBRATION_MODE}, "
+            f"got {calibration.get('calibration_mode', '')!r}"
+        )
+    if calibration.get("descriptor_name", "") != ROLE_DESCRIPTOR_NAME:
+        raise ValueError(
+            f"Cross-table metadata descriptor_name must be {ROLE_DESCRIPTOR_NAME}, "
+            f"got {calibration.get('descriptor_name', '')!r}"
+        )
     for key in DOPC_COVERED_TYPES:
         if key not in calibration["covered_depth_types"]:
             raise ValueError(f"Cross-table metadata missing covered type: {key}")
@@ -1606,7 +1655,34 @@ def validate_cross_table_meta(path: Path):
             raise ValueError(f"Cross-table metadata fit_rmse_summary missing/invalid {key}")
     if "symmetry_report" in data and not isinstance(data["symmetry_report"], dict):
         raise ValueError("Cross-table metadata symmetry_report must be a dict when present")
-    return {"n_env_type": len(env_types), "fit_rmse_summary": fit_summary}
+    return {
+        "n_env_type": len(env_types),
+        "fit_rmse_summary": fit_summary,
+        "calibration_mode": calibration["calibration_mode"],
+        "descriptor_name": calibration["descriptor_name"],
+    }
+
+
+def validate_dry_nonbond_artifact(path: Path, expected_env_classes=None):
+    artifact = load_dry_nonbond_artifact(path)
+    type_names = artifact["type_names"]
+    sigma_angstrom = artifact["sigma_angstrom"]
+    epsilon_eup = artifact["epsilon_eup"]
+    if len(type_names) != 38:
+        raise ValueError(f"Dry nonbond artifact expected 38 type names, got {len(type_names)}")
+    if expected_env_classes is not None and list(expected_env_classes) != list(type_names):
+        raise ValueError(
+            "Dry nonbond artifact type_names must match /classes/environment exactly; "
+            f"got {type_names}"
+        )
+    if np.any(sigma_angstrom <= 0.0):
+        raise ValueError("Dry nonbond artifact sigma_angstrom must be positive")
+    if not np.all(np.isfinite(sigma_angstrom)) or not np.all(np.isfinite(epsilon_eup)):
+        raise ValueError("Dry nonbond artifact contains non-finite values")
+    return {
+        "schema": artifact["schema"],
+        "n_type": len(type_names),
+    }
 
 
 def validate_cross_artifact(path: Path):
@@ -1618,10 +1694,13 @@ def validate_cross_artifact(path: Path):
         protein_classes = decode_bytes_array(h5["/classes/protein"][:]).tolist()
         env_classes = decode_bytes_array(h5["/classes/environment"][:]).tolist()
         schema = str(h5["/meta"].attrs.get("schema", ""))
+        calibration_mode = str(h5["/meta"].attrs.get("calibration_mode", ""))
+        descriptor_name = str(h5["/meta"].attrs.get("descriptor_name", ""))
         if protein_classes != list(BACKBONE_CLASSES):
             raise ValueError(f"Cross artifact protein classes mismatch: {protein_classes}")
         if len(env_classes) != 38:
             raise ValueError(f"Cross artifact expected 38 environment classes, got {len(env_classes)}")
+        dry_nonbond_summary = validate_dry_nonbond_artifact(path, expected_env_classes=env_classes)
         if schema == RBM_CROSS_SCHEMA:
             required = (
                 "/rbm/cross/radial_centers",
@@ -1642,12 +1721,28 @@ def validate_cross_artifact(path: Path):
                 raise ValueError("Cross artifact contains non-finite values")
             if np.any(widths <= 0.0):
                 raise ValueError("Cross artifact radial_widths must be positive")
-            return {"schema": schema, "n_env_type": len(env_classes), "n_radial": int(centers.shape[0])}
+            return {
+                "schema": schema,
+                "n_env_type": len(env_classes),
+                "n_radial": int(centers.shape[0]),
+                "dry_schema": dry_nonbond_summary["schema"],
+                "n_dry_type": dry_nonbond_summary["n_type"],
+            }
         if schema == SPLINE_CROSS_SCHEMA:
             required = ("/spline/cross/radial_grid", "/spline/cross/table_values")
             for key in required:
                 if key not in h5:
                     raise ValueError(f"Cross artifact missing {key}")
+            if calibration_mode != CROSS_CALIBRATION_MODE:
+                raise ValueError(
+                    f"Cross artifact calibration_mode must be {CROSS_CALIBRATION_MODE}, "
+                    f"got {calibration_mode!r}"
+                )
+            if descriptor_name != ROLE_DESCRIPTOR_NAME:
+                raise ValueError(
+                    f"Cross artifact descriptor_name must be {ROLE_DESCRIPTOR_NAME}, "
+                    f"got {descriptor_name!r}"
+                )
             cross = h5["/spline/cross"]
             radial_grid = cross["radial_grid"][:]
             table_values = cross["table_values"][:]
@@ -1670,7 +1765,15 @@ def validate_cross_artifact(path: Path):
             expected_grid = radial_min + radial_step * np.arange(radial_grid.shape[0], dtype=np.float64)
             if not np.allclose(radial_grid, expected_grid, atol=1e-5):
                 raise ValueError("Cross artifact spline radial_grid must match radial_min + radial_step * i")
-            return {"schema": schema, "n_env_type": len(env_classes), "n_radial": int(radial_grid.shape[0])}
+            return {
+                "schema": schema,
+                "n_env_type": len(env_classes),
+                "n_radial": int(radial_grid.shape[0]),
+                "calibration_mode": calibration_mode,
+                "descriptor_name": descriptor_name,
+                "dry_schema": dry_nonbond_summary["schema"],
+                "n_dry_type": dry_nonbond_summary["n_type"],
+            }
         raise ValueError(f"Unexpected cross artifact schema: {schema}")
 
 
@@ -2056,48 +2159,81 @@ def load_depth_targets(depth_table_csv: Path, depth_table_meta: Path | None):
     }
 
 
-def compute_env_descriptor(env_type, atomtypes, param_table):
-    epsilons = []
-    for other_type in atomtypes:
-        _sigma, epsilon = pair_param(param_table, env_type, other_type)
-        epsilons.append(float(epsilon))
-    return float(np.mean(np.asarray(epsilons, dtype=np.float64)))
+def compute_role_pair_descriptor(proxy_type, env_type, param_table):
+    _sigma, epsilon = pair_param(param_table, proxy_type, env_type)
+    return float(epsilon)
 
 
-def build_anchor_model(depth_by_type, atomtypes, param_table, target_field):
+def merge_anchor_points_with_labels(x, y, labels):
+    order = np.argsort(x)
+    x_sorted = np.asarray(x, dtype=np.float64)[order]
+    y_sorted = np.asarray(y, dtype=np.float64)[order]
+    labels_sorted = [labels[i] for i in order.tolist()]
+    merged_x = []
+    merged_y = []
+    merged_labels = []
+    i = 0
+    while i < x_sorted.shape[0]:
+        j = i + 1
+        values = [float(y_sorted[i])]
+        group_labels = [labels_sorted[i]]
+        while j < x_sorted.shape[0] and abs(x_sorted[j] - x_sorted[i]) < 1e-8:
+            values.append(float(y_sorted[j]))
+            group_labels.append(labels_sorted[j])
+            j += 1
+        merged_x.append(float(x_sorted[i]))
+        merged_y.append(float(np.mean(np.asarray(values, dtype=np.float64))))
+        merged_labels.append("+".join(group_labels))
+        i = j
+    if len(merged_x) < 2:
+        raise ValueError("Need at least two unique anchor descriptors")
+    return np.asarray(merged_x, dtype=np.float64), np.asarray(merged_y, dtype=np.float64), merged_labels
+
+
+def build_anchor_model(depth_by_type, param_table, proxy_type, target_field):
     required = ("Q0", "Qa", "Na", "C1", "C3")
     missing = [key for key in required if key not in depth_by_type]
     if missing:
         raise ValueError(f"Depth table is missing required DOPC dry types: {missing}")
-    anchor_points = []
+    raw_anchor_points = []
     for bead_type in DOPC_COVERED_TYPES:
-        anchor_points.append(
-            (
-                compute_env_descriptor(bead_type, atomtypes, param_table),
-                float(depth_by_type[bead_type][target_field]),
-                bead_type,
-            )
+        sigma_nm, epsilon_pair = pair_param(param_table, proxy_type, bead_type)
+        raw_anchor_points.append(
+            {
+                "env_type": bead_type,
+                "sigma_nm": float(sigma_nm),
+                "descriptor": float(epsilon_pair),
+                "target_value": float(depth_by_type[bead_type][target_field]),
+            }
         )
-    anchor_points.sort(key=lambda item: item[0])
-    x = np.asarray([item[0] for item in anchor_points], dtype=np.float64)
-    y = np.asarray([item[1] for item in anchor_points], dtype=np.float64)
-    labels = [item[2] for item in anchor_points]
-    if np.any(np.diff(x) <= 0):
-        raise ValueError("Anchor dry-table descriptors must be strictly increasing")
-    return x, y, labels
+    x = np.asarray([item["descriptor"] for item in raw_anchor_points], dtype=np.float64)
+    y = np.asarray([item["target_value"] for item in raw_anchor_points], dtype=np.float64)
+    labels = [item["env_type"] for item in raw_anchor_points]
+    merged_x, merged_y, merged_labels = merge_anchor_points_with_labels(x, y, labels)
+    return merged_x, merged_y, merged_labels, raw_anchor_points
 
 
-def build_role_anchor_models(depth_by_type, atomtypes, param_table):
+def build_role_anchor_models(depth_by_type, param_table):
     anchor_models = {}
     for role in BACKBONE_CLASSES:
         target_field = ROLE_TARGET_FIELDS[role]
-        anchor_x, anchor_y, anchor_labels = build_anchor_model(depth_by_type, atomtypes, param_table, target_field)
+        proxy_type = ROLE_PROXIES[role]
+        anchor_x, anchor_y, anchor_labels, raw_anchor_points = build_anchor_model(
+            depth_by_type,
+            param_table,
+            proxy_type,
+            target_field,
+        )
         anchor_models[role] = {
+            "proxy_type": proxy_type,
             "target_field": target_field,
             "target_description": ROLE_TARGET_DESCRIPTIONS[role],
+            "descriptor_name": ROLE_DESCRIPTOR_NAME,
+            "rmin_name": ROLE_RMIN_NAME,
             "x": anchor_x,
             "y": anchor_y,
             "labels": anchor_labels,
+            "raw_anchor_points": raw_anchor_points,
         }
     return anchor_models
 
@@ -2221,32 +2357,34 @@ def decode_ring_scale(atom_type):
     return 0.75 if atom_type.startswith("S") else 1.0
 
 
-def build_cross_type_records(atomtypes, param_table, descriptor_by_type, anchor_models_by_role, radial_grid):
+def build_cross_type_records(atomtypes, param_table, anchor_models_by_role, radial_grid):
     rows = []
     table_tensor = np.zeros((len(BACKBONE_CLASSES), len(atomtypes), len(radial_grid)), dtype=np.float32)
     pair_summaries = {}
     for env_index, env_type in enumerate(atomtypes):
-        sigma_base, epsilon_base = pair_param(param_table, BASE_PROXY, env_type)
-        descriptor = float(descriptor_by_type[env_type])
-        r_min = float((2.0 ** (1.0 / 6.0)) * sigma_base * 10.0)
         for role_index, role in enumerate(BACKBONE_CLASSES):
             anchor_model = anchor_models_by_role[role]
+            proxy_type = anchor_model["proxy_type"]
+            sigma_base, epsilon_base = pair_param(param_table, proxy_type, env_type)
+            descriptor = compute_role_pair_descriptor(proxy_type, env_type, param_table)
+            r_min = float((2.0 ** (1.0 / 6.0)) * sigma_base * 10.0)
             base_depth = interpolate_depth(descriptor, anchor_model["x"], anchor_model["y"])
             ctrl_x, ctrl_y = radial_control_points(r_min, base_depth, float(radial_grid[0]), float(radial_grid[-1]))
             target = pchip_interpolate(ctrl_x, ctrl_y, radial_grid)
             well_depth = float(base_depth)
             table_tensor[role_index, env_index, :] = target.astype(np.float32)
             pair_summaries[f"{role}:{env_type}"] = {
+                "proxy_type": proxy_type,
                 "r_min_angstrom": r_min,
                 "well_depth": well_depth,
                 "base_depth": float(base_depth),
                 "role_scale": 1.0,
                 "target_field": anchor_model["target_field"],
                 "target_description": anchor_model["target_description"],
+                "descriptor_name": anchor_model["descriptor_name"],
+                "descriptor_value": float(descriptor),
                 "sigma_nm": float(sigma_base),
-                "epsilon_p2": float(epsilon_base),
-                "epsilon_proxy": float(epsilon_base),
-                "dry_type_descriptor": float(descriptor),
+                "epsilon_pair": float(epsilon_base),
                 "fit_rmse": 0.0,
                 "control_r": [float(x) for x in ctrl_x],
                 "control_v": [float(y) for y in ctrl_y],
@@ -2256,6 +2394,7 @@ def build_cross_type_records(atomtypes, param_table, descriptor_by_type, anchor_
                     {
                         "protein_class": role,
                         "env_type": env_type,
+                        "proxy_type": proxy_type,
                         "r_angstrom": float(r_value),
                         "target_potential": float(target_value),
                         "fitted_potential": float(target_value),
@@ -2264,8 +2403,8 @@ def build_cross_type_records(atomtypes, param_table, descriptor_by_type, anchor_
                         "base_depth": float(base_depth),
                         "role_scale": 1.0,
                         "sigma_nm": float(sigma_base),
-                        "epsilon_p2": float(epsilon_base),
-                        "epsilon_proxy": float(epsilon_base),
+                        "epsilon_pair": float(epsilon_base),
+                        "descriptor_value": float(descriptor),
                         "fit_rmse": 0.0,
                     }
                 )
@@ -2326,11 +2465,15 @@ def write_cross_artifact(path: Path, protein_classes, env_types, radial_grid, ta
     with h5py.File(path, "w") as h5:
         meta = h5.create_group("meta")
         meta.attrs["schema"] = SPLINE_CROSS_SCHEMA
+        meta.attrs["calibration_mode"] = metadata["calibration"]["calibration_mode"]
+        meta.attrs["descriptor_name"] = metadata["calibration"]["descriptor_name"]
         meta.attrs["radial_min"] = np.float32(metadata["radial_grid"]["min"])
         meta.attrs["radial_max"] = np.float32(metadata["radial_grid"]["max"])
         meta.attrs["sample_step"] = np.float32(metadata["radial_grid"]["step"])
         meta.attrs["n_env_type"] = np.int32(len(env_types))
         meta.attrs["n_protein_class"] = np.int32(len(protein_classes))
+        for role in protein_classes:
+            meta.attrs[f"proxy_{role}"] = metadata["role_proxies"][role]
 
         sources = h5.create_group("sources")
         sources.attrs["ff_itp"] = metadata["sources"]["ff_itp"]
@@ -2346,6 +2489,17 @@ def write_cross_artifact(path: Path, protein_classes, env_types, radial_grid, ta
         cross.attrs["radial_step"] = np.float32(metadata["radial_grid"]["step"])
         cross.create_dataset("radial_grid", data=np.asarray(radial_grid, dtype=np.float32))
         cross.create_dataset("table_values", data=np.asarray(table_values, dtype=np.float32))
+
+
+def write_dry_nonbond_forcefield_artifact(path: Path, ff_itp: Path):
+    param_table = read_martini3_nonbond_params(str(ff_itp))
+    if not param_table:
+        raise ValueError(f"Failed to read dry MARTINI nonbond parameters from {ff_itp}")
+    type_order = None
+    with h5py.File(path, "r") as h5:
+        if "/classes/environment" in h5:
+            type_order = decode_bytes_array(h5["/classes/environment"][:]).tolist()
+    write_dry_nonbond_artifact(path, param_table, ff_itp, type_order=type_order)
 
 
 def load_manifest_paths(manifest_path: Path):
@@ -2418,6 +2572,8 @@ def load_cross_artifact(path: Path):
             cross = h5["/spline/cross"]
             return {
                 "schema": schema,
+                "calibration_mode": str(h5["/meta"].attrs.get("calibration_mode", "")),
+                "descriptor_name": str(h5["/meta"].attrs.get("descriptor_name", "")),
                 "protein_classes": protein_classes,
                 "environment_classes": env_classes,
                 "radial_grid": cross["radial_grid"][:].astype(np.float32),
@@ -2644,6 +2800,8 @@ def run_validate_backbone_only_command(argv):
         print(
             "  cross_meta "
             f"env_types={cross_meta_summary['n_env_type']} "
+            f"calibration_mode={cross_meta_summary['calibration_mode']} "
+            f"descriptor_name={cross_meta_summary['descriptor_name']} "
             f"fit_rmse_min={float(rmse['min']):.6f} "
             f"fit_rmse_median={float(rmse['median']):.6f} "
             f"fit_rmse_max={float(rmse['max']):.6f}"
@@ -2652,9 +2810,28 @@ def run_validate_backbone_only_command(argv):
         print(
             "  cross_artifact "
             f"schema={cross_artifact_summary['schema']} "
+            f"calibration_mode={cross_artifact_summary.get('calibration_mode', 'n/a')} "
+            f"descriptor_name={cross_artifact_summary.get('descriptor_name', 'n/a')} "
+            f"dry_schema={cross_artifact_summary.get('dry_schema', 'n/a')} "
+            f"dry_types={cross_artifact_summary.get('n_dry_type', 'n/a')} "
             f"env_types={cross_artifact_summary['n_env_type']} "
             f"n_radial={cross_artifact_summary['n_radial']}"
         )
+
+
+def run_validate_stage_potentials_command(argv):
+    parser = argparse.ArgumentParser(
+        description="Validate that a stage file does not contain forbidden membrane runtime nodes."
+    )
+    parser.add_argument("up_file", type=Path)
+    args = parser.parse_args(argv)
+    summary = validate_stage_potential_nodes(require_existing_file(args.up_file))
+    print(f"OK: {args.up_file}")
+    print(
+        "  stage_potentials "
+        f"n_nodes={summary['n_potential_nodes']} "
+        "forbidden_membrane_nodes=0"
+    )
 
 
 def run_build_depth_table_command(argv):
@@ -2755,15 +2932,20 @@ def run_build_backbone_cross_table_command(argv):
     atomtypes = parse_dry_atomtypes(ff_itp)
     param_table = read_martini3_nonbond_params(str(ff_itp))
     depth_by_type, depth_target_info = load_depth_targets(depth_table_csv, depth_table_meta)
-    descriptor_by_type = {env_type: compute_env_descriptor(env_type, atomtypes, param_table) for env_type in atomtypes}
-    anchor_models_by_role = build_role_anchor_models(depth_by_type, atomtypes, param_table)
+    descriptor_by_role = {
+        role: {
+            env_type: compute_role_pair_descriptor(ROLE_PROXIES[role], env_type, param_table)
+            for env_type in atomtypes
+        }
+        for role in BACKBONE_CLASSES
+    }
+    anchor_models_by_role = build_role_anchor_models(depth_by_type, param_table)
     radial_grid = np.arange(args.radial_min, args.radial_max + 0.5 * args.sample_step, args.sample_step)
     if radial_grid[-1] > args.radial_max:
         radial_grid[-1] = args.radial_max
     rows, table_tensor, pair_summaries = build_cross_type_records(
         atomtypes=atomtypes,
         param_table=param_table,
-        descriptor_by_type=descriptor_by_type,
         anchor_models_by_role=anchor_models_by_role,
         radial_grid=radial_grid,
     )
@@ -2774,10 +2956,13 @@ def run_build_backbone_cross_table_command(argv):
     for role in BACKBONE_CLASSES:
         anchor_model = anchor_models_by_role[role]
         role_targets = {}
-        for label, descriptor, well_depth in zip(anchor_model["labels"], anchor_model["x"], anchor_model["y"]):
+        for anchor_point in anchor_model["raw_anchor_points"]:
+            label = anchor_point["env_type"]
             role_targets[label] = {
-                "descriptor": float(descriptor),
-                "refined_well_depth": float(well_depth),
+                "proxy_type": anchor_model["proxy_type"],
+                "descriptor": float(anchor_point["descriptor"]),
+                "sigma_nm": float(anchor_point["sigma_nm"]),
+                "refined_well_depth": float(anchor_point["target_value"]),
                 "target_field": anchor_model["target_field"],
                 "target_description": anchor_model["target_description"],
             }
@@ -2814,16 +2999,22 @@ def run_build_backbone_cross_table_command(argv):
             },
         },
         "calibration": {
-            "descriptor_name": "mean_epsilon_to_all_dry_types",
+            "calibration_mode": CROSS_CALIBRATION_MODE,
+            "descriptor_name": ROLE_DESCRIPTOR_NAME,
+            "rmin_name": ROLE_RMIN_NAME,
             "role_target_fields": ROLE_TARGET_FIELDS,
             "role_target_descriptions": ROLE_TARGET_DESCRIPTIONS,
             "anchor_models_by_role": {
                 role: {
+                    "proxy_type": anchor_models_by_role[role]["proxy_type"],
                     "target_field": anchor_models_by_role[role]["target_field"],
                     "target_description": anchor_models_by_role[role]["target_description"],
-                    "anchor_labels": anchor_models_by_role[role]["labels"],
-                    "anchor_descriptors": [float(x) for x in anchor_models_by_role[role]["x"]],
-                    "anchor_depths": [float(y) for y in anchor_models_by_role[role]["y"]],
+                    "descriptor_name": anchor_models_by_role[role]["descriptor_name"],
+                    "rmin_name": anchor_models_by_role[role]["rmin_name"],
+                    "merged_anchor_labels": anchor_models_by_role[role]["labels"],
+                    "merged_anchor_descriptors": [float(x) for x in anchor_models_by_role[role]["x"]],
+                    "merged_anchor_depths": [float(y) for y in anchor_models_by_role[role]["y"]],
+                    "raw_anchor_points": anchor_models_by_role[role]["raw_anchor_points"],
                 }
                 for role in BACKBONE_CLASSES
             },
@@ -2832,8 +3023,8 @@ def run_build_backbone_cross_table_command(argv):
             "legacy_vs_refined": legacy_vs_refined,
         },
         "role_proxies": ROLE_PROXIES,
-        "role_scaling": "channel_specific_anchor_models",
-        "type_descriptor": descriptor_by_type,
+        "role_scaling": CROSS_CALIBRATION_MODE,
+        "type_descriptor_by_role": descriptor_by_role,
         "pair_summary": pair_summaries,
         "fit_rmse_summary": {
             "min": float(np.min(fit_rmses)),
@@ -2896,6 +3087,7 @@ COMMANDS = {
     "handoff": run_handoff_command,
     "inject-backbone-only": run_inject_backbone_only_command,
     "validate-backbone-only": run_validate_backbone_only_command,
+    "validate-stage-potentials": run_validate_stage_potentials_command,
     "build-depth-table": run_build_depth_table_command,
     "build-backbone-cross-table": run_build_backbone_cross_table_command,
     "inject-backbone-cross": run_inject_backbone_cross_command,
