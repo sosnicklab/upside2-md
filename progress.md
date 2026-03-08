@@ -110,8 +110,21 @@
   - fake Slurm zero-step smoke:
     `BASE_DIR=/tmp/condiv_symlay_validate_smoke SLURM_JOB_ID=12345 SLURM_NTASKS=48 SLURM_CPUS_PER_TASK=1 CONDIV_AUTO_RESUBMIT=1 CONDIV_CONVERGENCE_PATIENCE=2 bash ConDiv_symlay/run_remote.sh 0`
     -> pass
-  - produced `/tmp/condiv_symlay_validate_smoke/training_progress.jsonl` with `grad_norm_total=5.330964942122397`, `update_norm_total=0.43293099572683164`
-  - produced `/tmp/condiv_symlay_validate_smoke/training_status.json` with `converged=false`, `reason=not_enough_history`
+- produced `/tmp/condiv_symlay_validate_smoke/training_progress.jsonl` with `grad_norm_total=5.330964942122397`, `update_norm_total=0.43293099572683164`
+- produced `/tmp/condiv_symlay_validate_smoke/training_status.json` with `converged=false`, `reason=not_enough_history`
+
+## 2026-03-08 (Slurm spool-path bootstrap fix)
+- User reported a real cluster failure: the batch script tried to source `../.venv/bin/activate` relative to `/var/spool/slurm/...`, which does not point at the repo checkout.
+- Patched `ConDiv_symlay/run_remote.sh` to resolve `SCRIPT_DIR`/`PROJECT_ROOT` from `CONDIV_PROJECT_ROOT` or `SLURM_SUBMIT_DIR` before falling back to `dirname "$0"`.
+- Added `cd "$SCRIPT_DIR"` after path resolution so self-resubmitted `sbatch` calls run from the real workflow directory rather than the Slurm spool directory.
+- Switched environment bootstrap back to the resolved absolute project-root paths:
+  - `source "$PROJECT_ROOT/.venv/bin/activate"`
+  - `source "$PROJECT_ROOT/source.sh"`
+- Follow-up user correction: the Slurm wrapper should prefer the workflow-local `ConDiv_symlay/venv/bin/activate`, while still sourcing `source.sh` from the project root.
+- Updated `ConDiv_symlay/run_remote.sh` accordingly:
+  - prefer `"$SCRIPT_DIR/venv/bin/activate"`
+  - fall back to `"$PROJECT_ROOT/.venv/bin/activate"` only when the workflow-local venv is absent
+  - keep `source "$PROJECT_ROOT/source.sh"` unchanged
 
 ## 2026-02-28
 - Started Slurm adaptation task for `example/16.MARTINI/run_relax_6x_rigid_dry.sh` workflow.

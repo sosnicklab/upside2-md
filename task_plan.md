@@ -84,6 +84,9 @@ Build a new `/Users/yinhan/Documents/upside2-md/ConDiv_symlay` workflow cloned f
    - `run_remote.sh` now writes centralized progress/state artifacts under `BASE_DIR` (`training_progress.jsonl`, `training_status.json`).
    - convergence is evaluated on a trailing window of logged records using total gradient norm and total update norm thresholds, with defaults exposed as environment variables.
    - when not converged, the Slurm wrapper resubmits itself with `sbatch --dependency=afterok:$SLURM_JOB_ID` and increments a resubmission counter.
+10. Slurm spool-path follow-up:
+   - `run_remote.sh` now resolves the real workflow directory from `CONDIV_PROJECT_ROOT` or `SLURM_SUBMIT_DIR` before falling back to `dirname "$0"`.
+   - the batch job `cd`s into the resolved `ConDiv_symlay` directory before environment bootstrap and self-resubmission so spool-copy execution does not break repo-relative paths.
 
 # ConDiv Membrane Workflow Modernization Plan
 
