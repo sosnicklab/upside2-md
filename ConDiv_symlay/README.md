@@ -20,6 +20,8 @@ The training target still uses the standard `membrane.h5` schema. The difference
 
 This workflow now also uses one fixed DOPC membrane thickness for every training target. It does not read per-target `.thickness` files during ConDiv training.
 
+The design rationale for the training potential and constraints is documented in [TRAINING_POTENTIAL_DESIGN.md](/Users/yinhan/Documents/upside2-md/ConDiv_symlay/TRAINING_POTENTIAL_DESIGN.md).
+
 ## Environment
 
 Run from the project root:

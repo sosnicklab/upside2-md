@@ -39,3 +39,15 @@
   - one-target initialize smoke on `1orq` -> pass
     - legacy `1orq.thickness = 29.4`
     - stored training thickness still `30.2`
+- Added standalone design documentation:
+  - new note `ConDiv_symlay/TRAINING_POTENTIAL_DESIGN.md`
+  - linked it from `ConDiv_symlay/README.md`
+- The note records the implemented design principles for:
+  - direct implicit membrane training
+  - hard symmetric DOPC layer projection
+  - soft distance-resolved dry-MARTINI teacher
+  - fixed DOPC thickness
+  - preservation of the training-set protein-vs-bilayer frame
+- Verification:
+  - read back `ConDiv_symlay/TRAINING_POTENTIAL_DESIGN.md`
+  - read back the new README link
