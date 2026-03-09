@@ -135,8 +135,13 @@ def build_config() -> Config:
     if worker_launch not in {"auto", "local", "srun"}:
         raise ValueError("CONDIV_WORKER_LAUNCH must be one of auto|local|srun")
     legacy_threads = int(os.environ.get("CONDIV_N_THREADS", "8"))
-    n_replica = int(os.environ.get("CONDIV_N_REPLICA", str(legacy_threads)))
-    omp_threads_default = str(legacy_threads if "CONDIV_N_REPLICA" not in os.environ else 1)
+    slurm_active = bool(os.environ.get("SLURM_JOB_ID"))
+    n_replica_default = "8" if slurm_active else str(legacy_threads)
+    n_replica = int(os.environ.get("CONDIV_N_REPLICA", n_replica_default))
+    if slurm_active:
+        omp_threads_default = str(int(os.environ.get("SLURM_CPUS_PER_TASK", "1")))
+    else:
+        omp_threads_default = str(legacy_threads if "CONDIV_N_REPLICA" not in os.environ else 1)
 
     return Config(
         project_root=PROJECT_ROOT,

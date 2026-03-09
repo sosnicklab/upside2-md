@@ -27,6 +27,28 @@
 - Remaining limitation:
   - no live Slurm job step was run in this sandbox, so the verified evidence is command construction and runtime wiring rather than a real cluster execution.
 
+## 2026-03-09 (ConDiv_symlay Slurm stale-override and OOM correction)
+- User reported a live Slurm failure with:
+  - `Worker dispatch=srun, replicas/worker=48, omp_threads/upside=1, max_parallel_workers=1`
+  - all minibatch targets failing
+  - `slurmstepd` reporting many batch-step OOM kills
+- Root cause review:
+  - replica count was still vulnerable to stale legacy launch variables
+  - the batch script still requested only `16G` for a `48`-task node, which is not enough for the default full-node parallel path
+- Patched the defaults:
+  - `ConDiv_symlay/ConDiv_mem.py` now defaults to `8` replicas under Slurm unless `CONDIV_N_REPLICA` is explicitly set
+  - the legacy `CONDIV_N_THREADS` variable no longer inflates replica count under Slurm
+  - `ConDiv_symlay/run_remote.sh` now uses:
+    - `#SBATCH --cpus-per-task=1`
+    - `#SBATCH --mem=0`
+  - `run_remote.sh` now aborts when `CONDIV_N_REPLICA` matches all allocated task slots and no explicit `CONDIV_MAX_PARALLEL_WORKERS` override is present
+- Validation:
+  - `bash -n ConDiv_symlay/run_remote.sh` -> pass
+  - `python3 -m py_compile ConDiv_symlay/ConDiv_mem.py py/run_upside.py` -> pass
+  - fake Slurm import probe with `SLURM_JOB_ID=1`, `SLURM_CPUS_PER_TASK=1`, `CONDIV_N_THREADS=48`, and no `CONDIV_N_REPLICA` now resolves:
+    - `n_replica = 8`
+    - `omp_threads = 1`
+
 ## 2026-03-09 (Pair-table-informed ConDiv_symlay training and builder handoff)
 - Re-read `task_plan.md`, `progress.md`, and `lessons.md`, then verified the reduced pair-regularized smoke run artifacts before making any further edits.
 - Extended `ConDiv_symlay/symlay_utils.py` so the layer manifest now carries:

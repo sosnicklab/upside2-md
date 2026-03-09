@@ -197,6 +197,10 @@ Teach `ConDiv_symlay` to regularize the layered membrane teacher against the dry
    - `ConDiv_symlay/ConDiv_mem.py` now treats replica count and OMP thread count as separate runtime settings (`CONDIV_N_REPLICA`, `CONDIV_OMP_THREADS`).
    - Under Slurm, each worker now launches `run_upside('srun', ..., ntasks=n_replica)` so the actual `upside` step reserves one task per replica, matching the reference replica-exchange launch pattern in `example/02.ReplicaExchangeSimulation/run.py`.
    - With the default `#SBATCH --ntasks-per-node=48` and `CONDIV_N_REPLICA=8`, the wrapper now targets `6` concurrent Upside jobs instead of incorrectly mapping all 48 task slots onto independent Python workers.
+13. Slurm stale-override/OOM correction:
+   - `run_remote.sh` now requests full node memory by default with `#SBATCH --mem=0` and pins `#SBATCH --cpus-per-task=1` for the default `OMP=1` path.
+   - `ConDiv_symlay/ConDiv_mem.py` no longer derives replica count from the legacy `CONDIV_N_THREADS` variable under Slurm; absent an explicit `CONDIV_N_REPLICA`, it falls back to `8`.
+   - `run_remote.sh` now aborts if `CONDIV_N_REPLICA` equals all allocated task slots and `CONDIV_MAX_PARALLEL_WORKERS` is unset, because that usually indicates a stale pre-fix override that would collapse fanout to one oversized full-node bundle.
 
 # ConDiv Membrane Workflow Modernization Plan
 

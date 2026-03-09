@@ -4,7 +4,8 @@
 #SBATCH --time=36:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=48
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=0
 
 set -euo pipefail
 
@@ -116,6 +117,12 @@ fi
 
 export CONDIV_N_REPLICA="${CONDIV_N_REPLICA:-8}"
 export CONDIV_OMP_THREADS="${CONDIV_OMP_THREADS:-${SLURM_CPUS_PER_TASK:-1}}"
+if [ -n "$SLURM_TASK_SLOTS" ] && [ "${CONDIV_N_REPLICA}" -eq "$SLURM_TASK_SLOTS" ] && [ -z "${CONDIV_MAX_PARALLEL_WORKERS:-}" ]; then
+  echo "ERROR: CONDIV_N_REPLICA=$CONDIV_N_REPLICA matches all allocated Slurm task slots." >&2
+  echo "This usually indicates a stale override from the older launch model." >&2
+  echo "Unset CONDIV_N_REPLICA/CONDIV_N_THREADS and resubmit, or set CONDIV_MAX_PARALLEL_WORKERS explicitly if you really want one full-node replica bundle." >&2
+  exit 1
+fi
 if [ -n "$SLURM_TASK_SLOTS" ] && [ -z "${CONDIV_MAX_PARALLEL_WORKERS:-}" ]; then
   if [ "$SLURM_TASK_SLOTS" -lt "$CONDIV_N_REPLICA" ]; then
     echo "ERROR: allocated Slurm task slots ($SLURM_TASK_SLOTS) are smaller than CONDIV_N_REPLICA ($CONDIV_N_REPLICA)." >&2

@@ -90,7 +90,7 @@ export CONDIV_SYMLAY_SUPPORT_MARGIN=0.5
 sbatch run_remote.sh
 ```
 
-`run_remote.sh` uses the same restart surface as `run_local.sh`, requests `16G` memory by default, resolves the real workflow directory from `SLURM_SUBMIT_DIR` / `CONDIV_PROJECT_ROOT` so Slurm spool-copy execution still finds the repo checkout, prefers `ConDiv_symlay/venv/bin/activate` when present (falling back to the project-root `.venv` in this checkout), sources `source.sh` from the project root, loads `python/3.11.9`, `cmake`, and `openmpi` through the module system, and caps BLAS/OpenMP threads to keep worker launches predictable.
+`run_remote.sh` uses the same restart surface as `run_local.sh`, requests the full node memory by default with `#SBATCH --mem=0`, resolves the real workflow directory from `SLURM_SUBMIT_DIR` / `CONDIV_PROJECT_ROOT` so Slurm spool-copy execution still finds the repo checkout, prefers `ConDiv_symlay/venv/bin/activate` when present (falling back to the project-root `.venv` in this checkout), sources `source.sh` from the project root, loads `python/3.11.9`, `cmake`, and `openmpi` through the module system, and caps BLAS/OpenMP threads to keep worker launches predictable.
 
 With no argument, `run_remote.sh` defaults to `RUN_STEPS=20`. You can still pass a single positional step count if you want to override that default.
 
@@ -100,6 +100,8 @@ Inside Slurm, `WORKER_LAUNCH=auto` now resolves to `srun`. The wrapper also defa
 - `CONDIV_MAX_PARALLEL_WORKERS` to `allocated_task_slots / CONDIV_N_REPLICA`
 
 This matches the replica-exchange launch pattern in `example/02.ReplicaExchangeSimulation/run.py`: each worker launches the actual `upside` step against a full replica bundle, and under Slurm that step reserves `CONDIV_N_REPLICA` task slots through `srun`. With the default `#SBATCH --ntasks-per-node=48` and `CONDIV_N_REPLICA=8`, the wrapper will run up to `6` Upside jobs in parallel on the node.
+
+If the wrapper detects `CONDIV_N_REPLICA` equal to all allocated task slots and you did not set `CONDIV_MAX_PARALLEL_WORKERS`, it aborts with a stale-override error instead of launching one oversized full-node worker bundle by mistake.
 
 Actual concurrent worker count is still limited by the minimum of:
 - current minibatch size
