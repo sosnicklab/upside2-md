@@ -1,121 +1,19 @@
-# Findings
-
-- 2026-03-07: `ConDiv_symlay/build_layer_manifest.py` had to parse 4-character lipid residue names from the bilayer PDB (`DOPC` in columns `17:21`), not the 3-character slice used in some other helpers. Using `17:20` silently dropped the terminal `C` and produced zero matched lipid atoms.
-- 2026-03-08: In `ConDiv_symlay`, increasing `#SBATCH --ntasks-per-node` alone does not increase live worker parallelism. Three additional conditions matter:
-  - restart must refresh `worker_launch`, `n_threads`, and `max_parallel_workers` from the current environment instead of stale checkpoint state
-  - Slurm launches must use `srun` job steps for workers, not local subprocesses
-  - actual concurrent jobs are capped by minibatch size, which is fixed when `initial_checkpoint.pkl` is created
-- 2026-03-08: The default `ConDiv_symlay/pdb_list2` profile contains 45 proteins, so even on a `48`-task Slurm allocation the maximum useful same-minibatch worker fanout is 45.
-- 2026-03-08: `ConDiv_symlay` now records one centralized training-progress entry per completed Slurm restart job in `training_progress.jsonl` and writes the current convergence decision to `training_status.json`. The auto-resubmission stop rule is a trailing window over those records, using total gradient norm plus total update norm thresholds.
-- 2026-03-08: Current reduced smoke checkpoints show total norms around `grad_norm_total ~ 5.33` and `update_norm_total ~ 0.43`, so the new default Slurm convergence thresholds (`1.0`, `0.05`) are intentionally stricter than the current early-training regime.
-- 2026-03-08: Slurm executes the batch script from a copied file under `/var/spool/slurm/...`, so `dirname "$0"` does not point at the real workflow directory. `ConDiv_symlay/run_remote.sh` must resolve the workflow path from `CONDIV_PROJECT_ROOT` or `SLURM_SUBMIT_DIR`, then `cd` into the real `ConDiv_symlay` directory before sourcing the repo `.venv`/`source.sh` or self-resubmitting.
-- 2026-03-08: On this checkout, `ConDiv_symlay/venv` is absent but the user expects the Slurm wrapper to use it when available. The wrapper should therefore prefer `ConDiv_symlay/venv/bin/activate` and fall back to the project-root `.venv/bin/activate`, while always sourcing `source.sh` from the project root.
-- 2026-03-08: The cluster bootstrap requirements for `ConDiv_symlay/run_remote.sh` now include `module load python/3.11.9` in addition to `cmake` and `openmpi`, and the module loads must happen before venv activation.
-- 2026-03-08: The project-root `source.sh` was not safe under `set -u` and non-Homebrew environments. It assumed `MY_PYTHON`, `PYTHONPATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, and `LD_LIBRARY_PATH` were already defined, and it unconditionally invoked `brew`. It now derives `UPSIDE_HOME` from the script location when unset, uses `${VAR:+...}`-style expansions for optional vars, and only applies Homebrew-specific exports when `brew` exists.
-- 2026-03-08: The cluster copy of `source.sh` is a different, simpler file and still assumes `PYTHONPATH` is defined before `export PYTHONPATH=$UPSIDE_HOME/py:$PYTHONPATH`. `ConDiv_symlay/run_remote.sh` must therefore initialize `PYTHONPATH` before sourcing any project `source.sh`, regardless of the local repo copy.
-- 2026-03-09: The pair-table-informed `ConDiv_symlay` teacher now uses the fixed proxy mapping requested during planning:
-  - `N -> Qd`
-  - `CA -> C1`
-  - `C -> C2`
-  - `O -> Qa`
-  and constrains only the membrane mean channels (`cb mean`, donor mean, acceptor mean), not the burial/bound-state sub-branches. The slot score mode is now `pair_lj_minimum_energy_v1`, i.e. the LJ minimum `min_r V = -epsilon` from the dry MARTINI table rather than raw `epsilon`.
-- 2026-03-09: The new pair teacher follows the simplified DOPC topology correction rather than raw member counts:
-  - half-bilayer slot weights `1, 1, 2, 2, 2, 2, 2`
-  - mirrored full type sequence `Q0-Qa-Na-C1-C3-C1-C1-C1-C1-C3-C1-Na-Qa-Q0`
-  while the manifest still records `actual_member_count` separately for diagnostics.
-- 2026-03-09: `example/16.MARTINI/build_martini_parameters.py` can now materialize a trained membrane teacher directly from a `ConDiv_symlay` checkpoint by importing the copied `ConDiv_mem.py` from the run directory, provided `CONDIV_PROJECT_ROOT` is set before module load so project-root resolution inside the copied script stays valid.
-- 2026-03-09: The Slurm replica-exchange reference in `example/02.ReplicaExchangeSimulation/run.py` uses one `upside` launch over the full list of replica config files and sizes the allocation by replica count (`n_rep`). `ConDiv_symlay` should mirror that at the actual `upside` step: replica count is a separate runtime knob from OMP thread count, and Slurm fanout across proteins must be computed as `allocated_task_slots / n_replica`, not `allocated_task_slots` directly.
-- 2026-03-09: The failure mode `replicas/worker=48, max_parallel_workers=1` came from stale legacy launch assumptions. Under Slurm, `ConDiv_symlay` must not infer replica count from `CONDIV_N_THREADS`; the safe default remains `8` replicas unless `CONDIV_N_REPLICA` is explicitly set. The batch script also needs full node memory for the `48`-task default; `16G` is too small and is consistent with the observed cgroup OOMs.
-- 2026-03-07: The new `ConDiv_symlay` task should use the repo-root tracking files (`task_plan.md`, `findings.md`, `progress.md`) because the workflow lives at `/Users/yinhan/Documents/upside2-md/ConDiv_symlay`, not under `example/16.MARTINI/`.
-- 2026-03-07: `ConDiv/` is already a self-contained membrane-training workflow with the required runner surface (`run_init.sh`, `run_local.sh`, `run_remote.sh`, `run_validate_rounds.sh`), helper scripts, bundled `param0..3`, `upside_input*`, `pdb_list*`, and a copied nested `venv/`.
-- 2026-03-07: `ConDiv/run_init.sh`, `run_local.sh`, `run_remote.sh`, and `run_validate_rounds.sh` all bootstrap the project-root `.venv` and `source.sh`, export `CONDIV_PROJECT_ROOT`, and support `WORKER_LAUNCH=auto|local|srun`; this is the correct portability surface to preserve in `ConDiv_symlay`.
-- 2026-03-07: `ConDiv/ConDiv_mem.py` writes the standard `membrane.h5` arrays (`cb_energy`, `icb_energy`, `hb_energy`, `ihb_energy`) and copies itself into the run directory as `ConDiv_mem.py`, so the cloned workflow should keep that filename for checkpoint portability.
-- 2026-03-07: `ConDiv/ConDiv_mem.py` currently applies Adam updates directly to the four membrane parameter blocks and writes them through `expand_param(...)`; the hard symmetry/layer projection belongs between `new_param = param + step_update` and `expand_param(new_param, ...)`.
-- 2026-03-07: The stored `membrane.h5` arrays are clamped spline coefficients, not raw sampled values. Existing tooling evaluates them with `ue.clamped_spline_value(...)` and reconstructs them with `ue.clamped_spline_solve(...)`, so the new symmetric multilayer constraint must operate in sampled physical-curve space and solve back to coefficients.
-- 2026-03-07: The current published `parameters/ff_2.1/membrane.h5` has the same schema/shapes as `ConDiv/param0..3/membrane.h5` but asymmetric supports:
-  - `cb_energy` `(20, 2, 18)` with `cb_z_min=-17`, `cb_z_max=15`
-  - `hb_energy` `(2, 2, 18)` with `hb_z_min=-33`, `hb_z_max=15`
-- 2026-03-07: The user corrected the DOPC multilayer model from bead-name layers to a topology-slot model because DOPC is bifurcated at `Qa`. The canonical full-sequence type template to preserve is:
-  - `Q0-Qa-Na-C1-C3-C1-C1-C1-C1-C3-C1-Na-Qa-Q0`
-- 2026-03-07: For the current DOPC topology in `example/16.MARTINI/ff_dry/dry_martini_v2.1_lipids.itp`, the active bead names are:
-  - `NC3(Q0)`, `PO4(Qa)`, `GL1/GL2(Na)`, `C1A/C2A/D3A/C4A/C5A`, `C1B/C2B/D3B/C4B/C5B`
-- 2026-03-07: The user-corrected topology-slot basis implies repeated type slots are distinct by position, not by bead name. The natural current-DOPC slot membership for the first implementation is:
-  - `Q0 -> NC3`
-  - `Qa -> PO4`
-  - `Na -> GL1, GL2`
-  - outer `C1 -> C1A, C1B, C2A, C2B`
-  - `C3 -> D3A, D3B`
-  - inner `C1` slot 1 -> `C4A, C4B`
-  - inner `C1` slot 2 -> `C5A, C5B`
-- 2026-03-07: The observed DOPC bead depths in `example/16.MARTINI/pdb/bilayer.MARTINI.pdb` are not strictly depth-sorted by topology order, so the training manifest should preserve the canonical slot sequence for labeling while using the measured mean `|z-z_center|` values as the projection anchors.
-- 2026-03-07: The first working `ConDiv_symlay` manifest built the corrected full type sequence exactly:
-  - `Q0-Qa-Na-C1-C3-C1-C1-C1-C1-C3-C1-Na-Qa-Q0`
-  and measured positive projection depths (A):
-  - `2.157`, `2.373`, `4.666`, `7.781`, `13.585`, `18.233`, `19.767`
-- 2026-03-07: Seeding the current `parameters/ff_2.1/membrane.h5` into `ConDiv_symlay` expands the supports to:
-  - `cb`: `[-21, 21]`
-  - `hb`: `[-33, 33]`
-  while keeping the standard `membrane.h5` tensor shapes unchanged.
-- 2026-03-07: In the constrained clamped-spline representation, the written curves are not exactly piecewise-linear on a dense z-grid after `ue.clamped_spline_solve(...)`; practical residuals for the seeded constrained file were about:
-  - max symmetry residual `~0.089`
-  - max projection residual `~0.193`
-  so `ConDiv_symlay` constraint validation needs a tolerance band matched to the spline representation rather than near-zero dense-grid thresholds.
-- 2026-03-07: `ConDiv_symlay/ConDiv_mem.py::expand_param(...)` needed a second constrained projection pass on the emitted arrays, because the inner-curve rebuild (`shift_inner_curve`) otherwise broke symmetry in the written `membrane.h5` even when the in-memory checkpoint parameters were already projected.
-- 2026-03-07: Reduced smoke verification succeeded for the cloned workflow:
-  - `run_init.sh` passed in `/tmp/condiv_symlay_smoke_init3`
-  - `run_local.sh 1` passed in `/tmp/condiv_symlay_smoke_init3`
-  - `run_validate_rounds.sh` passed in `/tmp/condiv_symlay_validate_smoke`
-  - local shell execution of `bash ConDiv_symlay/run_remote.sh 0` passed against the produced checkpoint
-- 2026-03-08: A fresh random one-step local round can still fail at the parent level on a target-specific nonzero worker exit even when the worker writes a finite `*.divergence.pkl`; on the first fresh run, `7jna` returned nonzero after writing finite divergence metrics and the parent aborted with `All jobs failed`. For a deterministic “script works” confirmation, using a controlled one-protein list avoids random target instability.
-- 2026-03-08: A fresh controlled short round using only `5vb2` succeeded end-to-end in `/tmp/condiv_symlay_short_round_controlled`:
-  - `run_init.sh` passed
-  - `run_local.sh 1` passed with `Median RMSD 0.57 0.84`
-  - post-round `validate_symlay_constraints.py` passed on `epoch_00_minibatch_00/checkpoint.pkl`
-
-- 2026-02-12: Dry MARTINI Gromacs workflow files are present at `/Users/yinhan/Downloads/charmm-gui-7090685331/gromacs` with sequence: `step6.0_minimization.mdp`, `step6.1_minimization.mdp`, `step6.2` to `step6.6` equilibration, and `step7_production.mdp`.
-- 2026-02-12: Existing bilayer workflow script already performs staged minimization/equilibration/production but was tuned for prior MARTINI assumptions.
-- 2026-02-12: Dry MARTINI mdp settings indicate semi-isotropic coupling for relaxation (`tau-p=4.0`, membrane-plane compressibility equivalent to `3e-4 bar^-1`, normal-axis fixed for implicit systems) and a pressure-coupling strategy that transitions from Berendsen to Parrinello-Rahman as described in the paper note.
-- 2026-02-12: UPSIDE barostat previously used a single compressibility scalar for all axes; true dry MARTINI membrane coupling requires axis-specific compressibility (`xy` vs `z`).
-- 2026-02-12: `ff_dry` uses dry MARTINI v2.1 file names (`dry_martini_v2.1.itp`, `dry_martini_v2.1_lipids.itp`, `dry_martini_v2.1_ions.itp`) and macro-based aliases in `[ bonds ]`/`[ angles ]`, so parser support for `#define`-backed parameters is required.
-- 2026-02-12: Dry lipid ITP (`dry_martini_v2.1_lipids.itp`) relies on preprocessor branches (`#ifndef EXP_DOPC`/`#else`), and only one branch should be parsed.
-- 2026-02-12: Reciprocal Ewald path in `src/box.cpp` originally spent most cost in repeated `cosf/sinf` evaluations per atom per k-vector.
-- 2026-02-12: Added optional periodic cardinal cubic B-spline trig approximation (`ewald_use_cardinal_bspline`, `ewald_bspline_grid`) and per-k atom trig caching to reduce reciprocal-space compute cost while preserving the same summation structure.
-- 2026-02-13: CHARMM-GUI dry MARTINI bilayer uses `BILAYER_LIPIDHEAD_FC` only in equilibration stages `step6.2` to `step6.6` with values `200/100/50/20/10` from `.mdp` `define` lines; production (`step7_production.mdp`) has no `BILAYER_LIPIDHEAD_FC` define.
-- 2026-02-13: In `toppar/dry_martini_v2.1_lipids.itp`, bilayer head-group restraint blocks are under `#ifdef BILAYER_LIPIDHEAD_FC` and apply anisotropic position restraints with `fx=0`, `fy=0`, `fz=BILAYER_LIPIDHEAD_FC`.
-- 2026-02-13: Paper section 2.1 states implicit-solvent simulations should generally run in NVT; for periodic planar bilayers, semi-isotropic pressure coupling is used as an equilibration tool for area-per-lipid.
-- 2026-02-13: CHARMM-GUI dry bilayer `step7_production.mdp` sets `pcoupl = no` (NVT) for production, with pressure-coupling parameters retained but inactive.
-- 2026-02-13: CHARMM-GUI dry bilayer soft-core settings are present only in `step6.0_minimization.mdp` (`free-energy = yes`, `sc-alpha = 4`); stages `6.1`-`6.6` and `7.0` do not define soft-core/free-energy terms and are hard interaction stages.
-- 2026-02-13: Paper diffusion protocol for bilayers uses PO4 bead MSD, COM removal, linear fit `MSD(t)=4Dt+C` (2D lateral diffusion), excludes 10% of points at both ends of the MSD curve, and estimates uncertainty via difference between fits to first vs second halves.
-- 2026-02-23: In current HDF5 2.0 behavior, `H5Lexists`/`H5Oexists_by_name` can return a negative error for missing intermediate path components (not just `0` for absent object), so existence checks must treat that case as "not found" instead of aborting.
-- 2026-02-23: `extract_martini_vtf.py` `mode 2` requires hybrid mapping datasets (e.g., `/input/hybrid_env_topology/protein_membership`); bilayer-only workflows without hybrid groups must use `mode 1`.
-- 2026-02-25: In this repository layout, CMake project entrypoint is `src/CMakeLists.txt` (not root), so out-of-tree configure/build must use `cmake -S src -B <build_dir>`.
-- 2026-02-25: The provided master clone at `/Users/yinhan/Documents/upside2-md-master/src` does not include `martini.cpp`; direct file-by-file parity comparison for MARTINI runtime code is therefore not possible against that clone.
-- 2026-02-25: On this machine, `/opt/homebrew/bin/python3.14` lacks `numpy` while `/opt/homebrew/bin/python3.10` has `numpy` + `h5py`; RBM training/runtime script execution therefore depends on interpreter selection unless dependencies are installed in the active environment.
-- 2026-02-26: Several OPM/RCSB AA PDBs in the training list contain residues with missing required heavy atoms; direct martinize on raw files can fail with "Too many atoms missing" unless AA chains are sanitized first.
-- 2026-02-26: Reusing prior martinize outputs by filename alone is unsafe; `.top`/`.itp` can become incompatible with current AA input, so cache reuse should validate provenance (e.g., `.top` header source marker).
-- 2026-02-28: `example/16.MARTINI/run_relax_6x_rigid_dry.sh` is already a valid single-system compute payload for Slurm because it is self-contained, sources the project environment from `SCRIPT_DIR`, and performs sequential stage handoff internally.
-- 2026-02-28: The correct parallelization point for rigid dry MARTINI relaxation is `example/16.MARTINI/batch_relax_rigid_dry.py`, which iterates over manifest systems; parallelizing internal stages would break stage dependencies.
-- 2026-02-28: To keep Slurm submission robust, generating per-system wrapper scripts is safer than packing many environment variables into `sbatch --wrap`.
-- 2026-02-28: Verified Slurm dry-run wrapper generation against `train-data/training_manifest.json`; generated wrapper scripts only need workflow-specific exports (`RUN_DIR`, protein input paths, `MARTINIZE_ENABLE=0`, `SEED`) before invoking `run_relax_6x_rigid_dry.sh`.
-- 2026-03-01: `train-data/training_manifest.json` originally stored absolute project-root paths for all generated artifacts (`aa_pdb_effective`, `cg_pdb`, `itp_file`, `runtime_pdb`, `up_file`, etc.), which breaks when the repo is moved to a different root on Slurm.
-- 2026-03-01: `example/16.MARTINI/download_and_prepare_training_inputs.py` should emit repo-relative paths for project-local artifacts; `example/16.MARTINI/batch_relax_rigid_dry.py` now resolves both those relative paths and legacy absolute manifests.
-- 2026-03-01: The Slurm OOM during `prepare_system.py --prepare-structure 0` was consistent with an undersized job cgroup, because `batch_relax_rigid_dry.py` previously omitted `--mem` unless the user supplied `--slurm-mem`.
-- 2026-03-01: The generated Slurm wrapper should also cap `OMP_NUM_THREADS`/`OPENBLAS_NUM_THREADS`/`MKL_NUM_THREADS` and similar variables to `1` to prevent unnecessary thread fan-out and extra memory pressure during Python prep stages.
-- 2026-03-01: A single Slurm job array with `--array=0-N%2` is a better default orchestration shape here than `N` separate `sbatch` calls, because it keeps scheduler state smaller and caps active relaxations at two systems at a time.
-- 2026-03-04: Membrane training parameter schema is compatible between `/Users/yinhan/Documents/upside2-md/parameters/ff_2.1/membrane.h5` and `/Users/yinhan/Documents/Train/param*/membrane.h5` (`cb_energy`, `icb_energy`, `hb_energy`, `ihb_energy`, `burial_nodes`, `names`, and matching root attrs), enabling initialization from current force field.
-- 2026-03-04: Current `run_upside.py` API requires modern argument names (`environment_potential`, `bb_environment_potential`, `rotamer_interaction`, `rotamer_placement`, `hbond_energy`, `rama_sheet_mix_energy`); legacy membrane script keys (`environment`, `placement`, `hbond`, etc.) are incompatible and must be mapped.
-- 2026-03-04: Legacy membrane `pdb_list` profile (`upside_input`) has optional missing `.chain_breaks` files for many targets, while `pdb_list2` (`upside_input2`) is complete for all expected training suffixes.
-- 2026-03-04: Upside engine Python bindings expose `get_param`, `set_param`, and `get_param_deriv` for named nodes, enabling direct finite-difference checks against analytic membrane parameter derivatives without running full trajectories.
-- 2026-03-04: Legacy membrane chain-break files in `Train/upside_input*/*.chain_breaks` can be one-line residue-break lists, while current `py/upside_config.py` expects at least two lines (`chain_first_residue` + `chain_counts`); a compatibility conversion layer is needed before passing `--chain-break-from-file`.
-- 2026-03-04: For current `upside_config.py`, using `--channel-membrane-potential` generates `cb_surf_membrane_potential`/`hb_surf_membrane_potential` nodes with inner coefficients, while `--membrane-potential` generates `cb_membrane_potential`/`hb_membrane_potential` without inner coefficients.
-- 2026-03-04: In the current engine build, `get_param_deriv` for `cb_surf_membrane_potential`/`hb_surf_membrane_potential` reports derivatives for outer coefficients only (expected sizes `720` and `72` respectively), not concatenated outer+inner sizes.
-- 2026-03-04: For reduced-step smoke runs, Upside may exit non-zero (e.g., return `-5`) after writing usable trajectory frames; strict non-zero failure handling in workers should be gated by actual output presence.
-- 2026-03-04: Reduced single-minibatch smoke settings (`minibatch=1`, short duration) can yield NaN RMSD/gradient stats for this membrane dataset; gradient-check reports should be interpreted with stability context from the run configuration.
-- 2026-03-05: Source inspection in `src/membrane_potential.cpp` confirms `cb_surf_membrane_potential` and `hb_surf_membrane_potential` expose `get_param/set_param/get_param_deriv` over `coeff` only; `coeff_inner` is used in energy evaluation but is not part of the trainable API vector.
-- 2026-03-05: NaN checkpoint poisoning in membrane training came from fixed-frame slicing (`start = int(equil_fraction * CONFIG.n_frame)`) that can yield empty post-equil windows in short runs; selecting finite frames from actual output length prevents NaN updates.
-- 2026-03-05: In this engine build, `membrane_potential` (`cb_membrane_potential`/`hb_membrane_potential`) gives stable, finite gradient checks for the updated ConDiv workflow, while `channel_membrane_potential` produced persistent HB FD-vs-analytic mismatch for the same checkpoint state.
-- 2026-03-05: External workflow `/Users/yinhan/Documents/upside2-md-ConDiv/source.sh` runs with `set -u`; validator scripts must pre-initialize unset env vars (`PYTHONPATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, `LD_LIBRARY_PATH`) before sourcing it.
-- 2026-03-05: `ConDiv.py` checkpoints in `remd-4000-8RP-1th-test` can contain classes pickled as `__main__`; robust checkpoint mutation/inspection requires a mapped unpickler bound to `ConDiv.py`.
-- 2026-03-05: `rotamer` node in this ConDiv build accepts shape probes but rejects arbitrary perturbed `set_param` updates (`bad angular match`/`incompatible parameters`), so strict elementwise FD is not a valid check for that node.
-- 2026-03-05: Strict FD checks are reliable for `hbond_coverage` and `hbond_coverage_hydrophobe` in this workflow (low relative errors), while `hbond_energy` and `nonlinear_coupling_environment` require finite/dimension checks rather than strict relative-FD thresholds under current node semantics.
-- 2026-03-05: The dry-MARTINI to Upside parameter/depth table generator is `example/16.MARTINI/build_depth_interaction_table.py`; it defaults to inputs `pdb/bilayer.MARTINI.pdb`, `ff_dry/dry_martini_v2.1_lipids.itp`, `../../parameters/ff_2.1/membrane.h5` and writes `outputs/depth_interaction_table.csv` plus `outputs/depth_interaction_table.meta.json` when run from `example/16.MARTINI/`.
+Findings
+- `ConDiv_symlay/run_init.sh` is the workflow entrypoint. It builds `layer_manifest.json`, initializes via `ConDiv_mem.py`, then runs `validate_symlay_constraints.py`.
+- `ConDiv_symlay/ConDiv_mem.py` passes `membrane_potential=membrane_file` and `surface=True` into `run_upside.upside_config`; it does not pass `channel_membrane_potential`.
+- `py/run_upside.py` maps that to `--membrane-potential`, and `py/upside_config.py` handles that path with `write_membrane_potential3`, which writes `cb_membrane_potential` and `hb_membrane_potential`.
+- The active trained outer parameter shapes implied by the checked-in membrane files are `cb_energy (20, 2, 18)` and `hb_energy (2, 2, 18)`. The membrane files also carry `icb_energy (20, 18)` and `ihb_energy (2, 2, 18)`, but those are not part of the standard node parameter surface.
+- The CB membrane term is a burial-weighted sum of mirrored clamped spline curves over z. With the checked-in force field, `burial_nodes=[2.5]`, so there are two burial channels.
+- The HB membrane term is a mirrored clamped spline over z with two states per donor/acceptor type: unpaired and paired, mixed by `(1-hb_prob)^2` and `1-(1-hb_prob)^2`.
+- `ConDiv_symlay` applies hard symmetry/layer constraints by projecting every seeded or updated membrane curve (`cb`, `icb`, `hb`, `ihb`) onto an even, layer-anchored spline family derived from the DOPC manifest.
+- The manifest half-layer sequence is `Q0-Qa-Na-C1-C3-C1-C1`, giving full sequence `Q0-Qa-Na-C1-C3-C1-C1-C1-C1-C3-C1-Na-Qa-Q0`.
+- The checked-in test manifest projection depths are approximately `[2.1574, 2.3727, 4.6661, 7.7814, 13.5853, 18.2332, 19.7668]` Angstrom.
+- Symmetric support is computed as `[-ceil(max(|z_min|, |z_max|, max_slot + margin)), +ceil(...)]` with default margin `0.5` Angstrom and dense projection grid size `801`.
+- Using the checked-in source membrane plus the checked-in test manifest, the required projected supports would be `cb=[-21, 21]` and `hb=[-33, 33]`. The checked-in source membrane currently has `cb=[-17, 15]` and `hb=[-33, 15]`, so it is not yet in the constrained training subspace.
+- `validate_symlay_constraints.py` treats a membrane as passing only if support checks all pass, maximum symmetry residual is `<= 1e-1`, and maximum projection residual is `<= 2.5e-1`.
+- Soft regularization is also enabled by default. `compute_pair_regularization_gradient()` fits an affine trend of sampled membrane values versus dry MARTINI Lennard-Jones minimum energies at layer slots, then penalizes weighted residuals. Default weights are CB `0.05`, donor `0.10`, acceptor `0.10`.
+- The pair teacher uses slot weights `1` for `Q0/Qa` and `2` otherwise, with MARTINI proxy types `N->Qd`, `O->Qa`, and CB as the mean of `CA->C1` and `C->C2`.
+- When writing membrane files, inner curves are additionally coupled by `shift_inner_curve()`: the first internal spline segment is matched to the outer curve and the remaining tail is offset to stay continuous at spline point index `8`.
+- For the reported training failure, the generated HDF5 configs themselves are valid locally. The more important launch defect is that `ConDiv_symlay` launched the Python worker through `srun` and then launched `upside` through a second nested `srun` with `--ntasks=n_replica`.
+- `obj/upside` in this repo is not MPI-linked. Launching it under `srun --ntasks>1` therefore starts multiple independent `upside` processes, each trying to open the same `run.*.h5` files in read-write mode, which matches the observed HDF5 open/close failures.
+- The previous worker path also kept an unnecessary extra `base.h5` alongside all `run.*.h5` files. In the local smoke test, each config was about 480 MB, so removing that extra copy saves roughly one full config file per target during every minibatch.

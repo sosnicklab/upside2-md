@@ -94,12 +94,12 @@ sbatch run_remote.sh
 
 With no argument, `run_remote.sh` defaults to `RUN_STEPS=20`. You can still pass a single positional step count if you want to override that default.
 
-Inside Slurm, `WORKER_LAUNCH=auto` now resolves to `srun`. The wrapper also defaults:
+Inside Slurm, `WORKER_LAUNCH=auto` now resolves to `srun`. That `srun` launches one Python worker per Slurm task slot. Each worker then launches a single local `upside` process against its full replica bundle; `upside` itself is not MPI-launched. The wrapper also defaults:
 - `CONDIV_N_REPLICA` to `8`
 - `CONDIV_OMP_THREADS` to `${SLURM_CPUS_PER_TASK:-1}`
 - `CONDIV_MAX_PARALLEL_WORKERS` to `allocated_task_slots / CONDIV_N_REPLICA`
 
-This matches the replica-exchange launch pattern in `example/02.ReplicaExchangeSimulation/run.py`: each worker launches the actual `upside` step against a full replica bundle, and under Slurm that step reserves `CONDIV_N_REPLICA` task slots through `srun`. With the default `#SBATCH --ntasks-per-node=48` and `CONDIV_N_REPLICA=8`, the wrapper will run up to `6` Upside jobs in parallel on the node.
+With the default `#SBATCH --ntasks-per-node=48` and `CONDIV_N_REPLICA=8`, the current wrapper still caps itself at up to `6` concurrent Upside workers on the node.
 
 If the wrapper detects `CONDIV_N_REPLICA` equal to all allocated task slots and you did not set `CONDIV_MAX_PARALLEL_WORKERS`, it aborts with a stale-override error instead of launching one oversized full-node worker bundle by mistake.
 

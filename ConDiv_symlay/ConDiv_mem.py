@@ -922,9 +922,9 @@ def _run_worker_subprocess(
     direc: str,
     worker_argv: List[str],
 ) -> Tuple[sp.Popen, Optional[object]]:
-    # Keep the Python worker local. When Slurm is active, the worker launches
-    # the actual Upside replica bundle through `srun`, which lets one worker
-    # reserve `n_replica` task slots like the replica-exchange reference flow.
+    # Under Slurm, dispatch one Python worker per task slot through `srun`.
+    # The worker then launches a single local `upside` process against its full
+    # replica bundle; `upside` itself is not an MPI program.
     outfile = open(f"{direc}/{nm}.output_worker", "w", encoding="utf-8")
     cmd = [state["worker_python"], *worker_argv]
     return sp.Popen(cmd, close_fds=True, stdout=outfile, stderr=sp.STDOUT), outfile
@@ -1157,8 +1157,7 @@ def main_worker():
         ru.upside_config(fasta, config_base, initial_structure=initial_structure_npy, **kwargs)
         for i in range(1, len(T)):
             shutil.copyfile(config_base, configs[i])
-
-        ru.upside_config(fasta, configs[0], initial_structure=initial_structure_npy, **kwargs)
+        os.replace(config_base, configs[0])
         ru.advanced_config(
             configs[0],
             restraint_groups=[f"0-{n_res - 1}"],
@@ -1177,8 +1176,11 @@ def main_worker():
     swap_sets = [x for x in [set1, set2] if x]
     if not swap_sets:
         swap_sets = ru.swap_table2d(1, len(T))
+    # The worker itself may already be running inside a Slurm step. Launch the
+    # non-MPI `upside` binary directly here rather than nesting another `srun`
+    # over the same HDF5 config bundle.
     job = ru.run_upside(
-        "srun" if launch_mode == "srun" else "",
+        "",
         configs,
         sim_time,
         frame_interval,
@@ -1189,7 +1191,6 @@ def main_worker():
         replica_interval=5.0,
         time_step=0.01,
         disable_z_recentering=True,
-        ntasks=n_replica,
     )
     run_retcode = job.job.wait()
     if run_retcode != 0:
