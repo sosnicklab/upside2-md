@@ -13,6 +13,18 @@
 - 2026-03-08: The cluster bootstrap requirements for `ConDiv_symlay/run_remote.sh` now include `module load python/3.11.9` in addition to `cmake` and `openmpi`, and the module loads must happen before venv activation.
 - 2026-03-08: The project-root `source.sh` was not safe under `set -u` and non-Homebrew environments. It assumed `MY_PYTHON`, `PYTHONPATH`, `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, and `LD_LIBRARY_PATH` were already defined, and it unconditionally invoked `brew`. It now derives `UPSIDE_HOME` from the script location when unset, uses `${VAR:+...}`-style expansions for optional vars, and only applies Homebrew-specific exports when `brew` exists.
 - 2026-03-08: The cluster copy of `source.sh` is a different, simpler file and still assumes `PYTHONPATH` is defined before `export PYTHONPATH=$UPSIDE_HOME/py:$PYTHONPATH`. `ConDiv_symlay/run_remote.sh` must therefore initialize `PYTHONPATH` before sourcing any project `source.sh`, regardless of the local repo copy.
+- 2026-03-09: The pair-table-informed `ConDiv_symlay` teacher now uses the fixed proxy mapping requested during planning:
+  - `N -> Qd`
+  - `CA -> C1`
+  - `C -> C2`
+  - `O -> Qa`
+  and constrains only the membrane mean channels (`cb mean`, donor mean, acceptor mean), not the burial/bound-state sub-branches. The slot score mode is now `pair_lj_minimum_energy_v1`, i.e. the LJ minimum `min_r V = -epsilon` from the dry MARTINI table rather than raw `epsilon`.
+- 2026-03-09: The new pair teacher follows the simplified DOPC topology correction rather than raw member counts:
+  - half-bilayer slot weights `1, 1, 2, 2, 2, 2, 2`
+  - mirrored full type sequence `Q0-Qa-Na-C1-C3-C1-C1-C1-C1-C3-C1-Na-Qa-Q0`
+  while the manifest still records `actual_member_count` separately for diagnostics.
+- 2026-03-09: `example/16.MARTINI/build_martini_parameters.py` can now materialize a trained membrane teacher directly from a `ConDiv_symlay` checkpoint by importing the copied `ConDiv_mem.py` from the run directory, provided `CONDIV_PROJECT_ROOT` is set before module load so project-root resolution inside the copied script stays valid.
+- 2026-03-09: The Slurm replica-exchange reference in `example/02.ReplicaExchangeSimulation/run.py` uses one `upside` launch over the full list of replica config files and sizes the allocation by replica count (`n_rep`). `ConDiv_symlay` should mirror that at the actual `upside` step: replica count is a separate runtime knob from OMP thread count, and Slurm fanout across proteins must be computed as `allocated_task_slots / n_replica`, not `allocated_task_slots` directly.
 - 2026-03-07: The new `ConDiv_symlay` task should use the repo-root tracking files (`task_plan.md`, `findings.md`, `progress.md`) because the workflow lives at `/Users/yinhan/Documents/upside2-md/ConDiv_symlay`, not under `example/16.MARTINI/`.
 - 2026-03-07: `ConDiv/` is already a self-contained membrane-training workflow with the required runner surface (`run_init.sh`, `run_local.sh`, `run_remote.sh`, `run_validate_rounds.sh`), helper scripts, bundled `param0..3`, `upside_input*`, `pdb_list*`, and a copied nested `venv/`.
 - 2026-03-07: `ConDiv/run_init.sh`, `run_local.sh`, `run_remote.sh`, and `run_validate_rounds.sh` all bootstrap the project-root `.venv` and `source.sh`, export `CONDIV_PROJECT_ROOT`, and support `WORKER_LAUNCH=auto|local|srun`; this is the correct portability surface to preserve in `ConDiv_symlay`.

@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import math
 import os
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
@@ -48,9 +50,20 @@ import upside_engine as ue
 
 
 LAYER_TEMPLATE_SCHEMA = "condiv_symlay_layer_template_v1"
-LAYER_MANIFEST_SCHEMA = "condiv_symlay_layer_manifest_v1"
+LAYER_MANIFEST_SCHEMA = "condiv_symlay_layer_manifest_v2"
+LAYER_MANIFEST_SCHEMA_V1 = "condiv_symlay_layer_manifest_v1"
 DEFAULT_SUPPORT_MARGIN = 0.5
 DEFAULT_DENSE_GRID_SIZE = 801
+Q0_SURFACE_OFFSET_ANGSTROM = 4.7
+PAIR_TEACHER_SCHEMA = "condiv_symlay_pair_teacher_v1"
+PAIR_SCORE_MODE = "pair_lj_minimum_energy_v1"
+PAIR_ROLE_PROXIES = {"N": "Qd", "CA": "C1", "C": "C2", "O": "Qa"}
+PAIR_PROXY_FOR_TARGET = {
+    "cb_mean": ("C1", "C2"),
+    "hb_donor": ("Qd",),
+    "hb_acceptor": ("Qa",),
+}
+PAIR_SLOT_WEIGHT_MODEL = "simplified_q0_qa_1_else_2_v1"
 
 
 def repo_relative(path: Path) -> str:
@@ -63,6 +76,10 @@ def repo_relative(path: Path) -> str:
 
 def load_json(path: Path) -> dict:
     return json.loads(path.expanduser().resolve().read_text(encoding="utf-8"))
+
+
+def _default_slot_weight(slot_type: str) -> float:
+    return 1.0 if str(slot_type).strip().upper() in {"Q0", "QA"} else 2.0
 
 
 def load_layer_template(path: Path) -> dict:
@@ -182,6 +199,8 @@ def build_layer_manifest(template: dict, lipid_itp: Path, bilayer_pdb: Path) -> 
                 "slot_id": slot_id,
                 "type": slot_type,
                 "members": members,
+                "actual_member_count": int(len(members)),
+                "slot_weight": float(_default_slot_weight(slot_type)),
                 "count_total": int(signed.size),
                 "count_upper": int(upper.size),
                 "count_lower": int(lower.size),
@@ -191,6 +210,20 @@ def build_layer_manifest(template: dict, lipid_itp: Path, bilayer_pdb: Path) -> 
                 "lower_mean_signed_depth": float(np.mean(lower)),
             }
         )
+
+    q0_slots = [row for row in half_slots if row["type"] == "Q0"]
+    if len(q0_slots) != 1:
+        raise ValueError(f"Expected exactly one Q0 slot in half bilayer, found {len(q0_slots)}")
+    q0_slot = q0_slots[0]
+    upper_surface_z = float(q0_slot["upper_mean_signed_depth"]) + Q0_SURFACE_OFFSET_ANGSTROM
+    lower_surface_z = float(q0_slot["lower_mean_signed_depth"]) - Q0_SURFACE_OFFSET_ANGSTROM
+
+    for row in half_slots:
+        upper_surface_depth = float(upper_surface_z - float(row["upper_mean_signed_depth"]))
+        lower_surface_depth = float(float(row["lower_mean_signed_depth"]) - lower_surface_z)
+        row["upper_surface_depth"] = upper_surface_depth
+        row["lower_surface_depth"] = lower_surface_depth
+        row["mean_surface_depth"] = 0.5 * (upper_surface_depth + lower_surface_depth)
 
     sorted_half = sorted(half_slots, key=lambda row: row["mean_abs_depth"])
     positive_projection_depths = [float(row["mean_abs_depth"]) for row in sorted_half]
@@ -209,6 +242,13 @@ def build_layer_manifest(template: dict, lipid_itp: Path, bilayer_pdb: Path) -> 
         "z_center": float(z_center),
         "half_type_sequence": [str(x).strip() for x in template["half_type_sequence"]],
         "full_type_sequence": [str(x).strip() for x in template["full_type_sequence"]],
+        "surface_reference": {
+            "definition": "Q0 signed z +/- 4.7A",
+            "q0_surface_offset_angstrom": float(Q0_SURFACE_OFFSET_ANGSTROM),
+            "upper_surface_z": upper_surface_z,
+            "lower_surface_z": lower_surface_z,
+        },
+        "topology_weight_model": PAIR_SLOT_WEIGHT_MODEL,
         "half_slots": half_slots,
         "positive_projection_depths": positive_projection_depths,
         "positive_projection_slot_ids": positive_projection_slot_ids,
@@ -217,10 +257,34 @@ def build_layer_manifest(template: dict, lipid_itp: Path, bilayer_pdb: Path) -> 
 
 def load_layer_manifest(path: Path) -> dict:
     data = load_json(path)
-    if data.get("schema", "") != LAYER_MANIFEST_SCHEMA:
+    schema = data.get("schema", "")
+    if schema not in {LAYER_MANIFEST_SCHEMA, LAYER_MANIFEST_SCHEMA_V1}:
         raise ValueError(f"Unexpected layer manifest schema in {path}: {data.get('schema', '')!r}")
     if "positive_projection_depths" not in data or not data["positive_projection_depths"]:
         raise ValueError("Layer manifest missing positive_projection_depths")
+    if "surface_reference" not in data:
+        q0_slots = [row for row in data["half_slots"] if row["type"] == "Q0"]
+        if len(q0_slots) != 1:
+            raise ValueError(f"{path}: cannot infer surface reference without exactly one Q0 slot")
+        q0_slot = q0_slots[0]
+        data["surface_reference"] = {
+            "definition": "Q0 signed z +/- 4.7A",
+            "q0_surface_offset_angstrom": float(Q0_SURFACE_OFFSET_ANGSTROM),
+            "upper_surface_z": float(q0_slot["upper_mean_signed_depth"]) + Q0_SURFACE_OFFSET_ANGSTROM,
+            "lower_surface_z": float(q0_slot["lower_mean_signed_depth"]) - Q0_SURFACE_OFFSET_ANGSTROM,
+        }
+    for row in data["half_slots"]:
+        row.setdefault("actual_member_count", int(len(row.get("members", []))))
+        row.setdefault("slot_weight", float(_default_slot_weight(row["type"])))
+        if "mean_surface_depth" not in row:
+            upper_surface_z = float(data["surface_reference"]["upper_surface_z"])
+            lower_surface_z = float(data["surface_reference"]["lower_surface_z"])
+            upper_surface_depth = float(upper_surface_z - float(row["upper_mean_signed_depth"]))
+            lower_surface_depth = float(float(row["lower_mean_signed_depth"]) - lower_surface_z)
+            row["upper_surface_depth"] = upper_surface_depth
+            row["lower_surface_depth"] = lower_surface_depth
+            row["mean_surface_depth"] = 0.5 * (upper_surface_depth + lower_surface_depth)
+    data.setdefault("topology_weight_model", PAIR_SLOT_WEIGHT_MODEL)
     return data
 
 
@@ -232,13 +296,18 @@ def write_layer_manifest_csv(path: Path, manifest: dict) -> None:
         "slot_id",
         "type",
         "members",
+        "actual_member_count",
+        "slot_weight",
         "count_total",
         "count_upper",
         "count_lower",
         "mean_abs_depth",
+        "mean_surface_depth",
         "std_abs_depth",
         "upper_mean_signed_depth",
         "lower_mean_signed_depth",
+        "upper_surface_depth",
+        "lower_surface_depth",
     ]
     path = path.expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -337,6 +406,210 @@ def spline_internal_z(z_min: float, z_max: float, n_node: int) -> np.ndarray:
 def sample_spline_curve(coeff: np.ndarray, z_min: float, z_max: float, z_values: np.ndarray) -> np.ndarray:
     x = z_to_spline_x(z_values, z_min, z_max, int(coeff.size))
     return np.asarray(ue.clamped_spline_value(np.asarray(coeff, dtype=np.float64), x), dtype=np.float64)
+
+
+_SPLINE_INFLUENCE_CACHE: dict[tuple, np.ndarray] = {}
+
+
+def spline_influence_matrix(sample_z: Sequence[float], z_min: float, z_max: float, n_node: int) -> np.ndarray:
+    rounded_depths = tuple(round(float(x), 6) for x in sample_z)
+    key = (rounded_depths, round(float(z_min), 6), round(float(z_max), 6), int(n_node))
+    cached = _SPLINE_INFLUENCE_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    z = np.asarray(sample_z, dtype=np.float64)
+    x = z_to_spline_x(z, z_min, z_max, int(n_node))
+    basis = np.zeros((z.shape[0], int(n_node)), dtype=np.float64)
+    eye = np.eye(int(n_node), dtype=np.float64)
+    for idx in range(int(n_node)):
+        basis[:, idx] = np.asarray(ue.clamped_spline_value(eye[idx], x), dtype=np.float64)
+    _SPLINE_INFLUENCE_CACHE[key] = basis
+    return basis
+
+
+def weighted_affine_trend_residual(values: np.ndarray, scores: np.ndarray, weights: np.ndarray) -> dict:
+    y = np.asarray(values, dtype=np.float64)
+    s = np.asarray(scores, dtype=np.float64)
+    w = np.asarray(weights, dtype=np.float64)
+    x = np.column_stack([np.ones_like(s), s])
+    wx = w[:, None] * x
+    gram = x.T @ wx
+    rhs = x.T @ (w * y)
+    beta = np.linalg.solve(gram + 1e-8 * np.eye(gram.shape[0], dtype=np.float64), rhs)
+    fitted = x @ beta
+    residual = y - fitted
+    grad_values = w * residual
+    return {
+        "loss": 0.5 * float(np.sum(w * residual * residual)),
+        "beta_intercept": float(beta[0]),
+        "beta_scale": float(beta[1]),
+        "fitted": fitted,
+        "residual": residual,
+        "grad_values": grad_values,
+        "weighted_rms_residual": float(np.sqrt(np.sum(w * residual * residual) / max(np.sum(w), 1e-8))),
+        "max_abs_residual": float(np.max(np.abs(residual))) if residual.size else 0.0,
+    }
+
+
+@lru_cache(maxsize=1)
+def _load_martini_lib_module():
+    module_path = PROJECT_ROOT / "example" / "16.MARTINI" / "lib.py"
+    spec = importlib.util.spec_from_file_location("upside_martini_lib", str(module_path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load MARTINI helper module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_dry_martini_param_table(ff_itp: Path):
+    module = _load_martini_lib_module()
+    table = module.read_martini3_nonbond_params(str(ff_itp.expanduser().resolve()))
+    if not table:
+        raise ValueError(f"Failed to read dry MARTINI pair parameters from {ff_itp}")
+    return table
+
+
+def pair_param(param_table, type1: str, type2: str) -> Tuple[float, float]:
+    key1 = (str(type1).strip(), str(type2).strip())
+    key2 = (key1[1], key1[0])
+    if key1 in param_table:
+        sigma, epsilon = param_table[key1]
+        return float(sigma), float(epsilon)
+    if key2 in param_table:
+        sigma, epsilon = param_table[key2]
+        return float(sigma), float(epsilon)
+    raise KeyError(f"Missing dry MARTINI pair parameters for ({type1}, {type2})")
+
+
+def pair_minimum_energy(param_table, type1: str, type2: str) -> float:
+    _sigma, epsilon = pair_param(param_table, type1, type2)
+    return -float(epsilon)
+
+
+def build_pair_teacher(manifest: dict, ff_itp: Path) -> dict:
+    param_table = load_dry_martini_param_table(ff_itp)
+    half_slots = manifest["half_slots"]
+    slot_types = [str(row["type"]).strip() for row in half_slots]
+    slot_ids = [str(row["slot_id"]).strip() for row in half_slots]
+    slot_weights = np.asarray([float(row["slot_weight"]) for row in half_slots], dtype=np.float64)
+    slot_depths = np.asarray([float(row["mean_abs_depth"]) for row in half_slots], dtype=np.float64)
+    slot_surface_depths = np.asarray([float(row["mean_surface_depth"]) for row in half_slots], dtype=np.float64)
+
+    donor_scores = np.asarray(
+        [pair_minimum_energy(param_table, PAIR_ROLE_PROXIES["N"], slot_type) for slot_type in slot_types],
+        dtype=np.float64,
+    )
+    acceptor_scores = np.asarray(
+        [pair_minimum_energy(param_table, PAIR_ROLE_PROXIES["O"], slot_type) for slot_type in slot_types],
+        dtype=np.float64,
+    )
+    cb_scores = np.asarray(
+        [
+            0.5 * pair_minimum_energy(param_table, PAIR_ROLE_PROXIES["CA"], slot_type)
+            + 0.5 * pair_minimum_energy(param_table, PAIR_ROLE_PROXIES["C"], slot_type)
+            for slot_type in slot_types
+        ],
+        dtype=np.float64,
+    )
+
+    return {
+        "schema": PAIR_TEACHER_SCHEMA,
+        "score_mode": PAIR_SCORE_MODE,
+        "ff_itp": repo_relative(ff_itp),
+        "slot_weight_model": manifest.get("topology_weight_model", PAIR_SLOT_WEIGHT_MODEL),
+        "slot_ids": slot_ids,
+        "slot_types": slot_types,
+        "slot_weights": slot_weights.tolist(),
+        "slot_depths": slot_depths.tolist(),
+        "slot_surface_depths": slot_surface_depths.tolist(),
+        "role_proxies": dict(PAIR_ROLE_PROXIES),
+        "slot_scores": {
+            "cb_mean": cb_scores.tolist(),
+            "hb_donor": donor_scores.tolist(),
+            "hb_acceptor": acceptor_scores.tolist(),
+        },
+    }
+
+
+def compute_pair_regularization_gradient(
+    param,
+    init_membrane_file: str,
+    manifest: dict,
+    pair_teacher: dict,
+    cb_weight: float,
+    donor_weight: float,
+    acceptor_weight: float,
+):
+    init_arrays = load_membrane_arrays(Path(init_membrane_file))
+    slot_depths = np.asarray(pair_teacher["slot_depths"], dtype=np.float64)
+    slot_weights = np.asarray(pair_teacher["slot_weights"], dtype=np.float64)
+    cb_scores = np.asarray(pair_teacher["slot_scores"]["cb_mean"], dtype=np.float64)
+    donor_scores = np.asarray(pair_teacher["slot_scores"]["hb_donor"], dtype=np.float64)
+    acceptor_scores = np.asarray(pair_teacher["slot_scores"]["hb_acceptor"], dtype=np.float64)
+
+    cb_basis = spline_influence_matrix(slot_depths, init_arrays["cb_z_min"], init_arrays["cb_z_max"], param.cb.shape[-1])
+    hb_basis = spline_influence_matrix(slot_depths, init_arrays["hb_z_min"], init_arrays["hb_z_max"], param.hb.shape[-1])
+
+    grad = type(param)(
+        np.zeros_like(param.cb, dtype=np.float32),
+        np.zeros_like(param.icb, dtype=np.float32),
+        np.zeros_like(param.hb, dtype=np.float32),
+        np.zeros_like(param.ihb, dtype=np.float32),
+    )
+    stats = {
+        "pair_loss_cb": 0.0,
+        "pair_loss_hb_donor": 0.0,
+        "pair_loss_hb_acceptor": 0.0,
+        "pair_loss_total": 0.0,
+        "pair_cb_residual_rms_median": 0.0,
+        "pair_cb_residual_max": 0.0,
+        "pair_hb_donor_residual_rms": 0.0,
+        "pair_hb_acceptor_residual_rms": 0.0,
+    }
+
+    cb_rms = []
+    cb_max = []
+    if float(cb_weight) > 0.0:
+        for aa in range(param.cb.shape[0]):
+            y = 0.5 * (cb_basis @ np.asarray(param.cb[aa, 0], dtype=np.float64) + cb_basis @ np.asarray(param.cb[aa, 1], dtype=np.float64))
+            trend = weighted_affine_trend_residual(y, cb_scores, slot_weights)
+            grad_slot = float(cb_weight) * trend["grad_values"]
+            grad_curve = 0.5 * (cb_basis.T @ grad_slot)
+            grad.cb[aa, 0] += grad_curve.astype(np.float32)
+            grad.cb[aa, 1] += grad_curve.astype(np.float32)
+            stats["pair_loss_cb"] += float(cb_weight) * trend["loss"]
+            cb_rms.append(float(trend["weighted_rms_residual"]))
+            cb_max.append(float(trend["max_abs_residual"]))
+
+    def _accumulate_hb(tp_index: int, score_vector: np.ndarray, field_name: str, field_rms_name: str, weight_value: float):
+        if float(weight_value) <= 0.0:
+            return
+        y = 0.5 * (
+            hb_basis @ np.asarray(param.hb[tp_index, 0], dtype=np.float64)
+            + hb_basis @ np.asarray(param.hb[tp_index, 1], dtype=np.float64)
+        )
+        trend = weighted_affine_trend_residual(y, score_vector, slot_weights)
+        grad_slot = float(weight_value) * trend["grad_values"]
+        grad_curve = 0.5 * (hb_basis.T @ grad_slot)
+        grad.hb[tp_index, 0] += grad_curve.astype(np.float32)
+        grad.hb[tp_index, 1] += grad_curve.astype(np.float32)
+        stats[field_name] += float(weight_value) * trend["loss"]
+        stats[field_rms_name] = float(trend["weighted_rms_residual"])
+        stats[f"{field_name}_max_abs_residual"] = float(trend["max_abs_residual"])
+
+    _accumulate_hb(0, donor_scores, "pair_loss_hb_donor", "pair_hb_donor_residual_rms", donor_weight)
+    _accumulate_hb(1, acceptor_scores, "pair_loss_hb_acceptor", "pair_hb_acceptor_residual_rms", acceptor_weight)
+
+    stats["pair_loss_total"] = (
+        float(stats["pair_loss_cb"]) + float(stats["pair_loss_hb_donor"]) + float(stats["pair_loss_hb_acceptor"])
+    )
+    if cb_rms:
+        stats["pair_cb_residual_rms_median"] = float(np.median(np.asarray(cb_rms, dtype=np.float64)))
+        stats["pair_cb_residual_max"] = float(np.max(np.asarray(cb_max, dtype=np.float64)))
+
+    return grad, stats
 
 
 def symmetric_support(original_min: float, original_max: float, slot_depths: Sequence[float], margin: float) -> Tuple[float, float]:

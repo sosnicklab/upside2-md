@@ -63,8 +63,11 @@ import mdtraj_upside as mu
 import run_upside as ru
 import upside_engine as ue
 from symlay_utils import (
+    PAIR_TEACHER_SCHEMA,
     DEFAULT_DENSE_GRID_SIZE,
     DEFAULT_SUPPORT_MARGIN,
+    build_pair_teacher,
+    compute_pair_regularization_gradient,
     load_layer_manifest,
     load_membrane_arrays,
     project_membrane_arrays,
@@ -86,7 +89,8 @@ def _env_bool(name: str, default: bool) -> bool:
 class Config:
     project_root: Path
     ff_dir: Path
-    n_threads: int
+    n_replica: int
+    omp_threads: int
     native_restraint_strength: float
     rmsd_k: int
     minibatch_size: int
@@ -100,6 +104,11 @@ class Config:
     symlay_dense_grid_size: int
     symlay_support_margin: float
     symlay_projection_enabled: bool
+    pair_ff_itp: Path
+    pair_reg_enabled: bool
+    pair_reg_cb_weight: float
+    pair_reg_donor_weight: float
+    pair_reg_acceptor_weight: float
 
 
 @dataclass(frozen=True)
@@ -125,11 +134,15 @@ def build_config() -> Config:
     worker_launch = os.environ.get("CONDIV_WORKER_LAUNCH", "auto").strip().lower()
     if worker_launch not in {"auto", "local", "srun"}:
         raise ValueError("CONDIV_WORKER_LAUNCH must be one of auto|local|srun")
+    legacy_threads = int(os.environ.get("CONDIV_N_THREADS", "8"))
+    n_replica = int(os.environ.get("CONDIV_N_REPLICA", str(legacy_threads)))
+    omp_threads_default = str(legacy_threads if "CONDIV_N_REPLICA" not in os.environ else 1)
 
     return Config(
         project_root=PROJECT_ROOT,
         ff_dir=ff_dir,
-        n_threads=int(os.environ.get("CONDIV_N_THREADS", "8")),
+        n_replica=n_replica,
+        omp_threads=int(os.environ.get("CONDIV_OMP_THREADS", omp_threads_default)),
         native_restraint_strength=float(os.environ.get("CONDIV_NATIVE_RESTRAINT_STRENGTH", str(1.0 / 3.0**2))),
         rmsd_k=int(os.environ.get("CONDIV_RMSD_K", "15")),
         minibatch_size=int(os.environ.get("CONDIV_MINIBATCH_SIZE", "15")),
@@ -147,6 +160,16 @@ def build_config() -> Config:
             os.environ.get("CONDIV_SYMLAY_SUPPORT_MARGIN", str(DEFAULT_SUPPORT_MARGIN))
         ),
         symlay_projection_enabled=_env_bool("CONDIV_SYMLAY_PROJECTION_ENABLED", True),
+        pair_ff_itp=Path(
+            os.environ.get(
+                "CONDIV_PAIR_FF_ITP",
+                str(PROJECT_ROOT / "example" / "16.MARTINI" / "ff_dry" / "dry_martini_v2.1.itp"),
+            )
+        ).expanduser().resolve(),
+        pair_reg_enabled=_env_bool("CONDIV_PAIR_REG_ENABLED", True),
+        pair_reg_cb_weight=float(os.environ.get("CONDIV_PAIR_REG_CB_WEIGHT", "0.05")),
+        pair_reg_donor_weight=float(os.environ.get("CONDIV_PAIR_REG_DONOR_WEIGHT", "0.10")),
+        pair_reg_acceptor_weight=float(os.environ.get("CONDIV_PAIR_REG_ACCEPTOR_WEIGHT", "0.10")),
     )
 
 
@@ -869,11 +892,22 @@ def _apply_runtime_config(state: dict) -> dict:
     state["project_root"] = str(CONFIG.project_root)
     state["ff_dir"] = str(CONFIG.ff_dir)
     state["worker_launch"] = CONFIG.worker_launch
-    state["n_threads"] = CONFIG.n_threads
+    state["worker_python"] = CONFIG.worker_python
+    state["n_replica"] = CONFIG.n_replica
+    state["omp_threads"] = CONFIG.omp_threads
     state["max_parallel_workers"] = CONFIG.max_parallel_workers
+    if __file__:
+        state["worker_path"] = str(Path(__file__).resolve())
     state["symlay_dense_grid_size"] = CONFIG.symlay_dense_grid_size
     state["symlay_support_margin"] = CONFIG.symlay_support_margin
     state["symlay_projection_enabled"] = CONFIG.symlay_projection_enabled
+    state["pair_ff_itp"] = str(CONFIG.pair_ff_itp)
+    state["pair_reg_enabled"] = CONFIG.pair_reg_enabled
+    state["pair_reg_cb_weight"] = CONFIG.pair_reg_cb_weight
+    state["pair_reg_donor_weight"] = CONFIG.pair_reg_donor_weight
+    state["pair_reg_acceptor_weight"] = CONFIG.pair_reg_acceptor_weight
+    if state.get("pair_reg_enabled", False) and "pair_teacher" not in state:
+        state["pair_teacher"] = build_pair_teacher(state["layer_manifest"], Path(state["pair_ff_itp"]))
     return state
 
 
@@ -883,23 +917,9 @@ def _run_worker_subprocess(
     direc: str,
     worker_argv: List[str],
 ) -> Tuple[sp.Popen, Optional[object]]:
-    launch_mode = _choose_worker_launch(state["worker_launch"])
-    n_threads = int(state["n_threads"])
-
-    if launch_mode == "srun":
-        cmd = [
-            "srun",
-            "--exclusive",
-            "--nodes=1",
-            "--ntasks=1",
-            f"--cpus-per-task={n_threads}",
-            "--slurmd-debug=0",
-            f"--output={direc}/{nm}.output_worker",
-            state["worker_python"],
-            *worker_argv,
-        ]
-        return sp.Popen(cmd, close_fds=True), None
-
+    # Keep the Python worker local. When Slurm is active, the worker launches
+    # the actual Upside replica bundle through `srun`, which lets one worker
+    # reserve `n_replica` task slots like the replica-exchange reference flow.
     outfile = open(f"{direc}/{nm}.output_worker", "w", encoding="utf-8")
     cmd = [state["worker_python"], *worker_argv]
     return sp.Popen(cmd, close_fds=True, stdout=outfile, stderr=sp.STDOUT), outfile
@@ -936,10 +956,11 @@ def run_minibatch(
     max_parallel_workers = min(max_parallel_workers, len(minibatch))
 
     print(
-        "Worker launch=%s, threads/worker=%i, max_parallel_workers=%i, minibatch_targets=%i"
+        "Worker dispatch=%s, replicas/worker=%i, omp_threads/upside=%i, max_parallel_workers=%i, minibatch_targets=%i"
         % (
             _choose_worker_launch(state["worker_launch"]),
-            int(state["n_threads"]),
+            int(state["n_replica"]),
+            int(state["omp_threads"]),
             max_parallel_workers,
             len(minibatch),
         )
@@ -965,7 +986,9 @@ def run_minibatch(
                 target.chi,
                 cp.dumps(d_obj_param_files, protocol=4).hex(),
                 str(sim_time),
-                str(state["n_threads"]),
+                str(state["n_replica"]),
+                str(state["omp_threads"]),
+                _choose_worker_launch(state["worker_launch"]),
                 state["project_root"],
                 state["ff_dir"],
             ]
@@ -1015,6 +1038,23 @@ def run_minibatch(
     print("Median COM %.2f %.2f" % tuple(np.median(com_values, axis=0)))
 
     d_param = Update(*[np.sum(x, axis=0) for x in zip(*change)])
+    pair_stats = {
+        "pair_loss_cb": 0.0,
+        "pair_loss_hb_donor": 0.0,
+        "pair_loss_hb_acceptor": 0.0,
+        "pair_loss_total": 0.0,
+    }
+    if state.get("pair_reg_enabled", False):
+        d_pair, pair_stats = compute_pair_regularization_gradient(
+            param,
+            initial_param_files["memb"],
+            state["layer_manifest"],
+            state["pair_teacher"],
+            float(state["pair_reg_cb_weight"]),
+            float(state["pair_reg_donor_weight"]),
+            float(state["pair_reg_acceptor_weight"]),
+        )
+        d_param = d_param + d_pair
     step_update = solver.update_step(d_param)
     grad_stats = {
         "n_success": int(len(change)),
@@ -1027,7 +1067,11 @@ def run_minibatch(
         "update_norm_icb": float(np.linalg.norm(step_update[1])),
         "update_norm_hb": float(np.linalg.norm(step_update[2])),
         "update_norm_ihb": float(np.linalg.norm(step_update[3])),
+        "pair_reg_enabled": bool(state.get("pair_reg_enabled", False)),
+        "pair_teacher_schema": state.get("pair_teacher", {}).get("schema", ""),
+        "pair_ff_itp": repo_relative(Path(state["pair_ff_itp"])) if state.get("pair_ff_itp") else "",
     }
+    grad_stats.update(pair_stats)
     grad_stats["grad_norm_total"] = float(
         np.sqrt(
             grad_stats["grad_norm_cb"] ** 2
@@ -1082,9 +1126,11 @@ def main_worker():
     del chi
     param_files = cp.loads(bytes.fromhex(sys.argv[12]))
     sim_time = float(sys.argv[13])
-    n_threads = int(sys.argv[14])
-    project_root = sys.argv[15]
-    ff_dir = sys.argv[16]
+    n_replica = int(sys.argv[14])
+    omp_threads = int(sys.argv[15])
+    launch_mode = sys.argv[16]
+    project_root = sys.argv[17]
+    ff_dir = sys.argv[18]
     del project_root
 
     frame_interval = max(1, int(sim_time / CONFIG.n_frame))
@@ -1094,7 +1140,7 @@ def main_worker():
         chain_break, os.path.join(direc, f"{code}.chain_break_compat.txt")
     )
     kwargs = _forcefield_kwargs(ff_dir, param_files["memb"], thickness, chain_break_compat)
-    T = _temperature_schedule(n_threads)
+    T = _temperature_schedule(n_replica)
 
     try:
         config_base = f"{direc}/{code}.base.h5"
@@ -1127,17 +1173,18 @@ def main_worker():
     if not swap_sets:
         swap_sets = ru.swap_table2d(1, len(T))
     job = ru.run_upside(
-        "",
+        "srun" if launch_mode == "srun" else "",
         configs,
         sim_time,
         frame_interval,
-        n_threads=n_threads,
+        n_threads=omp_threads,
         temperature=T,
         swap_sets=swap_sets,
         mc_interval=5.0,
         replica_interval=5.0,
         time_step=0.01,
         disable_z_recentering=True,
+        ntasks=n_replica,
     )
     run_retcode = job.job.wait()
     if run_retcode != 0:
@@ -1286,6 +1333,12 @@ def main_initialize(args):
     os.makedirs(state["base_dir"], exist_ok=True)
     state["layer_manifest_path"] = str(_resolve_layer_manifest_path(state["base_dir"]))
     state["layer_manifest"] = load_layer_manifest(Path(state["layer_manifest_path"]))
+    state["pair_ff_itp"] = str(CONFIG.pair_ff_itp)
+    state["pair_reg_enabled"] = CONFIG.pair_reg_enabled
+    state["pair_reg_cb_weight"] = CONFIG.pair_reg_cb_weight
+    state["pair_reg_donor_weight"] = CONFIG.pair_reg_donor_weight
+    state["pair_reg_acceptor_weight"] = CONFIG.pair_reg_acceptor_weight
+    state["pair_teacher"] = build_pair_teacher(state["layer_manifest"], Path(state["pair_ff_itp"]))
 
     if not __file__:
         raise RuntimeError("No __file__ available")
@@ -1379,6 +1432,8 @@ def main_initialize(args):
                     "init_param_files": state["init_param_files"],
                     "layer_manifest_path": state["layer_manifest_path"],
                     "symlay_seed_summary": state["symlay_seed_summary"],
+                    "pair_teacher": state["pair_teacher"],
+                    "pair_ff_itp": state["pair_ff_itp"],
                 },
                 fh,
                 -1,
@@ -1393,11 +1448,15 @@ def main_initialize(args):
             state["seed_source_init_dir"] = payload.get("seed_source_init_dir", state["init_dir"])
             state["layer_manifest_path"] = payload.get("layer_manifest_path", state["layer_manifest_path"])
             state["symlay_seed_summary"] = payload.get("symlay_seed_summary", {})
+            state["pair_teacher"] = payload.get("pair_teacher", state["pair_teacher"])
+            state["pair_ff_itp"] = payload.get("pair_ff_itp", state["pair_ff_itp"])
         else:
             state["init_dir"], state["param"], state["init_param_files"] = payload
             state["seed_source_init_dir"] = state["init_dir"]
             state["symlay_seed_summary"] = {}
         state["layer_manifest"] = load_layer_manifest(Path(state["layer_manifest_path"]))
+        if "pair_teacher" not in state or state["pair_teacher"].get("schema", "") != PAIR_TEACHER_SCHEMA:
+            state["pair_teacher"] = build_pair_teacher(state["layer_manifest"], Path(state["pair_ff_itp"]))
         _validate_membrane_param_shapes(state["param"], state["init_param_files"]["memb"])
 
     state["initial_alpha"] = Update(0.02, 0.02, 0.02, 0.02) * CONFIG.alpha
@@ -1412,6 +1471,12 @@ def main_initialize(args):
     print("ConDiv_symlay slot sequence", "-".join(state["layer_manifest"]["full_type_sequence"]))
     print("ConDiv_symlay seed source", repo_relative(Path(state["seed_source_init_dir"])))
     print("ConDiv_symlay seed membrane", repo_relative(Path(state["init_param_files"]["memb"])))
+    print("ConDiv_symlay pair teacher", state["pair_teacher"]["schema"], repo_relative(Path(state["pair_ff_itp"])))
+    print(
+        "ConDiv_symlay replica layout",
+        f"replicas/worker={state['n_replica']}",
+        f"omp_threads/upside={state['omp_threads']}",
+    )
     print()
 
     state["epoch"] = 0

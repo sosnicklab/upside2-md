@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 
 import argparse
+import importlib.util
+import json
+import os
+import pickle as cp
 import shutil
+import sys
 from pathlib import Path
 
 import prepare_system as prep
@@ -9,6 +14,53 @@ import prepare_system as prep
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
+
+
+def _guess_condiv_worker_script(checkpoint: Path) -> Path:
+    candidates = [
+        checkpoint.parent / "ConDiv_mem.py",
+        checkpoint.parent.parent / "ConDiv_mem.py",
+        checkpoint.parent.parent.parent / "ConDiv_mem.py",
+        REPO_ROOT / "ConDiv_symlay" / "ConDiv_mem.py",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    raise RuntimeError(f"Could not locate ConDiv_mem.py for checkpoint {checkpoint}")
+
+
+def _load_condiv_module(worker_script: Path):
+    os.environ.setdefault("CONDIV_PROJECT_ROOT", str(REPO_ROOT))
+    script_dir = str(worker_script.parent)
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    spec = importlib.util.spec_from_file_location("ConDiv_mem", str(worker_script))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load ConDiv_mem module from {worker_script}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["ConDiv_mem"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def materialize_membrane_from_checkpoint(checkpoint: Path, output_path: Path) -> dict:
+    checkpoint = checkpoint.expanduser().resolve()
+    worker_script = _guess_condiv_worker_script(checkpoint)
+    module = _load_condiv_module(worker_script)
+    with checkpoint.open("rb") as fh:
+        state = cp.load(fh)
+
+    output_path = output_path.expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    module.expand_param(state["param"], state["init_param_files"], {"memb": str(output_path)})
+    return {
+        "condiv_checkpoint": str(checkpoint),
+        "worker_script": str(worker_script),
+        "materialized_membrane_h5": str(output_path),
+        "layer_manifest_path": state.get("layer_manifest_path", ""),
+        "pair_ff_itp": state.get("pair_ff_itp", ""),
+        "seed_source_init_dir": state.get("seed_source_init_dir", ""),
+    }
 
 
 def parse_args(argv=None):
@@ -50,6 +102,12 @@ def parse_args(argv=None):
         type=Path,
         default=REPO_ROOT / "parameters" / "ff_2.1" / "membrane.h5",
     )
+    parser.add_argument(
+        "--condiv-checkpoint",
+        type=Path,
+        default=None,
+        help="Optional ConDiv_symlay checkpoint to materialize and use as the membrane teacher source.",
+    )
     parser.add_argument("--radial-min", type=float, default=2.0)
     parser.add_argument("--radial-max", type=float, default=12.0)
     parser.add_argument("--sample-step", type=float, default=0.1)
@@ -71,6 +129,12 @@ def main(argv=None):
     cross_csv = output_dir / "backbone_cross_interaction_table.csv"
     cross_meta = output_dir / "backbone_cross_interaction_table.meta.json"
     cross_h5 = output_dir / "backbone_cross_interaction_table.h5"
+    trained_source = None
+    membrane_source = args.membrane_h5.expanduser().resolve()
+    if args.condiv_checkpoint is not None:
+        materialized_membrane = output_dir / "trained_membrane" / "membrane.h5"
+        trained_source = materialize_membrane_from_checkpoint(args.condiv_checkpoint, materialized_membrane)
+        membrane_source = materialized_membrane
 
     prep.run_build_depth_table_command(
         [
@@ -79,13 +143,17 @@ def main(argv=None):
             "--lipid-itp",
             str(args.lipid_itp.expanduser().resolve()),
             "--membrane-h5",
-            str(args.membrane_h5.expanduser().resolve()),
+            str(membrane_source),
             "--output-csv",
             str(depth_csv),
             "--output-json",
             str(depth_meta),
         ]
     )
+    if trained_source is not None:
+        depth_meta_payload = json.loads(depth_meta.read_text(encoding="utf-8"))
+        depth_meta_payload["trained_source"] = trained_source
+        depth_meta.write_text(json.dumps(depth_meta_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     prep.run_build_backbone_cross_table_command(
         [
@@ -147,6 +215,9 @@ def main(argv=None):
 
     print(f"Published MARTINI force-field artifact to: {publish_output}")
     print(f"Build outputs written to: {output_dir}")
+    if trained_source is not None:
+        print(f"Trained ConDiv checkpoint source: {trained_source['condiv_checkpoint']}")
+        print(f"Materialized membrane teacher: {trained_source['materialized_membrane_h5']}")
 
 
 if __name__ == "__main__":

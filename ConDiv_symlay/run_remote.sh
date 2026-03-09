@@ -114,9 +114,15 @@ if [ -z "$SLURM_TASK_SLOTS" ]; then
   SLURM_TASK_SLOTS="$(parse_slurm_task_slots "${SLURM_NTASKS_PER_NODE:-}")"
 fi
 
-export CONDIV_N_THREADS="${CONDIV_N_THREADS:-${SLURM_CPUS_PER_TASK:-1}}"
+export CONDIV_N_REPLICA="${CONDIV_N_REPLICA:-8}"
+export CONDIV_OMP_THREADS="${CONDIV_OMP_THREADS:-${SLURM_CPUS_PER_TASK:-1}}"
 if [ -n "$SLURM_TASK_SLOTS" ] && [ -z "${CONDIV_MAX_PARALLEL_WORKERS:-}" ]; then
-  export CONDIV_MAX_PARALLEL_WORKERS="$SLURM_TASK_SLOTS"
+  if [ "$SLURM_TASK_SLOTS" -lt "$CONDIV_N_REPLICA" ]; then
+    echo "ERROR: allocated Slurm task slots ($SLURM_TASK_SLOTS) are smaller than CONDIV_N_REPLICA ($CONDIV_N_REPLICA)." >&2
+    echo "Increase --ntasks-per-node or reduce CONDIV_N_REPLICA." >&2
+    exit 1
+  fi
+  export CONDIV_MAX_PARALLEL_WORKERS="$((SLURM_TASK_SLOTS / CONDIV_N_REPLICA))"
 fi
 
 export CONDIV_WORKER_LAUNCH="$WORKER_LAUNCH"
@@ -154,10 +160,11 @@ echo "  checkpoint: $checkpoint"
 echo "  steps: $RUN_STEPS"
 echo "  layer manifest: $LAYER_MANIFEST_JSON"
 echo "  slurm job id: ${SLURM_JOB_ID:-N/A}"
-echo "  worker launch request: $CONDIV_WORKER_LAUNCH"
-echo "  worker launch resolved: $RESOLVED_WORKER_LAUNCH"
+echo "  upside launch request: $CONDIV_WORKER_LAUNCH"
+echo "  upside launch resolved: $RESOLVED_WORKER_LAUNCH"
 echo "  python venv: $VENV_ACTIVATE"
-echo "  threads/worker: ${CONDIV_N_THREADS}"
+echo "  replicas/worker: ${CONDIV_N_REPLICA}"
+echo "  omp threads/upside: ${CONDIV_OMP_THREADS}"
 echo "  max parallel workers: ${CONDIV_MAX_PARALLEL_WORKERS:-auto}"
 echo "  allocated task slots: ${SLURM_TASK_SLOTS:-unknown}"
 echo "  convergence grad threshold: ${CONDIV_CONVERGENCE_GRAD_NORM}"

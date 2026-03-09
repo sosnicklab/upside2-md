@@ -2422,9 +2422,14 @@ def load_depth_targets(depth_table_csv: Path, depth_table_meta: Path | None):
         return depth_by_type, {"source": "csv_only", "legacy_depth_by_type": depth_by_type}
 
     meta = json.loads(depth_table_meta.read_text(encoding="utf-8"))
+    trained_source = meta.get("trained_source")
     type_sample_stats = meta.get("type_sample_stats", {})
     if not isinstance(type_sample_stats, dict) or not type_sample_stats:
-        return depth_by_type, {"source": "csv_only", "legacy_depth_by_type": depth_by_type}
+        return depth_by_type, {
+            "source": "csv_only",
+            "legacy_depth_by_type": depth_by_type,
+            "trained_source": trained_source,
+        }
 
     refined = {}
     comparison = {}
@@ -2484,6 +2489,7 @@ def load_depth_targets(depth_table_csv: Path, depth_table_meta: Path | None):
         "legacy_depth_by_type": depth_by_type,
         "legacy_vs_refined": comparison,
         "symmetry_report": meta.get("symmetry_report"),
+        "trained_source": trained_source,
     }
 
 
@@ -2802,10 +2808,19 @@ def write_cross_artifact(path: Path, protein_classes, env_types, radial_grid, ta
         meta.attrs["n_protein_class"] = np.int32(len(protein_classes))
         for role in protein_classes:
             meta.attrs[f"proxy_{role}"] = metadata["role_proxies"][role]
+        trained_source = metadata.get("trained_source")
+        if trained_source is not None:
+            meta.attrs["trained_source"] = json.dumps(trained_source, sort_keys=True)
 
         sources = h5.create_group("sources")
         sources.attrs["ff_itp"] = metadata["sources"]["ff_itp"]
         sources.attrs["depth_table_csv"] = metadata["sources"]["depth_table_csv"]
+        if metadata["sources"].get("depth_table_meta") is not None:
+            sources.attrs["depth_table_meta"] = metadata["sources"]["depth_table_meta"]
+        if trained_source is not None:
+            for key, value in sorted(trained_source.items()):
+                if value:
+                    sources.attrs[f"trained_{key}"] = str(value)
 
         classes = h5.create_group("classes")
         classes.create_dataset("protein", data=np.asarray(protein_classes, dtype=str_dtype))
@@ -3433,6 +3448,7 @@ def run_build_backbone_cross_table_command(argv):
         "overlap_report": overlap_report,
         "symmetry_report": depth_target_info.get("symmetry_report"),
         "depth_target_source": depth_target_info.get("source", "csv_only"),
+        "trained_source": depth_target_info.get("trained_source"),
     }
     write_csv_rows(args.output_csv, REQUIRED_CROSS_TABLE_COLUMNS, rows)
     write_summary(args.output_json, metadata)

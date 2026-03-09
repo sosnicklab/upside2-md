@@ -367,7 +367,7 @@ def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threa
                replica_interval=None, anneal_factor=1., anneal_duration=-1., anneal_start=-1., anneal_end=-1., mc_interval=None, input_base=None, output_base=None,
                time_step = None, swap_sets = None, exchange_criterion = None,
                log_level='basic', account=None, disable_recentering=False, disable_z_recentering=False,
-               extra_args=[], verbose=True):
+               extra_args=[], verbose=True, ntasks=1):
     if isinstance(config,str): config = [config]
     
     upside_args = [os.path.join(obj_dir,'upside'), '--duration', '%f'%duration,
@@ -440,7 +440,7 @@ def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threa
 
         try:
             os.environ['OMP_NUM_THREADS'] = str(n_threads)
-            args = ['srun', '--ntasks=1', '--nodes=1', '--cpus-per-task=%i'%n_threads, 
+            args = ['srun', '--ntasks=%i'%max(1, int(ntasks)), '--nodes=1', '--cpus-per-task=%i'%n_threads, 
                     '--slurmd-debug=0', '--output=%s'%output_path] + upside_args
             job = sp.Popen(args, close_fds=True)
         finally:

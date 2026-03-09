@@ -74,6 +74,69 @@ Allow the standard `ConDiv_symlay` training flow to run without any extra parame
 5. Verification note:
    - `RUN_STEPS=0` is not a valid smoke mode for `run_remote.sh` because `training_control.py` requires a produced `gradient_stats.json`; the wrapper is intended for positive restart steps.
 
+## Active Task (Pair-Table-Informed ConDiv_symlay Training)
+
+### Goal
+Teach `ConDiv_symlay` to regularize the layered membrane teacher against the dry-MARTINI pair table, then allow `example/16.MARTINI/build_martini_parameters.py` to consume a trained `ConDiv_symlay` checkpoint directly and publish a `martini.h5` artifact with recorded training provenance.
+
+### Key Decisions
+1. Keep `ConDiv_symlay` as the membrane-teacher workflow and add the dry-pair information as a regularization term, not as a direct replacement of the trained membrane objective.
+2. Use the fixed proxy mapping requested during planning:
+   - `N -> Qd`
+   - `CA -> C1`
+   - `C -> C2`
+   - `O -> Qa`
+3. Constrain only the membrane mean channels against the pair teacher:
+   - `cb mean` uses the equal CA/C proxy average
+   - `hb donor` uses the donor proxy row
+   - `hb acceptor` uses the acceptor proxy row
+   and leave burial/bound-state sub-branches as internal degrees of freedom.
+4. Carry the user-corrected topology weighting into the pair teacher:
+   - half-bilayer slot weights `1, 1, 2, 2, 2, 2, 2`
+   - mirrored full sequence `Q0-Qa-Na-C1-C3-C1-C1-C1-C1-C3-C1-Na-Qa-Q0`
+5. Keep the existing all-type span in the `martini.h5` builder. The new handoff is:
+   - trained `ConDiv_symlay` checkpoint -> materialized trained `membrane.h5` -> existing anchor-to-all-type builder path.
+
+### Execution Phases
+- [x] Phase P1: Extend the `ConDiv_symlay` layer manifest and utilities with topology weights, surface-reference metadata, dry-pair loading, and pair-teacher construction.
+- [x] Phase P2: Add pair-regularized gradient computation and configuration knobs to `ConDiv_symlay/ConDiv_mem.py`, and record the new pair-loss metrics in minibatch stats/checkpoints.
+- [x] Phase P3: Add a trained-checkpoint handoff path to `example/16.MARTINI/build_martini_parameters.py` and propagate trained-source metadata into the published cross artifact.
+- [x] Phase P4: Run reduced verification for:
+  - layer-manifest/pair-teacher construction,
+  - local `ConDiv_symlay` init + reduced restart with pair metrics,
+  - trained-checkpoint -> `martini.h5` builder smoke.
+
+### Known Errors / Blockers (Pair-Table Task)
+1. Only reduced local training smoke has been run for the new pair regularizer. Full multi-round convergence under the new loss has not been demonstrated in this sandbox.
+
+### Review (Pair-Table-Informed ConDiv_symlay Training)
+1. `ConDiv_symlay/symlay_utils.py` now:
+   - stores slot weights, actual member counts, and `Q0 +/- 4.7 A` surface metadata in the manifest,
+   - loads the dry MARTINI pair table from `example/16.MARTINI/ff_dry/dry_martini_v2.1.itp`,
+   - builds a pair teacher with the fixed proxy mapping and the simplified topology weights,
+   - computes a weighted affine-trend regularization gradient for `cb mean`, donor mean, and acceptor mean.
+2. `ConDiv_symlay/ConDiv_mem.py` now:
+   - accepts pair-regularization config via `CONDIV_PAIR_*`,
+   - seeds and persists `pair_teacher` metadata in init payloads/checkpoints,
+   - adds the pair regularization gradient to the ConDiv minibatch update,
+   - records pair-loss statistics in `gradient_stats.json`.
+3. `example/16.MARTINI/build_martini_parameters.py` now accepts `--condiv-checkpoint`, materializes a trained membrane teacher from that checkpoint, and feeds it into the existing depth/cross-table build path.
+4. `example/16.MARTINI/prepare_system.py` now carries the trained-source metadata from the depth table into the published cross artifact so the resulting `martini.h5` records the membrane-teacher provenance.
+5. Reduced verification completed:
+   - helper smoke built a `condiv_symlay_pair_teacher_v1` teacher with the expected half-bilayer weights `1,1,2,2,2,2,2`
+   - reduced `run_init.sh` smoke in `/tmp/condiv_symlay_pair_smoke` -> pass
+   - reduced local restart produced `/tmp/condiv_symlay_pair_smoke/epoch_00_minibatch_00/checkpoint.pkl` and `/tmp/condiv_symlay_pair_smoke/epoch_00_minibatch_00/gradient_stats.json`
+   - observed pair metrics:
+     - `pair_loss_total = 0.149028`
+     - `pair_loss_cb = 0.093457`
+     - `pair_loss_hb_donor = 0.033729`
+     - `pair_loss_hb_acceptor = 0.021842`
+   - final pair-score correction switched the teacher to `score_mode = pair_lj_minimum_energy_v1` (`min_r V = -epsilon`)
+   - fresh post-correction init in `/tmp/condiv_symlay_pair_smoke_v2` plus a direct probe of `compute_pair_regularization_gradient(...)` confirmed the same topology weights and the corrected score mode
+   - trained-checkpoint builder smoke:
+     `python3 example/16.MARTINI/build_martini_parameters.py --condiv-checkpoint /tmp/condiv_symlay_pair_smoke/initial_checkpoint.pkl ...` -> pass
+   - published artifact provenance check confirmed the trained checkpoint/materialized membrane paths are embedded in the output metadata.
+
 ## Review Criteria
 1. `ConDiv_symlay/` is self-contained and does not rely on `ConDiv/venv/`.
 2. `run_init.sh` produces a topology-slot manifest plus a seeded symmetric `membrane.h5` before the initial checkpoint.
@@ -116,8 +179,8 @@ Allow the standard `ConDiv_symlay` training flow to run without any extra parame
    This keeps the validator aligned with the constrained clamped-spline representation while still rejecting support and major symmetry regressions.
 8. Slurm fanout follow-up:
    - `ConDiv_mem.py` now refreshes runtime worker settings from the current environment on restart instead of keeping stale checkpoint copies.
-   - `auto` worker-launch mode now resolves to `srun` under Slurm, and worker steps use `srun --exclusive`.
-   - `run_remote.sh` now sources `../.venv/bin/activate` and `../source.sh`, loads `cmake` and `openmpi`, and defaults `CONDIV_N_THREADS` / `CONDIV_MAX_PARALLEL_WORKERS` from the Slurm allocation.
+   - `auto` worker-launch mode now resolves to a Slurm-backed Upside launch, but the `srun` step is now consumed by the actual `upside` replica bundle rather than by the lightweight Python worker wrapper.
+   - `run_remote.sh` now sources `../.venv/bin/activate` and `../source.sh`, loads `cmake` and `openmpi`, defaults `CONDIV_N_REPLICA=8`, defaults `CONDIV_OMP_THREADS` from `${SLURM_CPUS_PER_TASK:-1}`, and derives `CONDIV_MAX_PARALLEL_WORKERS` as `allocated_task_slots / CONDIV_N_REPLICA`.
    - full task-slot utilization is still limited by the minibatch size selected at `run_init.sh`; with the current default `pdb_list2`, the maximum useful fanout is 45 proteins.
 9. Training-control follow-up:
    - `run_remote.sh` now writes centralized progress/state artifacts under `BASE_DIR` (`training_progress.jsonl`, `training_status.json`).
@@ -129,6 +192,11 @@ Allow the standard `ConDiv_symlay` training flow to run without any extra parame
 11. Shared bootstrap follow-up:
    - the project-root `source.sh` is now hardened for `set -u` and non-Homebrew environments so the Slurm wrapper does not fail after environment activation.
    - `UPSIDE_HOME` is derived from the script location when unset, and optional path variables are appended safely.
+12. Slurm replica-launch correction:
+   - `ConDiv_symlay` no longer conflates replica count with CPU threads.
+   - `ConDiv_symlay/ConDiv_mem.py` now treats replica count and OMP thread count as separate runtime settings (`CONDIV_N_REPLICA`, `CONDIV_OMP_THREADS`).
+   - Under Slurm, each worker now launches `run_upside('srun', ..., ntasks=n_replica)` so the actual `upside` step reserves one task per replica, matching the reference replica-exchange launch pattern in `example/02.ReplicaExchangeSimulation/run.py`.
+   - With the default `#SBATCH --ntasks-per-node=48` and `CONDIV_N_REPLICA=8`, the wrapper now targets `6` concurrent Upside jobs instead of incorrectly mapping all 48 task slots onto independent Python workers.
 
 # ConDiv Membrane Workflow Modernization Plan
 

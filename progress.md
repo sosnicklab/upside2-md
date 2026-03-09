@@ -1,5 +1,76 @@
 # Progress Log
 
+## 2026-03-09 (ConDiv_symlay Slurm replica-launch correction)
+- Re-read `task_plan.md` and inspected `example/02.ReplicaExchangeSimulation/run.py` against the current `ConDiv_symlay` Slurm path.
+- Found the Slurm mismatch:
+  - `ConDiv_symlay` was using `CONDIV_N_THREADS` both as replica count and as `cpus-per-task`
+  - the Python worker wrapper consumed the `srun` step, while the actual `upside` launch still ran as a local subprocess
+  - `run_remote.sh` was mapping all allocated task slots directly to `CONDIV_MAX_PARALLEL_WORKERS`, which overstates concurrent Upside job capacity when each job needs multiple replicas
+- Patched the runtime:
+  - `py/run_upside.py` now accepts an optional `ntasks` argument for the `srun` queue path
+  - `ConDiv_symlay/ConDiv_mem.py` now separates `n_replica` from `omp_threads`
+  - under Slurm, the lightweight Python worker stays local and the worker launches the actual `upside` bundle through `run_upside('srun', ..., ntasks=n_replica)`
+  - `ConDiv_symlay/run_remote.sh` now defaults:
+    - `CONDIV_N_REPLICA=8`
+    - `CONDIV_OMP_THREADS=${SLURM_CPUS_PER_TASK:-1}`
+    - `CONDIV_MAX_PARALLEL_WORKERS=allocated_task_slots / CONDIV_N_REPLICA`
+  - `ConDiv_symlay/README.md` now documents the corrected Slurm layout and the default `48 / 8 = 6` worker fanout
+- Validation:
+  - `bash -n ConDiv_symlay/run_remote.sh` -> pass
+  - `python3 -m py_compile ConDiv_symlay/ConDiv_mem.py py/run_upside.py` -> pass
+  - direct config probe with `CONDIV_N_REPLICA=8`, `CONDIV_OMP_THREADS=1`, `CONDIV_MAX_PARALLEL_WORKERS=6` showed:
+    - `n_replica = 8`
+    - `omp_threads = 1`
+    - `max_parallel_workers = 6`
+  - direct `run_upside('srun', ..., ntasks=8)` probe captured:
+    - `srun --ntasks=8 --nodes=1 --cpus-per-task=1 ... upside <replica configs>`
+- Remaining limitation:
+  - no live Slurm job step was run in this sandbox, so the verified evidence is command construction and runtime wiring rather than a real cluster execution.
+
+## 2026-03-09 (Pair-table-informed ConDiv_symlay training and builder handoff)
+- Re-read `task_plan.md`, `progress.md`, and `lessons.md`, then verified the reduced pair-regularized smoke run artifacts before making any further edits.
+- Extended `ConDiv_symlay/symlay_utils.py` so the layer manifest now carries:
+  - `actual_member_count`
+  - simplified topology `slot_weight`
+  - `surface_reference` with `Q0 +/- 4.7 A`
+  - per-slot `upper_surface_depth`, `lower_surface_depth`, and `mean_surface_depth`
+- Added dry-pair teacher support in `ConDiv_symlay/symlay_utils.py`:
+  - loads `example/16.MARTINI/ff_dry/dry_martini_v2.1.itp`
+  - applies the fixed proxy mapping `N->Qd`, `CA->C1`, `C->C2`, `O->Qa`
+  - builds slot-wise teacher scores for `cb mean`, donor mean, and acceptor mean
+  - computes a weighted affine-trend regularization gradient using the simplified half-bilayer weights `1,1,2,2,2,2,2`
+- Updated `ConDiv_symlay/ConDiv_mem.py` to:
+  - add `CONDIV_PAIR_*` config fields
+  - seed/persist `pair_teacher` and `pair_ff_itp` in init payloads/checkpoints
+  - add the pair-regularization gradient to the minibatch update
+  - record pair-loss statistics in `gradient_stats.json`
+- Updated the MARTINI builder path:
+  - `example/16.MARTINI/build_martini_parameters.py` now accepts `--condiv-checkpoint`, materializes a trained membrane teacher from that checkpoint, and passes it into the existing depth/cross-table build
+  - `example/16.MARTINI/prepare_system.py` now propagates trained-source metadata into the published cross artifact
+- Validation:
+  - helper smoke built a `condiv_symlay_pair_teacher_v1` teacher with the expected slot weights and surface reference -> pass
+  - `python3 -m py_compile ConDiv_symlay/symlay_utils.py ConDiv_symlay/ConDiv_mem.py example/16.MARTINI/build_martini_parameters.py example/16.MARTINI/prepare_system.py` -> pass
+  - reduced pair init smoke:
+    `BASE_DIR=/tmp/condiv_symlay_pair_smoke ... ./ConDiv_symlay/run_init.sh` -> pass
+  - reduced local pair restart wrote:
+    - `/tmp/condiv_symlay_pair_smoke/epoch_00_minibatch_00/checkpoint.pkl`
+    - `/tmp/condiv_symlay_pair_smoke/epoch_00_minibatch_00/gradient_stats.json`
+  - recorded pair metrics from that restart:
+    - `pair_loss_total = 0.1490281505`
+    - `pair_loss_cb = 0.0934572112`
+    - `pair_loss_hb_donor = 0.0337293733`
+    - `pair_loss_hb_acceptor = 0.0218415660`
+  - direct pair-gradient probe against the saved checkpoint -> pass
+  - follow-up score-mode correction switched the pair teacher to `pair_lj_minimum_energy_v1` (`min_r V = -epsilon`); a fresh init in `/tmp/condiv_symlay_pair_smoke_v2` plus a direct probe of `compute_pair_regularization_gradient(...)` confirmed:
+    - `score_mode = pair_lj_minimum_energy_v1`
+    - `slot_weights = [1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0]`
+    - `cb_scores = [-2.0, -2.0, -2.7, -4.5, -4.5, -4.5, -4.5]`
+  - trained-checkpoint builder smoke:
+    `python3 example/16.MARTINI/build_martini_parameters.py --condiv-checkpoint /tmp/condiv_symlay_pair_smoke/initial_checkpoint.pkl --output-dir /tmp/martini_pair_builder_smoke --publish-output /tmp/martini_pair_builder_smoke/published_martini.h5 --validate 0` -> pass
+  - provenance audit on `/tmp/martini_pair_builder_smoke/published_martini.h5` confirmed the trained checkpoint/materialized membrane source attrs are present
+- Remaining limitation:
+  - only reduced local smoke and builder smoke were run here; long multi-round convergence with the new pair regularizer still needs live training evaluation.
+
 ## 2026-03-08 (ConDiv_symlay zero-argument launch flow)
 - Re-read `task_plan.md`, `lessons.md`, and the current `ConDiv_symlay` launchers before patching the no-argument training flow.
 - Updated `ConDiv_symlay/run_init.sh` to:

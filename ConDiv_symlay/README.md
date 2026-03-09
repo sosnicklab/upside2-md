@@ -95,10 +95,15 @@ sbatch run_remote.sh
 With no argument, `run_remote.sh` defaults to `RUN_STEPS=20`. You can still pass a single positional step count if you want to override that default.
 
 Inside Slurm, `WORKER_LAUNCH=auto` now resolves to `srun`. The wrapper also defaults:
-- `CONDIV_N_THREADS` to `${SLURM_CPUS_PER_TASK:-1}`
-- `CONDIV_MAX_PARALLEL_WORKERS` to the allocated Slurm task count
+- `CONDIV_N_REPLICA` to `8`
+- `CONDIV_OMP_THREADS` to `${SLURM_CPUS_PER_TASK:-1}`
+- `CONDIV_MAX_PARALLEL_WORKERS` to `allocated_task_slots / CONDIV_N_REPLICA`
 
-Actual concurrent worker count is still limited by the current minibatch size.
+This matches the replica-exchange launch pattern in `example/02.ReplicaExchangeSimulation/run.py`: each worker launches the actual `upside` step against a full replica bundle, and under Slurm that step reserves `CONDIV_N_REPLICA` task slots through `srun`. With the default `#SBATCH --ntasks-per-node=48` and `CONDIV_N_REPLICA=8`, the wrapper will run up to `6` Upside jobs in parallel on the node.
+
+Actual concurrent worker count is still limited by the minimum of:
+- current minibatch size
+- `CONDIV_MAX_PARALLEL_WORKERS`
 
 After each Slurm job, the wrapper:
 - appends one record to `<base_dir>/training_progress.jsonl`
