@@ -17,3 +17,26 @@ Findings
 - For the reported training failure, the generated HDF5 configs themselves are valid locally. The more important launch defect is that `ConDiv_symlay` launched the Python worker through `srun` and then launched `upside` through a second nested `srun` with `--ntasks=n_replica`.
 - `obj/upside` in this repo is not MPI-linked. Launching it under `srun --ntasks>1` therefore starts multiple independent `upside` processes, each trying to open the same `run.*.h5` files in read-write mode, which matches the observed HDF5 open/close failures.
 - The previous worker path also kept an unnecessary extra `base.h5` alongside all `run.*.h5` files. In the local smoke test, each config was about 480 MB, so removing that extra copy saves roughly one full config file per target during every minibatch.
+- `ConDiv_symlay` now uses `condiv_symlay_pair_teacher_v2` for pair regularization. The teacher is no longer a per-slot `-epsilon` vector; it is built from:
+  - a seeded reference membrane file,
+  - covered DOPC anchor types `Q0/Qa/Na/C1/C3`,
+  - all `38` dry-MARTINI environment types parsed from `dry_martini_v2.1.itp`,
+  - a `2.0..12.0 A` radial grid with `0.1 A` spacing,
+  - an explicit bilayer shell kernel measured from the template bilayer geometry.
+- The repeated layer slots in the manifest (`Q0-Qa-Na-C1-C3-C1-C1`) are now pooled back to covered dry types before regularization. Pooling weights are `slot_weight * actual_member_count`, so the regularizer works on dry-type anchors instead of treating each repeated `C1` slot as an independent dry type.
+- The new teacher spans all dry types by reusing the same role-specific dry-MARTINI descriptor used in `example/16.MARTINI`:
+  - descriptor = role-proxy pair `epsilon`,
+  - range = role-proxy pair `sigma`,
+  - table shape = PCHIP curve through sigma-derived control points with the seeded membrane attraction as the anchor depth.
+- The fixed training score for each covered dry type is now:
+  - build the all-type radial pair table for `cb_mean`, `hb_donor`, or `hb_acceptor`,
+  - project it through the explicit DOPC shell kernel,
+  - compare current covered-type membrane values against those projected scores with the existing weighted affine residual.
+- The same `build_pair_teacher(manifest, ff_itp, membrane_file)` entrypoint can be reused later with a new checkpoint membrane file to regenerate exportable explicit pair tables for that checkpoint; it is not limited to the seeded `param0/membrane.h5`.
+- The intended physical model for `ConDiv_symlay` is one fixed DOPC slab, but the old code still read per-target `.thickness` files and passed those values into `membrane_thickness`.
+- The current `ConDiv_symlay/upside_input2/*.thickness` files vary substantially (`25.8 .. 36.6 A`, median `30.2 A`), so leaving that per-target path active would silently make the membrane geometry target-dependent even though the force field is meant to emulate one DOPC bilayer.
+- `ConDiv_symlay` now uses one global membrane-thickness setting, `CONDIV_DOPC_THICKNESS`, with default `30.2 A`. New training-set construction no longer reads `base + ".thickness"`.
+- Restart compatibility is handled in two places:
+  - `condiv_init.pkl` now stores `membrane_thickness`
+  - worker dispatch ignores serialized `Target.thickness` values and always uses `state["membrane_thickness"]`
+- `_apply_runtime_config()` preserves the stored run thickness unless `CONDIV_DOPC_THICKNESS` is explicitly set in the current shell environment, so initialized runs stay self-consistent by default.

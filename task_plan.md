@@ -1,24 +1,36 @@
 Project Goal
-- Fix the `ConDiv_symlay` training failure where worker-generated `*.run.N.h5` configuration files cannot be opened reliably by `upside` during epoch execution.
+- Make `ConDiv_symlay` use one fixed DOPC membrane thickness for all training targets instead of reading per-target `.thickness` files.
 
 Architecture & Key Decisions
-- Treat this as a workflow-runtime bug in config generation or HDF5 file handling, not as a cluster-environment issue until the code path is ruled out.
-- Trace the worker call graph from minibatch launch through config generation, HDF5 writes, and `upside` launch.
-- Prefer a minimal fix at the file-generation or file-lifetime boundary instead of broad workflow changes.
-- Verify by reproducing the failing path locally as far as possible and by checking the resulting HDF5 files explicitly.
+- Preserve the current training and worker interfaces as much as possible; patch only the thickness source.
+- Add one workflow-level config value for membrane thickness, exposed through an environment variable so the fixed DOPC value is explicit and easy to override.
+- Default the fixed thickness to `30.2 A`, which is the median of the current `ConDiv_symlay/upside_input2/*.thickness` values. This removes per-target variation while staying close to existing practice.
+- Remove the hard dependency on per-target `.thickness` files during training-set construction.
+- Keep restart compatibility with old cached checkpoints by ignoring serialized target-specific thickness values at worker-dispatch time and using the current global workflow thickness instead.
 
 Execution Phases
-- [x] Locate the worker/config-generation path that produces `*.run.N.h5`.
-- [x] Inspect the failing HDF5 files and logs to determine whether the files are missing, truncated, or left in an invalid state.
-- [x] Identify the root cause in code and implement the minimal fix.
-- [x] Verify the fix by reproducing the relevant generation/open path or by running the smallest viable training smoke test.
-- [x] Record review notes and verification status.
+- [x] Audit all remaining membrane-thickness inputs and choose the minimal global-config path.
+- [x] Patch `ConDiv_symlay/ConDiv_mem.py` to use one global membrane thickness everywhere.
+- [x] Update README / tracking files to describe the fixed-thickness DOPC model.
+- [x] Run focused verification:
+  - syntax check
+  - local config-generation smoke test
+  - confirm worker args no longer depend on target-specific thickness
+- [x] Record review notes and residual risks.
 
 Known Errors / Blockers
-- User reports `upside` errors opening generated `*.run.N.h5` files inside `epoch_00_minibatch_00`.
+- Current code still reads `base + ".thickness"` for every target and passes that per-target value into `membrane_thickness`.
+- Existing cached `cd_training.pkl` files may still contain varying `Target.thickness` values, so worker dispatch must ignore them to make the change effective on restart.
 
 Review
-- Root cause identified in the Slurm launch model: `ConDiv_symlay` launched a Python worker through `srun`, then launched `upside` through a second nested `srun` with `--ntasks=n_replica`. `obj/upside` is not MPI-linked, so that path spawned multiple independent `upside` processes against the same HDF5 config bundle.
-- Implemented the minimal runtime fix in `ConDiv_symlay/ConDiv_mem.py`: keep `srun` only at the Python-worker boundary and launch `upside` locally inside the worker step.
-- Reduced transient config storage for each target by eliminating the redundant rewritten `base.h5` copy. The template file is now moved into `run.0.h5` after cloning the remaining replicas.
-- Local verification: syntax check passed for `ConDiv_symlay/ConDiv_mem.py`; a local config-generation smoke test produced valid `run.0.h5` and `run.1.h5`, validated against the membrane model, and removed the temporary `base.h5` as intended.
+- Added one global workflow thickness knob, `CONDIV_DOPC_THICKNESS`, in [ConDiv_mem.py]. The default is `30.2 A`, chosen as the median of the current `ConDiv_symlay/upside_input2/*.thickness` files so the workflow stops varying thickness by target while staying close to prior practice.
+- `ConDiv_symlay/ConDiv_mem.py` no longer reads `base + ".thickness"` during training-set construction. New `Target` rows are populated with the global thickness instead.
+- Worker dispatch now passes `state["membrane_thickness"]` instead of `target.thickness`, so old cached `cd_training.pkl` files with varied serialized thicknesses are neutralized on restart.
+- The initialized run state now stores `membrane_thickness`, and `_apply_runtime_config()` preserves that stored value unless `CONDIV_DOPC_THICKNESS` is explicitly set in the current environment.
+- Updated `ConDiv_symlay/README.md` to document the fixed-thickness DOPC model and the new override variable.
+- Local verification:
+  - `python3 -m py_compile ConDiv_symlay/ConDiv_mem.py` passed.
+  - One-target initialization smoke test with `CONDIV_DOPC_THICKNESS=30.2` stored `30.2` in both `cd_training.pkl` and `condiv_init.pkl`.
+  - A second one-target smoke test used target `1orq`, whose legacy file is `29.4`, and still stored `30.2`, confirming the workflow now ignores per-target `.thickness` files.
+- Residual risk:
+  - Existing code still carries the legacy `Target.thickness` field for checkpoint compatibility, but the active worker path no longer trusts it.

@@ -18,6 +18,8 @@ and adds the symmetric-layer tooling:
 
 The training target still uses the standard `membrane.h5` schema. The difference is that initialization and every optimizer update are projected into a symmetric topology-slot subspace derived from the DOPC bilayer structure.
 
+This workflow now also uses one fixed DOPC membrane thickness for every training target. It does not read per-target `.thickness` files during ConDiv training.
+
 ## Environment
 
 Run from the project root:
@@ -72,9 +74,12 @@ export BASE_DIR=/Users/yinhan/Documents/upside2-md/ConDiv_symlay/test_dimer3
 export INIT_FORCEFIELD_DIR=/Users/yinhan/Documents/upside2-md/parameters/ff_2.1
 export WORKER_LAUNCH=auto
 export CONDIV_MINIBATCH_SIZE=15
+export CONDIV_DOPC_THICKNESS=30.2
 export CONDIV_SYMLAY_DENSE_GRID_SIZE=801
 export CONDIV_SYMLAY_SUPPORT_MARGIN=0.5
 ```
+
+`CONDIV_DOPC_THICKNESS` is the global membrane thickness in Angstrom used for every target in the run. The default is `30.2`, matching the median of the current `upside_input2/*.thickness` values while removing target-specific variation.
 
 `CONDIV_MINIBATCH_SIZE` is fixed when `initial_checkpoint.pkl` is created. If you want larger Slurm fanout, set it before `./run_init.sh` and reinitialize the run directory. For the current default `pdb_list2`, there are 45 proteins total, so the practical upper bound is 45.
 

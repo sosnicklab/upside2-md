@@ -89,6 +89,7 @@ def _env_bool(name: str, default: bool) -> bool:
 class Config:
     project_root: Path
     ff_dir: Path
+    membrane_thickness: float
     n_replica: int
     omp_threads: int
     native_restraint_strength: float
@@ -146,6 +147,7 @@ def build_config() -> Config:
     return Config(
         project_root=PROJECT_ROOT,
         ff_dir=ff_dir,
+        membrane_thickness=float(os.environ.get("CONDIV_DOPC_THICKNESS", "30.2")),
         n_replica=n_replica,
         omp_threads=int(os.environ.get("CONDIV_OMP_THREADS", omp_threads_default)),
         native_restraint_strength=float(os.environ.get("CONDIV_NATIVE_RESTRAINT_STRENGTH", str(1.0 / 3.0**2))),
@@ -896,6 +898,11 @@ def _choose_worker_launch(mode: str) -> str:
 def _apply_runtime_config(state: dict) -> dict:
     state["project_root"] = str(CONFIG.project_root)
     state["ff_dir"] = str(CONFIG.ff_dir)
+    thickness_override = os.environ.get("CONDIV_DOPC_THICKNESS")
+    if thickness_override is not None:
+        state["membrane_thickness"] = float(thickness_override)
+    else:
+        state["membrane_thickness"] = float(state.get("membrane_thickness", CONFIG.membrane_thickness))
     state["worker_launch"] = CONFIG.worker_launch
     state["worker_python"] = CONFIG.worker_python
     state["n_replica"] = CONFIG.n_replica
@@ -911,8 +918,16 @@ def _apply_runtime_config(state: dict) -> dict:
     state["pair_reg_cb_weight"] = CONFIG.pair_reg_cb_weight
     state["pair_reg_donor_weight"] = CONFIG.pair_reg_donor_weight
     state["pair_reg_acceptor_weight"] = CONFIG.pair_reg_acceptor_weight
-    if state.get("pair_reg_enabled", False) and "pair_teacher" not in state:
-        state["pair_teacher"] = build_pair_teacher(state["layer_manifest"], Path(state["pair_ff_itp"]))
+    if (
+        state.get("pair_reg_enabled", False)
+        and "pair_teacher" not in state
+        and state.get("init_param_files", {}).get("memb")
+    ):
+        state["pair_teacher"] = build_pair_teacher(
+            state["layer_manifest"],
+            Path(state["pair_ff_itp"]),
+            Path(state["init_param_files"]["memb"]),
+        )
     return state
 
 
@@ -984,7 +999,7 @@ def run_minibatch(
                 target.fasta,
                 target.native_path,
                 target.breakfile_path,
-                str(target.thickness),
+                str(state["membrane_thickness"]),
                 target.nail_file,
                 target.init_path,
                 str(target.n_res),
@@ -1340,11 +1355,11 @@ def main_initialize(args):
     state["layer_manifest_path"] = str(_resolve_layer_manifest_path(state["base_dir"]))
     state["layer_manifest"] = load_layer_manifest(Path(state["layer_manifest_path"]))
     state["pair_ff_itp"] = str(CONFIG.pair_ff_itp)
+    state["membrane_thickness"] = float(CONFIG.membrane_thickness)
     state["pair_reg_enabled"] = CONFIG.pair_reg_enabled
     state["pair_reg_cb_weight"] = CONFIG.pair_reg_cb_weight
     state["pair_reg_donor_weight"] = CONFIG.pair_reg_donor_weight
     state["pair_reg_acceptor_weight"] = CONFIG.pair_reg_acceptor_weight
-    state["pair_teacher"] = build_pair_teacher(state["layer_manifest"], Path(state["pair_ff_itp"]))
 
     if not __file__:
         raise RuntimeError("No __file__ available")
@@ -1355,6 +1370,7 @@ def main_initialize(args):
 
     if protein_list != "cached":
         print("Reading training set")
+        print("Using fixed DOPC membrane thickness %.3f A for all targets" % float(state["membrane_thickness"]))
         with open(protein_list, "r", encoding="utf-8") as fh:
             protein_names = [x.split()[0] for x in fh if x.strip()]
         assert protein_names[0] == "prot"
@@ -1366,9 +1382,6 @@ def main_initialize(args):
             base = os.path.join(state["protein_dir"], code)
             native_pos = _load_native_positions(base + ".initial.pkl")
             n_res = len(native_pos) // 3
-
-            with open(base + ".thickness", "r", encoding="utf-8") as fh:
-                thickness = fh.read().strip()
 
             max_sep = np.sqrt(np.sum(np.diff(native_pos, axis=0) ** 2, axis=-1)).max()
             if max_sep < 20000.0:
@@ -1383,7 +1396,7 @@ def main_initialize(args):
                     native_pos,
                     base + ".initial.pkl",
                     break_path,
-                    thickness,
+                    float(state["membrane_thickness"]),
                     nail_path,
                     base + ".states.pkl",
                     n_res,
@@ -1428,6 +1441,11 @@ def main_initialize(args):
             CONFIG.symlay_support_margin,
         )
         state["param"], state["init_param_files"] = get_init_param(state["init_dir"])
+        state["pair_teacher"] = build_pair_teacher(
+            state["layer_manifest"],
+            Path(state["pair_ff_itp"]),
+            Path(state["init_param_files"]["memb"]),
+        )
         _validate_membrane_param_shapes(state["param"], state["init_param_files"]["memb"])
         with open(os.path.join(state["base_dir"], "condiv_init.pkl"), "wb") as fh:
             cp.dump(
@@ -1440,6 +1458,7 @@ def main_initialize(args):
                     "symlay_seed_summary": state["symlay_seed_summary"],
                     "pair_teacher": state["pair_teacher"],
                     "pair_ff_itp": state["pair_ff_itp"],
+                    "membrane_thickness": state["membrane_thickness"],
                 },
                 fh,
                 -1,
@@ -1456,13 +1475,18 @@ def main_initialize(args):
             state["symlay_seed_summary"] = payload.get("symlay_seed_summary", {})
             state["pair_teacher"] = payload.get("pair_teacher", state["pair_teacher"])
             state["pair_ff_itp"] = payload.get("pair_ff_itp", state["pair_ff_itp"])
+            state["membrane_thickness"] = payload.get("membrane_thickness", state["membrane_thickness"])
         else:
             state["init_dir"], state["param"], state["init_param_files"] = payload
             state["seed_source_init_dir"] = state["init_dir"]
             state["symlay_seed_summary"] = {}
         state["layer_manifest"] = load_layer_manifest(Path(state["layer_manifest_path"]))
         if "pair_teacher" not in state or state["pair_teacher"].get("schema", "") != PAIR_TEACHER_SCHEMA:
-            state["pair_teacher"] = build_pair_teacher(state["layer_manifest"], Path(state["pair_ff_itp"]))
+            state["pair_teacher"] = build_pair_teacher(
+                state["layer_manifest"],
+                Path(state["pair_ff_itp"]),
+                Path(state["init_param_files"]["memb"]),
+            )
         _validate_membrane_param_shapes(state["param"], state["init_param_files"]["memb"])
 
     state["initial_alpha"] = Update(0.02, 0.02, 0.02, 0.02) * CONFIG.alpha
@@ -1477,6 +1501,7 @@ def main_initialize(args):
     print("ConDiv_symlay slot sequence", "-".join(state["layer_manifest"]["full_type_sequence"]))
     print("ConDiv_symlay seed source", repo_relative(Path(state["seed_source_init_dir"])))
     print("ConDiv_symlay seed membrane", repo_relative(Path(state["init_param_files"]["memb"])))
+    print("ConDiv_symlay membrane thickness %.3f A" % float(state["membrane_thickness"]))
     print("ConDiv_symlay pair teacher", state["pair_teacher"]["schema"], repo_relative(Path(state["pair_ff_itp"])))
     print(
         "ConDiv_symlay replica layout",

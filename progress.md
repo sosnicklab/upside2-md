@@ -7,3 +7,35 @@
 - Patched `ConDiv_symlay/ConDiv_mem.py` so the worker launches `upside` locally inside the existing worker step, and so the temporary template config is moved into `run.0.h5` instead of being redundantly regenerated and retained as `base.h5`.
 - Updated `ConDiv_symlay/README.md` to document the corrected Slurm launch model.
 - Verified locally that `ConDiv_symlay/ConDiv_mem.py` compiles, that the revised config-generation path produces valid `run.0.h5` and `run.1.h5`, and that the temporary `base.h5` is no longer left behind in the smoke directory.
+- Replaced the old scalar dry-MARTINI pair teacher in `ConDiv_symlay/symlay_utils.py` with `condiv_symlay_pair_teacher_v2`.
+- Implemented the new teacher build path:
+  - pool repeated membrane slots to covered dry types `Q0/Qa/Na/C1/C3`
+  - sample the seeded membrane file once for CB / donor-HB / acceptor-HB reference anchors
+  - span those anchors to all `38` dry-MARTINI types using role-specific `epsilon/sigma`
+  - build distance-resolved radial pair tables on a `2.0..12.0 A` / `0.1 A` grid
+  - project those tables back through an explicit bilayer shell kernel measured from the template bilayer PDB
+- Updated `ConDiv_symlay/ConDiv_mem.py` so the pair teacher is built from `init_param_files["memb"]` after constrained seeding and rebuilt from that same membrane file on cached-state schema mismatch.
+- Verification:
+  - `python3 -m py_compile ConDiv_symlay/symlay_utils.py ConDiv_symlay/ConDiv_mem.py` -> pass
+  - local teacher-build smoke test against `ConDiv_symlay/test_symlay_manifest/layer_manifest.json` + `ConDiv_symlay/param0/membrane.h5` -> pass
+    - schema `condiv_symlay_pair_teacher_v2`
+    - `38` env types
+    - `101` radial samples
+  - local gradient smoke test from `ConDiv_symlay/param0` -> pass
+    - `pair_loss_total = 0.298912`
+    - `grad.cb.shape = (20, 2, 18)`
+    - `grad.hb.shape = (2, 2, 18)`
+- Follow-up patch for the fixed-DOPC geometry model:
+  - added global `CONDIV_DOPC_THICKNESS` config in `ConDiv_symlay/ConDiv_mem.py`
+  - stopped reading per-target `.thickness` files during training-set construction
+  - changed worker dispatch to use `state["membrane_thickness"]` instead of serialized `Target.thickness`
+  - stored `membrane_thickness` in `condiv_init.pkl`
+  - documented the new fixed-thickness model in `ConDiv_symlay/README.md`
+- Verification:
+  - `python3 -m py_compile ConDiv_symlay/ConDiv_mem.py` -> pass
+  - one-target initialize smoke with `CONDIV_DOPC_THICKNESS=30.2` -> pass
+    - `cd_training.pkl` stored `30.2`
+    - `condiv_init.pkl` stored `30.2`
+  - one-target initialize smoke on `1orq` -> pass
+    - legacy `1orq.thickness = 29.4`
+    - stored training thickness still `30.2`
