@@ -35,6 +35,45 @@ Build a new `/Users/yinhan/Documents/upside2-md/ConDiv_symlay` workflow cloned f
 ## Known Errors / Blockers
 1. Live Slurm scheduling cannot be proven inside this sandbox; only shell-level wrapper validation and local execution of the same script body are practical here.
 
+## Active Task (Zero-Argument ConDiv_symlay Launch)
+
+### Goal
+Allow the standard `ConDiv_symlay` training flow to run without any extra parameters so the default usage is:
+- `./run_init.sh`
+- `sbatch run_remote.sh`
+
+### Key Decisions
+1. Keep the default profile as `dimer3` and the default run directory inside `ConDiv_symlay/` as `test_dimer3`.
+2. Make `run_init.sh` match the Slurm wrapper's environment-bootstrap behavior by preferring `ConDiv_symlay/venv/bin/activate`, falling back to the project-root `.venv`, and pre-initializing `PYTHONPATH` before sourcing the project-root `source.sh`.
+3. Refuse to reinitialize an existing training run in the default run directory; direct the user to resume with `sbatch run_remote.sh` instead of overwriting checkpoints.
+4. Keep `run_remote.sh` restart behavior unchanged except that the no-argument path is the documented/default launch surface and `RUN_STEPS` falls back to `20`.
+
+### Execution Phases
+- [x] Phase Z1: Patch `ConDiv_symlay/run_init.sh` to use the workflow-local venv preference, safe `PYTHONPATH` bootstrap, and an existing-run refusal guard.
+- [x] Phase Z2: Patch `ConDiv_symlay/run_remote.sh` and `ConDiv_symlay/README.md` so the default documented Slurm command is `sbatch run_remote.sh` with no extra args.
+- [x] Phase Z3: Run shell checks plus a no-argument smoke validation for initialization/restart behavior and record the results.
+
+### Review (Zero-Argument ConDiv_symlay Launch)
+1. `run_init.sh` now:
+   - resolves `ConDiv_symlay`/project-root paths before bootstrap,
+   - prefers `ConDiv_symlay/venv/bin/activate` and falls back to the project-root `.venv`,
+   - pre-initializes `PYTHONPATH` before sourcing the project-root `source.sh`,
+   - refuses to overwrite an existing initialized run directory and tells the user to resume with `sbatch run_remote.sh`.
+2. `run_remote.sh` now accepts zero positional arguments as the primary launch path:
+   - default `RUN_STEPS=20` remains internal,
+   - continuation submissions now preserve `RUN_STEPS` through the exported environment instead of requiring a positional argument.
+3. `README.md` now documents the standard flow as:
+   - `./run_init.sh`
+   - `sbatch run_remote.sh`
+   and explicitly documents the default run directory plus the reinitialization refusal behavior.
+4. Validation completed:
+   - `bash -n ConDiv_symlay/run_init.sh ConDiv_symlay/run_remote.sh` -> pass
+   - fresh reduced `run_init.sh` smoke with a temp `BASE_DIR` and no positional args -> pass
+   - rerunning `run_init.sh` against the same initialized temp `BASE_DIR` -> correctly refused
+   - reduced no-argument `run_remote.sh` restart path -> confirmed checkpoint discovery, no-argument launch, and worker entry on a controlled one-protein run
+5. Verification note:
+   - `RUN_STEPS=0` is not a valid smoke mode for `run_remote.sh` because `training_control.py` requires a produced `gradient_stats.json`; the wrapper is intended for positive restart steps.
+
 ## Review Criteria
 1. `ConDiv_symlay/` is self-contained and does not rely on `ConDiv/venv/`.
 2. `run_init.sh` produces a topology-slot manifest plus a seeded symmetric `membrane.h5` before the initial checkpoint.

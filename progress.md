@@ -1,5 +1,32 @@
 # Progress Log
 
+## 2026-03-08 (ConDiv_symlay zero-argument launch flow)
+- Re-read `task_plan.md`, `lessons.md`, and the current `ConDiv_symlay` launchers before patching the no-argument training flow.
+- Updated `ConDiv_symlay/run_init.sh` to:
+  - resolve the real workflow/project paths before bootstrap,
+  - prefer `ConDiv_symlay/venv/bin/activate` and fall back to the project-root `.venv`,
+  - pre-initialize `PYTHONPATH` before sourcing the project-root `source.sh`,
+  - refuse to overwrite an existing initialized run directory and direct the user to resume with `sbatch run_remote.sh`.
+- Updated `ConDiv_symlay/run_remote.sh` so the standard no-argument Slurm entrypoint is explicit:
+  - zero positional arguments now cleanly default to `RUN_STEPS=20`,
+  - one optional positional `RUN_STEPS` override is still accepted,
+  - auto-resubmissions now preserve `RUN_STEPS` via the exported environment instead of passing a positional argument.
+- Updated `ConDiv_symlay/README.md` so the documented standard flow is:
+  - `./run_init.sh`
+  - `sbatch run_remote.sh`
+  and documented the default run directory plus the reinitialization refusal behavior.
+- Validation:
+  - `bash -n ConDiv_symlay/run_init.sh ConDiv_symlay/run_remote.sh` -> pass
+  - fresh reduced init smoke:
+    `env -i ... CONDIV_PROJECT_ROOT=/Users/yinhan/Documents/upside2-md bash -lc 'cd /Users/yinhan/Documents/upside2-md/ConDiv_symlay && BASE_DIR=/tmp/condiv_symlay_noarg_init PROFILE=dimer3 WORKER_LAUNCH=local CONDIV_MINIBATCH_SIZE=1 CONDIV_N_THREADS=2 CONDIV_SIM_TIME=5 CONDIV_N_FRAME=2 CONDIV_MAX_PARALLEL_WORKERS=1 ./run_init.sh'` -> pass
+  - rerunning the same init command against `/tmp/condiv_symlay_noarg_init` -> correctly refused with resume guidance
+  - controlled one-protein no-argument restart setup:
+    - wrote `/tmp/condiv_symlay_single.list` with `5vb2`
+    - initialized `/tmp/condiv_symlay_noarg_single` successfully with that list
+    - launched `run_remote.sh` with no positional arguments and confirmed it found `/tmp/condiv_symlay_noarg_single/initial_checkpoint.pkl`, used the temp layer manifest, and entered the worker loop
+- Verification note:
+  - `RUN_STEPS=0` is not a valid wrapper smoke case because `training_control.py` expects a produced `gradient_stats.json`; a zero-step no-arg probe failed there as expected and was not treated as a launcher regression.
+
 ## 2026-03-07 (ConDiv_symlay symmetric multilayer workflow)
 - Re-read the root task docs, findings, and prior ConDiv workflow before implementation, then reinitialized `task_plan.md` for the new root-level `ConDiv_symlay` task.
 - Updated `lessons.md` after the user correction so topology-slot membrane layers are no longer inferred from bead names or raw depth sorting.

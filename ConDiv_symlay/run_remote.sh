@@ -77,7 +77,14 @@ export PYTHONPATH="$SCRIPT_DIR:$PROJECT_ROOT/py:$PROJECT_ROOT/obj:${PYTHONPATH:-
 
 PROFILE="${PROFILE:-dimer3}"
 BASE_DIR="${BASE_DIR:-$SCRIPT_DIR/test_${PROFILE}}"
-RUN_STEPS="${1:-${RUN_STEPS:-20}}"
+if [ "$#" -gt 1 ]; then
+  echo "ERROR: run_remote.sh accepts at most one optional RUN_STEPS argument."
+  exit 1
+fi
+RUN_STEPS="${RUN_STEPS:-20}"
+if [ "$#" -eq 1 ]; then
+  RUN_STEPS="$1"
+fi
 WORKER_LAUNCH="${WORKER_LAUNCH:-auto}"
 LAYER_MANIFEST_JSON="${LAYER_MANIFEST_JSON:-$BASE_DIR/layer_manifest.json}"
 PROGRESS_LOG_JSONL="${PROGRESS_LOG_JSONL:-$BASE_DIR/training_progress.jsonl}"
@@ -93,6 +100,7 @@ export PROFILE BASE_DIR WORKER_LAUNCH LAYER_MANIFEST_JSON
 export PROGRESS_LOG_JSONL STATUS_JSON
 export CONDIV_CONVERGENCE_GRAD_NORM CONDIV_CONVERGENCE_UPDATE_NORM CONDIV_CONVERGENCE_PATIENCE
 export CONDIV_AUTO_RESUBMIT CONDIV_AUTO_MAX_SUBMISSIONS CONDIV_RESUBMIT_COUNT
+export RUN_STEPS
 
 parse_slurm_task_slots() {
   local raw="${1:-}"
@@ -214,5 +222,5 @@ if [ "$CONDIV_AUTO_MAX_SUBMISSIONS" -gt 0 ] && [ "$next_resubmit_count" -gt "$CO
   exit 0
 fi
 
-submit_output="$(sbatch --parsable --dependency=afterok:${SLURM_JOB_ID} --export=ALL,CONDIV_RESUBMIT_COUNT=${next_resubmit_count} "$SCRIPT_DIR/run_remote.sh" "$RUN_STEPS")"
+submit_output="$(sbatch --parsable --dependency=afterok:${SLURM_JOB_ID} --export=ALL,CONDIV_RESUBMIT_COUNT=${next_resubmit_count},RUN_STEPS=${RUN_STEPS} "$SCRIPT_DIR/run_remote.sh")"
 echo "Submitted continuation job: $submit_output"

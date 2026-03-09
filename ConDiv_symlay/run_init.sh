@@ -1,10 +1,46 @@
 #!/bin/bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+resolve_paths() {
+  local candidate
 
-source "$PROJECT_ROOT/.venv/bin/activate"
+  if [ -n "${CONDIV_PROJECT_ROOT:-}" ] && [ -f "${CONDIV_PROJECT_ROOT}/source.sh" ]; then
+    PROJECT_ROOT="$(cd "${CONDIV_PROJECT_ROOT}" && pwd)"
+    SCRIPT_DIR="$PROJECT_ROOT/ConDiv_symlay"
+    return 0
+  fi
+
+  candidate="$(cd "$(dirname "$0")" && pwd)"
+  if [ -f "$candidate/layer_template.json" ] && [ -f "$candidate/../source.sh" ]; then
+    SCRIPT_DIR="$candidate"
+    PROJECT_ROOT="$(cd "$candidate/.." && pwd)"
+    return 0
+  fi
+
+  echo "ERROR: could not resolve the ConDiv_symlay workflow directory." >&2
+  echo "Run this script from ConDiv_symlay or set CONDIV_PROJECT_ROOT." >&2
+  exit 1
+}
+
+has_existing_training_state() {
+  local base_dir="$1"
+  [ -f "$base_dir/initial_checkpoint.pkl" ] && return 0
+  [ -f "$base_dir/training_progress.jsonl" ] && return 0
+  [ -f "$base_dir/training_status.json" ] && return 0
+  [ -f "$base_dir/layer_manifest.json" ] && return 0
+  compgen -G "$base_dir/epoch_*_minibatch_*" > /dev/null
+}
+
+resolve_paths
+cd "$SCRIPT_DIR"
+
+VENV_ACTIVATE="$SCRIPT_DIR/venv/bin/activate"
+if [ ! -f "$VENV_ACTIVATE" ]; then
+  VENV_ACTIVATE="$PROJECT_ROOT/.venv/bin/activate"
+fi
+
+source "$VENV_ACTIVATE"
+export PYTHONPATH="${PYTHONPATH:-}"
 source "$PROJECT_ROOT/source.sh"
 
 export CONDIV_PROJECT_ROOT="$PROJECT_ROOT"
@@ -40,12 +76,20 @@ case "$PROFILE" in
     ;;
 esac
 
+if [ -d "$BASE_DIR" ] && has_existing_training_state "$BASE_DIR"; then
+  echo "ERROR: existing training run detected at $BASE_DIR"
+  echo "Resume it with: sbatch run_remote.sh"
+  echo "Or remove/change BASE_DIR before rerunning ./run_init.sh."
+  exit 1
+fi
+
 mkdir -p "$BASE_DIR"
 
 echo "Building ConDiv_symlay layer manifest"
 echo "  layer template: $LAYER_TEMPLATE"
 echo "  bilayer pdb: $BILAYER_PDB"
 echo "  lipid itp: $LIPID_ITP"
+echo "  python venv: $VENV_ACTIVATE"
 
 python3 "$SCRIPT_DIR/build_layer_manifest.py" \
   --template "$LAYER_TEMPLATE" \

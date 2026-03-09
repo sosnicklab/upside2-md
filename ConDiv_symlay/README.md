@@ -62,6 +62,8 @@ This does four things:
 3. creates `initial_checkpoint.pkl`
 4. validates the seeded checkpoint with `validate_symlay_constraints.py`
 
+By default this creates the run under `ConDiv_symlay/test_dimer3`. If that directory already contains an initialized training run, `./run_init.sh` now refuses to overwrite it and tells you to resume with `sbatch run_remote.sh` instead.
+
 Useful overrides:
 
 ```bash
@@ -85,10 +87,12 @@ export CONDIV_SYMLAY_SUPPORT_MARGIN=0.5
 ## Slurm Restart
 
 ```bash
-sbatch run_remote.sh 20
+sbatch run_remote.sh
 ```
 
 `run_remote.sh` uses the same restart surface as `run_local.sh`, requests `16G` memory by default, resolves the real workflow directory from `SLURM_SUBMIT_DIR` / `CONDIV_PROJECT_ROOT` so Slurm spool-copy execution still finds the repo checkout, prefers `ConDiv_symlay/venv/bin/activate` when present (falling back to the project-root `.venv` in this checkout), sources `source.sh` from the project root, loads `python/3.11.9`, `cmake`, and `openmpi` through the module system, and caps BLAS/OpenMP threads to keep worker launches predictable.
+
+With no argument, `run_remote.sh` defaults to `RUN_STEPS=20`. You can still pass a single positional step count if you want to override that default.
 
 Inside Slurm, `WORKER_LAUNCH=auto` now resolves to `srun`. The wrapper also defaults:
 - `CONDIV_N_THREADS` to `${SLURM_CPUS_PER_TASK:-1}`
