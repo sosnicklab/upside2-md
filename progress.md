@@ -1,4 +1,20 @@
 2026-03-09
+- Hard-pinned the `ConDiv_symlay` inner membrane branches to the non-membrane baseline:
+  - added `pin_inner_to_nonmembrane_baseline()` in `ConDiv_symlay/ConDiv_mem.py`
+  - zeroed `icb/ihb` on init-load, restart-state application, optimizer-gradient application, post-step state updates, and emitted membrane writeout
+  - removed the old `shift_inner_curve()` coupling path so inner curves are no longer regenerated from outer membrane curves
+- Updated `ConDiv_symlay/symlay_utils.py` so constrained projection now forces `icb/ihb` to a zero baseline with validator stats that measure deviation from that required baseline rather than silently projecting arbitrary inner curves.
+- Updated task tracking and findings to reflect the new explicit-conversion rule for `icb/ihb`.
+- Verification:
+  - `python3 -m py_compile ConDiv_symlay/ConDiv_mem.py ConDiv_symlay/symlay_utils.py ConDiv_symlay/validate_symlay_constraints.py` -> pass
+  - `bash -n ConDiv_symlay/run_init.sh` -> pass
+  - controlled `run_init.sh` smoke in `/tmp/condiv_symlay_inner_baseline_smoke` -> pass
+  - direct HDF5 check on `/tmp/condiv_symlay_inner_baseline_smoke/seed_forcefield/membrane.h5` -> `max_abs(icb)=0`, `max_abs(ihb)=0`
+  - controlled second init smoke in `/tmp/condiv_symlay_inner_baseline_smoke_fast` -> pass
+  - direct HDF5 check on `/tmp/condiv_symlay_inner_baseline_smoke_fast/epoch_00_minibatch_00/nesterov_temp__membrane.h5` -> `max_abs(icb)=0`, `max_abs(ihb)=0`
+  - direct `_project_update_to_symlay(...)` probe with injected nonzero inner values -> projected `icb/ihb` remained exactly zero
+- Limitation:
+  - the full local `run_local.sh 1` minibatch did not finish within the sandbox window, so the completed post-minibatch checkpoint was not available here; verification used the seeded file, the per-restart temporary membrane file, and a direct projection probe instead.
 - Initialized task tracking files for the `ConDiv_symlay` workflow investigation.
 - Traced `ConDiv_symlay/run_init.sh`, `ConDiv_mem.py`, `run_upside.py`, `upside_config.py`, `src/membrane_potential.cpp`, and `symlay_utils.py` to identify the active membrane potential form and training constraints.
 - Verified with local inspection that no initialized `ConDiv_symlay/test_dimer3` run is present in the repository; only source `param*/membrane.h5` files and a test layer manifest are checked in.

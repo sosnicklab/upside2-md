@@ -249,6 +249,15 @@ class Update(UpdateBase):
         return self._do_binary(other, lambda a, b: a / b)
 
 
+def pin_inner_to_nonmembrane_baseline(update: Update) -> Update:
+    return Update(
+        np.asarray(update.cb, dtype=np.float32),
+        np.zeros_like(update.icb, dtype=np.float32),
+        np.asarray(update.hb, dtype=np.float32),
+        np.zeros_like(update.ihb, dtype=np.float32),
+    )
+
+
 class AdamSolver:
     """Simple Adam solver for membrane parameter blocks."""
 
@@ -344,7 +353,7 @@ def get_init_param(init_dir: str):
         ihb_memb = t.root.ihb_energy[:]
 
     param = Update(*([None] * 4))._replace(cb=cb_memb, icb=icb_memb, hb=hb_memb, ihb=ihb_memb)
-    return param, init_param_files
+    return pin_inner_to_nonmembrane_baseline(param), init_param_files
 
 
 def _resolve_layer_manifest_path(base_dir: str) -> Path:
@@ -604,31 +613,11 @@ def _validate_membrane_file_vs_model(config_base: str, membrane_file: str) -> Me
     return spec
 
 
-def shift_inner_curve(param_inner: np.ndarray, param_outer: np.ndarray) -> np.ndarray:
-    spoint = 8
-    n_node = param_inner.size
-    xx = np.arange(1, n_node - 1)
-    y_i = ue.clamped_spline_value(param_inner, xx)
-    y_o = ue.clamped_spline_value(param_outer, xx)
-    y_i[spoint:] += y_o[spoint] - y_i[spoint]
-    y_i[:spoint] = y_o[:spoint]
-    return ue.clamped_spline_solve(y_i)
-
-
 def expand_param(params: Update, orig_param_files: Dict[str, str], new_param_files: Dict[str, str]) -> None:
     shutil.copyfile(orig_param_files["memb"], new_param_files["memb"])
 
-    n_aa = params.cb.shape[0]
-    params_icb = np.zeros_like(params.icb)
-    for aa in range(n_aa):
-        params_icb[aa] = shift_inner_curve(params.icb[aa], params.cb[aa, 0])
-
-    n_tp = params.hb.shape[0]
-    n_op = params.hb.shape[1]
-    params_ihb = np.zeros_like(params.ihb)
-    for tp in range(n_tp):
-        for op in range(n_op):
-            params_ihb[tp, op] = shift_inner_curve(params.ihb[tp, op], params.hb[tp, op])
+    params_icb = np.zeros_like(params.icb, dtype=np.float64)
+    params_ihb = np.zeros_like(params.ihb, dtype=np.float64)
 
     manifest_path = os.environ.get("CONDIV_SYMLAY_LAYER_MANIFEST", "").strip()
     if CONFIG.symlay_projection_enabled and manifest_path:
@@ -928,6 +917,8 @@ def _apply_runtime_config(state: dict) -> dict:
             Path(state["pair_ff_itp"]),
             Path(state["init_param_files"]["memb"]),
         )
+    if "param" in state:
+        state["param"] = pin_inner_to_nonmembrane_baseline(state["param"])
     return state
 
 
@@ -1075,6 +1066,7 @@ def run_minibatch(
             float(state["pair_reg_acceptor_weight"]),
         )
         d_param = d_param + d_pair
+    d_param = pin_inner_to_nonmembrane_baseline(d_param)
     step_update = solver.update_step(d_param)
     grad_stats = {
         "n_success": int(len(change)),
@@ -1110,7 +1102,7 @@ def run_minibatch(
     )
 
     new_param_files = {k: os.path.join(direc, os.path.basename(x)) for k, x in initial_param_files.items()}
-    new_param = param + step_update
+    new_param = pin_inner_to_nonmembrane_baseline(param + step_update)
     projection_stats = {}
     if state.get("symlay_projection_enabled", True):
         new_param, projection_stats = _project_update_to_symlay(

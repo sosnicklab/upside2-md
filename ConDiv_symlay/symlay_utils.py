@@ -1090,6 +1090,36 @@ def project_curve_to_symmetric_layers(
     }
 
 
+def project_curve_to_zero_baseline(
+    coeff: np.ndarray,
+    source_support: Tuple[float, float],
+    target_support: Tuple[float, float],
+    dense_grid_size: int = DEFAULT_DENSE_GRID_SIZE,
+) -> Tuple[np.ndarray, dict]:
+    coeff = np.asarray(coeff, dtype=np.float64)
+    if dense_grid_size < 101:
+        raise ValueError("dense_grid_size must be at least 101")
+    src_min, src_max = (float(source_support[0]), float(source_support[1]))
+    dst_min, dst_max = (float(target_support[0]), float(target_support[1]))
+    if abs(dst_min + dst_max) > 1e-6:
+        raise ValueError(f"Target support must be symmetric; got ({dst_min}, {dst_max})")
+
+    dense_grid = np.linspace(dst_min, dst_max, int(dense_grid_size), dtype=np.float64)
+    source_dense = sample_spline_curve(coeff, src_min, src_max, dense_grid)
+    new_coeff = np.zeros_like(coeff, dtype=np.float64)
+    residual = source_dense
+    return new_coeff, {
+        "dense_grid_size": int(dense_grid_size),
+        "n_anchor": 2,
+        "slot_depths": [],
+        "anchor_depths": [0.0, float(dst_max)],
+        "anchor_values": [0.0, 0.0],
+        "projection_residual_max_abs": float(np.max(np.abs(residual))),
+        "projection_residual_rms": float(np.sqrt(np.mean(np.square(residual)))),
+        "symmetry_residual_max_abs": float(np.max(np.abs(source_dense - source_dense[::-1]))),
+    }
+
+
 def project_membrane_arrays(
     arrays: dict,
     manifest: dict,
@@ -1124,11 +1154,10 @@ def project_membrane_arrays(
             summary["cb"].append(stats)
 
     for i in range(arrays["icb"].shape[0]):
-        coeff, stats = project_curve_to_symmetric_layers(
+        coeff, stats = project_curve_to_zero_baseline(
             arrays["icb"][i],
             (arrays["cb_z_min"], arrays["cb_z_max"]),
             cb_support,
-            slot_depths,
             dense_grid_size=dense_grid_size,
         )
         projected["icb"][i] = coeff
@@ -1148,11 +1177,10 @@ def project_membrane_arrays(
 
     for i in range(arrays["ihb"].shape[0]):
         for j in range(arrays["ihb"].shape[1]):
-            coeff, stats = project_curve_to_symmetric_layers(
+            coeff, stats = project_curve_to_zero_baseline(
                 arrays["ihb"][i, j],
                 (arrays["hb_z_min"], arrays["hb_z_max"]),
                 hb_support,
-                slot_depths,
                 dense_grid_size=dense_grid_size,
             )
             projected["ihb"][i, j] = coeff

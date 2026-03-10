@@ -29,7 +29,7 @@ The inner blocks:
 - `icb`
 - `ihb`
 
-are still carried in the parameter object and written to `membrane.h5`, but the direct MD differentiation path in this workflow is through the standard outer membrane nodes.
+are still carried in the parameter object and written to `membrane.h5`, but they are now hard-pinned to the non-membrane baseline (`0` membrane increment). They are not treated as an independent learned membrane channel.
 
 Conceptually:
 
@@ -59,6 +59,15 @@ where:
 - `P` is the hard symmetric-layer projector
 
 So the soft constraint influences the step, but the hard membrane subspace is enforced after every update.
+
+In addition, the inner membrane branch is frozen:
+
+```text
+icb(z) = 0
+ihb(z) = 0
+```
+
+at seed time, restart time, projection time, and emitted-forcefield writeout time.
 
 ## Hard Constraint: Symmetric DOPC Layer Projection
 

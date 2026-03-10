@@ -1,4 +1,15 @@
 Findings
+- `icb_energy` and `ihb_energy` are not a non-membrane baseline in the current runtime. They are the `coeff_inner` fallback branch mixed into `cb_surf_membrane_potential` and `hb_surf_membrane_potential` when surface coverage is low.
+- The checked-in `parameters/ff_2.1/membrane.h5` inner curves carry substantial membrane-specific signal rather than a zero/no-membrane baseline:
+  - `icb_energy` RMS vs zero: `0.994`
+  - `ihb_energy` RMS vs zero: `0.717`
+  - `icb_energy` range: `[-1.63, 2.94]`
+  - `ihb_energy` range: `[-1.77, 0.066]`
+- The `ConDiv_symlay` hard-constraint path now pins `icb/ihb` to the non-membrane baseline (`0` membrane increment) at seed time, projection time, restart-state sanitization, gradient/update time, and emitted `membrane.h5` writeout time.
+- Validation of the new inner-baseline rule:
+  - `/tmp/condiv_symlay_inner_baseline_smoke/seed_forcefield/membrane.h5` had `max_abs(icb)=0`, `max_abs(ihb)=0`
+  - `/tmp/condiv_symlay_inner_baseline_smoke_fast/epoch_00_minibatch_00/nesterov_temp__membrane.h5` had `max_abs(icb)=0`, `max_abs(ihb)=0`
+  - direct `_project_update_to_symlay(...)` probe with injected nonzero inner values still returned `max_abs(projected.icb)=0`, `max_abs(projected.ihb)=0`
 - `ConDiv_symlay/run_init.sh` is the workflow entrypoint. It builds `layer_manifest.json`, initializes via `ConDiv_mem.py`, then runs `validate_symlay_constraints.py`.
 - `ConDiv_symlay/ConDiv_mem.py` passes `membrane_potential=membrane_file` and `surface=True` into `run_upside.upside_config`; it does not pass `channel_membrane_potential`.
 - `py/run_upside.py` maps that to `--membrane-potential`, and `py/upside_config.py` handles that path with `write_membrane_potential3`, which writes `cb_membrane_potential` and `hb_membrane_potential`.
