@@ -109,12 +109,17 @@ Inside Slurm, `WORKER_LAUNCH=auto` now resolves to `srun`. The launch model matc
 
 The wrapper defaults:
 - `CONDIV_N_REPLICA=8`
-- `CONDIV_OMP_THREADS=CONDIV_N_REPLICA`
-- `CONDIV_MAX_PARALLEL_WORKERS=0`
+- `CONDIV_OMP_THREADS=8`
+- `CONDIV_MAX_PARALLEL_WORKERS=6`
 
-`CONDIV_MAX_PARALLEL_WORKERS=0` means the Python layer does not cap the minibatch fanout. It launches the whole minibatch and lets Slurm determine how many protein workers can run concurrently inside the allocation.
+The Slurm wrapper is now hard-coded to a fixed 48-CPU layout:
+- `#SBATCH --ntasks-per-node=6`
+- `#SBATCH --cpus-per-task=8`
+- `6` protein workers in parallel
+- `8` CPUs per worker
+- `8` replicas per worker
 
-With the default `#SBATCH --ntasks-per-node=48`, `CONDIV_N_REPLICA=8`, and `CONDIV_OMP_THREADS=8`, the allocation can sustain about `6` protein workers at once. If you want more proteins running concurrently, reduce `CONDIV_OMP_THREADS` / `CONDIV_N_REPLICA` or request more CPUs.
+It now fails fast if the live Slurm allocation does not match that `6 x 8 = 48` layout. This is intentional; the wrapper no longer tries to infer or adapt the CPU layout from the allocation.
 
 After each Slurm job, the wrapper:
 - appends one record to `<base_dir>/training_progress.jsonl`

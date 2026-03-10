@@ -1,5 +1,7 @@
 # Lessons
 
+- 2026-03-10: When a user asks to fully utilize a fixed CPU budget on Slurm, do not leave the layout inferred from runtime env vars. Hard-code the wrapper allocation and worker geometry together, and fail fast if the live allocation does not match the intended shape.
+- 2026-03-10: When a user points to a reference workflow for parallel training behavior, inspect that workflow’s worker/resource model directly before tuning Slurm knobs. Match the actual unit of parallelism first (here: one `srun` worker per protein, with local replica bundles), then derive defaults like threads, replicas, and minibatch fanout from that model.
 - 2026-03-10: When a user corrects the target workflow directory, stop and restate scope before editing. For sibling workflows like `ConDiv` and `ConDiv_symlay`, verify the active script paths first and avoid landing fixes in the wrong folder.
 - 2026-03-08: When a user wants a workflow launched with bare `./run_init.sh` then `sbatch run_remote.sh`, do not rely on extra exported vars or positional args for the normal case. Keep one internal default run directory/profile, make both scripts share the same bootstrap assumptions, and refuse to reinitialize an existing run instead of silently overwriting it.
 - 2026-03-10: For zero-argument Slurm restarts, do not trust inherited `BASE_DIR` from the shell environment. Record the active run directory during `run_init.sh` and have `run_remote.sh` reuse that recorded path by default so stale exports cannot silently redirect training to another checkout or run tree.

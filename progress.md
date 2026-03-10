@@ -1,4 +1,38 @@
 2026-03-09
+- User requested a hard-coded 48-CPU Slurm layout instead of the derived concurrency model.
+- Patched `ConDiv_symlay/run_remote.sh`:
+  - changed `#SBATCH --ntasks-per-node` from `48` to `6`
+  - changed `#SBATCH --cpus-per-task` from `1` to `8`
+  - hard-coded `CONDIV_N_REPLICA=8`
+  - hard-coded `CONDIV_OMP_THREADS=8`
+  - hard-coded `CONDIV_MAX_PARALLEL_WORKERS=6`
+  - added fail-fast checks for the expected `48` CPUs / `6` task slots
+  - updated log output to print the fixed `6 x 8 = 48` layout explicitly
+- Updated `ConDiv_symlay/README.md` to describe the fixed 48-CPU layout rather than the previous inferred-allocation model.
+- Verification:
+  - `bash -n ConDiv_symlay/run_remote.sh` -> pass
+  - checked the patched header/default block in `run_remote.sh` -> fixed `6 x 8` layout present
+  - confirmed the per-protein worker command remains `srun --ntasks=1 --cpus-per-task=8 ...`
+- Compared `ConDiv_symlay` against the reference workflow in `/Users/yinhan/Documents/Train` after the user asked for the same training model.
+- Reference findings from `Train`:
+  - `ConDiv.py` launches one `srun --ntasks=1 --cpus-per-task=n_threads` worker per protein
+  - each worker runs one local Upside replica bundle
+  - the whole minibatch is launched at once; there is no Python-side protein cap derived from replica count
+- Patched `ConDiv_symlay/ConDiv_mem.py`:
+  - Slurm default `omp_threads` now follows `n_replica`
+  - `_run_worker_subprocess(...)` now launches one `srun` step per protein worker with `--ntasks=1 --cpus-per-task=<omp_threads>`
+- Patched `ConDiv_symlay/run_remote.sh`:
+  - changed default `CONDIV_N_REPLICA` from `12` to `8`
+  - changed default `CONDIV_OMP_THREADS` to `CONDIV_N_REPLICA`
+  - removed the automatic Python-side `max_parallel_workers = task_slots / n_replica` cap
+  - added total-CPU detection and an informational `estimated concurrent workers from allocation` log line
+  - labeled `CONDIV_MAX_PARALLEL_WORKERS=0` as uncapped in the job header
+- Updated `ConDiv_symlay/README.md` to document the Train-style per-protein `srun` worker model.
+- Verification:
+  - `bash -n ConDiv_symlay/run_remote.sh` -> pass
+  - `python3 -m py_compile ConDiv_symlay/ConDiv_mem.py` -> pass
+  - fake-Slurm config probe under the project env -> `{'n_replica': 8, 'omp_threads': 8, 'max_parallel_workers': 0}`
+  - direct `_run_worker_subprocess(...)` capture -> `srun --exclusive --nodes=1 --ntasks=1 --cpus-per-task=8 ...`
 - User corrected the target workflow directory: this run-dir/bootstrap task is for `ConDiv_symlay`, not `ConDiv`.
 - Re-checked the live `ConDiv_symlay` wrappers and confirmed the active fix is scoped there:
   - `run_init.sh` now forces the run under `ConDiv_symlay/test_${PROFILE}`

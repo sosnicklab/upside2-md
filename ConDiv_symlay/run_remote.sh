@@ -3,8 +3,8 @@
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --time=36:00:00
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=48
-#SBATCH --cpus-per-task=1
+#SBATCH --ntasks-per-node=6
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=0
 
 set -euo pipefail
@@ -155,20 +155,26 @@ if [ -z "$SLURM_TOTAL_CPUS" ] && [ -n "$SLURM_TASK_SLOTS" ]; then
   SLURM_TOTAL_CPUS="$((SLURM_TASK_SLOTS * ${SLURM_CPUS_PER_TASK:-1}))"
 fi
 
-export CONDIV_N_REPLICA="${CONDIV_N_REPLICA:-8}"
-export CONDIV_OMP_THREADS="${CONDIV_OMP_THREADS:-${CONDIV_N_REPLICA}}"
-export CONDIV_MAX_PARALLEL_WORKERS="${CONDIV_MAX_PARALLEL_WORKERS:-0}"
+HARD_CODED_TOTAL_CPUS=48
+HARD_CODED_TASK_SLOTS=6
+HARD_CODED_CPUS_PER_WORKER=8
 
-if [ -n "$SLURM_TOTAL_CPUS" ] && [ "$SLURM_TOTAL_CPUS" -lt "$CONDIV_OMP_THREADS" ]; then
-  echo "ERROR: allocated CPUs ($SLURM_TOTAL_CPUS) are smaller than CONDIV_OMP_THREADS ($CONDIV_OMP_THREADS)." >&2
-  echo "Increase the Slurm allocation or reduce CONDIV_OMP_THREADS." >&2
+export CONDIV_N_REPLICA=8
+export CONDIV_OMP_THREADS="$HARD_CODED_CPUS_PER_WORKER"
+export CONDIV_MAX_PARALLEL_WORKERS="$HARD_CODED_TASK_SLOTS"
+
+if [ -n "$SLURM_TASK_SLOTS" ] && [ "$SLURM_TASK_SLOTS" -ne "$HARD_CODED_TASK_SLOTS" ]; then
+  echo "ERROR: this wrapper is hard-coded for ${HARD_CODED_TASK_SLOTS} Slurm task slots, but got ${SLURM_TASK_SLOTS}." >&2
+  echo "Submit with the script's built-in #SBATCH layout and do not override ntasks." >&2
+  exit 1
+fi
+if [ -n "$SLURM_TOTAL_CPUS" ] && [ "$SLURM_TOTAL_CPUS" -ne "$HARD_CODED_TOTAL_CPUS" ]; then
+  echo "ERROR: this wrapper is hard-coded for ${HARD_CODED_TOTAL_CPUS} allocated CPUs, but got ${SLURM_TOTAL_CPUS}." >&2
+  echo "Submit with the script's built-in #SBATCH layout and do not override CPU settings." >&2
   exit 1
 fi
 
-ESTIMATED_PARALLEL_WORKERS="unknown"
-if [ -n "$SLURM_TOTAL_CPUS" ]; then
-  ESTIMATED_PARALLEL_WORKERS="$((SLURM_TOTAL_CPUS / CONDIV_OMP_THREADS))"
-fi
+ESTIMATED_PARALLEL_WORKERS="$HARD_CODED_TASK_SLOTS"
 
 export CONDIV_WORKER_LAUNCH="$WORKER_LAUNCH"
 export CONDIV_SYMLAY_LAYER_MANIFEST="$LAYER_MANIFEST_JSON"
@@ -215,13 +221,10 @@ echo "  upside launch resolved: $RESOLVED_WORKER_LAUNCH"
 echo "  python venv: $VENV_ACTIVATE"
 echo "  replicas/worker: ${CONDIV_N_REPLICA}"
 echo "  omp threads/upside: ${CONDIV_OMP_THREADS}"
-if [ "${CONDIV_MAX_PARALLEL_WORKERS}" -eq 0 ]; then
-  echo "  max parallel workers: 0 (uncapped at Python layer; Slurm controls concurrency)"
-else
-  echo "  max parallel workers: ${CONDIV_MAX_PARALLEL_WORKERS}"
-fi
+echo "  max parallel workers: ${CONDIV_MAX_PARALLEL_WORKERS}"
 echo "  allocated task slots: ${SLURM_TASK_SLOTS:-unknown}"
 echo "  allocated cpus: ${SLURM_TOTAL_CPUS:-unknown}"
+echo "  hard-coded worker layout: ${HARD_CODED_TASK_SLOTS} workers x ${HARD_CODED_CPUS_PER_WORKER} cpus = ${HARD_CODED_TOTAL_CPUS}"
 echo "  estimated concurrent workers from allocation: ${ESTIMATED_PARALLEL_WORKERS}"
 echo "  convergence grad threshold: ${CONDIV_CONVERGENCE_GRAD_NORM}"
 echo "  convergence update threshold: ${CONDIV_CONVERGENCE_UPDATE_NORM}"

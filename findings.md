@@ -1,4 +1,26 @@
 Findings
+- The user wants `ConDiv_symlay` to use all `48` CPUs with a hard-coded layout, not an inferred layout from Slurm env vars.
+- The clean fixed layout for the current Train-style launch model is `6` protein workers in parallel with `8` CPUs per worker:
+  - `#SBATCH --ntasks-per-node=6`
+  - `#SBATCH --cpus-per-task=8`
+  - `CONDIV_N_REPLICA=8`
+  - `CONDIV_OMP_THREADS=8`
+  - `CONDIV_MAX_PARALLEL_WORKERS=6`
+- Keeping `CONDIV_MAX_PARALLEL_WORKERS=0` leaves concurrency to Slurm, which can still use all CPUs, but it is not a hard-coded CPU policy. The user explicitly asked for the hard-coded policy.
+- The wrapper now fails if the live allocation is not exactly the expected `48` CPUs / `6` task slots, so the workflow cannot silently run with a different CPU shape.
+- The reference workflow at `/Users/yinhan/Documents/Train/ConDiv.py` does not use the current replica-slot fanout model. Its `run_minibatch(...)` launches one `srun --ntasks=1 --cpus-per-task=n_threads` worker per protein and lets the whole minibatch be the protein-level launch surface.
+- In the reference `Train` workflow, `n_threads` serves both as:
+  - the number of replica configs per protein worker
+  - the OMP thread count for the local `upside` process launched by that worker
+- The reference `Train/srun.sh` requests resources as `--ntasks=batch --cpus-per-task=n_rpx`, so the protein-level fanout is controlled by Slurm allocation, not by a Python-side `max_parallel_workers = total_slots / n_replica` cap.
+- `ConDiv_symlay` had drifted from that model in two ways:
+  - workers were plain local subprocesses instead of `srun` steps
+  - `run_remote.sh` forced `CONDIV_MAX_PARALLEL_WORKERS = allocated_task_slots / CONDIV_N_REPLICA`, which turned the replica count into the protein-fanout limiter
+- `ConDiv_symlay` now matches the reference launch shape more closely:
+  - `_run_worker_subprocess(...)` wraps protein workers in `srun --ntasks=1 --cpus-per-task=<omp_threads>`
+  - Slurm defaults are `CONDIV_N_REPLICA=8`, `CONDIV_OMP_THREADS=8`, `CONDIV_MAX_PARALLEL_WORKERS=0`
+  - the Python layer now launches the whole minibatch by default and leaves concurrency control to Slurm
+- With the default `#SBATCH --ntasks-per-node=48`, the new Train-style defaults imply an estimated concurrency of `48 / 8 = 6` protein workers at once. To get `12` proteins truly running concurrently on that same allocation, `CONDIV_OMP_THREADS` / `CONDIV_N_REPLICA` would need to drop to `4`, or the Slurm CPU allocation would need to increase.
 - The user corrected a scope mistake: the requested workflow directory for the zero-argument run-dir fix is `ConDiv_symlay`, not `ConDiv`. Any wrapper-dir conclusions for this task must be stated against `ConDiv_symlay`.
 - `ConDiv/run_init.sh` was still trusting a generic inherited `BASE_DIR`, so stale shell environment from another workflow could redirect a bare `./run_init.sh` to the wrong run directory even when the active checkout was correct.
 - The requested `ConDiv` behavior is simpler than `ConDiv_symlay`: keep the training folder under the same `ConDiv/` directory as `run_init.sh` and `run_local.sh`, and drop any hard-coded/inherited run directory outside that tree.
