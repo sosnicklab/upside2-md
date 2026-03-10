@@ -115,7 +115,7 @@ if [ -z "$SLURM_TASK_SLOTS" ]; then
   SLURM_TASK_SLOTS="$(parse_slurm_task_slots "${SLURM_NTASKS_PER_NODE:-}")"
 fi
 
-export CONDIV_N_REPLICA="${CONDIV_N_REPLICA:-8}"
+export CONDIV_N_REPLICA="${CONDIV_N_REPLICA:-12}"
 export CONDIV_OMP_THREADS="${CONDIV_OMP_THREADS:-${SLURM_CPUS_PER_TASK:-1}}"
 if [ -n "$SLURM_TASK_SLOTS" ] && [ "${CONDIV_N_REPLICA}" -eq "$SLURM_TASK_SLOTS" ] && [ -z "${CONDIV_MAX_PARALLEL_WORKERS:-}" ]; then
   echo "ERROR: CONDIV_N_REPLICA=$CONDIV_N_REPLICA matches all allocated Slurm task slots." >&2
