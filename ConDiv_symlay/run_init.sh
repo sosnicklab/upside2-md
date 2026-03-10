@@ -48,18 +48,15 @@ export PYTHONPATH="$SCRIPT_DIR:$PROJECT_ROOT/py:$PROJECT_ROOT/obj:${PYTHONPATH:-
 
 PROFILE="${PROFILE:-dimer3}"
 BASE_DIR="${BASE_DIR:-$SCRIPT_DIR/test_${PROFILE}}"
+RUN_DIR_RECORD="$SCRIPT_DIR/.condiv_current_run_dir"
 INIT_FORCEFIELD_DIR="${INIT_FORCEFIELD_DIR:-$PROJECT_ROOT/parameters/ff_2.1}"
 WORKER_LAUNCH="${WORKER_LAUNCH:-auto}"
 LAYER_TEMPLATE="${LAYER_TEMPLATE:-$SCRIPT_DIR/layer_template.json}"
 BILAYER_PDB="${BILAYER_PDB:-$PROJECT_ROOT/example/16.MARTINI/pdb/bilayer.MARTINI.pdb}"
 LIPID_ITP="${LIPID_ITP:-$PROJECT_ROOT/example/16.MARTINI/ff_dry/dry_martini_v2.1_lipids.itp}"
-LAYER_MANIFEST_JSON="${LAYER_MANIFEST_JSON:-$BASE_DIR/layer_manifest.json}"
-LAYER_MANIFEST_CSV="${LAYER_MANIFEST_CSV:-$BASE_DIR/layer_manifest.csv}"
-LAYER_MANIFEST_PNG="${LAYER_MANIFEST_PNG:-$BASE_DIR/layer_manifest.png}"
 
 export CONDIV_WORKER_LAUNCH="$WORKER_LAUNCH"
 export CONDIV_FF_DIR="$INIT_FORCEFIELD_DIR"
-export CONDIV_SYMLAY_LAYER_MANIFEST="$LAYER_MANIFEST_JSON"
 
 case "$PROFILE" in
   dimer3)
@@ -84,6 +81,11 @@ if [ -d "$BASE_DIR" ] && has_existing_training_state "$BASE_DIR"; then
 fi
 
 mkdir -p "$BASE_DIR"
+BASE_DIR="$(cd "$BASE_DIR" && pwd)"
+LAYER_MANIFEST_JSON="${LAYER_MANIFEST_JSON:-$BASE_DIR/layer_manifest.json}"
+LAYER_MANIFEST_CSV="${LAYER_MANIFEST_CSV:-$BASE_DIR/layer_manifest.csv}"
+LAYER_MANIFEST_PNG="${LAYER_MANIFEST_PNG:-$BASE_DIR/layer_manifest.png}"
+export CONDIV_SYMLAY_LAYER_MANIFEST="$LAYER_MANIFEST_JSON"
 
 echo "Building ConDiv_symlay layer manifest"
 echo "  layer template: $LAYER_TEMPLATE"
@@ -111,3 +113,6 @@ python3 "$SCRIPT_DIR/validate_symlay_constraints.py" \
   --checkpoint "$BASE_DIR/initial_checkpoint.pkl" \
   --layer-manifest "$LAYER_MANIFEST_JSON" \
   --report "$BASE_DIR/constraint_init.json"
+
+printf '%s\n' "$BASE_DIR" > "$RUN_DIR_RECORD"
+echo "Recorded current run dir: $BASE_DIR"

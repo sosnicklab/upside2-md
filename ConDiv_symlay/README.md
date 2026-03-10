@@ -68,6 +68,8 @@ This does four things:
 
 By default this creates the run under `ConDiv_symlay/test_dimer3`. If that directory already contains an initialized training run, `./run_init.sh` now refuses to overwrite it and tells you to resume with `sbatch run_remote.sh` instead.
 
+After a successful init, `run_init.sh` records the resolved run directory in `ConDiv_symlay/.condiv_current_run_dir`. The zero-argument `sbatch run_remote.sh` path uses that recorded run directory by default, so stale inherited `BASE_DIR` values do not silently redirect training to a different checkout. If that record is missing, `run_remote.sh` falls back to discovering initialized run directories under the current `ConDiv_symlay` checkout before it ever trusts an inherited `BASE_DIR`.
+
 Useful overrides:
 
 ```bash

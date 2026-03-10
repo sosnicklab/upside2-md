@@ -1,4 +1,8 @@
 Findings
+- The reported Slurm path bug was not in `SCRIPT_DIR` resolution. In the user log, `python venv` already came from the current checkout, which means `run_remote.sh` had resolved the correct `ConDiv_symlay` directory. The wrong run path came from a stale inherited `BASE_DIR`.
+- `run_remote.sh` previously honored inherited `BASE_DIR` directly, so a stale shell export could silently redirect `sbatch run_remote.sh` to a different initialized run directory even when the wrapper itself was running from the right checkout.
+- The wrapper now uses a workflow-local run-directory record, `ConDiv_symlay/.condiv_current_run_dir`, written by `run_init.sh` after successful initialization. Zero-argument `run_remote.sh` now prefers that recorded run directory over inherited `BASE_DIR`.
+- If the run-directory record is missing, `run_remote.sh` now searches for initialized run directories under the current `ConDiv_symlay` checkout and prefers the newest one before falling back to inherited `BASE_DIR`.
 - `icb_energy` and `ihb_energy` are not a non-membrane baseline in the current runtime. They are the `coeff_inner` fallback branch mixed into `cb_surf_membrane_potential` and `hb_surf_membrane_potential` when surface coverage is low.
 - The checked-in `parameters/ff_2.1/membrane.h5` inner curves carry substantial membrane-specific signal rather than a zero/no-membrane baseline:
   - `icb_energy` RMS vs zero: `0.994`

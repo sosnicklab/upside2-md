@@ -1,6 +1,7 @@
 # Lessons
 
 - 2026-03-08: When a user wants a workflow launched with bare `./run_init.sh` then `sbatch run_remote.sh`, do not rely on extra exported vars or positional args for the normal case. Keep one internal default run directory/profile, make both scripts share the same bootstrap assumptions, and refuse to reinitialize an existing run instead of silently overwriting it.
+- 2026-03-10: For zero-argument Slurm restarts, do not trust inherited `BASE_DIR` from the shell environment. Record the active run directory during `run_init.sh` and have `run_remote.sh` reuse that recorded path by default so stale exports cannot silently redirect training to another checkout or run tree.
 - 2026-02-23: For stage-transition workflows, do not introduce coordinate transforms (recentering, per-atom wrapping, carrier remapping) unless explicitly requested. Default to exact previous-stage last-frame handoff.
 - 2026-02-23: When user states intended stage semantics ("only update tables/settings"), preserve that exactly and avoid convenience logic that changes physical state.
 - 2026-02-23: If the user asks for stage parity (e.g., `6.6 -> 7.0`), validate by checking exact coordinate equality first, then evaluate energy differences as a separate effect of stage parameter changes.

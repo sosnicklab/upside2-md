@@ -77,7 +77,7 @@ export CONDIV_PROJECT_ROOT="$PROJECT_ROOT"
 export PYTHONPATH="$SCRIPT_DIR:$PROJECT_ROOT/py:$PROJECT_ROOT/obj:${PYTHONPATH:-}"
 
 PROFILE="${PROFILE:-dimer3}"
-BASE_DIR="${BASE_DIR:-$SCRIPT_DIR/test_${PROFILE}}"
+RUN_DIR_RECORD="$SCRIPT_DIR/.condiv_current_run_dir"
 if [ "$#" -gt 1 ]; then
   echo "ERROR: run_remote.sh accepts at most one optional RUN_STEPS argument."
   exit 1
@@ -87,6 +87,38 @@ if [ "$#" -eq 1 ]; then
   RUN_STEPS="$1"
 fi
 WORKER_LAUNCH="${WORKER_LAUNCH:-auto}"
+
+discover_current_checkout_run_dir() {
+  local candidates=()
+  local ckpt
+  for ckpt in "$SCRIPT_DIR"/*/initial_checkpoint.pkl; do
+    [ -f "$ckpt" ] || continue
+    candidates+=("$(dirname "$ckpt")")
+  done
+  if [ "${#candidates[@]}" -eq 0 ]; then
+    return 1
+  fi
+  if [ "${#candidates[@]}" -eq 1 ]; then
+    printf '%s' "${candidates[0]}"
+    return 0
+  fi
+  ls -td "${candidates[@]}" | head -n 1
+}
+
+if [ -f "$RUN_DIR_RECORD" ]; then
+  RECORDED_BASE_DIR="$(tr -d '\r' < "$RUN_DIR_RECORD")"
+else
+  RECORDED_BASE_DIR=""
+fi
+if [ -n "$RECORDED_BASE_DIR" ]; then
+  BASE_DIR="$RECORDED_BASE_DIR"
+elif DISCOVERED_BASE_DIR="$(discover_current_checkout_run_dir)"; then
+  BASE_DIR="$DISCOVERED_BASE_DIR"
+else
+  BASE_DIR="${BASE_DIR:-$SCRIPT_DIR/test_${PROFILE}}"
+fi
+BASE_DIR="$(cd "$BASE_DIR" 2>/dev/null && pwd || printf '%s' "$BASE_DIR")"
+
 LAYER_MANIFEST_JSON="${LAYER_MANIFEST_JSON:-$BASE_DIR/layer_manifest.json}"
 PROGRESS_LOG_JSONL="${PROGRESS_LOG_JSONL:-$BASE_DIR/training_progress.jsonl}"
 STATUS_JSON="${STATUS_JSON:-$BASE_DIR/training_status.json}"
@@ -163,6 +195,11 @@ fi
 
 echo "Running Slurm membrane ConDiv restart"
 echo "  base dir: $BASE_DIR"
+if [ -n "$RECORDED_BASE_DIR" ]; then
+  echo "  run dir record: $RUN_DIR_RECORD"
+elif [ -n "${DISCOVERED_BASE_DIR:-}" ]; then
+  echo "  discovered current-checkout run dir: $DISCOVERED_BASE_DIR"
+fi
 echo "  checkpoint: $checkpoint"
 echo "  steps: $RUN_STEPS"
 echo "  layer manifest: $LAYER_MANIFEST_JSON"

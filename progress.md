@@ -1,4 +1,17 @@
 2026-03-09
+- Traced the reported wrong-directory Slurm run to stale inherited `BASE_DIR`, not to `SCRIPT_DIR` resolution. The job log showed the wrapper had already resolved the correct checkout for `python venv`, but the `base dir` / `checkpoint` still came from an older exported run path.
+- Patched `ConDiv_symlay/run_init.sh` to normalize the resolved `BASE_DIR` and record it in `ConDiv_symlay/.condiv_current_run_dir` after a successful init.
+- Patched `ConDiv_symlay/run_remote.sh` so the recorded current run directory wins for the normal zero-argument `sbatch run_remote.sh` path instead of any stale inherited `BASE_DIR`.
+- Added a fallback in `ConDiv_symlay/run_remote.sh` that discovers initialized run directories under the current checkout when the run-dir record is missing, so pre-patch runs are still found before any inherited `BASE_DIR` is used.
+- Updated `ConDiv_symlay/README.md` to document the run-directory record behavior.
+- Verification:
+  - `bash -n ConDiv_symlay/run_init.sh ConDiv_symlay/run_remote.sh` -> pass
+  - local wrapper-resolution probe with `BASE_DIR=/definitely/wrong/path` and recorded run dir `/tmp/condiv_symlay_inner_baseline_smoke_fast` -> pass
+    - printed `base dir: /tmp/condiv_symlay_inner_baseline_smoke_fast`
+    - printed `checkpoint: /tmp/condiv_symlay_inner_baseline_smoke_fast/initial_checkpoint.pkl`
+  - second wrapper-resolution probe with no run-dir record and a temporary initialized run stub under `ConDiv_symlay/tmp_detect_run` -> pass
+    - printed `base dir: /Users/yinhan/Documents/upside2-md/ConDiv_symlay/tmp_detect_run`
+    - printed `discovered current-checkout run dir: /Users/yinhan/Documents/upside2-md/ConDiv_symlay/tmp_detect_run`
 - Hard-pinned the `ConDiv_symlay` inner membrane branches to the non-membrane baseline:
   - added `pin_inner_to_nonmembrane_baseline()` in `ConDiv_symlay/ConDiv_mem.py`
   - zeroed `icb/ihb` on init-load, restart-state application, optimizer-gradient application, post-step state updates, and emitted membrane writeout
