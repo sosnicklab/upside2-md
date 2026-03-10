@@ -1,19 +1,72 @@
 #!/bin/bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+resolve_paths() {
+  local candidate
 
-source "$PROJECT_ROOT/.venv/bin/activate"
+  if [ -n "${CONDIV_PROJECT_ROOT:-}" ] && [ -f "${CONDIV_PROJECT_ROOT}/source.sh" ]; then
+    PROJECT_ROOT="$(cd "${CONDIV_PROJECT_ROOT}" && pwd)"
+    SCRIPT_DIR="$PROJECT_ROOT/ConDiv"
+    return 0
+  fi
+
+  candidate="$(cd "$(dirname "$0")" && pwd)"
+  if [ -f "$candidate/ConDiv_mem.py" ] && [ -f "$candidate/../source.sh" ]; then
+    SCRIPT_DIR="$candidate"
+    PROJECT_ROOT="$(cd "$candidate/.." && pwd)"
+    return 0
+  fi
+
+  echo "ERROR: could not resolve the ConDiv workflow directory." >&2
+  echo "Run this script from ConDiv or set CONDIV_PROJECT_ROOT." >&2
+  exit 1
+}
+
+discover_current_checkout_run_dir() {
+  local candidates=()
+  local ckpt
+  for ckpt in "$SCRIPT_DIR"/*/initial_checkpoint.pkl; do
+    [ -f "$ckpt" ] || continue
+    candidates+=("$(dirname "$ckpt")")
+  done
+  if [ "${#candidates[@]}" -eq 0 ]; then
+    return 1
+  fi
+  if [ "${#candidates[@]}" -eq 1 ]; then
+    printf '%s' "${candidates[0]}"
+    return 0
+  fi
+  ls -td "${candidates[@]}" | head -n 1
+}
+
+resolve_paths
+cd "$SCRIPT_DIR"
+
+VENV_ACTIVATE="$SCRIPT_DIR/venv/bin/activate"
+if [ ! -f "$VENV_ACTIVATE" ]; then
+  VENV_ACTIVATE="$PROJECT_ROOT/.venv/bin/activate"
+fi
+
+source "$VENV_ACTIVATE"
+export PYTHONPATH="${PYTHONPATH:-}"
 source "$PROJECT_ROOT/source.sh"
 
 export CONDIV_PROJECT_ROOT="$PROJECT_ROOT"
 export PYTHONPATH="$SCRIPT_DIR:$PROJECT_ROOT/py:$PROJECT_ROOT/obj:${PYTHONPATH:-}"
 
 PROFILE="${PROFILE:-dimer3}"
-BASE_DIR="${BASE_DIR:-$SCRIPT_DIR/test_${PROFILE}}"
+RUN_DIR_RECORD="$SCRIPT_DIR/.condiv_current_run_dir"
 RUN_STEPS="${1:-${RUN_STEPS:-20}}"
 WORKER_LAUNCH="${WORKER_LAUNCH:-auto}"
+
+if [ -f "$RUN_DIR_RECORD" ]; then
+  BASE_DIR="$(tr -d '\r' < "$RUN_DIR_RECORD")"
+elif DISCOVERED_BASE_DIR="$(discover_current_checkout_run_dir)"; then
+  BASE_DIR="$DISCOVERED_BASE_DIR"
+else
+  BASE_DIR="$SCRIPT_DIR/test_${PROFILE}"
+fi
+BASE_DIR="$(cd "$BASE_DIR" 2>/dev/null && pwd || printf '%s' "$BASE_DIR")"
 
 export CONDIV_WORKER_LAUNCH="$WORKER_LAUNCH"
 
@@ -40,6 +93,11 @@ fi
 
 echo "Running local membrane ConDiv restart"
 echo "  base dir: $BASE_DIR"
+if [ -f "$RUN_DIR_RECORD" ]; then
+  echo "  run dir record: $RUN_DIR_RECORD"
+elif [ -n "${DISCOVERED_BASE_DIR:-}" ]; then
+  echo "  discovered current-checkout run dir: $DISCOVERED_BASE_DIR"
+fi
 echo "  checkpoint: $checkpoint"
 echo "  steps: $RUN_STEPS"
 

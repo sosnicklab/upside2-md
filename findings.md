@@ -1,4 +1,9 @@
 Findings
+- The user corrected a scope mistake: the requested workflow directory for the zero-argument run-dir fix is `ConDiv_symlay`, not `ConDiv`. Any wrapper-dir conclusions for this task must be stated against `ConDiv_symlay`.
+- `ConDiv/run_init.sh` was still trusting a generic inherited `BASE_DIR`, so stale shell environment from another workflow could redirect a bare `./run_init.sh` to the wrong run directory even when the active checkout was correct.
+- The requested `ConDiv` behavior is simpler than `ConDiv_symlay`: keep the training folder under the same `ConDiv/` directory as `run_init.sh` and `run_local.sh`, and drop any hard-coded/inherited run directory outside that tree.
+- `ConDiv` wrappers now ignore inherited `BASE_DIR`, default to `ConDiv/test_${PROFILE}`, record the resolved run in `ConDiv/.condiv_current_run_dir`, and use that recorded path for local/Slurm restarts.
+- `ConDiv/run_remote.sh` also needed the same Slurm spool-copy fix as `ConDiv_symlay`: it now resolves the real checkout from `SLURM_SUBMIT_DIR` / `CONDIV_PROJECT_ROOT` instead of trusting `dirname "$0"` inside the Slurm spool.
 - The reported Slurm path bug was not in `SCRIPT_DIR` resolution. In the user log, `python venv` already came from the current checkout, which means `run_remote.sh` had resolved the correct `ConDiv_symlay` directory. The wrong run path came from a stale inherited `BASE_DIR`.
 - `run_remote.sh` previously honored inherited `BASE_DIR` directly, so a stale shell export could silently redirect `sbatch run_remote.sh` to a different initialized run directory even when the wrapper itself was running from the right checkout.
 - The wrapper now uses a workflow-local run-directory record, `ConDiv_symlay/.condiv_current_run_dir`, written by `run_init.sh` after successful initialization. Zero-argument `run_remote.sh` now prefers that recorded run directory over inherited `BASE_DIR`.

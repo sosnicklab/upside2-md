@@ -59,11 +59,16 @@ cd /Users/yinhan/Documents/upside2-md/ConDiv
 ./run_init.sh
 ```
 
+The training run is created under the same `ConDiv/` folder as the wrapper scripts, with the default path:
+
+`ConDiv/test_dimer3`
+
+The wrappers no longer trust a generic inherited `BASE_DIR`, so stale environment from other workflows does not redirect `./run_init.sh` or `sbatch run_remote.sh` to another checkout.
+
 Useful overrides:
 
 ```bash
 export INIT_FORCEFIELD_DIR=/Users/yinhan/Documents/upside2-md/parameters/ff_2.1
-export BASE_DIR=/Users/yinhan/Documents/upside2-md/ConDiv/test_dimer3
 export WORKER_LAUNCH=auto   # auto|local|srun
 ```
 
@@ -80,6 +85,8 @@ export WORKER_LAUNCH=auto   # auto|local|srun
 ```bash
 sbatch run_remote.sh 20
 ```
+
+After a successful init, `run_init.sh` records the active run directory in `ConDiv/.condiv_current_run_dir`, and `run_local.sh` / `run_remote.sh` reuse that recorded path by default.
 
 ## Multi-round Training + Gradient Validation
 

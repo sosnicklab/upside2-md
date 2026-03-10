@@ -1,4 +1,26 @@
 2026-03-09
+- User corrected the target workflow directory: this run-dir/bootstrap task is for `ConDiv_symlay`, not `ConDiv`.
+- Re-checked the live `ConDiv_symlay` wrappers and confirmed the active fix is scoped there:
+  - `run_init.sh` now forces the run under `ConDiv_symlay/test_${PROFILE}`
+  - `run_local.sh` and `run_remote.sh` now prefer `ConDiv_symlay/.condiv_current_run_dir` and otherwise discover initialized runs under the current `ConDiv_symlay` checkout
+  - stale inherited generic `BASE_DIR` is no longer used for the normal zero-argument path
+- Verification re-check:
+  - inspected `ConDiv_symlay/run_init.sh`, `run_local.sh`, `run_remote.sh`, and `run_validate_rounds.sh`
+  - confirmed `task_plan.md` is already scoped to `ConDiv_symlay`
+- Note:
+  - the earlier `ConDiv/` wrapper patch from this same issue was the wrong scope and should be ignored for the user-facing answer to this correction
+- Investigated the reported `ConDiv` init using the wrong run directory. The cause was the old `ConDiv` wrappers still trusting a generic inherited `BASE_DIR`, so stale environment from another workflow could redirect bare `./run_init.sh`.
+- Patched `ConDiv/run_init.sh`, `ConDiv/run_local.sh`, `ConDiv/run_remote.sh`, and `ConDiv/run_validate_rounds.sh`:
+  - default training run now stays under the current `ConDiv/` directory
+  - generic inherited `BASE_DIR` is no longer used
+  - `run_init.sh` records the resolved run dir in `ConDiv/.condiv_current_run_dir`
+  - restart scripts reuse that recorded path
+  - `run_remote.sh` now resolves the real checkout from `SLURM_SUBMIT_DIR` / `CONDIV_PROJECT_ROOT`
+- Updated `ConDiv/README.md` to document that the training folder now lives under `ConDiv/` and that stale `BASE_DIR` is ignored.
+- Verification:
+  - `bash -n ConDiv/run_init.sh ConDiv/run_local.sh ConDiv/run_remote.sh ConDiv/run_validate_rounds.sh` -> pass
+  - `BASE_DIR=/definitely/wrong/path bash ConDiv/run_init.sh` -> printed `base dir: /Users/yinhan/Documents/upside2-md/ConDiv/test_dimer3`
+  - recorded-run probe for `ConDiv/run_local.sh` -> ignored stale `BASE_DIR` and used the recorded current-checkout run dir
 - Traced the reported wrong-directory Slurm run to stale inherited `BASE_DIR`, not to `SCRIPT_DIR` resolution. The job log showed the wrapper had already resolved the correct checkout for `python venv`, but the `base dir` / `checkpoint` still came from an older exported run path.
 - Patched `ConDiv_symlay/run_init.sh` to normalize the resolved `BASE_DIR` and record it in `ConDiv_symlay/.condiv_current_run_dir` after a successful init.
 - Patched `ConDiv_symlay/run_remote.sh` so the recorded current run directory wins for the normal zero-argument `sbatch run_remote.sh` path instead of any stale inherited `BASE_DIR`.

@@ -115,7 +115,7 @@ if [ -n "$RECORDED_BASE_DIR" ]; then
 elif DISCOVERED_BASE_DIR="$(discover_current_checkout_run_dir)"; then
   BASE_DIR="$DISCOVERED_BASE_DIR"
 else
-  BASE_DIR="${BASE_DIR:-$SCRIPT_DIR/test_${PROFILE}}"
+  BASE_DIR="$SCRIPT_DIR/test_${PROFILE}"
 fi
 BASE_DIR="$(cd "$BASE_DIR" 2>/dev/null && pwd || printf '%s' "$BASE_DIR")"
 
