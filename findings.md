@@ -1,4 +1,7 @@
 Findings
+- The observed “only one protein running” behavior is consistent with `srun --exclusive` on each per-protein worker step. In the current one-node allocation, that flag can cause a worker step to reserve the whole node allocation for itself, serializing the protein workers.
+- The reference `/Users/yinhan/Documents/Train/ConDiv.py` worker launch does not use `--exclusive`; it uses only `srun --nodes=1 --ntasks=1 --cpus-per-task=n_threads ...`.
+- `ConDiv_symlay` now matches that part of the reference more closely: the worker launch keeps `--cpus-per-task=8` and `--cpu-bind=cores` but drops `--exclusive`.
 - The user wants `ConDiv_symlay` to use all `48` CPUs with a hard-coded layout, but explicitly wants to keep `#SBATCH --ntasks-per-node=48`.
 - The corrected fixed layout for the current Train-style launch model is:
   - `#SBATCH --ntasks-per-node=48`

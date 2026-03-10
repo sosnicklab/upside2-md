@@ -1,5 +1,6 @@
 # Lessons
 
+- 2026-03-10: When parallelizing many `srun` job steps inside one Slurm allocation, do not add `--exclusive` unless you really intend to serialize or whole-node reserve those steps. Match the reference step flags first; here `--exclusive` was the reason only one protein worker ran at a time.
 - 2026-03-10: When a user wants a fixed Slurm CPU layout but also wants to preserve a specific scheduler header shape (here `--ntasks-per-node=48`), do not rewrite the header blindly. Keep the requested allocation surface and hard-code the worker geometry behind it, then add fail-fast checks and CPU binding to enforce the intended mapping.
 - 2026-03-10: When a user points to a reference workflow for parallel training behavior, inspect that workflow’s worker/resource model directly before tuning Slurm knobs. Match the actual unit of parallelism first (here: one `srun` worker per protein, with local replica bundles), then derive defaults like threads, replicas, and minibatch fanout from that model.
 - 2026-03-10: When a user corrects the target workflow directory, stop and restate scope before editing. For sibling workflows like `ConDiv` and `ConDiv_symlay`, verify the active script paths first and avoid landing fixes in the wrong folder.

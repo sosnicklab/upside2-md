@@ -936,7 +936,6 @@ def _run_worker_subprocess(
     if _choose_worker_launch(state["worker_launch"]) == "srun":
         srun_cmd = [
             "srun",
-            "--exclusive",
             "--nodes=1",
             "--ntasks=1",
             f"--cpus-per-task={int(state['omp_threads'])}",

@@ -26,13 +26,14 @@ Execution Phases
 - [x] Verify syntax and resolved fixed settings.
 
 Known Errors / Blockers
-- None.
+- Resolved: worker-step serialization under Slurm due to `srun --exclusive` on each protein worker.
 
 Review
 - Kept the `ConDiv_symlay` Slurm worker model aligned with the reference `/Users/yinhan/Documents/Train` workflow:
   - one `srun --ntasks=1 --cpus-per-task=<omp_threads>` worker step per protein
   - each worker launches one local `upside` replica bundle
   - FF update still happens after the full minibatch
+- Corrected a parallelism regression in [ConDiv_mem.py](/Users/yinhan/Documents/upside2-md/ConDiv_symlay/ConDiv_mem.py): removed `srun --exclusive` from the per-protein worker launch so multiple worker steps can coexist inside the same `48`-slot node allocation again. The reference `/Users/yinhan/Documents/Train/ConDiv.py` does not use `--exclusive` there.
 - Changed [run_remote.sh](/Users/yinhan/Documents/upside2-md/ConDiv_symlay/run_remote.sh) so the Slurm CPU layout is now hard-coded to:
   - `#SBATCH --ntasks-per-node=48`
   - `#SBATCH --cpus-per-task=1`

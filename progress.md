@@ -1,4 +1,9 @@
 2026-03-09
+- Investigated the user report that the live Slurm run showed only one protein’s `run.0..7.h5` bundle active in `epoch_00_minibatch_00`.
+- Root cause: I had added `srun --exclusive` to the per-protein worker launch in `ConDiv_symlay/ConDiv_mem.py`, which is not present in the reference `Train` workflow and can serialize worker steps inside the same node allocation.
+- Patched `ConDiv_symlay/ConDiv_mem.py` to remove `--exclusive` while keeping `--cpus-per-task=8` and `--cpu-bind=cores`.
+- Verification:
+  - direct worker command capture now returns `srun --nodes=1 --ntasks=1 --cpus-per-task=8 --cpu-bind=cores ...`
 - User clarified they want to keep `#SBATCH --ntasks-per-node=48` and hard-code the rest of the CPU layout for faster training.
 - Corrected `ConDiv_symlay/run_remote.sh`:
   - restored `#SBATCH --ntasks-per-node=48`
