@@ -102,18 +102,19 @@ sbatch run_remote.sh
 
 With no argument, `run_remote.sh` defaults to `RUN_STEPS=20`. You can still pass a single positional step count if you want to override that default.
 
-Inside Slurm, `WORKER_LAUNCH=auto` now resolves to `srun`. That `srun` launches one Python worker per Slurm task slot. Each worker then launches a single local `upside` process against its full replica bundle; `upside` itself is not MPI-launched. The wrapper also defaults:
-- `CONDIV_N_REPLICA` to `8`
-- `CONDIV_OMP_THREADS` to `${SLURM_CPUS_PER_TASK:-1}`
-- `CONDIV_MAX_PARALLEL_WORKERS` to `allocated_task_slots / CONDIV_N_REPLICA`
+Inside Slurm, `WORKER_LAUNCH=auto` now resolves to `srun`. The launch model matches the reference `/Users/yinhan/Documents/Train` workflow:
+- one `srun --ntasks=1 --cpus-per-task=<CONDIV_OMP_THREADS>` step per protein worker
+- each worker launches one local `upside` replica bundle
+- the optimizer updates once after the whole minibatch finishes
 
-With the default `#SBATCH --ntasks-per-node=48` and `CONDIV_N_REPLICA=8`, the current wrapper still caps itself at up to `6` concurrent Upside workers on the node.
+The wrapper defaults:
+- `CONDIV_N_REPLICA=8`
+- `CONDIV_OMP_THREADS=CONDIV_N_REPLICA`
+- `CONDIV_MAX_PARALLEL_WORKERS=0`
 
-If the wrapper detects `CONDIV_N_REPLICA` equal to all allocated task slots and you did not set `CONDIV_MAX_PARALLEL_WORKERS`, it aborts with a stale-override error instead of launching one oversized full-node worker bundle by mistake.
+`CONDIV_MAX_PARALLEL_WORKERS=0` means the Python layer does not cap the minibatch fanout. It launches the whole minibatch and lets Slurm determine how many protein workers can run concurrently inside the allocation.
 
-Actual concurrent worker count is still limited by the minimum of:
-- current minibatch size
-- `CONDIV_MAX_PARALLEL_WORKERS`
+With the default `#SBATCH --ntasks-per-node=48`, `CONDIV_N_REPLICA=8`, and `CONDIV_OMP_THREADS=8`, the allocation can sustain about `6` protein workers at once. If you want more proteins running concurrently, reduce `CONDIV_OMP_THREADS` / `CONDIV_N_REPLICA` or request more CPUs.
 
 After each Slurm job, the wrapper:
 - appends one record to `<base_dir>/training_progress.jsonl`

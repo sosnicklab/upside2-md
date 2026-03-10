@@ -147,21 +147,27 @@ if [ -z "$SLURM_TASK_SLOTS" ]; then
   SLURM_TASK_SLOTS="$(parse_slurm_task_slots "${SLURM_NTASKS_PER_NODE:-}")"
 fi
 
-export CONDIV_N_REPLICA="${CONDIV_N_REPLICA:-12}"
-export CONDIV_OMP_THREADS="${CONDIV_OMP_THREADS:-${SLURM_CPUS_PER_TASK:-1}}"
-if [ -n "$SLURM_TASK_SLOTS" ] && [ "${CONDIV_N_REPLICA}" -eq "$SLURM_TASK_SLOTS" ] && [ -z "${CONDIV_MAX_PARALLEL_WORKERS:-}" ]; then
-  echo "ERROR: CONDIV_N_REPLICA=$CONDIV_N_REPLICA matches all allocated Slurm task slots." >&2
-  echo "This usually indicates a stale override from the older launch model." >&2
-  echo "Unset CONDIV_N_REPLICA/CONDIV_N_THREADS and resubmit, or set CONDIV_MAX_PARALLEL_WORKERS explicitly if you really want one full-node replica bundle." >&2
+SLURM_TOTAL_CPUS="${SLURM_CPUS_ON_NODE:-}"
+if [ -z "$SLURM_TOTAL_CPUS" ] && [ -n "${SLURM_JOB_CPUS_PER_NODE:-}" ]; then
+  SLURM_TOTAL_CPUS="$(parse_slurm_task_slots "${SLURM_JOB_CPUS_PER_NODE:-}")"
+fi
+if [ -z "$SLURM_TOTAL_CPUS" ] && [ -n "$SLURM_TASK_SLOTS" ]; then
+  SLURM_TOTAL_CPUS="$((SLURM_TASK_SLOTS * ${SLURM_CPUS_PER_TASK:-1}))"
+fi
+
+export CONDIV_N_REPLICA="${CONDIV_N_REPLICA:-8}"
+export CONDIV_OMP_THREADS="${CONDIV_OMP_THREADS:-${CONDIV_N_REPLICA}}"
+export CONDIV_MAX_PARALLEL_WORKERS="${CONDIV_MAX_PARALLEL_WORKERS:-0}"
+
+if [ -n "$SLURM_TOTAL_CPUS" ] && [ "$SLURM_TOTAL_CPUS" -lt "$CONDIV_OMP_THREADS" ]; then
+  echo "ERROR: allocated CPUs ($SLURM_TOTAL_CPUS) are smaller than CONDIV_OMP_THREADS ($CONDIV_OMP_THREADS)." >&2
+  echo "Increase the Slurm allocation or reduce CONDIV_OMP_THREADS." >&2
   exit 1
 fi
-if [ -n "$SLURM_TASK_SLOTS" ] && [ -z "${CONDIV_MAX_PARALLEL_WORKERS:-}" ]; then
-  if [ "$SLURM_TASK_SLOTS" -lt "$CONDIV_N_REPLICA" ]; then
-    echo "ERROR: allocated Slurm task slots ($SLURM_TASK_SLOTS) are smaller than CONDIV_N_REPLICA ($CONDIV_N_REPLICA)." >&2
-    echo "Increase --ntasks-per-node or reduce CONDIV_N_REPLICA." >&2
-    exit 1
-  fi
-  export CONDIV_MAX_PARALLEL_WORKERS="$((SLURM_TASK_SLOTS / CONDIV_N_REPLICA))"
+
+ESTIMATED_PARALLEL_WORKERS="unknown"
+if [ -n "$SLURM_TOTAL_CPUS" ]; then
+  ESTIMATED_PARALLEL_WORKERS="$((SLURM_TOTAL_CPUS / CONDIV_OMP_THREADS))"
 fi
 
 export CONDIV_WORKER_LAUNCH="$WORKER_LAUNCH"
@@ -209,8 +215,14 @@ echo "  upside launch resolved: $RESOLVED_WORKER_LAUNCH"
 echo "  python venv: $VENV_ACTIVATE"
 echo "  replicas/worker: ${CONDIV_N_REPLICA}"
 echo "  omp threads/upside: ${CONDIV_OMP_THREADS}"
-echo "  max parallel workers: ${CONDIV_MAX_PARALLEL_WORKERS:-auto}"
+if [ "${CONDIV_MAX_PARALLEL_WORKERS}" -eq 0 ]; then
+  echo "  max parallel workers: 0 (uncapped at Python layer; Slurm controls concurrency)"
+else
+  echo "  max parallel workers: ${CONDIV_MAX_PARALLEL_WORKERS}"
+fi
 echo "  allocated task slots: ${SLURM_TASK_SLOTS:-unknown}"
+echo "  allocated cpus: ${SLURM_TOTAL_CPUS:-unknown}"
+echo "  estimated concurrent workers from allocation: ${ESTIMATED_PARALLEL_WORKERS}"
 echo "  convergence grad threshold: ${CONDIV_CONVERGENCE_GRAD_NORM}"
 echo "  convergence update threshold: ${CONDIV_CONVERGENCE_UPDATE_NORM}"
 echo "  convergence patience: ${CONDIV_CONVERGENCE_PATIENCE}"

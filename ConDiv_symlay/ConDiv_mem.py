@@ -140,9 +140,9 @@ def build_config() -> Config:
     n_replica_default = "8" if slurm_active else str(legacy_threads)
     n_replica = int(os.environ.get("CONDIV_N_REPLICA", n_replica_default))
     if slurm_active:
-        omp_threads_default = str(int(os.environ.get("SLURM_CPUS_PER_TASK", "1")))
+        omp_threads_default = str(n_replica)
     else:
-        omp_threads_default = str(legacy_threads if "CONDIV_N_REPLICA" not in os.environ else 1)
+        omp_threads_default = str(legacy_threads if "CONDIV_N_REPLICA" not in os.environ else n_replica)
 
     return Config(
         project_root=PROJECT_ROOT,
@@ -928,11 +928,25 @@ def _run_worker_subprocess(
     direc: str,
     worker_argv: List[str],
 ) -> Tuple[sp.Popen, Optional[object]]:
-    # Under Slurm, dispatch one Python worker per task slot through `srun`.
-    # The worker then launches a single local `upside` process against its full
-    # replica bundle; `upside` itself is not an MPI program.
-    outfile = open(f"{direc}/{nm}.output_worker", "w", encoding="utf-8")
+    # Match the reference ConDiv workflow: one Slurm worker step per protein,
+    # each running a single local `upside` replica bundle. `upside` itself is
+    # not MPI-launched here.
+    outfile_path = f"{direc}/{nm}.output_worker"
     cmd = [state["worker_python"], *worker_argv]
+    if _choose_worker_launch(state["worker_launch"]) == "srun":
+        srun_cmd = [
+            "srun",
+            "--exclusive",
+            "--nodes=1",
+            "--ntasks=1",
+            f"--cpus-per-task={int(state['omp_threads'])}",
+            "--slurmd-debug=0",
+            f"--output={outfile_path}",
+            *cmd,
+        ]
+        return sp.Popen(srun_cmd, close_fds=True), None
+
+    outfile = open(outfile_path, "w", encoding="utf-8")
     return sp.Popen(cmd, close_fds=True, stdout=outfile, stderr=sp.STDOUT), outfile
 
 
