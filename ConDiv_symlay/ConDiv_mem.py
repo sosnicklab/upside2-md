@@ -940,6 +940,7 @@ def _run_worker_subprocess(
             "--nodes=1",
             "--ntasks=1",
             f"--cpus-per-task={int(state['omp_threads'])}",
+            "--cpu-bind=cores",
             "--slurmd-debug=0",
             f"--output={outfile_path}",
             *cmd,

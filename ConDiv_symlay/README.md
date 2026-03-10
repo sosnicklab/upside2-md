@@ -112,14 +112,16 @@ The wrapper defaults:
 - `CONDIV_OMP_THREADS=8`
 - `CONDIV_MAX_PARALLEL_WORKERS=6`
 
-The Slurm wrapper is now hard-coded to a fixed 48-CPU layout:
-- `#SBATCH --ntasks-per-node=6`
-- `#SBATCH --cpus-per-task=8`
+The Slurm wrapper is now hard-coded to a fixed 48-slot / 48-CPU layout:
+- `#SBATCH --ntasks-per-node=48`
+- `#SBATCH --cpus-per-task=1`
+- interpreted as `48` CPU slots total
 - `6` protein workers in parallel
 - `8` CPUs per worker
 - `8` replicas per worker
+- worker steps use `srun --cpu-bind=cores`
 
-It now fails fast if the live Slurm allocation does not match that `6 x 8 = 48` layout. This is intentional; the wrapper no longer tries to infer or adapt the CPU layout from the allocation.
+It now fails fast if the live Slurm allocation does not match that `48 slots -> 6 x 8 = 48 CPUs` layout. This is intentional; the wrapper no longer tries to infer or adapt the CPU layout from the allocation.
 
 After each Slurm job, the wrapper:
 - appends one record to `<base_dir>/training_progress.jsonl`

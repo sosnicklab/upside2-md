@@ -1,13 +1,17 @@
 Findings
-- The user wants `ConDiv_symlay` to use all `48` CPUs with a hard-coded layout, not an inferred layout from Slurm env vars.
-- The clean fixed layout for the current Train-style launch model is `6` protein workers in parallel with `8` CPUs per worker:
-  - `#SBATCH --ntasks-per-node=6`
-  - `#SBATCH --cpus-per-task=8`
+- The user wants `ConDiv_symlay` to use all `48` CPUs with a hard-coded layout, but explicitly wants to keep `#SBATCH --ntasks-per-node=48`.
+- The corrected fixed layout for the current Train-style launch model is:
+  - `#SBATCH --ntasks-per-node=48`
+  - `#SBATCH --cpus-per-task=1`
+  - interpret that as `48` CPU slots total
+  - `6` protein workers in parallel
+  - `8` CPUs per worker
   - `CONDIV_N_REPLICA=8`
   - `CONDIV_OMP_THREADS=8`
   - `CONDIV_MAX_PARALLEL_WORKERS=6`
 - Keeping `CONDIV_MAX_PARALLEL_WORKERS=0` leaves concurrency to Slurm, which can still use all CPUs, but it is not a hard-coded CPU policy. The user explicitly asked for the hard-coded policy.
-- The wrapper now fails if the live allocation is not exactly the expected `48` CPUs / `6` task slots, so the workflow cannot silently run with a different CPU shape.
+- The wrapper now fails if the live allocation is not exactly the expected `48` CPUs / `48` task slots, so the workflow cannot silently run with a different CPU shape.
+- Added `OMP_PROC_BIND=close`, `OMP_PLACES=cores`, and `srun --cpu-bind=cores` so the fixed `8`-CPU worker layout is actually pinned to cores instead of left to default placement.
 - The reference workflow at `/Users/yinhan/Documents/Train/ConDiv.py` does not use the current replica-slot fanout model. Its `run_minibatch(...)` launches one `srun --ntasks=1 --cpus-per-task=n_threads` worker per protein and lets the whole minibatch be the protein-level launch surface.
 - In the reference `Train` workflow, `n_threads` serves both as:
   - the number of replica configs per protein worker

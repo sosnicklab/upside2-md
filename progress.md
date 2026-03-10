@@ -1,18 +1,21 @@
 2026-03-09
-- User requested a hard-coded 48-CPU Slurm layout instead of the derived concurrency model.
-- Patched `ConDiv_symlay/run_remote.sh`:
-  - changed `#SBATCH --ntasks-per-node` from `48` to `6`
-  - changed `#SBATCH --cpus-per-task` from `1` to `8`
+- User clarified they want to keep `#SBATCH --ntasks-per-node=48` and hard-code the rest of the CPU layout for faster training.
+- Corrected `ConDiv_symlay/run_remote.sh`:
+  - restored `#SBATCH --ntasks-per-node=48`
+  - restored `#SBATCH --cpus-per-task=1`
   - hard-coded `CONDIV_N_REPLICA=8`
   - hard-coded `CONDIV_OMP_THREADS=8`
   - hard-coded `CONDIV_MAX_PARALLEL_WORKERS=6`
-  - added fail-fast checks for the expected `48` CPUs / `6` task slots
-  - updated log output to print the fixed `6 x 8 = 48` layout explicitly
-- Updated `ConDiv_symlay/README.md` to describe the fixed 48-CPU layout rather than the previous inferred-allocation model.
+  - added fail-fast checks for the expected `48` CPUs / `48` task slots
+  - updated log output to print the fixed `48 slots -> 6 x 8 = 48 CPUs` layout explicitly
+  - added `OMP_PROC_BIND=close` and `OMP_PLACES=cores`
+- Patched `ConDiv_symlay/ConDiv_mem.py` so worker `srun` steps now add `--cpu-bind=cores` on top of the Train-style `--ntasks=1 --cpus-per-task=8` launch.
+- Updated `ConDiv_symlay/README.md` to describe the corrected fixed 48-slot layout.
 - Verification:
   - `bash -n ConDiv_symlay/run_remote.sh` -> pass
-  - checked the patched header/default block in `run_remote.sh` -> fixed `6 x 8` layout present
-  - confirmed the per-protein worker command remains `srun --ntasks=1 --cpus-per-task=8 ...`
+  - `python3 -m py_compile ConDiv_symlay/ConDiv_mem.py` -> pass
+  - checked the patched header/default block in `run_remote.sh` -> fixed `48 slots -> 6 x 8` layout present
+  - confirmed the per-protein worker command is now `srun --ntasks=1 --cpus-per-task=8 --cpu-bind=cores ...`
 - Compared `ConDiv_symlay` against the reference workflow in `/Users/yinhan/Documents/Train` after the user asked for the same training model.
 - Reference findings from `Train`:
   - `ConDiv.py` launches one `srun --ntasks=1 --cpus-per-task=n_threads` worker per protein
