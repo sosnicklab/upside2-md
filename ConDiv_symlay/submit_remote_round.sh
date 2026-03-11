@@ -56,6 +56,29 @@ discover_current_checkout_run_dir() {
 resolve_paths
 cd "$SCRIPT_DIR"
 
+require_workflow_files() {
+  local missing=0
+  local path
+  for path in \
+    "$SCRIPT_DIR/slurm_round.py" \
+    "$SCRIPT_DIR/run_remote_update.sh" \
+    "$SCRIPT_DIR/ConDiv_mem.py" \
+    "$SCRIPT_DIR/training_control.py" \
+    "$SCRIPT_DIR/symlay_utils.py"
+  do
+    if [ ! -f "$path" ]; then
+      echo "ERROR: required workflow file is missing: $path" >&2
+      missing=1
+    fi
+  done
+  if [ "$missing" -ne 0 ]; then
+    echo "Sync the latest ConDiv_symlay workflow files to this cluster checkout before rerunning." >&2
+    exit 1
+  fi
+}
+
+require_workflow_files
+
 if [ -f /etc/profile.d/modules.sh ]; then
   source /etc/profile.d/modules.sh
 fi

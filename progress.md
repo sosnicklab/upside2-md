@@ -10,3 +10,4 @@
 - 2026-03-11: User corrected the Slurm design: the simulation side must be a single array `sbatch` file per round, with one array task per protein simulation. Refactor in progress.
 - 2026-03-11: Refactored `ConDiv_symlay/slurm_round.py` to stage one `simulate_array.sbatch` file per round, submit one array job, and dispatch tasks by `SLURM_ARRAY_TASK_ID` through the round manifest.
 - 2026-03-11: Re-verified Python syntax, shell syntax, and local no-submit staging; confirmed the generated simulation script is a single job-array sbatch file.
+- 2026-03-11: Added a preflight file check to `ConDiv_symlay/submit_remote_round.sh` so cluster checkouts missing `slurm_round.py` and related workflow files fail with a clear sync error.
