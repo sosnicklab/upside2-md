@@ -25,6 +25,32 @@ Before using this workflow, you should already have:
 - an active Python environment with the scientific stack used by the scripts
 - the Upside environment available for the shell scripts, usually through `source.sh` and `UPSIDE_HOME`
 
+## Experimental Data Dependencies
+
+Some parts of this workflow depend on experimental HXMS data, but the simulation-side uptake calculation can now run without it. The following files depend on experimental HXMS data or on files generated from experimental HXMS data:
+
+- `0.run_HXMS.py`: requires the raw HXMS uptake table `pdb/<pdb_id>_rawuptake_HXMS.csv`.
+- `4.calc_D_uptake.py`: can run without experimental data, but then it falls back to a default logarithmic time grid and only produces the simulation-based whole-protein uptake outputs. To get peptide-level outputs, it still needs experimental peptide definitions and time grids, either from `0.run_HXMS.py` (`outputs/<sim_id>/<HXMS_pdb>_pep_ids.csv` and `outputs/<sim_id>/<HXMS_pdb>_<HXMS_method>_time_peps_<protein_state>.npy`) or from the hard-coded experimental CSV named by `exp_data_file` for the temperature-optimization branch.
+- `5.analyze_D_uptake.py`: requires the HXMS reference arrays and peptide IDs produced by `0.run_HXMS.py` together with the peptide-level simulation uptake outputs from `4.calc_D_uptake.py`. It is a comparison script, not a simulation-only analysis step. If those experimental inputs are missing, it now exits cleanly after printing a warning.
+
+The scripts `1.config.py`, `2.traj_ana.sh`, `3.get_protaction_states.sh`, `get_info_from_upside_traj.py`, and `6.plot_deltaG_vs_resid.py` use simulation/model outputs only and do not read experimental HXMS tables.
+
+## No Experimental Data Case
+
+If you do not have an HXMS raw uptake table or any HXMS-derived peptide files, use only the simulation-side branch:
+
+1. Run `1.config.py`.
+2. Run `2.traj_ana.sh`.
+3. Run `3.get_protaction_states.sh`.
+4. Run `4.calc_D_uptake.py`.
+5. Optionally run `6.plot_deltaG_vs_resid.py`.
+
+In this mode:
+
+- skip `0.run_HXMS.py`
+- skip `5.analyze_D_uptake.py`
+- expect `4.calc_D_uptake.py` to write whole-protein uptake outputs such as `results/<pdb_id>_percentD.csv`, but not peptide-level comparison outputs unless experimental peptide definitions are available
+
 ## Typical Workflow
 
 The workflow has two preparation branches that later meet in the uptake comparison step:
@@ -41,6 +67,8 @@ A practical run order is:
 5. Run `4.calc_D_uptake.py` to generate simulation-based peptide and whole-protein uptake curves.
 6. Run `5.analyze_D_uptake.py` to compare the HXMS outputs from step 1 with the simulated uptake outputs from step 5.
 7. Optionally run `6.plot_deltaG_vs_resid.py` for residue-level protection free-energy style summaries.
+
+If you do not have experimental HXMS data, stop after step 5 or step 7 depending on whether you want the residue-level free-energy plot.
 
 ## Script Summary
 

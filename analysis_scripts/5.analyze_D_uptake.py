@@ -59,45 +59,164 @@ for pdb_id in pdb_ids:
     result_dirs.append(result_dir)
     run_dirs.append(run_dir)
 
+
+def load_optional_array(path, description):
+    try:
+        return np.load(path)
+    except FileNotFoundError:
+        print('WARNING: {} not found: {}'.format(description, path))
+    except Exception as exc:
+        print('WARNING: Failed to load {} ({}): {}'.format(description, path, exc))
+    return None
+
+
+def load_optional_percentd_csv(result_dir, pdb_id):
+    path = '{}/{}_percentD.csv'.format(result_dir, pdb_id)
+    try:
+        with open(path, 'r', encoding='utf-8-sig') as f:
+            rows = csv.reader(f)
+
+            time_row = []
+            d_norm_row = []
+            for i, row in enumerate(rows):
+                if i == 0:
+                    time_row = row
+                elif i == 1:
+                    d_norm_row = row
+                else:
+                    break
+    except FileNotFoundError:
+        return [], []
+    except Exception as exc:
+        print('WARNING: Failed to load simulation whole-protein uptake file ({}): {}'.format(path, exc))
+        return [], []
+
+    return time_row, d_norm_row
+
+
+def load_optional_peptide_ids(path, description):
+    try:
+        with open(path, 'r', encoding='utf-8-sig') as f:
+            rows = list(csv.reader(f))
+    except FileNotFoundError:
+        print('WARNING: {} not found: {}'.format(description, path))
+        return None, None, None
+    except Exception as exc:
+        print('WARNING: Failed to load {} ({}): {}'.format(description, path, exc))
+        return None, None, None
+
+    if len(rows) < 3:
+        print('WARNING: {} is incomplete: {}'.format(description, path))
+        return None, None, None
+
+    return np.array(rows[0]), np.array(rows[1]), np.array(rows[2])
+
+
+def load_experimental_reference():
+    peps_hxms = load_optional_array(
+        '{}/{}/{}_{}_peps_{}.npy'.format(output_dir, sim_id, main_pdb, HXMS_method, protein_state),
+        'experimental peptide list',
+    )
+    time_peps_hxms = load_optional_array(
+        '{}/{}/{}_{}_time_peps_{}.npy'.format(output_dir, sim_id, main_pdb, HXMS_method, protein_state),
+        'experimental peptide time grid',
+    )
+    d_norm_peps_hxms = load_optional_array(
+        '{}/{}/{}_{}_d_norm_peps_{}.npy'.format(output_dir, sim_id, main_pdb, HXMS_method, protein_state),
+        'experimental peptide uptake curves',
+    )
+    d_norm_theor_hxms = load_optional_array(
+        '{}/{}/{}_{}_d_norm_theor_{}.npy'.format(output_dir, sim_id, main_pdb, HXMS_method, protein_state),
+        'experimental theoretical uptake curves',
+    )
+    pep_start, pep_end, pep_id = load_optional_peptide_ids(
+        '{}/{}/{}_pep_ids.csv'.format(output_dir, sim_id, main_pdb),
+        'experimental peptide IDs',
+    )
+
+    required = [peps_hxms, time_peps_hxms, d_norm_peps_hxms, d_norm_theor_hxms, pep_start, pep_end, pep_id]
+    if any(item is None for item in required):
+        return None
+
+    return {
+        'peps_HXMS': peps_hxms,
+        'time_peps_HXMS': time_peps_hxms,
+        'd_norm_peps_HXMS': d_norm_peps_hxms,
+        'd_norm_theor_HXMS': d_norm_theor_hxms,
+        'pep_start': pep_start,
+        'pep_end': pep_end,
+        'pep_id': pep_id,
+    }
+
+
+def load_upside_peptide_outputs(result_dir, pdb_id):
+    pep = load_optional_array('{}/{}_percentD_peps.npy'.format(result_dir, pdb_id), 'simulation peptide list')
+    time_pep = load_optional_array('{}/{}_percentD_time_peps.npy'.format(result_dir, pdb_id), 'simulation peptide time grid')
+    d_norm_pep = load_optional_array('{}/{}_percentD_d_norm_peps.npy'.format(result_dir, pdb_id), 'simulation peptide uptake curves')
+    d_norm_theor = load_optional_array('{}/{}_percentD_d_norm_theor.npy'.format(result_dir, pdb_id), 'simulation theoretical uptake curves')
+
+    required = [pep, time_pep, d_norm_pep, d_norm_theor]
+    if any(item is None for item in required):
+        return None
+
+    return {
+        'peps': pep,
+        'time_peps': time_pep,
+        'd_norm_peps': d_norm_pep,
+        'd_norm_theor': d_norm_theor,
+    }
+
+
 #============================================
 # load data
 #============================================
 
+experimental_reference = load_experimental_reference()
+if experimental_reference is None:
+    print('WARNING: Experimental HXMS reference files are unavailable. Skipping comparison workflow.')
+    sys.exit(0)
+
+peps_HXMS = experimental_reference['peps_HXMS']
+time_peps_HXMS = experimental_reference['time_peps_HXMS']
+d_norm_peps_HXMS = experimental_reference['d_norm_peps_HXMS']
+d_norm_theor_HXMS = experimental_reference['d_norm_theor_HXMS']
+pep_start = experimental_reference['pep_start']
+pep_end = experimental_reference['pep_end']
+pep_id = experimental_reference['pep_id']
+
 # D uptake Upside predictions across proteins/protein domains
 times = []
 d_norms = []
-for p, (pdb_id, result_dir) in enumerate(zip(pdb_ids, result_dirs)):
-    with open('{}/{}_percentD.csv'.format(result_dir, pdb_id), 'r', encoding='utf-8-sig') as f:
-        rows = csv.reader(f)
-
-        time_row = []
-        d_norm_row = []
-        for i, row in enumerate(rows):
-            if i == 0:
-                time_row = row
-
-            elif i == 1:
-                d_norm_row = row
-
-            else:
-                break
-
-    times.append(time_row)
-    d_norms.append(d_norm_row)
 
 # D uptake Upside predictions for experimental peptides
+loaded_pdb_ids = []
+loaded_result_dirs = []
 peps = []
 peps_seq = np.array([])
 time_peps = []
 d_norm_peps = []
 d_norm_peps_theors = []
 for p, (pdb_id, result_dir) in enumerate(zip(pdb_ids, result_dirs)):
-    pep = np.load('{}/{}_percentD_peps.npy'.format(result_dir, pdb_id))
-    peps.append(pep)
-    peps_seq = np.concatenate([peps_seq, pep])
-    time_peps.append(np.load('{}/{}_percentD_time_peps.npy'.format(result_dir, pdb_id)))
-    d_norm_peps.append(np.load('{}/{}_percentD_d_norm_peps.npy'.format(result_dir, pdb_id)))
-    d_norm_peps_theors.append(np.load('{}/{}_percentD_d_norm_theor.npy'.format(result_dir, pdb_id)))
+    time_row, d_norm_row = load_optional_percentd_csv(result_dir, pdb_id)
+    if len(time_row) > 0 and len(d_norm_row) > 0:
+        times.append(time_row)
+        d_norms.append(d_norm_row)
+
+    upside_outputs = load_upside_peptide_outputs(result_dir, pdb_id)
+    if upside_outputs is None:
+        continue
+
+    loaded_pdb_ids.append(pdb_id)
+    loaded_result_dirs.append(result_dir)
+    peps.append(upside_outputs['peps'])
+    peps_seq = np.concatenate([peps_seq, upside_outputs['peps']])
+    time_peps.append(upside_outputs['time_peps'])
+    d_norm_peps.append(upside_outputs['d_norm_peps'])
+    d_norm_peps_theors.append(upside_outputs['d_norm_theor'])
+
+if len(peps) == 0:
+    print('WARNING: No simulation peptide uptake outputs were found. Skipping comparison workflow.')
+    sys.exit(0)
 
 # identifiers for Upside peptides
 #pep_starts = np.array([])
@@ -127,39 +246,6 @@ for p, (pdb_id, result_dir) in enumerate(zip(pdb_ids, result_dirs)):
     #pep_ends = np.concatenate([pep_ends, np.array(end_row)])
     #pep_ids = np.concatenate([pep_ids, np.array(pep_row)])
 
-# normalized D uptake / stretched exponential for experimental peptides
-peps_HXMS = np.load('{}/{}/{}_{}_peps_{}.npy'.format(output_dir, sim_id, main_pdb, HXMS_method, protein_state))
-
-time_peps_HXMS = np.load('{}/{}/{}_{}_time_peps_{}.npy'.format(output_dir, sim_id, main_pdb, HXMS_method, protein_state))
-
-d_norm_peps_HXMS = np.load('{}/{}/{}_{}_d_norm_peps_{}.npy'.format(output_dir, sim_id, main_pdb, HXMS_method, protein_state))
-
-d_norm_theor_HXMS = np.load('{}/{}/{}_{}_d_norm_theor_{}.npy'.format(output_dir, sim_id, main_pdb, HXMS_method, protein_state))
-
-# identifiers for experimental peptides
-with open('{}/{}/{}_pep_ids.csv'.format(output_dir, sim_id, main_pdb), 'r', encoding='utf-8-sig') as f:
-    rows = csv.reader(f)
-
-    pep_start = []
-    pep_end = []
-    pep_id = []
-    for i, row in enumerate(rows):
-        if i == 0:
-            pep_start = row
-
-        elif i == 1:
-            pep_end = row
-
-        elif i == 2:
-            pep_id = row
-
-        else:
-            break
-
-pep_start = np.array(pep_start)
-pep_end = np.array(pep_end)
-pep_id = np.array(pep_id)
-
 fasta = np.loadtxt('{}/inputs/{}.fasta'.format(work_dir, main_pdb, main_pdb), skiprows = 1, dtype=str)
 
 if np.size(fasta) == 1:
@@ -173,7 +259,7 @@ else:
 #============================================
 
 dGhx_Ts = np.array([])
-for p, (pdb_id, result_dir) in enumerate(zip(pdb_ids, result_dirs)):
+for p, (pdb_id, result_dir) in enumerate(zip(loaded_pdb_ids, loaded_result_dirs)):
     PS = []
     T  = []
     for i in range(n_rep):
@@ -260,6 +346,10 @@ Up_dfs = pd.concat(Up_dfs)
 merge_df = pd.merge(pep_exp_df, HXMS_df, on="peps")
 merge_dfs = pd.merge(merge_df, Up_dfs, on="peps")
 
+if merge_dfs.empty:
+    print('WARNING: No overlapping peptides were found between HXMS references and simulation outputs. Skipping comparison workflow.')
+    sys.exit(0)
+
 #============================================
 # calculate cooperativity factor (COF)
 #============================================
@@ -276,7 +366,7 @@ for i, (p_id, d_norm_pep) in enumerate(zip(merge_dfs.peps, merge_dfs.d_norms_HXM
         integral = trapezoid(squared_derivative, time_peps_HXMS)
 
     else:
-        break
+        integral = np.nan
 
     integrals_pep_HXMS.append(integral)
 
@@ -294,7 +384,7 @@ for p, (p_id, d_norm_pep) in enumerate(zip(merge_dfs.peps, merge_dfs.d_norms_Up)
         integral = trapezoid(squared_derivative, time_peps[0])
 
     else:
-        break
+        integral = np.nan
 
     integrals_pep_Upside.append(integral)
 

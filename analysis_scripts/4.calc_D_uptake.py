@@ -183,6 +183,10 @@ def build_time_grid_from_log_times(log_times):
     return np.asarray([10 ** s for s in np.arange(np.min(log_times), np.max(log_times) + step, step)])
 
 
+def build_default_time_grid(log_start=-1.0, log_stop=5.0, log_step=0.02):
+    return np.asarray([10 ** s for s in np.arange(log_start, log_stop, log_step)])
+
+
 def sanitize_peptides(peptide_starts, peptide_ends, peptide_labels, sequence_str, source_name):
     starts = np.asarray(peptide_starts)
     ends = np.asarray(peptide_ends)
@@ -379,10 +383,6 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
         print('WARNING: T={} skipped because no time grid is available.'.format(T_target))
         return None
 
-    if len(peptide_starts) == 0:
-        print('WARNING: T={} skipped because no peptides are available.'.format(T_target))
-        return None
-
     try:
         Ft_a, Ft_b, Ft_w, OD_minus, pKc_asp, pKc_glu, pKc_his = calculate_temperature_parameters(T_target, temperature_mode)
     except Exception as exc:
@@ -467,41 +467,48 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
     D = np.asarray(D)
     D_theor = np.asarray(D_theor)
 
-    D_peps = []
-    D_peps_theors = []
-    D_norm_peps = []
-    D_norm_peps_theors = []
-    for start, end in zip(peptide_starts, peptide_ends):
-        start_idx = start - 1
-        end_idx = end
+    if len(peptide_starts) > 0:
+        D_peps = []
+        D_peps_theors = []
+        D_norm_peps = []
+        D_norm_peps_theors = []
+        for start, end in zip(peptide_starts, peptide_ends):
+            start_idx = start - 1
+            end_idx = end
 
-        D_pep = np.sum(D[start_idx:end_idx], axis=0)
-        D_pep_theor = np.sum(D_theor[start_idx:end_idx], axis=0)
-        D_norm_pep, D_norm_pep_theor = normalize_uptake(D_pep, D_pep_theor)
+            D_pep = np.sum(D[start_idx:end_idx], axis=0)
+            D_pep_theor = np.sum(D_theor[start_idx:end_idx], axis=0)
+            D_norm_pep, D_norm_pep_theor = normalize_uptake(D_pep, D_pep_theor)
 
-        if not is_non_decreasing(D_pep) or not is_non_decreasing(D_pep_theor):
-            print('WARNING: T={} skipped because peptide uptake was not monotonic.'.format(T_target))
+            if not is_non_decreasing(D_pep) or not is_non_decreasing(D_pep_theor):
+                print('WARNING: T={} skipped because peptide uptake was not monotonic.'.format(T_target))
+                return None
+            if not is_non_decreasing(D_norm_pep) or not is_non_decreasing(D_norm_pep_theor):
+                print('WARNING: T={} skipped because normalized peptide uptake was not monotonic.'.format(T_target))
+                return None
+
+            D_peps.append(D_pep)
+            D_peps_theors.append(D_pep_theor)
+            D_norm_peps.append(D_norm_pep)
+            D_norm_peps_theors.append(D_norm_pep_theor)
+
+        D_peps = np.asarray(D_peps)
+        D_peps_theors = np.asarray(D_peps_theors)
+        D_norm_peps = np.asarray(D_norm_peps)
+        D_norm_peps_theors = np.asarray(D_norm_peps_theors)
+
+        if np.nanmin(np.subtract(D_peps_theors, D_peps)) < 0:
+            print('WARNING: T={} skipped because peptide uptake exceeded theoretical uptake.'.format(T_target))
             return None
-        if not is_non_decreasing(D_norm_pep) or not is_non_decreasing(D_norm_pep_theor):
-            print('WARNING: T={} skipped because normalized peptide uptake was not monotonic.'.format(T_target))
+        if np.nanmin(np.subtract(D_norm_peps_theors, D_norm_peps)) < 0:
+            print('WARNING: T={} skipped because normalized peptide uptake exceeded theoretical uptake.'.format(T_target))
             return None
-
-        D_peps.append(D_pep)
-        D_peps_theors.append(D_pep_theor)
-        D_norm_peps.append(D_norm_pep)
-        D_norm_peps_theors.append(D_norm_pep_theor)
-
-    D_peps = np.asarray(D_peps)
-    D_peps_theors = np.asarray(D_peps_theors)
-    D_norm_peps = np.asarray(D_norm_peps)
-    D_norm_peps_theors = np.asarray(D_norm_peps_theors)
-
-    if np.nanmin(np.subtract(D_peps_theors, D_peps)) < 0:
-        print('WARNING: T={} skipped because peptide uptake exceeded theoretical uptake.'.format(T_target))
-        return None
-    if np.nanmin(np.subtract(D_norm_peps_theors, D_norm_peps)) < 0:
-        print('WARNING: T={} skipped because normalized peptide uptake exceeded theoretical uptake.'.format(T_target))
-        return None
+    else:
+        empty_shape = (0, len(times))
+        D_peps = np.empty(empty_shape)
+        D_peps_theors = np.empty(empty_shape)
+        D_norm_peps = np.empty(empty_shape)
+        D_norm_peps_theors = np.empty(empty_shape)
 
     D_res = np.sum(D, axis=0)
     D_res_theor = np.sum(D_theor, axis=0)
@@ -568,10 +575,18 @@ def build_colors(num_colors):
     return cm.viridis(np.linspace(0, 0.9, num_colors))
 
 
+def has_peptide_plot_data(peptide_labels, uptake_plot):
+    return len(peptide_labels) > 0 and getattr(uptake_plot, 'ndim', 0) >= 3 and uptake_plot.shape[0] > 0 and uptake_plot.shape[1] > 0
+
+
+def has_full_protein_plot_data(uptake_plot):
+    return getattr(uptake_plot, 'ndim', 0) >= 2 and uptake_plot.shape[0] > 0
+
+
 def plot_peptide_pdf(output_path, times, T_targets, peptide_labels, peptide_starts, peptide_ends, uptake_plot, theor_plot, ylabel, title_mode, exp_df=None):
     pdf_pages = pdf.PdfPages(output_path)
 
-    if len(peptide_labels) == 0 or uptake_plot.shape[0] == 0:
+    if not has_peptide_plot_data(peptide_labels, uptake_plot):
         print('Skipping {} because no peptide data is available.'.format(output_path))
         pdf_pages.close()
         return
@@ -663,60 +678,71 @@ def plot_full_protein_png(output_path, times, T_targets, uptake_plot, theor_plot
 
 
 def export_legacy_outputs(times, peptide_labels, peptide_starts, peptide_ends, T_targets, plot_data):
-    if len(peptide_labels) == 0 or plot_data['D_peps'].shape[0] == 0:
+    has_peptide_data = has_peptide_plot_data(peptide_labels, plot_data['D_peps'])
+    has_full_protein_data = has_full_protein_plot_data(plot_data['D_res'])
+
+    if not has_peptide_data and not has_full_protein_data:
         print('Legacy workflow produced no output files.')
         return
 
-    export_peptide_ids('{}/{}_pep_ids.csv'.format(result_dir, pdb_id), peptide_starts, peptide_ends, peptide_labels)
+    if has_peptide_data:
+        export_peptide_ids('{}/{}_pep_ids.csv'.format(result_dir, pdb_id), peptide_starts, peptide_ends, peptide_labels)
 
-    plot_peptide_pdf(
-        fig_dir + '/D_uptake_{}.pdf'.format(pdb_id),
-        times,
-        T_targets,
-        peptide_labels,
-        peptide_starts,
-        peptide_ends,
-        plot_data['D_peps'],
-        plot_data['D_peps_theors'],
-        'D',
-        'legacy',
-    )
-    plot_peptide_pdf(
-        fig_dir + '/D_uptake_norm_{}.pdf'.format(pdb_id),
-        times,
-        T_targets,
-        peptide_labels,
-        peptide_starts,
-        peptide_ends,
-        plot_data['D_norm_peps'],
-        plot_data['D_norm_peps_theors'],
-        'Normalized %D',
-        'legacy',
-    )
-    plot_full_protein_png(
-        fig_dir + '/D_uptake.png',
-        times,
-        T_targets,
-        plot_data['D_res'],
-        plot_data['D_res_theor'],
-        'D',
-        'D Uptake Prediction at Upside T Slices',
-    )
-    plot_full_protein_png(
-        fig_dir + '/D_uptake_norm.png',
-        times,
-        T_targets,
-        plot_data['D_norm_res'],
-        plot_data['D_norm_res_theor'],
-        'Normalized %D',
-        '%D Uptake Prediction at Upside T Slices',
-    )
+        plot_peptide_pdf(
+            fig_dir + '/D_uptake_{}.pdf'.format(pdb_id),
+            times,
+            T_targets,
+            peptide_labels,
+            peptide_starts,
+            peptide_ends,
+            plot_data['D_peps'],
+            plot_data['D_peps_theors'],
+            'D',
+            'legacy',
+        )
+        plot_peptide_pdf(
+            fig_dir + '/D_uptake_norm_{}.pdf'.format(pdb_id),
+            times,
+            T_targets,
+            peptide_labels,
+            peptide_starts,
+            peptide_ends,
+            plot_data['D_norm_peps'],
+            plot_data['D_norm_peps_theors'],
+            'Normalized %D',
+            'legacy',
+        )
+    else:
+        print('WARNING: No peptide definitions available. Skipping peptide-level legacy exports.')
 
-    if single_T and len(T_targets) == 1:
-        np.save('{}/{}_percentD_peps.npy'.format(result_dir, pdb_id), peptide_labels)
-        np.save('{}/{}_percentD_time_peps.npy'.format(result_dir, pdb_id), np.log10(times))
-        np.save('{}/{}_percentD_d_norm_peps.npy'.format(result_dir, pdb_id), plot_data['D_norm_peps'][0])
-        np.save('{}/{}_percentD_d_norm_theor.npy'.format(result_dir, pdb_id), plot_data['D_norm_peps_theors'][0])
+    if has_full_protein_data:
+        plot_full_protein_png(
+            fig_dir + '/D_uptake.png',
+            times,
+            T_targets,
+            plot_data['D_res'],
+            plot_data['D_res_theor'],
+            'D',
+            'D Uptake Prediction at Upside T Slices',
+        )
+        plot_full_protein_png(
+            fig_dir + '/D_uptake_norm.png',
+            times,
+            T_targets,
+            plot_data['D_norm_res'],
+            plot_data['D_norm_res_theor'],
+            'Normalized %D',
+            '%D Uptake Prediction at Upside T Slices',
+        )
+    else:
+        print('WARNING: No full-protein legacy uptake data available.')
+
+    if single_T and len(T_targets) == 1 and has_full_protein_data:
+        if has_peptide_data:
+            np.save('{}/{}_percentD_peps.npy'.format(result_dir, pdb_id), peptide_labels)
+            np.save('{}/{}_percentD_time_peps.npy'.format(result_dir, pdb_id), np.log10(times))
+            np.save('{}/{}_percentD_d_norm_peps.npy'.format(result_dir, pdb_id), plot_data['D_norm_peps'][0])
+            np.save('{}/{}_percentD_d_norm_theor.npy'.format(result_dir, pdb_id), plot_data['D_norm_peps_theors'][0])
 
         with open('{}/{}_percentD.csv'.format(result_dir, pdb_id), 'w', newline='') as file:
             writer = csv.writer(file)
@@ -726,68 +752,84 @@ def export_legacy_outputs(times, peptide_labels, peptide_starts, peptide_ends, T
 
 
 def export_experimental_outputs(times, peptide_labels, peptide_starts, peptide_ends, T_targets, plot_data, exp_df):
-    if len(peptide_labels) == 0 or plot_data['D_peps'].shape[0] == 0:
+    has_peptide_data = has_peptide_plot_data(peptide_labels, plot_data['D_peps'])
+    has_full_protein_data = has_full_protein_plot_data(plot_data['D_res'])
+
+    if not has_peptide_data and not has_full_protein_data:
         print('Experimental workflow produced no output files.')
         return
 
-    plot_peptide_pdf(
-        fig_dir + '/D_uptake_{}_EXP.pdf'.format(pdb_id),
-        times,
-        T_targets,
-        peptide_labels,
-        peptide_starts,
-        peptide_ends,
-        plot_data['D_peps'],
-        plot_data['D_peps_theors'],
-        'D',
-        'exp',
-        exp_df=exp_df,
-    )
-    plot_peptide_pdf(
-        fig_dir + '/D_uptake_norm_{}_EXP.pdf'.format(pdb_id),
-        times,
-        T_targets,
-        peptide_labels,
-        peptide_starts,
-        peptide_ends,
-        plot_data['D_norm_peps'],
-        plot_data['D_norm_peps_theors'],
-        'Normalized %D',
-        'exp',
-        exp_df=exp_df,
-    )
-    plot_full_protein_png(
-        fig_dir + '/D_uptake_EXP.png',
-        times,
-        T_targets,
-        plot_data['D_res'],
-        plot_data['D_res_theor'],
-        'D',
-        'D Uptake Prediction at Optimal T = {:.3f}'.format(T_targets[0]),
-    )
-    plot_full_protein_png(
-        fig_dir + '/D_uptake_norm_EXP.png',
-        times,
-        T_targets,
-        plot_data['D_norm_res'],
-        plot_data['D_norm_res_theor'],
-        'Normalized %D',
-        '%D Uptake Prediction at Optimal T = {:.3f}'.format(T_targets[0]),
-    )
+    if has_peptide_data:
+        plot_peptide_pdf(
+            fig_dir + '/D_uptake_{}_EXP.pdf'.format(pdb_id),
+            times,
+            T_targets,
+            peptide_labels,
+            peptide_starts,
+            peptide_ends,
+            plot_data['D_peps'],
+            plot_data['D_peps_theors'],
+            'D',
+            'exp',
+            exp_df=exp_df,
+        )
+        plot_peptide_pdf(
+            fig_dir + '/D_uptake_norm_{}_EXP.pdf'.format(pdb_id),
+            times,
+            T_targets,
+            peptide_labels,
+            peptide_starts,
+            peptide_ends,
+            plot_data['D_norm_peps'],
+            plot_data['D_norm_peps_theors'],
+            'Normalized %D',
+            'exp',
+            exp_df=exp_df,
+        )
+    else:
+        print('WARNING: No peptide definitions available. Skipping peptide-level experimental exports.')
 
-    np.save('{}/{}_percentD_peps_EXP.npy'.format(result_dir, pdb_id), peptide_labels)
-    np.save('{}/{}_percentD_time_peps_EXP.npy'.format(result_dir, pdb_id), np.log10(times))
-    np.save('{}/{}_percentD_d_norm_peps_EXP.npy'.format(result_dir, pdb_id), plot_data['D_norm_peps'][0])
-    np.save('{}/{}_percentD_d_norm_theor_EXP.npy'.format(result_dir, pdb_id), plot_data['D_norm_peps_theors'][0])
+    if has_full_protein_data:
+        plot_full_protein_png(
+            fig_dir + '/D_uptake_EXP.png',
+            times,
+            T_targets,
+            plot_data['D_res'],
+            plot_data['D_res_theor'],
+            'D',
+            'D Uptake Prediction at Optimal T = {:.3f}'.format(T_targets[0]),
+        )
+        plot_full_protein_png(
+            fig_dir + '/D_uptake_norm_EXP.png',
+            times,
+            T_targets,
+            plot_data['D_norm_res'],
+            plot_data['D_norm_res_theor'],
+            'Normalized %D',
+            '%D Uptake Prediction at Optimal T = {:.3f}'.format(T_targets[0]),
+        )
+    else:
+        print('WARNING: No full-protein experimental uptake data available.')
 
-    with open('{}/{}_percentD_EXP.csv'.format(result_dir, pdb_id), 'w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(np.log10(times))
-        writer.writerow(plot_data['D_norm_res'][0])
-        writer.writerow(plot_data['D_norm_res_theor'][0])
+    if has_peptide_data:
+        np.save('{}/{}_percentD_peps_EXP.npy'.format(result_dir, pdb_id), peptide_labels)
+        np.save('{}/{}_percentD_time_peps_EXP.npy'.format(result_dir, pdb_id), np.log10(times))
+        np.save('{}/{}_percentD_d_norm_peps_EXP.npy'.format(result_dir, pdb_id), plot_data['D_norm_peps'][0])
+        np.save('{}/{}_percentD_d_norm_theor_EXP.npy'.format(result_dir, pdb_id), plot_data['D_norm_peps_theors'][0])
+
+    if has_full_protein_data:
+        with open('{}/{}_percentD_EXP.csv'.format(result_dir, pdb_id), 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(np.log10(times))
+            writer.writerow(plot_data['D_norm_res'][0])
+            writer.writerow(plot_data['D_norm_res_theor'][0])
 
 
 legacy_times, legacy_pep_starts, legacy_pep_ends, legacy_pep_labels = load_legacy_inputs()
+if len(legacy_times) == 0:
+    legacy_times = build_default_time_grid()
+    print('WARNING: Legacy HXMS time grid unavailable. Using default simulation-only time grid.')
+
 exp_df = load_experimental_data()
 exp_pep_starts, exp_pep_ends, exp_pep_labels = build_experimental_peptides(exp_df)
 
@@ -833,7 +875,7 @@ export_legacy_outputs(
 # experimental optimization workflow
 # ============================================
 
-exp_times = np.asarray([10 ** s for s in np.arange(-1, 5, 0.02)])
+exp_times = build_default_time_grid()
 
 
 def calculate_total_error(T_target):
