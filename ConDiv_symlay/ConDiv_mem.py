@@ -950,15 +950,14 @@ def _run_worker_subprocess(
     return sp.Popen(cmd, close_fds=True, stdout=outfile, stderr=sp.STDOUT), outfile
 
 
-def run_minibatch(
+def prepare_minibatch_inputs(
     state: dict,
     param: Update,
     initial_param_files: Dict[str, str],
     direc: str,
-    minibatch,
     solver: AdamSolver,
     sim_time: float,
-):
+) -> Dict[str, str]:
     os.makedirs(direc, exist_ok=True)
     print(direc)
     print()
@@ -971,84 +970,84 @@ def run_minibatch(
     with open(os.path.join(direc, "sim_time"), "w", encoding="utf-8") as fh:
         print(sim_time, file=fh)
 
+    return d_obj_param_files
+
+
+def build_worker_argv(
+    state: dict,
+    nm: str,
+    direc: str,
+    target: Target,
+    param_files: Dict[str, str],
+) -> List[str]:
+    return [
+        state["worker_path"],
+        "worker",
+        nm,
+        direc,
+        target.fasta,
+        target.native_path,
+        target.breakfile_path,
+        str(state["membrane_thickness"]),
+        target.nail_file,
+        target.init_path,
+        str(target.n_res),
+        target.chi,
+        cp.dumps(param_files, protocol=4).hex(),
+        str(state["sim_time"]),
+        str(state["n_replica"]),
+        str(state["omp_threads"]),
+        _choose_worker_launch(state["worker_launch"]),
+        state["project_root"],
+        state["ff_dir"],
+    ]
+
+
+def collect_minibatch_outputs(direc: str, minibatch) -> Tuple[dict, dict, List[Update]]:
     rmsd = {}
     com = {}
-    change = []
+    change: List[Update] = []
 
-    max_parallel_workers = state.get("max_parallel_workers", 0)
-    if max_parallel_workers <= 0:
-        max_parallel_workers = len(minibatch)
-    max_parallel_workers = min(max_parallel_workers, len(minibatch))
+    for nm, _target in minibatch:
+        divergence_path = os.path.join(direc, f"{nm}.divergence.pkl")
+        if not os.path.exists(divergence_path):
+            print(nm, "MISSING_DIVERGENCE")
+            continue
 
-    print(
-        "Worker dispatch=%s, replicas/worker=%i, omp_threads/upside=%i, max_parallel_workers=%i, minibatch_targets=%i"
-        % (
-            _choose_worker_launch(state["worker_launch"]),
-            int(state["n_replica"]),
-            int(state["omp_threads"]),
-            max_parallel_workers,
-            len(minibatch),
+        with open(divergence_path, "rb") as fh:
+            divergence = cp.load(fh)
+
+        metrics = np.array(
+            [
+                float(divergence["rmsd_restrain"]),
+                float(divergence["rmsd"]),
+                float(divergence["com_restrain"]),
+                float(divergence["com"]),
+            ],
+            dtype=np.float64,
         )
-    )
+        contrast = divergence["contrast"]
+        contrast_finite = all(np.isfinite(np.asarray(x)).all() for x in contrast)
+        if (not np.isfinite(metrics).all()) or (not contrast_finite):
+            print(nm, "NONFINITE_DIVERGENCE")
+            continue
 
-    for chunk_start in range(0, len(minibatch), max_parallel_workers):
-        chunk = minibatch[chunk_start : chunk_start + max_parallel_workers]
-        jobs = collections.OrderedDict()
+        rmsd[nm] = (divergence["rmsd_restrain"], divergence["rmsd"])
+        com[nm] = (divergence["com_restrain"], divergence["com"])
+        change.append(contrast)
 
-        for nm, target in chunk[::-1]:
-            worker_argv = [
-                state["worker_path"],
-                "worker",
-                nm,
-                direc,
-                target.fasta,
-                target.native_path,
-                target.breakfile_path,
-                str(state["membrane_thickness"]),
-                target.nail_file,
-                target.init_path,
-                str(target.n_res),
-                target.chi,
-                cp.dumps(d_obj_param_files, protocol=4).hex(),
-                str(sim_time),
-                str(state["n_replica"]),
-                str(state["omp_threads"]),
-                _choose_worker_launch(state["worker_launch"]),
-                state["project_root"],
-                state["ff_dir"],
-            ]
-            jobs[nm] = _run_worker_subprocess(state, nm, direc, worker_argv)
+    return rmsd, com, change
 
-        for nm, (job, outfile) in jobs.items():
-            try:
-                if job.wait() != 0:
-                    print(nm, "WORKER_FAIL")
-                    continue
 
-                with open(f"{direc}/{nm}.divergence.pkl", "rb") as fh:
-                    divergence = cp.load(fh)
-
-                metrics = np.array(
-                    [
-                        float(divergence["rmsd_restrain"]),
-                        float(divergence["rmsd"]),
-                        float(divergence["com_restrain"]),
-                        float(divergence["com"]),
-                    ],
-                    dtype=np.float64,
-                )
-                contrast = divergence["contrast"]
-                contrast_finite = all(np.isfinite(np.asarray(x)).all() for x in contrast)
-                if (not np.isfinite(metrics).all()) or (not contrast_finite):
-                    print(nm, "NONFINITE_DIVERGENCE")
-                    continue
-
-                rmsd[nm] = (divergence["rmsd_restrain"], divergence["rmsd"])
-                com[nm] = (divergence["com_restrain"], divergence["com"])
-                change.append(contrast)
-            finally:
-                if outfile is not None:
-                    outfile.close()
+def finalize_minibatch_from_outputs(
+    state: dict,
+    param: Update,
+    initial_param_files: Dict[str, str],
+    direc: str,
+    minibatch,
+    solver: AdamSolver,
+) -> Tuple[Update, dict]:
+    rmsd, com, change = collect_minibatch_outputs(direc, minibatch)
 
     if not change:
         raise RuntimeError("All jobs failed")
@@ -1134,6 +1133,66 @@ def run_minibatch(
         json.dump(grad_stats, fh, indent=2, sort_keys=True)
 
     return new_param, grad_stats
+
+
+def advance_training_state(state: dict, mb_direc: str, new_param: Update, grad_stats: dict) -> dict:
+    state["mb_direc"] = mb_direc
+    state["param"] = new_param
+    state["last_gradient_stats"] = grad_stats
+
+    state["i_mb"] += 1
+    if state["i_mb"] >= len(state["minibatches"]):
+        state["i_mb"] = 0
+        state["epoch"] += 1
+        state["minibatches"] = _shuffle_minibatches(state["minibatches"])
+
+    return state
+
+
+def run_minibatch(
+    state: dict,
+    param: Update,
+    initial_param_files: Dict[str, str],
+    direc: str,
+    minibatch,
+    solver: AdamSolver,
+    sim_time: float,
+):
+    d_obj_param_files = prepare_minibatch_inputs(state, param, initial_param_files, direc, solver, sim_time)
+
+    max_parallel_workers = state.get("max_parallel_workers", 0)
+    if max_parallel_workers <= 0:
+        max_parallel_workers = len(minibatch)
+    max_parallel_workers = min(max_parallel_workers, len(minibatch))
+
+    print(
+        "Worker dispatch=%s, replicas/worker=%i, omp_threads/upside=%i, max_parallel_workers=%i, minibatch_targets=%i"
+        % (
+            _choose_worker_launch(state["worker_launch"]),
+            int(state["n_replica"]),
+            int(state["omp_threads"]),
+            max_parallel_workers,
+            len(minibatch),
+        )
+    )
+
+    for chunk_start in range(0, len(minibatch), max_parallel_workers):
+        chunk = minibatch[chunk_start : chunk_start + max_parallel_workers]
+        jobs = collections.OrderedDict()
+
+        for nm, target in chunk[::-1]:
+            worker_argv = build_worker_argv(state, nm, direc, target, d_obj_param_files)
+            jobs[nm] = _run_worker_subprocess(state, nm, direc, worker_argv)
+
+        for nm, (job, outfile) in jobs.items():
+            try:
+                if job.wait() != 0:
+                    print(nm, "WORKER_FAIL")
+            finally:
+                if outfile is not None:
+                    outfile.close()
+
+    return finalize_minibatch_from_outputs(state, param, initial_param_files, direc, minibatch, solver)
 
 
 def main_worker():
@@ -1292,32 +1351,25 @@ def main_loop_iteration(state: dict) -> dict:
     sys.stdout.flush()
 
     tstart = time.time()
-    state["mb_direc"] = os.path.join(state["base_dir"], f"epoch_{state['epoch']:02d}_minibatch_{state['i_mb']:02d}")
-    if os.path.exists(state["mb_direc"]):
-        shutil.rmtree(state["mb_direc"], ignore_errors=True)
+    mb_direc = os.path.join(state["base_dir"], f"epoch_{state['epoch']:02d}_minibatch_{state['i_mb']:02d}")
+    if os.path.exists(mb_direc):
+        shutil.rmtree(mb_direc, ignore_errors=True)
 
     new_param, grad_stats = run_minibatch(
         state,
         state["param"],
         state["init_param_files"],
-        state["mb_direc"],
+        mb_direc,
         state["minibatches"][state["i_mb"]],
         state["solver"],
         state["sim_time"],
     )
-    state["param"] = new_param
-    state["last_gradient_stats"] = grad_stats
+    state = advance_training_state(state, mb_direc, new_param, grad_stats)
 
     print()
     print("%.0f seconds elapsed this minibatch" % (time.time() - tstart))
     print()
     sys.stdout.flush()
-
-    state["i_mb"] += 1
-    if state["i_mb"] >= len(state["minibatches"]):
-        state["i_mb"] = 0
-        state["epoch"] += 1
-        state["minibatches"] = _shuffle_minibatches(state["minibatches"])
 
     return state
 

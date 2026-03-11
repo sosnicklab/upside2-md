@@ -66,9 +66,9 @@ This does four things:
 3. creates `initial_checkpoint.pkl`
 4. validates the seeded checkpoint with `validate_symlay_constraints.py`
 
-By default this creates the run under `ConDiv_symlay/test_dimer3`. If that directory already contains an initialized training run, `./run_init.sh` now refuses to overwrite it and tells you to resume with `sbatch run_remote.sh` instead.
+By default this creates the run under `ConDiv_symlay/test_dimer3`. If that directory already contains an initialized training run, `./run_init.sh` now refuses to overwrite it and tells you to resume with `./submit_remote_round.sh` instead.
 
-After a successful init, `run_init.sh` records the resolved run directory in `ConDiv_symlay/.condiv_current_run_dir`. The zero-argument `sbatch run_remote.sh` path uses that recorded run directory by default, so stale inherited `BASE_DIR` values do not silently redirect training to a different checkout. If that record is missing, `run_local.sh` and `run_remote.sh` fall back to discovering initialized run directories under the current `ConDiv_symlay` checkout before they use the built-in `ConDiv_symlay/test_dimer3` default.
+After a successful init, `run_init.sh` records the resolved run directory in `ConDiv_symlay/.condiv_current_run_dir`. The zero-argument `./submit_remote_round.sh` and `sbatch run_remote.sh` paths both use that recorded run directory by default, so stale inherited `BASE_DIR` values do not silently redirect training to a different checkout. If that record is missing, the scripts fall back to discovering initialized run directories under the current `ConDiv_symlay` checkout before they use the built-in `ConDiv_symlay/test_dimer3` default.
 
 Useful overrides:
 
@@ -92,11 +92,60 @@ export CONDIV_SYMLAY_SUPPORT_MARGIN=0.5
 ./run_local.sh 20
 ```
 
-## Slurm Restart
+## Separate-Job Slurm Restart
+
+```bash
+./submit_remote_round.sh
+```
+
+This is the recommended remote workflow when you want each protein simulation to receive its own Slurm job ID. The submitter stages the next minibatch round under:
+
+- `<base_dir>/epoch_<epoch>_minibatch_<minibatch>/slurm/worker_specs/*.json`
+- `<base_dir>/epoch_<epoch>_minibatch_<minibatch>/slurm/simulate_array.sbatch`
+- `<base_dir>/epoch_<epoch>_minibatch_<minibatch>/slurm/round_manifest.json`
+
+Then it:
+
+- submits one Slurm job array for the whole minibatch round
+- maps one protein simulation to one array task
+- submits `run_remote_update.sh` with an `afterany` dependency on that array job
+- lets the update job compute the FF update, write `checkpoint.pkl`, append `training_progress.jsonl`, update `training_status.json`, and submit the next round when convergence has not been reached
+
+The simulation jobs use:
+
+- `1` Slurm array task per protein
+- `1` Slurm task inside each array element
+- `CONDIV_OMP_THREADS` CPUs per task
+- `CONDIV_N_REPLICA` local Upside replicas inside that job
+
+The generated array script carries its own `#SBATCH --array=0-(n-1)` line, so there is only one simulation `sbatch` file per round.
+
+By default `submit_remote_round.sh` uses `RUN_STEPS=0`, which means no submitter-imposed chain limit. If you pass one positional integer, it is treated as the remaining number of rounds to auto-submit in that chain:
+
+```bash
+./submit_remote_round.sh 10
+```
+
+Useful Slurm overrides for the separate-job workflow:
+
+```bash
+export CONDIV_SIM_WALLTIME=24:00:00
+export CONDIV_UPDATE_WALLTIME=02:00:00
+export CONDIV_SIM_MEM=16G
+export CONDIV_UPDATE_MEM=8G
+export CONDIV_SBATCH_PARTITION=caslake
+export CONDIV_SBATCH_ACCOUNT=<account>
+```
+
+`run_remote_update.sh` is the single Slurm-side update driver. It is normally submitted automatically by `submit_remote_round.sh`; manual `sbatch` is only needed for debugging or recovery, and requires `CONDIV_ROUND_MANIFEST` plus `CONDIV_PROJECT_ROOT` in the environment.
+
+## Legacy Single-Allocation Slurm Restart
 
 ```bash
 sbatch run_remote.sh
 ```
+
+`run_remote.sh` keeps the older model where one Slurm allocation owns the entire minibatch and fan-out happens inside that allocation via `srun`. That mode is still available, but it does not give each protein simulation a separate Slurm job ID.
 
 `run_remote.sh` uses the same restart surface as `run_local.sh`, requests the full node memory by default with `#SBATCH --mem=0`, resolves the real workflow directory from `SLURM_SUBMIT_DIR` / `CONDIV_PROJECT_ROOT` so Slurm spool-copy execution still finds the repo checkout, prefers `ConDiv_symlay/venv/bin/activate` when present (falling back to the project-root `.venv` in this checkout), sources `source.sh` from the project root, loads `python/3.11.9`, `cmake`, and `openmpi` through the module system, and caps BLAS/OpenMP threads to keep worker launches predictable.
 

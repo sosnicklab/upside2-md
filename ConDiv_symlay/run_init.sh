@@ -75,7 +75,8 @@ esac
 
 if [ -d "$BASE_DIR" ] && has_existing_training_state "$BASE_DIR"; then
   echo "ERROR: existing training run detected at $BASE_DIR"
-  echo "Resume it with: sbatch run_remote.sh"
+  echo "Resume it with: ./submit_remote_round.sh"
+  echo "Legacy single-allocation mode is still available via: sbatch run_remote.sh"
   echo "Or remove/change BASE_DIR before rerunning ./run_init.sh."
   exit 1
 fi

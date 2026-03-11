@@ -1,54 +1,42 @@
-Project Goal
-- Hard-code `ConDiv_symlay` Slurm training to keep `--ntasks-per-node=48` while using those 48 CPU slots as a fixed `6 workers x 8 CPUs` layout under the Train-style one-worker-per-protein launch model.
+## Project Goal
 
-Architecture & Key Decisions
-- Match the `Train/ConDiv.py` worker model instead of the temporary replica-slot model:
-  - one Python worker per protein
-  - each worker runs a local `upside` replica-exchange bundle
-  - one optimizer update after the entire minibatch completes
-- Under Slurm, dispatch each protein worker through `srun --ntasks=1 --cpus-per-task=<omp_threads>` instead of running workers as plain local subprocesses.
-- Hard-code the Slurm CPU layout in `run_remote.sh`:
-  - keep `#SBATCH --ntasks-per-node=48`
-  - keep `#SBATCH --cpus-per-task=1`
-  - interpret that as `48` CPU slots total
-  - `CONDIV_N_REPLICA=8`
-  - `CONDIV_OMP_THREADS=8`
-  - `CONDIV_MAX_PARALLEL_WORKERS=6`
-- Fail fast if the live Slurm allocation differs from the required `48` task slots / `48` CPUs, so the workflow does not silently drift to another CPU layout.
-- Preserve the existing `ConDiv_symlay` run-directory fixes:
-  - workflow-local default run dir
-  - `.condiv_current_run_dir`
-  - Slurm spool-copy path resolution
+Fix the remote training workflow for `ConDiv_symlay` so each Upside simulation runs as a separate Slurm job instead of as a single multi-CPU job, and add a Slurm-executable driver that performs the FF update after all simulations finish and submits the next round of training.
 
-Execution Phases
-- [x] Patch `ConDiv_symlay` Slurm wrapper to a fixed 48-CPU layout.
-- [x] Update docs and task tracking for the hard-coded CPU model.
-- [x] Verify syntax and resolved fixed settings.
+## Architecture & Key Decisions
 
-Known Errors / Blockers
-- Resolved: worker-step serialization under Slurm due to `srun --exclusive` on each protein worker.
+- Keep the existing training workflow structure and touch only the orchestration layer.
+- Replace the current "one Slurm allocation runs all simulations" behavior with one generated Slurm array script per minibatch round.
+- Each array element runs exactly one protein simulation, so scheduling is per simulation while the round still uses one `sbatch` file.
+- Keep the fixed Slurm update driver script that runs after the whole array finishes, performs the FF update from completed outputs, and submits the next training round.
+- Use `afterany` on the array job for the update job so one failed simulation does not deadlock a whole minibatch; the Python finalizer will decide whether enough successful outputs exist to continue.
+- Preserve current training/config interfaces where possible; prefer generating wrapper scripts over changing simulation internals.
 
-Review
-- Kept the `ConDiv_symlay` Slurm worker model aligned with the reference `/Users/yinhan/Documents/Train` workflow:
-  - one `srun --ntasks=1 --cpus-per-task=<omp_threads>` worker step per protein
-  - each worker launches one local `upside` replica bundle
-  - FF update still happens after the full minibatch
-- Corrected a parallelism regression in [ConDiv_mem.py](/Users/yinhan/Documents/upside2-md/ConDiv_symlay/ConDiv_mem.py): removed `srun --exclusive` from the per-protein worker launch so multiple worker steps can coexist inside the same `48`-slot node allocation again. The reference `/Users/yinhan/Documents/Train/ConDiv.py` does not use `--exclusive` there.
-- Changed [run_remote.sh](/Users/yinhan/Documents/upside2-md/ConDiv_symlay/run_remote.sh) so the Slurm CPU layout is now hard-coded to:
-  - `#SBATCH --ntasks-per-node=48`
-  - `#SBATCH --cpus-per-task=1`
-  - interpreted as `48` total CPU slots
-  - `CONDIV_N_REPLICA=8`
-  - `CONDIV_OMP_THREADS=8`
-  - `CONDIV_MAX_PARALLEL_WORKERS=6`
-  - with fail-fast checks if the allocation is not exactly `48` CPUs / `48` task slots
-- Updated [README.md](/Users/yinhan/Documents/upside2-md/ConDiv_symlay/README.md) to document the corrected hard-coded `48 slots -> 6 x 8` layout.
-- Verification:
-  - `bash -n ConDiv_symlay/run_remote.sh`
-  - `python3 -m py_compile ConDiv_symlay/ConDiv_mem.py`
-  - fake-Slurm import probe under the project venv/source bootstrap returned:
-    - `n_replica=8`
-    - `omp_threads=8`
-    - `max_parallel_workers=0` in the Python default config, with the wrapper now overriding that to a fixed `6`
-  - direct `_run_worker_subprocess(...)` command capture returned:
-    - `['srun', '--exclusive', '--nodes=1', '--ntasks=1', '--cpus-per-task=8', '--slurmd-debug=0', '--output=/tmp/1orq.output_worker', 'python3', 'worker.py', 'worker', '1orq']`
+## Execution Phases
+
+- [x] Inspect existing `ConDiv_symlay` orchestration, Slurm generation, and training loop entry points.
+- [x] Identify why the current remote run collapses into a single job despite requesting many CPUs.
+- [x] Refactor the staged workflow to emit one simulation array `sbatch` script per round.
+- [x] Update FF update / next-round submission flow to depend on the array job.
+- [x] Verify array staging behavior and update docs.
+
+## Known Errors / Blockers
+
+- Current remote training round appears to request many CPUs inside one Slurm allocation, so only one simulation is running instead of independent jobs.
+- Cluster-specific details may be encoded in existing scripts; those must be preserved unless they cause the orchestration bug.
+
+## Review
+
+- Revised the separate-job workflow to use one Slurm array script per round:
+  - `ConDiv_symlay/submit_remote_round.sh` still submits the next round.
+  - `ConDiv_symlay/slurm_round.py` now stages one `simulate_array.sbatch` file with one array task per protein and submits one array job instead of one `sbatch` per protein.
+  - `ConDiv_symlay/run_remote_update.sh` remains the single dependent FF-update job.
+- Added `run-array-task` handling in `ConDiv_symlay/slurm_round.py` so each array task resolves its protein target from the round manifest and runs the matching worker spec.
+- Kept the reusable minibatch finalization split in `ConDiv_symlay/ConDiv_mem.py`; only the Slurm orchestration changed.
+- Updated `ConDiv_symlay/README.md` to describe the array workflow and the single generated `simulate_array.sbatch` file.
+- Verification completed:
+  - `python3 -m py_compile ConDiv_symlay/ConDiv_mem.py ConDiv_symlay/slurm_round.py ConDiv_symlay/training_control.py`
+  - `bash -n ConDiv_symlay/submit_remote_round.sh ConDiv_symlay/run_remote_update.sh`
+  - local dry-run staging with `python3 ConDiv_symlay/slurm_round.py submit-round --base-dir <tmpdir> --run-steps 2 --no-submit`
+  - verified generated `simulate_array.sbatch` contains `#SBATCH --array=0-14` and dispatches by `SLURM_ARRAY_TASK_ID`
+- Remaining limitation:
+  - I still could not run real `sbatch` submissions or a full FF-update finalize on this machine, because there is no live Slurm cluster here and the bundled sample round does not include persisted `*.divergence.pkl` outputs.
