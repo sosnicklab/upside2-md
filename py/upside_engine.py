@@ -1,5 +1,6 @@
 import numpy as np
 import ctypes as ct
+import h5py
 import shutil
 import tables as tb
 import os
@@ -170,10 +171,10 @@ def clamped_coeff_deriv(bspline_coeff, x):
 class Upside(object):
     def __init__(self, config_file_path, quiet=False):
         self.config_file_path = str(config_file_path)
-        with tb.open_file(self.config_file_path) as t:
-            self.initial_pos = t.root.input.pos[:,:,0]
+        with h5py.File(self.config_file_path, 'r') as t:
+            self.initial_pos = np.asarray(t['/input/pos'])[:, :, 0]
             self.n_atom = self.initial_pos.shape[0]
-            self.sequence = t.root.input.sequence[:]
+            self.sequence = np.asarray(t['/input/sequence'])
         self.engine = calc.construct_deriv_engine(self.n_atom, bytes(self.config_file_path, encoding="ascii"), bool(quiet))
         if self.engine is None: raise RuntimeError('Unable to initialize upside engine for %s'%(config_file_path,))
 

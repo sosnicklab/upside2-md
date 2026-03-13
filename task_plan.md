@@ -74,3 +74,39 @@ Fix the `ConDiv_symlay` worker post-processing crash so completed simulation out
   - replayed the downloaded `ConDiv_symlay/test_dimer3/epoch_00_minibatch_00` outputs through `ConDiv_mem._compute_divergence_isolated(...)` for all 15 targets; all returned 300-frame derivative tensors successfully
   - rebuilt all 15 missing divergence files in the downloaded `epoch_00_minibatch_00` round and confirmed `finalize_minibatch_from_outputs()` completed successfully against that recovered data
   - created a fresh temporary copy of `ConDiv_symlay/test_dimer3`, deleted all recovered divergence files, patched the copied checkpoint/manifest to local paths, and ran `python3 ConDiv_symlay/slurm_round.py finalize-round --round-manifest <temp manifest>` successfully end-to-end; it recovered all 15 divergence files, wrote `epoch_00_minibatch_00/checkpoint.pkl`, and updated training progress/status outputs
+
+## Current Correction
+
+- The user confirmed `ConDiv_symlay/slurm-46899622.out` is from the current code, so the previous follow-up review is not sufficient evidence that the bug is fixed on the active code path.
+- Local reproduction also showed the current helper path can still crash child Python processes during divergence recovery, which matches the user-visible macOS popup failures even when the parent process retries and eventually succeeds.
+
+## Current Goal
+
+Eliminate the native membrane-gradient corruption that crashes `ConDiv_symlay` divergence recovery, while preserving bitwise-identical simulation results before and after the fix.
+
+## Current Decisions
+
+- The remaining crash is a native bug in membrane parameter-derivative evaluation, not a simulation-integrator bug and not primarily a Python orchestration bug.
+- The required native fix is to stop writing right-side spline derivative contributions past the end of the derivative buffer in `src/membrane_potential.cpp`.
+- Keep the Python-side helper hardening (`divergence_helper.py`, single-threaded helper env, lighter `Upside` metadata reads) because it reduces unrelated teardown noise, but it is not the root-cause fix.
+- Restore the normal helper batch limit to `64` after the native fix; the analysis path should now succeed without relying on artificially small batches.
+- Preserve simulation behavior exactly. Any change in `src/membrane_potential.cpp` is acceptable only if seeded old-vs-new simulation outputs remain identical.
+
+## Current Phases
+
+- [x] Reproduce the current helper crash path directly from the downloaded `epoch_00_minibatch_00` artifacts.
+- [x] Identify the concrete native root cause in membrane derivative evaluation.
+- [x] Patch the native out-of-bounds writes and rebuild the affected binaries.
+- [x] Verify stress-target recovery and end-to-end `finalize-round` on a fresh local copy of the downloaded round.
+- [x] Verify seeded old-vs-new simulation parity for the `src/membrane_potential.cpp` change.
+
+## Current Review
+
+- Root cause: `MembraneCBPotential::get_param_deriv()` and `MembraneSurfCBPotential::get_param_deriv()` in `src/membrane_potential.cpp` both allocated `deriv(np)` and then wrote right-side spline contributions at `shift + np`, corrupting memory during membrane-gradient extraction.
+- Native fix applied: remove the extra `+ np` offset in those two derivative-write paths so both left- and right-side spline terms index the allocated `np`-length buffer correctly.
+- Analysis verification:
+  - previously unstable targets `2oar`, `3ukm`, and `5vb2` now complete divergence recovery with zero helper retries at `CONDIV_DIVERGENCE_BATCH_LIMIT=64`
+  - a fresh `python3 ConDiv_symlay/slurm_round.py finalize-round --round-manifest <patched temp manifest>` replay on a clean temp copy of `ConDiv_symlay/test_dimer3` rebuilt all 15 divergence files, wrote `checkpoint.pkl`, and reported no recovery failures
+- Simulation-parity verification:
+  - built a temporary pre-patch `upside` binary and ran old/new binaries on identical stripped copies of `2oar.run.1.h5` with the same seed
+  - compared all shared `/output` datasets and found exact matches for every dataset, including `pos`, `potential`, `kinetic`, and `hbond`

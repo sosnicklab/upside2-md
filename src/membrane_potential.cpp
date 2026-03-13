@@ -474,7 +474,7 @@ struct MembraneCBPotential : public PotentialNode
 
             clamped_deBoor_coeff_deriv(&starting_bin, result, coord_right, n_node);
             for (int bi: range(n_bl)) {
-                int shift = (rt*n_bl + bi)*n_node + np;
+                int shift = (rt*n_bl + bi)*n_node;
                 for(int i: range(4)) deriv[shift+starting_bin+i] += result[i]*bl_score[bi]*lr;
             }
         }
@@ -975,7 +975,7 @@ struct MembraneSurfCBPotential : public PotentialNode
             else
                     surfv = surf(0, ri);
 
-                int shift = (rt*n_bl + bi)*n_node + np;
+                int shift = (rt*n_bl + bi)*n_node;
                 for(int i: range(4)) deriv[shift+starting_bin+i] += result[i]*bl_score[bi]*lr*surfv;
             }
         }
@@ -1353,4 +1353,3 @@ struct MembraneLateralPotential : public PotentialNode
 };
 
 static RegisterNodeType<MembraneLateralPotential, 3> membrane_lateral_potential_node("membranelateral_potential");
-

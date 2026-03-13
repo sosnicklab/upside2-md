@@ -807,6 +807,23 @@ def _compute_divergence_helper_main(config_base: str, pos_path: str, output_path
     os._exit(0)
 
 
+def _divergence_helper_env() -> Dict[str, str]:
+    # The native helper becomes unstable if it inherits the worker's thread
+    # counts from Slurm/OpenMP/BLAS. Force helper evaluation to be single-threaded.
+    env = os.environ.copy()
+    for key in (
+        "OMP_NUM_THREADS",
+        "OMP_THREAD_LIMIT",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "BLIS_NUM_THREADS",
+    ):
+        env[key] = "1"
+    return env
+
+
 def _compute_divergence_isolated(config_base: str, pos: np.ndarray) -> Update:
     pos = np.asarray(pos, dtype=np.float32)
     if pos.shape[0] <= 0:
@@ -843,6 +860,7 @@ def _compute_divergence_isolated(config_base: str, pos: np.ndarray) -> Update:
 
 def _compute_divergence_batch_isolated(config_base: str, pos: np.ndarray) -> Update:
     work_dir = Path(config_base).expanduser().resolve().parent
+    helper_path = Path(__file__).resolve().with_name("divergence_helper.py")
     pos_fd, pos_path = tempfile.mkstemp(
         prefix=f"{Path(config_base).stem}.divergence-pos-",
         suffix=".pkl",
@@ -863,13 +881,18 @@ def _compute_divergence_batch_isolated(config_base: str, pos: np.ndarray) -> Upd
         cmd = [
             sys.executable,
             "-u",
-            str(Path(__file__).resolve()),
-            "compute-divergence",
+            str(helper_path),
             str(Path(config_base).expanduser().resolve()),
             pos_path,
             result_path,
         ]
-        proc = sp.run(cmd, capture_output=True, text=True, check=False)
+        proc = sp.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_divergence_helper_env(),
+        )
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout).strip()
             if detail:
@@ -879,7 +902,7 @@ def _compute_divergence_batch_isolated(config_base: str, pos: np.ndarray) -> Upd
             raise RuntimeError("DIVERGENCE_HELPER_FAIL: helper produced no output")
 
         with open(result_path, "rb") as fh:
-            return cp.load(fh)
+            return Update(*cp.load(fh))
     finally:
         Path(pos_path).unlink(missing_ok=True)
         Path(result_path).unlink(missing_ok=True)
