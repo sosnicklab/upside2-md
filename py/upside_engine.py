@@ -257,7 +257,13 @@ class Upside(object):
         return value
 
     def __del__(self):
-        calc.free_deriv_engine(self.engine)
+        engine = getattr(self, 'engine', None)
+        self.engine = None
+        if not engine:
+            return
+        if os.environ.get('CONDIV_SKIP_UPSIDE_ENGINE_FREE') == '1':
+            return
+        calc.free_deriv_engine(engine)
 
 def get_rotamer_graph(engine):
     n_node, n_edge = engine.get_value_by_name((2,),         'rotamer', 'graph_nodes_edges_sizes').astype('i')

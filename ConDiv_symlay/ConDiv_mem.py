@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess as sp
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -256,6 +257,23 @@ def pin_inner_to_nonmembrane_baseline(update: Update) -> Update:
         np.asarray(update.hb, dtype=np.float32),
         np.zeros_like(update.ihb, dtype=np.float32),
     )
+
+
+def _align_update_to_reference_shapes(update: Update, reference: Update) -> Update:
+    aligned = []
+    for value, ref in zip(update, reference):
+        value_arr = np.asarray(value, dtype=np.float32)
+        ref_arr = np.asarray(ref, dtype=np.float32)
+        if value_arr.shape == ref_arr.shape:
+            aligned.append(value_arr)
+            continue
+        if value_arr.size == 0:
+            aligned.append(np.zeros_like(ref_arr, dtype=np.float32))
+            continue
+        raise RuntimeError(
+            f"Gradient shape mismatch: got {value_arr.shape}, expected {ref_arr.shape}"
+        )
+    return Update(*aligned)
 
 
 class AdamSolver:
@@ -775,6 +793,172 @@ def compute_divergence(config_base: str, pos: np.ndarray, mode: int = 0) -> Upda
     return Update(*[np.asarray(x) for x in contrast])
 
 
+def _compute_divergence_helper_main(config_base: str, pos_path: str, output_path: str) -> None:
+    os.environ["CONDIV_SKIP_UPSIDE_ENGINE_FREE"] = "1"
+    with open(pos_path, "rb") as fh:
+        pos = cp.load(fh)
+    divergence = compute_divergence(config_base, np.asarray(pos, dtype=np.float32))
+    with open(output_path, "wb") as fh:
+        cp.dump(divergence, fh, protocol=4)
+        fh.flush()
+        os.fsync(fh.fileno())
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
+
+
+def _compute_divergence_isolated(config_base: str, pos: np.ndarray) -> Update:
+    pos = np.asarray(pos, dtype=np.float32)
+    if pos.shape[0] <= 0:
+        raise RuntimeError("DIVERGENCE_HELPER_FAIL: empty position batch")
+
+    batch_limit = max(1, int(os.environ.get("CONDIV_DIVERGENCE_BATCH_LIMIT", "64")))
+    if pos.shape[0] > batch_limit:
+        chunks = []
+        for start in range(0, pos.shape[0], batch_limit):
+            stop = min(start + batch_limit, pos.shape[0])
+            chunks.append(_compute_divergence_isolated(config_base, pos[start:stop]))
+        return Update(
+            *[
+                np.concatenate([np.asarray(chunk_term) for chunk_term in terms], axis=0)
+                for terms in zip(*chunks)
+            ]
+        )
+
+    try:
+        return _compute_divergence_batch_isolated(config_base, pos)
+    except RuntimeError:
+        if pos.shape[0] == 1:
+            raise
+        mid = pos.shape[0] // 2
+        left = _compute_divergence_isolated(config_base, pos[:mid])
+        right = _compute_divergence_isolated(config_base, pos[mid:])
+        return Update(
+            *[
+                np.concatenate([np.asarray(l_term), np.asarray(r_term)], axis=0)
+                for l_term, r_term in zip(left, right)
+            ]
+        )
+
+
+def _compute_divergence_batch_isolated(config_base: str, pos: np.ndarray) -> Update:
+    work_dir = Path(config_base).expanduser().resolve().parent
+    pos_fd, pos_path = tempfile.mkstemp(
+        prefix=f"{Path(config_base).stem}.divergence-pos-",
+        suffix=".pkl",
+        dir=str(work_dir),
+    )
+    os.close(pos_fd)
+    result_fd, result_path = tempfile.mkstemp(
+        prefix=f"{Path(config_base).stem}.divergence-out-",
+        suffix=".pkl",
+        dir=str(work_dir),
+    )
+    os.close(result_fd)
+
+    try:
+        with open(pos_path, "wb") as fh:
+            cp.dump(pos, fh, protocol=4)
+
+        cmd = [
+            sys.executable,
+            "-u",
+            str(Path(__file__).resolve()),
+            "compute-divergence",
+            str(Path(config_base).expanduser().resolve()),
+            pos_path,
+            result_path,
+        ]
+        proc = sp.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout).strip()
+            if detail:
+                raise RuntimeError(f"DIVERGENCE_HELPER_FAIL (exit {proc.returncode}): {detail}")
+            raise RuntimeError(f"DIVERGENCE_HELPER_FAIL (exit {proc.returncode})")
+        if not os.path.exists(result_path) or os.path.getsize(result_path) <= 0:
+            raise RuntimeError("DIVERGENCE_HELPER_FAIL: helper produced no output")
+
+        with open(result_path, "rb") as fh:
+            return cp.load(fh)
+    finally:
+        Path(pos_path).unlink(missing_ok=True)
+        Path(result_path).unlink(missing_ok=True)
+
+
+def _build_divergence_from_outputs(
+    restrained_config: str,
+    free_config: str,
+    initial_structure_npy: str,
+    walltime: Optional[float] = None,
+) -> dict:
+    divergence = {}
+    equil_fraction = 0.25
+
+    with tb.open_file(restrained_config) as t:
+        pos_restrain = _select_finite_equil_frames(t.root.output.pos[:, 0], equil_fraction)
+    with tb.open_file(free_config) as t:
+        pos_free = _select_finite_equil_frames(t.root.output.pos[:, 0], equil_fraction)
+
+    target = _load_native_positions(initial_structure_npy)
+    atom_slice = _rmsd_atom_slice(int(target.shape[0]), CONFIG.rmsd_k)
+    divergence["rmsd_restrain"] = float(
+        ru.traj_rmsd(pos_restrain[:, atom_slice], target[atom_slice]).mean()
+    )
+    divergence["rmsd"] = float(
+        ru.traj_rmsd(pos_free[:, atom_slice], target[atom_slice]).mean()
+    )
+    divergence["com_restrain"] = float(pos_restrain[:, :, 2].mean())
+    divergence["com"] = float(pos_free[:, :, 2].mean())
+
+    all_pos = np.concatenate([pos_restrain, pos_free], axis=0)
+    all_div = _compute_divergence_isolated(free_config, all_pos)
+    n_pos0 = len(pos_restrain)
+    divergence["contrast"] = Update(
+        *[x[:n_pos0].mean(axis=0) - x[n_pos0:].mean(axis=0) for x in all_div]
+    )
+    metric_vals = np.array(
+        [divergence["rmsd_restrain"], divergence["rmsd"], divergence["com_restrain"], divergence["com"]],
+        dtype=np.float64,
+    )
+    if not np.isfinite(metric_vals).all():
+        raise RuntimeError("NONFINITE_DIVERGENCE_METRICS")
+    for term_name, term in zip(("cb", "icb", "hb", "ihb"), divergence["contrast"]):
+        if not np.isfinite(term).all():
+            raise RuntimeError(f"NONFINITE_DIVERGENCE_CONTRAST {term_name}")
+
+    divergence["walltime"] = float(walltime) if walltime is not None else float("nan")
+    return divergence
+
+
+def recover_missing_divergence_outputs(direc: str, minibatch) -> None:
+    for nm, _target in minibatch:
+        divergence_path = os.path.join(direc, f"{nm}.divergence.pkl")
+        if os.path.exists(divergence_path):
+            continue
+
+        restrained_config = os.path.join(direc, f"{nm}.run.0.h5")
+        free_config = os.path.join(direc, f"{nm}.run.1.h5")
+        initial_structure_npy = os.path.join(direc, f"{nm}.initial.npy")
+        required = [restrained_config, free_config, initial_structure_npy]
+        if not all(os.path.exists(path) for path in required):
+            print(nm, "RECOVER_INPUT_MISSING")
+            continue
+
+        try:
+            divergence = _build_divergence_from_outputs(
+                restrained_config,
+                free_config,
+                initial_structure_npy,
+            )
+        except Exception as exc:
+            print(nm, f"RECOVER_DIVERGENCE_FAIL {exc}")
+            continue
+
+        with open(divergence_path, "wb") as fh:
+            cp.dump(divergence, fh, -1)
+        print(nm, "RECOVERED_DIVERGENCE")
+
+
 def _safe_energy_component(engine: ue.Upside, node_name: str) -> float:
     try:
         return float(engine.get_output(node_name)[0, 0])
@@ -1048,6 +1232,7 @@ def finalize_minibatch_from_outputs(
     solver: AdamSolver,
 ) -> Tuple[Update, dict]:
     rmsd, com, change = collect_minibatch_outputs(direc, minibatch)
+    change = [_align_update_to_reference_shapes(x, param) for x in change]
 
     if not change:
         raise RuntimeError("All jobs failed")
@@ -1279,42 +1464,12 @@ def main_worker():
             raise RuntimeError("RUN_FAIL")
         print(f"WARNING: run_upside returned {run_retcode}, continuing with existing output frames")
 
-    divergence = {}
-    equil_fraction = 0.25
-
-    with tb.open_file(configs[0]) as t:
-        pos_restrain = _select_finite_equil_frames(t.root.output.pos[:, 0], equil_fraction)
-    with tb.open_file(configs[1]) as t:
-        pos_free = _select_finite_equil_frames(t.root.output.pos[:, 0], equil_fraction)
-
-    target = _load_native_positions(initial_structure_npy)
-    atom_slice = _rmsd_atom_slice(int(target.shape[0]), CONFIG.rmsd_k)
-    divergence["rmsd_restrain"] = float(
-        ru.traj_rmsd(pos_restrain[:, atom_slice], target[atom_slice]).mean()
+    divergence = _build_divergence_from_outputs(
+        configs[0],
+        configs[1],
+        initial_structure_npy,
+        walltime=(time.time() - tstart),
     )
-    divergence["rmsd"] = float(
-        ru.traj_rmsd(pos_free[:, atom_slice], target[atom_slice]).mean()
-    )
-    divergence["com_restrain"] = float(pos_restrain[:, :, 2].mean())
-    divergence["com"] = float(pos_free[:, :, 2].mean())
-
-    all_pos = np.concatenate([pos_restrain, pos_free], axis=0)
-    all_div = compute_divergence(configs[1], all_pos)
-    n_pos0 = len(pos_restrain)
-    divergence["contrast"] = Update(
-        *[x[:n_pos0].mean(axis=0) - x[n_pos0:].mean(axis=0) for x in all_div]
-    )
-    metric_vals = np.array(
-        [divergence["rmsd_restrain"], divergence["rmsd"], divergence["com_restrain"], divergence["com"]],
-        dtype=np.float64,
-    )
-    if not np.isfinite(metric_vals).all():
-        raise RuntimeError("NONFINITE_DIVERGENCE_METRICS")
-    for term_name, term in zip(("cb", "icb", "hb", "ihb"), divergence["contrast"]):
-        if not np.isfinite(term).all():
-            raise RuntimeError(f"NONFINITE_DIVERGENCE_CONTRAST {term_name}")
-
-    divergence["walltime"] = float(time.time() - tstart)
 
     if CONFIG.restart_from_last:
         with open(init_path, "rb") as ixyz:
@@ -1579,6 +1734,7 @@ def main_usage() -> str:
         "  ConDiv_mem.py initialize <init_dir> <protein_dir> <protein_list|cached> <base_dir>\n"
         "  ConDiv_mem.py restart <checkpoint.pkl> <max_iter>\n"
         "  ConDiv_mem.py worker <internal args...>\n"
+        "  ConDiv_mem.py compute-divergence <config.h5> <pos.pkl> <output.pkl>\n"
     )
 
 
@@ -1589,6 +1745,10 @@ if __name__ == "__main__":
     mode = sys.argv[1]
     if mode == "worker":
         main_worker()
+    elif mode == "compute-divergence":
+        if len(sys.argv[1:]) != 4:
+            raise RuntimeError(main_usage())
+        _compute_divergence_helper_main(sys.argv[2], sys.argv[3], sys.argv[4])
     elif mode == "restart":
         if len(sys.argv[1:]) != 3:
             raise RuntimeError(main_usage())

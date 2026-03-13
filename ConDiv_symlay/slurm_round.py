@@ -472,6 +472,7 @@ def finalize_round(manifest_path: Path) -> int:
         )
 
     minibatch = state["minibatches"][state["i_mb"]]
+    cd.recover_missing_divergence_outputs(str(round_dir), minibatch)
     new_param, grad_stats = cd.finalize_minibatch_from_outputs(
         state,
         state["param"],
