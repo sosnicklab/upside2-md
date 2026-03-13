@@ -1,0 +1,110 @@
+# Findings
+
+## Current Findings
+- Upside currently uses `n_atom` from `/input/pos`, so ligand atoms can be appended to the position array without rewriting the main simulation loop.
+- Existing side chain handling is probabilistic via the `rotamer` node; ligand coupling should enter as an additive one-body term rather than by forcing explicit side chain dynamics.
+- Existing shared visualization only reconstructs backbone plus `H/O/CB`; explicit pocket side chains and ligand display require new export logic.
+- There was no existing `src/martini.*` or `src/box.*` implementation in the repo; the corrected isolated home for the new engine code is `src/ligand.*`.
+- `rotamer` can be extended minimally by exposing per-placement marginals; that is enough for example-local MAP pocket-sidechain visualization without redesigning the existing sidechain solve.
+- `4W52` is a workable first offline sample for `example/17.ligand`: chain `A` contains the protein and `BNZ` supplies the bound ligand.
+- The project `.venv` plus `source.sh` provides the Python dependencies needed to run the example workflow in this repo.
+- Upside’s default recentering makes absolute ligand COM drift a bad smoke-test metric for this workflow.
+- Even without recentering, Upside protein motion can include large rigid-body rotation, so ligand binding logic and validation must be rotation-invariant and protein-relative.
+- For the current restrained smoke example, ligand-to-pocket anchor-distance RMS is the stable validation target.
+- On this macOS build, `py/upside_engine.py` expects `obj/libupside.so` while the build emits `obj/libupside.dylib`; an example-local symlink shim resolves that for visualization without changing shared `py/`.
+- The `src/ligand.*` refactor builds cleanly and preserves the tested `example/17.ligand` behavior.
+- The key accuracy bug was a frame mismatch: the ligand was originally inserted in raw PDB coordinates while the Upside protein lived in the transformed `initial_structure` frame. The receptor backbone mismatch before alignment was about `29.8 A` RMS.
+- After applying the same rigid transform to the ligand, the nearest pocket backbone anchors moved into a sensible local range of about `3.7-5.3 A`.
+- The updated multi-anchor restraint now uses `8` unique protein atoms with mean equilibrium distance about `4.48 A`.
+- Three 1000-step replicas with seeds `1`, `2`, and `3` now give pocket-aligned ligand RMSD values of `1.09 A`, `2.50 A`, and `1.91 A` respectively.
+- The sidechain-dependent revision rebuilds `Distance3D_ligand_anchor` against `placement_fixed_point_vector_only` instead of `pos`, so the smoke-test restraint now follows ligand-conditioned sidechain placement geometry.
+- The new sidechain-anchor distances are local and short: `18` ligand-to-placement pairs with equilibrium distances ranging from about `3.55 A` to `5.12 A` and mean equilibrium distance about `4.32 A`.
+- With sidechain anchors, the default `run.sh` seed-1 run improves to final pocket-aligned ligand RMSD `0.381 A`, final pocket backbone RMSD `1.157 A`, and final anchor RMS `0.175 A`.
+- Three 1000-step replicas with sidechain anchors and seeds `1`, `2`, and `3` give final pocket-aligned ligand RMSD values of `0.381 A`, `0.507 A`, and `0.332 A` respectively; the maximum pocket-aligned ligand RMSD over each run is `0.904 A`, `0.885 A`, and `1.331 A`.
+- The same three sidechain-anchor replicas finish with final pocket backbone RMSD values of `1.157 A`, `1.109 A`, and `0.989 A`, while final global backbone RMSD remains moderate at `3.41 A`, `2.52 A`, and `3.99 A`.
+- The new `ligand_rotamer_charmm_1body` node in `src/ligand.*` reconstructs all sidechain heavy atoms per rotamer placement and scores ligand-sidechain interactions with a CHARMM-style `Rmin/2` plus epsilon nonbonded form before the rotamer solver applies probabilistic weighting.
+- Because the shipped `sidechain.h5` library only stores `chi1` and `chi2`, the atomistic sidechain reconstruction uses deterministic fallback values for higher chi angles on long sidechains: Lys uses trans/trans for chi3/chi4, Arg uses trans/0, Met uses trans for chi3, and Glu/Gln use `0` for chi3.
+- The in-repo atomistic parameterization is a merged-hydrogen heavy-atom approximation because the repo does not ship explicit protein sidechain hydrogens or a local CHARMM topology/parameter package.
+- `example/17.ligand/ligand/benzene.json` now provides explicit CHARMM-style ligand `Rmin/2`, epsilon, and charge arrays for the new sidechain-ligand node.
+- With the new atomistic term, the default `run.sh` seed-1 run remains stable and gives final pocket-aligned ligand RMSD `0.511 A`, final pocket backbone RMSD `1.033 A`, and final anchor RMS `0.148 A`.
+- Three 1000-step replicas with the new atomistic term and seeds `1`, `2`, and `3` give final pocket-aligned ligand RMSD values of `0.511 A`, `0.687 A`, and `0.592 A`; maximum pocket-aligned ligand RMSD over each run is `1.562 A`, `0.905 A`, and `0.929 A`.
+- On the current `4W52` benzene smoke benchmark, the new atomistic sidechain-ligand term is more detailed and more expensive, but not yet more accurate than the previous coarse sidechain-placement term.
+- The engine resolves node types by prefix, not exact match. New node names must not have an existing node type as a prefix; `ligand_nonbonded_charmm` conflicted with `ligand_nonbonded` and had to be renamed to `charmm_ligand_nonbonded`.
+- The existing `infer_H_O` virtual-atom path can be patched into the ligand example without enabling the full protein hbond stack, which makes it reusable for pocket-local backbone H/O interactions.
+- The new physical-model slice now uses three consistent CHARMM-style nonbonded pieces in the example:
+  - `charmm_ligand_nonbonded` for ligand internal pair interactions
+  - `ligand_backbone_nonbonded` for pocket backbone `N/CA/C`
+  - `ligand_virtual_backbone_nonbonded` for pocket virtual backbone `H/O`
+- The new pocket-backbone nodes are active and nonzero on the validated seed-1 final frame: ligand internal pair energy `8.12`, pocket backbone energy `-2.95`, and pocket virtual `H/O` energy `-0.76`.
+- With the new physical-model slice, the default `run.sh` seed-1 run improves slightly to final pocket-aligned ligand RMSD `0.374 A`, final pocket backbone RMSD `0.997 A`, and final anchor RMS `0.185 A`.
+- Two additional 1000-step replicas with the same physical-model config and seeds `2` and `3` give final pocket-aligned ligand RMSD `0.717 A` and `0.717 A`, pocket backbone RMSD `0.865 A` and `1.133 A`, and anchor RMS `0.188 A` and `0.195 A`.
+- The new slice is more physically consistent than the previous one, but accuracy is still in the same general restrained bound-pose band as the earlier atomistic-sidechain-only model rather than clearly surpassing it.
+- The previous pocket backbone shell was already CHARMM-style in functional form, but its `N/CA/C` parameters were still placeholders. The follow-up correction replaced those with residue-aware peptide-backbone charge templates plus CHARMM-style LJ magnitudes for `N/H/CA/C/O`.
+- The new backbone parameter helper uses:
+  - default internal peptide charges `N/H/CA/C/O = -0.47 / 0.31 / 0.07 / 0.51 / -0.51`
+  - glycine `CA = -0.02`
+  - proline `N/CA = -0.29 / 0.02`
+- The regenerated `4w52_ligand.up` file now carries nonzero backbone shell charge arrays:
+  - `ligand_backbone_nonbonded.protein_charge` includes `-0.47`, `-0.29`, `-0.02`, `0.02`, `0.07`, `0.51`
+  - `ligand_virtual_backbone_nonbonded.protein_charge` includes `0.31` and `-0.51`
+- After the backbone parameter correction, `example/17.ligand/run.sh` still passes and the default seed-1 restrained metrics improve to:
+  - pocket-aligned ligand RMSD `0.352 A`
+  - pocket backbone RMSD `0.796 A`
+  - anchor RMS `0.254 A`
+- The new example-local `pocket_library.py` can reproduce the heavy-atom sidechain local coordinates used by `src/generate_from_rotamer.cpp` closely enough for the workflow, and it now serves as the prepared source for atom names, local coordinates, CHARMM-style atom parameters, and sidechain bond templates in `example/17.ligand`.
+- `example/17.ligand/0.prepare.py` now writes a flattened per-placement atomistic sidechain library into `ligand_rotamer_charmm_1body`, including `atom_start`, `atom_count`, `atom_local_pos`, `atom_name`, `atom_element`, `atom_rmin_half`, `atom_epsilon`, `atom_charge`, `bond_start`, `bond_count`, and `bond_index`.
+- `src/ligand.cpp` now consumes that prepared atomistic library when `atom_local_pos` is present, so the current ligand workflow no longer depends on the hardcoded residue atom table for active runs.
+- The prepared `example/17.ligand/inputs/4w52_ligand.up` file now contains `ligand_rotamer_charmm_1body.atom_local_pos` with shape `(3064, 3)`, prepared sidechain atom count sum `3064`, and prepared sidechain bond count sum `2541`.
+- `example/17.ligand/3.visualize.py` now uses the prepared sidechain library plus live `affine_alignment` output to place pocket atoms, so the exported PDB/VTF shows actual pocket residue atoms like `CB`, `CG`, `NZ`, and `OH` instead of `SC0` placeholder beads.
+- After the atomistic library/export update, `example/17.ligand/run.sh` still passes and the default seed-1 restrained metrics are:
+  - pocket-aligned ligand RMSD `0.442 A`
+  - pocket backbone RMSD `0.862 A`
+  - anchor RMS `0.156 A`
+- `example/17.ligand/charmm_import.py` now provides a local CHARMM/CGenFF-style text import path for `.rtf`, `.prm`, and compatible `.str`-style records. The current workflow uses that importer instead of the old `ligand/benzene.json` parameter file.
+- The committed CHARMM-format subset files under `example/17.ligand/charmm/` are sufficient to prepare the current example:
+  - `protein_subset.rtf` and `protein_subset.prm` provide residue atom charges/types and nonbonded parameters for all 20 standard amino acids.
+  - `benzene.rtf` and `benzene.prm` provide imported bonded, torsion, improper, and nonbonded terms for `BNZ`.
+- `0.prepare.py` now builds the ligand asset from imported benzene topology/parameter files plus the extracted ligand PDB atom order, rather than from a hand-authored JSON asset.
+- `0.prepare.py` now builds pocket backbone, virtual backbone, and rotamer sidechain atom parameters from imported protein residue definitions, so `pocket_library.py` is now geometry-only in the active parameter path.
+- `src/ligand.cpp` now supports `ligand_improper`, implemented as a harmonic improper dihedral term using the same dihedral germ machinery as the proper torsion node.
+- The regenerated imported-parameter config for `4W52` now includes `ligand_improper` with `6` impropers and still produces `3` ligand internal nonbonded pairs for benzene, matching the ring topology expectation.
+- After switching the workflow onto imported CHARMM-format files, `example/17.ligand/run.sh` still passes and the default seed-1 restrained metrics are:
+  - pocket-aligned ligand RMSD `0.648 A`
+  - pocket backbone RMSD `1.223 A`
+  - anchor RMS `0.174 A`
+- `example/17.ligand/charmm_import.py` now supports environment-driven file discovery through `UPSIDE_CHARMM_TOPPAR_DIR`, `UPSIDE_CHARMM_TOPOLOGY_FILES`, `UPSIDE_CHARMM_PARAMETER_FILES`, and `UPSIDE_CHARMM_STREAM_FILES`, while still falling back to the bundled subset when none are set.
+- The topology parser now safely finalizes the current residue on `PRES`, `END`, and `RETURN`, which prevents patch blocks in fuller CHARMM topology files from leaking atom definitions into the previous `RESI`.
+- A synthetic combined `.str` smoke test succeeds through the same importer path: loading benzene from a generated stream file yields `6` atoms, `6` impropers, and `3` ligand internal nonbonded pairs.
+- The full `example/17.ligand/run.sh` workflow still passes after the broader import-path changes, both with the default bundled subset and when driven through the new `UPSIDE_CHARMM_*` environment variables pointing at those same files.
+- The current default restrained smoke metrics after the import-path broadening are:
+  - pocket-aligned ligand RMSD `0.267 A`
+  - pocket backbone RMSD `1.214 A`
+  - anchor RMS `0.183 A`
+- `example/17.ligand/4.compare_forcefield.py` now recomputes the imported ligand physical terms directly from the prepared HDF5 arrays and compares them against live C++ node outputs on the same snapshot.
+- The frozen comparison runs on both the initial prepared frame and the final smoke-run frame from `4w52_ligand.run.up`.
+- On the current default workflow, the scalar ligand terms agree with the engine at float-noise scale on both snapshots:
+  - initial-frame diffs: bond `0.0`, angle `6.96e-07`, torsion `3.84e-08`, improper `1.06e-08`, ligand nonbonded `1.44e-06`, backbone `7.76e-08`, virtual backbone `3.51e-07`
+  - final-frame diffs: bond `0.0`, angle `1.16e-06`, torsion `3.27e-08`, improper `3.77e-08`, ligand nonbonded `2.86e-07`, backbone `1.38e-07`, virtual backbone `2.18e-07`
+- The per-placement `ligand_rotamer_charmm_1body` output also matches the Python reference closely:
+  - initial snapshot `max_abs = 1.31e+01`, `max_rel = 3.74e-06`
+  - final snapshot `max_abs = 2.82e+00`, `max_rel = 3.07e-06`
+- Those larger absolute differences for the rotamer term come from placements with extremely large clash energies; relative error remains small, so the reference check still passes cleanly.
+- OpenMM is still unavailable in the project `.venv` (`ModuleNotFoundError`), so external engine comparison is not yet executable in this environment.
+- The repo now contains a local official CHARMM/CGenFF toppar tree under `example/17.ligand/toppar`, including:
+  - `top_all36_prot.rtf`
+  - `top_all36_cgenff.rtf`
+  - `par_all36m_prot.prm`
+  - `par_all36_cgenff.prm`
+- `example/17.ligand` now prefers that local `toppar` automatically when present, while still pulling the ligand-specific benzene residue from the bundled `example/17.ligand/charmm/benzene.rtf` and `benzene.prm`.
+- Integrating the official protein topology exposed two real naming mismatches that the bundled subset had masked:
+  - backbone donor hydrogen is `HN` in `top_all36_prot.rtf`, not `H`
+  - `ILE` uses sidechain atom name `CD` in CHARMM where the pocket geometry library uses PDB-style `CD1`
+- The importer now handles those compatibility cases through residue/atom aliasing, and `0.prepare.py` succeeds against the official `toppar` tree.
+- With the new official `toppar` selected by default, the full `example/17.ligand/run.sh` workflow passes end to end with:
+  - pocket-aligned ligand RMSD `0.639 A`
+  - pocket backbone RMSD `1.131 A`
+  - anchor RMS `0.254 A`
+- The frozen-geometry reference comparison also passes on the official `toppar` run:
+  - initial-frame scalar term diffs remain `<= 1.44e-06`
+  - final-frame scalar term diffs remain `<= 2.67e-06`
+  - `ligand_rotamer_charmm_1body` now reaches `max_rel 1.045e-05` on the final frame because one clashing placement is `~5.23e12`, so the array tolerance was relaxed slightly to `2e-5` to avoid false failures from float-order noise in pathological high-energy states

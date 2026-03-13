@@ -1,0 +1,16 @@
+* Minimal CHARMM-format nonbonded subset for example/17.ligand
+36 1
+
+NONBONDED nbxmod 5 atom cdiel shift vatom vdistance vswitch -
+cutnb 16.0 ctofnb 14.0 ctonnb 12.0 eps 1.0 e14fac 1.0 wmin 1.5
+CALI  0.0  -0.0700   2.0000
+CARO  0.0  -0.0700   1.9900
+CABL  0.0  -0.0200   2.2750
+CCAR  0.0  -0.1100   2.0000
+NPOL  0.0  -0.2000   1.8500
+NCAT  0.0  -0.2000   1.8500
+OXY   0.0  -0.1200   1.7000
+SULF  0.0  -0.2500   2.0000
+HBLK  0.0  -0.0460   0.2245
+
+END

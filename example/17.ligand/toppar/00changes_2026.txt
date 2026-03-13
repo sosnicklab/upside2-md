@@ -1,0 +1,89 @@
+#Toppar change log
+#Update of the additive CHARMM36 force-field toppar files
+
+*** 2026_2_14
+
+Additional changes associated with version 5.0 of CGenFF. Both the current
+version 4.6 and version 5.0 will be made available as follows.
+
+Version 4.6 given the following names. These were already in the
+toppar_c36_releases but will be renamed to the following. In addition a v4.6 test case is
+
+top_all36_cgenff_v4.6.rtf
+par_all36_cgenff_v4.6.prm
+
+test/test_cgenff_v4.6.inp
+
+Version 5.0 is assummed to be the default
+
+top_all36_cgenff.rtf
+par_all36_cgenff.prm
+
+test/test_cgenff.inp: requires test_cgenff_pre_v5.0.str and test_ic_atoms.str
+
+run_all36_test.cmd: updated to run both testcases. requires manual
+intervention to set information for charmm version and location.
+
+These changes superseed some of the changes made below.
+
+*** 2026_1_24
+
+Updating of the CGenFF Version5.0 topology and parameter files and the test case
+Alex MacKerell
+
+The number of parameters in CGenFF v5.0 is greatly increased,
+therefore the following CHARMM Array dimensions need to be set to the
+following and the program compiled. This has been done by the
+CHARMM-GUI people so their version runs the new CGenFF. Future
+versions of CHARMM release will have the correct dimensions.
+
+MAXCP 100000
+MAXNBF 400000
+
+Repeated residues when using CHARMM-GUI inputs. These have been
+present for a long time and are due to, in part, a lot of residues in
+the CHARMM biomolecular force field being included in CGenFF. The way
+the toppar files are streamed the CHARMM biomolecular force field
+versions of the repreated residues are read after the CGenFF versions
+and therefore are the ones being applied if they are generated during
+any calculations. In addition, there are a number of repeated
+parameters and other warnings. These are largely due to non-MacKerell
+toppar files. In all cases the final version of a parameter is the one
+used for the calculations.
+
+CGenFF updates, Version 5.0
+
+1) top_all36_cgenff.rtf: minor corrections and update of comments
+
+2) par_all36_cgenff.prm: release parameters, currently v5.0, with
+various corrections, charge increment information removed and the
+bonded parameters aligned.
+
+Note that some dihedral parameters have 5 significant figures as shown
+below. align.sh misses these and they were manually corrected.
+
+CG331  CG321  CG321  CG331      0.03819 2     0.00 ! LIPID alkane, 4/04, jbk, adm2026
+
+3) par_all36_cgenff_increments.prm: release parameters, currently
+v5.0, WITH the charge increment terms, various corrections and bonded
+parameters NOT aligned
+
+4) Test cases updated to test_cgenff_all.inp. This includes all
+pre-version 5.0 tests and the v5.0 tests. The input streams
+test_ic_atoms.str and test_cgenff_pre_v5.0.str and test_cgenff_5.0.ene
+is written with the energies for all the molecules. see test subdirectory.
+
+! References:                                                                  !
+! K. Vanommeslaeghe, E. Hatcher, C. Acharya, S. Kundu, S. Zhong,               !
+!      J. Shim, E. Darian, O. Guvench, P. Lopes, I. Vorobyov and               !
+!      A. D. Mackerell Jr., J. Comput. Chem. 2010, 31, 671-690. PMC2888302,    !
+!      10.1002/jcc.21367                                                       !
+!                                                                              !
+! W. Yu, X. He, K. Vanommeslaeghe, A. D. MacKerell Jr., J. Comput. Chem. 2012, !
+!       33, 2451-2468, PMC3477297, 10.1002/jcc.23067                           !
+!                                                                              !
+! Croitoru, A., Kumar, A., Lambry, J.C., Lee, J., Sharif, S., Yu, W.,          !
+!      MacKerell, A.D., Jr.,* and Alexey Aleksandrov, A.,* JCTC 21: 3044-3065, !
+!      2025, PMC11938330, 10.1021/acs.jctc.5c00046                             !
+
+

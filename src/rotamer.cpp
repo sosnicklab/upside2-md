@@ -770,6 +770,17 @@ struct RotamerSidechain: public PotentialNode {
                             : 1e5f;
             }
             return node_energy;
+        } else if(!strcmp(log_name, "placement_marginal")) {
+            vector<float> placement_marginal(igraph.n_elem1, 0.f);
+            for(int n: range(igraph.n_elem1)) {
+                unsigned id = igraph.id1[n];
+                unsigned selector = (1u<<n_bit_rotamer) - 1u;
+                unsigned rot      = id & selector; id >>= n_bit_rotamer;
+                unsigned n_rot    = id & selector; id >>= n_bit_rotamer;
+                NodeHolder* nh = node_holders_matrix[n_rot];
+                placement_marginal[igraph.loc1[n]] = nh->cur_belief(rot, id);
+            }
+            return placement_marginal;
         } else if(!strcmp(log_name, "edge_energy") || !strcmp(log_name, "edge_marginal_in_graph_order")) {
             vector<float> edge_value(n_node*n_node*6*6, 0.f);
 

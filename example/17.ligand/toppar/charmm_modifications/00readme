@@ -1,0 +1,12 @@
+* Collection of modifications to the CHARMM additive force field published by various labs. 
+* These are untested beyond the original reports. 
+* See individual files for citations and additional information.
+
+Explict protein topology and parameter files for CHARMM36m-NSBF 
+from Chris Chipot added March 2025.
+
+The new NBSF files represent drop-in replacements for the standard CHARMM36m protein files. 
+
+top_all36_prot_NSBF.rtf can be used to replace the standard top_all36_prot.rtf file, 
+and top_all36_cgenff_NSBF.rtf used to to replace top_all36_cgenff.rtf.  
+Then, CHARMM36m_NSBF.prm needs to be included after par_all36m_prot.prm and par_all36_cgenff.prm.

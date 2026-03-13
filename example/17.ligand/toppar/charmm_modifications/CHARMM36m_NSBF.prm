@@ -1,0 +1,1816 @@
+* Newly introduced atom types for central C of arginine (CAG), aromatic C of tyrosine (CAB) 
+* and aromatic C of para-cresol (CG2R6B)
+* NBFIX parameters for cation-pi interactions (CHARMM36m-NBF) 
+* between toluene/para-cresol/3-methyl-indole and NH4/Gua/TMA
+* also for phenylalanine/tyrosine/tryptophan-lysine/arginine
+* NBFIX parameters for salt-bridge interactions (CHARMM36m-SBF)
+* between NH4/Gua-acetate
+* also for lysine/arginine-Glutamic/Aspartic acid
+*
+
+!references
+!
+!Han Liu, Haohao Fu, Xueguang Shao, Wensheng Cai, and Christophe Chipot.
+!"Accurate Description of Cation-pi interactions in proteins with a Nonpolarizable Force
+!Field at No Additional Cost"  J. Chem. Theory Comput. 2020, 16, 6397-6407
+!Han Liu, Haohao Fu, Christophe Chipot, Xueguang Shao, and Wensheng Cai.
+!"Accuracy of Alternate Nonpolarizable Force Fields for the Determination of Protein¨CLigand 
+!Binding Affinities Dominated by Cation-pi interactions"  J. Chem. Theory Comput. 2021, 17, 3908-3915
+!Han Liu, Haohao Fu, Christophe Chipot, Xueguang Shao, and Wensheng Cai.
+!"Accurate Description of Solvent-Exposed Salt Bridges with a Non-polarizable 
+!Force Field Incorporating Solvent Effects"  J. Chem. Inf. Model. 2022, 62, 3863¨C3873
+
+ATOMS
+MASS  -1  CAG       12.01100 ! central C,ARG
+MASS  -1  CAB       12.01100 ! aromatic C,TYR
+MASS  -1  CG2R6B    12.01100 ! aromatic C,para-cresol
+
+BONDS
+!
+!V(bond) = Kb(b - b0)**2
+!
+!Kb: kcal/mole/A**2
+!b0: A
+!
+!atom type Kb          b0
+!
+NH2  CT1   240.000     1.4550 ! From LSN NH2-CT2
+!
+CP1  CAG   250.000     1.4900 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT1  CAG   250.000     1.4900 ! ALLOW   ALI PEP POL ARO
+                ! Ala Dipeptide ab initio calc's (LK) fixed from 10/90 (5/91)
+CT2  CAG   250.000     1.4900 ! ALLOW   ALI PEP POL ARO
+                ! Ala Dipeptide ab initio calc's (LK) fixed from 10/90 (5/91)
+CT3  CAG   250.000     1.4900 ! ALLOW   ALI PEP POL ARO
+                ! Ala Dipeptide ab initio calc's (LK) fixed from 10/90 (5/91)
+N    CAG   260.000     1.3000 ! ALLOW PEP POL ARO PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NC2  CAG   450.000     1.3650 ! ALLOW   PEP POL ARO
+                ! mp2/6-311g** mgua vib. data, adm jr., 1/04
+NH1  CAG   370.000     1.3450 ! ALLOW   PEP POL ARO
+                ! Alanine Dipeptide ab initio calc's (LK)
+O    CAG   620.000     1.2300 ! ALLOW   PEP POL ARO
+                ! Peptide geometry, condensed phase (LK)
+CAB  CAI   305.000     1.3750 ! from CA CA
+CA   CAB   305.000     1.3750 ! ALLOW   ARO
+                ! benzene, JES 8/25/89
+CPT  CAB   300.000     1.3600 ! atm, methylindole, fit CCDSS
+CY   CAB   350.000     1.3650 ! trj, adm jr., 5/08/91, indole CCDB structure search
+NY   CAB   270.000     1.3700 ! trp, adm jr., 12/30/91
+CAB  CAB   305.000     1.3750 ! ALLOW   ARO
+                ! benzene, JES 8/25/89
+CT2  CAB   230.000     1.4900 ! ALLOW   ALI ARO
+                ! phe,tyr, JES 8/25/89
+CT3  CAB   230.000     1.4900 ! ALLOW   ALI ARO
+                ! toluene, adm jr. 3/7/92
+HP   CAB   340.000     1.0800 ! ALLOW   ARO
+                ! phe,tyr JES 8/25/89
+OC   CAB   525.000     1.2600 ! ALLOW   PEP POL ARO ION
+                ! adm jr. 8/27/91, phenoxide
+OH1  CAB   334.300     1.4110 ! ALLOW   ARO ALC
+                ! MeOH, EMB 10/10/89,
+CG1N1  CG2R6B  345.00     1.4350 ! 3CYP, 3-Cyanopyridine (PYRIDINE pyr-CN) (MP2 by kevo)
+CG2DC1 CG2R6B  365.00     1.4500 ! compromise between HDZ1B and STYR by kevo
+CG2DC2 CG2R6B  365.00     1.4500 ! compromise between HDZ1B and STYR by kevo
+CG2N2  CG2R6B  300.00     1.4400 ! BAMI, benzamidinium, mp2 geom & molvib, pram
+CG2N2  CG2R6B  300.00     1.4400 ! BAMI, benzamidinium, mp2 geom & molvib, pram
+CG2O2  CG2R6B  254.00     1.4800 ! ZOIC, benzoic acid, MBOA, methylbenzoate, jal
+CG2O3  CG2R6B  200.00     1.5000 ! 3CPY, pyridine-3-carboxylate (PYRIDINE nicotinic acid), yin
+CG2O4  CG2R6B  300.00     1.4798 ! ALDEHYDE benzaldehyde unmodified
+CG2O5  CG2R6B  254.00     1.4600 ! 3ACP, 3-acetylpyridine; BF6 BF7 C36 C37; PHMK, phenyl methyl ketone, mcs
+CG2R53 CG2R6B  300.00     1.4400 ! 2PTZ model for D3R, xxwy
+CG2R6B CG2R6B  305.00     1.3750 ! PROT benzene, JES 8/25/89
+CG2R61 CG2R6B  305.00     1.3750 ! PROT benzene, JES 8/25/89
+CG2R6B CG2R62  394.00     1.3750 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R6B CG2R63  265.00     1.4270 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B CG2R64  250.00     1.3550 ! 18NFD, 1,8-naphthyridine, erh
+CG2R6B CG2R66  305.00     1.3700 ! NAMODEL difluorotoluene
+CG2R6B CG2R67  305.00     1.3750 ! COMPDS peml
+CG2R6B CG2RC0  300.00     1.3600 ! INDO/TRP
+CG2R6B CG311   230.00     1.4900 ! NAMODEL difluorotoluene
+CG2R6B CG312   198.00     1.4500 ! BDFP, BDFD, Difuorobenzylphosphonate
+CG2R6B CG321   230.00     1.4900 ! PROT phe,tyr, JES 8/25/89
+CG2R6B CG324   230.00     1.4900 ! BPIP, N-Benzyl PIP, cacha
+CG2R6B CG331   230.00     1.4900 ! PROT toluene, adm jr. 3/7/92
+CG2R6B NG2D1   625.00     1.3660 ! ABNB, amide base, sr
+CG2R6B NG2O1   230.00     1.4020 ! NITB, nitrobenzene
+CG2R6B NG2P1   300.00     1.3820 ! K2C, yxu, RNA
+CG2R6B NG2R51  400.00     1.4200 ! D3R set1 scaffold 1, xxwy
+CG2R6B NG2R60  450.00     1.3050 ! PYR1, pyridine
+CG2R6B NG2R61  380.00     1.3790 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B NG2R62  450.00     1.3050 ! PYRD, pyridazine
+CG2R6B NG2RC0  370.00     1.3790 ! INDZ, indolizine, kevo
+CG2R6B NG2S0   305.00     1.4140 ! dmpu, not optimized, yxu, RNA
+CG2R6B NG2S1   305.00     1.4140 ! RETINOL PACP
+CG2R6B NG2S3   400.00     1.3900 ! PYRIDINE aminopyridine, adm jr., 7/94
+CG2R6B NG301   325.00     1.4100 ! DMAN, N,N-dimethylaniline, kevo
+CG2R6B NG311   330.00     1.4000 ! FEOZ, phenoxazine; PMSM N-phenylmethanesulfonamide; xxwy
+CG2R6B NG3N1   680.00     1.4100 ! PHHZ, phenylhydrazine, ed
+CG2R6B OG301   230.00     1.3820 ! COMPDS peml
+CG2R6B OG303   340.00     1.3800 ! PROTNA phenol phosphate, 6/94, adm jr.
+CG2R6B OG311   334.30     1.4110 ! PROT MeOH, EMB 10/10/89,
+CG2R6B OG312   525.00     1.2600 ! PROT adm jr. 8/27/91, phenoxide
+CG2R6B OG3R60  280.00     1.3500 ! FEOZ, phenoxazine, erh based on PY02, 2h-pyran
+CG2R6B SG311   280.00     1.7500 ! FETZ, phenothiazine, erh based on PY02, 2h-pyran
+CG2R6B SG3O1   230.00     1.7800 ! benzene sulfonate anion, og
+CG2R6B SG3O2   190.00     1.7300 ! BSAM, benzenesulfonamide and other sulfonamides, xxwy
+CG2R6B CLGR1   350.00     1.7400 ! CHLB, chlorobenzene
+CG2R6B BRGR1   230.00     1.9030 ! BROB, bromobenzene
+CG2R6B IGR1    190.00     2.1150 ! IODB, iodobenzene
+CG2R6B BG201   415.00     1.6500 !   BORB,BONB, BNNB Boronic acid, sr
+CG2R6B HGR61   340.00     1.0800 ! PROT phe,tyr JES 8/25/89
+CG2R6B HGR62   340.00     1.0800 ! NA, DFT
+
+ANGLES
+!
+!V(angle) = Ktheta(Theta - Theta0)**2
+!
+!V(Urey-Bradley) = Kub(S - S0)**2
+!
+!Ktheta: kcal/mole/rad**2
+!Theta0: degrees
+!Kub: kcal/mole/A**2 (Urey-Bradley)
+!S0: A
+!
+!atom types     Ktheta    Theta0   Kub     S0
+!
+NH2  CT1  CAG   50.000    107.00              ! From ALA Dipep. NH1-CT2-C
+NH2  CT2  CAG   50.000    107.00              ! From ALA Dipep. NH1-CT2-C, Neutral Gly Nterminus
+CP1  N    CAG   60.000   117.0000             ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CP2  CP1  CAG      52.000   112.3000 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CP3  N    CAG    60.000   117.0000 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+
+CT1  CT1  CAG    52.000   108.0000 ! ALLOW   ALI PEP POL ARO
+                ! Alanine Dipeptide ab initio calc's (LK)
+
+CT1  NH1  CAG    50.000   120.0000 ! ALLOW   ALI PEP POL ARO
+                ! NMA Vib Modes (LK)
+
+CT2  CT1  CAG    52.000   108.0000 ! ALLOW   ALI PEP POL ARO
+                ! Alanine Dipeptide ab initio calc's (LK)
+CT2  CT2  CAG    52.000   108.0000 ! ALLOW   ALI PEP POL ARO
+                ! from CT2  CT1  C, for lactams, adm jr.
+CT2  NC2  CAG    62.300   120.0000 ! ALLOW   ALI POL PEP ARO
+                ! 107.5->120.0 to make planar Arg (KK)
+CT2  NH1  CAG    50.000   120.0000 ! ALLOW   ALI PEP POL ARO
+                ! NMA Vib Modes (LK)
+
+CT3  CT1  CAG    52.000   108.0000 ! ALLOW   ALI PEP POL ARO
+                ! Alanine Dipeptide ab initio calc's (LK)
+CT3  NC2  CAG    62.300   120.0000 ! ALLOW   ALI POL PEP ARO
+                ! methylguanidinium, adm jr., 3/26/92
+CT3  NH1  CAG    50.000   120.0000 ! ALLOW   ALI PEP POL ARO
+                ! NMA Vib Modes (LK)
+H    NH1  CAG    34.000   123.0000 ! ALLOW   PEP POL ARO
+                ! NMA Vib Modes (LK)
+HA1  CT1  CAG   33.000    109.50   30.00   2.16300 ! ALLOW   ALI PEP POL ARO
+                ! alanine dipeptide, LK, replaced, adm jr.,5/09/91
+HA2  CT2  CAG   33.000    109.50   30.00   2.16300 ! ALLOW   ALI PEP POL ARO
+                ! alanine dipeptide, LK, replaced, adm jr., 5/09/91
+HA3  CT3  CAG   33.000    109.50   30.00   2.16300 ! ALLOW   ALI PEP POL ARO
+                ! alanine dipeptide, LK, replaced, adm jr., 5/09/91
+HB1  CP1  CAG    50.000   112.0000 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+HB1  CT1  CAG    50.000   109.5000 ! ALLOW  PEP
+                ! Alanine Dipeptide ab initio calc's (LK)
+HB2  CT2  CAG    50.000   109.5000 ! ALLOW  PEP
+                ! Alanine Dipeptide ab initio calc's (LK)
+HC   NC2  CAG   49.000   120.0000 ! ALLOW   POL PEP ARO
+                ! 35.3->49.0 GUANIDINIUM (KK)
+N    CAG  CP1    20.000   112.5000 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CT1    20.000   112.5000 ! ALLOW ALI PEP POL ARO PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CT2    20.000   112.5000 ! ALLOW ALI PEP POL ARO PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CT3    20.000   112.5000 ! ALLOW ALI PEP POL ARO PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CP1  CAG    50.000   108.2000 ! ALLOW PRO
+
+NC2  CAG  NC2   40.000    120.00   70.00   2.31
+                ! mp2/6-311g** mgua vib data, adm jr., 1/04
+                ! N-N distances: 2.29001, 2.31146, 2.33240
+NH1  CAG  CP1    80.000   116.5000 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NH1  CAG  CT1    80.000   116.5000 ! ALLOW   ALI PEP POL ARO
+                ! NMA Vib Modes (LK)
+NH1  CAG  CT2    80.000   116.5000 ! ALLOW   ALI PEP POL ARO
+                ! NMA Vib Modes (LK)
+NH1  CAG  CT3    80.000   116.5000 ! ALLOW   ALI PEP POL ARO
+                ! NMA Vib Modes (LK)
+NH1  CT1  CAG    50.000   107.0000 ! ALLOW   PEP POL ARO ALI
+NH1  CT2  CAG    50.000   107.0000 ! ALLOW   PEP POL ARO ALI
+                ! Alanine Dipeptide ab initio calc's (LK)
+NH3  CT1  CAG    43.700   110.0000 ! ALLOW   PEP POL ARO ALI
+                ! new aliphatics, adm jr., 2/3/92
+NH3  CT2  CAG    43.700   110.0000 ! ALLOW   PEP POL ARO ALI
+                ! alanine (JCS)
+NP   CP1  CAG    50.000   106.0000 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+O    CAG  CP1    80.000   118.0000 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+O    CAG  CT1    80.000   121.0000 ! ALLOW   ALI PEP POL ARO
+                ! Alanine Dipeptide ab initio calc's (LK)
+O    CAG  CT2    80.000   121.0000 ! ALLOW   ALI PEP POL ARO
+                ! Alanine Dipeptide ab initio calc's (LK)
+O    CAG  CT3    80.000   121.0000 ! ALLOW   ALI PEP POL ARO
+                ! Alanine Dipeptide ab initio calc's (LK)
+O    CAG  H      50.000   121.7000 ! ALLOW   PEP POL ARO
+                ! acetaldehyde (JCS)
+O    CAG  N      80.000   122.5000 ! ALLOW PRO PEP POL ARO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+O    CAG  NH1    80.000   122.5000 ! ALLOW   PEP POL ARO
+                ! NMA Vib Modes (LK)
+
+CT2A CT1  CAG    52.000   108.0000 ! from CT2  CT1  C
+CS   CT1  CAG    52.000   108.0000 ! from CT2  CT1  C   , kevo
+CAB  CAB  CAB   40.000    120.00   35.00   2.41620 ! ALLOW   ARO
+                ! JES 8/25/89
+CA   CA   CAB   40.000    120.00   35.00   2.41620 ! ALLOW   ARO
+                ! JES 8/25/89
+CA   CAB   CA   40.000    120.00   35.00   2.41620 ! ALLOW   ARO
+                ! JES 8/25/89
+HP   CA   CAB   30.000    120.00   22.00   2.15250 ! ALLOW   ARO
+                ! JES 8/25/89 benzene
+OH1  CAB  CA     45.200   120.0000 ! ALLOW   ARO ALC
+                ! PARALLH19 WITH [122.3] (JES)
+CT1  CT2  CAB    51.800   107.5000 ! ALLOW   ALI ARO
+                ! PARALLH19 (JES)
+CT2  CAB  CAB    45.800   122.3000 ! ALLOW   ALI ARO
+                ! PARALLH19 (JES)
+CT3  CAB  CAB    45.800   122.3000 ! ALLOW   ALI ARO
+                ! toluene, adm jr., 3/7/92
+CT3  CT2  CAB    51.800   107.5000 ! ALLOW   ALI ARO
+                ! ethylbenzene, adm jr., 3/7/92
+H    OH1  CAB    65.000   108.0000 ! ALLOW   ALC ARO
+                ! JES 8/25/89 phenol
+HA2  CT2  CAB    49.300   107.5000 ! ALLOW   ALI ARO
+                ! PARALLH19 (JES)
+
+HA3  CT3  CAB    49.300   107.5000 ! ALLOW   ALI ARO
+                ! toluene, adm jr. 3/7/92
+HP   CAB  CAB   30.000    120.00   22.00   2.15250 ! ALLOW   ARO
+                ! JES 8/25/89 benzene
+OH1  CAB  CAB    45.200   120.0000 ! ALLOW   ARO ALC
+                ! PARALLH19 WITH [122.3] (JES)
+CG2R6B CG1N1  NG1T1    40.00    180.00 ! 3CYP, 3-Cyanopyridine (PYRIDINE pyr-CN), yin
+CG2DC3 CG2DC1 CG2R6B   29.00    122.00 ! STYR, styrene, xxwy & oashi
+CG2R6B CG2DC1 NG2D1    56.00    117.00 ! HDZ1b, hydrazone model cmpd 1b, kevo
+CG2R6B CG2DC1 HGA4     32.00    120.00 ! HDZ1b, hydrazone model cmpd 1b; STYR, styrene; kevo, xxwy, oashi
+CG2DC3 CG2DC2 CG2R6B   29.00    122.00 ! STYR, styrene, xxwy & oashi
+CG2R6B CG2DC2 NG2D1    56.00    117.00 ! HDZ1b, hydrazone model cmpd 1b, kevo
+CG2R6B CG2DC2 HGA4     32.00    120.00 ! HDZ1b, hydrazone model cmpd 1b; STYR, styrene; kevo, xxwy, oashi
+CG2R6B CG2N2  NG2P1    80.00    118.50 ! BAMI, benzamidinium, mp2 geom & movib, pram
+CG2R6B CG2O1  NG2D1    80.00    117.00 ! ABBM, amide base, sr
+CG2R6B CG2O1  NG2S1    80.00    116.50 ! HDZ2, hydrazone model cmpd 2
+CG2R6B CG2O1  NG2S2    50.00    110.23 ! 3NAP, nicotamide (PYRIDINE pyr-CONH2), yin
+CG2R6B CG2O1  OG2D1    30.00    121.00 ! reverted to 3NAP, nicotamide. Kenno: compromise with NMA and HDZ2 ==> 124.5 --> 121.00
+CG2R6B CG2O2  OG2D1    70.00    123.10   20.00   2.4420 ! ZOIC, benzoic acid, MBOA, methylbenzoate, jal
+CG2R6B CG2O2  OG302    50.00    111.00   20.00   2.3600 ! MBOA, methylbenzoate (UB term has been adjusted), jal
+CG2R6B CG2O2  OG311    40.00    113.90   30.00   2.3700 ! ZOIC, benzoic acid (UB term has been adjusted), jal
+CG2R6B CG2O3  OG2D2    40.00    116.00   50.00   2.3530  ! 3CPY, pyridine-3-carboxylate (PYRIDINE nicotinic acid), yin
+CG2R6B CG2O4  OG2D1    75.00    126.00 ! ALDEHYDE benzaldehyde only angle unmodified
+CG2R6B CG2O4  HGR52    15.00    116.00 ! ALDEHYDE benzaldehyde only angle unmodified
+CG2O3  CG2O5  CG2R6B   40.00    117.20 ! BIPHENYLS BF7 C37, sum of equilibrium angles, kevo
+CG2R6B CG2O5  CG311    40.00    117.20 ! BIPHENYLS BF6 C36, sum of equilibrium angles, kevo
+CG2R6B CG2O5  CG321    20.00    116.50 ! PHEK, phenyl ethyl ketone; from 3ACP, 3-acetylpyridine; mcs
+CG2R6B CG2O5  CG331    60.00    116.50 ! PHMK, phenyl methyl ketone, mcs
+CG2R6B CG2O5  OG2D3    70.00    121.30 ! 3ACP, 3-acetylpyridine; BF6 BF7 C36 C37; PHMK, phenyl methyl ketone; verified by mcs
+CG2R6B CG2R53 NG2R50   25.00    124.50 ! 2PTZ model for D3R, xxwy
+CG2R6B CG2R53 SG2R50   25.00    118.30 ! 2PTZ model for D3R, xxwy
+CG1N1  CG2R6B CG2R6B   35.00    120.00 ! 3CYP, 3-Cyanopyridine (PYRIDINE pyr-CN) Kenno: 119 --> 120
+CG2DC1 CG2R6B CG2R6B   36.00    120.00 ! STYR, styrene & HDZ2, hydrazone model cmpd 2; xxwy & oashi; verified by kevo
+CG2DC2 CG2R6B CG2R6B   36.00    120.00 ! STYR, styrene & HDZ2, hydrazone model cmpd 2; xxwy & oashi; verified by kevo
+CG2N2  CG2R6B CG2R6B   25.00    120.00 ! BAMI, benzamidinium, mp2 molvib, pram
+CG2O1  CG2R6B CG2R6B   45.00    119.00 ! reverted to 3NAP, nicotinamide
+CG2O1  CG2R6B CG2R64   62.51  126.95 ! flavin
+CG2O1  CG2R6B CG2RC0   60.00    120.00 ! HDZ2, hydrazone model cmpd 2
+CG2O1  CG2R6B NG2R60   69.75  115.90 ! flavin
+CG2O2  CG2R6B CG2R6B   45.00    120.00 ! ZOIC, benzoic acid, MBOA, methylbenzoate, jal
+CG2O3  CG2R6B CG2R6B   45.00    119.00 ! 3CB, Benzoate. Based on a slack parameter from 3ACP, 3-acetylpyridine ==> re-optimize
+CG2O4  CG2R6B CG2R6B   45.00    119.80 ! ALDEHYDE benzaldehyde unmodified
+CG2O5  CG2R6B CG2R6B   45.00    120.00 ! PHMK, PHEK, sum of equilibrium angles, kevo
+CG2R53 CG2R6B CG2R6B   32.00    120.00 ! 2PTZ model for D3R, xxwy
+CG2R6B CG2R6B CG2R6B   40.00    120.00   35.00   2.41620 ! PROT JES 8/25/89
+CG2R61 CG2R61 CG2R6B   40.00    120.00   35.00   2.41620 ! PROT JES 8/25/89
+CG2R61 CG2R6B CG2R61   40.00    120.00   35.00   2.41620 ! PROT JES 8/25/89
+CG2R6B CG2R6B CG2R62   40.00    119.00   35.00   2.41620 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R6B CG2R6B CG2R63   40.00    120.00   35.00   2.41620 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B CG2R6B CG2R64   40.00    115.50   35.00   2.41620 ! 18NFD, 1,8-naphthyridine, erh
+CG2R6B CG2R6B CG2R66   40.00    119.00   35.00   2.41620 ! NAMODEL difluorotoluene
+CG2R6B CG2R6B CG2R67   40.00    120.00 ! BIPHENYL ANALOGS, peml
+CG2R6B CG2R6B CG2RC0   50.00    120.00 !adm,dec06 113.20 ! INDO/TRP
+CG2R6B CG2R6B CG311    45.80    120.00 ! modified by kevo for improved transferability
+CG2R6B CG2R6B CG312    45.80    120.00 ! BDFP, BDFD, Difuorobenzylphosphonate, modified by kevo for improved transferability
+CG2R6B CG2R6B CG321    45.80    120.00 ! EBEN, ethylbenzene, modified by kevo for improved transferability
+CG2R6B CG2R6B CG324    45.80    120.00 ! BPIP, N-Benzyl PIP, modified by kevo for improved transferability
+CG2R6B CG2R6B CG331    45.80    120.00 ! TOLU, toluene, modified by kevo for improved transferability
+CG2R6B CG2R6B NG2D1    80.00    125.50 ! ABNB, amide base, sr
+CG2R6B CG2R6B NG2O1    20.00    120.00 ! NITB, nitrobenzene
+CG2R6B CG2R6B NG2P1    39.00    121.20   43.00   2.1900 ! K2C (model: ncyp), yxu, RNA
+CG2R6B CG2R6B NG2R51   60.00    121.00 ! D3R set1 scaffold 1, xxwy
+CG2R6B CG2R6B NG2R60   20.00    124.00 ! PYRIDINE pyridine, yin
+CG2R6B CG2R6B NG2R61  125.00    120.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B CG2R6B NG2R62   20.00    124.00 ! PYRD, pyridazine
+CG2R6B CG2R6B NG2RC0  100.00    121.40 ! INDZ, indolizine, kevo
+CG2R6B CG2R6B NG2S0    40.00    120.00   35.00   2.41620 ! dmpu, from CG2R6B CG2R6B NG2S1, yxu, RNA
+CG2R6B CG2R6B NG2S1    40.00    120.00   35.00   2.4162 ! RESI PACP, FRET AND OTHERS
+CG2R6B CG2R6B NG2S3    60.00    121.00 ! PYRIDINE aminopyridine, adm jr., 7/94
+CG2R6B CG2R6B NG301    42.00    120.00 ! DMAN, N,N-dimethylaniline, kevo
+CG2R6B CG2R6B NG311    40.00    120.00 ! FEOZ, phenoxazine, erh
+CG2R6B CG2R6B NG3N1    48.00    122.00 ! PHHZ, phenylhydrazine, ed
+CG2R6B CG2R6B OG301   110.00    120.00 ! BIPHENYL ANALOGS, peml
+CG2R6B CG2R6B OG303    75.00    120.00 ! PROTNA phenol phosphate, 6/94, adm jr.
+CG2R6B CG2R6B OG311    45.20    120.00 ! PYRIDINE phenol, yin
+CG2R61 CG2R6B OG311    45.20    120.00 ! PYRIDINE phenol, yin
+CG2R6B CG2R6B OG312    40.00    120.00 ! PROT adm jr. 8/27/91, phenoxide
+CG2R6B CG2R6B OG3R60   40.00    120.00 ! FEOZ, phenoxazine, erh
+CG2R6B CG2R6B SG311    40.00    120.00 ! FETZ, phenothiazine, erh
+CG2R6B CG2R6B SG3O1    10.00    122.30 ! benzene sulfonic acid anion, og
+CG2R6B CG2R6B SG3O2    35.00    119.00 ! BSAM, benzenesulfonamide; PBSM, N-phenylbenzenesulfonamide; xxwy
+CG2R6B CG2R6B CLGR1    60.00    120.00 ! CHLB, chlorobenzene
+CG2R6B CG2R6B BRGR1    45.00    120.00 ! BROB, bromobenzene
+CG2R6B CG2R6B IGR1     45.00    120.00 ! IODB, iodobenzene
+CG2R6B CG2R6B BG201    42.00   120.00 !   BORB,BONB,BNNB Boronic acid, sr
+CG2R6B CG2R6B HGR61    30.00    120.00   22.00   2.15250 ! PROT JES 8/25/89 benzene
+CG2R6B CG2R61 HGR61    30.00    120.00   22.00   2.15250 ! PROT JES 8/25/89 benzene
+CG2R6B CG2R6B HGR62    30.00    120.00   22.00   2.15250 ! BROB, bromobenzene
+CG2R62 CG2R6B HGR61    20.00    121.00   22.00   2.15250 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R63 CG2R6B HGR62    18.00    120.00   22.00   2.15250 ! URA24S, 2,4(1H,3H)-pyrimidinedithione; from CG2R64 CG2R6B HGR61; isg
+CG2R64 CG2R6B NG2R60   20.00    123.40 ! PTID, pteridine, erh
+CG2R64 CG2R6B OG311    45.20    120.00 ! 2A3HPD, from PYRIDINE phenol, cacha
+CG2R64 CG2R6B HGR61    30.00    120.00   22.00   2.15250 ! 2AMP, 2-amino pyridine, from PROT benzene, kevo
+CG2R64 CG2R6B HGR62    38.00    120.10 ! 2SC, from CG2R62, NA36, RNA
+CG2R66 CG2R6B CG2R66   40.00    117.00   35.00   2.41620 ! NAMODEL difluorotoluene
+CG2R66 CG2R6B CG331    45.80    120.00 ! NAMODEL difluorotoluene
+CG2R66 CG2R6B NG2R60   20.00    124.00 ! 3FLP, 3-fluoropyridine. Kenno: copied from pyridine while retrofitting CG2R66 ==> re-optimize
+CG2R66 CG2R6B NG2S1    40.00    120.00   35.00   2.4162 ! 2FBD, 2-fluoroanilide patch. Kenno: copied from RETINOL TMCH/MECH while retrofitting CG2R66 ==> re-optimize
+CG2R66 CG2R6B HGR62    30.00    121.50   22.00   2.15250 ! NAMODEL difluorotoluene
+CG2R67 CG2R6B NG2R60   20.00    124.00 ! PYRIDINE pyridine, yin
+CG2R67 CG2R6B HGR61    30.00    120.00 ! BIPHENYL ANALOGS, peml
+CG2R67 CG2R6B HGR62    30.00    120.00 ! BIPHENYL ANALOGS, peml
+CG2RC0 CG2R6B NG2R62   20.00    119.00 ! PUR9, purine(N9H); PUR7, purine(N7H), kevo
+CG2RC0 CG2R6B OG311    45.20    120.00 ! 7MGe, from CG2R6B CG2R6B OG311, not optimized, yxu, RNA
+CG2RC0 CG2R6B HGR61    30.00    120.00   22.00 2.14600 ! 122 INDO/TRP
+CG2RC0 CG2R6B HGR62    30.00    121.50 !  22.00   2.16830 ! PUR7, purine(N7H); PUR9, purine(N9H), kevo
+CG321  CG2R6B NG2R60   45.80    122.30 ! 2AEPD, 2-ethylamino-pyridine CDCA conjugate, cacha
+CG331  CG2R6B NG2R60   45.80    122.30 ! 3A2MPD, 3-amino-2-methyl-pyridine CDCA conjugate, cacha
+NG2P1  CG2R6B HGR62    35.00    113.00 ! K2C, yxu, RNA
+NG2R60 CG2R6B BRGR1    45.00    120.00 ! 3A6BPD, Gamma-3-Amino-6-bromo Pyridine GA CDCA Amide, cacha
+NG2R60 CG2R6B HGR62    30.00    116.00   35.00   2.10000 ! PYR1, pyridine %%% Kenno: 112->116
+NG2R61 CG2R6B HGR62    33.00    115.00 ! URA24S, 2,4(1H,3H)-pyrimidinedithione, isg
+NG2R62 CG2R6B OG311    45.20    120.00 ! 7MGe, from CG2R6B CG2R6B OG311, not optimized, yxu, RNA
+NG2R62 CG2R6B HGR62    30.00    116.00   35.00   2.10000 ! PYRD, pyridazine %%% Kenno: 112->116
+NG2RC0 CG2R6B HGR62    30.00    118.60 ! INDZ, indolizine, kevo
+CG2R6B CG2R62 CG2R62   40.00    121.00 ! RIN, coumarin, isg
+CG2R6B CG2R62 CG2R63  120.00    122.30 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R6B CG2R62 NG2R61   23.00    116.10 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R6B CG2R62 NG2R62   30.00    118.00 ! TC243C, 4(3H)-quinazolinone, isg
+CG2R6B CG2R62 OG3R60   40.00    119.70 ! RIN, coumarin, isg
+CG2R6B CG2R63 NG2R61   59.00    111.90 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B CG2R63 NG2R67   59.00    113.40 ! 3PH24S, 2,3-dihydro-3-phenyl-2-thioxo-4(1H)pyrimidinethione; from YTS2; isg
+CG2R6B CG2R63 SG2D1    38.00    125.10 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B CG2R64 NG2D1    48.00    119.00   60.00   2.5830 ! K2Cn (model: nmcy), yxu, angsum 04/15, RNA
+CG2R6B CG2R64 NG2P1    60.00    110.00   51.00   2.5600 ! K2C (model: ncyp), yxu, angsum 04/15, RNA
+CG2R6B CG2R64 NG2R51   40.00    120.00 ! PIPA model for D3R, xxwy
+CG2R6B CG2R64 NG2R60   20.00    124.00 ! 2AMP, 2-amino pyridine, from PYR1, pyridine, kevo
+CG2R6B CG2R64 NG2R61   33.49    115.66 ! flavin
+CG2R6B CG2R64 NG2R62   20.00    128.00 ! 18NFD, 1,8-naphthyridine, erh
+CG2R6B CG2R64 NG2S1    40.00    120.00   35.00   2.4162 ! 2AMP, 2-Amino pyridine, from PACP, p-acetamide-phenol, kevo
+CG2R6B CG2R64 NG2S3    60.00    118.50 ! 2SC, cgenff_compromise, xxwy, KEVO: exocyclic N in 2SC planar, issue with CGenFF atom types?, RNA
+CG2R6B CG2R64 NG311    63.00    121.00 ! bepa, from 4MC, yxu, RNA
+CG2R6B CG2R66 CG2R6B   40.00    122.50   35.00   2.41620 ! NAMODEL difluorotoluene
+CG2R6B CG2R66 CG2R67   40.00    122.50   35.00   2.41620 ! PYO2F, from CG2R6B CG2R66 CG2R6B, fylin
+CG2R6B CG2R66 FGR1     60.00    118.75 ! NAMODEL difluorotoluene
+CG2R6B CG2R67 CG2R6B   40.00    120.00 ! BIPHENYL ANALOGS, peml
+CG2R6B CG2R67 CG2R66   40.00    120.00 ! PYO2F, from CG2R6B CG2R67 CG2R6B, fylin
+CG2R6B CG2R67 CG2R67   40.00    120.00 ! BIPHENYL ANALOGS, peml
+CG2R6B CG2R67 CG2RC0   50.00    120.00 ! CRBZ, carbazole, erh
+CG2R6B CG2R67 NG2R60   58.00    126.80 ! 22BPY, 2,2'-bipyridine, kevo
+CG2R6B CG2R67 NG2R67   50.00    120.00 ! 1PH4PO, 1-phenyl-4(1H)-pyridinone, isg
+CG25C1 CG2RC0 CG2R6B   40.00    125.00 ! MEOI, methyleneoxindole, kevo & xxwy
+CG25C2 CG2RC0 CG2R6B   40.00    125.00 ! MEOI, methyleneoxindole, kevo & xxwy
+CG2R51 CG2RC0 CG2R6B  130.00    132.00 !adm,dec06 133.50 ! INDO/TRP
+CG2R52 CG2RC0 CG2R6B   60.00    134.10 ! INDA, 1H-indazole, kevo
+CG2R6B CG2RC0 CG2R67   50.00    120.00 ! CRBZ, carbazole, erh
+CG2R6B CG2RC0 CG2RC0   50.00    120.00 !adm,dec06 110.00 ! INDO/TRP
+CG2R6B CG2RC0 CG3C50   50.00    130.00 ! MSCH model for D3R, xxwy
+CG2R6B CG2RC0 CG3C52   60.00    130.00 ! 3HIN, 3H-indole, kevo
+CG2R6B CG2RC0 NG2R50  130.00    130.00 ! ZIMI, benzimidazole, kevo
+CG2R6B CG2RC0 NG2R51  130.00    132.60 !adm,dec06 129.50 ! INDO/TRP
+CG2R6B CG2RC0 NG2R52  130.00    130.00 ! 7MGe, from CG2R6B CG2RC0 NG2R50, not optimized, yxu, RNA
+CG2R6B CG2RC0 NG2R53   50.00    130.00 ! MSCH model for D3R, xxwy
+CG2R6B CG2RC0 NG2RC0   80.00    118.80 ! INDZ, indolizine, kevo
+CG2R6B CG2RC0 NG3C51   35.00    130.70 ! INDI, indoline, kevo
+CG2R6B CG2RC0 OG2R50  100.00    129.40 ! ZFUR, benzofuran, kevo
+CG2R6B CG2RC0 OG3C51   50.00    125.30 !126.60 ZDOL, 1,3-benzodioxole, kevo
+CG2R6B CG2RC0 SG2R50   45.00    123.70 ! ZTHP, benzothiophene, kevo
+CG2R6B CG2RC0 BG201    35.00    130.70 !   BICB,BINB Boronic acid, sr
+CG2O2  CG311  CG2R6B   40.00    107.50 ! cmbz, yxu, RNA
+CG2O3  CG311  CG2R6B   51.80    107.50 ! FBIF, Fatty acid Binding protein Inhibitor F, cacha
+CG2R6B CG311  CG321    51.80    107.50 ! Slack parameter from difluorotoluene picked up by FBIC ==> RE-OPTIMIZE !!!
+CG2R6B CG311  CG331    51.80    107.50 ! FBIB, Fatty Binding Inhibitior B, cacha
+CG2R6B CG311  OG311    82.00    112.80 ! cmbz, yxu, RNA
+CG2R6B CG311  HGA1     43.00    111.00 ! NAMODEL difluorotoluene
+CG2R6B CG312  PG1      90.00    117.00   20.0   2.30  ! BDFP, Difuorobenzylphosphonate \ re-optimize?
+CG2R6B CG312  PG2      90.00    117.00   20.0   2.30  ! BDFD, Difuorobenzylphosphonate / re-optimize?
+CG2R6B CG312  FGA2     50.00    115.00   30.0   2.357 ! BDFP, BDFD, Difuorobenzylphosphonate
+CG1N1  CG321  CG2R6B   57.00    112.00 ! cybz, yxu, RNA
+CG2O1  CG321  CG2R6B   51.80    107.50 ! acbz, from mebz, yxu, RNA
+CG2O2  CG321  CG2R6B   51.80    107.50 ! mebz, yxu, RNA
+CG2O3  CG321  CG2R6B   51.80    107.50 ! bzac, from mebz, yxu, RNA
+CG2R6B CG321  CG2R6B   51.80    107.50 ! PYRIDINE pyr_CH2C6H5, yin
+CG2R6B CG321  CG311    51.80    107.50 ! PROT PARALLH19 (JES)
+CG2R6B CG321  CG314    51.80    107.50 ! PROT PARALLH19 (JES)
+CG2R6B CG321  CG321    51.80    107.50 ! PYRIDINE butylpyridine, yin
+CG2R6B CG321  CG331    51.80    107.50 ! PROT ethylbenzene, adm jr., 3/7/92
+CG2R6B CG321  NG2S1    53.00    115.20 ! NZAD, N-benzylacetamide; from CG2O2 CG321 NG2S1; isg
+CG2R6B CG321  NG311    73.00    109.00  ! ambz, yxu, RNA
+CG2R6B CG321  OG302    75.70    110.10 ! ABGA, Alpha Benzyl Glu Acid CDCA Amide, corrected by kevo
+CG2R6B CG321  OG311    75.70    110.10 ! toppar_all22_prot_pyridines.str has 115.1 but that appears to be a copy-paste error! - kevo
+CG2R6B CG321  PG1      90.00    111.00    20.0  2.300 ! BDFP, Benzylphosphonate \ re-optimize?
+CG2R6B CG321  PG2      90.00    111.00    20.0  2.300 ! BDFD, Benzylphosphonate / re-optimize?
+CG2R6B CG321  HGA2     49.30    107.50 ! PYRIDINE pyridines, yin
+CG2R6B CG324  NG3P1    45.00    102.30   35.00   2.10100 ! BPIP, N-Benzyl PIP, cacha
+CG2R6B CG324  NG3P2    54.00    108.50   37.00   2.43000 ! bzma, yxu, RNA
+CG2R6B CG324  NG3P3    45.00    107.00 ! bzam, cgenff_compromise, pram, RNA
+CG2R6B CG324  HGA2     49.30    107.50 ! BPIP, N-Benzyl PIP, cacha
+CG2R6B CG331  HGA3     49.30    107.50 ! PROT toluene, adm jr. 3/7/92
+CG2O1  NG2D1  CG2R6B   90.00    118.02 ! ABNB, amide base, sr
+CG2R6B NG2O1  OG2N1    65.00    116.00 ! NITB, nitrobenzene
+CG2R6B NG2P1  CG2R64   47.30    121.40 ! K2C (model: ncyp), yxu, RNA
+CG2R6B NG2P1  CG334    53.00    120.00 ! K2C (model: ncyp), yxu, RNA
+CG2R6B NG2P1  HGP2     47.00    120.00 ! ncyp, yxu, RNA
+CG2R51 NG2R51 CG2R6B   40.00    127.00 ! D3R set1 scaffold 1, xxwy
+CG2R6B NG2R51 NG2R50   40.00    118.00 ! D3R set1 scaffold 1, xxwy
+CG2R6B NG2R60 CG2R6B   20.00    112.00 ! PYRIDINE pyridine, yin
+CG2R6B NG2R60 CG2R64   20.00    112.00 ! 2AMP, 2-amino pyridine, from PYR1, pyridine, kevo
+CG2R6B NG2R60 CG2R67   20.00    109.20 ! 22BPY, 2,2'-bipyridine, kevo
+CG2R6B NG2R60 HGP1     28.29    114.58 ! flavin
+CG2R6B NG2R61 CG2R63   10.00    123.90 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B NG2R61 CG2R64   68.88    132.07 ! flavin
+CG2R6B NG2R61 CG321    26.71    117.66 ! flavin
+CG2R6B NG2R61 CG331    70.00    120.50 ! 34c, yxu, RNA
+CG2R6B NG2R61 HGP1     33.00    120.70 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B NG2R62 CG2R64   40.00    110.50 ! PYRM, pyrimidine %%% TEST 108.0 -> 113.4 %%%
+CG2R6B NG2R62 NG2R62   10.00    120.00 ! PYRD, pyridazine
+CG2R51 NG2RC0 CG2R6B   15.00    130.50 ! INDZ, indolizine, kevo
+CG2R6B NG2RC0 CG2RC0   15.00    119.80 ! INDZ, indolizine, kevo
+CG2O6  NG2S0  CG2R6B   60.00    115.00 ! dmpu, from m6pa, yxu, RNA
+CG2R6B NG2S0  CG331    45.00    115.50 ! dmpu, from m6pa, yxu, RNA
+CG2O1  NG2S1  CG2R6B   50.00    120.00 ! RESI PACP, FRET AND OTHERS
+CG2O6  NG2S1  CG2R6B   50.00    119.00 ! mpyu, yxu, RNA
+CG2R6B NG2S1  HGP1     34.00    117.00 ! RESI PACP, FRET AND OTHERS
+CG2R6B NG2S3  HGP4     60.00    111.60 ! PYRIDINE aminopyridine, adm jr., 7/94 kevo: 120 --> 111.6
+CG2R6B NG301  CG2R64   47.35    107.73 ! flavin
+CG2R6B NG301  CG321    56.61    114.00 ! flavin
+CG2R6B NG301  CG331    48.00    113.50 ! TMC, trimethylcytosine, yxu; DMAN, N,N-dimethylaniline, kevo
+CG2R6B NG311  CG2R6B   40.00    109.00 ! FEOZ, phenoxazine, erh
+CG2R6B NG311  CG2R62   34.78    114.44 ! flavin
+CG2R6B NG311  CG321    55.00    113.00 ! OBTZ, 1,1-dioxo-3,4-dihydro-2H-1,2,4-benzothiadiazine, xxwy
+CG2R6B NG311  SG3O2    35.00    115.00 ! PMSM, N-phenylmethanesulfonamide; PBSM, N-phenylbenzenesulfonamide; xxwy
+CG2R6B NG311  HGP1     40.00    114.00 ! PMSM, N-phenylmethanesulfonamide; PBSM, N-phenylbenzenesulfonamide; xxwy
+CG2R6B NG311  HGPAM1   45.00    115.00 ! FEOZ, phenoxazine, erh
+CG2R6B NG3N1  NG3N1    60.00    112.00 ! PHHZ, phenylhydrazine, decrease angle to make HN become out of plane, ed
+CG2R6B NG3N1  HGP1     52.00    115.00 ! PHHZ, phenylhydrazine, decrease angle to make HN become out of plane, ed
+CG2R6B OG301  CG2R6B  185.00    120.00 ! BIPHENYL ANALOGS, peml
+CG2R6B OG301  CG321    65.00    108.00 ! ETOB, Ethoxybenzene, cacha
+CG2R6B OG301  CG331    65.00    108.00 ! MEOB, Methoxybenzene, cacha
+CG2R6B OG303  PG1      90.00    120.00   20.00   2.30 ! PROTNA phenol phosphate, 6/94, adm jr.
+CG2R6B OG303  SG3O2    33.00    108.00 ! PMST, phenyl methanesulfonate, PSMT, phenyl sulfamate, xxwy
+CG2R6B OG311  HGP1     65.00    108.00 ! PROT JES 8/25/89 phenol
+CG2R6B OG3R60 CG2R6B   40.00    115.00 ! FEOZ, phenoxazine, erh
+CG2R6B SG311  CG2R6B   50.00    109.00 ! FETZ, phenothiazine, erh
+CG2R6B SG3O1  OG2P1    85.0      98.0  ! benzene sulfonic acid anion, og
+CG2R6B SG3O2  NG301    50.00     97.00 ! D3R set1 scaffold 2, xxwy
+CG2R6B SG3O2  NG311    70.00     97.00 ! MBSM, N-methylbenzenesulfonamide; PBSM, N-phenylbenzenesulfonamide; xxwy
+CG2R6B SG3O2  NG321    60.00     98.00 ! BSAM, benzenesulfonamide, xxwy
+CG2R6B SG3O2  OG2P1    60.00    101.00 ! BSAM, benzenesulfonamide, xxwy
+CG2R6B BG201  OG2D2    80.00    133.00 !   BONB,BNNB Boronic acid, sr
+CG2R6B BG201  OG311    40.00    123.00 !   BORB,BONB Boronic acid, sr
+
+DIHEDRALS
+!
+!V(dihedral) = Kchi(1 + cos(n(chi) - delta))
+!
+!Kchi: kcal/mole
+!n: multiplicity
+!delta: degrees
+!
+!atom types             Kchi    n   delta
+!
+!Neutral N terminus
+NH2  CT1  CAG  O        0.0000  1     0.00
+NH2  CT2  CAG  O        0.0000  1     0.00   ! Neutral Gly Nterminus
+NH2  CT1  CAG  NH1      0.0000  1     0.00
+NH2  CT2  CAG  NH1      0.0000  1     0.00   ! Neutral Gly Nterminus
+H    NH2  CT1  CAG      0.0000  1     0.00
+H    NH2  CT2  CAG      0.0000  1     0.00   ! Neutral Gly Nterminus
+
+CAG  CT1  NH1  CAG      0.2000  1   180.00 ! ALLOW PEP
+                ! ala dipeptide update for new C VDW Rmin, adm jr., 3/3/93c
+CAG  CT2  NH1  CAG      0.2000  1   180.00 ! ALLOW PEP
+                ! ala dipeptide update for new C VDW Rmin, adm jr., 3/3/93c
+CAG  N    CP1  CAG      0.8000  3     0.00 ! ALLOW PRO PEP
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD4/23/93
+CC   CP1  N    CAG      0.8000  3     0.00 ! ALLOW PRO PEP
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CC   CT1  NH1  CAG      0.2000  1   180.00 ! ALLOW PEP POL
+                ! ala dipeptide update for new C VDW Rmin, adm jr., 3/3/93c
+CC   CT2  NH1  CAG      2.0000  1   180.00 ! ALLOW PEP POL
+                ! Based on Gly3 data from graf et al, RB 7/1/11
+CD   CP1  N    CAG      0.0000  1   180.00 ! ALLOW PRO PEP
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CD   CT1  NH1  CAG      0.2000  1   180.00 ! ALLOW PEP POL
+                ! ala dipeptide update for new C VDW Rmin, adm jr., 3/3/93c
+CD   CT2  NH1  CAG      2.0000  1   180.00 ! ALLOW PEP POL
+                ! Based on Gly3 data from graf et al, RB 7/1/11
+CP1  CAG  N    CP1      2.7500  2   180.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CP1  CAG  N    CP1      0.3000  4     0.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CP2  CP1  N    CAG      0.8000  3     0.00 ! ALLOW PRO PEP
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CP2  CP3  N    CAG      0.0000  3   180.00 ! ALLOW PRO PEP
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CP3  N    CAG  CP1      2.7500  2   180.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CP3  N    CAG  CP1      0.3000  4     0.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CP3  N    CP1  CAG      0.1000  3     0.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CP3  NP   CP1  CAG      0.0800  3     0.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT1  CAG  N    CP1      2.7500  2   180.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT1  CAG  N    CP1      0.3000  4     0.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT1  CAG  N    CP3      2.7500  2   180.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT1  CAG  N    CP3      0.3000  4     0.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT1  CAG  NH1  CT1      1.6000  1     0.00 !  ALLOW PEP
+                ! Revised to adjust NMA cis/trans energy difference. (LK)
+CT1  CAG  NH1  CT1      2.5000  2   180.00 !  ALLOW PEP
+                ! Gives appropriate NMA cis/trans barrier. (LK)
+CT1  CT1  NH1  CAG      1.8000  1     0.00 ! ALLOW PEP
+                ! ala dipeptide update for new C VDW Rmin, adm jr., 3/3/93c
+CT1  NH1  CAG  CP1      1.6000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT1  NH1  CAG  CP1      2.5000  2   180.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT2  CAG  N    CP1      2.7500  2   180.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT2  CAG  N    CP1      0.3000  4     0.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT2  CAG  N    CP3      2.7500  2   180.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT2  CAG  N    CP3      0.3000  4     0.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT2  CAG  NH1  CT1      1.6000  1     0.00 !  ALLOW PEP
+                ! Revised to adjust NMA cis/trans energy difference. (LK)
+CT2  CAG  NH1  CT1      2.5000  2   180.00 !  ALLOW PEP
+                ! Gives appropriate NMA cis/trans barrier. (LK)
+CT2  CAG  NH1  CT2      1.6000  1     0.00 !  ALLOW PEP
+                ! Revised to adjust NMA cis/trans energy difference. (LK)
+CT2  CAG  NH1  CT2      2.5000  2   180.00 !  ALLOW PEP
+                ! Gives appropriate NMA cis/trans barrier. (LK)
+CT2  CAG  NH1  CT3      1.6000  1     0.00 !  ALLOW PEP
+                ! from CT2  C    NH1  CT2, adm jr. 10/21/96
+CT2  CAG  NH1  CT3      2.5000  2   180.00 !  ALLOW PEP
+                ! from CT2  C    NH1  CT2, adm jr. 10/21/96
+CT2  CT1  NH1  CAG      1.8000  1     0.00 ! ALLOW PEP
+                ! ala dipeptide update for new C VDW Rmin, adm jr., 3/3/93c
+CT2  CT2  NH1  CAG      1.8000  1     0.00 ! ALLOW PEP
+                ! from CT2  CT1  NH1  C, for lactams, adm jr.
+CT2  NH1  CAG  CP1      1.6000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT2  NH1  CAG  CP1      2.5000  2   180.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT2  NH1  CAG  CT1      1.6000  1     0.00 !  ALLOW PEP
+                ! Revised to adjust NMA cis/trans energy difference. (LK)
+CT2  NH1  CAG  CT1      2.5000  2   180.00 !  ALLOW PEP
+                ! Gives appropriate NMA cis/trans barrier. (LK)
+CT3  CAG  N    CP1      2.7500  2   180.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT3  CAG  N    CP1      0.3000  4     0.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT3  CAG  N    CP3      2.7500  2   180.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT3  CAG  N    CP3      0.3000  4     0.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT3  CAG  NH1  CT1      1.6000  1     0.00 !  ALLOW PEP
+                ! Revised to adjust NMA cis/trans energy difference. (LK)
+CT3  CAG  NH1  CT1      2.5000  2   180.00 !  ALLOW PEP
+                ! Gives appropriate NMA cis/trans barrier. (LK)
+CT3  CAG  NH1  CT2      1.6000  1     0.00 !  ALLOW PEP
+                ! for acetylated GLY N-terminus, adm jr.
+CT3  CAG  NH1  CT2      2.5000  2   180.00 !  ALLOW PEP
+                ! for acetylated GLY N-terminus, adm jr.
+CT3  CAG  NH1  CT3      1.6000  1     0.00 !  ALLOW PEP
+                ! Revised to adjust NMA cis/trans energy difference. (LK)
+CT3  CAG  NH1  CT3      2.5000  2   180.00 !  ALLOW PEP
+                ! Gives appropriate NMA cis/trans barrier. (LK)
+CT3  CT1  NH1  CAG      1.8000  1     0.00 ! ALLOW PEP
+                ! ala dipeptide update for new C VDW Rmin, adm jr., 3/3/93c
+CT3  NH1  CAG  CP1      1.6000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT3  NH1  CAG  CP1      2.5000  2   180.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+CT3  NH1  CAG  CT1      1.6000  1     0.00 !  ALLOW PEP
+                ! Revised to adjust NMA cis/trans energy difference. (LK)
+CT3  NH1  CAG  CT1      2.5000  2   180.00 !  ALLOW PEP
+                ! Gives appropriate NMA cis/trans barrier. (LK)
+H    NH1  CAG  CP1      2.5000  2   180.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+H    NH1  CAG  CT1      2.5000  2   180.00 !  ALLOW PEP
+                ! Gives appropriate NMA cis/trans barrier. (LK)
+H    NH1  CAG  CT2      2.5000  2   180.00 !  ALLOW PEP
+                ! Gives appropriate NMA cis/trans barrier. (LK)
+H    NH1  CAG  CT3      2.5000  2   180.00 !  ALLOW PEP
+                ! Gives appropriate NMA cis/trans barrier. (LK)
+H    NH1  CT1  CAG      0.0000  1     0.00 ! ALLOW PEP
+                ! Alanine Dipeptide ab initio calc's (LK)
+H    NH1  CT2  CAG      0.0000  1     0.00 ! ALLOW PEP
+                ! Alanine Dipeptide ab initio calc's (LK)
+HA2  CP3  N    CAG      0.0000  3   180.00 ! ALLOW PRO PEP
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+HA2  CT2  NH1  CAG      0.0000  3     0.00 ! ALLOW PEP
+                ! LK for autogenerate dihe, sp2-methyl, no dihedral potential
+HA3  CT3  NH1  CAG      0.0000  3     0.00 ! ALLOW PEP
+                ! LK for autogenerate dihe, sp2-methyl, no dihedral potential
+HB1  CP1  N    CAG      0.8000  3     0.00 ! ALLOW PRO PEP
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+HB1  CT1  NH1  CAG      0.0000  1     0.00 ! ALLOW PEP
+                ! Alanine Dipeptide ab initio calc's (LK)
+HB2  CT2  NH1  CAG      0.0000  1     0.00 ! ALLOW PEP
+                ! Alanine Dipeptide ab initio calc's (LK)
+HC   NP   CP1  CAG      0.0800  3     0.00 ! ALLOW PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CP1  CP2      0.4000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CP1  CP2      0.6000  2     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CP1  HB1      0.4000  1   180.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CP1  HB1      0.6000  2     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CP1  N        0.3000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CP1  N       -0.3000  4     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CT1  CT1      0.0000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CT1  CT2      0.0000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CT1  CT3      0.0000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CT1  HB1      0.0000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CT2  HB2      0.0000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CAG  CT3  HA3      0.0000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+N    CT1  CT2  CA       0.0400  3     0.00 ! ALLOW   ARO
+                ! 2.7 kcal/mole CH3 rot in ethylbenzene, adm jr, 3/7/92
+NH1  CAG  CP1  CP2      0.4000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NH1  CAG  CP1  CP2      0.6000  2     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NH1  CAG  CP1  HB1      0.4000  1   180.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NH1  CAG  CP1  HB1      0.6000  2     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NH1  CAG  CP1  N        0.3000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NH1  CAG  CP1  N       -0.3000  4     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NH1  CAG  CT1  CT1      0.0000  1     0.00 !   ALLOW PEP
+                ! ala dipeptide corrxn for new C VDW Rmin, 4/10/93 (LK)
+NH1  CAG  CT1  CT2      0.0000  1     0.00 !   ALLOW PEP
+                ! ala dipeptide corrxn for new C VDW Rmin, 4/10/93 (LK)
+NH1  CAG  CT1  CT3      0.0000  1     0.00 !   ALLOW PEP
+                ! ala dipeptide corrxn for new C VDW Rmin, 4/10/93 (LK)
+NH1  CAG  CT1  HB1      0.0000  1     0.00 !   ALLOW PEP
+                ! Alanine Dipeptide ab initio calc's (LK)
+NH1  CAG  CT1  NH1      0.6000  1     0.00 !   ALLOW PEP
+                ! ala dipeptide update for new C VDW Rmin, adm jr., 3/3/93
+NH1  CAG  CT2  CT2      0.0000  1     0.00 !   ALLOW PEP
+                ! from NH1  C    CT1  CT2, for lactams, adm jr.
+NH1  CAG  CT2  HA2      0.0000  3     0.00 ! ALLOW PEP
+                ! LK for autogenerate dihe, sp2-methyl, no dihedral potential
+NH1  CAG  CT2  HB2      0.0000  1     0.00 !   ALLOW PEP
+                ! Alanine Dipeptide ab initio calc's (LK)
+NH1  CAG  CT2  NH1      0.6000  1     0.00 !   ALLOW PEP
+                ! ala dipeptide update for new C VDW Rmin, adm jr., 3/3/93
+NH1  CAG  CT3  HA3      0.0000  3     0.00 ! ALLOW PEP
+                ! LK for autogenerate dihe, sp2-methyl, no dihedral potential
+NH1  CT1  CAG  N        0.4000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NH1  CT2  CAG  N        0.4000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NH3  CT1  CAG  N        0.4000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NH3  CT1  CAG  NH1      0.6000  1     0.00 ! ALLOW PEP PRO
+                ! ala dipeptide update for new C VDW Rmin, adm jr., 3/3/93
+NH3  CT2  CAG  N        0.4000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NH3  CT2  CAG  NH1      1.0000  1     0.00 ! ALLOW PEP PRO
+                ! RB 1/07/11, based on graf et al Gly 3 N-ter J-couplings for PRES GLYP
+NP   CP1  CAG  N        0.3000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+NP   CP1  CAG  NH1      0.3000  1     0.00 ! ALLOW PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+X    CAG  NC2  X        2.2500  2   180.00 ! ALLOW   PEP POL ARO
+                ! 9.0->2.25 GUANIDINIUM (KK)
+X    CP1  CAG  X        0.0000  6   180.00 ! ALLOW   POL PEP PRO
+                ! 6-31g* AcProNH2, ProNH2, 6-31g*//3-21g AcProNHCH3 RLD 4/23/93
+
+
+HA1  CT1  CT1  CAG      0.2000  3     0.00 ! From X    CT1  CT1  X
+
+HA2  CT2  CT1  CAG      0.2000  3     0.00 ! From X    CT1  CT2  X
+CAB  CAB  CAB  CAB      3.1000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89
+CA   CA   CA   CAB      3.1000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89
+CA   CA   CAB   CA      3.1000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89
+OH1  CAB  CA   CAB      3.1000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89 phenol
+OH1  CAB  CA   CA       3.1000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89 phenol
+HP   CA   CA   CAB      4.2000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89 benzene
+HP   CA   CAB    CA       4.2000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89 benzene
+OH1  CAB  CA   HP       4.2000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89 phenol
+H    OH1  CAB  CA       0.9900  2   180.00 ! ALLOW   ARO ALC
+                ! phenol OH rot bar, 3.37 kcal/mole, adm jr. 3/7/92
+CC   CT1  CT2  CAB      0.0400  3     0.00 ! ALLOW   ARO
+                ! 2.7 kcal/mole CH3 rot in ethylbenzene, adm jr, 3/7/92
+CT2  CAB  CAB  CAB      3.1000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89 toluene and ethylbenzene
+CT3  CAB  CAB  CAB      3.1000  2   180.00 ! ALLOW   ARO
+                ! toluene, adm jr., 3/7/92
+CT3  CT2  CAB  CAB      0.2300  2   180.00 ! ALLOW   ARO ALI
+                ! ethylbenzene ethyl rotation, adm jr. 3/7/92
+H    OH1  CAB  CAB      0.9900  2   180.00 ! ALLOW   ARO ALC
+                ! phenol OH rot bar, 3.37 kcal/mole, adm jr. 3/7/92
+HA1  CT1  CT2  CAB      0.0400  3     0.00 ! ALLOW   ARO
+                ! 2.7 kcal/mole CH3 rot in ethylbenzene, adm jr, 3/7/92
+HA3  CT3  CT2  CAB      0.0400  3     0.00 ! ALLOW   ARO
+                ! 2.7 kcal/mole CH3 rot in ethylbenzene, adm jr, 3/7/92
+HP   CAB  CAB  CAB      4.2000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89 benzene
+HP   CAB  CAB  CT2      4.2000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89 toluene and ethylbenzene
+HP   CAB  CAB  CT3      4.2000  2   180.00 ! ALLOW   ARO
+                ! toluene, adm jr., 3/7/92
+HP   CAB  CAB  HP       2.4000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89 benzene
+N    CT1  CT2  CAB      0.0400  3     0.00 ! ALLOW   ARO
+                ! 2.7 kcal/mole CH3 rot in ethylbenzene, adm jr, 3/7/92
+OC   CAB  CAB  CAB      3.1000  2   180.00 ! ALLOW   ARO
+                ! adm jr. 8/27/91, phenoxide
+OC   CAB  CAB  HP       4.2000  2   180.00 ! ALLOW   ARO
+                ! adm jr. 8/27/91, phenoxide
+OH1  CAB  CAB  CAB      3.1000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89 phenol
+OH1  CAB  CAB  HP       4.2000  2   180.00 ! ALLOW   ARO
+                ! JES 8/25/89 phenol
+X    CT2  CAB  X        0.0000  6     0.00 ! ALLOW   ALI ARO
+                ! toluene, adm jr., 3/7/92
+X    CT3  CAB  X        0.0000  6     0.00 ! ALLOW   ALI ARO
+                ! toluene, adm jr., 3/7/92
+CG251O CG25C1 CG2RC0 CG2R6B     4.00  2   180.00 ! OIRD, oxindol-3-ylidene rhodanine, kevo & xxwy
+CG2DC3 CG25C1 CG2RC0 CG2R6B     0.1000  2   180.00 ! MEOI, methyleneoxindole, kevo & xxwy
+CG2R53 CG25C1 CG2RC0 CG2R6B     3.00  2   180.00 ! MEOI, methyleneoxindole, kevo & xxwy
+CG252O CG25C2 CG2RC0 CG2R6B     4.00  2   180.00 ! OIRD, oxindol-3-ylidene rhodanine, kevo & xxwy
+CG2DC3 CG25C2 CG2RC0 CG2R6B     0.1000  2   180.00 ! MEOI, methyleneoxindole, kevo & xxwy
+CG2R53 CG25C2 CG2RC0 CG2R6B     3.00  2   180.00 ! MEOI, methyleneoxindole, kevo & xxwy
+CG2R6B CG2DC1 CG2DC3 HGA5       3.5000  2   180.00 ! STYR, styrene, xxwy & oashi
+CG2DC3 CG2DC1 CG2R6B CG2R6B     0.7500  2   180.00 ! STYR, styrene, xxwy & oashi
+CG2DC3 CG2DC1 CG2R6B CG2R6B     0.1900  4     0.00 ! STYR, styrene, xxwy & oashi
+NG2D1  CG2DC1 CG2R6B CG2R6B     1.6000  2   180.00 ! HDZ1b, hydrazone model cmpd 1b, kevo
+HGA4   CG2DC1 CG2R6B CG2R6B     0.6000  2   180.00 ! HDZ1b, hydrazone model cmpd 1b, kevo
+CG2R6B CG2DC1 NG2D1  NG2S1     12.00  2   180.00 ! HDZ2, hydrazone model cmpd 2
+CG2R6B CG2DC2 CG2DC3 HGA5       3.5000  2   180.00 ! STYR, styrene, xxwy & oashi
+CG2DC3 CG2DC2 CG2R6B CG2R6B     0.7500  2   180.00 ! STYR, styrene, xxwy & oashi
+CG2DC3 CG2DC2 CG2R6B CG2R6B     0.1900  4     0.00 ! STYR, styrene, xxwy & oashi
+NG2D1  CG2DC2 CG2R6B CG2R6B     1.6000  2   180.00 ! HDZ1b, hydrazone model cmpd 1b, kevo
+HGA4   CG2DC2 CG2R6B CG2R6B     0.6000  2   180.00 ! HDZ1b, hydrazone model cmpd 1b, kevo
+CG2R6B CG2DC2 NG2D1  NG2S1     12.00  2   180.00 ! HDZ2, hydrazone model cmpd 2
+NG2P1  CG2N2  CG2R6B CG2R6B     0.8200  2   180.00 ! BAMI, benzamidinium, sz (verified by pram)
+NG2P1  CG2N2  CG2R6B CG2R6B     0.2900  4     0.00 ! BAMI, benzamidinium, sz (verified by pram)
+NG2P1  CG2N2  CG2R6B CG2R6B     0.0900  6     0.00 ! BAMI, benzamidinium, sz (verified by pram)
+CG2R6B CG2N2  NG2P1  HGP2       2.00  2   180.00 ! BAMI, benzamidinium, mp2 scan, pram
+NG2D1  CG2O1  CG2R6B CG2R6B     1.00  2   180.00 ! ABBM, amide base, sr
+NG2S1  CG2O1  CG2R6B CG2R6B     1.00  2   180.00 ! HDZ2, hydrazone model cmpd 2
+NG2S1  CG2O1  CG2R6B CG2R64     0.00    2    180.0 ! flavin
+NG2S1  CG2O1  CG2R6B CG2RC0     1.00  2   180.00 ! HDZ2, hydrazone model cmpd 2
+NG2S1  CG2O1  CG2R6B NG2R60     1.62    2     180.0 ! flavin
+NG2S2  CG2O1  CG2R6B CG2R6B     1.00  2   180.00 ! 3NAP, nicotinamide (PYRIDINE pyr-CONH2), yin
+OG2D1  CG2O1  CG2R6B CG2R6B     1.00  2   180.00 ! 3NAP, nicotinamide (PYRIDINE pyr-CONH2), yin
+OG2D1  CG2O1  CG2R6B CG2R64     0.00    2     180.0 ! flavin
+OG2D1  CG2O1  CG2R6B CG2RC0     1.00  2   180.00 ! HDZ2, hydrazone model cmpd 2
+OG2D1  CG2O1  CG2R6B NG2R60     1.94    2     180.0 ! flavin
+NG2S2  CG2O1  CG321  CG2R6B     0.2100  1   180.00 ! acbz, yxu, RNA
+NG2S2  CG2O1  CG321  CG2R6B     0.5500  3     0.00 ! acbz, yxu, RNA
+OG2D1  CG2O1  CG321  CG2R6B     0.6700  2   180.00 ! acbz, yxu, RNA
+OG2D1  CG2O1  CG321  CG2R6B     0.9400  3     0.00 ! acbz, yxu, RNA
+CG2R6B CG2O1  NG2D1  CG331      7.6828  1   180.00 ! ABBM, amide base, sr
+CG2R6B CG2O1  NG2D1  CG331      3.9364  2   180.00 ! ABBM, amide base, sr
+CG2R6B CG2O1  NG2D1  CG331      2.6177  3     0.00 ! ABBM, amide base, sr
+CG331  CG2O1  NG2D1  CG2R6B     3.8319  1   180.00 ! ABNB, amide base, sr
+CG331  CG2O1  NG2D1  CG2R6B     1.9865  2   180.00 ! ABNB, amide base, sr
+CG331  CG2O1  NG2D1  CG2R6B     0.9745  3     0.00 ! ABNB, amide base, sr
+CG331  CG2O1  NG2D1  CG2R6B     1.7523  4     0.00 ! ABNB, amide base, sr
+CG331  CG2O1  NG2D1  CG2R6B     1.3108  5   180.00 ! ABNB, amide base, sr
+CG331  CG2O1  NG2D1  CG2R6B     0.4805  6     0.00 ! ABNB, amide base, sr
+OG2D1  CG2O1  NG2D1  CG2R6B     0.1745  1   180.00 ! ABNB, amide base, sr
+OG2D1  CG2O1  NG2D1  CG2R6B     0.4993  2   180.00 ! ABNB, amide base, sr
+OG2D1  CG2O1  NG2D1  CG2R6B     1.3856  3     0.00 ! ABNB, amide base, sr
+OG2D1  CG2O1  NG2D1  CG2R6B     1.1029  4   180.00 ! ABNB, amide base, sr
+OG2D1  CG2O1  NG2D1  CG2R6B     0.5507  5   180.00 ! ABNB, amide base, sr
+OG2D1  CG2O1  NG2D1  CG2R6B     0.2034  6     0.00 ! ABNB, amide base, sr
+CG2DC1 CG2O1  NG2S1  CG2R6B     1.6000  1     0.00 ! RETINOL FRET
+CG2DC1 CG2O1  NG2S1  CG2R6B     2.5000  2   180.00 ! RETINOL FRET
+CG2DC2 CG2O1  NG2S1  CG2R6B     1.6000  1     0.00 ! RETINOL FRET
+CG2DC2 CG2O1  NG2S1  CG2R6B     2.5000  2   180.00 ! RETINOL FRET
+CG2R6B CG2O1  NG2S1  CG2O6      1.84    1       0.0 ! flavin
+CG2R6B CG2O1  NG2S1  CG2O6      1.01    2     180.0 ! flavin
+CG2R6B CG2O1  NG2S1  CG321      1.6000  1     0.00 ! 3CPD, Gamma-3-Amide Pyridine Lysine CDCA Amide; from HDZ2, hydrazone model cmpd 2; cacha
+CG2R6B CG2O1  NG2S1  CG321      4.00  2   180.00 ! 3CPD, Gamma-3-Amide Pyridine Lysine CDCA Amide; from HDZ2, hydrazone model cmpd 2; cacha
+CG2R6B CG2O1  NG2S1  NG2D1      1.6000  1     0.00 ! HDZ2, hydrazone model cmpd 2
+CG2R6B CG2O1  NG2S1  NG2D1      4.00  2   180.00 ! HDZ2, hydrazone model cmpd 2
+CG2R6B CG2O1  NG2S1  HGP1       2.5000  2   180.00 ! HDZ2, hydrazone model cmpd 2
+CG321  CG2O1  NG2S1  CG2R6B     1.6000  1     0.00 ! 3APP, Alpha-Benzyl Gamma-3-Amino Pyridine GA CDCA Amide, cacha
+CG321  CG2O1  NG2S1  CG2R6B     2.5000  2   180.00 ! 3APP, Alpha-Benzyl Gamma-3-Amino Pyridine GA CDCA Amide, cacha
+CG331  CG2O1  NG2S1  CG2R6B     1.6000  1     0.00 ! RETINOL PACP 1-fold added by kevo
+CG331  CG2O1  NG2S1  CG2R6B     2.5000  2   180.00 ! RETINOL PACP
+OG2D1  CG2O1  NG2S1  CG2R6B     2.5000  2   180.00 ! RETINOL PACP
+CG2R6B CG2O1  NG2S2  HGP1       1.00  2   180.00 ! 3NAP, nicotamide (PYRIDINE pyr-CONH2), yin
+OG2D1  CG2O2  CG2R6B CG2R6B     1.0250  2   180.00 ! ZOIC, benzoic acid, MBOA, methylbenzoate, jal
+OG302  CG2O2  CG2R6B CG2R6B     0.8500  2   180.00 ! MBOA, methylbenzoate, jal
+OG311  CG2O2  CG2R6B CG2R6B     1.0250  2   180.00 ! ZOIC, benzoic acid, jal
+OG2D1  CG2O2  CG311  CG2R6B     0.7000  1     0.00 ! cmbz, yxu, RNA
+OG2D1  CG2O2  CG311  CG2R6B     0.3000  3   180.00 ! cmbz, yxu, RNA
+OG302  CG2O2  CG311  CG2R6B     0.3000  3     0.00 ! cmbz, yxu, RNA
+OG2D1  CG2O2  CG321  CG2R6B     0.8500  1     0.00 ! mebz, yxu, RNA
+OG302  CG2O2  CG321  CG2R6B     0.3000  1     0.00 ! mebz, yxu, RNA
+OG302  CG2O2  CG321  CG2R6B     1.00  2   180.00 ! mebz, yxu, RNA
+OG311  CG2O2  CG321  CG2R6B     0.9300  2   180.00 ! bzaa, yxu, RNA
+OG311  CG2O2  CG321  CG2R6B     0.1200  3   180.00 ! bzaa, yxu, RNA
+CG2R6B CG2O2  OG302  CG331      1.2500  1   180.00 ! MBOA, methylbenzoate, jal
+CG2R6B CG2O2  OG302  CG331      1.5000  2   180.00 ! MBOA, methylbenzoate, jal
+CG2R6B CG2O2  OG302  CG331      0.0500  6   180.00 ! MBOA, methylbenzoate, jal
+CG2R6B CG2O2  OG311  HGP1       0.9750  1   180.00 ! ZOIC, benzoic acid, jal
+CG2R6B CG2O2  OG311  HGP1       2.7000  2   180.00 ! ZOIC, benzoic acid, jal
+CG2R6B CG2O2  OG311  HGP1       0.0500  3   180.00 ! ZOIC, benzoic acid, jal
+CG2R6B CG2O2  OG311  HGP1       0.2500  6   180.00 ! ZOIC, benzoic acid, jal
+OG2D2  CG2O3  CG2O5  CG2R6B     0.3000  2   180.00 ! BIPHENYL ANALOGS unmodified, peml
+OG2D2  CG2O3  CG2R6B CG2R6B     3.1000  2   180.00 ! BIPHENYL ANALOGS, peml
+OG2D2  CG2O3  CG311  CG2R6B     0.00  1     0.00 ! FBIF, Fatty acid Binding protein Inhibitor F, cacha. Was 3.1 2 180 ==> reset by kevo. re-optimize!!!
+OG2D2  CG2O3  CG321  CG2R6B     0.6000  2   180.00 ! bzac, yxu, RNA
+OG2D2  CG2O3  CG321  CG2R6B     0.1000  4     0.00 ! bzac, yxu, RNA
+OG2D1  CG2O4  CG2R6B CG2R6B     1.0800  2   180.00 ! ALDEHYDE benzaldehyde unmodified
+HGR52  CG2O4  CG2R6B CG2R6B     1.0800  2   180.00 ! ALDEHYDE benzaldehyde unmodified
+CG2O3  CG2O5  CG2R6B CG2R6B     1.5850  2   180.00 ! BIPHENYL ANALOGS unmodified, peml; verified by mcs
+CG311  CG2O5  CG2R6B CG2R6B     1.5850  2   180.00 ! BIPHENYL ANALOGS unmodified, peml
+CG321  CG2O5  CG2R6B CG2R6B     0.2700  2   180.00 ! PHEK, phenyl ethyl ketone, mcs
+CG331  CG2O5  CG2R6B CG2R6B     0.2500  2   180.00 ! PHMK, phenyl methyl ketone, mcs
+OG2D3  CG2O5  CG2R6B CG2R6B     1.5850  2   180.00 ! BIPHENYL ANALOGS unmodified, peml; verified by mcs
+CG2R6B CG2O5  CG311  OG311      0.00  2   180.00 ! BIPHENYL ANALOGS unmodified, peml
+CG2R6B CG2O5  CG311  OG312      0.00  2     0.00 ! BIPHENYL ANALOGS unmodified, peml
+CG2R6B CG2O5  CG311  HGA1       0.00  1   180.00 ! BIPHENYL ANALOGS unmodified, peml
+CG2R6B CG2O5  CG321  CG331      0.4000  1     0.00 ! PHEK, phenyl ethyl ketone, mcs
+CG2R6B CG2O5  CG321  CG331      0.1700  2   180.00 ! PHEK, phenyl ethyl ketone, mcs
+CG2R6B CG2O5  CG321  CG331      0.1300  3   180.00 ! PHEK, phenyl ethyl ketone, mcs
+CG2R6B CG2O5  CG321  CG331      0.1000  6   180.00 ! PHEK, phenyl ethyl ketone, mcs
+CG2R6B CG2O5  CG321  HGA2       0.1000  3     0.00 ! PHEK, phenyl ethyl ketone; from 3ACP, 3-acetylpyridine; mcs
+CG2R6B CG2O5  CG331  HGA3       0.1000  3     0.00 ! 3ACP, 3-acetylpyridine; reset by kevo to ketone, RIMP2/cc-pVTZ//MP2/6-31G(d), adm 11/08
+NG2S1  CG2O6  NG2S0  CG2R6B     1.3000  2   180.00 ! pmmu, yxu, RNA
+OG2D1  CG2O6  NG2S0  CG2R6B     1.3000  2   180.00 ! pmmu, yxu, RNA
+NG2S1  CG2O6  NG2S1  CG2R6B     1.6000  2   180.00 ! mpyu, yxu, 12/2015, RNA
+NG2S1  CG2O6  NG2S1  CG2R6B     0.7000  3     0.00 ! mpyu, yxu, 12/2015, RNA
+OG2D1  CG2O6  NG2S1  CG2R6B     2.00  2   180.00 ! mpyu, yxu, RNA
+CG2N2  CG2R51 CG2RC0 CG2R6B     0.00  2   180.00 ! 7mip, yxu, RNA
+CG2R51 CG2R51 CG2RC0 CG2R6B     3.00  2   180.00 ! PROT JWK 09/05/89
+CG321  CG2R51 CG2RC0 CG2R6B     2.5000  2   180.00 ! INDO/TRP
+CG324  CG2R51 CG2RC0 CG2R6B     2.2000  2   180.00 ! ampu, yxu, RNA
+CG331  CG2R51 CG2RC0 CG2R6B     2.5000  2   180.00 ! INDO/TRP
+NG2R51 CG2R51 CG2RC0 CG2R6B     1.5000  2   180.00 ! ISOI, isoindole, kevo
+HGR51  CG2R51 CG2RC0 CG2R6B     2.8000  2   180.00 ! INDO/TRP
+HGR52  CG2R51 CG2RC0 CG2R6B     0.2500  2   180.00 ! ISOI, isoindole, kevo
+CG2O1  CG2R51 NG2R51 CG2R6B     3.00  2   180.00 ! D3R set1 scaffold 1, xxwy
+CG2R51 CG2R51 NG2R51 CG2R6B     0.00  1     0.00 ! D3R set1 scaffold 1, xxwy
+CG2R51 CG2R51 NG2RC0 CG2R6B     3.00  2   180.00 ! INDZ, indolizine, kevo
+CG321  CG2R51 NG2RC0 CG2R6B     0.7000  2   180.00 ! hpiz, from MWG, yxu, RNA
+HGR52  CG2R51 NG2RC0 CG2R6B     1.4000  2   180.00 ! INDZ, indolizine, kevo
+NG2R50 CG2R52 CG2RC0 CG2R6B     2.00  2   180.00 ! INDA, 1H-indazole, kevo
+HGR52  CG2R52 CG2RC0 CG2R6B     2.4000  2   180.00 ! INDA, 1H-indazole, kevo
+NG2R50 CG2R53 CG2R6B CG2R6B     0.8900  2   180.00 ! 2PTZ model for D3R, xxwy
+NG2R50 CG2R53 CG2R6B CG2R6B     0.1000  4     0.00 ! 2PTZ model for D3R, xxwy
+SG2R50 CG2R53 CG2R6B CG2R6B     0.8900  2   180.00 ! 2PTZ model for D3R, xxwy
+SG2R50 CG2R53 CG2R6B CG2R6B     0.1000  4     0.00 ! 2PTZ model for D3R, xxwy
+CG2R6B CG2R53 NG2R50 CG2R51     4.00  2   180.00 ! 2PTZ model for D3R, xxwy
+CG2R6B CG2R53 SG2R50 CG2R51     4.00  2   180.00 ! 2PTZ model for D3R, xxwy
+CG1N1  CG2R6B CG2R6B CG2R6B     2.00  2   180.00 ! 3CYP, 3-Cyanopyridine (PYRIDINE pyr-CN), yin
+CG1N1  CG2R6B CG2R6B CG2RC0     1.3000  2   180.00 ! CYIN, 5-cyanoindole; from 3CYP, 3-Cyanopyridine; alr
+CG1N1  CG2R6B CG2R6B NG2R60     1.00  2   180.00 ! 3CYP, 3-Cyanopyridine (PYRIDINE pyr-CN), yin
+CG1N1  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! 3CYP, 3-Cyanopyridine (PYRIDINE pyr-CN) Kenno: was 5.0 1 0.0 (sic!) ==> reset to default.
+CG1N1  CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! 3CYP, 3-Cyanopyridine (PYRIDINE pyr-CN) Kenno: was 5.0 1 0.0 (sic!) ==> reset to default.
+CG2DC1 CG2R6B CG2R6B CG2R6B     3.1000  2   180.00 ! HDZ2, hydrazone model cmpd 2
+CG2DC1 CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! HDZ2, hydrazone model cmpd 2 Kenno: 4.2 -> 2.4
+CG2DC2 CG2R6B CG2R6B CG2R6B     3.1000  2   180.00 ! HDZ2, hydrazone model cmpd 2
+CG2DC2 CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! HDZ2, hydrazone model cmpd 2 Kenno: 4.2 -> 2.4
+CG2N2  CG2R6B CG2R6B CG2R6B     3.1000  2   180.00 ! BAMI, benzamidinium; default parameter; sz
+CG2N2  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! BAMI, benzamidinium; default parameter; sz
+CG2O1  CG2R6B CG2R6B CG2R6B     3.1000  2   180.00 ! 3NAP, nicotinamide Kenno: 1.0 -> 3.1
+CG2O1  CG2R6B CG2R6B NG2R60     5.00  2   180.00 ! 3NAP, nicotinamide
+CG2O1  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! 3NAP, nicotinamide Kenno: 4.2 -> 2.4
+CG2O1  CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! 3NAP, nicotinamide Kenno: 4.2 -> 2.4
+CG2O2  CG2R6B CG2R6B CG2R6B     3.1000  2   180.00 ! ZOIC, benzoic acid, MBOA, methylbenzoate; default parameter; kevo & jal
+CG2O2  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! ZOIC, benzoic acid, MBOA, methylbenzoate; default parameter; kevo & jal
+CG2O3  CG2R6B CG2R6B CG2R6B     3.1000  2   180.00 ! BIPHENYL ANALOGS, peml
+CG2O3  CG2R6B CG2R6B NG2R60     1.00  2   180.00 ! PYRIDINE pyridine, yin
+CG2O3  CG2R6B CG2R6B NG2S1      2.4000  2   180.00 ! 2XBD, Gamma 2-carboxy phenyl GA CDCA amide, corrected by kevo
+CG2O3  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! PYRIDINE aminopyridine Kenno: 4.2 -> 2.4
+CG2O3  CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! PYRIDINE aminopyridine Kenno: 4.2 -> 2.4
+CG2O4  CG2R6B CG2R6B CG2R6B     3.1000  2   180.00 ! 3ALP, nicotinaldehyde (PYRIDINE pyr-aldehyde) unmodified, yin
+CG2O4  CG2R6B CG2R6B NG2R60     1.00  2   180.00 ! 3ALP, nicotinaldehyde (PYRIDINE pyr-aldehyde) unmodified, yin
+CG2O4  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! 3ALP, nicotinaldehyde (PYRIDINE pyr-aldehyde) Kenno: 4.2 -> 2.4 unmodified
+CG2O4  CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! 3ALP, nicotinaldehyde (PYRIDINE pyr-aldehyde) Kenno: 4.2 -> 2.4 unmodified
+CG2O5  CG2R6B CG2R6B CG2R6B     3.1000  2   180.00 ! BIPHENYL ANALOGS unmodified, peml
+CG2O5  CG2R6B CG2R6B NG2R60     5.00  2   180.00 ! 3ACP, 3-acetylpyridine unmodified
+CG2O5  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! 3ACP, 3-acetylpyridine reset to default by kevo; verified by mcs
+CG2O5  CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! 3ACP, 3-acetylpyridine reset to default by kevo; verified by mcs
+CG2R53 CG2R6B CG2R6B CG2R6B     3.00  2   180.00 ! 2PTZ model for D3R, xxwy
+CG2R53 CG2R6B CG2R6B HGR61      2.00  2   180.00 ! 2PTZ model for D3R, xxwy
+CG2R6B CG2R6B CG2R6B CG2R6B     3.1000  2   180.00 ! PROT JES 8/25/89
+CG2R61 CG2R61 CG2R61 CG2R6B     3.1000  2   180.00 ! PROT JES 8/25/89
+CG2R61 CG2R61 CG2R6B CG2R61     3.1000  2   180.00 ! PROT JES 8/25/89
+CG2R61 CG2R6B CG2R61 CG2R61     3.1000  2   180.00 ! PROT JES 8/25/89
+CG2R6B CG2R6B CG2R6B CG2R62     0.5000  2   180.00 ! RIN, coumarin, isg
+CG2R6B CG2R6B CG2R6B CG2R63     3.2000  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B CG2R6B CG2R6B CG2R64     3.1000  2   180.00 ! 18NFD, 1,8-naphthyridine, erh
+CG2R6B CG2R6B CG2R6B CG2R66     3.1000  2   180.00 ! NAMODEL difluorotoluene
+CG2R6B CG2R6B CG2R6B CG2R67     3.1000  2   180.00 ! BIPHENYL ANALOGS, peml
+CG2R6B CG2R6B CG2R6B CG2RC0     3.00  2   180.00 ! INDO/TRP
+CG2R6B CG2R6B CG2R6B CG311      3.1000  2   180.00 ! NAMODEL difluorotoluene
+CG2R6B CG2R6B CG2R6B CG312      3.1000  2   180.00 ! BDFP, BDFD, Difuorobenzylphosphonate
+CG2R6B CG2R6B CG2R6B CG321      3.1000  2   180.00 ! PROT JES 8/25/89 toluene and ethylbenzene
+CG2R6B CG2R6B CG2R6B CG324      3.1000  2   180.00 ! BPIP, N-Benzyl PIP, cacha
+CG2R6B CG2R6B CG2R6B CG331      3.1000  2   180.00 ! PROT toluene, adm jr., 3/7/92
+CG2R6B CG2R6B CG2R6B NG2D1      2.7214  2   180.00 ! ABNB, amide base, sr
+CG2R6B CG2R6B CG2R6B NG2O1      2.00  2   180.00 ! NITB, nitrobenzene
+CG2R6B CG2R6B CG2R6B NG2R51     5.00  2   180.00 ! D3R set1 scaffold 1, xxwy
+CG2R6B CG2R6B CG2R6B NG2R60     1.2000  2   180.00 ! PYR1, pyridine, yin
+CG2R6B CG2R6B CG2R6B NG2R61     3.7000  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B CG2R6B CG2R6B NG2R62     1.2000  2   180.00 ! PYRD, pyridazine (also applies to PYRM, pyrimidine); from PYR1, pyridine, yin; adm
+CG2R6B CG2R6B CG2R6B NG2RC0     1.5000  2   180.00 ! INDZ, indolizine, kevo
+CG2R6B CG2R6B CG2R6B NG2S0      3.1000  2   180.00 ! dmpu, from CG2R6B CG2R6B CG2R6B NG2S1, yxu, RNA
+CG2R6B CG2R6B CG2R6B NG2S1      3.1000  2   180.00 ! RETINOL PACP
+CG2R6B CG2R6B CG2R6B NG2S3      5.00  2   180.00 ! PYRIDINE aminopyridine, yin
+CG2R6B CG2R6B CG2R6B NG301      1.4000  2   180.00 ! DMAN, N,N-dimethylaniline, kevo
+CG2R6B CG2R6B CG2R6B NG311      3.1000  2   180.00 ! FEOZ, phenoxazine, erh based on PROT toluene, adm jr., 3/7/92
+CG2R6B CG2R6B CG2R6B NG3N1      3.1000  2   180.00 ! PHHZ, phenylhydrazine, ed; reset to default param by kevo
+CG2R6B CG2R6B CG2R6B OG301      3.1000  2   180.00 ! BIPHENYL ANALOGS, peml
+CG2R6B CG2R6B CG2R6B OG303      3.1000  2   180.00 ! PROTNA phenol phosphate, 6/94, adm jr.
+CG2R6B CG2R6B CG2R6B OG311      3.1000  2   180.00 ! PYRIDINE phenol, yin
+CG2R61 CG2R61 CG2R6B OG311      3.1000  2   180.00 ! PYRIDINE phenol, yin
+CG2R6B CG2R6B CG2R6B OG312      3.1000  2   180.00 ! PROT adm jr. 8/27/91, phenoxide
+CG2R6B CG2R6B CG2R6B OG3R60     3.1000  2   180.00 ! FEOZ, phenoxazine, erh based on PROT toluene, adm jr., 3/7/92
+CG2R6B CG2R6B CG2R6B SG311      4.5000  2   180.00 ! FETZ, phenothiazine, erh based on toluene, adm jr., 3/7/92
+CG2R6B CG2R6B CG2R6B SG3O1      3.1000  2   180.00 ! based on toluene, adm jr., 3/7/92
+CG2R6B CG2R6B CG2R6B SG3O2      3.00  2   180.00 ! BSAM, benzenesulfonamide and other sulfonamides, xxwy
+CG2R6B CG2R6B CG2R6B CLGR1      3.00  2   180.00 ! CHLB, chlorobenzene
+CG2R6B CG2R6B CG2R6B BRGR1      3.00  2   180.00 ! BROB, bromobenzene
+CG2R6B CG2R6B CG2R6B IGR1       2.1000  2   180.00 ! IODB, iodobenzene
+CG2R6B CG2R6B CG2R6B BG201      1.4000   2   180.00 !   BORB,BONB,BNNB Boronic acid, sr
+CG2R6B CG2R6B CG2R6B HGR61      4.2000  2   180.00 ! PROT JES 8/25/89 benzene
+CG2R6B CG2R61 CG2R61 HGR61      4.2000  2   180.00 ! PROT JES 8/25/89 benzene
+CG2R61 CG2R6B CG2R61 HGR61      4.2000  2   180.00 ! PROT JES 8/25/89 benzene
+CG2R6B CG2R6B CG2R6B HGR62      4.2000  2   180.00 ! BROB, bromobenzene
+CG2R62 CG2R6B CG2R6B HGR61      4.2000  2   180.00 ! RIN, coumarin, isg
+CG2R63 CG2R6B CG2R6B NG2R61     0.5000  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R63 CG2R6B CG2R6B NG2R62     1.2000  2   180.00 ! 43HSPY, 4(3H)-pyrimidinethione; from CG2R64 CG2R6B CG2R6B NG2R62; isg
+CG2R63 CG2R6B CG2R6B HGR61      1.00  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R63 CG2R6B CG2R6B HGR62      0.5000  2   180.00 ! URA24S, 2,4(1H,3H)-pyrimidinedithione; from CG2R64 CG2R6B CG2R6B HGR62; isg
+CG2R64 CG2R6B CG2R6B CG331      3.1000  2   180.00 ! 2A46PD, 2-Amino-4,6-dimethyl-pyridine CDCA conjugate, cacha
+CG2R64 CG2R6B CG2R6B NG2P1      3.1000  2   180.00 ! K2C, yxu, 16/7,13, RNA
+CG2R64 CG2R6B CG2R6B NG2R61     6.00  2   180.00 ! 2SC, from NA36, RNA
+CG2R64 CG2R6B CG2R6B NG2R62     1.2000  2   180.00 ! PTID, pteridine, erh
+CG2R64 CG2R6B CG2R6B HGR61      1.00  2   180.00 ! 18NFD, 1,8-naphthyridine, erh
+CG2R64 CG2R6B CG2R6B HGR62      0.5000  2   180.00 ! PTID, pteridine, erh
+CG2R66 CG2R6B CG2R6B NG2S1      3.1000  2   180.00 ! 3FBD, 3-fluoroanilide patch. Kenno: copied from RETINOL PACP while retrofitting CG2R66 ==> re-optimize
+CG2R66 CG2R6B CG2R6B HGR61      4.2000  2   180.00 ! NAMODEL difluorotoluene
+CG2R67 CG2R6B CG2R6B HGR61      4.2000  2   180.00 ! BIPHENYL ANALOGS, peml
+CG2RC0 CG2R6B CG2R6B BRGR1      3.1000  2   180.00 ! drug design project, xxwy
+CG2RC0 CG2R6B CG2R6B HGR61      3.00  2   180.00 ! INDO/TRP
+CG2RC0 CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! drug design project, xxwy
+CG311  CG2R6B CG2R6B OG311      2.4000  2   180.00 ! FBIB, Fatty Binding Inhibitior B, cacha Kenno: 4.2 -> 2.4
+CG311  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! NAMODEL difluorotoluene Kenno: 4.2 -> 2.4
+CG312  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! BDFP, BDFD, Difuorobenzylphosphonate Kenno: 4.2 -> 2.4
+CG321  CG2R6B CG2R6B NG2R60     1.00  2   180.00 ! PYRIDINE 3-ethylpyridine, yin
+CG321  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! PROT JES 8/25/89 toluene and ethylbenzene Kenno: 4.2 -> 2.4
+CG321  CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! PROT JES 8/25/89 toluene and ethylbenzene Kenno: 4.2 -> 2.4
+CG324  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! BPIP, N-Benzyl PIP, cacha Kenno: 4.2 -> 2.4
+CG331  CG2R6B CG2R6B CG331      2.4000  2   180.00 ! OXYL, o-xylene, kevo for gsk/ibm
+CG331  CG2R6B CG2R6B NG2R60     1.00  2   180.00 ! PYRIDINE 3-methylpyridine, yin
+CG331  CG2R6B CG2R6B NG2S1      2.4000  2   180.00 ! 3A2MPD, 3-amino-2-methyl-pyridine CDCA conjugate, corrected by kevo
+CG331  CG2R6B CG2R6B OG301      2.4000  2   180.00 ! FBID, Fatty acid Binding protein Inhibitor D, cacha Kenno: 4.2 -> 2.4
+CG331  CG2R6B CG2R6B OG311      2.4000  2   180.00 ! FBIA, Fatty Binding Inhibitior B, cacha Kenno: 4.2 -> 2.4
+CG331  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! PROT toluene, adm jr., 3/7/92 Kenno: 4.2 -> 2.4
+CG331  CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! PROT toluene, adm jr., 3/7/92 Kenno: 4.2 -> 2.4
+NG2D1  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! ABNB, amide base, sr
+NG2O1  CG2R6B CG2R6B HGR61      1.00  2   180.00 ! NITB, nitrobenzene
+NG2P1  CG2R6B CG2R6B HGR61      3.4000  2   180.00 ! K2C, yxu, 16/7,13, RNA
+NG2R51 CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! D3R set1 scaffold 1, xxwy
+NG2R60 CG2R6B CG2R6B NG2R60     0.9000  2   180.00 ! PYZN, pyrazine
+NG2R60 CG2R6B CG2R6B NG2R61     1.93    2   180.0 ! flavin
+NG2R60 CG2R6B CG2R6B NG2R62     3.00  2   180.00 ! PTID, pteridine, erh
+NG2R60 CG2R6B CG2R6B NG2S1      5.00  2   180.00 ! 3AMP, 3-Amino pyridine, cacha
+NG2R60 CG2R6B CG2R6B NG2S3      5.00  2   180.00 ! PYRIDINE aminopyridine, yin
+NG2R60 CG2R6B CG2R6B OG311      1.00  2   180.00 ! PYRIDINE 3-hydroxypyridine Kenno: 0.0 (unlikely) -> 1.0 from 3-methylpyridine, yin
+NG2R60 CG2R6B CG2R6B BRGR1      3.00  2   180.00 ! 3A5BPD, Gamma-3-Amino-5-bromo Pyridine GA CDCA Amide, cacha
+NG2R60 CG2R6B CG2R6B HGR61      2.8000  2   180.00 ! PYRIDINE pyridine, yin
+NG2R60 CG2R6B CG2R6B HGR62      6.00  2   180.00 ! PYZN, pyrazine
+NG2R61 CG2R6B CG2R6B HGR61      0.8000  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg (may need to be re-evaluated; ideally re-check INDZ with molvib_energy script and also look at URA2S molvib)
+NG2R61 CG2R6B CG2R6B HGR62      0.8000  2   180.00 ! URA24S, 2,4(1H,3H)-pyrimidinedithione; from NG2RC0 CG2R6B CG2R6B HGR61; isg (may need to be re-evaluated; ideally re-check INDZ with molvib_energy script and also look at URA2S molvib)
+NG2R62 CG2R6B CG2R6B NG2R62     0.5000  2   180.00 ! TRIB, triazine124
+NG2R62 CG2R6B CG2R6B HGR61      2.8000  2   180.00 ! PYRD, pyridazine
+NG2R62 CG2R6B CG2R6B HGR62      6.00  2   180.00 ! TRIB, triazine124
+NG2RC0 CG2R6B CG2R6B HGR61      0.8000  2   180.00 ! INDZ, indolizine, kevo
+NG2S0  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! DMPU, from NG2S1 CG2R6B CG2R6B HGR61, yxu, RNA
+NG2S1  CG2R6B CG2R6B OG301      2.4000  2   180.00 ! 2AMFD, Gamma 2-amino phenyl methyl ether, corrected by kevo
+NG2S1  CG2R6B CG2R6B OG311      2.4000  2   180.00 ! 2AMF, 2-acetamide phenol, cacha Kenno: 4.2 -> 2.4
+NG2S1  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! RETINOL PACP Kenno: 4.2 -> 2.4
+NG2S1  CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! 3AMP, 3-Amino pyridine, cacha Kenno: 4.2 -> 2.4
+NG2S3  CG2R6B CG2R6B NG2S3      3.1000  2   180.00 ! PYRIDINE diaminopyridine. Kenno: Change to 2.4 ???
+NG2S3  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! PYRIDINE aminopyridine Kenno: 4.2 -> 2.4
+NG2S3  CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! PYRIDINE aminopyridine Kenno: 4.2 -> 2.4
+NG301  CG2R6B CG2R6B NG311      2.44    2   180.00 ! flavin
+NG301  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! DMAN, N,N-dimethylaniline; from NG311 CG2R6B CG2R6B HGR61; sc
+NG311  CG2R6B CG2R6B OG3R60     2.5800  2   180.00 ! FEOZ, phenoxazine fit_dihedral, erh
+NG311  CG2R6B CG2R6B SG311      3.5700  2   180.00 ! FETZ, phenothiazine fit_dihedral, erh
+NG311  CG2R6B CG2R6B SG3O2      2.4000  2   180.00 ! OBTZ, sulfonamide heterocycle in drug HCTZ, xxwy
+NG311  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! FEOZ, phenoxazine, erh
+NG3N1  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! PHHZ, phenylhydrazine, ed; reset to default param by kevo
+OG301  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! BIPHENYL ANALOGS, peml. Kenno: 4.2 -> 2.4
+OG303  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! PROTNA phenol phosphate, 6/94, adm jr. Kenno: 4.2 -> 2.4
+OG311  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! PROT JES 8/25/89 phenol Kenno: 4.2 -> 2.4
+OG311  CG2R6B CG2R61 HGR61      2.4000  2   180.00 ! PROT JES 8/25/89 phenol Kenno: 4.2 -> 2.4
+OG311  CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! PROT JES 8/25/89 phenol Kenno: 4.2 -> 2.4
+OG312  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! PROT adm jr. 8/27/91, phenoxide Kenno: 4.2 -> 2.4
+OG3R60 CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! FEOZ, phenoxazine, erh
+SG311  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! FETZ, phenothiazine, erh based on toluene, adm jr., 3/7/92 Kenno: 4.2 -> 2.4
+SG3O1  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! based on toluene, adm jr., 3/7/92 Kenno: 4.2 -> 2.4
+SG3O2  CG2R6B CG2R6B HGR61      2.1000  2   180.00 ! BSAM, benzenesulfonamide and other sulfonamides, xxwy
+CLGR1  CG2R6B CG2R6B CLGR1      2.4000  2   180.00 ! 12DCB, 1,2,dichlorobenzene, (CG331 CG2R6B CG2R6B CG311), isg/fylin
+CLGR1  CG2R6B CG2R6B HGR62      3.00  2   180.00 ! CHLB, chlorobenzene
+BRGR1  CG2R6B CG2R6B BRGR1      2.4000  2   180.00 ! 12DBB, 1,2,dibromobenzene,  (CG331 CG2R6B CG2R6B CG311), isg/fylin
+BRGR1  CG2R6B CG2R6B HGR62      3.00  2   180.00 ! BROB, bromobenzene
+IGR1   CG2R6B CG2R6B IGR1       2.4000  2   180.00 ! 12DIB, 1,2,diiodobenzene,   (CG331 CG2R6B CG2R6B CG311), isg/fylin
+IGR1   CG2R6B CG2R6B HGR62      3.00  2   180.00 ! IODB, iodobenzene
+BG201  CG2R6B CG2R6B HGR61      2.4000  2   180.00 !   BORB,BONB,BNNB Boronic acid, sr
+HGR61  CG2R6B CG2R6B HGR61      2.4000  2   180.00 ! PROT JES 8/25/89 benzene
+HGR61  CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! BROB, bromobenzene
+HGR62  CG2R6B CG2R6B HGR62      2.4000  2   180.00 ! TRIB, triazine124
+CG2R6B CG2R6B CG2R62 CG2R62     0.5000  2   180.00 ! RIN, coumarin, isg
+CG2R6B CG2R6B CG2R62 CG2R63     3.1000  2   180.00 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R6B CG2R6B CG2R62 NG2R61     7.00  2   180.00 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R6B CG2R6B CG2R62 NG2R62     1.2000  2   180.00 ! TC243C, 4(3H)-quinazolinone, isg
+CG2R6B CG2R6B CG2R62 OG3R60     3.1000  2   180.00 ! RIN, coumarin, isg
+HGR61  CG2R6B CG2R62 CG2R62     3.1000  2   180.00 ! RIN, coumarin, isg
+HGR61  CG2R6B CG2R62 CG2R63     1.00  2   180.00 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+HGR61  CG2R6B CG2R62 NG2R61     0.4000  2   180.00 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+HGR61  CG2R6B CG2R62 NG2R62     2.8000  2   180.00 ! TC243C, 4(3H)-quinazolinone, isg
+HGR61  CG2R6B CG2R62 OG3R60     2.4000  2   180.00 ! RIN, coumarin, isg
+CG2R6B CG2R6B CG2R63 NG2R61     0.5000  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B CG2R6B CG2R63 NG2R67     0.5000  2   180.00 ! 43PPY, 3-phenyl-4(3H)-pyrimidinone; from CG2R6B CG2R6B CG2R63 NG2R61, YTS2; isg
+CG2R6B CG2R6B CG2R63 SG2D1      4.5000  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+HGR62  CG2R6B CG2R63 NG2R61     1.00  2   180.00 ! URA24S, 2,4(1H,3H)-pyrimidinedithione; from HGR62 CG2R62 CG2R63 NG2R61; isg
+HGR62  CG2R6B CG2R63 NG2R67     1.00  2   180.00 ! 3PH24S, 2,3-dihydro-3-phenyl-2-thioxo-4(1H)pyrimidinethione; from HGR62  CG2R62 CG2R63 NG2R61, NA; isg
+HGR62  CG2R6B CG2R63 SG2D1      2.4000  2   180.00 ! URA24S, 2,4(1H,3H)-pyrimidinedithione; from SG311 CG2R6B CG2R6B HGR61; isg
+CG2O1  CG2R6B CG2R64 NG2D1      1.15    2   180.00 ! flavin
+CG2O1  CG2R6B CG2R64 NG2R61     0.13    2   180.00 ! flavin
+CG2R6B CG2R6B CG2R64 NG2D1      3.00  2   180.00 ! K2Cn, from 3MCn, yxu, RNA
+CG2R6B CG2R6B CG2R64 NG2P1      2.8000  2   180.00 ! K2C, yxu, 16/7,13, RNA
+CG2R6B CG2R6B CG2R64 NG2R51     4.00  2   180.00 ! PIPA model for D3R, xxwy
+CG2R6B CG2R6B CG2R64 NG2R60     1.2000  2   180.00 ! 2AMP, 2-amino pyridine, from PYR1, pyridine, kevo
+CG2R6B CG2R6B CG2R64 NG2R62     1.2000  2   180.00 ! 18NFD, 1,8-naphthyridine, from PYR1, pyridine, erh
+CG2R6B CG2R6B CG2R64 NG2S1      3.1000  2   180.00 ! 2AMP, 2-amino pyridine, from PACP, p-acetamide-phenol, pyridine, kevo
+CG2R6B CG2R6B CG2R64 NG2S3      2.00  2   180.00 ! yxu KEVO: exocyclic N in 2SC planar, issue with CGenFF atom types?, RNA
+CG2R6B CG2R6B CG2R64 NG311      3.1000  2   180.00 ! bepa, from CG2R6B CG2R6B CG2R6B NG311, not optimized, yxu, RNA
+NG2R60 CG2R6B CG2R64 NG2D1      0.00    2     0.00 ! flavin
+NG2R60 CG2R6B CG2R64 NG2R61     0.36    2     0.00 ! flavin
+NG2R60 CG2R6B CG2R64 NG2R62     1.5000  2     0.00 ! PTID, pteridine, erh
+OG311  CG2R6B CG2R64 NG2R60     3.1000  2   180.00 ! 2A3HPD, cacha
+OG311  CG2R6B CG2R64 NG2S1      2.4000  2   180.00 ! 2A3HPD, cacha
+HGR61  CG2R6B CG2R64 NG2D1      1.00  2   180.00 ! K2Cn, from 3MCn, yxu, RNA
+HGR61  CG2R6B CG2R64 NG2P1      2.6000  2   180.00 ! K2C, yxu, 16/7,13, RNA
+HGR61  CG2R6B CG2R64 NG2R51     1.5000  2   180.00 ! PIPA model for D3R, xxwy
+HGR61  CG2R6B CG2R64 NG2R60     2.8000  2   180.00 ! 2AMP, 2-amino pyridine, from PYR1, pyridine, kevo
+HGR61  CG2R6B CG2R64 NG2R62     3.4000  2   180.00 ! K2Cn, from NA36, yxu, RNA
+HGR61  CG2R6B CG2R64 NG2S1      2.4000  2   180.00 ! 2AMP, 2-amino pyridine, default parameter by analogy to PACP, kevo
+HGR61  CG2R6B CG2R64 NG311      2.4000  2   180.00 ! bepa, from NG311 CG2R6B CG2R6B HGR61, not optimized, yxu, RNA
+HGR62  CG2R6B CG2R64 NG2R62     3.4000  2   180.00 ! 2SC, from NA36, RNA
+HGR62  CG2R6B CG2R64 NG2S3      2.00  2   180.00 ! 2SC, from NA36, RNA
+CG2R6B CG2R6B CG2R66 CG2R6B     3.1000  2   180.00 ! NAMODEL difluorotoluene
+CG2R6B CG2R6B CG2R66 CG2R67     3.1000  2   180.00 ! PYO2F , from CG2R6B CG2R6B CG2R66 CG2R6B, penalty= 0.5
+CG2R6B CG2R6B CG2R66 FGR1       4.5000  2   180.00 ! NAMODEL difluorotoluene
+CG2R66 CG2R6B CG2R66 CG2R6B     3.1000  2   180.00 ! NAMODEL difluorotoluene
+CG2R66 CG2R6B CG2R66 FGR1       4.5000  2   180.00 ! NAMODEL difluorotoluene
+CG331  CG2R6B CG2R66 CG2R6B     3.1000  2   180.00 ! NAMODEL difluorotoluene
+CG331  CG2R6B CG2R66 FGR1       4.5000  2   180.00 ! NAMODEL difluorotoluene
+NG2R60 CG2R6B CG2R66 CG2R6B     1.2000  2   180.00 ! 3FLP, 3-fluoropyridine. Kenno: copied from pyridine while retrofitting CG2R66 ==> re-optimize
+NG2R60 CG2R6B CG2R66 FGR1       3.1000  2   180.00 ! PYRIDINE fluoropyridine, yin
+NG2S1  CG2R6B CG2R66 CG2R6B     3.1000  2   180.00 ! 2FBD, 2-fluoroanilide patch. Kenno: copied from RETINOL PACP while retrofitting CG2R66 ==> re-optimize
+NG2S1  CG2R6B CG2R66 FGR1       2.4000  2   180.00 ! 2FBD, Gamma 2-Fluoro amino benzene glutamic acid CDCA amide, cacha Kenno: 3.1 -> 2.4
+HGR62  CG2R6B CG2R66 CG2R6B     4.2000  2   180.00 ! NAMODEL difluorotoluene
+HGR62  CG2R6B CG2R66 CG2R67     4.2000  2   180.00 ! PYO2F , from HGR62 CG2R6B CG2R66 CG2R6B, penalty= 0.5
+HGR62  CG2R6B CG2R66 FGR1       2.4000  2   180.00 ! NAMODEL difluorotoluene
+CG2R6B CG2R6B CG2R67 CG2R6B     3.1000  2   180.00 ! BIPHENYL ANALOGS, peml
+CG2R6B CG2R6B CG2R67 CG2R66     3.1000  2   180.00 ! PYO2F , from CG2R6B CG2R6B CG2R67 CG2R6B, penalty= 1.5
+CG2R6B CG2R6B CG2R67 CG2R67     3.1000  2   180.00 ! BIPHENYL ANALOGS, peml
+CG2R6B CG2R6B CG2R67 CG2RC0     0.2500  2   180.00 ! CRBZ, carbazole, erh
+CG2R6B CG2R6B CG2R67 NG2R60     1.2000  2   180.00 ! 22BPY, 2,2'-bipyridine, from CG2R6B CG2R6B CG2R6B NG2R60, kevo
+CG2R6B CG2R6B CG2R67 NG2R67     3.1000  2   180.00 ! 1PH4PO, 1-phenyl-4(1H)-pyridinone; from CG2R6B CG2R6B CG2R6B CG2R6B; isg
+NG2R60 CG2R6B CG2R67 CG2R6B     1.2000  2   180.00 ! 3PHP, 3-phenyl-pyridine; Kenno: 3.1 -> 1.2 from PYRIDINE pyridine, yin
+NG2R60 CG2R6B CG2R67 CG2R67     1.00  2   180.00 ! 3PHP, 3-phenyl-pyridine, Kenno: 3.1 -> 1.0 from 3-methylpyridine, yin
+HGR61  CG2R6B CG2R67 CG2R6B     4.2000  2   180.00 ! BIPHENYL ANALOGS, peml
+HGR61  CG2R6B CG2R67 CG2R66     4.2000  2   180.00 ! PYO2F , from HGR61 CG2R6B CG2R67 CG2R6B, penalty= 1.5
+HGR61  CG2R6B CG2R67 CG2R67     4.2000  2   180.00 ! BIPHENYL ANALOGS, peml
+HGR61  CG2R6B CG2R67 CG2RC0     3.00  2   180.00 ! CRBZ, carbazole, erh
+HGR61  CG2R6B CG2R67 NG2R60     2.8000  2   180.00 ! 22BPY, 2,2'-bipyridine, from NG2R60 CG2R6B CG2R6B HGR61, kevo
+HGR61  CG2R6B CG2R67 NG2R67     2.8000  2   180.00 ! 1PH4PO, 1-phenyl-4(1H)-pyridinone; from NG2R60 CG2R6B CG2R6B HGR61; isg
+HGR62  CG2R6B CG2R67 CG2R6B     4.2000  2   180.00 ! BIPHENYL ANALOGS, peml
+HGR62  CG2R6B CG2R67 CG2R67     4.2000  2   180.00 ! BIPHENYL ANALOGS, peml
+CG2O1  CG2R6B CG2RC0 CG2RC0     3.1000  2   180.00 ! HDZ2, hydrazone model cmpd 2
+CG2O1  CG2R6B CG2RC0 NG2R51     2.8000  2   180.00 ! HDZ2, hydrazone model cmpd 2
+CG2R6B CG2R6B CG2RC0 CG25C1     3.00  2   180.00 ! MEOI, methyleneoxindole, kevo & xxwy
+CG2R6B CG2R6B CG2RC0 CG25C2     3.00  2   180.00 ! MEOI, methyleneoxindole, kevo & xxwy
+CG2R6B CG2R6B CG2RC0 CG2R51     4.00  2   180.00 ! INDO/TRP
+CG2R6B CG2R6B CG2RC0 CG2R52     1.5000  2   180.00 ! INDA, 1H-indazole, kevo
+CG2R6B CG2R6B CG2RC0 CG2R67     0.2500  2   180.00 ! CRBZ, carbazole, erh
+CG2R6B CG2R6B CG2RC0 CG2RC0     3.00  2   180.00 ! INDO/TRP
+CG2R6B CG2R6B CG2RC0 CG3C50     0.00  2   180.00 ! MSCH model for D3R, xxwy
+CG2R6B CG2R6B CG2RC0 CG3C52     0.00  2   180.00 ! 3HIN, 3H-indole, kevo
+CG2R6B CG2R6B CG2RC0 NG2R50     1.5000  2   180.00 ! ZIMI, benzimidazole, kevo
+CG2R6B CG2R6B CG2RC0 NG2R51     3.00  2   180.00 ! INDO/TRP
+CG2R6B CG2R6B CG2RC0 NG2R53     3.00  2   180.00 ! MSCH model for D3R, xxwy
+CG2R6B CG2R6B CG2RC0 NG2RC0     3.5000  2   180.00 ! INDZ, indolizine, kevo
+CG2R6B CG2R6B CG2RC0 NG3C51     6.00  2   180.00 ! INDI, indoline, kevo
+CG2R6B CG2R6B CG2RC0 OG2R50     0.00  2   180.00 ! ZFUR, benzofuran, kevo
+CG2R6B CG2R6B CG2RC0 OG3C51     2.00  2   180.00 ! ZDOL, 1,3-benzodioxole, pram & oashi
+CG2R6B CG2R6B CG2RC0 SG2R50     0.00  2   180.00 ! ZTHP, benzothiophene, kevo
+CG2R6B CG2R6B CG2RC0 BG201      0.8911  2   180.00 !   BICB,BINB Boronic acid, sr
+NG2R62 CG2R6B CG2RC0 CG2R51     2.2000  2   180.00 ! ampu, not optimized, yxu, RNA
+NG2R62 CG2R6B CG2RC0 CG2RC0     2.2000  2   180.00 ! PUR9, purine(N9H), kevo
+NG2R62 CG2R6B CG2RC0 NG2R50     0.00  2   180.00 ! PUR9, purine(N9H), kevo
+NG2R62 CG2R6B CG2RC0 NG2R51     0.00  2   180.00 ! PUR7, purine(N7H), kevo
+NG2R62 CG2R6B CG2RC0 NG2R52     0.00  2   180.00 ! 7MGe, from NG2R62 CG2R6B CG2RC0 NG2R50, not optimized, yxu, RNA
+OG311  CG2R6B CG2RC0 CG2RC0     3.1000  2   180.00 ! 7MGe, from CG2R6B CG2R6B CG2R6B OG311, not optimized, yxu, RNA
+OG311  CG2R6B CG2RC0 NG2R50     1.00  2   180.00 ! GENO, from NG2R60 CG2R6B CG2R6B OG311, not optimized, yxu, RNA
+OG311  CG2R6B CG2RC0 NG2R52     2.4000  2   180.00 ! 7MGe, from NG2S1 CG2R6B CG2R6B OG311, not optimized, yxu, RNA
+HGR61  CG2R6B CG2RC0 CG25C1     3.00  2   180.00 ! MEOI, methyleneoxindole, kevo & xxwy
+HGR61  CG2R6B CG2RC0 CG25C2     3.00  2   180.00 ! MEOI, methyleneoxindole, kevo & xxwy
+HGR61  CG2R6B CG2RC0 CG2R51     4.00  2   180.00 ! INDO/TRP
+HGR61  CG2R6B CG2RC0 CG2R52     0.00  2   180.00 ! INDA, 1H-indazole, kevo
+HGR61  CG2R6B CG2RC0 CG2R67     3.00  2   180.00 ! CRBZ, carbazole, erh
+HGR61  CG2R6B CG2RC0 CG2RC0     3.00  2   180.00 ! INDO/TRP
+HGR61  CG2R6B CG2RC0 CG3C50     0.00  2   180.00 ! MSCH model for D3R, xxwy
+HGR61  CG2R6B CG2RC0 CG3C52     0.00  2   180.00 ! 3HIN, 3H-indole, kevo
+HGR61  CG2R6B CG2RC0 NG2R50     0.8000  2   180.00 ! ZIMI, benzimidazole, kevo
+HGR61  CG2R6B CG2RC0 NG2R51     3.00  2   180.00 ! INDO/TRP
+HGR61  CG2R6B CG2RC0 NG2R53     0.00  2   180.00 ! MSCH model for D3R, xxwy
+HGR61  CG2R6B CG2RC0 NG2RC0     0.00  2   180.00 ! INDZ, indolizine, kevo
+HGR61  CG2R6B CG2RC0 NG3C51     0.00  2   180.00 ! INDI, indoline, kevo
+HGR61  CG2R6B CG2RC0 OG2R50     0.00  2   180.00 ! ZFUR, benzofuran, kevo
+HGR61  CG2R6B CG2RC0 OG3C51     2.4000  2   180.00 ! ZDOL, 1,3-benzodioxole, pram & oashi
+HGR61  CG2R6B CG2RC0 SG2R50     0.00  2   180.00 ! ZTHP, benzothiophene, kevo
+HGR61  CG2R6B CG2RC0 BG201      0.00  2   180.00 !   BICB,BINB Boronic acid, sr
+HGR62  CG2R6B CG2RC0 CG25C1     2.4000  2   180.00 ! drug design project, xxwy
+HGR62  CG2R6B CG2RC0 CG25C2     2.4000  2   180.00 ! drug design project, xxwy
+HGR62  CG2R6B CG2RC0 CG2R51     4.00  2   180.00 ! ampu, from HGR61 CG2R6B CG2RC0 CG2R51, yxu, RNA
+HGR62  CG2R6B CG2RC0 CG2RC0     4.2000  2   180.00 ! PUR7, purine(N7H); PUR9, purine(N9H), kevo
+HGR62  CG2R6B CG2RC0 NG2R50     1.00  2   180.00 ! PUR9, purine(N9H), kevo
+HGR62  CG2R6B CG2RC0 NG2R51     0.00  2   180.00 ! PUR7, purine(N7H), kevo
+CG2R6B CG2R6B CG311  CG2O2      0.2000  2     0.00 ! cmbz, yxu,  corrected 1/2015, RNA
+CG2R6B CG2R6B CG311  CG2O3      0.2300  2   180.00 ! FBIF, Fatty acid Binding protein Inhibitor F, cacha
+CG2R6B CG2R6B CG311  CG321      0.2300  2   180.00 ! Slack parameter from difluorotoluene picked up by FBIC ==> RE-OPTIMIZE !!!
+CG2R6B CG2R6B CG311  CG331      0.2300  2   180.00 ! FBIB, Fatty Binding Inhibitior B, cacha
+CG2R6B CG2R6B CG311  OG311      0.7000  2   180.00 ! bzha & cmbz, yxu,  corrected 1/2015, RNA
+CG2R6B CG2R6B CG311  HGA1       0.1000  6   180.00 ! NAMODEL difluorotoluene
+CG2R6B CG2R6B CG312  PG1        0.1500  2   180.00 ! BDFP, Difuorobenzylphosphonate \ re-optimize?
+CG2R6B CG2R6B CG312  PG2        0.1500  2   180.00 ! BDFD, Difuorobenzylphosphonate / re-optimize?
+CG2R6B CG2R6B CG312  FGA2       0.3000  2     0.00 ! BDFP, BDFD, Difuorobenzylphosphonate
+CG2R6B CG2R6B CG321  CG1N1      0.3900  2   180.00 ! cybz, yxu, RNA
+CG2R6B CG2R6B CG321  CG1N1      0.0400  4     0.00 ! cybz, yxu, RNA
+CG2R6B CG2R6B CG321  CG2O1      0.1000  2     0.00 ! acbz, from mebz, yxu, RNA
+CG2R6B CG2R6B CG321  CG2O2      0.1000  2     0.00 ! mebz, yxu, RNA
+CG2R6B CG2R6B CG321  CG2O3      0.1000  4     0.00 ! bzac, yxu, RNA
+CG2R6B CG2R6B CG321  CG2R6B     0.2300  2   180.00 ! PYRIDINE pyr-CH2C6H5, yin
+CG2R6B CG2R6B CG321  CG311      0.2300  2   180.00 ! PROT ethylbenzene ethyl rotation, adm jr. 3/7/92
+CG2R6B CG2R6B CG321  CG314      0.2300  2   180.00 ! PROT ethylbenzene ethyl rotation, adm jr. 3/7/92
+CG2R6B CG2R6B CG321  CG321      0.2300  2   180.00 ! PROT ethylbenzene ethyl rotation, adm jr. 3/7/92
+CG2R6B CG2R6B CG321  CG331      0.2300  2   180.00 ! PROT ethylbenzene ethyl rotation, adm jr. 3/7/92
+CG2R6B CG2R6B CG321  NG2S1      0.1190  2     0.00 ! NZAD, N-benzylacetamide, isg
+CG2R6B CG2R6B CG321  NG2S1      0.1320  4   180.00 ! NZAD, N-benzylacetamide, isg
+CG2R6B CG2R6B CG321  NG2S1      0.0130  6   180.00 ! NZAD, N-benzylacetamide, isg
+CG2R6B CG2R6B CG321  NG311      1.00  2   180.00 ! ambz, yxu, RNA
+CG2R6B CG2R6B CG321  OG302      0.00  2     0.00 ! ABGA, ALPHA BENZYL GLU ACID CDCA AMIDE, cacha
+CG2R6B CG2R6B CG321  OG311      0.00  2     0.00 ! 3CAP, carbinol-pyridine (PYRIDINE pyr-CH2OH), yin
+CG2R6B CG2R6B CG321  PG1        0.2000  2   180.00 ! BDFP, Benzylphosphonate \ re-optimize?
+CG2R6B CG2R6B CG321  PG2        0.2000  2   180.00 ! BDFD, Benzylphosphonate / re-optimize?
+CG2R6B CG2R6B CG321  HGA2       0.0020  6     0.00 ! PROT toluene, adm jr., 3/7/92
+NG2R60 CG2R6B CG321  CG321      0.2300  2   180.00 ! 2AEPD, 2-ethylamino-pyridine CDCA conjugate, corrected by kevo
+NG2R60 CG2R6B CG321  HGA2       0.0020  6     0.00 ! 2AEPD, 2-ethylamino-pyridine CDCA conjugate, corrected by kevo
+CG2R6B CG2R6B CG324  NG3P1      0.1500  2   180.00 ! BPIP, N-Benzyl PIP, cacha
+CG2R6B CG2R6B CG324  NG3P2      0.2000  2     0.00 ! bzma, yxu 4/16,14, RNA
+CG2R6B CG2R6B CG324  NG3P3      0.3300  2     0.00 ! 4FBA, optimized using CCCN mp2 scan, pram
+CG2R6B CG2R6B CG324  HGA2       0.00  2     0.00 ! BPIP, N-Benzyl PIP, cacha
+CG2R6B CG2R6B CG331  HGA3       0.0020  6     0.00 ! PYRIDINE toluene Kenno: 180 -> 0
+CG2R66 CG2R6B CG331  HGA3       0.0020  6     0.00 ! PYRIDINE toluene Kenno: 180 -> 0
+NG2R60 CG2R6B CG331  HGA3       0.0030  6   180.00 ! 3A2MPD, 3-amino-2-methyl-pyridine CDCA conjugate, cacha
+CG2R6B CG2R6B NG2D1  CG2O1      3.7993  1     0.00 ! ABNB, amide base, sr
+CG2R6B CG2R6B NG2D1  CG2O1      3.2897  2   180.00 ! ABNB, amide base, sr
+CG2R6B CG2R6B NG2D1  CG2O1      1.3384  3     0.00 ! ABNB, amide base, sr
+CG2R6B CG2R6B NG2D1  CG2O1      0.2200  4     0.00 ! ABNB, amide base, sr
+CG2R6B CG2R6B NG2D1  CG2O1      0.5549  5   180.00 ! ABNB, amide base, sr
+CG2R6B CG2R6B NG2D1  CG2O1      0.3579  6   180.00 ! ABNB, amide base, sr
+CG2R6B CG2R6B NG2O1  OG2N1      0.9000  2   180.00 ! NITB, nitrobenzene
+CG2R6B CG2R6B NG2P1  CG2R64     0.6000  2   180.00 ! K2C, yxu, 16/7,13, RNA
+CG2R6B CG2R6B NG2P1  CG334      0.4000  2   180.00 ! ncyp, yxu, RNA
+CG2R6B CG2R6B NG2P1  HGP2       0.00  2   180.00 ! ncyp, yxu, RNA
+HGR62  CG2R6B NG2P1  CG2R64     4.00  2   180.00 ! K2C, yxu, RNA
+HGR62  CG2R6B NG2P1  CG334      2.7000  2   180.00 ! ncyp, yxu, RNA
+HGR62  CG2R6B NG2P1  HGP2       0.00  2   180.00 ! ncyp, yxu, RNA
+CG2R6B CG2R6B NG2R51 CG2R51     0.2000  1     0.00 ! D3R set1 scaffold 1, xxwy
+CG2R6B CG2R6B NG2R51 CG2R51     1.1000  2   180.00 ! D3R set1 scaffold 1, xxwy
+CG2R6B CG2R6B NG2R51 CG2R51     0.6000  3     0.00 ! D3R set1 scaffold 1, xxwy
+CG2R6B CG2R6B NG2R51 NG2R50     1.00  2   180.00 ! D3R set1 scaffold 1, xxwy
+CG2O1  CG2R6B NG2R60 CG2R6B     8.44    2   180.00 ! flavin
+CG2O1  CG2R6B NG2R60 HGP1       2.07    2   180.00 ! flavin
+CG2R6B CG2R6B NG2R60 CG2R6B     1.2000  2   180.00 ! PYRIDINE pyridine, yin
+CG2R6B CG2R6B NG2R60 CG2R64     1.2000  2   180.00 ! 2AMP, 2-amino pyridine, from PYR1, pyridine, kevo
+CG2R6B CG2R6B NG2R60 CG2R67     1.2000  2   180.00 ! 22BPY, 2,2'-bipyridine, from CG2R6B CG2R6B NG2R60 CG2R6B, kevo
+CG2R6B CG2R6B NG2R60 HGP1       0.91    2   180.00 ! flavin
+CG2R64 CG2R6B NG2R60 CG2R6B     2.2000  2   180.00 ! PTID, pteridine, erh
+CG2R64 CG2R6B NG2R60 HGP1       1.53    2   180.00 ! flavin
+CG2R66 CG2R6B NG2R60 CG2R6B     1.2000  2   180.00 ! 3FLP, 3-fluoropyridine. Kenno: copied from pyridine while retrofitting CG2R66 ==> re-optimize
+CG2R67 CG2R6B NG2R60 CG2R6B     1.2000  2   180.00 ! 3PHP, 3-phenyl-pyridine, yin
+CG321  CG2R6B NG2R60 CG2R6B     3.1000  2   180.00 ! 2AEPD, 2-ethylamino-pyridine CDCA conjugate, cacha
+CG331  CG2R6B NG2R60 CG2R6B     3.1000  2   180.00 ! 3A2MPD, 3-amino-2-methyl-pyridine CDCA conjugate, cacha
+CG331  CG2R6B NG2R60 CG2R64     3.1000  2   180.00 ! 2A46PD, 2-Amino-4,6-dimethyl-pyridine CDCA conjugate, cacha
+BRGR1  CG2R6B NG2R60 CG2R6B     3.00  2   180.00 ! 3A6BPD, Gamma-3-Amino-6-bromo Pyridine GA CDCA Amide, cacha
+HGR62  CG2R6B NG2R60 CG2R6B     5.8000  2   180.00 ! PYR1 pyridine, yin ! got overwritten with "slack parameter" during big renaming operation (par_cgenff_1e_unsorted). Restored to original from toppar_all22_prot_pyridines.
+HGR62  CG2R6B NG2R60 CG2R64     5.8000  2   180.00 ! 2AMP, 2-amino pyridine, from PYR1, pyridine, kevo
+HGR62  CG2R6B NG2R60 CG2R67     5.2500  2   180.00 ! 22BPY, 2,2'-bipyridine, kevo
+CG2R6B CG2R6B NG2R61 CG2R63     0.5000  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B CG2R6B NG2R61 CG2R64     0.03    2   180.00 ! flavin
+CG2R6B CG2R6B NG2R61 CG321      3.11    2   180.00 ! flavin
+CG2R6B CG2R6B NG2R61 CG331      2.23    2   180.00 ! flavin
+CG2R6B CG2R6B NG2R61 HGP1       1.00  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+HGR62  CG2R6B NG2R61 CG2R63     4.6000  2   180.00 ! URA24S, 2,4(1H,3H)-pyrimidinedithione; from HGR62 CG2R62 NG2R61 CG2R63; isg
+HGR62  CG2R6B NG2R61 CG2R64     4.6000  2   180.00 ! K2Cn, from HGR62 CG2R62 NG2R61 CG2R63, yxu, RNA
+HGR62  CG2R6B NG2R61 CG331      0.3000  2   180.00 ! 34c, yxu, RNA
+HGR62  CG2R6B NG2R61 HGP1       1.2000  2   180.00 ! URA24S, 2,4(1H,3H)-pyrimidinedithione; from HGR62 CG2R62 NG2R61 HGP1; isg
+CG2R6B CG2R6B NG2R62 CG2R64     2.00  2   180.00 ! PYRM, pyrimidine
+CG2R6B CG2R6B NG2R62 NG2R62     0.8000  2   180.00 ! PYRD, pyridazine
+CG2RC0 CG2R6B NG2R62 CG2R64     2.2000  2   180.00 ! PUR9, purine(N9H), kevo
+OG311  CG2R6B NG2R62 CG2R64     3.1000  2   180.00 ! 7MGe, from CG331 CG2R6B NG2R60 CG2R64, not optimized, yxu, RNA
+HGR62  CG2R6B NG2R62 CG2R64     7.3000  2   180.00 ! PYRM, pyrimidine
+HGR62  CG2R6B NG2R62 NG2R62     2.8000  2   180.00 ! PYRD, pyridazine
+CG2R6B CG2R6B NG2RC0 CG2R51     0.00  2   180.00 ! INDZ, indolizine, kevo
+CG2R6B CG2R6B NG2RC0 CG2RC0     0.5000  2   180.00 ! INDZ, indolizine, kevo
+HGR62  CG2R6B NG2RC0 CG2R51     0.00  2   180.00 ! INDZ, indolizine, kevo
+HGR62  CG2R6B NG2RC0 CG2RC0     1.9000  2   180.00 ! INDZ, indolizine, kevo
+CG2R6B CG2R6B NG2S0  CG2O6      2.2000  2   180.00 ! dmpu, from m6pa, yxu, RNA
+CG2R6B CG2R6B NG2S0  CG331      2.2000  2   180.00 ! dmpu, from m6pa, yxu, RNA
+CG2R6B CG2R6B NG2S1  CG2O1      1.2000  2   180.00 ! RETINOL PACP
+CG2R6B CG2R6B NG2S1  CG2O6      1.2000  2   180.00 ! mpyu, yxu, 12/2015, RNA
+CG2R6B CG2R6B NG2S1  HGP1       0.5000  2   180.00 ! RETINOL PACP
+CG2R66 CG2R6B NG2S1  CG2O1      1.2000  2   180.00 ! 2FBD, 2-fluoroanilide patch. Kenno: copied from RETINOL PACP while retrofitting CG2R66 ==> re-optimize
+CG2R66 CG2R6B NG2S1  CG2O1      1.00  3   180.00 ! 2FBD, 2-fluoroanilide patch. Kenno: copied from RETINOL PACP while retrofitting CG2R66 ==> re-optimize
+CG2R66 CG2R6B NG2S1  HGP1       0.5000  2   180.00 ! 2FBD, 2-fluoroanilide patch. Kenno: copied from RETINOL PACP while retrofitting CG2R66 ==> re-optimize
+CG2R6B CG2R6B NG2S3  HGP4       1.3500  2   180.00 ! PYRIDINE aminopyridine. kevo: 1.80 --> 1.35
+CG2R6B CG2R6B NG301  CG2R64     0.74    2     0.00 ! flavin
+CG2R6B CG2R6B NG301  CG321      1.50    2   180.00 ! flavin
+CG2R6B CG2R6B NG301  CG321      0.15    4     0.00 ! flavin
+CG2R6B CG2R6B NG301  CG331      0.9600  2   180.00 ! DMAN, N,N-dimethylaniline, kevo
+CG2R6B CG2R6B NG301  CG331      0.1050  4     0.00 ! DMAN, N,N-dimethylaniline, kevo
+CG2R6B CG2R6B NG301  CG331      0.0350  6   180.00 ! DMAN, N,N-dimethylaniline, kevo
+CG2R6B CG2R6B NG311  CG2R6B     0.4400  2     0.00 ! FEOZ, phenoxazine fit_dihedral, erh
+CG2R6B CG2R6B NG311  CG2R62     0.08    2   180.00 ! flavin
+CG2R6B CG2R6B NG311  CG321      1.2000  2   180.00 ! AOBT, acyclic model introduced for OBTZ to optimize related dihedrals, xxwy
+CG2R6B CG2R6B NG311  CG321      0.3000  4     0.00 ! AOBT, acyclic model introduced for OBTZ to optimize related dihedrals, xxwy
+CG2R6B CG2R6B NG311  SG3O2      0.2000  2   180.00 ! PMSM, N-phenylmethanesulfonamide; PBSM, N-phenylbenzenesulfonamide; xxwy
+CG2R6B CG2R6B NG311  HGP1       0.5000  2   180.00 ! PMSM, N-phenylmethanesulfonamide; PBSM, N-phenylbenzenesulfonamide; xxwy
+CG2R6B CG2R6B NG311  HGPAM1     0.3200  2   180.00 ! FEOZ, phenoxazine fit_dihedral, erh
+CG2R6B CG2R6B NG3N1  NG3N1      2.3700  2   180.00 ! PHHZ, phenylhydrazine, ed
+CG2R6B CG2R6B NG3N1  HGP1       0.00  2     0.00 ! PHHZ, phenylhydrazine, ed
+CG2R6B CG2R6B OG301  CG2R6B     1.2000  2   180.00 ! BIPHENYL ANALOGS, peml
+CG2R6B CG2R6B OG301  CG321      1.6200  2   180.00 ! ETOB, Ethoxybenzene, cacha
+CG2R6B CG2R6B OG301  CG321      0.1900  4   180.00 ! ETOB, Ethoxybenzene, cacha
+CG2R6B CG2R6B OG301  CG331      1.5800  2   180.00 ! MEOB, Methoxybenzene update, yxu
+CG2R6B CG2R6B OG301  CG331      0.2000  4   180.00 ! MEOB, Methoxybenzene update, yxu
+CG2R6B CG2R6B OG303  PG1        1.4000  2   180.00 ! PROTNA phenol phosphate, 6/94, adm jr.
+CG2R6B CG2R6B OG303  SG3O2      0.5100  2   180.00 ! PMST, phenyl methanesulfonate, PSMT, phenyl sulfamate, xxwy
+CG2R6B CG2R6B OG303  SG3O2      0.1500  4     0.00 ! PMST, phenyl methanesulfonate, PSMT, phenyl sulfamate, xxwy
+CG2R6B CG2R6B OG311  HGP1       0.9900  2   180.00 ! PROT phenol OH rot bar, 3.37 kcal/mole, adm jr. 3/7/92
+CG2R61 CG2R6B OG311  HGP1       0.9900  2   180.00 ! PROT phenol OH rot bar, 3.37 kcal/mole, adm jr. 3/7/92
+CG2R64 CG2R6B OG311  HGP1       0.9900  2   180.00 ! 2A3HPD, from PROT phenol, cacha
+CG2RC0 CG2R6B OG311  HGP1       0.9900  2   180.00 ! 7MGe, from CG2R6B CG2R6B OG311 HGP1, not optimized, yxu, RNA
+NG2R62 CG2R6B OG311  HGP1       0.9900  2   180.00 ! 7MGe, from CG2R6B CG2R6B OG311 HGP1, not optimized, yxu, RNA
+CG2R6B CG2R6B OG3R60 CG2R6B     0.7600  2     0.00 ! FEOZ, phenoxazine fit_dihedral, erh
+CG2R6B CG2R6B SG311  CG2R6B     1.7500  2     0.00 ! FETZ, phenothiazine fit_dihedral, erh
+CG2R6B CG2R6B SG3O1  OG2P1      0.0040  6     0.00 ! benzene sulfonic acid anion, og
+CG2R6B CG2R6B SG3O2  NG301      0.2200  2     0.00 ! D3R set1 scaffold 2, xxwy
+CG2R6B CG2R6B SG3O2  NG311      0.2200  2     0.00 ! MBSM, N-methylbenzenesulfonamide; PBSM, N-phenylbenzenesulfonamide; xxwy
+CG2R6B CG2R6B SG3O2  NG321      0.3500  2     0.00 ! BSAM, benzenesulfonamide, xxwy
+CG2R6B CG2R6B SG3O2  OG2P1      0.00  6     0.00 ! BSAM, benzenesulfonamide and other sulfonamides, xxwy
+CG2R6B CG2R6B BG201  OG2D2      0.9600  2   180.00 !   BONB,BNNB Boronic acid, sr
+CG2R6B CG2R6B BG201  OG2D2      0.1050  4     0.00 !   BONB,BNNB Boronic acid, sr
+CG2R6B CG2R6B BG201  OG2D2      0.0350  6   180.00 !   BONB,BNNB Boronic acid, sr
+CG2R6B CG2R6B BG201  OG311      0.9600  2   180.00 !   BORB,BONB Boronic acid, sr
+CG2R6B CG2R6B BG201  OG311      0.1050  4     0.00 !   BORB,BONB Boronic acid, sr
+CG2R6B CG2R6B BG201  OG311      0.0350  6   180.00 !   BORB,BONB Boronic acid, sr
+CG2R6B CG2R62 CG2R62 CG2R6B     2.5000  2   180.00 ! RIN, coumarin, isg
+CG2R6B CG2R62 CG2R62 CG2R62     2.00  2   180.00 ! RIN, coumarin, isg
+CG2R6B CG2R62 CG2R62 CG2R63     3.7000  2   180.00 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R6B CG2R62 CG2R62 NG2R61     3.5000  2   180.00 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R6B CG2R62 CG2R62 NG2R62     3.1000  2   180.00 ! TC243C, 4(3H)-quinazolinone, isg
+CG2R6B CG2R62 CG2R62 OG3R60     3.9000  2   180.00 ! RIN, coumarin, isg
+CG2R6B CG2R62 CG2R62 HGR62      1.00  2   180.00 ! RIN, coumarin, isg
+CG2R6B CG2R62 CG2R63 NG2R61     1.8000  2   180.00 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R6B CG2R62 CG2R63 OG2D4      1.00  2   180.00 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R6B CG2R62 CG2R63 SG2D1      4.5000  2   180.00 ! YT2S, 3,4-dihydro-4-thioxo-2(1H)-quinazolinone; from CG2R6B CG2R6B CG2R6B SG311, FETZ; isg
+CG2R6B CG2R62 NG2R61 CG2R63     0.6000  2   180.00 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R6B CG2R62 NG2R61 HGP1       1.00  2   180.00 ! YTHY, 2,4(1H,3H)-quinazolinedione, isg
+CG2R6B CG2R62 NG2R62 CG2R64     2.00  2   180.00 ! TC243C, 4(3H)-quinazolinone, isg
+CG2R63 CG2R62 NG311  CG2R6B     0.01    2      0.0 ! flavin
+CG2R64 CG2R62 NG311  CG2R6B     0.03    2    180.0 ! flavin
+CG2R6B CG2R62 OG3R60 CG2R63     0.7600  2     0.00 ! RIN, coumarin, isg
+CG2R6B CG2R63 NG2R61 CG2R63     0.5000  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B CG2R63 NG2R61 CG2R64     1.5000  2   180.00 ! 43HSPY, 4(3H)-pyrimidinethione; from CG2R62 CG2R63 NG2R61 CG2R63; isg
+CG2R6B CG2R63 NG2R61 HGP1       4.8000  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+NG2R61 CG2R63 NG2R61 CG2R6B     0.5000  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+NG2R62 CG2R63 NG2R61 CG2R6B     0.6000  2   180.00 ! 2SC, from NA36, RNA
+NG2R67 CG2R63 NG2R61 CG2R6B     1.5000  2   180.00 ! 3PH24S, 2,3-dihydro-3-phenyl-2-thioxo-4(1H)pyrimidinethione; from NG2R61 CG2R63 NG2R61 CG2R62, NA; isg
+SG2D1  CG2R63 NG2R61 CG2R6B     1.6000  2   180.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R6B CG2R63 NG2R67 CG2R63     1.5000  2   180.00 ! 3PH24S, 2,3-dihydro-3-phenyl-2-thioxo-4(1H)pyrimidinethione; from CG2R62 CG2R63 NG2R61 CG2R63, NA; isg
+CG2R6B CG2R63 NG2R67 CG2R64     1.5000  2   180.00 ! 43HSPP, 3-phenyl-4(3H)-pyrimidinethione; from 43HSPY; isg
+CG2R6B CG2R63 NG2R67 CG2R67     1.5000  2   180.00 ! 3PH24S, 2,3-dihydro-3-phenyl-2-thioxo-4(1H)pyrimidinethione; from CG2R62 CG2R63 NG2R67 CG2R67; isg
+CG2R6B CG2R64 NG2D1  CG2O6      2.87    2     180.0 ! flavin
+CG2R6B CG2R64 NG2D1  HGP1       6.8500  2   180.00 ! K2Cn, from 3MCn, yxu, RNA
+CG2R6B CG2R64 NG2P1  CG2R64     1.3000  2   180.00 ! K2C, yxu, 16/7,13, RNA
+CG2R6B CG2R64 NG2P1  HGP2       0.1900  2   180.00 ! K2C, yxu, 16/7,13, RNA
+NG2P1  CG2R64 NG2P1  CG2R6B     0.4000  2   180.00 ! K2C, yxu, 16/7,13, RNA
+CG2R6B CG2R64 NG2R51 CG2R51     0.2000  1     0.00 ! PIPA model for D3R, xxwy
+CG2R6B CG2R64 NG2R51 CG2R51     1.1000  2   180.00 ! PIPA model for D3R, xxwy
+CG2R6B CG2R64 NG2R51 CG2R51     0.6000  3     0.00 ! PIPA model for D3R, xxwy
+CG2R6B CG2R64 NG2R51 NG2R50     1.00  2   180.00 ! PIPA model for D3R, xxwy
+CG2R6B CG2R64 NG2R60 CG2R6B     1.2000  2   180.00 ! 2AMP, 2-amino pyridine, from PYR1, pyridine, kevo
+NG2R51 CG2R64 NG2R60 CG2R6B     4.00  2   180.00 ! PIPA model for D3R, xxwy
+NG2S1  CG2R64 NG2R60 CG2R6B     3.1000  2   180.00 ! 2AMP, 2-Amino pyridine, cacha (verified by kevo)
+NG311  CG2R64 NG2R60 CG2R6B     3.1000  2   180.00 ! bepa, from CG321 CG2R6B NG2R60 CG2R6B, not optimized, yxu, RNA
+CG2R6B CG2R64 NG2R61 CG2R6B     0.26    2   180.0 ! flavin
+CG2R6B CG2R64 NG2R61 CG321      1.48    2   180.0 ! flavin
+CG2R6B CG2R64 NG2R61 CG331      1.85    2   180.0 ! flavinNG2R51 CG2R64 NG2R60 CG2R6B     4.00  2   180.00 ! PIPA model for D3R, xxwy
+NG2S1  CG2R64 NG2R60 CG2R6B     3.1000  2   180.00 ! 2AMP, 2-Amino pyridine, cacha (verified by kevo)
+NG311  CG2R64 NG2R60 CG2R6B     3.1000  2   180.00 ! bepa, from CG321 CG2R6B NG2R60 CG2R6B, not optimized, yxu, RNA
+CG2R6B CG2R64 NG2R61 CG2R6B     0.26    2   180.0 ! flavin
+CG2R6B CG2R64 NG2R61 CG321      1.48    2   180.0 ! flavin
+CG2R6B CG2R64 NG2R61 CG331      1.85    2   180.0 ! flavin
+NG2R62 CG2R64 NG2R61 CG2R6B     0.2000  2   180.00 ! K2Cn, from NG2R62 CG2R64 NG2R61 CG2R63, yxu, RNA
+NG311  CG2R64 NG2R61 CG2R6B     4.00  2   180.00 ! K2Cn, from NG2S3 CG2R64 NG2R61 CG2R63, yxu, RNA
+CG2R6B CG2R64 NG2R62 CG2R6B     2.00  2   180.00 ! 18NFD, 1,8-naphthyridine, erh
+CG2R6B CG2R64 NG2R62 CG2R63     6.00  2   180.00 ! 2SC, from NA36, RNA
+CG2R6B CG2R64 NG2R62 CG2R64     2.00  2     0.00 ! PTID, pteridine, erh
+NG2R61 CG2R64 NG2R62 CG2R6B     2.00  2   180.00 ! 43HSPY, 4(3H)-pyrimidinethione; from NG2R61 CG2R64 NG2R62 CG2RC0; isg
+NG2R62 CG2R64 NG2R62 CG2R6B     2.00  2   180.00 ! PYRM, pyrimidine
+NG2R67 CG2R64 NG2R62 CG2R6B     2.00  2   180.00 ! 43HSPP, 3-phenyl-4(3H)-pyrimidinethione; from NG2R62 CG2R64 NG2R62 CG2R6B, PYRM; isg
+NG2S3  CG2R64 NG2R62 CG2R6B     2.00  2   180.00 ! 7MGe, from NG2S3 CG2R64 NG2R62 CG2R63, not optimized, yxu, RNA
+SG311  CG2R64 NG2R62 CG2R6B    10.2000  2   180.00 ! 2SMPYR, 2-(methylthio)-pyrimidine; from NG2S1 CG2R64 NG2R60 CG2R6B; isg
+HGR62  CG2R64 NG2R62 CG2R6B     7.3000  2   180.00 ! PYRM, pyrimidine
+CG2R6B CG2R64 NG2S1  CG2O1      1.2000  2   180.00 ! 2AMP, 2-amino pyridine, from PACP, cacha ! not fitted because cacha's original atom typing didn't allow it ==> re-optimize
+CG2R6B CG2R64 NG2S1  CG2O6      1.5000  1     0.00 ! pymu, yxu, RNA
+CG2R6B CG2R64 NG2S1  CG2O6      1.9000  2   180.00 ! pymu, yxu, RNA
+CG2R6B CG2R64 NG2S1  CG2O6      0.7200  3     0.00 ! pymu, yxu, RNA
+CG2R6B CG2R64 NG2S1  HGP1       0.5000  2   180.00 ! 2AMP, 2-amino pyridine, from PACP, cacha ! this one does not require re-optimization
+CG2R6B CG2R64 NG2S3  HGP4       2.00  2   180.00 ! yxu KEVO: exocyclic N in 2SC planar, issue with CGenFF atom types?, RNA
+CG2R62 CG2R64 NG301  CG2R6B     0.07    2   180.0 ! flavin
+NG2R61 CG2R64 NG301  CG2R6B     0.09    2   180.0 ! flavin
+NG2R62 CG2R64 NG301  CG2R6B     3.44    2   180.0 ! flavin
+CG2R6B CG2R64 NG311  CG321      1.1000  1     0.00 ! bepa, yxu, RNA
+CG2R6B CG2R64 NG311  CG321      2.00  2   180.00 ! bepa, yxu, RNA
+CG2R6B CG2R64 NG311  HGPAM1     1.6000  2   180.00 ! bepa, yxu, RNA
+CG2R6B CG2R66 CG2R67 CG2R6B     3.1000  2   180.00 ! PYO2F , from CG2R6B CG2R6B CG2R67 CG2R6B, penalty= 5
+CG2R6B CG2R66 CG2R67 CG2R67     3.1000  2   180.00 ! PYO2F , from CG2R6B CG2R6B CG2R67 CG2R67, penalty= 5
+FGR1   CG2R66 CG2R67 CG2R6B     4.5000  2   180.00 ! PYO2F , from CG2R6B CG2R6B CG2R66 FGR1, penalty= 30
+CG2R6B CG2R67 CG2R67 CG2R6B     0.8900  2   180.00 ! BIPHENYL ANALOGS, peml
+CG2R6B CG2R67 CG2R67 CG2R62     0.4600  2   180.00 ! pyo2b ,tune the middle 180 from CG2R6B CG2R67 CG2R67 CG2R6B, penalty= 0.5
+CG2R6B CG2R67 CG2R67 CG2R62     0.2300  4     0.00 ! low will down the two peaks;phs 4, 0 pyo2b , from CG2R6B CG2R67 CG2R67 CG2R6B, penalty= 0.5
+CG2R6B CG2R67 CG2R67 CG2RC0     2.00  2   180.00 ! CRBZ, carbazole, erh
+CG2R6B CG2R67 CG2R67 NG2R60     0.3750  1     0.00 ! 22BPY, 2,2'-bipyridine, kevo
+CG2R6B CG2R67 CG2R67 NG2R60     0.9400  2   180.00 ! 22BPY, 2,2'-bipyridine, kevo
+CG2R6B CG2R67 CG2R67 NG2R60     0.1900  3   180.00 ! 22BPY, 2,2'-bipyridine, kevo
+CG2R6B CG2R67 CG2R67 NG2R60     0.1600  4     0.00 ! 22BPY, 2,2'-bipyridine, kevo
+CG2R6B CG2R67 CG2RC0 CG2R6B     0.0500  2   180.00 ! CRBZ, carbazole, erh
+CG2R6B CG2R67 CG2RC0 CG3C52     6.7500  2   180.00 ! FLRN, Fluorene, erh
+CG2R6B CG2R67 CG2RC0 NG2R51     3.00  2   180.00 ! CRBZ, carbazole, erh
+CG2R67 CG2R67 CG2RC0 CG2R6B     3.5000  2   180.00 ! CRBZ, carbazole, erh
+CG2R6B CG2R67 NG2R60 CG2R6B     1.2000  2   180.00 ! 22BPY, 2,2'-bipyridine, from CG2R6B CG2R6B NG2R60 CG2R6B, kevo
+CG2R67 CG2R67 NG2R60 CG2R6B     3.1000  2   180.00 ! 22BPY, 2,2'-bipyridine, kevo
+CG2R6B CG2R67 NG2R67 CG2R62     0.3700  2   180.00 ! 1PH4PO, 1-phenyl-4(1H)-pyridinone, isg
+CG2R6B CG2R67 NG2R67 CG2R62     0.2700  4     0.00 ! 1PH4PO, 1-phenyl-4(1H)-pyridinone, isg
+CG2R6B CG2R67 NG2R67 CG2R62     0.0200  6     0.00 ! 1PH4PO, 1-phenyl-4(1H)-pyridinone, isg
+CG2R6B CG2R67 NG2R67 CG2R63     1.4500  2   180.00 ! 1PH2PO, 1-phenyl-2(1H)-pyridinone; from 1PH4PO; isg
+CG2R6B CG2R67 NG2R67 CG2R63     0.1400  4   180.00 ! 1PH2PO, 1-phenyl-2(1H)-pyridinone; from 1PH4PO; isg
+CG2R6B CG2R67 NG2R67 CG2R64     0.3700  2   180.00 ! 43PPY, 3-phenyl-4(3H)-pyrimidinone, isg
+CG2R6B CG2R67 NG2R67 CG2R64     0.2600  4     0.00 ! 43PPY, 3-phenyl-4(3H)-pyrimidinone, isg
+CG25C1 CG2RC0 CG2RC0 CG2R6B     1.5000  2   180.00 ! MEOI, methyleneoxindole, kevo & xxwy
+CG25C2 CG2RC0 CG2RC0 CG2R6B     1.5000  2   180.00 ! MEOI, methyleneoxindole, kevo & xxwy
+CG2R51 CG2RC0 CG2RC0 CG2R6B     1.5000  2   180.00 ! INDO/TRP (Kenno: 4.0 --> 1.5)
+CG2R52 CG2RC0 CG2RC0 CG2R6B     1.5000  2   180.00 ! INDA, 1H-indazole, kevo
+CG2R6B CG2RC0 CG2RC0 CG2R6B     3.00  2   180.00 ! INDO/TRP
+CG2R6B CG2RC0 CG2RC0 CG3C50     3.00  2   180.00 ! MSCH model for D3R, xxwy
+CG2R6B CG2RC0 CG2RC0 CG3C52     6.5000  2   180.00 ! 3HIN, 3H-indole, kevo
+CG2R6B CG2RC0 CG2RC0 NG2R50     1.5000  2   180.00 ! ZIMI, benzimidazole, kevo
+CG2R6B CG2RC0 CG2RC0 NG2R51     1.5000  2   180.00 ! INDO/TRP (Kenno: 4.0 --> 1.5)
+CG2R6B CG2RC0 CG2RC0 NG2R52     1.5000  2   180.00 ! 7MGe, from CG2R6B CG2RC0 CG2RC0 NG2R50, not optimized, yxu, RNA
+CG2R6B CG2RC0 CG2RC0 NG2R53    15.00  2   180.00 ! MSCH model for D3R, xxwy
+CG2R6B CG2RC0 CG2RC0 NG2R62     0.00  2   180.00 ! PUR9, purine(N9H), kevo
+CG2R6B CG2RC0 CG2RC0 NG3C51     6.00  2   180.00 ! INDI, indoline, kevo
+CG2R6B CG2RC0 CG2RC0 OG2R50     0.00  2   180.00 ! ZFUR, benzofuran, kevo
+CG2R6B CG2RC0 CG2RC0 OG3C51     4.00  2   180.00 ! ZDOL, 1,3-benzodioxole, pram & oashi
+CG2R6B CG2RC0 CG2RC0 SG2R50     0.00  2   180.00 ! ZTHP, benzothiophene, kevo
+CG2R6B CG2RC0 CG2RC0 BG201      1.3061  2   180.00 !   BICB,BINB Boronic acid, sr
+CG2R6B CG2RC0 CG3C50 CG2R53     2.00  3   180.00 ! MSCH model for D3R, xxwy
+CG2R6B CG2RC0 CG3C50 CG321      2.00  3   180.00 ! MSCH model for D3R, xxwy
+CG2R6B CG2RC0 CG3C52 CG2R51     0.9000  3     0.00 ! INDE, indene, kevo
+CG2R6B CG2RC0 CG3C52 CG2R52     3.5000  3     0.00 ! 3HIN, 3H-indole, kevo
+CG2R6B CG2RC0 CG3C52 CG2RC0     0.9000  3     0.00 ! FLRN, Fluorene, erh
+CG2R6B CG2RC0 CG3C52 CG3C52     3.00  2   180.00 ! INDI, indoline, kevo
+CG2R6B CG2RC0 CG3C52 OG3C51     4.6890  2   180.00 !   BICB,BINB Boronic acid, sr
+CG2R6B CG2RC0 CG3C52 HGA2       0.5000  3   180.00 ! 3HIN, 3H-indole, kevo
+CG2R6B CG2RC0 NG2R50 CG2R52     4.00  2   180.00 ! 3HIN, 3H-indole, kevo
+CG2R6B CG2RC0 NG2R50 CG2R53    15.00  2   180.00 ! ZIMI, benzimidazole, kevo
+CG2R6B CG2RC0 NG2R51 CG2R51     1.5000  2   180.00 ! NA bases
+CG2R6B CG2RC0 NG2R51 CG2R53    19.00  2   180.00 ! ZIMI, benzimidazole, kevo
+CG2R6B CG2RC0 NG2R51 CG2RC0     0.5000  2   180.00 ! CRBZ, carbazole, erh
+CG2R6B CG2RC0 NG2R51 NG2R50     3.00  2   180.00 ! INDA, 1H-indazole, kevo
+CG2R6B CG2RC0 NG2R51 HGP1       0.2000  2   180.00 ! INDO/TRP
+CG2R6B CG2RC0 NG2R52 CG2R53    12.00  2   180.00 ! 7MGe, from CG2R51 CG2R51 NG2R52 CG2R53, not optimized, yxu, RNA
+CG2R6B CG2RC0 NG2R52 CG334      6.00  2   180.00 ! 7MGe, from CG2R51 CG2R52 NG2R52 CG3C54, not optimized, yxu, RNA
+CG2R6B CG2RC0 NG2R53 CG2R53     3.00  2   180.00 ! MSCH model for D3R, xxwy
+CG2R6B CG2RC0 NG2R53 CG331      1.00  2   180.00 ! MSCH model for D3R, xxwy
+CG2R51 CG2RC0 NG2RC0 CG2R6B     1.00  2   180.00 ! INDZ, indolizine, kevo
+CG2R6B CG2RC0 NG2RC0 CG2R51     1.00  2   180.00 ! INDZ, indolizine, kevo
+CG2R6B CG2RC0 NG2RC0 CG2R6B     0.8000  2   180.00 ! INDZ, indolizine, kevo
+CG2R6B CG2RC0 NG3C51 CG3C52     4.00  2   180.00 ! INDI, indoline, kevo
+CG2R6B CG2RC0 NG3C51 HGP1       0.00  3     0.00 ! INDI, indoline, kevo
+CG2R6B CG2RC0 OG2R50 CG2R51     8.5000  2   180.00 ! ZFUR, benzofuran, kevo
+CG2R6B CG2RC0 OG3C51 CG3C52     0.3000  2   180.00 ! ZDOL, 1,3-benzodioxole, pram & oashi
+CG2R6B CG2RC0 SG2R50 CG2R51     8.5000  2   180.00 ! ZTHP, benzothiophene, kevo
+CG2R6B CG2RC0 SG2R50 CG2R53     3.00  2   180.00 ! ZTHZ, benzothiazole, kevo
+CG2R6B CG2RC0 BG201  OG2D2      2.2611  2   180.00 !   BINB, Boronic acid, sr
+CG2R6B CG2RC0 BG201  OG311      2.5536  2   180.00 !   BICB, Boronic acid, sr
+CG2R6B CG2RC0 BG201  OG3C51     1.5009  2     0.00 !   BICB,BINB Boronic acid, sr
+CG2O1  CG311  CG321  CG2R6B     0.0400  3     0.00 ! PROT 2.7 kcal/mole CH3 rot in ethylbenzene, adm jr, 3/7/92
+CG2O3  CG311  CG321  CG2R6B     0.0400  3     0.00 ! PROT 2.7 kcal/mole CH3 rot in ethylbenzene, adm jr, 3/7/92
+CG2R6B CG311  CG321  CG2O3      0.0400  3     0.00 ! FBIC(R/S), Fatty Binding Inhibitior C, cacha
+CG2R6B CG311  CG321  HGA2       0.00  3     0.00 ! Slack parameter from difluorotoluene picked up by FBIC ==> RE-OPTIMIZE !!!
+CG331  CG311  CG321  CG2R6B     0.0400  3     0.00 ! FBIF, Fatty acid Binding protein Inhibitor F, cacha
+NG2S1  CG311  CG321  CG2R6B     0.2000  3     0.00 ! PROT alkane update, adm jr., 3/2/92
+HGA1   CG311  CG321  CG2R6B     0.0400  3     0.00 ! PROT 2.7 kcal/mole CH3 rot in ethylbenzene, adm jr, 3/7/92
+CG2R6B CG311  CG331  HGA3       0.0400  3     0.00 ! FBIB, Fatty Binding Inhibitior B, cacha
+CG2R6B CG311  OG311  HGP1       1.0800  1     0.00 ! bzhe, yxu, RNA
+CG2R6B CG311  OG311  HGP1       0.5400  2     0.00 ! bzhe, yxu, RNA
+CG2R6B CG311  OG311  HGP1       0.7700  3     0.00 ! bzhe, yxu, RNA
+CG2R6B CG312  PG1    OG2P1      0.00  3     0.00 ! BDFP, Difuorobenzylphosphonate \ re-optimize?
+CG2R6B CG312  PG1    OG311      0.1000  2     0.00 ! BDFP, BDFD, Difuorobenzylphosphonate
+CG2R6B CG312  PG1    OG311      0.4000  3     0.00 ! BDFP, BDFD, Difuorobenzylphosphonate
+CG2R6B CG312  PG2    OG2P1      0.00  3     0.00 ! BDFD, Difuorobenzylphosphonate / re-optimize?
+CG2O1  CG314  CG321  CG2R6B     0.0400  3     0.00 ! PROT 2.7 kcal/mole CH3 rot in ethylbenzene, adm jr, 3/7/92
+CG2O3  CG314  CG321  CG2R6B     0.0400  3     0.00 ! PROT 2.7 kcal/mole CH3 rot in ethylbenzene, adm jr, 3/7/92
+NG3P3  CG314  CG321  CG2R6B     0.2000  3     0.00 ! PROT alkane update, adm jr., 3/2/92
+HGA1   CG314  CG321  CG2R6B     0.0400  3     0.00 ! PROT 2.7 kcal/mole CH3 rot in ethylbenzene, adm jr, 3/7/92
+CG2O3  CG321  CG321  CG2R6B     0.0400  3     0.00 ! FBIB, Fatty Binding Inhibitior B, cacha
+CG2R6B CG321  CG321  CG321      0.0400  3     0.00 ! PROT ethylbenzene
+CG2R6B CG321  CG321  NG2S1      0.1900  3     0.00 ! 2AEPD, 2-ethylamino-pyridine CDCA conjugate, corrected by kevo
+CG2R6B CG321  CG321  HGA2       0.0400  3     0.00 ! PROT ethylbenzene
+CG2R6B CG321  CG331  HGA3       0.0400  3     0.00 ! PROT 2.7 kcal/mole CH3 rot in ethylbenzene, adm jr, 3/7/92
+CG311  CG321  NG2R61 CG2R6B     1.69    1     0.0 ! flavin
+CG331  CG321  NG2R61 CG2R6B     1.69    1     0.0 ! flavin
+HGA2   CG321  NG2R61 CG2R6B     0.00    3     0.0 ! flavin
+CG2R6B CG321  NG2S1  CG2O1      0.0150  1     0.00 ! NZAD, N-benzylacetamide, isg
+CG2R6B CG321  NG2S1  CG2O1      0.2980  2     0.00 ! NZAD, N-benzylacetamide, isg
+CG2R6B CG321  NG2S1  CG2O1      0.0760  3   180.00 ! NZAD, N-benzylacetamide, isg
+CG2R6B CG321  NG2S1  CG2O1      0.6190  4     0.00 ! NZAD, N-benzylacetamide, isg
+CG2R6B CG321  NG2S1  CG2O1      0.1480  6     0.00 ! NZAD, N-benzylacetamide, isg
+CG2R6B CG321  NG2S1  HGP1       0.00  1     0.00 ! NZAD, N-benzylacetamide; from CG2O2 CG321 NG2S1 HGP1; isg
+CG311  CG321  NG301  CG2R6B     0.44    1    180.0 ! flavin
+CG311  CG321  NG301  CG2R6B     0.03    2      0.0 ! flavin
+CG311  CG321  NG301  CG2R6B     0.01    3      0.0 ! flavin
+CG331  CG321  NG301  CG2R6B     0.44    1    180.0 ! flavin
+CG331  CG321  NG301  CG2R6B     0.03    2      0.0 ! flavin
+CG331  CG321  NG301  CG2R6B     0.01    3      0.0 ! flavin
+HGA2   CG321  NG301  CG2R6B     0.00    3    180.0 ! flavin
+CG2R6B CG321  NG311  CG331      0.8000  1   180.00 ! ambz, yxu, RNA
+CG2R6B CG321  NG311  CG331      0.5000  2     0.00 ! ambz, yxu, RNA
+CG2R6B CG321  NG311  CG331      0.7000  3     0.00 ! ambz, yxu, RNA
+CG2R6B CG321  NG311  HGPAM1     0.3000  3     0.00 ! ambz, yxu, RNA
+NG311  CG321  NG311  CG2R6B     2.5000  1   180.00 ! AOBT, acyclic model introduced for OBTZ to optimize related dihedrals, xxwy
+NG311  CG321  NG311  CG2R6B     1.5000  2     0.00 ! AOBT, acyclic model introduced for OBTZ to optimize related dihedrals, xxwy
+NG311  CG321  NG311  CG2R6B     0.5000  3     0.00 ! AOBT, acyclic model introduced for OBTZ to optimize related dihedrals, xxwy
+HGA2   CG321  NG311  CG2R6B     0.00  3   180.00 ! AOBT, acyclic model introduced for OBTZ to optimize related dihedrals, xxwy
+CG2O2  CG321  OG301  CG2R6B     0.9100  1   180.00 ! oebz, yxu, RNA
+CG2O2  CG321  OG301  CG2R6B     0.5000  2     0.00 ! oebz, yxu, RNA
+CG2O3  CG321  OG301  CG2R6B     1.1000  1   180.00 ! atbz, yxu, 12/2015, RNA
+CG2O3  CG321  OG301  CG2R6B     0.2000  3   180.00 ! atbz, yxu, 12/2015, RNA
+CG321  CG321  OG301  CG2R6B     0.2400  1     0.00 ! PNTM, pentamidine; from ETOB, Ethoxybenzene; kevo
+CG321  CG321  OG301  CG2R6B     0.2900  2     0.00 ! PNTM, pentamidine; from ETOB, Ethoxybenzene; kevo
+CG321  CG321  OG301  CG2R6B     0.0200  3     0.00 ! PNTM, pentamidine; from ETOB, Ethoxybenzene; kevo
+CG331  CG321  OG301  CG2R6B     0.2400  1     0.00 ! ETOB, Ethoxybenzene, cacha
+CG331  CG321  OG301  CG2R6B     0.2900  2     0.00 ! ETOB, Ethoxybenzene, cacha
+CG331  CG321  OG301  CG2R6B     0.0200  3     0.00 ! ETOB, Ethoxybenzene, cacha2020/10/24
+CG3C51 CG321  OG301  CG2R6B     0.2000  1   180.00 ! 3POMP, 3-phenoxymethylpyrrolidine, kevo
+CG3C51 CG321  OG301  CG2R6B     0.1000  2     0.00 ! 3POMP, 3-phenoxymethylpyrrolidine, kevo
+CG3C51 CG321  OG301  CG2R6B     0.1000  3   180.00 ! 3POMP, 3-phenoxymethylpyrrolidine, kevo
+HGA2   CG321  OG301  CG2R6B     0.0950  3     0.00 ! ETOB, Ethoxybenzene, cacha
+CG2R6B CG321  OG302  CG2O2      0.00  3     0.00 ! ABGA, ALPHA BENZYL GLU ACID CDCA AMIDE
+CG2R6B CG321  OG311  HGP1       2.1000  1     0.00 ! 3ALP, nicotinaldehyde (PYRIDINE pyr-CH2OH), yin
+CG2R6B CG321  OG311  HGP1       1.4000  2     0.00 ! 3ALP, nicotinaldehyde (PYRIDINE pyr-CH2OH), yin
+CG2R6B CG321  OG311  HGP1       0.7400  3     0.00 ! 3ALP, nicotinaldehyde (PYRIDINE pyr-CH2OH), yin; Kenno: empirically corrected for HGA2 CG321 OG311 HGP1 from Team sugar ==> re-evaluate.
+CG2R6B CG321  PG1    OG2P1      0.0500  3     0.00 ! BDFP, Benzylphosphonate \ re-optimize?
+CG2R6B CG321  PG1    OG311      1.6500  1   180.00 ! BDFP, BDFD, Benzylphosphonate
+CG2R6B CG321  PG1    OG311      0.5000  2     0.00 ! BDFP, BDFD, Benzylphosphonate
+CG2R6B CG321  PG2    OG2P1      0.0500  3     0.00 ! BDFD, Benzylphosphonate / re-optimize?
+CG2R6B CG324  NG3P1  CG324      1.7000  1   180.00 ! BPIP, N-Benzyl PIP, cacha
+CG2R6B CG324  NG3P1  CG324      0.8000  2   180.00 ! BPIP, N-Benzyl PIP, cacha
+CG2R6B CG324  NG3P1  CG324      0.5800  3     0.00 ! BPIP, N-Benzyl PIP, cacha
+CG2R6B CG324  NG3P1  HGP2       0.0400  3     0.00 ! BPIP, N-Benzyl PIP, cacha
+CG2R6B CG324  NG3P2  CG334  0.6500  1   180.00 ! bzma, yxu, RNA
+CG2R6B CG324  NG3P2  CG334  0.7800  3     0.00 ! bzma, yxu, RNA
+CG2R6B CG324  NG3P2  HGP2   0.1000  3     0.00 ! bzma, yxu, RNA
+CG2R6B CG324  NG3P3  HGP2   0.0400  3     0.00 ! 4FBA, bzam; from CG2R6B CG324 NG3P1 HGP2; pram & yxu, RNA
+HGA3   CG331  NG2R61 CG2R6B     0.00    3     0.00 ! 34c, yxu, RNA
+!!!!!!!DUPLICATE!!!!!!!
+HGA3   CG331  NG2S0  CG2R6B     0.00  3     0.00 ! dmpu, from HGA3 CG331 NG2S0 CG2O1, yxu, RNA
+HGA3   CG331  NG301  CG2R6B     0.4300  3     0.00 ! DMAN, N,N-dimethylaniline, kevo
+HGA3   CG331  OG301  CG2R6B     0.0850  3     0.00 ! MEOB, Methoxybenzene, cacha
+HGA3   CG334  NG2P1  CG2R6B     0.00  3     0.00 ! ncyp, not optimized, yxu, RNA
+CG2R52 NG2R50 NG2R51 CG2R6B     1.4000  2   180.00 ! D3R set1 scaffold 1, xxwy
+CG2R6B NG2R62 NG2R62 CG2R6B     1.2000  2   180.00 ! PYRD, pyridazine
+CG2R6B NG2R62 NG2R62 CG2R64     0.5000  2   180.00 ! TRIB, triazine124
+CG321  NG301  SG3O2  CG2R6B     1.1700  1   180.00 ! D3R set1 scaffold 2, xxwy
+CG321  NG301  SG3O2  CG2R6B     1.1600  2     0.00 ! D3R set1 scaffold 2, xxwy
+CG321  NG301  SG3O2  CG2R6B     1.0200  3     0.00 ! D3R set1 scaffold 2, xxwy
+CG2R6B NG311  SG3O2  CG2R6B     1.2000  1   180.00 ! PBSM, N-phenylbenzenesulfonamide, xxwy
+CG2R6B NG311  SG3O2  CG2R6B     1.4000  2     0.00 ! PBSM, N-phenylbenzenesulfonamide, xxwy
+CG2R6B NG311  SG3O2  CG331      2.2000  2     0.00 ! PMSM, N-phenylmethanesulfonamide, xxwy
+CG2R6B NG311  SG3O2  CG331      0.2000  3     0.00 ! PMSM, N-phenylmethanesulfonamide, xxwy
+CG2R6B NG311  SG3O2  OG2P1      0.2000  3     0.00 ! PMSM, N-phenylmethanesulfonamide; PBSM, N-phenylbenzenesulfonamide; xxwy
+CG321  NG311  SG3O2  CG2R6B     1.5000  2     0.00 ! OBTZ, sulfonamide heterocycle in drug HCTZ, xxwy
+CG321  NG311  SG3O2  CG2R6B     0.5000  3     0.00 ! OBTZ, sulfonamide heterocycle in drug HCTZ, xxwy
+CG331  NG311  SG3O2  CG2R6B     1.5000  2     0.00 ! MBSM, N-methylbenzenesulfonamide, xxwy
+CG331  NG311  SG3O2  CG2R6B     0.5000  3     0.00 ! MBSM, N-methylbenzenesulfonamide, xxwy
+HGP1   NG311  SG3O2  CG2R6B     1.2000  1   180.00 ! MBSM, N-methylbenzenesulfonamide; PBSM, N-phenylbenzenesulfonamide; xxwy
+HGP1   NG311  SG3O2  CG2R6B     1.1000  2     0.00 ! MBSM, N-methylbenzenesulfonamide; PBSM, N-phenylbenzenesulfonamide; xxwy
+HGP1   NG311  SG3O2  CG2R6B     0.5000  3     0.00 ! MBSM, N-methylbenzenesulfonamide; PBSM, N-phenylbenzenesulfonamide; xxwy
+HGP1   NG321  SG3O2  CG2R6B     1.5000  1   180.00 ! BSAM, benzenesulfonamide, xxwy
+HGP1   NG321  SG3O2  CG2R6B     1.2000  2     0.00 ! BSAM, benzenesulfonamide, xxwy
+HGP1   NG321  SG3O2  CG2R6B     0.1000  3     0.00 ! BSAM, benzenesulfonamide, xxwy
+CG2R6B NG3N1  NG3N1  HGP1       1.6000  2   180.00 ! PHHZ, phenylhydrazine, ed
+HGP1   NG3N1  NG3N1  HGP1       1.1000  1   180.00 ! HDZN, hydrazine, ed
+CG2R6B OG303  PG1    OG2P1      0.1000  3     0.00 ! PROTNA phenol phosphate, 6/94, adm jr.
+CG2R6B OG303  PG1    OG311      0.9500  2     0.00 ! PROTNA phenol phosphate, 6/94, adm jr.
+CG2R6B OG303  PG1    OG311      0.5000  3     0.00 ! PROTNA phenol phosphate, 6/94, adm jr.
+CG2R6B OG303  SG3O2  CG331      1.6000  1   180.00 ! PMST, phenyl methanesulfonate, xxwy
+CG2R6B OG303  SG3O2  CG331      0.8000  2     0.00 ! PMST, phenyl methanesulfonate, xxwy
+CG2R6B OG303  SG3O2  CG331      0.1000  3     0.00 ! PMST, phenyl methanesulfonate, xxwy
+CG2R6B OG303  SG3O2  NG321      3.2000  1   180.00 ! PSMT, phenyl sulfamate, xxwy
+CG2R6B OG303  SG3O2  NG321      0.2000  2     0.00 ! PSMT, phenyl sulfamate, xxwy
+CG2R6B OG303  SG3O2  NG321      0.2000  3     0.00 ! PSMT, phenyl sulfamate, xxwy
+CG2R6B OG303  SG3O2  OG2P1      0.3000  3     0.00 ! PMST, phenyl methanesulfonate, PSMT, phenyl sulfamate, xxwy
+HGP1   OG311  BG201  CG2R6B     7.9954   1     0.00 !   BORB,BONB Boronic acid, sr
+CG321  CG2R6B CG2R6B NG301      2.4000  2   180.00 ! 2O4 , from CG331 CG2R61 CG2R61 OG301, PENALTY= 33.9
+CG321  CG321  NG301  CG2R6B     0.4400  1   180.00 ! 2O4 , from CG311 CG321 NG301 CG2R61, PENALTY= 0.6
+CG321  CG321  NG301  CG2R6B     0.0300  2     0.00 ! 2O4 , from CG311 CG321 NG301 CG2R61, PENALTY= 0.6
+CG321  CG321  NG301  CG2R6B     0.0100  3     0.00 ! 2O4 , from CG311 CG321 NG301 CG2R61, PENALTY= 0.6
+OG301  CG2R6B CG2R6B CLGR1      3.5700  2   180.00 ! 2LO , from NG311 CG2R61 CG2R61 SG311, PENALTY= 53
+CG2R53 CG321  CG321  CG2R6B     0.0400  3     0.00 ! 2LO , from CG2O1 CG311 CG321 CG2R61, PENALTY= 34
+
+!ARG
+CT2  CT2  NC2  CAG      0.0000  6   180.00 ! From X    CT2  NC2  X
+CT2  NC2  CAG  NC2      2.2500  2   180.00 ! From X    C    NC2  X
+HA2  CT2  NC2  CAG      0.0000  6   180.00 ! From X    CT2  NC2  X
+NC2  CAG  NC2  HC       2.2500  2   180.00 ! From X    C    NC2  X
+
+!Tyr/Phe
+HB1  CT1  CT2  CAB      0.2000  3     0.00 ! From X    CT1  CT2  X
+HA2  CT2  CAB  CAB      0.0000  6     0.00 ! From X    CT2  CA   X
+
+! Group-fitted for Phe/Tyr
+CAB  CAB  CT2  CT1      1.0700  1     0.00
+CAB  CAB  CT2  CT1      0.2400  2   180.00
+CAB  CAB  CT2  CT1      0.1700  3   180.00
+C    CT1  CT2  CAB      1.2800  1   180.00
+C    CT1  CT2  CAB      0.9400  2   180.00
+C    CT1  CT2  CAB      1.5700  3   180.00
+CAB  CT2  CT1  NH1      0.5200  1   180.00
+CAB  CT2  CT1  NH1      0.6200  2   180.00
+CAB  CT2  CT1  NH1      1.5800  3     0.00
+
+! Fit dihedrals
+! Variable cutoff based on QM and weighted in favor of alphaR and EXT (5:5:1)
+! Shared dihedrals were fitted simultaneously
+
+! Group-fitted for Lys/Arg/Gln/Met
+CAG  CT1  CT2  CT2      0.3500  1   180.00 
+CAG  CT1  CT2  CT2      0.4200  2   180.00 
+CAG  CT1  CT2  CT2      1.9100  3   180.00 
+
+IMPROPER
+!
+!V(improper) = Kpsi(psi - psi0)**2
+!
+!Kpsi: kcal/mole/rad**2
+!psi0: degrees
+!note that the second column of numbers (0) is ignored
+!
+!atom types           Kpsi                   psi0
+!
+N    CAG  CP1  CP3     0.0000         0      0.0000 ! ALLOW PRO
+                ! 6-31g* AcProNH2 and ProNH2  RLD 5/19/92
+NC2  X    X    CAG    45.0000         0      0.0000 ! ALLOW   PEP POL ARO
+                ! mp2/6-311g** guan vibrational data, adm jr., 1/04
+CAG  HC    HC  NC2      0.0          0      0.0
+                ! mp2/6-311g** guan vibrational data, adm jr., 1/04
+
+O    X    X    CAG   120.0000         0      0.0000 ! ALLOW   PEP POL ARO
+                ! NMA Vibrational Modes (LK)
+!additions, 2019-3
+!!!!!!!DUPLICATE!!!!!!!
+CG2DC1 CG2R6B NG2D1  HGA4      30.00  0     0.00 ! HDZ1B, xxwy
+CG2DC2 CG2R6B NG2D1  HGA4      30.00  0     0.00 ! HDZ1B, xxwy
+CG2N2  NG2P1  NG2P1  CG2R6B    30.00  0     0.00 ! BAMI, benzamidinium; from AMDN, amidinium; pram
+CG2O1  CG2R6B NG2D1  OG2D1    120.00  0     0.00 ! ABBM, amide base, sr
+CG2O1  CG2R6B NG2S1  OG2D1    120.00  0     0.00 ! PROT NMA Vibrational Modes (LK) WILDCARD
+CG2O1  CG2R6B NG2S2  OG2D1    120.00  0     0.00 ! PROT NMA Vibrational Modes (LK) WILDCARD
+CG2O2  CG2R6B OG2D1  OG302     72.00  0     0.00 ! MBOA, methyl benzoate; MOLVIB looks good; jal
+CG2O2  CG2R6B OG2D1  OG311     53.00  0     0.00 ! ZOIC, benzoic acid; MOLVIB 1% low (55 would be spot on); jal
+CG2O3  OG2D2  OG2D2  CG2R6B    96.00  0     0.00 ! PROT 90.0->96.0 acetate, single impr (KK) WILDCARD
+CG2O4  CG2R6B OG2D1  HGR52     53.00  0     0.00 ! ALDEHYDE benzaldehyde unmodified
+CG2O5  CG2O3  CG2R6B OG2D3     72.00  0     0.00 ! BIPHENYL re-initialized by kevo from PHEK, phenyl ethyl ketone, mcs
+CG2O5  CG2R6B CG311  OG2D3     72.00  0     0.00 ! BIPHENYL re-initialized by kevo from PHEK, phenyl ethyl ketone; mcs
+CG2O5  CG2R6B CG321  OG2D3     72.00  0     0.00 ! PHEK, phenyl ethyl ketone; mcs
+CG2O5  CG2R6B CG331  OG2D3     60.00  0     0.00 ! 3ACP, 3-acetylpyridine; PHMK, phenyl methyl ketone; mcs
+CG2R63 CG2R6B NG2R61 SG2D1     31.00  0     0.00 ! YTS2, 2,4(1H,3H)-quinazolinedithione, isg
+CG2R63 CG2R6B NG2R67 SG2D1     39.00  0     0.00 ! 3PH24S, 2,3-dihydro-3-phenyl-2-thioxo-4(1H)pyrimidinethione; from CG2R63 CG2R62 NG2R61 SG2D1, YTS2; isg
+CG2R64 CG2R6B NG2D1  NG2P1     28.00  0     0.00 ! K2C, yxu, TO BE OPTIMIZED, RNA
+CG2R64 CG2R6B NG2D1  NG2R62    42.00  0     0.00 ! K2Cn, from 3MCn, yxu, RNA
+CG2R64 CG2R6B NG2P1  NG2R62    42.00  0     0.00 ! 34HC, from 3MCn, yxu, TO BE OPTIMIZED, RNA
+CG2R64 CG2R6B NG2P1  NG2P1     42.00  0     0.00 ! 34HC, from 3MCn, yxu, TO BE OPTIMIZED, RNA
+CG2R64 CG2R6B NG2R60 NG2S1     19.00  0     0.00 ! 2AMP, 2-acetamide pyridine,xxwy
+CG2R64 CG2R6B NG2R62 NG2S3     60.00  0     0.00 ! 2SC, from CG2R64 CG2R62 NG2R62 NG2S3, from NA36, RNA
+NG2S3  HGP4   HGP4   CG2R6B    -2.50  0     0.00 ! -2.0 PYRIDINE aminopyridine 11/10 kevo: sic! Compensates for in-plane force from CG2R6B CG2R6B NG2S3 HGP4
+
+NONBONDED nbxmod  5 atom cdiel fshift vatom vdistance vfswitch -
+cutnb 14.0 ctofnb 12.0 ctonnb 10.0 eps 1.0 e14fac 1.0 wmin 1.5 
+                !adm jr., 2013 correction
+!
+!V(Lennard-Jones) = Eps,i,j[(Rmin,i,j/ri,j)**12 - 2(Rmin,i,j/ri,j)**6]
+!
+!epsilon: kcal/mole, Eps,i,j = sqrt(eps,i * eps,j)
+!Rmin/2: A, Rmin,i,j = Rmin/2,i + Rmin/2,j
+!
+!atom  ignored    epsilon      Rmin/2   ignored   eps,1-4       Rmin/2,1-4
+!
+!carbons
+
+CAG    0.000000  -0.110000     2.000000 ! ALLOW   PEP POL ARO
+                ! NMA pure solvent, adm jr., 3/3/93
+CAB    0.000000  -0.070000     1.992400 ! ALLOW   ARO
+                ! benzene (JES)
+CG2R6B   0.0       -0.0700     1.9924 ! INDO/TRP
+
+NBFIX
+!              Emin         Rmin
+!            (kcal/mol)     (A)
+!========================================================================================================
+!!! NBFIX for cation-pi between phenylalanine/tryptophan-arginine, protein-protein
+!!========================================================================================================
+CPT    CAG      -0.16000    4.10
+CAI    CAG      -0.15000    4.10
+CA     CAG      -0.15000    3.90
+CPT    NC2      -0.50000    4.10
+CAI    NC2      -0.51400    4.10
+CA     NC2      -0.40000    3.80
+!========================================================================================================
+!!! NBFIX for cation-pi between phenylalanine/tryptophan-Gua, protein-CGenFF
+!!========================================================================================================
+CPT    CG2N1    -0.16000    4.10
+CAI    CG2N1    -0.15000    4.10
+CA     CG2N1    -0.15000    3.90
+CPT    NG2P1    -0.50000    4.10
+CAI    NG2P1    -0.51400    4.10 
+CA     NG2P1    -0.40000    3.80 
+!========================================================================================================
+!!! NBFIX for cation-pi between toluene/3-methyl-indole-arginine, CGenFF-protein
+!!========================================================================================================
+CG2RC0   CAG    -0.16000   4.10
+CG2R61   CAG    -0.15000   3.90
+CG2RC0   NC2    -0.50000   4.10
+CG2R61   NC2    -0.40000   3.80
+!========================================================================================================
+!!! NBFIX for cation-pi between toluene/3-methyl-indole-Gua, CGenFF-CGenFF
+!!========================================================================================================
+CG2RC0   CG2N1  -0.16000   4.10
+CG2R61   CG2N1  -0.15000   3.90
+CG2RC0   NG2P1  -0.50000   4.10
+CG2R61   NG2P1  -0.40000   3.80 
+!========================================================================================================
+!!! NBFIX for cation-pi between tyrosine-lysine/arginine, protein-protein
+!!========================================================================================================
+CAB    NH3      -0.85000    3.30
+CAB    CAG      -0.12000    4.00
+CAB    NC2      -0.35440    3.90
+!========================================================================================================
+!!! NBFIX for cation-pi between tyrosine-TMA/Gua, protein-CGenFF
+!!========================================================================================================
+CAB    CG334    -0.22000    4.10
+CAB    NG3P0    -0.26000    3.90
+CAB    CG2N1    -0.12000    4.00
+CAB    NG2P1    -0.35440    3.90
+!========================================================================================================
+!!! NBFIX for cation-pi between para-cresol-lysine/arginine, CGenFF-protein
+!!========================================================================================================
+CG2R6B    NH3    -0.85000    3.30 
+CG2R6B    CAG    -0.12000    4.00 
+CG2R6B    NC2    -0.35440    3.90 
+!========================================================================================================
+!!! NBFIX for cation-pi between para-cresol-Gua/TMA, CGenFF-CGenFF
+!!========================================================================================================
+CG2R6B    CG334  -0.22000    4.10 
+CG2R6B    NG3P0  -0.26000    3.90 
+CG2R6B    CG2N1  -0.12000    4.00 
+CG2R6B    NG2P1  -0.35440    3.90
+!========================================================================================================
+!!! NBFIX for cation-pi between phenylalanine/tryptophan-lysine, protein-protein
+!!========================================================================================================
+CPT    NH3      -0.80000    3.20 
+CAI    NH3      -0.70000    3.20 
+CA     NH3      -0.70000    3.30 
+!========================================================================================================
+!!! NBFIX for cation-pi between phenylalanine/tryptophan-TMA, protein-CGenFF
+!!========================================================================================================
+CPT    NG3P0    -0.14000    3.70 
+CAI    NG3P0    -0.24000    3.80 
+CA     NG3P0    -0.28300    3.90 
+CPT    CG334    -0.09000    4.00 
+CAI    CG334    -0.20000    4.20 
+CA     CG334    -0.25500    4.00 
+!========================================================================================================
+!!! NBFIX for cation-pi between toluene/3-methyl-indole-lysine, CGenFF-protein
+!!========================================================================================================
+CG2R61  NH3     -0.70000   3.30
+CG2RC0  NH3     -0.80000   3.20
+!========================================================================================================
+!!! NBFIX for cation-pi between toluene/3-methyl-indole-TMA, CGenFF-CGenFF
+!!========================================================================================================
+CG2R61  NG3P0   -0.28300   3.90
+CG2R61  CG334   -0.25500   4.00
+CG2RC0  NG3P0   -0.14000   3.70
+CG2RC0  CG334   -0.09000   4.00
+!========================================================================================================
+!!! NBFIX for salt bridge between lysine/arginine-Glutamic/Aspartic acid, protein-protein
+!!========================================================================================================
+NH3     OC       -0.16000    3.675
+NC2     OC       -0.15800    3.715 
+!========================================================================================================
+!!! NBFIX for salt bridge between NH4/Gua-acetate, CGenFF-CGenFF
+!!========================================================================================================
+NG3P3   OG2D2    -0.16000    3.675
+NG2P1   OG2D2    -0.15800    3.715 
+!========================================================================================================
+!!! NBFIX for salt bridge between lysine/arginine-acetate, protein-CGenFF
+!!========================================================================================================
+NH3     OG2D2    -0.16000    3.675
+NC2     OG2D2    -0.15800    3.715
+!========================================================================================================
+!!! NBFIX for salt bridge between NH4/Gua-Glutamic/Aspartic acid, CGenFF-protein
+!!========================================================================================================
+NG3P3   OC       -0.16000    3.675
+NG2P1   OC       -0.15800    3.715 
+
+END
