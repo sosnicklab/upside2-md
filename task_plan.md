@@ -110,3 +110,37 @@ Eliminate the native membrane-gradient corruption that crashes `ConDiv_symlay` d
 - Simulation-parity verification:
   - built a temporary pre-patch `upside` binary and ran old/new binaries on identical stripped copies of `2oar.run.1.h5` with the same seed
   - compared all shared `/output` datasets and found exact matches for every dataset, including `pos`, `potential`, `kinetic`, and `hbond`
+
+## Checkpoint Compatibility Correction
+
+- The latest cluster failure is in the update job bootstrap, before divergence recovery or FF analysis begins.
+- `ConDiv_symlay/test_dimer3/initial_checkpoint.pkl` was serialized under local NumPy 2 and contains `numpy._core.numeric`, but the cluster update environment appears to provide an older NumPy that does not export that module path.
+
+## Checkpoint Compatibility Goal
+
+- Make `load_checkpoint()` accept NumPy 2-produced checkpoints when running under older NumPy cluster environments, without changing the checkpoint schema or retraining flow.
+
+## Checkpoint Compatibility Decisions
+
+- Keep the checkpoint format and all training-state fields unchanged; fix portability at unpickle time only.
+- Use a minimal custom unpickler inside `ConDiv_symlay/ConDiv_mem.py` that remaps `numpy._core...` globals to `numpy.core...` when needed.
+- Limit the change to `load_checkpoint()` so existing same-environment pickles and all other workflow behavior remain unchanged unless evidence shows broader pickle portability work is required.
+
+## Checkpoint Compatibility Phases
+
+- [x] Confirm the newest Slurm update failure and inspect the checkpoint bytes for NumPy 2-only module paths.
+- [x] Patch checkpoint loading for NumPy module-path compatibility.
+- [x] Verify the patched loader on the bundled `test_dimer3` checkpoint and via a simulated older-NumPy import failure.
+
+## Checkpoint Compatibility Blockers
+
+- I cannot inspect the actual cluster NumPy version from this Mac-only environment, so the exact version mismatch is inferred from the `ModuleNotFoundError` and the checkpoint contents rather than directly queried on the cluster.
+
+## Checkpoint Compatibility Review
+
+- Added `_CheckpointUnpickler` in `ConDiv_symlay/ConDiv_mem.py` and routed `load_checkpoint()` through it.
+- The unpickler preserves normal imports but falls back from `numpy._core...` to `numpy.core...` when the newer NumPy 2 module path is unavailable.
+- Verification completed:
+  - `python3 -m py_compile ConDiv_symlay/ConDiv_mem.py`
+  - `cd.load_checkpoint('ConDiv_symlay/test_dimer3/initial_checkpoint.pkl')` loads successfully in the normal local environment
+  - a simulated older-NumPy import failure for `numpy._core.numeric` still loads the same checkpoint successfully through the fallback path

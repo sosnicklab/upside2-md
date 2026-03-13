@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import collections
+import importlib
 import itertools
 import json
 import multiprocessing as mp
@@ -350,9 +351,43 @@ def save_checkpoint(path: str, state: dict) -> None:
         cp.dump(state, fh, -1)
 
 
+def _pickle_module_candidates(module: str) -> Iterable[str]:
+    yield module
+    if module == "numpy._core":
+        yield "numpy.core"
+    elif module.startswith("numpy._core."):
+        yield "numpy.core." + module[len("numpy._core.") :]
+
+
+def _resolve_pickle_class(module: str, name: str):
+    last_error = None
+    seen = set()
+    for candidate in _pickle_module_candidates(module):
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            imported = importlib.import_module(candidate)
+        except ModuleNotFoundError as exc:
+            last_error = exc
+            continue
+        try:
+            return getattr(imported, name)
+        except AttributeError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise ModuleNotFoundError(f"No module named {module!r}")
+
+
+class _CheckpointUnpickler(cp.Unpickler):
+    def find_class(self, module: str, name: str):
+        return _resolve_pickle_class(module, name)
+
+
 def load_checkpoint(path: str) -> dict:
     with open(path, "rb") as fh:
-        return cp.load(fh)
+        return _CheckpointUnpickler(fh).load()
 
 
 def _coerce_membrane_file(init_dir: str) -> str:

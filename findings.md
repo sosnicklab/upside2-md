@@ -23,3 +23,8 @@
   - `2oar`, `3ukm`, and `5vb2` all complete divergence recovery with zero helper retries under the normal helper path
   - a fresh local `finalize-round` replay on a clean temp copy of `test_dimer3` rebuilds all 15 divergence files with no `RECOVER_DIVERGENCE_FAIL` or `MISSING_DIVERGENCE`
 - The native fix does not alter simulation trajectories: a direct old-vs-new `upside` binary comparison on the same seeded `2oar.run.1.h5` config produced exact matches for every shared `/output` dataset, including `pos`, `potential`, `kinetic`, and the membrane-relevant outputs.
+- The newest Slurm update failure in `ConDiv_symlay/test_dimer3/epoch_00_minibatch_00/slurm/update-46924605.out` happens earlier than the prior divergence-recovery issues: `slurm_round.py finalize-round` dies while loading `initial_checkpoint.pkl`.
+- The bundled `ConDiv_symlay/test_dimer3/initial_checkpoint.pkl` contains `numpy._core.numeric`, which indicates it was pickled under NumPy 2.x.
+- `ConDiv_symlay/ConDiv_mem.py` currently loads checkpoints with a raw `cp.load(fh)`, so an older runtime lacking `numpy._core.numeric` will fail before any trajectory analysis or training update starts.
+- The minimal compatibility fix is to remap `numpy._core...` pickle globals to `numpy.core...` during checkpoint unpickling; this addresses the local-NumPy-2 to cluster-NumPy-1 direction without changing the checkpoint schema.
+- Local verification confirms that the patched loader still reads the bundled checkpoint normally and also succeeds when `ConDiv_mem.importlib.import_module('numpy._core.numeric')` is forced to raise `ModuleNotFoundError`, which exercises the intended fallback path.
