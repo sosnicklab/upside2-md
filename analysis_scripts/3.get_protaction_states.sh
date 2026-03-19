@@ -1,11 +1,13 @@
 #!/bin/bash
 
-source ../../source.sh
+set -euo pipefail
 
-pdb_id=glpG-RKRK-79HIS
-sim_id=memb_test
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-n_rep=48
+pdb_id=${pdb_id:-glpG-RKRK-79HIS} # CHECKME
+sim_id=${sim_id:-memb_test} # CHECKME
+
+n_rep=${n_rep:-48} # CHECKME
 
 work_dir=./
 input_dir=$work_dir/inputs

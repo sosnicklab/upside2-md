@@ -1,165 +1,342 @@
-# Analysis Scripts
+# Analysis Workflow
 
-This directory contains the post-setup analysis workflow for the Upside HDX/HXMS pipeline used in this repository.
+This directory contains the maintained HDX/HX-MS analysis workflow for this repository.
 
-The scripts are not fully generic command-line tools. Most of them expect you to edit values near the top of the file first, especially:
+The active workflow surface is:
 
-- `pdb_id`
-- `sim_id`
-- `n_rep`
-- `protein_state`
-- `HXMS_method`
-- temperature or frame-selection settings such as `start_frame`
+- `analysis.sh`
+- `0.run_HXMS.py`
+- `1.config.py`
+- `2.traj_ana.sh`
+- `3.get_protaction_states.sh`
+- `4.calc_D_uptake.py`
+- `5.analyze_D_uptake.py`
 
-Most scripts assume you run them from the repository root, so paths like `./inputs`, `./outputs`, `./results`, and `./pdb` resolve correctly.
+The numbered scripts are the workflow steps. `analysis.sh` is the recommended driver for running the full workflow in order.
 
-If your trajectories come from software other than Upside, the downstream analysis workflow can still be used. Extract the protein backbone trajectory first, then modify `get_info_from_upside_traj.py` so it reads that trajectory format and computes the per-replica data arrays expected by the later scripts.
+## Expected Directory Layout
 
-## Expected Inputs
+Run the workflow from a simulation directory that contains:
 
-Before using this workflow, you should already have:
+- `inputs/`
+- `outputs/`
+- `pdb/`
+- `results/` will be created if needed
 
-- prepared model/input files under `inputs/`
-- an HXMS raw uptake table under `pdb/<pdb_id>_rawuptake_HXMS.csv`
-- Upside trajectories under `outputs/<sim_id>/`, or protein backbone trajectories extracted from other software if you adapt `get_info_from_upside_traj.py` to produce the required analysis arrays
-- an active Python environment with the scientific stack used by the scripts
-- the Upside environment available for the shell scripts, usually through `source.sh` and `UPSIDE_HOME`
+Typical required inputs are:
 
-## Experimental Data Dependencies
+- `inputs/<pdb_id>.fasta`
+- `inputs/<pdb_id>.chain_breaks`
+- `inputs/<pdb_id>.initial.npy` if you use native initialization in `1.config.py`
+- `pdb/<pdb_id>_rawuptake_HXMS.csv` if you want the HX-MS comparison workflow
+- `outputs/<sim_id>/<pdb_id>.run.<replica>.up` for Upside trajectory analysis
 
-Some parts of this workflow depend on experimental HXMS data, but the simulation-side uptake calculation can now run without it. The following files depend on experimental HXMS data or on files generated from experimental HXMS data:
+The shell-based steps require the Upside environment (`UPSIDE_HOME`) and the Python environment from the project root.
 
-- `0.run_HXMS.py`: requires the raw HXMS uptake table `pdb/<pdb_id>_rawuptake_HXMS.csv`.
-- `4.calc_D_uptake.py`: can run without experimental data, but then it falls back to a default logarithmic time grid and only produces the simulation-based whole-protein uptake outputs. To get peptide-level outputs, it still needs experimental peptide definitions and time grids, either from `0.run_HXMS.py` (`outputs/<sim_id>/<HXMS_pdb>_pep_ids.csv` and `outputs/<sim_id>/<HXMS_pdb>_<HXMS_method>_time_peps_<protein_state>.npy`) or from the hard-coded experimental CSV named by `exp_data_file` for the temperature-optimization branch.
-- `5.analyze_D_uptake.py`: requires the HXMS reference arrays and peptide IDs produced by `0.run_HXMS.py` together with the peptide-level simulation uptake outputs from `4.calc_D_uptake.py`. It is a comparison script, not a simulation-only analysis step. If those experimental inputs are missing, it now exits cleanly after printing a warning.
+## Recommended Full Workflow
 
-The scripts `1.config.py`, `2.traj_ana.sh`, `3.get_protaction_states.sh`, `get_info_from_upside_traj.py`, and `6.plot_deltaG_vs_resid.py` use simulation/model outputs only and do not read experimental HXMS tables.
+Use `analysis.sh` unless you need to run individual steps by hand.
 
-## No Experimental Data Case
+The driver does the following:
 
-If you do not have an HXMS raw uptake table or any HXMS-derived peptide files, use only the simulation-side branch:
+- sources `${PROJECT_ROOT}/source.sh`
+- activates `${PROJECT_ROOT}/.venv`
+- runs the numbered workflow in order
+- can run locally or submit itself through Slurm
+- can skip the experiment-dependent branch when no experimental HX-MS data are available
 
-1. Run `1.config.py`.
-2. Run `2.traj_ana.sh`.
-3. Run `3.get_protaction_states.sh`.
-4. Run `4.calc_D_uptake.py`.
-5. Optionally run `6.plot_deltaG_vs_resid.py`.
+The default driver order is:
 
-In this mode:
+1. `0.run_HXMS.py`
+2. `1.config.py`
+3. `2.traj_ana.sh`
+4. `3.get_protaction_states.sh`
+5. `4.calc_D_uptake.py` with `analysis_mode=uptake`
+6. `4.calc_D_uptake.py` with `analysis_mode=stability`
+7. `4.calc_D_uptake.py` with `analysis_mode=pca`
+8. `5.analyze_D_uptake.py` with `analysis_mode=uptake`
+9. `5.analyze_D_uptake.py` with `analysis_mode=dg_summary`
 
-- skip `0.run_HXMS.py`
-- skip `5.analyze_D_uptake.py`
-- expect `4.calc_D_uptake.py` to write whole-protein uptake outputs such as `results/<pdb_id>_percentD.csv`, but not peptide-level comparison outputs unless experimental peptide definitions are available
+If `SKIP_EXPERIMENT_DATA="true"`, the driver skips:
 
-## Typical Workflow
+- `0.run_HXMS.py`
+- `5.analyze_D_uptake.py` with `analysis_mode=uptake`
 
-The workflow has two preparation branches that later meet in the uptake comparison step:
+## Run From This Repository
 
-- experimental HXMS preprocessing branch
-- simulation trajectory/protection-state branch
+Example from a checked-in workflow directory:
 
-A practical run order is:
+```bash
+cd example/GlpG_test
+bash ../../analysis_scripts/analysis.sh
+```
 
-1. Run `0.run_HXMS.py` to convert the raw HXMS uptake table into peptide-level normalized and stretched-exponential reference curves.
-2. Prepare the Upside `.up` configuration with `1.config.py`.
-3. Extract trajectory observables into `results/` with `2.traj_ana.sh` and its helper `get_info_from_upside_traj.py`.
-4. Extract protection-state arrays with `3.get_protaction_states.sh`.
-5. Run `4.calc_D_uptake.py` to generate simulation-based peptide and whole-protein uptake curves.
-6. Run `5.analyze_D_uptake.py` to compare the HXMS outputs from step 1 with the simulated uptake outputs from step 5.
-7. Optionally run `6.plot_deltaG_vs_resid.py` for residue-level protection free-energy style summaries.
+Before running, edit the `#CHECKME` settings at the top of `analysis.sh`:
 
-If you do not have experimental HXMS data, stop after step 5 or step 7 depending on whether you want the residue-level free-energy plot.
+- `RUNNER`
+- `WORK_DIR`
+- `PDB_ID`
+- `SIM_ID`
+- `N_REP`
+- `START_FRAME`
+- `SKIP_EXPERIMENT_DATA`
+- `HXMS_METHOD`
+- `PROTEIN_STATE`
+- `EXP_DATA_FILE`
+- Slurm settings if `RUNNER="slurm"`
 
-## Script Summary
+## Copy Workflow Into A Simulation Directory
+
+If you want the workflow scripts to live directly inside a simulation directory, copy the contents of `analysis_scripts/` into that directory, then point the copied workflow back to the main project root.
+
+Example:
+
+```bash
+SIM_DIR=/path/to/my_simulation
+cp -r ./analysis_scripts/* "$SIM_DIR"/
+cd "$SIM_DIR"
+```
+
+After copying:
+
+1. Open `analysis.sh`.
+2. Change the `PROJECT_ROOT=` assignment so it points to the repository root that contains `source.sh`, `.venv`, `py/`, and `obj/`.
+3. Update the `#CHECKME` settings for the target system.
+4. Run the workflow from the simulation directory.
+
+Local run:
+
+```bash
+bash ./analysis.sh
+```
+
+Slurm run:
+
+```bash
+bash ./analysis.sh
+```
+
+For Slurm, first set `RUNNER="slurm"` in `analysis.sh`.
+
+Notes for copied workflows:
+
+- Keep `WORK_DIR="./"` if you want the copied scripts to operate on the current simulation directory.
+- Keep the `helpers/` directory beside the copied top-level scripts.
+- The shell steps still depend on `${PROJECT_ROOT}/source.sh` to define `UPSIDE_HOME`.
+
+## What Each Script Does
+
+### `analysis.sh`
+
+This is the full-workflow driver.
+
+Use it when you want one place to set the main run parameters and execute the active workflow end to end. It is the only script that manages:
+
+- environment activation
+- local versus Slurm execution
+- skipping the experiment-dependent branch
+- fixed default step ordering
 
 ### `0.run_HXMS.py`
 
-Preferred HXMS preprocessing entry point.
+This preprocesses experimental HX-MS uptake data from:
 
-It reads the raw HXMS uptake table from `pdb/<pdb_id>_rawuptake_HXMS.csv`, groups data by protein state and peptide, then generates both:
+- `pdb/<pdb_id>_rawuptake_HXMS.csv`
 
-- normalized `%D` peptide uptake curves
-- stretched-exponential peptide fits
+It writes peptide metadata and experiment-derived uptake arrays under:
 
-It also writes the peptide ID table used later by the simulation-side scripts.
+- `outputs/<sim_id>/`
 
-### `0.run_normalized_D_HXMS.py`
+Use it when you have raw experimental HX-MS data and want to compare experiment against simulation in step 5.
 
-Legacy script for only the normalized `%D` HXMS workflow.
+Supported subworkflows:
 
-Use this only if you specifically want the older standalone normalized-preprocessing path. In normal use, `0.run_HXMS.py` replaces it.
+- `HXMS_SUBWORKFLOW=all`
+- `HXMS_SUBWORKFLOW=normalized`
+- `HXMS_SUBWORKFLOW=stretched`
 
-### `0.run_stretched_exp_HXMS.py`
+Main outputs include:
 
-Legacy script for only the stretched-exponential HXMS workflow.
-
-Use this only if you want the older standalone fit path. In normal use, `0.run_HXMS.py` replaces it.
+- `<pdb_id>_pep_ids.csv`
+- normalized `%D` arrays
+- stretched-exponential fit arrays
+- HX-MS preprocessing PDFs
 
 ### `1.config.py`
 
-Builds the Upside configuration for the target system.
+This builds the Upside HDX configuration file for the target system.
 
-It points Upside at the FASTA, chain-break file, force-field data, and optional initial structure, then writes the `.up` configuration used for the simulation and protection-state analysis steps.
+Default usage:
+
+- `workflow_action=config`
+
+It reads the model inputs in `inputs/` and writes:
+
+- `inputs/<pdb_id>-HDX.up`
+
+This step is Upside-specific. It requires `UPSIDE_HOME` and the Upside parameter files from the main project.
+
+Special mode:
+
+- `workflow_action=select_h5_frames`
+
+In this mode, the script filters existing trajectory `.up` files by RMSD and writes `selected.*.up` files.
 
 ### `2.traj_ana.sh`
 
-Extracts trajectory-derived observables from the Upside run files.
+This extracts per-replica observables from the Upside trajectories in:
 
-For each replica, it calls helper utilities to generate files in `results/` such as energy, radius of gyration, RMSD, hydrogen-bond, and trajectory-format outputs that later scripts consume.
+- `outputs/<sim_id>/`
 
-### `get_info_from_upside_traj.py`
+For each replica it writes the arrays used by downstream steps, including:
 
-Helper script used by `2.traj_ana.sh`.
+- `results/<pdb_id>_<sim_id>_<replica>_Energy.npy`
+- `results/<pdb_id>_<sim_id>_<replica>_Rg.npy`
+- `results/<pdb_id>_<sim_id>_<replica>_Rmsd.npy`
+- `results/<pdb_id>_<sim_id>_<replica>_Hbond.npy`
+- `results/<pdb_id>_<sim_id>_<replica>_T.npy`
 
-It reads an Upside trajectory file and writes the core per-replica analysis arrays used by the later workflow, including:
+It also writes a `.vtf` trajectory for visualization.
 
-- `*_Energy.npy`
-- `*_Hbond.npy`
-- `*_Rmsd.npy`
-- `*_Rg.npy`
-- `*_T.npy`
+This step calls:
 
-In the current version, the RMSD and radius-of-gyration calculations exclude residues 1 to 11.
-
-If you want to reuse this workflow with trajectories generated by other MD software, this is the main adaptation point: extract the protein backbone trajectory from that software, then update this script so it calculates the same required outputs for the downstream analysis steps.
+- `helpers/get_info_from_upside_traj.py`
+- `${UPSIDE_HOME}/py/extract_vtf.py`
 
 ### `3.get_protaction_states.sh`
 
-Extracts protection-state arrays from Upside trajectories.
+This extracts protection-state arrays from the Upside trajectories.
 
-For each replica, it calls `get_protection_state.py` and writes `*_PS.npy` plus residue index metadata used by the later uptake and free-energy analyses.
+For each replica it writes:
 
-If you are adapting this workflow to trajectories from other software, this is not the script you modify for the trajectory-format change; that adaptation belongs in `get_info_from_upside_traj.py`.
+- `results/<pdb_id>_<sim_id>_<replica>_PS.npy`
+
+It also writes:
+
+- `results/<pdb_id>.resid`
+
+This step calls `${UPSIDE_HOME}/py/get_protection_state.py`, so it is also Upside-specific.
 
 ### `4.calc_D_uptake.py`
 
-Computes simulated deuterium uptake from the simulation outputs.
+This is the main simulation-side analysis step. It reads the arrays produced by steps 2 and 3 and runs one of three branches:
 
-This script now contains both the original fixed-temperature workflow and the experimental/optimized workflow that was previously in `4.calc_D_uptake_DEV.py`. It reads the simulation observables and protection states, performs MBAR reweighting, computes peptide and whole-protein uptake curves, and writes the uptake plots/data used in downstream analysis.
+- `analysis_mode=uptake`
+- `analysis_mode=stability`
+- `analysis_mode=pca`
+
+`analysis_mode=uptake`:
+
+- computes simulated deuterium uptake
+- writes whole-protein and peptide-level uptake outputs
+- can run without experimental data, although experiment-derived peptide/time definitions are still needed for the full peptide-comparison branch
+
+`analysis_mode=stability`:
+
+- computes residue-level stability and protection free-energy style summaries
+- writes convergence plots
+- writes residue `dG` and related outputs
+- uses optional overlays from `pdb/<pdb_id>_HXMS.csv`, `pdb/<pdb_id>_NMR.csv`, and `pdb/<pdb_id>_NMR_MS.csv` when present
+
+`analysis_mode=pca`:
+
+- runs trajectory PCA and related RMSD/H-bond diagnostics
 
 ### `5.analyze_D_uptake.py`
 
-Compares HXMS-derived curves with the simulation-derived uptake curves.
+This is the comparison and summary step. It supports:
 
-It loads the HXMS peptide curves produced by `0.run_HXMS.py` (or the legacy `0.run_*` scripts) and the simulation uptake outputs from `4.calc_D_uptake.py`, then computes comparisons such as peptide-level alignment and cooperativity-style summaries. The exact behavior depends on settings like `HXMS_method` and `protein_state`.
+- `analysis_mode=uptake`
+- `analysis_mode=dg_summary`
+- `analysis_mode=compare_hxms`
 
-### `6.plot_deltaG_vs_resid.py`
+`analysis_mode=uptake`:
 
-Computes residue-level protection/stability summaries from the protection-state data.
+- compares experimental HX-MS peptide uptake against simulated uptake
+- writes comparison plots and cooperativity-style summaries
 
-It reads the MBAR-reweighted simulation outputs, estimates residue-level `dG`-like values across selected temperatures and denaturant conditions, and writes residue-wise plots/CSV outputs.
+`analysis_mode=dg_summary`:
 
-## Main Files Produced
+- summarizes residue-level `dG` outputs across one or more proteins
 
-The exact outputs depend on the script settings, but the main file families are:
+`analysis_mode=compare_hxms`:
 
-- `outputs/<sim_id>/<pdb_id>_pep_ids.csv`
-- `outputs/<sim_id>/<pdb_id>_D_norm_uptake_*.npy`
-- `outputs/<sim_id>/<pdb_id>_stretch_exp_*.npy`
-- `results/*_Energy.npy`, `*_Rg.npy`, `*_Rmsd.npy`, `*_Hbond.npy`, `*_PS.npy`, `*.resid`
-- `results/D_uptake*.pdf`, `results/D_uptake*.png`, `results/*percentD*`
+- compares HX-MS peptide uptake across proteins using `pdb_ids` and `protein_states`
 
-## Practical Notes
+## Manual Run Order
 
-- Many scripts still contain hard-coded values. Check the header of each script before running it.
-- The pipeline mixes Python and shell scripts. Run the shell scripts in an environment where `UPSIDE_HOME` and the Upside helper scripts are available.
+If you do not want to use `analysis.sh`, activate the environment first:
+
+```bash
+source "${PROJECT_ROOT}/source.sh"
+source "${PROJECT_ROOT}/.venv/bin/activate"
+```
+
+Then run the steps from the workflow directory.
+
+With experimental HX-MS data:
+
+```bash
+pdb_id=MY_PROTEIN sim_id=MY_SIM python 0.run_HXMS.py
+workflow_action=config pdb_id=MY_PROTEIN python 1.config.py
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 bash 2.traj_ana.sh
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 bash 3.get_protaction_states.sh
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=uptake python 4.calc_D_uptake.py
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=stability python 4.calc_D_uptake.py
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=pca python 4.calc_D_uptake.py
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=uptake python 5.analyze_D_uptake.py
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=dg_summary python 5.analyze_D_uptake.py
+```
+
+Without experimental HX-MS data:
+
+```bash
+workflow_action=config pdb_id=MY_PROTEIN python 1.config.py
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 bash 2.traj_ana.sh
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 bash 3.get_protaction_states.sh
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=uptake python 4.calc_D_uptake.py
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=stability python 4.calc_D_uptake.py
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=pca python 4.calc_D_uptake.py
+pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=dg_summary python 5.analyze_D_uptake.py
+```
+
+## Using Results From Other MD Software
+
+The full numbered workflow is Upside-specific through steps 1 to 3.
+
+You can still reuse the downstream analysis for trajectories from other MD software, but you must first produce the same files that steps 2 and 3 normally write into `results/`.
+
+Minimum files needed by step 4:
+
+- `results/<pdb_id>_<sim_id>_<replica>_Energy.npy`
+- `results/<pdb_id>_<sim_id>_<replica>_Rg.npy`
+- `results/<pdb_id>_<sim_id>_<replica>_Rmsd.npy`
+- `results/<pdb_id>_<sim_id>_<replica>_Hbond.npy`
+- `results/<pdb_id>_<sim_id>_<replica>_T.npy`
+- `results/<pdb_id>_<sim_id>_<replica>_PS.npy`
+- `results/<pdb_id>.resid`
+- `inputs/<pdb_id>.fasta`
+
+Recommended adaptation points:
+
+- Adapt `helpers/get_info_from_upside_traj.py` if you want a step-2-like script that reads your trajectory format and writes the observable arrays expected by step 4.
+- Replace the protection-state generation from step 3 if `${UPSIDE_HOME}/py/get_protection_state.py` does not apply to your trajectories. The important requirement is to generate compatible `*_PS.npy` arrays and `results/<pdb_id>.resid`.
+
+Once those files exist, you can start from:
+
+- `4.calc_D_uptake.py`
+- `5.analyze_D_uptake.py`
+
+If you also want experiment-versus-simulation comparison, you still need the experiment-derived HX-MS outputs from step 0 or equivalent files with the same content.
+
+## Main Output Families
+
+The exact outputs depend on the chosen modes, but the main result families are:
+
+- experiment-derived peptide arrays in `outputs/<sim_id>/`
+- per-replica observable arrays in `results/`
+- per-replica protection states in `results/`
+- whole-protein and peptide uptake outputs in `results/`
+- residue `dG` and stability plots in `results/`
+- PCA plots in `results/`
+- comparison and summary plots in `results/`

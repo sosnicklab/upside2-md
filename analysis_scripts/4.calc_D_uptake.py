@@ -1,5 +1,10 @@
+import os
+
 import numpy as np
 import scipy as sp
+import matplotlib
+if 'MPLBACKEND' not in os.environ:
+    matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.font_manager
 from matplotlib.font_manager import FontProperties
@@ -7,30 +12,70 @@ import matplotlib.cm as cm
 from matplotlib.ticker import LogLocator
 import pymbar  # for MBAR analysis
 from pymbar import timeseries  # for timeseries analysis
-import os
 import csv
 import pandas as pd
 import sys
+import runpy
 import matplotlib.backends.backend_pdf as pdf
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize_scalar
 
-pdb_id = 'glpG-RKRK-79HIS'  # CHECKME
-# pdb_id = os.environ['pdb_id']
-sim_id = 'memb_test'
-# sim_id = os.environ['sim_id']  # CHECKME
-start_frame = 100
+analysis_mode = os.environ.get('analysis_mode', 'uptake').strip().lower()
 
-main_pdb = 'glpG-RKRK-79HIS'  # CHECKME
-HXMS_pdb = 'glpG-RKRK-79HIS'  # CHECKME
-# HXMS_method = 'stretch_exp'  # CHECKME
-HXMS_method = 'D_norm_uptake'
-protein_state = 'pd9'
-exp_data_file = 'GlpG psWT Sub final peptides up sum 11192024.csv'
+
+def ensure_env_defaults(defaults):
+    for name, value in defaults.items():
+        os.environ.setdefault(name, value)
+
+
+if analysis_mode in ('stability', 'stability_hxms'):
+    ensure_env_defaults(
+        {
+            'pdb_id': 'glpG-RKRK-79HIS',
+            'sim_id': 'memb_test',
+            'n_rep': '48',
+            'start_frame': '100',
+            'T_targets': '0.80,0.85,0.90',
+            'target_T': '0.8',
+            'm_sens': '0.04',
+            'reference_temperature': '0.85',
+        }
+    )
+    runpy.run_module('helpers.calc_hdx_ht', run_name='__main__')
+    raise SystemExit(0)
+if analysis_mode == 'pca':
+    ensure_env_defaults(
+        {
+            'pdb_id': 'glpG-RKRK-79HIS',
+            'sim_id': 'memb_test',
+            'n_rep': '48',
+            'start_frame': '100',
+        }
+    )
+    runpy.run_module('helpers.traj_analysis_pca', run_name='__main__')
+    raise SystemExit(0)
+if analysis_mode != 'uptake':
+    raise SystemExit("Unsupported analysis_mode for 4.calc_D_uptake.py: {}".format(analysis_mode))
+
+
+def bool_env(name, default):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+
+
+pdb_id = os.environ.get('pdb_id', 'glpG-RKRK-79HIS')  # CHECKME
+sim_id = os.environ.get('sim_id', 'memb_test')  # CHECKME
+start_frame = int(os.environ.get('start_frame', '100'))  # CHECKME
+
+HXMS_method = os.environ.get('HXMS_method', 'D_norm_uptake')  # CHECKME
+protein_state = os.environ.get('protein_state', 'pd9')  # CHECKME
+exp_data_file = os.environ.get('exp_data_file', 'GlpG psWT Sub final peptides up sum 11192024.csv')  # CHECKME
+skip_experiment_data = bool_env('skip_experiment_data', False)
 
 work_dir = './'
-n_rep = 48  # CHECKME
-# n_rep = os.environ['n_rep']  # CHECKME
+n_rep = int(os.environ.get('n_rep', '48'))  # CHECKME
 
 input_dir = '{}/inputs'.format(work_dir)
 output_dir = '{}/outputs'.format(work_dir)
@@ -46,7 +91,7 @@ os.makedirs(result_dir, exist_ok=True)
 # set kchem params
 # ============================================
 
-mol_type = 'poly'  # CHECKME
+mol_type = os.environ.get('mol_type', 'poly').strip().lower()  # CHECKME
 
 aa = ['A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
 
@@ -58,7 +103,7 @@ Ea_asp = 1
 Ea_glu = 1.083
 Ea_his = 7.5
 
-single_T = True  # CHECKME
+single_T = bool_env('single_T', True)  # CHECKME
 legacy_T_range = np.array([0.85], dtype=float)
 # legacy_T_range = np.array([0.84, 0.85, 0.92, 0.99, 1.1], dtype=float)
 
@@ -76,7 +121,7 @@ T_ref_K = 293.0
 T_acid_K = 278.0
 
 # for calculation of protein HX in D2O
-pD_corr = 6.70  # CHECKME pD_read+0.4
+pD_corr = float(os.environ.get('pD_corr', '6.70'))  # CHECKME pD_read+0.4
 legacy_Kws = np.array([14.96], dtype=float)
 D_plus = np.power(10, -pD_corr)
 legacy_od_minus_map = {
@@ -233,16 +278,20 @@ def sanitize_peptides(peptide_starts, peptide_ends, peptide_labels, sequence_str
 
 
 def load_legacy_inputs():
+    if skip_experiment_data:
+        print('Skipping HXMS reference input loading because skip_experiment_data is enabled.')
+        return np.array([]), np.array([]), np.array([]), np.array([])
+
     try:
         legacy_time_log = np.load(
-            '{}/{}/{}_{}_time_peps_{}.npy'.format(output_dir, sim_id, HXMS_pdb, HXMS_method, protein_state)
+            '{}/{}/{}_{}_time_peps_{}.npy'.format(output_dir, sim_id, pdb_id, HXMS_method, protein_state)
         )
     except FileNotFoundError:
         print('WARNING: Legacy HXMS time grid not found. Skipping legacy workflow.')
         return np.array([]), np.array([]), np.array([]), np.array([])
 
     try:
-        with open('{}/{}/{}_pep_ids.csv'.format(output_dir, sim_id, HXMS_pdb), 'r', encoding='utf-8-sig') as f:
+        with open('{}/{}/{}_pep_ids.csv'.format(output_dir, sim_id, pdb_id), 'r', encoding='utf-8-sig') as f:
             rows = list(csv.reader(f))
     except FileNotFoundError:
         print('WARNING: Legacy peptide ID file not found. Skipping legacy workflow.')
@@ -257,7 +306,42 @@ def load_legacy_inputs():
     return legacy_times, legacy_starts, legacy_ends, legacy_labels
 
 
+def load_optional_array(path, description):
+    try:
+        return np.load(path)
+    except FileNotFoundError:
+        print('WARNING: {} not found: {}'.format(description, path))
+    except Exception as exc:
+        print('WARNING: Failed to load {} ({}): {}'.format(description, path, exc))
+    return None
+
+
+def load_legacy_reference_curves():
+    if skip_experiment_data:
+        return None
+
+    peps = load_optional_array(
+        '{}/{}/{}_{}_peps_{}.npy'.format(output_dir, sim_id, pdb_id, HXMS_method, protein_state),
+        'legacy peptide list',
+    )
+    d_norm_peps = load_optional_array(
+        '{}/{}/{}_{}_d_norm_peps_{}.npy'.format(output_dir, sim_id, pdb_id, HXMS_method, protein_state),
+        'legacy peptide uptake curves',
+    )
+    if peps is None or d_norm_peps is None:
+        return None
+
+    return {
+        'peps': np.asarray(peps, dtype=str).reshape(-1),
+        'd_norm_peps': np.asarray(d_norm_peps, dtype=float),
+    }
+
+
 def load_experimental_data():
+    if skip_experiment_data:
+        print('Skipping experimental data loading because skip_experiment_data is enabled.')
+        return pd.DataFrame()
+
     col_names = [
         'Protein State',
         'Protein',
@@ -355,7 +439,7 @@ def calculate_temperature_parameters(T_target, mode):
     pKc_glu = -1 * np.log10(np.power(10, -4.93) * np.exp(-Ea_glu * (((1 / real_K) - (1 / T_acid_K)) / 0.001987)))
     pKc_his = -1 * np.log10(np.power(10, -7.42) * np.exp(-Ea_his * (((1 / real_K) - (1 / T_acid_K)) / 0.001987)))
 
-    return Ft_a, Ft_b, Ft_w, OD_minus, pKc_asp, pKc_glu, pKc_his
+    return real_K, Ft_a, Ft_b, Ft_w, OD_minus, pKc_asp, pKc_glu, pKc_his
 
 
 def normalize_uptake(actual, theoretical):
@@ -384,7 +468,7 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
         return None
 
     try:
-        Ft_a, Ft_b, Ft_w, OD_minus, pKc_asp, pKc_glu, pKc_his = calculate_temperature_parameters(T_target, temperature_mode)
+        real_K, Ft_a, Ft_b, Ft_w, OD_minus, pKc_asp, pKc_glu, pKc_his = calculate_temperature_parameters(T_target, temperature_mode)
     except Exception as exc:
         print('WARNING: T={} failed during temperature parameter calculation: {}'.format(T_target, exc))
         return None
@@ -528,6 +612,14 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
         return None
 
     return {
+        'T_target': float(T_target),
+        'real_K': float(real_K),
+        'Fa_a': Fa_a,
+        'Fb_b': Fb_b,
+        'Fb_w': Fb_w,
+        'k_chem': k_chem,
+        'mean_pf_res': mean_pf,
+        'k_obs_res': k_obs,
         'D_peps': D_peps,
         'D_peps_theors': D_peps_theors,
         'D_norm_peps': D_norm_peps,
@@ -573,6 +665,89 @@ def build_colors(num_colors):
     if num_colors == 1:
         return cm.viridis(np.array([0.6]))
     return cm.viridis(np.linspace(0, 0.9, num_colors))
+
+
+def expand_residue_values(values):
+    expanded = np.zeros(len(sequence), dtype=float)
+    for residue_index, value in zip(res.astype(int), np.asarray(values, dtype=float)):
+        if 0 <= residue_index < len(sequence):
+            expanded[residue_index] = value
+    return expanded
+
+
+def export_percentd_feature_table(hdx_data):
+    if hdx_data is None:
+        return
+
+    mean_pf = expand_residue_values(hdx_data['mean_pf_res'])
+    k_obs = expand_residue_values(hdx_data['k_obs_res'])
+    dGhx_T = np.zeros(len(sequence), dtype=float)
+
+    unity_mask = mean_pf >= 1.0 - 1.0e-12
+    finite_mask = (mean_pf > 0.0) & (mean_pf < 1.0 - 1.0e-12)
+    dGhx_T[unity_mask] = 1000.0
+    dGhx_T[finite_mask] = 0.001987 * hdx_data['real_K'] * np.log(mean_pf[finite_mask] / (1.0 - mean_pf[finite_mask]))
+
+    feature_df = pd.DataFrame(
+        {
+            'res': list(sequence),
+            'res_idx': np.arange(len(sequence), dtype=int),
+            'Fa_a': np.asarray(hdx_data['Fa_a'], dtype=float),
+            'Fb_b': np.asarray(hdx_data['Fb_b'], dtype=float),
+            'Fb_w': np.asarray(hdx_data['Fb_w'], dtype=float),
+            'k_chem': np.asarray(hdx_data['k_chem'], dtype=float),
+            'mean_pf': mean_pf,
+            'k_obs': k_obs,
+            'dGhx_T': dGhx_T,
+        }
+    )
+    feature_df.to_csv('{}/{}_percentD_feats.csv'.format(result_dir, pdb_id), index=False)
+
+
+def export_r_square_summary(T_targets, peptide_labels, plot_data, legacy_reference):
+    if legacy_reference is None or len(T_targets) == 0 or not has_peptide_plot_data(peptide_labels, plot_data['D_norm_peps']):
+        return
+
+    reference_indices = {label: idx for idx, label in enumerate(legacy_reference['peps'])}
+    mean_r2_values = []
+    compared_counts = []
+
+    for tt, T_target in enumerate(T_targets):
+        peptide_r2_values = []
+        for p, peptide_label in enumerate(np.asarray(peptide_labels, dtype=str)):
+            reference_index = reference_indices.get(peptide_label)
+            if reference_index is None:
+                continue
+
+            sim_curve = np.asarray(plot_data['D_norm_peps'][tt, p], dtype=float).reshape(-1)
+            exp_curve = np.asarray(legacy_reference['d_norm_peps'][reference_index], dtype=float).reshape(-1)
+            curve_size = min(sim_curve.size, exp_curve.size)
+            if curve_size < 2:
+                continue
+
+            sim_curve = sim_curve[:curve_size]
+            exp_curve = exp_curve[:curve_size]
+            finite_mask = np.isfinite(sim_curve) & np.isfinite(exp_curve)
+            if np.count_nonzero(finite_mask) < 2:
+                continue
+
+            r_value = sp.stats.linregress(sim_curve[finite_mask], exp_curve[finite_mask]).rvalue
+            peptide_r2_values.append(r_value ** 2)
+
+        compared_counts.append(len(peptide_r2_values))
+        if peptide_r2_values:
+            mean_r2_values.append(float(np.nanmean(peptide_r2_values)))
+        else:
+            mean_r2_values.append(np.nan)
+
+    r_square_df = pd.DataFrame(
+        {
+            'T_target': np.asarray(T_targets, dtype=float),
+            'mean_r_square': np.asarray(mean_r2_values, dtype=float),
+            'num_peptides_compared': np.asarray(compared_counts, dtype=int),
+        }
+    )
+    r_square_df.to_csv('{}/{}_r_square.csv'.format(result_dir, pdb_id), index=False)
 
 
 def has_peptide_plot_data(peptide_labels, uptake_plot):
@@ -713,7 +888,10 @@ def export_legacy_outputs(times, peptide_labels, peptide_starts, peptide_ends, T
             'legacy',
         )
     else:
-        print('WARNING: No peptide definitions available. Skipping peptide-level legacy exports.')
+        if skip_experiment_data:
+            print('Skipping peptide-level legacy exports because skip_experiment_data is enabled.')
+        else:
+            print('WARNING: No peptide definitions available. Skipping peptide-level legacy exports.')
 
     if has_full_protein_data:
         plot_full_protein_png(
@@ -828,7 +1006,10 @@ def export_experimental_outputs(times, peptide_labels, peptide_starts, peptide_e
 legacy_times, legacy_pep_starts, legacy_pep_ends, legacy_pep_labels = load_legacy_inputs()
 if len(legacy_times) == 0:
     legacy_times = build_default_time_grid()
-    print('WARNING: Legacy HXMS time grid unavailable. Using default simulation-only time grid.')
+    if skip_experiment_data:
+        print('Using default simulation-only time grid because skip_experiment_data is enabled.')
+    else:
+        print('WARNING: Legacy HXMS time grid unavailable. Using default simulation-only time grid.')
 
 exp_df = load_experimental_data()
 exp_pep_starts, exp_pep_ends, exp_pep_labels = build_experimental_peptides(exp_df)
@@ -870,6 +1051,10 @@ export_legacy_outputs(
     legacy_valid_T_targets,
     legacy_plot_data,
 )
+legacy_reference = load_legacy_reference_curves()
+export_r_square_summary(legacy_valid_T_targets, legacy_pep_labels, legacy_plot_data, legacy_reference)
+if single_T and len(legacy_valid_T_targets) == 1:
+    export_percentd_feature_table(calculate_all_hdx_data(legacy_valid_T_targets[0], legacy_times, legacy_pep_starts, legacy_pep_ends, 'legacy'))
 
 # ============================================
 # experimental optimization workflow
@@ -955,6 +1140,9 @@ if not exp_df.empty and len(exp_pep_labels) > 0:
         exp_df,
     )
 else:
-    print('WARNING: No experimental data or peptides found. Skipping experimental optimization workflow.')
+    if skip_experiment_data:
+        print('Skipping experimental optimization workflow because skip_experiment_data is enabled.')
+    else:
+        print('WARNING: No experimental data or peptides found. Skipping experimental optimization workflow.')
 
 print('Script finished.')

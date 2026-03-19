@@ -1,9 +1,17 @@
 import sys, os, shutil
+import runpy
 import subprocess as sp
 import numpy as np
 import tables as tb
 from math import sqrt
 import time
+
+workflow_action = os.environ.get('workflow_action', 'config').strip().lower()
+if workflow_action == 'select_h5_frames':
+    runpy.run_module('helpers.select_h5_frames', run_name='__main__')
+    raise SystemExit(0)
+if workflow_action != 'config':
+    raise SystemExit("Unsupported workflow_action for 1.config.py: {}".format(workflow_action))
 
 upside_path = os.environ['UPSIDE_HOME']
 upside_utils_dir = os.path.expanduser(upside_path+"/py")
@@ -14,10 +22,11 @@ import run_upside as ru
 ## General Settings and Path
 #----------------------------------------------------------------------
 
-pdb_id           = 'glpG-RKRK-79HIS'
+pdb_id           = os.environ.get('pdb_id', 'glpG-RKRK-79HIS')  # CHECKME
 pdb_dir          = './pdb'
-is_native        = True
-ff               = 'ff_2.1'
+is_native_env    = os.environ.get('is_native')
+is_native        = True if is_native_env is None else is_native_env.lower() in ('1', 'true', 'yes', 'y')  # CHECKME
+ff               = os.environ.get('ff', 'ff_2.1').strip()  # CHECKME
 work_dir         = './'
 input_dir        = "{}/inputs".format(work_dir)
 

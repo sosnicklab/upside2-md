@@ -31,7 +31,7 @@ def normalize_se(d_norm_se):
             # check whether full D Uptake was reached before final timepoint
             if np.round(np.abs(d[-1] - d[-2]), decimals=2) <= 0.01:
                 # check whether full D Uptake was reached before final timepoint
-                d_norms_se = np.subtract(d, d[0]) / np.subtract(np.nanmax(d), d[0])*100 #CHECKME
+                d_norms_se = np.subtract(d, d[0]) / np.subtract(np.nanmax(d), d[0]) * 100
                 d_norm_ses.append(d_norms_se)
 
             else:

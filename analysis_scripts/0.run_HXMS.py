@@ -1,11 +1,15 @@
+import os
+
 import numpy as np
 import scipy as sp
+import matplotlib
+if 'MPLBACKEND' not in os.environ:
+    matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.font_manager
 from matplotlib.font_manager import FontProperties
 import pymbar  # for MBAR analysis
 from pymbar import timeseries  # for timeseries analysis
-import os
 import csv
 import pandas as pd
 from collections import OrderedDict
@@ -15,7 +19,7 @@ from scipy.optimize import curve_fit
 from math import ceil
 
 try:
-    from function import str_exp, plot_uptake
+    from helpers.function import str_exp, plot_uptake
 except ImportError:
     # Fallback to the standard stretched-exponential form when the helper module is absent.
     def str_exp(t, k, b):
@@ -25,10 +29,9 @@ except ImportError:
         return str_exp(t, k, b)
 
 
-pdb_id = 'glpG-RKRK-79HIS'  # CHECKME
-# pdb_id = os.environ['pdb_id']
-sim_id = 'memb_test'
-# sim_id = os.environ['sim_id']  # CHECKME
+pdb_id = os.environ.get('pdb_id', 'glpG-RKRK-79HIS')  # CHECKME
+sim_id = os.environ.get('sim_id', 'memb_test')  # CHECKME
+hxms_subworkflow = os.environ.get('HXMS_SUBWORKFLOW', 'all').strip().lower()  # CHECKME
 
 work_dir = './'
 input_dir = '{}/inputs'.format(work_dir)
@@ -330,5 +333,11 @@ export_peptide_ids(pep_starts, pep_ends, peptides_plot)
 df_arrays, df_kchems, df_maxs = build_uptake_arrays(state_frames, peptides, timepoints)
 pep_list, pep_ind = build_peptide_indexes(pep_nums)
 
-run_normalized_workflow(state_names, peptides_plot, pep_ind, pep_list, timepoints, df_arrays, df_kchems)
-run_stretched_exp_workflow(state_names, peptides_plot, pep_ind, pep_list, timepoints, df_arrays, df_kchems)
+if hxms_subworkflow not in {'all', 'normalized', 'stretched'}:
+    raise SystemExit('Unsupported HXMS_SUBWORKFLOW: {}'.format(hxms_subworkflow))
+
+if hxms_subworkflow in {'all', 'normalized'}:
+    run_normalized_workflow(state_names, peptides_plot, pep_ind, pep_list, timepoints, df_arrays, df_kchems)
+
+if hxms_subworkflow in {'all', 'stretched'}:
+    run_stretched_exp_workflow(state_names, peptides_plot, pep_ind, pep_list, timepoints, df_arrays, df_kchems)
