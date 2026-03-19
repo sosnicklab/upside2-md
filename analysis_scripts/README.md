@@ -2,7 +2,7 @@
 
 This directory contains the maintained HDX/HX-MS analysis workflow for this repository.
 
-The active workflow surface is:
+The active workflow scripts are:
 
 - `analysis.sh`
 - `0.run_HXMS.py`
