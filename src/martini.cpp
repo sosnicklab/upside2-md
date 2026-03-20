@@ -286,7 +286,7 @@ struct HybridRuntimeState {
     bool enabled = false;
     bool active = false;
     bool exclude_intra_protein_martini = true;
-    bool production_nonprotein_hard_sphere = true;
+    bool production_nonprotein_hard_sphere = false;
     bool preprod_rigid = true;
     std::string activation_stage = "production";
     std::string preprod_mode = "rigid";
@@ -967,7 +967,7 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.exclude_intra_protein_martini =
         (read_attribute<int>(ctrl.get(), ".", "exclude_intra_protein_martini", 1) != 0);
     out.production_nonprotein_hard_sphere =
-        (read_attribute<int>(ctrl.get(), ".", "production_nonprotein_hard_sphere", 1) != 0);
+        (read_attribute<int>(ctrl.get(), ".", "production_nonprotein_hard_sphere", 0) != 0);
     out.preprod_rigid = (out.preprod_mode == "rigid");
     out.coupling_align_enable = (read_attribute<int>(ctrl.get(), ".", "coupling_align_enable", 0) != 0);
     out.integration_rmsd_align_enable =
@@ -3833,7 +3833,7 @@ struct MartiniPotential : public PotentialNode
                     p2 = make_vec3(pa[0], pa[1], pa[2]);
                 }
             }
-            // Production-stage hybrid option: treat non-protein/non-protein
+            // Optional experimental branch: treat non-protein/non-protein
             // MARTINI nonbonded as hard-sphere-like repulsion (WCA branch).
             bool hard_sphere_pair = (
                 hybrid_state &&

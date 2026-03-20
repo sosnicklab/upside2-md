@@ -223,3 +223,71 @@
 - The active hybrid runtime path changes stage-7 MARTINI energetics in ways that remove the large negative cohesive terms present in the rigid-dry workflow:
   - most intra-protein MARTINI pairs are filtered out when hybrid is active (`BB-BB` off, `SC-SC` off, `BB-SC` only same residue);
   - non-protein/non-protein MARTINI nonbonded is switched to hard-sphere-like repulsion while hybrid is active.
+
+## 2026-03-19 (Stage-7 Backbone Rigid Hold via Workflow Fix-Rigid Mask)
+- `example/16.MARTINI/run_sim_1rkl.sh` can keep the stage-7 backbone rigid without disabling hybrid production by writing `/input/fix_rigid` directly into the prepared production `.up` file after hybrid node augmentation.
+- The smallest reliable stage-7 selection is driven by prepared-file metadata, not hardcoded indices:
+  - require `hybrid_env_topology/protein_membership >= 0` to restrict the mask to protein atoms,
+  - require atom roles/names `BB`, `N`, `CA`, `C`, and `O` so both dry-MARTINI backbone beads and injected all-atom backbone carriers are included.
+- Existing `/input/fix_rigid/atom_indices` should be preserved and unioned with the new backbone mask rather than overwritten silently.
+- A fast-fail validation is worthwhile in the workflow helper:
+  - missing any one of `BB/N/CA/C/O` should abort stage preparation,
+  - per-role counts should match the `BB` count so partial carrier injection does not produce a silently incomplete rigid mask.
+
+## 2026-03-19 (Initial Diagnostic: Rigid Backbone + Active Hybrid Stage-7 Failure)
+- This diagnosis was incomplete. Later Phase 22 probes show that rigid backbone + active hybrid is stable when `production_nonprotein_hard_sphere=0`; the rigid mask itself is not the root cause.
+- Using the archived stable phase-17 prepared stage-7 file plus the archived stage-6.6 handoff, adding only the new stage-7 backbone `fix_rigid` mask reproduces the user's accumulating-energy trace exactly:
+  - initial `Upside/MARTINI/Total = 663.56 / 4268.90 / 4932.46`,
+  - step `500`: `663.56 / 3471.02 / 4134.58`,
+  - step `1000`: `663.56 / 5938.75 / 6602.31`.
+- In that reproduced run, protein observables stay flat (`potential`, `Rg`, hbonds), so the pump is not coming from changing Upside backbone structure or from handoff drift; it is the active stage-7 MARTINI kernel acting on a protein that is no longer allowed to respond.
+- Rigid protein alone is stable:
+  - archived `run_sim_1rkl_rigid_dry.sh` stage-7 output remains monotone and bounded (`martini_potential -19534.69 -> -22112.04` over `0 -> 4500`).
+- Disabling active integration RMSD alignment does not materially change the reproduced rigid-hybrid trace at the first sampled checkpoint (`3464.62` vs `3471.02` at step `500`), so alignment is not the dominant cause.
+- Practical conclusion:
+  - active stage-7 hybrid production assumes protein `BB/N/CA/C/O` can absorb the BB/SC coupling it applies;
+  - if those backbone DOFs are fixed, the physically consistent workflow is to keep the explicit backbone `fix_rigid` mask but disable stage-7 hybrid activation, not to leave `hybrid_active=1`.
+- Validated fixed control combination from the same archived handoff:
+  - set `activation_stage="__hybrid_disabled__"` and `preprod_protein_mode="free"` while keeping the backbone `fix_rigid` mask,
+  - resulting energy trend is stable and decreasing: initial `663.56 / -19534.69 / -18871.13`, step `500` `663.56 / -22979.09 / -22315.53`, step `1000` `663.56 / -24867.03 / -24203.48`.
+
+## 2026-03-20 (Behavior Lesson: Do Not Treat Hybrid Disablement as a Fix)
+- User correction pattern:
+  - this repository is explicitly about hybrid simulation, so a result that becomes stable only after disabling hybrid is not a valid fix.
+- Working rule:
+  - when a workaround turns off the defining system feature, record it only as diagnostic evidence and immediately broaden the investigation into `src/` and the system design before calling the issue fixed.
+- Applied here:
+  - the rigid-backbone stage-7 `activation_stage="__hybrid_disabled__"` path remains useful to isolate the failing branch,
+  - but the real task is now to identify which active-hybrid runtime path or Hamiltonian change in `src/` causes the energy pump and repair that while keeping hybrid active.
+
+## 2026-03-20 (Phase 22 Runtime Audit: Fixed Atoms vs Active Hybrid)
+- The current fixed-atom implementation does not make protein coordinates globally immutable once active hybrid is on:
+  - `../../src/martini.cpp::apply_fix_rigid_md(...)` only zeros derivatives and momenta for fixed atoms.
+  - `../../src/deriv_engine.cpp` skips fixed atoms inside the integrator update loops, but `../../src/martini.cpp::align_active_protein_coordinates(...)` still rotates/translates all protein atoms before force evaluation, and `refresh_bb_positions_if_active(...)` still overwrites `BB` coordinates from mapped carriers.
+- Therefore the earlier "one-way forcing into fully frozen atoms" explanation is incomplete:
+  - fixed atoms are protected against integrator updates and barostat scaling,
+  - but they are not protected against active-hybrid coordinate rewrites that happen outside the integrator.
+- The active-hybrid Hamiltonian also changes much more than the earlier rigid-backbone explanation captured:
+  - `allow_intra_protein_pair_if_active(...)` removes most intra-protein MARTINI bonded/nonbonded terms when hybrid is active.
+  - `production_nonprotein_hard_sphere=1` replaces all non-protein/non-protein MARTINI nonbonded interactions with WCA-like repulsion in production.
+- On the exact same archived rigid stage-7 handoff, keeping `hybrid_active=1` but setting `exclude_intra_protein_martini=0` and `production_nonprotein_hard_sphere=0` changes the initial MARTINI energy from `+4268.90` to `-23653.72`.
+- Working conclusion for Phase 22:
+  - the rigid-backbone failure cannot be blamed only on projected forces landing on fixed atoms;
+  - active-hybrid coordinate rewrites and the active-hybrid Hamiltonian edits both need to be audited as potential root causes.
+
+## 2026-03-20 (Phase 22 Root Cause: Non-Protein Hard-Sphere Branch)
+- The rigid stage-7 control matrix on the exact same archived `6.6 -> 7.0` handoff isolates `production_nonprotein_hard_sphere` as the dominant failing branch:
+  - baseline rigid active hybrid (`exclude_intra=1`, `nonprotein_hs=1`): `4268.90 -> 3471.02 -> 5938.75` at `0/500/1000`;
+  - rigid active hybrid with only `exclude_intra=0`: `4228.57 -> 3448.09 -> 6024.10`;
+  - rigid active hybrid with only `nonprotein_hs=0`: `-23613.40 -> -23939.15 -> -21299.20`;
+  - rigid active hybrid with both toggles off: `-23653.72 -> -23962.09 -> -21213.85`.
+- Interpretation:
+  - disabling intra-protein MARTINI exclusions is not the important change for this failure mode;
+  - replacing all non-protein/non-protein MARTINI LJ+Coulomb interactions with repulsive-only WCA in active hybrid production removes the environment's cohesive energy and drives the observed MARTINI energy pump.
+- The same conclusion survives outside the rigid diagnostic:
+  - with hybrid still active, no rigid mask, and `nonprotein_hs=0`, the non-rigid stage-7 probe stayed stable through step `1000` with `Rg ~12.9 A`, `martini_potential -24897.98` at step `500`, and `-25198.87` at step `1000`.
+- Implementation rule:
+  - `production_nonprotein_hard_sphere` should default to `0` in the runtime and generated hybrid inputs.
+  - workflow stage preparation should keep hybrid active and write `production_nonprotein_hard_sphere=0` explicitly instead of disabling hybrid when the backbone rigid mask is used.
+- Verification:
+  - after the runtime default change, deleting the `production_nonprotein_hard_sphere` attribute entirely from a production file still produced `nonprotein_hs=0` in the runtime parse log and the expected negative initial MARTINI energy (`-23613.40`).

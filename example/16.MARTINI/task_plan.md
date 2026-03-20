@@ -5,6 +5,9 @@
 - Add a dedicated rigid dry-MARTINI workflow variant where the protein stays fixed for all stages (including stage 7.0), production-stage Upside coupling is never activated, and trajectory export avoids SC/backbone back-mapping.
 - Replace the production-stage fixed SC force-cap hold with a 200-step transition from capped SC-env/SC-BB forces to regular dry-MARTINI LJ/Coulomb forces in `run_sim_1rkl.sh`.
 - Adjust the SC-env/SC-BB force-cap transition so the cap removal finishes by production step 150, leaving at least 50 fully uncapped steps within the existing 200-step interaction window.
+- Keep the stage-7 backbone-rigid helper available in `run_sim_1rkl.sh`, but leave the default hybrid workflow flexible unless `PROD_70_BACKBONE_FIX_RIGID_ENABLE=1` is explicitly requested.
+- Identify and fix the stage-7 MARTINI energy accumulation that appears when the protein backbone is held rigid, so the underlying production instability is removed instead of masked by backbone motion.
+- Identify and fix that rigid-backbone stage-7 instability while keeping the simulation genuinely hybrid; a hybrid-disabled workaround is diagnostic only and not an acceptable final state.
 
 ## Architecture & Key Decisions
 - Data preparation includes packing OPM protein `pdb/1rkl.pdb` into MARTINI DOPC bilayer `pdb/bilayer.MARTINI.pdb`, with MARTINI 2.2 coarse-graining and 0.15 M NaCl ion placement.
@@ -16,6 +19,10 @@
 - Rotamer mapping is used for protein-environment coupling and for allowed same-residue protein `SC-BB` pairs in production so sidechain proxy forces are probability-weighted by live rotamer marginals.
 - Hybrid `.up` schema will add dedicated groups under `/input`: `hybrid_control`, `hybrid_bb_map`, `hybrid_sc_map`, and `hybrid_env_topology`.
 - Add optional rigid-body drift control for Upside protein motion in production: RMSD alignment or equivalent COM+rotation removal mode, enabled by configuration and evaluated for physical side effects.
+- Keep the stage-7 production-only `/input/fix_rigid` helper in `run_sim_1rkl.sh` for controlled diagnostics, selecting protein `BB/N/CA/C/O` atoms from the prepared stage file only when explicitly enabled.
+- Treat the rigid-backbone stage-7 run as a diagnostic for hidden active-hybrid work injection: if protein force feedback is being suppressed while environment coupling still pushes the system, the fix should remove that one-way energy pump rather than just re-enable backbone motion.
+- The accepted end state must preserve active hybrid production. Workflow-level deactivation of hybrid is evidence about the failure mode, not a valid fix.
+- Hybrid production should preserve the dry-MARTINI non-protein/non-protein LJ+Coulomb Hamiltonian by default; the repulsive-only `production_nonprotein_hard_sphere` branch is experimental opt-in only.
 
 ## Execution Phases
 - [x] Phase 1: Finalize hybrid data schema for `.up` and packed-system metadata.
@@ -37,8 +44,48 @@
 - [x] Phase 17: Tighten production startup coupling stability by applying the capped-to-uncapped startup ramp consistently to deterministic protein-env BB coupling, and replace the hard startup protein-feedback hold with a gradual 200-step feedback ramp; verify the early production potential trend without adding steps.
 - [x] Phase 18: Audit `run_sim_1rkl.sh` pre-7.0 parity against `run_sim_1rkl_rigid_dry.sh` and make the pre-production hybrid-control activation semantics explicit in the hybrid workflow.
 - [x] Phase 19: Isolate the cause of the stage-7 initial-energy mismatch between `run_sim_1rkl.sh` and `run_sim_1rkl_rigid_dry.sh` using the same `6.6 -> 7.0` handoff coordinates.
+- [x] Phase 20: Keep stage `7.0` protein backbone atoms rigid in `run_sim_1rkl.sh` by writing a production-only fixed-atom mask for protein `BB/N/CA/C/O`, then verify the selected mask and script syntax.
+- [x] Phase 21: Reproduce the rigid-backbone stage-7 energy accumulation, isolate the active-hybrid mechanism that pumps `martini_potential`, patch it, and verify the corrected production trend.
+- [x] Phase 22: Replace the workflow-only hybrid-disabled workaround with a hybrid-preserving root-cause fix by auditing active-hybrid runtime behavior in `src/`, reproducing discriminating rigid stage-7 probes, and validating the corrected active-hybrid production trend.
 
 ## Review
+- Phase 22 status:
+  - the earlier Phase 21 claim that "rigid backbone + active hybrid is invalid by design" is superseded. Active hybrid remains stable with a rigid backbone when `production_nonprotein_hard_sphere=0`.
+  - discriminating rigid stage-7 probes on the same archived `6.6 -> 7.0` handoff isolate the dominant failing branch:
+    - baseline rigid active hybrid (`exclude_intra=1`, `nonprotein_hs=1`): `4268.90 -> 3471.02 -> 5938.75` at `0/500/1000`;
+    - rigid active hybrid with only `exclude_intra=0`: `4228.57 -> 3448.09 -> 6024.10`;
+    - rigid active hybrid with only `nonprotein_hs=0`: `-23613.40 -> -23939.15 -> -21299.20`;
+    - rigid active hybrid with both toggles off: `-23653.72 -> -23962.09 -> -21213.85`.
+  - therefore `production_nonprotein_hard_sphere`, not `exclude_intra_protein_martini`, is the dominant source of the stage-7 energy pump in the current hybrid runtime.
+  - the same fix path also stabilizes the non-rigid hybrid production probe from the same handoff: with `hybrid_active=1`, no rigid mask, and `nonprotein_hs=0`, the run stayed finite through step `1000` (`martini_potential -24897.98` at step `500`, `-25198.87` at step `1000`).
+  - implemented fix:
+    - `../../src/martini.cpp` now defaults `production_nonprotein_hard_sphere` to `0` when the attribute is absent;
+    - `example/16.MARTINI/prepare_system_lib.py` now writes `production_nonprotein_hard_sphere=0`;
+    - `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh` explicitly rewrite stage-7 `hybrid_control.production_nonprotein_hard_sphere=0` while keeping hybrid activation active, and no longer disable hybrid when the rigid backbone mask is enabled.
+  - current workflow default:
+    - the stage-7 backbone `fix_rigid` helper remains available for diagnostics, but `PROD_70_BACKBONE_FIX_RIGID_ENABLE` now defaults to `0` so normal hybrid production leaves the protein backbone flexible.
+- Phase 21 root cause/result:
+  - superseded by Phase 22 for the final fix. These results remain useful only as diagnosis that the failure lived on the active-hybrid path.
+  - reproduced the rigid-backbone stage-7 failure from the archived stable phase-17 prepared file plus the archived `6.6 -> 7.0` handoff; with the new stage-7 backbone `fix_rigid` mask applied, the run matched the user-reported trend exactly (`4268.90 -> 3471.02 -> 5938.75` at `0/500/1000` while `potential`, `Rg`, and hbonds stayed flat).
+  - a rigid protein by itself is not the problem: archived `run_sim_1rkl_rigid_dry.sh` stage-7 outputs remain stable and monotonic on the same system (`martini_potential -19534.69 -> -22112.04` over `0 -> 4500`).
+  - targeted probes ruled out two obvious side paths:
+    - disabling active integration RMSD alignment left the rigid run essentially unchanged at the first sampled checkpoint (`3464.62` vs `3471.02` at step `500`);
+    - the rigid active-hybrid run still entered the same regime after the startup uncapping window, so the invalid combination is the permanent rigid-backbone + active-hybrid stage itself, not mere shell wiring or stage handoff drift.
+  - the actual bad combination is `stage-7 rigid backbone + hybrid_active=1`: active hybrid production assumes protein `BB/N/CA/C/O` can respond to BB/SC coupling. Freezing those backbone DOFs turns that stage into one-way active forcing on the environment.
+  - workflow fix: when `PROD_70_BACKBONE_FIX_RIGID_ENABLE=1`, both `run_sim_1rkl.sh` and `test_prod_run_sim_1rkl.sh` now keep the explicit stage-7 backbone `fix_rigid` mask but rewrite the production file to `activation_stage=${HYBRID_PREPROD_ACTIVATION_STAGE}` and `preprod_protein_mode=free`, so stage 7 uses a conservative fixed-backbone dry-MARTINI Hamiltonian instead of active hybrid coupling.
+  - targeted verification of that fixed control combination from the same archived handoff:
+    - initial energy: `663.56 / -19534.69 / -18871.13`;
+    - step `500`: `663.56 / -22979.09 / -22315.53`;
+    - step `1000`: `663.56 / -24867.03 / -24203.48`.
+- Added a production-only rigid-backbone hook in `example/16.MARTINI/run_sim_1rkl.sh`: stage `7.0` now writes `/input/fix_rigid` after production-node augmentation, selecting protein `BB` plus injected all-atom `N/CA/C/O` carriers directly from the prepared stage file.
+- Kept the stage-7 change narrowly scoped:
+  - hybrid activation remains `production`,
+  - SC startup controls and rotamer/backbone production nodes are unchanged,
+  - existing `/input/fix_rigid` atom indices are preserved and unioned with the new backbone mask if present.
+- Added validation inside the new helper so the workflow fails fast if the prepared stage file does not contain a consistent protein backbone role set (`BB`, `N`, `CA`, `C`, `O`) or if `protein_membership` and runtime atom counts disagree.
+- Verification completed in this session:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - A targeted HDF5 mock probe under the project `.venv` wrote the expected `fix_rigid` payload, preserving one pre-existing fixed atom and selecting a consistent backbone set with role counts `BB=N=CA=C=O=2`.
 - Implemented a production-stage SC transition schedule in `../../src/martini.cpp`: a per-activation counter now resets when hybrid activation changes, and SC-env plus allowed same-residue SC-BB pair forces blend from the configured capped force to the uncapped LJ/Coulomb force across `sc_env_relax_steps`.
 - Kept the workflow interface minimal: `example/16.MARTINI/run_sim_1rkl.sh` still writes the existing `sc_env_*` control attributes, with comments updated so `SC_ENV_LJ_FORCE_CAP`/`SC_ENV_COUL_FORCE_CAP` are documented as the initial caps and `SC_ENV_RELAX_STEPS` as the ramp window.
 - Tightened the default ramp window to `150` steps in both the production workflow and runtime fallback, so the existing 200-step SC coupling period now leaves at least the last 50 steps on fully regular SC-env/SC-BB LJ and Coulomb forces without changing the blending logic.
@@ -106,6 +153,7 @@
 - New blocker (2026-02-26): pre-production NPT stage 6.3 shows large transient XY expansion with bilayer holes while using correct physical target pressure (`1 bar = 0.000020659477 E_up/Angstrom^3`). Runtime barostat updates `output/box`, but force nodes retain stale internal box lengths within a stage because `simulation_box::npt::update_node_boxes(...)` is currently a no-op.
 - Remaining validation (2026-02-26): full 6.0->6.6 rerun with updated runtime is still pending; quick replays confirm the box-propagation fix works and no deadlock remains, but long-horizon membrane morphology needs fresh trajectory confirmation.
 - Remaining validation (2026-02-28): the new production SC force-cap ramp is compile-verified and wired into stage-7 activation, but a fresh long-horizon hybrid production replay has not been run in this session.
+- New blocker (2026-03-20): the current stage-7 rigid-backbone workaround disables active hybrid production when the rigid mask is enabled. The user explicitly rejected that behavior, so the real hybrid-runtime root cause is still open and must be fixed in a way that preserves active hybrid mode.
 
 ## Revised Decisions
 - Hybrid coupling starts only at production stage; pre-production protein remains rigid.
@@ -181,3 +229,4 @@
 - New workflow variant requirement: do not inject production rotamer/backbone nodes and use VTF extraction mode `1` at stage 7.0 to disable SC/backbone back-mapping output.
 - Stage-file injection in `run_sim_1rkl.sh` must scale AA backbone carrier masses by `72/54` so each `N/CA/C/O` carrier set sums to MARTINI `BB` mass `72/12`, giving per-carrier masses `N=1.56`, `CA=1.33`, `C=1.33`, `O=1.78` (Upside mass units).
 - Runtime NPT box scaling must propagate to all MARTINI node-local box dimensions used by minimum-image calculations (`dist_spring`, `angle_spring`, `dihedral_spring`) during the same stage; reporting `output/box` alone is insufficient.
+- A hybrid-disabled workaround is not an acceptable final fix for the rigid stage-7 instability; future changes must preserve active hybrid production and address the underlying runtime/Hamiltonian issue instead.

@@ -1816,3 +1816,147 @@
   - `example/16.MARTINI/task_plan.md`
   - `example/16.MARTINI/findings.md`
   - `example/16.MARTINI/progress.md`
+
+## 2026-03-19 (Stage-7 Backbone Rigid Hold in Hybrid Workflow)
+- Re-read `example/16.MARTINI/task_plan.md` before editing the workflow.
+- Updated task tracking for a new stage-7 requirement:
+  - keep the protein backbone rigid in `example/16.MARTINI/run_sim_1rkl.sh`,
+  - cover both dry-MARTINI `BB` beads and injected all-atom `N/CA/C/O` backbone carriers,
+  - keep the production hybrid stack otherwise unchanged.
+- Patched `example/16.MARTINI/run_sim_1rkl.sh`:
+  - added `PROD_70_BACKBONE_FIX_RIGID_ENABLE` (default `1`);
+  - added `set_production_backbone_fix_rigid()` to write `/input/fix_rigid` from prepared-file metadata;
+  - selection logic uses `hybrid_env_topology/protein_membership` plus `atom_roles`/`atom_names` and requires a consistent protein role set `BB/N/CA/C/O`;
+  - existing `/input/fix_rigid/atom_indices` are merged into the final production mask instead of discarded.
+- Verification completed in this session:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`: passed.
+  - No existing generated stage-7 `.up` artifact was present in the workspace for a direct workflow-file probe.
+  - Ran a targeted HDF5 mock probe under the project environment:
+    - command context: `source .venv/bin/activate && source source.sh && python3 ...`
+    - result: the helper logic wrote `fix_rigid.atom_indices = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11]`,
+    - preserved one pre-existing fixed atom index (`1`),
+    - wrote consistent role counts `BB=2, N=2, CA=2, C=2, O=2`.
+- Files modified in this follow-up:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-03-19 (Phase 21: Rigid Stage-7 Energy Accumulation Root Cause and Fix)
+- Re-read `example/16.MARTINI/task_plan.md` before starting the stage-7 rigid-backbone energy investigation.
+- Reproduced the user's reported energy-accumulation trace from archived workflow artifacts instead of rerunning the full pipeline:
+  - input basis: `outputs/martini_test_1rkl_hybrid_phase17_full/checkpoints/1rkl.stage_7.0.prepared.up`,
+  - handoff source: `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_6.6.up`,
+  - handoff mode: `UPSIDE_SET_INITIAL_STRICT_COPY=1`, `UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS=1`, `UPSIDE_SET_INITIAL_RECENTER_PRODUCTION=0`,
+  - added only the stage-7 backbone `fix_rigid` mask (`BB/N/CA/C/O`, `155` atoms total).
+- Reproduction result (`1500` steps, same seed / production controls):
+  - initial `Upside/MARTINI/Total = 663.56 / 4268.90 / 4932.46`,
+  - step `500`: `663.56 / 3471.02 / 4134.58`,
+  - step `1000`: `663.56 / 5938.75 / 6602.31`.
+- Comparison point confirming rigidity alone is not the issue:
+  - archived rigid-dry stage-7 run (`outputs/martini_test_1rkl_rigid_dry/logs/stage_7.0.log`) stays stable and monotone:
+    `martini_potential -19534.69 -> -20472.49 -> -20966.54 -> ... -> -22112.04`.
+- Targeted discriminating probes:
+  - rigid + `integration_rmsd_align_enable=0` (`1000` steps):
+    - step `500`: `martini_potential = 3464.62`,
+    - essentially unchanged from the failing rigid run, so RMSD alignment is not the dominant source.
+  - rigid + `sc_env_relax_steps=1` (`1000` steps):
+    - step `500`: `martini_potential = 3471.02`,
+    - same first sampled trend, so the issue is not explained by shell wiring or by the existence of the new rigid mask alone.
+- Root-cause conclusion:
+  - the invalid combination is `stage-7 rigid backbone + hybrid_active=1`;
+  - active hybrid production assumes the protein backbone DOFs can respond to BB/SC coupling;
+  - fixing `BB/N/CA/C/O` turns that stage into one-way active forcing on the environment, reproducing the same kind of energy build-up that earlier phase-17 work reduced by restoring protein feedback.
+- Implemented workflow fix in both stage-7 preparation paths:
+  - `example/16.MARTINI/run_sim_1rkl.sh`,
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh`.
+  - generalized the helper that writes `/input/hybrid_control`,
+  - when `PROD_70_BACKBONE_FIX_RIGID_ENABLE=1`, stage `7.0` still writes the explicit backbone `fix_rigid` mask,
+  - but now rewrites the production file to:
+    - `activation_stage=${HYBRID_PREPROD_ACTIVATION_STAGE}` in the full workflow (default `__hybrid_disabled__`),
+    - `activation_stage=__hybrid_disabled__` in the production-only helper by default,
+    - `preprod_protein_mode=free`,
+  - so only the explicit backbone `fix_rigid` mask remains active and stage-7 hybrid force exchange is off.
+- Verified the fixed control combination from the same archived handoff (`1001` steps):
+  - initial `Upside/MARTINI/Total = 663.56 / -19534.69 / -18871.13`,
+  - step `500`: `663.56 / -22979.09 / -22315.53`,
+  - step `1000`: `663.56 / -24867.03 / -24203.48`,
+  - no monotonic positive MARTINI blow-up.
+- Additional verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`: passed.
+  - `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh`: passed.
+- Files modified in this follow-up:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-03-20 (Phase 22: Re-plan to Preserve Active Hybrid)
+- Re-read `example/16.MARTINI/task_plan.md` after the user clarified that hybrid must remain active and that the investigation has to include `src/` and the overall hybrid design.
+- Updated task tracking to reopen the issue:
+  - Phase 21 workaround is now treated as diagnostic evidence only,
+  - added a new Phase 22 focused on a hybrid-preserving fix in the runtime/Hamiltonian rather than disabling stage-7 hybrid activation in the workflow.
+- Began a broader runtime audit:
+  - inspected active-hybrid branches in `src/martini.cpp` that materially change the production Hamiltonian (`exclude_intra_protein_martini`, `production_nonprotein_hard_sphere`, startup caps, BB refresh/projection, and integration alignment),
+  - confirmed from code that `production_nonprotein_hard_sphere` only affects non-protein/non-protein pairs, while `exclude_intra_protein_martini` removes most intra-protein MARTINI interactions when hybrid is active.
+- Confirmed that the current fixed-atom path is not a full position constraint under active hybrid:
+  - `src/martini.cpp::apply_fix_rigid_md(...)` zeros force and momentum only,
+  - `src/deriv_engine.cpp` skips fixed atoms in integrator position/momentum updates,
+  - but `src/martini.cpp::align_active_protein_coordinates(...)` and `src/martini.cpp::refresh_bb_positions_if_active(...)` can still rewrite coordinates of nominally fixed protein atoms outside the integrator.
+- Started a hybrid-preserving probe by keeping `hybrid_active=1` while setting `exclude_intra_protein_martini=0` and `production_nonprotein_hard_sphere=0` on the archived rigid stage-7 reproducer. The first printed frame already showed a radically different initial MARTINI energy (`-23653.72` instead of `+4268.90`), which strongly suggests the active-hybrid Hamiltonian changes themselves need to be separated from any fixed-atom work-injection bug.
+- Files modified in this follow-up:
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-03-20 (Phase 22: Hybrid-Preserving Runtime Fix)
+- Re-read `example/16.MARTINI/task_plan.md` before implementation and verification.
+- Ran the discriminating stage-7 rigid matrix from the same archived `6.6 -> 7.0` handoff:
+  - baseline rigid active hybrid (`exclude_intra=1`, `nonprotein_hs=1`): `4268.90 -> 3471.02 -> 5938.75` at `0/500/1000`;
+  - rigid active hybrid with only `exclude_intra=0`: `4228.57 -> 3448.09 -> 6024.10`;
+  - rigid active hybrid with only `nonprotein_hs=0`: `-23613.40 -> -23939.15 -> -21299.20`;
+  - rigid active hybrid with both toggles off: `-23653.72 -> -23962.09 -> -21213.85`.
+- Conclusion from the matrix:
+  - `production_nonprotein_hard_sphere` is the dominant source of the stage-7 energy pump in the current runtime;
+  - `exclude_intra_protein_martini` is not the primary cause for this reproduced failure mode;
+  - the earlier "rigid + active hybrid is invalid" conclusion is wrong.
+- Implemented the hybrid-preserving fix:
+  - `src/martini.cpp`
+    - changed the runtime default for `production_nonprotein_hard_sphere` from `1` to `0`;
+    - kept the WCA branch available only as an explicit opt-in path.
+  - `example/16.MARTINI/prepare_system_lib.py`
+    - changed generated `hybrid_control.production_nonprotein_hard_sphere` from `1` to `0`.
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+    - removed the rigid-backbone workaround that disabled stage-7 hybrid activation;
+    - extended `set_hybrid_sc_controls()` to write `production_nonprotein_hard_sphere`;
+    - stage-7 preparation now explicitly writes `production_nonprotein_hard_sphere=0` while keeping hybrid active.
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh`
+    - mirrored the same stage-7 control update and removed the hybrid-disable workaround.
+- Rebuilt and checked the edited code:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed.
+  - `python3 -m py_compile example/16.MARTINI/prepare_system_lib.py` passed.
+  - `cmake --build obj -j4` succeeded with the same pre-existing `martini.cpp` warnings about `%p` formatting/C++17 decomposition declarations.
+- Runtime verification after the fix:
+  - rigid active hybrid with `exclude_intra=1`, `nonprotein_hs=0` stayed stable through step `1000`;
+  - non-rigid active hybrid with `exclude_intra=1`, `nonprotein_hs=0` also stayed stable through step `1000`:
+    - step `500`: `potential 550.95`, `martini_potential -24897.98`, `Rg 12.9 A`;
+    - step `1000`: `potential 556.05`, `martini_potential -25198.87`, `Rg 12.9 A`.
+  - deleted `production_nonprotein_hard_sphere` from a production file entirely and confirmed the rebuilt runtime parsed `nonprotein_hs=0` by default and started from `martini_potential -23613.40`.
+- Files modified in this follow-up:
+  - `src/martini.cpp`
+  - `example/16.MARTINI/prepare_system_lib.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-03-20 (Workflow Default: Stage-7 Backbone Flexible)
+- Re-read `example/16.MARTINI/task_plan.md` and switched the hybrid workflow back to a flexible stage-7 protein backbone by default.
+- Narrow workflow change:
+  - `example/16.MARTINI/run_sim_1rkl.sh` now defaults `PROD_70_BACKBONE_FIX_RIGID_ENABLE=0`.
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh` mirrors the same default.
+  - the `set_production_backbone_fix_rigid()` helper remains available as an opt-in diagnostic path when `PROD_70_BACKBONE_FIX_RIGID_ENABLE=1`.
+- Updated `example/16.MARTINI/task_plan.md` so the workflow default is documented as flexible backbone, with rigid stage-7 hold retained only as an explicit override.

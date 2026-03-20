@@ -52,6 +52,9 @@ PROD_70_NSTEPS="${PROD_70_NSTEPS:-5000}"
 # Production runs with injected Upside all-atom backbone nodes; use a smaller
 # stable timestep than MARTINI-only stages.
 PROD_TIME_STEP="${PROD_TIME_STEP:-0.002}"
+# Keep stage-7 protein backbone flexible by default in the hybrid workflow.
+# Set to 1 only for targeted rigid-backbone diagnostics.
+PROD_70_BACKBONE_FIX_RIGID_ENABLE="${PROD_70_BACKBONE_FIX_RIGID_ENABLE:-0}"
 PROD_FRAME_STEPS="${PROD_FRAME_STEPS:-5000}"
 
 COMP_3E4_BAR_INV_TO_A3_PER_EUP="${COMP_3E4_BAR_INV_TO_A3_PER_EUP:-14.521180763676}"
@@ -87,6 +90,7 @@ SC_ENV_RESTRAINT_K="${SC_ENV_RESTRAINT_K:-5.0}"
 SC_ENV_MAX_DISPLACEMENT="${SC_ENV_MAX_DISPLACEMENT:-2.0}"
 SC_ENV_PO4_Z_CLAMP_ENABLE="${SC_ENV_PO4_Z_CLAMP_ENABLE:-1}"
 SC_ENV_PO4_Z_CLAMP_MODE="${SC_ENV_PO4_Z_CLAMP_MODE:-initial}"
+PRODUCTION_NONPROTEIN_HARD_SPHERE="${PRODUCTION_NONPROTEIN_HARD_SPHERE:-0}"
 NONPROTEIN_HS_FORCE_CAP="${NONPROTEIN_HS_FORCE_CAP:-100.0}"
 NONPROTEIN_HS_POTENTIAL_CAP="${NONPROTEIN_HS_POTENTIAL_CAP:-5000.0}"
 INTEGRATION_RMSD_ALIGN_ENABLE="${INTEGRATION_RMSD_ALIGN_ENABLE:-1}"
@@ -176,6 +180,25 @@ with h5py.File(up_file, "r+") as h5:
 PY
 }
 
+set_hybrid_control_mode() {
+    local up_file="$1"
+    local activation_stage="$2"
+    local preprod_mode="${3:-rigid}"
+    python3 - "$up_file" "$activation_stage" "$preprod_mode" << 'PY'
+import sys
+import h5py
+import numpy as np
+up_file = sys.argv[1]
+activation_stage = sys.argv[2]
+preprod_mode = sys.argv[3]
+with h5py.File(up_file, "r+") as h5:
+    grp = h5.require_group("input").require_group("hybrid_control")
+    grp.attrs["enable"] = np.int8(1)
+    grp.attrs["activation_stage"] = np.bytes_(activation_stage)
+    grp.attrs["preprod_protein_mode"] = np.bytes_(preprod_mode)
+PY
+}
+
 set_hybrid_sc_controls() {
     local up_file="$1"
     local lj_cap="$2"
@@ -188,10 +211,11 @@ set_hybrid_sc_controls() {
     local max_disp="$9"
     local hs_force_cap="${10}"
     local hs_pot_cap="${11}"
-    local rmsd_align_enable="${12}"
-    local po4_z_clamp_enable="${13}"
-    local po4_z_clamp_mode="${14}"
-    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$backbone_hold_steps" "$po4_z_hold_steps" "$relax_dt" "$rest_k" "$max_disp" "$hs_force_cap" "$hs_pot_cap" "$rmsd_align_enable" "$po4_z_clamp_enable" "$po4_z_clamp_mode" << 'PY'
+    local nonprotein_hard_sphere="${12}"
+    local rmsd_align_enable="${13}"
+    local po4_z_clamp_enable="${14}"
+    local po4_z_clamp_mode="${15}"
+    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$backbone_hold_steps" "$po4_z_hold_steps" "$relax_dt" "$rest_k" "$max_disp" "$hs_force_cap" "$hs_pot_cap" "$nonprotein_hard_sphere" "$rmsd_align_enable" "$po4_z_clamp_enable" "$po4_z_clamp_mode" << 'PY'
 import sys
 import h5py
 import numpy as np
@@ -207,9 +231,10 @@ rest_k = float(sys.argv[8])
 max_disp = float(sys.argv[9])
 hs_force_cap = float(sys.argv[10])
 hs_pot_cap = float(sys.argv[11])
-rmsd_align_enable = int(sys.argv[12])
-po4_z_clamp_enable = int(sys.argv[13])
-po4_z_clamp_mode = sys.argv[14]
+nonprotein_hard_sphere = int(sys.argv[12])
+rmsd_align_enable = int(sys.argv[13])
+po4_z_clamp_enable = int(sys.argv[14])
+po4_z_clamp_mode = sys.argv[15]
 
 with h5py.File(up_file, "r+") as h5:
     grp = h5.require_group("input").require_group("hybrid_control")
@@ -223,9 +248,95 @@ with h5py.File(up_file, "r+") as h5:
     grp.attrs["sc_env_max_displacement"] = np.float32(max_disp)
     grp.attrs["nonprotein_hs_force_cap"] = np.float32(hs_force_cap)
     grp.attrs["nonprotein_hs_potential_cap"] = np.float32(hs_pot_cap)
+    grp.attrs["production_nonprotein_hard_sphere"] = np.int8(1 if nonprotein_hard_sphere else 0)
     grp.attrs["integration_rmsd_align_enable"] = np.int8(1 if rmsd_align_enable else 0)
     grp.attrs["sc_env_po4_z_clamp_enabled"] = np.int8(1 if po4_z_clamp_enable else 0)
     grp.attrs["sc_env_po4_z_clamp_mode"] = np.bytes_(po4_z_clamp_mode)
+PY
+}
+
+set_production_backbone_fix_rigid() {
+    local up_file="$1"
+    python3 - "$up_file" << 'PY'
+import sys
+import h5py
+import numpy as np
+
+up_file = sys.argv[1]
+required_roles = ("BB", "N", "CA", "C", "O")
+
+def as_text(value):
+    if isinstance(value, (bytes, np.bytes_)):
+        return value.decode("utf-8", errors="ignore")
+    return str(value)
+
+with h5py.File(up_file, "r+") as h5:
+    inp = h5.require_group("input")
+    if "hybrid_env_topology" not in inp:
+        raise SystemExit(f"ERROR: missing /input/hybrid_env_topology in {up_file}")
+    if "pos" not in inp:
+        raise SystemExit(f"ERROR: missing /input/pos in {up_file}")
+
+    membership = inp["hybrid_env_topology"]["protein_membership"][:].astype(np.int32, copy=False)
+    n_atom = int(inp["pos"].shape[0])
+    if membership.shape[0] != n_atom:
+        raise SystemExit(
+            f"ERROR: {up_file} protein_membership length {membership.shape[0]} does not match n_atom {n_atom}"
+        )
+
+    role_source = ""
+    if "atom_roles" in inp:
+        role_source = "atom_roles"
+    elif "atom_names" in inp:
+        role_source = "atom_names"
+    else:
+        raise SystemExit(f"ERROR: missing /input/atom_roles or /input/atom_names in {up_file}")
+
+    role_values = [as_text(x).strip().upper() for x in inp[role_source][:]]
+    if len(role_values) != n_atom:
+        raise SystemExit(
+            f"ERROR: {up_file} {role_source} length {len(role_values)} does not match n_atom {n_atom}"
+        )
+
+    role_counts = {role: 0 for role in required_roles}
+    selected = []
+    for atom_idx, role in enumerate(role_values):
+        if membership[atom_idx] < 0 or role not in role_counts:
+            continue
+        selected.append(atom_idx)
+        role_counts[role] += 1
+
+    missing_roles = [role for role, count in role_counts.items() if count == 0]
+    if missing_roles:
+        raise SystemExit(
+            f"ERROR: {up_file} missing protein backbone roles for fix_rigid selection: "
+            f"{','.join(missing_roles)}"
+        )
+
+    bb_count = role_counts["BB"]
+    mismatched_roles = [role for role in required_roles[1:] if role_counts[role] != bb_count]
+    if mismatched_roles:
+        detail = ", ".join(f"{role}={role_counts[role]}" for role in required_roles)
+        raise SystemExit(
+            f"ERROR: {up_file} protein backbone role counts are inconsistent for fix_rigid selection ({detail})"
+        )
+
+    existing = np.zeros((0,), dtype=np.int32)
+    if "fix_rigid" in inp and "atom_indices" in inp["fix_rigid"]:
+        existing = inp["fix_rigid"]["atom_indices"][:].astype(np.int32, copy=False)
+
+    merged = np.unique(np.concatenate([existing, np.asarray(selected, dtype=np.int32)]))
+
+    if "fix_rigid" in inp:
+        del inp["fix_rigid"]
+    grp = inp.require_group("fix_rigid")
+    grp.attrs["enable"] = np.int8(1)
+    grp.attrs["selection"] = np.bytes_("protein_backbone_roles_bb_n_ca_c_o")
+    grp.attrs["selection_source"] = np.bytes_(role_source)
+    grp.attrs["selection_count"] = np.int32(merged.shape[0])
+    for role, count in role_counts.items():
+        grp.attrs[f"count_{role}"] = np.int32(count)
+    grp.create_dataset("atom_indices", data=merged.astype(np.int32, copy=False))
 PY
 }
 
@@ -921,6 +1032,7 @@ prepare_stage_file() {
     inject_hybrid_mapping "$target_file" "${HYBRID_MAPPING_FILE}"
     set_stage_label "$target_file" "$stage_label"
     if [ "$stage_label" = "production" ]; then
+        set_hybrid_control_mode "$target_file" "production" "rigid"
         set_hybrid_sc_controls \
             "$target_file" \
             "$SC_ENV_LJ_FORCE_CAP" \
@@ -933,6 +1045,7 @@ prepare_stage_file() {
             "$SC_ENV_MAX_DISPLACEMENT" \
             "$NONPROTEIN_HS_FORCE_CAP" \
             "$NONPROTEIN_HS_POTENTIAL_CAP" \
+            "$PRODUCTION_NONPROTEIN_HARD_SPHERE" \
             "$INTEGRATION_RMSD_ALIGN_ENABLE" \
             "$SC_ENV_PO4_Z_CLAMP_ENABLE" \
             "$SC_ENV_PO4_Z_CLAMP_MODE"
@@ -945,6 +1058,9 @@ prepare_stage_file() {
             "${UPSIDE_RAMA_SHEET_MIXING}" \
             "${UPSIDE_HBOND_ENERGY}" \
             "${UPSIDE_REFERENCE_STATE_RAMA}"
+        if [ "${PROD_70_BACKBONE_FIX_RIGID_ENABLE}" = "1" ]; then
+            set_production_backbone_fix_rigid "$target_file"
+        fi
     fi
 
     if [ "$npt_enable" = "1" ]; then
