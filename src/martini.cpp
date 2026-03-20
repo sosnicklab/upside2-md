@@ -297,6 +297,7 @@ struct HybridRuntimeState {
     std::vector<std::array<int,4>> atom_indices;
     std::vector<std::array<int,4>> atom_mask;
     std::vector<std::array<float,4>> weights;
+    std::vector<std::array<std::array<float,3>,4>> bb_reference_atom_coords;
     std::vector<int> protein_membership;
     std::vector<int> atom_residue_id;
     std::vector<unsigned char> atom_role_class;
@@ -1053,6 +1054,14 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         out.atom_indices.assign(out.n_bb, std::array<int,4>{{-1,-1,-1,-1}});
         out.atom_mask.assign(out.n_bb, std::array<int,4>{{0,0,0,0}});
         out.weights.assign(out.n_bb, std::array<float,4>{{0.f,0.f,0.f,0.f}});
+        out.bb_reference_atom_coords.assign(
+            out.n_bb,
+            std::array<std::array<float,3>,4>{{
+                std::array<float,3>{{0.f,0.f,0.f}},
+                std::array<float,3>{{0.f,0.f,0.f}},
+                std::array<float,3>{{0.f,0.f,0.f}},
+                std::array<float,3>{{0.f,0.f,0.f}},
+            }});
 
         traverse_dset<1,int>(bb.get(), "bb_residue_index", [&](size_t i, int v) {
             out.bb_residue_index[i] = v;
@@ -1066,6 +1075,15 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         traverse_dset<2,float>(bb.get(), "weights", [&](size_t i, size_t j, float v) {
             out.weights[i][j] = v;
         });
+        if(h5_exists(bb.get(), "reference_atom_coords")) {
+            auto ref_shape = get_dset_size(3, bb.get(), "reference_atom_coords");
+            if(ref_shape[0] != out.n_bb || ref_shape[1] != 4 || ref_shape[2] != 3) {
+                throw string("Hybrid BB reference_atom_coords must have shape (n_bb,4,3)");
+            }
+            traverse_dset<3,float>(bb.get(), "reference_atom_coords", [&](size_t i, size_t j, size_t d, float v) {
+                out.bb_reference_atom_coords[i][j][d] = v;
+            });
+        }
         if(h5_exists(bb.get(), "bb_atom_index")) {
             check_size(bb.get(), "bb_atom_index", out.n_bb);
             traverse_dset<1,int>(bb.get(), "bb_atom_index", [&](size_t i, int v) {
@@ -1668,8 +1686,11 @@ std::shared_ptr<const HybridRuntimeState> get_state_for_coord(const CoordNode& c
     return it->second;
 }
 
+static void refresh_backbone_o_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom);
+
 void refresh_bb_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom) {
     if(!st.enabled || !st.active) return;
+    refresh_backbone_o_positions_if_active(st, pos, n_atom);
     for(size_t k = 0; k < st.n_bb; ++k) {
         int bb = st.bb_atom_index[k];
         if(bb < 0 || bb >= n_atom) continue;
@@ -1780,6 +1801,44 @@ static inline void mat_mul(const float A[3][3], const float B[3][3], float C[3][
 
 static inline void mat_transpose(const float A[3][3], float AT[3][3]) {
     for(int i=0;i<3;++i) for(int j=0;j<3;++j) AT[i][j] = A[j][i];
+}
+
+static void refresh_backbone_o_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom) {
+    if(!st.enabled || !st.active) return;
+    if(st.bb_reference_atom_coords.size() != st.n_bb) return;
+
+    for(size_t k = 0; k < st.n_bb; ++k) {
+        const auto& atom_idx = st.atom_indices[k];
+        const int n_idx = atom_idx[0];
+        const int ca_idx = atom_idx[1];
+        const int c_idx = atom_idx[2];
+        const int o_idx = atom_idx[3];
+        if(n_idx < 0 || n_idx >= n_atom ||
+           ca_idx < 0 || ca_idx >= n_atom ||
+           c_idx < 0 || c_idx >= n_atom ||
+           o_idx < 0 || o_idx >= n_atom) {
+            continue;
+        }
+
+        const auto& ref = st.bb_reference_atom_coords[k];
+        float F_ref[3][3], F_cur[3][3], F_ref_T[3][3], R[3][3];
+        if(!build_frame_from_three(ref[0], ref[1], ref[2], F_ref)) continue;
+
+        auto cur_n = load_vec<3>(pos, n_idx);
+        auto cur_ca = load_vec<3>(pos, ca_idx);
+        auto cur_c = load_vec<3>(pos, c_idx);
+        auto cur_n_arr = std::array<float,3>{cur_n[0], cur_n[1], cur_n[2]};
+        auto cur_ca_arr = std::array<float,3>{cur_ca[0], cur_ca[1], cur_ca[2]};
+        auto cur_c_arr = std::array<float,3>{cur_c[0], cur_c[1], cur_c[2]};
+        if(!build_frame_from_three(cur_n_arr, cur_ca_arr, cur_c_arr, F_cur)) continue;
+
+        mat_transpose(F_ref, F_ref_T);
+        mat_mul(F_cur, F_ref_T, R);
+
+        auto ref_local_o = vec_sub(ref[3], ref[1]);
+        auto mapped_o = vec_add(apply_rot(R, ref_local_o), cur_ca_arr);
+        store_vec<3>(pos, o_idx, make_vec3(mapped_o[0], mapped_o[1], mapped_o[2]));
+    }
 }
 
 static inline void quat_to_rotmat(const std::array<double,4>& q, float R[3][3]) {

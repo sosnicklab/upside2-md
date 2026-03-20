@@ -1,52 +1,35 @@
 # Findings
 
-- 2026-03-02: `example/16.MARTINI/run_sim_1rkl.sh` already injects independent hybrid-control attrs for `sc_env_relax_steps`, `sc_env_backbone_hold_steps`, and `sc_env_po4_z_hold_steps`; the workflow does not need a new control to decouple the force-cap ramp from the PO4 z hold.
-- 2026-03-02: `src/martini.cpp` already honors these windows separately:
-  - force-cap removal uses `sc_env_relax_steps`
-  - PO4 z-coordinate fixing uses `sc_env_po4_z_hold_steps`
-  - backbone hold uses `sc_env_backbone_hold_steps`
-- 2026-03-02: For the requested behavior change, a workflow-default edit in `example/16.MARTINI/run_sim_1rkl.sh` is sufficient; no runtime C++ change is required.
+## External / Technical Findings
+- Saved baseline production artifact:
+  - file: `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`
+  - stage-7 output contains actual protein AA carrier atoms with roles `N/CA/C/O` on runtime indices `4090..4322`.
+- Actual carrier geometry from that artifact:
+  - restrained `N-CA` and `CA-C` bonds remain near expected values over saved frames.
+  - `C-O` is not part of the injected `Distance3D` / `Spring_bond` backbone restraint set and drifts badly in the saved output.
+  - measured `C-O` carrier distance changes from about `1.234 Å` at frame 0 to a mean of about `17.90 Å` and a max of about `30.30 Å` at the last saved frame.
+- Source-path finding:
+  - `example/16.MARTINI/run_sim_1rkl.sh` injects four active BB carriers with weights `[N, CA, C, O]`.
+  - `augment_production_rotamer_nodes()` builds production backbone nodes using only `N/CA/C` (`ref_n_atom = 3 * len(residue_ids)`), so `O` receives no direct backbone restraints.
+  - `src/martini.cpp::refresh_bb_positions_if_active(...)` still uses the four-carrier weighted COM, so drifting `O` contaminates the refreshed MARTINI `BB` proxy.
+- Export-path finding:
+  - `example/16.MARTINI/extract_martini_vtf.py::reconstruct_backbone_aa(...)` does not use the actual runtime AA carriers when they exist.
+  - It backmaps each residue by adding a pure translation from the live `BB` coordinate to the stored reference `N/CA/C/O` geometry, with no residue rotation.
+  - In the saved stage-7 artifact, that reconstructed backbone diverges strongly from the actual runtime carriers by the last saved frame:
+    - mean carrier-position mismatch about `7.12 Å`,
+    - max carrier-position mismatch about `20.75 Å`,
+    - mean peptide `C(i)-N(i+1)` bond in the reconstruction about `7.78 Å` versus about `1.37 Å` in the actual runtime carriers.
+- Implemented fix:
+  - `src/martini.cpp` now reads `hybrid_bb_map/reference_atom_coords` into runtime state and reconstructs the active `O` carrier from the current `N/CA/C` local frame before BB COM refresh.
+  - `example/16.MARTINI/extract_martini_vtf.py` now exports actual runtime carrier coordinates when `hybrid_bb_map/atom_indices` resolve to runtime roles `N/CA/C/O`.
+- Focused verification:
+  - rebuilt successfully with `cmake --build obj`;
+  - strict-copy replay from the broken last saved frame confirmed runtime repair:
+    - pre-run `/input/pos` `C-O` mean/max `17.90/30.30 Å`,
+    - first saved `/output/pos` frame after replay `C-O` mean/max `1.32/1.57 Å`;
+  - exporter verification on that replay file:
+    - `use_runtime_carriers=True`,
+    - exported AA backbone coordinates matched actual runtime carriers exactly on the checked frame (`0.0 Å` mean/max mismatch).
 
-- `py/upside_config.py` builds rotamer sidechains as placement rows keyed by residue, bead type, and an encoded `id_seq`; each allowed rotamer contributes one row per sidechain bead, and `--fix-rotamer` collapses a residue to a single state.
-- Sidechain placement and one-body energies are separate nodes:
-  - position/orientation comes from `placement_fixed_point_vector_only` or `placement_point_vector_only`
-  - scalar one-body energy comes from `placement_fixed_scalar` or `placement_scalar`
-- In the common dynamic-1body path, scalar energies are `-log(rotamer_prob(phi, psi, state))`; placement positions can also be Ramachandran-dependent in principle, but current `parameters/ff_2.1/sidechain.h5` contains `rotamer_center_fixed` and `rotamer_prob`, not `rotamer_center`.
-- `src/placement.cpp` applies an affine transform from the backbone-local frame (`affine_alignment`) to place each rotamer bead in Cartesian space; when Ramachandran-dependent placement is used, a 2D periodic spline over phi/psi supplies the local coordinates.
-- `py/upside_config.py` optionally adds `hbond_coverage` and `hbond_coverage_hydrophobe` as extra one-body inputs to the rotamer node, so the rotamer solver can include backbone-context terms beyond the library prior.
-- `src/rotamer.cpp` treats rotamers as a discrete graphical model over residues. The implementation is specialized for residues with `1`, `3`, or `6` states (`nodes1`, `nodes3`, `nodes6`).
-- One-body energies from all supplied probability/energy nodes are summed per rotamer state, then converted to Boltzmann weights. Pairwise sidechain interactions are evaluated from bead geometry and converted with `exp(-E_pair)` into edge factors before belief propagation.
-- Pair interaction kernels in `src/bead_interaction.h` reject interactions between states belonging to the same encoded residue/node by comparing the encoded IDs with the rotamer bits masked off.
-- `src/rotamer.cpp` solves the sidechain graph by damped belief propagation and exposes per-node marginals/free energies through logs such as `node_marginal`, `rotamer_free_energy`, and `rotamer_1body_energy`.
-- A separate path, `weighted_pos` in `src/environment.cpp`, combines sidechain coordinates with `exp(-placement_scalar)` weights for environment-style many-body terms. That node consumes placement energies directly, not the solved rotamer marginals from `rotamer.cpp`.
-- In `example/16.MARTINI/run_sim_1rkl.sh`, `augment_production_rotamer_nodes()` rebuilds rotamer `id_seq` with the same `n_bit_rotamer=4` encoding used by `py/upside_config.py`. Added validation now confirms, residue-by-residue, that decoded state ids are exactly `0..n_rot-1` and map to the expected sidechain-library layer blocks.
-- In `example/16.MARTINI/prepare_system_lib.py`, `collect_sc_map()` previously required an all-atom residue lookup even though it only emitted MARTINI-sidechain proxy rows. That AA gate was removed so SC row generation now follows the MARTINI 2.2 CG protein structure directly.
-- In `src/martini.cpp`, placement-state groups are decoded from the injected `id_seq`, then runtime validation now enforces:
-  - each residue's placement groups share one `node_id` and `n_rotamer`
-  - rotamer ids are unique and exactly contiguous `0..n_rot-1`
-  - any SC row `rotamer_id` matches an actual placement-group rotamer for that residue
-  - row-to-placement assignment does not silently renumber rotamers
-- 2026-03-20: In the dry-MARTINI / Upside hybrid runtime, the actual force transfer from MARTINI particles onto all-atom coordinates happens in `src/martini.cpp`:
-  - backbone-bead feedback is projected by `project_bb_gradient_if_active()`
-  - sidechain feedback is projected by `project_sc_gradient_if_active()`
-- 2026-03-20: The deterministic/probabilistic MARTINI nonbonded calculations should remain unchanged for this request; the requested `/10` adjustment belongs only on the MARTINI-to-all-atom projection step.
-- 2026-03-20: Lesson: when the user asks to undo the last step, revert both the code change and the task-tracking records so the repository state and task log stay aligned.
-- 2026-03-20: `example/16.MARTINI/run_sim_1rkl.sh::set_production_backbone_fix_rigid()` already builds the correct rigid selection for hybrid stage 7:
-  - it restricts to `hybrid_env_topology/protein_membership >= 0`
-  - it requires roles `BB`, `N`, `CA`, `C`, `O`
-  - that one mask therefore covers both dry-MARTINI backbone beads and injected all-atom backbone carrier atoms
-- 2026-03-20: For restoring rigid protein backbone behavior, a workflow-default change in the stage-7 hybrid runners is sufficient; no `src/martini.cpp` change is required.
-- 2026-03-20: The stage-7 energy-pump checkpoint already contains the intended rigid production controls:
-  - `fix_rigid` fixes protein `BB/N/CA/C/O`
-  - `production_nonprotein_hard_sphere=0`
-  - `exclude_intra_protein_martini=1`
-  - `integration_rmsd_align_enable=1`
-  This makes the remaining drift a runtime issue, not simply a missing workflow toggle.
-- 2026-03-20: The injected hybrid system contains many placeholder protein atoms with role `AA` that are not consumed by backbone mapping, SC projection, or MARTINI pair lists. Using them as the RMSD-alignment reference is invalid; alignment must use explicit backbone carriers (`N/CA/C/O`) or MARTINI `BB` fallback only.
-- 2026-03-20: In the failing checkpoint, all active hybrid sidechain rows map to underdetermined placement reference groups with fewer than three points. Recomputing `sc_local_pos` from live proxy coordinates each step feeds current proxy drift back into the virtual placement geometry and is not a stable reference-frame update.
-- 2026-03-20: The remaining large upward drift in the reproduced rigid-backbone run was dominated by protein-internal `dist_spring` terms, not by the logged SC-env free-energy scalar.
-- 2026-03-20: The worst exploding `dist_spring` bonds were hybrid protein sidechain-proxy bonds (`BB-SC` and `SC-SC`) whose MARTINI atoms also appeared in `hybrid_sc_map/proxy_atom_index`.
-- 2026-03-20: Root cause of the energy pump: `src/martini.cpp::project_sc_gradient_if_active()` cleared each SC proxy atom's full force accumulator before projecting probabilistic SC feedback onto all-atom targets. That removed the proxy's bonded and multibody restoring forces every integration step, allowing protein sidechain bond strains to accumulate.
-- 2026-03-20: Fix rule for this hybrid path: when projecting SC probabilistic feedback to all-atom carrier atoms, preserve the real MARTINI proxy forces already accumulated from bonded/multibody terms. Projection should add AA feedback, not erase the proxy's own force balance.
-- 2026-03-20: To make the hybrid protein backbone non-rigid again, no runtime change is needed. The workflow toggle remains `PROD_70_BACKBONE_FIX_RIGID_ENABLE` in both stage-7 runner scripts.
-- 2026-03-20: Lesson: when the user flips a workflow default like stage-7 backbone rigidity, update both `run_sim_1rkl.sh` and `test_prod_run_sim_1rkl.sh` together and keep the task records aligned with the new default state.
+## Lessons
+- None yet.

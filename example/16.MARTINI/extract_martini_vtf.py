@@ -289,6 +289,22 @@ def build_backbone_projection_map(struct_h5, input_pos):
     weights = weights / safe_wsum
     ref_anchor = np.sum(ref_coords * weights[:, :, None], axis=1)
 
+    runtime_carrier_index = None
+    use_runtime_carriers = False
+    if "atom_indices" in bb:
+        atom_indices = np.asarray(bb["atom_indices"][:], dtype=int)
+        if atom_indices.ndim == 2 and atom_indices.shape[1] == 4:
+            atom_indices = atom_indices[valid]
+            if np.all((atom_indices >= 0) & (atom_indices < n_particles)):
+                runtime_carrier_index = atom_indices
+                if "input/atom_roles" in struct_h5:
+                    atom_roles = decode_str_array(struct_h5["input/atom_roles"])
+                    runtime_roles = atom_roles[runtime_carrier_index]
+                    ref_role_row = np.asarray(ref_atom_names, dtype=object).reshape(1, 4)
+                    use_runtime_carriers = bool(np.all(runtime_roles == ref_role_row))
+                else:
+                    use_runtime_carriers = True
+
     return {
         "bb_atom_index": bb_atom_index,
         "bb_residue_index": bb_residue_index,
@@ -296,6 +312,8 @@ def build_backbone_projection_map(struct_h5, input_pos):
         "ref_atom_names": np.array(ref_atom_names, dtype=object),
         "weights": weights,
         "ref_anchor": ref_anchor,
+        "runtime_carrier_index": runtime_carrier_index,
+        "use_runtime_carriers": use_runtime_carriers,
     }
 
 
@@ -410,6 +428,11 @@ def mode2_backbone_bonds(start_idx, n_bb):
 
 
 def reconstruct_backbone_aa(frame_pos, bb_map, box_lengths=None):
+    runtime_carrier_index = bb_map.get("runtime_carrier_index")
+    if bb_map.get("use_runtime_carriers", False) and runtime_carrier_index is not None:
+        aa_pos = frame_pos[runtime_carrier_index.reshape(-1)]
+        return np.asarray(aa_pos, dtype=np.float32).reshape(-1, 3)
+
     bb_cur = frame_pos[bb_map["bb_atom_index"]]
     delta = bb_cur - bb_map["ref_anchor"]
     if box_lengths is not None:

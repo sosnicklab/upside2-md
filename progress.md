@@ -1,137 +1,25 @@
 # Progress Log
 
-- 2026-03-02: Re-scoped task tracking to the dry-MARTINI startup schedule change in `example/16.MARTINI/run_sim_1rkl.sh`.
-- 2026-03-02: Inspected the workflow and runtime path; confirmed the script already writes separate `sc_env_relax_steps` and `sc_env_po4_z_hold_steps` attrs, and `src/martini.cpp` already consumes them independently.
-- 2026-03-02: Planned a minimal workflow-only change: reduce the force-cap ramp default to `100` steps while keeping the PO4 z hold default at `150` steps.
-- 2026-03-02: Patched `example/16.MARTINI/run_sim_1rkl.sh`:
-  - `SC_ENV_RELAX_STEPS: 150 -> 100`
-  - `SC_ENV_PO4_Z_HOLD_STEPS: inherit relax -> 150`
-  - updated the nearby startup-window comment to match the new defaults
-- 2026-03-02: Verification:
-  - `sed -n '140,160p' example/16.MARTINI/run_sim_1rkl.sh` -> confirmed `100`-step relax ramp and `150`-step PO4 z hold
-  - `rg -n "SC_ENV_RELAX_STEPS|SC_ENV_PO4_Z_HOLD_STEPS" example/16.MARTINI/run_sim_1rkl.sh` -> confirmed the edited defaults and stage-7 argument wiring
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
-
-- Initialized task tracking files for the rotamer force-field explanation task.
-- Read `task_plan.md` and `lessons.md` before repository inspection.
-- Inspected README usage, `py/upside_config.py`, `src/placement.cpp`, `src/bead_interaction.h`, `src/rotamer.cpp`, and `src/environment.cpp` to trace rotamer representation and energy flow.
-- Verified `parameters/ff_2.1/sidechain.h5` layout:
-  - `rotamer_center_fixed` shape `(86, 6)`
-  - `rotamer_prob` shape `(36, 36, 86)`
-  - `rotamer_start_stop_bead` shape `(20, 3)`
-  - `pair_interaction` shape `(20, 20, 54)`
-- Confirmed final explanation points:
-  - rotamers are discrete sidechain states attached to pretabulated placements
-  - one-body terms come from Ramachandran/library energies and optional backbone-context coverage terms
-  - pairwise SC interactions are handled in a residue graph solved by belief propagation
-  - environment-style many-body terms use a separate weighted-position path
-- Switched `example/16.MARTINI/prepare_system_lib.py::collect_sc_map()` to derive SC rows directly from MARTINI CG sidechain proxies instead of gating on all-atom residue tables.
-- Updated `example/16.MARTINI/prepare_system.py` to use the new MARTINI-driven SC mapping call path.
-- Added stage-7 injection validation in `example/16.MARTINI/run_sim_1rkl.sh` to assert exact rotamer numbering and sidechain-library layer assignment for every injected residue.
-- Added runtime validation in `src/martini.cpp` so hybrid placement-group decoding and SC row assignments preserve exact 0-based rotamer numbering.
-- Verification:
-  - `python -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_lib.py` -> pass
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
-  - `cmake --build obj -j4` -> pass
-  - Targeted MARTINI-asset replay using `example/16.MARTINI/pdb/1rkl.MARTINI.pdb` and `example/16.MARTINI/pdb/1rkl_proa.itp`:
-    - `collect_sc_map_ok 37`
-    - `rotamer_numbering_ok 31`
-- User-reported follow-up failure: runtime `TabError` in the Python heredoc inside `example/16.MARTINI/run_sim_1rkl.sh` during stage preparation.
-- Fix:
-  - normalized the remaining tab-indented Python lines in the heredoc (`n_affine`, `affine_atoms`, `affine_ref_geom`) to spaces
-  - added a lesson to check shell heredocs for literal tabs after patching embedded Python
-- Follow-up verification:
-  - `sed -n '1060,1110p' example/16.MARTINI/run_sim_1rkl.sh | cat -vet` -> no tab markers in failing block
-  - `rg -nP "\t" example/16.MARTINI/run_sim_1rkl.sh` -> no tabs found
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
-- 2026-03-20: Re-scoped `task_plan.md` to the dry-MARTINI / Upside force-transfer scaling change.
-- 2026-03-20: Inspected `src/martini.cpp` and confirmed the MARTINI-to-all-atom writeback path:
-  - `project_bb_gradient_if_active()` projects backbone-bead gradients onto AA targets
-  - `project_sc_gradient_if_active()` projects sidechain proxy/row gradients onto AA targets
-- 2026-03-20: Planned a minimal runtime-only edit in `src/martini.cpp` to divide projected MARTINI feedback forces by `10` without altering MARTINI pair-force evaluation.
-- 2026-03-20: Patched `src/martini.cpp`:
-  - added shared constant `hybrid_martini_to_all_atom_force_scale = 0.1f`
-  - scaled feedback in `project_bb_gradient_if_active()`
-  - scaled feedback in `project_sc_gradient_if_active()`
-- 2026-03-20: Verification:
-  - `sed -n '2125,2210p' src/martini.cpp` -> confirmed `/10` scaling is applied only in MARTINI-to-AA projection functions
-  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` -> pass
-  - build emitted existing `src/martini.cpp` warnings (`%p` format type, C++17 decomposition declarations, duplicate `-lc++` link warning), but no new error from this change
-- 2026-03-20: User requested rollback of the `/10` MARTINI-to-all-atom force scaling change.
-- 2026-03-20: Reverted `src/martini.cpp` to the original projection behavior:
-  - removed `hybrid_martini_to_all_atom_force_scale`
-  - restored `project_bb_gradient_if_active()` to use the original feedback mix
-  - restored `project_sc_gradient_if_active()` to use the original feedback mix
-- 2026-03-20: Rollback verification:
-  - `sed -n '446,454p' src/martini.cpp` -> confirmed the temporary `0.1f` constant is gone
-  - `sed -n '2127,2185p' src/martini.cpp` -> confirmed both projection functions use the original `compute_sc_backbone_feedback_mix(st)` logic
-  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` -> pass
-  - build emitted the same pre-existing `src/martini.cpp` warnings and duplicate `-lc++` link warnings, with no rollback-specific error
-- 2026-03-20: Re-scoped `task_plan.md` to restoring rigid protein backbone behavior in hybrid production.
-- 2026-03-20: Inspected the hybrid stage-7 workflow and confirmed that `set_production_backbone_fix_rigid()` already selects protein roles `BB/N/CA/C/O`, so the existing workflow path covers both dry-MARTINI BB and all-atom backbone carriers.
-- 2026-03-20: Planned a minimal workflow-only change: restore the rigid-backbone path by default in the main hybrid runner and the production-only test runner.
-- 2026-03-20: Patched `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh`:
-  - restored `PROD_70_BACKBONE_FIX_RIGID_ENABLE` default from `0` to `1`
-  - updated the nearby comments to state that the rigid mask covers both MARTINI `BB` and AA `N/CA/C/O` backbone roles
-- 2026-03-20: Verification:
-  - `sed -n '108,118p' example/16.MARTINI/run_sim_1rkl.sh` -> confirmed rigid default and updated comment
-  - `sed -n '52,60p' example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> confirmed rigid default and updated comment
-  - `rg -n "PROD_70_BACKBONE_FIX_RIGID_ENABLE|set_production_backbone_fix_rigid" example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> confirmed both runners still route production stage prep through the existing rigid-mask helper
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
-  - `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> pass
-- 2026-03-20: Re-scoped `task_plan.md` to the stage-7 hybrid energy-pump investigation using the failing `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` checkpoint.
-- 2026-03-20: Confirmed the failing checkpoint is already on the rigid-backbone workflow path:
-  - `fix_rigid` exists with `155` atoms
-  - fixed protein roles are `BB/N/CA/C/O`
-  - `production_nonprotein_hard_sphere=0`
-  - `exclude_intra_protein_martini=1`
-  - `integration_rmsd_align_enable=1`
-- 2026-03-20: Verified that the failing checkpoint contains `109` protein atoms with role `AA` that are not used by the hybrid backbone mapping, the SC projection targets, or MARTINI pair interactions.
-- 2026-03-20: Patched `src/martini.cpp` to stop RMSD alignment from using those unused placeholder protein `AA` atoms:
-  - added `atom_backbone_carrier_mask` to `HybridRuntimeState`
-  - populated the mask from `atom_roles` / `atom_names`
-  - changed `align_active_protein_coordinates()` to prefer only protein `N/CA/C/O` carrier atoms, then fall back to `BB`
-- 2026-03-20: Alignment diagnostic replay:
-  - before the patch, `coupling_align_debug=1` showed small nonzero rigid-protein alignment drift (`rmsd~1e-4`)
-  - after the patch, the same replay showed `rmsd=0.0000 rot_deg=0.0000 trans=0.0000`
-- 2026-03-20: Verified every active hybrid sidechain row in the failing checkpoint uses an underdetermined placement group with fewer than three placement points.
-- 2026-03-20: Patched `src/martini.cpp` to stop refreshing `sc_local_pos` from current proxy coordinates each step for those underdetermined groups.
-- 2026-03-20: Targeted replay results after the two runtime fixes:
-  - baseline failing replay: MARTINI potential rises from about `-23939` at step `500` to about `-21299` at step `1000`
-  - after the alignment fix only: step `500 -> -23946`, step `1000 -> -21279`
-  - after both fixes: step `500 -> -23964`, step `1000 -> -21268`
-  - conclusion: both fixes remove real inconsistencies and slightly improve early behavior, but the main energy-pump bug remains
-- 2026-03-20: Isolated the remaining rising term using the saved replay frames in `example/16.MARTINI/outputs/rigid_bug_diag/1rkl.stage_7.0.patched2_1500.up`:
-  - `sc_env_energy_total` stayed near `~220`, so it was not the source of the multi-thousand-unit rise
-  - recomputed bonded MARTINI energies from the saved `0/500/1000` frames showed `dist_spring` was the dominant term:
-    - frame `0`: `bondE ~6115`
-    - frame `500`: `bondE ~6884`
-    - frame `1000`: `bondE ~20709`
-- 2026-03-20: Identified the exploding bonded terms as protein-internal sidechain-proxy bonds:
-  - the largest `500 -> 1000` bond jumps were hybrid protein `BB-SC` / `SC-SC` terms
-  - their atoms were the same MARTINI proxy atoms listed in `input/hybrid_sc_map/proxy_atom_index`
-  - those rows project to all-atom backbone carriers only (`N/CA/C/O`)
-- 2026-03-20: Root-cause inspection of `src/martini.cpp::project_sc_gradient_if_active()` showed that it cleared each SC proxy force accumulator with `store_vec(..., make_zero<3>())` before projecting hybrid SC feedback.
-- 2026-03-20: Patched `src/martini.cpp` so `project_sc_gradient_if_active()` preserves each proxy's existing MARTINI bonded/multibody forces and only adds the probabilistic SC feedback to the configured all-atom carrier targets.
-- 2026-03-20: Verification after the SC-proxy force fix:
-  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` -> pass
-  - replayed the original failing checkpoint for `1500` steps into `example/16.MARTINI/outputs/rigid_bug_diag/1rkl.stage_7.0.scforce_fix_1500.up`
-  - replay log comparison:
-    - baseline: step `500 -> -23939.15`, step `1000 -> -21299.20`
-    - fixed: step `500 -> -24563.04`, step `1000 -> -25146.67`
-  - recomputed bonded energies from the fixed replay:
-    - frame `0`: `bondE ~6115`
-    - frame `500`: `bondE ~6392`
-    - frame `1000`: `bondE ~13063`
-  - conclusion: the previous `dist_spring` blow-up is substantially reduced and the reproduced MARTINI potential no longer turns upward in the original failure window
-- 2026-03-20: Re-scoped `task_plan.md` to the workflow request to make the hybrid stage-7 protein backbone non-rigid again by default.
-- 2026-03-20: Confirmed both hybrid runners still defaulted `PROD_70_BACKBONE_FIX_RIGID_ENABLE` to `1` and still routed stage-7 preparation through `set_production_backbone_fix_rigid()`.
-- 2026-03-20: Patched `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh`:
-  - changed `PROD_70_BACKBONE_FIX_RIGID_ENABLE` default from `1` back to `0`
-  - updated the nearby comments to state that stage 7 is non-rigid by default and the rigid mask can still be re-enabled explicitly
-- 2026-03-20: Verification:
-  - `sed -n '108,120p' example/16.MARTINI/run_sim_1rkl.sh` -> confirmed non-rigid default and updated comment
-  - `sed -n '52,64p' example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> confirmed non-rigid default and updated comment
-  - `rg -n "PROD_70_BACKBONE_FIX_RIGID_ENABLE|set_production_backbone_fix_rigid" example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> confirmed both runners still use the same stage-7 helper path when the flag is set to `1`
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
-  - `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> pass
+## 2026-03-20
+- Initialized task tracking files for the MARTINI hybrid workflow backbone-break debugging task.
+- Inspected `example/16.MARTINI/run_sim_1rkl.sh` and the stage-7 hybrid runtime code in `src/martini.cpp`.
+- Used the saved production artifact `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` to validate the failure mode directly from HDF5 output instead of relying only on logs or VTF appearance.
+- Identified the simulation-side defect:
+  - stage-7 injects active `N/CA/C/O` carriers, but the generated Upside backbone force field only restrains `N/CA/C`;
+  - the `O` carriers are therefore unconstrained and drift far from `C` during production while still contributing to `hybrid_bb_map` BB refresh weights.
+- Identified the export-side defect:
+  - `extract_martini_vtf.py` reconstructs AA backbone coordinates from reference geometry plus BB translation instead of using the actual runtime carrier coordinates, which can make the exported stage-7 backbone look much worse than the real simulation state.
+- Patched `src/martini.cpp`:
+  - added runtime loading of `hybrid_bb_map/reference_atom_coords`;
+  - restore each active backbone `O` carrier from the current `N/CA/C` frame before `refresh_bb_positions_if_active(...)` computes the MARTINI `BB` proxy position.
+- Patched `example/16.MARTINI/extract_martini_vtf.py`:
+  - when stage files already contain runtime AA carriers under `hybrid_bb_map/atom_indices` with roles `N/CA/C/O`, export those coordinates directly instead of using the older translation-only reconstruction.
+- Rebuilt successfully with `cmake --build obj`.
+- Verified runtime repair on a focused strict-copy replay:
+  - seeded `/tmp/1rkl.stage_7.0.o_fix_replay_strict.up` from the broken last saved production frame with hybrid carrier refresh disabled at handoff;
+  - confirmed pre-run `/input/pos` `C-O` mean/max `17.90/30.30 Å`;
+  - ran one production step with the rebuilt `obj/upside`;
+  - confirmed first saved `/output/pos` frame `C-O` mean/max `1.32/1.57 Å`.
+- Verified exporter repair:
+  - `build_backbone_projection_map(...)` reports `use_runtime_carriers=True` on the replay file;
+  - exported AA backbone coordinates match actual runtime carriers exactly on the checked frame (`0.0 Å` mean/max mismatch).
