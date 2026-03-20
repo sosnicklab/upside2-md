@@ -26,3 +26,27 @@
   - rotamer ids are unique and exactly contiguous `0..n_rot-1`
   - any SC row `rotamer_id` matches an actual placement-group rotamer for that residue
   - row-to-placement assignment does not silently renumber rotamers
+- 2026-03-20: In the dry-MARTINI / Upside hybrid runtime, the actual force transfer from MARTINI particles onto all-atom coordinates happens in `src/martini.cpp`:
+  - backbone-bead feedback is projected by `project_bb_gradient_if_active()`
+  - sidechain feedback is projected by `project_sc_gradient_if_active()`
+- 2026-03-20: The deterministic/probabilistic MARTINI nonbonded calculations should remain unchanged for this request; the requested `/10` adjustment belongs only on the MARTINI-to-all-atom projection step.
+- 2026-03-20: Lesson: when the user asks to undo the last step, revert both the code change and the task-tracking records so the repository state and task log stay aligned.
+- 2026-03-20: `example/16.MARTINI/run_sim_1rkl.sh::set_production_backbone_fix_rigid()` already builds the correct rigid selection for hybrid stage 7:
+  - it restricts to `hybrid_env_topology/protein_membership >= 0`
+  - it requires roles `BB`, `N`, `CA`, `C`, `O`
+  - that one mask therefore covers both dry-MARTINI backbone beads and injected all-atom backbone carrier atoms
+- 2026-03-20: For restoring rigid protein backbone behavior, a workflow-default change in the stage-7 hybrid runners is sufficient; no `src/martini.cpp` change is required.
+- 2026-03-20: The stage-7 energy-pump checkpoint already contains the intended rigid production controls:
+  - `fix_rigid` fixes protein `BB/N/CA/C/O`
+  - `production_nonprotein_hard_sphere=0`
+  - `exclude_intra_protein_martini=1`
+  - `integration_rmsd_align_enable=1`
+  This makes the remaining drift a runtime issue, not simply a missing workflow toggle.
+- 2026-03-20: The injected hybrid system contains many placeholder protein atoms with role `AA` that are not consumed by backbone mapping, SC projection, or MARTINI pair lists. Using them as the RMSD-alignment reference is invalid; alignment must use explicit backbone carriers (`N/CA/C/O`) or MARTINI `BB` fallback only.
+- 2026-03-20: In the failing checkpoint, all active hybrid sidechain rows map to underdetermined placement reference groups with fewer than three points. Recomputing `sc_local_pos` from live proxy coordinates each step feeds current proxy drift back into the virtual placement geometry and is not a stable reference-frame update.
+- 2026-03-20: The remaining large upward drift in the reproduced rigid-backbone run was dominated by protein-internal `dist_spring` terms, not by the logged SC-env free-energy scalar.
+- 2026-03-20: The worst exploding `dist_spring` bonds were hybrid protein sidechain-proxy bonds (`BB-SC` and `SC-SC`) whose MARTINI atoms also appeared in `hybrid_sc_map/proxy_atom_index`.
+- 2026-03-20: Root cause of the energy pump: `src/martini.cpp::project_sc_gradient_if_active()` cleared each SC proxy atom's full force accumulator before projecting probabilistic SC feedback onto all-atom targets. That removed the proxy's bonded and multibody restoring forces every integration step, allowing protein sidechain bond strains to accumulate.
+- 2026-03-20: Fix rule for this hybrid path: when projecting SC probabilistic feedback to all-atom carrier atoms, preserve the real MARTINI proxy forces already accumulated from bonded/multibody terms. Projection should add AA feedback, not erase the proxy's own force balance.
+- 2026-03-20: To make the hybrid protein backbone non-rigid again, no runtime change is needed. The workflow toggle remains `PROD_70_BACKBONE_FIX_RIGID_ENABLE` in both stage-7 runner scripts.
+- 2026-03-20: Lesson: when the user flips a workflow default like stage-7 backbone rigidity, update both `run_sim_1rkl.sh` and `test_prod_run_sim_1rkl.sh` together and keep the task records aligned with the new default state.

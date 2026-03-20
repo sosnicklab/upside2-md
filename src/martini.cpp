@@ -300,6 +300,7 @@ struct HybridRuntimeState {
     std::vector<int> protein_membership;
     std::vector<int> atom_residue_id;
     std::vector<unsigned char> atom_role_class;
+    std::vector<unsigned char> atom_backbone_carrier_mask;
     std::string rotamer_node_name;
     std::string placement_node_name;
     DerivComputation* rotamer_node = nullptr;
@@ -427,6 +428,11 @@ static inline unsigned char classify_atom_role_name(const std::string& raw_name)
     return ROLE_OTHER;
 }
 
+static inline bool is_backbone_carrier_role_name(const std::string& raw_name) {
+    std::string name = normalize_role_token(raw_name);
+    return name == "N" || name == "CA" || name == "C" || name == "O";
+}
+
 static inline bool is_env_po4_atom(const HybridRuntimeState& st, int atom) {
     return atom >= 0 &&
            atom < static_cast<int>(st.sc_env_po4_env_mask.size()) &&
@@ -514,6 +520,12 @@ static inline bool same_residue_pair(const HybridRuntimeState& st, int i, int j)
 static inline unsigned char atom_role_class_at(const HybridRuntimeState& st, int i) {
     if(i < 0 || i >= (int)st.atom_role_class.size()) return ROLE_OTHER;
     return st.atom_role_class[i];
+}
+
+static inline bool atom_is_backbone_carrier_at(const HybridRuntimeState& st, int i) {
+    return i >= 0 &&
+           i < static_cast<int>(st.atom_backbone_carrier_mask.size()) &&
+           st.atom_backbone_carrier_mask[static_cast<size_t>(i)] != 0;
 }
 
 static inline bool allow_protein_pair_by_rule(const HybridRuntimeState& st, int i, int j) {
@@ -1089,13 +1101,20 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     }
 
     out.atom_role_class.assign(static_cast<size_t>(n_atom), ROLE_OTHER);
+    out.atom_backbone_carrier_mask.assign(static_cast<size_t>(n_atom), 0u);
     if(h5_exists(root, "/input/atom_roles")) {
         traverse_string_dset<1>(root, "/input/atom_roles", [&](size_t i, const std::string& v) {
-            if(static_cast<int>(i) < n_atom) out.atom_role_class[i] = classify_atom_role_name(v);
+            if(static_cast<int>(i) < n_atom) {
+                out.atom_role_class[i] = classify_atom_role_name(v);
+                out.atom_backbone_carrier_mask[i] = is_backbone_carrier_role_name(v) ? 1u : 0u;
+            }
         });
     } else if(h5_exists(root, "/input/atom_names")) {
         traverse_string_dset<1>(root, "/input/atom_names", [&](size_t i, const std::string& v) {
-            if(static_cast<int>(i) < n_atom) out.atom_role_class[i] = classify_atom_role_name(v);
+            if(static_cast<int>(i) < n_atom) {
+                out.atom_role_class[i] = classify_atom_role_name(v);
+                out.atom_backbone_carrier_mask[i] = is_backbone_carrier_role_name(v) ? 1u : 0u;
+            }
         });
     }
 
@@ -1986,15 +2005,16 @@ void align_active_protein_coordinates(DerivEngine& engine, VecArray pos, VecArra
 
     refresh_bb_positions_if_active(*st, pos, n_atom);
 
-    // Prefer protein AA carrier coordinates for RMSD alignment (ROLE_OTHER with
-    // protein membership). Fall back to MARTINI BB anchors if AA carriers are
-    // unavailable in this runtime state.
+    // Prefer explicit protein backbone carrier coordinates (N/CA/C/O) for
+    // RMSD alignment. This avoids using placeholder ROLE_OTHER protein atoms
+    // that are not part of the hybrid backbone mapping. Fall back to MARTINI BB
+    // anchors if backbone carriers are unavailable in this runtime state.
     std::vector<int> ref_idx;
     const size_t n_scan = std::min(static_cast<size_t>(n_atom), st->protein_membership.size());
     ref_idx.reserve(n_scan);
     for(size_t i = 0; i < n_scan; ++i) {
         if(st->protein_membership[i] < 0) continue;
-        if(atom_role_class_at(*st, static_cast<int>(i)) != ROLE_OTHER) continue;
+        if(!atom_is_backbone_carrier_at(*st, static_cast<int>(i))) continue;
         ref_idx.push_back(static_cast<int>(i));
     }
     if(ref_idx.size() < 3) {
@@ -2175,28 +2195,18 @@ void project_sc_gradient_if_active(
     const size_t n_rot = st.sc_proxy_atom_index.size();
     if(row_proxy_grad.size() != n_rot) return;
     float feedback_mix = compute_sc_backbone_feedback_mix(st);
-    if(!(feedback_mix > 0.f)) {
-        for(const auto& proxy_rows : st.sc_rows_by_proxy) {
-            int proxy = proxy_rows.first;
-            if(proxy >= 0 && proxy < n_atom) {
-                store_vec<3>(sens, proxy, make_zero<3>());
-            }
-        }
-        return;
-    }
+    if(!(feedback_mix > 0.f)) return;
     for(const auto& proxy_rows : st.sc_rows_by_proxy) {
         int proxy = proxy_rows.first;
         if(proxy < 0 || proxy >= n_atom) continue;
-
-        // Clear once per proxy. Multiple rotamer rows can share the same proxy.
-        store_vec<3>(sens, proxy, make_zero<3>());
         for(int r : proxy_rows.second) {
             if(r < 0 || r >= (int)n_rot) continue;
             Vec<3> proxy_grad = feedback_mix *
                                 make_vec3(row_proxy_grad[r][0], row_proxy_grad[r][1], row_proxy_grad[r][2]);
 
-            // Prefer explicit SC projection targets/weights from hybrid_sc_map.
-            // In this workflow, these are prepared from martinize bonded topology.
+            // Keep the proxy's existing MARTINI bonded/multibody forces intact.
+            // Only the probabilistic SC feedback is projected onto the explicit
+            // all-atom carrier targets from hybrid_sc_map.
             bool projected = false;
             for(int d = 0; d < 4; ++d) {
                 int ai = st.sc_proj_target_indices[r][d];
@@ -3462,51 +3472,6 @@ struct MartiniPotential : public PotentialNode
                     }
                 }
                 mutable_hybrid->sc_local_pos_initialized = true;
-            }
-
-            if(mutable_hybrid) {
-                // With fewer than 3 placement points in the reference group, rigid
-                // frame orientation is underdetermined; refresh local offsets each
-                // step from current proxy coordinates to avoid stale-offset drift.
-                std::unordered_map<int, std::array<float,3>> ref_centroid_by_residue;
-                for(size_t r = 0; r < mutable_hybrid->sc_proxy_atom_index.size(); ++r) {
-                    if(r >= mutable_hybrid->sc_residue_index.size()) continue;
-                    int resid = mutable_hybrid->sc_residue_index[r];
-                    auto ref_it = mutable_hybrid->placement_reference_group_by_residue.find(resid);
-                    if(ref_it == mutable_hybrid->placement_reference_group_by_residue.end()) continue;
-                    int ref_gid = ref_it->second;
-                    if(ref_gid < 0 || ref_gid >= static_cast<int>(mutable_hybrid->placement_state_groups.size())) continue;
-                    if(mutable_hybrid->placement_state_groups[ref_gid].placement_rows.size() >= 3u) continue;
-
-                    if(ref_centroid_by_residue.find(resid) == ref_centroid_by_residue.end()) {
-                        std::vector<std::array<float,3>> pts;
-                        std::array<float,3> ctr{0.f, 0.f, 0.f};
-                        if(!collect_placement_group_points(ref_gid, pts, ctr)) continue;
-                        ref_centroid_by_residue.emplace(resid, ctr);
-                    }
-
-                    int proxy = mutable_hybrid->sc_proxy_atom_index[r];
-                    if(proxy < 0 || proxy >= n_atom) continue;
-                    Vec<3> p = load_vec<3>(pos1, proxy);
-                    bool proxy_is_protein = (
-                        proxy >= 0 &&
-                        proxy < static_cast<int>(mutable_hybrid->protein_membership.size()) &&
-                        mutable_hybrid->protein_membership[proxy] >= 0);
-                    if(coupling_align.enabled && proxy_is_protein) {
-                        auto raw = std::array<float,3>{p[0], p[1], p[2]};
-                        auto aligned = martini_hybrid::vec_add(
-                            martini_hybrid::apply_rot(coupling_align.R, raw),
-                            coupling_align.t);
-                        p = make_vec3(aligned[0], aligned[1], aligned[2]);
-                    }
-
-                    const auto& ctr = ref_centroid_by_residue[resid];
-                    mutable_hybrid->sc_local_pos[r] = std::array<float,3>{
-                        p[0] - ctr[0],
-                        p[1] - ctr[1],
-                        p[2] - ctr[2]
-                    };
-                }
             }
 
             sc_row_proxy_grad.assign(hybrid_state->sc_proxy_atom_index.size(), std::array<float,3>{{0.f,0.f,0.f}});

@@ -109,8 +109,9 @@ EQ_TIME_STEP="${EQ_TIME_STEP:-0.010}"
 # Production runs with injected Upside all-atom backbone nodes; use a smaller
 # stable timestep than MARTINI-only stages.
 PROD_TIME_STEP="${PROD_TIME_STEP:-0.002}"
-# Keep stage-7 protein backbone flexible by default in the hybrid workflow.
-# Set to 1 only for targeted rigid-backbone diagnostics.
+# Leave the stage-7 protein backbone non-rigid by default in the hybrid
+# workflow. Set this to 1 to re-enable the production fix_rigid mask over
+# dry-MARTINI BB beads and AA backbone carrier roles BB/N/CA/C/O.
 PROD_70_BACKBONE_FIX_RIGID_ENABLE="${PROD_70_BACKBONE_FIX_RIGID_ENABLE:-0}"
 MIN_TIME_STEP="${MIN_TIME_STEP:-0.010}"
 

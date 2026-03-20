@@ -44,3 +44,94 @@
   - `sed -n '1060,1110p' example/16.MARTINI/run_sim_1rkl.sh | cat -vet` -> no tab markers in failing block
   - `rg -nP "\t" example/16.MARTINI/run_sim_1rkl.sh` -> no tabs found
   - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
+- 2026-03-20: Re-scoped `task_plan.md` to the dry-MARTINI / Upside force-transfer scaling change.
+- 2026-03-20: Inspected `src/martini.cpp` and confirmed the MARTINI-to-all-atom writeback path:
+  - `project_bb_gradient_if_active()` projects backbone-bead gradients onto AA targets
+  - `project_sc_gradient_if_active()` projects sidechain proxy/row gradients onto AA targets
+- 2026-03-20: Planned a minimal runtime-only edit in `src/martini.cpp` to divide projected MARTINI feedback forces by `10` without altering MARTINI pair-force evaluation.
+- 2026-03-20: Patched `src/martini.cpp`:
+  - added shared constant `hybrid_martini_to_all_atom_force_scale = 0.1f`
+  - scaled feedback in `project_bb_gradient_if_active()`
+  - scaled feedback in `project_sc_gradient_if_active()`
+- 2026-03-20: Verification:
+  - `sed -n '2125,2210p' src/martini.cpp` -> confirmed `/10` scaling is applied only in MARTINI-to-AA projection functions
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` -> pass
+  - build emitted existing `src/martini.cpp` warnings (`%p` format type, C++17 decomposition declarations, duplicate `-lc++` link warning), but no new error from this change
+- 2026-03-20: User requested rollback of the `/10` MARTINI-to-all-atom force scaling change.
+- 2026-03-20: Reverted `src/martini.cpp` to the original projection behavior:
+  - removed `hybrid_martini_to_all_atom_force_scale`
+  - restored `project_bb_gradient_if_active()` to use the original feedback mix
+  - restored `project_sc_gradient_if_active()` to use the original feedback mix
+- 2026-03-20: Rollback verification:
+  - `sed -n '446,454p' src/martini.cpp` -> confirmed the temporary `0.1f` constant is gone
+  - `sed -n '2127,2185p' src/martini.cpp` -> confirmed both projection functions use the original `compute_sc_backbone_feedback_mix(st)` logic
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` -> pass
+  - build emitted the same pre-existing `src/martini.cpp` warnings and duplicate `-lc++` link warnings, with no rollback-specific error
+- 2026-03-20: Re-scoped `task_plan.md` to restoring rigid protein backbone behavior in hybrid production.
+- 2026-03-20: Inspected the hybrid stage-7 workflow and confirmed that `set_production_backbone_fix_rigid()` already selects protein roles `BB/N/CA/C/O`, so the existing workflow path covers both dry-MARTINI BB and all-atom backbone carriers.
+- 2026-03-20: Planned a minimal workflow-only change: restore the rigid-backbone path by default in the main hybrid runner and the production-only test runner.
+- 2026-03-20: Patched `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh`:
+  - restored `PROD_70_BACKBONE_FIX_RIGID_ENABLE` default from `0` to `1`
+  - updated the nearby comments to state that the rigid mask covers both MARTINI `BB` and AA `N/CA/C/O` backbone roles
+- 2026-03-20: Verification:
+  - `sed -n '108,118p' example/16.MARTINI/run_sim_1rkl.sh` -> confirmed rigid default and updated comment
+  - `sed -n '52,60p' example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> confirmed rigid default and updated comment
+  - `rg -n "PROD_70_BACKBONE_FIX_RIGID_ENABLE|set_production_backbone_fix_rigid" example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> confirmed both runners still route production stage prep through the existing rigid-mask helper
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
+  - `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> pass
+- 2026-03-20: Re-scoped `task_plan.md` to the stage-7 hybrid energy-pump investigation using the failing `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` checkpoint.
+- 2026-03-20: Confirmed the failing checkpoint is already on the rigid-backbone workflow path:
+  - `fix_rigid` exists with `155` atoms
+  - fixed protein roles are `BB/N/CA/C/O`
+  - `production_nonprotein_hard_sphere=0`
+  - `exclude_intra_protein_martini=1`
+  - `integration_rmsd_align_enable=1`
+- 2026-03-20: Verified that the failing checkpoint contains `109` protein atoms with role `AA` that are not used by the hybrid backbone mapping, the SC projection targets, or MARTINI pair interactions.
+- 2026-03-20: Patched `src/martini.cpp` to stop RMSD alignment from using those unused placeholder protein `AA` atoms:
+  - added `atom_backbone_carrier_mask` to `HybridRuntimeState`
+  - populated the mask from `atom_roles` / `atom_names`
+  - changed `align_active_protein_coordinates()` to prefer only protein `N/CA/C/O` carrier atoms, then fall back to `BB`
+- 2026-03-20: Alignment diagnostic replay:
+  - before the patch, `coupling_align_debug=1` showed small nonzero rigid-protein alignment drift (`rmsd~1e-4`)
+  - after the patch, the same replay showed `rmsd=0.0000 rot_deg=0.0000 trans=0.0000`
+- 2026-03-20: Verified every active hybrid sidechain row in the failing checkpoint uses an underdetermined placement group with fewer than three placement points.
+- 2026-03-20: Patched `src/martini.cpp` to stop refreshing `sc_local_pos` from current proxy coordinates each step for those underdetermined groups.
+- 2026-03-20: Targeted replay results after the two runtime fixes:
+  - baseline failing replay: MARTINI potential rises from about `-23939` at step `500` to about `-21299` at step `1000`
+  - after the alignment fix only: step `500 -> -23946`, step `1000 -> -21279`
+  - after both fixes: step `500 -> -23964`, step `1000 -> -21268`
+  - conclusion: both fixes remove real inconsistencies and slightly improve early behavior, but the main energy-pump bug remains
+- 2026-03-20: Isolated the remaining rising term using the saved replay frames in `example/16.MARTINI/outputs/rigid_bug_diag/1rkl.stage_7.0.patched2_1500.up`:
+  - `sc_env_energy_total` stayed near `~220`, so it was not the source of the multi-thousand-unit rise
+  - recomputed bonded MARTINI energies from the saved `0/500/1000` frames showed `dist_spring` was the dominant term:
+    - frame `0`: `bondE ~6115`
+    - frame `500`: `bondE ~6884`
+    - frame `1000`: `bondE ~20709`
+- 2026-03-20: Identified the exploding bonded terms as protein-internal sidechain-proxy bonds:
+  - the largest `500 -> 1000` bond jumps were hybrid protein `BB-SC` / `SC-SC` terms
+  - their atoms were the same MARTINI proxy atoms listed in `input/hybrid_sc_map/proxy_atom_index`
+  - those rows project to all-atom backbone carriers only (`N/CA/C/O`)
+- 2026-03-20: Root-cause inspection of `src/martini.cpp::project_sc_gradient_if_active()` showed that it cleared each SC proxy force accumulator with `store_vec(..., make_zero<3>())` before projecting hybrid SC feedback.
+- 2026-03-20: Patched `src/martini.cpp` so `project_sc_gradient_if_active()` preserves each proxy's existing MARTINI bonded/multibody forces and only adds the probabilistic SC feedback to the configured all-atom carrier targets.
+- 2026-03-20: Verification after the SC-proxy force fix:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` -> pass
+  - replayed the original failing checkpoint for `1500` steps into `example/16.MARTINI/outputs/rigid_bug_diag/1rkl.stage_7.0.scforce_fix_1500.up`
+  - replay log comparison:
+    - baseline: step `500 -> -23939.15`, step `1000 -> -21299.20`
+    - fixed: step `500 -> -24563.04`, step `1000 -> -25146.67`
+  - recomputed bonded energies from the fixed replay:
+    - frame `0`: `bondE ~6115`
+    - frame `500`: `bondE ~6392`
+    - frame `1000`: `bondE ~13063`
+  - conclusion: the previous `dist_spring` blow-up is substantially reduced and the reproduced MARTINI potential no longer turns upward in the original failure window
+- 2026-03-20: Re-scoped `task_plan.md` to the workflow request to make the hybrid stage-7 protein backbone non-rigid again by default.
+- 2026-03-20: Confirmed both hybrid runners still defaulted `PROD_70_BACKBONE_FIX_RIGID_ENABLE` to `1` and still routed stage-7 preparation through `set_production_backbone_fix_rigid()`.
+- 2026-03-20: Patched `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh`:
+  - changed `PROD_70_BACKBONE_FIX_RIGID_ENABLE` default from `1` back to `0`
+  - updated the nearby comments to state that stage 7 is non-rigid by default and the rigid mask can still be re-enabled explicitly
+- 2026-03-20: Verification:
+  - `sed -n '108,120p' example/16.MARTINI/run_sim_1rkl.sh` -> confirmed non-rigid default and updated comment
+  - `sed -n '52,64p' example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> confirmed non-rigid default and updated comment
+  - `rg -n "PROD_70_BACKBONE_FIX_RIGID_ENABLE|set_production_backbone_fix_rigid" example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> confirmed both runners still use the same stage-7 helper path when the flag is set to `1`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` -> pass
+  - `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` -> pass
