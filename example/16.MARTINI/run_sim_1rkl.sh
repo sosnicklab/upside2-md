@@ -103,7 +103,7 @@ EQ_63_NSTEPS="${EQ_63_NSTEPS:-500}"
 EQ_64_NSTEPS="${EQ_64_NSTEPS:-500}"
 EQ_65_NSTEPS="${EQ_65_NSTEPS:-500}"
 EQ_66_NSTEPS="${EQ_66_NSTEPS:-500}"
-PROD_70_NSTEPS="${PROD_70_NSTEPS:-5000}"
+PROD_70_NSTEPS="${PROD_70_NSTEPS:-10000}"
 
 EQ_TIME_STEP="${EQ_TIME_STEP:-0.010}"
 # Production runs with injected Upside all-atom backbone nodes; use a smaller

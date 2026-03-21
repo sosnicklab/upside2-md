@@ -363,6 +363,18 @@ struct HybridRuntimeState {
 
 static std::map<DerivEngine*, std::shared_ptr<HybridRuntimeState>> g_hybrid_state;
 static std::map<const CoordNode*, std::shared_ptr<HybridRuntimeState>> g_hybrid_state_by_coord;
+
+static std::vector<int> active_virtual_bb_fixed_atoms(const HybridRuntimeState& st) {
+    std::vector<int> atoms;
+    if(!st.enabled || !st.active) return atoms;
+    atoms.reserve(st.bb_atom_index.size());
+    for(int atom_idx : st.bb_atom_index) {
+        if(atom_idx >= 0) atoms.push_back(atom_idx);
+    }
+    std::sort(atoms.begin(), atoms.end());
+    atoms.erase(std::unique(atoms.begin(), atoms.end()), atoms.end());
+    return atoms;
+}
 static std::string trim_h5_string(const std::string& in);
 
 static inline const std::vector<int>* find_sc_rows_for_proxy(const HybridRuntimeState& st, int proxy_idx) {
@@ -1404,7 +1416,7 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         martini_fix_rigid::set_dynamic_fixed_atoms(*engine, st->preprod_fixed_atom_indices);
         martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->preprod_z_fixed_atom_indices);
     } else {
-        martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
+        martini_fix_rigid::set_dynamic_fixed_atoms(*engine, active_virtual_bb_fixed_atoms(*st));
         if(active_sc_env_po4_z_hold_enabled(*st)) {
             martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->sc_env_po4_z_hold_atom_indices);
         } else {
@@ -1553,7 +1565,7 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
         martini_fix_rigid::set_dynamic_fixed_atoms(engine, st->preprod_fixed_atom_indices);
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
     } else {
-        martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
+        martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_virtual_bb_fixed_atoms(*st));
         if(active_sc_env_po4_z_hold_enabled(*st)) {
             martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->sc_env_po4_z_hold_atom_indices);
         } else {
@@ -1609,7 +1621,7 @@ void refresh_transition_holds_for_engine(DerivEngine& engine) {
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
         return;
     }
-    martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
+    martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_virtual_bb_fixed_atoms(*st));
     if(st->enabled && st->active &&
        st->sc_env_transition_step < std::numeric_limits<uint64_t>::max()) {
         st->sc_env_transition_step += 1;
@@ -2051,6 +2063,7 @@ CouplingAlignmentTransform build_coupling_alignment(HybridRuntimeState& st, VecA
 }
 
 void align_active_protein_coordinates(DerivEngine& engine, VecArray pos, VecArray mom) {
+    (void)mom;
     std::shared_ptr<HybridRuntimeState> st;
     {
         std::lock_guard<std::mutex> lock(g_hybrid_mutex);
@@ -2107,31 +2120,9 @@ void align_active_protein_coordinates(DerivEngine& engine, VecArray pos, VecArra
         return;
     }
 
-    const size_t n_protein = std::min(static_cast<size_t>(n_atom), st->protein_membership.size());
-    bool any_protein = false;
-    for(size_t i = 0; i < n_protein; ++i) {
-        if(st->protein_membership[i] < 0) continue;
-        any_protein = true;
-
-        auto p = load_vec<3>(pos, static_cast<int>(i));
-        auto pa = std::array<float,3>{p[0], p[1], p[2]};
-        auto pt = vec_add(apply_rot(R, pa), t);
-        store_vec<3>(pos, static_cast<int>(i), make_vec3(pt[0], pt[1], pt[2]));
-
-        if(mom.row_width > 0) {
-            auto m = load_vec<3>(mom, static_cast<int>(i));
-            auto ma = std::array<float,3>{m[0], m[1], m[2]};
-            auto mr = apply_rot(R, ma);
-            store_vec<3>(mom, static_cast<int>(i), make_vec3(mr[0], mr[1], mr[2]));
-        }
-    }
-    if(!any_protein) return;
-
-    refresh_bb_positions_if_active(*st, pos, n_atom);
     st->prev_bb_pos_rmsd.resize(ref_idx.size());
     for(size_t i = 0; i < ref_idx.size(); ++i) {
-        auto p = load_vec<3>(pos, ref_idx[i]);
-        st->prev_bb_pos_rmsd[i] = std::array<float,3>{p[0], p[1], p[2]};
+        st->prev_bb_pos_rmsd[i] = cur_ref[i];
     }
     st->has_prev_bb_rmsd = true;
     st->integration_align_step += 1;

@@ -1,9 +1,22 @@
 # Findings
 
 ## External / Technical Findings
+- Delayed production instability is reproducible from the saved baseline stage-7 log:
+  - file: `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/logs/stage_7.0.log`
+  - reported values match the user's failure window exactly:
+    - `5000 / 100000 ... potential   595.84, martini_potential -26362.14, total -25766.30`
+    - `10000 / 100000 ... potential 14036.12, martini_potential   516.82, total 14552.94`
+  - the next root-cause pass must therefore focus on a delayed instability in the hybrid runtime, not only on the already-fixed carrier-export corruption.
 - Saved baseline production artifact:
   - file: `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`
   - stage-7 output contains actual protein AA carrier atoms with roles `N/CA/C/O` on runtime indices `4090..4322`.
+- Hybrid virtual-site runtime defect:
+  - active hybrid `BB` proxies are refreshed from the live AA carrier map in `src/martini.cpp::refresh_bb_positions_if_active(...)`, so they are virtual coordinates rather than independent dynamic particles during stage-7 force evaluation.
+  - before the current fix, those same `BB` proxies were still being thermalized and integrated as ordinary atoms:
+    - a 20-step recorded-momentum replay from the exact `6.6 -> 7.0` workflow handoff showed frame-0 nonzero momentum on all 31 active `BB` proxies,
+    - frame-0 `BB` momentum norm mean/max were about `4.55e-2 / 8.74e-2`,
+    - frame-0 `BB` momentum also disagreed with the carrier-derived mapped momentum (mean/max mismatch about `4.80e-2 / 9.90e-2`).
+  - this means the thermostat was injecting ghost kinetic energy into coordinates that the hybrid runtime immediately overwrites before force evaluation, which is a non-Hamiltonian energy source and a plausible delayed 5k -> 10k instability mechanism.
 - Actual carrier geometry from that artifact:
   - restrained `N-CA` and `CA-C` bonds remain near expected values over saved frames.
   - `C-O` is not part of the injected `Distance3D` / `Spring_bond` backbone restraint set and drifts badly in the saved output.
@@ -22,6 +35,17 @@
 - Implemented fix:
   - `src/martini.cpp` now reads `hybrid_bb_map/reference_atom_coords` into runtime state and reconstructs the active `O` carrier from the current `N/CA/C` local frame before BB COM refresh.
   - `example/16.MARTINI/extract_martini_vtf.py` now exports actual runtime carrier coordinates when `hybrid_bb_map/atom_indices` resolve to runtime roles `N/CA/C/O`.
+- Implemented follow-up fix for delayed instability:
+  - `src/martini.cpp` now installs active hybrid `BB` proxy atoms into the dynamic fixed-atom mask whenever hybrid production is active, so those proxy beads no longer receive thermostat kicks or independent integrator updates.
+  - `src/main.cpp` now applies `martini_fix_rigid::apply_fix_rigid_md(...)` immediately after startup momentum initialization/thermalization, so any active virtual `BB` proxies start from zero momentum before the first saved production frame.
+- Reopened source-path finding after the user's rerun:
+  - the active-`BB` momentum fix is real but not sufficient, because the user reran the actual workflow and reproduced the same production log through step `10000`.
+  - `src/martini.cpp::align_active_protein_coordinates(...)` was still applying a rigid-body transform directly to the live integrated protein coordinates and momenta whenever `integration_rmsd_align_enable=1`.
+  - project-local design notes in `example/16.MARTINI/task_plan.md` state that rigid-body alignment is intended for coupling coordinates only and that saved trajectories should preserve the raw integrated state.
+  - this means the production integrator was being externally rewritten every alignment cycle, which is another non-Hamiltonian hybrid-energy source independent of the already-fixed `BB` virtual-site momentum bug.
+- Implemented current source fix:
+  - `src/martini.cpp::align_active_protein_coordinates(...)` now performs BB refresh and RMSD/reference bookkeeping only; it no longer rotates/translates the real integrated protein coordinates or momenta.
+  - `src/deriv_engine.cpp` comments were updated to match the corrected semantics at the call sites.
 - Focused verification:
   - rebuilt successfully with `cmake --build obj`;
   - strict-copy replay from the broken last saved frame confirmed runtime repair:
@@ -30,6 +54,32 @@
   - exporter verification on that replay file:
     - `use_runtime_carriers=True`,
     - exported AA backbone coordinates matched actual runtime carriers exactly on the checked frame (`0.0 Å` mean/max mismatch).
+- Virtual-BB verification:
+  - 5-step per-frame recorded-momentum replay from the exact workflow handoff (`6.6 -> 7.0`) after the new fix:
+    - active `BB` proxy momentum remained exactly zero on every checked saved frame (`5/5` frames, max `0.0`);
+    - active `BB` proxy positions still matched the carrier-weighted COM to numerical precision (max mismatch about `2.15e-6 Å`);
+    - early MARTINI energy remained well behaved over the checked frames (`-23613.40 -> -23801.97` from step `0 -> 4`).
+- Alignment-semantic verification:
+  - rebuilt successfully with `cmake --build obj` after removing the live-state rigid-body rewrite.
+  - exact stage-7 handoff A/B replay (`integration_rmsd_align_enable=1` vs `0`) over 5 saved frames now agrees to numerical noise only:
+    - `/output/pos` max absolute difference about `3.36e-5 Å`,
+    - `/output/potential` max absolute difference about `3.83e-5`,
+    - protein-only coordinate max norm difference about `4.38e-5 Å`.
+  - this confirms the stage-7 integration-alignment flag is now effectively coupling-side bookkeeping rather than a raw-trajectory mutation.
+- Delayed-horizon verification status:
+  - the exact fixed-code production replay from the real `6.6 -> 7.0` handoff is healthy through its `5000`-step checkpoint (`time 10.0`) and no longer matches the broken baseline values.
+  - broken baseline at step `5000`: `potential 595.84`, `martini_potential -26362.14`, `total -25766.30`.
+  - current replay at step `5000` / `time 10.0`: `potential 768.92`, `martini_potential -26414.40`, `total -25645.48`.
+  - the replay was stopped after that verified midpoint because reaching the full `10000`-step horizon is hour-scale in this environment, but the original failure signature is already absent at the midpoint.
+- Residual hybrid-virtual-site finding:
+  - short momentum-enabled replays show that reconstructed active backbone `O` carriers still carry independent momentum even after the `BB`-proxy fix.
+  - measured `O` momentum norm mean/max over the 5-step saved replay grew from about `4.78e-2 / 9.50e-2` to about `1.15e-1 / 1.94e-1`, while active `BB` proxy momentum stayed exactly `0.0`.
+  - because `O` contributes about `0.2963` of each `BB` COM weight, that is a real correctness issue, but fixing it cleanly requires projecting `O` feedback through the `N/CA/C -> O` reconstruction map rather than merely freezing `O`.
 
 ## Lessons
-- None yet.
+- 2026-03-20: A production-stage fix is not validated by a short replay alone when the user reports a delayed failure at a later step count.
+  - Working rule: if the user gives a later failure horizon (for example `10000` steps after a `5000`-step smoke passed), extend verification to that horizon or a targeted replay that reaches the same instability before calling the issue fixed.
+- 2026-03-20: A mechanistic source-level fix is still not validated if the user reruns the actual workflow and reproduces the same long-horizon log.
+  - Working rule: when the user reports “same output” after a rerun, immediately reopen the diagnosis, discard the previous fix as non-dominant, and validate the next candidate on the exact `stage handoff + seed + horizon` combination rather than on shorter proxy checks.
+- 2026-03-20: A hybrid "alignment" feature can silently violate design intent if it mutates live integrator state instead of coupling/reference coordinates.
+  - Working rule: when a control path sounds like diagnostic or coupling-side alignment, verify in code that it does not rewrite saved raw coordinates or momenta unless the design explicitly requires that behavior.

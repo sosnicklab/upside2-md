@@ -1,6 +1,44 @@
 # Progress Log
 
 ## 2026-03-20
+- Reopened the long-horizon stage-7 investigation after the user reran the full workflow and reproduced the exact same `5000 -> 10000` blow-up log, which ruled out the active-`BB` momentum fix as a sufficient solution.
+- Reviewed the historical MARTINI task notes under `example/16.MARTINI/` and found the intended design constraint that rigid-body alignment should affect coupling coordinates only, while saved trajectories should remain the raw integrated state.
+- Traced that design violation into `src/martini.cpp`:
+  - `align_active_protein_coordinates(...)` was still rotating/translating real protein coordinates and momenta during production whenever `integration_rmsd_align_enable=1`.
+- Patched `src/martini.cpp` so the stage-7 integration-alignment path now performs BB refresh plus RMSD/reference bookkeeping only and no longer mutates the live integrator state.
+- Updated `src/deriv_engine.cpp` comments at the call sites to match the corrected semantics.
+- Rebuilt successfully with `cmake --build obj` after the alignment patch.
+- Verified the alignment fix with a 5-step exact-handoff A/B replay:
+  - `integration_rmsd_align_enable=1` and `integration_rmsd_align_enable=0` now produce the same saved raw trajectory to numerical precision;
+  - max absolute output-coordinate difference was about `3.36e-5 Å`, and max absolute potential difference was about `3.83e-5`.
+- Started an exact 10000-step replay from the real `6.6 -> 7.0` workflow handoff using the production seed/settings to validate the current fix at the reported delayed-failure horizon; that verification is still in progress.
+- The exact fixed-code replay has now crossed its `5000`-step checkpoint and remains healthy there:
+  - current replay `5000` / `time 10.0`: `potential 768.92`, `martini_potential -26414.40`, `total -25645.48`;
+  - this no longer matches the broken baseline midpoint (`595.84 / -26362.14 / -25766.30`), so the old failure trajectory has already changed materially before the original blow-up point.
+- Stopped the exact replay after that verified midpoint because the remaining `5000 -> 10000` steps are hour-scale in this environment; the saved output confirms the run ended at `time 10.0` rather than the full `time 20.0`.
+- Confirmed a remaining virtual-site correctness issue in short momentum-enabled replays:
+  - reconstructed backbone `O` carriers still have nonzero independent momentum even after the active-`BB` proxy momentum fix;
+  - over the 5-step saved replay, `O` momentum mean/max grew from about `4.78e-2 / 9.50e-2` to about `1.15e-1 / 1.94e-1`, while `BB` proxy momentum stayed exactly zero.
+- Deferred patching that `O`-momentum issue in this pass because a correct fix needs explicit force redistribution through the reconstruction map, not a quick freeze that would silently discard about `29.6%` of each `BB` feedback channel.
+- Continued the delayed stage-7 investigation using the existing project-local diagnostics under `example/16.MARTINI/` to avoid redoing earlier short-horizon isolation work.
+- Reconfirmed from those diagnostics that the relevant remaining branch is the active hybrid backbone-coupling path in `src/`, not the already-fixed non-protein hard-sphere default.
+- Traced a new source-level defect in the active hybrid runtime:
+  - active `BB` proxy coordinates are overwritten from AA carriers before force evaluation,
+  - but they were still being thermalized and integrated as independent atoms.
+- Verified that defect directly with a short recorded-momentum replay from the exact `6.6 -> 7.0` workflow handoff:
+  - before the fix, frame-0 active `BB` proxy momentum was nonzero on all 31 `BB` proxies (mean norm `4.55e-2`, max `8.74e-2`).
+- Patched `src/martini.cpp` so active hybrid `BB` proxies are installed into the dynamic fixed-atom mask whenever hybrid production is active.
+- Patched `src/main.cpp` so the fixed-atom zeroing path runs immediately after startup momentum initialization / thermalization, eliminating ghost `BB` momentum before the first saved production frame.
+- Rebuilt successfully with `cmake --build obj` (same pre-existing warnings only).
+- Verified the new runtime invariant on a 5-step per-frame replay:
+  - active `BB` proxy momentum is exactly zero on every checked saved frame (`5/5`, max `0.0`);
+  - active `BB` positions still match the carrier-weighted COM to numerical precision (max mismatch `~2.15e-6 Å`);
+  - early MARTINI energy stays well-behaved over the checked frames (`-23613.40 -> -23801.97` from step `0 -> 4`).
+- Residual verification gap:
+  - did not rerun a full 10000-step production replay in this turn; long-horizon confirmation is still pending.
+- Re-opened the investigation after the user reported a delayed stage-7 explosion that occurs after a 5000-step smoke pass.
+- Confirmed the delayed failure directly from the saved production log `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/logs/stage_7.0.log`, which shows the run still healthy at step `5000` and blown up by step `10000`.
+- Updated the task plan to treat the earlier `O`-carrier repair as a prerequisite fix and to require localization and verification of the remaining long-horizon instability.
 - Initialized task tracking files for the MARTINI hybrid workflow backbone-break debugging task.
 - Inspected `example/16.MARTINI/run_sim_1rkl.sh` and the stage-7 hybrid runtime code in `src/martini.cpp`.
 - Used the saved production artifact `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` to validate the failure mode directly from HDF5 output instead of relying only on logs or VTF appearance.

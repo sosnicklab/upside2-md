@@ -989,6 +989,11 @@ try {
                 sys->thermostat.apply(sys->mom, sys->n_atom); // initial thermalization if it's a fresh start
             }
 
+            // Hybrid virtual BB proxy atoms are position-overwritten from the
+            // active carrier set, so they must not retain independently
+            // thermalized momentum before the first MD step.
+            martini_fix_rigid::apply_fix_rigid_md(sys->engine, sys->engine.pos->output, sys->engine.pos->sens, sys->mom);
+
 
             // we must capture the sys pointer by value here so that it is available later
             sys->logger->add_logger<float>("pos", {1, sys->n_atom, 3}, [sys](float* pos_buffer) {

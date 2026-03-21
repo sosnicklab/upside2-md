@@ -354,8 +354,8 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
     float pos_update[] = {     3.f*b, 3.0f-6.f*b, 3.f*b};
 
     for(int stage=0; stage<3; ++stage) {
-        // Ensure active hybrid protein AA coordinates are RMSD-aligned to the
-        // previous-step reference before each force-evaluation/update substep.
+        // Update active-hybrid RMSD reference bookkeeping without mutating the
+        // integrated protein coordinates.
         martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
         compute(DerivMode);   // compute derivatives
         Timer timer(string("integration"));
@@ -412,8 +412,8 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
     bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
 
     for(int stage=0; stage<3; ++stage) {
-        // Ensure active hybrid protein AA coordinates are RMSD-aligned to the
-        // previous-step reference before each force-evaluation/update substep.
+        // Update active-hybrid RMSD reference bookkeeping without mutating the
+        // integrated protein coordinates.
         martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
         compute(DerivMode);   // compute derivatives
         Timer timer(string("integration"));
@@ -474,7 +474,7 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
     auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
     bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
 
-    // calculate acceleration, update velocity for slow level
+    // Update active-hybrid RMSD reference bookkeeping before the slow level.
     martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
     compute(DerivMode, 1); 
     
@@ -497,7 +497,7 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
         
         // calculate acceleration, update velocity for fast level
         for(int i=0;i<inner_step;i++) {
-            // Apply RMSD alignment before each fast-level force evaluation/update.
+            // Refresh active-hybrid RMSD reference bookkeeping.
             martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
             compute(DerivMode, 0);
             for(int na=0; na < pos->n_atom; ++na) {
@@ -539,7 +539,7 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
         
         // calculate acceleration, update velocity for fast level
         for(int i=0;i<inner_step;i++) {
-            // Apply RMSD alignment before each fast-level force evaluation/update.
+            // Refresh active-hybrid RMSD reference bookkeeping.
             martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
             compute(DerivMode, 0);
             for(int na=0; na < pos->n_atom; ++na) {
