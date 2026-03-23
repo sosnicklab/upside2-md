@@ -9,6 +9,8 @@ from matplotlib.font_manager import FontProperties
 
 from helpers.advanced_analysis_utils import build_paths, csv_list_env, load_csv_rows, load_optional_numeric_csv
 
+SANS_SERIF_FONTS = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+
 
 default_pdb = os.environ.get('pdb_id', 'Pab1_RRM1')  # CHECKME
 pdb_ids = csv_list_env('pdb_ids', [default_pdb])  # CHECKME
@@ -43,7 +45,7 @@ if len(loaded) == 0:
 fig = plt.figure()
 ax = plt.subplot(111)
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 for pdb_id, residue_ids, sim_profile, sim_ranked, exp_ranked in loaded:
     ax.plot(sim_ranked, label='{}'.format(pdb_id))
 ax.set_xlabel('Residue (ranked by ∆G)')
@@ -61,7 +63,7 @@ if any(exp_ranked is not None for _, _, _, _, exp_ranked in loaded):
     fig = plt.figure()
     ax = plt.subplot(111)
     plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial']
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
     for pdb_id, residue_ids, sim_profile, sim_ranked, exp_ranked in loaded:
         ax.plot(sim_ranked, label='{} Sim'.format(pdb_id))
         if exp_ranked is not None:
@@ -78,7 +80,7 @@ if any(exp_ranked is not None for _, _, _, _, exp_ranked in loaded):
 fig = plt.figure()
 ax = plt.subplot(111)
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 for pdb_id, residue_ids, sim_profile, sim_ranked, exp_ranked in loaded:
     ax.plot(residue_ids, sim_profile, '-o', label='{}'.format(pdb_id))
 ax.set_xlabel('Residue Number')
@@ -144,7 +146,7 @@ def family_label(family_key):
 def plot_family_rankorder(family_key, family_entries):
     fig, axes = plt.subplots(1, 2, figsize=(15, 5))
     plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial']
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 
     for pdb_id, residue_ids, sim_profile, sim_ranked, exp_ranked in family_entries:
         axes[0].plot(sim_ranked, label='{}'.format(pdb_id))
@@ -176,7 +178,7 @@ def plot_family_residues(family_key, family_entries):
     fig = plt.figure()
     ax = plt.subplot(111)
     plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial']
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 
     for pdb_id, residue_ids, sim_profile, sim_ranked, exp_ranked in family_entries:
         ax.plot(residue_ids, sim_profile, '-o', label='{}'.format(pdb_id))
@@ -218,7 +220,7 @@ if temp_summary is not None and getattr(temp_summary, 'ndim', 0) == 2 and temp_s
     fig = plt.figure()
     ax = plt.subplot(111)
     plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial']
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
     for family_key, temperatures in family_temps.items():
         if len(temperatures) == 0:
             continue

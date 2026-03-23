@@ -18,6 +18,8 @@ from helpers.advanced_analysis_utils import (
     save_csv_rows,
 )
 
+SANS_SERIF_FONTS = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+
 
 pdb_id = os.environ.get('pdb_id', 'Pab1_RRM1')  # CHECKME
 sim_id = os.environ.get('sim_id', 'REMD')  # CHECKME
@@ -223,7 +225,7 @@ for T_target_value in target_temps:
     def conv_plot1(param, mean1, mean2, name):
         fig, axes = plt.subplots(1, 2, figsize=(15, 5))
         plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = ['Arial']
+        plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
         axes[0].set_xlabel('Frames')
         axes[0].set_ylabel('Average {}'.format(param))
         axes[0].plot(range(start_frame, end_frame1), mean1)
@@ -239,7 +241,7 @@ for T_target_value in target_temps:
     def conv_plot2(param, mean1, mean2, name):
         fig, axes = plt.subplots(1, 2, figsize=(15, 5))
         plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = ['Arial']
+        plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
         axes[0].set_xlabel('Average {}'.format(param))
         axes[0].set_ylabel('Density')
         axes[0].hist(mean1, bins=10, density=True)
@@ -316,7 +318,7 @@ mValue = np.diff(dGhx_D, axis=0) / (den[0] - den[1])
 
 fig, ax = plt.subplots()
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 ax.set_xlabel('T (Upside)')
 ax.set_ylabel('Rg (A)', color='tab:blue')
 rg_line_1 = ax.plot(T, Rg_mean, label='Rg direct average', color='tab:blue')
@@ -336,7 +338,7 @@ plt.close()
 
 fig = plt.figure()
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 plt.hist(Hb_flatten, bins=10, density=True)
 plt.xlabel('#H-bond')
 plt.ylabel('Density')
@@ -346,7 +348,7 @@ plt.close()
 
 fig = plt.figure()
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 selected_replica = min(8, len(T) - 1)
 plt.plot(bc, dG_hbond[selected_replica])
 plt.title('Upside T={:.2f}'.format(T[selected_replica]))
@@ -358,7 +360,7 @@ plt.close()
 fig = plt.figure()
 ax = plt.subplot(111)
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 plot_limits = residue_plot_limits(dGhx_slice)
 ax.set_ylim(*plot_limits)
 color_cycle = plt.rcParams['axes.prop_cycle'].by_key().get('color', ['tab:blue'])
@@ -389,7 +391,7 @@ plt.close()
 fig = plt.figure()
 ax = plt.subplot(111)
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 for i in range(dG_profile_temps.size):
     ax.plot(np.sort(dGhx_T[i])[::-1], label='T = {:.2f}'.format(dG_profile_temps[i]))
 ranked_hxms = None
@@ -407,7 +409,7 @@ plt.close()
 
 fig = plt.figure()
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 for i, residue_id in enumerate(res):
     plt.plot(den, dGhx_D[:, i])
 plt.title('∆G Upside vs. [den]')
@@ -418,7 +420,7 @@ plt.close()
 
 fig = plt.figure()
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 plt.bar(res, dGhx_D[0, :])
 plt.title('∆G Upside vs. Sequential Residues')
 plt.xlabel('Residue Number (from N-term)')
@@ -429,7 +431,7 @@ plt.close()
 width = 0.5
 fig, ax1 = plt.subplots()
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 ax1.set_xlabel('Residue Number (from N-term)')
 ax1.set_ylabel('∆G (kcal/mol)', color='tab:blue')
 ax1.bar(res - width, dGhx_D[0, :], color='tab:blue')
@@ -459,7 +461,7 @@ selected_ranked = np.sort(selected_profile)[::-1]
 if dGhx_HXMS is not None or dGhx_NMR is not None:
     fig = plt.figure()
     plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial']
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
     plt.plot(selected_ranked, label='Upside Simulation')
     if ranked_hxms is not None:
         plt.plot(ranked_hxms, label='HX-MS Experiment')
@@ -509,7 +511,7 @@ if dGhx_NMR_MS is not None and getattr(dGhx_NMR_MS, 'ndim', 0) == 2 and dGhx_NMR
         if best_index is not None:
             fig = plt.figure()
             plt.rcParams['font.family'] = 'sans-serif'
-            plt.rcParams['font.sans-serif'] = ['Arial']
+            plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
             plt.plot(res, dGhx_T[best_index], '-o', label='Upside Simulation', color='tab:blue')
             plt.scatter(res_int, exp_vals, label='NMR Experiment', color='tab:orange')
             plt.legend()
@@ -521,7 +523,7 @@ if dGhx_NMR_MS is not None and getattr(dGhx_NMR_MS, 'ndim', 0) == 2 and dGhx_NMR
 
             fig = plt.figure()
             plt.rcParams['font.family'] = 'sans-serif'
-            plt.rcParams['font.sans-serif'] = ['Arial']
+            plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
             sim_vals = best_profile[best_mask]
             exp_plot_vals = exp_vals[best_mask]
             plt.scatter(sim_vals, exp_plot_vals, c='b')

@@ -10,6 +10,8 @@ import mdtraj_upside as mu
 import numpy as np
 from scipy.stats import gaussian_kde
 
+SANS_SERIF_FONTS = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+
 try:
     from sklearn.decomposition import PCA as SklearnPCA
 except ImportError:
@@ -46,7 +48,7 @@ pdf_traj = pdf.PdfPages('{}/{}_traj_RMSD_Hbond_PCA.pdf'.format(paths['result_dir
 
 fig = plt.figure(figsize=(4 * ncols, 3 * nrows), facecolor='w')
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 for i in range(n_rep):
     plt.subplot(int(ceil(n_rep / ncols)), ncols, i + 1)
     plt.plot(Rmsd[i, start_frame:])
@@ -58,7 +60,7 @@ plt.close()
 
 fig = plt.figure(figsize=(4 * ncols, 3 * nrows), facecolor='w')
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 for i in range(n_rep):
     x = Hb[i, start_frame:]
     y = Rmsd[i, start_frame:]
@@ -78,7 +80,7 @@ plt.close()
 
 fig = plt.figure(figsize=(4 * ncols, 3 * nrows), facecolor='w')
 plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial']
+plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 for i in range(n_rep):
     traj = mu.load_upside_traj('{}/{}.run.{}.up'.format(paths['run_dir'], pdb_id, i))
     traj.superpose(traj, 0)

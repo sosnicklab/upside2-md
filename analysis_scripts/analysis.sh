@@ -7,9 +7,14 @@ set -euo pipefail
 # ============================================
 #
 
-# CHECKME: update these for the target run mode and workflow directory.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SELF_PATH="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
+
+# CHECKME: update these for the target run mode, workflow directory, and repository install.
 RUNNER="local" #local or slurm
 WORK_DIR="./"
+PROJECT_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd) # Repository root containing source.sh, py/, and obj/.
+PYTHON_ENV_CMD="" # Leave empty to use PROJECT_ROOT/.venv when present, or set e.g. "module load anaconda3".
 
 # CHECKME: update these for the target system and experimental condition.
 PDB_ID="glpG-RKRK-79HIS"
@@ -22,12 +27,6 @@ SKIP_EXPERIMENT_DATA="false"
 HXMS_METHOD="stretch_exp"
 PROTEIN_STATE="pd9"
 EXP_DATA_FILE="GlpG psWT Sub final peptides up sum 11192024.csv"
-
-# CHECKME: update these for working dir.
-
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-PROJECT_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
-SELF_PATH="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
 
 # ============================================
 # Slurm settings
@@ -52,6 +51,14 @@ log() {
 require_dir() {
     if [[ ! -d "$1" ]]; then
         echo "Missing directory: $1" >&2
+        exit 1
+    fi
+}
+
+
+require_file() {
+    if [[ ! -f "$1" ]]; then
+        echo "Missing file: $1" >&2
         exit 1
     fi
 }
@@ -132,10 +139,50 @@ submit_to_slurm() {
 
 
 activate_runtime() {
+    local venv_activate
+
+    require_dir "${PROJECT_ROOT}"
+    PROJECT_ROOT=$(cd "${PROJECT_ROOT}" && pwd)
+    require_file "${PROJECT_ROOT}/source.sh"
+    venv_activate="${PROJECT_ROOT}/.venv/bin/activate"
+
     set +u
     source "${PROJECT_ROOT}/source.sh"
-    source "${PROJECT_ROOT}/.venv/bin/activate"
+
+    if [[ -n "${PYTHON_ENV_CMD}" ]]; then
+        log "Activating Python runtime with PYTHON_ENV_CMD"
+        eval "${PYTHON_ENV_CMD}"
+    elif [[ -f "${venv_activate}" ]]; then
+        log "Activating Python runtime from ${venv_activate}"
+        source "${venv_activate}"
+    else
+        log "No ${venv_activate} found. Using the current python from PATH."
+    fi
+
     set -u
+}
+
+
+verify_python_environment() {
+    local module_list="numpy pandas scipy matplotlib pymbar mdtraj_upside"
+    local missing_modules
+
+    if ! is_true "${SKIP_EXPERIMENT_DATA}"; then
+        module_list="${module_list} mdtraj"
+    fi
+
+    command -v python >/dev/null 2>&1 || {
+        echo "Python was not found after runtime activation. Set PYTHON_ENV_CMD or create ${PROJECT_ROOT}/.venv." >&2
+        exit 1
+    }
+
+    missing_modules=$(ANALYSIS_REQUIRED_MODULES="${module_list}" python -c 'import importlib.util, os; modules = os.environ["ANALYSIS_REQUIRED_MODULES"].split(); missing = [name for name in modules if importlib.util.find_spec(name) is None]; print(",".join(missing))')
+    if [[ -n "${missing_modules}" ]]; then
+        echo "Python environment is missing required modules: ${missing_modules}. Set PYTHON_ENV_CMD to load a configured environment or install the dependencies into ${PROJECT_ROOT}/.venv." >&2
+        exit 1
+    fi
+
+    log "Using python executable: $(command -v python)"
 }
 
 
@@ -191,6 +238,7 @@ run_workflow() {
     mkdir -p "${MPLCONFIGDIR}" "${XDG_CACHE_HOME}"
 
     activate_runtime
+    verify_python_environment
     cd "${WORK_DIR}"
 
     if is_true "${SKIP_EXPERIMENT_DATA}"; then

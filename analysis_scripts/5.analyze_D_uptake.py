@@ -58,6 +58,9 @@ def color_array(color_data, column=None):
 def as_float_array(values):
     return np.asarray(values, dtype=float).reshape(-1)
 
+
+SANS_SERIF_FONTS = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+
 pdb_id      = os.environ.get('pdb_id', 'glpG-RKRK-79HIS')  # CHECKME
 sim_id      = os.environ.get('sim_id', 'memb_test')  # CHECKME
 
@@ -441,7 +444,7 @@ if len(times) > 0:
     fig = plt.figure()
     ax = plt.subplot(111)
     plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial']
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 
     plotted_any = False
     for pdb_label, time_row, d_norm_row in zip(whole_protein_pdb_ids, times, d_norms):
@@ -493,7 +496,7 @@ for row in merge_dfs.itertuples(index=False):
     fig = plt.figure()
     ax = plt.subplot(111)
     plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial']
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 
     exp_x = np.power(10.0, exp_time[exp_mask])
     sim_x = np.power(10.0, sim_time[sim_mask])
@@ -530,7 +533,7 @@ pdf_cof = pdf.PdfPages(fig_dir + '/COF_{}.pdf'.format(primary_pdb_id))
 # plot bar chart of COF integrals
 #fig, axes = plt.subplots(1, 2, figsize=(15, 5))
 #plt.rcParams['font.family'] = 'sans-serif'
-#plt.rcParams['font.sans-serif'] = ['Arial']
+#plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 
 #axes[0].bar(range(1, np.size(integrals_pep_HXMS) + 1), integrals_pep_HXMS, edgecolor='black')
 #axes[0].set_xlabel('Fit Number')
@@ -551,7 +554,7 @@ pdf_cof = pdf.PdfPages(fig_dir + '/COF_{}.pdf'.format(primary_pdb_id))
 # plot histogram of COF integrals
 #fig, axes = plt.subplots(1, 2, figsize=(15, 5))
 #plt.rcParams['font.family'] = 'sans-serif'
-#plt.rcParams['font.sans-serif'] = ['Arial']
+#plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 
 #axes[0].hist(integrals_pep_HXMS, bins=40, edgecolor='black', density=True)
 #axes[0].set_xlim(0, np.nanmax(integrals_pep_HXMS))
@@ -676,7 +679,7 @@ def peptide_plot(merged_df, heights, colors):
     for segment_index, segment in enumerate(sequence_segments):
         fig, ax = plt.subplots(figsize=(60, 10))
         plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = ['Arial']
+        plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 
         start_pos_segment = segment_index * segment_length
         end_pos_segment = start_pos_segment + segment_length - 1
@@ -730,7 +733,7 @@ def reg_plot(HXMS_value, Up_value, reg_method):
     # plot regression for COF HXMS vs. Upside
     fig = plt.figure()
     plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial']
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
     plt.scatter(HXMS_value.values[np.logical_and(~(np.isnan(HXMS_value.values)), ~(np.isnan(Up_value.values)))], Up_value.values[np.logical_and(~(np.isnan(HXMS_value.values)), ~(np.isnan(Up_value.values)))])
     plt.xlabel('COF HXMS')
     plt.ylabel('COF Upside')
@@ -796,7 +799,7 @@ def peptide_plot_res(merged_df, colors, subplot):
     """
     fig, ax = plt.subplots(figsize=(60, 10))
     plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial']
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 
     for index, row in merged_df.reset_index().iterrows():
         for segment_index, segment in enumerate(sequence):

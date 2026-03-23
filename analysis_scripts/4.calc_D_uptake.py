@@ -20,6 +20,8 @@ import matplotlib.backends.backend_pdf as pdf
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize_scalar
 
+SANS_SERIF_FONTS = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+
 analysis_mode = os.environ.get('analysis_mode', 'uptake').strip().lower()
 
 
@@ -771,6 +773,7 @@ def plot_peptide_pdf(output_path, times, T_targets, peptide_labels, peptide_star
         fig = plt.figure()
         ax = plt.subplot(111)
         plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 
         if np.isnan(uptake_plot[:, p]).any() or np.isnan(theor_plot[:, p]).any():
             plt.close()
@@ -822,6 +825,7 @@ def plot_full_protein_png(output_path, times, T_targets, uptake_plot, theor_plot
     fig = plt.figure()
     ax = plt.subplot(111)
     plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 
     if uptake_plot.shape[0] == 0:
         print('Skipping {} because no full-protein data is available.'.format(output_path))

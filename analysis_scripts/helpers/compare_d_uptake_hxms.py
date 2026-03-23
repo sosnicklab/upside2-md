@@ -13,6 +13,8 @@ import scipy as sp
 
 from helpers.advanced_analysis_utils import build_paths, csv_list_env
 
+SANS_SERIF_FONTS = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+
 
 sim_id = os.environ.get('sim_id', 'REMD')  # CHECKME
 HXMS_method = os.environ.get('HXMS_method', 'stretch_exp')  # CHECKME
@@ -97,7 +99,7 @@ for pep, p_start, p_end, d_norm_hxms_1, d_norm_hxms_2 in zip(
 
     fig = plt.figure()
     plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = ['Arial']
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
     plt.scatter(d_norm_1, d_norm_2_plot)
     plt.xlabel('{} %D Uptake'.format(pdb_1))
     plt.ylabel('{} %D Uptake'.format(pdb_2))

@@ -18,6 +18,8 @@ import matplotlib.backends.backend_pdf as pdf
 from scipy.optimize import curve_fit
 from math import ceil
 
+SANS_SERIF_FONTS = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+
 try:
     from helpers.function import str_exp, plot_uptake
 except ImportError:
@@ -180,7 +182,7 @@ def run_normalized_workflow(state_names, peptides_plot, pep_ind, pep_list, timep
     for state_name, df_array, allnorm in zip(state_names, df_arrays, allnorms):
         fig = plt.figure(figsize=(4 * n, 3 * m), facecolor='w')
         plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = ['Arial']
+        plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 
         for p in pep_ind:
             masks = ~np.isnan(allnorm[p][plot_time_s:plot_time_e])
@@ -292,7 +294,7 @@ def run_stretched_exp_workflow(state_names, peptides_plot, pep_ind, pep_list, ti
     for state_name, df_plot, fit_d, fit_th in zip(state_names, df_plots, fit_Ds, fit_Ths):
         fig = plt.figure(figsize=(4 * n, 3 * m), facecolor='w')
         plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = ['Arial']
+        plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 
         for p in pep_ind:
             series = df_plot[p][1:].astype(np.double)

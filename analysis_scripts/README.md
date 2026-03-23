@@ -31,7 +31,7 @@ Typical required inputs are:
 - `pdb/<pdb_id>_rawuptake_HXMS.csv` if you want the HX-MS comparison workflow
 - `outputs/<sim_id>/<pdb_id>.run.<replica>.up` for Upside trajectory analysis
 
-The shell-based steps require the Upside environment (`UPSIDE_HOME`) and the Python environment from the project root.
+The shell-based steps require the Upside environment (`UPSIDE_HOME`) from `${PROJECT_ROOT}/source.sh` and a Python environment with the workflow dependencies.
 
 ## Recommended Full Workflow
 
@@ -40,7 +40,7 @@ Use `analysis.sh` unless you need to run individual steps by hand.
 The driver does the following:
 
 - sources `${PROJECT_ROOT}/source.sh`
-- activates `${PROJECT_ROOT}/.venv`
+- activates Python using `PYTHON_ENV_CMD`, `${PROJECT_ROOT}/.venv`, or the current shell environment
 - runs the numbered workflow in order
 - can run locally or submit itself through Slurm
 - can skip the experiment-dependent branch when no experimental HX-MS data are available
@@ -75,6 +75,8 @@ Before running, edit the `#CHECKME` settings at the top of `analysis.sh`:
 
 - `RUNNER`
 - `WORK_DIR`
+- `PROJECT_ROOT` when the workflow is copied outside the repository
+- `PYTHON_ENV_CMD` if you need a cluster-specific activation command such as `module load anaconda3`
 - `PDB_ID`
 - `SIM_ID`
 - `N_REP`
@@ -100,9 +102,10 @@ cd "$SIM_DIR"
 After copying:
 
 1. Open `analysis.sh`.
-2. Change the `PROJECT_ROOT=` assignment so it points to the repository root that contains `source.sh`, `.venv`, `py/`, and `obj/`.
-3. Update the `#CHECKME` settings for the target system.
-4. Run the workflow from the simulation directory.
+2. In the `#CHECKME` block, set `PROJECT_ROOT` so it points to the repository root that contains `source.sh`, `py/`, and `obj/`.
+3. If you do not use `${PROJECT_ROOT}/.venv`, set `PYTHON_ENV_CMD` to your site-specific Python activation command, for example `module load anaconda3`.
+4. Update the remaining `#CHECKME` settings for the target system.
+5. Run the workflow from the simulation directory.
 
 Local run:
 
@@ -123,6 +126,7 @@ Notes for copied workflows:
 - Keep `WORK_DIR="./"` if you want the copied scripts to operate on the current simulation directory.
 - Keep the `helpers/` directory beside the copied top-level scripts.
 - The shell steps still depend on `${PROJECT_ROOT}/source.sh` to define `UPSIDE_HOME`.
+- Leave `PYTHON_ENV_CMD=""` to use `${PROJECT_ROOT}/.venv` when it exists, or set it to a site-specific command if your cluster provides Python through modules or another managed environment.
 
 ## What Each Script Does
 
@@ -269,8 +273,14 @@ If you do not want to use `analysis.sh`, activate the environment first:
 
 ```bash
 source "${PROJECT_ROOT}/source.sh"
-source "${PROJECT_ROOT}/.venv/bin/activate"
+if [[ -f "${PROJECT_ROOT}/.venv/bin/activate" ]]; then
+    source "${PROJECT_ROOT}/.venv/bin/activate"
+else
+    module load anaconda3  # or activate your site-specific Python environment
+fi
 ```
+
+If you use `analysis.sh`, prefer setting `PYTHON_ENV_CMD` instead of editing `activate_runtime()`.
 
 Then run the steps from the workflow directory.
 
