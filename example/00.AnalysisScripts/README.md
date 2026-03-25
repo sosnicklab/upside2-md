@@ -2,6 +2,10 @@
 
 This directory contains the maintained HDX/HX-MS analysis workflow for this repository.
 
+The canonical in-repository location is:
+
+- `example/00.AnalysisScripts/`
+
 The active workflow scripts are:
 
 - `analysis.sh`
@@ -11,6 +15,7 @@ The active workflow scripts are:
 - `3.get_protaction_states.sh`
 - `4.calc_D_uptake.py`
 - `5.analyze_D_uptake.py`
+- `6.generate_hx_plots.py`
 
 The numbered scripts are the workflow steps. `analysis.sh` is the recommended driver for running the full workflow in order.
 
@@ -31,6 +36,12 @@ Typical required inputs are:
 - `pdb/<pdb_id>_rawuptake_HXMS.csv` if you want the HX-MS comparison workflow
 - `outputs/<sim_id>/<pdb_id>.run.<replica>.up` for Upside trajectory analysis
 
+Optional legacy HX plot inputs for `6.generate_hx_plots.py` are:
+
+- `<hx_plot_prefix>-dfout-<protein_state>.csv`
+- `<hx_plot_prefix>-fitdata-<protein_state>`
+- `<hx_plot_prefix>-dg.csv`
+
 The shell-based steps require the Upside environment (`UPSIDE_HOME`) from `${PROJECT_ROOT}/source.sh` and a Python environment with the workflow dependencies.
 
 ## Recommended Full Workflow
@@ -44,6 +55,7 @@ The driver does the following:
 - runs the numbered workflow in order
 - can run locally or submit itself through Slurm
 - can skip the experiment-dependent branch when no experimental HX-MS data are available
+- can optionally run the legacy HX plot step when its input files are present
 
 The default driver order is:
 
@@ -53,9 +65,9 @@ The default driver order is:
 4. `3.get_protaction_states.sh`
 5. `4.calc_D_uptake.py` with `analysis_mode=uptake`
 6. `4.calc_D_uptake.py` with `analysis_mode=stability`
-7. `4.calc_D_uptake.py` with `analysis_mode=pca`
-8. `5.analyze_D_uptake.py` with `analysis_mode=uptake`
-9. `5.analyze_D_uptake.py` with `analysis_mode=dg_summary`
+7. `5.analyze_D_uptake.py` with `analysis_mode=uptake`
+8. `5.analyze_D_uptake.py` with `analysis_mode=dg_summary`
+9. `6.generate_hx_plots.py` when `HX_PLOT_ENABLED` permits it and the legacy HX plot inputs are available
 
 If `SKIP_EXPERIMENT_DATA="true"`, the driver skips:
 
@@ -64,11 +76,11 @@ If `SKIP_EXPERIMENT_DATA="true"`, the driver skips:
 
 ## Run From This Repository
 
-Example from a checked-in workflow directory:
+Example from the checked-in workflow directory:
 
 ```bash
-cd example/GlpG_test
-bash ../../analysis_scripts/analysis.sh
+cd example/00.AnalysisScripts
+bash ./analysis.sh
 ```
 
 Before running, edit the `#CHECKME` settings at the top of `analysis.sh`:
@@ -85,17 +97,25 @@ Before running, edit the `#CHECKME` settings at the top of `analysis.sh`:
 - `HXMS_METHOD`
 - `PROTEIN_STATE`
 - `EXP_DATA_FILE`
+- `HX_PLOT_ENABLED`
+- `HX_PLOT_PREFIX`
+- `HX_PLOT_STATE`
+- `HX_PLOT_DFOUT_FILE`
+- `HX_PLOT_FITDATA_FILE`
+- `HX_PLOT_DG_FILE`
+- `HX_PLOT_RESID_FILE`
+- `HX_PLOT_OUTPUT_DIR`
 - Slurm settings if `RUNNER="slurm"`
 
 ## Copy Workflow Into A Simulation Directory
 
-If you want the workflow scripts to live directly inside a simulation directory, copy the contents of `analysis_scripts/` into that directory, then point the copied workflow back to the main project root.
+If you want the workflow scripts to live directly inside a simulation directory, copy the contents of `example/00.AnalysisScripts/` into that directory, then point the copied workflow back to the main project root.
 
 Example:
 
 ```bash
 SIM_DIR=/path/to/my_simulation
-cp -r ./analysis_scripts/* "$SIM_DIR"/
+cp -r ./example/00.AnalysisScripts/* "$SIM_DIR"/
 cd "$SIM_DIR"
 ```
 
@@ -139,6 +159,7 @@ Use it when you want one place to set the main run parameters and execute the ac
 - environment activation
 - local versus Slurm execution
 - skipping the experiment-dependent branch
+- optional legacy HX plot execution
 - fixed default step ordering
 
 ### `0.run_HXMS.py`
@@ -223,11 +244,10 @@ This step calls `${UPSIDE_HOME}/py/get_protection_state.py`, so it is also Upsid
 
 ### `4.calc_D_uptake.py`
 
-This is the main simulation-side analysis step. It reads the arrays produced by steps 2 and 3 and runs one of three branches:
+This is the main simulation-side analysis step. It reads the arrays produced by steps 2 and 3 and runs one of two branches:
 
 - `analysis_mode=uptake`
 - `analysis_mode=stability`
-- `analysis_mode=pca`
 
 `analysis_mode=uptake`:
 
@@ -241,10 +261,6 @@ This is the main simulation-side analysis step. It reads the arrays produced by 
 - writes convergence plots
 - writes residue `dG` and related outputs
 - uses optional overlays from `pdb/<pdb_id>_HXMS.csv`, `pdb/<pdb_id>_NMR.csv`, and `pdb/<pdb_id>_NMR_MS.csv` when present
-
-`analysis_mode=pca`:
-
-- runs trajectory PCA and related RMSD/H-bond diagnostics
 
 ### `5.analyze_D_uptake.py`
 
@@ -266,6 +282,27 @@ This is the comparison and summary step. It supports:
 `analysis_mode=compare_hxms`:
 
 - compares HX-MS peptide uptake across proteins using `pdb_ids` and `protein_states`
+
+### `6.generate_hx_plots.py`
+
+This optional post-processing step reproduces the legacy HX overview and prediction plots from the older `example/1` workflow.
+
+It reads:
+
+- `<hx_plot_prefix>-dfout-<protein_state>.csv`
+- `<hx_plot_prefix>-fitdata-<protein_state>`
+- `<hx_plot_prefix>-dg.csv`
+- `results/<pdb_id>.resid`
+
+It writes PNG plots to the workflow directory by default:
+
+- `hx_overview_plot.png`
+- `hx_correlation_plot.png`
+- `hx_prediction_segments.png`
+
+The helper module for this step lives in:
+
+- `helpers/hxfunctions_clean.py`
 
 ## Manual Run Order
 
@@ -293,9 +330,9 @@ pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 bash 2.traj_ana.sh
 pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 bash 3.get_protaction_states.sh
 pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=uptake python 4.calc_D_uptake.py
 pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=stability python 4.calc_D_uptake.py
-pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=pca python 4.calc_D_uptake.py
 pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=uptake python 5.analyze_D_uptake.py
 pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=dg_summary python 5.analyze_D_uptake.py
+hx_plot_prefix=MY_PREFIX hx_plot_state=MY_STATE python 6.generate_hx_plots.py
 ```
 
 Without experimental HX-MS data:
@@ -306,7 +343,6 @@ pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 bash 2.traj_ana.sh
 pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 bash 3.get_protaction_states.sh
 pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=uptake python 4.calc_D_uptake.py
 pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=stability python 4.calc_D_uptake.py
-pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=pca python 4.calc_D_uptake.py
 pdb_id=MY_PROTEIN sim_id=MY_SIM n_rep=48 analysis_mode=dg_summary python 5.analyze_D_uptake.py
 ```
 
@@ -348,5 +384,5 @@ The exact outputs depend on the chosen modes, but the main result families are:
 - per-replica protection states in `results/`
 - whole-protein and peptide uptake outputs in `results/`
 - residue `dG` and stability plots in `results/`
-- PCA plots in `results/`
 - comparison and summary plots in `results/`
+- optional HX overview and prediction PNGs in the workflow directory

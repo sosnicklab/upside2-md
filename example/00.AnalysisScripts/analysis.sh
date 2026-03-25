@@ -13,7 +13,7 @@ SELF_PATH="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
 # CHECKME: update these for the target run mode, workflow directory, and repository install.
 RUNNER="local" #local or slurm
 WORK_DIR="./"
-PROJECT_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd) # Repository root containing source.sh, py/, and obj/.
+PROJECT_ROOT=$(cd "${SCRIPT_DIR}/../.." && pwd) # Repository root containing source.sh, py/, and obj/.
 PYTHON_ENV_CMD="" # Leave empty to use PROJECT_ROOT/.venv when present, or set e.g. "module load anaconda3".
 
 # CHECKME: update these for the target system and experimental condition.
@@ -27,6 +27,16 @@ SKIP_EXPERIMENT_DATA="false"
 HXMS_METHOD="stretch_exp"
 PROTEIN_STATE="pd9"
 EXP_DATA_FILE="GlpG psWT Sub final peptides up sum 11192024.csv"
+
+# CHECKME: optional legacy HX plot step. Use auto to run only when the legacy inputs are present.
+HX_PLOT_ENABLED="auto" # auto, true, or false
+HX_PLOT_PREFIX="glpg"
+HX_PLOT_STATE="${PROTEIN_STATE}"
+HX_PLOT_DFOUT_FILE=""
+HX_PLOT_FITDATA_FILE=""
+HX_PLOT_DG_FILE=""
+HX_PLOT_RESID_FILE=""
+HX_PLOT_OUTPUT_DIR=""
 
 # ============================================
 # Slurm settings
@@ -76,6 +86,40 @@ is_true() {
 }
 
 
+is_false() {
+    case "${1}" in
+        0|false|FALSE|False|no|NO|No|n|N|off|OFF|Off)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+
+is_auto() {
+    case "${1}" in
+        auto|AUTO|Auto)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+
+validate_hx_plot_mode() {
+    if is_true "${HX_PLOT_ENABLED}" || is_false "${HX_PLOT_ENABLED}" || is_auto "${HX_PLOT_ENABLED}"; then
+        return 0
+    fi
+
+    echo "Unsupported HX_PLOT_ENABLED: ${HX_PLOT_ENABLED}. Use auto, true, or false." >&2
+    exit 1
+}
+
+
 WORK_DIR=$(cd "${WORK_DIR}" && pwd)
 RESULT_DIR="${WORK_DIR}/results"
 mkdir -p "${RESULT_DIR}"
@@ -91,6 +135,48 @@ workflow_env=(
     "protein_state=${PROTEIN_STATE}"
     "exp_data_file=${EXP_DATA_FILE}"
 )
+
+
+resolve_work_path() {
+    local configured_path="$1"
+    local default_relative_path="$2"
+
+    if [[ -n "${configured_path}" ]]; then
+        if [[ "${configured_path}" = /* ]]; then
+            printf '%s\n' "${configured_path}"
+        else
+            printf '%s\n' "${WORK_DIR}/${configured_path}"
+        fi
+        return
+    fi
+
+    printf '%s\n' "${WORK_DIR}/${default_relative_path}"
+}
+
+
+hx_plot_dfout_path() {
+    resolve_work_path "${HX_PLOT_DFOUT_FILE}" "${HX_PLOT_PREFIX}-dfout-${HX_PLOT_STATE}.csv"
+}
+
+
+hx_plot_fitdata_path() {
+    resolve_work_path "${HX_PLOT_FITDATA_FILE}" "${HX_PLOT_PREFIX}-fitdata-${HX_PLOT_STATE}"
+}
+
+
+hx_plot_dg_path() {
+    resolve_work_path "${HX_PLOT_DG_FILE}" "${HX_PLOT_PREFIX}-dg.csv"
+}
+
+
+hx_plot_resid_path() {
+    resolve_work_path "${HX_PLOT_RESID_FILE}" "results/${PDB_ID}.resid"
+}
+
+
+hx_plot_output_dir_path() {
+    resolve_work_path "${HX_PLOT_OUTPUT_DIR}" "."
+}
 
 
 submit_to_slurm() {
@@ -170,7 +256,6 @@ verify_python_environment() {
     if ! is_true "${SKIP_EXPERIMENT_DATA}"; then
         module_list="${module_list} mdtraj"
     fi
-
     command -v python >/dev/null 2>&1 || {
         echo "Python was not found after runtime activation. Set PYTHON_ENV_CMD or create ${PROJECT_ROOT}/.venv." >&2
         exit 1
@@ -212,6 +297,53 @@ run_shell_step() {
 }
 
 
+run_hx_plot_step() {
+    local dfout_path fitdata_path dg_path resid_path output_dir
+    local missing_inputs=()
+
+    if is_false "${HX_PLOT_ENABLED}"; then
+        log "Skipping 6.generate_hx_plots.py because HX_PLOT_ENABLED=${HX_PLOT_ENABLED}"
+        return
+    fi
+
+    dfout_path=$(hx_plot_dfout_path)
+    fitdata_path=$(hx_plot_fitdata_path)
+    dg_path=$(hx_plot_dg_path)
+    resid_path=$(hx_plot_resid_path)
+    output_dir=$(hx_plot_output_dir_path)
+
+    [[ -f "${dfout_path}" ]] || missing_inputs+=("${dfout_path}")
+    [[ -f "${fitdata_path}" ]] || missing_inputs+=("${fitdata_path}")
+    [[ -f "${dg_path}" ]] || missing_inputs+=("${dg_path}")
+    [[ -f "${resid_path}" ]] || missing_inputs+=("${resid_path}")
+
+    if (( ${#missing_inputs[@]} > 0 )); then
+        if is_true "${HX_PLOT_ENABLED}"; then
+            printf 'HX plot step requested but required inputs are missing:\n' >&2
+            printf '  %s\n' "${missing_inputs[@]}" >&2
+            exit 1
+        fi
+
+        log "Skipping 6.generate_hx_plots.py because required HX plot inputs are unavailable"
+        return
+    fi
+
+    log "Running 6.generate_hx_plots.py"
+    env \
+        "${workflow_env[@]}" \
+        "hx_plot_work_dir=${WORK_DIR}" \
+        "hx_plot_results_dir=${RESULT_DIR}" \
+        "hx_plot_output_dir=${output_dir}" \
+        "hx_plot_prefix=${HX_PLOT_PREFIX}" \
+        "hx_plot_state=${HX_PLOT_STATE}" \
+        "hx_plot_dfout_path=${dfout_path}" \
+        "hx_plot_fitdata_path=${fitdata_path}" \
+        "hx_plot_dg_path=${dg_path}" \
+        "hx_plot_resid_path=${resid_path}" \
+        python "${SCRIPT_DIR}/6.generate_hx_plots.py"
+}
+
+
 run_workflow() {
     require_dir "${WORK_DIR}"
     require_dir "${WORK_DIR}/inputs"
@@ -238,6 +370,7 @@ run_workflow() {
     mkdir -p "${MPLCONFIGDIR}" "${XDG_CACHE_HOME}"
 
     activate_runtime
+    validate_hx_plot_mode
     verify_python_environment
     cd "${WORK_DIR}"
 
@@ -253,13 +386,13 @@ run_workflow() {
     run_shell_step "3.get_protaction_states.sh" "${SCRIPT_DIR}/3.get_protaction_states.sh"
     run_python_step "4.calc_D_uptake.py (uptake)" "uptake" "${SCRIPT_DIR}/4.calc_D_uptake.py"
     run_python_step "4.calc_D_uptake.py (stability)" "stability" "${SCRIPT_DIR}/4.calc_D_uptake.py"
-    run_python_step "4.calc_D_uptake.py (pca)" "pca" "${SCRIPT_DIR}/4.calc_D_uptake.py"
     if is_true "${SKIP_EXPERIMENT_DATA}"; then
         log "Skipping 5.analyze_D_uptake.py (uptake) because SKIP_EXPERIMENT_DATA=${SKIP_EXPERIMENT_DATA}"
     else
         run_python_step "5.analyze_D_uptake.py (uptake)" "uptake" "${SCRIPT_DIR}/5.analyze_D_uptake.py"
     fi
     run_python_step "5.analyze_D_uptake.py (dg_summary)" "dg_summary" "${SCRIPT_DIR}/5.analyze_D_uptake.py"
+    run_hx_plot_step
 }
 
 

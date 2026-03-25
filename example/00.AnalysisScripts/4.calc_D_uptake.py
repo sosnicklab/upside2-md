@@ -45,17 +45,6 @@ if analysis_mode in ('stability', 'stability_hxms'):
     )
     runpy.run_module('helpers.calc_hdx_ht', run_name='__main__')
     raise SystemExit(0)
-if analysis_mode == 'pca':
-    ensure_env_defaults(
-        {
-            'pdb_id': 'glpG-RKRK-79HIS',
-            'sim_id': 'memb_test',
-            'n_rep': '48',
-            'start_frame': '100',
-        }
-    )
-    runpy.run_module('helpers.traj_analysis_pca', run_name='__main__')
-    raise SystemExit(0)
 if analysis_mode != 'uptake':
     raise SystemExit("Unsupported analysis_mode for 4.calc_D_uptake.py: {}".format(analysis_mode))
 

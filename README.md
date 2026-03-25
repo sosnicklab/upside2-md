@@ -158,6 +158,10 @@ the trajectory will be discontinuous due to replica swapping.
 Explore the `upside/example/` folder for examples on running with restraints, membrane
 simulations, pulling simulations, HDX prediction, and more.
 
+The HDX/HX-MS analysis workflow is under:
+
+`example/00.AnalysisScripts/`
+
 ## Simulation analysis and visualization
 
 The contents of a `.up` file can be listed with
