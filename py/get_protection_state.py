@@ -95,7 +95,7 @@ def main():
 
     if args.use_TM_region:
         Surf = np.array(Surf)
-        Su = Su*0.
+        Su = Surf * 0.
         Su[Surf>args.criterion4] = 1.
         PS += Su
 
