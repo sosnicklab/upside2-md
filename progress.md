@@ -1,5 +1,306 @@
 # Progress Log
 
+## 2026-04-01
+- Reopened the mass path after the user clarified that dry-MARTINI particles must keep their original dry-MARTINI profile masses instead of reduced `/12` masses.
+- Updated the native-mass path:
+  - `example/16.MARTINI/prepare_system_lib.py` now writes force-field masses directly into `/input/mass`;
+  - `example/16.MARTINI/run_sim_1rkl.sh` no longer divides appended reference masses by `12`;
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh` now uses the same native-mass reference assignment as the main workflow.
+- Verified the fix:
+  - `python -m py_compile example/16.MARTINI/prepare_system_lib.py` passed under `.venv`;
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` and `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed;
+  - shortened real `example/16.MARTINI/run_sim_1rkl.sh` run completed through stage `7.0` in `/tmp/martini_mass_native`;
+  - direct HDF5 inspection of `/tmp/martini_mass_native/checkpoints/1rkl.stage_6.0.up`, `/tmp/martini_mass_native/checkpoints/1rkl.stage_7.0.prepared.up`, and `/tmp/martini_mass_native/checkpoints/1rkl.stage_7.0.up` shows:
+    - physical dry-MARTINI particle masses are native (`4082 x 72.0`, `8 x 45.0`);
+    - no reduced `/12` particle masses like `6.0` or `3.75` remain;
+    - appended AA reference rows now also avoid reduced-unit masses.
+- Reopened the backbone carrier mapping after the user clarified that the old four-particle `BB -> N/CA/C/O` active map must be completely removed.
+- Updated the active BB mapping implementation:
+  - `example/16.MARTINI/prepare_system_lib.py` now exports CA-only active BB rows while keeping `N/CA/C/O` only as reference metadata;
+  - `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh` now inject CA-only runtime `hybrid_bb_map` rows into stage files;
+  - `src/martini.cpp` now keeps separate reference-runtime indices for backbone reference atoms, rejects any active non-CA BB targets at load time, and still uses the stored reference geometry for stage-7 reconstructed `O` placement.
+- Verified the removal on fresh generated files and a shortened real workflow replay:
+  - `cmake --build obj` passed;
+  - `python -m py_compile example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/inject_sc_table_stage7.py` passed under `.venv`;
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` and `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed;
+  - fresh `/tmp/martini_ca_only/hybrid_prep/hybrid_mapping.h5`, `/tmp/martini_ca_only/checkpoints/1rkl.stage_6.0.up`, `/tmp/martini_ca_only/checkpoints/1rkl.stage_7.0.prepared.up`, and `/tmp/martini_ca_only/checkpoints/1rkl.stage_7.0.up` all show `hybrid_bb_map.atom_mask=[0,1,0,0]` and `weights=[0,1,0,0]` with zero active `N/C/O` slots;
+  - shortened `example/16.MARTINI/run_sim_1rkl.sh` completed through stage `7.0` with the CA-only BB mapping and no `/input/hybrid_sc_map` in the active stage files.
+- Fixed the shell/export boundary for the MARTINI unit defaults:
+  - `example/16.MARTINI/run_sim_1rkl.sh` now exports `UPSIDE_MARTINI_ENERGY_CONVERSION` and `UPSIDE_MARTINI_LENGTH_CONVERSION`;
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh` now exports the same defaults so `prepare_system.py` and `prepare_system_lib.py` receive them through `os.environ`.
+- Updated the simulation workflow defaults again so startup no longer hard-fails on the dry-MARTINI length conversion:
+  - `example/16.MARTINI/run_sim_1rkl.sh` now defaults `UPSIDE_MARTINI_LENGTH_CONVERSION` to `10`;
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh` now uses the same default.
+- Updated the simulation workflow defaults to match the AGENTS.md Upside energy conversion:
+  - `example/16.MARTINI/run_sim_1rkl.sh` now defaults `UPSIDE_MARTINI_ENERGY_CONVERSION` to `2.914952774272`;
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh` now uses the same default;
+  - both simulation entrypoints now start with the documented energy/length defaults unless the user overrides them.
+- Verification completed:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh`
+- Reopened stage-7 runtime cleanup after the user clarified that the old hybrid potential must not run in parallel with Upside.
+- Patched [src/martini.cpp](/Users/yinhan/Documents/upside2-md-martini/src/martini.cpp):
+  - active production now skips protein `SC` proxy MARTINI pairs;
+  - active production uses the Upside `CA` carrier coordinate as the dry-MARTINI `BB` interaction site for protein-backbone/environment pairs and accumulates force directly onto `CA`;
+  - the old probabilistic SC proxy branch is explicitly disabled in `martini_potential`;
+  - active-stage fixed-atom selection now freezes only the legacy protein proxy MARTINI atoms.
+- Cleaned the active workflow injection path in [example/16.MARTINI/run_sim_1rkl.sh](/Users/yinhan/Documents/upside2-md-martini/example/16.MARTINI/run_sim_1rkl.sh) and [example/16.MARTINI/test_prod_run_sim_1rkl.sh](/Users/yinhan/Documents/upside2-md-martini/example/16.MARTINI/test_prod_run_sim_1rkl.sh):
+  - removed the old shell helper that wrote stage-7 SC-relaxation controls;
+  - stopped copying `hybrid_sc_map` into runtime stage files during `inject_hybrid_mapping`.
+  - added an immediate failure guard to the legacy `augment_production_rotamer_nodes()` helper so the workflow cannot silently fall back to the removed stage-7 rotamer path.
+- Verification completed for the direct-Upside cleanup:
+  - `cmake --build obj` passed;
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed;
+  - `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed;
+  - focused helper replay `example/16.MARTINI/test_prod_run_sim_1rkl.sh` completed a fresh `6.6 -> 7.0` handoff and short production replay successfully;
+  - shortened full workflow `example/16.MARTINI/run_sim_1rkl.sh` completed end to end through stage `7.0`.
+- Verified final stage-file gating on the shortened full workflow outputs:
+  - `1rkl.stage_6.6.up` contains no `hybrid_sc_map`, no `martini_sc_table_potential`, and no `placement_fixed_point_only_CB`;
+  - `1rkl.stage_7.0.prepared.up` contains `martini_sc_table_potential` and `placement_fixed_point_only_CB`, with no `hybrid_sc_map` or `rotamer`;
+  - runtime logs for both the helper and full workflow now report `n_sc=0` in active production, confirming the legacy probabilistic SC proxy path is inactive.
+- Reopened the stage-7 verification pass after the repository `.venv` was repaired.
+- Confirmed the repaired environment now provides the HDF5 dependencies required by the stage-7 injector:
+  - `.venv/bin/python` imports both `h5py` and `tables` successfully.
+- Reproduced the first real stage-7 workflow failure on the current helper path:
+  - fresh `7.0.prepared` files generated by `prepare_system.py` lacked `/input/sequence`;
+  - `example/16.MARTINI/inject_sc_table_stage7.py` failed when it assumed that dataset existed.
+- Patched `example/16.MARTINI/inject_sc_table_stage7.py`:
+  - added optional `--protein-itp`;
+  - added residue-name parsing from the protein ITP `[ atoms ]` table using `BB` rows;
+  - sequence resolution now prefers `/input/sequence` when it matches the hybrid backbone residue count and otherwise falls back to the provided protein ITP;
+  - the injector now writes the normalized sequence back into the stage file after resolution.
+- Updated the production workflow wrappers:
+  - `example/16.MARTINI/run_sim_1rkl.sh` now passes `--protein-itp "${PROTEIN_ITP_EFFECTIVE}"` to the stage-7 injector;
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh` now passes `--protein-itp "${RUNTIME_ITP_FILE}"`.
+- Verified the patch at multiple levels:
+  - `python -m py_compile example/16.MARTINI/inject_sc_table_stage7.py` passed under the repaired `.venv`;
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` and `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed;
+  - reinjection of the stage-7 SC table into a copied prepared file succeeded using the new ITP fallback path.
+- Cleaned the stage-7 injector log path:
+  - narrowed the legacy NumPy visible-deprecation warning from `rama_reference.pkl` unpickling to a local warning-suppression block around the pickle load.
+- Completed focused end-to-end verification with the real production helper path:
+  - ran `example/16.MARTINI/test_prod_run_sim_1rkl.sh` from the saved `6.6` handoff with explicit MARTINI conversion parameters and a short `5`-step stage-7 production replay;
+  - the helper generated a fresh `7.0.prepared` file, injected `martini_sc_table_potential`, and completed stage `7.0` cleanly;
+  - observed stage-7 injection summary:
+    - `n_residues=28`,
+    - `skipped=3`,
+    - `n_env=4025`,
+    - `n_restypes=18`,
+    - `n_targets=38`.
+- Inspected the generated stage-7 prepared file structure directly:
+  - required nodes present: `martini_sc_table_potential`, `placement_fixed_point_only_CB`, `affine_alignment`, and the regenerated Upside backbone nodes;
+  - legacy nodes absent: `rotamer`, `placement_fixed_scalar`, `placement_fixed_point_vector_only`;
+  - `/input/hybrid_sc_map` absent as intended;
+  - `martini_sc_table_potential` datasets had the expected cardinalities:
+    - `cb_index` length `28`,
+    - `env_atom_index` length `4025`,
+    - `energy_kj_mol` shape `18 x 38 x 96`.
+- Exercised the real top-level `example/16.MARTINI/run_sim_1rkl.sh` workflow with shortened verification settings:
+  - `MIN_60_MAX_ITER=20`,
+  - `MIN_61_MAX_ITER=20`,
+  - `EQ_62_NSTEPS=20`,
+  - `EQ_63_NSTEPS=20`,
+  - `EQ_64_NSTEPS=20`,
+  - `EQ_65_NSTEPS=20`,
+  - `EQ_66_NSTEPS=20`,
+  - `PROD_70_NSTEPS=5`,
+  - `EQ_FRAME_STEPS=5`,
+  - `PROD_FRAME_STEPS=1`.
+- Verified the top-level workflow reached and executed stage `7.0`:
+  - `run_sim_1rkl.sh` generated a fresh `7.0.prepared` file, injected the SC table, verified hybrid activation, and completed a short `5`-step stage-7 production replay.
+- Verified stage gating directly on generated files:
+  - `1rkl.stage_6.6.up` has no `martini_sc_table_potential`, no `placement_fixed_point_only_CB`, and still contains `/input/hybrid_sc_map`;
+  - `1rkl.stage_7.0.prepared.up` has `martini_sc_table_potential`, has `placement_fixed_point_only_CB`, lacks legacy `rotamer`, and no longer contains `/input/hybrid_sc_map`.
+- Rebuilt the project after the injector updates:
+  - `cmake --build obj` passed successfully.
+- Residual verification caveat:
+  - the reduced-step full-workflow smoke run is adequate to validate stage gating and end-to-end script wiring, but not to judge physical stability because the aggressively shortened `6.4-6.6` relaxation still produced enormous MARTINI energies before the short stage-7 replay.
+- Inspected the completed external training output under `/Users/yinhan/Documents/SC-training/runs/default/results/assembled/`.
+- Confirmed the finished training corpus contains:
+  - `18` non-empty canonical residue sidechain types,
+  - `38` dry-MARTINI target particle types,
+  - `684` residue-target tasks,
+  - a uniform `96`-point radial grid per table.
+- Added `example/16.MARTINI/build_sc_martini_h5.py`:
+  - reads the assembled `sc_table.json`,
+  - builds a native-unit `martini.h5` using `python3 + h5import` instead of `h5py`,
+  - stores `restype_order`, `target_order`, `grid_nm`, and dense `energy_kj_mol`.
+- Built the real library file at `parameters/ff_2.1/martini.h5`.
+- Verified the generated library structure with HDF5 CLI tools:
+  - datasets present: `schema`, `forcefield_name`, `created_at_utc`, `manifest_path`, `restype_order`, `target_order`, `grid_nm`, `energy_kj_mol`;
+  - table shape is `18 x 38 x 96`.
+- Added `example/16.MARTINI/inject_sc_table_stage7.py`:
+  - preserves stage-7 Upside backbone augmentation through regenerated backbone nodes;
+  - removes legacy production SC nodes and `/input/hybrid_sc_map`;
+  - injects `affine_alignment`, `placement_fixed_point_only_CB`, and `martini_sc_table_potential`;
+  - selects only residues that exist in the trained `martini.h5` table;
+  - selects non-protein environment atoms by dry-MARTINI target type.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
+  - added `SC_MARTINI_LIBRARY`, `SC_MARTINI_TABLE_JSON`, `SC_MARTINI_BUILD_SCRIPT`, and `SC_TABLE_STAGE7_INJECTOR`;
+  - production stage now auto-builds `martini.h5` if needed from the completed training JSON;
+  - production stage now uses the new stage-7 injector instead of the legacy rotamer/SC production path;
+  - stages `6.0` through `6.6` remain unchanged and do not receive the new SC table force field.
+- Updated `example/16.MARTINI/test_prod_run_sim_1rkl.sh` to match the same stage-7-only SC table workflow.
+- Extended `src/martini.cpp` with the new runtime node:
+  - `martini_sc_table_potential` reads the injected SC table,
+  - evaluates CB-to-environment radial interactions,
+  - adds equal-and-opposite gradients to the environment atom and the CB coord node,
+  - keeps backbone/environment dry-MARTINI coupling in the existing `martini_potential`,
+  - reuses the cached hybrid coupling-alignment transform from `martini_potential`,
+  - participates in NPT box-size updates.
+- Updated hybrid graph wiring in `src/martini.cpp`:
+  - stage-7 SC table potential is ordered after `martini_potential` so it can reuse the cached coupling alignment consistently within the same compute pass.
+- Verification completed for this pass:
+  - `python3 -m py_compile example/16.MARTINI/build_sc_martini_h5.py example/16.MARTINI/inject_sc_table_stage7.py` passed;
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed;
+  - `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed;
+  - `cmake --build obj` passed, with only pre-existing unrelated warnings;
+  - `h5ls -r parameters/ff_2.1/martini.h5` confirmed the generated library layout.
+- Residual verification blocker:
+  - could not execute the full stage-7 injector or the full `run_sim_1rkl.sh` end to end in this shell because the local default `python3` lacks `h5py` and `tables`, and the repository `.venv` still points at a missing Python 3.10 path.
+
+## 2026-03-31
+- Reopened the `SC-training` Slurm launcher after the user reported a Midway error creating `.../var/spool/slurm/.../runs`.
+- Traced the new failure to Slurm spool-copy execution:
+  - `submit_remote_round.sh` still derived `SCRIPT_DIR` from `dirname "$0"`, which points at the spool copy when the wrapper itself is launched with `sbatch`;
+  - that made the default `SC_TRAIN_BASE_DIR` resolve under the spool tree and caused the observed permission error.
+- Updated `SC-training/submit_remote_round.sh` and `SC-training/run_local.sh`:
+  - both wrappers now resolve the real workflow directory by looking for `workflow.py`;
+  - both prefer `SLURM_SUBMIT_DIR` and `SLURM_SUBMIT_DIR/SC-training` when running under a batch-spooled launcher.
+- Verification completed for the spool-path fix:
+  - `bash -n SC-training/submit_remote_round.sh` and `bash -n SC-training/run_local.sh` passed;
+  - simulated spool-copy execution with `SLURM_SUBMIT_DIR=<repo>/SC-training` staged a clean no-submit run with `684` tasks;
+  - simulated spool-copy execution with `SLURM_SUBMIT_DIR=<repo root>` also staged a clean no-submit run with `684` tasks.
+- Verified the `SC-training/` Slurm execution model from the real launcher path rather than only by reading `workflow.py`.
+- Found a wrapper bug during that verification:
+  - `SC-training/submit_remote_round.sh` aborted while sourcing repo-root `source.sh` under `set -u` because `MY_PYTHON` could be unset in the parent environment;
+  - `SC-training/run_local.sh` had the same latent failure mode.
+- Updated `SC-training/run_local.sh` and `SC-training/submit_remote_round.sh`:
+  - both wrappers now derive `MY_PYTHON` from the selected interpreter when needed;
+  - both wrappers now temporarily relax `nounset` while sourcing repo-root `source.sh`.
+- Restaged a fresh no-submit Slurm round after the wrapper fix:
+  - `submit_remote_round.sh` completed successfully from the intended entrypoint;
+  - generated `train_array.sbatch` uses `#SBATCH --array=0-683`;
+  - the array script dispatches one training task per `SLURM_ARRAY_TASK_ID` through `workflow.py run-array-task`;
+  - staged `round_manifest.json` and `training_manifest.json` both reported `684` tasks.
+- Corrected the `SC-training/` default target enumeration after the user restored the intended full dry-MARTINI particle-type set.
+- Updated `SC-training/workflow.py`:
+  - removed the temporary non-ring `S*` filter from default target generation;
+  - default manifests now include the full bundled dry-MARTINI atomtype list again, so the baseline table is back to `18 x 38 = 684` residue-target tasks.
+- Updated `SC-training/README.md`, `plan.md`, and `findings.md`:
+  - recorded that the surrounding-position sampling is spherical-shell based but still isotropic within a shell in the current baseline model;
+  - recorded that the complete default table includes all `38` dry-MARTINI target particle types, including `S*` and `AC*`.
+- Reworked the dry-MARTINI unit-contract implementation after the user corrected the design:
+  - training must remain in native dry-MARTINI units;
+  - simulation must use explicit conversion parameters instead of hardcoded conversion numbers.
+- Updated `SC-training/workflow.py` and `SC-training/README.md`:
+  - removed baked Upside conversion numbers from training manifests and docs;
+  - replaced them with a native-unit policy note that leaves conversion to simulation-side parameters.
+- Updated `example/16.MARTINI/prepare_system_lib.py`:
+  - MARTINI simulation-unit conversion is now parameterized through explicit values written onto `martini_potential` attrs;
+  - the generator now requires explicit `UPSIDE_MARTINI_ENERGY_CONVERSION` and `UPSIDE_MARTINI_LENGTH_CONVERSION` inputs instead of silently defaulting them;
+  - the generator no longer relies on a hardcoded runtime Coulomb constant in C++.
+- Updated `src/martini.cpp`:
+  - `MartiniPotential` now requires explicit unit-conversion attrs for Coulomb scaling;
+  - runtime Coulomb splines and direct fallback evaluation derive `coulomb_k` from those attrs instead of the old literal constant.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh`:
+  - both scripts now fail early unless `UPSIDE_MARTINI_ENERGY_CONVERSION` and `UPSIDE_MARTINI_LENGTH_CONVERSION` are provided explicitly.
+- Updated `AGENTS.md`, `plan.md`, and `findings.md` to match the corrected unit-handling design.
+- Verification completed for this pass:
+  - `python3 -m py_compile SC-training/workflow.py example/16.MARTINI/prepare_system_lib.py` passed;
+  - `cmake --build obj` passed, with pre-existing unrelated warnings only;
+  - fresh `SC-training/workflow.py init-run` output shows native-unit policy metadata only and no baked runtime conversion numbers.
+- Reopened the `SC-training/` workflow to verify whether the folder could actually be uploaded and used independently for training.
+- Found and fixed the portability gap:
+  - training defaults previously depended on `example/16.MARTINI/martinize.py` and `example/16.MARTINI/ff_dry/dry_martini_v2.1.itp`;
+  - shell wrappers and generated Slurm scripts previously depended on repo-root `.venv` and `source.sh`.
+- Added bundled training data under `SC-training/data/`:
+  - `dry_martini_v2.1.itp`
+  - `martini22_sidechains.json`
+- Updated `SC-training/workflow.py`:
+  - default training inputs now point to the bundled data files;
+  - the sidechain loader now accepts bundled JSON definitions in addition to `martinize.py`;
+  - manifests now record `sidechain_source_path` explicitly.
+- Updated `SC-training/run_local.sh` and `SC-training/submit_remote_round.sh`:
+  - they now work without the parent repository for training;
+  - they use `python3` by default and optionally activate a local `.venv` or repo-root `.venv` when available;
+  - `submit_remote_round.sh` now supports `SC_TRAIN_NO_SUBMIT=1` for stage-only runs.
+- Updated generated Slurm script content so training/collector jobs reference the copied `SC-training/` folder directly instead of repo-root environment files.
+- Updated `SC-training/README.md` to document the bundled data, standalone training behavior, and the benchmark limitation.
+- Verification completed from standalone copied folders under `/private/tmp`:
+  - direct `python3 workflow.py init-run` + `run-local` succeeded without the parent repository;
+  - `run_local.sh` succeeded without the parent repository;
+  - `submit_remote_round.sh` succeeded in stage-only mode via `SC_TRAIN_NO_SUBMIT=1`;
+  - staged Slurm scripts referenced bundled `SC-training` paths and no longer required `source.sh` for training;
+  - manifests correctly pointed to bundled `SC-training/data/dry_martini_v2.1.itp` and `SC-training/data/martini22_sidechains.json`.
+- Residual limitation recorded:
+  - the optional benchmark path still points to `example/16.MARTINI/run_sim_1rkl.sh`, so benchmark execution still requires the full repository even though training itself is now self-contained.
+- Reviewed the new SC/dry-MARTINI interaction requirements against the current runtime force path in `src/martini.cpp` and the training workflow metadata in `SC-training/`.
+- Confirmed from the current runtime that the relevant MARTINI feedback pattern is already additive and two-way:
+  - pair forces are accumulated as equal-and-opposite gradients;
+  - SC-side gradients are projected back onto protein carriers via `project_sc_gradient_if_active(...)`;
+  - BB-side gradients are projected back onto backbone carriers via `project_bb_gradient_if_active(...)`;
+  - both projection paths add to the existing Upside sensitivities rather than replacing them.
+- Confirmed the current intra-protein MARTINI exclusion rules:
+  - `BB-BB` and `SC-SC` nonbonded MARTINI pairs are disabled;
+  - only same-residue `BB-SC` is allowed.
+- Updated planning/docs to capture the intended replacement architecture more precisely:
+  - the new SC/dry table must remain a two-way force term;
+  - its protein-side feedback must be added to existing Upside forces before integration;
+  - backbone dry-`BB`/`CA` to surrounding dry-particle coupling remains required and should stay separate from the new SC table;
+  - dry-MARTINI unit conversion is now documented explicitly for both training and simulation.
+- Updated `AGENTS.md`, `SC-training/workflow.py`, and `SC-training/README.md` so the dry-MARTINI unit contract is explicit in both project guidance and emitted training metadata.
+- Verification completed for this pass:
+  - inspected `src/martini.cpp` force/projection paths and pair-exclusion rules directly;
+  - verified `SC-training/workflow.py --help` still runs after the metadata update;
+  - verified a fresh `init-run` emits the new conversion metadata into the training manifest.
+- Implemented a new top-level `SC-training/` workflow to establish the sidechain-table training pipeline independently from the legacy SC back-mapping path.
+- Reused repository-native data sources for training inputs:
+  - `example/16.MARTINI/martinize.py` (`martini22`) for canonical residue sidechain bead definitions;
+  - `example/16.MARTINI/ff_dry/dry_martini_v2.1.itp` for dry-MARTINI atom types and pair parameters.
+- Added new files:
+  - `SC-training/workflow.py`
+  - `SC-training/run_local.sh`
+  - `SC-training/submit_remote_round.sh`
+  - `SC-training/README.md`
+  - `SC-training/.gitignore`
+- Workflow capabilities implemented:
+  - initialize a run directory and manifest,
+  - generate per-residue/per-target training tasks,
+  - execute tasks locally,
+  - assemble a single SC table output,
+  - stage or submit Slurm array jobs with dependent collector and optional benchmark jobs,
+  - stage or execute the canonical benchmark against `example/16.MARTINI/run_sim_1rkl.sh`.
+- Explicitly documented the current first-pass training assumption in workflow outputs and README:
+  - residue-target curves are built as a sum of direct dry-MARTINI bead-target interactions on a shared radial grid (`sum_beadwise_colocated`);
+  - no hidden sidechain geometry reconstruction is implied at this stage.
+- Verification completed:
+  - `bash -n SC-training/run_local.sh` passed.
+  - `bash -n SC-training/submit_remote_round.sh` passed.
+  - `python3 SC-training/workflow.py --help` passed.
+  - smoke run in `/tmp/sc_training_smoke` passed:
+    - manifest generation succeeded;
+    - full local execution + assembly succeeded;
+    - assembled summary reported `684` tasks across `18` residues and `38` targets;
+    - Slurm array, collector, and benchmark scripts were generated successfully with `--no-submit`.
+- Remaining gap:
+  - the workflow can already stage the canonical benchmark on `example/16.MARTINI/run_sim_1rkl.sh`, but the assembled SC table is not yet consumed by runtime C++ code; wiring that table into `src/martini.cpp` remains a separate implementation task.
+- Reviewed the repository-root `plan.md` as a proposed dry-MARTINI sidechain integration plan against the current hybrid runtime in `src/martini.cpp` and the established MARTINI workflow plan in `example/16.MARTINI/task_plan.md`.
+- Initial review found a major architectural mismatch because the draft plan assumed a replacement built around virtual sidechain back-mapping and a simplified angular surrogate, while the current runtime is built around explicit hybrid BB carriers plus SC rotamer/placement coupling.
+- User clarified the intended target architecture:
+  - sidechain back-mapping is to be dropped for this effort;
+  - the new goal is a direct dry-MARTINI sidechain-type to dry-MARTINI particle-type interaction table.
+- Updated the evaluation basis accordingly:
+  - reuse of existing hybrid backbone/environment plumbing remains relevant;
+  - the current SC back-mapping / rotamer-placement coupling path should be treated as replaceable design context rather than a required compatibility target for the new force-field plan.
+- Follow-up review on user request confirmed that the workflow still actively enables the old SC-relaxation path:
+  - `example/16.MARTINI/run_sim_1rkl.sh` still exports SC relaxation/control attrs into `/input/hybrid_control`;
+  - the same script still injects stage-7 rotamer/placement nodes via `augment_production_rotamer_nodes(...)`;
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh` mirrors that same control surface.
+- Updated the review conclusion:
+  - if the new architecture drops sidechain back-mapping, it must also drop the script-level SC relaxation and stage-7 rotamer augmentation in the production workflow;
+  - the authoritative benchmark should be the real `run_sim_1rkl.sh` workflow, not only the short production smoke helper.
+
 ## 2026-03-20
 - Reopened the long-horizon stage-7 investigation after the user reran the full workflow and reproduced the exact same `5000 -> 10000` blow-up log, which ruled out the active-`BB` momentum fix as a sufficient solution.
 - Reviewed the historical MARTINI task notes under `example/16.MARTINI/` and found the intended design constraint that rigid-body alignment should affect coupling coordinates only, while saved trajectories should remain the raw integrated state.

@@ -116,7 +116,12 @@ PROD_70_BACKBONE_FIX_RIGID_ENABLE="${PROD_70_BACKBONE_FIX_RIGID_ENABLE:-0}"
 MIN_TIME_STEP="${MIN_TIME_STEP:-0.010}"
 
 EQ_FRAME_STEPS="${EQ_FRAME_STEPS:-1000}"
-PROD_FRAME_STEPS="${PROD_FRAME_STEPS:-5000}"
+PROD_FRAME_STEPS="${PROD_FRAME_STEPS:-50}"
+
+# AGENTS.md: 1 E_up = 2.914952774272 kJ/mol
+export UPSIDE_MARTINI_ENERGY_CONVERSION="${UPSIDE_MARTINI_ENERGY_CONVERSION:-2.914952774272}"
+# Dry-MARTINI native lengths are in nm; simulation inputs use Angstrom.
+export UPSIDE_MARTINI_LENGTH_CONVERSION="${UPSIDE_MARTINI_LENGTH_CONVERSION:-10}"
 
 COMP_3E4_BAR_INV_TO_A3_PER_EUP="${COMP_3E4_BAR_INV_TO_A3_PER_EUP:-14.521180763676}"
 # Unit conversion from AGENTS.md:
@@ -142,7 +147,10 @@ export UPSIDE_EWALD_ALPHA="${UPSIDE_EWALD_ALPHA:-0.2}"
 export UPSIDE_EWALD_KMAX="${UPSIDE_EWALD_KMAX:-5}"
 export UPSIDE_MARTINI_FF_DIR="${UPSIDE_MARTINI_FF_DIR:-ff_dry}"
 MASS_FF_FILE="${MASS_FF_FILE:-${UPSIDE_MARTINI_FF_DIR}/dry_martini_v2.1.itp}"
-SIDECHAIN_LIBRARY="${SIDECHAIN_LIBRARY:-${UPSIDE_HOME}/parameters/ff_2.1/sidechain.h5}"
+SC_MARTINI_LIBRARY="${SC_MARTINI_LIBRARY:-${UPSIDE_HOME}/parameters/ff_2.1/martini.h5}"
+SC_MARTINI_TABLE_JSON="${SC_MARTINI_TABLE_JSON:-}"
+SC_MARTINI_BUILD_SCRIPT="${SC_MARTINI_BUILD_SCRIPT:-${SCRIPT_DIR}/build_sc_martini_h5.py}"
+SC_TABLE_STAGE7_INJECTOR="${SC_TABLE_STAGE7_INJECTOR:-${SCRIPT_DIR}/inject_sc_table_stage7.py}"
 UPSIDE_RAMA_LIBRARY="${UPSIDE_RAMA_LIBRARY:-${UPSIDE_HOME}/parameters/common/rama.dat}"
 UPSIDE_RAMA_SHEET_MIXING="${UPSIDE_RAMA_SHEET_MIXING:-${UPSIDE_HOME}/parameters/ff_2.1/sheet}"
 UPSIDE_HBOND_ENERGY="${UPSIDE_HBOND_ENERGY:-${UPSIDE_HOME}/parameters/ff_2.1/hbond.h5}"
@@ -224,11 +232,38 @@ if [ ! -f "${UNIVERSAL_PREP_SCRIPT}" ]; then
     echo "ERROR: universal prep script not found: ${UNIVERSAL_PREP_SCRIPT}"
     exit 1
 fi
+if [ ! -f "${SC_MARTINI_BUILD_SCRIPT}" ]; then
+    echo "ERROR: SC MARTINI builder script not found: ${SC_MARTINI_BUILD_SCRIPT}"
+    exit 1
+fi
+if [ ! -f "${SC_TABLE_STAGE7_INJECTOR}" ]; then
+    echo "ERROR: stage-7 SC injector script not found: ${SC_TABLE_STAGE7_INJECTOR}"
+    exit 1
+fi
 
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR" "$HYBRID_PREP_DIR"
 
 PROTEIN_CG_EFFECTIVE="${PROTEIN_CG_PDB}"
 PROTEIN_ITP_EFFECTIVE="${PROTEIN_ITP}"
+
+ensure_sc_martini_library() {
+    if [ -f "${SC_MARTINI_LIBRARY}" ]; then
+        return
+    fi
+    if [ -z "${SC_MARTINI_TABLE_JSON}" ]; then
+        echo "ERROR: SC MARTINI library not found: ${SC_MARTINI_LIBRARY}"
+        echo "Set SC_MARTINI_TABLE_JSON to the assembled SC-training sc_table.json to build it."
+        exit 1
+    fi
+    if [ ! -f "${SC_MARTINI_TABLE_JSON}" ]; then
+        echo "ERROR: SC MARTINI table JSON not found: ${SC_MARTINI_TABLE_JSON}"
+        exit 1
+    fi
+    echo "Building ${SC_MARTINI_LIBRARY} from ${SC_MARTINI_TABLE_JSON}"
+    python3 "${SC_MARTINI_BUILD_SCRIPT}" \
+        --sc-table-json "${SC_MARTINI_TABLE_JSON}" \
+        --output-h5 "${SC_MARTINI_LIBRARY}"
+}
 
 run_martinize() {
     local input_aa="$1"
@@ -514,65 +549,23 @@ print(
 PY
 }
 
-set_hybrid_sc_controls() {
+set_hybrid_production_controls() {
     local up_file="$1"
-    local lj_cap="$2"
-    local coul_cap="$3"
-    local relax_steps="$4"
-    local backbone_hold_steps="$5"
-    local po4_z_hold_steps="$6"
-    local relax_dt="$7"
-    local rest_k="$8"
-    local max_disp="$9"
-    local hs_force_cap="${10}"
-    local hs_pot_cap="${11}"
-    local nonprotein_hard_sphere="${12}"
-    local rmsd_align_enable="${13}"
-    local po4_z_clamp_enable="${14}"
-    local po4_z_clamp_mode="${15}"
-    local sc_env_energy_dump_enable="${16}"
-    local sc_env_energy_dump_stride="${17}"
-    python3 - "$up_file" "$lj_cap" "$coul_cap" "$relax_steps" "$backbone_hold_steps" "$po4_z_hold_steps" "$relax_dt" "$rest_k" "$max_disp" "$hs_force_cap" "$hs_pot_cap" "$nonprotein_hard_sphere" "$rmsd_align_enable" "$po4_z_clamp_enable" "$po4_z_clamp_mode" "$sc_env_energy_dump_enable" "$sc_env_energy_dump_stride" << 'PY'
+    local nonprotein_hard_sphere="$2"
+    local rmsd_align_enable="$3"
+    python3 - "$up_file" "$nonprotein_hard_sphere" "$rmsd_align_enable" << 'PY'
 import sys
 import h5py
 import numpy as np
 
 up_file = sys.argv[1]
-lj_cap = float(sys.argv[2])
-coul_cap = float(sys.argv[3])
-relax_steps = int(sys.argv[4])
-backbone_hold_steps = int(sys.argv[5])
-po4_z_hold_steps = int(sys.argv[6])
-relax_dt = float(sys.argv[7])
-rest_k = float(sys.argv[8])
-max_disp = float(sys.argv[9])
-hs_force_cap = float(sys.argv[10])
-hs_pot_cap = float(sys.argv[11])
-nonprotein_hard_sphere = int(sys.argv[12])
-rmsd_align_enable = int(sys.argv[13])
-po4_z_clamp_enable = int(sys.argv[14])
-po4_z_clamp_mode = sys.argv[15]
-sc_env_energy_dump_enable = int(sys.argv[16])
-sc_env_energy_dump_stride = int(sys.argv[17])
+nonprotein_hard_sphere = int(sys.argv[2])
+rmsd_align_enable = int(sys.argv[3])
 
 with h5py.File(up_file, "r+") as h5:
     grp = h5.require_group("input").require_group("hybrid_control")
-    grp.attrs["sc_env_lj_force_cap"] = np.float32(lj_cap)
-    grp.attrs["sc_env_coul_force_cap"] = np.float32(coul_cap)
-    grp.attrs["sc_env_relax_steps"] = np.int32(relax_steps)
-    grp.attrs["sc_env_backbone_hold_steps"] = np.int32(max(0, backbone_hold_steps))
-    grp.attrs["sc_env_po4_z_hold_steps"] = np.int32(max(0, po4_z_hold_steps))
-    grp.attrs["sc_env_relax_dt"] = np.float32(relax_dt)
-    grp.attrs["sc_env_restraint_k"] = np.float32(rest_k)
-    grp.attrs["sc_env_max_displacement"] = np.float32(max_disp)
-    grp.attrs["nonprotein_hs_force_cap"] = np.float32(hs_force_cap)
-    grp.attrs["nonprotein_hs_potential_cap"] = np.float32(hs_pot_cap)
     grp.attrs["production_nonprotein_hard_sphere"] = np.int8(1 if nonprotein_hard_sphere else 0)
     grp.attrs["integration_rmsd_align_enable"] = np.int8(1 if rmsd_align_enable else 0)
-    grp.attrs["sc_env_po4_z_clamp_enabled"] = np.int8(1 if po4_z_clamp_enable else 0)
-    grp.attrs["sc_env_po4_z_clamp_mode"] = np.bytes_(po4_z_clamp_mode)
-    grp.attrs["sc_env_energy_dump_enabled"] = np.int8(1 if sc_env_energy_dump_enable else 0)
-    grp.attrs["sc_env_energy_dump_stride"] = np.int32(max(1, sc_env_energy_dump_stride))
 PY
 }
 
@@ -674,7 +667,6 @@ mapping_file = sys.argv[2]
 groups = [
     "hybrid_control",
     "hybrid_bb_map",
-    "hybrid_sc_map",
     "hybrid_env_topology",
 ]
 
@@ -792,7 +784,7 @@ with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
                 ref_role[ref_idx] = pad_bytes(cname, role_dtype)
                 ref_residue[ref_idx] = resid
                 comp_mass = float(BB_COMPONENT_MASS.get(cname, 12.0))
-                ref_mass[ref_idx] = mass_dtype.type((BB_COMPONENT_SCALE * comp_mass) / 12.0)
+                ref_mass[ref_idx] = mass_dtype.type(BB_COMPONENT_SCALE * comp_mass)
 
         def append_input_dataset(name, appendix):
             if name not in dst_inp:
@@ -835,19 +827,13 @@ with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
     bb_runtime_mask = np.zeros((n_bb, 4), dtype=np.int8)
     bb_runtime_w = np.zeros((n_bb, 4), dtype=np.float32)
     for k in range(n_bb):
-        raw_w = np.zeros((4,), dtype=np.float32)
-        for d in range(4):
-            ref_idx = int(bb_ref_idx[k, d])
-            if ref_idx < 0:
-                continue
-            run_idx = ref_offset + ref_idx
-            bb_runtime_idx[k, d] = run_idx
-            bb_runtime_mask[k, d] = 1
-            cname = comp_names[d] if d < len(comp_names) else DEFAULT_COMPONENT_NAMES[d]
-            raw_w[d] = np.float32(BB_COMPONENT_MASS.get(cname, 12.0))
-        wsum = float(raw_w.sum())
-        if wsum > 0.0:
-            bb_runtime_w[k, :] = raw_w / wsum
+        ca_ref_idx = int(bb_ref_idx[k, 1])
+        if ca_ref_idx < 0:
+            raise ValueError(f"{up_file}: hybrid_bb_map row {k} is missing CA reference index")
+        ca_run_idx = ref_offset + ca_ref_idx
+        bb_runtime_idx[k, 1] = ca_run_idx
+        bb_runtime_mask[k, 1] = 1
+        bb_runtime_w[k, 1] = np.float32(1.0)
 
     replace_dataset(bb_grp, "atom_indices", bb_runtime_idx)
     replace_dataset(bb_grp, "atom_mask", bb_runtime_mask)
@@ -856,39 +842,6 @@ with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
     bb_grp.attrs["reference_index_space"] = np.bytes_("protein_aa_pdb_0based")
     bb_grp.attrs["reference_index_offset"] = np.int32(ref_offset)
     bb_grp.attrs["reference_index_count"] = np.int32(max(0, n_ref_index))
-
-    # Rewrite SC projection targets to AA carrier indices (no MARTINI BB fallback).
-    sc_grp = dst_inp["hybrid_sc_map"]
-    sc_residue = sc_grp["residue_index"][:].astype(np.int32)
-    n_sc = int(sc_residue.shape[0])
-    sc_runtime_idx = np.full((n_sc, 4), -1, dtype=np.int32)
-    sc_runtime_w = np.zeros((n_sc, 4), dtype=np.float32)
-
-    residue_to_bb_row = {}
-    for k, resid in enumerate(bb_residue.tolist()):
-        residue_to_bb_row.setdefault(int(resid), int(k))
-
-    for r in range(n_sc):
-        resid = int(sc_residue[r])
-        if resid not in residue_to_bb_row:
-            raise ValueError(
-                f"{up_file}: hybrid_sc_map residue {resid} has no matching hybrid_bb_map row"
-            )
-        k = residue_to_bb_row[resid]
-        idx_row = bb_runtime_idx[k].astype(np.int32, copy=True)
-        w_row = bb_runtime_w[k].astype(np.float32, copy=True)
-        active = (idx_row >= 0) & (w_row > 0.0)
-        if not np.any(active):
-            raise ValueError(
-                f"{up_file}: hybrid_sc_map residue {resid} maps to empty AA carrier targets"
-            )
-        sc_runtime_idx[r] = idx_row
-        sc_runtime_w[r] = w_row
-
-    replace_dataset(sc_grp, "proj_target_indices", sc_runtime_idx)
-    replace_dataset(sc_grp, "proj_weights", sc_runtime_w)
-    sc_grp.attrs["target_index_space"] = np.bytes_("stage_runtime")
-    sc_grp.attrs["target_projection"] = np.bytes_("bb_component_carriers")
 
     membership = np.full((n_atom_aug,), -1, dtype=np.int32)
     membership[:base_n_atom] = src_mem
@@ -902,6 +855,8 @@ PY
 }
 
 augment_production_rotamer_nodes() {
+    echo "ERROR: legacy stage-7 rotamer augmentation has been removed; use inject_stage7_sc_table_nodes." >&2
+    return 1
     local up_file="$1"
     local protein_itp="$2"
     local sidechain_lib="$3"
@@ -1364,6 +1319,20 @@ with h5py.File(up_file, "r+") as up:
 PY
 }
 
+inject_stage7_sc_table_nodes() {
+    local up_file="$1"
+    local sc_library="$2"
+    python3 "${SC_TABLE_STAGE7_INJECTOR}" \
+        "$up_file" \
+        "$sc_library" \
+        "${UPSIDE_HOME}" \
+        "${UPSIDE_RAMA_LIBRARY}" \
+        "${UPSIDE_RAMA_SHEET_MIXING}" \
+        "${UPSIDE_HBOND_ENERGY}" \
+        "${UPSIDE_REFERENCE_STATE_RAMA}" \
+        --protein-itp "${PROTEIN_ITP_EFFECTIVE}"
+}
+
 prepare_hybrid_artifacts() {
     echo "=== Stage 0: Hybrid Packing + Mapping Export ==="
     prepare_protein_inputs
@@ -1546,34 +1515,15 @@ prepare_stage_file() {
     set_hybrid_activation_stage "$target_file" "${HYBRID_PREPROD_ACTIVATION_STAGE}"
     set_stage_label "$target_file" "$stage_label"
     if [ "$stage_label" = "production" ]; then
+        ensure_sc_martini_library
         set_hybrid_activation_stage "$target_file" "production"
-        set_hybrid_sc_controls \
+        set_hybrid_production_controls \
             "$target_file" \
-            "$SC_ENV_LJ_FORCE_CAP" \
-            "$SC_ENV_COUL_FORCE_CAP" \
-            "$SC_ENV_RELAX_STEPS" \
-            "$SC_ENV_BACKBONE_HOLD_STEPS" \
-            "$SC_ENV_PO4_Z_HOLD_STEPS" \
-            "$SC_ENV_RELAX_DT" \
-            "$SC_ENV_RESTRAINT_K" \
-            "$SC_ENV_MAX_DISPLACEMENT" \
-            "$NONPROTEIN_HS_FORCE_CAP" \
-            "$NONPROTEIN_HS_POTENTIAL_CAP" \
             "$PRODUCTION_NONPROTEIN_HARD_SPHERE" \
-            "$INTEGRATION_RMSD_ALIGN_ENABLE" \
-            "$SC_ENV_PO4_Z_CLAMP_ENABLE" \
-            "$SC_ENV_PO4_Z_CLAMP_MODE" \
-            "$SC_ENV_ENERGY_DUMP_ENABLE" \
-            "$SC_ENV_ENERGY_DUMP_STRIDE"
-        augment_production_rotamer_nodes \
+            "$INTEGRATION_RMSD_ALIGN_ENABLE"
+        inject_stage7_sc_table_nodes \
             "$target_file" \
-            "${PROTEIN_ITP_EFFECTIVE}" \
-            "${SIDECHAIN_LIBRARY}" \
-            "${UPSIDE_HOME}" \
-            "${UPSIDE_RAMA_LIBRARY}" \
-            "${UPSIDE_RAMA_SHEET_MIXING}" \
-            "${UPSIDE_HBOND_ENERGY}" \
-            "${UPSIDE_REFERENCE_STATE_RAMA}"
+            "${SC_MARTINI_LIBRARY}"
         if [ "${PROD_70_BACKBONE_FIX_RIGID_ENABLE}" = "1" ]; then
             set_production_backbone_fix_rigid "$target_file"
         fi

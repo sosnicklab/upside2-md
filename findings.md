@@ -1,6 +1,131 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-01: Dry-MARTINI particle masses now stay in native dry-MARTINI profile units throughout the simulation workflow.
+  - `example/16.MARTINI/prepare_system_lib.py` no longer divides force-field masses by `12` when writing `/input/mass`;
+  - `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh` no longer append reduced-unit AA reference masses during stage-file augmentation;
+  - verified on fresh shortened workflow outputs:
+    - `/tmp/martini_mass_native/checkpoints/1rkl.stage_6.0.up`,
+    - `/tmp/martini_mass_native/checkpoints/1rkl.stage_7.0.prepared.up`,
+    - `/tmp/martini_mass_native/checkpoints/1rkl.stage_7.0.up`.
+  - for the physical dry-MARTINI particles in the current 1RKL system, `/input/mass` now contains native force-field values only:
+    - `4082` particles at `72.0`,
+    - `8` particles at `45.0`.
+  - the remaining appended AA reference rows carry unconverted bookkeeping masses (`18.6667`, `16.0`, `21.3333`, plus `1.0` placeholders for unused reference slots), not reduced `/12` values.
+- 2026-04-01: The old weighted `BB -> N/CA/C/O` active carrier map is now fully removed from the live hybrid force path.
+  - `example/16.MARTINI/prepare_system_lib.py` now exports CA-only active BB rows (`atom_mask=[0,1,0,0]`, `weights=[0,1,0,0]`) while keeping separate `reference_atom_indices` / `reference_atom_coords` for stage-7 reference geometry;
+  - `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh` now inject CA-only runtime BB rows into every prepared stage file, rather than remapping all four backbone reference particles into active carriers;
+  - `src/martini.cpp` now rejects any active `N/C/O` BB target rows at load time and uses separate stored reference-runtime indices for stage-7 `O` reconstruction, so reference geometry no longer implies four-way active force projection;
+  - verified on fresh generated files:
+    - `/tmp/martini_ca_only/hybrid_prep/hybrid_mapping.h5`,
+    - `/tmp/martini_ca_only/checkpoints/1rkl.stage_6.0.up`,
+    - `/tmp/martini_ca_only/checkpoints/1rkl.stage_7.0.prepared.up`,
+    - `/tmp/martini_ca_only/checkpoints/1rkl.stage_7.0.up`,
+    all show only `atom_mask=[0,1,0,0]` and `weights=[0,1,0,0]` for `/input/hybrid_bb_map`.
+- 2026-04-01: The direct-Upside stage-7 architecture is now verified end to end in the real workflow.
+  - `src/martini.cpp` active production now skips protein `SC` proxy MARTINI nonbonded pairs and treats the Upside `CA` carrier as the dry-MARTINI `BB` interaction site for protein-backbone/environment pairs;
+  - `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh` no longer inject `hybrid_sc_map` into runtime stage files, so active stage logs now report `n_sc=0` and the legacy probabilistic SC proxy path is inactive;
+  - direct stage-file inspection on the shortened full workflow confirms:
+    - `6.6` has no `hybrid_sc_map`, no `martini_sc_table_potential`, and no `placement_fixed_point_only_CB`;
+    - `7.0.prepared` has `martini_sc_table_potential` and `placement_fixed_point_only_CB`, with no `hybrid_sc_map` or `rotamer`.
+- 2026-04-01: Fresh production-stage prepared files from the current `prepare_system.py` path may omit `/input/sequence`.
+  - the stage-7 SC-table injector therefore cannot assume `sequence` exists in the prepared `.up` file;
+  - the correct fallback source is the effective protein ITP passed by the workflow, using residue names from `[ atoms ]` rows with `BB` roles;
+  - after adding that fallback, the injector now also writes the normalized sequence back into the stage file for downstream consistency.
+- 2026-04-01: Stage gating for the new SC table is now verified against real generated stage files.
+  - `example/16.MARTINI/run_sim_1rkl.sh` only injects the new SC table when `stage_label=production`;
+  - observed generated files confirm the intended split:
+    - `6.6` has no `martini_sc_table_potential`, no `placement_fixed_point_only_CB`, and still retains `/input/hybrid_sc_map`;
+    - `7.0.prepared` has `martini_sc_table_potential`, `placement_fixed_point_only_CB`, no legacy `rotamer`, and no `/input/hybrid_sc_map`.
+- 2026-04-01: With the repaired repository `.venv`, both the focused production helper and the real top-level workflow now execute the new stage-7 SC-table path successfully.
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh` completed a fresh stage-7 preparation/injection plus a short `5`-step production replay from the saved `6.6` handoff;
+  - `example/16.MARTINI/run_sim_1rkl.sh` also reached stage 7 and completed a short production replay under reduced verification settings, proving that the actual workflow consumes the new stage-7 injector path.
+- 2026-04-01: Shortened 6.x relaxation remains a poor physical benchmark even though the stage-7 wiring is correct.
+  - a reduced full-workflow verification run with `20`-step stages reached stage 7 successfully, but stages `6.4-6.6` still developed enormous MARTINI energies under those intentionally shortened pre-production settings;
+  - consequence:
+    - use the short run only as an integration/smoke check for stage gating and file wiring;
+    - use the intended relaxation horizon for any stability or thermodynamic assessment of the new force field.
+- 2026-04-01: Completed external training results are available at `/Users/yinhan/Documents/SC-training/runs/default/results/assembled/`.
+  - assembled summary confirms `18` non-empty residue sidechain types, `38` dry-MARTINI target particle types, and `684` residue-target tasks;
+  - assembled `sc_table.json` provides a uniform `96`-point radial grid per residue-target table and is sufficient to build a compact native-unit `martini.h5` without rerunning training.
+- 2026-04-01: The correct stage-7 replacement scope is narrower than “remove the old augmenter”.
+  - removing `rotamer` / `placement_fixed_scalar` / `placement_fixed_point_vector_only` is correct for the new direct SC table path;
+  - removing the full stage-7 augmenter would also remove the existing Upside backbone force nodes (`Distance3D`, `Angle`, `Dihedral_*`, rama, hbond, backbone pairs), which the user explicitly still wants summed with the new SC/dry-MARTINI force.
+  - consequence:
+    - stage 7 must still inject the Upside backbone nodes;
+    - the replacement only swaps the sidechain-specific production path for `affine_alignment`, `placement_fixed_point_only_CB`, and the new `martini_sc_table_potential`.
+- 2026-04-01: Local environment limitation for workflow verification remains active.
+  - default `/opt/homebrew/opt/python@3.14/bin/python3.14` still lacks both `h5py` and `tables`;
+  - the repository `.venv` points at a missing Homebrew Python 3.10 path in this environment, so the actual HDF5-mutating stage-7 injector and full `run_sim_1rkl.sh` execution cannot be run end to end here without repairing the Python environment first.
+  - workaround used in this pass:
+    - `martini.h5` generation is implemented through `python3 + h5import`, which works locally;
+    - injector/runtime integration was validated through syntax checks, file-structure checks, and a full C++ rebuild.
+- 2026-03-31: User clarified the intended dry-MARTINI integration target for the new sidechain work:
+  - drop sidechain back-mapping as a design goal for this force-field effort;
+  - replace it with a direct dry-MARTINI sidechain-type to dry-MARTINI particle-type interaction table integrated into the current Upside hybrid framework.
+  - evaluation of `plan.md` should therefore focus on whether it provides a clean table-driven replacement for the existing SC back-mapping/coupling path, not on preserving that older path.
+- 2026-03-31: User further clarified that the replacement must also drop the current sidechain-relaxation workflow path in `example/16.MARTINI/run_sim_1rkl.sh`, and that benchmarking should be run on that real workflow.
+  - current workflow evidence:
+    - `example/16.MARTINI/run_sim_1rkl.sh` still defines and writes production SC relaxation/control attrs under `/input/hybrid_control` (`sc_env_lj_force_cap`, `sc_env_coul_force_cap`, `sc_env_relax_steps`, `sc_env_backbone_hold_steps`, `sc_env_po4_z_hold_steps`, `sc_env_relax_dt`, `sc_env_restraint_k`, `sc_env_max_displacement`, PO4 clamp controls, SC energy dump controls);
+    - the same script still injects stage-7 `rotamer`, `placement_fixed_scalar`, `placement_fixed_point_vector_only`, and `affine_alignment` nodes through `augment_production_rotamer_nodes(...)`;
+    - `example/16.MARTINI/test_prod_run_sim_1rkl.sh` mirrors the same SC-relaxation control surface, so it is only a smoke helper for the current design, not the authoritative benchmark target for the replacement architecture.
+  - consequence for plan review:
+    - if the new force field removes SC back-mapping/relaxation entirely, both the runtime SC path and the workflow-side stage-7 augmentation/control wiring must be removed or bypassed together;
+    - performance/stability benchmarking should use the full `run_sim_1rkl.sh` workflow (real handoff, real stage-7 preparation, real horizon), not only short helper probes.
+- 2026-03-31: New `SC-training/` workflow implementation findings:
+  - `example/16.MARTINI/martinize.py` can be imported safely as a Python module for forcefield metadata without triggering CLI execution; the `martini22` class provides reusable canonical residue sidechain bead definitions.
+  - `example/16.MARTINI/ff_dry/dry_martini_v2.1.itp` provides a complete `atomtypes` + `nonbond_params` source sufficient to generate first-pass residue-target training tasks directly from repository data.
+  - the implemented first-pass workflow currently produces `18` non-empty canonical residue sidechain types against `38` dry-MARTINI target particle types, for `684` residue-target tasks total.
+  - the workflow now samples target positions over spherical shells around the sidechain center, but still assigns isotropic shell energies because explicit residue-sidechain geometry reconstruction is not yet part of the baseline model (`sum_beadwise_colocated_spherical_shells`).
+  - benchmark orchestration now targets `example/16.MARTINI/run_sim_1rkl.sh`, but actual consumption of the assembled SC table still requires separate runtime integration in `src/martini.cpp`.
+- 2026-03-31: User corrected the default SC-training target scope back to the full bundled dry-MARTINI particle-type list:
+  - default manifest generation should include all `38` dry-MARTINI particle types present in `SC-training/data/dry_martini_v2.1.itp`, including the `S*` and `AC*` types, not just a filtered non-ring subset;
+  - for the current sidechain definitions that means the complete table remains `18 x 38 = 684` residue-target tasks.
+- 2026-03-31: Slurm parallelization check for `SC-training/`:
+  - the actual training execution path is a Slurm array job, not a serial loop:
+    - generated `train_array.sbatch` uses `#SBATCH --array=0-683` for the current manifest;
+    - each array element executes exactly one task through `workflow.py run-array-task --round-manifest ... --task-id "$SLURM_ARRAY_TASK_ID"`;
+    - result assembly is staged as a separate dependent collector job/script via `assemble-results`.
+  - verification also exposed a launcher bug:
+    - both `SC-training/run_local.sh` and `SC-training/submit_remote_round.sh` sourced repo-root `source.sh` under `set -u`, which could abort immediately when `MY_PYTHON` was unset in the parent environment;
+    - the wrappers now seed `MY_PYTHON` from the chosen interpreter path when needed and temporarily relax `nounset` while sourcing `source.sh`.
+- 2026-03-31: User-reported Midway launcher failure exposed a second Slurm wrapper bug:
+  - when `submit_remote_round.sh` itself is executed under `sbatch`, `dirname "$0"` can resolve to Slurm's spool copy under `/var/spool/slurm/...` rather than the real `SC-training` directory;
+  - that made the default `BASE_DIR` fall back under the spool tree (`.../runs/default`), which fails with permission errors and also breaks relative lookup of `workflow.py`;
+  - the wrappers now resolve `SCRIPT_DIR` by searching for a directory that actually contains `workflow.py`, preferring the real submit location from `SLURM_SUBMIT_DIR` and `SLURM_SUBMIT_DIR/SC-training` when present;
+  - simulated spool-copy execution verified both common submission styles:
+    - `sbatch submit_remote_round.sh` from inside `SC-training/`;
+    - `sbatch SC-training/submit_remote_round.sh` from the repository root.
+- 2026-03-31: Double-check of the current MARTINI runtime against the new SC-table requirements:
+  - force symmetry / two-way force is already the relevant runtime pattern:
+    - direct pair evaluation uses `gi = -force`, `gj = force` before accumulation;
+    - the probabilistic SC-env path computes equal-and-opposite `proxy_grad` and `env_grad`, applies the environment contribution directly to the dry/environment atom, and later projects the SC-side gradient back through `hybrid_sc_map`;
+    - `project_sc_gradient_if_active(...)` and `project_bb_gradient_if_active(...)` both use additive gradient updates, so MARTINI feedback is summed with existing Upside forces rather than replacing them.
+  - current protein-pair policy in `src/martini.cpp` excludes `BB-BB` and `SC-SC` MARTINI nonbonded interactions and only allows `BB-SC` for the same residue.
+  - consequence for the replacement architecture:
+    - the new SC/dry table should target non-protein dry-MARTINI particles and project its feedback onto protein carriers;
+    - backbone dry-`BB`/`CA` to surrounding dry-particle coupling should remain a separate backbone/environment path;
+    - direct protein internal SC-backbone interactions should not be reintroduced through the new table.
+- 2026-03-31: Dry-MARTINI unit-contract finding for training vs simulation:
+  - user corrected the desired design after that review:
+    - training should stay in native dry-MARTINI units only;
+    - simulation should use explicit unit-conversion parameters instead of hardcoded conversion numbers.
+  - current corrected state:
+    - `SC-training/workflow.py` records native-unit policy only and no longer emits baked Upside conversion values;
+    - `example/16.MARTINI/prepare_system_lib.py` now requires explicit simulation env vars `UPSIDE_MARTINI_ENERGY_CONVERSION` and `UPSIDE_MARTINI_LENGTH_CONVERSION`, then writes the corresponding attrs (`energy_conversion_kj_per_eup`, `length_conversion_angstrom_per_nm`, `coulomb_constant_native_kj_mol_nm_e2`) into `martini_potential`;
+    - `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh` now fail early if those required conversion parameters are not provided;
+    - `src/martini.cpp` now derives runtime Coulomb scaling from those attrs instead of hardcoding `31.775347952181`.
+- 2026-03-31: Portability check for uploading only `SC-training/`:
+  - before this pass, the workflow was not actually self-contained:
+    - defaults still pointed at `example/16.MARTINI/martinize.py` and `example/16.MARTINI/ff_dry/dry_martini_v2.1.itp`;
+    - `run_local.sh`, `submit_remote_round.sh`, and generated Slurm scripts still required repo-root `.venv` and `source.sh`.
+  - current state after the portability patch:
+    - `SC-training/data/dry_martini_v2.1.itp` now bundles the dry-MARTINI nonbond parameter source used by training;
+    - `SC-training/data/martini22_sidechains.json` now bundles the martini22 canonical residue sidechain bead definitions needed for task generation;
+    - `workflow.py` now defaults to those bundled data files and can load sidechain definitions from JSON directly;
+    - local and Slurm launchers now work without parent-repo environment files for training, using `python3` by default and optional local `.venv` activation if present.
+  - residual limitation:
+    - the optional benchmark hook still points to `example/16.MARTINI/run_sim_1rkl.sh`, so uploading only `SC-training/` is sufficient for training and Slurm staging but not for benchmark execution.
 - Delayed production instability is reproducible from the saved baseline stage-7 log:
   - file: `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/logs/stage_7.0.log`
   - reported values match the user's failure window exactly:
@@ -77,6 +202,36 @@
   - because `O` contributes about `0.2963` of each `BB` COM weight, that is a real correctness issue, but fixing it cleanly requires projecting `O` feedback through the `N/CA/C -> O` reconstruction map rather than merely freezing `O`.
 
 ## Lessons
+- 2026-04-01: When the user asks for native-unit preservation, inspect the staged arrays directly rather than trusting comments or historical unit conventions.
+  - Working rule: for mass/unit corrections, verify the actual HDF5 payloads and separate physical dry-MARTINI particles from appended bookkeeping/reference rows before declaring the unit contract fixed.
+- 2026-04-01: When the user says a proxy carrier mapping must collapse to one carrier, audit the generated HDF5 payloads as well as the force code.
+  - Working rule: for hybrid mapping changes, verify the raw exported map, an early runtime stage file, and the final active stage file. It is not enough to change the runtime pair-force logic if the staged `hybrid_bb_map` still carries legacy active slots.
+- 2026-04-01: In shell-driven workflows, a default assignment is not enough when downstream Python reads `os.environ`.
+  - Working rule: if a child process depends on a variable, set workflow defaults with `export`, not a plain shell assignment, or the subprocess will still see the variable as missing.
+- 2026-04-01: When making workflow unit defaults match the documented contract, trace every required conversion gate, not just the one the user mentioned first.
+  - Working rule: if a runtime path requires both energy and length conversions, do not stop after defaulting one of them; check the startup guards and defaults together so the workflow is actually runnable with the documented unit contract.
+- 2026-04-01: Do not call a direct-Upside replacement complete while legacy runtime stage artifacts still exist.
+  - Working rule: after replacing a proxy-based hybrid force path, verify both the runtime math and the staged HDF5 payloads/logs. If stage files still carry old groups like `hybrid_sc_map` or runtime logs still report active SC proxy rows, the old path has not been fully removed from the actual workflow.
+- 2026-04-01: When replacing a subsystem inside a stage-specific workflow, separate “sidechain path” from “everything the old helper happened to inject”.
+  - Working rule: before deleting or bypassing a stage helper, enumerate which injected nodes belong to the user’s replacement target and which ones provide still-required physics; otherwise it is easy to delete the old sidechain path and accidentally delete the backbone force field with it.
+- 2026-03-31: When the user corrects the target architecture, re-evaluate the plan against the corrected end state immediately.
+  - Working rule: if the user says an existing subsystem is being removed or replaced, stop judging the proposal by compatibility with that subsystem and instead separate reusable infrastructure from obsolete design assumptions.
+- 2026-03-31: When the user says a feature is being dropped, include the workflow scaffolding and benchmark path in that scope check.
+  - Working rule: verify not just the C++ mechanism but also the driver scripts, injected HDF5 attrs/nodes, and the benchmark entrypoint, otherwise a removed subsystem may still be exercised by the nominal workflow.
+- 2026-03-31: When the user tightens force semantics, verify both mechanics and units end to end.
+  - Working rule: for hybrid interaction changes, check Newton-pair symmetry, the exact accumulation point where forces re-enter the protein coordinates, the exclusion rules for internal protein pairs, and the training-to-runtime unit contract in the same pass.
+- 2026-03-31: When the user rejects a baked numeric contract, remove it from both metadata and runtime.
+  - Working rule: if the user says a conversion must be parameterized, do not leave the old numbers lingering in manifests, docs, or runtime defaults and call the design fixed; trace the value through generation, stored attrs, and evaluation code.
+- 2026-03-31: Parameterized does not mean "parameter with a baked fallback".
+  - Working rule: if the user requires a value to be supplied as a parameter, do not hide the old constant behind a default; require the parameter explicitly or make the fallback behavior clearly legacy-only.
+- 2026-03-31: A workflow is not portable just because it lives in one folder.
+  - Working rule: when a user intends to upload a subtree independently, verify it from a standalone copied folder and trace defaults, bundled data, launcher scripts, and generated batch scripts for hidden parent-repo dependencies before calling it self-contained.
+- 2026-03-31: Do not narrow a domain table default with an ad hoc subtype filter when the authoritative forcefield source is already available.
+  - Working rule: if the workflow is supposed to build the complete forcefield table, default to the full bundled type list unless the user specifies an explicit subset, and treat any user-provided type list as the contract to validate against.
+- 2026-03-31: A wrapper-level verification is not complete until the canonical entrypoint survives its own environment setup.
+  - Working rule: when checking a staged workflow, run the top-level launcher itself at least once instead of only the underlying Python function, because shell-layer `set -u` / activation / environment sourcing bugs can invalidate an otherwise-correct execution model.
+- 2026-03-31: Slurm spool copies make `$0` an unsafe source of workspace paths.
+  - Working rule: for batch launchers, do not derive persistent workflow directories from `dirname "$0"` alone; prefer explicit submit-directory hints such as `SLURM_SUBMIT_DIR` and validate candidates by checking for expected workflow files.
 - 2026-03-20: A production-stage fix is not validated by a short replay alone when the user reports a delayed failure at a later step count.
   - Working rule: if the user gives a later failure horizon (for example `10000` steps after a `5000`-step smoke passed), extend verification to that horizon or a targeted replay that reaches the same instability before calling the issue fixed.
 - 2026-03-20: A mechanistic source-level fix is still not validated if the user reruns the actual workflow and reproduces the same long-horizon log.

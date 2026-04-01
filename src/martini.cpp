@@ -294,9 +294,12 @@ struct HybridRuntimeState {
     size_t n_env = 0;
     std::vector<int> bb_residue_index;
     std::vector<int> bb_atom_index;
+    std::vector<int> bb_ca_atom_index;
+    std::vector<int> bb_proxy_to_ca_atom;
     std::vector<std::array<int,4>> atom_indices;
     std::vector<std::array<int,4>> atom_mask;
     std::vector<std::array<float,4>> weights;
+    std::vector<std::array<int,4>> bb_reference_runtime_atom_indices;
     std::vector<std::array<std::array<float,3>,4>> bb_reference_atom_coords;
     std::vector<int> protein_membership;
     std::vector<int> atom_residue_id;
@@ -353,6 +356,10 @@ struct HybridRuntimeState {
     float sc_env_last_logged_lj = 0.f;
     float sc_env_last_logged_coul = 0.f;
     uint64_t sc_env_log_counter = 0;
+    bool current_coupling_align_valid = false;
+    bool current_coupling_align_enabled = false;
+    float current_coupling_align_R[3][3] = {{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}};
+    std::array<float,3> current_coupling_align_t{{0.f, 0.f, 0.f}};
     float nonprotein_hs_force_cap = 100.0f;
     float nonprotein_hs_potential_cap = 5000.0f;
     std::vector<std::array<float,3>> prev_bb_pos;
@@ -364,16 +371,26 @@ struct HybridRuntimeState {
 static std::map<DerivEngine*, std::shared_ptr<HybridRuntimeState>> g_hybrid_state;
 static std::map<const CoordNode*, std::shared_ptr<HybridRuntimeState>> g_hybrid_state_by_coord;
 
-static std::vector<int> active_virtual_bb_fixed_atoms(const HybridRuntimeState& st) {
+static std::vector<int> active_legacy_protein_proxy_fixed_atoms(const HybridRuntimeState& st) {
     std::vector<int> atoms;
     if(!st.enabled || !st.active) return atoms;
-    atoms.reserve(st.bb_atom_index.size());
-    for(int atom_idx : st.bb_atom_index) {
-        if(atom_idx >= 0) atoms.push_back(atom_idx);
+    atoms.reserve(st.protein_membership.size());
+    for(size_t atom_idx = 0; atom_idx < st.protein_membership.size(); ++atom_idx) {
+        if(st.protein_membership[atom_idx] < 0) continue;
+        if(atom_idx >= st.atom_role_class.size()) continue;
+        auto role = st.atom_role_class[atom_idx];
+        if(role == ROLE_BB || role == ROLE_SC) {
+            atoms.push_back(static_cast<int>(atom_idx));
+        }
     }
     std::sort(atoms.begin(), atoms.end());
     atoms.erase(std::unique(atoms.begin(), atoms.end()), atoms.end());
     return atoms;
+}
+
+static inline int direct_ca_atom_for_bb_proxy(const HybridRuntimeState& st, int bb_proxy_atom) {
+    if(bb_proxy_atom < 0 || bb_proxy_atom >= static_cast<int>(st.bb_proxy_to_ca_atom.size())) return -1;
+    return st.bb_proxy_to_ca_atom[static_cast<size_t>(bb_proxy_atom)];
 }
 static std::string trim_h5_string(const std::string& in);
 
@@ -1063,9 +1080,11 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         out.n_bb = atom_idx_shape[0];
         out.bb_residue_index.assign(out.n_bb, -1);
         out.bb_atom_index.assign(out.n_bb, -1);
+        out.bb_ca_atom_index.assign(out.n_bb, -1);
         out.atom_indices.assign(out.n_bb, std::array<int,4>{{-1,-1,-1,-1}});
         out.atom_mask.assign(out.n_bb, std::array<int,4>{{0,0,0,0}});
         out.weights.assign(out.n_bb, std::array<float,4>{{0.f,0.f,0.f,0.f}});
+        out.bb_reference_runtime_atom_indices.assign(out.n_bb, std::array<int,4>{{-1,-1,-1,-1}});
         out.bb_reference_atom_coords.assign(
             out.n_bb,
             std::array<std::array<float,3>,4>{{
@@ -1087,6 +1106,18 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         traverse_dset<2,float>(bb.get(), "weights", [&](size_t i, size_t j, float v) {
             out.weights[i][j] = v;
         });
+        if(h5_exists(bb.get(), "reference_atom_indices")) {
+            auto ref_idx_shape = get_dset_size(2, bb.get(), "reference_atom_indices");
+            if(ref_idx_shape[0] != out.n_bb || ref_idx_shape[1] != 4) {
+                throw string("Hybrid BB reference_atom_indices must have shape (n_bb,4)");
+            }
+            int ref_offset = read_attribute<int>(bb.get(), ".", "reference_index_offset", -1);
+            traverse_dset<2,int>(bb.get(), "reference_atom_indices", [&](size_t i, size_t j, int v) {
+                if(v >= 0 && ref_offset >= 0) {
+                    out.bb_reference_runtime_atom_indices[i][j] = ref_offset + v;
+                }
+            });
+        }
         if(h5_exists(bb.get(), "reference_atom_coords")) {
             auto ref_shape = get_dset_size(3, bb.get(), "reference_atom_coords");
             if(ref_shape[0] != out.n_bb || ref_shape[1] != 4 || ref_shape[2] != 3) {
@@ -1310,6 +1341,14 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     if(!out.protein_membership.empty()) {
         for(size_t k = 0; k < out.n_bb; ++k) {
             int bb = out.bb_atom_index[k];
+            int ca = (out.atom_mask[k][1] != 0) ? out.atom_indices[k][1] : -1;
+            out.bb_ca_atom_index[k] = ca;
+            if(out.atom_mask[k][0] != 0 || out.atom_mask[k][2] != 0 || out.atom_mask[k][3] != 0) {
+                throw string("Hybrid BB direct mapping expects CA-only atom_indices/atom_mask/weights");
+            }
+            if(out.atom_mask[k][1] == 0 || out.weights[k][1] != 1.f) {
+                throw string("Hybrid BB direct mapping expects CA target weight 1.0 at atom_indices[:,1]");
+            }
             if(bb >= 0) {
                 if(bb >= n_atom) {
                     throw string("Hybrid BB proxy index out of bounds");
@@ -1317,6 +1356,12 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
                 if(out.protein_membership[bb] < 0) {
                     throw string("Hybrid BB proxy index must be protein atom");
                 }
+            }
+            if(ca < 0 || ca >= n_atom) {
+                throw string("Hybrid BB mapping requires a valid CA carrier index");
+            }
+            if(out.protein_membership[ca] < 0) {
+                throw string("Hybrid BB CA carrier index must be protein atom");
             }
             for(int d = 0; d < 4; ++d) {
                 if(out.atom_mask[k][d] == 0) continue;
@@ -1327,6 +1372,15 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
                 if(out.protein_membership[ai] < 0) {
                     throw string("Hybrid BB target index must be protein atom");
                 }
+            }
+        }
+
+        out.bb_proxy_to_ca_atom.assign(static_cast<size_t>(n_atom), -1);
+        for(size_t k = 0; k < out.n_bb; ++k) {
+            int bb = out.bb_atom_index[k];
+            int ca = out.bb_ca_atom_index[k];
+            if(bb >= 0 && bb < n_atom && ca >= 0 && ca < n_atom) {
+                out.bb_proxy_to_ca_atom[static_cast<size_t>(bb)] = ca;
             }
         }
 
@@ -1391,6 +1445,8 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->sc_env_last_logged_coul = 0.f;
         st->sc_env_log_counter = 0;
         st->sc_env_transition_step = 0;
+        st->current_coupling_align_valid = false;
+        st->current_coupling_align_enabled = false;
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
         return;
@@ -1411,12 +1467,14 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->sc_env_last_logged_coul = 0.f;
         st->sc_env_log_counter = 0;
         st->sc_env_transition_step = 0;
+        st->current_coupling_align_valid = false;
+        st->current_coupling_align_enabled = false;
     }
     if(st->preprod_rigid && !st->active) {
         martini_fix_rigid::set_dynamic_fixed_atoms(*engine, st->preprod_fixed_atom_indices);
         martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->preprod_z_fixed_atom_indices);
     } else {
-        martini_fix_rigid::set_dynamic_fixed_atoms(*engine, active_virtual_bb_fixed_atoms(*st));
+        martini_fix_rigid::set_dynamic_fixed_atoms(*engine, active_legacy_protein_proxy_fixed_atoms(*st));
         if(active_sc_env_po4_z_hold_enabled(*st)) {
             martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->sc_env_po4_z_hold_atom_indices);
         } else {
@@ -1565,7 +1623,7 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
         martini_fix_rigid::set_dynamic_fixed_atoms(engine, st->preprod_fixed_atom_indices);
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
     } else {
-        martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_virtual_bb_fixed_atoms(*st));
+        martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_legacy_protein_proxy_fixed_atoms(*st));
         if(active_sc_env_po4_z_hold_enabled(*st)) {
             martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->sc_env_po4_z_hold_atom_indices);
         } else {
@@ -1621,7 +1679,7 @@ void refresh_transition_holds_for_engine(DerivEngine& engine) {
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
         return;
     }
-    martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_virtual_bb_fixed_atoms(*st));
+    martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_legacy_protein_proxy_fixed_atoms(*st));
     if(st->enabled && st->active &&
        st->sc_env_transition_step < std::numeric_limits<uint64_t>::max()) {
         st->sc_env_transition_step += 1;
@@ -1818,9 +1876,10 @@ static inline void mat_transpose(const float A[3][3], float AT[3][3]) {
 static void refresh_backbone_o_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom) {
     if(!st.enabled || !st.active) return;
     if(st.bb_reference_atom_coords.size() != st.n_bb) return;
+    if(st.bb_reference_runtime_atom_indices.size() != st.n_bb) return;
 
     for(size_t k = 0; k < st.n_bb; ++k) {
-        const auto& atom_idx = st.atom_indices[k];
+        const auto& atom_idx = st.bb_reference_runtime_atom_indices[k];
         const int n_idx = atom_idx[0];
         const int ca_idx = atom_idx[1];
         const int c_idx = atom_idx[2];
@@ -2550,7 +2609,7 @@ struct DihedralSpring : public PotentialNode
         std::cout << "  Spline range: " << dihedral_min << " to " << dihedral_max << " radians" << std::endl;
     }
 
-    virtual void compute_value(ComputeMode mode) {
+    virtual void compute_value(ComputeMode mode) override {
         Timer timer(string("dihedral_spring"));
 
         float* posc = pos.output.x.get();
@@ -2684,6 +2743,10 @@ struct MartiniPotential : public PotentialNode
     
     float epsilon, sigma, lj_cutoff, coul_cutoff;
     bool force_cap;
+    float energy_conversion_kj_per_eup;
+    float length_conversion_angstrom_per_nm;
+    float coulomb_constant_native_kj_mol_nm_e2;
+    float coulomb_k;
     bool coulomb_soften;
     float slater_alpha;
     bool ewald_enabled;
@@ -2734,9 +2797,26 @@ struct MartiniPotential : public PotentialNode
         sigma       = read_attribute<float>(grp, ".", "sigma");  
         lj_cutoff   = read_attribute<float>(grp, ".", "lj_cutoff");
         coul_cutoff = read_attribute<float>(grp, ".", "coul_cutoff");
-        // dielectric constant is now included in the Coulomb k constant (31.775347952181)
-        
-        // Coulomb constant is now hardcoded as 31.775347952181 in the potential calculation
+        if(!attribute_exists(grp, ".", "energy_conversion_kj_per_eup") ||
+           !attribute_exists(grp, ".", "length_conversion_angstrom_per_nm") ||
+           !attribute_exists(grp, ".", "coulomb_constant_native_kj_mol_nm_e2")) {
+            throw string("martini_potential requires explicit unit-conversion attrs: "
+                         "energy_conversion_kj_per_eup, length_conversion_angstrom_per_nm, "
+                         "coulomb_constant_native_kj_mol_nm_e2");
+        }
+        energy_conversion_kj_per_eup =
+            read_attribute<float>(grp, ".", "energy_conversion_kj_per_eup");
+        length_conversion_angstrom_per_nm =
+            read_attribute<float>(grp, ".", "length_conversion_angstrom_per_nm");
+        coulomb_constant_native_kj_mol_nm_e2 =
+            read_attribute<float>(grp, ".", "coulomb_constant_native_kj_mol_nm_e2");
+        if(!(energy_conversion_kj_per_eup > 0.f) || !(length_conversion_angstrom_per_nm > 0.f)) {
+            throw string("martini_potential unit-conversion attrs must be positive");
+        }
+        coulomb_k =
+            coulomb_constant_native_kj_mol_nm_e2 *
+            (length_conversion_angstrom_per_nm / energy_conversion_kj_per_eup);
+
         force_cap = true;
         if(attribute_exists(grp, ".", "force_cap")) {
             force_cap = read_attribute<int>(grp, ".", "force_cap") != 0;
@@ -3052,8 +3132,8 @@ struct MartiniPotential : public PotentialNode
                 float r = coul_r_min + i * (coul_r_max - coul_r_min) / 999.0f;
                 if(r == 0.0f) r = 1.0e-6f;
 
-                // Coulomb potential: V = k * qq / r, where k = 31.775347952181 (includes epsilon_r=15)
-                float coulomb_k = 31.775347952181f;
+                // Coulomb potential in simulation units derived from native
+                // dry-MARTINI units through explicit node attrs.
                 float potential = coulomb_k * qq / r;
 
                 // Apply Ewald erfc screening if enabled
@@ -3136,7 +3216,14 @@ struct MartiniPotential : public PotentialNode
                 float qq = coulomb_pair.first;
                 const auto& spline = coulomb_pair.second;
 
-                out << "# Coulomb Spline\n# q1q2=" << qq << ", k=31.775347952181, r_min=" << coul_r_min << ", r_max=" << coul_r_max << ", softened=" << (coulomb_soften?1:0) << ", slater_alpha=" << slater_alpha << ", ewald=" << (ewald_enabled?1:0) << ", ewald_alpha=" << ewald_alpha << "\n";
+                out << "# Coulomb Spline\n# q1q2=" << qq
+                    << ", k=" << coulomb_k
+                    << ", r_min=" << coul_r_min
+                    << ", r_max=" << coul_r_max
+                    << ", softened=" << (coulomb_soften?1:0)
+                    << ", slater_alpha=" << slater_alpha
+                    << ", ewald=" << (ewald_enabled?1:0)
+                    << ", ewald_alpha=" << ewald_alpha << "\n";
                 out << "# r potential\n";
 
                 int n_pts = 10;
@@ -3183,23 +3270,25 @@ struct MartiniPotential : public PotentialNode
         std::cout << "MARTINI: Initialized splines with 1000 knots" << std::endl;
         std::cout << "  LJ range: " << lj_r_min << " to " << lj_r_max << " Angstroms" << std::endl;
         std::cout << "  Coulomb range: " << coul_r_min << " to " << coul_r_max << " Angstroms" << std::endl;
-        std::cout << "  Coulomb k: 31.775347952181 (includes epsilon_r=15)" << std::endl;
+        std::cout << "  Coulomb k: " << coulomb_k
+                  << " (from native k=" << coulomb_constant_native_kj_mol_nm_e2
+                  << ", energy_conversion=" << energy_conversion_kj_per_eup
+                  << ", length_conversion=" << length_conversion_angstrom_per_nm << ")"
+                  << std::endl;
         std::cout << "  Using Coulomb spline tables for electrostatic interactions" << std::endl;
 
     }
 
-    virtual void compute_value(ComputeMode mode) {
+    virtual void compute_value(ComputeMode mode) override {
         Timer timer(string("martini_potential"));
         
         VecArray pos1      = pos.output;
         VecArray pos1_sens = pos.sens;
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         auto* mutable_hybrid = static_cast<martini_hybrid::HybridRuntimeState*>(nullptr);
-        martini_hybrid::CouplingAlignmentTransform coupling_align;
         if(hybrid_state) {
-            martini_hybrid::refresh_bb_positions_if_active(*hybrid_state, pos1, n_atom);
+            martini_hybrid::refresh_backbone_o_positions_if_active(*hybrid_state, pos1, n_atom);
             mutable_hybrid = const_cast<martini_hybrid::HybridRuntimeState*>(hybrid_state.get());
-            coupling_align = martini_hybrid::build_coupling_alignment(*mutable_hybrid, pos1, n_atom);
             if(mutable_hybrid) {
                 if(mutable_hybrid->sc_env_energy_dump_enabled) {
                     mutable_hybrid->sc_env_energy_total = 0.f;
@@ -3228,9 +3317,9 @@ struct MartiniPotential : public PotentialNode
             hybrid_state &&
             hybrid_state->enabled &&
             hybrid_state->active);
-        const bool use_probabilistic_sc = (
-            active_hybrid_startup &&
-            !hybrid_state->sc_proxy_atom_index.empty());
+        // The stage-7 direct-Upside design no longer evaluates the legacy
+        // probabilistic SC proxy path inside martini_potential.
+        const bool use_probabilistic_sc = false;
         float sc_force_uncap_mix = 1.f;
         if(active_hybrid_startup && mutable_hybrid) {
             sc_force_uncap_mix = martini_hybrid::compute_sc_force_uncap_mix(*mutable_hybrid);
@@ -3358,7 +3447,6 @@ struct MartiniPotential : public PotentialNode
                     float dE_dr = coul_deriv_spline * coord_scale;
                     coul_force_mag = -dE_dr;
                 } else {
-                    float coulomb_k = 31.775347952181f;
                     coul_pot = coulomb_k * qq / dist;
                     float dV_dr = -coulomb_k * qq / (dist * dist);
                     coul_force_mag = -dV_dr;
@@ -3380,6 +3468,8 @@ struct MartiniPotential : public PotentialNode
             }
             return !(pair_potential == 0.f && mag2(pair_force) == 0.f);
         };
+
+        martini_hybrid::CouplingAlignmentTransform coupling_align;
 
         auto collect_placement_group_points = [&](int gid,
                                                   std::vector<std::array<float,3>>& pts,
@@ -3830,22 +3920,26 @@ struct MartiniPotential : public PotentialNode
             auto j_role = hybrid_state
                               ? martini_hybrid::atom_role_class_at(*hybrid_state, j)
                               : martini_hybrid::ROLE_OTHER;
-            if(i_is_protein && j_is_protein &&
-               i_role == martini_hybrid::ROLE_SC &&
-               j_role == martini_hybrid::ROLE_SC) {
+            if(active_hybrid_startup &&
+               ((i_is_protein && i_role == martini_hybrid::ROLE_SC) ||
+                (j_is_protein && j_role == martini_hybrid::ROLE_SC))) {
                 continue;
             }
 
-            if(coupling_align.enabled) {
-                if(i_is_protein) {
-                    auto p = std::array<float,3>{p1[0], p1[1], p1[2]};
-                    auto pa = martini_hybrid::vec_add(martini_hybrid::apply_rot(coupling_align.R, p), coupling_align.t);
-                    p1 = make_vec3(pa[0], pa[1], pa[2]);
+            int i_force_atom = i;
+            int j_force_atom = j;
+            if(active_hybrid_startup && i_is_protein && i_role == martini_hybrid::ROLE_BB) {
+                int ca = martini_hybrid::direct_ca_atom_for_bb_proxy(*hybrid_state, i);
+                if(ca >= 0 && ca < n_atom) {
+                    p1 = load_vec<3>(pos1, ca);
+                    i_force_atom = ca;
                 }
-                if(j_is_protein) {
-                    auto p = std::array<float,3>{p2[0], p2[1], p2[2]};
-                    auto pa = martini_hybrid::vec_add(martini_hybrid::apply_rot(coupling_align.R, p), coupling_align.t);
-                    p2 = make_vec3(pa[0], pa[1], pa[2]);
+            }
+            if(active_hybrid_startup && j_is_protein && j_role == martini_hybrid::ROLE_BB) {
+                int ca = martini_hybrid::direct_ca_atom_for_bb_proxy(*hybrid_state, j);
+                if(ca >= 0 && ca < n_atom) {
+                    p2 = load_vec<3>(pos1, ca);
+                    j_force_atom = ca;
                 }
             }
             // Optional experimental branch: treat non-protein/non-protein
@@ -3994,20 +4088,8 @@ struct MartiniPotential : public PotentialNode
 
             auto gi = -force;
             auto gj = force;
-            if(coupling_align.enabled) {
-                if(i_is_protein) {
-                    auto g = std::array<float,3>{gi[0], gi[1], gi[2]};
-                    auto gr = martini_hybrid::apply_rot_T(coupling_align.R, g);
-                    gi = make_vec3(gr[0], gr[1], gr[2]);
-                }
-                if(j_is_protein) {
-                    auto g = std::array<float,3>{gj[0], gj[1], gj[2]};
-                    auto gr = martini_hybrid::apply_rot_T(coupling_align.R, g);
-                    gj = make_vec3(gr[0], gr[1], gr[2]);
-                }
-            }
-            update_vec<3>(pos1_sens, i, gi);
-            update_vec<3>(pos1_sens, j, gj);
+            update_vec<3>(pos1_sens, i_force_atom, gi);
+            update_vec<3>(pos1_sens, j_force_atom, gj);
         }
 
         if(use_probabilistic_sc && hybrid_state &&
@@ -4224,7 +4306,6 @@ struct MartiniPotential : public PotentialNode
 
         if(hybrid_state) {
             martini_hybrid::project_sc_gradient_if_active(*hybrid_state, pos1_sens, n_atom, sc_row_proxy_grad);
-            martini_hybrid::project_bb_gradient_if_active(*hybrid_state, pos1_sens, n_atom);
         }
         if(mutable_hybrid && mutable_hybrid->sc_env_energy_dump_enabled) {
             mutable_hybrid->sc_env_energy_total = sc_env_energy_total;
@@ -4238,6 +4319,207 @@ struct MartiniPotential : public PotentialNode
     // Box dimension update methods removed - using NVT ensemble without boundaries
 };
 static RegisterNodeType<MartiniPotential, 1> martini_potential_node("martini_potential");
+
+struct MartiniScTablePotential : public PotentialNode
+{
+    int n_cb;
+    int n_env;
+    int n_restype;
+    int n_target;
+    int n_grid;
+    int n_layer;
+
+    CoordNode& pos;
+    CoordNode& cb_pos;
+
+    vector<int> cb_index;
+    vector<int> residue_table_index;
+    vector<int> env_atom_index;
+    vector<int> env_target_index;
+
+    float energy_conversion_kj_per_eup;
+    float length_conversion_angstrom_per_nm;
+    float box_x;
+    float box_y;
+    float box_z;
+
+    float grid_start_ang;
+    float grid_step_ang;
+    float cutoff_ang;
+
+    vector<float> left_value;
+    vector<float> left_slope;
+    LayeredClampedSpline1D<1> energy_spline;
+
+    MartiniScTablePotential(hid_t grp, CoordNode& pos_, CoordNode& cb_pos_):
+        PotentialNode(),
+        n_cb(get_dset_size(1, grp, "cb_index")[0]),
+        n_env(get_dset_size(1, grp, "env_atom_index")[0]),
+        n_restype(get_dset_size(3, grp, "energy_kj_mol")[0]),
+        n_target(get_dset_size(3, grp, "energy_kj_mol")[1]),
+        n_grid(get_dset_size(3, grp, "energy_kj_mol")[2]),
+        n_layer(n_restype * n_target),
+        pos(pos_),
+        cb_pos(cb_pos_),
+        cb_index(n_cb),
+        residue_table_index(n_cb),
+        env_atom_index(n_env),
+        env_target_index(n_env),
+        energy_conversion_kj_per_eup(read_attribute<float>(grp, ".", "energy_conversion_kj_per_eup")),
+        length_conversion_angstrom_per_nm(read_attribute<float>(grp, ".", "length_conversion_angstrom_per_nm")),
+        box_x(read_attribute<float>(grp, ".", "x_len")),
+        box_y(read_attribute<float>(grp, ".", "y_len")),
+        box_z(read_attribute<float>(grp, ".", "z_len")),
+        grid_start_ang(0.f),
+        grid_step_ang(0.f),
+        cutoff_ang(0.f),
+        left_value(n_layer, 0.f),
+        left_slope(n_layer, 0.f),
+        energy_spline(n_layer, n_grid)
+    {
+        check_elem_width_lower_bound(pos, 3);
+        check_elem_width_lower_bound(cb_pos, 3);
+
+        check_size(grp, "residue_table_index", n_cb);
+        check_size(grp, "env_target_index", n_env);
+        check_size(grp, "grid_nm", n_grid);
+
+        if(!(energy_conversion_kj_per_eup > 0.f) || !(length_conversion_angstrom_per_nm > 0.f)) {
+            throw string("martini_sc_table_potential unit-conversion attrs must be positive");
+        }
+        if(n_restype <= 0 || n_target <= 0 || n_grid < 2) {
+            throw string("martini_sc_table_potential requires non-empty residue/target/grid dimensions");
+        }
+
+        traverse_dset<1,int>(grp, "cb_index", [&](size_t i, int x) { cb_index[i] = x; });
+        traverse_dset<1,int>(grp, "residue_table_index", [&](size_t i, int x) { residue_table_index[i] = x; });
+        traverse_dset<1,int>(grp, "env_atom_index", [&](size_t i, int x) { env_atom_index[i] = x; });
+        traverse_dset<1,int>(grp, "env_target_index", [&](size_t i, int x) { env_target_index[i] = x; });
+
+        vector<float> grid_nm(n_grid, 0.f);
+        traverse_dset<1,float>(grp, "grid_nm", [&](size_t i, float x) { grid_nm[i] = x; });
+
+        float grid_step_nm = grid_nm[1] - grid_nm[0];
+        if(!(grid_step_nm > 0.f)) {
+            throw string("martini_sc_table_potential grid_nm must be strictly increasing");
+        }
+        for(int i = 2; i < n_grid; ++i) {
+            float step = grid_nm[i] - grid_nm[i-1];
+            if(fabsf(step - grid_step_nm) > 1e-4f * std::max(1.f, fabsf(grid_step_nm))) {
+                throw string("martini_sc_table_potential requires a uniform radial grid");
+            }
+        }
+        grid_start_ang = grid_nm[0] * length_conversion_angstrom_per_nm;
+        grid_step_ang = grid_step_nm * length_conversion_angstrom_per_nm;
+        cutoff_ang = grid_nm[n_grid-1] * length_conversion_angstrom_per_nm;
+        if(!(grid_step_ang > 0.f) || !(cutoff_ang > grid_start_ang)) {
+            throw string("martini_sc_table_potential converted radial grid is invalid");
+        }
+
+        for(int i = 0; i < n_cb; ++i) {
+            if(cb_index[i] < 0 || cb_index[i] >= cb_pos.n_elem) {
+                throw string("martini_sc_table_potential cb_index out of bounds");
+            }
+            if(residue_table_index[i] < 0 || residue_table_index[i] >= n_restype) {
+                throw string("martini_sc_table_potential residue_table_index out of bounds");
+            }
+        }
+        for(int i = 0; i < n_env; ++i) {
+            if(env_atom_index[i] < 0 || env_atom_index[i] >= pos.n_elem) {
+                throw string("martini_sc_table_potential env_atom_index out of bounds");
+            }
+            if(env_target_index[i] < 0 || env_target_index[i] >= n_target) {
+                throw string("martini_sc_table_potential env_target_index out of bounds");
+            }
+        }
+
+        vector<float> energy_native(n_layer * n_grid, 0.f);
+        traverse_dset<3,float>(grp, "energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
+            energy_native[(ir * n_target + it) * n_grid + ig] = x;
+        });
+
+        vector<double> spline_input(n_layer * n_grid, 0.0);
+        for(int layer = 0; layer < n_layer; ++layer) {
+            int base = layer * n_grid;
+            float tail = energy_native[base + (n_grid - 1)];
+            for(int ig = 0; ig < n_grid; ++ig) {
+                float value_eup = (energy_native[base + ig] - tail) / energy_conversion_kj_per_eup;
+                spline_input[base + ig] = value_eup;
+            }
+            left_value[layer] = float(spline_input[base + 0]);
+            left_slope[layer] = float((spline_input[base + 1] - spline_input[base + 0]) / double(grid_step_ang));
+        }
+        energy_spline.fit_spline(spline_input.data());
+    }
+
+    virtual void update_box_dimensions_anisotropic(float scale_xy, float scale_z) override {
+        box_x *= scale_xy;
+        box_y *= scale_xy;
+        box_z *= scale_z;
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        (void)mode;
+        Timer timer(string("martini_sc_table_potential"));
+        potential = 0.f;
+
+        auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
+        if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
+
+        VecArray posc = pos.output;
+        VecArray pos_sens = pos.sens;
+        VecArray cbc = cb_pos.output;
+        VecArray cb_sens = cb_pos.sens;
+        constexpr float kMinDistance = 1.0e-8f;
+
+        for(int icb = 0; icb < n_cb; ++icb) {
+            int cb_idx = cb_index[icb];
+            int residue_idx = residue_table_index[icb];
+            Vec<3> cbp = load_vec<3>(cbc, cb_idx);
+
+            for(int ienv = 0; ienv < n_env; ++ienv) {
+                int atom_idx = env_atom_index[ienv];
+                int target_idx = env_target_index[ienv];
+                int layer = residue_idx * n_target + target_idx;
+                if(layer < 0 || layer >= n_layer) continue;
+
+                Vec<3> envp = load_vec<3>(posc, atom_idx);
+                Vec<3> dr = cbp - envp;
+                if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
+                    dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
+                }
+
+                float dist2 = mag2(dr);
+                float dist = sqrtf(std::max(dist2, kMinDistance));
+                if(dist >= cutoff_ang) continue;
+
+                float value = 0.f;
+                float dVdr = 0.f;
+                if(dist <= grid_start_ang) {
+                    value = left_value[layer] + left_slope[layer] * (dist - grid_start_ang);
+                    dVdr = left_slope[layer];
+                } else {
+                    float spline_x = (dist - grid_start_ang) / grid_step_ang;
+                    float result[2] = {0.f, 0.f};
+                    energy_spline.evaluate_value_and_deriv(result, layer, spline_x);
+                    dVdr = result[0] / grid_step_ang;
+                    value = result[1];
+                }
+
+                if(!std::isfinite(value) || !std::isfinite(dVdr)) continue;
+                potential += value;
+
+                if(dist <= 1.0e-6f) continue;
+                Vec<3> grad_cb = (dVdr / dist) * dr;
+                Vec<3> grad_env = -grad_cb;
+
+                update_vec<3>(cb_sens, cb_idx, grad_cb);
+                update_vec<3>(pos_sens, atom_idx, grad_env);
+            }
+        }
+    }
+};
+static RegisterNodeType<MartiniScTablePotential, 2> martini_sc_table_potential_node("martini_sc_table_potential");
 
 // Bond potential using spline interpolation
 struct DistSpring : public PotentialNode
@@ -5021,6 +5303,14 @@ void update_martini_node_boxes(DerivEngine& engine, float scale_xy, float scale_
             }
             continue;
         }
+        if(is_prefix("martini_sc_table_potential", n.name)) {
+            if(auto* node = dynamic_cast<MartiniScTablePotential*>(n.computation.get())) {
+                node->box_x *= scale_xy;
+                node->box_y *= scale_xy;
+                node->box_z *= scale_z;
+            }
+            continue;
+        }
         if(is_prefix("dist_spring", n.name)) {
             if(auto* node = dynamic_cast<DistSpring*>(n.computation.get())) {
                 node->box_x *= scale_xy;
@@ -5056,6 +5346,12 @@ struct MartiniNodeRegistrar {
             add_node_creation_function("martini_potential", [](hid_t grp, const ArgList& args) {
                 check_arguments_length(args,1);
                 return new MartiniPotential(grp, *args[0]);
+            });
+        }
+        if(m.find("martini_sc_table_potential") == m.end()) {
+            add_node_creation_function("martini_sc_table_potential", [](hid_t grp, const ArgList& args) {
+                check_arguments_length(args,2);
+                return new MartiniScTablePotential(grp, *args[0], *args[1]);
             });
         }
         if(m.find("dist_spring") == m.end()) {

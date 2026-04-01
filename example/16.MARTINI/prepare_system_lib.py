@@ -910,26 +910,16 @@ def collect_bb_map(protein_aa_atoms, protein_cg_atoms):
                 aa_aligned = aa_vec @ align_rot + align_trans
                 aa_coords.append([float(aa_aligned[0]), float(aa_aligned[1]), float(aa_aligned[2])])
 
-        # Active mapping is kept in protein-AA PDB index space.
+        # Active BB force mapping is CA-only in protein-AA PDB index space.
         # Runtime conversion to stage-local indices is done during stage-file injection.
-        idxs = [-1, -1, -1, -1]
-        mask = [0, 0, 0, 0]
-        raw_weights = [0.0, 0.0, 0.0, 0.0]
-        for d, (ai, m) in enumerate(zip(aa_idxs, BB_COMPONENT_MASSES)):
-            if ai < 0:
-                continue
-            idxs[d] = int(ai)
-            mask[d] = 1
-            raw_weights[d] = float(m)
-
-        weights = [0.0, 0.0, 0.0, 0.0]
-        wsum = float(sum(raw_weights))
-        if wsum > 0.0:
-            weights = [w / wsum for w in raw_weights]
+        ca_idx = int(aa_idxs[1]) if len(aa_idxs) > 1 else -1
+        idxs = [-1, ca_idx, -1, -1]
+        mask = [0, 1 if ca_idx >= 0 else 0, 0, 0]
+        weights = [0.0, 1.0 if ca_idx >= 0 else 0.0, 0.0, 0.0]
         bb_comment = (
             f"BB residue {atom['resseq']} chain '{atom['chain']}' "
             f"ref N/CA/C/O idx={aa_idxs}; index_space=protein_aa_pdb_0based; "
-            f"align_rmsd={align_rmsd:.4f}; w={weights}"
+            f"align_rmsd={align_rmsd:.4f}; direct_target=CA"
         )
         bb_entries.append(
             {
@@ -2148,9 +2138,22 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                         f"  Please ensure DOPC angles are properly defined in the phospholipid parameter file.\n"
                         f"  Aborting to prevent incorrect simulation results.")
     
-    # Unit conversions
-    energy_conversion = 2.914952774272  # kJ/mol → E_up (kT at T=350.59K)
-    length_conversion = 10.0  # nm → Å
+    # Unit conversions for mapping native MARTINI units into the active
+    # simulation unit system. These must be provided explicitly rather than
+    # baked into the generator.
+    energy_conversion_raw = os.environ.get('UPSIDE_MARTINI_ENERGY_CONVERSION', '').strip()
+    length_conversion_raw = os.environ.get('UPSIDE_MARTINI_LENGTH_CONVERSION', '').strip()
+    if not energy_conversion_raw:
+        raise ValueError("Missing required environment variable UPSIDE_MARTINI_ENERGY_CONVERSION")
+    if not length_conversion_raw:
+        raise ValueError("Missing required environment variable UPSIDE_MARTINI_LENGTH_CONVERSION")
+    energy_conversion = float(energy_conversion_raw)
+    length_conversion = float(length_conversion_raw)
+    coulomb_constant_native = float(os.environ.get('UPSIDE_MARTINI_COULOMB_CONSTANT_NATIVE', str(138.935458 / 15.0)))
+    if energy_conversion <= 0.0:
+        raise ValueError("UPSIDE_MARTINI_ENERGY_CONVERSION must be positive")
+    if length_conversion <= 0.0:
+        raise ValueError("UPSIDE_MARTINI_LENGTH_CONVERSION must be positive")
 
     # Pressure conversion (for NPT simulations):
     # 1 atm = 101325 Pa = 101.325 kJ/m³
@@ -2644,7 +2647,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         mom_array._v_attrs.dim = 3
         mom_array._v_attrs.initialized = True
         
-        # Create mass array (required by UPSIDE)
+        # Create mass array using the native dry-MARTINI masses from the
+        # force-field profile. Do not convert them to reduced Upside mass units.
         mass = np.zeros(n_atoms, dtype='f4')
         for i, atom_type in enumerate(atom_types):
             # Get mass from force field file, raise error if not found
@@ -2653,8 +2657,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                                 f"  Available atom types with masses: {sorted(martini_masses.keys())}\n"
                                 f"  This indicates incomplete force field parameters.\n"
                                 f"  Aborting to prevent incorrect simulation results.")
-            # Divide by 12.0 for reduced mass units (1 unit = 12 g/mol)
-            mass[i] = martini_masses[atom_type] / 12.0
+            mass[i] = martini_masses[atom_type]
         
         mass_array = t.create_array(input_grp, 'mass', obj=mass)
         mass_array._v_attrs.arguments = np.array([b'mass'])
@@ -2812,8 +2815,9 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         # They will be calculated from the coefficients array after it's created
         martini_potential._v_attrs.lj_cutoff = 12.0
         martini_potential._v_attrs.coul_cutoff = 12.0
-        # dielectric constant is now included in the Coulomb k constant (31.775347952181)
-        # coulomb_constant is now hardcoded as 31.775347952181 in the C++ code
+        martini_potential._v_attrs.energy_conversion_kj_per_eup = energy_conversion
+        martini_potential._v_attrs.length_conversion_angstrom_per_nm = length_conversion
+        martini_potential._v_attrs.coulomb_constant_native_kj_mol_nm_e2 = coulomb_constant_native
         martini_potential._v_attrs.n_types = 1
         martini_potential._v_attrs.n_params = 4
         martini_potential._v_attrs.cutoff = 12.0
