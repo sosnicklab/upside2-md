@@ -1,6 +1,31 @@
 # Progress Log
 
 ## 2026-04-01
+- Audited the active stage-7 SC/dry-MARTINI interaction semantics after the probabilistic-weight / face-vector check request.
+- Verified the live stage-7 injector/runtime path is deterministic and radial:
+  - `example/16.MARTINI/inject_sc_table_stage7.py` removes legacy `rotamer`, `placement_fixed_scalar`, and `placement_fixed_point_vector_only`, then injects only `affine_alignment`, `placement_fixed_point_only_CB`, and `martini_sc_table_potential`;
+  - `src/martini.cpp` `martini_sc_table_potential` reads only CB/environment indices plus a radial energy table and evaluates interactions from scalar distance `|CB-env|`;
+  - there is no rotamer-probability input and no sidechain face/vector term in the active SC/dry coupling.
+- Verified the generated active artifact:
+  - `/tmp/legacy_cleanup_short/checkpoints/1rkl.stage_7.0.prepared.up` contains `affine_alignment`, `placement_fixed_point_only_CB`, and `martini_sc_table_potential`;
+  - the same file does not contain `rotamer` or `placement_fixed_point_vector_only`;
+  - the `martini_sc_table_potential` node arguments are exactly `['pos', 'placement_fixed_point_only_CB']`.
+- Compared against general Upside capability:
+  - `py/upside_config.py` still has a vector-aware `placement_fixed_point_vector_only_CB` path, but the current MARTINI stage-7 injector does not use it.
+- Audited the protein dry-MARTINI backbone source after the termini-charge check request.
+- Verified the active workflow source of truth:
+  - `example/16.MARTINI/run_sim_1rkl.sh` runs `martinize.py` with `MARTINIZE_FF=martini22` and no `-nt`, so fresh generated protein CG/ITP data should use charged termini by default.
+  - `example/16.MARTINI/martinize.py` confirms this behavior in code:
+    - `-nt` defaults to `False`,
+    - the log explicitly says chain termini will be charged,
+    - the first and last backbone bead types are overridden to `Qd` and `Qa`.
+- Verified the actual active generated output in `/tmp/legacy_cleanup_short/hybrid_prep/1rkl_hybrid_proa.itp`:
+  - first BB row is `Qd` with charge `+1.0000`,
+  - last BB row is `Qa` with charge `-1.0000`,
+  - internal BB rows follow `martinize.py` backbone typing (`GLU` residue 2 uses `P5` in this artifact).
+- Compared that against the checked-in fallback `example/16.MARTINI/pdb/1rkl_proa.itp`:
+  - the fallback is stale relative to current `martini22` output (`Q5` termini and `P2` for the representative internal `GLU` backbone bead instead of `Qd/Qa` and `P5`).
+  - implication: the active default workflow is correct because `MARTINIZE_ENABLE=1`, but disabling martinize would fall back to a non-equivalent old protein topology.
 - Reopened the code-removal pass after the user asked to remove legacy code instead of merely disabling it.
 - Audited the remaining legacy surface in `src/martini.cpp`, `src/box.cpp`, and `src/box.h`:
   - removed the dead probabilistic SC / rotamer / placement subsystem from `src/martini.cpp`;

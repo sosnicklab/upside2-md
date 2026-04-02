@@ -1,6 +1,38 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-02: The active stage-7 SC/dry-MARTINI simulation path is not probabilistic and does not use a separate sidechain face-vector DOF.
+  - `example/16.MARTINI/inject_sc_table_stage7.py` deletes legacy `rotamer`, `placement_fixed_scalar`, and `placement_fixed_point_vector_only` nodes, then injects only:
+    - `affine_alignment`,
+    - `placement_fixed_point_only_CB`,
+    - `martini_sc_table_potential`;
+  - the injected `martini_sc_table_potential` takes arguments `[pos, placement_fixed_point_only_CB]` and stores only:
+    - `cb_index`,
+    - `residue_table_index`,
+    - `env_atom_index`,
+    - `env_target_index`,
+    - `grid_nm`,
+    - `energy_kj_mol`,
+    - residue/target order metadata;
+  - `src/martini.cpp` then evaluates that node as a purely radial CB-to-environment table over `dist = |CB - env|`, with no rotamer probabilities, no angular term, and no sidechain orientation/face vector input;
+  - the current generated stage artifact `/tmp/legacy_cleanup_short/checkpoints/1rkl.stage_7.0.prepared.up` confirms the active potential graph contains only `affine_alignment`, `placement_fixed_point_only_CB`, and `martini_sc_table_potential` among the relevant SC nodes.
+- 2026-04-02: Upside still has a general vector-aware CB placement path, but the current stage-7 MARTINI integration does not use it.
+  - `py/upside_config.py` contains a `placement_fixed_point_vector_only_CB` path with explicit stored direction vectors;
+  - the active stage-7 injector instead uses `placement_fixed_point_only_CB`, so that vector/orientation capability is currently bypassed for the dry-MARTINI SC coupling.
+- 2026-04-02: The active protein-CG generation path uses fresh `martini22` backbone bead assignments with charged termini, but the checked-in fallback `example/16.MARTINI/pdb/1rkl_proa.itp` is stale relative to the current `martinize.py`.
+  - `example/16.MARTINI/run_sim_1rkl.sh` defaults `MARTINIZE_ENABLE=1` and regenerates the protein CG PDB/ITP through `martinize.py` before hybrid preparation;
+  - `example/16.MARTINI/martinize.py` sets charged termini by default because `-nt` defaults to `False`, logs that chain termini will be charged, and explicitly overrides the first and last backbone bead types to `Qd` / `Qa`;
+  - fresh generated output from the active workflow at `/tmp/legacy_cleanup_short/hybrid_prep/1rkl_hybrid_proa.itp` confirms:
+    - first backbone bead: `Qd`, charge `+1.0000`,
+    - last backbone bead: `Qa`, charge `-1.0000`,
+    - representative internal backbone bead: residue 2 (`GLU`) uses neutral `P5`;
+  - the checked-in fallback `example/16.MARTINI/pdb/1rkl_proa.itp` does not match that current contract:
+    - first backbone bead: `Q5`, charge `+1`,
+    - last backbone bead: `Q5`, charge `-1`,
+    - representative internal backbone bead: residue 5 (`GLU`) uses `P2`;
+  - consequence:
+    - the active default workflow is correct as long as `MARTINIZE_ENABLE=1`,
+    - the checked-in fallback ITP should not be treated as equivalent to fresh current `martini22` output.
 - 2026-04-02: The remaining legacy surface after the direct-Upside rewrite was prep-only, not runtime.
   - `example/16.MARTINI/prepare_system_lib.py` was still exporting `hybrid_sc_map` and `example/16.MARTINI/validate_hybrid_mapping.py` was still requiring it, even though the active stage-7 workflow no longer consumed that group;
   - after removing that dead path, a fresh prep artifact in `/tmp/hybrid_mapping_bb_only/hybrid_mapping.h5` validates successfully and now contains only:
