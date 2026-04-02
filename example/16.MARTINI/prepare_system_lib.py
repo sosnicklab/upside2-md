@@ -6,7 +6,6 @@ import os
 import shlex
 import subprocess
 import sys
-import heapq
 from collections import Counter, defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
@@ -275,166 +274,6 @@ def residue_group_atoms(atoms):
         key = (atom["chain"], atom["resseq"], atom["icode"], atom["resname"].upper())
         groups[key].append(atom)
     return groups
-
-
-def parse_protein_itp_atoms_and_bonds(itp_path: Optional[Path]):
-    if itp_path is None or not itp_path.exists():
-        return {}, []
-
-    atoms = {}
-    bonds = []
-    current_section = ""
-
-    with itp_path.open("r", encoding="utf-8", errors="ignore") as fh:
-        for raw in fh:
-            line = raw.split(";", 1)[0].strip()
-            if not line:
-                continue
-            if line.startswith("#"):
-                continue
-            if line.startswith("[") and line.endswith("]"):
-                current_section = line.strip("[]").strip().lower()
-                continue
-
-            parts = line.split()
-            if current_section == "atoms":
-                if len(parts) < 5:
-                    continue
-                try:
-                    idx0 = int(parts[0]) - 1
-                    resnr = int(parts[2])
-                except ValueError:
-                    continue
-                role = parts[4].upper()
-                atoms[idx0] = {"resnr": resnr, "role": role}
-            elif current_section == "bonds":
-                if len(parts) < 3:
-                    continue
-                try:
-                    ai = int(parts[0]) - 1
-                    aj = int(parts[1]) - 1
-                    func = int(parts[2])
-                except ValueError:
-                    continue
-                if func != 1:
-                    continue
-                k = 1250.0
-                if len(parts) >= 5:
-                    try:
-                        k = float(parts[4])
-                    except ValueError:
-                        k = 1250.0
-                bonds.append((ai, aj, k))
-            elif current_section == "constraints":
-                if len(parts) < 3:
-                    continue
-                try:
-                    ai = int(parts[0]) - 1
-                    aj = int(parts[1]) - 1
-                    func = int(parts[2])
-                except ValueError:
-                    continue
-                if func != 1:
-                    continue
-                bonds.append((ai, aj, 1.0e6))
-
-    return atoms, bonds
-
-
-def build_cg_to_itp_index_map(protein_cg_atoms, itp_atoms):
-    if not itp_atoms:
-        return {}, {}
-
-    itp_key_to_idx = {}
-    for idx0, meta in itp_atoms.items():
-        itp_key_to_idx[(meta["resnr"], meta["role"])] = idx0
-
-    res_seq_map = {}
-    next_seq = 1
-    cg_to_itp = {}
-    used_itp = set()
-
-    for cg_idx, atom in enumerate(protein_cg_atoms):
-        key = (atom["chain"], atom["resseq"], atom["icode"])
-        if key not in res_seq_map:
-            res_seq_map[key] = next_seq
-            next_seq += 1
-
-        role = atom["name"].strip().upper()
-        direct = (atom["resseq"], role)
-        seq_key = (res_seq_map[key], role)
-
-        itp_idx = -1
-        # Prefer sequence-order alignment first; martinize ITP often reindexes
-        # residues starting from 1 while packed PDB keeps original residue ids.
-        if seq_key in itp_key_to_idx:
-            itp_idx = itp_key_to_idx[seq_key]
-        elif direct in itp_key_to_idx:
-            itp_idx = itp_key_to_idx[direct]
-
-        if itp_idx >= 0 and itp_idx not in used_itp:
-            cg_to_itp[cg_idx] = itp_idx
-            used_itp.add(itp_idx)
-
-    itp_to_cg = {itp_idx: cg_idx for cg_idx, itp_idx in cg_to_itp.items()}
-    return cg_to_itp, itp_to_cg
-
-
-def build_bonded_bb_target_map(protein_cg_atoms, protein_itp_path: Optional[Path]):
-    itp_atoms, itp_bonds = parse_protein_itp_atoms_and_bonds(protein_itp_path)
-    if not itp_atoms or not itp_bonds:
-        return {}
-
-    _, itp_to_cg = build_cg_to_itp_index_map(protein_cg_atoms, itp_atoms)
-    if not itp_to_cg:
-        return {}
-
-    n = len(protein_cg_atoms)
-    adjacency = [[] for _ in range(n)]
-    for ai_itp, aj_itp, k in itp_bonds:
-        if ai_itp not in itp_to_cg or aj_itp not in itp_to_cg:
-            continue
-        ai = itp_to_cg[ai_itp]
-        aj = itp_to_cg[aj_itp]
-        kval = max(1.0e-6, float(k))
-        compliance = 1.0 / kval
-        adjacency[ai].append((aj, compliance))
-        adjacency[aj].append((ai, compliance))
-
-    bb_nodes = [i for i, atom in enumerate(protein_cg_atoms) if atom["name"].strip().upper() == "BB"]
-    if not bb_nodes:
-        return {}
-    bb_set = set(bb_nodes)
-
-    target_by_sc = {}
-    for sc_idx, atom in enumerate(protein_cg_atoms):
-        if atom["name"].strip().upper() == "BB":
-            continue
-
-        dist = [float("inf")] * n
-        dist[sc_idx] = 0.0
-        pq = [(0.0, sc_idx)]
-        visited = [False] * n
-        best_bb = -1
-
-        while pq:
-            d, node = heapq.heappop(pq)
-            if visited[node]:
-                continue
-            visited[node] = True
-            if node in bb_set:
-                best_bb = node
-                break
-            for nei, cost in adjacency[node]:
-                nd = d + cost
-                if nd < dist[nei]:
-                    dist[nei] = nd
-                    heapq.heappush(pq, (nd, nei))
-
-        if best_bb >= 0:
-            target_by_sc[sc_idx] = best_bb
-
-    return target_by_sc
 
 
 def tile_and_crop_bilayer_lipids(
@@ -910,16 +749,26 @@ def collect_bb_map(protein_aa_atoms, protein_cg_atoms):
                 aa_aligned = aa_vec @ align_rot + align_trans
                 aa_coords.append([float(aa_aligned[0]), float(aa_aligned[1]), float(aa_aligned[2])])
 
-        # Active BB force mapping is CA-only in protein-AA PDB index space.
+        # Active mapping is kept in protein-AA PDB index space.
         # Runtime conversion to stage-local indices is done during stage-file injection.
-        ca_idx = int(aa_idxs[1]) if len(aa_idxs) > 1 else -1
-        idxs = [-1, ca_idx, -1, -1]
-        mask = [0, 1 if ca_idx >= 0 else 0, 0, 0]
-        weights = [0.0, 1.0 if ca_idx >= 0 else 0.0, 0.0, 0.0]
+        idxs = [-1, -1, -1, -1]
+        mask = [0, 0, 0, 0]
+        raw_weights = [0.0, 0.0, 0.0, 0.0]
+        for d, (ai, m) in enumerate(zip(aa_idxs, BB_COMPONENT_MASSES)):
+            if ai < 0:
+                continue
+            idxs[d] = int(ai)
+            mask[d] = 1
+            raw_weights[d] = float(m)
+
+        weights = [0.0, 0.0, 0.0, 0.0]
+        wsum = float(sum(raw_weights))
+        if wsum > 0.0:
+            weights = [w / wsum for w in raw_weights]
         bb_comment = (
             f"BB residue {atom['resseq']} chain '{atom['chain']}' "
             f"ref N/CA/C/O idx={aa_idxs}; index_space=protein_aa_pdb_0based; "
-            f"align_rmsd={align_rmsd:.4f}; direct_target=CA"
+            f"align_rmsd={align_rmsd:.4f}; w={weights}"
         )
         bb_entries.append(
             {
@@ -938,53 +787,9 @@ def collect_bb_map(protein_aa_atoms, protein_cg_atoms):
     return bb_entries
 
 
-def collect_sc_map(protein_cg_atoms, protein_itp_path: Optional[Path] = None):
-    residue_to_bb = {}
-    for cg_idx, atom in enumerate(protein_cg_atoms):
-        if atom["name"].upper() != "BB":
-            continue
-        key = (atom["chain"], atom["resseq"], atom["icode"])
-        residue_to_bb[key] = cg_idx
-
-    bonded_bb_target = build_bonded_bb_target_map(protein_cg_atoms, protein_itp_path)
-
-    sc_entries = []
-    for cg_idx, atom in enumerate(protein_cg_atoms):
-        atom_name = atom["name"].upper()
-        if atom_name == "BB":
-            continue
-        key = (atom["chain"], atom["resseq"], atom["icode"])
-
-        # Follow the MARTINI 2.2 sidechain proxy layout directly. SC rows should
-        # reflect the coarse-grained structure rather than being gated by an
-        # all-atom residue table.
-        #
-        # Route sidechain-proxy forces to backbone proxy in MARTINI index space.
-        # Prefer bonded-topology BB assignment from martinize ITP (k-weighted shortest compliance path).
-        # Fall back to residue BB if topology mapping is unavailable.
-        target_idx = bonded_bb_target.get(cg_idx, residue_to_bb.get(key, cg_idx))
-        target_indices = [target_idx, -1, -1, -1]
-        target_weights = [1.0, 0.0, 0.0, 0.0]
-        sc_entries.append(
-            {
-                "proxy_atom_index": cg_idx,
-                "residue_index": atom["resseq"],
-                "rotamer_id": 0,
-                "rotamer_prob": 1.0,
-                "proxy_type": 0,
-                "local_pos": [0.0, 0.0, 0.0],
-                "proj_target_indices": target_indices,
-                "proj_weights": target_weights,
-                "protein_id": 0,
-            }
-        )
-    return sc_entries
-
-
 def write_hybrid_mapping_h5(
     path: Path,
     bb_entries,
-    sc_entries,
     total_martini_atoms,
     env_atom_indices,
     n_protein_atoms,
@@ -999,7 +804,6 @@ def write_hybrid_mapping_h5(
         ctrl.attrs["preprod_lipid_headgroup_roles"] = b"PO4"
         ctrl.attrs["exclude_intra_protein_martini"] = np.int8(1)
         ctrl.attrs["production_nonprotein_hard_sphere"] = np.int8(0)
-        ctrl.attrs["coupling_align_enable"] = np.int8(0)
         ctrl.attrs["coupling_align_debug"] = np.int8(0)
         ctrl.attrs["coupling_align_interval"] = np.int32(100)
         ctrl.attrs["schema_version"] = np.int32(1)
@@ -1051,49 +855,6 @@ def write_hybrid_mapping_h5(
         bb_grp.create_dataset(
             "bb_comment",
             data=np.array([b["bb_comment"] for b in bb_entries], dtype=h5py.string_dtype(encoding="utf-8")),
-        )
-
-        sc_grp = inp.create_group("hybrid_sc_map")
-        n_sc = len(sc_entries)
-        sc_grp.create_dataset(
-            "residue_index",
-            data=np.array([x["residue_index"] for x in sc_entries], dtype=np.int32),
-        )
-        sc_grp.create_dataset(
-            "rotamer_offset",
-            data=np.arange(n_sc + 1, dtype=np.int32),
-        )
-        sc_grp.create_dataset(
-            "rotamer_id",
-            data=np.array([x["rotamer_id"] for x in sc_entries], dtype=np.int32),
-        )
-        sc_grp.create_dataset(
-            "proxy_type",
-            data=np.array([x["proxy_type"] for x in sc_entries], dtype=np.int32),
-        )
-        sc_grp.create_dataset(
-            "proxy_atom_index",
-            data=np.array([x["proxy_atom_index"] for x in sc_entries], dtype=np.int32),
-        )
-        sc_grp.create_dataset(
-            "rotamer_probability",
-            data=np.array([x["rotamer_prob"] for x in sc_entries], dtype=np.float32),
-        )
-        sc_grp.create_dataset(
-            "local_pos",
-            data=np.array([x["local_pos"] for x in sc_entries], dtype=np.float32).reshape(n_sc, 3),
-        )
-        sc_grp.create_dataset(
-            "proj_target_indices",
-            data=np.array([x["proj_target_indices"] for x in sc_entries], dtype=np.int32).reshape(n_sc, 4),
-        )
-        sc_grp.create_dataset(
-            "proj_weights",
-            data=np.array([x["proj_weights"] for x in sc_entries], dtype=np.float32).reshape(n_sc, 4),
-        )
-        sc_grp.create_dataset(
-            "protein_id",
-            data=np.array([x["protein_id"] for x in sc_entries], dtype=np.int32),
         )
 
         env_grp = inp.create_group("hybrid_env_topology")
@@ -1215,16 +976,11 @@ def main():
     write_pdb(packed_pdb, all_atoms, box_lengths)
 
     bb_entries = collect_bb_map(protein_aa_atoms, protein_cg_atoms)
-    sc_entries = collect_sc_map(
-        protein_cg_atoms,
-        protein_itp_path=config.protein_itp,
-    )
     mapping_h5 = config.output_dir / "hybrid_mapping.h5"
     env_atom_indices = list(range(len(protein_cg_atoms), len(all_atoms)))
     write_hybrid_mapping_h5(
         mapping_h5,
         bb_entries=bb_entries,
-        sc_entries=sc_entries,
         total_martini_atoms=len(all_atoms),
         env_atom_indices=env_atom_indices,
         n_protein_atoms=len(protein_cg_atoms),
@@ -1256,7 +1012,6 @@ def main():
         "ion_atoms_added": int(len(ion_atoms)),
         "total_atoms": int(len(all_atoms)),
         "bb_map_entries": int(len(bb_entries)),
-        "sc_map_entries": int(len(sc_entries)),
     }
     write_summary(config.output_dir / "hybrid_prep_summary.json", summary)
 
@@ -2647,8 +2402,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         mom_array._v_attrs.dim = 3
         mom_array._v_attrs.initialized = True
         
-        # Create mass array using the native dry-MARTINI masses from the
-        # force-field profile. Do not convert them to reduced Upside mass units.
+        # Create mass array (required by UPSIDE)
         mass = np.zeros(n_atoms, dtype='f4')
         for i, atom_type in enumerate(atom_types):
             # Get mass from force field file, raise error if not found
@@ -2657,7 +2411,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                                 f"  Available atom types with masses: {sorted(martini_masses.keys())}\n"
                                 f"  This indicates incomplete force field parameters.\n"
                                 f"  Aborting to prevent incorrect simulation results.")
-            mass[i] = martini_masses[atom_type]
+            # Divide by 12.0 for reduced mass units (1 unit = 12 g/mol)
+            mass[i] = martini_masses[atom_type] / 12.0
         
         mass_array = t.create_array(input_grp, 'mass', obj=mass)
         mass_array._v_attrs.arguments = np.array([b'mass'])

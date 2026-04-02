@@ -15,9 +15,10 @@
 - Simulation-side conversion into Upside units remains parameterized:
   - the stage-7 runtime node will read explicit `energy_conversion_kj_per_eup` and `length_conversion_angstrom_per_nm` attrs;
   - no numeric unit conversion will be baked into training outputs.
-- Dry-MARTINI particle masses must stay in the native force-field units from the dry-MARTINI profile:
-  - preparation must write the original force-field masses into `/input/mass` rather than dividing by `12`;
-  - stage-file augmentation must not reintroduce reduced-unit masses for appended reference atoms.
+- Revised decision after user correction on 2026-04-02:
+  - restore the reduced simulation-mass path (`ff_mass / 12`) in preparation and stage-file augmentation;
+  - keep the weighted BB mapping revert in place;
+  - retain the scientific-notation logging improvement only as a readability fix.
 - Revised decision after user correction:
   - the stage-7 dry-MARTINI coupling must be integrated directly with Upside carriers, not evaluated on parallel protein MARTINI proxy coordinates and projected afterward.
 - Sidechain/environment coupling will remain a separate stage-7 potential node, but it must be directly Upside-carried:
@@ -28,12 +29,18 @@
 - Backbone/environment coupling must also be directly Upside-carried:
   - treat the Upside `CA` carrier as the dry-MARTINI protein `BB` interaction site;
   - keep dry-MARTINI `BB` to surrounding non-protein dry particles active, but apply the resulting force directly to `CA` and the dry particle rather than to a proxy `BB` bead followed by projection;
-  - the old weighted `BB -> N/CA/C/O` active force map is removed entirely; only `CA` remains as the active `BB` carrier, while `N/CA/C/O` reference indices are retained only for stage-7 reference geometry such as reconstructed `O` placement;
+  - revised after regression report: the old weighted `BB -> N/CA/C/O` active map has been restored for now; the attempted CA-only active BB remap has been reverted pending a deeper force-path audit;
+  - revised after the 2026-04-02 production-drift audit:
+    - direct `BB -> CA` and direct `CB` stage-7 forces must still honor the existing startup protein-feedback ramp (`sc_env_backbone_hold_steps`) instead of feeding full force back onto the protein from step `0`;
+    - stage-7 must not evaluate any protein-internal MARTINI proxy-proxy terms, because those legacy bonded/nonbonded terms only add bookkeeping energy once the protein is carried directly by Upside;
   - do not evaluate protein internal SC-backbone dry-MARTINI interactions, because those are already handled on the Upside side.
 - The workflow must remove the legacy production SC path together with its dead control surface:
   - no stage-7 `rotamer`, `placement_fixed_scalar`, or `placement_fixed_point_vector_only`;
   - no stage-7 `hybrid_sc_map` requirement;
   - no stage-7 SC-relaxation / proxy-control attributes that only served the old probabilistic proxy path.
+- Revised decision after the 2026-04-02 cleanup pass:
+  - remove the dead prep-only `hybrid_sc_map` export/validation path as well; the active workflow only needs `hybrid_control`, `hybrid_bb_map`, and `hybrid_env_topology`;
+  - `src/box.cpp` and `src/box.h` were audited during this pass and left unchanged because they no longer contain the retired stage-7 proxy/rotamer subsystem, only active box/NPT infrastructure.
 - `ALA` and `GLY` remain excluded from the new SC table because the trained library covers the current `18` non-empty canonical sidechain types; those residues still participate through the existing backbone/environment MARTINI path only.
 
 ### Execution Phases
@@ -53,6 +60,24 @@
   - that does not block the stage-7 integration itself, but any physical assessment still needs the intended relaxation horizon / benchmark settings.
 
 ### Review
+- 2026-04-02 legacy-code removal verification:
+  - physically removed the dead probabilistic SC / rotamer / placement subsystem from `src/martini.cpp` instead of leaving it compiled behind runtime gates;
+  - removed the dead prep-only `hybrid_sc_map` generation and validation path from `example/16.MARTINI/prepare_system_lib.py`, `example/16.MARTINI/prepare_system.py`, and `example/16.MARTINI/validate_hybrid_mapping.py`;
+  - audited `src/box.cpp` and `src/box.h` and left them intact because the remaining code there is still-active barostat/box plumbing rather than disabled hybrid legacy logic;
+  - verification:
+    - `cmake --build obj` passed,
+    - `python -m py_compile example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/prepare_system.py example/16.MARTINI/validate_hybrid_mapping.py` passed under `.venv`,
+    - `bash -n example/16.MARTINI/run_sim_1rkl.sh` and `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed,
+    - a fresh prep run in `/tmp/hybrid_mapping_bb_only` produced a mapping file whose `/input` group contains only `hybrid_bb_map`, `hybrid_control`, and `hybrid_env_topology`,
+    - a shortened active-workflow run in `/tmp/legacy_cleanup_short` accepted that mapping schema and completed the full current `run_sim_1rkl.sh` ladder through stage `7.0`.
+- 2026-04-02 production-drift fix verification:
+  - restored the startup protein-feedback ramp on the direct stage-7 force paths in `src/martini.cpp`:
+    - direct `BB`/environment MARTINI forces now scale only the protein-side feedback by `compute_sc_backbone_feedback_mix(...)`,
+    - `martini_sc_table_potential` now does the same for `CB` feedback while leaving the environment-side force unchanged;
+  - removed the remaining active protein-internal MARTINI proxy-proxy path during stage 7 by making `allow_protein_pair_by_rule(...)` reject all protein-proxy pairs in the active hybrid runtime;
+  - targeted replay verification from the same saved production handoff (`example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`) now stays negative through the user’s failure window:
+    - archived current run at step `2050`: `martini_potential 26387.78`, `total 26216.96`;
+    - patched replay at step `2050`: `martini_potential -25985.45`, `total -26147.28`.
 - Implemented `example/16.MARTINI/build_sc_martini_h5.py` and generated `parameters/ff_2.1/martini.h5` from the completed external `SC-training` results.
 - Implemented `example/16.MARTINI/inject_sc_table_stage7.py` so stage 7 now:
   - preserves the existing Upside backbone-node augmentation,
@@ -74,9 +99,27 @@
   - `bash -n` passed for both workflow shell scripts;
   - `cmake --build obj` passed;
   - `h5ls -r parameters/ff_2.1/martini.h5` confirmed the generated library shape.
-- Native-mass follow-up verification completed:
-  - fresh shortened `example/16.MARTINI/run_sim_1rkl.sh` outputs now store native dry-MARTINI base-particle masses in `/input/mass`, with no reduced `/12` values;
-  - direct HDF5 inspection of `1rkl.stage_6.0.up`, `1rkl.stage_7.0.prepared.up`, and `1rkl.stage_7.0.up` shows the physical dry-MARTINI particles remain at native profile masses (`72.0` and `45.0` in the current 1RKL system), while appended AA reference rows no longer use reduced-unit masses.
+- Regression revert verification completed after the user reported a broken minimization stage:
+  - reverted the attempted native-mass switch and the CA-only active BB remap;
+  - a fresh shortened `example/16.MARTINI/run_sim_1rkl.sh` run again reaches stage `6.0` with a normal minimization startup:
+    - `Initial potential energy (Upside/MARTINI/Total): 0.00/140510.94/140510.94`
+  - this replaces the broken regression signature reported by the user:
+    - `Initial potential energy (Upside/MARTINI/Total): 0.00/30400945802214465601536.00/...`
+- Native-mass-only restoration verification completed on 2026-04-02:
+  - restored the native mass path while leaving the weighted 4-carrier BB map in place;
+  - a fresh shortened `example/16.MARTINI/run_sim_1rkl.sh` run still starts stage `6.0` at:
+    - `Initial potential energy (Upside/MARTINI/Total): 0.00/140510.94/140510.94`
+  - fresh `1rkl.stage_6.0.up` in `/tmp/martini_mass_restore` again shows native dry-MARTINI mass values in `/input/mass` (`72.0` and `45.0` for the physical dry particles).
+- Reduced-mass restoration verification completed after the user reported box blow-up with original masses:
+  - restored reduced simulation masses (`ff_mass / 12`) in preparation and stage-file augmentation while leaving the scientific-notation logging change in place;
+  - a fresh shortened `example/16.MARTINI/run_sim_1rkl.sh` run in `/tmp/martini_mass_reduced` again starts stage `6.0` at:
+    - `Initial potential energy (Upside/MARTINI/Total): 0.00/140510.94/140510.94`
+  - direct HDF5 inspection of `1rkl.stage_6.0.up` confirms the reduced mass values are back in `/input/mass`:
+    - `4082` particles at `6.0`,
+    - `8` particles at `3.75`.
+- Logging/readability follow-up on 2026-04-02:
+  - the huge `martini_potential` / `total` values seen in current stage-7 logs are real runtime values, not a `printf` type mismatch or summation bug;
+  - `src/main.cpp` now formats large-magnitude energies in scientific notation for readability only.
 - Additional end-to-end verification completed after the `.venv` repair:
   - the focused production helper `example/16.MARTINI/test_prod_run_sim_1rkl.sh` now runs end to end from a real `6.6 -> 7.0` handoff, injects the new SC table successfully, and completes a short stage-7 production replay;
   - direct HDF5 inspection confirmed stage gating:

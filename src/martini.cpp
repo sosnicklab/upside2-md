@@ -274,14 +274,6 @@ enum AtomRoleClass : unsigned char {
 };
 
 struct HybridRuntimeState {
-    struct PlacementStateGroup {
-        int residue = -1;
-        int rotamer = -1;
-        int n_rotamer = 0;
-        int node_id = -1;
-        std::vector<int> placement_rows;
-    };
-
     bool has_config = false;
     bool enabled = false;
     bool active = false;
@@ -302,33 +294,11 @@ struct HybridRuntimeState {
     std::vector<std::array<int,4>> bb_reference_runtime_atom_indices;
     std::vector<std::array<std::array<float,3>,4>> bb_reference_atom_coords;
     std::vector<int> protein_membership;
-    std::vector<int> atom_residue_id;
     std::vector<unsigned char> atom_role_class;
     std::vector<unsigned char> atom_backbone_carrier_mask;
-    std::string rotamer_node_name;
-    std::string placement_node_name;
-    DerivComputation* rotamer_node = nullptr;
-    CoordNode* placement_node = nullptr;
-    std::vector<int> sc_proxy_atom_index;
-    std::vector<int> sc_residue_index;
-    std::vector<int> sc_rotamer_id;
-    std::vector<std::array<int,4>> sc_proj_target_indices;
-    std::vector<std::array<float,4>> sc_proj_weights;
-    std::vector<float> sc_rotamer_prob;
-    std::vector<std::array<float,3>> sc_local_pos;
-    std::vector<int> sc_row_bb_target;
-    std::vector<PlacementStateGroup> placement_state_groups;
-    std::unordered_map<int, std::vector<int>> placement_groups_by_residue;
-    std::unordered_map<int, int> placement_reference_group_by_residue;
-    std::vector<int> sc_row_to_placement_group;
-    std::unordered_map<int, std::vector<int>> sc_rows_by_proxy;
-    std::unordered_map<int, int> sc_proxy_limit_by_residue;
-    bool sc_local_pos_initialized = false;
-    bool coupling_align_enable = false;
     bool integration_rmsd_align_enable = true;
     bool coupling_align_debug = false;
     int coupling_align_interval = 100;
-    uint64_t coupling_align_step = 0;
     uint64_t integration_align_step = 0;
     bool has_prev_bb = false;
     bool has_prev_bb_rmsd = false;
@@ -337,11 +307,7 @@ struct HybridRuntimeState {
     int sc_env_relax_steps = 150;
     int sc_env_backbone_hold_steps = 200;
     int sc_env_po4_z_hold_steps = 150;
-    float sc_env_relax_dt = 0.002f;
-    float sc_env_restraint_k = 5.0f;
-    float sc_env_max_displacement = 2.0f;
     bool sc_env_po4_z_clamp_enabled = false;
-    std::string sc_env_po4_z_clamp_mode = "initial";
     bool sc_env_energy_dump_enabled = false;
     int sc_env_energy_dump_stride = 1;
     uint64_t sc_env_transition_step = 0;
@@ -356,10 +322,6 @@ struct HybridRuntimeState {
     float sc_env_last_logged_lj = 0.f;
     float sc_env_last_logged_coul = 0.f;
     uint64_t sc_env_log_counter = 0;
-    bool current_coupling_align_valid = false;
-    bool current_coupling_align_enabled = false;
-    float current_coupling_align_R[3][3] = {{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}};
-    std::array<float,3> current_coupling_align_t{{0.f, 0.f, 0.f}};
     float nonprotein_hs_force_cap = 100.0f;
     float nonprotein_hs_potential_cap = 5000.0f;
     std::vector<std::array<float,3>> prev_bb_pos;
@@ -371,7 +333,7 @@ struct HybridRuntimeState {
 static std::map<DerivEngine*, std::shared_ptr<HybridRuntimeState>> g_hybrid_state;
 static std::map<const CoordNode*, std::shared_ptr<HybridRuntimeState>> g_hybrid_state_by_coord;
 
-static std::vector<int> active_legacy_protein_proxy_fixed_atoms(const HybridRuntimeState& st) {
+static std::vector<int> active_protein_proxy_fixed_atoms(const HybridRuntimeState& st) {
     std::vector<int> atoms;
     if(!st.enabled || !st.active) return atoms;
     atoms.reserve(st.protein_membership.size());
@@ -393,12 +355,6 @@ static inline int direct_ca_atom_for_bb_proxy(const HybridRuntimeState& st, int 
     return st.bb_proxy_to_ca_atom[static_cast<size_t>(bb_proxy_atom)];
 }
 static std::string trim_h5_string(const std::string& in);
-
-static inline const std::vector<int>* find_sc_rows_for_proxy(const HybridRuntimeState& st, int proxy_idx) {
-    auto it = st.sc_rows_by_proxy.find(proxy_idx);
-    if(it == st.sc_rows_by_proxy.end()) return nullptr;
-    return &it->second;
-}
 
 static std::vector<std::string> split_csv_tokens(const std::string& s) {
     auto trim_token = [](const std::string& in) {
@@ -517,7 +473,6 @@ static void initialize_sc_env_po4_z_reference(
         VecArray pos,
         int n_atom) {
     if(!active_sc_env_po4_z_hold_enabled(st)) return;
-    if(st.sc_env_po4_z_clamp_mode != "initial") return;
     if(st.sc_env_po4_z_reference_initialized &&
        static_cast<int>(st.sc_env_po4_z_reference.size()) == n_atom) {
         return;
@@ -539,14 +494,6 @@ static inline bool same_protein_membership_pair(const HybridRuntimeState& st, in
     return (pi >= 0 && pj >= 0 && pi == pj);
 }
 
-static inline bool same_residue_pair(const HybridRuntimeState& st, int i, int j) {
-    if(i < 0 || j < 0) return false;
-    if(i >= (int)st.atom_residue_id.size() || j >= (int)st.atom_residue_id.size()) return false;
-    int ri = st.atom_residue_id[i];
-    int rj = st.atom_residue_id[j];
-    return (ri >= 0 && rj >= 0 && ri == rj);
-}
-
 static inline unsigned char atom_role_class_at(const HybridRuntimeState& st, int i) {
     if(i < 0 || i >= (int)st.atom_role_class.size()) return ROLE_OTHER;
     return st.atom_role_class[i];
@@ -559,14 +506,13 @@ static inline bool atom_is_backbone_carrier_at(const HybridRuntimeState& st, int
 }
 
 static inline bool allow_protein_pair_by_rule(const HybridRuntimeState& st, int i, int j) {
-    auto ri = atom_role_class_at(st, i);
-    auto rj = atom_role_class_at(st, j);
-    if(ri == ROLE_BB && rj == ROLE_BB) return false;
-    if(ri == ROLE_SC && rj == ROLE_SC) return false;
-    if((ri == ROLE_BB && rj == ROLE_SC) || (ri == ROLE_SC && rj == ROLE_BB)) {
-        return same_residue_pair(st, i, j);
-    }
-    // Any other protein-protein role combination is disallowed by default.
+    (void)st;
+    (void)i;
+    (void)j;
+    // In the direct-Upside active stage, protein internal MARTINI proxy terms
+    // are bookkeeping only. Keeping any proxy-proxy protein interaction live
+    // leaks legacy bonded/nonbonded energy into the production bucket without
+    // feeding that force back through the Upside carrier path.
     return false;
 }
 
@@ -638,362 +584,6 @@ static std::string read_string_attribute_or_default(hid_t group, const char* att
     return out.empty() ? fallback : out;
 }
 
-struct DecodedRotamerId {
-    bool valid = false;
-    int rotamer = -1;
-    int n_rotamer = 0;
-    int node_id = -1;
-};
-
-static DecodedRotamerId decode_rotamer_id_value(int encoded_id) {
-    constexpr unsigned n_bit_rotamer = 4u;
-    constexpr unsigned selector = (1u << n_bit_rotamer) - 1u;
-    unsigned id = static_cast<unsigned>(encoded_id);
-    DecodedRotamerId out;
-    out.rotamer = static_cast<int>(id & selector);
-    id >>= n_bit_rotamer;
-    out.n_rotamer = static_cast<int>(id & selector);
-    id >>= n_bit_rotamer;
-    out.node_id = static_cast<int>(id);
-    out.valid = (out.n_rotamer > 0 && out.rotamer >= 0 && out.rotamer < out.n_rotamer);
-    return out;
-}
-
-static void read_placement_state_groups(hid_t root, HybridRuntimeState& out) {
-    out.placement_state_groups.clear();
-    out.placement_groups_by_residue.clear();
-    out.placement_reference_group_by_residue.clear();
-    if(out.placement_node_name.empty()) return;
-
-    std::string grp_path = "/input/potential/" + out.placement_node_name;
-    std::string id_path = grp_path + "/id_seq";
-    std::string aff_path = grp_path + "/affine_residue";
-    if(!h5_exists(root, id_path.c_str()) || !h5_exists(root, aff_path.c_str())) return;
-
-    auto grp = open_group(root, grp_path.c_str());
-    auto id_shape = get_dset_size(1, grp.get(), "id_seq");
-    check_size(grp.get(), "affine_residue", id_shape[0]);
-
-    std::vector<int> id_seq(id_shape[0], 0);
-    std::vector<int> affine_residue(id_shape[0], -1);
-    traverse_dset<1,int>(grp.get(), "id_seq", [&](size_t i, int v) { id_seq[i] = v; });
-    traverse_dset<1,int>(grp.get(), "affine_residue", [&](size_t i, int v) { affine_residue[i] = v; });
-
-    struct Key {
-        int residue;
-        int rotamer;
-        int n_rotamer;
-        int node_id;
-        bool operator==(const Key& other) const {
-            return residue == other.residue &&
-                   rotamer == other.rotamer &&
-                   n_rotamer == other.n_rotamer &&
-                   node_id == other.node_id;
-        }
-    };
-    struct KeyHash {
-        size_t operator()(const Key& k) const {
-            size_t h = 1469598103934665603ull;
-            auto mix = [&](int x) {
-                h ^= static_cast<size_t>(x + 0x9e3779b9);
-                h *= 1099511628211ull;
-            };
-            mix(k.residue);
-            mix(k.rotamer);
-            mix(k.n_rotamer);
-            mix(k.node_id);
-            return h;
-        }
-    };
-
-    std::unordered_map<Key, int, KeyHash> key_to_group;
-    for(size_t i = 0; i < id_seq.size(); ++i) {
-        DecodedRotamerId decoded = decode_rotamer_id_value(id_seq[i]);
-        if(!decoded.valid) continue;
-        int residue = affine_residue[i];
-        if(residue < 0) continue;
-
-        Key key{residue, decoded.rotamer, decoded.n_rotamer, decoded.node_id};
-        auto it = key_to_group.find(key);
-        int group_index = -1;
-        if(it == key_to_group.end()) {
-            group_index = static_cast<int>(out.placement_state_groups.size());
-            key_to_group.emplace(key, group_index);
-            out.placement_state_groups.emplace_back();
-            auto& g = out.placement_state_groups.back();
-            g.residue = residue;
-            g.rotamer = decoded.rotamer;
-            g.n_rotamer = decoded.n_rotamer;
-            g.node_id = decoded.node_id;
-            out.placement_groups_by_residue[residue].push_back(group_index);
-        } else {
-            group_index = it->second;
-        }
-        out.placement_state_groups[group_index].placement_rows.push_back(static_cast<int>(i));
-    }
-
-    for(auto& kv : out.placement_groups_by_residue) {
-        auto& groups = kv.second;
-        std::sort(groups.begin(), groups.end(), [&](int a, int b) {
-            const auto& ga = out.placement_state_groups[a];
-            const auto& gb = out.placement_state_groups[b];
-            if(ga.rotamer != gb.rotamer) return ga.rotamer < gb.rotamer;
-            return ga.node_id < gb.node_id;
-        });
-
-        int ref_gid = groups.front();
-        for(int gid : groups) {
-            if(gid < 0 || gid >= static_cast<int>(out.placement_state_groups.size())) continue;
-            if(out.placement_state_groups[gid].rotamer == 0) {
-                ref_gid = gid;
-                break;
-            }
-        }
-        out.placement_reference_group_by_residue[kv.first] = ref_gid;
-    }
-}
-
-static void validate_exact_sc_rotamer_numbering(const HybridRuntimeState& out) {
-    for(const auto& kv : out.placement_groups_by_residue) {
-        int residue = kv.first;
-        const auto& group_ids = kv.second;
-        if(group_ids.empty()) continue;
-
-        int expected_n_rot = -1;
-        int expected_node_id = -1;
-        std::vector<int> rotamers;
-        rotamers.reserve(group_ids.size());
-
-        for(int gid : group_ids) {
-            if(gid < 0 || gid >= static_cast<int>(out.placement_state_groups.size())) {
-                throw string("Hybrid SC numbering mismatch: invalid placement group index");
-            }
-            const auto& g = out.placement_state_groups[gid];
-            if(g.residue != residue) {
-                throw string("Hybrid SC numbering mismatch: placement group residue does not match lookup residue");
-            }
-            if(g.n_rotamer <= 0 || g.rotamer < 0 || g.rotamer >= g.n_rotamer) {
-                throw string("Hybrid SC numbering mismatch: invalid rotamer state encoding in placement groups");
-            }
-            if(g.placement_rows.empty()) {
-                throw string("Hybrid SC numbering mismatch: empty placement group");
-            }
-            if(expected_n_rot < 0) {
-                expected_n_rot = g.n_rotamer;
-                expected_node_id = g.node_id;
-            } else {
-                if(g.n_rotamer != expected_n_rot) {
-                    throw string("Hybrid SC numbering mismatch: residue has inconsistent n_rotamer across placement groups");
-                }
-                if(g.node_id != expected_node_id) {
-                    throw string("Hybrid SC numbering mismatch: residue has inconsistent placement node ids");
-                }
-            }
-            rotamers.push_back(g.rotamer);
-        }
-
-        std::sort(rotamers.begin(), rotamers.end());
-        auto unique_end = std::unique(rotamers.begin(), rotamers.end());
-        if(unique_end != rotamers.end()) {
-            throw string("Hybrid SC numbering mismatch: duplicate rotamer ids detected for residue ") + to_string(residue);
-        }
-        if(static_cast<int>(rotamers.size()) != expected_n_rot) {
-            throw string("Hybrid SC numbering mismatch: residue ") + to_string(residue) +
-                  string(" is missing placement states for exact 0-based numbering");
-        }
-        for(int rot = 0; rot < expected_n_rot; ++rot) {
-            if(rotamers[rot] != rot) {
-                throw string("Hybrid SC numbering mismatch: residue ") + to_string(residue) +
-                      string(" expected rotamer id ") + to_string(rot) +
-                      string(" but found ") + to_string(rotamers[rot]);
-            }
-        }
-    }
-
-    if(out.sc_rotamer_id.empty()) return;
-    if(out.sc_residue_index.size() != out.sc_rotamer_id.size()) {
-        throw string("Hybrid SC numbering mismatch: residue and rotamer-id row counts differ");
-    }
-    if(!out.sc_row_to_placement_group.empty() &&
-       out.sc_row_to_placement_group.size() != out.sc_rotamer_id.size()) {
-        throw string("Hybrid SC numbering mismatch: row-to-placement assignments do not match SC rows");
-    }
-
-    for(size_t r = 0; r < out.sc_rotamer_id.size(); ++r) {
-        int residue = out.sc_residue_index[r];
-        int rotamer = out.sc_rotamer_id[r];
-        auto it = out.placement_groups_by_residue.find(residue);
-        if(it == out.placement_groups_by_residue.end() || it->second.empty()) continue;
-
-        bool exact_match = false;
-        for(int gid : it->second) {
-            if(gid < 0 || gid >= static_cast<int>(out.placement_state_groups.size())) continue;
-            if(out.placement_state_groups[gid].rotamer == rotamer) {
-                exact_match = true;
-                break;
-            }
-        }
-        if(!exact_match) {
-            throw string("Hybrid SC numbering mismatch: SC row rotamer id does not exist for residue ") +
-                  to_string(residue);
-        }
-
-        if(!out.sc_row_to_placement_group.empty()) {
-            int gid = out.sc_row_to_placement_group[r];
-            if(gid >= 0 && gid < static_cast<int>(out.placement_state_groups.size()) &&
-               out.placement_state_groups[gid].rotamer != rotamer) {
-                throw string("Hybrid SC numbering mismatch: runtime SC row assignment changed rotamer numbering");
-            }
-        }
-    }
-}
-
-static void rebuild_sc_rows_by_proxy(HybridRuntimeState& out) {
-    out.sc_rows_by_proxy.clear();
-    for(size_t r = 0; r < out.sc_proxy_atom_index.size(); ++r) {
-        int proxy = out.sc_proxy_atom_index[r];
-        if(proxy >= 0) out.sc_rows_by_proxy[proxy].push_back(static_cast<int>(r));
-    }
-}
-
-static bool should_expand_sc_rows_from_placement(const HybridRuntimeState& out) {
-    if(out.sc_proxy_atom_index.empty()) return false;
-    if(out.sc_residue_index.size() != out.sc_proxy_atom_index.size()) return false;
-    if(out.placement_state_groups.empty()) return false;
-
-    for(size_t r = 0; r < out.sc_residue_index.size(); ++r) {
-        if(!out.sc_rotamer_id.empty() && out.sc_rotamer_id[r] != 0) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static void assign_sc_rows_to_placement_groups(HybridRuntimeState& out) {
-    out.sc_row_to_placement_group.assign(out.sc_proxy_atom_index.size(), -1);
-    if(out.sc_proxy_atom_index.empty()) return;
-    if(out.sc_residue_index.size() != out.sc_proxy_atom_index.size()) return;
-    if(out.placement_state_groups.empty()) return;
-
-    for(size_t r = 0; r < out.sc_proxy_atom_index.size(); ++r) {
-        int resid = out.sc_residue_index[r];
-        auto it = out.placement_groups_by_residue.find(resid);
-        if(it == out.placement_groups_by_residue.end() || it->second.empty()) continue;
-
-        int desired_rotamer = (!out.sc_rotamer_id.empty() ? out.sc_rotamer_id[r] : 0);
-        int match_gid = -1;
-        for(int gid : it->second) {
-            if(gid < 0 || gid >= (int)out.placement_state_groups.size()) continue;
-            if(out.placement_state_groups[gid].rotamer == desired_rotamer) {
-                match_gid = gid;
-                break;
-            }
-        }
-        if(match_gid < 0 && it->second.size() == 1u) {
-            match_gid = it->second.front();
-        }
-        out.sc_row_to_placement_group[r] = match_gid;
-    }
-}
-
-static std::unordered_map<int, int> compute_sc_proxy_limit_from_placement(const HybridRuntimeState& out) {
-    std::unordered_map<int, int> limit_by_residue;
-    for(const auto& kv : out.placement_groups_by_residue) {
-        int resid = kv.first;
-        int min_points = std::numeric_limits<int>::max();
-        for(int gid : kv.second) {
-            if(gid < 0 || gid >= static_cast<int>(out.placement_state_groups.size())) continue;
-            const auto& g = out.placement_state_groups[gid];
-            int n_points = static_cast<int>(g.placement_rows.size());
-            if(n_points <= 0) continue;
-            min_points = std::min(min_points, n_points);
-        }
-        if(min_points != std::numeric_limits<int>::max() && min_points > 0) {
-            limit_by_residue[resid] = min_points;
-        }
-    }
-    return limit_by_residue;
-}
-
-static void expand_sc_rows_from_placement(HybridRuntimeState& out) {
-    assign_sc_rows_to_placement_groups(out);
-    out.sc_proxy_limit_by_residue = compute_sc_proxy_limit_from_placement(out);
-    if(!should_expand_sc_rows_from_placement(out)) return;
-
-    std::vector<int> proxy;
-    std::vector<int> residue;
-    std::vector<int> rotamer_id;
-    std::vector<std::array<int,4>> target;
-    std::vector<std::array<float,4>> wproj;
-    std::vector<float> prob;
-    std::vector<std::array<float,3>> lpos;
-    std::vector<int> row_to_group;
-
-    for(size_t r = 0; r < out.sc_proxy_atom_index.size(); ++r) {
-        int resid = out.sc_residue_index[r];
-        auto it = out.placement_groups_by_residue.find(resid);
-        if(it == out.placement_groups_by_residue.end() || it->second.empty()) {
-            proxy.push_back(out.sc_proxy_atom_index[r]);
-            residue.push_back(resid);
-            rotamer_id.push_back(!out.sc_rotamer_id.empty() ? out.sc_rotamer_id[r] : 0);
-            target.push_back(out.sc_proj_target_indices[r]);
-            wproj.push_back(out.sc_proj_weights[r]);
-            prob.push_back(out.sc_rotamer_prob[r]);
-            lpos.push_back(out.sc_local_pos[r]);
-            row_to_group.push_back(-1);
-            continue;
-        }
-
-        const auto& group_ids = it->second;
-        float uniform_prob = 1.0f / std::max<int>(1, group_ids.size());
-        for(int gid : group_ids) {
-            const auto& g = out.placement_state_groups[gid];
-            proxy.push_back(out.sc_proxy_atom_index[r]);
-            residue.push_back(resid);
-            rotamer_id.push_back(g.rotamer);
-            target.push_back(out.sc_proj_target_indices[r]);
-            wproj.push_back(out.sc_proj_weights[r]);
-            prob.push_back(uniform_prob);
-            lpos.push_back(out.sc_local_pos[r]);
-            row_to_group.push_back(gid);
-        }
-    }
-
-    out.sc_proxy_atom_index = std::move(proxy);
-    out.sc_residue_index = std::move(residue);
-    out.sc_rotamer_id = std::move(rotamer_id);
-    out.sc_proj_target_indices = std::move(target);
-    out.sc_proj_weights = std::move(wproj);
-    out.sc_rotamer_prob = std::move(prob);
-    out.sc_local_pos = std::move(lpos);
-    out.sc_row_to_placement_group = std::move(row_to_group);
-    rebuild_sc_rows_by_proxy(out);
-}
-
-static void build_sc_row_bb_targets(HybridRuntimeState& out) {
-    out.sc_row_bb_target.assign(out.sc_proxy_atom_index.size(), -1);
-    if(out.sc_residue_index.size() != out.sc_proxy_atom_index.size()) return;
-    if(out.bb_residue_index.empty() || out.bb_atom_index.empty()) return;
-
-    std::unordered_map<int, int> residue_to_bb;
-    residue_to_bb.reserve(out.bb_residue_index.size());
-    for(size_t k = 0; k < out.bb_residue_index.size() && k < out.bb_atom_index.size(); ++k) {
-        int resid = out.bb_residue_index[k];
-        int bb = out.bb_atom_index[k];
-        if(resid < 0 || bb < 0) continue;
-        if(residue_to_bb.find(resid) == residue_to_bb.end()) {
-            residue_to_bb[resid] = bb;
-        }
-    }
-
-    for(size_t r = 0; r < out.sc_residue_index.size(); ++r) {
-        auto it = residue_to_bb.find(out.sc_residue_index[r]);
-        if(it != residue_to_bb.end()) {
-            out.sc_row_bb_target[r] = it->second;
-        }
-    }
-}
-
 static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     HybridRuntimeState out;
 
@@ -1011,7 +601,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.production_nonprotein_hard_sphere =
         (read_attribute<int>(ctrl.get(), ".", "production_nonprotein_hard_sphere", 0) != 0);
     out.preprod_rigid = (out.preprod_mode == "rigid");
-    out.coupling_align_enable = (read_attribute<int>(ctrl.get(), ".", "coupling_align_enable", 0) != 0);
     out.integration_rmsd_align_enable =
         (read_attribute<int>(ctrl.get(), ".", "integration_rmsd_align_enable", 1) != 0);
     out.coupling_align_debug = (read_attribute<int>(ctrl.get(), ".", "coupling_align_debug", 0) != 0);
@@ -1024,13 +613,8 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         read_attribute<int>(ctrl.get(), ".", "sc_env_backbone_hold_steps", out.sc_env_backbone_hold_steps);
     out.sc_env_po4_z_hold_steps =
         read_attribute<int>(ctrl.get(), ".", "sc_env_po4_z_hold_steps", out.sc_env_po4_z_hold_steps);
-    out.sc_env_relax_dt = read_attribute<float>(ctrl.get(), ".", "sc_env_relax_dt", out.sc_env_relax_dt);
-    out.sc_env_restraint_k = read_attribute<float>(ctrl.get(), ".", "sc_env_restraint_k", out.sc_env_restraint_k);
-    out.sc_env_max_displacement = read_attribute<float>(ctrl.get(), ".", "sc_env_max_displacement", out.sc_env_max_displacement);
     out.sc_env_po4_z_clamp_enabled =
         (read_attribute<int>(ctrl.get(), ".", "sc_env_po4_z_clamp_enabled", out.sc_env_po4_z_clamp_enabled ? 1 : 0) != 0);
-    out.sc_env_po4_z_clamp_mode =
-        read_string_attribute_or_default(ctrl.get(), "sc_env_po4_z_clamp_mode", out.sc_env_po4_z_clamp_mode);
     out.sc_env_energy_dump_enabled =
         (read_attribute<int>(ctrl.get(), ".", "sc_env_energy_dump_enabled", out.sc_env_energy_dump_enabled ? 1 : 0) != 0);
     out.sc_env_energy_dump_stride =
@@ -1044,12 +628,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     if(out.sc_env_relax_steps < 1) out.sc_env_relax_steps = 1;
     if(out.sc_env_backbone_hold_steps < 0) out.sc_env_backbone_hold_steps = 0;
     if(out.sc_env_po4_z_hold_steps < 0) out.sc_env_po4_z_hold_steps = 0;
-    if(!std::isfinite(out.sc_env_relax_dt) || out.sc_env_relax_dt <= 0.f) out.sc_env_relax_dt = 0.002f;
-    if(!std::isfinite(out.sc_env_restraint_k) || out.sc_env_restraint_k < 0.f) out.sc_env_restraint_k = 0.f;
-    if(!std::isfinite(out.sc_env_max_displacement) || out.sc_env_max_displacement < 0.f) out.sc_env_max_displacement = 0.f;
-    out.sc_env_po4_z_clamp_mode = normalize_mode_token(out.sc_env_po4_z_clamp_mode);
-    if(out.sc_env_po4_z_clamp_mode.empty()) out.sc_env_po4_z_clamp_mode = "initial";
-    if(out.sc_env_po4_z_clamp_mode != "initial") out.sc_env_po4_z_clamp_mode = "initial";
     if(out.sc_env_energy_dump_stride < 1) out.sc_env_energy_dump_stride = 1;
     if(out.nonprotein_hs_force_cap < 0.f) out.nonprotein_hs_force_cap = 0.f;
     if(out.nonprotein_hs_potential_cap < 0.f) out.nonprotein_hs_potential_cap = 0.f;
@@ -1150,17 +728,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     } else {
         throw string("Hybrid mode enabled but /input/hybrid_env_topology is missing");
     }
-
-    out.atom_residue_id.assign(static_cast<size_t>(n_atom), -1);
-    if(h5_exists(root, "/input/residue_ids")) {
-        auto residue_shape = get_dset_size(1, root, "/input/residue_ids");
-        if(static_cast<int>(residue_shape[0]) == n_atom) {
-            traverse_dset<1,int>(root, "/input/residue_ids", [&](size_t i, int v) {
-                out.atom_residue_id[i] = v;
-            });
-        }
-    }
-
     out.atom_role_class.assign(static_cast<size_t>(n_atom), ROLE_OTHER);
     out.atom_backbone_carrier_mask.assign(static_cast<size_t>(n_atom), 0u);
     if(h5_exists(root, "/input/atom_roles")) {
@@ -1242,63 +809,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         }
     }
 
-    if(h5_exists(root, "/input/hybrid_sc_map")) {
-        auto sc = open_group(root, "/input/hybrid_sc_map");
-        auto rotamer_shape = get_dset_size(1, sc.get(), "rotamer_id");
-        size_t n_rot = rotamer_shape[0];
-        if(n_rot > 0) {
-            check_size(sc.get(), "proxy_atom_index", n_rot);
-            check_size(sc.get(), "rotamer_probability", n_rot);
-            check_size(sc.get(), "proj_target_indices", n_rot, 4);
-            check_size(sc.get(), "proj_weights", n_rot, 4);
-            if(h5_exists(sc.get(), "local_pos")) {
-                check_size(sc.get(), "local_pos", n_rot, 3);
-            }
-            out.sc_proxy_atom_index.assign(n_rot, -1);
-            out.sc_proj_target_indices.assign(n_rot, std::array<int,4>{{-1,-1,-1,-1}});
-            out.sc_proj_weights.assign(n_rot, std::array<float,4>{{0.f,0.f,0.f,0.f}});
-            out.sc_rotamer_prob.assign(n_rot, 0.f);
-            out.sc_local_pos.assign(n_rot, std::array<float,3>{{0.f,0.f,0.f}});
-            out.sc_residue_index.assign(n_rot, -1);
-            out.sc_rotamer_id.assign(n_rot, 0);
-
-            traverse_dset<1,int>(sc.get(), "proxy_atom_index", [&](size_t i, int v) {
-                out.sc_proxy_atom_index[i] = v;
-            });
-            traverse_dset<1,float>(sc.get(), "rotamer_probability", [&](size_t i, float v) {
-                out.sc_rotamer_prob[i] = v;
-            });
-            if(h5_exists(sc.get(), "residue_index")) {
-                check_size(sc.get(), "residue_index", n_rot);
-                traverse_dset<1,int>(sc.get(), "residue_index", [&](size_t i, int v) {
-                    out.sc_residue_index[i] = v;
-                });
-            }
-            if(h5_exists(sc.get(), "rotamer_id")) {
-                check_size(sc.get(), "rotamer_id", n_rot);
-                traverse_dset<1,int>(sc.get(), "rotamer_id", [&](size_t i, int v) {
-                    out.sc_rotamer_id[i] = v;
-                });
-            }
-            traverse_dset<2,int>(sc.get(), "proj_target_indices", [&](size_t i, size_t j, int v) {
-                out.sc_proj_target_indices[i][j] = v;
-            });
-            traverse_dset<2,float>(sc.get(), "proj_weights", [&](size_t i, size_t j, float v) {
-                out.sc_proj_weights[i][j] = v;
-            });
-            if(h5_exists(sc.get(), "local_pos")) {
-                traverse_dset<2,float>(sc.get(), "local_pos", [&](size_t i, size_t j, float v) {
-                    if(j < 3) out.sc_local_pos[i][j] = v;
-                });
-            }
-            rebuild_sc_rows_by_proxy(out);
-        }
-    }
-    read_placement_state_groups(root, out);
-    expand_sc_rows_from_placement(out);
-    build_sc_row_bb_targets(out);
-    validate_exact_sc_rotamer_numbering(out);
-
     // Fallback BB atom inference if bb_atom_index is absent.
     bool need_infer_bb = false;
     for(int idx : out.bb_atom_index) if(idx < 0) { need_infer_bb = true; break; }
@@ -1343,12 +853,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             int bb = out.bb_atom_index[k];
             int ca = (out.atom_mask[k][1] != 0) ? out.atom_indices[k][1] : -1;
             out.bb_ca_atom_index[k] = ca;
-            if(out.atom_mask[k][0] != 0 || out.atom_mask[k][2] != 0 || out.atom_mask[k][3] != 0) {
-                throw string("Hybrid BB direct mapping expects CA-only atom_indices/atom_mask/weights");
-            }
-            if(out.atom_mask[k][1] == 0 || out.weights[k][1] != 1.f) {
-                throw string("Hybrid BB direct mapping expects CA target weight 1.0 at atom_indices[:,1]");
-            }
             if(bb >= 0) {
                 if(bb >= n_atom) {
                     throw string("Hybrid BB proxy index out of bounds");
@@ -1384,39 +888,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             }
         }
 
-        for(size_t r = 0; r < out.sc_proxy_atom_index.size(); ++r) {
-            int proxy = out.sc_proxy_atom_index[r];
-            if(proxy < 0 || proxy >= n_atom) {
-                throw string("Hybrid SC proxy index out of bounds");
-            }
-            if(out.protein_membership[proxy] < 0) {
-                throw string("Hybrid SC proxy index must be protein atom");
-            }
-            bool has_explicit_target = false;
-            float wsum = 0.f;
-            for(int d = 0; d < 4; ++d) {
-                int ai = out.sc_proj_target_indices[r][d];
-                float w = out.sc_proj_weights[r][d];
-                if(ai < 0) continue;
-                if(ai >= n_atom) {
-                    throw string("Hybrid SC target index out of bounds");
-                }
-                if(out.protein_membership[ai] < 0) {
-                    throw string("Hybrid SC target index must be protein atom");
-                }
-                auto rc = atom_role_class_at(out, ai);
-                if(rc == ROLE_BB || rc == ROLE_SC) {
-                    throw string("Hybrid SC target index must be non-MARTINI carrier atom");
-                }
-                if(w > 0.f) {
-                    has_explicit_target = true;
-                    wsum += w;
-                }
-            }
-            if(!has_explicit_target || wsum <= 0.f) {
-                throw string("Hybrid SC row missing explicit nonzero projection targets");
-            }
-        }
     }
 
     return out;
@@ -1445,8 +916,6 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->sc_env_last_logged_coul = 0.f;
         st->sc_env_log_counter = 0;
         st->sc_env_transition_step = 0;
-        st->current_coupling_align_valid = false;
-        st->current_coupling_align_enabled = false;
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
         return;
@@ -1467,14 +936,12 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->sc_env_last_logged_coul = 0.f;
         st->sc_env_log_counter = 0;
         st->sc_env_transition_step = 0;
-        st->current_coupling_align_valid = false;
-        st->current_coupling_align_enabled = false;
     }
     if(st->preprod_rigid && !st->active) {
         martini_fix_rigid::set_dynamic_fixed_atoms(*engine, st->preprod_fixed_atom_indices);
         martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->preprod_z_fixed_atom_indices);
     } else {
-        martini_fix_rigid::set_dynamic_fixed_atoms(*engine, active_legacy_protein_proxy_fixed_atoms(*st));
+        martini_fix_rigid::set_dynamic_fixed_atoms(*engine, active_protein_proxy_fixed_atoms(*st));
         if(active_sc_env_po4_z_hold_enabled(*st)) {
             martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->sc_env_po4_z_hold_atom_indices);
         } else {
@@ -1483,138 +950,12 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
     }
 }
 
-static int find_node_index_for_name_or_prefix(DerivEngine& engine, const std::string& name_or_prefix) {
-    if(name_or_prefix.empty()) return -1;
-    int exact = engine.get_idx(name_or_prefix, false);
-    if(exact >= 0) return exact;
-    for(size_t i = 0; i < engine.nodes.size(); ++i) {
-        const auto& nm = engine.nodes[i].name;
-        if(nm.find(name_or_prefix) == 0) return static_cast<int>(i);
-    }
-    return -1;
-}
-
-static bool add_parent_dependency(DerivEngine& engine, int child_idx, int parent_idx) {
-    if(child_idx < 0 || parent_idx < 0 || child_idx == parent_idx) return false;
-    auto& child = engine.nodes[child_idx];
-    if(std::find(child.parents.begin(), child.parents.end(), static_cast<size_t>(parent_idx)) != child.parents.end()) {
-        return false;
-    }
-    child.parents.push_back(static_cast<size_t>(parent_idx));
-    engine.nodes[parent_idx].children.push_back(static_cast<size_t>(child_idx));
-    return true;
-}
-
-static bool add_coord_dependencies(DerivEngine& engine, int child_idx) {
-    if(child_idx < 0 || child_idx >= static_cast<int>(engine.nodes.size())) return false;
-    bool changed = false;
-    for(size_t i = 0; i < engine.nodes.size(); ++i) {
-        int parent_idx = static_cast<int>(i);
-        if(parent_idx == child_idx) continue;
-        auto* coord = dynamic_cast<CoordNode*>(engine.nodes[i].computation.get());
-        if(!coord) continue;
-        changed |= add_parent_dependency(engine, child_idx, parent_idx);
-    }
-    return changed;
-}
-
-static std::string discover_rotamer_node_name_from_engine(const DerivEngine& engine) {
-    for(const auto& n : engine.nodes) {
-        if(n.name == "rotamer") return n.name;
-    }
-    for(const auto& n : engine.nodes) {
-        if(n.name.find("rotamer") == 0) return n.name;
-    }
-    return "";
-}
-
-static std::string discover_sc_placement_node_name_from_engine(const DerivEngine& engine) {
-    const std::vector<std::string> preferred{
-        "placement_fixed_point_vector_only",
-        "placement_point_vector_only"
-    };
-    for(const auto& pref : preferred) {
-        for(const auto& n : engine.nodes) {
-            if(n.name == pref) return n.name;
-        }
-    }
-    for(const auto& n : engine.nodes) {
-        if(n.name.find("placement") != 0) continue;
-        if(n.name.find("point_vector_only") == std::string::npos) continue;
-        if(n.name.find("_CB") != std::string::npos) continue;
-        return n.name;
-    }
-    return "";
-}
-
 void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
     auto parsed = read_hybrid_settings(config_root, engine.pos->n_elem);
     auto current_stage = martini_stage_params::get_current_stage(&engine);
     parsed.active = parsed.enabled && (current_stage == parsed.activation_stage);
 
     auto st = std::make_shared<HybridRuntimeState>(std::move(parsed));
-    if(st->enabled) {
-        if(st->rotamer_node_name.empty()) {
-            st->rotamer_node_name = discover_rotamer_node_name_from_engine(engine);
-        }
-        if(st->placement_node_name.empty()) {
-            st->placement_node_name = discover_sc_placement_node_name_from_engine(engine);
-        }
-
-        // Placement grouping depends on the resolved placement node name.
-        if(!st->placement_node_name.empty()) {
-            read_placement_state_groups(config_root, *st);
-            expand_sc_rows_from_placement(*st);
-            build_sc_row_bb_targets(*st);
-        }
-
-        int placement_idx = find_node_index_for_name_or_prefix(engine, st->placement_node_name);
-        if(placement_idx >= 0) {
-            st->placement_node = dynamic_cast<CoordNode*>(engine.nodes[placement_idx].computation.get());
-        }
-
-        int rotamer_idx = find_node_index_for_name_or_prefix(engine, st->rotamer_node_name);
-        if(rotamer_idx >= 0) {
-            st->rotamer_node = engine.nodes[rotamer_idx].computation.get();
-        }
-
-        // Strict production behavior: no static fallback for probabilistic SC mapping.
-        if(st->active && !st->sc_proxy_atom_index.empty()) {
-            if(!st->placement_node || st->placement_node_name.empty()) {
-                throw string("Hybrid production SC coupling requires placement*_point_vector_only node");
-            }
-            if(!st->rotamer_node || st->rotamer_node_name.empty()) {
-                throw string("Hybrid production SC coupling requires rotamer node");
-            }
-            if(st->placement_state_groups.empty()) {
-                throw string("Hybrid production SC coupling requires placement rotamer-state groups");
-            }
-            if(st->sc_row_to_placement_group.size() != st->sc_proxy_atom_index.size()) {
-                throw string("Hybrid production SC coupling mapping is inconsistent (row/group size mismatch)");
-            }
-            for(size_t r = 0; r < st->sc_row_to_placement_group.size(); ++r) {
-                int gid = st->sc_row_to_placement_group[r];
-                if(gid < 0 || gid >= static_cast<int>(st->placement_state_groups.size())) {
-                    throw string("Hybrid production SC coupling has unmapped placement group row");
-                }
-            }
-        }
-
-        bool changed_graph = false;
-        for(size_t i = 0; i < engine.nodes.size(); ++i) {
-            if(engine.nodes[i].name.find("martini_potential") != 0) continue;
-            changed_graph |= add_coord_dependencies(engine, static_cast<int>(i));
-            if(placement_idx >= 0) {
-                changed_graph |= add_parent_dependency(engine, static_cast<int>(i), placement_idx);
-            }
-            if(rotamer_idx >= 0) {
-                changed_graph |= add_parent_dependency(engine, static_cast<int>(i), rotamer_idx);
-            }
-        }
-        if(changed_graph) {
-            engine.build_exec_levels();
-        }
-    }
 
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     g_hybrid_state[&engine] = st;
@@ -1623,7 +964,7 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
         martini_fix_rigid::set_dynamic_fixed_atoms(engine, st->preprod_fixed_atom_indices);
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
     } else {
-        martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_legacy_protein_proxy_fixed_atoms(*st));
+        martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_protein_proxy_fixed_atoms(*st));
         if(active_sc_env_po4_z_hold_enabled(*st)) {
             martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->sc_env_po4_z_hold_atom_indices);
         } else {
@@ -1633,19 +974,15 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
     if(st->has_config && st->enabled) {
         size_t n_po4_env = 0;
         for(auto flag : st->sc_env_po4_env_mask) if(flag) ++n_po4_env;
-        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu n_sc=%zu placement_node=%s rotamer_node=%s exclude_intra=%d nonprotein_hs=%d force_frame_align=%d integration_rmsd_align=%d hs_force_cap=%.3f hs_pot_cap=%.3f sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_bb_hold_steps=%d sc_po4_z_hold_steps=%d sc_relax_dt=%.4f sc_rest_k=%.3f sc_max_disp=%.3f sc_po4_z_clamp=%d sc_po4_mode=%s sc_po4_env=%zu sc_energy_dump=%d sc_energy_stride=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
+        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu exclude_intra=%d nonprotein_hs=%d integration_rmsd_align=%d hs_force_cap=%.3f hs_pot_cap=%.3f sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_bb_hold_steps=%d sc_po4_z_hold_steps=%d sc_po4_z_clamp=%d sc_po4_env=%zu sc_energy_dump=%d sc_energy_stride=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
                current_stage.c_str(),
                st->activation_stage.c_str(),
                st->active ? 1 : 0,
                st->preprod_mode.c_str(),
                st->n_bb,
                st->n_env,
-               st->sc_proxy_atom_index.size(),
-               st->placement_node_name.empty() ? "<none>" : st->placement_node_name.c_str(),
-               st->rotamer_node_name.empty() ? "<none>" : st->rotamer_node_name.c_str(),
                st->exclude_intra_protein_martini ? 1 : 0,
                st->production_nonprotein_hard_sphere ? 1 : 0,
-               st->coupling_align_enable ? 1 : 0,
                st->integration_rmsd_align_enable ? 1 : 0,
                st->nonprotein_hs_force_cap,
                st->nonprotein_hs_potential_cap,
@@ -1654,11 +991,7 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
                st->sc_env_relax_steps,
                st->sc_env_backbone_hold_steps,
                st->sc_env_po4_z_hold_steps,
-               st->sc_env_relax_dt,
-               st->sc_env_restraint_k,
-               st->sc_env_max_displacement,
                st->sc_env_po4_z_clamp_enabled ? 1 : 0,
-               st->sc_env_po4_z_clamp_mode.c_str(),
                n_po4_env,
                st->sc_env_energy_dump_enabled ? 1 : 0,
                st->sc_env_energy_dump_stride,
@@ -1679,7 +1012,7 @@ void refresh_transition_holds_for_engine(DerivEngine& engine) {
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
         return;
     }
-    martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_legacy_protein_proxy_fixed_atoms(*st));
+    martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_protein_proxy_fixed_atoms(*st));
     if(st->enabled && st->active &&
        st->sc_env_transition_step < std::numeric_limits<uint64_t>::max()) {
         st->sc_env_transition_step += 1;
@@ -1783,28 +1116,11 @@ void refresh_bb_positions_if_active(const HybridRuntimeState& st, VecArray pos, 
     }
 }
 
-struct CouplingAlignmentTransform {
-    bool enabled = false;
-    bool has_rotation = false;
-    float R[3][3];
-    std::array<float,3> t;
-    float rotation_angle_deg = 0.f;
-    float translation_norm = 0.f;
-};
-
 static inline std::array<float,3> apply_rot(const float R[3][3], const std::array<float,3>& v) {
     return std::array<float,3>{
         R[0][0] * v[0] + R[0][1] * v[1] + R[0][2] * v[2],
         R[1][0] * v[0] + R[1][1] * v[1] + R[1][2] * v[2],
         R[2][0] * v[0] + R[2][1] * v[1] + R[2][2] * v[2]
-    };
-}
-
-static inline std::array<float,3> apply_rot_T(const float R[3][3], const std::array<float,3>& v) {
-    return std::array<float,3>{
-        R[0][0] * v[0] + R[1][0] * v[1] + R[2][0] * v[2],
-        R[0][1] * v[0] + R[1][1] * v[1] + R[2][1] * v[2],
-        R[0][2] * v[0] + R[1][2] * v[1] + R[2][2] * v[2]
     };
 }
 
@@ -2044,83 +1360,6 @@ static bool build_kabsch_horn_transform(
     return true;
 }
 
-CouplingAlignmentTransform build_coupling_alignment(HybridRuntimeState& st, VecArray pos, int n_atom) {
-    CouplingAlignmentTransform tr;
-    for(int i=0;i<3;++i){
-        for(int j=0;j<3;++j) tr.R[i][j] = (i==j ? 1.f : 0.f);
-    }
-    tr.t = std::array<float,3>{0.f, 0.f, 0.f};
-    if(!st.enabled || !st.active || !st.coupling_align_enable || st.n_bb < 3) return tr;
-
-    std::vector<int> bb_idx;
-    bb_idx.reserve(st.n_bb);
-    for(size_t k=0; k<st.n_bb; ++k) {
-        int bb = st.bb_atom_index[k];
-        if(bb >= 0 && bb < n_atom) bb_idx.push_back(bb);
-    }
-    if(bb_idx.size() < 3) return tr;
-
-    std::vector<std::array<float,3>> cur_bb(bb_idx.size());
-    for(size_t i=0; i<bb_idx.size(); ++i) {
-        auto v = load_vec<3>(pos, bb_idx[i]);
-        cur_bb[i] = std::array<float,3>{v[0], v[1], v[2]};
-    }
-
-    if(!st.has_prev_bb || st.prev_bb_pos.size() != bb_idx.size()) {
-        st.prev_bb_pos = cur_bb;
-        st.has_prev_bb = true;
-        return tr;
-    }
-
-    auto com_cur = std::array<float,3>{0.f,0.f,0.f};
-    auto com_prev = std::array<float,3>{0.f,0.f,0.f};
-    for(size_t i=0; i<cur_bb.size(); ++i) {
-        com_cur = vec_add(com_cur, cur_bb[i]);
-        com_prev = vec_add(com_prev, st.prev_bb_pos[i]);
-    }
-    float inv_n = 1.f / float(cur_bb.size());
-    com_cur = vec_scale(com_cur, inv_n);
-    com_prev = vec_scale(com_prev, inv_n);
-
-    float F_cur[3][3], F_prev[3][3], F_cur_T[3][3];
-    bool ok_frame = false;
-    for(size_t a=0; a+2<cur_bb.size(); ++a) {
-        auto c0 = cur_bb[a], c1 = cur_bb[a+1], c2 = cur_bb[a+2];
-        auto p0 = st.prev_bb_pos[a], p1 = st.prev_bb_pos[a+1], p2 = st.prev_bb_pos[a+2];
-        if(build_frame_from_three(c0, c1, c2, F_cur) && build_frame_from_three(p0, p1, p2, F_prev)) {
-            ok_frame = true;
-            break;
-        }
-    }
-    if(!ok_frame) {
-        st.prev_bb_pos = cur_bb;
-        return tr;
-    }
-
-    mat_transpose(F_cur, F_cur_T);
-    mat_mul(F_prev, F_cur_T, tr.R);
-    tr.has_rotation = true;
-
-    auto Rc = apply_rot(tr.R, com_cur);
-    tr.t = vec_sub(com_prev, Rc);
-    tr.translation_norm = vec_norm(tr.t);
-    float traceR = tr.R[0][0] + tr.R[1][1] + tr.R[2][2];
-    float c = 0.5f * (traceR - 1.f);
-    c = std::max(-1.f, std::min(1.f, c));
-    tr.rotation_angle_deg = acosf(c) * (180.f / float(M_PI));
-    tr.enabled = true;
-
-    st.prev_bb_pos = cur_bb;
-    st.coupling_align_step += 1;
-    if(st.coupling_align_debug && (st.coupling_align_step % uint64_t(st.coupling_align_interval) == 0)) {
-        printf("Hybrid coupling-align: step=%llu rot_deg=%.4f trans=%.4f\n",
-               (unsigned long long)st.coupling_align_step,
-               tr.rotation_angle_deg,
-               tr.translation_norm);
-    }
-    return tr;
-}
-
 void align_active_protein_coordinates(DerivEngine& engine, VecArray pos, VecArray mom) {
     (void)mom;
     std::shared_ptr<HybridRuntimeState> st;
@@ -2198,137 +1437,6 @@ void align_active_protein_coordinates(DerivEngine& engine, VecArray pos, VecArra
                rmsd,
                rot_deg,
                trans_norm);
-    }
-}
-
-bool refresh_sc_row_probabilities_from_rotamer(
-        const HybridRuntimeState& st,
-        std::vector<float>& row_probabilities) {
-    if(!st.enabled || !st.active) return true;
-    if(!st.rotamer_node) return false;
-    if(st.sc_row_to_placement_group.empty()) return false;
-    if(row_probabilities.size() != st.sc_proxy_atom_index.size()) return false;
-
-    std::vector<float> node_marginal;
-    std::vector<float> node_lookup;
-    try {
-        node_marginal = st.rotamer_node->get_value_by_name("node_marginal");
-        node_lookup = st.rotamer_node->get_value_by_name("node_lookup");
-    } catch(...) {
-        return false;
-    }
-
-    if(node_lookup.size() % 2u) return false;
-    const size_t n_node = node_lookup.size() / 2u;
-    if(node_marginal.size() != n_node * 6u) return false;
-
-    std::unordered_map<long long, int> lookup;
-    lookup.reserve(n_node);
-    for(size_t i = 0; i < n_node; ++i) {
-        int n_rotamer = static_cast<int>(lrintf(node_lookup[2*i + 0]));
-        int node_id = static_cast<int>(lrintf(node_lookup[2*i + 1]));
-        long long key = (static_cast<long long>(n_rotamer) << 32) | static_cast<unsigned int>(node_id);
-        lookup[key] = static_cast<int>(i);
-    }
-
-    for(size_t r = 0; r < row_probabilities.size(); ++r) {
-        int gid = st.sc_row_to_placement_group[r];
-        if(gid < 0 || gid >= static_cast<int>(st.placement_state_groups.size())) return false;
-        const auto& g = st.placement_state_groups[gid];
-        if(g.rotamer < 0 || g.rotamer >= 6) return false;
-
-        long long key = (static_cast<long long>(g.n_rotamer) << 32) | static_cast<unsigned int>(g.node_id);
-        auto it = lookup.find(key);
-        if(it == lookup.end()) return false;
-
-        float p = node_marginal[static_cast<size_t>(it->second) * 6u + static_cast<size_t>(g.rotamer)];
-        if(std::isfinite(p) && p >= 0.f) {
-            row_probabilities[r] = p;
-        } else {
-            return false;
-        }
-    }
-    return true;
-}
-
-void project_bb_gradient_if_active(const HybridRuntimeState& st, VecArray sens, int n_atom) {
-    if(!st.enabled || !st.active) return;
-    float feedback_mix = compute_sc_backbone_feedback_mix(st);
-    if(!(feedback_mix > 0.f)) {
-        for(size_t k = 0; k < st.n_bb; ++k) {
-            int bb = st.bb_atom_index[k];
-            if(bb >= 0 && bb < n_atom) {
-                store_vec<3>(sens, bb, make_zero<3>());
-            }
-        }
-        return;
-    }
-    for(size_t k = 0; k < st.n_bb; ++k) {
-        int bb = st.bb_atom_index[k];
-        if(bb < 0 || bb >= n_atom) continue;
-        auto bb_grad = feedback_mix * load_vec<3>(sens, bb);
-
-        float wsum = 0.f;
-        for(int d = 0; d < 4; ++d) {
-            if(st.atom_mask[k][d] == 0) continue;
-            int ai = st.atom_indices[k][d];
-            float w = st.weights[k][d];
-            if(ai < 0 || ai >= n_atom || w == 0.f) continue;
-            if(ai == bb) continue;
-            wsum += w;
-        }
-        if(wsum <= 0.f) {
-            continue;
-        }
-        float inv_wsum = 1.0f / wsum;
-
-        // Clear first so self-target mappings preserve intended fraction instead of being canceled.
-        store_vec<3>(sens, bb, make_zero<3>());
-        for(int d = 0; d < 4; ++d) {
-            if(st.atom_mask[k][d] == 0) continue;
-            int ai = st.atom_indices[k][d];
-            float w = st.weights[k][d];
-            if(ai < 0 || ai >= n_atom || w == 0.f) continue;
-            if(ai == bb) continue;
-            update_vec<3>(sens, ai, (w * inv_wsum) * bb_grad);
-        }
-    }
-}
-
-void project_sc_gradient_if_active(
-        const HybridRuntimeState& st,
-        VecArray sens,
-        int n_atom,
-        const std::vector<std::array<float,3>>& row_proxy_grad) {
-    if(!st.enabled || !st.active) return;
-    const size_t n_rot = st.sc_proxy_atom_index.size();
-    if(row_proxy_grad.size() != n_rot) return;
-    float feedback_mix = compute_sc_backbone_feedback_mix(st);
-    if(!(feedback_mix > 0.f)) return;
-    for(const auto& proxy_rows : st.sc_rows_by_proxy) {
-        int proxy = proxy_rows.first;
-        if(proxy < 0 || proxy >= n_atom) continue;
-        for(int r : proxy_rows.second) {
-            if(r < 0 || r >= (int)n_rot) continue;
-            Vec<3> proxy_grad = feedback_mix *
-                                make_vec3(row_proxy_grad[r][0], row_proxy_grad[r][1], row_proxy_grad[r][2]);
-
-            // Keep the proxy's existing MARTINI bonded/multibody forces intact.
-            // Only the probabilistic SC feedback is projected onto the explicit
-            // all-atom carrier targets from hybrid_sc_map.
-            bool projected = false;
-            for(int d = 0; d < 4; ++d) {
-                int ai = st.sc_proj_target_indices[r][d];
-                float w = st.sc_proj_weights[r][d];
-                if(ai < 0 || ai >= n_atom || w == 0.f) continue;
-                update_vec<3>(sens, ai, w * proxy_grad);
-                projected = true;
-            }
-            if(projected) {
-                continue;
-            }
-            throw string("Hybrid SC force projection requires explicit non-MARTINI targets");
-        }
     }
 }
 
@@ -3317,18 +2425,15 @@ struct MartiniPotential : public PotentialNode
             hybrid_state &&
             hybrid_state->enabled &&
             hybrid_state->active);
-        // The stage-7 direct-Upside design no longer evaluates the legacy
-        // probabilistic SC proxy path inside martini_potential.
-        const bool use_probabilistic_sc = false;
         float sc_force_uncap_mix = 1.f;
+        float sc_backbone_feedback_mix = 1.f;
         if(active_hybrid_startup && mutable_hybrid) {
             sc_force_uncap_mix = martini_hybrid::compute_sc_force_uncap_mix(*mutable_hybrid);
+            sc_backbone_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*mutable_hybrid);
         }
         float sc_env_energy_total = 0.f;
         float sc_env_energy_lj = 0.f;
         float sc_env_energy_coul = 0.f;
-        std::vector<std::array<float,3>> sc_row_proxy_grad;
-        std::vector<float> sc_row_probability;
 
         constexpr float wca_cutoff_factor = 1.122462048309373f; // 2^(1/6)
         auto cap_force_vector = [&](Vec<3>& f, float cap_mag) {
@@ -3469,427 +2574,6 @@ struct MartiniPotential : public PotentialNode
             return !(pair_potential == 0.f && mag2(pair_force) == 0.f);
         };
 
-        martini_hybrid::CouplingAlignmentTransform coupling_align;
-
-        auto collect_placement_group_points = [&](int gid,
-                                                  std::vector<std::array<float,3>>& pts,
-                                                  std::array<float,3>& centroid) -> bool {
-            pts.clear();
-            centroid = std::array<float,3>{0.f, 0.f, 0.f};
-            if(!hybrid_state || !hybrid_state->placement_node) return false;
-            if(gid < 0 || gid >= (int)hybrid_state->placement_state_groups.size()) return false;
-
-            const auto& g = hybrid_state->placement_state_groups[gid];
-            VecArray pl_pos = hybrid_state->placement_node->output;
-            for(int pi : g.placement_rows) {
-                if(pi < 0 || pi >= hybrid_state->placement_node->n_elem) continue;
-                Vec<3> p = make_vec3(pl_pos(0, pi), pl_pos(1, pi), pl_pos(2, pi));
-                if(coupling_align.enabled) {
-                    auto raw = std::array<float,3>{p[0], p[1], p[2]};
-                    auto aligned = martini_hybrid::vec_add(
-                        martini_hybrid::apply_rot(coupling_align.R, raw),
-                        coupling_align.t);
-                    p = make_vec3(aligned[0], aligned[1], aligned[2]);
-                }
-                pts.push_back(std::array<float,3>{p[0], p[1], p[2]});
-                centroid[0] += p[0];
-                centroid[1] += p[1];
-                centroid[2] += p[2];
-            }
-
-            if(pts.empty()) return false;
-            float inv_n = 1.f / float(pts.size());
-            centroid[0] *= inv_n;
-            centroid[1] *= inv_n;
-            centroid[2] *= inv_n;
-            return true;
-        };
-
-        auto compute_group_rigid_transform = [&](const std::vector<std::array<float,3>>& ref_pts,
-                                                 const std::array<float,3>& ref_centroid,
-                                                 const std::vector<std::array<float,3>>& tgt_pts,
-                                                 const std::array<float,3>& tgt_centroid,
-                                                 float R[3][3],
-                                                 std::array<float,3>& t) {
-            for(int i = 0; i < 3; ++i) {
-                for(int j = 0; j < 3; ++j) {
-                    R[i][j] = (i == j) ? 1.f : 0.f;
-                }
-            }
-
-            size_t n = std::min(ref_pts.size(), tgt_pts.size());
-            if(n >= 3) {
-                float F_ref[3][3], F_tgt[3][3], F_ref_T[3][3];
-                bool ok_frame = false;
-                for(size_t a = 0; a + 2 < n; ++a) {
-                    if(martini_hybrid::build_frame_from_three(ref_pts[a], ref_pts[a+1], ref_pts[a+2], F_ref) &&
-                       martini_hybrid::build_frame_from_three(tgt_pts[a], tgt_pts[a+1], tgt_pts[a+2], F_tgt)) {
-                        ok_frame = true;
-                        break;
-                    }
-                }
-                if(ok_frame) {
-                    martini_hybrid::mat_transpose(F_ref, F_ref_T);
-                    martini_hybrid::mat_mul(F_tgt, F_ref_T, R);
-                }
-            }
-
-            auto Rc = martini_hybrid::apply_rot(R, ref_centroid);
-            t = martini_hybrid::vec_sub(tgt_centroid, Rc);
-        };
-
-        if(use_probabilistic_sc) {
-            if(!hybrid_state->placement_node || hybrid_state->placement_state_groups.empty()) {
-                throw string("Hybrid SC probabilistic coupling requires placement*_point_vector_only node data");
-            }
-            if(!hybrid_state->rotamer_node) {
-                throw string("Hybrid SC probabilistic coupling requires rotamer node data");
-            }
-            if(hybrid_state->sc_row_to_placement_group.size() != hybrid_state->sc_proxy_atom_index.size()) {
-                throw string("Hybrid SC mapping is inconsistent: row/group sizes differ");
-            }
-            for(size_t r = 0; r < hybrid_state->sc_row_to_placement_group.size(); ++r) {
-                int gid = hybrid_state->sc_row_to_placement_group[r];
-                if(gid < 0 || gid >= (int)hybrid_state->placement_state_groups.size()) {
-                    throw string("Hybrid SC mapping missing placement group assignment for SC row");
-                }
-                int resid = (r < hybrid_state->sc_residue_index.size()) ? hybrid_state->sc_residue_index[r] : -1;
-                if(hybrid_state->placement_reference_group_by_residue.find(resid) ==
-                   hybrid_state->placement_reference_group_by_residue.end()) {
-                    throw string("Hybrid SC mapping missing residue reference placement group");
-                }
-            }
-
-            if(mutable_hybrid && !mutable_hybrid->sc_local_pos_initialized) {
-                bool has_nonzero_local = false;
-                for(const auto& local : mutable_hybrid->sc_local_pos) {
-                    if(fabsf(local[0]) > 1e-6f || fabsf(local[1]) > 1e-6f || fabsf(local[2]) > 1e-6f) {
-                        has_nonzero_local = true;
-                        break;
-                    }
-                }
-                if(!has_nonzero_local) {
-                    std::unordered_map<int, std::array<float,3>> ref_centroid_by_residue;
-                    for(size_t r = 0; r < mutable_hybrid->sc_proxy_atom_index.size(); ++r) {
-                        int resid = mutable_hybrid->sc_residue_index[r];
-                        auto ref_it = mutable_hybrid->placement_reference_group_by_residue.find(resid);
-                        if(ref_it == mutable_hybrid->placement_reference_group_by_residue.end()) {
-                            throw string("Hybrid SC rigid initialization failed: missing reference placement group");
-                        }
-
-                        if(ref_centroid_by_residue.find(resid) == ref_centroid_by_residue.end()) {
-                            std::vector<std::array<float,3>> pts;
-                            std::array<float,3> ctr{0.f, 0.f, 0.f};
-                            if(!collect_placement_group_points(ref_it->second, pts, ctr)) {
-                                throw string("Hybrid SC rigid initialization failed: cannot read reference placement points");
-                            }
-                            ref_centroid_by_residue.emplace(resid, ctr);
-                        }
-
-                        int proxy = mutable_hybrid->sc_proxy_atom_index[r];
-                        if(proxy < 0 || proxy >= n_atom) {
-                            throw string("Hybrid SC rigid initialization failed: proxy index out of bounds");
-                        }
-                        Vec<3> p = load_vec<3>(pos1, proxy);
-                        bool proxy_is_protein = (
-                            proxy >= 0 &&
-                            proxy < (int)mutable_hybrid->protein_membership.size() &&
-                            mutable_hybrid->protein_membership[proxy] >= 0);
-                        if(coupling_align.enabled && proxy_is_protein) {
-                            auto raw = std::array<float,3>{p[0], p[1], p[2]};
-                            auto aligned = martini_hybrid::vec_add(
-                                martini_hybrid::apply_rot(coupling_align.R, raw),
-                                coupling_align.t);
-                            p = make_vec3(aligned[0], aligned[1], aligned[2]);
-                        }
-
-                        auto ctr = ref_centroid_by_residue[resid];
-                        mutable_hybrid->sc_local_pos[r] = std::array<float,3>{
-                            p[0] - ctr[0],
-                            p[1] - ctr[1],
-                            p[2] - ctr[2]
-                        };
-                    }
-                }
-                mutable_hybrid->sc_local_pos_initialized = true;
-            }
-
-            sc_row_proxy_grad.assign(hybrid_state->sc_proxy_atom_index.size(), std::array<float,3>{{0.f,0.f,0.f}});
-            sc_row_probability = hybrid_state->sc_rotamer_prob;
-            if(!martini_hybrid::refresh_sc_row_probabilities_from_rotamer(*hybrid_state, sc_row_probability)) {
-                throw string("Hybrid SC probabilistic coupling requires live rotamer probabilities for all SC rows");
-            }
-        }
-
-        // Build per-rotamer projected SC position from placement coordinates only.
-        // No fallback to static hybrid_sc_map projection targets.
-        auto build_sc_row_proxy_pos = [&](int row, Vec<3>& out_pos) -> bool {
-            if(!hybrid_state) return false;
-            if(!hybrid_state->placement_node) return false;
-            if(row < 0 || row >= (int)hybrid_state->sc_row_to_placement_group.size()) return false;
-            if(row >= (int)hybrid_state->sc_residue_index.size()) return false;
-
-            int gid = hybrid_state->sc_row_to_placement_group[row];
-            if(gid < 0 || gid >= (int)hybrid_state->placement_state_groups.size()) return false;
-
-            int resid = hybrid_state->sc_residue_index[row];
-            auto ref_it = hybrid_state->placement_reference_group_by_residue.find(resid);
-            if(ref_it == hybrid_state->placement_reference_group_by_residue.end()) return false;
-            int ref_gid = ref_it->second;
-
-            std::vector<std::array<float,3>> ref_pts, tgt_pts;
-            std::array<float,3> ref_centroid{0.f, 0.f, 0.f};
-            std::array<float,3> tgt_centroid{0.f, 0.f, 0.f};
-            if(!collect_placement_group_points(ref_gid, ref_pts, ref_centroid)) return false;
-            if(!collect_placement_group_points(gid, tgt_pts, tgt_centroid)) return false;
-            bool underdetermined_frame = (ref_pts.size() < 3u || tgt_pts.size() < 3u);
-
-            float R[3][3];
-            std::array<float,3> t{0.f, 0.f, 0.f};
-            compute_group_rigid_transform(ref_pts, ref_centroid, tgt_pts, tgt_centroid, R, t);
-
-            std::array<float,3> local{0.f, 0.f, 0.f};
-            if(row < (int)hybrid_state->sc_local_pos.size()) {
-                local = hybrid_state->sc_local_pos[row];
-            }
-
-            auto rotated = martini_hybrid::apply_rot(R, local);
-            // `local` is stored relative to the reference-group centroid,
-            // so map it back by adding the target-group centroid.
-            auto mapped = martini_hybrid::vec_add(rotated, tgt_centroid);
-
-            if(underdetermined_frame && hybrid_state->sc_env_max_displacement > 0.f) {
-                int proxy = (row < static_cast<int>(hybrid_state->sc_proxy_atom_index.size()))
-                                ? hybrid_state->sc_proxy_atom_index[row]
-                                : -1;
-                if(proxy >= 0 && proxy < n_atom) {
-                    Vec<3> proxy_pos = load_vec<3>(pos1, proxy);
-                    bool proxy_is_protein = (
-                        proxy >= 0 &&
-                        proxy < static_cast<int>(hybrid_state->protein_membership.size()) &&
-                        hybrid_state->protein_membership[proxy] >= 0);
-                    if(coupling_align.enabled && proxy_is_protein) {
-                        auto raw = std::array<float,3>{proxy_pos[0], proxy_pos[1], proxy_pos[2]};
-                        auto aligned = martini_hybrid::vec_add(
-                            martini_hybrid::apply_rot(coupling_align.R, raw),
-                            coupling_align.t);
-                        proxy_pos = make_vec3(aligned[0], aligned[1], aligned[2]);
-                    }
-
-                    auto proxy_arr = std::array<float,3>{proxy_pos[0], proxy_pos[1], proxy_pos[2]};
-                    auto shift = martini_hybrid::vec_sub(mapped, proxy_arr);
-                    float shift_norm = martini_hybrid::vec_norm(shift);
-                    if(shift_norm > hybrid_state->sc_env_max_displacement && shift_norm > 1e-6f) {
-                        float scale = hybrid_state->sc_env_max_displacement / shift_norm;
-                        mapped = martini_hybrid::vec_add(proxy_arr, martini_hybrid::vec_scale(shift, scale));
-                    }
-                }
-            }
-            out_pos = make_vec3(mapped[0], mapped[1], mapped[2]);
-            return true;
-        };
-
-        std::vector<std::array<float,3>> sc_row_target_pos;
-        std::vector<std::array<float,3>> sc_row_relaxed_pos;
-        std::vector<unsigned char> sc_row_valid;
-        std::vector<float> sc_row_prob_norm;
-        std::vector<float> sc_proxy_force_weight;
-        if(use_probabilistic_sc && hybrid_state) {
-            const size_t n_sc_row = hybrid_state->sc_proxy_atom_index.size();
-            sc_row_target_pos.assign(n_sc_row, std::array<float,3>{{0.f, 0.f, 0.f}});
-            sc_row_relaxed_pos.assign(n_sc_row, std::array<float,3>{{0.f, 0.f, 0.f}});
-            sc_row_valid.assign(n_sc_row, 0u);
-            sc_row_prob_norm.assign(n_sc_row, 0.f);
-            sc_proxy_force_weight.assign(static_cast<size_t>(n_atom), 1.f);
-
-            for(size_t r = 0; r < n_sc_row; ++r) {
-                Vec<3> proxy_pos = make_zero<3>();
-                if(!build_sc_row_proxy_pos(static_cast<int>(r), proxy_pos)) continue;
-                sc_row_target_pos[r] = std::array<float,3>{{proxy_pos[0], proxy_pos[1], proxy_pos[2]}};
-                sc_row_relaxed_pos[r] = sc_row_target_pos[r];
-                sc_row_valid[r] = 1u;
-            }
-
-            // If multiple MARTINI SC proxies map to a residue but placement can only
-            // represent a limited number of proxies, keep the safest proxies for the
-            // current step based on nearest environment distance.
-            if(!hybrid_state->sc_proxy_limit_by_residue.empty() &&
-               !hybrid_state->protein_membership.empty()) {
-                std::vector<int> env_atoms;
-                env_atoms.reserve(hybrid_state->protein_membership.size());
-                for(size_t ai = 0; ai < hybrid_state->protein_membership.size(); ++ai) {
-                    if(hybrid_state->protein_membership[ai] < 0) {
-                        env_atoms.push_back(static_cast<int>(ai));
-                    }
-                }
-
-                if(!env_atoms.empty()) {
-                    std::unordered_map<int, std::unordered_map<int, float>> proxy_safety_by_residue;
-                    for(size_t r = 0; r < n_sc_row; ++r) {
-                        if(!sc_row_valid[r]) continue;
-                        if(r >= hybrid_state->sc_residue_index.size()) continue;
-                        if(r >= hybrid_state->sc_proxy_atom_index.size()) continue;
-
-                        int resid = hybrid_state->sc_residue_index[r];
-                        auto lim_it = hybrid_state->sc_proxy_limit_by_residue.find(resid);
-                        if(lim_it == hybrid_state->sc_proxy_limit_by_residue.end()) continue;
-                        if(lim_it->second <= 0) continue;
-
-                        int proxy = hybrid_state->sc_proxy_atom_index[r];
-                        auto rp = make_vec3(
-                            sc_row_target_pos[r][0],
-                            sc_row_target_pos[r][1],
-                            sc_row_target_pos[r][2]);
-                        float min_d2 = std::numeric_limits<float>::max();
-                        for(int env_atom : env_atoms) {
-                            auto ep = load_vec<3>(pos1, env_atom);
-                            min_d2 = std::min(min_d2, mag2(rp - ep));
-                        }
-                        float min_dist = 0.f;
-                        if(min_d2 < std::numeric_limits<float>::max()) {
-                            min_dist = sqrtf(std::max(0.f, min_d2));
-                        }
-
-                        auto& proxy_safety = proxy_safety_by_residue[resid];
-                        auto ps_it = proxy_safety.find(proxy);
-                        if(ps_it == proxy_safety.end() || min_dist < ps_it->second) {
-                            proxy_safety[proxy] = min_dist;
-                        }
-                    }
-
-                    std::unordered_map<int, std::vector<int>> selected_proxies_by_residue;
-                    for(const auto& kv : proxy_safety_by_residue) {
-                        int resid = kv.first;
-                        auto lim_it = hybrid_state->sc_proxy_limit_by_residue.find(resid);
-                        if(lim_it == hybrid_state->sc_proxy_limit_by_residue.end()) continue;
-                        int limit = std::max(1, lim_it->second);
-
-                        std::vector<std::pair<float, int>> ranked;
-                        ranked.reserve(kv.second.size());
-                        for(const auto& ps : kv.second) {
-                            ranked.emplace_back(ps.second, ps.first); // (safety distance, proxy atom)
-                        }
-                        if(static_cast<int>(ranked.size()) <= limit) continue;
-
-                        std::sort(ranked.begin(), ranked.end(),
-                                  [](const std::pair<float,int>& a, const std::pair<float,int>& b) {
-                                      if(a.first != b.first) return a.first > b.first;
-                                      return a.second < b.second;
-                                  });
-
-                        auto& keep = selected_proxies_by_residue[resid];
-                        keep.reserve(limit);
-                        for(int i = 0; i < limit && i < static_cast<int>(ranked.size()); ++i) {
-                            keep.push_back(ranked[i].second);
-                        }
-                    }
-
-                    if(!selected_proxies_by_residue.empty()) {
-                        for(size_t r = 0; r < n_sc_row; ++r) {
-                            if(!sc_row_valid[r]) continue;
-                            if(r >= hybrid_state->sc_residue_index.size()) continue;
-                            if(r >= hybrid_state->sc_proxy_atom_index.size()) continue;
-                            int resid = hybrid_state->sc_residue_index[r];
-                            auto sel_it = selected_proxies_by_residue.find(resid);
-                            if(sel_it == selected_proxies_by_residue.end()) continue;
-                            int proxy = hybrid_state->sc_proxy_atom_index[r];
-                            const auto& keep = sel_it->second;
-                            if(std::find(keep.begin(), keep.end(), proxy) == keep.end()) {
-                                sc_row_valid[r] = 0u;
-                            }
-                        }
-                    }
-                }
-            }
-
-            for(const auto& kv : hybrid_state->sc_rows_by_proxy) {
-                int proxy_atom = kv.first;
-                std::vector<int> active_rows;
-                active_rows.reserve(kv.second.size());
-                float prob_sum = 0.f;
-                for(int r : kv.second) {
-                    if(r < 0 || r >= static_cast<int>(n_sc_row)) continue;
-                    if(!sc_row_valid[r]) continue;
-                    active_rows.push_back(r);
-                    float pr = sc_row_probability[r];
-                    if(std::isfinite(pr) && pr > 0.f) {
-                        prob_sum += pr;
-                    }
-                }
-                if(active_rows.empty()) {
-                    if(proxy_atom >= 0 && proxy_atom < n_atom) {
-                        sc_proxy_force_weight[static_cast<size_t>(proxy_atom)] = 0.f;
-                    }
-                    continue;
-                }
-                if(prob_sum > 0.f) {
-                    float inv_prob = 1.f / prob_sum;
-                    for(int r : active_rows) {
-                        float pr = sc_row_probability[r];
-                        if(!(std::isfinite(pr) && pr > 0.f)) continue;
-                        sc_row_prob_norm[r] = pr * inv_prob;
-                    }
-                    if(proxy_atom >= 0 && proxy_atom < n_atom) {
-                        sc_proxy_force_weight[static_cast<size_t>(proxy_atom)] =
-                            std::min(1.f, std::max(0.f, prob_sum));
-                    }
-                } else {
-                    // Keep SC probabilistic coupling active even when incoming
-                    // marginals are degenerate by assigning a uniform fallback.
-                    float uniform = 1.f / static_cast<float>(active_rows.size());
-                    for(int r : active_rows) {
-                        sc_row_prob_norm[r] = uniform;
-                    }
-                    if(proxy_atom >= 0 && proxy_atom < n_atom) {
-                        sc_proxy_force_weight[static_cast<size_t>(proxy_atom)] = 1.f;
-                    }
-                }
-            }
-        }
-
-        struct ScEnvEdge {
-            int proxy_atom = -1;
-            int env_atom = -1;
-            bool proxy_is_i = false;
-            bool env_is_protein = false;
-            bool env_z_clamped = false;
-            float eps = 0.f;
-            float sig = 0.f;
-            float qi = 0.f;
-            float qj = 0.f;
-            std::array<float,3> env_pos{{0.f, 0.f, 0.f}};
-        };
-        struct ScScEdge {
-            int proxy_i = -1;
-            int proxy_j = -1;
-            float eps = 0.f;
-            float sig = 0.f;
-            float qi = 0.f;
-            float qj = 0.f;
-        };
-        auto proxy_has_active_weighted_rows = [&](int proxy_atom) -> bool {
-            const auto* rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, proxy_atom);
-            if(!rows || rows->empty()) return false;
-            for(int r : *rows) {
-                if(r < 0 || r >= static_cast<int>(sc_row_prob_norm.size())) continue;
-                if(r >= static_cast<int>(sc_row_valid.size()) || !sc_row_valid[r]) continue;
-                float pr = sc_row_prob_norm[r];
-                if(std::isfinite(pr) && pr > 0.f) return true;
-            }
-            return false;
-        };
-        auto proxy_force_weight_at = [&](int proxy_atom) -> float {
-            float w = 1.f;
-            if(proxy_atom >= 0 && proxy_atom < static_cast<int>(sc_proxy_force_weight.size())) {
-                w = sc_proxy_force_weight[static_cast<size_t>(proxy_atom)];
-            }
-            if(!std::isfinite(w)) return 1.f;
-            return std::min(1.f, std::max(0.f, w));
-        };
-        std::vector<ScEnvEdge> sc_env_edges;
-        std::vector<ScScEdge> sc_sc_edges;
-        if(use_probabilistic_sc) sc_env_edges.reserve(pairs.size()/8 + 1);
-        if(use_probabilistic_sc) sc_sc_edges.reserve(pairs.size()/16 + 1);
 
         for(size_t np=0; np<pairs.size(); ++np) {
             int i = pairs[np].first;
@@ -3952,110 +2636,6 @@ struct MartiniPotential : public PotentialNode
                 !i_is_protein &&
                 !j_is_protein);
 
-            // Probabilistic SC force evaluation:
-            // evaluate proxy-env interactions for each rotamer-state position and
-            // project weighted proxy gradients back through per-rotamer mappings.
-            if(use_probabilistic_sc && hybrid_state) {
-                if(i_role == martini_hybrid::ROLE_SC && j_role == martini_hybrid::ROLE_SC) {
-                    const auto* i_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, i);
-                    const auto* j_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, j);
-                    bool i_has_rows = (i_rows && !i_rows->empty());
-                    bool j_has_rows = (j_rows && !j_rows->empty());
-                    if(i_has_rows || j_has_rows) {
-                        if(i_has_rows && j_has_rows &&
-                           proxy_has_active_weighted_rows(i) &&
-                           proxy_has_active_weighted_rows(j)) {
-                            ScScEdge edge;
-                            edge.proxy_i = i;
-                            edge.proxy_j = j;
-                            edge.eps = eps;
-                            edge.sig = sig;
-                            edge.qi = qi;
-                            edge.qj = qj;
-                            sc_sc_edges.push_back(edge);
-                        }
-                        // SC-SC probabilistic coupling stays in row space only.
-                        continue;
-                    }
-                }
-
-                bool proxy_is_i = false;
-                int proxy_atom = -1;
-                int env_atom = -1;
-                bool env_is_protein = false;
-                const std::vector<int>* proxy_rows = nullptr;
-
-                auto select_proxy_rows = [&](int candidate_proxy,
-                                             int candidate_env,
-                                             bool candidate_proxy_is_i,
-                                             bool candidate_env_is_protein) {
-                    const auto* rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, candidate_proxy);
-                    if(!rows || rows->empty()) return false;
-
-                    if(candidate_env_is_protein) {
-                        if(!martini_hybrid::allow_intra_protein_pair_if_active(*hybrid_state, candidate_proxy, candidate_env)) {
-                            return false;
-                        }
-                        if(martini_hybrid::atom_role_class_at(*hybrid_state, candidate_env) != martini_hybrid::ROLE_BB) {
-                            return false;
-                        }
-                    }
-
-                    proxy_rows = rows;
-                    proxy_is_i = candidate_proxy_is_i;
-                    proxy_atom = candidate_proxy;
-                    env_atom = candidate_env;
-                    env_is_protein = candidate_env_is_protein;
-                    return true;
-                };
-
-                if(i_is_protein) {
-                    (void)select_proxy_rows(i, j, true, j_is_protein);
-                }
-                if(!proxy_rows && j_is_protein) {
-                    (void)select_proxy_rows(j, i, false, i_is_protein);
-                }
-
-                if(proxy_rows && !proxy_rows->empty()) {
-                    float prob_sum = 0.f;
-                    for(int r : *proxy_rows) {
-                        if(r < 0 || r >= static_cast<int>(sc_row_prob_norm.size())) continue;
-                        if(r >= static_cast<int>(sc_row_valid.size()) || !sc_row_valid[r]) continue;
-                        float pr = sc_row_prob_norm[r];
-                        if(std::isfinite(pr) && pr > 0.f) {
-                            prob_sum += pr;
-                        }
-                    }
-                    if(prob_sum > 0.f) {
-                        ScEnvEdge edge;
-                        edge.proxy_atom = proxy_atom;
-                        edge.env_atom = env_atom;
-                        edge.proxy_is_i = proxy_is_i;
-                        edge.env_is_protein = env_is_protein;
-                        edge.eps = eps;
-                        edge.sig = sig;
-                        edge.qi = qi;
-                        edge.qj = qj;
-                        auto env_pos = proxy_is_i ? p2 : p1;
-                        if(mutable_hybrid &&
-                           martini_hybrid::active_sc_env_po4_z_hold_enabled(*mutable_hybrid) &&
-                           !env_is_protein &&
-                           martini_hybrid::is_env_po4_atom(*mutable_hybrid, env_atom) &&
-                           env_atom < static_cast<int>(mutable_hybrid->sc_env_po4_z_reference.size())) {
-                            env_pos[2] = mutable_hybrid->sc_env_po4_z_reference[env_atom];
-                            edge.env_z_clamped = true;
-                        }
-                        edge.env_pos = std::array<float,3>{{env_pos[0], env_pos[1], env_pos[2]}};
-                        sc_env_edges.push_back(edge);
-                        continue;
-                    }
-                    // This proxy is configured for probabilistic SC coupling but has
-                    // no active weighted rows in this step. Skip deterministic MARTINI
-                    // fallback so SC interactions remain weight-driven only.
-                    continue;
-                }
-            }
-
             Vec<3> force = make_zero<3>();
             float pair_pot = 0.f;
             float hs_force_cap = 0.f;
@@ -4088,225 +2668,16 @@ struct MartiniPotential : public PotentialNode
 
             auto gi = -force;
             auto gj = force;
+            if(active_hybrid_startup && i_is_protein && i_role == martini_hybrid::ROLE_BB) {
+                gi *= sc_backbone_feedback_mix;
+            }
+            if(active_hybrid_startup && j_is_protein && j_role == martini_hybrid::ROLE_BB) {
+                gj *= sc_backbone_feedback_mix;
+            }
             update_vec<3>(pos1_sens, i_force_atom, gi);
             update_vec<3>(pos1_sens, j_force_atom, gj);
         }
 
-        if(use_probabilistic_sc && hybrid_state &&
-           (!sc_env_edges.empty() || !sc_sc_edges.empty())) {
-            // Keep each probabilistic SC at its mapped rotamer position for
-            // interaction evaluation. SC rows are not displaced by env/SC forces.
-            for(size_t r = 0; r < sc_row_relaxed_pos.size(); ++r) {
-                if(!sc_row_valid[r]) continue;
-                sc_row_relaxed_pos[r] = sc_row_target_pos[r];
-            }
-
-            for(const auto& edge : sc_env_edges) {
-                const auto* proxy_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, edge.proxy_atom);
-                if(!proxy_rows || proxy_rows->empty()) continue;
-                Vec<3> env_pos = make_vec3(edge.env_pos[0], edge.env_pos[1], edge.env_pos[2]);
-                Vec<3> env_grad_total = make_zero<3>();
-                bool has_env_grad = false;
-                struct RowEval {
-                    int row = -1;
-                    float prior = 0.f;
-                    float pair_pot = 0.f;
-                    float pair_lj = 0.f;
-                    float pair_coul = 0.f;
-                    Vec<3> proxy_grad = make_zero<3>();
-                    Vec<3> env_grad = make_zero<3>();
-                };
-                std::vector<RowEval> evals;
-                evals.reserve(proxy_rows->size());
-
-                float min_pair_pot = 1.0e30f;
-                for(int r : *proxy_rows) {
-                    if(r < 0 || r >= static_cast<int>(sc_row_relaxed_pos.size())) continue;
-                    if(!sc_row_valid[r]) continue;
-                    float prior = sc_row_prob_norm[r];
-                    if(prior <= 0.f) continue;
-
-                    auto& rp = sc_row_relaxed_pos[r];
-                    Vec<3> proxy_pos = make_vec3(rp[0], rp[1], rp[2]);
-                    Vec<3> pa = edge.proxy_is_i ? proxy_pos : env_pos;
-                    Vec<3> pb = edge.proxy_is_i ? env_pos : proxy_pos;
-
-                    Vec<3> pair_force = make_zero<3>();
-                    float pair_pot = 0.f;
-                    float pair_lj = 0.f;
-                    float pair_coul = 0.f;
-                    if(!eval_pair_force(pa, pb, edge.eps, edge.sig, edge.qi, edge.qj, false,
-                                        pair_pot, pair_force,
-                                        hybrid_state->sc_env_lj_force_cap,
-                                        hybrid_state->sc_env_coul_force_cap,
-                                        sc_force_uncap_mix,
-                                        0.f,
-                                        0.f,
-                                        &pair_lj,
-                                        &pair_coul)) {
-                        continue;
-                    }
-
-                    auto gi = -pair_force;
-                    auto gj = pair_force;
-                    auto proxy_grad = edge.proxy_is_i ? gi : gj;
-                    auto env_grad = edge.proxy_is_i ? gj : gi;
-                    if(edge.env_z_clamped) {
-                        env_grad[2] = 0.f;
-                    }
-
-                    if(coupling_align.enabled) {
-                        auto gproxy = std::array<float,3>{proxy_grad[0], proxy_grad[1], proxy_grad[2]};
-                        auto gproxy_raw = martini_hybrid::apply_rot_T(coupling_align.R, gproxy);
-                        proxy_grad = make_vec3(gproxy_raw[0], gproxy_raw[1], gproxy_raw[2]);
-                    }
-
-                    if(!std::isfinite(pair_pot)) continue;
-
-                    RowEval ev;
-                    ev.row = r;
-                    ev.prior = prior;
-                    ev.pair_pot = pair_pot;
-                    ev.pair_lj = pair_lj;
-                    ev.pair_coul = pair_coul;
-                    ev.proxy_grad = proxy_grad;
-                    ev.env_grad = env_grad;
-                    evals.push_back(ev);
-                    min_pair_pot = std::min(min_pair_pot, pair_pot);
-                }
-
-                if(!evals.empty() && std::isfinite(min_pair_pot) && min_pair_pot < 1.0e29f) {
-                    float z_shift = 0.f;
-                    for(const auto& ev : evals) {
-                        float shifted = ev.pair_pot - min_pair_pot;
-                        if(!std::isfinite(shifted)) continue;
-                        // Numerical stabilization for finite-math builds.
-                        shifted = std::max(0.f, std::min(shifted, 80.f));
-                        z_shift += ev.prior * expf(-shifted);
-                    }
-
-                    if(z_shift > 1.0e-20f && std::isfinite(z_shift)) {
-                        float free_energy = min_pair_pot - logf(z_shift);
-                        if(pot) *pot += free_energy;
-                        sc_env_energy_total += free_energy;
-                        float inv_z = 1.f / z_shift;
-                        for(const auto& ev : evals) {
-                            float shifted = ev.pair_pot - min_pair_pot;
-                            if(!std::isfinite(shifted)) continue;
-                            shifted = std::max(0.f, std::min(shifted, 80.f));
-                            float w = ev.prior * expf(-shifted) * inv_z;
-                            if(!(w > 0.f) || !std::isfinite(w)) continue;
-
-                            if(ev.row >= 0 && ev.row < static_cast<int>(sc_row_proxy_grad.size())) {
-                                sc_row_proxy_grad[ev.row][0] += w * ev.proxy_grad[0];
-                                sc_row_proxy_grad[ev.row][1] += w * ev.proxy_grad[1];
-                                sc_row_proxy_grad[ev.row][2] += w * ev.proxy_grad[2];
-                            }
-                            sc_env_energy_lj += w * ev.pair_lj;
-                            sc_env_energy_coul += w * ev.pair_coul;
-                            env_grad_total += w * ev.env_grad;
-                            has_env_grad = true;
-                        }
-                    } else {
-                        // Degenerate softmax: fall back to prior-weighted accumulation.
-                        for(const auto& ev : evals) {
-                            float w = ev.prior;
-                            if(!(w > 0.f) || !std::isfinite(w)) continue;
-                            if(pot) *pot += w * ev.pair_pot;
-                            sc_env_energy_total += w * ev.pair_pot;
-                            if(ev.row >= 0 && ev.row < static_cast<int>(sc_row_proxy_grad.size())) {
-                                sc_row_proxy_grad[ev.row][0] += w * ev.proxy_grad[0];
-                                sc_row_proxy_grad[ev.row][1] += w * ev.proxy_grad[1];
-                                sc_row_proxy_grad[ev.row][2] += w * ev.proxy_grad[2];
-                            }
-                            sc_env_energy_lj += w * ev.pair_lj;
-                            sc_env_energy_coul += w * ev.pair_coul;
-                            env_grad_total += w * ev.env_grad;
-                            has_env_grad = true;
-                        }
-                    }
-                }
-
-                if(has_env_grad && edge.env_atom >= 0 && edge.env_atom < n_atom) {
-                    if(coupling_align.enabled && edge.env_is_protein) {
-                        auto g = std::array<float,3>{env_grad_total[0], env_grad_total[1], env_grad_total[2]};
-                        auto gr = martini_hybrid::apply_rot_T(coupling_align.R, g);
-                        env_grad_total = make_vec3(gr[0], gr[1], gr[2]);
-                    }
-                    update_vec<3>(pos1_sens, edge.env_atom, env_grad_total);
-                }
-            }
-
-            for(const auto& edge : sc_sc_edges) {
-                const auto* i_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, edge.proxy_i);
-                const auto* j_rows = martini_hybrid::find_sc_rows_for_proxy(*hybrid_state, edge.proxy_j);
-                if(!i_rows || i_rows->empty() || !j_rows || j_rows->empty()) continue;
-
-                float wi = proxy_force_weight_at(edge.proxy_i);
-                float wj = proxy_force_weight_at(edge.proxy_j);
-                if(!(wi > 0.f) && !(wj > 0.f)) continue;
-
-                for(int ri : *i_rows) {
-                    if(ri < 0 || ri >= static_cast<int>(sc_row_relaxed_pos.size())) continue;
-                    if(!sc_row_valid[ri]) continue;
-                    float pri = sc_row_prob_norm[ri];
-                    if(!(std::isfinite(pri) && pri > 0.f)) continue;
-                    auto& pi = sc_row_relaxed_pos[ri];
-                    Vec<3> pos_i = make_vec3(pi[0], pi[1], pi[2]);
-
-                    for(int rj : *j_rows) {
-                        if(rj < 0 || rj >= static_cast<int>(sc_row_relaxed_pos.size())) continue;
-                        if(!sc_row_valid[rj]) continue;
-                        float prj = sc_row_prob_norm[rj];
-                        if(!(std::isfinite(prj) && prj > 0.f)) continue;
-                        auto& pj = sc_row_relaxed_pos[rj];
-                        Vec<3> pos_j = make_vec3(pj[0], pj[1], pj[2]);
-
-                        Vec<3> pair_force = make_zero<3>();
-                        float pair_pot = 0.f;
-                        if(!eval_pair_force(pos_i, pos_j,
-                                            edge.eps, edge.sig, edge.qi, edge.qj, false,
-                                            pair_pot, pair_force,
-                                            0.f, 0.f, 1.f, 0.f, 0.f,
-                                            nullptr, nullptr)) {
-                            continue;
-                        }
-
-                        float w_pair = pri * prj;
-                        if(!(std::isfinite(w_pair) && w_pair > 0.f)) continue;
-                        if(pot) *pot += w_pair * pair_pot;
-
-                        auto gi = -pair_force;
-                        auto gj = pair_force;
-                        if(coupling_align.enabled) {
-                            auto gi_arr = std::array<float,3>{gi[0], gi[1], gi[2]};
-                            auto gj_arr = std::array<float,3>{gj[0], gj[1], gj[2]};
-                            auto gi_raw = martini_hybrid::apply_rot_T(coupling_align.R, gi_arr);
-                            auto gj_raw = martini_hybrid::apply_rot_T(coupling_align.R, gj_arr);
-                            gi = make_vec3(gi_raw[0], gi_raw[1], gi_raw[2]);
-                            gj = make_vec3(gj_raw[0], gj_raw[1], gj_raw[2]);
-                        }
-
-                        float gi_scale = w_pair * wj;
-                        float gj_scale = w_pair * wi;
-                        if(ri >= 0 && ri < static_cast<int>(sc_row_proxy_grad.size()) && gi_scale > 0.f) {
-                            sc_row_proxy_grad[ri][0] += gi_scale * gi[0];
-                            sc_row_proxy_grad[ri][1] += gi_scale * gi[1];
-                            sc_row_proxy_grad[ri][2] += gi_scale * gi[2];
-                        }
-                        if(rj >= 0 && rj < static_cast<int>(sc_row_proxy_grad.size()) && gj_scale > 0.f) {
-                            sc_row_proxy_grad[rj][0] += gj_scale * gj[0];
-                            sc_row_proxy_grad[rj][1] += gj_scale * gj[1];
-                            sc_row_proxy_grad[rj][2] += gj_scale * gj[2];
-                        }
-                    }
-                }
-            }
-        }
-
-        if(hybrid_state) {
-            martini_hybrid::project_sc_gradient_if_active(*hybrid_state, pos1_sens, n_atom, sc_row_proxy_grad);
-        }
         if(mutable_hybrid && mutable_hybrid->sc_env_energy_dump_enabled) {
             mutable_hybrid->sc_env_energy_total = sc_env_energy_total;
             mutable_hybrid->sc_env_energy_lj = sc_env_energy_lj;
@@ -4465,6 +2836,7 @@ struct MartiniScTablePotential : public PotentialNode
 
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
+        float protein_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*hybrid_state);
 
         VecArray posc = pos.output;
         VecArray pos_sens = pos.sens;
@@ -4510,8 +2882,9 @@ struct MartiniScTablePotential : public PotentialNode
                 potential += value;
 
                 if(dist <= 1.0e-6f) continue;
-                Vec<3> grad_cb = (dVdr / dist) * dr;
-                Vec<3> grad_env = -grad_cb;
+                Vec<3> grad_cb_full = (dVdr / dist) * dr;
+                Vec<3> grad_cb = protein_feedback_mix * grad_cb_full;
+                Vec<3> grad_env = -grad_cb_full;
 
                 update_vec<3>(cb_sens, cb_idx, grad_cb);
                 update_vec<3>(pos_sens, atom_idx, grad_env);

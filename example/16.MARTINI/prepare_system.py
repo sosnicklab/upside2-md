@@ -11,7 +11,6 @@ import numpy as np
 from prepare_system_lib import (
     center_of_mass,
     collect_bb_map,
-    collect_sc_map,
     convert_stage,
     compute_lipid_residue_indices,
     coords,
@@ -423,12 +422,6 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
         if not protein_aa_atoms:
             raise ValueError(f"No atoms found in protein AA PDB: {protein_aa_pdb}")
 
-        protein_itp_for_map = None
-        if args.protein_itp:
-            protein_itp_for_map = Path(args.protein_itp).expanduser().resolve()
-        elif runtime_itp.exists():
-            protein_itp_for_map = runtime_itp
-
         frame_diag = validate_backbone_reference_frame(
             protein_aa_atoms,
             protein_atoms,
@@ -437,10 +430,6 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
             context=f"{protein_aa_pdb.name} -> {protein_cg_pdb.name}",
         )
         bb_entries = collect_bb_map(protein_aa_atoms, protein_atoms)
-        sc_entries = collect_sc_map(
-            protein_atoms,
-            protein_itp_path=protein_itp_for_map,
-        )
 
         mapping_h5 = Path(args.hybrid_mapping_output).expanduser().resolve()
         mapping_h5.parent.mkdir(parents=True, exist_ok=True)
@@ -448,7 +437,6 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
         write_hybrid_mapping_h5(
             mapping_h5,
             bb_entries=bb_entries,
-            sc_entries=sc_entries,
             total_martini_atoms=len(all_atoms),
             env_atom_indices=env_atom_indices,
             n_protein_atoms=len(protein_atoms),
@@ -458,7 +446,6 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
         mapping_summary["mapping_h5"] = str(mapping_h5)
         mapping_summary["backbone_frame_check"] = frame_diag
         mapping_summary["bb_map_entries"] = int(len(bb_entries))
-        mapping_summary["sc_map_entries"] = int(len(sc_entries))
 
         if args.hybrid_bb_map_json_output:
             mapping_json = Path(args.hybrid_bb_map_json_output).expanduser().resolve()

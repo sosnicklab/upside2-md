@@ -40,7 +40,6 @@ def main():
         inp = require_group(h5, "/input")
         ctrl = require_group(inp, "hybrid_control")
         bb = require_group(inp, "hybrid_bb_map")
-        sc = require_group(inp, "hybrid_sc_map")
         env = require_group(inp, "hybrid_env_topology")
 
         # Required control attrs.
@@ -95,28 +94,6 @@ def main():
                 if abs(wsum - 1.0) > 1e-4:
                     raise ValueError(f"BB weights do not sum to 1 for row {i}: {wsum}")
 
-        sc_proxy = require_dataset(sc, "proxy_atom_index")[:]
-        sc_prob = require_dataset(sc, "rotamer_probability")[:]
-        sc_proj_i = require_dataset(sc, "proj_target_indices")[:]
-        sc_proj_w = require_dataset(sc, "proj_weights")[:]
-
-        if sc_proj_i.ndim != 2 or sc_proj_i.shape[1] != 4:
-            raise ValueError("hybrid_sc_map/proj_target_indices must have shape (n_rot,4)")
-        if sc_proj_w.shape != sc_proj_i.shape:
-            raise ValueError("hybrid_sc_map/proj_weights must match proj_target_indices shape")
-        if sc_proxy.shape != sc_prob.shape:
-            raise ValueError("hybrid_sc_map/proxy_atom_index and rotamer_probability must have same shape")
-
-        n_rot = sc_proxy.shape[0]
-        for i in range(n_rot):
-            if sc_prob[i] < 0.0:
-                raise ValueError(f"Negative rotamer probability at row {i}")
-            valid = sc_proj_i[i] >= 0
-            if valid.any():
-                wsum = float(sc_proj_w[i][valid].sum())
-                if abs(wsum - 1.0) > 1e-4:
-                    raise ValueError(f"SC projection weights do not sum to 1 for row {i}: {wsum}")
-
         membership = require_dataset(env, "protein_membership")[:]
         if membership.ndim != 1:
             raise ValueError("hybrid_env_topology/protein_membership must be 1D")
@@ -146,26 +123,11 @@ def main():
                     if membership[ai] < 0:
                         raise ValueError(f"BB target index is not protein atom at row {i}, col {j}: {ai}")
 
-        for i in range(n_rot):
-            proxy_i = int(sc_proxy[i])
-            if proxy_i < 0 or proxy_i >= n_atom:
-                raise ValueError(f"SC proxy index out of bounds at row {i}: {proxy_i}")
-            if membership[proxy_i] < 0:
-                raise ValueError(f"SC proxy index is not protein atom at row {i}: {proxy_i}")
-            for j in range(4):
-                ai = int(sc_proj_i[i, j])
-                if ai < 0:
-                    continue
-                if ai >= n_atom:
-                    raise ValueError(f"SC target index out of bounds at row {i}, col {j}: {ai}")
-                if membership[ai] < 0:
-                    raise ValueError(f"SC target index is not protein atom at row {i}, col {j}: {ai}")
-
         n_protein = int(np.sum(membership >= 0))
         n_env = int(np.sum(membership < 0))
         print(f"OK: {p}")
         print(f"  n_atom={membership.shape[0]} n_protein={n_protein} n_env={n_env}")
-        print(f"  n_bb={n_bb} n_sc_rotamer_rows={n_rot} bb_index_space={bb_index_space}")
+        print(f"  n_bb={n_bb} bb_index_space={bb_index_space}")
 
 
 if __name__ == "__main__":

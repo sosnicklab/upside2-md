@@ -18,6 +18,8 @@
 #include <iostream>
 #include <cstdlib>
 #include <array>
+#include <iomanip>
+#include <cmath>
 
 
 #include "box.h"  // Simulation box PBC and NPT barostat
@@ -192,6 +194,17 @@ static void refresh_split_potential_cache(System& sys, bool recompute_engine) {
     split_engine_potential_terms(sys.engine, sys.cached_upside_potential, sys.cached_martini_potential);
     sys.cached_potential_round = sys.round_num;
     sys.has_cached_potential = true;
+}
+
+static std::string format_logged_energy(double value) {
+    std::ostringstream out;
+    double mag = std::fabs(value);
+    if(!std::isfinite(value) || (mag != 0.0 && (mag >= 1.0e6 || mag < 1.0e-3))) {
+        out << std::scientific << std::setprecision(3) << value;
+    } else {
+        out << std::fixed << std::setprecision(2) << value;
+    }
+    return out.str();
 }
 
 static vector<int> collect_rg_backbone_indices_from_hybrid_map(hid_t config_root, int n_atom) {
@@ -1165,7 +1178,12 @@ try {
             double upside_pot = 0.0;
             double martini_pot = 0.0;
             split_engine_potential_terms(sys.engine, upside_pot, martini_pot);
-            if(verbose) printf(" %.2f/%.2f/%.2f", upside_pot, martini_pot, sys.engine.potential);
+            if(verbose) {
+                auto up_str = format_logged_energy(upside_pot);
+                auto martini_str = format_logged_energy(martini_pot);
+                auto total_str = format_logged_energy(sys.engine.potential);
+                printf(" %s/%s/%s", up_str.c_str(), martini_str.c_str(), total_str.c_str());
+            }
         }
         if(verbose) printf("\n");
 
@@ -1282,8 +1300,11 @@ try {
                             double upside_pot = 0.0;
                             double martini_pot = 0.0;
                             split_engine_potential_terms(sys.engine, upside_pot, martini_pot);
-                            printf(", potential % 8.2f, martini_potential % 8.2f, total % 8.2f",
-                                   upside_pot, martini_pot, sys.engine.potential);
+                            auto up_str = format_logged_energy(upside_pot);
+                            auto martini_str = format_logged_energy(martini_pot);
+                            auto total_str = format_logged_energy(sys.engine.potential);
+                            printf(", potential %s, martini_potential %s, total %s",
+                                   up_str.c_str(), martini_str.c_str(), total_str.c_str());
                             printf("\n");
                         }
                         fflush(stdout);

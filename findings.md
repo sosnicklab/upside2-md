@@ -1,6 +1,55 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-02: The remaining legacy surface after the direct-Upside rewrite was prep-only, not runtime.
+  - `example/16.MARTINI/prepare_system_lib.py` was still exporting `hybrid_sc_map` and `example/16.MARTINI/validate_hybrid_mapping.py` was still requiring it, even though the active stage-7 workflow no longer consumed that group;
+  - after removing that dead path, a fresh prep artifact in `/tmp/hybrid_mapping_bb_only/hybrid_mapping.h5` validates successfully and now contains only:
+    - `/input/hybrid_bb_map`,
+    - `/input/hybrid_control`,
+    - `/input/hybrid_env_topology`.
+- 2026-04-02: `src/box.cpp` and `src/box.h` no longer carry the retired hybrid rotamer/proxy subsystem.
+  - the remaining code there is active NPT box propagation and compatibility plumbing;
+  - no stage-7 legacy hybrid runtime behavior remained to remove from those files in this pass.
+- 2026-04-02: The current production energy-drift regression came from two active stage-7 paths that bypassed the intended direct-Upside semantics.
+  - direct `BB -> CA` MARTINI forces in `src/martini.cpp` were applying full protein-side feedback from step `0`, bypassing the existing `sc_env_backbone_hold_steps` ramp that older hybrid projection paths used;
+  - `martini_sc_table_potential` likewise fed full `CB` force back into Upside from step `0`;
+  - stage-7 still allowed protein-internal MARTINI proxy-proxy terms through `allow_protein_pair_by_rule(...)`, which kept legacy proxy bonded/nonbonded bookkeeping energy alive even though those protein proxies are no longer the physical protein model in direct-Upside production.
+- 2026-04-02: Reinstating the startup protein-feedback ramp on the direct BB/CB paths helps substantially but is not sufficient by itself.
+  - replay from the saved production handoff with only the direct-feedback-ramp restoration reduced the archived step-`2050` drift from `martini_potential 26387.78 / total 26216.96` to about `10259.78 / 10097.96`;
+  - the remaining positive drift was then traced to leftover stage-7 protein proxy-proxy terms.
+- 2026-04-02: Removing the remaining active protein-internal MARTINI proxy-proxy terms resolves the reproduced production drift on the saved handoff.
+  - replay from `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` with both fixes reached step `2050` at:
+    - `martini_potential -25985.45`,
+    - `total -26147.28`;
+  - the archived current run at the same step is:
+    - `martini_potential 26387.78`,
+    - `total 26216.96`;
+  - the patched replay remained negative through all checked saved lines `0 -> 2050`, so the reproduced long-horizon energy build-up no longer occurs in that stage-7 artifact.
+- 2026-04-02: Reduced simulation masses are now restored as the active workflow state.
+  - `example/16.MARTINI/prepare_system_lib.py` again writes `ff_mass / 12` into `/input/mass`;
+  - `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh` again append reduced `/12` reference masses;
+  - fresh shortened workflow output `/tmp/martini_mass_reduced/checkpoints/1rkl.stage_6.0.up` confirms the reduced values are present:
+    - `4082` particles at `6.0`,
+    - `8` particles at `3.75`;
+  - the same run again starts stage `6.0` at `Initial potential energy (Upside/MARTINI/Total): 0.00/140510.94/140510.94`.
+- 2026-04-02: The current huge `martini_potential` / `total` values in `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/logs/stage_7.0.log` are real runtime values, not a logging bug.
+  - `src/main.cpp` prints the direct result of `split_engine_potential_terms(...)` and `sys.engine.potential`;
+  - the active stage-7 log shows `martini_potential` on the order of `1.9e21` at step `0`, decaying to about `1.27e21` by step `1200`;
+  - consequence:
+    - formatting can be improved for readability,
+    - but a print-path edit does not address the physical/force-field cause of those giant energies.
+- 2026-04-02: Restoring native dry-MARTINI masses alone does not reproduce the earlier minimization blow-up.
+  - the weighted 4-carrier BB mapping remained restored while only the mass path was switched back to native force-field values;
+  - a fresh shortened `example/16.MARTINI/run_sim_1rkl.sh` run in `/tmp/martini_mass_restore` again started stage `6.0` at:
+    - `Initial potential energy (Upside/MARTINI/Total): 0.00/140510.94/140510.94`;
+  - direct HDF5 inspection of `/tmp/martini_mass_restore/checkpoints/1rkl.stage_6.0.up` confirms native dry-MARTINI mass values are present in `/input/mass`:
+    - `4082` particles at `72.0`,
+    - `8` particles at `45.0`.
+- 2026-04-01: The last two attempted cleanup changes were not simulation-safe and have been reverted.
+  - the attempted switch to native dry-MARTINI masses in `/input/mass` caused immediate stage-6.0 minimization blow-up in the real workflow;
+  - the attempted CA-only active `hybrid_bb_map` remap was also reverted together with that mass change, per user request;
+  - after reverting both, a fresh shortened `example/16.MARTINI/run_sim_1rkl.sh` run returned to the pre-regression startup:
+    - `Initial potential energy (Upside/MARTINI/Total): 0.00/140510.94/140510.94`.
 - 2026-04-01: Dry-MARTINI particle masses now stay in native dry-MARTINI profile units throughout the simulation workflow.
   - `example/16.MARTINI/prepare_system_lib.py` no longer divides force-field masses by `12` when writing `/input/mass`;
   - `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh` no longer append reduced-unit AA reference masses during stage-file augmentation;
@@ -202,6 +251,18 @@
   - because `O` contributes about `0.2963` of each `BB` COM weight, that is a real correctness issue, but fixing it cleanly requires projecting `O` feedback through the `N/CA/C -> O` reconstruction map rather than merely freezing `O`.
 
 ## Lessons
+- 2026-04-02: A subsystem replacement is not complete while prep/export helpers still emit the retired schema.
+  - Working rule: after removing a runtime path, search the preparation and validation scripts for the same groups, attrs, and helper names. If the active workflow no longer consumes them, delete that export/validation code instead of leaving inert compatibility baggage behind.
+- 2026-04-02: A direct-carrier rewrite is not complete until startup gating and legacy proxy bookkeeping are both ported or removed.
+  - Working rule: when replacing a projected hybrid force path with a direct-Upside carrier path, audit more than the pair-force location. Explicitly check whether startup feedback ramps, hold windows, and proxy bonded/nonbonded terms still exist in parallel and will continue injecting energy or stale bookkeeping into production.
+- 2026-04-02: Treat simulation-stability feedback from the user as the priority over a cleaner unit contract.
+  - Working rule: if the user reports the box explodes after a unit change, restore the previously stable runtime contract first, verify the real workflow startup, and only then revisit the desired unit model with targeted diagnostics.
+- 2026-04-02: Distinguish logging readability fixes from simulation-state fixes.
+  - Working rule: if a log line shows absurd magnitudes, first verify whether the underlying value is real. Only then decide whether to patch formatting, physics, or both.
+- 2026-04-02: When two changes were reverted together after a regression, do not keep attributing the failure to one change without re-isolating it.
+  - Working rule: if the user later asks to restore one half of a reverted pair, re-test that change in isolation before repeating the earlier causal claim.
+- 2026-04-01: Do not treat a unit or carrier-mapping cleanup as valid until the first real minimization stage reproduces the old energy scale.
+  - Working rule: for hybrid workflow changes that touch masses or BB carriers, run the real `6.0` preparation/minimization path immediately and compare the initial MARTINI potential before making broader claims about correctness.
 - 2026-04-01: When the user asks for native-unit preservation, inspect the staged arrays directly rather than trusting comments or historical unit conventions.
   - Working rule: for mass/unit corrections, verify the actual HDF5 payloads and separate physical dry-MARTINI particles from appended bookkeeping/reference rows before declaring the unit contract fixed.
 - 2026-04-01: When the user says a proxy carrier mapping must collapse to one carrier, audit the generated HDF5 payloads as well as the force code.

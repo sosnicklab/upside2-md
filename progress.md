@@ -1,6 +1,84 @@
 # Progress Log
 
 ## 2026-04-01
+- Reopened the code-removal pass after the user asked to remove legacy code instead of merely disabling it.
+- Audited the remaining legacy surface in `src/martini.cpp`, `src/box.cpp`, and `src/box.h`:
+  - removed the dead probabilistic SC / rotamer / placement subsystem from `src/martini.cpp`;
+  - confirmed `src/box.cpp` and `src/box.h` no longer contain the retired stage-7 proxy/rotamer subsystem, so they were left unchanged.
+- Removed the remaining prep-only legacy mapping path:
+  - deleted `hybrid_sc_map` export code and the associated bonded-topology SC-target helpers from `example/16.MARTINI/prepare_system_lib.py`;
+  - updated `example/16.MARTINI/prepare_system.py` to build BB-only mapping files;
+  - updated `example/16.MARTINI/validate_hybrid_mapping.py` to validate only the active BB/env schema.
+- Verified the cleanup at multiple levels:
+  - `cmake --build obj` passed;
+  - `python -m py_compile example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/prepare_system.py example/16.MARTINI/validate_hybrid_mapping.py` passed under `.venv`;
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` and `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed;
+  - a fresh prep run in `/tmp/hybrid_mapping_bb_only` produced a mapping file whose `/input` keys are exactly `hybrid_bb_map`, `hybrid_control`, and `hybrid_env_topology`;
+  - a reduced-horizon active workflow run in `/tmp/legacy_cleanup_short` accepted that BB-only mapping file and completed the full current `run_sim_1rkl.sh` ladder through stage `7.0`.
+- Reopened the stage-7 production energy-drift regression from the saved hybrid artifact.
+- Reproduced the user-reported current behavior directly from the archived production handoff:
+  - replaying `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` with the current runtime again showed the MARTINI bucket cross positive and climb to `26387.78` by step `2050`.
+- Traced the first active regression to the direct-Upside stage-7 path in `src/martini.cpp`:
+  - direct `BB -> CA` MARTINI forces were bypassing `compute_sc_backbone_feedback_mix(...)`;
+  - `martini_sc_table_potential` was likewise feeding full `CB` force back onto the protein from step `0`.
+- Patched the direct stage-7 force paths:
+  - direct `BB` feedback onto the protein side now scales by `compute_sc_backbone_feedback_mix(...)` while leaving the environment-side force unchanged;
+  - `martini_sc_table_potential` now does the same for `CB` feedback.
+- Ran an intermediate replay after the direct-feedback-ramp patch:
+  - step `2050` improved from archived `26387.78 / 26216.96` (`martini_potential / total`) to about `10259.78 / 10097.96`,
+  - proving the startup feedback-ramp regression was real but not the whole remaining drift.
+- Traced the remaining drift to leftover stage-7 protein proxy-proxy MARTINI terms:
+  - active production still allowed same-residue protein `BB-SC` proxy terms through `allow_protein_pair_by_rule(...)`;
+  - those proxy terms are legacy bookkeeping in the direct-Upside stage and should not remain active.
+- Removed the remaining active stage-7 protein proxy-proxy MARTINI path in `src/martini.cpp` by rejecting protein-internal proxy pairs in `allow_protein_pair_by_rule(...)`.
+- Verified the full fix with a second replay from the same saved handoff:
+  - patched run in `/tmp/energy_drift_fix2/patched.log` stayed negative through step `2050`,
+  - observed step `2050`: `martini_potential -25985.45`, `total -26147.28`,
+  - archived current run at step `2050`: `martini_potential 26387.78`, `total 26216.96`.
+- Build verification for this pass:
+  - `cmake --build obj` passed after each `src/martini.cpp` update, with only pre-existing warnings.
+
+- Restored reduced `/12` simulation masses after the user reported box blow-up with original masses:
+  - `example/16.MARTINI/prepare_system_lib.py` again writes reduced dry-MARTINI masses into `/input/mass`;
+  - `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh` again append reduced reference masses;
+  - kept the scientific-notation log-format patch in `src/main.cpp`.
+- Verified the reduced-mass restoration:
+  - `python -m py_compile example/16.MARTINI/prepare_system_lib.py` passed;
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` and `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed;
+  - `cmake --build obj` passed;
+  - a fresh shortened real `example/16.MARTINI/run_sim_1rkl.sh` run in `/tmp/martini_mass_reduced` again starts stage `6.0` at `0.00/140510.94/140510.94`;
+  - direct HDF5 inspection of `/tmp/martini_mass_reduced/checkpoints/1rkl.stage_6.0.up` shows the reduced mass values are back (`4082 x 6.0`, `8 x 3.75`).
+- Investigated the current huge `martini_potential` / `total` printout in stage-7 logs.
+- Verified the print path in `src/main.cpp`:
+  - `split_engine_potential_terms(...)` sums the actual MARTINI-side `PotentialNode` values;
+  - the console log prints those values directly, so the giant numbers are not a `printf` type bug.
+- Added a readability-only log-format patch in `src/main.cpp`:
+  - energies now print in scientific notation when their magnitude is very large (or very small), while moderate values still print in fixed-point format.
+- Verified the formatting patch:
+  - `cmake --build obj` passed;
+  - replaying a copied problematic stage-7 file (`/tmp/print_fmt_stage7.up`) now prints:
+    - `Initial potential energy (Upside/MARTINI/Total): 233.38/1.906e+21/1.906e+21`
+    - `martini_potential 1.906e+21, total 1.906e+21`
+  - this is a reporting/readability fix only; the underlying giant MARTINI energy remains real in that run.
+- Re-restored the native dry-MARTINI mass path on 2026-04-02 while keeping the weighted BB mapping revert in place:
+  - `example/16.MARTINI/prepare_system_lib.py` again writes native force-field masses into `/input/mass`;
+  - `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh` again write native-mass reference rows instead of reduced `/12` masses.
+- Verified the isolated mass restoration:
+  - `python -m py_compile example/16.MARTINI/prepare_system_lib.py` passed;
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` and `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed;
+  - a fresh shortened real `example/16.MARTINI/run_sim_1rkl.sh` run in `/tmp/martini_mass_restore` still starts stage `6.0` at `0.00/140510.94/140510.94`, so the earlier blow-up is not reproduced by the mass change alone;
+  - direct HDF5 inspection of `/tmp/martini_mass_restore/checkpoints/1rkl.stage_6.0.up` confirms native dry-MARTINI particle masses (`4082 x 72.0`, `8 x 45.0`).
+- Reverted the last two edits after the user reported a broken minimization startup:
+  - restored reduced `/12` dry-MARTINI mass writing in `example/16.MARTINI/prepare_system_lib.py`;
+  - restored the previous stage-file reference-mass assignments in `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh`;
+  - restored the weighted 4-carrier active `hybrid_bb_map` export/injection path and removed the runtime CA-only rejection in `src/martini.cpp`.
+- Verified the revert:
+  - `python -m py_compile example/16.MARTINI/prepare_system_lib.py` passed;
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` and `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed;
+  - `cmake --build obj` passed;
+  - a fresh shortened `example/16.MARTINI/run_sim_1rkl.sh` run in `/tmp/martini_revert_check` returned to the expected 6.0 startup scale:
+    - `Initial potential energy (Upside/MARTINI/Total): 0.00/140510.94/140510.94`
+  - this replaced the reported broken behavior where the minimization stage started around `3.0e22`.
 - Reopened the mass path after the user clarified that dry-MARTINI particles must keep their original dry-MARTINI profile masses instead of reduced `/12` masses.
 - Updated the native-mass path:
   - `example/16.MARTINI/prepare_system_lib.py` now writes force-field masses directly into `/input/mass`;
