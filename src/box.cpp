@@ -364,8 +364,8 @@ void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
     
     if(s.debug) {
         const char* type_name = (s.type == BarostatType::ParrinelloRahman) ? "Parrinello-Rahman" : "Berendsen";
-        printf("[NPT] Barostat registered: %s, box %.2f x %.2f x %.2f, target Pxy=%.3e Pz=%.3e, beta_xy=%.3e beta_z=%.3e, tau=%.2f, interval=%d\n",
-               type_name, bx, by, bz, s.target_p_xy, s.target_p_z, s.compressibility_xy, s.compressibility_z, s.tau_p, s.interval);
+        printf("[NPT] Barostat registered: %s, target Pxy=%.3e Pz=%.3e, beta_xy=%.3e beta_z=%.3e, tau=%.2f, interval=%d\n",
+               type_name, s.target_p_xy, s.target_p_z, s.compressibility_xy, s.compressibility_z, s.tau_p, s.interval);
     }
 }
 
@@ -484,13 +484,6 @@ void maybe_apply_barostat(DerivEngine& engine,
     // Store scale factors for logging
     st.last_scale_xy = scale_xy;
     st.last_scale_z = scale_z;
-    
-    if(verbose && s.debug && print_now) {
-        printf("[NPT] t %.3f box %.2f %.2f %.2f\n",
-               double(round_num * delta_t),
-               st.box_x, st.box_y, st.box_z);
-        fflush(stdout);
-    }
 }
 
 void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz) {

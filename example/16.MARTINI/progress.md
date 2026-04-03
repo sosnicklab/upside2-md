@@ -1,5 +1,22 @@
 # Progress Log
 
+## 2026-04-03
+- Re-read `task_plan.md` and audited NPT logging sites in `../../src/box.cpp`.
+- Confirmed the box-dimension output came from two `printf` calls:
+  - barostat registration print with initial box dimensions,
+  - per-update `[NPT] t ... box ...` print.
+- Modified `../../src/box.cpp`:
+  - removed box dimensions from the registration log line,
+  - removed the per-update box-dimension log line entirely,
+  - kept the non-finite-pressure warning path unchanged.
+- Files modified:
+  - `../../src/box.cpp`
+  - `task_plan.md`
+  - `findings.md`
+- Verification:
+  - `rg -n "\\[NPT\\].*box|box %.2f %.2f %.2f|box %.2f x %.2f x %.2f" src/box.cpp src/main.cpp` -> no matches.
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` -> passed.
+
 ## 2026-02-28
 - Re-read `task_plan.md` and inspected the production SC coupling path in `../../src/martini.cpp` plus workflow controls in `run_sim_1rkl.sh`.
 - Confirmed root cause: `sc_env_relax_steps` was being written/parsing correctly but was no longer used in the active probabilistic SC interaction path, so production SC-env and same-residue SC-BB forces stayed at a fixed cap.

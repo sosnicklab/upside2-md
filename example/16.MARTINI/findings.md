@@ -1,5 +1,14 @@
 # Findings
 
+## 2026-04-03 (NPT Box-Dimension Debug Output Cleanup)
+- The NPT box-dimension debug output was emitted from `../../src/box.cpp`, not `main.cpp`.
+- Two box-specific prints existed:
+  - the barostat registration line printed `box %.2f x %.2f x %.2f`,
+  - the runtime update line printed `[NPT] t %.3f box %.2f %.2f %.2f`.
+- The useful non-box diagnostic in this area is the non-finite-pressure warning:
+  - `skipped update due to non-finite pressure ...`
+- Minimal-impact cleanup is to remove only the box-dimension prints and keep the warning/debug control path intact.
+
 ## 2026-02-28 (SC Probability Weighting Re-Check)
 - The capped-to-uncapped force ramp added in `../../src/martini.cpp` does not replace or bypass the existing SC probability weighting path.
 - Live SC row probabilities are still refreshed from the rotamer node (`refresh_sc_row_probabilities_from_rotamer(...)`) and normalized per proxy into `sc_row_prob_norm`.

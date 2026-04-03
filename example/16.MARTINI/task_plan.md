@@ -1,38 +1,28 @@
 # Task Plan
 
 ## Project Goal
-- Add example-style entrypoint files for `example/16.MARTINI`:
-  - `readme.md`
-  - `run.py`
-- Match the lightweight style of existing examples such as `example/02.ReplicaExchangeSimulation`, while keeping the real workflow implemented in `run_sim_1rkl.sh`.
+- Remove the NPT box-dimension debug output from the C++ runtime so simulation logs no longer emit messages such as:
+  - `[NPT] t 0.500 box 111.93 111.93 110.20`
 
 ## Architecture & Key Decisions
-- Keep `run_sim_1rkl.sh` as the actual MARTINI workflow implementation.
-- Add `run.py` as a thin Python wrapper that:
-  - exposes the main workflow knobs near the top of the file,
-  - passes them to `run_sim_1rkl.sh` through environment variables,
-  - invokes the shell workflow with `subprocess`.
-- Add `readme.md` in the same simple style as the other example directories:
-  - short description,
-  - minimal run commands,
-  - short note about outputs and visualization.
-- This task intentionally adds `run.py` even though the directory was previously reduced to four Python files, because the user explicitly requested a standard example-style Python entrypoint.
+- Keep the NPT barostat behavior unchanged.
+- Remove only the box-dimension debug `printf` calls in `src/box.cpp`.
+- Keep the non-finite-pressure warning path, since that is still useful runtime diagnostics and is not just box-dimension spam.
+- Do not change the HDF5/debug wiring unless it becomes dead or required for correctness; this cleanup should be minimal-impact.
 
 ## Execution Phases
-- [x] Phase 1: Inspect existing example `readme.md` / `run.py` style and current MARTINI workflow entrypoints.
-- [x] Phase 2: Implement `example/16.MARTINI/run.py` as a wrapper around `run_sim_1rkl.sh`.
-- [x] Phase 3: Implement `example/16.MARTINI/readme.md` with matching example documentation style.
-- [x] Phase 4: Verify the new files parse cleanly and document the result.
+- [x] Phase 1: Locate all NPT box-dimension debug prints in the C++ runtime.
+- [x] Phase 2: Remove the box-dimension debug output with minimal source changes.
+- [x] Phase 3: Rebuild and verify the cleanup.
 
 ## Known Errors / Blockers
-- No remaining blocker for this task.
+- No blocker identified.
 
 ## Review
-- Added [run.py](/Users/yinhan/Documents/upside2-md-martini/example/16.MARTINI/run.py) as a thin wrapper around [run_sim_1rkl.sh](/Users/yinhan/Documents/upside2-md-martini/example/16.MARTINI/run_sim_1rkl.sh):
-  - exposes the main workflow settings at the top of the file,
-  - passes them as environment overrides,
-  - launches the shell workflow with `subprocess`.
-- Added [readme.md](/Users/yinhan/Documents/upside2-md-martini/example/16.MARTINI/readme.md) in the lightweight style used by the other example directories.
+- Removed the two NPT box-dimension debug messages from `src/box.cpp`:
+  - the barostat registration message no longer prints the initial box dimensions,
+  - the per-update `[NPT] t ... box ...` message was removed entirely.
+- Kept the non-finite-pressure warning path unchanged.
 - Verification passed:
-  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/run.py example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/extract_martini_vtf.py example/16.MARTINI/martinize.py`
-  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `rg -n "\\[NPT\\].*box|box %.2f %.2f %.2f|box %.2f x %.2f x %.2f" src/box.cpp src/main.cpp`
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4`
