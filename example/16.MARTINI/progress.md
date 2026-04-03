@@ -2223,3 +2223,33 @@
   - `example/16.MARTINI/task_plan.md`
   - `example/16.MARTINI/findings.md`
   - `example/16.MARTINI/progress.md`
+
+## 2026-04-03 (Cleanup: Minimize `example/16.MARTINI` to `run_sim_1rkl.sh`)
+- Re-read `example/16.MARTINI/task_plan.md` and audited `example/16.MARTINI/run_sim_1rkl.sh` for direct local dependencies before deleting anything.
+- Confirmed retained source set:
+  - `run_sim_1rkl.sh`
+  - `prepare_system.py`
+  - `prepare_system_lib.py`
+  - `martinize.py`
+  - `build_sc_martini_h5.py`
+  - `inject_sc_table_stage7.py`
+  - `validate_hybrid_mapping.py`
+  - `set_initial_position.py`
+  - `extract_martini_vtf.py`
+  - `ff_dry/`
+  - `pdb/`
+  - `.gitignore`
+  - `task_plan.md`
+  - `findings.md`
+  - `progress.md`
+- Removed from `example/16.MARTINI`:
+  - alternate workflows and tests (`run_sim_1rkl_new.sh`, `run_sim_1rkl_nonrigid_dry.sh`, `run_sim_1rkl_rigid_dry.sh`, `run_sim_bilayer.sh`, `test_prod_run_sim_1rkl.sh`)
+  - analysis/debug artifacts (`HYBRID_VALIDATION.md`, `PROA_A.itp`, `all_splines.txt`, `angle_splines.txt`, `bond_splines.txt`, `dihedral_splines.txt`, `force_debug.txt`, `plot_lipid_diffusion_results.py`, `scan_lipid_diffusion.py`)
+  - generated/cached state (`inputs/`, `outputs/`, `.claude/`, `.serena/`, `__pycache__/`, `.DS_Store`)
+- Verification:
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/martinize.py example/16.MARTINI/build_sc_martini_h5.py example/16.MARTINI/inject_sc_table_stage7.py example/16.MARTINI/validate_hybrid_mapping.py example/16.MARTINI/set_initial_position.py example/16.MARTINI/extract_martini_vtf.py` passed.
+- Files modified in this follow-up:
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`

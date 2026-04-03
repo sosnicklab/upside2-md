@@ -481,3 +481,24 @@
     - `atom ... name N resid 4 resname ASP segid sA chain A`
     - `atom ... name CA resid 4 resname ASP segid sA chain A`
   - so VMD should now see standard backbone residues rather than the fallback anonymous residue.
+
+## 2026-04-03 (Workflow Cleanup Dependency Audit)
+- `example/16.MARTINI/run_sim_1rkl.sh` direct local-script dependencies are:
+  - `prepare_system.py`
+  - `martinize.py`
+  - `build_sc_martini_h5.py`
+  - `inject_sc_table_stage7.py`
+  - `validate_hybrid_mapping.py`
+  - `set_initial_position.py`
+  - `extract_martini_vtf.py`
+- The only extra Python module dependency within that kept set is:
+  - `prepare_system.py -> prepare_system_lib.py`
+- Workflow data/assets that must remain checked in for that path are:
+  - `ff_dry/`
+  - `pdb/`
+- Not required as checked-in workflow dependencies:
+  - alternate run scripts,
+  - test/scan/plot scripts,
+  - debug spline text files,
+  - cached `__pycache__` / tool-state directories,
+  - generated `inputs/` and `outputs/` directories.
