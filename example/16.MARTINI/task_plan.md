@@ -253,6 +253,23 @@
   - `martini22` uses 7 unique BB bead types across the 9 supported secondary-structure labels.
   - Canonical residues collapse to 3 backbone typing patterns in practice: default, `ALA`, and `PRO`; residue identity matters only through the bead type assignment logic.
   - Recommendation: do not merge BB into the current SC-training contract as `20 x n` residue-specific tables. If learned BB terms are wanted, add a separate BB-training path keyed by BB bead type (7 classes for `martini22`), not by 20 residue identities.
+
+## Current Task: VMD NewCartoon / VTF Metadata Fix
+- Goal:
+  - fix exported VTF/PDB metadata so VMD `NewCartoon` can recognize backmapped protein residues instead of collapsing them into a single anonymous residue.
+- Working decisions:
+  - preserve the existing coordinate/bond export path and only repair metadata fields used by VMD/Stride.
+  - emit `resid`, `resname`, `segid`, and `chain` on VTF atom records.
+  - derive backmapped protein residue names from `/input/sequence` rather than hard-coding `PRO`.
+- Checklist:
+  - [x] Inspect the current VTF/PDB exporter and identify why VMD reports residue `X 0 X`.
+  - [x] Patch the exporter metadata with minimal changes.
+  - [x] Verify the generated VTF/PDB headers on a stage-7 production file.
+  - [x] Record the root cause and required re-extraction step.
+- Review:
+  - root cause was the VTF header only writing `atom i name ...`, so VMD assigned fallback residue metadata `X 0 X` to every atom before calling Stride.
+  - mode-2 backmapped protein atoms were also mislabeled as residue name `PRO` instead of the actual sequence-derived residue names.
+  - `extract_martini_vtf.py` now writes full per-atom metadata in VTF and uses the stage-file sequence to label backmapped protein residues correctly.
 - Phase 6 alignment uses BB-frame rigid transform between consecutive steps (not full Kabsch over all protein atoms); validate stability impact in Phase 7.
 - Phase 7 completed smoke/integrity validation, and the targeted 5000-step stage-7 production replay for the startup energy-build-up issue now stays bounded; broader physical benchmarking beyond this corrected scenario remains future work.
 - Hybrid mapping export now stores BB component targets in protein-AA PDB index space; stage-file injection must convert this reference index space into runtime coordinate indices before simulation.

@@ -2196,3 +2196,30 @@
   - `example/16.MARTINI/task_plan.md`
   - `example/16.MARTINI/findings.md`
   - `example/16.MARTINI/progress.md`
+
+## 2026-04-03 (Fix: VTF Metadata for VMD NewCartoon)
+- Re-read `example/16.MARTINI/task_plan.md` and audited `example/16.MARTINI/extract_martini_vtf.py` after the user reported VMD `NewCartoon` / Stride failures on the exported VTF.
+- Root cause confirmed:
+  - VTF atom records were written with only `atom <i> name <aname>`, with no residue metadata.
+  - VMD therefore assigned fallback residue metadata `X 0 X` to all atoms, which made Stride fail on a single huge fake residue.
+  - the exporter was also hard-coding backmapped protein residue names to `PRO`.
+- Code changes in `example/16.MARTINI/extract_martini_vtf.py`:
+  - `read_martini_pdb_metadata(...)` now reads `ATOM` and `HETATM` chain IDs in addition to atom/residue names and residue IDs.
+  - added inferred chain-ID fallback logic for cases where no source PDB metadata is available.
+  - `build_backbone_projection_map(...)` now derives backmapped protein residue names from `/input/sequence` aligned to the ordered unique `hybrid_bb_map/bb_residue_index` list.
+  - mode-1 and mode-2 mappings now carry `output_chain_ids`.
+  - VTF export now writes `resid`, `resname`, `segid`, and `chain` on each atom record.
+  - PDB export now includes chain-aware residue records as well.
+- Verification:
+  - `python3 -m py_compile example/16.MARTINI/extract_martini_vtf.py` passed.
+  - regenerated a stage-7 mode-2 VTF:
+    - `python3 example/16.MARTINI/extract_martini_vtf.py example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.prepared.up /private/tmp/vmd_cartoon_fix_test.vtf example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.prepared.up 1rkl --mode 2`
+  - inspected the generated VTF header and confirmed protein backbone entries now carry proper residue metadata, e.g.:
+    - `name N resid 4 resname ASP segid sA chain A`
+    - `name CA resid 4 resname ASP segid sA chain A`
+  - regenerated a matching PDB smoke and confirmed the protein records include chain `A` and the correct residue names/IDs.
+- Files modified in this follow-up:
+  - `example/16.MARTINI/extract_martini_vtf.py`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`

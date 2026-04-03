@@ -70,21 +70,24 @@ def read_martini_pdb_metadata(pdb_file):
     atom_names = []
     residue_names = []
     residue_ids = []
+    chain_ids = []
     if not os.path.exists(pdb_file):
-        return None, None, None
+        return None, None, None, None
 
     with open(pdb_file, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
-            if not line.startswith("ATOM"):
+            if not (line.startswith("ATOM") or line.startswith("HETATM")):
                 continue
             atom_names.append(line[12:16].strip())
             residue_names.append(line[17:21].strip())
             residue_ids.append(int(line[22:26]))
+            chain_ids.append((line[21:22].strip() or "X"))
 
     return (
         np.array(atom_names, dtype=object),
         np.array(residue_names, dtype=object),
         np.array(residue_ids, dtype=int),
+        np.array(chain_ids, dtype=object),
     )
 
 
@@ -113,6 +116,25 @@ def infer_residue_names_from_class(atom_names, particle_class):
             out.append("DOPC")
         else:
             out.append("UNK")
+    return np.array(out, dtype=object)
+
+
+def infer_chain_ids_from_class(atom_names, particle_class):
+    if particle_class is None:
+        return np.array(["X"] * len(atom_names), dtype=object)
+
+    out = []
+    for aname, pclass in zip(atom_names, particle_class):
+        cls = str(pclass).upper()
+        an = str(aname).upper()
+        if cls == "PROTEIN" or cls == "PROTEINAA":
+            out.append("A")
+        elif cls == "ION":
+            out.append("I")
+        elif cls == "OTHER" and an in {"NC3", "PO4", "GL1", "GL2", "C1A", "C2A", "D3A", "C4A", "C5A", "C1B", "C2B", "D3B", "C4B", "C5B"}:
+            out.append("L")
+        else:
+            out.append("X")
     return np.array(out, dtype=object)
 
 
@@ -182,8 +204,9 @@ def centralize_system(frame_pos, residue_names, x_len, y_len, z_len):
         }
         protein_mask = np.array([str(name).upper() in protein_residues for name in residue_names], dtype=bool)
 
-    # Mode 2 output marks backmapped protein as residue "PRO". Centering by
-    # periodic protein COM avoids boundary-split rendering artifacts.
+    # Mode 2 output includes backmapped protein backbone residues by their
+    # sequence-derived residue names. Centering by periodic protein COM avoids
+    # boundary-split rendering artifacts.
     if protein_mask is not None and np.any(protein_mask):
         prot = np.mod(out[protein_mask], box[None, :])
         protein_center = np.zeros(3, dtype=np.float64)
@@ -215,13 +238,16 @@ def write_vtf_frame(fh, pos):
         fh.write(f"{x:.3f} {y:.3f} {z:.3f}\n")
 
 
-def write_pdb_frame(fh, pos, frame_num, atom_names, residue_names, residue_ids, x_len, y_len, z_len):
+def write_pdb_frame(fh, pos, frame_num, atom_names, residue_names, residue_ids, chain_ids, x_len, y_len, z_len):
     fh.write(f"MODEL     {frame_num + 1:4d}\n")
     fh.write(f"CRYST1{x_len:9.3f}{y_len:9.3f}{z_len:9.3f}  90.00  90.00  90.00 P 1           1\n")
-    for i, (coord, aname, rname, resid) in enumerate(zip(pos, atom_names, residue_names, residue_ids), 1):
+    for i, (coord, aname, rname, resid, chain_id) in enumerate(
+        zip(pos, atom_names, residue_names, residue_ids, chain_ids), 1
+    ):
         x, y, z = coord
+        chain = (str(chain_id).strip() or "X")[0]
         fh.write(
-            f"ATOM  {i:5d} {aname:>4} {rname:4s}{resid:5d}    "
+            f"ATOM  {i:5d} {aname:>4} {rname:4s}{chain:1s}{resid:4d}    "
             f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n"
         )
     fh.write("ENDMDL\n")
@@ -275,6 +301,24 @@ def build_backbone_projection_map(struct_h5, input_pos):
     if bb_atom_index.size == 0:
         return None
 
+    bb_residue_names = np.array(["UNK"] * bb_residue_index.shape[0], dtype=object)
+    if "input/sequence" in struct_h5:
+        sequence = decode_str_array(struct_h5["input/sequence"])
+        unique_residue_ids = []
+        for resid in bb_residue_index.tolist():
+            resid = int(resid)
+            if resid not in unique_residue_ids:
+                unique_residue_ids.append(resid)
+        if len(sequence) == len(unique_residue_ids):
+            residue_name_by_id = {
+                int(resid): str(resname)
+                for resid, resname in zip(unique_residue_ids, sequence.tolist())
+            }
+            bb_residue_names = np.array(
+                [residue_name_by_id.get(int(resid), "UNK") for resid in bb_residue_index.tolist()],
+                dtype=object,
+            )
+
     if "weights" in bb:
         weights = np.asarray(bb["weights"][:], dtype=np.float32)
         if weights.ndim != 2 or weights.shape[1] != 4:
@@ -308,6 +352,7 @@ def build_backbone_projection_map(struct_h5, input_pos):
     return {
         "bb_atom_index": bb_atom_index,
         "bb_residue_index": bb_residue_index,
+        "bb_residue_names": bb_residue_names,
         "ref_coords": ref_coords,
         "ref_atom_names": np.array(ref_atom_names, dtype=object),
         "weights": weights,
@@ -338,24 +383,30 @@ def build_mode1_mapping(
         and pdb_metadata[0] is not None
         and pdb_metadata[0].shape[0] == martini_indices.shape[0]
     ):
-        mart_atom_names, mart_res_names, mart_res_ids = pdb_metadata
+        mart_atom_names, mart_res_names, mart_res_ids, mart_chain_ids = pdb_metadata
     else:
         mart_atom_names = np.asarray(atom_names, dtype=object)[martini_indices]
         mart_res_names = np.asarray(residue_names, dtype=object)[martini_indices]
         mart_res_ids = np.asarray(residue_ids, dtype=int)[martini_indices]
+        mart_chain_ids = infer_chain_ids_from_class(
+            np.asarray(atom_names, dtype=object)[martini_indices],
+            None if particle_class is None else np.asarray(particle_class, dtype=object)[martini_indices],
+        )
 
     bb_map = build_backbone_projection_map(struct_h5, input_pos)
 
     out_atom_names = list(mart_atom_names)
     out_res_names = list(mart_res_names)
     out_res_ids = [int(x) for x in np.asarray(mart_res_ids, dtype=int)]
+    out_chain_ids = [str(x).strip() or "X" for x in np.asarray(mart_chain_ids, dtype=object)]
     include_aa_backbone = bb_map is not None
     if include_aa_backbone:
-        for resid in bb_map["bb_residue_index"]:
+        for resid, rname in zip(bb_map["bb_residue_index"], bb_map["bb_residue_names"]):
             for aname in bb_map["ref_atom_names"]:
                 out_atom_names.append(str(aname))
-                out_res_names.append("PRO")
+                out_res_names.append(str(rname))
                 out_res_ids.append(int(resid))
+                out_chain_ids.append("A")
 
     return {
         "mode": 1,
@@ -365,10 +416,19 @@ def build_mode1_mapping(
         "output_atom_names": np.array(out_atom_names, dtype=object),
         "output_residue_names": np.array(out_res_names, dtype=object),
         "output_residue_ids": np.array(out_res_ids, dtype=int),
+        "output_chain_ids": np.array(out_chain_ids, dtype=object),
     }
 
 
-def build_mode2_mapping(struct_h5, input_pos, atom_names, residue_names, residue_ids, pdb_metadata=None):
+def build_mode2_mapping(
+    struct_h5,
+    input_pos,
+    atom_names,
+    residue_names,
+    residue_ids,
+    particle_class,
+    pdb_metadata=None,
+):
     if "input/hybrid_env_topology/protein_membership" not in struct_h5:
         raise ValueError("Mode 2 requires /input/hybrid_env_topology/protein_membership")
 
@@ -387,21 +447,27 @@ def build_mode2_mapping(struct_h5, input_pos, atom_names, residue_names, residue
         and pdb_metadata[0] is not None
         and pdb_metadata[0].shape[0] == non_protein_idx.shape[0]
     ):
-        env_atom_names, env_res_names, env_res_ids = pdb_metadata
+        env_atom_names, env_res_names, env_res_ids, env_chain_ids = pdb_metadata
     else:
         env_atom_names = np.asarray(atom_names, dtype=object)[non_protein_idx]
         env_res_names = np.asarray(residue_names, dtype=object)[non_protein_idx]
         env_res_ids = np.asarray(residue_ids, dtype=int)[non_protein_idx]
+        env_chain_ids = infer_chain_ids_from_class(
+            np.asarray(atom_names, dtype=object)[non_protein_idx],
+            None if particle_class is None else np.asarray(particle_class, dtype=object)[non_protein_idx],
+        )
 
     out_atom_names = list(env_atom_names)
     out_res_names = list(env_res_names)
     out_res_ids = [int(x) for x in env_res_ids]
+    out_chain_ids = [str(x).strip() or "X" for x in np.asarray(env_chain_ids, dtype=object)]
 
-    for resid in bb_map["bb_residue_index"]:
+    for resid, rname in zip(bb_map["bb_residue_index"], bb_map["bb_residue_names"]):
         for aname in bb_map["ref_atom_names"]:
             out_atom_names.append(str(aname))
-            out_res_names.append("PRO")
+            out_res_names.append(str(rname))
             out_res_ids.append(int(resid))
+            out_chain_ids.append("A")
 
     return {
         "mode": 2,
@@ -410,6 +476,7 @@ def build_mode2_mapping(struct_h5, input_pos, atom_names, residue_names, residue
         "output_atom_names": np.array(out_atom_names, dtype=object),
         "output_residue_names": np.array(out_res_names, dtype=object),
         "output_residue_ids": np.array(out_res_ids, dtype=int),
+        "output_chain_ids": np.array(out_chain_ids, dtype=object),
     }
 
 
@@ -522,8 +589,8 @@ def main():
 
         inferred_res_names = infer_residue_names_from_class(atom_names, particle_class)
 
-        pdb_atom_names, pdb_res_names, pdb_res_ids = read_martini_pdb_metadata(pdb_file)
-        pdb_metadata = (pdb_atom_names, pdb_res_names, pdb_res_ids)
+        pdb_atom_names, pdb_res_names, pdb_res_ids, pdb_chain_ids = read_martini_pdb_metadata(pdb_file)
+        pdb_metadata = (pdb_atom_names, pdb_res_names, pdb_res_ids, pdb_chain_ids)
 
         if mode == 1:
             mapping = build_mode1_mapping(
@@ -542,6 +609,7 @@ def main():
                 atom_names,
                 inferred_res_names,
                 residue_ids,
+                particle_class,
                 pdb_metadata=pdb_metadata,
             )
 
@@ -578,8 +646,20 @@ def main():
             if fmt == "vtf":
                 f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
                 f.write(f"# mode {mode}\n")
-                for i, aname in enumerate(mapping["output_atom_names"]):
-                    f.write(f"atom {i} name {aname}\n")
+                for i, (aname, rname, resid, chain_id) in enumerate(
+                    zip(
+                        mapping["output_atom_names"],
+                        mapping["output_residue_names"],
+                        mapping["output_residue_ids"],
+                        mapping["output_chain_ids"],
+                    )
+                ):
+                    chain = (str(chain_id).strip() or "X")[0]
+                    segid = f"s{chain}"
+                    f.write(
+                        f"atom {i} name {aname} resid {int(resid)} "
+                        f"resname {str(rname)} segid {segid} chain {chain}\n"
+                    )
                 for i, j in out_bonds:
                     f.write(f"bond {i}:{j}\n")
                 f.write(f"pbc {x_len} {y_len} {z_len}\n")
@@ -624,6 +704,7 @@ def main():
                         mapping["output_atom_names"],
                         mapping["output_residue_names"],
                         mapping["output_residue_ids"],
+                        mapping["output_chain_ids"],
                         x_len,
                         y_len,
                         z_len,

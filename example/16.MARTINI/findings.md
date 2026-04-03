@@ -460,3 +460,24 @@
 - Recommendation:
   - do not fold BB into the existing SC-training workflow as one merged SC+BB table contract.
   - if learned BB terms are desired, add a separate BB-training workflow keyed by MARTINI BB bead type (and its own local backbone frame if orientation is later introduced), while keeping SC training residue/rotamer-based.
+
+## 2026-04-03 (VMD NewCartoon Failure on Exported VTF)
+- Root cause of the VMD error
+  - `example/16.MARTINI/extract_martini_vtf.py` was writing VTF atom lines as only `atom <i> name <aname>`.
+  - Without `resid/resname/chain/segid`, VMD assigned fallback residue metadata `X 0 X` to every atom when building the temporary PDB used for `NewCartoon`/Stride.
+  - That caused Stride to see one huge fake residue and fail with:
+    - `too many atoms in residue X 0 X`
+    - followed by missing Stride output / cartoon generation failure.
+- Secondary metadata issue found during the audit
+  - mode-1/mode-2 backmapped protein backbone atoms were being labeled with residue name `PRO` for every residue.
+  - The prepared stage file already carries `/input/sequence`, and for the tested stage file its length matches the unique `hybrid_bb_map/bb_residue_index` order, so the real residue names can be restored during export.
+- Exporter fix
+  - VTF atom records now include:
+    - `name`, `resid`, `resname`, `segid`, and `chain`.
+  - Backmapped protein backbone residue names are now derived from `/input/sequence` via the ordered `hybrid_bb_map/bb_residue_index` mapping instead of being hard-coded to `PRO`.
+  - PDB export was updated in parallel to include the same chain-aware residue metadata.
+- Verified output on the stage-7 prepared file:
+  - VTF protein lines now look like:
+    - `atom ... name N resid 4 resname ASP segid sA chain A`
+    - `atom ... name CA resid 4 resname ASP segid sA chain A`
+  - so VMD should now see standard backbone residues rather than the fallback anonymous residue.
