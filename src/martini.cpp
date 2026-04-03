@@ -5,7 +5,6 @@
 #include "spline.h"
 #include <iostream>
 #include <H5Apublic.h> // for H5Aexists
-#include <fstream> // For file writing
 #include <cmath> // For pow, cosf, sinf, acosf
 #include <cctype>
 #include <set> // For std::set
@@ -1632,7 +1631,6 @@ struct DihedralSpring : public PotentialNode
     // Spline parameters
     float dihedral_min, dihedral_max;
     float max_spring;  // Store max spring constant for scaling
-    bool debug_mode;   // Debug flag for writing splines
 
     DihedralSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
@@ -1676,14 +1674,6 @@ struct DihedralSpring : public PotentialNode
             box_z = wall_zhi - wall_zlo;
         }
         
-
-        
-        // Debug mode for spline output
-        debug_mode = false;
-        if(attribute_exists(grp, ".", "debug_mode")) {
-            debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
-        }
-        
         // Initialize spline parameters for dihedral potential
         // Find the range of equilibrium dihedrals and spring constants
         float min_dihedral = std::numeric_limits<float>::max();
@@ -1715,32 +1705,6 @@ struct DihedralSpring : public PotentialNode
         // Fit spline
         dihedral_potential_spline.fit_spline(dihedral_pot_data.data());
 
-        // Debug: Write all unique dihedral splines to a single file if debug_mode is enabled
-        if (debug_mode) {
-            std::ofstream out("dihedral_splines.txt", std::ios::out | std::ios::trunc);
-            out << "# Periodic dihedral spline: V = k * (1 + cos(phi - phi0))\n";
-            out << "# Forces are calculated as analytical derivatives of the potential\n";
-            // Collect unique (k, phi0)
-            std::set<std::pair<float, float>> dihedral_params;
-            for (const auto& p : params) dihedral_params.insert({p.spring_constant, p.equil_dihedral});
-            for (const auto& dp : dihedral_params) {
-                float k = dp.first, phi0 = dp.second;
-                out << "# Dihedral Spline\n# k=" << k << ", phi0_rad=" << phi0 << "\n";
-                out << "# phi_rad potential\n";
-                int n_pts = 10;
-                for (int i = 0; i < n_pts; ++i) {
-                    float phi = -M_PI_F + i * 2.0f * M_PI_F / (n_pts - 1);
-                    float delta_phi = phi - phi0;
-                    if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
-                    if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
-                    float pot = k * (1.0f + cos(delta_phi));  // Periodic form: k * (1 + cos(phi - phi0))
-                    out << phi << " " << pot << "\n";
-                }
-                out << "\n";
-            }
-            out.close();
-        }
-        
         std::cout << "DIHEDRALS: Initialized splines with 1000 knots" << std::endl;
         std::cout << "  Dihedral range: " << min_dihedral << " to " << max_dihedral << " radians" << std::endl;
         std::cout << "  Spline range: " << dihedral_min << " to " << dihedral_max << " radians" << std::endl;
@@ -1890,7 +1854,6 @@ struct MartiniPotential : public PotentialNode
     float ewald_alpha;
     bool lj_soften;
     float lj_soften_alpha;
-    bool overwrite_spline_tables;
     
     // PME parameters removed - using Coulomb spline tables instead
     // Box dimensions used for minimum-image pair displacements under PBC/NPT.
@@ -1911,20 +1874,8 @@ struct MartiniPotential : public PotentialNode
     float coul_r_shift, coul_r_scale;  // Coordinate transformation parameters
     int coul_n_knots;
     
-    // Debug variables
-    bool debug_mode;
-    int debug_step_count;
-    int max_debug_interactions;
-    
-    // Force debugging for specific particles
-    bool force_debug_mode;
-    std::vector<int> debug_particle_indices;
-    std::ofstream force_debug_file;
-    int force_debug_step_count;
-    
     MartiniPotential(hid_t grp, CoordNode& pos_):
-        PotentialNode(), n_atom(pos_.n_elem), pos(pos_), debug_step_count(0), max_debug_interactions(10),
-        force_debug_mode(false), force_debug_step_count(0)
+        PotentialNode(), n_atom(pos_.n_elem), pos(pos_)
     {
         check_size(grp, "atom_indices", n_atom);
         check_size(grp, "charges", n_atom);
@@ -2004,38 +1955,6 @@ struct MartiniPotential : public PotentialNode
             }
         }
 
-        // Debug mode - enable for first few steps
-        debug_mode = false;
-        if(attribute_exists(grp, ".", "debug_mode")) {
-            debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
-        }
-        
-        // Force debugging mode - enable to track forces on specific particles
-        force_debug_mode = false;
-        if(attribute_exists(grp, ".", "force_debug_mode")) {
-            force_debug_mode = read_attribute<int>(grp, ".", "force_debug_mode") != 0;
-        }
-        
-        // Initialize force debugging if enabled
-        if(force_debug_mode) {
-            force_debug_file.open("force_debug.txt", std::ios::out | std::ios::trunc);
-            force_debug_file << "# Force debugging for charged particles\n";
-            force_debug_file << "# Format: step particle_index force_type force_x force_y force_z potential\n";
-            
-            // Find charged particles (NC3, PO4, NA, CL)
-            debug_particle_indices.clear();
-            for(int i = 0; i < n_atom; ++i) {
-                // We'll identify charged particles by their charges
-                // This will be set up after we read the charges
-            }
-        }
-        
-        // Optionally overwrite existing spline table output files (debug text files)
-        overwrite_spline_tables = false;
-        if(attribute_exists(grp, ".", "overwrite_spline_tables")) {
-            overwrite_spline_tables = read_attribute<int>(grp, ".", "overwrite_spline_tables") != 0;
-        }
-        
         // PME parameters removed - using Coulomb spline tables instead
 
         
@@ -2306,104 +2225,6 @@ struct MartiniPotential : public PotentialNode
 
         std::cout << "MARTINI: Generated " << coulomb_splines.size() << " Coulomb splines" << std::endl;
 
-        // Debug: Write all unique spline tables to a single file
-        {
-            static bool s_truncated_all_splines = false;
-            std::ios_base::openmode mode = std::ios::app;
-            if (overwrite_spline_tables && !s_truncated_all_splines) {
-                mode = std::ios::out | std::ios::trunc;
-                s_truncated_all_splines = true;
-            }
-            std::ofstream out("all_splines.txt", mode);
-            out << "# LJ splines: Separate tables for each unique epsilon/sigma pair\n";
-            out << "# Each spline contains only the potential - forces calculated as analytical derivatives\n\n";
-            out << "# Coulomb splines: Separate tables for each unique charge product\n";
-            out << "# Each spline contains only the potential - forces calculated as analytical derivatives\n\n";
-            out << "# Bond splines: Harmonic potential for bond distances\n";
-            out << "# Angle splines: Cosine-based harmonic potential V = 0.5*k*(cos(θ)-cos(θ₀))²\n";
-            out << "# Dihedral splines: Periodic potential V = k * (1 + cos(phi - phi0)) for dihedral angles\n";
-            out << "# All forces are calculated as analytical derivatives of the potential splines\n";
-
-            // --- LJ splines for each unique (epsilon, sigma) ---
-            for (const auto& spline_pair : lj_splines) {
-                float epsilon = spline_pair.first.first;
-                float sigma = spline_pair.first.second;
-                const auto& spline = spline_pair.second;
-
-                out << "# LJ Spline\n# epsilon=" << epsilon << ", sigma=" << sigma << ", r_min=" << lj_r_min << ", r_max=" << lj_r_max
-                    << ", softened=" << (lj_soften?1:0) << ", lj_soften_alpha=" << lj_soften_alpha << "\n";
-                out << "# r potential\n";
-
-                int n_pts = 10;
-                for (int i = 0; i < n_pts; ++i) {
-                    float r = lj_r_min + i * (lj_r_max - lj_r_min) / (n_pts - 1);
-                    if(r == 0.0f) r = 1.0e-6f;
-                    float r_coord = (r - lj_r_min) / (lj_r_max - lj_r_min) * 999.0f;
-
-                    float result[2];
-                    spline.evaluate_value_and_deriv(result, 0, r_coord);
-                    float pot = result[1];  // Index 1 is the value
-
-                    out << r << " " << pot << "\n";
-                }
-                out << "\n";
-            }
-            // --- Coulomb splines for each unique charge product ---
-            for (const auto& coulomb_pair : coulomb_splines) {
-                float qq = coulomb_pair.first;
-                const auto& spline = coulomb_pair.second;
-
-                out << "# Coulomb Spline\n# q1q2=" << qq
-                    << ", k=" << coulomb_k
-                    << ", r_min=" << coul_r_min
-                    << ", r_max=" << coul_r_max
-                    << ", softened=" << (coulomb_soften?1:0)
-                    << ", slater_alpha=" << slater_alpha
-                    << ", ewald=" << (ewald_enabled?1:0)
-                    << ", ewald_alpha=" << ewald_alpha << "\n";
-                out << "# r potential\n";
-
-                int n_pts = 10;
-                for (int i = 0; i < n_pts; ++i) {
-                    float r = coul_r_min + i * (coul_r_max - coul_r_min) / (n_pts - 1);
-                    if(r == 0.0f) r = 1.0e-6f;
-                    float r_coord = (r - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
-
-                    float result[2];
-                    spline.evaluate_value_and_deriv(result, 0, r_coord);
-                    float pot = result[1];  // Index 1 is the value
-
-                    out << r << " " << pot << "\n";
-                }
-                out << "\n";
-            }
-            
-            // Add bond and angle splines to the main output file
-            // Read and append bond splines if they exist
-            std::ifstream bond_file("bond_splines.txt");
-            if (bond_file.is_open()) {
-                out << "\n# === BOND SPLINES ===\n";
-                std::string line;
-                while (std::getline(bond_file, line)) {
-                    out << line << "\n";
-                }
-                bond_file.close();
-            }
-            
-            // Read and append angle splines if they exist
-            std::ifstream angle_file("angle_splines.txt");
-            if (angle_file.is_open()) {
-                out << "\n# === ANGLE SPLINES ===\n";
-                std::string line;
-                while (std::getline(angle_file, line)) {
-                    out << line << "\n";
-                }
-                angle_file.close();
-            }
-            
-            out.close();
-        }
-
         std::cout << "MARTINI: Initialized splines with 1000 knots" << std::endl;
         std::cout << "  LJ range: " << lj_r_min << " to " << lj_r_max << " Angstroms" << std::endl;
         std::cout << "  Coulomb range: " << coul_r_min << " to " << coul_r_max << " Angstroms" << std::endl;
@@ -2442,12 +2263,7 @@ struct MartiniPotential : public PotentialNode
         
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
         if(pot) *pot = 0.f;
-        
-        // Initialize force debugging for this step
-        if(force_debug_mode && force_debug_step_count < 100) { // Debug first 100 steps
-            force_debug_file << "# Step " << force_debug_step_count << "\n";
-        }
-        
+
         // Compute particle-particle interactions
         const float kMinDistance = 1.0e-6f;
         const bool active_hybrid_startup = (
@@ -3489,7 +3305,6 @@ struct DistSpring : public PotentialNode
     // Canonical delta-r spline domain (shared across bonds)
     float bond_delta_min, bond_delta_max;
     float max_spring;  // Store max spring constant for scaling
-    bool debug_mode;   // Debug flag for writing splines
 
     DistSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
@@ -3540,13 +3355,6 @@ struct DistSpring : public PotentialNode
         // Store max_spring as member variable
         this->max_spring = max_spring;
         
-
-        // Debug mode for spline output
-        debug_mode = false;
-        if(attribute_exists(grp, ".", "debug_mode")) {
-            debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
-        }
-        
         // Define the bond r-range to start at 0 and extend to r_max
         bond_r_min = 0.0f;
         // Prefer an attribute if provided; otherwise choose a conservative default
@@ -3570,29 +3378,6 @@ struct DistSpring : public PotentialNode
         // Fit spline
         bond_potential_spline.fit_spline(bond_pot_data.data());
 
-        // Debug: Write all unique bond splines to a single file if debug_mode is enabled
-        if (debug_mode) {
-            std::ofstream out("bond_splines.txt", std::ios::out | std::ios::trunc);
-            out << "# Bond splines: Two-particle interactions (atom1-atom2)\n";
-            out << "# Forces are calculated as analytical derivatives of the potential\n";
-            // Collect unique (k, r0)
-            std::set<std::pair<float, float>> bond_params;
-            for (const auto& p : params) bond_params.insert({p.spring_constant, p.equil_dist});
-            for (const auto& bp : bond_params) {
-                float k = bp.first, r0 = bp.second;
-                out << "# Bond Spline\n# k=" << k << ", r0=" << r0 << "\n";
-                out << "# r potential\n";
-                int n_pts = 10;
-                for (int i = 0; i < n_pts; ++i) {
-                    float r = std::max(0.1f, r0 * 0.5f) + i * (r0 * 2.0f - std::max(0.1f, r0 * 0.5f)) / (n_pts - 1);
-                    float pot = 0.5f * k * (r - r0) * (r - r0);
-                    out << r << " " << pot << "\n";
-                }
-                out << "\n";
-            }
-            out.close();
-        }
-        
         std::cout << "BONDS: Initialized splines with 1000 knots" << std::endl;
         std::cout << "  Bond range: " << bond_r_min << " to " << bond_r_max << " Angstroms" << std::endl;
         std::cout << "  Equilibrium range: " << min_equil << " to " << max_equil << " Angstroms" << std::endl;
@@ -3682,7 +3467,6 @@ struct AngleSpring : public PotentialNode
     // Spline parameters
     float angle_cos_min, angle_cos_max;
     float max_spring;  // Store max spring constant for scaling
-    bool debug_mode;   // Debug flag for writing splines
 
     AngleSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
@@ -3731,13 +3515,6 @@ struct AngleSpring : public PotentialNode
         // Store max_spring as member variable
         this->max_spring = max_spring;
         
-
-        // Debug mode for spline output
-        debug_mode = false;
-        if(attribute_exists(grp, ".", "debug_mode")) {
-            debug_mode = read_attribute<int>(grp, ".", "debug_mode") != 0;
-        }
-        
         // Set spline range for delta_cos = cos(θ) - cos(θ₀)
         // Find the range of cos(equilibrium angles) to set proper delta_cos bounds
         float min_cos_equil = 1.0f;  // cos(0°) = 1
@@ -3762,33 +3539,6 @@ struct AngleSpring : public PotentialNode
         // Fit spline
         angle_potential_spline.fit_spline(angle_pot_data.data());
 
-        // Debug: Write all unique angle splines to a single file if debug_mode is enabled
-        if (debug_mode) {
-            std::ofstream out("angle_splines.txt", std::ios::out | std::ios::trunc);
-            out << "# Angle splines: Cosine-based harmonic potential V = 0.5*k*(cos(θ)-cos(θ₀))²\n";
-            out << "# Forces are calculated as analytical derivatives of the potential\n";
-            // Collect unique (k, theta0)
-            std::set<std::pair<float, float>> angle_params;
-            for (const auto& p : params) angle_params.insert({p.spring_constant, p.equil_angle_deg});
-            for (const auto& ap : angle_params) {
-                float k = ap.first, theta0 = ap.second;
-                out << "# Angle Spline\n# k=" << k << ", theta0_deg=" << theta0 << "\n";
-                out << "# theta_deg potential\n";
-                int n_pts = 10;
-                for (int i = 0; i < n_pts; ++i) {
-                    float theta = 180.0f * i / (n_pts - 1);
-                    float cos_theta = cosf(theta * M_PI / 180.0f);
-                    float cos_theta0 = cosf(theta0 * M_PI / 180.0f);
-                    float delta_cos = cos_theta - cos_theta0;
-                    float pot = 0.5f * k * delta_cos * delta_cos;
-                    
-                    out << theta << " " << pot << "\n";
-                }
-                out << "\n";
-            }
-            out.close();
-        }
-        
         std::cout << "ANGLES: Initialized splines with 1000 knots" << std::endl;
         std::cout << "  Angle range: " << min_angle << " to " << max_angle << " degrees" << std::endl;
         std::cout << "  Cosine range: " << angle_cos_min << " to " << angle_cos_max << std::endl;

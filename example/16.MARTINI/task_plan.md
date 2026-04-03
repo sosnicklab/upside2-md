@@ -1,48 +1,37 @@
 # Task Plan
 
 ## Project Goal
-- Reduce Python files under `example/16.MARTINI` to exactly four:
-  - `martinize.py`
-  - one simulation-input generation script
-  - one VTF conversion script
-  - one helper module
-- Keep `run_sim_1rkl.sh` working by routing all stage-preparation, validation, SC-table build, stage-7 injection, and handoff utilities through the single input-generation script plus the helper module.
+- Remove legacy spline/debug text file generation from the MARTINI runtime:
+  - `all_splines.txt`
+  - `angle_splines.txt`
+  - `bond_splines.txt`
+  - `dihedral_splines.txt`
+  - `force_debug.txt`
+- Keep the cleaned `example/16.MARTINI` Python layout intact while ensuring the runtime and preparation path no longer emit or configure those debug files.
 
 ## Architecture & Key Decisions
-- Keep `martinize.py` unchanged as the explicit MARTINI coarse-graining script.
-- Keep `extract_martini_vtf.py` as the explicit trajectory/VTF export script.
-- Use `prepare_system.py` as the only other workflow-facing Python entry point.
-- Merge the logic from `build_sc_martini_h5.py`, `inject_sc_table_stage7.py`, `set_initial_position.py`, and `validate_hybrid_mapping.py` into `prepare_system.py` plus `prepare_system_lib.py`.
-- Update `run_sim_1rkl.sh` to call `prepare_system.py` subcommands instead of separate Python entry points.
-- Remove obsolete Python scripts after the merged path is verified.
+- Remove debug file emission at the source in `src/martini.cpp` rather than relying on workflow cleanup.
+- Remove preparation-side attributes that only existed to drive spline/force debug file output.
+- Keep runtime physics unchanged apart from deleting unused file-debug behavior.
 
 ## Execution Phases
-- [x] Phase 1: Recreate task tracking and record the corrected four-file requirement.
-- [x] Phase 2: Merge extra Python entry-point logic into `prepare_system_lib.py` and expose it through `prepare_system.py`.
-- [x] Phase 3: Rewire `run_sim_1rkl.sh` to the consolidated Python interface.
-- [x] Phase 4: Delete obsolete Python scripts and caches, then verify the final tree and workflow parsing.
+- [x] Phase 1: Audit runtime and preparation code paths that still generate or configure the legacy spline/debug text files.
+- [x] Phase 2: Remove the runtime file-writing logic and the matching preparation-side debug attributes.
+- [x] Phase 3: Verify no references remain and rebuild the affected target.
 
 ## Known Errors / Blockers
-- No remaining blockers for this cleanup task.
+- No remaining blocker for this cleanup task.
 
 ## Review
-- Final retained Python files under `example/16.MARTINI`:
-  - `martinize.py`
-  - `prepare_system.py`
-  - `extract_martini_vtf.py`
-  - `prepare_system_lib.py`
-- Removed obsolete Python entry points:
-  - `build_sc_martini_h5.py`
-  - `inject_sc_table_stage7.py`
-  - `set_initial_position.py`
-  - `validate_hybrid_mapping.py`
-- `prepare_system.py` now owns the extra workflow entry points through subcommands:
-  - `build-sc-martini-h5`
-  - `inject-stage7-sc`
-  - `set-initial-position`
-  - `validate-hybrid-mapping`
+- Removed runtime file emission from [martini.cpp](/Users/yinhan/Documents/upside2-md-martini/src/martini.cpp):
+  - deleted `all_splines.txt`, `bond_splines.txt`, `angle_splines.txt`, `dihedral_splines.txt`, and `force_debug.txt` write paths;
+  - removed the associated `debug_mode`, `force_debug_mode`, `overwrite_spline_tables`, and file-stream state from the MARTINI runtime classes.
+- Removed preparation-side hooks from [prepare_system_lib.py](/Users/yinhan/Documents/upside2-md-martini/example/16.MARTINI/prepare_system_lib.py):
+  - no longer writes `debug_mode`, `force_debug_mode`, or `overwrite_spline_tables` attrs into generated stage files.
+- Removed the now-dead workflow env export from [run_sim_1rkl.sh](/Users/yinhan/Documents/upside2-md-martini/example/16.MARTINI/run_sim_1rkl.sh).
 - Verification passed:
-  - `find example/16.MARTINI -maxdepth 1 -name '*.py' | sort`
-  - `rg -n "build_sc_martini_h5\.py|inject_sc_table_stage7\.py|set_initial_position\.py|validate_hybrid_mapping\.py" example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/*.py`
+  - `rg -n "all_splines\.txt|angle_splines\.txt|bond_splines\.txt|dihedral_splines\.txt|force_debug\.txt|force_debug_mode|overwrite_spline_tables|UPSIDE_OVERWRITE_SPLINES|debug_mode = 1|_v_attrs\.debug_mode" -S src example/16.MARTINI`
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4`
   - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/extract_martini_vtf.py example/16.MARTINI/martinize.py`
   - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `find . \( -name 'all_splines.txt' -o -name 'angle_splines.txt' -o -name 'bond_splines.txt' -o -name 'dihedral_splines.txt' -o -name 'force_debug.txt' \) | sort`

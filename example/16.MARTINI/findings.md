@@ -532,3 +532,16 @@
   - only four `.py` files remain at top level in `example/16.MARTINI`;
   - no retained script still references the deleted Python filenames;
   - retained scripts parse cleanly.
+
+## 2026-04-03 (Legacy Spline/Force Debug File Removal)
+- Runtime source of the legacy debug files was isolated to `src/martini.cpp`:
+  - `DihedralSpring` wrote `dihedral_splines.txt`;
+  - `DistSpring` wrote `bond_splines.txt`;
+  - `AngleSpring` wrote `angle_splines.txt`;
+  - `MartiniPotential` wrote `all_splines.txt` and `force_debug.txt`.
+- Those file outputs were controlled by HDF5 attrs that are no longer needed:
+  - `debug_mode`
+  - `force_debug_mode`
+  - `overwrite_spline_tables`
+- Stage-file generation was still enabling those attrs in `example/16.MARTINI/prepare_system_lib.py`, and `example/16.MARTINI/run_sim_1rkl.sh` still exported `UPSIDE_OVERWRITE_SPLINES`; both hooks are now removed.
+- After cleanup, source-code references to those debug filenames remain only in tracker/history markdown, not in the runtime or preparation code.

@@ -2304,3 +2304,38 @@
   - `example/16.MARTINI/task_plan.md`
   - `example/16.MARTINI/findings.md`
   - `example/16.MARTINI/progress.md`
+
+## 2026-04-03 (Cleanup: Remove Legacy MARTINI Debug Text Files)
+- Re-read `example/16.MARTINI/task_plan.md` and audited every remaining source reference to:
+  - `all_splines.txt`
+  - `angle_splines.txt`
+  - `bond_splines.txt`
+  - `dihedral_splines.txt`
+  - `force_debug.txt`
+- Audit result:
+  - all runtime write paths were in `src/martini.cpp`;
+  - preparation still enabled their control attrs in `example/16.MARTINI/prepare_system_lib.py`;
+  - `example/16.MARTINI/run_sim_1rkl.sh` still exported `UPSIDE_OVERWRITE_SPLINES`.
+- Code changes:
+  - `src/martini.cpp`
+    - removed debug-file stream includes and state;
+    - removed the spline/force debug attr reads;
+    - removed the write blocks for `all_splines.txt`, `bond_splines.txt`, `angle_splines.txt`, `dihedral_splines.txt`, and `force_debug.txt`.
+  - `example/16.MARTINI/prepare_system_lib.py`
+    - removed `overwrite_spline_tables`, `debug_mode`, and `force_debug_mode` attribute writes from generated MARTINI nodes.
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+    - removed `UPSIDE_OVERWRITE_SPLINES`.
+  - cleaned the `example/16.MARTINI/__pycache__/` directory recreated by verification.
+- Verification:
+  - `rg -n "all_splines\.txt|angle_splines\.txt|bond_splines\.txt|dihedral_splines\.txt|force_debug\.txt|force_debug_mode|overwrite_spline_tables|UPSIDE_OVERWRITE_SPLINES|debug_mode = 1|_v_attrs\.debug_mode" -S src example/16.MARTINI` found only historical markdown mentions.
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed.
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/extract_martini_vtf.py example/16.MARTINI/martinize.py` passed.
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - `find . \( -name 'all_splines.txt' -o -name 'angle_splines.txt' -o -name 'bond_splines.txt' -o -name 'dihedral_splines.txt' -o -name 'force_debug.txt' \) | sort` returned no files.
+- Files modified in this follow-up:
+  - `src/martini.cpp`
+  - `example/16.MARTINI/prepare_system_lib.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`

@@ -2647,17 +2647,15 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         martini_potential._v_attrs.x_len = x_len
         martini_potential._v_attrs.y_len = y_len
         martini_potential._v_attrs.z_len = z_len
-        # Optional softening/overwrite controls via environment variables
+        # Optional softening controls via environment variables
         # UPSIDE_SOFTEN_COULOMB: 1 to enable Slater softening for Coulomb
         # UPSIDE_SLATER_ALPHA: float value for Slater alpha (1/Angstrom)
         # UPSIDE_SOFTEN_LJ: 1 to enable soft-core LJ
         # UPSIDE_LJ_ALPHA: float value for LJ softening alpha (dimensionless)
-        # UPSIDE_OVERWRITE_SPLINES: 1 to truncate spline debug files before writing
         soften_coul = int(os.environ.get('UPSIDE_SOFTEN_COULOMB', '0'))
         slater_alpha = float(os.environ.get('UPSIDE_SLATER_ALPHA', '1.0'))
         soften_lj = int(os.environ.get('UPSIDE_SOFTEN_LJ', '0'))
         lj_alpha = float(os.environ.get('UPSIDE_LJ_ALPHA', '1.0'))
-        overwrite_splines = int(os.environ.get('UPSIDE_OVERWRITE_SPLINES', '0'))
         
         # PME configuration via environment variables
         # UPSIDE_USE_PME: 1 to enable Particle Mesh Ewald for long-range Coulomb
@@ -2680,7 +2678,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         martini_potential._v_attrs.lj_soften = params['lj_soften']
         if params['lj_soften']:
             martini_potential._v_attrs.lj_soften_alpha = params['lj_alpha']
-        martini_potential._v_attrs.overwrite_spline_tables = overwrite_splines
         
         # PME configuration
         martini_potential._v_attrs.use_pme = use_pme
@@ -2713,9 +2710,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         else:
             print("Ewald summation disabled")
 
-        martini_potential._v_attrs.debug_mode = 1  # Enable spline table generation
-        martini_potential._v_attrs.force_debug_mode = 1  # Enable force debugging for charged particles
-        
         # Periodic boundary potential removed - using NVT ensemble without boundaries
         
         # PME node creation removed - using Coulomb spline tables instead
@@ -2829,8 +2823,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             bond_group._v_attrs.x_len = x_len
             bond_group._v_attrs.y_len = y_len
             bond_group._v_attrs.z_len = z_len
-            bond_group._v_attrs.debug_mode = 1  # Enable spline table generation
-
             t.create_array(bond_group, 'id', obj=np.array(bonds_list, dtype=int))
             t.create_array(bond_group, 'equil_dist', obj=np.array(bond_lengths_list, dtype='f4'))
             t.create_array(bond_group, 'spring_const', obj=np.array(bond_force_constants_list, dtype='f4'))
@@ -2846,8 +2838,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             angle_group._v_attrs.x_len = x_len
             angle_group._v_attrs.y_len = y_len
             angle_group._v_attrs.z_len = z_len
-            angle_group._v_attrs.debug_mode = 1  # Enable spline table generation
-
             t.create_array(angle_group, 'id', obj=np.array(angles_list, dtype=int))
             t.create_array(angle_group, 'equil_angle_deg', obj=np.array(angle_equil_deg_list, dtype='f4'))
             t.create_array(angle_group, 'spring_const', obj=np.array(angle_force_constants_list, dtype='f4'))
@@ -2861,8 +2851,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             dihedral_group._v_attrs.x_len = x_len
             dihedral_group._v_attrs.y_len = y_len
             dihedral_group._v_attrs.z_len = z_len
-            dihedral_group._v_attrs.debug_mode = 1  # Enable spline table generation
-
             t.create_array(dihedral_group, 'id', obj=np.array(dihedrals_list, dtype=int))
             # Some builds of UPSIDE expect 'equil_dist' for this potential; write both names for compatibility
             eq_deg = np.array(dihedral_equil_deg_list, dtype='f4')
