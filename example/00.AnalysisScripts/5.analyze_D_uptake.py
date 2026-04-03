@@ -1,0 +1,892 @@
+import os
+import runpy
+import sys
+import matplotlib
+
+if 'MPLBACKEND' not in os.environ:
+    matplotlib.use('Agg')
+
+analysis_mode = os.environ.get('analysis_mode', 'uptake').strip().lower()
+if analysis_mode == 'dg_summary':
+    runpy.run_module('helpers.analyze_hdx_summary', run_name='__main__')
+    raise SystemExit(0)
+if analysis_mode == 'compare_hxms':
+    runpy.run_module('helpers.compare_d_uptake_hxms', run_name='__main__')
+    raise SystemExit(0)
+if analysis_mode != 'uptake':
+    raise SystemExit("Unsupported analysis_mode for 5.analyze_D_uptake.py: {}".format(analysis_mode))
+
+import mdtraj as md
+import mdtraj_upside as mu
+import numpy as np
+import scipy as sp
+import matplotlib.pyplot as plt
+import matplotlib.font_manager
+from matplotlib.font_manager import FontProperties
+import pymbar # for MBAR analysis
+from pymbar import timeseries # for timeseries analysis
+import csv # for high-throughput analysis
+from scipy.integrate import trapezoid # for COF integration
+import pandas as pd
+import math
+import matplotlib.backends.backend_pdf as pdf # for D uptake and COF
+import matplotlib.patches as patches # for peptide plots
+from scipy.stats import percentileofscore # for COF comparison
+from matplotlib import colors # for COF colormap
+from helpers.function import *
+import matplotlib.gridspec as gridspec # for COF subplots
+
+try:
+    from pyhdx.plot import apply_cmap # for COF colormap
+except Exception:
+    def apply_cmap(values, cmap, norm):
+        return cmap(norm(np.asarray(values, dtype=float)))
+
+def color_array(color_data, column=None):
+    if column is not None and hasattr(color_data, "__getitem__"):
+        try:
+            color_data = color_data[column]
+        except Exception:
+            pass
+
+    arr = np.asarray(color_data)
+    if arr.ndim == 3 and arr.shape[1] == 1:
+        arr = arr[:, 0, :]
+    return arr
+
+
+def as_float_array(values):
+    return np.asarray(values, dtype=float).reshape(-1)
+
+
+SANS_SERIF_FONTS = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+
+pdb_id      = os.environ.get('pdb_id', 'glpG-RKRK-79HIS')  # CHECKME
+sim_id      = os.environ.get('sim_id', 'memb_test')  # CHECKME
+
+primary_pdb_id = pdb_id
+HXMS_method = os.environ.get('HXMS_method', 'stretch_exp')  # CHECKME
+protein_state = os.environ.get('protein_state', 'pd9')  # CHECKME
+
+work_dir         = './'
+n_rep            = int(os.environ.get('n_rep', '48'))  # CHECKME
+
+start_frame = int(os.environ.get('start_frame', '100'))  # CHECKME
+
+pdb_input_env = os.environ.get('pdb_ids')
+if pdb_input_env:
+    pdb_input = [item.strip() for item in pdb_input_env.replace(',', ' ').split() if item.strip()]
+else:
+    pdb_input = [
+        pdb_id,
+    ]
+
+pdb_ids = np.array(pdb_input)
+
+output_dir = "{}/outputs".format(work_dir)
+pdb_dir    = "{}/pdb".format(work_dir)
+fig_dir    = "results"
+
+input_dirs = []
+result_dirs = []
+run_dirs = []
+for pdb_id in pdb_ids:
+    input_dir  = "{}/inputs/{}".format(work_dir, pdb_id)
+    result_dir = "{}/results".format(work_dir)
+    run_dir    = "{}/{}/{}".format(output_dir, sim_id, pdb_id)
+
+    input_dirs.append(input_dir)
+    result_dirs.append(result_dir)
+    run_dirs.append(run_dir)
+
+
+def load_optional_array(path, description):
+    try:
+        return np.load(path)
+    except FileNotFoundError:
+        print('WARNING: {} not found: {}'.format(description, path))
+    except Exception as exc:
+        print('WARNING: Failed to load {} ({}): {}'.format(description, path, exc))
+    return None
+
+
+def load_optional_percentd_csv(result_dir, pdb_id):
+    path = '{}/{}_percentD.csv'.format(result_dir, pdb_id)
+    try:
+        with open(path, 'r', encoding='utf-8-sig') as f:
+            rows = csv.reader(f)
+
+            time_row = []
+            d_norm_row = []
+            for i, row in enumerate(rows):
+                if i == 0:
+                    time_row = row
+                elif i == 1:
+                    d_norm_row = row
+                else:
+                    break
+    except FileNotFoundError:
+        return [], []
+    except Exception as exc:
+        print('WARNING: Failed to load simulation whole-protein uptake file ({}): {}'.format(path, exc))
+        return [], []
+
+    return time_row, d_norm_row
+
+
+def load_optional_peptide_ids(path, description):
+    try:
+        with open(path, 'r', encoding='utf-8-sig') as f:
+            rows = list(csv.reader(f))
+    except FileNotFoundError:
+        print('WARNING: {} not found: {}'.format(description, path))
+        return None, None, None
+    except Exception as exc:
+        print('WARNING: Failed to load {} ({}): {}'.format(description, path, exc))
+        return None, None, None
+
+    if len(rows) < 3:
+        print('WARNING: {} is incomplete: {}'.format(description, path))
+        return None, None, None
+
+    return np.array(rows[0]), np.array(rows[1]), np.array(rows[2])
+
+
+def load_experimental_reference():
+    peps_hxms = load_optional_array(
+        '{}/{}/{}_{}_peps_{}.npy'.format(output_dir, sim_id, primary_pdb_id, HXMS_method, protein_state),
+        'experimental peptide list',
+    )
+    time_peps_hxms = load_optional_array(
+        '{}/{}/{}_{}_time_peps_{}.npy'.format(output_dir, sim_id, primary_pdb_id, HXMS_method, protein_state),
+        'experimental peptide time grid',
+    )
+    d_norm_peps_hxms = load_optional_array(
+        '{}/{}/{}_{}_d_norm_peps_{}.npy'.format(output_dir, sim_id, primary_pdb_id, HXMS_method, protein_state),
+        'experimental peptide uptake curves',
+    )
+    d_norm_theor_hxms = load_optional_array(
+        '{}/{}/{}_{}_d_norm_theor_{}.npy'.format(output_dir, sim_id, primary_pdb_id, HXMS_method, protein_state),
+        'experimental theoretical uptake curves',
+    )
+    pep_start, pep_end, pep_id = load_optional_peptide_ids(
+        '{}/{}/{}_pep_ids.csv'.format(output_dir, sim_id, primary_pdb_id),
+        'experimental peptide IDs',
+    )
+
+    required = [peps_hxms, time_peps_hxms, d_norm_peps_hxms, d_norm_theor_hxms, pep_start, pep_end, pep_id]
+    if any(item is None for item in required):
+        return None
+
+    return {
+        'peps_HXMS': peps_hxms,
+        'time_peps_HXMS': time_peps_hxms,
+        'd_norm_peps_HXMS': d_norm_peps_hxms,
+        'd_norm_theor_HXMS': d_norm_theor_hxms,
+        'pep_start': pep_start,
+        'pep_end': pep_end,
+        'pep_id': pep_id,
+    }
+
+
+def load_upside_peptide_outputs(result_dir, pdb_id):
+    pep = load_optional_array('{}/{}_percentD_peps.npy'.format(result_dir, pdb_id), 'simulation peptide list')
+    time_pep = load_optional_array('{}/{}_percentD_time_peps.npy'.format(result_dir, pdb_id), 'simulation peptide time grid')
+    d_norm_pep = load_optional_array('{}/{}_percentD_d_norm_peps.npy'.format(result_dir, pdb_id), 'simulation peptide uptake curves')
+    d_norm_theor = load_optional_array('{}/{}_percentD_d_norm_theor.npy'.format(result_dir, pdb_id), 'simulation theoretical uptake curves')
+
+    required = [pep, time_pep, d_norm_pep, d_norm_theor]
+    if any(item is None for item in required):
+        return None
+
+    return {
+        'peps': pep,
+        'time_peps': time_pep,
+        'd_norm_peps': d_norm_pep,
+        'd_norm_theor': d_norm_theor,
+    }
+
+
+#============================================
+# load data
+#============================================
+
+experimental_reference = load_experimental_reference()
+if experimental_reference is None:
+    print('WARNING: Experimental HXMS reference files are unavailable. Skipping comparison workflow.')
+    sys.exit(0)
+
+peps_HXMS = experimental_reference['peps_HXMS']
+time_peps_HXMS = experimental_reference['time_peps_HXMS']
+d_norm_peps_HXMS = experimental_reference['d_norm_peps_HXMS']
+d_norm_theor_HXMS = experimental_reference['d_norm_theor_HXMS']
+pep_start = experimental_reference['pep_start']
+pep_end = experimental_reference['pep_end']
+pep_id = experimental_reference['pep_id']
+
+# D uptake Upside predictions across proteins/protein domains
+times = []
+d_norms = []
+whole_protein_pdb_ids = []
+
+# D uptake Upside predictions for experimental peptides
+loaded_pdb_ids = []
+loaded_result_dirs = []
+peps = []
+peps_seq = np.array([])
+time_peps = []
+d_norm_peps = []
+d_norm_peps_theors = []
+for p, (pdb_id, result_dir) in enumerate(zip(pdb_ids, result_dirs)):
+    time_row, d_norm_row = load_optional_percentd_csv(result_dir, pdb_id)
+    if len(time_row) > 0 and len(d_norm_row) > 0:
+        times.append(time_row)
+        d_norms.append(d_norm_row)
+        whole_protein_pdb_ids.append(pdb_id)
+
+    upside_outputs = load_upside_peptide_outputs(result_dir, pdb_id)
+    if upside_outputs is None:
+        continue
+
+    loaded_pdb_ids.append(pdb_id)
+    loaded_result_dirs.append(result_dir)
+    peps.append(upside_outputs['peps'])
+    peps_seq = np.concatenate([peps_seq, upside_outputs['peps']])
+    time_peps.append(upside_outputs['time_peps'])
+    d_norm_peps.append(upside_outputs['d_norm_peps'])
+    d_norm_peps_theors.append(upside_outputs['d_norm_theor'])
+
+if len(peps) == 0:
+    print('WARNING: No simulation peptide uptake outputs were found. Skipping comparison workflow.')
+    sys.exit(0)
+
+# identifiers for Upside peptides
+#pep_starts = np.array([])
+#pep_ends = np.array([])
+#pep_ids = np.array([])
+#for p, (pdb_id, result_dir) in enumerate(zip(pdb_ids, result_dirs)):
+    #with open('{}/{}_pep_ids.csv'.format(result_dir, pdb_id), 'r', encoding='utf-8-sig') as f:
+        #rows = csv.reader(f)
+
+        #start_row = []
+        #end_row = []
+        #pep_row = []
+        #for i, row in enumerate(rows):
+            #if i == 0:
+                #start_row = row
+
+            #elif i == 1:
+                #end_row = row
+
+            #elif i == 2:
+                #pep_row = row
+
+            #else:
+                #break
+
+    #pep_starts = np.concatenate([pep_starts, np.array(start_row)])
+    #pep_ends = np.concatenate([pep_ends, np.array(end_row)])
+    #pep_ids = np.concatenate([pep_ids, np.array(pep_row)])
+
+fasta = np.loadtxt('{}/inputs/{}.fasta'.format(work_dir, primary_pdb_id), skiprows = 1, dtype=str)
+
+if np.size(fasta) == 1:
+    sequence = fasta.tolist()
+
+else:
+    sequence = ''.join(fasta)
+
+#============================================
+# calculate dG_HX at different T 
+#============================================
+
+dGhx_Ts = np.array([])
+for p, (pdb_id, result_dir) in enumerate(zip(loaded_pdb_ids, loaded_result_dirs)):
+    PS = []
+    T  = []
+    for i in range(n_rep):
+        PS.append( np.load('{}/{}_{}_{}_PS.npy'  .format(result_dir, pdb_id, sim_id, i)) ) 
+        T.append(np.load( '{}/{}_{}_{}_T.npy'.format(result_dir, pdb_id, sim_id, i) ))
+
+    min_idx = np.min([len(PS[i][:,0]) for i in range(n_rep)])
+    PS_idx = [PS[i][:min_idx] for i in range(n_rep)]
+    PS   = np.array(PS_idx)
+    T    = np.array(T)
+
+    res = np.loadtxt('{}/{}.resid'.format(result_dir, pdb_id), dtype=int)
+    n_res = res.size
+
+    dGhx_T = []
+    for k in range(T.size):
+        t = T[k]
+        tt = t/0.85*298.
+
+        dG = np.zeros(n_res)
+        for r in range(n_res):
+            pf_i = PS[:,start_frame:,r].flatten()
+            mean_pf = np.average(pf_i)
+            #mean_pf = np.average(pf_i, weights=w1)
+            if mean_pf == 1:
+            #print(k, r)
+                dG[r] = 1000.
+            else:
+                dG[r] = 0.001987*tt*np.log((mean_pf/(1.-mean_pf)))
+        dGhx_T.append(dG)
+    dGhx_T = np.array(dGhx_T)
+
+    dGhx_Ts = np.concatenate([dGhx_Ts, dGhx_T[0]], axis=0)
+
+dGhx_T_plots = []
+for r in range(len(sequence)):
+    if r in res:
+        dGhx_T_plot = dGhx_Ts[np.argwhere(res==r)][0][0]
+        dGhx_T_plots.append(dGhx_T_plot)
+
+    else:
+        dGhx_T_plot = np.nan
+        dGhx_T_plots.append(dGhx_T_plot)
+
+dGhx_T_plots = np.array(dGhx_T_plots)
+
+#============================================
+# compare D uptake at peptide level
+#============================================
+
+# build dataframe of experimental start and stop indices for peptides
+pep_exp = {"peps": pep_id, "pep_starts": pep_start, "pep_ends": pep_end}
+pep_exp_df = pd.DataFrame(pep_exp)
+
+# normalize the stretched exponential data
+d_norms_HXMS = normalize_se(d_norm_peps_HXMS)
+
+# build dataframe of D uptakes for experimental peptides
+HXMS = {"peps": peps_HXMS, "d_norms_HXMS": d_norms_HXMS, "d_theor_HXMS": d_norm_theor_HXMS.tolist()}
+HXMS_df = pd.DataFrame(HXMS)
+
+# build dataframe of computational start and stop indices for peptides
+#pep_ind = {"peps": pep_ids, "pep_starts": pep_starts, "pep_ends": pep_ends}
+#pep_ind_df = pd.DataFrame(pep_ind)
+
+# build dataframe of D uptakes and COFs for computational peptides
+Up_dfs = []
+for p, (p_id_Up, time_pep, d_norm_Up, d_norm_theor) in enumerate(zip(peps, time_peps, d_norm_peps, d_norm_peps_theors)):
+
+    # normalize the stretched exponential data
+    d_norms_theor = normalize_se(d_norm_theor)
+    d_norms_Up = normalize_se(d_norm_Up)
+
+    # get dataframes of D uptakes for each protein/domain
+    Up = {"peps": p_id_Up, "time_peps": [time_pep for i in enumerate(p_id_Up)], "d_norms_Up": d_norms_Up, "d_norms_theor": d_norms_theor}
+    #Up = {"peps": p_id_Up, "time_peps": [time_pep for i in enumerate(p_id_Up)], "d_norms_Up": d_norm_Up.tolist(), "d_norms_theor": d_norm_theor.tolist()}
+    Up_df = pd.DataFrame(Up)
+    Up_dfs.append(Up_df)
+
+# append dataframes for all protein domains
+Up_dfs = pd.concat(Up_dfs)
+
+# merge dataframes of experimental and computational peptides
+merge_df = pd.merge(pep_exp_df, HXMS_df, on="peps")
+merge_dfs = pd.merge(merge_df, Up_dfs, on="peps")
+
+if merge_dfs.empty:
+    print('WARNING: No overlapping peptides were found between HXMS references and simulation outputs. Skipping comparison workflow.')
+    sys.exit(0)
+
+#============================================
+# calculate cooperativity factor (COF)
+#============================================
+
+# calculate the squared derivative and its integral for experimental peptides
+integrals_pep_HXMS = []
+for i, (p_id, d_norm_pep) in enumerate(zip(merge_dfs.peps, merge_dfs.d_norms_HXMS)):
+
+    if np.size(d_norm_pep) == np.size(time_peps_HXMS): # ensure sizes match
+        derivative = numerical_derivative(time_peps_HXMS, d_norm_pep)
+        squared_derivative = np.square(derivative) # square the derivative
+
+        # calculate the integral of the squared derivative using trap rule
+        integral = trapezoid(squared_derivative, time_peps_HXMS)
+
+    else:
+        integral = np.nan
+
+    integrals_pep_HXMS.append(integral)
+
+merge_dfs['COF_HXMS'] = integrals_pep_HXMS
+
+# calculate the squared derivative and its integral for computational peptides
+integrals_pep_Upside = []
+for p, (p_id, d_norm_pep) in enumerate(zip(merge_dfs.peps, merge_dfs.d_norms_Up)):
+
+    if np.size(d_norm_pep) == np.size(time_peps[0]): # ensure sizes match
+        derivative = numerical_derivative(time_peps[0], d_norm_pep)
+        squared_derivative = np.square(derivative) # square the derivative
+
+        # calculate the integral of the squared derivative using trap rule
+        integral = trapezoid(squared_derivative, time_peps[0])
+
+    else:
+        integral = np.nan
+
+    integrals_pep_Upside.append(integral)
+
+merge_dfs['COF_Up'] = integrals_pep_Upside
+
+#============================================
+# plot D uptake curves
+#============================================
+
+maxv = 100
+minv = 0
+
+# plot Upside predicted uptake curves
+if len(times) > 0:
+    fig = plt.figure()
+    ax = plt.subplot(111)
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
+
+    plotted_any = False
+    for pdb_label, time_row, d_norm_row in zip(whole_protein_pdb_ids, times, d_norms):
+        log_times = as_float_array(time_row)
+        d_norm_values = as_float_array(d_norm_row)
+        mask = np.isfinite(log_times) & np.isfinite(d_norm_values)
+        if np.count_nonzero(mask) == 0:
+            continue
+
+        x_values = np.power(10.0, log_times[mask])
+        y_values = d_norm_values[mask]
+        order = np.argsort(x_values)
+        ax.plot(x_values[order], y_values[order], label='{}'.format(pdb_label))
+        plotted_any = True
+
+    if plotted_any:
+        ax.set_xscale('log')
+        ax.set_ylim(minv, maxv)
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel('Normalized %D')
+        ax.set_title('Upside %D Uptake Across Protein Domains')
+
+        fontP = FontProperties()
+        fontP.set_size('x-small')
+
+        box = ax.get_position()
+        ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), ncol=1, prop=fontP, columnspacing=0.8)
+        plt.savefig(fig_dir + '/D_uptake_Upside_{}.png'.format(primary_pdb_id), dpi=300, bbox_inches='tight')
+
+    plt.close()
+
+# plot D uptake for HX-MS vs. Upside at peptide-level
+pdf_d = pdf.PdfPages(fig_dir + '/D_uptake_compare_{}.pdf'.format(primary_pdb_id))
+plotted_compare = False
+for row in merge_dfs.itertuples(index=False):
+    exp_time = as_float_array(time_peps_HXMS)
+    exp_uptake = as_float_array(row.d_norms_HXMS)
+    exp_theory = as_float_array(row.d_theor_HXMS)
+    sim_time = as_float_array(row.time_peps)
+    sim_uptake = as_float_array(row.d_norms_Up)
+    sim_theory = as_float_array(row.d_norms_theor)
+
+    exp_mask = np.isfinite(exp_time) & np.isfinite(exp_uptake) & np.isfinite(exp_theory)
+    sim_mask = np.isfinite(sim_time) & np.isfinite(sim_uptake) & np.isfinite(sim_theory)
+    if np.count_nonzero(exp_mask) == 0 or np.count_nonzero(sim_mask) == 0:
+        continue
+
+    fig = plt.figure()
+    ax = plt.subplot(111)
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
+
+    exp_x = np.power(10.0, exp_time[exp_mask])
+    sim_x = np.power(10.0, sim_time[sim_mask])
+    exp_order = np.argsort(exp_x)
+    sim_order = np.argsort(sim_x)
+
+    ax.plot(exp_x[exp_order], exp_uptake[exp_mask][exp_order], label='HX-MS Experiment')
+    ax.plot(exp_x[exp_order], exp_theory[exp_mask][exp_order], label='HX-MS Theoretical', linestyle='dashed', color='black')
+    ax.plot(sim_x[sim_order], sim_uptake[sim_mask][sim_order], label='Upside Simulation')
+    ax.plot(sim_x[sim_order], sim_theory[sim_mask][sim_order], label='Upside Theoretical', linestyle='dashed', color='grey')
+    ax.set_xscale('log')
+    ax.set_ylim(minv, maxv)
+    ax.legend()
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('%D Uptake')
+    ax.set_title('{}-{} {}'.format(row.pep_starts, row.pep_ends, row.peps))
+
+    plt.tight_layout()
+    pdf_d.savefig(fig, dpi=300, bbox_inches='tight')
+    plt.close()
+    plotted_compare = True
+
+pdf_d.close()
+if not plotted_compare:
+    print('WARNING: No peptide-level HXMS versus simulation comparison plots were generated.')
+
+#============================================
+# plot bar charts and histograms of COFs
+#============================================
+
+# plot COFs for HX-MS vs. Upside
+pdf_cof = pdf.PdfPages(fig_dir + '/COF_{}.pdf'.format(primary_pdb_id))
+
+# plot bar chart of COF integrals
+#fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+#plt.rcParams['font.family'] = 'sans-serif'
+#plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
+
+#axes[0].bar(range(1, np.size(integrals_pep_HXMS) + 1), integrals_pep_HXMS, edgecolor='black')
+#axes[0].set_xlabel('Fit Number')
+#axes[0].set_ylabel('Integral of Squared Derivative')
+#axes[0].set_title('COFs of HX-MS Peptides')
+#axes[0].grid(axis='y')
+
+#axes[1].bar(range(1, np.size(integrals_seq_Upside) + 1), integrals_seq_Upside, edgecolor='black')
+#axes[1].set_xlabel('Fit Number')
+#axes[1].set_ylabel('Integral of Squared Derivative')
+#axes[1].set_title('COFs of Upside Peptides')
+#axes[1].grid(axis='y')
+
+#plt.tight_layout()
+#pdf_cof.savefig(fig, dpi=300, bbox_inches = 'tight')
+#plt.close()
+
+# plot histogram of COF integrals
+#fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+#plt.rcParams['font.family'] = 'sans-serif'
+#plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
+
+#axes[0].hist(integrals_pep_HXMS, bins=40, edgecolor='black', density=True)
+#axes[0].set_xlim(0, np.nanmax(integrals_pep_HXMS))
+#axes[0].set_xlabel('Cooperativity Factor')
+#axes[0].set_ylabel('Normalized Frequency')
+#axes[0].set_title('COFs of HX-MS Peptides')
+#axes[0].grid(True)
+
+#axes[1].hist(integrals_seq_Upside, bins=40, edgecolor='black', density=True)
+#axes[1].set_xlim(0, np.nanmax(integrals_seq_Upside))
+#axes[1].set_xlabel('Cooperativity Factor')
+#axes[1].set_ylabel('Normalized Frequency')
+#axes[1].set_title('COFs of Upside Peptides')
+#axes[1].grid(True)
+
+#plt.tight_layout()
+#pdf_cof.savefig(fig, bbox_inches = 'tight')
+#plt.close()
+
+#============================================
+# plot peptide plots across protein
+#============================================
+
+def peptide_colors(merged_df, rows, df_row, quant):
+    """
+    set colors based on distributions of COFs from multiple proteins
+    """
+    colors = []
+    for index, row in merged_df.iterrows():
+        if quant == True: # use quantile coloring
+            if pd.isna(row['{}'.format(rows)]):
+                colors.append('darkblue')
+            elif row['{}'.format(rows)] < np.nanquantile(df_row, 0.10):
+                colors.append('mediumblue')
+            elif np.nanquantile(df_row, 0.10) <= row['{}'.format(rows)] < np.nanquantile(df_row, 0.20):
+                colors.append('blue')
+            elif np.nanquantile(df_row, 0.20) <= row['{}'.format(rows)] < np.nanquantile(df_row, 0.30):
+                colors.append('slateblue')
+            elif np.nanquantile(df_row, 0.30) <= row['{}'.format(rows)] < np.nanquantile(df_row, 0.40):
+                colors.append('mediumslateblue')
+            elif np.nanquantile(df_row, 0.40) <= row['{}'.format(rows)] < np.nanquantile(df_row, 0.50):
+                colors.append('blueviolet')
+            elif np.nanquantile(df_row, 0.50) <= row['{}'.format(rows)] < np.nanquantile(df_row, 0.60):
+                colors.append('darkorchid')
+            elif np.nanquantile(df_row, 0.60) <= row['{}'.format(rows)] < np.nanquantile(df_row, 0.70):
+                colors.append('mediumorchid')
+            elif np.nanquantile(df_row, 0.70) <= row['{}'.format(rows)] < np.nanquantile(df_row, 0.80):
+                colors.append('orchid')
+            elif np.nanquantile(df_row, 0.80) <= row['{}'.format(rows)] < np.nanquantile(df_row, 0.90):
+                colors.append('violet')
+            else:
+                colors.append('magenta')
+
+        elif quant == False: # use absolute coloring
+            if pd.isna(row['{}'.format(rows)]):
+                colors.append('blue') # PD6 b factor = zero
+            elif row['{}'.format(rows)] < 500:
+                colors.append('darkturquoise') # PD6 b factor within 20% of kchem
+            elif 500 <= row['{}'.format(rows)] < 1000:
+                colors.append('darkorchid') # PD6 b factor ≥ kchem
+            else:
+                colors.append('magenta') # PD6 b factor < kchem
+
+        else:
+            break
+
+    return colors
+
+#colors_HXMS_quant = peptide_colors(merge_df, 'COF_HXMS', merge_df.COF_HXMS, True)
+#colors_HXMS = peptide_colors(merge_dfs, 'COF_HXMS', merge_dfs.COF_HXMS, False)
+#colors_Upside_quant = peptide_colors(merge_dfs, 'COF_Up', merge_dfs.COF_Up, True)
+#colors_Upside = peptide_colors(merge_dfs, 'COF_Up', merge_dfs.COF_Up, False)
+
+# define colormap and normalization
+cmap = matplotlib.colormaps.get_cmap('bwr').reversed()
+#norm_HXMS_res = colors.TwoSlopeNorm(vmin=0, vcenter=np.nanmedian(merge_dfs['COF_HXMS']), vmax=np.nanmax(merge_dfs['COF_HXMS']))
+norm_HXMS_res = colors.TwoSlopeNorm(vmin=-np.nanmax(merge_dfs['COF_HXMS']), vcenter=-np.nanmedian(merge_dfs['COF_HXMS']), vmax=-np.nanmin(merge_dfs['COF_HXMS']))
+#norm_Up_res = colors.TwoSlopeNorm(vmin=0, vcenter=np.nanmedian(merge_dfs['COF_Up']), vmax=np.nanmax(merge_dfs['COF_Up']))
+norm_Up_res = colors.TwoSlopeNorm(vmin=-np.nanmax(merge_dfs['COF_Up']), vcenter=-np.nanmedian(merge_dfs['COF_Up']), vmax=-np.nanmin(merge_dfs['COF_Up']))
+
+colors_HXMS = apply_cmap(-merge_dfs['COF_HXMS'], cmap, norm_HXMS_res)
+colors_Upside = apply_cmap(-merge_dfs['COF_Up'], cmap, norm_Up_res)
+
+# set segment length, # of residues in a single plot for the map
+segment_length = int(os.environ.get('segment_length', '250'))  # CHECKME
+
+# break sequence into segments based on segment length
+sequence_segments = [sequence[i:i+segment_length] for i in range(0, len(sequence), segment_length)]
+num_segments = len(sequence_segments)
+
+# set initial height and increment for staggered bars
+initial_height = 0.02
+increment = 0.02
+
+def bars_overlap(start1, end1, start2, end2):
+    """
+    check whether two bars overlap to stack both correctly
+    """
+    return not (end1 < start2 or end2 < start1)
+
+# calculate adjusted heights
+heights_HXMS = [initial_height] * len(merge_dfs)
+heights_Upside = [initial_height] * len(merge_dfs)
+
+def height_overlap(merged_df, heights):
+    """
+    determine whether there are overlaps and adjust heights
+    """
+    for i in range(len(merged_df)):
+        for j in range(i + 1, len(merged_df)):
+            if bars_overlap(merged_df.iloc[i]['pep_starts'], merged_df.iloc[i]['pep_ends'],
+                        merged_df.iloc[j]['pep_starts'], merged_df.iloc[j]['pep_ends']):
+                heights[j] = max(heights[j], heights[i] + increment)
+
+height_overlap(merge_dfs, heights_HXMS)
+height_overlap(merge_dfs, heights_Upside)
+
+def peptide_plot(merged_df, heights, colors):
+    """
+    plot peptide plots across protein sequence
+    """
+    for segment_index, segment in enumerate(sequence_segments):
+        fig, ax = plt.subplots(figsize=(60, 10))
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
+
+        start_pos_segment = segment_index * segment_length
+        end_pos_segment = start_pos_segment + segment_length - 1
+
+        for index, row in merged_df.iterrows():
+            if start_pos_segment <= int(row['pep_starts']) <= end_pos_segment:
+                start_pos = max(int(row['pep_starts']), start_pos_segment) - start_pos_segment
+                end_pos = min(int(row['pep_ends']), end_pos_segment) - start_pos_segment
+                height = heights[index] # use the calculated height
+                bar = patches.Rectangle((start_pos, height), end_pos - start_pos + 1, 0.01, color=colors[index])
+                ax.add_patch(bar)
+
+        # set axis limits and labels for each segment
+        ax.set_xlim(0, segment_length + 1)
+        ax.set_ylim(0, max(heights) + 0.1) # increase y-space to avoid clipping
+
+        # set x-ticks and x-tick labels to match the sequence positions
+        x_ticks = range(1, segment_length + 1)
+        sequence_segment = segment
+        x_tick_labels = [sequence_segment[i] if i < len(sequence_segment) else '' for i in range(len(sequence_segment))]
+
+        # test whether x_tick_labels have the same length as x_ticks
+        if len(x_tick_labels) < len(x_ticks):
+            x_tick_labels.extend([''] * (len(x_ticks) - len(x_tick_labels)))
+
+        ax.set_xticks(x_ticks)
+        ax.set_xticklabels(x_tick_labels[:len(x_ticks)], fontsize=20)
+
+        ax.set_yticks([])
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+
+        plt.tight_layout()
+        pdf_cof.savefig(fig, dpi=300, bbox_inches = 'tight')
+        plt.close()
+
+#peptide_plot(merge_df, heights_HXMS, colors_HXMS_quant)
+peptide_plot(merge_dfs, heights_HXMS, color_array(colors_HXMS))
+#peptide_plot(merge_dfs, heights_Upside, colors_Upside_quant)
+peptide_plot(merge_dfs, heights_Upside, color_array(colors_Upside))
+
+def reg_plot(HXMS_value, Up_value, reg_method):
+    """
+    plot regression plots across protein sequence
+    """
+    # determine r square value
+    COF_stats = sp.stats.linregress(HXMS_value.values[np.logical_and(~(np.isnan(HXMS_value.values)), ~(np.isnan(Up_value.values)))], Up_value.values[np.logical_and(~(np.isnan(HXMS_value.values)), ~(np.isnan(Up_value.values)))])
+    r_square = COF_stats.rvalue**2
+
+    # plot regression for COF HXMS vs. Upside
+    fig = plt.figure()
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
+    plt.scatter(HXMS_value.values[np.logical_and(~(np.isnan(HXMS_value.values)), ~(np.isnan(Up_value.values)))], Up_value.values[np.logical_and(~(np.isnan(HXMS_value.values)), ~(np.isnan(Up_value.values)))])
+    plt.xlabel('COF HXMS')
+    plt.ylabel('COF Upside')
+    plt.title('COF for HXMS vs. Upside')
+
+    a, _, _, _ = np.linalg.lstsq(HXMS_value.values[:,np.newaxis][np.logical_and(~(np.isnan(HXMS_value.values)), ~(np.isnan(Up_value.values)))], Up_value.values[np.logical_and(~(np.isnan(HXMS_value.values)), ~(np.isnan(Up_value.values)))], rcond=None)
+    line = np.linspace(0, 8000, 100)
+    plt.plot(line, a*line, color='k', lw=2.5)
+
+    plt.text(0.5, 7500, '$R^2$ = ' + str(round(r_square, 8)))
+
+    plt.xlim(0, 8000)
+    plt.ylim(0, 8000)
+    plt.savefig(fig_dir + '/COF_HXMS_Up_R2_{}_{}.png'.format(reg_method, primary_pdb_id))
+    plt.close()
+
+# plot regression for COF HXMS vs. Upside at peptide-level
+reg_plot(merge_dfs.COF_HXMS, merge_dfs.COF_Up, 'pep')
+
+comb_res_HXMS, comb_res_idx_HXMS, comb_res_COF_HXMS = average_int(merge_dfs, 'COF_HXMS', 'peps', 'pep_starts')
+
+comb_res_Up, comb_res_idx_Up, comb_res_COF_Up = average_int(merge_dfs, 'COF_Up', 'peps', 'pep_starts')
+
+# build dataframe of integrals for experimental residues
+res_int_HXMS = {"res": comb_res_HXMS, "res_idx": comb_res_idx_HXMS, "res_COF_HXMS": comb_res_COF_HXMS}
+res_int_df_HXMS = pd.DataFrame(res_int_HXMS)
+
+res_avg_int_df_HXMS = res_int_df_HXMS.groupby(['res_idx', 'res'])[['res_COF_HXMS']].mean()
+
+# build dataframe of integrals for computational residues
+res_int_Up = {"res": comb_res_Up, "res_idx": comb_res_idx_Up, "res_COF_Up": comb_res_COF_Up}
+res_int_df_Up = pd.DataFrame(res_int_Up)
+
+res_avg_int_df_Up = res_int_df_Up.groupby(['res_idx', 'res'])[['res_COF_Up']].mean()
+
+# merge dataframes of integrals
+res_avg_int_df = pd.merge(res_avg_int_df_Up, res_avg_int_df_HXMS, on=['res_idx', 'res'])
+
+res_avg_int_export = res_avg_int_df.reset_index()
+if 'res_idx' in res_avg_int_export.columns:
+    res_avg_int_export['res_idx'] = pd.to_numeric(res_avg_int_export['res_idx'], errors='coerce') - 1
+res_avg_int_export.to_csv('{}/{}/{}_COF_values.csv'.format(work_dir, fig_dir, primary_pdb_id), index=False)
+
+# plot regression for COF HXMS vs. Upside at residue-level
+reg_plot(res_avg_int_df.res_COF_HXMS, res_avg_int_df.res_COF_Up, 'res')
+
+#import pdb
+#pdb.set_trace()
+
+# define colormap and normalization
+cmap = matplotlib.colormaps.get_cmap('bwr').reversed()
+#norm_HXMS = colors.TwoSlopeNorm(vmin=0, vcenter=np.nanmedian(res_avg_int_df_HXMS['res_COF_HXMS']), vmax=np.nanmax(res_avg_int_df_HXMS['res_COF_HXMS']))
+norm_HXMS = colors.TwoSlopeNorm(vmin=-np.nanmax(res_avg_int_df_HXMS['res_COF_HXMS']), vcenter=-np.nanmedian(res_avg_int_df_HXMS['res_COF_HXMS']), vmax=-np.nanmin(res_avg_int_df_HXMS['res_COF_HXMS']))
+#norm_Up = colors.TwoSlopeNorm(vmin=0, vcenter=np.nanmedian(res_avg_int_df_Up['res_COF_Up']), vmax=np.nanmax(res_avg_int_df_Up['res_COF_Up']))
+norm_Up = colors.TwoSlopeNorm(vmin=-np.nanmax(res_avg_int_df_Up['res_COF_Up']), vcenter=-np.nanmedian(res_avg_int_df_Up['res_COF_Up']), vmax=-np.nanmin(res_avg_int_df_Up['res_COF_Up']))
+
+diff_color_HXMS = apply_cmap(-res_avg_int_df_HXMS, cmap, norm_HXMS)
+diff_color_Up = apply_cmap(-res_avg_int_df_Up, cmap, norm_Up)
+
+def peptide_plot_res(merged_df, colors, subplot):
+    """
+    plot peptide plots across protein sequence
+    """
+    fig, ax = plt.subplots(figsize=(60, 10))
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
+
+    for index, row in merged_df.reset_index().iterrows():
+        for segment_index, segment in enumerate(sequence):
+            if (int(row['res_idx']) == segment_index+1) and (row['res'] == segment):
+                height = (index + 1) * 0.02 # use the calculated height
+                bar = patches.Rectangle((index, height), 0.01, 0.01, color=colors[index])
+                ax.add_patch(bar)
+
+    # set axis limits and labels for each segment
+    ax.set_xlim(0, len(sequence) + 1)
+    ax.set_ylim(0, ((len(colors) + 1) * 0.02) + 0.1) # increase y-space to avoid clipping
+
+    # set x-ticks and x-tick labels to match the sequence positions
+    x_ticks = range(1, len(sequence) + 1)
+    x_tick_labels = [c for i, c in enumerate(sequence)]
+
+    # test whether x_tick_labels have the same length as x_ticks
+    if len(x_tick_labels) < len(x_ticks):
+        x_tick_labels.extend([''] * (len(x_ticks) - len(x_tick_labels)))
+
+    ax.set_xticks(x_ticks)
+    ax.set_xticklabels(x_tick_labels[:len(x_ticks)], fontsize=20)
+
+    ax.set_yticks([])
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+
+    if subplot == 'stability':
+        twin = ax.twinx()
+        for i, c in enumerate(sequence):
+            twin.plot(dGhx_T_plots[i])
+
+        twin.set_ylim(0, np.nanmax(dGhx_T_plots))
+        twin.set_ylabel('∆G (kcal/mol)')
+
+        plt.tight_layout()
+        pdf_cof.savefig(fig, dpi=300, bbox_inches = 'tight')
+        plt.close()
+
+    elif subplot == 'helicity':
+        twin = ax.twinx()
+
+        helicity_avg = []
+        for p, (pdb_id, run_dir) in enumerate(zip(pdb_ids, run_dirs)):
+            helicity = []
+            for i in range(n_rep):
+                traj = mu.load_upside_traj('{}/{}.run.{}.up'.format(run_dir, pdb_id, i))
+                dssp = md.compute_dssp(traj)
+                time = traj._time * 1e-6
+                #dssp.shape, time.shape
+                helicity_matrix = (dssp=='H').astype('int').T
+                helicity.append(np.average(helicity_matrix, axis=1)*100)
+
+            helicity_avg.append(np.average(helicity, axis=0))
+
+        helicity_avg = np.array(helicity_avg)
+
+        for i, c in enumerate(sequence):
+            twin.plot(helicity_avg[i])
+
+        twin.set_ylim(0, 100)
+        twin.set_ylabel("Helicity (%)")
+
+        plt.tight_layout()
+        pdf_cof.savefig(fig, dpi=300, bbox_inches = 'tight')
+        plt.close()
+
+    else:
+        plt.tight_layout()
+        pdf_cof.savefig(fig, dpi=300, bbox_inches = 'tight')
+        plt.close()
+
+
+pdf_cof.close()
+
+#import pdb
+#pdb.set_trace()
+
+#peptide_plot_res(res_int_df_HXMS[['res_idx', 'res']].drop_duplicates(), diff_color_HXMS['res_COF_HXMS'].values, 'stability')
+#peptide_plot_res(res_int_df_HXMS[['res_idx', 'res']].drop_duplicates(), diff_color_HXMS['res_COF_HXMS'].values, 'helicity')
+#peptide_plot_res(res_int_df_Up[['res_idx', 'res']].drop_duplicates(), diff_color_Up['res_COF_Up'].values, 'stability')
+#peptide_plot_res(res_int_df_Up[['res_idx', 'res']].drop_duplicates(), diff_color_Up['res_COF_Up'].values, 'helicity')
+
+# export colors to .npy file
+np.save('{}/{}/{}_colors_res_HXMS.npy'.format(work_dir, fig_dir, primary_pdb_id), res_int_df_HXMS['res_idx'].unique())
+np.save('{}/{}/{}_colors_HXMS.npy'.format(work_dir, fig_dir, primary_pdb_id), np.array([str(i) for i in color_array(diff_color_HXMS, 'res_COF_HXMS')]))
+
+np.save('{}/{}/{}_colors_res_Up.npy'.format(work_dir, fig_dir, primary_pdb_id), res_int_df_Up['res_idx'].unique())
+np.save('{}/{}/{}_colors_Upside.npy'.format(work_dir, fig_dir, primary_pdb_id), np.array([str(i) for i in color_array(diff_color_Up, 'res_COF_Up')]))

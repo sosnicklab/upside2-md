@@ -4,9 +4,8 @@ import shutil
 import tables as tb
 import os
 import time
-import platform
 
-# We have to do a dirty trick to get the correct path to libupside.so
+# We have to do a dirty trick to get the correct path to the native upside library.
 # It is likely possible to modify the build system to drop a config file 
 # that contains the necessary paths.  Since I do a lot of work concurrently
 # in the source tree, I don't want to depend on the build system to copy the
@@ -18,16 +17,33 @@ import platform
 py_source_dir = os.path.dirname(__file__)
 obj_dir = os.path.join(py_source_dir, '..', 'obj')
 
-# Try to load the library with appropriate extension for the platform
-if platform.system() == 'Darwin':  # macOS
-    lib_path = os.path.join(obj_dir, 'libupside.dylib')
-else:  # Linux and others
-    lib_path = os.path.join(obj_dir, 'libupside.so')
 
-if not os.path.exists(lib_path):
-    raise RuntimeError(f'Could not find UPSIDE library at {lib_path}')
+def load_upside_library():
+    candidate_names = [
+        'libupside.so',
+        'libupside.dylib',
+        'libupside.dll',
+    ]
+    attempted_paths = []
 
-calc = ct.cdll.LoadLibrary(lib_path)
+    for library_name in candidate_names:
+        library_path = os.path.join(obj_dir, library_name)
+        attempted_paths.append(library_path)
+        if not os.path.exists(library_path):
+            continue
+        try:
+            return ct.cdll.LoadLibrary(library_path)
+        except OSError:
+            raise
+
+    raise OSError(
+        'Could not find the Upside native library. Tried: {}'.format(
+            ', '.join(attempted_paths)
+        )
+    )
+
+
+calc = load_upside_library()
 
 calc.construct_deriv_engine.restype  = ct.c_void_p
 calc.construct_deriv_engine.argtypes = [ct.c_int, ct.c_char_p, ct.c_bool]

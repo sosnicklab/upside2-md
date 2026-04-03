@@ -545,3 +545,25 @@
   - `overwrite_spline_tables`
 - Stage-file generation was still enabling those attrs in `example/16.MARTINI/prepare_system_lib.py`, and `example/16.MARTINI/run_sim_1rkl.sh` still exported `UPSIDE_OVERWRITE_SPLINES`; both hooks are now removed.
 - After cleanup, source-code references to those debug filenames remain only in tracker/history markdown, not in the runtime or preparation code.
+
+## 2026-04-03 (Read-Only Merge Audit: `origin/master` into `martini`)
+- Current branch state:
+  - branch: `martini`
+  - branch tip: `3d693000de47f33021c415b4bebad21f3518fb1f`
+  - remote master tip inspected: `1ae7994480cfc97d49bbe74ee43963f117d326e0` dated March 29, 2026
+  - worktree is clean
+- Branch divergence:
+  - merge base: `94761377598955310efb435cfb3347984ce4a12e`
+  - `origin/master` has 10 commits not in `martini`
+  - `martini` has many commits beyond that base, but only two files overlap with `origin/master` changes since the base:
+    - `install_python_env.sh`
+    - `py/upside_engine.py`
+- Read-only `git merge-tree` result:
+  - predicted conflicts only in those two overlapping files.
+- Conflict guidance:
+  - `install_python_env.sh`: take the `origin/master` structure; it already sets `PYTHON_BIN` default to `python3.11`, adds version checks, recreates mismatched venvs safely, and performs import validation.
+  - `py/upside_engine.py`: take the `origin/master` `load_upside_library()` helper; it is more robust than the branch-local `platform.system()` switch because it searches `.so`, `.dylib`, and `.dll`.
+- Implementable manual-merge equivalent:
+  - syncing the 25 files changed on `origin/master` since the merge base into the working tree reproduces the merge result for this request because the only overlapping files are exactly the two conflict files, and both should take the `master` side.
+- Implementation result:
+  - after syncing those 25 files, `git hash-object <file>` matches `git rev-parse origin/master:<file>` for every file in the `origin/master` change set.

@@ -2339,3 +2339,70 @@
   - `example/16.MARTINI/task_plan.md`
   - `example/16.MARTINI/findings.md`
   - `example/16.MARTINI/progress.md`
+
+## 2026-04-03 (Read-Only Help: Merge `origin/master` into `martini`)
+- Re-read `example/16.MARTINI/task_plan.md`.
+- Did not run any write-side git commands because repository instructions forbid `git merge`, `git checkout`, `git commit`, and other state-changing git operations.
+- Read-only branch audit:
+  - `git status --short --branch` showed a clean `martini` branch.
+  - `git merge-base HEAD origin/master` returned `94761377598955310efb435cfb3347984ce4a12e`.
+  - `git log HEAD..origin/master` showed 10 master commits not yet in `martini`.
+- File-overlap audit:
+  - changed on `origin/master` since merge base: `README.md`, `example/00.AnalysisScripts/*`, `install_python_env.sh`, `py/get_protection_state.py`, `py/upside_engine.py`.
+  - changed on `martini` since merge base: large MARTINI/hybrid feature set plus `install_python_env.sh` and `py/upside_engine.py`.
+  - overlap is only:
+    - `install_python_env.sh`
+    - `py/upside_engine.py`
+- Read-only merge simulation:
+  - `git merge-tree 94761377598955310efb435cfb3347984ce4a12e HEAD origin/master` predicted conflicts in exactly those two files.
+  - `py/get_protection_state.py` from `origin/master` appears to auto-merge cleanly.
+- Resolution recommendation prepared for the user:
+  - prefer the `origin/master` version of `install_python_env.sh`
+  - prefer the `origin/master` `load_upside_library()` implementation in `py/upside_engine.py`
+- Files modified in this follow-up:
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-04-03 (Implementation Start: Materialize `origin/master` Merge Result in Working Tree)
+- User asked to keep the `master` side for merge conflicts and perform the merge.
+- Due repo policy forbidding write-side `git merge`, switched to the working-tree equivalent:
+  - identify all files changed on `origin/master` since merge base `94761377598955310efb435cfb3347984ce4a12e`;
+  - copy those files from `origin/master` into the current tree;
+  - thereby resolve the two overlapping files (`install_python_env.sh`, `py/upside_engine.py`) in favor of `master`.
+- Target file count for the manual merge sync: 25 files.
+- Files modified in this follow-up so far:
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-04-03 (Implementation Complete: Sync `origin/master` Change Set Into Working Tree)
+- Copied every file changed on `origin/master` since merge base `94761377598955310efb435cfb3347984ce4a12e` into the current working tree from `origin/master`.
+- Synced file set:
+  - `README.md`
+  - `example/00.AnalysisScripts/*`
+  - `install_python_env.sh`
+  - `py/get_protection_state.py`
+  - `py/upside_engine.py`
+- Conflict resolution applied:
+  - kept the `origin/master` versions of `install_python_env.sh` and `py/upside_engine.py`.
+- Mode alignment applied to match `origin/master`:
+  - `install_python_env.sh` set to `644`
+  - `py/get_protection_state.py`, `example/00.AnalysisScripts/2.traj_ana.sh`, `example/00.AnalysisScripts/3.get_protaction_states.sh`, and `example/00.AnalysisScripts/analysis.sh` set executable
+- Verification:
+  - `git diff --name-only 94761377598955310efb435cfb3347984ce4a12e..origin/master | while IFS= read -r f; do [ "$(git hash-object "$f")" = "$(git rev-parse "origin/master:$f")" ] || echo "$f"; done` returned no files.
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile py/get_protection_state.py py/upside_engine.py example/00.AnalysisScripts/0.run_HXMS.py example/00.AnalysisScripts/1.config.py example/00.AnalysisScripts/4.calc_D_uptake.py example/00.AnalysisScripts/5.analyze_D_uptake.py example/00.AnalysisScripts/6.generate_hx_plots.py example/00.AnalysisScripts/helpers/__init__.py example/00.AnalysisScripts/helpers/advanced_analysis_utils.py example/00.AnalysisScripts/helpers/analyze_hdx_summary.py example/00.AnalysisScripts/helpers/calc_hdx_ht.py example/00.AnalysisScripts/helpers/compare_d_uptake_hxms.py example/00.AnalysisScripts/helpers/function.py example/00.AnalysisScripts/helpers/get_info_from_upside_traj.py example/00.AnalysisScripts/helpers/hxfunctions_clean.py example/00.AnalysisScripts/helpers/select_h5_frames.py example/00.AnalysisScripts/helpers/traj_analysis_pca.py` passed.
+  - `bash -n install_python_env.sh && bash -n example/00.AnalysisScripts/2.traj_ana.sh && bash -n example/00.AnalysisScripts/3.get_protaction_states.sh && bash -n example/00.AnalysisScripts/analysis.sh` passed.
+  - `git status --short` now shows the expected working-tree merge result:
+    - modified `README.md`, `install_python_env.sh`, `py/get_protection_state.py`, `py/upside_engine.py`
+    - untracked `example/00.AnalysisScripts/`
+    - tracker file updates
+- Files modified in this follow-up:
+  - `README.md`
+  - `example/00.AnalysisScripts/` (new tree from `origin/master`)
+  - `install_python_env.sh`
+  - `py/get_protection_state.py`
+  - `py/upside_engine.py`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`

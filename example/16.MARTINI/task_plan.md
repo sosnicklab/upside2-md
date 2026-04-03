@@ -35,3 +35,25 @@
   - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/extract_martini_vtf.py example/16.MARTINI/martinize.py`
   - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh`
   - `find . \( -name 'all_splines.txt' -o -name 'angle_splines.txt' -o -name 'bond_splines.txt' -o -name 'dihedral_splines.txt' -o -name 'force_debug.txt' \) | sort`
+- Read-only merge audit for `origin/master -> martini`:
+  - current branch is clean (`git status --short --branch` showed `## martini...origin/martini`);
+  - merge base with `origin/master` is `94761377598955310efb435cfb3347984ce4a12e`;
+  - `origin/master` has 10 commits not in `martini`;
+  - overlap since the merge base is small: only `install_python_env.sh` and `py/upside_engine.py` changed on both sides.
+- Read-only `git merge-tree` predicts two real content conflicts:
+  - `install_python_env.sh`
+  - `py/upside_engine.py`
+- Suggested resolution strategy:
+  - for `install_python_env.sh`, prefer the `origin/master` refactor because it already defaults to Python `3.11` and adds stricter environment setup checks;
+  - for `py/upside_engine.py`, prefer the `origin/master` `load_upside_library()` helper over the branch’s simpler `platform.system()` branch selection.
+- Manual merge implementation strategy:
+  - because write-side `git merge` is prohibited by repo policy, reproduce the merge result directly in the working tree;
+  - copy all 25 files changed on `origin/master` since merge base `94761377598955310efb435cfb3347984ce4a12e` into the current tree from `origin/master`;
+  - for overlapping files (`install_python_env.sh`, `py/upside_engine.py`), keep the `origin/master` version exactly as requested;
+  - verify those 25 files match `origin/master` after the sync, leaving the rest of the branch-specific MARTINI work untouched.
+- Manual merge result:
+  - synced all 25 `origin/master`-changed files into the working tree;
+  - the two overlap/conflict files now use the `origin/master` versions:
+    - [install_python_env.sh](/Users/yinhan/Documents/upside2-md-martini/install_python_env.sh)
+    - [upside_engine.py](/Users/yinhan/Documents/upside2-md-martini/py/upside_engine.py)
+  - direct blob/hash verification confirmed every master-changed file now matches `origin/master` exactly in the working tree.
