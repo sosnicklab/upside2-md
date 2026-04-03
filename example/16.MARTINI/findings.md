@@ -567,3 +567,15 @@
   - syncing the 25 files changed on `origin/master` since the merge base into the working tree reproduces the merge result for this request because the only overlapping files are exactly the two conflict files, and both should take the `master` side.
 - Implementation result:
   - after syncing those 25 files, `git hash-object <file>` matches `git rev-parse origin/master:<file>` for every file in the `origin/master` change set.
+
+## 2026-04-03 (Example-Style MARTINI Wrapper)
+- Style references inspected:
+  - `example/02.ReplicaExchangeSimulation/readme.md`
+  - `example/02.ReplicaExchangeSimulation/run.py`
+  - `example/01.GettingStarted/readme.md`
+- Chosen pattern for `example/16.MARTINI`:
+  - keep documentation minimal and example-oriented,
+  - keep the new `run.py` thin rather than duplicating shell workflow logic,
+  - expose the common run knobs near the top of the wrapper file, matching the older example scripts.
+- Explicit user request supersedes the earlier four-Python-file cleanup rule for this directory:
+  - `run.py` is now intentionally present as the example entrypoint.

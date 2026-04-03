@@ -2406,3 +2406,27 @@
   - `example/16.MARTINI/task_plan.md`
   - `example/16.MARTINI/findings.md`
   - `example/16.MARTINI/progress.md`
+
+## 2026-04-03 (Add Example-Style `readme.md` and `run.py` to `example/16.MARTINI`)
+- Re-read `example/16.MARTINI/task_plan.md` and inspected the style of:
+  - `example/02.ReplicaExchangeSimulation/readme.md`
+  - `example/02.ReplicaExchangeSimulation/run.py`
+  - `example/01.GettingStarted/readme.md`
+- Added `example/16.MARTINI/run.py`:
+  - thin Python wrapper around `example/16.MARTINI/run_sim_1rkl.sh`;
+  - exposes common settings at the top of the file (`pdb_id`, `run_dir`, salt, stage lengths, frame spacing, timesteps);
+  - forwards those settings through environment variables and runs the shell workflow with `subprocess.check_call(...)`.
+- Added `example/16.MARTINI/readme.md`:
+  - short overview of the hybrid dry-MARTINI + Upside example;
+  - minimal commands for `source ../../source.sh` and `python run.py`;
+  - note that `run.py` wraps `run_sim_1rkl.sh` and writes results to `outputs/martini_test_1rkl_hybrid`.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/run.py example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/extract_martini_vtf.py example/16.MARTINI/martinize.py` passed.
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - cleaned `example/16.MARTINI/__pycache__/` after verification.
+- Files modified in this follow-up:
+  - `example/16.MARTINI/run.py`
+  - `example/16.MARTINI/readme.md`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
