@@ -150,8 +150,6 @@ MASS_FF_FILE="${MASS_FF_FILE:-${UPSIDE_MARTINI_FF_DIR}/dry_martini_v2.1.itp}"
 SC_MARTINI_LIBRARY="${SC_MARTINI_LIBRARY:-${UPSIDE_HOME}/parameters/ff_2.1/martini.h5}"
 SC_MARTINI_TABLE_JSON_DEFAULT="${SC_MARTINI_TABLE_JSON_DEFAULT:-${UPSIDE_HOME}/SC-training/runs/default/results/assembled/sc_table.json}"
 SC_MARTINI_TABLE_JSON="${SC_MARTINI_TABLE_JSON:-${SC_MARTINI_TABLE_JSON_DEFAULT}}"
-SC_MARTINI_BUILD_SCRIPT="${SC_MARTINI_BUILD_SCRIPT:-${SCRIPT_DIR}/build_sc_martini_h5.py}"
-SC_TABLE_STAGE7_INJECTOR="${SC_TABLE_STAGE7_INJECTOR:-${SCRIPT_DIR}/inject_sc_table_stage7.py}"
 UPSIDE_RAMA_LIBRARY="${UPSIDE_RAMA_LIBRARY:-${UPSIDE_HOME}/parameters/common/rama.dat}"
 UPSIDE_RAMA_SHEET_MIXING="${UPSIDE_RAMA_SHEET_MIXING:-${UPSIDE_HOME}/parameters/ff_2.1/sheet}"
 UPSIDE_HBOND_ENERGY="${UPSIDE_HBOND_ENERGY:-${UPSIDE_HOME}/parameters/ff_2.1/hbond.h5}"
@@ -233,14 +231,6 @@ if [ ! -f "${UNIVERSAL_PREP_SCRIPT}" ]; then
     echo "ERROR: universal prep script not found: ${UNIVERSAL_PREP_SCRIPT}"
     exit 1
 fi
-if [ ! -f "${SC_MARTINI_BUILD_SCRIPT}" ]; then
-    echo "ERROR: SC MARTINI builder script not found: ${SC_MARTINI_BUILD_SCRIPT}"
-    exit 1
-fi
-if [ ! -f "${SC_TABLE_STAGE7_INJECTOR}" ]; then
-    echo "ERROR: stage-7 SC injector script not found: ${SC_TABLE_STAGE7_INJECTOR}"
-    exit 1
-fi
 
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR" "$HYBRID_PREP_DIR"
 
@@ -287,7 +277,7 @@ PY
     if [ "${need_build}" = "1" ]; then
         echo "Building ${SC_MARTINI_LIBRARY} from ${SC_MARTINI_TABLE_JSON}"
     fi
-    python3 "${SC_MARTINI_BUILD_SCRIPT}" \
+    python3 "${UNIVERSAL_PREP_SCRIPT}" build-sc-martini-h5 \
         --sc-table-json "${SC_MARTINI_TABLE_JSON}" \
         --output-h5 "${SC_MARTINI_LIBRARY}"
     if ! python3 - "${SC_MARTINI_LIBRARY}" << 'PY'
@@ -917,7 +907,7 @@ PY
 inject_stage7_sc_table_nodes() {
     local up_file="$1"
     local sc_library="$2"
-    python3 "${SC_TABLE_STAGE7_INJECTOR}" \
+    python3 "${UNIVERSAL_PREP_SCRIPT}" inject-stage7-sc \
         "$up_file" \
         "$sc_library" \
         "${UPSIDE_HOME}" \
@@ -1054,7 +1044,7 @@ PY
     fi
 
     if [ "${HYBRID_VALIDATE}" = "1" ]; then
-        python3 validate_hybrid_mapping.py "${HYBRID_MAPPING_FILE}"
+        python3 "${UNIVERSAL_PREP_SCRIPT}" validate-hybrid-mapping "${HYBRID_MAPPING_FILE}"
     fi
 
     if [ "$(python3 - "${HYBRID_PACKED_PDB}" "${RUNTIME_PDB_FILE}" << 'PY'
@@ -1254,7 +1244,7 @@ handoff_initial_position() {
     UPSIDE_SET_INITIAL_STRICT_COPY="$STRICT_STAGE_HANDOFF" \
     UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS="$refresh_hybrid" \
     UPSIDE_SET_INITIAL_RECENTER_PRODUCTION="$recenter_production" \
-        python3 set_initial_position.py "$input_file" "$output_file"
+        python3 "${UNIVERSAL_PREP_SCRIPT}" set-initial-position "$input_file" "$output_file"
 }
 
 extract_stage_vtf() {

@@ -502,3 +502,33 @@
   - debug spline text files,
   - cached `__pycache__` / tool-state directories,
   - generated `inputs/` and `outputs/` directories.
+
+## 2026-04-03 (Behavior Lesson: Confirm Exact Retention Contract Before Cleanup)
+- User correction pattern:
+  - when a cleanup request gives a structural rule like "only allowed files", do not infer a broader or narrower file budget; restate and implement the exact allowed set.
+- Working rule:
+  - for file-count or retention constraints, mirror the user's exact allowance literally and update the task tracker before deleting or consolidating files.
+  - do not remove tracking files like `task_plan.md` unless the user explicitly includes them in the deletion scope.
+
+## 2026-04-03 (Four-File Python Consolidation Result)
+- The allowed Python layout under `example/16.MARTINI` is now:
+  - `martinize.py`
+  - `prepare_system.py`
+  - `extract_martini_vtf.py`
+  - `prepare_system_lib.py`
+- Consolidation design that preserved the workflow:
+  - `prepare_system.py` remains the simulation-input generation entry point and now dispatches the former auxiliary CLIs via subcommands.
+  - `prepare_system_lib.py` now contains the logic previously split across:
+    - `build_sc_martini_h5.py`
+    - `inject_sc_table_stage7.py`
+    - `set_initial_position.py`
+    - `validate_hybrid_mapping.py`
+  - `run_sim_1rkl.sh` now calls:
+    - `prepare_system.py build-sc-martini-h5`
+    - `prepare_system.py inject-stage7-sc`
+    - `prepare_system.py set-initial-position`
+    - `prepare_system.py validate-hybrid-mapping`
+- Verification outcome:
+  - only four `.py` files remain at top level in `example/16.MARTINI`;
+  - no retained script still references the deleted Python filenames;
+  - retained scripts parse cleanly.

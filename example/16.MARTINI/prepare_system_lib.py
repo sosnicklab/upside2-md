@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 
+import _pickle as cPickle
 import argparse
+import importlib.util
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
+import types
+import warnings
 from collections import Counter, defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
@@ -19,6 +25,46 @@ import tables as tb
 NA_AVOGADRO = 6.02214076e23
 BB_COMPONENT_NAMES = ("N", "CA", "C", "O")
 BB_COMPONENT_MASSES = (14.0, 12.0, 12.0, 16.0)
+DEFAULT_SC_TABLE_JSON = Path(
+    "/Users/yinhan/Documents/upside2-md-martini/SC-training/runs/default/results/assembled/sc_table.json"
+)
+TWOPI = 2.0 * np.pi
+CANONICAL_AFFINE_REF = np.array(
+    [
+        [-1.19280531, -0.83127186, 0.0],
+        [0.0, 0.0, 0.0],
+        [1.25222632, -0.87268266, 0.0],
+    ],
+    dtype=np.float32,
+)
+CANONICAL_AFFINE_REF -= CANONICAL_AFFINE_REF.mean(axis=0, keepdims=True)
+CB_PLACEMENT = np.array([[0.0, 0.94375626, 1.2068012]], dtype=np.float32)
+CB_VECTOR = CB_PLACEMENT / np.linalg.norm(CB_PLACEMENT, axis=1, keepdims=True)
+N_BIT_ROTAMER = 4
+LEGACY_STAGE7_NODES = [
+    "rotamer",
+    "placement_fixed_scalar",
+    "placement_fixed_point_vector_only",
+    "martini_sc_table_potential",
+    "martini_sc_table_1body",
+]
+BACKBONE_NODES = [
+    "Distance3D",
+    "Angle",
+    "Dihedral_omega",
+    "Dihedral_phi",
+    "Dihedral_psi",
+    "Spring_bond",
+    "Spring_angle",
+    "Spring_omega",
+    "rama_coord",
+    "rama_map_pot",
+    "rama_map_pot_ref",
+    "infer_H_O",
+    "protein_hbond",
+    "hbond_energy",
+    "backbone_pairs",
+]
 
 
 @dataclass
@@ -2930,6 +2976,1113 @@ def main_always_fixed(pdb_id):
     
     print(f"Modified input file: {input_file}")
     print("Note: Protein will be fixed rigid throughout entire simulation")
+
+
+def require_h5import():
+    exe = shutil.which("h5import")
+    if not exe:
+        raise SystemExit("ERROR: h5import was not found in PATH")
+    return exe
+
+
+def read_sc_table(path: Path):
+    if not path.exists():
+        raise SystemExit(f"ERROR: SC table JSON not found: {path}")
+    return json.loads(path.read_text())
+
+
+def normalize_string(value):
+    return "" if value is None else str(value)
+
+
+def build_factorized_sc_table(sc_table):
+    tables_by_residue = sc_table.get("tables_by_residue")
+    if not isinstance(tables_by_residue, dict) or not tables_by_residue:
+        raise SystemExit("ERROR: sc_table.json is missing non-empty tables_by_residue")
+
+    residues = list(tables_by_residue)
+    first_residue = residues[0]
+    targets = list(tables_by_residue[first_residue])
+    if not targets:
+        raise SystemExit("ERROR: first residue has no target tables")
+
+    reference_grid = np.asarray(
+        tables_by_residue[first_residue][targets[0]]["grid_nm"], dtype=np.float32
+    )
+    if reference_grid.ndim != 1 or reference_grid.size < 2:
+        raise SystemExit("ERROR: invalid radial grid in sc_table.json")
+    reference_cos_grid = np.asarray(
+        tables_by_residue[first_residue][targets[0]]["cos_theta_grid"], dtype=np.float32
+    )
+    if reference_cos_grid.ndim != 1 or reference_cos_grid.size < 2:
+        raise SystemExit("ERROR: invalid cos(theta) grid in sc_table.json")
+
+    max_rotamer = 0
+    for residue in residues:
+        for target in targets:
+            entry = tables_by_residue[residue][target]
+            max_rotamer = max(max_rotamer, int(entry.get("rotamer_count", 0)))
+    if max_rotamer < 1:
+        raise SystemExit("ERROR: no rotamer-resolved SC tables found in sc_table.json")
+
+    radial_energy = np.zeros((len(residues), len(targets), reference_grid.size), dtype=np.float32)
+    angular_energy = np.zeros((len(residues), len(targets), reference_grid.size), dtype=np.float32)
+    angular_profile = np.zeros(
+        (len(residues), len(targets), reference_cos_grid.size), dtype=np.float32
+    )
+    rotamer_count = np.zeros((len(residues),), dtype=np.float32)
+    rotamer_probability_fixed = np.zeros((len(residues), max_rotamer), dtype=np.float32)
+    rotamer_radial_energy = np.zeros(
+        (len(residues), max_rotamer, len(targets), reference_grid.size), dtype=np.float32
+    )
+    rotamer_angular_energy = np.zeros(
+        (len(residues), max_rotamer, len(targets), reference_grid.size), dtype=np.float32
+    )
+    rotamer_angular_profile = np.zeros(
+        (len(residues), max_rotamer, len(targets), reference_cos_grid.size), dtype=np.float32
+    )
+
+    for ri, residue in enumerate(residues):
+        residue_tables = tables_by_residue[residue]
+        missing_targets = sorted(set(targets) - set(residue_tables))
+        extra_targets = sorted(set(residue_tables) - set(targets))
+        if missing_targets or extra_targets:
+            raise SystemExit(
+                f"ERROR: target mismatch for residue {residue}: "
+                f"missing={missing_targets} extra={extra_targets}"
+            )
+
+        for ti, target in enumerate(targets):
+            entry = residue_tables[target]
+            entry_rot_count = int(entry.get("rotamer_count", 0))
+            if entry_rot_count < 1 or entry_rot_count > max_rotamer:
+                raise SystemExit(
+                    f"ERROR: invalid rotamer_count for residue {residue} target {target}: "
+                    f"{entry_rot_count}"
+                )
+            if ti == 0:
+                rotamer_count[ri] = float(entry_rot_count)
+                prob_row = np.asarray(entry.get("rotamer_probability_fixed", []), dtype=np.float32)
+                if prob_row.shape != (entry_rot_count,):
+                    raise SystemExit(
+                        f"ERROR: rotamer_probability_fixed shape mismatch for residue {residue}: "
+                        f"{prob_row.shape} vs {(entry_rot_count,)}"
+                    )
+                rotamer_probability_fixed[ri, :entry_rot_count] = prob_row
+            elif int(rotamer_count[ri]) != entry_rot_count:
+                raise SystemExit(
+                    f"ERROR: inconsistent rotamer_count for residue {residue}: "
+                    f"{int(rotamer_count[ri])} vs {entry_rot_count}"
+                )
+
+            grid = np.asarray(entry["grid_nm"], dtype=np.float32)
+            if grid.shape != reference_grid.shape or not np.allclose(grid, reference_grid):
+                raise SystemExit(
+                    f"ERROR: non-uniform radial grid for residue {residue} target {target}"
+                )
+            cos_grid = np.asarray(entry["cos_theta_grid"], dtype=np.float32)
+            if cos_grid.shape != reference_cos_grid.shape or not np.allclose(cos_grid, reference_cos_grid):
+                raise SystemExit(
+                    f"ERROR: non-uniform cos(theta) grid for residue {residue} target {target}"
+                )
+
+            radial_row = np.asarray(entry["radial_energy_kj_mol"], dtype=np.float32)
+            angular_row = np.asarray(entry["angular_energy_kj_mol"], dtype=np.float32)
+            profile_row = np.asarray(entry["angular_profile"], dtype=np.float32)
+            rot_radial = np.asarray(entry["rotamer_radial_energy_kj_mol"], dtype=np.float32)
+            rot_angular = np.asarray(entry["rotamer_angular_energy_kj_mol"], dtype=np.float32)
+            rot_profile = np.asarray(entry["rotamer_angular_profile"], dtype=np.float32)
+
+            if radial_row.shape != reference_grid.shape:
+                raise SystemExit(
+                    f"ERROR: radial_energy_kj_mol shape mismatch for residue {residue} "
+                    f"target {target}: {radial_row.shape} vs {reference_grid.shape}"
+                )
+            if angular_row.shape != reference_grid.shape:
+                raise SystemExit(
+                    f"ERROR: angular_energy_kj_mol shape mismatch for residue {residue} "
+                    f"target {target}: {angular_row.shape} vs {reference_grid.shape}"
+                )
+            if profile_row.shape != reference_cos_grid.shape:
+                raise SystemExit(
+                    f"ERROR: angular_profile shape mismatch for residue {residue} target {target}: "
+                    f"{profile_row.shape} vs {reference_cos_grid.shape}"
+                )
+            if rot_radial.shape != (entry_rot_count, reference_grid.size):
+                raise SystemExit(
+                    f"ERROR: rotamer_radial_energy_kj_mol shape mismatch for residue {residue} "
+                    f"target {target}: {rot_radial.shape} vs {(entry_rot_count, reference_grid.size)}"
+                )
+            if rot_angular.shape != (entry_rot_count, reference_grid.size):
+                raise SystemExit(
+                    f"ERROR: rotamer_angular_energy_kj_mol shape mismatch for residue {residue} "
+                    f"target {target}: {rot_angular.shape} vs {(entry_rot_count, reference_grid.size)}"
+                )
+            if rot_profile.shape != (entry_rot_count, reference_cos_grid.size):
+                raise SystemExit(
+                    f"ERROR: rotamer_angular_profile shape mismatch for residue {residue} "
+                    f"target {target}: {rot_profile.shape} vs {(entry_rot_count, reference_cos_grid.size)}"
+                )
+
+            radial_energy[ri, ti, :] = radial_row
+            angular_energy[ri, ti, :] = angular_row
+            angular_profile[ri, ti, :] = profile_row
+            rotamer_radial_energy[ri, :entry_rot_count, ti, :] = rot_radial
+            rotamer_angular_energy[ri, :entry_rot_count, ti, :] = rot_angular
+            rotamer_angular_profile[ri, :entry_rot_count, ti, :] = rot_profile
+
+    return (
+        residues,
+        targets,
+        reference_grid,
+        reference_cos_grid,
+        radial_energy,
+        angular_energy,
+        angular_profile,
+        rotamer_count,
+        rotamer_probability_fixed,
+        rotamer_radial_energy,
+        rotamer_angular_energy,
+        rotamer_angular_profile,
+    )
+
+
+def write_text_h5_dataset(h5import_exe: str, tmpdir: Path, output_h5: Path, dataset_path: str, values):
+    txt_path = tmpdir / f"{dataset_path.strip('/').replace('/', '__')}.txt"
+    cfg_path = tmpdir / f"{dataset_path.strip('/').replace('/', '__')}.cfg"
+    txt_path.write_text("".join(f"{normalize_string(v)}\n" for v in values))
+    cfg_path.write_text(f"PATH {dataset_path}\nINPUT-CLASS STR\n")
+    subprocess.run(
+        [h5import_exe, str(txt_path), "-c", str(cfg_path), "-o", str(output_h5)],
+        check=True,
+    )
+
+
+def write_float_h5_dataset(
+    h5import_exe: str,
+    tmpdir: Path,
+    output_h5: Path,
+    dataset_path: str,
+    array: np.ndarray,
+):
+    arr = np.asarray(array, dtype=np.float32)
+    bin_path = tmpdir / f"{dataset_path.strip('/').replace('/', '__')}.bin"
+    cfg_path = tmpdir / f"{dataset_path.strip('/').replace('/', '__')}.cfg"
+    arr.tofile(bin_path)
+    dims = " ".join(str(x) for x in arr.shape)
+    cfg_path.write_text(
+        "\n".join(
+            [
+                f"PATH {dataset_path}",
+                "INPUT-CLASS FP",
+                "INPUT-SIZE 32",
+                "INPUT-BYTE-ORDER LE",
+                f"RANK {arr.ndim}",
+                f"DIMENSION-SIZES {dims}",
+                "OUTPUT-CLASS FP",
+                "OUTPUT-SIZE 32",
+                "OUTPUT-ARCHITECTURE NATIVE",
+                "",
+            ]
+        )
+    )
+    subprocess.run(
+        [h5import_exe, str(bin_path), "-c", str(cfg_path), "-o", str(output_h5)],
+        check=True,
+    )
+
+
+def build_sc_martini_h5(sc_table_json: Path, output_h5: Path):
+    h5import_exe = require_h5import()
+    sc_table_path = Path(sc_table_json).expanduser().resolve()
+    output_h5 = Path(output_h5).expanduser().resolve()
+    output_h5.parent.mkdir(parents=True, exist_ok=True)
+    if output_h5.exists():
+        output_h5.unlink()
+
+    sc_table = read_sc_table(sc_table_path)
+    (
+        residues,
+        targets,
+        grid_nm,
+        cos_theta_grid,
+        radial_energy_kj_mol,
+        angular_energy_kj_mol,
+        angular_profile,
+        rotamer_count,
+        rotamer_probability_fixed,
+        rotamer_radial_energy_kj_mol,
+        rotamer_angular_energy_kj_mol,
+        rotamer_angular_profile,
+    ) = build_factorized_sc_table(sc_table)
+
+    with tempfile.TemporaryDirectory(prefix="build_sc_martini_h5.") as tmp:
+        tmpdir = Path(tmp)
+        write_text_h5_dataset(h5import_exe, tmpdir, output_h5, "/schema", [sc_table.get("schema", "")])
+        write_text_h5_dataset(
+            h5import_exe, tmpdir, output_h5, "/forcefield_name", [sc_table.get("forcefield_name", "")]
+        )
+        write_text_h5_dataset(
+            h5import_exe, tmpdir, output_h5, "/created_at_utc", [sc_table.get("created_at_utc", "")]
+        )
+        write_text_h5_dataset(
+            h5import_exe, tmpdir, output_h5, "/manifest_path", [sc_table.get("manifest_path", "")]
+        )
+        write_text_h5_dataset(h5import_exe, tmpdir, output_h5, "/restype_order", residues)
+        write_text_h5_dataset(h5import_exe, tmpdir, output_h5, "/target_order", targets)
+        write_float_h5_dataset(h5import_exe, tmpdir, output_h5, "/grid_nm", grid_nm)
+        write_float_h5_dataset(h5import_exe, tmpdir, output_h5, "/cos_theta_grid", cos_theta_grid)
+        write_float_h5_dataset(h5import_exe, tmpdir, output_h5, "/rotamer_count", rotamer_count)
+        write_float_h5_dataset(
+            h5import_exe, tmpdir, output_h5, "/rotamer_probability_fixed", rotamer_probability_fixed
+        )
+        write_float_h5_dataset(h5import_exe, tmpdir, output_h5, "/radial_energy_kj_mol", radial_energy_kj_mol)
+        write_float_h5_dataset(h5import_exe, tmpdir, output_h5, "/angular_energy_kj_mol", angular_energy_kj_mol)
+        write_float_h5_dataset(h5import_exe, tmpdir, output_h5, "/angular_profile", angular_profile)
+        write_float_h5_dataset(
+            h5import_exe, tmpdir, output_h5, "/rotamer_radial_energy_kj_mol", rotamer_radial_energy_kj_mol
+        )
+        write_float_h5_dataset(
+            h5import_exe, tmpdir, output_h5, "/rotamer_angular_energy_kj_mol", rotamer_angular_energy_kj_mol
+        )
+        write_float_h5_dataset(
+            h5import_exe, tmpdir, output_h5, "/rotamer_angular_profile", rotamer_angular_profile
+        )
+
+    print(
+        f"Built {output_h5} from {sc_table_path} with {len(residues)} residues, "
+        f"{len(targets)} targets, {cos_theta_grid.size} angular points, {grid_nm.size} radial points"
+    )
+
+
+def require_group(root, path):
+    if path not in root:
+        raise ValueError(f"Missing group: {path}")
+    return root[path]
+
+
+def require_dataset(group, name):
+    if name not in group:
+        raise ValueError(f"Missing dataset: {group.name}/{name}")
+    return group[name]
+
+
+def decode_attr_string(value, default=""):
+    if value is None:
+        return default
+    if isinstance(value, (bytes, np.bytes_)):
+        return value.decode("utf-8", errors="ignore")
+    return str(value)
+
+
+def validate_hybrid_mapping(mapping_h5: Path, n_atom: int | None = None):
+    path = Path(mapping_h5).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    with h5py.File(path, "r") as h5:
+        inp = require_group(h5, "/input")
+        ctrl = require_group(inp, "hybrid_control")
+        bb = require_group(inp, "hybrid_bb_map")
+        env = require_group(inp, "hybrid_env_topology")
+
+        for attr in [
+            "enable",
+            "activation_stage",
+            "preprod_protein_mode",
+            "exclude_intra_protein_martini",
+            "schema_version",
+        ]:
+            if attr not in ctrl.attrs:
+                raise ValueError(f"Missing hybrid_control attr: {attr}")
+
+        bb_atom_idx = require_dataset(bb, "bb_atom_index")[:]
+        bb_atom_map = require_dataset(bb, "atom_indices")[:]
+        bb_mask = require_dataset(bb, "atom_mask")[:]
+        bb_w = require_dataset(bb, "weights")[:]
+
+        if bb_atom_map.ndim != 2 or bb_atom_map.shape[1] != 4:
+            raise ValueError("hybrid_bb_map/atom_indices must have shape (n_bb,4)")
+        if bb_mask.shape != bb_atom_map.shape or bb_w.shape != bb_atom_map.shape:
+            raise ValueError("hybrid_bb_map mask/weights shapes must match atom_indices")
+
+        n_bb = bb_atom_map.shape[0]
+        if bb_atom_idx.shape != (n_bb,):
+            raise ValueError("hybrid_bb_map/bb_atom_index must have shape (n_bb,)")
+        bb_index_space = decode_attr_string(bb.attrs.get("atom_index_space", "runtime_n_atom"))
+        bb_reference_space = bb_index_space == "protein_aa_pdb_0based"
+
+        if "reference_atom_names" in bb and bb["reference_atom_names"][:].shape != (4,):
+            raise ValueError("hybrid_bb_map/reference_atom_names must have shape (4,)")
+        if "reference_atom_indices" in bb and bb["reference_atom_indices"][:].shape != (n_bb, 4):
+            raise ValueError("hybrid_bb_map/reference_atom_indices must have shape (n_bb,4)")
+        if "reference_atom_coords" in bb and bb["reference_atom_coords"][:].shape != (n_bb, 4, 3):
+            raise ValueError("hybrid_bb_map/reference_atom_coords must have shape (n_bb,4,3)")
+        if "bb_comment" in bb and bb["bb_comment"][:].shape != (n_bb,):
+            raise ValueError("hybrid_bb_map/bb_comment must have shape (n_bb,)")
+
+        for i in range(n_bb):
+            mask = bb_mask[i].astype(bool)
+            if mask.any():
+                wsum = float(bb_w[i][mask].sum())
+                if abs(wsum - 1.0) > 1e-4:
+                    raise ValueError(f"BB weights do not sum to 1 for row {i}: {wsum}")
+
+        membership = require_dataset(env, "protein_membership")[:]
+        if membership.ndim != 1:
+            raise ValueError("hybrid_env_topology/protein_membership must be 1D")
+        if n_atom is not None and membership.shape[0] != n_atom:
+            raise ValueError(
+                f"protein_membership length ({membership.shape[0]}) != expected n_atom ({n_atom})"
+            )
+        n_atom_runtime = int(membership.shape[0])
+
+        for i in range(n_bb):
+            bb_i = int(bb_atom_idx[i])
+            if bb_i < 0 or bb_i >= n_atom_runtime:
+                raise ValueError(f"BB proxy index out of bounds at row {i}: {bb_i}")
+            if membership[bb_i] < 0:
+                raise ValueError(f"BB proxy index is not protein atom at row {i}: {bb_i}")
+            for j in range(4):
+                if int(bb_mask[i, j]) == 0:
+                    continue
+                ai = int(bb_atom_map[i, j])
+                if bb_reference_space:
+                    if ai < 0:
+                        raise ValueError(
+                            f"BB reference target index invalid at row {i}, col {j}: {ai}"
+                        )
+                else:
+                    if ai < 0 or ai >= n_atom_runtime:
+                        raise ValueError(f"BB target index out of bounds at row {i}, col {j}: {ai}")
+                    if membership[ai] < 0:
+                        raise ValueError(f"BB target index is not protein atom at row {i}, col {j}: {ai}")
+
+        n_protein = int(np.sum(membership >= 0))
+        n_env = int(np.sum(membership < 0))
+        print(f"OK: {path}")
+        print(f"  n_atom={membership.shape[0]} n_protein={n_protein} n_env={n_env}")
+        print(f"  n_bb={n_bb} bb_index_space={bb_index_space}")
+
+
+def decode_stage_label(value):
+    if isinstance(value, (bytes, np.bytes_)):
+        return value.decode("utf-8", errors="ignore").strip().lower()
+    return str(value).strip().lower()
+
+
+def env_bool(name, default=False):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    return value not in ("0", "false", "no", "off", "")
+
+
+def recenter_protein_for_production(h5f, pos, box_lengths):
+    if box_lengths is None:
+        return pos
+    if "/input/stage_parameters" not in h5f:
+        return pos
+    stage = decode_stage_label(h5f["/input/stage_parameters"].attrs.get("current_stage", b""))
+    if stage != "production":
+        return pos
+    if "/input/hybrid_bb_map/bb_atom_index" not in h5f:
+        return pos
+
+    box = np.asarray(box_lengths, dtype=np.float64).reshape(3)
+    if not np.all(np.isfinite(box)) or np.any(box <= 0.0):
+        return pos
+
+    bb_idx = h5f["/input/hybrid_bb_map/bb_atom_index"][:].astype(np.int32)
+    bb_idx = bb_idx[(bb_idx >= 0) & (bb_idx < pos.shape[0])]
+    if bb_idx.size == 0:
+        return pos
+
+    bb_xyz = pos[bb_idx, :, 0].astype(np.float64)
+    bb_center = np.zeros(3, dtype=np.float64)
+    for ax in range(3):
+        coords_ax = np.mod(bb_xyz[:, ax], box[ax])
+        angles = TWOPI * coords_ax / box[ax]
+        s = np.mean(np.sin(angles))
+        c = np.mean(np.cos(angles))
+        if abs(s) < 1e-12 and abs(c) < 1e-12:
+            bb_center[ax] = float(np.mean(coords_ax))
+        else:
+            ang = np.arctan2(s, c)
+            if ang < 0.0:
+                ang += TWOPI
+            bb_center[ax] = box[ax] * ang / TWOPI
+
+    target_center = 0.5 * box
+    delta = target_center - bb_center
+    pos[:, :, 0] = pos[:, :, 0] + delta.astype(pos.dtype, copy=False)[None, :]
+    print(
+        "Recentered production protein BB to box center: "
+        f"before=({bb_center[0]:.3f}, {bb_center[1]:.3f}, {bb_center[2]:.3f}) "
+        f"target=({target_center[0]:.3f}, {target_center[1]:.3f}, {target_center[2]:.3f})"
+    )
+    return pos
+
+
+def refresh_hybrid_reference_carriers(h5f, pos):
+    if "/input/hybrid_bb_map" not in h5f:
+        return pos
+
+    grp = h5f["/input/hybrid_bb_map"]
+    required = ("bb_atom_index", "atom_indices", "weights", "reference_atom_coords")
+    if not all((f"/input/hybrid_bb_map/{k}" in h5f) for k in required):
+        return pos
+
+    bb_idx = grp["bb_atom_index"][:].astype(np.int32)
+    comp_idx = grp["atom_indices"][:].astype(np.int32)
+    comp_w = grp["weights"][:].astype(np.float64)
+    ref_xyz = grp["reference_atom_coords"][:].astype(np.float64)
+
+    if comp_idx.ndim != 2 or comp_idx.shape[1] != 4:
+        return pos
+    if ref_xyz.shape != (comp_idx.shape[0], 4, 3):
+        return pos
+
+    n_atom = pos.shape[0]
+    for k in range(comp_idx.shape[0]):
+        bb = int(bb_idx[k]) if k < bb_idx.shape[0] else -1
+        if bb < 0 or bb >= n_atom:
+            continue
+
+        valid = (comp_idx[k] >= 0) & (comp_idx[k] < n_atom) & (comp_w[k] > 0.0)
+        if not np.any(valid):
+            continue
+
+        w = comp_w[k][valid]
+        wsum = float(np.sum(w))
+        if wsum <= 0.0:
+            continue
+        w = w / wsum
+
+        ref_pts = ref_xyz[k][valid]
+        ref_com = np.sum(ref_pts * w[:, None], axis=0)
+        bb_pos = pos[bb, :, 0].astype(np.float64)
+        shift = bb_pos - ref_com
+
+        target_idx = comp_idx[k][valid]
+        aligned = ref_pts + shift[None, :]
+        for ai, pxyz in zip(target_idx, aligned):
+            pos[int(ai), :, 0] = pxyz.astype(pos.dtype)
+
+    return pos
+
+
+def set_initial_position(input_file, output_file):
+    strict_copy = env_bool("UPSIDE_SET_INITIAL_STRICT_COPY", False)
+    apply_refresh_hybrid = env_bool(
+        "UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS", default=(not strict_copy)
+    )
+    apply_recenter_production = env_bool(
+        "UPSIDE_SET_INITIAL_RECENTER_PRODUCTION", default=(not strict_copy)
+    )
+
+    with h5py.File(input_file, "r") as f:
+        if "/output/pos" in f and f["/output/pos"].shape[0] > 0:
+            last_pos = f["/output/pos"][-1, 0, :, :]
+            last_pos = last_pos[:, :, np.newaxis]
+        else:
+            last_pos = f["/input/pos"][:, :, 0]
+            last_pos = last_pos[:, :, np.newaxis]
+
+        last_box = None
+        if "/output/box" in f:
+            box_data = f["/output/box"][:]
+            if box_data.size > 0:
+                last_box = box_data[-1]
+                if len(last_box.shape) == 2 and last_box.shape[1] == 3:
+                    last_box = last_box[0]
+        if last_box is None and "/input/potential/martini_potential" in f:
+            pot_grp = f["/input/potential/martini_potential"]
+            if all(k in pot_grp.attrs for k in ("x_len", "y_len", "z_len")):
+                last_box = np.array(
+                    [pot_grp.attrs["x_len"], pot_grp.attrs["y_len"], pot_grp.attrs["z_len"]]
+                )
+
+    with h5py.File(output_file, "r+") as f:
+        target_pos = f["/input/pos"][:]
+        target_n = target_pos.shape[0]
+        source_n = last_pos.shape[0]
+        if source_n != target_n:
+            merged = target_pos.copy()
+            merged[: min(source_n, target_n), :, :] = last_pos[: min(source_n, target_n), :, :]
+            last_pos = merged
+
+        if strict_copy and not apply_refresh_hybrid and not apply_recenter_production:
+            print("Strict handoff mode: preserving exact coordinates from previous stage output.")
+
+        if apply_refresh_hybrid:
+            last_pos = refresh_hybrid_reference_carriers(f, last_pos)
+        if apply_recenter_production:
+            last_pos = recenter_protein_for_production(f, last_pos, last_box)
+
+        if "/input/pos" in f:
+            del f["/input/pos"]
+        f.create_dataset("/input/pos", data=last_pos)
+
+        if last_box is not None and "/input/potential/martini_potential" in f:
+            pot_grp = f["/input/potential/martini_potential"]
+            pot_grp.attrs["x_len"] = float(last_box[0])
+            pot_grp.attrs["y_len"] = float(last_box[1])
+            pot_grp.attrs["z_len"] = float(last_box[2])
+            print(
+                f"Updated box dimensions: x={last_box[0]:.3f}, y={last_box[1]:.3f}, z={last_box[2]:.3f}"
+            )
+
+
+def normalize_resname(name: str) -> str:
+    name = name.upper()
+    aliases = {
+        "HSD": "HIS",
+        "HSE": "HIS",
+        "HSP": "HIS",
+        "HID": "HIS",
+        "HIE": "HIS",
+        "HIP": "HIS",
+        "CYX": "CYS",
+    }
+    return aliases.get(name, name)
+
+
+def decode_string_array(dataset):
+    return [x.decode("ascii") if isinstance(x, (bytes, np.bytes_)) else str(x) for x in dataset[:]]
+
+
+def unique_preserving_order(values):
+    out = []
+    seen = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def parse_itp_residue_names(path: Path):
+    resnames = []
+    seen = set()
+    in_atoms = False
+    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+        for raw in fh:
+            line = raw.split(";", 1)[0].strip()
+            if not line:
+                continue
+            low = line.lower()
+            if low in {"[ atoms ]", "[atoms]"}:
+                in_atoms = True
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                in_atoms = False
+                continue
+            if not in_atoms:
+                continue
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            try:
+                resnr = int(parts[2])
+            except ValueError:
+                continue
+            if parts[4].strip().upper() != "BB" or resnr in seen:
+                continue
+            seen.add(resnr)
+            resnames.append(parts[3].strip().upper())
+    return resnames
+
+
+def resolve_sequence(inp, residue_count: int, protein_itp: Path | None):
+    mismatch_notes = []
+    if "sequence" in inp:
+        sequence = [normalize_resname(x) for x in decode_string_array(inp["sequence"])]
+        if len(sequence) == residue_count:
+            return sequence
+        mismatch_notes.append(f"/input/sequence has {len(sequence)} residues")
+
+    if protein_itp is not None:
+        if not protein_itp.exists():
+            raise ValueError(f"Protein ITP not found for sequence fallback: {protein_itp}")
+        sequence = [normalize_resname(x) for x in parse_itp_residue_names(protein_itp)]
+        if len(sequence) == residue_count:
+            return sequence
+        mismatch_notes.append(f"{protein_itp} has {len(sequence)} residues")
+
+    detail = ", ".join(mismatch_notes) if mismatch_notes else "no sequence source was available"
+    raise ValueError(
+        f"Could not resolve a residue sequence matching hybrid_bb_map residue count {residue_count}: {detail}"
+    )
+
+
+def build_affine_atoms(inp):
+    if "hybrid_bb_map" not in inp:
+        raise ValueError("Missing /input/hybrid_bb_map in stage file")
+    bb_grp = inp["hybrid_bb_map"]
+    if "reference_atom_indices" not in bb_grp:
+        raise ValueError("hybrid_bb_map/reference_atom_indices is required for stage-7 CB placement")
+    ref_offset = int(bb_grp.attrs.get("reference_index_offset", -1))
+    if ref_offset < 0:
+        raise ValueError("hybrid_bb_map/reference_index_offset is missing or invalid")
+
+    bb_residue_raw = bb_grp["bb_residue_index"][:].astype(np.int32)
+    bb_ref_idx = bb_grp["reference_atom_indices"][:].astype(np.int32)
+    residue_ids = unique_preserving_order(int(x) for x in bb_residue_raw.tolist())
+
+    residue_to_ncac = {}
+    n_atom = int(inp["pos"].shape[0])
+    for resid, ref_row in zip(bb_residue_raw.tolist(), bb_ref_idx.tolist()):
+        rid = int(resid)
+        n_idx, ca_idx, c_idx = [int(ref_row[0]), int(ref_row[1]), int(ref_row[2])]
+        if n_idx < 0 or ca_idx < 0 or c_idx < 0:
+            continue
+        n_rt = ref_offset + n_idx
+        ca_rt = ref_offset + ca_idx
+        c_rt = ref_offset + c_idx
+        for idx in (n_rt, ca_rt, c_rt):
+            if idx < 0 or idx >= n_atom:
+                raise ValueError(
+                    f"Backbone carrier index out of bounds for residue {rid}: idx={idx}, n_atom={n_atom}"
+                )
+        residue_to_ncac.setdefault(rid, (n_rt, ca_rt, c_rt))
+
+    missing = [rid for rid in residue_ids if rid not in residue_to_ncac]
+    if missing:
+        raise ValueError(f"Missing N/CA/C runtime mapping for residues: {missing[:8]}")
+
+    affine_atoms = np.zeros((len(residue_ids), 3), dtype=np.int32)
+    for seq_idx, resid in enumerate(residue_ids):
+        affine_atoms[seq_idx, :] = residue_to_ncac[resid]
+    return residue_ids, affine_atoms
+
+
+def load_sidechain_rotamer_payload(sidechain_lib: Path, sequence, restype_to_index):
+    if not sidechain_lib.exists():
+        raise ValueError(f"Sidechain library not found: {sidechain_lib}")
+
+    with h5py.File(sidechain_lib, "r") as sclib:
+        sc_restype_order = decode_string_array(sclib["restype_order"])
+        sc_restype_num = {name: i for i, name in enumerate(sc_restype_order)}
+        start_stop_bead = sclib["rotamer_start_stop_bead"][:].astype(np.int32)
+        rot_center_fixed = sclib["rotamer_center_fixed"][:, :6].astype(np.float32)
+        if "rotamer_prob_fixed" in sclib:
+            rot_energy_fixed = sclib["rotamer_prob_fixed"][:].astype(np.float32).reshape(-1)
+        elif "rotamer_prob" in sclib:
+            rot_prob = sclib["rotamer_prob"][:].astype(np.float64)
+            if rot_prob.ndim != 3:
+                raise ValueError(f"Unsupported rotamer_prob shape in {sidechain_lib}: {rot_prob.shape}")
+            rot_prob_mean = np.clip(rot_prob.mean(axis=(0, 1)), 1.0e-12, None)
+            rot_energy_fixed = (-np.log(rot_prob_mean)).astype(np.float32)
+        else:
+            raise ValueError(
+                f"Missing rotamer probability tables in {sidechain_lib}: need rotamer_prob_fixed or rotamer_prob"
+            )
+        bead_order = decode_string_array(sclib["bead_order"])
+        bead_num = {name: i for i, name in enumerate(bead_order)}
+        pair_interaction = sclib["pair_interaction"][:].astype(np.float32)
+
+    count_by_n_rot = {}
+    affine_residue = []
+    layer_index = []
+    beadtype_seq = []
+    bead_type_index = []
+    id_seq = []
+    row_rotamer_index = []
+    row_residue_table_index = []
+    skipped = []
+
+    for seq_idx, raw_resname in enumerate(sequence):
+        resname = normalize_resname(raw_resname)
+        restype_idx = sc_restype_num.get(resname)
+        residue_table_idx = restype_to_index.get(resname)
+        if restype_idx is None or residue_table_idx is None:
+            skipped.append((seq_idx, resname))
+            continue
+
+        start, stop, n_bead = [int(x) for x in start_stop_bead[restype_idx]]
+        if n_bead <= 0 or stop <= start:
+            skipped.append((seq_idx, resname))
+            continue
+        n_rot = (stop - start) // n_bead
+        if n_rot <= 0:
+            skipped.append((seq_idx, resname))
+            continue
+
+        if n_rot not in count_by_n_rot:
+            count_by_n_rot[n_rot] = 0
+        base_id = (count_by_n_rot[n_rot] << N_BIT_ROTAMER) + n_rot
+        count_by_n_rot[n_rot] += 1
+
+        for rel in range(stop - start):
+            lid = start + rel
+            rot_idx = rel // n_bead
+            bead_name = f"{resname}_{rel % n_bead}"
+            if bead_name not in bead_num:
+                raise ValueError(f"Missing bead '{bead_name}' in sidechain library bead_order")
+            affine_residue.append(seq_idx)
+            layer_index.append(lid)
+            beadtype_seq.append(bead_name)
+            bead_type_index.append(bead_num[bead_name])
+            id_seq.append(rot_idx + (base_id << N_BIT_ROTAMER))
+            row_rotamer_index.append(rot_idx)
+            row_residue_table_index.append(residue_table_idx)
+
+    if not layer_index:
+        raise ValueError("No production rotamer rows could be generated from the sidechain library")
+
+    layer_index_arr = np.asarray(layer_index, dtype=np.int32)
+    return {
+        "pair_interaction": pair_interaction,
+        "affine_residue": np.asarray(affine_residue, dtype=np.int32),
+        "layer_index": layer_index_arr,
+        "beadtype_seq": np.asarray([np.bytes_(x) for x in beadtype_seq], dtype="S16"),
+        "bead_type_index": np.asarray(bead_type_index, dtype=np.int32),
+        "id_seq": np.asarray(id_seq, dtype=np.int32),
+        "placement_data": rot_center_fixed[layer_index_arr].astype(np.float32),
+        "placement_scalar_data": rot_energy_fixed[layer_index_arr][:, None].astype(np.float32),
+        "row_rotamer_index": np.asarray(row_rotamer_index, dtype=np.int32),
+        "row_residue_table_index": np.asarray(row_residue_table_index, dtype=np.int32),
+        "skipped": skipped,
+    }
+
+
+def build_env_rows(inp, target_to_index):
+    if "hybrid_env_topology" not in inp:
+        raise ValueError("Missing /input/hybrid_env_topology in stage file")
+    env_grp = inp["hybrid_env_topology"]
+    if "protein_membership" not in env_grp:
+        raise ValueError("Missing hybrid_env_topology/protein_membership in stage file")
+
+    protein_membership = env_grp["protein_membership"][:].astype(np.int32)
+    atom_types = decode_string_array(inp["type"])
+
+    env_atom_index = []
+    env_target_index = []
+    for atom_idx, (membership, atom_type) in enumerate(zip(protein_membership.tolist(), atom_types)):
+        if membership >= 0:
+            continue
+        target_idx = target_to_index.get(atom_type)
+        if target_idx is None:
+            continue
+        env_atom_index.append(atom_idx)
+        env_target_index.append(target_idx)
+
+    if not env_atom_index:
+        raise ValueError("No non-protein dry-MARTINI particles matched martini.h5 target_order")
+
+    return np.asarray(env_atom_index, dtype=np.int32), np.asarray(env_target_index, dtype=np.int32)
+
+
+def recreate_group(parent, name):
+    if name in parent:
+        del parent[name]
+    return parent.create_group(name)
+
+
+def load_upside_config(upside_home: Path):
+    upside_config_py = upside_home / "py" / "upside_config.py"
+    if not upside_config_py.exists():
+        raise ValueError(f"upside_config.py not found: {upside_config_py}")
+    spec = importlib.util.spec_from_file_location("upside_config_runtime", str(upside_config_py))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def remap_atom_index_array(arr, atom_map):
+    out = arr.copy()
+    if out.size == 0:
+        return out
+    finite_mask = np.isfinite(out)
+    if not np.any(finite_mask):
+        return out
+    nonneg_mask = finite_mask & (out >= 0)
+    if not np.any(nonneg_mask):
+        return out
+    idx = out[nonneg_mask].astype(np.int64)
+    if np.any(idx >= atom_map.shape[0]):
+        raise ValueError(
+            f"Backbone atom remap index exceeds reference map size: max={int(idx.max())}, map_size={atom_map.shape[0]}"
+        )
+    mapped = atom_map[idx]
+    if np.any(mapped < 0):
+        bad = np.where(mapped < 0)[0][0]
+        raise ValueError(
+            f"Backbone atom remap produced negative target for reference index {int(idx[bad])}"
+        )
+    out[nonneg_mask] = mapped.astype(out.dtype, copy=False)
+    return out
+
+
+def inject_backbone_nodes(
+    up_file: Path,
+    sequence,
+    affine_atoms,
+    rama_library: Path,
+    rama_sheet_mixing: Path,
+    hbond_energy: Path,
+    reference_state_rama: Path,
+    upside_home: Path,
+):
+    uc = load_upside_config(upside_home)
+    fasta_seq = np.asarray(sequence)
+    ref_n_atom = 3 * len(sequence)
+    spring_args = types.SimpleNamespace(bond_stiffness=48.0, angle_stiffness=175.0, omega_stiffness=30.0)
+
+    with tb.open_file(str(up_file), mode="a") as tf:
+        uc.t = tf
+        uc.potential = tf.root.input.potential
+        uc.n_atom = ref_n_atom
+        uc.n_chains = 1
+        uc.chain_starts = np.array([0], dtype=np.int32)
+        uc.use_intensive_memory = False
+
+        uc.write_dist_spring(spring_args)
+        uc.write_angle_spring(spring_args)
+        uc.write_omega_spring1(spring_args, fasta_seq)
+        uc.write_rama_map_pot(
+            fasta_seq,
+            str(rama_library),
+            str(rama_sheet_mixing),
+            secstr_bias="",
+            mode="mixture",
+            param_deriv=False,
+        )
+
+        with open(reference_state_rama, "rb") as fh:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"dtype\(\): align should be passed as Python or NumPy boolean.*",
+                    category=np.exceptions.VisibleDeprecationWarning,
+                )
+                ref_state_raw = cPickle.load(fh, encoding="latin1")
+        ref_state_cor = np.log(np.asarray(ref_state_raw, dtype=np.float64))
+        ref_state_cor -= ref_state_cor.mean()
+        grp = tf.create_group(tf.root.input.potential, "rama_map_pot_ref")
+        grp._v_attrs.arguments = np.array([b"rama_coord"])
+        grp._v_attrs.log_pot = 0
+        uc.create_array(grp, "residue_id", obj=np.arange(len(fasta_seq), dtype=np.int32))
+        uc.create_array(grp, "rama_map_id", obj=np.zeros(len(fasta_seq), dtype=np.int32))
+        uc.create_array(grp, "rama_pot", obj=ref_state_cor[None])
+
+        uc.write_infer_H_O(fasta_seq, np.array([], dtype=np.int32))
+        uc.write_count_hbond(fasta_seq, False)
+        uc.write_short_hbond(fasta_seq, str(hbond_energy))
+        uc.write_rama_coord2()
+        uc.write_backbone_pair(fasta_seq)
+
+    atom_map = np.full((ref_n_atom,), -1, dtype=np.int64)
+    for seq_idx, (n_idx, ca_idx, c_idx) in enumerate(affine_atoms.tolist()):
+        atom_map[3 * seq_idx + 0] = n_idx
+        atom_map[3 * seq_idx + 1] = ca_idx
+        atom_map[3 * seq_idx + 2] = c_idx
+
+    remap_datasets = [
+        ("Distance3D", "id"),
+        ("Angle", "id"),
+        ("Dihedral_omega", "id"),
+        ("Dihedral_phi", "id"),
+        ("Dihedral_psi", "id"),
+        ("rama_coord", "id"),
+        ("infer_H_O/donors", "id"),
+        ("infer_H_O/acceptors", "id"),
+    ]
+    with h5py.File(up_file, "r+") as up:
+        pot = up["/input/potential"]
+        for node_name in BACKBONE_NODES:
+            if node_name not in pot:
+                raise ValueError(f"Missing generated backbone node in stage file {up_file}: {node_name}")
+        for grp_name, dset_name in remap_datasets:
+            ds = pot[grp_name][dset_name]
+            ds[...] = remap_atom_index_array(ds[:], atom_map).astype(ds.dtype, copy=False)
+
+
+def inject_stage7_sc_table_nodes(
+    up_file: Path,
+    martini_h5: Path,
+    upside_home: Path,
+    rama_library: Path,
+    rama_sheet_mixing: Path,
+    hbond_energy: Path,
+    reference_state_rama: Path,
+    protein_itp: Path | None = None,
+):
+    up_file = Path(up_file).expanduser().resolve()
+    martini_h5 = Path(martini_h5).expanduser().resolve()
+    upside_home = Path(upside_home).expanduser().resolve()
+    rama_library = Path(rama_library).expanduser().resolve()
+    rama_sheet_mixing = Path(rama_sheet_mixing).expanduser().resolve()
+    hbond_energy = Path(hbond_energy).expanduser().resolve()
+    reference_state_rama = Path(reference_state_rama).expanduser().resolve()
+    protein_itp = Path(protein_itp).expanduser().resolve() if protein_itp else None
+    sidechain_lib = (upside_home / "parameters" / "ff_2.1" / "sidechain.h5").resolve()
+
+    if not up_file.exists():
+        raise SystemExit(f"ERROR: stage file not found: {up_file}")
+    if not martini_h5.exists():
+        raise SystemExit(f"ERROR: martini.h5 not found: {martini_h5}")
+    for path in [rama_library, rama_sheet_mixing, hbond_energy, reference_state_rama, sidechain_lib]:
+        if not path.exists():
+            raise SystemExit(f"ERROR: required Upside input not found: {path}")
+
+    with h5py.File(martini_h5, "r") as sc_lib:
+        required_sc_datasets = [
+            "restype_order",
+            "target_order",
+            "grid_nm",
+            "cos_theta_grid",
+            "rotamer_count",
+            "rotamer_probability_fixed",
+            "rotamer_radial_energy_kj_mol",
+            "rotamer_angular_energy_kj_mol",
+            "rotamer_angular_profile",
+        ]
+        missing_sc_datasets = [name for name in required_sc_datasets if name not in sc_lib]
+        if missing_sc_datasets:
+            missing_text = ", ".join(missing_sc_datasets)
+            raise SystemExit(
+                f"ERROR: {martini_h5} is missing required rotamer-resolved SC datasets: {missing_text}. "
+                "Rebuild martini.h5 with the integrated prepare_system.py build-sc-martini-h5 command."
+            )
+        restype_order = decode_string_array(sc_lib["restype_order"])
+        target_order = decode_string_array(sc_lib["target_order"])
+        grid_nm = sc_lib["grid_nm"][:].astype(np.float32)
+        cos_theta_grid = sc_lib["cos_theta_grid"][:].astype(np.float32)
+        rotamer_count = sc_lib["rotamer_count"][:].astype(np.int32)
+        rotamer_probability_fixed = sc_lib["rotamer_probability_fixed"][:].astype(np.float32)
+        rotamer_radial_energy_kj_mol = sc_lib["rotamer_radial_energy_kj_mol"][:].astype(np.float32)
+        rotamer_angular_energy_kj_mol = sc_lib["rotamer_angular_energy_kj_mol"][:].astype(np.float32)
+        rotamer_angular_profile = sc_lib["rotamer_angular_profile"][:].astype(np.float32)
+
+    restype_to_index = {name: i for i, name in enumerate(restype_order)}
+    target_to_index = {name: i for i, name in enumerate(target_order)}
+
+    with h5py.File(up_file, "r+") as up:
+        inp = up["input"]
+        pot = inp["potential"]
+        martini_potential = pot["martini_potential"]
+
+        residue_ids, affine_atoms = build_affine_atoms(inp)
+        sequence = resolve_sequence(inp, len(residue_ids), protein_itp)
+        env_atom_index, env_target_index = build_env_rows(inp, target_to_index)
+        rotamer_payload = load_sidechain_rotamer_payload(sidechain_lib, sequence, restype_to_index)
+
+        if "hybrid_sc_map" in inp:
+            del inp["hybrid_sc_map"]
+        if "sequence" in inp:
+            del inp["sequence"]
+        inp.create_dataset("sequence", data=np.asarray([np.bytes_(x) for x in sequence], dtype="S3"))
+
+        for node_name in [*LEGACY_STAGE7_NODES, *BACKBONE_NODES]:
+            if node_name in pot:
+                del pot[node_name]
+
+        g_aff = recreate_group(pot, "affine_alignment")
+        g_aff.attrs["arguments"] = np.asarray([np.bytes_("pos")])
+        g_aff.create_dataset("atoms", data=affine_atoms, dtype=np.int32)
+        g_aff.create_dataset(
+            "ref_geom",
+            data=np.repeat(CANONICAL_AFFINE_REF[None, :, :], len(sequence), axis=0),
+            dtype=np.float32,
+        )
+
+        g_sc_place = recreate_group(pot, "placement_fixed_point_vector_only")
+        g_sc_place.attrs["arguments"] = np.asarray([np.bytes_("affine_alignment")])
+        g_sc_place.create_dataset("rama_residue", data=rotamer_payload["affine_residue"], dtype=np.int32)
+        g_sc_place.create_dataset("affine_residue", data=rotamer_payload["affine_residue"], dtype=np.int32)
+        g_sc_place.create_dataset("layer_index", data=rotamer_payload["layer_index"], dtype=np.int32)
+        g_sc_place.create_dataset("placement_data", data=rotamer_payload["placement_data"], dtype=np.float32)
+        g_sc_place.create_dataset("beadtype_seq", data=rotamer_payload["beadtype_seq"])
+        g_sc_place.create_dataset("id_seq", data=rotamer_payload["id_seq"], dtype=np.int32)
+        g_sc_place.create_dataset("fix_rotamer", data=np.zeros((0, 2), dtype=np.int32), dtype=np.int32)
+
+        g_pl = recreate_group(pot, "placement_fixed_scalar")
+        g_pl.attrs["arguments"] = np.asarray([np.bytes_("affine_alignment")])
+        g_pl.create_dataset("rama_residue", data=rotamer_payload["affine_residue"], dtype=np.int32)
+        g_pl.create_dataset("affine_residue", data=rotamer_payload["affine_residue"], dtype=np.int32)
+        g_pl.create_dataset("layer_index", data=rotamer_payload["layer_index"], dtype=np.int32)
+        g_pl.create_dataset("placement_data", data=rotamer_payload["placement_scalar_data"], dtype=np.float32)
+
+        g_rot = recreate_group(pot, "rotamer")
+        g_rot.attrs["arguments"] = np.asarray(
+            [
+                np.bytes_("placement_fixed_point_vector_only"),
+                np.bytes_("placement_fixed_scalar"),
+                np.bytes_("martini_sc_table_1body"),
+            ]
+        )
+        g_rot.attrs["integrator_level"] = np.int32(1)
+        g_rot.attrs["max_iter"] = np.int32(1000)
+        g_rot.attrs["tol"] = np.float32(1.0e-3)
+        g_rot.attrs["damping"] = np.float32(0.4)
+        g_rot.attrs["iteration_chunk_size"] = np.int32(2)
+
+        g_pair = g_rot.create_group("pair_interaction")
+        g_pair.create_dataset("interaction_param", data=rotamer_payload["pair_interaction"], dtype=np.float32)
+        g_pair.create_dataset(
+            "index", data=np.arange(len(rotamer_payload["id_seq"]), dtype=np.int32), dtype=np.int32
+        )
+        g_pair.create_dataset("type", data=rotamer_payload["bead_type_index"], dtype=np.int32)
+        g_pair.create_dataset("id", data=rotamer_payload["id_seq"], dtype=np.int32)
+
+        g_cb = recreate_group(pot, "placement_fixed_point_vector_only_CB")
+        g_cb.attrs["arguments"] = np.asarray([np.bytes_("affine_alignment")])
+        g_cb.create_dataset("affine_residue", data=np.arange(len(sequence), dtype=np.int32), dtype=np.int32)
+        g_cb.create_dataset("layer_index", data=np.zeros(len(sequence), dtype=np.int32), dtype=np.int32)
+        g_cb.create_dataset(
+            "placement_data", data=np.concatenate([CB_PLACEMENT, CB_VECTOR], axis=1), dtype=np.float32
+        )
+
+    inject_backbone_nodes(
+        up_file=up_file,
+        sequence=sequence,
+        affine_atoms=affine_atoms,
+        rama_library=rama_library,
+        rama_sheet_mixing=rama_sheet_mixing,
+        hbond_energy=hbond_energy,
+        reference_state_rama=reference_state_rama,
+        upside_home=upside_home,
+    )
+
+    with h5py.File(up_file, "r+") as up:
+        inp = up["input"]
+        pot = inp["potential"]
+        martini_potential = pot["martini_potential"]
+        g_sc = recreate_group(pot, "martini_sc_table_1body")
+        g_sc.attrs["arguments"] = np.asarray([np.bytes_("pos"), np.bytes_("placement_fixed_point_vector_only_CB")])
+        g_sc.attrs["energy_conversion_kj_per_eup"] = np.float32(martini_potential.attrs["energy_conversion_kj_per_eup"])
+        g_sc.attrs["length_conversion_angstrom_per_nm"] = np.float32(
+            martini_potential.attrs["length_conversion_angstrom_per_nm"]
+        )
+        g_sc.attrs["x_len"] = np.float32(martini_potential.attrs["x_len"])
+        g_sc.attrs["y_len"] = np.float32(martini_potential.attrs["y_len"])
+        g_sc.attrs["z_len"] = np.float32(martini_potential.attrs["z_len"])
+        g_sc.create_dataset("row_residue_index", data=rotamer_payload["affine_residue"], dtype=np.int32)
+        g_sc.create_dataset("row_rotamer_index", data=rotamer_payload["row_rotamer_index"], dtype=np.int32)
+        g_sc.create_dataset(
+            "row_residue_table_index", data=rotamer_payload["row_residue_table_index"], dtype=np.int32
+        )
+        g_sc.create_dataset("env_atom_index", data=env_atom_index, dtype=np.int32)
+        g_sc.create_dataset("env_target_index", data=env_target_index, dtype=np.int32)
+        g_sc.create_dataset("grid_nm", data=grid_nm, dtype=np.float32)
+        g_sc.create_dataset("cos_theta_grid", data=cos_theta_grid, dtype=np.float32)
+        g_sc.create_dataset("rotamer_count", data=rotamer_count.astype(np.int32), dtype=np.int32)
+        g_sc.create_dataset("rotamer_probability_fixed", data=rotamer_probability_fixed, dtype=np.float32)
+        g_sc.create_dataset("rotamer_radial_energy_kj_mol", data=rotamer_radial_energy_kj_mol, dtype=np.float32)
+        g_sc.create_dataset("rotamer_angular_energy_kj_mol", data=rotamer_angular_energy_kj_mol, dtype=np.float32)
+        g_sc.create_dataset("rotamer_angular_profile", data=rotamer_angular_profile, dtype=np.float32)
+        g_sc.create_dataset("restype_order", data=np.asarray([np.bytes_(x) for x in restype_order], dtype="S4"))
+        g_sc.create_dataset("target_order", data=np.asarray([np.bytes_(x) for x in target_order], dtype="S8"))
+
+    print(
+        f"Injected rotamer-weighted martini_sc_table_1body into {up_file}: "
+        f"n_rows={len(rotamer_payload['id_seq'])} skipped={len(rotamer_payload['skipped'])} "
+        f"n_env={len(env_atom_index)} n_restypes={len(restype_order)} n_targets={len(target_order)}"
+    )
 
 
 if __name__ == "__main__":

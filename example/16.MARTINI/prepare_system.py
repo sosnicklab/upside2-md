@@ -4,12 +4,14 @@ import argparse
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import numpy as np
 
 from prepare_system_lib import (
     center_of_mass,
+    build_sc_martini_h5,
     collect_bb_map,
     convert_stage,
     compute_lipid_residue_indices,
@@ -18,22 +20,26 @@ from prepare_system_lib import (
     extract_protein_cg_atoms,
     infer_effective_ion_volume_fraction_from_template,
     infer_protein_charge_from_cg,
+    inject_stage7_sc_table_nodes,
     lipid_resname,
     parse_pdb,
     place_ions,
     remove_overlapping_lipids,
+    set_initial_position,
     set_box_from_lipid_xy,
     tile_and_crop_bilayer_lipids,
+    validate_hybrid_mapping,
     validate_backbone_reference_frame,
     write_hybrid_mapping_h5,
     write_pdb,
+    DEFAULT_SC_TABLE_JSON,
 )
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
-def parse_args():
+def parse_prepare_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
             "Unified preparation script for bilayer-only, protein-only, or mixed "
@@ -84,7 +90,7 @@ def parse_args():
         ),
     )
     parser.add_argument("--summary-json", default=None)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def runtime_paths(args):
@@ -512,7 +518,7 @@ def write_summary(path: Path, payload):
 
 
 def main():
-    args = parse_args()
+    args = parse_prepare_args()
     runtime_pdb, runtime_itp = runtime_paths(args)
     runtime_pdb.parent.mkdir(parents=True, exist_ok=True)
     runtime_itp.parent.mkdir(parents=True, exist_ok=True)
@@ -558,5 +564,128 @@ def main():
     print(f"Preparation summary written to: {summary_path}")
 
 
+def run_prepare_command(argv):
+    args = parse_prepare_args(argv)
+    runtime_pdb, runtime_itp = runtime_paths(args)
+    runtime_pdb.parent.mkdir(parents=True, exist_ok=True)
+    runtime_itp.parent.mkdir(parents=True, exist_ok=True)
+
+    summary = {
+        "mode": args.mode,
+        "pdb_id": args.pdb_id,
+        "prepare_structure": bool(args.prepare_structure),
+        "stage": args.stage,
+        "run_dir": args.run_dir,
+    }
+
+    if args.prepare_structure:
+        if args.mode == "bilayer":
+            summary.update(prepare_bilayer_structure(args, runtime_pdb))
+        elif args.mode == "protein":
+            summary.update(prepare_protein_structure(args, runtime_pdb, runtime_itp))
+        else:
+            summary.update(prepare_mixed_structure(args, runtime_pdb, runtime_itp))
+    else:
+        if not runtime_pdb.exists():
+            raise FileNotFoundError(
+                f"Runtime PDB not found for stage conversion: {runtime_pdb}. "
+                "Run with --prepare-structure 1 first."
+            )
+
+    if args.stage:
+        if args.mode in {"protein", "both"}:
+            if not runtime_itp.exists():
+                raise FileNotFoundError(
+                    f"Protein ITP required for mode={args.mode} stage conversion: {runtime_itp}. "
+                    "Provide --protein-itp when running with --prepare-structure 1."
+                )
+            assert_protein_itp_mass_compatibility(runtime_itp)
+        run_stage_conversion(args, runtime_pdb, runtime_itp)
+        summary["upside_input"] = str(Path(args.run_dir).expanduser().resolve() / "test.input.up")
+
+    if args.summary_json:
+        summary_path = Path(args.summary_json).expanduser().resolve()
+    else:
+        summary_path = runtime_pdb.with_suffix(".prep_summary.json")
+    write_summary(summary_path, summary)
+    print(f"Preparation summary written to: {summary_path}")
+
+
+def run_build_sc_martini_h5_command(argv):
+    parser = argparse.ArgumentParser(
+        description="Build a native-unit martini.h5 SC table from assembled SC-training JSON."
+    )
+    parser.add_argument(
+        "--sc-table-json",
+        default=str(DEFAULT_SC_TABLE_JSON),
+        help="Path to assembled sc_table.json from SC-training.",
+    )
+    parser.add_argument(
+        "--output-h5",
+        default="parameters/ff_2.1/martini.h5",
+        help="Output HDF5 file path.",
+    )
+    args = parser.parse_args(argv)
+    build_sc_martini_h5(Path(args.sc_table_json), Path(args.output_h5))
+
+
+def run_validate_hybrid_mapping_command(argv):
+    parser = argparse.ArgumentParser(
+        description="Validate hybrid mapping HDF5 schema and index consistency."
+    )
+    parser.add_argument("mapping_h5", type=Path, help="Path to hybrid mapping HDF5 file.")
+    parser.add_argument("--n-atom", type=int, default=None, help="Optional expected n_atom value.")
+    args = parser.parse_args(argv)
+    validate_hybrid_mapping(args.mapping_h5, n_atom=args.n_atom)
+
+
+def run_set_initial_position_command(argv):
+    parser = argparse.ArgumentParser(
+        description="Copy final coordinates from one stage file into the next stage input."
+    )
+    parser.add_argument("input_file", help="Source stage file.")
+    parser.add_argument("output_file", help="Target stage file to update.")
+    args = parser.parse_args(argv)
+    set_initial_position(args.input_file, args.output_file)
+
+
+def run_inject_stage7_sc_command(argv):
+    parser = argparse.ArgumentParser(
+        description="Inject stage-7 dry-MARTINI SC table coupling into a prepared .up file."
+    )
+    parser.add_argument("up_file", help="Target stage-7 .up file to modify in place.")
+    parser.add_argument("martini_h5", help="Native-unit martini.h5 table library.")
+    parser.add_argument("upside_home", help="UPSIDE_HOME used to locate upside_config.py.")
+    parser.add_argument("rama_library", help="Upside rama.dat path.")
+    parser.add_argument("rama_sheet_mixing", help="Upside sheet-mixing path.")
+    parser.add_argument("hbond_energy", help="Upside hbond.h5 path.")
+    parser.add_argument("reference_state_rama", help="Upside rama_reference.pkl path.")
+    parser.add_argument(
+        "--protein-itp",
+        help="Protein ITP used to recover residue names when /input/sequence is absent or mismatched.",
+    )
+    args = parser.parse_args(argv)
+    inject_stage7_sc_table_nodes(
+        up_file=Path(args.up_file),
+        martini_h5=Path(args.martini_h5),
+        upside_home=Path(args.upside_home),
+        rama_library=Path(args.rama_library),
+        rama_sheet_mixing=Path(args.rama_sheet_mixing),
+        hbond_energy=Path(args.hbond_energy),
+        reference_state_rama=Path(args.reference_state_rama),
+        protein_itp=Path(args.protein_itp) if args.protein_itp else None,
+    )
+
+
 if __name__ == "__main__":
-    main()
+    command_handlers = {
+        "build-sc-martini-h5": run_build_sc_martini_h5_command,
+        "inject-stage7-sc": run_inject_stage7_sc_command,
+        "set-initial-position": run_set_initial_position_command,
+        "validate-hybrid-mapping": run_validate_hybrid_mapping_command,
+    }
+    argv = sys.argv[1:]
+    if argv and argv[0] in command_handlers:
+        command_handlers[argv[0]](argv[1:])
+    else:
+        run_prepare_command(argv)

@@ -2253,3 +2253,54 @@
   - `example/16.MARTINI/task_plan.md`
   - `example/16.MARTINI/findings.md`
   - `example/16.MARTINI/progress.md`
+
+## 2026-04-03 (Follow-Up: Tighten Python Script Count to User-Specified Four Files)
+- User clarified the allowed Python set under `example/16.MARTINI`:
+  - keep `martinize.py`
+  - keep one simulation-input generation script
+  - keep one VTF conversion script
+  - keep one helper file
+- Recreated `example/16.MARTINI/task_plan.md` because it had been removed during the prior cleanup pass.
+- Started consolidation audit:
+  - confirmed the current Python files still present are `prepare_system.py`, `prepare_system_lib.py`, `martinize.py`, `extract_martini_vtf.py`, `build_sc_martini_h5.py`, `inject_sc_table_stage7.py`, `set_initial_position.py`, and `validate_hybrid_mapping.py`;
+  - confirmed `run_sim_1rkl.sh` still directly references the four extra entry points that need to be folded into the consolidated interface.
+- Files modified in this follow-up:
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-04-03 (Implementation: Collapse Extra Python Entry Points into Four-File Layout)
+- Recreated `example/16.MARTINI/task_plan.md` and then consolidated the workflow logic so only four Python files remain under `example/16.MARTINI`.
+- Code changes:
+  - `example/16.MARTINI/prepare_system_lib.py`
+    - absorbed the SC-table builder logic from `build_sc_martini_h5.py`;
+    - absorbed hybrid-mapping validation logic from `validate_hybrid_mapping.py`;
+    - absorbed stage-handoff position update logic from `set_initial_position.py`;
+    - absorbed stage-7 SC-table injection logic from `inject_sc_table_stage7.py`.
+  - `example/16.MARTINI/prepare_system.py`
+    - kept the existing preparation path;
+    - added subcommand dispatch for `build-sc-martini-h5`, `inject-stage7-sc`, `set-initial-position`, and `validate-hybrid-mapping`.
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+    - replaced calls to the removed standalone Python scripts with `prepare_system.py` subcommands.
+- Removed files:
+  - `example/16.MARTINI/build_sc_martini_h5.py`
+  - `example/16.MARTINI/inject_sc_table_stage7.py`
+  - `example/16.MARTINI/set_initial_position.py`
+  - `example/16.MARTINI/validate_hybrid_mapping.py`
+  - `example/16.MARTINI/__pycache__/`
+- Verification:
+  - `find example/16.MARTINI -maxdepth 1 -name '*.py' | sort` shows only:
+    - `extract_martini_vtf.py`
+    - `martinize.py`
+    - `prepare_system.py`
+    - `prepare_system_lib.py`
+  - `rg -n "build_sc_martini_h5\.py|inject_sc_table_stage7\.py|set_initial_position\.py|validate_hybrid_mapping\.py" example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/*.py` returned no matches.
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/prepare_system.py example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/extract_martini_vtf.py example/16.MARTINI/martinize.py` passed.
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+- Files modified in this follow-up:
+  - `example/16.MARTINI/prepare_system.py`
+  - `example/16.MARTINI/prepare_system_lib.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
