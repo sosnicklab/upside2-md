@@ -148,7 +148,8 @@ export UPSIDE_EWALD_KMAX="${UPSIDE_EWALD_KMAX:-5}"
 export UPSIDE_MARTINI_FF_DIR="${UPSIDE_MARTINI_FF_DIR:-ff_dry}"
 MASS_FF_FILE="${MASS_FF_FILE:-${UPSIDE_MARTINI_FF_DIR}/dry_martini_v2.1.itp}"
 SC_MARTINI_LIBRARY="${SC_MARTINI_LIBRARY:-${UPSIDE_HOME}/parameters/ff_2.1/martini.h5}"
-SC_MARTINI_TABLE_JSON="${SC_MARTINI_TABLE_JSON:-}"
+SC_MARTINI_TABLE_JSON_DEFAULT="${SC_MARTINI_TABLE_JSON_DEFAULT:-${UPSIDE_HOME}/SC-training/runs/default/results/assembled/sc_table.json}"
+SC_MARTINI_TABLE_JSON="${SC_MARTINI_TABLE_JSON:-${SC_MARTINI_TABLE_JSON_DEFAULT}}"
 SC_MARTINI_BUILD_SCRIPT="${SC_MARTINI_BUILD_SCRIPT:-${SCRIPT_DIR}/build_sc_martini_h5.py}"
 SC_TABLE_STAGE7_INJECTOR="${SC_TABLE_STAGE7_INJECTOR:-${SCRIPT_DIR}/inject_sc_table_stage7.py}"
 UPSIDE_RAMA_LIBRARY="${UPSIDE_RAMA_LIBRARY:-${UPSIDE_HOME}/parameters/common/rama.dat}"
@@ -247,22 +248,75 @@ PROTEIN_CG_EFFECTIVE="${PROTEIN_CG_PDB}"
 PROTEIN_ITP_EFFECTIVE="${PROTEIN_ITP}"
 
 ensure_sc_martini_library() {
+    local need_build="0"
     if [ -f "${SC_MARTINI_LIBRARY}" ]; then
-        return
+        if python3 - "${SC_MARTINI_LIBRARY}" << 'PY'
+import sys
+import h5py
+
+required = [
+    "grid_nm",
+    "cos_theta_grid",
+    "rotamer_count",
+    "rotamer_probability_fixed",
+    "rotamer_radial_energy_kj_mol",
+    "rotamer_angular_energy_kj_mol",
+    "rotamer_angular_profile",
+]
+
+path = sys.argv[1]
+with h5py.File(path, "r") as h5:
+    missing = [name for name in required if name not in h5]
+    if missing:
+        raise SystemExit(1)
+PY
+        then
+            return
+        fi
+        echo "NOTICE: ${SC_MARTINI_LIBRARY} is missing rotamer-resolved SC datasets; rebuilding it."
+        need_build="1"
+    else
+        need_build="1"
     fi
-    if [ -z "${SC_MARTINI_TABLE_JSON}" ]; then
-        echo "ERROR: SC MARTINI library not found: ${SC_MARTINI_LIBRARY}"
-        echo "Set SC_MARTINI_TABLE_JSON to the assembled SC-training sc_table.json to build it."
-        exit 1
-    fi
+
     if [ ! -f "${SC_MARTINI_TABLE_JSON}" ]; then
         echo "ERROR: SC MARTINI table JSON not found: ${SC_MARTINI_TABLE_JSON}"
+        echo "The stage-7 SC injector now requires the rotamer-resolved martini.h5 schema."
         exit 1
     fi
-    echo "Building ${SC_MARTINI_LIBRARY} from ${SC_MARTINI_TABLE_JSON}"
+    if [ "${need_build}" = "1" ]; then
+        echo "Building ${SC_MARTINI_LIBRARY} from ${SC_MARTINI_TABLE_JSON}"
+    fi
     python3 "${SC_MARTINI_BUILD_SCRIPT}" \
         --sc-table-json "${SC_MARTINI_TABLE_JSON}" \
         --output-h5 "${SC_MARTINI_LIBRARY}"
+    if ! python3 - "${SC_MARTINI_LIBRARY}" << 'PY'
+import sys
+import h5py
+
+required = [
+    "grid_nm",
+    "cos_theta_grid",
+    "rotamer_count",
+    "rotamer_probability_fixed",
+    "rotamer_radial_energy_kj_mol",
+    "rotamer_angular_energy_kj_mol",
+    "rotamer_angular_profile",
+]
+
+path = sys.argv[1]
+with h5py.File(path, "r") as h5:
+    missing = [name for name in required if name not in h5]
+    if missing:
+        raise SystemExit(
+            "rebuilt SC MARTINI library is still missing required datasets: "
+            + ",".join(missing)
+        )
+PY
+    then
+        echo "ERROR: rebuilt SC MARTINI library failed schema validation: ${SC_MARTINI_LIBRARY}"
+        exit 1
+    fi
 }
 
 run_martinize() {

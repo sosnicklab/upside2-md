@@ -15,14 +15,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+import h5py
+import numpy as np
 
-SCHEMA_MANIFEST = "sc_training_manifest_v1"
-SCHEMA_TASK = "sc_training_task_result_v1"
-SCHEMA_TABLE = "sc_training_table_v1"
+SCHEMA_MANIFEST = "sc_training_manifest_v3"
+SCHEMA_TASK = "sc_training_task_result_v3"
+SCHEMA_TABLE = "sc_training_table_v3"
 SCHEMA_SLURM_ROUND = "sc_training_slurm_round_v1"
 SCHEMA_SIDECHAINS = "sc_training_sidechains_v1"
 
 COULOMB_K_DRY_KJ_NM = 138.935458 / 15.0
+ANGSTROM_TO_NM = 0.1
 CANONICAL_RESIDUES = (
     "ALA",
     "ARG",
@@ -49,6 +52,10 @@ CANONICAL_RESIDUES = (
 POSITIVE_TYPES = {"Qda", "Qd", "SQda", "SQd"}
 NEGATIVE_TYPES = {"Qa", "SQa"}
 
+CANONICAL_CB_POSITION_ANG = (0.0, 0.94375626, 1.2068012)
+_cb_norm = math.sqrt(sum(x * x for x in CANONICAL_CB_POSITION_ANG))
+CANONICAL_CB_VECTOR_UNIT = tuple(x / _cb_norm for x in CANONICAL_CB_POSITION_ANG)
+
 
 def _now_utc() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -64,6 +71,10 @@ def _data_dir() -> Path:
 
 def _project_root() -> Path:
     return _workflow_dir().parent
+
+
+def _default_sidechain_library() -> Path:
+    return _project_root() / "parameters" / "ff_2.1" / "sidechain.h5"
 
 
 def _manifest_path(base_dir: Path) -> Path:
@@ -284,6 +295,195 @@ def _fibonacci_sphere(count: int) -> List[List[float]]:
     return directions
 
 
+def _dot3(a: Iterable[float], b: Iterable[float]) -> float:
+    ax, ay, az = a
+    bx, by, bz = b
+    return float(ax) * float(bx) + float(ay) * float(by) + float(az) * float(bz)
+
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
+
+def _mean_over_prefix_axes(values: Any) -> List[float]:
+    shape = getattr(values, "shape", ())
+    if not shape:
+        return [float(values)]
+    if len(shape) == 1:
+        return [float(x) for x in values[:]]
+
+    total = 1
+    for dim in shape[:-1]:
+        total *= int(dim)
+    sums = [0.0] * int(shape[-1])
+    for prefix in _iter_index_prefix(tuple(int(x) for x in shape[:-1])):
+        row = values[prefix]
+        for i, val in enumerate(row):
+            sums[i] += float(val)
+    return [val / float(total) for val in sums]
+
+
+def _iter_index_prefix(shape: Tuple[int, ...]) -> Iterable[Tuple[int, ...]]:
+    if not shape:
+        yield ()
+        return
+    first, rest = shape[0], shape[1:]
+    for i in range(first):
+        for tail in _iter_index_prefix(rest):
+            yield (i,) + tail
+
+
+def _load_sidechain_orientation_library(sidechain_lib_path: Path) -> Dict[str, Dict[str, Any]]:
+    if not sidechain_lib_path.exists():
+        raise RuntimeError(f"Sidechain orientation library not found: {sidechain_lib_path}")
+
+    with h5py.File(sidechain_lib_path, "r") as h5:
+        restype_order = [x.decode("ascii") if isinstance(x, bytes) else str(x) for x in h5["restype_order"][:]]
+        start_stop_bead = h5["rotamer_start_stop_bead"][:]
+        rotamer_center_fixed = h5["rotamer_center_fixed"][:, :6]
+
+        prob_weights = None
+        if "rotamer_prob_fixed" in h5:
+            prob_weights = [float(x) for x in h5["rotamer_prob_fixed"][:].reshape(-1)]
+        elif "rotamer_prob" in h5:
+            prob_weights = _mean_over_prefix_axes(h5["rotamer_prob"])
+
+        residue_info: Dict[str, Dict[str, Any]] = {}
+        for residue_index, residue_name in enumerate(restype_order):
+            start, stop, n_bead = [int(x) for x in start_stop_bead[residue_index]]
+            if stop <= start or n_bead <= 0:
+                residue_info[residue_name] = {
+                    "center_nm": [],
+                    "vector_unit": [],
+                    "weight": [],
+                }
+                continue
+
+            n_row = stop - start
+            if n_row % n_bead != 0:
+                raise RuntimeError(
+                    f"Sidechain orientation rows are not divisible by n_bead for residue {residue_name}: "
+                    f"rows={n_row} n_bead={n_bead}"
+                )
+            n_rot = n_row // n_bead
+            block = rotamer_center_fixed[start:stop].reshape(n_rot, n_bead, 6)
+            centers_nm = [
+                [float(val) * ANGSTROM_TO_NM for val in row]
+                for row in block[:, :, :3].mean(axis=1)
+            ]
+            vectors = []
+            for row in block[:, 0, 3:6]:
+                norm = math.sqrt(sum(float(x) * float(x) for x in row))
+                if norm <= 0.0:
+                    raise RuntimeError(f"Invalid zero sidechain vector in {sidechain_lib_path} for residue {residue_name}")
+                vectors.append([float(x) / norm for x in row])
+
+            if prob_weights is None:
+                weights = [1.0 / float(n_rot)] * n_rot
+            else:
+                row_weights = prob_weights[start:stop:n_bead]
+                if len(row_weights) != n_rot:
+                    raise RuntimeError(
+                        f"Rotamer-weight shape mismatch in {sidechain_lib_path} for residue {residue_name}: "
+                        f"expected {n_rot}, got {len(row_weights)}"
+                    )
+                total = sum(max(0.0, float(x)) for x in row_weights)
+                if total <= 0.0:
+                    weights = [1.0 / float(n_rot)] * n_rot
+                else:
+                    weights = [max(0.0, float(x)) / total for x in row_weights]
+
+            residue_info[residue_name] = {
+                "center_nm": centers_nm,
+                "vector_unit": vectors,
+                "weight": weights,
+                "n_rotamer": n_rot,
+                "n_bead": n_bead,
+            }
+
+    return residue_info
+
+
+def _accumulate_on_cos_grid(
+    cos_theta: float,
+    value: float,
+    cos_grid: List[float],
+    value_sum: List[float],
+    weight_sum: List[float],
+) -> None:
+    if len(cos_grid) == 1:
+        value_sum[0] += value
+        weight_sum[0] += 1.0
+        return
+
+    step = cos_grid[1] - cos_grid[0]
+    coord = (cos_theta - cos_grid[0]) / step
+    if coord <= 0.0:
+        value_sum[0] += value
+        weight_sum[0] += 1.0
+        return
+    if coord >= len(cos_grid) - 1:
+        value_sum[-1] += value
+        weight_sum[-1] += 1.0
+        return
+
+    lo = int(math.floor(coord))
+    hi = lo + 1
+    hi_weight = coord - float(lo)
+    lo_weight = 1.0 - hi_weight
+    value_sum[lo] += lo_weight * value
+    weight_sum[lo] += lo_weight
+    value_sum[hi] += hi_weight * value
+    weight_sum[hi] += hi_weight
+
+
+def _factorize_one_sided_orientation(
+    sampled_energy_grid: List[List[float]],
+    cos_theta_grid: List[float],
+) -> Tuple[List[float], List[float], List[float], List[List[float]], float]:
+    sampled = np.asarray(sampled_energy_grid, dtype=np.float64)
+    if sampled.ndim != 2:
+        raise RuntimeError(f"Expected a 2D sampled energy grid, got shape {sampled.shape}")
+
+    radial = sampled.mean(axis=0)
+    residual = sampled - radial[None, :]
+
+    if np.allclose(residual, 0.0):
+        angular_profile = np.zeros(sampled.shape[0], dtype=np.float64)
+        angular_radial = np.zeros(sampled.shape[1], dtype=np.float64)
+        fitted = radial[None, :].repeat(sampled.shape[0], axis=0)
+        rms_error = 0.0
+    else:
+        u, s, vh = np.linalg.svd(residual, full_matrices=False)
+        angular_profile = u[:, 0].copy()
+        angular_radial = (s[0] * vh[0, :]).copy()
+
+        profile_mean = float(angular_profile.mean())
+        if abs(profile_mean) > 1.0e-12:
+            radial = radial + profile_mean * angular_radial
+            angular_profile = angular_profile - profile_mean
+
+        if float(np.dot(angular_profile, np.asarray(cos_theta_grid, dtype=np.float64))) < 0.0:
+            angular_profile *= -1.0
+            angular_radial *= -1.0
+
+        max_abs = float(np.max(np.abs(angular_profile)))
+        if max_abs > 0.0:
+            angular_profile /= max_abs
+            angular_radial *= max_abs
+
+        fitted = radial[None, :] + angular_profile[:, None] * angular_radial[None, :]
+        rms_error = float(np.sqrt(np.mean((sampled - fitted) ** 2)))
+
+    return (
+        [float(x) for x in radial],
+        [float(x) for x in angular_profile],
+        [float(x) for x in angular_radial],
+        [[float(x) for x in row] for row in fitted.tolist()],
+        rms_error,
+    )
+
+
 def _task_code(residue: str, target_label: str) -> str:
     safe_label = "".join(ch if ch.isalnum() or ch in ("_", "-", ".") else "_" for ch in target_label)
     return f"{residue}__{safe_label}"
@@ -293,24 +493,31 @@ def _build_manifest(
     base_dir: Path,
     martinize_path: Path,
     dry_ff_path: Path,
+    sidechain_lib_path: Path,
     forcefield_name: str,
     target_specs: List[str],
     r_min_nm: float,
     r_max_nm: float,
     r_count: int,
     direction_count: int,
+    cos_theta_count: int,
     benchmark_script: Path,
 ) -> Dict[str, Any]:
     residue_map = _load_martini_forcefield(martinize_path, forcefield_name)
     atomtypes, pair_params = _parse_dry_forcefield(dry_ff_path)
+    orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
     targets = _build_targets(target_specs, atomtypes)
     directions = _fibonacci_sphere(direction_count)
+    cos_theta_grid = _linspace(-1.0, 1.0, cos_theta_count)
 
     tasks: List[Dict[str, Any]] = []
     for residue in sorted(residue_map):
         bead_types = residue_map[residue]
         if not bead_types:
             continue
+        orientation = orientation_map.get(residue)
+        if not orientation or not orientation["center_nm"]:
+            raise RuntimeError(f"Missing orientation geometry for residue {residue} in {sidechain_lib_path}")
         bead_charges = [_infer_type_charge(bead_type) for bead_type in bead_types]
         for target in targets:
             missing = [bead for bead in bead_types if (bead, target["bead_type"]) not in pair_params]
@@ -326,6 +533,9 @@ def _build_manifest(
                     "residue": residue,
                     "sidechain_bead_types": bead_types,
                     "sidechain_bead_charges": bead_charges,
+                    "sidechain_effective_center_nm": orientation["center_nm"],
+                    "sidechain_effective_vector_unit": orientation["vector_unit"],
+                    "sidechain_rotamer_weight": orientation["weight"],
                     "target": dict(target),
                 }
             )
@@ -339,6 +549,7 @@ def _build_manifest(
         "martinize_path": str(martinize_path),
         "sidechain_source_path": str(martinize_path),
         "dry_forcefield_path": str(dry_ff_path),
+        "sidechain_library_path": str(sidechain_lib_path),
         "forcefield_name": forcefield_name,
         "benchmark_script": str(benchmark_script),
         "grid": {
@@ -347,15 +558,18 @@ def _build_manifest(
             "r_count": r_count,
             "direction_count": direction_count,
             "direction_vectors_unit": directions,
+            "cos_theta_count": cos_theta_count,
+            "cos_theta_grid": cos_theta_grid,
+            "cb_anchor_nm": [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG],
+            "cb_vector_unit": list(CANONICAL_CB_VECTOR_UNIT),
             "sample_count_per_task": r_count * direction_count,
         },
         "assumptions": {
-            "effective_model": "sum_beadwise_colocated_spherical_shells",
+            "effective_model": "sum_beadwise_rotamer_weighted_oriented_cb_table",
             "geometry_note": (
-                "First-pass training samples dry-MARTINI target positions over spherical shells surrounding "
-                "the sidechain center, but still uses a sum of per-bead dry-MARTINI bead-target interactions "
-                "without explicit sidechain geometry reconstruction. That means each shell remains isotropic "
-                "in this baseline workflow."
+                "Training samples target dry-MARTINI particles in the original Upside residue-local CB frame. "
+                "Each residue uses the sidechain library's rotamer-resolved effective centers, projected into a "
+                "single dry-MARTINI table over radial distance and cos(theta) with respect to the canonical CA->CB vector."
             ),
             "target_selection": {
                 "mode": "default_all_dry_martini_atomtypes" if not target_specs else "explicit_user_targets",
@@ -373,6 +587,20 @@ def _build_manifest(
                     "Training outputs remain in native dry-MARTINI units. Simulation-side "
                     "conversion must be supplied separately as runtime parameters."
                 ),
+            },
+            "orientation_contract": {
+                "anchor": "CB",
+                "vector": "canonical_CA_to_CB_unit_vector",
+                "n1_source": "backbone_defined_CA_to_CB_vector",
+                "n12_source": "sampled_CB_to_target_direction",
+                "angular_coordinate": "cos_theta",
+                "note": (
+                    "The one-sided orientation term uses the same backbone-defined CB vector in training "
+                    "and runtime. The sampled dry-MARTINI target position contributes only the CB-to-target "
+                    "direction used for n12."
+                ),
+                "sidechain_library_units": "angstrom",
+                "training_table_units": "nm / kJ/mol / e",
             },
         },
         "targets": targets,
@@ -396,14 +624,26 @@ def _run_task(base_dir: Path, manifest: Dict[str, Any], task: Dict[str, Any]) ->
     grid = manifest["grid"]
     r_values = _linspace(float(grid["r_min_nm"]), float(grid["r_max_nm"]), int(grid["r_count"]))
     direction_vectors = [list(vec) for vec in grid["direction_vectors_unit"]]
+    cos_theta_grid = [float(x) for x in grid["cos_theta_grid"]]
+    cb_anchor_nm = [float(x) for x in grid["cb_anchor_nm"]]
+    cb_vector_unit = [float(x) for x in grid["cb_vector_unit"]]
     target = task["target"]
     target_type = str(target["bead_type"])
     target_charge = float(target["charge"])
+    rotamer_centers_nm = [list(row) for row in task["sidechain_effective_center_nm"]]
+    rotamer_weights = [float(x) for x in task["sidechain_rotamer_weight"]]
+    rotamer_vectors = [list(row) for row in task["sidechain_effective_vector_unit"]]
+    n_rotamer = len(rotamer_centers_nm)
 
-    radial_energy: List[float] = []
-    radial_lj: List[float] = []
-    radial_coulomb: List[float] = []
+    angular_energy = [[0.0 for _ in r_values] for _ in cos_theta_grid]
+    angular_lj = [[0.0 for _ in r_values] for _ in cos_theta_grid]
+    angular_coulomb = [[0.0 for _ in r_values] for _ in cos_theta_grid]
+    rotamer_angular_energy = [
+        [[0.0 for _ in r_values] for _ in cos_theta_grid]
+        for _ in range(n_rotamer)
+    ]
     position_samples_nm: List[List[float]] = []
+    sample_cos_theta: List[float] = []
     sample_energy: List[float] = []
     sample_lj: List[float] = []
     sample_coulomb: List[float] = []
@@ -420,36 +660,107 @@ def _run_task(base_dir: Path, manifest: Dict[str, Any], task: Dict[str, Any]) ->
             }
         )
 
-    for r_nm in r_values:
-        energy = 0.0
-        lj_energy = 0.0
-        coul_energy = 0.0
-        for residue_bead, bead_charge in zip(task["sidechain_bead_types"], task["sidechain_bead_charges"]):
-            params = pair_params[(residue_bead, target_type)]
-            pair_total, pair_lj, pair_coul = _pair_energy(
-                r_nm=r_nm,
-                sigma_nm=float(params["sigma_nm"]),
-                epsilon_kj_mol=float(params["epsilon_kj_mol"]),
-                qi=float(bead_charge),
-                qj=target_charge,
-            )
-            energy += pair_total
-            lj_energy += pair_lj
-            coul_energy += pair_coul
-        radial_energy.append(energy)
-        radial_lj.append(lj_energy)
-        radial_coulomb.append(coul_energy)
+    for ir, r_nm in enumerate(r_values):
+        energy_sum = [0.0 for _ in cos_theta_grid]
+        energy_weight = [0.0 for _ in cos_theta_grid]
+        lj_sum = [0.0 for _ in cos_theta_grid]
+        lj_weight = [0.0 for _ in cos_theta_grid]
+        coul_sum = [0.0 for _ in cos_theta_grid]
+        coul_weight = [0.0 for _ in cos_theta_grid]
+        rotamer_energy_sum = [[0.0 for _ in cos_theta_grid] for _ in range(n_rotamer)]
+        rotamer_energy_weight = [[0.0 for _ in cos_theta_grid] for _ in range(n_rotamer)]
+
         for direction in direction_vectors:
-            position_samples_nm.append(
-                [
-                    r_nm * float(direction[0]),
-                    r_nm * float(direction[1]),
-                    r_nm * float(direction[2]),
-                ]
-            )
-            sample_energy.append(energy)
-            sample_lj.append(lj_energy)
-            sample_coulomb.append(coul_energy)
+            target_position_nm = [
+                cb_anchor_nm[0] + r_nm * float(direction[0]),
+                cb_anchor_nm[1] + r_nm * float(direction[1]),
+                cb_anchor_nm[2] + r_nm * float(direction[2]),
+            ]
+            # n1 is the residue-local backbone-defined CB vector. The sampled target
+            # direction contributes only n12 for the one-sided angular coordinate.
+            cos_theta = _clamp(-_dot3(direction, cb_vector_unit), -1.0, 1.0)
+            total_energy = 0.0
+            total_lj = 0.0
+            total_coulomb = 0.0
+
+            for irot, (center_nm, rot_weight) in enumerate(zip(rotamer_centers_nm, rotamer_weights)):
+                dx = target_position_nm[0] - float(center_nm[0])
+                dy = target_position_nm[1] - float(center_nm[1])
+                dz = target_position_nm[2] - float(center_nm[2])
+                dist_nm = max(1.0e-6, math.sqrt(dx * dx + dy * dy + dz * dz))
+
+                rot_energy = 0.0
+                rot_lj = 0.0
+                rot_coulomb = 0.0
+                for residue_bead, bead_charge in zip(task["sidechain_bead_types"], task["sidechain_bead_charges"]):
+                    params = pair_params[(residue_bead, target_type)]
+                    pair_total, pair_lj, pair_coul = _pair_energy(
+                        r_nm=dist_nm,
+                        sigma_nm=float(params["sigma_nm"]),
+                        epsilon_kj_mol=float(params["epsilon_kj_mol"]),
+                        qi=float(bead_charge),
+                        qj=target_charge,
+                    )
+                    rot_energy += pair_total
+                    rot_lj += pair_lj
+                    rot_coulomb += pair_coul
+
+                _accumulate_on_cos_grid(
+                    cos_theta,
+                    rot_energy,
+                    cos_theta_grid,
+                    rotamer_energy_sum[irot],
+                    rotamer_energy_weight[irot],
+                )
+                total_energy += rot_weight * rot_energy
+                total_lj += rot_weight * rot_lj
+                total_coulomb += rot_weight * rot_coulomb
+
+            position_samples_nm.append([r_nm * float(direction[0]), r_nm * float(direction[1]), r_nm * float(direction[2])])
+            sample_cos_theta.append(cos_theta)
+            sample_energy.append(total_energy)
+            sample_lj.append(total_lj)
+            sample_coulomb.append(total_coulomb)
+            _accumulate_on_cos_grid(cos_theta, total_energy, cos_theta_grid, energy_sum, energy_weight)
+            _accumulate_on_cos_grid(cos_theta, total_lj, cos_theta_grid, lj_sum, lj_weight)
+            _accumulate_on_cos_grid(cos_theta, total_coulomb, cos_theta_grid, coul_sum, coul_weight)
+
+        for ia in range(len(cos_theta_grid)):
+            if energy_weight[ia] <= 0.0 or lj_weight[ia] <= 0.0 or coul_weight[ia] <= 0.0:
+                raise RuntimeError(
+                    f"Cos(theta) bin received no samples for residue {task['residue']} target {target_type} "
+                    f"at r={r_nm:.4f} nm; increase direction-count or reduce cos-theta-count"
+                )
+            angular_energy[ia][ir] = energy_sum[ia] / energy_weight[ia]
+            angular_lj[ia][ir] = lj_sum[ia] / lj_weight[ia]
+            angular_coulomb[ia][ir] = coul_sum[ia] / coul_weight[ia]
+            for irot in range(n_rotamer):
+                if rotamer_energy_weight[irot][ia] <= 0.0:
+                    raise RuntimeError(
+                        f"Cos(theta) bin received no rotamer samples for residue {task['residue']} target {target_type} "
+                        f"rotamer={irot} at r={r_nm:.4f} nm"
+                    )
+                rotamer_angular_energy[irot][ia][ir] = (
+                    rotamer_energy_sum[irot][ia] / rotamer_energy_weight[irot][ia]
+                )
+
+    radial_energy, angular_profile, angular_radial_energy, fitted_energy, factorization_rms_error = (
+        _factorize_one_sided_orientation(angular_energy, cos_theta_grid)
+    )
+    rotamer_radial_energy = []
+    rotamer_angular_profile = []
+    rotamer_angular_radial_energy = []
+    rotamer_fitted_energy = []
+    rotamer_factorization_rms_error = []
+    for rot_grid in rotamer_angular_energy:
+        rot_radial, rot_profile, rot_angular, rot_fitted, rot_rms = _factorize_one_sided_orientation(
+            rot_grid, cos_theta_grid
+        )
+        rotamer_radial_energy.append(rot_radial)
+        rotamer_angular_profile.append(rot_profile)
+        rotamer_angular_radial_energy.append(rot_angular)
+        rotamer_fitted_energy.append(rot_fitted)
+        rotamer_factorization_rms_error.append(rot_rms)
 
     payload = {
         "schema": SCHEMA_TASK,
@@ -462,13 +773,33 @@ def _run_task(base_dir: Path, manifest: Dict[str, Any], task: Dict[str, Any]) ->
         "target": target,
         "sidechain_bead_types": list(task["sidechain_bead_types"]),
         "sidechain_bead_charges": list(task["sidechain_bead_charges"]),
+        "sidechain_effective_center_nm": rotamer_centers_nm,
+        "sidechain_effective_vector_unit": rotamer_vectors,
+        "sidechain_rotamer_weight": rotamer_weights,
+        "cb_anchor_nm": cb_anchor_nm,
+        "cb_vector_unit": cb_vector_unit,
         "component_pairs": component_details,
         "grid_nm": r_values,
+        "cos_theta_grid": cos_theta_grid,
         "direction_vectors_unit": direction_vectors,
         "position_samples_nm": position_samples_nm,
-        "energy_kj_mol": radial_energy,
-        "lj_kj_mol": radial_lj,
-        "coulomb_kj_mol": radial_coulomb,
+        "sample_cos_theta": sample_cos_theta,
+        "sampled_grid_energy_kj_mol": angular_energy,
+        "sampled_grid_lj_kj_mol": angular_lj,
+        "sampled_grid_coulomb_kj_mol": angular_coulomb,
+        "energy_kj_mol": fitted_energy,
+        "radial_energy_kj_mol": radial_energy,
+        "angular_energy_kj_mol": angular_radial_energy,
+        "angular_profile": angular_profile,
+        "fit_rms_error_kj_mol": factorization_rms_error,
+        "rotamer_count": n_rotamer,
+        "rotamer_probability_fixed": rotamer_weights,
+        "rotamer_sampled_grid_energy_kj_mol": rotamer_angular_energy,
+        "rotamer_energy_kj_mol": rotamer_fitted_energy,
+        "rotamer_radial_energy_kj_mol": rotamer_radial_energy,
+        "rotamer_angular_energy_kj_mol": rotamer_angular_radial_energy,
+        "rotamer_angular_profile": rotamer_angular_profile,
+        "rotamer_fit_rms_error_kj_mol": rotamer_factorization_rms_error,
         "sample_energy_kj_mol": sample_energy,
         "sample_lj_kj_mol": sample_lj,
         "sample_coulomb_kj_mol": sample_coulomb,
@@ -509,14 +840,34 @@ def assemble_results(base_dir: Path) -> Path:
             "target": result["target"],
             "component_pairs": result["component_pairs"],
             "grid_nm": result["grid_nm"],
+            "cos_theta_grid": result["cos_theta_grid"],
             "direction_vectors_unit": result["direction_vectors_unit"],
             "position_samples_nm": result["position_samples_nm"],
+            "sample_cos_theta": result["sample_cos_theta"],
             "energy_kj_mol": result["energy_kj_mol"],
-            "lj_kj_mol": result["lj_kj_mol"],
-            "coulomb_kj_mol": result["coulomb_kj_mol"],
+            "sampled_grid_energy_kj_mol": result["sampled_grid_energy_kj_mol"],
+            "sampled_grid_lj_kj_mol": result["sampled_grid_lj_kj_mol"],
+            "sampled_grid_coulomb_kj_mol": result["sampled_grid_coulomb_kj_mol"],
+            "radial_energy_kj_mol": result["radial_energy_kj_mol"],
+            "angular_energy_kj_mol": result["angular_energy_kj_mol"],
+            "angular_profile": result["angular_profile"],
+            "fit_rms_error_kj_mol": result["fit_rms_error_kj_mol"],
+            "rotamer_count": result["rotamer_count"],
+            "rotamer_probability_fixed": result["rotamer_probability_fixed"],
+            "rotamer_sampled_grid_energy_kj_mol": result["rotamer_sampled_grid_energy_kj_mol"],
+            "rotamer_energy_kj_mol": result["rotamer_energy_kj_mol"],
+            "rotamer_radial_energy_kj_mol": result["rotamer_radial_energy_kj_mol"],
+            "rotamer_angular_energy_kj_mol": result["rotamer_angular_energy_kj_mol"],
+            "rotamer_angular_profile": result["rotamer_angular_profile"],
+            "rotamer_fit_rms_error_kj_mol": result["rotamer_fit_rms_error_kj_mol"],
             "sample_energy_kj_mol": result["sample_energy_kj_mol"],
             "sample_lj_kj_mol": result["sample_lj_kj_mol"],
             "sample_coulomb_kj_mol": result["sample_coulomb_kj_mol"],
+            "sidechain_effective_center_nm": result["sidechain_effective_center_nm"],
+            "sidechain_effective_vector_unit": result["sidechain_effective_vector_unit"],
+            "sidechain_rotamer_weight": result["sidechain_rotamer_weight"],
+            "cb_anchor_nm": result["cb_anchor_nm"],
+            "cb_vector_unit": result["cb_vector_unit"],
             "residue_effective_charge": result["residue_effective_charge"],
         }
 
@@ -813,12 +1164,14 @@ def cmd_init_run(args: argparse.Namespace) -> int:
         base_dir=base_dir,
         martinize_path=Path(args.martinize).expanduser().resolve(),
         dry_ff_path=Path(args.dry_forcefield).expanduser().resolve(),
+        sidechain_lib_path=Path(args.sidechain_library).expanduser().resolve(),
         forcefield_name=args.forcefield,
         target_specs=list(args.target or []),
         r_min_nm=float(args.r_min_nm),
         r_max_nm=float(args.r_max_nm),
         r_count=int(args.r_count),
         direction_count=int(args.direction_count),
+        cos_theta_count=int(args.cos_theta_count),
         benchmark_script=Path(args.benchmark_script).expanduser().resolve(),
     )
     _write_json(_manifest_path(base_dir), manifest)
@@ -879,8 +1232,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SC training workflow")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    default_martinize = _data_dir() / "martini22_sidechains.json"
-    default_dry_ff = _data_dir() / "dry_martini_v2.1.itp"
+    default_martinize = _project_root() / "example" / "16.MARTINI" / "martinize.py"
+    default_dry_ff = _project_root() / "example" / "16.MARTINI" / "ff_dry" / "dry_martini_v2.1.itp"
+    default_sidechain_library = _default_sidechain_library()
     default_benchmark = _project_root() / "example" / "16.MARTINI" / "run_sim_1rkl.sh"
 
     p_init = sub.add_parser("init-run", help="Create a training manifest in a run directory")
@@ -888,9 +1242,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument(
         "--martinize",
         default=str(default_martinize),
-        help="Path to martinize.py or a bundled sidechain-definition JSON",
+        help="Path to martinize.py or a sidechain-definition JSON",
     )
     p_init.add_argument("--dry-forcefield", default=str(default_dry_ff), help="Path to dry MARTINI .itp")
+    p_init.add_argument(
+        "--sidechain-library",
+        default=str(default_sidechain_library),
+        help="Path to the original Upside sidechain.h5 library used for residue-local CB-frame geometry",
+    )
     p_init.add_argument("--forcefield", default="martini22", help="Forcefield class name inside martinize.py")
     p_init.add_argument("--target", action="append", help="Target spec label[:bead_type[:charge]]; repeatable")
     p_init.add_argument("--r-min-nm", type=float, default=0.25, help="Minimum training radius in nm")
@@ -901,6 +1260,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=24,
         help="Number of spherical directions sampled around the sidechain at each radius",
+    )
+    p_init.add_argument(
+        "--cos-theta-count",
+        type=int,
+        default=13,
+        help="Number of uniform cos(theta) bins in the assembled orientation-aware table",
     )
     p_init.add_argument("--benchmark-script", default=str(default_benchmark), help="Canonical benchmark workflow script")
     p_init.set_defaults(func=cmd_init_run)

@@ -1960,3 +1960,239 @@
   - `example/16.MARTINI/test_prod_run_sim_1rkl.sh` mirrors the same default.
   - the `set_production_backbone_fix_rigid()` helper remains available as an opt-in diagnostic path when `PROD_70_BACKBONE_FIX_RIGID_ENABLE=1`.
 - Updated `example/16.MARTINI/task_plan.md` so the workflow default is documented as flexible backbone, with rigid stage-7 hold retained only as an explicit override.
+
+## 2026-04-02 (Phase 23: SC-Table Orientation Audit)
+- Re-read `example/16.MARTINI/task_plan.md` and audited the trained SC-table contract against the stage-7 runtime consumption path after the user asked whether sidechain orientation / a normal vector is involved.
+- Source-level findings from the audit:
+  - `SC-training/README.md` and `SC-training/workflow.py` define the first-pass SC table as isotropic spherical-shell training around an effective sidechain center; sidechain internal geometry is not reconstructed in training.
+  - `example/16.MARTINI/build_sc_martini_h5.py` keeps only `grid_nm` and `energy_kj_mol` when building `martini.h5`, so no directional data survives into the runtime library.
+  - `example/16.MARTINI/inject_sc_table_stage7.py` reconstructs a `CB` proxy with `affine_alignment` + fixed `CB_PLACEMENT`, and `src/martini.cpp::MartiniScTablePotential` uses only the scalar `|CB-env|` distance for the spline lookup.
+- Conclusion recorded in project docs:
+  - runtime does not add an orientation-dependent forcefield term that is absent from `SC-training`;
+  - the only orientation-sensitive math is geometric placement of the isotropic `CB` anchor in Cartesian space.
+  - separate caveat: runtime currently treats reconstructed `CB` as the isotropic center, while training describes an "effective sidechain center"; this is a center-choice assumption, not a normal-vector mismatch.
+- Files modified in this follow-up:
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+- Verification:
+  - no runtime code was changed;
+  - verification was by direct source audit of the training, HDF5-build, stage-injection, affine-placement, and C++ table-evaluation paths.
+
+## 2026-04-02 (Phase 24: One-Sided Orientation-Aware MARTINI SC Table)
+- Re-read `example/16.MARTINI/task_plan.md`, then implemented the user-corrected hybrid forcefield contract instead of preserving the earlier radial-only baseline.
+- Confirmed the original Upside reference model before coding:
+  - `/Users/yinhan/Documents/upside2-md-ConDiv/py/upside_config.py` uses `placement_fixed_point_vector_only_CB` with a canonical `CA -> CB` unit vector.
+  - `/Users/yinhan/Documents/upside2-md-ConDiv/src/environment.cpp` evaluates a one-sided orientation term through `dp = dot(displace_unitvec, rvec1)`.
+  - `/Users/yinhan/Documents/upside2-md-ConDiv/py/rotamer_parameter_estimation.py::quadspline_energy(...)` uses the SC-SC factorization `uni + dp1 * dp2 * direc`, which justifies the dry-MARTINI reduction to `V_radial(r) + ang_1(-n_1 . n_12) * V_angular(r)`.
+- Modified the training/export/runtime path end-to-end:
+  - `SC-training/workflow.py`
+    - loads the original sidechain orientation library,
+    - samples dry-MARTINI energies in the residue-local `CB` frame,
+    - bins the directional surface on `distance x cos(theta)`,
+    - factorizes the sampled surface into `radial_energy_kj_mol`, `angular_energy_kj_mol`, and `angular_profile`.
+  - `example/16.MARTINI/build_sc_martini_h5.py`
+    - now writes `cos_theta_grid`, `radial_energy_kj_mol`, `angular_energy_kj_mol`, and `angular_profile` into `martini.h5`.
+  - `example/16.MARTINI/inject_sc_table_stage7.py`
+    - now injects `placement_fixed_point_vector_only_CB`,
+    - injects `martini_sc_table_1body` plus `placement_fixed_scalar` and wires both into `rotamer`,
+    - stores the factorized SC datasets and per-rotamer priors in the stage-7 file.
+  - `src/martini.cpp`
+    - adds `MartiniScTableOneBody` to evaluate `radial_value + ang1_value * angular_value` per rotamer row,
+    - uses `angular_coord = -dot(displace_unitvec, cb_vector)`,
+    - propagates force contributions through both the `CB` point and vector channels.
+  - `SC-training/README.md`
+    - updated to document the current orientation-aware contract and defaults.
+- Rebuilt the default artifact set:
+  - reran `SC-training/workflow.py init-run` and `run-local` for `SC-training/runs/default`,
+  - rebuilt `parameters/ff_2.1/martini.h5` from the assembled SC table.
+- Verification:
+  - `python3 -m py_compile SC-training/workflow.py example/16.MARTINI/build_sc_martini_h5.py example/16.MARTINI/inject_sc_table_stage7.py` passed.
+  - `cmake --build obj -j4` passed.
+  - stage-7 injection smoke test succeeded after wiring the vector-bearing `CB` node and factorized SC datasets.
+  - direct HDF5 inspection of the rebuilt `parameters/ff_2.1/martini.h5` shows:
+    - `grid_nm (96,)`
+    - `cos_theta_grid (13,)`
+    - `radial_energy_kj_mol (18, 38, 96)`
+    - `angular_energy_kj_mol (18, 38, 96)`
+    - `angular_profile (18, 38, 13)`
+- Calibration caveat captured for follow-up:
+  - the required hybrid form is now implemented consistently across training, export, and runtime,
+  - but the one-sided factorization fit is not uniformly tight for all residue/target pairs at very short range,
+  - current aggregate metrics from `SC-training/runs/default/results/assembled/sc_table.json` are:
+    - `fit_rms_error_kj_mol`: min `477.15`, median `554698.67`, max `5.356e9`
+    - median relative RMS vs sampled-grid RMS: `1.131e-2`
+    - median relative RMS vs sampled-grid max-abs value: `5.508e-4`
+- Files modified in this follow-up:
+  - `SC-training/workflow.py`
+  - `SC-training/README.md`
+  - `example/16.MARTINI/build_sc_martini_h5.py`
+  - `example/16.MARTINI/inject_sc_table_stage7.py`
+  - `src/martini.cpp`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-04-02 (Follow-Up Clarification: n1 Source)
+- Re-checked the implemented one-sided angular coordinate after the user clarified that the sidechain orientation vector should be defined with respect to the backbone, not the dry-MARTINI target particle.
+- Verification result:
+  - no algorithm change was required;
+  - `SC-training/workflow.py` already uses the backbone-defined canonical `CA -> CB` vector as `n_1`;
+  - the sampled dry-MARTINI particle direction contributes only `n_12`;
+  - runtime in `src/martini.cpp` already uses the same `placement_fixed_point_vector_only_CB` vector, so training and simulation share the same `n_1` definition.
+- Narrow follow-up edits:
+  - added explicit orientation-contract metadata and inline comments to `SC-training/workflow.py`;
+  - updated `SC-training/README.md`;
+  - recorded the clarification in `task_plan.md` and `findings.md`.
+
+## 2026-04-02 (Follow-Up Audit: SC/Dry-MARTINI Probabilistic Weighting)
+- Re-read `example/16.MARTINI/task_plan.md` and traced the weighting contract against original Upside before changing anything.
+- Reference audit:
+  - checked `/Users/yinhan/Documents/upside2-md-ConDiv/py/upside_config.py::write_rotamer_placement(...)` and confirmed that static Upside sidechain weighting comes from fixed rotamer one-body energies (`placement_fixed_scalar` sourced from `rotamer_prob_fixed`), not from a standalone weighted-average potential.
+  - checked `../../src/rotamer.cpp` and confirmed the `rotamer` node combines those one-body terms and pair interactions through the usual rotamer marginals/belief-propagation solve.
+- Current repo audit:
+  - checked `parameters/ff_2.1/sidechain.h5` and confirmed it contains `rotamer_prob` but not `rotamer_prob_fixed`.
+  - verified that the residue-local mean over `rotamer_prob` already sums to `~1.0` for each residue block, so it is a valid fixed-prior fallback.
+  - checked `SC-training/workflow.py` and confirmed training uses that same normalized residue-local mean as `sidechain_rotamer_weight`.
+  - checked `example/16.MARTINI/inject_sc_table_stage7.py` and confirmed stage-7 injection reconstructs `placement_fixed_scalar` from that same `rotamer_prob` fallback and feeds `martini_sc_table_1body` into `rotamer` as an extra one-body node.
+- Focused verification:
+  - rebuilt a temporary SC table library:
+    - `python3 example/16.MARTINI/build_sc_martini_h5.py --sc-table-json /private/tmp/sc_train_prob_smoke/results/assembled/sc_table.json --output-h5 /private/tmp/sc_train_prob_smoke.h5`
+  - inspected the rebuilt HDF5 shapes and confirmed both residue-averaged and per-rotamer datasets were present.
+  - injected the temporary library into `/private/tmp/sc_train_prob_inject.up` with `example/16.MARTINI/inject_sc_table_stage7.py`.
+  - inspected the injected graph and confirmed:
+    - `rotamer(arguments=[placement_fixed_point_vector_only, placement_fixed_scalar, martini_sc_table_1body])`,
+    - `placement_fixed_point_vector_only_CB` present,
+    - `martini_sc_table_1body` present,
+    - no active `martini_sc_table_potential` remained.
+  - numerically compared:
+    - residue-local fixed priors derived from `sidechain.h5::rotamer_prob`,
+    - `/private/tmp/sc_train_prob_smoke.h5::rotamer_probability_fixed`,
+    - injected `placement_fixed_scalar` probabilities recovered as `exp(-E)` and renormalized per residue,
+    - worst-case max-abs mismatch was below `4e-7`.
+  - ran a zero-duration runtime probe:
+    - first probe failed because the copied stage file lacked a legacy `martini_potential` unit-conversion attr (`coulomb_constant_native_kj_mol_nm_e2`);
+    - patched that temporary probe file only,
+    - reran `./obj/upside --duration 0 --frame-interval 1 --temperature 0.8 -o /private/tmp/sc_train_prob_runtime_probe.up /private/tmp/sc_train_prob_inject.up`,
+    - runtime initialization succeeded.
+- Outcome:
+  - no code change was needed in this follow-up;
+  - the current SC/dry-MARTINI implementation already uses the same fixed-prior probabilistic weighting contract as Upside sidechain interactions.
+- Files modified in this follow-up:
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-04-02 (Follow-Up Fix: Stage-7 SC Artifact Schema)
+- Re-read `example/16.MARTINI/task_plan.md` after the user reported a real stage-7 crash:
+  - `inject_sc_table_stage7.py` failed on `sc_lib["rotamer_count"]` during production-file preparation.
+- Root-cause audit:
+  - checked `parameters/ff_2.1/martini.h5` directly and confirmed it did not contain `rotamer_count` even though the code expected the new rotamer-resolved schema.
+  - attempted to rebuild `parameters/ff_2.1/martini.h5` from `SC-training/runs/default/results/assembled/sc_table.json`; that failed with `ERROR: no rotamer-resolved SC tables found in sc_table.json`.
+  - checked the assembled table and confirmed it was still `sc_training_table_v2` and lacked `rotamer_count`.
+  - conclusion: both the default assembled training output and the checked-in `martini.h5` were stale, while `ensure_sc_martini_library()` only guarded on file existence.
+- Code changes:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+    - defaulted `SC_MARTINI_TABLE_JSON` to `SC-training/runs/default/results/assembled/sc_table.json`,
+    - upgraded `ensure_sc_martini_library()` to validate the required rotamer-resolved HDF5 datasets and rebuild when the file is missing or stale.
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh`
+    - mirrored the same default-table path and schema-validation/rebuild logic.
+  - `example/16.MARTINI/inject_sc_table_stage7.py`
+    - added an explicit required-dataset check for the rotamer-resolved `martini.h5` schema,
+    - now emits a clear rebuild instruction instead of a raw `KeyError`.
+- Artifact repair:
+  - reran the full default SC-training workflow:
+    - `python3 SC-training/workflow.py init-run --base-dir SC-training/runs/default`
+    - `python3 SC-training/workflow.py run-local --base-dir SC-training/runs/default --force`
+  - verified the refreshed assembled table is now `sc_training_table_v3` and includes the rotamer fields.
+  - rebuilt the repo library:
+    - `python3 example/16.MARTINI/build_sc_martini_h5.py --sc-table-json SC-training/runs/default/results/assembled/sc_table.json --output-h5 parameters/ff_2.1/martini.h5`
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed.
+  - `python3 -m py_compile example/16.MARTINI/inject_sc_table_stage7.py` passed.
+  - direct HDF5 inspection of the rebuilt `parameters/ff_2.1/martini.h5` now shows:
+    - `rotamer_count (18,)`
+    - `rotamer_probability_fixed (18, 6)`
+    - `rotamer_radial_energy_kj_mol (18, 6, 38, 96)`
+    - `rotamer_angular_energy_kj_mol (18, 6, 38, 96)`
+    - `rotamer_angular_profile (18, 6, 38, 13)`
+  - stage-7 injection smoke with the rebuilt repo library succeeded:
+    - `Injected rotamer-weighted martini_sc_table_1body into /private/tmp/sc_stage7_full_verify.up: n_rows=117 skipped=3 n_env=4025 n_restypes=18 n_targets=38`
+- Files modified in this follow-up:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/test_prod_run_sim_1rkl.sh`
+  - `example/16.MARTINI/inject_sc_table_stage7.py`
+  - `SC-training/runs/default/training_manifest.json`
+  - `SC-training/runs/default/results/assembled/sc_table.json`
+  - `parameters/ff_2.1/martini.h5`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-04-02 (Follow-Up Audit: SC-Training Orientation Vector / No-Backbone Training)
+- Re-read `example/16.MARTINI/task_plan.md` and checked the exact `n_1` construction against both the local Upside code and the ConDiv reference.
+- Orientation-vector verification:
+  - `SC-training/workflow.py` uses `CANONICAL_CB_VECTOR_UNIT` for the angular coordinate.
+  - `py/upside_config.py::write_environment(...)` uses the same canonical `CB` point and the default vector `(CB - CA) / |CB - CA|` when `vector_CA_CO=False`.
+  - direct numeric comparison between those two constructions gave `max_abs_diff = 0.0`.
+  - this confirms the training-side one-sided orientation vector is the same backbone-defined default Upside vector.
+- Sidechain-vs-backbone bead verification:
+  - loaded the martinize `martini22` residue map through `SC-training/workflow.py::_load_martini_forcefield(...)`;
+  - confirmed the non-empty residue bead sets are sidechain-only and contain no `BB` entry for any residue;
+  - checked the refreshed default training manifest and confirmed the only training bead types used are:
+    - `AC1, AC2, C3, C5, N0, P1, P4, P5, Qa, Qd, SC4, SC5, SNd, SP1`
+    - `BB` is absent.
+- Outcome:
+  - no code change was needed in this follow-up;
+  - SC-training uses the same default Upside `CA -> CB` orientation vector method, and backbone particles are not included in SC-training against dry-MARTINI targets.
+- Files modified in this follow-up:
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-04-02 (Follow-Up Fix: Hybrid BB Force Projection)
+- Re-read `example/16.MARTINI/task_plan.md` and audited the current hybrid BB/SC force path in `src/martini.cpp`.
+- Audit result:
+  - active hybrid runtime was already excluding all intra-protein MARTINI proxy interactions via `allow_protein_pair_by_rule(...)`, so `BB-BB` remained excluded in nonbonded, bond, and angle MARTINI terms.
+  - the remaining bug was that active-stage protein `BB` pairs were evaluated at `CA` and their protein-side force was written directly to `CA`, bypassing the hybrid BB carrier map.
+- Code changes in `src/martini.cpp`:
+  - added a runtime `bb_proxy_to_map_index` lookup so BB proxy atoms can resolve back to their `hybrid_bb_map` row efficiently.
+  - added `project_bb_proxy_gradient_if_active(...)` to project protein-side BB gradients through the mapped carrier weights instead of a direct `CA` write.
+  - changed `MartiniPotential::compute_value(...)` to refresh live BB proxy coordinates at the start of the MARTINI pair evaluation path.
+  - removed the active-stage `BB -> CA` coordinate substitution from pair evaluation, so BB-env interactions are computed at the refreshed BB proxy coordinate.
+  - routed active-stage protein-side BB gradients through the new BB projection helper while keeping equal-and-opposite force on the dry-MARTINI partner atom.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4` passed.
+  - one-step production-stage smoke passed:
+    - `source .venv/bin/activate && source source.sh && ./obj/upside --duration-steps 1 --frame-interval 1 --temperature 0.8 -o /tmp/bb_force_projection_smoke.up example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.prepared.up`
+    - runtime initialized hybrid stage-7 input successfully and completed the force-evaluation step without crashing.
+- Files modified in this follow-up:
+  - `src/martini.cpp`
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+
+## 2026-04-03 (Analysis: Should BB Be Merged Into SC Training?)
+- Re-read `example/16.MARTINI/task_plan.md` and inspected backbone typing in `example/16.MARTINI/martinize.py` through the actual `martini22.bbGetBead(residue, ss)` lookup path.
+- Backbone typing audit:
+  - `martini22` default backbone typing table over secondary structure is:
+    - `F -> N0`, `E -> Nda`, `H -> N0`, `1 -> Nd`, `2 -> Na`, `3 -> Nda`, `T -> Nda`, `S -> P5`, `C -> P5`.
+  - residue-specific backbone overrides exist only for `ALA`, `PRO`, and `HYP`.
+  - exact unique backbone bead types used by `bbGetBead(...)` are:
+    - `C5, N0, Na, Nd, Nda, P4, P5`
+    - so `n = 7`.
+  - across the 20 canonical residues, those assignments collapse to 3 distinct residue-pattern families rather than 20 fully independent BB classes.
+- Comparison against current SC-training/runtime contract:
+  - `SC-training/workflow.py` currently builds training tasks from `ff.sidechains`, i.e. sidechain-only bead lists, and its runtime counterpart is residue/rotamer/CB-frame specific.
+  - that makes the current SC workflow a poor place to directly merge backbone BB training, because BB has no rotamer axis and its dry-MARTINI identity is already captured by the assigned BB bead type.
+- Recommendation recorded:
+  - not a good idea to merge BB into the existing SC-training contract as `20 x n` residue-specific tables.
+  - if a learned BB replacement is wanted, train it separately by MARTINI BB bead type:
+    - 7 BB bead classes for `martini22`,
+    - with the current 38 dry-MARTINI target particle types that would mean 266 BB-target tables,
+    - not 140 residue-specific BB classes before target expansion.
+- Files modified in this follow-up:
+  - `example/16.MARTINI/task_plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`

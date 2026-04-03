@@ -288,6 +288,7 @@ struct HybridRuntimeState {
     std::vector<int> bb_atom_index;
     std::vector<int> bb_ca_atom_index;
     std::vector<int> bb_proxy_to_ca_atom;
+    std::vector<int> bb_proxy_to_map_index;
     std::vector<std::array<int,4>> atom_indices;
     std::vector<std::array<int,4>> atom_mask;
     std::vector<std::array<float,4>> weights;
@@ -353,6 +354,30 @@ static std::vector<int> active_protein_proxy_fixed_atoms(const HybridRuntimeStat
 static inline int direct_ca_atom_for_bb_proxy(const HybridRuntimeState& st, int bb_proxy_atom) {
     if(bb_proxy_atom < 0 || bb_proxy_atom >= static_cast<int>(st.bb_proxy_to_ca_atom.size())) return -1;
     return st.bb_proxy_to_ca_atom[static_cast<size_t>(bb_proxy_atom)];
+}
+
+static inline int bb_map_index_for_proxy(const HybridRuntimeState& st, int bb_proxy_atom) {
+    if(bb_proxy_atom < 0 || bb_proxy_atom >= static_cast<int>(st.bb_proxy_to_map_index.size())) return -1;
+    return st.bb_proxy_to_map_index[static_cast<size_t>(bb_proxy_atom)];
+}
+
+static inline void project_bb_proxy_gradient_if_active(
+        const HybridRuntimeState& st,
+        VecArray pos_sens,
+        int n_atom,
+        int bb_proxy_atom,
+        const Vec<3>& grad) {
+    int map_idx = bb_map_index_for_proxy(st, bb_proxy_atom);
+    if(map_idx < 0 || map_idx >= static_cast<int>(st.n_bb)) return;
+
+    for(int d = 0; d < 4; ++d) {
+        if(st.atom_mask[static_cast<size_t>(map_idx)][d] == 0) continue;
+        int atom_idx = st.atom_indices[static_cast<size_t>(map_idx)][d];
+        float w = st.weights[static_cast<size_t>(map_idx)][d];
+        if(atom_idx < 0 || atom_idx >= n_atom || w == 0.f) continue;
+        if(atom_idx == bb_proxy_atom) continue;
+        update_vec<3>(pos_sens, atom_idx, w * grad);
+    }
 }
 static std::string trim_h5_string(const std::string& in);
 
@@ -880,11 +905,15 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         }
 
         out.bb_proxy_to_ca_atom.assign(static_cast<size_t>(n_atom), -1);
+        out.bb_proxy_to_map_index.assign(static_cast<size_t>(n_atom), -1);
         for(size_t k = 0; k < out.n_bb; ++k) {
             int bb = out.bb_atom_index[k];
             int ca = out.bb_ca_atom_index[k];
             if(bb >= 0 && bb < n_atom && ca >= 0 && ca < n_atom) {
                 out.bb_proxy_to_ca_atom[static_cast<size_t>(bb)] = ca;
+            }
+            if(bb >= 0 && bb < n_atom) {
+                out.bb_proxy_to_map_index[static_cast<size_t>(bb)] = static_cast<int>(k);
             }
         }
 
@@ -2395,7 +2424,7 @@ struct MartiniPotential : public PotentialNode
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         auto* mutable_hybrid = static_cast<martini_hybrid::HybridRuntimeState*>(nullptr);
         if(hybrid_state) {
-            martini_hybrid::refresh_backbone_o_positions_if_active(*hybrid_state, pos1, n_atom);
+            martini_hybrid::refresh_bb_positions_if_active(*hybrid_state, pos1, n_atom);
             mutable_hybrid = const_cast<martini_hybrid::HybridRuntimeState*>(hybrid_state.get());
             if(mutable_hybrid) {
                 if(mutable_hybrid->sc_env_energy_dump_enabled) {
@@ -2610,22 +2639,6 @@ struct MartiniPotential : public PotentialNode
                 continue;
             }
 
-            int i_force_atom = i;
-            int j_force_atom = j;
-            if(active_hybrid_startup && i_is_protein && i_role == martini_hybrid::ROLE_BB) {
-                int ca = martini_hybrid::direct_ca_atom_for_bb_proxy(*hybrid_state, i);
-                if(ca >= 0 && ca < n_atom) {
-                    p1 = load_vec<3>(pos1, ca);
-                    i_force_atom = ca;
-                }
-            }
-            if(active_hybrid_startup && j_is_protein && j_role == martini_hybrid::ROLE_BB) {
-                int ca = martini_hybrid::direct_ca_atom_for_bb_proxy(*hybrid_state, j);
-                if(ca >= 0 && ca < n_atom) {
-                    p2 = load_vec<3>(pos1, ca);
-                    j_force_atom = ca;
-                }
-            }
             // Optional experimental branch: treat non-protein/non-protein
             // MARTINI nonbonded as hard-sphere-like repulsion (WCA branch).
             bool hard_sphere_pair = (
@@ -2674,8 +2687,16 @@ struct MartiniPotential : public PotentialNode
             if(active_hybrid_startup && j_is_protein && j_role == martini_hybrid::ROLE_BB) {
                 gj *= sc_backbone_feedback_mix;
             }
-            update_vec<3>(pos1_sens, i_force_atom, gi);
-            update_vec<3>(pos1_sens, j_force_atom, gj);
+            if(active_hybrid_startup && i_is_protein && i_role == martini_hybrid::ROLE_BB) {
+                martini_hybrid::project_bb_proxy_gradient_if_active(*hybrid_state, pos1_sens, n_atom, i, gi);
+            } else {
+                update_vec<3>(pos1_sens, i, gi);
+            }
+            if(active_hybrid_startup && j_is_protein && j_role == martini_hybrid::ROLE_BB) {
+                martini_hybrid::project_bb_proxy_gradient_if_active(*hybrid_state, pos1_sens, n_atom, j, gj);
+            } else {
+                update_vec<3>(pos1_sens, j, gj);
+            }
         }
 
         if(mutable_hybrid && mutable_hybrid->sc_env_energy_dump_enabled) {
@@ -2717,18 +2738,92 @@ struct MartiniScTablePotential : public PotentialNode
     float grid_start_ang;
     float grid_step_ang;
     float cutoff_ang;
+    int n_angle;
+    float cos_start;
+    float cos_step;
+    float cos_end;
 
-    vector<float> left_value;
-    vector<float> left_slope;
-    LayeredClampedSpline1D<1> energy_spline;
+    vector<float> radial_table;
+    vector<float> angular_table;
+    vector<float> radial_left_value;
+    vector<float> radial_left_slope;
+    vector<float> angular_left_value;
+    vector<float> angular_left_slope;
+    vector<float> angular_profile_table;
+
+    inline int radial_index(int layer, int grid_idx) const {
+        return layer * n_grid + grid_idx;
+    }
+
+    inline int profile_index(int layer, int angle_idx) const {
+        return layer * n_angle + angle_idx;
+    }
+
+    inline void evaluate_component_value_and_deriv(
+            float& value,
+            float& dVdr,
+            const vector<float>& table,
+            const vector<float>& left_value,
+            const vector<float>& left_slope,
+            int layer,
+            float dist) const {
+        if(dist <= grid_start_ang) {
+            value = left_value[layer] + left_slope[layer] * (dist - grid_start_ang);
+            dVdr = left_slope[layer];
+            return;
+        }
+
+        float radial_coord = (dist - grid_start_ang) / grid_step_ang;
+        int grid_idx = int(floorf(radial_coord));
+        if(grid_idx < 0) grid_idx = 0;
+        if(grid_idx > n_grid - 2) grid_idx = n_grid - 2;
+        float frac = radial_coord - float(grid_idx);
+        float e0 = table[radial_index(layer, grid_idx)];
+        float e1 = table[radial_index(layer, grid_idx + 1)];
+        value = (1.f - frac) * e0 + frac * e1;
+        dVdr = (e1 - e0) / grid_step_ang;
+    }
+
+    inline void evaluate_angular_profile_and_deriv(
+            float& value,
+            float& dVdcoord,
+            int layer,
+            float angular_coord) const {
+        if(n_angle <= 1) {
+            value = angular_profile_table[profile_index(layer, 0)];
+            dVdcoord = 0.f;
+            return;
+        }
+
+        if(angular_coord <= cos_start) {
+            value = angular_profile_table[profile_index(layer, 0)];
+            dVdcoord = 0.f;
+            return;
+        }
+        if(angular_coord >= cos_end) {
+            value = angular_profile_table[profile_index(layer, n_angle - 1)];
+            dVdcoord = 0.f;
+            return;
+        }
+
+        float angle_coord = (angular_coord - cos_start) / cos_step;
+        int angle_idx = int(floorf(angle_coord));
+        if(angle_idx < 0) angle_idx = 0;
+        if(angle_idx > n_angle - 2) angle_idx = n_angle - 2;
+        float frac = angle_coord - float(angle_idx);
+        float value_lo = angular_profile_table[profile_index(layer, angle_idx)];
+        float value_hi = angular_profile_table[profile_index(layer, angle_idx + 1)];
+        value = (1.f - frac) * value_lo + frac * value_hi;
+        dVdcoord = (value_hi - value_lo) / cos_step;
+    }
 
     MartiniScTablePotential(hid_t grp, CoordNode& pos_, CoordNode& cb_pos_):
         PotentialNode(),
         n_cb(get_dset_size(1, grp, "cb_index")[0]),
         n_env(get_dset_size(1, grp, "env_atom_index")[0]),
-        n_restype(get_dset_size(3, grp, "energy_kj_mol")[0]),
-        n_target(get_dset_size(3, grp, "energy_kj_mol")[1]),
-        n_grid(get_dset_size(3, grp, "energy_kj_mol")[2]),
+        n_restype(get_dset_size(3, grp, "radial_energy_kj_mol")[0]),
+        n_target(get_dset_size(3, grp, "radial_energy_kj_mol")[1]),
+        n_grid(get_dset_size(3, grp, "radial_energy_kj_mol")[2]),
         n_layer(n_restype * n_target),
         pos(pos_),
         cb_pos(cb_pos_),
@@ -2744,21 +2839,32 @@ struct MartiniScTablePotential : public PotentialNode
         grid_start_ang(0.f),
         grid_step_ang(0.f),
         cutoff_ang(0.f),
-        left_value(n_layer, 0.f),
-        left_slope(n_layer, 0.f),
-        energy_spline(n_layer, n_grid)
+        n_angle(get_dset_size(3, grp, "angular_profile")[2]),
+        cos_start(0.f),
+        cos_step(0.f),
+        cos_end(0.f),
+        radial_table(n_layer * n_grid, 0.f),
+        angular_table(n_layer * n_grid, 0.f),
+        radial_left_value(n_layer, 0.f),
+        radial_left_slope(n_layer, 0.f),
+        angular_left_value(n_layer, 0.f),
+        angular_left_slope(n_layer, 0.f),
+        angular_profile_table(n_layer * n_angle, 0.f)
     {
         check_elem_width_lower_bound(pos, 3);
-        check_elem_width_lower_bound(cb_pos, 3);
+        check_elem_width_lower_bound(cb_pos, 6);
 
         check_size(grp, "residue_table_index", n_cb);
         check_size(grp, "env_target_index", n_env);
         check_size(grp, "grid_nm", n_grid);
+        check_size(grp, "cos_theta_grid", n_angle);
+        check_size(grp, "angular_energy_kj_mol", n_restype, n_target, n_grid);
+        check_size(grp, "angular_profile", n_restype, n_target, n_angle);
 
         if(!(energy_conversion_kj_per_eup > 0.f) || !(length_conversion_angstrom_per_nm > 0.f)) {
             throw string("martini_sc_table_potential unit-conversion attrs must be positive");
         }
-        if(n_restype <= 0 || n_target <= 0 || n_grid < 2) {
+        if(n_restype <= 0 || n_target <= 0 || n_grid < 2 || n_angle < 1) {
             throw string("martini_sc_table_potential requires non-empty residue/target/grid dimensions");
         }
 
@@ -2769,6 +2875,8 @@ struct MartiniScTablePotential : public PotentialNode
 
         vector<float> grid_nm(n_grid, 0.f);
         traverse_dset<1,float>(grp, "grid_nm", [&](size_t i, float x) { grid_nm[i] = x; });
+        vector<float> cos_theta_grid(n_angle, 0.f);
+        traverse_dset<1,float>(grp, "cos_theta_grid", [&](size_t i, float x) { cos_theta_grid[i] = x; });
 
         float grid_step_nm = grid_nm[1] - grid_nm[0];
         if(!(grid_step_nm > 0.f)) {
@@ -2785,6 +2893,24 @@ struct MartiniScTablePotential : public PotentialNode
         cutoff_ang = grid_nm[n_grid-1] * length_conversion_angstrom_per_nm;
         if(!(grid_step_ang > 0.f) || !(cutoff_ang > grid_start_ang)) {
             throw string("martini_sc_table_potential converted radial grid is invalid");
+        }
+
+        if(n_angle > 1) {
+            cos_step = cos_theta_grid[1] - cos_theta_grid[0];
+            if(!(cos_step > 0.f)) {
+                throw string("martini_sc_table_potential cos_theta_grid must be strictly increasing");
+            }
+            for(int i = 2; i < n_angle; ++i) {
+                float step = cos_theta_grid[i] - cos_theta_grid[i-1];
+                if(fabsf(step - cos_step) > 1e-4f * std::max(1.f, fabsf(cos_step))) {
+                    throw string("martini_sc_table_potential requires a uniform cos_theta_grid");
+                }
+            }
+            cos_start = cos_theta_grid[0];
+            cos_end = cos_theta_grid[n_angle - 1];
+        } else {
+            cos_start = cos_end = cos_theta_grid[0];
+            cos_step = 1.f;
         }
 
         for(int i = 0; i < n_cb; ++i) {
@@ -2804,23 +2930,34 @@ struct MartiniScTablePotential : public PotentialNode
             }
         }
 
-        vector<float> energy_native(n_layer * n_grid, 0.f);
-        traverse_dset<3,float>(grp, "energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
-            energy_native[(ir * n_target + it) * n_grid + ig] = x;
+        vector<float> radial_native(n_layer * n_grid, 0.f);
+        vector<float> angular_native(n_layer * n_grid, 0.f);
+        traverse_dset<3,float>(grp, "radial_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
+            radial_native[radial_index(int(ir * n_target + it), int(ig))] = x;
+        });
+        traverse_dset<3,float>(grp, "angular_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
+            angular_native[radial_index(int(ir * n_target + it), int(ig))] = x;
+        });
+        traverse_dset<3,float>(grp, "angular_profile", [&](size_t ir, size_t it, size_t ia, float x) {
+            angular_profile_table[profile_index(int(ir * n_target + it), int(ia))] = x;
         });
 
-        vector<double> spline_input(n_layer * n_grid, 0.0);
         for(int layer = 0; layer < n_layer; ++layer) {
-            int base = layer * n_grid;
-            float tail = energy_native[base + (n_grid - 1)];
+            float radial_tail = radial_native[radial_index(layer, n_grid - 1)];
+            float angular_tail = angular_native[radial_index(layer, n_grid - 1)];
             for(int ig = 0; ig < n_grid; ++ig) {
-                float value_eup = (energy_native[base + ig] - tail) / energy_conversion_kj_per_eup;
-                spline_input[base + ig] = value_eup;
+                radial_table[radial_index(layer, ig)] =
+                    (radial_native[radial_index(layer, ig)] - radial_tail) / energy_conversion_kj_per_eup;
+                angular_table[radial_index(layer, ig)] =
+                    (angular_native[radial_index(layer, ig)] - angular_tail) / energy_conversion_kj_per_eup;
             }
-            left_value[layer] = float(spline_input[base + 0]);
-            left_slope[layer] = float((spline_input[base + 1] - spline_input[base + 0]) / double(grid_step_ang));
+            radial_left_value[layer] = radial_table[radial_index(layer, 0)];
+            radial_left_slope[layer] =
+                (radial_table[radial_index(layer, 1)] - radial_table[radial_index(layer, 0)]) / grid_step_ang;
+            angular_left_value[layer] = angular_table[radial_index(layer, 0)];
+            angular_left_slope[layer] =
+                (angular_table[radial_index(layer, 1)] - angular_table[radial_index(layer, 0)]) / grid_step_ang;
         }
-        energy_spline.fit_spline(spline_input.data());
     }
 
     virtual void update_box_dimensions_anisotropic(float scale_xy, float scale_z) override {
@@ -2847,7 +2984,9 @@ struct MartiniScTablePotential : public PotentialNode
         for(int icb = 0; icb < n_cb; ++icb) {
             int cb_idx = cb_index[icb];
             int residue_idx = residue_table_index[icb];
-            Vec<3> cbp = load_vec<3>(cbc, cb_idx);
+            Vec<6> cb_site = load_vec<6>(cbc, cb_idx);
+            Vec<3> cbp = extract<0,3>(cb_site);
+            Vec<3> cbv = extract<3,6>(cb_site);
 
             for(int ienv = 0; ienv < n_env; ++ienv) {
                 int atom_idx = env_atom_index[ienv];
@@ -2865,34 +3004,465 @@ struct MartiniScTablePotential : public PotentialNode
                 float dist = sqrtf(std::max(dist2, kMinDistance));
                 if(dist >= cutoff_ang) continue;
 
-                float value = 0.f;
-                float dVdr = 0.f;
-                if(dist <= grid_start_ang) {
-                    value = left_value[layer] + left_slope[layer] * (dist - grid_start_ang);
-                    dVdr = left_slope[layer];
-                } else {
-                    float spline_x = (dist - grid_start_ang) / grid_step_ang;
-                    float result[2] = {0.f, 0.f};
-                    energy_spline.evaluate_value_and_deriv(result, layer, spline_x);
-                    dVdr = result[0] / grid_step_ang;
-                    value = result[1];
-                }
+                float radial_value = 0.f;
+                float radial_dVdr = 0.f;
+                float angular_value = 0.f;
+                float angular_dVdr = 0.f;
+                float ang1_value = 0.f;
+                float dAng1dcoord = 0.f;
+                Vec<3> displace_unitvec = (1.f / dist) * dr;
+                float cos_theta = dot(displace_unitvec, cbv);
+                float angular_coord = -cos_theta;
+                evaluate_component_value_and_deriv(
+                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+                evaluate_component_value_and_deriv(
+                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
 
-                if(!std::isfinite(value) || !std::isfinite(dVdr)) continue;
+                float value = radial_value + ang1_value * angular_value;
+                float dVdr = radial_dVdr + ang1_value * angular_dVdr;
+                float dVdcoord = dAng1dcoord * angular_value;
+
+                if(!std::isfinite(value) || !std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
                 potential += value;
 
                 if(dist <= 1.0e-6f) continue;
-                Vec<3> grad_cb_full = (dVdr / dist) * dr;
-                Vec<3> grad_cb = protein_feedback_mix * grad_cb_full;
-                Vec<3> grad_env = -grad_cb_full;
+                Vec<3> point_grad = dVdr * displace_unitvec +
+                                    (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec);
+                Vec<3> vector_grad = -dVdcoord * displace_unitvec;
+                Vec<6> grad_cb_full;
+                store<0,3>(grad_cb_full, point_grad);
+                store<3,6>(grad_cb_full, vector_grad);
+                Vec<6> grad_cb = protein_feedback_mix * grad_cb_full;
+                Vec<3> grad_env = -point_grad;
 
-                update_vec<3>(cb_sens, cb_idx, grad_cb);
+                update_vec<6>(cb_sens, cb_idx, grad_cb);
                 update_vec<3>(pos_sens, atom_idx, grad_env);
             }
         }
     }
 };
 static RegisterNodeType<MartiniScTablePotential, 2> martini_sc_table_potential_node("martini_sc_table_potential");
+
+struct MartiniScTableOneBody : public CoordNode
+{
+    int n_row;
+    int n_env;
+    int n_restype;
+    int n_rotamer_max;
+    int n_target;
+    int n_grid;
+    int n_layer;
+
+    CoordNode& pos;
+    CoordNode& cb_pos;
+
+    vector<int> row_residue_index;
+    vector<int> row_rotamer_index;
+    vector<int> row_residue_table_index;
+    vector<int> row_group_count;
+    vector<int> env_atom_index;
+    vector<int> env_target_index;
+    vector<int> rotamer_count;
+
+    float energy_conversion_kj_per_eup;
+    float length_conversion_angstrom_per_nm;
+    float box_x;
+    float box_y;
+    float box_z;
+
+    float grid_start_ang;
+    float grid_step_ang;
+    float cutoff_ang;
+    int n_angle;
+    float cos_start;
+    float cos_step;
+    float cos_end;
+
+    vector<float> radial_table;
+    vector<float> angular_table;
+    vector<float> radial_left_value;
+    vector<float> radial_left_slope;
+    vector<float> angular_left_value;
+    vector<float> angular_left_slope;
+    vector<float> angular_profile_table;
+
+    inline int radial_index(int layer, int grid_idx) const {
+        return layer * n_grid + grid_idx;
+    }
+
+    inline int profile_index(int layer, int angle_idx) const {
+        return layer * n_angle + angle_idx;
+    }
+
+    inline int layer_index(int residue_idx, int rotamer_idx, int target_idx) const {
+        return ((residue_idx * n_rotamer_max) + rotamer_idx) * n_target + target_idx;
+    }
+
+    inline void evaluate_component_value_and_deriv(
+            float& value,
+            float& dVdr,
+            const vector<float>& table,
+            const vector<float>& left_value,
+            const vector<float>& left_slope,
+            int layer,
+            float dist) const {
+        if(dist <= grid_start_ang) {
+            value = left_value[layer] + left_slope[layer] * (dist - grid_start_ang);
+            dVdr = left_slope[layer];
+            return;
+        }
+
+        float radial_coord = (dist - grid_start_ang) / grid_step_ang;
+        int grid_idx = int(floorf(radial_coord));
+        if(grid_idx < 0) grid_idx = 0;
+        if(grid_idx > n_grid - 2) grid_idx = n_grid - 2;
+        float frac = radial_coord - float(grid_idx);
+        float e0 = table[radial_index(layer, grid_idx)];
+        float e1 = table[radial_index(layer, grid_idx + 1)];
+        value = (1.f - frac) * e0 + frac * e1;
+        dVdr = (e1 - e0) / grid_step_ang;
+    }
+
+    inline void evaluate_angular_profile_and_deriv(
+            float& value,
+            float& dVdcoord,
+            int layer,
+            float angular_coord) const {
+        if(n_angle <= 1) {
+            value = angular_profile_table[profile_index(layer, 0)];
+            dVdcoord = 0.f;
+            return;
+        }
+
+        if(angular_coord <= cos_start) {
+            value = angular_profile_table[profile_index(layer, 0)];
+            dVdcoord = 0.f;
+            return;
+        }
+        if(angular_coord >= cos_end) {
+            value = angular_profile_table[profile_index(layer, n_angle - 1)];
+            dVdcoord = 0.f;
+            return;
+        }
+
+        float angle_coord = (angular_coord - cos_start) / cos_step;
+        int angle_idx = int(floorf(angle_coord));
+        if(angle_idx < 0) angle_idx = 0;
+        if(angle_idx > n_angle - 2) angle_idx = n_angle - 2;
+        float frac = angle_coord - float(angle_idx);
+        float value_lo = angular_profile_table[profile_index(layer, angle_idx)];
+        float value_hi = angular_profile_table[profile_index(layer, angle_idx + 1)];
+        value = (1.f - frac) * value_lo + frac * value_hi;
+        dVdcoord = (value_hi - value_lo) / cos_step;
+    }
+
+    MartiniScTableOneBody(hid_t grp, CoordNode& pos_, CoordNode& cb_pos_):
+        CoordNode(get_dset_size(1, grp, "row_residue_index")[0], 1),
+        n_row(get_dset_size(1, grp, "row_residue_index")[0]),
+        n_env(get_dset_size(1, grp, "env_atom_index")[0]),
+        n_restype(get_dset_size(4, grp, "rotamer_radial_energy_kj_mol")[0]),
+        n_rotamer_max(get_dset_size(4, grp, "rotamer_radial_energy_kj_mol")[1]),
+        n_target(get_dset_size(4, grp, "rotamer_radial_energy_kj_mol")[2]),
+        n_grid(get_dset_size(4, grp, "rotamer_radial_energy_kj_mol")[3]),
+        n_layer(n_restype * n_rotamer_max * n_target),
+        pos(pos_),
+        cb_pos(cb_pos_),
+        row_residue_index(n_row),
+        row_rotamer_index(n_row),
+        row_residue_table_index(n_row),
+        row_group_count(n_row, 1),
+        env_atom_index(n_env),
+        env_target_index(n_env),
+        rotamer_count(n_restype, 0),
+        energy_conversion_kj_per_eup(read_attribute<float>(grp, ".", "energy_conversion_kj_per_eup")),
+        length_conversion_angstrom_per_nm(read_attribute<float>(grp, ".", "length_conversion_angstrom_per_nm")),
+        box_x(read_attribute<float>(grp, ".", "x_len")),
+        box_y(read_attribute<float>(grp, ".", "y_len")),
+        box_z(read_attribute<float>(grp, ".", "z_len")),
+        grid_start_ang(0.f),
+        grid_step_ang(0.f),
+        cutoff_ang(0.f),
+        n_angle(get_dset_size(4, grp, "rotamer_angular_profile")[3]),
+        cos_start(0.f),
+        cos_step(0.f),
+        cos_end(0.f),
+        radial_table(n_layer * n_grid, 0.f),
+        angular_table(n_layer * n_grid, 0.f),
+        radial_left_value(n_layer, 0.f),
+        radial_left_slope(n_layer, 0.f),
+        angular_left_value(n_layer, 0.f),
+        angular_left_slope(n_layer, 0.f),
+        angular_profile_table(n_layer * n_angle, 0.f)
+    {
+        check_elem_width_lower_bound(pos, 3);
+        check_elem_width_lower_bound(cb_pos, 6);
+
+        check_size(grp, "row_rotamer_index", n_row);
+        check_size(grp, "row_residue_table_index", n_row);
+        check_size(grp, "env_target_index", n_env);
+        check_size(grp, "grid_nm", n_grid);
+        check_size(grp, "cos_theta_grid", n_angle);
+        check_size(grp, "rotamer_count", n_restype);
+        check_size(grp, "rotamer_angular_energy_kj_mol", n_restype, n_rotamer_max, n_target, n_grid);
+        check_size(grp, "rotamer_angular_profile", n_restype, n_rotamer_max, n_target, n_angle);
+
+        if(!(energy_conversion_kj_per_eup > 0.f) || !(length_conversion_angstrom_per_nm > 0.f)) {
+            throw string("martini_sc_table_1body unit-conversion attrs must be positive");
+        }
+        if(n_restype <= 0 || n_rotamer_max <= 0 || n_target <= 0 || n_grid < 2 || n_angle < 1) {
+            throw string("martini_sc_table_1body requires non-empty residue/rotamer/target/grid dimensions");
+        }
+
+        traverse_dset<1,int>(grp, "row_residue_index", [&](size_t i, int x) { row_residue_index[i] = x; });
+        traverse_dset<1,int>(grp, "row_rotamer_index", [&](size_t i, int x) { row_rotamer_index[i] = x; });
+        traverse_dset<1,int>(grp, "row_residue_table_index", [&](size_t i, int x) { row_residue_table_index[i] = x; });
+        traverse_dset<1,int>(grp, "env_atom_index", [&](size_t i, int x) { env_atom_index[i] = x; });
+        traverse_dset<1,int>(grp, "env_target_index", [&](size_t i, int x) { env_target_index[i] = x; });
+        traverse_dset<1,int>(grp, "rotamer_count", [&](size_t i, int x) { rotamer_count[i] = x; });
+
+        std::unordered_map<uint64_t, int> group_counts;
+        group_counts.reserve(static_cast<size_t>(n_row) * 2u);
+        for(int i = 0; i < n_row; ++i) {
+            uint64_t key = (uint64_t(uint32_t(row_residue_index[i])) << 32) | uint32_t(row_rotamer_index[i]);
+            group_counts[key] += 1;
+        }
+        for(int i = 0; i < n_row; ++i) {
+            uint64_t key = (uint64_t(uint32_t(row_residue_index[i])) << 32) | uint32_t(row_rotamer_index[i]);
+            auto it = group_counts.find(key);
+            row_group_count[i] = (it == group_counts.end() || it->second < 1) ? 1 : it->second;
+        }
+
+        vector<float> grid_nm(n_grid, 0.f);
+        traverse_dset<1,float>(grp, "grid_nm", [&](size_t i, float x) { grid_nm[i] = x; });
+        vector<float> cos_theta_grid(n_angle, 0.f);
+        traverse_dset<1,float>(grp, "cos_theta_grid", [&](size_t i, float x) { cos_theta_grid[i] = x; });
+
+        float grid_step_nm = grid_nm[1] - grid_nm[0];
+        if(!(grid_step_nm > 0.f)) {
+            throw string("martini_sc_table_1body grid_nm must be strictly increasing");
+        }
+        for(int i = 2; i < n_grid; ++i) {
+            float step = grid_nm[i] - grid_nm[i-1];
+            if(fabsf(step - grid_step_nm) > 1e-4f * std::max(1.f, fabsf(grid_step_nm))) {
+                throw string("martini_sc_table_1body requires a uniform radial grid");
+            }
+        }
+        grid_start_ang = grid_nm[0] * length_conversion_angstrom_per_nm;
+        grid_step_ang = grid_step_nm * length_conversion_angstrom_per_nm;
+        cutoff_ang = grid_nm[n_grid - 1] * length_conversion_angstrom_per_nm;
+        if(!(grid_step_ang > 0.f) || !(cutoff_ang > grid_start_ang)) {
+            throw string("martini_sc_table_1body converted radial grid is invalid");
+        }
+
+        if(n_angle > 1) {
+            cos_step = cos_theta_grid[1] - cos_theta_grid[0];
+            if(!(cos_step > 0.f)) {
+                throw string("martini_sc_table_1body cos_theta_grid must be strictly increasing");
+            }
+            for(int i = 2; i < n_angle; ++i) {
+                float step = cos_theta_grid[i] - cos_theta_grid[i - 1];
+                if(fabsf(step - cos_step) > 1e-4f * std::max(1.f, fabsf(cos_step))) {
+                    throw string("martini_sc_table_1body requires a uniform cos_theta_grid");
+                }
+            }
+            cos_start = cos_theta_grid[0];
+            cos_end = cos_theta_grid[n_angle - 1];
+        } else {
+            cos_start = cos_end = cos_theta_grid[0];
+            cos_step = 1.f;
+        }
+
+        for(int i = 0; i < n_row; ++i) {
+            if(row_residue_index[i] < 0 || row_residue_index[i] >= cb_pos.n_elem) {
+                throw string("martini_sc_table_1body row_residue_index out of bounds");
+            }
+            if(row_residue_table_index[i] < 0 || row_residue_table_index[i] >= n_restype) {
+                throw string("martini_sc_table_1body row_residue_table_index out of bounds");
+            }
+            int res_idx = row_residue_table_index[i];
+            if(row_rotamer_index[i] < 0 || row_rotamer_index[i] >= rotamer_count[res_idx]) {
+                throw string("martini_sc_table_1body row_rotamer_index out of bounds");
+            }
+        }
+        for(int i = 0; i < n_env; ++i) {
+            if(env_atom_index[i] < 0 || env_atom_index[i] >= pos.n_elem) {
+                throw string("martini_sc_table_1body env_atom_index out of bounds");
+            }
+            if(env_target_index[i] < 0 || env_target_index[i] >= n_target) {
+                throw string("martini_sc_table_1body env_target_index out of bounds");
+            }
+        }
+
+        vector<float> radial_native(n_layer * n_grid, 0.f);
+        vector<float> angular_native(n_layer * n_grid, 0.f);
+        traverse_dset<4,float>(grp, "rotamer_radial_energy_kj_mol",
+                [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
+                    radial_native[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
+                });
+        traverse_dset<4,float>(grp, "rotamer_angular_energy_kj_mol",
+                [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
+                    angular_native[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
+                });
+        traverse_dset<4,float>(grp, "rotamer_angular_profile",
+                [&](size_t ir, size_t iro, size_t it, size_t ia, float x) {
+                    angular_profile_table[profile_index(layer_index(int(ir), int(iro), int(it)), int(ia))] = x;
+                });
+
+        for(int layer = 0; layer < n_layer; ++layer) {
+            float radial_tail = radial_native[radial_index(layer, n_grid - 1)];
+            float angular_tail = angular_native[radial_index(layer, n_grid - 1)];
+            for(int ig = 0; ig < n_grid; ++ig) {
+                radial_table[radial_index(layer, ig)] =
+                    (radial_native[radial_index(layer, ig)] - radial_tail) / energy_conversion_kj_per_eup;
+                angular_table[radial_index(layer, ig)] =
+                    (angular_native[radial_index(layer, ig)] - angular_tail) / energy_conversion_kj_per_eup;
+            }
+            radial_left_value[layer] = radial_table[radial_index(layer, 0)];
+            radial_left_slope[layer] =
+                (radial_table[radial_index(layer, 1)] - radial_table[radial_index(layer, 0)]) / grid_step_ang;
+            angular_left_value[layer] = angular_table[radial_index(layer, 0)];
+            angular_left_slope[layer] =
+                (angular_table[radial_index(layer, 1)] - angular_table[radial_index(layer, 0)]) / grid_step_ang;
+        }
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        (void)mode;
+        Timer timer(string("martini_sc_table_1body"));
+        fill(output, 0.f);
+
+        auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
+        if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
+
+        VecArray posc = pos.output;
+        VecArray cbc = cb_pos.output;
+        constexpr float kMinDistance = 1.0e-8f;
+
+        for(int irow = 0; irow < n_row; ++irow) {
+            int cb_idx = row_residue_index[irow];
+            int residue_idx = row_residue_table_index[irow];
+            int rotamer_idx = row_rotamer_index[irow];
+            int group_count = std::max(1, row_group_count[irow]);
+
+            Vec<6> cb_site = load_vec<6>(cbc, cb_idx);
+            Vec<3> cbp = extract<0,3>(cb_site);
+            Vec<3> cbv = extract<3,6>(cb_site);
+
+            float total = 0.f;
+            for(int ienv = 0; ienv < n_env; ++ienv) {
+                int atom_idx = env_atom_index[ienv];
+                int target_idx = env_target_index[ienv];
+                int layer = layer_index(residue_idx, rotamer_idx, target_idx);
+
+                Vec<3> envp = load_vec<3>(posc, atom_idx);
+                Vec<3> dr = cbp - envp;
+                if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
+                    dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
+                }
+
+                float dist2 = mag2(dr);
+                float dist = sqrtf(std::max(dist2, kMinDistance));
+                if(dist >= cutoff_ang) continue;
+
+                float radial_value = 0.f;
+                float radial_dVdr = 0.f;
+                float angular_value = 0.f;
+                float angular_dVdr = 0.f;
+                float ang1_value = 0.f;
+                float dAng1dcoord = 0.f;
+                Vec<3> displace_unitvec = (1.f / dist) * dr;
+                float angular_coord = -dot(displace_unitvec, cbv);
+                evaluate_component_value_and_deriv(
+                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+                evaluate_component_value_and_deriv(
+                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+
+                total += radial_value + ang1_value * angular_value;
+            }
+
+            output(0, irow) = total / float(group_count);
+        }
+    }
+
+    virtual void propagate_deriv() override {
+        Timer timer(string("d_martini_sc_table_1body"));
+
+        auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
+        if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
+        float protein_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*hybrid_state);
+
+        VecArray posc = pos.output;
+        VecArray pos_sens = pos.sens;
+        VecArray cbc = cb_pos.output;
+        VecArray cb_sens = cb_pos.sens;
+        constexpr float kMinDistance = 1.0e-8f;
+
+        for(int irow = 0; irow < n_row; ++irow) {
+            float row_scale = sens(0, irow);
+            if(row_scale == 0.f) continue;
+
+            int cb_idx = row_residue_index[irow];
+            int residue_idx = row_residue_table_index[irow];
+            int rotamer_idx = row_rotamer_index[irow];
+            int group_count = std::max(1, row_group_count[irow]);
+            row_scale /= float(group_count);
+
+            Vec<6> cb_site = load_vec<6>(cbc, cb_idx);
+            Vec<3> cbp = extract<0,3>(cb_site);
+            Vec<3> cbv = extract<3,6>(cb_site);
+
+            for(int ienv = 0; ienv < n_env; ++ienv) {
+                int atom_idx = env_atom_index[ienv];
+                int target_idx = env_target_index[ienv];
+                int layer = layer_index(residue_idx, rotamer_idx, target_idx);
+
+                Vec<3> envp = load_vec<3>(posc, atom_idx);
+                Vec<3> dr = cbp - envp;
+                if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
+                    dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
+                }
+
+                float dist2 = mag2(dr);
+                float dist = sqrtf(std::max(dist2, kMinDistance));
+                if(dist >= cutoff_ang || dist <= 1.0e-6f) continue;
+
+                float radial_value = 0.f;
+                float radial_dVdr = 0.f;
+                float angular_value = 0.f;
+                float angular_dVdr = 0.f;
+                float ang1_value = 0.f;
+                float dAng1dcoord = 0.f;
+                Vec<3> displace_unitvec = (1.f / dist) * dr;
+                float cos_theta = dot(displace_unitvec, cbv);
+                float angular_coord = -cos_theta;
+                evaluate_component_value_and_deriv(
+                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+                evaluate_component_value_and_deriv(
+                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+
+                float dVdr = radial_dVdr + ang1_value * angular_dVdr;
+                float dVdcoord = dAng1dcoord * angular_value;
+                if(!std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
+
+                Vec<3> point_grad = dVdr * displace_unitvec +
+                                    (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec);
+                Vec<3> vector_grad = -dVdcoord * displace_unitvec;
+                Vec<6> grad_cb_full;
+                store<0,3>(grad_cb_full, row_scale * point_grad);
+                store<3,6>(grad_cb_full, row_scale * vector_grad);
+                Vec<6> grad_cb = protein_feedback_mix * grad_cb_full;
+                Vec<3> grad_env = -row_scale * point_grad;
+
+                update_vec<6>(cb_sens, cb_idx, grad_cb);
+                update_vec<3>(pos_sens, atom_idx, grad_env);
+            }
+        }
+    }
+};
+static RegisterNodeType<MartiniScTableOneBody, 2> martini_sc_table_1body_node("martini_sc_table_1body");
 
 // Bond potential using spline interpolation
 struct DistSpring : public PotentialNode
@@ -3725,6 +4295,12 @@ struct MartiniNodeRegistrar {
             add_node_creation_function("martini_sc_table_potential", [](hid_t grp, const ArgList& args) {
                 check_arguments_length(args,2);
                 return new MartiniScTablePotential(grp, *args[0], *args[1]);
+            });
+        }
+        if(m.find("martini_sc_table_1body") == m.end()) {
+            add_node_creation_function("martini_sc_table_1body", [](hid_t grp, const ArgList& args) {
+                check_arguments_length(args,2);
+                return new MartiniScTableOneBody(grp, *args[0], *args[1]);
             });
         }
         if(m.find("dist_spring") == m.end()) {

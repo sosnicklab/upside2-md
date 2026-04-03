@@ -1,28 +1,33 @@
 # SC-training
 
-This folder contains the first training workflow for the new dry-MARTINI sidechain-type to dry-MARTINI particle-type table.
+This folder contains the dry-MARTINI sidechain-type to dry-MARTINI particle-type training workflow used to build the stage-7 `martini.h5` sidechain library.
 
 ## Scope
 
 - The workflow is independent from the legacy SC back-mapping / rotamer-placement production path.
 - It derives per-residue/per-target training curves from dry-MARTINI forcefield inputs already present in this repository.
 - It can run locally or stage/submit Slurm array jobs.
-- By default it builds the complete table over all `38` dry-MARTINI particle types bundled in `SC-training/data/dry_martini_v2.1.itp`, giving `18 x 38 = 684` residue-target tasks for the current non-empty canonical sidechains.
+- By default it builds the complete table over all `38` dry-MARTINI particle types from `example/16.MARTINI/ff_dry/dry_martini_v2.1.itp`, giving `18 x 38 = 684` residue-target tasks for the current non-empty canonical sidechains.
 - The canonical benchmark workflow target is `example/16.MARTINI/run_sim_1rkl.sh`.
-- The training path is now self-contained inside `SC-training/`:
-  - bundled sidechain residue definitions live in `SC-training/data/martini22_sidechains.json`;
-  - bundled dry-MARTINI nonbond parameters live in `SC-training/data/dry_martini_v2.1.itp`.
+- The default geometry/data sources are:
+  - dry-MARTINI sidechain bead types from `example/16.MARTINI/martinize.py` (`martini22`);
+  - dry-MARTINI nonbond parameters from `example/16.MARTINI/ff_dry/dry_martini_v2.1.itp`;
+  - original Upside residue-local sidechain geometry from `parameters/ff_2.1/sidechain.h5`.
 
-## Current First-Pass Assumption
+## Current Contract
 
-The first workflow pass uses an explicit simplifying assumption:
+The current workflow follows the user-specified one-sided Upside orientation form:
 
 - each residue sidechain is represented as the set of dry-MARTINI bead types defined by `example/16.MARTINI/martinize.py` for `martini22`;
-- the workflow places the target dry-MARTINI particle on spherical shells around the effective sidechain center and records those sampled positions explicitly;
-- the energy assigned to each sampled position is still the sum of direct dry-MARTINI bead-target LJ+Coulomb interactions over a shared radial grid;
-- sidechain internal geometry is not yet reconstructed in this first pass, so the directional samples remain isotropic within a shell and the workflow is best treated as a reproducible table-building baseline rather than the final scientific model.
+- target dry-MARTINI particles are sampled in the original residue-local `CB` frame recovered from the Upside sidechain library;
+- the angular coordinate is the one-sided Upside sidechain vector term `-n_1 . n_12`, where:
+  - `n_1` is the backbone-defined canonical `CA -> CB` unit vector shared with Upside runtime;
+  - `n_12` is the sampled `CB ->` dry-MARTINI target direction;
+- the assembled forcefield is stored in factorized form:
+  - `V_hybrid(r,theta) = V_radial(r) + ang_1(-n_1 . n_12) * V_angular(r)`;
+- task JSON outputs retain the sampled directional surface and the fitted factorized form so fit quality can be audited.
 
-That assumption is written into the manifest and assembled outputs so it is not hidden.
+This contract is written into the manifest and assembled outputs so training and runtime use the same orientation model.
 
 ## Unit Contract
 
