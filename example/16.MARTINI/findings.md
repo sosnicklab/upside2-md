@@ -1,5 +1,41 @@
 # Findings
 
+## 2026-04-03 (Absolute MASS_FF_FILE Join Bug)
+- After moving the dry-MARTINI FF to `parameters/dryMARTINI`, `MASS_FF_FILE` now defaults to an absolute path.
+- `example/16.MARTINI/run_sim_1rkl.sh::prepare_protein_inputs()` was still building the validation path as `"${SCRIPT_DIR}/${MASS_FF_FILE}"`, which corrupts absolute inputs into paths like:
+  - `example/16.MARTINI//Users/.../parameters/dryMARTINI/dry_martini_v2.1.itp`
+- The minimal correct fix is to resolve `MASS_FF_FILE` directly through absolute-path normalization and stop prefixing `SCRIPT_DIR`.
+
+## 2026-04-03 (Shared Bilayer Template Location)
+- The live MARTINI example only needs one checked-in example-local structure input now: `example/16.MARTINI/pdb/1rkl.pdb`.
+- The bilayer template is better treated as shared dry-MARTINI data, not as an example-local input, so its stable location is `parameters/dryMARTINI/DOPC.pdb`.
+- The three active workflow references that needed updating for this move were:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `py/martini_prepare_system.py`
+  - `py/martini_prepare_system_lib.py`
+
+## 2026-04-03 (Required vs Stale 1RKL MARTINI Input Files)
+- The default live MARTINI example workflow does not consume checked-in `pdb/1rkl.MARTINI.pdb` or `pdb/1rkl_proa.itp`.
+- Instead, with `MARTINIZE_ENABLE=1` (the default), [run_sim_1rkl.sh](/Users/yinhan/Documents/upside2-md-martini/example/16.MARTINI/run_sim_1rkl.sh) uses `pdb/${PDB_ID}.pdb` and generates the protein CG PDB plus topology/ITP under `${RUN_DIR}/martinize/`.
+- The checked-in `pdb/1rkl_hybrid.MARTINI.pdb` and `pdb/1rkl_hybrid_proa.itp` are also stale for the live workflow; runtime hybrid files are built under `${RUN_DIR}/hybrid_prep/`, not loaded from `example/16.MARTINI/pdb/`.
+- `MARTINIZE_ENABLE=0` still supports a prebuilt CG/ITP path, but those inputs should now be supplied explicitly by the user rather than relying on checked-in default `1rkl` files.
+
+## 2026-04-03 (Move dry-MARTINI FF to parameters/)
+- The live MARTINI example workflow only needed three active dry-MARTINI force-field references updated:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `py/martini_prepare_system.py`
+  - `py/martini_prepare_system_lib.py`
+- The stable shared location for the dry-MARTINI `.itp` files is `parameters/dryMARTINI`.
+- For Python helpers, defaulting `UPSIDE_MARTINI_FF_DIR` to an absolute repo-anchored path is safer than relying on a relative `ff_dry` path, because those scripts now live under `py/` rather than under the example directory.
+
+## 2026-04-03 (MARTINI Helper Relocation to py/)
+- Moving the MARTINI helper scripts from `example/16.MARTINI` into top-level `py/` requires explicit path anchoring back to the example directory; otherwise helper defaults start resolving `pdb/` and `ff_dry/` under `py/`, which is wrong.
+- The stable split is:
+  - keep only `run.py` in `example/16.MARTINI`,
+  - move workflow helpers to `py/` with `martini_`-prefixed names,
+  - point `run_sim_1rkl.sh` at those renamed scripts through explicit path variables.
+- The moved prep and extraction scripts now resolve workflow assets against `example/16.MARTINI`, while the shell workflow still runs from the example directory.
+
 ## 2026-04-03 (NPT Box-Dimension Debug Output Cleanup)
 - The NPT box-dimension debug output was emitted from `../../src/box.cpp`, not `main.cpp`.
 - Two box-specific prints existed:

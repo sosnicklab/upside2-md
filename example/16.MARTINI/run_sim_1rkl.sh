@@ -5,6 +5,7 @@ source "${SCRIPT_DIR}/../../source.sh"
 source "${SCRIPT_DIR}/../../.venv/bin/activate"
 set -euo pipefail
 cd "${SCRIPT_DIR}"
+PYTHON_WORKFLOW_DIR="${PYTHON_WORKFLOW_DIR:-${SCRIPT_DIR}/../../py}"
 
 # Hybrid 1RKL workflow:
 # 0) Hybrid preparation (packed MARTINI + hybrid mapping export)
@@ -40,10 +41,10 @@ LOG_DIR="${LOG_DIR:-${RUN_DIR}/logs}"
 HYBRID_PREP_DIR="${HYBRID_PREP_DIR:-${RUN_DIR}/hybrid_prep}"
 
 PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/${PDB_ID}.pdb}"
-PROTEIN_CG_PDB="${PROTEIN_CG_PDB:-pdb/${PDB_ID}.MARTINI.pdb}"
-PROTEIN_ITP="${PROTEIN_ITP:-pdb/${PDB_ID}_proa.itp}"
-BILAYER_PDB="${BILAYER_PDB:-pdb/bilayer.MARTINI.pdb}"
-UNIVERSAL_PREP_SCRIPT="${UNIVERSAL_PREP_SCRIPT:-${SCRIPT_DIR}/prepare_system.py}"
+PROTEIN_CG_PDB="${PROTEIN_CG_PDB:-}"
+PROTEIN_ITP="${PROTEIN_ITP:-}"
+BILAYER_PDB="${BILAYER_PDB:-${UPSIDE_HOME}/parameters/dryMARTINI/DOPC.pdb}"
+UNIVERSAL_PREP_SCRIPT="${UNIVERSAL_PREP_SCRIPT:-${PYTHON_WORKFLOW_DIR}/martini_prepare_system.py}"
 UNIVERSAL_PREP_MODE="${UNIVERSAL_PREP_MODE:-both}"
 
 RUNTIME_PDB_FILE="${RUNTIME_PDB_FILE:-${HYBRID_PREP_DIR}/${RUNTIME_PDB_ID}.MARTINI.pdb}"
@@ -57,7 +58,8 @@ HYBRID_PREPROD_ACTIVATION_STAGE="${HYBRID_PREPROD_ACTIVATION_STAGE:-__hybrid_dis
 MARTINIZE_ENABLE="${MARTINIZE_ENABLE:-1}"
 MARTINIZE_FF="${MARTINIZE_FF:-martini22}"
 MARTINIZE_MOLNAME="${MARTINIZE_MOLNAME:-PROA}"
-MARTINIZE_SCRIPT="${MARTINIZE_SCRIPT:-${SCRIPT_DIR}/martinize.py}"
+MARTINIZE_SCRIPT="${MARTINIZE_SCRIPT:-${PYTHON_WORKFLOW_DIR}/martini_martinize.py}"
+EXTRACT_VTF_SCRIPT="${EXTRACT_VTF_SCRIPT:-${PYTHON_WORKFLOW_DIR}/martini_extract_vtf.py}"
 
 PREPARED_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.prepared.up"
 STAGE_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.up"
@@ -144,7 +146,7 @@ PROD_70_BAROSTAT_TYPE="${PROD_70_BAROSTAT_TYPE:-1}"
 export UPSIDE_EWALD_ENABLE="${UPSIDE_EWALD_ENABLE:-1}"
 export UPSIDE_EWALD_ALPHA="${UPSIDE_EWALD_ALPHA:-0.2}"
 export UPSIDE_EWALD_KMAX="${UPSIDE_EWALD_KMAX:-5}"
-export UPSIDE_MARTINI_FF_DIR="${UPSIDE_MARTINI_FF_DIR:-ff_dry}"
+export UPSIDE_MARTINI_FF_DIR="${UPSIDE_MARTINI_FF_DIR:-${UPSIDE_HOME}/parameters/dryMARTINI}"
 MASS_FF_FILE="${MASS_FF_FILE:-${UPSIDE_MARTINI_FF_DIR}/dry_martini_v2.1.itp}"
 SC_MARTINI_LIBRARY="${SC_MARTINI_LIBRARY:-${UPSIDE_HOME}/parameters/ff_2.1/martini.h5}"
 SC_MARTINI_TABLE_JSON_DEFAULT="${SC_MARTINI_TABLE_JSON_DEFAULT:-${UPSIDE_HOME}/SC-training/runs/default/results/assembled/sc_table.json}"
@@ -212,11 +214,19 @@ if [ ! -f "${UPSIDE_REFERENCE_STATE_RAMA}" ]; then
 fi
 if [ "${MARTINIZE_ENABLE}" = "1" ]; then
     if [ ! -f "${MARTINIZE_SCRIPT}" ]; then
-        echo "ERROR: martinize.py script not found: ${MARTINIZE_SCRIPT}"
+        echo "ERROR: MARTINI workflow martinize script not found: ${MARTINIZE_SCRIPT}"
         exit 1
     fi
 fi
 if [ "${MARTINIZE_ENABLE}" = "0" ]; then
+    if [ -z "${PROTEIN_CG_PDB}" ]; then
+        echo "ERROR: MARTINIZE_ENABLE=0 requires PROTEIN_CG_PDB to be set explicitly"
+        exit 1
+    fi
+    if [ -z "${PROTEIN_ITP}" ]; then
+        echo "ERROR: MARTINIZE_ENABLE=0 requires PROTEIN_ITP to be set explicitly"
+        exit 1
+    fi
     if [ ! -f "${PROTEIN_CG_PDB}" ]; then
         echo "ERROR: protein CG PDB not found: ${PROTEIN_CG_PDB}"
         exit 1
@@ -228,6 +238,10 @@ if [ "${MARTINIZE_ENABLE}" = "0" ]; then
 fi
 if [ ! -f "${UNIVERSAL_PREP_SCRIPT}" ]; then
     echo "ERROR: universal prep script not found: ${UNIVERSAL_PREP_SCRIPT}"
+    exit 1
+fi
+if [ ! -f "${EXTRACT_VTF_SCRIPT}" ]; then
+    echo "ERROR: MARTINI VTF extractor script not found: ${EXTRACT_VTF_SCRIPT}"
     exit 1
 fi
 
@@ -337,10 +351,10 @@ PY
     workdir="$(dirname "$top_abs")"
     mkdir -p "$workdir"
 
-    echo "Running martinize.py command:"
+    echo "Running MARTINI martinize command:"
     echo "  python3 ${script_abs} -f ${input_abs} -x ${cg_abs} -o ${top_abs} -ff ${MARTINIZE_FF} -name ${MARTINIZE_MOLNAME}"
     if ! (cd "$workdir" && python3 "$script_abs" -f "$input_abs" -x "$cg_abs" -o "$top_abs" -ff "$MARTINIZE_FF" -name "$MARTINIZE_MOLNAME"); then
-        echo "ERROR: martinize.py execution failed."
+        echo "ERROR: MARTINI martinize execution failed."
         exit 1
     fi
 }
@@ -444,7 +458,7 @@ if missing:
         f"  ITP: {itp_file}\n"
         f"  FF:  {ff_file}\n"
         f"  Missing types: {missing}\n"
-        "Use MARTINI2-compatible martinize.py settings (e.g., MARTINIZE_FF=martini22)."
+        "Use MARTINI2-compatible MARTINI martinize settings (e.g., MARTINIZE_FF=martini22)."
     )
 
 print(f"Protein ITP mass compatibility OK: {itp_file}")
@@ -452,7 +466,12 @@ PY
 }
 
 prepare_protein_inputs() {
-    local mass_ff_path="${SCRIPT_DIR}/${MASS_FF_FILE}"
+    local mass_ff_path
+    mass_ff_path="$(python3 - "$MASS_FF_FILE" << 'PY'
+import os, sys
+print(os.path.abspath(os.path.expanduser(sys.argv[1])))
+PY
+)"
     if [ "${MARTINIZE_ENABLE}" = "1" ]; then
         local martinize_dir="${RUN_DIR}/martinize"
         mkdir -p "${martinize_dir}"
@@ -461,18 +480,18 @@ prepare_protein_inputs() {
 
         run_martinize "${PROTEIN_AA_PDB}" "${cg_pdb}" "${top_file}"
         if [ ! -f "${cg_pdb}" ]; then
-            echo "ERROR: martinize.py did not produce CG PDB: ${cg_pdb}"
+            echo "ERROR: MARTINI martinize did not produce CG PDB: ${cg_pdb}"
             exit 1
         fi
         if [ ! -f "${top_file}" ]; then
-            echo "ERROR: martinize.py did not produce topology file: ${top_file}"
+            echo "ERROR: MARTINI martinize did not produce topology file: ${top_file}"
             exit 1
         fi
 
         local generated_itp
         generated_itp="$(resolve_itp_from_top "${top_file}")"
         if [ -z "${generated_itp}" ] || [ ! -f "${generated_itp}" ]; then
-            echo "ERROR: unable to resolve protein ITP from martinize.py output top: ${top_file}"
+            echo "ERROR: unable to resolve protein ITP from MARTINI martinize output top: ${top_file}"
             exit 1
         fi
 
@@ -1255,13 +1274,14 @@ extract_stage_vtf() {
     echo "=== Stage ${stage_label}: VTF Extraction (mode ${mode}) ==="
     echo "Input:  $stage_file"
     echo "Output: $vtf_file"
-    python3 extract_martini_vtf.py "$stage_file" "$vtf_file" "$stage_file" "$RUNTIME_PDB_ID" --mode "$mode"
+    python3 "${EXTRACT_VTF_SCRIPT}" "$stage_file" "$vtf_file" "$stage_file" "$RUNTIME_PDB_ID" --mode "$mode"
 }
 
 echo "=== Hybrid 1RKL Dry MARTINI Workflow ==="
 echo "Protein ID: $PDB_ID"
 echo "Runtime PDB ID: $RUNTIME_PDB_ID"
 echo "Universal prep: ${UNIVERSAL_PREP_SCRIPT} (mode=${UNIVERSAL_PREP_MODE})"
+echo "VTF extractor: ${EXTRACT_VTF_SCRIPT}"
 echo "Hybrid prep: $HYBRID_PREP_DIR"
 echo "Simulation stages: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"
 echo

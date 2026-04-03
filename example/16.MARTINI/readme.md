@@ -9,6 +9,7 @@ source ../../source.sh
 python run.py
 
 The script `run.py` is a thin wrapper around `run_sim_1rkl.sh`.  Edit the settings near the top of `run.py` if you want to change the PDB id, run directory, salt concentration, or stage lengths.
+The MARTINI workflow helper scripts used by `run_sim_1rkl.sh` live under `../../py/`.
 
 You can also run the shell workflow directly:
 

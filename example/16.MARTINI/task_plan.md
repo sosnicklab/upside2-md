@@ -1,28 +1,28 @@
 # Task Plan
 
 ## Project Goal
-- Remove the NPT box-dimension debug output from the C++ runtime so simulation logs no longer emit messages such as:
-  - `[NPT] t 0.500 box 111.93 111.93 110.20`
+- Fix the MARTINI workflow mass force-field path handling so an absolute `MASS_FF_FILE` does not get prefixed with `example/16.MARTINI`.
 
 ## Architecture & Key Decisions
-- Keep the NPT barostat behavior unchanged.
-- Remove only the box-dimension debug `printf` calls in `src/box.cpp`.
-- Keep the non-finite-pressure warning path, since that is still useful runtime diagnostics and is not just box-dimension spam.
-- Do not change the HDF5/debug wiring unless it becomes dead or required for correctness; this cleanup should be minimal-impact.
+- Root cause is in `prepare_protein_inputs()` inside `run_sim_1rkl.sh`:
+  - `MASS_FF_FILE` now defaults to an absolute path under `${UPSIDE_HOME}/parameters/dryMARTINI`,
+  - but the script was still constructing `mass_ff_path` as `"${SCRIPT_DIR}/${MASS_FF_FILE}"`,
+  - producing an invalid doubled path for absolute inputs.
+- Fix only the shell path resolution:
+  - resolve `MASS_FF_FILE` through `abspath(expanduser(...))`,
+  - do not change the MARTINI workflow contract otherwise.
 
 ## Execution Phases
-- [x] Phase 1: Locate all NPT box-dimension debug prints in the C++ runtime.
-- [x] Phase 2: Remove the box-dimension debug output with minimal source changes.
-- [x] Phase 3: Rebuild and verify the cleanup.
+- [x] Phase 1: Audit `MASS_FF_FILE` path handling in the shell workflow.
+- [x] Phase 2: Fix absolute-vs-relative mass force-field path resolution.
+- [x] Phase 3: Verify the updated script behavior and syntax.
 
 ## Known Errors / Blockers
 - No blocker identified.
 
 ## Review
-- Removed the two NPT box-dimension debug messages from `src/box.cpp`:
-  - the barostat registration message no longer prints the initial box dimensions,
-  - the per-update `[NPT] t ... box ...` message was removed entirely.
-- Kept the non-finite-pressure warning path unchanged.
+- Fixed [run_sim_1rkl.sh](/Users/yinhan/Documents/upside2-md-martini/example/16.MARTINI/run_sim_1rkl.sh) so `prepare_protein_inputs()` resolves `MASS_FF_FILE` safely whether it is absolute or relative.
+- Root cause was the old `"${SCRIPT_DIR}/${MASS_FF_FILE}"` join against an already-absolute default path.
 - Verification passed:
-  - `rg -n "\\[NPT\\].*box|box %.2f %.2f %.2f|box %.2f x %.2f x %.2f" src/box.cpp src/main.cpp`
-  - `source .venv/bin/activate && source source.sh && cmake --build obj -j4`
+  - `python3 -c 'import os; p=\"/Users/yinhan/Documents/upside2-md-martini/parameters/dryMARTINI/dry_martini_v2.1.itp\"; print(os.path.abspath(os.path.expanduser(p)))'`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`

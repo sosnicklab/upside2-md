@@ -5,9 +5,14 @@ import os
 import re
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import h5py
 import numpy as np
+
+PY_DIR = Path(__file__).resolve().parent
+REPO_ROOT = PY_DIR.parent
+WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 
 
 def decode_str_array(dset):
@@ -554,7 +559,7 @@ def main():
     if fmt not in ("vtf", "pdb"):
         raise ValueError("Output file must be .vtf or .pdb")
 
-    pdb_file = f"pdb/{pdb_id}.MARTINI.pdb"
+    pdb_file = str(WORKFLOW_DIR / "pdb" / f"{pdb_id}.MARTINI.pdb")
 
     print(f"Extracting trajectory from: {input_file}")
     print(f"Structure source: {structure_file}")

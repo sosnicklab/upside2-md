@@ -1,5 +1,97 @@
 # Progress Log
 
+## 2026-04-03 (Fix Absolute `MASS_FF_FILE` Handling)
+- Re-read `example/16.MARTINI/task_plan.md` and audited the user-reported mass FF path failure in `example/16.MARTINI/run_sim_1rkl.sh`.
+- Confirmed root cause:
+  - `MASS_FF_FILE` now defaults to an absolute path under `parameters/dryMARTINI`,
+  - `prepare_protein_inputs()` still prefixed it with `${SCRIPT_DIR}/`,
+  - producing an invalid doubled path.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
+  - `mass_ff_path` is now resolved with `python3` using `abspath(expanduser(...))` directly from `MASS_FF_FILE`,
+  - no `SCRIPT_DIR` prefix is applied.
+- Verification:
+  - `python3 -c 'import os; p=\"/Users/yinhan/Documents/upside2-md-martini/parameters/dryMARTINI/dry_martini_v2.1.itp\"; print(os.path.abspath(os.path.expanduser(p)))'` -> correct absolute path returned unchanged.
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` -> passed.
+
+## 2026-04-03 (Move Bilayer Template to `parameters/dryMARTINI/DOPC.pdb`)
+- Re-read `example/16.MARTINI/task_plan.md` and audited live `bilayer.MARTINI.pdb` references in the MARTINI workflow.
+- Updated workflow defaults:
+  - `example/16.MARTINI/run_sim_1rkl.sh` now defaults `BILAYER_PDB` to `${UPSIDE_HOME}/parameters/dryMARTINI/DOPC.pdb`.
+  - `py/martini_prepare_system.py` now defaults `--bilayer-pdb` to the repo-anchored `parameters/dryMARTINI/DOPC.pdb`.
+  - `py/martini_prepare_system_lib.py` now defaults `--bilayer-pdb` to the repo-anchored `parameters/dryMARTINI/DOPC.pdb`.
+- Moved the bilayer template:
+  - `example/16.MARTINI/pdb/bilayer.MARTINI.pdb` -> `../../parameters/dryMARTINI/DOPC.pdb`
+- Post-move layout:
+  - `example/16.MARTINI/pdb` now contains only `1rkl.pdb`.
+  - `parameters/dryMARTINI` now contains `DOPC.pdb` plus the three dry-MARTINI `.itp` files.
+- Verification:
+  - `find example/16.MARTINI/pdb -maxdepth 1 -type f | sort` -> only `1rkl.pdb`.
+  - `find parameters/dryMARTINI -maxdepth 1 -type f | sort` -> `DOPC.pdb` and the three `.itp` files present.
+  - `rg -n "bilayer\.MARTINI\.pdb|BILAYER_PDB|DOPC\.pdb" example/16.MARTINI/run_sim_1rkl.sh py/martini_prepare_system.py py/martini_prepare_system_lib.py` -> only the new shared-path references remain.
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/run.py py/martini_prepare_system.py py/martini_prepare_system_lib.py` -> passed.
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` -> passed.
+
+## 2026-04-03 (Remove Stale Checked-In 1RKL MARTINI Inputs)
+- Re-read `example/16.MARTINI/task_plan.md` and audited the live file contract in `example/16.MARTINI/run_sim_1rkl.sh`.
+- Confirmed the default path is:
+  - required AA input: `pdb/1rkl.pdb`,
+  - required bilayer template: `pdb/bilayer.MARTINI.pdb`,
+  - generated protein CG PDB and ITP: `${RUN_DIR}/martinize/${RUNTIME_PDB_ID}.MARTINI.pdb` and the resolved martinize-generated ITP,
+  - generated runtime hybrid PDB and ITP: `${RUN_DIR}/hybrid_prep/...`.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
+  - `PROTEIN_CG_PDB` and `PROTEIN_ITP` no longer default to checked-in `pdb/1rkl.*` files,
+  - `MARTINIZE_ENABLE=0` now requires those override paths to be provided explicitly.
+- Removed stale checked-in files from `example/16.MARTINI/pdb`:
+  - `1rkl_hybrid_proa.itp`
+  - `1rkl_hybrid.MARTINI.pdb`
+  - `1rkl_proa.itp`
+  - `1rkl.AA.pdb`
+  - `1rkl.MARTINI.pdb`
+- Verification:
+  - `find example/16.MARTINI/pdb -maxdepth 1 -type f | sort` -> remaining relevant 1RKL inputs are only `1rkl.pdb` and `bilayer.MARTINI.pdb`.
+  - `rg -n "1rkl_hybrid_proa\.itp|1rkl_hybrid\.MARTINI\.pdb|1rkl_proa\.itp|1rkl\.AA\.pdb|1rkl\.MARTINI\.pdb" example/16.MARTINI py` -> no live-code references; only tracker markdown mentions remain.
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` -> passed.
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile example/16.MARTINI/run.py py/martini_prepare_system.py py/martini_prepare_system_lib.py` -> passed.
+
+## 2026-04-03 (Move dry-MARTINI FF to `parameters/dryMARTINI`)
+- Re-read `example/16.MARTINI/task_plan.md` and audited active `ff_dry` usage in the MARTINI workflow.
+- Updated workflow defaults:
+  - `example/16.MARTINI/run_sim_1rkl.sh` now defaults `UPSIDE_MARTINI_FF_DIR` to `${UPSIDE_HOME}/parameters/dryMARTINI`.
+  - `py/martini_prepare_system.py` now defaults its dry-MARTINI mass-table lookup to the repo-anchored `parameters/dryMARTINI`.
+  - `py/martini_prepare_system_lib.py` now defaults its dry-MARTINI force-field directory lookup to the repo-anchored `parameters/dryMARTINI`.
+- Moved the dry-MARTINI files:
+  - `example/16.MARTINI/ff_dry/dry_martini_v2.1.itp` -> `../../parameters/dryMARTINI/dry_martini_v2.1.itp`
+  - `example/16.MARTINI/ff_dry/dry_martini_v2.1_ions.itp` -> `../../parameters/dryMARTINI/dry_martini_v2.1_ions.itp`
+  - `example/16.MARTINI/ff_dry/dry_martini_v2.1_lipids.itp` -> `../../parameters/dryMARTINI/dry_martini_v2.1_lipids.itp`
+- Removed the now-empty `example/16.MARTINI/ff_dry` directory.
+- Verification:
+  - `find parameters/dryMARTINI -maxdepth 2 -type f | sort` -> all three `.itp` files present.
+  - `test -d example/16.MARTINI/ff_dry; echo $?` -> `1` (directory gone).
+  - `rg -n "UPSIDE_MARTINI_FF_DIR|dryMARTINI|ff_dry|dry_martini_v2\.1\.itp" example/16.MARTINI/run_sim_1rkl.sh py/martini_prepare_system.py py/martini_prepare_system_lib.py` -> only the new shared-path references remain.
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py example/16.MARTINI/run.py` -> passed.
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` -> passed.
+
+## 2026-04-03 (Move MARTINI Workflow Helpers to `py/`)
+- Re-read `example/16.MARTINI/task_plan.md` and audited the current Python layout plus helper-script references in `run_sim_1rkl.sh`.
+- Moved and renamed the MARTINI helper scripts:
+  - `example/16.MARTINI/prepare_system.py` -> `../../py/martini_prepare_system.py`
+  - `example/16.MARTINI/prepare_system_lib.py` -> `../../py/martini_prepare_system_lib.py`
+  - `example/16.MARTINI/extract_martini_vtf.py` -> `../../py/martini_extract_vtf.py`
+  - `example/16.MARTINI/martinize.py` -> `../../py/martini_martinize.py`
+- Updated the moved Python helpers so their default asset lookups stay anchored to `example/16.MARTINI/pdb` and `example/16.MARTINI/ff_dry` after relocation.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
+  - added `PYTHON_WORKFLOW_DIR`,
+  - rewired `UNIVERSAL_PREP_SCRIPT`, `MARTINIZE_SCRIPT`, and the VTF extraction call to the renamed `py/` helpers,
+  - added validation for the renamed VTF extractor path,
+  - cleaned user-facing log/error text to match the new helper naming.
+- Updated `example/16.MARTINI/readme.md` to note that the helper scripts now live under `../../py/`.
+- Verification:
+  - `find example/16.MARTINI -maxdepth 1 -name '*.py' | sort` -> only `run.py`.
+  - `find py -maxdepth 1 -type f | sort | rg 'martini_(prepare_system|prepare_system_lib|extract_vtf|martinize)\.py$'` -> all four renamed helpers present.
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py py/martini_martinize.py example/16.MARTINI/run.py` -> passed.
+  - `source .venv/bin/activate && source source.sh && python3 py/martini_prepare_system.py --help` -> passed.
+  - `source .venv/bin/activate && source source.sh && bash -n example/16.MARTINI/run_sim_1rkl.sh` -> passed.
+
 ## 2026-04-03
 - Re-read `task_plan.md` and audited NPT logging sites in `../../src/box.cpp`.
 - Confirmed the box-dimension output came from two `printf` calls:

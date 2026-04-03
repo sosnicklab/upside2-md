@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from prepare_system_lib import (
+from martini_prepare_system_lib import (
     center_of_mass,
     build_sc_martini_h5,
     collect_bb_map,
@@ -36,7 +36,9 @@ from prepare_system_lib import (
 )
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
+PY_DIR = Path(__file__).resolve().parent
+REPO_ROOT = PY_DIR.parent
+WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 
 
 def parse_prepare_args(argv=None):
@@ -55,7 +57,7 @@ def parse_prepare_args(argv=None):
     parser.add_argument("--stage", default=None, help="stage name for UPSIDE input conversion")
     parser.add_argument("--run-dir", default="outputs/martini_test")
 
-    parser.add_argument("--bilayer-pdb", default="pdb/bilayer.MARTINI.pdb")
+    parser.add_argument("--bilayer-pdb", default=str(REPO_ROOT / "parameters" / "dryMARTINI" / "DOPC.pdb"))
     parser.add_argument("--protein-cg-pdb", default=None)
     parser.add_argument("--protein-aa-pdb", default=None)
     parser.add_argument("--protein-itp", default=None)
@@ -97,12 +99,12 @@ def runtime_paths(args):
     runtime_pdb = (
         Path(args.runtime_pdb_output).expanduser().resolve()
         if args.runtime_pdb_output
-        else (SCRIPT_DIR / "pdb" / f"{args.pdb_id}.MARTINI.pdb")
+        else (WORKFLOW_DIR / "pdb" / f"{args.pdb_id}.MARTINI.pdb")
     )
     runtime_itp = (
         Path(args.runtime_itp_output).expanduser().resolve()
         if args.runtime_itp_output
-        else (SCRIPT_DIR / "pdb" / f"{args.pdb_id}_proa.itp")
+        else (WORKFLOW_DIR / "pdb" / f"{args.pdb_id}_proa.itp")
     )
     return runtime_pdb, runtime_itp
 
@@ -166,8 +168,14 @@ def parse_ff_mass_atom_types(ff_file: Path):
 
 
 def assert_protein_itp_mass_compatibility(runtime_itp: Path):
-    ff_dir = os.environ.get("UPSIDE_MARTINI_FF_DIR", "ff_dry")
-    ff_file = SCRIPT_DIR / ff_dir / "dry_martini_v2.1.itp"
+    ff_dir = Path(
+        os.environ.get("UPSIDE_MARTINI_FF_DIR", str(REPO_ROOT / "parameters" / "dryMARTINI"))
+    ).expanduser()
+    if not ff_dir.is_absolute():
+        ff_dir = (REPO_ROOT / ff_dir).resolve()
+    else:
+        ff_dir = ff_dir.resolve()
+    ff_file = ff_dir / "dry_martini_v2.1.itp"
     if not ff_file.exists():
         raise FileNotFoundError(
             f"Dry MARTINI mass table not found: {ff_file}. "

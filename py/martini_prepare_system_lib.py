@@ -22,6 +22,10 @@ import h5py
 import numpy as np
 import tables as tb
 
+PY_DIR = Path(__file__).resolve().parent
+REPO_ROOT = PY_DIR.parent
+WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
+
 NA_AVOGADRO = 6.02214076e23
 BB_COMPONENT_NAMES = ("N", "CA", "C", "O")
 BB_COMPONENT_MASSES = (14.0, 12.0, 12.0, 16.0)
@@ -91,8 +95,8 @@ def parse_args() -> Config:
             "mapping artifacts for Upside + dry MARTINI integration."
         )
     )
-    parser.add_argument("--protein-pdb", default="pdb/1rkl.pdb")
-    parser.add_argument("--bilayer-pdb", default="pdb/bilayer.MARTINI.pdb")
+    parser.add_argument("--protein-pdb", default=str(WORKFLOW_DIR / "pdb" / "1rkl.pdb"))
+    parser.add_argument("--bilayer-pdb", default=str(REPO_ROOT / "parameters" / "dryMARTINI" / "DOPC.pdb"))
     parser.add_argument("--output-dir", default="outputs/hybrid_1rkl")
     parser.add_argument(
         "--protein-cg-pdb",
@@ -103,7 +107,7 @@ def parse_args() -> Config:
         "--protein-itp",
         default=None,
         help=(
-            "Optional MARTINI protein ITP from martinize.py. If provided, sidechain-to-backbone "
+            "Optional MARTINI protein ITP from martini_martinize.py. If provided, sidechain-to-backbone "
             "force-transfer mapping is derived from bonded topology and force constants."
         ),
     )
@@ -1683,11 +1687,13 @@ def parse_itp_file(itp_file, target_molecule=None, preprocessor_defines=None):
 def read_martini_masses(ff_file):
     """Read atom type masses from MARTINI force field file"""
     masses = {}
-    # Get script directory to ensure correct path resolution
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    ff_file_path = os.path.join(SCRIPT_DIR, ff_file)
+    ff_file_path = Path(ff_file).expanduser()
+    if not ff_file_path.is_absolute():
+        ff_file_path = (WORKFLOW_DIR / ff_file_path).resolve()
+    else:
+        ff_file_path = ff_file_path.resolve()
     
-    if not os.path.exists(ff_file_path):
+    if not ff_file_path.exists():
         raise ValueError(f"FATAL ERROR: Force field file '{ff_file}' not found.\n"
                         f"  Full path: {ff_file_path}\n"
                         f"  This file is required for atom type masses.\n"
@@ -1695,7 +1701,7 @@ def read_martini_masses(ff_file):
                         f"  Aborting to prevent incorrect simulation results.")
     
     in_atomtypes = False
-    with open(ff_file_path, 'r') as f:
+    with ff_file_path.open('r') as f:
         for line in f:
             line = line.strip()
             if line.startswith('[ atomtypes ]'):
@@ -1796,15 +1802,21 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     print(f"PDB ID: {pdb_id}")
     print(f"Output directory: {run_dir}")
     
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    workflow_dir = str(WORKFLOW_DIR)
     # Read dry MARTINI parameter files
     print("\n=== Reading Dry MARTINI Parameters ===")
-    ff_dir = os.environ.get('UPSIDE_MARTINI_FF_DIR', 'ff_dry')
-    ff_path = os.path.join(SCRIPT_DIR, ff_dir)
+    ff_dir = Path(
+        os.environ.get('UPSIDE_MARTINI_FF_DIR', str(REPO_ROOT / "parameters" / "dryMARTINI"))
+    ).expanduser()
+    if not ff_dir.is_absolute():
+        ff_dir = (REPO_ROOT / ff_dir).resolve()
+    else:
+        ff_dir = ff_dir.resolve()
+    ff_path = str(ff_dir)
 
     if not os.path.isdir(ff_path):
         raise ValueError(f"FATAL ERROR: Force-field directory '{ff_path}' not found.\n"
-                        f"  Set UPSIDE_MARTINI_FF_DIR to a valid directory under {SCRIPT_DIR}.")
+                        "  Set UPSIDE_MARTINI_FF_DIR to a valid dry-MARTINI force-field directory.")
 
     ff_files = sorted(os.listdir(ff_path))
     print(f"Using force-field directory: {ff_path}")
@@ -1830,7 +1842,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     
     # Determine system type and load appropriate topology
     # Check if this is a protein system by looking for protein ITP file
-    protein_itp = runtime_protein_itp_path(SCRIPT_DIR, pdb_id)
+    protein_itp = runtime_protein_itp_path(workflow_dir, pdb_id)
     has_protein = os.path.exists(protein_itp)
     
     # Check if this is a mixed protein-lipid system by looking for both protein and lipid residues
@@ -1992,7 +2004,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     
     # Read PDB file
     if strict_from_martini_pdb or include_protein:
-        input_pdb_file = runtime_input_pdb_path(SCRIPT_DIR, pdb_id)
+        input_pdb_file = runtime_input_pdb_path(workflow_dir, pdb_id)
         print(f"\nUsing MARTINI PDB as base structure: {input_pdb_file}")
     
     # Read PDB and populate arrays
@@ -2007,7 +2019,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     seg_ids = []
     
     # Load protein topology mapping and connectivity if available
-    protein_itp = runtime_protein_itp_path(SCRIPT_DIR, pdb_id)
+    protein_itp = runtime_protein_itp_path(workflow_dir, pdb_id)
     protein_topo_map = read_protein_itp_topology(protein_itp)
     
     # Parse protein connectivity for minimization stage (uses FLEXIBLE, NORMANG, POSRES sections)
@@ -2062,7 +2074,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             initial_positions.append([x, y, z])
             
             # Determine if this line corresponds to protein beads.
-            # Accept both legacy PROA-tagged MARTINI PDBs and martinize.py outputs
+            # Accept both legacy PROA-tagged MARTINI PDBs and martini_martinize.py outputs
             # that identify protein only by residue names/atom roles.
             is_protein = (
                 ('PROA' in line) or
@@ -2905,8 +2917,7 @@ def create_production_input(input_file, pdb_id):
     print(f"\n=== Creating Production Input File ===")
     
     # Parse protein connectivity for production stage (uses regular sections)
-    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-    protein_itp = runtime_protein_itp_path(SCRIPT_DIR, pdb_id)
+    protein_itp = runtime_protein_itp_path(str(WORKFLOW_DIR), pdb_id)
     protein_bonds_prod, protein_angles_prod, protein_dihedrals_prod, protein_constraints_prod, protein_position_restraints_prod = read_protein_itp_connectivity(protein_itp, 'production')
     
     print(f"Production stage parameters:")
@@ -3934,7 +3945,7 @@ def inject_stage7_sc_table_nodes(
             missing_text = ", ".join(missing_sc_datasets)
             raise SystemExit(
                 f"ERROR: {martini_h5} is missing required rotamer-resolved SC datasets: {missing_text}. "
-                "Rebuild martini.h5 with the integrated prepare_system.py build-sc-martini-h5 command."
+                "Rebuild martini.h5 with the integrated martini_prepare_system.py build-sc-martini-h5 command."
             )
         restype_order = decode_string_array(sc_lib["restype_order"])
         target_order = decode_string_array(sc_lib["target_order"])
@@ -4074,4 +4085,4 @@ def inject_stage7_sc_table_nodes(
 
 
 if __name__ == "__main__":
-    raise SystemExit("Use prepare_system.py as the workflow preparation entrypoint.")
+    raise SystemExit("Use martini_prepare_system.py as the workflow preparation entrypoint.")
