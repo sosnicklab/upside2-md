@@ -854,8 +854,6 @@ def write_hybrid_mapping_h5(
         ctrl.attrs["preprod_lipid_headgroup_roles"] = b"PO4"
         ctrl.attrs["exclude_intra_protein_martini"] = np.int8(1)
         ctrl.attrs["production_nonprotein_hard_sphere"] = np.int8(0)
-        ctrl.attrs["coupling_align_debug"] = np.int8(0)
-        ctrl.attrs["coupling_align_interval"] = np.int32(100)
         ctrl.attrs["schema_version"] = np.int32(1)
 
         bb_grp = inp.create_group("hybrid_bb_map")

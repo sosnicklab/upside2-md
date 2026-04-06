@@ -176,7 +176,6 @@ SC_ENV_ENERGY_DUMP_STRIDE="${SC_ENV_ENERGY_DUMP_STRIDE:-1}"
 PRODUCTION_NONPROTEIN_HARD_SPHERE="${PRODUCTION_NONPROTEIN_HARD_SPHERE:-0}"
 NONPROTEIN_HS_FORCE_CAP="${NONPROTEIN_HS_FORCE_CAP:-100.0}"
 NONPROTEIN_HS_POTENTIAL_CAP="${NONPROTEIN_HS_POTENTIAL_CAP:-5000.0}"
-INTEGRATION_RMSD_ALIGN_ENABLE="${INTEGRATION_RMSD_ALIGN_ENABLE:-1}"
 
 # =============================================================================
 # VALIDATION
@@ -614,20 +613,17 @@ PY
 set_hybrid_production_controls() {
     local up_file="$1"
     local nonprotein_hard_sphere="$2"
-    local rmsd_align_enable="$3"
-    python3 - "$up_file" "$nonprotein_hard_sphere" "$rmsd_align_enable" << 'PY'
+    python3 - "$up_file" "$nonprotein_hard_sphere" << 'PY'
 import sys
 import h5py
 import numpy as np
 
 up_file = sys.argv[1]
 nonprotein_hard_sphere = int(sys.argv[2])
-rmsd_align_enable = int(sys.argv[3])
 
 with h5py.File(up_file, "r+") as h5:
     grp = h5.require_group("input").require_group("hybrid_control")
     grp.attrs["production_nonprotein_hard_sphere"] = np.int8(1 if nonprotein_hard_sphere else 0)
-    grp.attrs["integration_rmsd_align_enable"] = np.int8(1 if rmsd_align_enable else 0)
 PY
 }
 
@@ -1122,8 +1118,7 @@ prepare_stage_file() {
         set_hybrid_activation_stage "$target_file" "production"
         set_hybrid_production_controls \
             "$target_file" \
-            "$PRODUCTION_NONPROTEIN_HARD_SPHERE" \
-            "$INTEGRATION_RMSD_ALIGN_ENABLE"
+            "$PRODUCTION_NONPROTEIN_HARD_SPHERE"
         inject_stage7_sc_table_nodes \
             "$target_file" \
             "${SC_MARTINI_LIBRARY}"

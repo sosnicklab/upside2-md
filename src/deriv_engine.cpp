@@ -16,10 +16,6 @@ std::vector<int> get_fixed_atoms(const DerivEngine& engine);
 std::vector<int> get_z_fixed_atoms(const DerivEngine& engine);
 }
 
-namespace martini_hybrid {
-void align_active_protein_coordinates(DerivEngine& engine, VecArray pos, VecArray mom);
-}
-
 static std::vector<unsigned char> build_fixed_mask(const DerivEngine& engine, int n_atom) {
     std::vector<unsigned char> mask(static_cast<size_t>(std::max(0, n_atom)), 0);
     auto fixed_atoms = martini_fix_rigid::get_fixed_atoms(engine);
@@ -354,9 +350,6 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
     float pos_update[] = {     3.f*b, 3.0f-6.f*b, 3.f*b};
 
     for(int stage=0; stage<3; ++stage) {
-        // Update active-hybrid RMSD reference bookkeeping without mutating the
-        // integrated protein coordinates.
-        martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
         compute(DerivMode);   // compute derivatives
         Timer timer(string("integration"));
         
@@ -412,9 +405,6 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
     bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
 
     for(int stage=0; stage<3; ++stage) {
-        // Update active-hybrid RMSD reference bookkeeping without mutating the
-        // integrated protein coordinates.
-        martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
         compute(DerivMode);   // compute derivatives
         Timer timer(string("integration"));
 
@@ -474,8 +464,6 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
     auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
     bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
 
-    // Update active-hybrid RMSD reference bookkeeping before the slow level.
-    martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
     compute(DerivMode, 1); 
     
     // Check if MARTINI masses are available and use mass-aware integrator
@@ -497,8 +485,6 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
         
         // calculate acceleration, update velocity for fast level
         for(int i=0;i<inner_step;i++) {
-            // Refresh active-hybrid RMSD reference bookkeeping.
-            martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
             compute(DerivMode, 0);
             for(int na=0; na < pos->n_atom; ++na) {
                 if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
@@ -539,8 +525,6 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
         
         // calculate acceleration, update velocity for fast level
         for(int i=0;i<inner_step;i++) {
-            // Refresh active-hybrid RMSD reference bookkeeping.
-            martini_hybrid::align_active_protein_coordinates(*this, pos->output, mom);
             compute(DerivMode, 0);
             for(int na=0; na < pos->n_atom; ++na) {
                 if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
