@@ -26,3 +26,4 @@ source.sh
 **outputs/
 .vscode/*
 .venv/
+bilayer-lateral-diffusion/*
