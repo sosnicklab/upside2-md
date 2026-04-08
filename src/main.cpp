@@ -163,6 +163,23 @@ struct System {
     }
 };
 
+static double compute_logged_kinetic_energy(System* sys) {
+    double sum_kin = 0.0;
+    VecArray mom_array = sys->mom;
+    if(martini_masses::has_masses(&sys->engine)) {
+        for(int na=0; na<sys->n_atom; ++na) {
+            float mass = martini_masses::get_mass(&sys->engine, na);
+            if(mass <= 0.f) mass = 1.f;
+            sum_kin += mag2(load_vec<3>(mom_array, na)) / mass;
+        }
+    } else {
+        for(int na=0; na<sys->n_atom; ++na) {
+            sum_kin += mag2(load_vec<3>(mom_array, na));
+        }
+    }
+    return (0.5/sys->n_atom) * sum_kin;
+}
+
 static inline bool is_martini_potential_node_name(const std::string& name) {
     return is_prefix("martini_potential", name) ||
            is_prefix("dist_spring", name) ||
@@ -999,7 +1016,7 @@ try {
             }
             else {
                 for(int d: range(3)) for(int na: range(sys->n_atom)) sys->mom(d,na) = 0.f;
-                sys->thermostat.apply(sys->mom, sys->n_atom); // initial thermalization if it's a fresh start
+                sys->thermostat.apply(sys->mom, sys->n_atom, &sys->engine); // initial thermalization if it's a fresh start
             }
 
             // Hybrid virtual BB proxy atoms are position-overwritten from the
@@ -1025,9 +1042,7 @@ try {
                 
             }
             sys->logger->add_logger<double>("kinetic", {1}, [sys](double* kin_buffer) {
-                    double sum_kin = 0.f;
-                    for(int na=0; na<sys->n_atom; ++na) sum_kin += mag2(load_vec<3>(sys->mom,na));
-                    kin_buffer[0] = (0.5/sys->n_atom)*sum_kin;  // kinetic_energy = (1/2) * <mom^2>
+                    kin_buffer[0] = compute_logged_kinetic_energy(sys);
                     });
             sys->logger->add_logger<double>("potential", {1}, [sys](double* pot_buffer) {
                     refresh_split_potential_cache(*sys, true);
@@ -1318,7 +1333,7 @@ try {
                         // Handle simulated annealing if applicable
                         if(anneal_factor != 1.)
                             sys.set_temperature(anneal_temp(sys.initial_temperature, inner_step*dt*(sys.round_num+1)));
-                        sys.thermostat.apply(sys.mom, sys.n_atom);
+                        sys.thermostat.apply(sys.mom, sys.n_atom, &sys.engine);
                     }
 
                     // Enforce fixed-in-space constraints before integration so fixed atoms

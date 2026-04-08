@@ -1,3 +1,4 @@
+#include "deriv_engine.h"
 #include <cstdint>
 #include <cmath>
 
@@ -35,5 +36,5 @@ struct OrnsteinUhlenbeckThermostat
         OrnsteinUhlenbeckThermostat& set_delta_t  (float delta_t_)   {
             delta_t   = delta_t_;   update_parameters(); return *this;}
 
-        void apply(VecArray mom, int n_atom); 
+        void apply(VecArray mom, int n_atom, DerivEngine* engine = nullptr);
 };
