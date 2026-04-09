@@ -78,3 +78,16 @@
   - rebuild succeeded,
   - runtime banners no longer print any RMSD-align field,
   - stages `6.0` through `7.0` completed successfully under `outputs/martini_test_1rkl_noalign_removed`.
+
+## 2026-04-09 (Thermostat Consistency Audit)
+- Audited thermostat usage across the example workflows:
+  - `example/01.GettingStarted/0.run.py`,
+  - `example/08.MembraneSimulation/0.normal.run.py`,
+  - `example/12.MultistepIntegrator/0.run.py`,
+  - `example/16.MARTINI/run_sim_1rkl.sh`,
+  - CLI defaults in `src/main.cpp`.
+- Confirmed that the standard examples inherit the engine default `--thermostat-timescale=5.0`, while workflow `16` was the outlier with `THERMOSTAT_TIMESCALE=4.0`.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh` so workflow `16` now defaults to `THERMOSTAT_TIMESCALE=5.0`.
+- Updated `example/16.MARTINI/readme.md` to document:
+  - the thermostat-default alignment with the other examples,
+  - the remaining caveat that workflow `16` still uses smaller hybrid timesteps, so the borrowed `40 ps/step` calibration still needs separate validation for stage `7.0`.

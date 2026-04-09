@@ -44,3 +44,16 @@
   - `INTEGRATION_RMSD_ALIGN_ENABLE` in `run_sim_1rkl.sh` was deleted,
   - `integration_rmsd_align_enable`, `coupling_align_debug`, and `coupling_align_interval` are no longer written into hybrid-control metadata.
 - Reduced end-to-end verification after rebuild completed through stage `7.0` with runtime banners that no longer mention any RMSD-align field at all.
+
+## 2026-04-09 (Thermostat Default Audit For Workflow 16)
+- The standard Upside examples do not pass `--thermostat-timescale`:
+  - `example/01.GettingStarted/0.run.py`,
+  - `example/08.MembraneSimulation/0.normal.run.py`,
+  - `example/12.MultistepIntegrator/0.run.py`.
+- Therefore they inherit the engine default thermostat timescale `tau = 5.0` from `src/main.cpp`.
+- Workflow `16` had been the only example in the main example set that explicitly overrode this to `THERMOSTAT_TIMESCALE=4.0` in `run_sim_1rkl.sh`, with no local documentation explaining why.
+- To keep the damping convention consistent with the examples that underlie the user’s `40 ps` per-step calibration, workflow `16` should default to `tau = 5.0` as well.
+- Separate caveat:
+  - workflow `16` still uses `EQ_TIME_STEP=0.010` and `PROD_TIME_STEP=0.002`,
+  - the standard examples rely on the engine default `dt = 0.009`,
+  - so matching the thermostat default does not, by itself, make the borrowed `40 ps/step` calibration valid for hybrid stage `7.0`.

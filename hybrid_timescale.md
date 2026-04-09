@@ -1,35 +1,59 @@
 # Hybrid Bilayer Timescale Settings
 
-Warning: these settings were derived before fixing a thermostat bug where momentum noise ignored per-atom mass. They are provisional only and should be regenerated after rerunning the bilayer diffusion scan with the corrected thermostat.
-
-These settings keep the scanned Upside temperature fixed and apply a bilayer-only mass / damping correction to match a physical DOPC diffusion target as closely as possible.
+This file reflects the post-thermostat-fix bilayer rerun. The old strong mass dependence was an artifact of the unit-mass OU noise bug and should not be used anymore.
 
 ## Unit Contract
 
 - Upside temperature conversion from [AGENTS.md](/Users/yinhan/Documents/upside2-md-martini/AGENTS.md#L31): `1.0 T_up = 350.588235 K`
-- Physical DOPC target curve from:
-  - Bag N, Yap DHX, Wohland T. *Temperature dependence of diffusion in model and live cell membranes characterized by imaging fluorescence correlation spectroscopy.* Biochim Biophys Acta Biomembr. 2014;1838(3):802-813.
-  - DOI: `10.1016/j.bbamem.2013.10.009`
+- Upside timestep calibration used for the downloaded analysis: `40 ps` per integration step
+- Caveat:
+  - the repo examples that motivate that `40 ps` calibration use the standard Upside defaults, including the default thermostat timescale and default `dt = 0.009`,
+  - workflow `16` now matches the standard example thermostat default again, but its hybrid stages still run at `EQ_TIME_STEP=0.010` and `PROD_TIME_STEP=0.002`,
+  - so the borrowed `40 ps/step` calibration should still be treated as provisional for hybrid stage `7.0` until it is validated for that smaller hybrid timestep.
+- Workflow integration step used in the bilayer scan: `0.01`
+- Therefore:
+  - `1` workflow time unit = `4 ns`
+  - `nm^2/ns = diffusion_mean_nm2_per_time / 4`
+  - `um^2/s = diffusion_mean_nm2_per_time * 250`
 
-## Recommended Bilayer Corrections
+## Post-Fix Scan Summary
 
-| Upside temperature | Kelvin | Recommended damping | Recommended mass scale | Closest stable scanned point |
-| --- | ---: | ---: | ---: | --- |
-| `0.7` | `245.4 K` | `16` | `0.0676` | `mass=0.1, tau=4, D=0.311 um^2/s` |
-| `0.8` | `280.5 K` | `4` | `0.0419` | `mass=0.1, tau=12, D=0.374 um^2/s` |
-| `0.9` | `315.5 K` | `6` | `0.0324` | `mass=0.1, tau=16, D=0.454 um^2/s` |
-| `1.0` | `350.6 K` | `8` | `0.0303` | `mass=0.1, tau=8, D=0.507 um^2/s` |
-| `1.1` | `385.6 K` | `6` | `0.0296` | `mass=0.1, tau=4, D=0.758 um^2/s` |
+- Refreshed `stage7-analysis` validation passed:
+  - `525` stage-7 files
+  - `525` successful task rows
+  - `175` condition rows
+  - no tasks below `R^2 < 0.95`
+- Within the stable damping window, the corrected scan shows:
+  - temperature effect: about `2.87x`
+  - mass effect: about `1.36x`
+  - damping effect: about `1.05x`
+- Interpretation:
+  - after fixing the thermostat, temperature is a stronger control than mass inside the tested `mass = 0.1 -> 1.0` range,
+  - the current grid does not provide enough leverage to fit a trustworthy bilayer mass correction.
 
-## Interpretation
+## Closest Stable Settings In The Current Grid
 
-- Damping is a secondary knob in this scan. Mass scaling is the main correction.
-- Every temperature requires `mass < 0.1`, so the current scan minimum mass is still too heavy.
-- A practical next scan would keep temperature fixed, keep damping in a stable band around `tau = 6-8`, and extend the bilayer mass scale below `0.1`.
-- The source experiment directly constrains `298-313 K`. The rows for `T_up = 0.7`, `0.8`, `1.0`, and `1.1` are therefore extrapolations under the Upside temperature mapping.
+These are the closest stable scanned points to the physical DOPC target at fixed Upside temperature. They are the best currently available settings from the rerun, but they are still much too slow.
+
+| Upside temperature | Kelvin | Stable damping | Best tested mass | Observed diffusion | Sim / target |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `0.7` | `245.4 K` | `12` | `0.1` | `0.089 um^2/s` | `0.153` |
+| `0.8` | `280.5 K` | `12` | `0.1` | `0.149 um^2/s` | `0.092` |
+| `0.9` | `315.5 K` | `12` | `0.1` | `0.201 um^2/s` | `0.056` |
+| `1.0` | `350.6 K` | `16` | `0.1` | `0.253 um^2/s` | `0.037` |
+| `1.1` | `385.6 K` | `16` | `0.1` | `0.320 um^2/s` | `0.028` |
+
+## What This Means
+
+- No reliable mass correction is resolved by the current post-fix scan.
+- Any literal extrapolation from this grid wants a mass far below the tested range, which is not trustworthy enough to save as a calibrated setting.
+- The practical post-fix recommendation is:
+  - if you need the best currently tested stable settings, use the table above,
+  - if you need a quantitative bilayer timescale match, run a new scan with a broader acceleration range instead of fitting a precise correction from the current grid.
 
 ## Source Artifacts
 
-- Detailed calibration table: [temperature_specific_corrections.csv](/Users/yinhan/Documents/upside2-md-martini/bilayer-lateral-diffusion/stage7-analysis/report/temperature_specific_corrections.csv)
-- Detailed calibration note: [temperature_specific_correction.md](/Users/yinhan/Documents/upside2-md-martini/bilayer-lateral-diffusion/stage7-analysis/report/temperature_specific_correction.md)
-- Calibration plot: [temperature_specific_correction.png](/Users/yinhan/Documents/upside2-md-martini/bilayer-lateral-diffusion/stage7-analysis/report/temperature_specific_correction.png)
+- General report: [report.md](/Users/yinhan/Documents/upside2-md-martini/bilayer-lateral-diffusion/stage7-analysis/report/report.md)
+- Fixed-temperature calibration note: [temperature_specific_correction.md](/Users/yinhan/Documents/upside2-md-martini/bilayer-lateral-diffusion/stage7-analysis/report/temperature_specific_correction.md)
+- Fixed-temperature calibration table: [temperature_specific_corrections.csv](/Users/yinhan/Documents/upside2-md-martini/bilayer-lateral-diffusion/stage7-analysis/report/temperature_specific_corrections.csv)
+- Fixed-temperature calibration plot: [temperature_specific_correction.png](/Users/yinhan/Documents/upside2-md-martini/bilayer-lateral-diffusion/stage7-analysis/report/temperature_specific_correction.png)
