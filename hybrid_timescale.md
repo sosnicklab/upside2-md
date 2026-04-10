@@ -1,6 +1,6 @@
 # Hybrid Bilayer Timescale Settings
 
-This file reflects the post-thermostat-fix bilayer rerun. The old strong mass dependence was an artifact of the unit-mass OU noise bug and should not be used anymore.
+This file reflects the focused post-fix mass-only bilayer rerun at fixed `tau = 5`. The old strong mass dependence from the pre-fix scan was an artifact of the unit-mass OU noise bug and should not be used anymore.
 
 ## Unit Contract
 
@@ -16,40 +16,55 @@ This file reflects the post-thermostat-fix bilayer rerun. The old strong mass de
   - `nm^2/ns = diffusion_mean_nm2_per_time / 4`
   - `um^2/s = diffusion_mean_nm2_per_time * 250`
 
-## Post-Fix Scan Summary
+## Focused Tau-5 Scan Summary
 
 - Refreshed `stage7-analysis` validation passed:
-  - `525` stage-7 files
-  - `525` successful task rows
-  - `175` condition rows
+  - `90` stage-7 files
+  - `90` successful task rows
+  - `30` condition rows
   - no tasks below `R^2 < 0.95`
-- Within the stable damping window, the corrected scan shows:
-  - temperature effect: about `2.87x`
-  - mass effect: about `1.36x`
-  - damping effect: about `1.05x`
+- This rerun kept damping fixed at `tau = 5` and only pushed mass lower:
+  - `mass = 0.1, 0.05, 0.02, 0.01, 0.005, 0.002`
+  - `temperature = 0.7, 0.8, 0.9, 1.0, 1.1`
+- In this focused grid:
+  - temperature effect: about `3.20x`
+  - mass effect: about `1.61x`
+  - damping effect: fixed at `1.00x` because `tau` was held constant
 - Interpretation:
-  - after fixing the thermostat, temperature is a stronger control than mass inside the tested `mass = 0.1 -> 1.0` range,
-  - the current grid does not provide enough leverage to fit a trustworthy bilayer mass correction.
+  - lowering mass does accelerate the bilayer, but temperature still changes diffusion more strongly than mass across this tested range,
+  - even at `mass = 0.002`, the bilayer remains far below the physical DOPC target at the same temperature.
 
-## Closest Stable Settings In The Current Grid
+## Best Robust Settings In The Current Grid
 
-These are the closest stable scanned points to the physical DOPC target at fixed Upside temperature. They are the best currently available settings from the rerun, but they are still much too slow.
+These are the best low-variance (`CV <= 0.25`) points currently available at fixed `tau = 5`. They are the most defensible operational choices from the rerun, but they are still much too slow for a physical DOPC match.
 
-| Upside temperature | Kelvin | Stable damping | Best tested mass | Observed diffusion | Sim / target |
+| Upside temperature | Kelvin | Fixed damping | Best robust mass | Observed diffusion | Notes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `0.7` | `245.4 K` | `5` | `0.002` | `0.120 um^2/s` | lowest mass is usable but only modestly faster |
+| `0.8` | `280.5 K` | `5` | `0.002` | `0.225 um^2/s` | lowest mass is usable |
+| `0.9` | `315.5 K` | `5` | `0.005` | `0.284 um^2/s` | `0.002` is noisier and should not anchor calibration |
+| `1.0` | `350.6 K` | `5` | `0.010` | `0.311 um^2/s` | best robust point at this temperature |
+| `1.1` | `385.6 K` | `5` | `0.005` | `0.365 um^2/s` | best robust point in the whole grid |
+
+## Closest Stable Points To The Physical Target
+
+Using the temperature-specific calibration report, the closest in-grid points to the physical DOPC target are still far too slow:
+
+| Upside temperature | Kelvin | Fixed damping | Nearest mass | Observed diffusion | Sim / target |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `0.7` | `245.4 K` | `12` | `0.1` | `0.089 um^2/s` | `0.153` |
-| `0.8` | `280.5 K` | `12` | `0.1` | `0.149 um^2/s` | `0.092` |
-| `0.9` | `315.5 K` | `12` | `0.1` | `0.201 um^2/s` | `0.056` |
-| `1.0` | `350.6 K` | `16` | `0.1` | `0.253 um^2/s` | `0.037` |
-| `1.1` | `385.6 K` | `16` | `0.1` | `0.320 um^2/s` | `0.028` |
+| `0.7` | `245.4 K` | `5` | `0.002` | `0.120 um^2/s` | `0.206` |
+| `0.8` | `280.5 K` | `5` | `0.002` | `0.225 um^2/s` | `0.139` |
+| `0.9` | `315.5 K` | `5` | `0.002` | `0.410 um^2/s` | `0.114` |
+| `1.0` | `350.6 K` | `5` | `0.010` | `0.311 um^2/s` | `0.046` |
+| `1.1` | `385.6 K` | `5` | `0.002` | `0.432 um^2/s` | `0.038` |
 
 ## What This Means
 
-- No reliable mass correction is resolved by the current post-fix scan.
-- Any literal extrapolation from this grid wants a mass far below the tested range, which is not trustworthy enough to save as a calibrated setting.
-- The practical post-fix recommendation is:
-  - if you need the best currently tested stable settings, use the table above,
-  - if you need a quantitative bilayer timescale match, run a new scan with a broader acceleration range instead of fitting a precise correction from the current grid.
+- The focused mass-only rerun improved bilayer fluidity, but it still did not resolve a reliable timescale match.
+- No reportable mass correction is resolved by the current grid; the calibration file still marks every temperature as `unresolved (< 0.01)`.
+- The practical recommendation is now:
+  - if you need the best currently tested stable settings at fixed Upside damping, use the `Best Robust Settings` table above,
+  - if you need a quantitative bilayer timescale match while keeping `tau = 5`, you will need either even lighter effective bilayer masses or a different acceleration model.
 
 ## Source Artifacts
 
