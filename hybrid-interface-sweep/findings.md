@@ -21,5 +21,16 @@
 - Capturing a whitelist of relevant env overrides at `init-run` time is enough to make shortened smoke runs and production reruns reproducible without turning the new workflow into a second copy of the hybrid parameter surface.
 - The reduced smoke run verified that the workflow can drive the canonical hybrid shell path all the way to a real task-local `stage_7.0.up` checkpoint.
 
+## 2026-04-13 (Analysis Design)
+- The active hybrid stage-7 outputs need schema-aware analysis:
+  - protein carrier atoms are best selected from `hybrid_bb_map` rather than proxy MARTINI roles,
+  - lipid membership is recoverable from non-protein `PO4` beads plus `molecule_ids`,
+  - box lengths may need to fall back to `input/potential/martini_potential` attrs when `/output/box` is absent.
+- A practical first analysis target for the sweep is diffusion, not a direct viscosity estimator:
+  - protein lateral COM diffusion relative to the bilayer COM is the main sweep signal,
+  - lipid `PO4` lateral diffusion is the bilayer guardrail,
+  - the analysis can be assembled into per-task and per-condition CSV summaries for later offline comparison.
+
 ## Lessons
 - When a new sweep is supposed to exercise an existing scientific workflow, orchestrate the real entrypoint rather than re-encoding the stage logic in a second place.
+- When adding post-run analysis, derive atom selection and box handling from the actual generated stage files before writing the analyzer.

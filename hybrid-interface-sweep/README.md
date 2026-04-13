@@ -7,7 +7,7 @@ This folder stages and submits sweeps over `PROTEIN_ENV_INTERFACE_SCALE` using t
 - Each task runs one full hybrid workflow instance for one `(interface_scale, replicate)` pair.
 - Every task gets its own task-local `RUN_DIR`, logs, checkpoints, and result JSON.
 - The workflow supports local execution and Slurm array staging/submission.
-- The workflow records execution status only in v1; it does not add a new scientific analysis pipeline.
+- The workflow also supports a post-run analysis phase over completed `stage_7.0.up` files.
 
 ## Default Sweep
 
@@ -62,6 +62,72 @@ Optional Slurm resource environment variables:
 - `HYBRID_SWEEP_TRAIN_WALLTIME`
 - `HYBRID_SWEEP_COLLECT_WALLTIME`
 - `HYBRID_SWEEP_CPUS_PER_TASK`
+- `HYBRID_SWEEP_SBATCH_PARTITION`
+- `HYBRID_SWEEP_SBATCH_ACCOUNT`
+- `HYBRID_SWEEP_SBATCH_QOS`
+- `HYBRID_SWEEP_SBATCH_CONSTRAINT`
+- `HYBRID_SWEEP_SBATCH_MEM`
+
+## Analysis Outputs
+
+The post-run analysis treats lateral diffusion as the main fluidity proxy for the hybrid sweep.
+
+- Protein signal: protein lateral COM diffusion relative to the bilayer lateral COM.
+- Bilayer guardrail: lipid `PO4` lateral diffusion relative to the bilayer lateral COM.
+- The analysis uses completed `tasks/*/run/checkpoints/<pdb_id>.stage_7.0.up` files discovered from the sweep tree.
+
+The analysis writes under `BASE_DIR/analysis/`:
+
+- `analysis_manifest.json`
+- `results/tasks/*.json`
+- `assembled/task_results.csv`
+- `assembled/condition_summary.csv`
+- `assembled/failed_tasks.csv`
+- `assembled/summary.json`
+
+This is a diffusion-style calibration helper, not a direct viscosity estimator.
+
+## Run Analysis Locally
+
+```bash
+source .venv/bin/activate
+source source.sh
+./hybrid-interface-sweep/run_analysis_local.sh
+```
+
+Useful wrapper environment variables:
+
+- `HYBRID_SWEEP_BASE_DIR`
+- `HYBRID_SWEEP_FORCE_ANALYSIS_INIT=1`
+- `HYBRID_SWEEP_ANALYSIS_MAX_TASKS`
+- `HYBRID_SWEEP_ANALYSIS_START_TASK`
+- `HYBRID_SWEEP_ANALYSIS_NO_ASSEMBLE=1`
+- `HYBRID_SWEEP_OVERWRITE=1`
+- `HYBRID_SWEEP_PYTHON`
+- `HYBRID_SWEEP_HDF5_MODULE`
+
+## Submit Analysis To Slurm
+
+```bash
+source .venv/bin/activate
+source source.sh
+./hybrid-interface-sweep/submit_analysis.sh
+```
+
+Useful wrapper environment variables:
+
+- `HYBRID_SWEEP_BASE_DIR`
+- `HYBRID_SWEEP_FORCE_ANALYSIS_INIT=1`
+- `HYBRID_SWEEP_NO_SUBMIT=1`
+- `HYBRID_SWEEP_OVERWRITE=1`
+- `HYBRID_SWEEP_PYTHON`
+- `HYBRID_SWEEP_HDF5_MODULE`
+
+Optional analysis Slurm resource environment variables:
+
+- `HYBRID_SWEEP_ANALYSIS_WALLTIME`
+- `HYBRID_SWEEP_ANALYSIS_COLLECT_WALLTIME`
+- `HYBRID_SWEEP_ANALYSIS_CPUS_PER_TASK`
 - `HYBRID_SWEEP_SBATCH_PARTITION`
 - `HYBRID_SWEEP_SBATCH_ACCOUNT`
 - `HYBRID_SWEEP_SBATCH_QOS`

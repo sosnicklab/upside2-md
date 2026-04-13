@@ -1,6 +1,20 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-13: The current `hybrid-interface-sweep` stage-7 outputs require schema-aware analysis rather than assumptions copied from the bilayer workflow.
+  - Fresh reduced `1rkl.stage_7.0.up` output from `/tmp/hybrid_interface_sweep_analysis_smoke/tasks/scale0p85_r01/run/checkpoints/1rkl.stage_7.0.up` shows:
+    - `particle_class` does not provide a usable `LIPID` partition for this analyzer,
+    - `/output/box` may be absent,
+    - protein carrier selection should come from `input/hybrid_bb_map`, not proxy MARTINI atom classes.
+  - The implemented analyzer therefore:
+    - falls back to `input/potential/martini_potential.{x_len,y_len,z_len}` when `/output/box` is absent,
+    - identifies lipid molecules from non-protein `PO4` beads plus `molecule_ids`,
+    - identifies protein `CA` carrier atoms from `hybrid_bb_map.atom_indices[:,1]` where `atom_mask[:,1] != 0`.
+- 2026-04-13: The new hybrid sweep analysis uses diffusion-style observables as the practical fluidity proxy.
+  - Per completed task, it computes:
+    - protein lateral COM diffusion relative to the bilayer COM,
+    - lipid `PO4` lateral diffusion relative to the bilayer COM as a guardrail.
+  - The implementation unwraps XY coordinates, removes bilayer COM drift, drops the first `20%` of frames as burn-in, and fits `MSD = 4Dt + b` over a fixed lag window.
 - 2026-04-02: The active stage-7 SC/dry-MARTINI simulation path is not probabilistic and does not use a separate sidechain face-vector DOF.
   - `example/16.MARTINI/inject_sc_table_stage7.py` deletes legacy `rotamer`, `placement_fixed_scalar`, and `placement_fixed_point_vector_only` nodes, then injects only:
     - `affine_alignment`,
@@ -337,6 +351,8 @@
   - Working rule: when multiple stage-7 paths coexist, inspect the active workflow artifact and codepath first; do not assume the older compatibility node is still the production path.
 - 2026-04-13: When asked to build a new sweep workflow for an existing scientific run, orchestrate the canonical entrypoint instead of cloning its stage logic.
   - Working rule: if the repo already has one shell workflow that owns preparation, stage handoff, and activation logic, make the new sweep workflow drive that entrypoint with task-local env overrides rather than reimplementing the stage ladder in Python.
+- 2026-04-13: When adding analysis to an existing scientific sweep, inspect the real output schema first and derive selectors from the generated files rather than from a nearby workflow.
+  - Working rule: before implementing the analyzer, inspect a real stage file for atom selectors, box storage, and protein-carrier metadata; do not assume that `particle_class`, box datasets, or atom-role conventions match a different workflow.
 
 ## 2026-04-13 (Interface-Only Hybrid Scaling Calibration)
 - Active stage-7 SC production path in this checkout:

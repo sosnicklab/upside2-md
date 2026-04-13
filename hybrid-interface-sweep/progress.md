@@ -41,3 +41,29 @@
   - wrote `results/tasks/scale0p85_r01.json`,
   - produced task-local `run/checkpoints/1rkl.stage_7.0.up`,
   - assembled `1` successful task and `1` completed scale under `assembled/summary.json`.
+
+## 2026-04-13 (Analysis Extension)
+- Extended `workflow.py` with:
+  - post-run stage-7 discovery,
+  - protein/bilayer MSD analysis,
+  - analysis result assembly,
+  - analysis Slurm staging.
+- Added:
+  - `run_analysis_local.sh`
+  - `submit_analysis.sh`
+- Updated `README.md` with analysis commands, outputs, and environment variables.
+- Ran static checks:
+  - `python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - `bash -n hybrid-interface-sweep/run_analysis_local.sh`
+  - `bash -n hybrid-interface-sweep/submit_analysis.sh`
+- Ran a reduced real sweep plus post-run analysis smoke path under `/tmp/hybrid_interface_sweep_analysis_smoke`:
+  - sweep produced a task-local `1rkl.stage_7.0.up`,
+  - analysis wrote `analysis/results/tasks/scale0p85_r01.json`,
+  - analysis assembled:
+    - `analysis/assembled/task_results.csv`
+    - `analysis/assembled/condition_summary.csv`
+    - `analysis/assembled/summary.json`
+- Verified no-submit analysis Slurm staging wrote:
+  - `analysis/slurm/round_manifest.json`
+  - `analysis/slurm/analyze_array.sbatch`
+  - `analysis/slurm/collect_analysis.sbatch`

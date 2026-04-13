@@ -1,5 +1,41 @@
 # Progress Log
 
+## 2026-04-13 (Hybrid Sweep Analysis)
+- Reopened the root-level `hybrid-interface-sweep/` task to add a post-run analysis phase over completed `stage_7.0.up` outputs.
+- Extended `hybrid-interface-sweep/workflow.py` with:
+  - analysis discovery from completed sweep tasks,
+  - stage-7 MSD analysis,
+  - assembled analysis CSV/JSON outputs,
+  - analysis Slurm array and collector staging.
+- Added:
+  - `hybrid-interface-sweep/run_analysis_local.sh`
+  - `hybrid-interface-sweep/submit_analysis.sh`
+- Updated `hybrid-interface-sweep/README.md` with local and Slurm analysis usage plus the produced artifact paths.
+- Static verification completed:
+  - `python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - `bash -n hybrid-interface-sweep/run_analysis_local.sh`
+  - `bash -n hybrid-interface-sweep/submit_analysis.sh`
+- Ran a reduced real sweep and analysis smoke path under `/tmp/hybrid_interface_sweep_analysis_smoke`:
+  - sweep settings:
+    - `interface_scale = 0.85`
+    - `replicates = 1`
+    - `MIN_60_MAX_ITER=1`
+    - `MIN_61_MAX_ITER=1`
+    - `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1`
+    - `PROD_70_NSTEPS=40`
+    - `EQ_FRAME_STEPS=1`
+    - `PROD_FRAME_STEPS=1`
+  - analysis completed successfully and wrote:
+    - `analysis/analysis_manifest.json`
+    - `analysis/results/tasks/scale0p85_r01.json`
+    - `analysis/assembled/task_results.csv`
+    - `analysis/assembled/condition_summary.csv`
+    - `analysis/assembled/summary.json`
+- Verified no-submit analysis Slurm staging:
+  - `analysis/slurm/round_manifest.json`
+  - `analysis/slurm/analyze_array.sbatch`
+  - `analysis/slurm/collect_analysis.sbatch`
+
 ## 2026-04-01
 - Audited the active stage-7 SC/dry-MARTINI interaction semantics after the probabilistic-weight / face-vector check request.
 - Verified the live stage-7 injector/runtime path is deterministic and radial:

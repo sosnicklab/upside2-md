@@ -365,3 +365,62 @@ What specific biological system or environment are you aiming to simulate first 
     - task result JSON recorded `success = true`
     - task-local `stage_7.0.up` exists at `/tmp/hybrid_interface_sweep_smoke/tasks/scale0p85_r01/run/checkpoints/1rkl.stage_7.0.up`
     - assembled summary recorded `1` successful task and `1` completed scale.
+
+## 2026-04-13 Hybrid Sweep Post-Run Analysis
+
+### Project Goal
+- Add a post-run analysis path for `hybrid-interface-sweep/` that measures hybrid diffusion/fluidity signals from completed `stage_7.0.up` files.
+- Make that analysis runnable locally and on Slurm.
+- Produce downloadable per-task and assembled analysis artifacts for later offline review.
+
+### Architecture & Key Decisions
+- Reuse the sweep manifest/task tree and analyze existing `stage_7.0.up` outputs post hoc rather than mixing analysis into the simulation task runner.
+- Measure two signals per completed sweep task:
+  - protein lateral COM MSD relative to bilayer COM, using protein `CA` carrier atoms from `hybrid_bb_map`,
+  - lipid `PO4` lateral MSD as a bilayer fluidity guardrail.
+- Use the same basic MSD treatment as the bilayer workflow:
+  - XY unwrapping,
+  - bilayer COM drift removal,
+  - burn-in removal,
+  - linear `MSD = 4Dt + b` fit over a fixed lag window.
+- Add the analysis as workflow subcommands plus a thin Slurm wrapper under `hybrid-interface-sweep/`, following the same array/collector pattern as the existing run workflow.
+
+### Execution Phases
+- [x] Phase K: Add root and local tracker entries for the analysis extension.
+- [x] Phase L: Extend `hybrid-interface-sweep/workflow.py` with manifest discovery, per-task analysis, assembly, and Slurm submission for analysis.
+- [x] Phase M: Add analysis wrapper/docs in `hybrid-interface-sweep/`.
+- [x] Phase N: Run static checks plus reduced analysis smoke verification.
+- [x] Phase O: Record review notes and lessons.
+
+### Known Errors / Blockers
+- No blocker is known yet, but the analysis must select protein carriers and lipid molecules from the actual stage-file schema used by `run_sim_1rkl.sh`, not from assumptions copied from other workflows.
+
+### Review
+- Extended `hybrid-interface-sweep/workflow.py` with a full post-run analysis path:
+  - `init-analysis`
+  - `run-analysis-local`
+  - `run-analysis-task`
+  - `assemble-analysis`
+  - `submit-analysis-slurm`
+- Added analysis wrappers and docs:
+  - `hybrid-interface-sweep/run_analysis_local.sh`
+  - `hybrid-interface-sweep/submit_analysis.sh`
+  - updated `hybrid-interface-sweep/README.md`
+- Analysis outputs now measure:
+  - protein lateral COM diffusion relative to the bilayer COM,
+  - lipid `PO4` lateral diffusion as a bilayer guardrail,
+  - per-task MSD and linear-diffusion fit metadata in `analysis/results/tasks/*.json`,
+  - assembled CSV and summary JSON outputs under `analysis/assembled/`.
+- Verification completed:
+  - `python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - `bash -n hybrid-interface-sweep/run_analysis_local.sh`
+  - `bash -n hybrid-interface-sweep/submit_analysis.sh`
+  - reduced real sweep run in `/tmp/hybrid_interface_sweep_analysis_smoke` with `PROD_70_NSTEPS=40`
+  - local analysis run on that smoke output
+  - no-submit analysis Slurm staging under `/tmp/hybrid_interface_sweep_analysis_smoke/analysis/slurm`
+  - generated artifacts verified:
+    - `analysis/analysis_manifest.json`
+    - `analysis/results/tasks/scale0p85_r01.json`
+    - `analysis/assembled/task_results.csv`
+    - `analysis/assembled/condition_summary.csv`
+    - `analysis/assembled/summary.json`
