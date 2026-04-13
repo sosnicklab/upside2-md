@@ -238,3 +238,130 @@ Run test simulations to ensure the hybrid physics do not break the model.
 2. **Tune the Scaling Factor ($\kappa$):** Introduce a global scaling multiplier to the hybrid potential: $V_{total} = \kappa(V_{hybrid})$. Run a folded protein in a box of your Dry-MARTINI particles. If the protein denatures because the MARTINI interactions are overwhelmingly strong compared to Upside's internal folding potentials, lower $\kappa$ until the thermodynamic balance is restored.
 
 What specific biological system or environment are you aiming to simulate first once this hybrid engine is built?
+
+## 2026-04-13 Interface-Only Hybrid Scaling Calibration
+
+### Project Goal
+- Calibrate one shared dry-MARTINI interaction scale from bilayer-only DOPC diffusion runs.
+- Apply that scale only to Upside/dry-MARTINI interface interactions in active hybrid production.
+- Leave bilayer-bilayer interactions unchanged in the hybrid workflow.
+
+### Architecture & Key Decisions
+- Use one shared scalar `protein_env_interface_scale` rather than separate LJ and Coulomb knobs.
+- In active hybrid stage `7.0`, apply the scale only to cross-interface protein/environment interactions:
+  - direct `martini_potential` protein-environment pairs,
+  - `martini_sc_table_1body`,
+  - legacy `martini_sc_table_potential` for backward compatibility.
+- Preserve current hybrid startup logic such as the protein-feedback ramp; the new factor is an additional interface-strength control, not a replacement for startup stabilization.
+- Calibrate the scalar in the bilayer-only workflow by rewriting dry-MARTINI pair coefficients before simulation:
+  - `epsilon *= pair_scale`
+  - `q_i *= sqrt(pair_scale)`
+  - `q_j *= sqrt(pair_scale)`
+- Keep bilayer calibration separate from hybrid runtime application:
+  - bilayer-only runs may scale all MARTINI pairs to match target fluidity,
+  - hybrid production must apply the chosen factor only to protein-environment interface terms.
+- Correct the active-stage assumption from earlier notes:
+  - the current production SC path in this checkout is `martini_sc_table_1body`,
+  - `martini_sc_table_potential` remains only as a compatibility surface.
+
+### Execution Phases
+- [x] Phase A: Extend hybrid-control schema and runtime state with `protein_env_interface_scale`.
+- [x] Phase B: Apply interface-only scaling in `src/martini.cpp` for direct pair terms and both SC-table paths.
+- [x] Phase C: Expose the production control in `example/16.MARTINI/run_sim_1rkl.sh`.
+- [x] Phase D: Add bilayer-only pair-scale calibration support plus a fixed sweep wrapper and cross-run report.
+- [x] Phase E: Verify build/script integrity and record review notes, progress, and lessons.
+
+### Known Errors / Blockers
+- No blocker is known yet, but the implementation must respect two different semantics:
+  - bilayer calibration runs scale all MARTINI interactions inside the bilayer-only workflow,
+  - hybrid production must scale only protein-environment interface terms.
+
+### Review
+- Implemented the new hybrid control attr `protein_env_interface_scale` in:
+  - `src/martini.cpp`
+  - `py/martini_prepare_system_lib.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+- Runtime behavior now matches the intended split:
+  - active direct protein-environment `martini_potential` pairs scale only the cross-interface LJ+Coulomb interaction,
+  - bilayer-bilayer and other non-interface pairs remain unchanged in the hybrid workflow,
+  - `martini_sc_table_1body` and legacy `martini_sc_table_potential` both respond to the same scale.
+- Added bilayer calibration support in:
+  - `bilayer-lateral-diffusion/workflow.py`
+  - `bilayer-lateral-diffusion/submit_interface_scale_calibration_round.sh`
+  - `bilayer-lateral-diffusion/report_interface_scale_calibration.py`
+- Verification completed:
+  - `python3 -m py_compile py/martini_prepare_system_lib.py bilayer-lateral-diffusion/workflow.py bilayer-lateral-diffusion/report_interface_scale_calibration.py`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n bilayer-lateral-diffusion/submit_remote_round.sh`
+  - `bash -n bilayer-lateral-diffusion/run_local.sh`
+  - `bash -n bilayer-lateral-diffusion/submit_interface_scale_calibration_round.sh`
+  - `cmake --build obj --target upside`
+  - no-submit wrapper staging for `/tmp/bilayer_interface_scale_calibration/pair_scale_0p85`
+  - reduced local bilayer smoke runs at `pair_scale=1.0` and `0.85`
+  - direct HDF5 inspection of staged `stage_6.0.prepared.up` files confirmed:
+    - `epsilon` ratio = `0.85`
+    - charge ratios = `sqrt(0.85) = 0.921954`
+  - `report_interface_scale_calibration.py` executed successfully on a temporary two-run smoke tree.
+
+## 2026-04-13 Root-Level Hybrid Interface Sweep Workflow
+
+### Project Goal
+- Add a new project-root workflow folder that sweeps `PROTEIN_ENV_INTERFACE_SCALE` over the real hybrid `1RKL` production path.
+- Reuse `example/16.MARTINI/run_sim_1rkl.sh` as the single simulation entrypoint.
+- Submit the sweep to Slurm using the same array/collector pattern already proven in `bilayer-lateral-diffusion/`.
+
+### Architecture & Key Decisions
+- Create a dedicated root-level folder `hybrid-interface-sweep/`.
+- Keep the sweep workflow thin:
+  - generate a manifest of `(interface_scale, replicate)` tasks,
+  - run one full `run_sim_1rkl.sh` instance per task in its own task-local `RUN_DIR`,
+  - collect only execution/status metadata rather than adding a new scientific analyzer in v1.
+- Do not duplicate hybrid simulation logic in Python; invoke `example/16.MARTINI/run_sim_1rkl.sh` directly with environment overrides.
+- Follow the `bilayer-lateral-diffusion` Slurm submission shape:
+  - `workflow.py`
+  - `run_local.sh`
+  - `submit_remote_round.sh`
+  - generated array and collector `.sbatch` scripts
+- Preserve reproducibility by capturing a whitelist of relevant `run_sim_1rkl.sh` environment overrides into the manifest at `init-run` time.
+
+### Execution Phases
+- [x] Phase F: Add root and local tracker entries for the new hybrid sweep workflow.
+- [x] Phase G: Create `hybrid-interface-sweep/workflow.py` with manifest, task runner, assembly, and Slurm submission.
+- [x] Phase H: Add `run_local.sh`, `submit_remote_round.sh`, `README.md`, and local tracker files.
+- [x] Phase I: Run static checks plus a reduced smoke run and no-submit Slurm staging.
+- [x] Phase J: Record review notes and lessons.
+
+### Known Errors / Blockers
+- No blocker is known yet, but the new workflow must reuse the real hybrid shell entrypoint rather than silently diverging from `example/16.MARTINI/run_sim_1rkl.sh`.
+
+### Review
+- Added a new root-level workflow folder:
+  - `hybrid-interface-sweep/workflow.py`
+  - `hybrid-interface-sweep/run_local.sh`
+  - `hybrid-interface-sweep/submit_remote_round.sh`
+  - `hybrid-interface-sweep/README.md`
+  - local `plan.md`, `progress.md`, and `findings.md`
+- The new workflow:
+  - generates a manifest of `(interface_scale, replicate)` tasks,
+  - runs the real `example/16.MARTINI/run_sim_1rkl.sh` entrypoint per task,
+  - assigns each task its own task-local `RUN_DIR`,
+  - captures a whitelist of relevant hybrid env overrides into the manifest,
+  - stages Slurm array and collector scripts using the same pattern as `bilayer-lateral-diffusion`.
+- Verification completed:
+  - `python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - `bash -n hybrid-interface-sweep/run_local.sh`
+  - `bash -n hybrid-interface-sweep/submit_remote_round.sh`
+  - no-submit Slurm staging under `/tmp/hybrid_interface_sweep_smoke`
+  - reduced local smoke run with:
+    - `interface_scale = 0.85`
+    - `replicates = 1`
+    - `MIN_60_MAX_ITER=1`
+    - `MIN_61_MAX_ITER=1`
+    - `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1`
+    - `PROD_70_NSTEPS = 1`
+    - `EQ_FRAME_STEPS = 1`
+    - `PROD_FRAME_STEPS = 1`
+  - smoke result verification:
+    - task result JSON recorded `success = true`
+    - task-local `stage_7.0.up` exists at `/tmp/hybrid_interface_sweep_smoke/tasks/scale0p85_r01/run/checkpoints/1rkl.stage_7.0.up`
+    - assembled summary recorded `1` successful task and `1` completed scale.

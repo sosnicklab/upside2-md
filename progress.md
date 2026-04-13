@@ -465,3 +465,63 @@
 - Verified exporter repair:
   - `build_backbone_projection_map(...)` reports `use_runtime_carriers=True` on the replay file;
   - exported AA backbone coordinates match actual runtime carriers exactly on the checked frame (`0.0 Å` mean/max mismatch).
+
+## 2026-04-13 (Interface-Only Hybrid Scaling Calibration)
+- Reopened the hybrid timescale-bridging task after the user corrected the intended calibration semantics:
+  - use bilayer-only runs to calibrate a shared dry-MARTINI LJ+Coulomb scale,
+  - apply the chosen factor only to the Upside/dry-MARTINI interface in hybrid production,
+  - leave bilayer-bilayer interactions unchanged in the hybrid workflow.
+- Updated the hybrid runtime and prep path:
+  - `src/martini.cpp` now reads `hybrid_control/protein_env_interface_scale`,
+  - active direct protein-environment `martini_potential` pairs scale only the cross-interface interaction strength,
+  - active `martini_sc_table_1body` and legacy `martini_sc_table_potential` both scale by the same factor,
+  - `py/martini_prepare_system_lib.py` now writes the attr by default and validates it when present,
+  - `example/16.MARTINI/run_sim_1rkl.sh` now exposes `PROTEIN_ENV_INTERFACE_SCALE` and writes it into stage `7.0`.
+- Added bilayer-only calibration support:
+  - `bilayer-lateral-diffusion/workflow.py` now accepts a fixed `pair_scale` per run and rewrites staged MARTINI coefficients before simulation,
+  - `bilayer-lateral-diffusion/submit_interface_scale_calibration_round.sh` stages the fixed pair-scale sweep,
+  - `bilayer-lateral-diffusion/report_interface_scale_calibration.py` compares the completed subruns and recommends one scale.
+- Updated documentation:
+  - `bilayer-lateral-diffusion/README.md` now documents the new calibration sweep and report.
+- Verification completed:
+  - `python3 -m py_compile py/martini_prepare_system_lib.py bilayer-lateral-diffusion/workflow.py bilayer-lateral-diffusion/report_interface_scale_calibration.py`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n bilayer-lateral-diffusion/submit_remote_round.sh`
+  - `bash -n bilayer-lateral-diffusion/run_local.sh`
+  - `bash -n bilayer-lateral-diffusion/submit_interface_scale_calibration_round.sh`
+  - `cmake --build obj --target upside`
+  - staged no-submit calibration wrapper under `/tmp/bilayer_interface_scale_calibration/pair_scale_0p85`
+  - reduced local bilayer smoke runs under `/tmp/bilayer_pair_scale_smoke_1p0` and `/tmp/bilayer_pair_scale_smoke_0p85`
+  - direct HDF5 inspection of `stage_6.0.prepared.up` verified:
+    - `epsilon` ratio = `0.85`
+    - charge ratios = `0.921954 = sqrt(0.85)`
+  - `report_interface_scale_calibration.py` executed successfully on a temporary two-run smoke comparison tree.
+
+## 2026-04-13 (Root-Level Hybrid Interface Sweep Workflow)
+- Added a new project-root workflow folder `hybrid-interface-sweep/` for sweeping the real hybrid `PROTEIN_ENV_INTERFACE_SCALE` run path.
+- Implemented `hybrid-interface-sweep/workflow.py`:
+  - manifest generation for `(interface_scale, replicate)` tasks,
+  - task execution through `example/16.MARTINI/run_sim_1rkl.sh`,
+  - task-local `RUN_DIR` allocation,
+  - compact assembled status summaries,
+  - Slurm array and collector staging.
+- Added wrapper scripts:
+  - `hybrid-interface-sweep/run_local.sh`
+  - `hybrid-interface-sweep/submit_remote_round.sh`
+- Added local workflow docs and tracker files:
+  - `hybrid-interface-sweep/README.md`
+  - `hybrid-interface-sweep/plan.md`
+  - `hybrid-interface-sweep/progress.md`
+  - `hybrid-interface-sweep/findings.md`
+- Reused the `bilayer-lateral-diffusion` Slurm submission shape instead of inventing a second submission model.
+- Preserved reproducibility by capturing a whitelist of relevant `run_sim_1rkl.sh` env overrides into the sweep manifest at `init-run`.
+- Verification completed:
+  - `python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - `bash -n hybrid-interface-sweep/run_local.sh`
+  - `bash -n hybrid-interface-sweep/submit_remote_round.sh`
+  - no-submit Slurm staging with a one-task smoke config under `/tmp/hybrid_interface_sweep_smoke`
+  - reduced end-to-end local smoke run for `scale = 0.85`
+  - verified:
+    - `results/tasks/scale0p85_r01.json` reports `success = true`
+    - task-local `1rkl.stage_7.0.up` exists
+    - `assembled/summary.json` reports `1` successful task and `1` completed scale.

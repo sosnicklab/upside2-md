@@ -175,6 +175,7 @@ SC_ENV_ENERGY_DUMP_STRIDE="${SC_ENV_ENERGY_DUMP_STRIDE:-1}"
 # Keep the environment on the dry-MARTINI LJ/Coulomb Hamiltonian in hybrid
 # production. The repulsive-only WCA replacement destabilizes stage 7.
 PRODUCTION_NONPROTEIN_HARD_SPHERE="${PRODUCTION_NONPROTEIN_HARD_SPHERE:-0}"
+PROTEIN_ENV_INTERFACE_SCALE="${PROTEIN_ENV_INTERFACE_SCALE:-1.0}"
 NONPROTEIN_HS_FORCE_CAP="${NONPROTEIN_HS_FORCE_CAP:-100.0}"
 NONPROTEIN_HS_POTENTIAL_CAP="${NONPROTEIN_HS_POTENTIAL_CAP:-5000.0}"
 
@@ -614,17 +615,26 @@ PY
 set_hybrid_production_controls() {
     local up_file="$1"
     local nonprotein_hard_sphere="$2"
-    python3 - "$up_file" "$nonprotein_hard_sphere" << 'PY'
+    local protein_env_interface_scale="$3"
+    python3 - "$up_file" "$nonprotein_hard_sphere" "$protein_env_interface_scale" << 'PY'
 import sys
+import math
 import h5py
 import numpy as np
 
 up_file = sys.argv[1]
 nonprotein_hard_sphere = int(sys.argv[2])
+protein_env_interface_scale = float(sys.argv[3])
+
+if not math.isfinite(protein_env_interface_scale) or protein_env_interface_scale <= 0.0:
+    raise SystemExit(
+        f"ERROR: protein_env_interface_scale must be finite and > 0, got {protein_env_interface_scale!r}"
+    )
 
 with h5py.File(up_file, "r+") as h5:
     grp = h5.require_group("input").require_group("hybrid_control")
     grp.attrs["production_nonprotein_hard_sphere"] = np.int8(1 if nonprotein_hard_sphere else 0)
+    grp.attrs["protein_env_interface_scale"] = np.float32(protein_env_interface_scale)
 PY
 }
 
@@ -1119,7 +1129,8 @@ prepare_stage_file() {
         set_hybrid_activation_stage "$target_file" "production"
         set_hybrid_production_controls \
             "$target_file" \
-            "$PRODUCTION_NONPROTEIN_HARD_SPHERE"
+            "$PRODUCTION_NONPROTEIN_HARD_SPHERE" \
+            "$PROTEIN_ENV_INTERFACE_SCALE"
         inject_stage7_sc_table_nodes \
             "$target_file" \
             "${SC_MARTINI_LIBRARY}"

@@ -15,12 +15,12 @@ resolve_paths() {
 
   if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -d "${SLURM_SUBMIT_DIR}" ]; then
     submit_dir="$(cd "${SLURM_SUBMIT_DIR}" && pwd)"
-    candidates+=("$submit_dir" "$submit_dir/bilayer-lateral-diffusion")
+    candidates+=("$submit_dir" "$submit_dir/hybrid-interface-sweep")
   fi
 
-  if [ -n "${BILAYER_DIFF_PROJECT_ROOT:-}" ] && [ -d "${BILAYER_DIFF_PROJECT_ROOT}" ]; then
-    project_root_hint="$(cd "${BILAYER_DIFF_PROJECT_ROOT}" && pwd)"
-    candidates+=("$project_root_hint/bilayer-lateral-diffusion" "$project_root_hint")
+  if [ -n "${HYBRID_SWEEP_PROJECT_ROOT:-}" ] && [ -d "${HYBRID_SWEEP_PROJECT_ROOT}" ]; then
+    project_root_hint="$(cd "${HYBRID_SWEEP_PROJECT_ROOT}" && pwd)"
+    candidates+=("$project_root_hint/hybrid-interface-sweep" "$project_root_hint")
   fi
 
   for candidate in "${candidates[@]}"; do
@@ -31,7 +31,7 @@ resolve_paths() {
   done
 
   if [ -z "$SCRIPT_DIR" ]; then
-    echo "Unable to locate the bilayer-lateral-diffusion workflow directory." >&2
+    echo "Unable to locate the hybrid-interface-sweep workflow directory." >&2
     return 1
   fi
 
@@ -63,7 +63,7 @@ source_project_env() {
 }
 
 resolve_python_bin() {
-  local requested="${BILAYER_DIFF_PYTHON:-}"
+  local requested="${HYBRID_SWEEP_PYTHON:-}"
   if [ -n "$requested" ]; then
     if command -v "$requested" >/dev/null 2>&1; then
       PYTHON_BIN="$(command -v "$requested")"
@@ -81,9 +81,12 @@ resolve_python_bin() {
   PYTHON_BIN="$(command -v python3)"
 }
 
-default_base_dir() {
-  local preset="${BILAYER_DIFF_RUN_PRESET:-default}"
-  echo "$SCRIPT_DIR/runs/$preset"
+append_init_arg() {
+  local flag="$1"
+  local value="${2:-}"
+  if [ -n "$value" ]; then
+    INIT_CMD+=("$flag" "$value")
+  fi
 }
 
 resolve_paths
@@ -97,7 +100,7 @@ if command -v module >/dev/null 2>&1; then
   module load python/3.11.9 || true
   module load cmake || true
   module load openmpi || true
-  module load "${BILAYER_DIFF_HDF5_MODULE:-hdf5/1.14.3}" || true
+  module load "${HYBRID_SWEEP_HDF5_MODULE:-hdf5/1.14.3}" || true
 fi
 
 PYTHON_BIN=""
@@ -114,17 +117,34 @@ resolve_python_bin
 
 export PYTHONUNBUFFERED=1
 if [ -n "${PROJECT_ROOT:-}" ]; then
-  export BILAYER_DIFF_PROJECT_ROOT="$PROJECT_ROOT"
+  export HYBRID_SWEEP_PROJECT_ROOT="$PROJECT_ROOT"
 fi
 
-BASE_DIR="${BILAYER_DIFF_BASE_DIR:-$(default_base_dir)}"
+BASE_DIR="${HYBRID_SWEEP_BASE_DIR:-$SCRIPT_DIR/runs/default}"
 mkdir -p "$BASE_DIR"
 
-"$PYTHON_BIN" "$SCRIPT_DIR/workflow.py" init-stage7-analysis --base-dir "$BASE_DIR"
+INIT_CMD=("$PYTHON_BIN" "$SCRIPT_DIR/workflow.py" init-run --base-dir "$BASE_DIR")
+append_init_arg "--pdb-id" "${HYBRID_SWEEP_PDB_ID:-}"
+append_init_arg "--interface-scales" "${HYBRID_SWEEP_INTERFACE_SCALES:-}"
+append_init_arg "--replicates" "${HYBRID_SWEEP_REPLICATES:-}"
+append_init_arg "--seed" "${HYBRID_SWEEP_SEED:-}"
 
-cmd=("$PYTHON_BIN" "$SCRIPT_DIR/workflow.py" submit-stage7-analysis-slurm --base-dir "$BASE_DIR")
-if [ "${BILAYER_DIFF_NO_SUBMIT:-0}" = "1" ]; then
-  cmd+=(--no-submit)
+if [ "${HYBRID_SWEEP_FORCE_INIT:-0}" = "1" ] || [ ! -f "$BASE_DIR/sweep_manifest.json" ]; then
+  "${INIT_CMD[@]}"
+fi
+
+cmd=("$PYTHON_BIN" "$SCRIPT_DIR/workflow.py" run-local --base-dir "$BASE_DIR")
+if [ -n "${HYBRID_SWEEP_MAX_TASKS:-}" ]; then
+  cmd+=(--max-tasks "$HYBRID_SWEEP_MAX_TASKS")
+fi
+if [ -n "${HYBRID_SWEEP_START_TASK:-}" ]; then
+  cmd+=(--start-task "$HYBRID_SWEEP_START_TASK")
+fi
+if [ "${HYBRID_SWEEP_OVERWRITE:-0}" = "1" ]; then
+  cmd+=(--overwrite)
+fi
+if [ "${HYBRID_SWEEP_NO_ASSEMBLE:-0}" = "1" ]; then
+  cmd+=(--no-assemble)
 fi
 
 "${cmd[@]}"

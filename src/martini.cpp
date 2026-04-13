@@ -281,6 +281,7 @@ struct HybridRuntimeState {
     bool preprod_rigid = true;
     std::string activation_stage = "production";
     std::string preprod_mode = "rigid";
+    float protein_env_interface_scale = 1.0f;
     size_t n_bb = 0;
     size_t n_env = 0;
     std::vector<int> bb_residue_index;
@@ -474,6 +475,22 @@ static inline bool active_sc_env_po4_z_hold_enabled(const HybridRuntimeState& st
            st.sc_env_transition_step < static_cast<uint64_t>(st.sc_env_po4_z_hold_steps);
 }
 
+static inline bool active_cross_interface_pair(
+        const HybridRuntimeState& st,
+        bool i_is_protein,
+        bool j_is_protein) {
+    return st.enabled && st.active && (i_is_protein != j_is_protein);
+}
+
+static inline float active_interface_interaction_scale(
+        const HybridRuntimeState& st,
+        bool i_is_protein,
+        bool j_is_protein) {
+    return active_cross_interface_pair(st, i_is_protein, j_is_protein)
+               ? st.protein_env_interface_scale
+               : 1.f;
+}
+
 static inline bool deterministic_startup_pair_cap_enabled(
         const HybridRuntimeState& st,
         bool i_is_protein,
@@ -619,6 +636,8 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.production_nonprotein_hard_sphere =
         (read_attribute<int>(ctrl.get(), ".", "production_nonprotein_hard_sphere", 0) != 0);
     out.preprod_rigid = (out.preprod_mode == "rigid");
+    out.protein_env_interface_scale =
+        read_attribute<float>(ctrl.get(), ".", "protein_env_interface_scale", out.protein_env_interface_scale);
     out.sc_env_lj_force_cap = read_attribute<float>(ctrl.get(), ".", "sc_env_lj_force_cap", out.sc_env_lj_force_cap);
     out.sc_env_coul_force_cap = read_attribute<float>(ctrl.get(), ".", "sc_env_coul_force_cap", out.sc_env_coul_force_cap);
     out.sc_env_relax_steps = read_attribute<int>(ctrl.get(), ".", "sc_env_relax_steps", out.sc_env_relax_steps);
@@ -644,6 +663,9 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     if(out.sc_env_energy_dump_stride < 1) out.sc_env_energy_dump_stride = 1;
     if(out.nonprotein_hs_force_cap < 0.f) out.nonprotein_hs_force_cap = 0.f;
     if(out.nonprotein_hs_potential_cap < 0.f) out.nonprotein_hs_potential_cap = 0.f;
+    if(!(out.protein_env_interface_scale > 0.f) || !std::isfinite(out.protein_env_interface_scale)) {
+        throw string("hybrid_control/protein_env_interface_scale must be finite and > 0");
+    }
 
     if(!out.enabled) {
         return out;
@@ -2068,6 +2090,7 @@ struct MartiniPotential : public PotentialNode
                                    float sig,
                                    float qi,
                                    float qj,
+                                   float interaction_scale,
                                    bool hard_sphere_mode,
                                    float& pair_potential,
                                    Vec<3>& pair_force,
@@ -2103,12 +2126,12 @@ struct MartiniPotential : public PotentialNode
                 float wca_pot = 4.f * eps * (sr12 - sr6) + eps;
                 float wca_force_mag = 24.f * eps * (2.f * sr12 - sr6) / eval_dist;
                 if(std::isfinite(wca_pot) && std::isfinite(wca_force_mag)) {
-                    pair_potential = wca_pot;
+                    pair_potential = interaction_scale * wca_pot;
                     if(hs_pot_cap_mag > 0.f && pair_potential > hs_pot_cap_mag) {
                         pair_potential = hs_pot_cap_mag;
                     }
                     if(pair_lj_potential) *pair_lj_potential = pair_potential;
-                    pair_force = (wca_force_mag / eval_dist) * dr;
+                    pair_force = interaction_scale * ((wca_force_mag / eval_dist) * dr);
                     cap_force_vector(pair_force, hs_force_cap_mag);
                     return true;
                 }
@@ -2139,6 +2162,8 @@ struct MartiniPotential : public PotentialNode
                                 lj_force = ((1.f - cap_mix) * lj_force) + (cap_mix * lj_force_uncapped);
                             }
                         }
+                        lj_pot *= interaction_scale;
+                        lj_force *= interaction_scale;
                         pair_potential += lj_pot;
                         if(pair_lj_potential) *pair_lj_potential += lj_pot;
                         pair_force += lj_force;
@@ -2183,6 +2208,8 @@ struct MartiniPotential : public PotentialNode
                             coul_force = ((1.f - cap_mix) * coul_force) + (cap_mix * coul_force_uncapped);
                         }
                     }
+                    coul_pot *= interaction_scale;
+                    coul_force *= interaction_scale;
                     pair_potential += coul_pot;
                     if(pair_coul_potential) *pair_coul_potential += coul_pot;
                     pair_force += coul_force;
@@ -2255,7 +2282,11 @@ struct MartiniPotential : public PotentialNode
                 startup_coul_force_cap = hybrid_state->sc_env_coul_force_cap;
                 startup_cap_mix = sc_force_uncap_mix;
             }
-            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, hard_sphere_pair, pair_pot, force,
+            float interface_scale = hybrid_state
+                                        ? martini_hybrid::active_interface_interaction_scale(
+                                              *hybrid_state, i_is_protein, j_is_protein)
+                                        : 1.f;
+            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, interface_scale, hard_sphere_pair, pair_pot, force,
                                 startup_lj_force_cap,
                                 startup_coul_force_cap,
                                 startup_cap_mix,
@@ -2561,6 +2592,7 @@ struct MartiniScTablePotential : public PotentialNode
 
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
+        float interface_scale = hybrid_state->protein_env_interface_scale;
         float protein_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*hybrid_state);
 
         VecArray posc = pos.output;
@@ -2612,6 +2644,9 @@ struct MartiniScTablePotential : public PotentialNode
                 float dVdcoord = dAng1dcoord * angular_value;
 
                 if(!std::isfinite(value) || !std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
+                value *= interface_scale;
+                dVdr *= interface_scale;
+                dVdcoord *= interface_scale;
                 potential += value;
 
                 if(dist <= 1.0e-6f) continue;
@@ -2922,6 +2957,7 @@ struct MartiniScTableOneBody : public CoordNode
 
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
+        float interface_scale = hybrid_state->protein_env_interface_scale;
 
         VecArray posc = pos.output;
         VecArray cbc = cb_pos.output;
@@ -2970,7 +3006,7 @@ struct MartiniScTableOneBody : public CoordNode
                 total += radial_value + ang1_value * angular_value;
             }
 
-            output(0, irow) = total / float(group_count);
+            output(0, irow) = interface_scale * (total / float(group_count));
         }
     }
 
@@ -2979,6 +3015,7 @@ struct MartiniScTableOneBody : public CoordNode
 
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
+        float interface_scale = hybrid_state->protein_env_interface_scale;
         float protein_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*hybrid_state);
 
         VecArray posc = pos.output;
@@ -2995,7 +3032,7 @@ struct MartiniScTableOneBody : public CoordNode
             int residue_idx = row_residue_table_index[irow];
             int rotamer_idx = row_rotamer_index[irow];
             int group_count = std::max(1, row_group_count[irow]);
-            row_scale /= float(group_count);
+            row_scale = interface_scale * (row_scale / float(group_count));
 
             Vec<6> cb_site = load_vec<6>(cbc, cb_idx);
             Vec<3> cbp = extract<0,3>(cb_site);

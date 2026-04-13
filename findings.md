@@ -331,3 +331,36 @@
   - Working rule: when the user reports “same output” after a rerun, immediately reopen the diagnosis, discard the previous fix as non-dominant, and validate the next candidate on the exact `stage handoff + seed + horizon` combination rather than on shorter proxy checks.
 - 2026-03-20: A hybrid "alignment" feature can silently violate design intent if it mutates live integrator state instead of coupling/reference coordinates.
   - Working rule: when a control path sounds like diagnostic or coupling-side alignment, verify in code that it does not rewrite saved raw coordinates or momenta unless the design explicitly requires that behavior.
+- 2026-04-13: When the user uses a bilayer-only calibration as a proxy for a hybrid control, separate the calibration Hamiltonian from the production Hamiltonian explicitly.
+  - Working rule: if a user says a factor should be measured in a bilayer-only run but applied only at the Upside/dry-MARTINI interface, do not reuse the calibration scope as the production scope; implement those two surfaces independently and verify both.
+- 2026-04-13: Before planning against an older compatibility node, re-check which runtime node is actually live in the current checkout.
+  - Working rule: when multiple stage-7 paths coexist, inspect the active workflow artifact and codepath first; do not assume the older compatibility node is still the production path.
+- 2026-04-13: When asked to build a new sweep workflow for an existing scientific run, orchestrate the canonical entrypoint instead of cloning its stage logic.
+  - Working rule: if the repo already has one shell workflow that owns preparation, stage handoff, and activation logic, make the new sweep workflow drive that entrypoint with task-local env overrides rather than reimplementing the stage ladder in Python.
+
+## 2026-04-13 (Interface-Only Hybrid Scaling Calibration)
+- Active stage-7 SC production path in this checkout:
+  - `martini_sc_table_1body` is the live production path,
+  - `martini_sc_table_potential` remains only as a backward-compatibility surface.
+- The new shared interface factor can be applied in the direct pair runtime without regenerating MARTINI spline tables:
+  - direct LJ contributions are linear in `epsilon`,
+  - direct Coulomb contributions are linear in the charge product `q_i q_j`,
+  - therefore a single multiplicative `interaction_scale` on the evaluated pair energy/force reproduces `epsilon *= scale` and `q -> sqrt(scale) * q`.
+- Bilayer calibration implementation was verified directly on staged HDF5 artifacts:
+  - for a `pair_scale = 0.85` smoke run,
+  - `stage_6.0.prepared.up` had `epsilon` ratios of exactly `0.85`,
+  - charge ratios were exactly `0.921954`, matching `sqrt(0.85)`.
+
+## 2026-04-13 (Root-Level Hybrid Interface Sweep Workflow)
+- The correct simulation surface for a production interface-scale sweep is `example/16.MARTINI/run_sim_1rkl.sh`:
+  - it already owns hybrid packing,
+  - stage-file generation,
+  - stage `7.0` activation,
+  - `PROTEIN_ENV_INTERFACE_SCALE`,
+  - and the expected output layout.
+- A thin orchestration workflow is enough for this sweep:
+  - manifest,
+  - one task-local `RUN_DIR` per scale/replicate,
+  - Slurm array submission,
+  - compact assembled status summary.
+- The reduced smoke run verified that the new workflow can reach a real task-local `stage_7.0.up` checkpoint through the canonical hybrid entrypoint.

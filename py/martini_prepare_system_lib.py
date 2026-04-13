@@ -855,6 +855,7 @@ def write_hybrid_mapping_h5(
         ctrl.attrs["preprod_lipid_headgroup_roles"] = b"PO4"
         ctrl.attrs["exclude_intra_protein_martini"] = np.int8(1)
         ctrl.attrs["production_nonprotein_hard_sphere"] = np.int8(0)
+        ctrl.attrs["protein_env_interface_scale"] = np.float32(1.0)
         ctrl.attrs["schema_version"] = np.int32(1)
 
         bb_grp = inp.create_group("hybrid_bb_map")
@@ -3293,6 +3294,13 @@ def validate_hybrid_mapping(mapping_h5: Path, n_atom: int | None = None):
         ]:
             if attr not in ctrl.attrs:
                 raise ValueError(f"Missing hybrid_control attr: {attr}")
+
+        if "protein_env_interface_scale" in ctrl.attrs:
+            interface_scale = float(ctrl.attrs["protein_env_interface_scale"])
+            if not np.isfinite(interface_scale) or interface_scale <= 0.0:
+                raise ValueError(
+                    "hybrid_control/protein_env_interface_scale must be finite and > 0"
+                )
 
         bb_atom_idx = require_dataset(bb, "bb_atom_index")[:]
         bb_atom_map = require_dataset(bb, "atom_indices")[:]
