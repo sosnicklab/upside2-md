@@ -353,6 +353,8 @@
   - Working rule: if the repo already has one shell workflow that owns preparation, stage handoff, and activation logic, make the new sweep workflow drive that entrypoint with task-local env overrides rather than reimplementing the stage ladder in Python.
 - 2026-04-13: When adding analysis to an existing scientific sweep, inspect the real output schema first and derive selectors from the generated files rather than from a nearby workflow.
   - Working rule: before implementing the analyzer, inspect a real stage file for atom selectors, box storage, and protein-carrier metadata; do not assume that `particle_class`, box datasets, or atom-role conventions match a different workflow.
+- 2026-04-13: When the user explicitly asks for Slurm-array parity with a reference workflow, verify the live submission path against that reference and state the array granularity clearly in code/docs.
+  - Working rule: if a reference workflow is provided, inspect its actual `submit-*` wrapper and `workflow.py` array-submission code, then align empty-manifest guards, one-task-per-array-element behavior, and user-facing docs rather than only assuming the current implementation is “close enough”.
 
 ## 2026-04-13 (Interface-Only Hybrid Scaling Calibration)
 - Active stage-7 SC production path in this checkout:

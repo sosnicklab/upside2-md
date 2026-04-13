@@ -36,6 +36,14 @@
   - `analysis/slurm/analyze_array.sbatch`
   - `analysis/slurm/collect_analysis.sbatch`
 
+## 2026-04-13 (Array Submission Parity)
+- Rechecked the external `/Users/yinhan/Documents/bilayer-lateral-diffusion` workflow after the user asked for Slurm-array parity.
+- Confirmed the hybrid sweep already uses Slurm arrays for both simulation and analysis submission.
+- Tightened the hybrid workflow to match the bilayer pattern more explicitly:
+  - `submit-slurm` now rejects empty sweep manifests before staging an invalid array,
+  - `submit-analysis-slurm` now rejects empty analysis manifests before staging an invalid array,
+  - `hybrid-interface-sweep/README.md` now states directly that both submission paths use one array task per manifest row / discovered checkpoint plus a dependent collector job.
+
 ## 2026-04-01
 - Audited the active stage-7 SC/dry-MARTINI interaction semantics after the probabilistic-weight / face-vector check request.
 - Verified the live stage-7 injector/runtime path is deterministic and radial:

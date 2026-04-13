@@ -45,6 +45,8 @@ source source.sh
 ./hybrid-interface-sweep/submit_remote_round.sh
 ```
 
+This stages and submits a Slurm array with one array element per sweep task from `sweep_manifest.json`, followed by a dependent collector job.
+
 Useful wrapper environment variables:
 
 - `HYBRID_SWEEP_BASE_DIR`
@@ -113,6 +115,12 @@ source .venv/bin/activate
 source source.sh
 ./hybrid-interface-sweep/submit_analysis.sh
 ```
+
+This follows the same pattern as the bilayer workflow:
+
+- `init-analysis` discovers completed `stage_7.0.up` files,
+- `submit-analysis-slurm` stages an analysis Slurm array with one array element per discovered checkpoint,
+- a dependent collector job assembles the per-task analysis JSON files into CSV and summary outputs.
 
 Useful wrapper environment variables:
 

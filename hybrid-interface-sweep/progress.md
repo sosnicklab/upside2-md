@@ -67,3 +67,11 @@
   - `analysis/slurm/round_manifest.json`
   - `analysis/slurm/analyze_array.sbatch`
   - `analysis/slurm/collect_analysis.sbatch`
+
+## 2026-04-13 (Bilayer Parity Check)
+- Compared the hybrid sweep Slurm submission path against `/Users/yinhan/Documents/bilayer-lateral-diffusion`.
+- Confirmed both hybrid submission entrypoints already use Slurm arrays:
+  - one sweep task per manifest row for simulation,
+  - one analysis task per discovered `stage_7.0.up` file for post-run analysis.
+- Added empty-manifest guards to both `submit-slurm` and `submit-analysis-slurm`.
+- Updated `README.md` to state the array-task granularity and dependent collector pattern explicitly.

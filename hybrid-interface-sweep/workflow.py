@@ -1360,19 +1360,22 @@ def _analysis_collector_script_content(base_dir: Path) -> str:
 def cmd_submit_slurm(args: argparse.Namespace) -> int:
     base_dir = Path(args.base_dir).expanduser().resolve()
     manifest = _load_manifest(base_dir)
+    n_tasks = len(manifest["tasks"])
+    if n_tasks <= 0:
+        raise RuntimeError("Sweep manifest contains no tasks")
     round_manifest = {
         "schema": SCHEMA_SLURM_ROUND,
         "created_at_utc": _now_utc(),
         "base_dir": str(base_dir),
         "manifest_path": str(_manifest_path(base_dir)),
-        "n_tasks": len(manifest["tasks"]),
+        "n_tasks": n_tasks,
     }
     round_manifest_path = _slurm_dir(base_dir) / "round_manifest.json"
     _write_json(round_manifest_path, round_manifest)
 
     array_script = _slurm_dir(base_dir) / "train_array.sbatch"
     collector_script = _slurm_dir(base_dir) / "collect_results.sbatch"
-    _write_text(array_script, _array_script_content(round_manifest_path, base_dir, len(manifest["tasks"])), executable=True)
+    _write_text(array_script, _array_script_content(round_manifest_path, base_dir, n_tasks), executable=True)
     _write_text(collector_script, _collector_script_content(base_dir), executable=True)
 
     print(f"Round manifest: {round_manifest_path}")
@@ -1404,12 +1407,15 @@ def cmd_submit_slurm(args: argparse.Namespace) -> int:
 def cmd_submit_analysis_slurm(args: argparse.Namespace) -> int:
     base_dir = Path(args.base_dir).expanduser().resolve()
     analysis_manifest = _load_analysis_manifest(base_dir)
+    n_tasks = len(analysis_manifest["tasks"])
+    if n_tasks <= 0:
+        raise RuntimeError("Analysis manifest contains no tasks")
     round_manifest = {
         "schema": SCHEMA_ANALYSIS_SLURM,
         "created_at_utc": _now_utc(),
         "base_dir": str(base_dir),
         "analysis_manifest_path": str(_analysis_manifest_path(base_dir)),
-        "n_tasks": len(analysis_manifest["tasks"]),
+        "n_tasks": n_tasks,
     }
     round_manifest_path = _analysis_slurm_dir(base_dir) / "round_manifest.json"
     _write_json(round_manifest_path, round_manifest)
@@ -1418,7 +1424,7 @@ def cmd_submit_analysis_slurm(args: argparse.Namespace) -> int:
     collector_script = _analysis_slurm_dir(base_dir) / "collect_analysis.sbatch"
     _write_text(
         array_script,
-        _analysis_array_script_content(round_manifest_path, base_dir, len(analysis_manifest["tasks"])),
+        _analysis_array_script_content(round_manifest_path, base_dir, n_tasks),
         executable=True,
     )
     _write_text(
