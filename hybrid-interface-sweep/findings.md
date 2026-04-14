@@ -48,6 +48,38 @@
   - provenance attrs record `interaction_scale` and `coulomb_charge_scale`.
 - The corrected analysis path assembles cleanly on the smoke tree with `interaction_scale` as the only condition axis.
 
+## 2026-04-14 (Downloaded Scalar-Factor Analysis Review)
+- The downloaded scalar-factor analysis tree is numerically complete:
+  - `15 / 15` analysis tasks succeeded,
+  - `0` failed tasks were assembled,
+  - all `5` tested scales have full `3 / 3` replicate coverage.
+- Internal consistency is strong across the full sweep:
+  - every task uses `160` post-burn-in frames,
+  - every task uses `102` `PO4` beads,
+  - all diffusion values are finite,
+  - fit quality stays tight at `R^2 = 0.9882 -> 0.9943`.
+- The sweep response is monotonic over the tested range:
+  - `interaction_scale = 1.0 -> 0.6`
+  - `PO4` diffusion rises from `0.824 -> 1.128 um^2/s`.
+- The saved recommendation `interaction_scale = 0.6` is justified by the current selector:
+  - it has the highest mean diffusion in-grid,
+  - its replicate spread remains modest (`CV = 0.035`),
+  - and it also has the best minimum fit quality in-grid (`min R^2 = 0.9915`).
+- Relative to the existing `40 ps/step` temperature-specific proxy target:
+  - workflow temperature `T = 0.8647` corresponds to about `303.2 K`,
+  - linear interpolation between the `0.8` and `0.9` reference rows in `hybrid_timescale.md` implies a target near `2.892 um^2/s`,
+  - no tested scale reaches that target.
+- Consequence:
+  - if the goal is simply “best within this tested scalar grid,” choose `interaction_scale = 0.6`,
+  - if the goal is to match the provisional `40 ps/step` physical target, the current grid is still unresolved and should be extended below `0.6`.
+
+## 2026-04-14 (Default Grid Extension)
+- The workflow default scale list should no longer stop at `0.6`.
+- The next default run should probe substantially lower interaction strength without requiring a manual env override.
+- The widened default grid is:
+  - `1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.25, 0.2, 0.15, 0.1`
+- This is an exploration extension, not a claim that the target lies inside that range.
+
 ## Lessons
 - When the user says a softening factor is “a simple number,” implement a scalar interaction-strength factor, not a softened Hamiltonian shape.
 - When the user explicitly says not to modify a reference workflow, keep the fix inside the named target workflow even if the reference path influenced earlier designs.

@@ -117,3 +117,42 @@
   - inferred target at workflow temperature `T = 0.8647` is about `2.9 um^2/s`,
   - current sweep reaches only `0.733 -> 0.862 um^2/s`,
   - so the grid does not yet produce a true target match.
+
+## 2026-04-14 (Downloaded Scalar-Factor Analysis Validation)
+- Re-reviewed the downloaded `hybrid-interface-sweep/analysis/` tree after the scalar-factor workflow rerun.
+- Confirmed the assembled scalar-factor analysis is complete:
+  - `15 / 15` tasks succeeded,
+  - `0` failed tasks,
+  - `5 / 5` tested scales have full `3 / 3` replicate coverage.
+- Rechecked per-task internal consistency:
+  - all tasks use `160` post-burn-in frames,
+  - all tasks use `102` `PO4` beads,
+  - all diffusion outputs are finite,
+  - task-level `PO4` fit quality spans `R^2 = 0.9882 -> 0.9943`.
+- Reviewed condition-level behavior:
+  - diffusion increases monotonically as `interaction_scale` decreases from `1.0` to `0.6`,
+  - mean diffusion range is `0.824 -> 1.128 um^2/s`,
+  - replicate spread stays modest across the grid (`CV = 0.021 -> 0.054`).
+- The current in-grid best condition is:
+  - `interaction_scale = 0.6`
+  - `po4_diffusion_um2_per_s_mean = 1.128`
+  - `po4_diffusion_um2_per_s_std = 0.0396`
+  - `CV = 0.035`
+  - `min R^2 = 0.9915`
+- Compared the measured range against the existing provisional `40 ps/step` target proxy from `hybrid_timescale.md`:
+  - interpolated target at workflow temperature `T = 0.8647` is about `2.892 um^2/s`,
+  - the new scalar sweep still does not reach that target,
+  - so `0.6` is the best tested scale, but not yet a demonstrated target match.
+
+## 2026-04-14 (Default Grid Extension)
+- Updated `hybrid-interface-sweep/workflow.py` so the default scalar-factor list now extends below the previous floor of `0.6`.
+- New default grid:
+  - `1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.25, 0.2, 0.15, 0.1`
+- Updated `hybrid-interface-sweep/README.md` to document the widened default sweep and why it was extended.
+- This preserves the existing override surface:
+  - `HYBRID_SWEEP_INTERACTION_SCALES`
+  - `--interaction-scales`
+- Verification:
+  - `python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - `python3 hybrid-interface-sweep/workflow.py init-run --base-dir /tmp/hybrid_interface_scale_defaults_check_v3`
+  - confirmed fresh default manifest count = `36` tasks.
