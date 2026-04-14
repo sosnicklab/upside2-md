@@ -1,77 +1,63 @@
 # Progress Log
 
-## 2026-04-13 (Initialization)
-- Created a dedicated root-level workflow folder for sweeping the hybrid `PROTEIN_ENV_INTERFACE_SCALE`.
-- Recorded the implementation goal, design choices, and execution phases in the local tracker files before code changes.
+## 2026-04-13 (Workflow Redesign)
+- Reopened `hybrid-interface-sweep/` after the user corrected the scientific goal:
+  - the existing workflow answered a hybrid protein/bilayer interface-scale question,
+  - but the requested workflow needed to be bilayer-only and softening-focused.
+- Rewrote the local tracker files to make bilayer-only production softening, bilayer diffusion, and a viscosity proxy the source of truth for the task.
 
 ## 2026-04-13 (Implementation)
-- Added `hybrid-interface-sweep/workflow.py` with:
-  - manifest generation,
-  - task execution through `example/16.MARTINI/run_sim_1rkl.sh`,
-  - task-local `RUN_DIR` allocation,
-  - result aggregation,
-  - Slurm array and collector staging.
-- Added:
+- Replaced `hybrid-interface-sweep/workflow.py` so the sweep now:
+  - prepares bilayer-only systems through `py/martini_prepare_system.py --mode bilayer`,
+  - runs a bilayer `6.0 -> 7.0` stage ladder,
+  - sweeps `(lj_alpha, slater_alpha, replicate)` instead of `PROTEIN_ENV_INTERFACE_SCALE`,
+  - rewrites the staged production `martini_potential` attrs for task-specific softening,
+  - assembles bilayer-only task summaries,
+  - discovers successful `stage_7.0.up` files for analysis,
+  - computes `PO4` lateral diffusion relative to bilayer COM,
+  - converts diffusion into physical units using the configured `ps/step` assumption,
+  - reports a reciprocal-diffusion viscosity proxy,
+  - writes `recommendation_summary.json` from the assembled analysis.
+- Updated wrapper scripts:
   - `hybrid-interface-sweep/run_local.sh`
   - `hybrid-interface-sweep/submit_remote_round.sh`
-  - `hybrid-interface-sweep/README.md`
+- Rewrote `hybrid-interface-sweep/README.md` around the corrected bilayer-only parameter surface and outputs.
 
 ## 2026-04-13 (Verification)
-- Ran `python3 -m py_compile hybrid-interface-sweep/workflow.py`.
-- Ran `bash -n hybrid-interface-sweep/run_local.sh`.
-- Ran `bash -n hybrid-interface-sweep/submit_remote_round.sh`.
-- Staged a no-submit Slurm run under `/tmp/hybrid_interface_sweep_smoke`.
-- Verified the staged Slurm output includes:
-  - `slurm/round_manifest.json`
-  - `slurm/train_array.sbatch`
-  - `slurm/collect_results.sbatch`
-- Ran a reduced one-task local smoke run with captured hybrid env overrides:
-  - `MIN_60_MAX_ITER=1`
-  - `MIN_61_MAX_ITER=1`
-  - `EQ_62_NSTEPS=1`
-  - `EQ_63_NSTEPS=1`
-  - `EQ_64_NSTEPS=1`
-  - `EQ_65_NSTEPS=1`
-  - `EQ_66_NSTEPS=1`
-  - `PROD_70_NSTEPS=1`
-  - `EQ_FRAME_STEPS=1`
-  - `PROD_FRAME_STEPS=1`
-- Verified the smoke task:
-  - completed successfully,
-  - wrote `results/tasks/scale0p85_r01.json`,
-  - produced task-local `run/checkpoints/1rkl.stage_7.0.up`,
-  - assembled `1` successful task and `1` completed scale under `assembled/summary.json`.
-
-## 2026-04-13 (Analysis Extension)
-- Extended `workflow.py` with:
-  - post-run stage-7 discovery,
-  - protein/bilayer MSD analysis,
-  - analysis result assembly,
-  - analysis Slurm staging.
-- Added:
-  - `run_analysis_local.sh`
-  - `submit_analysis.sh`
-- Updated `README.md` with analysis commands, outputs, and environment variables.
-- Ran static checks:
+- Ran static verification:
   - `python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - `bash -n hybrid-interface-sweep/run_local.sh`
+  - `bash -n hybrid-interface-sweep/submit_remote_round.sh`
   - `bash -n hybrid-interface-sweep/run_analysis_local.sh`
   - `bash -n hybrid-interface-sweep/submit_analysis.sh`
-- Ran a reduced real sweep plus post-run analysis smoke path under `/tmp/hybrid_interface_sweep_analysis_smoke`:
-  - sweep produced a task-local `1rkl.stage_7.0.up`,
-  - analysis wrote `analysis/results/tasks/scale0p85_r01.json`,
-  - analysis assembled:
-    - `analysis/assembled/task_results.csv`
-    - `analysis/assembled/condition_summary.csv`
-    - `analysis/assembled/summary.json`
-- Verified no-submit analysis Slurm staging wrote:
+- Ran a reduced one-task bilayer smoke sweep under `/tmp/hybrid_interface_softening_smoke` with:
+  - `lj_alpha = 0.05`
+  - `slater_alpha = 0.5`
+  - `replicates = 1`
+  - `MIN_60_MAX_ITER = 1`
+  - `MIN_61_MAX_ITER = 1`
+  - `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1`
+  - `PROD_70_NSTEPS = 40`
+  - `EQ_FRAME_STEPS = 1`
+  - `PROD_FRAME_STEPS = 1`
+- Verified the sweep smoke outputs:
+  - `results/tasks/lj0p05_coul0p5_r01.json` reports `success = true`
+  - `assembled/summary.json` reports one completed task and one completed condition
+  - staged `bilayer.stage_7.0.up` carries:
+    - `lj_soften = 1`
+    - `lj_soften_alpha = 0.05`
+    - `coulomb_soften = 1`
+    - `slater_alpha = 0.5`
+- Ran reduced local analysis on the same smoke tree and verified:
+  - `analysis/results/tasks/lj0p05_coul0p5_r01.json`
+  - `analysis/assembled/task_results.csv`
+  - `analysis/assembled/condition_summary.csv`
+  - `analysis/assembled/recommendation_summary.json`
+  - `analysis/assembled/summary.json`
+- Verified no-submit Slurm staging:
+  - `slurm/round_manifest.json`
+  - `slurm/run_array.sbatch`
+  - `slurm/collect_results.sbatch`
   - `analysis/slurm/round_manifest.json`
   - `analysis/slurm/analyze_array.sbatch`
   - `analysis/slurm/collect_analysis.sbatch`
-
-## 2026-04-13 (Bilayer Parity Check)
-- Compared the hybrid sweep Slurm submission path against `/Users/yinhan/Documents/bilayer-lateral-diffusion`.
-- Confirmed both hybrid submission entrypoints already use Slurm arrays:
-  - one sweep task per manifest row for simulation,
-  - one analysis task per discovered `stage_7.0.up` file for post-run analysis.
-- Added empty-manifest guards to both `submit-slurm` and `submit-analysis-slurm`.
-- Updated `README.md` to state the array-task granularity and dependent collector pattern explicitly.

@@ -125,9 +125,12 @@ mkdir -p "$BASE_DIR"
 
 INIT_CMD=("$PYTHON_BIN" "$SCRIPT_DIR/workflow.py" init-run --base-dir "$BASE_DIR")
 append_init_arg "--pdb-id" "${HYBRID_SWEEP_PDB_ID:-}"
-append_init_arg "--interface-scales" "${HYBRID_SWEEP_INTERFACE_SCALES:-}"
+append_init_arg "--lj-alphas" "${HYBRID_SWEEP_LJ_ALPHAS:-}"
+append_init_arg "--slater-alphas" "${HYBRID_SWEEP_SLATER_ALPHAS:-}"
 append_init_arg "--replicates" "${HYBRID_SWEEP_REPLICATES:-}"
 append_init_arg "--seed" "${HYBRID_SWEEP_SEED:-}"
+append_init_arg "--integration-ps-per-step" "${HYBRID_SWEEP_INTEGRATION_PS_PER_STEP:-}"
+append_init_arg "--target-diffusion-um2-s" "${HYBRID_SWEEP_TARGET_DIFFUSION_UM2_S:-}"
 
 if [ "${HYBRID_SWEEP_FORCE_INIT:-0}" = "1" ] || [ ! -f "$BASE_DIR/sweep_manifest.json" ]; then
   "${INIT_CMD[@]}"

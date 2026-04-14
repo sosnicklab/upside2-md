@@ -1,42 +1,26 @@
 # Findings
 
-## 2026-04-13 (Initial Design)
-- The correct execution surface for the sweep is `example/16.MARTINI/run_sim_1rkl.sh`, because that script already owns:
-  - hybrid preparation,
-  - stage-file generation,
-  - stage `7.0` activation,
-  - `PROTEIN_ENV_INTERFACE_SCALE`,
-  - trajectory extraction.
-- The right Slurm pattern already exists in `bilayer-lateral-diffusion/`:
-  - a manifest created at `init-run`,
-  - one array task per manifest row,
-  - a collector job that assembles per-task results after the array finishes.
+## 2026-04-13 (User Correction)
+- The current `hybrid-interface-sweep` is scientifically mis-scoped for the stated goal.
+  - Sweeping `PROTEIN_ENV_INTERFACE_SCALE` through the full hybrid protein+bilayer workflow answers a protein/bilayer interaction-strength question.
+  - It does not answer the requested bilayer-only softening-calibration question.
+- The corrected workflow target is:
+  - run bilayer-only dry-MARTINI tests,
+  - vary the softening applied to Lennard-Jones and Coulomb interactions,
+  - measure bilayer lateral diffusion and a viscosity proxy,
+  - then use that calibration to choose softening intended for later protein/bilayer interface use.
 
-## 2026-04-13 (Implementation Details)
-- The new workflow can stay thin because `run_sim_1rkl.sh` is already fully env-configurable for:
-  - `PROTEIN_ENV_INTERFACE_SCALE`
-  - `RUN_DIR`
-  - simulation-length overrides
-  - thermostat and production settings.
-- Capturing a whitelist of relevant env overrides at `init-run` time is enough to make shortened smoke runs and production reruns reproducible without turning the new workflow into a second copy of the hybrid parameter surface.
-- The reduced smoke run verified that the workflow can drive the canonical hybrid shell path all the way to a real task-local `stage_7.0.up` checkpoint.
-
-## 2026-04-13 (Analysis Design)
-- The active hybrid stage-7 outputs need schema-aware analysis:
-  - protein carrier atoms are best selected from `hybrid_bb_map` rather than proxy MARTINI roles,
-  - lipid membership is recoverable from non-protein `PO4` beads plus `molecule_ids`,
-  - box lengths may need to fall back to `input/potential/martini_potential` attrs when `/output/box` is absent.
-- A practical first analysis target for the sweep is diffusion, not a direct viscosity estimator:
-  - protein lateral COM diffusion relative to the bilayer COM is the main sweep signal,
-  - lipid `PO4` lateral diffusion is the bilayer guardrail,
-  - the analysis can be assembled into per-task and per-condition CSV summaries for later offline comparison.
-- The external `/Users/yinhan/Documents/bilayer-lateral-diffusion` workflow uses the intended acceleration pattern:
-  - a manifest/init step,
-  - one Slurm array element per task,
-  - a dependent collector job after the array.
-- The hybrid sweep now mirrors that pattern explicitly for both simulation and analysis submission.
+## 2026-04-13 (Implementation Facts)
+- `py/martini_prepare_system.py` already supports `--mode bilayer`, so the corrected workflow can prepare bilayer-only stage inputs without inventing a new packer.
+- Production softening is represented directly on `input/potential/martini_potential` by these attrs:
+  - `lj_soften`
+  - `lj_soften_alpha`
+  - `coulomb_soften`
+  - `slater_alpha`
+- `src/martini.cpp` reads those attrs at runtime and uses them to generate the softened LJ and Coulomb spline tables for the active MARTINI Hamiltonian.
+- The existing repo context does not provide a ready-made bilayer viscosity observable, so the workflow should report diffusion plus a clearly labeled reciprocal-diffusion viscosity proxy instead of pretending to compute a direct viscosity.
 
 ## Lessons
-- When a new sweep is supposed to exercise an existing scientific workflow, orchestrate the real entrypoint rather than re-encoding the stage logic in a second place.
-- When adding post-run analysis, derive atom selection and box handling from the actual generated stage files before writing the analyzer.
-- When the user points to a reference Slurm workflow, inspect its live array-submission path and match that pattern explicitly rather than relying on informal similarity.
+- When the user says a sweep should calibrate a future interface control through bilayer-only tests, do not route the workflow through the actual hybrid protein+bilayer simulation path.
+- When the user asks for softening calibration, distinguish interaction-strength scaling from Hamiltonian softening parameters before writing the sweep surface.
+- If a workflow’s scientific observable changes, rewrite the tracker files first so implementation and verification are aligned with the corrected question.
