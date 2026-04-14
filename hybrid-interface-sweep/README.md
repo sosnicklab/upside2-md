@@ -1,28 +1,29 @@
 # hybrid-interface-sweep
 
-This folder stages and submits bilayer-only dry-MARTINI softening sweeps for later hybrid interface calibration.
+This folder stages and submits bilayer-only dry-MARTINI interaction-scale sweeps for later hybrid interface calibration.
 
 ## Scope
 
-- Each task runs one full bilayer-only `6.0 -> 7.0` membrane workflow instance for one `(lj_alpha, slater_alpha, replicate)` condition.
-- Production-stage `7.0` softening is applied by rewriting the staged `martini_potential` attrs:
-  - `lj_soften`
-  - `lj_soften_alpha`
-  - `coulomb_soften`
-  - `slater_alpha`
+- Each task runs one full bilayer-only `6.0 -> 7.0` membrane workflow instance for one `(interaction_scale, replicate)` condition.
+- Production-stage `7.0` scaling is applied only inside this sweep workflow by rewriting the staged `martini_potential/coefficients` table:
+  - LJ coefficients use `epsilon *= f`
+  - Coulomb coefficients use `q_i *= sqrt(f)` and `q_j *= sqrt(f)`
+  - this is equivalent to multiplying the evaluated LJ and Coulomb pair energies and forces by the same scalar `f`
+- The canonical `example/16.MARTINI/` workflow is not modified by this sweep.
 - The workflow measures bilayer `PO4` lateral diffusion and reports a reciprocal-diffusion viscosity proxy.
 - The workflow supports local execution and Slurm array staging/submission.
 - The workflow also supports a post-run analysis phase over completed `stage_7.0.up` files.
 
 ## Default Sweep
 
-- `lj_alpha = 0.00, 0.025, 0.05, 0.10, 0.20`
-- `slater_alpha = 0.00, 0.25, 0.50, 1.00, 2.00`
+- `interaction_scale = 1.00, 0.90, 0.80, 0.70, 0.60`
 - `replicates = 3`
 - `pdb_id = bilayer`
 - physical conversion assumption: `40 ps` per integrator step
 
 The default output directory is `hybrid-interface-sweep/runs/default`.
+
+If a base directory still contains the older `(lj_alpha, slater_alpha)` manifest, reinitialize it with `HYBRID_SWEEP_FORCE_INIT=1` or use a fresh `HYBRID_SWEEP_BASE_DIR`.
 
 ## Run Locally
 
@@ -35,8 +36,7 @@ source source.sh
 Useful wrapper environment variables:
 
 - `HYBRID_SWEEP_BASE_DIR`
-- `HYBRID_SWEEP_LJ_ALPHAS`
-- `HYBRID_SWEEP_SLATER_ALPHAS`
+- `HYBRID_SWEEP_INTERACTION_SCALES`
 - `HYBRID_SWEEP_REPLICATES`
 - `HYBRID_SWEEP_PDB_ID`
 - `HYBRID_SWEEP_SEED`
@@ -60,8 +60,7 @@ This stages and submits a Slurm array with one array element per sweep task from
 Useful wrapper environment variables:
 
 - `HYBRID_SWEEP_BASE_DIR`
-- `HYBRID_SWEEP_LJ_ALPHAS`
-- `HYBRID_SWEEP_SLATER_ALPHAS`
+- `HYBRID_SWEEP_INTERACTION_SCALES`
 - `HYBRID_SWEEP_REPLICATES`
 - `HYBRID_SWEEP_PDB_ID`
 - `HYBRID_SWEEP_SEED`
@@ -116,7 +115,7 @@ To capture additional environment keys, set:
 
 ## Analysis Outputs
 
-The post-run analysis treats bilayer `PO4` lateral diffusion as the main fluidity signal.
+The post-run analysis treats bilayer `PO4` lateral diffusion as the main fluidity signal and groups results by the scalar interaction factor `f`.
 
 - Main signal: `PO4` lateral diffusion relative to bilayer COM.
 - Physical-unit conversion:

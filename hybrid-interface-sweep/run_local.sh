@@ -125,8 +125,7 @@ mkdir -p "$BASE_DIR"
 
 INIT_CMD=("$PYTHON_BIN" "$SCRIPT_DIR/workflow.py" init-run --base-dir "$BASE_DIR")
 append_init_arg "--pdb-id" "${HYBRID_SWEEP_PDB_ID:-}"
-append_init_arg "--lj-alphas" "${HYBRID_SWEEP_LJ_ALPHAS:-}"
-append_init_arg "--slater-alphas" "${HYBRID_SWEEP_SLATER_ALPHAS:-}"
+append_init_arg "--interaction-scales" "${HYBRID_SWEEP_INTERACTION_SCALES:-}"
 append_init_arg "--replicates" "${HYBRID_SWEEP_REPLICATES:-}"
 append_init_arg "--seed" "${HYBRID_SWEEP_SEED:-}"
 append_init_arg "--integration-ps-per-step" "${HYBRID_SWEEP_INTEGRATION_PS_PER_STEP:-}"

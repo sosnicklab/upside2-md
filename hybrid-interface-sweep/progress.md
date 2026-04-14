@@ -1,5 +1,41 @@
 # Progress Log
 
+## 2026-04-13 (Scalar-Factor Rewrite)
+- Reopened the workflow after the user clarified two constraints:
+  - the calibrated softening control must be a simple scalar factor `f`,
+  - and the correction must stay inside `hybrid-interface-sweep/`, not `example/16.MARTINI/`.
+- Updated the local tracker files:
+  - `hybrid-interface-sweep/plan.md`
+  - `hybrid-interface-sweep/findings.md`
+- Reworked `hybrid-interface-sweep/workflow.py` so the sweep now:
+  - accepts one `interaction_scale` axis instead of `(lj_alpha, slater_alpha)`,
+  - bumps manifest/result schemas to reject stale softening-manifest runs,
+  - rewrites staged production `martini_potential/coefficients` with:
+    - `epsilon *= interaction_scale`
+    - `q *= sqrt(interaction_scale)`
+  - disables `lj_soften` / `coulomb_soften` on the production-stage file,
+  - stores production provenance for the applied scalar factor,
+  - assembles run and analysis summaries grouped only by `interaction_scale`,
+  - updates recommendation tie-breaks to prefer larger `interaction_scale` when metrics are otherwise tied.
+- Updated the local launch surface:
+  - `hybrid-interface-sweep/run_local.sh`
+  - `hybrid-interface-sweep/submit_remote_round.sh`
+  - `hybrid-interface-sweep/README.md`
+  - new wrapper/config knob: `HYBRID_SWEEP_INTERACTION_SCALES`
+- Verified the corrected scalar-factor version:
+  - `python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - `bash -n hybrid-interface-sweep/run_local.sh`
+  - `bash -n hybrid-interface-sweep/submit_remote_round.sh`
+  - `bash -n hybrid-interface-sweep/run_analysis_local.sh`
+  - `bash -n hybrid-interface-sweep/submit_analysis.sh`
+  - reduced local smoke run under `/tmp/hybrid_interface_scale_smoke_v2`
+  - direct HDF5 comparison of staged `7.0` files confirmed:
+    - `epsilon` ratio = `0.85`
+    - charge ratios = `0.921954 = sqrt(0.85)`
+    - `lj_soften = 0`
+    - `coulomb_soften = 0`
+  - reduced local analysis run and no-submit Slurm staging both completed on the smoke tree.
+
 ## 2026-04-13 (Workflow Redesign)
 - Reopened `hybrid-interface-sweep/` after the user corrected the scientific goal:
   - the existing workflow answered a hybrid protein/bilayer interface-scale question,
@@ -61,3 +97,23 @@
   - `analysis/slurm/round_manifest.json`
   - `analysis/slurm/analyze_array.sbatch`
   - `analysis/slurm/collect_analysis.sbatch`
+
+## 2026-04-13 (Downloaded Analysis Validation)
+- Reviewed the downloaded `hybrid-interface-sweep/analysis/` tree from the completed remote run.
+- Confirmed the assembled analysis is numerically complete:
+  - `75 / 75` tasks succeeded,
+  - `0` failed tasks,
+  - `25 / 25` conditions have full `3 / 3` replicate coverage.
+- Checked the assembled metric consistency:
+  - all tasks use `160` post-burn-in frames,
+  - all tasks use `102` `PO4` beads,
+  - all diffusion outputs are finite,
+  - task-level `PO4` fit quality spans `R^2 = 0.978 -> 0.993`.
+- Reviewed condition-level stability and ranking:
+  - saved workflow recommendation `lj_alpha = 0.1`, `slater_alpha = 0.5` is the fastest mean branch but also relatively noisy,
+  - the best practical low-perturbation choice from the current grid is `lj_alpha = 0.0`, `slater_alpha = 1.0`,
+  - the best higher-stability high-fluidity branch is `lj_alpha = 0.1`, `slater_alpha = 2.0`.
+- Compared the measured diffusion range against the existing `40 ps/step` physical-timescale note in `hybrid_timescale.md`:
+  - inferred target at workflow temperature `T = 0.8647` is about `2.9 um^2/s`,
+  - current sweep reaches only `0.733 -> 0.862 um^2/s`,
+  - so the grid does not yet produce a true target match.

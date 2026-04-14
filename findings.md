@@ -356,7 +356,11 @@
 - 2026-04-13: When the user explicitly asks for Slurm-array parity with a reference workflow, verify the live submission path against that reference and state the array granularity clearly in code/docs.
 - 2026-04-13: When the user corrects the scientific scope of a workflow, do not preserve the old workflow surface if it still answers the wrong Hamiltonian.
   - Working rule: if a workflow folder is supposed to calibrate bilayer-only softening for later interface use, remove protein-relative controls and observables from that workflow rather than trying to reinterpret them in place.
+- 2026-04-13: "Softening factor" and "softened potential" are not interchangeable controls.
+  - Working rule: when the user asks for a simple percentage-like factor on LJ+Coulomb interaction strength, implement and analyze a scalar multiplier on the evaluated pair energy/force or its equivalent coefficient scaling; do not substitute soft-core LJ or Slater-softened Coulomb shape parameters.
   - Working rule: if a reference workflow is provided, inspect its actual `submit-*` wrapper and `workflow.py` array-submission code, then align empty-manifest guards, one-task-per-array-element behavior, and user-facing docs rather than only assuming the current implementation is “close enough”.
+- 2026-04-13: Do not expand a workflow correction into the reference workflow when the user explicitly scoped the fix to the sweep/orchestration layer.
+  - Working rule: if the user says the canonical example workflow is already correct and only the sweep wrapper is wrong, keep code changes inside the sweep workflow and treat the example path as read-only reference context.
 
 ## 2026-04-13 (Interface-Only Hybrid Scaling Calibration)
 - Active stage-7 SC production path in this checkout:
