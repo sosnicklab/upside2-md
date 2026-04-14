@@ -1,5 +1,25 @@
 # Progress Log
 
+## 2026-04-14 (Python Environment Installer Portability)
+- Opened a root-level installer portability task in `plan.md` and logged the relevant Darwin findings in `findings.md`.
+- Updated `install_python_env.sh` to:
+  - discover a valid Python `3.11` interpreter on Linux or macOS while still honoring `PYTHON_BIN`;
+  - allow `VENV_DIR` override instead of hardcoding the venv path;
+  - export Homebrew-backed build hints on macOS for `hdf5`, `c-blosc2`, `lzo`, and `bzip2`;
+  - install core packages as required dependencies and optional packages one at a time with warnings instead of aborting the full setup;
+  - run pip and import checks through `$VENV_DIR/bin/python` directly, avoiding stale `activate` scripts after repo moves;
+  - isolate the matplotlib/font cache used during the import check in a temporary writable directory.
+- Caught and fixed two script issues during verification:
+  - `set -e` could abort from a helper that returned the status of a missing optional Homebrew subdirectory;
+  - sourcing the existing `.venv/bin/activate` failed because that file still referenced an old absolute repo path.
+- Verification completed:
+  - `bash -n install_python_env.sh`
+  - `env PIP_NO_INDEX=1 bash install_python_env.sh`
+- Result on the current Darwin arm64 host:
+  - auto-selected `/opt/homebrew/bin/python3.11`;
+  - reused `/Users/yinhan/Documents/upside2-md/.venv`;
+  - passed the core scientific-stack import check and the `pyhdx` import check.
+
 ## 2026-04-13 (Hybrid Sweep Analysis)
 - Reopened the root-level `hybrid-interface-sweep/` task to add a post-run analysis phase over completed `stage_7.0.up` outputs.
 - Extended `hybrid-interface-sweep/workflow.py` with:

@@ -1,6 +1,16 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-14: The current Python installer is Linux-biased in two ways that matter on local macOS.
+  - it defaults to `PYTHON_BIN=python3.11`, but the host default `python3` on this Darwin arm64 machine is `/opt/homebrew/opt/python@3.14/bin/python3.14`, so the script should discover and validate a Python `3.11` interpreter instead of assuming one fixed executable path;
+  - it installs required and optional packages in one `pip install` invocation under `set -e`, so any macOS-specific failure in optional extras aborts the full environment bootstrap.
+- 2026-04-14: The current Darwin arm64 machine already exposes the Homebrew-native libraries most relevant to HDF5/PyTables source builds.
+  - `brew --prefix` resolves successfully for `hdf5`, `lzo`, `bzip2`, and `c-blosc2`;
+  - these prefixes can be exported as build hints without affecting Linux behavior.
+- 2026-04-14: The repository-local virtual environment can remain reusable even when its `activate` script becomes stale after a repo move.
+  - on this machine, `.venv/bin/activate` still hardcodes `VIRTUAL_ENV=/Users/yinhan/Documents/upside2-md-martini/.venv`, which breaks `source .venv/bin/activate` even though `.venv/bin/python` itself is valid and executable;
+  - consequence:
+    - the installer should drive the environment with `$VENV_DIR/bin/python` directly instead of depending on activation side effects.
 - 2026-04-13: The current `hybrid-interface-sweep` stage-7 outputs require schema-aware analysis rather than assumptions copied from the bilayer workflow.
   - Fresh reduced `1rkl.stage_7.0.up` output from `/tmp/hybrid_interface_sweep_analysis_smoke/tasks/scale0p85_r01/run/checkpoints/1rkl.stage_7.0.up` shows:
     - `particle_class` does not provide a usable `LIPID` partition for this analyzer,

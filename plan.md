@@ -1,4 +1,27 @@
 
+## 2026-04-14 Python Environment Installer Portability
+
+### Project Goal
+- Make `install_python_env.sh` succeed on both Linux and local macOS hosts while preserving the existing Python-package intent for UPSIDE2.
+
+### Architecture & Key Decisions
+- Keep Python `3.11` as the required interpreter version for the repository environment.
+- Interpreter selection will stay configuration-driven:
+  - honor `PYTHON_BIN` when provided;
+  - otherwise discover a compatible Python `3.11` interpreter from common Linux/macOS locations instead of assuming a single command name.
+- macOS setup will export Homebrew-backed dependency hints for packages that may need native HDF5 / compression libraries during pip installation.
+- Core scientific packages remain required.
+- Optional analysis packages remain best-effort so a platform-specific failure in `pyhdx`-related extras does not abort the whole environment bootstrap.
+
+### Execution Phases
+- [x] Audit the current installer and local Darwin environment.
+- [x] Patch `install_python_env.sh` for cross-platform interpreter and package installation behavior.
+- [x] Verify shell syntax and installer logic, then document the result.
+
+### Known Errors / Blockers
+- No active code blocker remains for this installer task.
+- Verification completed in the current Darwin arm64 shell with `PIP_NO_INDEX=1`, which exercised interpreter discovery, macOS build-hint setup, venv reuse, and the post-install import checks without requiring fresh downloads.
+
 ## 2026-04-01 Stage-7 SC Table Integration
 
 ### Project Goal
