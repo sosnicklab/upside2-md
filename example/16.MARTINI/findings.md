@@ -57,3 +57,32 @@
   - workflow `16` still uses `EQ_TIME_STEP=0.010` and `PROD_TIME_STEP=0.002`,
   - the standard examples rely on the engine default `dt = 0.009`,
   - so matching the thermostat default does not, by itself, make the borrowed `40 ps/step` calibration valid for hybrid stage `7.0`.
+
+## 2026-04-14 (Hybrid Packing Analysis Surface)
+- The current hybrid workflow already carries production-stage NPT controls, but leaves them off by default:
+  - `PROD_70_NPT_ENABLE=0` in `example/16.MARTINI/run_sim_1rkl.sh`.
+- The stage-7 output schema is sufficient to measure bilayer packing directly from local outputs:
+  - `output/pos`,
+  - `output/time`,
+  - `output/box` when NPT writes it,
+  - otherwise static `input/potential/martini_potential.{x_len,y_len,z_len}` attrs.
+- The current hybrid stage files also contain enough lipid topology to compute packing observables without external topology files:
+  - lipid molecules can be identified from `PO4` atom names plus `molecule_ids`,
+  - current DOPC tail bead names are present (`GL1/GL2`, `C1A/C2A/D3A/C4A/C5A`, `C1B/C2B/D3B/C4B/C5B`).
+- Consequence:
+  - the missing piece for a packing-first calibration loop was not runtime support,
+  - it was a direct analysis path for APL / thickness / order on completed hybrid outputs.
+
+## 2026-04-14 (Current Hybrid Packing Baseline)
+- The new packing analyzer ran successfully on:
+  - `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`
+- Measured baseline after `20%` burn-in:
+  - `n_lipid_molecules = 280`
+  - `APL = 89.01 A^2`
+  - `PO4 thickness = 32.57 A`
+  - `tail order parameter = 0.238`
+- That output was produced without dynamic `output/box` frames.
+  - The analyzer therefore fell back to the static `input/potential/martini_potential.{x_len,y_len,z_len}` box attrs and reported zero area variance, which is the expected NVT behavior for this artifact.
+- Consequence:
+  - the repository can now quantify current hybrid membrane packing directly,
+  - the next scientific decision still needs an external dry-MARTINI packing target for comparison rather than more blind interface-scale tuning.

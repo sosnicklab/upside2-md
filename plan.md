@@ -1,4 +1,41 @@
 
+## 2026-04-14 MARTINI Workflow Python Runtime Repair
+
+### Project Goal
+- Make `example/16.MARTINI/run_sim_1rkl.sh` use the repository `.venv` reliably so `py/martini_prepare_system_lib.py` can import `h5py`.
+- Repair `install_python_env.sh` so a repo-local `.venv` still works after the repository has been moved on disk.
+
+### Architecture & Key Decisions
+- Treat the reported `ModuleNotFoundError: h5py` as an interpreter-selection bug, not a missing dependency bug:
+  - the current `.venv/bin/python` imports `h5py` successfully;
+  - the failure comes from `run_sim_1rkl.sh` resolving `python3` from Homebrew `python3.14` after sourcing a stale `.venv/bin/activate`.
+- Fix the workflow wrapper directly by prepending the repo-local `.venv/bin` to `PATH` instead of depending on `activate` side effects.
+- Fix the installer in place by repairing stale `.venv/bin/activate*` files and stale console-script shebangs under `.venv/bin` to the current repo path, avoiding an unnecessary full environment rebuild.
+
+### Execution Phases
+- [x] Confirm the interpreter/path mismatch and inspect the current `.venv` metadata.
+- [x] Patch `example/16.MARTINI/run_sim_1rkl.sh` and `install_python_env.sh` with the minimal robust fix.
+- [x] Verify the repaired runtime path and document the result.
+
+### Known Errors / Blockers
+- None so far. The local `.venv` already contains `h5py`, so verification does not depend on a fresh network install.
+
+### Review
+- Root cause verified:
+  - `.venv/bin/python` imports `h5py`;
+  - Homebrew `python3.14` does not;
+  - the old `.venv/bin/activate` still pointed at `/Users/yinhan/Documents/upside2-md-martini/.venv`, so `run_sim_1rkl.sh` was picking the wrong interpreter.
+- Implemented:
+  - `example/16.MARTINI/run_sim_1rkl.sh` now prepends the repo-local `.venv/bin` to `PATH` instead of sourcing `activate`;
+  - `install_python_env.sh` now repairs stale `activate*` files and stale `.venv/bin` Python-script shebangs in place.
+- Verification:
+  - `bash -n install_python_env.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -lc 'PROJECT_ROOT="$PWD"; source "$PROJECT_ROOT/source.sh"; export PATH="$PROJECT_ROOT/.venv/bin:$PATH"; python3 -c "import sys, h5py; print(sys.executable); print(h5py.__version__)"'`
+  - `env PIP_NO_INDEX=1 bash install_python_env.sh`
+  - `bash -lc 'source .venv/bin/activate && python3 -c "import sys, h5py; print(sys.executable); print(h5py.__version__)"'`
+  - `bash -lc 'source .venv/bin/activate && pip --version'`
+
 ## 2026-04-14 Python Environment Installer Portability
 
 ### Project Goal

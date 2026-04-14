@@ -151,6 +151,81 @@ configure_macos_build_env() {
     return 0
 }
 
+repair_venv_scripts() {
+    local repaired
+
+    repaired="$("$VENV_PYTHON" - "$VENV_DIR" "$VENV_PYTHON" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+venv_dir = Path(sys.argv[1]).resolve()
+venv_python = Path(sys.argv[2])
+bin_dir = venv_dir / "bin"
+changed = []
+
+
+def rewrite_text(path: Path, transform) -> None:
+    try:
+        original = path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return
+
+    updated = transform(original)
+    if updated != original:
+        path.write_text(updated)
+        changed.append(str(path))
+
+
+activate_rewrites = [
+    (bin_dir / "activate", r"(?m)^VIRTUAL_ENV=.*$", f"VIRTUAL_ENV={venv_dir}"),
+    (bin_dir / "activate.csh", r"(?m)^setenv VIRTUAL_ENV .*$", f"setenv VIRTUAL_ENV {venv_dir}"),
+    (bin_dir / "activate.fish", r"(?m)^set -gx VIRTUAL_ENV .*$", f"set -gx VIRTUAL_ENV {venv_dir}"),
+    (bin_dir / "Activate.ps1", r'(?m)^\$env:VIRTUAL_ENV = .*$', f'$env:VIRTUAL_ENV = "{venv_dir}"'),
+]
+
+for path, pattern, replacement in activate_rewrites:
+    if not path.exists():
+        continue
+    rewrite_text(
+        path,
+        lambda text, pattern=pattern, replacement=replacement: re.sub(pattern, replacement, text, count=1),
+    )
+
+for path in bin_dir.iterdir():
+    if path.is_dir() or path.is_symlink():
+        continue
+
+    try:
+        original = path.read_text()
+    except (OSError, UnicodeDecodeError):
+        continue
+
+    lines = original.splitlines(True)
+    if not lines or not lines[0].startswith("#!"):
+        continue
+
+    shebang = lines[0][2:].strip()
+    if "/.venv/bin/python" not in shebang or shebang.startswith(str(venv_dir)):
+        continue
+
+    lines[0] = f"#!{venv_python}\n"
+    updated = "".join(lines)
+    if updated != original:
+        path.write_text(updated)
+        changed.append(str(path))
+
+if changed:
+    print("\n".join(changed))
+PY
+)"
+
+    if [ -n "$repaired" ]; then
+        echo "Repaired stale virtual environment scripts:"
+        printf '%s\n' "$repaired"
+    fi
+}
+
 if [ -n "${PYTHON_BIN:-}" ]; then
     if ! PYTHON_BIN="$(resolve_executable "$PYTHON_BIN")"; then
         echo "ERROR: Requested Python interpreter not found: ${PYTHON_BIN}" >&2
@@ -215,6 +290,8 @@ for package in "${OPTIONAL_PACKAGES[@]}"; do
         echo "WARNING: Optional package failed to install: $package" >&2
     fi
 done
+
+repair_venv_scripts
 
 VERIFY_CACHE_ROOT="${TMPDIR:-/tmp}/upside-python-install-$RANDOM-$$"
 mkdir -p "$VERIFY_CACHE_ROOT/mpl" "$VERIFY_CACHE_ROOT/cache"

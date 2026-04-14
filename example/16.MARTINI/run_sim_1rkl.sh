@@ -1,11 +1,14 @@
 #!/bin/bash
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/../../source.sh"
-source "${SCRIPT_DIR}/../../.venv/bin/activate"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+source "${PROJECT_ROOT}/source.sh"
+if [ -d "${PROJECT_ROOT}/.venv/bin" ]; then
+    export PATH="${PROJECT_ROOT}/.venv/bin:$PATH"
+fi
 set -euo pipefail
 cd "${SCRIPT_DIR}"
-PYTHON_WORKFLOW_DIR="${PYTHON_WORKFLOW_DIR:-${SCRIPT_DIR}/../../py}"
+PYTHON_WORKFLOW_DIR="${PYTHON_WORKFLOW_DIR:-${PROJECT_ROOT}/py}"
 
 # Hybrid 1RKL workflow:
 # 0) Hybrid preparation (packed MARTINI + hybrid mapping export)

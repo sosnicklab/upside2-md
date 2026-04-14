@@ -33,6 +33,8 @@
 - [x] Phase 2: Rewrite `workflow.py` to sweep a single `interaction_scale` and patch staged `7.0` coefficients instead of production softening attrs.
 - [x] Phase 3: Update local/Slurm wrappers, assembled summaries, analysis grouping, and README to the single-factor surface.
 - [x] Phase 4: Run static verification and a reduced smoke path on the corrected workflow, then record review notes.
+- [x] Phase 5: Validate the completed refined low-end downloaded analysis and extract the best-supported interface-scale recommendation.
+- [x] Phase 6: Fit a trend line to the refined `interaction_scale` versus diffusion data, save a plot artifact, and record the extrapolation result.
 
 ## Known Errors / Blockers
 - Old run directories created with the prior `(lj_alpha, slater_alpha)` schema are intentionally incompatible with the corrected workflow.
@@ -94,3 +96,15 @@
   - widened the default scale list further to include `0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01`,
   - so a fresh default run now samples the current best-boundary region more densely.
   - verified by `init-run` on `/tmp/hybrid_interface_scale_defaults_check_v4`, which produced `63` tasks across the refined scale list.
+- Downloaded refined low-end scalar-factor analysis review:
+  - assembled analysis is complete for `21` scales with `3 / 3` replicates each,
+  - the best tested in-grid condition is now `interaction_scale = 0.02`,
+  - `0.02` is a real interior optimum relative to `0.03`, while `0.01` is only a near-tied smaller-scale neighbor,
+  - the best tested point still does not reach the provisional `40 ps/step` target proxy near `2.892 um^2/s`.
+- Fitted trend-line review:
+  - saved plot artifact: `analysis/assembled/softening_trend_linear_fit.svg`,
+  - saved fit summary: `analysis/assembled/softening_trend_linear_fit.json`,
+  - weighted linear fit over all `21` condition means gives `D = -0.9807 * interaction_scale + 1.7549` with `R^2 = 0.9707`,
+  - the fit predicts `D(0) = 1.7549 um^2/s`,
+  - the same fit would require `interaction_scale = -1.159` to hit the provisional `2.892 um^2/s` target, which is nonphysical,
+  - so the fitted trend supports the same conclusion as the raw grid: the current calibration does not demonstrate a target match inside the valid `[0, 1]` scale range.

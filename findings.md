@@ -1,6 +1,10 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-14: The reported `ModuleNotFoundError: h5py` from `example/16.MARTINI/run_sim_1rkl.sh` was caused by a moved virtualenv, not by a missing `h5py` wheel in the repo `.venv`.
+  - `./.venv/bin/python` imports `h5py` successfully;
+  - the failing interpreter was Homebrew `python3.14`, reached because `.venv/bin/activate` still hardcoded `VIRTUAL_ENV=/Users/yinhan/Documents/upside2-md-martini/.venv`;
+  - stale absolute paths also remained in console-script shebangs under `.venv/bin` such as `pip`, so the robust installer fix needs to repair both activation scripts and launcher shebangs in place.
 - 2026-04-14: The current Python installer is Linux-biased in two ways that matter on local macOS.
   - it defaults to `PYTHON_BIN=python3.11`, but the host default `python3` on this Darwin arm64 machine is `/opt/homebrew/opt/python@3.14/bin/python3.14`, so the script should discover and validate a Python `3.11` interpreter instead of assuming one fixed executable path;
   - it installs required and optional packages in one `pip install` invocation under `set -e`, so any macOS-specific failure in optional extras aborts the full environment bootstrap.

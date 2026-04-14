@@ -195,3 +195,52 @@
   - target remains about `2.892 um^2/s` at `T = 0.8647`,
   - the best tested point `0.1` still falls short by about `1.294 um^2/s`,
   - so no tested scale in the extended grid reaches the target.
+
+## 2026-04-14 (Downloaded Refined Low-End Scalar-Factor Analysis Validation)
+- Re-reviewed the downloaded `hybrid-interface-sweep/analysis/` tree after the dense `0.01 -> 0.10` low-end rerun.
+- Confirmed the assembled refined analysis is complete:
+  - `63 / 63` analysis tasks succeeded,
+  - `0` failed tasks,
+  - `21 / 21` tested scales have full `3 / 3` replicate coverage.
+- Rechecked per-task consistency:
+  - all tasks use `160` post-burn-in frames,
+  - all tasks use `102` `PO4` beads,
+  - all diffusion outputs are finite,
+  - task-level `PO4` fit quality spans `R^2 = 0.9882 -> 0.9979`.
+- Reviewed condition-level behavior:
+  - the best in-grid mean diffusion moves from `1.598` at `0.1` to `1.828 um^2/s` at `0.02`,
+  - `0.02` is clearly better than `0.03`,
+  - `0.01` remains effectively tied with `0.02` but does not improve the mean,
+  - the low-end branch stays stable by spread and fit quality rather than showing a broad instability signature.
+- The current best-tested condition is:
+  - `interaction_scale = 0.02`
+  - `po4_diffusion_um2_per_s_mean = 1.828`
+  - `po4_diffusion_um2_per_s_std = 0.0276`
+  - `CV = 0.015`
+  - `min R^2 = 0.9966`
+- Compared the refined range against the same provisional `40 ps/step` target proxy from `hybrid_timescale.md`:
+  - target remains about `2.892 um^2/s` at `T = 0.8647`,
+  - the best tested point `0.02` still falls short by about `1.064 um^2/s`,
+  - so the dense low-end refinement improves the recommendation but still does not produce a demonstrated target match.
+- Interface-use conclusion:
+  - the best-supported current bilayer-calibrated scalar is `0.02`,
+  - for the canonical hybrid workflow this maps to `PROTEIN_ENV_INTERFACE_SCALE=0.02`.
+
+## 2026-04-14 (Trend-Line Fit And Plot)
+- Re-read the refined assembled condition table and fit a sweep-level trend line to `interaction_scale` versus `po4_diffusion_um2_per_s_mean`.
+- `matplotlib` was not available in the local environment, so generated a pure-SVG plot artifact instead of adding dependencies.
+- Wrote:
+  - `hybrid-interface-sweep/analysis/assembled/softening_trend_linear_fit.svg`
+  - `hybrid-interface-sweep/analysis/assembled/softening_trend_linear_fit.json`
+- Fit summary:
+  - weighted linear fit over all `21` condition means,
+  - equation `D = -0.9807 * interaction_scale + 1.7549`,
+  - `R^2 = 0.9707`.
+- Extrapolation result:
+  - predicted `D(0) = 1.7549 um^2/s`,
+  - fitted scale required for the provisional `2.892 um^2/s` target is `-1.159`,
+  - therefore the fitted line does not predict any valid `[0, 1]` interaction scale that reaches the provisional target.
+- Interpretation:
+  - the line is a decent global trend summary,
+  - but it underpredicts the observed low-end bump near `0.02`,
+  - so the measured recommendation remains `0.02`, not the line intercept.

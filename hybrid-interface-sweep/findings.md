@@ -112,6 +112,53 @@
   - `0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01`
 - This keeps the sweep inside the same scalar-factor semantics and only increases resolution near the current best boundary.
 
+## 2026-04-14 (Downloaded Refined Low-End Scalar-Factor Analysis Review)
+- The downloaded refined low-end analysis tree is numerically complete:
+  - `63 / 63` analysis tasks succeeded,
+  - `0` failed tasks were assembled,
+  - all `21` tested scales have full `3 / 3` replicate coverage.
+- Internal consistency remains strong across the refined sweep:
+  - every task uses `160` post-burn-in frames,
+  - every task uses `102` `PO4` beads,
+  - all diffusion values are finite,
+  - fit quality stays tight at `R^2 = 0.9882 -> 0.9979`.
+- The response stays mostly monotone toward smaller `interaction_scale`, with only mild local dips at:
+  - `0.25 -> 0.20`,
+  - `0.10 -> 0.09`,
+  - `0.05 -> 0.04`,
+  - `0.02 -> 0.01`.
+- The saved recommendation `interaction_scale = 0.02` is justified by the current selector:
+  - it has the highest mean diffusion in-grid at `1.8275 um^2/s`,
+  - low replicate spread (`CV = 0.015`),
+  - and strong fit quality (`min R^2 = 0.9966`).
+- The neighboring `0.01` point is statistically indistinguishable from `0.02` within replicate uncertainty, but it does not improve the mean.
+  - Because the workflow tie-break rule prefers the larger scale when performance is effectively tied, `0.02` is the conservative best-tested choice for later interface use.
+- Relative to the same provisional `40 ps/step` target proxy:
+  - the workflow target remains about `2.892 um^2/s` at `T = 0.8647`,
+  - the best tested point `0.02` reaches about `63%` of that target,
+  - so the refined grid still does not demonstrate a true target match.
+- Consequence:
+  - if the goal is “best stable scalar factor supported by this bilayer sweep,” choose `interaction_scale = 0.02`,
+  - for the actual hybrid run surface, map that to `PROTEIN_ENV_INTERFACE_SCALE = 0.02`,
+  - if the goal is a strict physical-timescale match, the calibration remains unresolved.
+
+## 2026-04-14 (Trend-Line Fit On Refined Sweep)
+- A simple weighted linear fit across the `21` condition means is a reasonable global trend summary:
+  - `D_um2_per_s = -0.9807 * interaction_scale + 1.7549`
+  - `R^2 = 0.9707`
+- This fit is useful as a sweep-level trend, but it is not a perfect local model of the low-end region:
+  - at the best tested point `interaction_scale = 0.02`,
+  - the fit predicts `1.7353 um^2/s`,
+  - while the observed mean is `1.8275 um^2/s`.
+- Extrapolation from the fitted line does not rescue the provisional target:
+  - predicted `D(0) = 1.7549 um^2/s`,
+  - fitted `interaction_scale` needed for `D = 2.892 um^2/s` is `-1.159`,
+  - which lies outside the physically allowed `[0, 1]` range.
+- Consequence:
+  - the fitted line supports the same scientific conclusion as the raw sweep,
+  - the bilayer calibration trend is real,
+  - but the current physical-target mapping is still unresolved rather than just hidden between sampled points.
+
 ## Lessons
 - When the user says a softening factor is “a simple number,” implement a scalar interaction-strength factor, not a softened Hamiltonian shape.
 - When the user explicitly says not to modify a reference workflow, keep the fix inside the named target workflow even if the reference path influenced earlier designs.

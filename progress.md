@@ -1,5 +1,28 @@
 # Progress Log
 
+## 2026-04-14 (MARTINI Workflow Python Runtime Repair)
+- Investigated the `ModuleNotFoundError: No module named 'h5py'` reported from `example/16.MARTINI/run_sim_1rkl.sh`.
+- Confirmed the failure was interpreter selection, not package absence:
+  - `./.venv/bin/python` imported `h5py` successfully (`3.16.0`);
+  - plain `python3` resolved to `/opt/homebrew/opt/python@3.14/bin/python3.14` and failed to import `h5py`;
+  - `.venv/bin/activate` still pointed at the old moved-repo path `/Users/yinhan/Documents/upside2-md-martini/.venv`.
+- Patched `example/16.MARTINI/run_sim_1rkl.sh` to prepend `${PROJECT_ROOT}/.venv/bin` to `PATH` instead of sourcing `activate`, so all existing `python3` calls resolve to the repo-local environment directly.
+- Patched `install_python_env.sh` to repair stale virtualenv launchers in place:
+  - rewrites `activate`, `activate.csh`, `activate.fish`, and `Activate.ps1` to the current `VENV_DIR`;
+  - rewrites stale Python shebangs under `.venv/bin` so console scripts like `pip` point at the current repo-local interpreter again.
+- Verification completed:
+  - `bash -n install_python_env.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -lc 'PROJECT_ROOT="$PWD"; source "$PROJECT_ROOT/source.sh"; export PATH="$PROJECT_ROOT/.venv/bin:$PATH"; python3 -c "import sys, h5py; print(sys.executable); print(h5py.__version__)"'`
+  - `env PIP_NO_INDEX=1 bash install_python_env.sh`
+  - `bash -lc 'source .venv/bin/activate && python3 -c "import sys, h5py; print(sys.executable); print(h5py.__version__)"'`
+  - `bash -lc 'source .venv/bin/activate && pip --version'`
+- Observed results:
+  - the installer repaired the stale `.venv/bin` launchers in place;
+  - `source .venv/bin/activate` now yields `/Users/yinhan/Documents/upside2-md/.venv/bin/python3`;
+  - `pip` now resolves inside the same `.venv`;
+  - the core-scientific import check passed under the repo-local Python environment.
+
 ## 2026-04-14 (Python Environment Installer Portability)
 - Opened a root-level installer portability task in `plan.md` and logged the relevant Darwin findings in `findings.md`.
 - Updated `install_python_env.sh` to:

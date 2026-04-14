@@ -91,3 +91,35 @@
 - Updated `example/16.MARTINI/readme.md` to document:
   - the thermostat-default alignment with the other examples,
   - the remaining caveat that workflow `16` still uses smaller hybrid timesteps, so the borrowed `40 ps/step` calibration still needs separate validation for stage `7.0`.
+
+## 2026-04-14 (Packing-First Calibration Tooling)
+- Opened a new local task to address membrane packing before further timescale tuning and wrote `example/16.MARTINI/plan.md`.
+- Audited the current hybrid workflow and confirmed:
+  - equilibration stages `6.0 -> 6.6` already run with NPT enabled,
+  - production stage `7.0` has NPT plumbing but defaults to `PROD_70_NPT_ENABLE=0`,
+  - stage outputs contain the box and lipid metadata needed for direct packing analysis.
+- Added `example/16.MARTINI/analyze_packing.py`:
+  - reads completed `stage_7.0.up` files,
+  - computes XY area,
+  - computes leaflet-resolved and mean APL from `PO4`-identified lipid molecules,
+  - computes `PO4` leaflet thickness,
+  - computes tail-bond orientational order relative to the bilayer normal,
+  - writes optional JSON summary and per-frame CSV outputs.
+- Updated `example/16.MARTINI/run.py` to expose:
+  - `PROD_70_NPT_ENABLE`
+  - `PROD_70_BAROSTAT_TYPE`
+  in the top-level wrapper settings.
+- Updated `example/16.MARTINI/readme.md` with:
+  - production-NPT guidance for packing tests,
+  - usage for `analyze_packing.py`,
+  - a packing-first calibration loop.
+- Verification:
+  - `.venv/bin/python -m py_compile example/16.MARTINI/analyze_packing.py example/16.MARTINI/run.py`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `.venv/bin/python example/16.MARTINI/analyze_packing.py example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up --json-out /tmp/packing_summary.json --csv-out /tmp/packing_timeseries.csv`
+- Observed baseline on the current `martini_test_1rkl_hybrid` output:
+  - `APL = 89.01 A^2`
+  - `PO4 thickness = 32.57 A`
+  - `tail order = 0.238`
+  - `n_lipid_molecules = 280`
+  - no dynamic `output/box` frames were present, so area stayed fixed under the expected NVT fallback path.
