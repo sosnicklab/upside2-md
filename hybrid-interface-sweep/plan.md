@@ -21,7 +21,7 @@
   - finite,
   - within `[0, 1]`,
   - grouped and reported as a single scalar sweep axis.
-- Extend the default sweep below `0.6` because the current downloaded grid never reached the provisional `40 ps/step` target proxy.
+- Extend the default sweep below `0.6`, and then densify the `0.01 -> 0.10` region, because the current downloaded grids never reached the provisional `40 ps/step` target proxy and the best tested point sat on the lower sweep boundary.
 - Keep bilayer-only observables unchanged:
   - lipid `PO4` lateral diffusion relative to bilayer COM,
   - reciprocal diffusion as an explicitly labeled viscosity proxy,
@@ -86,3 +86,11 @@
   - widened the default scale list to `1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.25, 0.2, 0.15, 0.1`,
   - so a fresh default run now probes materially lower interaction strength without requiring manual override.
   - verified by `init-run` on `/tmp/hybrid_interface_scale_defaults_check_v3`, which produced `36` tasks across the widened scale list.
+- Downloaded extended scalar-factor analysis review:
+  - assembled analysis is complete for `12` scales with `3 / 3` replicates each,
+  - best tested in-grid condition is now `interaction_scale = 0.1`,
+  - even the extended range still does not reach the provisional `40 ps/step` target proxy near `2.892 um^2/s`.
+- Low-end default-grid refinement:
+  - widened the default scale list further to include `0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01`,
+  - so a fresh default run now samples the current best-boundary region more densely.
+  - verified by `init-run` on `/tmp/hybrid_interface_scale_defaults_check_v4`, which produced `63` tasks across the refined scale list.

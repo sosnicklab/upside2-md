@@ -32,7 +32,29 @@ SCHEMA_ANALYSIS_SLURM = "hybrid_interface_softening_sweep_analysis_slurm_v2"
 SCHEMA_ANALYSIS_RESULT = "hybrid_interface_softening_sweep_analysis_result_v2"
 
 DEFAULT_PDB_ID = "bilayer"
-DEFAULT_INTERACTION_SCALES = [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.25, 0.2, 0.15, 0.1]
+DEFAULT_INTERACTION_SCALES = [
+    1.0,
+    0.9,
+    0.8,
+    0.7,
+    0.6,
+    0.5,
+    0.4,
+    0.3,
+    0.25,
+    0.2,
+    0.15,
+    0.1,
+    0.09,
+    0.08,
+    0.07,
+    0.06,
+    0.05,
+    0.04,
+    0.03,
+    0.02,
+    0.01,
+]
 DEFAULT_REPLICATES = 3
 DEFAULT_SEED = 20260413
 DEFAULT_INTEGRATION_PS_PER_STEP = 40.0

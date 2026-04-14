@@ -16,12 +16,12 @@ This folder stages and submits bilayer-only dry-MARTINI interaction-scale sweeps
 
 ## Default Sweep
 
-- `interaction_scale = 1.00, 0.90, 0.80, 0.70, 0.60, 0.50, 0.40, 0.30, 0.25, 0.20, 0.15, 0.10`
+- `interaction_scale = 1.00, 0.90, 0.80, 0.70, 0.60, 0.50, 0.40, 0.30, 0.25, 0.20, 0.15, 0.10, 0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01`
 - `replicates = 3`
 - `pdb_id = bilayer`
 - physical conversion assumption: `40 ps` per integrator step
 
-The lower-end extension is intentional: the last downloaded scalar-factor sweep showed that `0.6` was still the best tested point and still below the provisional `40 ps/step` target proxy.
+The lower-end refinement is intentional: the last downloaded scalar-factor sweep showed that `0.1` was the best tested point and was still below the provisional `40 ps/step` target proxy, so the default grid now samples the `0.01 -> 0.10` region much more densely.
 
 The default output directory is `hybrid-interface-sweep/runs/default`.
 

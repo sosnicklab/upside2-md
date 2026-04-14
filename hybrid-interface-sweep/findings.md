@@ -80,6 +80,38 @@
   - `1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.25, 0.2, 0.15, 0.1`
 - This is an exploration extension, not a claim that the target lies inside that range.
 
+## 2026-04-14 (Downloaded Extended Scalar-Factor Analysis Review)
+- The downloaded extended scalar-factor analysis tree is numerically complete:
+  - `36 / 36` analysis tasks succeeded,
+  - `0` failed tasks were assembled,
+  - all `12` tested scales have full `3 / 3` replicate coverage.
+- Internal consistency remains strong across the extended sweep:
+  - every task uses `160` post-burn-in frames,
+  - every task uses `102` `PO4` beads,
+  - all diffusion values are finite,
+  - fit quality stays tight at `R^2 = 0.9882 -> 0.9967`.
+- The response remains broadly monotone toward smaller `interaction_scale`:
+  - `1.0 -> 0.1` raises mean diffusion from `0.824 -> 1.598 um^2/s`,
+  - there is only a mild local dip at `0.20` versus `0.25`, not a broader instability signature.
+- The saved recommendation `interaction_scale = 0.1` is justified by the current selector:
+  - it has the highest mean diffusion in-grid,
+  - one of the lowest replicate spreads (`CV = 0.020`),
+  - and the best minimum fit quality in-grid (`min R^2 = 0.9950`).
+- Relative to the same provisional `40 ps/step` target proxy:
+  - the workflow target remains about `2.892 um^2/s` at `T = 0.8647`,
+  - the best tested point `0.1` reaches `1.598 um^2/s`,
+  - so the extended grid still does not achieve the target and reaches only about `55%` of it.
+- Consequence:
+  - if the goal is “best within the tested scalar grid,” choose `interaction_scale = 0.1`,
+  - if the goal is to match the provisional physical target, the study remains unresolved even after the low-end extension.
+
+## 2026-04-14 (Low-End Default Grid Refinement)
+- The workflow default scale list should no longer stop at `0.1`.
+- Since `0.1` was the best tested point in the extended sweep, the next default run should sample the boundary region below `0.1` more densely.
+- The refined default low-end addition is:
+  - `0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01`
+- This keeps the sweep inside the same scalar-factor semantics and only increases resolution near the current best boundary.
+
 ## Lessons
 - When the user says a softening factor is “a simple number,” implement a scalar interaction-strength factor, not a softened Hamiltonian shape.
 - When the user explicitly says not to modify a reference workflow, keep the fix inside the named target workflow even if the reference path influenced earlier designs.

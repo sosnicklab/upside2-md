@@ -156,3 +156,42 @@
   - `python3 -m py_compile hybrid-interface-sweep/workflow.py`
   - `python3 hybrid-interface-sweep/workflow.py init-run --base-dir /tmp/hybrid_interface_scale_defaults_check_v3`
   - confirmed fresh default manifest count = `36` tasks.
+
+## 2026-04-14 (Low-End Default Grid Refinement)
+- Updated `hybrid-interface-sweep/workflow.py` again so the default scalar-factor list now includes dense points between `0` and `0.1`.
+- Added low-end defaults:
+  - `0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01`
+- Updated `hybrid-interface-sweep/README.md` to document the refined low-end default sweep and why it was added.
+- This still preserves the existing override surface:
+  - `HYBRID_SWEEP_INTERACTION_SCALES`
+  - `--interaction-scales`
+- Verification:
+  - `python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - `python3 hybrid-interface-sweep/workflow.py init-run --base-dir /tmp/hybrid_interface_scale_defaults_check_v4`
+  - confirmed fresh default manifest count = `63` tasks.
+
+## 2026-04-14 (Downloaded Extended Scalar-Factor Analysis Validation)
+- Re-reviewed the downloaded `hybrid-interface-sweep/analysis/` tree after the widened default-grid rerun.
+- Confirmed the assembled extended analysis is complete:
+  - `36 / 36` tasks succeeded,
+  - `0` failed tasks,
+  - `12 / 12` tested scales have full `3 / 3` replicate coverage.
+- Rechecked per-task consistency:
+  - all tasks use `160` post-burn-in frames,
+  - all tasks use `102` `PO4` beads,
+  - all diffusion outputs are finite,
+  - task-level `PO4` fit quality spans `R^2 = 0.9882 -> 0.9967`.
+- Reviewed condition-level behavior:
+  - diffusion rises from `0.824` at `interaction_scale = 1.0` to `1.598 um^2/s` at `0.1`,
+  - the low-end branch remains stable by spread and fit quality,
+  - there is a mild local dip at `0.20` relative to `0.25`, but no broader instability signal.
+- The current in-grid best condition is:
+  - `interaction_scale = 0.1`
+  - `po4_diffusion_um2_per_s_mean = 1.598`
+  - `po4_diffusion_um2_per_s_std = 0.0319`
+  - `CV = 0.020`
+  - `min R^2 = 0.9950`
+- Compared the extended range against the same provisional `40 ps/step` target proxy from `hybrid_timescale.md`:
+  - target remains about `2.892 um^2/s` at `T = 0.8647`,
+  - the best tested point `0.1` still falls short by about `1.294 um^2/s`,
+  - so no tested scale in the extended grid reaches the target.
