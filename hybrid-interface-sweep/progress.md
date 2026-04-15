@@ -244,3 +244,36 @@
   - the line is a decent global trend summary,
   - but it underpredicts the observed low-end bump near `0.02`,
   - so the measured recommendation remains `0.02`, not the line intercept.
+
+## 2026-04-14 (Softening Sweep Restoration)
+- Reopened `hybrid-interface-sweep/` after the user reported that the scalar sweep was not working and requested softened potentials for both LJ and Coulomb instead.
+- Rewrote the local tracker files:
+  - `hybrid-interface-sweep/plan.md`
+  - `hybrid-interface-sweep/findings.md`
+- Restored the workflow surface in `hybrid-interface-sweep/workflow.py` so it now:
+  - sweeps `(lj_alpha, slater_alpha, replicate)` again instead of `interaction_scale`,
+  - patches production-stage `7.0` via `lj_soften`, `lj_soften_alpha`, `coulomb_soften`, and `slater_alpha`,
+  - groups run and analysis summaries by `(lj_alpha, slater_alpha)`,
+  - bumps all workflow schemas to `v3` so stale scalar manifests are rejected.
+- Updated the local launch surface:
+  - `hybrid-interface-sweep/run_local.sh`
+  - `hybrid-interface-sweep/submit_remote_round.sh`
+  - `hybrid-interface-sweep/README.md`
+  - restored wrapper/config knobs: `HYBRID_SWEEP_LJ_ALPHAS`, `HYBRID_SWEEP_SLATER_ALPHAS`
+- Fixed an execution bug discovered during smoke verification:
+  - `workflow.py` was still launching prep subprocesses with bare `python3`,
+  - this bypassed the wrapper-selected environment and failed on missing `numpy`,
+  - the prep helpers now use `sys.executable`.
+- Verified the restored workflow:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - `bash -n hybrid-interface-sweep/run_local.sh`
+  - `bash -n hybrid-interface-sweep/submit_remote_round.sh`
+  - `bash -n hybrid-interface-sweep/run_analysis_local.sh`
+  - `bash -n hybrid-interface-sweep/submit_analysis.sh`
+  - reduced local smoke run under `/tmp/hybrid_interface_softening_restore_smoke`
+  - direct HDF5 check on `bilayer.stage_7.0.up` confirmed:
+    - `lj_soften = 1`
+    - `lj_soften_alpha = 0.05`
+    - `coulomb_soften = 1`
+    - `slater_alpha = 0.5`
+  - reduced local analysis run assembled successfully under `/tmp/hybrid_interface_softening_restore_smoke/analysis/assembled`

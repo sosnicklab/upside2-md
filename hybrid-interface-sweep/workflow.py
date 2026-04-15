@@ -10,6 +10,7 @@ import os
 import shlex
 import shutil
 import subprocess as sp
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,37 +25,16 @@ REPO_ROOT = WORKFLOW_DIR.parent
 PREP_SCRIPT = REPO_ROOT / "py" / "martini_prepare_system.py"
 UPSIDE_EXECUTABLE = REPO_ROOT / "obj" / "upside"
 
-SCHEMA_MANIFEST = "hybrid_interface_softening_sweep_manifest_v2"
-SCHEMA_SLURM_ROUND = "hybrid_interface_softening_sweep_slurm_round_v2"
-SCHEMA_TASK_RESULT = "hybrid_interface_softening_sweep_task_result_v2"
-SCHEMA_ANALYSIS_MANIFEST = "hybrid_interface_softening_sweep_analysis_manifest_v2"
-SCHEMA_ANALYSIS_SLURM = "hybrid_interface_softening_sweep_analysis_slurm_v2"
-SCHEMA_ANALYSIS_RESULT = "hybrid_interface_softening_sweep_analysis_result_v2"
+SCHEMA_MANIFEST = "hybrid_interface_softening_sweep_manifest_v3"
+SCHEMA_SLURM_ROUND = "hybrid_interface_softening_sweep_slurm_round_v3"
+SCHEMA_TASK_RESULT = "hybrid_interface_softening_sweep_task_result_v3"
+SCHEMA_ANALYSIS_MANIFEST = "hybrid_interface_softening_sweep_analysis_manifest_v3"
+SCHEMA_ANALYSIS_SLURM = "hybrid_interface_softening_sweep_analysis_slurm_v3"
+SCHEMA_ANALYSIS_RESULT = "hybrid_interface_softening_sweep_analysis_result_v3"
 
 DEFAULT_PDB_ID = "bilayer"
-DEFAULT_INTERACTION_SCALES = [
-    1.0,
-    0.9,
-    0.8,
-    0.7,
-    0.6,
-    0.5,
-    0.4,
-    0.3,
-    0.25,
-    0.2,
-    0.15,
-    0.1,
-    0.09,
-    0.08,
-    0.07,
-    0.06,
-    0.05,
-    0.04,
-    0.03,
-    0.02,
-    0.01,
-]
+DEFAULT_LJ_ALPHAS = [0.0, 0.025, 0.05, 0.10, 0.20]
+DEFAULT_SLATER_ALPHAS = [0.0, 0.25, 0.50, 1.00, 2.00]
 DEFAULT_REPLICATES = 3
 DEFAULT_SEED = 20260413
 DEFAULT_INTEGRATION_PS_PER_STEP = 40.0
@@ -222,7 +202,7 @@ STAGE_SPECS = [
         "nsteps_key": "PROD_70_NSTEPS",
         "dt_key": "PROD_TIME_STEP",
         "frame_key": "PROD_FRAME_STEPS",
-        "apply_interaction_scale": True,
+        "apply_softening": True,
     },
 ]
 
@@ -231,7 +211,8 @@ STAGE_SPECS = [
 class Config:
     base_dir: Path
     pdb_id: str
-    interaction_scales: List[float]
+    lj_alphas: List[float]
+    slater_alphas: List[float]
     replicates: int
     seed: int
     integration_ps_per_step: float
@@ -392,15 +373,14 @@ def _resolved_runtime_env() -> Dict[str, str]:
 
 
 def _build_config(args: argparse.Namespace, base_dir: Path) -> Config:
-    interaction_scales = sorted(
-        dict.fromkeys(float(x) for x in args.interaction_scales),
-        reverse=True,
-    )
-    for value in interaction_scales:
-        if not math.isfinite(value) or value < 0.0 or value > 1.0:
-            raise ValueError(
-                f"interaction scale must be finite and within [0, 1], got {value}"
-            )
+    lj_alphas = sorted(dict.fromkeys(float(x) for x in args.lj_alphas))
+    slater_alphas = sorted(dict.fromkeys(float(x) for x in args.slater_alphas))
+    for value in lj_alphas:
+        if not math.isfinite(value) or value < 0.0:
+            raise ValueError(f"lj alpha must be finite and >= 0, got {value}")
+    for value in slater_alphas:
+        if not math.isfinite(value) or value < 0.0:
+            raise ValueError(f"slater alpha must be finite and >= 0, got {value}")
     replicates = int(args.replicates)
     if replicates < 1:
         raise ValueError(f"replicates must be >= 1, got {replicates}")
@@ -417,7 +397,8 @@ def _build_config(args: argparse.Namespace, base_dir: Path) -> Config:
     return Config(
         base_dir=base_dir,
         pdb_id=str(args.pdb_id),
-        interaction_scales=interaction_scales,
+        lj_alphas=lj_alphas,
+        slater_alphas=slater_alphas,
         replicates=replicates,
         seed=int(args.seed),
         integration_ps_per_step=integration_ps_per_step,
@@ -429,19 +410,25 @@ def _build_config(args: argparse.Namespace, base_dir: Path) -> Config:
 def _build_manifest(config: Config) -> Dict[str, Any]:
     tasks: List[Dict[str, Any]] = []
     task_id = 0
-    for interaction_scale in config.interaction_scales:
-        for replicate in range(config.replicates):
-            code = f"scale{_format_float_tag(interaction_scale)}_r{replicate + 1:02d}"
-            tasks.append(
-                {
-                    "task_id": task_id,
-                    "code": code,
-                    "interaction_scale": float(interaction_scale),
-                    "replicate": int(replicate + 1),
-                    "seed": _task_seed(config.seed, task_id),
-                }
-            )
-            task_id += 1
+    for lj_alpha in config.lj_alphas:
+        for slater_alpha in config.slater_alphas:
+            for replicate in range(config.replicates):
+                code = (
+                    f"lj{_format_float_tag(lj_alpha)}_"
+                    f"coul{_format_float_tag(slater_alpha)}_"
+                    f"r{replicate + 1:02d}"
+                )
+                tasks.append(
+                    {
+                        "task_id": task_id,
+                        "code": code,
+                        "lj_alpha": float(lj_alpha),
+                        "slater_alpha": float(slater_alpha),
+                        "replicate": int(replicate + 1),
+                        "seed": _task_seed(config.seed, task_id),
+                    }
+                )
+                task_id += 1
     return {
         "schema": SCHEMA_MANIFEST,
         "created_at_utc": _now_utc(),
@@ -450,7 +437,8 @@ def _build_manifest(config: Config) -> Dict[str, Any]:
         "repo_root": str(REPO_ROOT),
         "settings": {
             "pdb_id": config.pdb_id,
-            "interaction_scales": config.interaction_scales,
+            "lj_alphas": config.lj_alphas,
+            "slater_alphas": config.slater_alphas,
             "replicates": config.replicates,
             "seed": config.seed,
             "prep_script": str(PREP_SCRIPT),
@@ -565,7 +553,7 @@ def _prepare_runtime_structure(
     log_path: Path,
 ) -> None:
     cmd = [
-        "python3",
+        sys.executable,
         str(PREP_SCRIPT),
         "--mode",
         "bilayer",
@@ -626,7 +614,7 @@ def _prepare_stage_input(
     stage_env = dict(env)
     stage_env["UPSIDE_SIMULATION_STAGE"] = prepare_stage
     cmd = [
-        "python3",
+        sys.executable,
         str(PREP_SCRIPT),
         "--mode",
         "bilayer",
@@ -701,37 +689,20 @@ def _set_barostat_type(up_file: Path, barostat_type: int) -> None:
         h5["/input/barostat"].attrs["type"] = int(barostat_type)
 
 
-def _set_production_interaction_scale(up_file: Path, *, interaction_scale: float) -> Dict[str, Any]:
-    if not math.isfinite(interaction_scale) or interaction_scale < 0.0 or interaction_scale > 1.0:
-        raise ValueError(f"interaction_scale must be within [0, 1], got {interaction_scale}")
-    charge_scale = math.sqrt(interaction_scale)
+def _set_production_softening(up_file: Path, *, lj_alpha: float, slater_alpha: float) -> Dict[str, Any]:
+    lj_enable = int(lj_alpha > 0.0)
+    coul_enable = int(slater_alpha > 0.0)
     with h5py.File(up_file, "r+") as h5:
         grp = h5["/input/potential/martini_potential"]
-        coeff = np.asarray(grp["coefficients"][:], dtype=np.float32)
-        if coeff.ndim != 2 or coeff.shape[1] != 4:
-            raise ValueError(f"Unexpected martini coefficient shape in {up_file}: {coeff.shape}")
-        coeff[:, 0] *= np.float32(interaction_scale)
-        coeff[:, 2] *= np.float32(charge_scale)
-        coeff[:, 3] *= np.float32(charge_scale)
-        del grp["coefficients"]
-        grp.create_dataset("coefficients", data=coeff)
-
-        if "epsilon" in grp.attrs:
-            grp.attrs["epsilon"] = np.float32(float(grp.attrs["epsilon"]) * interaction_scale)
-
-        grp.attrs["lj_soften"] = np.int8(0)
-        grp.attrs["coulomb_soften"] = np.int8(0)
-        for key in ("lj_soften_alpha", "slater_alpha"):
-            if key in grp.attrs:
-                del grp.attrs[key]
-        grp.attrs["interaction_scale"] = np.float32(float(interaction_scale))
-        grp.attrs["coulomb_charge_scale"] = np.float32(float(charge_scale))
+        grp.attrs["lj_soften"] = np.int8(lj_enable)
+        grp.attrs["lj_soften_alpha"] = np.float32(float(max(0.0, lj_alpha)))
+        grp.attrs["coulomb_soften"] = np.int8(coul_enable)
+        grp.attrs["slater_alpha"] = np.float32(float(max(0.0, slater_alpha)))
     return {
-        "interaction_scale": float(interaction_scale),
-        "lj_epsilon_scale": float(interaction_scale),
-        "coulomb_charge_scale": float(charge_scale),
-        "lj_soften": 0,
-        "coulomb_soften": 0,
+        "lj_soften": lj_enable,
+        "lj_soften_alpha": float(max(0.0, lj_alpha)),
+        "coulomb_soften": coul_enable,
+        "slater_alpha": float(max(0.0, slater_alpha)),
     }
 
 
@@ -826,9 +797,10 @@ def cmd_init_run(args: argparse.Namespace) -> int:
     _require_runtime_files(config.runtime_env)
     manifest = _build_manifest(config)
     _write_json(_manifest_path(base_dir), manifest)
-    print(f"Initialized hybrid interface interaction-scale sweep: {base_dir}")
+    print(f"Initialized hybrid interface softening sweep: {base_dir}")
     print(f"Task count: {len(manifest['tasks'])}")
-    print(f"Interaction scales: {manifest['settings']['interaction_scales']}")
+    print(f"LJ alphas: {manifest['settings']['lj_alphas']}")
+    print(f"Slater alphas: {manifest['settings']['slater_alphas']}")
     return 0
 
 
@@ -859,7 +831,7 @@ def _run_task(base_dir: Path, manifest: Dict[str, Any], task: Dict[str, Any], ov
 
     stage_logs: Dict[str, str] = {}
     md_runtime: Dict[str, Dict[str, Any]] = {}
-    stage_70_interaction_scale: Dict[str, Any] | None = None
+    stage_70_softening: Dict[str, Any] | None = None
 
     try:
         _prepare_runtime_structure(
@@ -910,10 +882,11 @@ def _run_task(base_dir: Path, manifest: Dict[str, Any], task: Dict[str, Any], ov
             if npt_enable:
                 _set_barostat_type(stage_file, barostat_type)
 
-            if spec.get("apply_interaction_scale"):
-                stage_70_interaction_scale = _set_production_interaction_scale(
+            if spec.get("apply_softening"):
+                stage_70_softening = _set_production_softening(
                     stage_file,
-                    interaction_scale=float(task["interaction_scale"]),
+                    lj_alpha=float(task["lj_alpha"]),
+                    slater_alpha=float(task["slater_alpha"]),
                 )
 
             run_log = log_dir / f"stage_{label}.run.log"
@@ -953,7 +926,7 @@ def _run_task(base_dir: Path, manifest: Dict[str, Any], task: Dict[str, Any], ov
             "runtime_pdb": str(runtime_pdb),
             "stage_logs": stage_logs,
             "stage_70_file": str(stage_70_file),
-            "production_interaction_scale": stage_70_interaction_scale,
+            "production_softening": stage_70_softening,
             "production_time_step": float(runtime_env["PROD_TIME_STEP"]),
             "integration_ps_per_step": float(settings["integration_ps_per_step"]),
             "target_diffusion_um2_s": settings["target_diffusion_um2_s"],
@@ -1031,13 +1004,14 @@ def assemble_results(base_dir: Path) -> int:
     assembled_dir.mkdir(parents=True, exist_ok=True)
 
     task_rows: List[Dict[str, Any]] = []
-    grouped: Dict[float, List[Dict[str, Any]]] = {}
+    grouped: Dict[tuple[float, float], List[Dict[str, Any]]] = {}
     for result in results:
         task = result["task"]
         row = {
             "task_id": int(task["task_id"]),
             "code": str(task["code"]),
-            "interaction_scale": float(task["interaction_scale"]),
+            "lj_alpha": float(task["lj_alpha"]),
+            "slater_alpha": float(task["slater_alpha"]),
             "replicate": int(task["replicate"]),
             "seed": int(task["seed"]),
             "production_time_step": float(result["production_time_step"]),
@@ -1047,14 +1021,15 @@ def assemble_results(base_dir: Path) -> int:
             "stage_70_file": str(result["stage_70_file"]),
         }
         task_rows.append(row)
-        grouped.setdefault(row["interaction_scale"], []).append(row)
+        grouped.setdefault((row["lj_alpha"], row["slater_alpha"]), []).append(row)
 
     task_csv = assembled_dir / "task_results.csv"
     with task_csv.open("w", encoding="utf-8", newline="") as fh:
         fieldnames = [
             "task_id",
             "code",
-            "interaction_scale",
+            "lj_alpha",
+            "slater_alpha",
             "replicate",
             "seed",
             "production_time_step",
@@ -1070,10 +1045,11 @@ def assemble_results(base_dir: Path) -> int:
 
     summary_rows: List[Dict[str, Any]] = []
     expected_replicates = int(manifest["settings"]["replicates"])
-    for interaction_scale, rows in sorted(grouped.items(), reverse=True):
+    for (lj_alpha, slater_alpha), rows in sorted(grouped.items()):
         summary_rows.append(
             {
-                "interaction_scale": float(interaction_scale),
+                "lj_alpha": float(lj_alpha),
+                "slater_alpha": float(slater_alpha),
                 "n_replicates_expected": expected_replicates,
                 "n_replicates_completed": len(rows),
                 "all_stage70_present": int(all(Path(row["stage_70_file"]).exists() for row in rows)),
@@ -1083,7 +1059,8 @@ def assemble_results(base_dir: Path) -> int:
     summary_csv = assembled_dir / "condition_summary.csv"
     with summary_csv.open("w", encoding="utf-8", newline="") as fh:
         fieldnames = [
-            "interaction_scale",
+            "lj_alpha",
+            "slater_alpha",
             "n_replicates_expected",
             "n_replicates_completed",
             "all_stage70_present",
@@ -1505,7 +1482,7 @@ def assemble_analysis(base_dir: Path) -> int:
 
     successful_results = _successful_results_from_dir(results_dir)
     task_rows: List[Dict[str, Any]] = []
-    grouped: Dict[float, List[Dict[str, Any]]] = {}
+    grouped: Dict[tuple[float, float], List[Dict[str, Any]]] = {}
     target_diffusion_um2_s = manifest["settings"].get("target_diffusion_um2_s")
     for result in successful_results:
         task = result["task"]
@@ -1514,7 +1491,8 @@ def assemble_analysis(base_dir: Path) -> int:
             "analysis_task_id": int(result["analysis_task_id"]),
             "task_id": int(task.get("task_id", -1)),
             "code": str(task["code"]),
-            "interaction_scale": float(task["interaction_scale"]),
+            "lj_alpha": float(task["lj_alpha"]),
+            "slater_alpha": float(task["slater_alpha"]),
             "replicate": int(task["replicate"]),
             "po4_lateral_diffusion_angstrom2_per_time": float(
                 analysis["po4_lateral_diffusion_angstrom2_per_time"]
@@ -1531,7 +1509,7 @@ def assemble_analysis(base_dir: Path) -> int:
         if "target_abs_error_um2_per_s" in analysis:
             row["target_abs_error_um2_per_s"] = float(analysis["target_abs_error_um2_per_s"])
         task_rows.append(row)
-        grouped.setdefault(row["interaction_scale"], []).append(row)
+        grouped.setdefault((row["lj_alpha"], row["slater_alpha"]), []).append(row)
 
     task_csv = assembled_dir / "task_results.csv"
     with task_csv.open("w", encoding="utf-8", newline="") as fh:
@@ -1539,7 +1517,8 @@ def assemble_analysis(base_dir: Path) -> int:
             "analysis_task_id",
             "task_id",
             "code",
-            "interaction_scale",
+            "lj_alpha",
+            "slater_alpha",
             "replicate",
             "po4_lateral_diffusion_angstrom2_per_time",
             "po4_lateral_diffusion_nm2_per_time",
@@ -1559,7 +1538,7 @@ def assemble_analysis(base_dir: Path) -> int:
 
     expected_replicates = int(manifest["settings"]["replicates"])
     summary_rows: List[Dict[str, Any]] = []
-    for interaction_scale, rows in sorted(grouped.items(), reverse=True):
+    for (lj_alpha, slater_alpha), rows in sorted(grouped.items()):
         diffusion_time = np.asarray(
             [row["po4_lateral_diffusion_nm2_per_time"] for row in rows],
             dtype=np.float64,
@@ -1578,7 +1557,8 @@ def assemble_analysis(base_dir: Path) -> int:
         )
         po4_r2 = np.asarray([row["po4_fit_r2"] for row in rows], dtype=np.float64)
         summary = {
-            "interaction_scale": float(interaction_scale),
+            "lj_alpha": float(lj_alpha),
+            "slater_alpha": float(slater_alpha),
             "n_replicates_expected": expected_replicates,
             "n_replicates_completed": len(rows),
             "po4_diffusion_nm2_per_time_mean": float(np.mean(diffusion_time)),
@@ -1601,7 +1581,8 @@ def assemble_analysis(base_dir: Path) -> int:
     summary_csv = assembled_dir / "condition_summary.csv"
     with summary_csv.open("w", encoding="utf-8", newline="") as fh:
         fieldnames = [
-            "interaction_scale",
+            "lj_alpha",
+            "slater_alpha",
             "n_replicates_expected",
             "n_replicates_completed",
             "po4_diffusion_nm2_per_time_mean",
@@ -1666,7 +1647,8 @@ def assemble_analysis(base_dir: Path) -> int:
                     row["target_abs_error_um2_per_s_mean"],
                     row["po4_diffusion_um2_per_s_std"],
                     -row["n_replicates_completed"],
-                    -row["interaction_scale"],
+                    row["lj_alpha"],
+                    row["slater_alpha"],
                 ),
             )
             selection_basis = "closest_target_diffusion_um2_per_s"
@@ -1677,7 +1659,8 @@ def assemble_analysis(base_dir: Path) -> int:
                     row["po4_diffusion_um2_per_s_mean"],
                     -row["po4_diffusion_um2_per_s_std"],
                     row["n_replicates_completed"],
-                    row["interaction_scale"],
+                    -row["lj_alpha"],
+                    -row["slater_alpha"],
                 ),
             )
             selection_basis = "highest_mean_diffusion_um2_per_s"
@@ -2074,17 +2057,14 @@ def cmd_submit_analysis_slurm(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Hybrid interface bilayer interaction-scale sweep workflow")
+    parser = argparse.ArgumentParser(description="Hybrid interface softening sweep workflow")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_init = sub.add_parser("init-run", help="Initialize a new bilayer-only interaction-scale sweep")
+    p_init = sub.add_parser("init-run", help="Initialize a new bilayer-only softening sweep")
     p_init.add_argument("--base-dir", default=str(WORKFLOW_DIR / "runs" / "default"))
     p_init.add_argument("--pdb-id", default=DEFAULT_PDB_ID)
-    p_init.add_argument(
-        "--interaction-scales",
-        type=_float_list_arg,
-        default=DEFAULT_INTERACTION_SCALES,
-    )
+    p_init.add_argument("--lj-alphas", type=_float_list_arg, default=DEFAULT_LJ_ALPHAS)
+    p_init.add_argument("--slater-alphas", type=_float_list_arg, default=DEFAULT_SLATER_ALPHAS)
     p_init.add_argument("--replicates", type=int, default=DEFAULT_REPLICATES)
     p_init.add_argument("--seed", type=int, default=DEFAULT_SEED)
     p_init.add_argument("--integration-ps-per-step", type=float, default=DEFAULT_INTEGRATION_PS_PER_STEP)
