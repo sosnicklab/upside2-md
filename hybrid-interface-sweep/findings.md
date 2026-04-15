@@ -140,6 +140,56 @@
   - `trendline_points.csv` is written with headers only,
   - `summary.json` records `trendline_available = 0`.
 
+## 2026-04-15 (Downloaded Task Bundle Shape)
+- The downloaded `hybrid-interface-sweep/tasks/` bundle is not the raw run tree.
+- It contains per-task analysis result JSON files directly:
+  - `4` successful reference task results,
+  - `14` successful hybrid task results,
+  - `4` hybrid analysis failures.
+- Because the raw remote `stage_7.0.up` files are not present locally, this rerun is an assembled analysis from downloaded task-result JSONs rather than a fresh frame extraction from HDF5 checkpoints.
+- The bundle also uses mixed analysis payload versions:
+  - most successful task JSONs are older results with RMSF-only fields,
+  - only newer results include geometry fields like `max_rmsf_angstrom`, `ca_radius_of_gyration_*`, and `ca_span_*`.
+
+## 2026-04-15 (Legacy Task-Result Compatibility)
+- The current assembled-analysis code must tolerate downloaded task-result bundles that mix old and new analysis payload schemas.
+- For legacy successful payloads, the assembler can safely derive:
+  - `max_rmsf_angstrom` from the saved `residue_rmsf_angstrom` profile.
+- Geometry-based stability fields cannot be reconstructed from legacy RMSF-only task JSONs, so those checks must be skipped when the required values are absent.
+- With this compatibility layer, the downloaded bundle assembled successfully and still filtered obvious destroyed trajectories by the available RMSF ratios.
+
+## 2026-04-15 (Current Stable Sweep Region)
+- The latest assembled downloaded task bundle supports a practical stable default sweep region of about:
+  - `interface_scale = 0.40 -> 1.00`
+- In that bundle:
+  - `0.40` had full `3 / 3` stable replicate coverage,
+  - `0.55`, `0.70`, `0.85`, and `1.00` all retained at least one stable replicate,
+  - `0.25` is closer to the instability boundary.
+- A denser default grid inside `0.40 -> 1.00` is therefore a better next calibration surface than continuing to sample the lower-`scale` destabilized branch sparsely.
+
+## 2026-04-15 (Longer RMSF Calibration Defaults)
+- To make the scaling-factor trend easier to defend, the workflow defaults should reduce trajectory-noise rather than relying only on more sampled scales.
+- The workflow now lengthens the default runs used for new sweeps:
+  - reference `REFERENCE_DURATION = 200001`,
+  - hybrid `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1000`,
+  - hybrid `PROD_70_NSTEPS = 50000`,
+  - hybrid `EQ_FRAME_STEPS = 250`,
+  - hybrid `PROD_FRAME_STEPS = 100`.
+
+## 2026-04-15 (Rendered Plot Artifact)
+- Plot-ready CSVs are useful for notebooks, but they are not sufficient when the goal is to persuade others quickly that the scale calibration is working.
+- The assembled analysis should therefore render a figure directly.
+- The workflow now writes:
+  - `analysis/assembled/interface_scale_vs_rmsf_difference.png`
+  - `analysis/assembled/interface_scale_vs_rmsf_difference.svg`
+- The rendered figure shows:
+  - stable condition points,
+  - fit trend line,
+  - best sampled point,
+  - stable/completed replicate counts per scale.
+- Matplotlib on this machine needs writable local cache directories.
+  - Setting `MPLCONFIGDIR` and `XDG_CACHE_HOME` inside the plotting step avoids noisy font/cache warnings in analysis logs.
+
 ## 2026-04-14 (Analysis Surface)
 - There is no existing RMSF analysis helper in the repo for this calibration.
 - The new analysis should therefore compute and store:
@@ -238,3 +288,7 @@
 - When the user says some trajectories destroy the protein, exclude those trajectories from condition averages and trend fitting instead of letting them bias the calibration surface.
 - When adding new analysis settings to a persisted manifest, backfill defaults for older run trees so re-analysis still works on already-completed sweeps.
 - When a filtered-data workflow leaves no valid samples for fitting, emit an explicit no-fit result state rather than aborting after partially overwriting assembled outputs.
+- When the user provides a downloaded `tasks/` bundle, inspect whether it is raw task directories or already-computed task-result JSONs before assuming the local rerun can read HDF5 checkpoints.
+- When downloaded task-result JSONs mix legacy and current schemas, normalize them during assembly instead of requiring the user to regenerate the whole analysis remotely.
+- When a user wants a scale-calibration result to be persuasive rather than merely inspectable, emit a rendered PNG/SVG figure directly from assembled analysis instead of stopping at CSV tables.
+- When Matplotlib runs in constrained environments, point its config and cache directories at writable analysis-local paths so plotting does not clutter Slurm logs with cache warnings.

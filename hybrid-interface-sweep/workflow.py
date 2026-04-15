@@ -45,7 +45,7 @@ REFERENCE_METHOD = "example_08_fixed_curvature"
 HYBRID_METHOD = "example_16_hybrid"
 
 DEFAULT_PDB_ID = "1rkl"
-DEFAULT_INTERFACE_SCALES = [1.00, 0.85, 0.70, 0.55, 0.40, 0.25]
+DEFAULT_INTERFACE_SCALES = [1.00, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40]
 DEFAULT_HYBRID_REPLICATES = 3
 DEFAULT_REFERENCE_REPLICATES = 4
 DEFAULT_SEED = 20260414
@@ -58,12 +58,23 @@ DEFAULT_STABILITY_CA_SPAN_RATIO_MAX = 1.75
 
 DEFAULT_REFERENCE_SETTINGS = {
     "REFERENCE_TEMPERATURE": "0.80",
-    "REFERENCE_DURATION": "100001",
+    "REFERENCE_DURATION": "200001",
     "REFERENCE_FRAME_INTERVAL": "100",
     "REFERENCE_MEMBRANE_THICKNESS": "24.8",
     "REFERENCE_USE_CURVATURE": "1",
     "REFERENCE_CURVATURE_RADIUS": "120.0",
     "REFERENCE_CURVATURE_SIGN": "1",
+}
+
+DEFAULT_HYBRID_RUNTIME_SETTINGS = {
+    "EQ_62_NSTEPS": "1000",
+    "EQ_63_NSTEPS": "1000",
+    "EQ_64_NSTEPS": "1000",
+    "EQ_65_NSTEPS": "1000",
+    "EQ_66_NSTEPS": "1000",
+    "PROD_70_NSTEPS": "50000",
+    "EQ_FRAME_STEPS": "250",
+    "PROD_FRAME_STEPS": "100",
 }
 
 DEFAULT_REFERENCE_SETTING_KEYS = [
@@ -303,7 +314,7 @@ def _capture_reference_settings() -> Dict[str, str]:
 def _capture_hybrid_passthrough_env() -> Dict[str, str]:
     extra = _floatless_csv(os.environ.get("HYBRID_SWEEP_EXTRA_ENV_KEYS", ""))
     keys = _normalize_env_key_list(DEFAULT_HYBRID_PASSTHROUGH_ENV_KEYS + extra)
-    out: Dict[str, str] = {}
+    out: Dict[str, str] = dict(DEFAULT_HYBRID_RUNTIME_SETTINGS)
     for key in keys:
         value = os.environ.get(key)
         if value is None or value == "":
@@ -1124,9 +1135,12 @@ def _framewise_ca_span(ca_xyz: np.ndarray) -> np.ndarray:
     return np.max(dist, axis=(1, 2))
 
 
-def _safe_ratio(value: float, reference: float) -> float | None:
-    value = float(value)
-    reference = float(reference)
+def _safe_ratio(value: Any, reference: Any) -> float | None:
+    try:
+        value = float(value)
+        reference = float(reference)
+    except (TypeError, ValueError):
+        return None
     if not (math.isfinite(value) and math.isfinite(reference) and reference > 0.0):
         return None
     return float(value / reference)
@@ -1163,37 +1177,81 @@ def _analysis_settings_with_defaults(settings: Dict[str, Any] | None) -> Dict[st
     return merged
 
 
+def _normalize_analysis_for_assembly(analysis: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(analysis)
+    profile = np.asarray(normalized["residue_rmsf_angstrom"], dtype=np.float64)
+    normalized.setdefault("max_rmsf_angstrom", float(np.max(profile)))
+    normalized.setdefault("n_frames_dropped_nonfinite", 0)
+    normalized.setdefault("selected_backbone_atom_count", 0)
+    normalized.setdefault("selected_particle_classes", [])
+    normalized.setdefault("selected_atom_roles", [])
+    for key in (
+        "ca_radius_of_gyration_angstrom_mean",
+        "ca_radius_of_gyration_angstrom_std",
+        "ca_radius_of_gyration_angstrom_max",
+        "ca_span_angstrom_mean",
+        "ca_span_angstrom_std",
+        "ca_span_angstrom_max",
+    ):
+        normalized.setdefault(key, None)
+    return normalized
+
+
+def _mean_available(values: Iterable[Any]) -> float | None:
+    usable: List[float] = []
+    for value in values:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(parsed):
+            usable.append(parsed)
+    if not usable:
+        return None
+    return float(np.mean(np.asarray(usable, dtype=np.float64)))
+
+
+def _csv_optional_float(value: Any) -> str | float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if not math.isfinite(parsed):
+        return ""
+    return float(parsed)
+
+
 def _stability_failure_summary(
     analysis: Dict[str, Any],
-    reference_baselines: Dict[str, float],
+    reference_baselines: Dict[str, float | None],
     analysis_settings: Dict[str, Any],
 ) -> Dict[str, Any]:
     checks = [
         (
             "mean_rmsf_ratio",
-            float(analysis["mean_rmsf_angstrom"]),
-            float(reference_baselines["mean_rmsf_angstrom"]),
+            analysis.get("mean_rmsf_angstrom"),
+            reference_baselines.get("mean_rmsf_angstrom"),
             float(analysis_settings["stability_mean_rmsf_ratio_max"]),
             "mean_rmsf",
         ),
         (
             "max_rmsf_ratio",
-            float(analysis["max_rmsf_angstrom"]),
-            float(reference_baselines["max_rmsf_angstrom"]),
+            analysis.get("max_rmsf_angstrom"),
+            reference_baselines.get("max_rmsf_angstrom"),
             float(analysis_settings["stability_max_rmsf_ratio_max"]),
             "max_rmsf",
         ),
         (
             "ca_radius_of_gyration_ratio",
-            float(analysis["ca_radius_of_gyration_angstrom_mean"]),
-            float(reference_baselines["ca_radius_of_gyration_angstrom_mean"]),
+            analysis.get("ca_radius_of_gyration_angstrom_mean"),
+            reference_baselines.get("ca_radius_of_gyration_angstrom_mean"),
             float(analysis_settings["stability_ca_rg_ratio_max"]),
             "ca_rg",
         ),
         (
             "ca_span_ratio",
-            float(analysis["ca_span_angstrom_mean"]),
-            float(reference_baselines["ca_span_angstrom_mean"]),
+            analysis.get("ca_span_angstrom_mean"),
+            reference_baselines.get("ca_span_angstrom_mean"),
             float(analysis_settings["stability_ca_span_ratio_max"]),
             "ca_span",
         ),
@@ -1470,6 +1528,183 @@ def _fit_trendline(x: np.ndarray, y: np.ndarray, samples: int) -> Dict[str, Any]
     }
 
 
+def _write_interface_scale_rmsf_plot(
+    *,
+    assembled_dir: Path,
+    condition_rows: List[Dict[str, Any]],
+    stable_condition_rows: List[Dict[str, Any]],
+    trend: Dict[str, Any] | None,
+    recommendation: Dict[str, Any],
+) -> Dict[str, Any]:
+    mpl_config_dir = assembled_dir / ".mplconfig"
+    cache_dir = assembled_dir / ".cache"
+    mpl_config_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("MPLCONFIGDIR", str(mpl_config_dir))
+    os.environ.setdefault("XDG_CACHE_HOME", str(cache_dir))
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    png_path = assembled_dir / "interface_scale_vs_rmsf_difference.png"
+    svg_path = assembled_dir / "interface_scale_vs_rmsf_difference.svg"
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.8))
+
+    stable_by_scale = {
+        float(row["interface_scale"]): row
+        for row in condition_rows
+        if int(row.get("n_replicates_stable", 0)) > 0
+        and str(row.get("condition_profile_rmse_angstrom", "")) != ""
+    }
+
+    if stable_condition_rows:
+        x_values = np.asarray(
+            [float(row["interface_scale"]) for row in stable_condition_rows],
+            dtype=np.float64,
+        )
+        y_values = np.asarray(
+            [float(row["condition_profile_rmse_angstrom"]) for row in stable_condition_rows],
+            dtype=np.float64,
+        )
+        y_errors = np.asarray(
+            [
+                float(row["task_rmse_std_angstrom"])
+                if str(row.get("task_rmse_std_angstrom", "")) != ""
+                else 0.0
+                for row in stable_condition_rows
+            ],
+            dtype=np.float64,
+        )
+        ax.errorbar(
+            x_values,
+            y_values,
+            yerr=y_errors,
+            fmt="o",
+            color="#1f6f8b",
+            ecolor="#7db7c7",
+            elinewidth=1.2,
+            capsize=3.0,
+            markersize=6.5,
+            label="Stable condition mean",
+            zorder=3,
+        )
+
+        for row in stable_condition_rows:
+            scale = float(row["interface_scale"])
+            stable_meta = stable_by_scale[scale]
+            label = f"{int(stable_meta['n_replicates_stable'])}/{int(stable_meta['n_replicates_completed'])}"
+            ax.annotate(
+                label,
+                (scale, float(row["condition_profile_rmse_angstrom"])),
+                textcoords="offset points",
+                xytext=(0, 6),
+                ha="center",
+                fontsize=8,
+                color="#24505c",
+            )
+
+    excluded_scales = [
+        float(row["interface_scale"])
+        for row in condition_rows
+        if int(row.get("condition_excluded_from_fit", 0)) == 1
+    ]
+    if excluded_scales:
+        excluded_y = 1.0
+        if stable_condition_rows:
+            excluded_y = float(
+                max(float(row["condition_profile_rmse_angstrom"]) for row in stable_condition_rows) * 1.06
+            )
+        ax.scatter(
+            excluded_scales,
+            np.full(len(excluded_scales), excluded_y, dtype=np.float64),
+            marker="x",
+            s=48,
+            linewidths=1.6,
+            color="#c84b31",
+            label="Excluded from fit",
+            zorder=4,
+        )
+        for scale in excluded_scales:
+            excluded_meta = next(row for row in condition_rows if float(row["interface_scale"]) == scale)
+            label = f"0/{int(excluded_meta['n_replicates_completed'])}"
+            ax.annotate(
+                label,
+                (scale, excluded_y),
+                textcoords="offset points",
+                xytext=(0, 6),
+                ha="center",
+                fontsize=8,
+                color="#8c2d19",
+            )
+
+    if trend is not None:
+        grid_x = np.asarray(trend["grid_x"], dtype=np.float64)
+        grid_y = np.asarray(trend["grid_y"], dtype=np.float64)
+        ax.plot(
+            grid_x,
+            grid_y,
+            color="#d95f02",
+            linewidth=2.0,
+            label=f"Quadratic fit (R^2={float(trend['r2']):.3f})" if int(trend["degree"]) == 2 else "Trend fit",
+            zorder=2,
+        )
+        ax.axvline(
+            float(trend["recommended_interface_scale"]),
+            color="#d95f02",
+            linestyle="--",
+            linewidth=1.2,
+            alpha=0.8,
+        )
+
+    best_sampled_scale = recommendation.get("best_sampled_interface_scale")
+    best_sampled_rmse = recommendation.get("best_sampled_condition_profile_rmse_angstrom")
+    if best_sampled_scale is not None and best_sampled_rmse is not None:
+        ax.scatter(
+            [float(best_sampled_scale)],
+            [float(best_sampled_rmse)],
+            marker="*",
+            s=140,
+            color="#2a9d8f",
+            edgecolors="#1d5c54",
+            linewidths=0.8,
+            label="Best sampled",
+            zorder=5,
+        )
+
+    ax.set_xlabel("PROTEIN_ENV_INTERFACE_SCALE")
+    ax.set_ylabel("RMSF Difference Vs Reference (RMSE, Angstrom)")
+    ax.set_title("1rkl Interface-Scale Calibration")
+    ax.grid(True, alpha=0.25, linewidth=0.7)
+    if condition_rows:
+        scales = sorted(float(row["interface_scale"]) for row in condition_rows)
+        ax.set_xlim(min(scales) - 0.03, max(scales) + 0.03)
+    ax.legend(frameon=False, fontsize=8, loc="best")
+
+    note = "Labels show stable/completed replicate counts per scale"
+    ax.text(
+        0.99,
+        0.02,
+        note,
+        transform=ax.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=8,
+        color="#4b5563",
+    )
+
+    fig.tight_layout()
+    fig.savefig(png_path, dpi=200)
+    fig.savefig(svg_path)
+    plt.close(fig)
+    return {
+        "png": str(png_path),
+        "svg": str(svg_path),
+    }
+
+
 def assemble_analysis(base_dir: Path) -> int:
     manifest = _load_manifest(base_dir)
     analysis_manifest = _load_analysis_manifest(base_dir)
@@ -1478,6 +1713,8 @@ def assemble_analysis(base_dir: Path) -> int:
     assembled_dir.mkdir(parents=True, exist_ok=True)
 
     successful_results = _successful_results_from_dir(results_dir)
+    for result in successful_results:
+        result["analysis"] = _normalize_analysis_for_assembly(result["analysis"])
     reference_results = [item for item in successful_results if item["task"]["kind"] == "reference"]
     hybrid_results = [item for item in successful_results if item["task"]["kind"] == "hybrid"]
     if not reference_results:
@@ -1502,22 +1739,17 @@ def assemble_analysis(base_dir: Path) -> int:
     reference_mean = np.mean(reference_profiles, axis=0)
     reference_std = np.std(reference_profiles, axis=0, ddof=0)
     reference_baselines = {
-        "mean_rmsf_angstrom": float(
-            np.mean([float(item["analysis"]["mean_rmsf_angstrom"]) for item in reference_results])
+        "mean_rmsf_angstrom": _mean_available(
+            item["analysis"].get("mean_rmsf_angstrom") for item in reference_results
         ),
-        "max_rmsf_angstrom": float(
-            np.mean([float(item["analysis"]["max_rmsf_angstrom"]) for item in reference_results])
+        "max_rmsf_angstrom": _mean_available(
+            item["analysis"].get("max_rmsf_angstrom") for item in reference_results
         ),
-        "ca_radius_of_gyration_angstrom_mean": float(
-            np.mean(
-                [
-                    float(item["analysis"]["ca_radius_of_gyration_angstrom_mean"])
-                    for item in reference_results
-                ]
-            )
+        "ca_radius_of_gyration_angstrom_mean": _mean_available(
+            item["analysis"].get("ca_radius_of_gyration_angstrom_mean") for item in reference_results
         ),
-        "ca_span_angstrom_mean": float(
-            np.mean([float(item["analysis"]["ca_span_angstrom_mean"]) for item in reference_results])
+        "ca_span_angstrom_mean": _mean_available(
+            item["analysis"].get("ca_span_angstrom_mean") for item in reference_results
         ),
     }
     analysis_settings = _analysis_settings_with_defaults(
@@ -1584,12 +1816,18 @@ def assemble_analysis(base_dir: Path) -> int:
             "mean_rmsf_angstrom": float(analysis["mean_rmsf_angstrom"]),
             "std_rmsf_angstrom": float(analysis["std_rmsf_angstrom"]),
             "max_rmsf_angstrom": float(analysis["max_rmsf_angstrom"]),
-            "ca_radius_of_gyration_angstrom_mean": float(analysis["ca_radius_of_gyration_angstrom_mean"]),
-            "ca_radius_of_gyration_angstrom_std": float(analysis["ca_radius_of_gyration_angstrom_std"]),
-            "ca_radius_of_gyration_angstrom_max": float(analysis["ca_radius_of_gyration_angstrom_max"]),
-            "ca_span_angstrom_mean": float(analysis["ca_span_angstrom_mean"]),
-            "ca_span_angstrom_std": float(analysis["ca_span_angstrom_std"]),
-            "ca_span_angstrom_max": float(analysis["ca_span_angstrom_max"]),
+            "ca_radius_of_gyration_angstrom_mean": _csv_optional_float(
+                analysis.get("ca_radius_of_gyration_angstrom_mean")
+            ),
+            "ca_radius_of_gyration_angstrom_std": _csv_optional_float(
+                analysis.get("ca_radius_of_gyration_angstrom_std")
+            ),
+            "ca_radius_of_gyration_angstrom_max": _csv_optional_float(
+                analysis.get("ca_radius_of_gyration_angstrom_max")
+            ),
+            "ca_span_angstrom_mean": _csv_optional_float(analysis.get("ca_span_angstrom_mean")),
+            "ca_span_angstrom_std": _csv_optional_float(analysis.get("ca_span_angstrom_std")),
+            "ca_span_angstrom_max": _csv_optional_float(analysis.get("ca_span_angstrom_max")),
             "n_frames_used": int(analysis["n_frames_used"]),
             "n_frames_dropped_nonfinite": int(analysis.get("n_frames_dropped_nonfinite", 0)),
             "selected_backbone_atom_count": int(analysis.get("selected_backbone_atom_count", 0)),
@@ -1938,6 +2176,21 @@ def assemble_analysis(base_dir: Path) -> int:
             "stability_ca_span_ratio_max": float(analysis_settings["stability_ca_span_ratio_max"]),
         },
     }
+    plot_outputs: Dict[str, str] = {}
+    plot_error = ""
+    try:
+        plot_outputs = _write_interface_scale_rmsf_plot(
+            assembled_dir=assembled_dir,
+            condition_rows=condition_rows,
+            stable_condition_rows=stable_condition_rows,
+            trend=trend,
+            recommendation=recommendation,
+        )
+    except Exception as exc:
+        plot_error = str(exc)
+    recommendation["interface_scale_vs_rmsf_difference_png"] = plot_outputs.get("png", "")
+    recommendation["interface_scale_vs_rmsf_difference_svg"] = plot_outputs.get("svg", "")
+    recommendation["plot_error"] = plot_error
     _write_json(assembled_dir / "recommendation_summary.json", recommendation)
 
     payload = {
@@ -1965,6 +2218,9 @@ def assemble_analysis(base_dir: Path) -> int:
         "condition_summary_csv": str(summary_csv),
         "trendline_points_csv": str(trend_csv),
         "failed_tasks_csv": str(failed_csv),
+        "interface_scale_vs_rmsf_difference_png": plot_outputs.get("png", ""),
+        "interface_scale_vs_rmsf_difference_svg": plot_outputs.get("svg", ""),
+        "plot_error": plot_error,
     }
     _write_json(assembled_dir / "summary.json", payload)
     print(f"Assembled analysis results written under {assembled_dir}")

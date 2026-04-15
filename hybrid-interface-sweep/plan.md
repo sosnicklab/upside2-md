@@ -79,6 +79,16 @@
     - scale recommendation.
   - analysis manifest loading now backfills missing stability-threshold keys so existing completed run trees can be re-analyzed without re-running `init-run`.
   - if no stable hybrid trajectories remain after filtering, analysis now completes with an explicit `no_stable_hybrid_trajectories` status instead of aborting mid-assemble and leaving stale recommendation artifacts behind.
+  - assembled analysis now also tolerates downloaded legacy task-result JSON bundles:
+    - older successful payloads are normalized during assembly,
+    - `max_rmsf_angstrom` is derived from the saved residue RMSF profile when absent,
+    - missing geometry metrics remain blank and their associated stability checks are skipped.
+  - new default runs now focus the scale grid on the current stable region and extend trajectory length to make the scale-vs-RMSF trend more defensible:
+    - `interface_scale = 0.40 -> 1.00` in `0.05` increments,
+    - `REFERENCE_DURATION = 200001`,
+    - `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1000`,
+    - `PROD_70_NSTEPS = 50000`.
+  - assembled analysis now emits a rendered scale-vs-RMSF figure directly as both PNG and SVG.
 - Verification completed:
   - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
   - `bash -n hybrid-interface-sweep/run_local.sh`
@@ -144,3 +154,26 @@
       - `n_hybrid_conditions_used_for_fit = 1`
       - `trendline_available = 1`
       - `trendline_points.csv` rows = `201`
+  - downloaded task-result bundle verification:
+    - inspected `hybrid-interface-sweep/tasks/` and confirmed it contains per-task analysis JSONs rather than raw task directories,
+    - staged those JSONs under `hybrid-interface-sweep/analysis/results/tasks/`,
+    - wrote local `sweep_manifest.json` and `analysis/analysis_manifest.json` for assembly,
+    - reran `assemble-analysis` locally and confirmed successful assembled outputs from the downloaded bundle:
+      - `18 / 22` successful task results,
+      - `4` explicit analysis failures from zero finite frames,
+      - `4` additional successful hybrid tasks filtered as unstable destroyed trajectories,
+      - `10` stable hybrid tasks used for condition summaries and trend fitting.
+  - denser stable-range + longer-run verification:
+    - initialized fresh defaults under `/tmp/hybrid_interface_rmsf_dense_long_defaults`,
+    - confirmed the new default grid contains `13` hybrid scales:
+      - `0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00`
+    - confirmed the fresh manifest records:
+      - `REFERENCE_DURATION = 200001`
+      - `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1000`
+      - `PROD_70_NSTEPS = 50000`
+      - `EQ_FRAME_STEPS = 250`
+      - `PROD_FRAME_STEPS = 100`
+    - reran `assemble-analysis` on the downloaded local analysis base and confirmed:
+      - `interface_scale_vs_rmsf_difference.png`
+      - `interface_scale_vs_rmsf_difference.svg`
+      - plot paths saved into `summary.json` and `recommendation_summary.json`

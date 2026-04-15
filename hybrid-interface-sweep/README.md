@@ -7,7 +7,7 @@ It compares two methods:
 - Reference: `example/08.MembraneSimulation/3.fixed_curvature.run.py` physics for `1rkl`
 - Swept method: `example/16.MARTINI/run_sim_1rkl.sh`
 
-The sweep variable is `PROTEIN_ENV_INTERFACE_SCALE`. The analysis computes residue-wise backbone RMSF for both methods, fits a trend line over RMSF error versus `interface_scale`, and writes plot-ready CSV files plus a recommended scale.
+The sweep variable is `PROTEIN_ENV_INTERFACE_SCALE`. The analysis computes residue-wise backbone RMSF for both methods, fits a trend line over RMSF error versus `interface_scale`, and writes plot-ready CSV files, rendered plot files, and a recommended scale.
 
 ## Scope
 
@@ -18,12 +18,18 @@ The sweep variable is `PROTEIN_ENV_INTERFACE_SCALE`. The analysis computes resid
 
 ## Default Sweep
 
-- `interface_scale = 1.00, 0.85, 0.70, 0.55, 0.40, 0.25`
+- `interface_scale = 1.00, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40`
 - `reference_replicates = 4`
 - `hybrid_replicates = 3`
 - `pdb_id = 1rkl`
 - RMSF burn-in fraction: `0.20`
 - trend-line sample count: `201`
+- longer default trajectories for smoother RMSF estimates:
+  - reference `REFERENCE_DURATION = 200001`
+  - hybrid `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1000`
+  - hybrid `PROD_70_NSTEPS = 50000`
+  - hybrid `EQ_FRAME_STEPS = 250`
+  - hybrid `PROD_FRAME_STEPS = 100`
 
 The default output directory is `hybrid-interface-sweep/runs/default`.
 
@@ -106,10 +112,22 @@ The example-08 reference side is configured from these environment variables at 
 - `REFERENCE_CURVATURE_SIGN`
 
 Defaults match `example/08.MembraneSimulation/3.fixed_curvature.run.py` for `1rkl`.
+The workflow lengthens the default reference duration to `200001` steps to reduce RMSF noise while keeping the same reference physics.
 
 ### Hybrid Method
 
 The hybrid side replays a whitelist of `example/16.MARTINI/run_sim_1rkl.sh` overrides captured at `init-run` time.
+
+The workflow now seeds longer default hybrid durations into that captured environment unless you override them explicitly:
+
+- `EQ_62_NSTEPS = 1000`
+- `EQ_63_NSTEPS = 1000`
+- `EQ_64_NSTEPS = 1000`
+- `EQ_65_NSTEPS = 1000`
+- `EQ_66_NSTEPS = 1000`
+- `PROD_70_NSTEPS = 50000`
+- `EQ_FRAME_STEPS = 250`
+- `PROD_FRAME_STEPS = 100`
 
 Examples:
 
@@ -157,6 +175,8 @@ The analysis writes under `BASE_DIR/analysis/`:
 - `assembled/condition_profiles.csv`
 - `assembled/condition_summary.csv`
 - `assembled/trendline_points.csv`
+- `assembled/interface_scale_vs_rmsf_difference.png`
+- `assembled/interface_scale_vs_rmsf_difference.svg`
 - `assembled/failed_tasks.csv`
 - `assembled/recommendation_summary.json`
 - `assembled/summary.json`
@@ -165,6 +185,8 @@ The main plot-ready files are:
 
 - observed condition points: `assembled/condition_summary.csv`
 - fitted trend line: `assembled/trendline_points.csv`
+- rendered figure: `assembled/interface_scale_vs_rmsf_difference.png`
+- vector figure: `assembled/interface_scale_vs_rmsf_difference.svg`
 
 The recommended scale is saved in:
 

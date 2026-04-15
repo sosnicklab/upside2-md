@@ -304,6 +304,77 @@
     - relaxed thresholds in `analysis_manifest.json`
     - `assemble-analysis` completed with `analysis_status = ok`
     - `trendline_points.csv` contains `201` fit rows
+
+## 2026-04-15 (Downloaded Task-Result Assembly)
+- Reopened the analysis after the user reported that analysis still failed remotely but had downloaded `hybrid-interface-sweep/tasks/`.
+- Inspected the downloaded bundle and found it contains analysis task JSONs directly rather than raw task directories or HDF5 checkpoints.
+- Updated:
+  - `hybrid-interface-sweep/workflow.py`
+  - `hybrid-interface-sweep/findings.md`
+- Added legacy-task compatibility to the assembled-analysis path:
+  - normalize older successful task payloads during assembly,
+  - derive `max_rmsf_angstrom` from saved residue RMSF when absent,
+  - leave missing geometry metrics blank and skip geometry-based stability checks when those fields are unavailable.
+- Staged the downloaded task JSONs into the local workflow layout:
+  - wrote `hybrid-interface-sweep/sweep_manifest.json`
+  - wrote `hybrid-interface-sweep/analysis/analysis_manifest.json`
+  - copied `hybrid-interface-sweep/tasks/*.json` into `hybrid-interface-sweep/analysis/results/tasks/`
+- Verification:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python hybrid-interface-sweep/workflow.py assemble-analysis --base-dir hybrid-interface-sweep`
+- Local assembled rerun completed successfully from the downloaded task-result JSONs:
+  - `18 / 22` task results successful
+  - `4 / 22` task results failed with `Too few finite backbone frames remain after filtering for RMSF analysis: 0`
+  - `14` successful hybrid task results
+  - `4` reference task results
+  - `4` successful hybrid tasks filtered as unstable destroyed trajectories
+  - `10` stable hybrid task results used in condition summaries / fit
+- The rerun wrote:
+  - `hybrid-interface-sweep/analysis/assembled/task_results.csv`
+  - `hybrid-interface-sweep/analysis/assembled/condition_summary.csv`
+  - `hybrid-interface-sweep/analysis/assembled/failed_tasks.csv`
+  - `hybrid-interface-sweep/analysis/assembled/recommendation_summary.json`
+  - `hybrid-interface-sweep/analysis/assembled/summary.json`
+
+## 2026-04-15 (Denser Stable-Range Sweep And Plot Output)
+- Reopened the workflow after the user asked for:
+  - more sampled `interface_scale` points inside the stable protein range,
+  - longer simulations,
+  - and a rendered scale-vs-RMSF-difference plot suitable for presentation.
+- Updated:
+  - `hybrid-interface-sweep/workflow.py`
+  - `hybrid-interface-sweep/README.md`
+  - `hybrid-interface-sweep/plan.md`
+  - `hybrid-interface-sweep/findings.md`
+- Changed the default scale grid to a denser stable-range sweep:
+  - `1.00, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40`
+- Lengthened the default runtime settings for new sweeps:
+  - `REFERENCE_DURATION = 200001`
+  - `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1000`
+  - `PROD_70_NSTEPS = 50000`
+  - `EQ_FRAME_STEPS = 250`
+  - `PROD_FRAME_STEPS = 100`
+- Added rendered analysis outputs:
+  - `analysis/assembled/interface_scale_vs_rmsf_difference.png`
+  - `analysis/assembled/interface_scale_vs_rmsf_difference.svg`
+- The plot shows:
+  - stable condition RMSE points,
+  - fitted trend line,
+  - best sampled point,
+  - stable/completed replicate-count labels per scale.
+- Hardened plotting runtime paths so Matplotlib uses analysis-local writable config/cache directories.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python hybrid-interface-sweep/workflow.py init-run --base-dir /tmp/hybrid_interface_rmsf_dense_long_defaults`
+  - confirmed fresh default manifest settings:
+    - `interface_scale = 0.40 -> 1.00` in `0.05` increments
+    - `REFERENCE_DURATION = 200001`
+    - `PROD_70_NSTEPS = 50000`
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python hybrid-interface-sweep/workflow.py assemble-analysis --base-dir hybrid-interface-sweep`
+  - confirmed rendered plot outputs exist:
+    - PNG `1500 x 960`
+    - SVG written successfully
+  - confirmed assembled JSON outputs now include plot paths and no plot error.
 - Ran a reduced local smoke sweep under `/tmp/hybrid_interface_rmsf_smoke` with:
   - `interface_scale = 0.85`
   - `reference_replicates = 1`
