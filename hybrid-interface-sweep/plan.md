@@ -1,93 +1,105 @@
-# Hybrid Interface Softening Sweep Restoration
+# Hybrid Interface RMSF Calibration Sweep
 
 ## Project Goal
-- Restore `hybrid-interface-sweep/` so it sweeps softened nonbonded potentials for both LJ and Coulomb in bilayer-only production runs.
-- Remove the current scalar `interaction_scale` rewrite from the workflow.
-- Keep all changes inside `hybrid-interface-sweep/`; do not modify `example/16.MARTINI/`.
+- Replace `hybrid-interface-sweep/` with an interface-scale calibration workflow for `1rkl`.
+- Use the implicit-membrane `example/08.MembraneSimulation` method as the RMSF reference.
+- Use the hybrid dry-MARTINI `example/16.MARTINI` method as the swept method.
+- Sweep the Upside/dry-MARTINI interface scaling factor and choose it from an RMSF-error trend line.
+- Keep local and Slurm execution paths working, including a post-run analysis phase.
 
 ## Architecture & Key Decisions
-- Keep the existing bilayer preparation surface in `py/martini_prepare_system.py --mode bilayer`.
-- Keep the bilayer stage ladder already implemented in `hybrid-interface-sweep/workflow.py`:
-  - `6.0` / `6.1` minimization,
-  - `6.2` / `6.3` softened equilibration from the existing bilayer prep path,
-  - `6.4` / `6.5` / `6.6` hard equilibration,
-  - `7.0` production.
-- Apply the sweep only to the staged production `7.0` Hamiltonian inside the sweep workflow by rewriting `input/potential/martini_potential` attrs:
-  - `lj_soften = 1` when `lj_alpha > 0`,
-  - `lj_soften_alpha = lj_alpha`,
-  - `coulomb_soften = 1` when `slater_alpha > 0`,
-  - `slater_alpha = slater_alpha`.
-- Treat `lj_alpha` and `slater_alpha` as independent non-negative sweep axes; default to the previously working grid:
-  - `lj_alpha = 0.0, 0.025, 0.05, 0.10, 0.20`
-  - `slater_alpha = 0.0, 0.25, 0.50, 1.00, 2.00`
-- Bump manifest/result schemas so stale scalar-factor manifests fail loudly instead of being reused accidentally.
-- Restore assembled run/analysis grouping to `(lj_alpha, slater_alpha)` conditions.
+- Revert the sweep surface back to `PROTEIN_ENV_INTERFACE_SCALE`; the softening workflow is no longer the right control for this task.
+- Represent the sweep as two task families inside one manifest:
+  - `reference` tasks: run `1rkl` with the example-08 fixed-curvature implicit-membrane method.
+  - `hybrid` tasks: run `1rkl` with the example-16 hybrid membrane workflow at one `interface_scale`.
+- Do not call the example-08 script directly.
+  - `3.fixed_curvature.run.py` shells out to `sbatch` and bundles replicas only for convenience.
+  - Because `exchange = False`, independent per-replicate runs are equivalent and fit the sweep/Slurm model better.
+- Keep the example-08 reference physics aligned to `3.fixed_curvature.run.py`:
+  - `pdb_id = 1rkl`
+  - `membrane_thickness = 24.8`
+  - `use_curvature = True`
+  - `curvature_radius = 120.0`
+  - `curvature_sign = 1`
+  - `temperature = 0.80`
+  - `integrator = mv`
+  - `--disable-recentering`
+- Keep the hybrid production runner aligned to `example/16.MARTINI/run_sim_1rkl.sh`.
+- Preserve caller-owned repo paths for the hybrid runner.
+  - Current `source.sh` points `UPSIDE_HOME` at a non-existent checkout.
+  - The workflow therefore needs the example-16 shell script to honor an already-set `UPSIDE_HOME`.
+- RMSF comparison surface:
+  - compare the shared `1rkl` protein backbone only,
+  - align frames rigidly in 3D using all mapped backbone carrier atoms,
+  - compute per-residue RMSF from the mapped CA-like backbone atom for each residue,
+  - aggregate the example-08 reference profile across reference replicates,
+  - score each hybrid replicate and condition by RMSF profile mismatch to that reference.
+- Analysis outputs must be plot-ready:
+  - per-task RMSF summaries,
+  - per-residue RMSF profiles,
+  - condition-level RMSF error table versus `interface_scale`,
+  - fitted trend-line samples,
+  - recommendation JSON with both best sampled scale and trend-line-selected scale.
+- Fit a simple polynomial trend line over condition-level RMSF RMSE.
+  - Default to quadratic when at least three scales are available.
+  - Choose the recommended scale from the minimum fitted error within the sampled scale range.
 
 ## Execution Phases
-- [x] Phase 1: Rewrite the local tracker files to the restored softening semantics and record the user correction.
-- [x] Phase 2: Patch `workflow.py` task schemas, CLI surface, and stage-7 mutation logic from scalar scaling back to softened-potential attrs.
-- [x] Phase 3: Patch wrappers and README so local/Slurm entrypoints expose `HYBRID_SWEEP_LJ_ALPHAS` and `HYBRID_SWEEP_SLATER_ALPHAS`.
-- [x] Phase 4: Run static verification and a reduced smoke path that proves the staged `7.0` file carries the requested softening attrs.
-- [x] Phase 5: Record review notes, compatibility caveats, and verification results.
+- [x] Phase 1: Rewrite tracker files for the new interface-scale RMSF calibration workflow.
+- [x] Phase 2: Replace `workflow.py` so it stages reference and hybrid tasks, runs them locally or via Slurm, and records the right metadata.
+- [x] Phase 3: Update the example-16 shell runner just enough to preserve caller-supplied repo paths.
+- [x] Phase 4: Update wrapper scripts and README for the new run and analysis surfaces.
+- [x] Phase 5: Run static verification and reduced smoke tests for both methods plus the assembled trend-line analysis.
+- [x] Phase 6: Record review notes, verification results, and caveats.
 
 ## Known Errors / Blockers
-- Base directories initialized with the scalar `interaction_scale` manifest are intentionally incompatible with the restored workflow and must be reinitialized.
-- Any previously downloaded scalar-factor analysis is not valid for selecting softened-potential parameters.
-- The current local repo copy contains the downloaded `analysis/` artifacts but not the corresponding full sweep task tree, so re-analysis here means revalidating the downloaded task/condition results rather than recomputing from raw stage-7 checkpoints.
+- `source.sh` currently exports `UPSIDE_HOME=/Users/yinhan/Documents/upside2-md-martini`, but that path does not exist on this machine.
+- No pre-existing example-08 output artifact is stored in the repo, so the workflow must generate its own reference trajectories before hybrid RMSF comparison.
 
 ## Review
 - Implemented:
-  - restored two-axis `(lj_alpha, slater_alpha, replicate)` manifest/task generation,
-  - restored production-stage `7.0` softening patching via `lj_soften`, `lj_soften_alpha`, `coulomb_soften`, and `slater_alpha`,
-  - restored run/analysis assembly grouping and recommendation selection on `(lj_alpha, slater_alpha)`,
-  - restored wrapper and README env surfaces to `HYBRID_SWEEP_LJ_ALPHAS` and `HYBRID_SWEEP_SLATER_ALPHAS`,
-  - bumped manifest/result schemas to `v3` so stale scalar-factor trees fail loudly.
-- Runtime fix:
-  - `workflow.py` now launches preparation subprocesses with `sys.executable` instead of bare `python3`, so the prep path stays on the same interpreter selected by the wrapper or Slurm entrypoint.
+  - replaced the old softening workflow with a mixed-task `reference + hybrid` interface-scale RMSF sweep,
+  - added example-08-style reference task generation and direct Upside execution for `1rkl`,
+  - restored hybrid task execution through `example/16.MARTINI/run_sim_1rkl.sh` with per-task `PROTEIN_ENV_INTERFACE_SCALE`,
+  - added RMSF analysis that writes residue profiles, condition summaries, fitted trend-line samples, and a recommendation JSON,
+  - updated wrapper scripts and README for the new interface-scale run surface,
+  - patched `example/16.MARTINI/run_sim_1rkl.sh` so caller-provided `UPSIDE_HOME` survives its local `source.sh`.
+- Runtime hardening:
+  - all four shell wrappers now prefer repo-local `.venv/bin/python3` directly before falling back to `VIRTUAL_ENV` or system `python3`.
 - Verification completed:
-  - `source .venv/bin/activate && source source.sh && python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
   - `bash -n hybrid-interface-sweep/run_local.sh`
   - `bash -n hybrid-interface-sweep/submit_remote_round.sh`
   - `bash -n hybrid-interface-sweep/run_analysis_local.sh`
   - `bash -n hybrid-interface-sweep/submit_analysis.sh`
-  - reduced local smoke run under `/tmp/hybrid_interface_softening_restore_smoke` with:
-    - `lj_alpha = 0.05`
-    - `slater_alpha = 0.5`
-    - `replicates = 1`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - reduced local smoke sweep under `/tmp/hybrid_interface_rmsf_smoke` with:
+    - `interface_scale = 0.85`
+    - `reference_replicates = 1`
+    - `hybrid_replicates = 1`
+    - `REFERENCE_DURATION = 20`
+    - `REFERENCE_FRAME_INTERVAL = 1`
     - `MIN_60_MAX_ITER = 1`
     - `MIN_61_MAX_ITER = 1`
     - `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1`
-    - `PROD_70_NSTEPS = 40`
+    - `PROD_70_NSTEPS = 20`
     - `EQ_FRAME_STEPS = 1`
     - `PROD_FRAME_STEPS = 1`
-  - direct staged HDF5 verification on `bilayer.stage_7.0.up` confirmed:
-    - `lj_soften = 1`
-    - `lj_soften_alpha = 0.05`
-    - `coulomb_soften = 1`
-    - `slater_alpha = 0.5`
-  - reduced local analysis run wrote:
+  - reduced analysis run on the same smoke tree wrote:
     - `analysis/assembled/task_results.csv`
+    - `analysis/assembled/residue_rmsf_profiles.csv`
+    - `analysis/assembled/reference_profile.csv`
+    - `analysis/assembled/condition_profiles.csv`
     - `analysis/assembled/condition_summary.csv`
+    - `analysis/assembled/trendline_points.csv`
     - `analysis/assembled/recommendation_summary.json`
     - `analysis/assembled/summary.json`
-- Downloaded analysis rerun:
-  - reviewed the downloaded `hybrid-interface-sweep/analysis/` tree now present in the repo,
-  - confirmed `75 / 75` task results succeeded with `0` failed tasks and full `3 / 3` replicate coverage for all `25` `(lj_alpha, slater_alpha)` conditions,
-  - confirmed task-level consistency:
-    - `160` frames used in every task,
-    - `102` `PO4` beads in every task,
-    - all diffusion outputs finite,
-    - `PO4` fit quality spans `R^2 = 0.9780 -> 0.9927`,
-  - saved recommendation remains:
-    - `lj_alpha = 0.1`
-    - `slater_alpha = 0.5`
-    - `po4_diffusion_um2_per_s_mean = 0.8621`
-    - `po4_diffusion_um2_per_s_std = 0.0706`
-    - `CV = 0.082`,
-  - nearby alternatives worth noting:
-    - lower-perturbation high-fluidity branch: `(0.0, 1.0)` with `0.8584 um^2/s`, `CV = 0.047`,
-    - highest-stability near-top branch: `(0.1, 2.0)` with `0.8510 um^2/s`, `CV = 0.013`, `min R^2 = 0.9888`,
-  - compared against the same provisional `40 ps/step` target proxy from `hybrid_timescale.md`:
-    - target at `T = 0.8647` remains about `2.892 um^2/s`,
-    - the best tested condition reaches only about `30%` of that target,
-    - so this restored softening sweep still does not demonstrate a target match.
+  - verified hybrid production control on the smoke tree:
+    - `input/hybrid_control/protein_env_interface_scale = 0.85`
+  - verified no-submit Slurm staging on the same smoke tree:
+    - `slurm/round_manifest.json`
+    - `slurm/run_array.sbatch`
+    - `slurm/collect_results.sbatch`
+    - `analysis/slurm/round_manifest.json`
+    - `analysis/slurm/analyze_array.sbatch`
+    - `analysis/slurm/collect_analysis.sbatch`

@@ -7,7 +7,6 @@ import csv
 import json
 import math
 import os
-import shlex
 import shutil
 import subprocess as sp
 import sys
@@ -22,64 +21,58 @@ import numpy as np
 
 WORKFLOW_DIR = Path(os.path.abspath(__file__)).parent
 REPO_ROOT = WORKFLOW_DIR.parent
-PREP_SCRIPT = REPO_ROOT / "py" / "martini_prepare_system.py"
+PY_DIR = REPO_ROOT / "py"
+if str(PY_DIR) not in sys.path:
+    sys.path.insert(0, str(PY_DIR))
+
+import run_upside as ru
+
+
+PDB_TO_INITIAL_STRUCTURE = PY_DIR / "PDB_to_initial_structure.py"
 UPSIDE_EXECUTABLE = REPO_ROOT / "obj" / "upside"
+HYBRID_RUN_SCRIPT = REPO_ROOT / "example" / "16.MARTINI" / "run_sim_1rkl.sh"
+REFERENCE_PDB_DIR = REPO_ROOT / "example" / "08.MembraneSimulation" / "pdb"
+HYBRID_PDB_DIR = REPO_ROOT / "example" / "16.MARTINI" / "pdb"
 
-SCHEMA_MANIFEST = "hybrid_interface_softening_sweep_manifest_v3"
-SCHEMA_SLURM_ROUND = "hybrid_interface_softening_sweep_slurm_round_v3"
-SCHEMA_TASK_RESULT = "hybrid_interface_softening_sweep_task_result_v3"
-SCHEMA_ANALYSIS_MANIFEST = "hybrid_interface_softening_sweep_analysis_manifest_v3"
-SCHEMA_ANALYSIS_SLURM = "hybrid_interface_softening_sweep_analysis_slurm_v3"
-SCHEMA_ANALYSIS_RESULT = "hybrid_interface_softening_sweep_analysis_result_v3"
+SCHEMA_MANIFEST = "hybrid_interface_rmsf_sweep_manifest_v1"
+SCHEMA_SLURM_ROUND = "hybrid_interface_rmsf_sweep_slurm_round_v1"
+SCHEMA_TASK_RESULT = "hybrid_interface_rmsf_sweep_task_result_v1"
+SCHEMA_ANALYSIS_MANIFEST = "hybrid_interface_rmsf_sweep_analysis_manifest_v1"
+SCHEMA_ANALYSIS_SLURM = "hybrid_interface_rmsf_sweep_analysis_slurm_v1"
+SCHEMA_ANALYSIS_RESULT = "hybrid_interface_rmsf_sweep_analysis_result_v1"
 
-DEFAULT_PDB_ID = "bilayer"
-DEFAULT_LJ_ALPHAS = [0.0, 0.025, 0.05, 0.10, 0.20]
-DEFAULT_SLATER_ALPHAS = [0.0, 0.25, 0.50, 1.00, 2.00]
-DEFAULT_REPLICATES = 3
-DEFAULT_SEED = 20260413
-DEFAULT_INTEGRATION_PS_PER_STEP = 40.0
-BAR_1_TO_EUP_PER_A3 = "0.000020659477"
-COMP_3E4_BAR_INV_TO_A3_PER_EUP = "14.521180763676"
+REFERENCE_METHOD = "example_08_fixed_curvature"
+HYBRID_METHOD = "example_16_hybrid"
 
-DEFAULT_RUNTIME_ENV = {
-    "TEMPERATURE": "0.8647",
-    "THERMOSTAT_TIMESCALE": "5.0",
-    "THERMOSTAT_INTERVAL": "-1",
-    "MIN_60_MAX_ITER": "500",
-    "MIN_61_MAX_ITER": "500",
-    "EQ_62_NSTEPS": "500",
-    "EQ_63_NSTEPS": "500",
-    "EQ_64_NSTEPS": "500",
-    "EQ_65_NSTEPS": "500",
-    "EQ_66_NSTEPS": "500",
-    "PROD_70_NSTEPS": "10000",
-    "MIN_TIME_STEP": "0.010",
-    "EQ_TIME_STEP": "0.010",
-    "PROD_TIME_STEP": "0.010",
-    "EQ_FRAME_STEPS": "1000",
-    "PROD_FRAME_STEPS": "50",
-    "PROD_70_NPT_ENABLE": "1",
-    "PROD_70_BAROSTAT_TYPE": "1",
-    "SALT_MOLAR": "0.15",
-    "ION_CUTOFF": "4.0",
-    "BOX_PADDING_XY": "0.0",
-    "BOX_PADDING_Z": "20.0",
-    "UPSIDE_MARTINI_ENERGY_CONVERSION": "2.914952774272",
-    "UPSIDE_MARTINI_LENGTH_CONVERSION": "10",
-    "UPSIDE_EWALD_ENABLE": "1",
-    "UPSIDE_EWALD_ALPHA": "0.2",
-    "UPSIDE_EWALD_KMAX": "5",
-    "UPSIDE_NPT_TAU": "4.0",
-    "UPSIDE_NPT_COMPRESSIBILITY": COMP_3E4_BAR_INV_TO_A3_PER_EUP,
-    "UPSIDE_NPT_COMPRESSIBILITY_XY": COMP_3E4_BAR_INV_TO_A3_PER_EUP,
-    "UPSIDE_NPT_COMPRESSIBILITY_Z": "0.0",
-    "UPSIDE_NPT_INTERVAL": "10",
-    "UPSIDE_NPT_SEMI": "1",
-    "UPSIDE_NPT_DEBUG": "1",
-    "BILAYER_PDB": str(REPO_ROOT / "parameters" / "dryMARTINI" / "DOPC.pdb"),
+DEFAULT_PDB_ID = "1rkl"
+DEFAULT_INTERFACE_SCALES = [1.00, 0.85, 0.70, 0.55, 0.40, 0.25]
+DEFAULT_HYBRID_REPLICATES = 3
+DEFAULT_REFERENCE_REPLICATES = 4
+DEFAULT_SEED = 20260414
+DEFAULT_BURN_IN_FRACTION = 0.20
+DEFAULT_TRENDLINE_SAMPLES = 201
+
+DEFAULT_REFERENCE_SETTINGS = {
+    "REFERENCE_TEMPERATURE": "0.80",
+    "REFERENCE_DURATION": "100001",
+    "REFERENCE_FRAME_INTERVAL": "100",
+    "REFERENCE_MEMBRANE_THICKNESS": "24.8",
+    "REFERENCE_USE_CURVATURE": "1",
+    "REFERENCE_CURVATURE_RADIUS": "120.0",
+    "REFERENCE_CURVATURE_SIGN": "1",
 }
 
-DEFAULT_RUNTIME_ENV_KEYS = [
+DEFAULT_REFERENCE_SETTING_KEYS = [
+    "REFERENCE_TEMPERATURE",
+    "REFERENCE_DURATION",
+    "REFERENCE_FRAME_INTERVAL",
+    "REFERENCE_MEMBRANE_THICKNESS",
+    "REFERENCE_USE_CURVATURE",
+    "REFERENCE_CURVATURE_RADIUS",
+    "REFERENCE_CURVATURE_SIGN",
+]
+
+DEFAULT_HYBRID_PASSTHROUGH_ENV_KEYS = [
     "TEMPERATURE",
     "THERMOSTAT_TIMESCALE",
     "THERMOSTAT_INTERVAL",
@@ -91,119 +84,44 @@ DEFAULT_RUNTIME_ENV_KEYS = [
     "EQ_65_NSTEPS",
     "EQ_66_NSTEPS",
     "PROD_70_NSTEPS",
-    "MIN_TIME_STEP",
     "EQ_TIME_STEP",
     "PROD_TIME_STEP",
+    "MIN_TIME_STEP",
     "EQ_FRAME_STEPS",
     "PROD_FRAME_STEPS",
     "PROD_70_NPT_ENABLE",
     "PROD_70_BAROSTAT_TYPE",
+    "PROD_70_BACKBONE_FIX_RIGID_ENABLE",
+    "PRODUCTION_NONPROTEIN_HARD_SPHERE",
+    "MARTINIZE_ENABLE",
+    "MARTINIZE_FF",
+    "PROTEIN_AA_PDB",
+    "PROTEIN_CG_PDB",
+    "PROTEIN_ITP",
     "BILAYER_PDB",
-    "SALT_MOLAR",
-    "ION_CUTOFF",
-    "BOX_PADDING_XY",
-    "BOX_PADDING_Z",
-    "PREP_SEED",
+    "UNIVERSAL_PREP_MODE",
     "UPSIDE_MARTINI_ENERGY_CONVERSION",
     "UPSIDE_MARTINI_LENGTH_CONVERSION",
     "UPSIDE_EWALD_ENABLE",
     "UPSIDE_EWALD_ALPHA",
     "UPSIDE_EWALD_KMAX",
-    "UPSIDE_NPT_TAU",
-    "UPSIDE_NPT_COMPRESSIBILITY",
-    "UPSIDE_NPT_COMPRESSIBILITY_XY",
-    "UPSIDE_NPT_COMPRESSIBILITY_Z",
-    "UPSIDE_NPT_INTERVAL",
-    "UPSIDE_NPT_SEMI",
-    "UPSIDE_NPT_DEBUG",
-]
-
-STAGE_SPECS = [
-    {
-        "label": "6.0",
-        "prepare_stage": "minimization",
-        "stage_kind": "minimization",
-        "npt_enable": 1,
-        "barostat_type": 0,
-        "lipidhead_fc": 0.0,
-        "nsteps_key": "MIN_60_MAX_ITER",
-    },
-    {
-        "label": "6.1",
-        "prepare_stage": "npt_prod",
-        "stage_kind": "minimization",
-        "npt_enable": 1,
-        "barostat_type": 0,
-        "lipidhead_fc": 0.0,
-        "nsteps_key": "MIN_61_MAX_ITER",
-    },
-    {
-        "label": "6.2",
-        "prepare_stage": "npt_equil",
-        "stage_kind": "md",
-        "npt_enable": 1,
-        "barostat_type": 0,
-        "lipidhead_fc": 200.0,
-        "nsteps_key": "EQ_62_NSTEPS",
-        "dt_key": "EQ_TIME_STEP",
-        "frame_key": "EQ_FRAME_STEPS",
-    },
-    {
-        "label": "6.3",
-        "prepare_stage": "npt_equil_reduced",
-        "stage_kind": "md",
-        "npt_enable": 1,
-        "barostat_type": 0,
-        "lipidhead_fc": 100.0,
-        "nsteps_key": "EQ_63_NSTEPS",
-        "dt_key": "EQ_TIME_STEP",
-        "frame_key": "EQ_FRAME_STEPS",
-    },
-    {
-        "label": "6.4",
-        "prepare_stage": "npt_prod",
-        "stage_kind": "md",
-        "npt_enable": 1,
-        "barostat_type": 0,
-        "lipidhead_fc": 50.0,
-        "nsteps_key": "EQ_64_NSTEPS",
-        "dt_key": "EQ_TIME_STEP",
-        "frame_key": "EQ_FRAME_STEPS",
-    },
-    {
-        "label": "6.5",
-        "prepare_stage": "npt_prod",
-        "stage_kind": "md",
-        "npt_enable": 1,
-        "barostat_type": 0,
-        "lipidhead_fc": 20.0,
-        "nsteps_key": "EQ_65_NSTEPS",
-        "dt_key": "EQ_TIME_STEP",
-        "frame_key": "EQ_FRAME_STEPS",
-    },
-    {
-        "label": "6.6",
-        "prepare_stage": "npt_prod",
-        "stage_kind": "md",
-        "npt_enable": 1,
-        "barostat_type": 0,
-        "lipidhead_fc": 10.0,
-        "nsteps_key": "EQ_66_NSTEPS",
-        "dt_key": "EQ_TIME_STEP",
-        "frame_key": "EQ_FRAME_STEPS",
-    },
-    {
-        "label": "7.0",
-        "prepare_stage": "npt_prod",
-        "stage_kind": "md",
-        "npt_enable_env_key": "PROD_70_NPT_ENABLE",
-        "barostat_type_env_key": "PROD_70_BAROSTAT_TYPE",
-        "lipidhead_fc": 0.0,
-        "nsteps_key": "PROD_70_NSTEPS",
-        "dt_key": "PROD_TIME_STEP",
-        "frame_key": "PROD_FRAME_STEPS",
-        "apply_softening": True,
-    },
+    "SC_ENV_LJ_FORCE_CAP",
+    "SC_ENV_COUL_FORCE_CAP",
+    "SC_ENV_RELAX_STEPS",
+    "SC_ENV_BACKBONE_HOLD_STEPS",
+    "SC_ENV_PO4_Z_HOLD_STEPS",
+    "SC_ENV_PO4_Z_CLAMP_ENABLE",
+    "SC_ENV_ENERGY_DUMP_ENABLE",
+    "SC_ENV_ENERGY_DUMP_STRIDE",
+    "SALT_MOLAR",
+    "PROTEIN_LIPID_CUTOFF",
+    "ION_CUTOFF",
+    "BOX_PADDING_XY",
+    "BOX_PADDING_Z",
+    "PREP_SEED",
+    "BB_AA_MIN_MATCHED_RESIDUES",
+    "BB_AA_MAX_RIGID_RMSD",
+    "SC_MARTINI_LIBRARY",
 ]
 
 
@@ -211,13 +129,14 @@ STAGE_SPECS = [
 class Config:
     base_dir: Path
     pdb_id: str
-    lj_alphas: List[float]
-    slater_alphas: List[float]
-    replicates: int
+    interface_scales: List[float]
+    hybrid_replicates: int
+    reference_replicates: int
     seed: int
-    integration_ps_per_step: float
-    target_diffusion_um2_s: float | None
-    runtime_env: Dict[str, str]
+    burn_in_fraction: float
+    trendline_samples: int
+    reference_settings: Dict[str, str]
+    hybrid_passthrough_env: Dict[str, str]
 
 
 def _now_utc() -> str:
@@ -355,80 +274,98 @@ def _normalize_env_key_list(values: Iterable[str]) -> List[str]:
     return out
 
 
-def _resolved_runtime_env() -> Dict[str, str]:
-    extra = _floatless_csv(os.environ.get("HYBRID_SWEEP_EXTRA_ENV_KEYS", ""))
-    keys = _normalize_env_key_list(DEFAULT_RUNTIME_ENV_KEYS + extra)
-    resolved = dict(DEFAULT_RUNTIME_ENV)
+def _truthy(text: str | None) -> bool:
+    if text is None:
+        return False
+    return text.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _capture_reference_settings() -> Dict[str, str]:
+    extra = _floatless_csv(os.environ.get("HYBRID_SWEEP_EXTRA_REFERENCE_KEYS", ""))
+    keys = _normalize_env_key_list(DEFAULT_REFERENCE_SETTING_KEYS + extra)
+    out = dict(DEFAULT_REFERENCE_SETTINGS)
     for key in keys:
         value = os.environ.get(key)
         if value is None or value == "":
             continue
-        resolved[key] = value
-    for key in extra:
+        out[key] = value
+    return out
+
+
+def _capture_hybrid_passthrough_env() -> Dict[str, str]:
+    extra = _floatless_csv(os.environ.get("HYBRID_SWEEP_EXTRA_ENV_KEYS", ""))
+    keys = _normalize_env_key_list(DEFAULT_HYBRID_PASSTHROUGH_ENV_KEYS + extra)
+    out: Dict[str, str] = {}
+    for key in keys:
         value = os.environ.get(key)
         if value is None or value == "":
             continue
-        resolved[key] = value
-    return resolved
+        out[key] = value
+    return out
 
 
 def _build_config(args: argparse.Namespace, base_dir: Path) -> Config:
-    lj_alphas = sorted(dict.fromkeys(float(x) for x in args.lj_alphas))
-    slater_alphas = sorted(dict.fromkeys(float(x) for x in args.slater_alphas))
-    for value in lj_alphas:
-        if not math.isfinite(value) or value < 0.0:
-            raise ValueError(f"lj alpha must be finite and >= 0, got {value}")
-    for value in slater_alphas:
-        if not math.isfinite(value) or value < 0.0:
-            raise ValueError(f"slater alpha must be finite and >= 0, got {value}")
-    replicates = int(args.replicates)
-    if replicates < 1:
-        raise ValueError(f"replicates must be >= 1, got {replicates}")
-    integration_ps_per_step = float(args.integration_ps_per_step)
-    if not math.isfinite(integration_ps_per_step) or integration_ps_per_step <= 0.0:
-        raise ValueError(
-            f"integration_ps_per_step must be finite and > 0, got {integration_ps_per_step}"
-        )
-    target = args.target_diffusion_um2_s
-    if target is not None:
-        target = float(target)
-        if not math.isfinite(target) or target <= 0.0:
-            raise ValueError(f"target diffusion must be finite and > 0, got {target}")
+    interface_scales = sorted(dict.fromkeys(float(x) for x in args.interface_scales))
+    for value in interface_scales:
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"interface scale must be finite and > 0, got {value}")
+    hybrid_replicates = int(args.hybrid_replicates)
+    reference_replicates = int(args.reference_replicates)
+    if hybrid_replicates < 1:
+        raise ValueError(f"hybrid replicates must be >= 1, got {hybrid_replicates}")
+    if reference_replicates < 1:
+        raise ValueError(f"reference replicates must be >= 1, got {reference_replicates}")
+    burn_in_fraction = float(args.burn_in_fraction)
+    if not math.isfinite(burn_in_fraction) or not (0.0 <= burn_in_fraction < 1.0):
+        raise ValueError(f"burn-in fraction must be finite in [0, 1), got {burn_in_fraction}")
+    trendline_samples = int(args.trendline_samples)
+    if trendline_samples < 11:
+        raise ValueError(f"trendline samples must be >= 11, got {trendline_samples}")
     return Config(
         base_dir=base_dir,
         pdb_id=str(args.pdb_id),
-        lj_alphas=lj_alphas,
-        slater_alphas=slater_alphas,
-        replicates=replicates,
+        interface_scales=interface_scales,
+        hybrid_replicates=hybrid_replicates,
+        reference_replicates=reference_replicates,
         seed=int(args.seed),
-        integration_ps_per_step=integration_ps_per_step,
-        target_diffusion_um2_s=target,
-        runtime_env=_resolved_runtime_env(),
+        burn_in_fraction=burn_in_fraction,
+        trendline_samples=trendline_samples,
+        reference_settings=_capture_reference_settings(),
+        hybrid_passthrough_env=_capture_hybrid_passthrough_env(),
     )
 
 
 def _build_manifest(config: Config) -> Dict[str, Any]:
     tasks: List[Dict[str, Any]] = []
     task_id = 0
-    for lj_alpha in config.lj_alphas:
-        for slater_alpha in config.slater_alphas:
-            for replicate in range(config.replicates):
-                code = (
-                    f"lj{_format_float_tag(lj_alpha)}_"
-                    f"coul{_format_float_tag(slater_alpha)}_"
-                    f"r{replicate + 1:02d}"
-                )
-                tasks.append(
-                    {
-                        "task_id": task_id,
-                        "code": code,
-                        "lj_alpha": float(lj_alpha),
-                        "slater_alpha": float(slater_alpha),
-                        "replicate": int(replicate + 1),
-                        "seed": _task_seed(config.seed, task_id),
-                    }
-                )
-                task_id += 1
+    for replicate in range(config.reference_replicates):
+        code = f"ref_r{replicate + 1:02d}"
+        tasks.append(
+            {
+                "task_id": task_id,
+                "kind": "reference",
+                "method": REFERENCE_METHOD,
+                "code": code,
+                "replicate": int(replicate + 1),
+                "seed": _task_seed(config.seed, task_id),
+            }
+        )
+        task_id += 1
+    for interface_scale in config.interface_scales:
+        for replicate in range(config.hybrid_replicates):
+            code = f"scale{_format_float_tag(interface_scale)}_r{replicate + 1:02d}"
+            tasks.append(
+                {
+                    "task_id": task_id,
+                    "kind": "hybrid",
+                    "method": HYBRID_METHOD,
+                    "code": code,
+                    "interface_scale": float(interface_scale),
+                    "replicate": int(replicate + 1),
+                    "seed": _task_seed(config.seed, task_id),
+                }
+            )
+            task_id += 1
     return {
         "schema": SCHEMA_MANIFEST,
         "created_at_utc": _now_utc(),
@@ -437,28 +374,49 @@ def _build_manifest(config: Config) -> Dict[str, Any]:
         "repo_root": str(REPO_ROOT),
         "settings": {
             "pdb_id": config.pdb_id,
-            "lj_alphas": config.lj_alphas,
-            "slater_alphas": config.slater_alphas,
-            "replicates": config.replicates,
+            "interface_scales": config.interface_scales,
+            "hybrid_replicates": config.hybrid_replicates,
+            "reference_replicates": config.reference_replicates,
             "seed": config.seed,
-            "prep_script": str(PREP_SCRIPT),
+            "reference_settings": config.reference_settings,
+            "hybrid_passthrough_env": config.hybrid_passthrough_env,
+            "reference_pdb_dir": str(REFERENCE_PDB_DIR),
+            "hybrid_pdb_dir": str(HYBRID_PDB_DIR),
+            "pdb_to_initial_structure": str(PDB_TO_INITIAL_STRUCTURE),
             "upside_executable": str(UPSIDE_EXECUTABLE),
-            "runtime_env": config.runtime_env,
-            "integration_ps_per_step": config.integration_ps_per_step,
-            "target_diffusion_um2_s": config.target_diffusion_um2_s,
+            "hybrid_run_script": str(HYBRID_RUN_SCRIPT),
+            "analysis_settings": {
+                "burn_in_fraction": config.burn_in_fraction,
+                "trendline_samples": config.trendline_samples,
+                "rmsf_atom_role": "CA",
+                "alignment_iterations": 3,
+            },
         },
         "tasks": tasks,
     }
 
 
-def _require_runtime_files(runtime_env: Dict[str, str]) -> None:
-    if not PREP_SCRIPT.exists():
-        raise RuntimeError(f"Preparation script not found: {PREP_SCRIPT}")
+def _reference_pdb_path(pdb_id: str) -> Path:
+    return REFERENCE_PDB_DIR / f"{pdb_id}.pdb"
+
+
+def _hybrid_pdb_path(pdb_id: str) -> Path:
+    return HYBRID_PDB_DIR / f"{pdb_id}.pdb"
+
+
+def _require_runtime_files(pdb_id: str) -> None:
+    if not PDB_TO_INITIAL_STRUCTURE.exists():
+        raise RuntimeError(f"PDB-to-initial-structure script not found: {PDB_TO_INITIAL_STRUCTURE}")
     if not UPSIDE_EXECUTABLE.exists():
         raise RuntimeError(f"Upside executable not found: {UPSIDE_EXECUTABLE}")
-    bilayer_pdb = Path(runtime_env["BILAYER_PDB"]).expanduser().resolve()
-    if not bilayer_pdb.exists():
-        raise RuntimeError(f"Bilayer PDB not found: {bilayer_pdb}")
+    if not HYBRID_RUN_SCRIPT.exists():
+        raise RuntimeError(f"Hybrid run script not found: {HYBRID_RUN_SCRIPT}")
+    reference_pdb = _reference_pdb_path(pdb_id)
+    if not reference_pdb.exists():
+        raise RuntimeError(f"Reference PDB not found: {reference_pdb}")
+    hybrid_pdb = _hybrid_pdb_path(pdb_id)
+    if not hybrid_pdb.exists():
+        raise RuntimeError(f"Hybrid PDB not found: {hybrid_pdb}")
 
 
 def _optional_sbatch_directives(phase: str) -> List[str]:
@@ -509,17 +467,19 @@ def _base_runtime_env() -> Dict[str, str]:
     env = os.environ.copy()
     env["UPSIDE_HOME"] = str(REPO_ROOT)
     env["PYTHONUNBUFFERED"] = "1"
+    if (REPO_ROOT / ".venv" / "bin").exists():
+        _prepend_env_path(env, "PATH", str(REPO_ROOT / ".venv" / "bin"))
     _prepend_env_path(env, "PATH", str(REPO_ROOT / "obj"))
     _prepend_env_path(env, "PYTHONPATH", str(REPO_ROOT / "py"))
     return env
 
 
-def _call_logged(cmd: Sequence[str], log_path: Path, env: Dict[str, str]) -> None:
+def _call_logged(cmd: Sequence[str], log_path: Path, env: Dict[str, str], cwd: Path | None = None) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as fh:
         proc = sp.run(
             list(cmd),
-            cwd=str(REPO_ROOT),
+            cwd=str(cwd if cwd is not None else REPO_ROOT),
             env=env,
             stdout=fh,
             stderr=sp.STDOUT,
@@ -537,256 +497,211 @@ def _call_logged(cmd: Sequence[str], log_path: Path, env: Dict[str, str]) -> Non
         raise RuntimeError(detail)
 
 
-def _stage_file_path(checkpoint_dir: Path, pdb_id: str, label: str, prepared: bool) -> Path:
-    suffix = "prepared.up" if prepared else "up"
-    return checkpoint_dir / f"{pdb_id}.stage_{label}.{suffix}"
+def _write_log_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
 
 
-def _prepare_runtime_structure(
-    *,
-    pdb_id: str,
-    runtime_pdb: Path,
-    runtime_itp: Path,
-    run_dir: Path,
-    summary_json: Path,
-    env: Dict[str, str],
-    log_path: Path,
-) -> None:
-    cmd = [
-        sys.executable,
-        str(PREP_SCRIPT),
-        "--mode",
-        "bilayer",
-        "--pdb-id",
-        pdb_id,
-        "--runtime-pdb-output",
-        str(runtime_pdb),
-        "--runtime-itp-output",
-        str(runtime_itp),
-        "--prepare-structure",
-        "1",
-        "--run-dir",
-        str(run_dir),
-        "--bilayer-pdb",
-        env["BILAYER_PDB"],
-        "--salt-molar",
-        env["SALT_MOLAR"],
-        "--ion-cutoff",
-        env["ION_CUTOFF"],
-        "--box-padding-xy",
-        env["BOX_PADDING_XY"],
-        "--box-padding-z",
-        env["BOX_PADDING_Z"],
-        "--seed",
-        env["PREP_SEED"],
-        "--summary-json",
-        str(summary_json),
-    ]
-    _call_logged(cmd, log_path, env)
-
-
-def _stage_env(env: Dict[str, str], stage_label: str, npt_enable: int, lipidhead_fc: float) -> Dict[str, str]:
-    out = dict(env)
-    out["UPSIDE_NPT_ENABLE"] = str(int(npt_enable))
-    out["UPSIDE_BILAYER_LIPIDHEAD_FC"] = f"{float(lipidhead_fc):.8g}"
-    if not npt_enable:
-        return out
-    if stage_label in {"6.0", "6.1"}:
-        target = "0.0"
-    else:
-        target = BAR_1_TO_EUP_PER_A3
-    out["UPSIDE_NPT_TARGET_PXY"] = target
-    out["UPSIDE_NPT_TARGET_PZ"] = target
-    return out
-
-
-def _prepare_stage_input(
-    *,
-    pdb_id: str,
-    runtime_pdb: Path,
-    runtime_itp: Path,
-    run_dir: Path,
-    prepare_stage: str,
-    summary_json: Path,
-    env: Dict[str, str],
-    log_path: Path,
-) -> None:
-    stage_env = dict(env)
-    stage_env["UPSIDE_SIMULATION_STAGE"] = prepare_stage
-    cmd = [
-        sys.executable,
-        str(PREP_SCRIPT),
-        "--mode",
-        "bilayer",
-        "--pdb-id",
-        pdb_id,
-        "--runtime-pdb-output",
-        str(runtime_pdb),
-        "--runtime-itp-output",
-        str(runtime_itp),
-        "--prepare-structure",
-        "0",
-        "--stage",
-        prepare_stage,
-        "--run-dir",
-        str(run_dir),
-        "--summary-json",
-        str(summary_json),
-    ]
-    _call_logged(cmd, log_path, stage_env)
-
-
-def _copy_last_position(input_file: Path, output_file: Path) -> None:
-    with h5py.File(input_file, "r") as src:
-        if "/output/pos" in src and src["/output/pos"].shape[0] > 0:
-            last_pos = np.asarray(src["/output/pos"][-1, 0, :, :], dtype=np.float64)
-            last_pos = last_pos[:, :, np.newaxis]
-        else:
-            last_pos = np.asarray(src["/input/pos"][:, :, 0], dtype=np.float64)
-            last_pos = last_pos[:, :, np.newaxis]
-
-        last_box = None
-        if "/output/box" in src:
-            box_data = np.asarray(src["/output/box"][:], dtype=np.float64)
-            if box_data.size > 0:
-                box_frame = box_data[-1]
-                if box_frame.ndim == 2 and box_frame.shape[0] > 0:
-                    last_box = np.asarray(box_frame[0], dtype=np.float64)
-                elif box_frame.ndim == 1 and box_frame.shape[0] == 3:
-                    last_box = np.asarray(box_frame, dtype=np.float64)
-        if last_box is None and "/input/potential/martini_potential" in src:
-            pot = src["/input/potential/martini_potential"]
-            if all(key in pot.attrs for key in ("x_len", "y_len", "z_len")):
-                last_box = np.asarray(
-                    [pot.attrs["x_len"], pot.attrs["y_len"], pot.attrs["z_len"]],
-                    dtype=np.float64,
-                )
-
-    with h5py.File(output_file, "r+") as dst:
-        target_pos = np.asarray(dst["/input/pos"][:], dtype=np.float64)
-        if target_pos.shape[0] != last_pos.shape[0]:
-            merged = target_pos.copy()
-            merged[: min(target_pos.shape[0], last_pos.shape[0]), :, :] = last_pos[
-                : min(target_pos.shape[0], last_pos.shape[0]),
-                :,
-                :,
-            ]
-            last_pos = merged
-        if "/input/pos" in dst:
-            del dst["/input/pos"]
-        dst.create_dataset("/input/pos", data=last_pos)
-        if last_box is not None and "/input/potential/martini_potential" in dst:
-            pot = dst["/input/potential/martini_potential"]
-            pot.attrs["x_len"] = float(last_box[0])
-            pot.attrs["y_len"] = float(last_box[1])
-            pot.attrs["z_len"] = float(last_box[2])
-
-
-def _set_barostat_type(up_file: Path, barostat_type: int) -> None:
-    with h5py.File(up_file, "r+") as h5:
-        if "/input/barostat" not in h5:
-            return
-        h5["/input/barostat"].attrs["type"] = int(barostat_type)
-
-
-def _set_production_softening(up_file: Path, *, lj_alpha: float, slater_alpha: float) -> Dict[str, Any]:
-    lj_enable = int(lj_alpha > 0.0)
-    coul_enable = int(slater_alpha > 0.0)
-    with h5py.File(up_file, "r+") as h5:
-        grp = h5["/input/potential/martini_potential"]
-        grp.attrs["lj_soften"] = np.int8(lj_enable)
-        grp.attrs["lj_soften_alpha"] = np.float32(float(max(0.0, lj_alpha)))
-        grp.attrs["coulomb_soften"] = np.int8(coul_enable)
-        grp.attrs["slater_alpha"] = np.float32(float(max(0.0, slater_alpha)))
-    return {
-        "lj_soften": lj_enable,
-        "lj_soften_alpha": float(max(0.0, lj_alpha)),
-        "coulomb_soften": coul_enable,
-        "slater_alpha": float(max(0.0, slater_alpha)),
+def _reference_config_kwargs(pdb_id: str, input_dir: Path, settings: Dict[str, str]) -> Dict[str, Any]:
+    param_dir_common = REPO_ROOT / "parameters" / "common"
+    param_dir_ff = REPO_ROOT / "parameters" / "ff_2.1"
+    kwargs: Dict[str, Any] = {
+        "rama_library": str(param_dir_common / "rama.dat"),
+        "rama_sheet_mix_energy": str(param_dir_ff / "sheet"),
+        "reference_state_rama": str(param_dir_common / "rama_reference.pkl"),
+        "hbond_energy": str(param_dir_ff / "hbond.h5"),
+        "rotamer_placement": str(param_dir_ff / "sidechain.h5"),
+        "dynamic_rotamer_1body": True,
+        "rotamer_interaction": str(param_dir_ff / "sidechain.h5"),
+        "environment_potential": str(param_dir_ff / "environment.h5"),
+        "bb_environment_potential": str(param_dir_ff / "bb_env.dat"),
+        "membrane_potential": str(param_dir_ff / "membrane.h5"),
+        "membrane_thickness": float(settings["REFERENCE_MEMBRANE_THICKNESS"]),
+        "chain_break_from_file": str(input_dir / f"{pdb_id}.chain_breaks"),
+        "initial_structure": str(input_dir / f"{pdb_id}.initial.npy"),
     }
+    if _truthy(settings.get("REFERENCE_USE_CURVATURE")):
+        kwargs["use_curvature"] = True
+        kwargs["curvature_radius"] = float(settings["REFERENCE_CURVATURE_RADIUS"])
+        kwargs["curvature_sign"] = int(settings["REFERENCE_CURVATURE_SIGN"])
+    return kwargs
 
 
-def _run_minimization_stage(
+def _prepare_reference_inputs(
     *,
-    stage_label: str,
-    up_file: Path,
-    max_iter: int,
+    pdb_id: str,
+    input_dir: Path,
+    settings: Dict[str, str],
     env: Dict[str, str],
-    log_path: Path,
-) -> None:
+    prep_log: Path,
+    config_log: Path,
+) -> Path:
+    reference_pdb = _reference_pdb_path(pdb_id)
+    input_dir.mkdir(parents=True, exist_ok=True)
+    prefix = input_dir / pdb_id
     cmd = [
-        str(UPSIDE_EXECUTABLE),
-        str(up_file),
-        "--duration",
-        "0",
-        "--frame-interval",
-        "1",
-        "--temperature",
-        env["TEMPERATURE"],
-        "--time-step",
-        env["MIN_TIME_STEP"],
-        "--thermostat-timescale",
-        env["THERMOSTAT_TIMESCALE"],
-        "--thermostat-interval",
-        env["THERMOSTAT_INTERVAL"],
-        "--seed",
-        env["SEED"],
-        "--integrator",
-        "v",
+        sys.executable,
+        str(PDB_TO_INITIAL_STRUCTURE),
+        str(reference_pdb),
+        str(prefix),
+        "--record-chain-breaks",
         "--disable-recentering",
-        "--minimize",
-        "--min-max-iter",
-        str(int(max_iter)),
-        "--min-energy-tol",
-        "1e-6",
-        "--min-force-tol",
-        "1e-3",
-        "--min-step",
-        "0.01",
     ]
-    _call_logged(cmd, log_path, env)
+    _call_logged(cmd, prep_log, env)
+
+    fasta = input_dir / f"{pdb_id}.fasta"
+    config_base = input_dir / f"{pdb_id}.reference.base.up"
+    kwargs = _reference_config_kwargs(pdb_id, input_dir, settings)
+    output = ru.upside_config(str(fasta), str(config_base), **kwargs)
+    _write_log_text(config_log, output)
+    return config_base
 
 
-def _run_md_stage(
+def _run_reference_md(
     *,
-    up_file: Path,
-    nsteps: int,
-    dt: float,
-    frame_steps: int,
+    output_file: Path,
+    settings: Dict[str, str],
+    seed: int,
     env: Dict[str, str],
     log_path: Path,
 ) -> Dict[str, Any]:
-    effective_frame_steps = int(frame_steps)
-    if effective_frame_steps >= int(nsteps):
-        effective_frame_steps = max(1, int(nsteps) // 10)
-    frame_interval = effective_frame_steps * float(dt)
     cmd = [
         str(UPSIDE_EXECUTABLE),
-        str(up_file),
-        "--duration-steps",
-        str(int(nsteps)),
+        str(output_file),
+        "--duration",
+        str(settings["REFERENCE_DURATION"]),
         "--frame-interval",
-        f"{frame_interval:.10g}",
+        str(settings["REFERENCE_FRAME_INTERVAL"]),
         "--temperature",
-        env["TEMPERATURE"],
-        "--time-step",
-        f"{float(dt):.10g}",
-        "--thermostat-timescale",
-        env["THERMOSTAT_TIMESCALE"],
-        "--thermostat-interval",
-        env["THERMOSTAT_INTERVAL"],
+        str(settings["REFERENCE_TEMPERATURE"]),
         "--seed",
-        env["SEED"],
-        "--integrator",
-        "v",
+        str(int(seed)),
         "--disable-recentering",
+        "--integrator",
+        "mv",
     ]
     _call_logged(cmd, log_path, env)
     return {
-        "nsteps": int(nsteps),
-        "time_step": float(dt),
-        "frame_steps": int(effective_frame_steps),
-        "frame_interval_time": float(frame_interval),
+        "duration": float(settings["REFERENCE_DURATION"]),
+        "frame_interval": float(settings["REFERENCE_FRAME_INTERVAL"]),
+        "temperature": float(settings["REFERENCE_TEMPERATURE"]),
+        "integrator": "mv",
+        "disable_recentering": True,
+    }
+
+
+def _run_reference_task(
+    *,
+    base_dir: Path,
+    manifest: Dict[str, Any],
+    task: Dict[str, Any],
+) -> Dict[str, Any]:
+    settings = manifest["settings"]
+    reference_settings = dict(settings["reference_settings"])
+    task_dir = _task_dir(base_dir, task["code"])
+    input_dir = task_dir / "inputs"
+    run_dir = task_dir / "run"
+    log_dir = task_dir / "logs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    env = _base_runtime_env()
+    env["SEED"] = str(int(task["seed"]))
+    env["OMP_NUM_THREADS"] = os.environ.get("OMP_NUM_THREADS", "1")
+
+    prep_log = log_dir / "prepare_reference_inputs.log"
+    config_log = log_dir / "configure_reference.log"
+    run_log = log_dir / "run_reference.log"
+
+    config_base = _prepare_reference_inputs(
+        pdb_id=str(settings["pdb_id"]),
+        input_dir=input_dir,
+        settings=reference_settings,
+        env=env,
+        prep_log=prep_log,
+        config_log=config_log,
+    )
+
+    output_file = run_dir / f"{settings['pdb_id']}.reference.r{int(task['replicate']):02d}.up"
+    shutil.copy2(config_base, output_file)
+    runtime = _run_reference_md(
+        output_file=output_file,
+        settings=reference_settings,
+        seed=int(task["seed"]),
+        env=env,
+        log_path=run_log,
+    )
+    if not output_file.exists():
+        raise RuntimeError(f"Reference run did not produce output file: {output_file}")
+
+    return {
+        "schema": SCHEMA_TASK_RESULT,
+        "created_at_utc": _now_utc(),
+        "base_dir": str(base_dir),
+        "task": task,
+        "success": True,
+        "kind": "reference",
+        "method": REFERENCE_METHOD,
+        "run_dir": str(run_dir),
+        "log_dir": str(log_dir),
+        "analysis_target_file": str(output_file),
+        "log_files": {
+            "prepare_reference_inputs": str(prep_log),
+            "configure_reference": str(config_log),
+            "run_reference": str(run_log),
+        },
+        "reference_runtime": runtime,
+    }
+
+
+def _run_hybrid_task(
+    *,
+    base_dir: Path,
+    manifest: Dict[str, Any],
+    task: Dict[str, Any],
+) -> Dict[str, Any]:
+    settings = manifest["settings"]
+    passthrough_env = dict(settings["hybrid_passthrough_env"])
+    task_dir = _task_dir(base_dir, task["code"])
+    run_dir = task_dir / "run"
+    log_dir = task_dir / "logs"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    env = _base_runtime_env()
+    env.update({str(k): str(v) for k, v in passthrough_env.items()})
+    env["SEED"] = str(int(task["seed"]))
+    env.setdefault("PREP_SEED", env["SEED"])
+    env["RUN_DIR"] = str(run_dir)
+    env["PROTEIN_ENV_INTERFACE_SCALE"] = f"{float(task['interface_scale']):.10g}"
+    env.setdefault("PROTEIN_AA_PDB", str(_hybrid_pdb_path(str(settings["pdb_id"]))))
+    env["HYBRID_SWEEP_PROJECT_ROOT"] = str(REPO_ROOT)
+
+    run_log = log_dir / "run_hybrid_workflow.log"
+    cmd = ["bash", str(HYBRID_RUN_SCRIPT), f"PDB_ID={settings['pdb_id']}"]
+    _call_logged(cmd, run_log, env, cwd=HYBRID_RUN_SCRIPT.parent)
+
+    stage_70_file = run_dir / "checkpoints" / f"{settings['pdb_id']}.stage_7.0.up"
+    if not stage_70_file.exists():
+        raise RuntimeError(f"Hybrid workflow did not produce stage-7 checkpoint: {stage_70_file}")
+
+    return {
+        "schema": SCHEMA_TASK_RESULT,
+        "created_at_utc": _now_utc(),
+        "base_dir": str(base_dir),
+        "task": task,
+        "success": True,
+        "kind": "hybrid",
+        "method": HYBRID_METHOD,
+        "run_dir": str(run_dir),
+        "log_dir": str(log_dir),
+        "analysis_target_file": str(stage_70_file),
+        "log_files": {
+            "run_hybrid_workflow": str(run_log),
+        },
+        "hybrid_runtime": {
+            "interface_scale": float(task["interface_scale"]),
+        },
     }
 
 
@@ -794,13 +709,13 @@ def cmd_init_run(args: argparse.Namespace) -> int:
     base_dir = Path(args.base_dir).expanduser().resolve()
     base_dir.mkdir(parents=True, exist_ok=True)
     config = _build_config(args, base_dir)
-    _require_runtime_files(config.runtime_env)
+    _require_runtime_files(config.pdb_id)
     manifest = _build_manifest(config)
     _write_json(_manifest_path(base_dir), manifest)
-    print(f"Initialized hybrid interface softening sweep: {base_dir}")
-    print(f"Task count: {len(manifest['tasks'])}")
-    print(f"LJ alphas: {manifest['settings']['lj_alphas']}")
-    print(f"Slater alphas: {manifest['settings']['slater_alphas']}")
+    print(f"Initialized hybrid interface RMSF sweep: {base_dir}")
+    print(f"Reference tasks: {config.reference_replicates}")
+    print(f"Hybrid tasks: {len(config.interface_scales) * config.hybrid_replicates}")
+    print(f"Interface scales: {manifest['settings']['interface_scales']}")
     return 0
 
 
@@ -812,127 +727,13 @@ def _run_task(base_dir: Path, manifest: Dict[str, Any], task: Dict[str, Any], ov
             print(f"Skipping completed task {task['code']}")
             return existing
 
-    settings = manifest["settings"]
-    runtime_env = dict(settings["runtime_env"])
-    task_dir = _task_dir(base_dir, task["code"])
-    run_dir = task_dir / "run"
-    checkpoint_dir = run_dir / "checkpoints"
-    log_dir = run_dir / "logs"
-    input_dir = task_dir / "inputs"
-    prep_dir = task_dir / "prep"
-    prep_dir.mkdir(parents=True, exist_ok=True)
-    runtime_pdb = input_dir / f"{settings['pdb_id']}.MARTINI.pdb"
-    runtime_itp = input_dir / f"{settings['pdb_id']}_unused.itp"
-
-    env = _base_runtime_env()
-    env.update({str(k): str(v) for k, v in runtime_env.items()})
-    env["SEED"] = str(int(task["seed"]))
-    env.setdefault("PREP_SEED", env["SEED"])
-
-    stage_logs: Dict[str, str] = {}
-    md_runtime: Dict[str, Dict[str, Any]] = {}
-    stage_70_softening: Dict[str, Any] | None = None
-
     try:
-        _prepare_runtime_structure(
-            pdb_id=str(settings["pdb_id"]),
-            runtime_pdb=runtime_pdb,
-            runtime_itp=runtime_itp,
-            run_dir=run_dir,
-            summary_json=prep_dir / "runtime_structure.summary.json",
-            env=env,
-            log_path=log_dir / "prepare_runtime_structure.log",
-        )
-        stage_logs["prepare_runtime_structure"] = str(log_dir / "prepare_runtime_structure.log")
-
-        previous_stage_file: Path | None = None
-        for spec in STAGE_SPECS:
-            label = str(spec["label"])
-            prepare_stage = str(spec["prepare_stage"])
-            prepared_file = _stage_file_path(checkpoint_dir, str(settings["pdb_id"]), label, prepared=True)
-            stage_file = _stage_file_path(checkpoint_dir, str(settings["pdb_id"]), label, prepared=False)
-            npt_enable = int(runtime_env.get(spec.get("npt_enable_env_key", ""), spec.get("npt_enable", 0)))
-            barostat_type = int(
-                runtime_env.get(spec.get("barostat_type_env_key", ""), spec.get("barostat_type", 0))
-            )
-            stage_env = _stage_env(env, label, npt_enable, float(spec["lipidhead_fc"]))
-            prepare_log = log_dir / f"stage_{label}.prepare.log"
-            _prepare_stage_input(
-                pdb_id=str(settings["pdb_id"]),
-                runtime_pdb=runtime_pdb,
-                runtime_itp=runtime_itp,
-                run_dir=run_dir,
-                prepare_stage=prepare_stage,
-                summary_json=prep_dir / f"stage_{label}.summary.json",
-                env=stage_env,
-                log_path=prepare_log,
-            )
-            stage_logs[f"stage_{label}_prepare"] = str(prepare_log)
-
-            prepared_tmp = run_dir / "test.input.up"
-            if not prepared_tmp.exists():
-                raise RuntimeError(f"Preparation failed for stage {label}: {prepared_tmp} not found")
-            prepared_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(prepared_tmp), str(prepared_file))
-            shutil.copy2(prepared_file, stage_file)
-
-            if previous_stage_file is not None:
-                _copy_last_position(previous_stage_file, stage_file)
-
-            if npt_enable:
-                _set_barostat_type(stage_file, barostat_type)
-
-            if spec.get("apply_softening"):
-                stage_70_softening = _set_production_softening(
-                    stage_file,
-                    lj_alpha=float(task["lj_alpha"]),
-                    slater_alpha=float(task["slater_alpha"]),
-                )
-
-            run_log = log_dir / f"stage_{label}.run.log"
-            if spec["stage_kind"] == "minimization":
-                _run_minimization_stage(
-                    stage_label=label,
-                    up_file=stage_file,
-                    max_iter=int(runtime_env[spec["nsteps_key"]]),
-                    env=stage_env,
-                    log_path=run_log,
-                )
-            else:
-                md_runtime[label] = _run_md_stage(
-                    up_file=stage_file,
-                    nsteps=int(runtime_env[spec["nsteps_key"]]),
-                    dt=float(runtime_env[spec["dt_key"]]),
-                    frame_steps=int(runtime_env[spec["frame_key"]]),
-                    env=stage_env,
-                    log_path=run_log,
-                )
-            stage_logs[f"stage_{label}_run"] = str(run_log)
-            previous_stage_file = stage_file
-
-        stage_70_file = _stage_file_path(checkpoint_dir, str(settings["pdb_id"]), "7.0", prepared=False)
-        if not stage_70_file.exists():
-            raise RuntimeError(f"Missing expected stage-7 checkpoint: {stage_70_file}")
-
-        result = {
-            "schema": SCHEMA_TASK_RESULT,
-            "created_at_utc": _now_utc(),
-            "base_dir": str(base_dir),
-            "task": task,
-            "success": True,
-            "run_dir": str(run_dir),
-            "checkpoint_dir": str(checkpoint_dir),
-            "log_dir": str(log_dir),
-            "runtime_pdb": str(runtime_pdb),
-            "stage_logs": stage_logs,
-            "stage_70_file": str(stage_70_file),
-            "production_softening": stage_70_softening,
-            "production_time_step": float(runtime_env["PROD_TIME_STEP"]),
-            "integration_ps_per_step": float(settings["integration_ps_per_step"]),
-            "target_diffusion_um2_s": settings["target_diffusion_um2_s"],
-            "md_runtime": md_runtime,
-            "runtime_env": runtime_env,
-        }
+        if task["kind"] == "reference":
+            result = _run_reference_task(base_dir=base_dir, manifest=manifest, task=task)
+        elif task["kind"] == "hybrid":
+            result = _run_hybrid_task(base_dir=base_dir, manifest=manifest, task=task)
+        else:
+            raise RuntimeError(f"Unsupported task kind: {task['kind']}")
         _write_json(result_path, result)
         return result
     except Exception as exc:
@@ -942,10 +743,9 @@ def _run_task(base_dir: Path, manifest: Dict[str, Any], task: Dict[str, Any], ov
             "base_dir": str(base_dir),
             "task": task,
             "success": False,
-            "run_dir": str(run_dir),
-            "log_dir": str(log_dir),
+            "kind": str(task.get("kind", "")),
+            "method": str(task.get("method", "")),
             "error": str(exc),
-            "stage_logs": stage_logs,
         }
         _write_json(result_path, result)
         raise
@@ -1004,39 +804,45 @@ def assemble_results(base_dir: Path) -> int:
     assembled_dir.mkdir(parents=True, exist_ok=True)
 
     task_rows: List[Dict[str, Any]] = []
-    grouped: Dict[tuple[float, float], List[Dict[str, Any]]] = {}
+    hybrid_grouped: Dict[float, List[Dict[str, Any]]] = {}
+    n_reference_completed = 0
     for result in results:
         task = result["task"]
         row = {
             "task_id": int(task["task_id"]),
             "code": str(task["code"]),
-            "lj_alpha": float(task["lj_alpha"]),
-            "slater_alpha": float(task["slater_alpha"]),
+            "kind": str(task["kind"]),
+            "method": str(task["method"]),
+            "interface_scale": (
+                ""
+                if task["kind"] != "hybrid"
+                else f"{float(task['interface_scale']):.10g}"
+            ),
             "replicate": int(task["replicate"]),
             "seed": int(task["seed"]),
-            "production_time_step": float(result["production_time_step"]),
-            "integration_ps_per_step": float(result["integration_ps_per_step"]),
             "run_dir": str(result["run_dir"]),
             "log_dir": str(result["log_dir"]),
-            "stage_70_file": str(result["stage_70_file"]),
+            "analysis_target_file": str(result["analysis_target_file"]),
         }
         task_rows.append(row)
-        grouped.setdefault((row["lj_alpha"], row["slater_alpha"]), []).append(row)
+        if task["kind"] == "reference":
+            n_reference_completed += 1
+        else:
+            hybrid_grouped.setdefault(float(task["interface_scale"]), []).append(row)
 
     task_csv = assembled_dir / "task_results.csv"
     with task_csv.open("w", encoding="utf-8", newline="") as fh:
         fieldnames = [
             "task_id",
             "code",
-            "lj_alpha",
-            "slater_alpha",
+            "kind",
+            "method",
+            "interface_scale",
             "replicate",
             "seed",
-            "production_time_step",
-            "integration_ps_per_step",
             "run_dir",
             "log_dir",
-            "stage_70_file",
+            "analysis_target_file",
         ]
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
@@ -1044,26 +850,24 @@ def assemble_results(base_dir: Path) -> int:
             writer.writerow(row)
 
     summary_rows: List[Dict[str, Any]] = []
-    expected_replicates = int(manifest["settings"]["replicates"])
-    for (lj_alpha, slater_alpha), rows in sorted(grouped.items()):
+    expected_hybrid_replicates = int(manifest["settings"]["hybrid_replicates"])
+    for interface_scale, rows in sorted(hybrid_grouped.items()):
         summary_rows.append(
             {
-                "lj_alpha": float(lj_alpha),
-                "slater_alpha": float(slater_alpha),
-                "n_replicates_expected": expected_replicates,
+                "interface_scale": float(interface_scale),
+                "n_replicates_expected": expected_hybrid_replicates,
                 "n_replicates_completed": len(rows),
-                "all_stage70_present": int(all(Path(row["stage_70_file"]).exists() for row in rows)),
+                "all_outputs_present": int(all(Path(row["analysis_target_file"]).exists() for row in rows)),
             }
         )
 
     summary_csv = assembled_dir / "condition_summary.csv"
     with summary_csv.open("w", encoding="utf-8", newline="") as fh:
         fieldnames = [
-            "lj_alpha",
-            "slater_alpha",
+            "interface_scale",
             "n_replicates_expected",
             "n_replicates_completed",
-            "all_stage70_present",
+            "all_outputs_present",
         ]
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
@@ -1075,7 +879,9 @@ def assemble_results(base_dir: Path) -> int:
         "base_dir": str(base_dir),
         "n_tasks_total": int(len(manifest["tasks"])),
         "n_tasks_completed_successfully": len(task_rows),
-        "n_conditions_completed": len(summary_rows),
+        "n_reference_tasks_completed": int(n_reference_completed),
+        "n_hybrid_tasks_completed": int(sum(len(rows) for rows in hybrid_grouped.values())),
+        "n_hybrid_conditions_completed": len(summary_rows),
         "task_results_csv": str(task_csv),
         "condition_summary_csv": str(summary_csv),
     }
@@ -1103,13 +909,6 @@ def _normalize_output_positions(arr: np.ndarray) -> np.ndarray:
     raise ValueError(f"Unexpected output/pos shape: {arr.shape}")
 
 
-def _normalize_time(arr: np.ndarray) -> np.ndarray:
-    out = np.asarray(arr)
-    while out.ndim > 1:
-        out = out[:, 0]
-    return np.asarray(out, dtype=np.float64).reshape(-1)
-
-
 def _normalize_box(arr: np.ndarray) -> np.ndarray:
     out = np.asarray(arr)
     if out.ndim == 3:
@@ -1122,9 +921,9 @@ def _normalize_box(arr: np.ndarray) -> np.ndarray:
     raise ValueError(f"Unexpected output/box shape: {arr.shape}")
 
 
-def _decode_str_array(dataset: h5py.Dataset) -> np.ndarray:
-    arr = dataset[:]
-    out = []
+def _decode_str_values(values: np.ndarray) -> np.ndarray:
+    arr = np.asarray(values).reshape(-1)
+    out: List[str] = []
     for item in arr:
         if isinstance(item, (bytes, np.bytes_)):
             out.append(item.decode("utf-8", errors="ignore").strip())
@@ -1133,209 +932,168 @@ def _decode_str_array(dataset: h5py.Dataset) -> np.ndarray:
     return np.asarray(out, dtype=object)
 
 
-def _load_box_frames(h5: h5py.File, n_frame: int) -> np.ndarray:
+def _load_box_frames_optional(h5: h5py.File, n_frame: int) -> np.ndarray | None:
     if "output/box" in h5:
-        return _normalize_box(h5["output/box"][:])
-    grp = h5["input/potential/martini_potential"]
-    box = np.array([grp.attrs["x_len"], grp.attrs["y_len"], grp.attrs["z_len"]], dtype=np.float64)
-    return np.repeat(box[None, :], n_frame, axis=0)
+        box = _normalize_box(h5["output/box"][:])
+        if box.shape[0] != n_frame:
+            raise ValueError("output/box length does not match output/pos frames")
+        return box
+    if "input/potential/martini_potential" in h5:
+        grp = h5["input/potential/martini_potential"]
+        required = ("x_len", "y_len", "z_len")
+        if all(key in grp.attrs for key in required):
+            box = np.array([grp.attrs["x_len"], grp.attrs["y_len"], grp.attrs["z_len"]], dtype=np.float64)
+            return np.repeat(box[None, :], n_frame, axis=0)
+    return None
 
 
-def _minimum_image_xy(delta_xy: np.ndarray, box_xy: np.ndarray) -> np.ndarray:
-    return delta_xy - box_xy * np.round(delta_xy / box_xy)
+def _minimum_image(delta: np.ndarray, box: np.ndarray) -> np.ndarray:
+    out = np.asarray(delta, dtype=np.float64).copy()
+    box = np.asarray(box, dtype=np.float64)
+    valid = np.isfinite(box) & (box > 0.0)
+    if np.any(valid):
+        out[..., valid] -= box[valid] * np.round(out[..., valid] / box[valid])
+    return out
 
 
-def _unwrap_xy(positions_xy: np.ndarray, box_xy: np.ndarray) -> np.ndarray:
-    unwrapped = np.zeros_like(positions_xy, dtype=np.float64)
-    unwrapped[0] = positions_xy[0]
-    for frame in range(1, positions_xy.shape[0]):
-        delta = positions_xy[frame] - positions_xy[frame - 1]
-        delta = _minimum_image_xy(delta, box_xy[frame - 1][None, :])
+def _unwrap_xyz(positions: np.ndarray, box: np.ndarray) -> np.ndarray:
+    unwrapped = np.zeros_like(positions, dtype=np.float64)
+    unwrapped[0] = positions[0]
+    for frame in range(1, positions.shape[0]):
+        delta = positions[frame] - positions[frame - 1]
+        delta = _minimum_image(delta, box[frame - 1])
         unwrapped[frame] = unwrapped[frame - 1] + delta
     return unwrapped
 
 
-def _compute_msd(xy: np.ndarray, times: np.ndarray, max_lag: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    msd = np.zeros((max_lag,), dtype=np.float64)
-    lag_times = np.zeros((max_lag,), dtype=np.float64)
-    counts = np.zeros((max_lag,), dtype=np.int64)
-    for lag in range(1, max_lag + 1):
-        disp = xy[lag:] - xy[:-lag]
-        sq = np.sum(disp * disp, axis=2)
-        msd[lag - 1] = float(np.mean(sq))
-        lag_times[lag - 1] = float(np.mean(times[lag:] - times[:-lag]))
-        counts[lag - 1] = int(sq.size)
-    return lag_times, msd, counts
+def _align_points_kabsch(mobile: np.ndarray, target: np.ndarray) -> np.ndarray:
+    mobile_centroid = np.mean(mobile, axis=0)
+    target_centroid = np.mean(target, axis=0)
+    mobile_centered = mobile - mobile_centroid
+    target_centered = target - target_centroid
+    cov = mobile_centered.T @ target_centered
+    u, _, vt = np.linalg.svd(cov)
+    correction = np.eye(3, dtype=np.float64)
+    if np.linalg.det(u @ vt) < 0.0:
+        correction[-1, -1] = -1.0
+    rotation = u @ correction @ vt
+    return mobile_centered @ rotation + target_centroid
 
 
-def _fit_diffusion(lag_times: np.ndarray, msd: np.ndarray) -> Dict[str, Any]:
-    max_lag = lag_times.shape[0]
-    if max_lag < 5:
-        raise ValueError("Not enough lag points to fit diffusion")
-    fit_start = max(1, int(math.ceil(0.10 * max_lag)))
-    fit_end = max(fit_start + 2, int(math.floor(0.40 * max_lag)))
-    fit_slice = slice(fit_start - 1, fit_end)
-    x = lag_times[fit_slice]
-    y = msd[fit_slice]
-    if x.shape[0] < 2:
-        raise ValueError("Not enough points in diffusion fit window")
-    slope, intercept = np.polyfit(x, y, 1)
-    y_pred = slope * x + intercept
-    ss_res = float(np.sum((y - y_pred) ** 2))
-    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
-    r2 = 1.0 if ss_tot <= 0.0 else 1.0 - ss_res / ss_tot
+def _iterative_align_frames(frames: np.ndarray, n_iter: int = 3) -> tuple[np.ndarray, np.ndarray]:
+    reference = np.asarray(frames[0], dtype=np.float64)
+    aligned = np.asarray(frames, dtype=np.float64)
+    for _ in range(max(1, int(n_iter))):
+        next_aligned = np.empty_like(aligned)
+        for index, frame in enumerate(frames):
+            next_aligned[index] = _align_points_kabsch(np.asarray(frame, dtype=np.float64), reference)
+        aligned = next_aligned
+        reference = np.mean(aligned, axis=0)
+    return aligned, reference
+
+
+def _extract_backbone_map(h5: h5py.File) -> Dict[str, Any]:
+    inp = h5["input"]
+    residue_labels: np.ndarray | None = None
+    if "sequence" in inp:
+        residue_labels = _decode_str_values(inp["sequence"][:])
+
+    if "hybrid_bb_map" in inp and "aa_atom_index" in inp["hybrid_bb_map"]:
+        atom_index = np.asarray(inp["hybrid_bb_map"]["aa_atom_index"][:], dtype=np.int64)
+        source = "input/hybrid_bb_map/aa_atom_index"
+    elif "potential" in inp and "affine_alignment" in inp["potential"] and "atoms" in inp["potential"]["affine_alignment"]:
+        atom_index = np.asarray(inp["potential"]["affine_alignment"]["atoms"][:], dtype=np.int64)
+        source = "input/potential/affine_alignment/atoms"
+    else:
+        raise ValueError("Could not locate a residue-level backbone map for RMSF analysis")
+
+    if atom_index.ndim != 2 or atom_index.shape[0] < 1 or atom_index.shape[1] < 2:
+        raise ValueError(f"Unexpected backbone map shape: {atom_index.shape}")
+    if np.any(atom_index < 0):
+        raise ValueError("Backbone map contains negative atom indices")
+
+    n_residue = int(atom_index.shape[0])
+    if residue_labels is None or residue_labels.shape[0] != n_residue:
+        residue_labels = np.asarray([str(index + 1) for index in range(n_residue)], dtype=object)
+
     return {
-        "fit_start_lag_index_1based": fit_start,
-        "fit_end_lag_index_1based": fit_end,
-        "slope_angstrom2_per_time": float(slope),
-        "intercept_angstrom2": float(intercept),
-        "r2": float(r2),
-        "n_fit_points": int(x.shape[0]),
-        "diffusion_angstrom2_per_time": float(slope / 4.0),
-        "diffusion_nm2_per_time": float(slope / 400.0),
+        "atom_index": atom_index,
+        "source": source,
+        "residue_labels": residue_labels,
+        "ca_column": 1,
     }
 
 
-def _select_lipid_atoms_and_po4(
-    atom_names: np.ndarray,
-    residue_names: np.ndarray | None,
-    molecule_ids: np.ndarray | None,
-    particle_class: np.ndarray | None,
-) -> tuple[np.ndarray, np.ndarray]:
-    if particle_class is not None:
-        lipid_mask = particle_class == "LIPID"
-        po4_mask = lipid_mask & (atom_names == "PO4")
-        if np.any(po4_mask):
-            return lipid_mask, po4_mask
-
-    if residue_names is not None:
-        lipid_mask = np.isin(residue_names, np.asarray(["DOP", "DOPC"], dtype=object))
-        po4_mask = lipid_mask & (atom_names == "PO4")
-        if np.any(po4_mask):
-            return lipid_mask, po4_mask
-
-    po4_mask = atom_names == "PO4"
-    if molecule_ids is None or not np.any(po4_mask):
-        raise ValueError("Could not identify bilayer PO4 beads for analysis")
-    lipid_molecule_ids = np.unique(molecule_ids[po4_mask])
-    lipid_mask = np.isin(molecule_ids, lipid_molecule_ids)
-    po4_mask = lipid_mask & (atom_names == "PO4")
-    if not np.any(po4_mask):
-        raise ValueError("Could not infer lipid molecules from PO4 beads")
-    return lipid_mask, po4_mask
+def _safe_profile_correlation(a: np.ndarray, b: np.ndarray) -> float:
+    if a.shape != b.shape:
+        raise ValueError("Profile shapes must match for correlation")
+    a_std = float(np.std(a, ddof=0))
+    b_std = float(np.std(b, ddof=0))
+    if a_std <= 0.0 or b_std <= 0.0:
+        return 1.0 if np.allclose(a, b) else float("nan")
+    return float(np.corrcoef(a, b)[0, 1])
 
 
-def _convert_diffusion_units(
-    diffusion_nm2_per_time: float,
-    production_time_step: float,
-    integration_ps_per_step: float,
-) -> Dict[str, float]:
-    if not (production_time_step > 0.0 and integration_ps_per_step > 0.0):
-        raise ValueError("Production timestep and integration ps/step must be > 0")
-    ns_per_time_unit = integration_ps_per_step / production_time_step / 1000.0
-    diffusion_nm2_per_ns = diffusion_nm2_per_time / ns_per_time_unit
-    diffusion_um2_per_s = diffusion_nm2_per_ns * 1000.0
-    viscosity_proxy_s_per_um2 = float("inf")
-    if diffusion_um2_per_s > 0.0:
-        viscosity_proxy_s_per_um2 = 1.0 / diffusion_um2_per_s
-    return {
-        "ns_per_time_unit": float(ns_per_time_unit),
-        "diffusion_nm2_per_ns": float(diffusion_nm2_per_ns),
-        "diffusion_um2_per_s": float(diffusion_um2_per_s),
-        "viscosity_proxy_s_per_um2": float(viscosity_proxy_s_per_um2),
-    }
-
-
-def _analyze_stage7(
+def _analyze_rmsf_profile(
     stage_file: Path,
     *,
-    production_time_step: float,
-    integration_ps_per_step: float,
-    target_diffusion_um2_s: float | None,
+    burn_in_fraction: float,
+    alignment_iterations: int,
 ) -> Dict[str, Any]:
     with h5py.File(stage_file, "r") as h5:
         if "output/pos" not in h5:
             raise ValueError(f"Missing output/pos in {stage_file}")
         pos = _normalize_output_positions(h5["output/pos"][:])
-        n_frame, n_atom, _ = pos.shape
-        if n_frame < 10:
-            raise ValueError(f"Need at least 10 output frames for MSD analysis, found {n_frame}")
+        n_frame_total = int(pos.shape[0])
+        if n_frame_total < 5:
+            raise ValueError(f"Need at least 5 output frames for RMSF analysis, found {n_frame_total}")
 
-        if "output/time" in h5:
-            times = _normalize_time(h5["output/time"][:])
-        else:
-            times = np.arange(n_frame, dtype=np.float64)
-        if times.shape[0] != n_frame:
-            raise ValueError("output/time length does not match output/pos frames")
+        backbone = _extract_backbone_map(h5)
+        atom_index = np.asarray(backbone["atom_index"], dtype=np.int64)
+        flat_index = atom_index.reshape(-1)
+        if np.max(flat_index) >= pos.shape[1]:
+            raise ValueError("Backbone map refers to atoms outside output/pos")
 
-        box = _load_box_frames(h5, n_frame)
-        inp = h5["input"]
-        atom_names = _decode_str_array(inp["atom_names"])
-        residue_names = _decode_str_array(inp["residue_names"]) if "residue_names" in inp else None
-        molecule_ids = np.asarray(inp["molecule_ids"][:], dtype=np.int32) if "molecule_ids" in inp else None
-        particle_class = _decode_str_array(inp["particle_class"]) if "particle_class" in inp else None
-
-        lipid_mask, po4_mask = _select_lipid_atoms_and_po4(atom_names, residue_names, molecule_ids, particle_class)
-        lipid_indices = np.where(lipid_mask)[0]
-        po4_indices = np.where(po4_mask)[0]
-        if lipid_indices.size == 0 or po4_indices.size == 0:
-            raise ValueError("No lipid PO4 atoms selected for bilayer analysis")
-
-        burn_start = max(1, int(math.floor(0.20 * n_frame)))
+        burn_start = int(math.floor(float(burn_in_fraction) * n_frame_total))
+        burn_start = min(max(0, burn_start), n_frame_total - 1)
         pos = pos[burn_start:]
-        times = times[burn_start:]
-        box = box[burn_start:]
-        n_frame = pos.shape[0]
-        if n_frame < 10:
-            raise ValueError("Too few frames remain after burn-in for MSD analysis")
+        n_frame_used = int(pos.shape[0])
+        if n_frame_used < 5:
+            raise ValueError("Too few frames remain after burn-in for RMSF analysis")
 
-        box_xy = box[:, :2]
-        lipid_xy = pos[:, lipid_indices, :2]
-        po4_xy = pos[:, po4_indices, :2]
+        backbone_xyz = np.asarray(pos[:, flat_index, :], dtype=np.float64)
+        box = _load_box_frames_optional(h5, n_frame_total)
+        box_unwrap_applied = False
+        if box is not None:
+            box = box[burn_start:]
+            backbone_xyz = _unwrap_xyz(backbone_xyz, box)
+            box_unwrap_applied = True
 
-        lipid_xy_unwrapped = _unwrap_xy(lipid_xy, box_xy)
-        po4_xy_unwrapped = _unwrap_xy(po4_xy, box_xy)
-        bilayer_com_xy = np.mean(lipid_xy_unwrapped, axis=1)
-        po4_xy_corrected = po4_xy_unwrapped - bilayer_com_xy[:, None, :]
-
-        max_lag = min(max(5, int(math.floor(0.25 * n_frame))), n_frame - 1)
-        if max_lag < 5:
-            raise ValueError("Not enough post-burn-in frames for lag-window analysis")
-
-        lag_times, msd_po4, counts_po4 = _compute_msd(po4_xy_corrected, times, max_lag)
-        fit_po4 = _fit_diffusion(lag_times, msd_po4)
-        converted = _convert_diffusion_units(
-            fit_po4["diffusion_nm2_per_time"],
-            production_time_step=production_time_step,
-            integration_ps_per_step=integration_ps_per_step,
+        aligned_backbone, mean_backbone = _iterative_align_frames(
+            backbone_xyz,
+            n_iter=alignment_iterations,
         )
+        n_residue = int(atom_index.shape[0])
+        n_backbone_atom = int(atom_index.shape[1])
+        aligned_backbone = aligned_backbone.reshape(n_frame_used, n_residue, n_backbone_atom, 3)
+        ca_xyz = aligned_backbone[:, :, int(backbone["ca_column"]), :]
+        mean_ca = np.mean(ca_xyz, axis=0)
+        rmsf = np.sqrt(np.mean(np.sum((ca_xyz - mean_ca) ** 2, axis=2), axis=0))
 
-        analysis = {
-            "n_frames_total": int(burn_start + n_frame),
-            "n_frames_used": int(n_frame),
+        return {
+            "n_frames_total": n_frame_total,
+            "n_frames_used": n_frame_used,
             "burn_in_frames": int(burn_start),
-            "n_atom": int(n_atom),
-            "n_lipid_atoms": int(lipid_indices.shape[0]),
-            "n_po4": int(po4_indices.shape[0]),
-            "msd_lag_time": lag_times.tolist(),
-            "po4_msd_angstrom2": msd_po4.tolist(),
-            "po4_msd_counts": counts_po4.tolist(),
-            "fit_po4": fit_po4,
-            "po4_lateral_diffusion_angstrom2_per_time": float(fit_po4["diffusion_angstrom2_per_time"]),
-            "po4_lateral_diffusion_nm2_per_time": float(fit_po4["diffusion_nm2_per_time"]),
-            "po4_lateral_diffusion_nm2_per_ns": float(converted["diffusion_nm2_per_ns"]),
-            "po4_lateral_diffusion_um2_per_s": float(converted["diffusion_um2_per_s"]),
-            "viscosity_proxy_s_per_um2": float(converted["viscosity_proxy_s_per_um2"]),
-            "integration_ps_per_step": float(integration_ps_per_step),
-            "production_time_step": float(production_time_step),
-            "ns_per_time_unit": float(converted["ns_per_time_unit"]),
+            "n_residue": n_residue,
+            "residue_labels": [str(x) for x in backbone["residue_labels"]],
+            "backbone_map_source": str(backbone["source"]),
+            "alignment_iterations": int(alignment_iterations),
+            "box_unwrap_applied": int(box_unwrap_applied),
+            "mean_rmsf_angstrom": float(np.mean(rmsf)),
+            "std_rmsf_angstrom": float(np.std(rmsf, ddof=0)),
+            "residue_rmsf_angstrom": [float(x) for x in rmsf],
+            "backbone_mean_structure_shape": list(mean_backbone.shape),
         }
-        if target_diffusion_um2_s is not None:
-            analysis["target_diffusion_um2_per_s"] = float(target_diffusion_um2_s)
-            analysis["target_abs_error_um2_per_s"] = float(
-                abs(analysis["po4_lateral_diffusion_um2_per_s"] - float(target_diffusion_um2_s))
-            )
-        return analysis
 
 
 def _discover_analysis_tasks(base_dir: Path, manifest: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1350,10 +1108,7 @@ def _discover_analysis_tasks(base_dir: Path, manifest: Dict[str, Any]) -> List[D
                 "analysis_task_id": len(discovered),
                 "code": code,
                 "task": task,
-                "stage7_file": str(result["stage_70_file"]),
-                "production_time_step": float(result["production_time_step"]),
-                "integration_ps_per_step": float(result["integration_ps_per_step"]),
-                "target_diffusion_um2_s": result.get("target_diffusion_um2_s"),
+                "analysis_target_file": str(result["analysis_target_file"]),
             }
         )
     if not discovered:
@@ -1374,16 +1129,17 @@ def cmd_init_analysis(args: argparse.Namespace) -> int:
         "base_dir": str(base_dir),
         "manifest_path": str(_manifest_path(base_dir)),
         "pdb_id": manifest["settings"]["pdb_id"],
-        "n_stage7_files": len(tasks),
+        "analysis_settings": manifest["settings"]["analysis_settings"],
+        "n_analysis_targets": len(tasks),
         "tasks": tasks,
     }
     _write_json(_analysis_manifest_path(base_dir), payload)
     print(f"Analysis manifest: {_analysis_manifest_path(base_dir)}")
-    print(f"Discovered stage_7.0 files: {len(tasks)}")
+    print(f"Discovered analysis targets: {len(tasks)}")
     return 0
 
 
-def _run_analysis_task(base_dir: Path, task_entry: Dict[str, Any], overwrite: bool) -> Dict[str, Any]:
+def _run_analysis_task(base_dir: Path, analysis_manifest: Dict[str, Any], task_entry: Dict[str, Any], overwrite: bool) -> Dict[str, Any]:
     task = dict(task_entry["task"])
     code = str(task["code"])
     result_path = _analysis_result_path(base_dir, code)
@@ -1393,20 +1149,16 @@ def _run_analysis_task(base_dir: Path, task_entry: Dict[str, Any], overwrite: bo
             print(f"Skipping completed analysis task {code}")
             return existing
 
-    stage7_file = Path(task_entry["stage7_file"]).expanduser().resolve()
-    if not stage7_file.exists():
-        raise RuntimeError(f"Stage-7 checkpoint not found: {stage7_file}")
+    stage_file = Path(task_entry["analysis_target_file"]).expanduser().resolve()
+    if not stage_file.exists():
+        raise RuntimeError(f"Analysis target file not found: {stage_file}")
 
+    analysis_settings = analysis_manifest["analysis_settings"]
     try:
-        analysis = _analyze_stage7(
-            stage7_file,
-            production_time_step=float(task_entry["production_time_step"]),
-            integration_ps_per_step=float(task_entry["integration_ps_per_step"]),
-            target_diffusion_um2_s=(
-                None
-                if task_entry.get("target_diffusion_um2_s") is None
-                else float(task_entry["target_diffusion_um2_s"])
-            ),
+        analysis = _analyze_rmsf_profile(
+            stage_file,
+            burn_in_fraction=float(analysis_settings["burn_in_fraction"]),
+            alignment_iterations=int(analysis_settings["alignment_iterations"]),
         )
         result = {
             "schema": SCHEMA_ANALYSIS_RESULT,
@@ -1415,7 +1167,7 @@ def _run_analysis_task(base_dir: Path, task_entry: Dict[str, Any], overwrite: bo
             "analysis_task_id": int(task_entry["analysis_task_id"]),
             "success": True,
             "task": task,
-            "stage7_file": str(stage7_file),
+            "analysis_target_file": str(stage_file),
             "analysis": analysis,
         }
         _write_json(result_path, result)
@@ -1428,7 +1180,7 @@ def _run_analysis_task(base_dir: Path, task_entry: Dict[str, Any], overwrite: bo
             "analysis_task_id": int(task_entry["analysis_task_id"]),
             "success": False,
             "task": task,
-            "stage7_file": str(stage7_file),
+            "analysis_target_file": str(stage_file),
             "error": str(exc),
         }
         _write_json(result_path, result)
@@ -1447,7 +1199,7 @@ def cmd_run_analysis_local(args: argparse.Namespace) -> int:
     failures: List[str] = []
     for task_entry in selected:
         try:
-            _run_analysis_task(base_dir, task_entry, overwrite=bool(args.overwrite))
+            _run_analysis_task(base_dir, analysis_manifest, task_entry, overwrite=bool(args.overwrite))
         except Exception as exc:
             failures.append(f"{task_entry['code']}: {exc}")
 
@@ -1469,8 +1221,32 @@ def cmd_run_analysis_task(args: argparse.Namespace) -> int:
     tasks = analysis_manifest["tasks"]
     if task_id < 0 or task_id >= len(tasks):
         raise RuntimeError(f"Analysis task id out of range: {task_id} for {len(tasks)} tasks")
-    _run_analysis_task(base_dir, tasks[task_id], overwrite=bool(args.overwrite))
+    _run_analysis_task(base_dir, analysis_manifest, tasks[task_id], overwrite=bool(args.overwrite))
     return 0
+
+
+def _fit_trendline(x: np.ndarray, y: np.ndarray, samples: int) -> Dict[str, Any]:
+    if x.size != y.size or x.size < 1:
+        raise ValueError("Trend-line fit requires at least one sampled point")
+    degree = min(2, int(x.size) - 1)
+    coeffs = np.polyfit(x, y, degree) if degree > 0 else np.asarray([float(np.mean(y))], dtype=np.float64)
+    fitted = np.polyval(coeffs, x)
+    y_mean = float(np.mean(y))
+    ss_res = float(np.sum((y - fitted) ** 2))
+    ss_tot = float(np.sum((y - y_mean) ** 2))
+    r2 = 1.0 if ss_tot <= 0.0 else 1.0 - ss_res / ss_tot
+    grid_x = np.linspace(float(np.min(x)), float(np.max(x)), int(samples))
+    grid_y = np.polyval(coeffs, grid_x)
+    best_index = int(np.argmin(grid_y))
+    return {
+        "degree": int(degree),
+        "coefficients": [float(v) for v in np.asarray(coeffs, dtype=np.float64)],
+        "r2": float(r2),
+        "grid_x": [float(v) for v in grid_x],
+        "grid_y": [float(v) for v in grid_y],
+        "recommended_interface_scale": float(grid_x[best_index]),
+        "recommended_metric_value": float(grid_y[best_index]),
+    }
 
 
 def assemble_analysis(base_dir: Path) -> int:
@@ -1481,35 +1257,110 @@ def assemble_analysis(base_dir: Path) -> int:
     assembled_dir.mkdir(parents=True, exist_ok=True)
 
     successful_results = _successful_results_from_dir(results_dir)
+    reference_results = [item for item in successful_results if item["task"]["kind"] == "reference"]
+    hybrid_results = [item for item in successful_results if item["task"]["kind"] == "hybrid"]
+    if not reference_results:
+        raise RuntimeError("No successful reference RMSF analyses found")
+    if not hybrid_results:
+        raise RuntimeError("No successful hybrid RMSF analyses found")
+
+    reference_profiles = np.asarray(
+        [result["analysis"]["residue_rmsf_angstrom"] for result in reference_results],
+        dtype=np.float64,
+    )
+    reference_labels = reference_results[0]["analysis"]["residue_labels"]
+    n_residue = int(reference_profiles.shape[1])
+    for result in successful_results:
+        profile = np.asarray(result["analysis"]["residue_rmsf_angstrom"], dtype=np.float64)
+        labels = result["analysis"]["residue_labels"]
+        if profile.shape[0] != n_residue:
+            raise RuntimeError("Residue-count mismatch across RMSF analysis results")
+        if list(labels) != list(reference_labels):
+            raise RuntimeError("Residue-label mismatch across RMSF analysis results")
+
+    reference_mean = np.mean(reference_profiles, axis=0)
+    reference_std = np.std(reference_profiles, axis=0, ddof=0)
+
+    reference_profile_csv = assembled_dir / "reference_profile.csv"
+    with reference_profile_csv.open("w", encoding="utf-8", newline="") as fh:
+        fieldnames = [
+            "residue_index",
+            "residue_label",
+            "reference_rmsf_mean_angstrom",
+            "reference_rmsf_std_angstrom",
+        ]
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for index, label in enumerate(reference_labels, start=1):
+            writer.writerow(
+                {
+                    "residue_index": index,
+                    "residue_label": label,
+                    "reference_rmsf_mean_angstrom": float(reference_mean[index - 1]),
+                    "reference_rmsf_std_angstrom": float(reference_std[index - 1]),
+                }
+            )
+
     task_rows: List[Dict[str, Any]] = []
-    grouped: Dict[tuple[float, float], List[Dict[str, Any]]] = {}
-    target_diffusion_um2_s = manifest["settings"].get("target_diffusion_um2_s")
+    profile_rows: List[Dict[str, Any]] = []
+    grouped: Dict[float, List[Dict[str, Any]]] = {}
     for result in successful_results:
         task = result["task"]
         analysis = result["analysis"]
-        row = {
+        profile = np.asarray(analysis["residue_rmsf_angstrom"], dtype=np.float64)
+        row: Dict[str, Any] = {
             "analysis_task_id": int(result["analysis_task_id"]),
             "task_id": int(task.get("task_id", -1)),
             "code": str(task["code"]),
-            "lj_alpha": float(task["lj_alpha"]),
-            "slater_alpha": float(task["slater_alpha"]),
-            "replicate": int(task["replicate"]),
-            "po4_lateral_diffusion_angstrom2_per_time": float(
-                analysis["po4_lateral_diffusion_angstrom2_per_time"]
+            "kind": str(task["kind"]),
+            "method": str(task["method"]),
+            "interface_scale": (
+                ""
+                if task["kind"] != "hybrid"
+                else f"{float(task['interface_scale']):.10g}"
             ),
-            "po4_lateral_diffusion_nm2_per_time": float(analysis["po4_lateral_diffusion_nm2_per_time"]),
-            "po4_lateral_diffusion_nm2_per_ns": float(analysis["po4_lateral_diffusion_nm2_per_ns"]),
-            "po4_lateral_diffusion_um2_per_s": float(analysis["po4_lateral_diffusion_um2_per_s"]),
-            "viscosity_proxy_s_per_um2": float(analysis["viscosity_proxy_s_per_um2"]),
-            "po4_fit_r2": float(analysis["fit_po4"]["r2"]),
+            "replicate": int(task["replicate"]),
+            "mean_rmsf_angstrom": float(analysis["mean_rmsf_angstrom"]),
+            "std_rmsf_angstrom": float(analysis["std_rmsf_angstrom"]),
             "n_frames_used": int(analysis["n_frames_used"]),
-            "n_po4": int(analysis["n_po4"]),
-            "stage7_file": str(result["stage7_file"]),
+            "analysis_target_file": str(result["analysis_target_file"]),
+            "rmsf_rmse_vs_reference_angstrom": "",
+            "rmsf_mae_vs_reference_angstrom": "",
+            "rmsf_correlation_vs_reference": "",
         }
-        if "target_abs_error_um2_per_s" in analysis:
-            row["target_abs_error_um2_per_s"] = float(analysis["target_abs_error_um2_per_s"])
+        if task["kind"] == "hybrid":
+            delta = profile - reference_mean
+            row["rmsf_rmse_vs_reference_angstrom"] = float(np.sqrt(np.mean(delta * delta)))
+            row["rmsf_mae_vs_reference_angstrom"] = float(np.mean(np.abs(delta)))
+            row["rmsf_correlation_vs_reference"] = _safe_profile_correlation(profile, reference_mean)
+            grouped.setdefault(float(task["interface_scale"]), []).append(
+                {
+                    "row": row,
+                    "profile": profile,
+                }
+            )
         task_rows.append(row)
-        grouped.setdefault((row["lj_alpha"], row["slater_alpha"]), []).append(row)
+
+        for index, label in enumerate(reference_labels, start=1):
+            profile_rows.append(
+                {
+                    "kind": str(task["kind"]),
+                    "method": str(task["method"]),
+                    "code": str(task["code"]),
+                    "interface_scale": (
+                        ""
+                        if task["kind"] != "hybrid"
+                        else f"{float(task['interface_scale']):.10g}"
+                    ),
+                    "replicate": int(task["replicate"]),
+                    "residue_index": index,
+                    "residue_label": label,
+                    "rmsf_angstrom": float(profile[index - 1]),
+                    "reference_rmsf_mean_angstrom": float(reference_mean[index - 1]),
+                    "reference_rmsf_std_angstrom": float(reference_std[index - 1]),
+                    "delta_vs_reference_angstrom": float(profile[index - 1] - reference_mean[index - 1]),
+                }
+            )
 
     task_csv = assembled_dir / "task_results.csv"
     with task_csv.open("w", encoding="utf-8", newline="") as fh:
@@ -1517,175 +1368,209 @@ def assemble_analysis(base_dir: Path) -> int:
             "analysis_task_id",
             "task_id",
             "code",
-            "lj_alpha",
-            "slater_alpha",
+            "kind",
+            "method",
+            "interface_scale",
             "replicate",
-            "po4_lateral_diffusion_angstrom2_per_time",
-            "po4_lateral_diffusion_nm2_per_time",
-            "po4_lateral_diffusion_nm2_per_ns",
-            "po4_lateral_diffusion_um2_per_s",
-            "viscosity_proxy_s_per_um2",
-            "po4_fit_r2",
+            "mean_rmsf_angstrom",
+            "std_rmsf_angstrom",
+            "rmsf_rmse_vs_reference_angstrom",
+            "rmsf_mae_vs_reference_angstrom",
+            "rmsf_correlation_vs_reference",
             "n_frames_used",
-            "n_po4",
-            "stage7_file",
-            "target_abs_error_um2_per_s",
+            "analysis_target_file",
         ]
-        writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         for row in sorted(task_rows, key=lambda item: (item["analysis_task_id"], item["task_id"], item["code"])):
             writer.writerow(row)
 
-    expected_replicates = int(manifest["settings"]["replicates"])
-    summary_rows: List[Dict[str, Any]] = []
-    for (lj_alpha, slater_alpha), rows in sorted(grouped.items()):
-        diffusion_time = np.asarray(
-            [row["po4_lateral_diffusion_nm2_per_time"] for row in rows],
+    profile_csv = assembled_dir / "residue_rmsf_profiles.csv"
+    with profile_csv.open("w", encoding="utf-8", newline="") as fh:
+        fieldnames = [
+            "kind",
+            "method",
+            "code",
+            "interface_scale",
+            "replicate",
+            "residue_index",
+            "residue_label",
+            "rmsf_angstrom",
+            "reference_rmsf_mean_angstrom",
+            "reference_rmsf_std_angstrom",
+            "delta_vs_reference_angstrom",
+        ]
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in profile_rows:
+            writer.writerow(row)
+
+    condition_rows: List[Dict[str, Any]] = []
+    condition_profile_rows: List[Dict[str, Any]] = []
+    for interface_scale, rows in sorted(grouped.items()):
+        profiles = np.asarray([item["profile"] for item in rows], dtype=np.float64)
+        condition_mean = np.mean(profiles, axis=0)
+        condition_std = np.std(profiles, axis=0, ddof=0)
+        condition_delta = condition_mean - reference_mean
+        task_rmse = np.asarray(
+            [float(item["row"]["rmsf_rmse_vs_reference_angstrom"]) for item in rows],
             dtype=np.float64,
         )
-        diffusion_ns = np.asarray(
-            [row["po4_lateral_diffusion_nm2_per_ns"] for row in rows],
+        task_mae = np.asarray(
+            [float(item["row"]["rmsf_mae_vs_reference_angstrom"]) for item in rows],
             dtype=np.float64,
         )
-        diffusion_um = np.asarray(
-            [row["po4_lateral_diffusion_um2_per_s"] for row in rows],
+        task_corr = np.asarray(
+            [float(item["row"]["rmsf_correlation_vs_reference"]) for item in rows],
             dtype=np.float64,
         )
-        viscosity_proxy = np.asarray(
-            [row["viscosity_proxy_s_per_um2"] for row in rows],
-            dtype=np.float64,
-        )
-        po4_r2 = np.asarray([row["po4_fit_r2"] for row in rows], dtype=np.float64)
         summary = {
-            "lj_alpha": float(lj_alpha),
-            "slater_alpha": float(slater_alpha),
-            "n_replicates_expected": expected_replicates,
+            "interface_scale": float(interface_scale),
+            "n_replicates_expected": int(manifest["settings"]["hybrid_replicates"]),
             "n_replicates_completed": len(rows),
-            "po4_diffusion_nm2_per_time_mean": float(np.mean(diffusion_time)),
-            "po4_diffusion_nm2_per_time_std": float(np.std(diffusion_time, ddof=0)),
-            "po4_diffusion_nm2_per_ns_mean": float(np.mean(diffusion_ns)),
-            "po4_diffusion_nm2_per_ns_std": float(np.std(diffusion_ns, ddof=0)),
-            "po4_diffusion_um2_per_s_mean": float(np.mean(diffusion_um)),
-            "po4_diffusion_um2_per_s_std": float(np.std(diffusion_um, ddof=0)),
-            "viscosity_proxy_s_per_um2_mean": float(np.mean(viscosity_proxy)),
-            "viscosity_proxy_s_per_um2_std": float(np.std(viscosity_proxy, ddof=0)),
-            "po4_fit_r2_min": float(np.min(po4_r2)),
+            "condition_profile_rmse_angstrom": float(np.sqrt(np.mean(condition_delta * condition_delta))),
+            "condition_profile_mae_angstrom": float(np.mean(np.abs(condition_delta))),
+            "task_rmse_mean_angstrom": float(np.mean(task_rmse)),
+            "task_rmse_std_angstrom": float(np.std(task_rmse, ddof=0)),
+            "task_mae_mean_angstrom": float(np.mean(task_mae)),
+            "task_mae_std_angstrom": float(np.std(task_mae, ddof=0)),
+            "task_correlation_mean": float(np.nanmean(task_corr)),
+            "task_correlation_min": float(np.nanmin(task_corr)),
         }
-        if target_diffusion_um2_s is not None:
-            summary["target_diffusion_um2_per_s"] = float(target_diffusion_um2_s)
-            summary["target_abs_error_um2_per_s_mean"] = float(
-                abs(summary["po4_diffusion_um2_per_s_mean"] - float(target_diffusion_um2_s))
+        condition_rows.append(summary)
+
+        for index, label in enumerate(reference_labels, start=1):
+            condition_profile_rows.append(
+                {
+                    "interface_scale": float(interface_scale),
+                    "residue_index": index,
+                    "residue_label": label,
+                    "condition_rmsf_mean_angstrom": float(condition_mean[index - 1]),
+                    "condition_rmsf_std_angstrom": float(condition_std[index - 1]),
+                    "reference_rmsf_mean_angstrom": float(reference_mean[index - 1]),
+                    "reference_rmsf_std_angstrom": float(reference_std[index - 1]),
+                    "delta_vs_reference_angstrom": float(condition_mean[index - 1] - reference_mean[index - 1]),
+                }
             )
-        summary_rows.append(summary)
 
     summary_csv = assembled_dir / "condition_summary.csv"
     with summary_csv.open("w", encoding="utf-8", newline="") as fh:
         fieldnames = [
-            "lj_alpha",
-            "slater_alpha",
+            "interface_scale",
             "n_replicates_expected",
             "n_replicates_completed",
-            "po4_diffusion_nm2_per_time_mean",
-            "po4_diffusion_nm2_per_time_std",
-            "po4_diffusion_nm2_per_ns_mean",
-            "po4_diffusion_nm2_per_ns_std",
-            "po4_diffusion_um2_per_s_mean",
-            "po4_diffusion_um2_per_s_std",
-            "viscosity_proxy_s_per_um2_mean",
-            "viscosity_proxy_s_per_um2_std",
-            "po4_fit_r2_min",
-            "target_diffusion_um2_per_s",
-            "target_abs_error_um2_per_s_mean",
+            "condition_profile_rmse_angstrom",
+            "condition_profile_mae_angstrom",
+            "task_rmse_mean_angstrom",
+            "task_rmse_std_angstrom",
+            "task_mae_mean_angstrom",
+            "task_mae_std_angstrom",
+            "task_correlation_mean",
+            "task_correlation_min",
         ]
-        writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
-        for row in summary_rows:
+        for row in condition_rows:
             writer.writerow(row)
 
-    failed_results: List[Dict[str, Any]] = []
-    if results_dir.exists():
-        for path in sorted(results_dir.glob("*.json")):
-            payload = _load_json(path)
-            if not payload.get("success"):
-                task = payload.get("task", {})
-                failed_results.append(
-                    {
-                        "analysis_task_id": int(payload.get("analysis_task_id", -1)),
-                        "task_id": int(task.get("task_id", -1)),
-                        "code": str(task.get("code", path.stem)),
-                        "error": str(payload.get("error", "")),
-                        "stage7_file": str(payload.get("stage7_file", "")),
-                    }
-                )
+    condition_profile_csv = assembled_dir / "condition_profiles.csv"
+    with condition_profile_csv.open("w", encoding="utf-8", newline="") as fh:
+        fieldnames = [
+            "interface_scale",
+            "residue_index",
+            "residue_label",
+            "condition_rmsf_mean_angstrom",
+            "condition_rmsf_std_angstrom",
+            "reference_rmsf_mean_angstrom",
+            "reference_rmsf_std_angstrom",
+            "delta_vs_reference_angstrom",
+        ]
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in condition_profile_rows:
+            writer.writerow(row)
+
+    trend = _fit_trendline(
+        np.asarray([row["interface_scale"] for row in condition_rows], dtype=np.float64),
+        np.asarray([row["condition_profile_rmse_angstrom"] for row in condition_rows], dtype=np.float64),
+        int(analysis_manifest["analysis_settings"]["trendline_samples"]),
+    )
+    trend_csv = assembled_dir / "trendline_points.csv"
+    with trend_csv.open("w", encoding="utf-8", newline="") as fh:
+        fieldnames = [
+            "interface_scale",
+            "fitted_condition_profile_rmse_angstrom",
+        ]
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for x_value, y_value in zip(trend["grid_x"], trend["grid_y"]):
+            writer.writerow(
+                {
+                    "interface_scale": float(x_value),
+                    "fitted_condition_profile_rmse_angstrom": float(y_value),
+                }
+            )
+
+    failed_rows: List[Dict[str, Any]] = []
+    for path in sorted(results_dir.glob("*.json")):
+        payload = _load_json(path)
+        if payload.get("success"):
+            continue
+        task = payload.get("task", {})
+        failed_rows.append(
+            {
+                "code": str(task.get("code", path.stem)),
+                "kind": str(task.get("kind", "")),
+                "interface_scale": (
+                    ""
+                    if task.get("kind") != "hybrid"
+                    else f"{float(task.get('interface_scale')):.10g}"
+                ),
+                "replicate": int(task.get("replicate", 0) or 0),
+                "error": str(payload.get("error", "")),
+            }
+        )
 
     failed_csv = assembled_dir / "failed_tasks.csv"
     with failed_csv.open("w", encoding="utf-8", newline="") as fh:
-        fieldnames = ["analysis_task_id", "task_id", "code", "error", "stage7_file"]
+        fieldnames = ["code", "kind", "interface_scale", "replicate", "error"]
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
-        for row in failed_results:
+        for row in failed_rows:
             writer.writerow(row)
 
-    finite_rows = [row for row in summary_rows if math.isfinite(row["po4_diffusion_um2_per_s_mean"])]
-    complete_rows = [
-        row for row in finite_rows if int(row["n_replicates_completed"]) == int(row["n_replicates_expected"])
-    ]
-    recommendation_pool = complete_rows or finite_rows
-    recommendation: Dict[str, Any]
-    if not recommendation_pool:
-        recommendation = {
-            "created_at_utc": _now_utc(),
-            "base_dir": str(base_dir),
-            "selection_basis": "no_finite_conditions",
-            "recommended_condition": None,
-        }
-    else:
-        if target_diffusion_um2_s is not None:
-            best = min(
-                recommendation_pool,
-                key=lambda row: (
-                    row["target_abs_error_um2_per_s_mean"],
-                    row["po4_diffusion_um2_per_s_std"],
-                    -row["n_replicates_completed"],
-                    row["lj_alpha"],
-                    row["slater_alpha"],
-                ),
-            )
-            selection_basis = "closest_target_diffusion_um2_per_s"
-        else:
-            best = max(
-                recommendation_pool,
-                key=lambda row: (
-                    row["po4_diffusion_um2_per_s_mean"],
-                    -row["po4_diffusion_um2_per_s_std"],
-                    row["n_replicates_completed"],
-                    -row["lj_alpha"],
-                    -row["slater_alpha"],
-                ),
-            )
-            selection_basis = "highest_mean_diffusion_um2_per_s"
-        recommendation = {
-            "created_at_utc": _now_utc(),
-            "base_dir": str(base_dir),
-            "selection_basis": selection_basis,
-            "target_diffusion_um2_per_s": target_diffusion_um2_s,
-            "candidate_scope": "complete_replicates" if complete_rows else "finite_results_only",
-            "recommended_condition": best,
-        }
-
-    recommendation_path = assembled_dir / "recommendation_summary.json"
-    _write_json(recommendation_path, recommendation)
+    best_sampled = min(condition_rows, key=lambda item: (item["condition_profile_rmse_angstrom"], item["interface_scale"]))
+    recommendation = {
+        "created_at_utc": _now_utc(),
+        "metric": "condition_profile_rmse_angstrom",
+        "reference_task_count": int(len(reference_results)),
+        "hybrid_condition_count": int(len(condition_rows)),
+        "best_sampled_interface_scale": float(best_sampled["interface_scale"]),
+        "best_sampled_condition_profile_rmse_angstrom": float(best_sampled["condition_profile_rmse_angstrom"]),
+        "trendline_recommended_interface_scale": float(trend["recommended_interface_scale"]),
+        "trendline_recommended_condition_profile_rmse_angstrom": float(trend["recommended_metric_value"]),
+        "trendline_fit_degree": int(trend["degree"]),
+        "trendline_fit_coefficients": [float(x) for x in trend["coefficients"]],
+        "trendline_fit_r2": float(trend["r2"]),
+    }
+    _write_json(assembled_dir / "recommendation_summary.json", recommendation)
 
     payload = {
         "created_at_utc": _now_utc(),
         "base_dir": str(base_dir),
+        "pdb_id": manifest["settings"]["pdb_id"],
         "n_analysis_tasks_total": int(len(analysis_manifest["tasks"])),
-        "n_analysis_tasks_completed_successfully": len(task_rows),
-        "n_analysis_tasks_failed": len(failed_results),
+        "n_analysis_tasks_completed_successfully": int(len(successful_results)),
+        "n_reference_tasks_completed_successfully": int(len(reference_results)),
+        "n_hybrid_tasks_completed_successfully": int(len(hybrid_results)),
+        "n_hybrid_conditions_completed": int(len(condition_rows)),
         "task_results_csv": str(task_csv),
+        "residue_rmsf_profiles_csv": str(profile_csv),
+        "reference_profile_csv": str(reference_profile_csv),
+        "condition_profiles_csv": str(condition_profile_csv),
         "condition_summary_csv": str(summary_csv),
+        "trendline_points_csv": str(trend_csv),
         "failed_tasks_csv": str(failed_csv),
-        "recommendation_summary_json": str(recommendation_path),
     }
     _write_json(assembled_dir / "summary.json", payload)
     print(f"Assembled analysis results written under {assembled_dir}")
@@ -1698,388 +1583,291 @@ def cmd_assemble_analysis(args: argparse.Namespace) -> int:
 
 
 def _array_script_content(round_manifest_path: Path, base_dir: Path, n_tasks: int) -> str:
-    output_path = _slurm_dir(base_dir) / "sweep-%A_%a.out"
-    lines = [
-        "#!/bin/bash",
-        f"#SBATCH --job-name=hybrid-soften-{base_dir.name}",
-        f"#SBATCH --output={output_path}",
-        f"#SBATCH --time={os.environ.get('HYBRID_SWEEP_TRAIN_WALLTIME', '24:00:00')}",
-        "#SBATCH --nodes=1",
-        "#SBATCH --ntasks=1",
-        f"#SBATCH --cpus-per-task={int(os.environ.get('HYBRID_SWEEP_CPUS_PER_TASK', '1'))}",
-        f"#SBATCH --array=0-{n_tasks - 1}",
-    ]
-    lines.extend(_optional_sbatch_directives("TRAIN"))
-    lines.extend(
-        [
-            "",
-            "set -euo pipefail",
-            "",
-            f"SCRIPT_DIR={shlex.quote(str(WORKFLOW_DIR))}",
-            f"ROUND_MANIFEST={shlex.quote(str(round_manifest_path))}",
-            f"PROJECT_ROOT={shlex.quote(str(REPO_ROOT))}",
-            'PYTHON_BIN=""',
-            "",
-            "if [ -f /etc/profile.d/modules.sh ]; then",
-            "  source /etc/profile.d/modules.sh",
-            "fi",
-            "",
-            "if command -v module >/dev/null 2>&1; then",
-            "  module load python/3.11.9 || true",
-            "  module load cmake || true",
-            "  module load openmpi || true",
-            '  module load "${HYBRID_SWEEP_HDF5_MODULE:-hdf5/1.14.3}" || true',
-            "fi",
-            "",
-            'if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then',
-            '  source "$SCRIPT_DIR/.venv/bin/activate"',
-            'elif [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then',
-            '  source "$PROJECT_ROOT/.venv/bin/activate"',
-            "fi",
-            "",
-            'if [ -n "${HYBRID_SWEEP_PYTHON:-}" ]; then',
-            '  if command -v "${HYBRID_SWEEP_PYTHON}" >/dev/null 2>&1; then',
-            '    PYTHON_BIN="$(command -v "${HYBRID_SWEEP_PYTHON}")"',
-            "  else",
-            '    PYTHON_BIN="${HYBRID_SWEEP_PYTHON}"',
-            "  fi",
-            'elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x "${VIRTUAL_ENV}/bin/python3" ]; then',
-            '  PYTHON_BIN="${VIRTUAL_ENV}/bin/python3"',
-            "else",
-            '  PYTHON_BIN="$(command -v python3)"',
-            "fi",
-            "",
-            'if [ -z "${MY_PYTHON:-}" ]; then',
-            '  py_path="$(command -v "$PYTHON_BIN" || true)"',
-            '  if [ -n "$py_path" ]; then',
-            '    export MY_PYTHON="$(cd "$(dirname "$py_path")/.." && pwd)"',
-            "  fi",
-            "fi",
-            "set +u",
-            'source "$PROJECT_ROOT/source.sh"',
-            "set -u",
-            'export PYTHONUNBUFFERED=1',
-            'cmd=("$PYTHON_BIN" -u "$SCRIPT_DIR/workflow.py" run-array-task --round-manifest "$ROUND_MANIFEST" --task-id "$SLURM_ARRAY_TASK_ID")',
-            'if [ "${HYBRID_SWEEP_OVERWRITE:-0}" = "1" ]; then',
-            '  cmd+=(--overwrite)',
-            "fi",
-            '"${cmd[@]}"',
-        ]
-    )
-    return "\n".join(lines) + "\n"
+    train_walltime = os.environ.get("HYBRID_SWEEP_TRAIN_WALLTIME", "24:00:00").strip() or "24:00:00"
+    cpus_per_task = int(os.environ.get("HYBRID_SWEEP_CPUS_PER_TASK", "1"))
+    directives = "\n".join(_optional_sbatch_directives("TRAIN"))
+    if directives:
+        directives += "\n"
+    return f"""#!/bin/bash
+#SBATCH --job-name=hybrid_rmsf_sweep
+#SBATCH --output={_slurm_dir(base_dir) / "array_%A_%a.out"}
+#SBATCH --error={_slurm_dir(base_dir) / "array_%A_%a.err"}
+#SBATCH --array=0-{max(0, n_tasks - 1)}
+#SBATCH --time={train_walltime}
+#SBATCH --cpus-per-task={cpus_per_task}
+{directives}set -euo pipefail
+
+PROJECT_ROOT="{REPO_ROOT}"
+WORKFLOW_DIR="{WORKFLOW_DIR}"
+ROUND_MANIFEST="{round_manifest_path}"
+TASK_ID="${{SLURM_ARRAY_TASK_ID:?}}"
+
+if [ -f /etc/profile.d/modules.sh ]; then
+  source /etc/profile.d/modules.sh
+fi
+
+if command -v module >/dev/null 2>&1; then
+  module load python/3.11.9 || true
+  module load cmake || true
+  module load openmpi || true
+  module load "${{HYBRID_SWEEP_HDF5_MODULE:-hdf5/1.14.3}}" || true
+fi
+
+if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
+  source "$PROJECT_ROOT/.venv/bin/activate"
+fi
+
+PYTHON_BIN="${{HYBRID_SWEEP_PYTHON:-python3}}"
+export HYBRID_SWEEP_PROJECT_ROOT="$PROJECT_ROOT"
+export PYTHONUNBUFFERED=1
+
+"$PYTHON_BIN" -u "$WORKFLOW_DIR/workflow.py" run-array-task --round-manifest "$ROUND_MANIFEST" --task-id "$TASK_ID"
+"""
 
 
 def _collector_script_content(base_dir: Path) -> str:
-    output_path = _slurm_dir(base_dir) / "collect-%j.out"
-    lines = [
-        "#!/bin/bash",
-        f"#SBATCH --job-name=hybrid-soften-collect-{base_dir.name}",
-        f"#SBATCH --output={output_path}",
-        f"#SBATCH --time={os.environ.get('HYBRID_SWEEP_COLLECT_WALLTIME', '01:00:00')}",
-        "#SBATCH --nodes=1",
-        "#SBATCH --ntasks=1",
-        "#SBATCH --cpus-per-task=1",
-    ]
-    lines.extend(_optional_sbatch_directives("COLLECT"))
-    lines.extend(
-        [
-            "",
-            "set -euo pipefail",
-            "",
-            f"SCRIPT_DIR={shlex.quote(str(WORKFLOW_DIR))}",
-            f"BASE_DIR={shlex.quote(str(base_dir))}",
-            f"PROJECT_ROOT={shlex.quote(str(REPO_ROOT))}",
-            'PYTHON_BIN=""',
-            "",
-            "if [ -f /etc/profile.d/modules.sh ]; then",
-            "  source /etc/profile.d/modules.sh",
-            "fi",
-            "",
-            "if command -v module >/dev/null 2>&1; then",
-            "  module load python/3.11.9 || true",
-            "  module load cmake || true",
-            "  module load openmpi || true",
-            '  module load "${HYBRID_SWEEP_HDF5_MODULE:-hdf5/1.14.3}" || true',
-            "fi",
-            "",
-            'if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then',
-            '  source "$SCRIPT_DIR/.venv/bin/activate"',
-            'elif [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then',
-            '  source "$PROJECT_ROOT/.venv/bin/activate"',
-            "fi",
-            'if [ -n "${HYBRID_SWEEP_PYTHON:-}" ]; then',
-            '  if command -v "${HYBRID_SWEEP_PYTHON}" >/dev/null 2>&1; then',
-            '    PYTHON_BIN="$(command -v "${HYBRID_SWEEP_PYTHON}")"',
-            "  else",
-            '    PYTHON_BIN="${HYBRID_SWEEP_PYTHON}"',
-            "  fi",
-            'elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x "${VIRTUAL_ENV}/bin/python3" ]; then',
-            '  PYTHON_BIN="${VIRTUAL_ENV}/bin/python3"',
-            "else",
-            '  PYTHON_BIN="$(command -v python3)"',
-            "fi",
-            'export PYTHONUNBUFFERED=1',
-            '"$PYTHON_BIN" -u "$SCRIPT_DIR/workflow.py" assemble-results --base-dir "$BASE_DIR"',
-        ]
-    )
-    return "\n".join(lines) + "\n"
+    collect_walltime = os.environ.get("HYBRID_SWEEP_COLLECT_WALLTIME", "01:00:00").strip() or "01:00:00"
+    directives = "\n".join(_optional_sbatch_directives("COLLECT"))
+    if directives:
+        directives += "\n"
+    return f"""#!/bin/bash
+#SBATCH --job-name=hybrid_rmsf_collect
+#SBATCH --output={_slurm_dir(base_dir) / "collect_%j.out"}
+#SBATCH --error={_slurm_dir(base_dir) / "collect_%j.err"}
+#SBATCH --time={collect_walltime}
+#SBATCH --cpus-per-task=1
+{directives}set -euo pipefail
+
+PROJECT_ROOT="{REPO_ROOT}"
+WORKFLOW_DIR="{WORKFLOW_DIR}"
+BASE_DIR="{base_dir}"
+
+if [ -f /etc/profile.d/modules.sh ]; then
+  source /etc/profile.d/modules.sh
+fi
+
+if command -v module >/dev/null 2>&1; then
+  module load python/3.11.9 || true
+  module load cmake || true
+  module load openmpi || true
+  module load "${{HYBRID_SWEEP_HDF5_MODULE:-hdf5/1.14.3}}" || true
+fi
+
+if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
+  source "$PROJECT_ROOT/.venv/bin/activate"
+fi
+
+PYTHON_BIN="${{HYBRID_SWEEP_PYTHON:-python3}}"
+export HYBRID_SWEEP_PROJECT_ROOT="$PROJECT_ROOT"
+export PYTHONUNBUFFERED=1
+
+"$PYTHON_BIN" -u "$WORKFLOW_DIR/workflow.py" assemble-results --base-dir "$BASE_DIR"
+"""
 
 
 def _analysis_array_script_content(round_manifest_path: Path, base_dir: Path, n_tasks: int) -> str:
-    output_path = _analysis_slurm_dir(base_dir) / "analyze-%A_%a.out"
-    lines = [
-        "#!/bin/bash",
-        f"#SBATCH --job-name=hybrid-analyze-{base_dir.name}",
-        f"#SBATCH --output={output_path}",
-        f"#SBATCH --time={os.environ.get('HYBRID_SWEEP_ANALYSIS_WALLTIME', '08:00:00')}",
-        "#SBATCH --nodes=1",
-        "#SBATCH --ntasks=1",
-        f"#SBATCH --cpus-per-task={int(os.environ.get('HYBRID_SWEEP_ANALYSIS_CPUS_PER_TASK', '1'))}",
-        f"#SBATCH --array=0-{n_tasks - 1}",
-    ]
-    lines.extend(_optional_sbatch_directives("ANALYSIS"))
-    lines.extend(
-        [
-            "",
-            "set -euo pipefail",
-            "",
-            f"SCRIPT_DIR={shlex.quote(str(WORKFLOW_DIR))}",
-            f"ROUND_MANIFEST={shlex.quote(str(round_manifest_path))}",
-            f"PROJECT_ROOT={shlex.quote(str(REPO_ROOT))}",
-            'PYTHON_BIN=""',
-            "",
-            "if [ -f /etc/profile.d/modules.sh ]; then",
-            "  source /etc/profile.d/modules.sh",
-            "fi",
-            "",
-            "if command -v module >/dev/null 2>&1; then",
-            "  module load python/3.11.9 || true",
-            "  module load cmake || true",
-            "  module load openmpi || true",
-            '  module load "${HYBRID_SWEEP_HDF5_MODULE:-hdf5/1.14.3}" || true',
-            "fi",
-            "",
-            'if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then',
-            '  source "$SCRIPT_DIR/.venv/bin/activate"',
-            'elif [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then',
-            '  source "$PROJECT_ROOT/.venv/bin/activate"',
-            "fi",
-            "",
-            'if [ -n "${HYBRID_SWEEP_PYTHON:-}" ]; then',
-            '  if command -v "${HYBRID_SWEEP_PYTHON}" >/dev/null 2>&1; then',
-            '    PYTHON_BIN="$(command -v "${HYBRID_SWEEP_PYTHON}")"',
-            "  else",
-            '    PYTHON_BIN="${HYBRID_SWEEP_PYTHON}"',
-            "  fi",
-            'elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x "${VIRTUAL_ENV}/bin/python3" ]; then',
-            '  PYTHON_BIN="${VIRTUAL_ENV}/bin/python3"',
-            "else",
-            '  PYTHON_BIN="$(command -v python3)"',
-            "fi",
-            "",
-            'if [ -z "${MY_PYTHON:-}" ]; then',
-            '  py_path="$(command -v "$PYTHON_BIN" || true)"',
-            '  if [ -n "$py_path" ]; then',
-            '    export MY_PYTHON="$(cd "$(dirname "$py_path")/.." && pwd)"',
-            "  fi",
-            "fi",
-            "set +u",
-            'source "$PROJECT_ROOT/source.sh"',
-            "set -u",
-            'export PYTHONUNBUFFERED=1',
-            'cmd=("$PYTHON_BIN" -u "$SCRIPT_DIR/workflow.py" run-analysis-task --round-manifest "$ROUND_MANIFEST" --task-id "$SLURM_ARRAY_TASK_ID")',
-            'if [ "${HYBRID_SWEEP_OVERWRITE:-0}" = "1" ]; then',
-            '  cmd+=(--overwrite)',
-            "fi",
-            '"${cmd[@]}"',
-        ]
-    )
-    return "\n".join(lines) + "\n"
+    walltime = os.environ.get("HYBRID_SWEEP_ANALYSIS_WALLTIME", "04:00:00").strip() or "04:00:00"
+    cpus_per_task = int(os.environ.get("HYBRID_SWEEP_ANALYSIS_CPUS_PER_TASK", "1"))
+    directives = "\n".join(_optional_sbatch_directives("ANALYSIS"))
+    if directives:
+        directives += "\n"
+    return f"""#!/bin/bash
+#SBATCH --job-name=hybrid_rmsf_analysis
+#SBATCH --output={_analysis_slurm_dir(base_dir) / "array_%A_%a.out"}
+#SBATCH --error={_analysis_slurm_dir(base_dir) / "array_%A_%a.err"}
+#SBATCH --array=0-{max(0, n_tasks - 1)}
+#SBATCH --time={walltime}
+#SBATCH --cpus-per-task={cpus_per_task}
+{directives}set -euo pipefail
+
+PROJECT_ROOT="{REPO_ROOT}"
+WORKFLOW_DIR="{WORKFLOW_DIR}"
+ROUND_MANIFEST="{round_manifest_path}"
+TASK_ID="${{SLURM_ARRAY_TASK_ID:?}}"
+
+if [ -f /etc/profile.d/modules.sh ]; then
+  source /etc/profile.d/modules.sh
+fi
+
+if command -v module >/dev/null 2>&1; then
+  module load python/3.11.9 || true
+  module load cmake || true
+  module load openmpi || true
+  module load "${{HYBRID_SWEEP_HDF5_MODULE:-hdf5/1.14.3}}" || true
+fi
+
+if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
+  source "$PROJECT_ROOT/.venv/bin/activate"
+fi
+
+PYTHON_BIN="${{HYBRID_SWEEP_PYTHON:-python3}}"
+export HYBRID_SWEEP_PROJECT_ROOT="$PROJECT_ROOT"
+export PYTHONUNBUFFERED=1
+
+"$PYTHON_BIN" -u "$WORKFLOW_DIR/workflow.py" run-analysis-task --round-manifest "$ROUND_MANIFEST" --task-id "$TASK_ID"
+"""
 
 
 def _analysis_collector_script_content(base_dir: Path) -> str:
-    output_path = _analysis_slurm_dir(base_dir) / "collect-analysis-%j.out"
-    lines = [
-        "#!/bin/bash",
-        f"#SBATCH --job-name=hybrid-analyze-collect-{base_dir.name}",
-        f"#SBATCH --output={output_path}",
-        f"#SBATCH --time={os.environ.get('HYBRID_SWEEP_ANALYSIS_COLLECT_WALLTIME', '01:00:00')}",
-        "#SBATCH --nodes=1",
-        "#SBATCH --ntasks=1",
-        "#SBATCH --cpus-per-task=1",
-    ]
-    lines.extend(_optional_sbatch_directives("COLLECT"))
-    lines.extend(
-        [
-            "",
-            "set -euo pipefail",
-            "",
-            f"SCRIPT_DIR={shlex.quote(str(WORKFLOW_DIR))}",
-            f"BASE_DIR={shlex.quote(str(base_dir))}",
-            f"PROJECT_ROOT={shlex.quote(str(REPO_ROOT))}",
-            'PYTHON_BIN=""',
-            "",
-            "if [ -f /etc/profile.d/modules.sh ]; then",
-            "  source /etc/profile.d/modules.sh",
-            "fi",
-            "",
-            "if command -v module >/dev/null 2>&1; then",
-            "  module load python/3.11.9 || true",
-            "  module load cmake || true",
-            "  module load openmpi || true",
-            '  module load "${HYBRID_SWEEP_HDF5_MODULE:-hdf5/1.14.3}" || true',
-            "fi",
-            "",
-            'if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then',
-            '  source "$SCRIPT_DIR/.venv/bin/activate"',
-            'elif [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then',
-            '  source "$PROJECT_ROOT/.venv/bin/activate"',
-            "fi",
-            "",
-            'if [ -n "${HYBRID_SWEEP_PYTHON:-}" ]; then',
-            '  if command -v "${HYBRID_SWEEP_PYTHON}" >/dev/null 2>&1; then',
-            '    PYTHON_BIN="$(command -v "${HYBRID_SWEEP_PYTHON}")"',
-            "  else",
-            '    PYTHON_BIN="${HYBRID_SWEEP_PYTHON}"',
-            "  fi",
-            'elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x "${VIRTUAL_ENV}/bin/python3" ]; then',
-            '  PYTHON_BIN="${VIRTUAL_ENV}/bin/python3"',
-            "else",
-            '  PYTHON_BIN="$(command -v python3)"',
-            "fi",
-            'export PYTHONUNBUFFERED=1',
-            '"$PYTHON_BIN" -u "$SCRIPT_DIR/workflow.py" assemble-analysis --base-dir "$BASE_DIR"',
-        ]
-    )
-    return "\n".join(lines) + "\n"
+    collect_walltime = os.environ.get("HYBRID_SWEEP_ANALYSIS_COLLECT_WALLTIME", "01:00:00").strip() or "01:00:00"
+    directives = "\n".join(_optional_sbatch_directives("ANALYSIS_COLLECT"))
+    if directives:
+        directives += "\n"
+    return f"""#!/bin/bash
+#SBATCH --job-name=hybrid_rmsf_analysis_collect
+#SBATCH --output={_analysis_slurm_dir(base_dir) / "collect_%j.out"}
+#SBATCH --error={_analysis_slurm_dir(base_dir) / "collect_%j.err"}
+#SBATCH --time={collect_walltime}
+#SBATCH --cpus-per-task=1
+{directives}set -euo pipefail
+
+PROJECT_ROOT="{REPO_ROOT}"
+WORKFLOW_DIR="{WORKFLOW_DIR}"
+BASE_DIR="{base_dir}"
+
+if [ -f /etc/profile.d/modules.sh ]; then
+  source /etc/profile.d/modules.sh
+fi
+
+if command -v module >/dev/null 2>&1; then
+  module load python/3.11.9 || true
+  module load cmake || true
+  module load openmpi || true
+  module load "${{HYBRID_SWEEP_HDF5_MODULE:-hdf5/1.14.3}}" || true
+fi
+
+if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
+  source "$PROJECT_ROOT/.venv/bin/activate"
+fi
+
+PYTHON_BIN="${{HYBRID_SWEEP_PYTHON:-python3}}"
+export HYBRID_SWEEP_PROJECT_ROOT="$PROJECT_ROOT"
+export PYTHONUNBUFFERED=1
+
+"$PYTHON_BIN" -u "$WORKFLOW_DIR/workflow.py" assemble-analysis --base-dir "$BASE_DIR"
+"""
 
 
 def cmd_submit_slurm(args: argparse.Namespace) -> int:
     base_dir = Path(args.base_dir).expanduser().resolve()
     manifest = _load_manifest(base_dir)
-    n_tasks = len(manifest["tasks"])
-    if n_tasks <= 0:
-        raise RuntimeError("Sweep manifest contains no tasks")
+    tasks = manifest["tasks"]
+    if not tasks:
+        raise RuntimeError("No tasks available to submit")
+
+    slurm_dir = _slurm_dir(base_dir)
+    slurm_dir.mkdir(parents=True, exist_ok=True)
+    round_manifest_path = slurm_dir / "round_manifest.json"
+    array_script = slurm_dir / "run_array.sbatch"
+    collect_script = slurm_dir / "collect_results.sbatch"
+
     round_manifest = {
         "schema": SCHEMA_SLURM_ROUND,
         "created_at_utc": _now_utc(),
         "base_dir": str(base_dir),
         "manifest_path": str(_manifest_path(base_dir)),
-        "n_tasks": n_tasks,
+        "task_count": int(len(tasks)),
     }
-    round_manifest_path = _slurm_dir(base_dir) / "round_manifest.json"
     _write_json(round_manifest_path, round_manifest)
-
-    array_script = _slurm_dir(base_dir) / "run_array.sbatch"
-    collector_script = _slurm_dir(base_dir) / "collect_results.sbatch"
-    _write_text(array_script, _array_script_content(round_manifest_path, base_dir, n_tasks), executable=True)
-    _write_text(collector_script, _collector_script_content(base_dir), executable=True)
-
-    print(f"Round manifest: {round_manifest_path}")
-    print(f"Array script: {array_script}")
-    print(f"Collector script: {collector_script}")
+    _write_text(array_script, _array_script_content(round_manifest_path, base_dir, len(tasks)), executable=True)
+    _write_text(collect_script, _collector_script_content(base_dir), executable=True)
 
     if args.no_submit:
-        print("Staged Slurm scripts only; no jobs submitted.")
+        print(f"Staged Slurm run scripts under {slurm_dir}")
         return 0
 
-    if not _shutil_which("sbatch"):
-        raise RuntimeError("sbatch not available in PATH")
-
-    train_job = _run_sbatch(["sbatch", "--parsable", str(array_script)])
-    collect_job = _run_sbatch(["sbatch", "--parsable", f"--dependency=afterok:{train_job}", str(collector_script)])
+    sbatch = _shutil_which("sbatch")
+    if sbatch is None:
+        raise RuntimeError("sbatch not found in PATH")
+    array_job_id = _run_sbatch([sbatch, "--parsable", str(array_script)])
+    collect_job_id = _run_sbatch([sbatch, "--parsable", f"--dependency=afterok:{array_job_id}", str(collect_script)])
     _write_json(
-        _slurm_dir(base_dir) / "submission.json",
+        slurm_dir / "submission.json",
         {
             "created_at_utc": _now_utc(),
-            "run_job_id": train_job,
-            "collect_job_id": collect_job,
+            "array_job_id": array_job_id,
+            "collect_job_id": collect_job_id,
         },
     )
-    print(f"Submitted sweep array job: {train_job}")
-    print(f"Submitted collector job: {collect_job}")
+    print(f"Submitted array job {array_job_id}")
+    print(f"Submitted collector job {collect_job_id}")
     return 0
 
 
 def cmd_submit_analysis_slurm(args: argparse.Namespace) -> int:
     base_dir = Path(args.base_dir).expanduser().resolve()
     analysis_manifest = _load_analysis_manifest(base_dir)
-    n_tasks = len(analysis_manifest["tasks"])
-    if n_tasks <= 0:
-        raise RuntimeError("Analysis manifest contains no tasks")
+    tasks = analysis_manifest["tasks"]
+    if not tasks:
+        raise RuntimeError("No analysis tasks available to submit")
+
+    slurm_dir = _analysis_slurm_dir(base_dir)
+    slurm_dir.mkdir(parents=True, exist_ok=True)
+    round_manifest_path = slurm_dir / "round_manifest.json"
+    array_script = slurm_dir / "analyze_array.sbatch"
+    collect_script = slurm_dir / "collect_analysis.sbatch"
+
     round_manifest = {
         "schema": SCHEMA_ANALYSIS_SLURM,
         "created_at_utc": _now_utc(),
         "base_dir": str(base_dir),
         "analysis_manifest_path": str(_analysis_manifest_path(base_dir)),
-        "n_tasks": n_tasks,
+        "task_count": int(len(tasks)),
     }
-    round_manifest_path = _analysis_slurm_dir(base_dir) / "round_manifest.json"
     _write_json(round_manifest_path, round_manifest)
-
-    array_script = _analysis_slurm_dir(base_dir) / "analyze_array.sbatch"
-    collector_script = _analysis_slurm_dir(base_dir) / "collect_analysis.sbatch"
     _write_text(
         array_script,
-        _analysis_array_script_content(round_manifest_path, base_dir, n_tasks),
+        _analysis_array_script_content(round_manifest_path, base_dir, len(tasks)),
         executable=True,
     )
-    _write_text(
-        collector_script,
-        _analysis_collector_script_content(base_dir),
-        executable=True,
-    )
-
-    print(f"Analysis round manifest: {round_manifest_path}")
-    print(f"Analysis array script: {array_script}")
-    print(f"Analysis collector script: {collector_script}")
+    _write_text(collect_script, _analysis_collector_script_content(base_dir), executable=True)
 
     if args.no_submit:
-        print("Staged analysis Slurm scripts only; no jobs submitted.")
+        print(f"Staged analysis Slurm scripts under {slurm_dir}")
         return 0
 
-    if not _shutil_which("sbatch"):
-        raise RuntimeError("sbatch not available in PATH")
-
-    analyze_job = _run_sbatch(["sbatch", "--parsable", str(array_script)])
-    collect_job = _run_sbatch(["sbatch", "--parsable", f"--dependency=afterok:{analyze_job}", str(collector_script)])
+    sbatch = _shutil_which("sbatch")
+    if sbatch is None:
+        raise RuntimeError("sbatch not found in PATH")
+    array_job_id = _run_sbatch([sbatch, "--parsable", str(array_script)])
+    collect_job_id = _run_sbatch([sbatch, "--parsable", f"--dependency=afterok:{array_job_id}", str(collect_script)])
     _write_json(
-        _analysis_slurm_dir(base_dir) / "submission.json",
+        slurm_dir / "submission.json",
         {
             "created_at_utc": _now_utc(),
-            "analyze_job_id": analyze_job,
-            "collect_job_id": collect_job,
+            "array_job_id": array_job_id,
+            "collect_job_id": collect_job_id,
         },
     )
-    print(f"Submitted analysis array job: {analyze_job}")
-    print(f"Submitted analysis collector job: {collect_job}")
+    print(f"Submitted analysis array job {array_job_id}")
+    print(f"Submitted analysis collector job {collect_job_id}")
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Hybrid interface softening sweep workflow")
+    parser = argparse.ArgumentParser(description="Hybrid interface RMSF calibration sweep")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_init = sub.add_parser("init-run", help="Initialize a new bilayer-only softening sweep")
+    p_init = sub.add_parser("init-run", help="Initialize a new interface-scale RMSF sweep")
     p_init.add_argument("--base-dir", default=str(WORKFLOW_DIR / "runs" / "default"))
     p_init.add_argument("--pdb-id", default=DEFAULT_PDB_ID)
-    p_init.add_argument("--lj-alphas", type=_float_list_arg, default=DEFAULT_LJ_ALPHAS)
-    p_init.add_argument("--slater-alphas", type=_float_list_arg, default=DEFAULT_SLATER_ALPHAS)
-    p_init.add_argument("--replicates", type=int, default=DEFAULT_REPLICATES)
+    p_init.add_argument("--interface-scales", type=_float_list_arg, default=DEFAULT_INTERFACE_SCALES)
+    p_init.add_argument("--hybrid-replicates", type=int, default=DEFAULT_HYBRID_REPLICATES)
+    p_init.add_argument("--reference-replicates", type=int, default=DEFAULT_REFERENCE_REPLICATES)
     p_init.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    p_init.add_argument("--integration-ps-per-step", type=float, default=DEFAULT_INTEGRATION_PS_PER_STEP)
-    p_init.add_argument("--target-diffusion-um2-s", type=float, default=None)
+    p_init.add_argument("--burn-in-fraction", type=float, default=DEFAULT_BURN_IN_FRACTION)
+    p_init.add_argument("--trendline-samples", type=int, default=DEFAULT_TRENDLINE_SAMPLES)
     p_init.set_defaults(func=cmd_init_run)
 
     p_local = sub.add_parser("run-local", help="Run sweep tasks locally")
     p_local.add_argument("--base-dir", default=str(WORKFLOW_DIR / "runs" / "default"))
-    p_local.add_argument("--max-tasks", type=int, default=None)
+    p_local.add_argument("--max-tasks", type=int)
     p_local.add_argument("--start-task", type=int, default=0)
     p_local.add_argument("--overwrite", action="store_true")
     p_local.add_argument("--no-assemble", action="store_true")
     p_local.set_defaults(func=cmd_run_local)
 
-    p_array = sub.add_parser("run-array-task", help="Run a single Slurm array task")
+    p_array = sub.add_parser("run-array-task", help="Run one task from a Slurm round manifest")
     p_array.add_argument("--round-manifest", required=True)
     p_array.add_argument("--task-id", required=True, type=int)
     p_array.add_argument("--overwrite", action="store_true")
@@ -2094,19 +1882,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_submit.add_argument("--no-submit", action="store_true")
     p_submit.set_defaults(func=cmd_submit_slurm)
 
-    p_init_analysis = sub.add_parser("init-analysis", help="Discover completed stage-7 files for analysis")
+    p_init_analysis = sub.add_parser("init-analysis", help="Discover completed outputs for RMSF analysis")
     p_init_analysis.add_argument("--base-dir", default=str(WORKFLOW_DIR / "runs" / "default"))
     p_init_analysis.set_defaults(func=cmd_init_analysis)
 
     p_analysis_local = sub.add_parser("run-analysis-local", help="Run completed analysis tasks locally")
     p_analysis_local.add_argument("--base-dir", default=str(WORKFLOW_DIR / "runs" / "default"))
-    p_analysis_local.add_argument("--max-tasks", type=int, default=None)
+    p_analysis_local.add_argument("--max-tasks", type=int)
     p_analysis_local.add_argument("--start-task", type=int, default=0)
     p_analysis_local.add_argument("--overwrite", action="store_true")
     p_analysis_local.add_argument("--no-assemble", action="store_true")
     p_analysis_local.set_defaults(func=cmd_run_analysis_local)
 
-    p_analysis_task = sub.add_parser("run-analysis-task", help="Run a single analysis Slurm array task")
+    p_analysis_task = sub.add_parser("run-analysis-task", help="Run one analysis task from a Slurm round manifest")
     p_analysis_task.add_argument("--round-manifest", required=True)
     p_analysis_task.add_argument("--task-id", required=True, type=int)
     p_analysis_task.add_argument("--overwrite", action="store_true")

@@ -1,6 +1,82 @@
 # Findings
 
 ## 2026-04-14 (Current Workflow Target)
+- `hybrid-interface-sweep/` is no longer a bilayer-only diffusion or softening workflow.
+- The new target is an interface-scale calibration workflow for `1rkl`.
+- The desired calibration observable is protein backbone RMSF:
+  - reference method: `example/08.MembraneSimulation`
+  - swept method: `example/16.MARTINI`
+
+## 2026-04-14 (Reference Surface: Example 08)
+- The relevant `1rkl` example-08 workflow is `example/08.MembraneSimulation/3.fixed_curvature.run.py`.
+- Its reference settings are materially different from the generic membrane example:
+  - `pdb_id = 1rkl`
+  - `membrane_thickness = 24.8`
+  - `use_curvature = True`
+  - `curvature_radius = 120.0`
+  - `curvature_sign = 1`
+  - `temperature = 0.80`
+  - `exchange = False`
+- Because `exchange = False`, running each reference replicate independently is equivalent to the bundled replica launch used in the example script.
+- The example-08 config surface for `1rkl` exposes the same 31-residue backbone triplet structure needed for RMSF comparison:
+  - `input/potential/affine_alignment/atoms` has shape `(31, 3)`.
+
+## 2026-04-14 (Hybrid Surface: Example 16)
+- The relevant hybrid control already exists in `example/16.MARTINI/run_sim_1rkl.sh` and in the engine:
+  - env var `PROTEIN_ENV_INTERFACE_SCALE`
+  - HDF5 attr `input/hybrid_control/protein_env_interface_scale`
+- The hybrid stage-7 output for `1rkl` already exposes a directly comparable 31-residue backbone map:
+  - `input/hybrid_bb_map/aa_atom_index` has shape `(31, 3)`.
+- This supports a shared analysis surface:
+  - rigid alignment over mapped backbone carrier atoms,
+  - per-residue RMSF from the mapped CA-like atom.
+
+## 2026-04-14 (Runtime Path Hazard)
+- `source.sh` in this checkout currently exports:
+  - `UPSIDE_HOME=/Users/yinhan/Documents/upside2-md-martini`
+- That path does not exist locally.
+- `example/16.MARTINI/run_sim_1rkl.sh` currently re-sources `source.sh`, so it will clobber any caller-provided `UPSIDE_HOME` unless the script is patched to preserve it.
+- Consequence:
+  - the new sweep should set repo-local runtime paths itself,
+  - and the example-16 runner must honor an already-set `UPSIDE_HOME`.
+
+## 2026-04-14 (Wrapper Python Resolution)
+- Relying on shell activation state alone is not robust enough for this workflow.
+- In the first smoke attempt, the wrapper fell back to a system `python3` that imported `h5py` from Homebrew but had no `numpy` available in that interpreter.
+- The shell wrappers therefore need to prefer repo-local `.venv/bin/python3` directly before falling back to `VIRTUAL_ENV` or system `python3`.
+
+## 2026-04-14 (Reduced RMSF Smoke Verification)
+- A reduced end-to-end smoke run under `/tmp/hybrid_interface_rmsf_smoke` completed successfully with:
+  - `reference_replicates = 1`
+  - `hybrid_replicates = 1`
+  - `interface_scale = 0.85`
+  - shortened reference and hybrid stage lengths for verification only.
+- The hybrid task reached and saved:
+  - `tasks/scale0p85_r01/run/checkpoints/1rkl.stage_7.0.up`
+- The staged hybrid control in that file carries the requested scale:
+  - `input/hybrid_control/protein_env_interface_scale = 0.85`
+- The reduced analysis also completed successfully and wrote the full assembled RMSF output set:
+  - `task_results.csv`
+  - `residue_rmsf_profiles.csv`
+  - `reference_profile.csv`
+  - `condition_profiles.csv`
+  - `condition_summary.csv`
+  - `trendline_points.csv`
+  - `recommendation_summary.json`
+  - `summary.json`
+- With only one sampled scale in the smoke tree, the trend-line fit correctly degrades to a degree-0 constant fit and recommends that same sampled scale.
+
+## 2026-04-14 (Analysis Surface)
+- There is no existing RMSF analysis helper in the repo for this calibration.
+- The new analysis should therefore compute and store:
+  - per-task residue RMSF profiles,
+  - aggregate reference RMSF profile,
+  - per-hybrid-task RMSF mismatch against that reference,
+  - condition-level summaries over `interface_scale`,
+  - fit samples for a trend line used to choose the recommended scale.
+- Plot-ready outputs should be explicit CSV files rather than requiring notebook-only postprocessing.
+
+## 2026-04-14 (Current Workflow Target)
 - `hybrid-interface-sweep/` must be a bilayer-only calibration workflow.
 - The requested fix is to use softened potentials for both LJ and Coulomb in production-stage `7.0`.
 - The requested change belongs only in `hybrid-interface-sweep/`.
@@ -80,3 +156,6 @@
 - When a workflow semantics change invalidates old run trees, bump the manifest/result schemas immediately so reuse fails loudly.
 - When a workflow script is launched from a managed environment, subprocess Python calls must use `sys.executable` rather than bare `python3`.
 - When the user provides only a downloaded analysis tree, state explicitly whether the rerun is a fresh recomputation from raw checkpoints or a validation/review of the downloaded artifacts.
+- When the user redirects the scientific target entirely, rewrite the workflow around the new observable instead of trying to preserve the previous analysis pipeline.
+- When an example script re-sources environment setup, preserve caller-supplied runtime paths if the sweep depends on running that script from the current checkout.
+- When wrappers are meant to use a repo-local virtualenv, prefer the concrete `.venv/bin/python3` path before trusting the ambient shell state.

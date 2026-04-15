@@ -218,6 +218,79 @@
   - `po4_diffusion_um2_per_s_std = 0.0276`
   - `CV = 0.015`
   - `min R^2 = 0.9966`
+
+## 2026-04-14 (Workflow Replacement: RMSF Calibration)
+- Reopened `hybrid-interface-sweep/` after the user changed the scientific target again:
+  - the softening and diffusion workflows were no longer relevant,
+  - the new task was to sweep `PROTEIN_ENV_INTERFACE_SCALE` and match example-08 `1rkl` RMSF with example-16 hybrid `1rkl`.
+- Rewrote the tracker files:
+  - `hybrid-interface-sweep/plan.md`
+  - `hybrid-interface-sweep/findings.md`
+- Replaced `hybrid-interface-sweep/workflow.py` so the workflow now:
+  - builds a mixed manifest with `reference` and `hybrid` task families,
+  - runs example-08-style fixed-curvature reference replicates directly through Upside,
+  - runs example-16 hybrid replicates through `run_sim_1rkl.sh`,
+  - sweeps `PROTEIN_ENV_INTERFACE_SCALE`,
+  - assembles run results grouped by `interface_scale`,
+  - discovers completed reference and hybrid outputs for analysis,
+  - computes aligned residue-wise backbone RMSF,
+  - aggregates the reference RMSF profile,
+  - scores hybrid RMSF mismatch against that reference,
+  - writes condition-level RMSF error tables and fitted trend-line samples,
+  - writes `recommendation_summary.json` with both sampled-best and trend-line-selected scale.
+- Patched the hybrid example runner:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - it now preserves a caller-provided `UPSIDE_HOME` even though it still sources the local `source.sh`.
+- Updated wrapper scripts:
+  - `hybrid-interface-sweep/run_local.sh`
+  - `hybrid-interface-sweep/submit_remote_round.sh`
+  - `hybrid-interface-sweep/run_analysis_local.sh`
+  - `hybrid-interface-sweep/submit_analysis.sh`
+  - wrappers now prefer repo-local `.venv/bin/python3` directly and pass the new interface-scale / replicate knobs.
+- Rewrote:
+  - `hybrid-interface-sweep/README.md`
+
+## 2026-04-14 (Verification: RMSF Workflow)
+- Ran static verification:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
+  - `bash -n hybrid-interface-sweep/run_local.sh`
+  - `bash -n hybrid-interface-sweep/submit_remote_round.sh`
+  - `bash -n hybrid-interface-sweep/run_analysis_local.sh`
+  - `bash -n hybrid-interface-sweep/submit_analysis.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+- Ran a reduced local smoke sweep under `/tmp/hybrid_interface_rmsf_smoke` with:
+  - `interface_scale = 0.85`
+  - `reference_replicates = 1`
+  - `hybrid_replicates = 1`
+  - `REFERENCE_DURATION = 20`
+  - `REFERENCE_FRAME_INTERVAL = 1`
+  - `MIN_60_MAX_ITER = 1`
+  - `MIN_61_MAX_ITER = 1`
+  - `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1`
+  - `PROD_70_NSTEPS = 20`
+  - `EQ_FRAME_STEPS = 1`
+  - `PROD_FRAME_STEPS = 1`
+- Verified the smoke run outputs:
+  - both task result JSON files were written,
+  - the hybrid task produced `tasks/scale0p85_r01/run/checkpoints/1rkl.stage_7.0.up`,
+  - assembled run summary reports `1` completed reference task and `1` completed hybrid task,
+  - direct HDF5 inspection confirmed `input/hybrid_control/protein_env_interface_scale = 0.85`.
+- Ran reduced local analysis on the same smoke tree and verified:
+  - `analysis/assembled/task_results.csv`
+  - `analysis/assembled/residue_rmsf_profiles.csv`
+  - `analysis/assembled/reference_profile.csv`
+  - `analysis/assembled/condition_profiles.csv`
+  - `analysis/assembled/condition_summary.csv`
+  - `analysis/assembled/trendline_points.csv`
+  - `analysis/assembled/recommendation_summary.json`
+  - `analysis/assembled/summary.json`
+- Verified no-submit Slurm staging:
+  - `slurm/round_manifest.json`
+  - `slurm/run_array.sbatch`
+  - `slurm/collect_results.sbatch`
+  - `analysis/slurm/round_manifest.json`
+  - `analysis/slurm/analyze_array.sbatch`
+  - `analysis/slurm/collect_analysis.sbatch`
 - Compared the refined range against the same provisional `40 ps/step` target proxy from `hybrid_timescale.md`:
   - target remains about `2.892 um^2/s` at `T = 0.8647`,
   - the best tested point `0.02` still falls short by about `1.064 um^2/s`,

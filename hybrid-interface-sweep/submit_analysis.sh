@@ -73,6 +73,16 @@ resolve_python_bin() {
     return
   fi
 
+  if [ -x "$SCRIPT_DIR/.venv/bin/python3" ]; then
+    PYTHON_BIN="$SCRIPT_DIR/.venv/bin/python3"
+    return
+  fi
+
+  if [ -n "${PROJECT_ROOT:-}" ] && [ -x "$PROJECT_ROOT/.venv/bin/python3" ]; then
+    PYTHON_BIN="$PROJECT_ROOT/.venv/bin/python3"
+    return
+  fi
+
   if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "${VIRTUAL_ENV}/bin/python3" ]; then
     PYTHON_BIN="${VIRTUAL_ENV}/bin/python3"
     return

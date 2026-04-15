@@ -2,7 +2,11 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+CALLER_UPSIDE_HOME="${UPSIDE_HOME:-}"
 source "${PROJECT_ROOT}/source.sh"
+if [ -n "${CALLER_UPSIDE_HOME}" ]; then
+    export UPSIDE_HOME="${CALLER_UPSIDE_HOME}"
+fi
 if [ -d "${PROJECT_ROOT}/.venv/bin" ]; then
     export PATH="${PROJECT_ROOT}/.venv/bin:$PATH"
 fi
