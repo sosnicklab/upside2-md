@@ -33,6 +33,7 @@
 ## Known Errors / Blockers
 - Base directories initialized with the scalar `interaction_scale` manifest are intentionally incompatible with the restored workflow and must be reinitialized.
 - Any previously downloaded scalar-factor analysis is not valid for selecting softened-potential parameters.
+- The current local repo copy contains the downloaded `analysis/` artifacts but not the corresponding full sweep task tree, so re-analysis here means revalidating the downloaded task/condition results rather than recomputing from raw stage-7 checkpoints.
 
 ## Review
 - Implemented:
@@ -69,3 +70,24 @@
     - `analysis/assembled/condition_summary.csv`
     - `analysis/assembled/recommendation_summary.json`
     - `analysis/assembled/summary.json`
+- Downloaded analysis rerun:
+  - reviewed the downloaded `hybrid-interface-sweep/analysis/` tree now present in the repo,
+  - confirmed `75 / 75` task results succeeded with `0` failed tasks and full `3 / 3` replicate coverage for all `25` `(lj_alpha, slater_alpha)` conditions,
+  - confirmed task-level consistency:
+    - `160` frames used in every task,
+    - `102` `PO4` beads in every task,
+    - all diffusion outputs finite,
+    - `PO4` fit quality spans `R^2 = 0.9780 -> 0.9927`,
+  - saved recommendation remains:
+    - `lj_alpha = 0.1`
+    - `slater_alpha = 0.5`
+    - `po4_diffusion_um2_per_s_mean = 0.8621`
+    - `po4_diffusion_um2_per_s_std = 0.0706`
+    - `CV = 0.082`,
+  - nearby alternatives worth noting:
+    - lower-perturbation high-fluidity branch: `(0.0, 1.0)` with `0.8584 um^2/s`, `CV = 0.047`,
+    - highest-stability near-top branch: `(0.1, 2.0)` with `0.8510 um^2/s`, `CV = 0.013`, `min R^2 = 0.9888`,
+  - compared against the same provisional `40 ps/step` target proxy from `hybrid_timescale.md`:
+    - target at `T = 0.8647` remains about `2.892 um^2/s`,
+    - the best tested condition reaches only about `30%` of that target,
+    - so this restored softening sweep still does not demonstrate a target match.

@@ -277,3 +277,30 @@
     - `coulomb_soften = 1`
     - `slater_alpha = 0.5`
   - reduced local analysis run assembled successfully under `/tmp/hybrid_interface_softening_restore_smoke/analysis/assembled`
+
+## 2026-04-14 (Downloaded Softening Analysis Review Rerun)
+- Reopened `hybrid-interface-sweep/` after the user reported that they had run the restored workflow remotely and downloaded the `analysis/` folder.
+- Confirmed the local repo copy contains the downloaded analysis artifacts under `hybrid-interface-sweep/analysis/`, but not the full local sweep task tree.
+- Re-ran the review from the downloaded assembled artifacts:
+  - `hybrid-interface-sweep/analysis/assembled/task_results.csv`
+  - `hybrid-interface-sweep/analysis/assembled/condition_summary.csv`
+  - `hybrid-interface-sweep/analysis/assembled/recommendation_summary.json`
+  - `hybrid-interface-sweep/analysis/assembled/summary.json`
+- Rechecked completeness and internal consistency:
+  - `75 / 75` analysis tasks succeeded,
+  - `0` failed tasks,
+  - `25 / 25` conditions have full `3 / 3` replicate coverage,
+  - all tasks use `160` frames and `102` `PO4` beads,
+  - all diffusion outputs are finite,
+  - task-level `PO4` fit quality spans `R^2 = 0.9780 -> 0.9927`.
+- Re-reviewed condition-level behavior:
+  - saved workflow recommendation remains `(lj_alpha, slater_alpha) = (0.1, 0.5)`,
+  - best mean diffusion is `0.8621 um^2/s`,
+  - but this branch has moderate replicate spread (`CV = 0.082`),
+  - nearby alternatives still matter scientifically:
+    - `(0.0, 1.0)` is nearly as fast at `0.8584 um^2/s` with lower perturbation and lower spread,
+    - `(0.1, 2.0)` is slightly slower at `0.8510 um^2/s` but is the most stable near-top branch.
+- Compared the downloaded results against the same provisional `40 ps/step` target proxy from `hybrid_timescale.md`:
+  - target remains about `2.892 um^2/s` at `T = 0.8647`,
+  - the sweep reaches only `0.733 -> 0.862 um^2/s`,
+  - so this restored softening workflow still does not produce a demonstrated target match in the tested grid.

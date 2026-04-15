@@ -49,7 +49,34 @@
   - and Slurm array tasks
   on one consistent Python environment with the required packages.
 
+## 2026-04-14 (Downloaded Softening Analysis Rerun)
+- The local repo copy currently contains the downloaded `hybrid-interface-sweep/analysis/` tree only:
+  - task-level analysis JSON files,
+  - assembled CSV/JSON summaries,
+  - Slurm logs and manifests.
+- It does not contain the corresponding full sweep task tree locally, so this rerun is a validation/review of the downloaded analysis artifacts rather than a fresh extraction from raw `stage_7.0.up` files.
+- The downloaded softening analysis is numerically complete:
+  - `75 / 75` analysis task JSON files succeeded,
+  - `0` failed tasks,
+  - all `25` conditions have full `3 / 3` replicate coverage.
+- Internal consistency is strong across the full sweep:
+  - every task uses `160` post-burn-in frames,
+  - every task uses `102` `PO4` beads,
+  - all diffusion values are finite,
+  - task-level `PO4` fit quality spans `R^2 = 0.9780 -> 0.9927`.
+- The saved recommendation from the downloaded artifacts is supported by the condition table:
+  - best mean diffusion: `lj_alpha = 0.1`, `slater_alpha = 0.5`, `D = 0.8621 um^2/s`,
+  - but that branch is somewhat noisier than the nearby alternatives (`CV = 0.082`).
+- Two practical neighboring branches remain important for interpretation:
+  - lower-perturbation high-fluidity branch: `(lj_alpha, slater_alpha) = (0.0, 1.0)` with `D = 0.8584 um^2/s`, `CV = 0.047`,
+  - highest-stability near-top branch: `(0.1, 2.0)` with `D = 0.8510 um^2/s`, `CV = 0.013`, `min R^2 = 0.9888`.
+- Relative to the same provisional `40 ps/step` target proxy from `hybrid_timescale.md`:
+  - target at workflow temperature `T = 0.8647` remains about `2.892 um^2/s`,
+  - the downloaded softening sweep reaches only `0.733 -> 0.862 um^2/s`,
+  - so no tested condition demonstrates a target match.
+
 ## Lessons
 - When the user points out that scaling leaves a singular pair-potential shape unchanged, restore the shape-control surface instead of trying to force the scalar workflow to fit.
 - When a workflow semantics change invalidates old run trees, bump the manifest/result schemas immediately so reuse fails loudly.
 - When a workflow script is launched from a managed environment, subprocess Python calls must use `sys.executable` rather than bare `python3`.
+- When the user provides only a downloaded analysis tree, state explicitly whether the rerun is a fresh recomputation from raw checkpoints or a validation/review of the downloaded artifacts.
