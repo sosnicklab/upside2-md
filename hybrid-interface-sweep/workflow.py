@@ -932,6 +932,11 @@ def _decode_str_values(values: np.ndarray) -> np.ndarray:
     return np.asarray(out, dtype=object)
 
 
+def _unique_selected_strings(values: np.ndarray, indices: np.ndarray) -> List[str]:
+    selected = _decode_str_values(np.asarray(values)[np.asarray(indices, dtype=np.int64)])
+    return sorted({str(item) for item in selected})
+
+
 def _load_box_frames_optional(h5: h5py.File, n_frame: int) -> np.ndarray | None:
     if "output/box" in h5:
         box = _normalize_box(h5["output/box"][:])
@@ -960,19 +965,32 @@ def _unwrap_xyz(positions: np.ndarray, box: np.ndarray) -> np.ndarray:
     unwrapped = np.zeros_like(positions, dtype=np.float64)
     unwrapped[0] = positions[0]
     for frame in range(1, positions.shape[0]):
-        delta = positions[frame] - positions[frame - 1]
+        current = positions[frame]
+        previous = positions[frame - 1]
+        if not (np.all(np.isfinite(current)) and np.all(np.isfinite(previous))):
+            unwrapped[frame] = current
+            continue
+        delta = current - previous
         delta = _minimum_image(delta, box[frame - 1])
         unwrapped[frame] = unwrapped[frame - 1] + delta
     return unwrapped
 
 
 def _align_points_kabsch(mobile: np.ndarray, target: np.ndarray) -> np.ndarray:
+    if not (np.all(np.isfinite(mobile)) and np.all(np.isfinite(target))):
+        raise ValueError("Kabsch alignment received non-finite coordinates")
     mobile_centroid = np.mean(mobile, axis=0)
     target_centroid = np.mean(target, axis=0)
     mobile_centered = mobile - mobile_centroid
     target_centered = target - target_centroid
     cov = mobile_centered.T @ target_centered
-    u, _, vt = np.linalg.svd(cov)
+    if not np.all(np.isfinite(cov)):
+        raise ValueError("Kabsch covariance is non-finite")
+    try:
+        u, _, vt = np.linalg.svd(cov)
+    except np.linalg.LinAlgError:
+        jitter = np.eye(3, dtype=np.float64) * 1.0e-12
+        u, _, vt = np.linalg.svd(cov + jitter)
     correction = np.eye(3, dtype=np.float64)
     if np.linalg.det(u @ vt) < 0.0:
         correction[-1, -1] = -1.0
@@ -981,11 +999,15 @@ def _align_points_kabsch(mobile: np.ndarray, target: np.ndarray) -> np.ndarray:
 
 
 def _iterative_align_frames(frames: np.ndarray, n_iter: int = 3) -> tuple[np.ndarray, np.ndarray]:
-    reference = np.asarray(frames[0], dtype=np.float64)
     aligned = np.asarray(frames, dtype=np.float64)
+    if aligned.ndim != 3 or aligned.shape[0] < 1:
+        raise ValueError(f"Unexpected frame array for alignment: {aligned.shape}")
+    if not np.all(np.isfinite(aligned[0])):
+        raise ValueError("Alignment reference frame is non-finite")
+    reference = np.asarray(aligned[0], dtype=np.float64)
     for _ in range(max(1, int(n_iter))):
         next_aligned = np.empty_like(aligned)
-        for index, frame in enumerate(frames):
+        for index, frame in enumerate(aligned):
             next_aligned[index] = _align_points_kabsch(np.asarray(frame, dtype=np.float64), reference)
         aligned = next_aligned
         reference = np.mean(aligned, axis=0)
@@ -1041,6 +1063,7 @@ def _analyze_rmsf_profile(
     alignment_iterations: int,
 ) -> Dict[str, Any]:
     with h5py.File(stage_file, "r") as h5:
+        inp = h5["input"]
         if "output/pos" not in h5:
             raise ValueError(f"Missing output/pos in {stage_file}")
         pos = _normalize_output_positions(h5["output/pos"][:])
@@ -1053,6 +1076,19 @@ def _analyze_rmsf_profile(
         flat_index = atom_index.reshape(-1)
         if np.max(flat_index) >= pos.shape[1]:
             raise ValueError("Backbone map refers to atoms outside output/pos")
+
+        selected_particle_classes: List[str] = []
+        if "particle_class" in inp:
+            selected_particle_classes = _unique_selected_strings(inp["particle_class"][:], flat_index)
+            if any(not value.startswith("PROTEIN") for value in selected_particle_classes):
+                raise ValueError(
+                    "RMSF backbone selection is not protein-only: "
+                    + ",".join(selected_particle_classes)
+                )
+
+        selected_atom_roles: List[str] = []
+        if "atom_roles" in inp:
+            selected_atom_roles = _unique_selected_strings(inp["atom_roles"][:], flat_index)
 
         burn_start = int(math.floor(float(burn_in_fraction) * n_frame_total))
         burn_start = min(max(0, burn_start), n_frame_total - 1)
@@ -1069,6 +1105,16 @@ def _analyze_rmsf_profile(
             backbone_xyz = _unwrap_xyz(backbone_xyz, box)
             box_unwrap_applied = True
 
+        frame_finite_mask = np.all(np.isfinite(backbone_xyz), axis=(1, 2))
+        dropped_nonfinite_frames = int(np.count_nonzero(~frame_finite_mask))
+        if dropped_nonfinite_frames:
+            backbone_xyz = backbone_xyz[frame_finite_mask]
+            n_frame_used = int(backbone_xyz.shape[0])
+        if n_frame_used < 5:
+            raise ValueError(
+                f"Too few finite backbone frames remain after filtering for RMSF analysis: {n_frame_used}"
+            )
+
         aligned_backbone, mean_backbone = _iterative_align_frames(
             backbone_xyz,
             n_iter=alignment_iterations,
@@ -1084,7 +1130,11 @@ def _analyze_rmsf_profile(
             "n_frames_total": n_frame_total,
             "n_frames_used": n_frame_used,
             "burn_in_frames": int(burn_start),
+            "n_frames_dropped_nonfinite": dropped_nonfinite_frames,
             "n_residue": n_residue,
+            "selected_backbone_atom_count": int(flat_index.size),
+            "selected_particle_classes": selected_particle_classes,
+            "selected_atom_roles": selected_atom_roles,
             "residue_labels": [str(x) for x in backbone["residue_labels"]],
             "backbone_map_source": str(backbone["source"]),
             "alignment_iterations": int(alignment_iterations),

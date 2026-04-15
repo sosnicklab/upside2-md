@@ -66,6 +66,7 @@
   - patched `example/16.MARTINI/run_sim_1rkl.sh` so caller-provided `UPSIDE_HOME` survives its local `source.sh`.
 - Runtime hardening:
   - all four shell wrappers now prefer repo-local `.venv/bin/python3` directly before falling back to `VIRTUAL_ENV` or system `python3`.
+  - RMSF analysis now filters non-finite selected protein-backbone frames before Kabsch alignment and retries the 3x3 SVD with a tiny diagonal jitter if the first solve fails.
 - Verification completed:
   - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
   - `bash -n hybrid-interface-sweep/run_local.sh`
@@ -103,3 +104,9 @@
     - `analysis/slurm/round_manifest.json`
     - `analysis/slurm/analyze_array.sbatch`
     - `analysis/slurm/collect_analysis.sbatch`
+  - post-deployment bugfix verification:
+    - reran reduced local analysis on `/tmp/hybrid_interface_rmsf_smoke` with overwrite enabled,
+    - confirmed saved task analysis now records `n_frames_dropped_nonfinite`,
+    - synthetic HDF5 test with one NaN protein frame completed successfully and reported:
+      - `n_frames_dropped_nonfinite = 1`
+      - `n_frames_used = 5`

@@ -66,6 +66,35 @@
   - `summary.json`
 - With only one sampled scale in the smoke tree, the trend-line fit correctly degrades to a degree-0 constant fit and recommends that same sampled scale.
 
+## 2026-04-15 (Protein-Only RMSF Audit)
+- The hybrid `stage_7.0.up` file does dump the full mixed system:
+  - smoke `output/pos` shape is `(20, 1, 4323, 3)`.
+- The RMSF analysis does not use all `4323` particles.
+- On the verified smoke artifact, it selects the residue map from:
+  - `input/potential/affine_alignment/atoms`
+  - shape `(31, 3)`
+  - total selected atoms `= 93`
+- The selected atoms are protein-only backbone carrier atoms:
+  - `selected_particle_classes = ['PROTEINAA']`
+  - `selected_atom_roles = ['C', 'CA', 'N']`
+- The analysis now validates this explicitly and will fail if the selected RMSF atoms are not protein-only.
+
+## 2026-04-15 (Slurm Analysis Failure: Kabsch SVD Non-Convergence)
+- The remote analysis failure
+  - `numpy.linalg.LinAlgError: SVD did not converge`
+  from `_align_points_kabsch(...)` indicates the selected protein-backbone frame data can become non-finite for at least some tasks.
+- On a `3 x 3` covariance matrix, SVD non-convergence is far more likely to come from `NaN`/`Inf` contamination than from a genuinely hard linear-algebra problem.
+- The RMSF analysis is now hardened to:
+  - keep the protein-only selection check,
+  - drop non-finite selected backbone frames after burn-in,
+  - require at least five finite frames to remain,
+  - retry the 3x3 SVD with a tiny diagonal jitter if the first call fails.
+- The per-task analysis payload now records:
+  - `n_frames_dropped_nonfinite`
+- A synthetic HDF5 with one NaN protein frame now succeeds and reports:
+  - `n_frames_dropped_nonfinite = 1`
+  - `n_frames_used = 5`
+
 ## 2026-04-14 (Analysis Surface)
 - There is no existing RMSF analysis helper in the repo for this calibration.
 - The new analysis should therefore compute and store:
@@ -159,3 +188,5 @@
 - When the user redirects the scientific target entirely, rewrite the workflow around the new observable instead of trying to preserve the previous analysis pipeline.
 - When an example script re-sources environment setup, preserve caller-supplied runtime paths if the sweep depends on running that script from the current checkout.
 - When wrappers are meant to use a repo-local virtualenv, prefer the concrete `.venv/bin/python3` path before trusting the ambient shell state.
+- When a workflow output contains both target and environment particles, record and validate the exact atom-class subset used by the analysis instead of leaving that assumption implicit.
+- When a cluster-only `SVD did not converge` failure appears in a small rigid-alignment solve, assume non-finite frame data first and harden the analysis to filter bad frames instead of treating it as a pure numerical-method issue.

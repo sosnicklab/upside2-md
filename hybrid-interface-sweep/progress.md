@@ -291,6 +291,46 @@
   - `analysis/slurm/round_manifest.json`
   - `analysis/slurm/analyze_array.sbatch`
   - `analysis/slurm/collect_analysis.sbatch`
+
+## 2026-04-15 (Protein-Only RMSF Validation)
+- Reopened the RMSF analysis after the user flagged that `example/16.MARTINI/run_sim_1rkl.sh` dumps both protein and bilayer.
+- Audited the current hybrid smoke artifact and confirmed:
+  - `output/pos` contains the full mixed system (`4323` particles),
+  - the RMSF analysis selects only `93` atoms from `input/potential/affine_alignment/atoms`,
+  - those selected atoms are all `PROTEINAA` with atom roles `N`, `CA`, and `C`.
+- Patched `hybrid-interface-sweep/workflow.py` so `_analyze_rmsf_profile(...)` now:
+  - records `selected_backbone_atom_count`,
+  - records `selected_particle_classes`,
+  - records `selected_atom_roles`,
+  - raises an error if the selected RMSF subset is not protein-only.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
+  - reran reduced local analysis on `/tmp/hybrid_interface_rmsf_smoke` with overwrite enabled
+  - confirmed saved hybrid analysis JSON now reports:
+    - `backbone_map_source = input/potential/affine_alignment/atoms`
+    - `selected_backbone_atom_count = 93`
+    - `selected_particle_classes = ['PROTEINAA']`
+    - `selected_atom_roles = ['C', 'CA', 'N']`
+
+## 2026-04-15 (Analysis Robustness Fix: SVD Did Not Converge)
+- Reopened the RMSF analysis after the user provided a remote Slurm traceback:
+  - `numpy.linalg.LinAlgError: SVD did not converge`
+  - failure site: `_align_points_kabsch(...)` during analysis-array execution.
+- Patched `hybrid-interface-sweep/workflow.py` so the analysis now:
+  - avoids propagating non-finite coordinates through periodic unwrapping,
+  - rejects non-finite Kabsch inputs explicitly,
+  - retries the 3x3 covariance SVD with a tiny diagonal jitter,
+  - drops non-finite selected backbone frames after burn-in,
+  - records `n_frames_dropped_nonfinite`,
+  - fails only if fewer than five finite frames remain.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
+  - reran reduced local analysis on `/tmp/hybrid_interface_rmsf_smoke` with overwrite enabled
+  - confirmed the normal smoke task still succeeds and now reports:
+    - `n_frames_dropped_nonfinite = 0`
+  - created a synthetic HDF5 analysis target with one NaN protein frame and verified `_analyze_rmsf_profile(...)` succeeds with:
+    - `n_frames_dropped_nonfinite = 1`
+    - `n_frames_used = 5`
 - Compared the refined range against the same provisional `40 ps/step` target proxy from `hybrid_timescale.md`:
   - target remains about `2.892 um^2/s` at `T = 0.8647`,
   - the best tested point `0.02` still falls short by about `1.064 um^2/s`,
