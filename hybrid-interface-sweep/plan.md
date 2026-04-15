@@ -67,6 +67,18 @@
 - Runtime hardening:
   - all four shell wrappers now prefer repo-local `.venv/bin/python3` directly before falling back to `VIRTUAL_ENV` or system `python3`.
   - RMSF analysis now filters non-finite selected protein-backbone frames before Kabsch alignment and retries the 3x3 SVD with a tiny diagonal jitter if the first solve fails.
+  - RMSF analysis now measures protein stability per hybrid trajectory using reference-relative thresholds on:
+    - mean RMSF,
+    - max RMSF,
+    - CA radius of gyration,
+    - CA span.
+  - unstable hybrid trajectories are kept in task-level outputs but excluded from:
+    - `condition_summary.csv` metrics,
+    - `condition_profiles.csv`,
+    - trend-line fitting,
+    - scale recommendation.
+  - analysis manifest loading now backfills missing stability-threshold keys so existing completed run trees can be re-analyzed without re-running `init-run`.
+  - if no stable hybrid trajectories remain after filtering, analysis now completes with an explicit `no_stable_hybrid_trajectories` status instead of aborting mid-assemble and leaving stale recommendation artifacts behind.
 - Verification completed:
   - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
   - `bash -n hybrid-interface-sweep/run_local.sh`
@@ -110,3 +122,25 @@
     - synthetic HDF5 test with one NaN protein frame completed successfully and reported:
       - `n_frames_dropped_nonfinite = 1`
       - `n_frames_used = 5`
+  - protein-stability filter verification:
+    - reran reduced local analysis on `/tmp/hybrid_interface_rmsf_smoke` with overwrite enabled,
+    - confirmed the shortened hybrid toy run is filtered as unstable with recorded reasons:
+      - `mean_rmsf=13.091>3.000`
+      - `max_rmsf=52.651>3.000`
+      - `ca_rg=3.022>1.750`
+      - `ca_span=5.367>1.750`
+    - confirmed assembled outputs now record:
+      - `n_replicates_stable`
+      - `n_replicates_filtered_unstable`
+      - `condition_excluded_from_fit`
+      - `is_stable_protein_trajectory`
+      - ratio-to-reference stability metrics and failure reasons
+    - confirmed the no-stable case now writes explicit assembled status instead of failing:
+      - `analysis_status = no_stable_hybrid_trajectories`
+      - `trendline_available = 0`
+      - unstable trajectories listed in `failed_tasks.csv` with `failure_stage = protein_stability_filter`
+    - controlled temp-copy verification under `/tmp/hybrid_interface_rmsf_smoke_relaxed` with relaxed thresholds confirmed the normal fit path still works:
+      - `analysis_status = ok`
+      - `n_hybrid_conditions_used_for_fit = 1`
+      - `trendline_available = 1`
+      - `trendline_points.csv` rows = `201`

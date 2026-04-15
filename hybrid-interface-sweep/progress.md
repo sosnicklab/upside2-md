@@ -258,6 +258,52 @@
   - `bash -n hybrid-interface-sweep/run_analysis_local.sh`
   - `bash -n hybrid-interface-sweep/submit_analysis.sh`
   - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+
+## 2026-04-15 (Protein Stability Filter)
+- Reopened the RMSF analysis after the user clarified that some swept hybrid runs completely destroy the protein and should be filtered out of calibration.
+- Updated:
+  - `hybrid-interface-sweep/workflow.py`
+  - `hybrid-interface-sweep/plan.md`
+  - `hybrid-interface-sweep/findings.md`
+- Added per-task protein-stability metrics to RMSF analysis output:
+  - `max_rmsf_angstrom`
+  - `ca_radius_of_gyration_angstrom_mean/std/max`
+  - `ca_span_angstrom_mean/std/max`
+- Added reference-relative stability filtering for hybrid tasks during assembled analysis:
+  - unstable tasks are still written to `task_results.csv`,
+  - unstable tasks are copied into `failed_tasks.csv` with `failure_stage = protein_stability_filter`,
+  - condition summaries, residue profiles, trend-line fitting, and recommendation selection now use only stable hybrid replicates.
+- Added new assembled-analysis reporting fields:
+  - task-level:
+    - `is_stable_protein_trajectory`
+    - `stability_failure_reasons`
+    - ratio-to-reference stability metrics
+  - condition-level:
+    - `n_replicates_stable`
+    - `n_replicates_filtered_unstable`
+    - `condition_excluded_from_fit`
+- Hardened compatibility for existing run trees:
+  - analysis settings now backfill the new stability-threshold defaults if the run was initialized before these keys existed.
+- Hardened the no-stable case:
+  - assembled analysis now writes explicit `analysis_status = no_stable_hybrid_trajectories`,
+  - recommendation/trendline values become null instead of leaving stale old outputs behind.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python hybrid-interface-sweep/workflow.py init-analysis --base-dir /tmp/hybrid_interface_rmsf_smoke`
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python hybrid-interface-sweep/workflow.py run-analysis-local --base-dir /tmp/hybrid_interface_rmsf_smoke --overwrite`
+  - confirmed the shortened smoke hybrid task is filtered with:
+    - `mean_rmsf=13.091>3.000`
+    - `max_rmsf=52.651>3.000`
+    - `ca_rg=3.022>1.750`
+    - `ca_span=5.367>1.750`
+  - confirmed assembled no-fit outputs on `/tmp/hybrid_interface_rmsf_smoke/analysis/assembled`:
+    - `summary.json` reports `analysis_status = no_stable_hybrid_trajectories`
+    - `condition_summary.csv` reports `n_replicates_stable = 0`
+    - `failed_tasks.csv` contains the filtered hybrid task
+  - controlled temp-copy verification on `/tmp/hybrid_interface_rmsf_smoke_relaxed`:
+    - relaxed thresholds in `analysis_manifest.json`
+    - `assemble-analysis` completed with `analysis_status = ok`
+    - `trendline_points.csv` contains `201` fit rows
 - Ran a reduced local smoke sweep under `/tmp/hybrid_interface_rmsf_smoke` with:
   - `interface_scale = 0.85`
   - `reference_replicates = 1`

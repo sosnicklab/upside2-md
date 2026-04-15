@@ -95,6 +95,51 @@
   - `n_frames_dropped_nonfinite = 1`
   - `n_frames_used = 5`
 
+## 2026-04-15 (Protein Stability Filter For Destroyed Hybrid Trajectories)
+- Some hybrid `1rkl` runs can destroy the protein badly enough that RMSF matching is no longer meaningful.
+- The analysis now treats stability as a per-hybrid-trajectory gate relative to the reference ensemble.
+- The current filter compares each hybrid task against reference baselines using four ratios:
+  - mean residue RMSF,
+  - max residue RMSF,
+  - mean CA radius of gyration,
+  - mean CA span.
+- Default filter limits are:
+  - `stability_mean_rmsf_ratio_max = 3.0`
+  - `stability_max_rmsf_ratio_max = 3.0`
+  - `stability_ca_rg_ratio_max = 1.75`
+  - `stability_ca_span_ratio_max = 1.75`
+- Unstable hybrid tasks remain visible in:
+  - `task_results.csv`
+  - `failed_tasks.csv`
+  with explicit ratio values and filter reasons.
+- Unstable hybrid tasks are excluded from:
+  - `condition_summary.csv` metrics,
+  - `condition_profiles.csv`,
+  - trend-line fitting,
+  - recommended scale selection.
+- The shortened local smoke hybrid run is an example destroyed trajectory under this filter:
+  - `mean_rmsf_ratio = 13.09`
+  - `max_rmsf_ratio = 52.65`
+  - `ca_rg_ratio = 3.02`
+  - `ca_span_ratio = 5.37`
+
+## 2026-04-15 (Existing Run Tree Compatibility)
+- Existing completed run trees may have been initialized before the stability-filter keys were added to `analysis_settings`.
+- Re-analysis therefore must not assume those manifest keys already exist.
+- The analysis layer now backfills missing settings with current defaults when:
+  - creating `analysis_manifest.json`,
+  - running analysis tasks,
+  - assembling analysis outputs.
+
+## 2026-04-15 (No-Stable Analysis State)
+- A legitimate outcome of the new filter is that zero hybrid trajectories remain stable enough for fitting.
+- That case should not crash analysis or leave stale old recommendation files behind.
+- The assembled outputs now represent this state explicitly:
+  - `recommendation_summary.json` gets `analysis_status = no_stable_hybrid_trajectories`,
+  - recommendation and trend-line scalars become `null`,
+  - `trendline_points.csv` is written with headers only,
+  - `summary.json` records `trendline_available = 0`.
+
 ## 2026-04-14 (Analysis Surface)
 - There is no existing RMSF analysis helper in the repo for this calibration.
 - The new analysis should therefore compute and store:
@@ -190,3 +235,6 @@
 - When wrappers are meant to use a repo-local virtualenv, prefer the concrete `.venv/bin/python3` path before trusting the ambient shell state.
 - When a workflow output contains both target and environment particles, record and validate the exact atom-class subset used by the analysis instead of leaving that assumption implicit.
 - When a cluster-only `SVD did not converge` failure appears in a small rigid-alignment solve, assume non-finite frame data first and harden the analysis to filter bad frames instead of treating it as a pure numerical-method issue.
+- When the user says some trajectories destroy the protein, exclude those trajectories from condition averages and trend fitting instead of letting them bias the calibration surface.
+- When adding new analysis settings to a persisted manifest, backfill defaults for older run trees so re-analysis still works on already-completed sweeps.
+- When a filtered-data workflow leaves no valid samples for fitting, emit an explicit no-fit result state rather than aborting after partially overwriting assembled outputs.

@@ -51,6 +51,10 @@ DEFAULT_REFERENCE_REPLICATES = 4
 DEFAULT_SEED = 20260414
 DEFAULT_BURN_IN_FRACTION = 0.20
 DEFAULT_TRENDLINE_SAMPLES = 201
+DEFAULT_STABILITY_MEAN_RMSF_RATIO_MAX = 3.0
+DEFAULT_STABILITY_MAX_RMSF_RATIO_MAX = 3.0
+DEFAULT_STABILITY_CA_RG_RATIO_MAX = 1.75
+DEFAULT_STABILITY_CA_SPAN_RATIO_MAX = 1.75
 
 DEFAULT_REFERENCE_SETTINGS = {
     "REFERENCE_TEMPERATURE": "0.80",
@@ -135,6 +139,10 @@ class Config:
     seed: int
     burn_in_fraction: float
     trendline_samples: int
+    stability_mean_rmsf_ratio_max: float
+    stability_max_rmsf_ratio_max: float
+    stability_ca_rg_ratio_max: float
+    stability_ca_span_ratio_max: float
     reference_settings: Dict[str, str]
     hybrid_passthrough_env: Dict[str, str]
 
@@ -321,6 +329,38 @@ def _build_config(args: argparse.Namespace, base_dir: Path) -> Config:
     trendline_samples = int(args.trendline_samples)
     if trendline_samples < 11:
         raise ValueError(f"trendline samples must be >= 11, got {trendline_samples}")
+    stability_mean_rmsf_ratio_max = float(
+        os.environ.get(
+            "HYBRID_SWEEP_STABILITY_MEAN_RMSF_RATIO_MAX",
+            str(DEFAULT_STABILITY_MEAN_RMSF_RATIO_MAX),
+        )
+    )
+    stability_max_rmsf_ratio_max = float(
+        os.environ.get(
+            "HYBRID_SWEEP_STABILITY_MAX_RMSF_RATIO_MAX",
+            str(DEFAULT_STABILITY_MAX_RMSF_RATIO_MAX),
+        )
+    )
+    stability_ca_rg_ratio_max = float(
+        os.environ.get(
+            "HYBRID_SWEEP_STABILITY_CA_RG_RATIO_MAX",
+            str(DEFAULT_STABILITY_CA_RG_RATIO_MAX),
+        )
+    )
+    stability_ca_span_ratio_max = float(
+        os.environ.get(
+            "HYBRID_SWEEP_STABILITY_CA_SPAN_RATIO_MAX",
+            str(DEFAULT_STABILITY_CA_SPAN_RATIO_MAX),
+        )
+    )
+    for name, value in (
+        ("stability_mean_rmsf_ratio_max", stability_mean_rmsf_ratio_max),
+        ("stability_max_rmsf_ratio_max", stability_max_rmsf_ratio_max),
+        ("stability_ca_rg_ratio_max", stability_ca_rg_ratio_max),
+        ("stability_ca_span_ratio_max", stability_ca_span_ratio_max),
+    ):
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{name} must be finite and > 0, got {value}")
     return Config(
         base_dir=base_dir,
         pdb_id=str(args.pdb_id),
@@ -330,6 +370,10 @@ def _build_config(args: argparse.Namespace, base_dir: Path) -> Config:
         seed=int(args.seed),
         burn_in_fraction=burn_in_fraction,
         trendline_samples=trendline_samples,
+        stability_mean_rmsf_ratio_max=stability_mean_rmsf_ratio_max,
+        stability_max_rmsf_ratio_max=stability_max_rmsf_ratio_max,
+        stability_ca_rg_ratio_max=stability_ca_rg_ratio_max,
+        stability_ca_span_ratio_max=stability_ca_span_ratio_max,
         reference_settings=_capture_reference_settings(),
         hybrid_passthrough_env=_capture_hybrid_passthrough_env(),
     )
@@ -390,6 +434,10 @@ def _build_manifest(config: Config) -> Dict[str, Any]:
                 "trendline_samples": config.trendline_samples,
                 "rmsf_atom_role": "CA",
                 "alignment_iterations": 3,
+                "stability_mean_rmsf_ratio_max": config.stability_mean_rmsf_ratio_max,
+                "stability_max_rmsf_ratio_max": config.stability_max_rmsf_ratio_max,
+                "stability_ca_rg_ratio_max": config.stability_ca_rg_ratio_max,
+                "stability_ca_span_ratio_max": config.stability_ca_span_ratio_max,
             },
         },
         "tasks": tasks,
@@ -1056,6 +1104,114 @@ def _safe_profile_correlation(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.corrcoef(a, b)[0, 1])
 
 
+def _mean_std_max(values: np.ndarray) -> Dict[str, float]:
+    arr = np.asarray(values, dtype=np.float64)
+    return {
+        "mean": float(np.mean(arr)),
+        "std": float(np.std(arr, ddof=0)),
+        "max": float(np.max(arr)),
+    }
+
+
+def _framewise_ca_radius_of_gyration(ca_xyz: np.ndarray) -> np.ndarray:
+    centered = ca_xyz - np.mean(ca_xyz, axis=1, keepdims=True)
+    return np.sqrt(np.mean(np.sum(centered * centered, axis=2), axis=1))
+
+
+def _framewise_ca_span(ca_xyz: np.ndarray) -> np.ndarray:
+    delta = ca_xyz[:, :, None, :] - ca_xyz[:, None, :, :]
+    dist = np.sqrt(np.sum(delta * delta, axis=3))
+    return np.max(dist, axis=(1, 2))
+
+
+def _safe_ratio(value: float, reference: float) -> float | None:
+    value = float(value)
+    reference = float(reference)
+    if not (math.isfinite(value) and math.isfinite(reference) and reference > 0.0):
+        return None
+    return float(value / reference)
+
+
+def _format_ratio(value: float | None) -> str:
+    if value is None:
+        return ""
+    return f"{float(value):.10g}"
+
+
+def _analysis_settings_with_defaults(settings: Dict[str, Any] | None) -> Dict[str, Any]:
+    merged = dict(settings or {})
+    merged.setdefault("burn_in_fraction", DEFAULT_BURN_IN_FRACTION)
+    merged.setdefault("trendline_samples", DEFAULT_TRENDLINE_SAMPLES)
+    merged.setdefault("rmsf_atom_role", "CA")
+    merged.setdefault("alignment_iterations", 3)
+    merged.setdefault(
+        "stability_mean_rmsf_ratio_max",
+        DEFAULT_STABILITY_MEAN_RMSF_RATIO_MAX,
+    )
+    merged.setdefault(
+        "stability_max_rmsf_ratio_max",
+        DEFAULT_STABILITY_MAX_RMSF_RATIO_MAX,
+    )
+    merged.setdefault(
+        "stability_ca_rg_ratio_max",
+        DEFAULT_STABILITY_CA_RG_RATIO_MAX,
+    )
+    merged.setdefault(
+        "stability_ca_span_ratio_max",
+        DEFAULT_STABILITY_CA_SPAN_RATIO_MAX,
+    )
+    return merged
+
+
+def _stability_failure_summary(
+    analysis: Dict[str, Any],
+    reference_baselines: Dict[str, float],
+    analysis_settings: Dict[str, Any],
+) -> Dict[str, Any]:
+    checks = [
+        (
+            "mean_rmsf_ratio",
+            float(analysis["mean_rmsf_angstrom"]),
+            float(reference_baselines["mean_rmsf_angstrom"]),
+            float(analysis_settings["stability_mean_rmsf_ratio_max"]),
+            "mean_rmsf",
+        ),
+        (
+            "max_rmsf_ratio",
+            float(analysis["max_rmsf_angstrom"]),
+            float(reference_baselines["max_rmsf_angstrom"]),
+            float(analysis_settings["stability_max_rmsf_ratio_max"]),
+            "max_rmsf",
+        ),
+        (
+            "ca_radius_of_gyration_ratio",
+            float(analysis["ca_radius_of_gyration_angstrom_mean"]),
+            float(reference_baselines["ca_radius_of_gyration_angstrom_mean"]),
+            float(analysis_settings["stability_ca_rg_ratio_max"]),
+            "ca_rg",
+        ),
+        (
+            "ca_span_ratio",
+            float(analysis["ca_span_angstrom_mean"]),
+            float(reference_baselines["ca_span_angstrom_mean"]),
+            float(analysis_settings["stability_ca_span_ratio_max"]),
+            "ca_span",
+        ),
+    ]
+    ratios: Dict[str, float | None] = {}
+    reasons: List[str] = []
+    for ratio_key, value, baseline, limit, label in checks:
+        ratio = _safe_ratio(value, baseline)
+        ratios[ratio_key] = ratio
+        if ratio is not None and ratio > limit:
+            reasons.append(f"{label}={ratio:.3f}>{limit:.3f}")
+    return {
+        "is_stable": not reasons,
+        "reasons": reasons,
+        "ratios": ratios,
+    }
+
+
 def _analyze_rmsf_profile(
     stage_file: Path,
     *,
@@ -1125,6 +1281,10 @@ def _analyze_rmsf_profile(
         ca_xyz = aligned_backbone[:, :, int(backbone["ca_column"]), :]
         mean_ca = np.mean(ca_xyz, axis=0)
         rmsf = np.sqrt(np.mean(np.sum((ca_xyz - mean_ca) ** 2, axis=2), axis=0))
+        ca_radius_of_gyration = _framewise_ca_radius_of_gyration(ca_xyz)
+        ca_span = _framewise_ca_span(ca_xyz)
+        ca_rg_stats = _mean_std_max(ca_radius_of_gyration)
+        ca_span_stats = _mean_std_max(ca_span)
 
         return {
             "n_frames_total": n_frame_total,
@@ -1141,6 +1301,13 @@ def _analyze_rmsf_profile(
             "box_unwrap_applied": int(box_unwrap_applied),
             "mean_rmsf_angstrom": float(np.mean(rmsf)),
             "std_rmsf_angstrom": float(np.std(rmsf, ddof=0)),
+            "max_rmsf_angstrom": float(np.max(rmsf)),
+            "ca_radius_of_gyration_angstrom_mean": float(ca_rg_stats["mean"]),
+            "ca_radius_of_gyration_angstrom_std": float(ca_rg_stats["std"]),
+            "ca_radius_of_gyration_angstrom_max": float(ca_rg_stats["max"]),
+            "ca_span_angstrom_mean": float(ca_span_stats["mean"]),
+            "ca_span_angstrom_std": float(ca_span_stats["std"]),
+            "ca_span_angstrom_max": float(ca_span_stats["max"]),
             "residue_rmsf_angstrom": [float(x) for x in rmsf],
             "backbone_mean_structure_shape": list(mean_backbone.shape),
         }
@@ -1179,7 +1346,9 @@ def cmd_init_analysis(args: argparse.Namespace) -> int:
         "base_dir": str(base_dir),
         "manifest_path": str(_manifest_path(base_dir)),
         "pdb_id": manifest["settings"]["pdb_id"],
-        "analysis_settings": manifest["settings"]["analysis_settings"],
+        "analysis_settings": _analysis_settings_with_defaults(
+            manifest["settings"].get("analysis_settings")
+        ),
         "n_analysis_targets": len(tasks),
         "tasks": tasks,
     }
@@ -1203,7 +1372,9 @@ def _run_analysis_task(base_dir: Path, analysis_manifest: Dict[str, Any], task_e
     if not stage_file.exists():
         raise RuntimeError(f"Analysis target file not found: {stage_file}")
 
-    analysis_settings = analysis_manifest["analysis_settings"]
+    analysis_settings = _analysis_settings_with_defaults(
+        analysis_manifest.get("analysis_settings")
+    )
     try:
         analysis = _analyze_rmsf_profile(
             stage_file,
@@ -1330,6 +1501,28 @@ def assemble_analysis(base_dir: Path) -> int:
 
     reference_mean = np.mean(reference_profiles, axis=0)
     reference_std = np.std(reference_profiles, axis=0, ddof=0)
+    reference_baselines = {
+        "mean_rmsf_angstrom": float(
+            np.mean([float(item["analysis"]["mean_rmsf_angstrom"]) for item in reference_results])
+        ),
+        "max_rmsf_angstrom": float(
+            np.mean([float(item["analysis"]["max_rmsf_angstrom"]) for item in reference_results])
+        ),
+        "ca_radius_of_gyration_angstrom_mean": float(
+            np.mean(
+                [
+                    float(item["analysis"]["ca_radius_of_gyration_angstrom_mean"])
+                    for item in reference_results
+                ]
+            )
+        ),
+        "ca_span_angstrom_mean": float(
+            np.mean([float(item["analysis"]["ca_span_angstrom_mean"]) for item in reference_results])
+        ),
+    }
+    analysis_settings = _analysis_settings_with_defaults(
+        analysis_manifest.get("analysis_settings")
+    )
 
     reference_profile_csv = assembled_dir / "reference_profile.csv"
     with reference_profile_csv.open("w", encoding="utf-8", newline="") as fh:
@@ -1353,11 +1546,29 @@ def assemble_analysis(base_dir: Path) -> int:
 
     task_rows: List[Dict[str, Any]] = []
     profile_rows: List[Dict[str, Any]] = []
-    grouped: Dict[float, List[Dict[str, Any]]] = {}
+    grouped_all: Dict[float, List[Dict[str, Any]]] = {}
+    grouped_stable: Dict[float, List[Dict[str, Any]]] = {}
     for result in successful_results:
         task = result["task"]
         analysis = result["analysis"]
         profile = np.asarray(analysis["residue_rmsf_angstrom"], dtype=np.float64)
+        stability_is_stable = True
+        stability_reasons: List[str] = []
+        stability_ratios = {
+            "mean_rmsf_ratio": None,
+            "max_rmsf_ratio": None,
+            "ca_radius_of_gyration_ratio": None,
+            "ca_span_ratio": None,
+        }
+        if task["kind"] == "hybrid":
+            stability = _stability_failure_summary(
+                analysis=analysis,
+                reference_baselines=reference_baselines,
+                analysis_settings=analysis_settings,
+            )
+            stability_is_stable = bool(stability["is_stable"])
+            stability_reasons = list(stability["reasons"])
+            stability_ratios = dict(stability["ratios"])
         row: Dict[str, Any] = {
             "analysis_task_id": int(result["analysis_task_id"]),
             "task_id": int(task.get("task_id", -1)),
@@ -1372,7 +1583,26 @@ def assemble_analysis(base_dir: Path) -> int:
             "replicate": int(task["replicate"]),
             "mean_rmsf_angstrom": float(analysis["mean_rmsf_angstrom"]),
             "std_rmsf_angstrom": float(analysis["std_rmsf_angstrom"]),
+            "max_rmsf_angstrom": float(analysis["max_rmsf_angstrom"]),
+            "ca_radius_of_gyration_angstrom_mean": float(analysis["ca_radius_of_gyration_angstrom_mean"]),
+            "ca_radius_of_gyration_angstrom_std": float(analysis["ca_radius_of_gyration_angstrom_std"]),
+            "ca_radius_of_gyration_angstrom_max": float(analysis["ca_radius_of_gyration_angstrom_max"]),
+            "ca_span_angstrom_mean": float(analysis["ca_span_angstrom_mean"]),
+            "ca_span_angstrom_std": float(analysis["ca_span_angstrom_std"]),
+            "ca_span_angstrom_max": float(analysis["ca_span_angstrom_max"]),
             "n_frames_used": int(analysis["n_frames_used"]),
+            "n_frames_dropped_nonfinite": int(analysis.get("n_frames_dropped_nonfinite", 0)),
+            "selected_backbone_atom_count": int(analysis.get("selected_backbone_atom_count", 0)),
+            "selected_particle_classes": ",".join(analysis.get("selected_particle_classes", [])),
+            "selected_atom_roles": ",".join(analysis.get("selected_atom_roles", [])),
+            "is_stable_protein_trajectory": int(stability_is_stable),
+            "stability_failure_reasons": ";".join(stability_reasons),
+            "mean_rmsf_ratio_to_reference": _format_ratio(stability_ratios["mean_rmsf_ratio"]),
+            "max_rmsf_ratio_to_reference": _format_ratio(stability_ratios["max_rmsf_ratio"]),
+            "ca_radius_of_gyration_ratio_to_reference": _format_ratio(
+                stability_ratios["ca_radius_of_gyration_ratio"]
+            ),
+            "ca_span_ratio_to_reference": _format_ratio(stability_ratios["ca_span_ratio"]),
             "analysis_target_file": str(result["analysis_target_file"]),
             "rmsf_rmse_vs_reference_angstrom": "",
             "rmsf_mae_vs_reference_angstrom": "",
@@ -1383,12 +1613,19 @@ def assemble_analysis(base_dir: Path) -> int:
             row["rmsf_rmse_vs_reference_angstrom"] = float(np.sqrt(np.mean(delta * delta)))
             row["rmsf_mae_vs_reference_angstrom"] = float(np.mean(np.abs(delta)))
             row["rmsf_correlation_vs_reference"] = _safe_profile_correlation(profile, reference_mean)
-            grouped.setdefault(float(task["interface_scale"]), []).append(
+            grouped_all.setdefault(float(task["interface_scale"]), []).append(
                 {
                     "row": row,
                     "profile": profile,
                 }
             )
+            if stability_is_stable:
+                grouped_stable.setdefault(float(task["interface_scale"]), []).append(
+                    {
+                        "row": row,
+                        "profile": profile,
+                    }
+                )
         task_rows.append(row)
 
         for index, label in enumerate(reference_labels, start=1):
@@ -1403,6 +1640,7 @@ def assemble_analysis(base_dir: Path) -> int:
                         else f"{float(task['interface_scale']):.10g}"
                     ),
                     "replicate": int(task["replicate"]),
+                    "is_stable_protein_trajectory": int(stability_is_stable),
                     "residue_index": index,
                     "residue_label": label,
                     "rmsf_angstrom": float(profile[index - 1]),
@@ -1424,10 +1662,27 @@ def assemble_analysis(base_dir: Path) -> int:
             "replicate",
             "mean_rmsf_angstrom",
             "std_rmsf_angstrom",
+            "max_rmsf_angstrom",
+            "ca_radius_of_gyration_angstrom_mean",
+            "ca_radius_of_gyration_angstrom_std",
+            "ca_radius_of_gyration_angstrom_max",
+            "ca_span_angstrom_mean",
+            "ca_span_angstrom_std",
+            "ca_span_angstrom_max",
             "rmsf_rmse_vs_reference_angstrom",
             "rmsf_mae_vs_reference_angstrom",
             "rmsf_correlation_vs_reference",
             "n_frames_used",
+            "n_frames_dropped_nonfinite",
+            "selected_backbone_atom_count",
+            "selected_particle_classes",
+            "selected_atom_roles",
+            "is_stable_protein_trajectory",
+            "stability_failure_reasons",
+            "mean_rmsf_ratio_to_reference",
+            "max_rmsf_ratio_to_reference",
+            "ca_radius_of_gyration_ratio_to_reference",
+            "ca_span_ratio_to_reference",
             "analysis_target_file",
         ]
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
@@ -1443,6 +1698,7 @@ def assemble_analysis(base_dir: Path) -> int:
             "code",
             "interface_scale",
             "replicate",
+            "is_stable_protein_trajectory",
             "residue_index",
             "residue_label",
             "rmsf_angstrom",
@@ -1457,51 +1713,74 @@ def assemble_analysis(base_dir: Path) -> int:
 
     condition_rows: List[Dict[str, Any]] = []
     condition_profile_rows: List[Dict[str, Any]] = []
-    for interface_scale, rows in sorted(grouped.items()):
-        profiles = np.asarray([item["profile"] for item in rows], dtype=np.float64)
-        condition_mean = np.mean(profiles, axis=0)
-        condition_std = np.std(profiles, axis=0, ddof=0)
-        condition_delta = condition_mean - reference_mean
-        task_rmse = np.asarray(
-            [float(item["row"]["rmsf_rmse_vs_reference_angstrom"]) for item in rows],
-            dtype=np.float64,
-        )
-        task_mae = np.asarray(
-            [float(item["row"]["rmsf_mae_vs_reference_angstrom"]) for item in rows],
-            dtype=np.float64,
-        )
-        task_corr = np.asarray(
-            [float(item["row"]["rmsf_correlation_vs_reference"]) for item in rows],
-            dtype=np.float64,
-        )
-        summary = {
+    stable_condition_rows: List[Dict[str, Any]] = []
+    for interface_scale, rows in sorted(grouped_all.items()):
+        stable_rows = grouped_stable.get(float(interface_scale), [])
+        summary: Dict[str, Any] = {
             "interface_scale": float(interface_scale),
             "n_replicates_expected": int(manifest["settings"]["hybrid_replicates"]),
             "n_replicates_completed": len(rows),
-            "condition_profile_rmse_angstrom": float(np.sqrt(np.mean(condition_delta * condition_delta))),
-            "condition_profile_mae_angstrom": float(np.mean(np.abs(condition_delta))),
-            "task_rmse_mean_angstrom": float(np.mean(task_rmse)),
-            "task_rmse_std_angstrom": float(np.std(task_rmse, ddof=0)),
-            "task_mae_mean_angstrom": float(np.mean(task_mae)),
-            "task_mae_std_angstrom": float(np.std(task_mae, ddof=0)),
-            "task_correlation_mean": float(np.nanmean(task_corr)),
-            "task_correlation_min": float(np.nanmin(task_corr)),
+            "n_replicates_stable": len(stable_rows),
+            "n_replicates_filtered_unstable": len(rows) - len(stable_rows),
+            "condition_excluded_from_fit": int(len(stable_rows) == 0),
+            "condition_profile_rmse_angstrom": "",
+            "condition_profile_mae_angstrom": "",
+            "task_rmse_mean_angstrom": "",
+            "task_rmse_std_angstrom": "",
+            "task_mae_mean_angstrom": "",
+            "task_mae_std_angstrom": "",
+            "task_correlation_mean": "",
+            "task_correlation_min": "",
         }
-        condition_rows.append(summary)
-
-        for index, label in enumerate(reference_labels, start=1):
-            condition_profile_rows.append(
+        if stable_rows:
+            profiles = np.asarray([item["profile"] for item in stable_rows], dtype=np.float64)
+            condition_mean = np.mean(profiles, axis=0)
+            condition_std = np.std(profiles, axis=0, ddof=0)
+            condition_delta = condition_mean - reference_mean
+            task_rmse = np.asarray(
+                [float(item["row"]["rmsf_rmse_vs_reference_angstrom"]) for item in stable_rows],
+                dtype=np.float64,
+            )
+            task_mae = np.asarray(
+                [float(item["row"]["rmsf_mae_vs_reference_angstrom"]) for item in stable_rows],
+                dtype=np.float64,
+            )
+            task_corr = np.asarray(
+                [float(item["row"]["rmsf_correlation_vs_reference"]) for item in stable_rows],
+                dtype=np.float64,
+            )
+            summary.update(
                 {
-                    "interface_scale": float(interface_scale),
-                    "residue_index": index,
-                    "residue_label": label,
-                    "condition_rmsf_mean_angstrom": float(condition_mean[index - 1]),
-                    "condition_rmsf_std_angstrom": float(condition_std[index - 1]),
-                    "reference_rmsf_mean_angstrom": float(reference_mean[index - 1]),
-                    "reference_rmsf_std_angstrom": float(reference_std[index - 1]),
-                    "delta_vs_reference_angstrom": float(condition_mean[index - 1] - reference_mean[index - 1]),
+                    "condition_profile_rmse_angstrom": float(
+                        np.sqrt(np.mean(condition_delta * condition_delta))
+                    ),
+                    "condition_profile_mae_angstrom": float(np.mean(np.abs(condition_delta))),
+                    "task_rmse_mean_angstrom": float(np.mean(task_rmse)),
+                    "task_rmse_std_angstrom": float(np.std(task_rmse, ddof=0)),
+                    "task_mae_mean_angstrom": float(np.mean(task_mae)),
+                    "task_mae_std_angstrom": float(np.std(task_mae, ddof=0)),
+                    "task_correlation_mean": float(np.nanmean(task_corr)),
+                    "task_correlation_min": float(np.nanmin(task_corr)),
                 }
             )
+            stable_condition_rows.append(summary)
+
+            for index, label in enumerate(reference_labels, start=1):
+                condition_profile_rows.append(
+                    {
+                        "interface_scale": float(interface_scale),
+                        "residue_index": index,
+                        "residue_label": label,
+                        "condition_rmsf_mean_angstrom": float(condition_mean[index - 1]),
+                        "condition_rmsf_std_angstrom": float(condition_std[index - 1]),
+                        "reference_rmsf_mean_angstrom": float(reference_mean[index - 1]),
+                        "reference_rmsf_std_angstrom": float(reference_std[index - 1]),
+                        "delta_vs_reference_angstrom": float(
+                            condition_mean[index - 1] - reference_mean[index - 1]
+                        ),
+                    }
+                )
+        condition_rows.append(summary)
 
     summary_csv = assembled_dir / "condition_summary.csv"
     with summary_csv.open("w", encoding="utf-8", newline="") as fh:
@@ -1509,6 +1788,9 @@ def assemble_analysis(base_dir: Path) -> int:
             "interface_scale",
             "n_replicates_expected",
             "n_replicates_completed",
+            "n_replicates_stable",
+            "n_replicates_filtered_unstable",
+            "condition_excluded_from_fit",
             "condition_profile_rmse_angstrom",
             "condition_profile_mae_angstrom",
             "task_rmse_mean_angstrom",
@@ -1540,12 +1822,8 @@ def assemble_analysis(base_dir: Path) -> int:
         for row in condition_profile_rows:
             writer.writerow(row)
 
-    trend = _fit_trendline(
-        np.asarray([row["interface_scale"] for row in condition_rows], dtype=np.float64),
-        np.asarray([row["condition_profile_rmse_angstrom"] for row in condition_rows], dtype=np.float64),
-        int(analysis_manifest["analysis_settings"]["trendline_samples"]),
-    )
     trend_csv = assembled_dir / "trendline_points.csv"
+    trend: Dict[str, Any] | None = None
     with trend_csv.open("w", encoding="utf-8", newline="") as fh:
         fieldnames = [
             "interface_scale",
@@ -1553,13 +1831,22 @@ def assemble_analysis(base_dir: Path) -> int:
         ]
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
-        for x_value, y_value in zip(trend["grid_x"], trend["grid_y"]):
-            writer.writerow(
-                {
-                    "interface_scale": float(x_value),
-                    "fitted_condition_profile_rmse_angstrom": float(y_value),
-                }
+        if stable_condition_rows:
+            trend = _fit_trendline(
+                np.asarray([float(row["interface_scale"]) for row in stable_condition_rows], dtype=np.float64),
+                np.asarray(
+                    [float(row["condition_profile_rmse_angstrom"]) for row in stable_condition_rows],
+                    dtype=np.float64,
+                ),
+                int(analysis_settings["trendline_samples"]),
             )
+            for x_value, y_value in zip(trend["grid_x"], trend["grid_y"]):
+                writer.writerow(
+                    {
+                        "interface_scale": float(x_value),
+                        "fitted_condition_profile_rmse_angstrom": float(y_value),
+                    }
+                )
 
     failed_rows: List[Dict[str, Any]] = []
     for path in sorted(results_dir.glob("*.json")):
@@ -1577,43 +1864,100 @@ def assemble_analysis(base_dir: Path) -> int:
                     else f"{float(task.get('interface_scale')):.10g}"
                 ),
                 "replicate": int(task.get("replicate", 0) or 0),
+                "failure_stage": "analysis_error",
                 "error": str(payload.get("error", "")),
+            }
+        )
+    for row in task_rows:
+        if row["kind"] != "hybrid" or int(row["is_stable_protein_trajectory"]) == 1:
+            continue
+        failed_rows.append(
+            {
+                "code": str(row["code"]),
+                "kind": str(row["kind"]),
+                "interface_scale": str(row["interface_scale"]),
+                "replicate": int(row["replicate"]),
+                "failure_stage": "protein_stability_filter",
+                "error": str(row["stability_failure_reasons"]),
             }
         )
 
     failed_csv = assembled_dir / "failed_tasks.csv"
     with failed_csv.open("w", encoding="utf-8", newline="") as fh:
-        fieldnames = ["code", "kind", "interface_scale", "replicate", "error"]
+        fieldnames = ["code", "kind", "interface_scale", "replicate", "failure_stage", "error"]
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         for row in failed_rows:
             writer.writerow(row)
 
-    best_sampled = min(condition_rows, key=lambda item: (item["condition_profile_rmse_angstrom"], item["interface_scale"]))
+    best_sampled: Dict[str, Any] | None = None
+    if stable_condition_rows:
+        best_sampled = min(
+            stable_condition_rows,
+            key=lambda item: (
+                float(item["condition_profile_rmse_angstrom"]),
+                float(item["interface_scale"]),
+            ),
+        )
+    analysis_status = "ok" if stable_condition_rows else "no_stable_hybrid_trajectories"
     recommendation = {
         "created_at_utc": _now_utc(),
+        "analysis_status": analysis_status,
         "metric": "condition_profile_rmse_angstrom",
         "reference_task_count": int(len(reference_results)),
         "hybrid_condition_count": int(len(condition_rows)),
-        "best_sampled_interface_scale": float(best_sampled["interface_scale"]),
-        "best_sampled_condition_profile_rmse_angstrom": float(best_sampled["condition_profile_rmse_angstrom"]),
-        "trendline_recommended_interface_scale": float(trend["recommended_interface_scale"]),
-        "trendline_recommended_condition_profile_rmse_angstrom": float(trend["recommended_metric_value"]),
-        "trendline_fit_degree": int(trend["degree"]),
-        "trendline_fit_coefficients": [float(x) for x in trend["coefficients"]],
-        "trendline_fit_r2": float(trend["r2"]),
+        "hybrid_condition_count_used_for_fit": int(len(stable_condition_rows)),
+        "hybrid_task_count_filtered_unstable": int(
+            sum(1 for row in task_rows if row["kind"] == "hybrid" and int(row["is_stable_protein_trajectory"]) == 0)
+        ),
+        "best_sampled_interface_scale": (
+            None if best_sampled is None else float(best_sampled["interface_scale"])
+        ),
+        "best_sampled_condition_profile_rmse_angstrom": (
+            None if best_sampled is None else float(best_sampled["condition_profile_rmse_angstrom"])
+        ),
+        "trendline_recommended_interface_scale": (
+            None if trend is None else float(trend["recommended_interface_scale"])
+        ),
+        "trendline_recommended_condition_profile_rmse_angstrom": (
+            None if trend is None else float(trend["recommended_metric_value"])
+        ),
+        "trendline_fit_degree": None if trend is None else int(trend["degree"]),
+        "trendline_fit_coefficients": [] if trend is None else [float(x) for x in trend["coefficients"]],
+        "trendline_fit_r2": None if trend is None else float(trend["r2"]),
+        "note": (
+            ""
+            if stable_condition_rows
+            else "No stable hybrid trajectories remained after protein stability filtering"
+        ),
+        "reference_stability_baselines": reference_baselines,
+        "stability_thresholds": {
+            "stability_mean_rmsf_ratio_max": float(analysis_settings["stability_mean_rmsf_ratio_max"]),
+            "stability_max_rmsf_ratio_max": float(analysis_settings["stability_max_rmsf_ratio_max"]),
+            "stability_ca_rg_ratio_max": float(analysis_settings["stability_ca_rg_ratio_max"]),
+            "stability_ca_span_ratio_max": float(analysis_settings["stability_ca_span_ratio_max"]),
+        },
     }
     _write_json(assembled_dir / "recommendation_summary.json", recommendation)
 
     payload = {
         "created_at_utc": _now_utc(),
+        "analysis_status": analysis_status,
         "base_dir": str(base_dir),
         "pdb_id": manifest["settings"]["pdb_id"],
         "n_analysis_tasks_total": int(len(analysis_manifest["tasks"])),
         "n_analysis_tasks_completed_successfully": int(len(successful_results)),
         "n_reference_tasks_completed_successfully": int(len(reference_results)),
         "n_hybrid_tasks_completed_successfully": int(len(hybrid_results)),
+        "n_hybrid_tasks_filtered_unstable": int(
+            sum(1 for row in task_rows if row["kind"] == "hybrid" and int(row["is_stable_protein_trajectory"]) == 0)
+        ),
+        "n_hybrid_tasks_stable": int(
+            sum(1 for row in task_rows if row["kind"] == "hybrid" and int(row["is_stable_protein_trajectory"]) == 1)
+        ),
         "n_hybrid_conditions_completed": int(len(condition_rows)),
+        "n_hybrid_conditions_used_for_fit": int(len(stable_condition_rows)),
+        "trendline_available": int(bool(stable_condition_rows)),
         "task_results_csv": str(task_csv),
         "residue_rmsf_profiles_csv": str(profile_csv),
         "reference_profile_csv": str(reference_profile_csv),
