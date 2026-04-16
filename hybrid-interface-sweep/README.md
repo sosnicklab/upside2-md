@@ -18,9 +18,10 @@ The sweep variable is `PROTEIN_ENV_INTERFACE_SCALE`. The analysis computes resid
 
 ## Default Sweep
 
-- `interface_scale = 1.00, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50, 0.45, 0.40`
+- targeted confirmation sweep:
+  - `interface_scale = 0.55, 0.60, 0.625, 0.65, 0.675, 0.70, 0.725, 0.75, 0.775, 0.80, 0.85`
 - `reference_replicates = 4`
-- `hybrid_replicates = 3`
+- `hybrid_replicates = 5`
 - `pdb_id = 1rkl`
 - RMSF burn-in fraction: `0.20`
 - trend-line sample count: `201`
@@ -177,6 +178,8 @@ The analysis writes under `BASE_DIR/analysis/`:
 - `assembled/trendline_points.csv`
 - `assembled/interface_scale_vs_rmsf_difference.png`
 - `assembled/interface_scale_vs_rmsf_difference.svg`
+- `assembled/best_interface_scale_rmsf_vs_reference.png`
+- `assembled/best_interface_scale_rmsf_vs_reference.svg`
 - `assembled/failed_tasks.csv`
 - `assembled/recommendation_summary.json`
 - `assembled/summary.json`
@@ -187,10 +190,17 @@ The main plot-ready files are:
 - fitted trend line: `assembled/trendline_points.csv`
 - rendered figure: `assembled/interface_scale_vs_rmsf_difference.png`
 - vector figure: `assembled/interface_scale_vs_rmsf_difference.svg`
+- best-scale RMSF overlay: `assembled/best_interface_scale_rmsf_vs_reference.png`
+- best-scale RMSF overlay vector: `assembled/best_interface_scale_rmsf_vs_reference.svg`
 
 The recommended scale is saved in:
 
 - `assembled/recommendation_summary.json`
+
+That recommendation file also records which sampled scale was used for the RMSF overlay plot:
+
+- exact best sampled scale when that is the chosen target,
+- otherwise the nearest stable sampled scale to the trend-line recommendation.
 
 ## Run Analysis Locally
 

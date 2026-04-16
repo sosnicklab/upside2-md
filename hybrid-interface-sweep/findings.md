@@ -190,6 +190,112 @@
 - Matplotlib on this machine needs writable local cache directories.
   - Setting `MPLCONFIGDIR` and `XDG_CACHE_HOME` inside the plotting step avoids noisy font/cache warnings in analysis logs.
 
+## 2026-04-16 (Downloaded Long-Sweep Run Bundle)
+- The latest downloaded bundle includes:
+  - `results/tasks/*.json`
+  - `analysis/results/tasks/*.json`
+  - `slurm/`
+  - `analysis/slurm/`
+- It does not include the original `sweep_manifest.json`, but that manifest is reconstructable from the downloaded task-result JSONs.
+- Downloaded run coverage:
+  - `43` run-task JSONs total,
+  - `42` successful runs,
+  - `1` failed run.
+- Downloaded analysis coverage:
+  - `42` analysis-task JSONs total,
+  - `37` successful analyses,
+  - `5` analysis failures.
+
+## 2026-04-16 (Latest Run Failure Root Cause)
+- The only run-stage failure in the downloaded long sweep is:
+  - `scale0p75_r02`
+- It is not an analysis bug.
+- The stage-7 dynamics itself blew up:
+  - `Rg` rose into the `1e5 -> 1e6 A` range,
+  - `martini_potential` rose into about `1e15`,
+  - the C++ engine then segfaulted inside spline / interaction evaluation during `Stage 7.0`.
+- This failed task should be treated as a genuine unstable trajectory, not retried in analysis.
+
+## 2026-04-16 (Latest Analysis Failure Root Cause)
+- The five analysis-task failures are all the same failure mode:
+  - `Too few finite backbone frames remain after filtering for RMSF analysis: 0`
+- Affected tasks:
+  - `scale0p5_r02`
+  - `scale0p55_r03`
+  - `scale0p6_r01`
+  - `scale0p9_r02`
+  - `scale0p95_r03`
+- Interpretation:
+  - these runs completed far enough to write `stage_7.0.up`,
+  - but every post-burn-in selected protein-backbone frame was non-finite,
+  - so the analysis correctly rejected them as unusable.
+
+## 2026-04-16 (Latest Assembled Validity)
+- The latest downloaded long sweep is still usable for partial calibration analysis after filtering failed and unstable tasks.
+- Assembled counts after local rerun:
+  - `37` successful task analyses,
+  - `9` additional successful hybrid analyses filtered as unstable,
+  - `24` stable hybrid analyses retained,
+  - `13` interface-scale conditions still represented in the fitted table.
+- Important limitation:
+  - stable replicate coverage is uneven,
+  - several scales rely on only `1` or `2` stable replicates,
+  - the quadratic trend fit is weak:
+    - `R^2 = 0.187`
+- Consequence:
+  - the sweep is valid enough to inspect and plot,
+  - but the trend line is not strong enough to treat the fitted minimum as a definitive calibration result.
+
+## 2026-04-16 (Latest Practical Ranking)
+- Raw best sampled condition from the latest assembled bundle:
+  - `interface_scale = 0.60`
+  - `condition_profile_rmse = 0.350 A`
+  - but only `1 / 3` stable replicates remained.
+- Trendline minimum from the latest bundle:
+  - `interface_scale = 0.583`
+  - fitted RMSE `= 0.488 A`
+  - fit quality `R^2 = 0.187`
+- More defensible branches by stable coverage:
+  - `0.75`:
+    - `RMSE = 0.364 A`
+    - `2 / 2` stable completed replicates
+    - one separate run crashed in stage 7
+  - `0.65`:
+    - `RMSE = 0.421 A`
+    - full `3 / 3` stable replicate coverage
+  - `0.80`:
+    - `RMSE = 0.429 A`
+    - full `3 / 3` stable replicate coverage
+
+## 2026-04-16 (Targeted Confirmation Sweep Defaults)
+- The broad `0.40 -> 1.00` default sweep is no longer the best default calibration surface.
+- The latest assembled long sweep supports a narrower confirmation window centered on the current best-supported region:
+  - `interface_scale = 0.55, 0.60, 0.625, 0.65, 0.675, 0.70, 0.725, 0.75, 0.775, 0.80, 0.85`
+- Replicate count matters more than further widening the scale range at this stage.
+- New default hybrid replicate count:
+  - `hybrid_replicates = 5`
+- A fresh `init-run` now produces:
+  - `11` sampled scales,
+  - `55` hybrid tasks total,
+  - plus the unchanged reference task family.
+
+## 2026-04-16 (Best-Scale RMSF Overlay Plot)
+- The assembled analysis should not stop at the scale-vs-RMSE trend plot when the goal is to convince others that the interface scaling is physically meaningful.
+- The analysis now renders a second presentation plot:
+  - `analysis/assembled/best_interface_scale_rmsf_vs_reference.png`
+  - `analysis/assembled/best_interface_scale_rmsf_vs_reference.svg`
+- This plot overlays:
+  - the reference per-residue RMSF mean and spread,
+  - the selected hybrid condition per-residue RMSF mean and spread.
+- Selection rule:
+  - if the fitted recommended scale is also a sampled stable scale, use it directly,
+  - otherwise use the nearest stable sampled scale to the fitted recommendation,
+  - if no fitted recommendation is available, fall back to the best sampled stable scale.
+- On the current assembled dataset:
+  - `trendline_recommended_interface_scale = 0.583`
+  - `profile_comparison_interface_scale = 0.60`
+  - `profile_comparison_selection_basis = nearest_stable_sample_to_trendline_recommendation`
+
 ## 2026-04-14 (Analysis Surface)
 - There is no existing RMSF analysis helper in the repo for this calibration.
 - The new analysis should therefore compute and store:
@@ -281,6 +387,7 @@
 - When a workflow script is launched from a managed environment, subprocess Python calls must use `sys.executable` rather than bare `python3`.
 - When the user provides only a downloaded analysis tree, state explicitly whether the rerun is a fresh recomputation from raw checkpoints or a validation/review of the downloaded artifacts.
 - When the user redirects the scientific target entirely, rewrite the workflow around the new observable instead of trying to preserve the previous analysis pipeline.
+- When the user asks for a convincing calibration plot, add a direct reference-vs-selected-condition RMSF overlay instead of assuming the trend plot alone is enough.
 - When an example script re-sources environment setup, preserve caller-supplied runtime paths if the sweep depends on running that script from the current checkout.
 - When wrappers are meant to use a repo-local virtualenv, prefer the concrete `.venv/bin/python3` path before trusting the ambient shell state.
 - When a workflow output contains both target and environment particles, record and validate the exact atom-class subset used by the analysis instead of leaving that assumption implicit.
@@ -292,3 +399,5 @@
 - When downloaded task-result JSONs mix legacy and current schemas, normalize them during assembly instead of requiring the user to regenerate the whole analysis remotely.
 - When a user wants a scale-calibration result to be persuasive rather than merely inspectable, emit a rendered PNG/SVG figure directly from assembled analysis instead of stopping at CSV tables.
 - When Matplotlib runs in constrained environments, point its config and cache directories at writable analysis-local paths so plotting does not clutter Slurm logs with cache warnings.
+- When a downloaded run bundle is missing the original manifest but includes per-task result JSONs, reconstruct the manifest locally instead of blocking on a rerun.
+- When the fitted trend line has very low `R^2`, report that explicitly and prefer discussing best-sampled and best-covered branches separately rather than overselling the fitted optimum.

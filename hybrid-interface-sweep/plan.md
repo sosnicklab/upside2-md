@@ -39,10 +39,14 @@
   - per-residue RMSF profiles,
   - condition-level RMSF error table versus `interface_scale`,
   - fitted trend-line samples,
-  - recommendation JSON with both best sampled scale and trend-line-selected scale.
+  - recommendation JSON with both best sampled scale and trend-line-selected scale,
+  - a direct per-residue RMSF overlay comparing the reference profile against the best sampled scale or nearest stable sampled scale to the fitted recommendation.
 - Fit a simple polynomial trend line over condition-level RMSF RMSE.
   - Default to quadratic when at least three scales are available.
   - Choose the recommended scale from the minimum fitted error within the sampled scale range.
+- Default new sweeps to the current confirmation window instead of the older broad grid.
+  - Use `interface_scale = 0.55, 0.60, 0.625, 0.65, 0.675, 0.70, 0.725, 0.75, 0.775, 0.80, 0.85`.
+  - Use `hybrid_replicates = 5` so the trend line is backed by better stable-trajectory coverage.
 
 ## Execution Phases
 - [x] Phase 1: Rewrite tracker files for the new interface-scale RMSF calibration workflow.
@@ -89,6 +93,14 @@
     - `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1000`,
     - `PROD_70_NSTEPS = 50000`.
   - assembled analysis now emits a rendered scale-vs-RMSF figure directly as both PNG and SVG.
+  - downloaded long-sweep bundles that include `results/`, `analysis/`, and `slurm/` but omit `sweep_manifest.json` can still be assembled locally by reconstructing a minimal manifest from the downloaded task-result JSONs.
+  - new default confirmation sweeps now focus on the empirically stable region with denser sampling near the current apparent optimum:
+    - `interface_scale = 0.55, 0.60, 0.625, 0.65, 0.675, 0.70, 0.725, 0.75, 0.775, 0.80, 0.85`
+    - `hybrid_replicates = 5`
+  - assembled analysis now also renders a per-residue RMSF overlay for presentation:
+    - `analysis/assembled/best_interface_scale_rmsf_vs_reference.png`
+    - `analysis/assembled/best_interface_scale_rmsf_vs_reference.svg`
+    - it uses the nearest stable sampled scale to the fitted recommendation when the fitted optimum is not itself a sampled stable point.
 - Verification completed:
   - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
   - `bash -n hybrid-interface-sweep/run_local.sh`
@@ -177,3 +189,25 @@
       - `interface_scale_vs_rmsf_difference.png`
       - `interface_scale_vs_rmsf_difference.svg`
       - plot paths saved into `summary.json` and `recommendation_summary.json`
+  - downloaded long-sweep validation:
+    - inspected `results/tasks/`, `analysis/results/tasks/`, and both Slurm log trees,
+    - reconstructed a missing local `sweep_manifest.json`,
+    - reran `assemble-analysis` locally and confirmed valid assembled outputs from the downloaded bundle,
+    - identified one true run-stage crash at `scale0p75_r02`,
+    - identified five analysis rejections due to zero finite protein-backbone frames,
+    - confirmed the assembled bundle remains usable but coverage is uneven:
+      - raw best sampled `scale = 0.60` with only `1 / 3` stable replicates,
+      - strongest full-coverage stable branch `scale = 0.65` with `3 / 3` stable replicates,
+      - fitted trend quality remains weak with `R^2 = 0.187`.
+  - targeted confirmation default + overlay-plot verification:
+    - initialized a fresh default tree under `/tmp/hybrid_interface_rmsf_confirmation_defaults`,
+    - confirmed the default hybrid scales are:
+      - `0.55, 0.60, 0.625, 0.65, 0.675, 0.70, 0.725, 0.75, 0.775, 0.80, 0.85`
+    - confirmed default hybrid task count:
+      - `11` scales x `5` replicates = `55` hybrid tasks
+    - reran `assemble-analysis` on the local downloaded analysis base and confirmed:
+      - `analysis_status = ok`
+      - `profile_comparison_target_interface_scale = 0.583`
+      - `profile_comparison_interface_scale = 0.60`
+      - `profile_comparison_selection_basis = nearest_stable_sample_to_trendline_recommendation`
+      - both rendered figures are written under `analysis/assembled/`.

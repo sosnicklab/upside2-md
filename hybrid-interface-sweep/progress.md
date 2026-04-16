@@ -1,5 +1,36 @@
 # Progress Log
 
+## 2026-04-16 (Targeted Confirmation Defaults And Overlay Plot)
+- Reopened `hybrid-interface-sweep/` to turn the recommendation from the latest weak-fit long sweep into the next default confirmation workflow.
+- Updated:
+  - `hybrid-interface-sweep/workflow.py`
+  - `hybrid-interface-sweep/README.md`
+- Changed the default hybrid confirmation grid to:
+  - `0.55, 0.60, 0.625, 0.65, 0.675, 0.70, 0.725, 0.75, 0.775, 0.80, 0.85`
+- Increased default hybrid replicate count to:
+  - `5`
+- Added a new assembled analysis figure:
+  - `analysis/assembled/best_interface_scale_rmsf_vs_reference.png`
+  - `analysis/assembled/best_interface_scale_rmsf_vs_reference.svg`
+- The new figure overlays the reference RMSF profile against the selected hybrid condition and records the selection rule in assembled JSON outputs.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python hybrid-interface-sweep/workflow.py init-run --base-dir /tmp/hybrid_interface_rmsf_confirmation_defaults`
+  - confirmed fresh defaults write:
+    - `11` hybrid scales
+    - `55` hybrid tasks total
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python hybrid-interface-sweep/workflow.py assemble-analysis --base-dir hybrid-interface-sweep`
+  - confirmed assembled outputs now include:
+    - `interface_scale_vs_rmsf_difference.png`
+    - `interface_scale_vs_rmsf_difference.svg`
+    - `best_interface_scale_rmsf_vs_reference.png`
+    - `best_interface_scale_rmsf_vs_reference.svg`
+  - confirmed the current downloaded assembled bundle records:
+    - `analysis_status = ok`
+    - `trendline_recommended_interface_scale = 0.583`
+    - `profile_comparison_interface_scale = 0.60`
+    - `profile_comparison_selection_basis = nearest_stable_sample_to_trendline_recommendation`
+
 ## 2026-04-13 (Scalar-Factor Rewrite)
 - Reopened the workflow after the user clarified two constraints:
   - the calibrated softening control must be a simple scalar factor `f`,
@@ -375,6 +406,55 @@
     - PNG `1500 x 960`
     - SVG written successfully
   - confirmed assembled JSON outputs now include plot paths and no plot error.
+
+## 2026-04-16 (Downloaded Long-Sweep Validation And Assembly)
+- Reopened the project after the user downloaded the completed long sweep’s:
+  - `results/`
+  - `analysis/`
+  - `slurm/`
+  trees into `hybrid-interface-sweep/`.
+- Inspected the downloaded bundle and found:
+  - `43` run-task result JSONs under `results/tasks/`
+  - `42` analysis-task result JSONs under `analysis/results/tasks/`
+  - no downloaded `sweep_manifest.json`
+- Reconstructed a local:
+  - `hybrid-interface-sweep/sweep_manifest.json`
+  from the downloaded run-task JSONs so the local assembler could run.
+- Diagnosed the run-stage failure:
+  - `scale0p75_r02`
+  - stage-7 energy/Rg blow-up followed by a C++ segmentation fault in spline / interaction evaluation
+  - this is a genuine simulation instability, not an analysis-side failure.
+- Diagnosed the analysis-stage failures:
+  - `scale0p5_r02`
+  - `scale0p55_r03`
+  - `scale0p6_r01`
+  - `scale0p9_r02`
+  - `scale0p95_r03`
+  - all failed with `Too few finite backbone frames remain after filtering for RMSF analysis: 0`
+- Ran local assembled analysis successfully from the downloaded analysis task JSONs:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python hybrid-interface-sweep/workflow.py assemble-analysis --base-dir hybrid-interface-sweep`
+- Assembled outcome:
+  - `37 / 42` analysis tasks succeeded
+  - `5 / 42` analysis tasks failed
+  - `9` additional successful hybrid tasks were filtered as unstable/destroyed
+  - `24` stable hybrid tasks remained across all `13` sampled interface scales
+- Current assembled recommendation from the downloaded long sweep:
+  - best sampled: `interface_scale = 0.60`, `RMSE = 0.350 A`
+  - trendline minimum: `interface_scale = 0.583`, fitted `RMSE = 0.488 A`
+  - but the fitted trend is weak: `R^2 = 0.187`
+- Coverage-aware interpretation:
+  - `0.60` is the raw minimum but rests on only `1 / 3` stable replicates
+  - the strongest fully-covered stable branch is `0.65` with `3 / 3` stable replicates and `RMSE = 0.421 A`
+  - `0.80` is similarly fully covered at `RMSE = 0.429 A`
+  - `0.75` is numerically strong at `RMSE = 0.364 A`, but one replicate crashed in stage 7 so coverage is only `2 / 3`
+- Verified assembled outputs were written:
+  - `analysis/assembled/task_results.csv`
+  - `analysis/assembled/condition_summary.csv`
+  - `analysis/assembled/failed_tasks.csv`
+  - `analysis/assembled/recommendation_summary.json`
+  - `analysis/assembled/summary.json`
+  - `analysis/assembled/interface_scale_vs_rmsf_difference.png`
+  - `analysis/assembled/interface_scale_vs_rmsf_difference.svg`
 - Ran a reduced local smoke sweep under `/tmp/hybrid_interface_rmsf_smoke` with:
   - `interface_scale = 0.85`
   - `reference_replicates = 1`

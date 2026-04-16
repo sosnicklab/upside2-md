@@ -1,1 +1,4 @@
 analysis/*
+results/*
+slurm/*
+sweep_manifest.json
