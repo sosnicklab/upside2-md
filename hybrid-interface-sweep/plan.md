@@ -29,15 +29,15 @@
   - Current `source.sh` points `UPSIDE_HOME` at a non-existent checkout.
   - The workflow therefore needs the example-16 shell script to honor an already-set `UPSIDE_HOME`.
 - RMSF comparison surface:
-  - compare the shared `1rkl` protein backbone only,
-  - align frames rigidly in 3D using all mapped backbone carrier atoms,
-  - compute per-residue RMSF from the mapped CA-like backbone atom for each residue,
-  - aggregate the example-08 reference profile across reference replicates,
-  - score each hybrid replicate and condition by RMSF profile mismatch to that reference.
+  - do not score the full protein backbone anymore,
+  - derive a fixed embedded-residue subset from the example-08 reference membrane geometry,
+  - align frames rigidly in 3D using only that embedded-region backbone subset,
+  - compute embedded-region per-residue RMSF as a diagnostic only,
+  - score each hybrid replicate and condition by embedded-region RMSD amplitude difference to the reference.
 - Analysis outputs must be plot-ready:
   - per-task RMSF summaries,
   - per-residue RMSF profiles,
-  - condition-level RMSF error table versus `interface_scale`,
+  - condition-level embedded-region RMSD-amplitude error table versus `interface_scale`,
   - fitted trend-line samples,
   - recommendation JSON with both best sampled scale and trend-line-selected scale,
   - a direct per-residue RMSF overlay comparing the reference profile against the best sampled scale or nearest stable sampled scale to the fitted recommendation.
@@ -65,7 +65,7 @@
   - replaced the old softening workflow with a mixed-task `reference + hybrid` interface-scale RMSF sweep,
   - added example-08-style reference task generation and direct Upside execution for `1rkl`,
   - restored hybrid task execution through `example/16.MARTINI/run_sim_1rkl.sh` with per-task `PROTEIN_ENV_INTERFACE_SCALE`,
-  - added RMSF analysis that writes residue profiles, condition summaries, fitted trend-line samples, and a recommendation JSON,
+  - added embedded-region analysis that writes residue profiles, condition summaries, fitted trend-line samples, and a recommendation JSON,
   - updated wrapper scripts and README for the new interface-scale run surface,
   - patched `example/16.MARTINI/run_sim_1rkl.sh` so caller-provided `UPSIDE_HOME` survives its local `source.sh`.
 - Runtime hardening:
@@ -101,6 +101,10 @@
     - `analysis/assembled/best_interface_scale_rmsf_vs_reference.png`
     - `analysis/assembled/best_interface_scale_rmsf_vs_reference.svg`
     - it uses the nearest stable sampled scale to the fitted recommendation when the fitted optimum is not itself a sampled stable point.
+  - the analysis selector now derives the membrane-embedded residue subset from the reference membrane geometry and applies that fixed subset to all tasks.
+  - the fitted calibration metric is now:
+    - `condition_embedded_region_rmsd_delta_vs_reference_angstrom`
+    - not per-residue RMSF profile RMSE.
 - Verification completed:
   - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
   - `bash -n hybrid-interface-sweep/run_local.sh`
@@ -211,3 +215,10 @@
       - `profile_comparison_interface_scale = 0.60`
       - `profile_comparison_selection_basis = nearest_stable_sample_to_trendline_recommendation`
       - both rendered figures are written under `analysis/assembled/`.
+  - embedded-region RMSD analysis rewrite verification:
+    - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
+    - synthetic end-to-end analysis under `/private/tmp/hybrid_interface_embedded_metric_smoke`
+    - confirmed the reference-derived embedded subset is residues `2, 3, 4, 5`
+    - confirmed noisy solution residues are ignored by the fit metric
+    - confirmed the assembled metric is now `condition_embedded_region_rmsd_delta_vs_reference_angstrom`
+    - confirmed the better-matched synthetic scale `0.60` is selected over `0.80`.

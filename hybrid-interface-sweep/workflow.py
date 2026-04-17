@@ -37,9 +37,9 @@ HYBRID_PDB_DIR = REPO_ROOT / "example" / "16.MARTINI" / "pdb"
 SCHEMA_MANIFEST = "hybrid_interface_rmsf_sweep_manifest_v1"
 SCHEMA_SLURM_ROUND = "hybrid_interface_rmsf_sweep_slurm_round_v1"
 SCHEMA_TASK_RESULT = "hybrid_interface_rmsf_sweep_task_result_v1"
-SCHEMA_ANALYSIS_MANIFEST = "hybrid_interface_rmsf_sweep_analysis_manifest_v1"
-SCHEMA_ANALYSIS_SLURM = "hybrid_interface_rmsf_sweep_analysis_slurm_v1"
-SCHEMA_ANALYSIS_RESULT = "hybrid_interface_rmsf_sweep_analysis_result_v1"
+SCHEMA_ANALYSIS_MANIFEST = "hybrid_interface_rmsf_sweep_analysis_manifest_v2"
+SCHEMA_ANALYSIS_SLURM = "hybrid_interface_rmsf_sweep_analysis_slurm_v2"
+SCHEMA_ANALYSIS_RESULT = "hybrid_interface_rmsf_sweep_analysis_result_v2"
 
 REFERENCE_METHOD = "example_08_fixed_curvature"
 HYBRID_METHOD = "example_16_hybrid"
@@ -55,6 +55,7 @@ DEFAULT_STABILITY_MEAN_RMSF_RATIO_MAX = 3.0
 DEFAULT_STABILITY_MAX_RMSF_RATIO_MAX = 3.0
 DEFAULT_STABILITY_CA_RG_RATIO_MAX = 1.75
 DEFAULT_STABILITY_CA_SPAN_RATIO_MAX = 1.75
+DEFAULT_EMBEDDED_OCCUPANCY_MIN = 0.50
 
 DEFAULT_REFERENCE_SETTINGS = {
     "REFERENCE_TEMPERATURE": "0.80",
@@ -150,6 +151,7 @@ class Config:
     seed: int
     burn_in_fraction: float
     trendline_samples: int
+    embedded_occupancy_min: float
     stability_mean_rmsf_ratio_max: float
     stability_max_rmsf_ratio_max: float
     stability_ca_rg_ratio_max: float
@@ -340,6 +342,16 @@ def _build_config(args: argparse.Namespace, base_dir: Path) -> Config:
     trendline_samples = int(args.trendline_samples)
     if trendline_samples < 11:
         raise ValueError(f"trendline samples must be >= 11, got {trendline_samples}")
+    embedded_occupancy_min = float(
+        os.environ.get(
+            "HYBRID_SWEEP_EMBEDDED_OCCUPANCY_MIN",
+            str(DEFAULT_EMBEDDED_OCCUPANCY_MIN),
+        )
+    )
+    if not math.isfinite(embedded_occupancy_min) or not (0.0 < embedded_occupancy_min <= 1.0):
+        raise ValueError(
+            f"embedded occupancy min must be finite in (0, 1], got {embedded_occupancy_min}"
+        )
     stability_mean_rmsf_ratio_max = float(
         os.environ.get(
             "HYBRID_SWEEP_STABILITY_MEAN_RMSF_RATIO_MAX",
@@ -381,6 +393,7 @@ def _build_config(args: argparse.Namespace, base_dir: Path) -> Config:
         seed=int(args.seed),
         burn_in_fraction=burn_in_fraction,
         trendline_samples=trendline_samples,
+        embedded_occupancy_min=embedded_occupancy_min,
         stability_mean_rmsf_ratio_max=stability_mean_rmsf_ratio_max,
         stability_max_rmsf_ratio_max=stability_max_rmsf_ratio_max,
         stability_ca_rg_ratio_max=stability_ca_rg_ratio_max,
@@ -443,6 +456,7 @@ def _build_manifest(config: Config) -> Dict[str, Any]:
             "analysis_settings": {
                 "burn_in_fraction": config.burn_in_fraction,
                 "trendline_samples": config.trendline_samples,
+                "embedded_occupancy_min": config.embedded_occupancy_min,
                 "rmsf_atom_role": "CA",
                 "alignment_iterations": 3,
                 "stability_mean_rmsf_ratio_max": config.stability_mean_rmsf_ratio_max,
@@ -856,6 +870,19 @@ def _successful_results_from_dir(result_dir: Path) -> List[Dict[str, Any]]:
     return results
 
 
+def _successful_analysis_results_from_dir(result_dir: Path) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    if not result_dir.exists():
+        return results
+    for path in sorted(result_dir.glob("*.json")):
+        payload = _load_json(path)
+        if payload.get("schema") != SCHEMA_ANALYSIS_RESULT:
+            continue
+        if payload.get("success"):
+            results.append(payload)
+    return results
+
+
 def assemble_results(base_dir: Path) -> int:
     manifest = _load_manifest(base_dir)
     results = _successful_results_from_dir(_result_dir(base_dir))
@@ -1105,6 +1132,181 @@ def _extract_backbone_map(h5: h5py.File) -> Dict[str, Any]:
     }
 
 
+def _extract_reference_membrane_geometry(h5: h5py.File) -> Dict[str, Any]:
+    potential = h5["input"]["potential"]
+    group_name = ""
+    if "cb_membrane_potential" in potential:
+        group_name = "cb_membrane_potential"
+    elif "cb_surf_membrane_potential" in potential:
+        group_name = "cb_surf_membrane_potential"
+    else:
+        raise ValueError("Could not locate a reference membrane potential group for embedded-region selection")
+
+    grp = potential[group_name]
+    if "cb_index" not in grp:
+        raise ValueError(f"Membrane potential group missing cb_index: input/potential/{group_name}")
+    cb_index = np.asarray(grp["cb_index"][:], dtype=np.int64).reshape(-1)
+    if cb_index.size < 1:
+        raise ValueError(f"Membrane potential group has no residue indices: input/potential/{group_name}")
+    if np.any(cb_index < 0):
+        raise ValueError(f"Membrane potential group has negative residue indices: input/potential/{group_name}")
+    return {
+        "group_path": f"input/potential/{group_name}",
+        "half_thickness": float(grp.attrs["half_thickness"]),
+        "use_curvature": bool(int(grp.attrs.get("use_curvature", 0))),
+        "curvature_radius": float(grp.attrs.get("curvature_radius", 0.0)),
+        "curvature_sign": float(grp.attrs.get("curvature_sign", 1.0)),
+        "cb_index": cb_index,
+    }
+
+
+def _compute_membrane_depth_for_positions(
+    residue_xyz: np.ndarray,
+    *,
+    half_thickness: float,
+    use_curvature: bool,
+    curvature_radius: float,
+    curvature_sign: float,
+) -> np.ndarray:
+    xyz = np.asarray(residue_xyz, dtype=np.float64)
+    if xyz.ndim != 3 or xyz.shape[-1] != 3:
+        raise ValueError(f"Unexpected residue coordinate shape for membrane depth: {xyz.shape}")
+    if use_curvature:
+        center = np.array([0.0, 0.0, -curvature_radius * curvature_sign], dtype=np.float64)
+        dist = np.linalg.norm(xyz - center[None, None, :], axis=2)
+        return curvature_sign * (dist - curvature_radius)
+    return xyz[:, :, 2]
+
+
+def _derive_reference_embedded_region(
+    tasks: Sequence[Dict[str, Any]],
+    *,
+    burn_in_fraction: float,
+    occupancy_min: float,
+) -> Dict[str, Any]:
+    reference_tasks = [item for item in tasks if item["task"]["kind"] == "reference"]
+    if not reference_tasks:
+        raise RuntimeError("Need at least one reference task to derive the embedded residue region")
+
+    reference_labels: List[str] | None = None
+    reference_numbers: List[int] | None = None
+    occupancy_accum: np.ndarray | None = None
+    eligible_mask: np.ndarray | None = None
+    geometry_path = ""
+    half_thickness = None
+    use_curvature = None
+    curvature_radius = None
+    curvature_sign = None
+    source_count = 0
+
+    for item in reference_tasks:
+        stage_file = Path(item["analysis_target_file"]).expanduser().resolve()
+        if not stage_file.exists():
+            raise RuntimeError(f"Reference analysis target file not found for embedded-region selection: {stage_file}")
+        with h5py.File(stage_file, "r") as h5:
+            if "output/pos" not in h5:
+                raise ValueError(f"Missing output/pos in {stage_file}")
+            pos = _normalize_output_positions(h5["output/pos"][:])
+            n_frame_total = int(pos.shape[0])
+            if n_frame_total < 5:
+                raise ValueError(
+                    f"Need at least 5 output frames to derive the embedded region, found {n_frame_total}"
+                )
+            burn_start = int(math.floor(float(burn_in_fraction) * n_frame_total))
+            burn_start = min(max(0, burn_start), n_frame_total - 1)
+            pos = pos[burn_start:]
+            if pos.shape[0] < 5:
+                raise ValueError("Too few frames remain after burn-in to derive the embedded region")
+
+            backbone = _extract_backbone_map(h5)
+            residue_labels = [str(x) for x in backbone["residue_labels"]]
+            residue_numbers = [int(idx + 1) for idx in range(len(residue_labels))]
+            atom_index = np.asarray(backbone["atom_index"], dtype=np.int64)
+            ca_index = np.asarray(atom_index[:, int(backbone["ca_column"])], dtype=np.int64)
+            if np.max(ca_index) >= pos.shape[1]:
+                raise ValueError("Backbone CA selection refers to atoms outside output/pos")
+
+            geometry = _extract_reference_membrane_geometry(h5)
+            geometry_path = str(geometry["group_path"])
+            half_thickness = float(geometry["half_thickness"])
+            use_curvature = bool(geometry["use_curvature"])
+            curvature_radius = float(geometry["curvature_radius"])
+            curvature_sign = float(geometry["curvature_sign"])
+
+            ca_xyz = np.asarray(pos[:, ca_index, :], dtype=np.float64)
+            finite_mask = np.all(np.isfinite(ca_xyz), axis=(1, 2))
+            ca_xyz = ca_xyz[finite_mask]
+            if ca_xyz.shape[0] < 5:
+                raise ValueError(
+                    f"Too few finite CA frames remain to derive the embedded region from {stage_file}: {ca_xyz.shape[0]}"
+                )
+            depth = _compute_membrane_depth_for_positions(
+                ca_xyz,
+                half_thickness=float(geometry["half_thickness"]),
+                use_curvature=bool(geometry["use_curvature"]),
+                curvature_radius=float(geometry["curvature_radius"]),
+                curvature_sign=float(geometry["curvature_sign"]),
+            )
+            current_eligible = np.zeros(len(residue_labels), dtype=bool)
+            current_eligible[np.asarray(geometry["cb_index"], dtype=np.int64)] = True
+            occupancy = np.mean(np.abs(depth) <= float(geometry["half_thickness"]), axis=0)
+            occupancy = np.where(current_eligible, occupancy, 0.0)
+
+            if reference_labels is None:
+                reference_labels = residue_labels
+                reference_numbers = residue_numbers
+                occupancy_accum = np.asarray(occupancy, dtype=np.float64)
+                eligible_mask = np.asarray(current_eligible, dtype=bool)
+            else:
+                if residue_labels != reference_labels:
+                    raise RuntimeError("Residue labels differ across reference tasks while deriving the embedded region")
+                if residue_numbers != reference_numbers:
+                    raise RuntimeError("Residue numbering differs across reference tasks while deriving the embedded region")
+                if occupancy_accum is None or eligible_mask is None:
+                    raise RuntimeError("Embedded-region accumulator was not initialized correctly")
+                occupancy_accum += np.asarray(occupancy, dtype=np.float64)
+                eligible_mask = np.logical_and(eligible_mask, np.asarray(current_eligible, dtype=bool))
+            source_count += 1
+
+    if (
+        reference_labels is None
+        or reference_numbers is None
+        or occupancy_accum is None
+        or eligible_mask is None
+        or half_thickness is None
+        or use_curvature is None
+        or curvature_radius is None
+        or curvature_sign is None
+    ):
+        raise RuntimeError("Failed to derive the embedded residue region from the reference tasks")
+
+    occupancy_mean = occupancy_accum / float(source_count)
+    selected_mask = np.logical_and(eligible_mask, occupancy_mean >= float(occupancy_min))
+    selected_indices = [int(index) for index in np.flatnonzero(selected_mask)]
+    if not selected_indices:
+        raise RuntimeError(
+            "No residues met the embedded-region occupancy criterion; lower HYBRID_SWEEP_EMBEDDED_OCCUPANCY_MIN or inspect the reference trajectories"
+        )
+
+    return {
+        "selection_mode": "reference_membrane_depth_occupancy",
+        "selection_source": geometry_path,
+        "half_thickness": float(half_thickness),
+        "use_curvature": int(use_curvature),
+        "curvature_radius": float(curvature_radius),
+        "curvature_sign": float(curvature_sign),
+        "occupancy_min": float(occupancy_min),
+        "source_reference_task_count": int(source_count),
+        "embedded_residue_indices": selected_indices,
+        "embedded_residue_numbers_1based": [int(reference_numbers[index]) for index in selected_indices],
+        "embedded_residue_labels": [str(reference_labels[index]) for index in selected_indices],
+        "embedded_residue_occupancy": [float(occupancy_mean[index]) for index in selected_indices],
+        "all_residue_numbers_1based": [int(x) for x in reference_numbers],
+        "all_residue_labels": [str(x) for x in reference_labels],
+        "all_residue_occupancy": [float(x) for x in occupancy_mean],
+    }
+
+
 def _safe_profile_correlation(a: np.ndarray, b: np.ndarray) -> float:
     if a.shape != b.shape:
         raise ValueError("Profile shapes must match for correlation")
@@ -1156,6 +1358,7 @@ def _analysis_settings_with_defaults(settings: Dict[str, Any] | None) -> Dict[st
     merged = dict(settings or {})
     merged.setdefault("burn_in_fraction", DEFAULT_BURN_IN_FRACTION)
     merged.setdefault("trendline_samples", DEFAULT_TRENDLINE_SAMPLES)
+    merged.setdefault("embedded_occupancy_min", DEFAULT_EMBEDDED_OCCUPANCY_MIN)
     merged.setdefault("rmsf_atom_role", "CA")
     merged.setdefault("alignment_iterations", 3)
     merged.setdefault(
@@ -1181,10 +1384,19 @@ def _normalize_analysis_for_assembly(analysis: Dict[str, Any]) -> Dict[str, Any]
     normalized = dict(analysis)
     profile = np.asarray(normalized["residue_rmsf_angstrom"], dtype=np.float64)
     normalized.setdefault("max_rmsf_angstrom", float(np.max(profile)))
+    normalized.setdefault("residue_numbers_1based", list(range(1, int(profile.shape[0]) + 1)))
     normalized.setdefault("n_frames_dropped_nonfinite", 0)
     normalized.setdefault("selected_backbone_atom_count", 0)
     normalized.setdefault("selected_particle_classes", [])
     normalized.setdefault("selected_atom_roles", [])
+    normalized.setdefault("selected_residue_indices", [])
+    normalized.setdefault("selected_residue_numbers_1based", normalized["residue_numbers_1based"])
+    normalized.setdefault("selected_residue_labels", normalized.get("residue_labels", []))
+    normalized.setdefault("selected_region_kind", "protein_backbone")
+    normalized.setdefault("selected_region_source", "")
+    normalized.setdefault("mean_embedded_region_rmsd_angstrom", None)
+    normalized.setdefault("std_embedded_region_rmsd_angstrom", None)
+    normalized.setdefault("max_embedded_region_rmsd_angstrom", None)
     for key in (
         "ca_radius_of_gyration_angstrom_mean",
         "ca_radius_of_gyration_angstrom_std",
@@ -1275,6 +1487,7 @@ def _analyze_rmsf_profile(
     *,
     burn_in_fraction: float,
     alignment_iterations: int,
+    embedded_residue_indices: Sequence[int] | None,
 ) -> Dict[str, Any]:
     with h5py.File(stage_file, "r") as h5:
         inp = h5["input"]
@@ -1286,7 +1499,26 @@ def _analyze_rmsf_profile(
             raise ValueError(f"Need at least 5 output frames for RMSF analysis, found {n_frame_total}")
 
         backbone = _extract_backbone_map(h5)
-        atom_index = np.asarray(backbone["atom_index"], dtype=np.int64)
+        atom_index_full = np.asarray(backbone["atom_index"], dtype=np.int64)
+        residue_labels_full = [str(x) for x in backbone["residue_labels"]]
+        residue_numbers_full = [int(index + 1) for index in range(len(residue_labels_full))]
+        selected_residue_indices = list(range(atom_index_full.shape[0]))
+        selected_region_kind = "protein_backbone"
+        selected_region_source = str(backbone["source"])
+        if embedded_residue_indices is not None:
+            selected_residue_indices = sorted({int(index) for index in embedded_residue_indices})
+            if not selected_residue_indices:
+                raise ValueError("Embedded residue selection is empty")
+            if min(selected_residue_indices) < 0 or max(selected_residue_indices) >= atom_index_full.shape[0]:
+                raise ValueError("Embedded residue selection is out of range for the residue backbone map")
+            atom_index = np.asarray(atom_index_full[selected_residue_indices, :], dtype=np.int64)
+            selected_region_kind = "reference_embedded_region"
+            selected_region_source = "analysis_manifest.embedded_region"
+        else:
+            atom_index = np.asarray(atom_index_full, dtype=np.int64)
+        residue_labels = [residue_labels_full[index] for index in selected_residue_indices]
+        residue_numbers = [residue_numbers_full[index] for index in selected_residue_indices]
+
         flat_index = atom_index.reshape(-1)
         if np.max(flat_index) >= pos.shape[1]:
             raise ValueError("Backbone map refers to atoms outside output/pos")
@@ -1339,6 +1571,10 @@ def _analyze_rmsf_profile(
         ca_xyz = aligned_backbone[:, :, int(backbone["ca_column"]), :]
         mean_ca = np.mean(ca_xyz, axis=0)
         rmsf = np.sqrt(np.mean(np.sum((ca_xyz - mean_ca) ** 2, axis=2), axis=0))
+        embedded_region_rmsd = np.sqrt(
+            np.mean(np.sum((ca_xyz - mean_ca[None, :, :]) ** 2, axis=2), axis=1)
+        )
+        embedded_region_rmsd_stats = _mean_std_max(embedded_region_rmsd)
         ca_radius_of_gyration = _framewise_ca_radius_of_gyration(ca_xyz)
         ca_span = _framewise_ca_span(ca_xyz)
         ca_rg_stats = _mean_std_max(ca_radius_of_gyration)
@@ -1353,13 +1589,22 @@ def _analyze_rmsf_profile(
             "selected_backbone_atom_count": int(flat_index.size),
             "selected_particle_classes": selected_particle_classes,
             "selected_atom_roles": selected_atom_roles,
-            "residue_labels": [str(x) for x in backbone["residue_labels"]],
+            "selected_region_kind": selected_region_kind,
+            "selected_region_source": selected_region_source,
+            "selected_residue_indices": [int(x) for x in selected_residue_indices],
+            "selected_residue_numbers_1based": [int(x) for x in residue_numbers],
+            "selected_residue_labels": [str(x) for x in residue_labels],
+            "residue_labels": [str(x) for x in residue_labels],
+            "residue_numbers_1based": [int(x) for x in residue_numbers],
             "backbone_map_source": str(backbone["source"]),
             "alignment_iterations": int(alignment_iterations),
             "box_unwrap_applied": int(box_unwrap_applied),
             "mean_rmsf_angstrom": float(np.mean(rmsf)),
             "std_rmsf_angstrom": float(np.std(rmsf, ddof=0)),
             "max_rmsf_angstrom": float(np.max(rmsf)),
+            "mean_embedded_region_rmsd_angstrom": float(embedded_region_rmsd_stats["mean"]),
+            "std_embedded_region_rmsd_angstrom": float(embedded_region_rmsd_stats["std"]),
+            "max_embedded_region_rmsd_angstrom": float(embedded_region_rmsd_stats["max"]),
             "ca_radius_of_gyration_angstrom_mean": float(ca_rg_stats["mean"]),
             "ca_radius_of_gyration_angstrom_std": float(ca_rg_stats["std"]),
             "ca_radius_of_gyration_angstrom_max": float(ca_rg_stats["max"]),
@@ -1398,15 +1643,22 @@ def cmd_init_analysis(args: argparse.Namespace) -> int:
     base_dir = Path(args.base_dir).expanduser().resolve()
     manifest = _load_manifest(base_dir)
     tasks = _discover_analysis_tasks(base_dir, manifest)
+    analysis_settings = _analysis_settings_with_defaults(
+        manifest["settings"].get("analysis_settings")
+    )
+    embedded_region = _derive_reference_embedded_region(
+        tasks,
+        burn_in_fraction=float(analysis_settings["burn_in_fraction"]),
+        occupancy_min=float(analysis_settings["embedded_occupancy_min"]),
+    )
     payload = {
         "schema": SCHEMA_ANALYSIS_MANIFEST,
         "created_at_utc": _now_utc(),
         "base_dir": str(base_dir),
         "manifest_path": str(_manifest_path(base_dir)),
         "pdb_id": manifest["settings"]["pdb_id"],
-        "analysis_settings": _analysis_settings_with_defaults(
-            manifest["settings"].get("analysis_settings")
-        ),
+        "analysis_settings": analysis_settings,
+        "embedded_region": embedded_region,
         "n_analysis_targets": len(tasks),
         "tasks": tasks,
     }
@@ -1422,7 +1674,7 @@ def _run_analysis_task(base_dir: Path, analysis_manifest: Dict[str, Any], task_e
     result_path = _analysis_result_path(base_dir, code)
     if result_path.exists() and not overwrite:
         existing = _load_json(result_path)
-        if existing.get("success"):
+        if existing.get("schema") == SCHEMA_ANALYSIS_RESULT and existing.get("success"):
             print(f"Skipping completed analysis task {code}")
             return existing
 
@@ -1433,11 +1685,13 @@ def _run_analysis_task(base_dir: Path, analysis_manifest: Dict[str, Any], task_e
     analysis_settings = _analysis_settings_with_defaults(
         analysis_manifest.get("analysis_settings")
     )
+    embedded_region = dict(analysis_manifest.get("embedded_region") or {})
     try:
         analysis = _analyze_rmsf_profile(
             stage_file,
             burn_in_fraction=float(analysis_settings["burn_in_fraction"]),
             alignment_iterations=int(analysis_settings["alignment_iterations"]),
+            embedded_residue_indices=embedded_region.get("embedded_residue_indices"),
         )
         result = {
             "schema": SCHEMA_ANALYSIS_RESULT,
@@ -1563,7 +1817,7 @@ def _write_interface_scale_rmsf_plot(
         float(row["interface_scale"]): row
         for row in condition_rows
         if int(row.get("n_replicates_stable", 0)) > 0
-        and str(row.get("condition_profile_rmse_angstrom", "")) != ""
+        and str(row.get("condition_embedded_region_rmsd_delta_vs_reference_angstrom", "")) != ""
     }
 
     if stable_condition_rows:
@@ -1572,13 +1826,16 @@ def _write_interface_scale_rmsf_plot(
             dtype=np.float64,
         )
         y_values = np.asarray(
-            [float(row["condition_profile_rmse_angstrom"]) for row in stable_condition_rows],
+            [
+                float(row["condition_embedded_region_rmsd_delta_vs_reference_angstrom"])
+                for row in stable_condition_rows
+            ],
             dtype=np.float64,
         )
         y_errors = np.asarray(
             [
-                float(row["task_rmse_std_angstrom"])
-                if str(row.get("task_rmse_std_angstrom", "")) != ""
+                float(row["task_embedded_region_rmsd_delta_std_angstrom"])
+                if str(row.get("task_embedded_region_rmsd_delta_std_angstrom", "")) != ""
                 else 0.0
                 for row in stable_condition_rows
             ],
@@ -1604,7 +1861,7 @@ def _write_interface_scale_rmsf_plot(
             label = f"{int(stable_meta['n_replicates_stable'])}/{int(stable_meta['n_replicates_completed'])}"
             ax.annotate(
                 label,
-                (scale, float(row["condition_profile_rmse_angstrom"])),
+                (scale, float(row["condition_embedded_region_rmsd_delta_vs_reference_angstrom"])),
                 textcoords="offset points",
                 xytext=(0, 6),
                 ha="center",
@@ -1621,7 +1878,11 @@ def _write_interface_scale_rmsf_plot(
         excluded_y = 1.0
         if stable_condition_rows:
             excluded_y = float(
-                max(float(row["condition_profile_rmse_angstrom"]) for row in stable_condition_rows) * 1.06
+                max(
+                    float(row["condition_embedded_region_rmsd_delta_vs_reference_angstrom"])
+                    for row in stable_condition_rows
+                )
+                * 1.06
             )
         ax.scatter(
             excluded_scales,
@@ -1666,7 +1927,9 @@ def _write_interface_scale_rmsf_plot(
         )
 
     best_sampled_scale = recommendation.get("best_sampled_interface_scale")
-    best_sampled_rmse = recommendation.get("best_sampled_condition_profile_rmse_angstrom")
+    best_sampled_rmse = recommendation.get(
+        "best_sampled_condition_embedded_region_rmsd_delta_vs_reference_angstrom"
+    )
     if best_sampled_scale is not None and best_sampled_rmse is not None:
         ax.scatter(
             [float(best_sampled_scale)],
@@ -1681,8 +1944,8 @@ def _write_interface_scale_rmsf_plot(
         )
 
     ax.set_xlabel("PROTEIN_ENV_INTERFACE_SCALE")
-    ax.set_ylabel("RMSF Difference Vs Reference (RMSE, Angstrom)")
-    ax.set_title("1rkl Interface-Scale Calibration")
+    ax.set_ylabel("Embedded-Region RMSD Delta Vs Reference (Angstrom)")
+    ax.set_title("1rkl Embedded-Region RMSD Calibration")
     ax.grid(True, alpha=0.25, linewidth=0.7)
     if condition_rows:
         scales = sorted(float(row["interface_scale"]) for row in condition_rows)
@@ -1757,6 +2020,7 @@ def _select_profile_comparison_scale(
 def _write_best_scale_reference_rmsf_plot(
     *,
     assembled_dir: Path,
+    reference_numbers: Sequence[int],
     reference_labels: Sequence[str],
     reference_mean: np.ndarray,
     reference_std: np.ndarray,
@@ -1777,7 +2041,7 @@ def _write_best_scale_reference_rmsf_plot(
     png_path = assembled_dir / "best_interface_scale_rmsf_vs_reference.png"
     svg_path = assembled_dir / "best_interface_scale_rmsf_vs_reference.svg"
 
-    x_values = np.arange(1, int(condition_mean.shape[0]) + 1, dtype=np.int64)
+    x_values = np.asarray([int(x) for x in reference_numbers], dtype=np.int64)
     fig, ax = plt.subplots(figsize=(8.4, 4.8))
 
     ax.fill_between(
@@ -1815,18 +2079,23 @@ def _write_best_scale_reference_rmsf_plot(
     )
 
     tick_positions = [int(x_values[0])]
-    for index in range(4, int(x_values[-1]) + 1, 5):
-        tick_positions.append(index)
+    for position in x_values[1:]:
+        if (int(position) - int(tick_positions[-1])) >= 5:
+            tick_positions.append(int(position))
     if int(x_values[-1]) not in tick_positions:
         tick_positions.append(int(x_values[-1]))
     tick_positions = sorted(set(tick_positions))
-    tick_labels = [f"{pos}\n{reference_labels[pos - 1]}" for pos in tick_positions]
+    tick_label_map = {
+        int(number): f"{int(number)}\n{str(label)}"
+        for number, label in zip(reference_numbers, reference_labels)
+    }
+    tick_labels = [tick_label_map.get(int(pos), str(int(pos))) for pos in tick_positions]
 
     ax.set_xticks(tick_positions)
     ax.set_xticklabels(tick_labels, fontsize=8)
     ax.set_xlabel("Residue")
     ax.set_ylabel("Backbone RMSF (Angstrom)")
-    ax.set_title(f"1rkl RMSF Profile: Reference vs Interface Scale {selected_scale:.3f}")
+    ax.set_title(f"1rkl Embedded-Region RMSF: Reference vs Interface Scale {selected_scale:.3f}")
     ax.grid(True, alpha=0.22, linewidth=0.7)
     ax.legend(frameon=False, fontsize=8, loc="upper right")
 
@@ -1864,7 +2133,7 @@ def assemble_analysis(base_dir: Path) -> int:
     assembled_dir = _analysis_assembled_dir(base_dir)
     assembled_dir.mkdir(parents=True, exist_ok=True)
 
-    successful_results = _successful_results_from_dir(results_dir)
+    successful_results = _successful_analysis_results_from_dir(results_dir)
     for result in successful_results:
         result["analysis"] = _normalize_analysis_for_assembly(result["analysis"])
     reference_results = [item for item in successful_results if item["task"]["kind"] == "reference"]
@@ -1878,15 +2147,31 @@ def assemble_analysis(base_dir: Path) -> int:
         [result["analysis"]["residue_rmsf_angstrom"] for result in reference_results],
         dtype=np.float64,
     )
-    reference_labels = reference_results[0]["analysis"]["residue_labels"]
+    reference_labels = [str(x) for x in reference_results[0]["analysis"]["residue_labels"]]
+    reference_numbers = [
+        int(x)
+        for x in reference_results[0]["analysis"].get(
+            "residue_numbers_1based",
+            list(range(1, int(reference_profiles.shape[1]) + 1)),
+        )
+    ]
     n_residue = int(reference_profiles.shape[1])
     for result in successful_results:
         profile = np.asarray(result["analysis"]["residue_rmsf_angstrom"], dtype=np.float64)
-        labels = result["analysis"]["residue_labels"]
+        labels = [str(x) for x in result["analysis"]["residue_labels"]]
+        numbers = [
+            int(x)
+            for x in result["analysis"].get(
+                "residue_numbers_1based",
+                list(range(1, int(profile.shape[0]) + 1)),
+            )
+        ]
         if profile.shape[0] != n_residue:
-            raise RuntimeError("Residue-count mismatch across RMSF analysis results")
-        if list(labels) != list(reference_labels):
-            raise RuntimeError("Residue-label mismatch across RMSF analysis results")
+            raise RuntimeError("Residue-count mismatch across embedded-region RMSF analysis results")
+        if labels != reference_labels:
+            raise RuntimeError("Residue-label mismatch across embedded-region RMSF analysis results")
+        if numbers != reference_numbers:
+            raise RuntimeError("Residue-number mismatch across embedded-region RMSF analysis results")
 
     reference_mean = np.mean(reference_profiles, axis=0)
     reference_std = np.std(reference_profiles, axis=0, ddof=0)
@@ -1896,6 +2181,9 @@ def assemble_analysis(base_dir: Path) -> int:
         ),
         "max_rmsf_angstrom": _mean_available(
             item["analysis"].get("max_rmsf_angstrom") for item in reference_results
+        ),
+        "mean_embedded_region_rmsd_angstrom": _mean_available(
+            item["analysis"].get("mean_embedded_region_rmsd_angstrom") for item in reference_results
         ),
         "ca_radius_of_gyration_angstrom_mean": _mean_available(
             item["analysis"].get("ca_radius_of_gyration_angstrom_mean") for item in reference_results
@@ -1907,11 +2195,13 @@ def assemble_analysis(base_dir: Path) -> int:
     analysis_settings = _analysis_settings_with_defaults(
         analysis_manifest.get("analysis_settings")
     )
+    embedded_region = dict(analysis_manifest.get("embedded_region") or {})
 
     reference_profile_csv = assembled_dir / "reference_profile.csv"
     with reference_profile_csv.open("w", encoding="utf-8", newline="") as fh:
         fieldnames = [
             "residue_index",
+            "residue_number_1based",
             "residue_label",
             "reference_rmsf_mean_angstrom",
             "reference_rmsf_std_angstrom",
@@ -1922,6 +2212,7 @@ def assemble_analysis(base_dir: Path) -> int:
             writer.writerow(
                 {
                     "residue_index": index,
+                    "residue_number_1based": int(reference_numbers[index - 1]),
                     "residue_label": label,
                     "reference_rmsf_mean_angstrom": float(reference_mean[index - 1]),
                     "reference_rmsf_std_angstrom": float(reference_std[index - 1]),
@@ -1965,6 +2256,18 @@ def assemble_analysis(base_dir: Path) -> int:
                 else f"{float(task['interface_scale']):.10g}"
             ),
             "replicate": int(task["replicate"]),
+            "selected_region_kind": str(analysis.get("selected_region_kind", "")),
+            "selected_region_source": str(analysis.get("selected_region_source", "")),
+            "selected_residue_count": int(len(analysis.get("selected_residue_numbers_1based", []))),
+            "mean_embedded_region_rmsd_angstrom": _csv_optional_float(
+                analysis.get("mean_embedded_region_rmsd_angstrom")
+            ),
+            "std_embedded_region_rmsd_angstrom": _csv_optional_float(
+                analysis.get("std_embedded_region_rmsd_angstrom")
+            ),
+            "max_embedded_region_rmsd_angstrom": _csv_optional_float(
+                analysis.get("max_embedded_region_rmsd_angstrom")
+            ),
             "mean_rmsf_angstrom": float(analysis["mean_rmsf_angstrom"]),
             "std_rmsf_angstrom": float(analysis["std_rmsf_angstrom"]),
             "max_rmsf_angstrom": float(analysis["max_rmsf_angstrom"]),
@@ -1994,19 +2297,20 @@ def assemble_analysis(base_dir: Path) -> int:
             ),
             "ca_span_ratio_to_reference": _format_ratio(stability_ratios["ca_span_ratio"]),
             "analysis_target_file": str(result["analysis_target_file"]),
-            "rmsf_rmse_vs_reference_angstrom": "",
-            "rmsf_mae_vs_reference_angstrom": "",
-            "rmsf_correlation_vs_reference": "",
+            "embedded_region_rmsd_signed_delta_vs_reference_angstrom": "",
+            "embedded_region_rmsd_delta_vs_reference_angstrom": "",
         }
         if task["kind"] == "hybrid":
-            delta = profile - reference_mean
-            row["rmsf_rmse_vs_reference_angstrom"] = float(np.sqrt(np.mean(delta * delta)))
-            row["rmsf_mae_vs_reference_angstrom"] = float(np.mean(np.abs(delta)))
-            row["rmsf_correlation_vs_reference"] = _safe_profile_correlation(profile, reference_mean)
+            task_embedded_rmsd = float(analysis["mean_embedded_region_rmsd_angstrom"])
+            reference_embedded_rmsd = float(reference_baselines["mean_embedded_region_rmsd_angstrom"])
+            signed_delta = task_embedded_rmsd - reference_embedded_rmsd
+            row["embedded_region_rmsd_signed_delta_vs_reference_angstrom"] = float(signed_delta)
+            row["embedded_region_rmsd_delta_vs_reference_angstrom"] = float(abs(signed_delta))
             grouped_all.setdefault(float(task["interface_scale"]), []).append(
                 {
                     "row": row,
                     "profile": profile,
+                    "embedded_region_rmsd": task_embedded_rmsd,
                 }
             )
             if stability_is_stable:
@@ -2014,6 +2318,7 @@ def assemble_analysis(base_dir: Path) -> int:
                     {
                         "row": row,
                         "profile": profile,
+                        "embedded_region_rmsd": task_embedded_rmsd,
                     }
                 )
         task_rows.append(row)
@@ -2032,6 +2337,7 @@ def assemble_analysis(base_dir: Path) -> int:
                     "replicate": int(task["replicate"]),
                     "is_stable_protein_trajectory": int(stability_is_stable),
                     "residue_index": index,
+                    "residue_number_1based": int(reference_numbers[index - 1]),
                     "residue_label": label,
                     "rmsf_angstrom": float(profile[index - 1]),
                     "reference_rmsf_mean_angstrom": float(reference_mean[index - 1]),
@@ -2050,6 +2356,12 @@ def assemble_analysis(base_dir: Path) -> int:
             "method",
             "interface_scale",
             "replicate",
+            "selected_region_kind",
+            "selected_region_source",
+            "selected_residue_count",
+            "mean_embedded_region_rmsd_angstrom",
+            "std_embedded_region_rmsd_angstrom",
+            "max_embedded_region_rmsd_angstrom",
             "mean_rmsf_angstrom",
             "std_rmsf_angstrom",
             "max_rmsf_angstrom",
@@ -2059,9 +2371,8 @@ def assemble_analysis(base_dir: Path) -> int:
             "ca_span_angstrom_mean",
             "ca_span_angstrom_std",
             "ca_span_angstrom_max",
-            "rmsf_rmse_vs_reference_angstrom",
-            "rmsf_mae_vs_reference_angstrom",
-            "rmsf_correlation_vs_reference",
+            "embedded_region_rmsd_signed_delta_vs_reference_angstrom",
+            "embedded_region_rmsd_delta_vs_reference_angstrom",
             "n_frames_used",
             "n_frames_dropped_nonfinite",
             "selected_backbone_atom_count",
@@ -2090,6 +2401,7 @@ def assemble_analysis(base_dir: Path) -> int:
             "replicate",
             "is_stable_protein_trajectory",
             "residue_index",
+            "residue_number_1based",
             "residue_label",
             "rmsf_angstrom",
             "reference_rmsf_mean_angstrom",
@@ -2114,44 +2426,41 @@ def assemble_analysis(base_dir: Path) -> int:
             "n_replicates_stable": len(stable_rows),
             "n_replicates_filtered_unstable": len(rows) - len(stable_rows),
             "condition_excluded_from_fit": int(len(stable_rows) == 0),
-            "condition_profile_rmse_angstrom": "",
-            "condition_profile_mae_angstrom": "",
-            "task_rmse_mean_angstrom": "",
-            "task_rmse_std_angstrom": "",
-            "task_mae_mean_angstrom": "",
-            "task_mae_std_angstrom": "",
-            "task_correlation_mean": "",
-            "task_correlation_min": "",
+            "reference_embedded_region_rmsd_mean_angstrom": _csv_optional_float(
+                reference_baselines.get("mean_embedded_region_rmsd_angstrom")
+            ),
+            "condition_embedded_region_rmsd_mean_angstrom": "",
+            "condition_embedded_region_rmsd_std_angstrom": "",
+            "condition_embedded_region_rmsd_delta_vs_reference_angstrom": "",
+            "task_embedded_region_rmsd_delta_mean_angstrom": "",
+            "task_embedded_region_rmsd_delta_std_angstrom": "",
         }
         if stable_rows:
             profiles = np.asarray([item["profile"] for item in stable_rows], dtype=np.float64)
             condition_mean = np.mean(profiles, axis=0)
             condition_std = np.std(profiles, axis=0, ddof=0)
-            condition_delta = condition_mean - reference_mean
-            task_rmse = np.asarray(
-                [float(item["row"]["rmsf_rmse_vs_reference_angstrom"]) for item in stable_rows],
+            task_embedded_rmsd = np.asarray(
+                [float(item["embedded_region_rmsd"]) for item in stable_rows],
                 dtype=np.float64,
             )
-            task_mae = np.asarray(
-                [float(item["row"]["rmsf_mae_vs_reference_angstrom"]) for item in stable_rows],
-                dtype=np.float64,
+            condition_embedded_rmsd_mean = float(np.mean(task_embedded_rmsd))
+            condition_embedded_rmsd_std = float(np.std(task_embedded_rmsd, ddof=0))
+            condition_embedded_rmsd_delta = abs(
+                condition_embedded_rmsd_mean - float(reference_baselines["mean_embedded_region_rmsd_angstrom"])
             )
-            task_corr = np.asarray(
-                [float(item["row"]["rmsf_correlation_vs_reference"]) for item in stable_rows],
+            task_delta = np.asarray(
+                [float(item["row"]["embedded_region_rmsd_delta_vs_reference_angstrom"]) for item in stable_rows],
                 dtype=np.float64,
             )
             summary.update(
                 {
-                    "condition_profile_rmse_angstrom": float(
-                        np.sqrt(np.mean(condition_delta * condition_delta))
+                    "condition_embedded_region_rmsd_mean_angstrom": float(condition_embedded_rmsd_mean),
+                    "condition_embedded_region_rmsd_std_angstrom": float(condition_embedded_rmsd_std),
+                    "condition_embedded_region_rmsd_delta_vs_reference_angstrom": float(
+                        condition_embedded_rmsd_delta
                     ),
-                    "condition_profile_mae_angstrom": float(np.mean(np.abs(condition_delta))),
-                    "task_rmse_mean_angstrom": float(np.mean(task_rmse)),
-                    "task_rmse_std_angstrom": float(np.std(task_rmse, ddof=0)),
-                    "task_mae_mean_angstrom": float(np.mean(task_mae)),
-                    "task_mae_std_angstrom": float(np.std(task_mae, ddof=0)),
-                    "task_correlation_mean": float(np.nanmean(task_corr)),
-                    "task_correlation_min": float(np.nanmin(task_corr)),
+                    "task_embedded_region_rmsd_delta_mean_angstrom": float(np.mean(task_delta)),
+                    "task_embedded_region_rmsd_delta_std_angstrom": float(np.std(task_delta, ddof=0)),
                 }
             )
             stable_condition_rows.append(summary)
@@ -2160,7 +2469,9 @@ def assemble_analysis(base_dir: Path) -> int:
                 "std": np.asarray(condition_std, dtype=np.float64),
                 "n_replicates_stable": int(len(stable_rows)),
                 "n_replicates_completed": int(len(rows)),
-                "condition_profile_rmse_angstrom": float(summary["condition_profile_rmse_angstrom"]),
+                "condition_embedded_region_rmsd_delta_vs_reference_angstrom": float(
+                    summary["condition_embedded_region_rmsd_delta_vs_reference_angstrom"]
+                ),
             }
 
             for index, label in enumerate(reference_labels, start=1):
@@ -2168,6 +2479,7 @@ def assemble_analysis(base_dir: Path) -> int:
                     {
                         "interface_scale": float(interface_scale),
                         "residue_index": index,
+                        "residue_number_1based": int(reference_numbers[index - 1]),
                         "residue_label": label,
                         "condition_rmsf_mean_angstrom": float(condition_mean[index - 1]),
                         "condition_rmsf_std_angstrom": float(condition_std[index - 1]),
@@ -2189,14 +2501,12 @@ def assemble_analysis(base_dir: Path) -> int:
             "n_replicates_stable",
             "n_replicates_filtered_unstable",
             "condition_excluded_from_fit",
-            "condition_profile_rmse_angstrom",
-            "condition_profile_mae_angstrom",
-            "task_rmse_mean_angstrom",
-            "task_rmse_std_angstrom",
-            "task_mae_mean_angstrom",
-            "task_mae_std_angstrom",
-            "task_correlation_mean",
-            "task_correlation_min",
+            "reference_embedded_region_rmsd_mean_angstrom",
+            "condition_embedded_region_rmsd_mean_angstrom",
+            "condition_embedded_region_rmsd_std_angstrom",
+            "condition_embedded_region_rmsd_delta_vs_reference_angstrom",
+            "task_embedded_region_rmsd_delta_mean_angstrom",
+            "task_embedded_region_rmsd_delta_std_angstrom",
         ]
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
@@ -2208,6 +2518,7 @@ def assemble_analysis(base_dir: Path) -> int:
         fieldnames = [
             "interface_scale",
             "residue_index",
+            "residue_number_1based",
             "residue_label",
             "condition_rmsf_mean_angstrom",
             "condition_rmsf_std_angstrom",
@@ -2225,7 +2536,7 @@ def assemble_analysis(base_dir: Path) -> int:
     with trend_csv.open("w", encoding="utf-8", newline="") as fh:
         fieldnames = [
             "interface_scale",
-            "fitted_condition_profile_rmse_angstrom",
+            "fitted_condition_embedded_region_rmsd_delta_vs_reference_angstrom",
         ]
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
@@ -2233,7 +2544,10 @@ def assemble_analysis(base_dir: Path) -> int:
             trend = _fit_trendline(
                 np.asarray([float(row["interface_scale"]) for row in stable_condition_rows], dtype=np.float64),
                 np.asarray(
-                    [float(row["condition_profile_rmse_angstrom"]) for row in stable_condition_rows],
+                    [
+                        float(row["condition_embedded_region_rmsd_delta_vs_reference_angstrom"])
+                        for row in stable_condition_rows
+                    ],
                     dtype=np.float64,
                 ),
                 int(analysis_settings["trendline_samples"]),
@@ -2242,7 +2556,7 @@ def assemble_analysis(base_dir: Path) -> int:
                 writer.writerow(
                     {
                         "interface_scale": float(x_value),
-                        "fitted_condition_profile_rmse_angstrom": float(y_value),
+                        "fitted_condition_embedded_region_rmsd_delta_vs_reference_angstrom": float(y_value),
                     }
                 )
 
@@ -2293,7 +2607,7 @@ def assemble_analysis(base_dir: Path) -> int:
         best_sampled = min(
             stable_condition_rows,
             key=lambda item: (
-                float(item["condition_profile_rmse_angstrom"]),
+                float(item["condition_embedded_region_rmsd_delta_vs_reference_angstrom"]),
                 float(item["interface_scale"]),
             ),
         )
@@ -2301,23 +2615,26 @@ def assemble_analysis(base_dir: Path) -> int:
     recommendation = {
         "created_at_utc": _now_utc(),
         "analysis_status": analysis_status,
-        "metric": "condition_profile_rmse_angstrom",
+        "metric": "condition_embedded_region_rmsd_delta_vs_reference_angstrom",
         "reference_task_count": int(len(reference_results)),
         "hybrid_condition_count": int(len(condition_rows)),
         "hybrid_condition_count_used_for_fit": int(len(stable_condition_rows)),
         "hybrid_task_count_filtered_unstable": int(
             sum(1 for row in task_rows if row["kind"] == "hybrid" and int(row["is_stable_protein_trajectory"]) == 0)
         ),
+        "embedded_region": embedded_region,
         "best_sampled_interface_scale": (
             None if best_sampled is None else float(best_sampled["interface_scale"])
         ),
-        "best_sampled_condition_profile_rmse_angstrom": (
-            None if best_sampled is None else float(best_sampled["condition_profile_rmse_angstrom"])
+        "best_sampled_condition_embedded_region_rmsd_delta_vs_reference_angstrom": (
+            None
+            if best_sampled is None
+            else float(best_sampled["condition_embedded_region_rmsd_delta_vs_reference_angstrom"])
         ),
         "trendline_recommended_interface_scale": (
             None if trend is None else float(trend["recommended_interface_scale"])
         ),
-        "trendline_recommended_condition_profile_rmse_angstrom": (
+        "trendline_recommended_condition_embedded_region_rmsd_delta_vs_reference_angstrom": (
             None if trend is None else float(trend["recommended_metric_value"])
         ),
         "trendline_fit_degree": None if trend is None else int(trend["degree"]),
@@ -2359,6 +2676,7 @@ def assemble_analysis(base_dir: Path) -> int:
         try:
             best_profile_plot_outputs = _write_best_scale_reference_rmsf_plot(
                 assembled_dir=assembled_dir,
+                reference_numbers=reference_numbers,
                 reference_labels=reference_labels,
                 reference_mean=np.asarray(reference_mean, dtype=np.float64),
                 reference_std=np.asarray(reference_std, dtype=np.float64),
@@ -2389,6 +2707,11 @@ def assemble_analysis(base_dir: Path) -> int:
         "analysis_status": analysis_status,
         "base_dir": str(base_dir),
         "pdb_id": manifest["settings"]["pdb_id"],
+        "metric": recommendation["metric"],
+        "embedded_region": embedded_region,
+        "reference_embedded_region_rmsd_mean_angstrom": reference_baselines.get(
+            "mean_embedded_region_rmsd_angstrom"
+        ),
         "n_analysis_tasks_total": int(len(analysis_manifest["tasks"])),
         "n_analysis_tasks_completed_successfully": int(len(successful_results)),
         "n_reference_tasks_completed_successfully": int(len(reference_results)),

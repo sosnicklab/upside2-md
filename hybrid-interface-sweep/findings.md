@@ -1,5 +1,37 @@
 # Findings
 
+## 2026-04-17 (Embedded-Region Analysis Target)
+- The current full-protein per-residue RMSF fit is not aligned with the intended scientific question.
+- The calibration should ignore solution-exposed residues and focus only on the membrane-embedded region.
+- Detailed per-residue RMSF shape inside that region is secondary.
+- The primary fit metric is now the overall fluctuation amplitude of the embedded region:
+  - implemented as mean framewise embedded-region RMSD to the embedded-region mean structure.
+
+## 2026-04-17 (Reference-Driven Embedded Selector)
+- The cleanest shared selector is to derive the membrane-embedded residue subset from the reference method only, then apply that same residue subset to every hybrid task.
+- The selector now uses the stored membrane geometry in the reference stage file:
+  - `input/potential/cb_membrane_potential` or `input/potential/cb_surf_membrane_potential`
+  - `half_thickness`
+  - `use_curvature`
+  - `curvature_radius`
+  - `curvature_sign`
+- For curved reference membranes, the depth coordinate should follow the engine definition rather than plain `z`:
+  - `depth = curvature_sign * (|xyz - center| - curvature_radius)`
+- Residues are selected by reference occupancy after burn-in, with default threshold:
+  - `HYBRID_SWEEP_EMBEDDED_OCCUPANCY_MIN = 0.50`
+
+## 2026-04-17 (Embedded-Region RMSD Metric Verification)
+- A synthetic end-to-end analysis under `/private/tmp/hybrid_interface_embedded_metric_smoke` verified the new behavior.
+- The derived embedded subset was exactly the intended membrane region:
+  - residues `2, 3, 4, 5`
+- In that synthetic test:
+  - one hybrid condition matched the reference embedded-region fluctuation amplitude while making the solution residues much noisier,
+  - another hybrid condition increased the embedded-region fluctuation amplitude.
+- The assembled analysis correctly chose the amplitude-matched condition:
+  - `best_sampled_interface_scale = 0.60`
+  - `metric = condition_embedded_region_rmsd_delta_vs_reference_angstrom`
+- This confirms the new fit is driven by embedded-region RMSD amplitude and is insensitive to solution-region noise.
+
 ## 2026-04-14 (Current Workflow Target)
 - `hybrid-interface-sweep/` is no longer a bilayer-only diffusion or softening workflow.
 - The new target is an interface-scale calibration workflow for `1rkl`.
@@ -382,6 +414,8 @@
   - so no tested condition demonstrates a target match.
 
 ## Lessons
+- When the user says the solution region should be ignored, the fit metric must be redefined around a membrane-region selector instead of merely relabeling the old full-protein RMSF outputs.
+- When the user says per-residue shape does not matter, do not keep fitting profile RMSE; use a scalar fluctuation-amplitude metric instead.
 - When the user points out that scaling leaves a singular pair-potential shape unchanged, restore the shape-control surface instead of trying to force the scalar workflow to fit.
 - When a workflow semantics change invalidates old run trees, bump the manifest/result schemas immediately so reuse fails loudly.
 - When a workflow script is launched from a managed environment, subprocess Python calls must use `sys.executable` rather than bare `python3`.

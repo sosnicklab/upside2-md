@@ -1,5 +1,27 @@
 # Progress Log
 
+## 2026-04-17 (Embedded-Region RMSD Analysis Rewrite)
+- Reopened the calibration analysis after the user corrected two scientific requirements:
+  - ignore solution-region residues,
+  - fit overall fluctuation amplitude rather than detailed per-residue RMSF shape.
+- Updated:
+  - `hybrid-interface-sweep/workflow.py`
+  - `hybrid-interface-sweep/README.md`
+  - `hybrid-interface-sweep/plan.md`
+  - `hybrid-interface-sweep/findings.md`
+- Changed the analysis semantics:
+  - `init-analysis` now derives a fixed embedded-residue subset from the reference membrane geometry and stores it in `analysis/analysis_manifest.json`
+  - `run-analysis-*` now analyzes only that selected residue subset
+  - the primary calibration metric is now `condition_embedded_region_rmsd_delta_vs_reference_angstrom`
+  - embedded-region per-residue RMSF is still written as a diagnostic, not the fit target
+- Bumped the analysis schemas so old full-protein RMSF analysis JSON files are not reused silently.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
+  - synthetic end-to-end analysis under `/private/tmp/hybrid_interface_embedded_metric_smoke`
+  - confirmed the derived embedded region is residues `2-5`
+  - confirmed the fitted metric ignores noisy solution residues
+  - confirmed the assembled recommendation prefers the synthetic amplitude-matched scale `0.60`
+
 ## 2026-04-16 (Targeted Confirmation Defaults And Overlay Plot)
 - Reopened `hybrid-interface-sweep/` to turn the recommendation from the latest weak-fit long sweep into the next default confirmation workflow.
 - Updated:
