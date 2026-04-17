@@ -4,7 +4,7 @@
 - Replace `hybrid-interface-sweep/` with an interface-scale calibration workflow for `1rkl`.
 - Use the implicit-membrane `example/08.MembraneSimulation` method as the RMSF reference.
 - Use the hybrid dry-MARTINI `example/16.MARTINI` method as the swept method.
-- Sweep the Upside/dry-MARTINI interface scaling factor and choose it from an RMSF-error trend line.
+- Sweep the Upside/dry-MARTINI interface scaling factor and choose it from direct per-scale RMSF overlays against the reference.
 - Keep local and Slurm execution paths working, including a post-run analysis phase.
 
 ## Architecture & Key Decisions
@@ -40,13 +40,17 @@
   - condition-level embedded-region RMSD-amplitude error table versus `interface_scale`,
   - fitted trend-line samples,
   - recommendation JSON with both best sampled scale and trend-line-selected scale,
-  - a direct per-residue RMSF overlay comparing the reference profile against the best sampled scale or nearest stable sampled scale to the fitted recommendation.
+  - a direct per-residue RMSF overlay comparing the reference profile against the best sampled scale or nearest stable sampled scale to the fitted recommendation,
+  - a direct reference-vs-hybrid RMSF overlay for every sampled stable scale.
 - Fit a simple polynomial trend line over condition-level RMSF RMSE.
   - Default to quadratic when at least three scales are available.
   - Choose the recommended scale from the minimum fitted error within the sampled scale range.
-- Default new sweeps to the current confirmation window instead of the older broad grid.
-  - Use `interface_scale = 0.55, 0.60, 0.625, 0.65, 0.675, 0.70, 0.725, 0.75, 0.775, 0.80, 0.85`.
-  - Use `hybrid_replicates = 5` so the trend line is backed by better stable-trajectory coverage.
+- Treat the fitted trend line as secondary.
+  - The main decision artifact is the per-scale overlay set.
+  - `interface_scale_vs_rmsf_difference.png` remains optional context only.
+- Default new sweeps to a high-end exploratory window.
+  - Use `interface_scale = 0.825, 0.85, 0.875, 0.90, 0.925, 0.95, 0.975, 1.00, 1.025, 1.05, 1.075, 1.10, 1.125, 1.15, 1.175, 1.20`.
+  - Use `hybrid_replicates = 1` for the exploratory pass.
 
 ## Execution Phases
 - [x] Phase 1: Rewrite tracker files for the new interface-scale RMSF calibration workflow.
@@ -66,6 +70,7 @@
   - added example-08-style reference task generation and direct Upside execution for `1rkl`,
   - restored hybrid task execution through `example/16.MARTINI/run_sim_1rkl.sh` with per-task `PROTEIN_ENV_INTERFACE_SCALE`,
   - added embedded-region analysis that writes residue profiles, condition summaries, fitted trend-line samples, and a recommendation JSON,
+  - added per-scale overlay rendering under `analysis/assembled/scale_rmsf_vs_reference/` so each sampled stable scale gets its own reference comparison figure,
   - updated wrapper scripts and README for the new interface-scale run surface,
   - patched `example/16.MARTINI/run_sim_1rkl.sh` so caller-provided `UPSIDE_HOME` survives its local `source.sh`.
 - Runtime hardening:
@@ -222,3 +227,27 @@
     - confirmed noisy solution residues are ignored by the fit metric
     - confirmed the assembled metric is now `condition_embedded_region_rmsd_delta_vs_reference_angstrom`
     - confirmed the better-matched synthetic scale `0.60` is selected over `0.80`.
+  - downloaded `default/` bundle assembly rerun:
+    - confirmed `default/analysis/results/tasks/*.json` already use the embedded-region `v2` schema,
+    - reran `assemble-analysis --base-dir hybrid-interface-sweep/default`,
+    - assembled outputs written under `default/analysis/assembled/`,
+    - current downloaded result:
+      - best sampled scale `= 0.675`,
+      - trendline recommendation `= 0.841`,
+      - fit quality `R^2 = 0.053`,
+      - coverage remains sparse with only `17` stable hybrid tasks across `9` fit-eligible conditions.
+  - high-end exploratory default + per-scale overlay verification:
+    - initialized a fresh default tree under `/tmp/hybrid_interface_high_end_defaults`,
+    - confirmed the default hybrid scales are:
+      - `0.825, 0.85, 0.875, 0.90, 0.925, 0.95, 0.975, 1.00, 1.025, 1.05, 1.075, 1.10, 1.125, 1.15, 1.175, 1.20`
+    - confirmed default hybrid task count:
+      - `16` scales x `1` replicate = `16` hybrid tasks
+    - reran `assemble-analysis --base-dir hybrid-interface-sweep/default`,
+    - confirmed assembled outputs now include:
+      - `analysis/assembled/scale_rmsf_vs_reference/scale*_rmsf_vs_reference.png`
+      - `analysis/assembled/scale_rmsf_vs_reference/scale*_rmsf_vs_reference.svg`
+      - `analysis/assembled/scale_rmsf_vs_reference_index.csv`
+    - confirmed assembled metadata now records:
+      - `scale_rmsf_vs_reference_dir`
+      - `scale_rmsf_vs_reference_index_csv`
+      - `all_scale_plot_error = ""`

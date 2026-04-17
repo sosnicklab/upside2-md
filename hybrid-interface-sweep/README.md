@@ -23,10 +23,10 @@ The sweep variable is `PROTEIN_ENV_INTERFACE_SCALE`. The analysis now:
 
 ## Default Sweep
 
-- targeted confirmation sweep:
-  - `interface_scale = 0.55, 0.60, 0.625, 0.65, 0.675, 0.70, 0.725, 0.75, 0.775, 0.80, 0.85`
+- high-end exploratory sweep:
+  - `interface_scale = 0.825, 0.85, 0.875, 0.90, 0.925, 0.95, 0.975, 1.00, 1.025, 1.05, 1.075, 1.10, 1.125, 1.15, 1.175, 1.20`
 - `reference_replicates = 4`
-- `hybrid_replicates = 5`
+- `hybrid_replicates = 1`
 - `pdb_id = 1rkl`
 - RMSF burn-in fraction: `0.20`
 - trend-line sample count: `201`
@@ -189,6 +189,9 @@ The analysis writes under `BASE_DIR/analysis/`:
 - `assembled/condition_profiles.csv`
 - `assembled/condition_summary.csv`
 - `assembled/trendline_points.csv`
+- `assembled/scale_rmsf_vs_reference/scale*.png`
+- `assembled/scale_rmsf_vs_reference/scale*.svg`
+- `assembled/scale_rmsf_vs_reference_index.csv`
 - `assembled/interface_scale_vs_rmsf_difference.png`
 - `assembled/interface_scale_vs_rmsf_difference.svg`
 - `assembled/best_interface_scale_rmsf_vs_reference.png`
@@ -201,6 +204,8 @@ The main plot-ready files are:
 
 - observed condition points: `assembled/condition_summary.csv`
 - fitted trend line: `assembled/trendline_points.csv`
+- per-scale embedded-region RMSF overlays: `assembled/scale_rmsf_vs_reference/`
+- per-scale overlay index: `assembled/scale_rmsf_vs_reference_index.csv`
 - rendered figure: `assembled/interface_scale_vs_rmsf_difference.png`
 - vector figure: `assembled/interface_scale_vs_rmsf_difference.svg`
 - best-scale embedded-region RMSF overlay: `assembled/best_interface_scale_rmsf_vs_reference.png`
@@ -210,10 +215,12 @@ The recommended scale is saved in:
 
 - `assembled/recommendation_summary.json`
 
-That recommendation file also records which sampled scale was used for the RMSF overlay plot:
+That recommendation file also records which sampled scale was used for the single selected RMSF overlay plot:
 
 - exact best sampled scale when that is the chosen target,
 - otherwise the nearest stable sampled scale to the trend-line recommendation.
+
+For the current exploratory workflow, the per-scale overlays are intended to be the primary decision surface and the trend plot is secondary.
 
 Important:
 

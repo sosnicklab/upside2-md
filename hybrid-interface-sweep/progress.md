@@ -1,5 +1,66 @@
 # Progress Log
 
+## 2026-04-17 (High-End Exploratory Defaults And Per-Scale Overlay Set)
+- Reopened `hybrid-interface-sweep/` after the user rejected `interface_scale_vs_rmsf_difference.png` as the main output.
+- Updated:
+  - `hybrid-interface-sweep/workflow.py`
+  - `hybrid-interface-sweep/README.md`
+  - `hybrid-interface-sweep/plan.md`
+  - `hybrid-interface-sweep/findings.md`
+- Changed the default exploratory hybrid grid to:
+  - `0.825, 0.85, 0.875, 0.90, 0.925, 0.95, 0.975, 1.00, 1.025, 1.05, 1.075, 1.10, 1.125, 1.15, 1.175, 1.20`
+- Reduced default hybrid replicate count to:
+  - `1`
+- Added a per-scale overlay output set under:
+  - `analysis/assembled/scale_rmsf_vs_reference/`
+  - one PNG and one SVG per sampled stable scale
+  - `analysis/assembled/scale_rmsf_vs_reference_index.csv`
+- Kept `best_interface_scale_rmsf_vs_reference.*` for compatibility, but it is no longer the only presentation artifact.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python -m py_compile hybrid-interface-sweep/workflow.py`
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python hybrid-interface-sweep/workflow.py init-run --base-dir /tmp/hybrid_interface_high_end_defaults`
+  - confirmed fresh defaults write:
+    - `16` hybrid scales
+    - `16` hybrid tasks total
+    - `hybrid_replicates = 1`
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python hybrid-interface-sweep/workflow.py assemble-analysis --base-dir hybrid-interface-sweep/default`
+  - confirmed assembled outputs now include:
+    - `scale_rmsf_vs_reference/scale*_rmsf_vs_reference.png`
+    - `scale_rmsf_vs_reference/scale*_rmsf_vs_reference.svg`
+    - `scale_rmsf_vs_reference_index.csv`
+  - confirmed assembled metadata records:
+    - `scale_rmsf_vs_reference_dir`
+    - `scale_rmsf_vs_reference_index_csv`
+    - `all_scale_plot_error = ""`
+
+## 2026-04-17 (Downloaded `default/` Assembly Rerun)
+- Reopened the project after the user downloaded the completed sweep bundle under:
+  - `hybrid-interface-sweep/default/`
+  - without the raw `tasks/` directory.
+- Inspected the downloaded tree and confirmed it still contains enough for current analysis assembly:
+  - `default/sweep_manifest.json`
+  - `default/results/tasks/*.json`
+  - `default/analysis/analysis_manifest.json`
+  - `default/analysis/results/tasks/*.json`
+- Verified the downloaded analysis payloads are already on the current embedded-region schema:
+  - `hybrid_interface_rmsf_sweep_analysis_manifest_v2`
+  - `hybrid_interface_rmsf_sweep_analysis_result_v2`
+- Ran local assembly directly from the downloaded task-analysis JSONs:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python hybrid-interface-sweep/workflow.py assemble-analysis --base-dir hybrid-interface-sweep/default`
+- Confirmed assembled outputs were written under:
+  - `hybrid-interface-sweep/default/analysis/assembled/`
+- Key assembled result:
+  - best sampled scale `= 0.675`
+  - best sampled embedded-region RMSD delta `= 0.1441 A`
+  - trendline recommendation `= 0.841`
+  - fit quality `R^2 = 0.053`
+  - overlay comparison scale `= 0.85`
+- Coverage caveat:
+  - `44 / 59` task analyses succeeded,
+  - `15` analysis errors remained,
+  - `23` additional hybrid tasks were filtered unstable,
+  - only `17` stable hybrid tasks remained across `9` fit-eligible conditions.
+
 ## 2026-04-17 (Embedded-Region RMSD Analysis Rewrite)
 - Reopened the calibration analysis after the user corrected two scientific requirements:
   - ignore solution-region residues,

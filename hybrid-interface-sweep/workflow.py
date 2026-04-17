@@ -45,8 +45,25 @@ REFERENCE_METHOD = "example_08_fixed_curvature"
 HYBRID_METHOD = "example_16_hybrid"
 
 DEFAULT_PDB_ID = "1rkl"
-DEFAULT_INTERFACE_SCALES = [0.55, 0.60, 0.625, 0.65, 0.675, 0.70, 0.725, 0.75, 0.775, 0.80, 0.85]
-DEFAULT_HYBRID_REPLICATES = 5
+DEFAULT_INTERFACE_SCALES = [
+    0.825,
+    0.85,
+    0.875,
+    0.90,
+    0.925,
+    0.95,
+    0.975,
+    1.00,
+    1.025,
+    1.05,
+    1.075,
+    1.10,
+    1.125,
+    1.15,
+    1.175,
+    1.20,
+]
+DEFAULT_HYBRID_REPLICATES = 1
 DEFAULT_REFERENCE_REPLICATES = 4
 DEFAULT_SEED = 20260414
 DEFAULT_BURN_IN_FRACTION = 0.20
@@ -2031,15 +2048,45 @@ def _write_best_scale_reference_rmsf_plot(
         return {}
 
     selected_scale = float(selection["selected_interface_scale"])
-    condition_mean = np.asarray(profile_meta["mean"], dtype=np.float64)
-    condition_std = np.asarray(profile_meta["std"], dtype=np.float64)
     n_stable = int(profile_meta["n_replicates_stable"])
     n_completed = int(profile_meta["n_replicates_completed"])
+    selection_note = str(selection.get("selection_basis", "")).replace("_", " ")
+    note = (
+        f"Profile scale selection: {selection_note}; "
+        f"stable/completed replicates = {n_stable}/{n_completed}"
+        if selection_note
+        else f"Stable/completed replicates = {n_stable}/{n_completed}"
+    )
+    return _write_reference_comparison_plot(
+        assembled_dir=assembled_dir,
+        png_path=assembled_dir / "best_interface_scale_rmsf_vs_reference.png",
+        svg_path=assembled_dir / "best_interface_scale_rmsf_vs_reference.svg",
+        reference_numbers=reference_numbers,
+        reference_labels=reference_labels,
+        reference_mean=reference_mean,
+        reference_std=reference_std,
+        condition_mean=np.asarray(profile_meta["mean"], dtype=np.float64),
+        condition_std=np.asarray(profile_meta["std"], dtype=np.float64),
+        interface_scale=selected_scale,
+        note=note,
+    )
 
+
+def _write_reference_comparison_plot(
+    *,
+    assembled_dir: Path,
+    png_path: Path,
+    svg_path: Path,
+    reference_numbers: Sequence[int],
+    reference_labels: Sequence[str],
+    reference_mean: np.ndarray,
+    reference_std: np.ndarray,
+    condition_mean: np.ndarray,
+    condition_std: np.ndarray,
+    interface_scale: float,
+    note: str,
+) -> Dict[str, Any]:
     plt = _prepare_matplotlib(assembled_dir)
-
-    png_path = assembled_dir / "best_interface_scale_rmsf_vs_reference.png"
-    svg_path = assembled_dir / "best_interface_scale_rmsf_vs_reference.svg"
 
     x_values = np.asarray([int(x) for x in reference_numbers], dtype=np.int64)
     fig, ax = plt.subplots(figsize=(8.4, 4.8))
@@ -2068,14 +2115,14 @@ def _write_best_scale_reference_rmsf_plot(
         color="#f4a261",
         alpha=0.35,
         linewidth=0.0,
-        label=f"Scale {selected_scale:.3f} ±1σ",
+        label=f"Scale {interface_scale:.3f} ±1σ",
     )
     ax.plot(
         x_values,
         condition_mean,
         color="#d1495b",
         linewidth=2.1,
-        label=f"Scale {selected_scale:.3f} mean",
+        label=f"Scale {interface_scale:.3f} mean",
     )
 
     tick_positions = [int(x_values[0])]
@@ -2095,16 +2142,11 @@ def _write_best_scale_reference_rmsf_plot(
     ax.set_xticklabels(tick_labels, fontsize=8)
     ax.set_xlabel("Residue")
     ax.set_ylabel("Backbone RMSF (Angstrom)")
-    ax.set_title(f"1rkl Embedded-Region RMSF: Reference vs Interface Scale {selected_scale:.3f}")
+    ax.set_title(f"1rkl Embedded-Region RMSF: Reference vs Interface Scale {interface_scale:.3f}")
     ax.grid(True, alpha=0.22, linewidth=0.7)
     ax.legend(frameon=False, fontsize=8, loc="upper right")
 
-    selection_note = str(selection.get("selection_basis", "")).replace("_", " ")
-    if selection_note:
-        note = (
-            f"Profile scale selection: {selection_note}; "
-            f"stable/completed replicates = {n_stable}/{n_completed}"
-        )
+    if note:
         ax.text(
             0.99,
             0.02,
@@ -2123,6 +2165,89 @@ def _write_best_scale_reference_rmsf_plot(
     return {
         "png": str(png_path),
         "svg": str(svg_path),
+    }
+
+
+def _write_all_scale_reference_rmsf_plots(
+    *,
+    assembled_dir: Path,
+    reference_numbers: Sequence[int],
+    reference_labels: Sequence[str],
+    reference_mean: np.ndarray,
+    reference_std: np.ndarray,
+    condition_rows: Sequence[Dict[str, Any]],
+    stable_profile_by_scale: Dict[float, Dict[str, Any]],
+) -> Dict[str, Any]:
+    plot_dir = assembled_dir / "scale_rmsf_vs_reference"
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    index_csv = assembled_dir / "scale_rmsf_vs_reference_index.csv"
+
+    rows: List[Dict[str, Any]] = []
+    for row in sorted(condition_rows, key=lambda item: float(item["interface_scale"])):
+        interface_scale = float(row["interface_scale"])
+        profile_meta = stable_profile_by_scale.get(interface_scale)
+        plot_png = ""
+        plot_svg = ""
+        plot_error = ""
+        if profile_meta is not None:
+            tag = _format_float_tag(interface_scale, digits=4)
+            png_path = plot_dir / f"scale{tag}_rmsf_vs_reference.png"
+            svg_path = plot_dir / f"scale{tag}_rmsf_vs_reference.svg"
+            note = (
+                f"Sampled scale overlay; stable/completed replicates = "
+                f"{int(profile_meta['n_replicates_stable'])}/{int(profile_meta['n_replicates_completed'])}"
+            )
+            try:
+                outputs = _write_reference_comparison_plot(
+                    assembled_dir=assembled_dir,
+                    png_path=png_path,
+                    svg_path=svg_path,
+                    reference_numbers=reference_numbers,
+                    reference_labels=reference_labels,
+                    reference_mean=reference_mean,
+                    reference_std=reference_std,
+                    condition_mean=np.asarray(profile_meta["mean"], dtype=np.float64),
+                    condition_std=np.asarray(profile_meta["std"], dtype=np.float64),
+                    interface_scale=interface_scale,
+                    note=note,
+                )
+                plot_png = outputs.get("png", "")
+                plot_svg = outputs.get("svg", "")
+            except Exception as exc:
+                plot_error = str(exc)
+
+        rows.append(
+            {
+                "interface_scale": float(interface_scale),
+                "n_replicates_completed": int(row["n_replicates_completed"]),
+                "n_replicates_stable": int(row["n_replicates_stable"]),
+                "condition_embedded_region_rmsd_delta_vs_reference_angstrom": row.get(
+                    "condition_embedded_region_rmsd_delta_vs_reference_angstrom", ""
+                ),
+                "plot_png": plot_png,
+                "plot_svg": plot_svg,
+                "plot_error": plot_error,
+            }
+        )
+
+    with index_csv.open("w", encoding="utf-8", newline="") as fh:
+        fieldnames = [
+            "interface_scale",
+            "n_replicates_completed",
+            "n_replicates_stable",
+            "condition_embedded_region_rmsd_delta_vs_reference_angstrom",
+            "plot_png",
+            "plot_svg",
+            "plot_error",
+        ]
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+    return {
+        "plot_dir": str(plot_dir),
+        "index_csv": str(index_csv),
     }
 
 
@@ -2659,8 +2784,10 @@ def assemble_analysis(base_dir: Path) -> int:
         trendline_scale=recommendation["trendline_recommended_interface_scale"],
     )
     plot_outputs: Dict[str, str] = {}
+    all_scale_plot_outputs: Dict[str, str] = {}
     best_profile_plot_outputs: Dict[str, str] = {}
     plot_error = ""
+    all_scale_plot_error = ""
     best_profile_plot_error = ""
     try:
         plot_outputs = _write_interface_scale_rmsf_plot(
@@ -2672,6 +2799,18 @@ def assemble_analysis(base_dir: Path) -> int:
         )
     except Exception as exc:
         plot_error = str(exc)
+    try:
+        all_scale_plot_outputs = _write_all_scale_reference_rmsf_plots(
+            assembled_dir=assembled_dir,
+            reference_numbers=reference_numbers,
+            reference_labels=reference_labels,
+            reference_mean=np.asarray(reference_mean, dtype=np.float64),
+            reference_std=np.asarray(reference_std, dtype=np.float64),
+            condition_rows=condition_rows,
+            stable_profile_by_scale=stable_profile_by_scale,
+        )
+    except Exception as exc:
+        all_scale_plot_error = str(exc)
     if profile_selection.get("selected_interface_scale") is not None:
         try:
             best_profile_plot_outputs = _write_best_scale_reference_rmsf_plot(
@@ -2694,11 +2833,14 @@ def assemble_analysis(base_dir: Path) -> int:
     recommendation["profile_comparison_selection_basis"] = profile_selection.get(
         "selection_basis", ""
     )
+    recommendation["scale_rmsf_vs_reference_dir"] = all_scale_plot_outputs.get("plot_dir", "")
+    recommendation["scale_rmsf_vs_reference_index_csv"] = all_scale_plot_outputs.get("index_csv", "")
     recommendation["interface_scale_vs_rmsf_difference_png"] = plot_outputs.get("png", "")
     recommendation["interface_scale_vs_rmsf_difference_svg"] = plot_outputs.get("svg", "")
     recommendation["best_interface_scale_rmsf_vs_reference_png"] = best_profile_plot_outputs.get("png", "")
     recommendation["best_interface_scale_rmsf_vs_reference_svg"] = best_profile_plot_outputs.get("svg", "")
     recommendation["plot_error"] = plot_error
+    recommendation["all_scale_plot_error"] = all_scale_plot_error
     recommendation["best_profile_plot_error"] = best_profile_plot_error
     _write_json(assembled_dir / "recommendation_summary.json", recommendation)
 
@@ -2732,6 +2874,8 @@ def assemble_analysis(base_dir: Path) -> int:
         "condition_summary_csv": str(summary_csv),
         "trendline_points_csv": str(trend_csv),
         "failed_tasks_csv": str(failed_csv),
+        "scale_rmsf_vs_reference_dir": all_scale_plot_outputs.get("plot_dir", ""),
+        "scale_rmsf_vs_reference_index_csv": all_scale_plot_outputs.get("index_csv", ""),
         "interface_scale_vs_rmsf_difference_png": plot_outputs.get("png", ""),
         "interface_scale_vs_rmsf_difference_svg": plot_outputs.get("svg", ""),
         "best_interface_scale_rmsf_vs_reference_png": best_profile_plot_outputs.get("png", ""),
@@ -2740,6 +2884,7 @@ def assemble_analysis(base_dir: Path) -> int:
         "profile_comparison_target_interface_scale": profile_selection.get("target_interface_scale"),
         "profile_comparison_selection_basis": profile_selection.get("selection_basis", ""),
         "plot_error": plot_error,
+        "all_scale_plot_error": all_scale_plot_error,
         "best_profile_plot_error": best_profile_plot_error,
     }
     _write_json(assembled_dir / "summary.json", payload)

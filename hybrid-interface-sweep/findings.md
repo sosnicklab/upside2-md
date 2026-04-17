@@ -1,5 +1,22 @@
 # Findings
 
+## 2026-04-17 (Per-Scale Overlay Presentation)
+- The fitted `interface_scale_vs_rmsf_difference.png` plot is too weak to be the main presentation artifact for this workflow.
+- For this calibration, the user wants to inspect direct reference-vs-hybrid RMSF overlays and choose the scale visually.
+- The analysis should therefore render one overlay for every sampled stable scale, not only one “best” overlay.
+- The workflow defaults were shifted to a high-end exploratory range because the current overlay at `0.85` still sits above the reference amplitude:
+  - `0.825, 0.85, 0.875, 0.90, 0.925, 0.95, 0.975, 1.00, 1.025, 1.05, 1.075, 1.10, 1.125, 1.15, 1.175, 1.20`
+- For this exploratory pass, one long hybrid replicate per scale is a better use of compute than many noisy replicates across the same narrow range.
+
+## 2026-04-17 (Lesson: Match The Primary Output To The Real Decision)
+- When the user needs to convince others with a figure, a fitted aggregate trend is not automatically the right artifact.
+- The primary output should match the actual decision rule.
+- In this workflow, that means direct per-scale RMSF overlays are primary and derived trend plots are secondary.
+
+## 2026-04-17 (Lesson: Leave Range Headroom When The Boundary Point Is Still On One Side)
+- When the highest sampled scale is still clearly above the reference amplitude, stop treating that edge as the practical cap.
+- Extend the exploratory range beyond the current boundary instead of overcommitting to denser sampling below it.
+
 ## 2026-04-17 (Embedded-Region Analysis Target)
 - The current full-protein per-residue RMSF fit is not aligned with the intended scientific question.
 - The calibration should ignore solution-exposed residues and focus only on the membrane-embedded region.
@@ -31,6 +48,42 @@
   - `best_sampled_interface_scale = 0.60`
   - `metric = condition_embedded_region_rmsd_delta_vs_reference_angstrom`
 - This confirms the new fit is driven by embedded-region RMSD amplitude and is insensitive to solution-region noise.
+
+## 2026-04-17 (Downloaded `default/` Bundle Compatibility)
+- The downloaded `hybrid-interface-sweep/default/` tree is sufficient for a local rerun of the current analysis even without the raw `tasks/` directory.
+- Why it works:
+  - `default/sweep_manifest.json` is present,
+  - `default/analysis/analysis_manifest.json` is already `hybrid_interface_rmsf_sweep_analysis_manifest_v2`,
+  - `default/analysis/results/tasks/*.json` are already `hybrid_interface_rmsf_sweep_analysis_result_v2`.
+- Consequence:
+  - local `assemble-analysis` can be rerun directly from the downloaded analysis-task JSONs,
+  - the missing raw `stage_7.0.up` files do not block final assembly in this specific bundle.
+
+## 2026-04-17 (Downloaded `default/` Bundle Result)
+- Local assembly of the downloaded `default/` bundle completed successfully under:
+  - `hybrid-interface-sweep/default/analysis/assembled/`
+- Coverage after assembly:
+  - `59` analysis tasks total,
+  - `44` successful task analyses,
+  - `15` analysis errors,
+  - `23` additional hybrid tasks filtered by the protein-stability gate,
+  - `17` stable hybrid tasks retained,
+  - `9` hybrid conditions used for fitting out of `11` sampled scales.
+- Embedded reference region:
+  - residues `7 -> 24`
+  - `18` residues total
+- Best sampled scale by the current metric:
+  - `interface_scale = 0.675`
+  - `condition_embedded_region_rmsd_delta_vs_reference_angstrom = 0.1441`
+  - but only `1 / 4` stable replicate remained.
+- Trendline result:
+  - fitted recommendation `interface_scale = 0.841`
+  - nearest sampled stable overlay scale `= 0.85`
+  - fit quality is very weak:
+    - `R^2 = 0.053`
+- Interpretation:
+  - the assembled analysis is valid and current,
+  - but the fitted optimum is not persuasive because replicate coverage is sparse and the trend fit is poor.
 
 ## 2026-04-14 (Current Workflow Target)
 - `hybrid-interface-sweep/` is no longer a bilayer-only diffusion or softening workflow.
