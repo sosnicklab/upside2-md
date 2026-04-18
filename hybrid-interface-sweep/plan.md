@@ -251,3 +251,22 @@
       - `scale_rmsf_vs_reference_dir`
       - `scale_rmsf_vs_reference_index_csv`
       - `all_scale_plot_error = ""`
+  - downloaded high-end sweep assembly rerun on `2026-04-18`:
+    - inspected the downloaded `default/` bundle and confirmed it includes enough for local assembly without raw task directories,
+    - identified one true run-stage crash:
+      - `scale1p125_r01`
+      - stage `7.0` blow-up followed by a C++ segmentation fault,
+    - identified five explicit analysis failures from zero finite protein-backbone frames:
+      - `scale0p875_r01`
+      - `scale0p9_r01`
+      - `scale1_r01`
+      - `scale1p05_r01`
+      - `scale1p1_r01`,
+    - reran `assemble-analysis --base-dir hybrid-interface-sweep/default`,
+    - confirmed assembled outputs now exist under `default/analysis/assembled/`,
+    - confirmed current assembled result:
+      - best sampled scale `= 1.075`,
+      - trendline recommendation `= 1.20`,
+      - stable overlay scales `= 0.85, 0.95, 1.025, 1.075, 1.20`,
+      - fit quality improved versus the previous bundle but still lands on the upper sampled boundary:
+        - `R^2 = 0.529`.

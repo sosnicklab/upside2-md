@@ -1,5 +1,64 @@
 # Findings
 
+## 2026-04-18 (Sweep Seed Default)
+- The sweep was still defaulting to a fixed base seed:
+  - `20260414`
+- That means every new `init-run` without an explicit override would stage the same task seeds.
+- The workflow now generates a fresh random base seed for each new manifest by default.
+- Explicit reproducibility is still available through:
+  - `--seed`
+  - `HYBRID_SWEEP_SEED`
+
+## 2026-04-18 (Lesson: Keep Reproducibility Optional, Not Forced By Default)
+- Deterministic seeds are useful when requested, but they should not silently be the default for exploratory sweep initialization.
+- The default should create fresh random seeds, with an explicit override for reproducible reruns.
+
+## 2026-04-18 (Slurm Walltime Default)
+- The generated run-array sbatch script was still defaulting to `24:00:00`.
+- On a cluster that allows `36:00:00`, the long exploratory hybrid runs should default to the full allowed walltime rather than relying on the user to override it.
+- The workflow default run walltime is now `36:00:00` through:
+  - `HYBRID_SWEEP_TRAIN_WALLTIME`
+
+## 2026-04-18 (Lesson: Promote Repeated Operational Overrides Into Defaults)
+- If the user points out a cluster limit that is clearly better than the current default for the intended workload, move that value into the workflow default instead of leaving it as an optional env-var workaround.
+
+## 2026-04-18 (Downloaded `default/` Bundle: High-End Exploratory Sweep)
+- The newly downloaded `hybrid-interface-sweep/default/` bundle is sufficient for local assembly even without the raw `tasks/` directory.
+- Current high-end sweep coverage:
+  - `4 / 4` reference runs succeeded,
+  - `15 / 16` hybrid runs produced run-task JSONs successfully,
+  - `1 / 16` hybrid run crashed at `scale1p125_r01`,
+  - `10 / 15` successful hybrid runs also produced successful analysis task JSONs,
+  - `5 / 15` successful hybrid runs failed analysis because every post-burn-in selected backbone frame became non-finite.
+- The one true run-stage failure is:
+  - `scale1p125_r01`
+  - stage `7.0` blow-up with `Rg` in the `1e5 A` range and `martini_potential` in the `1e14` range before a C++ spline/interaction segfault.
+- The five explicit analysis failures are:
+  - `scale0p875_r01`
+  - `scale0p9_r01`
+  - `scale1_r01`
+  - `scale1p05_r01`
+  - `scale1p1_r01`
+  - all with `Too few finite backbone frames remain after filtering for RMSF analysis: 0`
+- Among the `10` successful hybrid analyses:
+  - `5` were filtered unstable,
+  - `5` remained stable and fit-eligible.
+- Stable sampled scales in this bundle are:
+  - `0.85`
+  - `0.95`
+  - `1.025`
+  - `1.075`
+  - `1.20`
+- The current best sampled scale by the embedded-region RMSD-amplitude metric is:
+  - `interface_scale = 1.075`
+  - `condition_embedded_region_rmsd_delta_vs_reference_angstrom = 0.1423`
+- The quadratic fit over the surviving stable scales recommends the upper sampled boundary:
+  - `trendline_recommended_interface_scale = 1.20`
+  - `trendline_fit_r2 = 0.529`
+- Interpretation:
+  - this bundle is analyzable and the surviving high-end stable branch is materially better than the older low-end branch,
+  - but the fit minimum landing on the sampled upper boundary means the true optimum may still be above `1.20`, or the sparse surviving coverage may be biasing the fit.
+
 ## 2026-04-17 (Per-Scale Overlay Presentation)
 - The fitted `interface_scale_vs_rmsf_difference.png` plot is too weak to be the main presentation artifact for this workflow.
 - For this calibration, the user wants to inspect direct reference-vs-hybrid RMSF overlays and choose the scale visually.

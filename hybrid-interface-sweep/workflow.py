@@ -7,6 +7,7 @@ import csv
 import json
 import math
 import os
+import secrets
 import shutil
 import subprocess as sp
 import sys
@@ -65,7 +66,6 @@ DEFAULT_INTERFACE_SCALES = [
 ]
 DEFAULT_HYBRID_REPLICATES = 1
 DEFAULT_REFERENCE_REPLICATES = 4
-DEFAULT_SEED = 20260414
 DEFAULT_BURN_IN_FRACTION = 0.20
 DEFAULT_TRENDLINE_SAMPLES = 201
 DEFAULT_STABILITY_MEAN_RMSF_RATIO_MAX = 3.0
@@ -291,6 +291,10 @@ def _task_seed(base_seed: int, task_id: int) -> int:
     return int(base_seed + (task_id + 1) * 1009)
 
 
+def _generate_base_seed() -> int:
+    return int(secrets.randbelow(2_000_000_000 - 1) + 1)
+
+
 def _floatless_csv(text: str) -> List[str]:
     out: List[str] = []
     for chunk in text.split(","):
@@ -401,13 +405,14 @@ def _build_config(args: argparse.Namespace, base_dir: Path) -> Config:
     ):
         if not math.isfinite(value) or value <= 0.0:
             raise ValueError(f"{name} must be finite and > 0, got {value}")
+    base_seed = int(args.seed) if args.seed is not None else _generate_base_seed()
     return Config(
         base_dir=base_dir,
         pdb_id=str(args.pdb_id),
         interface_scales=interface_scales,
         hybrid_replicates=hybrid_replicates,
         reference_replicates=reference_replicates,
-        seed=int(args.seed),
+        seed=base_seed,
         burn_in_fraction=burn_in_fraction,
         trendline_samples=trendline_samples,
         embedded_occupancy_min=embedded_occupancy_min,
@@ -2898,7 +2903,7 @@ def cmd_assemble_analysis(args: argparse.Namespace) -> int:
 
 
 def _array_script_content(round_manifest_path: Path, base_dir: Path, n_tasks: int) -> str:
-    train_walltime = os.environ.get("HYBRID_SWEEP_TRAIN_WALLTIME", "24:00:00").strip() or "24:00:00"
+    train_walltime = os.environ.get("HYBRID_SWEEP_TRAIN_WALLTIME", "36:00:00").strip() or "36:00:00"
     cpus_per_task = int(os.environ.get("HYBRID_SWEEP_CPUS_PER_TASK", "1"))
     directives = "\n".join(_optional_sbatch_directives("TRAIN"))
     if directives:
@@ -3169,7 +3174,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--interface-scales", type=_float_list_arg, default=DEFAULT_INTERFACE_SCALES)
     p_init.add_argument("--hybrid-replicates", type=int, default=DEFAULT_HYBRID_REPLICATES)
     p_init.add_argument("--reference-replicates", type=int, default=DEFAULT_REFERENCE_REPLICATES)
-    p_init.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    p_init.add_argument("--seed", type=int, default=None)
     p_init.add_argument("--burn-in-fraction", type=float, default=DEFAULT_BURN_IN_FRACTION)
     p_init.add_argument("--trendline-samples", type=int, default=DEFAULT_TRENDLINE_SAMPLES)
     p_init.set_defaults(func=cmd_init_run)

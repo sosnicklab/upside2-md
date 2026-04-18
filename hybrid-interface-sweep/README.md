@@ -27,6 +27,7 @@ The sweep variable is `PROTEIN_ENV_INTERFACE_SCALE`. The analysis now:
   - `interface_scale = 0.825, 0.85, 0.875, 0.90, 0.925, 0.95, 0.975, 1.00, 1.025, 1.05, 1.075, 1.10, 1.125, 1.15, 1.175, 1.20`
 - `reference_replicates = 4`
 - `hybrid_replicates = 1`
+- base seed is randomly generated at each `init-run`
 - `pdb_id = 1rkl`
 - RMSF burn-in fraction: `0.20`
 - trend-line sample count: `201`
@@ -59,6 +60,7 @@ Useful wrapper environment variables:
   - fallback that applies the same count to both task families
 - `HYBRID_SWEEP_PDB_ID`
 - `HYBRID_SWEEP_SEED`
+  - optional override; by default the workflow generates a fresh random base seed at `init-run`
 - `HYBRID_SWEEP_BURN_IN_FRACTION`
 - `HYBRID_SWEEP_TRENDLINE_SAMPLES`
 - `HYBRID_SWEEP_EMBEDDED_OCCUPANCY_MIN`
@@ -93,10 +95,11 @@ Useful wrapper environment variables:
 - `HYBRID_SWEEP_NO_SUBMIT=1`
 - `HYBRID_SWEEP_PYTHON`
 - `HYBRID_SWEEP_HDF5_MODULE`
+- `HYBRID_SWEEP_TRAIN_WALLTIME`
+  - default run-array walltime is `36:00:00`
 
 Optional Slurm resource environment variables:
 
-- `HYBRID_SWEEP_TRAIN_WALLTIME`
 - `HYBRID_SWEEP_COLLECT_WALLTIME`
 - `HYBRID_SWEEP_CPUS_PER_TASK`
 - `HYBRID_SWEEP_SBATCH_PARTITION`

@@ -1,5 +1,89 @@
 # Progress Log
 
+## 2026-04-18 (Default Sweep Seeds Made Random)
+- Reopened the sweep initialization path after the user asked to double-check that seeds are not hard coded.
+- Updated:
+  - `hybrid-interface-sweep/workflow.py`
+  - `hybrid-interface-sweep/README.md`
+  - `hybrid-interface-sweep/findings.md`
+- Confirmed the old behavior was deterministic:
+  - base seed defaulted to `20260414`
+  - per-task seeds were derived deterministically from that fixed base
+- Changed the default behavior so `init-run` now:
+  - generates a fresh random base seed for each new manifest when no explicit seed is provided
+  - still honors explicit reproducibility through `--seed` / `HYBRID_SWEEP_SEED`
+- Verification:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - two fresh `init-run` calls under separate temp dirs
+  - confirmed the two manifests now carry different `settings.seed` values by default
+  - confirmed task seeds are still populated deterministically from each manifest's captured base seed
+
+## 2026-04-18 (Default Slurm Run Walltime Raised To 36 Hours)
+- Reopened the Slurm staging defaults after the user pointed out that the cluster supports `36` hours and the current `24` hour cap may be too tight for the long exploratory runs.
+- Updated:
+  - `hybrid-interface-sweep/workflow.py`
+  - `hybrid-interface-sweep/README.md`
+  - `hybrid-interface-sweep/findings.md`
+- Changed the default run-array walltime from:
+  - `24:00:00`
+  to:
+  - `36:00:00`
+- Kept the same override surface:
+  - `HYBRID_SWEEP_TRAIN_WALLTIME`
+- Verification:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python3 -m py_compile hybrid-interface-sweep/workflow.py`
+  - no-submit Slurm staging under `/tmp/hybrid_interface_walltime_36h_check`
+  - confirmed generated `run_array.sbatch` now writes:
+    - `#SBATCH --time=36:00:00`
+
+## 2026-04-18 (Downloaded High-End Sweep Assembly Rerun)
+- Reopened `hybrid-interface-sweep/default/` after the user downloaded the rerun bundle without the raw `tasks/` directory.
+- Inspected the downloaded tree and confirmed it contains enough for local assembly:
+  - `default/sweep_manifest.json`
+  - `default/results/tasks/*.json`
+  - `default/analysis/analysis_manifest.json`
+  - `default/analysis/results/tasks/*.json`
+  - both run-side and analysis-side Slurm log trees
+- Checked run coverage:
+  - `20` manifest tasks total
+  - `19 / 20` run-task JSONs marked success
+  - `1 / 20` run-task JSON marked failure:
+    - `scale1p125_r01`
+- Checked analysis coverage:
+  - `19` analysis task JSONs present
+  - `14 / 19` successful analysis task JSONs
+  - `5 / 19` explicit analysis failures with:
+    - `Too few finite backbone frames remain after filtering for RMSF analysis: 0`
+- Confirmed the one true run-stage crash from the Slurm logs:
+  - `default/slurm/array_48730981_16.err`
+  - `scale1p125_r01`
+  - stage `7.0` blow-up followed by a C++ segmentation fault in spline/interaction evaluation
+- Confirmed the five analysis failures from the analysis Slurm logs:
+  - `scale0p875_r01`
+  - `scale0p9_r01`
+  - `scale1_r01`
+  - `scale1p05_r01`
+  - `scale1p1_r01`
+- Ran local assembly from the downloaded artifacts:
+  - `source .venv/bin/activate && source source.sh && .venv/bin/python3 hybrid-interface-sweep/workflow.py assemble-analysis --base-dir hybrid-interface-sweep/default`
+- Confirmed assembled outputs were written under:
+  - `hybrid-interface-sweep/default/analysis/assembled/`
+- Key assembled result:
+  - `analysis_status = ok`
+  - `10` hybrid conditions completed analysis successfully
+  - `5` hybrid conditions were filtered unstable
+  - `5` stable hybrid conditions were used for fitting
+  - best sampled scale `= 1.075`
+  - best sampled embedded-region RMSD delta `= 0.1423 A`
+  - trendline recommendation `= 1.20`
+  - trendline fit `R^2 = 0.529`
+  - per-scale overlays written for stable scales:
+    - `0.85`
+    - `0.95`
+    - `1.025`
+    - `1.075`
+    - `1.20`
+
 ## 2026-04-17 (High-End Exploratory Defaults And Per-Scale Overlay Set)
 - Reopened `hybrid-interface-sweep/` after the user rejected `interface_scale_vs_rmsf_difference.png` as the main output.
 - Updated:
