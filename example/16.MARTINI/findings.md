@@ -113,3 +113,18 @@
   - the protein is above the upper leaflet with explicit surface separation,
   - the larger box comes primarily from the widened XY target plus increased `z` padding,
   - the start geometry does not rely on carving a hole into the bilayer to make room.
+
+## 2026-04-19 (Stage-7 Continuation Path For Workflow 16)
+- The existing helper `set-initial-position` already supports production-stage continuation because it can copy the last `/output/pos` frame from one `.up` file into another `.up` file's `/input/pos` while preserving the last box.
+- `martini_extract_vtf.py` can extract directly from a resumed `stage_7.0.up` without requiring regenerated stage-0 prep artifacts.
+- Consequence:
+  - the clean restart design is to skip stage `0` through `6.6`,
+  - validate the previous `stage_7.0.up` is still a hybrid production file,
+  - write continuation output to a new `stage_7.0.continue.up` by default,
+  - then run production MD and VTF extraction from that resumed file.
+
+## 2026-04-19 (User Correction: Slurm Walltime Hard Limit)
+- This cluster's hard Slurm walltime limit for the workflow is `36:00:00`, not `48:00:00`.
+- Lesson:
+  - do not invent or round up Slurm walltimes in wrapper scripts;
+  - when the user provides a hard cluster limit, propagate that exact value into `#SBATCH --time` and any related guidance.

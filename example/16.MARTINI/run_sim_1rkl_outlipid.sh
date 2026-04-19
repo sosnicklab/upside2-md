@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=1rkl_outlipid
 #SBATCH --output=slurm-%x-%j.out
-#SBATCH --time=48:00:00
+#SBATCH --time=36:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
@@ -14,7 +14,25 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # - place the protein above the upper leaflet,
 # - rotate it into a laid-flat orientation,
 # - enlarge the box so unfolding has more room than the embedded workflow.
-export RUN_DIR="${RUN_DIR:-outputs/martini_test_1rkl_outlipid}"
+# Continuation options:
+# - set CONTINUE_STAGE_70_FROM directly to a previous stage_7.0.up file, or
+# - set PREVIOUS_STAGE7_FILE to that file, or
+# - set PREVIOUS_RUN_DIR and the wrapper will use
+#   ${PREVIOUS_RUN_DIR}/checkpoints/1rkl.stage_7.0.up
+if [ -z "${CONTINUE_STAGE_70_FROM:-}" ]; then
+    if [ -n "${PREVIOUS_STAGE7_FILE:-}" ]; then
+        export CONTINUE_STAGE_70_FROM="${PREVIOUS_STAGE7_FILE}"
+    elif [ -n "${PREVIOUS_RUN_DIR:-}" ]; then
+        export CONTINUE_STAGE_70_FROM="${PREVIOUS_RUN_DIR}/checkpoints/1rkl.stage_7.0.up"
+    fi
+fi
+
+if [ -n "${CONTINUE_STAGE_70_FROM:-}" ]; then
+    export RUN_DIR="${RUN_DIR:-outputs/martini_test_1rkl_outlipid_continue}"
+else
+    export RUN_DIR="${RUN_DIR:-outputs/martini_test_1rkl_outlipid}"
+fi
+
 export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1rkl_outlipid}"
 export PROTEIN_PLACEMENT_MODE="${PROTEIN_PLACEMENT_MODE:-outside-top}"
 export PROTEIN_ORIENTATION_MODE="${PROTEIN_ORIENTATION_MODE:-lay-flat}"
@@ -25,5 +43,8 @@ export BOX_PADDING_Z="${BOX_PADDING_Z:-50.0}"
 export PROTEIN_LIPID_CUTOFF="${PROTEIN_LIPID_CUTOFF:-5.0}"
 export PROTEIN_LIPID_MIN_GAP="${PROTEIN_LIPID_MIN_GAP:-5.0}"
 export PROTEIN_LIPID_CUTOFF_MAX="${PROTEIN_LIPID_CUTOFF_MAX:-10.0}"
+if [ -n "${CONTINUE_STAGE_70_FROM:-}" ]; then
+    export CONTINUE_STAGE_70_OUTPUT="${CONTINUE_STAGE_70_OUTPUT:-${RUN_DIR}/checkpoints/1rkl.stage_7.0.continue.up}"
+fi
 
 exec "${SCRIPT_DIR}/run_sim_1rkl.sh" "$@"

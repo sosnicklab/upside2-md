@@ -164,3 +164,36 @@
   - direct stage-0 prep run completed successfully and preserved hybrid backbone-frame validation:
     - matched residues = `31`
     - rigid RMSD = `0.1030 Å`
+
+## 2026-04-19 (Implementation: Stage-7 Continuation For Out-of-Bilayer Wrapper)
+- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
+  - added `CONTINUE_STAGE_70_FROM`,
+  - added `CONTINUE_STAGE_70_OUTPUT`,
+  - added `CONTINUE_STAGE_70_LABEL`,
+  - added a `run_stage70_continuation(...)` path that:
+    - validates the previous `stage_7.0.up` is still a hybrid production file,
+    - copies or reuses the source checkpoint,
+    - refreshes `/input/pos` from the last production output frame,
+    - reruns only stage `7.0`,
+    - writes a continuation VTF.
+- Updated `example/16.MARTINI/run_sim_1rkl_outlipid.sh`:
+  - corrected `#SBATCH --time` from `48:00:00` to `36:00:00` after user correction about the cluster hard limit,
+  - added wrapper aliases:
+    - `PREVIOUS_RUN_DIR`
+    - `PREVIOUS_STAGE7_FILE`
+  - mapped those aliases onto `CONTINUE_STAGE_70_FROM`,
+  - defaulted continuation runs into `outputs/martini_test_1rkl_outlipid_continue`,
+  - defaulted the resumed checkpoint path to `checkpoints/1rkl.stage_7.0.continue.up`.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - continuation smoke test through the wrapper:
+    - `PREVIOUS_RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid`
+    - `RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_continue_smoke`
+    - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+- Observed result:
+  - continuation mode skipped stage `0` through `6.6`,
+  - validated the previous hybrid production checkpoint,
+  - wrote `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_continue_smoke/checkpoints/1rkl.stage_7.0.continue.up`,
+  - wrote `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_continue_smoke/1rkl.stage_7.0_continue.vtf`,
+  - completed a one-step production continuation successfully.

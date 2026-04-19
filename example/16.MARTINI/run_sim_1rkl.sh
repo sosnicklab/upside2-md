@@ -83,6 +83,9 @@ PREPARED_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.prepared.up"
 STAGE_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.up"
 PREPARED_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.prepared.up"
 STAGE_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.up"
+CONTINUE_STAGE_70_FROM="${CONTINUE_STAGE_70_FROM:-}"
+CONTINUE_STAGE_70_OUTPUT="${CONTINUE_STAGE_70_OUTPUT:-${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.continue.up}"
+CONTINUE_STAGE_70_LABEL="${CONTINUE_STAGE_70_LABEL:-7.0_continue}"
 
 # Stage-0 hybrid structure prep controls
 SALT_MOLAR="${SALT_MOLAR:-0.15}"
@@ -1299,97 +1302,142 @@ extract_stage_vtf() {
     python3 "${EXTRACT_VTF_SCRIPT}" "$stage_file" "$vtf_file" "$stage_file" "$RUNTIME_PDB_ID" --mode "$mode"
 }
 
+run_stage70_continuation() {
+    local source_file="$1"
+    local output_file="$2"
+    local stage_label="${3:-7.0_continue}"
+
+    if [ ! -f "$source_file" ]; then
+        echo "ERROR: continuation source not found: $source_file"
+        exit 1
+    fi
+
+    assert_hybrid_stage_active "$source_file" "production" "production"
+
+    mkdir -p "$(dirname "$output_file")"
+
+    if [ "$(python3 - "$source_file" "$output_file" << 'PY'
+import os
+import sys
+print(int(os.path.abspath(sys.argv[1]) == os.path.abspath(sys.argv[2])))
+PY
+)" = "0" ]; then
+        cp -f "$source_file" "$output_file"
+    fi
+
+    handoff_initial_position "$source_file" "$output_file" "production_hybrid"
+    assert_hybrid_stage_active "$output_file" "production" "production"
+    run_md_stage "$stage_label" "$output_file" "$output_file" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
+    extract_stage_vtf "$stage_label" "$output_file" "2"
+}
+
 echo "=== Hybrid 1RKL Dry MARTINI Workflow ==="
 echo "Protein ID: $PDB_ID"
 echo "Runtime PDB ID: $RUNTIME_PDB_ID"
 echo "Universal prep: ${UNIVERSAL_PREP_SCRIPT} (mode=${UNIVERSAL_PREP_MODE})"
 echo "VTF extractor: ${EXTRACT_VTF_SCRIPT}"
 echo "Hybrid prep: $HYBRID_PREP_DIR"
-echo "Simulation stages: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"
+if [ -n "$CONTINUE_STAGE_70_FROM" ]; then
+    echo "Continuation mode: production stage 7.0 only"
+    echo "Continuation source: ${CONTINUE_STAGE_70_FROM}"
+    echo "Continuation output: ${CONTINUE_STAGE_70_OUTPUT}"
+else
+    echo "Simulation stages: 6.0 -> 6.1 -> 6.2 -> 6.3 -> 6.4 -> 6.5 -> 6.6 -> 7.0"
+fi
 echo
 
-prepare_hybrid_artifacts
+if [ -n "$CONTINUE_STAGE_70_FROM" ]; then
+    run_stage70_continuation "$CONTINUE_STAGE_70_FROM" "$CONTINUE_STAGE_70_OUTPUT" "$CONTINUE_STAGE_70_LABEL"
+else
+    prepare_hybrid_artifacts
 
-# 6.0: soft-core minimization (pre-production / hybrid inactive)
-set_stage_npt_targets "6.0"
-prepare_stage_file "$PREPARED_60_FILE" "minimization" "1" "0" "0" "minimization"
-cp -f "$PREPARED_60_FILE" "$STAGE_60_FILE"
-run_minimization_stage "6.0" "$STAGE_60_FILE" "$MIN_60_MAX_ITER"
-extract_stage_vtf "6.0" "$STAGE_60_FILE" "1"
+    # 6.0: soft-core minimization (pre-production / hybrid inactive)
+    set_stage_npt_targets "6.0"
+    prepare_stage_file "$PREPARED_60_FILE" "minimization" "1" "0" "0" "minimization"
+    cp -f "$PREPARED_60_FILE" "$STAGE_60_FILE"
+    run_minimization_stage "6.0" "$STAGE_60_FILE" "$MIN_60_MAX_ITER"
+    extract_stage_vtf "6.0" "$STAGE_60_FILE" "1"
 
-# 6.1: hard minimization (pre-production / hybrid inactive)
-set_stage_npt_targets "6.1"
-prepare_stage_file "$PREPARED_61_FILE" "npt_prod" "1" "0" "0" "minimization"
-cp -f "$PREPARED_61_FILE" "$STAGE_61_FILE"
-handoff_initial_position "$STAGE_60_FILE" "$STAGE_61_FILE"
-run_minimization_stage "6.1" "$STAGE_61_FILE" "$MIN_61_MAX_ITER"
-extract_stage_vtf "6.1" "$STAGE_61_FILE" "1"
+    # 6.1: hard minimization (pre-production / hybrid inactive)
+    set_stage_npt_targets "6.1"
+    prepare_stage_file "$PREPARED_61_FILE" "npt_prod" "1" "0" "0" "minimization"
+    cp -f "$PREPARED_61_FILE" "$STAGE_61_FILE"
+    handoff_initial_position "$STAGE_60_FILE" "$STAGE_61_FILE"
+    run_minimization_stage "6.1" "$STAGE_61_FILE" "$MIN_61_MAX_ITER"
+    extract_stage_vtf "6.1" "$STAGE_61_FILE" "1"
 
-# 6.2: soft equilibration
-set_stage_npt_targets "6.2"
-prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "0" "200" "minimization"
-handoff_initial_position "$STAGE_61_FILE" "$STAGE_62_FILE"
-run_md_stage "6.2" "$STAGE_62_FILE" "$STAGE_62_FILE" "$EQ_62_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
-extract_stage_vtf "6.2" "$STAGE_62_FILE" "1"
+    # 6.2: soft equilibration
+    set_stage_npt_targets "6.2"
+    prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "0" "200" "minimization"
+    handoff_initial_position "$STAGE_61_FILE" "$STAGE_62_FILE"
+    run_md_stage "6.2" "$STAGE_62_FILE" "$STAGE_62_FILE" "$EQ_62_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+    extract_stage_vtf "6.2" "$STAGE_62_FILE" "1"
 
-# 6.3: reduced softening equilibration
-set_stage_npt_targets "6.3"
-prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "0" "100" "minimization"
-cp -f "$PREPARED_63_FILE" "$STAGE_63_FILE"
-handoff_initial_position "$STAGE_62_FILE" "$STAGE_63_FILE"
-run_md_stage "6.3" "$STAGE_63_FILE" "$STAGE_63_FILE" "$EQ_63_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
-extract_stage_vtf "6.3" "$STAGE_63_FILE" "1"
+    # 6.3: reduced softening equilibration
+    set_stage_npt_targets "6.3"
+    prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "0" "100" "minimization"
+    cp -f "$PREPARED_63_FILE" "$STAGE_63_FILE"
+    handoff_initial_position "$STAGE_62_FILE" "$STAGE_63_FILE"
+    run_md_stage "6.3" "$STAGE_63_FILE" "$STAGE_63_FILE" "$EQ_63_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+    extract_stage_vtf "6.3" "$STAGE_63_FILE" "1"
 
-# 6.4-6.6: hard equilibration with restraint ramp
-set_stage_npt_targets "6.4"
-prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "0" "50" "minimization"
-cp -f "$PREPARED_64_FILE" "$STAGE_64_FILE"
-handoff_initial_position "$STAGE_63_FILE" "$STAGE_64_FILE"
-run_md_stage "6.4" "$STAGE_64_FILE" "$STAGE_64_FILE" "$EQ_64_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
-extract_stage_vtf "6.4" "$STAGE_64_FILE" "1"
+    # 6.4-6.6: hard equilibration with restraint ramp
+    set_stage_npt_targets "6.4"
+    prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "0" "50" "minimization"
+    cp -f "$PREPARED_64_FILE" "$STAGE_64_FILE"
+    handoff_initial_position "$STAGE_63_FILE" "$STAGE_64_FILE"
+    run_md_stage "6.4" "$STAGE_64_FILE" "$STAGE_64_FILE" "$EQ_64_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+    extract_stage_vtf "6.4" "$STAGE_64_FILE" "1"
 
-set_stage_npt_targets "6.5"
-prepare_stage_file "$PREPARED_65_FILE" "npt_prod" "1" "0" "20" "minimization"
-cp -f "$PREPARED_65_FILE" "$STAGE_65_FILE"
-handoff_initial_position "$STAGE_64_FILE" "$STAGE_65_FILE"
-run_md_stage "6.5" "$STAGE_65_FILE" "$STAGE_65_FILE" "$EQ_65_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
-extract_stage_vtf "6.5" "$STAGE_65_FILE" "1"
+    set_stage_npt_targets "6.5"
+    prepare_stage_file "$PREPARED_65_FILE" "npt_prod" "1" "0" "20" "minimization"
+    cp -f "$PREPARED_65_FILE" "$STAGE_65_FILE"
+    handoff_initial_position "$STAGE_64_FILE" "$STAGE_65_FILE"
+    run_md_stage "6.5" "$STAGE_65_FILE" "$STAGE_65_FILE" "$EQ_65_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+    extract_stage_vtf "6.5" "$STAGE_65_FILE" "1"
 
-set_stage_npt_targets "6.6"
-prepare_stage_file "$PREPARED_66_FILE" "npt_prod" "1" "0" "10" "minimization"
-cp -f "$PREPARED_66_FILE" "$STAGE_66_FILE"
-handoff_initial_position "$STAGE_65_FILE" "$STAGE_66_FILE"
-run_md_stage "6.6" "$STAGE_66_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
-extract_stage_vtf "6.6" "$STAGE_66_FILE" "1"
+    set_stage_npt_targets "6.6"
+    prepare_stage_file "$PREPARED_66_FILE" "npt_prod" "1" "0" "10" "minimization"
+    cp -f "$PREPARED_66_FILE" "$STAGE_66_FILE"
+    handoff_initial_position "$STAGE_65_FILE" "$STAGE_66_FILE"
+    run_md_stage "6.6" "$STAGE_66_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
+    extract_stage_vtf "6.6" "$STAGE_66_FILE" "1"
 
-# 7.0: production (hybrid active)
-prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "$PROD_70_BAROSTAT_TYPE" "0" "production"
-cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
-handoff_initial_position "$STAGE_66_FILE" "$STAGE_70_FILE" "production_hybrid"
-assert_hybrid_stage_active "$STAGE_70_FILE" "production" "production"
-run_md_stage "7.0" "$STAGE_70_FILE" "$STAGE_70_FILE" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
-extract_stage_vtf "7.0" "$STAGE_70_FILE" "2"
+    # 7.0: production (hybrid active)
+    prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "$PROD_70_BAROSTAT_TYPE" "0" "production"
+    cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
+    handoff_initial_position "$STAGE_66_FILE" "$STAGE_70_FILE" "production_hybrid"
+    assert_hybrid_stage_active "$STAGE_70_FILE" "production" "production"
+    run_md_stage "7.0" "$STAGE_70_FILE" "$STAGE_70_FILE" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
+    extract_stage_vtf "7.0" "$STAGE_70_FILE" "2"
+fi
 
 echo
 echo "=== Workflow Complete ==="
-echo "Hybrid prep:"
-echo "  Packed PDB: ${HYBRID_PACKED_PDB}"
-echo "  Mapping:    ${HYBRID_MAPPING_FILE}"
-echo "Checkpoints:"
-echo "  6.0: $STAGE_60_FILE"
-echo "  6.1: $STAGE_61_FILE"
-echo "  6.2: $STAGE_62_FILE"
-echo "  6.3: $STAGE_63_FILE"
-echo "  6.4: $STAGE_64_FILE"
-echo "  6.5: $STAGE_65_FILE"
-echo "  6.6: $STAGE_66_FILE"
-echo "  7.0: $STAGE_70_FILE"
-echo "VTF:"
-echo "  ${RUN_DIR}/${PDB_ID}.stage_6.0.vtf"
-echo "  ${RUN_DIR}/${PDB_ID}.stage_6.1.vtf"
-echo "  ${RUN_DIR}/${PDB_ID}.stage_6.2.vtf"
-echo "  ${RUN_DIR}/${PDB_ID}.stage_6.3.vtf"
-echo "  ${RUN_DIR}/${PDB_ID}.stage_6.4.vtf"
-echo "  ${RUN_DIR}/${PDB_ID}.stage_6.5.vtf"
-echo "  ${RUN_DIR}/${PDB_ID}.stage_6.6.vtf"
-echo "  ${RUN_DIR}/${PDB_ID}.stage_7.0.vtf"
+if [ -n "$CONTINUE_STAGE_70_FROM" ]; then
+    echo "Continuation source: ${CONTINUE_STAGE_70_FROM}"
+    echo "Continuation checkpoint: ${CONTINUE_STAGE_70_OUTPUT}"
+    echo "Continuation VTF: ${RUN_DIR}/${PDB_ID}.stage_${CONTINUE_STAGE_70_LABEL}.vtf"
+else
+    echo "Hybrid prep:"
+    echo "  Packed PDB: ${HYBRID_PACKED_PDB}"
+    echo "  Mapping:    ${HYBRID_MAPPING_FILE}"
+    echo "Checkpoints:"
+    echo "  6.0: $STAGE_60_FILE"
+    echo "  6.1: $STAGE_61_FILE"
+    echo "  6.2: $STAGE_62_FILE"
+    echo "  6.3: $STAGE_63_FILE"
+    echo "  6.4: $STAGE_64_FILE"
+    echo "  6.5: $STAGE_65_FILE"
+    echo "  6.6: $STAGE_66_FILE"
+    echo "  7.0: $STAGE_70_FILE"
+    echo "VTF:"
+    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.0.vtf"
+    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.1.vtf"
+    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.2.vtf"
+    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.3.vtf"
+    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.4.vtf"
+    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.5.vtf"
+    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.6.vtf"
+    echo "  ${RUN_DIR}/${PDB_ID}.stage_7.0.vtf"
+fi
