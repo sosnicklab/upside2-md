@@ -9,6 +9,28 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_WORKFLOW_SCRIPT="${BASE_WORKFLOW_SCRIPT:-}"
+
+if [ -z "${BASE_WORKFLOW_SCRIPT}" ]; then
+    for candidate_dir in \
+        "${SLURM_SUBMIT_DIR:-}" \
+        "${SLURM_SUBMIT_DIR:-}/example/16.MARTINI" \
+        "${PWD}" \
+        "${PWD}/example/16.MARTINI" \
+        "${SCRIPT_DIR}"
+    do
+        if [ -n "${candidate_dir}" ] && [ -f "${candidate_dir}/run_sim_1rkl.sh" ]; then
+            BASE_WORKFLOW_SCRIPT="${candidate_dir}/run_sim_1rkl.sh"
+            break
+        fi
+    done
+fi
+
+if [ -z "${BASE_WORKFLOW_SCRIPT}" ]; then
+    echo "ERROR: could not locate run_sim_1rkl.sh." >&2
+    echo "Set BASE_WORKFLOW_SCRIPT explicitly or submit from the repo root or example/16.MARTINI." >&2
+    exit 1
+fi
 
 # Outside-of-bilayer 1RKL start:
 # - place the protein above the upper leaflet,
@@ -47,4 +69,4 @@ if [ -n "${CONTINUE_STAGE_70_FROM:-}" ]; then
     export CONTINUE_STAGE_70_OUTPUT="${CONTINUE_STAGE_70_OUTPUT:-${RUN_DIR}/checkpoints/1rkl.stage_7.0.continue.up}"
 fi
 
-exec "${SCRIPT_DIR}/run_sim_1rkl.sh" "$@"
+exec "${BASE_WORKFLOW_SCRIPT}" "$@"

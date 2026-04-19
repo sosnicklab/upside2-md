@@ -197,3 +197,31 @@
   - wrote `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_continue_smoke/checkpoints/1rkl.stage_7.0.continue.up`,
   - wrote `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_continue_smoke/1rkl.stage_7.0_continue.vtf`,
   - completed a one-step production continuation successfully.
+
+## 2026-04-19 (Bug Fix: Slurm Spool Copy Broke Wrapper Path Resolution)
+- User reported:
+  - `slurm_script: line 50: /var/spool/slurm/.../run_sim_1rkl.sh: No such file or directory`
+- Root cause:
+  - `example/16.MARTINI/run_sim_1rkl_outlipid.sh` resolved the base workflow from `BASH_SOURCE[0]`,
+  - under `sbatch`, that path can point to a Slurm spool copy rather than the real repository directory.
+- Fix:
+  - added `BASE_WORKFLOW_SCRIPT` override support,
+  - made the wrapper search for `run_sim_1rkl.sh` in:
+    - `SLURM_SUBMIT_DIR`
+    - `SLURM_SUBMIT_DIR/example/16.MARTINI`
+    - `PWD`
+    - `PWD/example/16.MARTINI`
+    - `SCRIPT_DIR`
+  - kept an explicit error if none of those locations contain the base workflow.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - spool-style smoke test from a copied wrapper under `/tmp`:
+    - `SLURM_SUBMIT_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI`
+    - `PREVIOUS_RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid`
+    - `RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_continue_spool_smoke`
+    - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1`
+- Observed result:
+  - the copied wrapper no longer tried to execute `/var/spool/.../run_sim_1rkl.sh`,
+  - it resolved `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_1rkl.sh`,
+  - the one-step continuation run completed successfully from the simulated Slurm-spool execution context.

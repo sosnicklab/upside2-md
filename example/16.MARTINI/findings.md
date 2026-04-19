@@ -128,3 +128,9 @@
 - Lesson:
   - do not invent or round up Slurm walltimes in wrapper scripts;
   - when the user provides a hard cluster limit, propagate that exact value into `#SBATCH --time` and any related guidance.
+
+## 2026-04-19 (User Correction: Slurm Wrapper Path Resolution)
+- `sbatch` may execute a spool copy of the submitted script under `/var/spool/slurm/...`, so `BASH_SOURCE[0]` is not a reliable way for a wrapper to find sibling workflow files.
+- Lesson:
+  - do not resolve repo-local helper scripts in an `sbatch` wrapper from the wrapper's own runtime path alone;
+  - prefer `SLURM_SUBMIT_DIR`, the job working directory, or an explicit override env var such as `BASE_WORKFLOW_SCRIPT`.
