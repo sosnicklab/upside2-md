@@ -2,6 +2,86 @@
 
 This file reflects the refreshed boundary-focused dryMARTINI bilayer scan. It supersedes the earlier broad joint-scan summary.
 
+## Hybrid Interface Scale Calibration
+
+This file also records the separate protein-interface calibration that was used to choose the hybrid `1rkl` production scale.
+
+- Goal:
+  - choose the Upside/dryMARTINI interface factor that reproduces the protein fluctuation amplitude of the implicit membrane reference
+- Reference method:
+  - `example/08.MembraneSimulation`
+  - `1rkl`
+  - fixed-curvature implicit membrane
+  - `membrane_thickness = 24.8`
+  - `curvature_radius = 120.0`
+  - `curvature_sign = 1`
+  - `temperature = 0.80`
+- Hybrid method:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - sweep / production control:
+    - `PROTEIN_ENV_INTERFACE_SCALE`
+
+### Calibration Method
+
+- Compare protein-only fluctuations, not the full hybrid protein+bilayer dump.
+- Use only the membrane-embedded protein region derived from the reference membrane geometry.
+- Embedded reference region used in the latest rerun:
+  - residues `7-24`
+- Primary metric:
+  - embedded-region RMSD amplitude difference to the reference
+- Primary presentation artifact:
+  - direct reference-vs-hybrid RMSF overlays for each stable sampled scale
+- Secondary artifact only:
+  - fitted trend line versus `interface_scale`
+
+### What We Ran
+
+- Replaced the older broad exploratory default with a focused high-end sweep in `hybrid-interface-sweep/`.
+- Lengthened the default trajectories to reduce RMSF noise:
+  - reference `REFERENCE_DURATION = 200001`
+  - hybrid `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1000`
+  - hybrid `PROD_70_NSTEPS = 50000`
+- Raised the default Slurm run walltime to:
+  - `36:00:00`
+- Switched sweep initialization to fresh random seeds by default.
+- Filtered destroyed trajectories from the analysis:
+  - explicit non-finite backbone-frame failures are excluded
+  - structurally unstable protein trajectories are excluded by reference-relative RMSF / geometry thresholds
+
+### Latest Rerun Result
+
+- Downloaded rerun coverage:
+  - `20 / 20` run tasks succeeded
+  - `19 / 20` analysis tasks succeeded
+  - `1` analysis task failed:
+    - `scale1p1_r01`
+    - `Too few finite backbone frames remain after filtering for RMSF analysis: 0`
+- Stable sampled scales that survived the filter:
+  - `0.825`
+  - `0.925`
+  - `1.0`
+  - `1.075`
+  - `1.15`
+  - `1.20`
+- Best sampled stable scale:
+  - `interface_scale = 1.15`
+  - embedded-region RMSD delta `= 0.05765 A`
+- Fitted trend line on the same rerun:
+  - recommended `0.915`
+  - `R^2 = 0.268`
+- Decision:
+  - the fit is too weak to use as the main argument
+  - the direct overlay comparison was used instead
+  - chosen production interface scale:
+    - `PROTEIN_ENV_INTERFACE_SCALE = 1.15`
+
+### Current Project Default
+
+- `hybrid-interface-sweep/workflow.py` now defaults to:
+  - `interface_scale = 1.15`
+- `example/16.MARTINI/run_sim_1rkl.sh` now defaults to:
+  - `PROTEIN_ENV_INTERFACE_SCALE = 1.15`
+
 ## Unit Contract
 
 - Upside temperature conversion from [AGENTS.md](/Users/yinhan/Documents/upside2-md-martini/AGENTS.md#L31): `1.0 T_up = 350.588235 K`

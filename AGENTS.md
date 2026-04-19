@@ -5,6 +5,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Overview
 Upside is a molecular dynamics simulation package for protein folding and conformational dynamics. It combines a fast C++ core with Python scripts for configuration and analysis.
 
+## Hybrid Interface RMSF Calibration
+
+- For the hybrid `1rkl` membrane workflow, the current chosen production interface factor is:
+  - `PROTEIN_ENV_INTERFACE_SCALE = 1.15`
+- This value is used in:
+  - `hybrid-interface-sweep/`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+- Calibration target:
+  - reproduce the protein fluctuation amplitude of the implicit membrane reference from `example/08.MembraneSimulation`
+  - compare only the membrane-embedded protein region, not the solution-exposed residues
+- Decision rule:
+  - prefer direct reference-vs-hybrid RMSF overlays over weak fitted trend lines
+  - current selected scale from the latest stable rerun is `1.15`
+
 ## Development Rules
 ## Development Rules
 * **Backward Compatibility**: Modifications to C++ source files must not break existing function calls or the Python-to-C++ interface. Exception: This rule does not apply to `src/box.h`, `src/box.cpp`, `src/martini.cpp`, and any files under the `example/16.MARTINI/` directory.
