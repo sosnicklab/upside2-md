@@ -10,7 +10,6 @@ Upside is a molecular dynamics simulation package for protein folding and confor
 - For the hybrid `1rkl` membrane workflow, the current chosen production interface factor is:
   - `PROTEIN_ENV_INTERFACE_SCALE = 1.15`
 - This value is used in:
-  - `hybrid-interface-sweep/`
   - `example/16.MARTINI/run_sim_1rkl.sh`
 - Calibration target:
   - reproduce the protein fluctuation amplitude of the implicit membrane reference from `example/08.MembraneSimulation`
@@ -33,6 +32,78 @@ Crucial: You must run these commands from the project root before running anythi
 source .venv/bin/activate
 source source.sh
 
+```
+
+### Slurm Environment Setup
+For Slurm jobs on the cluster, do not rely on the Apple-Silicon `source.sh` bootstrap as the primary environment setup.
+
+Use a self-contained Slurm setup from the repo root:
+```bash
+PROJECT_ROOT=/path/to/upside2-md
+
+if [ -f /etc/profile.d/modules.sh ]; then
+  source /etc/profile.d/modules.sh
+fi
+
+if command -v module >/dev/null 2>&1; then
+  module load python/3.11.9 || true
+  module load cmake || true
+  module load openmpi || true
+  module load hdf5/1.14.3 || true
+fi
+
+if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
+  source "$PROJECT_ROOT/.venv/bin/activate"
+fi
+
+export UPSIDE_HOME="$PROJECT_ROOT"
+export PATH="$PROJECT_ROOT/obj:$PATH"
+export PYTHONPATH="$PROJECT_ROOT/py${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+Rules:
+- For interactive local Mac work: `source .venv/bin/activate && source source.sh`.
+- For Slurm jobs: prefer module load + repo `.venv` activation + explicit `UPSIDE_HOME/PATH/PYTHONPATH`.
+- If a Slurm wrapper sets up the environment itself, it should set `UPSIDE_SKIP_SOURCE_SH=1` before invoking lower-level workflow scripts so they do not re-enter the local-only bootstrap path.
+- A proper Slurm job for this project should do these steps in order:
+  1. Resolve `PROJECT_ROOT` explicitly.
+  2. Source `/etc/profile.d/modules.sh` when available.
+  3. Load the required modules: Python, CMake, OpenMPI, and HDF5.
+  4. Activate `PROJECT_ROOT/.venv` if it exists.
+  5. Export `UPSIDE_HOME="$PROJECT_ROOT"`.
+  6. Prepend `PROJECT_ROOT/obj` to `PATH`.
+  7. Prepend `PROJECT_ROOT/py` to `PYTHONPATH`.
+  8. Set `UPSIDE_SKIP_SOURCE_SH=1` if the wrapper is handing off to lower-level workflow scripts that would otherwise source the local Mac bootstrap.
+
+Example Slurm wrapper skeleton:
+```bash
+#!/bin/bash
+#SBATCH --time=36:00:00
+set -euo pipefail
+
+PROJECT_ROOT=/path/to/upside2-md
+
+if [ -f /etc/profile.d/modules.sh ]; then
+  source /etc/profile.d/modules.sh
+fi
+
+if command -v module >/dev/null 2>&1; then
+  module load python/3.11.9 || true
+  module load cmake || true
+  module load openmpi || true
+  module load hdf5/1.14.3 || true
+fi
+
+if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
+  source "$PROJECT_ROOT/.venv/bin/activate"
+fi
+
+export UPSIDE_HOME="$PROJECT_ROOT"
+export PATH="$PROJECT_ROOT/obj:$PATH"
+export PYTHONPATH="$PROJECT_ROOT/py${PYTHONPATH:+:$PYTHONPATH}"
+export UPSIDE_SKIP_SOURCE_SH=1
+
+bash "$PROJECT_ROOT/example/16.MARTINI/run_sim_1rkl_outlipid.sh"
 ```
 
 ### Installation & Build

@@ -225,3 +225,45 @@
   - the copied wrapper no longer tried to execute `/var/spool/.../run_sim_1rkl.sh`,
   - it resolved `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_1rkl.sh`,
   - the one-step continuation run completed successfully from the simulated Slurm-spool execution context.
+
+## 2026-04-19 (Bug Fix: Slurm Environment Must Match hybrid-interface-sweep)
+- User reported a new cluster failure:
+  - `ERROR: UPSIDE executable not found: /home/yinhanw/project/yinhan/upside2-md/obj/upside`
+- Audited the working Slurm environment pattern in:
+  - `hybrid-interface-sweep/default/slurm/run_array.sbatch`
+  - `hybrid-interface-sweep/submit_remote_round.sh`
+  - generated Slurm script templates in `hybrid-interface-sweep/workflow.py`
+- Implemented the same pattern for workflow `16`:
+  - updated `example/16.MARTINI/run_sim_1rkl_outlipid.sh` to:
+    - infer `PROJECT_ROOT` from the base workflow path,
+    - allow `UPSIDE_PROJECT_ROOT` to override both the base workflow search root and the runtime root,
+    - source `/etc/profile.d/modules.sh` when present,
+    - load `python/3.11.9`, `cmake`, `openmpi`, and configurable HDF5 modules,
+    - source `PROJECT_ROOT/.venv/bin/activate` when present,
+    - export `UPSIDE_HOME="$PROJECT_ROOT"`,
+    - export `PYTHONPATH="$PROJECT_ROOT/py:${PYTHONPATH}"`,
+    - prepend `PROJECT_ROOT/obj` to `PATH`,
+    - set `UPSIDE_SKIP_SOURCE_SH=1`.
+  - updated `example/16.MARTINI/run_sim_1rkl.sh` to honor `UPSIDE_SKIP_SOURCE_SH=1` and skip the repo-local `source.sh` bootstrap in wrapper-managed environments while still exporting `obj` and `py` paths.
+- Updated `/Users/yinhan/Documents/upside2-md/AGENTS.md`:
+  - clarified that `source .venv/bin/activate && source source.sh` is the local Mac path,
+  - added a dedicated self-contained Slurm environment section that documents the module-load + venv + explicit `UPSIDE_HOME/PATH/PYTHONPATH` pattern,
+  - added an explicit proper-Slurm-job checklist and wrapper skeleton,
+  - documented the requirement that Slurm wrappers set `UPSIDE_SKIP_SOURCE_SH=1`.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - wrapper-managed environment smoke test:
+    - `PREVIOUS_RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid`
+    - `RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_envfix_smoke`
+    - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+- Observed result:
+  - the wrapper found `/Users/yinhan/Documents/upside2-md/obj/upside` via the wrapper-managed environment,
+  - the one-step continuation run completed successfully and wrote the expected continued checkpoint and VTF outputs under `outputs/martini_test_1rkl_outlipid_envfix_smoke`.
+
+## 2026-04-19 (User Correction: AGENTS.md Must Not Depend On Removable Side Folders)
+- User clarified that `hybrid-interface-sweep/` will be removed and must not be referenced from `AGENTS.md` as the place to look for Slurm setup.
+- Updated `/Users/yinhan/Documents/upside2-md/AGENTS.md` again to:
+  - remove the `hybrid-interface-sweep` reference,
+  - write the Slurm environment contract directly in the main project guidance,
+  - include a proper Slurm-job step list and a self-contained wrapper example.

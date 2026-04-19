@@ -3,13 +3,21 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CALLER_UPSIDE_HOME="${UPSIDE_HOME:-}"
-source "${PROJECT_ROOT}/source.sh"
-if [ -n "${CALLER_UPSIDE_HOME}" ]; then
+if [ "${UPSIDE_SKIP_SOURCE_SH:-0}" != "1" ]; then
+    source "${PROJECT_ROOT}/source.sh"
+    if [ -n "${CALLER_UPSIDE_HOME}" ]; then
+        export UPSIDE_HOME="${CALLER_UPSIDE_HOME}"
+    fi
+elif [ -n "${CALLER_UPSIDE_HOME}" ]; then
     export UPSIDE_HOME="${CALLER_UPSIDE_HOME}"
+else
+    export UPSIDE_HOME="${PROJECT_ROOT}"
 fi
 if [ -d "${PROJECT_ROOT}/.venv/bin" ]; then
     export PATH="${PROJECT_ROOT}/.venv/bin:$PATH"
 fi
+export PATH="${PROJECT_ROOT}/obj:$PATH"
+export PYTHONPATH="${PROJECT_ROOT}/py${PYTHONPATH:+:$PYTHONPATH}"
 set -euo pipefail
 cd "${SCRIPT_DIR}"
 PYTHON_WORKFLOW_DIR="${PYTHON_WORKFLOW_DIR:-${PROJECT_ROOT}/py}"

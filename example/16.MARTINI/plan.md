@@ -28,6 +28,7 @@
 - [x] Phase 6: Add stage-7 continuation support to `run_sim_1rkl.sh` and expose it through the out-of-bilayer wrapper.
 - [x] Phase 7: Verify the continuation path and record the updated review notes.
 - [x] Phase 8: Fix Slurm spool-copy path resolution in the out-of-bilayer wrapper and verify it with a spool-style smoke test.
+- [x] Phase 9: Align the Slurm wrapper environment with a self-contained cluster setup and document the rule in `AGENTS.md`.
 
 ## Known Errors / Blockers
 - The review PDB will be MARTINI resolution because the actual packed simulation input is a MARTINI structure.
@@ -58,6 +59,8 @@
 - Slurm constraint:
   - `run_sim_1rkl_outlipid.sh` now uses `#SBATCH --time=36:00:00` to match the user-provided hard cluster limit
   - `run_sim_1rkl_outlipid.sh` now resolves the base workflow from `SLURM_SUBMIT_DIR`, `PWD`, or `BASE_WORKFLOW_SCRIPT` instead of relying only on `BASH_SOURCE[0]`
+  - `run_sim_1rkl_outlipid.sh` now loads the cluster modules and activates `PROJECT_ROOT/.venv` before running the workflow
+  - `run_sim_1rkl.sh` now supports `UPSIDE_SKIP_SOURCE_SH=1` so Slurm wrappers can bypass the local Apple-Silicon bootstrap
 - Verification:
   - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
   - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
@@ -68,3 +71,7 @@
     - `RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_continue_smoke`
     - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl_outlipid.sh`
   - spool-style wrapper smoke test from `/tmp` with `SLURM_SUBMIT_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI`
+  - wrapper-managed environment smoke test:
+    - `PREVIOUS_RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid`
+    - `RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_envfix_smoke`
+    - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl_outlipid.sh`

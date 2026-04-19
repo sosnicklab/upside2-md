@@ -134,3 +134,18 @@
 - Lesson:
   - do not resolve repo-local helper scripts in an `sbatch` wrapper from the wrapper's own runtime path alone;
   - prefer `SLURM_SUBMIT_DIR`, the job working directory, or an explicit override env var such as `BASE_WORKFLOW_SCRIPT`.
+
+## 2026-04-19 (User Correction: Proper Slurm Environment For This Project)
+- The proper cluster pattern for this project must be documented directly in the main repo guidance, not inferred from side directories that may be removed.
+- The self-contained Slurm environment contract is:
+  - source `/etc/profile.d/modules.sh` when present,
+  - `module load python/3.11.9`,
+  - `module load cmake`,
+  - `module load openmpi`,
+  - `module load hdf5/1.14.3` or the configured override,
+  - source `PROJECT_ROOT/.venv/bin/activate` when present,
+  - export `UPSIDE_HOME`, `PATH`, and `PYTHONPATH` from the repo root.
+- Lesson:
+  - for Slurm jobs, do not depend on the repo's Apple-Silicon `source.sh` bootstrap to establish the runtime environment;
+  - Slurm wrappers should establish the cluster environment themselves and set `UPSIDE_SKIP_SOURCE_SH=1` before invoking lower-level workflow scripts;
+  - `AGENTS.md` must describe the Slurm setup directly and must not tell future instances to look at removable auxiliary folders for core environment rules.
