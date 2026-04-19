@@ -27,6 +27,7 @@ from martini_prepare_system_lib import (
     remove_overlapping_lipids,
     set_initial_position,
     set_box_from_lipid_xy,
+    set_coords,
     tile_and_crop_bilayer_lipids,
     validate_hybrid_mapping,
     validate_backbone_reference_frame,
@@ -74,6 +75,24 @@ def parse_prepare_args(argv=None):
     parser.add_argument("--protein-lipid-cutoff", type=float, default=3.0)
     parser.add_argument("--protein-net-charge", type=int, default=None)
     parser.add_argument(
+        "--protein-placement-mode",
+        choices=["embed", "outside-top", "outside-bottom"],
+        default="embed",
+        help="How to place the protein relative to the bilayer during mixed-system preparation.",
+    )
+    parser.add_argument(
+        "--protein-orientation-mode",
+        choices=["input", "lay-flat"],
+        default="input",
+        help="Whether to keep the input protein orientation or rotate it so its thinnest axis becomes the bilayer normal.",
+    )
+    parser.add_argument(
+        "--protein-surface-gap",
+        type=float,
+        default=6.0,
+        help="Requested minimum gap in Angstrom between the protein surface and the lipid surface for outside-of-bilayer placement.",
+    )
+    parser.add_argument(
         "--bb-aa-min-matched-residues",
         type=int,
         default=8,
@@ -115,6 +134,69 @@ def copy_if_different(src: Path, dst: Path):
     if src_resolved == dst_resolved:
         return
     shutil.copy2(src_resolved, dst_resolved)
+
+
+def canonicalize_axis_sign(axis):
+    axis = np.asarray(axis, dtype=float)
+    dominant = int(np.argmax(np.abs(axis)))
+    if axis[dominant] < 0.0:
+        axis = -axis
+    return axis
+
+
+def lay_flat_rotation_basis(protein_xyz):
+    centered = protein_xyz - center_of_mass(protein_xyz)
+    if centered.shape[0] < 3:
+        return np.eye(3, dtype=float)
+
+    cov = np.cov(centered.T)
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    order = np.argsort(eigvals)[::-1]
+
+    axis_x = canonicalize_axis_sign(eigvecs[:, order[0]])
+    axis_z = canonicalize_axis_sign(eigvecs[:, order[-1]])
+    axis_y = np.cross(axis_z, axis_x)
+    axis_y_norm = float(np.linalg.norm(axis_y))
+    if axis_y_norm <= 1.0e-8:
+        axis_y = canonicalize_axis_sign(eigvecs[:, order[1]])
+    else:
+        axis_y = axis_y / axis_y_norm
+
+    axis_z = np.cross(axis_x, axis_y)
+    axis_z = axis_z / np.linalg.norm(axis_z)
+    basis = np.column_stack((axis_x, axis_y, axis_z))
+    if np.linalg.det(basis) < 0.0:
+        basis[:, 1] *= -1.0
+    return basis
+
+
+def orient_protein_xyz(protein_xyz, orientation_mode):
+    protein_center = center_of_mass(protein_xyz)
+    centered = protein_xyz - protein_center
+    if orientation_mode == "input":
+        return centered
+    if orientation_mode == "lay-flat":
+        return centered @ lay_flat_rotation_basis(protein_xyz)
+    raise ValueError(f"Unsupported protein orientation mode: {orientation_mode}")
+
+
+def place_protein_xyz(protein_xyz_centered, bilayer_xyz, bilayer_center, placement_mode, surface_gap):
+    if placement_mode == "embed":
+        return protein_xyz_centered + bilayer_center
+
+    translation = np.array([float(bilayer_center[0]), float(bilayer_center[1]), 0.0], dtype=float)
+    if placement_mode == "outside-top":
+        translation[2] = float(bilayer_xyz[:, 2].max()) + float(surface_gap) - float(
+            protein_xyz_centered[:, 2].min()
+        )
+        return protein_xyz_centered + translation
+    if placement_mode == "outside-bottom":
+        translation[2] = float(bilayer_xyz[:, 2].min()) - float(surface_gap) - float(
+            protein_xyz_centered[:, 2].max()
+        )
+        return protein_xyz_centered + translation
+
+    raise ValueError(f"Unsupported protein placement mode: {placement_mode}")
 
 
 def parse_itp_atom_types(itp_path: Path):
@@ -330,41 +412,75 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
     if not bilayer_lipid_atoms:
         raise ValueError("No lipid residues found in bilayer template.")
 
-    protein_xyz = coords(protein_atoms)
+    protein_xyz_raw = coords(protein_atoms)
     bilayer_xyz = coords(bilayer_lipid_atoms)
     bilayer_center = center_of_mass(bilayer_xyz)
-    protein_center = center_of_mass(protein_xyz)
-    shift = bilayer_center - protein_center
-    protein_xyz = protein_xyz + shift
-    for atom, c in zip(protein_atoms, protein_xyz):
-        atom["x"], atom["y"], atom["z"] = float(c[0]), float(c[1]), float(c[2])
-
-    pmin = protein_xyz.min(axis=0)
-    pmax = protein_xyz.max(axis=0)
-    pspan = pmax - pmin
-    pcenter_xy = 0.5 * (pmin[:2] + pmax[:2])
-
     bmin = bilayer_xyz.min(axis=0)
     bmax = bilayer_xyz.max(axis=0)
     base_side = max(float(bmax[0] - bmin[0]), float(bmax[1] - bmin[1]))
-    min_required_xy = 3.0 * pspan[:2] + 2.0 * float(args.box_padding_xy)
-    target_side = max(base_side * float(max(1.0, args.xy_scale)), float(np.max(min_required_xy)))
 
-    target_xy_min = np.array(
-        [pcenter_xy[0] - 0.5 * target_side, pcenter_xy[1] - 0.5 * target_side],
-        dtype=float,
-    )
-    target_xy_max = np.array(
-        [pcenter_xy[0] + 0.5 * target_side, pcenter_xy[1] + 0.5 * target_side],
-        dtype=float,
-    )
+    if args.protein_placement_mode == "embed" and args.protein_orientation_mode == "input":
+        protein_center = center_of_mass(protein_xyz_raw)
+        shift = bilayer_center - protein_center
+        protein_xyz = protein_xyz_raw + shift
+        set_coords(protein_atoms, protein_xyz)
 
-    bilayer_lipids = tile_and_crop_bilayer_lipids(
-        bilayer_atoms=bilayer_atoms,
-        bilayer_box=bilayer_box,
-        target_xy_min=target_xy_min,
-        target_xy_max=target_xy_max,
-    )
+        pmin = protein_xyz.min(axis=0)
+        pmax = protein_xyz.max(axis=0)
+        pspan = pmax - pmin
+        pcenter_xy = 0.5 * (pmin[:2] + pmax[:2])
+
+        min_required_xy = 3.0 * pspan[:2] + 2.0 * float(args.box_padding_xy)
+        target_side = max(base_side * float(max(1.0, args.xy_scale)), float(np.max(min_required_xy)))
+        target_xy_min = np.array(
+            [pcenter_xy[0] - 0.5 * target_side, pcenter_xy[1] - 0.5 * target_side],
+            dtype=float,
+        )
+        target_xy_max = np.array(
+            [pcenter_xy[0] + 0.5 * target_side, pcenter_xy[1] + 0.5 * target_side],
+            dtype=float,
+        )
+        bilayer_lipids = tile_and_crop_bilayer_lipids(
+            bilayer_atoms=bilayer_atoms,
+            bilayer_box=bilayer_box,
+            target_xy_min=target_xy_min,
+            target_xy_max=target_xy_max,
+        )
+    else:
+        protein_xyz_oriented = orient_protein_xyz(protein_xyz_raw, args.protein_orientation_mode)
+        pmin = protein_xyz_oriented.min(axis=0)
+        pmax = protein_xyz_oriented.max(axis=0)
+        pspan = pmax - pmin
+
+        min_required_xy = 3.0 * pspan[:2] + 2.0 * float(args.box_padding_xy)
+        target_side = max(base_side * float(max(1.0, args.xy_scale)), float(np.max(min_required_xy)))
+        target_xy_min = np.array(
+            [bilayer_center[0] - 0.5 * target_side, bilayer_center[1] - 0.5 * target_side],
+            dtype=float,
+        )
+        target_xy_max = np.array(
+            [bilayer_center[0] + 0.5 * target_side, bilayer_center[1] + 0.5 * target_side],
+            dtype=float,
+        )
+        bilayer_lipids = tile_and_crop_bilayer_lipids(
+            bilayer_atoms=bilayer_atoms,
+            bilayer_box=bilayer_box,
+            target_xy_min=target_xy_min,
+            target_xy_max=target_xy_max,
+        )
+
+        bilayer_lipid_atoms_cropped = [a for a in bilayer_lipids if lipid_resname(a["resname"])]
+        if not bilayer_lipid_atoms_cropped:
+            raise ValueError("No lipid residues remained after bilayer tiling/cropping.")
+        bilayer_xyz_cropped = coords(bilayer_lipid_atoms_cropped)
+        protein_xyz = place_protein_xyz(
+            protein_xyz_centered=protein_xyz_oriented,
+            bilayer_xyz=bilayer_xyz_cropped,
+            bilayer_center=center_of_mass(bilayer_xyz_cropped),
+            placement_mode=args.protein_placement_mode,
+            surface_gap=args.protein_surface_gap,
+        )
+        set_coords(protein_atoms, protein_xyz)
     lipid_residues, keep_nonlipid = compute_lipid_residue_indices(bilayer_lipids)
     bilayer_kept, removed_lipids = remove_overlapping_lipids(
         bilayer_atoms=bilayer_lipids,
@@ -415,6 +531,9 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
 
     all_atoms = packed_atoms + ion_atoms
     write_pdb(runtime_pdb, all_atoms, box_lengths)
+    protein_xyz_final = coords(protein_atoms)
+    bilayer_kept_lipid_atoms = [a for a in bilayer_kept if lipid_resname(a["resname"])]
+    bilayer_xyz_final = coords(bilayer_kept_lipid_atoms) if bilayer_kept_lipid_atoms else coords(bilayer_kept)
 
     if args.protein_itp:
         protein_itp = Path(args.protein_itp).expanduser().resolve()
@@ -472,6 +591,9 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
         "input_bilayer_pdb": str(bilayer_pdb),
         "runtime_pdb": str(runtime_pdb),
         "runtime_itp": str(runtime_itp) if args.protein_itp else None,
+        "protein_placement_mode": str(args.protein_placement_mode),
+        "protein_orientation_mode": str(args.protein_orientation_mode),
+        "protein_surface_gap_requested_angstrom": float(args.protein_surface_gap),
         "xy_scale": float(args.xy_scale),
         "base_xy_side_angstrom": float(base_side),
         "target_xy_side_angstrom": float(target_side),
@@ -485,6 +607,13 @@ def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
         "lipid_residues_removed": int(removed_lipids),
         "ion_atoms_added": int(len(ion_atoms)),
         "total_atoms": int(len(all_atoms)),
+        "protein_span_angstrom": [float(v) for v in pspan],
+        "protein_final_z_min": float(protein_xyz_final[:, 2].min()),
+        "protein_final_z_max": float(protein_xyz_final[:, 2].max()),
+        "lipid_final_z_min": float(bilayer_xyz_final[:, 2].min()),
+        "lipid_final_z_max": float(bilayer_xyz_final[:, 2].max()),
+        "protein_top_clearance_angstrom": float(protein_xyz_final[:, 2].min() - bilayer_xyz_final[:, 2].max()),
+        "protein_bottom_clearance_angstrom": float(bilayer_xyz_final[:, 2].min() - protein_xyz_final[:, 2].max()),
     }
     summary.update(mapping_summary)
     return summary

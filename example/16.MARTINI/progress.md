@@ -123,3 +123,44 @@
   - `tail order = 0.238`
   - `n_lipid_molecules = 280`
   - no dynamic `output/box` frames were present, so area stayed fixed under the expected NVT fallback path.
+
+## 2026-04-19 (Task Start: Out-of-Bilayer 1RKL Workflow)
+- Replaced `example/16.MARTINI/plan.md` with a task-specific plan for the new outside-of-bilayer workflow.
+- Audited the relevant preparation path before editing:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `py/martini_prepare_system.py`
+  - `py/martini_prepare_system_lib.py`
+  - `example/16.MARTINI/pdb/1rkl.pdb`
+- Confirmed the current mixed-system builder centers the protein onto the bilayer before lipid removal and box construction, so the new start geometry must be implemented in the prep script rather than as a post hoc shell-only shift.
+
+## 2026-04-19 (Implementation: Out-of-Bilayer 1RKL Workflow)
+- Updated `py/martini_prepare_system.py`:
+  - added optional `--protein-placement-mode`,
+  - added optional `--protein-orientation-mode`,
+  - added optional `--protein-surface-gap`,
+  - kept the existing embedded/input path on the original code branch,
+  - added a new geometry path that can place the protein above or below the bilayer and rotate it into a deterministic flat orientation based on principal axes.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
+  - exposed the new prep controls through optional environment variables only,
+  - kept all existing defaults unchanged.
+- Added `example/16.MARTINI/run_sim_1rkl_outlipid.sh`:
+  - `sbatch` headers,
+  - outside-top placement,
+  - flat protein orientation,
+  - larger XY and Z box defaults,
+  - slightly more conservative protein-lipid clearance defaults for the outside-start geometry.
+- Generated a review artifact with a direct stage-0 prep run using the existing martinized `1rkl` protein inputs:
+  - output PDB: `example/16.MARTINI/outputs/martini_test_1rkl_outlipid/hybrid_prep/hybrid_packed.MARTINI.pdb`
+  - summary JSON: `example/16.MARTINI/outputs/martini_test_1rkl_outlipid/hybrid_prep/hybrid_prep_summary.json`
+- Observed review geometry:
+  - box = `177.472 x 177.472 x 160.621 Å`
+  - protein above upper leaflet with `6.0 Å` clearance
+  - protein flat span = `43.177 x 16.204 x 11.812 Å`
+  - no lipid residues removed during packing
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - source-compilation syntax check for `py/martini_prepare_system.py` via Python `compile(...)`
+  - direct stage-0 prep run completed successfully and preserved hybrid backbone-frame validation:
+    - matched residues = `31`
+    - rigid RMSD = `0.1030 Å`

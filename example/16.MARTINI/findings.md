@@ -86,3 +86,30 @@
 - Consequence:
   - the repository can now quantify current hybrid membrane packing directly,
   - the next scientific decision still needs an external dry-MARTINI packing target for comparison rather than more blind interface-scale tuning.
+
+## 2026-04-19 (1RKL Mixed-System Placement Audit For Out-of-Bilayer Start)
+- The current mixed-system prep path in `py/martini_prepare_system.py::prepare_mixed_structure(...)` does not have an explicit outside-of-bilayer mode.
+- Current behavior:
+  - translates the protein center to the bilayer center,
+  - sizes the XY target from the translated protein span,
+  - removes overlapping lipids,
+  - recenters the bilayer in `z` when defining the box.
+- Consequence:
+  - an out-of-bilayer starting geometry cannot be implemented reliably in a wrapper script alone,
+  - the correct change point is the mixed-system prep step that writes the packed runtime PDB and hybrid mapping inputs.
+- The `1rkl` input PDB is already membrane-oriented metadata-wise (`REMARK 1/2 of bilayer thickness: 12.4`), but a reviewable "protein on top of bilayer" start still needs an explicit orientation rule rather than only a `z` translation.
+
+## 2026-04-19 (Out-of-Bilayer 1RKL Review Geometry)
+- The new outside-start placement that best matches the request is:
+  - `protein_placement_mode = outside-top`
+  - `protein_orientation_mode = lay-flat`
+  - `protein_surface_gap = 6.0 Å`
+- A direct stage-0 preparation run with those settings produced:
+  - box = `177.472 x 177.472 x 160.621 Å`
+  - protein span after flat orientation = `43.177 x 16.204 x 11.812 Å`
+  - top-of-bilayer clearance = exactly `6.0 Å`
+  - removed lipid residues = `0`
+- Consequence:
+  - the protein is above the upper leaflet with explicit surface separation,
+  - the larger box comes primarily from the widened XY target plus increased `z` padding,
+  - the start geometry does not rely on carving a hole into the bilayer to make room.

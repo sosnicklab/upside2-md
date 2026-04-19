@@ -89,8 +89,12 @@ SALT_MOLAR="${SALT_MOLAR:-0.15}"
 # More conservative default exclusion to prevent lipids packed too close to protein surface.
 PROTEIN_LIPID_CUTOFF="${PROTEIN_LIPID_CUTOFF:-4.5}"
 ION_CUTOFF="${ION_CUTOFF:-4.0}"
+XY_SCALE="${XY_SCALE:-1.0}"
 BOX_PADDING_XY="${BOX_PADDING_XY:-0.0}"
 BOX_PADDING_Z="${BOX_PADDING_Z:-20.0}"
+PROTEIN_PLACEMENT_MODE="${PROTEIN_PLACEMENT_MODE:-embed}"
+PROTEIN_ORIENTATION_MODE="${PROTEIN_ORIENTATION_MODE:-input}"
+PROTEIN_SURFACE_GAP="${PROTEIN_SURFACE_GAP:-6.0}"
 PREP_SEED="${PREP_SEED:-2026}"
 PROTEIN_LIPID_MIN_GAP="${PROTEIN_LIPID_MIN_GAP:-4.5}"
 PROTEIN_LIPID_CUTOFF_STEP="${PROTEIN_LIPID_CUTOFF_STEP:-0.5}"
@@ -975,8 +979,12 @@ prepare_hybrid_artifacts() {
             --salt-molar "${SALT_MOLAR}" \
             --protein-lipid-cutoff "${packing_cutoff}" \
             --ion-cutoff "${ION_CUTOFF}" \
+            --xy-scale "${XY_SCALE}" \
             --box-padding-xy "${BOX_PADDING_XY}" \
             --box-padding-z "${BOX_PADDING_Z}" \
+            --protein-placement-mode "${PROTEIN_PLACEMENT_MODE}" \
+            --protein-orientation-mode "${PROTEIN_ORIENTATION_MODE}" \
+            --protein-surface-gap "${PROTEIN_SURFACE_GAP}" \
             --bb-aa-min-matched-residues "${BB_AA_MIN_MATCHED_RESIDUES}" \
             --bb-aa-max-rigid-rmsd "${BB_AA_MAX_RIGID_RMSD}" \
             --seed "${PREP_SEED}" \
