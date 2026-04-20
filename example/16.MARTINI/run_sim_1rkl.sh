@@ -1298,6 +1298,49 @@ handoff_initial_position() {
         python3 "${UNIVERSAL_PREP_SCRIPT}" set-initial-position "$input_file" "$output_file"
 }
 
+list_stage_vtf_outputs() {
+    local stage_label="$1"
+    local stage_file="$2"
+
+    python3 - "$RUN_DIR" "$PDB_ID" "$stage_label" "$stage_file" << 'PY'
+import os
+import re
+import sys
+
+import h5py
+
+run_dir, pdb_id, stage_label, stage_file = sys.argv[1:5]
+prefix = os.path.join(run_dir, f"{pdb_id}.stage_{stage_label}")
+pattern = re.compile(r"^output_previous_(\d+)$")
+
+with h5py.File(stage_file, "r") as f:
+    groups = []
+    for key in f.keys():
+        match = pattern.fullmatch(str(key))
+        if match and isinstance(f[key], h5py.Group):
+            groups.append((int(match.group(1)), str(key)))
+    groups.sort()
+    output_groups = [name for _, name in groups]
+    if "output" in f and isinstance(f["output"], h5py.Group):
+        output_groups.append("output")
+
+if len(output_groups) <= 1:
+    print(f"{prefix}.vtf")
+else:
+    for segment_index, _ in enumerate(output_groups):
+        print(f"{prefix}.segment_{segment_index}.vtf")
+PY
+}
+
+print_stage_vtf_outputs() {
+    local stage_label="$1"
+    local stage_file="$2"
+    while IFS= read -r vtf_file; do
+        [ -n "$vtf_file" ] || continue
+        echo "  ${vtf_file}"
+    done < <(list_stage_vtf_outputs "$stage_label" "$stage_file")
+}
+
 extract_stage_vtf() {
     local stage_label="$1"
     local stage_file="$2"
@@ -1306,8 +1349,8 @@ extract_stage_vtf() {
 
     echo "=== Stage ${stage_label}: VTF Extraction (mode ${mode}) ==="
     echo "Input:  $stage_file"
-    echo "Output: $vtf_file"
-    python3 "${EXTRACT_VTF_SCRIPT}" "$stage_file" "$vtf_file" "$stage_file" "$RUNTIME_PDB_ID" --mode "$mode"
+    echo "Output prefix: $vtf_file"
+    python3 "${EXTRACT_VTF_SCRIPT}" "$stage_file" "$vtf_file" "$stage_file" "$RUNTIME_PDB_ID" --mode "$mode" --split-segments
 }
 
 run_stage70_continuation() {
@@ -1425,7 +1468,8 @@ echo "=== Workflow Complete ==="
 if [ -n "$CONTINUE_STAGE_70_FROM" ]; then
     echo "Continuation source: ${CONTINUE_STAGE_70_FROM}"
     echo "Continuation checkpoint: ${CONTINUE_STAGE_70_OUTPUT}"
-    echo "Continuation VTF: ${RUN_DIR}/${PDB_ID}.stage_${CONTINUE_STAGE_70_LABEL}.vtf"
+    echo "Continuation VTF:"
+    print_stage_vtf_outputs "$CONTINUE_STAGE_70_LABEL" "$CONTINUE_STAGE_70_OUTPUT"
 else
     echo "Hybrid prep:"
     echo "  Packed PDB: ${HYBRID_PACKED_PDB}"
@@ -1440,12 +1484,12 @@ else
     echo "  6.6: $STAGE_66_FILE"
     echo "  7.0: $STAGE_70_FILE"
     echo "VTF:"
-    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.0.vtf"
-    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.1.vtf"
-    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.2.vtf"
-    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.3.vtf"
-    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.4.vtf"
-    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.5.vtf"
-    echo "  ${RUN_DIR}/${PDB_ID}.stage_6.6.vtf"
-    echo "  ${RUN_DIR}/${PDB_ID}.stage_7.0.vtf"
+    print_stage_vtf_outputs "6.0" "$STAGE_60_FILE"
+    print_stage_vtf_outputs "6.1" "$STAGE_61_FILE"
+    print_stage_vtf_outputs "6.2" "$STAGE_62_FILE"
+    print_stage_vtf_outputs "6.3" "$STAGE_63_FILE"
+    print_stage_vtf_outputs "6.4" "$STAGE_64_FILE"
+    print_stage_vtf_outputs "6.5" "$STAGE_65_FILE"
+    print_stage_vtf_outputs "6.6" "$STAGE_66_FILE"
+    print_stage_vtf_outputs "7.0" "$STAGE_70_FILE"
 fi

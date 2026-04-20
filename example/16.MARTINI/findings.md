@@ -149,3 +149,12 @@
   - for Slurm jobs, do not depend on the repo's Apple-Silicon `source.sh` bootstrap to establish the runtime environment;
   - Slurm wrappers should establish the cluster environment themselves and set `UPSIDE_SKIP_SOURCE_SH=1` before invoking lower-level workflow scripts;
   - `AGENTS.md` must describe the Slurm setup directly and must not tell future instances to look at removable auxiliary folders for core environment rules.
+
+## 2026-04-20 (User Correction: VTF Output Must Be Per Trajectory Segment)
+- A continued `.up` file may contain multiple trajectory groups:
+  - archived `output_previous_*` groups from earlier segments,
+  - the current `output` group for the latest segment.
+- The correct VTF export behavior is one file per trajectory segment, not a flattened output that combines all archived pieces into one `.vtf`.
+- Lesson:
+  - when a restartable HDF5 stage file can archive prior outputs, inspect the internal group layout before assuming one stage file implies one trajectory segment;
+  - keep the single-segment filename stable, but split multi-segment extraction into deterministic `segment_<n>` files.

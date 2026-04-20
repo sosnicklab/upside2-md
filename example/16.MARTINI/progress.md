@@ -267,3 +267,29 @@
   - remove the `hybrid-interface-sweep` reference,
   - write the Slurm environment contract directly in the main project guidance,
   - include a proper Slurm-job step list and a self-contained wrapper example.
+
+## 2026-04-20 (Bug Fix: VTF Extraction Must Stay Per Segment)
+- User corrected the continuation-export requirement:
+  - do not flatten all archived trajectory pieces into one VTF,
+  - do emit one VTF file for each simulation segment.
+- Updated `py/martini_extract_vtf.py`:
+  - added `--output-group` selection,
+  - added `--split-segments`,
+  - taught the extractor to enumerate `output_previous_*` groups plus the current `output`,
+  - kept the existing single-segment filename unchanged,
+  - wrote multi-segment outputs as `.segment_<n>.vtf`.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
+  - `extract_stage_vtf()` now calls the extractor with `--split-segments`,
+  - final workflow summaries now list either the single stage VTF or the segment-specific files implied by the current stage file.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - no-write syntax check for `py/martini_extract_vtf.py` via Python `compile(...)`
+  - single-segment smoke test:
+    - `python py/martini_extract_vtf.py ... --split-segments`
+    - observed `/tmp/segment_single_check.vtf`
+  - synthetic multi-segment smoke test:
+    - copied a stage file to `/tmp/1rkl.stage_7.0.segment_test2.up`
+    - duplicated `/output` into `/output_previous_0`
+    - reran `python py/martini_extract_vtf.py ... --split-segments`
+    - observed `/tmp/segment_multi_check.segment_0.vtf`
+    - observed `/tmp/segment_multi_check.segment_1.vtf`
