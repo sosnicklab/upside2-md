@@ -293,3 +293,26 @@
     - reran `python py/martini_extract_vtf.py ... --split-segments`
     - observed `/tmp/segment_multi_check.segment_0.vtf`
     - observed `/tmp/segment_multi_check.segment_1.vtf`
+
+## 2026-04-20 (Bug Fix: Workflow Seeds Must Be Generated Per Run)
+- User asked to double-check that the workflow no longer uses fixed literal seeds by default.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
+  - added a `generate_random_seed()` helper using `/dev/urandom` with a bash fallback,
+  - removed fixed defaults `PREP_SEED=2026` and `SEED=7090685331`,
+  - now generates `PREP_SEED` and `SEED` at runtime when unset,
+  - still honors explicit `PREP_SEED` / `SEED` env-var overrides,
+  - prints the chosen seeds in the workflow banner.
+- Updated `example/16.MARTINI/run_sim_1rkl_outlipid.sh` comments to document that it inherits the base workflow's random seed generation unless seeds are explicitly provided.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - clean-environment base-workflow continuation smoke tests:
+    - run A generated `PREP_SEED=230538232`, `SEED=2946250751`
+    - run B generated `PREP_SEED=702128154`, `SEED=3561662407`
+  - clean-environment wrapper continuation smoke tests:
+    - run A generated `PREP_SEED=1002878124`, `SEED=479116090`
+    - run B generated `PREP_SEED=3764234752`, `SEED=606192356`
+- Observed result:
+  - both scripts now default to non-fixed seeds,
+  - repeated runs produced different seeds without manual overrides,
+  - both the base workflow and the out-of-bilayer wrapper still completed one-step continuation successfully.

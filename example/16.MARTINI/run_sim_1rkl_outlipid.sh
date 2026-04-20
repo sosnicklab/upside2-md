@@ -66,6 +66,10 @@ export PATH="${PROJECT_ROOT}/obj:$PATH"
 # - set PREVIOUS_STAGE7_FILE to that file, or
 # - set PREVIOUS_RUN_DIR and the wrapper will use
 #   ${PREVIOUS_RUN_DIR}/checkpoints/1rkl.stage_7.0.up
+# Seed options:
+# - leave PREP_SEED and SEED unset to let the base workflow generate them
+#   randomly per run,
+# - set PREP_SEED and/or SEED explicitly for reproducible reruns.
 if [ -z "${CONTINUE_STAGE_70_FROM:-}" ]; then
     if [ -n "${PREVIOUS_STAGE7_FILE:-}" ]; then
         export CONTINUE_STAGE_70_FROM="${PREVIOUS_STAGE7_FILE}"

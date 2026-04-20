@@ -22,6 +22,31 @@ set -euo pipefail
 cd "${SCRIPT_DIR}"
 PYTHON_WORKFLOW_DIR="${PYTHON_WORKFLOW_DIR:-${PROJECT_ROOT}/py}"
 
+generate_random_seed() {
+    local seed=""
+    if [ -r /dev/urandom ] && command -v od >/dev/null 2>&1; then
+        seed="$(od -An -N4 -tu4 /dev/urandom 2>/dev/null || true)"
+        seed="${seed//[[:space:]]/}"
+    fi
+    if [ -z "$seed" ] || [ "$seed" = "0" ]; then
+        seed="$(( ((RANDOM & 32767) << 17) ^ ((RANDOM & 32767) << 2) ^ (RANDOM & 3) ))"
+    fi
+    if [ -z "$seed" ] || [ "$seed" = "0" ]; then
+        seed="1"
+    fi
+    printf '%s\n' "$seed"
+}
+
+if [ -z "${PREP_SEED:-}" ]; then
+    PREP_SEED="$(generate_random_seed)"
+fi
+if [ -z "${SEED:-}" ]; then
+    SEED="$(generate_random_seed)"
+    if [ "$SEED" = "$PREP_SEED" ]; then
+        SEED="$(generate_random_seed)"
+    fi
+fi
+
 # Hybrid 1RKL workflow:
 # 0) Hybrid preparation (packed MARTINI + hybrid mapping export)
 # 1) Stage input generation (dry MARTINI)
@@ -106,7 +131,6 @@ BOX_PADDING_Z="${BOX_PADDING_Z:-20.0}"
 PROTEIN_PLACEMENT_MODE="${PROTEIN_PLACEMENT_MODE:-embed}"
 PROTEIN_ORIENTATION_MODE="${PROTEIN_ORIENTATION_MODE:-input}"
 PROTEIN_SURFACE_GAP="${PROTEIN_SURFACE_GAP:-6.0}"
-PREP_SEED="${PREP_SEED:-2026}"
 PROTEIN_LIPID_MIN_GAP="${PROTEIN_LIPID_MIN_GAP:-4.5}"
 PROTEIN_LIPID_CUTOFF_STEP="${PROTEIN_LIPID_CUTOFF_STEP:-0.5}"
 PROTEIN_LIPID_CUTOFF_MAX="${PROTEIN_LIPID_CUTOFF_MAX:-8.0}"
@@ -118,7 +142,6 @@ TEMPERATURE="${TEMPERATURE:-0.8647}"
 # Match the standard Upside examples unless explicitly overridden.
 THERMOSTAT_TIMESCALE="${THERMOSTAT_TIMESCALE:-5.0}"
 THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
-SEED="${SEED:-7090685331}"
 STRICT_STAGE_HANDOFF="${STRICT_STAGE_HANDOFF:-1}"
 
 MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-500}"
@@ -1385,6 +1408,8 @@ PY
 echo "=== Hybrid 1RKL Dry MARTINI Workflow ==="
 echo "Protein ID: $PDB_ID"
 echo "Runtime PDB ID: $RUNTIME_PDB_ID"
+echo "Preparation seed: ${PREP_SEED}"
+echo "Simulation seed: ${SEED}"
 echo "Universal prep: ${UNIVERSAL_PREP_SCRIPT} (mode=${UNIVERSAL_PREP_MODE})"
 echo "VTF extractor: ${EXTRACT_VTF_SCRIPT}"
 echo "Hybrid prep: $HYBRID_PREP_DIR"

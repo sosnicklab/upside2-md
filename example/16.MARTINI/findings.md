@@ -158,3 +158,14 @@
 - Lesson:
   - when a restartable HDF5 stage file can archive prior outputs, inspect the internal group layout before assuming one stage file implies one trajectory segment;
   - keep the single-segment filename stable, but split multi-segment extraction into deterministic `segment_<n>` files.
+
+## 2026-04-20 (User Correction: Workflow Seeds Must Not Be Fixed Literals)
+- `example/16.MARTINI/run_sim_1rkl.sh` still carried fixed default literals for:
+  - `PREP_SEED=2026`
+  - `SEED=7090685331`
+- The correct default behavior for this workflow is:
+  - generate fresh seeds per run when the user does not provide them,
+  - keep explicit env-var overrides available for reproducible reruns.
+- Lesson:
+  - when a workflow is intended for independent reruns, audit seed defaults directly instead of assuming a variable named `SEED` is already randomized;
+  - avoid fixed literal seed defaults unless the user explicitly asked for deterministic behavior.

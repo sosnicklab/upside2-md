@@ -7,6 +7,7 @@
 - Generate a reviewable prepared PDB and keep the workflow directly submitable with `sbatch`.
 - Add a continuation mode so the out-of-bilayer wrapper can resume production from a previous `stage_7.0.up`.
 - Ensure VTF extraction writes one file per continued trajectory segment instead of flattening archived `output_previous_*` groups into one output.
+- Ensure the workflow seeds are generated per run by default instead of using fixed literal numbers.
 
 ## Architecture & Key Decisions
 - Keep `example/16.MARTINI/run_sim_1rkl.sh` backward-compatible by adding optional preparation controls only.
@@ -22,6 +23,9 @@
 - Handle multi-segment continuation at VTF extraction time:
   - keep the existing `${stage}.vtf` name for single-segment stage files,
   - emit `${stage}.segment_<n>.vtf` files when a stage file contains `output_previous_*` groups plus the current `output`.
+- Keep seed behavior explicit:
+  - `PREP_SEED` and `SEED` should be generated at runtime when unset,
+  - explicit user-provided env vars must still override the generated values for reproducibility.
 
 ## Execution Phases
 - [x] Phase 1: Update the prep script with optional outside-top placement and flat orientation controls while preserving current defaults.
@@ -34,6 +38,7 @@
 - [x] Phase 8: Fix Slurm spool-copy path resolution in the out-of-bilayer wrapper and verify it with a spool-style smoke test.
 - [x] Phase 9: Align the Slurm wrapper environment with a self-contained cluster setup and document the rule in `AGENTS.md`.
 - [x] Phase 10: Make VTF extraction segment-aware for continued stage files and verify the multi-segment naming path.
+- [x] Phase 11: Replace fixed workflow seed defaults with runtime-generated seeds and verify both the base workflow and the out-of-bilayer wrapper.
 
 ## Known Errors / Blockers
 - The review PDB will be MARTINI resolution because the actual packed simulation input is a MARTINI structure.
@@ -47,6 +52,7 @@
   - optional `CONTINUE_STAGE_70_FROM` / `CONTINUE_STAGE_70_OUTPUT` production-resume path in `example/16.MARTINI/run_sim_1rkl.sh`
   - wrapper aliases `PREVIOUS_RUN_DIR` and `PREVIOUS_STAGE7_FILE` in `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
   - segment-aware VTF extraction in `py/martini_extract_vtf.py` and `example/16.MARTINI/run_sim_1rkl.sh`
+  - runtime-generated default `PREP_SEED` and `SEED` in `example/16.MARTINI/run_sim_1rkl.sh`, with wrapper pass-through documentation in `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
 - Review artifact:
   - `example/16.MARTINI/outputs/martini_test_1rkl_outlipid/hybrid_prep/hybrid_packed.MARTINI.pdb`
 - Continuation artifact:
@@ -63,6 +69,15 @@
   - default continuation output is a new `stage_7.0.continue.up` file in the current `RUN_DIR`
   - one-step production continuation completed successfully and wrote `1rkl.stage_7.0_continue.vtf`
   - continued stage files with multiple archived trajectory groups now extract to per-segment files such as `stage_7.0_continue.segment_0.vtf` and `stage_7.0_continue.segment_1.vtf`
+- Observed seed behavior:
+  - fixed defaults `PREP_SEED=2026` and `SEED=7090685331` were removed
+  - two clean-environment base-workflow runs generated different seed pairs:
+    - base A: `PREP_SEED=230538232`, `SEED=2946250751`
+    - base B: `PREP_SEED=702128154`, `SEED=3561662407`
+  - two clean-environment wrapper runs generated different seed pairs:
+    - wrapper A: `PREP_SEED=1002878124`, `SEED=479116090`
+    - wrapper B: `PREP_SEED=3764234752`, `SEED=606192356`
+  - explicit `PREP_SEED` / `SEED` env vars still override the generated defaults
 - Slurm constraint:
   - `run_sim_1rkl_outlipid.sh` now uses `#SBATCH --time=36:00:00` to match the user-provided hard cluster limit
   - `run_sim_1rkl_outlipid.sh` now resolves the base workflow from `SLURM_SUBMIT_DIR`, `PWD`, or `BASE_WORKFLOW_SCRIPT` instead of relying only on `BASH_SOURCE[0]`
@@ -83,6 +98,14 @@
     - `PREVIOUS_RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid`
     - `RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_envfix_smoke`
     - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - clean-environment base-workflow seed smoke tests:
+    - `env -i ... CONTINUE_STAGE_70_FROM=... RUN_DIR=...seedcheck_base_a PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl.sh`
+    - `env -i ... CONTINUE_STAGE_70_FROM=... RUN_DIR=...seedcheck_base_b PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl.sh`
+    - observed different generated seed pairs and successful continuation in both runs
+  - clean-environment wrapper seed smoke tests:
+    - `env -i ... PREVIOUS_RUN_DIR=... RUN_DIR=...seedcheck_wrapper_a PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+    - `env -i ... PREVIOUS_RUN_DIR=... RUN_DIR=...seedcheck_wrapper_b PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+    - observed different generated seed pairs and successful continuation in both runs
   - single-segment extractor smoke test:
     - `python py/martini_extract_vtf.py ... --split-segments` on `outputs/martini_test_1rkl_outlipid_envfix_smoke/checkpoints/1rkl.stage_7.0.continue.up`
     - observed one output file: `/tmp/segment_single_check.vtf`
