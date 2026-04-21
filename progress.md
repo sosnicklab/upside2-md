@@ -1,5 +1,34 @@
 # Progress Log
 
+## 2026-04-21 (Example 16 Dead Path Removal Audit)
+- Traced the Example 16 workflow to the runtime entry points for minimization and NPT.
+- Confirmed the workflow-side minimization path:
+  - `example/16.MARTINI/run_sim_1rkl.sh` invokes `upside` with `--minimize --min-max-iter ... --integrator v`;
+  - `src/main.cpp` responds by calling `martini_run_minimization(...)`;
+  - the `ConjugateGradientMinimizer` node and `minimize_structure_with_regular_potential(...)` helper in `src/martini.cpp` have no call sites anywhere in the repository.
+- Confirmed the workflow-side NPT path:
+  - stages `6.1` through `6.6` explicitly set barostat type `0` in `run_sim_1rkl.sh`;
+  - stage `7.0` keeps `PROD_70_NPT_ENABLE=0` by default, so the default workflow does not use production NPT at all;
+  - the Parrinello-Rahman branch in `src/box.cpp` is only selected when `/input/barostat.type == 1`, so it is not on the active Example 16 path.
+- Also found stale Example 16 config surface that still mentions Parrinello-Rahman even though the active wrapper does not use it:
+  - `example/16.MARTINI/run.py`
+  - `py/martini_prepare_system_lib.py`
+- Next step:
+  - remove the dead CG minimizer code from `src/martini.cpp`,
+  - simplify the barostat runtime to Berendsen-only and remove the stale Example 16 barostat-type plumbing,
+  - rebuild and verify.
+- Removed the dead code/configuration:
+  - deleted the unused `ConjugateGradientMinimizer`, `conjugate_gradient_minimizer` node registration, and `minimize_structure_with_regular_potential(...)` helper from `src/martini.cpp`;
+  - removed the unused Parrinello-Rahman branch/state selection from `src/box.cpp` and `src/box.h`, leaving the active Berendsen NPT path;
+  - removed the dead Example 16 `barostat_type` plumbing from `example/16.MARTINI/run_sim_1rkl.sh`, `example/16.MARTINI/run.py`, and `py/martini_prepare_system_lib.py`.
+- Verification completed:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `python3 -m py_compile example/16.MARTINI/run.py py/martini_prepare_system_lib.py`
+  - `cmake --build obj`
+- Observed result:
+  - the runtime rebuilt successfully with only pre-existing compiler warnings unrelated to this cleanup;
+  - repo-wide reference sweep after the edit found no remaining code references to the removed CG minimizer or Parrinello-Rahman runtime path, only an old note in `example/16.MARTINI/progress.md`.
+
 ## 2026-04-14 (MARTINI Workflow Python Runtime Repair)
 - Investigated the `ModuleNotFoundError: No module named 'h5py'` reported from `example/16.MARTINI/run_sim_1rkl.sh`.
 - Confirmed the failure was interpreter selection, not package absence:

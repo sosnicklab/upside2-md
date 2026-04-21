@@ -1,5 +1,4 @@
 // box.cpp - Simulation box management for periodic boundaries and NPT/NVT ensembles
-// Ported from origin/martini branch
 //
 // H5 configuration expected at: /input/barostat (group)
 //   attrs:
@@ -108,15 +107,6 @@ static BarostatSettings read_barostat_settings(hid_t root) {
                 s.semi_isotropic = read_attribute<int>(grp.get(), ".", "semi_isotropic") != 0;
             if(attribute_exists(grp.get(), ".", "debug"))
                 s.debug = read_attribute<int>(grp.get(), ".", "debug") != 0;
-            // Read barostat type: 0 = Berendsen (default), 1 = Parrinello-Rahman
-            if(attribute_exists(grp.get(), ".", "type")) {
-                int type_int = read_attribute<int>(grp.get(), ".", "type");
-                if(type_int == 1) {
-                    s.type = BarostatType::ParrinelloRahman;
-                } else {
-                    s.type = BarostatType::Berendsen;
-                }
-            }
         }
     } catch(...) {
         s.enabled = false;
@@ -254,76 +244,6 @@ static void apply_berendsen_barostat(BarostatState& st,
     }
 }
 
-// Apply Parrinello-Rahman barostat
-static void apply_parrinello_rahman_barostat(BarostatState& st,
-                                             float pxy_inst, float pz_inst,
-                                             float delta_t,
-                                             float& scale_xy, float& scale_z) {
-    auto& s = st.settings;
-
-    // Update box velocities using pressure difference
-    // Correct Parrinello-Rahman equation: dv/dt = (1/W) * (P - P_target)
-    // Note: Volume V should NOT be in the numerator
-    float bx = st.box_x, by = st.box_y, bz = st.box_z;
-
-    if(s.semi_isotropic) {
-        float beta_xy = std::max(0.0f, s.compressibility_xy);
-        float beta_z = std::max(0.0f, s.compressibility_z);
-        float W_xy = (beta_xy > 0.0f) ? (s.tau_p * s.tau_p / beta_xy) : 0.0f;
-        float W_z = (beta_z > 0.0f) ? (s.tau_p * s.tau_p / beta_z) : 0.0f;
-
-        // Lateral (xy) and normal (z) are independent
-        float dv_xy_dt = (W_xy > 0.0f && std::isfinite(pxy_inst) && std::isfinite(s.target_p_xy))
-            ? ((1.0f / W_xy) * (pxy_inst - s.target_p_xy)) : 0.0f;
-        float dv_z_dt = (W_z > 0.0f && std::isfinite(pz_inst) && std::isfinite(s.target_p_z))
-            ? ((1.0f / W_z) * (pz_inst - s.target_p_z)) : 0.0f;
-
-        // Update velocities
-        st.box_vel_xy += dv_xy_dt * delta_t;
-        st.box_vel_z += dv_z_dt * delta_t;
-
-        // Apply damping to prevent oscillations
-        float damping = 0.95f;
-        st.box_vel_xy *= damping;
-        st.box_vel_z *= damping;
-
-        // Compute scaling factors from velocities
-        // scale = exp(v * dt / box_dim)
-        // For small v*dt, scale ≈ 1 + v*dt/box_dim
-        float avg_box_xy = 0.5f * (bx + by);
-        scale_xy = 1.0f + (st.box_vel_xy * delta_t) / avg_box_xy;
-        scale_z = 1.0f + (st.box_vel_z * delta_t) / bz;
-
-        if(beta_xy == 0.0f) scale_xy = 1.0f;
-        if(beta_z == 0.0f) scale_z = 1.0f;
-
-        // Clamp to prevent instabilities
-        scale_xy = std::max(0.99f, std::min(1.01f, scale_xy));
-        scale_z = std::max(0.99f, std::min(1.01f, scale_z));
-    } else {
-        float beta = std::max(0.0f, s.compressibility);
-        float W = (beta > 0.0f) ? (s.tau_p * s.tau_p / beta) : 0.0f;
-        // Isotropic coupling
-        float p_inst = (2.f * pxy_inst + pz_inst) / 3.f;
-        float target_p = (2.f * s.target_p_xy + s.target_p_z) / 3.f;
-
-        float dv_dt = (W > 0.0f && std::isfinite(p_inst) && std::isfinite(target_p))
-            ? ((1.0f / W) * (p_inst - target_p)) : 0.0f;
-        st.box_vel_xy += dv_dt * delta_t;
-        st.box_vel_z = st.box_vel_xy;
-
-        float damping = 0.95f;
-        st.box_vel_xy *= damping;
-        st.box_vel_z *= damping;
-
-        float avg_box = powf(bx * by * bz, 1.0f/3.0f);
-        float scale = 1.0f + (st.box_vel_xy * delta_t) / avg_box;
-        scale = (beta > 0.0f) ? std::max(0.99f, std::min(1.01f, scale)) : 1.0f;
-        scale_xy = scale;
-        scale_z = scale;
-    }
-}
-
 void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
     BarostatSettings s = read_barostat_settings(config_root);
     if(!s.enabled) return;
@@ -363,9 +283,8 @@ void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
     } catch(...) {}
     
     if(s.debug) {
-        const char* type_name = (s.type == BarostatType::ParrinelloRahman) ? "Parrinello-Rahman" : "Berendsen";
-        printf("[NPT] Barostat registered: %s, target Pxy=%.3e Pz=%.3e, beta_xy=%.3e beta_z=%.3e, tau=%.2f, interval=%d\n",
-               type_name, s.target_p_xy, s.target_p_z, s.compressibility_xy, s.compressibility_z, s.tau_p, s.interval);
+        printf("[NPT] Barostat registered: Berendsen, target Pxy=%.3e Pz=%.3e, beta_xy=%.3e beta_z=%.3e, tau=%.2f, interval=%d\n",
+               s.target_p_xy, s.target_p_z, s.compressibility_xy, s.compressibility_z, s.tau_p, s.interval);
     }
 }
 
@@ -442,11 +361,7 @@ void maybe_apply_barostat(DerivEngine& engine,
     float scale_xy = 1.0f;
     float scale_z = 1.0f;
 
-    if(s.type == BarostatType::ParrinelloRahman) {
-        apply_parrinello_rahman_barostat(st, pxy_inst, pz_inst, delta_t, scale_xy, scale_z);
-    } else {
-        apply_berendsen_barostat(st, pxy_inst, pz_inst, delta_t, scale_xy, scale_z);
-    }
+    apply_berendsen_barostat(st, pxy_inst, pz_inst, delta_t, scale_xy, scale_z);
     
     // Check for equilibrium
     bool at_equilibrium = false;

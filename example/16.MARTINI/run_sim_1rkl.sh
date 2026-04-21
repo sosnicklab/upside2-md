@@ -187,7 +187,6 @@ export UPSIDE_NPT_INTERVAL="${UPSIDE_NPT_INTERVAL:-10}"
 export UPSIDE_NPT_SEMI="${UPSIDE_NPT_SEMI:-1}"
 export UPSIDE_NPT_DEBUG="${UPSIDE_NPT_DEBUG:-1}"
 PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-0}"
-PROD_70_BAROSTAT_TYPE="${PROD_70_BAROSTAT_TYPE:-1}"
 
 export UPSIDE_EWALD_ENABLE="${UPSIDE_EWALD_ENABLE:-1}"
 export UPSIDE_EWALD_ALPHA="${UPSIDE_EWALD_ALPHA:-0.2}"
@@ -558,20 +557,6 @@ PY
         PROTEIN_CG_EFFECTIVE="${PROTEIN_CG_PDB}"
         PROTEIN_ITP_EFFECTIVE="${PROTEIN_ITP}"
     fi
-}
-
-set_barostat_type() {
-    local up_file="$1"
-    local barostat_type="$2"
-    python3 - "$up_file" "$barostat_type" << 'PY'
-import sys
-import tables as tb
-up_file = sys.argv[1]
-barostat_type = int(sys.argv[2])
-with tb.open_file(up_file, 'r+') as t:
-    if '/input/barostat' in t:
-        t.root.input.barostat._v_attrs.type = barostat_type
-PY
 }
 
 set_stage_label() {
@@ -1145,9 +1130,8 @@ prepare_stage_file() {
     local target_file="$1"
     local prepare_stage="$2"
     local npt_enable="$3"
-    local barostat_type="$4"
-    local lipidhead_fc="${5:-0}"
-    local stage_label="${6:-minimization}"
+    local lipidhead_fc="${4:-0}"
+    local stage_label="${5:-minimization}"
 
     export UPSIDE_SIMULATION_STAGE="$prepare_stage"
     export UPSIDE_NPT_ENABLE="$npt_enable"
@@ -1186,10 +1170,6 @@ prepare_stage_file() {
         if [ "${PROD_70_BACKBONE_FIX_RIGID_ENABLE}" = "1" ]; then
             set_production_backbone_fix_rigid "$target_file"
         fi
-    fi
-
-    if [ "$npt_enable" = "1" ]; then
-        set_barostat_type "$target_file" "$barostat_type"
     fi
 }
 
@@ -1429,14 +1409,14 @@ else
 
     # 6.0: soft-core minimization (pre-production / hybrid inactive)
     set_stage_npt_targets "6.0"
-    prepare_stage_file "$PREPARED_60_FILE" "minimization" "1" "0" "0" "minimization"
+    prepare_stage_file "$PREPARED_60_FILE" "minimization" "1" "0" "minimization"
     cp -f "$PREPARED_60_FILE" "$STAGE_60_FILE"
     run_minimization_stage "6.0" "$STAGE_60_FILE" "$MIN_60_MAX_ITER"
     extract_stage_vtf "6.0" "$STAGE_60_FILE" "1"
 
     # 6.1: hard minimization (pre-production / hybrid inactive)
     set_stage_npt_targets "6.1"
-    prepare_stage_file "$PREPARED_61_FILE" "npt_prod" "1" "0" "0" "minimization"
+    prepare_stage_file "$PREPARED_61_FILE" "npt_prod" "1" "0" "minimization"
     cp -f "$PREPARED_61_FILE" "$STAGE_61_FILE"
     handoff_initial_position "$STAGE_60_FILE" "$STAGE_61_FILE"
     run_minimization_stage "6.1" "$STAGE_61_FILE" "$MIN_61_MAX_ITER"
@@ -1444,14 +1424,14 @@ else
 
     # 6.2: soft equilibration
     set_stage_npt_targets "6.2"
-    prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "0" "200" "minimization"
+    prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "200" "minimization"
     handoff_initial_position "$STAGE_61_FILE" "$STAGE_62_FILE"
     run_md_stage "6.2" "$STAGE_62_FILE" "$STAGE_62_FILE" "$EQ_62_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.2" "$STAGE_62_FILE" "1"
 
     # 6.3: reduced softening equilibration
     set_stage_npt_targets "6.3"
-    prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "0" "100" "minimization"
+    prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "100" "minimization"
     cp -f "$PREPARED_63_FILE" "$STAGE_63_FILE"
     handoff_initial_position "$STAGE_62_FILE" "$STAGE_63_FILE"
     run_md_stage "6.3" "$STAGE_63_FILE" "$STAGE_63_FILE" "$EQ_63_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
@@ -1459,28 +1439,28 @@ else
 
     # 6.4-6.6: hard equilibration with restraint ramp
     set_stage_npt_targets "6.4"
-    prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "0" "50" "minimization"
+    prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "50" "minimization"
     cp -f "$PREPARED_64_FILE" "$STAGE_64_FILE"
     handoff_initial_position "$STAGE_63_FILE" "$STAGE_64_FILE"
     run_md_stage "6.4" "$STAGE_64_FILE" "$STAGE_64_FILE" "$EQ_64_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.4" "$STAGE_64_FILE" "1"
 
     set_stage_npt_targets "6.5"
-    prepare_stage_file "$PREPARED_65_FILE" "npt_prod" "1" "0" "20" "minimization"
+    prepare_stage_file "$PREPARED_65_FILE" "npt_prod" "1" "20" "minimization"
     cp -f "$PREPARED_65_FILE" "$STAGE_65_FILE"
     handoff_initial_position "$STAGE_64_FILE" "$STAGE_65_FILE"
     run_md_stage "6.5" "$STAGE_65_FILE" "$STAGE_65_FILE" "$EQ_65_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.5" "$STAGE_65_FILE" "1"
 
     set_stage_npt_targets "6.6"
-    prepare_stage_file "$PREPARED_66_FILE" "npt_prod" "1" "0" "10" "minimization"
+    prepare_stage_file "$PREPARED_66_FILE" "npt_prod" "1" "10" "minimization"
     cp -f "$PREPARED_66_FILE" "$STAGE_66_FILE"
     handoff_initial_position "$STAGE_65_FILE" "$STAGE_66_FILE"
     run_md_stage "6.6" "$STAGE_66_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.6" "$STAGE_66_FILE" "1"
 
     # 7.0: production (hybrid active)
-    prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "$PROD_70_BAROSTAT_TYPE" "0" "production"
+    prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "0" "production"
     cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
     handoff_initial_position "$STAGE_66_FILE" "$STAGE_70_FILE" "production_hybrid"
     assert_hybrid_stage_active "$STAGE_70_FILE" "production" "production"

@@ -1,4 +1,42 @@
 
+## 2026-04-21 Example 16 Dead Path Removal Audit
+
+### Project Goal
+- Determine whether the Parrinello-Rahman barostat path in `src/box.cpp` and the Conjugate Gradient minimizer path in `src/martini.cpp` are actually used by `example/16.MARTINI/run_sim_1rkl.sh`.
+- If either path is not used by that workflow, remove it completely together with any stale Example 16 configuration surface that only exists to select it.
+
+### Architecture & Key Decisions
+- Audit the real workflow path from `example/16.MARTINI/run_sim_1rkl.sh` through `src/main.cpp` before editing any runtime code.
+- Treat "used by the workflow" as the code path that can be selected by the current Example 16 wrapper and its default stage preparation/invocation logic.
+- Remove dead selection/configuration knobs together with dead implementations so the workflow surface matches the surviving runtime behavior.
+
+### Execution Phases
+- [x] Trace the Example 16 workflow to the runtime entry points for NPT and minimization.
+- [x] Confirm whether the Parrinello-Rahman barostat branch and CG minimizer branch are actually reachable from that workflow.
+- [x] Remove the unused runtime/code-path pieces and stale workflow configuration knobs.
+- [x] Verify script syntax and rebuild the runtime.
+
+### Known Errors / Blockers
+- None so far.
+
+### Review
+- Confirmed workflow reachability:
+  - `example/16.MARTINI/run_sim_1rkl.sh` minimization uses `--minimize`, which `src/main.cpp` routes to `martini_run_minimization(...)`;
+  - the `ConjugateGradientMinimizer` node and `minimize_structure_with_regular_potential(...)` helper in `src/martini.cpp` were dead.
+  - Example 16 pre-production NPT stages write Berendsen barostat type `0`;
+  - stage `7.0` keeps NPT disabled by default, so the default workflow does not use Parrinello-Rahman at all.
+- Removed:
+  - the dead CG minimizer node/helper code from `src/martini.cpp`;
+  - the Parrinello-Rahman branch and related state/type plumbing from `src/box.cpp` and `src/box.h`;
+  - the dead Example 16 `barostat_type` selection surface from:
+    - `example/16.MARTINI/run_sim_1rkl.sh`
+    - `example/16.MARTINI/run.py`
+    - `py/martini_prepare_system_lib.py`
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `python3 -m py_compile example/16.MARTINI/run.py py/martini_prepare_system_lib.py`
+  - `cmake --build obj`
+
 ## 2026-04-14 MARTINI Workflow Python Runtime Repair
 
 ### Project Goal

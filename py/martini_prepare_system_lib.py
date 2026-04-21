@@ -1764,28 +1764,24 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             'lj_alpha': 0.2,
             'coulomb_soften': 1,
             'slater_alpha': 2.0,
-            'barostat_type': 0  # Berendsen
         },
         'npt_equil': {
             'lj_soften': 1,
             'lj_alpha': 0.2,
             'coulomb_soften': 1,
             'slater_alpha': 2.0,
-            'barostat_type': 0  # Berendsen
         },
         'npt_equil_reduced': {
             'lj_soften': 1,
             'lj_alpha': 0.05,
             'coulomb_soften': 1,
             'slater_alpha': 0.5,
-            'barostat_type': 0  # Berendsen
         },
         'npt_prod': {
             'lj_soften': 0,
             'lj_alpha': 0.0,
             'coulomb_soften': 0,
             'slater_alpha': 0.0,
-            'barostat_type': 1  # Parrinello-Rahman
         }
     }
 
@@ -2537,10 +2533,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             barostat_grp._v_attrs.interval = int(os.environ.get('UPSIDE_NPT_INTERVAL', '10'))
             barostat_grp._v_attrs.semi_isotropic = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
             barostat_grp._v_attrs.debug = int(os.environ.get('UPSIDE_NPT_DEBUG', '1'))
-            # Barostat type: 0 = Berendsen (default), 1 = Parrinello-Rahman
-            barostat_grp._v_attrs.type = params['barostat_type']
             print(f"  Enabled: {barostat_enable}")
-            print(f"  Type: {'Parrinello-Rahman' if barostat_grp._v_attrs.type == 1 else 'Berendsen'}")
+            print("  Type: Berendsen")
             print(f"  Target Pxy: {barostat_grp._v_attrs.target_p_xy} E_up/Angstrom^3 (~1 bar)")
             print(f"  Target Pz: {barostat_grp._v_attrs.target_p_z} E_up/Angstrom^3 (~1 bar)")
             print(f"  Compressibility XY: {barostat_grp._v_attrs.compressibility_xy} Angstrom^3/E_up")

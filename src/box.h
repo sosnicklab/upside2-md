@@ -39,15 +39,9 @@ void wrap_positions(VecArray pos, int n_atom, float box_x, float box_y, float bo
 // ===================== NPT BAROSTAT =====================
 namespace npt {
 
-enum class BarostatType {
-    Berendsen,
-    ParrinelloRahman
-};
-
 struct BarostatSettings {
     bool  enabled = false;
     bool  semi_isotropic = true;
-    BarostatType type = BarostatType::Berendsen;
     int   interval = 0;           // steps between applications
     float target_p_xy = 1.0f;     // UP units
     float target_p_z  = 1.0f;     // UP units
@@ -74,9 +68,6 @@ struct BarostatState {
     float last_pz_inst = 0.0f;
     float last_scale_xy = 1.0f;
     float last_scale_z = 1.0f;
-    // Parrinello-Rahman state variables
-    float box_vel_xy = 0.0f;  // box velocity for lateral dimensions
-    float box_vel_z = 0.0f;   // box velocity for normal dimension
 };
 
 using NodeBoxUpdater = void (*)(DerivEngine& engine, float scale_xy, float scale_z);

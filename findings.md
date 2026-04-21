@@ -1,6 +1,15 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-21: `example/16.MARTINI/run_sim_1rkl.sh` does not use the `ConjugateGradientMinimizer` path in `src/martini.cpp`.
+  - the workflow launches minimization with `--minimize --min-max-iter ...` and `--integrator v`;
+  - `src/main.cpp` handles `--minimize` by calling `martini_run_minimization(...)`;
+  - repo-wide search found no call sites or HDF5 node construction sites for `ConjugateGradientMinimizer`, `conjugate_gradient_minimizer`, or `minimize_structure_with_regular_potential(...)` beyond their dead definitions in `src/martini.cpp`.
+- 2026-04-21: The active Example 16 workflow uses the Berendsen NPT branch, not the Parrinello-Rahman branch.
+  - `run_sim_1rkl.sh` prepares stages `6.1` through `6.6` with `npt_enable=1` and explicit barostat type `0`;
+  - production stage `7.0` defaults `PROD_70_NPT_ENABLE=0`, so the default workflow does not run stage-7 NPT at all;
+  - `src/box.cpp` only enters the Parrinello-Rahman path when `/input/barostat.type == 1`;
+  - the Example 16 prep library still carried a stale `npt_prod -> barostat_type = 1` default, but the actual wrapper overwrote the active pre-production stages to `0`.
 - 2026-04-14: The reported `ModuleNotFoundError: h5py` from `example/16.MARTINI/run_sim_1rkl.sh` was caused by a moved virtualenv, not by a missing `h5py` wheel in the repo `.venv`.
   - `./.venv/bin/python` imports `h5py` successfully;
   - the failing interpreter was Homebrew `python3.14`, reached because `.venv/bin/activate` still hardcoded `VIRTUAL_ENV=/Users/yinhan/Documents/upside2-md-martini/.venv`;
