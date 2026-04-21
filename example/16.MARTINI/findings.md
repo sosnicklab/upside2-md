@@ -169,3 +169,17 @@
 - Lesson:
   - when a workflow is intended for independent reruns, audit seed defaults directly instead of assuming a variable named `SEED` is already randomized;
   - avoid fixed literal seed defaults unless the user explicitly asked for deterministic behavior.
+
+## 2026-04-20 (Audit: 1RKL Workflow Integrator Path)
+- `example/16.MARTINI/run_sim_1rkl.sh` uses `--integrator v` for both minimization and MD stages rather than a dedicated MARTINI-specific CLI mode.
+- `src/main.cpp` always calls `martini_masses::load_masses_for_engine(...)` after loading the HDF5 config, so MARTINI mass data is available whenever the stage file contains `/input/mass`.
+- The generated 1RKL stage files do contain `/input/mass`; inspection of existing workflow outputs confirms that both stage `6.0` and stage `7.0` checkpoints include that dataset.
+- Therefore the workflow does use a mass-aware integrator path at runtime, but the active implementation is the inline `martini_masses::has_masses(...)` branches in `src/deriv_engine.cpp`.
+- The helper `martini_masses::martini_integration_stage(...)` in `src/martini.cpp` is not called anywhere and is effectively unused by this workflow.
+
+## 2026-04-20 (Cleanup: Remove Dead `martini_integration_stage`)
+- The only occurrence of `martini_integration_stage(...)` was its unused definition in `src/martini.cpp`.
+- Removing that helper does not affect the active MARTINI mass-aware path, because runtime integration still uses:
+  - `martini_masses::load_masses_for_engine(...)` in `src/main.cpp`,
+  - `martini_masses::has_masses(...)` and `martini_masses::get_mass(...)` inside `src/deriv_engine.cpp`.
+- A fresh out-of-tree build from `src/CMakeLists.txt` completed successfully after the removal.

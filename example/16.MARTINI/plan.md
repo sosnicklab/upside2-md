@@ -39,6 +39,7 @@
 - [x] Phase 9: Align the Slurm wrapper environment with a self-contained cluster setup and document the rule in `AGENTS.md`.
 - [x] Phase 10: Make VTF extraction segment-aware for continued stage files and verify the multi-segment naming path.
 - [x] Phase 11: Replace fixed workflow seed defaults with runtime-generated seeds and verify both the base workflow and the out-of-bilayer wrapper.
+- [x] Phase 12: Remove the dead `martini_integration_stage(...)` helper from `src/martini.cpp` and verify the active MARTINI mass-aware path still builds.
 
 ## Known Errors / Blockers
 - The review PDB will be MARTINI resolution because the actual packed simulation input is a MARTINI structure.
@@ -113,3 +114,12 @@
     - created `/tmp/1rkl.stage_7.0.segment_test2.up` with both `output_previous_0` and `output`
     - ran `python py/martini_extract_vtf.py ... --split-segments`
     - observed output files: `/tmp/segment_multi_check.segment_0.vtf` and `/tmp/segment_multi_check.segment_1.vtf`
+- Integrator audit (2026-04-20):
+  - `run_sim_1rkl.sh` launches all minimization and MD stages with `--integrator v`, so the workflow stays on the standard Verlet CLI path.
+  - The runtime still becomes MARTINI mass-aware because `src/main.cpp` always calls `martini_masses::load_masses_for_engine(...)`, and the generated workflow `.up` files contain `/input/mass`.
+  - The actual mass-aware position updates happen inside the inline `martini_masses::has_masses(...)` branches in `src/deriv_engine.cpp`.
+  - The custom helper `martini_masses::martini_integration_stage(...)` in `src/martini.cpp` is not wired into the execution path and has no call sites.
+- Dead-helper cleanup (2026-04-20):
+  - removed `martini_masses::martini_integration_stage(...)` from `src/martini.cpp`
+  - confirmed no remaining source references under `src/`
+  - verified a clean out-of-tree configure/build from `src/CMakeLists.txt` in `/tmp/upside2-md-stagecheck`

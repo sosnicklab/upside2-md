@@ -1323,36 +1323,6 @@ namespace martini_masses {
         g_masses.erase(engine);
     }
     
-    // MARTINI-specific integrator functions that use proper masses
-    void martini_integration_stage(
-            DerivEngine* engine,
-            VecArray mom,
-            VecArray pos,
-            const VecArray deriv,
-            float vel_factor,
-            float pos_factor,
-            float max_force,
-            int n_atom) {
-        for(int na=0; na<n_atom; ++na) {
-            // Get mass for this atom from MARTINI mass storage
-            float mass = get_mass(engine, na);
-
-            auto d = load_vec<3>(deriv, na);
-            if(max_force) {
-                float f_mag = mag(d)+1e-6f;  // ensure no NaN when mag(deriv)==0.
-                float scale_factor = atan(f_mag * ((0.5f*M_PI_F) / max_force)) * (max_force/f_mag * (2.f/M_PI_F));
-                d *= scale_factor;
-            }
-
-            // Apply mass scaling: F = ma, so a = F/m
-            d /= mass;
-
-            auto p = load_vec<3>(mom, na) - vel_factor*d;
-            store_vec (mom, na, p);
-            update_vec(pos, na, pos_factor*p);
-        }
-    }
-    
     // MARTINI-specific integration cycle that uses masses
     void martini_integration_cycle(
             DerivEngine* engine,

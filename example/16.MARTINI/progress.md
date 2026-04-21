@@ -218,6 +218,41 @@
   - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
   - spool-style smoke test from a copied wrapper under `/tmp`:
     - `SLURM_SUBMIT_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI`
+
+## 2026-04-20 (Audit: Does `run_sim_1rkl.sh` Use `martini_integration_stage`?)
+- Traced the workflow CLI path in `example/16.MARTINI/run_sim_1rkl.sh` and confirmed both minimization and MD stages invoke `upside` with `--integrator v`.
+- Traced runtime setup in `src/main.cpp` and confirmed:
+  - MARTINI masses are loaded for every engine via `martini_masses::load_masses_for_engine(...)`,
+  - the default `v` path dispatches to `DerivEngine::integration_cycle(sys.mom, dt)`.
+- Traced `src/deriv_engine.cpp` and confirmed:
+  - each `integration_cycle(...)` overload checks `martini_masses::has_masses(this)`,
+  - when masses exist, momentum and position updates use per-atom mass scaling inline via `martini_masses::get_mass(...)`.
+- Checked symbol usage in `src/martini.cpp`:
+  - `martini_integration_stage(...)` exists only as a local helper definition,
+  - there are no call sites, so this workflow does not execute that function.
+- Verified generated data path:
+  - `py/martini_prepare_system_lib.py` writes `/input/mass`,
+  - `h5ls -r` on existing `1rkl.stage_6.0.up` and `1rkl.stage_7.0.up` checkpoints shows `/input/mass` is present.
+- Commands used:
+  - `rg -n "integrator|load_masses_for_engine|has_masses|get_mass|martini_integration_stage" example/16.MARTINI/run_sim_1rkl.sh src/main.cpp src/deriv_engine.cpp src/martini.cpp src/main.h py/martini_prepare_system_lib.py`
+  - `sed -n '1180,1325p' example/16.MARTINI/run_sim_1rkl.sh`
+  - `sed -n '660,990p' src/main.cpp`
+  - `sed -n '330,560p' src/deriv_engine.cpp`
+  - `sed -n '1278,1378p' src/martini.cpp`
+  - `h5ls -r example/16.MARTINI/outputs/martini_test_1rkl_outlipid/checkpoints/1rkl.stage_6.0.up`
+  - `h5ls -r example/16.MARTINI/outputs/martini_test_1rkl_outlipid/checkpoints/1rkl.stage_7.0.up`
+
+## 2026-04-20 (Cleanup: Remove Dead `martini_integration_stage`)
+- Updated `src/martini.cpp` to delete the unused `martini_masses::martini_integration_stage(...)` helper.
+- Left the active mass-aware integrator logic unchanged in `src/main.cpp` and `src/deriv_engine.cpp`.
+- Verification:
+  - `rg -n "martini_integration_stage" src` returned no matches
+  - in-tree `cmake --build obj --target upside -j4` failed because `obj/CMakeCache.txt` points at an old checkout path `/Users/yinhan/Documents/upside2-md-martini`
+  - clean reconfigure succeeded with `cmake -S src -B /tmp/upside2-md-stagecheck`
+  - clean build succeeded with `cmake --build /tmp/upside2-md-stagecheck --target upside -j4`
+- Observed result:
+  - `upside` built successfully after the helper removal
+  - remaining build output contained pre-existing compiler warnings, but no error related to this change
     - `PREVIOUS_RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid`
     - `RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_continue_spool_smoke`
     - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1`
