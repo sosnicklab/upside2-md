@@ -28,10 +28,16 @@ namespace martini_fix_rigid {
 // Global registry for fix rigid constraints per engine
 static std::mutex g_fix_rigid_mutex;
 static std::map<DerivEngine*, std::vector<int>> g_user_fixed_atoms;
+static std::map<DerivEngine*, std::vector<int>> g_user_z_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_dynamic_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_dynamic_z_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_z_fixed_atoms;
+
+struct FixRigidSettings {
+    std::vector<int> fixed_atoms;
+    std::vector<int> z_fixed_atoms;
+};
 
 static void normalize_atom_list(std::vector<int>& atoms) {
     std::sort(atoms.begin(), atoms.end());
@@ -53,6 +59,10 @@ static void rebuild_fixed_atoms(DerivEngine& engine) {
 
     auto& merged_z = g_z_fixed_atoms[&engine];
     merged_z.clear();
+    auto uzit = g_user_z_fixed_atoms.find(&engine);
+    if(uzit != g_user_z_fixed_atoms.end()) {
+        merged_z.insert(merged_z.end(), uzit->second.begin(), uzit->second.end());
+    }
     auto zdit = g_dynamic_z_fixed_atoms.find(&engine);
     if(zdit != g_dynamic_z_fixed_atoms.end()) {
         merged_z.insert(merged_z.end(), zdit->second.begin(), zdit->second.end());
@@ -78,9 +88,17 @@ static void merge_fixed_atoms(DerivEngine& engine, const std::vector<int>& extra
     rebuild_fixed_atoms(engine);
 }
 
+static void merge_z_fixed_atoms(DerivEngine& engine, const std::vector<int>& extra_atoms) {
+    if(extra_atoms.empty()) return;
+    auto& fixed_atoms = g_user_z_fixed_atoms[&engine];
+    fixed_atoms.insert(fixed_atoms.end(), extra_atoms.begin(), extra_atoms.end());
+    normalize_atom_list(fixed_atoms);
+    rebuild_fixed_atoms(engine);
+}
+
 // Read fix rigid settings from H5 configuration
-std::vector<int> read_fix_rigid_settings(hid_t root) {
-    std::vector<int> fixed_atoms;
+FixRigidSettings read_fix_rigid_settings(hid_t root) {
+    FixRigidSettings out;
     try {
         if(h5_exists(root, "/input/fix_rigid")) {
             auto grp = open_group(root, "/input/fix_rigid");
@@ -89,15 +107,20 @@ std::vector<int> read_fix_rigid_settings(hid_t root) {
                 // Read atom indices to fix
                 if(h5_exists(grp.get(), "atom_indices")) {
                     traverse_dset<1,int>(grp.get(), "atom_indices", [&](size_t i, int atom_idx) {
-                        fixed_atoms.push_back(atom_idx);
+                        out.fixed_atoms.push_back(atom_idx);
+                    });
+                }
+                if(h5_exists(grp.get(), "z_atom_indices")) {
+                    traverse_dset<1,int>(grp.get(), "z_atom_indices", [&](size_t i, int atom_idx) {
+                        out.z_fixed_atoms.push_back(atom_idx);
                     });
                 }
             }
         }
     } catch(...) { 
-        // Return empty vector if no fix rigid settings found
+        return FixRigidSettings();
     }
-    return fixed_atoms;
+    return out;
 }
 
 std::vector<int> read_martini_backbone_hold(hid_t root, const std::string& atom_role_name) {
@@ -121,8 +144,9 @@ std::vector<int> read_martini_backbone_hold(hid_t root, const std::string& atom_
 // Register fix rigid constraints for an engine
 void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
-    auto fixed_atoms = read_fix_rigid_settings(config_root);
-    merge_fixed_atoms(engine, fixed_atoms);
+    auto settings = read_fix_rigid_settings(config_root);
+    merge_fixed_atoms(engine, settings.fixed_atoms);
+    merge_z_fixed_atoms(engine, settings.z_fixed_atoms);
 }
 
 void register_fix_rigid_backbone_for_engine(hid_t config_root, DerivEngine& engine, const std::string& atom_name) {

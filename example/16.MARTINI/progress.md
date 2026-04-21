@@ -1,5 +1,138 @@
 # Progress Log
 
+## 2026-04-21 (Bug Fix: Restore Committed Bilayer Prep Baseline)
+- User reported that the prepared bilayer must keep the same initial `z` placement and structure as the last committed workflow baseline.
+- Re-read the local task trackers and recorded the new correction in `findings.md`.
+- Compared the current AA-backbone prep output against the committed hybrid prep artifact:
+  - baseline: `outputs/martini_test_1rkl_hybrid/hybrid_prep/hybrid_packed.MARTINI.pdb`
+  - current pre-fix AA prep: `outputs/martini_test_1rkl_aabb_hold_smoke/prep/1rkl_aabb.MARTINI.pdb`
+- Confirmed the regression:
+  - pre-fix AA prep removed only `18` lipids instead of `22`,
+  - shrank the initial box from `111.159 x 111.159 x 110.196 Å` to `110.454 x 110.454 x 97.551 Å`,
+  - shifted the bilayer midplane downward by roughly `6 Å`.
+- Root cause:
+  - `py/martini_prepare_system.py::prepare_mixed_structure(...)` was using the runtime backbone-only atom cloud for:
+    - XY target sizing,
+    - lipid overlap removal,
+    - `min_box_z_target`,
+  - which made the initial bilayer follow the smaller backbone envelope instead of the committed protein-plus-sidechain footprint.
+- Implemented the prep fix in:
+  - `py/martini_prepare_system_lib.py`
+  - `py/martini_prepare_system.py`
+- Details of the fix:
+  - added `extract_protein_aa_atoms(...)` so the prep path can work from the filtered AA protein atom set cleanly,
+  - added `build_sidechain_centroid_proxy_atoms(...)` to create one prep-only sidechain centroid proxy per residue,
+  - built the prep exclusion envelope as:
+    - AA backbone atoms,
+    - plus sidechain centroid proxies,
+  - used that prep envelope for:
+    - XY target sizing,
+    - lipid overlap removal,
+    - `min_box_z_target`,
+  - kept the runtime written PDB backbone-only,
+  - preserved coherent rigid transforms for the alternate outside/`lay-flat` placement path by orienting backbone/runtime and prep-envelope coordinates against the same reference frame.
+- Verification:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` with `PYTHONPYCACHEPREFIX=/tmp/upside_pycache`
+  - direct prep smoke:
+    - `example/16.MARTINI/outputs/aabb_bilayer_baseline_check/prep/prep_summary.json`
+  - reduced workflow smoke:
+    - `example/16.MARTINI/outputs/martini_test_1rkl_aabb_bilayerfix_smoke`
+- Direct artifact comparison against the committed hybrid prep confirmed:
+  - lipid atoms: `3920` in both outputs,
+  - `PO4` count: `280` in both outputs,
+  - XY box: `111.159 x 111.159 Å` in both outputs,
+  - new AA prep box `z`: `109.665 Å` versus committed `110.196 Å`,
+  - new AA prep `PO4` mean `z`: `53.656 Å` versus committed `54.052 Å`,
+  - `PO4` thickness difference: `0.0059 Å`,
+  - lipid residues removed: restored to `22` from the pre-fix `18`.
+- Reduced workflow verification confirmed:
+  - `outputs/martini_test_1rkl_aabb_bilayerfix_smoke` completed through stage `7.0`,
+  - `stage_6.2.up` contains:
+    - `124` rigid protein atoms,
+    - `280` `PO4` `z` holds,
+  - the 5-step `6.2` segment kept:
+    - protein max displacement = `0.0 Å`,
+    - `PO4` max `|Δz|` = `0.0 Å`.
+
+## 2026-04-21 (Bug Fix: Preproduction Protein/PO4 Spatial Holds)
+- User reported that the bilayer was shifting in `z` around stage `6.2`, breaking the later production handoff.
+- Audited runtime hold semantics in:
+  - `src/martini.cpp`
+  - `src/deriv_engine.cpp`
+  - `src/box.cpp`
+  - `py/martini_prepare_system_lib.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+- Confirmed:
+  - `fix_rigid` already pins absolute coordinates, not just internal geometry,
+  - the DOPC topology only supplied soft harmonic `PO4` `z` restraints,
+  - the engine already had a dynamic Z-fixed path but the AA-backbone workflow was not writing user-defined Z-fixed atoms.
+- Implemented:
+  - `src/martini.cpp` now reads optional `/input/fix_rigid/z_atom_indices` and merges them into the engine's user-defined Z-fixed atom set.
+  - `example/16.MARTINI/run_sim_1rkl.sh` now writes preproduction spatial holds through one stage-file helper:
+    - absolute holds for all AA backbone atoms,
+    - `z_atom_indices` holds for all environment `PO4` atoms,
+    - production stage remains unfixed by default.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - in-memory Python syntax checks for the MARTINI prep/extract modules
+  - rebuilt the binary:
+    - `cmake --build obj -j4`
+  - reduced workflow run with a nonzero `6.2` segment:
+    - `outputs/martini_test_1rkl_aabb_hold_smoke`
+    - `EQ_62_NSTEPS=5`
+    - completed through `7.0`
+- Artifact inspection on `outputs/martini_test_1rkl_aabb_hold_smoke/checkpoints/1rkl.stage_6.2.up` confirmed:
+  - `fix_rigid/atom_indices` count = `124`
+  - `fix_rigid/z_atom_indices` count = `282`
+  - all Z-fixed environment atom names are `PO4`
+  - protein max displacement across stage `6.2` = `0.0 Å`
+  - `PO4` max absolute `z` shift across stage `6.2` = `0.0 Å`
+- Post-run schema check confirmed:
+  - `stage_6.0.up` and `stage_6.2.up` contain `z_atom_indices`
+  - `stage_7.0.up` does not contain `fix_rigid` or `z_atom_indices` by default
+
+## 2026-04-21 (Implementation: AA-Backbone 1RKL Workflow)
+- Replaced the active `1rkl` workflow in `example/16.MARTINI/run_sim_1rkl.sh` with an AA-backbone-only path:
+  - removed martinize / CG-protein / protein-ITP / interface-scale controls,
+  - packed direct AA backbone atoms into the DOPC environment,
+  - injected sidechain nodes on every prepared stage `6.0` through `7.0`,
+  - applied `fix_rigid` to the AA backbone on stages `6.0` through `6.6`,
+  - left stage `7.0` unfixed by default, with optional production override retained.
+- Refactored `py/martini_prepare_system.py`:
+  - removed runtime-ITP plumbing,
+  - made prep/write paths AA-backbone-only,
+  - removed the `inject-stage7-sc` protein-ITP fallback surface.
+- Refactored `py/martini_prepare_system_lib.py`:
+  - converted protein stage atoms to placeholder type `AABB` with physical `N/CA/C/O` masses and `PROTEINAA` class,
+  - kept sequence/backbone metadata in direct runtime index space,
+  - removed the retired standalone martinize/CG-hybrid prep code,
+  - removed retired protein-ITP sequence/connectivity helpers that no longer participate in workflow 16.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - in-memory syntax checks for:
+    - `py/martini_prepare_system.py`
+    - `py/martini_prepare_system_lib.py`
+    - `py/martini_extract_vtf.py`
+  - direct AA-backbone prep smoke:
+    - `outputs/aabb_smoke/prep/prep_summary.json`
+    - observed `protein_atoms=124`, `lipid_residues_removed=18`, `total_atoms=4165`
+  - direct stage `6.0` conversion smoke:
+    - `outputs/aabb_smoke/run/test.input.up`
+  - reduced end-to-end workflow smoke:
+    - `outputs/martini_test_1rkl_aabb_smoke`
+    - completed stages `6.0` through `7.0`
+  - reduced continuation smoke:
+    - `outputs/martini_test_1rkl_aabb_continue_smoke`
+    - resumed from `stage_7.0.up` and completed one production step
+- Artifact inspection of the reduced smoke outputs confirmed:
+  - `stage_6.0.up` contains `fix_rigid` with `124` AA-backbone atoms,
+  - `stage_7.0.up` has no `fix_rigid` group by default,
+  - `particle_class` values are `ION`, `OTHER`, `PROTEINAA`,
+  - the first 124 atom roles are exactly `N`, `CA`, `C`, `O`,
+  - the first 10 protein atom types are `AABB`,
+  - `rotamer`, `martini_sc_table_1body`, and `affine_alignment` exist on both `stage_6.0` and `stage_7.0`.
+
 ## 2026-04-06 (Audit: Does Upside RMSD-Align Protein Backbone Each Step?)
 - Recreated the required tracker files in `example/16.MARTINI` because they had been removed during prior directory cleanup.
 - Audited runtime references related to RMSD alignment across:
