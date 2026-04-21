@@ -8,7 +8,7 @@ Upside is a molecular dynamics simulation package for protein folding and confor
 ## Hybrid Interface RMSF Calibration
 
 - For the hybrid `1rkl` membrane workflow, the current chosen production interface factor is:
-  - `PROTEIN_ENV_INTERFACE_SCALE = 1.15`
+  - `PROTEIN_ENV_INTERFACE_SCALE = 1.00`
 - This value is used in:
   - `example/16.MARTINI/run_sim_1rkl.sh`
 - Calibration target:
@@ -16,7 +16,7 @@ Upside is a molecular dynamics simulation package for protein folding and confor
   - compare only the membrane-embedded protein region, not the solution-exposed residues
 - Decision rule:
   - prefer direct reference-vs-hybrid RMSF overlays over weak fitted trend lines
-  - current selected scale from the latest stable rerun is `1.15`
+- current selected scale from the latest stable rerun is `1.00`
 
 ## Development Rules
 ## Development Rules
