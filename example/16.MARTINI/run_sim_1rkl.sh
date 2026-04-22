@@ -82,6 +82,7 @@ PREPARED_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.prepared.up"
 STAGE_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.up"
 PREPARED_61_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.1.prepared.up"
 STAGE_61_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.1.up"
+PREPARED_62_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.2.prepared.up"
 STAGE_62_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.2.up"
 PREPARED_63_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.3.prepared.up"
 STAGE_63_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.3.up"
@@ -263,6 +264,134 @@ with h5py.File(metadata_file, "r") as src, h5py.File(up_file, "r+") as dst:
         if name in dst_inp:
             del dst_inp[name]
         src.copy(src_inp[name], dst_inp, name=name)
+PY
+}
+
+promote_stage_from_previous() {
+    local source_file="$1"
+    local target_file="$2"
+    local stage_label="$3"
+    local npt_enable="$4"
+    local lipidhead_fc="$5"
+    cp -f "$source_file" "$target_file"
+    python3 - "$target_file" "$stage_label" "$npt_enable" "$lipidhead_fc" << 'PY'
+import os
+import re
+import sys
+import h5py
+import numpy as np
+
+target_file = sys.argv[1]
+stage_label = sys.argv[2]
+npt_enable = int(sys.argv[3])
+lipidhead_fc = float(sys.argv[4])
+
+energy_conversion = float(os.environ.get("UPSIDE_MARTINI_ENERGY_CONVERSION", "2.914952774272"))
+length_conversion = float(os.environ.get("UPSIDE_MARTINI_LENGTH_CONVERSION", "10.0"))
+restraint_spring = np.float32(0.0)
+if lipidhead_fc > 0.0:
+    restraint_spring = np.float32(
+        lipidhead_fc / (energy_conversion * length_conversion * length_conversion)
+    )
+
+def as_text(value):
+    if isinstance(value, (bytes, np.bytes_)):
+        return value.decode("utf-8", errors="ignore")
+    return str(value)
+
+with h5py.File(target_file, "r+") as h5:
+    inp = h5["/input"]
+    if "/output/pos" in h5 and h5["/output/pos"].shape[0] > 0:
+        last_pos = h5["/output/pos"][-1, 0, :, :]
+    else:
+        last_pos = inp["pos"][:, :, 0]
+
+    last_box = None
+    if "/output/box" in h5 and h5["/output/box"].size > 0:
+        last_box = h5["/output/box"][-1]
+        if len(last_box.shape) == 2 and last_box.shape[1] == 3:
+            last_box = last_box[0]
+    elif "/input/potential/martini_potential" in h5:
+        pot_grp = h5["/input/potential/martini_potential"]
+        if all(k in pot_grp.attrs for k in ("x_len", "y_len", "z_len")):
+            last_box = np.array(
+                [pot_grp.attrs["x_len"], pot_grp.attrs["y_len"], pot_grp.attrs["z_len"]],
+                dtype=np.float32,
+            )
+
+    for key in list(h5.keys()):
+        if key == "output" or re.fullmatch(r"output_previous_\\d+", str(key)):
+            del h5[key]
+
+    if "pos" in inp:
+        del inp["pos"]
+    inp.create_dataset("pos", data=last_pos[:, :, np.newaxis])
+
+    stage_grp = inp.require_group("stage_parameters")
+    stage_grp.attrs["enable"] = np.int8(1)
+    stage_grp.attrs["current_stage"] = np.bytes_(stage_label)
+
+    pot = inp["potential"]
+    if "restraint_position" in pot:
+        del pot["restraint_position"]
+    if restraint_spring > 0.0:
+        membership = inp["hybrid_env_topology"]["protein_membership"][:].astype(np.int32)
+        atom_names = [as_text(x).strip().upper() for x in inp["atom_names"][:]]
+        restraint_indices = [
+            atom_idx
+            for atom_idx, (membership_value, atom_name) in enumerate(zip(membership, atom_names))
+            if membership_value < 0 and atom_name == "PO4"
+        ]
+        if not restraint_indices:
+            raise ValueError("Cannot create lipid-head restraints: no environment PO4 atoms found")
+        restraint_indices = np.asarray(restraint_indices, dtype=np.int32)
+        ref_pos = last_pos[restraint_indices].astype(np.float32)
+        spring_const_xyz = np.zeros((len(restraint_indices), 3), dtype=np.float32)
+        spring_const_xyz[:, 2] = restraint_spring
+        grp = pot.create_group("restraint_position")
+        grp.attrs["arguments"] = np.asarray([np.bytes_("pos")])
+        grp.attrs["initialized"] = np.uint8(1)
+        grp.create_dataset("restraint_indices", data=restraint_indices, dtype=np.int32)
+        grp.create_dataset("ref_pos", data=ref_pos, dtype=np.float32)
+        grp.create_dataset("spring_const_xyz", data=spring_const_xyz, dtype=np.float32)
+        grp.create_dataset(
+            "spring_const",
+            data=np.full((len(restraint_indices),), restraint_spring, dtype=np.float32),
+            dtype=np.float32,
+        )
+
+    if "fix_rigid" in inp:
+        del inp["fix_rigid"]
+    if "barostat" in inp:
+        del inp["barostat"]
+
+    if npt_enable:
+        grp = inp.create_group("barostat")
+        grp.attrs["enable"] = np.int8(npt_enable)
+        grp.attrs["target_p_xy"] = float(os.environ.get("UPSIDE_NPT_TARGET_PXY", "0.000020659"))
+        grp.attrs["target_p_z"] = float(os.environ.get("UPSIDE_NPT_TARGET_PZ", "0.000020659"))
+        grp.attrs["tau_p"] = float(os.environ.get("UPSIDE_NPT_TAU", "1.0"))
+        grp.attrs["compressibility_xy"] = float(
+            os.environ.get(
+                "UPSIDE_NPT_COMPRESSIBILITY_XY",
+                os.environ.get("UPSIDE_NPT_COMPRESSIBILITY", "14.521180763676"),
+            )
+        )
+        grp.attrs["compressibility_z"] = float(
+            os.environ.get(
+                "UPSIDE_NPT_COMPRESSIBILITY_Z",
+                os.environ.get("UPSIDE_NPT_COMPRESSIBILITY", "14.521180763676"),
+            )
+        )
+        grp.attrs["interval"] = int(os.environ.get("UPSIDE_NPT_INTERVAL", "10"))
+        grp.attrs["semi_isotropic"] = int(os.environ.get("UPSIDE_NPT_SEMI", "1"))
+        grp.attrs["debug"] = int(os.environ.get("UPSIDE_NPT_DEBUG", "1"))
+
+    if last_box is not None and "martini_potential" in pot:
+        martini_potential = pot["martini_potential"]
+        martini_potential.attrs["x_len"] = float(last_box[0])
+        martini_potential.attrs["y_len"] = float(last_box[1])
+        martini_potential.attrs["z_len"] = float(last_box[2])
 PY
 }
 
@@ -752,49 +881,52 @@ else
     extract_stage_vtf "6.0" "$STAGE_60_FILE" "1"
 
     set_stage_npt_targets "6.1"
-    prepare_stage_file "$PREPARED_61_FILE" "npt_prod" "1" "0" "minimization"
+    promote_stage_from_previous "$STAGE_60_FILE" "$PREPARED_61_FILE" "minimization" "1" "0"
+    set_preproduction_spatial_holds "$PREPARED_61_FILE" "${PREPROD_PO4_Z_HOLD_ENABLE}"
     cp -f "$PREPARED_61_FILE" "$STAGE_61_FILE"
-    handoff_initial_position "$STAGE_60_FILE" "$STAGE_61_FILE"
     run_minimization_stage "6.1" "$STAGE_61_FILE" "$MIN_61_MAX_ITER"
     extract_stage_vtf "6.1" "$STAGE_61_FILE" "1"
 
     set_stage_npt_targets "6.2"
-    prepare_stage_file "$STAGE_62_FILE" "npt_equil" "1" "200" "minimization"
-    handoff_initial_position "$STAGE_61_FILE" "$STAGE_62_FILE"
+    promote_stage_from_previous "$STAGE_61_FILE" "$PREPARED_62_FILE" "minimization" "1" "200"
+    set_preproduction_spatial_holds "$PREPARED_62_FILE" "${PREPROD_PO4_Z_HOLD_ENABLE}"
+    cp -f "$PREPARED_62_FILE" "$STAGE_62_FILE"
     run_md_stage "6.2" "$STAGE_62_FILE" "$STAGE_62_FILE" "$EQ_62_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.2" "$STAGE_62_FILE" "1"
 
     set_stage_npt_targets "6.3"
-    prepare_stage_file "$PREPARED_63_FILE" "npt_equil_reduced" "1" "100" "minimization"
+    promote_stage_from_previous "$STAGE_62_FILE" "$PREPARED_63_FILE" "minimization" "1" "100"
+    set_preproduction_spatial_holds "$PREPARED_63_FILE" "${PREPROD_PO4_Z_HOLD_ENABLE}"
     cp -f "$PREPARED_63_FILE" "$STAGE_63_FILE"
-    handoff_initial_position "$STAGE_62_FILE" "$STAGE_63_FILE"
     run_md_stage "6.3" "$STAGE_63_FILE" "$STAGE_63_FILE" "$EQ_63_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.3" "$STAGE_63_FILE" "1"
 
     set_stage_npt_targets "6.4"
-    prepare_stage_file "$PREPARED_64_FILE" "npt_prod" "1" "50" "minimization"
+    promote_stage_from_previous "$STAGE_63_FILE" "$PREPARED_64_FILE" "minimization" "1" "50"
+    set_preproduction_spatial_holds "$PREPARED_64_FILE" "${PREPROD_PO4_Z_HOLD_ENABLE}"
     cp -f "$PREPARED_64_FILE" "$STAGE_64_FILE"
-    handoff_initial_position "$STAGE_63_FILE" "$STAGE_64_FILE"
     run_md_stage "6.4" "$STAGE_64_FILE" "$STAGE_64_FILE" "$EQ_64_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.4" "$STAGE_64_FILE" "1"
 
     set_stage_npt_targets "6.5"
-    prepare_stage_file "$PREPARED_65_FILE" "npt_prod" "1" "20" "minimization"
+    promote_stage_from_previous "$STAGE_64_FILE" "$PREPARED_65_FILE" "minimization" "1" "20"
+    set_preproduction_spatial_holds "$PREPARED_65_FILE" "${PREPROD_PO4_Z_HOLD_ENABLE}"
     cp -f "$PREPARED_65_FILE" "$STAGE_65_FILE"
-    handoff_initial_position "$STAGE_64_FILE" "$STAGE_65_FILE"
     run_md_stage "6.5" "$STAGE_65_FILE" "$STAGE_65_FILE" "$EQ_65_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.5" "$STAGE_65_FILE" "1"
 
     set_stage_npt_targets "6.6"
-    prepare_stage_file "$PREPARED_66_FILE" "npt_prod" "1" "10" "minimization"
+    promote_stage_from_previous "$STAGE_65_FILE" "$PREPARED_66_FILE" "minimization" "1" "10"
+    set_preproduction_spatial_holds "$PREPARED_66_FILE" "${PREPROD_PO4_Z_HOLD_ENABLE}"
     cp -f "$PREPARED_66_FILE" "$STAGE_66_FILE"
-    handoff_initial_position "$STAGE_65_FILE" "$STAGE_66_FILE"
     run_md_stage "6.6" "$STAGE_66_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.6" "$STAGE_66_FILE" "1"
 
-    prepare_stage_file "$PREPARED_70_FILE" "npt_prod" "$PROD_70_NPT_ENABLE" "0" "production"
+    promote_stage_from_previous "$STAGE_66_FILE" "$PREPARED_70_FILE" "production" "$PROD_70_NPT_ENABLE" "0"
     cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
-    handoff_initial_position "$STAGE_66_FILE" "$STAGE_70_FILE"
+    if [ "${PROD_70_BACKBONE_FIX_RIGID_ENABLE}" = "1" ]; then
+        set_backbone_fix_rigid "$STAGE_70_FILE"
+    fi
     validate_production_stage_file "$STAGE_70_FILE"
     run_md_stage "7.0" "$STAGE_70_FILE" "$STAGE_70_FILE" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
     extract_stage_vtf "7.0" "$STAGE_70_FILE" "2"
