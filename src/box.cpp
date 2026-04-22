@@ -9,7 +9,6 @@
 //     interval          (int)     apply every N integrator steps
 //     compressibility_xy(float)   in-plane compressibility (1/pressure)
 //     compressibility_z (float)   normal compressibility   (1/pressure)
-//     compressibility   (float)   legacy isotropic compressibility fallback
 //     semi_isotropic    (int)     1 = scale x,y together; z separately
 //     debug             (int)     enable prints alongside existing output
 
@@ -40,28 +39,6 @@ static inline bool attribute_exists(hid_t loc_id, const char* obj_name, const ch
 }
 
 namespace simulation_box {
-
-// ===================== PBC UTILITIES =====================
-
-void wrap_positions(VecArray pos, int n_atom, float box_x, float box_y, float box_z) {
-    for(int i = 0; i < n_atom; ++i) {
-        float x = pos(0, i);
-        float y = pos(1, i);
-        float z = pos(2, i);
-        
-        // Wrap into [0, box_dim)
-        x = fmodf(x, box_x);
-        if(x < 0) x += box_x;
-        y = fmodf(y, box_y);
-        if(y < 0) y += box_y;
-        z = fmodf(z, box_z);
-        if(z < 0) z += box_z;
-        
-        pos(0, i) = x;
-        pos(1, i) = y;
-        pos(2, i) = z;
-    }
-}
 
 // ===================== NPT BAROSTAT =====================
 
@@ -95,10 +72,6 @@ static BarostatSettings read_barostat_settings(hid_t root) {
                 s.tau_p = read_attribute<float>(grp.get(), ".", "tau_p");
             if(attribute_exists(grp.get(), ".", "interval"))
                 s.interval = read_attribute<int>(grp.get(), ".", "interval");
-            if(attribute_exists(grp.get(), ".", "compressibility"))
-                s.compressibility = read_attribute<float>(grp.get(), ".", "compressibility");
-            s.compressibility_xy = s.compressibility;
-            s.compressibility_z = s.compressibility;
             if(attribute_exists(grp.get(), ".", "compressibility_xy"))
                 s.compressibility_xy = read_attribute<float>(grp.get(), ".", "compressibility_xy");
             if(attribute_exists(grp.get(), ".", "compressibility_z"))
@@ -223,7 +196,7 @@ static void apply_berendsen_barostat(BarostatState& st,
         if(pxy_inst < s.target_p_xy) scale_xy = std::min(scale_xy, 1.0f);
         if(pz_inst < s.target_p_z) scale_z = std::min(scale_z, 1.0f);
     } else {
-        float beta = std::max(0.0f, s.compressibility);
+        float beta = std::max(0.0f, (2.0f * s.compressibility_xy + s.compressibility_z) / 3.0f);
         float p_inst = (2.f * pxy_inst + pz_inst) / 3.f;
         float target_p = (2.f * s.target_p_xy + s.target_p_z) / 3.f;
         float factor = 1.0f;
@@ -384,10 +357,6 @@ void maybe_apply_barostat(DerivEngine& engine,
         }
     }
     
-    st.prev_box_x = st.box_x;
-    st.prev_box_y = st.box_y;
-    st.prev_box_z = st.box_z;
-    
     if(!at_equilibrium) {
         apply_semi_isotropic_scaling(engine, scale_xy, scale_z);
         st.box_x = bx * scale_xy;
@@ -395,10 +364,6 @@ void maybe_apply_barostat(DerivEngine& engine,
         st.box_z = bz * scale_z;
         st.has_applied_once = true;
     }
-
-    // Store scale factors for logging
-    st.last_scale_xy = scale_xy;
-    st.last_scale_z = scale_z;
 }
 
 void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz) {

@@ -1,5 +1,48 @@
 # Progress Log
 
+## 2026-04-21 (1RKL-Only Runtime Cleanup Verification)
+- Rebuilt the runtime after the cleanup edits:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj`
+  - build passed with only pre-existing warnings.
+- Re-ran Python syntax validation after the generator cleanup:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py`
+  - `python3 -m py_compile py/martini_prepare_system_lib.py`
+- Ran a fresh reduced `1rkl` workflow in `/tmp/cleanup_1rkl_verify` with one-step settings for:
+  - `6.0`, `6.1` minimization,
+  - `6.2` through `6.6` equilibration/relaxation,
+  - `7.0` production.
+- Verified the fresh generated checkpoints directly with `h5py`:
+  - `/input/stage_parameters` now has only attr-based stage tracking and no dead bond/angle child groups;
+  - `/input/barostat` no longer carries the legacy scalar `compressibility` attr;
+  - `/input/potential` still contains the required active nodes for the current workflow, including `martini_potential`, `dist_spring`, `angle_spring`, `rotamer`, `placement_fixed_point_vector_only`, `placement_fixed_scalar`, `placement_fixed_point_vector_only_CB`, and `martini_sc_table_1body`;
+  - pre-production stage `6.2` still includes `restraint_position` where expected;
+  - fresh stage `7.0` does not contain `martini_sc_table_potential`.
+- Removed one final stale generator-only string reference:
+  - dropped `martini_sc_table_potential` from `py/martini_prepare_system_lib.py::LEGACY_STAGE7_NODES`.
+- Final repo-wide symbol sweep after that cleanup found no remaining code references to the removed APIs/nodes.
+
+## 2026-04-21 (1RKL-Only Runtime Cleanup)
+- Re-audited the current default `example/16.MARTINI/run_sim_1rkl.sh` path using both the injector code and existing local stage artifacts.
+- Confirmed the current compatibility boundary:
+  - keep `martini_sc_table_1body`, `rotamer`, `placement_fixed_point_vector_only`, `placement_fixed_scalar`, active spring/restraint nodes, Berendsen NPT, Ewald, fix-rigid, and hybrid state logic;
+  - remove `martini_sc_table_potential`, unused stage-parameter force-constant plumbing, the unused mass cleanup/integration placeholder, `wrap_positions`, and legacy `wall_*` / barostat `compressibility` fallbacks.
+- Patched runtime headers/sources:
+  - removed `wrap_positions(...)` from `src/box.h` / `src/box.cpp`;
+  - removed the legacy barostat `compressibility` field and other write-only barostat state from `src/box.h` / `src/box.cpp`;
+  - removed `martini_masses::clear_masses_for_engine(...)` and the unused `martini_integration_cycle(...)` placeholder from `src/martini.cpp`;
+  - removed the unreferenced `MartiniScTablePotential` node, its registration hook, and its NPT box-updater branch from `src/martini.cpp`;
+  - removed dead stage-parameter APIs from `src/main.h`, their call sites from `src/main.cpp`, and the unused force-constant storage/parsing from `src/martini.cpp`.
+- Tightened the active schema assumptions:
+  - `MartiniPotential`, `DistSpring`, `AngleSpring`, and `DihedralSpring` now require explicit `x_len/y_len/z_len`;
+  - current generator still supports legacy stage-file cleanup by deleting `martini_sc_table_potential` if it happens to be present before reinjection.
+- Patched `py/martini_prepare_system_lib.py` so fresh stage files now:
+  - create only `input/stage_parameters.{enable,current_stage}` without dead `minimization_*` / `production_*` force-constant payloads;
+  - write only `compressibility_xy` / `compressibility_z` into `/input/barostat`, not the legacy scalar `compressibility` attr.
+- Next step:
+  - rebuild the runtime,
+  - syntax-check the Python generator,
+  - generate a fresh reduced `1rkl` run and inspect the resulting stage-file schema.
+
 ## 2026-04-21 (Example 16 Dead Path Removal Audit)
 - Traced the Example 16 workflow to the runtime entry points for minimization and NPT.
 - Confirmed the workflow-side minimization path:

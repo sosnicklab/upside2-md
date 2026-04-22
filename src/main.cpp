@@ -1353,10 +1353,6 @@ try {
                     // Apply fix rigid constraints after integration
                     martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.engine.pos->sens, sys.mom);
                     
-                    // Apply stage-specific parameters
-                    martini_stage_params::apply_stage_bond_params(sys.engine);
-                    martini_stage_params::apply_stage_angle_params(sys.engine);
-
                     // Apply NPT barostat if enabled (skip step 0 to allow initial relaxation)
                     if(nr > 0) {
                         bool print_baro = do_print;  // Print barostat info at same frequency as frame output

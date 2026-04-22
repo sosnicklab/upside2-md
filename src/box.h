@@ -33,9 +33,6 @@ inline void minimum_image_scalar(float& dx, float& dy, float& dz, float box_x, f
     if (dz < -0.5f * box_z) dz += box_z;
 }
 
-// Wrap all particle positions into the primary box [0, box_dim)
-void wrap_positions(VecArray pos, int n_atom, float box_x, float box_y, float box_z);
-
 // ===================== NPT BAROSTAT =====================
 namespace npt {
 
@@ -48,7 +45,6 @@ struct BarostatSettings {
     float tau_p = 5.0f;           // time constant
     float compressibility_xy = 4.5e-5f; // 1/pressure in bilayer plane
     float compressibility_z = 4.5e-5f;  // 1/pressure normal to bilayer
-    float compressibility = 4.5e-5f;    // legacy fallback (kept for compatibility)
     bool  debug = true;
     bool  prefer_shrink_first = true; // on first application, avoid any expansion
 };
@@ -58,16 +54,10 @@ struct BarostatState {
     float box_x = 0.f, box_y = 0.f, box_z = 0.f;
     std::vector<float> masses;
     bool has_applied_once = false;
-    // Equilibrium detection
-    float prev_box_x = 0.f, prev_box_y = 0.f, prev_box_z = 0.f;
     int equilibrium_count = 0;
     static constexpr int EQUILIBRIUM_THRESHOLD = 5;
-    static constexpr float EQUILIBRIUM_TOLERANCE = 0.001f;
-    // Last applied values for logging
     float last_pxy_inst = 0.0f;
     float last_pz_inst = 0.0f;
-    float last_scale_xy = 1.0f;
-    float last_scale_z = 1.0f;
 };
 
 using NodeBoxUpdater = void (*)(DerivEngine& engine, float scale_xy, float scale_z);

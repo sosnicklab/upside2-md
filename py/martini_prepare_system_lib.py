@@ -84,7 +84,6 @@ LEGACY_STAGE7_NODES = [
     "rotamer",
     "placement_fixed_scalar",
     "placement_fixed_point_vector_only",
-    "martini_sc_table_potential",
     "martini_sc_table_1body",
 ]
 BACKBONE_NODES = [
@@ -1798,31 +1797,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         stage_grp = t.create_group(input_grp, 'stage_parameters')
         stage_grp._v_attrs.enable = 1
         stage_grp._v_attrs.current_stage = b'minimization'
-        
-        # Store minimization stage bond parameters (large spring constants)
-        min_bonds_grp = t.create_group(stage_grp, 'minimization_bonds')
-        min_bond_fc = np.array([1000000.0] * len(protein_bonds), dtype='f4')
-        t.create_array(min_bonds_grp, 'force_constants', obj=min_bond_fc)
-        
-        # Store production stage bond parameters (regular spring constants)
-        prod_bonds_grp = t.create_group(stage_grp, 'production_bonds')
-        prod_bond_fc = np.array([bond[3] for bond in protein_bonds], dtype='f4')  # Regular k values
-        t.create_array(prod_bonds_grp, 'force_constants', obj=prod_bond_fc)
-        
-        # Store minimization stage angle parameters (NORMANG angles)
-        min_angles_grp = t.create_group(stage_grp, 'minimization_angles')
-        min_angle_fc = np.array([angle[4] for angle in protein_angles], dtype='f4')
-        t.create_array(min_angles_grp, 'force_constants', obj=min_angle_fc)
-        
-        # Store production stage angle parameters (regular angles)
-        prod_angles_grp = t.create_group(stage_grp, 'production_angles')
-        # For production, we'd use different angle parameters (not NORMANG)
-        # For now, use the same as minimization but this could be different
-        prod_angle_fc = np.array([angle[4] for angle in protein_angles], dtype='f4')
-        t.create_array(prod_angles_grp, 'force_constants', obj=prod_angle_fc)
-        
-        print(f"Stage-specific parameters: minimization bonds={len(min_bond_fc)}, production bonds={len(prod_bond_fc)}")
-        print(f"Stage-specific parameters: minimization angles={len(min_angle_fc)}, production angles={len(prod_angle_fc)}")
+        print(f"Stage parameters initialized: current_stage={stage_grp._v_attrs.current_stage.decode()}")
         
         # ===================== NPT BAROSTAT CONFIGURATION =====================
         # Create barostat configuration group for NPT simulations
@@ -1836,9 +1811,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             barostat_grp._v_attrs.target_p_xy = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '0.000020659'))
             barostat_grp._v_attrs.target_p_z = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '0.000020659'))
             barostat_grp._v_attrs.tau_p = float(os.environ.get('UPSIDE_NPT_TAU', '1.0'))
-            # Legacy isotropic compressibility (kept for compatibility)
             legacy_compressibility = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '14.521180763676'))
-            barostat_grp._v_attrs.compressibility = legacy_compressibility
             # Axis-specific compressibility for semi-isotropic membrane coupling
             barostat_grp._v_attrs.compressibility_xy = float(
                 os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_XY', str(legacy_compressibility))

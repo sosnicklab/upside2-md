@@ -1,6 +1,49 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-21: Fresh reduced `1rkl` checkpoints confirm the trimmed active schema.
+  - `/tmp/cleanup_1rkl_verify/checkpoints/1rkl.stage_6.2.up` and `1rkl.stage_7.0.prepared.up` both store the active node graph under `/input/potential` using the lower-case node ids emitted by the current generator;
+  - both fresh files still contain:
+    - `martini_potential`
+    - `dist_spring`
+    - `angle_spring`
+    - `rotamer`
+    - `placement_fixed_point_vector_only`
+    - `placement_fixed_scalar`
+    - `placement_fixed_point_vector_only_CB`
+    - `martini_sc_table_1body`
+  - fresh stage `6.2` also still contains `restraint_position`, matching the active pre-production path;
+  - neither fresh file contains `martini_sc_table_potential`.
+- 2026-04-21: Fresh reduced `1rkl` checkpoints confirm the generator/runtime schema cleanup landed as intended.
+  - `/input/stage_parameters` now contains only attr-based stage tracking (`enable`, `current_stage`) plus PyTables metadata; there are no `minimization_*` or `production_*` child groups anymore;
+  - `/input/barostat` now carries only `compressibility_xy` and `compressibility_z`; the legacy scalar `compressibility` attr is absent from fresh files.
+- 2026-04-21: The current default `1rkl` workflow still uses the rotamer-weighted stage-7 path, not the older radial-only SC table node.
+  - `py/martini_prepare_system_lib.py::inject_stage7_sc_table_nodes(...)` currently emits:
+    - `rotamer`
+    - `placement_fixed_point_vector_only`
+    - `placement_fixed_scalar`
+    - `placement_fixed_point_vector_only_CB`
+    - `martini_sc_table_1body`
+  - current local stage artifacts under `example/16.MARTINI/outputs/` confirm `martini_sc_table_1body` is present on fresh-enough `stage_7.0.up` files;
+  - `src/martini.cpp::MartiniScTablePotential` had no current generator call path and was safe to delete under a fresh-`1rkl`-only compatibility target.
+- 2026-04-21: The stage-parameter force-constant payload under `/input/stage_parameters` was dead plumbing.
+  - `src/main.cpp` only used the stage system for stage-label switching around minimization and hybrid activation;
+  - the per-step `apply_stage_bond_params(...)` and `apply_stage_angle_params(...)` hooks had no implementation beyond map lookups and comments;
+  - current generator payloads `minimization_bonds`, `production_bonds`, `minimization_angles`, and `production_angles` were therefore removable, while `current_stage` still had to remain.
+- 2026-04-21: Several compatibility helpers were globally unused and safe to remove.
+  - `simulation_box::wrap_positions(...)` in `src/box.cpp` / `src/box.h` had no call sites;
+  - `martini_masses::martini_integration_cycle(...)` and `martini_masses::clear_masses_for_engine(...)` in `src/martini.cpp` had no call sites.
+- 2026-04-21: The active `1rkl` generator writes explicit `x_len/y_len/z_len` attrs for the current MARTINI/spring nodes.
+  - `py/martini_prepare_system_lib.py` writes `x_len`, `y_len`, and `z_len` for:
+    - `martini_potential`
+    - `dist_spring`
+    - `angle_spring`
+    - `dihedral_spring`
+  - under a fresh-`1rkl`-only compatibility target, the legacy `wall_*` fallback readers in `src/martini.cpp` were dead compatibility code.
+- 2026-04-21: The active `1rkl` barostat schema only needs axis-specific compressibility attrs.
+  - `run_sim_1rkl.sh` drives semi-isotropic membrane coupling;
+  - `src/box.cpp` now reads `compressibility_xy` and `compressibility_z` only;
+  - the scalar `/input/barostat.compressibility` attr was only a legacy fallback and could be dropped from fresh stage generation.
 - 2026-04-21: `example/16.MARTINI/run_sim_1rkl.sh` does not use the `ConjugateGradientMinimizer` path in `src/martini.cpp`.
   - the workflow launches minimization with `--minimize --min-max-iter ...` and `--integrator v`;
   - `src/main.cpp` handles `--minimize` by calling `martini_run_minimization(...)`;

@@ -1341,23 +1341,6 @@ namespace martini_masses {
         return it->second[atom_index];
     }
     
-    // Clean up masses for an engine
-    void clear_masses_for_engine(DerivEngine* engine) {
-        std::lock_guard<std::mutex> lk(g_mass_mutex);
-        g_masses.erase(engine);
-    }
-    
-    // MARTINI-specific integration cycle that uses masses
-    void martini_integration_cycle(
-            DerivEngine* engine,
-            VecArray mom, 
-            float dt) {
-        // This is a placeholder for now - in a full implementation,
-        // this would need to be integrated into the main simulation loop
-        // to replace the standard integrator when MARTINI masses are available
-        printf("MARTINI: Mass-aware integrator would be used here\n");
-    }
-    
     // Check if MARTINI masses are available for an engine
     bool has_masses(DerivEngine* engine) {
         std::lock_guard<std::mutex> lk(g_mass_mutex);
@@ -1442,25 +1425,9 @@ struct DihedralSpring : public PotentialNode
             for(auto& param : params) param.dihedral_type = 1;
         }
 
-        // Read box dimensions (same as MartiniPotential)
-        // Support both individual dimensions and legacy wall_box_size
-        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
-            // New format: separate x, y, z dimensions
-            box_x = read_attribute<float>(grp, ".", "x_len");
-            box_y = read_attribute<float>(grp, ".", "y_len");
-            box_z = read_attribute<float>(grp, ".", "z_len");
-        } else {
-            // Legacy format: wall boundaries
-            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
-            box_x = wall_xhi - wall_xlo;
-            box_y = wall_yhi - wall_ylo;
-            box_z = wall_zhi - wall_zlo;
-        }
+        box_x = read_attribute<float>(grp, ".", "x_len");
+        box_y = read_attribute<float>(grp, ".", "y_len");
+        box_z = read_attribute<float>(grp, ".", "z_len");
         
         // Initialize spline parameters for dihedral potential
         // Find the range of equilibrium dihedrals and spring constants
@@ -1746,26 +1713,9 @@ struct MartiniPotential : public PotentialNode
         // PME parameters removed - using Coulomb spline tables instead
 
         
-        // Read box dimensions for minimum-image displacements.
-        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
-            box_x = read_attribute<float>(grp, ".", "x_len");
-            box_y = read_attribute<float>(grp, ".", "y_len");
-            box_z = read_attribute<float>(grp, ".", "z_len");
-        } else if(attribute_exists(grp, ".", "wall_xlo") && attribute_exists(grp, ".", "wall_xhi") &&
-                  attribute_exists(grp, ".", "wall_ylo") && attribute_exists(grp, ".", "wall_yhi") &&
-                  attribute_exists(grp, ".", "wall_zlo") && attribute_exists(grp, ".", "wall_zhi")) {
-            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
-            box_x = wall_xhi - wall_xlo;
-            box_y = wall_yhi - wall_ylo;
-            box_z = wall_zhi - wall_zlo;
-        } else {
-            box_x = box_y = box_z = 0.f;
-        }
+        box_x = read_attribute<float>(grp, ".", "x_len");
+        box_y = read_attribute<float>(grp, ".", "y_len");
+        box_z = read_attribute<float>(grp, ".", "z_len");
 
         auto n_pair = get_dset_size(2, grp, "pairs")[0];
         
@@ -2325,342 +2275,6 @@ struct MartiniPotential : public PotentialNode
 };
 static RegisterNodeType<MartiniPotential, 1> martini_potential_node("martini_potential");
 
-struct MartiniScTablePotential : public PotentialNode
-{
-    int n_cb;
-    int n_env;
-    int n_restype;
-    int n_target;
-    int n_grid;
-    int n_layer;
-
-    CoordNode& pos;
-    CoordNode& cb_pos;
-
-    vector<int> cb_index;
-    vector<int> residue_table_index;
-    vector<int> env_atom_index;
-    vector<int> env_target_index;
-
-    float energy_conversion_kj_per_eup;
-    float length_conversion_angstrom_per_nm;
-    float box_x;
-    float box_y;
-    float box_z;
-
-    float grid_start_ang;
-    float grid_step_ang;
-    float cutoff_ang;
-    int n_angle;
-    float cos_start;
-    float cos_step;
-    float cos_end;
-
-    vector<float> radial_table;
-    vector<float> angular_table;
-    vector<float> radial_left_value;
-    vector<float> radial_left_slope;
-    vector<float> angular_left_value;
-    vector<float> angular_left_slope;
-    vector<float> angular_profile_table;
-
-    inline int radial_index(int layer, int grid_idx) const {
-        return layer * n_grid + grid_idx;
-    }
-
-    inline int profile_index(int layer, int angle_idx) const {
-        return layer * n_angle + angle_idx;
-    }
-
-    inline void evaluate_component_value_and_deriv(
-            float& value,
-            float& dVdr,
-            const vector<float>& table,
-            const vector<float>& left_value,
-            const vector<float>& left_slope,
-            int layer,
-            float dist) const {
-        if(dist <= grid_start_ang) {
-            value = left_value[layer] + left_slope[layer] * (dist - grid_start_ang);
-            dVdr = left_slope[layer];
-            return;
-        }
-
-        float radial_coord = (dist - grid_start_ang) / grid_step_ang;
-        int grid_idx = int(floorf(radial_coord));
-        if(grid_idx < 0) grid_idx = 0;
-        if(grid_idx > n_grid - 2) grid_idx = n_grid - 2;
-        float frac = radial_coord - float(grid_idx);
-        float e0 = table[radial_index(layer, grid_idx)];
-        float e1 = table[radial_index(layer, grid_idx + 1)];
-        value = (1.f - frac) * e0 + frac * e1;
-        dVdr = (e1 - e0) / grid_step_ang;
-    }
-
-    inline void evaluate_angular_profile_and_deriv(
-            float& value,
-            float& dVdcoord,
-            int layer,
-            float angular_coord) const {
-        if(n_angle <= 1) {
-            value = angular_profile_table[profile_index(layer, 0)];
-            dVdcoord = 0.f;
-            return;
-        }
-
-        if(angular_coord <= cos_start) {
-            value = angular_profile_table[profile_index(layer, 0)];
-            dVdcoord = 0.f;
-            return;
-        }
-        if(angular_coord >= cos_end) {
-            value = angular_profile_table[profile_index(layer, n_angle - 1)];
-            dVdcoord = 0.f;
-            return;
-        }
-
-        float angle_coord = (angular_coord - cos_start) / cos_step;
-        int angle_idx = int(floorf(angle_coord));
-        if(angle_idx < 0) angle_idx = 0;
-        if(angle_idx > n_angle - 2) angle_idx = n_angle - 2;
-        float frac = angle_coord - float(angle_idx);
-        float value_lo = angular_profile_table[profile_index(layer, angle_idx)];
-        float value_hi = angular_profile_table[profile_index(layer, angle_idx + 1)];
-        value = (1.f - frac) * value_lo + frac * value_hi;
-        dVdcoord = (value_hi - value_lo) / cos_step;
-    }
-
-    MartiniScTablePotential(hid_t grp, CoordNode& pos_, CoordNode& cb_pos_):
-        PotentialNode(),
-        n_cb(get_dset_size(1, grp, "cb_index")[0]),
-        n_env(get_dset_size(1, grp, "env_atom_index")[0]),
-        n_restype(get_dset_size(3, grp, "radial_energy_kj_mol")[0]),
-        n_target(get_dset_size(3, grp, "radial_energy_kj_mol")[1]),
-        n_grid(get_dset_size(3, grp, "radial_energy_kj_mol")[2]),
-        n_layer(n_restype * n_target),
-        pos(pos_),
-        cb_pos(cb_pos_),
-        cb_index(n_cb),
-        residue_table_index(n_cb),
-        env_atom_index(n_env),
-        env_target_index(n_env),
-        energy_conversion_kj_per_eup(read_attribute<float>(grp, ".", "energy_conversion_kj_per_eup")),
-        length_conversion_angstrom_per_nm(read_attribute<float>(grp, ".", "length_conversion_angstrom_per_nm")),
-        box_x(read_attribute<float>(grp, ".", "x_len")),
-        box_y(read_attribute<float>(grp, ".", "y_len")),
-        box_z(read_attribute<float>(grp, ".", "z_len")),
-        grid_start_ang(0.f),
-        grid_step_ang(0.f),
-        cutoff_ang(0.f),
-        n_angle(get_dset_size(3, grp, "angular_profile")[2]),
-        cos_start(0.f),
-        cos_step(0.f),
-        cos_end(0.f),
-        radial_table(n_layer * n_grid, 0.f),
-        angular_table(n_layer * n_grid, 0.f),
-        radial_left_value(n_layer, 0.f),
-        radial_left_slope(n_layer, 0.f),
-        angular_left_value(n_layer, 0.f),
-        angular_left_slope(n_layer, 0.f),
-        angular_profile_table(n_layer * n_angle, 0.f)
-    {
-        check_elem_width_lower_bound(pos, 3);
-        check_elem_width_lower_bound(cb_pos, 6);
-
-        check_size(grp, "residue_table_index", n_cb);
-        check_size(grp, "env_target_index", n_env);
-        check_size(grp, "grid_nm", n_grid);
-        check_size(grp, "cos_theta_grid", n_angle);
-        check_size(grp, "angular_energy_kj_mol", n_restype, n_target, n_grid);
-        check_size(grp, "angular_profile", n_restype, n_target, n_angle);
-
-        if(!(energy_conversion_kj_per_eup > 0.f) || !(length_conversion_angstrom_per_nm > 0.f)) {
-            throw string("martini_sc_table_potential unit-conversion attrs must be positive");
-        }
-        if(n_restype <= 0 || n_target <= 0 || n_grid < 2 || n_angle < 1) {
-            throw string("martini_sc_table_potential requires non-empty residue/target/grid dimensions");
-        }
-
-        traverse_dset<1,int>(grp, "cb_index", [&](size_t i, int x) { cb_index[i] = x; });
-        traverse_dset<1,int>(grp, "residue_table_index", [&](size_t i, int x) { residue_table_index[i] = x; });
-        traverse_dset<1,int>(grp, "env_atom_index", [&](size_t i, int x) { env_atom_index[i] = x; });
-        traverse_dset<1,int>(grp, "env_target_index", [&](size_t i, int x) { env_target_index[i] = x; });
-
-        vector<float> grid_nm(n_grid, 0.f);
-        traverse_dset<1,float>(grp, "grid_nm", [&](size_t i, float x) { grid_nm[i] = x; });
-        vector<float> cos_theta_grid(n_angle, 0.f);
-        traverse_dset<1,float>(grp, "cos_theta_grid", [&](size_t i, float x) { cos_theta_grid[i] = x; });
-
-        float grid_step_nm = grid_nm[1] - grid_nm[0];
-        if(!(grid_step_nm > 0.f)) {
-            throw string("martini_sc_table_potential grid_nm must be strictly increasing");
-        }
-        for(int i = 2; i < n_grid; ++i) {
-            float step = grid_nm[i] - grid_nm[i-1];
-            if(fabsf(step - grid_step_nm) > 1e-4f * std::max(1.f, fabsf(grid_step_nm))) {
-                throw string("martini_sc_table_potential requires a uniform radial grid");
-            }
-        }
-        grid_start_ang = grid_nm[0] * length_conversion_angstrom_per_nm;
-        grid_step_ang = grid_step_nm * length_conversion_angstrom_per_nm;
-        cutoff_ang = grid_nm[n_grid-1] * length_conversion_angstrom_per_nm;
-        if(!(grid_step_ang > 0.f) || !(cutoff_ang > grid_start_ang)) {
-            throw string("martini_sc_table_potential converted radial grid is invalid");
-        }
-
-        if(n_angle > 1) {
-            cos_step = cos_theta_grid[1] - cos_theta_grid[0];
-            if(!(cos_step > 0.f)) {
-                throw string("martini_sc_table_potential cos_theta_grid must be strictly increasing");
-            }
-            for(int i = 2; i < n_angle; ++i) {
-                float step = cos_theta_grid[i] - cos_theta_grid[i-1];
-                if(fabsf(step - cos_step) > 1e-4f * std::max(1.f, fabsf(cos_step))) {
-                    throw string("martini_sc_table_potential requires a uniform cos_theta_grid");
-                }
-            }
-            cos_start = cos_theta_grid[0];
-            cos_end = cos_theta_grid[n_angle - 1];
-        } else {
-            cos_start = cos_end = cos_theta_grid[0];
-            cos_step = 1.f;
-        }
-
-        for(int i = 0; i < n_cb; ++i) {
-            if(cb_index[i] < 0 || cb_index[i] >= cb_pos.n_elem) {
-                throw string("martini_sc_table_potential cb_index out of bounds");
-            }
-            if(residue_table_index[i] < 0 || residue_table_index[i] >= n_restype) {
-                throw string("martini_sc_table_potential residue_table_index out of bounds");
-            }
-        }
-        for(int i = 0; i < n_env; ++i) {
-            if(env_atom_index[i] < 0 || env_atom_index[i] >= pos.n_elem) {
-                throw string("martini_sc_table_potential env_atom_index out of bounds");
-            }
-            if(env_target_index[i] < 0 || env_target_index[i] >= n_target) {
-                throw string("martini_sc_table_potential env_target_index out of bounds");
-            }
-        }
-
-        vector<float> radial_native(n_layer * n_grid, 0.f);
-        vector<float> angular_native(n_layer * n_grid, 0.f);
-        traverse_dset<3,float>(grp, "radial_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
-            radial_native[radial_index(int(ir * n_target + it), int(ig))] = x;
-        });
-        traverse_dset<3,float>(grp, "angular_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
-            angular_native[radial_index(int(ir * n_target + it), int(ig))] = x;
-        });
-        traverse_dset<3,float>(grp, "angular_profile", [&](size_t ir, size_t it, size_t ia, float x) {
-            angular_profile_table[profile_index(int(ir * n_target + it), int(ia))] = x;
-        });
-
-        for(int layer = 0; layer < n_layer; ++layer) {
-            float radial_tail = radial_native[radial_index(layer, n_grid - 1)];
-            float angular_tail = angular_native[radial_index(layer, n_grid - 1)];
-            for(int ig = 0; ig < n_grid; ++ig) {
-                radial_table[radial_index(layer, ig)] =
-                    (radial_native[radial_index(layer, ig)] - radial_tail) / energy_conversion_kj_per_eup;
-                angular_table[radial_index(layer, ig)] =
-                    (angular_native[radial_index(layer, ig)] - angular_tail) / energy_conversion_kj_per_eup;
-            }
-            radial_left_value[layer] = radial_table[radial_index(layer, 0)];
-            radial_left_slope[layer] =
-                (radial_table[radial_index(layer, 1)] - radial_table[radial_index(layer, 0)]) / grid_step_ang;
-            angular_left_value[layer] = angular_table[radial_index(layer, 0)];
-            angular_left_slope[layer] =
-                (angular_table[radial_index(layer, 1)] - angular_table[radial_index(layer, 0)]) / grid_step_ang;
-        }
-    }
-
-    virtual void update_box_dimensions_anisotropic(float scale_xy, float scale_z) override {
-        box_x *= scale_xy;
-        box_y *= scale_xy;
-        box_z *= scale_z;
-    }
-
-    virtual void compute_value(ComputeMode mode) override {
-        (void)mode;
-        Timer timer(string("martini_sc_table_potential"));
-        potential = 0.f;
-
-        auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
-        if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
-        float interface_scale = hybrid_state->protein_env_interface_scale;
-        float protein_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*hybrid_state);
-
-        VecArray posc = pos.output;
-        VecArray pos_sens = pos.sens;
-        VecArray cbc = cb_pos.output;
-        VecArray cb_sens = cb_pos.sens;
-        constexpr float kMinDistance = 1.0e-8f;
-
-        for(int icb = 0; icb < n_cb; ++icb) {
-            int cb_idx = cb_index[icb];
-            int residue_idx = residue_table_index[icb];
-            Vec<6> cb_site = load_vec<6>(cbc, cb_idx);
-            Vec<3> cbp = extract<0,3>(cb_site);
-            Vec<3> cbv = extract<3,6>(cb_site);
-
-            for(int ienv = 0; ienv < n_env; ++ienv) {
-                int atom_idx = env_atom_index[ienv];
-                int target_idx = env_target_index[ienv];
-                int layer = residue_idx * n_target + target_idx;
-                if(layer < 0 || layer >= n_layer) continue;
-
-                Vec<3> envp = load_vec<3>(posc, atom_idx);
-                Vec<3> dr = cbp - envp;
-                if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
-                    dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
-                }
-
-                float dist2 = mag2(dr);
-                float dist = sqrtf(std::max(dist2, kMinDistance));
-                if(dist >= cutoff_ang) continue;
-
-                float radial_value = 0.f;
-                float radial_dVdr = 0.f;
-                float angular_value = 0.f;
-                float angular_dVdr = 0.f;
-                float ang1_value = 0.f;
-                float dAng1dcoord = 0.f;
-                Vec<3> displace_unitvec = (1.f / dist) * dr;
-                float cos_theta = dot(displace_unitvec, cbv);
-                float angular_coord = -cos_theta;
-                evaluate_component_value_and_deriv(
-                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
-
-                float value = radial_value + ang1_value * angular_value;
-                float dVdr = radial_dVdr + ang1_value * angular_dVdr;
-                float dVdcoord = dAng1dcoord * angular_value;
-
-                if(!std::isfinite(value) || !std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
-                value *= interface_scale;
-                dVdr *= interface_scale;
-                dVdcoord *= interface_scale;
-                potential += value;
-
-                if(dist <= 1.0e-6f) continue;
-                Vec<3> point_grad = dVdr * displace_unitvec +
-                                    (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec);
-                Vec<3> vector_grad = -dVdcoord * displace_unitvec;
-                Vec<6> grad_cb_full;
-                store<0,3>(grad_cb_full, point_grad);
-                store<3,6>(grad_cb_full, vector_grad);
-                Vec<6> grad_cb = protein_feedback_mix * grad_cb_full;
-                Vec<3> grad_env = -point_grad;
-
-                update_vec<6>(cb_sens, cb_idx, grad_cb);
-                update_vec<3>(pos_sens, atom_idx, grad_env);
-            }
-        }
-    }
-};
-static RegisterNodeType<MartiniScTablePotential, 2> martini_sc_table_potential_node("martini_sc_table_potential");
-
 struct MartiniScTableOneBody : public CoordNode
 {
     int n_row;
@@ -3126,22 +2740,9 @@ struct DistSpring : public PotentialNode
         traverse_dset<1,float>(grp, "spring_const", [&](size_t i,           float x) {p[i].spring_constant = x;});
         traverse_dset<1,int>  (grp, "bonded_atoms", [&](size_t i,           int   x) {bonded_atoms.push_back(x);});
 
-        // Read box dimensions
-        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
-            box_x = read_attribute<float>(grp, ".", "x_len");
-            box_y = read_attribute<float>(grp, ".", "y_len");
-            box_z = read_attribute<float>(grp, ".", "z_len");
-        } else {
-            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
-            box_x = wall_xhi - wall_xlo;
-            box_y = wall_yhi - wall_ylo;
-            box_z = wall_zhi - wall_zlo;
-        }
+        box_x = read_attribute<float>(grp, ".", "x_len");
+        box_y = read_attribute<float>(grp, ".", "y_len");
+        box_z = read_attribute<float>(grp, ".", "z_len");
 
         // Initialize spline parameters for bond potential
         // Find the range of equilibrium distances and spring constants
@@ -3243,8 +2844,6 @@ struct DistSpring : public PotentialNode
             }
         }
     }
-    
-    // Box dimension update methods removed - using NVT ensemble without boundaries
 };
 static RegisterNodeType<DistSpring, 1> dist_spring_node("dist_spring");
 
@@ -3286,22 +2885,9 @@ struct AngleSpring : public PotentialNode
         traverse_dset<1,float>(grp, "equil_angle_deg", [&](size_t i,           float x) { p[i].equil_angle_deg = x;});
         traverse_dset<1,float>(grp, "spring_const",    [&](size_t i,           float x) { p[i].spring_constant = x;});
 
-        // Read box dimensions
-        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
-            box_x = read_attribute<float>(grp, ".", "x_len");
-            box_y = read_attribute<float>(grp, ".", "y_len");
-            box_z = read_attribute<float>(grp, ".", "z_len");
-        } else {
-            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
-            box_x = wall_xhi - wall_xlo;
-            box_y = wall_yhi - wall_ylo;
-            box_z = wall_zhi - wall_zlo;
-        }
+        box_x = read_attribute<float>(grp, ".", "x_len");
+        box_y = read_attribute<float>(grp, ".", "y_len");
+        box_z = read_attribute<float>(grp, ".", "z_len");
 
         // Initialize spline parameters for angle potential
         // Find the range of equilibrium angles and spring constants
@@ -3417,8 +3003,6 @@ struct AngleSpring : public PotentialNode
             update_vec(pos_sens, p.atom[2], grad_c);
         }
     }
-    
-    // Box dimension update methods removed - using NVT ensemble without boundaries
 };
 static RegisterNodeType<AngleSpring, 1> angle_spring_node("angle_spring");
 
@@ -3533,14 +3117,6 @@ void update_martini_node_boxes(DerivEngine& engine, float scale_xy, float scale_
             }
             continue;
         }
-        if(is_prefix("martini_sc_table_potential", n.name)) {
-            if(auto* node = dynamic_cast<MartiniScTablePotential*>(n.computation.get())) {
-                node->box_x *= scale_xy;
-                node->box_y *= scale_xy;
-                node->box_z *= scale_z;
-            }
-            continue;
-        }
         if(is_prefix("dist_spring", n.name)) {
             if(auto* node = dynamic_cast<DistSpring*>(n.computation.get())) {
                 node->box_x *= scale_xy;
@@ -3576,12 +3152,6 @@ struct MartiniNodeRegistrar {
             add_node_creation_function("martini_potential", [](hid_t grp, const ArgList& args) {
                 check_arguments_length(args,1);
                 return new MartiniPotential(grp, *args[0]);
-            });
-        }
-        if(m.find("martini_sc_table_potential") == m.end()) {
-            add_node_creation_function("martini_sc_table_potential", [](hid_t grp, const ArgList& args) {
-                check_arguments_length(args,2);
-                return new MartiniScTablePotential(grp, *args[0], *args[1]);
             });
         }
         if(m.find("martini_sc_table_1body") == m.end()) {
@@ -3720,23 +3290,16 @@ void martini_run_minimization(DerivEngine& engine,
 
 namespace martini_stage_params {
 
-// Global registry for stage-specific parameters per engine
 static std::mutex g_stage_mutex;
 static std::map<DerivEngine*, std::string> g_current_stage;
-static std::map<DerivEngine*, std::map<std::string, std::vector<float>>> g_stage_bond_params;
-static std::map<DerivEngine*, std::map<std::string, std::vector<float>>> g_stage_angle_params;
 
-// Read stage-specific parameter settings from H5 configuration
 struct StageParamData {
     std::string stage;
-    std::map<std::string, std::vector<float>> bond_params;
-    std::map<std::string, std::vector<float>> angle_params;
-    bool enabled;
+    bool enabled = false;
 };
 
 StageParamData read_stage_param_settings(hid_t root) {
     StageParamData data;
-    data.enabled = false;
     
     try {
         if(h5_exists(root, "/input/stage_parameters")) {
@@ -3749,45 +3312,6 @@ StageParamData read_stage_param_settings(hid_t root) {
                 data.stage = "production";
                 data.stage = martini_hybrid::read_string_attribute_or_default(
                     grp.get(), "current_stage", data.stage);
-                
-                // Read bond parameters for different stages
-                if(h5_exists(grp.get(), "minimization_bonds")) {
-                    auto min_grp = open_group(grp.get(), "minimization_bonds");
-                    // Read bond force constants
-                    if(h5_exists(min_grp.get(), "force_constants")) {
-                        traverse_dset<1,float>(min_grp.get(), "force_constants", [&](size_t i, float fc) {
-                            data.bond_params["minimization"].push_back(fc);
-                        });
-                    }
-                }
-                
-                if(h5_exists(grp.get(), "production_bonds")) {
-                    auto prod_grp = open_group(grp.get(), "production_bonds");
-                    if(h5_exists(prod_grp.get(), "force_constants")) {
-                        traverse_dset<1,float>(prod_grp.get(), "force_constants", [&](size_t i, float fc) {
-                            data.bond_params["production"].push_back(fc);
-                        });
-                    }
-                }
-                
-                // Read angle parameters for different stages
-                if(h5_exists(grp.get(), "minimization_angles")) {
-                    auto min_grp = open_group(grp.get(), "minimization_angles");
-                    if(h5_exists(min_grp.get(), "force_constants")) {
-                        traverse_dset<1,float>(min_grp.get(), "force_constants", [&](size_t i, float fc) {
-                            data.angle_params["minimization"].push_back(fc);
-                        });
-                    }
-                }
-                
-                if(h5_exists(grp.get(), "production_angles")) {
-                    auto prod_grp = open_group(grp.get(), "production_angles");
-                    if(h5_exists(prod_grp.get(), "force_constants")) {
-                        traverse_dset<1,float>(prod_grp.get(), "force_constants", [&](size_t i, float fc) {
-                            data.angle_params["production"].push_back(fc);
-                        });
-                    }
-                }
             }
         }
     } catch(...) { 
@@ -3796,18 +3320,13 @@ StageParamData read_stage_param_settings(hid_t root) {
     return data;
 }
 
-// Register stage-specific parameters for an engine
 void register_stage_params_for_engine(DerivEngine* engine, hid_t root) {
     std::lock_guard<std::mutex> lock(g_stage_mutex);
     
     auto data = read_stage_param_settings(root);
     if(data.enabled) {
         g_current_stage[engine] = data.stage;
-        g_stage_bond_params[engine] = data.bond_params;
-        g_stage_angle_params[engine] = data.angle_params;
-        
-        printf("Stage-specific parameters: %s stage, %zu bond params, %zu angle params\n", 
-               data.stage.c_str(), data.bond_params.size(), data.angle_params.size());
+        printf("Stage parameters: %s stage\n", data.stage.c_str());
     }
 }
 
@@ -3823,7 +3342,6 @@ void switch_simulation_stage(DerivEngine* engine, const std::string& new_stage) 
     }
 }
 
-// Get current simulation stage
 std::string get_current_stage(DerivEngine* engine) {
     std::lock_guard<std::mutex> lock(g_stage_mutex);
     
@@ -3832,54 +3350,6 @@ std::string get_current_stage(DerivEngine* engine) {
         return it->second;
     }
     return "production"; // Default stage
-}
-
-// Apply stage-specific bond parameters
-void apply_stage_bond_params(DerivEngine& engine) {
-    std::lock_guard<std::mutex> lock(g_stage_mutex);
-    
-    auto stage_it = g_current_stage.find(&engine);
-    if(stage_it == g_current_stage.end()) return;
-    
-    std::string current_stage = stage_it->second;
-    auto bond_it = g_stage_bond_params.find(&engine);
-    if(bond_it == g_stage_bond_params.end()) return;
-    
-    auto& stage_bonds = bond_it->second;
-    auto param_it = stage_bonds.find(current_stage);
-    if(param_it == stage_bonds.end()) return;
-    
-    // Apply stage-specific bond force constants
-    // This would need to be integrated with the bond potential calculation
-    // Debug output removed to reduce clutter
-}
-
-// Apply stage-specific angle parameters  
-void apply_stage_angle_params(DerivEngine& engine) {
-    std::lock_guard<std::mutex> lock(g_stage_mutex);
-    
-    auto stage_it = g_current_stage.find(&engine);
-    if(stage_it == g_current_stage.end()) return;
-    
-    std::string current_stage = stage_it->second;
-    auto angle_it = g_stage_angle_params.find(&engine);
-    if(angle_it == g_stage_angle_params.end()) return;
-    
-    auto& stage_angles = angle_it->second;
-    auto param_it = stage_angles.find(current_stage);
-    if(param_it == stage_angles.end()) return;
-    
-    // Apply stage-specific angle force constants
-    // This would need to be integrated with the angle potential calculation
-    // Debug output removed to reduce clutter
-}
-
-// Clear stage parameters for an engine
-void clear_stage_params_for_engine(DerivEngine* engine) {
-    std::lock_guard<std::mutex> lock(g_stage_mutex);
-    g_current_stage.erase(engine);
-    g_stage_bond_params.erase(engine);
-    g_stage_angle_params.erase(engine);
 }
 
 } // namespace martini_stage_params

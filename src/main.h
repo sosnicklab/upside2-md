@@ -13,9 +13,6 @@ namespace martini_stage_params {
     void register_stage_params_for_engine(DerivEngine* engine, hid_t root);
     void switch_simulation_stage(DerivEngine* engine, const std::string& new_stage);
     std::string get_current_stage(DerivEngine* engine);
-    void apply_stage_bond_params(DerivEngine& engine);
-    void apply_stage_angle_params(DerivEngine& engine);
-    void clear_stage_params_for_engine(DerivEngine* engine);
 }
 
 namespace martini_hybrid {
@@ -33,6 +30,5 @@ namespace martini_hybrid {
 namespace martini_masses {
     void load_masses_for_engine(DerivEngine* engine, hid_t config_root);
     float get_mass(DerivEngine* engine, int atom_index);
-    void clear_masses_for_engine(DerivEngine* engine);
     bool has_masses(DerivEngine* engine);
 }

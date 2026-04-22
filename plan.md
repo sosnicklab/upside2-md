@@ -1,4 +1,50 @@
 
+## 2026-04-21 1RKL-Only Runtime Cleanup
+
+### Project Goal
+- Remove runtime and generator code that is not needed by a freshly generated default `example/16.MARTINI/run_sim_1rkl.sh` workflow.
+- Restrict compatibility to the current `1rkl` generation path rather than preserving old checked-in `.up` artifacts.
+
+### Architecture & Key Decisions
+- Keep the current stage-7 rotamer-weighted path because the active injector still emits:
+  - `rotamer`
+  - `placement_fixed_point_vector_only`
+  - `placement_fixed_scalar`
+  - `martini_sc_table_1body`
+- Remove the unused radial-only `martini_sc_table_potential` runtime because the current injector does not emit it.
+- Keep active Berendsen NPT, Ewald, fix-rigid, hybrid state, and current spring/restraint nodes.
+- Remove dead stage-parameter force-constant plumbing while preserving only stage-label tracking (`current_stage`) for hybrid activation/minimization handoff.
+
+### Execution Phases
+- [x] Audit the fresh `1rkl` generation/runtime path and separate active nodes from dead compatibility code.
+- [x] Patch `src/martini.cpp`, `src/main.cpp`, `src/main.h`, `src/box.cpp`, and `src/box.h` to remove dead hooks and legacy box/barostat fallbacks.
+- [x] Patch `py/martini_prepare_system_lib.py` to stop writing dead stage-parameter payloads and the legacy barostat `compressibility` attr.
+- [x] Rebuild and run targeted verification for the current `1rkl` path.
+- [x] Record verification results and final review notes.
+
+### Known Errors / Blockers
+- None so far.
+
+### Review
+- Build verification:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj`
+  - rebuild passed; only pre-existing warnings remained.
+- Generator verification:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py`
+  - `python3 -m py_compile py/martini_prepare_system_lib.py`
+- Fresh workflow verification:
+  - ran a reduced fresh `example/16.MARTINI/run_sim_1rkl.sh` in `/tmp/cleanup_1rkl_verify` with one-step minimization/equilibration/production settings;
+  - the run completed through fresh stage `7.0`.
+- Fresh stage-file schema verification:
+  - `/input/stage_parameters` now contains only attrs `enable` and `current_stage` plus PyTables metadata; no dead bond/angle child groups remain;
+  - `/input/barostat` now contains only `compressibility_xy` and `compressibility_z`; the legacy scalar `compressibility` attr is absent;
+  - fresh `/input/potential` still contains the required active nodes for the current workflow, including:
+    - pre-production `martini_potential`, `dist_spring`, `angle_spring`, `restraint_position`, `rotamer`, `placement_fixed_point_vector_only`, `placement_fixed_scalar`, `placement_fixed_point_vector_only_CB`, `martini_sc_table_1body`;
+    - production `martini_potential`, `dist_spring`, `angle_spring`, `rotamer`, `placement_fixed_point_vector_only`, `placement_fixed_scalar`, `placement_fixed_point_vector_only_CB`, `martini_sc_table_1body`;
+  - fresh stage files do not contain `martini_sc_table_potential`.
+- Repo sweep verification:
+  - repo-wide search found no remaining code references to `wrap_positions`, `martini_integration_cycle`, `clear_masses_for_engine`, `apply_stage_bond_params`, `apply_stage_angle_params`, `clear_stage_params_for_engine`, or `martini_sc_table_potential`.
+
 ## 2026-04-21 Example 16 Dead Path Removal Audit
 
 ### Project Goal
