@@ -6,7 +6,6 @@ import argparse
 import importlib.util
 import json
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -15,7 +14,6 @@ import types
 import warnings
 from collections import Counter, defaultdict
 from copy import deepcopy
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -29,7 +27,43 @@ WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 
 NA_AVOGADRO = 6.02214076e23
 BB_COMPONENT_NAMES = ("N", "CA", "C", "O")
-BB_COMPONENT_MASSES = (14.0, 12.0, 12.0, 16.0)
+PROTEIN_AA_RESNAMES = {
+    "ALA",
+    "ARG",
+    "ASN",
+    "ASP",
+    "CYS",
+    "GLN",
+    "GLU",
+    "GLY",
+    "HIS",
+    "ILE",
+    "LEU",
+    "LYS",
+    "MET",
+    "PHE",
+    "PRO",
+    "SER",
+    "THR",
+    "TRP",
+    "TYR",
+    "VAL",
+    "HID",
+    "HIE",
+    "HIP",
+    "HSD",
+    "HSE",
+    "HSP",
+    "CYX",
+}
+AA_BACKBONE_PLACEHOLDER_TYPE = "AABB"
+AA_BACKBONE_ATOM_MASS = {
+    "N": 14.0,
+    "CA": 12.0,
+    "C": 12.0,
+    "O": 16.0,
+}
+NONINTERACTING_ATOM_TYPES = {AA_BACKBONE_PLACEHOLDER_TYPE}
 DEFAULT_SC_TABLE_JSON = Path(
     "/Users/yinhan/Documents/upside2-md-martini/SC-training/runs/default/results/assembled/sc_table.json"
 )
@@ -70,90 +104,8 @@ BACKBONE_NODES = [
     "hbond_energy",
     "backbone_pairs",
 ]
-
-
-@dataclass
-class Config:
-    protein_pdb: Path
-    bilayer_pdb: Path
-    output_dir: Path
-    protein_cg_pdb: Optional[Path]
-    protein_itp: Optional[Path]
-    martinize_cmd: Optional[str]
-    salt_molar: float
-    protein_lipid_cutoff: float
-    ion_cutoff: float
-    box_padding_xy: float
-    box_padding_z: float
-    seed: int
-    protein_net_charge: Optional[int]
-
-
-def parse_args() -> Config:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Pack OPM protein into MARTINI DOPC bilayer and export hybrid "
-            "mapping artifacts for Upside + dry MARTINI integration."
-        )
-    )
-    parser.add_argument("--protein-pdb", default=str(WORKFLOW_DIR / "pdb" / "1rkl.pdb"))
-    parser.add_argument("--bilayer-pdb", default=str(REPO_ROOT / "parameters" / "dryMARTINI" / "DOPC.pdb"))
-    parser.add_argument("--output-dir", default="outputs/hybrid_1rkl")
-    parser.add_argument(
-        "--protein-cg-pdb",
-        default=None,
-        help="Optional existing MARTINI protein PDB. If not provided, --martinize-cmd is required.",
-    )
-    parser.add_argument(
-        "--protein-itp",
-        default=None,
-        help=(
-            "Optional MARTINI protein ITP from martini_martinize.py. If provided, sidechain-to-backbone "
-            "force-transfer mapping is derived from bonded topology and force constants."
-        ),
-    )
-    parser.add_argument(
-        "--martinize-cmd",
-        default=None,
-        help=(
-            "Optional martinize command template used when --protein-cg-pdb is not given. "
-            "Use placeholders {input} and {output}."
-        ),
-    )
-    parser.add_argument("--salt-molar", type=float, default=0.15)
-    parser.add_argument("--protein-lipid-cutoff", type=float, default=3.0)
-    parser.add_argument("--ion-cutoff", type=float, default=4.0)
-    parser.add_argument("--box-padding-xy", type=float, default=0.0)
-    parser.add_argument("--box-padding-z", type=float, default=20.0)
-    parser.add_argument("--seed", type=int, default=2026)
-    parser.add_argument(
-        "--protein-net-charge",
-        type=int,
-        default=None,
-        help="Override inferred protein charge for ion placement.",
-    )
-
-    args = parser.parse_args()
-    return Config(
-        protein_pdb=Path(args.protein_pdb).expanduser().resolve(),
-        bilayer_pdb=Path(args.bilayer_pdb).expanduser().resolve(),
-        output_dir=Path(args.output_dir).expanduser().resolve(),
-        protein_cg_pdb=Path(args.protein_cg_pdb).expanduser().resolve()
-        if args.protein_cg_pdb
-        else None,
-        protein_itp=Path(args.protein_itp).expanduser().resolve()
-        if args.protein_itp
-        else None,
-        martinize_cmd=args.martinize_cmd,
-        salt_molar=args.salt_molar,
-        protein_lipid_cutoff=args.protein_lipid_cutoff,
-        ion_cutoff=args.ion_cutoff,
-        box_padding_xy=args.box_padding_xy,
-        box_padding_z=args.box_padding_z,
-        seed=args.seed,
-        protein_net_charge=args.protein_net_charge,
-    )
-
+EXPLICIT_BACKBONE_OXYGEN_BOND_STIFFNESS = 48.0
+EXPLICIT_BACKBONE_OXYGEN_ANGLE_STIFFNESS = 175.0
 
 def parse_pdb(path: Path):
     atoms = []
@@ -235,76 +187,36 @@ def canonical_lipid_resname(resname: str) -> str:
     return resname
 
 
-def infer_protein_charge_from_cg(protein_atoms):
+def extract_protein_aa_atoms(aa_atoms):
+    protein_atoms = [deepcopy(atom) for atom in aa_atoms if atom["resname"].strip().upper() in PROTEIN_AA_RESNAMES]
+    if not protein_atoms:
+        raise ValueError("No protein AA atoms found in protein AA PDB.")
+    return protein_atoms
+
+
+def extract_protein_aa_backbone_atoms(aa_atoms):
+    protein_atoms = extract_protein_aa_atoms(aa_atoms)
+    backbone = []
+    for atom in protein_atoms:
+        atom_name = atom["name"].strip().upper()
+        if atom_name in BB_COMPONENT_NAMES:
+            backbone.append(atom)
+    if not backbone:
+        raise ValueError("No AA backbone atoms (N/CA/C/O) found in protein AA PDB.")
+    return backbone
+
+
+def infer_protein_charge_from_aa(protein_aa_atoms):
     charged_res = {"ASP": -1, "GLU": -1, "LYS": 1, "ARG": 1}
     seen = set()
     total = 0
-    for atom in protein_atoms:
+    for atom in protein_aa_atoms:
         key = (atom["chain"], atom["resseq"], atom["icode"])
         if key in seen:
             continue
         seen.add(key)
         total += charged_res.get(atom["resname"].upper(), 0)
     return total
-
-
-def run_martinize(config: Config, out_path: Path):
-    if not config.martinize_cmd:
-        raise ValueError(
-            "protein_cg_pdb not provided and martinize_cmd missing. "
-            "Provide --protein-cg-pdb or --martinize-cmd."
-        )
-    cmd_str = config.martinize_cmd.format(
-        input=str(config.protein_pdb),
-        output=str(out_path),
-    )
-    cmd = shlex.split(cmd_str)
-    subprocess.run(cmd, check=True)
-    if not out_path.exists():
-        raise FileNotFoundError(f"martinize output not found: {out_path}")
-
-
-def choose_protein_cg(config: Config) -> Path:
-    if config.protein_cg_pdb is not None:
-        return config.protein_cg_pdb
-
-    out_path = config.output_dir / "protein.martini.pdb"
-    run_martinize(config, out_path)
-    return out_path
-
-
-def extract_protein_cg_atoms(cg_atoms):
-    aa_res = {
-        "ALA",
-        "ARG",
-        "ASN",
-        "ASP",
-        "CYS",
-        "GLN",
-        "GLU",
-        "GLY",
-        "HIS",
-        "ILE",
-        "LEU",
-        "LYS",
-        "MET",
-        "PHE",
-        "PRO",
-        "SER",
-        "THR",
-        "TRP",
-        "TYR",
-        "VAL",
-    }
-    protein_like = []
-    for atom in cg_atoms:
-        seg = atom["segid"].upper()
-        resname = atom["resname"].upper()
-        if seg.startswith("PRO") or resname in aa_res:
-            protein_like.append(atom)
-    if not protein_like:
-        raise ValueError("No protein-like MARTINI atoms found in CG PDB.")
-    return protein_like
 
 
 def compute_lipid_residue_indices(bilayer_atoms):
@@ -325,6 +237,20 @@ def residue_group_atoms(atoms):
         key = (atom["chain"], atom["resseq"], atom["icode"], atom["resname"].upper())
         groups[key].append(atom)
     return groups
+
+
+def build_sidechain_centroid_proxy_atoms(protein_aa_atoms):
+    proxies = []
+    for atoms in residue_group_atoms(protein_aa_atoms).values():
+        sidechain_atoms = [atom for atom in atoms if atom["name"].strip().upper() not in BB_COMPONENT_NAMES]
+        if not sidechain_atoms:
+            continue
+        centroid = center_of_mass(coords(sidechain_atoms))
+        proxy = deepcopy(sidechain_atoms[0])
+        proxy["name"] = "SC"
+        proxy["x"], proxy["y"], proxy["z"] = (float(centroid[0]), float(centroid[1]), float(centroid[2]))
+        proxies.append(proxy)
+    return proxies
 
 
 def tile_and_crop_bilayer_lipids(
@@ -588,279 +514,86 @@ def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng):
     return placed
 
 
-def collect_backbone_com_pairs(protein_aa_atoms, protein_cg_atoms):
-    aa_by_res = defaultdict(dict)
-    for idx, atom in enumerate(protein_aa_atoms):
+def extract_backbone_sequence(backbone_atoms):
+    sequence = []
+    seen = set()
+    for atom in backbone_atoms:
         key = (atom["chain"], atom["resseq"], atom["icode"])
-        aa_by_res[key][atom["name"].strip().upper()] = idx
-
-    aa_points = []
-    cg_points = []
-    for atom in protein_cg_atoms:
-        if atom["name"].strip().upper() != "BB":
+        if key in seen:
             continue
-
-        found_key = None
-        key = (atom["chain"], atom["resseq"], atom["icode"])
-        if key in aa_by_res:
-            found_key = key
-        else:
-            cands = [k for k in aa_by_res.keys() if k[1] == atom["resseq"]]
-            if len(cands) == 1:
-                found_key = cands[0]
-        if found_key is None:
-            continue
-
-        idxs = [aa_by_res[found_key].get(nm, -1) for nm in BB_COMPONENT_NAMES]
-        valid = [int(i) for i in idxs if i is not None and int(i) >= 0]
-        if not valid:
-            continue
-
-        aa_xyz = np.array(
-            [[protein_aa_atoms[i]["x"], protein_aa_atoms[i]["y"], protein_aa_atoms[i]["z"]] for i in valid],
-            dtype=float,
-        )
-        aa_com = np.mean(aa_xyz, axis=0)
-        cg_bb = np.array([atom["x"], atom["y"], atom["z"]], dtype=float)
-        aa_points.append(aa_com)
-        cg_points.append(cg_bb)
-
-    if not aa_points:
-        return np.zeros((0, 3), dtype=float), np.zeros((0, 3), dtype=float)
-
-    return np.array(aa_points, dtype=float), np.array(cg_points, dtype=float)
+        seen.add(key)
+        sequence.append(atom["resname"].strip().upper())
+    return sequence
 
 
-def compute_backbone_com_alignment(protein_aa_atoms, protein_cg_atoms):
-    p, q = collect_backbone_com_pairs(protein_aa_atoms, protein_cg_atoms)
-    if p.shape[0] == 0:
-        return np.eye(3, dtype=float), np.zeros(3, dtype=float), 0.0, 0
-
-    p_center = np.mean(p, axis=0)
-    q_center = np.mean(q, axis=0)
-
-    # Use Kabsch when at least 3 matched COM points exist; otherwise
-    # keep identity rotation and use translation-only alignment.
-    if p.shape[0] >= 3:
-        p0 = p - p_center
-        q0 = q - q_center
-        cov = p0.T @ q0
-        u, _, vt = np.linalg.svd(cov)
-        rot = u @ vt
-        if np.linalg.det(rot) < 0.0:
-            vt[-1, :] *= -1.0
-            rot = u @ vt
-    else:
-        rot = np.eye(3, dtype=float)
-
-    trans = q_center - p_center @ rot
-    aligned = p @ rot + trans
-    rmsd = float(np.sqrt(np.mean(np.sum((aligned - q) ** 2, axis=1))))
-    return rot, trans, rmsd, int(p.shape[0])
-
-
-def summarize_backbone_frame_alignment(protein_aa_atoms, protein_cg_atoms):
-    p, q = collect_backbone_com_pairs(protein_aa_atoms, protein_cg_atoms)
-    matched = int(p.shape[0])
-    summary = {
-        "matched_residues": matched,
-        "raw_rmsd_angstrom": 0.0,
-        "translation_only_rmsd_angstrom": 0.0,
-        "rigid_rmsd_angstrom": 0.0,
-        "centroid_shift_angstrom": 0.0,
-        "rotation_angle_deg": 0.0,
-        "radius_gyration_ratio": 1.0,
-        "frame_offset_detected": False,
-    }
-    if matched == 0:
-        return summary
-
-    p_center = np.mean(p, axis=0)
-    q_center = np.mean(q, axis=0)
-    shift = q_center - p_center
-    p_shift = p + shift
-
-    raw_rmsd = float(np.sqrt(np.mean(np.sum((p - q) ** 2, axis=1))))
-    trans_rmsd = float(np.sqrt(np.mean(np.sum((p_shift - q) ** 2, axis=1))))
-    rot, _trans, rigid_rmsd, _n = compute_backbone_com_alignment(protein_aa_atoms, protein_cg_atoms)
-
-    trace_val = float(np.trace(rot))
-    cos_theta = max(-1.0, min(1.0, 0.5 * (trace_val - 1.0)))
-    rotation_angle = float(np.degrees(np.arccos(cos_theta)))
-    rg_aa = float(np.sqrt(np.mean(np.sum((p - p_center) ** 2, axis=1))))
-    rg_cg = float(np.sqrt(np.mean(np.sum((q - q_center) ** 2, axis=1))))
-    rg_ratio = float(rg_aa / rg_cg) if rg_cg > 1.0e-12 else 1.0
-    centroid_shift = float(np.linalg.norm(shift))
-
-    summary.update(
-        {
-            "raw_rmsd_angstrom": raw_rmsd,
-            "translation_only_rmsd_angstrom": trans_rmsd,
-            "rigid_rmsd_angstrom": float(rigid_rmsd),
-            "centroid_shift_angstrom": centroid_shift,
-            "rotation_angle_deg": rotation_angle,
-            "radius_gyration_ratio": rg_ratio,
-            "frame_offset_detected": bool(
-                centroid_shift > 1.0
-                or rotation_angle > 5.0
-                or (trans_rmsd - float(rigid_rmsd)) > 1.0
-            ),
-        }
-    )
-    return summary
-
-
-def validate_backbone_reference_frame(
-    protein_aa_atoms,
-    protein_cg_atoms,
-    min_matched_residues: int = 8,
-    max_rigid_rmsd: float = 1.5,
-    context: str = "",
-):
-    diag = summarize_backbone_frame_alignment(protein_aa_atoms, protein_cg_atoms)
-    matched = int(diag["matched_residues"])
-    label = context if context else "AA->MARTINI BB"
-
-    if matched < int(min_matched_residues):
-        raise ValueError(
-            "Backbone frame preflight failed: insufficient matched residues between "
-            f"AA backbone and MARTINI BB for {label}. "
-            f"Matched={matched}, required>={int(min_matched_residues)}. "
-            "Check chain/residue numbering and ensure AA/CG structures correspond to the same protein."
-        )
-
-    rigid_rmsd = float(diag["rigid_rmsd_angstrom"])
-    if rigid_rmsd > float(max_rigid_rmsd):
-        raise ValueError(
-            "Backbone frame preflight failed: AA backbone and MARTINI BB are inconsistent "
-            f"after optimal rigid alignment for {label}. "
-            f"rigid_rmsd={rigid_rmsd:.4f} Angstrom, limit={float(max_rigid_rmsd):.4f} Angstrom, "
-            f"translation_only_rmsd={float(diag['translation_only_rmsd_angstrom']):.4f} Angstrom, "
-            f"centroid_shift={float(diag['centroid_shift_angstrom']):.4f} Angstrom. "
-            "Check that AA and CG inputs are generated from the same structure and residue indexing."
-        )
-
-    print(
-        "Backbone frame preflight (AA N/CA/C/O vs MARTINI BB): "
-        f"context={label}; matched={matched}; "
-        f"rigid_rmsd={rigid_rmsd:.4f} Angstrom; "
-        f"translation_only_rmsd={float(diag['translation_only_rmsd_angstrom']):.4f} Angstrom; "
-        f"centroid_shift={float(diag['centroid_shift_angstrom']):.4f} Angstrom; "
-        f"rotation={float(diag['rotation_angle_deg']):.2f} deg"
-    )
-    if bool(diag["frame_offset_detected"]):
-        print(
-            "Detected AA/BB frame offset (shift and/or rotation); "
-            "preparation will keep using rigid AA->BB alignment for reference backbone coordinates."
-        )
-    return diag
-
-
-def collect_bb_map(protein_aa_atoms, protein_cg_atoms):
-    aa_by_res = defaultdict(dict)
-    for idx, atom in enumerate(protein_aa_atoms):
-        key = (atom["chain"], atom["resseq"], atom["icode"])
-        aa_by_res[key][atom["name"].strip().upper()] = idx
-
-    align_rot, align_trans, align_rmsd, align_n = compute_backbone_com_alignment(
-        protein_aa_atoms, protein_cg_atoms
-    )
-    if align_n > 0:
-        print(
-            "Backbone COM RMSD alignment (AA->MARTINI BB): "
-            f"n={align_n}, rmsd={align_rmsd:.4f} Å"
-        )
+def collect_aa_backbone_map(backbone_atoms):
+    by_residue = defaultdict(dict)
+    residue_order = []
+    for idx, atom in enumerate(backbone_atoms):
+        key = (atom["chain"], atom["resseq"], atom["icode"], atom["resname"].strip().upper())
+        if key not in by_residue:
+            residue_order.append(key)
+        by_residue[key][atom["name"].strip().upper()] = idx
 
     bb_entries = []
-    for cg_idx, atom in enumerate(protein_cg_atoms):
-        if atom["name"].upper() != "BB":
-            continue
-        found_key = None
-        # Primary matching by chain+resseq+icode.
-        key = (atom["chain"], atom["resseq"], atom["icode"])
-        if key in aa_by_res:
-            found_key = key
-        else:
-            # Fallback: unique residue number match.
-            cands = [k for k in aa_by_res.keys() if k[1] == atom["resseq"]]
-            if len(cands) == 1:
-                found_key = cands[0]
-        if found_key is None:
-            continue
+    for chain, resseq, icode, resname in residue_order:
+        atom_map = by_residue[(chain, resseq, icode, resname)]
+        missing = [name for name in BB_COMPONENT_NAMES if name not in atom_map]
+        if missing:
+            raise ValueError(
+                f"AA backbone residue {resname} {chain}{resseq}{icode} is missing atoms: {missing}"
+            )
 
-        # Reference all-atom backbone atom mapping (for audit/comment metadata).
-        aa_idxs = [int(aa_by_res[found_key].get(nm, -1)) for nm in BB_COMPONENT_NAMES]
-        aa_coords = []
-        for ai in aa_idxs:
-            if ai < 0:
-                aa_coords.append([0.0, 0.0, 0.0])
-            else:
-                aa_atom = protein_aa_atoms[ai]
-                aa_vec = np.array([float(aa_atom["x"]), float(aa_atom["y"]), float(aa_atom["z"])], dtype=float)
-                aa_aligned = aa_vec @ align_rot + align_trans
-                aa_coords.append([float(aa_aligned[0]), float(aa_aligned[1]), float(aa_aligned[2])])
+        idxs = [int(atom_map[name]) for name in BB_COMPONENT_NAMES]
+        weights_raw = [float(AA_BACKBONE_ATOM_MASS[name]) for name in BB_COMPONENT_NAMES]
+        weight_sum = float(sum(weights_raw))
+        weights = [weight / weight_sum for weight in weights_raw]
+        coords_row = []
+        for atom_idx in idxs:
+            atom = backbone_atoms[atom_idx]
+            coords_row.append([float(atom["x"]), float(atom["y"]), float(atom["z"])])
 
-        # Active mapping is kept in protein-AA PDB index space.
-        # Runtime conversion to stage-local indices is done during stage-file injection.
-        idxs = [-1, -1, -1, -1]
-        mask = [0, 0, 0, 0]
-        raw_weights = [0.0, 0.0, 0.0, 0.0]
-        for d, (ai, m) in enumerate(zip(aa_idxs, BB_COMPONENT_MASSES)):
-            if ai < 0:
-                continue
-            idxs[d] = int(ai)
-            mask[d] = 1
-            raw_weights[d] = float(m)
-
-        weights = [0.0, 0.0, 0.0, 0.0]
-        wsum = float(sum(raw_weights))
-        if wsum > 0.0:
-            weights = [w / wsum for w in raw_weights]
-        bb_comment = (
-            f"BB residue {atom['resseq']} chain '{atom['chain']}' "
-            f"ref N/CA/C/O idx={aa_idxs}; index_space=protein_aa_pdb_0based; "
-            f"align_rmsd={align_rmsd:.4f}; w={weights}"
-        )
         bb_entries.append(
             {
-                "bb_resseq": atom["resseq"],
-                "bb_chain": atom["chain"],
-                "bb_icode": atom["icode"],
-                "bb_atom_index": cg_idx,
+                "bb_resseq": int(resseq),
+                "bb_chain": chain,
+                "bb_icode": icode,
+                "bb_atom_index": int(atom_map["CA"]),
                 "atom_indices": idxs,
-                "atom_mask": mask,
+                "atom_mask": [1, 1, 1, 1],
                 "weights": weights,
-                "reference_atom_indices": aa_idxs,
-                "reference_atom_coords": aa_coords,
-                "bb_comment": bb_comment,
+                "reference_atom_indices": idxs,
+                "reference_atom_coords": coords_row,
+                "bb_comment": (
+                    f"AA backbone residue {resname} {chain}{resseq}{icode}; "
+                    f"runtime N/CA/C/O idx={idxs}; index_space=stage_runtime; w={weights}"
+                ),
             }
         )
     return bb_entries
 
 
-def write_hybrid_mapping_h5(
+def write_backbone_metadata_h5(
     path: Path,
     bb_entries,
-    total_martini_atoms,
+    total_atoms,
     env_atom_indices,
     n_protein_atoms,
+    sequence,
 ):
     with h5py.File(path, "w") as h5:
         inp = h5.create_group("input")
-
-        ctrl = inp.create_group("hybrid_control")
-        ctrl.attrs["enable"] = np.int8(1)
-        ctrl.attrs["activation_stage"] = b"production"
-        ctrl.attrs["preprod_protein_mode"] = b"rigid"
-        ctrl.attrs["preprod_lipid_headgroup_roles"] = b"PO4"
-        ctrl.attrs["exclude_intra_protein_martini"] = np.int8(1)
-        ctrl.attrs["production_nonprotein_hard_sphere"] = np.int8(0)
-        ctrl.attrs["protein_env_interface_scale"] = np.float32(1.0)
-        ctrl.attrs["schema_version"] = np.int32(1)
+        inp.create_dataset(
+            "sequence",
+            data=np.asarray([np.bytes_(resname) for resname in sequence], dtype="S3"),
+        )
 
         bb_grp = inp.create_group("hybrid_bb_map")
-        bb_grp.attrs["atom_index_space"] = b"protein_aa_pdb_0based"
-        bb_grp.attrs["runtime_index_space"] = b"stage_runtime_after_injection"
+        bb_grp.attrs["atom_index_space"] = b"stage_runtime"
+        bb_grp.attrs["runtime_index_space"] = b"stage_runtime"
+        bb_grp.attrs["reference_index_space"] = b"stage_runtime"
+        bb_grp.attrs["reference_index_offset"] = np.int32(0)
+        bb_grp.attrs["reference_index_count"] = np.int32(n_protein_atoms)
         bb_grp.create_dataset(
             "bb_residue_index",
             data=np.array([b["bb_resseq"] for b in bb_entries], dtype=np.int32),
@@ -885,7 +618,6 @@ def write_hybrid_mapping_h5(
             "protein_id",
             data=np.zeros(len(bb_entries), dtype=np.int32),
         )
-        # Optional reference backbone metadata for auditability in .up/.h5 artifacts.
         bb_grp.create_dataset(
             "reference_atom_names",
             data=np.array(["N", "CA", "C", "O"], dtype=h5py.string_dtype(encoding="utf-8")),
@@ -908,166 +640,16 @@ def write_hybrid_mapping_h5(
         )
 
         env_grp = inp.create_group("hybrid_env_topology")
-        env_grp.create_dataset(
-            "env_atom_indices",
-            data=np.array(env_atom_indices, dtype=np.int32),
-        )
-        membership = np.full(total_martini_atoms, -1, dtype=np.int32)
+        env_grp.create_dataset("env_atom_indices", data=np.array(env_atom_indices, dtype=np.int32))
+        membership = np.full(total_atoms, -1, dtype=np.int32)
         membership[:n_protein_atoms] = 0
-        env_grp.create_dataset(
-            "protein_membership",
-            data=membership,
-        )
+        env_grp.create_dataset("protein_membership", data=membership)
 
 
 def write_summary(path: Path, payload: Dict):
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, sort_keys=True)
         f.write("\n")
-
-
-def main():
-    config = parse_args()
-    config.output_dir.mkdir(parents=True, exist_ok=True)
-    rng = np.random.default_rng(config.seed)
-
-    protein_aa_atoms, _ = parse_pdb(config.protein_pdb)
-    bilayer_atoms, bilayer_box = parse_pdb(config.bilayer_pdb)
-    protein_cg_path = choose_protein_cg(config)
-    protein_cg_atoms_raw, _ = parse_pdb(protein_cg_path)
-    protein_cg_atoms = extract_protein_cg_atoms(protein_cg_atoms_raw)
-
-    bilayer_lipid_atoms = [a for a in bilayer_atoms if lipid_resname(a["resname"])]
-    bilayer_xyz = coords(bilayer_lipid_atoms if bilayer_lipid_atoms else bilayer_atoms)
-    protein_xyz = coords(protein_cg_atoms)
-    bilayer_center = center_of_mass(bilayer_xyz)
-    protein_center = center_of_mass(protein_xyz)
-    shift = bilayer_center - protein_center
-    translated = protein_xyz + shift
-    set_coords(protein_cg_atoms, translated)
-    if protein_aa_atoms:
-        protein_aa_xyz = coords(protein_aa_atoms)
-        set_coords(protein_aa_atoms, protein_aa_xyz + shift)
-
-    protein_xyz = coords(protein_cg_atoms)
-    pmin = protein_xyz.min(axis=0)
-    pmax = protein_xyz.max(axis=0)
-    pspan = pmax - pmin
-    pcenter_xy = 0.5 * (pmin[:2] + pmax[:2])
-    min_required_xy = 3.0 * pspan[:2] + 2.0 * config.box_padding_xy
-    square_side = float(np.max(min_required_xy))
-    target_xy_min = np.array(
-        [pcenter_xy[0] - 0.5 * square_side, pcenter_xy[1] - 0.5 * square_side],
-        dtype=float,
-    )
-    target_xy_max = np.array(
-        [pcenter_xy[0] + 0.5 * square_side, pcenter_xy[1] + 0.5 * square_side],
-        dtype=float,
-    )
-
-    bilayer_lipids = tile_and_crop_bilayer_lipids(
-        bilayer_atoms=bilayer_atoms,
-        bilayer_box=bilayer_box,
-        target_xy_min=target_xy_min,
-        target_xy_max=target_xy_max,
-    )
-
-    lipid_residues, keep_nonlipid = compute_lipid_residue_indices(bilayer_lipids)
-    bilayer_kept, removed_lipids = remove_overlapping_lipids(
-        bilayer_atoms=bilayer_lipids,
-        protein_atoms=protein_cg_atoms,
-        lipid_residues=lipid_residues,
-        keep_nonlipid=keep_nonlipid,
-        cutoff=config.protein_lipid_cutoff,
-    )
-
-    packed_atoms = protein_cg_atoms + bilayer_kept
-    min_box_z_target = float(3.0 * pspan[2])
-
-    box_lengths = set_box_from_lipid_xy(
-        all_atoms=packed_atoms,
-        lipid_atoms=bilayer_kept,
-        pad_z=config.box_padding_z,
-        min_box_z=min_box_z_target,
-    )
-    bilayer_xyz_post = coords(bilayer_kept)
-    lipid_mid_z = float(0.5 * (bilayer_xyz_post[:, 2].min() + bilayer_xyz_post[:, 2].max()))
-
-    effective_vol_frac = infer_effective_ion_volume_fraction_from_template(
-        bilayer_atoms=bilayer_atoms,
-        bilayer_box=bilayer_box,
-        salt_molar=config.salt_molar,
-    )
-
-    protein_charge = (
-        config.protein_net_charge
-        if config.protein_net_charge is not None
-        else infer_protein_charge_from_cg(protein_cg_atoms)
-    )
-    salt_pairs = estimate_salt_pairs(
-        box_lengths,
-        config.salt_molar,
-        effective_volume_fraction=effective_vol_frac,
-    )
-    n_na = salt_pairs + max(0, -protein_charge)
-    n_cl = salt_pairs + max(0, protein_charge)
-    ion_atoms = place_ions(
-        atoms=packed_atoms,
-        box_lengths=box_lengths,
-        n_na=n_na,
-        n_cl=n_cl,
-        cutoff=config.ion_cutoff,
-        rng=rng,
-    )
-
-    all_atoms = packed_atoms + ion_atoms
-
-    packed_pdb = config.output_dir / "hybrid_packed.MARTINI.pdb"
-    write_pdb(packed_pdb, all_atoms, box_lengths)
-
-    bb_entries = collect_bb_map(protein_aa_atoms, protein_cg_atoms)
-    mapping_h5 = config.output_dir / "hybrid_mapping.h5"
-    env_atom_indices = list(range(len(protein_cg_atoms), len(all_atoms)))
-    write_hybrid_mapping_h5(
-        mapping_h5,
-        bb_entries=bb_entries,
-        total_martini_atoms=len(all_atoms),
-        env_atom_indices=env_atom_indices,
-        n_protein_atoms=len(protein_cg_atoms),
-    )
-
-    mapping_json = config.output_dir / "hybrid_bb_map.json"
-    write_summary(mapping_json, {"bb_entries": bb_entries, "count": len(bb_entries)})
-
-    summary = {
-        "protein_aa_pdb": str(config.protein_pdb),
-        "protein_cg_pdb": str(protein_cg_path),
-        "bilayer_pdb": str(config.bilayer_pdb),
-        "output_pdb": str(packed_pdb),
-        "mapping_h5": str(mapping_h5),
-        "box_angstrom": [float(v) for v in box_lengths],
-        "lipid_mid_z": float(lipid_mid_z),
-        "box_half_z": float(0.5 * box_lengths[2]),
-        "protein_z_span": float(pspan[2]),
-        "min_box_z_target": float(min_box_z_target),
-        "protein_charge_used": int(protein_charge),
-        "salt_molar": float(config.salt_molar),
-        "salt_pairs_target": int(salt_pairs),
-        "ion_effective_volume_fraction": float(effective_vol_frac),
-        "na_added": int(n_na),
-        "cl_added": int(n_cl),
-        "protein_atoms_cg": int(len(protein_cg_atoms)),
-        "bilayer_atoms_kept": int(len(bilayer_kept)),
-        "lipid_residues_removed": int(removed_lipids),
-        "ion_atoms_added": int(len(ion_atoms)),
-        "total_atoms": int(len(all_atoms)),
-        "bb_map_entries": int(len(bb_entries)),
-    }
-    write_summary(config.output_dir / "hybrid_prep_summary.json", summary)
-
-    print(f"Packed system written to: {packed_pdb}")
-    print(f"Hybrid mapping HDF5 written to: {mapping_h5}")
-    print(f"Summary written to: {config.output_dir / 'hybrid_prep_summary.json'}")
 
 
 
@@ -1080,14 +662,6 @@ def runtime_input_pdb_path(script_dir, pdb_id):
     if override:
         return os.path.abspath(os.path.expanduser(override))
     return os.path.join(script_dir, f"pdb/{pdb_id}.MARTINI.pdb")
-
-
-def runtime_protein_itp_path(script_dir, pdb_id):
-    """Resolve protein ITP path with optional runtime override."""
-    override = os.environ.get("UPSIDE_RUNTIME_ITP_FILE", "").strip()
-    if override:
-        return os.path.abspath(os.path.expanduser(override))
-    return os.path.join(script_dir, f"pdb/{pdb_id}_proa.itp")
 
 
 def read_martini3_nonbond_params(itp_file):
@@ -1180,230 +754,6 @@ def read_martini3_nonbond_params(itp_file):
     
     print(f"Read {len(martini_table)//2} unique nonbonded parameter pairs")
     return martini_table
-
-# --- Helpers: read MARTINI protein topology (ITP) for protein bead typing and connectivity ---
-def read_protein_itp_topology(itp_path: str):
-    topo_by_res_and_role = {}
-    if not os.path.exists(itp_path):
-        return topo_by_res_and_role
-    in_atoms = False
-    with open(itp_path, 'r') as f:
-        for raw in f:
-            line = raw.strip()
-            if not line or line.startswith(';'):
-                continue
-            if line.startswith('['):
-                in_atoms = line.lower().startswith('[ atoms')
-                continue
-            if not in_atoms:
-                continue
-            # tokens: idx type resnr residue atom cgnr charge ...
-            parts = line.split()
-            if len(parts) < 6:
-                continue
-            try:
-                _idx = int(parts[0])
-                bead_type = parts[1]
-                resnr = int(parts[2])
-                residue = parts[3]
-                atom_role = parts[4]  # e.g., BB, SC1, SC2
-                # charge is usually the last numeric token; try to parse last column
-                charge = 0.0
-                for tok in reversed(parts):
-                    try:
-                        charge = float(tok)
-                        break
-                    except ValueError:
-                        continue
-                topo_by_res_and_role[(resnr, atom_role)] = (bead_type, charge)
-            except Exception:
-                continue
-    return topo_by_res_and_role
-
-def read_protein_itp_connectivity(itp_path: str, simulation_stage='minimization'):
-    """
-    Read bonds, angles, dihedrals, constraints, and position restraints from protein ITP file
-    simulation_stage: 'minimization' or 'production'
-    """
-    bonds = []
-    angles = []
-    dihedrals = []
-    constraints = []
-    position_restraints = []
-    
-    if not os.path.exists(itp_path):
-        return bonds, angles, dihedrals, constraints, position_restraints
-    
-    current_section = None
-    in_normang_section = False
-    in_nonnormang_section = False
-    in_flexible_section = False
-    in_posres_section = False
-    
-    with open(itp_path, 'r') as f:
-        for raw in f:
-            line = raw.strip()
-            if not line or line.startswith(';'):
-                continue
-            
-            # Handle preprocessor directives
-            if line.startswith('#ifdef NORMANG'):
-                in_normang_section = True
-                in_nonnormang_section = False
-                continue
-            elif line.startswith('#ifndef NORMANG'):
-                in_normang_section = False
-                in_nonnormang_section = True
-                continue
-            elif line.startswith('#ifdef FLEXIBLE'):
-                in_flexible_section = True
-                continue
-            elif line.startswith('#ifndef FLEXIBLE'):
-                in_flexible_section = False
-                continue
-            elif line.startswith('#ifdef POSRES'):
-                in_posres_section = True
-                continue
-            elif line.startswith('#ifndef POSRES'):
-                # Don't reset in_posres_section here - let #endif handle it
-                continue
-            elif line.startswith('#ifndef POSRES_FC'):
-                # This is a different directive - don't reset in_posres_section
-                continue
-            elif line.startswith('#endif'):
-                # Only reset flags if we're not in a position restraints section
-                if current_section != 'position_restraints':
-                    in_normang_section = False
-                    in_nonnormang_section = False
-                    in_flexible_section = False
-                    in_posres_section = False
-                continue
-            
-            if line.startswith('['):
-                section = line.lower()
-                if 'bonds' in section:
-                    current_section = 'bonds'
-                elif 'angles' in section:
-                    current_section = 'angles'
-                elif 'dihedrals' in section:
-                    current_section = 'dihedrals'
-                elif 'constraints' in section:
-                    current_section = 'constraints'
-                elif 'position_restraints' in section:
-                    current_section = 'position_restraints'
-                else:
-                    current_section = None
-                continue
-            
-            if current_section is None:
-                continue
-                
-            parts = line.split()
-            if len(parts) < 3:
-                continue
-                
-            try:
-                if current_section == 'bonds':
-                    # Format: i j func r0 k
-                    i, j = int(parts[0])-1, int(parts[1])-1  # Convert to 0-indexed
-                    func = int(parts[2])
-                    if func == 1 and len(parts) >= 5:  # Harmonic bond
-                        r0 = float(parts[3])  # nm
-                        k = float(parts[4])   # kJ/mol/nm²
-                        
-                        # For minimization: use FLEXIBLE bonds (large spring constants)
-                        # For production: use regular bonds
-                        if simulation_stage == 'minimization' and in_flexible_section:
-                            k = 1000000.0  # Large spring constant for minimization
-                        
-                        bonds.append((i, j, r0, k))
-                elif current_section == 'angles':
-                    # Format: i j k func theta0 k
-                    # For minimization: use NORMANG section
-                    # For production: use regular angles section
-                    if simulation_stage == 'minimization' and in_normang_section and not in_nonnormang_section:
-                        i, j, k = int(parts[0])-1, int(parts[1])-1, int(parts[2])-1
-                        func = int(parts[3])
-                        if func == 2 and len(parts) >= 6:  # Harmonic angle
-                            theta0 = float(parts[4])  # degrees
-                            k = float(parts[5])       # kJ/mol/rad²
-                            angles.append((i, j, k, theta0, k))
-                    elif simulation_stage == 'production' and not in_normang_section and not in_nonnormang_section:
-                        # Regular angles section for production
-                        i, j, k = int(parts[0])-1, int(parts[1])-1, int(parts[2])-1
-                        func = int(parts[3])
-                        if func == 2 and len(parts) >= 6:  # Harmonic angle
-                            theta0 = float(parts[4])  # degrees
-                            k = float(parts[5])       # kJ/mol/rad²
-                            angles.append((i, j, k, theta0, k))
-                elif current_section == 'constraints':
-                    # Format: i j func r0
-                    # These should be treated as bonds with large spring constants
-                    i, j = int(parts[0])-1, int(parts[1])-1  # Convert to 0-indexed
-                    func = int(parts[2])
-                    if func == 1 and len(parts) >= 4:  # Constraint
-                        r0 = float(parts[3])  # nm
-                        k = 1000000.0  # Large spring constant as requested
-                        constraints.append((i, j, r0, k))
-                elif current_section == 'position_restraints':
-                    # Format: i func fx fy fz
-                    # Only process during minimization stage
-                    if simulation_stage == 'minimization' and in_posres_section:
-                        i = int(parts[0])-1  # Convert to 0-indexed
-                        func = int(parts[1])
-                        if func == 1 and len(parts) >= 5:  # Position restraint
-                            fx = float(parts[2]) if parts[2] != 'POSRES_FC' else 1000.0
-                            fy = float(parts[3]) if parts[3] != 'POSRES_FC' else 1000.0
-                            fz = float(parts[4]) if parts[4] != 'POSRES_FC' else 1000.0
-                            position_restraints.append((i, fx, fy, fz))
-                elif current_section == 'dihedrals':
-                    # Format: i j k l func phi0 k mult
-                    atom_i, atom_j, atom_k, atom_l = int(parts[0])-1, int(parts[1])-1, int(parts[2])-1, int(parts[3])-1
-                    func = int(parts[4])
-                    if func == 1 and len(parts) >= 8:  # Periodic dihedral
-                        phi0 = float(parts[5])  # degrees
-                        force_const = float(parts[6])     # kJ/mol/rad²
-                        dihedrals.append((atom_i, atom_j, atom_k, atom_l, phi0, force_const, func))
-                    elif func == 2 and len(parts) >= 7:  # Harmonic dihedral
-                        phi0 = float(parts[5])  # degrees
-                        force_const = float(parts[6])     # kJ/mol/rad²
-                        dihedrals.append((atom_i, atom_j, atom_k, atom_l, phi0, force_const, func))
-            except (ValueError, IndexError):
-                continue
-    
-    return bonds, angles, dihedrals, constraints, position_restraints
-
-def read_protein_itp_exclusions(itp_path: str):
-    """Read exclusions from protein ITP file"""
-    exclusions = []
-    
-    if not os.path.exists(itp_path):
-        return exclusions
-    
-    current_section = None
-    with open(itp_path, 'r') as f:
-        for raw in f:
-            line = raw.strip()
-            if not line or line.startswith(';'):
-                continue
-            if line.startswith('['):
-                section = line.lower()
-                if 'exclusions' in section:
-                    current_section = 'exclusions'
-                else:
-                    current_section = None
-                continue
-            
-            if current_section == 'exclusions':
-                parts = line.split()
-                if len(parts) >= 2:
-                    # Convert to 0-indexed and add all pairs
-                    atoms = [int(part)-1 for part in parts]
-                    for i in range(len(atoms)):
-                        for j in range(i+1, len(atoms)):
-                            exclusions.append((atoms[i], atoms[j]))
-    
-    return exclusions
 
 def parse_itp_file(itp_file, target_molecule=None, preprocessor_defines=None):
     """
@@ -1794,7 +1144,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     strict_from_martini_pdb = True
     include_protein = True
     
-    print("=== Dry MARTINI Protein-Lipid System Preparation ===")
+    print("=== AA-Backbone Protein-Lipid System Preparation ===")
     print(f"PDB ID: {pdb_id}")
     print(f"Output directory: {run_dir}")
     
@@ -1836,21 +1186,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                         f"  Please ensure the dry MARTINI parameter file exists and is readable.\n"
                         f"  Aborting to prevent incorrect simulation results.")
     
-    # Determine system type and load appropriate topology
-    # Check if this is a protein system by looking for protein ITP file
-    protein_itp = runtime_protein_itp_path(workflow_dir, pdb_id)
-    has_protein = os.path.exists(protein_itp)
-    
-    # Check if this is a mixed protein-lipid system by looking for both protein and lipid residues
-    # This will be determined during PDB parsing, but we can prepare for both cases
-    
-    if has_protein:
-        print("=== Mixed Protein-Lipid System Detected ===")
-        print(f"Using protein topology from: {protein_itp}")
-        print("System contains both protein and lipid components")
-        print("Using dry MARTINI force field parameters for both protein and lipid components")
-    else:
-        print("=== Lipid System Detected ===")
+    print("=== AA-Backbone Protein-Lipid System Detected ===")
+    print("System contains DOPC environment plus direct AA backbone atoms.")
     
     # For both protein and lipid systems, we need DOPC parameters
     # Parse DOPC topology from ITP file
@@ -2014,20 +1351,16 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     chain_ids = []
     seg_ids = []
     
-    # Load protein topology mapping and connectivity if available
-    protein_itp = runtime_protein_itp_path(workflow_dir, pdb_id)
-    protein_topo_map = read_protein_itp_topology(protein_itp)
-    
-    # Parse protein connectivity for minimization stage (uses FLEXIBLE, NORMANG, POSRES sections)
-    protein_bonds, protein_angles, protein_dihedrals, protein_constraints, protein_position_restraints = read_protein_itp_connectivity(protein_itp, 'minimization')
-    protein_exclusions = read_protein_itp_exclusions(protein_itp)
-    
-    print(f"\n=== Protein Connectivity for Minimization Stage ===")
-    print(f"Bonds: {len(protein_bonds)} (including FLEXIBLE bonds with large spring constants)")
-    print(f"Angles: {len(protein_angles)} (from NORMANG section)")
-    print(f"Dihedrals: {len(protein_dihedrals)}")
-    print(f"Constraints: {len(protein_constraints)} (as bonds with large spring constants)")
-    print(f"Position restraints: {len(protein_position_restraints)} (POSRES atoms - will be ignored)")
+    protein_bonds = []
+    protein_angles = []
+    protein_dihedrals = []
+    protein_constraints = []
+    protein_position_restraints = []
+    protein_exclusions = []
+
+    print(f"\n=== Protein Connectivity ===")
+    print("Protein MARTINI topology is retired for this workflow.")
+    print("Protein bonded geometry will be supplied by injected Upside backbone nodes.")
     
     
     protein_residue_names = {
@@ -2035,12 +1368,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP',
         'TYR', 'VAL', 'HID', 'HIE', 'HIP', 'HSD', 'HSE', 'HSP', 'CYX'
     }
-    # martinize outputs can renumber residues (e.g., start from 1) while the packed
-    # PDB can preserve original residue ids. Track sequential protein residues from
-    # the PDB stream so we can map roles against ITP resnr robustly.
-    protein_resseq_to_seqidx = {}
-    protein_seq_next = 1
-
     with open(input_pdb_file, 'r') as f:
         for line in f:
             if not line.startswith(('ATOM', 'HETATM')):
@@ -2069,35 +1396,19 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             z = float(line[46:54])
             initial_positions.append([x, y, z])
             
-            # Determine if this line corresponds to protein beads.
-            # Accept both legacy PROA-tagged MARTINI PDBs and martini_martinize.py outputs
-            # that identify protein only by residue names/atom roles.
-            is_protein = (
-                ('PROA' in line) or
-                (residue_name in protein_residue_names) or
-                ((residue_id, atom_name) in protein_topo_map)
-            )
+            is_protein = residue_name in protein_residue_names
             
             # Map to MARTINI type based on context
             if is_protein:
-                # Prefer exact topology mapping by (resnr, role) when available
-                role = atom_name  # BB / SC1 / SC2 ... expected in our MARTINI PDB
-                res_key = (chain_id, residue_id, residue_name)
-                if res_key not in protein_resseq_to_seqidx:
-                    protein_resseq_to_seqidx[res_key] = protein_seq_next
-                    protein_seq_next += 1
-                seq_resnr = protein_resseq_to_seqidx[res_key]
-
-                if (residue_id, role) in protein_topo_map:
-                    martini_type, charge = protein_topo_map[(residue_id, role)]
-                elif (seq_resnr, role) in protein_topo_map:
-                    martini_type, charge = protein_topo_map[(seq_resnr, role)]
-                else:
-                    # Raise error for unknown protein atom
-                    raise ValueError(f"FATAL ERROR: Unknown protein atom '{atom_name}' in residue '{residue_name}'.\n"
-                                   f"  This indicates incomplete protein topology mapping in the ITP file.\n"
-                                   f"  Please ensure the protein topology file '{protein_itp}' contains proper mapping for this atom.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                if atom_name not in AA_BACKBONE_ATOM_MASS:
+                    raise ValueError(
+                        f"FATAL ERROR: Unexpected protein atom '{atom_name}' in residue '{residue_name}'.\n"
+                        "  The AA-backbone workflow expects runtime protein atoms to contain only N/CA/C/O.\n"
+                        "  Regenerate the runtime structure with martini_prepare_system.py before stage conversion.\n"
+                        "  Aborting to prevent incorrect simulation results."
+                    )
+                martini_type = AA_BACKBONE_PLACEHOLDER_TYPE
+                charge = 0.0
             elif residue_name == 'DOPC' or residue_name == 'DOP':
                 # For DOPC, use the topology from parameter file (for both lipid and mixed systems)
                 if atom_name in dopc_atom_to_type:
@@ -2347,9 +1658,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     protein_constraint_count = 0
     
     if protein_bonds or protein_constraints:
-        print(f"\n=== Protein Connectivity from {protein_itp} ===")
-        print(f"Found {len(protein_bonds)} bonds, {len(protein_angles)} angles, {len(protein_dihedrals)} dihedrals")
-        print(f"Found {len(protein_constraints)} constraints, {len(protein_position_restraints)} position restraints")
+        print(f"\n=== Protein Connectivity from Upside Backbone Nodes ===")
+        print("No MARTINI protein bonds, angles, or dihedrals are created in stage conversion.")
         
         # Add protein bonds to the bond list
         for i, j, r0_nm, k_kj in protein_bonds:
@@ -2405,7 +1715,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         print(f"Added {protein_angle_count} protein angles")
         print(f"Added {protein_dihedral_count} protein dihedrals")
     else:
-        print(f"\nNo protein connectivity found in {protein_itp}")
+        print("\nNo MARTINI protein connectivity is expected in the AA-backbone workflow")
     
     print(f"Total system bonds: {len(bonds_list)}")
     print(f"Total system angles: {len(angles_list)}")
@@ -2459,13 +1769,19 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         # Create mass array (required by UPSIDE)
         mass = np.zeros(n_atoms, dtype='f4')
         for i, atom_type in enumerate(atom_types):
-            # Get mass from force field file, raise error if not found
+            if atom_type in NONINTERACTING_ATOM_TYPES:
+                atom_name = atom_names[i].decode('utf-8') if isinstance(atom_names[i], bytes) else str(atom_names[i])
+                if atom_name not in AA_BACKBONE_ATOM_MASS:
+                    raise ValueError(
+                        f"FATAL ERROR: No AA backbone mass is defined for atom '{atom_name}' (atom index {i})."
+                    )
+                mass[i] = AA_BACKBONE_ATOM_MASS[atom_name] / 12.0
+                continue
             if atom_type not in martini_masses:
                 raise ValueError(f"FATAL ERROR: Mass not found for atom type '{atom_type}' (atom index {i}).\n"
                                 f"  Available atom types with masses: {sorted(martini_masses.keys())}\n"
                                 f"  This indicates incomplete force field parameters.\n"
                                 f"  Aborting to prevent incorrect simulation results.")
-            # Divide by 12.0 for reduced mass units (1 unit = 12 g/mol)
             mass[i] = martini_masses[atom_type] / 12.0
         
         mass_array = t.create_array(input_grp, 'mass', obj=mass)
@@ -2556,7 +1872,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         particle_class = np.empty(n_atoms, dtype='S10')
         for i, resname in enumerate(residue_names):
             if resname in protein_residues:
-                particle_class[i] = b"PROTEIN"
+                particle_class[i] = b"PROTEINAA"
             elif resname == 'DOP':
                 particle_class[i] = b"LIPID"
             elif resname == 'W':
@@ -2772,6 +2088,10 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                 type1 = atom_types[i].decode('utf-8') if isinstance(atom_types[i], bytes) else str(atom_types[i])
                 type2 = atom_types[j].decode('utf-8') if isinstance(atom_types[j], bytes) else str(atom_types[j])
                 
+                if type1 in NONINTERACTING_ATOM_TYPES or type2 in NONINTERACTING_ATOM_TYPES:
+                    coeff_array.append([0.0, 0.0, 0.0, 0.0])
+                    continue
+
                 # Look up MARTINI parameters for this bead type pair
                 if (type1, type2) in martini_table:
                     sigma_nm, epsilon_kj = martini_table[(type1, type2)]
@@ -2905,71 +2225,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         f.write(f"Additional exclusions: {excluded_additional_count}\n")
     
     print(f"Preparation summary saved to: {summary_file}")
-
-def create_production_input(input_file, pdb_id):
-    """Create production input file with production-stage parameters"""
-    print(f"\n=== Creating Production Input File ===")
-    
-    # Parse protein connectivity for production stage (uses regular sections)
-    protein_itp = runtime_protein_itp_path(str(WORKFLOW_DIR), pdb_id)
-    protein_bonds_prod, protein_angles_prod, protein_dihedrals_prod, protein_constraints_prod, protein_position_restraints_prod = read_protein_itp_connectivity(protein_itp, 'production')
-    
-    print(f"Production stage parameters:")
-    print(f"  Bonds: {len(protein_bonds_prod)} (regular bonds)")
-    print(f"  Angles: {len(protein_angles_prod)} (regular angles)")
-    print(f"  Dihedrals: {len(protein_dihedrals_prod)}")
-    print(f"  Constraints: {len(protein_constraints_prod)}")
-    print(f"  Position restraints: {len(protein_position_restraints_prod)} (none for production)")
-    
-    # Create production input file
-    production_file = f"outputs/martini_test/production.input.up"
-    
-    # Copy the minimization file and modify for production
-    import shutil
-    shutil.copy2(input_file, production_file)
-    
-    # Remove position restraints from production file
-    import h5py
-    with h5py.File(production_file, 'r+') as f:
-        if 'input' in f and 'position_restraints' in f['input']:
-            del f['input']['position_restraints']
-            print("Removed position restraints from production file")
-    
-    print(f"Production input file created: {production_file}")
-    print("Note: Production file uses regular parameters without position restraints")
-
-def main_always_fixed(pdb_id):
-    """Create input file with protein always fixed rigid throughout simulation"""
-    print(f"\n=== Creating Input with Always-Fixed Protein ===")
-    print(f"PDB ID: {pdb_id}")
-    print("Output directory: outputs/martini_test")
-    
-    # Use the same setup as conversion path but modify the fix rigid configuration
-    # First, run the normal preparation
-    convert_stage(pdb_id=pdb_id)
-    
-    # Then modify the H5 file to ensure fix rigid is always enabled
-    import h5py
-    input_file = f"outputs/martini_test/test.input.up"
-    
-    print(f"\n=== Modifying H5 File for Always-Fixed Protein ===")
-    with h5py.File(input_file, 'r+') as f:
-        if 'input' in f and 'fix_rigid' in f['input']:
-            fix_rigid_grp = f['input']['fix_rigid']
-            # Ensure fix rigid is always enabled
-            fix_rigid_grp.attrs['enable'] = 1
-            print("Fix rigid enabled for entire simulation")
-            
-            # Remove stage-specific parameters since we want fix rigid throughout
-            if 'stage_parameters' in f['input']:
-                del f['input']['stage_parameters']
-                print("Removed stage-specific parameters (using fix rigid throughout)")
-        else:
-            print("WARNING: No fix rigid group found in H5 file")
-    
-    print(f"Modified input file: {input_file}")
-    print("Note: Protein will be fixed rigid throughout entire simulation")
-
 
 def require_h5import():
     exe = shutil.which("h5import")
@@ -3275,26 +2530,27 @@ def validate_hybrid_mapping(mapping_h5: Path, n_atom: int | None = None):
 
     with h5py.File(path, "r") as h5:
         inp = require_group(h5, "/input")
-        ctrl = require_group(inp, "hybrid_control")
         bb = require_group(inp, "hybrid_bb_map")
         env = require_group(inp, "hybrid_env_topology")
 
-        for attr in [
-            "enable",
-            "activation_stage",
-            "preprod_protein_mode",
-            "exclude_intra_protein_martini",
-            "schema_version",
-        ]:
-            if attr not in ctrl.attrs:
-                raise ValueError(f"Missing hybrid_control attr: {attr}")
+        if "hybrid_control" in inp:
+            ctrl = require_group(inp, "hybrid_control")
+            for attr in [
+                "enable",
+                "activation_stage",
+                "preprod_protein_mode",
+                "exclude_intra_protein_martini",
+                "schema_version",
+            ]:
+                if attr not in ctrl.attrs:
+                    raise ValueError(f"Missing hybrid_control attr: {attr}")
 
-        if "protein_env_interface_scale" in ctrl.attrs:
-            interface_scale = float(ctrl.attrs["protein_env_interface_scale"])
-            if not np.isfinite(interface_scale) or interface_scale <= 0.0:
-                raise ValueError(
-                    "hybrid_control/protein_env_interface_scale must be finite and > 0"
-                )
+            if "protein_env_interface_scale" in ctrl.attrs:
+                interface_scale = float(ctrl.attrs["protein_env_interface_scale"])
+                if not np.isfinite(interface_scale) or interface_scale <= 0.0:
+                    raise ValueError(
+                        "hybrid_control/protein_env_interface_scale must be finite and > 0"
+                    )
 
         bb_atom_idx = require_dataset(bb, "bb_atom_index")[:]
         bb_atom_map = require_dataset(bb, "atom_indices")[:]
@@ -3564,57 +2820,14 @@ def unique_preserving_order(values):
     return out
 
 
-def parse_itp_residue_names(path: Path):
-    resnames = []
-    seen = set()
-    in_atoms = False
-    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-        for raw in fh:
-            line = raw.split(";", 1)[0].strip()
-            if not line:
-                continue
-            low = line.lower()
-            if low in {"[ atoms ]", "[atoms]"}:
-                in_atoms = True
-                continue
-            if line.startswith("[") and line.endswith("]"):
-                in_atoms = False
-                continue
-            if not in_atoms:
-                continue
-            parts = line.split()
-            if len(parts) < 5:
-                continue
-            try:
-                resnr = int(parts[2])
-            except ValueError:
-                continue
-            if parts[4].strip().upper() != "BB" or resnr in seen:
-                continue
-            seen.add(resnr)
-            resnames.append(parts[3].strip().upper())
-    return resnames
-
-
-def resolve_sequence(inp, residue_count: int, protein_itp: Path | None):
-    mismatch_notes = []
+def resolve_sequence(inp, residue_count: int):
     if "sequence" in inp:
         sequence = [normalize_resname(x) for x in decode_string_array(inp["sequence"])]
         if len(sequence) == residue_count:
             return sequence
-        mismatch_notes.append(f"/input/sequence has {len(sequence)} residues")
-
-    if protein_itp is not None:
-        if not protein_itp.exists():
-            raise ValueError(f"Protein ITP not found for sequence fallback: {protein_itp}")
-        sequence = [normalize_resname(x) for x in parse_itp_residue_names(protein_itp)]
-        if len(sequence) == residue_count:
-            return sequence
-        mismatch_notes.append(f"{protein_itp} has {len(sequence)} residues")
-
-    detail = ", ".join(mismatch_notes) if mismatch_notes else "no sequence source was available"
     raise ValueError(
-        f"Could not resolve a residue sequence matching hybrid_bb_map residue count {residue_count}: {detail}"
+        "Missing or inconsistent /input/sequence for AA-backbone sidechain injection: "
+        f"expected {residue_count} residues"
     )
 
 
@@ -3817,6 +3030,166 @@ def remap_atom_index_array(arr, atom_map):
     return out
 
 
+def _decode_bytes_array(arr):
+    return np.asarray(
+        [x.decode("utf-8", errors="ignore") if isinstance(x, (bytes, np.bytes_)) else str(x) for x in arr]
+    )
+
+
+def _replace_h5_dataset(group, name: str, data, dtype):
+    if name in group:
+        del group[name]
+    group.create_dataset(name, data=np.asarray(data, dtype=dtype))
+
+
+def _cosine_from_triplets(pos, atom0, atom1, vertex):
+    vec0 = pos[np.asarray(atom0, dtype=np.int64)] - pos[np.asarray(vertex, dtype=np.int64)]
+    vec1 = pos[np.asarray(atom1, dtype=np.int64)] - pos[np.asarray(vertex, dtype=np.int64)]
+    norm0 = np.linalg.norm(vec0, axis=1)
+    norm1 = np.linalg.norm(vec1, axis=1)
+    if np.any(norm0 <= 0.0) or np.any(norm1 <= 0.0):
+        raise ValueError("Cannot build explicit backbone oxygen angle with zero-length vectors")
+    cosine = np.einsum("ij,ij->i", vec0, vec1) / (norm0 * norm1)
+    return np.clip(cosine, -1.0, 1.0)
+
+
+def append_explicit_backbone_oxygen_geometry(
+    up_file: Path,
+    bond_stiffness: float = EXPLICIT_BACKBONE_OXYGEN_BOND_STIFFNESS,
+    angle_stiffness: float = EXPLICIT_BACKBONE_OXYGEN_ANGLE_STIFFNESS,
+):
+    up_file = Path(up_file).expanduser().resolve()
+    with h5py.File(up_file, "r+") as up:
+        inp = up["input"]
+        pot = inp["potential"]
+        bb = inp["hybrid_bb_map"]
+
+        reference_names = _decode_bytes_array(bb["reference_atom_names"][:])
+        column_by_name = {name.upper(): idx for idx, name in enumerate(reference_names.tolist())}
+        missing = [name for name in BB_COMPONENT_NAMES if name not in column_by_name]
+        if missing:
+            raise ValueError(f"Missing explicit backbone oxygen mapping columns: {missing}")
+
+        atom_indices = bb["atom_indices"][:].astype(np.int64)
+        atom_mask = bb["atom_mask"][:].astype(bool)
+        required_mask = np.logical_and.reduce(
+            [atom_mask[:, column_by_name[name]] for name in BB_COMPONENT_NAMES]
+        )
+        if not np.any(required_mask):
+            raise ValueError("No residues with complete N/CA/C/O mapping found for explicit oxygen geometry")
+
+        n_idx = atom_indices[required_mask, column_by_name["N"]]
+        ca_idx = atom_indices[required_mask, column_by_name["CA"]]
+        c_idx = atom_indices[required_mask, column_by_name["C"]]
+        o_idx = atom_indices[required_mask, column_by_name["O"]]
+        pos = inp["pos"][:, :, 0]
+
+        bond_rows = np.column_stack([c_idx, o_idx]).astype(np.int64, copy=False)
+        bond_equil = np.linalg.norm(pos[c_idx] - pos[o_idx], axis=1)
+
+        angle_rows = [np.column_stack([ca_idx, o_idx, c_idx]).astype(np.int64, copy=False)]
+        angle_equil = [_cosine_from_triplets(pos, ca_idx, o_idx, c_idx)]
+        if len(n_idx) > 1:
+            angle_rows.append(
+                np.column_stack([o_idx[:-1], n_idx[1:], c_idx[:-1]]).astype(np.int64, copy=False)
+            )
+            angle_equil.append(_cosine_from_triplets(pos, o_idx[:-1], n_idx[1:], c_idx[:-1]))
+
+        dist_group = pot["Distance3D"]
+        spring_bond_group = pot["Spring_bond"]
+        dist_ids = dist_group["id"][:]
+        spring_bond_ids = spring_bond_group["id"][:]
+        spring_bond_equil = spring_bond_group["equil_dist"][:]
+        spring_bond_const = spring_bond_group["spring_const"][:]
+
+        existing_bonds = {tuple(sorted(map(int, row.tolist()))): i for i, row in enumerate(dist_ids)}
+        new_bond_rows = []
+        new_bond_equil = []
+        for row, equil in zip(bond_rows, bond_equil):
+            key = tuple(sorted(map(int, row.tolist())))
+            if key in existing_bonds:
+                continue
+            new_bond_rows.append(row.tolist())
+            new_bond_equil.append(float(equil))
+        if new_bond_rows:
+            new_bond_rows = np.asarray(new_bond_rows, dtype=dist_ids.dtype)
+            new_bond_equil = np.asarray(new_bond_equil, dtype=spring_bond_equil.dtype)
+            bond_row_start = dist_ids.shape[0]
+            dist_ids = np.concatenate([dist_ids, new_bond_rows], axis=0)
+            spring_bond_ids = np.concatenate(
+                [
+                    spring_bond_ids,
+                    np.arange(bond_row_start, bond_row_start + len(new_bond_rows), dtype=spring_bond_ids.dtype),
+                ]
+            )
+            spring_bond_equil = np.concatenate([spring_bond_equil, new_bond_equil])
+            spring_bond_const = np.concatenate(
+                [
+                    spring_bond_const,
+                    np.full(len(new_bond_rows), bond_stiffness, dtype=spring_bond_const.dtype),
+                ]
+            )
+            _replace_h5_dataset(dist_group, "id", dist_ids, dist_ids.dtype)
+            _replace_h5_dataset(spring_bond_group, "id", spring_bond_ids, spring_bond_ids.dtype)
+            _replace_h5_dataset(
+                spring_bond_group, "equil_dist", spring_bond_equil, spring_bond_equil.dtype
+            )
+            _replace_h5_dataset(
+                spring_bond_group, "spring_const", spring_bond_const, spring_bond_const.dtype
+            )
+
+        angle_group = pot["Angle"]
+        spring_angle_group = pot["Spring_angle"]
+        angle_ids = angle_group["id"][:]
+        spring_angle_ids = spring_angle_group["id"][:]
+        spring_angle_equil = spring_angle_group["equil_dist"][:]
+        spring_angle_const = spring_angle_group["spring_const"][:]
+
+        existing_angles = {
+            (min(int(row[0]), int(row[1])), max(int(row[0]), int(row[1])), int(row[2])): i
+            for i, row in enumerate(angle_ids)
+        }
+        pending_angle_rows = []
+        pending_angle_equil = []
+        for rows, equil_vals in zip(angle_rows, angle_equil):
+            for row, equil in zip(rows, equil_vals):
+                key = (min(int(row[0]), int(row[1])), max(int(row[0]), int(row[1])), int(row[2]))
+                if key in existing_angles:
+                    continue
+                pending_angle_rows.append(row.tolist())
+                pending_angle_equil.append(float(equil))
+        if pending_angle_rows:
+            pending_angle_rows = np.asarray(pending_angle_rows, dtype=angle_ids.dtype)
+            pending_angle_equil = np.asarray(pending_angle_equil, dtype=spring_angle_equil.dtype)
+            angle_row_start = angle_ids.shape[0]
+            angle_ids = np.concatenate([angle_ids, pending_angle_rows], axis=0)
+            spring_angle_ids = np.concatenate(
+                [
+                    spring_angle_ids,
+                    np.arange(
+                        angle_row_start,
+                        angle_row_start + len(pending_angle_rows),
+                        dtype=spring_angle_ids.dtype,
+                    ),
+                ]
+            )
+            spring_angle_equil = np.concatenate([spring_angle_equil, pending_angle_equil])
+            spring_angle_const = np.concatenate(
+                [
+                    spring_angle_const,
+                    np.full(len(pending_angle_rows), angle_stiffness, dtype=spring_angle_const.dtype),
+                ]
+            )
+            _replace_h5_dataset(angle_group, "id", angle_ids, angle_ids.dtype)
+            _replace_h5_dataset(spring_angle_group, "id", spring_angle_ids, spring_angle_ids.dtype)
+            _replace_h5_dataset(
+                spring_angle_group, "equil_dist", spring_angle_equil, spring_angle_equil.dtype
+            )
+            _replace_h5_dataset(
+                spring_angle_group, "spring_const", spring_angle_const, spring_angle_const.dtype
+            )
+
+
 def inject_backbone_nodes(
     up_file: Path,
     sequence,
@@ -3899,6 +3272,7 @@ def inject_backbone_nodes(
         for grp_name, dset_name in remap_datasets:
             ds = pot[grp_name][dset_name]
             ds[...] = remap_atom_index_array(ds[:], atom_map).astype(ds.dtype, copy=False)
+    append_explicit_backbone_oxygen_geometry(up_file)
 
 
 def inject_stage7_sc_table_nodes(
@@ -3909,7 +3283,6 @@ def inject_stage7_sc_table_nodes(
     rama_sheet_mixing: Path,
     hbond_energy: Path,
     reference_state_rama: Path,
-    protein_itp: Path | None = None,
 ):
     up_file = Path(up_file).expanduser().resolve()
     martini_h5 = Path(martini_h5).expanduser().resolve()
@@ -3918,7 +3291,6 @@ def inject_stage7_sc_table_nodes(
     rama_sheet_mixing = Path(rama_sheet_mixing).expanduser().resolve()
     hbond_energy = Path(hbond_energy).expanduser().resolve()
     reference_state_rama = Path(reference_state_rama).expanduser().resolve()
-    protein_itp = Path(protein_itp).expanduser().resolve() if protein_itp else None
     sidechain_lib = (upside_home / "parameters" / "ff_2.1" / "sidechain.h5").resolve()
 
     if not up_file.exists():
@@ -3967,7 +3339,7 @@ def inject_stage7_sc_table_nodes(
         martini_potential = pot["martini_potential"]
 
         residue_ids, affine_atoms = build_affine_atoms(inp)
-        sequence = resolve_sequence(inp, len(residue_ids), protein_itp)
+        sequence = resolve_sequence(inp, len(residue_ids))
         env_atom_index, env_target_index = build_env_rows(inp, target_to_index)
         rotamer_payload = load_sidechain_rotamer_payload(sidechain_lib, sequence, restype_to_index)
 

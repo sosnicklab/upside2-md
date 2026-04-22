@@ -1,5 +1,26 @@
 # Findings
 
+## 2026-04-21 (1RKL AABB Stage-7 Oxygen Failure Root Cause)
+- The reported bilayer "shifting through space" in `outputs/martini_test_1rkl_aabb` is not the dominant runtime bug.
+- Direct artifact measurements showed:
+  - preproduction `PO4` motion relative to the fixed protein stays below about `0.15 Å` in XY and `0 Å` in Z,
+  - stage-7 absolute `PO4` drift is small (`~0.31 Å` XY),
+  - the large apparent stage-7 motion comes from the protein destabilizing relative to a mostly stable bilayer.
+- Root cause:
+  - `py/martini_prepare_system_lib.py::inject_backbone_nodes(...)` writes the native Upside 3-site backbone machinery for `N/CA/C`,
+  - explicit runtime `O` atoms are present in the AA-backbone workflow but are not included in those generated backbone bond/angle nodes,
+  - stages `6.0` through `6.6` hid this because `fix_rigid` held the whole AA backbone fixed,
+  - stage `7.0` releases the backbone, so the unrestrained `O` atoms fly off immediately.
+- Correct fix for the current workflow:
+  - keep the existing 3-site Upside backbone nodes,
+  - append explicit runtime oxygen geometry terms in the stage file:
+    - `C-O` bond,
+    - `CA-C-O` angle,
+    - `O-C-N(next)` angle for nonterminal residues.
+- Verification on a regenerated production handoff confirmed the fix:
+  - original `stage_7.0.up`: `C-O` max grew to `102.05 Å`,
+  - fixed stage-7 smoke run over `1000` MD steps: `C-O` stayed within `0.96–1.58 Å`.
+
 ## 2026-04-06 (Protein-Backbone RMSD Alignment Audit)
 - There is no generic Upside MD step that RMSD-aligns and overwrites protein backbone coordinates during integration.
 - The relevant feature is MARTINI-hybrid specific:
@@ -183,3 +204,29 @@
   - `martini_masses::load_masses_for_engine(...)` in `src/main.cpp`,
   - `martini_masses::has_masses(...)` and `martini_masses::get_mass(...)` inside `src/deriv_engine.cpp`.
 - A fresh out-of-tree build from `src/CMakeLists.txt` completed successfully after the removal.
+
+## 2026-04-21 (User Correction: Remove Retired Workflow-16 Code Completely)
+- For the `1rkl` AA-backbone workflow replacement, it is not sufficient to block or ignore the old dry-MARTINI protein presentation path.
+- The expected implementation standard is:
+  - delete the retired workflow-16 CG/hybrid branches,
+  - delete their dead control surface,
+  - keep only code that remains active in the new design.
+- Lesson:
+  - when the user asks to retire a workflow path, remove the superseded implementation rather than leaving compatibility branches unless there is a concrete active caller that still depends on them;
+  - if shared metadata names remain in use, that is fine, but the retired behavior behind them must still be deleted.
+
+## 2026-04-21 (User Correction: Prevent Preproduction Bilayer Z Drift)
+- The AA-backbone workflow cannot rely on soft preproduction behavior alone if bilayer `z` drift destabilizes stage `7.0`.
+- For workflow `16`, the intended preproduction behavior is:
+  - protein held rigid in absolute space,
+  - bilayer `PO4` headgroups held at fixed `z` coordinates through the preproduction stages before production.
+- Lesson:
+  - when a user reports stage-to-stage geometric drift, verify whether the current mechanism is a hard hold or only a soft restraint;
+  - if the request is for fixed coordinates, do not substitute a weak spring ramp when the engine can support an explicit fixed-axis hold.
+
+## 2026-04-21 (User Correction: Preserve Committed Initial Bilayer Placement)
+- For the `1rkl` prep path, it is not sufficient that the new code produces a reasonable bilayer placement.
+- The initial bilayer structure and its `z` placement must remain identical to the last committed preparation behavior unless the user explicitly asks to change it.
+- Lesson:
+  - when replacing a representation inside an existing prep workflow, compare generated prep artifacts against the committed baseline instead of assuming equivalent centering code preserves the same structure;
+  - if the user asks for identity with the committed baseline, verify the bilayer coordinates directly.
