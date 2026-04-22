@@ -534,3 +534,47 @@
   - both scripts now default to non-fixed seeds,
   - repeated runs produced different seeds without manual overrides,
   - both the base workflow and the out-of-bilayer wrapper still completed one-step continuation successfully.
+
+## 2026-04-21 (Workflow-16 Local Bilayer Asset Update)
+- Re-read the local tracking files and inspected the current workflow surfaces:
+  - `run_sim_1rkl.sh` still defaulted `BILAYER_PDB` to `${UPSIDE_HOME}/parameters/dryMARTINI/DOPC.pdb`,
+  - `run_sim_1rkl_outlipid.sh` inherited that default implicitly,
+  - `readme.md` did not document the bilayer source.
+- Planned implementation:
+  - move `DOPC.pdb` into `example/16.MARTINI/pdb/`,
+  - update both shell entry points to use `pdb/DOPC.pdb` by default,
+  - add README guidance that the bilayer structure should be generated from CHARMM-GUI.
+- Files targeted:
+  - `example/16.MARTINI/plan.md`
+  - `example/16.MARTINI/progress.md`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - `example/16.MARTINI/readme.md`
+  - `example/16.MARTINI/pdb/DOPC.pdb`
+- Applied changes:
+  - updated `example/16.MARTINI/run_sim_1rkl.sh` so `BILAYER_PDB` now defaults to `pdb/DOPC.pdb`,
+  - updated `example/16.MARTINI/run_sim_1rkl_outlipid.sh` to export the same local default explicitly,
+  - updated `example/16.MARTINI/readme.md` to say the bilayer structure should be generated from CHARMM-GUI and stored as `pdb/DOPC.pdb`,
+  - moved `DOPC.pdb` from `parameters/dryMARTINI/` into `example/16.MARTINI/pdb/`.
+- Verification:
+  - `ls -la example/16.MARTINI/pdb/DOPC.pdb`
+  - confirmed `parameters/dryMARTINI/DOPC.pdb` is absent after the move
+  - `rg -n "BILAYER_PDB|CHARMM-GUI|pdb/DOPC.pdb" example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/run_sim_1rkl_outlipid.sh example/16.MARTINI/readme.md`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+- Observed result:
+  - workflow-16 now resolves its default bilayer from the example-local `pdb/` directory,
+  - the old shared-path asset reference is removed from the two entry points,
+  - the README documents the expected CHARMM-GUI provenance for the bilayer structure.
+
+## 2026-04-21 (README Wording Correction For Bilayer Input)
+- User corrected the README requirement:
+  - the workflow should use the lipid bilayer structure downloaded from CHARMM-GUI,
+  - the README must not prescribe the filename `DOPC.pdb`,
+  - the README must not imply the bilayer must specifically be DOPC.
+- Updated `example/16.MARTINI/readme.md`:
+  - replaced the filename-specific sentence with generic guidance that the workflow uses the downloaded CHARMM-GUI bilayer structure as its bilayer input.
+- Updated `example/16.MARTINI/findings.md`:
+  - recorded the correction and a lesson to avoid turning implementation filenames into README requirements.
+- Verification:
+  - inspected the updated README sentence directly.

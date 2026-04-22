@@ -230,3 +230,16 @@
 - Lesson:
   - when replacing a representation inside an existing prep workflow, compare generated prep artifacts against the committed baseline instead of assuming equivalent centering code preserves the same structure;
   - if the user asks for identity with the committed baseline, verify the bilayer coordinates directly.
+
+## 2026-04-21 (Workflow-16 Bilayer Asset Location And Provenance)
+- The workflow-16 example should carry its default DOPC bilayer PDB locally under `example/16.MARTINI/pdb/DOPC.pdb` rather than pointing at the shared `parameters/dryMARTINI/` copy.
+- The example README should state that the bilayer structure should be generated from CHARMM-GUI.
+
+## 2026-04-21 (User Correction: README Must Not Prescribe `DOPC.pdb`)
+- The README wording for workflow `16` must describe the bilayer input generically:
+  - use the lipid bilayer structure downloaded from CHARMM-GUI,
+  - do not imply the workflow requires the filename `DOPC.pdb`,
+  - do not imply the bilayer identity must be DOPC unless the user explicitly says so.
+- Lesson:
+  - when documenting workflow inputs, distinguish between the current local default path used by scripts and the broader user requirement described in the README;
+  - do not turn an implementation detail like a current filename into a workflow requirement unless the user explicitly asks for that contract.

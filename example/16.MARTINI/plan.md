@@ -1,45 +1,29 @@
-# 1RKL AABB Stage-7 Oxygen Failure
+# Workflow-16 Local Bilayer Asset Update
 
 ## Project Goal
-- Diagnose the reported problems in `outputs/martini_test_1rkl_aabb`.
-- Check whether bilayer drift is a real runtime error and whether it explains the stage-7 oxygen blow-up.
-- Fix the smallest root cause in the active `1rkl` AA-backbone workflow so stage `7.0` keeps backbone oxygens physically attached when the backbone is released.
+- Move `DOPC.pdb` from `parameters/dryMARTINI/` into this example's local `pdb/` directory.
+- Update `run_sim_1rkl.sh` and `run_sim_1rkl_outlipid.sh` so workflow-16 uses the example-local bilayer file by default.
+- Update `readme.md` to state that the bilayer structure should be generated from CHARMM-GUI.
 
 ## Architecture & Key Decisions
-- Treat the reported bilayer shift as a hypothesis, not the assumed root cause.
-- Prefer direct artifact measurements from the reported run over VTF-only visual impressions.
-- Keep the current AA-backbone workflow structure unless the diagnostics prove it is fundamentally unsound.
-- If stage-7 oxygens are being ignored by the native Upside 3-site backbone nodes, add explicit local geometry constraints for the runtime `O` atoms instead of changing the broader workflow design.
+- Keep the change local to `example/16.MARTINI/`; do not change shared prep code or unrelated examples.
+- Make `pdb/DOPC.pdb` the default bilayer path so the example is self-contained.
+- Update both shell entry points explicitly, even though the wrapper inherits the base workflow, so the local bilayer default is obvious at both user-facing launch surfaces.
 
 ## Execution Phases
-- [x] Phase 1: Re-read local task trackers and inspect the reported `martini_test_1rkl_aabb` artifacts plus the active workflow script.
-- [x] Phase 2: Quantify bilayer/protein motion from the HDF5 outputs and verify whether bilayer drift is the actual failure.
-- [x] Phase 3: Audit the stage-7 backbone node injection and identify why explicit oxygens destabilize after the rigid hold is removed.
-- [x] Phase 4: Implement the smallest code fix for stage-7 explicit oxygen geometry.
-- [x] Phase 5: Run targeted verification on regenerated stage-7 artifacts and record the outcome.
+- [x] Phase 1: Re-read `plan.md`, `findings.md`, `progress.md`, and inspect current bilayer-path usage in the workflow scripts and README.
+- [x] Phase 2: Patch the local trackers, scripts, and README for the example-local bilayer asset and CHARMM-GUI documentation.
+- [x] Phase 3: Move `DOPC.pdb` into `example/16.MARTINI/pdb/` and verify the updated references.
 
 ## Known Errors / Blockers
-- Current diagnosis from `outputs/martini_test_1rkl_aabb`:
-  - preproduction bilayer drift relative to the fixed protein is small (`< 0.15 Å` in XY, `0 Å` in Z for PO4 COM),
-  - the stage-7 failure is the explicit backbone oxygen coordinates: `C-O` distances grow from about `1.23 Å` to tens of Å.
-- Root cause confirmed:
-  - `inject_backbone_nodes(...)` writes the native Upside 3-site backbone machinery for `N/CA/C`,
-  - explicit runtime `O` atoms are present in the stage file but receive no direct restoring bond/angle geometry once `fix_rigid` is removed.
+- Moving the source file out of `parameters/dryMARTINI/` requires a write outside the example directory, so the file move may need escalated permission.
 
 ## Review
-- Kept the current AA-backbone workflow design and patched only the stage-file injector in `py/martini_prepare_system_lib.py`.
-- Added explicit local geometry for runtime carbonyl oxygens after the native 3-site backbone nodes are injected:
-  - one `C-O` bond per residue,
-  - one `CA-C-O` angle per residue,
-  - one `O-C-N(next)` angle for each nonterminal residue.
-- Verification on a regenerated production handoff file showed:
-  - original `outputs/martini_test_1rkl_aabb/checkpoints/1rkl.stage_7.0.up`:
-    - `C-O` max = `102.05 Å`,
-    - frame-10 `C-O` max = `3.26 Å`,
-    - relative `PO4`/protein drift = `4.77 Å` XY, `4.16 Å` Z,
-    - absolute `PO4` drift = `0.31 Å` XY,
-  - fixed smoke artifact `outputs/martini_test_1rkl_aabb_oxygen_fix_smoke/checkpoints/1rkl.stage_7.0.handoff.up` after `1000` MD steps:
-    - `C-O` range remained `0.96–1.58 Å`,
-    - last-frame `C-O` mean = `1.20 Å`,
-    - relative `PO4`/protein drift = `0.46 Å` XY, `0.26 Å` Z,
-    - absolute `PO4` drift = `0.04 Å` XY.
+- Moved the default bilayer asset into `example/16.MARTINI/pdb/DOPC.pdb`.
+- Updated both user-facing shell entry points to default `BILAYER_PDB` to `pdb/DOPC.pdb`.
+- Updated `readme.md` to state that the bilayer structure should be generated from CHARMM-GUI and stored locally in the example.
+- Verification:
+  - `ls -la pdb/DOPC.pdb`
+  - confirmed `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/DOPC.pdb` no longer exists after the move
+  - `bash -n run_sim_1rkl.sh`
+  - `bash -n run_sim_1rkl_outlipid.sh`
