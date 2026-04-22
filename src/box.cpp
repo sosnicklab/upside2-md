@@ -1,24 +1,10 @@
-// box.cpp - Simulation box management for periodic boundaries and NPT/NVT ensembles
-//
-// H5 configuration expected at: /input/barostat (group)
-//   attrs:
-//     enable            (int, 0/1)
-//     target_p_xy       (float)   target lateral pressure (UP units)
-//     target_p_z        (float)   target normal pressure  (UP units)
-//     tau_p             (float)   barostat time constant (time units)
-//     interval          (int)     apply every N integrator steps
-//     compressibility_xy(float)   in-plane compressibility (1/pressure)
-//     compressibility_z (float)   normal compressibility   (1/pressure)
-//     semi_isotropic    (int)     1 = scale x,y together; z separately
-//     debug             (int)     enable prints alongside existing output
-
 #include "box.h"
-#include <cmath>
-#include <cstdio>
 #include <algorithm>
 #include <atomic>
-#include <mutex>
+#include <cmath>
+#include <cstdio>
 #include <map>
+#include <mutex>
 #include <vector>
 
 using namespace h5;
@@ -28,11 +14,9 @@ std::vector<int> get_fixed_atoms(const DerivEngine& engine);
 std::vector<int> get_z_fixed_atoms(const DerivEngine& engine);
 }
 
-// Local helper to check if an HDF5 attribute exists
-// (Mirrors the function in martini.cpp)
 static inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* attr_name) {
     hid_t obj_id = H5Oopen(loc_id, obj_name, H5P_DEFAULT);
-    if (obj_id < 0) return false;
+    if(obj_id < 0) return false;
     htri_t exists = H5Aexists(obj_id, attr_name);
     H5Oclose(obj_id);
     return exists > 0;
@@ -40,11 +24,8 @@ static inline bool attribute_exists(hid_t loc_id, const char* obj_name, const ch
 
 namespace simulation_box {
 
-// ===================== NPT BAROSTAT =====================
-
 namespace npt {
 
-// Global registry mapping DerivEngine* to BarostatState
 static std::mutex g_baro_mutex;
 static std::map<DerivEngine*, BarostatState> g_baro_state;
 static std::atomic<NodeBoxUpdater> g_node_box_updater{nullptr};
@@ -56,7 +37,6 @@ static inline float pressure_rel_deviation(float value, float target) {
     return fabsf(value - target) / denom;
 }
 
-// Attempt to read barostat settings from H5 config
 static BarostatSettings read_barostat_settings(hid_t root) {
     BarostatSettings s;
     try {
@@ -87,7 +67,6 @@ static BarostatSettings read_barostat_settings(hid_t root) {
     return s;
 }
 
-// Scale positions for semi-isotropic barostat
 static void apply_semi_isotropic_scaling(DerivEngine& engine, float scale_xy, float scale_z) {
     VecArray pos = engine.pos->output;
     int n_atom = engine.pos->n_elem;
@@ -113,12 +92,9 @@ static void apply_semi_isotropic_scaling(DerivEngine& engine, float scale_xy, fl
             pos(2, i) *= scale_z;
         }
     }
-    
-    // Also update node box dimensions
     update_node_boxes(engine, scale_xy, scale_z);
 }
 
-// Estimate pressure tensor from kinetic + virial contributions
 static void estimate_pressure_tensor(const VecArray& mom,
                                      const VecArray& pos,
                                      const VecArray& sens,
@@ -128,9 +104,7 @@ static void estimate_pressure_tensor(const VecArray& mom,
                                      const std::vector<unsigned char>* fixed_mask,
                                      const std::vector<unsigned char>* z_fixed_mask,
                                      float& pxx, float& pyy, float& pzz) {
-    // Kinetic contribution: sum_i (p_i^2 / m_i)
     double kx = 0.0, ky = 0.0, kz = 0.0;
-    // Virial contribution: -sum_i (r_i . F_i) where F = -deriv
     double wxx = 0.0, wyy = 0.0, wzz = 0.0;
 
     for(int i = 0; i < n_atom; ++i) {
@@ -146,10 +120,9 @@ static void estimate_pressure_tensor(const VecArray& mom,
         ky += double(p.y() * p.y()) / m;
         if(!is_z_fixed) kz += double(p.z() * p.z()) / m;
 
-        // Virial: r . (-deriv) = -r . sens (sens is gradient)
         float3 r = load_vec<3>(pos, i);
         float3 F = load_vec<3>(sens, i);
-        F = make_vec3(-F.x(), -F.y(), -F.z()); // Force = -gradient
+        F = make_vec3(-F.x(), -F.y(), -F.z());
 
         wxx += double(r.x() * F.x());
         wyy += double(r.y() * F.y());
@@ -161,7 +134,6 @@ static void estimate_pressure_tensor(const VecArray& mom,
     pzz = float((kz + wzz) / V);
 }
 
-// Apply Berendsen barostat scaling
 static void apply_berendsen_barostat(BarostatState& st,
                                      float pxy_inst, float pz_inst,
                                      float delta_t,
@@ -182,7 +154,6 @@ static void apply_berendsen_barostat(BarostatState& st,
             factor_z = 1.f + beta_z * (delta_t / s.tau_p) * (pz_inst - s.target_p_z);
         }
 
-        // Clamp scale factors
         factor_xy = std::max(0.98f, std::min(1.02f, factor_xy));
         factor_z = std::max(0.98f, std::min(1.02f, factor_z));
 
@@ -192,7 +163,6 @@ static void apply_berendsen_barostat(BarostatState& st,
         scale_xy = std::max(0.995f, std::min(1.005f, scale_xy));
         scale_z = std::max(0.995f, std::min(1.005f, scale_z));
 
-        // Monotonic shrink guard
         if(pxy_inst < s.target_p_xy) scale_xy = std::min(scale_xy, 1.0f);
         if(pz_inst < s.target_p_z) scale_z = std::min(scale_z, 1.0f);
     } else {
@@ -210,7 +180,6 @@ static void apply_berendsen_barostat(BarostatState& st,
         scale_z = sc;
     }
 
-    // First application policy
     if(!st.has_applied_once && s.prefer_shrink_first) {
         scale_xy = std::min(scale_xy, 1.0f);
         scale_z = std::min(scale_z, 1.0f);
@@ -223,7 +192,6 @@ void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
     
     float bx = 0.f, by = 0.f, bz = 0.f;
     try {
-        // Try to get box dimensions from various sources
         if(h5_exists(config_root, "/input/potential/periodic_boundary_potential")) {
             auto grp = open_group(config_root, "/input/potential/periodic_boundary_potential");
             bx = read_attribute<float>(grp.get(), ".", "x_len");
@@ -246,7 +214,6 @@ void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
     st.box_y = by;
     st.box_z = bz;
     
-    // Load masses if available
     try {
         if(h5_exists(config_root, "/input/mass")) {
             st.masses.clear();
@@ -284,12 +251,10 @@ void maybe_apply_barostat(DerivEngine& engine,
     if(s.interval <= 0) return;
     if(round_num == 0 || (round_num % s.interval) != 0) return;
     
-    // Determine current box
     float bx = st.box_x, by = st.box_y, bz = st.box_z;
     if(bx == 0.f || by == 0.f || bz == 0.f) return;
     float V = volume_xyz(bx, by, bz);
-    
-    // Compute forces for virial
+
     engine.compute(PotentialAndDerivMode);
     VecArray pos = engine.pos->output;
     VecArray sens = engine.pos->sens;
@@ -323,20 +288,14 @@ void maybe_apply_barostat(DerivEngine& engine,
         return;
     }
 
-    // Store for logging
     st.last_pxy_inst = pxy_inst;
     st.last_pz_inst = pz_inst;
 
-    // Calculate time step
     float delta_t = dt * inner_step;
-
-    // Apply appropriate barostat algorithm
     float scale_xy = 1.0f;
     float scale_z = 1.0f;
-
     apply_berendsen_barostat(st, pxy_inst, pz_inst, delta_t, scale_xy, scale_z);
-    
-    // Check for equilibrium
+
     bool at_equilibrium = false;
     if(st.has_applied_once) {
         float pxy_deviation = pressure_rel_deviation(pxy_inst, s.target_p_xy);
@@ -386,33 +345,12 @@ bool is_enabled(const DerivEngine& engine) {
     return false;
 }
 
-// Placeholder for updating node boxes - will be implemented in martini.cpp
 void update_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
     NodeBoxUpdater updater = g_node_box_updater.load(std::memory_order_relaxed);
     if(updater) updater(engine, scale_xy, scale_z);
 }
 
-void get_pressure(const DerivEngine& engine, float& pxy, float& pz) {
-    std::lock_guard<std::mutex> lk(g_baro_mutex);
-    auto it = g_baro_state.find(const_cast<DerivEngine*>(&engine));
-    if(it != g_baro_state.end() && it->second.settings.enabled) {
-        pxy = it->second.last_pxy_inst;
-        pz = it->second.last_pz_inst;
-    } else {
-        pxy = 0.0f;
-        pz = 0.0f;
-    }
-}
-
-float get_volume(const DerivEngine& engine) {
-    float bx, by, bz;
-    get_current_box(engine, bx, by, bz);
-    return bx * by * bz;
-}
-
 } // namespace npt
-
-// ===================== EWALD SUMMATION =====================
 namespace ewald {
 
 static std::mutex g_ewald_mutex;
@@ -426,7 +364,7 @@ static TrigSplineTable g_trig_table;
 
 static inline bool attribute_exists_ewald(hid_t loc_id, const char* obj_name, const char* attr_name) {
     hid_t obj_id = H5Oopen(loc_id, obj_name, H5P_DEFAULT);
-    if (obj_id < 0) return false;
+    if(obj_id < 0) return false;
     htri_t exists = H5Aexists(obj_id, attr_name);
     H5Oclose(obj_id);
     return exists > 0;
@@ -451,7 +389,6 @@ static void ensure_trig_table(int n_grid) {
     }
 }
 
-// Periodic cardinal cubic B-spline interpolation for sin/cos over [0, 2pi)
 static inline void sincos_cardinal_bspline(float theta, float& c_out, float& s_out) {
     const int n = g_trig_table.n_grid;
     const float inv_twopi = 1.0f / (2.0f * float(M_PI));
@@ -464,7 +401,6 @@ static inline void sincos_cardinal_bspline(float theta, float& c_out, float& s_o
     float t2 = t * t;
     float t3 = t2 * t;
     float om3 = om * om * om;
-    // Cardinal cubic B-spline basis
     float w0 = om3 / 6.0f;
     float w1 = (3.0f * t3 - 6.0f * t2 + 4.0f) / 6.0f;
     float w2 = (-3.0f * t3 + 3.0f * t2 + 3.0f * t + 1.0f) / 6.0f;
@@ -481,7 +417,6 @@ static inline void sincos_cardinal_bspline(float theta, float& c_out, float& s_o
             w2 * g_trig_table.sin_table[i2] + w3 * g_trig_table.sin_table[i3];
 }
 
-// Build k-vectors and prefactors for current box dimensions
 static void build_kvectors(EwaldState& st) {
     auto& s = st.settings;
     float bx = st.box_x, by = st.box_y, bz = st.box_z;
@@ -519,7 +454,6 @@ static void build_kvectors(EwaldState& st) {
         }
     }
 
-    // Self-energy correction: -alpha/sqrt(pi) * sum_i q_i^2
     double q2_sum = 0.0;
     for(int i = 0; i < st.n_atom; ++i) {
         q2_sum += double(st.charges[i]) * double(st.charges[i]);
@@ -550,7 +484,6 @@ void initialize_ewald(hid_t config_root, DerivEngine& engine) {
         return;
     }
 
-    // Read box dimensions
     float bx = 0.f, by = 0.f, bz = 0.f;
     try {
         if(h5_exists(config_root, "/input/potential/martini_potential")) {
@@ -563,7 +496,6 @@ void initialize_ewald(hid_t config_root, DerivEngine& engine) {
         bx = by = bz = 0.f;
     }
 
-    // Read per-atom charges
     int n_atom = engine.pos->n_elem;
     std::vector<float> charges(n_atom, 0.f);
     try {
@@ -598,7 +530,6 @@ void update_kvectors(DerivEngine& engine) {
     auto& st = it->second;
     if(!st.settings.enabled) return;
 
-    // Sync box from NPT barostat
     float bx, by, bz;
     npt::get_current_box(engine, bx, by, bz);
     if(bx > 0.f && by > 0.f && bz > 0.f) {
@@ -622,11 +553,7 @@ void compute_ewald_reciprocal(DerivEngine& engine) {
     VecArray pos = engine.pos->output;
     VecArray sens = engine.pos->sens;
 
-    // For each k-vector, compute structure factor S(k) = sum_i q_i * exp(i k.r_i)
-    // Energy = coulomb_k * sum_k prefactor * |S(k)|^2  +  self_energy
     double E_recip = 0.0;
-
-    // Temporary per-atom force accumulators
     std::vector<double> fx(n_atom, 0.0), fy(n_atom, 0.0), fz(n_atom, 0.0);
     std::vector<float> cos_cache(n_atom, 0.0f), sin_cache(n_atom, 0.0f);
     const bool use_bspline = st.settings.use_cardinal_bspline;
@@ -635,7 +562,6 @@ void compute_ewald_reciprocal(DerivEngine& engine) {
         float gx = st.kx[m], gy = st.ky[m], gz = st.kz[m];
         float pref = st.k_prefactor[m];
 
-        // Compute structure factor components
         double S_re = 0.0, S_im = 0.0;
         for(int i = 0; i < n_atom; ++i) {
             float qi = st.charges[i];
@@ -657,29 +583,18 @@ void compute_ewald_reciprocal(DerivEngine& engine) {
         double S2 = S_re * S_re + S_im * S_im;
         E_recip += pref * S2;
 
-        // Force on atom i: F_i = -dE/dr_i
-        // dE/dk = 2 * pref * (S_re * d(S_re)/dr_i + S_im * d(S_im)/dr_i)
-        // d(S_re)/dr_i = -q_i * sin(k.r_i) * k
-        // d(S_im)/dr_i =  q_i * cos(k.r_i) * k
-        // => dE/dr_i = 2 * pref * q_i * (S_im * cos(k.r_i) - S_re * sin(k.r_i)) * k
-        // Force = -dE/dr_i
         for(int i = 0; i < n_atom; ++i) {
             float qi = st.charges[i];
             if(qi == 0.f) continue;
             float cos_kr = cos_cache[i];
             float sin_kr = sin_cache[i];
-            // gradient component = 2 * pref * qi * (S_im*cos - S_re*sin)
             double grad_scalar = 2.0 * pref * qi * (S_im * cos_kr - S_re * sin_kr);
-            // This is dE/d(component), force = -gradient
-            // But sens stores gradient (not force), so we ADD grad_scalar * k
             fx[i] += grad_scalar * gx;
             fy[i] += grad_scalar * gy;
             fz[i] += grad_scalar * gz;
         }
     }
 
-    // Scale by coulomb_k and add to sens (gradient accumulator)
-    // sens stores -force = gradient of potential
     for(int i = 0; i < n_atom; ++i) {
         sens(0, i) += float(coulomb_k * fx[i]);
         sens(1, i) += float(coulomb_k * fy[i]);
@@ -696,13 +611,6 @@ bool is_enabled(const DerivEngine& engine) {
     std::lock_guard<std::mutex> lk(g_ewald_mutex);
     auto it = g_ewald_state.find(const_cast<DerivEngine*>(&engine));
     return it != g_ewald_state.end() && it->second.settings.enabled;
-}
-
-float get_reciprocal_energy(const DerivEngine& engine) {
-    std::lock_guard<std::mutex> lk(g_ewald_mutex);
-    auto it = g_ewald_state.find(const_cast<DerivEngine*>(&engine));
-    if(it != g_ewald_state.end()) return it->second.reciprocal_energy;
-    return 0.f;
 }
 
 } // namespace ewald

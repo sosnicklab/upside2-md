@@ -1,4 +1,64 @@
 
+## 2026-04-22 Runtime Legacy-Style Cleanup
+
+### Project Goal
+- Restyle `src/box.cpp`, `src/box.h`, `src/martini.cpp`, and `src/main.cpp` so they match the older `src/` coding style more closely and stop reading like recent AI-generated code, while preserving the active MARTINI workflow.
+
+### Architecture & Key Decisions
+- Preserve the current Example 16 MARTINI runtime behavior:
+  - `--minimize`
+  - `--duration-steps`
+  - hybrid / stage / mass / fix-rigid / NPT / Ewald registration and runtime hooks
+  - split Upside vs MARTINI potential reporting
+  - `/output/box` logging
+- Trim clearly unused AI-added surface in `src/main.cpp` rather than preserving it for compatibility:
+  - remove `nvtc`
+  - remove `--max-force`
+  - remove `--martini-hold-backbone`
+  - remove the extra pressure / volume / Ewald reciprocal / SC-env diagnostic loggers
+- Let the style cleanup drive small declaration cleanup:
+  - remove now-unused helper APIs from `src/box.h`, `src/box.cpp`, `src/main.h`, and `src/martini.cpp`
+  - keep active function names and data flow unchanged where the workflow still depends on them
+- Prefer repo-local `src/` style:
+  - shorter comments
+  - fewer banner separators
+  - simpler include / namespace / helper layout
+  - avoid over-explaining obvious code
+
+### Execution Phases
+- [x] Update the root task-tracking files for this cleanup and record the intended compatibility boundary.
+- [x] Rewrite `src/main.cpp` toward the master-era `src/` style while preserving the active MARTINI runtime paths and removing the unused AI-added CLI/logger surface.
+- [x] Rewrite `src/box.h` and `src/box.cpp` toward the existing `src/` style and delete accessor APIs that become dead after the `main.cpp` cleanup.
+- [x] Rewrite `src/martini.cpp` and `src/main.h` toward the existing `src/` style and delete dead helper declarations/definitions left behind by the `main.cpp` cleanup.
+- [x] Rebuild, run targeted CLI checks, run a reduced Example 16 verification, and record the review notes and findings.
+
+### Known Errors / Blockers
+- None so far.
+
+### Review
+- Reworked [src/main.cpp](/Users/yinhan/Documents/upside2-md/src/main.cpp:1) toward the older `src/` shape:
+  - removed the ad hoc local declaration blocks for `box` / `fix_rigid`,
+  - kept the active MARTINI initialization and runtime hooks,
+  - removed the unused AI-added `nvtc`, `--max-force`, `--martini-hold-backbone`, and the extra diagnostic loggers,
+  - preserved `--minimize`, `--duration-steps`, split Upside/MARTINI potential reporting, and `/output/box`.
+- Simplified [src/main.h](/Users/yinhan/Documents/upside2-md/src/main.h:1) into a small shared declaration header for the active cross-file MARTINI hooks, including the minimizer entry point.
+- Restyled [src/box.h](/Users/yinhan/Documents/upside2-md/src/box.h:1) and [src/box.cpp](/Users/yinhan/Documents/upside2-md/src/box.cpp:1):
+  - removed banner-heavy comments,
+  - collapsed the settings/state declarations into shorter older-style structs,
+  - deleted the dead pressure / volume / reciprocal-energy accessor APIs left behind by the logger cleanup.
+- Trimmed dead helper surface from [src/martini.cpp](/Users/yinhan/Documents/upside2-md/src/martini.cpp:1):
+  - removed the unused MARTINI-backbone-hold registration helper,
+  - removed the unused SC-environment logging helper functions and their cache-only state,
+  - reduced top-of-file comment and include noise without changing the active hybrid/fix-rigid/mass/stage runtime behavior.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj`
+  - `source .venv/bin/activate && source source.sh && obj/upside --help`
+  - reduced workflow run:
+    - `source .venv/bin/activate && source source.sh && RUN_DIR=/tmp/runtime_legacy_style_verify MIN_60_MAX_ITER=1 MIN_61_MAX_ITER=1 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl.sh`
+  - direct HDF5 check:
+    - stage `6.2` still writes `/output/box`,
+    - stages `6.2` and `7.0` no longer expose `/output/pressure`, `/output/volume`, `/output/ewald_reciprocal_energy`, or `output/diagnostics/sc_env_energy_total`.
+
 ## 2026-04-22 MARTINI Python Legacy-Style Cleanup
 
 ### Project Goal

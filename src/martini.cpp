@@ -1,31 +1,26 @@
 #include "deriv_engine.h"
-#include "timing.h"
-#include "state_logger.h"
-#include <mutex>
+#include "box.h"
 #include "spline.h"
+#include "state_logger.h"
+#include "timing.h"
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <complex>
 #include <iostream>
 #include <H5Apublic.h> // for H5Aexists
-#include <cmath> // For pow, cosf, sinf, acosf
-#include <cctype>
-#include <set> // For std::set
-#include <complex> // For complex numbers in PME
-#include <vector> // For PME grid operations
-#include <algorithm> // For PME algorithms
-#include <unordered_map>
-#include <memory>
 #include <limits>
-#include "box.h" // For PBC minimum_image function
+#include <memory>
+#include <mutex>
+#include <set>
+#include <unordered_map>
+#include <vector>
 
 using namespace h5;
 using namespace std;
 
-// ===================== FIX RIGID FUNCTIONALITY =====================
-// Implementation of fix rigid constraints for both minimization and MD
-// This allows certain atoms to be held fixed at their initial positions
-
 namespace martini_fix_rigid {
 
-// Global registry for fix rigid constraints per engine
 static std::mutex g_fix_rigid_mutex;
 static std::map<DerivEngine*, std::vector<int>> g_user_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_user_z_fixed_atoms;
@@ -96,7 +91,6 @@ static void merge_z_fixed_atoms(DerivEngine& engine, const std::vector<int>& ext
     rebuild_fixed_atoms(engine);
 }
 
-// Read fix rigid settings from H5 configuration
 FixRigidSettings read_fix_rigid_settings(hid_t root) {
     FixRigidSettings out;
     try {
@@ -104,7 +98,6 @@ FixRigidSettings read_fix_rigid_settings(hid_t root) {
             auto grp = open_group(root, "/input/fix_rigid");
             int enable = read_attribute<int>(grp.get(), ".", "enable", 0);
             if(enable) {
-                // Read atom indices to fix
                 if(h5_exists(grp.get(), "atom_indices")) {
                     traverse_dset<1,int>(grp.get(), "atom_indices", [&](size_t i, int atom_idx) {
                         out.fixed_atoms.push_back(atom_idx);
@@ -123,41 +116,11 @@ FixRigidSettings read_fix_rigid_settings(hid_t root) {
     return out;
 }
 
-std::vector<int> read_martini_backbone_hold(hid_t root, const std::string& atom_role_name) {
-    std::vector<int> fixed_atoms;
-    try {
-        if(atom_role_name.empty()) return fixed_atoms;
-        if(!h5_exists(root, "/input/atom_roles")) {
-            return fixed_atoms;
-        }
-        traverse_string_dset<1>(root, "/input/atom_roles", [&](size_t i, const std::string& name) {
-            if(name == atom_role_name) {
-                fixed_atoms.push_back(static_cast<int>(i));
-            }
-        });
-    } catch(...) {
-        return std::vector<int>();
-    }
-    return fixed_atoms;
-}
-
-// Register fix rigid constraints for an engine
 void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
     auto settings = read_fix_rigid_settings(config_root);
     merge_fixed_atoms(engine, settings.fixed_atoms);
     merge_z_fixed_atoms(engine, settings.z_fixed_atoms);
-}
-
-void register_fix_rigid_backbone_for_engine(hid_t config_root, DerivEngine& engine, const std::string& atom_name) {
-    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
-    if(h5_exists(config_root, "/input/potential/martini_potential")) {
-        if(!h5_exists(config_root, "/input/atom_roles")) {
-            throw string("MARTINI backbone hold requires /input/atom_roles");
-        }
-    }
-    auto fixed_atoms = read_martini_backbone_hold(config_root, atom_name);
-    merge_fixed_atoms(engine, fixed_atoms);
 }
 
 void set_dynamic_fixed_atoms(DerivEngine& engine, const std::vector<int>& atom_indices) {
@@ -188,7 +151,6 @@ void clear_dynamic_z_fixed_atoms(DerivEngine& engine) {
     rebuild_fixed_atoms(engine);
 }
 
-// Apply fix rigid constraints during minimization
 void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv) {
     (void)pos;
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
@@ -197,7 +159,6 @@ void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray de
         const auto& fixed_atoms = it->second;
         for(int atom_idx : fixed_atoms) {
             if(atom_idx >= 0 && atom_idx < engine.pos->n_atom) {
-                // Zero out forces on fixed atoms
                 deriv(0, atom_idx) = 0.0f;
                 deriv(1, atom_idx) = 0.0f;
                 deriv(2, atom_idx) = 0.0f;
@@ -215,7 +176,6 @@ void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray de
     }
 }
 
-// Apply fix rigid constraints during MD (zero forces and velocities)
 void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom) {
     (void)pos;
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
@@ -224,12 +184,10 @@ void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecAr
         const auto& fixed_atoms = it->second;
         for(int atom_idx : fixed_atoms) {
             if(atom_idx >= 0 && atom_idx < engine.pos->n_atom) {
-                // Zero out forces on fixed atoms
                 deriv(0, atom_idx) = 0.0f;
                 deriv(1, atom_idx) = 0.0f;
                 deriv(2, atom_idx) = 0.0f;
-                
-                // Zero out velocities on fixed atoms
+
                 if(mom.row_width > 0) {
                     mom(0, atom_idx) = 0.0f;
                     mom(1, atom_idx) = 0.0f;
@@ -252,7 +210,6 @@ void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecAr
     }
 }
 
-// Check if an atom is fixed
 bool is_atom_fixed(const DerivEngine& engine, int atom_idx) {
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
     auto it = g_fixed_atoms.find(const_cast<DerivEngine*>(&engine));
@@ -263,7 +220,6 @@ bool is_atom_fixed(const DerivEngine& engine, int atom_idx) {
     return false;
 }
 
-// Get list of fixed atoms for an engine
 std::vector<int> get_fixed_atoms(const DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
     auto it = g_fixed_atoms.find(const_cast<DerivEngine*>(&engine));
@@ -338,10 +294,6 @@ struct HybridRuntimeState {
     float sc_env_energy_total = 0.f;
     float sc_env_energy_lj = 0.f;
     float sc_env_energy_coul = 0.f;
-    float sc_env_last_logged_total = 0.f;
-    float sc_env_last_logged_lj = 0.f;
-    float sc_env_last_logged_coul = 0.f;
-    uint64_t sc_env_log_counter = 0;
     float nonprotein_hs_force_cap = 100.0f;
     float nonprotein_hs_potential_cap = 5000.0f;
     std::vector<std::array<float,3>> prev_bb_pos;
@@ -972,10 +924,6 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->sc_env_energy_total = 0.f;
         st->sc_env_energy_lj = 0.f;
         st->sc_env_energy_coul = 0.f;
-        st->sc_env_last_logged_total = 0.f;
-        st->sc_env_last_logged_lj = 0.f;
-        st->sc_env_last_logged_coul = 0.f;
-        st->sc_env_log_counter = 0;
         st->sc_env_transition_step = 0;
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
@@ -990,10 +938,6 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->sc_env_energy_total = 0.f;
         st->sc_env_energy_lj = 0.f;
         st->sc_env_energy_coul = 0.f;
-        st->sc_env_last_logged_total = 0.f;
-        st->sc_env_last_logged_lj = 0.f;
-        st->sc_env_last_logged_coul = 0.f;
-        st->sc_env_log_counter = 0;
         st->sc_env_transition_step = 0;
     }
     if(st->preprod_rigid && !st->active) {
@@ -1092,36 +1036,6 @@ bool is_hybrid_active(const DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
     return it != g_hybrid_state.end() && it->second && it->second->active;
-}
-
-bool is_sc_env_energy_dump_enabled(const DerivEngine& engine) {
-    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
-    auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
-    if(it == g_hybrid_state.end() || !it->second) return false;
-    const auto& st = it->second;
-    return st->enabled && st->sc_env_energy_dump_enabled;
-}
-
-bool sample_sc_env_energy_for_logging(DerivEngine& engine, float& total, float& lj, float& coul) {
-    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
-    auto it = g_hybrid_state.find(&engine);
-    if(it == g_hybrid_state.end() || !it->second) return false;
-    auto& st = it->second;
-    if(!st->enabled || !st->sc_env_energy_dump_enabled) return false;
-
-    st->sc_env_log_counter += 1;
-    bool emit_new = (st->sc_env_energy_dump_stride <= 1) ||
-                    ((st->sc_env_log_counter - 1) % static_cast<uint64_t>(st->sc_env_energy_dump_stride) == 0u);
-    if(emit_new) {
-        st->sc_env_last_logged_total = st->sc_env_energy_total;
-        st->sc_env_last_logged_lj = st->sc_env_energy_lj;
-        st->sc_env_last_logged_coul = st->sc_env_energy_coul;
-    }
-
-    total = st->sc_env_last_logged_total;
-    lj = st->sc_env_last_logged_lj;
-    coul = st->sc_env_last_logged_coul;
-    return true;
 }
 
 static float compute_sc_force_uncap_mix(const HybridRuntimeState& st) {

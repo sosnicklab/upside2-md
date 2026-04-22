@@ -1,5 +1,55 @@
 # Progress Log
 
+## 2026-04-22 (Runtime Legacy-Style Cleanup)
+- Re-read the root `plan.md`, `findings.md`, and `progress.md` before editing, then opened the current `src/main.cpp`, `src/main.h`, `src/box.cpp`, `src/box.h`, and `src/martini.cpp` against representative older `src/` files plus `upside2-md-master/src/main.cpp`.
+- Confirmed the key split for this cleanup:
+  - keep the active MARTINI runtime additions in `src/main.cpp`:
+    - `--minimize`
+    - `--duration-steps`
+    - NPT / Ewald / mass / fix-rigid / stage / hybrid initialization
+    - split `potential` vs `martini_potential`
+    - `/output/box`
+  - remove the clearly unused AI-added surface:
+    - `nvtc`
+    - `--max-force`
+    - `--martini-hold-backbone`
+    - pressure / volume / Ewald reciprocal / SC-env diagnostic loggers.
+- Patched the shared declarations first:
+  - rewrote `src/main.h` as a small active-hook header with:
+    - `martini_fix_rigid`
+    - `martini_stage_params`
+    - `martini_hybrid`
+    - `martini_masses`
+    - `martini_run_minimization(...)`
+- Reworked `src/main.cpp` toward the older `src/` style:
+  - removed the local namespace-forward-declaration blocks,
+  - simplified include layout,
+  - dropped the unused CLI switches and the dead logger blocks,
+  - kept the active initialization, minimization, split-potential logging, and MD runtime hooks.
+- Reworked `src/box.h` and `src/box.cpp`:
+  - removed banner-style comments,
+  - converted the NPT/Ewald settings structs to shorter constructor-based declarations,
+  - removed `get_pressure(...)`, `get_volume(...)`, and `get_reciprocal_energy(...)`,
+  - left the active Berendsen NPT and Ewald compute/update path intact.
+- Reworked `src/martini.cpp`:
+  - trimmed top-of-file comment noise and simplified include ordering,
+  - removed `read_martini_backbone_hold(...)`,
+  - removed `register_fix_rigid_backbone_for_engine(...)`,
+  - removed the unused SC-env logging helper functions and their cache-only state fields.
+- Verification completed:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj`
+  - `source .venv/bin/activate && source source.sh && obj/upside --help`
+  - reduced fresh workflow run in `/tmp/runtime_legacy_style_verify`
+  - direct HDF5 output checks on:
+    - `/tmp/runtime_legacy_style_verify/checkpoints/1rkl.stage_6.2.up`
+    - `/tmp/runtime_legacy_style_verify/checkpoints/1rkl.stage_7.0.up`
+- Observed result:
+  - rebuild passed with only pre-existing warnings;
+  - fresh CLI help retained `--minimize` and `--duration-steps`, and removed `nvtc`, `--max-force`, and `--martini-hold-backbone`;
+  - the reduced Example 16 workflow completed through stage `7.0`;
+  - stage `6.2` still writes `/output/box`;
+  - the removed diagnostic arrays are absent from the fresh output.
+
 ## 2026-04-22 (MARTINI Python Legacy-Style Cleanup)
 - Re-read the root `plan.md`, `progress.md`, and `findings.md` before editing to align this task with the current workflow log and avoid contradicting earlier MARTINI decisions.
 - Re-audited the three target files against representative older `py/` scripts:

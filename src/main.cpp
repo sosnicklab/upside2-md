@@ -1,65 +1,28 @@
 #include "main.h"
+#include "box.h"
 #include "monte_carlo_sampler.h"
 #include "h5_support.h"
-#include <tclap/CmdLine.h>
 #include "deriv_engine.h"
-#include "timing.h"
-#include "thermostat.h"
-#include <chrono>
-#include <algorithm>
-#include <set>
 #include "random.h"
-#include <random>
 #include "state_logger.h"
-#include <csignal>
-#include <map>
-#include <sstream>
-#include <fstream>
-#include <iostream>
-#include <cstdlib>
-#include <array>
-#include <iomanip>
+#include "thermostat.h"
+#include "timing.h"
+#include <tclap/CmdLine.h>
+#include <algorithm>
+#include <chrono>
 #include <cmath>
-
-
-#include "box.h"  // Simulation box PBC and NPT barostat
+#include <csignal>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <map>
+#include <random>
+#include <set>
+#include <sstream>
 
 using namespace std;
 using namespace h5;
-
-// ---- NPT barostat hooks (implemented in box.cpp) ----
-namespace simulation_box {
-    namespace npt {
-        void register_barostat_for_engine(hid_t config_root, DerivEngine& engine);
-        void maybe_apply_barostat(DerivEngine& engine,
-                                  const VecArray& mom,
-                                  int n_atom,
-                                  uint64_t round_num,
-                                  float dt,
-                                  int inner_step,
-                                  int verbose,
-                                  bool print_now);
-        void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz);
-        void get_pressure(const DerivEngine& engine, float& pxy, float& pz);
-        float get_volume(const DerivEngine& engine);
-        bool is_enabled(const DerivEngine& engine);
-    }
-    namespace ewald {
-        void initialize_ewald(hid_t config_root, DerivEngine& engine);
-        void update_kvectors(DerivEngine& engine);
-        void compute_ewald_reciprocal(DerivEngine& engine);
-        bool is_enabled(const DerivEngine& engine);
-        float get_reciprocal_energy(const DerivEngine& engine);
-    }
-}
-
-// ---- Fix Rigid hooks (implemented in martini.cpp) ----
-namespace martini_fix_rigid {
-    void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine);
-    void register_fix_rigid_backbone_for_engine(hid_t config_root, DerivEngine& engine, const std::string& atom_name);
-    void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv);
-    void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom);
-}
 
 // If any stop signal is received (currently we trap sigterm and sigint)
 // we increment any_stop_signal_received.
@@ -152,8 +115,8 @@ struct System {
     vector<int> rg_backbone_atom_indices;
     System():
         round_num(0),
-        cached_upside_potential(0.0),
-        cached_martini_potential(0.0),
+        cached_upside_potential(0.),
+        cached_martini_potential(0.),
         cached_potential_round(0),
         has_cached_potential(false) {}
 
@@ -665,13 +628,11 @@ try {
             "Maximum amount of curvature radius adjustment (default 0.05)", 
             false, 0.05, "float", cmd);
 
-    ValueArg<string> integrator_arg("", "integrator", 
-            "Use this option to control which Integrator are used.  Available: v (Verlet), mv (multi-step Verlet), nvtc (NVT-corrected). "
+    ValueArg<string> integrator_arg("", "integrator",
+            "Use this option to control which Integrator are used.  Available: v (Verlet), mv (multi-step Verlet). "
             "Default is Verlet.",
-            false, "", "v, mv, nvtc", cmd);
+            false, "", "v, mv", cmd);
     ValueArg<int> inner_step_arg("", "inner-step", "inner step for the integrator", false, 3, "int", cmd);
-    ValueArg<double> max_force_arg("", "max-force", "Clip forces to this max magnitude per-particle (0 disables; used by nvtc)", false, 0.0, "float", cmd);
-    // Minimization controls (ported from prior branch)
     SwitchArg enable_min_arg("", "minimize", "Run an energy minimization before MD", cmd, false);
     ValueArg<int> min_max_iter_arg("", "min-max-iter", "Minimization max iterations", false, 1000, "int", cmd);
     ValueArg<double> min_energy_tol_arg("", "min-energy-tol", "Minimization energy tolerance", false, 1e-6, "float", cmd);
@@ -709,9 +670,6 @@ try {
             " this is usually helpful when the simulation ends due to the wall time."
             " To restart the trajectory, make sure to copy the end momentum of last run to input.mom (similar to the pos treatment when restarting):"
             " check examples for continue the simulation",
-            cmd, false);
-    SwitchArg martini_hold_backbone_arg("", "martini-hold-backbone",
-            "hold MARTINI protein backbone (BB) beads rigid (requires /input/atom_names)",
             cmd, false);
     ValueArg<string> set_param_arg("", "set-param", "Developer use only", false, "", "param_arg", cmd);
     UnlabeledMultiArg<string> config_args("config_files","configuration .h5 files", true, "h5_files");
@@ -948,20 +906,11 @@ try {
 
             auto potential_group = open_group(sys->config.get(), "/input/potential");
             sys->engine = initialize_engine_from_hdf5(sys->n_atom, potential_group.get());
-            // Register NPT barostat for this engine (reads settings from H5)
             simulation_box::npt::register_barostat_for_engine(sys->config.get(), sys->engine);
-            // Initialize Ewald summation for this engine (reads settings from H5)
             simulation_box::ewald::initialize_ewald(sys->config.get(), sys->engine);
-            // Load masses for MARTINI integrators (read from H5)
             martini_masses::load_masses_for_engine(&sys->engine, sys->config.get());
-            // Register fix rigid settings for this engine (read from H5)
             martini_fix_rigid::register_fix_rigid_for_engine(sys->config.get(), sys->engine);
-            if(martini_hold_backbone_arg.getValue()) {
-                martini_fix_rigid::register_fix_rigid_backbone_for_engine(sys->config.get(), sys->engine, "BB");
-            }
-            // Register stage-specific parameters for this engine (read from H5)
             martini_stage_params::register_stage_params_for_engine(&sys->engine, sys->config.get());
-            // Register hybrid MARTINI/Upside metadata for this engine (read from H5)
             martini_hybrid::register_hybrid_for_engine(sys->config.get(), sys->engine);
             if  (integrator_arg.getValue() == "mv" )
                 sys->engine.build_integrator_levels(true, dt, inner_step );
@@ -1019,9 +968,6 @@ try {
                 sys->thermostat.apply(sys->mom, sys->n_atom, &sys->engine); // initial thermalization if it's a fresh start
             }
 
-            // Hybrid virtual BB proxy atoms are position-overwritten from the
-            // active carrier set, so they must not retain independently
-            // thermalized momentum before the first MD step.
             martini_fix_rigid::apply_fix_rigid_md(sys->engine, sys->engine.pos->output, sys->engine.pos->sens, sys->mom);
 
 
@@ -1118,70 +1064,13 @@ try {
             systems[ns].logger->add_logger<double>("temperature", {1}, [temperature_pointer](double* temperature_buffer) {
                     temperature_buffer[0] = *temperature_pointer;});
 
-            // Add NPT-specific loggers if barostat is enabled
             if(simulation_box::npt::is_enabled(systems[ns].engine)) {
-                // Log box dimensions
                 systems[ns].logger->add_logger<float>("box", {3}, [ns, &systems](float* buffer) {
                     float bx, by, bz;
                     simulation_box::npt::get_current_box(systems[ns].engine, bx, by, bz);
                     buffer[0] = bx;
                     buffer[1] = by;
                     buffer[2] = bz;
-                });
-
-                // Log pressure
-                systems[ns].logger->add_logger<float>("pressure", {2}, [ns, &systems](float* buffer) {
-                    float pxy, pz;
-                    simulation_box::npt::get_pressure(systems[ns].engine, pxy, pz);
-                    buffer[0] = pxy;
-                    buffer[1] = pz;
-                });
-
-                // Log volume
-                systems[ns].logger->add_logger<float>("volume", {1}, [ns, &systems](float* buffer) {
-                    float vol = simulation_box::npt::get_volume(systems[ns].engine);
-                    buffer[0] = vol;
-                });
-            }
-
-            // Add Ewald reciprocal energy logger if enabled
-            if(simulation_box::ewald::is_enabled(systems[ns].engine)) {
-                systems[ns].logger->add_logger<float>("ewald_reciprocal_energy", {1}, [ns, &systems](float* buffer) {
-                    buffer[0] = simulation_box::ewald::get_reciprocal_energy(systems[ns].engine);
-                });
-            }
-
-            if(martini_hybrid::is_sc_env_energy_dump_enabled(systems[ns].engine)) {
-                ensure_group(systems[ns].logger->logging_group.get(), "diagnostics");
-                auto sc_env_cache = std::make_shared<std::array<float,3>>(std::array<float,3>{{0.f, 0.f, 0.f}});
-                auto sc_env_cache_valid = std::make_shared<bool>(false);
-                systems[ns].logger->add_logger<float>("diagnostics/sc_env_energy_total", {1}, [ns, &systems, sc_env_cache, sc_env_cache_valid](float* buffer) {
-                    float total = 0.f, lj = 0.f, coul = 0.f;
-                    if(martini_hybrid::sample_sc_env_energy_for_logging(systems[ns].engine, total, lj, coul)) {
-                        (*sc_env_cache)[0] = total;
-                        (*sc_env_cache)[1] = lj;
-                        (*sc_env_cache)[2] = coul;
-                        *sc_env_cache_valid = true;
-                        buffer[0] = total;
-                    } else {
-                        *sc_env_cache_valid = false;
-                        buffer[0] = 0.f;
-                    }
-                });
-                systems[ns].logger->add_logger<float>("diagnostics/sc_env_energy_lj", {1}, [sc_env_cache, sc_env_cache_valid](float* buffer) {
-                    if(*sc_env_cache_valid) {
-                        buffer[0] = (*sc_env_cache)[1];
-                    } else {
-                        buffer[0] = 0.f;
-                    }
-                });
-                systems[ns].logger->add_logger<float>("diagnostics/sc_env_energy_coul", {1}, [sc_env_cache, sc_env_cache_valid](float* buffer) {
-                    if(*sc_env_cache_valid) {
-                        buffer[0] = (*sc_env_cache)[2];
-                        *sc_env_cache_valid = false;
-                    } else {
-                        buffer[0] = 0.f;
-                    }
                 });
             }
         }
@@ -1202,9 +1091,7 @@ try {
         }
         if(verbose) printf("\n");
 
-            // Optional pre-run minimization
             if(enable_min_arg.getValue()) {
-                void martini_run_minimization(DerivEngine&, int, double, double, double, int);
                 int it = min_max_iter_arg.getValue();
                 double etol = min_energy_tol_arg.getValue();
                 double ftol = min_force_tol_arg.getValue();
@@ -1213,14 +1100,9 @@ try {
                 for(System& sys: systems) {
                     const std::string stage_before_min =
                         martini_stage_params::get_current_stage(&sys.engine);
-                    // Switch to minimization stage before minimization
                     martini_stage_params::switch_simulation_stage(&sys.engine, "minimization");
                     martini_run_minimization(sys.engine, it, etol, ftol, mstep, verbose);
-                    // Restore the pre-minimization stage so production-only logic
-                    // is not spuriously activated for pre-production files.
                     martini_stage_params::switch_simulation_stage(&sys.engine, stage_before_min);
-                    // Save a frame immediately after minimization so downstream stages can pick it up
-                    // This ensures /output/pos exists even if duration is 0
                     sys.engine.compute(PotentialAndDerivMode);
                     sys.logger->collect_samples();
                 }
@@ -1336,41 +1218,30 @@ try {
                         sys.thermostat.apply(sys.mom, sys.n_atom, &sys.engine);
                     }
 
-                    // Enforce fixed-in-space constraints before integration so fixed atoms
-                    // do not receive a first-step kick from initialized/thermostatted momenta.
                     martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.engine.pos->sens, sys.mom);
 
-                    if  (integrator_arg.getValue() == "mv" ) {
+                    if(integrator_arg.getValue() == "mv") {
                         sys.engine.integration_cycle(sys.mom, dt, inner_step);
-                    } else if (integrator_arg.getValue() == "nvtc" ) {
-                        float mf = static_cast<float>(max_force_arg.getValue());
-                        sys.engine.integration_cycle(sys.mom, dt, mf, DerivEngine::Predescu);
                     } else {
-                        // Default simple Verlet step. Ensure we still progress even if forces are tiny.
                         sys.engine.integration_cycle(sys.mom, dt);
                     }
 
-                    // Apply fix rigid constraints after integration
                     martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.engine.pos->sens, sys.mom);
                     
-                    // Apply NPT barostat if enabled (skip step 0 to allow initial relaxation)
                     if(nr > 0) {
-                        bool print_baro = do_print;  // Print barostat info at same frequency as frame output
+                        bool print_baro = do_print;
                         simulation_box::npt::maybe_apply_barostat(sys.engine, sys.mom, sys.n_atom,
                                                                    nr, dt, inner_step,
                                                                    verbose, print_baro);
-                        // Update Ewald k-vectors if box changed (NPT)
                         if(simulation_box::npt::is_enabled(sys.engine) && simulation_box::ewald::is_enabled(sys.engine)) {
                             simulation_box::ewald::update_kvectors(sys.engine);
                         }
                     }
 
-                    // Compute Ewald reciprocal-space contribution if enabled
                     if(simulation_box::ewald::is_enabled(sys.engine)) {
                         simulation_box::ewald::compute_ewald_reciprocal(sys.engine);
                     }
 
-                    // Re-apply fixed-in-space constraints after barostat/box updates.
                     martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.engine.pos->sens, sys.mom);
                     martini_hybrid::refresh_transition_holds_for_engine(sys.engine);
 

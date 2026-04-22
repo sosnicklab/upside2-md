@@ -1,6 +1,15 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-22: The runtime legacy-style cleanup is safe for the active Example 16 MARTINI path when limited to style plus dead-surface removal.
+  - after restyling `src/main.cpp`, `src/main.h`, `src/box.cpp`, `src/box.h`, and `src/martini.cpp`:
+    - `cmake --build obj` still passed under the repo environment,
+    - `obj/upside --help` still exposed `--minimize`, `--duration-steps`, and `--integrator <v, mv>`,
+    - the fresh help surface no longer exposed the unused AI-added `nvtc`, `--max-force`, or `--martini-hold-backbone`,
+    - a reduced fresh `example/16.MARTINI/run_sim_1rkl.sh` run in `/tmp/runtime_legacy_style_verify` still completed through stage `7.0`,
+    - direct HDF5 inspection showed stage `6.2` still writes `/output/box`, while `/output/pressure`, `/output/volume`, `/output/ewald_reciprocal_energy`, and `output/diagnostics/sc_env_energy_total` are absent as intended;
+  - consequence:
+    - the older `src/` style can be restored without regressing the active MARTINI workflow, as long as the cleanup preserves the live initialization and runtime hooks and trims only the unused AI-added CLI/logger surface.
 - 2026-04-22: The legacy-style rewrite of the active MARTINI Python scripts is behaviorally safe on the reduced default workflow.
   - after restyling `py/martini_prepare_system.py`, `py/martini_prepare_system_lib.py`, and `py/martini_extract_vtf.py` toward the older `py/` idiom:
     - `python3 -m py_compile` still passed for all three files,
