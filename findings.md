@@ -1,6 +1,14 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-22: The legacy-style rewrite of the active MARTINI Python scripts is behaviorally safe on the reduced default workflow.
+  - after restyling `py/martini_prepare_system.py`, `py/martini_prepare_system_lib.py`, and `py/martini_extract_vtf.py` toward the older `py/` idiom:
+    - `python3 -m py_compile` still passed for all three files,
+    - help smoke checks passed under the repo environment,
+    - a reduced fresh `example/16.MARTINI/run_sim_1rkl.sh` run in `/tmp/martini_legacy_style_verify` completed through stage `7.0`,
+    - fresh VTF extraction still ran on stages `6.0` through `7.0`;
+  - consequence:
+    - the modern `Path` / type-hint / verbose-wrapper style was not required for the current Example 16 MARTINI path.
 - 2026-04-22: The full default `1rkl` ladder can be promoted stage-to-stage, not just `6.6 -> 7.0`.
   - fresh reduced artifacts in `/tmp/cleanup_1rkl_true_stage_handoff/checkpoints` confirm:
     - `6.1.prepared /input/pos` matches `6.0 /output/pos[-1]`,

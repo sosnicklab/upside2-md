@@ -1,5 +1,51 @@
 # Progress Log
 
+## 2026-04-22 (MARTINI Python Legacy-Style Cleanup)
+- Re-read the root `plan.md`, `progress.md`, and `findings.md` before editing to align this task with the current workflow log and avoid contradicting earlier MARTINI decisions.
+- Re-audited the three target files against representative older `py/` scripts:
+  - `py/extract_vtf.py`
+  - `py/PDB_to_initial_structure.py`
+  - `py/generate_restart_config.py`
+- Confirmed the main style mismatch:
+  - the MARTINI scripts use `Path`, type hints, `from __future__`, verbose helper wrappers, and tutorial-style comments/messages;
+  - the rest of `py/` is flatter, string-based, and much more direct.
+- Confirmed the compatibility boundary before rewriting:
+  - `example/16.MARTINI/run_sim_1rkl.sh` calls `martini_prepare_system.py` for:
+    - default prep,
+    - `build-sc-martini-h5`,
+    - `inject-stage7-sc`,
+    - `set-initial-position`;
+  - `run_sim_1rkl.sh` calls `martini_extract_vtf.py` with explicit `pdb_id` and `--split-segments`;
+  - there are no additional live callers that require a broader public surface.
+- Rewrote `py/martini_prepare_system.py` into a flatter script:
+  - replaced `Path` usage with `os.path`,
+  - removed type hints,
+  - collapsed command dispatch into a direct `main()` branch layout,
+  - kept the same prep and helper command surface.
+- Cleaned `py/martini_extract_vtf.py` toward the older repo style:
+  - removed `Path`,
+  - simplified the segment-output path builder,
+  - made box-length inference explicit by passing `pdb_file`,
+  - shortened extractor progress/status output.
+- Simplified `py/martini_prepare_system_lib.py` without changing the active workflow behavior:
+  - removed `from __future__`, type-annotated signatures, and `Path`-typed interfaces,
+  - added string-based path expansion helpers,
+  - shortened the noisiest diagnostics and stage-conversion banner output,
+  - kept the same helper names used by the wrapper and entrypoint.
+- Verification completed:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py`
+  - help smoke checks for:
+    - `martini_prepare_system.py`
+    - `build-sc-martini-h5`
+    - `inject-stage7-sc`
+    - `set-initial-position`
+    - `martini_extract_vtf.py`
+  - reduced real workflow run in `/tmp/martini_legacy_style_verify`.
+- Observed result:
+  - direct system `python3` help checks failed first because the host interpreter currently lacks `numpy`;
+  - rerunning the checks inside `source .venv/bin/activate && source source.sh` worked as expected;
+  - the reduced `run_sim_1rkl.sh` ladder completed through fresh stage `7.0` and still wrote all expected checkpoints and VTF files.
+
 ## 2026-04-22 (True Stage-to-Stage Handoff)
 - Re-audited the full `6.0 -> 7.0` ladder after the user clarified that each stage must start from the previous stage result, not just production.
 - Confirmed on fresh reduced artifacts that neighboring stages already shared the same hybrid/runtime graph, so the workflow could be converted to promotion instead of regeneration.

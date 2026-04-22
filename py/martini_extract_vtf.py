@@ -3,14 +3,13 @@
 import argparse
 import os
 import re
-from pathlib import Path
 
 import h5py
 import numpy as np
 
-PY_DIR = Path(__file__).resolve().parent
-REPO_ROOT = PY_DIR.parent
-WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+WORKFLOW_DIR = os.path.join(REPO_ROOT, "example", "16.MARTINI")
 OUTPUT_PREVIOUS_RE = re.compile(r"^output_previous_(\d+)$")
 
 
@@ -48,13 +47,10 @@ def normalize_input_positions(input_pos):
         if arr.shape[0] == 3:
             return np.asarray(arr.T, dtype=np.float32)
     if arr.ndim == 3:
-        # Common H5 layout from UPSIDE input: (n_atom, 3, 1)
         if arr.shape[1] == 3:
             return np.asarray(arr[:, :, 0], dtype=np.float32)
-        # Alternate layout: (n_atom, 1, 3)
         if arr.shape[2] == 3:
             return np.asarray(arr[:, 0, :], dtype=np.float32)
-        # Alternate layout: (3, n_atom, n_frame)
         if arr.shape[0] == 3:
             return np.asarray(arr[:, :, 0].T, dtype=np.float32)
     raise ValueError(f"Unexpected input/pos shape: {arr.shape}")
@@ -134,7 +130,7 @@ def infer_chain_ids_from_class(atom_names, particle_class):
     return np.array(out, dtype=object)
 
 
-def infer_box_lengths(traj_h5, struct_h5, output_group="output"):
+def infer_box_lengths(traj_h5, struct_h5, pdb_file, output_group="output"):
     x_len = y_len = z_len = None
 
     box_path = f"{output_group}/box" if output_group else None
@@ -169,7 +165,7 @@ def infer_box_lengths(traj_h5, struct_h5, output_group="output"):
                     break
 
     if x_len is None:
-        raise ValueError("Could not infer box lengths from current checkpoint data")
+        raise ValueError("Could not determine box lengths")
 
     return x_len, y_len, z_len
 
@@ -189,9 +185,6 @@ def centralize_system(frame_pos, residue_names, x_len, y_len, z_len):
         }
         protein_mask = np.array([str(name).upper() in protein_residues for name in residue_names], dtype=bool)
 
-    # Mode 2 output includes backmapped protein backbone residues by their
-    # sequence-derived residue names. Centering by periodic protein COM avoids
-    # boundary-split rendering artifacts.
     if protein_mask is not None and np.any(protein_mask):
         prot = np.mod(out[protein_mask], box[None, :])
         protein_center = np.zeros(3, dtype=np.float64)
@@ -237,8 +230,10 @@ def list_output_groups(traj_h5):
 
 
 def build_segment_output_path(output_file, segment_index):
-    path = Path(output_file)
-    return str(path.with_name(f"{path.stem}.segment_{segment_index}{path.suffix}"))
+    dirname = os.path.dirname(output_file)
+    basename = os.path.basename(output_file)
+    stem, ext = os.path.splitext(basename)
+    return os.path.join(dirname, "%s.segment_%d%s" % (stem, segment_index, ext))
 
 
 def collect_dist_spring_bonds(struct_h5):
@@ -516,9 +511,9 @@ def assemble_mode2_frame(frame_pos, mapping, box_lengths=None):
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Extract MARTINI trajectory into VTF.\n"
-            "mode 1: all MARTINI particles + protein all-atom backbone (N,CA,C,O)\n"
-            "mode 2: non-protein MARTINI particles + protein all-atom backbone (N,CA,C,O)"
+            "Extract a MARTINI trajectory to VTF.\n"
+            "mode 1: all MARTINI particles + AA backbone\n"
+            "mode 2: non-protein MARTINI particles + AA backbone"
         )
     )
     parser.add_argument("input_up", help="trajectory .up file")
@@ -553,12 +548,12 @@ def extract_trajectory(
     if fmt != "vtf":
         raise ValueError("Output file must be .vtf")
 
-    print(f"Extracting trajectory from: {input_file}")
-    print(f"Structure source: {structure_file}")
-    print(f"Output: {output_file}")
-    print(f"Mode: {mode}")
-    print(f"PDB ID: {pdb_id}")
-    print(f"Trajectory group: {output_group or 'input'}")
+    print("input:", input_file)
+    print("structure:", structure_file)
+    print("output:", output_file)
+    print("mode:", mode)
+    print("pdb_id:", pdb_id)
+    print("group:", output_group or "input")
 
     if output_group is not None:
         if output_group not in traj_h5:
@@ -577,13 +572,14 @@ def extract_trajectory(
     x_len, y_len, z_len = infer_box_lengths(
         traj_h5,
         struct_h5,
+        pdb_file,
         output_group=output_group,
     )
 
-    print(f"Particles (input): {n_particles}")
-    print(f"Particles (output): {mapping['output_atom_names'].shape[0]}")
-    print(f"Frames: {n_frame_total}")
-    print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
+    print("n_input_atom:", n_particles)
+    print("n_output_atom:", mapping["output_atom_names"].shape[0])
+    print("n_frame:", n_frame_total)
+    print("box: %.3f %.3f %.3f" % (x_len, y_len, z_len))
 
     with open(output_file, "w", encoding="utf-8") as f:
         f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
@@ -637,7 +633,7 @@ def extract_trajectory(
 
             prev_frame = out_frame
             if frame_idx % 100 == 0:
-                print(f"Processed frame {frame_idx}/{n_frame_total - 1}")
+                print("frame %d/%d" % (frame_idx, n_frame_total - 1))
 
 
 def main():
@@ -649,7 +645,7 @@ def main():
     pdb_id = args.pdb_id
     mode = args.mode
 
-    pdb_file = str(WORKFLOW_DIR / "pdb" / f"{pdb_id}.MARTINI.pdb")
+    pdb_file = os.path.join(WORKFLOW_DIR, "pdb", "%s.MARTINI.pdb" % pdb_id)
 
     with h5py.File(input_file, "r") as t, h5py.File(structure_file, "r") as s:
         input_pos = normalize_input_positions(s["input/pos"][:])
@@ -737,7 +733,7 @@ def main():
                     output_group=target_group,
                 )
             else:
-                print(f"Found {len(output_groups)} trajectory segments; writing one file per segment.")
+                print("found %d trajectory segments" % len(output_groups))
                 for segment_index, output_group in enumerate(output_groups):
                     segment_output_file = build_segment_output_path(output_file, segment_index)
                     extract_trajectory(
@@ -755,7 +751,7 @@ def main():
                         mode,
                         output_group=output_group,
                     )
-                    print(f"Wrote segment {segment_index}: {segment_output_file} ({output_group})")
+                    print("wrote segment %d: %s (%s)" % (segment_index, segment_output_file, output_group))
         else:
             target_group = "output" if "output" in t else None
             extract_trajectory(

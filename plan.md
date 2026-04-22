@@ -1,4 +1,59 @@
 
+## 2026-04-22 MARTINI Python Legacy-Style Cleanup
+
+### Project Goal
+- Restyle `py/martini_extract_vtf.py`, `py/martini_prepare_system_lib.py`, and `py/martini_prepare_system.py` so they read like the older `py/` scripts in this repo and stop sounding AI-written, while preserving the active Example 16 workflow interface.
+
+### Architecture & Key Decisions
+- Preserve the current CLI and import surface used by `example/16.MARTINI/run_sim_1rkl.sh`.
+- Rewrite toward the existing repo-local Python idiom:
+  - plain string / `os.path` path handling instead of `Path`,
+  - no type hints or `from __future__`,
+  - flatter helper layout and simpler command dispatch,
+  - shorter comments and direct error/status messages.
+- Keep behavior stable unless a change is required to preserve current semantics after the style cleanup.
+
+### Execution Phases
+- [x] Update the root task-tracking files for this cleanup and record the implementation/verification path.
+- [x] Rewrite `py/martini_prepare_system.py` toward the older repo script style without changing its command names or flags.
+- [x] Rewrite `py/martini_extract_vtf.py` toward the older repo script style without changing its current CLI contract.
+- [x] Rewrite `py/martini_prepare_system_lib.py` toward the older repo script style while preserving helper names and call signatures used by the workflow.
+- [x] Run syntax checks, CLI help smoke checks, and a reduced real workflow verification.
+- [x] Record the review notes, verification results, and any style-specific findings.
+
+### Known Errors / Blockers
+- None so far.
+
+### Review
+- Rewrote [py/martini_prepare_system.py](/Users/yinhan/Documents/upside2-md/py/martini_prepare_system.py:1) into the flatter repo style:
+  - plain `os.path` handling,
+  - no `Path` objects or type hints,
+  - direct command dispatch instead of a command-handler table,
+  - unchanged command names and flags.
+- Reworked [py/martini_extract_vtf.py](/Users/yinhan/Documents/upside2-md/py/martini_extract_vtf.py:1) to match the rest of `py/` more closely:
+  - string-based path handling,
+  - simpler extractor status output,
+  - reduced comment noise,
+  - same positional args plus `--mode` and `--split-segments`.
+- Simplified [py/martini_prepare_system_lib.py](/Users/yinhan/Documents/upside2-md/py/martini_prepare_system_lib.py:1) without changing the active MARTINI workflow surface:
+  - removed `from __future__`, type annotations, and `Path`-typed interfaces,
+  - introduced string-based path helpers,
+  - shortened overly explanatory diagnostics and banner logging,
+  - preserved the helper names used by `martini_prepare_system.py` and the Example 16 wrapper.
+- Verification:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py`
+  - `bash -lc 'source .venv/bin/activate && source source.sh && python3 py/martini_prepare_system.py -h'`
+  - `bash -lc 'source .venv/bin/activate && source source.sh && python3 py/martini_prepare_system.py build-sc-martini-h5 -h'`
+  - `bash -lc 'source .venv/bin/activate && source source.sh && python3 py/martini_prepare_system.py inject-stage7-sc -h'`
+  - `bash -lc 'source .venv/bin/activate && source source.sh && python3 py/martini_prepare_system.py set-initial-position -h'`
+  - `bash -lc 'source .venv/bin/activate && source source.sh && python3 py/martini_extract_vtf.py -h'`
+  - reduced real workflow run:
+    - `bash -lc 'source .venv/bin/activate && source source.sh && RUN_DIR=/tmp/martini_legacy_style_verify MIN_60_MAX_ITER=1 MIN_61_MAX_ITER=1 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl.sh'`
+- Observed result:
+  - the help surfaces remained available under the repo environment;
+  - the reduced workflow completed through fresh stage `7.0`;
+  - fresh VTF extraction still ran for stages `6.0` through `7.0` on the rewritten script path.
+
 ## 2026-04-22 True Stage-to-Stage Handoff
 
 ### Project Goal

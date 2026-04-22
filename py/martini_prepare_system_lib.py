@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
 
 import _pickle as cPickle
 import importlib.util
@@ -13,14 +12,13 @@ import types
 import warnings
 from collections import Counter, defaultdict
 from copy import deepcopy
-from pathlib import Path
 import h5py
 import numpy as np
 import tables as tb
 
-PY_DIR = Path(__file__).resolve().parent
-REPO_ROOT = PY_DIR.parent
-WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+WORKFLOW_DIR = os.path.join(REPO_ROOT, "example", "16.MARTINI")
 
 NA_AVOGADRO = 6.02214076e23
 BB_COMPONENT_NAMES = ("N", "CA", "C", "O")
@@ -61,8 +59,8 @@ AA_BACKBONE_ATOM_MASS = {
     "O": 16.0,
 }
 NONINTERACTING_ATOM_TYPES = {AA_BACKBONE_PLACEHOLDER_TYPE}
-DEFAULT_SC_TABLE_JSON = Path(
-    "/Users/yinhan/Documents/upside2-md-martini/SC-training/runs/default/results/assembled/sc_table.json"
+DEFAULT_SC_TABLE_JSON = os.path.join(
+    REPO_ROOT, "SC-training", "runs", "default", "results", "assembled", "sc_table.json"
 )
 TWOPI = 2.0 * np.pi
 CANONICAL_AFFINE_REF = np.array(
@@ -103,10 +101,15 @@ BACKBONE_NODES = [
 EXPLICIT_BACKBONE_OXYGEN_BOND_STIFFNESS = 48.0
 EXPLICIT_BACKBONE_OXYGEN_ANGLE_STIFFNESS = 175.0
 
-def parse_pdb(path: Path):
+def expand_path(path):
+    return os.path.abspath(os.path.expanduser(os.fspath(path)))
+
+
+def parse_pdb(path):
+    path = os.fspath(path)
     atoms = []
     cryst1 = None
-    with path.open("r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
             record = line[:6].strip()
             if record == "CRYST1":
@@ -140,8 +143,9 @@ def parse_pdb(path: Path):
     return atoms, cryst1
 
 
-def write_pdb(path: Path, atoms, box_lengths):
-    with path.open("w", encoding="utf-8") as f:
+def write_pdb(path, atoms, box_lengths):
+    path = os.fspath(path)
+    with open(path, "w", encoding="utf-8") as f:
         if box_lengths is not None:
             f.write(
                 f"CRYST1{box_lengths[0]:9.3f}{box_lengths[1]:9.3f}{box_lengths[2]:9.3f}"
@@ -173,7 +177,7 @@ def center_of_mass(xyz):
     return np.mean(xyz, axis=0)
 
 
-def lipid_resname(resname: str) -> bool:
+def lipid_resname(resname):
     return resname.upper() in {"DOP", "DOPC"}
 
 def extract_protein_aa_atoms(aa_atoms):
@@ -547,13 +551,14 @@ def collect_aa_backbone_map(backbone_atoms):
 
 
 def write_backbone_metadata_h5(
-    path: Path,
+    path,
     bb_entries,
     total_atoms,
     env_atom_indices,
     n_protein_atoms,
     sequence,
 ):
+    path = expand_path(path)
     with h5py.File(path, "w") as h5:
         inp = h5.create_group("input")
         inp.create_dataset(
@@ -1000,23 +1005,18 @@ def parse_itp_file(itp_file, target_molecule=None, preprocessor_defines=None):
     return topology
 
 def read_martini_masses(ff_file):
-    """Read atom type masses from MARTINI force field file"""
     masses = {}
-    ff_file_path = Path(ff_file).expanduser()
-    if not ff_file_path.is_absolute():
-        ff_file_path = (WORKFLOW_DIR / ff_file_path).resolve()
+    ff_file_path = os.path.expanduser(os.fspath(ff_file))
+    if not os.path.isabs(ff_file_path):
+        ff_file_path = os.path.abspath(os.path.join(WORKFLOW_DIR, ff_file_path))
     else:
-        ff_file_path = ff_file_path.resolve()
+        ff_file_path = os.path.abspath(ff_file_path)
     
-    if not ff_file_path.exists():
-        raise ValueError(f"FATAL ERROR: Force field file '{ff_file}' not found.\n"
-                        f"  Full path: {ff_file_path}\n"
-                        f"  This file is required for atom type masses.\n"
-                        f"  Please ensure the MARTINI force field file exists and is readable.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
+    if not os.path.exists(ff_file_path):
+        raise ValueError("Force field file not found: %s" % ff_file_path)
     
     in_atomtypes = False
-    with ff_file_path.open('r') as f:
+    with open(ff_file_path, 'r') as f:
         for line in f:
             line = line.strip()
             if line.startswith('[ atomtypes ]'):
@@ -1039,20 +1039,15 @@ def read_martini_masses(ff_file):
     return masses
 
 def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
-    """
-    Write the active AA-backbone + dry-MARTINI stage file for the default 1RKL workflow.
-    """
     if not pdb_id:
         raise ValueError("convert_stage requires an explicit pdb_id")
     if not run_dir:
         raise ValueError("convert_stage requires an explicit run_dir")
     os.makedirs(run_dir, exist_ok=True)
 
-    # Get stage from environment variable or use default
     stage = os.environ.get('UPSIDE_SIMULATION_STAGE', stage)
-    print(f"Preparing for stage: {stage}")
+    print("stage:", stage)
 
-    # Stage-specific parameterization
     stage_params = {
         'minimization': {
             'lj_soften': 1,
@@ -1080,39 +1075,32 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
         }
     }
 
-    # Get parameters for current stage
     params = stage_params.get(stage, stage_params['npt_prod'])
     stage_lipidhead_fc = float(os.environ.get('UPSIDE_BILAYER_LIPIDHEAD_FC', '0'))
     
-    print("=== AA-Backbone Protein-Lipid System Preparation ===")
-    print(f"PDB ID: {pdb_id}")
-    print(f"Output directory: {run_dir}")
+    print("pdb_id:", pdb_id)
+    print("run_dir:", run_dir)
 
-    # Read dry MARTINI parameter files
-    print("\n=== Reading Dry MARTINI Parameters ===")
-    ff_dir = Path(
-        os.environ.get('UPSIDE_MARTINI_FF_DIR', str(REPO_ROOT / "parameters" / "dryMARTINI"))
-    ).expanduser()
-    if not ff_dir.is_absolute():
-        ff_dir = (REPO_ROOT / ff_dir).resolve()
+    ff_dir = os.path.expanduser(
+        os.environ.get('UPSIDE_MARTINI_FF_DIR', os.path.join(REPO_ROOT, "parameters", "dryMARTINI"))
+    )
+    if not os.path.isabs(ff_dir):
+        ff_path = os.path.abspath(os.path.join(REPO_ROOT, ff_dir))
     else:
-        ff_dir = ff_dir.resolve()
-    ff_path = str(ff_dir)
+        ff_path = os.path.abspath(ff_dir)
 
     if not os.path.isdir(ff_path):
-        raise ValueError(f"FATAL ERROR: Force-field directory '{ff_path}' not found.\n"
-                        "  Set UPSIDE_MARTINI_FF_DIR to a valid dry-MARTINI force-field directory.")
+        raise ValueError("Force-field directory not found: %s" % ff_path)
 
     ff_files = sorted(os.listdir(ff_path))
-    print(f"Using force-field directory: {ff_path}")
+    print("ff_dir:", ff_path)
 
     def pick_ff_file(name, required=True):
         path = os.path.join(ff_path, name)
         if os.path.exists(path):
             return path
         if required:
-            raise ValueError(f"FATAL ERROR: Required dry MARTINI file '{name}' not found in '{ff_path}'.\n"
-                            f"  Available: {ff_files}")
+            raise ValueError("Missing dry MARTINI file %s in %s" % (name, ff_path))
         return None
 
     # Read nonbonded parameters
@@ -1120,23 +1108,14 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
     martini_table = read_martini3_nonbond_params(martini_param_file)
     
     if not martini_table:
-        raise ValueError(f"FATAL ERROR: Could not read MARTINI parameters from '{martini_param_file}'\n"
-                        f"  This file is required for proper force field parameterization.\n"
-                        f"  Please ensure the dry MARTINI parameter file exists and is readable.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
-    
-    print("=== AA-Backbone Protein-Lipid System Detected ===")
-    print("System contains DOPC environment plus direct AA backbone atoms.")
-    
-    # For both protein and lipid systems, we need DOPC parameters
-    # Parse DOPC topology from ITP file
+        raise ValueError("Could not read MARTINI parameters from %s" % martini_param_file)
+
     dopc_param_file = pick_ff_file("dry_martini_v2.1_lipids.itp")
     lipid_preproc_defs = {}
     if stage_lipidhead_fc > 0.0:
         lipid_preproc_defs['BILAYER_LIPIDHEAD_FC'] = stage_lipidhead_fc
     full_topology = parse_itp_file(dopc_param_file, preprocessor_defines=lipid_preproc_defs)
     
-    # Try to find DOPC or similar molecule
     dopc_molecule = None
     for mol_name in full_topology['molecules'].keys():
         if 'DOPC' in mol_name.upper() or 'DOP' in mol_name.upper():
@@ -1149,44 +1128,35 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
         )
     else:
         available_molecules = list(full_topology['molecules'].keys())
-        raise ValueError(f"FATAL ERROR: DOPC molecule not found in '{dopc_param_file}'.\n"
-                        f"  Available molecules: {available_molecules}\n"
-                        f"  Please ensure DOPC is defined in the phospholipid parameter file.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
+        raise ValueError("DOPC molecule not found in %s: %s" % (dopc_param_file, available_molecules))
     
     dopc_bead_types = [atom['type'] for atom in dopc_topology['atoms']]
     dopc_charges = [atom['charge'] for atom in dopc_topology['atoms']]
-    # Create mapping from atom names to bead types and charges
     dopc_atom_to_type = {atom['atom']: atom['type'] for atom in dopc_topology['atoms']}
     dopc_atom_to_charge = {atom['atom']: atom['charge'] for atom in dopc_topology['atoms']}
-    print(f"Read DOPC topology: {len(dopc_bead_types)} bead types from {dopc_param_file}")
+    print("read DOPC topology:", len(dopc_bead_types), "beads")
     
     # Parse ion topologies from ITP file
     ion_param_file = pick_ff_file("dry_martini_v2.1_ions.itp", required=False)
     if ion_param_file:
         ion_topology = parse_itp_file(ion_param_file)
-        # Extract NA and CL atoms specifically
-        # In MARTINI ion ITP files, residue name is "ION" and atom name is "NA" or "CL"
         na_atoms = [atom for atom in ion_topology['atoms'] if atom['atom'].upper() == 'NA']
         cl_atoms = [atom for atom in ion_topology['atoms'] if atom['atom'].upper() == 'CL']
         
-        # For standard ions, use the first occurrence (standard chloride is TQ5, not SQ5n which is for acetate)
         na_bead_types = [na_atoms[0]['type']] if na_atoms else []
         na_charges = [na_atoms[0]['charge']] if na_atoms else []
-        cl_bead_types = [cl_atoms[0]['type']] if cl_atoms else []  # Use first CL (TQ5), not acetate CL (SQ5n)
+        cl_bead_types = [cl_atoms[0]['type']] if cl_atoms else []
         cl_charges = [cl_atoms[0]['charge']] if cl_atoms else []
-        print(f"Ion topology loaded: NA={len(na_bead_types)} type(s), CL={len(cl_bead_types)} type(s)")
+        print("ion topology: NA=%d CL=%d" % (len(na_bead_types), len(cl_bead_types)))
     else:
         na_bead_types, na_charges = [], []
         cl_bead_types, cl_charges = [], []
-        print("Ion topology file not found in selected FF")
+        print("ion topology not found")
     
-    # Read bead masses from force field file
     mass_file = martini_param_file
     martini_masses = read_martini_masses(mass_file)
-    print(f"Read {len(martini_masses)} atom type masses from force field file")
+    print("read masses:", len(martini_masses))
     
-    # Read DOPC bonds and angles from parsed topology (for both lipid and mixed systems)
     dopc_bonds = [(bond['i'], bond['j']) for bond in dopc_topology['bonds']]
     dopc_bond_lengths = [bond['r0'] for bond in dopc_topology['bonds']]  # nm
     dopc_bond_force_constants = [bond['k'] for bond in dopc_topology['bonds']]  # kJ/mol/nm²
@@ -1196,20 +1166,13 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
     dopc_angle_force_constants = [angle['force_k'] for angle in dopc_topology['angles']]  # kJ/mol/rad²
     dopc_position_restraints = dopc_topology.get('position_restraints', [])
     
-    print(f"Read DOPC connectivity: {len(dopc_bonds)} bonds, {len(dopc_angles)} angles")
+    print("read DOPC connectivity:", len(dopc_bonds), "bonds", len(dopc_angles), "angles")
     
-    # Validate that required topology data was found
     if not dopc_bonds:
-        raise ValueError(f"FATAL ERROR: No DOPC bonds found in topology from '{dopc_param_file}'.\n"
-                        f"  This indicates incomplete molecule definition.\n"
-                        f"  Please ensure DOPC bonds are properly defined in the phospholipid parameter file.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
+        raise ValueError("No DOPC bonds found in %s" % dopc_param_file)
     
     if not dopc_angles:
-        raise ValueError(f"FATAL ERROR: No DOPC angles found in topology from '{dopc_param_file}'.\n"
-                        f"  This indicates incomplete molecule definition.\n"
-                        f"  Please ensure DOPC angles are properly defined in the phospholipid parameter file.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
+        raise ValueError("No DOPC angles found in %s" % dopc_param_file)
     
     # Unit conversions for mapping native MARTINI units into the active
     # simulation unit system. These must be provided explicitly rather than
@@ -1249,24 +1212,12 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
     # Dihedrals: kJ/mol → E_up
     dihedral_conversion = 1.0 / energy_conversion  # ≈ 0.343
 
-    print("\n=== MARTINI Unit Conversions ===")
-    print(f"Bond lengths (nm -> Å): 0.40 nm -> 4.0 Å")
-    print(f"Bond force constants (kJ/mol/nm² -> E_up/Å²): 7000.0 -> {7000.0 * bond_conversion:.3f}")
-    print(f"Angle equilibrium (degrees): 108.0°")
-    print(f"Angle force constants (kJ/mol/deg² -> E_up/deg²): 21.5 -> {21.5 * angle_conversion:.6f}")
-    print(f"Dihedral force constants (kJ/mol -> E_up): 400.0 -> {400.0 * dihedral_conversion:.6f}")
-    print(f"Pressure (bar -> E_up/Å³): 1 bar -> {pressure_conversion_bar_to_eup:.9f}")
-    print(f"Energy conversion factor: {energy_conversion} (kJ/mol -> E_up)")
-    print(f"Length conversion: 1 nm = {length_conversion} Å, so 1 nm² = {length_conversion**2} Å²")
-    print(f"Bond conversion factor: {bond_conversion:.6f} (divide by energy_conv × length_conv²)")
-    print(f"Angle conversion factor: {angle_conversion:.6f} (divide by energy_conv)")
-    print(f"Dihedral conversion factor: {dihedral_conversion:.6f} (divide by energy_conv)")
-    
+    print("energy_conversion:", energy_conversion)
+    print("length_conversion:", length_conversion)
+
     input_pdb_file = runtime_input_pdb_path(str(WORKFLOW_DIR), pdb_id)
-    print(f"\nUsing MARTINI PDB as base structure: {input_pdb_file}")
-    
-    # Read PDB and populate arrays
-    print(f"\n=== Reading PDB Structure ===")
+    print("input_pdb:", input_pdb_file)
+
     initial_positions = []
     atom_types = []
     charges = []
@@ -1275,12 +1226,6 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
     residue_names = []
     chain_ids = []
     seg_ids = []
-    
-    print(f"\n=== Protein Connectivity ===")
-    print("Protein MARTINI topology is retired for this workflow.")
-    print("Protein bonded geometry will be supplied by injected Upside backbone nodes.")
-    
-    
     protein_residue_names = {
         'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS',
         'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP',
@@ -1297,8 +1242,6 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
             atom_names.append(atom_name)
             residue_id = int(line[22:26])
             residue_ids.append(residue_id)
-            # Read 4-character residue field to support DOPC while preserving
-            # standard 3-letter protein residues (e.g., " ASN" -> "ASN").
             residue_name = line[17:21].strip().upper()
             residue_names.append(residue_name)
             chain_id = line[21:22].strip()
@@ -1320,43 +1263,32 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
             if is_protein:
                 if atom_name not in AA_BACKBONE_ATOM_MASS:
                     raise ValueError(
-                        f"FATAL ERROR: Unexpected protein atom '{atom_name}' in residue '{residue_name}'.\n"
-                        "  The AA-backbone workflow expects runtime protein atoms to contain only N/CA/C/O.\n"
-                        "  Regenerate the runtime structure with martini_prepare_system.py before stage conversion.\n"
-                        "  Aborting to prevent incorrect simulation results."
+                        "Unexpected protein atom %s in residue %s" % (atom_name, residue_name)
                     )
                 martini_type = AA_BACKBONE_PLACEHOLDER_TYPE
                 charge = 0.0
             elif residue_name == 'DOPC' or residue_name == 'DOP':
-                # For DOPC, use the topology from parameter file (for both lipid and mixed systems)
                 if atom_name in dopc_atom_to_type:
                     martini_type = dopc_atom_to_type[atom_name]
                     charge = dopc_atom_to_charge[atom_name]
                 else:
                     available_atom_names = sorted(dopc_atom_to_type.keys())
-                    raise ValueError(f"FATAL ERROR: Unknown DOPC atom '{atom_name}' in residue '{residue_name}'.\n"
-                                   f"  Available DOPC atom names: {available_atom_names}\n"
-                                   f"  This indicates incomplete DOPC topology mapping.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                    raise ValueError(
+                        "Unknown DOPC atom %s in residue %s: %s"
+                        % (atom_name, residue_name, available_atom_names)
+                    )
             elif residue_name == 'NA':
                 if not na_bead_types:
-                    raise ValueError(f"FATAL ERROR: No sodium bead types found in topology.\n"
-                                   f"  This indicates incomplete ion parameter file.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                    raise ValueError("No sodium bead types found in topology")
                 martini_type = na_bead_types[0]
                 charge = na_charges[0]
             elif residue_name == 'CL':
                 if not cl_bead_types:
-                    raise ValueError(f"FATAL ERROR: No chloride bead types found in topology.\n"
-                                   f"  This indicates incomplete ion parameter file.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                    raise ValueError("No chloride bead types found in topology")
                 martini_type = cl_bead_types[0]
                 charge = cl_charges[0]
             else:
-                raise ValueError(f"FATAL ERROR: Unknown residue type '{residue_name}' for atom '{atom_name}'.\n"
-                               f"  Supported residue types: PROTEIN, DOPC, NA, CL\n"
-                               f"  This indicates incomplete system definition.\n"
-                               f"  Aborting to prevent incorrect simulation results.")
+                raise ValueError("Unknown residue type %s for atom %s" % (residue_name, atom_name))
             
             atom_types.append(martini_type)
             charges.append(charge)
@@ -1372,8 +1304,6 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
     seg_ids = np.array(seg_ids)
     n_atoms = len(initial_positions)
     
-    # Read box dimensions from CRYST1 record
-    print(f"Reading box dimensions from {input_pdb_file}...")
     with open(input_pdb_file, 'r') as f:
         for line in f:
             if line.startswith('CRYST1'):
@@ -1382,18 +1312,12 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
                     x_len = float(fields[1])
                     y_len = float(fields[2])
                     z_len = float(fields[3])
-                    print(f"Found CRYST1 record: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
                     break
         else:
-            raise ValueError(f"FATAL ERROR: No CRYST1 record found in PDB file '{input_pdb_file}'.\n"
-                           f"  Box dimensions are required for proper simulation setup.\n"
-                           f"  Please ensure the PDB file contains a CRYST1 record with box dimensions.\n"
-                           f"  Aborting to prevent incorrect simulation results.")
-    
-    # Print system parameters
-    print(f"Box dimensions: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
-    print(f"Box volume: {x_len * y_len * z_len:.1f} Å³")
-    print(f"Total atoms: {n_atoms}")
+            raise ValueError("No CRYST1 record found in %s" % input_pdb_file)
+
+    print("box: %.3f %.3f %.3f" % (x_len, y_len, z_len))
+    print("n_atom:", n_atoms)
     
     # Group atoms into molecules by chain (for proteins) or residue ID (for other molecules)
     molecules = []
@@ -1460,11 +1384,7 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
         unique_resnames = set(residue_names_in_mol)
         if mol_type != 'PROTEIN':
             if len(unique_resnames) > 1:
-                raise ValueError(f"FATAL ERROR: Molecule {i} contains mixed residue types: {unique_resnames}\n"
-                               f"  This indicates incorrect molecule grouping.\n"
-                               f"  Molecule atoms: {atoms}\n"
-                               f"  Residue names: {residue_names_in_mol}\n"
-                               f"  Aborting to prevent incorrect simulation results.")
+                raise ValueError("Molecule %d contains mixed residue types: %s" % (i, unique_resnames))
         else:
             pass
     
@@ -1489,14 +1409,11 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
         mol_counts['PROTEIN'] = f"{protein_chains} chain(s) ({protein_residue_count} residues)"
     
     dopc_count = mol_counts.get('DOPC', 0)
-    print(f"\n=== Molecule Summary ===")
+    print("molecule summary:")
     for moltype, count in mol_counts.items():
-        print(f"{moltype}: {count} molecules")
+        print("%s: %s" % (moltype, count))
     
     # Create bonds and angles
-    print(f"\n=== Creating Connectivity ===")
-    
-    # Initialize lists for bonds and angles
     bonds_list = []
     bond_lengths_list = []
     bond_force_constants_list = []
@@ -1511,7 +1428,6 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
     lipid_restraint_ref_pos = []
     lipid_restraint_spring_xyz = []
     
-    # Create DOPC bonds and angles (for both lipid and mixed systems)
     dopc_molecules = [mol for mol in molecules if mol[0] == 'DOPC']  # unified label
     
     for mol_idx, (_, atom_names_mol, atom_indices) in enumerate(dopc_molecules):
@@ -1556,26 +1472,16 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
                     restraint['fz'] * bond_conversion,
                 ])
     
-    print(f"Created {len(bonds_list)} bonds for {dopc_count} DOPC lipids")
-    print(f"Created {len(angles_list)} angles for {dopc_count} DOPC lipids")
-    print(f"Created {len(lipid_restraint_indices)} lipid position restraints (BILAYER_LIPIDHEAD_FC={stage_lipidhead_fc:g})")
+    print("connectivity: bonds=%d angles=%d restraints=%d" % (
+        len(bonds_list), len(angles_list), len(lipid_restraint_indices)
+    ))
 
-    print("\nNo MARTINI protein connectivity is expected in the AA-backbone workflow")
-    
-    print(f"Total system bonds: {len(bonds_list)}")
-    print(f"Total system angles: {len(angles_list)}")
-    print(f"Total system dihedrals: {len(dihedrals_list)}")
-    
-    # Center and wrap positions
-    print(f"\n=== Preparing Final Structure ===")
     center = np.mean(initial_positions, axis=0)
     centered_positions = initial_positions - center
     half_box = np.array([x_len/2, y_len/2, z_len/2])
     centered_positions = (centered_positions + half_box) % (2*half_box) - half_box
     final_positions = centered_positions
     
-    # Create UPSIDE input file
-    print(f"\n=== Creating UPSIDE Input File ===")
     input_file = f"{run_dir}/test.input.up"
     
     with tb.open_file(input_file, 'w') as t:
@@ -1617,16 +1523,11 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
             if atom_type in NONINTERACTING_ATOM_TYPES:
                 atom_name = atom_names[i].decode('utf-8') if isinstance(atom_names[i], bytes) else str(atom_names[i])
                 if atom_name not in AA_BACKBONE_ATOM_MASS:
-                    raise ValueError(
-                        f"FATAL ERROR: No AA backbone mass is defined for atom '{atom_name}' (atom index {i})."
-                    )
+                    raise ValueError("No AA backbone mass for atom %s at index %d" % (atom_name, i))
                 mass[i] = AA_BACKBONE_ATOM_MASS[atom_name] / 12.0
                 continue
             if atom_type not in martini_masses:
-                raise ValueError(f"FATAL ERROR: Mass not found for atom type '{atom_type}' (atom index {i}).\n"
-                                f"  Available atom types with masses: {sorted(martini_masses.keys())}\n"
-                                f"  This indicates incomplete force field parameters.\n"
-                                f"  Aborting to prevent incorrect simulation results.")
+                raise ValueError("Mass not found for atom type %s at index %d" % (atom_type, i))
             mass[i] = martini_masses[atom_type] / 12.0
         
         mass_array = t.create_array(input_grp, 'mass', obj=mass)
@@ -1637,28 +1538,21 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
         
         # Protein should NOT be held rigid during minimization
         # Allow the protein to relax and minimize its energy
-        print("Protein atoms are free to move during minimization (no rigid constraints)")
-        
-        # Create stage-specific parameters group (always create this)
         stage_grp = t.create_group(input_grp, 'stage_parameters')
         stage_grp._v_attrs.enable = 1
         stage_grp._v_attrs.current_stage = b'minimization'
-        print(f"Stage parameters initialized: current_stage={stage_grp._v_attrs.current_stage.decode()}")
         
         # ===================== NPT BAROSTAT CONFIGURATION =====================
         # Create barostat configuration group for NPT simulations
         # Settings are read from environment variables (set by run_sim_bilayer.sh)
         barostat_enable = int(os.environ.get('UPSIDE_NPT_ENABLE', '0'))
         if barostat_enable:
-            print(f"\n=== Creating NPT Barostat Configuration ===")
             barostat_grp = t.create_group(input_grp, 'barostat')
             barostat_grp._v_attrs.enable = barostat_enable
-            # Default: 1 bar = 0.000020659 E_up/Angstrom^3 (from 1 atm = 0.000020933215)
             barostat_grp._v_attrs.target_p_xy = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '0.000020659'))
             barostat_grp._v_attrs.target_p_z = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '0.000020659'))
             barostat_grp._v_attrs.tau_p = float(os.environ.get('UPSIDE_NPT_TAU', '1.0'))
             legacy_compressibility = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '14.521180763676'))
-            # Axis-specific compressibility for semi-isotropic membrane coupling
             barostat_grp._v_attrs.compressibility_xy = float(
                 os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_XY', str(legacy_compressibility))
             )
@@ -1668,16 +1562,8 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
             barostat_grp._v_attrs.interval = int(os.environ.get('UPSIDE_NPT_INTERVAL', '10'))
             barostat_grp._v_attrs.semi_isotropic = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
             barostat_grp._v_attrs.debug = int(os.environ.get('UPSIDE_NPT_DEBUG', '1'))
-            print(f"  Enabled: {barostat_enable}")
-            print("  Type: Berendsen")
-            print(f"  Target Pxy: {barostat_grp._v_attrs.target_p_xy} E_up/Angstrom^3 (~1 bar)")
-            print(f"  Target Pz: {barostat_grp._v_attrs.target_p_z} E_up/Angstrom^3 (~1 bar)")
-            print(f"  Compressibility XY: {barostat_grp._v_attrs.compressibility_xy} Angstrom^3/E_up")
-            print(f"  Compressibility Z: {barostat_grp._v_attrs.compressibility_z} Angstrom^3/E_up")
-            print(f"  Tau_p: {barostat_grp._v_attrs.tau_p}")
-            print(f"  Interval: {barostat_grp._v_attrs.interval} steps")
         else:
-            print(f"\n=== NPT Barostat Disabled (NVT mode) ===")
+            pass
         
         # Create type array
         type_array = t.create_array(input_grp, 'type', obj=atom_types.astype('S4'))
@@ -1894,11 +1780,9 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
                 else:
                     # Raise error for missing interaction parameters
                     available_types = sorted(set([t[0] for t in martini_table.keys()] + [t[1] for t in martini_table.keys()]))
-                    raise ValueError(f"FATAL ERROR: Missing interaction parameters for bead type pair ({type1}, {type2})\n"
-                                   f"  Atom indices: {i} ({type1}) - {j} ({type2})\n"
-                                   f"  This indicates incomplete MARTINI force field parameters.\n"
-                                   f"  Available bead types in parameter table: {available_types}\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                    raise ValueError(
+                        "Missing interaction parameters for bead pair (%s, %s)" % (type1, type2)
+                    )
                 
                 # Convert to UPSIDE units
                 epsilon = epsilon_kj / energy_conversion  # kJ/mol → E_up
@@ -1929,9 +1813,7 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
             martini_potential._v_attrs.epsilon = median_epsilon
             martini_potential._v_attrs.sigma = median_sigma
         else:
-            raise ValueError("FATAL ERROR: No interaction coefficients found.\n"
-                           f"  This indicates no non-bonded interactions were defined.\n"
-                           f"  Aborting to prevent incorrect simulation results.")
+            raise ValueError("No interaction coefficients found")
 
         # Add bonded potentials mirroring original run_martini.py
         # Bonds: dist_spring
@@ -1996,20 +1878,21 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
             # Backward-compatible scalar spring constant for older readers.
             t.create_array(restraint_group, 'spring_const', obj=np.max(spring_xyz, axis=1).astype('f4'))
     
-    print(f"Created UPSIDE input file: {input_file}")
-    print(f"Preparation complete!")
+    print("wrote:", input_file)
 
 def require_h5import():
     exe = shutil.which("h5import")
     if not exe:
-        raise SystemExit("ERROR: h5import was not found in PATH")
+        raise SystemExit("h5import not found in PATH")
     return exe
 
 
-def read_sc_table(path: Path):
-    if not path.exists():
-        raise SystemExit(f"ERROR: SC table JSON not found: {path}")
-    return json.loads(path.read_text())
+def read_sc_table(path):
+    path = expand_path(path)
+    if not os.path.exists(path):
+        raise SystemExit("SC table JSON not found: %s" % path)
+    with open(path) as fh:
+        return json.load(fh)
 
 
 def normalize_string(value):
@@ -2168,58 +2051,63 @@ def build_factorized_sc_table(sc_table):
     )
 
 
-def write_text_h5_dataset(h5import_exe: str, tmpdir: Path, output_h5: Path, dataset_path: str, values):
-    txt_path = tmpdir / f"{dataset_path.strip('/').replace('/', '__')}.txt"
-    cfg_path = tmpdir / f"{dataset_path.strip('/').replace('/', '__')}.cfg"
-    txt_path.write_text("".join(f"{normalize_string(v)}\n" for v in values))
-    cfg_path.write_text(f"PATH {dataset_path}\nINPUT-CLASS STR\n")
+def write_text_h5_dataset(h5import_exe, tmpdir, output_h5, dataset_path, values):
+    base = dataset_path.strip('/').replace('/', '__')
+    txt_path = os.path.join(tmpdir, "%s.txt" % base)
+    cfg_path = os.path.join(tmpdir, "%s.cfg" % base)
+    with open(txt_path, "w") as fh:
+        fh.write("".join("%s\n" % normalize_string(v) for v in values))
+    with open(cfg_path, "w") as fh:
+        fh.write("PATH %s\nINPUT-CLASS STR\n" % dataset_path)
     subprocess.run(
-        [h5import_exe, str(txt_path), "-c", str(cfg_path), "-o", str(output_h5)],
+        [h5import_exe, txt_path, "-c", cfg_path, "-o", output_h5],
         check=True,
     )
 
 
 def write_float_h5_dataset(
-    h5import_exe: str,
-    tmpdir: Path,
-    output_h5: Path,
-    dataset_path: str,
-    array: np.ndarray,
+    h5import_exe,
+    tmpdir,
+    output_h5,
+    dataset_path,
+    array,
 ):
     arr = np.asarray(array, dtype=np.float32)
-    bin_path = tmpdir / f"{dataset_path.strip('/').replace('/', '__')}.bin"
-    cfg_path = tmpdir / f"{dataset_path.strip('/').replace('/', '__')}.cfg"
+    base = dataset_path.strip('/').replace('/', '__')
+    bin_path = os.path.join(tmpdir, "%s.bin" % base)
+    cfg_path = os.path.join(tmpdir, "%s.cfg" % base)
     arr.tofile(bin_path)
     dims = " ".join(str(x) for x in arr.shape)
-    cfg_path.write_text(
-        "\n".join(
-            [
-                f"PATH {dataset_path}",
-                "INPUT-CLASS FP",
-                "INPUT-SIZE 32",
-                "INPUT-BYTE-ORDER LE",
-                f"RANK {arr.ndim}",
-                f"DIMENSION-SIZES {dims}",
-                "OUTPUT-CLASS FP",
-                "OUTPUT-SIZE 32",
-                "OUTPUT-ARCHITECTURE NATIVE",
-                "",
-            ]
+    with open(cfg_path, "w") as fh:
+        fh.write(
+            "\n".join(
+                [
+                    "PATH %s" % dataset_path,
+                    "INPUT-CLASS FP",
+                    "INPUT-SIZE 32",
+                    "INPUT-BYTE-ORDER LE",
+                    "RANK %d" % arr.ndim,
+                    "DIMENSION-SIZES %s" % dims,
+                    "OUTPUT-CLASS FP",
+                    "OUTPUT-SIZE 32",
+                    "OUTPUT-ARCHITECTURE NATIVE",
+                    "",
+                ]
+            )
         )
-    )
     subprocess.run(
-        [h5import_exe, str(bin_path), "-c", str(cfg_path), "-o", str(output_h5)],
+        [h5import_exe, bin_path, "-c", cfg_path, "-o", output_h5],
         check=True,
     )
 
 
-def build_sc_martini_h5(sc_table_json: Path, output_h5: Path):
+def build_sc_martini_h5(sc_table_json, output_h5):
     h5import_exe = require_h5import()
-    sc_table_path = Path(sc_table_json).expanduser().resolve()
-    output_h5 = Path(output_h5).expanduser().resolve()
-    output_h5.parent.mkdir(parents=True, exist_ok=True)
-    if output_h5.exists():
-        output_h5.unlink()
+    sc_table_path = expand_path(sc_table_json)
+    output_h5 = expand_path(output_h5)
+    os.makedirs(os.path.dirname(output_h5), exist_ok=True)
+    if os.path.exists(output_h5):
+        os.unlink(output_h5)
 
     sc_table = read_sc_table(sc_table_path)
     (
@@ -2237,8 +2125,7 @@ def build_sc_martini_h5(sc_table_json: Path, output_h5: Path):
         rotamer_angular_profile,
     ) = build_factorized_sc_table(sc_table)
 
-    with tempfile.TemporaryDirectory(prefix="build_sc_martini_h5.") as tmp:
-        tmpdir = Path(tmp)
+    with tempfile.TemporaryDirectory(prefix="build_sc_martini_h5.") as tmpdir:
         write_text_h5_dataset(h5import_exe, tmpdir, output_h5, "/schema", [sc_table.get("schema", "")])
         write_text_h5_dataset(
             h5import_exe, tmpdir, output_h5, "/forcefield_name", [sc_table.get("forcefield_name", "")]
@@ -2271,8 +2158,8 @@ def build_sc_martini_h5(sc_table_json: Path, output_h5: Path):
         )
 
     print(
-        f"Built {output_h5} from {sc_table_path} with {len(residues)} residues, "
-        f"{len(targets)} targets, {cos_theta_grid.size} angular points, {grid_nm.size} radial points"
+        "Built %s from %s with %d residues, %d targets, %d angular points, %d radial points"
+        % (output_h5, sc_table_path, len(residues), len(targets), cos_theta_grid.size, grid_nm.size)
     )
 
 
@@ -2296,9 +2183,9 @@ def decode_attr_string(value, default=""):
     return str(value)
 
 
-def validate_hybrid_mapping(mapping_h5: Path, n_atom: int | None = None):
-    path = Path(mapping_h5).expanduser().resolve()
-    if not path.exists():
+def validate_hybrid_mapping(mapping_h5, n_atom=None):
+    path = expand_path(mapping_h5)
+    if not os.path.exists(path):
         raise FileNotFoundError(path)
 
     with h5py.File(path, "r") as h5:
@@ -2564,7 +2451,7 @@ def set_initial_position(input_file, output_file):
             )
 
 
-def normalize_resname(name: str) -> str:
+def normalize_resname(name):
     name = name.upper()
     aliases = {
         "HSD": "HIS",
@@ -2593,7 +2480,7 @@ def unique_preserving_order(values):
     return out
 
 
-def resolve_sequence(inp, residue_count: int):
+def resolve_sequence(inp, residue_count):
     if "sequence" in inp:
         sequence = [normalize_resname(x) for x in decode_string_array(inp["sequence"])]
         if len(sequence) == residue_count:
@@ -2645,9 +2532,10 @@ def build_affine_atoms(inp):
     return residue_ids, affine_atoms
 
 
-def load_sidechain_rotamer_payload(sidechain_lib: Path, sequence, restype_to_index):
-    if not sidechain_lib.exists():
-        raise ValueError(f"Sidechain library not found: {sidechain_lib}")
+def load_sidechain_rotamer_payload(sidechain_lib, sequence, restype_to_index):
+    sidechain_lib = expand_path(sidechain_lib)
+    if not os.path.exists(sidechain_lib):
+        raise ValueError("Sidechain library not found: %s" % sidechain_lib)
 
     with h5py.File(sidechain_lib, "r") as sclib:
         sc_restype_order = decode_string_array(sclib["restype_order"])
@@ -2768,11 +2656,12 @@ def recreate_group(parent, name):
     return parent.create_group(name)
 
 
-def load_upside_config(upside_home: Path):
-    upside_config_py = upside_home / "py" / "upside_config.py"
-    if not upside_config_py.exists():
-        raise ValueError(f"upside_config.py not found: {upside_config_py}")
-    spec = importlib.util.spec_from_file_location("upside_config_runtime", str(upside_config_py))
+def load_upside_config(upside_home):
+    upside_home = expand_path(upside_home)
+    upside_config_py = os.path.join(upside_home, "py", "upside_config.py")
+    if not os.path.exists(upside_config_py):
+        raise ValueError("upside_config.py not found: %s" % upside_config_py)
+    spec = importlib.util.spec_from_file_location("upside_config_runtime", upside_config_py)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -2809,7 +2698,7 @@ def _decode_bytes_array(arr):
     )
 
 
-def _replace_h5_dataset(group, name: str, data, dtype):
+def _replace_h5_dataset(group, name, data, dtype):
     if name in group:
         del group[name]
     group.create_dataset(name, data=np.asarray(data, dtype=dtype))
@@ -2827,11 +2716,11 @@ def _cosine_from_triplets(pos, atom0, atom1, vertex):
 
 
 def append_explicit_backbone_oxygen_geometry(
-    up_file: Path,
-    bond_stiffness: float = EXPLICIT_BACKBONE_OXYGEN_BOND_STIFFNESS,
-    angle_stiffness: float = EXPLICIT_BACKBONE_OXYGEN_ANGLE_STIFFNESS,
+    up_file,
+    bond_stiffness=EXPLICIT_BACKBONE_OXYGEN_BOND_STIFFNESS,
+    angle_stiffness=EXPLICIT_BACKBONE_OXYGEN_ANGLE_STIFFNESS,
 ):
-    up_file = Path(up_file).expanduser().resolve()
+    up_file = expand_path(up_file)
     with h5py.File(up_file, "r+") as up:
         inp = up["input"]
         pot = inp["potential"]
@@ -2964,14 +2853,14 @@ def append_explicit_backbone_oxygen_geometry(
 
 
 def inject_backbone_nodes(
-    up_file: Path,
+    up_file,
     sequence,
     affine_atoms,
-    rama_library: Path,
-    rama_sheet_mixing: Path,
-    hbond_energy: Path,
-    reference_state_rama: Path,
-    upside_home: Path,
+    rama_library,
+    rama_sheet_mixing,
+    hbond_energy,
+    reference_state_rama,
+    upside_home,
 ):
     uc = load_upside_config(upside_home)
     fasta_seq = np.asarray(sequence)
@@ -3049,30 +2938,30 @@ def inject_backbone_nodes(
 
 
 def inject_stage7_sc_table_nodes(
-    up_file: Path,
-    martini_h5: Path,
-    upside_home: Path,
-    rama_library: Path,
-    rama_sheet_mixing: Path,
-    hbond_energy: Path,
-    reference_state_rama: Path,
+    up_file,
+    martini_h5,
+    upside_home,
+    rama_library,
+    rama_sheet_mixing,
+    hbond_energy,
+    reference_state_rama,
 ):
-    up_file = Path(up_file).expanduser().resolve()
-    martini_h5 = Path(martini_h5).expanduser().resolve()
-    upside_home = Path(upside_home).expanduser().resolve()
-    rama_library = Path(rama_library).expanduser().resolve()
-    rama_sheet_mixing = Path(rama_sheet_mixing).expanduser().resolve()
-    hbond_energy = Path(hbond_energy).expanduser().resolve()
-    reference_state_rama = Path(reference_state_rama).expanduser().resolve()
-    sidechain_lib = (upside_home / "parameters" / "ff_2.1" / "sidechain.h5").resolve()
+    up_file = expand_path(up_file)
+    martini_h5 = expand_path(martini_h5)
+    upside_home = expand_path(upside_home)
+    rama_library = expand_path(rama_library)
+    rama_sheet_mixing = expand_path(rama_sheet_mixing)
+    hbond_energy = expand_path(hbond_energy)
+    reference_state_rama = expand_path(reference_state_rama)
+    sidechain_lib = os.path.join(upside_home, "parameters", "ff_2.1", "sidechain.h5")
 
-    if not up_file.exists():
-        raise SystemExit(f"ERROR: stage file not found: {up_file}")
-    if not martini_h5.exists():
-        raise SystemExit(f"ERROR: martini.h5 not found: {martini_h5}")
+    if not os.path.exists(up_file):
+        raise SystemExit("stage file not found: %s" % up_file)
+    if not os.path.exists(martini_h5):
+        raise SystemExit("martini.h5 not found: %s" % martini_h5)
     for path in [rama_library, rama_sheet_mixing, hbond_energy, reference_state_rama, sidechain_lib]:
-        if not path.exists():
-            raise SystemExit(f"ERROR: required Upside input not found: {path}")
+        if not os.path.exists(path):
+            raise SystemExit("required input not found: %s" % path)
 
     with h5py.File(martini_h5, "r") as sc_lib:
         required_sc_datasets = [
@@ -3089,10 +2978,7 @@ def inject_stage7_sc_table_nodes(
         missing_sc_datasets = [name for name in required_sc_datasets if name not in sc_lib]
         if missing_sc_datasets:
             missing_text = ", ".join(missing_sc_datasets)
-            raise SystemExit(
-                f"ERROR: {martini_h5} is missing required rotamer-resolved SC datasets: {missing_text}. "
-                "Rebuild martini.h5 with the integrated martini_prepare_system.py build-sc-martini-h5 command."
-            )
+            raise SystemExit("%s is missing SC datasets: %s" % (martini_h5, missing_text))
         restype_order = decode_string_array(sc_lib["restype_order"])
         target_order = decode_string_array(sc_lib["target_order"])
         grid_nm = sc_lib["grid_nm"][:].astype(np.float32)
@@ -3224,9 +3110,14 @@ def inject_stage7_sc_table_nodes(
         g_sc.create_dataset("target_order", data=np.asarray([np.bytes_(x) for x in target_order], dtype="S8"))
 
     print(
-        f"Injected rotamer-weighted martini_sc_table_1body into {up_file}: "
-        f"n_rows={len(rotamer_payload['id_seq'])} skipped={len(rotamer_payload['skipped'])} "
-        f"n_env={len(env_atom_index)} n_restypes={len(restype_order)} n_targets={len(target_order)}"
+        "injected martini_sc_table_1body: n_rows=%d skipped=%d n_env=%d n_restypes=%d n_targets=%d"
+        % (
+            len(rotamer_payload['id_seq']),
+            len(rotamer_payload['skipped']),
+            len(env_atom_index),
+            len(restype_order),
+            len(target_order),
+        )
     )
 
 

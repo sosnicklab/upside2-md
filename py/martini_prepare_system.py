@@ -3,7 +3,6 @@
 import argparse
 import os
 import sys
-from pathlib import Path
 
 import numpy as np
 
@@ -37,11 +36,21 @@ from martini_prepare_system_lib import (
 )
 
 
-PY_DIR = Path(__file__).resolve().parent
-REPO_ROOT = PY_DIR.parent
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 
 
-def parse_prepare_args(argv=None):
+def abs_path(path):
+    return os.path.abspath(os.path.expanduser(path))
+
+
+def runtime_pdb_path(args):
+    if args.runtime_pdb_output:
+        return abs_path(args.runtime_pdb_output)
+    return os.path.join(REPO_ROOT, "example", "16.MARTINI", "pdb", "%s.MARTINI.pdb" % args.pdb_id)
+
+
+def parse_prepare_args(argv):
     parser = argparse.ArgumentParser(
         description="Prepare the default 1RKL mixed AA-backbone + dry-MARTINI workflow input."
     )
@@ -52,7 +61,7 @@ def parse_prepare_args(argv=None):
     parser.add_argument("--run-dir", default="outputs/martini_test")
     parser.add_argument(
         "--bilayer-pdb",
-        default=str(REPO_ROOT / "parameters" / "dryMARTINI" / "DOPC.pdb"),
+        default=os.path.join(REPO_ROOT, "parameters", "dryMARTINI", "DOPC.pdb"),
     )
     parser.add_argument("--protein-aa-pdb", required=True)
     parser.add_argument("--hybrid-mapping-output", default=None)
@@ -67,19 +76,14 @@ def parse_prepare_args(argv=None):
     return parser.parse_args(argv)
 
 
-def runtime_path(args):
-    if args.runtime_pdb_output:
-        return Path(args.runtime_pdb_output).expanduser().resolve()
-    return (REPO_ROOT / "example" / "16.MARTINI" / "pdb" / f"{args.pdb_id}.MARTINI.pdb").resolve()
+def prepare_mixed_structure(args, runtime_pdb):
+    protein_aa_pdb = abs_path(args.protein_aa_pdb)
+    bilayer_pdb = abs_path(args.bilayer_pdb)
 
-
-def prepare_mixed_structure(args, runtime_pdb: Path):
-    protein_aa_pdb = Path(args.protein_aa_pdb).expanduser().resolve()
-    bilayer_pdb = Path(args.bilayer_pdb).expanduser().resolve()
-    if not protein_aa_pdb.exists():
-        raise FileNotFoundError(f"Protein AA PDB not found: {protein_aa_pdb}")
-    if not bilayer_pdb.exists():
-        raise FileNotFoundError(f"Bilayer PDB not found: {bilayer_pdb}")
+    if not os.path.exists(protein_aa_pdb):
+        raise IOError("Protein AA PDB not found: %s" % protein_aa_pdb)
+    if not os.path.exists(bilayer_pdb):
+        raise IOError("Bilayer PDB not found: %s" % bilayer_pdb)
     if args.xy_scale < 1.0:
         raise ValueError("--xy-scale must be >= 1.0")
 
@@ -87,14 +91,14 @@ def prepare_mixed_structure(args, runtime_pdb: Path):
     bilayer_atoms, bilayer_box = parse_pdb(bilayer_pdb)
     protein_aa_atoms_full = extract_protein_aa_atoms(protein_aa_atoms_raw)
     protein_atoms = extract_protein_aa_backbone_atoms(protein_aa_atoms_full)
-    protein_env_atoms = [atom.copy() for atom in protein_atoms] + build_sidechain_centroid_proxy_atoms(
-        protein_aa_atoms_full
-    )
+    protein_env_atoms = [atom.copy() for atom in protein_atoms]
+    protein_env_atoms.extend(build_sidechain_centroid_proxy_atoms(protein_aa_atoms_full))
     bilayer_lipid_atoms = [atom for atom in bilayer_atoms if lipid_resname(atom["resname"])]
+
     if not protein_atoms:
-        raise ValueError("No AA backbone atoms found in protein AA PDB.")
+        raise ValueError("No AA backbone atoms found in protein AA PDB")
     if not bilayer_lipid_atoms:
-        raise ValueError("No lipid residues found in bilayer template.")
+        raise ValueError("No lipid residues found in bilayer template")
 
     protein_xyz = coords(protein_atoms)
     protein_env_xyz = coords(protein_env_atoms)
@@ -121,6 +125,7 @@ def prepare_mixed_structure(args, runtime_pdb: Path):
         [env_center_xy[0] + 0.5 * target_side, env_center_xy[1] + 0.5 * target_side],
         dtype=float,
     )
+
     bilayer_lipids = tile_and_crop_bilayer_lipids(
         bilayer_atoms=bilayer_atoms,
         bilayer_box=bilayer_box,
@@ -136,6 +141,7 @@ def prepare_mixed_structure(args, runtime_pdb: Path):
         keep_nonlipid=keep_nonlipid,
         cutoff=float(args.protein_lipid_cutoff),
     )
+    _ = removed_lipids
 
     packed_atoms = protein_atoms + bilayer_kept
     box_lengths = set_box_from_lipid_xy(
@@ -152,11 +158,11 @@ def prepare_mixed_structure(args, runtime_pdb: Path):
         bilayer_box=bilayer_box,
         salt_molar=float(args.salt_molar),
     )
-    protein_charge = (
-        int(args.protein_net_charge)
-        if args.protein_net_charge is not None
-        else int(infer_protein_charge_from_aa(protein_aa_atoms_full))
-    )
+    if args.protein_net_charge is not None:
+        protein_charge = int(args.protein_net_charge)
+    else:
+        protein_charge = int(infer_protein_charge_from_aa(protein_aa_atoms_full))
+
     salt_pairs = estimate_salt_pairs(
         box_lengths=box_lengths,
         salt_molar=float(args.salt_molar),
@@ -179,8 +185,10 @@ def prepare_mixed_structure(args, runtime_pdb: Path):
     write_pdb(runtime_pdb, all_atoms, box_lengths)
 
     if args.hybrid_mapping_output:
-        mapping_h5 = Path(args.hybrid_mapping_output).expanduser().resolve()
-        mapping_h5.parent.mkdir(parents=True, exist_ok=True)
+        mapping_h5 = abs_path(args.hybrid_mapping_output)
+        mapping_dir = os.path.dirname(mapping_h5)
+        if mapping_dir:
+            os.makedirs(mapping_dir, exist_ok=True)
         bb_entries = collect_aa_backbone_map(protein_atoms)
         write_backbone_metadata_h5(
             path=mapping_h5,
@@ -193,11 +201,12 @@ def prepare_mixed_structure(args, runtime_pdb: Path):
         validate_hybrid_mapping(mapping_h5, n_atom=len(all_atoms))
 
 
-def run_stage_conversion(args, runtime_pdb: Path):
+def run_stage_conversion(args, runtime_pdb):
     prev_pdb = os.environ.get("UPSIDE_RUNTIME_PDB_FILE")
     prev_itp = os.environ.get("UPSIDE_RUNTIME_ITP_FILE")
-    os.environ["UPSIDE_RUNTIME_PDB_FILE"] = str(runtime_pdb)
+    os.environ["UPSIDE_RUNTIME_PDB_FILE"] = runtime_pdb
     os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
+
     try:
         convert_stage(pdb_id=args.pdb_id, stage=args.stage, run_dir=args.run_dir)
     finally:
@@ -212,24 +221,23 @@ def run_stage_conversion(args, runtime_pdb: Path):
             os.environ["UPSIDE_RUNTIME_ITP_FILE"] = prev_itp
 
 
-def run_prepare_command(argv):
+def run_prepare(argv):
     args = parse_prepare_args(argv)
-    runtime_pdb = runtime_path(args)
-    runtime_pdb.parent.mkdir(parents=True, exist_ok=True)
+    runtime_pdb = runtime_pdb_path(args)
+    runtime_dir = os.path.dirname(runtime_pdb)
+    if runtime_dir:
+        os.makedirs(runtime_dir, exist_ok=True)
 
     if args.prepare_structure:
         prepare_mixed_structure(args, runtime_pdb)
-    elif not runtime_pdb.exists():
-        raise FileNotFoundError(
-            f"Runtime PDB not found for stage conversion: {runtime_pdb}. "
-            "Run with --prepare-structure 1 first."
-        )
+    elif not os.path.exists(runtime_pdb):
+        raise IOError("Runtime PDB not found for stage conversion: %s" % runtime_pdb)
 
     if args.stage:
         run_stage_conversion(args, runtime_pdb)
 
 
-def run_build_sc_martini_h5_command(argv):
+def run_build_sc_martini_h5(argv):
     parser = argparse.ArgumentParser(
         description="Build a native-unit martini.h5 SC table from assembled SC-training JSON."
     )
@@ -244,10 +252,10 @@ def run_build_sc_martini_h5_command(argv):
         help="Output HDF5 file path.",
     )
     args = parser.parse_args(argv)
-    build_sc_martini_h5(Path(args.sc_table_json), Path(args.output_h5))
+    build_sc_martini_h5(args.sc_table_json, args.output_h5)
 
 
-def run_set_initial_position_command(argv):
+def run_set_initial_position(argv):
     parser = argparse.ArgumentParser(
         description="Copy final coordinates from one stage file into the next stage input."
     )
@@ -257,7 +265,7 @@ def run_set_initial_position_command(argv):
     set_initial_position(args.input_file, args.output_file)
 
 
-def run_inject_stage7_sc_command(argv):
+def run_inject_stage7_sc(argv):
     parser = argparse.ArgumentParser(
         description="Inject stage-7 dry-MARTINI SC table coupling into a prepared .up file."
     )
@@ -270,24 +278,27 @@ def run_inject_stage7_sc_command(argv):
     parser.add_argument("reference_state_rama", help="Upside rama_reference.pkl path.")
     args = parser.parse_args(argv)
     inject_stage7_sc_table_nodes(
-        up_file=Path(args.up_file),
-        martini_h5=Path(args.martini_h5),
-        upside_home=Path(args.upside_home),
-        rama_library=Path(args.rama_library),
-        rama_sheet_mixing=Path(args.rama_sheet_mixing),
-        hbond_energy=Path(args.hbond_energy),
-        reference_state_rama=Path(args.reference_state_rama),
+        up_file=args.up_file,
+        martini_h5=args.martini_h5,
+        upside_home=args.upside_home,
+        rama_library=args.rama_library,
+        rama_sheet_mixing=args.rama_sheet_mixing,
+        hbond_energy=args.hbond_energy,
+        reference_state_rama=args.reference_state_rama,
     )
 
 
-if __name__ == "__main__":
-    command_handlers = {
-        "build-sc-martini-h5": run_build_sc_martini_h5_command,
-        "inject-stage7-sc": run_inject_stage7_sc_command,
-        "set-initial-position": run_set_initial_position_command,
-    }
+def main():
     argv = sys.argv[1:]
-    if argv and argv[0] in command_handlers:
-        command_handlers[argv[0]](argv[1:])
+    if argv and argv[0] == "build-sc-martini-h5":
+        run_build_sc_martini_h5(argv[1:])
+    elif argv and argv[0] == "inject-stage7-sc":
+        run_inject_stage7_sc(argv[1:])
+    elif argv and argv[0] == "set-initial-position":
+        run_set_initial_position(argv[1:])
     else:
-        run_prepare_command(argv)
+        run_prepare(argv)
+
+
+if __name__ == "__main__":
+    main()
