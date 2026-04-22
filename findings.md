@@ -1,6 +1,23 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-21: The default `run_sim_1rkl.sh` Python surface is much smaller than the files suggested.
+  - `py/martini_prepare_system.py` only needs:
+    - mixed-system prep,
+    - stage conversion,
+    - `build-sc-martini-h5`,
+    - `inject-stage7-sc`,
+    - `set-initial-position`;
+  - the default wrapper does not need bilayer-only prep, protein-only prep, deprecated `bb-aa-*` knobs, standalone hybrid-mapping validation, or summary side outputs.
+- 2026-04-21: The default VTF extractor contract is narrower than the current generic CLI.
+  - `run_sim_1rkl.sh` always asks `py/martini_extract_vtf.py` for VTF output, passes an explicit `pdb_id`, and uses `--split-segments`;
+  - the default wrapper does not use extractor `.pdb` output or `--output-group`.
+- 2026-04-21: Fresh reduced default workflow verification confirms the narrowed Python surface is sufficient.
+  - `/tmp/cleanup_1rkl_python_verify` completed through fresh stage `7.0` after removing the dead prep/extractor CLI branches;
+  - fresh VTF extraction still worked for:
+    - mode `1` on stages `6.0` to `6.6`,
+    - mode `2` on stage `7.0`;
+  - fresh mixed-system prep still wrote valid `/tmp/cleanup_1rkl_python_verify/prep/backbone_metadata.h5`, and inline validation was sufficient without a separate `validate-hybrid-mapping` command.
 - 2026-04-21: Fresh reduced `1rkl` checkpoints confirm the trimmed active schema.
   - `/tmp/cleanup_1rkl_verify/checkpoints/1rkl.stage_6.2.up` and `1rkl.stage_7.0.prepared.up` both store the active node graph under `/input/potential` using the lower-case node ids emitted by the current generator;
   - both fresh files still contain:

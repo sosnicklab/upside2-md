@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -9,12 +8,13 @@ from pathlib import Path
 import numpy as np
 
 from martini_prepare_system_lib import (
+    DEFAULT_SC_TABLE_JSON,
+    build_sc_martini_h5,
     build_sidechain_centroid_proxy_atoms,
     center_of_mass,
-    build_sc_martini_h5,
     collect_aa_backbone_map,
-    convert_stage,
     compute_lipid_residue_indices,
+    convert_stage,
     coords,
     estimate_salt_pairs,
     extract_backbone_sequence,
@@ -27,280 +27,61 @@ from martini_prepare_system_lib import (
     parse_pdb,
     place_ions,
     remove_overlapping_lipids,
-    set_initial_position,
     set_box_from_lipid_xy,
     set_coords,
+    set_initial_position,
     tile_and_crop_bilayer_lipids,
     validate_hybrid_mapping,
     write_backbone_metadata_h5,
     write_pdb,
-    DEFAULT_SC_TABLE_JSON,
 )
 
 
 PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
-WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 
 
 def parse_prepare_args(argv=None):
     parser = argparse.ArgumentParser(
-        description=(
-            "Unified preparation script for bilayer-only, protein-only, or mixed "
-            "protein+bilayer systems. Can optionally convert prepared structure "
-            "to UPSIDE input."
-        )
+        description="Prepare the default 1RKL mixed AA-backbone + dry-MARTINI workflow input."
     )
-    parser.add_argument("--mode", choices=["bilayer", "protein", "both"], required=True)
     parser.add_argument("--pdb-id", required=True, help="Runtime PDB id for stage conversion")
     parser.add_argument("--runtime-pdb-output", default=None)
     parser.add_argument("--prepare-structure", type=int, default=1, choices=[0, 1])
-    parser.add_argument("--stage", default=None, help="stage name for UPSIDE input conversion")
+    parser.add_argument("--stage", default=None, help="Stage name for UPSIDE input conversion")
     parser.add_argument("--run-dir", default="outputs/martini_test")
-
-    parser.add_argument("--bilayer-pdb", default=str(REPO_ROOT / "parameters" / "dryMARTINI" / "DOPC.pdb"))
-    parser.add_argument("--protein-aa-pdb", default=None)
+    parser.add_argument(
+        "--bilayer-pdb",
+        default=str(REPO_ROOT / "parameters" / "dryMARTINI" / "DOPC.pdb"),
+    )
+    parser.add_argument("--protein-aa-pdb", required=True)
     parser.add_argument("--hybrid-mapping-output", default=None)
-    parser.add_argument("--hybrid-bb-map-json-output", default=None)
-
     parser.add_argument("--xy-scale", type=float, default=1.0)
     parser.add_argument("--box-padding-xy", type=float, default=0.0)
     parser.add_argument("--box-padding-z", type=float, default=20.0)
     parser.add_argument("--salt-molar", type=float, default=0.15)
     parser.add_argument("--ion-cutoff", type=float, default=4.0)
     parser.add_argument("--seed", type=int, default=2026)
-
     parser.add_argument("--protein-lipid-cutoff", type=float, default=3.0)
     parser.add_argument("--protein-net-charge", type=int, default=None)
-    parser.add_argument(
-        "--protein-placement-mode",
-        choices=["embed", "outside-top", "outside-bottom"],
-        default="embed",
-        help="How to place the protein relative to the bilayer during mixed-system preparation.",
-    )
-    parser.add_argument(
-        "--protein-orientation-mode",
-        choices=["input", "lay-flat"],
-        default="input",
-        help="Whether to keep the input protein orientation or rotate it so its thinnest axis becomes the bilayer normal.",
-    )
-    parser.add_argument(
-        "--protein-surface-gap",
-        type=float,
-        default=6.0,
-        help="Requested minimum gap in Angstrom between the protein surface and the lipid surface for outside-of-bilayer placement.",
-    )
-    parser.add_argument(
-        "--bb-aa-min-matched-residues",
-        type=int,
-        default=8,
-        help=(
-            "Deprecated compatibility knob. AA-backbone workflow writes direct runtime "
-            "backbone metadata and no longer aligns against MARTINI BB."
-        ),
-    )
-    parser.add_argument(
-        "--bb-aa-max-rigid-rmsd",
-        type=float,
-        default=1.5,
-        help=(
-            "Deprecated compatibility knob. AA-backbone workflow writes direct runtime "
-            "backbone metadata and no longer aligns against MARTINI BB."
-        ),
-    )
-    parser.add_argument("--summary-json", default=None)
     return parser.parse_args(argv)
 
 
-def runtime_paths(args):
-    return (
-        Path(args.runtime_pdb_output).expanduser().resolve()
-        if args.runtime_pdb_output
-        else (WORKFLOW_DIR / "pdb" / f"{args.pdb_id}.MARTINI.pdb")
-    )
+def runtime_path(args):
+    if args.runtime_pdb_output:
+        return Path(args.runtime_pdb_output).expanduser().resolve()
+    return (REPO_ROOT / "example" / "16.MARTINI" / "pdb" / f"{args.pdb_id}.MARTINI.pdb").resolve()
 
 
-def canonicalize_axis_sign(axis):
-    axis = np.asarray(axis, dtype=float)
-    dominant = int(np.argmax(np.abs(axis)))
-    if axis[dominant] < 0.0:
-        axis = -axis
-    return axis
-
-
-def lay_flat_rotation_basis(protein_xyz):
-    centered = protein_xyz - center_of_mass(protein_xyz)
-    if centered.shape[0] < 3:
-        return np.eye(3, dtype=float)
-
-    cov = np.cov(centered.T)
-    eigvals, eigvecs = np.linalg.eigh(cov)
-    order = np.argsort(eigvals)[::-1]
-
-    axis_x = canonicalize_axis_sign(eigvecs[:, order[0]])
-    axis_z = canonicalize_axis_sign(eigvecs[:, order[-1]])
-    axis_y = np.cross(axis_z, axis_x)
-    axis_y_norm = float(np.linalg.norm(axis_y))
-    if axis_y_norm <= 1.0e-8:
-        axis_y = canonicalize_axis_sign(eigvecs[:, order[1]])
-    else:
-        axis_y = axis_y / axis_y_norm
-
-    axis_z = np.cross(axis_x, axis_y)
-    axis_z = axis_z / np.linalg.norm(axis_z)
-    basis = np.column_stack((axis_x, axis_y, axis_z))
-    if np.linalg.det(basis) < 0.0:
-        basis[:, 1] *= -1.0
-    return basis
-
-
-def orient_xyz_with_reference(protein_xyz, reference_xyz, orientation_mode):
-    reference_center = center_of_mass(reference_xyz)
-    centered = protein_xyz - reference_center
-    if orientation_mode == "input":
-        return centered
-    if orientation_mode == "lay-flat":
-        return centered @ lay_flat_rotation_basis(reference_xyz)
-    raise ValueError(f"Unsupported protein orientation mode: {orientation_mode}")
-
-
-def place_protein_xyz(protein_xyz_centered, bilayer_xyz, bilayer_center, placement_mode, surface_gap):
-    if placement_mode == "embed":
-        return protein_xyz_centered + bilayer_center
-
-    translation = np.array([float(bilayer_center[0]), float(bilayer_center[1]), 0.0], dtype=float)
-    if placement_mode == "outside-top":
-        translation[2] = float(bilayer_xyz[:, 2].max()) + float(surface_gap) - float(
-            protein_xyz_centered[:, 2].min()
-        )
-        return protein_xyz_centered + translation
-    if placement_mode == "outside-bottom":
-        translation[2] = float(bilayer_xyz[:, 2].min()) - float(surface_gap) - float(
-            protein_xyz_centered[:, 2].max()
-        )
-        return protein_xyz_centered + translation
-
-    raise ValueError(f"Unsupported protein placement mode: {placement_mode}")
-
-
-def prepare_bilayer_structure(args, runtime_pdb):
-    bilayer_pdb = Path(args.bilayer_pdb).expanduser().resolve()
-    bilayer_atoms, bilayer_box = parse_pdb(bilayer_pdb)
-    lipid_atoms = [a for a in bilayer_atoms if lipid_resname(a["resname"])]
-    if not lipid_atoms:
-        raise ValueError("No lipid residues detected in bilayer template.")
-
-    if args.xy_scale < 1.0:
-        raise ValueError("--xy-scale must be >= 1.0")
-
-    lip_xyz = coords(lipid_atoms)
-    lip_min = lip_xyz.min(axis=0)
-    lip_max = lip_xyz.max(axis=0)
-    lip_center = center_of_mass(lip_xyz)
-
-    span_x = float(lip_max[0] - lip_min[0])
-    span_y = float(lip_max[1] - lip_min[1])
-    base_side = max(span_x, span_y)
-    target_side = base_side * float(args.xy_scale)
-    target_xy_min = np.array(
-        [lip_center[0] - 0.5 * target_side, lip_center[1] - 0.5 * target_side],
-        dtype=float,
-    )
-    target_xy_max = np.array(
-        [lip_center[0] + 0.5 * target_side, lip_center[1] + 0.5 * target_side],
-        dtype=float,
-    )
-
-    bilayer_lipids = tile_and_crop_bilayer_lipids(
-        bilayer_atoms=bilayer_atoms,
-        bilayer_box=bilayer_box,
-        target_xy_min=target_xy_min,
-        target_xy_max=target_xy_max,
-    )
-
-    box_lengths = set_box_from_lipid_xy(
-        all_atoms=bilayer_lipids,
-        lipid_atoms=bilayer_lipids,
-        pad_z=float(args.box_padding_z),
-        force_square_xy=True,
-        min_box_z=None,
-        center_lipid_in_z=True,
-    )
-
-    effective_vol_frac = infer_effective_ion_volume_fraction_from_template(
-        bilayer_atoms=bilayer_atoms,
-        bilayer_box=bilayer_box,
-        salt_molar=float(args.salt_molar),
-    )
-    salt_pairs = estimate_salt_pairs(
-        box_lengths=box_lengths,
-        salt_molar=float(args.salt_molar),
-        effective_volume_fraction=effective_vol_frac,
-    )
-
-    rng = np.random.default_rng(int(args.seed))
-    ion_atoms = place_ions(
-        atoms=bilayer_lipids,
-        box_lengths=box_lengths,
-        n_na=salt_pairs,
-        n_cl=salt_pairs,
-        cutoff=float(args.ion_cutoff),
-        rng=rng,
-    )
-    all_atoms = bilayer_lipids + ion_atoms
-    write_pdb(runtime_pdb, all_atoms, box_lengths)
-
-    return {
-        "mode": "bilayer",
-        "input_bilayer_pdb": str(bilayer_pdb),
-        "runtime_pdb": str(runtime_pdb),
-        "xy_scale": float(args.xy_scale),
-        "base_xy_side_angstrom": float(base_side),
-        "target_xy_side_angstrom": float(target_side),
-        "box_angstrom": [float(v) for v in box_lengths],
-        "salt_molar": float(args.salt_molar),
-        "ion_effective_volume_fraction": float(effective_vol_frac),
-        "salt_pairs_target": int(salt_pairs),
-        "na_added": int(salt_pairs),
-        "cl_added": int(salt_pairs),
-        "lipid_atoms": int(len(bilayer_lipids)),
-        "ion_atoms_added": int(len(ion_atoms)),
-        "total_atoms": int(len(all_atoms)),
-    }
-
-
-def prepare_protein_structure(args, runtime_pdb):
-    if not args.protein_aa_pdb:
-        raise ValueError("--protein-aa-pdb is required for mode=protein")
-    protein_aa_pdb = Path(args.protein_aa_pdb).expanduser().resolve()
-    if not protein_aa_pdb.exists():
-        raise FileNotFoundError(f"Protein AA PDB not found: {protein_aa_pdb}")
-
-    protein_atoms_raw, protein_box = parse_pdb(protein_aa_pdb)
-    protein_atoms = extract_protein_aa_backbone_atoms(protein_atoms_raw)
-    write_pdb(runtime_pdb, protein_atoms, protein_box)
-
-    return {
-        "mode": "protein",
-        "input_protein_aa_pdb": str(protein_aa_pdb),
-        "runtime_pdb": str(runtime_pdb),
-        "total_atoms": int(len(protein_atoms)),
-        "box_angstrom": [float(v) for v in protein_box] if protein_box else None,
-    }
-
-
-def prepare_mixed_structure(args, runtime_pdb):
-    if not args.protein_aa_pdb:
-        raise ValueError("--protein-aa-pdb is required for mode=both")
-    if not args.bilayer_pdb:
-        raise ValueError("--bilayer-pdb is required for mode=both")
-
+def prepare_mixed_structure(args, runtime_pdb: Path):
     protein_aa_pdb = Path(args.protein_aa_pdb).expanduser().resolve()
     bilayer_pdb = Path(args.bilayer_pdb).expanduser().resolve()
     if not protein_aa_pdb.exists():
         raise FileNotFoundError(f"Protein AA PDB not found: {protein_aa_pdb}")
     if not bilayer_pdb.exists():
         raise FileNotFoundError(f"Bilayer PDB not found: {bilayer_pdb}")
+    if args.xy_scale < 1.0:
+        raise ValueError("--xy-scale must be >= 1.0")
 
     protein_aa_atoms_raw, _ = parse_pdb(protein_aa_pdb)
     bilayer_atoms, bilayer_box = parse_pdb(bilayer_pdb)
@@ -309,97 +90,44 @@ def prepare_mixed_structure(args, runtime_pdb):
     protein_env_atoms = [atom.copy() for atom in protein_atoms] + build_sidechain_centroid_proxy_atoms(
         protein_aa_atoms_full
     )
-    bilayer_lipid_atoms = [a for a in bilayer_atoms if lipid_resname(a["resname"])]
+    bilayer_lipid_atoms = [atom for atom in bilayer_atoms if lipid_resname(atom["resname"])]
     if not protein_atoms:
         raise ValueError("No AA backbone atoms found in protein AA PDB.")
     if not bilayer_lipid_atoms:
         raise ValueError("No lipid residues found in bilayer template.")
 
-    protein_xyz_raw = coords(protein_atoms)
-    protein_env_xyz_raw = coords(protein_env_atoms)
+    protein_xyz = coords(protein_atoms)
+    protein_env_xyz = coords(protein_env_atoms)
     bilayer_xyz = coords(bilayer_lipid_atoms)
     bilayer_center = center_of_mass(bilayer_xyz)
-    bmin = bilayer_xyz.min(axis=0)
-    bmax = bilayer_xyz.max(axis=0)
-    base_side = max(float(bmax[0] - bmin[0]), float(bmax[1] - bmin[1]))
+    bilayer_span = bilayer_xyz.max(axis=0) - bilayer_xyz.min(axis=0)
+    base_side = max(float(bilayer_span[0]), float(bilayer_span[1]))
 
-    if args.protein_placement_mode == "embed" and args.protein_orientation_mode == "input":
-        protein_center = center_of_mass(protein_xyz_raw)
-        shift = bilayer_center - protein_center
-        protein_xyz = protein_xyz_raw + shift
-        protein_env_xyz = protein_env_xyz_raw + shift
-        set_coords(protein_atoms, protein_xyz)
-        set_coords(protein_env_atoms, protein_env_xyz)
+    shift = bilayer_center - center_of_mass(protein_xyz)
+    protein_xyz = protein_xyz + shift
+    protein_env_xyz = protein_env_xyz + shift
+    set_coords(protein_atoms, protein_xyz)
+    set_coords(protein_env_atoms, protein_env_xyz)
 
-        pmin = protein_env_xyz.min(axis=0)
-        pmax = protein_env_xyz.max(axis=0)
-        pspan = pmax - pmin
-        pcenter_xy = 0.5 * (pmin[:2] + pmax[:2])
+    env_span = protein_env_xyz.max(axis=0) - protein_env_xyz.min(axis=0)
+    env_center_xy = 0.5 * (protein_env_xyz.min(axis=0)[:2] + protein_env_xyz.max(axis=0)[:2])
+    min_required_xy = 3.0 * env_span[:2] + 2.0 * float(args.box_padding_xy)
+    target_side = max(base_side * float(args.xy_scale), float(np.max(min_required_xy)))
+    target_xy_min = np.array(
+        [env_center_xy[0] - 0.5 * target_side, env_center_xy[1] - 0.5 * target_side],
+        dtype=float,
+    )
+    target_xy_max = np.array(
+        [env_center_xy[0] + 0.5 * target_side, env_center_xy[1] + 0.5 * target_side],
+        dtype=float,
+    )
+    bilayer_lipids = tile_and_crop_bilayer_lipids(
+        bilayer_atoms=bilayer_atoms,
+        bilayer_box=bilayer_box,
+        target_xy_min=target_xy_min,
+        target_xy_max=target_xy_max,
+    )
 
-        min_required_xy = 3.0 * pspan[:2] + 2.0 * float(args.box_padding_xy)
-        target_side = max(base_side * float(max(1.0, args.xy_scale)), float(np.max(min_required_xy)))
-        target_xy_min = np.array(
-            [pcenter_xy[0] - 0.5 * target_side, pcenter_xy[1] - 0.5 * target_side],
-            dtype=float,
-        )
-        target_xy_max = np.array(
-            [pcenter_xy[0] + 0.5 * target_side, pcenter_xy[1] + 0.5 * target_side],
-            dtype=float,
-        )
-        bilayer_lipids = tile_and_crop_bilayer_lipids(
-            bilayer_atoms=bilayer_atoms,
-            bilayer_box=bilayer_box,
-            target_xy_min=target_xy_min,
-            target_xy_max=target_xy_max,
-        )
-    else:
-        protein_env_xyz_oriented = orient_xyz_with_reference(
-            protein_env_xyz_raw,
-            protein_env_xyz_raw,
-            args.protein_orientation_mode,
-        )
-        protein_xyz_oriented = orient_xyz_with_reference(
-            protein_xyz_raw,
-            protein_env_xyz_raw,
-            args.protein_orientation_mode,
-        )
-        pmin = protein_env_xyz_oriented.min(axis=0)
-        pmax = protein_env_xyz_oriented.max(axis=0)
-        pspan = pmax - pmin
-
-        min_required_xy = 3.0 * pspan[:2] + 2.0 * float(args.box_padding_xy)
-        target_side = max(base_side * float(max(1.0, args.xy_scale)), float(np.max(min_required_xy)))
-        target_xy_min = np.array(
-            [bilayer_center[0] - 0.5 * target_side, bilayer_center[1] - 0.5 * target_side],
-            dtype=float,
-        )
-        target_xy_max = np.array(
-            [bilayer_center[0] + 0.5 * target_side, bilayer_center[1] + 0.5 * target_side],
-            dtype=float,
-        )
-        bilayer_lipids = tile_and_crop_bilayer_lipids(
-            bilayer_atoms=bilayer_atoms,
-            bilayer_box=bilayer_box,
-            target_xy_min=target_xy_min,
-            target_xy_max=target_xy_max,
-        )
-
-        bilayer_lipid_atoms_cropped = [a for a in bilayer_lipids if lipid_resname(a["resname"])]
-        if not bilayer_lipid_atoms_cropped:
-            raise ValueError("No lipid residues remained after bilayer tiling/cropping.")
-        bilayer_xyz_cropped = coords(bilayer_lipid_atoms_cropped)
-        protein_xyz = place_protein_xyz(
-            protein_xyz_centered=protein_env_xyz_oriented,
-            bilayer_xyz=bilayer_xyz_cropped,
-            bilayer_center=center_of_mass(bilayer_xyz_cropped),
-            placement_mode=args.protein_placement_mode,
-            surface_gap=args.protein_surface_gap,
-        )
-        placement_shift = protein_xyz[0] - protein_env_xyz_oriented[0]
-        protein_env_xyz = protein_env_xyz_oriented + placement_shift
-        protein_xyz = protein_xyz_oriented + placement_shift
-        set_coords(protein_atoms, protein_xyz)
-        set_coords(protein_env_atoms, protein_env_xyz)
     lipid_residues, keep_nonlipid = compute_lipid_residue_indices(bilayer_lipids)
     bilayer_kept, removed_lipids = remove_overlapping_lipids(
         bilayer_atoms=bilayer_lipids,
@@ -410,13 +138,12 @@ def prepare_mixed_structure(args, runtime_pdb):
     )
 
     packed_atoms = protein_atoms + bilayer_kept
-    min_box_z_target = float(3.0 * pspan[2])
     box_lengths = set_box_from_lipid_xy(
         all_atoms=packed_atoms,
         lipid_atoms=bilayer_kept,
         pad_z=float(args.box_padding_z),
         force_square_xy=True,
-        min_box_z=min_box_z_target,
+        min_box_z=float(3.0 * env_span[2]),
         center_lipid_in_z=True,
     )
 
@@ -450,86 +177,29 @@ def prepare_mixed_structure(args, runtime_pdb):
 
     all_atoms = packed_atoms + ion_atoms
     write_pdb(runtime_pdb, all_atoms, box_lengths)
-    protein_xyz_final = coords(protein_atoms)
-    bilayer_kept_lipid_atoms = [a for a in bilayer_kept if lipid_resname(a["resname"])]
-    bilayer_xyz_final = coords(bilayer_kept_lipid_atoms) if bilayer_kept_lipid_atoms else coords(bilayer_kept)
 
-    mapping_summary = {}
     if args.hybrid_mapping_output:
-        bb_entries = collect_aa_backbone_map(protein_atoms)
-        sequence = extract_backbone_sequence(protein_atoms)
-
         mapping_h5 = Path(args.hybrid_mapping_output).expanduser().resolve()
         mapping_h5.parent.mkdir(parents=True, exist_ok=True)
-        env_atom_indices = list(range(len(protein_atoms), len(all_atoms)))
+        bb_entries = collect_aa_backbone_map(protein_atoms)
         write_backbone_metadata_h5(
             path=mapping_h5,
             bb_entries=bb_entries,
             total_atoms=len(all_atoms),
-            env_atom_indices=env_atom_indices,
+            env_atom_indices=list(range(len(protein_atoms), len(all_atoms))),
             n_protein_atoms=len(protein_atoms),
-            sequence=sequence,
+            sequence=extract_backbone_sequence(protein_atoms),
         )
-
-        mapping_summary["protein_aa_pdb"] = str(protein_aa_pdb)
-        mapping_summary["mapping_h5"] = str(mapping_h5)
-        mapping_summary["bb_map_entries"] = int(len(bb_entries))
-
-        if args.hybrid_bb_map_json_output:
-            mapping_json = Path(args.hybrid_bb_map_json_output).expanduser().resolve()
-            write_summary(mapping_json, {"bb_entries": bb_entries, "count": len(bb_entries)})
-            mapping_summary["mapping_json"] = str(mapping_json)
-
-    summary = {
-        "mode": "both",
-        "input_protein_aa_pdb": str(protein_aa_pdb),
-        "input_bilayer_pdb": str(bilayer_pdb),
-        "runtime_pdb": str(runtime_pdb),
-        "protein_placement_mode": str(args.protein_placement_mode),
-        "protein_orientation_mode": str(args.protein_orientation_mode),
-        "protein_surface_gap_requested_angstrom": float(args.protein_surface_gap),
-        "xy_scale": float(args.xy_scale),
-        "base_xy_side_angstrom": float(base_side),
-        "target_xy_side_angstrom": float(target_side),
-        "box_angstrom": [float(v) for v in box_lengths],
-        "protein_charge_used": int(protein_charge),
-        "salt_pairs_target": int(salt_pairs),
-        "na_added": int(n_na),
-        "cl_added": int(n_cl),
-        "protein_atoms": int(len(protein_atoms)),
-        "bilayer_atoms_kept": int(len(bilayer_kept)),
-        "lipid_residues_removed": int(removed_lipids),
-        "ion_atoms_added": int(len(ion_atoms)),
-        "total_atoms": int(len(all_atoms)),
-        "protein_span_angstrom": [
-            float(v) for v in (protein_xyz_final.max(axis=0) - protein_xyz_final.min(axis=0))
-        ],
-        "protein_prep_envelope_atoms": int(len(protein_env_atoms)),
-        "protein_prep_envelope_span_angstrom": [float(v) for v in pspan],
-        "protein_final_z_min": float(protein_xyz_final[:, 2].min()),
-        "protein_final_z_max": float(protein_xyz_final[:, 2].max()),
-        "lipid_final_z_min": float(bilayer_xyz_final[:, 2].min()),
-        "lipid_final_z_max": float(bilayer_xyz_final[:, 2].max()),
-        "protein_top_clearance_angstrom": float(protein_xyz_final[:, 2].min() - bilayer_xyz_final[:, 2].max()),
-        "protein_bottom_clearance_angstrom": float(bilayer_xyz_final[:, 2].min() - protein_xyz_final[:, 2].max()),
-    }
-    summary.update(mapping_summary)
-    return summary
+        validate_hybrid_mapping(mapping_h5, n_atom=len(all_atoms))
 
 
 def run_stage_conversion(args, runtime_pdb: Path):
     prev_pdb = os.environ.get("UPSIDE_RUNTIME_PDB_FILE")
     prev_itp = os.environ.get("UPSIDE_RUNTIME_ITP_FILE")
-
     os.environ["UPSIDE_RUNTIME_PDB_FILE"] = str(runtime_pdb)
     os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
-
     try:
-        convert_stage(
-            pdb_id=args.pdb_id,
-            stage=args.stage,
-            run_dir=args.run_dir,
-        )
+        convert_stage(pdb_id=args.pdb_id, stage=args.stage, run_dir=args.run_dir)
     finally:
         if prev_pdb is None:
             os.environ.pop("UPSIDE_RUNTIME_PDB_FILE", None)
@@ -542,89 +212,21 @@ def run_stage_conversion(args, runtime_pdb: Path):
             os.environ["UPSIDE_RUNTIME_ITP_FILE"] = prev_itp
 
 
-def write_summary(path: Path, payload):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, sort_keys=True)
-        f.write("\n")
-
-
-def main():
-    args = parse_prepare_args()
-    runtime_pdb = runtime_paths(args)
-    runtime_pdb.parent.mkdir(parents=True, exist_ok=True)
-
-    summary = {
-        "mode": args.mode,
-        "pdb_id": args.pdb_id,
-        "prepare_structure": bool(args.prepare_structure),
-        "stage": args.stage,
-        "run_dir": args.run_dir,
-    }
-
-    if args.prepare_structure:
-        if args.mode == "bilayer":
-            summary.update(prepare_bilayer_structure(args, runtime_pdb))
-        elif args.mode == "protein":
-            summary.update(prepare_protein_structure(args, runtime_pdb))
-        else:
-            summary.update(prepare_mixed_structure(args, runtime_pdb))
-    else:
-        if not runtime_pdb.exists():
-            raise FileNotFoundError(
-                f"Runtime PDB not found for stage conversion: {runtime_pdb}. "
-                "Run with --prepare-structure 1 first."
-            )
-
-    if args.stage:
-        run_stage_conversion(args, runtime_pdb)
-        summary["upside_input"] = str(Path(args.run_dir).expanduser().resolve() / "test.input.up")
-
-    if args.summary_json:
-        summary_path = Path(args.summary_json).expanduser().resolve()
-    else:
-        summary_path = runtime_pdb.with_suffix(".prep_summary.json")
-    write_summary(summary_path, summary)
-    print(f"Preparation summary written to: {summary_path}")
-
-
 def run_prepare_command(argv):
     args = parse_prepare_args(argv)
-    runtime_pdb = runtime_paths(args)
+    runtime_pdb = runtime_path(args)
     runtime_pdb.parent.mkdir(parents=True, exist_ok=True)
 
-    summary = {
-        "mode": args.mode,
-        "pdb_id": args.pdb_id,
-        "prepare_structure": bool(args.prepare_structure),
-        "stage": args.stage,
-        "run_dir": args.run_dir,
-    }
-
     if args.prepare_structure:
-        if args.mode == "bilayer":
-            summary.update(prepare_bilayer_structure(args, runtime_pdb))
-        elif args.mode == "protein":
-            summary.update(prepare_protein_structure(args, runtime_pdb))
-        else:
-            summary.update(prepare_mixed_structure(args, runtime_pdb))
-    else:
-        if not runtime_pdb.exists():
-            raise FileNotFoundError(
-                f"Runtime PDB not found for stage conversion: {runtime_pdb}. "
-                "Run with --prepare-structure 1 first."
-            )
+        prepare_mixed_structure(args, runtime_pdb)
+    elif not runtime_pdb.exists():
+        raise FileNotFoundError(
+            f"Runtime PDB not found for stage conversion: {runtime_pdb}. "
+            "Run with --prepare-structure 1 first."
+        )
 
     if args.stage:
         run_stage_conversion(args, runtime_pdb)
-        summary["upside_input"] = str(Path(args.run_dir).expanduser().resolve() / "test.input.up")
-
-    if args.summary_json:
-        summary_path = Path(args.summary_json).expanduser().resolve()
-    else:
-        summary_path = runtime_pdb.with_suffix(".prep_summary.json")
-    write_summary(summary_path, summary)
-    print(f"Preparation summary written to: {summary_path}")
 
 
 def run_build_sc_martini_h5_command(argv):
@@ -643,16 +245,6 @@ def run_build_sc_martini_h5_command(argv):
     )
     args = parser.parse_args(argv)
     build_sc_martini_h5(Path(args.sc_table_json), Path(args.output_h5))
-
-
-def run_validate_hybrid_mapping_command(argv):
-    parser = argparse.ArgumentParser(
-        description="Validate hybrid mapping HDF5 schema and index consistency."
-    )
-    parser.add_argument("mapping_h5", type=Path, help="Path to hybrid mapping HDF5 file.")
-    parser.add_argument("--n-atom", type=int, default=None, help="Optional expected n_atom value.")
-    args = parser.parse_args(argv)
-    validate_hybrid_mapping(args.mapping_h5, n_atom=args.n_atom)
 
 
 def run_set_initial_position_command(argv):
@@ -693,7 +285,6 @@ if __name__ == "__main__":
         "build-sc-martini-h5": run_build_sc_martini_h5_command,
         "inject-stage7-sc": run_inject_stage7_sc_command,
         "set-initial-position": run_set_initial_position_command,
-        "validate-hybrid-mapping": run_validate_hybrid_mapping_command,
     }
     argv = sys.argv[1:]
     if argv and argv[0] in command_handlers:

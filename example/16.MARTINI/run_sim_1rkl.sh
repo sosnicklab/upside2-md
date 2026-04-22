@@ -73,12 +73,10 @@ PREP_DIR="${PREP_DIR:-${RUN_DIR}/prep}"
 PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/${PDB_ID}.pdb}"
 BILAYER_PDB="${BILAYER_PDB:-pdb/DOPC.pdb}"
 UNIVERSAL_PREP_SCRIPT="${UNIVERSAL_PREP_SCRIPT:-${PYTHON_WORKFLOW_DIR}/martini_prepare_system.py}"
-UNIVERSAL_PREP_MODE="${UNIVERSAL_PREP_MODE:-both}"
 EXTRACT_VTF_SCRIPT="${EXTRACT_VTF_SCRIPT:-${PYTHON_WORKFLOW_DIR}/martini_extract_vtf.py}"
 
 RUNTIME_PDB_FILE="${RUNTIME_PDB_FILE:-${PREP_DIR}/${RUNTIME_PDB_ID}.MARTINI.pdb}"
 BACKBONE_METADATA_FILE="${BACKBONE_METADATA_FILE:-${PREP_DIR}/backbone_metadata.h5}"
-BACKBONE_METADATA_JSON="${BACKBONE_METADATA_JSON:-${PREP_DIR}/backbone_metadata.json}"
 
 PREPARED_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.prepared.up"
 STAGE_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.up"
@@ -105,9 +103,6 @@ ION_CUTOFF="${ION_CUTOFF:-4.0}"
 XY_SCALE="${XY_SCALE:-1.0}"
 BOX_PADDING_XY="${BOX_PADDING_XY:-0.0}"
 BOX_PADDING_Z="${BOX_PADDING_Z:-20.0}"
-PROTEIN_PLACEMENT_MODE="${PROTEIN_PLACEMENT_MODE:-embed}"
-PROTEIN_ORIENTATION_MODE="${PROTEIN_ORIENTATION_MODE:-input}"
-PROTEIN_SURFACE_GAP="${PROTEIN_SURFACE_GAP:-6.0}"
 PROTEIN_LIPID_MIN_GAP="${PROTEIN_LIPID_MIN_GAP:-4.5}"
 PROTEIN_LIPID_CUTOFF_STEP="${PROTEIN_LIPID_CUTOFF_STEP:-0.5}"
 PROTEIN_LIPID_CUTOFF_MAX="${PROTEIN_LIPID_CUTOFF_MAX:-8.0}"
@@ -431,13 +426,11 @@ prepare_backbone_artifacts() {
     while true; do
         echo "Packing attempt with protein-lipid cutoff: ${packing_cutoff} Å"
         python3 "${UNIVERSAL_PREP_SCRIPT}" \
-            --mode "both" \
             --pdb-id "${RUNTIME_PDB_ID}" \
             --runtime-pdb-output "${RUNTIME_PDB_FILE}" \
             --prepare-structure 1 \
             --protein-aa-pdb "${PROTEIN_AA_PDB}" \
             --hybrid-mapping-output "${BACKBONE_METADATA_FILE}" \
-            --hybrid-bb-map-json-output "${BACKBONE_METADATA_JSON}" \
             --bilayer-pdb "${BILAYER_PDB}" \
             --salt-molar "${SALT_MOLAR}" \
             --protein-lipid-cutoff "${packing_cutoff}" \
@@ -445,11 +438,7 @@ prepare_backbone_artifacts() {
             --xy-scale "${XY_SCALE}" \
             --box-padding-xy "${BOX_PADDING_XY}" \
             --box-padding-z "${BOX_PADDING_Z}" \
-            --protein-placement-mode "${PROTEIN_PLACEMENT_MODE}" \
-            --protein-orientation-mode "${PROTEIN_ORIENTATION_MODE}" \
-            --protein-surface-gap "${PROTEIN_SURFACE_GAP}" \
-            --seed "${PREP_SEED}" \
-            --summary-json "${PREP_DIR}/prep_summary.json"
+            --seed "${PREP_SEED}"
 
         packing_min_gap="$(python3 - "${RUNTIME_PDB_FILE}" << 'PY'
 import sys
@@ -513,8 +502,6 @@ PY
 )"
         echo "Packing too tight near the AA backbone (min ${packing_min_gap} Å). Retrying with cutoff ${packing_cutoff} Å."
     done
-
-    python3 "${UNIVERSAL_PREP_SCRIPT}" validate-hybrid-mapping "${BACKBONE_METADATA_FILE}"
 }
 
 prepare_stage_file() {
@@ -529,13 +516,12 @@ prepare_stage_file() {
     export UPSIDE_BILAYER_LIPIDHEAD_FC="$lipidhead_fc"
 
     python3 "${UNIVERSAL_PREP_SCRIPT}" \
-        --mode "${UNIVERSAL_PREP_MODE}" \
         --pdb-id "${RUNTIME_PDB_ID}" \
         --runtime-pdb-output "${RUNTIME_PDB_FILE}" \
         --prepare-structure 0 \
         --stage "$prepare_stage" \
         --run-dir "$RUN_DIR" \
-        --summary-json "${PREP_DIR}/stage_${prepare_stage}.summary.json"
+        --protein-aa-pdb "${PROTEIN_AA_PDB}"
 
     local prepared_tmp="${RUN_DIR}/test.input.up"
     if [ ! -f "$prepared_tmp" ]; then

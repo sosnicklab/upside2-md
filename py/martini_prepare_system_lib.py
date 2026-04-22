@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import _pickle as cPickle
-import argparse
 import importlib.util
 import json
 import os
@@ -15,8 +14,6 @@ import warnings
 from collections import Counter, defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-
 import h5py
 import numpy as np
 import tables as tb
@@ -179,13 +176,6 @@ def center_of_mass(xyz):
 def lipid_resname(resname: str) -> bool:
     return resname.upper() in {"DOP", "DOPC"}
 
-
-def canonical_lipid_resname(resname: str) -> str:
-    if lipid_resname(resname):
-        return "DOPC"
-    return resname
-
-
 def extract_protein_aa_atoms(aa_atoms):
     protein_atoms = [deepcopy(atom) for atom in aa_atoms if atom["resname"].strip().upper() in PROTEIN_AA_RESNAMES]
     if not protein_atoms:
@@ -230,17 +220,14 @@ def compute_lipid_residue_indices(bilayer_atoms):
     return lipid_residues, keep_nonlipid
 
 
-def residue_group_atoms(atoms):
-    groups = defaultdict(list)
-    for atom in atoms:
-        key = (atom["chain"], atom["resseq"], atom["icode"], atom["resname"].upper())
-        groups[key].append(atom)
-    return groups
-
-
 def build_sidechain_centroid_proxy_atoms(protein_aa_atoms):
+    residue_groups = defaultdict(list)
+    for atom in protein_aa_atoms:
+        key = (atom["chain"], atom["resseq"], atom["icode"], atom["resname"].upper())
+        residue_groups[key].append(atom)
+
     proxies = []
-    for atoms in residue_group_atoms(protein_aa_atoms).values():
+    for atoms in residue_groups.values():
         sidechain_atoms = [atom for atom in atoms if atom["name"].strip().upper() not in BB_COMPONENT_NAMES]
         if not sidechain_atoms:
             continue
@@ -286,7 +273,10 @@ def tile_and_crop_bilayer_lipids(
     nx = int(np.ceil(target_span[0] / tile_x)) + 2
     ny = int(np.ceil(target_span[1] / tile_y)) + 2
 
-    base_groups = residue_group_atoms(lipid_atoms)
+    base_groups = defaultdict(list)
+    for atom in lipid_atoms:
+        key = (atom["chain"], atom["resseq"], atom["icode"], atom["resname"].upper())
+        base_groups[key].append(atom)
     tiled_groups = []
     for ix in range(-nx, nx + 1):
         for iy in range(-ny, ny + 1):
@@ -295,7 +285,7 @@ def tile_and_crop_bilayer_lipids(
                 gcopy = []
                 for atom in group:
                     a = deepcopy(atom)
-                    a["resname"] = canonical_lipid_resname(a["resname"])
+                    a["resname"] = "DOPC"
                     a["x"] = float(a["x"] + shift[0])
                     a["y"] = float(a["y"] + shift[1])
                     gcopy.append(a)
@@ -337,7 +327,7 @@ def tile_and_crop_bilayer_lipids(
             atom["chain"] = chain
             atom["icode"] = icode
             atom["resseq"] = next_resseq
-            atom["resname"] = canonical_lipid_resname(atom["resname"])
+            atom["resname"] = "DOPC"
             atom["segid"] = "MEMB"
             out_atoms.append(atom)
         next_resseq += 1
@@ -369,22 +359,6 @@ def remove_overlapping_lipids(
             keep_atom_idx.add(i)
     kept = [bilayer_atoms[i] for i in sorted(keep_atom_idx)]
     return kept, removed_residues
-
-
-def resize_and_shift(all_atoms, pad_xy, pad_z):
-    xyz = coords(all_atoms)
-    min_c = xyz.min(axis=0)
-    max_c = xyz.max(axis=0)
-    spans = max_c - min_c
-    box = np.array(
-        [spans[0] + 2.0 * pad_xy, spans[1] + 2.0 * pad_xy, spans[2] + 2.0 * pad_z],
-        dtype=float,
-    )
-    shift = np.array([pad_xy, pad_xy, pad_z], dtype=float) - min_c
-    shifted = xyz + shift
-    set_coords(all_atoms, shifted)
-    return box
-
 
 def set_box_from_lipid_xy(
     all_atoms,
@@ -643,14 +617,6 @@ def write_backbone_metadata_h5(
         membership = np.full(total_atoms, -1, dtype=np.int32)
         membership[:n_protein_atoms] = 0
         env_grp.create_dataset("protein_membership", data=membership)
-
-
-def write_summary(path: Path, payload: Dict):
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, sort_keys=True)
-        f.write("\n")
-
-
 
 # -----------------------------------------------------------------------------
 # Stage Conversion Helpers
@@ -1072,34 +1038,14 @@ def read_martini_masses(ff_file):
     
     return masses
 
-def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
+def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
     """
-    Main preparation function with stage-specific parameterization
-    
-    Args:
-        stage: Simulation stage ('minimization', 'npt_equil', 'npt_equil_reduced', 'npt_prod')
-        run_dir: Optional run directory (default: outputs/martini_test)
+    Write the active AA-backbone + dry-MARTINI stage file for the default 1RKL workflow.
     """
-
-    # Get UPSIDE home directory
-    upside_path = os.environ['UPSIDE_HOME']
-
-    # Resolve PDB ID from explicit argument first, then legacy CLI fallback.
-    if pdb_id is None:
-        if len(sys.argv) > 1:
-            pdb_id = sys.argv[1]
-        else:
-            raise ValueError("FATAL ERROR: No PDB ID provided.\n"
-                            f"  Usage: python {sys.argv[0]} <pdb_id>\n"
-                            f"  Example: python {sys.argv[0]} 1rkl\n"
-                            f"  Aborting to prevent incorrect simulation results.")
-
-    # Get run directory from function parameter or use default
-    if run_dir is None:
-        if len(sys.argv) > 2 and sys.argv[2] != '--stage':
-            run_dir = sys.argv[2]
-        else:
-            run_dir = "outputs/martini_test"
+    if not pdb_id:
+        raise ValueError("convert_stage requires an explicit pdb_id")
+    if not run_dir:
+        raise ValueError("convert_stage requires an explicit run_dir")
     os.makedirs(run_dir, exist_ok=True)
 
     # Get stage from environment variable or use default
@@ -1137,17 +1083,11 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     # Get parameters for current stage
     params = stage_params.get(stage, stage_params['npt_prod'])
     stage_lipidhead_fc = float(os.environ.get('UPSIDE_BILAYER_LIPIDHEAD_FC', '0'))
-
-
-    # Configuration
-    strict_from_martini_pdb = True
-    include_protein = True
     
     print("=== AA-Backbone Protein-Lipid System Preparation ===")
     print(f"PDB ID: {pdb_id}")
     print(f"Output directory: {run_dir}")
-    
-    workflow_dir = str(WORKFLOW_DIR)
+
     # Read dry MARTINI parameter files
     print("\n=== Reading Dry MARTINI Parameters ===")
     ff_dir = Path(
@@ -1241,18 +1181,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         cl_bead_types, cl_charges = [], []
         print("Ion topology file not found in selected FF")
     
-    # Parse water topology from ITP file
-    water_param_file = pick_ff_file("dry_martini_v2.1_solvents.itp", required=False)
-    if water_param_file:
-        water_topology = parse_itp_file(water_param_file)
-        water_atoms = [atom for atom in water_topology['atoms'] if atom['residue'].upper() == 'W']
-        water_bead_types = [atom['type'] for atom in water_atoms]
-        water_charges = [atom['charge'] for atom in water_atoms]
-        print(f"Read water topology: {len(water_bead_types)} bead types from {water_param_file}")
-    else:
-        water_bead_types, water_charges = [], []
-        print("Water topology file not found in selected FF")
-    
     # Read bead masses from force field file
     mass_file = martini_param_file
     martini_masses = read_martini_masses(mass_file)
@@ -1334,10 +1262,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     print(f"Angle conversion factor: {angle_conversion:.6f} (divide by energy_conv)")
     print(f"Dihedral conversion factor: {dihedral_conversion:.6f} (divide by energy_conv)")
     
-    # Read PDB file
-    if strict_from_martini_pdb or include_protein:
-        input_pdb_file = runtime_input_pdb_path(workflow_dir, pdb_id)
-        print(f"\nUsing MARTINI PDB as base structure: {input_pdb_file}")
+    input_pdb_file = runtime_input_pdb_path(str(WORKFLOW_DIR), pdb_id)
+    print(f"\nUsing MARTINI PDB as base structure: {input_pdb_file}")
     
     # Read PDB and populate arrays
     print(f"\n=== Reading PDB Structure ===")
@@ -1350,13 +1276,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     chain_ids = []
     seg_ids = []
     
-    protein_bonds = []
-    protein_angles = []
-    protein_dihedrals = []
-    protein_constraints = []
-    protein_position_restraints = []
-    protein_exclusions = []
-
     print(f"\n=== Protein Connectivity ===")
     print("Protein MARTINI topology is retired for this workflow.")
     print("Protein bonded geometry will be supplied by injected Upside backbone nodes.")
@@ -1419,13 +1338,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                                    f"  Available DOPC atom names: {available_atom_names}\n"
                                    f"  This indicates incomplete DOPC topology mapping.\n"
                                    f"  Aborting to prevent incorrect simulation results.")
-            elif residue_name == 'W':
-                if not water_bead_types:
-                    raise ValueError(f"FATAL ERROR: No water bead types found in topology.\n"
-                                   f"  This indicates incomplete water parameter file.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
-                martini_type = water_bead_types[0]
-                charge = water_charges[0]
             elif residue_name == 'NA':
                 if not na_bead_types:
                     raise ValueError(f"FATAL ERROR: No sodium bead types found in topology.\n"
@@ -1442,7 +1354,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                 charge = cl_charges[0]
             else:
                 raise ValueError(f"FATAL ERROR: Unknown residue type '{residue_name}' for atom '{atom_name}'.\n"
-                               f"  Supported residue types: PROTEIN, DOPC, W, NA, CL\n"
+                               f"  Supported residue types: PROTEIN, DOPC, NA, CL\n"
                                f"  This indicates incomplete system definition.\n"
                                f"  Aborting to prevent incorrect simulation results.")
             
@@ -1577,8 +1489,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         mol_counts['PROTEIN'] = f"{protein_chains} chain(s) ({protein_residue_count} residues)"
     
     dopc_count = mol_counts.get('DOPC', 0)
-    water_count = mol_counts.get('W', 0)
-    
     print(f"\n=== Molecule Summary ===")
     for moltype, count in mol_counts.items():
         print(f"{moltype}: {count} molecules")
@@ -1649,72 +1559,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     print(f"Created {len(bonds_list)} bonds for {dopc_count} DOPC lipids")
     print(f"Created {len(angles_list)} angles for {dopc_count} DOPC lipids")
     print(f"Created {len(lipid_restraint_indices)} lipid position restraints (BILAYER_LIPIDHEAD_FC={stage_lipidhead_fc:g})")
-    
-    # Create protein connectivity if available
-    protein_bond_count = 0
-    protein_angle_count = 0
-    protein_dihedral_count = 0
-    protein_constraint_count = 0
-    
-    if protein_bonds or protein_constraints:
-        print(f"\n=== Protein Connectivity from Upside Backbone Nodes ===")
-        print("No MARTINI protein bonds, angles, or dihedrals are created in stage conversion.")
-        
-        # Add protein bonds to the bond list
-        for i, j, r0_nm, k_kj in protein_bonds:
-            # Convert MARTINI units to UPSIDE units
-            r0_angstrom = r0_nm * 10.0  # nm to Å
-            k_upside = k_kj * bond_conversion  # kJ/mol/nm² to E_up/Å²
-            
-            # Add to bond list (assuming protein atoms come first in the system)
-            bonds_list.append([i, j])
-            bond_lengths_list.append(r0_angstrom)
-            bond_force_constants_list.append(k_upside)
-            protein_bond_count += 1
-        
-        # Add protein constraints as bonds with large spring constants
-        for i, j, r0_nm, k_kj in protein_constraints:
-            # Convert MARTINI units to UPSIDE units
-            r0_angstrom = r0_nm * 10.0  # nm to Å
-            k_upside = k_kj * bond_conversion  # kJ/mol/nm² to E_up/Å²
-            
-            # Add to bond list
-            bonds_list.append([i, j])
-            bond_lengths_list.append(r0_angstrom)
-            bond_force_constants_list.append(k_upside)
-            protein_constraint_count += 1
-        
-        # Add protein angles to the angle list
-        for i, j, k, theta0_deg, k_kj in protein_angles:
-            # Convert MARTINI units to UPSIDE units
-            theta0_upside = theta0_deg  # degrees (same unit)
-            k_upside = k_kj * angle_conversion  # kJ/mol/deg² to E_up/deg²
-            
-            # Add to angle list
-            angles_list.append([i, j, k])
-            angle_equil_deg_list.append(theta0_upside)
-            angle_force_constants_list.append(k_upside)
-            protein_angle_count += 1
-        
-        # Add protein dihedrals to the dihedral list
-        for i, j, k, l, phi0_deg, k_kj, func_type in protein_dihedrals:
-            # Convert MARTINI units to UPSIDE units
-            phi0_upside = phi0_deg  # degrees (same unit)
-            k_upside = k_kj * dihedral_conversion  # kJ/mol to E_up
-            
-            # Add to dihedral list
-            dihedrals_list.append([i, j, k, l])
-            dihedral_equil_deg_list.append(phi0_upside)
-            dihedral_force_constants_list.append(k_upside)
-            dihedral_type_list.append(func_type)
-            protein_dihedral_count += 1
-        
-        print(f"Added {protein_bond_count} protein bonds")
-        print(f"Added {protein_constraint_count} protein constraints (as bonds with large spring constants)")
-        print(f"Added {protein_angle_count} protein angles")
-        print(f"Added {protein_dihedral_count} protein dihedrals")
-    else:
-        print("\nNo MARTINI protein connectivity is expected in the AA-backbone workflow")
+
+    print("\nNo MARTINI protein connectivity is expected in the AA-backbone workflow")
     
     print(f"Total system bonds: {len(bonds_list)}")
     print(f"Total system angles: {len(angles_list)}")
@@ -1841,15 +1687,13 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         type_array._v_attrs.initialized = True
         type_array._v_attrs.description = b"Interaction matrix type names (e.g., C1, C2, Qa, Qd)"
 
-        # Store particle class per atom (protein/lipid/water/ion/other)
+        # Store particle class per atom (protein/lipid/ion/other)
         particle_class = np.empty(n_atoms, dtype='S10')
         for i, resname in enumerate(residue_names):
             if resname in protein_residues:
                 particle_class[i] = b"PROTEINAA"
-            elif resname == 'DOP':
+            elif resname in ('DOP', 'DOPC'):
                 particle_class[i] = b"LIPID"
-            elif resname == 'W':
-                particle_class[i] = b"WATER"
             elif resname in ('NA', 'CL'):
                 particle_class[i] = b"ION"
             else:
@@ -1859,7 +1703,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         particle_class_array._v_attrs.shape = particle_class.shape
         particle_class_array._v_attrs.n_atoms = n_atoms
         particle_class_array._v_attrs.initialized = True
-        particle_class_array._v_attrs.description = b"Per-atom class: PROTEIN, LIPID, WATER, ION, OTHER"
+        particle_class_array._v_attrs.description = b"Per-atom class: PROTEINAA, LIPID, ION, OTHER"
         
         # Create charges array
         charge_array = t.create_array(input_grp, 'charges', obj=charges)
@@ -1922,23 +1766,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         force_cap = float(os.environ.get('UPSIDE_FORCE_CAP', '0'))
         martini_potential._v_attrs.force_cap = force_cap
         
-        # PME configuration for long-range Coulomb interactions
-        use_pme = int(os.environ.get('UPSIDE_USE_PME', '1'))
-        pme_alpha = float(os.environ.get('UPSIDE_PME_ALPHA', '0.01'))
-        pme_rcut = float(os.environ.get('UPSIDE_PME_RCUT', '10.0'))
-        pme_nx = int(os.environ.get('UPSIDE_PME_NX', '32'))
-        pme_ny = int(os.environ.get('UPSIDE_PME_NY', '32'))
-        pme_nz = int(os.environ.get('UPSIDE_PME_NZ', '32'))
-        pme_order = int(os.environ.get('UPSIDE_PME_ORDER', '4'))
-        
-        martini_potential._v_attrs.use_pme = use_pme
-        martini_potential._v_attrs.pme_alpha = pme_alpha
-        martini_potential._v_attrs.pme_rcut = pme_rcut
-        martini_potential._v_attrs.pme_nx = pme_nx
-        martini_potential._v_attrs.pme_ny = pme_ny
-        martini_potential._v_attrs.pme_nz = pme_nz
-        martini_potential._v_attrs.pme_order = pme_order
-
         martini_potential._v_attrs.x_len = x_len
         martini_potential._v_attrs.y_len = y_len
         martini_potential._v_attrs.z_len = z_len
@@ -2027,12 +1854,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         for bond in bonds_list:
             sorted_bond = (min(bond[0], bond[1]), max(bond[0], bond[1]))
             bonded_pairs_12.add(sorted_bond)
-        
-        # Add additional exclusions from protein ITP file
-        if protein_exclusions:
-            for exclusion in protein_exclusions:
-                sorted_exclusion = (min(exclusion[0], exclusion[1]), max(exclusion[0], exclusion[1]))
-                additional_exclusions.add(sorted_exclusion)
         
         # Generate all unique pairs (i < j) with proper exclusions (nrexcl=1)
         excluded_12_count = 0
@@ -2177,27 +1998,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     
     print(f"Created UPSIDE input file: {input_file}")
     print(f"Preparation complete!")
-    
-    # Save preparation summary
-    summary_file = f"{run_dir}/preparation_summary.txt"
-    with open(summary_file, 'w') as f:
-        f.write("=== MARTINI 3.0 Preparation Summary ===\n")
-        f.write(f"PDB ID: {pdb_id}\n")
-        f.write(f"Total atoms: {n_atoms}\n")
-        f.write(f"Box dimensions: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å\n")
-        f.write(f"Total bonds: {len(bonds_list)}\n")
-        f.write(f"Total angles: {len(angles_list)}\n")
-        f.write(f"Total dihedrals: {len(dihedrals_list)}\n")
-        f.write(f"Protein bonds: {protein_bond_count}\n")
-        f.write(f"Protein constraints: {protein_constraint_count}\n")
-        f.write(f"Protein angles: {protein_angle_count}\n")
-        f.write(f"Protein dihedrals: {protein_dihedral_count}\n")
-        f.write(f"DOPC lipids: {dopc_count}\n")
-        f.write(f"Water molecules: {water_count}\n")
-        f.write(f"1-2 exclusions (nrexcl=1): {excluded_12_count}\n")
-        f.write(f"Additional exclusions: {excluded_additional_count}\n")
-    
-    print(f"Preparation summary saved to: {summary_file}")
 
 def require_h5import():
     exe = shutil.which("h5import")

@@ -1,4 +1,41 @@
 
+## 2026-04-21 1RKL Python Workflow Cleanup
+
+### Project Goal
+- Remove dead prep/extraction code from `py/martini_prepare_system.py`, `py/martini_prepare_system_lib.py`, and `py/martini_extract_vtf.py`, keeping only the fresh default `example/16.MARTINI/run_sim_1rkl.sh` path.
+
+### Architecture & Key Decisions
+- Keep only the mixed AA-backbone + DOPC + ion preparation path used by the default wrapper.
+- Keep only the Python helper commands still needed by the default wrapper:
+  - `build-sc-martini-h5`
+  - `inject-stage7-sc`
+  - `set-initial-position`
+- Inline hybrid-mapping validation into mixed-system preparation instead of keeping a separate public subcommand.
+- Keep VTF extraction modes `1` and `2` plus split-segment handling, but drop the extra generic CLI/output surface.
+
+### Execution Phases
+- [x] Audit the current Python entrypoints and helper surface against the default `run_sim_1rkl.sh` path.
+- [x] Patch `py/martini_prepare_system.py` to remove unused prep modes, deprecated flags, duplicate wrapper logic, and dead subcommands.
+- [x] Patch `py/martini_prepare_system_lib.py` to remove unused helpers and default-flow-inactive branches from stage conversion.
+- [x] Patch `py/martini_extract_vtf.py` and `example/16.MARTINI/run_sim_1rkl.sh` to match the narrowed VTF/prep interface.
+- [x] Verify the default workflow end to end on a reduced fresh run.
+
+### Known Errors / Blockers
+- None so far.
+
+### Review
+- Static verification:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py`
+  - repo sweep confirmed removal of the deleted prep/extractor options and dead helper names.
+- Fresh workflow verification:
+  - ran a reduced fresh `example/16.MARTINI/run_sim_1rkl.sh` in `/tmp/cleanup_1rkl_python_verify` with one-step minimization/equilibration/production settings;
+  - the run completed through stage `7.0`.
+- Observed behavior on the narrowed Python path:
+  - mixed-system preparation still wrote the runtime PDB and backbone metadata HDF5;
+  - stage conversion still produced fresh `6.0` to `7.0` checkpoints;
+  - VTF extraction still produced mode-`1` files for `6.x` and mode-`2` file for `7.0`;
+  - stage-7 SC injection still produced `martini_sc_table_1body` on the fresh production checkpoint.
+
 ## 2026-04-21 1RKL-Only Runtime Cleanup
 
 ### Project Goal

@@ -1,5 +1,39 @@
 # Progress Log
 
+## 2026-04-21 (1RKL Python Workflow Cleanup)
+- Trimmed `py/martini_prepare_system.py` down to the default mixed-system path plus the only helper commands still needed by `run_sim_1rkl.sh`:
+  - `build-sc-martini-h5`
+  - `inject-stage7-sc`
+  - `set-initial-position`
+- Removed the dead Python prep surface:
+  - bilayer-only/protein-only prep modes,
+  - deprecated `bb-aa-*` flags,
+  - extra placement/orientation branches,
+  - duplicate wrapper logic,
+  - the public `validate-hybrid-mapping` subcommand,
+  - summary/json side outputs that the default workflow does not consume.
+- Simplified `py/martini_prepare_system_lib.py` around the default active path:
+  - removed dead helper functions (`canonical_lipid_resname`, `residue_group_atoms`, `resize_and_shift`, lib-local summary writer);
+  - removed legacy CLI fallback behavior from `convert_stage(...)`;
+  - removed water-specific stage-conversion support and the empty protein-connectivity scaffolding;
+  - removed duplicate PME attribute setup while leaving the current Ewald/default runtime path intact.
+- Simplified `py/martini_extract_vtf.py` to the current wrapper contract:
+  - VTF-only output,
+  - required explicit `pdb_id`,
+  - no `--output-group`,
+  - current-checkpoint box inference from `/output/box` or `martini_potential.{x_len,y_len,z_len}`.
+- Updated `example/16.MARTINI/run_sim_1rkl.sh` to stop passing deleted prep options and to rely on inline mapping validation during prep.
+- Verification completed:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py`
+  - reduced fresh workflow run:
+    - `RUN_DIR=/tmp/cleanup_1rkl_python_verify`
+    - `MIN_60_MAX_ITER=1 MIN_61_MAX_ITER=1`
+    - `EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1`
+    - `PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1`
+  - observed result:
+    - completed through fresh stage `7.0`,
+    - wrote all expected checkpoints and VTF files on the narrowed Python path.
+
 ## 2026-04-21 (1RKL-Only Runtime Cleanup Verification)
 - Rebuilt the runtime after the cleanup edits:
   - `source .venv/bin/activate && source source.sh && cmake --build obj`

@@ -3,8 +3,6 @@
 import argparse
 import os
 import re
-import sys
-from datetime import datetime
 from pathlib import Path
 
 import h5py
@@ -25,16 +23,6 @@ def decode_str_array(dset):
         else:
             out.append(str(x).strip())
     return np.array(out, dtype=object)
-
-
-def infer_pdb_id(input_file, user_pdb_id):
-    if user_pdb_id:
-        return user_pdb_id
-    base = os.path.basename(input_file).lower()
-    if "bilayer" in base:
-        return "bilayer"
-    return "1rkl"
-
 
 def normalize_frame(pos, n_particles):
     arr = np.asarray(pos)
@@ -111,6 +99,8 @@ def infer_residue_names_from_class(atom_names, particle_class):
         an = str(aname).upper()
         if cls == "PROTEIN":
             out.append("PRO")
+        elif cls == "LIPID":
+            out.append("DOPC")
         elif cls == "ION":
             if an == "NA":
                 out.append("NA")
@@ -144,7 +134,7 @@ def infer_chain_ids_from_class(atom_names, particle_class):
     return np.array(out, dtype=object)
 
 
-def infer_box_lengths(traj_h5, struct_h5, pdb_file, input_file, output_group="output"):
+def infer_box_lengths(traj_h5, struct_h5, output_group="output"):
     x_len = y_len = z_len = None
 
     box_path = f"{output_group}/box" if output_group else None
@@ -159,18 +149,6 @@ def infer_box_lengths(traj_h5, struct_h5, pdb_file, input_file, output_group="ou
                 bx, by, bz = float(last[0]), float(last[1]), float(last[2])
                 if bx > 0 and by > 0 and bz > 0:
                     x_len, y_len, z_len = bx, by, bz
-
-    if x_len is None:
-        log_file = input_file.replace(".up", ".log")
-        if os.path.exists(log_file):
-            with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
-            for line in reversed(lines):
-                if "[NPT]" in line and "box" in line:
-                    m = re.search(r"box\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)", line)
-                    if m:
-                        x_len, y_len, z_len = float(m.group(1)), float(m.group(2)), float(m.group(3))
-                    break
 
     if x_len is None and "input/potential/martini_potential" in struct_h5:
         g = struct_h5["input/potential/martini_potential"]
@@ -191,7 +169,7 @@ def infer_box_lengths(traj_h5, struct_h5, pdb_file, input_file, output_group="ou
                     break
 
     if x_len is None:
-        x_len = y_len = z_len = 50.0
+        raise ValueError("Could not infer box lengths from current checkpoint data")
 
     return x_len, y_len, z_len
 
@@ -243,21 +221,6 @@ def write_vtf_frame(fh, pos):
     fh.write("\ntimestep ordered\n")
     for x, y, z in pos:
         fh.write(f"{x:.3f} {y:.3f} {z:.3f}\n")
-
-
-def write_pdb_frame(fh, pos, frame_num, atom_names, residue_names, residue_ids, chain_ids, x_len, y_len, z_len):
-    fh.write(f"MODEL     {frame_num + 1:4d}\n")
-    fh.write(f"CRYST1{x_len:9.3f}{y_len:9.3f}{z_len:9.3f}  90.00  90.00  90.00 P 1           1\n")
-    for i, (coord, aname, rname, resid, chain_id) in enumerate(
-        zip(pos, atom_names, residue_names, residue_ids, chain_ids), 1
-    ):
-        x, y, z = coord
-        chain = (str(chain_id).strip() or "X")[0]
-        fh.write(
-            f"ATOM  {i:5d} {aname:>4} {rname:4s}{chain:1s}{resid:4d}    "
-            f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n"
-        )
-    fh.write("ENDMDL\n")
 
 
 def list_output_groups(traj_h5):
@@ -553,21 +516,16 @@ def assemble_mode2_frame(frame_pos, mapping, box_lengths=None):
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Extract MARTINI trajectory into VTF/PDB.\n"
+            "Extract MARTINI trajectory into VTF.\n"
             "mode 1: all MARTINI particles + protein all-atom backbone (N,CA,C,O)\n"
             "mode 2: non-protein MARTINI particles + protein all-atom backbone (N,CA,C,O)"
         )
     )
     parser.add_argument("input_up", help="trajectory .up file")
-    parser.add_argument("output_file", help="output .vtf or .pdb")
+    parser.add_argument("output_file", help="output .vtf")
     parser.add_argument("structure_up", nargs="?", default=None, help="structure source .up (default: input_up)")
-    parser.add_argument("pdb_id", nargs="?", default=None, help="PDB id for pdb/<id>.MARTINI.pdb metadata")
+    parser.add_argument("pdb_id", help="PDB id for pdb/<id>.MARTINI.pdb metadata")
     parser.add_argument("--mode", type=int, choices=(1, 2), default=1, help="output mode (default: 1)")
-    parser.add_argument(
-        "--output-group",
-        default=None,
-        help="HDF5 trajectory group to extract (default: output, or input if no output exists).",
-    )
     parser.add_argument(
         "--split-segments",
         action="store_true",
@@ -592,8 +550,8 @@ def extract_trajectory(
     output_group=None,
 ):
     fmt = output_file.split(".")[-1].lower()
-    if fmt not in ("vtf", "pdb"):
-        raise ValueError("Output file must be .vtf or .pdb")
+    if fmt != "vtf":
+        raise ValueError("Output file must be .vtf")
 
     print(f"Extracting trajectory from: {input_file}")
     print(f"Structure source: {structure_file}")
@@ -619,8 +577,6 @@ def extract_trajectory(
     x_len, y_len, z_len = infer_box_lengths(
         traj_h5,
         struct_h5,
-        pdb_file,
-        input_file,
         output_group=output_group,
     )
 
@@ -630,32 +586,26 @@ def extract_trajectory(
     print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
 
     with open(output_file, "w", encoding="utf-8") as f:
-        if fmt == "vtf":
-            f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
-            f.write(f"# mode {mode}\n")
-            f.write(f"# group {output_group or 'input'}\n")
-            for i, (aname, rname, resid, chain_id) in enumerate(
-                zip(
-                    mapping["output_atom_names"],
-                    mapping["output_residue_names"],
-                    mapping["output_residue_ids"],
-                    mapping["output_chain_ids"],
-                )
-            ):
-                chain = (str(chain_id).strip() or "X")[0]
-                segid = f"s{chain}"
-                f.write(
-                    f"atom {i} name {aname} resid {int(resid)} "
-                    f"resname {str(rname)} segid {segid} chain {chain}\n"
-                )
-            for i, j in out_bonds:
-                f.write(f"bond {i}:{j}\n")
-            f.write(f"pbc {x_len} {y_len} {z_len}\n")
-        else:
-            f.write("TITLE     UPSIDE MARTINI TRAJECTORY\n")
-            f.write(f"REMARK    DATE: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"REMARK    MODE: {mode}\n")
-            f.write(f"REMARK    GROUP: {output_group or 'input'}\n")
+        f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
+        f.write(f"# mode {mode}\n")
+        f.write(f"# group {output_group or 'input'}\n")
+        for i, (aname, rname, resid, chain_id) in enumerate(
+            zip(
+                mapping["output_atom_names"],
+                mapping["output_residue_names"],
+                mapping["output_residue_ids"],
+                mapping["output_chain_ids"],
+            )
+        ):
+            chain = (str(chain_id).strip() or "X")[0]
+            segid = f"s{chain}"
+            f.write(
+                f"atom {i} name {aname} resid {int(resid)} "
+                f"resname {str(rname)} segid {segid} chain {chain}\n"
+            )
+        for i, j in out_bonds:
+            f.write(f"bond {i}:{j}\n")
+        f.write(f"pbc {x_len} {y_len} {z_len}\n")
 
         prev_frame = None
         for frame_idx in range(n_frame_total):
@@ -683,21 +633,7 @@ def extract_trajectory(
                 else:
                     out_frame = np.where(np.isnan(out_frame), prev_frame, out_frame)
 
-            if fmt == "vtf":
-                write_vtf_frame(f, out_frame)
-            else:
-                write_pdb_frame(
-                    f,
-                    out_frame,
-                    frame_idx,
-                    mapping["output_atom_names"],
-                    mapping["output_residue_names"],
-                    mapping["output_residue_ids"],
-                    mapping["output_chain_ids"],
-                    x_len,
-                    y_len,
-                    z_len,
-                )
+            write_vtf_frame(f, out_frame)
 
             prev_frame = out_frame
             if frame_idx % 100 == 0:
@@ -710,11 +646,8 @@ def main():
     input_file = args.input_up
     output_file = args.output_file
     structure_file = args.structure_up or input_file
-    pdb_id = infer_pdb_id(input_file, args.pdb_id)
+    pdb_id = args.pdb_id
     mode = args.mode
-
-    if args.split_segments and args.output_group is not None:
-        raise ValueError("--split-segments and --output-group cannot be used together")
 
     pdb_file = str(WORKFLOW_DIR / "pdb" / f"{pdb_id}.MARTINI.pdb")
 
@@ -824,9 +757,7 @@ def main():
                     )
                     print(f"Wrote segment {segment_index}: {segment_output_file} ({output_group})")
         else:
-            target_group = args.output_group
-            if target_group is None:
-                target_group = "output" if "output" in t else None
+            target_group = "output" if "output" in t else None
             extract_trajectory(
                 t,
                 s,
