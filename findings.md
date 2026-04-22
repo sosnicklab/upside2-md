@@ -1,6 +1,37 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-22: The full default `1rkl` ladder can be promoted stage-to-stage, not just `6.6 -> 7.0`.
+  - fresh reduced artifacts in `/tmp/cleanup_1rkl_true_stage_handoff/checkpoints` confirm:
+    - `6.1.prepared /input/pos` matches `6.0 /output/pos[-1]`,
+    - `6.2.prepared /input/pos` matches `6.1 /output/pos[-1]`,
+    - `7.0.prepared /input/pos` matches `6.6 /output/pos[-1]`;
+  - promoted prepared files also have no stale `/output` groups;
+  - consequence:
+    - the default wrapper only needs one fresh stage build (`6.0`);
+    - every later stage can be derived by copying the previous completed stage and patching only control-state deltas.
+- 2026-04-22: Fresh reduced `1rkl` artifacts show the production prepared file can be promoted directly from the last preproduction prepared file.
+  - in `/tmp/cleanup_1rkl_python_verify/checkpoints`, `1rkl.stage_6.6.prepared.up` and `1rkl.stage_7.0.prepared.up` already matched on the retained hybrid payload:
+    - `atom_names`
+    - `atom_roles`
+    - `sequence`
+    - `hybrid_bb_map`
+    - `hybrid_env_topology`
+    - `placement_fixed_point_vector_only_CB`
+    - `martini_sc_table_1body`
+  - the meaningful differences were only:
+    - `/input/stage_parameters.current_stage`
+    - presence of `/input/potential/restraint_position`
+    - presence of `/input/barostat`
+    - presence of `/input/fix_rigid`
+  - consequence:
+    - production does not need a fresh `convert_stage(...) + inject-stage7-sc` pass in the default flow;
+    - `7.0.prepared` can be derived from `6.6.prepared` plus control-state edits, then receive the normal coordinate handoff from `6.6.up`.
+
+## Lessons
+- 2026-04-22: When a user points out stage-handoff semantics, audit the entire stage ladder before optimizing a single edge case.
+  - I initially narrowed the fix to production-only promotion.
+  - The correct behavior requirement applied to every stage transition, so the right fix was a full ladder promotion design.
 - 2026-04-21: The default `run_sim_1rkl.sh` Python surface is much smaller than the files suggested.
   - `py/martini_prepare_system.py` only needs:
     - mixed-system prep,

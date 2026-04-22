@@ -1,5 +1,44 @@
 # Progress Log
 
+## 2026-04-22 (True Stage-to-Stage Handoff)
+- Re-audited the full `6.0 -> 7.0` ladder after the user clarified that each stage must start from the previous stage result, not just production.
+- Confirmed on fresh reduced artifacts that neighboring stages already shared the same hybrid/runtime graph, so the workflow could be converted to promotion instead of regeneration.
+- Patched `example/16.MARTINI/run_sim_1rkl.sh`:
+  - added generic `promote_stage_from_previous(...)`;
+  - kept `6.0` as the only freshly generated stage;
+  - switched `6.1` through `7.0` to be prepared from the previous completed stage file;
+  - rebuilt/removal logic for:
+    - `/input/pos` from the previous stage last output,
+    - stale `/output` groups,
+    - barostat attrs,
+    - lipid-head `restraint_position`,
+    - `fix_rigid`.
+- Verification completed:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - reduced fresh workflow run in `/tmp/cleanup_1rkl_true_stage_handoff`
+  - direct HDF5 checks confirming:
+    - `6.1.prepared` matches `6.0` output coordinates,
+    - `6.2.prepared` matches `6.1` output coordinates,
+    - `7.0.prepared` matches `6.6` output coordinates,
+    - promoted prepared files have no stale `/output` groups.
+
+## 2026-04-22 (Production Promotion Cleanup)
+- Re-audited the current `6.6 -> 7.0` handoff after the user flagged the remaining “stage-7 injection” path.
+- Confirmed from fresh reduced artifacts that production did not need a fresh hybrid reinjection:
+  - `6.6.prepared` and `7.0.prepared` already carried identical hybrid payload datasets for `atom_names`, `atom_roles`, `sequence`, `hybrid_bb_map`, `hybrid_env_topology`, `placement_fixed_point_vector_only_CB`, and `martini_sc_table_1body`;
+  - the only meaningful differences were `current_stage` plus removal of `restraint_position`, `barostat`, and `fix_rigid`.
+- Patched `example/16.MARTINI/run_sim_1rkl.sh`:
+  - added `promote_preproduction_to_production(...)`;
+  - switched `7.0.prepared` creation from `prepare_stage_file ... production` to promotion from `6.6.prepared`;
+  - preserved optional production `barostat` recreation and production `fix_rigid` override behavior.
+- Verification completed:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - reduced fresh workflow run in `/tmp/cleanup_1rkl_production_promotion` with one-step `6.0` through `7.0` settings.
+- Observed result:
+  - the workflow still completed through `7.0`;
+  - the log now stops fresh injection at `6.6.prepared`, then promotes and hands off into production without a new `inject-stage7-sc` call;
+  - direct HDF5 inspection confirmed the promoted `7.0.prepared` file has production stage labeling, no preproduction restraints, and the same retained hybrid payload as `6.6.prepared`.
+
 ## 2026-04-21 (1RKL Python Workflow Cleanup)
 - Trimmed `py/martini_prepare_system.py` down to the default mixed-system path plus the only helper commands still needed by `run_sim_1rkl.sh`:
   - `build-sc-martini-h5`

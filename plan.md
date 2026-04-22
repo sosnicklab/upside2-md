@@ -1,4 +1,100 @@
 
+## 2026-04-22 True Stage-to-Stage Handoff
+
+### Project Goal
+- Make every stage in `example/16.MARTINI/run_sim_1rkl.sh` start from the previous stage result, not from a freshly regenerated stage template with only coordinates copied forward.
+
+### Architecture & Key Decisions
+- Keep fresh generation only for `6.0`, since it has no predecessor.
+- For `6.1` through `7.0`, derive each prepared file from the previous completed stage file:
+  - copy the previous stage file,
+  - move the last output coordinates into `/input/pos`,
+  - remove stale `/output` and `/output_previous_*` groups,
+  - patch only the stage control deltas (`current_stage`, barostat attrs, lipid-head restraint node, rigid-hold selection).
+- Create the lipid-head restraint node during promotion from the carried-forward coordinates instead of relying on a fresh stage template.
+- Preserve the current shell-visible checkpoint pattern (`*.prepared.up` then runnable `*.up`) while changing the source of truth for stage initialization.
+
+### Execution Phases
+- [x] Audit the actual differences between adjacent prepared stage files and determine whether the stage graph is otherwise identical.
+- [x] Patch the workflow so every stage after `6.0` is promoted from the previous completed stage rather than regenerated from scratch.
+- [x] Verify the reduced default workflow and confirm the promoted prepared files match the previous stage outputs.
+
+### Known Errors / Blockers
+- None so far.
+
+### Review
+- Adjacent stage audit on fresh reduced artifacts showed that the hybrid/runtime graph stayed constant across the ladder:
+  - `atom_names`, `atom_roles`, `sequence`, `hybrid_bb_map`, `hybrid_env_topology`, and `martini_sc_table_1body` matched between neighboring stages;
+  - the real per-stage deltas were only:
+    - last-step coordinates / box,
+    - `stage_parameters.current_stage`,
+    - barostat targets,
+    - presence/value of `restraint_position`,
+    - `fix_rigid` selection state.
+- Patched [example/16.MARTINI/run_sim_1rkl.sh](/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_1rkl.sh:270) to add generic `promote_stage_from_previous(...)` and use it for:
+  - `6.1`
+  - `6.2`
+  - `6.3`
+  - `6.4`
+  - `6.5`
+  - `6.6`
+  - `7.0`
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - reduced fresh workflow run:
+    - `source .venv/bin/activate && source source.sh && RUN_DIR=/tmp/cleanup_1rkl_true_stage_handoff MIN_60_MAX_ITER=1 MIN_61_MAX_ITER=1 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl.sh`
+  - direct HDF5 promotion checks:
+    - `6.1.prepared /input/pos` matches `6.0 /output/pos[-1]`,
+    - `6.2.prepared /input/pos` matches `6.1 /output/pos[-1]`,
+    - `7.0.prepared /input/pos` matches `6.6 /output/pos[-1]`,
+    - promoted prepared files no longer contain stale `/output` groups.
+
+## 2026-04-22 Production Promotion Cleanup
+
+### Project Goal
+- Remove redundant stage-7 reinjection from the default `example/16.MARTINI/run_sim_1rkl.sh` path by promoting the existing `6.6` prepared file into production instead of regenerating and reinjecting a fresh `7.0` file.
+
+### Architecture & Key Decisions
+- Keep the existing AA-backbone/hybrid-node injection for stages prepared from scratch (`6.0` to `6.6`), because those files still originate from `convert_stage(...)`.
+- Stop rebuilding production from scratch:
+  - derive `7.0.prepared` from `6.6.prepared`,
+  - switch `current_stage` to `production`,
+  - remove preproduction-only controls (`restraint_position`, `fix_rigid`, `barostat`) before the normal `6.6 -> 7.0` coordinate handoff.
+- Preserve the existing optional production controls:
+  - if `PROD_70_NPT_ENABLE=1`, recreate `/input/barostat` from the current environment settings;
+  - if `PROD_70_BACKBONE_FIX_RIGID_ENABLE=1`, continue applying the production `fix_rigid` selection after promotion.
+
+### Execution Phases
+- [x] Confirm the exact schema differences between fresh `6.6.prepared` and `7.0.prepared`.
+- [x] Patch the workflow to promote `6.6.prepared` into `7.0.prepared` instead of regenerating/injecting production from scratch.
+- [x] Verify the default reduced workflow still reaches `7.0` and that stage-7 preparation no longer depends on a fresh injection pass.
+
+### Known Errors / Blockers
+- None so far.
+
+### Review
+- Confirmed on the fresh reduced baseline artifacts that `6.6.prepared` and `7.0.prepared` already shared the same hybrid payload:
+  - identical `atom_names`, `atom_roles`, `sequence`, `hybrid_bb_map`, `hybrid_env_topology`, `placement_fixed_point_vector_only_CB`, and `martini_sc_table_1body` datasets;
+  - the real differences were only:
+    - `stage_parameters.current_stage`,
+    - presence of `/input/potential/restraint_position`,
+    - presence of `/input/barostat`,
+    - presence of `/input/fix_rigid`.
+- Patched `example/16.MARTINI/run_sim_1rkl.sh` to:
+  - add `promote_preproduction_to_production(...)`,
+  - build `7.0.prepared` from `6.6.prepared`,
+  - remove the preproduction-only controls during promotion,
+  - recreate production barostat only when `PROD_70_NPT_ENABLE=1`,
+  - keep the optional production `fix_rigid` override after the normal `6.6 -> 7.0` handoff.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - reduced fresh workflow run:
+    - `source .venv/bin/activate && source source.sh && RUN_DIR=/tmp/cleanup_1rkl_production_promotion MIN_60_MAX_ITER=1 MIN_61_MAX_ITER=1 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl.sh`
+- Observed result:
+  - the reduced run completed through `7.0`;
+  - the workflow log shows the last fresh injection at `6.6.prepared`, followed by direct production handoff without a new `inject-stage7-sc` pass;
+  - fresh promoted `7.0.prepared` has `current_stage=production` and no `barostat`, `fix_rigid`, or `restraint_position`, while retaining the same hybrid payload datasets as `6.6.prepared`.
+
 ## 2026-04-21 1RKL Python Workflow Cleanup
 
 ### Project Goal
