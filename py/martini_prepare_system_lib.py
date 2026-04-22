@@ -104,6 +104,8 @@ BACKBONE_NODES = [
     "hbond_energy",
     "backbone_pairs",
 ]
+EXPLICIT_BACKBONE_OXYGEN_BOND_STIFFNESS = 48.0
+EXPLICIT_BACKBONE_OXYGEN_ANGLE_STIFFNESS = 175.0
 
 def parse_pdb(path: Path):
     atoms = []
@@ -3028,6 +3030,166 @@ def remap_atom_index_array(arr, atom_map):
     return out
 
 
+def _decode_bytes_array(arr):
+    return np.asarray(
+        [x.decode("utf-8", errors="ignore") if isinstance(x, (bytes, np.bytes_)) else str(x) for x in arr]
+    )
+
+
+def _replace_h5_dataset(group, name: str, data, dtype):
+    if name in group:
+        del group[name]
+    group.create_dataset(name, data=np.asarray(data, dtype=dtype))
+
+
+def _cosine_from_triplets(pos, atom0, atom1, vertex):
+    vec0 = pos[np.asarray(atom0, dtype=np.int64)] - pos[np.asarray(vertex, dtype=np.int64)]
+    vec1 = pos[np.asarray(atom1, dtype=np.int64)] - pos[np.asarray(vertex, dtype=np.int64)]
+    norm0 = np.linalg.norm(vec0, axis=1)
+    norm1 = np.linalg.norm(vec1, axis=1)
+    if np.any(norm0 <= 0.0) or np.any(norm1 <= 0.0):
+        raise ValueError("Cannot build explicit backbone oxygen angle with zero-length vectors")
+    cosine = np.einsum("ij,ij->i", vec0, vec1) / (norm0 * norm1)
+    return np.clip(cosine, -1.0, 1.0)
+
+
+def append_explicit_backbone_oxygen_geometry(
+    up_file: Path,
+    bond_stiffness: float = EXPLICIT_BACKBONE_OXYGEN_BOND_STIFFNESS,
+    angle_stiffness: float = EXPLICIT_BACKBONE_OXYGEN_ANGLE_STIFFNESS,
+):
+    up_file = Path(up_file).expanduser().resolve()
+    with h5py.File(up_file, "r+") as up:
+        inp = up["input"]
+        pot = inp["potential"]
+        bb = inp["hybrid_bb_map"]
+
+        reference_names = _decode_bytes_array(bb["reference_atom_names"][:])
+        column_by_name = {name.upper(): idx for idx, name in enumerate(reference_names.tolist())}
+        missing = [name for name in BB_COMPONENT_NAMES if name not in column_by_name]
+        if missing:
+            raise ValueError(f"Missing explicit backbone oxygen mapping columns: {missing}")
+
+        atom_indices = bb["atom_indices"][:].astype(np.int64)
+        atom_mask = bb["atom_mask"][:].astype(bool)
+        required_mask = np.logical_and.reduce(
+            [atom_mask[:, column_by_name[name]] for name in BB_COMPONENT_NAMES]
+        )
+        if not np.any(required_mask):
+            raise ValueError("No residues with complete N/CA/C/O mapping found for explicit oxygen geometry")
+
+        n_idx = atom_indices[required_mask, column_by_name["N"]]
+        ca_idx = atom_indices[required_mask, column_by_name["CA"]]
+        c_idx = atom_indices[required_mask, column_by_name["C"]]
+        o_idx = atom_indices[required_mask, column_by_name["O"]]
+        pos = inp["pos"][:, :, 0]
+
+        bond_rows = np.column_stack([c_idx, o_idx]).astype(np.int64, copy=False)
+        bond_equil = np.linalg.norm(pos[c_idx] - pos[o_idx], axis=1)
+
+        angle_rows = [np.column_stack([ca_idx, o_idx, c_idx]).astype(np.int64, copy=False)]
+        angle_equil = [_cosine_from_triplets(pos, ca_idx, o_idx, c_idx)]
+        if len(n_idx) > 1:
+            angle_rows.append(
+                np.column_stack([o_idx[:-1], n_idx[1:], c_idx[:-1]]).astype(np.int64, copy=False)
+            )
+            angle_equil.append(_cosine_from_triplets(pos, o_idx[:-1], n_idx[1:], c_idx[:-1]))
+
+        dist_group = pot["Distance3D"]
+        spring_bond_group = pot["Spring_bond"]
+        dist_ids = dist_group["id"][:]
+        spring_bond_ids = spring_bond_group["id"][:]
+        spring_bond_equil = spring_bond_group["equil_dist"][:]
+        spring_bond_const = spring_bond_group["spring_const"][:]
+
+        existing_bonds = {tuple(sorted(map(int, row.tolist()))): i for i, row in enumerate(dist_ids)}
+        new_bond_rows = []
+        new_bond_equil = []
+        for row, equil in zip(bond_rows, bond_equil):
+            key = tuple(sorted(map(int, row.tolist())))
+            if key in existing_bonds:
+                continue
+            new_bond_rows.append(row.tolist())
+            new_bond_equil.append(float(equil))
+        if new_bond_rows:
+            new_bond_rows = np.asarray(new_bond_rows, dtype=dist_ids.dtype)
+            new_bond_equil = np.asarray(new_bond_equil, dtype=spring_bond_equil.dtype)
+            bond_row_start = dist_ids.shape[0]
+            dist_ids = np.concatenate([dist_ids, new_bond_rows], axis=0)
+            spring_bond_ids = np.concatenate(
+                [
+                    spring_bond_ids,
+                    np.arange(bond_row_start, bond_row_start + len(new_bond_rows), dtype=spring_bond_ids.dtype),
+                ]
+            )
+            spring_bond_equil = np.concatenate([spring_bond_equil, new_bond_equil])
+            spring_bond_const = np.concatenate(
+                [
+                    spring_bond_const,
+                    np.full(len(new_bond_rows), bond_stiffness, dtype=spring_bond_const.dtype),
+                ]
+            )
+            _replace_h5_dataset(dist_group, "id", dist_ids, dist_ids.dtype)
+            _replace_h5_dataset(spring_bond_group, "id", spring_bond_ids, spring_bond_ids.dtype)
+            _replace_h5_dataset(
+                spring_bond_group, "equil_dist", spring_bond_equil, spring_bond_equil.dtype
+            )
+            _replace_h5_dataset(
+                spring_bond_group, "spring_const", spring_bond_const, spring_bond_const.dtype
+            )
+
+        angle_group = pot["Angle"]
+        spring_angle_group = pot["Spring_angle"]
+        angle_ids = angle_group["id"][:]
+        spring_angle_ids = spring_angle_group["id"][:]
+        spring_angle_equil = spring_angle_group["equil_dist"][:]
+        spring_angle_const = spring_angle_group["spring_const"][:]
+
+        existing_angles = {
+            (min(int(row[0]), int(row[1])), max(int(row[0]), int(row[1])), int(row[2])): i
+            for i, row in enumerate(angle_ids)
+        }
+        pending_angle_rows = []
+        pending_angle_equil = []
+        for rows, equil_vals in zip(angle_rows, angle_equil):
+            for row, equil in zip(rows, equil_vals):
+                key = (min(int(row[0]), int(row[1])), max(int(row[0]), int(row[1])), int(row[2]))
+                if key in existing_angles:
+                    continue
+                pending_angle_rows.append(row.tolist())
+                pending_angle_equil.append(float(equil))
+        if pending_angle_rows:
+            pending_angle_rows = np.asarray(pending_angle_rows, dtype=angle_ids.dtype)
+            pending_angle_equil = np.asarray(pending_angle_equil, dtype=spring_angle_equil.dtype)
+            angle_row_start = angle_ids.shape[0]
+            angle_ids = np.concatenate([angle_ids, pending_angle_rows], axis=0)
+            spring_angle_ids = np.concatenate(
+                [
+                    spring_angle_ids,
+                    np.arange(
+                        angle_row_start,
+                        angle_row_start + len(pending_angle_rows),
+                        dtype=spring_angle_ids.dtype,
+                    ),
+                ]
+            )
+            spring_angle_equil = np.concatenate([spring_angle_equil, pending_angle_equil])
+            spring_angle_const = np.concatenate(
+                [
+                    spring_angle_const,
+                    np.full(len(pending_angle_rows), angle_stiffness, dtype=spring_angle_const.dtype),
+                ]
+            )
+            _replace_h5_dataset(angle_group, "id", angle_ids, angle_ids.dtype)
+            _replace_h5_dataset(spring_angle_group, "id", spring_angle_ids, spring_angle_ids.dtype)
+            _replace_h5_dataset(
+                spring_angle_group, "equil_dist", spring_angle_equil, spring_angle_equil.dtype
+            )
+            _replace_h5_dataset(
+                spring_angle_group, "spring_const", spring_angle_const, spring_angle_const.dtype
+            )
+
+
 def inject_backbone_nodes(
     up_file: Path,
     sequence,
@@ -3110,6 +3272,7 @@ def inject_backbone_nodes(
         for grp_name, dset_name in remap_datasets:
             ds = pot[grp_name][dset_name]
             ds[...] = remap_atom_index_array(ds[:], atom_map).astype(ds.dtype, copy=False)
+    append_explicit_backbone_oxygen_geometry(up_file)
 
 
 def inject_stage7_sc_table_nodes(

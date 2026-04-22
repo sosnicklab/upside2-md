@@ -1,5 +1,26 @@
 # Findings
 
+## 2026-04-21 (1RKL AABB Stage-7 Oxygen Failure Root Cause)
+- The reported bilayer "shifting through space" in `outputs/martini_test_1rkl_aabb` is not the dominant runtime bug.
+- Direct artifact measurements showed:
+  - preproduction `PO4` motion relative to the fixed protein stays below about `0.15 Å` in XY and `0 Å` in Z,
+  - stage-7 absolute `PO4` drift is small (`~0.31 Å` XY),
+  - the large apparent stage-7 motion comes from the protein destabilizing relative to a mostly stable bilayer.
+- Root cause:
+  - `py/martini_prepare_system_lib.py::inject_backbone_nodes(...)` writes the native Upside 3-site backbone machinery for `N/CA/C`,
+  - explicit runtime `O` atoms are present in the AA-backbone workflow but are not included in those generated backbone bond/angle nodes,
+  - stages `6.0` through `6.6` hid this because `fix_rigid` held the whole AA backbone fixed,
+  - stage `7.0` releases the backbone, so the unrestrained `O` atoms fly off immediately.
+- Correct fix for the current workflow:
+  - keep the existing 3-site Upside backbone nodes,
+  - append explicit runtime oxygen geometry terms in the stage file:
+    - `C-O` bond,
+    - `CA-C-O` angle,
+    - `O-C-N(next)` angle for nonterminal residues.
+- Verification on a regenerated production handoff confirmed the fix:
+  - original `stage_7.0.up`: `C-O` max grew to `102.05 Å`,
+  - fixed stage-7 smoke run over `1000` MD steps: `C-O` stayed within `0.96–1.58 Å`.
+
 ## 2026-04-06 (Protein-Backbone RMSD Alignment Audit)
 - There is no generic Upside MD step that RMSD-aligns and overwrites protein backbone coordinates during integration.
 - The relevant feature is MARTINI-hybrid specific:

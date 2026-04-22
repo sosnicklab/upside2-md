@@ -1,5 +1,55 @@
 # Progress Log
 
+## 2026-04-21 (Bug Fix: Stage-7 Explicit Backbone Oxygen Geometry)
+- User reported two issues in `outputs/martini_test_1rkl_aabb`:
+  - stage `7.0` backbone oxygens fly apart,
+  - the bilayer appears to shift through space.
+- Re-read the local trackers, replaced `plan.md` with the current debugging plan, and audited:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/outputs/martini_test_1rkl_aabb/checkpoints/*.up`
+  - `example/16.MARTINI/outputs/martini_test_1rkl_aabb/logs/stage_*.log`
+  - `py/martini_prepare_system_lib.py`
+- Direct output diagnostics showed the bilayer was not the main failure:
+  - preproduction `PO4` drift relative to the fixed protein was below `0.15 Å` in XY and `0 Å` in Z,
+  - stage-7 absolute `PO4` drift was only about `0.31 Å` in XY,
+  - stage-7 relative protein/bilayer motion was large because the protein destabilized.
+- Root cause identified:
+  - `inject_backbone_nodes(...)` injects native Upside backbone nodes only for `N/CA/C`,
+  - explicit runtime `O` atoms were left without direct local restoring geometry after production released `fix_rigid`,
+  - observed in the reported run as:
+    - frame-10 `C-O` range expanding to `0.40–3.26 Å`,
+    - final-frame `C-O` range expanding to `12.70–102.05 Å`.
+- Implemented the minimal fix in:
+  - `py/martini_prepare_system_lib.py`
+- Fix details:
+  - added a post-injection stage-file helper that reads `hybrid_bb_map` and appends explicit oxygen geometry terms to the existing Upside backbone nodes,
+  - added one `C-O` bond per residue,
+  - added one `CA-C-O` angle per residue,
+  - added one `O-C-N(next)` angle for each nonterminal residue,
+  - kept the rest of the AA-backbone workflow unchanged.
+- Verification:
+  - `PYTHONPYCACHEPREFIX=/tmp/upside_pycache python3 -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py`
+  - regenerated stage-7 injector output on a copied prepared production file:
+    - `example/16.MARTINI/outputs/martini_test_1rkl_aabb_oxygen_fix_smoke/checkpoints/1rkl.stage_7.0.prepared.up`
+  - verified appended node sizes:
+    - `Distance3D`: `92 -> 123`
+    - `Spring_bond`: `92 -> 123`
+    - `Angle`: `91 -> 152`
+    - `Spring_angle`: `91 -> 152`
+  - copied the last `6.6` coordinates into the regenerated production file with strict handoff:
+    - `example/16.MARTINI/outputs/martini_test_1rkl_aabb_oxygen_fix_smoke/checkpoints/1rkl.stage_7.0.handoff.up`
+  - ran a targeted production smoke:
+    - `obj/upside .../1rkl.stage_7.0.handoff.up --duration-steps 1000 --frame-interval 0.1 --time-step 0.002 ...`
+- Targeted stage-7 verification result:
+  - fixed run started from the expected negative MARTINI energy (`-20911.70`) after proper handoff,
+  - over `1000` MD steps:
+    - `C-O` stayed within `0.96–1.58 Å`,
+    - last-frame `C-O` mean = `1.20 Å`,
+    - relative `PO4`/protein drift = `0.46 Å` XY and `0.26 Å` Z,
+    - absolute `PO4` drift = `0.04 Å` XY.
+- Verification note:
+  - an initial direct run on the regenerated prepared file without the normal `set-initial-position` handoff was discarded because it reproduced a pre-handoff clash state and generated meaningless huge energies.
+
 ## 2026-04-21 (Bug Fix: Restore Committed Bilayer Prep Baseline)
 - User reported that the prepared bilayer must keep the same initial `z` placement and structure as the last committed workflow baseline.
 - Re-read the local task trackers and recorded the new correction in `findings.md`.
