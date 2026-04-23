@@ -528,7 +528,7 @@ def collect_aa_backbone_map(backbone_atoms):
         by_residue[key][atom["name"].strip().upper()] = idx
 
     bb_entries = []
-    for chain, resseq, icode, resname in residue_order:
+    for residue_index, (chain, resseq, icode, resname) in enumerate(residue_order):
         atom_map = by_residue[(chain, resseq, icode, resname)]
         missing = [name for name in BB_COMPONENT_NAMES if name not in atom_map]
         if missing:
@@ -547,6 +547,9 @@ def collect_aa_backbone_map(backbone_atoms):
 
         bb_entries.append(
             {
+                # Use a residue-order index here instead of raw PDB resseq so
+                # repeated residue numbers across chains stay distinct.
+                "bb_residue_index": int(residue_index),
                 "bb_resseq": int(resseq),
                 "bb_chain": chain,
                 "bb_icode": icode,
@@ -589,7 +592,7 @@ def write_backbone_metadata_h5(
         bb_grp.attrs["reference_index_count"] = np.int32(n_protein_atoms)
         bb_grp.create_dataset(
             "bb_residue_index",
-            data=np.array([b["bb_resseq"] for b in bb_entries], dtype=np.int32),
+            data=np.array([b.get("bb_residue_index", b["bb_resseq"]) for b in bb_entries], dtype=np.int32),
         )
         bb_grp.create_dataset(
             "bb_atom_index",
