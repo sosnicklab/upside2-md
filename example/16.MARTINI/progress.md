@@ -1,5 +1,51 @@
 # Progress Log
 
+## 2026-04-22 (Implementation: 1AFO Workflow Wrappers)
+- Re-read the workflow plan before adding new scripts:
+  - `example/16.MARTINI/plan.md`
+- Inspected:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - `example/16.MARTINI/pdb/1AFO.pdb`
+- Implementation decision:
+  - use thin wrappers instead of copying the full `1rkl` workflow implementation,
+  - keep workflow/output names lowercase `1afo`,
+  - point the default input structure to the actual local file `pdb/1AFO.pdb`.
+- Added:
+  - `example/16.MARTINI/run_sim_1afo.sh`
+  - `example/16.MARTINI/run_sim_1afo_outlipid.sh`
+- `run_sim_1afo.sh` behavior:
+  - locates `run_sim_1rkl.sh`,
+  - forwards `PDB_ID=1afo`,
+  - sets default `RUN_DIR=outputs/martini_test_1afo_aabb`,
+  - sets default `RUNTIME_PDB_ID=1afo_aabb`,
+  - sets default `PROTEIN_AA_PDB=pdb/1AFO.pdb`.
+- `run_sim_1afo_outlipid.sh` behavior:
+  - locates `run_sim_1afo.sh`,
+  - mirrors the current outlipid wrapper environment setup,
+  - auto-detects prior outlipid stage-7 artifacts named:
+    - `1afo.stage_7.0.up`
+    - `1afo.stage_7.0.continue.up`
+  - uses `outputs/martini_test_1afo_outlipid_continue` when continuing,
+  - otherwise falls back to `outputs/martini_test_1afo_outlipid`.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1afo.sh`
+  - `bash -n example/16.MARTINI/run_sim_1afo_outlipid.sh`
+  - isolated `/tmp` stub for `run_sim_1afo.sh` confirmed:
+    - `arg1=PDB_ID=1afo`
+    - `RUN_DIR=outputs/martini_test_1afo_aabb`
+    - `RUNTIME_PDB_ID=1afo_aabb`
+    - `PROTEIN_AA_PDB=pdb/1AFO.pdb`
+  - isolated `/tmp` stub for `run_sim_1afo_outlipid.sh` confirmed:
+    - with a prior stage-7 file:
+      - `CONTINUE_STAGE_70_FROM=<detected 1afo stage-7 file>`
+      - `RUN_DIR=outputs/martini_test_1afo_outlipid_continue`
+      - `RUNTIME_PDB_ID=1afo_outlipid`
+    - without a prior stage-7 file:
+      - `CONTINUE_STAGE_70_FROM=`
+      - `RUN_DIR=outputs/martini_test_1afo_outlipid`
+      - `RUNTIME_PDB_ID=1afo_outlipid`
+
 ## 2026-04-22 (Implementation: Default Outlipid Auto-Resume)
 - Re-read the local workflow plan before changing the wrapper:
   - `example/16.MARTINI/plan.md`
