@@ -1,4 +1,10 @@
 #!/bin/bash
+#SBATCH --job-name=1afo_aabb
+#SBATCH --output=slurm-%x-%j.out
+#SBATCH --time=36:00:00
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
 
 set -euo pipefail
 
@@ -9,6 +15,8 @@ if [ -z "${BASE_WORKFLOW_SCRIPT}" ]; then
     for candidate_dir in \
         "${UPSIDE_PROJECT_ROOT:-}/example/16.MARTINI" \
         "${UPSIDE_PROJECT_ROOT:-}" \
+        "${SLURM_SUBMIT_DIR:-}" \
+        "${SLURM_SUBMIT_DIR:-}/example/16.MARTINI" \
         "${PWD}" \
         "${PWD}/example/16.MARTINI" \
         "${SCRIPT_DIR}"
@@ -22,11 +30,33 @@ fi
 
 if [ -z "${BASE_WORKFLOW_SCRIPT}" ]; then
     echo "ERROR: could not locate run_sim_1rkl.sh." >&2
-    echo "Set BASE_WORKFLOW_SCRIPT explicitly or run from the repo root or example/16.MARTINI." >&2
+    echo "Set BASE_WORKFLOW_SCRIPT explicitly or submit from the repo root or example/16.MARTINI." >&2
     exit 1
 fi
 
+PROJECT_ROOT="${UPSIDE_PROJECT_ROOT:-$(cd "$(dirname "${BASE_WORKFLOW_SCRIPT}")/../.." && pwd)}"
 WORKFLOW_DIR="$(cd "$(dirname "${BASE_WORKFLOW_SCRIPT}")" && pwd)"
+
+if [ -f /etc/profile.d/modules.sh ]; then
+    source /etc/profile.d/modules.sh
+fi
+
+if command -v module >/dev/null 2>&1; then
+    module load python/3.11.9 || true
+    module load cmake || true
+    module load openmpi || true
+    module load "${UPSIDE_HDF5_MODULE:-${HYBRID_SWEEP_HDF5_MODULE:-hdf5/1.14.3}}" || true
+fi
+
+if [ -f "${PROJECT_ROOT}/.venv/bin/activate" ]; then
+    source "${PROJECT_ROOT}/.venv/bin/activate"
+fi
+
+export UPSIDE_SKIP_SOURCE_SH="${UPSIDE_SKIP_SOURCE_SH:-1}"
+export UPSIDE_HOME="${PROJECT_ROOT}"
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
+export PYTHONPATH="${PROJECT_ROOT}/py${PYTHONPATH:+:$PYTHONPATH}"
+export PATH="${PROJECT_ROOT}/obj:$PATH"
 
 autodetect_previous_stage70_file() {
     local outputs_root="${WORKFLOW_DIR}/outputs"

@@ -1,5 +1,36 @@
 # Findings
 
+## 2026-04-23 (`run_sim_1afo_outlipid.sh` Isolation Verification)
+- The Slurm/bootstrap fix in `run_sim_1afo.sh` does not alter the intended continuation behavior of `run_sim_1afo_outlipid.sh`.
+- Verified behavior after the AABB wrapper fix:
+  - `run_sim_1afo_outlipid.sh` still exports `DISABLE_1AFO_AABB_AUTO_CONTINUE=1` before delegating,
+  - when only an AABB prior stage-7 artifact exists, the outlipid wrapper does not resume,
+  - when an outlipid prior stage-7 artifact exists, the outlipid wrapper resumes from that file and uses the outlipid continue directory,
+  - under a simulated `sbatch` context with a wrong inherited `UPSIDE_HOME`, the outlipid wrapper still delegates with the correct resolved project root.
+- Consequence:
+  - the AABB Slurm fix is isolated to the AABB wrapper behavior and does not regress the outlipid wrapper.
+
+## 2026-04-23 (`run_sim_1afo.sh` Slurm Bootstrap Failure Root Cause)
+- The `sbatch run_sim_1afo.sh` failure with
+  - `ERROR: UPSIDE executable not found: /home/yinhanw/project/yinhan/upside2-md/obj/upside`
+  was caused by the wrapper missing the Slurm-safe bootstrap that already existed in the outlipid wrappers.
+- The previous `run_sim_1afo.sh`:
+  - did not search for `run_sim_1rkl.sh` using `SLURM_SUBMIT_DIR`,
+  - did not load the cluster modules / activate the repo `.venv`,
+  - did not force `UPSIDE_SKIP_SOURCE_SH=1`,
+  - did not force `UPSIDE_HOME` to the resolved project root before delegating.
+- Consequence:
+  - `sbatch` could inherit a stale or unrelated `UPSIDE_HOME`,
+  - the delegated base workflow then looked for `obj/upside` under that wrong root and aborted before any simulation work started.
+- Correct fix:
+  - make `run_sim_1afo.sh` use the same Slurm-safe bootstrap pattern as `run_sim_1rkl_outlipid.sh` / `run_sim_1afo_outlipid.sh`.
+- Verification after the fix:
+  - isolated Slurm-style harness with `UPSIDE_HOME=/wrong/root` still delegated with:
+    - `UPSIDE_HOME=<resolved project root>`
+    - `UPSIDE_SKIP_SOURCE_SH=1`
+    - `PYTHONPATH=<resolved project root>/py`
+    - `PATH` containing `<resolved project root>/obj`
+
 ## 2026-04-23 (1AFO Sidechain Injection Failure Root Cause)
 - The `1afo_outlipid` failure in `inject_stage7_sc_table_nodes(...)` was caused by a multi-chain residue-ID collapse in the shared hybrid metadata path, not by the `1afo` wrapper scripts themselves.
 - For `example/16.MARTINI/pdb/1AFO.pdb`:

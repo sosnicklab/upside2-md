@@ -1,5 +1,81 @@
 # Progress Log
 
+## 2026-04-23 (Verification: `run_sim_1afo_outlipid.sh` Unaffected By AABB Slurm Fix)
+- Re-read the workflow plan before verifying the outlipid wrapper behavior:
+  - `example/16.MARTINI/plan.md`
+- Inspected:
+  - `example/16.MARTINI/run_sim_1afo.sh`
+  - `example/16.MARTINI/run_sim_1afo_outlipid.sh`
+- Verification performed:
+  - `bash -n example/16.MARTINI/run_sim_1afo_outlipid.sh`
+  - isolated Slurm-style harness with wrong inherited `UPSIDE_HOME` and only an AABB prior artifact:
+    - previous file present:
+      - `outputs/martini_test_1afo_aabb/checkpoints/1afo.stage_7.0.up`
+    - observed delegation:
+      - `UPSIDE_HOME=<resolved project root>`
+      - `UPSIDE_SKIP_SOURCE_SH=1`
+      - `DISABLE_1AFO_AABB_AUTO_CONTINUE=1`
+      - `CONTINUE_STAGE_70_FROM=`
+      - `RUN_DIR=outputs/martini_test_1afo_outlipid`
+      - `RUNTIME_PDB_ID=1afo_outlipid`
+  - isolated Slurm-style harness with wrong inherited `UPSIDE_HOME` and an outlipid prior artifact:
+    - previous file present:
+      - `outputs/martini_test_1afo_outlipid/checkpoints/1afo.stage_7.0.up`
+    - observed delegation:
+      - `UPSIDE_HOME=<resolved project root>`
+      - `UPSIDE_SKIP_SOURCE_SH=1`
+      - `DISABLE_1AFO_AABB_AUTO_CONTINUE=1`
+      - `CONTINUE_STAGE_70_FROM=<detected outlipid stage-7 file>`
+      - `RUN_DIR=outputs/martini_test_1afo_outlipid_continue`
+      - `RUNTIME_PDB_ID=1afo_outlipid`
+- Conclusion:
+  - the recent Slurm/bootstrap modification to `run_sim_1afo.sh` does not change `run_sim_1afo_outlipid.sh` behavior,
+  - the outlipid wrapper still ignores AABB auto-resume and still resumes only from outlipid artifacts.
+
+## 2026-04-23 (Fix: `run_sim_1afo.sh` Slurm Bootstrap)
+- Re-read the workflow trackers before debugging the reported `sbatch` failure:
+  - `example/16.MARTINI/plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+- Diagnosed the failure reported from `slurm-48929253.out`:
+  - `ERROR: UPSIDE executable not found: /home/yinhanw/project/yinhan/upside2-md/obj/upside`
+- Inspected:
+  - `example/16.MARTINI/run_sim_1afo.sh`
+  - `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - repo `source.sh`
+- Confirmed the root cause:
+  - `run_sim_1afo.sh` was still a thin local wrapper,
+  - it did not search via `SLURM_SUBMIT_DIR`,
+  - it did not bootstrap the cluster environment before delegating,
+  - and it did not force `UPSIDE_HOME` / `PATH` / `PYTHONPATH` to the resolved project root,
+  - so `sbatch` could inherit a stale `UPSIDE_HOME` and fail on the wrong `obj/upside` path.
+- Updated:
+  - `example/16.MARTINI/run_sim_1afo.sh`
+- Wrapper changes:
+  - added Slurm header defaults,
+  - added `SLURM_SUBMIT_DIR`-aware workflow search,
+  - derive `PROJECT_ROOT` from the resolved `run_sim_1rkl.sh`,
+  - load cluster modules when available,
+  - activate `${PROJECT_ROOT}/.venv` when present,
+  - export:
+    - `UPSIDE_SKIP_SOURCE_SH=1`
+    - `UPSIDE_HOME=${PROJECT_ROOT}`
+    - `PYTHONUNBUFFERED=1`
+    - `PYTHONPATH=${PROJECT_ROOT}/py...`
+    - `PATH=${PROJECT_ROOT}/obj:$PATH`
+  - preserved existing `1afo` continuation/default run wiring.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1afo.sh`
+  - isolated Slurm-style harness with wrong inherited `UPSIDE_HOME=/wrong/root` and `SLURM_SUBMIT_DIR=<workflow dir>` confirmed delegated values:
+    - `UPSIDE_HOME=<resolved project root>`
+    - `UPSIDE_SKIP_SOURCE_SH=1`
+    - `PYTHONPATH=<resolved project root>/py`
+    - `PATH` includes `<resolved project root>/obj`
+    - `RUN_DIR=outputs/martini_test_1afo_aabb`
+    - `RUNTIME_PDB_ID=1afo_aabb`
+    - `PROTEIN_AA_PDB=pdb/1AFO.pdb`
+    - `arg1=PDB_ID=1afo`
+
 ## 2026-04-23 (Fix: 1AFO Multi-Chain Residue Collapse In Hybrid Metadata)
 - Re-read the workflow trackers before debugging the reported cluster failure:
   - `example/16.MARTINI/plan.md`
