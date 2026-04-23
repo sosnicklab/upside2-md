@@ -1,9 +1,11 @@
 #include "deriv_engine.h"
+#include "affine.h"
 #include "box.h"
 #include "spline.h"
 #include "state_logger.h"
 #include "timing.h"
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <complex>
@@ -19,6 +21,10 @@
 using namespace h5;
 using namespace std;
 
+namespace martini_masses {
+float get_mass(DerivEngine* engine, int atom_index);
+}
+
 namespace martini_fix_rigid {
 
 static std::mutex g_fix_rigid_mutex;
@@ -29,10 +35,120 @@ static std::map<DerivEngine*, std::vector<int>> g_dynamic_z_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_z_fixed_atoms;
 
+enum class FixRigidMode {
+    absolute,
+    rigid_body
+};
+
+struct RigidBodyConstraint {
+    std::vector<int> atoms;
+    std::vector<float> masses;
+    std::vector<std::array<double,3>> ref_rel;
+    double total_mass = 0.0;
+    bool active = false;
+};
+
+static std::map<DerivEngine*, RigidBodyConstraint> g_rigid_body_constraints;
+
 struct FixRigidSettings {
+    FixRigidMode mode = FixRigidMode::absolute;
     std::vector<int> fixed_atoms;
     std::vector<int> z_fixed_atoms;
 };
+
+static inline std::array<double,3> make_dvec(double x=0.0, double y=0.0, double z=0.0) {
+    return std::array<double,3>{{x, y, z}};
+}
+
+static inline std::array<double,3> dvec_add(const std::array<double,3>& a, const std::array<double,3>& b) {
+    return make_dvec(a[0] + b[0], a[1] + b[1], a[2] + b[2]);
+}
+
+static inline std::array<double,3> dvec_sub(const std::array<double,3>& a, const std::array<double,3>& b) {
+    return make_dvec(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+static inline std::array<double,3> dvec_scale(const std::array<double,3>& a, double s) {
+    return make_dvec(a[0] * s, a[1] * s, a[2] * s);
+}
+
+static inline double dvec_dot(const std::array<double,3>& a, const std::array<double,3>& b) {
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+}
+
+static inline std::array<double,3> dvec_cross(const std::array<double,3>& a, const std::array<double,3>& b) {
+    return make_dvec(
+        a[1]*b[2] - a[2]*b[1],
+        a[2]*b[0] - a[0]*b[2],
+        a[0]*b[1] - a[1]*b[0]);
+}
+
+static inline std::array<double,3> load_pos_dvec(const VecArray& pos, int atom_idx) {
+    return make_dvec(pos(0, atom_idx), pos(1, atom_idx), pos(2, atom_idx));
+}
+
+static inline std::array<double,3> load_vec_dvec(const VecArray& vec, int atom_idx) {
+    return make_dvec(vec(0, atom_idx), vec(1, atom_idx), vec(2, atom_idx));
+}
+
+static inline void store_pos_dvec(VecArray& pos, int atom_idx, const std::array<double,3>& v) {
+    pos(0, atom_idx) = float(v[0]);
+    pos(1, atom_idx) = float(v[1]);
+    pos(2, atom_idx) = float(v[2]);
+}
+
+static inline void store_vec_dvec(VecArray& vec, int atom_idx, const std::array<double,3>& v) {
+    vec(0, atom_idx) = float(v[0]);
+    vec(1, atom_idx) = float(v[1]);
+    vec(2, atom_idx) = float(v[2]);
+}
+
+static bool attribute_exists_fix(hid_t loc_id, const char* obj_name, const char* attr_name) {
+    hid_t obj_id = H5Oopen(loc_id, obj_name, H5P_DEFAULT);
+    if(obj_id < 0) return false;
+    htri_t exists = H5Aexists(obj_id, attr_name);
+    H5Oclose(obj_id);
+    return exists > 0;
+}
+
+static std::string trim_fix_string(const std::string& in) {
+    size_t begin = 0;
+    while(begin < in.size() && (in[begin] == '\0' || std::isspace(static_cast<unsigned char>(in[begin])))) {
+        ++begin;
+    }
+    size_t end = in.size();
+    while(end > begin && (in[end - 1] == '\0' || std::isspace(static_cast<unsigned char>(in[end - 1])))) {
+        --end;
+    }
+    return in.substr(begin, end - begin);
+}
+
+static std::string read_fix_string_attribute_or_default(hid_t group, const char* attr_name, const std::string& fallback) {
+    if(!attribute_exists_fix(group, ".", attr_name)) return fallback;
+    auto attr = h5_obj(H5Aclose, H5Aopen(group, attr_name, H5P_DEFAULT));
+    auto dtype = h5_obj(H5Tclose, H5Aget_type(attr.get()));
+    if(H5Tis_variable_str(dtype.get())) {
+        char* raw = nullptr;
+        if(H5Aread(attr.get(), dtype.get(), &raw) < 0) return fallback;
+        std::string out = raw ? trim_fix_string(std::string(raw)) : fallback;
+        if(raw) H5free_memory(raw);
+        return out.empty() ? fallback : out;
+    }
+    size_t nchar = H5Tget_size(dtype.get());
+    if(nchar == 0) return fallback;
+    std::string raw(nchar, '\0');
+    if(H5Aread(attr.get(), dtype.get(), &raw[0]) < 0) return fallback;
+    std::string out = trim_fix_string(raw);
+    return out.empty() ? fallback : out;
+}
+
+static FixRigidMode parse_fix_rigid_mode(const std::string& raw_mode) {
+    std::string mode = trim_fix_string(raw_mode);
+    std::transform(mode.begin(), mode.end(), mode.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if(mode == "rigid_body") return FixRigidMode::rigid_body;
+    return FixRigidMode::absolute;
+}
 
 static void normalize_atom_list(std::vector<int>& atoms) {
     std::sort(atoms.begin(), atoms.end());
@@ -63,11 +179,26 @@ static void rebuild_fixed_atoms(DerivEngine& engine) {
         merged_z.insert(merged_z.end(), zdit->second.begin(), zdit->second.end());
     }
     normalize_atom_list(merged_z);
+    std::vector<int> rigid_atoms;
+    auto rbit = g_rigid_body_constraints.find(&engine);
+    if(rbit != g_rigid_body_constraints.end() && rbit->second.active) {
+        rigid_atoms = rbit->second.atoms;
+    }
     if(!merged.empty() && !merged_z.empty()) {
         std::vector<int> filtered;
         filtered.reserve(merged_z.size());
         for(int atom_idx : merged_z) {
             if(!std::binary_search(merged.begin(), merged.end(), atom_idx)) {
+                filtered.push_back(atom_idx);
+            }
+        }
+        merged_z.swap(filtered);
+    }
+    if(!rigid_atoms.empty() && !merged_z.empty()) {
+        std::vector<int> filtered;
+        filtered.reserve(merged_z.size());
+        for(int atom_idx : merged_z) {
+            if(!std::binary_search(rigid_atoms.begin(), rigid_atoms.end(), atom_idx)) {
                 filtered.push_back(atom_idx);
             }
         }
@@ -91,6 +222,254 @@ static void merge_z_fixed_atoms(DerivEngine& engine, const std::vector<int>& ext
     rebuild_fixed_atoms(engine);
 }
 
+static bool solve_3x3(double A[3][3], const std::array<double,3>& b, std::array<double,3>& x) {
+    double aug[3][4] = {
+        {A[0][0], A[0][1], A[0][2], b[0]},
+        {A[1][0], A[1][1], A[1][2], b[1]},
+        {A[2][0], A[2][1], A[2][2], b[2]},
+    };
+    for(int col = 0; col < 3; ++col) {
+        int pivot = col;
+        for(int row = col + 1; row < 3; ++row) {
+            if(std::fabs(aug[row][col]) > std::fabs(aug[pivot][col])) pivot = row;
+        }
+        if(std::fabs(aug[pivot][col]) < 1e-12) return false;
+        if(pivot != col) {
+            for(int k = col; k < 4; ++k) std::swap(aug[pivot][k], aug[col][k]);
+        }
+        double denom = aug[col][col];
+        for(int k = col; k < 4; ++k) aug[col][k] /= denom;
+        for(int row = 0; row < 3; ++row) {
+            if(row == col) continue;
+            double factor = aug[row][col];
+            if(factor == 0.0) continue;
+            for(int k = col; k < 4; ++k) aug[row][k] -= factor * aug[col][k];
+        }
+    }
+    x = make_dvec(aug[0][3], aug[1][3], aug[2][3]);
+    return true;
+}
+
+static void compute_best_fit_rotation(
+        const std::vector<std::array<double,3>>& ref_rel,
+        const std::vector<std::array<double,3>>& cur_rel,
+        const std::vector<float>& masses,
+        float rot[9]) {
+    if(ref_rel.empty() || cur_rel.size() != ref_rel.size()) {
+        for(int i = 0; i < 9; ++i) rot[i] = (i % 4 == 0) ? 1.0f : 0.0f;
+        return;
+    }
+
+    double H[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+    for(size_t i = 0; i < ref_rel.size(); ++i) {
+        double w = (masses.size() > i && masses[i] > 0.f) ? masses[i] : 1.0;
+        for(int r = 0; r < 3; ++r) {
+            for(int c = 0; c < 3; ++c) {
+                H[r][c] += w * cur_rel[i][r] * ref_rel[i][c];
+            }
+        }
+    }
+
+    double trace = H[0][0] + H[1][1] + H[2][2];
+    double N[4][4] = {
+        {trace,            H[1][2]-H[2][1], H[2][0]-H[0][2], H[0][1]-H[1][0]},
+        {H[1][2]-H[2][1],  H[0][0]-H[1][1]-H[2][2], H[0][1]+H[1][0], H[0][2]+H[2][0]},
+        {H[2][0]-H[0][2],  H[0][1]+H[1][0], -H[0][0]+H[1][1]-H[2][2], H[1][2]+H[2][1]},
+        {H[0][1]-H[1][0],  H[0][2]+H[2][0], H[1][2]+H[2][1], -H[0][0]-H[1][1]+H[2][2]},
+    };
+
+    double q[4] = {1.0, 0.0, 0.0, 0.0};
+    for(int iter = 0; iter < 32; ++iter) {
+        double next[4] = {0.0, 0.0, 0.0, 0.0};
+        for(int r = 0; r < 4; ++r) {
+            for(int c = 0; c < 4; ++c) next[r] += N[r][c] * q[c];
+        }
+        double norm = std::sqrt(next[0]*next[0] + next[1]*next[1] + next[2]*next[2] + next[3]*next[3]);
+        if(norm < 1e-12) break;
+        for(int k = 0; k < 4; ++k) q[k] = next[k] / norm;
+    }
+    float qf[4] = {float(q[0]), float(q[1]), float(q[2]), float(q[3])};
+    quat_to_rot(rot, qf);
+}
+
+static bool compute_rigid_body_transform(
+        const RigidBodyConstraint& st,
+        const VecArray& pos,
+        std::array<double,3>& com,
+        float rot[9]) {
+    if(!st.active || st.atoms.empty()) return false;
+
+    com = make_dvec();
+    double total_mass = st.total_mass;
+    if(total_mass <= 0.0) return false;
+
+    std::vector<std::array<double,3>> cur_rel;
+    cur_rel.reserve(st.atoms.size());
+    for(size_t i = 0; i < st.atoms.size(); ++i) {
+        auto p = load_pos_dvec(pos, st.atoms[i]);
+        double w = (st.masses.size() > i && st.masses[i] > 0.f) ? st.masses[i] : 1.0;
+        com = dvec_add(com, dvec_scale(p, w));
+        cur_rel.push_back(p);
+    }
+    com = dvec_scale(com, 1.0 / total_mass);
+    for(size_t i = 0; i < cur_rel.size(); ++i) {
+        cur_rel[i] = dvec_sub(cur_rel[i], com);
+    }
+
+    compute_best_fit_rotation(st.ref_rel, cur_rel, st.masses, rot);
+    return true;
+}
+
+static std::array<double,3> apply_rot_dvec(const float rot[9], const std::array<double,3>& v) {
+    return make_dvec(
+        double(rot[0]) * v[0] + double(rot[1]) * v[1] + double(rot[2]) * v[2],
+        double(rot[3]) * v[0] + double(rot[4]) * v[1] + double(rot[5]) * v[2],
+        double(rot[6]) * v[0] + double(rot[7]) * v[1] + double(rot[8]) * v[2]);
+}
+
+static void project_rigid_body_positions_no_lock(DerivEngine& engine, VecArray pos) {
+    auto it = g_rigid_body_constraints.find(&engine);
+    if(it == g_rigid_body_constraints.end() || !it->second.active) return;
+    auto& st = it->second;
+
+    std::array<double,3> com;
+    float rot[9];
+    if(!compute_rigid_body_transform(st, pos, com, rot)) return;
+
+    for(size_t i = 0; i < st.atoms.size(); ++i) {
+        auto projected = dvec_add(com, apply_rot_dvec(rot, st.ref_rel[i]));
+        store_pos_dvec(pos, st.atoms[i], projected);
+    }
+}
+
+static void project_rigid_body_gradient_no_lock(DerivEngine& engine, VecArray pos, VecArray deriv) {
+    auto it = g_rigid_body_constraints.find(&engine);
+    if(it == g_rigid_body_constraints.end() || !it->second.active) return;
+    auto& st = it->second;
+    size_t n = st.atoms.size();
+    if(n == 0) return;
+
+    std::array<double,3> center = make_dvec();
+    std::vector<std::array<double,3>> rel;
+    rel.reserve(n);
+    for(size_t i = 0; i < n; ++i) {
+        auto p = load_pos_dvec(pos, st.atoms[i]);
+        center = dvec_add(center, p);
+        rel.push_back(p);
+    }
+    center = dvec_scale(center, 1.0 / double(n));
+    for(size_t i = 0; i < n; ++i) rel[i] = dvec_sub(rel[i], center);
+
+    std::array<double,3> t = make_dvec();
+    std::vector<std::array<double,3>> descent;
+    descent.reserve(n);
+    for(size_t i = 0; i < n; ++i) {
+        auto d = dvec_scale(load_vec_dvec(deriv, st.atoms[i]), -1.0);
+        t = dvec_add(t, d);
+        descent.push_back(d);
+    }
+    t = dvec_scale(t, 1.0 / double(n));
+
+    double A[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+    std::array<double,3> b = make_dvec();
+    for(size_t i = 0; i < n; ++i) {
+        auto ri = rel[i];
+        auto di = dvec_sub(descent[i], t);
+        double rr = dvec_dot(ri, ri);
+        for(int ax = 0; ax < 3; ++ax) {
+            A[ax][ax] += rr;
+            for(int ay = 0; ay < 3; ++ay) {
+                A[ax][ay] -= ri[ax] * ri[ay];
+            }
+        }
+        b = dvec_add(b, dvec_cross(ri, di));
+    }
+
+    std::array<double,3> omega = make_dvec();
+    if(!solve_3x3(A, b, omega)) omega = make_dvec();
+
+    for(size_t i = 0; i < n; ++i) {
+        auto projected_descent = dvec_add(t, dvec_cross(omega, rel[i]));
+        store_vec_dvec(deriv, st.atoms[i], dvec_scale(projected_descent, -1.0));
+    }
+}
+
+static void project_rigid_body_momentum_no_lock(DerivEngine& engine, VecArray pos, VecArray mom) {
+    auto it = g_rigid_body_constraints.find(&engine);
+    if(it == g_rigid_body_constraints.end() || !it->second.active) return;
+    auto& st = it->second;
+    if(st.atoms.empty() || st.total_mass <= 0.0 || mom.row_width <= 0) return;
+
+    std::array<double,3> com = make_dvec();
+    for(size_t i = 0; i < st.atoms.size(); ++i) {
+        auto p = load_pos_dvec(pos, st.atoms[i]);
+        double w = (st.masses.size() > i && st.masses[i] > 0.f) ? st.masses[i] : 1.0;
+        com = dvec_add(com, dvec_scale(p, w));
+    }
+    com = dvec_scale(com, 1.0 / st.total_mass);
+
+    std::array<double,3> p_total = make_dvec();
+    std::array<double,3> L = make_dvec();
+    double I[3][3] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+    std::vector<std::array<double,3>> rel;
+    rel.reserve(st.atoms.size());
+    for(size_t i = 0; i < st.atoms.size(); ++i) {
+        auto p = load_vec_dvec(mom, st.atoms[i]);
+        auto r = dvec_sub(load_pos_dvec(pos, st.atoms[i]), com);
+        double m = (st.masses.size() > i && st.masses[i] > 0.f) ? st.masses[i] : 1.0;
+        p_total = dvec_add(p_total, p);
+        L = dvec_add(L, dvec_cross(r, p));
+        double rr = dvec_dot(r, r);
+        for(int ax = 0; ax < 3; ++ax) {
+            I[ax][ax] += m * rr;
+            for(int ay = 0; ay < 3; ++ay) {
+                I[ax][ay] -= m * r[ax] * r[ay];
+            }
+        }
+        rel.push_back(r);
+    }
+
+    std::array<double,3> V = dvec_scale(p_total, 1.0 / st.total_mass);
+    std::array<double,3> omega = make_dvec();
+    if(!solve_3x3(I, L, omega)) omega = make_dvec();
+
+    for(size_t i = 0; i < st.atoms.size(); ++i) {
+        double m = (st.masses.size() > i && st.masses[i] > 0.f) ? st.masses[i] : 1.0;
+        auto v = dvec_add(V, dvec_cross(omega, rel[i]));
+        store_vec_dvec(mom, st.atoms[i], dvec_scale(v, m));
+    }
+}
+
+static RigidBodyConstraint build_rigid_body_constraint(hid_t root, DerivEngine& engine, std::vector<int> atoms) {
+    RigidBodyConstraint st;
+    st.atoms = std::move(atoms);
+    normalize_atom_list(st.atoms);
+    if(st.atoms.empty()) return st;
+
+    std::vector<std::array<double,3>> positions(static_cast<size_t>(engine.pos->n_elem), make_dvec());
+    traverse_dset<3,float>(root, "/input/pos", [&](size_t atom, size_t dim, size_t ns, float x) {
+        if(ns == 0 && atom < positions.size() && dim < 3) positions[atom][dim] = x;
+    });
+
+    st.masses.reserve(st.atoms.size());
+    std::array<double,3> ref_com = make_dvec();
+    for(int atom_idx : st.atoms) {
+        float m = martini_masses::get_mass(&engine, atom_idx);
+        if(m <= 0.f) m = 1.f;
+        st.masses.push_back(m);
+        st.total_mass += m;
+        ref_com = dvec_add(ref_com, dvec_scale(positions[static_cast<size_t>(atom_idx)], m));
+    }
+    if(st.total_mass <= 0.0) return st;
+    ref_com = dvec_scale(ref_com, 1.0 / st.total_mass);
+    st.ref_rel.reserve(st.atoms.size());
+    for(int atom_idx : st.atoms) {
+        st.ref_rel.push_back(dvec_sub(positions[static_cast<size_t>(atom_idx)], ref_com));
+    }
+    st.active = true;
+    return st;
+}
+
 FixRigidSettings read_fix_rigid_settings(hid_t root) {
     FixRigidSettings out;
     try {
@@ -98,6 +477,8 @@ FixRigidSettings read_fix_rigid_settings(hid_t root) {
             auto grp = open_group(root, "/input/fix_rigid");
             int enable = read_attribute<int>(grp.get(), ".", "enable", 0);
             if(enable) {
+                out.mode = parse_fix_rigid_mode(
+                    read_fix_string_attribute_or_default(grp.get(), "mode", "absolute"));
                 if(h5_exists(grp.get(), "atom_indices")) {
                     traverse_dset<1,int>(grp.get(), "atom_indices", [&](size_t i, int atom_idx) {
                         out.fixed_atoms.push_back(atom_idx);
@@ -119,8 +500,14 @@ FixRigidSettings read_fix_rigid_settings(hid_t root) {
 void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
     auto settings = read_fix_rigid_settings(config_root);
-    merge_fixed_atoms(engine, settings.fixed_atoms);
+    if(settings.mode == FixRigidMode::rigid_body) {
+        g_rigid_body_constraints[&engine] =
+            build_rigid_body_constraint(config_root, engine, settings.fixed_atoms);
+    } else {
+        merge_fixed_atoms(engine, settings.fixed_atoms);
+    }
     merge_z_fixed_atoms(engine, settings.z_fixed_atoms);
+    rebuild_fixed_atoms(engine);
 }
 
 void set_dynamic_fixed_atoms(DerivEngine& engine, const std::vector<int>& atom_indices) {
@@ -152,7 +539,6 @@ void clear_dynamic_z_fixed_atoms(DerivEngine& engine) {
 }
 
 void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv) {
-    (void)pos;
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
     auto it = g_fixed_atoms.find(&engine);
     if(it != g_fixed_atoms.end()) {
@@ -165,6 +551,8 @@ void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray de
             }
         }
     }
+    project_rigid_body_positions_no_lock(engine, pos);
+    project_rigid_body_gradient_no_lock(engine, pos, deriv);
     auto zit = g_z_fixed_atoms.find(&engine);
     if(zit != g_z_fixed_atoms.end()) {
         const auto& z_fixed_atoms = zit->second;
@@ -177,7 +565,6 @@ void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray de
 }
 
 void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom) {
-    (void)pos;
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
     auto it = g_fixed_atoms.find(&engine);
     if(it != g_fixed_atoms.end()) {
@@ -196,6 +583,9 @@ void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecAr
             }
         }
     }
+    project_rigid_body_positions_no_lock(engine, pos);
+    project_rigid_body_gradient_no_lock(engine, pos, deriv);
+    project_rigid_body_momentum_no_lock(engine, pos, mom);
     auto zit = g_z_fixed_atoms.find(&engine);
     if(zit != g_z_fixed_atoms.end()) {
         const auto& z_fixed_atoms = zit->second;
@@ -234,6 +624,15 @@ std::vector<int> get_z_fixed_atoms(const DerivEngine& engine) {
     auto it = g_z_fixed_atoms.find(const_cast<DerivEngine*>(&engine));
     if(it != g_z_fixed_atoms.end()) {
         return it->second;
+    }
+    return std::vector<int>();
+}
+
+std::vector<int> get_rigid_body_atoms(const DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    auto it = g_rigid_body_constraints.find(const_cast<DerivEngine*>(&engine));
+    if(it != g_rigid_body_constraints.end() && it->second.active) {
+        return it->second.atoms;
     }
     return std::vector<int>();
 }
@@ -3163,6 +3562,7 @@ void martini_run_minimization(DerivEngine& engine,
                 );
                 store_vec<3>(position, i, p);
             }
+            martini_fix_rigid::apply_fix_rigid_minimization(engine, position, engine.pos->sens);
             engine.compute(PotentialAndDerivMode);
             if(engine.potential <= best_pot){
                 best_pot = engine.potential;

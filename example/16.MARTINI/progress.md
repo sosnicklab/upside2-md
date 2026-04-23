@@ -1,580 +1,91 @@
 # Progress Log
 
-## 2026-04-21 (Bug Fix: Stage-7 Explicit Backbone Oxygen Geometry)
-- User reported two issues in `outputs/martini_test_1rkl_aabb`:
-  - stage `7.0` backbone oxygens fly apart,
-  - the bilayer appears to shift through space.
-- Re-read the local trackers, replaced `plan.md` with the current debugging plan, and audited:
-  - `example/16.MARTINI/run_sim_1rkl.sh`
-  - `example/16.MARTINI/outputs/martini_test_1rkl_aabb/checkpoints/*.up`
-  - `example/16.MARTINI/outputs/martini_test_1rkl_aabb/logs/stage_*.log`
-  - `py/martini_prepare_system_lib.py`
-- Direct output diagnostics showed the bilayer was not the main failure:
-  - preproduction `PO4` drift relative to the fixed protein was below `0.15 Å` in XY and `0 Å` in Z,
-  - stage-7 absolute `PO4` drift was only about `0.31 Å` in XY,
-  - stage-7 relative protein/bilayer motion was large because the protein destabilized.
-- Root cause identified:
-  - `inject_backbone_nodes(...)` injects native Upside backbone nodes only for `N/CA/C`,
-  - explicit runtime `O` atoms were left without direct local restoring geometry after production released `fix_rigid`,
-  - observed in the reported run as:
-    - frame-10 `C-O` range expanding to `0.40–3.26 Å`,
-    - final-frame `C-O` range expanding to `12.70–102.05 Å`.
-- Implemented the minimal fix in:
-  - `py/martini_prepare_system_lib.py`
-- Fix details:
-  - added a post-injection stage-file helper that reads `hybrid_bb_map` and appends explicit oxygen geometry terms to the existing Upside backbone nodes,
-  - added one `C-O` bond per residue,
-  - added one `CA-C-O` angle per residue,
-  - added one `O-C-N(next)` angle for each nonterminal residue,
-  - kept the rest of the AA-backbone workflow unchanged.
-- Verification:
-  - `PYTHONPYCACHEPREFIX=/tmp/upside_pycache python3 -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py`
-  - regenerated stage-7 injector output on a copied prepared production file:
-    - `example/16.MARTINI/outputs/martini_test_1rkl_aabb_oxygen_fix_smoke/checkpoints/1rkl.stage_7.0.prepared.up`
-  - verified appended node sizes:
-    - `Distance3D`: `92 -> 123`
-    - `Spring_bond`: `92 -> 123`
-    - `Angle`: `91 -> 152`
-    - `Spring_angle`: `91 -> 152`
-  - copied the last `6.6` coordinates into the regenerated production file with strict handoff:
-    - `example/16.MARTINI/outputs/martini_test_1rkl_aabb_oxygen_fix_smoke/checkpoints/1rkl.stage_7.0.handoff.up`
-  - ran a targeted production smoke:
-    - `obj/upside .../1rkl.stage_7.0.handoff.up --duration-steps 1000 --frame-interval 0.1 --time-step 0.002 ...`
-- Targeted stage-7 verification result:
-  - fixed run started from the expected negative MARTINI energy (`-20911.70`) after proper handoff,
-  - over `1000` MD steps:
-    - `C-O` stayed within `0.96–1.58 Å`,
-    - last-frame `C-O` mean = `1.20 Å`,
-    - relative `PO4`/protein drift = `0.46 Å` XY and `0.26 Å` Z,
-    - absolute `PO4` drift = `0.04 Å` XY.
-- Verification note:
-  - an initial direct run on the regenerated prepared file without the normal `set-initial-position` handoff was discarded because it reproduced a pre-handoff clash state and generated meaningless huge energies.
-
-## 2026-04-21 (Bug Fix: Restore Committed Bilayer Prep Baseline)
-- User reported that the prepared bilayer must keep the same initial `z` placement and structure as the last committed workflow baseline.
-- Re-read the local task trackers and recorded the new correction in `findings.md`.
-- Compared the current AA-backbone prep output against the committed hybrid prep artifact:
-  - baseline: `outputs/martini_test_1rkl_hybrid/hybrid_prep/hybrid_packed.MARTINI.pdb`
-  - current pre-fix AA prep: `outputs/martini_test_1rkl_aabb_hold_smoke/prep/1rkl_aabb.MARTINI.pdb`
-- Confirmed the regression:
-  - pre-fix AA prep removed only `18` lipids instead of `22`,
-  - shrank the initial box from `111.159 x 111.159 x 110.196 Å` to `110.454 x 110.454 x 97.551 Å`,
-  - shifted the bilayer midplane downward by roughly `6 Å`.
-- Root cause:
-  - `py/martini_prepare_system.py::prepare_mixed_structure(...)` was using the runtime backbone-only atom cloud for:
-    - XY target sizing,
-    - lipid overlap removal,
-    - `min_box_z_target`,
-  - which made the initial bilayer follow the smaller backbone envelope instead of the committed protein-plus-sidechain footprint.
-- Implemented the prep fix in:
-  - `py/martini_prepare_system_lib.py`
-  - `py/martini_prepare_system.py`
-- Details of the fix:
-  - added `extract_protein_aa_atoms(...)` so the prep path can work from the filtered AA protein atom set cleanly,
-  - added `build_sidechain_centroid_proxy_atoms(...)` to create one prep-only sidechain centroid proxy per residue,
-  - built the prep exclusion envelope as:
-    - AA backbone atoms,
-    - plus sidechain centroid proxies,
-  - used that prep envelope for:
-    - XY target sizing,
-    - lipid overlap removal,
-    - `min_box_z_target`,
-  - kept the runtime written PDB backbone-only,
-  - preserved coherent rigid transforms for the alternate outside/`lay-flat` placement path by orienting backbone/runtime and prep-envelope coordinates against the same reference frame.
-- Verification:
-  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` with `PYTHONPYCACHEPREFIX=/tmp/upside_pycache`
-  - direct prep smoke:
-    - `example/16.MARTINI/outputs/aabb_bilayer_baseline_check/prep/prep_summary.json`
-  - reduced workflow smoke:
-    - `example/16.MARTINI/outputs/martini_test_1rkl_aabb_bilayerfix_smoke`
-- Direct artifact comparison against the committed hybrid prep confirmed:
-  - lipid atoms: `3920` in both outputs,
-  - `PO4` count: `280` in both outputs,
-  - XY box: `111.159 x 111.159 Å` in both outputs,
-  - new AA prep box `z`: `109.665 Å` versus committed `110.196 Å`,
-  - new AA prep `PO4` mean `z`: `53.656 Å` versus committed `54.052 Å`,
-  - `PO4` thickness difference: `0.0059 Å`,
-  - lipid residues removed: restored to `22` from the pre-fix `18`.
-- Reduced workflow verification confirmed:
-  - `outputs/martini_test_1rkl_aabb_bilayerfix_smoke` completed through stage `7.0`,
-  - `stage_6.2.up` contains:
-    - `124` rigid protein atoms,
-    - `280` `PO4` `z` holds,
-  - the 5-step `6.2` segment kept:
-    - protein max displacement = `0.0 Å`,
-    - `PO4` max `|Δz|` = `0.0 Å`.
-
-## 2026-04-21 (Bug Fix: Preproduction Protein/PO4 Spatial Holds)
-- User reported that the bilayer was shifting in `z` around stage `6.2`, breaking the later production handoff.
-- Audited runtime hold semantics in:
-  - `src/martini.cpp`
-  - `src/deriv_engine.cpp`
-  - `src/box.cpp`
-  - `py/martini_prepare_system_lib.py`
-  - `example/16.MARTINI/run_sim_1rkl.sh`
-- Confirmed:
-  - `fix_rigid` already pins absolute coordinates, not just internal geometry,
-  - the DOPC topology only supplied soft harmonic `PO4` `z` restraints,
-  - the engine already had a dynamic Z-fixed path but the AA-backbone workflow was not writing user-defined Z-fixed atoms.
-- Implemented:
-  - `src/martini.cpp` now reads optional `/input/fix_rigid/z_atom_indices` and merges them into the engine's user-defined Z-fixed atom set.
-  - `example/16.MARTINI/run_sim_1rkl.sh` now writes preproduction spatial holds through one stage-file helper:
-    - absolute holds for all AA backbone atoms,
-    - `z_atom_indices` holds for all environment `PO4` atoms,
-    - production stage remains unfixed by default.
-- Verification:
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - in-memory Python syntax checks for the MARTINI prep/extract modules
-  - rebuilt the binary:
-    - `cmake --build obj -j4`
-  - reduced workflow run with a nonzero `6.2` segment:
-    - `outputs/martini_test_1rkl_aabb_hold_smoke`
-    - `EQ_62_NSTEPS=5`
-    - completed through `7.0`
-- Artifact inspection on `outputs/martini_test_1rkl_aabb_hold_smoke/checkpoints/1rkl.stage_6.2.up` confirmed:
-  - `fix_rigid/atom_indices` count = `124`
-  - `fix_rigid/z_atom_indices` count = `282`
-  - all Z-fixed environment atom names are `PO4`
-  - protein max displacement across stage `6.2` = `0.0 Å`
-  - `PO4` max absolute `z` shift across stage `6.2` = `0.0 Å`
-- Post-run schema check confirmed:
-  - `stage_6.0.up` and `stage_6.2.up` contain `z_atom_indices`
-  - `stage_7.0.up` does not contain `fix_rigid` or `z_atom_indices` by default
-
-## 2026-04-21 (Implementation: AA-Backbone 1RKL Workflow)
-- Replaced the active `1rkl` workflow in `example/16.MARTINI/run_sim_1rkl.sh` with an AA-backbone-only path:
-  - removed martinize / CG-protein / protein-ITP / interface-scale controls,
-  - packed direct AA backbone atoms into the DOPC environment,
-  - injected sidechain nodes on every prepared stage `6.0` through `7.0`,
-  - applied `fix_rigid` to the AA backbone on stages `6.0` through `6.6`,
-  - left stage `7.0` unfixed by default, with optional production override retained.
-- Refactored `py/martini_prepare_system.py`:
-  - removed runtime-ITP plumbing,
-  - made prep/write paths AA-backbone-only,
-  - removed the `inject-stage7-sc` protein-ITP fallback surface.
-- Refactored `py/martini_prepare_system_lib.py`:
-  - converted protein stage atoms to placeholder type `AABB` with physical `N/CA/C/O` masses and `PROTEINAA` class,
-  - kept sequence/backbone metadata in direct runtime index space,
-  - removed the retired standalone martinize/CG-hybrid prep code,
-  - removed retired protein-ITP sequence/connectivity helpers that no longer participate in workflow 16.
-- Verification:
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
-  - in-memory syntax checks for:
-    - `py/martini_prepare_system.py`
-    - `py/martini_prepare_system_lib.py`
-    - `py/martini_extract_vtf.py`
-  - direct AA-backbone prep smoke:
-    - `outputs/aabb_smoke/prep/prep_summary.json`
-    - observed `protein_atoms=124`, `lipid_residues_removed=18`, `total_atoms=4165`
-  - direct stage `6.0` conversion smoke:
-    - `outputs/aabb_smoke/run/test.input.up`
-  - reduced end-to-end workflow smoke:
-    - `outputs/martini_test_1rkl_aabb_smoke`
-    - completed stages `6.0` through `7.0`
-  - reduced continuation smoke:
-    - `outputs/martini_test_1rkl_aabb_continue_smoke`
-    - resumed from `stage_7.0.up` and completed one production step
-- Artifact inspection of the reduced smoke outputs confirmed:
-  - `stage_6.0.up` contains `fix_rigid` with `124` AA-backbone atoms,
-  - `stage_7.0.up` has no `fix_rigid` group by default,
-  - `particle_class` values are `ION`, `OTHER`, `PROTEINAA`,
-  - the first 124 atom roles are exactly `N`, `CA`, `C`, `O`,
-  - the first 10 protein atom types are `AABB`,
-  - `rotamer`, `martini_sc_table_1body`, and `affine_alignment` exist on both `stage_6.0` and `stage_7.0`.
-
-## 2026-04-06 (Audit: Does Upside RMSD-Align Protein Backbone Each Step?)
-- Recreated the required tracker files in `example/16.MARTINI` because they had been removed during prior directory cleanup.
-- Audited runtime references related to RMSD alignment across:
-  - `src/martini.cpp`
-  - `src/deriv_engine.cpp`
-  - `example/16.MARTINI/run_sim_1rkl.sh`
-  - supporting config code in `py/martini_prepare_system_lib.py`
-- Confirmed workflow wiring:
-  - `INTEGRATION_RMSD_ALIGN_ENABLE` defaults to `1` in `run_sim_1rkl.sh`,
-  - production stage setup writes `integration_rmsd_align_enable` into `/input/hybrid_control`.
-- Confirmed runtime behavior:
-  - `martini_hybrid::align_active_protein_coordinates(...)` is called repeatedly from the integrator before derivative evaluations,
-  - but the function only computes/stores RMSD-alignment bookkeeping and optional debug output,
-  - it does not modify integrated coordinates or momenta.
-- Verification:
-  - `rg -n "rmsd|align|coupling_align|integration_rmsd_align|affine_alignment" src py example/16.MARTINI/run_sim_1rkl.sh`
-  - inspected `src/martini.cpp` around `integration_rmsd_align_enable` parsing and `align_active_protein_coordinates(...)`
-  - inspected `src/deriv_engine.cpp` call sites for `martini_hybrid::align_active_protein_coordinates(...)`
-  - inspected `example/16.MARTINI/run_sim_1rkl.sh` production-control wiring
-
-## 2026-04-06 (Audit: Would Removing Whole-Protein Rigid-Body Momentum Preserve Results?)
-- Extended the runtime audit to inspect likely pure-Upside rolling sources and the effect of possible fixes.
-- Inspected:
-  - `src/thermostat.cpp` and `src/thermostat.h` for OU momentum injection,
-  - `src/main.cpp` for thermostat application and recentering hooks,
-  - `src/deriv_engine.cpp` for position recentering behavior.
-- Findings:
-  - OU thermostat applies atomwise stochastic momentum updates with no subsequent rigid-body angular-momentum removal.
-  - Upside does have position recentering, but only translational recentering of coordinates, not momentum or angular-velocity removal.
-  - Whole-protein angular-momentum removal would change rotational dynamics, so it is not a no-change substitute for the current bookkeeping-only RMSD alignment hook.
-- Conclusion recorded for decision-making:
-  - if the goal is no change to Upside results, do not default to angular-momentum removal;
-  - diagnose net force / torque / linear momentum / angular momentum first to separate force bugs from expected rigid-body thermostat motion.
-
-## 2026-04-06 (Rollback Test: Hybrid RMSD-Align Disabled)
-- First changed `example/16.MARTINI/run_sim_1rkl.sh` so `INTEGRATION_RMSD_ALIGN_ENABLE` defaults to `0`.
-- Ran an initial reduced workflow smoke test and found stage `6.0` still reported `integration_rmsd_align=1`.
-- Traced the issue to generated hybrid-control metadata:
-  - `py/martini_prepare_system_lib.py::write_hybrid_mapping_h5(...)` created `/input/hybrid_control` without `integration_rmsd_align_enable`,
-  - `src/martini.cpp` therefore fell back to runtime default `1`.
-- Fixed the workflow-level source of truth by adding `ctrl.attrs["integration_rmsd_align_enable"] = np.int8(0)` in `py/martini_prepare_system_lib.py`.
-- Verification:
-  - `python3 -m py_compile py/martini_prepare_system_lib.py`
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - reduced end-to-end run:
-    - `RUN_DIR=outputs/martini_test_1rkl_noalign_smoke2`
-    - `MIN_60_MAX_ITER=1 MIN_61_MAX_ITER=1`
-    - `EQ_62_NSTEPS=0 EQ_63_NSTEPS=0 EQ_64_NSTEPS=0 EQ_65_NSTEPS=0 EQ_66_NSTEPS=0`
-    - `PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1`
-- Observed result:
-  - stages `6.0` through `7.0` completed successfully,
-  - runtime banners for stages `6.0`, `6.1`, `6.2`, `6.3`, `6.4`, `6.5`, `6.6`, and `7.0` all reported `integration_rmsd_align=0`,
-  - workflow finished and wrote the expected checkpoint and VTF outputs under `outputs/martini_test_1rkl_noalign_smoke2`.
-
-## 2026-04-06 (Implementation: Remove Hybrid RMSD-Align from Runtime and Workflow)
-- Deleted the C++ runtime feature:
-  - removed `martini_hybrid::align_active_protein_coordinates(...)` from `src/martini.cpp`,
-  - removed the associated Kabsch/Horn quaternion helpers that were only used by that path,
-  - removed five integrator call sites plus the forward declaration from `src/deriv_engine.cpp`,
-  - removed the RMSD-align fields from `HybridRuntimeState`, hybrid-control parsing, stage-reset logic, and runtime banner text in `src/martini.cpp`.
-- Deleted stale workflow plumbing:
-  - removed `INTEGRATION_RMSD_ALIGN_ENABLE` from `example/16.MARTINI/run_sim_1rkl.sh`,
-  - simplified `set_hybrid_production_controls()` to update only `production_nonprotein_hard_sphere`,
-  - removed `integration_rmsd_align_enable`, `coupling_align_debug`, and `coupling_align_interval` attrs from `py/martini_prepare_system_lib.py`.
-- Verification:
-  - `rg -n "integration_rmsd_align|align_active_protein_coordinates|prev_bb_pos_rmsd|has_prev_bb_rmsd|coupling_align_debug|coupling_align_interval|integration_align_step" src example/16.MARTINI/run_sim_1rkl.sh py/martini_prepare_system_lib.py`
-  - `python3 -m py_compile py/martini_prepare_system_lib.py`
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `cmake --build obj -j4`
-  - reduced end-to-end workflow run:
-    - `RUN_DIR=outputs/martini_test_1rkl_noalign_removed`
-    - `MIN_60_MAX_ITER=1 MIN_61_MAX_ITER=1`
-    - `EQ_62_NSTEPS=0 EQ_63_NSTEPS=0 EQ_64_NSTEPS=0 EQ_65_NSTEPS=0 EQ_66_NSTEPS=0`
-    - `PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1`
-- Observed result:
-  - rebuild succeeded,
-  - runtime banners no longer print any RMSD-align field,
-  - stages `6.0` through `7.0` completed successfully under `outputs/martini_test_1rkl_noalign_removed`.
-
-## 2026-04-09 (Thermostat Consistency Audit)
-- Audited thermostat usage across the example workflows:
-  - `example/01.GettingStarted/0.run.py`,
-  - `example/08.MembraneSimulation/0.normal.run.py`,
-  - `example/12.MultistepIntegrator/0.run.py`,
-  - `example/16.MARTINI/run_sim_1rkl.sh`,
-  - CLI defaults in `src/main.cpp`.
-- Confirmed that the standard examples inherit the engine default `--thermostat-timescale=5.0`, while workflow `16` was the outlier with `THERMOSTAT_TIMESCALE=4.0`.
-- Updated `example/16.MARTINI/run_sim_1rkl.sh` so workflow `16` now defaults to `THERMOSTAT_TIMESCALE=5.0`.
-- Updated `example/16.MARTINI/readme.md` to document:
-  - the thermostat-default alignment with the other examples,
-  - the remaining caveat that workflow `16` still uses smaller hybrid timesteps, so the borrowed `40 ps/step` calibration still needs separate validation for stage `7.0`.
-
-## 2026-04-14 (Packing-First Calibration Tooling)
-- Opened a new local task to address membrane packing before further timescale tuning and wrote `example/16.MARTINI/plan.md`.
-- Audited the current hybrid workflow and confirmed:
-  - equilibration stages `6.0 -> 6.6` already run with NPT enabled,
-  - production stage `7.0` has NPT plumbing but defaults to `PROD_70_NPT_ENABLE=0`,
-  - stage outputs contain the box and lipid metadata needed for direct packing analysis.
-- Added `example/16.MARTINI/analyze_packing.py`:
-  - reads completed `stage_7.0.up` files,
-  - computes XY area,
-  - computes leaflet-resolved and mean APL from `PO4`-identified lipid molecules,
-  - computes `PO4` leaflet thickness,
-  - computes tail-bond orientational order relative to the bilayer normal,
-  - writes optional JSON summary and per-frame CSV outputs.
-- Updated `example/16.MARTINI/run.py` to expose:
-  - `PROD_70_NPT_ENABLE`
-  - `PROD_70_BAROSTAT_TYPE`
-  in the top-level wrapper settings.
-- Updated `example/16.MARTINI/readme.md` with:
-  - production-NPT guidance for packing tests,
-  - usage for `analyze_packing.py`,
-  - a packing-first calibration loop.
-- Verification:
-  - `.venv/bin/python -m py_compile example/16.MARTINI/analyze_packing.py example/16.MARTINI/run.py`
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `.venv/bin/python example/16.MARTINI/analyze_packing.py example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up --json-out /tmp/packing_summary.json --csv-out /tmp/packing_timeseries.csv`
-- Observed baseline on the current `martini_test_1rkl_hybrid` output:
-  - `APL = 89.01 A^2`
-  - `PO4 thickness = 32.57 A`
-  - `tail order = 0.238`
-  - `n_lipid_molecules = 280`
-  - no dynamic `output/box` frames were present, so area stayed fixed under the expected NVT fallback path.
-
-## 2026-04-19 (Task Start: Out-of-Bilayer 1RKL Workflow)
-- Replaced `example/16.MARTINI/plan.md` with a task-specific plan for the new outside-of-bilayer workflow.
-- Audited the relevant preparation path before editing:
-  - `example/16.MARTINI/run_sim_1rkl.sh`
-  - `py/martini_prepare_system.py`
-  - `py/martini_prepare_system_lib.py`
-  - `example/16.MARTINI/pdb/1rkl.pdb`
-- Confirmed the current mixed-system builder centers the protein onto the bilayer before lipid removal and box construction, so the new start geometry must be implemented in the prep script rather than as a post hoc shell-only shift.
-
-## 2026-04-19 (Implementation: Out-of-Bilayer 1RKL Workflow)
-- Updated `py/martini_prepare_system.py`:
-  - added optional `--protein-placement-mode`,
-  - added optional `--protein-orientation-mode`,
-  - added optional `--protein-surface-gap`,
-  - kept the existing embedded/input path on the original code branch,
-  - added a new geometry path that can place the protein above or below the bilayer and rotate it into a deterministic flat orientation based on principal axes.
-- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
-  - exposed the new prep controls through optional environment variables only,
-  - kept all existing defaults unchanged.
-- Added `example/16.MARTINI/run_sim_1rkl_outlipid.sh`:
-  - `sbatch` headers,
-  - outside-top placement,
-  - flat protein orientation,
-  - larger XY and Z box defaults,
-  - slightly more conservative protein-lipid clearance defaults for the outside-start geometry.
-- Generated a review artifact with a direct stage-0 prep run using the existing martinized `1rkl` protein inputs:
-  - output PDB: `example/16.MARTINI/outputs/martini_test_1rkl_outlipid/hybrid_prep/hybrid_packed.MARTINI.pdb`
-  - summary JSON: `example/16.MARTINI/outputs/martini_test_1rkl_outlipid/hybrid_prep/hybrid_prep_summary.json`
-- Observed review geometry:
-  - box = `177.472 x 177.472 x 160.621 Å`
-  - protein above upper leaflet with `6.0 Å` clearance
-  - protein flat span = `43.177 x 16.204 x 11.812 Å`
-  - no lipid residues removed during packing
-- Verification:
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
-  - source-compilation syntax check for `py/martini_prepare_system.py` via Python `compile(...)`
-  - direct stage-0 prep run completed successfully and preserved hybrid backbone-frame validation:
-    - matched residues = `31`
-    - rigid RMSD = `0.1030 Å`
-
-## 2026-04-19 (Implementation: Stage-7 Continuation For Out-of-Bilayer Wrapper)
-- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
-  - added `CONTINUE_STAGE_70_FROM`,
-  - added `CONTINUE_STAGE_70_OUTPUT`,
-  - added `CONTINUE_STAGE_70_LABEL`,
-  - added a `run_stage70_continuation(...)` path that:
-    - validates the previous `stage_7.0.up` is still a hybrid production file,
-    - copies or reuses the source checkpoint,
-    - refreshes `/input/pos` from the last production output frame,
-    - reruns only stage `7.0`,
-    - writes a continuation VTF.
-- Updated `example/16.MARTINI/run_sim_1rkl_outlipid.sh`:
-  - corrected `#SBATCH --time` from `48:00:00` to `36:00:00` after user correction about the cluster hard limit,
-  - added wrapper aliases:
-    - `PREVIOUS_RUN_DIR`
-    - `PREVIOUS_STAGE7_FILE`
-  - mapped those aliases onto `CONTINUE_STAGE_70_FROM`,
-  - defaulted continuation runs into `outputs/martini_test_1rkl_outlipid_continue`,
-  - defaulted the resumed checkpoint path to `checkpoints/1rkl.stage_7.0.continue.up`.
-- Verification:
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
-  - continuation smoke test through the wrapper:
-    - `PREVIOUS_RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid`
-    - `RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_continue_smoke`
-    - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl_outlipid.sh`
-- Observed result:
-  - continuation mode skipped stage `0` through `6.6`,
-  - validated the previous hybrid production checkpoint,
-  - wrote `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_continue_smoke/checkpoints/1rkl.stage_7.0.continue.up`,
-  - wrote `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_continue_smoke/1rkl.stage_7.0_continue.vtf`,
-  - completed a one-step production continuation successfully.
-
-## 2026-04-19 (Bug Fix: Slurm Spool Copy Broke Wrapper Path Resolution)
-- User reported:
-  - `slurm_script: line 50: /var/spool/slurm/.../run_sim_1rkl.sh: No such file or directory`
-- Root cause:
-  - `example/16.MARTINI/run_sim_1rkl_outlipid.sh` resolved the base workflow from `BASH_SOURCE[0]`,
-  - under `sbatch`, that path can point to a Slurm spool copy rather than the real repository directory.
-- Fix:
-  - added `BASE_WORKFLOW_SCRIPT` override support,
-  - made the wrapper search for `run_sim_1rkl.sh` in:
-    - `SLURM_SUBMIT_DIR`
-    - `SLURM_SUBMIT_DIR/example/16.MARTINI`
-    - `PWD`
-    - `PWD/example/16.MARTINI`
-    - `SCRIPT_DIR`
-  - kept an explicit error if none of those locations contain the base workflow.
-- Verification:
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
-  - spool-style smoke test from a copied wrapper under `/tmp`:
-    - `SLURM_SUBMIT_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI`
-
-## 2026-04-20 (Audit: Does `run_sim_1rkl.sh` Use `martini_integration_stage`?)
-- Traced the workflow CLI path in `example/16.MARTINI/run_sim_1rkl.sh` and confirmed both minimization and MD stages invoke `upside` with `--integrator v`.
-- Traced runtime setup in `src/main.cpp` and confirmed:
-  - MARTINI masses are loaded for every engine via `martini_masses::load_masses_for_engine(...)`,
-  - the default `v` path dispatches to `DerivEngine::integration_cycle(sys.mom, dt)`.
-- Traced `src/deriv_engine.cpp` and confirmed:
-  - each `integration_cycle(...)` overload checks `martini_masses::has_masses(this)`,
-  - when masses exist, momentum and position updates use per-atom mass scaling inline via `martini_masses::get_mass(...)`.
-- Checked symbol usage in `src/martini.cpp`:
-  - `martini_integration_stage(...)` exists only as a local helper definition,
-  - there are no call sites, so this workflow does not execute that function.
-- Verified generated data path:
-  - `py/martini_prepare_system_lib.py` writes `/input/mass`,
-  - `h5ls -r` on existing `1rkl.stage_6.0.up` and `1rkl.stage_7.0.up` checkpoints shows `/input/mass` is present.
-- Commands used:
-  - `rg -n "integrator|load_masses_for_engine|has_masses|get_mass|martini_integration_stage" example/16.MARTINI/run_sim_1rkl.sh src/main.cpp src/deriv_engine.cpp src/martini.cpp src/main.h py/martini_prepare_system_lib.py`
-  - `sed -n '1180,1325p' example/16.MARTINI/run_sim_1rkl.sh`
-  - `sed -n '660,990p' src/main.cpp`
-  - `sed -n '330,560p' src/deriv_engine.cpp`
-  - `sed -n '1278,1378p' src/martini.cpp`
-  - `h5ls -r example/16.MARTINI/outputs/martini_test_1rkl_outlipid/checkpoints/1rkl.stage_6.0.up`
-  - `h5ls -r example/16.MARTINI/outputs/martini_test_1rkl_outlipid/checkpoints/1rkl.stage_7.0.up`
-
-## 2026-04-20 (Cleanup: Remove Dead `martini_integration_stage`)
-- Updated `src/martini.cpp` to delete the unused `martini_masses::martini_integration_stage(...)` helper.
-- Left the active mass-aware integrator logic unchanged in `src/main.cpp` and `src/deriv_engine.cpp`.
-- Verification:
-  - `rg -n "martini_integration_stage" src` returned no matches
-  - in-tree `cmake --build obj --target upside -j4` failed because `obj/CMakeCache.txt` points at an old checkout path `/Users/yinhan/Documents/upside2-md-martini`
-  - clean reconfigure succeeded with `cmake -S src -B /tmp/upside2-md-stagecheck`
-  - clean build succeeded with `cmake --build /tmp/upside2-md-stagecheck --target upside -j4`
-- Observed result:
-  - `upside` built successfully after the helper removal
-  - remaining build output contained pre-existing compiler warnings, but no error related to this change
-    - `PREVIOUS_RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid`
-    - `RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_continue_spool_smoke`
-    - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1`
-- Observed result:
-  - the copied wrapper no longer tried to execute `/var/spool/.../run_sim_1rkl.sh`,
-  - it resolved `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_1rkl.sh`,
-  - the one-step continuation run completed successfully from the simulated Slurm-spool execution context.
-
-## 2026-04-19 (Bug Fix: Slurm Environment Must Match hybrid-interface-sweep)
-- User reported a new cluster failure:
-  - `ERROR: UPSIDE executable not found: /home/yinhanw/project/yinhan/upside2-md/obj/upside`
-- Audited the working Slurm environment pattern in:
-  - `hybrid-interface-sweep/default/slurm/run_array.sbatch`
-  - `hybrid-interface-sweep/submit_remote_round.sh`
-  - generated Slurm script templates in `hybrid-interface-sweep/workflow.py`
-- Implemented the same pattern for workflow `16`:
-  - updated `example/16.MARTINI/run_sim_1rkl_outlipid.sh` to:
-    - infer `PROJECT_ROOT` from the base workflow path,
-    - allow `UPSIDE_PROJECT_ROOT` to override both the base workflow search root and the runtime root,
-    - source `/etc/profile.d/modules.sh` when present,
-    - load `python/3.11.9`, `cmake`, `openmpi`, and configurable HDF5 modules,
-    - source `PROJECT_ROOT/.venv/bin/activate` when present,
-    - export `UPSIDE_HOME="$PROJECT_ROOT"`,
-    - export `PYTHONPATH="$PROJECT_ROOT/py:${PYTHONPATH}"`,
-    - prepend `PROJECT_ROOT/obj` to `PATH`,
-    - set `UPSIDE_SKIP_SOURCE_SH=1`.
-  - updated `example/16.MARTINI/run_sim_1rkl.sh` to honor `UPSIDE_SKIP_SOURCE_SH=1` and skip the repo-local `source.sh` bootstrap in wrapper-managed environments while still exporting `obj` and `py` paths.
-- Updated `/Users/yinhan/Documents/upside2-md/AGENTS.md`:
-  - clarified that `source .venv/bin/activate && source source.sh` is the local Mac path,
-  - added a dedicated self-contained Slurm environment section that documents the module-load + venv + explicit `UPSIDE_HOME/PATH/PYTHONPATH` pattern,
-  - added an explicit proper-Slurm-job checklist and wrapper skeleton,
-  - documented the requirement that Slurm wrappers set `UPSIDE_SKIP_SOURCE_SH=1`.
-- Verification:
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
-  - wrapper-managed environment smoke test:
-    - `PREVIOUS_RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid`
-    - `RUN_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_outlipid_envfix_smoke`
-    - `PROD_70_NSTEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl_outlipid.sh`
-- Observed result:
-  - the wrapper found `/Users/yinhan/Documents/upside2-md/obj/upside` via the wrapper-managed environment,
-  - the one-step continuation run completed successfully and wrote the expected continued checkpoint and VTF outputs under `outputs/martini_test_1rkl_outlipid_envfix_smoke`.
-
-## 2026-04-19 (User Correction: AGENTS.md Must Not Depend On Removable Side Folders)
-- User clarified that `hybrid-interface-sweep/` will be removed and must not be referenced from `AGENTS.md` as the place to look for Slurm setup.
-- Updated `/Users/yinhan/Documents/upside2-md/AGENTS.md` again to:
-  - remove the `hybrid-interface-sweep` reference,
-  - write the Slurm environment contract directly in the main project guidance,
-  - include a proper Slurm-job step list and a self-contained wrapper example.
-
-## 2026-04-20 (Bug Fix: VTF Extraction Must Stay Per Segment)
-- User corrected the continuation-export requirement:
-  - do not flatten all archived trajectory pieces into one VTF,
-  - do emit one VTF file for each simulation segment.
-- Updated `py/martini_extract_vtf.py`:
-  - added `--output-group` selection,
-  - added `--split-segments`,
-  - taught the extractor to enumerate `output_previous_*` groups plus the current `output`,
-  - kept the existing single-segment filename unchanged,
-  - wrote multi-segment outputs as `.segment_<n>.vtf`.
-- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
-  - `extract_stage_vtf()` now calls the extractor with `--split-segments`,
-  - final workflow summaries now list either the single stage VTF or the segment-specific files implied by the current stage file.
-- Verification:
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - no-write syntax check for `py/martini_extract_vtf.py` via Python `compile(...)`
-  - single-segment smoke test:
-    - `python py/martini_extract_vtf.py ... --split-segments`
-    - observed `/tmp/segment_single_check.vtf`
-  - synthetic multi-segment smoke test:
-    - copied a stage file to `/tmp/1rkl.stage_7.0.segment_test2.up`
-    - duplicated `/output` into `/output_previous_0`
-    - reran `python py/martini_extract_vtf.py ... --split-segments`
-    - observed `/tmp/segment_multi_check.segment_0.vtf`
-    - observed `/tmp/segment_multi_check.segment_1.vtf`
-
-## 2026-04-20 (Bug Fix: Workflow Seeds Must Be Generated Per Run)
-- User asked to double-check that the workflow no longer uses fixed literal seeds by default.
-- Updated `example/16.MARTINI/run_sim_1rkl.sh`:
-  - added a `generate_random_seed()` helper using `/dev/urandom` with a bash fallback,
-  - removed fixed defaults `PREP_SEED=2026` and `SEED=7090685331`,
-  - now generates `PREP_SEED` and `SEED` at runtime when unset,
-  - still honors explicit `PREP_SEED` / `SEED` env-var overrides,
-  - prints the chosen seeds in the workflow banner.
-- Updated `example/16.MARTINI/run_sim_1rkl_outlipid.sh` comments to document that it inherits the base workflow's random seed generation unless seeds are explicitly provided.
-- Verification:
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
-  - clean-environment base-workflow continuation smoke tests:
-    - run A generated `PREP_SEED=230538232`, `SEED=2946250751`
-    - run B generated `PREP_SEED=702128154`, `SEED=3561662407`
-  - clean-environment wrapper continuation smoke tests:
-    - run A generated `PREP_SEED=1002878124`, `SEED=479116090`
-    - run B generated `PREP_SEED=3764234752`, `SEED=606192356`
-- Observed result:
-  - both scripts now default to non-fixed seeds,
-  - repeated runs produced different seeds without manual overrides,
-  - both the base workflow and the out-of-bilayer wrapper still completed one-step continuation successfully.
-
-## 2026-04-21 (Workflow-16 Local Bilayer Asset Update)
-- Re-read the local tracking files and inspected the current workflow surfaces:
-  - `run_sim_1rkl.sh` still defaulted `BILAYER_PDB` to `${UPSIDE_HOME}/parameters/dryMARTINI/DOPC.pdb`,
-  - `run_sim_1rkl_outlipid.sh` inherited that default implicitly,
-  - `readme.md` did not document the bilayer source.
-- Planned implementation:
-  - move `DOPC.pdb` into `example/16.MARTINI/pdb/`,
-  - update both shell entry points to use `pdb/DOPC.pdb` by default,
-  - add README guidance that the bilayer structure should be generated from CHARMM-GUI.
-- Files targeted:
+## 2026-04-22 (Implementation: Preproduction Rigid-Body Hold)
+- Replaced the local task tracker with the rigid-body preproduction plan after diagnosing the reported production-stage bilayer `z` shift.
+- Re-read:
   - `example/16.MARTINI/plan.md`
+  - `example/16.MARTINI/findings.md`
   - `example/16.MARTINI/progress.md`
-  - `example/16.MARTINI/run_sim_1rkl.sh`
-  - `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
-  - `example/16.MARTINI/readme.md`
-  - `example/16.MARTINI/pdb/DOPC.pdb`
-- Applied changes:
-  - updated `example/16.MARTINI/run_sim_1rkl.sh` so `BILAYER_PDB` now defaults to `pdb/DOPC.pdb`,
-  - updated `example/16.MARTINI/run_sim_1rkl_outlipid.sh` to export the same local default explicitly,
-  - updated `example/16.MARTINI/readme.md` to say the bilayer structure should be generated from CHARMM-GUI and stored as `pdb/DOPC.pdb`,
-  - moved `DOPC.pdb` from `parameters/dryMARTINI/` into `example/16.MARTINI/pdb/`.
-- Verification:
-  - `ls -la example/16.MARTINI/pdb/DOPC.pdb`
-  - confirmed `parameters/dryMARTINI/DOPC.pdb` is absent after the move
-  - `rg -n "BILAYER_PDB|CHARMM-GUI|pdb/DOPC.pdb" example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/run_sim_1rkl_outlipid.sh example/16.MARTINI/readme.md`
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
-- Observed result:
-  - workflow-16 now resolves its default bilayer from the example-local `pdb/` directory,
-  - the old shared-path asset reference is removed from the two entry points,
-  - the README documents the expected CHARMM-GUI provenance for the bilayer structure.
+- Grounded the diagnosis on the current local artifacts:
+  - `example/16.MARTINI/outputs/martini_test_1rkl_aabb/checkpoints/1rkl.stage_6.6.up`
+  - `example/16.MARTINI/outputs/martini_test_1rkl_aabb/checkpoints/1rkl.stage_7.0.up`
+  - `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`
+  - matching stage logs under `example/16.MARTINI/outputs/*/logs/`
+- Confirmed before implementation:
+  - the AA-backbone `6.6 -> 7.0` handoff is exact,
+  - stage `6.6` carries the current absolute protein hold plus `PO4` `z` hold,
+  - stage `7.0` removes both `fix_rigid` and `barostat`,
+  - the apparent stage-7 bilayer shift is dominated by protein-relative drift, not bilayer bulk translation.
+- Next implementation steps:
+  - extend the C++ `fix_rigid` path with a rigid-body mode,
+  - write that mode from `run_sim_1rkl.sh` for preproduction AA-backbone holds,
+  - rebuild and verify on reduced workflow runs and direct drift measurements.
 
-## 2026-04-21 (README Wording Correction For Bilayer Input)
-- User corrected the README requirement:
-  - the workflow should use the lipid bilayer structure downloaded from CHARMM-GUI,
-  - the README must not prescribe the filename `DOPC.pdb`,
-  - the README must not imply the bilayer must specifically be DOPC.
-- Updated `example/16.MARTINI/readme.md`:
-  - replaced the filename-specific sentence with generic guidance that the workflow uses the downloaded CHARMM-GUI bilayer structure as its bilayer input.
-- Updated `example/16.MARTINI/findings.md`:
-  - recorded the correction and a lesson to avoid turning implementation filenames into README requirements.
+- Implemented the engine-side rigid-body mode in:
+  - `src/main.h`
+  - `src/martini.cpp`
+  - `src/box.cpp`
+- Implementation details:
+  - added `fix_rigid.mode` parsing with legacy default `absolute`,
+  - added rigid-body registration state that stores:
+    - selected atoms,
+    - per-atom masses,
+    - reference coordinates relative to the rigid-body COM,
+  - added rigid-body projection logic for:
+    - best-fit rigid position projection,
+    - rigid-body gradient projection during minimization/MD,
+    - rigid-body momentum reconstruction from whole-body translation and rotation,
+  - kept the existing absolute-pin path unchanged for all callers that do not write `mode = rigid_body`,
+  - excluded rigid-body-held atoms from barostat coordinate scaling while leaving the legacy absolute fixed-atom mask path intact.
+- Updated workflow metadata in:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+- Workflow change:
+  - preproduction `set_preproduction_spatial_holds()` now writes:
+    - `fix_rigid.mode = rigid_body`
+    - `selection = aa_backbone_rigid_body_hold`
+    - the existing `PO4` `z_atom_indices` hold unchanged.
 - Verification:
-  - inspected the updated README sentence directly.
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `PYTHONPYCACHEPREFIX=/tmp/upside_pycache python -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py example/16.MARTINI/run.py`
+  - initial sandboxed `cmake --build obj -j4` failed because `obj/` was not writable in the sandbox,
+  - reran `cmake --build obj -j4` with escalation and the build completed successfully.
+- Reduced end-to-end workflow smoke:
+  - command:
+    - `RUN_DIR=example/16.MARTINI/outputs/martini_test_1rkl_rigidbody_smoke`
+    - `MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5`
+    - `EQ_62_NSTEPS=10 EQ_63_NSTEPS=10 EQ_64_NSTEPS=10 EQ_65_NSTEPS=10 EQ_66_NSTEPS=10`
+    - `PROD_70_NSTEPS=200 PROD_FRAME_STEPS=10`
+    - `bash example/16.MARTINI/run_sim_1rkl.sh`
+  - note:
+    - because the smoke `RUN_DIR` was passed with the `example/16.MARTINI/...` prefix from the repo root, the outputs landed under `example/16.MARTINI/example/16.MARTINI/outputs/...`;
+    - this affected only the verification path used in this session, not the workflow code.
+- Direct smoke artifact checks confirmed:
+  - `stage_6.2.up`:
+    - `fix_rigid.mode = rigid_body`
+    - `atom_indices = 124`
+    - `z_atom_indices = 280`
+    - protein internal span change max = `1.25e-6 Å`
+    - `PO4` `z` hold max drift = `0.0 Å`
+    - protein COM drift max = `0.00190 Å`
+  - `stage_6.6.up`:
+    - `fix_rigid.mode = rigid_body`
+    - protein internal span change max = `1.32e-6 Å`
+    - `PO4` `z` hold max drift = `0.0 Å`
+    - protein COM drift max = `0.00190 Å`
+  - `stage_7.0.up`:
+    - no `fix_rigid` group,
+    - bilayer `z` drift max over the 200-step smoke = `0.0072 Å`,
+    - protein `z` drift max over the 200-step smoke = `0.0137 Å`,
+    - bilayer-minus-protein relative `z` change max = `0.0185 Å`.
+- Longer targeted production check:
+  - copied the prepared production handoff to:
+    - `.../checkpoints/1rkl.stage_7.0.long.up`
+  - ran:
+    - `obj/upside .../1rkl.stage_7.0.long.up --duration-steps 1000 --frame-interval 0.1 --temperature 0.8647 --time-step 0.002 --seed 2388072927 --integrator v --disable-recentering`
+  - measured on the resulting 20 output frames:
+    - bilayer `z` drift max = `0.066 Å`
+    - protein `z` drift max = `0.052 Å`
+    - bilayer-minus-protein relative `z` change max = `0.118 Å`
+- Comparison against the first 20 output frames of the old `outputs/martini_test_1rkl_aabb/checkpoints/1rkl.stage_7.0.up` artifact:
+  - old bilayer-minus-protein relative `z` change max = `0.300 Å`
+  - new rigid-body continuation relative `z` change max = `0.118 Å`

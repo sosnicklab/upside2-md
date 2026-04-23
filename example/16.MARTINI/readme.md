@@ -12,15 +12,15 @@ The script `run.py` is a thin wrapper around `run_sim_1rkl.sh`.  Edit the settin
 The MARTINI workflow helper scripts used by `run_sim_1rkl.sh` live under `../../py/`.
 For the bilayer input, use a lipid bilayer structure generated from CHARMM-GUI; note that while `DOPC.pdb` is used as an example, any valid bilayer structure from CHARMM-GUI is compatible.
 
-The workflow now defaults to the same thermostat timescale as the standard Upside examples (`tau = 5.0`) unless you override `THERMOSTAT_TIMESCALE`.
-Its hybrid stages still use smaller explicit timesteps than the standard examples for stability, so any repo-wide physical time calibration borrowed from those examples should be revalidated before applying it literally to stage `7.0`.
+The workflow now inherits the same thermostat defaults as the standard Upside examples from the engine itself (`tau = 5.0` with the default interval).
+Its hybrid stages still use smaller fixed explicit timesteps than the standard examples for stability, so any repo-wide physical time calibration borrowed from those examples should be revalidated before applying it literally to stage `7.0`.
 Production stage `7.0` still defaults to NVT (`PROD_70_NPT_ENABLE=0`).  That is useful for stability comparisons, but it also means membrane packing can drift away from the dry-MARTINI reference even when the interface coupling is otherwise reasonable.
 
 You can also run the shell workflow directly:
 
 bash run_sim_1rkl.sh
 
-The default results are stored in `outputs/martini_test_1rkl_hybrid`.  The workflow writes stage checkpoints, logs, and VTF files there.
+The default results are stored in `outputs/martini_test_1rkl_aabb`.  The workflow writes stage checkpoints, logs, and VTF files there.
 
 To test packing with production NPT enabled, override:
 

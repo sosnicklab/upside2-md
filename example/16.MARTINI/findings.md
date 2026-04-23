@@ -243,3 +243,45 @@
 - Lesson:
   - when documenting workflow inputs, distinguish between the current local default path used by scripts and the broader user requirement described in the README;
   - do not turn an implementation detail like a current filename into a workflow requirement unless the user explicitly asks for that contract.
+
+## 2026-04-22 (User Correction: Keep Stage-Length Controls Public)
+- For the `1rkl` workflow cleanup, the number of iterations / MD steps in each stage must remain part of the user-facing interface.
+- It is acceptable to remove or hardcode internal prep/runtime/testing knobs, but not the per-stage run-length controls.
+- Lesson:
+  - when shrinking a workflow control surface, distinguish between true internal plumbing knobs and the run-length controls the user actively uses for experiment design;
+  - do not collapse stage-specific iteration / step-count controls into fixed constants unless the user explicitly asks for that.
+
+## 2026-04-22 (AA-Backbone Stage-7 Drift Diagnosis)
+- Re-analysis of the current local artifacts shows the reported production-stage bilayer `z` shift is not a bulk bilayer translation bug.
+- In `example/16.MARTINI/outputs/martini_test_1rkl_aabb/checkpoints/1rkl.stage_7.0.up`:
+  - bilayer/environment/total `z` drift stays around `0.2–0.4 Å`,
+  - protein center `z` drift reaches about `7 Å`,
+  - the `6.6 -> 7.0` coordinate handoff is exact.
+- The existing AA-backbone preproduction path holds the protein by absolute pinning:
+  - `set_preproduction_spatial_holds()` writes `fix_rigid/atom_indices`,
+  - `src/martini.cpp::apply_fix_rigid_*` zeroes the selected atoms' forces and momenta directly.
+- User correction on intended semantics:
+  - during minimization and preproduction the protein should remain rigid internally,
+  - but it must not be locked in space,
+  - rigid-body translation and rotation should both be allowed.
+- Consequence:
+  - this is not solvable by only rearranging stage timing or recentering flags;
+  - it requires extending the `fix_rigid` runtime path with a rigid-body mode distinct from the existing absolute pin.
+- Lesson:
+  - distinguish "rigid internally" from "fixed in absolute coordinates";
+  - when a user asks for the former, do not reuse an absolute freeze primitive without checking whether whole-body motion is supposed to remain allowed.
+
+## 2026-04-22 (Rigid-Body Preproduction Hold Verification)
+- Extending `fix_rigid` with `mode = rigid_body` was sufficient to keep the AA-backbone protein internally rigid during preproduction without using the old absolute pin path.
+- Verified behavior on `example/16.MARTINI/example/16.MARTINI/outputs/martini_test_1rkl_rigidbody_smoke`:
+  - `stage_6.2.up` and `stage_6.6.up` write `fix_rigid.mode = rigid_body`,
+  - protein internal span changes stay at the `1e-6 Å` level,
+  - `PO4` `z` holds remain exact,
+  - the protein is no longer mathematically forced to zero absolute displacement; the short smoke shows small but nonzero COM motion.
+- A direct 1000-step production continuation from the prepared stage-7 handoff stayed well behaved:
+  - bilayer `z` drift max = `0.066 Å`,
+  - protein `z` drift max = `0.052 Å`,
+  - bilayer-minus-protein relative `z` change max = `0.118 Å`.
+- Consequence:
+  - the new rigid-body preproduction mode does not reintroduce bilayer bulk drift,
+  - and it reduces the early production protein/bilayer relative drift compared with the old AABB artifact over the same 20-frame window.

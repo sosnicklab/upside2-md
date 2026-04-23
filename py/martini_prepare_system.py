@@ -7,6 +7,7 @@ import sys
 import numpy as np
 
 from martini_prepare_system_lib import (
+    DEFAULT_WORKFLOW_BILAYER_PDB,
     DEFAULT_SC_TABLE_JSON,
     build_sc_martini_h5,
     build_sidechain_centroid_proxy_atoms,
@@ -61,7 +62,7 @@ def parse_prepare_args(argv):
     parser.add_argument("--run-dir", default="outputs/martini_test")
     parser.add_argument(
         "--bilayer-pdb",
-        default=os.path.join(REPO_ROOT, "parameters", "dryMARTINI", "DOPC.pdb"),
+        default=DEFAULT_WORKFLOW_BILAYER_PDB,
     )
     parser.add_argument("--protein-aa-pdb", required=True)
     parser.add_argument("--hybrid-mapping-output", default=None)
@@ -73,6 +74,10 @@ def parse_prepare_args(argv):
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--protein-lipid-cutoff", type=float, default=3.0)
     parser.add_argument("--protein-net-charge", type=int, default=None)
+    parser.add_argument("--stage-lipidhead-fc", type=float, default=0.0)
+    parser.add_argument("--npt-enable", type=int, default=0)
+    parser.add_argument("--npt-target-pxy", type=float, default=0.0)
+    parser.add_argument("--npt-target-pz", type=float, default=0.0)
     return parser.parse_args(argv)
 
 
@@ -202,23 +207,16 @@ def prepare_mixed_structure(args, runtime_pdb):
 
 
 def run_stage_conversion(args, runtime_pdb):
-    prev_pdb = os.environ.get("UPSIDE_RUNTIME_PDB_FILE")
-    prev_itp = os.environ.get("UPSIDE_RUNTIME_ITP_FILE")
-    os.environ["UPSIDE_RUNTIME_PDB_FILE"] = runtime_pdb
-    os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
-
-    try:
-        convert_stage(pdb_id=args.pdb_id, stage=args.stage, run_dir=args.run_dir)
-    finally:
-        if prev_pdb is None:
-            os.environ.pop("UPSIDE_RUNTIME_PDB_FILE", None)
-        else:
-            os.environ["UPSIDE_RUNTIME_PDB_FILE"] = prev_pdb
-
-        if prev_itp is None:
-            os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
-        else:
-            os.environ["UPSIDE_RUNTIME_ITP_FILE"] = prev_itp
+    convert_stage(
+        pdb_id=args.pdb_id,
+        stage=args.stage,
+        run_dir=args.run_dir,
+        runtime_pdb_file=runtime_pdb,
+        stage_lipidhead_fc=args.stage_lipidhead_fc,
+        npt_enable=args.npt_enable,
+        npt_target_pxy=args.npt_target_pxy,
+        npt_target_pz=args.npt_target_pz,
+    )
 
 
 def run_prepare(argv):

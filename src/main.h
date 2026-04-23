@@ -11,6 +11,7 @@ namespace martini_fix_rigid {
     void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine);
     void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv);
     void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom);
+    std::vector<int> get_rigid_body_atoms(const DerivEngine& engine);
 }
 
 namespace martini_stage_params {

@@ -12,6 +12,7 @@ using namespace h5;
 namespace martini_fix_rigid {
 std::vector<int> get_fixed_atoms(const DerivEngine& engine);
 std::vector<int> get_z_fixed_atoms(const DerivEngine& engine);
+std::vector<int> get_rigid_body_atoms(const DerivEngine& engine);
 }
 
 static inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* attr_name) {
@@ -74,6 +75,11 @@ static void apply_semi_isotropic_scaling(DerivEngine& engine, float scale_xy, fl
     std::vector<unsigned char> fixed_mask(static_cast<size_t>(std::max(0, n_atom)), 0);
     std::vector<unsigned char> z_fixed_mask(static_cast<size_t>(std::max(0, n_atom)), 0);
     for(int atom_idx : martini_fix_rigid::get_fixed_atoms(engine)) {
+        if(atom_idx >= 0 && atom_idx < n_atom) {
+            fixed_mask[static_cast<size_t>(atom_idx)] = 1;
+        }
+    }
+    for(int atom_idx : martini_fix_rigid::get_rigid_body_atoms(engine)) {
         if(atom_idx >= 0 && atom_idx < n_atom) {
             fixed_mask[static_cast<size_t>(atom_idx)] = 1;
         }
@@ -262,6 +268,11 @@ void maybe_apply_barostat(DerivEngine& engine,
     std::vector<unsigned char> fixed_mask(static_cast<size_t>(std::max(0, n_atom)), 0);
     std::vector<unsigned char> z_fixed_mask(static_cast<size_t>(std::max(0, n_atom)), 0);
     for(int atom_idx : martini_fix_rigid::get_fixed_atoms(engine)) {
+        if(atom_idx >= 0 && atom_idx < n_atom) {
+            fixed_mask[static_cast<size_t>(atom_idx)] = 1;
+        }
+    }
+    for(int atom_idx : martini_fix_rigid::get_rigid_body_atoms(engine)) {
         if(atom_idx >= 0 && atom_idx < n_atom) {
             fixed_mask[static_cast<size_t>(atom_idx)] = 1;
         }

@@ -19,6 +19,21 @@ import tables as tb
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 WORKFLOW_DIR = os.path.join(REPO_ROOT, "example", "16.MARTINI")
+DEFAULT_WORKFLOW_BILAYER_PDB = os.path.join(WORKFLOW_DIR, "pdb", "DOPC.pdb")
+MARTINI_ENERGY_CONVERSION_KJ_PER_EUP = 2.914952774272
+MARTINI_LENGTH_CONVERSION_ANGSTROM_PER_NM = 10.0
+MARTINI_COULOMB_CONSTANT_NATIVE_KJ_MOL_NM_E2 = 138.935458 / 15.0
+WORKFLOW_NPT_TAU = 4.0
+WORKFLOW_NPT_COMPRESSIBILITY_XY = 14.521180763676
+WORKFLOW_NPT_COMPRESSIBILITY_Z = 0.0
+WORKFLOW_NPT_INTERVAL = 10
+WORKFLOW_NPT_SEMI_ISOTROPIC = 1
+WORKFLOW_NPT_DEBUG = 1
+WORKFLOW_EWALD_ENABLED = 1
+WORKFLOW_EWALD_ALPHA = 0.2
+WORKFLOW_EWALD_KMAX = 5
+WORKFLOW_EWALD_USE_CARDINAL_BSPLINE = 1
+WORKFLOW_EWALD_BSPLINE_GRID = 16384
 
 NA_AVOGADRO = 6.02214076e23
 BB_COMPONENT_NAMES = ("N", "CA", "C", "O")
@@ -1038,14 +1053,22 @@ def read_martini_masses(ff_file):
     
     return masses
 
-def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
+def convert_stage(
+    pdb_id,
+    stage="minimization",
+    run_dir="outputs/martini_test",
+    runtime_pdb_file=None,
+    stage_lipidhead_fc=0.0,
+    npt_enable=0,
+    npt_target_pxy=0.0,
+    npt_target_pz=0.0,
+):
     if not pdb_id:
         raise ValueError("convert_stage requires an explicit pdb_id")
     if not run_dir:
         raise ValueError("convert_stage requires an explicit run_dir")
     os.makedirs(run_dir, exist_ok=True)
 
-    stage = os.environ.get('UPSIDE_SIMULATION_STAGE', stage)
     print("stage:", stage)
 
     stage_params = {
@@ -1076,7 +1099,10 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
     }
 
     params = stage_params.get(stage, stage_params['npt_prod'])
-    stage_lipidhead_fc = float(os.environ.get('UPSIDE_BILAYER_LIPIDHEAD_FC', '0'))
+    stage_lipidhead_fc = float(stage_lipidhead_fc)
+    npt_enable = int(npt_enable)
+    npt_target_pxy = float(npt_target_pxy)
+    npt_target_pz = float(npt_target_pz)
     
     print("pdb_id:", pdb_id)
     print("run_dir:", run_dir)
@@ -1174,22 +1200,14 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
     if not dopc_angles:
         raise ValueError("No DOPC angles found in %s" % dopc_param_file)
     
-    # Unit conversions for mapping native MARTINI units into the active
-    # simulation unit system. These must be provided explicitly rather than
-    # baked into the generator.
-    energy_conversion_raw = os.environ.get('UPSIDE_MARTINI_ENERGY_CONVERSION', '').strip()
-    length_conversion_raw = os.environ.get('UPSIDE_MARTINI_LENGTH_CONVERSION', '').strip()
-    if not energy_conversion_raw:
-        raise ValueError("Missing required environment variable UPSIDE_MARTINI_ENERGY_CONVERSION")
-    if not length_conversion_raw:
-        raise ValueError("Missing required environment variable UPSIDE_MARTINI_LENGTH_CONVERSION")
-    energy_conversion = float(energy_conversion_raw)
-    length_conversion = float(length_conversion_raw)
-    coulomb_constant_native = float(os.environ.get('UPSIDE_MARTINI_COULOMB_CONSTANT_NATIVE', str(138.935458 / 15.0)))
+    # Workflow-16 uses fixed native dry-MARTINI -> Upside conversion constants.
+    energy_conversion = float(MARTINI_ENERGY_CONVERSION_KJ_PER_EUP)
+    length_conversion = float(MARTINI_LENGTH_CONVERSION_ANGSTROM_PER_NM)
+    coulomb_constant_native = float(MARTINI_COULOMB_CONSTANT_NATIVE_KJ_MOL_NM_E2)
     if energy_conversion <= 0.0:
-        raise ValueError("UPSIDE_MARTINI_ENERGY_CONVERSION must be positive")
+        raise ValueError("MARTINI energy conversion constant must be positive")
     if length_conversion <= 0.0:
-        raise ValueError("UPSIDE_MARTINI_LENGTH_CONVERSION must be positive")
+        raise ValueError("MARTINI length conversion constant must be positive")
 
     # Pressure conversion (for NPT simulations):
     # 1 atm = 101325 Pa = 101.325 kJ/m³
@@ -1215,7 +1233,10 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
     print("energy_conversion:", energy_conversion)
     print("length_conversion:", length_conversion)
 
-    input_pdb_file = runtime_input_pdb_path(str(WORKFLOW_DIR), pdb_id)
+    if runtime_pdb_file is None:
+        input_pdb_file = runtime_input_pdb_path(str(WORKFLOW_DIR), pdb_id)
+    else:
+        input_pdb_file = expand_path(runtime_pdb_file)
     print("input_pdb:", input_pdb_file)
 
     initial_positions = []
@@ -1543,25 +1564,19 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
         stage_grp._v_attrs.current_stage = b'minimization'
         
         # ===================== NPT BAROSTAT CONFIGURATION =====================
-        # Create barostat configuration group for NPT simulations
-        # Settings are read from environment variables (set by run_sim_bilayer.sh)
-        barostat_enable = int(os.environ.get('UPSIDE_NPT_ENABLE', '0'))
-        if barostat_enable:
+        # Create barostat configuration group for NPT simulations using the
+        # fixed workflow-16 settings selected by the shell stage ladder.
+        if npt_enable:
             barostat_grp = t.create_group(input_grp, 'barostat')
-            barostat_grp._v_attrs.enable = barostat_enable
-            barostat_grp._v_attrs.target_p_xy = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '0.000020659'))
-            barostat_grp._v_attrs.target_p_z = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '0.000020659'))
-            barostat_grp._v_attrs.tau_p = float(os.environ.get('UPSIDE_NPT_TAU', '1.0'))
-            legacy_compressibility = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '14.521180763676'))
-            barostat_grp._v_attrs.compressibility_xy = float(
-                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_XY', str(legacy_compressibility))
-            )
-            barostat_grp._v_attrs.compressibility_z = float(
-                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_Z', str(legacy_compressibility))
-            )
-            barostat_grp._v_attrs.interval = int(os.environ.get('UPSIDE_NPT_INTERVAL', '10'))
-            barostat_grp._v_attrs.semi_isotropic = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
-            barostat_grp._v_attrs.debug = int(os.environ.get('UPSIDE_NPT_DEBUG', '1'))
+            barostat_grp._v_attrs.enable = npt_enable
+            barostat_grp._v_attrs.target_p_xy = npt_target_pxy
+            barostat_grp._v_attrs.target_p_z = npt_target_pz
+            barostat_grp._v_attrs.tau_p = float(WORKFLOW_NPT_TAU)
+            barostat_grp._v_attrs.compressibility_xy = float(WORKFLOW_NPT_COMPRESSIBILITY_XY)
+            barostat_grp._v_attrs.compressibility_z = float(WORKFLOW_NPT_COMPRESSIBILITY_Z)
+            barostat_grp._v_attrs.interval = int(WORKFLOW_NPT_INTERVAL)
+            barostat_grp._v_attrs.semi_isotropic = int(WORKFLOW_NPT_SEMI_ISOTROPIC)
+            barostat_grp._v_attrs.debug = int(WORKFLOW_NPT_DEBUG)
         else:
             pass
         
@@ -1696,17 +1711,12 @@ def convert_stage(pdb_id, stage="minimization", run_dir="outputs/martini_test"):
         else:
             print("PME disabled: using standard Coulomb cutoff")
 
-        # Ewald summation configuration via environment variables
-        # UPSIDE_EWALD_ENABLE: 1 to enable Ewald summation for long-range Coulomb
-        # UPSIDE_EWALD_ALPHA: Ewald screening parameter in 1/Angstrom (default: 0.2)
-        # UPSIDE_EWALD_KMAX: k-space cutoff (default: 5)
-        # UPSIDE_EWALD_USE_CARDINAL_BSPLINE: 1 to approximate trig via periodic cardinal cubic B-spline
-        # UPSIDE_EWALD_BSPLINE_GRID: lookup grid size for the periodic trig table
-        ewald_enabled = int(os.environ.get('UPSIDE_EWALD_ENABLE', '0'))
-        ewald_alpha = float(os.environ.get('UPSIDE_EWALD_ALPHA', '0.2'))
-        ewald_kmax = int(os.environ.get('UPSIDE_EWALD_KMAX', '5'))
-        ewald_use_cardinal_bspline = int(os.environ.get('UPSIDE_EWALD_USE_CARDINAL_BSPLINE', '1'))
-        ewald_bspline_grid = int(os.environ.get('UPSIDE_EWALD_BSPLINE_GRID', '16384'))
+        # Ewald summation is enabled with the fixed workflow-16 settings.
+        ewald_enabled = int(WORKFLOW_EWALD_ENABLED)
+        ewald_alpha = float(WORKFLOW_EWALD_ALPHA)
+        ewald_kmax = int(WORKFLOW_EWALD_KMAX)
+        ewald_use_cardinal_bspline = int(WORKFLOW_EWALD_USE_CARDINAL_BSPLINE)
+        ewald_bspline_grid = int(WORKFLOW_EWALD_BSPLINE_GRID)
 
         martini_potential._v_attrs.ewald_enabled = ewald_enabled
         if ewald_enabled:

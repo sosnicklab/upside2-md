@@ -8,11 +8,15 @@ from pathlib import Path
 #----------------------------------------------------------------------
 
 pdb_id = "1rkl"
-runtime_pdb_id = f"{pdb_id}_hybrid"
-run_dir = "./outputs/martini_test_1rkl_hybrid"
+runtime_pdb_id = f"{pdb_id}_aabb"
+run_dir = "./outputs/martini_test_1rkl_aabb"
 
 salt_molar = 0.15
 protein_lipid_cutoff = 4.5
+xy_scale = 1.0
+box_padding_xy = 0.0
+box_padding_z = 20.0
+temperature = 0.8647
 
 min_60_max_iter = 500
 min_61_max_iter = 500
@@ -23,11 +27,7 @@ eq_65_nsteps = 500
 eq_66_nsteps = 500
 prod_70_nsteps = 10000
 
-eq_frame_steps = 1000
 prod_frame_steps = 50
-
-eq_time_step = 0.010
-prod_time_step = 0.002
 prod_70_npt_enable = 0
 
 
@@ -46,6 +46,10 @@ env_updates = {
     "RUN_DIR": run_dir,
     "SALT_MOLAR": salt_molar,
     "PROTEIN_LIPID_CUTOFF": protein_lipid_cutoff,
+    "XY_SCALE": xy_scale,
+    "BOX_PADDING_XY": box_padding_xy,
+    "BOX_PADDING_Z": box_padding_z,
+    "TEMPERATURE": temperature,
     "MIN_60_MAX_ITER": min_60_max_iter,
     "MIN_61_MAX_ITER": min_61_max_iter,
     "EQ_62_NSTEPS": eq_62_nsteps,
@@ -54,10 +58,7 @@ env_updates = {
     "EQ_65_NSTEPS": eq_65_nsteps,
     "EQ_66_NSTEPS": eq_66_nsteps,
     "PROD_70_NSTEPS": prod_70_nsteps,
-    "EQ_FRAME_STEPS": eq_frame_steps,
     "PROD_FRAME_STEPS": prod_frame_steps,
-    "EQ_TIME_STEP": eq_time_step,
-    "PROD_TIME_STEP": prod_time_step,
     "PROD_70_NPT_ENABLE": prod_70_npt_enable,
 }
 

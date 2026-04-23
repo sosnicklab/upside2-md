@@ -20,7 +20,7 @@ export PATH="${PROJECT_ROOT}/obj:$PATH"
 export PYTHONPATH="${PROJECT_ROOT}/py${PYTHONPATH:+:$PYTHONPATH}"
 set -euo pipefail
 cd "${SCRIPT_DIR}"
-PYTHON_WORKFLOW_DIR="${PYTHON_WORKFLOW_DIR:-${PROJECT_ROOT}/py}"
+PYTHON_WORKFLOW_DIR="${PROJECT_ROOT}/py"
 
 generate_random_seed() {
     local seed=""
@@ -66,17 +66,17 @@ RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-${PDB_ID}_aabb}"
 INPUTS_DIR="inputs"
 OUTPUTS_DIR="outputs"
 RUN_DIR="${RUN_DIR:-outputs/martini_test_1rkl_aabb}"
-CHECKPOINT_DIR="${CHECKPOINT_DIR:-${RUN_DIR}/checkpoints}"
-LOG_DIR="${LOG_DIR:-${RUN_DIR}/logs}"
-PREP_DIR="${PREP_DIR:-${RUN_DIR}/prep}"
+CHECKPOINT_DIR="${RUN_DIR}/checkpoints"
+LOG_DIR="${RUN_DIR}/logs"
+PREP_DIR="${RUN_DIR}/prep"
 
 PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/${PDB_ID}.pdb}"
 BILAYER_PDB="${BILAYER_PDB:-pdb/DOPC.pdb}"
-UNIVERSAL_PREP_SCRIPT="${UNIVERSAL_PREP_SCRIPT:-${PYTHON_WORKFLOW_DIR}/martini_prepare_system.py}"
-EXTRACT_VTF_SCRIPT="${EXTRACT_VTF_SCRIPT:-${PYTHON_WORKFLOW_DIR}/martini_extract_vtf.py}"
+UNIVERSAL_PREP_SCRIPT="${PYTHON_WORKFLOW_DIR}/martini_prepare_system.py"
+EXTRACT_VTF_SCRIPT="${PYTHON_WORKFLOW_DIR}/martini_extract_vtf.py"
 
-RUNTIME_PDB_FILE="${RUNTIME_PDB_FILE:-${PREP_DIR}/${RUNTIME_PDB_ID}.MARTINI.pdb}"
-BACKBONE_METADATA_FILE="${BACKBONE_METADATA_FILE:-${PREP_DIR}/backbone_metadata.h5}"
+RUNTIME_PDB_FILE="${PREP_DIR}/${RUNTIME_PDB_ID}.MARTINI.pdb"
+BACKBONE_METADATA_FILE="${PREP_DIR}/backbone_metadata.h5"
 
 PREPARED_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.prepared.up"
 STAGE_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.up"
@@ -100,18 +100,16 @@ CONTINUE_STAGE_70_LABEL="${CONTINUE_STAGE_70_LABEL:-7.0_continue}"
 
 SALT_MOLAR="${SALT_MOLAR:-0.15}"
 PROTEIN_LIPID_CUTOFF="${PROTEIN_LIPID_CUTOFF:-4.5}"
-ION_CUTOFF="${ION_CUTOFF:-4.0}"
 XY_SCALE="${XY_SCALE:-1.0}"
 BOX_PADDING_XY="${BOX_PADDING_XY:-0.0}"
 BOX_PADDING_Z="${BOX_PADDING_Z:-20.0}"
-PROTEIN_LIPID_MIN_GAP="${PROTEIN_LIPID_MIN_GAP:-4.5}"
-PROTEIN_LIPID_CUTOFF_STEP="${PROTEIN_LIPID_CUTOFF_STEP:-0.5}"
-PROTEIN_LIPID_CUTOFF_MAX="${PROTEIN_LIPID_CUTOFF_MAX:-8.0}"
+
+readonly ION_CUTOFF="4.0"
+readonly PROTEIN_LIPID_MIN_GAP="4.5"
+readonly PROTEIN_LIPID_CUTOFF_STEP="0.5"
+readonly PROTEIN_LIPID_CUTOFF_MAX="8.0"
 
 TEMPERATURE="${TEMPERATURE:-0.8647}"
-THERMOSTAT_TIMESCALE="${THERMOSTAT_TIMESCALE:-5.0}"
-THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
-STRICT_STAGE_HANDOFF="${STRICT_STAGE_HANDOFF:-1}"
 
 MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-500}"
 MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-500}"
@@ -122,43 +120,25 @@ EQ_65_NSTEPS="${EQ_65_NSTEPS:-500}"
 EQ_66_NSTEPS="${EQ_66_NSTEPS:-500}"
 PROD_70_NSTEPS="${PROD_70_NSTEPS:-10000}"
 
-EQ_TIME_STEP="${EQ_TIME_STEP:-0.010}"
-PROD_TIME_STEP="${PROD_TIME_STEP:-0.002}"
-MIN_TIME_STEP="${MIN_TIME_STEP:-0.010}"
-PROD_70_BACKBONE_FIX_RIGID_ENABLE="${PROD_70_BACKBONE_FIX_RIGID_ENABLE:-0}"
-PREPROD_PO4_Z_HOLD_ENABLE="${PREPROD_PO4_Z_HOLD_ENABLE:-1}"
-
-EQ_FRAME_STEPS="${EQ_FRAME_STEPS:-1000}"
+readonly MIN_TIME_STEP="0.010"
+readonly EQ_TIME_STEP="0.010"
+readonly PROD_TIME_STEP="0.002"
+readonly EQ_FRAME_STEPS="1000"
 PROD_FRAME_STEPS="${PROD_FRAME_STEPS:-50}"
 
-export UPSIDE_MARTINI_ENERGY_CONVERSION="${UPSIDE_MARTINI_ENERGY_CONVERSION:-2.914952774272}"
-export UPSIDE_MARTINI_LENGTH_CONVERSION="${UPSIDE_MARTINI_LENGTH_CONVERSION:-10}"
-
-COMP_3E4_BAR_INV_TO_A3_PER_EUP="${COMP_3E4_BAR_INV_TO_A3_PER_EUP:-14.521180763676}"
-BAR_1_TO_EUP_PER_A3="${BAR_1_TO_EUP_PER_A3:-0.000020659477}"
-NPT_REF_P_ZERO="${NPT_REF_P_ZERO:-0.0}"
-NPT_REF_P_ONE_BAR="${NPT_REF_P_ONE_BAR:-$BAR_1_TO_EUP_PER_A3}"
-export UPSIDE_NPT_TARGET_PXY="${UPSIDE_NPT_TARGET_PXY:-$NPT_REF_P_ZERO}"
-export UPSIDE_NPT_TARGET_PZ="${UPSIDE_NPT_TARGET_PZ:-$NPT_REF_P_ZERO}"
-export UPSIDE_NPT_TAU="${UPSIDE_NPT_TAU:-4.0}"
-export UPSIDE_NPT_COMPRESSIBILITY="${UPSIDE_NPT_COMPRESSIBILITY:-$COMP_3E4_BAR_INV_TO_A3_PER_EUP}"
-export UPSIDE_NPT_COMPRESSIBILITY_XY="${UPSIDE_NPT_COMPRESSIBILITY_XY:-$COMP_3E4_BAR_INV_TO_A3_PER_EUP}"
-export UPSIDE_NPT_COMPRESSIBILITY_Z="${UPSIDE_NPT_COMPRESSIBILITY_Z:-0.0}"
-export UPSIDE_NPT_INTERVAL="${UPSIDE_NPT_INTERVAL:-10}"
-export UPSIDE_NPT_SEMI="${UPSIDE_NPT_SEMI:-1}"
-export UPSIDE_NPT_DEBUG="${UPSIDE_NPT_DEBUG:-1}"
+readonly BAR_1_TO_EUP_PER_A3="0.000020659477"
+readonly NPT_REF_P_ZERO="0.0"
+readonly NPT_REF_P_ONE_BAR="${BAR_1_TO_EUP_PER_A3}"
 PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-0}"
+STAGE_NPT_TARGET_PXY="${NPT_REF_P_ZERO}"
+STAGE_NPT_TARGET_PZ="${NPT_REF_P_ZERO}"
 
-export UPSIDE_EWALD_ENABLE="${UPSIDE_EWALD_ENABLE:-1}"
-export UPSIDE_EWALD_ALPHA="${UPSIDE_EWALD_ALPHA:-0.2}"
-export UPSIDE_EWALD_KMAX="${UPSIDE_EWALD_KMAX:-5}"
-SC_MARTINI_LIBRARY="${SC_MARTINI_LIBRARY:-${UPSIDE_HOME}/parameters/ff_2.1/martini.h5}"
-SC_MARTINI_TABLE_JSON_DEFAULT="${SC_MARTINI_TABLE_JSON_DEFAULT:-${UPSIDE_HOME}/SC-training/runs/default/results/assembled/sc_table.json}"
-SC_MARTINI_TABLE_JSON="${SC_MARTINI_TABLE_JSON:-${SC_MARTINI_TABLE_JSON_DEFAULT}}"
-UPSIDE_RAMA_LIBRARY="${UPSIDE_RAMA_LIBRARY:-${UPSIDE_HOME}/parameters/common/rama.dat}"
-UPSIDE_RAMA_SHEET_MIXING="${UPSIDE_RAMA_SHEET_MIXING:-${UPSIDE_HOME}/parameters/ff_2.1/sheet}"
-UPSIDE_HBOND_ENERGY="${UPSIDE_HBOND_ENERGY:-${UPSIDE_HOME}/parameters/ff_2.1/hbond.h5}"
-UPSIDE_REFERENCE_STATE_RAMA="${UPSIDE_REFERENCE_STATE_RAMA:-${UPSIDE_HOME}/parameters/common/rama_reference.pkl}"
+SC_MARTINI_LIBRARY="${UPSIDE_HOME}/parameters/ff_2.1/martini.h5"
+SC_MARTINI_TABLE_JSON="${UPSIDE_HOME}/SC-training/runs/default/results/assembled/sc_table.json"
+UPSIDE_RAMA_LIBRARY="${UPSIDE_HOME}/parameters/common/rama.dat"
+UPSIDE_RAMA_SHEET_MIXING="${UPSIDE_HOME}/parameters/ff_2.1/sheet"
+UPSIDE_HBOND_ENERGY="${UPSIDE_HOME}/parameters/ff_2.1/hbond.h5"
+UPSIDE_REFERENCE_STATE_RAMA="${UPSIDE_HOME}/parameters/common/rama_reference.pkl"
 
 if [ -z "${UPSIDE_HOME:-}" ]; then
     echo "ERROR: UPSIDE_HOME environment variable is not set"
@@ -273,9 +253,10 @@ promote_stage_from_previous() {
     local stage_label="$3"
     local npt_enable="$4"
     local lipidhead_fc="$5"
+    local target_pxy="$6"
+    local target_pz="$7"
     cp -f "$source_file" "$target_file"
-    python3 - "$target_file" "$stage_label" "$npt_enable" "$lipidhead_fc" << 'PY'
-import os
+    python3 - "$target_file" "$stage_label" "$npt_enable" "$lipidhead_fc" "$target_pxy" "$target_pz" << 'PY'
 import re
 import sys
 import h5py
@@ -285,9 +266,11 @@ target_file = sys.argv[1]
 stage_label = sys.argv[2]
 npt_enable = int(sys.argv[3])
 lipidhead_fc = float(sys.argv[4])
+target_pxy = float(sys.argv[5])
+target_pz = float(sys.argv[6])
 
-energy_conversion = float(os.environ.get("UPSIDE_MARTINI_ENERGY_CONVERSION", "2.914952774272"))
-length_conversion = float(os.environ.get("UPSIDE_MARTINI_LENGTH_CONVERSION", "10.0"))
+energy_conversion = 2.914952774272
+length_conversion = 10.0
 restraint_spring = np.float32(0.0)
 if lipidhead_fc > 0.0:
     restraint_spring = np.float32(
@@ -368,24 +351,14 @@ with h5py.File(target_file, "r+") as h5:
     if npt_enable:
         grp = inp.create_group("barostat")
         grp.attrs["enable"] = np.int8(npt_enable)
-        grp.attrs["target_p_xy"] = float(os.environ.get("UPSIDE_NPT_TARGET_PXY", "0.000020659"))
-        grp.attrs["target_p_z"] = float(os.environ.get("UPSIDE_NPT_TARGET_PZ", "0.000020659"))
-        grp.attrs["tau_p"] = float(os.environ.get("UPSIDE_NPT_TAU", "1.0"))
-        grp.attrs["compressibility_xy"] = float(
-            os.environ.get(
-                "UPSIDE_NPT_COMPRESSIBILITY_XY",
-                os.environ.get("UPSIDE_NPT_COMPRESSIBILITY", "14.521180763676"),
-            )
-        )
-        grp.attrs["compressibility_z"] = float(
-            os.environ.get(
-                "UPSIDE_NPT_COMPRESSIBILITY_Z",
-                os.environ.get("UPSIDE_NPT_COMPRESSIBILITY", "14.521180763676"),
-            )
-        )
-        grp.attrs["interval"] = int(os.environ.get("UPSIDE_NPT_INTERVAL", "10"))
-        grp.attrs["semi_isotropic"] = int(os.environ.get("UPSIDE_NPT_SEMI", "1"))
-        grp.attrs["debug"] = int(os.environ.get("UPSIDE_NPT_DEBUG", "1"))
+        grp.attrs["target_p_xy"] = target_pxy
+        grp.attrs["target_p_z"] = target_pz
+        grp.attrs["tau_p"] = 4.0
+        grp.attrs["compressibility_xy"] = 14.521180763676
+        grp.attrs["compressibility_z"] = 0.0
+        grp.attrs["interval"] = 10
+        grp.attrs["semi_isotropic"] = 1
+        grp.attrs["debug"] = 1
 
     if last_box is not None and "martini_potential" in pot:
         martini_potential = pot["martini_potential"]
@@ -395,56 +368,9 @@ with h5py.File(target_file, "r+") as h5:
 PY
 }
 
-set_backbone_fix_rigid() {
-    local up_file="$1"
-    python3 - "$up_file" << 'PY'
-import sys
-import h5py
-import numpy as np
-
-required_roles = ("N", "CA", "C", "O")
-
-def as_text(value):
-    if isinstance(value, (bytes, np.bytes_)):
-        return value.decode("utf-8", errors="ignore")
-    return str(value)
-
-with h5py.File(sys.argv[1], "r+") as h5:
-    inp = h5["/input"]
-    membership = inp["hybrid_env_topology"]["protein_membership"][:].astype(np.int32)
-    roles = [as_text(value).strip().upper() for value in inp["atom_roles"][:]]
-    selected = []
-    counts = {role: 0 for role in required_roles}
-    for atom_idx, role in enumerate(roles):
-        if membership[atom_idx] < 0 or role not in counts:
-            continue
-        selected.append(atom_idx)
-        counts[role] += 1
-
-    missing = [role for role, count in counts.items() if count == 0]
-    if missing:
-        raise ValueError(f"Missing AA backbone roles for fix_rigid: {missing}")
-
-    ca_count = counts["CA"]
-    bad = [role for role in required_roles if counts[role] != ca_count]
-    if bad:
-        detail = ", ".join(f"{role}={counts[role]}" for role in required_roles)
-        raise ValueError(f"Inconsistent AA backbone role counts for fix_rigid ({detail})")
-
-    if "fix_rigid" in inp:
-        del inp["fix_rigid"]
-    grp = inp.create_group("fix_rigid")
-    grp.attrs["enable"] = np.int8(1)
-    grp.attrs["selection"] = np.bytes_("aa_backbone_roles_n_ca_c_o")
-    grp.attrs["selection_count"] = np.int32(len(selected))
-    grp.create_dataset("atom_indices", data=np.asarray(selected, dtype=np.int32))
-PY
-}
-
 set_preproduction_spatial_holds() {
     local up_file="$1"
-    local po4_z_hold_enable="$2"
-    python3 - "$up_file" "$po4_z_hold_enable" << 'PY'
+    python3 - "$up_file" << 'PY'
 import sys
 import h5py
 import numpy as np
@@ -481,20 +407,20 @@ with h5py.File(sys.argv[1], "r+") as h5:
         raise ValueError(f"Inconsistent AA backbone role counts for preproduction hold ({detail})")
 
     z_fixed_atoms = []
-    if sys.argv[2] == "1":
-        for atom_idx, atom_name in enumerate(atom_names):
-            if membership[atom_idx] >= 0:
-                continue
-            if atom_name == "PO4":
-                z_fixed_atoms.append(atom_idx)
-        if not z_fixed_atoms:
-            raise ValueError("Requested PO4 Z hold but found no environment PO4 atoms")
+    for atom_idx, atom_name in enumerate(atom_names):
+        if membership[atom_idx] >= 0:
+            continue
+        if atom_name == "PO4":
+            z_fixed_atoms.append(atom_idx)
+    if not z_fixed_atoms:
+        raise ValueError("Requested PO4 Z hold but found no environment PO4 atoms")
 
     if "fix_rigid" in inp:
         del inp["fix_rigid"]
     grp = inp.create_group("fix_rigid")
     grp.attrs["enable"] = np.int8(1)
-    grp.attrs["selection"] = np.bytes_("aa_backbone_absolute_hold")
+    grp.attrs["mode"] = np.bytes_("rigid_body")
+    grp.attrs["selection"] = np.bytes_("aa_backbone_rigid_body_hold")
     grp.attrs["selection_count"] = np.int32(len(fixed_atoms))
     grp.create_dataset("atom_indices", data=np.asarray(fixed_atoms, dtype=np.int32))
 
@@ -639,10 +565,8 @@ prepare_stage_file() {
     local npt_enable="$3"
     local lipidhead_fc="${4:-0}"
     local stage_label="${5:-minimization}"
-
-    export UPSIDE_SIMULATION_STAGE="$prepare_stage"
-    export UPSIDE_NPT_ENABLE="$npt_enable"
-    export UPSIDE_BILAYER_LIPIDHEAD_FC="$lipidhead_fc"
+    local target_pxy="${6:-${NPT_REF_P_ZERO}}"
+    local target_pz="${7:-${NPT_REF_P_ZERO}}"
 
     python3 "${UNIVERSAL_PREP_SCRIPT}" \
         --pdb-id "${RUNTIME_PDB_ID}" \
@@ -650,7 +574,11 @@ prepare_stage_file() {
         --prepare-structure 0 \
         --stage "$prepare_stage" \
         --run-dir "$RUN_DIR" \
-        --protein-aa-pdb "${PROTEIN_AA_PDB}"
+        --protein-aa-pdb "${PROTEIN_AA_PDB}" \
+        --stage-lipidhead-fc "${lipidhead_fc}" \
+        --npt-enable "${npt_enable}" \
+        --npt-target-pxy "${target_pxy}" \
+        --npt-target-pz "${target_pz}"
 
     local prepared_tmp="${RUN_DIR}/test.input.up"
     if [ ! -f "$prepared_tmp" ]; then
@@ -663,12 +591,8 @@ prepare_stage_file() {
     set_stage_label "$target_file" "$stage_label"
     inject_sidechain_nodes "$target_file"
 
-    if [ "$stage_label" = "production" ]; then
-        if [ "${PROD_70_BACKBONE_FIX_RIGID_ENABLE}" = "1" ]; then
-            set_backbone_fix_rigid "$target_file"
-        fi
-    else
-        set_preproduction_spatial_holds "$target_file" "${PREPROD_PO4_Z_HOLD_ENABLE}"
+    if [ "$stage_label" != "production" ]; then
+        set_preproduction_spatial_holds "$target_file"
     fi
 }
 
@@ -676,14 +600,16 @@ set_stage_npt_targets() {
     local stage_label="$1"
     case "$stage_label" in
         6.0|6.1)
-            export UPSIDE_NPT_TARGET_PXY="$NPT_REF_P_ZERO"
-            export UPSIDE_NPT_TARGET_PZ="$NPT_REF_P_ZERO"
+            STAGE_NPT_TARGET_PXY="$NPT_REF_P_ZERO"
+            STAGE_NPT_TARGET_PZ="$NPT_REF_P_ZERO"
             ;;
         6.2|6.3|6.4|6.5|6.6)
-            export UPSIDE_NPT_TARGET_PXY="$NPT_REF_P_ONE_BAR"
-            export UPSIDE_NPT_TARGET_PZ="$NPT_REF_P_ONE_BAR"
+            STAGE_NPT_TARGET_PXY="$NPT_REF_P_ONE_BAR"
+            STAGE_NPT_TARGET_PZ="$NPT_REF_P_ONE_BAR"
             ;;
         *)
+            STAGE_NPT_TARGET_PXY="$NPT_REF_P_ZERO"
+            STAGE_NPT_TARGET_PZ="$NPT_REF_P_ZERO"
             return
             ;;
     esac
@@ -702,8 +628,6 @@ run_minimization_stage() {
         "--frame-interval" "1"
         "--temperature" "$TEMPERATURE"
         "--time-step" "$MIN_TIME_STEP"
-        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
         "--seed" "$SEED"
         "--integrator" "v"
         "--disable-recentering"
@@ -752,8 +676,6 @@ run_md_stage() {
         "--frame-interval" "$frame_interval"
         "--temperature" "$TEMPERATURE"
         "--time-step" "$dt"
-        "--thermostat-timescale" "$THERMOSTAT_TIMESCALE"
-        "--thermostat-interval" "$THERMOSTAT_INTERVAL"
         "--seed" "$SEED"
         "--integrator" "v"
         "--disable-recentering"
@@ -768,7 +690,7 @@ run_md_stage() {
 handoff_initial_position() {
     local input_file="$1"
     local output_file="$2"
-    UPSIDE_SET_INITIAL_STRICT_COPY="$STRICT_STAGE_HANDOFF" \
+    UPSIDE_SET_INITIAL_STRICT_COPY="1" \
     UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS="0" \
     UPSIDE_SET_INITIAL_RECENTER_PRODUCTION="0" \
         python3 "${UNIVERSAL_PREP_SCRIPT}" set-initial-position "$input_file" "$output_file"
@@ -844,9 +766,6 @@ PY
     fi
 
     handoff_initial_position "$source_file" "$output_file"
-    if [ "${PROD_70_BACKBONE_FIX_RIGID_ENABLE}" = "1" ]; then
-        set_backbone_fix_rigid "$output_file"
-    fi
     validate_production_stage_file "$output_file"
     run_md_stage "$stage_label" "$output_file" "$output_file" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
     extract_stage_vtf "$stage_label" "$output_file" "2"
@@ -875,58 +794,55 @@ else
     prepare_backbone_artifacts
 
     set_stage_npt_targets "6.0"
-    prepare_stage_file "$PREPARED_60_FILE" "minimization" "1" "0" "minimization"
+    prepare_stage_file "$PREPARED_60_FILE" "minimization" "1" "0" "minimization" "$STAGE_NPT_TARGET_PXY" "$STAGE_NPT_TARGET_PZ"
     cp -f "$PREPARED_60_FILE" "$STAGE_60_FILE"
     run_minimization_stage "6.0" "$STAGE_60_FILE" "$MIN_60_MAX_ITER"
     extract_stage_vtf "6.0" "$STAGE_60_FILE" "1"
 
     set_stage_npt_targets "6.1"
-    promote_stage_from_previous "$STAGE_60_FILE" "$PREPARED_61_FILE" "minimization" "1" "0"
-    set_preproduction_spatial_holds "$PREPARED_61_FILE" "${PREPROD_PO4_Z_HOLD_ENABLE}"
+    promote_stage_from_previous "$STAGE_60_FILE" "$PREPARED_61_FILE" "minimization" "1" "0" "$STAGE_NPT_TARGET_PXY" "$STAGE_NPT_TARGET_PZ"
+    set_preproduction_spatial_holds "$PREPARED_61_FILE"
     cp -f "$PREPARED_61_FILE" "$STAGE_61_FILE"
     run_minimization_stage "6.1" "$STAGE_61_FILE" "$MIN_61_MAX_ITER"
     extract_stage_vtf "6.1" "$STAGE_61_FILE" "1"
 
     set_stage_npt_targets "6.2"
-    promote_stage_from_previous "$STAGE_61_FILE" "$PREPARED_62_FILE" "minimization" "1" "200"
-    set_preproduction_spatial_holds "$PREPARED_62_FILE" "${PREPROD_PO4_Z_HOLD_ENABLE}"
+    promote_stage_from_previous "$STAGE_61_FILE" "$PREPARED_62_FILE" "minimization" "1" "200" "$STAGE_NPT_TARGET_PXY" "$STAGE_NPT_TARGET_PZ"
+    set_preproduction_spatial_holds "$PREPARED_62_FILE"
     cp -f "$PREPARED_62_FILE" "$STAGE_62_FILE"
     run_md_stage "6.2" "$STAGE_62_FILE" "$STAGE_62_FILE" "$EQ_62_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.2" "$STAGE_62_FILE" "1"
 
     set_stage_npt_targets "6.3"
-    promote_stage_from_previous "$STAGE_62_FILE" "$PREPARED_63_FILE" "minimization" "1" "100"
-    set_preproduction_spatial_holds "$PREPARED_63_FILE" "${PREPROD_PO4_Z_HOLD_ENABLE}"
+    promote_stage_from_previous "$STAGE_62_FILE" "$PREPARED_63_FILE" "minimization" "1" "100" "$STAGE_NPT_TARGET_PXY" "$STAGE_NPT_TARGET_PZ"
+    set_preproduction_spatial_holds "$PREPARED_63_FILE"
     cp -f "$PREPARED_63_FILE" "$STAGE_63_FILE"
     run_md_stage "6.3" "$STAGE_63_FILE" "$STAGE_63_FILE" "$EQ_63_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.3" "$STAGE_63_FILE" "1"
 
     set_stage_npt_targets "6.4"
-    promote_stage_from_previous "$STAGE_63_FILE" "$PREPARED_64_FILE" "minimization" "1" "50"
-    set_preproduction_spatial_holds "$PREPARED_64_FILE" "${PREPROD_PO4_Z_HOLD_ENABLE}"
+    promote_stage_from_previous "$STAGE_63_FILE" "$PREPARED_64_FILE" "minimization" "1" "50" "$STAGE_NPT_TARGET_PXY" "$STAGE_NPT_TARGET_PZ"
+    set_preproduction_spatial_holds "$PREPARED_64_FILE"
     cp -f "$PREPARED_64_FILE" "$STAGE_64_FILE"
     run_md_stage "6.4" "$STAGE_64_FILE" "$STAGE_64_FILE" "$EQ_64_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.4" "$STAGE_64_FILE" "1"
 
     set_stage_npt_targets "6.5"
-    promote_stage_from_previous "$STAGE_64_FILE" "$PREPARED_65_FILE" "minimization" "1" "20"
-    set_preproduction_spatial_holds "$PREPARED_65_FILE" "${PREPROD_PO4_Z_HOLD_ENABLE}"
+    promote_stage_from_previous "$STAGE_64_FILE" "$PREPARED_65_FILE" "minimization" "1" "20" "$STAGE_NPT_TARGET_PXY" "$STAGE_NPT_TARGET_PZ"
+    set_preproduction_spatial_holds "$PREPARED_65_FILE"
     cp -f "$PREPARED_65_FILE" "$STAGE_65_FILE"
     run_md_stage "6.5" "$STAGE_65_FILE" "$STAGE_65_FILE" "$EQ_65_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.5" "$STAGE_65_FILE" "1"
 
     set_stage_npt_targets "6.6"
-    promote_stage_from_previous "$STAGE_65_FILE" "$PREPARED_66_FILE" "minimization" "1" "10"
-    set_preproduction_spatial_holds "$PREPARED_66_FILE" "${PREPROD_PO4_Z_HOLD_ENABLE}"
+    promote_stage_from_previous "$STAGE_65_FILE" "$PREPARED_66_FILE" "minimization" "1" "10" "$STAGE_NPT_TARGET_PXY" "$STAGE_NPT_TARGET_PZ"
+    set_preproduction_spatial_holds "$PREPARED_66_FILE"
     cp -f "$PREPARED_66_FILE" "$STAGE_66_FILE"
     run_md_stage "6.6" "$STAGE_66_FILE" "$STAGE_66_FILE" "$EQ_66_NSTEPS" "$EQ_TIME_STEP" "$EQ_FRAME_STEPS"
     extract_stage_vtf "6.6" "$STAGE_66_FILE" "1"
 
-    promote_stage_from_previous "$STAGE_66_FILE" "$PREPARED_70_FILE" "production" "$PROD_70_NPT_ENABLE" "0"
+    promote_stage_from_previous "$STAGE_66_FILE" "$PREPARED_70_FILE" "production" "$PROD_70_NPT_ENABLE" "0" "$STAGE_NPT_TARGET_PXY" "$STAGE_NPT_TARGET_PZ"
     cp -f "$PREPARED_70_FILE" "$STAGE_70_FILE"
-    if [ "${PROD_70_BACKBONE_FIX_RIGID_ENABLE}" = "1" ]; then
-        set_backbone_fix_rigid "$STAGE_70_FILE"
-    fi
     validate_production_stage_file "$STAGE_70_FILE"
     run_md_stage "7.0" "$STAGE_70_FILE" "$STAGE_70_FILE" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
     extract_stage_vtf "7.0" "$STAGE_70_FILE" "2"
