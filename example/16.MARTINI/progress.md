@@ -1,5 +1,36 @@
 # Progress Log
 
+## 2026-04-22 (Audit: `run_sim_1rkl_outlipid.sh` Validity After Shared Workflow Updates)
+- Re-read the local workflow trackers before starting the audit:
+  - `example/16.MARTINI/plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+- Replaced the previous rigid-body task plan with a dedicated out-of-bilayer script validity check in:
+  - `example/16.MARTINI/plan.md`
+- Compared:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - shared prep/runtime entry points under:
+    - `py/martini_prepare_system.py`
+    - `py/martini_prepare_system_lib.py`
+- Findings from the comparison:
+  - the outlipid script now delegates to `run_sim_1rkl.sh`, so it inherits the current shared workflow updates,
+  - but its outside-start controls are not wired through the current prep path,
+  - and its exported `PROTEIN_LIPID_MIN_GAP` / `PROTEIN_LIPID_CUTOFF_MAX` do not override the current base-script readonly constants.
+- Validation performed:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - direct prep generation from repo root:
+    - `source .venv/bin/activate && source source.sh`
+    - `python3 py/martini_prepare_system.py --pdb-id 1rkl_outlipid_check --runtime-pdb-output example/16.MARTINI/outputs/outlipid_validity_check/prep/1rkl_outlipid_check.MARTINI.pdb --prepare-structure 1 --protein-aa-pdb example/16.MARTINI/pdb/1rkl.pdb --hybrid-mapping-output example/16.MARTINI/outputs/outlipid_validity_check/prep/backbone_metadata.h5 --bilayer-pdb example/16.MARTINI/pdb/DOPC.pdb --salt-molar 0.15 --protein-lipid-cutoff 5.0 --ion-cutoff 4.0 --xy-scale 1.35 --box-padding-xy 20.0 --box-padding-z 50.0 --seed 12345`
+- Measured result on the generated runtime PDB:
+  - protein `z_min = 55.143 Å`
+  - protein `z_max = 87.660 Å`
+  - `PO4 z_max = 91.635 Å`
+  - clearance above the upper leaflet = `-36.492 Å`
+- Conclusion:
+  - the current wrapper is shell-valid but functionally invalid for an outside-of-bilayer start because the generated structure remains embedded in the bilayer.
+
 ## 2026-04-22 (Implementation: Preproduction Rigid-Body Hold)
 - Replaced the local task tracker with the rigid-body preproduction plan after diagnosing the reported production-stage bilayer `z` shift.
 - Re-read:

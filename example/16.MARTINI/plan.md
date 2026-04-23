@@ -1,63 +1,46 @@
-# Workflow-16 Preproduction Rigid-Body Hold
+# Workflow Check: 1RKL Outside-Bilayer Script Validity
 
 ## Project Goal
-- Replace the AA-backbone workflow's absolute preproduction protein pinning with a rigid-body hold that preserves internal geometry while still allowing whole-protein translation and rotation.
-- Keep the existing stage ladder and public shell interface unchanged.
-- Preserve the current hard `PO4` `z` hold through preproduction and the current unfixed default production stage.
+- Determine whether `run_sim_1rkl_outlipid.sh` is still valid after the recent Upside engine changes and the updates made to `run_sim_1rkl.sh`.
+- Preserve the out-of-bilayer workflow intent:
+  - start `1rkl` outside the bilayer,
+  - keep the script consistent with current helper interfaces and runtime attrs,
+  - avoid changing shared architecture unless a concrete incompatibility is found.
 
 ## Architecture & Key Decisions
-- The observed production-stage "bilayer z shift" in `outputs/martini_test_1rkl_aabb` is not a true bulk bilayer drift bug:
-  - bilayer/environment/total `z` drift stays small,
-  - the large motion is protein-relative drift after stage `7.0` releases the preproduction hold.
-- The requested workflow semantics are now:
-  - protein rigid during minimization and preproduction,
-  - protein not locked to absolute space,
-  - rigid-body translation and rotation both allowed,
-  - environment `PO4` atoms still fixed in `z` during preproduction.
-- Do not add a new stage or new shell controls.
-- The fix belongs in the shared `fix_rigid` runtime path:
-  - extend `fix_rigid` with a new internal `rigid_body` mode,
-  - keep existing missing-mode behavior as the current absolute pin to avoid regressions.
-- Workflow `16` should opt into the new mode only for its preproduction protein hold.
+- Treat this as a workflow compatibility audit first, not an automatic refactor.
+- Compare `run_sim_1rkl_outlipid.sh` directly against the current `run_sim_1rkl.sh` and any shared helper/runtime interfaces it depends on.
+- If the outlipid script is broken, fix only the concrete incompatibilities required to restore validity.
+- Validation should prefer:
+  - shell syntax checks,
+  - config-generation / dry-run style checks,
+  - targeted runtime or parser verification only where needed.
 
 ## Execution Phases
-- [x] Phase 1: Replace the local trackers for the rigid-body preproduction task and record the new user correction.
-- [x] Phase 2: Extend the `fix_rigid` engine path to support rigid-body minimization and MD while preserving the legacy absolute-pin mode.
-- [x] Phase 3: Update `run_sim_1rkl.sh` to write `fix_rigid.mode = rigid_body` for preproduction protein holds while leaving `PO4` `z` holds unchanged.
-- [x] Phase 4: Rebuild the binary, run targeted syntax/workflow verification, and measure whether the AA-backbone production drift is reduced without reintroducing bilayer drift.
+- [x] Phase 1: Compare `run_sim_1rkl_outlipid.sh` with `run_sim_1rkl.sh` and identify changed assumptions.
+- [x] Phase 2: Validate the outlipid script against current helpers/runtime, and patch only confirmed incompatibilities if needed.
+- [x] Phase 3: Record results in the workflow trackers and summarize whether the script is still valid.
 
 ## Known Errors / Blockers
-- No blocker yet.
+- `run_sim_1rkl_outlipid.sh` is not currently valid for its stated purpose because the current prep path does not consume its outside-placement overrides.
 
 ## Review
-- Implemented the new `fix_rigid` mode in the engine:
-  - legacy missing-mode behavior still maps to the old absolute pin,
-  - `mode = rigid_body` now keeps the selected atoms on a best-fit rigid transform,
-  - MD projection rebuilds rigid-body-consistent momenta from translational and rotational motion,
-  - minimization projection keeps the selected atoms on the rigid-body manifold while still allowing net translation/rotation descent.
-- Updated the AA-backbone workflow preproduction writer:
-  - `example/16.MARTINI/run_sim_1rkl.sh` now writes `fix_rigid.mode = rigid_body`,
-  - the `PO4` `z_atom_indices` hold remains unchanged,
-  - production stage `7.0` still removes `fix_rigid` entirely.
-- Verification summary:
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `PYTHONPYCACHEPREFIX=/tmp/upside_pycache python -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py example/16.MARTINI/run.py`
-  - `cmake --build obj -j4`
-  - reduced workflow smoke:
-    - `RUN_DIR=example/16.MARTINI/outputs/martini_test_1rkl_rigidbody_smoke`
-    - `MIN_60_MAX_ITER=5 MIN_61_MAX_ITER=5`
-    - `EQ_62_NSTEPS=10 EQ_63_NSTEPS=10 EQ_64_NSTEPS=10 EQ_65_NSTEPS=10 EQ_66_NSTEPS=10`
-    - `PROD_70_NSTEPS=200 PROD_FRAME_STEPS=10`
-    - completed stages `6.0` through `7.0`
-  - direct artifact checks on the reduced smoke outputs confirmed:
-    - `stage_6.2.up` and `stage_6.6.up` contain `fix_rigid.mode = rigid_body`,
-    - `stage_6.2.up` and `stage_6.6.up` preserve protein internal distances to about `1e-6 Å`,
-    - `stage_6.2.up` and `stage_6.6.up` keep `PO4` `z` holds exact (`0.0 Å` drift),
-    - preproduction protein COM motion is no longer exactly zero,
-    - `stage_7.0.up` contains no `fix_rigid`.
-  - direct production continuation from the prepared stage-7 handoff:
-    - `obj/upside .../1rkl.stage_7.0.long.up --duration-steps 1000 --frame-interval 0.1 ...`
-    - over the resulting 20 output frames:
-      - bilayer `z` drift max = `0.066 Å`,
-      - protein `z` drift max = `0.052 Å`,
-      - bilayer-minus-protein relative `z` change max = `0.118 Å`.
+- Comparison result:
+  - `run_sim_1rkl_outlipid.sh` is now a thin wrapper that delegates execution to the updated `run_sim_1rkl.sh`,
+  - this means it does inherit the recent shared workflow changes, including the new preproduction `fix_rigid.mode = rigid_body` path and the current continuation logic.
+- Confirmed incompatibilities:
+  - the wrapper exports `PROTEIN_PLACEMENT_MODE`, `PROTEIN_ORIENTATION_MODE`, and `PROTEIN_SURFACE_GAP`,
+  - the current prep implementation in `py/martini_prepare_system.py` / `py/martini_prepare_system_lib.py` does not reference those settings at all,
+  - the wrapper also exports `PROTEIN_LIPID_MIN_GAP` and `PROTEIN_LIPID_CUTOFF_MAX`, but the current base script hardcodes those values as readonly constants, so the wrapper cannot override them.
+- Targeted validation:
+  - `bash -n run_sim_1rkl.sh`
+  - `bash -n run_sim_1rkl_outlipid.sh`
+  - direct stage-0 prep check from repo root with the wrapper's current packing parameters:
+    - `python3 py/martini_prepare_system.py --pdb-id 1rkl_outlipid_check ... --xy-scale 1.35 --box-padding-xy 20.0 --box-padding-z 50.0 --protein-lipid-cutoff 5.0`
+  - measured on `example/16.MARTINI/outputs/outlipid_validity_check/prep/1rkl_outlipid_check.MARTINI.pdb`:
+    - protein `z_min = 55.143 Å`
+    - upper-leaflet `PO4 z_max = 91.635 Å`
+    - clearance above upper leaflet = `-36.492 Å`
+- Conclusion:
+  - the generated structure is still embedded in the bilayer rather than above it,
+  - so `run_sim_1rkl_outlipid.sh` is not currently valid as an "initially outside of bilayer" workflow.

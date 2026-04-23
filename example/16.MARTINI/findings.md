@@ -1,5 +1,20 @@
 # Findings
 
+## 2026-04-22 (`run_sim_1rkl_outlipid.sh` Validity Audit After Shared Workflow Updates)
+- The current `run_sim_1rkl_outlipid.sh` does inherit the recent shared workflow/engine updates because it now delegates to `example/16.MARTINI/run_sim_1rkl.sh`.
+- That inheritance is incomplete for the out-of-bilayer intent:
+  - the wrapper exports `PROTEIN_PLACEMENT_MODE`, `PROTEIN_ORIENTATION_MODE`, and `PROTEIN_SURFACE_GAP`,
+  - the current prep path in `py/martini_prepare_system.py::prepare_mixed_structure(...)` and `py/martini_prepare_system_lib.py` does not read those settings,
+  - the wrapper also exports `PROTEIN_LIPID_MIN_GAP` and `PROTEIN_LIPID_CUTOFF_MAX`, but the current base workflow redefines those as local readonly constants (`4.5` and `8.0`) instead of reading env overrides.
+- A direct prep check with the wrapper's current box/padding/cutoff values confirmed the functional regression:
+  - generated file: `example/16.MARTINI/outputs/outlipid_validity_check/prep/1rkl_outlipid_check.MARTINI.pdb`
+  - protein `z_min = 55.143 Å`
+  - upper-leaflet `PO4 z_max = 91.635 Å`
+  - clearance above upper leaflet = `-36.492 Å`
+- Consequence:
+  - the current script is shell-valid and picks up the new rigid-body preproduction behavior from the base workflow,
+  - but it is not valid as an "initially outside of bilayer" workflow because the generated starting geometry remains bilayer-embedded.
+
 ## 2026-04-21 (1RKL AABB Stage-7 Oxygen Failure Root Cause)
 - The reported bilayer "shifting through space" in `outputs/martini_test_1rkl_aabb` is not the dominant runtime bug.
 - Direct artifact measurements showed:
