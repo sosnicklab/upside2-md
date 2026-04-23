@@ -1,46 +1,41 @@
-# Workflow Check: 1RKL Outside-Bilayer Script Validity
+# Workflow Update: Default Outlipid Auto-Resume
 
 ## Project Goal
-- Determine whether `run_sim_1rkl_outlipid.sh` is still valid after the recent Upside engine changes and the updates made to `run_sim_1rkl.sh`.
-- Preserve the out-of-bilayer workflow intent:
-  - start `1rkl` outside the bilayer,
-  - keep the script consistent with current helper interfaces and runtime attrs,
-  - avoid changing shared architecture unless a concrete incompatibility is found.
+- Update `run_sim_1rkl_outlipid.sh` so it resumes from the last available stage-7 frame of a previous outlipid run by default.
+- If no previous run artifact is found, fall back to the normal scratch workflow.
+- Preserve the existing explicit continuation overrides and keep the change scoped to the wrapper script.
 
 ## Architecture & Key Decisions
-- Treat this as a workflow compatibility audit first, not an automatic refactor.
-- Compare `run_sim_1rkl_outlipid.sh` directly against the current `run_sim_1rkl.sh` and any shared helper/runtime interfaces it depends on.
-- If the outlipid script is broken, fix only the concrete incompatibilities required to restore validity.
-- Validation should prefer:
-  - shell syntax checks,
-  - config-generation / dry-run style checks,
-  - targeted runtime or parser verification only where needed.
+- Implement auto-resume only in `run_sim_1rkl_outlipid.sh`; do not change the shared base workflow unless a concrete incompatibility appears.
+- Keep the current explicit controls first:
+  - `CONTINUE_STAGE_70_FROM`
+  - `PREVIOUS_STAGE7_FILE`
+  - `PREVIOUS_RUN_DIR`
+- Only when none of those are set, auto-detect the most recent prior outlipid production checkpoint under `example/16.MARTINI/outputs/`.
+- Search only outlipid-specific output trees to avoid resuming from unrelated embedded or hybrid runs.
 
 ## Execution Phases
-- [x] Phase 1: Compare `run_sim_1rkl_outlipid.sh` with `run_sim_1rkl.sh` and identify changed assumptions.
-- [x] Phase 2: Validate the outlipid script against current helpers/runtime, and patch only confirmed incompatibilities if needed.
-- [x] Phase 3: Record results in the workflow trackers and summarize whether the script is still valid.
+- [x] Phase 1: Inspect the current wrapper continuation logic and the local output naming/layout used for previous outlipid runs.
+- [x] Phase 2: Patch the wrapper to auto-detect the latest previous stage-7 artifact, with scratch fallback when none exists.
+- [x] Phase 3: Verify shell syntax and exercise the detection result against the current local `outputs/` tree.
 
 ## Known Errors / Blockers
-- `run_sim_1rkl_outlipid.sh` is not currently valid for its stated purpose because the current prep path does not consume its outside-placement overrides.
+- No blocker.
 
 ## Review
-- Comparison result:
-  - `run_sim_1rkl_outlipid.sh` is now a thin wrapper that delegates execution to the updated `run_sim_1rkl.sh`,
-  - this means it does inherit the recent shared workflow changes, including the new preproduction `fix_rigid.mode = rigid_body` path and the current continuation logic.
-- Confirmed incompatibilities:
-  - the wrapper exports `PROTEIN_PLACEMENT_MODE`, `PROTEIN_ORIENTATION_MODE`, and `PROTEIN_SURFACE_GAP`,
-  - the current prep implementation in `py/martini_prepare_system.py` / `py/martini_prepare_system_lib.py` does not reference those settings at all,
-  - the wrapper also exports `PROTEIN_LIPID_MIN_GAP` and `PROTEIN_LIPID_CUTOFF_MAX`, but the current base script hardcodes those values as readonly constants, so the wrapper cannot override them.
-- Targeted validation:
-  - `bash -n run_sim_1rkl.sh`
+- Updated `run_sim_1rkl_outlipid.sh` to derive the real workflow directory from `BASE_WORKFLOW_SCRIPT`, then auto-detect the newest prior outlipid stage-7 file under `outputs/` when no explicit continuation source is provided.
+- Preserved the explicit continuation precedence:
+  - `CONTINUE_STAGE_70_FROM`
+  - `PREVIOUS_STAGE7_FILE`
+  - `PREVIOUS_RUN_DIR`
+- Added an escape hatch for intentional scratch starts:
+  - `AUTO_CONTINUE_FROM_PREVIOUS_RUN=0`
+- Verification:
   - `bash -n run_sim_1rkl_outlipid.sh`
-  - direct stage-0 prep check from repo root with the wrapper's current packing parameters:
-    - `python3 py/martini_prepare_system.py --pdb-id 1rkl_outlipid_check ... --xy-scale 1.35 --box-padding-xy 20.0 --box-padding-z 50.0 --protein-lipid-cutoff 5.0`
-  - measured on `example/16.MARTINI/outputs/outlipid_validity_check/prep/1rkl_outlipid_check.MARTINI.pdb`:
-    - protein `z_min = 55.143 Å`
-    - upper-leaflet `PO4 z_max = 91.635 Å`
-    - clearance above upper leaflet = `-36.492 Å`
-- Conclusion:
-  - the generated structure is still embedded in the bilayer rather than above it,
-  - so `run_sim_1rkl_outlipid.sh` is not currently valid as an "initially outside of bilayer" workflow.
+  - isolated `/tmp` harness with no prior outlipid stage-7 file:
+    - `CONTINUE_STAGE_70_FROM=` and `RUN_DIR=outputs/martini_test_1rkl_outlipid`
+  - isolated `/tmp` harness with a prior outlipid `checkpoints/1rkl.stage_7.0.up`:
+    - `CONTINUE_STAGE_70_FROM=<detected stage-7 file>`
+    - `RUN_DIR=outputs/martini_test_1rkl_outlipid_continue`
+  - current local repo outputs:
+    - no outlipid stage-7 artifact exists yet, so the wrapper will currently fall back to scratch in this workspace.

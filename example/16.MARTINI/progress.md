@@ -1,5 +1,35 @@
 # Progress Log
 
+## 2026-04-22 (Implementation: Default Outlipid Auto-Resume)
+- Re-read the local workflow plan before changing the wrapper:
+  - `example/16.MARTINI/plan.md`
+- Inspected:
+  - `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - current `outputs/` layout under `example/16.MARTINI/outputs`
+- Confirmed the local output tree currently has no prior outlipid stage-7 artifact, so the default behavior in this workspace should still fall back to scratch until one exists.
+- Updated:
+  - `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+- Wrapper changes:
+  - derive `WORKFLOW_DIR` from the resolved `BASE_WORKFLOW_SCRIPT`,
+  - keep explicit continuation precedence unchanged:
+    - `CONTINUE_STAGE_70_FROM`
+    - `PREVIOUS_STAGE7_FILE`
+    - `PREVIOUS_RUN_DIR`
+  - when none of those are set, search `outputs/martini_test_1rkl_outlipid*/checkpoints/` for the newest:
+    - `1rkl.stage_7.0.up`
+    - `1rkl.stage_7.0.continue.up`
+  - if a candidate is found, export it as `CONTINUE_STAGE_70_FROM`,
+  - if no candidate is found, fall back to the scratch default,
+  - add `AUTO_CONTINUE_FROM_PREVIOUS_RUN=0` as an opt-out for forced scratch starts.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - isolated `/tmp` harness with no previous outlipid stage-7 file:
+    - `CONTINUE_STAGE_70_FROM=` 
+    - `RUN_DIR=outputs/martini_test_1rkl_outlipid`
+  - isolated `/tmp` harness with a previous outlipid `1rkl.stage_7.0.up`:
+    - `CONTINUE_STAGE_70_FROM=<detected file>`
+    - `RUN_DIR=outputs/martini_test_1rkl_outlipid_continue`
+
 ## 2026-04-22 (Audit: `run_sim_1rkl_outlipid.sh` Validity After Shared Workflow Updates)
 - Re-read the local workflow trackers before starting the audit:
   - `example/16.MARTINI/plan.md`
