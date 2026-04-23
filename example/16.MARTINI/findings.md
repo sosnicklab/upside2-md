@@ -1,5 +1,62 @@
 # Findings
 
+## 2026-04-23 (User Correction: 1AFO Must Stay Two Protein Chains)
+- `example/16.MARTINI/pdb/1AFO.pdb` is a two-chain protein and the prep path must preserve that chain topology in the generated Upside stage files.
+- The relevant correctness criterion is not only unique residue indexing; the generated bonded topology must also avoid connecting the last residue of chain `A` to the first residue of chain `B`.
+- Lesson:
+  - for multi-chain protein prep bugs, do not stop at residue-ID uniqueness;
+  - explicitly audit whether chain-break metadata is written through to the final stage file and whether the topology builder still assumes `n_chains = 1`.
+
+## 2026-04-23 (1AFO Chain-Break Topology Root Cause)
+- The remaining `1AFO` chain bug was not in PDB parsing:
+  - `pdb/1AFO.pdb` already exposes chain `A` / `B` in the normal chain column and in the segment field,
+  - the shared backbone map already tracked `bb_chain` per residue.
+- The actual collapse happened later in the hybrid prep pipeline:
+  - `write_backbone_metadata_h5(...)` did not emit `/input/chain_break`,
+  - `run_sim_1rkl.sh::inject_runtime_metadata(...)` therefore never copied chain-break metadata into stage files,
+  - `inject_backbone_nodes(...)` then rebuilt the Upside backbone terms with:
+    - `uc.n_chains = 1`
+    - `uc.chain_starts = [0]`
+- Consequence:
+  - the generated bonded topology treated chain `A` residue 101 and chain `B` residue 66 as adjacent peptide residues,
+  - downstream VTF export also labeled appended AA-backbone atoms as chain `A` and linked backbone bonds across the chain boundary.
+- Correct fix:
+  - write `/input/chain_break` plus per-residue `bb_chain_id` into the hybrid metadata,
+  - copy `chain_break` into prepared stage files,
+  - drive `uc.n_chains` / `uc.chain_starts` from the stored chain-break metadata,
+  - use `bb_chain_id` in VTF export and skip cross-chain backbone bonds.
+- Verification after the fix:
+  - metadata round-trip: `chain_first_residue = [36]`, `chain_counts = [1, 1]`,
+  - reduced generated `outputs/1afo_chainbreak_check/checkpoints/1afo.stage_7.0.up` contains the same chain-break metadata,
+  - no bond exists between the last chain-`A` backbone `C` and the first chain-`B` backbone `N`,
+  - exported `1afo.stage_7.0.vtf` contains protein atoms with both chain `A` and chain `B`.
+
+## 2026-04-23 (Stage-7 Continuation Naming Root Cause)
+- The current continuation naming is split across the base workflow and the thin wrappers:
+  - `run_sim_1rkl.sh` hardcodes `CONTINUE_STAGE_70_OUTPUT` to `stage_7.0.continue.up`,
+  - `run_sim_1rkl.sh` hardcodes the stage label `7.0_continue`, which drives VTF names like `*.stage_7.0_continue.vtf`,
+  - `run_sim_1afo.sh`, `run_sim_1afo_outlipid.sh`, and `run_sim_1rkl_outlipid.sh` switch to separate `*_continue` run directories when continuation is enabled.
+- Consequence:
+  - a continuation currently writes into a new folder and gets `_continue` filenames,
+  - wrapper auto-detection only knows about the base stage-7 file plus one `.continue` variant,
+  - repeated continuation chains are therefore not represented cleanly.
+- Correct change direction:
+  - compute the numbered continuation target in the same run directory as the prior stage-7 file,
+  - make wrapper auto-detection accept the base `stage_7.0.up` plus numbered continuation files and choose the newest artifact.
+
+## 2026-04-23 (Numbered Stage-7 Continuation Scheme)
+- The implemented continuation numbering for workflow `16` is:
+  - base production run remains `stage_7.0.up` / `stage_7.0.vtf`,
+  - first continuation becomes `stage_7.1.up` / `stage_7.1.vtf`,
+  - later continuations increment monotonically (`stage_7.2`, `stage_7.3`, ...).
+- Continuation outputs are now anchored to the previous trajectory location:
+  - if the user continues from a stage-7 checkpoint in `<run_dir>/checkpoints/`, the next checkpoint is written into that same `checkpoints/` directory,
+  - wrapper `RUN_DIR` defaults are derived from the continuation source so VTF output stays in the same run folder.
+- Wrapper selection rule:
+  - detect all `stage_7.<n>.up` artifacts,
+  - prefer the highest numbered file,
+  - break ties by modification time and path.
+
 ## 2026-04-23 (`run_sim_1afo_outlipid.sh` Isolation Verification)
 - The Slurm/bootstrap fix in `run_sim_1afo.sh` does not alter the intended continuation behavior of `run_sim_1afo_outlipid.sh`.
 - Verified behavior after the AABB wrapper fix:

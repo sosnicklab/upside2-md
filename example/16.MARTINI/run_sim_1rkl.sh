@@ -65,38 +65,49 @@ RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-${PDB_ID}_aabb}"
 
 INPUTS_DIR="inputs"
 OUTPUTS_DIR="outputs"
-RUN_DIR="${RUN_DIR:-outputs/martini_test_1rkl_aabb}"
-CHECKPOINT_DIR="${RUN_DIR}/checkpoints"
-LOG_DIR="${RUN_DIR}/logs"
-PREP_DIR="${RUN_DIR}/prep"
+DEFAULT_RUN_DIR="outputs/martini_test_1rkl_aabb"
+RUN_DIR_WAS_SET="0"
+if [ "${RUN_DIR+x}" = "x" ] && [ -n "${RUN_DIR}" ]; then
+    RUN_DIR_WAS_SET="1"
+fi
+RUN_DIR="${RUN_DIR:-${DEFAULT_RUN_DIR}}"
 
 PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/${PDB_ID}.pdb}"
 BILAYER_PDB="${BILAYER_PDB:-pdb/DOPC.pdb}"
 UNIVERSAL_PREP_SCRIPT="${PYTHON_WORKFLOW_DIR}/martini_prepare_system.py"
 EXTRACT_VTF_SCRIPT="${PYTHON_WORKFLOW_DIR}/martini_extract_vtf.py"
 
-RUNTIME_PDB_FILE="${PREP_DIR}/${RUNTIME_PDB_ID}.MARTINI.pdb"
-BACKBONE_METADATA_FILE="${PREP_DIR}/backbone_metadata.h5"
-
-PREPARED_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.prepared.up"
-STAGE_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.up"
-PREPARED_61_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.1.prepared.up"
-STAGE_61_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.1.up"
-PREPARED_62_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.2.prepared.up"
-STAGE_62_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.2.up"
-PREPARED_63_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.3.prepared.up"
-STAGE_63_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.3.up"
-PREPARED_64_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.4.prepared.up"
-STAGE_64_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.4.up"
-PREPARED_65_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.5.prepared.up"
-STAGE_65_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.5.up"
-PREPARED_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.prepared.up"
-STAGE_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.up"
-PREPARED_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.prepared.up"
-STAGE_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.up"
 CONTINUE_STAGE_70_FROM="${CONTINUE_STAGE_70_FROM:-}"
-CONTINUE_STAGE_70_OUTPUT="${CONTINUE_STAGE_70_OUTPUT:-${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.continue.up}"
-CONTINUE_STAGE_70_LABEL="${CONTINUE_STAGE_70_LABEL:-7.0_continue}"
+CONTINUE_STAGE_70_OUTPUT="${CONTINUE_STAGE_70_OUTPUT:-}"
+CONTINUE_STAGE_70_LABEL="${CONTINUE_STAGE_70_LABEL:-}"
+
+refresh_run_dir_paths() {
+    CHECKPOINT_DIR="${RUN_DIR}/checkpoints"
+    LOG_DIR="${RUN_DIR}/logs"
+    PREP_DIR="${RUN_DIR}/prep"
+
+    RUNTIME_PDB_FILE="${PREP_DIR}/${RUNTIME_PDB_ID}.MARTINI.pdb"
+    BACKBONE_METADATA_FILE="${PREP_DIR}/backbone_metadata.h5"
+
+    PREPARED_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.prepared.up"
+    STAGE_60_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.0.up"
+    PREPARED_61_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.1.prepared.up"
+    STAGE_61_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.1.up"
+    PREPARED_62_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.2.prepared.up"
+    STAGE_62_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.2.up"
+    PREPARED_63_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.3.prepared.up"
+    STAGE_63_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.3.up"
+    PREPARED_64_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.4.prepared.up"
+    STAGE_64_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.4.up"
+    PREPARED_65_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.5.prepared.up"
+    STAGE_65_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.5.up"
+    PREPARED_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.prepared.up"
+    STAGE_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.up"
+    PREPARED_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.prepared.up"
+    STAGE_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.up"
+}
+
+refresh_run_dir_paths
 
 SALT_MOLAR="${SALT_MOLAR:-0.15}"
 PROTEIN_LIPID_CUTOFF="${PROTEIN_LIPID_CUTOFF:-4.5}"
@@ -164,6 +175,88 @@ do
         exit 1
     fi
 done
+
+derive_run_dir_from_stage70_file() {
+    local stage70_file="$1"
+    python3 - "$stage70_file" << 'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1]).resolve()
+parent = path.parent
+if parent.name == "checkpoints":
+    print(parent.parent)
+else:
+    print(parent)
+PY
+}
+
+resolve_stage70_continuation_target() {
+    local source_file="$1"
+    local requested_output="$2"
+    local requested_label="$3"
+    python3 - "$source_file" "$requested_output" "$requested_label" << 'PY'
+from pathlib import Path
+import re
+import sys
+
+source = Path(sys.argv[1]).resolve()
+requested_output = sys.argv[2].strip()
+requested_label = sys.argv[3].strip()
+
+match = re.fullmatch(r"(.+)\.stage_7\.(\d+)\.up", source.name)
+if not match:
+    raise SystemExit(f"ERROR: unsupported continuation source filename: {source.name}")
+
+pdb_id = match.group(1)
+checkpoint_dir = source.parent if source.parent.name == "checkpoints" else source.parent
+
+if requested_output:
+    output_path = Path(requested_output)
+else:
+    indices = []
+    pattern = re.compile(rf"^{re.escape(pdb_id)}\.stage_7\.(\d+)\.up$")
+    if checkpoint_dir.exists():
+        for path in checkpoint_dir.glob(f"{pdb_id}.stage_7.*.up"):
+            match = pattern.fullmatch(path.name)
+            if match:
+                indices.append(int(match.group(1)))
+    next_index = (max(indices) + 1) if indices else 1
+    output_path = checkpoint_dir / f"{pdb_id}.stage_7.{next_index}.up"
+
+if requested_label:
+    label = requested_label
+else:
+    match = re.fullmatch(rf"{re.escape(pdb_id)}\.stage_7\.(\d+)\.up", output_path.name)
+    if not match:
+        raise SystemExit(f"ERROR: cannot derive continuation stage label from {output_path.name}")
+    label = f"7.{int(match.group(1))}"
+
+print(f"output={output_path}")
+print(f"label={label}")
+PY
+}
+
+if [ -n "${CONTINUE_STAGE_70_FROM}" ] && [ "${RUN_DIR_WAS_SET}" != "1" ]; then
+    derived_run_dir="$(derive_run_dir_from_stage70_file "${CONTINUE_STAGE_70_FROM}")"
+    if [ -n "${derived_run_dir}" ]; then
+        RUN_DIR="${derived_run_dir}"
+        refresh_run_dir_paths
+    fi
+fi
+
+if [ -n "${CONTINUE_STAGE_70_FROM}" ]; then
+    while IFS='=' read -r key value; do
+        case "${key}" in
+            output)
+                CONTINUE_STAGE_70_OUTPUT="${value}"
+                ;;
+            label)
+                CONTINUE_STAGE_70_LABEL="${value}"
+                ;;
+        esac
+    done < <(resolve_stage70_continuation_target "${CONTINUE_STAGE_70_FROM}" "${CONTINUE_STAGE_70_OUTPUT}" "${CONTINUE_STAGE_70_LABEL}")
+fi
 
 mkdir -p "$INPUTS_DIR" "$OUTPUTS_DIR" "$RUN_DIR" "$CHECKPOINT_DIR" "$LOG_DIR" "$PREP_DIR"
 
@@ -233,14 +326,21 @@ import h5py
 
 up_file = sys.argv[1]
 metadata_file = sys.argv[2]
-groups = ("hybrid_bb_map", "hybrid_env_topology", "sequence")
+required_groups = ("hybrid_bb_map", "hybrid_env_topology", "sequence")
+optional_groups = ("chain_break",)
 
 with h5py.File(metadata_file, "r") as src, h5py.File(up_file, "r+") as dst:
     src_inp = src["/input"]
     dst_inp = dst.require_group("input")
-    for name in groups:
+    for name in required_groups:
         if name not in src_inp:
             raise ValueError(f"Missing metadata entry: /input/{name}")
+        if name in dst_inp:
+            del dst_inp[name]
+        src.copy(src_inp[name], dst_inp, name=name)
+    for name in optional_groups:
+        if name not in src_inp:
+            continue
         if name in dst_inp:
             del dst_inp[name]
         src.copy(src_inp[name], dst_inp, name=name)
@@ -746,7 +846,7 @@ extract_stage_vtf() {
 run_stage70_continuation() {
     local source_file="$1"
     local output_file="$2"
-    local stage_label="${3:-7.0_continue}"
+    local stage_label="${3:-7.1}"
 
     if [ ! -f "$source_file" ]; then
         echo "ERROR: continuation source not found: ${source_file}"

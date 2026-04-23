@@ -1,5 +1,140 @@
 # Progress Log
 
+## 2026-04-23 (Fix: Preserve Multi-Chain Topology For 1AFO Prep)
+- Re-read the workflow trackers before debugging the reported `1AFO` chain-collapse bug:
+  - `example/16.MARTINI/plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+- Inspected:
+  - `example/16.MARTINI/pdb/1AFO.pdb`
+  - `py/martini_prepare_system_lib.py`
+  - `py/martini_extract_vtf.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `py/upside_config.py`
+- Confirmed the root cause before patching:
+  - the `1AFO` input PDB already contains chain `A` and `B`,
+  - `collect_aa_backbone_map(...)` already preserved `bb_chain`,
+  - but the hybrid metadata writer did not emit `chain_break`,
+  - stage metadata injection did not copy `chain_break`,
+  - and `inject_backbone_nodes(...)` rebuilt the Upside peptide topology with:
+    - `uc.n_chains = 1`
+    - `uc.chain_starts = [0]`
+  - `martini_extract_vtf.py` also forced appended protein chain labels to `A` and linked backbone bonds across every residue boundary.
+- Updated:
+  - `py/martini_prepare_system_lib.py`
+  - `py/martini_extract_vtf.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/plan.md`
+  - `example/16.MARTINI/findings.md`
+- Code changes:
+  - `write_backbone_metadata_h5(...)` now writes:
+    - `hybrid_bb_map/bb_chain_id`
+    - `hybrid_bb_map/bb_resseq`
+    - `hybrid_bb_map/bb_icode`
+    - `/input/chain_break/{chain_first_residue,chain_counts}` for multi-chain proteins
+  - `validate_hybrid_mapping(...)` now validates `chain_break` shape and ordering when present.
+  - `run_sim_1rkl.sh::inject_runtime_metadata(...)` now copies optional `chain_break` metadata into prepared stage files.
+  - `inject_backbone_nodes(...)` now reads the stored chain break and sets:
+    - `uc.n_chains`
+    - `uc.chain_first_residue`
+    - `uc.chain_starts`
+    - `uc.rl_chains = None`
+  - `martini_extract_vtf.py` now:
+    - uses stored `bb_chain_id` for appended AA-backbone atoms,
+    - skips peptide-bond links across chain boundaries in exported backbone bonds.
+- Verification:
+  - `PYTHONPYCACHEPREFIX=/tmp python3 -m py_compile ../../py/martini_prepare_system_lib.py ../../py/martini_extract_vtf.py`
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - metadata helper round-trip on `/tmp/1afo_chainbreak_metadata.h5` observed:
+    - `n_sequence = 72`
+    - `chain_ids = ['A', 'B']`
+    - `chain_first_residue = [36]`
+    - `chain_counts = [1, 1]`
+  - reduced local workflow run:
+    - `RUN_DIR=outputs/1afo_chainbreak_check`
+    - `AUTO_CONTINUE_FROM_PREVIOUS_RUN=0`
+    - `DISABLE_1AFO_AABB_AUTO_CONTINUE=1`
+    - all minimization / equilibration / production lengths reduced to `1`
+    - completed through:
+      - `outputs/1afo_chainbreak_check/checkpoints/1afo.stage_7.0.up`
+  - generated stage-7 inspection observed:
+    - `/input/chain_break/chain_first_residue = [36]`
+    - `/input/chain_break/chain_counts = [1, 1]`
+    - boundary residue indices:
+      - last chain `A` residue index = `35`
+      - first chain `B` residue index = `36`
+    - boundary backbone atoms:
+      - last chain `A` `C` atom = `142`
+      - first chain `B` `N` atom = `144`
+    - `cross_chain_bond_present = False` in `/input/potential/Distance3D/id`
+  - generated VTF inspection observed:
+    - protein atoms under `segid sA chain A`
+    - protein atoms under `segid sB chain B`
+
+## 2026-04-23 (Fix: Numbered Stage-7 Continuations In-Place)
+- Re-read the workflow trackers before changing the continuation flow:
+  - `example/16.MARTINI/plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+- Inspected:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/run_sim_1afo.sh`
+  - `example/16.MARTINI/run_sim_1afo_outlipid.sh`
+  - `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+- Confirmed the root cause before patching:
+  - the base workflow hardcoded continuation names:
+    - `stage_7.0.continue.up`
+    - `7.0_continue`
+  - the wrappers switched continuation runs into new `*_continue` run directories,
+  - wrapper auto-detection only knew about the base `stage_7.0.up` plus a single `.continue` variant.
+- Updated:
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/run_sim_1afo.sh`
+  - `example/16.MARTINI/run_sim_1afo_outlipid.sh`
+  - `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - `example/16.MARTINI/plan.md`
+  - `example/16.MARTINI/findings.md`
+- Code changes:
+  - `run_sim_1rkl.sh` now resolves the next continuation checkpoint name dynamically from the source stage-7 file and assigns numbered outputs:
+    - `stage_7.1.up`
+    - `stage_7.2.up`
+    - `stage_7.3.up`
+  - `run_sim_1rkl.sh` now derives the continuation stage label from that numbered target so VTF names follow the same numbering.
+  - `run_sim_1rkl.sh` now defaults continuation `RUN_DIR` to the source trajectory folder when the caller did not set `RUN_DIR`.
+  - the `1afo` and outlipid wrappers now:
+    - keep the same run directory during continuation,
+    - detect numbered `stage_7.<n>.up` checkpoints,
+    - choose the newest numbered file for auto-resume,
+    - and resolve `PREVIOUS_RUN_DIR` to the latest numbered stage-7 checkpoint instead of hardcoding `stage_7.0.up`.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n example/16.MARTINI/run_sim_1afo.sh`
+  - `bash -n example/16.MARTINI/run_sim_1afo_outlipid.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - isolated `run_sim_1afo_outlipid.sh` harness with only:
+    - `outputs/martini_test_1afo_outlipid/checkpoints/1afo.stage_7.0.up`
+    - observed:
+      - `CONTINUE_STAGE_70_FROM=<...>/1afo.stage_7.0.up`
+      - `RUN_DIR=<...>/outputs/martini_test_1afo_outlipid`
+  - isolated `run_sim_1afo_outlipid.sh` harness with:
+    - `1afo.stage_7.0.up`
+    - `1afo.stage_7.1.up`
+    - `1afo.stage_7.2.up`
+    - observed:
+      - `CONTINUE_STAGE_70_FROM=<...>/1afo.stage_7.2.up`
+      - `RUN_DIR=<...>/outputs/martini_test_1afo_outlipid`
+  - isolated `run_sim_1afo.sh` harness with `PREVIOUS_RUN_DIR=<prev_run>` containing:
+    - `checkpoints/1afo.stage_7.0.up`
+    - `checkpoints/1afo.stage_7.1.up`
+    - observed:
+      - `CONTINUE_STAGE_70_FROM=<prev_run>/checkpoints/1afo.stage_7.1.up`
+      - `RUN_DIR=<prev_run>`
+  - direct `run_sim_1rkl.sh` continuation-path checks with stub stage-7 files:
+    - source `1rkl.stage_7.0.up` resolved continuation output:
+      - `1rkl.stage_7.1.up`
+    - source `1rkl.stage_7.2.up` with prior numbered files resolved continuation output:
+      - `1rkl.stage_7.3.up`
+
 ## 2026-04-23 (Verification: `run_sim_1afo_outlipid.sh` Unaffected By AABB Slurm Fix)
 - Re-read the workflow plan before verifying the outlipid wrapper behavior:
   - `example/16.MARTINI/plan.md`

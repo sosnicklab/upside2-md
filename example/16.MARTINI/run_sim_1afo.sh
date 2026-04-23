@@ -58,31 +58,82 @@ export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export PYTHONPATH="${PROJECT_ROOT}/py${PYTHONPATH:+:$PYTHONPATH}"
 export PATH="${PROJECT_ROOT}/obj:$PATH"
 
-autodetect_previous_stage70_file() {
-    local outputs_root="${WORKFLOW_DIR}/outputs"
-    if [ ! -d "${outputs_root}" ]; then
-        return 0
-    fi
-
-    python3 - "${outputs_root}" << 'PY'
+select_latest_stage70_file() {
+    local search_root="$1"
+    local glob_pattern="$2"
+    python3 - "$search_root" "$glob_pattern" << 'PY'
 from pathlib import Path
+import re
 import sys
 
 root = Path(sys.argv[1])
+glob_pattern = sys.argv[2]
+if not root.exists():
+    raise SystemExit(0)
+
+name_pattern = re.compile(r"^1afo\.stage_7\.(\d+)\.up$")
 candidates = []
-allowed_names = {"1afo.stage_7.0.up", "1afo.stage_7.0.continue.up"}
-for path in root.glob("martini_test_1afo_aabb*/checkpoints/1afo.stage_7.0*.up"):
+for path in root.glob(glob_pattern):
     if not path.is_file():
         continue
-    if path.name not in allowed_names:
+    match = name_pattern.fullmatch(path.name)
+    if not match:
         continue
-    candidates.append(path)
+    candidates.append((int(match.group(1)), path.stat().st_mtime_ns, str(path), path))
 
 if not candidates:
     raise SystemExit(0)
 
-candidates.sort(key=lambda path: (path.stat().st_mtime_ns, str(path)), reverse=True)
-print(candidates[0])
+candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+print(candidates[0][3])
+PY
+}
+
+autodetect_previous_stage70_file() {
+    select_latest_stage70_file "${WORKFLOW_DIR}/outputs" "martini_test_1afo_aabb*/checkpoints/1afo.stage_7.*.up"
+}
+
+resolve_previous_stage70_from_run_dir() {
+    local previous_run_dir="$1"
+    python3 - "$previous_run_dir" << 'PY'
+from pathlib import Path
+import re
+import sys
+
+root = Path(sys.argv[1]).resolve()
+checkpoints = root / "checkpoints"
+search_dir = checkpoints if checkpoints.is_dir() else root
+name_pattern = re.compile(r"^1afo\.stage_7\.(\d+)\.up$")
+candidates = []
+if search_dir.is_dir():
+    for path in search_dir.glob("1afo.stage_7.*.up"):
+        if not path.is_file():
+            continue
+        match = name_pattern.fullmatch(path.name)
+        if not match:
+            continue
+        candidates.append((int(match.group(1)), path.stat().st_mtime_ns, str(path), path))
+
+if not candidates:
+    raise SystemExit(0)
+
+candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+print(candidates[0][3])
+PY
+}
+
+derive_run_dir_from_stage70_file() {
+    local stage70_file="$1"
+    python3 - "$stage70_file" << 'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1]).resolve()
+parent = path.parent
+if parent.name == "checkpoints":
+    print(parent.parent)
+else:
+    print(parent)
 PY
 }
 
@@ -90,7 +141,10 @@ if [ -z "${CONTINUE_STAGE_70_FROM:-}" ]; then
     if [ -n "${PREVIOUS_STAGE7_FILE:-}" ]; then
         export CONTINUE_STAGE_70_FROM="${PREVIOUS_STAGE7_FILE}"
     elif [ -n "${PREVIOUS_RUN_DIR:-}" ]; then
-        export CONTINUE_STAGE_70_FROM="${PREVIOUS_RUN_DIR}/checkpoints/1afo.stage_7.0.up"
+        previous_stage70_file="$(resolve_previous_stage70_from_run_dir "${PREVIOUS_RUN_DIR}" || true)"
+        if [ -n "${previous_stage70_file}" ]; then
+            export CONTINUE_STAGE_70_FROM="${previous_stage70_file}"
+        fi
     elif [ "${AUTO_CONTINUE_FROM_PREVIOUS_RUN:-1}" = "1" ] && [ "${DISABLE_1AFO_AABB_AUTO_CONTINUE:-0}" != "1" ]; then
         auto_continue_file="$(autodetect_previous_stage70_file || true)"
         if [ -n "${auto_continue_file}" ]; then
@@ -100,10 +154,14 @@ if [ -z "${CONTINUE_STAGE_70_FROM:-}" ]; then
 fi
 
 if [ -n "${CONTINUE_STAGE_70_FROM:-}" ]; then
-    export RUN_DIR="${RUN_DIR:-outputs/martini_test_1afo_aabb_continue}"
-else
-    export RUN_DIR="${RUN_DIR:-outputs/martini_test_1afo_aabb}"
+    if [ -z "${RUN_DIR:-}" ]; then
+        derived_run_dir="$(derive_run_dir_from_stage70_file "${CONTINUE_STAGE_70_FROM}" || true)"
+        if [ -n "${derived_run_dir}" ]; then
+            export RUN_DIR="${derived_run_dir}"
+        fi
+    fi
 fi
+export RUN_DIR="${RUN_DIR:-outputs/martini_test_1afo_aabb}"
 
 export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1afo_aabb}"
 export PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/1AFO.pdb}"

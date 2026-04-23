@@ -1,44 +1,38 @@
-# Verification: 1AFO Outlipid Unaffected By AABB Slurm Fix
+# Fix: Preserve Multi-Chain Topology For 1AFO Prep
 
 ## Project Goal
-- Verify that the recent Slurm/bootstrap modification to `run_sim_1afo.sh` does not change the intended behavior of `run_sim_1afo_outlipid.sh`.
-- Confirm that the outlipid wrapper still:
-  - uses outlipid defaults,
-  - resumes only from outlipid stage-7 artifacts,
-  - ignores AABB auto-resume,
-  - and delegates under Slurm with the correct project-root environment.
+- Make the `1AFO` preparation path preserve its two peptide chains instead of collapsing them into one continuous chain in the generated Upside stage files.
+- Ensure both metadata and generated stage-7 backbone terms reflect the actual chain break between chain `A` and chain `B`.
 
 ## Architecture & Key Decisions
-- Treat this as a verification task first; only patch code if the check exposes a regression.
-- Validate behavior in isolated harnesses so the real repo outputs are not disturbed.
-- Explicitly test both:
-  - an AABB prior stage-7 artifact present without an outlipid artifact,
-  - an outlipid prior stage-7 artifact present.
+- Keep the fix in the shared hybrid metadata and stage-7 injection path rather than in the thin `1afo` wrappers.
+- Write explicit chain-break metadata from the AA-backbone residue order into the hybrid metadata HDF5.
+- Copy that chain-break metadata into prepared stage files along with the existing hybrid groups.
+- Make backbone-node injection read the chain-break metadata and configure Upside with the correct `n_chains` / `chain_starts` instead of forcing a single chain.
+- Also persist per-residue chain IDs in the backbone map so downstream exports can recover the correct protein chain labels.
 
 ## Execution Phases
-- [x] Phase 1: Inspect the current `1afo` AABB and outlipid wrappers after the Slurm fix.
-- [x] Phase 2: Run isolated Slurm-style harnesses to verify that `run_sim_1afo_outlipid.sh` still uses outlipid-only continuation behavior and correct environment bootstrap.
-- [x] Phase 3: Record the verification result in the local trackers and summarize whether the outlipid wrapper is unaffected.
+- [x] Phase 1: Update the trackers for the multi-chain prep bug and inspect the current metadata / backbone-node injection path.
+- [x] Phase 2: Patch the metadata writer, stage metadata injection, and backbone-node injection so multi-chain proteins preserve chain breaks.
+- [x] Phase 3: Verify the `1AFO` metadata and a reduced generated stage file show the expected two-chain topology and no peptide bond across the chain boundary.
 
 ## Known Errors / Blockers
 - No blocker.
 
 ## Review
-- `run_sim_1afo_outlipid.sh` remains unaffected by the `run_sim_1afo.sh` Slurm bootstrap change.
-- Verified properties:
-  - it still exports `DISABLE_1AFO_AABB_AUTO_CONTINUE=1` before delegation,
-  - with only an AABB prior stage-7 artifact present, it does not resume and keeps:
-    - `CONTINUE_STAGE_70_FROM=`
-    - `RUN_DIR=outputs/martini_test_1afo_outlipid`
-    - `RUNTIME_PDB_ID=1afo_outlipid`
-  - with an outlipid prior stage-7 artifact present, it still resumes from that outlipid file and uses:
-    - `RUN_DIR=outputs/martini_test_1afo_outlipid_continue`
-  - under a simulated `sbatch` context with a wrong inherited `UPSIDE_HOME`, it still delegates with:
-    - `UPSIDE_HOME=<resolved project root>`
-    - `UPSIDE_SKIP_SOURCE_SH=1`
-    - `PYTHONPATH=<resolved project root>/py`
-    - `PATH` containing `<resolved project root>/obj`
-- Verification:
-  - `bash -n run_sim_1afo_outlipid.sh`
-  - isolated Slurm-style harness with only `outputs/martini_test_1afo_aabb/checkpoints/1afo.stage_7.0.up`
-  - isolated Slurm-style harness with `outputs/martini_test_1afo_outlipid/checkpoints/1afo.stage_7.0.up`
+- The shared hybrid metadata writer now preserves per-residue chain IDs and writes `/input/chain_break` for multi-chain proteins.
+- The stage metadata handoff now copies `chain_break` into prepared stage files.
+- Backbone-node injection no longer forces `n_chains = 1`; it reads the stored chain break and configures Upside with the correct chain starts.
+- `martini_extract_vtf.py` now preserves AA-backbone chain IDs and skips cross-chain backbone bonds in the exported VTF topology.
+- Verified with:
+  - `PYTHONPYCACHEPREFIX=/tmp python3 -m py_compile ../../py/martini_prepare_system_lib.py ../../py/martini_extract_vtf.py`
+  - `bash -n run_sim_1rkl.sh`
+  - metadata round-trip on `/tmp/1afo_chainbreak_metadata.h5`
+  - reduced local workflow run:
+    - `RUN_DIR=outputs/1afo_chainbreak_check ... bash run_sim_1afo.sh`
+  - generated production file checks:
+    - `/input/chain_break/chain_first_residue = [36]`
+    - `/input/chain_break/chain_counts = [1, 1]`
+    - no `Distance3D` bond between the last chain-`A` C atom and the first chain-`B` N atom
+  - generated VTF checks:
+    - protein entries appear under both chain `A` and chain `B`.
