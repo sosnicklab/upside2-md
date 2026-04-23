@@ -1,5 +1,55 @@
 # Progress Log
 
+## 2026-04-22 (Update: `run_sim_1afo.sh` Default Auto-Resume)
+- Re-read the workflow plan before changing the `1afo` wrappers:
+  - `example/16.MARTINI/plan.md`
+- Inspected:
+  - `example/16.MARTINI/run_sim_1afo.sh`
+  - `example/16.MARTINI/run_sim_1afo_outlipid.sh`
+  - current local `outputs/` tree for `1afo.stage_7.0.up` / `1afo.stage_7.0.continue.up`
+- Confirmed the issue before patching:
+  - `run_sim_1afo.sh` previously had no default continuation logic,
+  - so it always used the scratch default unless the caller supplied continuation variables explicitly.
+- Updated:
+  - `example/16.MARTINI/run_sim_1afo.sh`
+  - `example/16.MARTINI/run_sim_1afo_outlipid.sh`
+- `run_sim_1afo.sh` changes:
+  - added previous-run precedence:
+    - `CONTINUE_STAGE_70_FROM`
+    - `PREVIOUS_STAGE7_FILE`
+    - `PREVIOUS_RUN_DIR`
+  - added auto-detection of the newest prior AABB stage-7 artifact under:
+    - `outputs/martini_test_1afo_aabb*/checkpoints/`
+  - when a prior AABB stage-7 file exists:
+    - `CONTINUE_STAGE_70_FROM=<detected file>`
+    - `RUN_DIR=outputs/martini_test_1afo_aabb_continue`
+  - when none exists:
+    - `CONTINUE_STAGE_70_FROM=`
+    - `RUN_DIR=outputs/martini_test_1afo_aabb`
+- `run_sim_1afo_outlipid.sh` change:
+  - exports `DISABLE_1AFO_AABB_AUTO_CONTINUE=1` before delegating to `run_sim_1afo.sh`,
+  - this prevents the new base AABB auto-resume path from hijacking outlipid runs.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1afo.sh`
+  - `bash -n example/16.MARTINI/run_sim_1afo_outlipid.sh`
+  - isolated `/tmp` AABB harness without prior stage-7 file:
+    - `CONTINUE_STAGE_70_FROM=`
+    - `RUN_DIR=outputs/martini_test_1afo_aabb`
+    - `RUNTIME_PDB_ID=1afo_aabb`
+    - `PROTEIN_AA_PDB=pdb/1AFO.pdb`
+    - `arg1=PDB_ID=1afo`
+  - isolated `/tmp` AABB harness with prior `1afo.stage_7.0.up`:
+    - `CONTINUE_STAGE_70_FROM=<detected AABB stage-7 file>`
+    - `RUN_DIR=outputs/martini_test_1afo_aabb_continue`
+  - isolated `/tmp` outlipid harness with only an AABB prior stage-7 file:
+    - `CONTINUE_STAGE_70_FROM=`
+    - `RUN_DIR=outputs/martini_test_1afo_outlipid`
+    - `DISABLE_1AFO_AABB_AUTO_CONTINUE=1`
+  - isolated `/tmp` outlipid harness with an outlipid prior stage-7 file:
+    - `CONTINUE_STAGE_70_FROM=<detected outlipid stage-7 file>`
+    - `RUN_DIR=outputs/martini_test_1afo_outlipid_continue`
+    - `DISABLE_1AFO_AABB_AUTO_CONTINUE=1`
+
 ## 2026-04-22 (Implementation: 1AFO Workflow Wrappers)
 - Re-read the workflow plan before adding new scripts:
   - `example/16.MARTINI/plan.md`

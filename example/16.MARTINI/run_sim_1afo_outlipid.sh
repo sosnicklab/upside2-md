@@ -137,4 +137,6 @@ if [ -n "${CONTINUE_STAGE_70_FROM:-}" ]; then
     export CONTINUE_STAGE_70_OUTPUT="${CONTINUE_STAGE_70_OUTPUT:-${RUN_DIR}/checkpoints/1afo.stage_7.0.continue.up}"
 fi
 
+export DISABLE_1AFO_AABB_AUTO_CONTINUE="1"
+
 exec "${BASE_WORKFLOW_SCRIPT}" "$@"
