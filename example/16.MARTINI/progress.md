@@ -1,5 +1,46 @@
 # Progress Log
 
+## 2026-04-23 (Fix: 1AFO Multi-Chain Residue Collapse In Hybrid Metadata)
+- Re-read the workflow trackers before debugging the reported cluster failure:
+  - `example/16.MARTINI/plan.md`
+  - `example/16.MARTINI/findings.md`
+  - `example/16.MARTINI/progress.md`
+- Diagnosed the failure reported from `slurm-1afo_outlipid-48925479.out`:
+  - `inject_stage7_sc_table_nodes(...)` raised
+    - `ValueError: Missing or inconsistent /input/sequence for AA-backbone sidechain injection: expected 36 residues`
+- Inspected:
+  - `example/16.MARTINI/run_sim_1afo.sh`
+  - `py/martini_prepare_system_lib.py`
+  - `src/martini.cpp`
+  - `py/martini_extract_vtf.py`
+  - `example/16.MARTINI/pdb/1AFO.pdb`
+- Confirmed the root cause on the local `1AFO` input:
+  - `extract_backbone_sequence(...)` returns `72` residues,
+  - `collect_aa_backbone_map(...)` previously wrote only `36` unique `bb_resseq` values because chains `A` and `B` reuse the same raw residue numbers,
+  - the hybrid metadata therefore mixed a 72-entry sequence with a 36-ID backbone residue map.
+- Updated:
+  - `py/martini_prepare_system_lib.py`
+- Code changes:
+  - `collect_aa_backbone_map(...)` now assigns a unique residue-order `bb_residue_index` for each backbone residue,
+  - `write_backbone_metadata_h5(...)` now writes `bb_residue_index` from that unique field, with fallback to the old `bb_resseq` value for compatibility.
+- Verification:
+  - helper check on `example/16.MARTINI/pdb/1AFO.pdb`:
+    - `len(entries) = 72`
+    - `len(sequence) = 72`
+    - `unique bb_residue_index = 72`
+  - metadata round-trip on `/tmp/1afo_test_backbone_metadata.h5`:
+    - `sequence len = 72`
+    - `unique bb_residue_index = 72`
+  - reduced local workflow smoke:
+    - `RUN_DIR=example/16.MARTINI/outputs/1afo_inject_fix_check`
+    - `AUTO_CONTINUE_FROM_PREVIOUS_RUN=0`
+    - `DISABLE_1AFO_AABB_AUTO_CONTINUE=1`
+    - all stage lengths reduced to `1`
+    - observed behavior:
+      - stage-0 packing completed,
+      - metadata wrote `n_bb=72`,
+      - stage conversion progressed past the previous `inject-stage7-sc` failure site without raising the `expected 36 residues` exception.
+
 ## 2026-04-22 (Update: `run_sim_1afo.sh` Default Auto-Resume)
 - Re-read the workflow plan before changing the `1afo` wrappers:
   - `example/16.MARTINI/plan.md`

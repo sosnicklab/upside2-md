@@ -1,5 +1,23 @@
 # Findings
 
+## 2026-04-23 (1AFO Sidechain Injection Failure Root Cause)
+- The `1afo_outlipid` failure in `inject_stage7_sc_table_nodes(...)` was caused by a multi-chain residue-ID collapse in the shared hybrid metadata path, not by the `1afo` wrapper scripts themselves.
+- For `example/16.MARTINI/pdb/1AFO.pdb`:
+  - `extract_backbone_sequence(...)` correctly returns `72` residues (`36` in chain `A`, `36` in chain `B`),
+  - `collect_aa_backbone_map(...)` previously stored raw PDB `resseq` as `hybrid_bb_map/bb_residue_index`,
+  - because both chains use residue numbers `66..101`, the metadata contained only `36` unique backbone residue IDs.
+- Consequence:
+  - sidechain injection saw `72` sequence entries but only `36` affine residues from `build_affine_atoms(...)`,
+  - which triggered:
+    - `ValueError: Missing or inconsistent /input/sequence for AA-backbone sidechain injection: expected 36 residues`
+- Correct fix:
+  - assign a unique residue-order `bb_residue_index` per backbone residue during hybrid metadata generation,
+  - do not use raw `resseq` alone as the unique hybrid residue key for multi-chain proteins.
+- Verification after the fix:
+  - helper output for `1AFO`: `72` sequence residues and `72` unique `bb_residue_index` values,
+  - written metadata file `/tmp/1afo_test_backbone_metadata.h5`: `sequence len = 72`, `unique bb_residue_index = 72`,
+  - reduced local `run_sim_1afo_outlipid.sh` smoke advanced past the prior `inject-stage7-sc` failure site.
+
 ## 2026-04-22 (`run_sim_1rkl_outlipid.sh` Validity Audit After Shared Workflow Updates)
 - The current `run_sim_1rkl_outlipid.sh` does inherit the recent shared workflow/engine updates because it now delegates to `example/16.MARTINI/run_sim_1rkl.sh`.
 - That inheritance is incomplete for the out-of-bilayer intent:

@@ -1,47 +1,50 @@
-# Workflow Update: 1AFO Default Auto-Resume
+# Workflow Fix: 1AFO Sidechain Injection Residue Collapse
 
 ## Project Goal
-- Make `run_sim_1afo.sh` default to continuing from the most recent previous stage-7 checkpoint of a prior `1afo` AABB run.
-- If no prior `1afo` stage-7 artifact exists, fall back to the scratch workflow.
-- Preserve the current `run_sim_1afo_outlipid.sh` behavior without letting the new base-script auto-resume accidentally switch an outlipid run onto an AABB checkpoint.
+- Fix the `1afo_outlipid` stage-preparation failure:
+  - `ValueError: Missing or inconsistent /input/sequence for AA-backbone sidechain injection: expected 36 residues`
+- Preserve the existing `1rkl` behavior while making multi-chain AA-backbone workflows like `1AFO` generate consistent hybrid metadata.
 
 ## Architecture & Key Decisions
-- Keep `run_sim_1afo.sh` as a thin wrapper over `run_sim_1rkl.sh`, but add the same explicit-override and auto-detect continuation logic used by the outlipid wrapper.
-- Search only `outputs/martini_test_1afo_aabb*/checkpoints/` for prior AABB stage-7 artifacts.
-- Add a dedicated opt-out flag in `run_sim_1afo.sh` so callers can disable AABB auto-resume when needed.
-- Have `run_sim_1afo_outlipid.sh` set that opt-out before delegating, so outlipid continuation remains scoped to outlipid artifacts only.
+- Fix the problem in the shared metadata-generation path, not in the `1afo` wrapper scripts.
+- The root cause is a residue-identity collapse in `hybrid_bb_map/bb_residue_index`:
+  - sequence extraction is chain-aware,
+  - backbone-map residue IDs currently use raw `resseq` only,
+  - multi-chain proteins with repeated residue numbers therefore collapse distinct residues.
+- The fix should make `bb_residue_index` unique per backbone residue in residue-order space.
+- Keep raw chain/resseq information only as descriptive metadata/comments; do not rely on raw `resseq` as the unique hybrid residue key.
 
 ## Execution Phases
-- [x] Phase 1: Confirm the current `1afo` wrappers and identify the safe auto-resume integration point.
-- [x] Phase 2: Patch `run_sim_1afo.sh` for default auto-resume with scratch fallback, and isolate `run_sim_1afo_outlipid.sh` from that new base behavior.
-- [x] Phase 3: Verify shell syntax plus both scratch and continuation behavior in isolated harnesses.
+- [x] Phase 1: Confirm the multi-chain residue-index collapse and identify the shared metadata write path to change.
+- [x] Phase 2: Patch the hybrid metadata generation so backbone residue IDs remain unique across chains.
+- [x] Phase 3: Re-run the failing `1AFO` prep/injection path and verify the sidechain injection succeeds.
 
 ## Known Errors / Blockers
 - No blocker.
 
 ## Review
-- Updated `run_sim_1afo.sh` so it now behaves like the outlipid wrapper with respect to continuation:
-  - explicit precedence remains:
-    - `CONTINUE_STAGE_70_FROM`
-    - `PREVIOUS_STAGE7_FILE`
-    - `PREVIOUS_RUN_DIR`
-  - otherwise it auto-detects the newest prior AABB stage-7 artifact under `outputs/martini_test_1afo_aabb*/checkpoints/`,
-  - if one is found it continues into `outputs/martini_test_1afo_aabb_continue`,
-  - if none is found it falls back to the scratch default `outputs/martini_test_1afo_aabb`.
-- Added an internal guard so `run_sim_1afo_outlipid.sh` does not inherit the new AABB auto-resume path:
-  - it now exports `DISABLE_1AFO_AABB_AUTO_CONTINUE=1` before delegating to `run_sim_1afo.sh`,
-  - so outlipid continuation remains driven only by outlipid stage-7 artifacts.
+- Root cause confirmed in the shared hybrid metadata path:
+  - `extract_backbone_sequence(...)` is chain-aware and returns `72` residues for `1AFO`,
+  - `collect_aa_backbone_map(...)` previously stored raw PDB `resseq` into `bb_residue_index`,
+  - because chains `A` and `B` both use residue numbers `66..101`, the written metadata collapsed to only `36` unique backbone residue IDs,
+  - `inject_stage7_sc_table_nodes(...)` therefore saw `72` sequence entries but only `36` affine residues and aborted.
+- Implemented fix:
+  - `py/martini_prepare_system_lib.py::collect_aa_backbone_map(...)` now writes a residue-order `bb_residue_index` that is unique per backbone residue across chains,
+  - `write_backbone_metadata_h5(...)` now writes that unique index into `hybrid_bb_map/bb_residue_index`, with backward-compatible fallback to the old `bb_resseq` field if needed.
 - Verification:
-  - `bash -n run_sim_1afo.sh`
-  - `bash -n run_sim_1afo_outlipid.sh`
-  - isolated AABB harness with no prior stage-7 file:
-    - `CONTINUE_STAGE_70_FROM=`
-    - `RUN_DIR=outputs/martini_test_1afo_aabb`
-  - isolated AABB harness with prior `1afo.stage_7.0.up`:
-    - `CONTINUE_STAGE_70_FROM=<detected AABB stage-7 file>`
-    - `RUN_DIR=outputs/martini_test_1afo_aabb_continue`
-  - isolated outlipid harness with only an AABB prior stage-7 file:
-    - `CONTINUE_STAGE_70_FROM=` and `DISABLE_1AFO_AABB_AUTO_CONTINUE=1`
-  - isolated outlipid harness with an outlipid prior stage-7 file:
-    - `CONTINUE_STAGE_70_FROM=<detected outlipid stage-7 file>`
-    - `RUN_DIR=outputs/martini_test_1afo_outlipid_continue`
+  - helper check on `example/16.MARTINI/pdb/1AFO.pdb`:
+    - `len(entries) = 72`
+    - `len(sequence) = 72`
+    - `unique bb_residue_index = 72`
+  - metadata write/read check on `/tmp/1afo_test_backbone_metadata.h5`:
+    - `sequence len = 72`
+    - `unique bb_residue_index = 72`
+  - reduced local workflow smoke:
+    - `RUN_DIR=example/16.MARTINI/outputs/1afo_inject_fix_check`
+    - `AUTO_CONTINUE_FROM_PREVIOUS_RUN=0`
+    - `DISABLE_1AFO_AABB_AUTO_CONTINUE=1`
+    - minimal stage lengths set to `1`
+    - the run advanced past the previous failure site:
+      - stage-0 packing succeeded,
+      - stage conversion wrote `test.input.up`,
+      - `inject-stage7-sc` no longer raised `expected 36 residues`.
