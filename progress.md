@@ -1,5 +1,47 @@
 # Progress Log
 
+## 2026-04-23 (dryMARTINI Runtime Neighbor-List Speedup)
+- Re-read the root `plan.md`, `progress.md`, and `findings.md` before starting the implementation so the runtime change stays aligned with the documented MARTINI workflow constraints.
+- Re-audited the active dryMARTINI runtime path in:
+  - `src/martini.cpp`
+  - `py/martini_prepare_system_lib.py`
+  - `src/box.h`
+  - `src/box.cpp`
+- Confirmed the current bottleneck shape before editing:
+  - `MartiniPotential` scans the full prebuilt `pairs` array in `compute_value(...)`;
+  - the prep path writes essentially all legal `i < j` nonbonded pairs up front, with bonded exclusions only;
+  - `MartiniScTableOneBody` scans every `(row, env)` candidate pair and applies the cutoff inside the inner loop.
+- Confirmed the runtime tables are already loaded into RAM during node construction, so a RAM-disk feature would not address the hot-loop cost.
+- Selected the minimal exact implementation path:
+  - add cached active-pair rebuilding over the existing legal pair lists,
+  - keep the current force law and final cutoff tests,
+  - add compact per-pair parameter-class lookup while touching the MARTINI pair loader,
+  - propagate `cache_buffer` into `martini_sc_table_1body` so both caches use the same skin concept.
+- Patched `src/martini.cpp`:
+  - `MartiniPotential` now stores:
+    - compact unique parameter rows,
+    - per-pair parameter-class indices,
+    - cached active pair indices,
+    - cached atom positions and cached box lengths;
+  - the hot loop now iterates only active pairs and uses pre-resolved spline pointers instead of per-step map lookups.
+- Patched `src/martini.cpp` for `MartiniScTableOneBody`:
+  - added cached active `(row, env)` contacts,
+  - cached CB point positions and environment atom positions for rebuild checks,
+  - moved accumulation to an active-contact pass plus a final row scaling pass,
+  - extended the MARTINI box updater so this node tracks NPT box changes.
+- Patched `py/martini_prepare_system_lib.py` so injected `martini_sc_table_1body` groups now carry `cache_buffer`.
+- Verification completed:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj`
+  - `source .venv/bin/activate && source source.sh && PYTHONPYCACHEPREFIX=/tmp/upside_pycache python -m py_compile py/martini_prepare_system_lib.py`
+  - reduced real workflow run in `/tmp/drym_neighborlist_verify`
+  - direct HDF5 attr check on `/tmp/drym_neighborlist_verify/checkpoints/1rkl.stage_7.0.up`
+- Observed result:
+  - the rebuild passed;
+  - the reduced `run_sim_1rkl.sh` ladder completed through fresh stage `7.0`;
+  - the fresh stage-7 artifact carries `cache_buffer = 1.0` on both:
+    - `input/potential/martini_potential`
+    - `input/potential/martini_sc_table_1body`.
+
 ## 2026-04-22 (Runtime Legacy-Style Cleanup)
 - Re-read the root `plan.md`, `findings.md`, and `progress.md` before editing, then opened the current `src/main.cpp`, `src/main.h`, `src/box.cpp`, `src/box.h`, and `src/martini.cpp` against representative older `src/` files plus `upside2-md-master/src/main.cpp`.
 - Confirmed the key split for this cleanup:

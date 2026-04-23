@@ -1,6 +1,40 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-23: The active dryMARTINI runtime does not use a neighbor list even though generic pairlist infrastructure exists elsewhere in the repo.
+  - `src/interaction_graph.h` provides a cached pairlist implementation used by nodes such as `backbone_pairs`,
+  - `src/martini.cpp::MartiniPotential` currently iterates the full `pairs` array directly in its hot loop,
+  - `src/martini.cpp::MartiniScTableOneBody` likewise iterates the full `(row, env)` candidate set and applies the cutoff only inside the loop;
+  - consequence:
+    - dryMARTINI runtime cost is dominated by repeatedly scanning mostly inactive candidates, not by missing input data in memory.
+- 2026-04-23: Input HDF5 tables are already copied into RAM during engine construction, so putting `.h5` files on a RAM disk is not the main runtime optimization.
+  - `src/main.cpp` initializes the engine from `/input/potential` once at startup,
+  - `src/deriv_engine.cpp` constructs each node from HDF5 once,
+  - `traverse_dset(...)` performs full `H5Dread` dataset loads into memory-backed containers during construction;
+  - consequence:
+    - RAM-disk placement may reduce startup or restart latency,
+    - but it does not remove the dominant per-step dryMARTINI compute cost.
+- 2026-04-23: A representative active hybrid artifact shows the dryMARTINI nonbonded loop is overwhelmingly sparse at runtime.
+  - on `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`:
+    - `n_atoms = 4323`,
+    - `martini_potential` stores `8,358,298` legal nonbonded pairs,
+    - only about `105,120` pairs were within the 12 A cutoff on the sampled frame, about `1.26%`,
+    - the pair coefficients collapse to only `29` unique 4-float parameter rows;
+  - consequence:
+    - cached active-pair rebuilding over the existing legal pair list is the highest-leverage exact-preserving speedup,
+    - compact per-pair parameter-class indexing is justified because the interaction table is highly repetitive.
+- 2026-04-23: The cached-shortlist implementation is behaviorally compatible with the active reduced Example 16 ladder.
+  - after patching `src/martini.cpp` and `py/martini_prepare_system_lib.py`:
+    - `cmake --build obj` passed under the repo environment,
+    - `python -m py_compile py/martini_prepare_system_lib.py` passed,
+    - a reduced fresh `example/16.MARTINI/run_sim_1rkl.sh` run in `/tmp/drym_neighborlist_verify` completed through stage `7.0`,
+    - the fresh stage-7 artifact contains:
+      - `input/potential/martini_potential.cache_buffer = 1.0`
+      - `input/potential/martini_sc_table_1body.cache_buffer = 1.0`
+      - unchanged `martini_sc_table_1body` cardinalities `n_rows = 117`, `n_env = 4025`;
+  - consequence:
+    - the new caching path integrates cleanly into the current workflow and metadata handoff,
+    - the remaining open question for a later pass is measured speedup, not integration correctness.
 - 2026-04-22: The runtime legacy-style cleanup is safe for the active Example 16 MARTINI path when limited to style plus dead-surface removal.
   - after restyling `src/main.cpp`, `src/main.h`, `src/box.cpp`, `src/box.h`, and `src/martini.cpp`:
     - `cmake --build obj` still passed under the repo environment,

@@ -3176,6 +3176,7 @@ def inject_stage7_sc_table_nodes(
         g_sc.attrs["x_len"] = np.float32(martini_potential.attrs["x_len"])
         g_sc.attrs["y_len"] = np.float32(martini_potential.attrs["y_len"])
         g_sc.attrs["z_len"] = np.float32(martini_potential.attrs["z_len"])
+        g_sc.attrs["cache_buffer"] = np.float32(martini_potential.attrs.get("cache_buffer", 1.0))
         g_sc.create_dataset("row_residue_index", data=rotamer_payload["affine_residue"], dtype=np.int32)
         g_sc.create_dataset("row_rotamer_index", data=rotamer_payload["row_rotamer_index"], dtype=np.int32)
         g_sc.create_dataset(

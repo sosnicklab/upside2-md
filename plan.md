@@ -59,6 +59,67 @@
     - stage `6.2` still writes `/output/box`,
     - stages `6.2` and `7.0` no longer expose `/output/pressure`, `/output/volume`, `/output/ewald_reciprocal_energy`, or `output/diagnostics/sc_env_energy_total`.
 
+## 2026-04-23 dryMARTINI Runtime Neighbor-List Speedup
+
+### Project Goal
+- Reduce dryMARTINI runtime cost in the active Example 16 workflow by replacing the current full allowed-pair scans with cached geometry shortlists, while preserving the existing force law, exclusions, and cutoff behavior.
+
+### Architecture & Key Decisions
+- Keep the legal interaction surface unchanged:
+  - `MartiniPotential` will still derive from the existing prebuilt `pairs` list written by the prep pipeline,
+  - `MartiniScTableOneBody` will still derive from the existing `(row, env)` candidate sets.
+- Do not add any RAM-disk or alternate in-memory HDF5 feature:
+  - runtime tables are already loaded into RAM during node construction,
+  - the optimization target is the hot compute loop, not startup I/O.
+- Use cached Verlet-style shortlists with a rebuild skin:
+  - `MartiniPotential` rebuilds an active pair-index list from `pairs` using `max(lj_cutoff, coul_cutoff) + cache_buffer`,
+  - `MartiniScTableOneBody` rebuilds an active `(row, env)` shortlist using `cutoff_ang + cache_buffer`,
+  - both caches rebuild when box lengths change or any tracked coordinate moves by more than half the skin.
+- Keep the implementation minimal and exact:
+  - reuse the current final cutoff checks during force/energy evaluation,
+  - do not change the pair exclusions or hybrid skip rules,
+  - avoid a full cell-list rewrite in this pass.
+- Reduce `MartiniPotential` hot-loop lookup overhead while touching the loader:
+  - store a compact per-pair parameter-class index instead of a full 4-float coefficient row,
+  - pre-resolve spline pointers per unique parameter class so the hot loop no longer does map lookups by `(epsilon, sigma)` or `qq`.
+- Keep box propagation correct under NPT:
+  - extend the MARTINI box-updater hook so `MartiniScTableOneBody` tracks box changes the same way as `MartiniPotential`.
+
+### Execution Phases
+- [x] Update the root task-tracking files for the dryMARTINI runtime speedup and record the exact optimization boundary.
+- [x] Patch `src/martini.cpp` so `MartiniPotential` uses a cached active-pair shortlist and compact parameter lookup.
+- [x] Patch `src/martini.cpp` so `MartiniScTableOneBody` uses a cached active `(row, env)` shortlist.
+- [x] Patch the stage-7 SC injection path to carry a `cache_buffer` attr into `martini_sc_table_1body`.
+- [x] Rebuild and run targeted verification for build health and reduced Example 16 execution.
+
+### Known Errors / Blockers
+- None so far.
+
+### Review
+- Reworked [src/martini.cpp](/Users/yinhan/Documents/upside2-md/src/martini.cpp:1907) so `MartiniPotential` no longer scans every legal nonbonded pair on every step:
+  - added a cached active-pair shortlist built from the existing `pairs` array using `max(lj_cutoff, coul_cutoff) + cache_buffer`,
+  - rebuilds the shortlist only when tracked coordinates move more than half the skin or the box changes,
+  - keeps the current final cutoff, hybrid skip rules, and force law unchanged.
+- Compacted the `MartiniPotential` pair parameter path:
+  - replaced the per-pair 4-float coefficient payload with a per-pair parameter-class index,
+  - deduplicated coefficient rows at load time for the original format,
+  - pre-resolved spline pointers per unique parameter class so the hot loop no longer performs `(epsilon, sigma)` or `qq` map lookups.
+- Reworked [src/martini.cpp](/Users/yinhan/Documents/upside2-md/src/martini.cpp:2662) so `MartiniScTableOneBody` uses the same cached-shortlist idea:
+  - rebuilds an active `(row, env)` list using `cutoff_ang + cache_buffer`,
+  - caches only the CB point positions and environment atom positions needed for the distance gate,
+  - keeps the existing energy and derivative evaluation unchanged after the shortlist filter.
+- Extended the MARTINI box-propagation hook so `martini_sc_table_1body` now tracks NPT box changes alongside the other MARTINI nodes.
+- Patched [py/martini_prepare_system_lib.py](/Users/yinhan/Documents/upside2-md/py/martini_prepare_system_lib.py:3170) so stage-7 injection writes `cache_buffer` onto `martini_sc_table_1body`, reusing the same skin value carried by `martini_potential`.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj`
+  - `source .venv/bin/activate && source source.sh && PYTHONPYCACHEPREFIX=/tmp/upside_pycache python -m py_compile py/martini_prepare_system_lib.py`
+  - reduced real workflow run:
+    - `source .venv/bin/activate && source source.sh && RUN_DIR=/tmp/drym_neighborlist_verify MIN_60_MAX_ITER=1 MIN_61_MAX_ITER=1 EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1 PROD_70_NSTEPS=1 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1 bash example/16.MARTINI/run_sim_1rkl.sh`
+  - direct HDF5 check on `/tmp/drym_neighborlist_verify/checkpoints/1rkl.stage_7.0.up`:
+    - `martini_potential.cache_buffer = 1.0`
+    - `martini_sc_table_1body.cache_buffer = 1.0`
+    - `martini_sc_table_1body` still contains `117` rows and `4025` environment atoms.
+
 ## 2026-04-22 MARTINI Python Legacy-Style Cleanup
 
 ### Project Goal
