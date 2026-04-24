@@ -183,3 +183,53 @@
   - `martini_masses::load_masses_for_engine(...)` in `src/main.cpp`,
   - `martini_masses::has_masses(...)` and `martini_masses::get_mass(...)` inside `src/deriv_engine.cpp`.
 - A fresh out-of-tree build from `src/CMakeLists.txt` completed successfully after the removal.
+
+## 2026-04-24 (Workflow Port: Temp Repo Wrappers Must Be Adapted, Not Copied)
+- The temp repo's `1afo` wrappers assume a different base workflow and a different prep surface:
+  - temp `run_sim_1afo*.sh` delegate to an AA-backbone-flavored `run_sim_1rkl.sh`,
+  - this repo's base workflow is the hybrid workflow with stage-0 packing plus hybrid-mapping injection,
+  - this repo also uses `${UPSIDE_HOME}/parameters/dryMARTINI/DOPC.pdb` by default rather than `example/16.MARTINI/pdb/DOPC.pdb`.
+- Consequence:
+  - the correct port here is thin wrappers around this repo's `run_sim_1rkl.sh`,
+  - wrapper defaults must stay hybrid-specific (`*_hybrid` run/runtime ids) and must not hardcode the temp repo's bilayer path.
+
+## 2026-04-24 (1AFO Hybrid Prep Requires Unique Residue Index + Chain Metadata)
+- `example/16.MARTINI/pdb/1AFO.pdb` is a two-chain protein with reused raw residue numbers across chains.
+- In this repo's hybrid metadata path before the fix:
+  - `collect_bb_map(...)` stored raw `resseq` as `bb_residue_index`,
+  - `write_hybrid_mapping_h5(...)` did not emit `bb_chain_id` or `/input/chain_break`,
+  - `inject_backbone_nodes(...)` rebuilt the topology with `uc.n_chains = 1`,
+  - `martini_extract_vtf.py` labeled appended AA-backbone atoms as chain `A` and linked peptide bonds across the chain boundary.
+- Correct fix:
+  - assign a unique sequential `bb_residue_index`,
+  - preserve `bb_resseq`, `bb_chain_id`, and `bb_icode`,
+  - derive and write `/input/chain_break`,
+  - propagate that metadata into the prepared stage file and VTF export.
+- Verification after the fix on `outputs/1afo_port_smoke2/checkpoints/1afo.stage_7.0.up`:
+  - `n_bb = 72`,
+  - `unique_bb_residue_index = 72`,
+  - `bb_chain_ids = ['A', 'B']`,
+  - `chain_first_residue = [36]`,
+  - no `Distance3D` bond exists between sequence indices `35` and `36`,
+  - exported `1afo.stage_7.0.vtf` contains both chain `A` and chain `B`.
+
+## 2026-04-24 (1AFO Martinize Output Needs Runtime ITP Expansion)
+- This repo's base workflow originally assumed the martinize `.top` referenced a single protein ITP that already matched the runtime packed PDB.
+- For `1AFO`, martinize writes:
+  - one included ITP `PROA_A.itp` containing `36` residues,
+  - a `.top` with two `PROA_A` molecules under `[ molecules ]`.
+- Consequence:
+  - blindly copying the included ITP into the runtime path makes stage conversion fail on the two-chain packed PDB.
+- Correct fix:
+  - materialize a runtime ITP from the `.top` by repeating and index-offsetting the included protein ITP once per molecule entry.
+- Verification after the fix:
+  - `outputs/1afo_port_smoke2/martinize/1afo_hybrid.runtime.itp` passed mass-table validation,
+  - the reduced `1afo` hybrid smoke completed through stage `7.0` using the expanded runtime ITP.
+
+## 2026-04-24 (Wrapper Continuation Detection Must Accept Current Repo Naming)
+- The temp repo moved to numbered continuation files (`stage_7.1.up`, `stage_7.2.up`, ...), but this repo's current hybrid base workflow still defaults to `stage_7.0.continue.up`.
+- Consequence:
+  - wrapper auto-resume logic in this repo must accept both shapes:
+    - `stage_7.0.continue.up`
+    - `stage_7.<n>.up`
+- The new `1afo` wrappers and the updated `run_sim_1rkl_outlipid.sh` now sort both naming styles and derive `RUN_DIR` from the selected checkpoint path.

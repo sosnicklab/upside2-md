@@ -123,3 +123,52 @@
   - removed `martini_masses::martini_integration_stage(...)` from `src/martini.cpp`
   - confirmed no remaining source references under `src/`
   - verified a clean out-of-tree configure/build from `src/CMakeLists.txt` in `/tmp/upside2-md-stagecheck`
+
+## 2026-04-24 (Workflow Port: 1AFO + Temp-Repo Wrapper Sync)
+
+### Project Goal
+- Add `run_sim_1afo.sh` and `run_sim_1afo_outlipid.sh` to this repo and align the existing `1rkl` outlipid wrapper with the temp-repo workflow behavior, while keeping the current repo on its hybrid prep/runtime path.
+
+### Architecture & Key Decisions
+- Do not copy the temp repo's full `run_sim_1rkl.sh`.
+  - This repo's base workflow is the hybrid workflow and already owns the correct prep/stage-injection path.
+- Implement `1afo` as thin wrappers around this repo's `run_sim_1rkl.sh`.
+  - Override only the PDB id, input PDB path, run-directory defaults, outlipid placement defaults, and continuation autodetection rules.
+- Patch the shared hybrid prep/runtime path for multi-chain `1AFO`.
+  - The wrappers alone are insufficient because the current hybrid metadata still collapses chain-local residue numbers and does not propagate chain-break metadata into stage-7 topology reconstruction.
+- Keep continuation compatibility with this repo's current base workflow.
+  - Wrapper autodetection should accept the current `.stage_7.0.continue.up` naming as well as numbered `.stage_7.<n>.up` files so the new wrappers work without forcing a larger continuation refactor.
+
+### Execution Phases
+- [x] Phase 1: Patch shared hybrid metadata/runtime code for unique multi-chain backbone residue indexing and chain-break propagation.
+- [x] Phase 2: Patch VTF export so appended AA-backbone atoms preserve chain ids and skip cross-chain peptide links.
+- [x] Phase 3: Add `run_sim_1afo.sh` and `run_sim_1afo_outlipid.sh` with Slurm-safe bootstrap and wrapper-level continuation autodetection.
+- [x] Phase 4: Update `run_sim_1rkl_outlipid.sh` to the same wrapper autodetection/bootstrap pattern adapted to this repo.
+- [x] Phase 5: Run shell syntax checks and a reduced local `1afo` smoke path, then document review notes.
+
+### Known Errors / Blockers
+- No open blocker from the implementation pass.
+
+### Review
+- Implemented:
+  - multi-chain-safe hybrid metadata in `py/martini_prepare_system_lib.py`
+  - chain-aware AA-backbone VTF export in `py/martini_extract_vtf.py`
+  - optional `chain_break` propagation during hybrid stage-file injection in `example/16.MARTINI/run_sim_1rkl.sh`
+  - multi-chain runtime ITP materialization from martinize `.top` in `example/16.MARTINI/run_sim_1rkl.sh`
+  - new hybrid wrappers `example/16.MARTINI/run_sim_1afo.sh` and `example/16.MARTINI/run_sim_1afo_outlipid.sh`
+  - updated outlipid wrapper autodetection/bootstrap in `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+- Verified:
+  - `bash -n` on all four workflow entrypoints
+  - `.venv/bin/python3 -m py_compile py/martini_prepare_system_lib.py py/martini_extract_vtf.py`
+  - reduced `1afo` end-to-end hybrid smoke:
+    - `RUN_DIR=outputs/1afo_port_smoke2`
+    - all minimization / equilibration / production lengths reduced to `1`
+    - completed through `outputs/1afo_port_smoke2/checkpoints/1afo.stage_7.0.up`
+  - stage-7 artifact audit:
+    - `n_bb = 72`
+    - `unique_bb_residue_index = 72`
+    - `bb_chain_ids = ['A', 'B']`
+    - `chain_first_residue = [36]`
+    - `chain_counts = [1, 1]`
+    - no `Distance3D` bond between sequence indices `35` and `36`
+    - `example/16.MARTINI/outputs/1afo_port_smoke2/1afo.stage_7.0.vtf` contains both `segid sA chain A` and `segid sB chain B`

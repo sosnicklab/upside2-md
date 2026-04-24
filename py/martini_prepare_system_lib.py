@@ -823,6 +823,7 @@ def collect_bb_map(protein_aa_atoms, protein_cg_atoms):
         )
         bb_entries.append(
             {
+                "bb_residue_index": len(bb_entries) + 1,
                 "bb_resseq": atom["resseq"],
                 "bb_chain": atom["chain"],
                 "bb_icode": atom["icode"],
@@ -836,6 +837,20 @@ def collect_bb_map(protein_aa_atoms, protein_cg_atoms):
             }
         )
     return bb_entries
+
+
+def derive_chain_break_metadata(bb_entries):
+    if not bb_entries:
+        return np.array([], dtype=np.int32), np.array([], dtype=np.int32)
+
+    chain_ids = [str(entry.get("bb_chain", "")).strip() or " " for entry in bb_entries]
+    chain_first_residue = [
+        residue_index
+        for residue_index in range(1, len(chain_ids))
+        if chain_ids[residue_index] != chain_ids[residue_index - 1]
+    ]
+    n_chains = len(chain_first_residue) + 1
+    return np.asarray(chain_first_residue, dtype=np.int32), np.ones(n_chains, dtype=np.int32)
 
 
 def write_hybrid_mapping_h5(
@@ -863,7 +878,25 @@ def write_hybrid_mapping_h5(
         bb_grp.attrs["runtime_index_space"] = b"stage_runtime_after_injection"
         bb_grp.create_dataset(
             "bb_residue_index",
+            data=np.array([b.get("bb_residue_index", b["bb_resseq"]) for b in bb_entries], dtype=np.int32),
+        )
+        bb_grp.create_dataset(
+            "bb_resseq",
             data=np.array([b["bb_resseq"] for b in bb_entries], dtype=np.int32),
+        )
+        bb_grp.create_dataset(
+            "bb_chain_id",
+            data=np.array(
+                [str(b.get("bb_chain", "")).strip() or " " for b in bb_entries],
+                dtype=h5py.string_dtype(encoding="utf-8"),
+            ),
+        )
+        bb_grp.create_dataset(
+            "bb_icode",
+            data=np.array(
+                [str(b.get("bb_icode", "")).strip() or " " for b in bb_entries],
+                dtype=h5py.string_dtype(encoding="utf-8"),
+            ),
         )
         bb_grp.create_dataset(
             "bb_atom_index",
@@ -918,6 +951,12 @@ def write_hybrid_mapping_h5(
             "protein_membership",
             data=membership,
         )
+
+        chain_first_residue, chain_counts = derive_chain_break_metadata(bb_entries)
+        if chain_first_residue.size:
+            break_grp = inp.create_group("chain_break")
+            break_grp.create_dataset("chain_first_residue", data=chain_first_residue, dtype=np.int32)
+            break_grp.create_dataset("chain_counts", data=chain_counts, dtype=np.int32)
 
 
 def write_summary(path: Path, payload: Dict):
@@ -3343,6 +3382,25 @@ def validate_hybrid_mapping(mapping_h5: Path, n_atom: int | None = None):
             )
         n_atom_runtime = int(membership.shape[0])
 
+        if "chain_break" in inp:
+            chain_break = require_group(inp, "chain_break")
+            chain_first_residue = require_dataset(chain_break, "chain_first_residue")[:]
+            chain_counts = require_dataset(chain_break, "chain_counts")[:]
+            if chain_first_residue.ndim != 1:
+                raise ValueError("chain_break/chain_first_residue must be 1D")
+            if chain_counts.ndim != 1:
+                raise ValueError("chain_break/chain_counts must be 1D")
+            if chain_counts.shape[0] != chain_first_residue.shape[0] + 1:
+                raise ValueError("chain_break/chain_counts length must equal number of chains")
+            if chain_first_residue.size and np.any(chain_first_residue[:-1] >= chain_first_residue[1:]):
+                raise ValueError("chain_break/chain_first_residue must be strictly increasing")
+            if chain_first_residue.size and (
+                np.any(chain_first_residue <= 0) or np.any(chain_first_residue >= n_bb)
+            ):
+                raise ValueError("chain_break/chain_first_residue entries must be within (0, n_bb)")
+            if np.any(chain_counts <= 0):
+                raise ValueError("chain_break/chain_counts entries must be positive")
+
         for i in range(n_bb):
             bb_i = int(bb_atom_idx[i])
             if bb_i < 0 or bb_i >= n_atom_runtime:
@@ -3837,13 +3895,28 @@ def inject_backbone_nodes(
     fasta_seq = np.asarray(sequence)
     ref_n_atom = 3 * len(sequence)
     spring_args = types.SimpleNamespace(bond_stiffness=48.0, angle_stiffness=175.0, omega_stiffness=30.0)
+    chain_first_residue = np.array([], dtype=np.int32)
+
+    with h5py.File(up_file, "r") as up:
+        inp = up["input"]
+        if "chain_break" in inp and "chain_first_residue" in inp["chain_break"]:
+            chain_first_residue = inp["chain_break"]["chain_first_residue"][:].astype(np.int32)
+        elif "hybrid_bb_map" in inp and "bb_chain_id" in inp["hybrid_bb_map"]:
+            bb_chain_ids = decode_string_array(inp["hybrid_bb_map"]["bb_chain_id"])
+            chain_first_residue, _ = derive_chain_break_metadata(
+                [{"bb_chain": chain_id} for chain_id in bb_chain_ids]
+            )
+    n_chains = int(chain_first_residue.size) + 1
+    chain_starts = np.append(np.array([0], dtype=np.int32), chain_first_residue) * 3
 
     with tb.open_file(str(up_file), mode="a") as tf:
         uc.t = tf
         uc.potential = tf.root.input.potential
         uc.n_atom = ref_n_atom
-        uc.n_chains = 1
-        uc.chain_starts = np.array([0], dtype=np.int32)
+        uc.n_chains = n_chains
+        uc.chain_first_residue = chain_first_residue.astype(np.int32, copy=False)
+        uc.chain_starts = chain_starts.astype(np.int32, copy=False)
+        uc.rl_chains = None
         uc.use_intensive_memory = False
 
         uc.write_dist_spring(spring_args)

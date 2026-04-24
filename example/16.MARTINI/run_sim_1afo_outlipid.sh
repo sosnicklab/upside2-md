@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=1rkl_outlipid
+#SBATCH --job-name=1afo_outlipid
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --time=36:00:00
 #SBATCH --ntasks=1
@@ -21,20 +21,21 @@ if [ -z "${BASE_WORKFLOW_SCRIPT}" ]; then
         "${PWD}/example/16.MARTINI" \
         "${SCRIPT_DIR}"
     do
-        if [ -n "${candidate_dir}" ] && [ -f "${candidate_dir}/run_sim_1rkl.sh" ]; then
-            BASE_WORKFLOW_SCRIPT="${candidate_dir}/run_sim_1rkl.sh"
+        if [ -n "${candidate_dir}" ] && [ -f "${candidate_dir}/run_sim_1afo.sh" ]; then
+            BASE_WORKFLOW_SCRIPT="${candidate_dir}/run_sim_1afo.sh"
             break
         fi
     done
 fi
 
 if [ -z "${BASE_WORKFLOW_SCRIPT}" ]; then
-    echo "ERROR: could not locate run_sim_1rkl.sh." >&2
+    echo "ERROR: could not locate run_sim_1afo.sh." >&2
     echo "Set BASE_WORKFLOW_SCRIPT explicitly or submit from the repo root or example/16.MARTINI." >&2
     exit 1
 fi
 
 PROJECT_ROOT="${UPSIDE_PROJECT_ROOT:-$(cd "$(dirname "${BASE_WORKFLOW_SCRIPT}")/../.." && pwd)}"
+WORKFLOW_DIR="$(cd "$(dirname "${BASE_WORKFLOW_SCRIPT}")" && pwd)"
 
 if [ -f /etc/profile.d/modules.sh ]; then
     source /etc/profile.d/modules.sh
@@ -70,7 +71,7 @@ glob_pattern = sys.argv[2]
 if not root.exists():
     raise SystemExit(0)
 
-name_pattern = re.compile(r"^1rkl\.stage_7\.(\d+)(?:\.continue)?\.up$")
+name_pattern = re.compile(r"^1afo\.stage_7\.(\d+)(?:\.continue)?\.up$")
 candidates = []
 for path in root.glob(glob_pattern):
     if not path.is_file():
@@ -90,7 +91,7 @@ PY
 }
 
 autodetect_previous_stage70_file() {
-    select_latest_stage70_file "${SCRIPT_DIR}/outputs" "martini_test_1rkl_outlipid*/checkpoints/1rkl.stage_7*.up"
+    select_latest_stage70_file "${WORKFLOW_DIR}/outputs" "martini_test_1afo_outlipid*/checkpoints/1afo.stage_7*.up"
 }
 
 resolve_previous_stage70_from_run_dir() {
@@ -103,10 +104,10 @@ import sys
 root = Path(sys.argv[1]).resolve()
 checkpoints = root / "checkpoints"
 search_dir = checkpoints if checkpoints.is_dir() else root
-name_pattern = re.compile(r"^1rkl\.stage_7\.(\d+)(?:\.continue)?\.up$")
+name_pattern = re.compile(r"^1afo\.stage_7\.(\d+)(?:\.continue)?\.up$")
 candidates = []
 if search_dir.is_dir():
-    for path in search_dir.glob("1rkl.stage_7*.up"):
+    for path in search_dir.glob("1afo.stage_7*.up"):
         if not path.is_file():
             continue
         match = name_pattern.fullmatch(path.name)
@@ -138,7 +139,7 @@ else:
 PY
 }
 
-# Outside-of-bilayer 1RKL start:
+# Outside-of-bilayer 1AFO start:
 # - place the protein above the upper leaflet,
 # - rotate it into a laid-flat orientation,
 # - enlarge the box so unfolding has more room than the embedded workflow.
@@ -148,13 +149,9 @@ PY
 # - set CONTINUE_STAGE_70_FROM directly to a previous stage_7.*.up file, or
 # - set PREVIOUS_STAGE7_FILE to that file, or
 # - set PREVIOUS_RUN_DIR and the wrapper will use the newest
-#   ${PREVIOUS_RUN_DIR}/checkpoints/1rkl.stage_7*.up
+#   ${PREVIOUS_RUN_DIR}/checkpoints/1afo.stage_7*.up
 # - set AUTO_CONTINUE_FROM_PREVIOUS_RUN=0 to force a scratch start even
 #   when a previous outlipid stage-7 artifact exists.
-# Seed options:
-# - leave PREP_SEED and SEED unset to let the base workflow generate them
-#   randomly per run,
-# - set PREP_SEED and/or SEED explicitly for reproducible reruns.
 if [ -z "${CONTINUE_STAGE_70_FROM:-}" ]; then
     if [ -n "${PREVIOUS_STAGE7_FILE:-}" ]; then
         export CONTINUE_STAGE_70_FROM="${PREVIOUS_STAGE7_FILE}"
@@ -177,9 +174,9 @@ if [ -n "${CONTINUE_STAGE_70_FROM:-}" ] && [ -z "${RUN_DIR:-}" ]; then
         export RUN_DIR="${derived_run_dir}"
     fi
 fi
-export RUN_DIR="${RUN_DIR:-outputs/martini_test_1rkl_outlipid}"
+export RUN_DIR="${RUN_DIR:-outputs/martini_test_1afo_outlipid}"
 
-export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1rkl_outlipid}"
+export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1afo_outlipid}"
 export PROTEIN_PLACEMENT_MODE="${PROTEIN_PLACEMENT_MODE:-outside-top}"
 export PROTEIN_ORIENTATION_MODE="${PROTEIN_ORIENTATION_MODE:-lay-flat}"
 export PROTEIN_SURFACE_GAP="${PROTEIN_SURFACE_GAP:-6.0}"
@@ -189,5 +186,8 @@ export BOX_PADDING_Z="${BOX_PADDING_Z:-50.0}"
 export PROTEIN_LIPID_CUTOFF="${PROTEIN_LIPID_CUTOFF:-5.0}"
 export PROTEIN_LIPID_MIN_GAP="${PROTEIN_LIPID_MIN_GAP:-5.0}"
 export PROTEIN_LIPID_CUTOFF_MAX="${PROTEIN_LIPID_CUTOFF_MAX:-10.0}"
+export DISABLE_1AFO_AUTO_CONTINUE="1"
+export DISABLE_1AFO_HYBRID_AUTO_CONTINUE="1"
+export DISABLE_1AFO_AABB_AUTO_CONTINUE="1"
 
 exec "${BASE_WORKFLOW_SCRIPT}" "$@"

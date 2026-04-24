@@ -317,12 +317,17 @@ def build_backbone_projection_map(struct_h5, input_pos):
         ref_atom_names = decode_str_array(bb["reference_atom_names"])
     else:
         ref_atom_names = np.array(["N", "CA", "C", "O"], dtype=object)
+    if "bb_chain_id" in bb:
+        bb_chain_ids = decode_str_array(bb["bb_chain_id"])
+    else:
+        bb_chain_ids = np.array(["A"] * bb_atom_index.shape[0], dtype=object)
 
     n_particles = input_pos.shape[0]
     valid = (bb_atom_index >= 0) & (bb_atom_index < n_particles)
     bb_atom_index = bb_atom_index[valid]
     bb_residue_index = bb_residue_index[valid]
     ref_coords = ref_coords[valid]
+    bb_chain_ids = np.asarray(bb_chain_ids, dtype=object)[valid]
     if bb_atom_index.size == 0:
         return None
 
@@ -378,6 +383,7 @@ def build_backbone_projection_map(struct_h5, input_pos):
         "bb_atom_index": bb_atom_index,
         "bb_residue_index": bb_residue_index,
         "bb_residue_names": bb_residue_names,
+        "bb_chain_ids": bb_chain_ids,
         "ref_coords": ref_coords,
         "ref_atom_names": np.array(ref_atom_names, dtype=object),
         "weights": weights,
@@ -426,12 +432,14 @@ def build_mode1_mapping(
     out_chain_ids = [str(x).strip() or "X" for x in np.asarray(mart_chain_ids, dtype=object)]
     include_aa_backbone = bb_map is not None
     if include_aa_backbone:
-        for resid, rname in zip(bb_map["bb_residue_index"], bb_map["bb_residue_names"]):
+        for resid, rname, chain_id in zip(
+            bb_map["bb_residue_index"], bb_map["bb_residue_names"], bb_map["bb_chain_ids"]
+        ):
             for aname in bb_map["ref_atom_names"]:
                 out_atom_names.append(str(aname))
                 out_res_names.append(str(rname))
                 out_res_ids.append(int(resid))
-                out_chain_ids.append("A")
+                out_chain_ids.append(str(chain_id).strip() or "A")
 
     return {
         "mode": 1,
@@ -487,12 +495,14 @@ def build_mode2_mapping(
     out_res_ids = [int(x) for x in env_res_ids]
     out_chain_ids = [str(x).strip() or "X" for x in np.asarray(env_chain_ids, dtype=object)]
 
-    for resid, rname in zip(bb_map["bb_residue_index"], bb_map["bb_residue_names"]):
+    for resid, rname, chain_id in zip(
+        bb_map["bb_residue_index"], bb_map["bb_residue_names"], bb_map["bb_chain_ids"]
+    ):
         for aname in bb_map["ref_atom_names"]:
             out_atom_names.append(str(aname))
             out_res_names.append(str(rname))
             out_res_ids.append(int(resid))
-            out_chain_ids.append("A")
+            out_chain_ids.append(str(chain_id).strip() or "A")
 
     return {
         "mode": 2,
@@ -505,7 +515,7 @@ def build_mode2_mapping(
     }
 
 
-def mode2_backbone_bonds(start_idx, n_bb):
+def mode2_backbone_bonds(start_idx, n_bb, bb_chain_ids=None):
     bonds = []
     for r in range(n_bb):
         b = start_idx + 4 * r
@@ -513,6 +523,11 @@ def mode2_backbone_bonds(start_idx, n_bb):
         bonds.append((b + 1, b + 2))
         bonds.append((b + 2, b + 3))
     for r in range(n_bb - 1):
+        if bb_chain_ids is not None:
+            chain_left = str(bb_chain_ids[r]).strip() or " "
+            chain_right = str(bb_chain_ids[r + 1]).strip() or " "
+            if chain_left != chain_right:
+                continue
         b0 = start_idx + 4 * r
         b1 = start_idx + 4 * (r + 1)
         bonds.append((b0 + 2, b1 + 0))
@@ -776,13 +791,25 @@ def main():
             out_bonds = remap_bonds(dist_bonds, idx_map)
             if mapping.get("include_aa_backbone", False):
                 bb_start = len(mart_idx)
-                out_bonds.extend(mode2_backbone_bonds(bb_start, mapping["bb_map"]["bb_atom_index"].shape[0]))
+                out_bonds.extend(
+                    mode2_backbone_bonds(
+                        bb_start,
+                        mapping["bb_map"]["bb_atom_index"].shape[0],
+                        mapping["bb_map"].get("bb_chain_ids"),
+                    )
+                )
         else:
             non_idx = mapping["non_protein_idx"]
             idx_map = {int(old): int(new) for new, old in enumerate(non_idx)}
             out_bonds = remap_bonds(dist_bonds, idx_map)
             bb_start = len(non_idx)
-            out_bonds.extend(mode2_backbone_bonds(bb_start, mapping["bb_map"]["bb_atom_index"].shape[0]))
+            out_bonds.extend(
+                mode2_backbone_bonds(
+                    bb_start,
+                    mapping["bb_map"]["bb_atom_index"].shape[0],
+                    mapping["bb_map"].get("bb_chain_ids"),
+                )
+            )
 
         if args.split_segments:
             output_groups = list_output_groups(t)

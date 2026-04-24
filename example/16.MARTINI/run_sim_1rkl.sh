@@ -442,6 +442,132 @@ PY
     echo "${out_path}"
 }
 
+materialize_runtime_itp_from_top() {
+    local top_file="$1"
+    local source_itp="$2"
+    local out_itp="$3"
+
+    python3 - "$top_file" "$source_itp" "$out_itp" << 'PY'
+from pathlib import Path
+import re
+import sys
+
+top_file = Path(sys.argv[1]).resolve()
+source_itp = Path(sys.argv[2]).resolve()
+out_itp = Path(sys.argv[3]).resolve()
+
+source_lines = source_itp.read_text(encoding="utf-8", errors="ignore").splitlines()
+
+moleculetype_name = None
+current_section = None
+atom_count = 0
+residue_count = 0
+for raw in source_lines:
+    stripped = raw.strip()
+    lower = stripped.lower()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        current_section = stripped[1:-1].strip().lower()
+        continue
+    if not stripped or stripped.startswith(";"):
+        continue
+    if current_section == "moleculetype" and moleculetype_name is None:
+        moleculetype_name = stripped.split()[0]
+    elif current_section == "atoms":
+        parts = stripped.split()
+        if len(parts) >= 6:
+            atom_count = max(atom_count, int(parts[0]))
+            residue_count = max(residue_count, int(parts[2]))
+
+if not moleculetype_name:
+    raise SystemExit(f"ERROR: could not resolve moleculetype name from {source_itp}")
+if atom_count <= 0 or residue_count <= 0:
+    raise SystemExit(f"ERROR: could not resolve atom/residue counts from {source_itp}")
+
+copy_count = 0
+in_molecules = False
+for raw in top_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+    stripped = raw.split(";", 1)[0].strip()
+    lower = stripped.lower()
+    if not stripped:
+        continue
+    if stripped.startswith("[") and stripped.endswith("]"):
+        in_molecules = (stripped[1:-1].strip().lower() == "molecules")
+        continue
+    if not in_molecules:
+        continue
+    parts = stripped.split()
+    if len(parts) >= 2 and parts[0] == moleculetype_name:
+        copy_count += int(parts[1])
+
+if copy_count <= 0:
+    copy_count = 1
+
+if copy_count == 1:
+    out_itp.write_text("\n".join(source_lines) + "\n", encoding="utf-8")
+    raise SystemExit(0)
+
+section_index_offsets = {
+    "bonds": 2,
+    "constraints": 2,
+    "pairs": 2,
+    "angles": 3,
+    "dihedrals": 4,
+    "position_restraints": 1,
+}
+
+def split_comment(line: str):
+    if ";" in line:
+        body, comment = line.split(";", 1)
+        return body.rstrip(), ";" + comment
+    return line.rstrip(), ""
+
+def transform_line(raw: str, current_section: str | None, atom_offset: int, residue_offset: int):
+    body, comment = split_comment(raw)
+    stripped = body.strip()
+    if not stripped:
+        return raw
+    if stripped.startswith("[") and stripped.endswith("]"):
+        return raw
+    if stripped.startswith(";"):
+        return raw
+
+    parts = body.split()
+    if current_section == "atoms" and len(parts) >= 6:
+        parts[0] = str(int(parts[0]) + atom_offset)
+        parts[2] = str(int(parts[2]) + residue_offset)
+        parts[5] = str(int(parts[5]) + atom_offset)
+    elif current_section in section_index_offsets:
+        n_index = section_index_offsets[current_section]
+        for idx in range(min(n_index, len(parts))):
+            parts[idx] = str(int(parts[idx]) + atom_offset)
+    elif current_section == "exclusions":
+        for idx in range(len(parts)):
+            parts[idx] = str(int(parts[idx]) + atom_offset)
+
+    transformed = " ".join(parts)
+    if comment:
+        transformed = f"{transformed} {comment}"
+    return transformed
+
+rendered = []
+for copy_index in range(copy_count):
+    atom_offset = copy_index * atom_count
+    residue_offset = copy_index * residue_count
+    current_section = None
+    if copy_index > 0:
+        rendered.append("")
+    for raw in source_lines:
+        stripped = raw.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            current_section = stripped[1:-1].strip().lower()
+            rendered.append(raw)
+            continue
+        rendered.append(transform_line(raw, current_section, atom_offset, residue_offset))
+
+out_itp.write_text("\n".join(rendered) + "\n", encoding="utf-8")
+PY
+}
+
 assert_itp_types_have_masses() {
     local itp_file="$1"
     local ff_file="$2"
@@ -541,10 +667,12 @@ PY
             exit 1
         fi
 
-        assert_itp_types_have_masses "${generated_itp}" "${mass_ff_path}"
+        local runtime_itp="${martinize_dir}/${RUNTIME_PDB_ID}.runtime.itp"
+        materialize_runtime_itp_from_top "${top_file}" "${generated_itp}" "${runtime_itp}"
+        assert_itp_types_have_masses "${runtime_itp}" "${mass_ff_path}"
 
         PROTEIN_CG_EFFECTIVE="${cg_pdb}"
-        PROTEIN_ITP_EFFECTIVE="${generated_itp}"
+        PROTEIN_ITP_EFFECTIVE="${runtime_itp}"
     else
         if [ ! -f "${PROTEIN_CG_PDB}" ]; then
             echo "ERROR: protein CG PDB not found: ${PROTEIN_CG_PDB}"
@@ -783,6 +911,7 @@ groups = [
     "hybrid_bb_map",
     "hybrid_env_topology",
 ]
+optional_groups = ("chain_break",)
 
 BB_COMPONENT_MASS = {
     "N": 14.0,
@@ -825,6 +954,12 @@ with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
     for g in groups:
         if g not in src_inp:
             raise ValueError(f"Missing mapping group in {mapping_file}: /input/{g}")
+        if g in dst_inp:
+            del dst_inp[g]
+        src.copy(src_inp[g], dst_inp, name=g)
+    for g in optional_groups:
+        if g not in src_inp:
+            continue
         if g in dst_inp:
             del dst_inp[g]
         src.copy(src_inp[g], dst_inp, name=g)

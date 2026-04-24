@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=1rkl_outlipid
+#SBATCH --job-name=1afo_hybrid
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --time=36:00:00
 #SBATCH --ntasks=1
@@ -35,6 +35,7 @@ if [ -z "${BASE_WORKFLOW_SCRIPT}" ]; then
 fi
 
 PROJECT_ROOT="${UPSIDE_PROJECT_ROOT:-$(cd "$(dirname "${BASE_WORKFLOW_SCRIPT}")/../.." && pwd)}"
+WORKFLOW_DIR="$(cd "$(dirname "${BASE_WORKFLOW_SCRIPT}")" && pwd)"
 
 if [ -f /etc/profile.d/modules.sh ]; then
     source /etc/profile.d/modules.sh
@@ -70,7 +71,7 @@ glob_pattern = sys.argv[2]
 if not root.exists():
     raise SystemExit(0)
 
-name_pattern = re.compile(r"^1rkl\.stage_7\.(\d+)(?:\.continue)?\.up$")
+name_pattern = re.compile(r"^1afo\.stage_7\.(\d+)(?:\.continue)?\.up$")
 candidates = []
 for path in root.glob(glob_pattern):
     if not path.is_file():
@@ -90,7 +91,7 @@ PY
 }
 
 autodetect_previous_stage70_file() {
-    select_latest_stage70_file "${SCRIPT_DIR}/outputs" "martini_test_1rkl_outlipid*/checkpoints/1rkl.stage_7*.up"
+    select_latest_stage70_file "${WORKFLOW_DIR}/outputs" "martini_test_1afo_hybrid*/checkpoints/1afo.stage_7*.up"
 }
 
 resolve_previous_stage70_from_run_dir() {
@@ -103,10 +104,10 @@ import sys
 root = Path(sys.argv[1]).resolve()
 checkpoints = root / "checkpoints"
 search_dir = checkpoints if checkpoints.is_dir() else root
-name_pattern = re.compile(r"^1rkl\.stage_7\.(\d+)(?:\.continue)?\.up$")
+name_pattern = re.compile(r"^1afo\.stage_7\.(\d+)(?:\.continue)?\.up$")
 candidates = []
 if search_dir.is_dir():
-    for path in search_dir.glob("1rkl.stage_7*.up"):
+    for path in search_dir.glob("1afo.stage_7*.up"):
         if not path.is_file():
             continue
         match = name_pattern.fullmatch(path.name)
@@ -138,23 +139,8 @@ else:
 PY
 }
 
-# Outside-of-bilayer 1RKL start:
-# - place the protein above the upper leaflet,
-# - rotate it into a laid-flat orientation,
-# - enlarge the box so unfolding has more room than the embedded workflow.
-# Continuation options:
-# - by default the wrapper auto-detects the newest previous outlipid
-#   stage-7 artifact under `outputs/`,
-# - set CONTINUE_STAGE_70_FROM directly to a previous stage_7.*.up file, or
-# - set PREVIOUS_STAGE7_FILE to that file, or
-# - set PREVIOUS_RUN_DIR and the wrapper will use the newest
-#   ${PREVIOUS_RUN_DIR}/checkpoints/1rkl.stage_7*.up
-# - set AUTO_CONTINUE_FROM_PREVIOUS_RUN=0 to force a scratch start even
-#   when a previous outlipid stage-7 artifact exists.
-# Seed options:
-# - leave PREP_SEED and SEED unset to let the base workflow generate them
-#   randomly per run,
-# - set PREP_SEED and/or SEED explicitly for reproducible reruns.
+disable_auto_continue="${DISABLE_1AFO_AUTO_CONTINUE:-${DISABLE_1AFO_HYBRID_AUTO_CONTINUE:-${DISABLE_1AFO_AABB_AUTO_CONTINUE:-0}}}"
+
 if [ -z "${CONTINUE_STAGE_70_FROM:-}" ]; then
     if [ -n "${PREVIOUS_STAGE7_FILE:-}" ]; then
         export CONTINUE_STAGE_70_FROM="${PREVIOUS_STAGE7_FILE}"
@@ -163,7 +149,7 @@ if [ -z "${CONTINUE_STAGE_70_FROM:-}" ]; then
         if [ -n "${previous_stage70_file}" ]; then
             export CONTINUE_STAGE_70_FROM="${previous_stage70_file}"
         fi
-    elif [ "${AUTO_CONTINUE_FROM_PREVIOUS_RUN:-1}" = "1" ]; then
+    elif [ "${AUTO_CONTINUE_FROM_PREVIOUS_RUN:-1}" = "1" ] && [ "${disable_auto_continue}" != "1" ]; then
         auto_continue_file="$(autodetect_previous_stage70_file || true)"
         if [ -n "${auto_continue_file}" ]; then
             export CONTINUE_STAGE_70_FROM="${auto_continue_file}"
@@ -177,17 +163,9 @@ if [ -n "${CONTINUE_STAGE_70_FROM:-}" ] && [ -z "${RUN_DIR:-}" ]; then
         export RUN_DIR="${derived_run_dir}"
     fi
 fi
-export RUN_DIR="${RUN_DIR:-outputs/martini_test_1rkl_outlipid}"
+export RUN_DIR="${RUN_DIR:-outputs/martini_test_1afo_hybrid}"
 
-export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1rkl_outlipid}"
-export PROTEIN_PLACEMENT_MODE="${PROTEIN_PLACEMENT_MODE:-outside-top}"
-export PROTEIN_ORIENTATION_MODE="${PROTEIN_ORIENTATION_MODE:-lay-flat}"
-export PROTEIN_SURFACE_GAP="${PROTEIN_SURFACE_GAP:-6.0}"
-export XY_SCALE="${XY_SCALE:-1.35}"
-export BOX_PADDING_XY="${BOX_PADDING_XY:-20.0}"
-export BOX_PADDING_Z="${BOX_PADDING_Z:-50.0}"
-export PROTEIN_LIPID_CUTOFF="${PROTEIN_LIPID_CUTOFF:-5.0}"
-export PROTEIN_LIPID_MIN_GAP="${PROTEIN_LIPID_MIN_GAP:-5.0}"
-export PROTEIN_LIPID_CUTOFF_MAX="${PROTEIN_LIPID_CUTOFF_MAX:-10.0}"
+export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1afo_hybrid}"
+export PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/1AFO.pdb}"
 
-exec "${BASE_WORKFLOW_SCRIPT}" "$@"
+exec "${BASE_WORKFLOW_SCRIPT}" "PDB_ID=${PDB_ID:-1afo}" "$@"

@@ -351,3 +351,98 @@
   - both scripts now default to non-fixed seeds,
   - repeated runs produced different seeds without manual overrides,
   - both the base workflow and the out-of-bilayer wrapper still completed one-step continuation successfully.
+
+## 2026-04-24 (Task Start: Port Temp-Repo Workflows Into Hybrid Repo)
+- Re-read the existing workflow trackers before changing the workflow entrypoints:
+  - `example/16.MARTINI/plan.md`
+  - `example/16.MARTINI/findings.md`
+- Inspected:
+  - current repo:
+    - `example/16.MARTINI/run_sim_1rkl.sh`
+    - `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+    - `py/martini_prepare_system.py`
+    - `py/martini_prepare_system_lib.py`
+    - `py/martini_extract_vtf.py`
+    - `example/16.MARTINI/pdb/1AFO.pdb`
+  - temp repo:
+    - `example/16.MARTINI/run_sim_1afo.sh`
+    - `example/16.MARTINI/run_sim_1afo_outlipid.sh`
+    - `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+    - task notes under `example/16.MARTINI/progress.md`
+- Confirmed before patching:
+  - the temp wrappers delegate to a different base `run_sim_1rkl.sh`,
+  - this repo's base path is the hybrid workflow and already owns the correct prep/stage-injection path,
+  - this repo's example directory does not carry `pdb/DOPC.pdb`, so the temp wrapper bilayer override would be wrong here,
+  - the current hybrid metadata path still used raw `resseq` as the unique backbone residue id, which is unsafe for two-chain `1AFO`.
+
+## 2026-04-24 (Implementation: Shared Hybrid Multi-Chain Support + Workflow Wrappers)
+- Updated:
+  - `py/martini_prepare_system_lib.py`
+  - `py/martini_extract_vtf.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - `example/16.MARTINI/run_sim_1afo.sh`
+  - `example/16.MARTINI/run_sim_1afo_outlipid.sh`
+  - `example/16.MARTINI/plan.md`
+  - `example/16.MARTINI/findings.md`
+- Shared hybrid prep/runtime changes:
+  - `collect_bb_map(...)` now assigns a unique sequential `bb_residue_index`,
+  - hybrid metadata now writes:
+    - `hybrid_bb_map/bb_resseq`
+    - `hybrid_bb_map/bb_chain_id`
+    - `hybrid_bb_map/bb_icode`
+    - `/input/chain_break/{chain_first_residue,chain_counts}`
+  - stage-file injection now copies optional `chain_break`,
+  - stage-7 backbone node injection now derives `uc.n_chains` / `uc.chain_starts` from `chain_break` or `bb_chain_id`,
+  - VTF export now:
+    - preserves appended AA-backbone chain ids,
+    - writes both chain `A` and chain `B`,
+    - skips peptide links across chain boundaries.
+- Workflow wrapper changes:
+  - added `run_sim_1afo.sh` as a thin hybrid wrapper around `run_sim_1rkl.sh`,
+  - added `run_sim_1afo_outlipid.sh` with the out-of-bilayer defaults adapted to this repo,
+  - updated `run_sim_1rkl_outlipid.sh` to use temp-style previous-run autodetection while remaining compatible with this repo's `.stage_7.0.continue.up` continuation naming.
+- Base workflow fix for `1AFO` martinize output:
+  - `run_sim_1rkl.sh` now materializes a runtime protein ITP from the martinize `.top`,
+  - the generated runtime ITP repeats and index-offsets the included protein ITP once per `[ molecules ]` entry,
+  - this fixed the initial `1AFO` stage-conversion failure caused by a single-chain `PROA_A.itp` being copied into a two-chain runtime path.
+
+## 2026-04-24 (Verification: Syntax + Reduced 1AFO Hybrid Smoke)
+- Syntax / compile checks:
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - `bash -n example/16.MARTINI/run_sim_1afo.sh`
+  - `bash -n example/16.MARTINI/run_sim_1afo_outlipid.sh`
+  - `.venv/bin/python3 -m py_compile py/martini_prepare_system_lib.py py/martini_extract_vtf.py`
+- Reduced end-to-end `1afo` hybrid smoke:
+  - `RUN_DIR=outputs/1afo_port_smoke2`
+  - `AUTO_CONTINUE_FROM_PREVIOUS_RUN=0`
+  - `DISABLE_1AFO_AUTO_CONTINUE=1`
+  - all minimization / equilibration / production lengths reduced to `1`
+  - command:
+    - `bash example/16.MARTINI/run_sim_1afo.sh`
+- First smoke failure and fix:
+  - the first reduced run failed during stage conversion with:
+    - `Unknown protein atom 'BB' in residue 'HIS'`
+  - root cause:
+    - martinize wrote one included protein ITP for a single chain,
+    - but the `.top` requested two copies for the two-chain `1AFO` system,
+    - the workflow copied only the single-chain ITP into the runtime path.
+  - fixed by materializing the runtime ITP from the `.top` molecule counts.
+- Final reduced run result:
+  - completed successfully through:
+    - `example/16.MARTINI/outputs/1afo_port_smoke2/checkpoints/1afo.stage_7.0.up`
+  - wrote VTF outputs through stage `7.0`
+  - stage-7 injection succeeded:
+    - `Injected rotamer-weighted martini_sc_table_1body ... n_rows=246 skipped=10`
+- Artifact audit:
+  - HDF5 check on `1afo.stage_7.0.up` observed:
+    - `n_bb = 72`
+    - `unique_bb_residue_index = 72`
+    - `bb_chain_ids = ['A', 'B']`
+    - `chain_first_residue = [36]`
+    - `chain_counts = [1, 1]`
+    - `cross_chain_distance3d_35_36 = False`
+  - VTF check on `example/16.MARTINI/outputs/1afo_port_smoke2/1afo.stage_7.0.vtf` observed:
+    - `segid sA chain A`
+    - `segid sB chain B`
