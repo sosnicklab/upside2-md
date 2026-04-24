@@ -7,8 +7,10 @@
 #include <H5Apublic.h> // for H5Aexists
 #include <cmath> // For pow, cosf, sinf, acosf
 #include <cctype>
+#include <cstdint>
 #include <set> // For std::set
 #include <complex> // For complex numbers in PME
+#include <array>
 #include <vector> // For PME grid operations
 #include <algorithm> // For PME algorithms
 #include <unordered_map>
@@ -1602,8 +1604,23 @@ struct MartiniPotential : public PotentialNode
 {
     int n_atom;
     CoordNode& pos;
-    
-    vector<array<float,4>> coeff;
+
+    struct PairParam {
+        float eps;
+        float sig;
+        float qi;
+        float qj;
+        float qq;
+        const LayeredClampedSpline1D<1>* lj_spline;
+        const LayeredClampedSpline1D<1>* coul_spline;
+
+        PairParam():
+            eps(0.f), sig(0.f), qi(0.f), qj(0.f), qq(0.f),
+            lj_spline(nullptr), coul_spline(nullptr) {}
+    };
+
+    vector<PairParam> param_table;
+    vector<uint32_t> pair_param_index;
     vector<pair<int,int>> pairs;
     
     float epsilon, sigma, lj_cutoff, coul_cutoff;
@@ -1628,8 +1645,6 @@ struct MartiniPotential : public PotentialNode
     
     // Spline interpolation for Coulomb potential - single spline for each charge product
     std::map<float, LayeredClampedSpline1D<1>> coulomb_splines;
-    // Quantized charge-product lookup to avoid float-key mismatches in the hot loop
-    std::unordered_map<int, float> coulomb_key_to_qq;
     
     // Spline parameters
     float lj_r_min, lj_r_max;
@@ -1637,9 +1652,79 @@ struct MartiniPotential : public PotentialNode
     float coul_r_min, coul_r_max;
     float coul_r_shift, coul_r_scale;  // Coordinate transformation parameters
     int coul_n_knots;
+
+    float cache_buffer;
+    float pairlist_cutoff;
+    bool pairlist_valid;
+    float cached_box_x;
+    float cached_box_y;
+    float cached_box_z;
+    vector<float> cached_pos;
+    vector<int32_t> active_pair_indices;
+
+    inline bool pairlist_needs_rebuild(const VecArray& pos1) const {
+        if(!pairlist_valid) return true;
+        if(cache_buffer <= 0.f) return true;
+        if(fabsf(box_x - cached_box_x) > 1.0e-6f ||
+           fabsf(box_y - cached_box_y) > 1.0e-6f ||
+           fabsf(box_z - cached_box_z) > 1.0e-6f) return true;
+
+        float max_cache_dist2 = sqr(0.5f * cache_buffer);
+        for(int na = 0; na < n_atom; ++na) {
+            float dx = pos1(0, na) - cached_pos[3*na + 0];
+            float dy = pos1(1, na) - cached_pos[3*na + 1];
+            float dz = pos1(2, na) - cached_pos[3*na + 2];
+            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
+                simulation_box::minimum_image_scalar(dx, dy, dz, box_x, box_y, box_z);
+            }
+            if(dx*dx + dy*dy + dz*dz > max_cache_dist2) return true;
+        }
+        return false;
+    }
+
+    void rebuild_pairlist(const VecArray& pos1) {
+        Timer timer(string("martini_pairlist_rebuild"));
+        float active_cutoff = pairlist_cutoff + std::max(0.f, cache_buffer);
+        float active_cutoff2 = sqr(active_cutoff);
+
+        active_pair_indices.clear();
+        active_pair_indices.reserve(std::min<size_t>(pairs.size(), size_t(1u << 20)));
+
+        for(size_t np = 0; np < pairs.size(); ++np) {
+            const auto& param = param_table[pair_param_index[np]];
+            if(param.eps == 0.f && param.sig == 0.f && param.qi == 0.f && param.qj == 0.f) continue;
+
+            int i = pairs[np].first;
+            int j = pairs[np].second;
+            auto dr = load_vec<3>(pos1, i) - load_vec<3>(pos1, j);
+            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
+                dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
+            }
+            if(mag2(dr) < active_cutoff2) {
+                active_pair_indices.push_back(int32_t(np));
+            }
+        }
+
+        for(int na = 0; na < n_atom; ++na) {
+            cached_pos[3*na + 0] = pos1(0, na);
+            cached_pos[3*na + 1] = pos1(1, na);
+            cached_pos[3*na + 2] = pos1(2, na);
+        }
+        cached_box_x = box_x;
+        cached_box_y = box_y;
+        cached_box_z = box_z;
+        pairlist_valid = true;
+    }
     
     MartiniPotential(hid_t grp, CoordNode& pos_):
-        PotentialNode(), n_atom(pos_.n_elem), pos(pos_)
+        PotentialNode(), n_atom(pos_.n_elem), pos(pos_),
+        cache_buffer(1.f),
+        pairlist_cutoff(0.f),
+        pairlist_valid(false),
+        cached_box_x(0.f),
+        cached_box_y(0.f),
+        cached_box_z(0.f),
+        cached_pos(3*n_atom, 0.f)
     {
         check_size(grp, "atom_indices", n_atom);
         check_size(grp, "charges", n_atom);
@@ -1649,6 +1734,9 @@ struct MartiniPotential : public PotentialNode
         sigma       = read_attribute<float>(grp, ".", "sigma");  
         lj_cutoff   = read_attribute<float>(grp, ".", "lj_cutoff");
         coul_cutoff = read_attribute<float>(grp, ".", "coul_cutoff");
+        cache_buffer = read_attribute<float>(grp, ".", "cache_buffer", 1.f);
+        if(cache_buffer < 0.f) cache_buffer = 0.f;
+        pairlist_cutoff = max(lj_cutoff, coul_cutoff);
         if(!attribute_exists(grp, ".", "energy_conversion_kj_per_eup") ||
            !attribute_exists(grp, ".", "length_conversion_angstrom_per_nm") ||
            !attribute_exists(grp, ".", "coulomb_constant_native_kj_mol_nm_e2")) {
@@ -1780,30 +1868,19 @@ struct MartiniPotential : public PotentialNode
                 if(d == 0) pairs[np].first = x;
                 else pairs[np].second = x;
             });
-            
-            // Reconstruct full coefficient array from indices
-            coeff.resize(n_pair);
+
+            pair_param_index.resize(n_pair);
             for(size_t np = 0; np < n_pair; ++np) {
                 long idx = coeff_indices[np];
                 if(idx >= 0 && idx < (long)n_unique_coeff) {
-                    coeff[np] = unique_coeff[idx];
+                    pair_param_index[np] = uint32_t(idx);
                 } else {
-                    std::cerr << "ERROR: Invalid coefficient index " << idx << " for pair " << np << std::endl;
-                    coeff[np] = {0.0f, 0.0f, 0.0f, 0.0f};
+                    throw string("Invalid coefficient index in martini_potential");
                 }
             }
-            
-            // Debug: Print first few coefficients to verify reconstruction
-            std::cout << "MARTINI: Debug - First 5 reconstructed coefficients:" << std::endl;
-            for(size_t i = 0; i < std::min(size_t(5), size_t(n_pair)); ++i) {
-                std::cout << "  Pair " << i << " (atoms " << pairs[i].first << "-" << pairs[i].second 
-                          << "): idx=" << (int)coeff_indices[i] << " coeff=[" 
-                          << coeff[i][0] << ", " << coeff[i][1] << ", " << coeff[i][2] << ", " << coeff[i][3] << "]" << std::endl;
-            }
-            
+
             std::cout << "MARTINI: Loaded " << n_unique_coeff << " unique coefficients for " << n_pair << " pairs" << std::endl;
             std::cout << "MARTINI: Compression ratio: " << (float)n_pair / n_unique_coeff << "x" << std::endl;
-            
         } else {
             // Original format: full coefficient array
             std::cout << "MARTINI: Using original interaction table format" << std::endl;
@@ -1815,33 +1892,37 @@ struct MartiniPotential : public PotentialNode
                 if(d == 0) pairs[np].first = x;
                 else pairs[np].second = x;
             });
-            
-            coeff.resize(n_pair);
+
+            vector<array<float,4>> coeff_rows(n_pair);
             traverse_dset<2,float>(grp, "coefficients", [&](size_t np, size_t d, float x) {
-                coeff[np][d] = x;
+                coeff_rows[np][d] = x;
             });
+
+            std::map<array<float,4>, uint32_t> coeff_to_index;
+            pair_param_index.resize(n_pair);
+            for(size_t np = 0; np < n_pair; ++np) {
+                auto it = coeff_to_index.find(coeff_rows[np]);
+                if(it == coeff_to_index.end()) {
+                    uint32_t idx = uint32_t(unique_coeff.size());
+                    coeff_to_index.insert(std::make_pair(coeff_rows[np], idx));
+                    unique_coeff.push_back(coeff_rows[np]);
+                    pair_param_index[np] = idx;
+                } else {
+                    pair_param_index[np] = it->second;
+                }
+            }
+
+            std::cout << "MARTINI: Compacted " << n_pair << " coefficients into " << unique_coeff.size()
+                      << " unique parameter rows" << std::endl;
         }
         
         // Find all epsilon/sigma pairs for separate LJ splines
         std::set<std::pair<float, float>> unique_lj_params;
-
-        if(optimized_format) {
-            // In optimized format, iterate over unique coefficients
-            for(const auto& c : unique_coeff) {
-                float eps = c[0];
-                float sig = c[1];
-                if(eps != 0.f && sig != 0.f) {
-                    unique_lj_params.insert({eps, sig});
-                }
-            }
-        } else {
-            // In original format, iterate over all coefficients
-            for(const auto& c : coeff) {
-                float eps = c[0];
-                float sig = c[1];
-                if(eps != 0.f && sig != 0.f) {
-                    unique_lj_params.insert({eps, sig});
-                }
+        for(const auto& c : unique_coeff) {
+            float eps = c[0];
+            float sig = c[1];
+            if(eps != 0.f && sig != 0.f) {
+                unique_lj_params.insert({eps, sig});
             }
         }
 
@@ -1908,13 +1989,13 @@ struct MartiniPotential : public PotentialNode
             }
 
             // Create single spline for this epsilon/sigma combination
-            auto [it, inserted] = lj_splines.emplace(std::piecewise_construct,
-                                                     std::forward_as_tuple(eps, sig),
-                                                     std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
-            auto& spline = it->second;
+            auto inserted_result = lj_splines.emplace(std::piecewise_construct,
+                                                      std::forward_as_tuple(eps, sig),
+                                                      std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
+            auto& spline = inserted_result.first->second;
 
             // Only compute spline data if this is a new parameter set
-            if (inserted) {
+            if (inserted_result.second) {
                 // Initialize the spline with potential data
                 spline.fit_spline(lj_pot_data.data());
             }
@@ -1924,21 +2005,10 @@ struct MartiniPotential : public PotentialNode
 
         // Generate separate Coulomb splines for each unique charge product
         std::set<float> unique_charge_products;
-        if(optimized_format) {
-            // In optimized format, look at unique coefficients
-            for(const auto& c : unique_coeff) {
-                float qq = c[2] * c[3];
-                if(std::abs(qq) > 1e-10f) {  // Use small epsilon for floating point comparison
-                    unique_charge_products.insert(qq);
-                }
-            }
-        } else {
-            // In original format, look at all coefficients
-            for(const auto& c : coeff) {
-                float qq = c[2] * c[3];
-                if(std::abs(qq) > 1e-10f) {  // Use small epsilon for floating point comparison
-                    unique_charge_products.insert(qq);
-                }
+        for(const auto& c : unique_coeff) {
+            float qq = c[2] * c[3];
+            if(std::abs(qq) > 1e-10f) {
+                unique_charge_products.insert(qq);
             }
         }
 
@@ -1976,15 +2046,31 @@ struct MartiniPotential : public PotentialNode
             }
 
             // Create single spline for this charge product
-            auto [coulomb_it, coulomb_inserted] = coulomb_splines.emplace(std::piecewise_construct,
-                                                                          std::forward_as_tuple(qq),
-                                                                          std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
-            auto& coulomb_spline = coulomb_it->second;
-            int qkey = int(lrintf(qq * 1000000.0f));
-            coulomb_key_to_qq[qkey] = qq;
+            auto inserted_result = coulomb_splines.emplace(std::piecewise_construct,
+                                                           std::forward_as_tuple(qq),
+                                                           std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
+            auto& coulomb_spline = inserted_result.first->second;
 
             // Initialize the spline with potential data
             coulomb_spline.fit_spline(coul_pot_data_for_spline.data());
+        }
+
+        param_table.resize(unique_coeff.size());
+        for(size_t ip = 0; ip < unique_coeff.size(); ++ip) {
+            auto& param = param_table[ip];
+            param.eps = unique_coeff[ip][0];
+            param.sig = unique_coeff[ip][1];
+            param.qi  = unique_coeff[ip][2];
+            param.qj  = unique_coeff[ip][3];
+            param.qq  = param.qi * param.qj;
+            if(param.eps != 0.f && param.sig != 0.f) {
+                auto it = lj_splines.find({param.eps, param.sig});
+                if(it != lj_splines.end()) param.lj_spline = &it->second;
+            }
+            if(std::abs(param.qq) > 1e-10f) {
+                auto it = coulomb_splines.find(param.qq);
+                if(it != coulomb_splines.end()) param.coul_spline = &it->second;
+            }
         }
 
         std::cout << "MARTINI: Generated " << coulomb_splines.size() << " Coulomb splines" << std::endl;
@@ -2056,10 +2142,7 @@ struct MartiniPotential : public PotentialNode
 
         auto eval_pair_force = [&](const Vec<3>& pa,
                                    const Vec<3>& pb,
-                                   float eps,
-                                   float sig,
-                                   float qi,
-                                   float qj,
+                                   const PairParam& param,
                                    float interaction_scale,
                                    bool hard_sphere_mode,
                                    float& pair_potential,
@@ -2083,18 +2166,18 @@ struct MartiniPotential : public PotentialNode
             if(pair_coul_potential) *pair_coul_potential = 0.f;
 
             if(hard_sphere_mode) {
-                if(eps == 0.f || sig == 0.f) return false;
-                float rcut = wca_cutoff_factor * sig;
+                if(param.eps == 0.f || param.sig == 0.f) return false;
+                float rcut = wca_cutoff_factor * param.sig;
                 if(dist >= rcut) return false;
-                float eval_dist = std::max(dist, 0.1f * sig);
+                float eval_dist = std::max(dist, 0.1f * param.sig);
 
-                float sr = sig / eval_dist;
+                float sr = param.sig / eval_dist;
                 float sr2 = sr * sr;
                 float sr6 = sr2 * sr2 * sr2;
                 float sr12 = sr6 * sr6;
 
-                float wca_pot = 4.f * eps * (sr12 - sr6) + eps;
-                float wca_force_mag = 24.f * eps * (2.f * sr12 - sr6) / eval_dist;
+                float wca_pot = 4.f * param.eps * (sr12 - sr6) + param.eps;
+                float wca_force_mag = 24.f * param.eps * (2.f * sr12 - sr6) / eval_dist;
                 if(std::isfinite(wca_pot) && std::isfinite(wca_force_mag)) {
                     pair_potential = interaction_scale * wca_pot;
                     if(hs_pot_cap_mag > 0.f && pair_potential > hs_pot_cap_mag) {
@@ -2112,60 +2195,48 @@ struct MartiniPotential : public PotentialNode
 
             float cap_mix = std::max(0.f, std::min(capped_to_regular_mix, 1.f));
 
-            if(eps != 0.f && sig != 0.f && dist < lj_cutoff) {
-                auto spline_it = lj_splines.find({eps, sig});
-                if(spline_it != lj_splines.end()) {
-                    float r_coord = (dist - lj_r_min) / (lj_r_max - lj_r_min) * 999.0f;
-                    float lj_result[2];
-                    spline_it->second.evaluate_value_and_deriv(lj_result, 0, r_coord);
-                    float lj_pot = lj_result[1];
-                    float lj_deriv_spline = lj_result[0];
-                    float coord_scale = 999.0f / (lj_r_max - lj_r_min);
-                    float dE_dr = lj_deriv_spline * coord_scale;
-                    float lj_force_mag = -dE_dr;
-                    if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag)) {
-                        Vec<3> lj_force_uncapped = (lj_force_mag/dist) * dr;
-                        Vec<3> lj_force = lj_force_uncapped;
-                        if(lj_force_cap_mag > 0.f && cap_mix < 1.f) {
-                            cap_force_vector(lj_force, lj_force_cap_mag);
-                            if(cap_mix > 0.f) {
-                                lj_force = ((1.f - cap_mix) * lj_force) + (cap_mix * lj_force_uncapped);
-                            }
+            if(param.lj_spline && dist < lj_cutoff) {
+                float r_coord = (dist - lj_r_min) / (lj_r_max - lj_r_min) * 999.0f;
+                float lj_result[2];
+                param.lj_spline->evaluate_value_and_deriv(lj_result, 0, r_coord);
+                float lj_pot = lj_result[1];
+                float lj_deriv_spline = lj_result[0];
+                float coord_scale = 999.0f / (lj_r_max - lj_r_min);
+                float dE_dr = lj_deriv_spline * coord_scale;
+                float lj_force_mag = -dE_dr;
+                if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag)) {
+                    Vec<3> lj_force_uncapped = (lj_force_mag/dist) * dr;
+                    Vec<3> lj_force = lj_force_uncapped;
+                    if(lj_force_cap_mag > 0.f && cap_mix < 1.f) {
+                        cap_force_vector(lj_force, lj_force_cap_mag);
+                        if(cap_mix > 0.f) {
+                            lj_force = ((1.f - cap_mix) * lj_force) + (cap_mix * lj_force_uncapped);
                         }
-                        lj_pot *= interaction_scale;
-                        lj_force *= interaction_scale;
-                        pair_potential += lj_pot;
-                        if(pair_lj_potential) *pair_lj_potential += lj_pot;
-                        pair_force += lj_force;
                     }
+                    lj_pot *= interaction_scale;
+                    lj_force *= interaction_scale;
+                    pair_potential += lj_pot;
+                    if(pair_lj_potential) *pair_lj_potential += lj_pot;
+                    pair_force += lj_force;
                 }
             }
 
-            if(qi != 0.f && qj != 0.f && dist < coul_cutoff) {
-                float qq = qi * qj;
+            if(param.qq != 0.f && dist < coul_cutoff) {
                 float coul_pot = 0.0f;
                 float coul_force_mag = 0.0f;
 
-                auto coulomb_it = coulomb_splines.end();
-                int qkey = int(lrintf(qq * 1000000.0f));
-                auto qk_it = coulomb_key_to_qq.find(qkey);
-                if(qk_it != coulomb_key_to_qq.end()) {
-                    coulomb_it = coulomb_splines.find(qk_it->second);
-                } else {
-                    coulomb_it = coulomb_splines.find(qq);
-                }
-                if(coulomb_it != coulomb_splines.end() && dist >= coul_r_min && dist <= coul_r_max) {
+                if(param.coul_spline && dist >= coul_r_min && dist <= coul_r_max) {
                     float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
                     float coul_result[2];
-                    coulomb_it->second.evaluate_value_and_deriv(coul_result, 0, r_coord);
+                    param.coul_spline->evaluate_value_and_deriv(coul_result, 0, r_coord);
                     coul_pot = coul_result[1];
                     float coul_deriv_spline = coul_result[0];
                     float coord_scale = 999.0f / (coul_r_max - coul_r_min);
                     float dE_dr = coul_deriv_spline * coord_scale;
                     coul_force_mag = -dE_dr;
                 } else {
-                    coul_pot = coulomb_k * qq / dist;
-                    float dV_dr = -coulomb_k * qq / (dist * dist);
+                    coul_pot = coulomb_k * param.qq / dist;
+                    float dV_dr = -coulomb_k * param.qq / (dist * dist);
                     coul_force_mag = -dV_dr;
                 }
 
@@ -2188,19 +2259,19 @@ struct MartiniPotential : public PotentialNode
             return !(pair_potential == 0.f && mag2(pair_force) == 0.f);
         };
 
+        if(pairlist_needs_rebuild(pos1)) {
+            rebuild_pairlist(pos1);
+        }
 
-        for(size_t np=0; np<pairs.size(); ++np) {
+        for(int32_t active_idx : active_pair_indices) {
+            size_t np = size_t(active_idx);
             int i = pairs[np].first;
             int j = pairs[np].second;
             if(hybrid_state && martini_hybrid::skip_pair_if_intra_protein(*hybrid_state, i, j)) {
                 continue;
             }
 
-            auto eps   = coeff[np][0];
-            auto sig   = coeff[np][1];
-            auto qi    = coeff[np][2];
-            auto qj    = coeff[np][3];
-            if(eps==0.f && sig==0.f && qi==0.f && qj==0.f) continue;
+            const auto& param = param_table[pair_param_index[np]];
 
             auto p1 = load_vec<3>(pos1, i);
             auto p2 = load_vec<3>(pos1, j);
@@ -2256,7 +2327,7 @@ struct MartiniPotential : public PotentialNode
                                         ? martini_hybrid::active_interface_interaction_scale(
                                               *hybrid_state, i_is_protein, j_is_protein)
                                         : 1.f;
-            if(!eval_pair_force(p1, p2, eps, sig, qi, qj, interface_scale, hard_sphere_pair, pair_pot, force,
+            if(!eval_pair_force(p1, p2, param, interface_scale, hard_sphere_pair, pair_pot, force,
                                 startup_lj_force_cap,
                                 startup_coul_force_cap,
                                 startup_cap_mix,
@@ -2680,6 +2751,20 @@ struct MartiniScTableOneBody : public CoordNode
     vector<float> angular_left_slope;
     vector<float> angular_profile_table;
 
+    struct ActiveContact {
+        int row;
+        int env;
+    };
+
+    float cache_buffer;
+    bool active_contacts_valid;
+    float cached_box_x;
+    float cached_box_y;
+    float cached_box_z;
+    vector<float> cached_cb_point;
+    vector<float> cached_env_pos;
+    vector<ActiveContact> active_contacts;
+
     inline int radial_index(int layer, int grid_idx) const {
         return layer * n_grid + grid_idx;
     }
@@ -2690,6 +2775,81 @@ struct MartiniScTableOneBody : public CoordNode
 
     inline int layer_index(int residue_idx, int rotamer_idx, int target_idx) const {
         return ((residue_idx * n_rotamer_max) + rotamer_idx) * n_target + target_idx;
+    }
+
+    inline bool active_contacts_need_rebuild(const VecArray& posc, const VecArray& cbc) const {
+        if(!active_contacts_valid) return true;
+        if(cache_buffer <= 0.f) return true;
+        if(fabsf(box_x - cached_box_x) > 1.0e-6f ||
+           fabsf(box_y - cached_box_y) > 1.0e-6f ||
+           fabsf(box_z - cached_box_z) > 1.0e-6f) return true;
+
+        float max_cache_dist2 = sqr(0.5f * cache_buffer);
+
+        for(int icb = 0; icb < cb_pos.n_elem; ++icb) {
+            float dx = cbc(0, icb) - cached_cb_point[3*icb + 0];
+            float dy = cbc(1, icb) - cached_cb_point[3*icb + 1];
+            float dz = cbc(2, icb) - cached_cb_point[3*icb + 2];
+            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
+                simulation_box::minimum_image_scalar(dx, dy, dz, box_x, box_y, box_z);
+            }
+            if(dx*dx + dy*dy + dz*dz > max_cache_dist2) return true;
+        }
+
+        for(int ienv = 0; ienv < n_env; ++ienv) {
+            int atom_idx = env_atom_index[ienv];
+            float dx = posc(0, atom_idx) - cached_env_pos[3*ienv + 0];
+            float dy = posc(1, atom_idx) - cached_env_pos[3*ienv + 1];
+            float dz = posc(2, atom_idx) - cached_env_pos[3*ienv + 2];
+            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
+                simulation_box::minimum_image_scalar(dx, dy, dz, box_x, box_y, box_z);
+            }
+            if(dx*dx + dy*dy + dz*dz > max_cache_dist2) return true;
+        }
+
+        return false;
+    }
+
+    void rebuild_active_contacts(const VecArray& posc, const VecArray& cbc) {
+        Timer timer(string("martini_sc_env_pairlist_rebuild"));
+        float active_cutoff = cutoff_ang + std::max(0.f, cache_buffer);
+        float active_cutoff2 = sqr(active_cutoff);
+
+        active_contacts.clear();
+        active_contacts.reserve(std::min<size_t>(size_t(n_row) * size_t(n_env), size_t(1u << 18)));
+
+        for(int irow = 0; irow < n_row; ++irow) {
+            int cb_idx = row_residue_index[irow];
+            Vec<3> cbp = extract<0,3>(load_vec<6>(cbc, cb_idx));
+
+            for(int ienv = 0; ienv < n_env; ++ienv) {
+                int atom_idx = env_atom_index[ienv];
+                Vec<3> envp = load_vec<3>(posc, atom_idx);
+                Vec<3> dr = cbp - envp;
+                if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
+                    dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
+                }
+                if(mag2(dr) < active_cutoff2) {
+                    active_contacts.push_back({irow, ienv});
+                }
+            }
+        }
+
+        for(int icb = 0; icb < cb_pos.n_elem; ++icb) {
+            cached_cb_point[3*icb + 0] = cbc(0, icb);
+            cached_cb_point[3*icb + 1] = cbc(1, icb);
+            cached_cb_point[3*icb + 2] = cbc(2, icb);
+        }
+        for(int ienv = 0; ienv < n_env; ++ienv) {
+            int atom_idx = env_atom_index[ienv];
+            cached_env_pos[3*ienv + 0] = posc(0, atom_idx);
+            cached_env_pos[3*ienv + 1] = posc(1, atom_idx);
+            cached_env_pos[3*ienv + 2] = posc(2, atom_idx);
+        }
+        cached_box_x = box_x;
+        cached_box_y = box_y;
+        cached_box_z = box_z;
+        active_contacts_valid = true;
     }
 
     inline void evaluate_component_value_and_deriv(
@@ -2786,10 +2946,18 @@ struct MartiniScTableOneBody : public CoordNode
         radial_left_slope(n_layer, 0.f),
         angular_left_value(n_layer, 0.f),
         angular_left_slope(n_layer, 0.f),
-        angular_profile_table(n_layer * n_angle, 0.f)
+        angular_profile_table(n_layer * n_angle, 0.f),
+        cache_buffer(read_attribute<float>(grp, ".", "cache_buffer", 1.f)),
+        active_contacts_valid(false),
+        cached_box_x(0.f),
+        cached_box_y(0.f),
+        cached_box_z(0.f),
+        cached_cb_point(3*cb_pos_.n_elem, 0.f),
+        cached_env_pos(3*n_env, 0.f)
     {
         check_elem_width_lower_bound(pos, 3);
         check_elem_width_lower_bound(cb_pos, 6);
+        if(cache_buffer < 0.f) cache_buffer = 0.f;
 
         check_size(grp, "row_rotamer_index", n_row);
         check_size(grp, "row_residue_table_index", n_row);
@@ -2933,50 +3101,53 @@ struct MartiniScTableOneBody : public CoordNode
         VecArray cbc = cb_pos.output;
         constexpr float kMinDistance = 1.0e-8f;
 
-        for(int irow = 0; irow < n_row; ++irow) {
+        if(active_contacts_need_rebuild(posc, cbc)) {
+            rebuild_active_contacts(posc, cbc);
+        }
+
+        for(const auto& active : active_contacts) {
+            int irow = active.row;
+            int ienv = active.env;
             int cb_idx = row_residue_index[irow];
             int residue_idx = row_residue_table_index[irow];
             int rotamer_idx = row_rotamer_index[irow];
-            int group_count = std::max(1, row_group_count[irow]);
+            int atom_idx = env_atom_index[ienv];
+            int target_idx = env_target_index[ienv];
+            int layer = layer_index(residue_idx, rotamer_idx, target_idx);
 
             Vec<6> cb_site = load_vec<6>(cbc, cb_idx);
             Vec<3> cbp = extract<0,3>(cb_site);
             Vec<3> cbv = extract<3,6>(cb_site);
-
-            float total = 0.f;
-            for(int ienv = 0; ienv < n_env; ++ienv) {
-                int atom_idx = env_atom_index[ienv];
-                int target_idx = env_target_index[ienv];
-                int layer = layer_index(residue_idx, rotamer_idx, target_idx);
-
-                Vec<3> envp = load_vec<3>(posc, atom_idx);
-                Vec<3> dr = cbp - envp;
-                if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
-                    dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
-                }
-
-                float dist2 = mag2(dr);
-                float dist = sqrtf(std::max(dist2, kMinDistance));
-                if(dist >= cutoff_ang) continue;
-
-                float radial_value = 0.f;
-                float radial_dVdr = 0.f;
-                float angular_value = 0.f;
-                float angular_dVdr = 0.f;
-                float ang1_value = 0.f;
-                float dAng1dcoord = 0.f;
-                Vec<3> displace_unitvec = (1.f / dist) * dr;
-                float angular_coord = -dot(displace_unitvec, cbv);
-                evaluate_component_value_and_deriv(
-                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
-
-                total += radial_value + ang1_value * angular_value;
+            Vec<3> envp = load_vec<3>(posc, atom_idx);
+            Vec<3> dr = cbp - envp;
+            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
+                dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
             }
 
-            output(0, irow) = interface_scale * (total / float(group_count));
+            float dist2 = mag2(dr);
+            float dist = sqrtf(std::max(dist2, kMinDistance));
+            if(dist >= cutoff_ang) continue;
+
+            float radial_value = 0.f;
+            float radial_dVdr = 0.f;
+            float angular_value = 0.f;
+            float angular_dVdr = 0.f;
+            float ang1_value = 0.f;
+            float dAng1dcoord = 0.f;
+            Vec<3> displace_unitvec = (1.f / dist) * dr;
+            float angular_coord = -dot(displace_unitvec, cbv);
+            evaluate_component_value_and_deriv(
+                radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+            evaluate_component_value_and_deriv(
+                angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+            evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+
+            output(0, irow) += radial_value + ang1_value * angular_value;
+        }
+
+        for(int irow = 0; irow < n_row; ++irow) {
+            int group_count = std::max(1, row_group_count[irow]);
+            output(0, irow) = interface_scale * (output(0, irow) / float(group_count));
         }
     }
 
@@ -2994,7 +3165,13 @@ struct MartiniScTableOneBody : public CoordNode
         VecArray cb_sens = cb_pos.sens;
         constexpr float kMinDistance = 1.0e-8f;
 
-        for(int irow = 0; irow < n_row; ++irow) {
+        if(active_contacts_need_rebuild(posc, cbc)) {
+            rebuild_active_contacts(posc, cbc);
+        }
+
+        for(const auto& active : active_contacts) {
+            int irow = active.row;
+            int ienv = active.env;
             float row_scale = sens(0, irow);
             if(row_scale == 0.f) continue;
 
@@ -3008,52 +3185,50 @@ struct MartiniScTableOneBody : public CoordNode
             Vec<3> cbp = extract<0,3>(cb_site);
             Vec<3> cbv = extract<3,6>(cb_site);
 
-            for(int ienv = 0; ienv < n_env; ++ienv) {
-                int atom_idx = env_atom_index[ienv];
-                int target_idx = env_target_index[ienv];
-                int layer = layer_index(residue_idx, rotamer_idx, target_idx);
+            int atom_idx = env_atom_index[ienv];
+            int target_idx = env_target_index[ienv];
+            int layer = layer_index(residue_idx, rotamer_idx, target_idx);
 
-                Vec<3> envp = load_vec<3>(posc, atom_idx);
-                Vec<3> dr = cbp - envp;
-                if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
-                    dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
-                }
-
-                float dist2 = mag2(dr);
-                float dist = sqrtf(std::max(dist2, kMinDistance));
-                if(dist >= cutoff_ang || dist <= 1.0e-6f) continue;
-
-                float radial_value = 0.f;
-                float radial_dVdr = 0.f;
-                float angular_value = 0.f;
-                float angular_dVdr = 0.f;
-                float ang1_value = 0.f;
-                float dAng1dcoord = 0.f;
-                Vec<3> displace_unitvec = (1.f / dist) * dr;
-                float cos_theta = dot(displace_unitvec, cbv);
-                float angular_coord = -cos_theta;
-                evaluate_component_value_and_deriv(
-                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
-
-                float dVdr = radial_dVdr + ang1_value * angular_dVdr;
-                float dVdcoord = dAng1dcoord * angular_value;
-                if(!std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
-
-                Vec<3> point_grad = dVdr * displace_unitvec +
-                                    (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec);
-                Vec<3> vector_grad = -dVdcoord * displace_unitvec;
-                Vec<6> grad_cb_full;
-                store<0,3>(grad_cb_full, row_scale * point_grad);
-                store<3,6>(grad_cb_full, row_scale * vector_grad);
-                Vec<6> grad_cb = protein_feedback_mix * grad_cb_full;
-                Vec<3> grad_env = -row_scale * point_grad;
-
-                update_vec<6>(cb_sens, cb_idx, grad_cb);
-                update_vec<3>(pos_sens, atom_idx, grad_env);
+            Vec<3> envp = load_vec<3>(posc, atom_idx);
+            Vec<3> dr = cbp - envp;
+            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
+                dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
             }
+
+            float dist2 = mag2(dr);
+            float dist = sqrtf(std::max(dist2, kMinDistance));
+            if(dist >= cutoff_ang || dist <= 1.0e-6f) continue;
+
+            float radial_value = 0.f;
+            float radial_dVdr = 0.f;
+            float angular_value = 0.f;
+            float angular_dVdr = 0.f;
+            float ang1_value = 0.f;
+            float dAng1dcoord = 0.f;
+            Vec<3> displace_unitvec = (1.f / dist) * dr;
+            float cos_theta = dot(displace_unitvec, cbv);
+            float angular_coord = -cos_theta;
+            evaluate_component_value_and_deriv(
+                radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+            evaluate_component_value_and_deriv(
+                angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+            evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+
+            float dVdr = radial_dVdr + ang1_value * angular_dVdr;
+            float dVdcoord = dAng1dcoord * angular_value;
+            if(!std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
+
+            Vec<3> point_grad = dVdr * displace_unitvec +
+                                (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec);
+            Vec<3> vector_grad = -dVdcoord * displace_unitvec;
+            Vec<6> grad_cb_full;
+            store<0,3>(grad_cb_full, row_scale * point_grad);
+            store<3,6>(grad_cb_full, row_scale * vector_grad);
+            Vec<6> grad_cb = protein_feedback_mix * grad_cb_full;
+            Vec<3> grad_env = -row_scale * point_grad;
+
+            update_vec<6>(cb_sens, cb_idx, grad_cb);
+            update_vec<3>(pos_sens, atom_idx, grad_env);
         }
     }
 };
@@ -3777,6 +3952,14 @@ void update_martini_node_boxes(DerivEngine& engine, float scale_xy, float scale_
         }
         if(is_prefix("martini_sc_table_potential", n.name)) {
             if(auto* node = dynamic_cast<MartiniScTablePotential*>(n.computation.get())) {
+                node->box_x *= scale_xy;
+                node->box_y *= scale_xy;
+                node->box_z *= scale_z;
+            }
+            continue;
+        }
+        if(is_prefix("martini_sc_table_1body", n.name)) {
+            if(auto* node = dynamic_cast<MartiniScTableOneBody*>(n.computation.get())) {
                 node->box_x *= scale_xy;
                 node->box_y *= scale_xy;
                 node->box_z *= scale_z;

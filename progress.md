@@ -1,5 +1,32 @@
 # Progress Log
 
+## 2026-04-24 (dry-MARTINI Runtime Acceleration Import)
+- Opened a new root-level task in `plan.md` scoped to importing only the dry-MARTINI acceleration logic from `/Users/yinhan/Documents/upside2-md_temp/src/martini.cpp`.
+- Compared the temp and current `src/martini.cpp` implementations and isolated the acceleration-specific deltas from unrelated temp-only changes.
+- Confirmed the active runtime surfaces for this checkout:
+  - `MartiniPotential` is the main dry-MARTINI nonbonded hot loop;
+  - `martini_sc_table_1body` is the active production SC/environment node;
+  - `martini_sc_table_potential` remains for compatibility.
+- Patched `src/martini.cpp` to import the acceleration paths:
+  - `MartiniPotential` now uses:
+    - a unique parameter table (`PairParam`) with direct LJ/Coulomb spline pointers,
+    - `pair_param_index` indirection from pair rows to unique parameter rows,
+    - a cached pairlist (`cache_buffer`, cached positions/box, `active_pair_indices`) rebuilt only when needed;
+  - `MartiniScTableOneBody` now uses:
+    - cached `(row, env)` active contacts inside `cutoff + cache_buffer`,
+    - shared cache reuse in both `compute_value()` and `propagate_deriv()`;
+  - `update_martini_node_boxes(...)` now also updates `martini_sc_table_1body` box dimensions so the live-node cache invalidation stays correct under NPT scaling.
+- During verification, the repo-local `obj/` build tree failed immediately because its `CMakeCache.txt` still referenced the old moved repo path.
+- Verified the patch in a fresh out-of-tree build instead:
+  - `cmake -S src -B /tmp/upside2-md-build-20260424`
+  - `cmake --build /tmp/upside2-md-build-20260424`
+  - incremental re-check after removing C++17-only structured bindings:
+    - `cmake --build /tmp/upside2-md-build-20260424 --target upside upside_calculation upside_engine`
+- Result:
+  - all three targets built successfully;
+  - no build errors remain from the imported acceleration logic;
+  - remaining warnings are pre-existing or unrelated except for a long-standing `%p` format warning already present in `martini_masses::get_mass(...)`.
+
 ## 2026-04-14 (MARTINI Workflow Python Runtime Repair)
 - Investigated the `ModuleNotFoundError: No module named 'h5py'` reported from `example/16.MARTINI/run_sim_1rkl.sh`.
 - Confirmed the failure was interpreter selection, not package absence:

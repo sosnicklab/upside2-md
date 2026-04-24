@@ -1,6 +1,16 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-24: The temp checkout’s dry-MARTINI speedup is concentrated in three hot-path changes rather than in its unrelated feature diffs.
+  - `MartiniPotential` adds a cached Verlet-style pairlist (`cache_buffer`, cached coordinates/box, active pair indices) so the full `pairs` table is not rescanned every force evaluation.
+  - It also compacts coefficient rows into a unique parameter table and stores direct spline pointers per unique parameter row, removing repeated per-pair coefficient unpacking and spline-map lookup from the inner loop.
+  - The active SC/environment runtime in this checkout is `martini_sc_table_1body`, and the temp checkout accelerates that path with a cached active-contact list over `(row, env)` contacts inside `cutoff + cache_buffer`.
+- 2026-04-24: The active production SC/environment node in this repo is `martini_sc_table_1body`, not `martini_sc_table_potential`.
+  - `py/martini_prepare_system_lib.py` injects `martini_sc_table_1body`;
+  - therefore the temp-file active-contact cache belongs on `martini_sc_table_1body` in this checkout, while `martini_sc_table_potential` should remain as a compatibility surface.
+- 2026-04-24: The checked-in `obj/` build tree is stale after the repo move.
+  - `obj/CMakeCache.txt` still references `/Users/yinhan/Documents/upside2-md-martini`;
+  - reliable verification currently requires a fresh configure/build outside that stale tree unless the user wants `obj/` reinitialized.
 - 2026-04-14: The reported `ModuleNotFoundError: h5py` from `example/16.MARTINI/run_sim_1rkl.sh` was caused by a moved virtualenv, not by a missing `h5py` wheel in the repo `.venv`.
   - `./.venv/bin/python` imports `h5py` successfully;
   - the failing interpreter was Homebrew `python3.14`, reached because `.venv/bin/activate` still hardcoded `VIRTUAL_ENV=/Users/yinhan/Documents/upside2-md-martini/.venv`;

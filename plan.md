@@ -1,4 +1,43 @@
 
+## 2026-04-24 dry-MARTINI Runtime Acceleration Import
+
+### Project Goal
+- Import the dry-MARTINI runtime acceleration logic from `/Users/yinhan/Documents/upside2-md_temp/src/martini.cpp` into this repo's `src/martini.cpp`.
+- Keep the scope limited to performance paths used by the active dry-MARTINI runtime, not unrelated feature changes from the temp checkout.
+
+### Architecture & Key Decisions
+- Only transplant acceleration mechanisms that directly reduce hot-loop work in the current runtime:
+  - cached Verlet-style pairlists for `MartiniPotential`,
+  - cached per-pair parameter metadata so the main nonbonded loop avoids repeated coefficient unpacking / spline-map lookup,
+  - cached active contact lists for `martini_sc_table_1body`, which is the active production SC/environment node in this checkout.
+- Do not import unrelated temp-file changes such as fix-rigid extensions, stage-parameter cleanup, or removal of legacy compatibility nodes unless they are required for the acceleration paths to compile.
+- Preserve backward compatibility in `src/martini.cpp`:
+  - keep existing node names and interfaces intact,
+  - keep legacy `martini_sc_table_potential` available.
+
+### Execution Phases
+- [x] Confirm the exact acceleration deltas in the temp file and map them onto the active runtime surfaces in this checkout.
+- [x] Patch `src/martini.cpp` with the selected acceleration paths only.
+- [x] Build and verify the modified MARTINI runtime.
+- [x] Document the imported optimizations and verification results.
+
+### Known Errors / Blockers
+- The checked-in `obj/` build cache is stale from the old moved repo path (`/Users/yinhan/Documents/upside2-md-martini`), so verification in this pass used a fresh out-of-tree build directory under `/tmp` instead of the existing `obj/`.
+
+### Review
+- Confirmed the temp checkout acceleration scope:
+  - `MartiniPotential` adds a cached Verlet-style pairlist plus cached per-pair parameter metadata/pointer indirection;
+  - the active SC/environment runtime in this checkout is `martini_sc_table_1body`, and the temp checkout accelerates that path with a cached active-contact list.
+- Implemented in `src/martini.cpp`:
+  - `MartiniPotential` now compacts pair coefficients into a unique parameter table, caches direct spline pointers per unique parameter row, and rebuilds an active pairlist only when atoms move beyond half the configured skin or the box changes;
+  - `MartiniScTableOneBody` now caches row/environment contacts within `cutoff + cache_buffer` and reuses them across both value and derivative passes until the cache is invalidated by motion or box changes;
+  - the NPT box updater now also updates `martini_sc_table_1body`, so the active-contact cache remains valid under box scaling for the live production node.
+- Verification:
+  - configured a fresh build tree with `cmake -S src -B /tmp/upside2-md-build-20260424`;
+  - built `upside`, `upside_calculation`, and `upside_engine` successfully with `cmake --build /tmp/upside2-md-build-20260424 --target upside upside_calculation upside_engine`.
+- Residual warnings:
+  - build still reports a pre-existing `%p` formatting warning in `martini_masses::get_mass(...)` and unrelated existing warnings in other translation units; no new build errors remain from the acceleration import.
+
 ## 2026-04-14 MARTINI Workflow Python Runtime Repair
 
 ### Project Goal
