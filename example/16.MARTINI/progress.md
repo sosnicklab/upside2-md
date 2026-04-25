@@ -1,5 +1,24 @@
 # Progress Log
 
+## 2026-04-25 (Task Start: 1RKL Outlipid Continuation Autodetect Fix)
+- User reported that `run_sim_1rkl_outlipid.sh` appears to fail continuing from a previous trajectory.
+- Inspected the wrapper continuation path and found a likely inconsistency:
+  - `run_sim_1afo.sh` and `run_sim_1afo_outlipid.sh` derive `WORKFLOW_DIR` from `BASE_WORKFLOW_SCRIPT`,
+  - `run_sim_1rkl_outlipid.sh` still autodetects previous outputs under `${SCRIPT_DIR}/outputs`,
+  - under Slurm spool execution, `${SCRIPT_DIR}` may be the spool directory rather than the repo workflow directory.
+- Added a focused plan section for fixing and verifying the outlipid continuation path.
+- Confirmed available local `1rkl` numeric checkpoints:
+  - existing numeric checkpoints were under `martini_test_1rkl_hybrid` and `numeric_continue_smoke`,
+  - no numeric `martini_test_1rkl_outlipid*/checkpoints/1rkl.stage_7*.up` checkpoint was present for wrapper auto-detection.
+- The wrapper path issue still needs fixing because `SCRIPT_DIR` is not stable under Slurm spool execution.
+- Patched `run_sim_1rkl_outlipid.sh`:
+  - added `WORKFLOW_DIR` derived from `BASE_WORKFLOW_SCRIPT`,
+  - changed outlipid auto-detection to search `${WORKFLOW_DIR}/outputs` instead of `${SCRIPT_DIR}/outputs`.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - explicit `PREVIOUS_RUN_DIR` wrapper continuation wrote numeric `stage_7.1` checkpoint and VTF under `outputs/martini_test_1rkl_outlipid_continue_fix_smoke`.
+  - copied the wrapper to `/tmp` and ran with `SLURM_SUBMIT_DIR=/Users/yinhan/Documents/upside2-md/example/16.MARTINI`; the wrapper auto-detected the prior outlipid checkpoint from the real workflow outputs and wrote numeric `stage_7.2` checkpoint and VTF.
+
 ## 2026-04-25 (Task Start: Numeric Continuation Trajectory Naming)
 - User reported that continuation outputs like `_7.0_continue.vtf` and repeated `_continue` naming are unacceptable.
 - Started a focused workflow fix to use numeric stage names for continuation trajectories.

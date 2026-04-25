@@ -35,6 +35,7 @@ if [ -z "${BASE_WORKFLOW_SCRIPT}" ]; then
 fi
 
 PROJECT_ROOT="${UPSIDE_PROJECT_ROOT:-$(cd "$(dirname "${BASE_WORKFLOW_SCRIPT}")/../.." && pwd)}"
+WORKFLOW_DIR="$(cd "$(dirname "${BASE_WORKFLOW_SCRIPT}")" && pwd)"
 
 if [ -f /etc/profile.d/modules.sh ]; then
     source /etc/profile.d/modules.sh
@@ -89,7 +90,7 @@ PY
 }
 
 autodetect_previous_stage70_file() {
-    select_latest_stage70_file "${SCRIPT_DIR}/outputs" "martini_test_1rkl_outlipid*/checkpoints/1rkl.stage_7*.up"
+    select_latest_stage70_file "${WORKFLOW_DIR}/outputs" "martini_test_1rkl_outlipid*/checkpoints/1rkl.stage_7*.up"
 }
 
 resolve_previous_stage70_from_run_dir() {

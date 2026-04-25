@@ -244,3 +244,16 @@
 - Current bash workflow autodetection should use numeric `stage_7.<n>.up` files only.
 - Lesson:
   - restartable workflow names should encode segment order with an incrementing number, not a descriptive suffix that becomes nonsensical after repeated continuation.
+
+## 2026-04-25 (User Correction: Outlipid Autodetect Must Be Spool-Safe)
+- `run_sim_1rkl_outlipid.sh` must resolve previous output auto-detection from the real workflow directory, not from the runtime script path.
+- Root cause:
+  - Slurm can execute a spool copy of the submitted wrapper,
+  - `${SCRIPT_DIR}` can therefore point outside the repo,
+  - searching `${SCRIPT_DIR}/outputs` silently misses previous trajectories.
+- Correct pattern:
+  - resolve `BASE_WORKFLOW_SCRIPT`,
+  - derive `WORKFLOW_DIR="$(dirname "$BASE_WORKFLOW_SCRIPT")"`,
+  - search `${WORKFLOW_DIR}/outputs` for numeric continuation checkpoints.
+- Lesson:
+  - all wrapper-side repo-relative lookups need to be anchored to the resolved workflow script or submit directory, not `BASH_SOURCE[0]`.

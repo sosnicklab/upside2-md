@@ -212,3 +212,35 @@
   - reduced continuation from `1rkl.stage_7.1.up` wrote `outputs/numeric_continue_smoke/checkpoints/1rkl.stage_7.2.up` and `outputs/numeric_continue_smoke/1rkl.stage_7.2.vtf`.
   - reduced continuation through `run_sim_1afo.sh` from `1afo.stage_7.0.up` wrote `outputs/numeric_continue_1afo_smoke/checkpoints/1afo.stage_7.1.up` and `outputs/numeric_continue_1afo_smoke/1afo.stage_7.1.vtf`.
   - code search found no remaining `.continue` filename matching or hard-coded default `stage_7.0.continue` / `7.0_continue` names in the workflow entrypoints.
+
+## 2026-04-25 (1RKL Outlipid Continuation Autodetect Fix)
+
+### Project Goal
+- Fix `run_sim_1rkl_outlipid.sh` continuation from a previous trajectory.
+- Preserve numeric-only continuation checkpoint naming.
+
+### Architecture & Key Decisions
+- Resolve previous outlipid checkpoints from the real workflow directory derived from `BASE_WORKFLOW_SCRIPT`, not from `SCRIPT_DIR`.
+- Keep explicit `PREVIOUS_RUN_DIR`, `PREVIOUS_STAGE7_FILE`, and `CONTINUE_STAGE_70_FROM` behavior unchanged.
+- Keep autodetection numeric-only: `1rkl.stage_7.<n>.up`.
+
+### Execution Phases
+- [x] Phase 1: Reproduce/confirm the wrapper continuation failure path.
+- [x] Phase 2: Patch `run_sim_1rkl_outlipid.sh` to use the real workflow directory for autodetection.
+- [x] Phase 3: Verify local continuation and Slurm-spool-style autodetection.
+
+### Known Errors / Blockers
+- No blocker identified yet.
+
+### Review
+- Implemented in `run_sim_1rkl_outlipid.sh`:
+  - added `WORKFLOW_DIR` from the resolved `BASE_WORKFLOW_SCRIPT`,
+  - changed auto-continuation search from `${SCRIPT_DIR}/outputs` to `${WORKFLOW_DIR}/outputs`.
+- Verification:
+  - `bash -n example/16.MARTINI/run_sim_1rkl_outlipid.sh`
+  - explicit `PREVIOUS_RUN_DIR` continuation through the wrapper wrote:
+    - `outputs/martini_test_1rkl_outlipid_continue_fix_smoke/checkpoints/1rkl.stage_7.1.up`
+    - `outputs/martini_test_1rkl_outlipid_continue_fix_smoke/1rkl.stage_7.1.vtf`
+  - Slurm-spool-style wrapper run from `/tmp` with `SLURM_SUBMIT_DIR` set auto-detected the prior outlipid numeric checkpoint and wrote:
+    - `outputs/martini_test_1rkl_outlipid_continue_fix_smoke/checkpoints/1rkl.stage_7.2.up`
+    - `outputs/martini_test_1rkl_outlipid_continue_fix_smoke/1rkl.stage_7.2.vtf`
