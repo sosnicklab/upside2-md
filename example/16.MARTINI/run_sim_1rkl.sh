@@ -1531,6 +1531,14 @@ stage70_output_path_for_label() {
     printf '%s/%s.stage_%s.up\n' "$CHECKPOINT_DIR" "$PDB_ID" "$stage_label"
 }
 
+validate_stage70_numeric_label() {
+    local stage_label="$1"
+    if [[ ! "$stage_label" =~ ^7\.[0-9]+$ ]]; then
+        echo "ERROR: continuation stage label must be numeric stage_7.N, got: ${stage_label}" >&2
+        exit 1
+    fi
+}
+
 infer_next_stage70_label() {
     local source_file="$1"
 
@@ -1542,17 +1550,14 @@ import sys
 source_file = Path(sys.argv[1])
 checkpoint_dir = Path(sys.argv[2])
 pdb_id = sys.argv[3]
-pattern = re.compile(rf"^{re.escape(pdb_id)}\.stage_7\.(\d+)(\.continue)?\.up$")
+pattern = re.compile(rf"^{re.escape(pdb_id)}\.stage_7\.(\d+)\.up$")
 
 
 def logical_index(path):
     match = pattern.fullmatch(path.name)
     if not match:
         return None
-    index = int(match.group(1))
-    if match.group(2):
-        index += 1
-    return index
+    return int(match.group(1))
 
 
 indices = []
@@ -1582,11 +1587,18 @@ resolve_continuation_stage70_outputs() {
     if [ -z "$CONTINUE_STAGE_70_LABEL" ]; then
         if [ -n "$CONTINUE_STAGE_70_OUTPUT" ]; then
             CONTINUE_STAGE_70_LABEL="$(infer_stage70_label_from_file "$CONTINUE_STAGE_70_OUTPUT")"
+            if [ -z "$CONTINUE_STAGE_70_LABEL" ]; then
+                echo "ERROR: CONTINUE_STAGE_70_OUTPUT must be named ${PDB_ID}.stage_7.N.up" >&2
+                echo "Got: ${CONTINUE_STAGE_70_OUTPUT}" >&2
+                exit 1
+            fi
         fi
         if [ -z "$CONTINUE_STAGE_70_LABEL" ]; then
             CONTINUE_STAGE_70_LABEL="$(infer_next_stage70_label "$CONTINUE_STAGE_70_FROM")"
         fi
     fi
+
+    validate_stage70_numeric_label "$CONTINUE_STAGE_70_LABEL"
 
     if [ -z "$CONTINUE_STAGE_70_OUTPUT" ]; then
         CONTINUE_STAGE_70_OUTPUT="$(stage70_output_path_for_label "$CONTINUE_STAGE_70_LABEL")"

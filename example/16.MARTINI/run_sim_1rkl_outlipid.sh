@@ -70,7 +70,7 @@ glob_pattern = sys.argv[2]
 if not root.exists():
     raise SystemExit(0)
 
-name_pattern = re.compile(r"^1rkl\.stage_7\.(\d+)(?:\.continue)?\.up$")
+name_pattern = re.compile(r"^1rkl\.stage_7\.(\d+)\.up$")
 candidates = []
 for path in root.glob(glob_pattern):
     if not path.is_file():
@@ -78,14 +78,13 @@ for path in root.glob(glob_pattern):
     match = name_pattern.fullmatch(path.name)
     if not match:
         continue
-    is_continue = 1 if ".continue." in path.name else 0
-    candidates.append((int(match.group(1)), is_continue, path.stat().st_mtime_ns, str(path), path))
+    candidates.append((int(match.group(1)), path.stat().st_mtime_ns, str(path), path))
 
 if not candidates:
     raise SystemExit(0)
 
-candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]), reverse=True)
-print(candidates[0][4])
+candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+print(candidates[0][3])
 PY
 }
 
@@ -103,7 +102,7 @@ import sys
 root = Path(sys.argv[1]).resolve()
 checkpoints = root / "checkpoints"
 search_dir = checkpoints if checkpoints.is_dir() else root
-name_pattern = re.compile(r"^1rkl\.stage_7\.(\d+)(?:\.continue)?\.up$")
+name_pattern = re.compile(r"^1rkl\.stage_7\.(\d+)\.up$")
 candidates = []
 if search_dir.is_dir():
     for path in search_dir.glob("1rkl.stage_7*.up"):
@@ -112,14 +111,13 @@ if search_dir.is_dir():
         match = name_pattern.fullmatch(path.name)
         if not match:
             continue
-        is_continue = 1 if ".continue." in path.name else 0
-        candidates.append((int(match.group(1)), is_continue, path.stat().st_mtime_ns, str(path), path))
+        candidates.append((int(match.group(1)), path.stat().st_mtime_ns, str(path), path))
 
 if not candidates:
     raise SystemExit(0)
 
-candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]), reverse=True)
-print(candidates[0][4])
+candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+print(candidates[0][3])
 PY
 }
 

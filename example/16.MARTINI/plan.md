@@ -137,7 +137,7 @@
 - Patch the shared hybrid prep/runtime path for multi-chain `1AFO`.
   - The wrappers alone are insufficient because the current hybrid metadata still collapses chain-local residue numbers and does not propagate chain-break metadata into stage-7 topology reconstruction.
 - Keep continuation compatibility with this repo's current base workflow.
-  - Wrapper autodetection should accept the current `.stage_7.0.continue.up` naming as well as numbered `.stage_7.<n>.up` files so the new wrappers work without forcing a larger continuation refactor.
+  - Superseded on 2026-04-25: wrapper autodetection now uses numeric `stage_7.<n>.up` names only.
 
 ### Execution Phases
 - [x] Phase 1: Patch shared hybrid metadata/runtime code for unique multi-chain backbone residue indexing and chain-break propagation.
@@ -183,14 +183,16 @@
 - Keep the existing stage `7.0` production checkpoint as the first production trajectory segment.
 - Name resumed production segments as `stage_7.1`, `stage_7.2`, etc.
 - Determine the next continuation index from existing checkpoints in the target `RUN_DIR` and the source checkpoint name, so reruns can continue from either a previous run directory or an explicit previous stage file.
-- Keep explicit `CONTINUE_STAGE_70_OUTPUT` as an override for compatibility, but make the default numeric.
+- Keep explicit `CONTINUE_STAGE_70_OUTPUT` as an override for compatibility, but require it to use numeric `stage_7.<n>.up` naming.
 - This supersedes the earlier `.continue` default naming decision.
+- After user correction, all current bash workflow autodetection should use numeric `stage_7.<n>.up` names only; legacy `.continue` matching is no longer kept in bash wrappers.
 
 ### Execution Phases
 - [x] Phase 1: Inspect continuation output selection and VTF naming in the workflow scripts.
 - [x] Phase 2: Patch continuation naming to choose numeric `stage_7.<n>` checkpoint and VTF outputs by default.
 - [x] Phase 3: Update wrapper autodetection if it still prefers legacy `.continue` names.
 - [x] Phase 4: Run syntax checks and a reduced continuation smoke test.
+- [x] Phase 5: Remove legacy `.continue` file matching from all bash workflows and verify `1afo` continuation output.
 
 ### Known Errors / Blockers
 - No blocker identified yet.
@@ -200,11 +202,13 @@
   - removed the default `stage_7.0.continue.up` checkpoint name,
   - removed the default `7.0_continue` VTF label,
   - added numeric continuation output resolution for `stage_7.1`, `stage_7.2`, etc.,
-  - kept explicit `CONTINUE_STAGE_70_OUTPUT` and `CONTINUE_STAGE_70_LABEL` overrides.
+  - kept explicit `CONTINUE_STAGE_70_OUTPUT` and `CONTINUE_STAGE_70_LABEL` overrides only for numeric stage names.
 - Wrapper review:
-  - no wrapper code change was needed because the wrappers already accept numbered `stage_7.<n>.up` files and keep legacy `.continue` detection only for old outputs.
+  - `run_sim_1rkl_outlipid.sh`, `run_sim_1afo.sh`, and `run_sim_1afo_outlipid.sh` now auto-detect only numeric `stage_7.<n>.up` continuation checkpoints.
+  - `run_sim_1afo.sh` delegates to the same numeric continuation resolver and was verified directly.
 - Verification:
   - `bash -n` passed for `run_sim_1rkl.sh`, `run_sim_1rkl_outlipid.sh`, `run_sim_1afo.sh`, and `run_sim_1afo_outlipid.sh`.
   - reduced continuation from `1rkl.stage_7.0.up` wrote `outputs/numeric_continue_smoke/checkpoints/1rkl.stage_7.1.up` and `outputs/numeric_continue_smoke/1rkl.stage_7.1.vtf`.
   - reduced continuation from `1rkl.stage_7.1.up` wrote `outputs/numeric_continue_smoke/checkpoints/1rkl.stage_7.2.up` and `outputs/numeric_continue_smoke/1rkl.stage_7.2.vtf`.
-  - code search found no remaining hard-coded default `stage_7.0.continue` or `7.0_continue` names in the workflow entrypoints.
+  - reduced continuation through `run_sim_1afo.sh` from `1afo.stage_7.0.up` wrote `outputs/numeric_continue_1afo_smoke/checkpoints/1afo.stage_7.1.up` and `outputs/numeric_continue_1afo_smoke/1afo.stage_7.1.vtf`.
+  - code search found no remaining `.continue` filename matching or hard-coded default `stage_7.0.continue` / `7.0_continue` names in the workflow entrypoints.

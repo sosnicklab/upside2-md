@@ -29,6 +29,18 @@
   - output VTF: `outputs/numeric_continue_smoke/1rkl.stage_7.2.vtf`
 - Initial smoke attempt failed because the command passed a repo-root-relative source path while the workflow changes into `example/16.MARTINI`; reran with an absolute source path and verified the workflow successfully.
 - Artifact check confirmed the smoke directory contains numbered continuation outputs only.
+- User clarified that this must apply to all bash workflows, including `1afo`.
+- Rescanned all `*.sh` workflow entrypoints and found legacy `.continue` filename matching still present in:
+  - `run_sim_1rkl.sh`
+  - `run_sim_1rkl_outlipid.sh`
+  - `run_sim_1afo.sh`
+  - `run_sim_1afo_outlipid.sh`
+- Removed legacy `.continue` filename matching from all bash workflows.
+- Tightened explicit continuation output handling so `CONTINUE_STAGE_70_OUTPUT` must be named `${PDB_ID}.stage_7.N.up`.
+- Verified `1afo` continuation through `run_sim_1afo.sh`:
+  - source: `outputs/1afo_port_smoke2/checkpoints/1afo.stage_7.0.up`
+  - output checkpoint: `outputs/numeric_continue_1afo_smoke/checkpoints/1afo.stage_7.1.up`
+  - output VTF: `outputs/numeric_continue_1afo_smoke/1afo.stage_7.1.vtf`
 
 ## 2026-04-06 (Audit: Does Upside RMSD-Align Protein Backbone Each Step?)
 - Recreated the required tracker files in `example/16.MARTINI` because they had been removed during prior directory cleanup.
