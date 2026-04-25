@@ -117,8 +117,8 @@ STAGE_66_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_6.6.up"
 PREPARED_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.prepared.up"
 STAGE_70_FILE="${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.up"
 CONTINUE_STAGE_70_FROM="${CONTINUE_STAGE_70_FROM:-}"
-CONTINUE_STAGE_70_OUTPUT="${CONTINUE_STAGE_70_OUTPUT:-${CHECKPOINT_DIR}/${PDB_ID}.stage_7.0.continue.up}"
-CONTINUE_STAGE_70_LABEL="${CONTINUE_STAGE_70_LABEL:-7.0_continue}"
+CONTINUE_STAGE_70_OUTPUT="${CONTINUE_STAGE_70_OUTPUT:-}"
+CONTINUE_STAGE_70_LABEL="${CONTINUE_STAGE_70_LABEL:-}"
 
 # Stage-0 hybrid structure prep controls
 SALT_MOLAR="${SALT_MOLAR:-0.15}"
@@ -1511,10 +1511,92 @@ extract_stage_vtf() {
     python3 "${EXTRACT_VTF_SCRIPT}" "$stage_file" "$vtf_file" "$stage_file" "$RUNTIME_PDB_ID" --mode "$mode" --split-segments
 }
 
+infer_stage70_label_from_file() {
+    local stage_file="$1"
+    local base_name="${stage_file##*/}"
+    local prefix="${PDB_ID}.stage_"
+    local suffix=".up"
+
+    if [[ "$base_name" != "$prefix"*"$suffix" ]]; then
+        return 0
+    fi
+
+    local label="${base_name#"$prefix"}"
+    label="${label%"$suffix"}"
+    printf '%s\n' "$label"
+}
+
+stage70_output_path_for_label() {
+    local stage_label="$1"
+    printf '%s/%s.stage_%s.up\n' "$CHECKPOINT_DIR" "$PDB_ID" "$stage_label"
+}
+
+infer_next_stage70_label() {
+    local source_file="$1"
+
+    python3 - "$source_file" "$CHECKPOINT_DIR" "$PDB_ID" << 'PY'
+from pathlib import Path
+import re
+import sys
+
+source_file = Path(sys.argv[1])
+checkpoint_dir = Path(sys.argv[2])
+pdb_id = sys.argv[3]
+pattern = re.compile(rf"^{re.escape(pdb_id)}\.stage_7\.(\d+)(\.continue)?\.up$")
+
+
+def logical_index(path):
+    match = pattern.fullmatch(path.name)
+    if not match:
+        return None
+    index = int(match.group(1))
+    if match.group(2):
+        index += 1
+    return index
+
+
+indices = []
+source_index = logical_index(source_file)
+if source_index is not None:
+    indices.append(source_index)
+
+if checkpoint_dir.is_dir():
+    for path in checkpoint_dir.glob(f"{pdb_id}.stage_7*.up"):
+        if path.is_file():
+            index = logical_index(path)
+            if index is not None:
+                indices.append(index)
+
+if not indices:
+    print("7.1")
+else:
+    print(f"7.{max(indices) + 1}")
+PY
+}
+
+resolve_continuation_stage70_outputs() {
+    if [ -z "$CONTINUE_STAGE_70_FROM" ]; then
+        return 0
+    fi
+
+    if [ -z "$CONTINUE_STAGE_70_LABEL" ]; then
+        if [ -n "$CONTINUE_STAGE_70_OUTPUT" ]; then
+            CONTINUE_STAGE_70_LABEL="$(infer_stage70_label_from_file "$CONTINUE_STAGE_70_OUTPUT")"
+        fi
+        if [ -z "$CONTINUE_STAGE_70_LABEL" ]; then
+            CONTINUE_STAGE_70_LABEL="$(infer_next_stage70_label "$CONTINUE_STAGE_70_FROM")"
+        fi
+    fi
+
+    if [ -z "$CONTINUE_STAGE_70_OUTPUT" ]; then
+        CONTINUE_STAGE_70_OUTPUT="$(stage70_output_path_for_label "$CONTINUE_STAGE_70_LABEL")"
+    fi
+}
+
 run_stage70_continuation() {
     local source_file="$1"
     local output_file="$2"
-    local stage_label="${3:-7.0_continue}"
+    local stage_label="$3"
 
     if [ ! -f "$source_file" ]; then
         echo "ERROR: continuation source not found: $source_file"
@@ -1539,6 +1621,8 @@ PY
     run_md_stage "$stage_label" "$output_file" "$output_file" "$PROD_70_NSTEPS" "$PROD_TIME_STEP" "$PROD_FRAME_STEPS"
     extract_stage_vtf "$stage_label" "$output_file" "2"
 }
+
+resolve_continuation_stage70_outputs
 
 echo "=== Hybrid 1RKL Dry MARTINI Workflow ==="
 echo "Protein ID: $PDB_ID"

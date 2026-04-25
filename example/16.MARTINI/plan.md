@@ -172,3 +172,39 @@
     - `chain_counts = [1, 1]`
     - no `Distance3D` bond between sequence indices `35` and `36`
     - `example/16.MARTINI/outputs/1afo_port_smoke2/1afo.stage_7.0.vtf` contains both `segid sA chain A` and `segid sB chain B`
+
+## 2026-04-25 (Numeric Continuation Trajectory Naming)
+
+### Project Goal
+- Replace ugly `_continue` checkpoint and VTF names with numeric continuation stage names.
+- Ensure repeated continuations naturally produce the next numbered trajectory instead of names like `_continue_continue`.
+
+### Architecture & Key Decisions
+- Keep the existing stage `7.0` production checkpoint as the first production trajectory segment.
+- Name resumed production segments as `stage_7.1`, `stage_7.2`, etc.
+- Determine the next continuation index from existing checkpoints in the target `RUN_DIR` and the source checkpoint name, so reruns can continue from either a previous run directory or an explicit previous stage file.
+- Keep explicit `CONTINUE_STAGE_70_OUTPUT` as an override for compatibility, but make the default numeric.
+- This supersedes the earlier `.continue` default naming decision.
+
+### Execution Phases
+- [x] Phase 1: Inspect continuation output selection and VTF naming in the workflow scripts.
+- [x] Phase 2: Patch continuation naming to choose numeric `stage_7.<n>` checkpoint and VTF outputs by default.
+- [x] Phase 3: Update wrapper autodetection if it still prefers legacy `.continue` names.
+- [x] Phase 4: Run syntax checks and a reduced continuation smoke test.
+
+### Known Errors / Blockers
+- No blocker identified yet.
+
+### Review
+- Implemented in `run_sim_1rkl.sh`:
+  - removed the default `stage_7.0.continue.up` checkpoint name,
+  - removed the default `7.0_continue` VTF label,
+  - added numeric continuation output resolution for `stage_7.1`, `stage_7.2`, etc.,
+  - kept explicit `CONTINUE_STAGE_70_OUTPUT` and `CONTINUE_STAGE_70_LABEL` overrides.
+- Wrapper review:
+  - no wrapper code change was needed because the wrappers already accept numbered `stage_7.<n>.up` files and keep legacy `.continue` detection only for old outputs.
+- Verification:
+  - `bash -n` passed for `run_sim_1rkl.sh`, `run_sim_1rkl_outlipid.sh`, `run_sim_1afo.sh`, and `run_sim_1afo_outlipid.sh`.
+  - reduced continuation from `1rkl.stage_7.0.up` wrote `outputs/numeric_continue_smoke/checkpoints/1rkl.stage_7.1.up` and `outputs/numeric_continue_smoke/1rkl.stage_7.1.vtf`.
+  - reduced continuation from `1rkl.stage_7.1.up` wrote `outputs/numeric_continue_smoke/checkpoints/1rkl.stage_7.2.up` and `outputs/numeric_continue_smoke/1rkl.stage_7.2.vtf`.
+  - code search found no remaining hard-coded default `stage_7.0.continue` or `7.0_continue` names in the workflow entrypoints.

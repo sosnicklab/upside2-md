@@ -233,3 +233,13 @@
     - `stage_7.0.continue.up`
     - `stage_7.<n>.up`
 - The new `1afo` wrappers and the updated `run_sim_1rkl_outlipid.sh` now sort both naming styles and derive `RUN_DIR` from the selected checkpoint path.
+
+## 2026-04-25 (User Correction: Continuation Trajectories Must Be Numbered)
+- Continuation outputs must not use `_continue` or `.continue` as the default naming shape.
+- Correct default behavior:
+  - first production trajectory remains `stage_7.0`,
+  - the first continuation writes `stage_7.1`,
+  - repeated continuations write `stage_7.2`, `stage_7.3`, etc.
+- Legacy `.continue` files may still be detected for compatibility, but new default checkpoint and VTF output names must be numeric.
+- Lesson:
+  - restartable workflow names should encode segment order with an incrementing number, not a descriptive suffix that becomes nonsensical after repeated continuation.

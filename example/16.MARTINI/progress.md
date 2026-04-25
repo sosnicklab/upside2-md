@@ -1,5 +1,35 @@
 # Progress Log
 
+## 2026-04-25 (Task Start: Numeric Continuation Trajectory Naming)
+- User reported that continuation outputs like `_7.0_continue.vtf` and repeated `_continue` naming are unacceptable.
+- Started a focused workflow fix to use numeric stage names for continuation trajectories.
+- Updated `plan.md` with the numeric continuation naming goal, decisions, phases, and verification plan.
+- Inspected continuation naming in the workflow:
+  - `run_sim_1rkl.sh` still defaulted to `checkpoints/${PDB_ID}.stage_7.0.continue.up`.
+  - `run_sim_1rkl.sh` still defaulted the VTF label to `7.0_continue`.
+  - `run_sim_1rkl_outlipid.sh`, `run_sim_1afo.sh`, and `run_sim_1afo_outlipid.sh` already accept numbered `stage_7.<n>.up` files while remaining compatible with legacy `.continue` files.
+- Patched `run_sim_1rkl.sh` so continuation mode resolves default output names numerically:
+  - source `stage_7.0.up` with no later target checkpoint becomes `stage_7.1.up` and `stage_7.1.vtf`.
+  - repeated continuation increments from the highest existing target checkpoint or the source checkpoint.
+  - explicit `CONTINUE_STAGE_70_OUTPUT` and `CONTINUE_STAGE_70_LABEL` remain supported.
+- Verification so far:
+  - `bash -n run_sim_1rkl.sh`
+- Ran project-environment syntax checks for all workflow entrypoints:
+  - `run_sim_1rkl.sh`
+  - `run_sim_1rkl_outlipid.sh`
+  - `run_sim_1afo.sh`
+  - `run_sim_1afo_outlipid.sh`
+- First reduced continuation smoke:
+  - source: `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`
+  - output checkpoint: `outputs/numeric_continue_smoke/checkpoints/1rkl.stage_7.1.up`
+  - output VTF: `outputs/numeric_continue_smoke/1rkl.stage_7.1.vtf`
+- Second reduced continuation smoke:
+  - source: `outputs/numeric_continue_smoke/checkpoints/1rkl.stage_7.1.up`
+  - output checkpoint: `outputs/numeric_continue_smoke/checkpoints/1rkl.stage_7.2.up`
+  - output VTF: `outputs/numeric_continue_smoke/1rkl.stage_7.2.vtf`
+- Initial smoke attempt failed because the command passed a repo-root-relative source path while the workflow changes into `example/16.MARTINI`; reran with an absolute source path and verified the workflow successfully.
+- Artifact check confirmed the smoke directory contains numbered continuation outputs only.
+
 ## 2026-04-06 (Audit: Does Upside RMSD-Align Protein Backbone Each Step?)
 - Recreated the required tracker files in `example/16.MARTINI` because they had been removed during prior directory cleanup.
 - Audited runtime references related to RMSD alignment across:
