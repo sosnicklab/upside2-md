@@ -1,5 +1,20 @@
 # Progress Log
 
+## 2026-04-25 (Task Start: 1AFO Outlipid Stage Prep OOM)
+- User reported `run_sim_1afo_outlipid.sh` freezes locally and is OOM-killed on Slurm during the base workflow stage-prep command:
+  - `python3 "${UNIVERSAL_PREP_SCRIPT}" --mode ... --prepare-structure 0 --stage "$prepare_stage" ...`
+- Added a focused plan section to inspect wrapper defaults, generated system size, and the killed stage-prep code path before changing resource requests.
+- Inspected existing partial `outputs/martini_test_1afo_outlipid` artifacts:
+  - prepared system has `17,966` MARTINI atoms,
+  - stage prep would need roughly `161 million` nonbonded pairs before exclusions,
+  - the old Python writer accumulated both `pairs_list` and full per-pair `coeff_array` in memory before writing HDF5.
+- Confirmed the C++ MARTINI runtime already supports an optimized table format with unique `coefficients` plus `coefficient_indices`.
+- Patched `py/martini_prepare_system_lib.py` stage conversion:
+  - stream `pairs` and `coefficient_indices` into HDF5 extendable arrays,
+  - write only unique coefficient rows,
+  - set `martini_potential.optimized_format=1`,
+  - compute representative epsilon/sigma from weighted unique-row counts.
+
 ## 2026-04-25 (Task Start: 1RKL Outlipid Continuation Autodetect Fix)
 - User reported that `run_sim_1rkl_outlipid.sh` appears to fail continuing from a previous trajectory.
 - Inspected the wrapper continuation path and found a likely inconsistency:
@@ -507,3 +522,26 @@
   - VTF check on `example/16.MARTINI/outputs/1afo_port_smoke2/1afo.stage_7.0.vtf` observed:
     - `segid sA chain A`
     - `segid sB chain B`
+
+## 2026-04-25 (Bug Fix: 1AFO Outlipid Stage Prep OOM)
+- Investigated the Slurm/local freeze in `run_sim_1afo_outlipid.sh`.
+- Root cause:
+  - the shared stage writer in `py/martini_prepare_system_lib.py` accumulated all non-bonded pairs and all per-pair coefficients in Python lists before writing HDF5,
+  - the outlipid `1AFO` system has `17966` MARTINI atoms and `161363448` non-bonded pairs after exclusions,
+  - this made stage preparation allocate pathological Python-side memory and triggered the reported OOM.
+- Modified:
+  - `py/martini_prepare_system_lib.py`
+  - `example/16.MARTINI/plan.md`
+  - `example/16.MARTINI/progress.md`
+  - `example/16.MARTINI/findings.md`
+- Implementation:
+  - stream `pairs` into an HDF5 extendable array,
+  - write only unique coefficient rows to `coefficients`,
+  - write per-pair integer `coefficient_indices`,
+  - set `optimized_format = 1` for the existing optimized C++ runtime loader.
+- Verification:
+  - no-write Python source compile passed for `py/martini_prepare_system_lib.py`,
+  - reduced base `1afo` workflow completed through `outputs/optimized_format_1afo_smoke/checkpoints/1afo.stage_7.0.up`,
+  - reduced wrapper `1afo_outlipid` workflow completed through `outputs/oomfix_1afo_outlipid_wrapper_smoke/checkpoints/1afo.stage_7.0.up`,
+  - large outlipid prep wrote `161363448` pairs with `32` unique coefficient rows,
+  - runtime confirmed `MARTINI: Using optimized interaction table format`.

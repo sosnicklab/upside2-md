@@ -244,3 +244,39 @@
   - Slurm-spool-style wrapper run from `/tmp` with `SLURM_SUBMIT_DIR` set auto-detected the prior outlipid numeric checkpoint and wrote:
     - `outputs/martini_test_1rkl_outlipid_continue_fix_smoke/checkpoints/1rkl.stage_7.2.up`
     - `outputs/martini_test_1rkl_outlipid_continue_fix_smoke/1rkl.stage_7.2.vtf`
+
+## 2026-04-25 (1AFO Outlipid Stage Prep OOM)
+
+### Project Goal
+- Fix `run_sim_1afo_outlipid.sh` freezing locally and being OOM-killed on Slurm during stage-file preparation.
+- Keep the out-of-bilayer start geometry usable without requiring excessive Slurm memory.
+
+### Architecture & Key Decisions
+- Diagnose the stage-prep memory source before changing resource requests.
+- Keep the shared base workflow behavior intact unless the root cause is shared.
+- Prefer reducing pathological wrapper-generated system size or avoiding unnecessary dense allocations over raising memory.
+
+### Execution Phases
+- [x] Phase 1: Inspect `1afo` outlipid wrapper defaults, generated prep artifacts, and the killed stage-prep code path.
+- [x] Phase 2: Identify the memory blow-up and patch the smallest responsible code path.
+- [x] Phase 3: Verify `1afo` outlipid reduced workflow reaches stage `7.0` or the formerly killed stage-prep call without freezing/OOM.
+
+### Known Errors / Blockers
+- No open blocker from the implementation pass.
+
+### Review
+- Root cause:
+  - the shared MARTINI stage writer built a full Python list of all non-bonded pairs and a full per-pair `float32[4]` coefficient table before writing HDF5,
+  - the `1afo_outlipid` box has `17966` MARTINI atoms, which produces `161363448` non-bonded pairs after exclusions,
+  - that dense Python-side allocation caused the local freeze and Slurm OOM during the stage-prep conversion call.
+- Implemented in `py/martini_prepare_system_lib.py`:
+  - stream non-bonded `pairs` directly into an HDF5 extendable array,
+  - store unique coefficient rows once in `coefficients`,
+  - store one integer `coefficient_indices` entry per pair,
+  - mark the MARTINI group with `optimized_format = 1`, matching the existing optimized runtime loader in `src/martini.cpp`.
+- Verification:
+  - no-write source compile of `py/martini_prepare_system_lib.py` passed,
+  - reduced `1afo` base workflow completed through `outputs/optimized_format_1afo_smoke/checkpoints/1afo.stage_7.0.up`,
+  - reduced `1afo_outlipid` wrapper completed through `outputs/oomfix_1afo_outlipid_wrapper_smoke/checkpoints/1afo.stage_7.0.up`,
+  - the formerly killed prep path wrote `161363448` non-bonded pairs with `32` unique coefficient rows,
+  - runtime loaded the optimized table with `MARTINI: Using optimized interaction table format`.

@@ -257,3 +257,17 @@
   - search `${WORKFLOW_DIR}/outputs` for numeric continuation checkpoints.
 - Lesson:
   - all wrapper-side repo-relative lookups need to be anchored to the resolved workflow script or submit directory, not `BASH_SOURCE[0]`.
+
+## 2026-04-25 (1AFO Outlipid OOM: Avoid Dense Per-Pair Coefficients)
+- The `1afo_outlipid` packed MARTINI system contains `17966` atoms and produces `161363448` non-bonded pairs after bonded exclusions.
+- The previous stage writer stored two dense Python-side structures before HDF5 output:
+  - a list of all pair index tuples,
+  - a per-pair `float32[4]` coefficient row.
+- This is the root cause of the local freeze and Slurm OOM during the stage-prep call.
+- Correct pattern:
+  - stream large pair arrays directly to HDF5,
+  - deduplicate coefficient rows by atom type/charge class,
+  - store one integer coefficient index per pair,
+  - rely on the existing optimized MARTINI runtime loader for `optimized_format = 1`.
+- Lesson:
+  - for O(N^2) molecular interaction tables, never build Python object lists or duplicate static per-class coefficients per pair; write chunked numeric arrays and factor repeated metadata.

@@ -2771,10 +2771,9 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         t.create_array(martini_potential, 'atom_indices', obj=np.arange(n_atoms))
         t.create_array(martini_potential, 'charges', obj=charges)
         
-        # Create pairs and coefficients for non-bonded interactions with proper exclusions
-        pairs_list = []
-        coeff_array = []
-        
+        # Create pairs and optimized coefficient indices for non-bonded interactions.
+        # The full coefficient table is O(N^2) and can OOM for large membrane boxes;
+        # store unique coefficient rows plus one int index per pair instead.
         # Create sets for exclusions (MARTINI uses nrexcl=1, so only 1-2 exclusions)
         bonded_pairs_12 = set()  # Directly bonded (1-2) - full exclusion
         additional_exclusions = set()  # Additional exclusions from ITP file
@@ -2793,69 +2792,139 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         # Generate all unique pairs (i < j) with proper exclusions (nrexcl=1)
         excluded_12_count = 0
         excluded_additional_count = 0
-        
+        total_candidate_pairs = n_atoms * (n_atoms - 1) // 2
+        total_pairs_written = 0
+        unique_coeffs = []
+        coeff_to_index = {}
+        coeff_counts = []
+        atom_type_strings = [
+            atom_type.decode('utf-8') if isinstance(atom_type, bytes) else str(atom_type)
+            for atom_type in atom_types
+        ]
+        atom_classes = [(atom_type_strings[i], float(charges[i])) for i in range(n_atoms)]
+        class_to_id = {}
+        atom_class_ids = np.empty(n_atoms, dtype=np.int32)
+        class_values = []
+        for i, cls in enumerate(atom_classes):
+            class_id = class_to_id.get(cls)
+            if class_id is None:
+                class_id = len(class_values)
+                class_to_id[cls] = class_id
+                class_values.append(cls)
+            atom_class_ids[i] = class_id
+
+        def coefficient_index_for_classes(class_i, class_j, atom_i):
+            type1, q1_raw = class_values[class_i]
+            type2, q2_raw = class_values[class_j]
+            if (type1, type2) in martini_table:
+                sigma_nm, epsilon_kj = martini_table[(type1, type2)]
+            elif (type2, type1) in martini_table:
+                sigma_nm, epsilon_kj = martini_table[(type2, type1)]
+            else:
+                available_types = sorted(set([t[0] for t in martini_table.keys()] + [t[1] for t in martini_table.keys()]))
+                raise ValueError(f"FATAL ERROR: Missing interaction parameters for bead type pair ({type1}, {type2})\n"
+                               f"  Atom index: {atom_i} ({type1})\n"
+                               f"  This indicates incomplete MARTINI force field parameters.\n"
+                               f"  Available bead types in parameter table: {available_types}\n"
+                               f"  Aborting to prevent incorrect simulation results.")
+
+            epsilon = np.float32(epsilon_kj / energy_conversion)
+            sigma = np.float32(sigma_nm * length_conversion)
+            q1 = np.float32(q1_raw)
+            q2 = np.float32(q2_raw)
+            coeff_key = (float(epsilon), float(sigma), float(q1), float(q2))
+            coeff_index = coeff_to_index.get(coeff_key)
+            if coeff_index is None:
+                coeff_index = len(unique_coeffs)
+                coeff_to_index[coeff_key] = coeff_index
+                unique_coeffs.append(coeff_key)
+                coeff_counts.append(0)
+            return coeff_index
+
+        def weighted_median(values_and_counts, total_count):
+            midpoint = total_count // 2
+            running = 0
+            for value, count in sorted(values_and_counts):
+                running += count
+                if running > midpoint:
+                    return value
+            return values_and_counts[-1][0]
+
+        pairs_array = t.create_earray(
+            martini_potential,
+            'pairs',
+            atom=tb.Int32Atom(),
+            shape=(0, 2),
+            expectedrows=total_candidate_pairs,
+        )
+        coeff_index_array = t.create_earray(
+            martini_potential,
+            'coefficient_indices',
+            atom=tb.Int64Atom(),
+            shape=(0,),
+            expectedrows=total_candidate_pairs,
+        )
+
+        bonded_by_i = defaultdict(set)
+        for i, j in bonded_pairs_12:
+            bonded_by_i[i].add(j)
+        additional_by_i = defaultdict(set)
+        for i, j in additional_exclusions:
+            additional_by_i[i].add(j)
+
         for i in range(n_atoms):
-            for j in range(i + 1, n_atoms):
-                pair = (i, j)
-                
-                # Skip 1-2 pairs (full exclusion) - nrexcl=1
-                if pair in bonded_pairs_12:
-                    excluded_12_count += 1
-                    continue
-                
-                # Skip additional exclusions from ITP file
-                if pair in additional_exclusions:
-                    excluded_additional_count += 1
-                    continue
-                
-                # No scaling needed for MARTINI (nrexcl=1)
-                scale_factor = 1.0
-                
-                pairs_list.append([i, j])
-                
-                # Get bead types for this pair
-                type1 = atom_types[i].decode('utf-8') if isinstance(atom_types[i], bytes) else str(atom_types[i])
-                type2 = atom_types[j].decode('utf-8') if isinstance(atom_types[j], bytes) else str(atom_types[j])
-                
-                # Look up MARTINI parameters for this bead type pair
-                if (type1, type2) in martini_table:
-                    sigma_nm, epsilon_kj = martini_table[(type1, type2)]
-                elif (type2, type1) in martini_table:
-                    sigma_nm, epsilon_kj = martini_table[(type2, type1)]
-                else:
-                    # Raise error for missing interaction parameters
-                    available_types = sorted(set([t[0] for t in martini_table.keys()] + [t[1] for t in martini_table.keys()]))
-                    raise ValueError(f"FATAL ERROR: Missing interaction parameters for bead type pair ({type1}, {type2})\n"
-                                   f"  Atom indices: {i} ({type1}) - {j} ({type2})\n"
-                                   f"  This indicates incomplete MARTINI force field parameters.\n"
-                                   f"  Available bead types in parameter table: {available_types}\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
-                
-                # Convert to UPSIDE units
-                epsilon = epsilon_kj / energy_conversion  # kJ/mol → E_up
-                sigma = sigma_nm * length_conversion  # nm → Å
-                q1 = charges[i] * scale_factor
-                q2 = charges[j] * scale_factor
-                coeff_array.append([epsilon * scale_factor, sigma, q1, q2])
+            if i + 1 >= n_atoms:
+                continue
+            js = np.arange(i + 1, n_atoms, dtype=np.int32)
+            bonded_js = bonded_by_i.get(i)
+            additional_js = additional_by_i.get(i)
+            if bonded_js:
+                bonded_mask = np.isin(js, np.fromiter(bonded_js, dtype=np.int32), assume_unique=True)
+                excluded_12_count += int(np.count_nonzero(bonded_mask))
+                js = js[~bonded_mask]
+            if additional_js and js.size:
+                additional_candidates = np.fromiter(
+                    (j for j in additional_js if not bonded_js or j not in bonded_js),
+                    dtype=np.int32,
+                )
+                if additional_candidates.size:
+                    additional_mask = np.isin(js, additional_candidates, assume_unique=True)
+                    excluded_additional_count += int(np.count_nonzero(additional_mask))
+                    js = js[~additional_mask]
+            if js.size == 0:
+                continue
+
+            pairs_chunk = np.empty((js.size, 2), dtype=np.int32)
+            pairs_chunk[:, 0] = i
+            pairs_chunk[:, 1] = js
+
+            coeff_indices = np.empty(js.size, dtype=np.int64)
+            class_i = int(atom_class_ids[i])
+            js_class_ids = atom_class_ids[js]
+            for class_j in np.unique(js_class_ids):
+                mask = js_class_ids == class_j
+                coeff_index = coefficient_index_for_classes(class_i, int(class_j), i)
+                count = int(np.count_nonzero(mask))
+                coeff_indices[mask] = coeff_index
+                coeff_counts[coeff_index] += count
+
+            pairs_array.append(pairs_chunk)
+            coeff_index_array.append(coeff_indices)
+            total_pairs_written += int(js.size)
         
         print(f"Excluded {excluded_12_count} 1-2 bonded pairs from non-bonded interactions (nrexcl=1)")
         print(f"Excluded {excluded_additional_count} additional pairs from ITP exclusions")
-
-        t.create_array(martini_potential, 'pairs', obj=np.array(pairs_list, dtype=int))
-        t.create_array(martini_potential, 'coefficients', obj=np.array(coeff_array, dtype='f4'))
+        print(f"Wrote {total_pairs_written} non-bonded pairs with {len(unique_coeffs)} unique coefficient rows")
+        martini_potential._v_attrs.optimized_format = 1
+        t.create_array(martini_potential, 'coefficients', obj=np.array(unique_coeffs, dtype='f4'))
         
         # Calculate representative epsilon and sigma from the coefficients array
         # These are required by the C++ interface but not used in computation
-        if coeff_array:
-            # Use the most common epsilon and sigma values from the coefficients
-            epsilon_values = [coeff[0] for coeff in coeff_array]  # epsilon values
-            sigma_values = [coeff[1] for coeff in coeff_array]    # sigma values
-            
-            # Use the median values as representative
-            epsilon_values.sort()
-            sigma_values.sort()
-            median_epsilon = epsilon_values[len(epsilon_values)//2]
-            median_sigma = sigma_values[len(sigma_values)//2]
+        if total_pairs_written > 0:
+            epsilon_counts = [(coeff[0], coeff_counts[idx]) for idx, coeff in enumerate(unique_coeffs)]
+            sigma_counts = [(coeff[1], coeff_counts[idx]) for idx, coeff in enumerate(unique_coeffs)]
+            median_epsilon = weighted_median(epsilon_counts, total_pairs_written)
+            median_sigma = weighted_median(sigma_counts, total_pairs_written)
             
             martini_potential._v_attrs.epsilon = median_epsilon
             martini_potential._v_attrs.sigma = median_sigma
