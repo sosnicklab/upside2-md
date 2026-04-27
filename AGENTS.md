@@ -16,9 +16,14 @@ Upside is a molecular dynamics simulation package for protein folding and confor
   - compare only the membrane-embedded protein region, not the solution-exposed residues
 - Decision rule:
   - prefer direct reference-vs-hybrid RMSF overlays over weak fitted trend lines
-  - current selected scale from the latest stable rerun is `1.15`
+  - current selected scale from the latest stable rerun is `1.00`
 
-## Development Rules
+## Physical Model Integrity
+**CRITICAL: Do not modify, scale to zero, or disable core physics interactions.**
+* **Hybrid Interface Interactions:** The interaction potentials between the protein Side Chains and the dry-MARTINI environment (SC-env), as well as the protein Backbone and the dry-MARTINI environment (BB-env), must **NEVER** be turned off.
+* **No "Debugging" Exclusions:** Do not disable or bypass these hybrid interface interactions to circumvent crashes, optimize performance, or troubleshoot workflow scripts. Disabling them completely breaks the physical model of the Upside simulation. 
+* **Strict Adherence:** Any generated script, parameter modification, or configuration must 100% respect this physical model.
+
 ## Development Rules
 * **Backward Compatibility**: Modifications to C++ source files must not break existing function calls or the Python-to-C++ interface. Exception: This rule does not apply to `src/box.h`, `src/box.cpp`, `src/martini.cpp`, and any files under the `example/16.MARTINI/` directory.
 * **Function Signatures**: When adding parameters to an existing function, the additional parameters must be optional (i.e., provide default values), except when modifying `src/box.h`, `src/box.cpp`, `src/martini.cpp`, or files within `example/16.MARTINI/`.
