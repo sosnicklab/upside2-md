@@ -1,6 +1,24 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-28: User correction after the compact-reference fix: a clean initial stage file is not enough; stage-7 must be replayed for at least the early production window because the current run explodes by step `50`.
+  - Step-0 energies can look plausible while force propagation is still catastrophically wrong.
+  - Verification for this workflow must include a short production replay with Rg/energy inspection, not only HDF5 structure checks and one-frame extraction.
+  - The fix must preserve active SC-env and BB-env interactions rather than hiding the explosion behind disabled physics.
+- 2026-04-28: The compact runtime AA reference mapping requires C++ runtime consumers to use `hybrid_bb_map/atom_indices` directly.
+  - Recomputing `reference_index_offset + reference_atom_indices` is invalid once raw AA PDB indices are compacted.
+  - This specifically corrupted the backbone O refresh path and can destabilize production immediately.
+- 2026-04-28: The active SC/environment table node needs the migrated SC force cap too.
+  - `martini_potential` already capped startup pair forces, but `martini_sc_table_1body` was applying uncapped table gradients to environment atoms and CB feedback.
+  - Applying `sc_env_lj_force_cap` to SC-table point/vector gradients preserves the SC-env interaction while preventing launch-force events.
+- 2026-04-28: User correction after the hybrid workflow refactor: syntax and reduced-run smoke tests are insufficient when the first VTF frame depends on exact hybrid runtime atom indexing.
+  - The Python stage injector must not preserve sparse AA PDB atom-index gaps as appended runtime particles.
+  - When converting AA backbone references into stage-runtime carriers, append a compact set of the actually referenced N/CA/C/O atoms and map raw reference indices through that compact lookup.
+  - This prevents padded inert reference rows from changing the production stage geometry surface while keeping SC-env and BB-env interface potentials active.
+- 2026-04-28: `example/16.MARTINI/run_sim_1rkl.sh` must source the repo bootstrap before enabling `set -u`.
+  - `source.sh` can reference `MY_PYTHON` before it is set in the caller environment;
+  - enabling `set -u` before sourcing it aborts the workflow immediately;
+  - the launcher should establish the project environment first, then enable strict shell mode.
 - 2026-04-24: The temp checkout’s dry-MARTINI speedup is concentrated in three hot-path changes rather than in its unrelated feature diffs.
   - `MartiniPotential` adds a cached Verlet-style pairlist (`cache_buffer`, cached coordinates/box, active pair indices) so the full `pairs` table is not rescanned every force evaluation.
   - It also compacts coefficient rows into a unique parameter table and stores direct spline pointers per unique parameter row, removing repeated per-pair coefficient unpacking and spline-map lookup from the inner loop.

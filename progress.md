@@ -1,5 +1,57 @@
 # Progress Log
 
+## 2026-04-28 (Hybrid MARTINI Workflow Refactor)
+- Started implementation of the workflow refactor to move low-level MARTINI constants, stabilization heuristics, and stage-file HDF5 mutations out of `run_sim_1rkl.sh` and into typed Python argparse defaults.
+- Reviewed the active shell and Python surfaces:
+  - `run_sim_1rkl.sh` still owns low-level constants and many inline HDF5-editing Python heredocs;
+  - `martini_prepare_system_lib.py` still reads several low-level values from environment variables during stage conversion;
+  - the active production SC/environment runtime node is `martini_sc_table_1body`, so verification must check that node remains injected for stage 7.
+- Updated `py/martini_prepare_system.py` with a `run-hybrid-workflow` command that owns:
+  - stage-0 hybrid packing and mapping export,
+  - MARTINI protein input generation,
+  - stage-file generation and HDF5 mutation,
+  - continuation output resolution,
+  - stage execution and VTF extraction,
+  - low-level argparse defaults for force caps, ramps, NPT/Ewald internals, and unit constants.
+- Replaced `run_sim_1rkl.sh` with a high-level launcher and simplified the 1RKL/1AFO wrapper scripts so they only set system, placement, runtime, Slurm, and stage-length defaults.
+- Removed the `PROD_70_BAROSTAT_TYPE` override from `example/16.MARTINI/run.py`; barostat type now belongs to Python argparse defaults.
+- Verification completed:
+  - `bash -n` passed for `run_sim_1rkl.sh`, `run_sim_1rkl_outlipid.sh`, `run_sim_1afo.sh`, and `run_sim_1afo_outlipid.sh`;
+  - `.venv/bin/python -m py_compile py/martini_prepare_system.py` passed;
+  - `.venv/bin/python py/martini_prepare_system.py run-hybrid-workflow --help` exposed the migrated parser surface;
+  - code search found no migrated low-level names in the bash wrappers or `run.py`;
+  - a reduced continuation smoke from an existing stage-7 file wrote `/tmp/hybrid_refactor_continue/checkpoints/1rkl.stage_7.1.up`;
+  - a reduced fresh workflow completed through stage `7.0` and wrote `/tmp/hybrid_refactor_full/checkpoints/1rkl.stage_7.0.up`.
+- HDF5 production audit of `/tmp/hybrid_refactor_full/checkpoints/1rkl.stage_7.0.up` confirmed:
+  - `hybrid_control.activation_stage=production`,
+  - `production_nonprotein_hard_sphere=0`,
+  - migrated production-control attrs are present with defaults,
+  - `martini_sc_table_1body` and `martini_potential` are both present,
+  - the non-protein environment target count is `4025`.
+- Reopened the refactor after the user reported an unstable first VTF frame with a malformed 1RKL helix.
+- Initial regression audit found that the refactored Python injector appends AA reference rows using sparse raw AA PDB indices up to the maximum index. For 1RKL this can append padded unused rows instead of only the 31 x 4 referenced backbone atoms.
+- Patched `py/martini_prepare_system.py` so hybrid BB runtime augmentation appends a compact set of the actually referenced AA backbone atoms and remaps raw AA PDB atom ids through that compact lookup.
+- Fixed the stage-7 CB placement consumer in `py/martini_prepare_system_lib.py` to read `hybrid_bb_map/atom_indices` after runtime remapping instead of recomputing `reference_index_offset + raw_reference_index`.
+- Regression verification:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed;
+  - `run-hybrid-workflow --help` passed;
+  - `bash -n` passed for all four MARTINI shell entrypoints;
+  - reduced fresh run under `/tmp/hybrid_refactor_fix_full2` completed through stage `7.0` and extracted mode-2 VTF;
+  - production HDF5 audit showed compact runtime AA reference rows (`reference_index_count=124`, runtime BB index range `4090..4213`, all in bounds) and both active interface potentials still present.
+- Reopened again after the user reported the actual production explosion:
+  - local `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/logs/stage_7.0.log` matched the pasted failure, with Rg jumping to `17862.9 A` by step `50` and NaNs later.
+- Patched `src/martini.cpp`:
+  - runtime backbone O refresh now uses the already-remapped compact `hybrid_bb_map/atom_indices` rather than `reference_index_offset + raw_reference_index`;
+  - SC-table point/vector gradients are capped with `sc_env_lj_force_cap` while keeping `martini_sc_table_1body` active.
+- Regression replay from the saved failing handoff:
+  - `200`-step replay first confirmed the immediate Rg explosion was gone;
+  - `500`-step replay stayed bounded and recovered after an early transient;
+  - `1000`-step replay stayed finite with Rg `12.5-12.7 A`, MARTINI energy around `-2.27e4`, and no NaNs.
+- Final checks:
+  - `cmake --build obj --target upside` passed with the pre-existing `%p` warning;
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed;
+  - `bash -n` passed for `run_sim_1rkl.sh`, `run_sim_1rkl_outlipid.sh`, `run_sim_1afo.sh`, and `run_sim_1afo_outlipid.sh`.
+
 ## 2026-04-24 (dry-MARTINI Runtime Acceleration Import)
 - Opened a new root-level task in `plan.md` scoped to importing only the dry-MARTINI acceleration logic from `/Users/yinhan/Documents/upside2-md_temp/src/martini.cpp`.
 - Compared the temp and current `src/martini.cpp` implementations and isolated the acceleration-specific deltas from unrelated temp-only changes.

@@ -1,4 +1,113 @@
 
+## 2026-04-28 Hybrid MARTINI Workflow Refactor
+
+### Project Goal
+- Decouple `example/16.MARTINI/run_sim_1rkl.sh` orchestration from low-level MARTINI constants, stabilization heuristics, and HDF5 mutation details.
+- Make `py/martini_prepare_system.py` own the typed workflow defaults and stage metadata writes through argparse.
+- Preserve the current hybrid MARTINI physics: SC-env and BB-env interface interactions must remain active in production.
+
+### Architecture & Key Decisions
+- Rewrite `run_sim_1rkl.sh` as a thin launcher that only bootstraps the environment and forwards high-level workflow controls.
+- Add a `run-hybrid-workflow` Python command that owns stage prep, stage execution, continuation naming, HDF5 stage mutation, SC library validation/build, and VTF extraction dispatch.
+- Move the named force caps, relaxation ramps, backbone-frame heuristics, NPT internals, Ewald alpha, and unit constants into Python argparse defaults.
+- Remove dead shell-only low-level variables rather than preserving inert compatibility surfaces.
+- Keep production non-protein hard-sphere replacement disabled by default and do not add any switch that disables SC-env or BB-env hybrid interface interactions.
+
+### Execution Phases
+- [x] Phase 1: Add Python workflow config/orchestration and argparse defaults.
+- [x] Phase 2: Replace the base bash workflow with a high-level launcher.
+- [x] Phase 3: Update associated wrappers to expose only high-level defaults.
+- [x] Phase 4: Verify syntax, parser surface, code search, and reduced workflow behavior where feasible.
+- [x] Phase 5: Record review results and remaining blockers.
+
+### Known Errors / Blockers
+- None identified at task start.
+
+### Review
+- Implemented:
+  - `py/martini_prepare_system.py run-hybrid-workflow` now owns hybrid packing, stage-file conversion, HDF5 metadata injection, continuation naming, stage execution, SC-library validation/build, and VTF extraction.
+  - `run_sim_1rkl.sh` is now a high-level launcher with orchestration controls only; low-level force caps, ramps, NPT/Ewald internals, and unit constants are argparse defaults in Python.
+  - `run_sim_1rkl_outlipid.sh`, `run_sim_1afo.sh`, and `run_sim_1afo_outlipid.sh` are thin wrappers that set high-level system/placement/run defaults.
+  - production stage files now write migrated hybrid-control attrs from Python and explicitly keep `production_nonprotein_hard_sphere=0`.
+- Physics integrity audit:
+  - reduced full workflow generated a production stage containing both `martini_potential` and `martini_sc_table_1body`;
+  - production `hybrid_control` had `activation_stage=production`, `sc_env_lj_force_cap=25`, `sc_env_coul_force_cap=25`, `sc_env_relax_steps=150`, `sc_env_backbone_hold_steps=200`, `sc_env_po4_z_hold_steps=150`, `sc_env_po4_z_clamp_enabled=1`, and `nonprotein_hs_force_cap=100`;
+  - production environment membership retained `4025` non-protein targets.
+- Verification:
+  - `bash -n` passed for all four workflow shell entrypoints.
+  - `.venv/bin/python -m py_compile py/martini_prepare_system.py` passed.
+  - `.venv/bin/python py/martini_prepare_system.py run-hybrid-workflow --help` exposed the migrated argparse surface.
+  - Search found no migrated low-level variable names in the bash wrappers or `run.py`.
+  - Reduced continuation smoke wrote `/tmp/hybrid_refactor_continue/checkpoints/1rkl.stage_7.1.up` and VTF.
+  - Reduced fresh workflow wrote `/tmp/hybrid_refactor_full/checkpoints/1rkl.stage_7.0.up` and VTF after completing stages `6.0` through `7.0`.
+
+## 2026-04-28 Hybrid MARTINI First-Frame Geometry Regression
+
+### Project Goal
+- Restore stable 1RKL initial geometry after the workflow refactor; the first VTF frame must retain the proper helical backbone while preserving all active SC-env and BB-env hybrid interface interactions.
+
+### Architecture & Key Decisions
+- Treat the regression as a stage-file geometry/mapping issue unless runtime evidence proves otherwise.
+- Keep the fix in `py/martini_prepare_system.py`; do not reintroduce low-level shell controls or wrapper compatibility paths.
+- Preserve direct stage-runtime BB mapping and production SC/BB environment potentials.
+- Compact appended AA reference atoms to the actual referenced N/CA/C/O atoms instead of preserving sparse raw AA PDB index gaps as runtime particles.
+- Stage-7 CB placement must consume `hybrid_bb_map/atom_indices` after runtime remapping, not recompute runtime indices from raw `reference_atom_indices`.
+
+### Execution Phases
+- [x] Phase 1: Inspect generated stage-7 mapping metadata and identify the sparse-reference atom expansion.
+- [x] Phase 2: Patch hybrid mapping injection to append only compact referenced AA atoms.
+- [x] Phase 3: Verify reduced 1RKL workflow output and first-frame mapping integrity.
+- [x] Phase 4: Record results and remaining risk.
+
+### Known Errors / Blockers
+- Reduced one-step workflows remain invalid as stability benchmarks because intentionally collapsed 6.x relaxation can leave enormous MARTINI energies before stage 7. Use them only for wiring and geometry checks.
+
+### Review
+- Fixed:
+  - `py/martini_prepare_system.py` now appends only the compact set of referenced AA backbone atoms and remaps runtime BB carriers through that compact lookup.
+  - `py/martini_prepare_system_lib.py` stage-7 CB placement now consumes the already-remapped `hybrid_bb_map/atom_indices` directly.
+- Verification:
+  - reduced fresh run completed through `/tmp/hybrid_refactor_fix_full2/checkpoints/1rkl.stage_7.0.up` and `/tmp/hybrid_refactor_fix_full2/1rkl.stage_7.0.vtf`;
+  - production stage has `n_atom=4214`, `reference_index_count=124`, runtime BB indices `4090..4213`, and all runtime BB indices in bounds;
+  - appended AA role counts are exactly `31` each for `N`, `CA`, `C`, and `O`;
+  - production HDF5 still contains both `martini_potential` and `martini_sc_table_1body`, with `activation_stage=production` and `production_nonprotein_hard_sphere=0`;
+  - stage-7 input backbone distances are normal before dynamics: N-CA mean `1.471 A`, CA-C mean `1.539 A`, C-O mean `1.234 A`, CA-CA next mean `3.906 A`.
+
+## 2026-04-28 Hybrid MARTINI Stage-7 Explosion Regression
+
+### Project Goal
+- Stop the current stage-7 1RKL production blow-up while keeping SC-env and BB-env interface potentials active.
+
+### Architecture & Key Decisions
+- Treat the user-reported trajectory as authoritative: the workflow is still wrong if Rg jumps from `12.6 A` to `17862.9 A` by step `50`.
+- Compare the runtime force carrier model against the last stable direct-Upside hybrid semantics before making more cleanup edits.
+- Do not disable `martini_potential`, `martini_sc_table_1body`, SC-env, or BB-env interactions.
+- Do not add debug bypass flags.
+
+### Execution Phases
+- [x] Phase 1: Re-open regression notes and capture the user correction.
+- [x] Phase 2: Inspect stage-7 force carrier and pair semantics against a known stable artifact.
+- [x] Phase 3: Patch the wrong carrier/integration path directly.
+- [x] Phase 4: Replay a short production window and verify Rg and energies do not explode.
+
+### Known Errors / Blockers
+- User-reported production run explodes by step `50` after the compact mapping fix:
+  - step `0`: `Rg 12.6 A`, total `-12776.13`;
+  - step `50`: `Rg 17862.9 A`, total `1.111e+12`;
+  - step `100`: `Rg 34374319.3 A`, total `2.324e+20`.
+
+### Review
+- Fixed two runtime issues:
+  - `src/martini.cpp` now uses the remapped `hybrid_bb_map/atom_indices` as the runtime N/CA/C/O carrier indices for backbone O refresh instead of recomputing `reference_index_offset + raw_reference_index`;
+  - `martini_sc_table_1body` and the legacy SC-table node now apply the configured SC-env force cap to table point/vector gradients whenever the cap is positive, keeping SC-env active but preventing launch-force startup events.
+- Verification:
+  - rebuilt `obj/upside` successfully;
+  - replayed the saved failing handoff for `1000` steps from `/tmp/hybrid_stage7_replay_cap1000.up`;
+  - replay stayed finite with CA Rg `12.5-12.7 A` through the full replay;
+  - output HDF5 is all finite, with CA Rg `12.759 A` at frame `0` and `12.723 A` at the last saved frame;
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed;
+  - `bash -n` passed for all four MARTINI workflow entrypoint scripts.
+
 ## 2026-04-24 dry-MARTINI Runtime Acceleration Import
 
 ### Project Goal

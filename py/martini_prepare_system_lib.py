@@ -3755,32 +3755,26 @@ def build_affine_atoms(inp):
     if "hybrid_bb_map" not in inp:
         raise ValueError("Missing /input/hybrid_bb_map in stage file")
     bb_grp = inp["hybrid_bb_map"]
-    if "reference_atom_indices" not in bb_grp:
-        raise ValueError("hybrid_bb_map/reference_atom_indices is required for stage-7 CB placement")
-    ref_offset = int(bb_grp.attrs.get("reference_index_offset", -1))
-    if ref_offset < 0:
-        raise ValueError("hybrid_bb_map/reference_index_offset is missing or invalid")
+    if "atom_indices" not in bb_grp:
+        raise ValueError("hybrid_bb_map/atom_indices is required for stage-7 CB placement")
 
     bb_residue_raw = bb_grp["bb_residue_index"][:].astype(np.int32)
-    bb_ref_idx = bb_grp["reference_atom_indices"][:].astype(np.int32)
+    bb_atom_idx = bb_grp["atom_indices"][:].astype(np.int32)
     residue_ids = unique_preserving_order(int(x) for x in bb_residue_raw.tolist())
 
     residue_to_ncac = {}
     n_atom = int(inp["pos"].shape[0])
-    for resid, ref_row in zip(bb_residue_raw.tolist(), bb_ref_idx.tolist()):
+    for resid, atom_row in zip(bb_residue_raw.tolist(), bb_atom_idx.tolist()):
         rid = int(resid)
-        n_idx, ca_idx, c_idx = [int(ref_row[0]), int(ref_row[1]), int(ref_row[2])]
+        n_idx, ca_idx, c_idx = [int(atom_row[0]), int(atom_row[1]), int(atom_row[2])]
         if n_idx < 0 or ca_idx < 0 or c_idx < 0:
             continue
-        n_rt = ref_offset + n_idx
-        ca_rt = ref_offset + ca_idx
-        c_rt = ref_offset + c_idx
-        for idx in (n_rt, ca_rt, c_rt):
+        for idx in (n_idx, ca_idx, c_idx):
             if idx < 0 or idx >= n_atom:
                 raise ValueError(
                     f"Backbone carrier index out of bounds for residue {rid}: idx={idx}, n_atom={n_atom}"
                 )
-        residue_to_ncac.setdefault(rid, (n_rt, ca_rt, c_rt))
+        residue_to_ncac.setdefault(rid, (n_idx, ca_idx, c_idx))
 
     missing = [rid for rid in residue_ids if rid not in residue_to_ncac]
     if missing:
