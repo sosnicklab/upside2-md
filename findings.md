@@ -1,6 +1,39 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-29: User correction: the previous production restart patch is incomplete.
+  - Do not assume recording/copying momentum plus a transition counter is sufficient.
+  - Re-check whether the restart source is the true final integrator state or only the last logged frame.
+  - Continuation should not silently proceed from incomplete restart state.
+- 2026-04-29: Production restart root cause after re-audit.
+  - A restart that reuses saved momentum must not refresh hybrid reference carrier positions; doing so creates a position/momentum mismatch unique to split production runs.
+  - Normal MD output must include the final integrator state. If the last saved frame is only the last periodic pre-integration sample, continuation advances the hybrid transition counter from a stale time and restarts from stale coordinates.
+  - Older production files without `output/mom`, or with momentum but no validated final-state marker, are not exact restart sources; the workflow should fail before MD rather than rethermalize silently or use a stale frame.
+- 2026-04-28: User correction: production restart parity must be verified explicitly.
+  - Stage-7 continuation may look syntactically valid while missing runtime state such as momentum, box, or hybrid ramp/hold counters.
+  - Verification must compare split production (`7.0 -> 7.1`) against an uninterrupted run of matching length, not just check that continuation executes.
+- 2026-04-28: Production continuation was missing two state channels.
+  - Without `--record-momentum`, stage files do not contain `output/mom`, so continuation rethermalizes instead of preserving the velocity state.
+  - Without a persisted SC-env transition counter, every `7.x` restart begins the force-cap/backbone-hold schedule again from step zero.
+  - Correct restart handoff needs to copy saved momentum into `input/mom`, pass `--restart-using-momentum`, and set `hybrid_control.sc_env_transition_step_start` from saved production time.
+- 2026-04-28: User correction after the compact-reference fix: a clean initial stage file is not enough; stage-7 must be replayed for at least the early production window because the current run explodes by step `50`.
+  - Step-0 energies can look plausible while force propagation is still catastrophically wrong.
+  - Verification for this workflow must include a short production replay with Rg/energy inspection, not only HDF5 structure checks and one-frame extraction.
+  - The fix must preserve active SC-env and BB-env interactions rather than hiding the explosion behind disabled physics.
+- 2026-04-28: The compact runtime AA reference mapping requires C++ runtime consumers to use `hybrid_bb_map/atom_indices` directly.
+  - Recomputing `reference_index_offset + reference_atom_indices` is invalid once raw AA PDB indices are compacted.
+  - This specifically corrupted the backbone O refresh path and can destabilize production immediately.
+- 2026-04-28: The active SC/environment table node needs the migrated SC force cap too.
+  - `martini_potential` already capped startup pair forces, but `martini_sc_table_1body` was applying uncapped table gradients to environment atoms and CB feedback.
+  - Applying `sc_env_lj_force_cap` to SC-table point/vector gradients preserves the SC-env interaction while preventing launch-force events.
+- 2026-04-28: User correction after the hybrid workflow refactor: syntax and reduced-run smoke tests are insufficient when the first VTF frame depends on exact hybrid runtime atom indexing.
+  - The Python stage injector must not preserve sparse AA PDB atom-index gaps as appended runtime particles.
+  - When converting AA backbone references into stage-runtime carriers, append a compact set of the actually referenced N/CA/C/O atoms and map raw reference indices through that compact lookup.
+  - This prevents padded inert reference rows from changing the production stage geometry surface while keeping SC-env and BB-env interface potentials active.
+- 2026-04-28: `example/16.MARTINI/run_sim_1rkl.sh` must source the repo bootstrap before enabling `set -u`.
+  - `source.sh` can reference `MY_PYTHON` before it is set in the caller environment;
+  - enabling `set -u` before sourcing it aborts the workflow immediately;
+  - the launcher should establish the project environment first, then enable strict shell mode.
 - 2026-04-24: The temp checkout’s dry-MARTINI speedup is concentrated in three hot-path changes rather than in its unrelated feature diffs.
   - `MartiniPotential` adds a cached Verlet-style pairlist (`cache_buffer`, cached coordinates/box, active pair indices) so the full `pairs` table is not rescanned every force evaluation.
   - It also compacts coefficient rows into a unique parameter table and stores direct spline pointers per unique parameter row, removing repeated per-pair coefficient unpacking and spline-map lookup from the inner loop.

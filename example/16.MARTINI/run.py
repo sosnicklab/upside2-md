@@ -29,7 +29,6 @@ prod_frame_steps = 50
 eq_time_step = 0.010
 prod_time_step = 0.002
 prod_70_npt_enable = 0
-prod_70_barostat_type = 1
 
 
 #----------------------------------------------------------------------
@@ -60,7 +59,6 @@ env_updates = {
     "EQ_TIME_STEP": eq_time_step,
     "PROD_TIME_STEP": prod_time_step,
     "PROD_70_NPT_ENABLE": prod_70_npt_enable,
-    "PROD_70_BAROSTAT_TYPE": prod_70_barostat_type,
 }
 
 run_env = os.environ.copy()

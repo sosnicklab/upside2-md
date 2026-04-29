@@ -309,6 +309,7 @@ struct HybridRuntimeState {
     bool sc_env_energy_dump_enabled = false;
     int sc_env_energy_dump_stride = 1;
     uint64_t sc_env_transition_step = 0;
+    uint64_t sc_env_transition_step_start = 0;
     std::vector<unsigned char> sc_env_po4_env_mask;
     std::vector<float> sc_env_po4_z_reference;
     bool sc_env_po4_z_reference_initialized = false;
@@ -657,6 +658,9 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         read_attribute<float>(ctrl.get(), ".", "nonprotein_hs_force_cap", out.nonprotein_hs_force_cap);
     out.nonprotein_hs_potential_cap =
         read_attribute<float>(ctrl.get(), ".", "nonprotein_hs_potential_cap", out.nonprotein_hs_potential_cap);
+    int transition_start = read_attribute<int>(ctrl.get(), ".", "sc_env_transition_step_start", 0);
+    out.sc_env_transition_step_start = static_cast<uint64_t>(std::max(0, transition_start));
+    out.sc_env_transition_step = out.sc_env_transition_step_start;
     if(out.sc_env_lj_force_cap < 0.f) out.sc_env_lj_force_cap = 0.f;
     if(out.sc_env_coul_force_cap < 0.f) out.sc_env_coul_force_cap = 0.f;
     if(out.sc_env_relax_steps < 1) out.sc_env_relax_steps = 1;
@@ -721,18 +725,7 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         traverse_dset<2,float>(bb.get(), "weights", [&](size_t i, size_t j, float v) {
             out.weights[i][j] = v;
         });
-        if(h5_exists(bb.get(), "reference_atom_indices")) {
-            auto ref_idx_shape = get_dset_size(2, bb.get(), "reference_atom_indices");
-            if(ref_idx_shape[0] != out.n_bb || ref_idx_shape[1] != 4) {
-                throw string("Hybrid BB reference_atom_indices must have shape (n_bb,4)");
-            }
-            int ref_offset = read_attribute<int>(bb.get(), ".", "reference_index_offset", -1);
-            traverse_dset<2,int>(bb.get(), "reference_atom_indices", [&](size_t i, size_t j, int v) {
-                if(v >= 0 && ref_offset >= 0) {
-                    out.bb_reference_runtime_atom_indices[i][j] = ref_offset + v;
-                }
-            });
-        }
+        out.bb_reference_runtime_atom_indices = out.atom_indices;
         if(h5_exists(bb.get(), "reference_atom_coords")) {
             auto ref_shape = get_dset_size(3, bb.get(), "reference_atom_coords");
             if(ref_shape[0] != out.n_bb || ref_shape[1] != 4 || ref_shape[2] != 3) {
@@ -972,7 +965,7 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->sc_env_last_logged_lj = 0.f;
         st->sc_env_last_logged_coul = 0.f;
         st->sc_env_log_counter = 0;
-        st->sc_env_transition_step = 0;
+        st->sc_env_transition_step = st->sc_env_transition_step_start;
     }
     if(st->preprod_rigid && !st->active) {
         martini_fix_rigid::set_dynamic_fixed_atoms(*engine, st->preprod_fixed_atom_indices);
@@ -1109,6 +1102,15 @@ static float compute_sc_force_uncap_mix(const HybridRuntimeState& st) {
     if(st.sc_env_transition_step >= final_ramp_step) return 1.f;
 
     return float(st.sc_env_transition_step) / float(final_ramp_step);
+}
+
+static inline void cap_force_vector(Vec<3>& force, float cap_mag) {
+    if(!(cap_mag > 0.f)) return;
+    float force2 = mag2(force);
+    float cap2 = cap_mag * cap_mag;
+    if(force2 > cap2 && force2 > 0.f) {
+        force *= cap_mag / sqrtf(force2);
+    }
 }
 
 bool preproduction_requires_rigid(const DerivEngine& engine) {
@@ -2694,6 +2696,8 @@ struct MartiniScTablePotential : public PotentialNode
                 Vec<3> point_grad = dVdr * displace_unitvec +
                                     (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec);
                 Vec<3> vector_grad = -dVdcoord * displace_unitvec;
+                martini_hybrid::cap_force_vector(point_grad, hybrid_state->sc_env_lj_force_cap);
+                martini_hybrid::cap_force_vector(vector_grad, hybrid_state->sc_env_lj_force_cap);
                 Vec<6> grad_cb_full;
                 store<0,3>(grad_cb_full, point_grad);
                 store<3,6>(grad_cb_full, vector_grad);
@@ -3218,14 +3222,17 @@ struct MartiniScTableOneBody : public CoordNode
             float dVdcoord = dAng1dcoord * angular_value;
             if(!std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
 
-            Vec<3> point_grad = dVdr * displace_unitvec +
-                                (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec);
-            Vec<3> vector_grad = -dVdcoord * displace_unitvec;
+            Vec<3> point_grad = row_scale * (
+                dVdr * displace_unitvec +
+                (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec));
+            Vec<3> vector_grad = row_scale * (-dVdcoord * displace_unitvec);
+            martini_hybrid::cap_force_vector(point_grad, hybrid_state->sc_env_lj_force_cap);
+            martini_hybrid::cap_force_vector(vector_grad, hybrid_state->sc_env_lj_force_cap);
             Vec<6> grad_cb_full;
-            store<0,3>(grad_cb_full, row_scale * point_grad);
-            store<3,6>(grad_cb_full, row_scale * vector_grad);
+            store<0,3>(grad_cb_full, point_grad);
+            store<3,6>(grad_cb_full, vector_grad);
             Vec<6> grad_cb = protein_feedback_mix * grad_cb_full;
-            Vec<3> grad_env = -row_scale * point_grad;
+            Vec<3> grad_env = -point_grad;
 
             update_vec<6>(cb_sens, cb_idx, grad_cb);
             update_vec<3>(pos_sens, atom_idx, grad_env);

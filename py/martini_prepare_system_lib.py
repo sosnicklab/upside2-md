@@ -3614,6 +3614,8 @@ def set_initial_position(input_file, output_file):
     apply_recenter_production = env_bool(
         "UPSIDE_SET_INITIAL_RECENTER_PRODUCTION", default=(not strict_copy)
     )
+    preserve_hybrid_transition = env_bool("UPSIDE_SET_INITIAL_PRESERVE_HYBRID_TRANSITION", False)
+    time_step = float(os.environ.get("UPSIDE_SET_INITIAL_TIME_STEP", "0") or "0")
 
     with h5py.File(input_file, "r") as f:
         if "/output/pos" in f and f["/output/pos"].shape[0] > 0:
@@ -3636,6 +3638,30 @@ def set_initial_position(input_file, output_file):
                 last_box = np.array(
                     [pot_grp.attrs["x_len"], pot_grp.attrs["y_len"], pot_grp.attrs["z_len"]]
                 )
+        last_mom = None
+        if "/output/mom" in f and f["/output/mom"].shape[0] > 0:
+            last_mom = f["/output/mom"][-1, 0, :, :]
+            last_mom = last_mom[:, :, np.newaxis]
+
+        source_stage = ""
+        if "/input/stage_parameters" in f:
+            source_stage = f["/input/stage_parameters"].attrs.get("current_stage", b"")
+            if isinstance(source_stage, (bytes, np.bytes_)):
+                source_stage = source_stage.decode("utf-8", errors="ignore")
+            else:
+                source_stage = str(source_stage)
+            source_stage = source_stage.strip()
+        source_transition_start = 0
+        if "/input/hybrid_control" in f:
+            source_transition_start = int(
+                f["/input/hybrid_control"].attrs.get("sc_env_transition_step_start", 0)
+            )
+        source_elapsed_steps = 0
+        if preserve_hybrid_transition and source_stage == "production" and time_step > 0.0:
+            if "/output/time" in f and f["/output/time"].shape[0] > 0:
+                last_time = float(f["/output/time"][-1])
+                source_elapsed_steps = max(0, int(round(last_time / time_step)))
+        exact_production_restart = preserve_hybrid_transition and source_stage == "production" and last_mom is not None
 
     with h5py.File(output_file, "r+") as f:
         target_pos = f["/input/pos"][:]
@@ -3648,6 +3674,10 @@ def set_initial_position(input_file, output_file):
 
         if strict_copy and not apply_refresh_hybrid and not apply_recenter_production:
             print("Strict handoff mode: preserving exact coordinates from previous stage output.")
+        if exact_production_restart and (apply_refresh_hybrid or apply_recenter_production):
+            raise ValueError(
+                "Production restart must preserve saved coordinates exactly when saved momentum is reused."
+            )
 
         if apply_refresh_hybrid:
             last_pos = refresh_hybrid_reference_carriers(f, last_pos)
@@ -3657,6 +3687,22 @@ def set_initial_position(input_file, output_file):
         if "/input/pos" in f:
             del f["/input/pos"]
         f.create_dataset("/input/pos", data=last_pos)
+
+        if last_mom is not None:
+            if last_mom.shape[0] != target_n:
+                merged_mom = f["/input/mom"][:] if "/input/mom" in f else np.zeros((target_n, 3, 1), dtype=last_mom.dtype)
+                merged_mom[: min(last_mom.shape[0], target_n), :, :] = last_mom[: min(last_mom.shape[0], target_n), :, :]
+                last_mom = merged_mom
+            if "/input/mom" in f:
+                del f["/input/mom"]
+            mom_ds = f.create_dataset("/input/mom", data=last_mom)
+            mom_ds.attrs["restart_valid"] = np.int8(1)
+        elif "/input/mom" in f:
+            f["/input/mom"].attrs["restart_valid"] = np.int8(0)
+
+        if preserve_hybrid_transition and source_stage == "production" and "/input/hybrid_control" in f:
+            transition_step = source_transition_start + source_elapsed_steps
+            f["/input/hybrid_control"].attrs["sc_env_transition_step_start"] = np.int32(transition_step)
 
         if last_box is not None and "/input/potential/martini_potential" in f:
             pot_grp = f["/input/potential/martini_potential"]
@@ -3755,32 +3801,26 @@ def build_affine_atoms(inp):
     if "hybrid_bb_map" not in inp:
         raise ValueError("Missing /input/hybrid_bb_map in stage file")
     bb_grp = inp["hybrid_bb_map"]
-    if "reference_atom_indices" not in bb_grp:
-        raise ValueError("hybrid_bb_map/reference_atom_indices is required for stage-7 CB placement")
-    ref_offset = int(bb_grp.attrs.get("reference_index_offset", -1))
-    if ref_offset < 0:
-        raise ValueError("hybrid_bb_map/reference_index_offset is missing or invalid")
+    if "atom_indices" not in bb_grp:
+        raise ValueError("hybrid_bb_map/atom_indices is required for stage-7 CB placement")
 
     bb_residue_raw = bb_grp["bb_residue_index"][:].astype(np.int32)
-    bb_ref_idx = bb_grp["reference_atom_indices"][:].astype(np.int32)
+    bb_atom_idx = bb_grp["atom_indices"][:].astype(np.int32)
     residue_ids = unique_preserving_order(int(x) for x in bb_residue_raw.tolist())
 
     residue_to_ncac = {}
     n_atom = int(inp["pos"].shape[0])
-    for resid, ref_row in zip(bb_residue_raw.tolist(), bb_ref_idx.tolist()):
+    for resid, atom_row in zip(bb_residue_raw.tolist(), bb_atom_idx.tolist()):
         rid = int(resid)
-        n_idx, ca_idx, c_idx = [int(ref_row[0]), int(ref_row[1]), int(ref_row[2])]
+        n_idx, ca_idx, c_idx = [int(atom_row[0]), int(atom_row[1]), int(atom_row[2])]
         if n_idx < 0 or ca_idx < 0 or c_idx < 0:
             continue
-        n_rt = ref_offset + n_idx
-        ca_rt = ref_offset + ca_idx
-        c_rt = ref_offset + c_idx
-        for idx in (n_rt, ca_rt, c_rt):
+        for idx in (n_idx, ca_idx, c_idx):
             if idx < 0 or idx >= n_atom:
                 raise ValueError(
                     f"Backbone carrier index out of bounds for residue {rid}: idx={idx}, n_atom={n_atom}"
                 )
-        residue_to_ncac.setdefault(rid, (n_rt, ca_rt, c_rt))
+        residue_to_ncac.setdefault(rid, (n_idx, ca_idx, c_idx))
 
     missing = [rid for rid in residue_ids if rid not in residue_to_ncac]
     if missing:

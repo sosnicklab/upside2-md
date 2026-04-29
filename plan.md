@@ -1,4 +1,188 @@
 
+## 2026-04-28 Hybrid MARTINI Workflow Refactor
+
+### Project Goal
+- Decouple `example/16.MARTINI/run_sim_1rkl.sh` orchestration from low-level MARTINI constants, stabilization heuristics, and HDF5 mutation details.
+- Make `py/martini_prepare_system.py` own the typed workflow defaults and stage metadata writes through argparse.
+- Preserve the current hybrid MARTINI physics: SC-env and BB-env interface interactions must remain active in production.
+
+### Architecture & Key Decisions
+- Rewrite `run_sim_1rkl.sh` as a thin launcher that only bootstraps the environment and forwards high-level workflow controls.
+- Add a `run-hybrid-workflow` Python command that owns stage prep, stage execution, continuation naming, HDF5 stage mutation, SC library validation/build, and VTF extraction dispatch.
+- Move the named force caps, relaxation ramps, backbone-frame heuristics, NPT internals, Ewald alpha, and unit constants into Python argparse defaults.
+- Remove dead shell-only low-level variables rather than preserving inert compatibility surfaces.
+- Keep production non-protein hard-sphere replacement disabled by default and do not add any switch that disables SC-env or BB-env hybrid interface interactions.
+
+### Execution Phases
+- [x] Phase 1: Add Python workflow config/orchestration and argparse defaults.
+- [x] Phase 2: Replace the base bash workflow with a high-level launcher.
+- [x] Phase 3: Update associated wrappers to expose only high-level defaults.
+- [x] Phase 4: Verify syntax, parser surface, code search, and reduced workflow behavior where feasible.
+- [x] Phase 5: Record review results and remaining blockers.
+
+### Known Errors / Blockers
+- None identified at task start.
+
+### Review
+- Implemented:
+  - `py/martini_prepare_system.py run-hybrid-workflow` now owns hybrid packing, stage-file conversion, HDF5 metadata injection, continuation naming, stage execution, SC-library validation/build, and VTF extraction.
+  - `run_sim_1rkl.sh` is now a high-level launcher with orchestration controls only; low-level force caps, ramps, NPT/Ewald internals, and unit constants are argparse defaults in Python.
+  - `run_sim_1rkl_outlipid.sh`, `run_sim_1afo.sh`, and `run_sim_1afo_outlipid.sh` are thin wrappers that set high-level system/placement/run defaults.
+  - production stage files now write migrated hybrid-control attrs from Python and explicitly keep `production_nonprotein_hard_sphere=0`.
+- Physics integrity audit:
+  - reduced full workflow generated a production stage containing both `martini_potential` and `martini_sc_table_1body`;
+  - production `hybrid_control` had `activation_stage=production`, `sc_env_lj_force_cap=25`, `sc_env_coul_force_cap=25`, `sc_env_relax_steps=150`, `sc_env_backbone_hold_steps=200`, `sc_env_po4_z_hold_steps=150`, `sc_env_po4_z_clamp_enabled=1`, and `nonprotein_hs_force_cap=100`;
+  - production environment membership retained `4025` non-protein targets.
+- Verification:
+  - `bash -n` passed for all four workflow shell entrypoints.
+  - `.venv/bin/python -m py_compile py/martini_prepare_system.py` passed.
+  - `.venv/bin/python py/martini_prepare_system.py run-hybrid-workflow --help` exposed the migrated argparse surface.
+  - Search found no migrated low-level variable names in the bash wrappers or `run.py`.
+  - Reduced continuation smoke wrote `/tmp/hybrid_refactor_continue/checkpoints/1rkl.stage_7.1.up` and VTF.
+  - Reduced fresh workflow wrote `/tmp/hybrid_refactor_full/checkpoints/1rkl.stage_7.0.up` and VTF after completing stages `6.0` through `7.0`.
+
+## 2026-04-28 Hybrid MARTINI First-Frame Geometry Regression
+
+### Project Goal
+- Restore stable 1RKL initial geometry after the workflow refactor; the first VTF frame must retain the proper helical backbone while preserving all active SC-env and BB-env hybrid interface interactions.
+
+### Architecture & Key Decisions
+- Treat the regression as a stage-file geometry/mapping issue unless runtime evidence proves otherwise.
+- Keep the fix in `py/martini_prepare_system.py`; do not reintroduce low-level shell controls or wrapper compatibility paths.
+- Preserve direct stage-runtime BB mapping and production SC/BB environment potentials.
+- Compact appended AA reference atoms to the actual referenced N/CA/C/O atoms instead of preserving sparse raw AA PDB index gaps as runtime particles.
+- Stage-7 CB placement must consume `hybrid_bb_map/atom_indices` after runtime remapping, not recompute runtime indices from raw `reference_atom_indices`.
+
+### Execution Phases
+- [x] Phase 1: Inspect generated stage-7 mapping metadata and identify the sparse-reference atom expansion.
+- [x] Phase 2: Patch hybrid mapping injection to append only compact referenced AA atoms.
+- [x] Phase 3: Verify reduced 1RKL workflow output and first-frame mapping integrity.
+- [x] Phase 4: Record results and remaining risk.
+
+### Known Errors / Blockers
+- Reduced one-step workflows remain invalid as stability benchmarks because intentionally collapsed 6.x relaxation can leave enormous MARTINI energies before stage 7. Use them only for wiring and geometry checks.
+
+### Review
+- Fixed:
+  - `py/martini_prepare_system.py` now appends only the compact set of referenced AA backbone atoms and remaps runtime BB carriers through that compact lookup.
+  - `py/martini_prepare_system_lib.py` stage-7 CB placement now consumes the already-remapped `hybrid_bb_map/atom_indices` directly.
+- Verification:
+  - reduced fresh run completed through `/tmp/hybrid_refactor_fix_full2/checkpoints/1rkl.stage_7.0.up` and `/tmp/hybrid_refactor_fix_full2/1rkl.stage_7.0.vtf`;
+  - production stage has `n_atom=4214`, `reference_index_count=124`, runtime BB indices `4090..4213`, and all runtime BB indices in bounds;
+  - appended AA role counts are exactly `31` each for `N`, `CA`, `C`, and `O`;
+  - production HDF5 still contains both `martini_potential` and `martini_sc_table_1body`, with `activation_stage=production` and `production_nonprotein_hard_sphere=0`;
+  - stage-7 input backbone distances are normal before dynamics: N-CA mean `1.471 A`, CA-C mean `1.539 A`, C-O mean `1.234 A`, CA-CA next mean `3.906 A`.
+
+## 2026-04-28 Hybrid MARTINI Stage-7 Explosion Regression
+
+### Project Goal
+- Stop the current stage-7 1RKL production blow-up while keeping SC-env and BB-env interface potentials active.
+
+### Architecture & Key Decisions
+- Treat the user-reported trajectory as authoritative: the workflow is still wrong if Rg jumps from `12.6 A` to `17862.9 A` by step `50`.
+- Compare the runtime force carrier model against the last stable direct-Upside hybrid semantics before making more cleanup edits.
+- Do not disable `martini_potential`, `martini_sc_table_1body`, SC-env, or BB-env interactions.
+- Do not add debug bypass flags.
+
+### Execution Phases
+- [x] Phase 1: Re-open regression notes and capture the user correction.
+- [x] Phase 2: Inspect stage-7 force carrier and pair semantics against a known stable artifact.
+- [x] Phase 3: Patch the wrong carrier/integration path directly.
+- [x] Phase 4: Replay a short production window and verify Rg and energies do not explode.
+
+### Known Errors / Blockers
+- User-reported production run explodes by step `50` after the compact mapping fix:
+  - step `0`: `Rg 12.6 A`, total `-12776.13`;
+  - step `50`: `Rg 17862.9 A`, total `1.111e+12`;
+  - step `100`: `Rg 34374319.3 A`, total `2.324e+20`.
+
+### Review
+- Fixed two runtime issues:
+  - `src/martini.cpp` now uses the remapped `hybrid_bb_map/atom_indices` as the runtime N/CA/C/O carrier indices for backbone O refresh instead of recomputing `reference_index_offset + raw_reference_index`;
+  - `martini_sc_table_1body` and the legacy SC-table node now apply the configured SC-env force cap to table point/vector gradients whenever the cap is positive, keeping SC-env active but preventing launch-force startup events.
+- Verification:
+  - rebuilt `obj/upside` successfully;
+  - replayed the saved failing handoff for `1000` steps from `/tmp/hybrid_stage7_replay_cap1000.up`;
+  - replay stayed finite with CA Rg `12.5-12.7 A` through the full replay;
+  - output HDF5 is all finite, with CA Rg `12.759 A` at frame `0` and `12.723 A` at the last saved frame;
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed;
+  - `bash -n` passed for all four MARTINI workflow entrypoint scripts.
+
+## 2026-04-28 Hybrid MARTINI Production Restart Parity
+
+### Project Goal
+- Fix stage-7 production restart behavior so split runs (`7.0 -> 7.1 -> ...`) preserve the same protein stability as an uninterrupted production run.
+
+### Architecture & Key Decisions
+- Restart must preserve physical state, not just positions: momenta/velocities, box, hybrid startup counters, and dynamic hold/ramp state must be equivalent.
+- Continue using active SC-env and BB-env interactions; do not add restart-only debug bypasses.
+- Compare split-vs-continuous production using the saved stage-7 handoff before declaring the bug fixed.
+
+### Execution Phases
+- [x] Phase 1: Document the restart regression and inspect continuation workflow.
+- [x] Phase 2: Identify missing restart state by comparing uninterrupted and split runs.
+- [x] Phase 3: Patch continuation state transfer.
+- [x] Phase 4: Verify split-vs-continuous stability and log results.
+
+### Known Errors / Blockers
+- No active blocker remains for production restart state transfer.
+
+### Review
+- Fixed:
+  - production MD runs now record momentum so stage files contain restartable `output/mom`;
+  - handoff now copies the last saved `output/mom` to `input/mom` and marks it restart-valid;
+  - continuation now passes `--restart-using-momentum` only when copied momentum is valid;
+  - production continuation now preserves the hybrid SC-env transition counter with `hybrid_control.sc_env_transition_step_start`;
+  - `src/martini.cpp` initializes `sc_env_transition_step` from that restart attr instead of always restarting the ramp/hold from zero.
+- Verification:
+  - direct continuous `1000`-step replay from the saved stage-7 handoff stayed stable with Rg around `12.7-12.9 A`;
+  - split replay (`500 + 500`) stayed stable after restart with Rg around `12.8-13.0 A`;
+  - actual workflow continuation wrote `/tmp/restart_workflow_check/checkpoints/1rkl.stage_7.1.up`, invoked `--record-momentum --restart-using-momentum`, and kept Rg finite around `12.9 A`;
+  - generated continuation file has `input/mom.restart_valid=1`, `output/mom`, and `sc_env_transition_step_start=450`;
+  - `cmake --build obj --target upside`, Python compile checks, and shell syntax checks passed.
+
+## 2026-04-29 Hybrid MARTINI Restart Instability Still Reproduces
+
+### Project Goal
+- Resolve the still-observed production restart instability when starting from a previous production stage.
+
+### Architecture & Key Decisions
+- Treat the prior restart fix as incomplete.
+- Audit whether continuation is using the true final integrator state or merely the last logged frame.
+- If exact restart state is unavailable, fail clearly instead of silently rethermalizing or restarting from stale logged state.
+- Production-to-production continuation must preserve saved coordinates and momenta exactly; hybrid reference carriers must not be rebuilt during restart handoff.
+- MD output must include the true final state so a later continuation does not restart from the last pre-final logging interval.
+- Preserve active SC-env and BB-env interactions.
+
+### Execution Phases
+- [x] Phase 1: Record unresolved restart instability correction.
+- [x] Phase 2: Audit restart source state actually available in current production files.
+- [x] Phase 3: Fix continuation to use true final state or fail loudly when unavailable.
+- [x] Phase 4: Verify restart from a real production stage generated by the workflow.
+
+### Known Errors / Blockers
+- Existing production files created without `--record-momentum` cannot be exact restart sources; continuation now fails before MD and tells the user to regenerate the previous production stage with the current workflow.
+- Existing production files created before the validated final-state marker also cannot be accepted as exact restart sources, even if they contain `output/mom`.
+
+### Review
+- Fixed:
+  - production `7.x -> 7.x` continuation now uses `production_restart` handoff, which copies saved final coordinates and momentum exactly and does not refresh hybrid carriers;
+  - continuation now requires both a validated final-state marker on `output/mom` and `input/mom.restart_valid=1` after handoff;
+  - `upside` now appends a final MD output sample after the integration loop so the next stage restarts from the true final state;
+  - workflow MD stages mark `output/mom.restart_final_state_valid=1` only after verifying the final output time matches the requested duration;
+  - hybrid transition carry-forward now advances by the full final output time instead of the last periodic pre-final frame.
+- Verification:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed;
+  - `bash -n` passed for all four MARTINI workflow shell entrypoints;
+  - `cmake --build obj --target upside` passed with only existing warnings;
+  - a patched 500-step production source wrote final `output/time=1.0` and matching `output/mom`;
+  - workflow continuation from that source used `--restart-using-momentum`, kept Rg finite from `12.6 A` to `12.3 A`, and produced finite positions/momenta;
+  - continuation input exactly matched source final state: position max diff `0.0`, momentum max diff `0.0`, `input/mom.restart_valid=1`, `sc_env_transition_step_start=500`;
+  - workflow-generated `stage_7.1` was restarted into `stage_7.2`, used `--restart-using-momentum`, stayed stable from `Rg 12.2 A` to `12.1 A`, and produced `sc_env_transition_step_start=1000`;
+  - `stage_7.2` input exactly matched `stage_7.1` final state: position max diff `0.0`, momentum max diff `0.0`;
+  - continuation from a source with `output/mom` but no validated final-state marker failed before MD with the expected final restart-state error;
+  - continuation from an older source without `output/mom` failed before MD with the expected restart-valid momentum error.
+
 ## 2026-04-24 dry-MARTINI Runtime Acceleration Import
 
 ### Project Goal
