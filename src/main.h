@@ -22,8 +22,6 @@ namespace martini_hybrid {
     void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine);
     bool is_hybrid_enabled(const DerivEngine& engine);
     bool is_hybrid_active(const DerivEngine& engine);
-    bool is_sc_env_energy_dump_enabled(const DerivEngine& engine);
-    bool sample_sc_env_energy_for_logging(DerivEngine& engine, float& total, float& lj, float& coul);
     bool preproduction_requires_rigid(const DerivEngine& engine);
     void refresh_transition_holds_for_engine(DerivEngine& engine);
     void clear_hybrid_for_engine(DerivEngine* engine);

@@ -727,3 +727,29 @@
   - stage 7.2 input exactly matched stage 7.1 final output for both position and momentum (`max diff 0.0`);
   - `sc_env_transition_step_start=1000` after two 500-step chunks;
   - a copied source with `output/mom` but no final-state marker failed before MD with the expected final restart-state error.
+
+## 2026-04-29 (C++ Core Cleanup For 1RKL Default Path)
+- Reopened the core cleanup scope for `src/main.cpp`, `src/box.h`, `src/box.cpp`, and `src/martini.cpp` with strict default-path-only execution criteria for `example/16.MARTINI/run_sim_1rkl.sh`.
+- Cleaned `src/main.cpp`:
+  - removed split-potential/Rg diagnostic plumbing and cached potential state;
+  - removed temporary CLI branches `nvtc`, `--max-force`, and `--martini-hold-backbone`;
+  - kept required default workflow controls (`--duration-steps`, minimization flags, `--record-momentum`, `--restart-using-momentum`);
+  - simplified runtime progress/energy printing to direct total potential output.
+- Cleaned `src/box.h` and `src/box.cpp`:
+  - removed barostat debug toggle/prints and Ewald init print;
+  - removed equilibrium-detection freeze logic and kept direct NPT scaling updates;
+  - preserved NPT state registration, pressure/volume logging values, and Ewald reciprocal-force/energy contribution.
+- Cleaned `src/martini.cpp`:
+  - removed dead placeholder logic and wrappers: `martini_masses::martini_integration_cycle`, `ConjugateGradientMinimizer` node registration, and `minimize_structure_with_regular_potential` stub;
+  - removed hybrid SC-energy-dump runtime plumbing and nonprotein hard-sphere experimental branch;
+  - removed verbose status/debug print blocks from MARTINI, bond/angle/dihedral initialization, and stage-param switching.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj --target upside` passed.
+  - Reduced end-to-end workflow smoke run passed:
+    - `RUN_DIR=/tmp/cpp_cleanup_smoke`
+    - `MIN_60_MAX_ITER=1 MIN_61_MAX_ITER=1`
+    - `EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1`
+    - `PROD_70_NSTEPS=5 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1`
+    - `bash example/16.MARTINI/run_sim_1rkl.sh`
+  - Confirmed production stage still carries active hybrid MARTINI interfaces:
+    - `/tmp/cpp_cleanup_smoke/checkpoints/1rkl.stage_7.0.up` contains both `/input/potential/martini_potential` and `/input/potential/martini_sc_table_1body`.

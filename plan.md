@@ -707,3 +707,41 @@ What specific biological system or environment are you aiming to simulate first 
     - `analysis/assembled/task_results.csv`
     - `analysis/assembled/condition_summary.csv`
     - `analysis/assembled/summary.json`
+
+## 2026-04-29 C++ Core Cleanup For 1RKL Default Path
+
+### Project Goal
+- Refactor and clean `src/main.cpp`, `src/box.h`, `src/box.cpp`, and `src/martini.cpp` so only logic required by the default `example/16.MARTINI/run_sim_1rkl.sh` pipeline remains.
+
+### Architecture & Key Decisions
+- Scope is strict default-path execution only; optional workflow/debug branches are removed.
+- Keep SC-env and BB-env interaction potentials active; do not disable or zero these force paths.
+- Keep barostat/Ewald and hybrid runtime features only where needed by the active 1RKL pipeline.
+- Use `/Users/yinhan/Documents/upside2-md-master/src/main.cpp` as reference for removing temporary CLI/debug deviations in `src/main.cpp`.
+
+### Execution Phases
+- [x] Phase 1: Clean `src/main.cpp` against master and keep only required workflow deltas.
+- [x] Phase 2: Remove dead/debug scaffolding from `src/box.h` and `src/box.cpp`.
+- [x] Phase 3: Remove dead wrappers/placeholders/debug branches from `src/martini.cpp` while preserving active physics.
+- [x] Phase 4: Build and run reduced workflow verification for default 1RKL path.
+- [x] Phase 5: Document results in `progress.md` and review section.
+
+### Known Errors / Blockers
+- None at start.
+
+### Review
+- Implemented cleanup in the four requested files:
+  - `src/main.cpp`: removed split-potential/Rg logging scaffolding, removed temporary CLI branches (`nvtc`, `max-force`, `martini-hold-backbone`), kept only default-path flags required by `run_sim_1rkl.sh` (`duration-steps`, minimization controls, momentum restart controls).
+  - `src/box.h` and `src/box.cpp`: removed barostat debug toggles/prints and equilibrium-freeze scaffolding; preserved active NPT scaling and Ewald reciprocal computation paths.
+  - `src/martini.cpp`: removed dead placeholder and compatibility scaffolding (`martini_masses::martini_integration_cycle`, `ConjugateGradientMinimizer` node, `minimize_structure_with_regular_potential` stub), removed SC-energy-dump plumbing and nonprotein hard-sphere experimental branch, and removed debug/status prints.
+- Physics integrity preserved:
+  - SC-env and BB-env force paths remain active.
+  - `martini_potential` and `martini_sc_table_1body` both remain present in generated production stage files.
+- Verification:
+  - `cmake --build obj --target upside` succeeded.
+  - Reduced default-workflow run succeeded end-to-end:
+    - `RUN_DIR=/tmp/cpp_cleanup_smoke` with minimized stage step counts.
+    - Stage outputs through `1rkl.stage_7.0.up` and VTF extraction completed.
+  - Stage-7 production file check confirmed:
+    - `/input/potential/martini_potential` exists;
+    - `/input/potential/martini_sc_table_1body` exists.

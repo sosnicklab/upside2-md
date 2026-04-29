@@ -279,7 +279,6 @@ struct HybridRuntimeState {
     bool enabled = false;
     bool active = false;
     bool exclude_intra_protein_martini = true;
-    bool production_nonprotein_hard_sphere = false;
     bool preprod_rigid = true;
     std::string activation_stage = "production";
     std::string preprod_mode = "rigid";
@@ -306,23 +305,12 @@ struct HybridRuntimeState {
     int sc_env_backbone_hold_steps = 200;
     int sc_env_po4_z_hold_steps = 150;
     bool sc_env_po4_z_clamp_enabled = false;
-    bool sc_env_energy_dump_enabled = false;
-    int sc_env_energy_dump_stride = 1;
     uint64_t sc_env_transition_step = 0;
     uint64_t sc_env_transition_step_start = 0;
     std::vector<unsigned char> sc_env_po4_env_mask;
     std::vector<float> sc_env_po4_z_reference;
     bool sc_env_po4_z_reference_initialized = false;
     std::vector<int> sc_env_po4_z_hold_atom_indices;
-    float sc_env_energy_total = 0.f;
-    float sc_env_energy_lj = 0.f;
-    float sc_env_energy_coul = 0.f;
-    float sc_env_last_logged_total = 0.f;
-    float sc_env_last_logged_lj = 0.f;
-    float sc_env_last_logged_coul = 0.f;
-    uint64_t sc_env_log_counter = 0;
-    float nonprotein_hs_force_cap = 100.0f;
-    float nonprotein_hs_potential_cap = 5000.0f;
     std::vector<std::array<float,3>> prev_bb_pos;
     std::vector<int> preprod_fixed_atom_indices;
     std::vector<int> preprod_z_fixed_atom_indices;
@@ -636,8 +624,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.preprod_mode = read_string_attribute_or_default(ctrl.get(), "preprod_protein_mode", "rigid");
     out.exclude_intra_protein_martini =
         (read_attribute<int>(ctrl.get(), ".", "exclude_intra_protein_martini", 1) != 0);
-    out.production_nonprotein_hard_sphere =
-        (read_attribute<int>(ctrl.get(), ".", "production_nonprotein_hard_sphere", 0) != 0);
     out.preprod_rigid = (out.preprod_mode == "rigid");
     out.protein_env_interface_scale =
         read_attribute<float>(ctrl.get(), ".", "protein_env_interface_scale", out.protein_env_interface_scale);
@@ -650,14 +636,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         read_attribute<int>(ctrl.get(), ".", "sc_env_po4_z_hold_steps", out.sc_env_po4_z_hold_steps);
     out.sc_env_po4_z_clamp_enabled =
         (read_attribute<int>(ctrl.get(), ".", "sc_env_po4_z_clamp_enabled", out.sc_env_po4_z_clamp_enabled ? 1 : 0) != 0);
-    out.sc_env_energy_dump_enabled =
-        (read_attribute<int>(ctrl.get(), ".", "sc_env_energy_dump_enabled", out.sc_env_energy_dump_enabled ? 1 : 0) != 0);
-    out.sc_env_energy_dump_stride =
-        read_attribute<int>(ctrl.get(), ".", "sc_env_energy_dump_stride", out.sc_env_energy_dump_stride);
-    out.nonprotein_hs_force_cap =
-        read_attribute<float>(ctrl.get(), ".", "nonprotein_hs_force_cap", out.nonprotein_hs_force_cap);
-    out.nonprotein_hs_potential_cap =
-        read_attribute<float>(ctrl.get(), ".", "nonprotein_hs_potential_cap", out.nonprotein_hs_potential_cap);
     int transition_start = read_attribute<int>(ctrl.get(), ".", "sc_env_transition_step_start", 0);
     out.sc_env_transition_step_start = static_cast<uint64_t>(std::max(0, transition_start));
     out.sc_env_transition_step = out.sc_env_transition_step_start;
@@ -666,9 +644,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     if(out.sc_env_relax_steps < 1) out.sc_env_relax_steps = 1;
     if(out.sc_env_backbone_hold_steps < 0) out.sc_env_backbone_hold_steps = 0;
     if(out.sc_env_po4_z_hold_steps < 0) out.sc_env_po4_z_hold_steps = 0;
-    if(out.sc_env_energy_dump_stride < 1) out.sc_env_energy_dump_stride = 1;
-    if(out.nonprotein_hs_force_cap < 0.f) out.nonprotein_hs_force_cap = 0.f;
-    if(out.nonprotein_hs_potential_cap < 0.f) out.nonprotein_hs_potential_cap = 0.f;
     if(!(out.protein_env_interface_scale > 0.f) || !std::isfinite(out.protein_env_interface_scale)) {
         throw string("hybrid_control/protein_env_interface_scale must be finite and > 0");
     }
@@ -940,13 +915,6 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->prev_bb_pos.clear();
         st->sc_env_po4_z_reference.clear();
         st->sc_env_po4_z_reference_initialized = false;
-        st->sc_env_energy_total = 0.f;
-        st->sc_env_energy_lj = 0.f;
-        st->sc_env_energy_coul = 0.f;
-        st->sc_env_last_logged_total = 0.f;
-        st->sc_env_last_logged_lj = 0.f;
-        st->sc_env_last_logged_coul = 0.f;
-        st->sc_env_log_counter = 0;
         st->sc_env_transition_step = 0;
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
@@ -958,13 +926,6 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->prev_bb_pos.clear();
         st->sc_env_po4_z_reference.clear();
         st->sc_env_po4_z_reference_initialized = false;
-        st->sc_env_energy_total = 0.f;
-        st->sc_env_energy_lj = 0.f;
-        st->sc_env_energy_coul = 0.f;
-        st->sc_env_last_logged_total = 0.f;
-        st->sc_env_last_logged_lj = 0.f;
-        st->sc_env_last_logged_coul = 0.f;
-        st->sc_env_log_counter = 0;
         st->sc_env_transition_step = st->sc_env_transition_step_start;
     }
     if(st->preprod_rigid && !st->active) {
@@ -1001,34 +962,6 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
             martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
         }
     }
-    if(st->has_config && st->enabled) {
-        size_t n_po4_env = 0;
-        for(auto flag : st->sc_env_po4_env_mask) if(flag) ++n_po4_env;
-        printf("Hybrid input parsed: current_stage=%s activation_stage=%s hybrid_active=%d preprod_mode=%s n_bb=%zu n_env=%zu exclude_intra=%d nonprotein_hs=%d hs_force_cap=%.3f hs_pot_cap=%.3f sc_cap_lj=%.3f sc_cap_coul=%.3f sc_relax_steps=%d sc_bb_hold_steps=%d sc_po4_z_hold_steps=%d sc_po4_z_clamp=%d sc_po4_env=%zu sc_energy_dump=%d sc_energy_stride=%d preprod_fixed=%zu preprod_zfixed=%zu\n",
-               current_stage.c_str(),
-               st->activation_stage.c_str(),
-               st->active ? 1 : 0,
-               st->preprod_mode.c_str(),
-               st->n_bb,
-               st->n_env,
-               st->exclude_intra_protein_martini ? 1 : 0,
-               st->production_nonprotein_hard_sphere ? 1 : 0,
-               st->nonprotein_hs_force_cap,
-               st->nonprotein_hs_potential_cap,
-               st->sc_env_lj_force_cap,
-               st->sc_env_coul_force_cap,
-               st->sc_env_relax_steps,
-               st->sc_env_backbone_hold_steps,
-               st->sc_env_po4_z_hold_steps,
-               st->sc_env_po4_z_clamp_enabled ? 1 : 0,
-               n_po4_env,
-               st->sc_env_energy_dump_enabled ? 1 : 0,
-               st->sc_env_energy_dump_stride,
-               st->preprod_fixed_atom_indices.size(),
-               st->preprod_z_fixed_atom_indices.size());
-    } else if(st->has_config) {
-        printf("Hybrid input present but disabled\n");
-    }
 }
 
 void refresh_transition_holds_for_engine(DerivEngine& engine) {
@@ -1063,36 +996,6 @@ bool is_hybrid_active(const DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
     return it != g_hybrid_state.end() && it->second && it->second->active;
-}
-
-bool is_sc_env_energy_dump_enabled(const DerivEngine& engine) {
-    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
-    auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
-    if(it == g_hybrid_state.end() || !it->second) return false;
-    const auto& st = it->second;
-    return st->enabled && st->sc_env_energy_dump_enabled;
-}
-
-bool sample_sc_env_energy_for_logging(DerivEngine& engine, float& total, float& lj, float& coul) {
-    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
-    auto it = g_hybrid_state.find(&engine);
-    if(it == g_hybrid_state.end() || !it->second) return false;
-    auto& st = it->second;
-    if(!st->enabled || !st->sc_env_energy_dump_enabled) return false;
-
-    st->sc_env_log_counter += 1;
-    bool emit_new = (st->sc_env_energy_dump_stride <= 1) ||
-                    ((st->sc_env_log_counter - 1) % static_cast<uint64_t>(st->sc_env_energy_dump_stride) == 0u);
-    if(emit_new) {
-        st->sc_env_last_logged_total = st->sc_env_energy_total;
-        st->sc_env_last_logged_lj = st->sc_env_energy_lj;
-        st->sc_env_last_logged_coul = st->sc_env_energy_coul;
-    }
-
-    total = st->sc_env_last_logged_total;
-    lj = st->sc_env_last_logged_lj;
-    coul = st->sc_env_last_logged_coul;
-    return true;
 }
 
 static float compute_sc_force_uncap_mix(const HybridRuntimeState& st) {
@@ -1310,14 +1213,8 @@ namespace martini_masses {
     float get_mass(DerivEngine* engine, int atom_index) {
         std::lock_guard<std::mutex> lk(g_mass_mutex);
         auto it = g_masses.find(engine);
-        if(it == g_masses.end()) {
-            printf("ERROR: No mass data found for engine %p\n", engine);
-            return 1.0f; // fallback to unit mass
-        }
-        if(atom_index >= (int)it->second.size()) {
-            printf("ERROR: Atom index %d out of range for mass array (size %zu)\n", atom_index, it->second.size());
-            return 1.0f; // fallback to unit mass
-        }
+        if(it == g_masses.end()) return 1.0f;
+        if(atom_index < 0 || atom_index >= (int)it->second.size()) return 1.0f;
         return it->second[atom_index];
     }
     
@@ -1327,18 +1224,6 @@ namespace martini_masses {
         g_masses.erase(engine);
     }
     
-    // MARTINI-specific integration cycle that uses masses
-    void martini_integration_cycle(
-            DerivEngine* engine,
-            VecArray mom, 
-            float dt) {
-        // This is a placeholder for now - in a full implementation,
-        // this would need to be integrated into the main simulation loop
-        // to replace the standard integrator when MARTINI masses are available
-        printf("MARTINI: Mass-aware integrator would be used here\n");
-    }
-    
-    // Check if MARTINI masses are available for an engine
     bool has_masses(DerivEngine* engine) {
         std::lock_guard<std::mutex> lk(g_mass_mutex);
         auto it = g_masses.find(engine);
@@ -1346,14 +1231,6 @@ namespace martini_masses {
     }
 }
 
-// NPT barostat removed - using NVT ensemble without boundaries
-
-//Bond, Angle and Dihedral the same format in MARTINI 10.1021/jp071097f
-//Missing: Proper Dihedral from 10.1021/ct700324x (might not need if only exist in protein model)
-//Coulomb interactions can be softened using Slater potential: V(r) = q1*q2/r * (1 - (1 + αr/2) * exp(-αr))
-//Reference: LAMMPS pair_coul_slater_cut implementation
-
-// Helper to check if an HDF5 attribute exists
 inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* attr_name) {
     // H5Oopen(loc, ".") may alias the same ID in some HDF5 builds.
     // Closing that alias can invalidate the caller's handle.
@@ -1368,14 +1245,6 @@ inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* att
     H5Oclose(obj_id);
     return exists > 0;
 }
-
-// Minimum image convention removed - using NVT ensemble without boundaries
-
-
-
-
-
-
 
 struct DihedralSpring : public PotentialNode
 {
@@ -1473,9 +1342,6 @@ struct DihedralSpring : public PotentialNode
         // Fit spline
         dihedral_potential_spline.fit_spline(dihedral_pot_data.data());
 
-        std::cout << "DIHEDRALS: Initialized splines with 1000 knots" << std::endl;
-        std::cout << "  Dihedral range: " << min_dihedral << " to " << max_dihedral << " radians" << std::endl;
-        std::cout << "  Spline range: " << dihedral_min << " to " << dihedral_max << " radians" << std::endl;
     }
 
     virtual void compute_value(ComputeMode mode) override {
@@ -1589,17 +1455,8 @@ struct DihedralSpring : public PotentialNode
         }
     }
     
-    // Box dimension update methods removed - using NVT ensemble without boundaries
 };
 static RegisterNodeType<DihedralSpring,1> dihedral_spring_node("dihedral_spring");
-
-// PBC implementation removed - using NVT ensemble without boundaries
-
-// PME FFT implementation removed - using Coulomb spline tables instead
-
-// PME B-spline implementation removed - using Coulomb spline tables instead
-
-// PME implementation removed - using Coulomb spline tables instead
 
 // MARTINI potential using spline interpolation for LJ and Coulomb calculations
 struct MartiniPotential : public PotentialNode
@@ -1638,7 +1495,6 @@ struct MartiniPotential : public PotentialNode
     bool lj_soften;
     float lj_soften_alpha;
     
-    // PME parameters removed - using Coulomb spline tables instead
     // Box dimensions used for minimum-image pair displacements under PBC/NPT.
     float box_x, box_y, box_z;
     
@@ -1792,7 +1648,6 @@ struct MartiniPotential : public PotentialNode
             } else {
                 ewald_alpha = 0.3f;  // default in inverse Angstroms
             }
-            std::cout << "MARTINI: Ewald splitting enabled, alpha=" << ewald_alpha << " A^-1" << std::endl;
         }
 
         // LJ softening parameters (soft-core LJ)
@@ -1809,9 +1664,6 @@ struct MartiniPotential : public PotentialNode
             }
         }
 
-        // PME parameters removed - using Coulomb spline tables instead
-
-        
         // Read box dimensions for minimum-image displacements.
         if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
             box_x = read_attribute<float>(grp, ".", "x_len");
@@ -1845,9 +1697,6 @@ struct MartiniPotential : public PotentialNode
         std::vector<array<float,4>> unique_coeff;
 
         if(optimized_format) {
-            // Optimized format: unique coefficients + indices
-            std::cout << "MARTINI: Using optimized interaction table format" << std::endl;
-            
             // Load unique coefficients
             auto n_unique_coeff = get_dset_size(2, grp, "coefficients")[0];
             check_size(grp, "coefficient_indices", n_pair);
@@ -1880,13 +1729,7 @@ struct MartiniPotential : public PotentialNode
                     throw string("Invalid coefficient index in martini_potential");
                 }
             }
-
-            std::cout << "MARTINI: Loaded " << n_unique_coeff << " unique coefficients for " << n_pair << " pairs" << std::endl;
-            std::cout << "MARTINI: Compression ratio: " << (float)n_pair / n_unique_coeff << "x" << std::endl;
         } else {
-            // Original format: full coefficient array
-            std::cout << "MARTINI: Using original interaction table format" << std::endl;
-            
             check_size(grp, "coefficients", n_pair, 4);
             
             pairs.resize(n_pair);
@@ -1913,9 +1756,6 @@ struct MartiniPotential : public PotentialNode
                     pair_param_index[np] = it->second;
                 }
             }
-
-            std::cout << "MARTINI: Compacted " << n_pair << " coefficients into " << unique_coeff.size()
-                      << " unique parameter rows" << std::endl;
         }
         
         // Find all epsilon/sigma pairs for separate LJ splines
@@ -1926,11 +1766,6 @@ struct MartiniPotential : public PotentialNode
             if(eps != 0.f && sig != 0.f) {
                 unique_lj_params.insert({eps, sig});
             }
-        }
-
-        std::cout << "MARTINI: Generating separate LJ splines for " << unique_lj_params.size() << " unique epsilon/sigma pairs from coefficients array" << std::endl;
-        for(const auto& params : unique_lj_params) {
-            std::cout << "  epsilon=" << params.first << ", sigma=" << params.second << std::endl;
         }
 
         // Initialize spline parameters for LJ - fixed domain [0, 12]
@@ -2014,8 +1849,6 @@ struct MartiniPotential : public PotentialNode
             }
         }
 
-        std::cout << "MARTINI: Generating separate Coulomb splines for " << unique_charge_products.size() << " unique charge products" << std::endl;
-
         // Generate separate Coulomb splines for each unique charge product
         for(float qq : unique_charge_products) {
             std::vector<double> coul_pot_data_for_spline(1000 * 1);  // 1 layer, 1000 points, 1 value per point
@@ -2075,18 +1908,6 @@ struct MartiniPotential : public PotentialNode
             }
         }
 
-        std::cout << "MARTINI: Generated " << coulomb_splines.size() << " Coulomb splines" << std::endl;
-
-        std::cout << "MARTINI: Initialized splines with 1000 knots" << std::endl;
-        std::cout << "  LJ range: " << lj_r_min << " to " << lj_r_max << " Angstroms" << std::endl;
-        std::cout << "  Coulomb range: " << coul_r_min << " to " << coul_r_max << " Angstroms" << std::endl;
-        std::cout << "  Coulomb k: " << coulomb_k
-                  << " (from native k=" << coulomb_constant_native_kj_mol_nm_e2
-                  << ", energy_conversion=" << energy_conversion_kj_per_eup
-                  << ", length_conversion=" << length_conversion_angstrom_per_nm << ")"
-                  << std::endl;
-        std::cout << "  Using Coulomb spline tables for electrostatic interactions" << std::endl;
-
     }
 
     virtual void compute_value(ComputeMode mode) override {
@@ -2100,19 +1921,10 @@ struct MartiniPotential : public PotentialNode
             martini_hybrid::refresh_bb_positions_if_active(*hybrid_state, pos1, n_atom);
             mutable_hybrid = const_cast<martini_hybrid::HybridRuntimeState*>(hybrid_state.get());
             if(mutable_hybrid) {
-                if(mutable_hybrid->sc_env_energy_dump_enabled) {
-                    mutable_hybrid->sc_env_energy_total = 0.f;
-                    mutable_hybrid->sc_env_energy_lj = 0.f;
-                    mutable_hybrid->sc_env_energy_coul = 0.f;
-                }
                 martini_hybrid::initialize_sc_env_po4_z_reference(*mutable_hybrid, pos1, n_atom);
             }
         }
-        
-        // --- REMOVED: fill(pos1_sens, 3, n_atom, 0.f); ---
-        // This line was incorrectly zeroing the force array, erasing all bonded forces
-        // Force array initialization is now handled centrally in DerivEngine::compute()
-        
+
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
         if(pot) *pot = 0.f;
 
@@ -2128,11 +1940,7 @@ struct MartiniPotential : public PotentialNode
             sc_force_uncap_mix = martini_hybrid::compute_sc_force_uncap_mix(*mutable_hybrid);
             sc_backbone_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*mutable_hybrid);
         }
-        float sc_env_energy_total = 0.f;
-        float sc_env_energy_lj = 0.f;
-        float sc_env_energy_coul = 0.f;
 
-        constexpr float wca_cutoff_factor = 1.122462048309373f; // 2^(1/6)
         auto cap_force_vector = [&](Vec<3>& f, float cap_mag) {
             if(!(cap_mag > 0.f)) return;
             float f2 = mag2(f);
@@ -2146,14 +1954,11 @@ struct MartiniPotential : public PotentialNode
                                    const Vec<3>& pb,
                                    const PairParam& param,
                                    float interaction_scale,
-                                   bool hard_sphere_mode,
                                    float& pair_potential,
                                    Vec<3>& pair_force,
                                    float lj_force_cap_mag,
                                    float coul_force_cap_mag,
                                    float capped_to_regular_mix,
-                                   float hs_force_cap_mag,
-                                   float hs_pot_cap_mag,
                                    float* pair_lj_potential,
                                    float* pair_coul_potential) -> bool {
             auto dr = pa - pb;
@@ -2166,32 +1971,6 @@ struct MartiniPotential : public PotentialNode
             pair_force = make_zero<3>();
             if(pair_lj_potential) *pair_lj_potential = 0.f;
             if(pair_coul_potential) *pair_coul_potential = 0.f;
-
-            if(hard_sphere_mode) {
-                if(param.eps == 0.f || param.sig == 0.f) return false;
-                float rcut = wca_cutoff_factor * param.sig;
-                if(dist >= rcut) return false;
-                float eval_dist = std::max(dist, 0.1f * param.sig);
-
-                float sr = param.sig / eval_dist;
-                float sr2 = sr * sr;
-                float sr6 = sr2 * sr2 * sr2;
-                float sr12 = sr6 * sr6;
-
-                float wca_pot = 4.f * param.eps * (sr12 - sr6) + param.eps;
-                float wca_force_mag = 24.f * param.eps * (2.f * sr12 - sr6) / eval_dist;
-                if(std::isfinite(wca_pot) && std::isfinite(wca_force_mag)) {
-                    pair_potential = interaction_scale * wca_pot;
-                    if(hs_pot_cap_mag > 0.f && pair_potential > hs_pot_cap_mag) {
-                        pair_potential = hs_pot_cap_mag;
-                    }
-                    if(pair_lj_potential) *pair_lj_potential = pair_potential;
-                    pair_force = interaction_scale * ((wca_force_mag / eval_dist) * dr);
-                    cap_force_vector(pair_force, hs_force_cap_mag);
-                    return true;
-                }
-                return false;
-            }
 
             if(dist > max(lj_cutoff, coul_cutoff)) return false;
 
@@ -2297,27 +2076,11 @@ struct MartiniPotential : public PotentialNode
                 continue;
             }
 
-            // Optional experimental branch: treat non-protein/non-protein
-            // MARTINI nonbonded as hard-sphere-like repulsion (WCA branch).
-            bool hard_sphere_pair = (
-                hybrid_state &&
-                hybrid_state->enabled &&
-                hybrid_state->active &&
-                hybrid_state->production_nonprotein_hard_sphere &&
-                !i_is_protein &&
-                !j_is_protein);
-
             Vec<3> force = make_zero<3>();
             float pair_pot = 0.f;
-            float hs_force_cap = 0.f;
-            float hs_pot_cap = 0.f;
             float startup_lj_force_cap = 0.f;
             float startup_coul_force_cap = 0.f;
             float startup_cap_mix = 1.f;
-            if(hard_sphere_pair && hybrid_state) {
-                hs_force_cap = hybrid_state->nonprotein_hs_force_cap;
-                hs_pot_cap = hybrid_state->nonprotein_hs_potential_cap;
-            }
             if(hybrid_state &&
                martini_hybrid::deterministic_startup_pair_cap_enabled(
                    *hybrid_state, i_is_protein, j_is_protein, i_role, j_role)) {
@@ -2329,12 +2092,10 @@ struct MartiniPotential : public PotentialNode
                                         ? martini_hybrid::active_interface_interaction_scale(
                                               *hybrid_state, i_is_protein, j_is_protein)
                                         : 1.f;
-            if(!eval_pair_force(p1, p2, param, interface_scale, hard_sphere_pair, pair_pot, force,
+            if(!eval_pair_force(p1, p2, param, interface_scale, pair_pot, force,
                                 startup_lj_force_cap,
                                 startup_coul_force_cap,
                                 startup_cap_mix,
-                                hs_force_cap,
-                                hs_pot_cap,
                                 nullptr,
                                 nullptr)) {
                 continue;
@@ -2361,16 +2122,7 @@ struct MartiniPotential : public PotentialNode
             }
         }
 
-        if(mutable_hybrid && mutable_hybrid->sc_env_energy_dump_enabled) {
-            mutable_hybrid->sc_env_energy_total = sc_env_energy_total;
-            mutable_hybrid->sc_env_energy_lj = sc_env_energy_lj;
-            mutable_hybrid->sc_env_energy_coul = sc_env_energy_coul;
-        }
     }
-    
-    // Destructor removed - no debug file needed for NVT ensemble
-    
-    // Box dimension update methods removed - using NVT ensemble without boundaries
 };
 static RegisterNodeType<MartiniPotential, 1> martini_potential_node("martini_potential");
 
@@ -3339,9 +3091,6 @@ struct DistSpring : public PotentialNode
         // Fit spline
         bond_potential_spline.fit_spline(bond_pot_data.data());
 
-        std::cout << "BONDS: Initialized splines with 1000 knots" << std::endl;
-        std::cout << "  Bond range: " << bond_r_min << " to " << bond_r_max << " Angstroms" << std::endl;
-        std::cout << "  Equilibrium range: " << min_equil << " to " << max_equil << " Angstroms" << std::endl;
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -3402,7 +3151,6 @@ struct DistSpring : public PotentialNode
         }
     }
     
-    // Box dimension update methods removed - using NVT ensemble without boundaries
 };
 static RegisterNodeType<DistSpring, 1> dist_spring_node("dist_spring");
 
@@ -3500,10 +3248,6 @@ struct AngleSpring : public PotentialNode
         // Fit spline
         angle_potential_spline.fit_spline(angle_pot_data.data());
 
-        std::cout << "ANGLES: Initialized splines with 1000 knots" << std::endl;
-        std::cout << "  Angle range: " << min_angle << " to " << max_angle << " degrees" << std::endl;
-        std::cout << "  Cosine range: " << angle_cos_min << " to " << angle_cos_max << std::endl;
-        std::cout << "  Note: Equilibrium angles stored in degrees, converted to radians for cosine calculation" << std::endl;
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -3576,7 +3320,6 @@ struct AngleSpring : public PotentialNode
         }
     }
     
-    // Box dimension update methods removed - using NVT ensemble without boundaries
 };
 static RegisterNodeType<AngleSpring, 1> angle_spring_node("angle_spring");
 
@@ -3626,16 +3369,6 @@ struct PositionRestraint : public PotentialNode
             });
         }
 
-        std::cout << "POSITION_RESTRAINT: Initialized " << n_elem << " restraints" << std::endl;
-        if(n_elem > 0) {
-            float min_k = std::numeric_limits<float>::max();
-            float max_k = std::numeric_limits<float>::lowest();
-            for(const auto& param : params) {
-                min_k = std::min(min_k, std::min(param.spring_const_xyz.x(), std::min(param.spring_const_xyz.y(), param.spring_const_xyz.z())));
-                max_k = std::max(max_k, std::max(param.spring_const_xyz.x(), std::max(param.spring_const_xyz.y(), param.spring_const_xyz.z())));
-            }
-            std::cout << "  Spring constant range: " << min_k << " to " << max_k << std::endl;
-        }
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -3673,272 +3406,6 @@ struct PositionRestraint : public PotentialNode
     }
 };
 static RegisterNodeType<PositionRestraint, 1> position_restraint_node("restraint_position");
-
-// Conjugate Gradient Minimizer based on LAMMPS implementation
-struct ConjugateGradientMinimizer : public PotentialNode
-{
-    CoordNode& pos;
-    int n_atom;
-    int max_iterations;
-    float energy_tolerance;
-    float force_tolerance;
-    float step_size;
-    bool verbose;
-    
-    // Minimization state variables
-    vector<Vec<3,float>> forces;
-    vector<Vec<3,float>> search_direction;
-    vector<Vec<3,float>> old_forces;
-    float old_energy;
-    int iteration_count;
-    bool converged;
-    
-    ConjugateGradientMinimizer(hid_t grp, CoordNode& pos_):
-        PotentialNode(), pos(pos_), n_atom(pos_.n_elem), iteration_count(0), converged(false)
-    {
-        // Read minimization parameters
-        max_iterations = 1000;
-        if(attribute_exists(grp, ".", "max_iterations")) {
-            max_iterations = read_attribute<int>(grp, ".", "max_iterations");
-        }
-        
-        energy_tolerance = 1e-6f;
-        if(attribute_exists(grp, ".", "energy_tolerance")) {
-            energy_tolerance = read_attribute<float>(grp, ".", "energy_tolerance");
-        }
-        
-        force_tolerance = 1e-6f;
-        if(attribute_exists(grp, ".", "force_tolerance")) {
-            force_tolerance = read_attribute<float>(grp, ".", "force_tolerance");
-        }
-        
-        step_size = 0.1f;
-        if(attribute_exists(grp, ".", "step_size")) {
-            step_size = read_attribute<float>(grp, ".", "step_size");
-        }
-        
-        verbose = true;
-        if(attribute_exists(grp, ".", "verbose")) {
-            verbose = read_attribute<int>(grp, ".", "verbose") != 0;
-        }
-        
-        // Initialize vectors
-        forces.resize(n_atom);
-        search_direction.resize(n_atom);
-        old_forces.resize(n_atom);
-        
-        std::cout << "[MINIMIZER] Conjugate Gradient Minimizer initialized:" << std::endl;
-        std::cout << "  Max iterations: " << max_iterations << std::endl;
-        std::cout << "  Energy tolerance: " << energy_tolerance << std::endl;
-        std::cout << "  Force tolerance: " << force_tolerance << std::endl;
-        std::cout << "  Step size: " << step_size << std::endl;
-    }
-    
-    // Compute force magnitude for convergence check
-    float compute_force_magnitude() {
-        float total_force = 0.0f;
-        for(int i = 0; i < n_atom; ++i) {
-            total_force += mag2(forces[i]);
-        }
-        return sqrtf(total_force);
-    }
-    
-    // Line search to find optimal step size (simplified version)
-    float line_search() {
-        float alpha = step_size;
-        float energy_0 = potential;
-        
-        // Store current positions
-        vector<Vec<3,float>> original_pos(n_atom);
-        VecArray pos_array = pos.output;
-        for(int i = 0; i < n_atom; ++i) {
-            original_pos[i] = load_vec<3>(pos_array, i);
-        }
-        
-        // Try different step sizes
-        for(int attempt = 0; attempt < 10; ++attempt) {
-            // Move along search direction
-            for(int i = 0; i < n_atom; ++i) {
-                auto new_pos = original_pos[i] + alpha * search_direction[i];
-                store_vec<3>(pos_array, i, new_pos);
-            }
-            
-            // Recompute energy (this would need to trigger a full energy calculation)
-            // For now, we'll use a simplified approach
-            float new_energy = energy_0; // Placeholder - would need actual recomputation
-            
-            if(new_energy < energy_0) {
-                return alpha;
-            }
-            
-            alpha *= 0.5f; // Reduce step size
-        }
-        
-        // Restore original positions
-        for(int i = 0; i < n_atom; ++i) {
-            store_vec<3>(pos_array, i, original_pos[i]);
-        }
-        
-        return step_size * 0.1f; // Return small step size if no improvement found
-    }
-    
-    virtual void compute_value(ComputeMode mode) {
-        Timer timer(string("conjugate_gradient_minimizer"));
-        
-        if(converged || iteration_count >= max_iterations) {
-            if(verbose) {
-                std::cout << "[MINIMIZER] Minimization " << (converged ? "converged" : "reached max iterations") << std::endl;
-            }
-            return;
-        }
-        
-        VecArray pos_array = pos.output;
-        VecArray pos_sens = pos.sens;
-        
-        // Extract forces from sensitivity (gradient)
-        for(int i = 0; i < n_atom; ++i) {
-            forces[i] = -load_vec<3>(pos_sens, i); // Force = -gradient
-        }
-        
-        float current_energy = potential;
-        float force_magnitude = compute_force_magnitude();
-        
-        if(verbose && iteration_count % 10 == 0) {
-            std::cout << "[MINIMIZER] Iteration " << iteration_count 
-                      << " Energy: " << current_energy 
-                      << " Force: " << force_magnitude << std::endl;
-        }
-        
-        // Check convergence
-        if(iteration_count > 0) {
-            float energy_change = fabsf(current_energy - old_energy);
-            if(energy_change < energy_tolerance && force_magnitude < force_tolerance) {
-                converged = true;
-                if(verbose) {
-                    std::cout << "[MINIMIZER] CONVERGED! Energy change: " << energy_change 
-                              << " Force magnitude: " << force_magnitude << std::endl;
-                }
-                return;
-            }
-        }
-        
-        // Compute search direction using conjugate gradient method
-        if(iteration_count == 0) {
-            // First iteration: use steepest descent
-            for(int i = 0; i < n_atom; ++i) {
-                search_direction[i] = forces[i];
-            }
-        } else {
-            // Conjugate gradient: Polak-Ribiere formula
-            float numerator = 0.0f;
-            float denominator = 0.0f;
-            
-            for(int i = 0; i < n_atom; ++i) {
-                Vec<3,float> force_diff = forces[i] - old_forces[i];
-                numerator += dot(forces[i], force_diff);
-                denominator += dot(old_forces[i], old_forces[i]);
-            }
-            
-            float beta = (denominator > 0.0f) ? numerator / denominator : 0.0f;
-            
-            // Ensure beta is positive (Fletcher-Reeves fallback)
-            if(beta < 0.0f) {
-                beta = 0.0f;
-            }
-            
-            for(int i = 0; i < n_atom; ++i) {
-                search_direction[i] = forces[i] + beta * search_direction[i];
-            }
-        }
-        
-        // Normalize search direction
-        float search_magnitude = 0.0f;
-        for(int i = 0; i < n_atom; ++i) {
-            search_magnitude += mag2(search_direction[i]);
-        }
-        search_magnitude = sqrtf(search_magnitude);
-        
-        if(search_magnitude > 0.0f) {
-            for(int i = 0; i < n_atom; ++i) {
-                search_direction[i] = search_direction[i] / search_magnitude;
-            }
-        }
-        
-        // Perform line search to find optimal step size
-        float alpha = line_search();
-        
-        // Update positions
-        for(int i = 0; i < n_atom; ++i) {
-            auto current_pos = load_vec<3>(pos_array, i);
-            auto new_pos = current_pos + alpha * search_direction[i];
-            store_vec<3>(pos_array, i, new_pos);
-        }
-        
-        // Store current state for next iteration
-        old_energy = current_energy;
-        for(int i = 0; i < n_atom; ++i) {
-            old_forces[i] = forces[i];
-        }
-        
-        iteration_count++;
-        
-        // Set potential to current energy for logging
-        potential = current_energy;
-    }
-};
-
-static RegisterNodeType<ConjugateGradientMinimizer, 1> cg_minimizer_node("conjugate_gradient_minimizer");
-
-// Standalone minimization function for use in simulation workflow
-// This function performs energy minimization using the regular potential
-// and can be called between simulation stages
-extern "C" {
-    // Function to perform energy minimization on a structure
-    // Returns 0 on success, -1 on failure
-    int minimize_structure_with_regular_potential(const char* input_file, 
-                                                 const char* output_file,
-                                                 int max_iterations = 1000,
-                                                 float energy_tolerance = 1e-6f,
-                                                 float force_tolerance = 1e-6f,
-                                                 float step_size = 0.1f,
-                                                 bool verbose = true) {
-        try {
-            std::cout << "[MINIMIZATION] Starting energy minimization with regular potential" << std::endl;
-            std::cout << "  Input file: " << input_file << std::endl;
-            std::cout << "  Output file: " << output_file << std::endl;
-            std::cout << "  Max iterations: " << max_iterations << std::endl;
-            std::cout << "  Energy tolerance: " << energy_tolerance << std::endl;
-            std::cout << "  Force tolerance: " << force_tolerance << std::endl;
-            
-            // Open the input file
-            hid_t file_id = H5Fopen(input_file, H5F_ACC_RDWR, H5P_DEFAULT);
-            if (file_id < 0) {
-                std::cerr << "[MINIMIZATION] ERROR: Cannot open input file: " << input_file << std::endl;
-                return -1;
-            }
-            
-            // Read the structure and potential information
-            // This is a simplified implementation - in practice, you would need to
-            // properly initialize the UPSIDE engine and run the minimization
-            
-            // For now, we'll create a minimal implementation that can be called
-            // from the simulation script
-            
-            std::cout << "[MINIMIZATION] Minimization completed successfully" << std::endl;
-            
-            // Close the file
-            H5Fclose(file_id);
-            
-            return 0;
-            
-        } catch (const std::exception& e) {
-            std::cerr << "[MINIMIZATION] ERROR: " << e.what() << std::endl;
-            return -1;
-        }
-    }
-}
-
-
 
 // Explicit registrar to ensure node types are available at runtime
 // Even if some linkers strip unused static objects, this guarantees registration
@@ -4040,7 +3507,6 @@ struct MartiniNodeRegistrar {
                 return new DihedralSpring(grp, *args[0]);
             });
         }
-        // PBC and PME node creation functions removed - using NVT ensemble without boundaries
     }
 };
 static MartiniNodeRegistrar s_martini_node_registrar;
@@ -4237,9 +3703,6 @@ void register_stage_params_for_engine(DerivEngine* engine, hid_t root) {
         g_current_stage[engine] = data.stage;
         g_stage_bond_params[engine] = data.bond_params;
         g_stage_angle_params[engine] = data.angle_params;
-        
-        printf("Stage-specific parameters: %s stage, %zu bond params, %zu angle params\n", 
-               data.stage.c_str(), data.bond_params.size(), data.angle_params.size());
     }
 }
 
@@ -4251,7 +3714,6 @@ void switch_simulation_stage(DerivEngine* engine, const std::string& new_stage) 
     if(it != g_current_stage.end()) {
         it->second = new_stage;
         martini_hybrid::update_stage_for_engine(engine, new_stage);
-        printf("Switched to %s stage\n", new_stage.c_str());
     }
 }
 
@@ -4281,9 +3743,6 @@ void apply_stage_bond_params(DerivEngine& engine) {
     auto param_it = stage_bonds.find(current_stage);
     if(param_it == stage_bonds.end()) return;
     
-    // Apply stage-specific bond force constants
-    // This would need to be integrated with the bond potential calculation
-    // Debug output removed to reduce clutter
 }
 
 // Apply stage-specific angle parameters  
@@ -4301,9 +3760,6 @@ void apply_stage_angle_params(DerivEngine& engine) {
     auto param_it = stage_angles.find(current_stage);
     if(param_it == stage_angles.end()) return;
     
-    // Apply stage-specific angle force constants
-    // This would need to be integrated with the angle potential calculation
-    // Debug output removed to reduce clutter
 }
 
 // Clear stage parameters for an engine
