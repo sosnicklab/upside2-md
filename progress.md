@@ -51,6 +51,19 @@
   - `cmake --build obj --target upside` passed with the pre-existing `%p` warning;
   - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed;
   - `bash -n` passed for `run_sim_1rkl.sh`, `run_sim_1rkl_outlipid.sh`, `run_sim_1afo.sh`, and `run_sim_1afo_outlipid.sh`.
+- Reopened production continuation after the user reported restarted stage-7 runs are less stable than uninterrupted runs.
+- Found missing restart state:
+  - MD stages were not run with `--record-momentum`, so no `output/mom` was available for exact continuation;
+  - handoff copied only positions and box, not momentum;
+  - C++ hybrid startup state reset `sc_env_transition_step` to zero at each restarted production stage.
+- Patched restart state transfer:
+  - `run_md_stage` now records momentum and uses `--restart-using-momentum` only when `input/mom.restart_valid=1`;
+  - `set_initial_position` now copies last saved `output/mom` into `input/mom`, marks restart validity, and carries forward `sc_env_transition_step_start` from saved production time;
+  - `src/martini.cpp` initializes the SC-env transition counter from `hybrid_control.sc_env_transition_step_start`.
+- Restart verification:
+  - continuous `1000`-step replay from the saved stage-7 handoff stayed stable with Rg around `12.7-12.9 A`;
+  - split `500 + 500` replay stayed stable after restart with Rg around `12.8-13.0 A`;
+  - actual workflow continuation under `/tmp/restart_workflow_check` used `--record-momentum --restart-using-momentum`, produced finite output, and wrote restart metadata.
 
 ## 2026-04-24 (dry-MARTINI Runtime Acceleration Import)
 - Opened a new root-level task in `plan.md` scoped to importing only the dry-MARTINI acceleration logic from `/Users/yinhan/Documents/upside2-md_temp/src/martini.cpp`.
@@ -691,3 +704,26 @@
     - `results/tasks/scale0p85_r01.json` reports `success = true`
     - task-local `1rkl.stage_7.0.up` exists
     - `assembled/summary.json` reports `1` successful task and `1` completed scale.
+## 2026-04-29 Restart Instability Follow-up
+- Re-audited production continuation after the user reported the instability still reproduces.
+- Found two restart-only discontinuities:
+  - 7.x continuation refreshed hybrid carrier coordinates while reusing saved momentum.
+  - `upside` logged output frames before integration and did not append the true final MD state.
+- Changed production continuation to use an exact saved-state handoff, require restart-valid momentum, and preserve the hybrid transition counter without rebuilding carriers.
+- Changed `src/main.cpp` to append a final MD sample after the integration loop so subsequent continuation stages consume the final state.
+- Verification:
+  - Python compile and shell syntax checks passed.
+  - `cmake --build obj --target upside` passed with existing warnings only.
+  - Generated `/tmp/restart_final_source.up`; it now has final `output/time=1.0` and `output/mom` for a 500-step run.
+  - Workflow continuation from that source wrote `/tmp/restart_final_workflow/checkpoints/1rkl.stage_7.1.up`, used `--restart-using-momentum`, and stayed finite with Rg `12.6 A -> 12.3 A`.
+  - HDF5 comparison showed continuation input position and momentum exactly match the source final output (`max diff 0.0` for both), with `sc_env_transition_step_start=500`.
+  - Continuation from `/tmp/hybrid_stage7_replay_cap1000.up`, which lacks `output/mom`, fails before MD with the expected restart-valid momentum error.
+- Added a validated final-state restart marker:
+  - workflow MD stages now mark `output/mom.restart_final_state_valid=1` only after `output/time[-1]` matches `nsteps * dt`;
+  - production continuation refuses sources without that marker, so files with momentum but stale/pre-final outputs cannot be used as exact restarts.
+- Verified workflow-generated restart chaining:
+  - `/tmp/restart_marker_workflow/checkpoints/1rkl.stage_7.1.up` restarted into `/tmp/restart_marker_workflow_2/checkpoints/1rkl.stage_7.2.up`;
+  - stage 7.2 used `--restart-using-momentum`, stayed finite with Rg `12.2 A -> 12.1 A`, and wrote finite positions/momenta;
+  - stage 7.2 input exactly matched stage 7.1 final output for both position and momentum (`max diff 0.0`);
+  - `sc_env_transition_step_start=1000` after two 500-step chunks;
+  - a copied source with `output/mom` but no final-state marker failed before MD with the expected final restart-state error.

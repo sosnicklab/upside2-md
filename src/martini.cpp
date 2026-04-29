@@ -309,6 +309,7 @@ struct HybridRuntimeState {
     bool sc_env_energy_dump_enabled = false;
     int sc_env_energy_dump_stride = 1;
     uint64_t sc_env_transition_step = 0;
+    uint64_t sc_env_transition_step_start = 0;
     std::vector<unsigned char> sc_env_po4_env_mask;
     std::vector<float> sc_env_po4_z_reference;
     bool sc_env_po4_z_reference_initialized = false;
@@ -657,6 +658,9 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         read_attribute<float>(ctrl.get(), ".", "nonprotein_hs_force_cap", out.nonprotein_hs_force_cap);
     out.nonprotein_hs_potential_cap =
         read_attribute<float>(ctrl.get(), ".", "nonprotein_hs_potential_cap", out.nonprotein_hs_potential_cap);
+    int transition_start = read_attribute<int>(ctrl.get(), ".", "sc_env_transition_step_start", 0);
+    out.sc_env_transition_step_start = static_cast<uint64_t>(std::max(0, transition_start));
+    out.sc_env_transition_step = out.sc_env_transition_step_start;
     if(out.sc_env_lj_force_cap < 0.f) out.sc_env_lj_force_cap = 0.f;
     if(out.sc_env_coul_force_cap < 0.f) out.sc_env_coul_force_cap = 0.f;
     if(out.sc_env_relax_steps < 1) out.sc_env_relax_steps = 1;
@@ -961,7 +965,7 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->sc_env_last_logged_lj = 0.f;
         st->sc_env_last_logged_coul = 0.f;
         st->sc_env_log_counter = 0;
-        st->sc_env_transition_step = 0;
+        st->sc_env_transition_step = st->sc_env_transition_step_start;
     }
     if(st->preprod_rigid && !st->active) {
         martini_fix_rigid::set_dynamic_fixed_atoms(*engine, st->preprod_fixed_atom_indices);

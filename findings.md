@@ -1,6 +1,21 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-29: User correction: the previous production restart patch is incomplete.
+  - Do not assume recording/copying momentum plus a transition counter is sufficient.
+  - Re-check whether the restart source is the true final integrator state or only the last logged frame.
+  - Continuation should not silently proceed from incomplete restart state.
+- 2026-04-29: Production restart root cause after re-audit.
+  - A restart that reuses saved momentum must not refresh hybrid reference carrier positions; doing so creates a position/momentum mismatch unique to split production runs.
+  - Normal MD output must include the final integrator state. If the last saved frame is only the last periodic pre-integration sample, continuation advances the hybrid transition counter from a stale time and restarts from stale coordinates.
+  - Older production files without `output/mom`, or with momentum but no validated final-state marker, are not exact restart sources; the workflow should fail before MD rather than rethermalize silently or use a stale frame.
+- 2026-04-28: User correction: production restart parity must be verified explicitly.
+  - Stage-7 continuation may look syntactically valid while missing runtime state such as momentum, box, or hybrid ramp/hold counters.
+  - Verification must compare split production (`7.0 -> 7.1`) against an uninterrupted run of matching length, not just check that continuation executes.
+- 2026-04-28: Production continuation was missing two state channels.
+  - Without `--record-momentum`, stage files do not contain `output/mom`, so continuation rethermalizes instead of preserving the velocity state.
+  - Without a persisted SC-env transition counter, every `7.x` restart begins the force-cap/backbone-hold schedule again from step zero.
+  - Correct restart handoff needs to copy saved momentum into `input/mom`, pass `--restart-using-momentum`, and set `hybrid_control.sc_env_transition_step_start` from saved production time.
 - 2026-04-28: User correction after the compact-reference fix: a clean initial stage file is not enough; stage-7 must be replayed for at least the early production window because the current run explodes by step `50`.
   - Step-0 energies can look plausible while force propagation is still catastrophically wrong.
   - Verification for this workflow must include a short production replay with Rg/energy inspection, not only HDF5 structure checks and one-frame extraction.

@@ -1394,6 +1394,14 @@ try {
         }
 
 
+        if(n_round > 0) {
+            for(System& sys: systems) {
+                if(do_recenter) recenter(sys.engine.pos->output, xy_recenter_only, sys.n_atom);
+                sys.engine.compute(PotentialAndDerivMode);
+                sys.logger->collect_samples();
+            }
+        }
+
 
         if(received_signal!=NO_SIGNAL) {fprintf(stderr, "Received early termination signal\n");}
         if(passed_time_lim) {fprintf(stderr, "Passed time limit\n");}
