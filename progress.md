@@ -727,3 +727,48 @@
   - stage 7.2 input exactly matched stage 7.1 final output for both position and momentum (`max diff 0.0`);
   - `sc_env_transition_step_start=1000` after two 500-step chunks;
   - a copied source with `output/mom` but no final-state marker failed before MD with the expected final restart-state error.
+
+## 2026-04-29 (C++ Core Cleanup For 1RKL Default Path)
+- Reopened the core cleanup scope for `src/main.cpp`, `src/box.h`, `src/box.cpp`, and `src/martini.cpp` with strict default-path-only execution criteria for `example/16.MARTINI/run_sim_1rkl.sh`.
+- Cleaned `src/main.cpp`:
+  - removed split-potential/Rg diagnostic plumbing and cached potential state;
+  - removed temporary CLI branches `nvtc`, `--max-force`, and `--martini-hold-backbone`;
+  - kept required default workflow controls (`--duration-steps`, minimization flags, `--record-momentum`, `--restart-using-momentum`);
+  - simplified runtime progress/energy printing to direct total potential output.
+- Cleaned `src/box.h` and `src/box.cpp`:
+  - removed barostat debug toggle/prints and Ewald init print;
+  - removed equilibrium-detection freeze logic and kept direct NPT scaling updates;
+  - preserved NPT state registration, pressure/volume logging values, and Ewald reciprocal-force/energy contribution.
+- Cleaned `src/martini.cpp`:
+  - removed dead placeholder logic and wrappers: `martini_masses::martini_integration_cycle`, `ConjugateGradientMinimizer` node registration, and `minimize_structure_with_regular_potential` stub;
+  - removed hybrid SC-energy-dump runtime plumbing and nonprotein hard-sphere experimental branch;
+  - removed verbose status/debug print blocks from MARTINI, bond/angle/dihedral initialization, and stage-param switching.
+- Verification:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj --target upside` passed.
+  - Reduced end-to-end workflow smoke run passed:
+    - `RUN_DIR=/tmp/cpp_cleanup_smoke`
+    - `MIN_60_MAX_ITER=1 MIN_61_MAX_ITER=1`
+    - `EQ_62_NSTEPS=1 EQ_63_NSTEPS=1 EQ_64_NSTEPS=1 EQ_65_NSTEPS=1 EQ_66_NSTEPS=1`
+    - `PROD_70_NSTEPS=5 EQ_FRAME_STEPS=1 PROD_FRAME_STEPS=1`
+    - `bash example/16.MARTINI/run_sim_1rkl.sh`
+  - Confirmed production stage still carries active hybrid MARTINI interfaces:
+    - `/tmp/cpp_cleanup_smoke/checkpoints/1rkl.stage_7.0.up` contains both `/input/potential/martini_potential` and `/input/potential/martini_sc_table_1body`.
+- Follow-up correction implemented (2026-04-29): restored permanent MARTINI-hybrid progress output detail in `src/main.cpp`.
+  - Added hybrid-only `Rg` reporting from `hybrid_bb_map` CA carrier indices.
+  - Added hybrid-only `prot_potential` calculation by summing non-MARTINI potential nodes.
+  - Renamed displayed total energy field to `total_potential` for hybrid output lines.
+  - Kept non-hybrid output format unchanged.
+- Verification:
+  - rebuilt `obj/upside` successfully;
+  - ran a direct short hybrid command on `/tmp/cpp_cleanup_smoke/checkpoints/1rkl.stage_7.0.up` and confirmed output line format:
+    - `... hbonds  12.8 Rg, prot_potential ... total_potential ...`.
+- Follow-up correction implemented (2026-04-29): refined hybrid `prot_potential` decomposition.
+  - Added `martini_hybrid::get_last_bb_env_interface_potential(const DerivEngine&)` in `src/martini.cpp` and `src/main.h`.
+  - `MartiniPotential::compute_value()` now tracks last BB-env interface pair energy per engine state.
+  - `src/main.cpp` hybrid progress line now computes:
+    - protein forcefield (non-dry-MARTINI nodes)
+    - + SC-env interface nodes (`martini_sc_table_1body` / legacy sc-table)
+    - + BB-env interface energy extracted from `martini_potential` pair classification.
+- Verification:
+  - rebuilt `obj/upside` successfully;
+  - reran a one-step hybrid stage command on `/tmp/cpp_cleanup_smoke/checkpoints/1rkl.stage_7.0.up` and confirmed output line retains `Rg`, `prot_potential`, and `total_potential` with the refined `prot_potential` definition.

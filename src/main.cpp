@@ -17,8 +17,6 @@
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
-#include <array>
-#include <iomanip>
 #include <cmath>
 
 
@@ -56,7 +54,6 @@ namespace simulation_box {
 // ---- Fix Rigid hooks (implemented in martini.cpp) ----
 namespace martini_fix_rigid {
     void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine);
-    void register_fix_rigid_backbone_for_engine(hid_t config_root, DerivEngine& engine, const std::string& atom_name);
     void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv);
     void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom);
 }
@@ -145,23 +142,103 @@ struct System {
     VecArrayStorage mom; // momentum
     OrnsteinUhlenbeckThermostat thermostat;
     uint64_t round_num;
-    double cached_upside_potential;
-    double cached_martini_potential;
-    uint64_t cached_potential_round;
-    bool has_cached_potential;
-    vector<int> rg_backbone_atom_indices;
-    System():
-        round_num(0),
-        cached_upside_potential(0.0),
-        cached_martini_potential(0.0),
-        cached_potential_round(0),
-        has_cached_potential(false) {}
+    bool martini_hybrid_progress;
+    vector<int> protein_rg_atom_indices;
+    System(): round_num(0), martini_hybrid_progress(false) {}
 
     void set_temperature(float new_temp) {
         temperature = new_temp;
         thermostat.set_temp(temperature);
     }
 };
+
+static vector<int> collect_hybrid_ca_indices(hid_t config_root, int n_atom) {
+    vector<int> out;
+    if(n_atom <= 0) return out;
+    if(!h5_exists(config_root, "/input/hybrid_bb_map/atom_indices")) return out;
+    if(!h5_exists(config_root, "/input/hybrid_bb_map/atom_mask")) return out;
+
+    try {
+        auto idx_shape = get_dset_size(2, config_root, "/input/hybrid_bb_map/atom_indices");
+        auto mask_shape = get_dset_size(2, config_root, "/input/hybrid_bb_map/atom_mask");
+        if(idx_shape.size() != 2u || mask_shape.size() != 2u) return out;
+        if(idx_shape[0] == 0u || idx_shape[1] < 2u) return out;
+        if(mask_shape[0] != idx_shape[0] || mask_shape[1] != idx_shape[1]) return out;
+
+        const size_t n_row = idx_shape[0];
+        const size_t n_col = idx_shape[1];
+        vector<int> atom_indices(n_row*n_col, -1);
+        vector<int> atom_mask(n_row*n_col, 0);
+        traverse_dset<2,int>(config_root, "/input/hybrid_bb_map/atom_indices",
+                [&](size_t i, size_t j, int v) { atom_indices[i*n_col + j] = v; });
+        traverse_dset<2,int>(config_root, "/input/hybrid_bb_map/atom_mask",
+                [&](size_t i, size_t j, int v) { atom_mask[i*n_col + j] = v; });
+
+        vector<unsigned char> seen(static_cast<size_t>(n_atom), 0u);
+        out.reserve(n_row);
+        for(size_t i = 0; i < n_row; ++i) {
+            if(atom_mask[i*n_col + 1] == 0) continue;
+            int ai = atom_indices[i*n_col + 1];
+            if(ai < 0 || ai >= n_atom) continue;
+            if(seen[static_cast<size_t>(ai)]) continue;
+            seen[static_cast<size_t>(ai)] = 1u;
+            out.push_back(ai);
+        }
+    } catch(...) {
+        out.clear();
+    }
+    return out;
+}
+
+static double compute_protein_rg(const System& sys) {
+    if(sys.protein_rg_atom_indices.empty()) return -1.0;
+    float3 com = make_vec3(0.f, 0.f, 0.f);
+    int n_backbone = 0;
+    for(int ai: sys.protein_rg_atom_indices) {
+        if(ai < 0 || ai >= sys.n_atom) continue;
+        com += load_vec<3>(sys.engine.pos->output, ai);
+        ++n_backbone;
+    }
+    if(n_backbone <= 0) return -1.0;
+    com *= 1.f/n_backbone;
+    double rg2 = 0.0;
+    for(int ai: sys.protein_rg_atom_indices) {
+        if(ai < 0 || ai >= sys.n_atom) continue;
+        rg2 += mag2(load_vec<3>(sys.engine.pos->output, ai)-com);
+    }
+    return sqrt(rg2/n_backbone);
+}
+
+static inline bool is_dry_martini_term_name(const std::string& name) {
+    return is_prefix("martini_potential", name) ||
+           is_prefix("dist_spring", name) ||
+           is_prefix("angle_spring", name) ||
+           is_prefix("dihedral_spring", name) ||
+           is_prefix("restraint_position", name);
+}
+
+static inline bool is_sc_env_interface_term_name(const std::string& name) {
+    return is_prefix("martini_sc_table_1body", name) ||
+           is_prefix("martini_sc_table_potential", name);
+}
+
+static double compute_hybrid_protein_potential(const DerivEngine& engine) {
+    double protein_forcefield_potential = 0.0;
+    double sc_env_interface_potential = 0.0;
+    for(const auto& n : engine.nodes) {
+        if(!n.computation->potential_term) continue;
+        const auto& pot_node = dynamic_cast<const PotentialNode&>(*n.computation.get());
+        double p = static_cast<double>(pot_node.potential);
+        if(is_sc_env_interface_term_name(n.name)) {
+            sc_env_interface_potential += p;
+            continue;
+        }
+        if(is_dry_martini_term_name(n.name)) continue;
+        protein_forcefield_potential += p;
+    }
+    double bb_env_interface_potential = martini_hybrid::get_last_bb_env_interface_potential(engine);
+    return protein_forcefield_potential + sc_env_interface_potential + bb_env_interface_potential;
+}
 
 static double compute_logged_kinetic_energy(System* sys) {
     double sum_kin = 0.0;
@@ -179,121 +256,6 @@ static double compute_logged_kinetic_energy(System* sys) {
     }
     return (0.5/sys->n_atom) * sum_kin;
 }
-
-static inline bool is_martini_potential_node_name(const std::string& name) {
-    return is_prefix("martini_potential", name) ||
-           is_prefix("dist_spring", name) ||
-           is_prefix("angle_spring", name) ||
-           is_prefix("dihedral_spring", name) ||
-           is_prefix("restraint_position", name);
-}
-
-static void split_engine_potential_terms(const DerivEngine& engine,
-                                         double& upside_potential,
-                                         double& martini_potential) {
-    upside_potential = 0.0;
-    martini_potential = 0.0;
-    for(const auto& n : engine.nodes) {
-        if(!n.computation->potential_term) continue;
-        const auto& pot_node = dynamic_cast<const PotentialNode&>(*n.computation.get());
-        if(is_martini_potential_node_name(n.name)) {
-            martini_potential += static_cast<double>(pot_node.potential);
-        } else {
-            upside_potential += static_cast<double>(pot_node.potential);
-        }
-    }
-}
-
-static void refresh_split_potential_cache(System& sys, bool recompute_engine) {
-    if(recompute_engine) {
-        sys.engine.compute(PotentialAndDerivMode);
-    }
-    split_engine_potential_terms(sys.engine, sys.cached_upside_potential, sys.cached_martini_potential);
-    sys.cached_potential_round = sys.round_num;
-    sys.has_cached_potential = true;
-}
-
-static std::string format_logged_energy(double value) {
-    std::ostringstream out;
-    double mag = std::fabs(value);
-    if(!std::isfinite(value) || (mag != 0.0 && (mag >= 1.0e6 || mag < 1.0e-3))) {
-        out << std::scientific << std::setprecision(3) << value;
-    } else {
-        out << std::fixed << std::setprecision(2) << value;
-    }
-    return out.str();
-}
-
-static vector<int> collect_rg_backbone_indices_from_hybrid_map(hid_t config_root, int n_atom) {
-    vector<int> out;
-    if(n_atom <= 0) return out;
-    if(!h5_exists(config_root, "/input/hybrid_bb_map/atom_indices")) return out;
-
-    vector<unsigned char> seen(static_cast<size_t>(n_atom), 0u);
-    try {
-        auto shape = get_dset_size(2, config_root, "/input/hybrid_bb_map/atom_indices");
-        if(shape.size() != 2u || shape[0] == 0u || shape[1] == 0u) return out;
-
-        const size_t n_row = shape[0];
-        const size_t n_col = shape[1];
-        vector<int> atom_indices(n_row*n_col, -1);
-        vector<int> atom_mask;
-        bool has_mask = h5_exists(config_root, "/input/hybrid_bb_map/atom_mask");
-        if(has_mask) {
-            auto mask_shape = get_dset_size(2, config_root, "/input/hybrid_bb_map/atom_mask");
-            if(mask_shape.size() != 2u || mask_shape[0] != n_row || mask_shape[1] != n_col) {
-                has_mask = false;
-            } else {
-                atom_mask.assign(n_row*n_col, 0);
-                traverse_dset<2,int>(config_root, "/input/hybrid_bb_map/atom_mask",
-                        [&](size_t i, size_t j, int v) { atom_mask[i*n_col + j] = v; });
-            }
-        }
-
-        traverse_dset<2,int>(config_root, "/input/hybrid_bb_map/atom_indices",
-                [&](size_t i, size_t j, int v) { atom_indices[i*n_col + j] = v; });
-
-        out.reserve(n_row*n_col);
-        for(size_t i = 0; i < n_row; ++i) {
-            for(size_t j = 0; j < n_col; ++j) {
-                if(has_mask && atom_mask[i*n_col + j] == 0) continue;
-                int ai = atom_indices[i*n_col + j];
-                if(ai < 0 || ai >= n_atom) continue;
-                if(!seen[static_cast<size_t>(ai)]) {
-                    seen[static_cast<size_t>(ai)] = 1u;
-                    out.push_back(ai);
-                }
-            }
-        }
-    } catch(...) {
-        out.clear();
-    }
-    return out;
-}
-
-static vector<int> collect_rg_backbone_indices_from_sequence(hid_t config_root, int n_atom) {
-    vector<int> out;
-    if(n_atom <= 0) return out;
-    if(!h5_exists(config_root, "/input/sequence")) return out;
-    try {
-        auto seq_shape = get_dset_size(1, config_root, "/input/sequence");
-        if(seq_shape.empty()) return out;
-        int n_res = static_cast<int>(seq_shape[0]);
-        int n_backbone = std::min(n_atom, 3*n_res);
-        out.reserve(n_backbone);
-        for(int na = 0; na < n_backbone; ++na) out.push_back(na);
-    } catch(...) {
-        out.clear();
-    }
-    return out;
-}
-
-static vector<int> collect_rg_backbone_indices(hid_t config_root, int n_atom) {
-    auto hybrid_indices = collect_rg_backbone_indices_from_hybrid_map(config_root, n_atom);
-    if(!hybrid_indices.empty()) return hybrid_indices;
-    return collect_rg_backbone_indices_from_sequence(config_root, n_atom);
-}
-
 
 double stod_strict(const std::string& s) {
     size_t nchar = -1u;
@@ -548,8 +510,6 @@ struct CurvatureChange {
             }
         }
 
-        //cout << dcenterz << " " << rand_value << " " << relative_change << " " << centerz << " || " << new_memb_potential << " " << memb_potential << endl;
-
         float old_lboltz = -beta*memb_potential;
         float new_lboltz = -beta*new_memb_potential;
 
@@ -666,11 +626,10 @@ try {
             false, 0.05, "float", cmd);
 
     ValueArg<string> integrator_arg("", "integrator", 
-            "Use this option to control which Integrator are used.  Available: v (Verlet), mv (multi-step Verlet), nvtc (NVT-corrected). "
-            "Default is Verlet.",
-            false, "", "v, mv, nvtc", cmd);
+            "Use this option to control which Integrator are used.  Available levels are v(verlet) or mv(multi-step verlet). "
+            "Default is verlet.",
+            false, "", "v, mv", cmd);
     ValueArg<int> inner_step_arg("", "inner-step", "inner step for the integrator", false, 3, "int", cmd);
-    ValueArg<double> max_force_arg("", "max-force", "Clip forces to this max magnitude per-particle (0 disables; used by nvtc)", false, 0.0, "float", cmd);
     // Minimization controls (ported from prior branch)
     SwitchArg enable_min_arg("", "minimize", "Run an energy minimization before MD", cmd, false);
     ValueArg<int> min_max_iter_arg("", "min-max-iter", "Minimization max iterations", false, 1000, "int", cmd);
@@ -709,9 +668,6 @@ try {
             " this is usually helpful when the simulation ends due to the wall time."
             " To restart the trajectory, make sure to copy the end momentum of last run to input.mom (similar to the pos treatment when restarting):"
             " check examples for continue the simulation",
-            cmd, false);
-    SwitchArg martini_hold_backbone_arg("", "martini-hold-backbone",
-            "hold MARTINI protein backbone (BB) beads rigid (requires /input/atom_names)",
             cmd, false);
     ValueArg<string> set_param_arg("", "set-param", "Developer use only", false, "", "param_arg", cmd);
     UnlabeledMultiArg<string> config_args("config_files","configuration .h5 files", true, "h5_files");
@@ -941,7 +897,6 @@ try {
                 pos_shape = get_dset_size(3, sys->input.get(), "/input/pos");
 
             sys->n_atom = pos_shape[0];
-            sys->rg_backbone_atom_indices = collect_rg_backbone_indices(sys->config.get(), sys->n_atom);
 
             if(pos_shape[1]!=3) throw string("invalid dimensions for initial position");
             if(pos_shape[2]!=1) throw string("must have n_system 1 from config");
@@ -956,13 +911,16 @@ try {
             martini_masses::load_masses_for_engine(&sys->engine, sys->config.get());
             // Register fix rigid settings for this engine (read from H5)
             martini_fix_rigid::register_fix_rigid_for_engine(sys->config.get(), sys->engine);
-            if(martini_hold_backbone_arg.getValue()) {
-                martini_fix_rigid::register_fix_rigid_backbone_for_engine(sys->config.get(), sys->engine, "BB");
-            }
             // Register stage-specific parameters for this engine (read from H5)
             martini_stage_params::register_stage_params_for_engine(&sys->engine, sys->config.get());
             // Register hybrid MARTINI/Upside metadata for this engine (read from H5)
             martini_hybrid::register_hybrid_for_engine(sys->config.get(), sys->engine);
+            sys->martini_hybrid_progress = martini_hybrid::is_hybrid_enabled(sys->engine);
+            if(sys->martini_hybrid_progress) {
+                sys->protein_rg_atom_indices = collect_hybrid_ca_indices(sys->config.get(), sys->n_atom);
+            } else {
+                sys->protein_rg_atom_indices.clear();
+            }
             if  (integrator_arg.getValue() == "mv" )
                 sys->engine.build_integrator_levels(true, dt, inner_step );
 
@@ -1045,13 +1003,8 @@ try {
                     kin_buffer[0] = compute_logged_kinetic_energy(sys);
                     });
             sys->logger->add_logger<double>("potential", {1}, [sys](double* pot_buffer) {
-                    refresh_split_potential_cache(*sys, true);
-                    pot_buffer[0] = sys->cached_upside_potential;});
-            sys->logger->add_logger<double>("martini_potential", {1}, [sys](double* pot_buffer) {
-                    if(!sys->has_cached_potential || sys->cached_potential_round != sys->round_num) {
-                        refresh_split_potential_cache(*sys, true);
-                    }
-                    pot_buffer[0] = sys->cached_martini_potential;});
+                    sys->engine.compute(PotentialAndDerivMode);
+                    pot_buffer[0] = sys->engine.potential;});
             sys->logger->add_logger<double>("time", {}, [sys,dt,inner_step](double* time_buffer) {
                     *time_buffer=inner_step*dt*sys->round_num;});
 
@@ -1151,54 +1104,13 @@ try {
                 });
             }
 
-            if(martini_hybrid::is_sc_env_energy_dump_enabled(systems[ns].engine)) {
-                ensure_group(systems[ns].logger->logging_group.get(), "diagnostics");
-                auto sc_env_cache = std::make_shared<std::array<float,3>>(std::array<float,3>{{0.f, 0.f, 0.f}});
-                auto sc_env_cache_valid = std::make_shared<bool>(false);
-                systems[ns].logger->add_logger<float>("diagnostics/sc_env_energy_total", {1}, [ns, &systems, sc_env_cache, sc_env_cache_valid](float* buffer) {
-                    float total = 0.f, lj = 0.f, coul = 0.f;
-                    if(martini_hybrid::sample_sc_env_energy_for_logging(systems[ns].engine, total, lj, coul)) {
-                        (*sc_env_cache)[0] = total;
-                        (*sc_env_cache)[1] = lj;
-                        (*sc_env_cache)[2] = coul;
-                        *sc_env_cache_valid = true;
-                        buffer[0] = total;
-                    } else {
-                        *sc_env_cache_valid = false;
-                        buffer[0] = 0.f;
-                    }
-                });
-                systems[ns].logger->add_logger<float>("diagnostics/sc_env_energy_lj", {1}, [sc_env_cache, sc_env_cache_valid](float* buffer) {
-                    if(*sc_env_cache_valid) {
-                        buffer[0] = (*sc_env_cache)[1];
-                    } else {
-                        buffer[0] = 0.f;
-                    }
-                });
-                systems[ns].logger->add_logger<float>("diagnostics/sc_env_energy_coul", {1}, [sc_env_cache, sc_env_cache_valid](float* buffer) {
-                    if(*sc_env_cache_valid) {
-                        buffer[0] = (*sc_env_cache)[2];
-                        *sc_env_cache_valid = false;
-                    } else {
-                        buffer[0] = 0.f;
-                    }
-                });
-            }
         }
         if(verbose) printf("\n");
 
-            if(verbose) printf("Initial potential energy (Upside/MARTINI/Total):");
+            if(verbose) printf("Initial potential energy:");
         for(System& sys: systems) {
             sys.engine.compute(PotentialAndDerivMode);
-            double upside_pot = 0.0;
-            double martini_pot = 0.0;
-            split_engine_potential_terms(sys.engine, upside_pot, martini_pot);
-            if(verbose) {
-                auto up_str = format_logged_energy(upside_pot);
-                auto martini_str = format_logged_energy(martini_pot);
-                auto total_str = format_logged_energy(sys.engine.potential);
-                printf(" %s/%s/%s", up_str.c_str(), martini_str.c_str(), total_str.c_str());
-            }
+            if(verbose) printf(" % .2f", sys.engine.potential);
         }
         if(verbose) printf("\n");
 
@@ -1273,54 +1185,31 @@ try {
                         sys.engine.compute(PotentialAndDerivMode);
                         sys.logger->collect_samples();
 
-                        double Rg = -1.0; // Default to N/A
-                        const auto& rg_atoms = sys.rg_backbone_atom_indices;
-                        if(!rg_atoms.empty()) {
-                            float3 com = make_vec3(0.f, 0.f, 0.f);
-                            int n_backbone = 0;
-                            for(int ai: rg_atoms) {
-                                if(ai < 0 || ai >= sys.n_atom) continue;
-                                com += load_vec<3>(sys.engine.pos->output, ai);
-                                ++n_backbone;
-                            }
-
-                            if(n_backbone > 0) {
-                                com *= 1.f/n_backbone;
-                                double rg2 = 0.0;
-                                for(int ai: rg_atoms) {
-                                    if(ai < 0 || ai >= sys.n_atom) continue;
-                                    rg2 += mag2(load_vec<3>(sys.engine.pos->output, ai)-com);
-                                }
-                                Rg = sqrt(rg2/n_backbone);
-                            }
-                        }
-
-                        // Print with conditional Rg info
                         if(verbose) {
                             double display_elapsed = use_duration_steps
                                 ? static_cast<double>(nr)
                                 : nr*double(dt*inner_step);
-                            printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg ",
-                                   duration_print_width, display_elapsed,
-                                   duration_print_width, display_duration_total,
-                                   ns, sys.temperature,
-                                   get_n_hbond(sys.engine));
-
-                            if(Rg < 0.0) {
-                                printf("  N/A");
+                            if(sys.martini_hybrid_progress) {
+                                double rg = compute_protein_rg(sys);
+                                double prot_potential = compute_hybrid_protein_potential(sys.engine);
+                                printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds",
+                                       duration_print_width, display_elapsed,
+                                       duration_print_width, display_duration_total,
+                                       ns, sys.temperature,
+                                       get_n_hbond(sys.engine));
+                                if(rg >= 0.0) printf(" %5.1f Rg,", rg);
+                                else          printf("  N/A Rg,");
+                                printf(" prot_potential % .2f total_potential % .2f\n",
+                                       prot_potential,
+                                       sys.engine.potential);
                             } else {
-                                printf("%5.1f A", Rg);
+                                printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, potential % .2f\n",
+                                       duration_print_width, display_elapsed,
+                                       duration_print_width, display_duration_total,
+                                       ns, sys.temperature,
+                                       get_n_hbond(sys.engine),
+                                       sys.engine.potential);
                             }
-
-                            double upside_pot = 0.0;
-                            double martini_pot = 0.0;
-                            split_engine_potential_terms(sys.engine, upside_pot, martini_pot);
-                            auto up_str = format_logged_energy(upside_pot);
-                            auto martini_str = format_logged_energy(martini_pot);
-                            auto total_str = format_logged_energy(sys.engine.potential);
-                            printf(", potential %s, martini_potential %s, total %s",
-                                   up_str.c_str(), martini_str.c_str(), total_str.c_str());
-                            printf("\n");
                         }
                         fflush(stdout);
                     }
@@ -1342,11 +1231,7 @@ try {
 
                     if  (integrator_arg.getValue() == "mv" ) {
                         sys.engine.integration_cycle(sys.mom, dt, inner_step);
-                    } else if (integrator_arg.getValue() == "nvtc" ) {
-                        float mf = static_cast<float>(max_force_arg.getValue());
-                        sys.engine.integration_cycle(sys.mom, dt, mf, DerivEngine::Predescu);
                     } else {
-                        // Default simple Verlet step. Ensure we still progress even if forces are tiny.
                         sys.engine.integration_cycle(sys.mom, dt);
                     }
 
