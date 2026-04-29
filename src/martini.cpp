@@ -311,6 +311,7 @@ struct HybridRuntimeState {
     std::vector<float> sc_env_po4_z_reference;
     bool sc_env_po4_z_reference_initialized = false;
     std::vector<int> sc_env_po4_z_hold_atom_indices;
+    float bb_env_interface_potential = 0.f;
     std::vector<std::array<float,3>> prev_bb_pos;
     std::vector<int> preprod_fixed_atom_indices;
     std::vector<int> preprod_z_fixed_atom_indices;
@@ -915,6 +916,7 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->prev_bb_pos.clear();
         st->sc_env_po4_z_reference.clear();
         st->sc_env_po4_z_reference_initialized = false;
+        st->bb_env_interface_potential = 0.f;
         st->sc_env_transition_step = 0;
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
@@ -926,6 +928,7 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->prev_bb_pos.clear();
         st->sc_env_po4_z_reference.clear();
         st->sc_env_po4_z_reference_initialized = false;
+        st->bb_env_interface_potential = 0.f;
         st->sc_env_transition_step = st->sc_env_transition_step_start;
     }
     if(st->preprod_rigid && !st->active) {
@@ -996,6 +999,13 @@ bool is_hybrid_active(const DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
     return it != g_hybrid_state.end() && it->second && it->second->active;
+}
+
+double get_last_bb_env_interface_potential(const DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+    auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
+    if(it == g_hybrid_state.end() || !it->second) return 0.0;
+    return static_cast<double>(it->second->bb_env_interface_potential);
 }
 
 static float compute_sc_force_uncap_mix(const HybridRuntimeState& st) {
@@ -1921,6 +1931,7 @@ struct MartiniPotential : public PotentialNode
             martini_hybrid::refresh_bb_positions_if_active(*hybrid_state, pos1, n_atom);
             mutable_hybrid = const_cast<martini_hybrid::HybridRuntimeState*>(hybrid_state.get());
             if(mutable_hybrid) {
+                mutable_hybrid->bb_env_interface_potential = 0.f;
                 martini_hybrid::initialize_sc_env_po4_z_reference(*mutable_hybrid, pos1, n_atom);
             }
         }
@@ -2101,6 +2112,9 @@ struct MartiniPotential : public PotentialNode
                 continue;
             }
             if(pot) *pot += pair_pot;
+            if(mutable_hybrid && (i_is_protein != j_is_protein)) {
+                mutable_hybrid->bb_env_interface_potential += pair_pot;
+            }
 
             auto gi = -force;
             auto gj = force;

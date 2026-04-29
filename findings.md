@@ -445,3 +445,13 @@
   - Slurm array submission,
   - compact assembled status summary.
 - The reduced smoke run verified that the new workflow can reach a real task-local `stage_7.0.up` checkpoint through the canonical hybrid entrypoint.
+- 2026-04-29: User correction on C++ cleanup output policy.
+  - MARTINI-hybrid progress output must permanently include protein structural/energy signals, not just total potential.
+  - Required default line content for hybrid runs: `hbonds`, protein `Rg`, `prot_potential` (protein-side/non-MARTINI potential), and `total_potential`.
+  - This must be auto-enabled for hybrid only, with no additional CLI switch, and must not alter non-hybrid simulation output behavior.
+- 2026-04-29: User correction on `prot_potential` semantics.
+  - `prot_potential` for MARTINI-hybrid progress lines must exclude dry-MARTINI bulk terms.
+  - It must include hybrid interface terms:
+    - SC-env table interface (`martini_sc_table_1body` / `martini_sc_table_potential`),
+    - BB-env interface contribution inside `martini_potential`.
+  - A simple `non-martini node sum` is insufficient because BB-env interface energy is embedded in `martini_potential`.

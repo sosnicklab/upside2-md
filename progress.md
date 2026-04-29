@@ -753,3 +753,22 @@
     - `bash example/16.MARTINI/run_sim_1rkl.sh`
   - Confirmed production stage still carries active hybrid MARTINI interfaces:
     - `/tmp/cpp_cleanup_smoke/checkpoints/1rkl.stage_7.0.up` contains both `/input/potential/martini_potential` and `/input/potential/martini_sc_table_1body`.
+- Follow-up correction implemented (2026-04-29): restored permanent MARTINI-hybrid progress output detail in `src/main.cpp`.
+  - Added hybrid-only `Rg` reporting from `hybrid_bb_map` CA carrier indices.
+  - Added hybrid-only `prot_potential` calculation by summing non-MARTINI potential nodes.
+  - Renamed displayed total energy field to `total_potential` for hybrid output lines.
+  - Kept non-hybrid output format unchanged.
+- Verification:
+  - rebuilt `obj/upside` successfully;
+  - ran a direct short hybrid command on `/tmp/cpp_cleanup_smoke/checkpoints/1rkl.stage_7.0.up` and confirmed output line format:
+    - `... hbonds  12.8 Rg, prot_potential ... total_potential ...`.
+- Follow-up correction implemented (2026-04-29): refined hybrid `prot_potential` decomposition.
+  - Added `martini_hybrid::get_last_bb_env_interface_potential(const DerivEngine&)` in `src/martini.cpp` and `src/main.h`.
+  - `MartiniPotential::compute_value()` now tracks last BB-env interface pair energy per engine state.
+  - `src/main.cpp` hybrid progress line now computes:
+    - protein forcefield (non-dry-MARTINI nodes)
+    - + SC-env interface nodes (`martini_sc_table_1body` / legacy sc-table)
+    - + BB-env interface energy extracted from `martini_potential` pair classification.
+- Verification:
+  - rebuilt `obj/upside` successfully;
+  - reran a one-step hybrid stage command on `/tmp/cpp_cleanup_smoke/checkpoints/1rkl.stage_7.0.up` and confirmed output line retains `Rg`, `prot_potential`, and `total_potential` with the refined `prot_potential` definition.

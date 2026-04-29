@@ -22,6 +22,7 @@ namespace martini_hybrid {
     void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine);
     bool is_hybrid_enabled(const DerivEngine& engine);
     bool is_hybrid_active(const DerivEngine& engine);
+    double get_last_bb_env_interface_potential(const DerivEngine& engine);
     bool preproduction_requires_rigid(const DerivEngine& engine);
     void refresh_transition_holds_for_engine(DerivEngine& engine);
     void clear_hybrid_for_engine(DerivEngine* engine);
