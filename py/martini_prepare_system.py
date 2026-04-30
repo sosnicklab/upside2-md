@@ -37,13 +37,34 @@ from martini_prepare_system_lib import (
     validate_backbone_reference_frame,
     write_hybrid_mapping_h5,
     write_pdb,
-    DEFAULT_SC_TABLE_JSON,
 )
 
 
 PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
 WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
+
+DEFAULT_HYBRID_PREPROD_ACTIVATION_STAGE = "__hybrid_disabled__"
+DEFAULT_SC_ENV_LJ_FORCE_CAP = 25.0
+DEFAULT_SC_ENV_COUL_FORCE_CAP = 25.0
+DEFAULT_NONPROTEIN_HS_FORCE_CAP = 100.0
+DEFAULT_SC_ENV_PO4_Z_CLAMP_ENABLE = 1
+DEFAULT_SC_ENV_RELAX_STEPS = 150
+DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS = 200
+DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS = 150
+DEFAULT_BB_AA_MAX_RIGID_RMSD = 1.5
+DEFAULT_BB_AA_MIN_MATCHED_RESIDUES = 8
+DEFAULT_NPT_TAU = 4.0
+DEFAULT_NPT_INTERVAL = 10
+DEFAULT_EWALD_ENABLE = 1
+DEFAULT_EWALD_ALPHA = 0.2
+DEFAULT_EWALD_KMAX = 5
+DEFAULT_PROD_70_BAROSTAT_TYPE = 1
+DEFAULT_MARTINI_ENERGY_CONVERSION = 2.914952774272
+DEFAULT_MARTINI_LENGTH_CONVERSION = 10.0
+DEFAULT_BAR_1_TO_EUP_PER_A3 = 0.000020659477
+DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP = 14.521180763676
+DEFAULT_PROTEIN_ENV_INTERFACE_SCALE = 1.0
 
 
 def parse_prepare_args(argv=None):
@@ -54,7 +75,7 @@ def parse_prepare_args(argv=None):
             "to UPSIDE input."
         )
     )
-    parser.add_argument("--mode", choices=["bilayer", "protein", "both"], required=True)
+    parser.add_argument("--mode", choices=["both"], required=True)
     parser.add_argument("--pdb-id", required=True, help="Runtime PDB id for stage conversion")
     parser.add_argument("--runtime-pdb-output", default=None)
     parser.add_argument("--runtime-itp-output", default=None)
@@ -280,118 +301,6 @@ def assert_protein_itp_mass_compatibility(runtime_itp: Path):
             "Use a dry-MARTINI-compatible protein ITP (e.g., from the hybrid path or "
             "martinize settings that match the selected force field)."
         )
-
-
-def prepare_bilayer_structure(args, runtime_pdb):
-    bilayer_pdb = Path(args.bilayer_pdb).expanduser().resolve()
-    bilayer_atoms, bilayer_box = parse_pdb(bilayer_pdb)
-    lipid_atoms = [a for a in bilayer_atoms if lipid_resname(a["resname"])]
-    if not lipid_atoms:
-        raise ValueError("No lipid residues detected in bilayer template.")
-
-    if args.xy_scale < 1.0:
-        raise ValueError("--xy-scale must be >= 1.0")
-
-    lip_xyz = coords(lipid_atoms)
-    lip_min = lip_xyz.min(axis=0)
-    lip_max = lip_xyz.max(axis=0)
-    lip_center = center_of_mass(lip_xyz)
-
-    span_x = float(lip_max[0] - lip_min[0])
-    span_y = float(lip_max[1] - lip_min[1])
-    base_side = max(span_x, span_y)
-    target_side = base_side * float(args.xy_scale)
-    target_xy_min = np.array(
-        [lip_center[0] - 0.5 * target_side, lip_center[1] - 0.5 * target_side],
-        dtype=float,
-    )
-    target_xy_max = np.array(
-        [lip_center[0] + 0.5 * target_side, lip_center[1] + 0.5 * target_side],
-        dtype=float,
-    )
-
-    bilayer_lipids = tile_and_crop_bilayer_lipids(
-        bilayer_atoms=bilayer_atoms,
-        bilayer_box=bilayer_box,
-        target_xy_min=target_xy_min,
-        target_xy_max=target_xy_max,
-    )
-
-    box_lengths = set_box_from_lipid_xy(
-        all_atoms=bilayer_lipids,
-        lipid_atoms=bilayer_lipids,
-        pad_z=float(args.box_padding_z),
-        force_square_xy=True,
-        min_box_z=None,
-        center_lipid_in_z=True,
-    )
-
-    effective_vol_frac = infer_effective_ion_volume_fraction_from_template(
-        bilayer_atoms=bilayer_atoms,
-        bilayer_box=bilayer_box,
-        salt_molar=float(args.salt_molar),
-    )
-    salt_pairs = estimate_salt_pairs(
-        box_lengths=box_lengths,
-        salt_molar=float(args.salt_molar),
-        effective_volume_fraction=effective_vol_frac,
-    )
-
-    rng = np.random.default_rng(int(args.seed))
-    ion_atoms = place_ions(
-        atoms=bilayer_lipids,
-        box_lengths=box_lengths,
-        n_na=salt_pairs,
-        n_cl=salt_pairs,
-        cutoff=float(args.ion_cutoff),
-        rng=rng,
-    )
-    all_atoms = bilayer_lipids + ion_atoms
-    write_pdb(runtime_pdb, all_atoms, box_lengths)
-
-    return {
-        "mode": "bilayer",
-        "input_bilayer_pdb": str(bilayer_pdb),
-        "runtime_pdb": str(runtime_pdb),
-        "xy_scale": float(args.xy_scale),
-        "base_xy_side_angstrom": float(base_side),
-        "target_xy_side_angstrom": float(target_side),
-        "box_angstrom": [float(v) for v in box_lengths],
-        "salt_molar": float(args.salt_molar),
-        "ion_effective_volume_fraction": float(effective_vol_frac),
-        "salt_pairs_target": int(salt_pairs),
-        "na_added": int(salt_pairs),
-        "cl_added": int(salt_pairs),
-        "lipid_atoms": int(len(bilayer_lipids)),
-        "ion_atoms_added": int(len(ion_atoms)),
-        "total_atoms": int(len(all_atoms)),
-    }
-
-
-def prepare_protein_structure(args, runtime_pdb, runtime_itp):
-    if not args.protein_cg_pdb:
-        raise ValueError("--protein-cg-pdb is required for mode=protein")
-    protein_cg_pdb = Path(args.protein_cg_pdb).expanduser().resolve()
-    if not protein_cg_pdb.exists():
-        raise FileNotFoundError(f"Protein CG PDB not found: {protein_cg_pdb}")
-
-    protein_atoms_raw, protein_box = parse_pdb(protein_cg_pdb)
-    protein_atoms = extract_protein_cg_atoms(protein_atoms_raw)
-    write_pdb(runtime_pdb, protein_atoms, protein_box)
-    if args.protein_itp:
-        protein_itp = Path(args.protein_itp).expanduser().resolve()
-        if not protein_itp.exists():
-            raise FileNotFoundError(f"Protein ITP not found: {protein_itp}")
-        copy_if_different(protein_itp, runtime_itp)
-
-    return {
-        "mode": "protein",
-        "input_protein_cg_pdb": str(protein_cg_pdb),
-        "runtime_pdb": str(runtime_pdb),
-        "runtime_itp": str(runtime_itp) if args.protein_itp else None,
-        "total_atoms": int(len(protein_atoms)),
-        "box_angstrom": [float(v) for v in protein_box] if protein_box else None,
-    }
 
 
 def prepare_mixed_structure(args, runtime_pdb, runtime_itp):
@@ -658,53 +567,6 @@ def write_summary(path: Path, payload):
         f.write("\n")
 
 
-def main():
-    args = parse_prepare_args()
-    runtime_pdb, runtime_itp = runtime_paths(args)
-    runtime_pdb.parent.mkdir(parents=True, exist_ok=True)
-    runtime_itp.parent.mkdir(parents=True, exist_ok=True)
-
-    summary = {
-        "mode": args.mode,
-        "pdb_id": args.pdb_id,
-        "prepare_structure": bool(args.prepare_structure),
-        "stage": args.stage,
-        "run_dir": args.run_dir,
-    }
-
-    if args.prepare_structure:
-        if args.mode == "bilayer":
-            summary.update(prepare_bilayer_structure(args, runtime_pdb))
-        elif args.mode == "protein":
-            summary.update(prepare_protein_structure(args, runtime_pdb, runtime_itp))
-        else:
-            summary.update(prepare_mixed_structure(args, runtime_pdb, runtime_itp))
-    else:
-        if not runtime_pdb.exists():
-            raise FileNotFoundError(
-                f"Runtime PDB not found for stage conversion: {runtime_pdb}. "
-                "Run with --prepare-structure 1 first."
-            )
-
-    if args.stage:
-        if args.mode in {"protein", "both"}:
-            if not runtime_itp.exists():
-                raise FileNotFoundError(
-                    f"Protein ITP required for mode={args.mode} stage conversion: {runtime_itp}. "
-                    "Provide --protein-itp when running with --prepare-structure 1."
-                )
-            assert_protein_itp_mass_compatibility(runtime_itp)
-        run_stage_conversion(args, runtime_pdb, runtime_itp)
-        summary["upside_input"] = str(Path(args.run_dir).expanduser().resolve() / "test.input.up")
-
-    if args.summary_json:
-        summary_path = Path(args.summary_json).expanduser().resolve()
-    else:
-        summary_path = runtime_pdb.with_suffix(".prep_summary.json")
-    write_summary(summary_path, summary)
-    print(f"Preparation summary written to: {summary_path}")
-
-
 def run_prepare_command(argv):
     args = parse_prepare_args(argv)
     runtime_pdb, runtime_itp = runtime_paths(args)
@@ -720,12 +582,7 @@ def run_prepare_command(argv):
     }
 
     if args.prepare_structure:
-        if args.mode == "bilayer":
-            summary.update(prepare_bilayer_structure(args, runtime_pdb))
-        elif args.mode == "protein":
-            summary.update(prepare_protein_structure(args, runtime_pdb, runtime_itp))
-        else:
-            summary.update(prepare_mixed_structure(args, runtime_pdb, runtime_itp))
+        summary.update(prepare_mixed_structure(args, runtime_pdb, runtime_itp))
     else:
         if not runtime_pdb.exists():
             raise FileNotFoundError(
@@ -734,13 +591,12 @@ def run_prepare_command(argv):
             )
 
     if args.stage:
-        if args.mode in {"protein", "both"}:
-            if not runtime_itp.exists():
-                raise FileNotFoundError(
-                    f"Protein ITP required for mode={args.mode} stage conversion: {runtime_itp}. "
-                    "Provide --protein-itp when running with --prepare-structure 1."
-                )
-            assert_protein_itp_mass_compatibility(runtime_itp)
+        if not runtime_itp.exists():
+            raise FileNotFoundError(
+                f"Protein ITP required for stage conversion: {runtime_itp}. "
+                "Provide --protein-itp when running with --prepare-structure 1."
+            )
+        assert_protein_itp_mass_compatibility(runtime_itp)
         run_stage_conversion(args, runtime_pdb, runtime_itp)
         summary["upside_input"] = str(Path(args.run_dir).expanduser().resolve() / "test.input.up")
 
@@ -750,72 +606,6 @@ def run_prepare_command(argv):
         summary_path = runtime_pdb.with_suffix(".prep_summary.json")
     write_summary(summary_path, summary)
     print(f"Preparation summary written to: {summary_path}")
-
-
-def run_build_sc_martini_h5_command(argv):
-    parser = argparse.ArgumentParser(
-        description="Build a native-unit martini.h5 SC table from assembled SC-training JSON."
-    )
-    parser.add_argument(
-        "--sc-table-json",
-        default=str(DEFAULT_SC_TABLE_JSON),
-        help="Path to assembled sc_table.json from SC-training.",
-    )
-    parser.add_argument(
-        "--output-h5",
-        default="parameters/ff_2.1/martini.h5",
-        help="Output HDF5 file path.",
-    )
-    args = parser.parse_args(argv)
-    build_sc_martini_h5(Path(args.sc_table_json), Path(args.output_h5))
-
-
-def run_validate_hybrid_mapping_command(argv):
-    parser = argparse.ArgumentParser(
-        description="Validate hybrid mapping HDF5 schema and index consistency."
-    )
-    parser.add_argument("mapping_h5", type=Path, help="Path to hybrid mapping HDF5 file.")
-    parser.add_argument("--n-atom", type=int, default=None, help="Optional expected n_atom value.")
-    args = parser.parse_args(argv)
-    validate_hybrid_mapping(args.mapping_h5, n_atom=args.n_atom)
-
-
-def run_set_initial_position_command(argv):
-    parser = argparse.ArgumentParser(
-        description="Copy final coordinates from one stage file into the next stage input."
-    )
-    parser.add_argument("input_file", help="Source stage file.")
-    parser.add_argument("output_file", help="Target stage file to update.")
-    args = parser.parse_args(argv)
-    set_initial_position(args.input_file, args.output_file)
-
-
-def run_inject_stage7_sc_command(argv):
-    parser = argparse.ArgumentParser(
-        description="Inject stage-7 dry-MARTINI SC table coupling into a prepared .up file."
-    )
-    parser.add_argument("up_file", help="Target stage-7 .up file to modify in place.")
-    parser.add_argument("martini_h5", help="Native-unit martini.h5 table library.")
-    parser.add_argument("upside_home", help="UPSIDE_HOME used to locate upside_config.py.")
-    parser.add_argument("rama_library", help="Upside rama.dat path.")
-    parser.add_argument("rama_sheet_mixing", help="Upside sheet-mixing path.")
-    parser.add_argument("hbond_energy", help="Upside hbond.h5 path.")
-    parser.add_argument("reference_state_rama", help="Upside rama_reference.pkl path.")
-    parser.add_argument(
-        "--protein-itp",
-        help="Protein ITP used to recover residue names when /input/sequence is absent or mismatched.",
-    )
-    args = parser.parse_args(argv)
-    inject_stage7_sc_table_nodes(
-        up_file=Path(args.up_file),
-        martini_h5=Path(args.martini_h5),
-        upside_home=Path(args.upside_home),
-        rama_library=Path(args.rama_library),
-        rama_sheet_mixing=Path(args.rama_sheet_mixing),
-        hbond_energy=Path(args.hbond_energy),
-        reference_state_rama=Path(args.reference_state_rama),
-        protein_itp=Path(args.protein_itp) if args.protein_itp else None,
-    )
 
 
 PROTEIN_RESIDUES = {
@@ -1686,71 +1476,35 @@ def infer_stage70_label_from_file(stage_file: Path, pdb_id: str):
     return match.group(1) if match else ""
 
 
-def infer_next_stage70_label(source_file: Path, checkpoint_dir: Path, pdb_id: str):
+def infer_next_stage70_label_from_source(source_file: Path, pdb_id: str):
     pattern = re.compile(rf"^{re.escape(pdb_id)}\.stage_7\.(\d+)\.up$")
-    indices = []
     match = pattern.fullmatch(source_file.name)
-    if match:
-        indices.append(int(match.group(1)))
-    if checkpoint_dir.is_dir():
-        for path in checkpoint_dir.glob(f"{pdb_id}.stage_7*.up"):
-            match = pattern.fullmatch(path.name)
-            if path.is_file() and match:
-                indices.append(int(match.group(1)))
-    return f"7.{max(indices) + 1}" if indices else "7.1"
-
-
-def resolve_previous_stage70_from_run_dir(previous_run_dir: Path, pdb_id: str):
-    checkpoint_dir = previous_run_dir / "checkpoints"
-    search_dir = checkpoint_dir if checkpoint_dir.is_dir() else previous_run_dir
-    pattern = re.compile(rf"^{re.escape(pdb_id)}\.stage_7\.(\d+)\.up$")
-    candidates = []
-    if search_dir.is_dir():
-        for path in search_dir.glob(f"{pdb_id}.stage_7*.up"):
-            match = pattern.fullmatch(path.name)
-            if path.is_file() and match:
-                candidates.append((int(match.group(1)), path.stat().st_mtime_ns, str(path), path))
-    if not candidates:
-        return None
-    candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-    return candidates[0][3]
-
-
-def autodetect_previous_stage70(args):
-    if args.continue_stage_70_from:
-        return args.continue_stage_70_from
-    if args.previous_stage7_file:
-        return args.previous_stage7_file
-    if args.previous_run_dir:
-        return resolve_previous_stage70_from_run_dir(args.previous_run_dir, args.pdb_id)
-    if not args.auto_continue_from_previous_run:
-        return None
-    if not args.auto_continue_glob:
-        return None
-    pattern = re.compile(rf"^{re.escape(args.pdb_id)}\.stage_7\.(\d+)\.up$")
-    candidates = []
-    for path in (WORKFLOW_DIR / "outputs").glob(args.auto_continue_glob):
-        match = pattern.fullmatch(path.name)
-        if path.is_file() and match:
-            candidates.append((int(match.group(1)), path.stat().st_mtime_ns, str(path), path))
-    if not candidates:
-        return None
-    candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-    return candidates[0][3]
+    if not match:
+        return "7.1"
+    return f"7.{int(match.group(1)) + 1}"
 
 
 def resolve_continuation_outputs(args):
-    source = autodetect_previous_stage70(args)
-    if source is None:
+    if args.previous_run_dir or args.previous_stage7_file:
+        raise ValueError(
+            "Legacy continuation discovery flags are no longer supported. "
+            "Use --continue-stage-70-from with an explicit source stage file."
+        )
+    if args.auto_continue_from_previous_run or args.auto_continue_glob:
+        raise ValueError(
+            "Auto continuation discovery is no longer supported. "
+            "Use --continue-stage-70-from with an explicit source stage file."
+        )
+    if args.continue_stage_70_from is None:
         return None, None, None
-    source = source.resolve()
+    source = args.continue_stage_70_from.resolve()
     label = args.continue_stage_70_label
     if not label and args.continue_stage_70_output:
         label = infer_stage70_label_from_file(args.continue_stage_70_output, args.pdb_id)
         if not label:
             raise ValueError(f"CONTINUE_STAGE_70_OUTPUT must be named {args.pdb_id}.stage_7.N.up")
     if not label:
-        label = infer_next_stage70_label(source, args.checkpoint_dir, args.pdb_id)
+        label = infer_next_stage70_label_from_source(source, args.pdb_id)
     if not re.fullmatch(r"7\.\d+", label):
         raise ValueError(f"Continuation stage label must be numeric stage_7.N, got {label}")
     output = args.continue_stage_70_output or (args.checkpoint_dir / f"{args.pdb_id}.stage_{label}.up")
@@ -1783,22 +1537,45 @@ def run_stage70_continuation(args, source_file: Path, output_file: Path, stage_l
 def normalize_hybrid_workflow_args(args):
     args.upside_home = workflow_path(args.upside_home, REPO_ROOT).resolve()
     args.run_dir = workflow_path(args.run_dir).resolve()
-    args.checkpoint_dir = workflow_path(args.checkpoint_dir).resolve() if args.checkpoint_dir else args.run_dir / "checkpoints"
-    args.log_dir = workflow_path(args.log_dir).resolve() if args.log_dir else args.run_dir / "logs"
-    args.hybrid_prep_dir = workflow_path(args.hybrid_prep_dir).resolve() if args.hybrid_prep_dir else args.run_dir / "hybrid_prep"
-    args.runtime_pdb_file = workflow_path(args.runtime_pdb_file).resolve() if args.runtime_pdb_file else args.hybrid_prep_dir / f"{args.runtime_pdb_id}.MARTINI.pdb"
-    args.runtime_itp_file = workflow_path(args.runtime_itp_file).resolve() if args.runtime_itp_file else args.hybrid_prep_dir / f"{args.runtime_pdb_id}_proa.itp"
-    args.hybrid_mapping_file = workflow_path(args.hybrid_mapping_file).resolve() if args.hybrid_mapping_file else args.hybrid_prep_dir / "hybrid_mapping.h5"
-    args.hybrid_packed_pdb = workflow_path(args.hybrid_packed_pdb).resolve() if args.hybrid_packed_pdb else args.hybrid_prep_dir / "hybrid_packed.MARTINI.pdb"
-    args.upside_executable = workflow_path(args.upside_executable, args.upside_home).resolve() if args.upside_executable else args.upside_home / "obj" / "upside"
-    args.martini_ff_dir = workflow_path(args.martini_ff_dir, args.upside_home).resolve()
-    args.mass_ff_file = workflow_path(args.mass_ff_file).resolve() if args.mass_ff_file else args.martini_ff_dir / "dry_martini_v2.1.itp"
-    args.sc_martini_library = workflow_path(args.sc_martini_library, args.upside_home).resolve()
-    args.sc_martini_table_json = workflow_path(args.sc_martini_table_json, args.upside_home).resolve()
-    args.upside_rama_library = workflow_path(args.upside_rama_library, args.upside_home).resolve()
-    args.upside_rama_sheet_mixing = workflow_path(args.upside_rama_sheet_mixing, args.upside_home).resolve()
-    args.upside_hbond_energy = workflow_path(args.upside_hbond_energy, args.upside_home).resolve()
-    args.upside_reference_state_rama = workflow_path(args.upside_reference_state_rama, args.upside_home).resolve()
+    args.checkpoint_dir = args.run_dir / "checkpoints"
+    args.log_dir = args.run_dir / "logs"
+    args.hybrid_prep_dir = args.run_dir / "hybrid_prep"
+    args.runtime_pdb_file = args.hybrid_prep_dir / f"{args.runtime_pdb_id}.MARTINI.pdb"
+    args.runtime_itp_file = args.hybrid_prep_dir / f"{args.runtime_pdb_id}_proa.itp"
+    args.hybrid_mapping_file = args.hybrid_prep_dir / "hybrid_mapping.h5"
+    args.hybrid_packed_pdb = args.hybrid_prep_dir / "hybrid_packed.MARTINI.pdb"
+    args.upside_executable = args.upside_home / "obj" / "upside"
+    args.martini_ff_dir = args.upside_home / "parameters" / "dryMARTINI"
+    args.mass_ff_file = args.martini_ff_dir / "dry_martini_v2.1.itp"
+    args.sc_martini_library = args.upside_home / "parameters" / "ff_2.1" / "martini.h5"
+    args.sc_martini_table_json = args.upside_home / "SC-training" / "runs" / "default" / "results" / "assembled" / "sc_table.json"
+    args.upside_rama_library = args.upside_home / "parameters" / "common" / "rama.dat"
+    args.upside_rama_sheet_mixing = args.upside_home / "parameters" / "ff_2.1" / "sheet"
+    args.upside_hbond_energy = args.upside_home / "parameters" / "ff_2.1" / "hbond.h5"
+    args.upside_reference_state_rama = args.upside_home / "parameters" / "common" / "rama_reference.pkl"
+    args.universal_prep_mode = "both"
+    args.hybrid_validate = True
+    args.hybrid_preprod_activation_stage = DEFAULT_HYBRID_PREPROD_ACTIVATION_STAGE
+    args.sc_env_lj_force_cap = DEFAULT_SC_ENV_LJ_FORCE_CAP
+    args.sc_env_coul_force_cap = DEFAULT_SC_ENV_COUL_FORCE_CAP
+    args.nonprotein_hs_force_cap = DEFAULT_NONPROTEIN_HS_FORCE_CAP
+    args.sc_env_po4_z_clamp_enable = DEFAULT_SC_ENV_PO4_Z_CLAMP_ENABLE
+    args.sc_env_relax_steps = DEFAULT_SC_ENV_RELAX_STEPS
+    args.sc_env_backbone_hold_steps = DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS
+    args.sc_env_po4_z_hold_steps = DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS
+    args.bb_aa_max_rigid_rmsd = DEFAULT_BB_AA_MAX_RIGID_RMSD
+    args.bb_aa_min_matched_residues = DEFAULT_BB_AA_MIN_MATCHED_RESIDUES
+    args.npt_tau = DEFAULT_NPT_TAU
+    args.npt_interval = DEFAULT_NPT_INTERVAL
+    args.ewald_enable = DEFAULT_EWALD_ENABLE
+    args.ewald_alpha = DEFAULT_EWALD_ALPHA
+    args.ewald_kmax = DEFAULT_EWALD_KMAX
+    args.prod_70_barostat_type = DEFAULT_PROD_70_BAROSTAT_TYPE
+    args.martini_energy_conversion = DEFAULT_MARTINI_ENERGY_CONVERSION
+    args.martini_length_conversion = DEFAULT_MARTINI_LENGTH_CONVERSION
+    args.bar_1_to_eup_per_a3 = DEFAULT_BAR_1_TO_EUP_PER_A3
+    args.compressibility_3e4_bar_inv_to_a3_per_eup = DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP
+    args.protein_env_interface_scale = DEFAULT_PROTEIN_ENV_INTERFACE_SCALE
     args.martinize_script = workflow_path(args.martinize_script).resolve()
     args.extract_vtf_script = workflow_path(args.extract_vtf_script).resolve()
     args.continue_stage_70_from = workflow_path(args.continue_stage_70_from).resolve() if args.continue_stage_70_from else None
@@ -1822,20 +1599,10 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--runtime-pdb-id", default=env_default("RUNTIME_PDB_ID", None))
     parser.add_argument("--upside-home", default=env_default("UPSIDE_HOME", str(REPO_ROOT)))
     parser.add_argument("--run-dir", default=env_default("RUN_DIR", "outputs/martini_test_1rkl_hybrid"))
-    parser.add_argument("--checkpoint-dir", default=env_default("CHECKPOINT_DIR", None))
-    parser.add_argument("--log-dir", default=env_default("LOG_DIR", None))
-    parser.add_argument("--hybrid-prep-dir", default=env_default("HYBRID_PREP_DIR", None))
     parser.add_argument("--protein-aa-pdb", default=env_default("PROTEIN_AA_PDB", None))
     parser.add_argument("--protein-cg-pdb", default=env_default("PROTEIN_CG_PDB", ""))
     parser.add_argument("--protein-itp", default=env_default("PROTEIN_ITP", ""))
     parser.add_argument("--bilayer-pdb", default=env_default("BILAYER_PDB", None))
-    parser.add_argument("--runtime-pdb-file", default=env_default("RUNTIME_PDB_FILE", None))
-    parser.add_argument("--runtime-itp-file", default=env_default("RUNTIME_ITP_FILE", None))
-    parser.add_argument("--hybrid-mapping-file", default=env_default("HYBRID_MAPPING_FILE", None))
-    parser.add_argument("--hybrid-packed-pdb", default=env_default("HYBRID_PACKED_PDB", None))
-    parser.add_argument("--universal-prep-mode", default=env_default("UNIVERSAL_PREP_MODE", "both"))
-    parser.add_argument("--hybrid-validate", type=int, default=env_int("HYBRID_VALIDATE", 1))
-    parser.add_argument("--hybrid-preprod-activation-stage", default=env_default("HYBRID_PREPROD_ACTIVATION_STAGE", "__hybrid_disabled__"))
     parser.add_argument("--martinize-enable", type=int, default=env_int("MARTINIZE_ENABLE", 1))
     parser.add_argument("--martinize-ff", default=env_default("MARTINIZE_FF", "martini22"))
     parser.add_argument("--martinize-molname", default=env_default("MARTINIZE_MOLNAME", "PROA"))
@@ -1881,35 +1648,6 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--previous-stage7-file", default=env_default("PREVIOUS_STAGE7_FILE", ""))
     parser.add_argument("--auto-continue-from-previous-run", type=int, default=env_int("AUTO_CONTINUE_FROM_PREVIOUS_RUN", 0))
     parser.add_argument("--auto-continue-glob", default=env_default("AUTO_CONTINUE_GLOB", ""))
-    parser.add_argument("--upside-executable", default=env_default("UPSIDE_EXECUTABLE", None))
-    parser.add_argument("--martini-ff-dir", default=env_default("UPSIDE_MARTINI_FF_DIR", str(REPO_ROOT / "parameters" / "dryMARTINI")))
-    parser.add_argument("--mass-ff-file", default=env_default("MASS_FF_FILE", ""))
-    parser.add_argument("--sc-martini-library", default=env_default("SC_MARTINI_LIBRARY", "parameters/ff_2.1/martini.h5"))
-    parser.add_argument("--sc-martini-table-json", default=env_default("SC_MARTINI_TABLE_JSON", "SC-training/runs/default/results/assembled/sc_table.json"))
-    parser.add_argument("--upside-rama-library", default=env_default("UPSIDE_RAMA_LIBRARY", "parameters/common/rama.dat"))
-    parser.add_argument("--upside-rama-sheet-mixing", default=env_default("UPSIDE_RAMA_SHEET_MIXING", "parameters/ff_2.1/sheet"))
-    parser.add_argument("--upside-hbond-energy", default=env_default("UPSIDE_HBOND_ENERGY", "parameters/ff_2.1/hbond.h5"))
-    parser.add_argument("--upside-reference-state-rama", default=env_default("UPSIDE_REFERENCE_STATE_RAMA", "parameters/common/rama_reference.pkl"))
-    parser.add_argument("--sc-env-lj-force-cap", type=float, default=25.0)
-    parser.add_argument("--sc-env-coul-force-cap", type=float, default=25.0)
-    parser.add_argument("--nonprotein-hs-force-cap", type=float, default=100.0)
-    parser.add_argument("--sc-env-po4-z-clamp-enable", type=int, default=1)
-    parser.add_argument("--sc-env-relax-steps", type=int, default=150)
-    parser.add_argument("--sc-env-backbone-hold-steps", type=int, default=200)
-    parser.add_argument("--sc-env-po4-z-hold-steps", type=int, default=150)
-    parser.add_argument("--bb-aa-max-rigid-rmsd", type=float, default=1.5)
-    parser.add_argument("--bb-aa-min-matched-residues", type=int, default=8)
-    parser.add_argument("--npt-tau", type=float, default=4.0)
-    parser.add_argument("--npt-interval", type=int, default=10)
-    parser.add_argument("--ewald-enable", type=int, default=1)
-    parser.add_argument("--ewald-alpha", type=float, default=0.2)
-    parser.add_argument("--ewald-kmax", type=int, default=5)
-    parser.add_argument("--prod-70-barostat-type", type=int, default=1)
-    parser.add_argument("--martini-energy-conversion", type=float, default=2.914952774272)
-    parser.add_argument("--martini-length-conversion", type=float, default=10.0)
-    parser.add_argument("--bar-1-to-eup-per-a3", type=float, default=0.000020659477)
-    parser.add_argument("--compressibility-3e4-bar-inv-to-a3-per-eup", type=float, default=14.521180763676)
-    parser.add_argument("--protein-env-interface-scale", type=float, default=1.0)
     args = parser.parse_args(argv)
     if args.runtime_pdb_id is None:
         args.runtime_pdb_id = f"{args.pdb_id}_hybrid"
@@ -1918,7 +1656,6 @@ def run_hybrid_workflow_command(argv):
     if args.bilayer_pdb is None:
         args.bilayer_pdb = str(Path(args.upside_home) / "parameters" / "dryMARTINI" / "DOPC.pdb")
     args.martinize_enable = bool(args.martinize_enable)
-    args.hybrid_validate = bool(args.hybrid_validate)
     args.prod_70_backbone_fix_rigid_enable = bool(args.prod_70_backbone_fix_rigid_enable)
     args.auto_continue_from_previous_run = bool(args.auto_continue_from_previous_run)
     args.prep_seed = int(args.prep_seed) if args.prep_seed not in (None, "") else None
@@ -2024,15 +1761,10 @@ def run_hybrid_workflow_command(argv):
 
 
 if __name__ == "__main__":
-    command_handlers = {
-        "build-sc-martini-h5": run_build_sc_martini_h5_command,
-        "inject-stage7-sc": run_inject_stage7_sc_command,
-        "run-hybrid-workflow": run_hybrid_workflow_command,
-        "set-initial-position": run_set_initial_position_command,
-        "validate-hybrid-mapping": run_validate_hybrid_mapping_command,
-    }
     argv = sys.argv[1:]
-    if argv and argv[0] in command_handlers:
-        command_handlers[argv[0]](argv[1:])
-    else:
-        run_prepare_command(argv)
+    if not argv or argv[0] != "run-hybrid-workflow":
+        raise SystemExit(
+            "Unsupported command. Use:\n"
+            "  martini_prepare_system.py run-hybrid-workflow [options]"
+        )
+    run_hybrid_workflow_command(argv[1:])

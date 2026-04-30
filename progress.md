@@ -772,3 +772,38 @@
 - Verification:
   - rebuilt `obj/upside` successfully;
   - reran a one-step hybrid stage command on `/tmp/cpp_cleanup_smoke/checkpoints/1rkl.stage_7.0.up` and confirmed output line retains `Rg`, `prot_potential`, and `total_potential` with the refined `prot_potential` definition.
+
+## 2026-04-29 (Python Workflow Cleanup: Baseline + Explicit Continuation)
+- Started implementation for cleanup of:
+  - `py/martini_prepare_system.py`
+  - `py/martini_prepare_system_lib.py`
+  - `py/martini_extract_vtf.py`
+- Locked scope to preserve explicit stage-7 continuation while removing non-essential auto-discovery and legacy command surfaces.
+- Added a new task section in `plan.md` and recorded the user correction in `findings.md`.
+- Refactored `py/martini_prepare_system.py`:
+  - removed legacy command handlers (`build-sc-martini-h5`, `inject-stage7-sc`, `set-initial-position`, `validate-hybrid-mapping`) and default fallback command behavior;
+  - kept only `run-hybrid-workflow` entrypoint;
+  - removed auto-discovery continuation branches and retained explicit continuation (`--continue-stage-70-from`);
+  - aligned parser flags to the exact set passed by `example/16.MARTINI/run_sim_1rkl.sh`;
+  - converted non-shell configuration controls into internal constants while preserving production hybrid-control writes and SC-env settings.
+- Refactored `py/martini_prepare_system_lib.py`:
+  - removed dead standalone prep CLI/config path and its helper wrappers;
+  - removed obsolete wrapper functions (`create_production_input`, `main_always_fixed`) and related dead code blocks.
+- Refactored `py/martini_extract_vtf.py`:
+  - removed unused PDB output and `--output-group` branch;
+  - kept direct VTF-only extraction with mode 1/2 and segment splitting;
+  - replaced NaN frame substitution with fail-fast validation.
+- Verification completed:
+  - `.venv/bin/python -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py`
+  - `.venv/bin/python py/martini_prepare_system.py run-hybrid-workflow --help`
+  - `.venv/bin/python py/martini_extract_vtf.py --help`
+  - `.venv/bin/python py/martini_prepare_system.py run-hybrid-workflow --previous-run-dir foo` confirmed explicit continuation enforcement.
+- Environment note:
+  - system `python3` still lacks `tables` here; verification was run with repo `.venv` Python.
+- Follow-up fix for continuation regression reported from `run_sim_1afo.sh`:
+  - patched `example/16.MARTINI/run_sim_1rkl.sh` to detect latest existing `stage_7.N.up` automatically and set `CONTINUE_STAGE_70_FROM` before invoking Python;
+  - detection order now supports explicit `PREVIOUS_STAGE7_FILE`, `PREVIOUS_RUN_DIR`, current `RUN_DIR/checkpoints`, and optional `AUTO_CONTINUE_GLOB` fallback under `example/16.MARTINI/outputs`;
+  - once explicit continuation source is resolved, the launcher now passes empty/zero legacy autodiscovery flags to Python to prevent the strict explicit-source check from failing.
+- Verification:
+  - `bash -n` passed for `run_sim_1rkl.sh`, `run_sim_1afo.sh`, `run_sim_1rkl_outlipid.sh`, `run_sim_1afo_outlipid.sh`;
+  - dry-run harness with a fake checkpoint file confirmed `run_sim_1afo.sh` prints `Detected continuation source: ...stage_7.3.up` and forwards explicit `--continue-stage-70-from`.

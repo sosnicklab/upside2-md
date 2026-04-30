@@ -103,6 +103,51 @@ if [ ! -f "${UNIVERSAL_PREP_SCRIPT}" ]; then
     exit 1
 fi
 
+find_latest_stage7_in_pattern() {
+    local pattern="$1"
+    local best_file=""
+    local best_idx=-1
+    local path=""
+    local file=""
+    local idx=""
+    shopt -s nullglob
+    for path in $pattern; do
+        [ -f "$path" ] || continue
+        file="$(basename "$path")"
+        if [[ "$file" =~ ^${PDB_ID}\.stage_7\.([0-9]+)\.up$ ]]; then
+            idx="${BASH_REMATCH[1]}"
+            if [ "$idx" -gt "$best_idx" ]; then
+                best_idx="$idx"
+                best_file="$path"
+            fi
+        fi
+    done
+    shopt -u nullglob
+    if [ -n "$best_file" ]; then
+        printf '%s\n' "$best_file"
+    fi
+}
+
+if [ -z "${CONTINUE_STAGE_70_FROM}" ] && [ -n "${PREVIOUS_STAGE7_FILE}" ] && [ -f "${PREVIOUS_STAGE7_FILE}" ]; then
+    CONTINUE_STAGE_70_FROM="${PREVIOUS_STAGE7_FILE}"
+fi
+
+if [ -z "${CONTINUE_STAGE_70_FROM}" ] && [ -n "${PREVIOUS_RUN_DIR}" ]; then
+    CONTINUE_STAGE_70_FROM="$(find_latest_stage7_in_pattern "${PREVIOUS_RUN_DIR}/checkpoints/${PDB_ID}.stage_7.*.up")"
+fi
+
+if [ -z "${CONTINUE_STAGE_70_FROM}" ]; then
+    CONTINUE_STAGE_70_FROM="$(find_latest_stage7_in_pattern "${RUN_DIR}/checkpoints/${PDB_ID}.stage_7.*.up")"
+fi
+
+if [ -z "${CONTINUE_STAGE_70_FROM}" ] && [ "${AUTO_CONTINUE_FROM_PREVIOUS_RUN}" = "1" ] && [ -n "${AUTO_CONTINUE_GLOB}" ]; then
+    CONTINUE_STAGE_70_FROM="$(find_latest_stage7_in_pattern "${SCRIPT_DIR}/outputs/${AUTO_CONTINUE_GLOB}")"
+fi
+
+if [ -n "${CONTINUE_STAGE_70_FROM}" ]; then
+    echo "Detected continuation source: ${CONTINUE_STAGE_70_FROM}"
+fi
+
 python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
     --pdb-id "${PDB_ID}" \
     --runtime-pdb-id "${RUNTIME_PDB_ID}" \
@@ -153,7 +198,7 @@ python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
     --continue-stage-70-from "${CONTINUE_STAGE_70_FROM}" \
     --continue-stage-70-output "${CONTINUE_STAGE_70_OUTPUT}" \
     --continue-stage-70-label "${CONTINUE_STAGE_70_LABEL}" \
-    --previous-run-dir "${PREVIOUS_RUN_DIR}" \
-    --previous-stage7-file "${PREVIOUS_STAGE7_FILE}" \
-    --auto-continue-from-previous-run "${AUTO_CONTINUE_FROM_PREVIOUS_RUN}" \
-    --auto-continue-glob "${AUTO_CONTINUE_GLOB}"
+    --previous-run-dir "" \
+    --previous-stage7-file "" \
+    --auto-continue-from-previous-run "0" \
+    --auto-continue-glob ""

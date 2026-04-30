@@ -3,8 +3,6 @@
 import argparse
 import os
 import re
-import sys
-from datetime import datetime
 from pathlib import Path
 
 import h5py
@@ -243,21 +241,6 @@ def write_vtf_frame(fh, pos):
     fh.write("\ntimestep ordered\n")
     for x, y, z in pos:
         fh.write(f"{x:.3f} {y:.3f} {z:.3f}\n")
-
-
-def write_pdb_frame(fh, pos, frame_num, atom_names, residue_names, residue_ids, chain_ids, x_len, y_len, z_len):
-    fh.write(f"MODEL     {frame_num + 1:4d}\n")
-    fh.write(f"CRYST1{x_len:9.3f}{y_len:9.3f}{z_len:9.3f}  90.00  90.00  90.00 P 1           1\n")
-    for i, (coord, aname, rname, resid, chain_id) in enumerate(
-        zip(pos, atom_names, residue_names, residue_ids, chain_ids), 1
-    ):
-        x, y, z = coord
-        chain = (str(chain_id).strip() or "X")[0]
-        fh.write(
-            f"ATOM  {i:5d} {aname:>4} {rname:4s}{chain:1s}{resid:4d}    "
-            f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n"
-        )
-    fh.write("ENDMDL\n")
 
 
 def list_output_groups(traj_h5):
@@ -568,21 +551,16 @@ def assemble_mode2_frame(frame_pos, mapping, box_lengths=None):
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Extract MARTINI trajectory into VTF/PDB.\n"
+            "Extract MARTINI trajectory into VTF.\n"
             "mode 1: all MARTINI particles + protein all-atom backbone (N,CA,C,O)\n"
             "mode 2: non-protein MARTINI particles + protein all-atom backbone (N,CA,C,O)"
         )
     )
     parser.add_argument("input_up", help="trajectory .up file")
-    parser.add_argument("output_file", help="output .vtf or .pdb")
+    parser.add_argument("output_file", help="output .vtf file")
     parser.add_argument("structure_up", nargs="?", default=None, help="structure source .up (default: input_up)")
     parser.add_argument("pdb_id", nargs="?", default=None, help="PDB id for pdb/<id>.MARTINI.pdb metadata")
     parser.add_argument("--mode", type=int, choices=(1, 2), default=1, help="output mode (default: 1)")
-    parser.add_argument(
-        "--output-group",
-        default=None,
-        help="HDF5 trajectory group to extract (default: output, or input if no output exists).",
-    )
     parser.add_argument(
         "--split-segments",
         action="store_true",
@@ -604,32 +582,30 @@ def extract_trajectory(
     pdb_file,
     pdb_id,
     mode,
-    output_group=None,
+    output_group,
 ):
     fmt = output_file.split(".")[-1].lower()
-    if fmt not in ("vtf", "pdb"):
-        raise ValueError("Output file must be .vtf or .pdb")
+    if fmt != "vtf":
+        raise ValueError("Output file must be .vtf")
 
     print(f"Extracting trajectory from: {input_file}")
     print(f"Structure source: {structure_file}")
     print(f"Output: {output_file}")
     print(f"Mode: {mode}")
     print(f"PDB ID: {pdb_id}")
-    print(f"Trajectory group: {output_group or 'input'}")
+    print(f"Trajectory group: {output_group}")
 
-    if output_group is not None:
+    if output_group == "input":
+        pos_data = None
+        n_frame_total = 1
+    else:
         if output_group not in traj_h5:
             raise ValueError(f"Trajectory group not found: {output_group}")
         group = traj_h5[output_group]
-        if "pos" in group:
-            pos_data = group["pos"]
-            n_frame_total = int(pos_data.shape[0])
-        else:
-            pos_data = None
-            n_frame_total = 1
-    else:
-        pos_data = None
-        n_frame_total = 1
+        if "pos" not in group:
+            raise ValueError(f"Trajectory group has no positions: {output_group}")
+        pos_data = group["pos"]
+        n_frame_total = int(pos_data.shape[0])
 
     x_len, y_len, z_len = infer_box_lengths(
         traj_h5,
@@ -645,34 +621,27 @@ def extract_trajectory(
     print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
 
     with open(output_file, "w", encoding="utf-8") as f:
-        if fmt == "vtf":
-            f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
-            f.write(f"# mode {mode}\n")
-            f.write(f"# group {output_group or 'input'}\n")
-            for i, (aname, rname, resid, chain_id) in enumerate(
-                zip(
-                    mapping["output_atom_names"],
-                    mapping["output_residue_names"],
-                    mapping["output_residue_ids"],
-                    mapping["output_chain_ids"],
-                )
-            ):
-                chain = (str(chain_id).strip() or "X")[0]
-                segid = f"s{chain}"
-                f.write(
-                    f"atom {i} name {aname} resid {int(resid)} "
-                    f"resname {str(rname)} segid {segid} chain {chain}\n"
-                )
-            for i, j in out_bonds:
-                f.write(f"bond {i}:{j}\n")
-            f.write(f"pbc {x_len} {y_len} {z_len}\n")
-        else:
-            f.write("TITLE     UPSIDE MARTINI TRAJECTORY\n")
-            f.write(f"REMARK    DATE: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"REMARK    MODE: {mode}\n")
-            f.write(f"REMARK    GROUP: {output_group or 'input'}\n")
+        f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
+        f.write(f"# mode {mode}\n")
+        f.write(f"# group {output_group}\n")
+        for i, (aname, rname, resid, chain_id) in enumerate(
+            zip(
+                mapping["output_atom_names"],
+                mapping["output_residue_names"],
+                mapping["output_residue_ids"],
+                mapping["output_chain_ids"],
+            )
+        ):
+            chain = (str(chain_id).strip() or "X")[0]
+            segid = f"s{chain}"
+            f.write(
+                f"atom {i} name {aname} resid {int(resid)} "
+                f"resname {str(rname)} segid {segid} chain {chain}\n"
+            )
+        for i, j in out_bonds:
+            f.write(f"bond {i}:{j}\n")
+        f.write(f"pbc {x_len} {y_len} {z_len}\n")
 
-        prev_frame = None
         for frame_idx in range(n_frame_total):
             if pos_data is None:
                 frame = input_pos
@@ -691,30 +660,9 @@ def extract_trajectory(
                 y_len,
                 z_len,
             )
-
             if np.isnan(out_frame).any():
-                if prev_frame is None:
-                    out_frame = np.where(np.isnan(out_frame), 0.0, out_frame)
-                else:
-                    out_frame = np.where(np.isnan(out_frame), prev_frame, out_frame)
-
-            if fmt == "vtf":
-                write_vtf_frame(f, out_frame)
-            else:
-                write_pdb_frame(
-                    f,
-                    out_frame,
-                    frame_idx,
-                    mapping["output_atom_names"],
-                    mapping["output_residue_names"],
-                    mapping["output_residue_ids"],
-                    mapping["output_chain_ids"],
-                    x_len,
-                    y_len,
-                    z_len,
-                )
-
-            prev_frame = out_frame
+                raise ValueError(f"NaN coordinates found in frame {frame_idx} for group {output_group}")
+            write_vtf_frame(f, out_frame)
             if frame_idx % 100 == 0:
                 print(f"Processed frame {frame_idx}/{n_frame_total - 1}")
 
@@ -727,9 +675,6 @@ def main():
     structure_file = args.structure_up or input_file
     pdb_id = infer_pdb_id(input_file, args.pdb_id)
     mode = args.mode
-
-    if args.split_segments and args.output_group is not None:
-        raise ValueError("--split-segments and --output-group cannot be used together")
 
     pdb_file = str(WORKFLOW_DIR / "pdb" / f"{pdb_id}.MARTINI.pdb")
 
@@ -814,7 +759,7 @@ def main():
         if args.split_segments:
             output_groups = list_output_groups(t)
             if len(output_groups) <= 1:
-                target_group = output_groups[0] if output_groups else None
+                target_group = output_groups[0] if output_groups else "input"
                 extract_trajectory(
                     t,
                     s,
@@ -851,9 +796,7 @@ def main():
                     )
                     print(f"Wrote segment {segment_index}: {segment_output_file} ({output_group})")
         else:
-            target_group = args.output_group
-            if target_group is None:
-                target_group = "output" if "output" in t else None
+            target_group = "output" if "output" in t else "input"
             extract_trajectory(
                 t,
                 s,
