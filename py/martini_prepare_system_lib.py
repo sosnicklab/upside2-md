@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 import _pickle as cPickle
-import argparse
 import importlib.util
 import json
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -15,9 +13,7 @@ import types
 import warnings
 from collections import Counter, defaultdict
 from copy import deepcopy
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import h5py
 import numpy as np
@@ -30,9 +26,6 @@ WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 NA_AVOGADRO = 6.02214076e23
 BB_COMPONENT_NAMES = ("N", "CA", "C", "O")
 BB_COMPONENT_MASSES = (14.0, 12.0, 12.0, 16.0)
-DEFAULT_SC_TABLE_JSON = Path(
-    "/Users/yinhan/Documents/upside2-md-martini/SC-training/runs/default/results/assembled/sc_table.json"
-)
 TWOPI = 2.0 * np.pi
 CANONICAL_AFFINE_REF = np.array(
     [
@@ -70,89 +63,6 @@ BACKBONE_NODES = [
     "hbond_energy",
     "backbone_pairs",
 ]
-
-
-@dataclass
-class Config:
-    protein_pdb: Path
-    bilayer_pdb: Path
-    output_dir: Path
-    protein_cg_pdb: Optional[Path]
-    protein_itp: Optional[Path]
-    martinize_cmd: Optional[str]
-    salt_molar: float
-    protein_lipid_cutoff: float
-    ion_cutoff: float
-    box_padding_xy: float
-    box_padding_z: float
-    seed: int
-    protein_net_charge: Optional[int]
-
-
-def parse_args() -> Config:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Pack OPM protein into MARTINI DOPC bilayer and export hybrid "
-            "mapping artifacts for Upside + dry MARTINI integration."
-        )
-    )
-    parser.add_argument("--protein-pdb", default=str(WORKFLOW_DIR / "pdb" / "1rkl.pdb"))
-    parser.add_argument("--bilayer-pdb", default=str(REPO_ROOT / "parameters" / "dryMARTINI" / "DOPC.pdb"))
-    parser.add_argument("--output-dir", default="outputs/hybrid_1rkl")
-    parser.add_argument(
-        "--protein-cg-pdb",
-        default=None,
-        help="Optional existing MARTINI protein PDB. If not provided, --martinize-cmd is required.",
-    )
-    parser.add_argument(
-        "--protein-itp",
-        default=None,
-        help=(
-            "Optional MARTINI protein ITP from martini_martinize.py. If provided, sidechain-to-backbone "
-            "force-transfer mapping is derived from bonded topology and force constants."
-        ),
-    )
-    parser.add_argument(
-        "--martinize-cmd",
-        default=None,
-        help=(
-            "Optional martinize command template used when --protein-cg-pdb is not given. "
-            "Use placeholders {input} and {output}."
-        ),
-    )
-    parser.add_argument("--salt-molar", type=float, default=0.15)
-    parser.add_argument("--protein-lipid-cutoff", type=float, default=3.0)
-    parser.add_argument("--ion-cutoff", type=float, default=4.0)
-    parser.add_argument("--box-padding-xy", type=float, default=0.0)
-    parser.add_argument("--box-padding-z", type=float, default=20.0)
-    parser.add_argument("--seed", type=int, default=2026)
-    parser.add_argument(
-        "--protein-net-charge",
-        type=int,
-        default=None,
-        help="Override inferred protein charge for ion placement.",
-    )
-
-    args = parser.parse_args()
-    return Config(
-        protein_pdb=Path(args.protein_pdb).expanduser().resolve(),
-        bilayer_pdb=Path(args.bilayer_pdb).expanduser().resolve(),
-        output_dir=Path(args.output_dir).expanduser().resolve(),
-        protein_cg_pdb=Path(args.protein_cg_pdb).expanduser().resolve()
-        if args.protein_cg_pdb
-        else None,
-        protein_itp=Path(args.protein_itp).expanduser().resolve()
-        if args.protein_itp
-        else None,
-        martinize_cmd=args.martinize_cmd,
-        salt_molar=args.salt_molar,
-        protein_lipid_cutoff=args.protein_lipid_cutoff,
-        ion_cutoff=args.ion_cutoff,
-        box_padding_xy=args.box_padding_xy,
-        box_padding_z=args.box_padding_z,
-        seed=args.seed,
-        protein_net_charge=args.protein_net_charge,
-    )
 
 
 def parse_pdb(path: Path):
@@ -246,31 +156,6 @@ def infer_protein_charge_from_cg(protein_atoms):
         seen.add(key)
         total += charged_res.get(atom["resname"].upper(), 0)
     return total
-
-
-def run_martinize(config: Config, out_path: Path):
-    if not config.martinize_cmd:
-        raise ValueError(
-            "protein_cg_pdb not provided and martinize_cmd missing. "
-            "Provide --protein-cg-pdb or --martinize-cmd."
-        )
-    cmd_str = config.martinize_cmd.format(
-        input=str(config.protein_pdb),
-        output=str(out_path),
-    )
-    cmd = shlex.split(cmd_str)
-    subprocess.run(cmd, check=True)
-    if not out_path.exists():
-        raise FileNotFoundError(f"martinize output not found: {out_path}")
-
-
-def choose_protein_cg(config: Config) -> Path:
-    if config.protein_cg_pdb is not None:
-        return config.protein_cg_pdb
-
-    out_path = config.output_dir / "protein.martini.pdb"
-    run_martinize(config, out_path)
-    return out_path
 
 
 def extract_protein_cg_atoms(cg_atoms):
@@ -957,157 +842,6 @@ def write_hybrid_mapping_h5(
             break_grp = inp.create_group("chain_break")
             break_grp.create_dataset("chain_first_residue", data=chain_first_residue, dtype=np.int32)
             break_grp.create_dataset("chain_counts", data=chain_counts, dtype=np.int32)
-
-
-def write_summary(path: Path, payload: Dict):
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, sort_keys=True)
-        f.write("\n")
-
-
-def main():
-    config = parse_args()
-    config.output_dir.mkdir(parents=True, exist_ok=True)
-    rng = np.random.default_rng(config.seed)
-
-    protein_aa_atoms, _ = parse_pdb(config.protein_pdb)
-    bilayer_atoms, bilayer_box = parse_pdb(config.bilayer_pdb)
-    protein_cg_path = choose_protein_cg(config)
-    protein_cg_atoms_raw, _ = parse_pdb(protein_cg_path)
-    protein_cg_atoms = extract_protein_cg_atoms(protein_cg_atoms_raw)
-
-    bilayer_lipid_atoms = [a for a in bilayer_atoms if lipid_resname(a["resname"])]
-    bilayer_xyz = coords(bilayer_lipid_atoms if bilayer_lipid_atoms else bilayer_atoms)
-    protein_xyz = coords(protein_cg_atoms)
-    bilayer_center = center_of_mass(bilayer_xyz)
-    protein_center = center_of_mass(protein_xyz)
-    shift = bilayer_center - protein_center
-    translated = protein_xyz + shift
-    set_coords(protein_cg_atoms, translated)
-    if protein_aa_atoms:
-        protein_aa_xyz = coords(protein_aa_atoms)
-        set_coords(protein_aa_atoms, protein_aa_xyz + shift)
-
-    protein_xyz = coords(protein_cg_atoms)
-    pmin = protein_xyz.min(axis=0)
-    pmax = protein_xyz.max(axis=0)
-    pspan = pmax - pmin
-    pcenter_xy = 0.5 * (pmin[:2] + pmax[:2])
-    min_required_xy = 3.0 * pspan[:2] + 2.0 * config.box_padding_xy
-    square_side = float(np.max(min_required_xy))
-    target_xy_min = np.array(
-        [pcenter_xy[0] - 0.5 * square_side, pcenter_xy[1] - 0.5 * square_side],
-        dtype=float,
-    )
-    target_xy_max = np.array(
-        [pcenter_xy[0] + 0.5 * square_side, pcenter_xy[1] + 0.5 * square_side],
-        dtype=float,
-    )
-
-    bilayer_lipids = tile_and_crop_bilayer_lipids(
-        bilayer_atoms=bilayer_atoms,
-        bilayer_box=bilayer_box,
-        target_xy_min=target_xy_min,
-        target_xy_max=target_xy_max,
-    )
-
-    lipid_residues, keep_nonlipid = compute_lipid_residue_indices(bilayer_lipids)
-    bilayer_kept, removed_lipids = remove_overlapping_lipids(
-        bilayer_atoms=bilayer_lipids,
-        protein_atoms=protein_cg_atoms,
-        lipid_residues=lipid_residues,
-        keep_nonlipid=keep_nonlipid,
-        cutoff=config.protein_lipid_cutoff,
-    )
-
-    packed_atoms = protein_cg_atoms + bilayer_kept
-    min_box_z_target = float(3.0 * pspan[2])
-
-    box_lengths = set_box_from_lipid_xy(
-        all_atoms=packed_atoms,
-        lipid_atoms=bilayer_kept,
-        pad_z=config.box_padding_z,
-        min_box_z=min_box_z_target,
-    )
-    bilayer_xyz_post = coords(bilayer_kept)
-    lipid_mid_z = float(0.5 * (bilayer_xyz_post[:, 2].min() + bilayer_xyz_post[:, 2].max()))
-
-    effective_vol_frac = infer_effective_ion_volume_fraction_from_template(
-        bilayer_atoms=bilayer_atoms,
-        bilayer_box=bilayer_box,
-        salt_molar=config.salt_molar,
-    )
-
-    protein_charge = (
-        config.protein_net_charge
-        if config.protein_net_charge is not None
-        else infer_protein_charge_from_cg(protein_cg_atoms)
-    )
-    salt_pairs = estimate_salt_pairs(
-        box_lengths,
-        config.salt_molar,
-        effective_volume_fraction=effective_vol_frac,
-    )
-    n_na = salt_pairs + max(0, -protein_charge)
-    n_cl = salt_pairs + max(0, protein_charge)
-    ion_atoms = place_ions(
-        atoms=packed_atoms,
-        box_lengths=box_lengths,
-        n_na=n_na,
-        n_cl=n_cl,
-        cutoff=config.ion_cutoff,
-        rng=rng,
-    )
-
-    all_atoms = packed_atoms + ion_atoms
-
-    packed_pdb = config.output_dir / "hybrid_packed.MARTINI.pdb"
-    write_pdb(packed_pdb, all_atoms, box_lengths)
-
-    bb_entries = collect_bb_map(protein_aa_atoms, protein_cg_atoms)
-    mapping_h5 = config.output_dir / "hybrid_mapping.h5"
-    env_atom_indices = list(range(len(protein_cg_atoms), len(all_atoms)))
-    write_hybrid_mapping_h5(
-        mapping_h5,
-        bb_entries=bb_entries,
-        total_martini_atoms=len(all_atoms),
-        env_atom_indices=env_atom_indices,
-        n_protein_atoms=len(protein_cg_atoms),
-    )
-
-    mapping_json = config.output_dir / "hybrid_bb_map.json"
-    write_summary(mapping_json, {"bb_entries": bb_entries, "count": len(bb_entries)})
-
-    summary = {
-        "protein_aa_pdb": str(config.protein_pdb),
-        "protein_cg_pdb": str(protein_cg_path),
-        "bilayer_pdb": str(config.bilayer_pdb),
-        "output_pdb": str(packed_pdb),
-        "mapping_h5": str(mapping_h5),
-        "box_angstrom": [float(v) for v in box_lengths],
-        "lipid_mid_z": float(lipid_mid_z),
-        "box_half_z": float(0.5 * box_lengths[2]),
-        "protein_z_span": float(pspan[2]),
-        "min_box_z_target": float(min_box_z_target),
-        "protein_charge_used": int(protein_charge),
-        "salt_molar": float(config.salt_molar),
-        "salt_pairs_target": int(salt_pairs),
-        "ion_effective_volume_fraction": float(effective_vol_frac),
-        "na_added": int(n_na),
-        "cl_added": int(n_cl),
-        "protein_atoms_cg": int(len(protein_cg_atoms)),
-        "bilayer_atoms_kept": int(len(bilayer_kept)),
-        "lipid_residues_removed": int(removed_lipids),
-        "ion_atoms_added": int(len(ion_atoms)),
-        "total_atoms": int(len(all_atoms)),
-        "bb_map_entries": int(len(bb_entries)),
-    }
-    write_summary(config.output_dir / "hybrid_prep_summary.json", summary)
-
-    print(f"Packed system written to: {packed_pdb}")
-    print(f"Hybrid mapping HDF5 written to: {mapping_h5}")
-    print(f"Summary written to: {config.output_dir / 'hybrid_prep_summary.json'}")
-
 
 
 # -----------------------------------------------------------------------------
@@ -3019,71 +2753,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         f.write(f"Additional exclusions: {excluded_additional_count}\n")
     
     print(f"Preparation summary saved to: {summary_file}")
-
-def create_production_input(input_file, pdb_id):
-    """Create production input file with production-stage parameters"""
-    print(f"\n=== Creating Production Input File ===")
-    
-    # Parse protein connectivity for production stage (uses regular sections)
-    protein_itp = runtime_protein_itp_path(str(WORKFLOW_DIR), pdb_id)
-    protein_bonds_prod, protein_angles_prod, protein_dihedrals_prod, protein_constraints_prod, protein_position_restraints_prod = read_protein_itp_connectivity(protein_itp, 'production')
-    
-    print(f"Production stage parameters:")
-    print(f"  Bonds: {len(protein_bonds_prod)} (regular bonds)")
-    print(f"  Angles: {len(protein_angles_prod)} (regular angles)")
-    print(f"  Dihedrals: {len(protein_dihedrals_prod)}")
-    print(f"  Constraints: {len(protein_constraints_prod)}")
-    print(f"  Position restraints: {len(protein_position_restraints_prod)} (none for production)")
-    
-    # Create production input file
-    production_file = f"outputs/martini_test/production.input.up"
-    
-    # Copy the minimization file and modify for production
-    import shutil
-    shutil.copy2(input_file, production_file)
-    
-    # Remove position restraints from production file
-    import h5py
-    with h5py.File(production_file, 'r+') as f:
-        if 'input' in f and 'position_restraints' in f['input']:
-            del f['input']['position_restraints']
-            print("Removed position restraints from production file")
-    
-    print(f"Production input file created: {production_file}")
-    print("Note: Production file uses regular parameters without position restraints")
-
-def main_always_fixed(pdb_id):
-    """Create input file with protein always fixed rigid throughout simulation"""
-    print(f"\n=== Creating Input with Always-Fixed Protein ===")
-    print(f"PDB ID: {pdb_id}")
-    print("Output directory: outputs/martini_test")
-    
-    # Use the same setup as conversion path but modify the fix rigid configuration
-    # First, run the normal preparation
-    convert_stage(pdb_id=pdb_id)
-    
-    # Then modify the H5 file to ensure fix rigid is always enabled
-    import h5py
-    input_file = f"outputs/martini_test/test.input.up"
-    
-    print(f"\n=== Modifying H5 File for Always-Fixed Protein ===")
-    with h5py.File(input_file, 'r+') as f:
-        if 'input' in f and 'fix_rigid' in f['input']:
-            fix_rigid_grp = f['input']['fix_rigid']
-            # Ensure fix rigid is always enabled
-            fix_rigid_grp.attrs['enable'] = 1
-            print("Fix rigid enabled for entire simulation")
-            
-            # Remove stage-specific parameters since we want fix rigid throughout
-            if 'stage_parameters' in f['input']:
-                del f['input']['stage_parameters']
-                print("Removed stage-specific parameters (using fix rigid throughout)")
-        else:
-            print("WARNING: No fix rigid group found in H5 file")
-    
-    print(f"Modified input file: {input_file}")
-    print("Note: Protein will be fixed rigid throughout entire simulation")
-
 
 def require_h5import():
     exe = shutil.which("h5import")

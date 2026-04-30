@@ -455,3 +455,12 @@
     - SC-env table interface (`martini_sc_table_1body` / `martini_sc_table_potential`),
     - BB-env interface contribution inside `martini_potential`.
   - A simple `non-martini node sum` is insufficient because BB-env interface energy is embedded in `martini_potential`.
+
+- 2026-04-29: User correction on cleanup scope: stage-7 continuation is required and must be retained.
+  - Do not over-prune by deleting all continuation behavior when asked for baseline cleanup.
+  - Keep explicit production continuation (`--continue-stage-70-from`) as part of active workflow requirements.
+  - Prefer pruning auto-discovery/redundant continuation branches rather than removing continuation capability itself.
+- 2026-04-29: User correction on continuation UX after cleanup.
+  - Removing Python autodiscovery requires equivalent continuation detection in workflow bash scripts.
+  - `run_sim_1rkl.sh` must auto-detect latest `stage_7.N.up` and pass explicit `--continue-stage-70-from`.
+  - When passing explicit continuation source, bash should neutralize legacy auto flags to avoid parser/behavior conflicts.

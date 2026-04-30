@@ -745,3 +745,42 @@ What specific biological system or environment are you aiming to simulate first 
   - Stage-7 production file check confirmed:
     - `/input/potential/martini_potential` exists;
     - `/input/potential/martini_sc_table_1body` exists.
+
+## 2026-04-29 Python Workflow Cleanup (Baseline + Explicit 7.x Continuation)
+
+### Project Goal
+- Refactor and clean `py/martini_prepare_system.py`, `py/martini_prepare_system_lib.py`, and `py/martini_extract_vtf.py` to remove dead/legacy/debug-hoarded logic.
+- Keep only functionality required by `example/16.MARTINI/run_sim_1rkl.sh` fresh execution and explicit production continuation (`--continue-stage-70-from` -> `7.1`, `7.2`, ...).
+- Preserve SC-env and BB-env interface interactions fully active.
+
+### Architecture & Key Decisions
+- Keep `run-hybrid-workflow` as the only intended high-level entrypoint in `martini_prepare_system.py`.
+- Remove legacy command surfaces and wrapper flows not needed by the active pipeline.
+- Keep continuation path only for explicit source file input; remove auto-discovery branches.
+- Flatten defensive/legacy branching in VTF extraction to a direct path used by workflow outputs.
+
+### Execution Phases
+- [x] Phase 1: Prune `martini_prepare_system.py` CLI/command surfaces and continuation discovery branches.
+- [x] Phase 2: Remove dead standalone/legacy conversion layers from `martini_prepare_system_lib.py` while preserving required functions.
+- [x] Phase 3: Simplify `martini_extract_vtf.py` to workflow-required VTF behavior.
+- [x] Phase 4: Run compile/syntax checks and validate retained continuation + physics-critical attrs remain intact.
+- [x] Phase 5: Record review results and residual risks.
+
+### Known Errors / Blockers
+- None at task start.
+
+### Review
+- Implemented:
+  - `py/martini_prepare_system.py` now supports only the `run-hybrid-workflow` command surface; legacy subcommands and fallback execution paths were removed.
+  - `run-hybrid-workflow` parser now matches flags passed by `run_sim_1rkl.sh`; internal physics and stage defaults moved to explicit in-code constants.
+  - Continuation now requires explicit `--continue-stage-70-from`; auto-discovery (`previous-run`/`auto-continue`) code paths were removed and now fail fast if used.
+  - `py/martini_prepare_system_lib.py` removed dead standalone prep CLI/`main` orchestration and unused wrapper functions (`create_production_input`, `main_always_fixed`, martinize wrapper path).
+  - `py/martini_extract_vtf.py` was simplified to VTF-only extraction and direct trajectory-group handling; defensive NaN frame substitution and unused PDB/output-group branches were removed.
+- Physics integrity preserved:
+  - production hybrid-control writes still enforce active SC-env configuration (`sc_env_*` attrs plus positive interface scale) and keep `production_nonprotein_hard_sphere=0`;
+  - production stage injection still requires and validates active `martini_sc_table_1body` and `martini_potential`.
+- Verification:
+  - `.venv/bin/python -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py`
+  - `.venv/bin/python py/martini_prepare_system.py run-hybrid-workflow --help`
+  - `.venv/bin/python py/martini_extract_vtf.py --help`
+  - `.venv/bin/python py/martini_prepare_system.py run-hybrid-workflow --previous-run-dir foo` (verified explicit-source continuation enforcement with clear error).
