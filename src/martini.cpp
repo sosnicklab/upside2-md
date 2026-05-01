@@ -2591,6 +2591,9 @@ struct MartiniPotential : public PotentialNode
 
             float cap_mix = std::max(0.f, std::min(capped_to_regular_mix, 1.f));
 
+            if(dist < lj_cutoff && param.eps != 0.f && param.sig != 0.f && !param.lj_spline) {
+                throw string("MARTINI LJ spline missing for nonzero epsilon/sigma pair");
+            }
             if(param.lj_spline && dist < lj_cutoff) {
                 float r_coord = (dist - lj_r_min) / (lj_r_max - lj_r_min) * 999.0f;
                 float lj_result[2];
@@ -2620,21 +2623,18 @@ struct MartiniPotential : public PotentialNode
             if(param.qq != 0.f && dist < coul_cutoff) {
                 float coul_pot = 0.0f;
                 float coul_force_mag = 0.0f;
-
-                if(param.coul_spline && dist >= coul_r_min && dist <= coul_r_max) {
-                    float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
-                    float coul_result[2];
-                    param.coul_spline->evaluate_value_and_deriv(coul_result, 0, r_coord);
-                    coul_pot = coul_result[1];
-                    float coul_deriv_spline = coul_result[0];
-                    float coord_scale = 999.0f / (coul_r_max - coul_r_min);
-                    float dE_dr = coul_deriv_spline * coord_scale;
-                    coul_force_mag = -dE_dr;
-                } else {
-                    coul_pot = coulomb_k * param.qq / dist;
-                    float dV_dr = -coulomb_k * param.qq / (dist * dist);
-                    coul_force_mag = -dV_dr;
+                if(!param.coul_spline) {
+                    throw string("MARTINI Coulomb spline missing for nonzero charge product");
                 }
+                float eval_r = std::max(coul_r_min, std::min(dist, coul_r_max));
+                float r_coord = (eval_r - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
+                float coul_result[2];
+                param.coul_spline->evaluate_value_and_deriv(coul_result, 0, r_coord);
+                coul_pot = coul_result[1];
+                float coul_deriv_spline = coul_result[0];
+                float coord_scale = 999.0f / (coul_r_max - coul_r_min);
+                float dE_dr = coul_deriv_spline * coord_scale;
+                coul_force_mag = -dE_dr;
 
                 if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag)) {
                     Vec<3> coul_force_uncapped = (coul_force_mag/dist) * dr;

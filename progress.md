@@ -978,3 +978,16 @@
   - Fresh 1AFO stage conversion in `/tmp/1afo_segfix` produced protein `/input/sequence` length `72` with chain ids A/B retained.
   - Stage-7 injection path (`inject_hybrid_mapping` + `inject_stage7_sc_table_nodes`) succeeded without sequence-mismatch failure.
   - Generated stage file has `chain_break/chain_first_residue=[36]`, `chain_counts=[1,1]` and stage-7 H-bond infer step no longer prints the chain-break exclusion error.
+
+## 2026-04-30 (Spline-Only MARTINI Nonbonded + Hybrid prot_potential Accounting)
+- Actions taken:
+  - Updated `src/martini.cpp` nonbonded force evaluation to enforce spline-only LJ/Coulomb paths for all non-Ewald pair interactions.
+  - Removed direct analytic Coulomb fallback from pair-force evaluation; Coulomb now always evaluates from prebuilt spline tables (with domain clamp).
+  - Added hard-fail checks for missing LJ/Coulomb splines on nonzero interaction parameters to prevent silent non-spline fallbacks.
+  - Refactored hybrid progress energy accounting in `src/main.cpp` into explicit components: Upside protein potential, SC-env interface potential, and BB-env interface potential.
+- Files modified:
+  - `src/martini.cpp`
+  - `src/main.cpp`
+- Verification:
+  - `cmake --build obj --target upside` passed.
+  - Short production replay (`/tmp/rkl_splinecheck.up`) ran successfully after changes; no missing-spline runtime error was triggered.

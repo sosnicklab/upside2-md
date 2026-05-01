@@ -521,3 +521,5 @@
 - 2026-04-30: User correction on 1AFO topology semantics (two peptide segments, not one continuous chain).
   - Working rule: for multi-segment peptide systems, keep residue identity keyed by true chain IDs and ensure chain-break adjacency residues are excluded from inferred H-bond donor/acceptor construction (`i-1` and `i` at each chain break `i`).
   - Working rule: sequence length parity with `hybrid_bb_map` is necessary but not sufficient; stage-7 backbone/hbond node generation must also receive chain-break exclusions to avoid cross-segment backbone chemistry artifacts.
+- 2026-04-30: Hybrid MARTINI nonbonded path should fail fast if table coverage is incomplete.
+  - Working rule: when policy requires spline-only LJ/Coulomb (except Ewald), remove analytic fallback branches from runtime pair evaluation and throw explicit runtime errors if a nonzero interaction lacks a corresponding spline.
