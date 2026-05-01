@@ -1,6 +1,18 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-04-30: User correction: AA-direct hybrid mapping must not silently alias missing BB proxies to CA coordinates.
+  - If `bb_atom_index=-1` is a sentinel, runtime must keep it as missing-proxy state and derive BB interaction sites from mapped carriers.
+  - Writing BB COM coordinates into physical CA coordinates changes the protein model and breaks helicity.
+- 2026-04-30: AA-direct rigid-body behavior requires geometric projection, not just force/momentum filtering.
+  - A rigid-body force redistribution alone allows internal drift under finite-step integration.
+  - The stage-6 implementation must project coordinates back to a rigid manifold each step while preserving net translation/rotation.
+- 2026-04-30: In AA-direct mode, proxy-fix routing must exclude physical carrier atoms.
+  - Logic that fixed `ROLE_BB` atoms was valid only when those atoms were virtual MARTINI proxies.
+  - With carrier-backed BB sites (`CA` role), that same logic incorrectly freezes real protein coordinates and destabilizes backbone geometry.
+- 2026-04-30: BB mapping parity with martinize includes termini fragment overrides.
+  - Extracted BB typing is incomplete unless charged fragment termini are explicitly set to `Qd`/`Qa` and charges follow BB type.
+  - Missing this parity shifts interface electrostatics and can destabilize early-stage behavior.
 - 2026-04-29: User correction: the previous production restart patch is incomplete.
   - Do not assume recording/copying momentum plus a transition counter is sufficient.
   - Re-check whether the restart source is the true final integrator state or only the last logged frame.
@@ -464,3 +476,43 @@
   - Removing Python autodiscovery requires equivalent continuation detection in workflow bash scripts.
   - `run_sim_1rkl.sh` must auto-detect latest `stage_7.N.up` and pass explicit `--continue-stage-70-from`.
   - When passing explicit continuation source, bash should neutralize legacy auto flags to avoid parser/behavior conflicts.
+
+## 2026-04-29 (User Correction: Hybrid Protein Runtime Representation)
+- The required runtime representation for this refactor is strict:
+  - remove all CG protein particles from stage files;
+  - keep only protein backbone carriers (`N/CA/C/O`) as protein particles;
+  - compute BB-env from per-residue COM of `N/CA/C/O` and distribute BB forces back to those carriers.
+- Stage policy required by user:
+  - hybrid interface active in stage 6.x and 7.x;
+  - stage 6.x protein is rigid-body (free translation/rotation, no absolute pinning);
+  - rigid-body constraint must be removed for stage 7.x.
+- Mapping policy required by user:
+  - use `pydssp` for secondary-structure classification and backbone-type mapping.
+- Lesson:
+  - when the user specifies a physics-level representation change, do not keep a “nearly equivalent” proxy-particle compromise; implement the exact particle set and force-routing semantics requested.
+- 2026-04-29: Local runtime verification for the AA-direct MARTINI workflow is currently blocked by an environment dependency gap.
+  - `python3 py/martini_prepare_system.py run-hybrid-workflow ...` fails at import time with `ModuleNotFoundError: No module named 'tables'` from `py/martini_prepare_system_lib.py`.
+  - Static verification (`py_compile`) and C++ build still pass, but end-to-end runtime checks require installing `tables` in the active `.venv`.
+- 2026-04-29: The rigid-body fix-rigid extension in `src/martini.cpp` requires declaration order care.
+  - `register_fix_rigid_for_engine` calls `rebuild_rigid_groups`; a forward declaration is required before that call site.
+- 2026-04-30: User correction on rigid AA geometry integrity before stage 7.0.
+  - A force-only rigid treatment is not sufficient in minimization if trial/final line-search coordinates are not projected to the rigid manifold.
+  - Working rule: when protein is declared rigid in stage 6.x, project rigid group coordinates on every minimizer state update (initial/trial/accepted/final), not only via force filtering.
+  - Working rule: stage handoff for AA-direct mode must be a strict coordinate copy path; do not apply per-residue carrier refresh/alignment transforms during 6.6 -> 7.0.
+  - Working rule: hybrid interface setup must never mutate AA backbone carrier coordinates at runtime; interface math can remap interaction sites and gradients, but cannot overwrite state vectors.
+- 2026-04-30: User correction on helix recognition at stage 7.0 start.
+  - Working rule: when users report “not helix in VMD,” validate both HDF5 checkpoint geometry and exported VTF first-frame geometry with an independent DSSP check before attributing the issue to a specific stage.
+  - Working rule: if minimization is not part of the last known-good workflow, keep stage-6 minimization disabled by default and require explicit opt-in.
+- 2026-04-30: Stage-7 start structure comparisons must use backbone mapping order, not raw protein-membership order.
+  - Working rule: compare stage `7.0` start against PDB using `hybrid_bb_map/atom_indices` (`N/CA/C/O` per residue) to avoid index-order ambiguity.
+  - Working rule: when old output directories already contain drifted artifacts, validate on a fresh run directory before concluding the current code path still regresses.
+- 2026-04-30: User correction on BB typing source and fallback behavior in AA runtime mode.
+  - Working rule: when parity is requested against the last working martinize behavior, do not introduce DSSP-dependent BB typing in the active AA runtime path.
+  - Working rule: for no-ITP AA runtime prep, use martinize fallback backbone typing (`ss="C"` table behavior) plus termini/chain-break `Qd/Qa` overrides.
+- 2026-04-30: User correction on interaction parity scope.
+  - Working rule: if the user asks for last-working BB-env/SC-env interaction logic, preserve AA virtual-BB COM coordinate/gradient routing but avoid adding new cross-interface role filters that change pair inclusion semantics.
+- 2026-04-30: User correction on BB force routing scope in current AA-runtime framework.
+  - Working rule: once BB is represented as an explicit virtual proxy, BB->carrier force distribution must remain enabled in production path as well; do not gate projection logic behind startup-only ramps.
+  - Working rule: `ROLE_BB` must remain bound to explicit `BB` particles only (never reinterpret `CA` as BB in this framework), while `N/CA/C/O` serve only as carriers for COM/force projection.
+- 2026-04-30: Stage-7-only instability root cause can be hidden in unconstrained backbone O carriers when BB COM includes O.
+  - Working rule: if BB COM uses N/CA/C/O while stage-7 backbone constraints are N/CA/C-centric, restore the runtime O reconstruction path from reference N/CA/C frame before BB COM update.

@@ -8,7 +8,7 @@ source .venv/bin/activate
 pip install --upgrade pip setuptools wheel
 
 echo "Installing core scientific packages..."
-pip install h5py tables matplotlib mdtraj pymbar pandas ProDy scikit-learn jax
+pip install h5py tables matplotlib mdtraj pymbar pandas ProDy scikit-learn jax pydssp
 
 echo "Installing optional packages..."
 pip install colorcet pyhdx==0.4.3 "hdxms-datasets<0.2"

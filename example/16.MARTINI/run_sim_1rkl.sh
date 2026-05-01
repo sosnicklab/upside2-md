@@ -42,15 +42,9 @@ RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-${PDB_ID}_hybrid}"
 RUN_DIR="${RUN_DIR:-outputs/martini_test_1rkl_hybrid}"
 
 PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/${PDB_ID}.pdb}"
-PROTEIN_CG_PDB="${PROTEIN_CG_PDB:-}"
-PROTEIN_ITP="${PROTEIN_ITP:-}"
 BILAYER_PDB="${BILAYER_PDB:-${UPSIDE_HOME}/parameters/dryMARTINI/DOPC.pdb}"
 UNIVERSAL_PREP_SCRIPT="${UNIVERSAL_PREP_SCRIPT:-${PROJECT_ROOT}/py/martini_prepare_system.py}"
 
-MARTINIZE_ENABLE="${MARTINIZE_ENABLE:-1}"
-MARTINIZE_FF="${MARTINIZE_FF:-martini22}"
-MARTINIZE_MOLNAME="${MARTINIZE_MOLNAME:-PROA}"
-MARTINIZE_SCRIPT="${MARTINIZE_SCRIPT:-${PROJECT_ROOT}/py/martini_martinize.py}"
 EXTRACT_VTF_SCRIPT="${EXTRACT_VTF_SCRIPT:-${PROJECT_ROOT}/py/martini_extract_vtf.py}"
 
 SALT_MOLAR="${SALT_MOLAR:-0.15}"
@@ -71,8 +65,8 @@ THERMOSTAT_TIMESCALE="${THERMOSTAT_TIMESCALE:-5.0}"
 THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
 STRICT_STAGE_HANDOFF="${STRICT_STAGE_HANDOFF:-1}"
 
-MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-500}"
-MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-500}"
+MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-0}"
+MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-0}"
 EQ_62_NSTEPS="${EQ_62_NSTEPS:-500}"
 EQ_63_NSTEPS="${EQ_63_NSTEPS:-500}"
 EQ_64_NSTEPS="${EQ_64_NSTEPS:-500}"
@@ -86,7 +80,6 @@ MIN_TIME_STEP="${MIN_TIME_STEP:-0.010}"
 EQ_FRAME_STEPS="${EQ_FRAME_STEPS:-1000}"
 PROD_FRAME_STEPS="${PROD_FRAME_STEPS:-50}"
 PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-0}"
-PROD_70_BACKBONE_FIX_RIGID_ENABLE="${PROD_70_BACKBONE_FIX_RIGID_ENABLE:-0}"
 
 PREP_SEED="${PREP_SEED:-}"
 SEED="${SEED:-}"
@@ -154,13 +147,7 @@ python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
     --upside-home "${UPSIDE_HOME}" \
     --run-dir "${RUN_DIR}" \
     --protein-aa-pdb "${PROTEIN_AA_PDB}" \
-    --protein-cg-pdb "${PROTEIN_CG_PDB}" \
-    --protein-itp "${PROTEIN_ITP}" \
     --bilayer-pdb "${BILAYER_PDB}" \
-    --martinize-enable "${MARTINIZE_ENABLE}" \
-    --martinize-ff "${MARTINIZE_FF}" \
-    --martinize-molname "${MARTINIZE_MOLNAME}" \
-    --martinize-script "${MARTINIZE_SCRIPT}" \
     --extract-vtf-script "${EXTRACT_VTF_SCRIPT}" \
     --salt-molar "${SALT_MOLAR}" \
     --protein-lipid-cutoff "${PROTEIN_LIPID_CUTOFF}" \
@@ -192,7 +179,6 @@ python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
     --eq-frame-steps "${EQ_FRAME_STEPS}" \
     --prod-frame-steps "${PROD_FRAME_STEPS}" \
     --prod-70-npt-enable "${PROD_70_NPT_ENABLE}" \
-    --prod-70-backbone-fix-rigid-enable "${PROD_70_BACKBONE_FIX_RIGID_ENABLE}" \
     --prep-seed "${PREP_SEED}" \
     --seed "${SEED}" \
     --continue-stage-70-from "${CONTINUE_STAGE_70_FROM}" \
