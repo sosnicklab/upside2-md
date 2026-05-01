@@ -1,5 +1,29 @@
 # Progress Log
 
+## 2026-04-30 (Hybrid AA-Direct Forensic Regression Fix)
+- Reopened the hybrid AA-direct instability as a strict HEAD-vs-working-tree forensic pass focused on `src/martini.cpp` and `py/martini_prepare_system*.py`.
+- Confirmed and fixed the main C++ regressions:
+  - removed `bb_atom_index < 0 -> CA` aliasing in runtime mapping sanity;
+  - stopped treating physical backbone carriers as fixed MARTINI proxies in `active_protein_proxy_fixed_atoms`;
+  - updated BB force projection to include the carrier atom contribution when the BB site is carrier-backed;
+  - added carrier-backed BB virtual-site position evaluation (`N/CA/C/O` COM) for MARTINI pair distance evaluation;
+  - projected BB forces back to mapped carriers in AA-direct mode (not only startup proxy mode);
+  - prevented BB/O refresh from overwriting physical AA carriers when no explicit BB proxy is present.
+- Upgraded stage-6 rigid enforcement in `martini_fix_rigid`:
+  - added weighted best-fit rigid transform (Horn quaternion solve) from stored reference geometry to current coordinates;
+  - projected protein coordinates back to a rigid manifold each step in both MD and minimization rigid paths;
+  - kept net translation/rotation dynamics while freezing internal DOFs.
+- Restored mapping/charge parity details in `py/martini_prepare_system_lib.py`:
+  - applied charged termini/fragments BB overrides (`Qd`/`Qa`) in DSSP-derived BB typing;
+  - assigned protein BB charges from MARTINI BB type (`Qd/Qa/...`) instead of hardcoded `0.0`.
+- Validation:
+  - `cmake --build obj --target upside` passed;
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py` passed;
+  - mode-2 extraction from `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` now succeeds (no `hybrid_bb_map` failure);
+  - short stage-6 replay (`/tmp/rigid_check_stage6.up`, 300 steps) preserved rigid internal geometry (sampled pair-distance drift mean `3.1e-05 Å`, max `1.4e-04 Å`);
+  - short stage-7 replay confirmed rigid release (sampled pair-distance drift mean `0.63 Å`);
+  - reduced end-to-end workflow run in `/tmp/hybrid_forensic_fix` completed through stage `7.0` and mode-2 VTF extraction.
+
 ## 2026-04-28 (Hybrid MARTINI Workflow Refactor)
 - Started implementation of the workflow refactor to move low-level MARTINI constants, stabilization heuristics, and stage-file HDF5 mutations out of `run_sim_1rkl.sh` and into typed Python argparse defaults.
 - Reviewed the active shell and Python surfaces:
@@ -807,3 +831,163 @@
 - Verification:
   - `bash -n` passed for `run_sim_1rkl.sh`, `run_sim_1afo.sh`, `run_sim_1rkl_outlipid.sh`, `run_sim_1afo_outlipid.sh`;
   - dry-run harness with a fake checkpoint file confirmed `run_sim_1afo.sh` prints `Detected continuation source: ...stage_7.3.up` and forwards explicit `--continue-stage-70-from`.
+
+## 2026-04-29 (Hybrid MARTINI Simplification: Start)
+- Initialized implementation for major hybrid workflow simplification:
+  - remove AA->CG martinize path;
+  - keep only protein `N/CA/C/O` carriers in runtime;
+  - remove all CG protein particles;
+  - stage 6.x rigid-body and stage 7.x released dynamics;
+  - preserve active SC-env and BB-env interfaces in both stages.
+- Added a dedicated plan section in `plan.md` with phased execution checkpoints.
+
+## 2026-04-29 (AA-Direct Hybrid MARTINI Simplification)
+- Removed the legacy conversion surface for this workflow:
+  - deleted `py/martini_martinize.py`;
+  - removed stale AA<->CG helper functions from `py/martini_prepare_system_lib.py` (`infer_protein_charge_from_cg`, `extract_protein_cg_atoms`, COM alignment/preflight CG mapping helpers, and unused protein-ITP readers);
+  - switched `py/martini_prepare_system.py` mixed-system charge inference to `infer_protein_charge_from_residues`.
+- Confirmed launcher is AA-only:
+  - `example/16.MARTINI/run_sim_1rkl.sh` passes only `--protein-aa-pdb` into `run-hybrid-workflow` and has no martinize/protein-ITP args.
+- Confirmed hybrid control semantics:
+  - `py/martini_prepare_system.py` sets preproduction activation to `minimization` and mode to `rigid_body` for stage 6.x;
+  - stage 7.0 preparation switches activation to `production`.
+- Fixed C++ compile break in rigid-body path:
+  - added forward declaration for `rebuild_rigid_groups` in `src/martini.cpp`.
+- Verification:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed;
+  - `cmake --build obj --target upside` passed.
+- Attempted runtime smoke test with shortened `run-hybrid-workflow` failed before execution due to local environment:
+  - `ModuleNotFoundError: No module named 'tables'`.
+
+## 2026-04-30 (Rigid Invariance + Handoff No-Overwrite Fix)
+- Actions taken:
+  - Patched C++ minimization loop to rigid-project protein group geometry at all minimizer coordinate states (initial, each line-search trial, and final state).
+  - Removed Python stage handoff coordinate-refresh code that could mutate AA backbone carriers.
+  - Removed runtime MARTINI pre-force coordinate refresh invocation so hybrid interface no longer rewrites carrier coordinates.
+- Files modified:
+  - `src/martini.cpp`
+  - `py/martini_prepare_system.py`
+  - `py/martini_prepare_system_lib.py`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Test/build results:
+  - `cmake --build obj --target upside` passed.
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py` passed.
+  - Runtime minimization replay (`/tmp/stage60_rigid_test.up`, 30 iterations) kept protein internal geometry rigid:
+    - pair-distance drift mean `1.2004292671008443e-07 A`
+    - pair-distance drift max `1.9073486328125e-06 A`
+  - Fresh strict handoff copy check (`stage_6.6 -> /tmp/stage70_handoff_test.up`) showed exact protein coordinate preservation:
+    - atom diff mean `0.0 A`
+    - atom diff max `0.0 A`
+
+## 2026-04-30 (Stage-7 Helix Forensics + Minimize-Default Change)
+- Actions taken:
+  - Ran stage-by-stage forensic comparison of AA backbone vs checkpoints (`6.0.prepared`, `6.0`, `6.6`, `7.0.prepared`, `7.0`) in existing run artifacts.
+  - Verified stage-7 start geometry in both checkpoint HDF5 and VTF first frame using `pydssp`.
+  - Updated workflow defaults to skip stage `6.0/6.1` minimization unless explicitly enabled (`MIN_60_MAX_ITER > 0`, `MIN_61_MAX_ITER > 0`).
+- Files modified:
+  - `py/martini_prepare_system.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `findings.md`
+  - `progress.md`
+- Test/build results:
+  - `python3 -m py_compile py/martini_prepare_system.py` passed.
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - Reduced fresh workflow run (`RUN_DIR=/tmp/helix_start_check`) completed with stage `6.0/6.1` minimization skipped.
+  - In that run, stage `7.0` input remained helix (`23` helical residues by `pydssp`) and VTF first frame also remained helix (`23`).
+
+## 2026-04-30 (Stage-7 Start vs PDB Comparison)
+- Actions taken:
+  - Performed direct numeric comparison between stage `7.0` start backbone and AA PDB backbone using `hybrid_bb_map/atom_indices` ordering.
+  - Ran a longer preproduction smoke (`/tmp/helix_longer_check`) with minimization disabled (`MIN_60_MAX_ITER=0`, `MIN_61_MAX_ITER=0`).
+- Results:
+  - New run (`/tmp/helix_longer_check/checkpoints/1rkl.stage_7.0.up`) is effectively identical to PDB up to rigid-body transform:
+    - Kabsch residual mean `2.09e-06 A`, max `4.45e-06 A`
+    - Pair-distance drift mean `1.53e-06 A`, max `7.32e-06 A`
+  - Existing old artifact (`example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`) still contains drift:
+    - Kabsch residual mean `5.84e-04 A`, max `1.11e-03 A`
+    - Pair-distance drift mean `7.81e-04 A`, max `1.93e-03 A`
+
+## 2026-04-30 (BB Type Fallback + BB-env/SC-env Logic Parity)
+- Actions taken:
+  - Replaced DSSP-driven BB typing with martinize fallback BB typing (`ss="C"` table + termini/chain-break `Qd/Qa`) in AA runtime prep.
+  - Updated hybrid mapping prep summary to emit fallback typing metadata (`bb_fallback_typed_residues`).
+  - Removed the extra cross-interface role gate in `src/martini.cpp` pair loop to align BB-env/SC-env interaction flow with last-working logic, while keeping AA virtual-BB COM projection and carrier force projection.
+- Files modified:
+  - `py/martini_prepare_system.py`
+  - `py/martini_prepare_system_lib.py`
+  - `src/martini.cpp`
+  - `plan.md`
+  - `progress.md`
+- Test/build results:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
+  - `cmake --build obj --target upside` passed.
+
+## 2026-04-30 (BB Proxy COM Distributor Production-Path Fix)
+- Actions taken:
+  - Audited current `src/martini.cpp` BB gradient path against runtime role/mapping semantics.
+  - Found production-path gating bug: BB gradient projection depended on `active_hybrid_startup` branch.
+  - Patched pair-force accumulation so any mapped `ROLE_BB` atom always projects force to mapped carriers (`N/CA/C/O`) during active hybrid stages.
+  - Removed dead conditional branch that attempted carrier-projected BB site position under contradictory role checks.
+- Files modified:
+  - `src/martini.cpp`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj --target upside` passed.
+  - `source .venv/bin/activate && python -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
+
+## 2026-04-30 (Stage-7 O-Reconstruction Restoration from Last Committed Method)
+- Actions taken:
+  - Restored the last-committed backbone O reconstruction path in `src/martini.cpp` by reintroducing `refresh_backbone_o_positions_if_active(...)` and calling it inside `refresh_bb_positions_if_active(...)` before BB COM update.
+  - Kept current BB role and BB force projection behavior unchanged.
+- Files modified:
+  - `src/martini.cpp`
+- Verification:
+  - `source .venv/bin/activate && source source.sh && cmake --build obj --target upside` passed.
+  - `source .venv/bin/activate && python -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
+  - Targeted stage-7 replay from existing `1rkl.stage_6.6.up` to `/tmp/stage70_o_fix_test.up` for 200 steps:
+    - frame 0 O rigid-dev mean/max: `5.55e-07 / 1.13e-06 A`
+    - final frame O rigid-dev mean/max: `5.13e-07 / 1.56e-06 A`
+    - O-CA mean/max stayed stable at `~2.359 / 2.431 A`
+  - This removes the previous large stage-7 O drift signature (tens of Angstroms).
+
+## 2026-04-30 (1AFO Stage-7 Sequence Length Fix)
+- Actions taken:
+  - Fixed protein chain identity selection in `convert_stage` sequence/molecule grouping path.
+  - Changed chain key preference from `segid`-first to `chain_id`-first to avoid collapsing multi-chain proteins when `segid` is shared (e.g., `PROA`).
+- Files modified:
+  - `py/martini_prepare_system_lib.py`
+- Verification:
+  - `python -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py` passed.
+  - On `1afo_hybrid.MARTINI.pdb`: old key produced 36 protein residues; new key produced 72 protein residues (chains A/B preserved).
+  - Fresh `convert_stage(stage=npt_prod)` run produced `/input/sequence` length 72.
+  - Direct `inject_hybrid_mapping + inject_stage7_sc_table_nodes` on generated stage file succeeded (no sequence/mapping count mismatch).
+
+## 2026-04-30 (1AFO Two-Segment Peptide Prep Parity)
+- Actions taken:
+  - Audited commit `e878e9c20dadbfd181dce20bcc8a52530c06e75d` against current workflow for stage-7 prep semantics.
+  - Preserved multi-chain residue identity by preferring `chain_id` over shared `segid` when building protein sequence keys in `convert_stage`.
+  - Updated stage-7 backbone node injection to pass chain-break-derived H-bond exclusions into `upside_config.write_infer_H_O`, matching Upside chain-break logic (`exclude i-1 and i for each chain break at residue i`).
+- Files modified:
+  - `py/martini_prepare_system_lib.py`
+- Verification:
+  - `python -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py` passed.
+  - Fresh 1AFO stage conversion in `/tmp/1afo_segfix` produced protein `/input/sequence` length `72` with chain ids A/B retained.
+  - Stage-7 injection path (`inject_hybrid_mapping` + `inject_stage7_sc_table_nodes`) succeeded without sequence-mismatch failure.
+  - Generated stage file has `chain_break/chain_first_residue=[36]`, `chain_counts=[1,1]` and stage-7 H-bond infer step no longer prints the chain-break exclusion error.
+
+## 2026-04-30 (Spline-Only MARTINI Nonbonded + Hybrid prot_potential Accounting)
+- Actions taken:
+  - Updated `src/martini.cpp` nonbonded force evaluation to enforce spline-only LJ/Coulomb paths for all non-Ewald pair interactions.
+  - Removed direct analytic Coulomb fallback from pair-force evaluation; Coulomb now always evaluates from prebuilt spline tables (with domain clamp).
+  - Added hard-fail checks for missing LJ/Coulomb splines on nonzero interaction parameters to prevent silent non-spline fallbacks.
+  - Refactored hybrid progress energy accounting in `src/main.cpp` into explicit components: Upside protein potential, SC-env interface potential, and BB-env interface potential.
+- Files modified:
+  - `src/martini.cpp`
+  - `src/main.cpp`
+- Verification:
+  - `cmake --build obj --target upside` passed.
+  - Short production replay (`/tmp/rkl_splinecheck.up`) ran successfully after changes; no missing-spline runtime error was triggered.

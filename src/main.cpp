@@ -222,22 +222,30 @@ static inline bool is_sc_env_interface_term_name(const std::string& name) {
            is_prefix("martini_sc_table_potential", name);
 }
 
-static double compute_hybrid_protein_potential(const DerivEngine& engine) {
-    double protein_forcefield_potential = 0.0;
+struct HybridProteinPotentialComponents {
+    double upside_protein_potential = 0.0;
     double sc_env_interface_potential = 0.0;
+    double bb_env_interface_potential = 0.0;
+    double total() const {
+        return upside_protein_potential + sc_env_interface_potential + bb_env_interface_potential;
+    }
+};
+
+static HybridProteinPotentialComponents compute_hybrid_protein_potential_components(const DerivEngine& engine) {
+    HybridProteinPotentialComponents out;
     for(const auto& n : engine.nodes) {
         if(!n.computation->potential_term) continue;
         const auto& pot_node = dynamic_cast<const PotentialNode&>(*n.computation.get());
         double p = static_cast<double>(pot_node.potential);
         if(is_sc_env_interface_term_name(n.name)) {
-            sc_env_interface_potential += p;
+            out.sc_env_interface_potential += p;
             continue;
         }
         if(is_dry_martini_term_name(n.name)) continue;
-        protein_forcefield_potential += p;
+        out.upside_protein_potential += p;
     }
-    double bb_env_interface_potential = martini_hybrid::get_last_bb_env_interface_potential(engine);
-    return protein_forcefield_potential + sc_env_interface_potential + bb_env_interface_potential;
+    out.bb_env_interface_potential = martini_hybrid::get_last_bb_env_interface_potential(engine);
+    return out;
 }
 
 static double compute_logged_kinetic_energy(System* sys) {
@@ -1191,7 +1199,8 @@ try {
                                 : nr*double(dt*inner_step);
                             if(sys.martini_hybrid_progress) {
                                 double rg = compute_protein_rg(sys);
-                                double prot_potential = compute_hybrid_protein_potential(sys.engine);
+                                auto prot_components = compute_hybrid_protein_potential_components(sys.engine);
+                                double prot_potential = prot_components.total();
                                 printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds",
                                        duration_print_width, display_elapsed,
                                        duration_print_width, display_duration_total,

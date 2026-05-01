@@ -34,6 +34,17 @@ static std::map<DerivEngine*, std::vector<int>> g_dynamic_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_dynamic_z_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_fixed_atoms;
 static std::map<DerivEngine*, std::vector<int>> g_z_fixed_atoms;
+static std::map<DerivEngine*, std::vector<float>> g_atom_masses;
+
+struct RigidBodyGroup {
+    std::vector<int> atom_indices;
+    std::vector<float> masses;
+    std::vector<std::array<float,3>> reference_rel;
+    bool initialized = false;
+};
+static std::map<DerivEngine*, std::vector<std::vector<int>>> g_dynamic_rigid_groups;
+static std::map<DerivEngine*, std::vector<RigidBodyGroup>> g_rigid_groups;
+static void rebuild_rigid_groups(DerivEngine& engine);
 
 static void normalize_atom_list(std::vector<int>& atoms) {
     std::sort(atoms.begin(), atoms.end());
@@ -80,6 +91,465 @@ static void merge_fixed_atoms(DerivEngine& engine, const std::vector<int>& extra
     rebuild_fixed_atoms(engine);
 }
 
+static bool invert_3x3(const float a[3][3], float inv_out[3][3]) {
+    float det =
+        a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
+        a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+        a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+    if(std::fabs(det) < 1.0e-12f) return false;
+    float inv_det = 1.0f / det;
+    inv_out[0][0] =  (a[1][1] * a[2][2] - a[1][2] * a[2][1]) * inv_det;
+    inv_out[0][1] = -(a[0][1] * a[2][2] - a[0][2] * a[2][1]) * inv_det;
+    inv_out[0][2] =  (a[0][1] * a[1][2] - a[0][2] * a[1][1]) * inv_det;
+    inv_out[1][0] = -(a[1][0] * a[2][2] - a[1][2] * a[2][0]) * inv_det;
+    inv_out[1][1] =  (a[0][0] * a[2][2] - a[0][2] * a[2][0]) * inv_det;
+    inv_out[1][2] = -(a[0][0] * a[1][2] - a[0][2] * a[1][0]) * inv_det;
+    inv_out[2][0] =  (a[1][0] * a[2][1] - a[1][1] * a[2][0]) * inv_det;
+    inv_out[2][1] = -(a[0][0] * a[2][1] - a[0][1] * a[2][0]) * inv_det;
+    inv_out[2][2] =  (a[0][0] * a[1][1] - a[0][1] * a[1][0]) * inv_det;
+    return true;
+}
+
+static std::array<float,3> cross3(
+        const std::array<float,3>& a,
+        const std::array<float,3>& b) {
+    return std::array<float,3>{
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    };
+}
+
+static std::array<float,3> mat3_mul_vec(
+        const float m[3][3],
+        const std::array<float,3>& v) {
+    return std::array<float,3>{
+        m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+        m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+        m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
+    };
+}
+
+static void quat_to_rotmat(const float q[4], float R[3][3]) {
+    float w = q[0], x = q[1], y = q[2], z = q[3];
+    float ww = w*w, xx = x*x, yy = y*y, zz = z*z;
+    float wx = w*x, wy = w*y, wz = w*z;
+    float xy = x*y, xz = x*z, yz = y*z;
+    R[0][0] = ww + xx - yy - zz;
+    R[0][1] = 2.f * (xy - wz);
+    R[0][2] = 2.f * (xz + wy);
+    R[1][0] = 2.f * (xy + wz);
+    R[1][1] = ww - xx + yy - zz;
+    R[1][2] = 2.f * (yz - wx);
+    R[2][0] = 2.f * (xz - wy);
+    R[2][1] = 2.f * (yz + wx);
+    R[2][2] = ww - xx - yy + zz;
+}
+
+static std::array<float,3> apply_rot3(const float R[3][3], const std::array<float,3>& v) {
+    return std::array<float,3>{
+        R[0][0] * v[0] + R[0][1] * v[1] + R[0][2] * v[2],
+        R[1][0] * v[0] + R[1][1] * v[1] + R[1][2] * v[2],
+        R[2][0] * v[0] + R[2][1] * v[1] + R[2][2] * v[2],
+    };
+}
+
+static bool best_fit_rotation_from_reference(
+        const std::vector<std::array<float,3>>& reference_rel,
+        const std::vector<std::array<float,3>>& current_rel,
+        const std::vector<float>& masses,
+        float R[3][3]) {
+    if(reference_rel.size() != current_rel.size() || reference_rel.size() != masses.size()) {
+        return false;
+    }
+    if(reference_rel.size() < 2) {
+        R[0][0] = 1.f; R[0][1] = 0.f; R[0][2] = 0.f;
+        R[1][0] = 0.f; R[1][1] = 1.f; R[1][2] = 0.f;
+        R[2][0] = 0.f; R[2][1] = 0.f; R[2][2] = 1.f;
+        return true;
+    }
+
+    float Sxx = 0.f, Sxy = 0.f, Sxz = 0.f;
+    float Syx = 0.f, Syy = 0.f, Syz = 0.f;
+    float Szx = 0.f, Szy = 0.f, Szz = 0.f;
+    float total_weight = 0.f;
+    for(size_t i = 0; i < reference_rel.size(); ++i) {
+        float w = masses[i];
+        if(!(w > 0.f)) w = 1.f;
+        const auto& r = reference_rel[i];
+        const auto& c = current_rel[i];
+        total_weight += w;
+        Sxx += w * c[0] * r[0];
+        Sxy += w * c[0] * r[1];
+        Sxz += w * c[0] * r[2];
+        Syx += w * c[1] * r[0];
+        Syy += w * c[1] * r[1];
+        Syz += w * c[1] * r[2];
+        Szx += w * c[2] * r[0];
+        Szy += w * c[2] * r[1];
+        Szz += w * c[2] * r[2];
+    }
+    if(!(total_weight > 0.f)) return false;
+
+    float N[4][4];
+    N[0][0] = Sxx + Syy + Szz;
+    N[0][1] = Syz - Szy;
+    N[0][2] = Szx - Sxz;
+    N[0][3] = Sxy - Syx;
+    N[1][0] = Syz - Szy;
+    N[1][1] = Sxx - Syy - Szz;
+    N[1][2] = Sxy + Syx;
+    N[1][3] = Szx + Sxz;
+    N[2][0] = Szx - Sxz;
+    N[2][1] = Sxy + Syx;
+    N[2][2] = -Sxx + Syy - Szz;
+    N[2][3] = Syz + Szy;
+    N[3][0] = Sxy - Syx;
+    N[3][1] = Szx + Sxz;
+    N[3][2] = Syz + Szy;
+    N[3][3] = -Sxx - Syy + Szz;
+
+    float q[4] = {1.f, 0.f, 0.f, 0.f};
+    for(int iter = 0; iter < 16; ++iter) {
+        float qn[4] = {
+            N[0][0]*q[0] + N[0][1]*q[1] + N[0][2]*q[2] + N[0][3]*q[3],
+            N[1][0]*q[0] + N[1][1]*q[1] + N[1][2]*q[2] + N[1][3]*q[3],
+            N[2][0]*q[0] + N[2][1]*q[1] + N[2][2]*q[2] + N[2][3]*q[3],
+            N[3][0]*q[0] + N[3][1]*q[1] + N[3][2]*q[2] + N[3][3]*q[3],
+        };
+        float norm = sqrtf(qn[0]*qn[0] + qn[1]*qn[1] + qn[2]*qn[2] + qn[3]*qn[3]);
+        if(norm <= 1.0e-12f) return false;
+        q[0] = qn[0] / norm;
+        q[1] = qn[1] / norm;
+        q[2] = qn[2] / norm;
+        q[3] = qn[3] / norm;
+    }
+    quat_to_rotmat(q, R);
+    return true;
+}
+
+static void initialize_rigid_group_if_needed(DerivEngine& engine, RigidBodyGroup& group, VecArray pos) {
+    if(group.initialized) return;
+    float total_mass = 0.f;
+    std::array<float,3> com{{0.f, 0.f, 0.f}};
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        float m = group.masses[i];
+        if(!(m > 0.f)) m = 1.f;
+        total_mass += m;
+        com[0] += m * pos(0, atom);
+        com[1] += m * pos(1, atom);
+        com[2] += m * pos(2, atom);
+    }
+    if(!(total_mass > 0.f)) return;
+    com[0] /= total_mass;
+    com[1] /= total_mass;
+    com[2] /= total_mass;
+    group.reference_rel.assign(group.atom_indices.size(), std::array<float,3>{{0.f,0.f,0.f}});
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        group.reference_rel[i][0] = pos(0, atom) - com[0];
+        group.reference_rel[i][1] = pos(1, atom) - com[1];
+        group.reference_rel[i][2] = pos(2, atom) - com[2];
+    }
+    group.initialized = true;
+}
+
+static void apply_rigid_group_constraints(
+        DerivEngine& engine,
+        RigidBodyGroup& group,
+        VecArray pos,
+        VecArray deriv,
+        VecArray mom) {
+    if(group.atom_indices.size() < 2) return;
+    initialize_rigid_group_if_needed(engine, group, pos);
+    if(!group.initialized || group.reference_rel.size() != group.atom_indices.size()) return;
+
+    float total_mass = 0.f;
+    std::array<float,3> com{{0.f, 0.f, 0.f}};
+    std::array<float,3> total_force{{0.f, 0.f, 0.f}};
+    std::array<float,3> total_momentum{{0.f, 0.f, 0.f}};
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        float m = group.masses[i];
+        if(!(m > 0.f)) m = 1.f;
+        total_mass += m;
+        com[0] += m * pos(0, atom);
+        com[1] += m * pos(1, atom);
+        com[2] += m * pos(2, atom);
+        total_force[0] += -deriv(0, atom);
+        total_force[1] += -deriv(1, atom);
+        total_force[2] += -deriv(2, atom);
+        total_momentum[0] += mom(0, atom);
+        total_momentum[1] += mom(1, atom);
+        total_momentum[2] += mom(2, atom);
+    }
+    if(!(total_mass > 0.f)) return;
+    com[0] /= total_mass;
+    com[1] /= total_mass;
+    com[2] /= total_mass;
+
+    std::vector<std::array<float,3>> current_rel(group.atom_indices.size(), std::array<float,3>{{0.f,0.f,0.f}});
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        current_rel[i][0] = pos(0, atom) - com[0];
+        current_rel[i][1] = pos(1, atom) - com[1];
+        current_rel[i][2] = pos(2, atom) - com[2];
+    }
+    float Rfit[3][3];
+    bool have_rotation = best_fit_rotation_from_reference(group.reference_rel, current_rel, group.masses, Rfit);
+    if(have_rotation) {
+        for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+            int atom = group.atom_indices[i];
+            if(atom < 0 || atom >= engine.pos->n_atom) continue;
+            auto rfit = apply_rot3(Rfit, group.reference_rel[i]);
+            pos(0, atom) = com[0] + rfit[0];
+            pos(1, atom) = com[1] + rfit[1];
+            pos(2, atom) = com[2] + rfit[2];
+            current_rel[i] = rfit;
+        }
+    }
+
+    float inertia[3][3] = {{0.f,0.f,0.f},{0.f,0.f,0.f},{0.f,0.f,0.f}};
+    std::array<float,3> torque{{0.f, 0.f, 0.f}};
+    std::array<float,3> ang_momentum{{0.f, 0.f, 0.f}};
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        float m = group.masses[i];
+        if(!(m > 0.f)) m = 1.f;
+        std::array<float,3> r = current_rel[i];
+        std::array<float,3> f{
+            -deriv(0, atom),
+            -deriv(1, atom),
+            -deriv(2, atom),
+        };
+        std::array<float,3> p{
+            mom(0, atom),
+            mom(1, atom),
+            mom(2, atom),
+        };
+        auto rx_f = cross3(r, f);
+        auto rx_p = cross3(r, p);
+        torque[0] += rx_f[0];
+        torque[1] += rx_f[1];
+        torque[2] += rx_f[2];
+        ang_momentum[0] += rx_p[0];
+        ang_momentum[1] += rx_p[1];
+        ang_momentum[2] += rx_p[2];
+
+        float r2 = r[0]*r[0] + r[1]*r[1] + r[2]*r[2];
+        inertia[0][0] += m * (r2 - r[0]*r[0]);
+        inertia[1][1] += m * (r2 - r[1]*r[1]);
+        inertia[2][2] += m * (r2 - r[2]*r[2]);
+        inertia[0][1] -= m * r[0] * r[1];
+        inertia[1][0] -= m * r[0] * r[1];
+        inertia[0][2] -= m * r[0] * r[2];
+        inertia[2][0] -= m * r[0] * r[2];
+        inertia[1][2] -= m * r[1] * r[2];
+        inertia[2][1] -= m * r[1] * r[2];
+    }
+
+    float inertia_inv[3][3];
+    bool invertible = invert_3x3(inertia, inertia_inv);
+    std::array<float,3> alpha{{0.f, 0.f, 0.f}};
+    std::array<float,3> omega{{0.f, 0.f, 0.f}};
+    if(invertible) {
+        alpha = mat3_mul_vec(inertia_inv, torque);
+        omega = mat3_mul_vec(inertia_inv, ang_momentum);
+    }
+    std::array<float,3> vcm{
+        total_momentum[0] / total_mass,
+        total_momentum[1] / total_mass,
+        total_momentum[2] / total_mass,
+    };
+    std::array<float,3> acom{
+        total_force[0] / total_mass,
+        total_force[1] / total_mass,
+        total_force[2] / total_mass,
+    };
+
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        float m = group.masses[i];
+        if(!(m > 0.f)) m = 1.f;
+        std::array<float,3> r = current_rel[i];
+        auto alpha_x_r = cross3(alpha, r);
+        auto omega_x_r = cross3(omega, r);
+        std::array<float,3> rigid_force{
+            m * (acom[0] + alpha_x_r[0]),
+            m * (acom[1] + alpha_x_r[1]),
+            m * (acom[2] + alpha_x_r[2]),
+        };
+        std::array<float,3> rigid_mom{
+            m * (vcm[0] + omega_x_r[0]),
+            m * (vcm[1] + omega_x_r[1]),
+            m * (vcm[2] + omega_x_r[2]),
+        };
+        deriv(0, atom) = -rigid_force[0];
+        deriv(1, atom) = -rigid_force[1];
+        deriv(2, atom) = -rigid_force[2];
+        mom(0, atom) = rigid_mom[0];
+        mom(1, atom) = rigid_mom[1];
+        mom(2, atom) = rigid_mom[2];
+    }
+}
+
+static void apply_rigid_group_minimization(
+        DerivEngine& engine,
+        RigidBodyGroup& group,
+        VecArray pos,
+        VecArray deriv) {
+    if(group.atom_indices.size() < 2) return;
+    initialize_rigid_group_if_needed(engine, group, pos);
+    if(!group.initialized) return;
+
+    float total_mass = 0.f;
+    std::array<float,3> com{{0.f, 0.f, 0.f}};
+    std::array<float,3> total_force{{0.f, 0.f, 0.f}};
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        float m = group.masses[i];
+        if(!(m > 0.f)) m = 1.f;
+        total_mass += m;
+        com[0] += m * pos(0, atom);
+        com[1] += m * pos(1, atom);
+        com[2] += m * pos(2, atom);
+        total_force[0] += -deriv(0, atom);
+        total_force[1] += -deriv(1, atom);
+        total_force[2] += -deriv(2, atom);
+    }
+    if(!(total_mass > 0.f)) return;
+    com[0] /= total_mass;
+    com[1] /= total_mass;
+    com[2] /= total_mass;
+
+    std::vector<std::array<float,3>> current_rel(group.atom_indices.size(), std::array<float,3>{{0.f,0.f,0.f}});
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        current_rel[i][0] = pos(0, atom) - com[0];
+        current_rel[i][1] = pos(1, atom) - com[1];
+        current_rel[i][2] = pos(2, atom) - com[2];
+    }
+    float Rfit[3][3];
+    bool have_rotation = best_fit_rotation_from_reference(group.reference_rel, current_rel, group.masses, Rfit);
+    if(have_rotation) {
+        for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+            int atom = group.atom_indices[i];
+            if(atom < 0 || atom >= engine.pos->n_atom) continue;
+            auto rfit = apply_rot3(Rfit, group.reference_rel[i]);
+            pos(0, atom) = com[0] + rfit[0];
+            pos(1, atom) = com[1] + rfit[1];
+            pos(2, atom) = com[2] + rfit[2];
+            current_rel[i] = rfit;
+        }
+    }
+
+    float inertia[3][3] = {{0.f,0.f,0.f},{0.f,0.f,0.f},{0.f,0.f,0.f}};
+    std::array<float,3> torque{{0.f, 0.f, 0.f}};
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        float m = group.masses[i];
+        if(!(m > 0.f)) m = 1.f;
+        std::array<float,3> r = current_rel[i];
+        std::array<float,3> f{
+            -deriv(0, atom),
+            -deriv(1, atom),
+            -deriv(2, atom),
+        };
+        auto rx_f = cross3(r, f);
+        torque[0] += rx_f[0];
+        torque[1] += rx_f[1];
+        torque[2] += rx_f[2];
+        float r2 = r[0]*r[0] + r[1]*r[1] + r[2]*r[2];
+        inertia[0][0] += m * (r2 - r[0]*r[0]);
+        inertia[1][1] += m * (r2 - r[1]*r[1]);
+        inertia[2][2] += m * (r2 - r[2]*r[2]);
+        inertia[0][1] -= m * r[0] * r[1];
+        inertia[1][0] -= m * r[0] * r[1];
+        inertia[0][2] -= m * r[0] * r[2];
+        inertia[2][0] -= m * r[0] * r[2];
+        inertia[1][2] -= m * r[1] * r[2];
+        inertia[2][1] -= m * r[1] * r[2];
+    }
+    float inertia_inv[3][3];
+    std::array<float,3> alpha{{0.f, 0.f, 0.f}};
+    if(invert_3x3(inertia, inertia_inv)) {
+        alpha = mat3_mul_vec(inertia_inv, torque);
+    }
+    std::array<float,3> acom{
+        total_force[0] / total_mass,
+        total_force[1] / total_mass,
+        total_force[2] / total_mass,
+    };
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        float m = group.masses[i];
+        if(!(m > 0.f)) m = 1.f;
+        std::array<float,3> r = current_rel[i];
+        auto alpha_x_r = cross3(alpha, r);
+        deriv(0, atom) = -m * (acom[0] + alpha_x_r[0]);
+        deriv(1, atom) = -m * (acom[1] + alpha_x_r[1]);
+        deriv(2, atom) = -m * (acom[2] + alpha_x_r[2]);
+    }
+}
+
+static void project_rigid_group_geometry(
+        DerivEngine& engine,
+        RigidBodyGroup& group,
+        VecArray pos) {
+    if(group.atom_indices.size() < 2) return;
+    initialize_rigid_group_if_needed(engine, group, pos);
+    if(!group.initialized) return;
+
+    float total_mass = 0.f;
+    std::array<float,3> com{{0.f, 0.f, 0.f}};
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        float m = group.masses[i];
+        if(!(m > 0.f)) m = 1.f;
+        total_mass += m;
+        com[0] += m * pos(0, atom);
+        com[1] += m * pos(1, atom);
+        com[2] += m * pos(2, atom);
+    }
+    if(!(total_mass > 0.f)) return;
+    com[0] /= total_mass;
+    com[1] /= total_mass;
+    com[2] /= total_mass;
+
+    std::vector<std::array<float,3>> current_rel(group.atom_indices.size(), std::array<float,3>{{0.f,0.f,0.f}});
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        current_rel[i][0] = pos(0, atom) - com[0];
+        current_rel[i][1] = pos(1, atom) - com[1];
+        current_rel[i][2] = pos(2, atom) - com[2];
+    }
+
+    float Rfit[3][3];
+    bool have_rotation = best_fit_rotation_from_reference(group.reference_rel, current_rel, group.masses, Rfit);
+    if(!have_rotation) return;
+    for(size_t i = 0; i < group.atom_indices.size(); ++i) {
+        int atom = group.atom_indices[i];
+        if(atom < 0 || atom >= engine.pos->n_atom) continue;
+        auto rfit = apply_rot3(Rfit, group.reference_rel[i]);
+        pos(0, atom) = com[0] + rfit[0];
+        pos(1, atom) = com[1] + rfit[1];
+        pos(2, atom) = com[2] + rfit[2];
+    }
+}
+
 // Read fix rigid settings from H5 configuration
 std::vector<int> read_fix_rigid_settings(hid_t root) {
     std::vector<int> fixed_atoms;
@@ -123,8 +593,16 @@ std::vector<int> read_martini_backbone_hold(hid_t root, const std::string& atom_
 // Register fix rigid constraints for an engine
 void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    auto& masses = g_atom_masses[&engine];
+    masses.assign(std::max(0, engine.pos->n_atom), 1.f);
+    if(h5_exists(config_root, "/input/mass")) {
+        traverse_dset<1,float>(config_root, "/input/mass", [&](size_t i, float m) {
+            if(i < masses.size() && m > 0.f) masses[i] = m;
+        });
+    }
     auto fixed_atoms = read_fix_rigid_settings(config_root);
     merge_fixed_atoms(engine, fixed_atoms);
+    rebuild_rigid_groups(engine);
 }
 
 void register_fix_rigid_backbone_for_engine(hid_t config_root, DerivEngine& engine, const std::string& atom_name) {
@@ -166,9 +644,54 @@ void clear_dynamic_z_fixed_atoms(DerivEngine& engine) {
     rebuild_fixed_atoms(engine);
 }
 
+static void rebuild_rigid_groups(DerivEngine& engine) {
+    auto it = g_dynamic_rigid_groups.find(&engine);
+    if(it == g_dynamic_rigid_groups.end()) {
+        g_rigid_groups.erase(&engine);
+        return;
+    }
+    const auto mit = g_atom_masses.find(&engine);
+    const std::vector<float> empty_masses;
+    const auto& masses = (mit != g_atom_masses.end()) ? mit->second : empty_masses;
+    std::vector<RigidBodyGroup> groups;
+    for(const auto& raw_group : it->second) {
+        std::vector<int> atoms = raw_group;
+        normalize_atom_list(atoms);
+        if(atoms.size() < 2) continue;
+        RigidBodyGroup grp;
+        grp.atom_indices = atoms;
+        grp.masses.resize(atoms.size(), 1.f);
+        for(size_t i = 0; i < atoms.size(); ++i) {
+            int atom = atoms[i];
+            if(atom >= 0 && atom < static_cast<int>(masses.size()) && masses[atom] > 0.f) {
+                grp.masses[i] = masses[atom];
+            }
+        }
+        groups.push_back(std::move(grp));
+    }
+    if(groups.empty()) g_rigid_groups.erase(&engine);
+    else g_rigid_groups[&engine] = std::move(groups);
+}
+
+void set_dynamic_rigid_groups(DerivEngine& engine, const std::vector<std::vector<int>>& groups) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    if(groups.empty()) {
+        g_dynamic_rigid_groups.erase(&engine);
+        g_rigid_groups.erase(&engine);
+        return;
+    }
+    g_dynamic_rigid_groups[&engine] = groups;
+    rebuild_rigid_groups(engine);
+}
+
+void clear_dynamic_rigid_groups(DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    g_dynamic_rigid_groups.erase(&engine);
+    g_rigid_groups.erase(&engine);
+}
+
 // Apply fix rigid constraints during minimization
 void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv) {
-    (void)pos;
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
     auto it = g_fixed_atoms.find(&engine);
     if(it != g_fixed_atoms.end()) {
@@ -191,11 +714,25 @@ void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray de
             }
         }
     }
+    auto rit = g_rigid_groups.find(&engine);
+    if(rit != g_rigid_groups.end()) {
+        for(auto& group : rit->second) {
+            apply_rigid_group_minimization(engine, group, pos, deriv);
+        }
+    }
+}
+
+void apply_fix_rigid_projection(DerivEngine& engine, VecArray pos) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    auto rit = g_rigid_groups.find(&engine);
+    if(rit == g_rigid_groups.end()) return;
+    for(auto& group : rit->second) {
+        project_rigid_group_geometry(engine, group, pos);
+    }
 }
 
 // Apply fix rigid constraints during MD (zero forces and velocities)
 void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom) {
-    (void)pos;
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
     auto it = g_fixed_atoms.find(&engine);
     if(it != g_fixed_atoms.end()) {
@@ -226,6 +763,12 @@ void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecAr
                     mom(2, atom_idx) = 0.0f;
                 }
             }
+        }
+    }
+    auto rit = g_rigid_groups.find(&engine);
+    if(rit != g_rigid_groups.end()) {
+        for(auto& group : rit->second) {
+            apply_rigid_group_constraints(engine, group, pos, deriv, mom);
         }
     }
 }
@@ -281,7 +824,7 @@ struct HybridRuntimeState {
     bool exclude_intra_protein_martini = true;
     bool preprod_rigid = true;
     std::string activation_stage = "production";
-    std::string preprod_mode = "rigid";
+    std::string preprod_mode = "rigid_body";
     float protein_env_interface_scale = 1.0f;
     size_t n_bb = 0;
     size_t n_env = 0;
@@ -328,7 +871,10 @@ static std::vector<int> active_protein_proxy_fixed_atoms(const HybridRuntimeStat
         if(st.protein_membership[atom_idx] < 0) continue;
         if(atom_idx >= st.atom_role_class.size()) continue;
         auto role = st.atom_role_class[atom_idx];
-        if(role == ROLE_BB || role == ROLE_SC) {
+        bool is_backbone_carrier =
+            atom_idx < st.atom_backbone_carrier_mask.size() &&
+            st.atom_backbone_carrier_mask[atom_idx] != 0u;
+        if((role == ROLE_BB || role == ROLE_SC) && !is_backbone_carrier) {
             atoms.push_back(static_cast<int>(atom_idx));
         }
     }
@@ -355,14 +901,183 @@ static inline void project_bb_proxy_gradient_if_active(
         const Vec<3>& grad) {
     int map_idx = bb_map_index_for_proxy(st, bb_proxy_atom);
     if(map_idx < 0 || map_idx >= static_cast<int>(st.n_bb)) return;
+    bool site_is_carrier =
+        bb_proxy_atom >= 0 &&
+        bb_proxy_atom < static_cast<int>(st.atom_backbone_carrier_mask.size()) &&
+        st.atom_backbone_carrier_mask[static_cast<size_t>(bb_proxy_atom)] != 0u;
 
     for(int d = 0; d < 4; ++d) {
         if(st.atom_mask[static_cast<size_t>(map_idx)][d] == 0) continue;
         int atom_idx = st.atom_indices[static_cast<size_t>(map_idx)][d];
         float w = st.weights[static_cast<size_t>(map_idx)][d];
         if(atom_idx < 0 || atom_idx >= n_atom || w == 0.f) continue;
-        if(atom_idx == bb_proxy_atom) continue;
+        if(!site_is_carrier && atom_idx == bb_proxy_atom) continue;
         update_vec<3>(pos_sens, atom_idx, w * grad);
+    }
+}
+
+static inline bool mapped_bb_site_position_if_active(
+        const HybridRuntimeState& st,
+        VecArray pos,
+        int n_atom,
+        int bb_site_atom,
+        Vec<3>& site_pos) {
+    int map_idx = bb_map_index_for_proxy(st, bb_site_atom);
+    if(map_idx < 0 || map_idx >= static_cast<int>(st.n_bb)) return false;
+    Vec<3> com = make_zero<3>();
+    float wsum = 0.f;
+    for(int d = 0; d < 4; ++d) {
+        if(st.atom_mask[static_cast<size_t>(map_idx)][d] == 0) continue;
+        int atom_idx = st.atom_indices[static_cast<size_t>(map_idx)][d];
+        float w = st.weights[static_cast<size_t>(map_idx)][d];
+        if(atom_idx < 0 || atom_idx >= n_atom || w == 0.f) continue;
+        com += w * load_vec<3>(pos, atom_idx);
+        wsum += w;
+    }
+    if(!(wsum > 0.f)) return false;
+    if(fabsf(wsum - 1.f) > 1e-6f) com *= (1.f / wsum);
+    site_pos = com;
+    return true;
+}
+
+static void refresh_backbone_o_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom);
+
+static inline void refresh_bb_positions_if_active(
+        const HybridRuntimeState& st,
+        VecArray pos,
+        int n_atom) {
+    if(!st.enabled || !st.active) return;
+    refresh_backbone_o_positions_if_active(st, pos, n_atom);
+    for(size_t k = 0; k < st.n_bb; ++k) {
+        int bb = st.bb_atom_index[k];
+        if(bb < 0 || bb >= n_atom) continue;
+        Vec<3> com = make_zero<3>();
+        float wsum = 0.f;
+        for(int d = 0; d < 4; ++d) {
+            if(st.atom_mask[k][d] == 0) continue;
+            int ai = st.atom_indices[k][d];
+            float w = st.weights[k][d];
+            if(ai < 0 || ai >= n_atom || w == 0.f) continue;
+            if(ai == bb) continue;
+            com += w * load_vec<3>(pos, ai);
+            wsum += w;
+        }
+        if(wsum > 0.f) {
+            if(fabsf(wsum - 1.f) > 1e-6f) com *= (1.f / wsum);
+            store_vec<3>(pos, bb, com);
+        }
+    }
+}
+
+static inline std::array<float,3> apply_rot(const float R[3][3], const std::array<float,3>& v) {
+    return std::array<float,3>{
+        R[0][0] * v[0] + R[0][1] * v[1] + R[0][2] * v[2],
+        R[1][0] * v[0] + R[1][1] * v[1] + R[1][2] * v[2],
+        R[2][0] * v[0] + R[2][1] * v[1] + R[2][2] * v[2]
+    };
+}
+
+static inline std::array<float,3> vec_sub(const std::array<float,3>& a, const std::array<float,3>& b) {
+    return std::array<float,3>{a[0]-b[0], a[1]-b[1], a[2]-b[2]};
+}
+
+static inline std::array<float,3> vec_add(const std::array<float,3>& a, const std::array<float,3>& b) {
+    return std::array<float,3>{a[0]+b[0], a[1]+b[1], a[2]+b[2]};
+}
+
+static inline std::array<float,3> vec_scale(const std::array<float,3>& a, float s) {
+    return std::array<float,3>{a[0]*s, a[1]*s, a[2]*s};
+}
+
+static inline float vec_dot(const std::array<float,3>& a, const std::array<float,3>& b) {
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+}
+
+static inline std::array<float,3> vec_cross(const std::array<float,3>& a, const std::array<float,3>& b) {
+    return std::array<float,3>{
+        a[1]*b[2] - a[2]*b[1],
+        a[2]*b[0] - a[0]*b[2],
+        a[0]*b[1] - a[1]*b[0]
+    };
+}
+
+static inline float vec_norm(const std::array<float,3>& a) {
+    return sqrtf(vec_dot(a, a));
+}
+
+static inline std::array<float,3> vec_normalize(const std::array<float,3>& a) {
+    float n = vec_norm(a);
+    if(n <= 1e-8f) return std::array<float,3>{0.f,0.f,0.f};
+    return vec_scale(a, 1.f/n);
+}
+
+static inline bool build_frame_from_three(
+        const std::array<float,3>& p0,
+        const std::array<float,3>& p1,
+        const std::array<float,3>& p2,
+        float F[3][3]) {
+    auto e1 = vec_normalize(vec_sub(p1, p0));
+    auto v2 = vec_sub(p2, p0);
+    auto e3 = vec_cross(e1, v2);
+    float n3 = vec_norm(e3);
+    if(n3 <= 1e-8f) return false;
+    e3 = vec_scale(e3, 1.f/n3);
+    auto e2 = vec_cross(e3, e1);
+
+    // Columns are basis vectors.
+    F[0][0] = e1[0]; F[1][0] = e1[1]; F[2][0] = e1[2];
+    F[0][1] = e2[0]; F[1][1] = e2[1]; F[2][1] = e2[2];
+    F[0][2] = e3[0]; F[1][2] = e3[1]; F[2][2] = e3[2];
+    return true;
+}
+
+static inline void mat_mul(const float A[3][3], const float B[3][3], float C[3][3]) {
+    for(int i=0;i<3;++i) for(int j=0;j<3;++j) {
+        C[i][j] = 0.f;
+        for(int k=0;k<3;++k) C[i][j] += A[i][k]*B[k][j];
+    }
+}
+
+static inline void mat_transpose(const float A[3][3], float AT[3][3]) {
+    for(int i=0;i<3;++i) for(int j=0;j<3;++j) AT[i][j] = A[j][i];
+}
+
+static void refresh_backbone_o_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom) {
+    if(!st.enabled || !st.active) return;
+    if(st.bb_reference_atom_coords.size() != st.n_bb) return;
+    if(st.bb_reference_runtime_atom_indices.size() != st.n_bb) return;
+
+    for(size_t k = 0; k < st.n_bb; ++k) {
+        const auto& atom_idx = st.bb_reference_runtime_atom_indices[k];
+        const int n_idx = atom_idx[0];
+        const int ca_idx = atom_idx[1];
+        const int c_idx = atom_idx[2];
+        const int o_idx = atom_idx[3];
+        if(n_idx < 0 || n_idx >= n_atom ||
+           ca_idx < 0 || ca_idx >= n_atom ||
+           c_idx < 0 || c_idx >= n_atom ||
+           o_idx < 0 || o_idx >= n_atom) {
+            continue;
+        }
+
+        const auto& ref = st.bb_reference_atom_coords[k];
+        float F_ref[3][3], F_cur[3][3], F_ref_T[3][3], R[3][3];
+        if(!build_frame_from_three(ref[0], ref[1], ref[2], F_ref)) continue;
+
+        auto cur_n = load_vec<3>(pos, n_idx);
+        auto cur_ca = load_vec<3>(pos, ca_idx);
+        auto cur_c = load_vec<3>(pos, c_idx);
+        auto cur_n_arr = std::array<float,3>{cur_n[0], cur_n[1], cur_n[2]};
+        auto cur_ca_arr = std::array<float,3>{cur_ca[0], cur_ca[1], cur_ca[2]};
+        auto cur_c_arr = std::array<float,3>{cur_c[0], cur_c[1], cur_c[2]};
+        if(!build_frame_from_three(cur_n_arr, cur_ca_arr, cur_c_arr, F_cur)) continue;
+
+        mat_transpose(F_ref, F_ref_T);
+        mat_mul(F_cur, F_ref_T, R);
+
+        auto ref_local_o = vec_sub(ref[3], ref[1]);
+        auto mapped_o = vec_add(apply_rot(R, ref_local_o), cur_ca_arr);
+        store_vec<3>(pos, o_idx, make_vec3(mapped_o[0], mapped_o[1], mapped_o[2]));
     }
 }
 static std::string trim_h5_string(const std::string& in);
@@ -625,7 +1340,7 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.preprod_mode = read_string_attribute_or_default(ctrl.get(), "preprod_protein_mode", "rigid");
     out.exclude_intra_protein_martini =
         (read_attribute<int>(ctrl.get(), ".", "exclude_intra_protein_martini", 1) != 0);
-    out.preprod_rigid = (out.preprod_mode == "rigid");
+    out.preprod_rigid = (out.preprod_mode == "rigid" || out.preprod_mode == "rigid_body");
     out.protein_env_interface_scale =
         read_attribute<float>(ctrl.get(), ".", "protein_env_interface_scale", out.protein_env_interface_scale);
     out.sc_env_lj_force_cap = read_attribute<float>(ctrl.get(), ".", "sc_env_lj_force_cap", out.sc_env_lj_force_cap);
@@ -896,6 +1611,22 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             if(bb >= 0 && bb < n_atom) {
                 out.bb_proxy_to_map_index[static_cast<size_t>(bb)] = static_cast<int>(k);
             }
+            if(ca >= 0 && ca < n_atom) {
+                if(out.bb_proxy_to_ca_atom[static_cast<size_t>(ca)] < 0) {
+                    out.bb_proxy_to_ca_atom[static_cast<size_t>(ca)] = ca;
+                }
+                if(out.bb_proxy_to_map_index[static_cast<size_t>(ca)] < 0) {
+                    out.bb_proxy_to_map_index[static_cast<size_t>(ca)] = static_cast<int>(k);
+                }
+            }
+            for(int d = 0; d < 4; ++d) {
+                if(out.atom_mask[k][d] == 0) continue;
+                int ai = out.atom_indices[k][d];
+                if(ai < 0 || ai >= n_atom) continue;
+                if(out.bb_proxy_to_map_index[static_cast<size_t>(ai)] < 0) {
+                    out.bb_proxy_to_map_index[static_cast<size_t>(ai)] = static_cast<int>(k);
+                }
+            }
         }
 
     }
@@ -920,6 +1651,7 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->sc_env_transition_step = 0;
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
+        martini_fix_rigid::clear_dynamic_rigid_groups(*engine);
         return;
     }
     st->active = (stage == st->activation_stage);
@@ -931,10 +1663,13 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->bb_env_interface_potential = 0.f;
         st->sc_env_transition_step = st->sc_env_transition_step_start;
     }
-    if(st->preprod_rigid && !st->active) {
-        martini_fix_rigid::set_dynamic_fixed_atoms(*engine, st->preprod_fixed_atom_indices);
+    bool enforce_preprod_rigid = st->preprod_rigid && (stage != "production");
+    if(enforce_preprod_rigid) {
+        martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
+        martini_fix_rigid::set_dynamic_rigid_groups(*engine, {st->preprod_fixed_atom_indices});
         martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->preprod_z_fixed_atom_indices);
     } else {
+        martini_fix_rigid::clear_dynamic_rigid_groups(*engine);
         martini_fix_rigid::set_dynamic_fixed_atoms(*engine, active_protein_proxy_fixed_atoms(*st));
         if(active_sc_env_po4_z_hold_enabled(*st)) {
             martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->sc_env_po4_z_hold_atom_indices);
@@ -954,10 +1689,13 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     g_hybrid_state[&engine] = st;
     g_hybrid_state_by_coord[static_cast<const CoordNode*>(engine.pos)] = st;
-    if(st->enabled && st->preprod_rigid && !st->active) {
-        martini_fix_rigid::set_dynamic_fixed_atoms(engine, st->preprod_fixed_atom_indices);
+    bool enforce_preprod_rigid = st->enabled && st->preprod_rigid && (current_stage != "production");
+    if(enforce_preprod_rigid) {
+        martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
+        martini_fix_rigid::set_dynamic_rigid_groups(engine, {st->preprod_fixed_atom_indices});
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
     } else {
+        martini_fix_rigid::clear_dynamic_rigid_groups(engine);
         martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_protein_proxy_fixed_atoms(*st));
         if(active_sc_env_po4_z_hold_enabled(*st)) {
             martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->sc_env_po4_z_hold_atom_indices);
@@ -972,11 +1710,15 @@ void refresh_transition_holds_for_engine(DerivEngine& engine) {
     auto it = g_hybrid_state.find(&engine);
     if(it == g_hybrid_state.end() || !it->second) return;
     auto st = it->second;
-    if(st->preprod_rigid && !st->active) {
-        martini_fix_rigid::set_dynamic_fixed_atoms(engine, st->preprod_fixed_atom_indices);
+    std::string current_stage = martini_stage_params::get_current_stage(&engine);
+    bool enforce_preprod_rigid = st->preprod_rigid && (current_stage != "production");
+    if(enforce_preprod_rigid) {
+        martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
+        martini_fix_rigid::set_dynamic_rigid_groups(engine, {st->preprod_fixed_atom_indices});
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
         return;
     }
+    martini_fix_rigid::clear_dynamic_rigid_groups(engine);
     martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_protein_proxy_fixed_atoms(*st));
     if(st->enabled && st->active &&
        st->sc_env_transition_step < std::numeric_limits<uint64_t>::max()) {
@@ -1040,145 +1782,6 @@ std::shared_ptr<const HybridRuntimeState> get_state_for_coord(const CoordNode& c
     return it->second;
 }
 
-static void refresh_backbone_o_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom);
-
-void refresh_bb_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom) {
-    if(!st.enabled || !st.active) return;
-    refresh_backbone_o_positions_if_active(st, pos, n_atom);
-    for(size_t k = 0; k < st.n_bb; ++k) {
-        int bb = st.bb_atom_index[k];
-        if(bb < 0 || bb >= n_atom) continue;
-
-        Vec<3> com = make_zero<3>();
-        float wsum = 0.f;
-        for(int d = 0; d < 4; ++d) {
-            if(st.atom_mask[k][d] == 0) continue;
-            int ai = st.atom_indices[k][d];
-            float w = st.weights[k][d];
-            if(ai < 0 || ai >= n_atom || w == 0.f) continue;
-            if(ai == bb) continue;
-            com += w * load_vec<3>(pos, ai);
-            wsum += w;
-        }
-        if(wsum > 0.f) {
-            if(fabsf(wsum - 1.0f) > 1e-6f) com *= (1.0f / wsum);
-            store_vec<3>(pos, bb, com);
-        }
-    }
-}
-
-static inline std::array<float,3> apply_rot(const float R[3][3], const std::array<float,3>& v) {
-    return std::array<float,3>{
-        R[0][0] * v[0] + R[0][1] * v[1] + R[0][2] * v[2],
-        R[1][0] * v[0] + R[1][1] * v[1] + R[1][2] * v[2],
-        R[2][0] * v[0] + R[2][1] * v[1] + R[2][2] * v[2]
-    };
-}
-
-static inline std::array<float,3> vec_sub(const std::array<float,3>& a, const std::array<float,3>& b) {
-    return std::array<float,3>{a[0]-b[0], a[1]-b[1], a[2]-b[2]};
-}
-
-static inline std::array<float,3> vec_add(const std::array<float,3>& a, const std::array<float,3>& b) {
-    return std::array<float,3>{a[0]+b[0], a[1]+b[1], a[2]+b[2]};
-}
-
-static inline std::array<float,3> vec_scale(const std::array<float,3>& a, float s) {
-    return std::array<float,3>{a[0]*s, a[1]*s, a[2]*s};
-}
-
-static inline float vec_dot(const std::array<float,3>& a, const std::array<float,3>& b) {
-    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
-}
-
-static inline std::array<float,3> vec_cross(const std::array<float,3>& a, const std::array<float,3>& b) {
-    return std::array<float,3>{
-        a[1]*b[2] - a[2]*b[1],
-        a[2]*b[0] - a[0]*b[2],
-        a[0]*b[1] - a[1]*b[0]
-    };
-}
-
-static inline float vec_norm(const std::array<float,3>& a) {
-    return sqrtf(vec_dot(a, a));
-}
-
-static inline std::array<float,3> vec_normalize(const std::array<float,3>& a) {
-    float n = vec_norm(a);
-    if(n <= 1e-8f) return std::array<float,3>{0.f,0.f,0.f};
-    return vec_scale(a, 1.f/n);
-}
-
-static inline bool build_frame_from_three(
-        const std::array<float,3>& p0,
-        const std::array<float,3>& p1,
-        const std::array<float,3>& p2,
-        float F[3][3]) {
-    auto e1 = vec_normalize(vec_sub(p1, p0));
-    auto v2 = vec_sub(p2, p0);
-    auto e3 = vec_cross(e1, v2);
-    float n3 = vec_norm(e3);
-    if(n3 <= 1e-8f) return false;
-    e3 = vec_scale(e3, 1.f/n3);
-    auto e2 = vec_cross(e3, e1);
-
-    // Columns are basis vectors.
-    F[0][0] = e1[0]; F[1][0] = e1[1]; F[2][0] = e1[2];
-    F[0][1] = e2[0]; F[1][1] = e2[1]; F[2][1] = e2[2];
-    F[0][2] = e3[0]; F[1][2] = e3[1]; F[2][2] = e3[2];
-    return true;
-}
-
-static inline void mat_mul(const float A[3][3], const float B[3][3], float C[3][3]) {
-    for(int i=0;i<3;++i) for(int j=0;j<3;++j) {
-        C[i][j] = 0.f;
-        for(int k=0;k<3;++k) C[i][j] += A[i][k]*B[k][j];
-    }
-}
-
-static inline void mat_transpose(const float A[3][3], float AT[3][3]) {
-    for(int i=0;i<3;++i) for(int j=0;j<3;++j) AT[i][j] = A[j][i];
-}
-
-static void refresh_backbone_o_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom) {
-    if(!st.enabled || !st.active) return;
-    if(st.bb_reference_atom_coords.size() != st.n_bb) return;
-    if(st.bb_reference_runtime_atom_indices.size() != st.n_bb) return;
-
-    for(size_t k = 0; k < st.n_bb; ++k) {
-        const auto& atom_idx = st.bb_reference_runtime_atom_indices[k];
-        const int n_idx = atom_idx[0];
-        const int ca_idx = atom_idx[1];
-        const int c_idx = atom_idx[2];
-        const int o_idx = atom_idx[3];
-        if(n_idx < 0 || n_idx >= n_atom ||
-           ca_idx < 0 || ca_idx >= n_atom ||
-           c_idx < 0 || c_idx >= n_atom ||
-           o_idx < 0 || o_idx >= n_atom) {
-            continue;
-        }
-
-        const auto& ref = st.bb_reference_atom_coords[k];
-        float F_ref[3][3], F_cur[3][3], F_ref_T[3][3], R[3][3];
-        if(!build_frame_from_three(ref[0], ref[1], ref[2], F_ref)) continue;
-
-        auto cur_n = load_vec<3>(pos, n_idx);
-        auto cur_ca = load_vec<3>(pos, ca_idx);
-        auto cur_c = load_vec<3>(pos, c_idx);
-        auto cur_n_arr = std::array<float,3>{cur_n[0], cur_n[1], cur_n[2]};
-        auto cur_ca_arr = std::array<float,3>{cur_ca[0], cur_ca[1], cur_ca[2]};
-        auto cur_c_arr = std::array<float,3>{cur_c[0], cur_c[1], cur_c[2]};
-        if(!build_frame_from_three(cur_n_arr, cur_ca_arr, cur_c_arr, F_cur)) continue;
-
-        mat_transpose(F_ref, F_ref_T);
-        mat_mul(F_cur, F_ref_T, R);
-
-        auto ref_local_o = vec_sub(ref[3], ref[1]);
-        auto mapped_o = vec_add(apply_rot(R, ref_local_o), cur_ca_arr);
-        store_vec<3>(pos, o_idx, make_vec3(mapped_o[0], mapped_o[1], mapped_o[2]));
-    }
-}
-
 inline bool skip_pair_if_intra_protein(const HybridRuntimeState& st, int i, int j) {
     if(!st.enabled || !st.active || !st.exclude_intra_protein_martini) return false;
     return !allow_intra_protein_pair_if_active(st, i, j);
@@ -1189,6 +1792,7 @@ void clear_hybrid_for_engine(DerivEngine* engine) {
     if(engine) {
         martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
+        martini_fix_rigid::clear_dynamic_rigid_groups(*engine);
     }
     if(engine && engine->pos) {
         g_hybrid_state_by_coord.erase(static_cast<const CoordNode*>(engine->pos));
@@ -1987,6 +2591,9 @@ struct MartiniPotential : public PotentialNode
 
             float cap_mix = std::max(0.f, std::min(capped_to_regular_mix, 1.f));
 
+            if(dist < lj_cutoff && param.eps != 0.f && param.sig != 0.f && !param.lj_spline) {
+                throw string("MARTINI LJ spline missing for nonzero epsilon/sigma pair");
+            }
             if(param.lj_spline && dist < lj_cutoff) {
                 float r_coord = (dist - lj_r_min) / (lj_r_max - lj_r_min) * 999.0f;
                 float lj_result[2];
@@ -2016,21 +2623,18 @@ struct MartiniPotential : public PotentialNode
             if(param.qq != 0.f && dist < coul_cutoff) {
                 float coul_pot = 0.0f;
                 float coul_force_mag = 0.0f;
-
-                if(param.coul_spline && dist >= coul_r_min && dist <= coul_r_max) {
-                    float r_coord = (dist - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
-                    float coul_result[2];
-                    param.coul_spline->evaluate_value_and_deriv(coul_result, 0, r_coord);
-                    coul_pot = coul_result[1];
-                    float coul_deriv_spline = coul_result[0];
-                    float coord_scale = 999.0f / (coul_r_max - coul_r_min);
-                    float dE_dr = coul_deriv_spline * coord_scale;
-                    coul_force_mag = -dE_dr;
-                } else {
-                    coul_pot = coulomb_k * param.qq / dist;
-                    float dV_dr = -coulomb_k * param.qq / (dist * dist);
-                    coul_force_mag = -dV_dr;
+                if(!param.coul_spline) {
+                    throw string("MARTINI Coulomb spline missing for nonzero charge product");
                 }
+                float eval_r = std::max(coul_r_min, std::min(dist, coul_r_max));
+                float r_coord = (eval_r - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
+                float coul_result[2];
+                param.coul_spline->evaluate_value_and_deriv(coul_result, 0, r_coord);
+                coul_pot = coul_result[1];
+                float coul_deriv_spline = coul_result[0];
+                float coord_scale = 999.0f / (coul_r_max - coul_r_min);
+                float dE_dr = coul_deriv_spline * coord_scale;
+                coul_force_mag = -dE_dr;
 
                 if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag)) {
                     Vec<3> coul_force_uncapped = (coul_force_mag/dist) * dr;
@@ -2081,6 +2685,21 @@ struct MartiniPotential : public PotentialNode
             auto j_role = hybrid_state
                               ? martini_hybrid::atom_role_class_at(*hybrid_state, j)
                               : martini_hybrid::ROLE_OTHER;
+            if(hybrid_state && hybrid_state->enabled && hybrid_state->active) {
+                bool i_carrier_env_pair =
+                    i_is_protein &&
+                    !j_is_protein &&
+                    martini_hybrid::atom_is_backbone_carrier_at(*hybrid_state, i) &&
+                    martini_hybrid::bb_map_index_for_proxy(*hybrid_state, i) >= 0;
+                bool j_carrier_env_pair =
+                    j_is_protein &&
+                    !i_is_protein &&
+                    martini_hybrid::atom_is_backbone_carrier_at(*hybrid_state, j) &&
+                    martini_hybrid::bb_map_index_for_proxy(*hybrid_state, j) >= 0;
+                if(i_carrier_env_pair || j_carrier_env_pair) {
+                    continue;
+                }
+            }
             if(active_hybrid_startup &&
                ((i_is_protein && i_role == martini_hybrid::ROLE_SC) ||
                 (j_is_protein && j_role == martini_hybrid::ROLE_SC))) {
@@ -2124,14 +2743,22 @@ struct MartiniPotential : public PotentialNode
             if(active_hybrid_startup && j_is_protein && j_role == martini_hybrid::ROLE_BB) {
                 gj *= sc_backbone_feedback_mix;
             }
-            if(active_hybrid_startup && i_is_protein && i_role == martini_hybrid::ROLE_BB) {
+            bool i_projected = false;
+            bool j_projected = false;
+            if(hybrid_state && i_is_protein && i_role == martini_hybrid::ROLE_BB &&
+               martini_hybrid::bb_map_index_for_proxy(*hybrid_state, i) >= 0) {
                 martini_hybrid::project_bb_proxy_gradient_if_active(*hybrid_state, pos1_sens, n_atom, i, gi);
-            } else {
+                i_projected = true;
+            }
+            if(hybrid_state && j_is_protein && j_role == martini_hybrid::ROLE_BB &&
+               martini_hybrid::bb_map_index_for_proxy(*hybrid_state, j) >= 0) {
+                martini_hybrid::project_bb_proxy_gradient_if_active(*hybrid_state, pos1_sens, n_atom, j, gj);
+                j_projected = true;
+            }
+            if(!i_projected) {
                 update_vec<3>(pos1_sens, i, gi);
             }
-            if(active_hybrid_startup && j_is_protein && j_role == martini_hybrid::ROLE_BB) {
-                martini_hybrid::project_bb_proxy_gradient_if_active(*hybrid_state, pos1_sens, n_atom, j, gj);
-            } else {
+            if(!j_projected) {
                 update_vec<3>(pos1_sens, j, gj);
             }
         }
@@ -3534,7 +4161,9 @@ void martini_run_minimization(DerivEngine& engine,
                                           double initial_step_size,
                                           int verbose)
 {
+    martini_fix_rigid::apply_fix_rigid_projection(engine, engine.pos->output);
     engine.compute(PotentialAndDerivMode);
+    martini_fix_rigid::apply_fix_rigid_minimization(engine, engine.pos->output, engine.pos->sens);
     double prev_potential = engine.potential;
     if(verbose) printf("MIN: Initial potential %.6f\n", prev_potential);
 
@@ -3591,7 +4220,9 @@ void martini_run_minimization(DerivEngine& engine,
                 );
                 store_vec<3>(position, i, p);
             }
+            martini_fix_rigid::apply_fix_rigid_projection(engine, position);
             engine.compute(PotentialAndDerivMode);
+            martini_fix_rigid::apply_fix_rigid_minimization(engine, position, engine.pos->sens);
             if(engine.potential <= best_pot){
                 best_pot = engine.potential;
                 accepted = true;
@@ -3623,6 +4254,10 @@ void martini_run_minimization(DerivEngine& engine,
         step = std::min(2.0*alpha, step*1.5);
         ++iter;
     }
+    martini_fix_rigid::apply_fix_rigid_projection(engine, position);
+    engine.compute(PotentialAndDerivMode);
+    martini_fix_rigid::apply_fix_rigid_minimization(engine, position, engine.pos->sens);
+    prev_potential = engine.potential;
     if(verbose) printf("MIN: Final potential %.6f after %d iterations\n", prev_potential, iter);
 }
 

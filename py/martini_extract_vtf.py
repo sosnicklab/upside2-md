@@ -290,10 +290,15 @@ def build_backbone_projection_map(struct_h5, input_pos):
     if "bb_atom_index" not in bb or "bb_residue_index" not in bb or "reference_atom_coords" not in bb:
         return None
 
-    bb_atom_index = np.asarray(bb["bb_atom_index"][:], dtype=int)
+    bb_atom_index_raw = np.asarray(bb["bb_atom_index"][:], dtype=int)
     bb_residue_index = np.asarray(bb["bb_residue_index"][:], dtype=int)
     ref_coords = np.asarray(bb["reference_atom_coords"][:], dtype=np.float32)
     if ref_coords.ndim != 3 or ref_coords.shape[1:] != (4, 3):
+        return None
+    if bb_atom_index_raw.ndim != 1:
+        return None
+    n_bb = bb_atom_index_raw.shape[0]
+    if bb_residue_index.shape[0] != n_bb or ref_coords.shape[0] != n_bb:
         return None
 
     if "reference_atom_names" in bb:
@@ -303,16 +308,35 @@ def build_backbone_projection_map(struct_h5, input_pos):
     if "bb_chain_id" in bb:
         bb_chain_ids = decode_str_array(bb["bb_chain_id"])
     else:
-        bb_chain_ids = np.array(["A"] * bb_atom_index.shape[0], dtype=object)
+        bb_chain_ids = np.array(["A"] * n_bb, dtype=object)
+    bb_chain_ids = np.asarray(bb_chain_ids, dtype=object)
+    if bb_chain_ids.shape[0] != n_bb:
+        bb_chain_ids = np.array(["A"] * n_bb, dtype=object)
 
     n_particles = input_pos.shape[0]
-    valid = (bb_atom_index >= 0) & (bb_atom_index < n_particles)
+    valid_proxy = (bb_atom_index_raw >= 0) & (bb_atom_index_raw < n_particles)
+
+    atom_indices_full = None
+    valid_carrier = np.zeros(n_bb, dtype=bool)
+    if "atom_indices" in bb:
+        atom_indices_candidate = np.asarray(bb["atom_indices"][:], dtype=int)
+        if atom_indices_candidate.ndim == 2 and atom_indices_candidate.shape == (n_bb, 4):
+            atom_indices_full = atom_indices_candidate
+            valid_carrier = np.all((atom_indices_full >= 0) & (atom_indices_full < n_particles), axis=1)
+
+    valid = valid_proxy | valid_carrier
+    if not np.any(valid):
+        return None
+
+    if atom_indices_full is not None:
+        fallback_ca = atom_indices_full[:, 1]
+    else:
+        fallback_ca = np.full(n_bb, -1, dtype=int)
+    bb_atom_index = np.where(valid_proxy, bb_atom_index_raw, fallback_ca)
     bb_atom_index = bb_atom_index[valid]
     bb_residue_index = bb_residue_index[valid]
     ref_coords = ref_coords[valid]
-    bb_chain_ids = np.asarray(bb_chain_ids, dtype=object)[valid]
-    if bb_atom_index.size == 0:
-        return None
+    bb_chain_ids = bb_chain_ids[valid]
 
     bb_residue_names = np.array(["UNK"] * bb_residue_index.shape[0], dtype=object)
     if "input/sequence" in struct_h5:
@@ -334,7 +358,7 @@ def build_backbone_projection_map(struct_h5, input_pos):
 
     if "weights" in bb:
         weights = np.asarray(bb["weights"][:], dtype=np.float32)
-        if weights.ndim != 2 or weights.shape[1] != 4:
+        if weights.ndim != 2 or weights.shape != (n_bb, 4):
             weights = np.full((bb_atom_index.shape[0], 4), 0.25, dtype=np.float32)
         else:
             weights = weights[valid]
@@ -348,19 +372,17 @@ def build_backbone_projection_map(struct_h5, input_pos):
 
     runtime_carrier_index = None
     use_runtime_carriers = False
-    if "atom_indices" in bb:
-        atom_indices = np.asarray(bb["atom_indices"][:], dtype=int)
-        if atom_indices.ndim == 2 and atom_indices.shape[1] == 4:
-            atom_indices = atom_indices[valid]
-            if np.all((atom_indices >= 0) & (atom_indices < n_particles)):
-                runtime_carrier_index = atom_indices
-                if "input/atom_roles" in struct_h5:
-                    atom_roles = decode_str_array(struct_h5["input/atom_roles"])
-                    runtime_roles = atom_roles[runtime_carrier_index]
-                    ref_role_row = np.asarray(ref_atom_names, dtype=object).reshape(1, 4)
-                    use_runtime_carriers = bool(np.all(runtime_roles == ref_role_row))
-                else:
-                    use_runtime_carriers = True
+    if atom_indices_full is not None:
+        atom_indices = atom_indices_full[valid]
+        if np.all((atom_indices >= 0) & (atom_indices < n_particles)):
+            runtime_carrier_index = atom_indices
+            if "input/atom_roles" in struct_h5:
+                atom_roles = decode_str_array(struct_h5["input/atom_roles"])
+                runtime_roles = atom_roles[runtime_carrier_index]
+                ref_role_row = np.asarray(ref_atom_names, dtype=object).reshape(1, 4)
+                use_runtime_carriers = bool(np.all(runtime_roles == ref_role_row))
+            else:
+                use_runtime_carriers = True
 
     return {
         "bb_atom_index": bb_atom_index,

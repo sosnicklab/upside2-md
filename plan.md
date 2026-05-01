@@ -1,4 +1,43 @@
 
+## 2026-04-30 Hybrid AA-Direct Forensic Regression Fix
+
+### Project Goal
+- Restore the pre-regression hybrid physics while keeping the AA-direct architecture (no martinize runtime path), with stable stage-6 rigid behavior and valid stage-7 mode-2 extraction.
+
+### Architecture & Key Decisions
+- Keep `hybrid_bb_map/bb_atom_index=-1` as a valid AA-direct mapping sentinel; drive BB sites from mapped N/CA/C/O carriers instead of aliasing CA coordinates.
+- Keep SC-env and BB-env interactions active; fix force projection and site construction rather than damping/disable workarounds.
+- Enforce pre-production rigidity by geometric rigid projection (best-fit rigid transform each step), not only force/momentum filtering.
+- Restore martinize-equivalent charged termini BB typing (`Qd`/`Qa`) in extracted backbone mapping and preserve explicit dry-MARTINI-to-Upside unit conversion contract.
+
+### Execution Phases
+- [x] Phase 1: Audit and remove CA-alias/fallback regressions in C++ hybrid runtime.
+- [x] Phase 2: Rewire BB virtual-site position/force projection for AA carriers without proxy-coordinate overwrite.
+- [x] Phase 3: Restore BB mapping parity details (termini typing and BB charge assignment) in Python prep.
+- [x] Phase 4: Verify compile, mode-2 extraction, rigid stage-6 geometry behavior, and stage-7 release behavior.
+
+### Known Errors / Blockers
+- Reduced-horizon workflow smoke runs can still show large MARTINI energies because minimization/equilibration are intentionally truncated; use full schedule for physical stability assessment.
+
+### Review
+- Fixed C++ regression points:
+  - removed runtime `bb<-ca` aliasing path and preserved sentinel semantics for missing BB proxy indices;
+  - prevented carrier CA atoms from being treated as fixed proxies in production constraint routing;
+  - enabled COM-mapped BB site evaluation for AA carriers and conservative BB force projection back to N/CA/C/O carriers (including CA contribution);
+  - stopped proxy refresh paths from overwriting physical AA carrier coordinates in AA-direct mode.
+- Fixed rigid-body enforcement:
+  - rigid groups now apply a weighted best-fit rigid transform each step and project atom coordinates onto that rigid manifold, while preserving net translation/rotation.
+- Fixed Python mapping parity:
+  - BB mapping now applies charged termini fragment overrides (`Qd`/`Qa`);
+  - AA-backbone MARTINI BB charges are assigned from BB type (`Qd/Qa/...`) instead of hardcoded zero.
+- Verification summary:
+  - `cmake --build obj --target upside` passed;
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py` passed;
+  - mode-2 extraction from stage-7 artifact now succeeds with valid AA-direct carrier fallback;
+  - short stage-6 run keeps protein pair distances rigid (mean pair-distance drift ~`3e-05 Å` on sampled set);
+  - short stage-7 run shows rigidity released (pair-distance drift becomes non-zero);
+  - reduced full workflow run completes through stage `7.0` and mode-2 VTF extraction without backbone-map errors.
+
 ## 2026-04-28 Hybrid MARTINI Workflow Refactor
 
 ### Project Goal
@@ -784,3 +823,165 @@ What specific biological system or environment are you aiming to simulate first 
   - `.venv/bin/python py/martini_prepare_system.py run-hybrid-workflow --help`
   - `.venv/bin/python py/martini_extract_vtf.py --help`
   - `.venv/bin/python py/martini_prepare_system.py run-hybrid-workflow --previous-run-dir foo` (verified explicit-source continuation enforcement with clear error).
+
+## 2026-04-29 Hybrid MARTINI Architecture Simplification (AA->Backbone-Only, No CG Protein)
+
+### Project Goal
+- Refactor the hybrid MARTINI workflow to remove the AA->CG martinize pipeline entirely and run hybrid staging from direct AA input while keeping only protein backbone carriers (`N/CA/C/O`) in runtime stage files.
+- Enforce protein rigid-body behavior (free translation/rotation, fixed internal geometry) during stage 6.x and release that constraint for stage 7.x production.
+- Keep SC-env and BB-env interface interactions active in both stages.
+
+### Architecture & Key Decisions
+- Delete `py/martini_martinize.py` and remove all martinize execution/config from workflow scripts.
+- Runtime protein representation in both 6.x and 7.x is backbone-only (`N/CA/C/O`), with no CG protein particles.
+- BB-env is evaluated from per-residue virtual BB COM built from `N/CA/C/O` carriers and force-distributed back to those carriers.
+- Stage 6.x hybrid activation must be on; stage 7.x remains hybrid-active with rigid constraint released.
+- Use `pydssp` for residue secondary-structure assignment and inline the MARTINI backbone type mapping logic needed for BB typing.
+
+### Execution Phases
+- [ ] Phase 1: Remove martinize surfaces and add DSSP dependency.
+- [ ] Phase 2: Refactor Python prep to AA-backbone-only runtime packing/mapping and stage artifact generation.
+- [ ] Phase 3: Implement C++ virtual-BB interface force path and rigid-body stage-6 constraint path.
+- [ ] Phase 4: Clean dead code paths and remove deleted script references.
+- [ ] Phase 5: Run build/syntax/workflow verification and document review/results.
+
+### Known Errors / Blockers
+- None at start.
+
+## 2026-04-29 AA-Direct Hybrid MARTINI Simplification
+
+### Project Goal
+- Remove the AA->CG martinize conversion path from the 1RKL hybrid workflow.
+- Use AA backbone atoms directly for stage 6.x/7.x hybrid interaction with dry-MARTINI bilayer.
+- Keep stage 6.x protein rigid as a free rigid body (translation/rotation allowed), then release that constraint in stage 7.x.
+
+### Architecture & Key Decisions
+- Delete `py/martini_martinize.py`; keep only DSSP-driven AA-backbone -> dry-MARTINI BB type mapping inside `py/martini_prepare_system_lib.py`.
+- Make `run_sim_1rkl.sh` call `run-hybrid-workflow` with AA input only (`--protein-aa-pdb`) and no martinize/ITP path.
+- Keep hybrid stage control as `activation_stage=minimization` with `preprod_protein_mode=rigid_body` for stage 6.x and switch to `activation_stage=production` at stage 7.x.
+- Implement runtime rigid-body group projection in `src/martini.cpp` through `martini_fix_rigid::set_dynamic_rigid_groups(...)` instead of absolute position pinning.
+
+### Execution Phases
+- [x] Phase 1: Remove martinize CLI and file dependencies from workflow scripts.
+- [x] Phase 2: Keep only AA backbone BB mapping path in prep code and remove dead CG mapper helpers.
+- [x] Phase 3: Ensure stage 6.x rigid-body hold and stage 7.x release in C++ hybrid transitions.
+- [x] Phase 4: Validate syntax/build and check for stale references.
+
+### Known Errors / Blockers
+- End-to-end smoke run is blocked in current local `.venv` by missing optional dependency `tables` (`ModuleNotFoundError`).
+
+### Review
+- Deleted `py/martini_martinize.py`.
+- Refactored prep/workflow to AA-only input and backbone-only mapping.
+- C++ rigid-body dynamic group path compiles and is wired into stage transition control.
+- Static verification passed (`py_compile`, `cmake --build obj --target upside`).
+
+## 2026-04-30 Rigid Invariance and Handoff Geometry Integrity
+
+### Project Goal
+- Enforce mathematically rigid protein backbone geometry during minimization and stage 6.x preproduction.
+- Guarantee stage 6.6 -> 7.0 handoff copies AA backbone coordinates exactly (no per-residue coordinate rewrites).
+
+### Architecture & Key Decisions
+- Keep stage-6 rigid behavior as true rigid-body projection in C++ minimization path, including trial line-search states.
+- Remove coordinate refresh paths that can overwrite AA backbone carriers during handoff/runtime.
+- Keep BB-env and SC-env interface forces active; only remove coordinate mutation paths.
+
+### Execution Phases
+- [x] Phase 1: Patch minimization to rigid-project trial/accepted/final states.
+- [x] Phase 2: Remove Python handoff hybrid-carrier refresh from active path.
+- [x] Phase 3: Remove runtime hybrid coordinate overwrite call before MARTINI pair force evaluation.
+- [x] Phase 4: Build and run geometry invariance checks.
+
+### Known Errors / Blockers
+- None in this patch round.
+
+### Review
+- `src/martini.cpp`: minimization now rigid-projects before first compute, each line-search trial, and final state flush.
+- `py/martini_prepare_system.py` / `py/martini_prepare_system_lib.py`: removed `UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS` path and `refresh_hybrid_reference_carriers`.
+- `src/martini.cpp`: removed hybrid pre-force coordinate refresh call, eliminating runtime coordinate overwrites.
+- Verification:
+  - `cmake --build obj --target upside` passed.
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py` passed.
+  - Stage 6.0 minimization invariance check: pair-distance drift mean `1.2e-07 A`, max `1.9e-06 A`.
+  - Stage 6.6 -> 7.0 handoff check: protein atom coordinate diff mean/max `0.0 A`.
+
+## 2026-04-30 Stage-7 Helix Start Forensics
+
+### Project Goal
+- Identify where AA-backbone helix geometry is lost before stage `7.0` and align workflow defaults with the last known-good no-preprod-minimization behavior.
+
+### Architecture & Key Decisions
+- Validate geometry from checkpoint files directly (not only VMD rendering).
+- Keep stage `6.0/6.1` minimization opt-in rather than default, matching the user’s last-working expectation.
+
+### Execution Phases
+- [x] Phase 1: Compare AA backbone vs stage `6.0/6.6/7.0` checkpoint geometry.
+- [x] Phase 2: Validate stage-7 VTF first-frame helix assignment independently.
+- [x] Phase 3: Disable stage `6.0/6.1` minimization by default and keep explicit opt-in.
+- [x] Phase 4: Re-run reduced fresh workflow and verify stage-7 start helix.
+
+### Known Errors / Blockers
+- None in this patch round.
+
+### Review
+- Forensic result on current artifacts: stage `7.0` start backbone is still helix-consistent with AA reference; no structural corruption observed in checkpoint geometry.
+- Changed defaults so stage `6.0/6.1` minimization is skipped unless user sets positive iteration counts.
+- Fresh reduced run with new defaults confirmed stage-7 input and VTF first frame both retain helix signature (`23` helical residues by DSSP on 31-residue backbone).
+- Added strict stage-7-start vs PDB comparison on a fresh longer run:
+  - `/tmp/helix_longer_check/checkpoints/1rkl.stage_7.0.up` matches PDB backbone geometry up to rigid transform within micro-Angstrom numerical noise.
+  - Existing older run artifacts under `example/16.MARTINI/outputs/martini_test_1rkl_hybrid` still show millangstrom-level drift and should not be used as baseline for patched behavior.
+
+## 2026-04-30 BB Type + Interface Logic Parity (AA Runtime)
+
+### Project Goal
+- Keep AA-backbone runtime mode while restoring last-working BB typing policy and BB-env/SC-env interaction semantics.
+
+### Architecture & Key Decisions
+- Remove DSSP dependency from BB type assignment; use martinize fallback with fixed coil mapping plus termini/chain-break `Qd/Qa` overrides.
+- Preserve AA virtual-BB COM position evaluation from `hybrid_bb_map` carriers (`N/CA/C/O`) and keep gradient projection back to carriers.
+- Align interaction control flow with last-working behavior by removing the newly-added cross-interface role filter in `martini_potential`.
+
+### Execution Phases
+- [x] Phase 1: Replace DSSP-based BB typing with martinize fallback typing.
+- [x] Phase 2: Wire fallback BB typing into both hybrid mapping export and stage conversion.
+- [x] Phase 3: Restore BB-env/SC-env interaction control flow parity in C++ while keeping AA COM projection.
+- [x] Phase 4: Verify Python syntax and C++ build.
+
+### Known Errors / Blockers
+- None in this patch round.
+
+### Review
+- `py/martini_prepare_system_lib.py` now computes BB types with martinize fallback (`ss="C"` table behavior) and applies termini/chain-break charged BB rules; DSSP usage removed from this path.
+- `py/martini_prepare_system.py` now consumes the fallback mapper and reports `bb_fallback_typed_residues` in prep summaries.
+- `src/martini.cpp` now uses last-working BB-env/SC-env pair-routing flow (removed added cross-interface role gate) while retaining AA virtual-BB COM site projection for carrier atoms.
+- Verification:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
+  - `cmake --build obj --target upside` passed.
+
+## 2026-04-30 BB Proxy COM + Force Distributor Restoration
+
+### Project Goal
+- Keep current AA-runtime framework while restoring last-working BB semantics:
+  - BB is a dedicated virtual proxy (not CA);
+  - BB position is COM of N/CA/C/O;
+  - BB-env force is distributed back to N/CA/C/O carriers.
+
+### Architecture & Key Decisions
+- Preserve explicit virtual `BB` atoms in runtime protein coordinates and keep `ROLE_BB` assignment only for `BB` atom names.
+- Keep mapped carrier atoms (`N/CA/C/O`) excluded from direct protein-env MARTINI pair coupling to avoid double-counting alongside BB-env projection.
+- Ensure BB gradient projection is not startup-only; projection must stay active through production stage interaction flow whenever a BB map row exists.
+
+### Execution Phases
+- [x] Phase 1: Confirm last-committed BB semantics in `src/martini.cpp` and runtime mapping schema.
+- [x] Phase 2: Restore virtual-BB export path in Python prep and allow BB particle types in stage conversion.
+- [x] Phase 3: Patch C++ pair loop so BB gradients are always projected to carriers in active hybrid stages.
+- [x] Phase 4: Rebuild and run syntax checks.
+
+### Known Errors / Blockers
+- No long-horizon stage-7 replay run executed in this patch round yet.
+
+### Review
+- `src/martini.cpp` now routes mapped BB gradients to carrier atoms (`N/CA/C/O`) independent of startup ramp state.
+- Runtime keeps BB role separate from CA role and refreshes BB coordinates from mapped COM in active hybrid.
+- Build and syntax checks passed (`cmake --build obj --target upside`, `python -m py_compile`).
