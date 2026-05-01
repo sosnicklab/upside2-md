@@ -516,3 +516,8 @@
   - Working rule: `ROLE_BB` must remain bound to explicit `BB` particles only (never reinterpret `CA` as BB in this framework), while `N/CA/C/O` serve only as carriers for COM/force projection.
 - 2026-04-30: Stage-7-only instability root cause can be hidden in unconstrained backbone O carriers when BB COM includes O.
   - Working rule: if BB COM uses N/CA/C/O while stage-7 backbone constraints are N/CA/C-centric, restore the runtime O reconstruction path from reference N/CA/C frame before BB COM update.
+- 2026-04-30: Multi-chain AA runtime prep must not key protein residues by shared segid.
+  - Working rule: when generating `/input/sequence` and protein chain grouping from runtime PDB, prefer `chain_id` over `segid`; shared segid labels (e.g., `PROA`) can collapse distinct chains and break stage-7 sequence/mapping consistency.
+- 2026-04-30: User correction on 1AFO topology semantics (two peptide segments, not one continuous chain).
+  - Working rule: for multi-segment peptide systems, keep residue identity keyed by true chain IDs and ensure chain-break adjacency residues are excluded from inferred H-bond donor/acceptor construction (`i-1` and `i` at each chain break `i`).
+  - Working rule: sequence length parity with `hybrid_bb_map` is necessary but not sufficient; stage-7 backbone/hbond node generation must also receive chain-break exclusions to avoid cross-segment backbone chemistry artifacts.

@@ -953,3 +953,28 @@
     - final frame O rigid-dev mean/max: `5.13e-07 / 1.56e-06 A`
     - O-CA mean/max stayed stable at `~2.359 / 2.431 A`
   - This removes the previous large stage-7 O drift signature (tens of Angstroms).
+
+## 2026-04-30 (1AFO Stage-7 Sequence Length Fix)
+- Actions taken:
+  - Fixed protein chain identity selection in `convert_stage` sequence/molecule grouping path.
+  - Changed chain key preference from `segid`-first to `chain_id`-first to avoid collapsing multi-chain proteins when `segid` is shared (e.g., `PROA`).
+- Files modified:
+  - `py/martini_prepare_system_lib.py`
+- Verification:
+  - `python -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py` passed.
+  - On `1afo_hybrid.MARTINI.pdb`: old key produced 36 protein residues; new key produced 72 protein residues (chains A/B preserved).
+  - Fresh `convert_stage(stage=npt_prod)` run produced `/input/sequence` length 72.
+  - Direct `inject_hybrid_mapping + inject_stage7_sc_table_nodes` on generated stage file succeeded (no sequence/mapping count mismatch).
+
+## 2026-04-30 (1AFO Two-Segment Peptide Prep Parity)
+- Actions taken:
+  - Audited commit `e878e9c20dadbfd181dce20bcc8a52530c06e75d` against current workflow for stage-7 prep semantics.
+  - Preserved multi-chain residue identity by preferring `chain_id` over shared `segid` when building protein sequence keys in `convert_stage`.
+  - Updated stage-7 backbone node injection to pass chain-break-derived H-bond exclusions into `upside_config.write_infer_H_O`, matching Upside chain-break logic (`exclude i-1 and i for each chain break at residue i`).
+- Files modified:
+  - `py/martini_prepare_system_lib.py`
+- Verification:
+  - `python -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py` passed.
+  - Fresh 1AFO stage conversion in `/tmp/1afo_segfix` produced protein `/input/sequence` length `72` with chain ids A/B retained.
+  - Stage-7 injection path (`inject_hybrid_mapping` + `inject_stage7_sc_table_nodes`) succeeded without sequence-mismatch failure.
+  - Generated stage file has `chain_break/chain_first_residue=[36]`, `chain_counts=[1,1]` and stage-7 H-bond infer step no longer prints the chain-break exclusion error.

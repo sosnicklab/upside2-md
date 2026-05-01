@@ -1658,9 +1658,11 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     }
     
     def pick_chain_id(idx):
-        if seg_ids[idx]:
-            return seg_ids[idx]
-        return chain_ids[idx]
+        # Prefer PDB chain ID to preserve distinct protein chains in multi-chain
+        # systems where segid may be shared (e.g., "PROA" for all protein atoms).
+        if chain_ids[idx]:
+            return chain_ids[idx]
+        return seg_ids[idx]
 
     for i, (resid, resname, atom_name) in enumerate(zip(residue_ids, residue_names, atom_names)):
         # Determine molecule type
@@ -3362,6 +3364,13 @@ def inject_backbone_nodes(
             )
     n_chains = int(chain_first_residue.size) + 1
     chain_starts = np.append(np.array([0], dtype=np.int32), chain_first_residue) * 3
+    # Mirror upside_config chain-break handling: exclude residues adjacent to
+    # each chain boundary from inferred H-bond donor/acceptor construction.
+    # For each chain first residue i (except chain 0), exclude residues i-1 and i.
+    hbond_excluded_residues = np.array(
+        sorted({int(i + j) for i in chain_first_residue.tolist() for j in (-1, 0)}),
+        dtype=np.int32,
+    )
 
     with tb.open_file(str(up_file), mode="a") as tf:
         uc.t = tf
@@ -3402,7 +3411,7 @@ def inject_backbone_nodes(
         uc.create_array(grp, "rama_map_id", obj=np.zeros(len(fasta_seq), dtype=np.int32))
         uc.create_array(grp, "rama_pot", obj=ref_state_cor[None])
 
-        uc.write_infer_H_O(fasta_seq, np.array([], dtype=np.int32))
+        uc.write_infer_H_O(fasta_seq, hbond_excluded_residues)
         uc.write_count_hbond(fasta_seq, False)
         uc.write_short_hbond(fasta_seq, str(hbond_energy))
         uc.write_rama_coord2()
