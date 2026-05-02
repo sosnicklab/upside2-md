@@ -85,10 +85,6 @@ def _task_result_dir(base_dir: Path) -> Path:
     return base_dir / "results" / "tasks"
 
 
-def _assembled_dir(base_dir: Path) -> Path:
-    return base_dir / "results" / "assembled"
-
-
 def _slurm_dir(base_dir: Path) -> Path:
     return base_dir / "slurm"
 
@@ -104,6 +100,28 @@ def _current_run_record() -> Path:
 def _write_json(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_task_h5(path: Path, data: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(path, "w") as h5:
+        for key, value in data.items():
+            if key == "target":
+                grp = h5.create_group("target")
+                grp.attrs["label"] = str(value["label"])
+                grp.attrs["bead_type"] = str(value["bead_type"])
+                grp.attrs["charge"] = float(value["charge"])
+            elif isinstance(value, str):
+                h5.attrs[key] = value
+            elif isinstance(value, (int, float, bool)):
+                h5.attrs[key] = value
+            elif isinstance(value, list):
+                if all(isinstance(x, str) for x in value):
+                    h5.create_dataset(key, data=np.asarray([np.bytes_(x) for x in value], dtype="S8"))
+                else:
+                    h5.create_dataset(key, data=np.asarray(value, dtype=np.float32))
+            elif isinstance(value, np.ndarray):
+                h5.create_dataset(key, data=value.astype(np.float32))
 
 
 def _load_json(path: Path) -> Dict[str, Any]:
@@ -642,6 +660,14 @@ def _run_task(base_dir: Path, manifest: Dict[str, Any], task: Dict[str, Any]) ->
         [[0.0 for _ in r_values] for _ in cos_theta_grid]
         for _ in range(n_rotamer)
     ]
+    rotamer_angular_lj = [
+        [[0.0 for _ in r_values] for _ in cos_theta_grid]
+        for _ in range(n_rotamer)
+    ]
+    rotamer_angular_coulomb = [
+        [[0.0 for _ in r_values] for _ in cos_theta_grid]
+        for _ in range(n_rotamer)
+    ]
     position_samples_nm: List[List[float]] = []
     sample_cos_theta: List[float] = []
     sample_energy: List[float] = []
@@ -669,6 +695,10 @@ def _run_task(base_dir: Path, manifest: Dict[str, Any], task: Dict[str, Any]) ->
         coul_weight = [0.0 for _ in cos_theta_grid]
         rotamer_energy_sum = [[0.0 for _ in cos_theta_grid] for _ in range(n_rotamer)]
         rotamer_energy_weight = [[0.0 for _ in cos_theta_grid] for _ in range(n_rotamer)]
+        rotamer_lj_sum = [[0.0 for _ in cos_theta_grid] for _ in range(n_rotamer)]
+        rotamer_lj_weight = [[0.0 for _ in cos_theta_grid] for _ in range(n_rotamer)]
+        rotamer_coul_sum = [[0.0 for _ in cos_theta_grid] for _ in range(n_rotamer)]
+        rotamer_coul_weight = [[0.0 for _ in cos_theta_grid] for _ in range(n_rotamer)]
 
         for direction in direction_vectors:
             target_position_nm = [
@@ -712,6 +742,20 @@ def _run_task(base_dir: Path, manifest: Dict[str, Any], task: Dict[str, Any]) ->
                     rotamer_energy_sum[irot],
                     rotamer_energy_weight[irot],
                 )
+                _accumulate_on_cos_grid(
+                    cos_theta,
+                    rot_lj,
+                    cos_theta_grid,
+                    rotamer_lj_sum[irot],
+                    rotamer_lj_weight[irot],
+                )
+                _accumulate_on_cos_grid(
+                    cos_theta,
+                    rot_coulomb,
+                    cos_theta_grid,
+                    rotamer_coul_sum[irot],
+                    rotamer_coul_weight[irot],
+                )
                 total_energy += rot_weight * rot_energy
                 total_lj += rot_weight * rot_lj
                 total_coulomb += rot_weight * rot_coulomb
@@ -740,74 +784,108 @@ def _run_task(base_dir: Path, manifest: Dict[str, Any], task: Dict[str, Any]) ->
                         f"Cos(theta) bin received no rotamer samples for residue {task['residue']} target {target_type} "
                         f"rotamer={irot} at r={r_nm:.4f} nm"
                     )
+                if rotamer_lj_weight[irot][ia] <= 0.0:
+                    raise RuntimeError(
+                        f"Cos(theta) bin received no rotamer LJ samples for residue {task['residue']} target {target_type} "
+                        f"rotamer={irot} at r={r_nm:.4f} nm"
+                    )
+                if rotamer_coul_weight[irot][ia] <= 0.0:
+                    raise RuntimeError(
+                        f"Cos(theta) bin received no rotamer Coulomb samples for residue {task['residue']} target {target_type} "
+                        f"rotamer={irot} at r={r_nm:.4f} nm"
+                    )
                 rotamer_angular_energy[irot][ia][ir] = (
                     rotamer_energy_sum[irot][ia] / rotamer_energy_weight[irot][ia]
+                )
+                rotamer_angular_lj[irot][ia][ir] = (
+                    rotamer_lj_sum[irot][ia] / rotamer_lj_weight[irot][ia]
+                )
+                rotamer_angular_coulomb[irot][ia][ir] = (
+                    rotamer_coul_sum[irot][ia] / rotamer_coul_weight[irot][ia]
                 )
 
     radial_energy, angular_profile, angular_radial_energy, fitted_energy, factorization_rms_error = (
         _factorize_one_sided_orientation(angular_energy, cos_theta_grid)
+    )
+    lj_radial_energy, lj_angular_profile, lj_angular_radial_energy, lj_fitted_energy, lj_factorization_rms_error = (
+        _factorize_one_sided_orientation(angular_lj, cos_theta_grid)
+    )
+    coul_radial_energy, coul_angular_profile, coul_angular_radial_energy, coul_fitted_energy, coul_factorization_rms_error = (
+        _factorize_one_sided_orientation(angular_coulomb, cos_theta_grid)
     )
     rotamer_radial_energy = []
     rotamer_angular_profile = []
     rotamer_angular_radial_energy = []
     rotamer_fitted_energy = []
     rotamer_factorization_rms_error = []
-    for rot_grid in rotamer_angular_energy:
+    rotamer_lj_radial_energy = []
+    rotamer_lj_angular_profile = []
+    rotamer_lj_angular_radial_energy = []
+    rotamer_lj_fitted_energy = []
+    rotamer_lj_factorization_rms_error = []
+    rotamer_coul_radial_energy = []
+    rotamer_coul_angular_profile = []
+    rotamer_coul_angular_radial_energy = []
+    rotamer_coul_fitted_energy = []
+    rotamer_coul_factorization_rms_error = []
+    for irot in range(n_rotamer):
         rot_radial, rot_profile, rot_angular, rot_fitted, rot_rms = _factorize_one_sided_orientation(
-            rot_grid, cos_theta_grid
+            rotamer_angular_energy[irot], cos_theta_grid
         )
         rotamer_radial_energy.append(rot_radial)
         rotamer_angular_profile.append(rot_profile)
         rotamer_angular_radial_energy.append(rot_angular)
         rotamer_fitted_energy.append(rot_fitted)
         rotamer_factorization_rms_error.append(rot_rms)
+        rot_lj_radial, rot_lj_profile, rot_lj_angular, rot_lj_fitted, rot_lj_rms = _factorize_one_sided_orientation(
+            rotamer_angular_lj[irot], cos_theta_grid
+        )
+        rotamer_lj_radial_energy.append(rot_lj_radial)
+        rotamer_lj_angular_profile.append(rot_lj_profile)
+        rotamer_lj_angular_radial_energy.append(rot_lj_angular)
+        rotamer_lj_fitted_energy.append(rot_lj_fitted)
+        rotamer_lj_factorization_rms_error.append(rot_lj_rms)
+        rot_coul_radial, rot_coul_profile, rot_coul_angular, rot_coul_fitted, rot_coul_rms = _factorize_one_sided_orientation(
+            rotamer_angular_coulomb[irot], cos_theta_grid
+        )
+        rotamer_coul_radial_energy.append(rot_coul_radial)
+        rotamer_coul_angular_profile.append(rot_coul_profile)
+        rotamer_coul_angular_radial_energy.append(rot_coul_angular)
+        rotamer_coul_fitted_energy.append(rot_coul_fitted)
+        rotamer_coul_factorization_rms_error.append(rot_coul_rms)
 
-    payload = {
-        "schema": SCHEMA_TASK,
-        "created_at_utc": _now_utc(),
-        "base_dir": str(base_dir),
-        "manifest_path": str(_manifest_path(base_dir)),
+    out_path = _task_result_dir(base_dir) / f"{task['code']}.h5"
+    _write_task_h5(out_path, {
         "task_id": int(task["task_id"]),
         "code": task["code"],
         "residue": task["residue"],
         "target": target,
         "sidechain_bead_types": list(task["sidechain_bead_types"]),
         "sidechain_bead_charges": list(task["sidechain_bead_charges"]),
-        "sidechain_effective_center_nm": rotamer_centers_nm,
-        "sidechain_effective_vector_unit": rotamer_vectors,
-        "sidechain_rotamer_weight": rotamer_weights,
-        "cb_anchor_nm": cb_anchor_nm,
-        "cb_vector_unit": cb_vector_unit,
-        "component_pairs": component_details,
         "grid_nm": r_values,
         "cos_theta_grid": cos_theta_grid,
-        "direction_vectors_unit": direction_vectors,
-        "position_samples_nm": position_samples_nm,
-        "sample_cos_theta": sample_cos_theta,
-        "sampled_grid_energy_kj_mol": angular_energy,
-        "sampled_grid_lj_kj_mol": angular_lj,
-        "sampled_grid_coulomb_kj_mol": angular_coulomb,
-        "energy_kj_mol": fitted_energy,
         "radial_energy_kj_mol": radial_energy,
         "angular_energy_kj_mol": angular_radial_energy,
         "angular_profile": angular_profile,
-        "fit_rms_error_kj_mol": factorization_rms_error,
+        "lj_radial_energy_kj_mol": lj_radial_energy,
+        "lj_angular_energy_kj_mol": lj_angular_radial_energy,
+        "lj_angular_profile": lj_angular_profile,
+        "coul_radial_energy_kj_mol": coul_radial_energy,
+        "coul_angular_energy_kj_mol": coul_angular_radial_energy,
+        "coul_angular_profile": coul_angular_profile,
         "rotamer_count": n_rotamer,
         "rotamer_probability_fixed": rotamer_weights,
-        "rotamer_sampled_grid_energy_kj_mol": rotamer_angular_energy,
-        "rotamer_energy_kj_mol": rotamer_fitted_energy,
         "rotamer_radial_energy_kj_mol": rotamer_radial_energy,
         "rotamer_angular_energy_kj_mol": rotamer_angular_radial_energy,
         "rotamer_angular_profile": rotamer_angular_profile,
-        "rotamer_fit_rms_error_kj_mol": rotamer_factorization_rms_error,
-        "sample_energy_kj_mol": sample_energy,
-        "sample_lj_kj_mol": sample_lj,
-        "sample_coulomb_kj_mol": sample_coulomb,
+        "rotamer_lj_radial_energy_kj_mol": rotamer_lj_radial_energy,
+        "rotamer_lj_angular_energy_kj_mol": rotamer_lj_angular_radial_energy,
+        "rotamer_lj_angular_profile": rotamer_lj_angular_profile,
+        "rotamer_coul_radial_energy_kj_mol": rotamer_coul_radial_energy,
+        "rotamer_coul_angular_energy_kj_mol": rotamer_coul_angular_radial_energy,
+        "rotamer_coul_angular_profile": rotamer_coul_angular_profile,
         "residue_effective_charge": float(sum(task["sidechain_bead_charges"])),
-        "assumption": manifest["assumptions"]["effective_model"],
-    }
-    out_path = _task_result_dir(base_dir) / f"{task['code']}.json"
-    _write_json(out_path, payload)
+    })
     return out_path
 
 
@@ -825,76 +903,118 @@ def _find_task(manifest: Dict[str, Any], task_id: int) -> Dict[str, Any]:
     raise RuntimeError(f"Task id {task_id} not found in manifest")
 
 
+def _read_task_h5(path: Path) -> Dict[str, Any]:
+    result: Dict[str, Any] = {}
+    with h5py.File(path, "r") as h5:
+        for key in h5.attrs:
+            result[key] = h5.attrs[key]
+        for key in h5:
+            if key == "target":
+                grp = h5[key]
+                result["target"] = {
+                    "label": str(grp.attrs["label"]),
+                    "bead_type": str(grp.attrs["bead_type"]),
+                    "charge": float(grp.attrs["charge"]),
+                }
+            else:
+                ds = h5[key]
+                arr = ds[:]
+                if arr.dtype.kind == "S":
+                    result[key] = [x.decode("utf-8") for x in arr]
+                else:
+                    result[key] = arr.astype(np.float32).tolist()
+    return result
+
+
 def assemble_results(base_dir: Path) -> Path:
     manifest = _load_manifest_for_base(base_dir)
-    assembled_entries: List[Dict[str, Any]] = []
+    entries: List[Dict[str, Any]] = []
     by_residue: Dict[str, Dict[str, Any]] = {}
 
     for task in manifest["tasks"]:
-        result_path = _task_result_dir(base_dir) / f"{task['code']}.json"
+        result_path = _task_result_dir(base_dir) / f"{task['code']}.h5"
         if not result_path.exists():
             raise RuntimeError(f"Missing task result: {result_path}")
-        result = _load_json(result_path)
-        assembled_entries.append(result)
-        by_residue.setdefault(result["residue"], {})[result["target"]["label"]] = {
-            "target": result["target"],
-            "component_pairs": result["component_pairs"],
-            "grid_nm": result["grid_nm"],
-            "cos_theta_grid": result["cos_theta_grid"],
-            "direction_vectors_unit": result["direction_vectors_unit"],
-            "position_samples_nm": result["position_samples_nm"],
-            "sample_cos_theta": result["sample_cos_theta"],
-            "energy_kj_mol": result["energy_kj_mol"],
-            "sampled_grid_energy_kj_mol": result["sampled_grid_energy_kj_mol"],
-            "sampled_grid_lj_kj_mol": result["sampled_grid_lj_kj_mol"],
-            "sampled_grid_coulomb_kj_mol": result["sampled_grid_coulomb_kj_mol"],
-            "radial_energy_kj_mol": result["radial_energy_kj_mol"],
-            "angular_energy_kj_mol": result["angular_energy_kj_mol"],
-            "angular_profile": result["angular_profile"],
-            "fit_rms_error_kj_mol": result["fit_rms_error_kj_mol"],
-            "rotamer_count": result["rotamer_count"],
-            "rotamer_probability_fixed": result["rotamer_probability_fixed"],
-            "rotamer_sampled_grid_energy_kj_mol": result["rotamer_sampled_grid_energy_kj_mol"],
-            "rotamer_energy_kj_mol": result["rotamer_energy_kj_mol"],
-            "rotamer_radial_energy_kj_mol": result["rotamer_radial_energy_kj_mol"],
-            "rotamer_angular_energy_kj_mol": result["rotamer_angular_energy_kj_mol"],
-            "rotamer_angular_profile": result["rotamer_angular_profile"],
-            "rotamer_fit_rms_error_kj_mol": result["rotamer_fit_rms_error_kj_mol"],
-            "sample_energy_kj_mol": result["sample_energy_kj_mol"],
-            "sample_lj_kj_mol": result["sample_lj_kj_mol"],
-            "sample_coulomb_kj_mol": result["sample_coulomb_kj_mol"],
-            "sidechain_effective_center_nm": result["sidechain_effective_center_nm"],
-            "sidechain_effective_vector_unit": result["sidechain_effective_vector_unit"],
-            "sidechain_rotamer_weight": result["sidechain_rotamer_weight"],
-            "cb_anchor_nm": result["cb_anchor_nm"],
-            "cb_vector_unit": result["cb_vector_unit"],
-            "residue_effective_charge": result["residue_effective_charge"],
-        }
+        result = _read_task_h5(result_path)
+        entries.append(result)
+        by_residue.setdefault(result["residue"], {})[result["target"]["label"]] = result
 
-    payload = {
-        "schema": SCHEMA_TABLE,
-        "created_at_utc": _now_utc(),
-        "manifest_path": str(_manifest_path(base_dir)),
-        "assumptions": manifest["assumptions"],
-        "grid": manifest["grid"],
-        "forcefield_name": manifest["forcefield_name"],
-        "entries": assembled_entries,
-        "tables_by_residue": by_residue,
-    }
-    out_path = _assembled_dir(base_dir) / "sc_table.json"
-    _write_json(out_path, payload)
+    residues = sorted(by_residue)
+    targets = [t["label"] for t in manifest["targets"]]
+    first_entry = by_residue[residues[0]][targets[0]]
+    ref_grid = np.asarray(first_entry["grid_nm"], dtype=np.float32)
+    ref_cos_grid = np.asarray(first_entry["cos_theta_grid"], dtype=np.float32)
+    n_r, n_cos = ref_grid.size, ref_cos_grid.size
+    n_t = len(targets)
+    max_rot = max(int(by_residue[r][targets[0]]["rotamer_count"]) for r in residues)
 
-    summary = {
-        "schema": f"{SCHEMA_TABLE}_summary",
-        "created_at_utc": _now_utc(),
-        "manifest_path": str(_manifest_path(base_dir)),
-        "n_tasks": len(assembled_entries),
-        "n_residues": len(by_residue),
-        "n_targets": len(manifest["targets"]),
-        "residues": sorted(by_residue),
-        "targets": [target["label"] for target in manifest["targets"]],
-    }
-    _write_json(_assembled_dir(base_dir) / "sc_table_summary.json", summary)
+    _zeros_3d = lambda: np.zeros((len(residues), n_t, n_r), dtype=np.float32)
+    _zeros_profile = lambda: np.zeros((len(residues), n_t, n_cos), dtype=np.float32)
+    _zeros_rotamer_3d = lambda: np.zeros((len(residues), max_rot, n_t, n_r), dtype=np.float32)
+    _zeros_rotamer_profile = lambda: np.zeros((len(residues), max_rot, n_t, n_cos), dtype=np.float32)
+    _zeros_1d_count = lambda: np.zeros((len(residues),), dtype=np.float32)
+    _zeros_2d_prob = lambda: np.zeros((len(residues), max_rot), dtype=np.float32)
+
+    rad_e = _zeros_3d(); ang_e = _zeros_3d(); ang_p = _zeros_profile()
+    lj_rad = _zeros_3d(); lj_ang = _zeros_3d(); lj_prof = _zeros_profile()
+    coul_rad = _zeros_3d(); coul_ang = _zeros_3d(); coul_prof = _zeros_profile()
+    rc = _zeros_1d_count(); rpf = _zeros_2d_prob()
+    r_rad = _zeros_rotamer_3d(); r_ang = _zeros_rotamer_3d(); r_prof = _zeros_rotamer_profile()
+    r_lj_rad = _zeros_rotamer_3d(); r_lj_ang = _zeros_rotamer_3d(); r_lj_prof = _zeros_rotamer_profile()
+    r_coul_rad = _zeros_rotamer_3d(); r_coul_ang = _zeros_rotamer_3d(); r_coul_prof = _zeros_rotamer_profile()
+
+    for ri, residue in enumerate(residues):
+        for ti, target in enumerate(targets):
+            e = by_residue[residue][target]
+            n_rot = int(e["rotamer_count"])
+            if ti == 0:
+                rc[ri] = float(n_rot)
+                rpf[ri, :n_rot] = np.asarray(e["rotamer_probability_fixed"], dtype=np.float32)
+
+            rad_e[ri, ti, :] = np.asarray(e["radial_energy_kj_mol"], dtype=np.float32)
+            ang_e[ri, ti, :] = np.asarray(e["angular_energy_kj_mol"], dtype=np.float32)
+            ang_p[ri, ti, :] = np.asarray(e["angular_profile"], dtype=np.float32)
+            lj_rad[ri, ti, :] = np.asarray(e["lj_radial_energy_kj_mol"], dtype=np.float32)
+            lj_ang[ri, ti, :] = np.asarray(e["lj_angular_energy_kj_mol"], dtype=np.float32)
+            lj_prof[ri, ti, :] = np.asarray(e["lj_angular_profile"], dtype=np.float32)
+            coul_rad[ri, ti, :] = np.asarray(e["coul_radial_energy_kj_mol"], dtype=np.float32)
+            coul_ang[ri, ti, :] = np.asarray(e["coul_angular_energy_kj_mol"], dtype=np.float32)
+            coul_prof[ri, ti, :] = np.asarray(e["coul_angular_profile"], dtype=np.float32)
+            r_rad[ri, :n_rot, ti, :] = np.asarray(e["rotamer_radial_energy_kj_mol"], dtype=np.float32)
+            r_ang[ri, :n_rot, ti, :] = np.asarray(e["rotamer_angular_energy_kj_mol"], dtype=np.float32)
+            r_prof[ri, :n_rot, ti, :] = np.asarray(e["rotamer_angular_profile"], dtype=np.float32)
+            r_lj_rad[ri, :n_rot, ti, :] = np.asarray(e["rotamer_lj_radial_energy_kj_mol"], dtype=np.float32)
+            r_lj_ang[ri, :n_rot, ti, :] = np.asarray(e["rotamer_lj_angular_energy_kj_mol"], dtype=np.float32)
+            r_lj_prof[ri, :n_rot, ti, :] = np.asarray(e["rotamer_lj_angular_profile"], dtype=np.float32)
+            r_coul_rad[ri, :n_rot, ti, :] = np.asarray(e["rotamer_coul_radial_energy_kj_mol"], dtype=np.float32)
+            r_coul_ang[ri, :n_rot, ti, :] = np.asarray(e["rotamer_coul_angular_energy_kj_mol"], dtype=np.float32)
+            r_coul_prof[ri, :n_rot, ti, :] = np.asarray(e["rotamer_coul_angular_profile"], dtype=np.float32)
+
+    out_path = _project_root() / "parameters" / "dryMARTINI" / "sc_table.h5"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(out_path, "w") as h5:
+        h5.attrs["schema"] = SCHEMA_TABLE
+        h5.attrs["forcefield_name"] = manifest.get("forcefield_name", "")
+        h5.create_dataset("restype_order", data=np.asarray([np.bytes_(x) for x in residues], dtype="S4"))
+        h5.create_dataset("target_order", data=np.asarray([np.bytes_(x) for x in targets], dtype="S8"))
+        h5.create_dataset("grid_nm", data=ref_grid)
+        h5.create_dataset("cos_theta_grid", data=ref_cos_grid)
+        h5.create_dataset("rotamer_count", data=rc)
+        h5.create_dataset("rotamer_probability_fixed", data=rpf)
+        for name, arr in [
+            ("radial_energy_kj_mol", rad_e), ("angular_energy_kj_mol", ang_e), ("angular_profile", ang_p),
+            ("lj_radial_energy_kj_mol", lj_rad), ("lj_angular_energy_kj_mol", lj_ang), ("lj_angular_profile", lj_prof),
+            ("coul_radial_energy_kj_mol", coul_rad), ("coul_angular_energy_kj_mol", coul_ang), ("coul_angular_profile", coul_prof),
+            ("rotamer_radial_energy_kj_mol", r_rad), ("rotamer_angular_energy_kj_mol", r_ang), ("rotamer_angular_profile", r_prof),
+            ("rotamer_lj_radial_energy_kj_mol", r_lj_rad), ("rotamer_lj_angular_energy_kj_mol", r_lj_ang), ("rotamer_lj_angular_profile", r_lj_prof),
+            ("rotamer_coul_radial_energy_kj_mol", r_coul_rad), ("rotamer_coul_angular_energy_kj_mol", r_coul_ang), ("rotamer_coul_angular_profile", r_coul_prof),
+        ]:
+            h5.create_dataset(name, data=arr)
+
+    print(
+        f"Built {out_path} with {len(residues)} residues, {len(targets)} targets, "
+        f"{n_cos} angular points, {n_r} radial points"
+    )
     return out_path
 
 
@@ -1098,7 +1218,7 @@ def shutil_which(binary: str) -> str | None:
 
 def run_benchmark(base_dir: Path, execute: bool) -> int:
     manifest = _load_manifest_for_base(base_dir)
-    assembled_path = _assembled_dir(base_dir) / "sc_table.json"
+    assembled_path = _project_root() / "parameters" / "dryMARTINI" / "sc_table.h5"
     if not assembled_path.exists():
         raise RuntimeError(f"Assembled SC table not found: {assembled_path}")
 
@@ -1109,8 +1229,9 @@ def run_benchmark(base_dir: Path, execute: bool) -> int:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = _benchmark_dir(base_dir) / stamp
     run_dir.mkdir(parents=True, exist_ok=True)
-    table_copy = run_dir / "sc_table.json"
-    table_copy.write_text(assembled_path.read_text(encoding="utf-8"), encoding="utf-8")
+    table_copy = run_dir / "sc_table.h5"
+    import shutil
+    shutil.copy2(str(assembled_path), str(table_copy))
     env_file = run_dir / "benchmark_env.sh"
     env_file.write_text(
         "\n".join(
@@ -1187,7 +1308,7 @@ def cmd_run_local(args: argparse.Namespace) -> int:
     manifest = _load_manifest_for_base(base_dir)
     _record_current_run_dir(base_dir)
     for task in manifest["tasks"]:
-        result_path = _task_result_dir(base_dir) / f"{task['code']}.json"
+        result_path = _task_result_dir(base_dir) / f"{task['code']}.h5"
         if result_path.exists() and not args.force:
             continue
         _run_task(base_dir, manifest, task)
@@ -1232,8 +1353,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SC training workflow")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    default_martinize = _project_root() / "example" / "16.MARTINI" / "martinize.py"
-    default_dry_ff = _project_root() / "example" / "16.MARTINI" / "ff_dry" / "dry_martini_v2.1.itp"
+    default_martinize = _project_root() / "py" / "martinize.py"
+    default_dry_ff = _project_root() / "parameters" / "dryMARTINI" / "dry_martini_v2.1.itp"
     default_sidechain_library = _default_sidechain_library()
     default_benchmark = _project_root() / "example" / "16.MARTINI" / "run_sim_1rkl.sh"
 

@@ -2806,6 +2806,23 @@ struct MartiniScTablePotential : public PotentialNode
     vector<float> angular_left_slope;
     vector<float> angular_profile_table;
 
+    bool has_lj_coul_tables;
+    float coulomb_scale;
+    vector<float> lj_radial_table;
+    vector<float> lj_angular_table;
+    vector<float> lj_radial_left_value;
+    vector<float> lj_radial_left_slope;
+    vector<float> lj_angular_left_value;
+    vector<float> lj_angular_left_slope;
+    vector<float> lj_angular_profile_table;
+    vector<float> coul_radial_table;
+    vector<float> coul_angular_table;
+    vector<float> coul_radial_left_value;
+    vector<float> coul_radial_left_slope;
+    vector<float> coul_angular_left_value;
+    vector<float> coul_angular_left_slope;
+    vector<float> coul_angular_profile_table;
+
     inline int radial_index(int layer, int grid_idx) const {
         return layer * n_grid + grid_idx;
     }
@@ -2872,6 +2889,38 @@ struct MartiniScTablePotential : public PotentialNode
         dVdcoord = (value_hi - value_lo) / cos_step;
     }
 
+    inline void evaluate_angular_profile_and_deriv(
+            float& value,
+            float& dVdcoord,
+            int layer,
+            float angular_coord,
+            const vector<float>& profile_table) const {
+        if(n_angle <= 1) {
+            value = profile_table[profile_index(layer, 0)];
+            dVdcoord = 0.f;
+            return;
+        }
+        if(angular_coord <= cos_start) {
+            value = profile_table[profile_index(layer, 0)];
+            dVdcoord = 0.f;
+            return;
+        }
+        if(angular_coord >= cos_end) {
+            value = profile_table[profile_index(layer, n_angle - 1)];
+            dVdcoord = 0.f;
+            return;
+        }
+        float angle_coord = (angular_coord - cos_start) / cos_step;
+        int angle_idx = int(floorf(angle_coord));
+        if(angle_idx < 0) angle_idx = 0;
+        if(angle_idx > n_angle - 2) angle_idx = n_angle - 2;
+        float frac = angle_coord - float(angle_idx);
+        float value_lo = profile_table[profile_index(layer, angle_idx)];
+        float value_hi = profile_table[profile_index(layer, angle_idx + 1)];
+        value = (1.f - frac) * value_lo + frac * value_hi;
+        dVdcoord = (value_hi - value_lo) / cos_step;
+    }
+
     MartiniScTablePotential(hid_t grp, CoordNode& pos_, CoordNode& cb_pos_):
         PotentialNode(),
         n_cb(get_dset_size(1, grp, "cb_index")[0]),
@@ -2904,7 +2953,23 @@ struct MartiniScTablePotential : public PotentialNode
         radial_left_slope(n_layer, 0.f),
         angular_left_value(n_layer, 0.f),
         angular_left_slope(n_layer, 0.f),
-        angular_profile_table(n_layer * n_angle, 0.f)
+        angular_profile_table(n_layer * n_angle, 0.f),
+        has_lj_coul_tables(false),
+        coulomb_scale(read_attribute<float>(grp, ".", "coulomb_scale", 1.0f)),
+        lj_radial_table(n_layer * n_grid, 0.f),
+        lj_angular_table(n_layer * n_grid, 0.f),
+        lj_radial_left_value(n_layer, 0.f),
+        lj_radial_left_slope(n_layer, 0.f),
+        lj_angular_left_value(n_layer, 0.f),
+        lj_angular_left_slope(n_layer, 0.f),
+        lj_angular_profile_table(n_layer * n_angle, 0.f),
+        coul_radial_table(n_layer * n_grid, 0.f),
+        coul_angular_table(n_layer * n_grid, 0.f),
+        coul_radial_left_value(n_layer, 0.f),
+        coul_radial_left_slope(n_layer, 0.f),
+        coul_angular_left_value(n_layer, 0.f),
+        coul_angular_left_slope(n_layer, 0.f),
+        coul_angular_profile_table(n_layer * n_angle, 0.f)
     {
         check_elem_width_lower_bound(pos, 3);
         check_elem_width_lower_bound(cb_pos, 6);
@@ -3013,6 +3078,61 @@ struct MartiniScTablePotential : public PotentialNode
             angular_left_slope[layer] =
                 (angular_table[radial_index(layer, 1)] - angular_table[radial_index(layer, 0)]) / grid_step_ang;
         }
+
+        // Read separate LJ/Coulomb tables if present
+        if(H5Lexists(grp, "lj_radial_energy_kj_mol", H5P_DEFAULT) > 0) {
+            has_lj_coul_tables = true;
+            vector<float> lj_radial_native(n_layer * n_grid, 0.f);
+            vector<float> lj_angular_native(n_layer * n_grid, 0.f);
+            vector<float> coul_radial_native(n_layer * n_grid, 0.f);
+            vector<float> coul_angular_native(n_layer * n_grid, 0.f);
+            traverse_dset<3,float>(grp, "lj_radial_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
+                lj_radial_native[radial_index(int(ir * n_target + it), int(ig))] = x;
+            });
+            traverse_dset<3,float>(grp, "lj_angular_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
+                lj_angular_native[radial_index(int(ir * n_target + it), int(ig))] = x;
+            });
+            traverse_dset<3,float>(grp, "lj_angular_profile", [&](size_t ir, size_t it, size_t ia, float x) {
+                lj_angular_profile_table[profile_index(int(ir * n_target + it), int(ia))] = x;
+            });
+            traverse_dset<3,float>(grp, "coul_radial_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
+                coul_radial_native[radial_index(int(ir * n_target + it), int(ig))] = x;
+            });
+            traverse_dset<3,float>(grp, "coul_angular_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
+                coul_angular_native[radial_index(int(ir * n_target + it), int(ig))] = x;
+            });
+            traverse_dset<3,float>(grp, "coul_angular_profile", [&](size_t ir, size_t it, size_t ia, float x) {
+                coul_angular_profile_table[profile_index(int(ir * n_target + it), int(ia))] = x;
+            });
+            for(int layer = 0; layer < n_layer; ++layer) {
+                float lj_tail = lj_radial_native[radial_index(layer, n_grid - 1)];
+                float coul_tail = coul_radial_native[radial_index(layer, n_grid - 1)];
+                float lj_ang_tail = lj_angular_native[radial_index(layer, n_grid - 1)];
+                float coul_ang_tail = coul_angular_native[radial_index(layer, n_grid - 1)];
+                for(int ig = 0; ig < n_grid; ++ig) {
+                    lj_radial_table[radial_index(layer, ig)] =
+                        (lj_radial_native[radial_index(layer, ig)] - lj_tail) / energy_conversion_kj_per_eup;
+                    coul_radial_table[radial_index(layer, ig)] =
+                        (coul_radial_native[radial_index(layer, ig)] - coul_tail) / energy_conversion_kj_per_eup;
+                    lj_angular_table[radial_index(layer, ig)] =
+                        (lj_angular_native[radial_index(layer, ig)] - lj_ang_tail) / energy_conversion_kj_per_eup;
+                    coul_angular_table[radial_index(layer, ig)] =
+                        (coul_angular_native[radial_index(layer, ig)] - coul_ang_tail) / energy_conversion_kj_per_eup;
+                }
+                lj_radial_left_value[layer] = lj_radial_table[radial_index(layer, 0)];
+                lj_radial_left_slope[layer] =
+                    (lj_radial_table[radial_index(layer, 1)] - lj_radial_table[radial_index(layer, 0)]) / grid_step_ang;
+                lj_angular_left_value[layer] = lj_angular_table[radial_index(layer, 0)];
+                lj_angular_left_slope[layer] =
+                    (lj_angular_table[radial_index(layer, 1)] - lj_angular_table[radial_index(layer, 0)]) / grid_step_ang;
+                coul_radial_left_value[layer] = coul_radial_table[radial_index(layer, 0)];
+                coul_radial_left_slope[layer] =
+                    (coul_radial_table[radial_index(layer, 1)] - coul_radial_table[radial_index(layer, 0)]) / grid_step_ang;
+                coul_angular_left_value[layer] = coul_angular_table[radial_index(layer, 0)];
+                coul_angular_left_slope[layer] =
+                    (coul_angular_table[radial_index(layer, 1)] - coul_angular_table[radial_index(layer, 0)]) / grid_step_ang;
+            }
+        }
     }
 
     virtual void update_box_dimensions_anisotropic(float scale_xy, float scale_z) override {
@@ -3060,24 +3180,48 @@ struct MartiniScTablePotential : public PotentialNode
                 float dist = sqrtf(std::max(dist2, kMinDistance));
                 if(dist >= cutoff_ang) continue;
 
-                float radial_value = 0.f;
-                float radial_dVdr = 0.f;
-                float angular_value = 0.f;
-                float angular_dVdr = 0.f;
-                float ang1_value = 0.f;
-                float dAng1dcoord = 0.f;
                 Vec<3> displace_unitvec = (1.f / dist) * dr;
                 float cos_theta = dot(displace_unitvec, cbv);
                 float angular_coord = -cos_theta;
-                evaluate_component_value_and_deriv(
-                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+                float value, dVdr, dVdcoord;
 
-                float value = radial_value + ang1_value * angular_value;
-                float dVdr = radial_dVdr + ang1_value * angular_dVdr;
-                float dVdcoord = dAng1dcoord * angular_value;
+                if(has_lj_coul_tables) {
+                    float lj_radial_value = 0.f, lj_radial_dVdr = 0.f;
+                    float lj_angular_value = 0.f, lj_angular_dVdr = 0.f;
+                    float lj_ang1_value = 0.f, lj_dAng1dcoord = 0.f;
+                    float coul_radial_value = 0.f, coul_radial_dVdr = 0.f;
+                    float coul_angular_value = 0.f, coul_angular_dVdr = 0.f;
+                    float coul_ang1_value = 0.f, coul_dAng1dcoord = 0.f;
+                    evaluate_component_value_and_deriv(
+                        lj_radial_value, lj_radial_dVdr, lj_radial_table, lj_radial_left_value, lj_radial_left_slope, layer, dist);
+                    evaluate_component_value_and_deriv(
+                        lj_angular_value, lj_angular_dVdr, lj_angular_table, lj_angular_left_value, lj_angular_left_slope, layer, dist);
+                    evaluate_angular_profile_and_deriv(lj_ang1_value, lj_dAng1dcoord, layer, angular_coord, lj_angular_profile_table);
+                    evaluate_component_value_and_deriv(
+                        coul_radial_value, coul_radial_dVdr, coul_radial_table, coul_radial_left_value, coul_radial_left_slope, layer, dist);
+                    evaluate_component_value_and_deriv(
+                        coul_angular_value, coul_angular_dVdr, coul_angular_table, coul_angular_left_value, coul_angular_left_slope, layer, dist);
+                    evaluate_angular_profile_and_deriv(coul_ang1_value, coul_dAng1dcoord, layer, angular_coord, coul_angular_profile_table);
+                    float lj_value = lj_radial_value + lj_ang1_value * lj_angular_value;
+                    float coul_value = coul_radial_value + coul_ang1_value * coul_angular_value;
+                    float lj_dVdr = lj_radial_dVdr + lj_ang1_value * lj_angular_dVdr;
+                    float coul_dVdr = coul_radial_dVdr + coul_ang1_value * coul_angular_dVdr;
+                    value = lj_value + coulomb_scale * coul_value;
+                    dVdr = lj_dVdr + coulomb_scale * coul_dVdr;
+                    dVdcoord = lj_dAng1dcoord * lj_angular_value + coulomb_scale * coul_dAng1dcoord * coul_angular_value;
+                } else {
+                    float radial_value = 0.f, radial_dVdr = 0.f;
+                    float angular_value = 0.f, angular_dVdr = 0.f;
+                    float ang1_value = 0.f, dAng1dcoord = 0.f;
+                    evaluate_component_value_and_deriv(
+                        radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+                    evaluate_component_value_and_deriv(
+                        angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+                    evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+                    value = radial_value + ang1_value * angular_value;
+                    dVdr = radial_dVdr + ang1_value * angular_dVdr;
+                    dVdcoord = dAng1dcoord * angular_value;
+                }
 
                 if(!std::isfinite(value) || !std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
                 value *= interface_scale;
@@ -3147,6 +3291,23 @@ struct MartiniScTableOneBody : public CoordNode
     vector<float> angular_left_value;
     vector<float> angular_left_slope;
     vector<float> angular_profile_table;
+
+    bool has_lj_coul_tables;
+    float coulomb_scale;
+    vector<float> lj_radial_table;
+    vector<float> lj_angular_table;
+    vector<float> lj_radial_left_value;
+    vector<float> lj_radial_left_slope;
+    vector<float> lj_angular_left_value;
+    vector<float> lj_angular_left_slope;
+    vector<float> lj_angular_profile_table;
+    vector<float> coul_radial_table;
+    vector<float> coul_angular_table;
+    vector<float> coul_radial_left_value;
+    vector<float> coul_radial_left_slope;
+    vector<float> coul_angular_left_value;
+    vector<float> coul_angular_left_slope;
+    vector<float> coul_angular_profile_table;
 
     struct ActiveContact {
         int row;
@@ -3307,6 +3468,38 @@ struct MartiniScTableOneBody : public CoordNode
         dVdcoord = (value_hi - value_lo) / cos_step;
     }
 
+    inline void evaluate_angular_profile_and_deriv(
+            float& value,
+            float& dVdcoord,
+            int layer,
+            float angular_coord,
+            const vector<float>& profile_table) const {
+        if(n_angle <= 1) {
+            value = profile_table[profile_index(layer, 0)];
+            dVdcoord = 0.f;
+            return;
+        }
+        if(angular_coord <= cos_start) {
+            value = profile_table[profile_index(layer, 0)];
+            dVdcoord = 0.f;
+            return;
+        }
+        if(angular_coord >= cos_end) {
+            value = profile_table[profile_index(layer, n_angle - 1)];
+            dVdcoord = 0.f;
+            return;
+        }
+        float angle_coord = (angular_coord - cos_start) / cos_step;
+        int angle_idx = int(floorf(angle_coord));
+        if(angle_idx < 0) angle_idx = 0;
+        if(angle_idx > n_angle - 2) angle_idx = n_angle - 2;
+        float frac = angle_coord - float(angle_idx);
+        float value_lo = profile_table[profile_index(layer, angle_idx)];
+        float value_hi = profile_table[profile_index(layer, angle_idx + 1)];
+        value = (1.f - frac) * value_lo + frac * value_hi;
+        dVdcoord = (value_hi - value_lo) / cos_step;
+    }
+
     MartiniScTableOneBody(hid_t grp, CoordNode& pos_, CoordNode& cb_pos_):
         CoordNode(get_dset_size(1, grp, "row_residue_index")[0], 1),
         n_row(get_dset_size(1, grp, "row_residue_index")[0]),
@@ -3344,6 +3537,22 @@ struct MartiniScTableOneBody : public CoordNode
         angular_left_value(n_layer, 0.f),
         angular_left_slope(n_layer, 0.f),
         angular_profile_table(n_layer * n_angle, 0.f),
+        has_lj_coul_tables(false),
+        coulomb_scale(read_attribute<float>(grp, ".", "coulomb_scale", 1.0f)),
+        lj_radial_table(n_layer * n_grid, 0.f),
+        lj_angular_table(n_layer * n_grid, 0.f),
+        lj_radial_left_value(n_layer, 0.f),
+        lj_radial_left_slope(n_layer, 0.f),
+        lj_angular_left_value(n_layer, 0.f),
+        lj_angular_left_slope(n_layer, 0.f),
+        lj_angular_profile_table(n_layer * n_angle, 0.f),
+        coul_radial_table(n_layer * n_grid, 0.f),
+        coul_angular_table(n_layer * n_grid, 0.f),
+        coul_radial_left_value(n_layer, 0.f),
+        coul_radial_left_slope(n_layer, 0.f),
+        coul_angular_left_value(n_layer, 0.f),
+        coul_angular_left_slope(n_layer, 0.f),
+        coul_angular_profile_table(n_layer * n_angle, 0.f),
         cache_buffer(read_attribute<float>(grp, ".", "cache_buffer", 1.f)),
         active_contacts_valid(false),
         cached_box_x(0.f),
@@ -3483,6 +3692,67 @@ struct MartiniScTableOneBody : public CoordNode
             angular_left_slope[layer] =
                 (angular_table[radial_index(layer, 1)] - angular_table[radial_index(layer, 0)]) / grid_step_ang;
         }
+
+        // Read separate LJ/Coulomb rotamer tables if present
+        if(H5Lexists(grp, "rotamer_lj_radial_energy_kj_mol", H5P_DEFAULT) > 0) {
+            has_lj_coul_tables = true;
+            vector<float> lj_radial_native(n_layer * n_grid, 0.f);
+            vector<float> lj_angular_native(n_layer * n_grid, 0.f);
+            vector<float> coul_radial_native(n_layer * n_grid, 0.f);
+            vector<float> coul_angular_native(n_layer * n_grid, 0.f);
+            traverse_dset<4,float>(grp, "rotamer_lj_radial_energy_kj_mol",
+                    [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
+                        lj_radial_native[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
+                    });
+            traverse_dset<4,float>(grp, "rotamer_lj_angular_energy_kj_mol",
+                    [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
+                        lj_angular_native[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
+                    });
+            traverse_dset<4,float>(grp, "rotamer_lj_angular_profile",
+                    [&](size_t ir, size_t iro, size_t it, size_t ia, float x) {
+                        lj_angular_profile_table[profile_index(layer_index(int(ir), int(iro), int(it)), int(ia))] = x;
+                    });
+            traverse_dset<4,float>(grp, "rotamer_coul_radial_energy_kj_mol",
+                    [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
+                        coul_radial_native[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
+                    });
+            traverse_dset<4,float>(grp, "rotamer_coul_angular_energy_kj_mol",
+                    [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
+                        coul_angular_native[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
+                    });
+            traverse_dset<4,float>(grp, "rotamer_coul_angular_profile",
+                    [&](size_t ir, size_t iro, size_t it, size_t ia, float x) {
+                        coul_angular_profile_table[profile_index(layer_index(int(ir), int(iro), int(it)), int(ia))] = x;
+                    });
+            for(int layer = 0; layer < n_layer; ++layer) {
+                float lj_tail = lj_radial_native[radial_index(layer, n_grid - 1)];
+                float coul_tail = coul_radial_native[radial_index(layer, n_grid - 1)];
+                float lj_ang_tail = lj_angular_native[radial_index(layer, n_grid - 1)];
+                float coul_ang_tail = coul_angular_native[radial_index(layer, n_grid - 1)];
+                for(int ig = 0; ig < n_grid; ++ig) {
+                    lj_radial_table[radial_index(layer, ig)] =
+                        (lj_radial_native[radial_index(layer, ig)] - lj_tail) / energy_conversion_kj_per_eup;
+                    coul_radial_table[radial_index(layer, ig)] =
+                        (coul_radial_native[radial_index(layer, ig)] - coul_tail) / energy_conversion_kj_per_eup;
+                    lj_angular_table[radial_index(layer, ig)] =
+                        (lj_angular_native[radial_index(layer, ig)] - lj_ang_tail) / energy_conversion_kj_per_eup;
+                    coul_angular_table[radial_index(layer, ig)] =
+                        (coul_angular_native[radial_index(layer, ig)] - coul_ang_tail) / energy_conversion_kj_per_eup;
+                }
+                lj_radial_left_value[layer] = lj_radial_table[radial_index(layer, 0)];
+                lj_radial_left_slope[layer] =
+                    (lj_radial_table[radial_index(layer, 1)] - lj_radial_table[radial_index(layer, 0)]) / grid_step_ang;
+                lj_angular_left_value[layer] = lj_angular_table[radial_index(layer, 0)];
+                lj_angular_left_slope[layer] =
+                    (lj_angular_table[radial_index(layer, 1)] - lj_angular_table[radial_index(layer, 0)]) / grid_step_ang;
+                coul_radial_left_value[layer] = coul_radial_table[radial_index(layer, 0)];
+                coul_radial_left_slope[layer] =
+                    (coul_radial_table[radial_index(layer, 1)] - coul_radial_table[radial_index(layer, 0)]) / grid_step_ang;
+                coul_angular_left_value[layer] = coul_angular_table[radial_index(layer, 0)];
+                coul_angular_left_slope[layer] =
+                    (coul_angular_table[radial_index(layer, 1)] - coul_angular_table[radial_index(layer, 0)]) / grid_step_ang;
+            }
+        }
     }
 
     virtual void compute_value(ComputeMode mode) override {
@@ -3525,21 +3795,40 @@ struct MartiniScTableOneBody : public CoordNode
             float dist = sqrtf(std::max(dist2, kMinDistance));
             if(dist >= cutoff_ang) continue;
 
-            float radial_value = 0.f;
-            float radial_dVdr = 0.f;
-            float angular_value = 0.f;
-            float angular_dVdr = 0.f;
-            float ang1_value = 0.f;
-            float dAng1dcoord = 0.f;
             Vec<3> displace_unitvec = (1.f / dist) * dr;
             float angular_coord = -dot(displace_unitvec, cbv);
-            evaluate_component_value_and_deriv(
-                radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-            evaluate_component_value_and_deriv(
-                angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-            evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
 
-            output(0, irow) += radial_value + ang1_value * angular_value;
+            if(has_lj_coul_tables) {
+                float lj_radial_value = 0.f, lj_radial_dVdr = 0.f;
+                float lj_angular_value = 0.f, lj_angular_dVdr = 0.f;
+                float lj_ang1_value = 0.f, lj_dAng1dcoord = 0.f;
+                float coul_radial_value = 0.f, coul_radial_dVdr = 0.f;
+                float coul_angular_value = 0.f, coul_angular_dVdr = 0.f;
+                float coul_ang1_value = 0.f, coul_dAng1dcoord = 0.f;
+                evaluate_component_value_and_deriv(
+                    lj_radial_value, lj_radial_dVdr, lj_radial_table, lj_radial_left_value, lj_radial_left_slope, layer, dist);
+                evaluate_component_value_and_deriv(
+                    lj_angular_value, lj_angular_dVdr, lj_angular_table, lj_angular_left_value, lj_angular_left_slope, layer, dist);
+                evaluate_angular_profile_and_deriv(lj_ang1_value, lj_dAng1dcoord, layer, angular_coord, lj_angular_profile_table);
+                evaluate_component_value_and_deriv(
+                    coul_radial_value, coul_radial_dVdr, coul_radial_table, coul_radial_left_value, coul_radial_left_slope, layer, dist);
+                evaluate_component_value_and_deriv(
+                    coul_angular_value, coul_angular_dVdr, coul_angular_table, coul_angular_left_value, coul_angular_left_slope, layer, dist);
+                evaluate_angular_profile_and_deriv(coul_ang1_value, coul_dAng1dcoord, layer, angular_coord, coul_angular_profile_table);
+                float lj_value = lj_radial_value + lj_ang1_value * lj_angular_value;
+                float coul_value = coul_radial_value + coul_ang1_value * coul_angular_value;
+                output(0, irow) += lj_value + coulomb_scale * coul_value;
+            } else {
+                float radial_value = 0.f, radial_dVdr = 0.f;
+                float angular_value = 0.f, angular_dVdr = 0.f;
+                float ang1_value = 0.f, dAng1dcoord = 0.f;
+                evaluate_component_value_and_deriv(
+                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+                evaluate_component_value_and_deriv(
+                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+                output(0, irow) += radial_value + ang1_value * angular_value;
+            }
         }
 
         for(int irow = 0; irow < n_row; ++irow) {
@@ -3596,23 +3885,44 @@ struct MartiniScTableOneBody : public CoordNode
             float dist = sqrtf(std::max(dist2, kMinDistance));
             if(dist >= cutoff_ang || dist <= 1.0e-6f) continue;
 
-            float radial_value = 0.f;
-            float radial_dVdr = 0.f;
-            float angular_value = 0.f;
-            float angular_dVdr = 0.f;
-            float ang1_value = 0.f;
-            float dAng1dcoord = 0.f;
             Vec<3> displace_unitvec = (1.f / dist) * dr;
             float cos_theta = dot(displace_unitvec, cbv);
             float angular_coord = -cos_theta;
-            evaluate_component_value_and_deriv(
-                radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-            evaluate_component_value_and_deriv(
-                angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-            evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+            float dVdr, dVdcoord;
 
-            float dVdr = radial_dVdr + ang1_value * angular_dVdr;
-            float dVdcoord = dAng1dcoord * angular_value;
+            if(has_lj_coul_tables) {
+                float lj_radial_value = 0.f, lj_radial_dVdr = 0.f;
+                float lj_angular_value = 0.f, lj_angular_dVdr = 0.f;
+                float lj_ang1_value = 0.f, lj_dAng1dcoord = 0.f;
+                float coul_radial_value = 0.f, coul_radial_dVdr = 0.f;
+                float coul_angular_value = 0.f, coul_angular_dVdr = 0.f;
+                float coul_ang1_value = 0.f, coul_dAng1dcoord = 0.f;
+                evaluate_component_value_and_deriv(
+                    lj_radial_value, lj_radial_dVdr, lj_radial_table, lj_radial_left_value, lj_radial_left_slope, layer, dist);
+                evaluate_component_value_and_deriv(
+                    lj_angular_value, lj_angular_dVdr, lj_angular_table, lj_angular_left_value, lj_angular_left_slope, layer, dist);
+                evaluate_angular_profile_and_deriv(lj_ang1_value, lj_dAng1dcoord, layer, angular_coord, lj_angular_profile_table);
+                evaluate_component_value_and_deriv(
+                    coul_radial_value, coul_radial_dVdr, coul_radial_table, coul_radial_left_value, coul_radial_left_slope, layer, dist);
+                evaluate_component_value_and_deriv(
+                    coul_angular_value, coul_angular_dVdr, coul_angular_table, coul_angular_left_value, coul_angular_left_slope, layer, dist);
+                evaluate_angular_profile_and_deriv(coul_ang1_value, coul_dAng1dcoord, layer, angular_coord, coul_angular_profile_table);
+                float lj_dVdr = lj_radial_dVdr + lj_ang1_value * lj_angular_dVdr;
+                float coul_dVdr = coul_radial_dVdr + coul_ang1_value * coul_angular_dVdr;
+                dVdr = lj_dVdr + coulomb_scale * coul_dVdr;
+                dVdcoord = lj_dAng1dcoord * lj_angular_value + coulomb_scale * coul_dAng1dcoord * coul_angular_value;
+            } else {
+                float radial_value = 0.f, radial_dVdr = 0.f;
+                float angular_value = 0.f, angular_dVdr = 0.f;
+                float ang1_value = 0.f, dAng1dcoord = 0.f;
+                evaluate_component_value_and_deriv(
+                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+                evaluate_component_value_and_deriv(
+                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+                dVdr = radial_dVdr + ang1_value * angular_dVdr;
+                dVdcoord = dAng1dcoord * angular_value;
+            }
             if(!std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
 
             Vec<3> point_grad = row_scale * (

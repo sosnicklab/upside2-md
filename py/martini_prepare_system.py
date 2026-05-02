@@ -16,7 +16,6 @@ import numpy as np
 from martini_prepare_system_lib import (
     build_backbone_with_virtual_bb,
     center_of_mass,
-    build_sc_martini_h5,
     convert_stage,
     compute_lipid_residue_indices,
     coords,
@@ -734,22 +733,12 @@ def ensure_sc_martini_library(args):
     import h5py
 
     library = args.sc_martini_library
-    need_build = True
-    if library.exists():
-        with h5py.File(library, "r") as h5:
-            missing = [name for name in SC_LIBRARY_REQUIRED_DATASETS if name not in h5]
-        need_build = bool(missing)
-        if need_build:
-            print(f"NOTICE: {library} is missing required SC datasets; rebuilding it.")
-    if need_build:
-        if not args.sc_martini_table_json.exists():
-            raise FileNotFoundError(args.sc_martini_table_json)
-        print(f"Building {library} from {args.sc_martini_table_json}")
-        build_sc_martini_h5(args.sc_martini_table_json, library)
+    if not library.exists():
+        raise FileNotFoundError(library)
     with h5py.File(library, "r") as h5:
         missing = [name for name in SC_LIBRARY_REQUIRED_DATASETS if name not in h5]
     if missing:
-        raise ValueError(f"{library} missing required datasets after build: {','.join(missing)}")
+        raise ValueError(f"{library} missing required datasets: {','.join(missing)}")
 
 
 def assert_hybrid_stage_active(up_file: Path, expected_stage: str, expected_activation: str):
@@ -1046,8 +1035,7 @@ def normalize_hybrid_workflow_args(args):
     args.upside_executable = args.upside_home / "obj" / "upside"
     args.martini_ff_dir = args.upside_home / "parameters" / "dryMARTINI"
     args.mass_ff_file = args.martini_ff_dir / "dry_martini_v2.1.itp"
-    args.sc_martini_library = args.upside_home / "parameters" / "ff_2.1" / "martini.h5"
-    args.sc_martini_table_json = args.upside_home / "SC-training" / "runs" / "default" / "results" / "assembled" / "sc_table.json"
+    args.sc_martini_library = args.upside_home / "parameters" / "dryMARTINI" / "sc_table.h5"
     args.upside_rama_library = args.upside_home / "parameters" / "common" / "rama.dat"
     args.upside_rama_sheet_mixing = args.upside_home / "parameters" / "ff_2.1" / "sheet"
     args.upside_hbond_energy = args.upside_home / "parameters" / "ff_2.1" / "hbond.h5"

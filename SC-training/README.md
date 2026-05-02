@@ -1,6 +1,6 @@
 # SC-training
 
-This folder contains the dry-MARTINI sidechain-type to dry-MARTINI particle-type training workflow used to build the stage-7 `martini.h5` sidechain library.
+This folder contains the dry-MARTINI sidechain-type to dry-MARTINI particle-type training workflow used to build the `parameters/dryMARTINI/sc_table.h5` sidechain library for stage-7 injection.
 
 ## Scope
 
@@ -102,9 +102,8 @@ python3 SC-training/workflow.py run-benchmark --base-dir SC-training/runs/defaul
 Each run directory contains:
 
 - `training_manifest.json`: residue/target task manifest and training assumptions
-- `results/tasks/*.json`: one result per residue-target task
-- `results/assembled/sc_table.json`: assembled table
-- `results/assembled/sc_table_summary.json`: simple summary
+- `results/tasks/*.h5`: one result per residue-target task
+- `parameters/dryMARTINI/sc_table.h5`: assembled table deployed to the parameters tree
 - `slurm/`: generated Slurm manifests and scripts
 - `benchmark/`: staged benchmark commands and optional benchmark run logs
 
