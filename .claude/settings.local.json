@@ -5,7 +5,9 @@
       "WebFetch(domain:pubmed.ncbi.nlm.nih.gov)",
       "WebFetch(domain:cgmartini.nl)",
       "WebFetch(domain:datapdf.com)",
-      "Bash(make -j4)"
+      "Bash(make -j4)",
+      "Bash(python3 *)",
+      "Bash(/Users/yinhan/Documents/upside2-md/.venv/bin/python3 *)"
     ]
   }
 }

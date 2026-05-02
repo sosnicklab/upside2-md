@@ -2397,111 +2397,78 @@ struct MartiniPotential : public PotentialNode
         coul_r_shift = -coul_r_min;  // shift to make coordinate system start at 0
         coul_r_scale = 999.0f / (coul_r_max + coul_r_shift);  // scale to [0, 999]
 
-        // Generate separate LJ splines for each unique epsilon/sigma pair
-        for(const auto& params : unique_lj_params) {
-            float eps = params.first;
-            float sig = params.second;
+        // Load pre-computed LJ energy grids from particles.h5 (injected into this group)
+        {
+            auto lj_dims = get_dset_size(2, grp, "lj_energy_grids");
+            size_t n_lj_h5 = lj_dims[0];
+            size_t n_lj_pts = lj_dims[1];
+            if (n_lj_pts != 1000)
+                throw string("particles.h5 LJ grid has " + to_string(n_lj_pts) + " points, expected 1000");
 
-            std::vector<double> lj_pot_data(1000);
+            check_size(grp, "lj_unique_eps_eup", n_lj_h5);
+            check_size(grp, "lj_unique_sig_ang", n_lj_h5);
 
-            for(int i = 0; i < 1000; ++i) {
-                float r = lj_r_min + i * (lj_r_max - lj_r_min) / 999.0f;
-                if(r == 0.0f) r = 1.0e-6f;
+            std::vector<float> h5_eps(n_lj_h5), h5_sig(n_lj_h5);
+            traverse_dset<1,double>(grp, "lj_unique_eps_eup", [&](size_t i, double x) { h5_eps[i] = (float)x; });
+            traverse_dset<1,double>(grp, "lj_unique_sig_ang", [&](size_t i, double x) { h5_sig[i] = (float)x; });
 
-                // Check for numerical stability - avoid very small r values for regular LJ
-                if(!lj_soften || lj_soften_alpha <= 0.0f) {
-                    if(r < 0.1f * sig) r = 0.1f * sig;  // Minimum r = 0.1 * sigma to avoid numerical issues
+            std::vector<double> all_lj_grids(n_lj_h5 * 1000);
+            traverse_dset<2,double>(grp, "lj_energy_grids", [&](size_t row, size_t col, double x) {
+                all_lj_grids[row * 1000 + col] = x;
+            });
+
+            std::map<std::pair<float,float>, size_t> h5_lj_index;
+            for (size_t i = 0; i < n_lj_h5; ++i)
+                h5_lj_index[{h5_eps[i], h5_sig[i]}] = i;
+
+            for (const auto& params : unique_lj_params) {
+                float eps = params.first;
+                float sig = params.second;
+                auto it = h5_lj_index.find({eps, sig});
+                if (it == h5_lj_index.end()) {
+                    // Fallback: find nearest match within tolerance
+                    for (size_t i = 0; i < n_lj_h5; ++i) {
+                        if (std::fabs(h5_eps[i] - eps) < 1e-5f && std::fabs(h5_sig[i] - sig) < 1e-3f) {
+                            it = h5_lj_index.find({h5_eps[i], h5_sig[i]});
+                            break;
+                        }
+                    }
                 }
+                if (it == h5_lj_index.end())
+                    throw string("LJ params (" + to_string(eps) + ", " + to_string(sig) + ") not found in particles.h5");
 
-                if(lj_soften && lj_soften_alpha > 0.0f) {
-                    // Soft-core LJ: t = (r/sigma)^6 + alpha; V = 4*epsilon*(1/t^2 - 1/t)
-                    float x = r / sig;
-                    float x2 = x * x;
-                    float x3 = x2 * x;
-                    float x6 = x3 * x3; // (r/sigma)^6
-                    float t = x6 + lj_soften_alpha;
-                    float inv_t = 1.0f / t;
-                    float inv_t2 = inv_t * inv_t;
-                    // potential for softened Lennard-Jones
-                    lj_pot_data[i] = 4.0 * eps * (inv_t2 - inv_t);
-                } else {
-                    // Regular LJ potential: V = 4*epsilon*((sigma/r)^12 - (sigma/r)^6)
-                    float r2 = r * r;
-                    float r3 = r2 * r;
-                    float r6 = r3 * r3;
-                    float sig2 = sig * sig;
-                    float sig6 = sig2 * sig2 * sig2;
-                    float sig12 = sig6 * sig6;
-                    float inv_r6 = sig6 / r6;
-                    float inv_r12 = sig12 / (r6 * r6);
-                    // LJ potential
-                    lj_pot_data[i] = 4.0 * eps * (inv_r12 - inv_r6);
-                }
-            }
-
-            // Create single spline for this epsilon/sigma combination
-            auto inserted_result = lj_splines.emplace(std::piecewise_construct,
-                                                      std::forward_as_tuple(eps, sig),
-                                                      std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
-            auto& spline = inserted_result.first->second;
-
-            // Only compute spline data if this is a new parameter set
-            if (inserted_result.second) {
-                // Initialize the spline with potential data
-                spline.fit_spline(lj_pot_data.data());
-            }
-            
-        }
-        
-
-        // Generate separate Coulomb splines for each unique charge product
-        std::set<float> unique_charge_products;
-        for(const auto& c : unique_coeff) {
-            float qq = c[2] * c[3];
-            if(std::abs(qq) > 1e-10f) {
-                unique_charge_products.insert(qq);
+                size_t row = it->second;
+                auto inserted_result = lj_splines.emplace(std::piecewise_construct,
+                                                          std::forward_as_tuple(eps, sig),
+                                                          std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
+                if (inserted_result.second)
+                    inserted_result.first->second.fit_spline(all_lj_grids.data() + row * 1000);
             }
         }
 
-        // Generate separate Coulomb splines for each unique charge product
-        for(float qq : unique_charge_products) {
-            std::vector<double> coul_pot_data_for_spline(1000 * 1);  // 1 layer, 1000 points, 1 value per point
+        // Load Coulomb reference grid and scale by each unique charge product
+        {
+            check_size(grp, "coulomb_reference_grid", 1000);
+            std::vector<double> coul_ref_grid(1000);
+            traverse_dset<1,double>(grp, "coulomb_reference_grid", [&](size_t i, double x) { coul_ref_grid[i] = x; });
 
-            for(int i = 0; i < 1000; ++i) {
-                float r = coul_r_min + i * (coul_r_max - coul_r_min) / 999.0f;
-                if(r == 0.0f) r = 1.0e-6f;
-
-                // Coulomb potential in simulation units derived from native
-                // dry-MARTINI units through explicit node attrs.
-                float potential = coulomb_k * qq / r;
-
-                // Apply Ewald erfc screening if enabled
-                if(ewald_enabled) {
-                    potential *= erfcf(ewald_alpha * r);
-                }
-
-                // Apply softening if enabled
-                if(coulomb_soften) {
-                    // Slater softening: V(r) = k*qq/r * (1 - (1 + αr/2) * exp(-αr))
-                    float alpha_r = slater_alpha * r;
-                    float exp_term = expf(-alpha_r);
-                    float soft_factor = 1.0f - (1.0f + alpha_r * 0.5f) * exp_term;
-
-                    // Softened potential
-                    coul_pot_data_for_spline[i] = potential * soft_factor;
-                } else {
-                    coul_pot_data_for_spline[i] = potential;
-                }
+            std::set<float> unique_charge_products;
+            for (const auto& c : unique_coeff) {
+                float qq = c[2] * c[3];
+                if (std::abs(qq) > 1e-10f)
+                    unique_charge_products.insert(qq);
             }
 
-            // Create single spline for this charge product
-            auto inserted_result = coulomb_splines.emplace(std::piecewise_construct,
-                                                           std::forward_as_tuple(qq),
-                                                           std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
-            auto& coulomb_spline = inserted_result.first->second;
+            for (float qq : unique_charge_products) {
+                std::vector<double> scaled(1000);
+                for (size_t i = 0; i < 1000; ++i)
+                    scaled[i] = coul_ref_grid[i] * qq;
 
-            // Initialize the spline with potential data
-            coulomb_spline.fit_spline(coul_pot_data_for_spline.data());
+                auto inserted_result = coulomb_splines.emplace(std::piecewise_construct,
+                                                               std::forward_as_tuple(qq),
+                                                               std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
+                inserted_result.first->second.fit_spline(scaled.data());
+            }
         }
 
         param_table.resize(unique_coeff.size());

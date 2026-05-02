@@ -11,6 +11,8 @@ from collections import Counter, defaultdict
 from copy import deepcopy
 from pathlib import Path
 
+import math
+
 import h5py
 import numpy as np
 import tables as tb
@@ -3172,6 +3174,94 @@ def inject_backbone_nodes(
         for grp_name, dset_name in remap_datasets:
             ds = pot[grp_name][dset_name]
             ds[...] = remap_atom_index_array(ds[:], atom_map).astype(ds.dtype, copy=False)
+
+
+def inject_particles_table(up_file: Path, upside_home: Path):
+    up_file = Path(up_file).expanduser().resolve()
+    upside_home = Path(upside_home).expanduser().resolve()
+    particles_h5 = upside_home / "parameters" / "dryMARTINI" / "particles.h5"
+
+    if not particles_h5.exists():
+        raise SystemExit(f"ERROR: particles.h5 not found: {particles_h5}")
+
+    with h5py.File(particles_h5, "r") as src:
+        lj_eps = src["lj_unique_eps_eup"][:].astype(np.float64)
+        lj_sig = src["lj_unique_sig_ang"][:].astype(np.float64)
+        lj_grids = src["lj_energy_grids"][:].astype(np.float64)
+        coul_ref = src["coulomb_reference_grid"][:].astype(np.float64)
+        grid_attrs = {k: src.attrs[k] for k in [
+            "lj_n_points", "lj_r_min_ang", "lj_r_max_ang",
+            "coul_n_points", "coul_r_min_ang", "coul_r_max_ang",
+        ]}
+
+    GRID_N = 1000
+    R_MIN = 0.0
+    R_MAX = 12.0
+
+    with h5py.File(up_file, "r+") as up:
+        g = up["/input/potential/martini_potential"]
+
+        lj_soften = bool(int(g.attrs.get("lj_soften", 0)))
+        lj_soften_alpha = float(g.attrs.get("lj_soften_alpha", 0.0))
+        coulomb_soften = bool(int(g.attrs.get("coulomb_soften", 0)))
+        slater_alpha = float(g.attrs.get("slater_alpha", 0.0))
+        ewald_enabled = bool(int(g.attrs.get("ewald_enabled", 0)))
+        ewald_alpha = float(g.attrs.get("ewald_alpha", 0.0))
+
+        if lj_soften and lj_soften_alpha > 0.0:
+            alpha = float(lj_soften_alpha)
+            for idx in range(len(lj_eps)):
+                eps = float(lj_eps[idx])
+                sig = float(lj_sig[idx])
+                for i in range(GRID_N):
+                    r = R_MIN + i * (R_MAX - R_MIN) / (GRID_N - 1)
+                    if r == 0.0:
+                        r = 1.0e-6
+                    x = r / sig
+                    x2 = x * x
+                    x3 = x2 * x
+                    x6 = x3 * x3
+                    t = x6 + alpha
+                    inv_t = 1.0 / t
+                    lj_grids[idx, i] = 4.0 * eps * (inv_t * inv_t - inv_t)
+
+        if coulomb_soften or ewald_enabled:
+            coulomb_k_native = float(g.attrs["coulomb_constant_native_kj_mol_nm_e2"])
+            energy_conv = float(g.attrs["energy_conversion_kj_per_eup"])
+            length_conv = float(g.attrs["length_conversion_angstrom_per_nm"])
+            coulomb_k = coulomb_k_native * (length_conv / energy_conv)
+
+            slater = float(slater_alpha) if coulomb_soften else 0.0
+            ewald = float(ewald_alpha) if ewald_enabled else 0.0
+
+            for i in range(GRID_N):
+                r = R_MIN + i * (R_MAX - R_MIN) / (GRID_N - 1)
+                if r == 0.0:
+                    r = 1.0e-6
+                potential = coulomb_k / r
+
+                if ewald_enabled:
+                    potential *= math.erfc(ewald * r)
+
+                if coulomb_soften:
+                    alpha_r = slater * r
+                    exp_term = math.exp(-alpha_r)
+                    soft_factor = 1.0 - (1.0 + alpha_r * 0.5) * exp_term
+                    potential *= soft_factor
+
+                coul_ref[i] = potential
+
+        for ds_name in ["lj_unique_eps_eup", "lj_unique_sig_ang",
+                         "lj_energy_grids", "coulomb_reference_grid"]:
+            if ds_name in g:
+                del g[ds_name]
+
+        g.create_dataset("lj_unique_eps_eup", data=lj_eps, dtype=np.float64)
+        g.create_dataset("lj_unique_sig_ang", data=lj_sig, dtype=np.float64)
+        g.create_dataset("lj_energy_grids", data=lj_grids, dtype=np.float64)
+        g.create_dataset("coulomb_reference_grid", data=coul_ref, dtype=np.float64)
+        for key, val in grid_attrs.items():
+            g.attrs[key] = np.float32(val) if "ang" in key or "points" in key else val
 
 
 def inject_stage7_sc_table_nodes(

@@ -23,6 +23,7 @@ from martini_prepare_system_lib import (
     extract_protein_backbone_atoms_from_aa,
     infer_effective_ion_volume_fraction_from_template,
     infer_protein_charge_from_residues,
+    inject_particles_table,
     inject_stage7_sc_table_nodes,
     lipid_resname,
     map_backbone_types_from_martinize_fallback,
@@ -817,6 +818,7 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
     inject_hybrid_mapping(target_file, args.hybrid_mapping_file)
     set_hybrid_control_mode(target_file, args.hybrid_preprod_activation_stage)
     set_stage_label(target_file, stage_label)
+    inject_particles_table(up_file=target_file, upside_home=args.upside_home)
     if stage_label == "production":
         ensure_sc_martini_library(args)
         set_hybrid_control_mode(target_file, "production")
