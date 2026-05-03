@@ -9,10 +9,9 @@
 #include <cctype>
 #include <cstdint>
 #include <set> // For std::set
-#include <complex> // For complex numbers in PME
 #include <array>
-#include <vector> // For PME grid operations
-#include <algorithm> // For PME algorithms
+#include <vector>
+#include <algorithm>
 #include <unordered_map>
 #include <memory>
 #include <limits>
@@ -2084,12 +2083,11 @@ struct MartiniPotential : public PotentialNode
         float qi;
         float qj;
         float qq;
-        const LayeredClampedSpline1D<1>* lj_spline;
-        const LayeredClampedSpline1D<1>* coul_spline;
+        const LayeredClampedSpline1D<1>* combined_spline;
 
         PairParam():
             eps(0.f), sig(0.f), qi(0.f), qj(0.f), qq(0.f),
-            lj_spline(nullptr), coul_spline(nullptr) {}
+            combined_spline(nullptr) {}
     };
 
     vector<PairParam> param_table;
@@ -2102,28 +2100,15 @@ struct MartiniPotential : public PotentialNode
     float length_conversion_angstrom_per_nm;
     float coulomb_constant_native_kj_mol_nm_e2;
     float coulomb_k;
-    bool coulomb_soften;
-    float slater_alpha;
-    bool ewald_enabled;
-    float ewald_alpha;
-    bool lj_soften;
-    float lj_soften_alpha;
-    
+
     // Box dimensions used for minimum-image pair displacements under PBC/NPT.
     float box_x, box_y, box_z;
     
-    // Spline interpolation for LJ potential - single spline for each epsilon/sigma pair
-    std::map<std::pair<float, float>, LayeredClampedSpline1D<1>> lj_splines;
-    
-    // Spline interpolation for Coulomb potential - single spline for each charge product
-    std::map<float, LayeredClampedSpline1D<1>> coulomb_splines;
-    
-    // Spline parameters
-    float lj_r_min, lj_r_max;
-    float lj_r_shift, lj_r_scale;  // Coordinate transformation parameters
-    float coul_r_min, coul_r_max;
-    float coul_r_shift, coul_r_scale;  // Coordinate transformation parameters
-    int coul_n_knots;
+    // Combined LJ+Coulomb spline — one spline per (eps, sig, qq) triple
+    std::map<std::tuple<float, float, float>, LayeredClampedSpline1D<1>> combined_splines;
+
+    float r_min, r_max;
+    float r_shift, r_scale;
 
     float cache_buffer;
     float pairlist_cutoff;
@@ -2234,50 +2219,6 @@ struct MartiniPotential : public PotentialNode
             force_cap = read_attribute<int>(grp, ".", "force_cap") != 0;
         }
         
-        // Coulomb softening parameters
-        coulomb_soften = false;
-        if(attribute_exists(grp, ".", "coulomb_soften")) {
-            coulomb_soften = read_attribute<int>(grp, ".", "coulomb_soften") != 0;
-        }
-        
-        slater_alpha = 0.0f;
-        if(coulomb_soften) {
-            if(attribute_exists(grp, ".", "slater_alpha")) {
-                slater_alpha = read_attribute<float>(grp, ".", "slater_alpha");
-            } else {
-                // Default value if not specified
-                slater_alpha = 1.0f;
-            }
-        }
-        
-        // Ewald splitting parameters
-        ewald_enabled = false;
-        ewald_alpha = 0.0f;
-        if(attribute_exists(grp, ".", "ewald_enabled")) {
-            ewald_enabled = read_attribute<int>(grp, ".", "ewald_enabled") != 0;
-        }
-        if(ewald_enabled) {
-            if(attribute_exists(grp, ".", "ewald_alpha")) {
-                ewald_alpha = read_attribute<float>(grp, ".", "ewald_alpha");
-            } else {
-                ewald_alpha = 0.3f;  // default in inverse Angstroms
-            }
-        }
-
-        // LJ softening parameters (soft-core LJ)
-        lj_soften = false;
-        if(attribute_exists(grp, ".", "lj_soften")) {
-            lj_soften = read_attribute<int>(grp, ".", "lj_soften") != 0;
-        }
-        lj_soften_alpha = 0.0f;
-        if(lj_soften) {
-            if(attribute_exists(grp, ".", "lj_soften_alpha")) {
-                lj_soften_alpha = read_attribute<float>(grp, ".", "lj_soften_alpha");
-            } else {
-                lj_soften_alpha = 1.0f; // sensible default, dimensionless added to (r/sigma)^6
-            }
-        }
-
         // Read box dimensions for minimum-image displacements.
         if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
             box_x = read_attribute<float>(grp, ".", "x_len");
@@ -2382,92 +2323,64 @@ struct MartiniPotential : public PotentialNode
             }
         }
 
-        // Initialize spline parameters for LJ - fixed domain [0, 12]
-        lj_r_min = 0.0f;
-        lj_r_max = 12.0f;  // Fixed domain for all LJ interactions
-        
-        // Coordinate transformation parameters (following membrane spline pattern)
-        lj_r_shift = -lj_r_min;  // shift to make coordinate system start at 0
-        lj_r_scale = 999.0f / (lj_r_max + lj_r_shift);  // scale to [0, 999]
+        // Combined spline domain [0, 12] Angstroms, 1000 points
+        r_min = 0.0f;
+        r_max = 12.0f;
+        r_shift = -r_min;
+        r_scale = 999.0f / (r_max + r_shift);
 
-        coul_r_min = 0.0f;        // Minimum distance for Coulomb spline (Angstroms)
-        coul_r_max = 12.0f;       // Fixed domain for all Coulomb interactions
-        
-        // Coordinate transformation parameters for Coulomb
-        coul_r_shift = -coul_r_min;  // shift to make coordinate system start at 0
-        coul_r_scale = 999.0f / (coul_r_max + coul_r_shift);  // scale to [0, 999]
-
-        // Load pre-computed LJ energy grids from particles.h5 (injected into this group)
+        // Load combined LJ+Coulomb energy grids from injected per-run martini table
         {
-            auto lj_dims = get_dset_size(2, grp, "lj_energy_grids");
-            size_t n_lj_h5 = lj_dims[0];
-            size_t n_lj_pts = lj_dims[1];
-            if (n_lj_pts != 1000)
-                throw string("particles.h5 LJ grid has " + to_string(n_lj_pts) + " points, expected 1000");
+            auto dims = get_dset_size(2, grp, "combined_energy_grids");
+            size_t n_triples = dims[0];
+            size_t n_pts = dims[1];
+            if (n_pts != 1000)
+                throw string("combined_energy_grids has " + to_string(n_pts) + " points, expected 1000");
 
-            check_size(grp, "lj_unique_eps_eup", n_lj_h5);
-            check_size(grp, "lj_unique_sig_ang", n_lj_h5);
+            check_size(grp, "unique_eps_eup", n_triples);
+            check_size(grp, "unique_sig_ang", n_triples);
+            check_size(grp, "unique_charge_product", n_triples);
 
-            std::vector<float> h5_eps(n_lj_h5), h5_sig(n_lj_h5);
-            traverse_dset<1,double>(grp, "lj_unique_eps_eup", [&](size_t i, double x) { h5_eps[i] = (float)x; });
-            traverse_dset<1,double>(grp, "lj_unique_sig_ang", [&](size_t i, double x) { h5_sig[i] = (float)x; });
+            std::vector<float> h5_eps(n_triples), h5_sig(n_triples), h5_qq(n_triples);
+            traverse_dset<1,double>(grp, "unique_eps_eup", [&](size_t i, double x) { h5_eps[i] = (float)x; });
+            traverse_dset<1,double>(grp, "unique_sig_ang", [&](size_t i, double x) { h5_sig[i] = (float)x; });
+            traverse_dset<1,double>(grp, "unique_charge_product", [&](size_t i, double x) { h5_qq[i] = (float)x; });
 
-            std::vector<double> all_lj_grids(n_lj_h5 * 1000);
-            traverse_dset<2,double>(grp, "lj_energy_grids", [&](size_t row, size_t col, double x) {
-                all_lj_grids[row * 1000 + col] = x;
+            std::vector<double> all_grids(n_triples * 1000);
+            traverse_dset<2,double>(grp, "combined_energy_grids", [&](size_t row, size_t col, double x) {
+                all_grids[row * 1000 + col] = x;
             });
 
-            std::map<std::pair<float,float>, size_t> h5_lj_index;
-            for (size_t i = 0; i < n_lj_h5; ++i)
-                h5_lj_index[{h5_eps[i], h5_sig[i]}] = i;
+            std::map<std::tuple<float,float,float>, size_t> h5_index;
+            for (size_t i = 0; i < n_triples; ++i)
+                h5_index[{h5_eps[i], h5_sig[i], h5_qq[i]}] = i;
 
-            for (const auto& params : unique_lj_params) {
-                float eps = params.first;
-                float sig = params.second;
-                auto it = h5_lj_index.find({eps, sig});
-                if (it == h5_lj_index.end()) {
-                    // Fallback: find nearest match within tolerance
-                    for (size_t i = 0; i < n_lj_h5; ++i) {
-                        if (std::fabs(h5_eps[i] - eps) < 1e-5f && std::fabs(h5_sig[i] - sig) < 1e-3f) {
-                            it = h5_lj_index.find({h5_eps[i], h5_sig[i]});
+            for (const auto& c : unique_coeff) {
+                float eps = c[0];
+                float sig = c[1];
+                float qq  = c[2] * c[3];
+                auto key = std::make_tuple(eps, sig, qq);
+                auto it = h5_index.find(key);
+                if (it == h5_index.end()) {
+                    // Fallback: nearest match within tolerance
+                    for (size_t i = 0; i < n_triples; ++i) {
+                        if (std::fabs(h5_eps[i] - eps) < 1e-5f &&
+                            std::fabs(h5_sig[i] - sig) < 1e-3f &&
+                            std::fabs(h5_qq[i] - qq) < 1e-5f) {
+                            it = h5_index.find({h5_eps[i], h5_sig[i], h5_qq[i]});
                             break;
                         }
                     }
                 }
-                if (it == h5_lj_index.end())
-                    throw string("LJ params (" + to_string(eps) + ", " + to_string(sig) + ") not found in particles.h5");
+                if (it == h5_index.end())
+                    throw string("Combined params (" + to_string(eps) + ", " + to_string(sig) + ", " + to_string(qq) + ") not found in martini table");
 
                 size_t row = it->second;
-                auto inserted_result = lj_splines.emplace(std::piecewise_construct,
-                                                          std::forward_as_tuple(eps, sig),
-                                                          std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
-                if (inserted_result.second)
-                    inserted_result.first->second.fit_spline(all_lj_grids.data() + row * 1000);
-            }
-        }
-
-        // Load Coulomb reference grid and scale by each unique charge product
-        {
-            check_size(grp, "coulomb_reference_grid", 1000);
-            std::vector<double> coul_ref_grid(1000);
-            traverse_dset<1,double>(grp, "coulomb_reference_grid", [&](size_t i, double x) { coul_ref_grid[i] = x; });
-
-            std::set<float> unique_charge_products;
-            for (const auto& c : unique_coeff) {
-                float qq = c[2] * c[3];
-                if (std::abs(qq) > 1e-10f)
-                    unique_charge_products.insert(qq);
-            }
-
-            for (float qq : unique_charge_products) {
-                std::vector<double> scaled(1000);
-                for (size_t i = 0; i < 1000; ++i)
-                    scaled[i] = coul_ref_grid[i] * qq;
-
-                auto inserted_result = coulomb_splines.emplace(std::piecewise_construct,
-                                                               std::forward_as_tuple(qq),
-                                                               std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
-                inserted_result.first->second.fit_spline(scaled.data());
+                auto inserted = combined_splines.emplace(std::piecewise_construct,
+                                                        std::forward_as_tuple(eps, sig, qq),
+                                                        std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
+                if (inserted.second)
+                    inserted.first->second.fit_spline(all_grids.data() + row * 1000);
             }
         }
 
@@ -2479,14 +2392,8 @@ struct MartiniPotential : public PotentialNode
             param.qi  = unique_coeff[ip][2];
             param.qj  = unique_coeff[ip][3];
             param.qq  = param.qi * param.qj;
-            if(param.eps != 0.f && param.sig != 0.f) {
-                auto it = lj_splines.find({param.eps, param.sig});
-                if(it != lj_splines.end()) param.lj_spline = &it->second;
-            }
-            if(std::abs(param.qq) > 1e-10f) {
-                auto it = coulomb_splines.find(param.qq);
-                if(it != coulomb_splines.end()) param.coul_spline = &it->second;
-            }
+            auto it = combined_splines.find(std::make_tuple(param.eps, param.sig, param.qq));
+            if(it != combined_splines.end()) param.combined_spline = &it->second;
         }
 
     }
@@ -2538,11 +2445,8 @@ struct MartiniPotential : public PotentialNode
                                    float interaction_scale,
                                    float& pair_potential,
                                    Vec<3>& pair_force,
-                                   float lj_force_cap_mag,
-                                   float coul_force_cap_mag,
-                                   float capped_to_regular_mix,
-                                   float* pair_lj_potential,
-                                   float* pair_coul_potential) -> bool {
+                                   float force_cap_mag,
+                                   float capped_to_regular_mix) -> bool {
             auto dr = pa - pb;
             if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
                 dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
@@ -2551,72 +2455,34 @@ struct MartiniPotential : public PotentialNode
             auto dist = sqrtf(max(dist2, kMinDistance));
             pair_potential = 0.f;
             pair_force = make_zero<3>();
-            if(pair_lj_potential) *pair_lj_potential = 0.f;
-            if(pair_coul_potential) *pair_coul_potential = 0.f;
 
-            if(dist > max(lj_cutoff, coul_cutoff)) return false;
+            float cutoff = max(lj_cutoff, coul_cutoff);
+            if(dist > cutoff) return false;
 
             float cap_mix = std::max(0.f, std::min(capped_to_regular_mix, 1.f));
 
-            if(dist < lj_cutoff && param.eps != 0.f && param.sig != 0.f && !param.lj_spline) {
-                throw string("MARTINI LJ spline missing for nonzero epsilon/sigma pair");
-            }
-            if(param.lj_spline && dist < lj_cutoff) {
-                float r_coord = (dist - lj_r_min) / (lj_r_max - lj_r_min) * 999.0f;
-                float lj_result[2];
-                param.lj_spline->evaluate_value_and_deriv(lj_result, 0, r_coord);
-                float lj_pot = lj_result[1];
-                float lj_deriv_spline = lj_result[0];
-                float coord_scale = 999.0f / (lj_r_max - lj_r_min);
-                float dE_dr = lj_deriv_spline * coord_scale;
-                float lj_force_mag = -dE_dr;
-                if(std::isfinite(lj_pot) && std::isfinite(lj_force_mag)) {
-                    Vec<3> lj_force_uncapped = (lj_force_mag/dist) * dr;
-                    Vec<3> lj_force = lj_force_uncapped;
-                    if(lj_force_cap_mag > 0.f && cap_mix < 1.f) {
-                        cap_force_vector(lj_force, lj_force_cap_mag);
+            if(param.combined_spline) {
+                float r_coord = (dist - r_min) / (r_max - r_min) * 999.0f;
+                float result[2];
+                param.combined_spline->evaluate_value_and_deriv(result, 0, r_coord);
+                float pot = result[1];
+                float deriv_spline = result[0];
+                float coord_scale = 999.0f / (r_max - r_min);
+                float dE_dr = deriv_spline * coord_scale;
+                float force_mag = -dE_dr;
+                if(std::isfinite(pot) && std::isfinite(force_mag)) {
+                    Vec<3> force_uncapped = (force_mag/dist) * dr;
+                    Vec<3> force = force_uncapped;
+                    if(force_cap_mag > 0.f && cap_mix < 1.f) {
+                        cap_force_vector(force, force_cap_mag);
                         if(cap_mix > 0.f) {
-                            lj_force = ((1.f - cap_mix) * lj_force) + (cap_mix * lj_force_uncapped);
+                            force = ((1.f - cap_mix) * force) + (cap_mix * force_uncapped);
                         }
                     }
-                    lj_pot *= interaction_scale;
-                    lj_force *= interaction_scale;
-                    pair_potential += lj_pot;
-                    if(pair_lj_potential) *pair_lj_potential += lj_pot;
-                    pair_force += lj_force;
-                }
-            }
-
-            if(param.qq != 0.f && dist < coul_cutoff) {
-                float coul_pot = 0.0f;
-                float coul_force_mag = 0.0f;
-                if(!param.coul_spline) {
-                    throw string("MARTINI Coulomb spline missing for nonzero charge product");
-                }
-                float eval_r = std::max(coul_r_min, std::min(dist, coul_r_max));
-                float r_coord = (eval_r - coul_r_min) / (coul_r_max - coul_r_min) * 999.0f;
-                float coul_result[2];
-                param.coul_spline->evaluate_value_and_deriv(coul_result, 0, r_coord);
-                coul_pot = coul_result[1];
-                float coul_deriv_spline = coul_result[0];
-                float coord_scale = 999.0f / (coul_r_max - coul_r_min);
-                float dE_dr = coul_deriv_spline * coord_scale;
-                coul_force_mag = -dE_dr;
-
-                if(std::isfinite(coul_pot) && std::isfinite(coul_force_mag)) {
-                    Vec<3> coul_force_uncapped = (coul_force_mag/dist) * dr;
-                    Vec<3> coul_force = coul_force_uncapped;
-                    if(coul_force_cap_mag > 0.f && cap_mix < 1.f) {
-                        cap_force_vector(coul_force, coul_force_cap_mag);
-                        if(cap_mix > 0.f) {
-                            coul_force = ((1.f - cap_mix) * coul_force) + (cap_mix * coul_force_uncapped);
-                        }
-                    }
-                    coul_pot *= interaction_scale;
-                    coul_force *= interaction_scale;
-                    pair_potential += coul_pot;
-                    if(pair_coul_potential) *pair_coul_potential += coul_pot;
-                    pair_force += coul_force;
+                    pot *= interaction_scale;
+                    force *= interaction_scale;
+                    pair_potential += pot;
+                    pair_force += force;
                 }
             }
             return !(pair_potential == 0.f && mag2(pair_force) == 0.f);
@@ -2675,14 +2541,13 @@ struct MartiniPotential : public PotentialNode
 
             Vec<3> force = make_zero<3>();
             float pair_pot = 0.f;
-            float startup_lj_force_cap = 0.f;
-            float startup_coul_force_cap = 0.f;
+            float startup_force_cap = 0.f;
             float startup_cap_mix = 1.f;
             if(hybrid_state &&
                martini_hybrid::deterministic_startup_pair_cap_enabled(
                    *hybrid_state, i_is_protein, j_is_protein, i_role, j_role)) {
-                startup_lj_force_cap = hybrid_state->sc_env_lj_force_cap;
-                startup_coul_force_cap = hybrid_state->sc_env_coul_force_cap;
+                startup_force_cap = max(hybrid_state->sc_env_lj_force_cap,
+                                        hybrid_state->sc_env_coul_force_cap);
                 startup_cap_mix = sc_force_uncap_mix;
             }
             float interface_scale = hybrid_state
@@ -2690,11 +2555,8 @@ struct MartiniPotential : public PotentialNode
                                               *hybrid_state, i_is_protein, j_is_protein)
                                         : 1.f;
             if(!eval_pair_force(p1, p2, param, interface_scale, pair_pot, force,
-                                startup_lj_force_cap,
-                                startup_coul_force_cap,
-                                startup_cap_mix,
-                                nullptr,
-                                nullptr)) {
+                                startup_force_cap,
+                                startup_cap_mix)) {
                 continue;
             }
             if(pot) *pot += pair_pot;
@@ -2772,23 +2634,6 @@ struct MartiniScTablePotential : public PotentialNode
     vector<float> angular_left_value;
     vector<float> angular_left_slope;
     vector<float> angular_profile_table;
-
-    bool has_lj_coul_tables;
-    float coulomb_scale;
-    vector<float> lj_radial_table;
-    vector<float> lj_angular_table;
-    vector<float> lj_radial_left_value;
-    vector<float> lj_radial_left_slope;
-    vector<float> lj_angular_left_value;
-    vector<float> lj_angular_left_slope;
-    vector<float> lj_angular_profile_table;
-    vector<float> coul_radial_table;
-    vector<float> coul_angular_table;
-    vector<float> coul_radial_left_value;
-    vector<float> coul_radial_left_slope;
-    vector<float> coul_angular_left_value;
-    vector<float> coul_angular_left_slope;
-    vector<float> coul_angular_profile_table;
 
     inline int radial_index(int layer, int grid_idx) const {
         return layer * n_grid + grid_idx;
@@ -2920,23 +2765,7 @@ struct MartiniScTablePotential : public PotentialNode
         radial_left_slope(n_layer, 0.f),
         angular_left_value(n_layer, 0.f),
         angular_left_slope(n_layer, 0.f),
-        angular_profile_table(n_layer * n_angle, 0.f),
-        has_lj_coul_tables(false),
-        coulomb_scale(read_attribute<float>(grp, ".", "coulomb_scale", 1.0f)),
-        lj_radial_table(n_layer * n_grid, 0.f),
-        lj_angular_table(n_layer * n_grid, 0.f),
-        lj_radial_left_value(n_layer, 0.f),
-        lj_radial_left_slope(n_layer, 0.f),
-        lj_angular_left_value(n_layer, 0.f),
-        lj_angular_left_slope(n_layer, 0.f),
-        lj_angular_profile_table(n_layer * n_angle, 0.f),
-        coul_radial_table(n_layer * n_grid, 0.f),
-        coul_angular_table(n_layer * n_grid, 0.f),
-        coul_radial_left_value(n_layer, 0.f),
-        coul_radial_left_slope(n_layer, 0.f),
-        coul_angular_left_value(n_layer, 0.f),
-        coul_angular_left_slope(n_layer, 0.f),
-        coul_angular_profile_table(n_layer * n_angle, 0.f)
+        angular_profile_table(n_layer * n_angle, 0.f)
     {
         check_elem_width_lower_bound(pos, 3);
         check_elem_width_lower_bound(cb_pos, 6);
@@ -3046,60 +2875,6 @@ struct MartiniScTablePotential : public PotentialNode
                 (angular_table[radial_index(layer, 1)] - angular_table[radial_index(layer, 0)]) / grid_step_ang;
         }
 
-        // Read separate LJ/Coulomb tables if present
-        if(H5Lexists(grp, "lj_radial_energy_kj_mol", H5P_DEFAULT) > 0) {
-            has_lj_coul_tables = true;
-            vector<float> lj_radial_native(n_layer * n_grid, 0.f);
-            vector<float> lj_angular_native(n_layer * n_grid, 0.f);
-            vector<float> coul_radial_native(n_layer * n_grid, 0.f);
-            vector<float> coul_angular_native(n_layer * n_grid, 0.f);
-            traverse_dset<3,float>(grp, "lj_radial_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
-                lj_radial_native[radial_index(int(ir * n_target + it), int(ig))] = x;
-            });
-            traverse_dset<3,float>(grp, "lj_angular_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
-                lj_angular_native[radial_index(int(ir * n_target + it), int(ig))] = x;
-            });
-            traverse_dset<3,float>(grp, "lj_angular_profile", [&](size_t ir, size_t it, size_t ia, float x) {
-                lj_angular_profile_table[profile_index(int(ir * n_target + it), int(ia))] = x;
-            });
-            traverse_dset<3,float>(grp, "coul_radial_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
-                coul_radial_native[radial_index(int(ir * n_target + it), int(ig))] = x;
-            });
-            traverse_dset<3,float>(grp, "coul_angular_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
-                coul_angular_native[radial_index(int(ir * n_target + it), int(ig))] = x;
-            });
-            traverse_dset<3,float>(grp, "coul_angular_profile", [&](size_t ir, size_t it, size_t ia, float x) {
-                coul_angular_profile_table[profile_index(int(ir * n_target + it), int(ia))] = x;
-            });
-            for(int layer = 0; layer < n_layer; ++layer) {
-                float lj_tail = lj_radial_native[radial_index(layer, n_grid - 1)];
-                float coul_tail = coul_radial_native[radial_index(layer, n_grid - 1)];
-                float lj_ang_tail = lj_angular_native[radial_index(layer, n_grid - 1)];
-                float coul_ang_tail = coul_angular_native[radial_index(layer, n_grid - 1)];
-                for(int ig = 0; ig < n_grid; ++ig) {
-                    lj_radial_table[radial_index(layer, ig)] =
-                        (lj_radial_native[radial_index(layer, ig)] - lj_tail) / energy_conversion_kj_per_eup;
-                    coul_radial_table[radial_index(layer, ig)] =
-                        (coul_radial_native[radial_index(layer, ig)] - coul_tail) / energy_conversion_kj_per_eup;
-                    lj_angular_table[radial_index(layer, ig)] =
-                        (lj_angular_native[radial_index(layer, ig)] - lj_ang_tail) / energy_conversion_kj_per_eup;
-                    coul_angular_table[radial_index(layer, ig)] =
-                        (coul_angular_native[radial_index(layer, ig)] - coul_ang_tail) / energy_conversion_kj_per_eup;
-                }
-                lj_radial_left_value[layer] = lj_radial_table[radial_index(layer, 0)];
-                lj_radial_left_slope[layer] =
-                    (lj_radial_table[radial_index(layer, 1)] - lj_radial_table[radial_index(layer, 0)]) / grid_step_ang;
-                lj_angular_left_value[layer] = lj_angular_table[radial_index(layer, 0)];
-                lj_angular_left_slope[layer] =
-                    (lj_angular_table[radial_index(layer, 1)] - lj_angular_table[radial_index(layer, 0)]) / grid_step_ang;
-                coul_radial_left_value[layer] = coul_radial_table[radial_index(layer, 0)];
-                coul_radial_left_slope[layer] =
-                    (coul_radial_table[radial_index(layer, 1)] - coul_radial_table[radial_index(layer, 0)]) / grid_step_ang;
-                coul_angular_left_value[layer] = coul_angular_table[radial_index(layer, 0)];
-                coul_angular_left_slope[layer] =
-                    (coul_angular_table[radial_index(layer, 1)] - coul_angular_table[radial_index(layer, 0)]) / grid_step_ang;
-            }
-        }
     }
 
     virtual void update_box_dimensions_anisotropic(float scale_xy, float scale_z) override {
@@ -3152,43 +2927,17 @@ struct MartiniScTablePotential : public PotentialNode
                 float angular_coord = -cos_theta;
                 float value, dVdr, dVdcoord;
 
-                if(has_lj_coul_tables) {
-                    float lj_radial_value = 0.f, lj_radial_dVdr = 0.f;
-                    float lj_angular_value = 0.f, lj_angular_dVdr = 0.f;
-                    float lj_ang1_value = 0.f, lj_dAng1dcoord = 0.f;
-                    float coul_radial_value = 0.f, coul_radial_dVdr = 0.f;
-                    float coul_angular_value = 0.f, coul_angular_dVdr = 0.f;
-                    float coul_ang1_value = 0.f, coul_dAng1dcoord = 0.f;
-                    evaluate_component_value_and_deriv(
-                        lj_radial_value, lj_radial_dVdr, lj_radial_table, lj_radial_left_value, lj_radial_left_slope, layer, dist);
-                    evaluate_component_value_and_deriv(
-                        lj_angular_value, lj_angular_dVdr, lj_angular_table, lj_angular_left_value, lj_angular_left_slope, layer, dist);
-                    evaluate_angular_profile_and_deriv(lj_ang1_value, lj_dAng1dcoord, layer, angular_coord, lj_angular_profile_table);
-                    evaluate_component_value_and_deriv(
-                        coul_radial_value, coul_radial_dVdr, coul_radial_table, coul_radial_left_value, coul_radial_left_slope, layer, dist);
-                    evaluate_component_value_and_deriv(
-                        coul_angular_value, coul_angular_dVdr, coul_angular_table, coul_angular_left_value, coul_angular_left_slope, layer, dist);
-                    evaluate_angular_profile_and_deriv(coul_ang1_value, coul_dAng1dcoord, layer, angular_coord, coul_angular_profile_table);
-                    float lj_value = lj_radial_value + lj_ang1_value * lj_angular_value;
-                    float coul_value = coul_radial_value + coul_ang1_value * coul_angular_value;
-                    float lj_dVdr = lj_radial_dVdr + lj_ang1_value * lj_angular_dVdr;
-                    float coul_dVdr = coul_radial_dVdr + coul_ang1_value * coul_angular_dVdr;
-                    value = lj_value + coulomb_scale * coul_value;
-                    dVdr = lj_dVdr + coulomb_scale * coul_dVdr;
-                    dVdcoord = lj_dAng1dcoord * lj_angular_value + coulomb_scale * coul_dAng1dcoord * coul_angular_value;
-                } else {
-                    float radial_value = 0.f, radial_dVdr = 0.f;
-                    float angular_value = 0.f, angular_dVdr = 0.f;
-                    float ang1_value = 0.f, dAng1dcoord = 0.f;
-                    evaluate_component_value_and_deriv(
-                        radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-                    evaluate_component_value_and_deriv(
-                        angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-                    evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
-                    value = radial_value + ang1_value * angular_value;
-                    dVdr = radial_dVdr + ang1_value * angular_dVdr;
-                    dVdcoord = dAng1dcoord * angular_value;
-                }
+                float radial_value = 0.f, radial_dVdr = 0.f;
+                float angular_value = 0.f, angular_dVdr = 0.f;
+                float ang1_value = 0.f, dAng1dcoord = 0.f;
+                evaluate_component_value_and_deriv(
+                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+                evaluate_component_value_and_deriv(
+                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+                value = radial_value + ang1_value * angular_value;
+                dVdr = radial_dVdr + ang1_value * angular_dVdr;
+                dVdcoord = dAng1dcoord * angular_value;
 
                 if(!std::isfinite(value) || !std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
                 value *= interface_scale;
@@ -3258,23 +3007,6 @@ struct MartiniScTableOneBody : public CoordNode
     vector<float> angular_left_value;
     vector<float> angular_left_slope;
     vector<float> angular_profile_table;
-
-    bool has_lj_coul_tables;
-    float coulomb_scale;
-    vector<float> lj_radial_table;
-    vector<float> lj_angular_table;
-    vector<float> lj_radial_left_value;
-    vector<float> lj_radial_left_slope;
-    vector<float> lj_angular_left_value;
-    vector<float> lj_angular_left_slope;
-    vector<float> lj_angular_profile_table;
-    vector<float> coul_radial_table;
-    vector<float> coul_angular_table;
-    vector<float> coul_radial_left_value;
-    vector<float> coul_radial_left_slope;
-    vector<float> coul_angular_left_value;
-    vector<float> coul_angular_left_slope;
-    vector<float> coul_angular_profile_table;
 
     struct ActiveContact {
         int row;
@@ -3504,22 +3236,6 @@ struct MartiniScTableOneBody : public CoordNode
         angular_left_value(n_layer, 0.f),
         angular_left_slope(n_layer, 0.f),
         angular_profile_table(n_layer * n_angle, 0.f),
-        has_lj_coul_tables(false),
-        coulomb_scale(read_attribute<float>(grp, ".", "coulomb_scale", 1.0f)),
-        lj_radial_table(n_layer * n_grid, 0.f),
-        lj_angular_table(n_layer * n_grid, 0.f),
-        lj_radial_left_value(n_layer, 0.f),
-        lj_radial_left_slope(n_layer, 0.f),
-        lj_angular_left_value(n_layer, 0.f),
-        lj_angular_left_slope(n_layer, 0.f),
-        lj_angular_profile_table(n_layer * n_angle, 0.f),
-        coul_radial_table(n_layer * n_grid, 0.f),
-        coul_angular_table(n_layer * n_grid, 0.f),
-        coul_radial_left_value(n_layer, 0.f),
-        coul_radial_left_slope(n_layer, 0.f),
-        coul_angular_left_value(n_layer, 0.f),
-        coul_angular_left_slope(n_layer, 0.f),
-        coul_angular_profile_table(n_layer * n_angle, 0.f),
         cache_buffer(read_attribute<float>(grp, ".", "cache_buffer", 1.f)),
         active_contacts_valid(false),
         cached_box_x(0.f),
@@ -3660,66 +3376,6 @@ struct MartiniScTableOneBody : public CoordNode
                 (angular_table[radial_index(layer, 1)] - angular_table[radial_index(layer, 0)]) / grid_step_ang;
         }
 
-        // Read separate LJ/Coulomb rotamer tables if present
-        if(H5Lexists(grp, "rotamer_lj_radial_energy_kj_mol", H5P_DEFAULT) > 0) {
-            has_lj_coul_tables = true;
-            vector<float> lj_radial_native(n_layer * n_grid, 0.f);
-            vector<float> lj_angular_native(n_layer * n_grid, 0.f);
-            vector<float> coul_radial_native(n_layer * n_grid, 0.f);
-            vector<float> coul_angular_native(n_layer * n_grid, 0.f);
-            traverse_dset<4,float>(grp, "rotamer_lj_radial_energy_kj_mol",
-                    [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
-                        lj_radial_native[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
-                    });
-            traverse_dset<4,float>(grp, "rotamer_lj_angular_energy_kj_mol",
-                    [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
-                        lj_angular_native[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
-                    });
-            traverse_dset<4,float>(grp, "rotamer_lj_angular_profile",
-                    [&](size_t ir, size_t iro, size_t it, size_t ia, float x) {
-                        lj_angular_profile_table[profile_index(layer_index(int(ir), int(iro), int(it)), int(ia))] = x;
-                    });
-            traverse_dset<4,float>(grp, "rotamer_coul_radial_energy_kj_mol",
-                    [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
-                        coul_radial_native[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
-                    });
-            traverse_dset<4,float>(grp, "rotamer_coul_angular_energy_kj_mol",
-                    [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
-                        coul_angular_native[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
-                    });
-            traverse_dset<4,float>(grp, "rotamer_coul_angular_profile",
-                    [&](size_t ir, size_t iro, size_t it, size_t ia, float x) {
-                        coul_angular_profile_table[profile_index(layer_index(int(ir), int(iro), int(it)), int(ia))] = x;
-                    });
-            for(int layer = 0; layer < n_layer; ++layer) {
-                float lj_tail = lj_radial_native[radial_index(layer, n_grid - 1)];
-                float coul_tail = coul_radial_native[radial_index(layer, n_grid - 1)];
-                float lj_ang_tail = lj_angular_native[radial_index(layer, n_grid - 1)];
-                float coul_ang_tail = coul_angular_native[radial_index(layer, n_grid - 1)];
-                for(int ig = 0; ig < n_grid; ++ig) {
-                    lj_radial_table[radial_index(layer, ig)] =
-                        (lj_radial_native[radial_index(layer, ig)] - lj_tail) / energy_conversion_kj_per_eup;
-                    coul_radial_table[radial_index(layer, ig)] =
-                        (coul_radial_native[radial_index(layer, ig)] - coul_tail) / energy_conversion_kj_per_eup;
-                    lj_angular_table[radial_index(layer, ig)] =
-                        (lj_angular_native[radial_index(layer, ig)] - lj_ang_tail) / energy_conversion_kj_per_eup;
-                    coul_angular_table[radial_index(layer, ig)] =
-                        (coul_angular_native[radial_index(layer, ig)] - coul_ang_tail) / energy_conversion_kj_per_eup;
-                }
-                lj_radial_left_value[layer] = lj_radial_table[radial_index(layer, 0)];
-                lj_radial_left_slope[layer] =
-                    (lj_radial_table[radial_index(layer, 1)] - lj_radial_table[radial_index(layer, 0)]) / grid_step_ang;
-                lj_angular_left_value[layer] = lj_angular_table[radial_index(layer, 0)];
-                lj_angular_left_slope[layer] =
-                    (lj_angular_table[radial_index(layer, 1)] - lj_angular_table[radial_index(layer, 0)]) / grid_step_ang;
-                coul_radial_left_value[layer] = coul_radial_table[radial_index(layer, 0)];
-                coul_radial_left_slope[layer] =
-                    (coul_radial_table[radial_index(layer, 1)] - coul_radial_table[radial_index(layer, 0)]) / grid_step_ang;
-                coul_angular_left_value[layer] = coul_angular_table[radial_index(layer, 0)];
-                coul_angular_left_slope[layer] =
-                    (coul_angular_table[radial_index(layer, 1)] - coul_angular_table[radial_index(layer, 0)]) / grid_step_ang;
-            }
-        }
     }
 
     virtual void compute_value(ComputeMode mode) override {
@@ -3765,37 +3421,15 @@ struct MartiniScTableOneBody : public CoordNode
             Vec<3> displace_unitvec = (1.f / dist) * dr;
             float angular_coord = -dot(displace_unitvec, cbv);
 
-            if(has_lj_coul_tables) {
-                float lj_radial_value = 0.f, lj_radial_dVdr = 0.f;
-                float lj_angular_value = 0.f, lj_angular_dVdr = 0.f;
-                float lj_ang1_value = 0.f, lj_dAng1dcoord = 0.f;
-                float coul_radial_value = 0.f, coul_radial_dVdr = 0.f;
-                float coul_angular_value = 0.f, coul_angular_dVdr = 0.f;
-                float coul_ang1_value = 0.f, coul_dAng1dcoord = 0.f;
-                evaluate_component_value_and_deriv(
-                    lj_radial_value, lj_radial_dVdr, lj_radial_table, lj_radial_left_value, lj_radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    lj_angular_value, lj_angular_dVdr, lj_angular_table, lj_angular_left_value, lj_angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(lj_ang1_value, lj_dAng1dcoord, layer, angular_coord, lj_angular_profile_table);
-                evaluate_component_value_and_deriv(
-                    coul_radial_value, coul_radial_dVdr, coul_radial_table, coul_radial_left_value, coul_radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    coul_angular_value, coul_angular_dVdr, coul_angular_table, coul_angular_left_value, coul_angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(coul_ang1_value, coul_dAng1dcoord, layer, angular_coord, coul_angular_profile_table);
-                float lj_value = lj_radial_value + lj_ang1_value * lj_angular_value;
-                float coul_value = coul_radial_value + coul_ang1_value * coul_angular_value;
-                output(0, irow) += lj_value + coulomb_scale * coul_value;
-            } else {
-                float radial_value = 0.f, radial_dVdr = 0.f;
-                float angular_value = 0.f, angular_dVdr = 0.f;
-                float ang1_value = 0.f, dAng1dcoord = 0.f;
-                evaluate_component_value_and_deriv(
-                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
-                output(0, irow) += radial_value + ang1_value * angular_value;
-            }
+            float radial_value = 0.f, radial_dVdr = 0.f;
+            float angular_value = 0.f, angular_dVdr = 0.f;
+            float ang1_value = 0.f, dAng1dcoord = 0.f;
+            evaluate_component_value_and_deriv(
+                radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+            evaluate_component_value_and_deriv(
+                angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+            evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+            output(0, irow) += radial_value + ang1_value * angular_value;
         }
 
         for(int irow = 0; irow < n_row; ++irow) {
@@ -3857,39 +3491,16 @@ struct MartiniScTableOneBody : public CoordNode
             float angular_coord = -cos_theta;
             float dVdr, dVdcoord;
 
-            if(has_lj_coul_tables) {
-                float lj_radial_value = 0.f, lj_radial_dVdr = 0.f;
-                float lj_angular_value = 0.f, lj_angular_dVdr = 0.f;
-                float lj_ang1_value = 0.f, lj_dAng1dcoord = 0.f;
-                float coul_radial_value = 0.f, coul_radial_dVdr = 0.f;
-                float coul_angular_value = 0.f, coul_angular_dVdr = 0.f;
-                float coul_ang1_value = 0.f, coul_dAng1dcoord = 0.f;
-                evaluate_component_value_and_deriv(
-                    lj_radial_value, lj_radial_dVdr, lj_radial_table, lj_radial_left_value, lj_radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    lj_angular_value, lj_angular_dVdr, lj_angular_table, lj_angular_left_value, lj_angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(lj_ang1_value, lj_dAng1dcoord, layer, angular_coord, lj_angular_profile_table);
-                evaluate_component_value_and_deriv(
-                    coul_radial_value, coul_radial_dVdr, coul_radial_table, coul_radial_left_value, coul_radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    coul_angular_value, coul_angular_dVdr, coul_angular_table, coul_angular_left_value, coul_angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(coul_ang1_value, coul_dAng1dcoord, layer, angular_coord, coul_angular_profile_table);
-                float lj_dVdr = lj_radial_dVdr + lj_ang1_value * lj_angular_dVdr;
-                float coul_dVdr = coul_radial_dVdr + coul_ang1_value * coul_angular_dVdr;
-                dVdr = lj_dVdr + coulomb_scale * coul_dVdr;
-                dVdcoord = lj_dAng1dcoord * lj_angular_value + coulomb_scale * coul_dAng1dcoord * coul_angular_value;
-            } else {
-                float radial_value = 0.f, radial_dVdr = 0.f;
-                float angular_value = 0.f, angular_dVdr = 0.f;
-                float ang1_value = 0.f, dAng1dcoord = 0.f;
-                evaluate_component_value_and_deriv(
-                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
-                dVdr = radial_dVdr + ang1_value * angular_dVdr;
-                dVdcoord = dAng1dcoord * angular_value;
-            }
+            float radial_value = 0.f, radial_dVdr = 0.f;
+            float angular_value = 0.f, angular_dVdr = 0.f;
+            float ang1_value = 0.f, dAng1dcoord = 0.f;
+            evaluate_component_value_and_deriv(
+                radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+            evaluate_component_value_and_deriv(
+                angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+            evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+            dVdr = radial_dVdr + ang1_value * angular_dVdr;
+            dVdcoord = dAng1dcoord * angular_value;
             if(!std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
 
             Vec<3> point_grad = row_scale * (

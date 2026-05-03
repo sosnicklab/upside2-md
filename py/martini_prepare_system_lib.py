@@ -2117,23 +2117,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         force_cap = float(os.environ.get('UPSIDE_FORCE_CAP', '0'))
         martini_potential._v_attrs.force_cap = force_cap
         
-        # PME configuration for long-range Coulomb interactions
-        use_pme = int(os.environ.get('UPSIDE_USE_PME', '1'))
-        pme_alpha = float(os.environ.get('UPSIDE_PME_ALPHA', '0.01'))
-        pme_rcut = float(os.environ.get('UPSIDE_PME_RCUT', '10.0'))
-        pme_nx = int(os.environ.get('UPSIDE_PME_NX', '32'))
-        pme_ny = int(os.environ.get('UPSIDE_PME_NY', '32'))
-        pme_nz = int(os.environ.get('UPSIDE_PME_NZ', '32'))
-        pme_order = int(os.environ.get('UPSIDE_PME_ORDER', '4'))
-        
-        martini_potential._v_attrs.use_pme = use_pme
-        martini_potential._v_attrs.pme_alpha = pme_alpha
-        martini_potential._v_attrs.pme_rcut = pme_rcut
-        martini_potential._v_attrs.pme_nx = pme_nx
-        martini_potential._v_attrs.pme_ny = pme_ny
-        martini_potential._v_attrs.pme_nz = pme_nz
-        martini_potential._v_attrs.pme_order = pme_order
-
         martini_potential._v_attrs.x_len = x_len
         martini_potential._v_attrs.y_len = y_len
         martini_potential._v_attrs.z_len = z_len
@@ -2147,20 +2130,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         soften_lj = int(os.environ.get('UPSIDE_SOFTEN_LJ', '0'))
         lj_alpha = float(os.environ.get('UPSIDE_LJ_ALPHA', '1.0'))
         
-        # PME configuration via environment variables
-        # UPSIDE_USE_PME: 1 to enable Particle Mesh Ewald for long-range Coulomb
-        # UPSIDE_PME_ALPHA: PME screening parameter (default: 0.2)
-        # UPSIDE_PME_RCUT: Real space cutoff in Angstroms (default: 10.0)
-        # UPSIDE_PME_NX/NY/NZ: Grid dimensions (default: 32, should be powers of 2)
-        # UPSIDE_PME_ORDER: B-spline interpolation order (default: 4)
-        use_pme = int(os.environ.get('UPSIDE_USE_PME', '0'))
-        pme_alpha = float(os.environ.get('UPSIDE_PME_ALPHA', '0.01'))
-        pme_rcut = float(os.environ.get('UPSIDE_PME_RCUT', '10.0'))
-        pme_nx = int(os.environ.get('UPSIDE_PME_NX', '32'))
-        pme_ny = int(os.environ.get('UPSIDE_PME_NY', '32'))
-        pme_nz = int(os.environ.get('UPSIDE_PME_NZ', '32'))
-        pme_order = int(os.environ.get('UPSIDE_PME_ORDER', '4'))
-
         # Set stage-specific softening parameters
         martini_potential._v_attrs.coulomb_soften = params['coulomb_soften']
         if params['coulomb_soften']:
@@ -2169,42 +2138,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         if params['lj_soften']:
             martini_potential._v_attrs.lj_soften_alpha = params['lj_alpha']
         
-        # PME configuration
-        martini_potential._v_attrs.use_pme = use_pme
-        if use_pme:
-            martini_potential._v_attrs.pme_alpha = pme_alpha
-            martini_potential._v_attrs.pme_rcut = pme_rcut
-            print(f"PME enabled: alpha={pme_alpha}, rcut={pme_rcut}, grid={pme_nx}x{pme_ny}x{pme_nz}, order={pme_order}")
-        else:
-            print("PME disabled: using standard Coulomb cutoff")
-
-        # Ewald summation configuration via environment variables
-        # UPSIDE_EWALD_ENABLE: 1 to enable Ewald summation for long-range Coulomb
-        # UPSIDE_EWALD_ALPHA: Ewald screening parameter in 1/Angstrom (default: 0.2)
-        # UPSIDE_EWALD_KMAX: k-space cutoff (default: 5)
-        # UPSIDE_EWALD_USE_CARDINAL_BSPLINE: 1 to approximate trig via periodic cardinal cubic B-spline
-        # UPSIDE_EWALD_BSPLINE_GRID: lookup grid size for the periodic trig table
-        ewald_enabled = int(os.environ.get('UPSIDE_EWALD_ENABLE', '0'))
-        ewald_alpha = float(os.environ.get('UPSIDE_EWALD_ALPHA', '0.2'))
-        ewald_kmax = int(os.environ.get('UPSIDE_EWALD_KMAX', '5'))
-        ewald_use_cardinal_bspline = int(os.environ.get('UPSIDE_EWALD_USE_CARDINAL_BSPLINE', '1'))
-        ewald_bspline_grid = int(os.environ.get('UPSIDE_EWALD_BSPLINE_GRID', '16384'))
-
-        martini_potential._v_attrs.ewald_enabled = ewald_enabled
-        if ewald_enabled:
-            martini_potential._v_attrs.ewald_alpha = ewald_alpha
-            martini_potential._v_attrs.ewald_kmax = ewald_kmax
-            martini_potential._v_attrs.ewald_use_cardinal_bspline = ewald_use_cardinal_bspline
-            martini_potential._v_attrs.ewald_bspline_grid = ewald_bspline_grid
-            print(f"Ewald summation enabled: alpha={ewald_alpha} A^-1, kmax={ewald_kmax}, cardinal_bspline={ewald_use_cardinal_bspline}, grid={ewald_bspline_grid}")
-        else:
-            print("Ewald summation disabled")
-
         # Periodic boundary potential removed - using NVT ensemble without boundaries
-        
-        # PME node creation removed - using Coulomb spline tables instead
-        
-        # NPT barostat configuration removed - using NVT ensemble without boundaries
+
 
         # Create atom indices and charges arrays for the potential
         t.create_array(martini_potential, 'atom_indices', obj=np.arange(n_atoms))
@@ -2458,16 +2393,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         f.write(f"Additional exclusions: {excluded_additional_count}\n")
     
     print(f"Preparation summary saved to: {summary_file}")
-
-def _read_optional_float32(h5file, name):
-    if name not in h5file:
-        return None
-    return h5file[name][:].astype(np.float32)
-
-
-def _write_optional_float32(group, name, data):
-    if data is not None:
-        group.create_dataset(name, data=data, dtype=np.float32)
 
 
 
@@ -3024,7 +2949,7 @@ def build_env_rows(inp, target_to_index):
         env_target_index.append(target_idx)
 
     if not env_atom_index:
-        raise ValueError("No non-protein dry-MARTINI particles matched sc_table.h5 target_order")
+        raise ValueError("No non-protein dry-MARTINI particles matched martini.h5 sc_table target_order")
 
     return np.asarray(env_atom_index, dtype=np.int32), np.asarray(env_target_index, dtype=np.int32)
 
@@ -3176,23 +3101,20 @@ def inject_backbone_nodes(
             ds[...] = remap_atom_index_array(ds[:], atom_map).astype(ds.dtype, copy=False)
 
 
-def inject_particles_table(up_file: Path, upside_home: Path):
+def inject_particles_table(up_file: Path, martini_h5: Path):
     up_file = Path(up_file).expanduser().resolve()
-    upside_home = Path(upside_home).expanduser().resolve()
-    particles_h5 = upside_home / "parameters" / "dryMARTINI" / "particles.h5"
+    martini_h5 = Path(martini_h5).expanduser().resolve()
 
-    if not particles_h5.exists():
-        raise SystemExit(f"ERROR: particles.h5 not found: {particles_h5}")
+    if not martini_h5.exists():
+        raise SystemExit(f"ERROR: martini.h5 not found: {martini_h5}")
 
-    with h5py.File(particles_h5, "r") as src:
-        lj_eps = src["lj_unique_eps_eup"][:].astype(np.float64)
-        lj_sig = src["lj_unique_sig_ang"][:].astype(np.float64)
-        lj_grids = src["lj_energy_grids"][:].astype(np.float64)
-        coul_ref = src["coulomb_reference_grid"][:].astype(np.float64)
-        grid_attrs = {k: src.attrs[k] for k in [
-            "lj_n_points", "lj_r_min_ang", "lj_r_max_ang",
-            "coul_n_points", "coul_r_min_ang", "coul_r_max_ang",
-        ]}
+    with h5py.File(martini_h5, "r") as src:
+        pg = src["particles"]
+        eps_arr = pg["unique_eps_eup"][:].astype(np.float64)
+        sig_arr = pg["unique_sig_ang"][:].astype(np.float64)
+        qq_arr = pg["unique_charge_product"][:].astype(np.float64)
+        combined_grids = pg["combined_energy_grids"][:].astype(np.float64)
+        n_triples = len(eps_arr)
 
     GRID_N = 1000
     R_MIN = 0.0
@@ -3205,63 +3127,58 @@ def inject_particles_table(up_file: Path, upside_home: Path):
         lj_soften_alpha = float(g.attrs.get("lj_soften_alpha", 0.0))
         coulomb_soften = bool(int(g.attrs.get("coulomb_soften", 0)))
         slater_alpha = float(g.attrs.get("slater_alpha", 0.0))
-        ewald_enabled = bool(int(g.attrs.get("ewald_enabled", 0)))
-        ewald_alpha = float(g.attrs.get("ewald_alpha", 0.0))
+        has_softening = (lj_soften and lj_soften_alpha > 0.0) or coulomb_soften
 
-        if lj_soften and lj_soften_alpha > 0.0:
-            alpha = float(lj_soften_alpha)
-            for idx in range(len(lj_eps)):
-                eps = float(lj_eps[idx])
-                sig = float(lj_sig[idx])
-                for i in range(GRID_N):
-                    r = R_MIN + i * (R_MAX - R_MIN) / (GRID_N - 1)
-                    if r == 0.0:
-                        r = 1.0e-6
-                    x = r / sig
-                    x2 = x * x
-                    x3 = x2 * x
-                    x6 = x3 * x3
-                    t = x6 + alpha
-                    inv_t = 1.0 / t
-                    lj_grids[idx, i] = 4.0 * eps * (inv_t * inv_t - inv_t)
-
-        if coulomb_soften or ewald_enabled:
+        if has_softening:
             coulomb_k_native = float(g.attrs["coulomb_constant_native_kj_mol_nm_e2"])
             energy_conv = float(g.attrs["energy_conversion_kj_per_eup"])
             length_conv = float(g.attrs["length_conversion_angstrom_per_nm"])
             coulomb_k = coulomb_k_native * (length_conv / energy_conv)
-
+            lj_alpha = float(lj_soften_alpha) if lj_soften else 0.0
             slater = float(slater_alpha) if coulomb_soften else 0.0
-            ewald = float(ewald_alpha) if ewald_enabled else 0.0
 
-            for i in range(GRID_N):
-                r = R_MIN + i * (R_MAX - R_MIN) / (GRID_N - 1)
-                if r == 0.0:
-                    r = 1.0e-6
-                potential = coulomb_k / r
+            for idx in range(n_triples):
+                eps = float(eps_arr[idx])
+                sig = float(sig_arr[idx])
+                qq = float(qq_arr[idx])
+                for i in range(GRID_N):
+                    r = R_MIN + i * (R_MAX - R_MIN) / (GRID_N - 1)
+                    if r == 0.0:
+                        r = 1.0e-6
 
-                if ewald_enabled:
-                    potential *= math.erfc(ewald * r)
+                    # LJ component with optional soft-core
+                    if eps != 0.0 and sig != 0.0:
+                        if lj_soften and lj_alpha > 0.0:
+                            x = r / sig
+                            t = (x * x) ** 3 + lj_alpha
+                            inv_t = 1.0 / t
+                            lj = 4.0 * eps * (inv_t * inv_t - inv_t)
+                        else:
+                            x = sig / r
+                            x6 = (x * x) ** 3
+                            lj = 4.0 * eps * (x6 * x6 - x6)
+                    else:
+                        lj = 0.0
 
-                if coulomb_soften:
-                    alpha_r = slater * r
-                    exp_term = math.exp(-alpha_r)
-                    soft_factor = 1.0 - (1.0 + alpha_r * 0.5) * exp_term
-                    potential *= soft_factor
+                    # Coulomb component with optional softening
+                    if abs(qq) > 1e-10:
+                        coul = coulomb_k * qq / r
+                        if coulomb_soften:
+                            alpha_r = slater * r
+                            coul *= 1.0 - (1.0 + alpha_r * 0.5) * math.exp(-alpha_r)
+                    else:
+                        coul = 0.0
 
-                coul_ref[i] = potential
+                    combined_grids[idx, i] = lj + coul
 
-        for ds_name in ["lj_unique_eps_eup", "lj_unique_sig_ang",
-                         "lj_energy_grids", "coulomb_reference_grid"]:
-            if ds_name in g:
-                del g[ds_name]
-
-        g.create_dataset("lj_unique_eps_eup", data=lj_eps, dtype=np.float64)
-        g.create_dataset("lj_unique_sig_ang", data=lj_sig, dtype=np.float64)
-        g.create_dataset("lj_energy_grids", data=lj_grids, dtype=np.float64)
-        g.create_dataset("coulomb_reference_grid", data=coul_ref, dtype=np.float64)
-        for key, val in grid_attrs.items():
-            g.attrs[key] = np.float32(val) if "ang" in key or "points" in key else val
+        g.create_dataset("unique_eps_eup", data=eps_arr, dtype=np.float64)
+        g.create_dataset("unique_sig_ang", data=sig_arr, dtype=np.float64)
+        g.create_dataset("unique_charge_product", data=qq_arr, dtype=np.float64)
+        g.create_dataset("combined_energy_grids", data=combined_grids, dtype=np.float64)
+        g.attrs["n_combined_triples"] = np.int32(n_triples)
+        g.attrs["r_min_ang"] = np.float32(R_MIN)
+        g.attrs["r_max_ang"] = np.float32(R_MAX)
+        g.attrs["n_points"] = np.int32(GRID_N)
 
 
 def inject_stage7_sc_table_nodes(
@@ -3287,12 +3204,13 @@ def inject_stage7_sc_table_nodes(
     if not up_file.exists():
         raise SystemExit(f"ERROR: stage file not found: {up_file}")
     if not martini_h5.exists():
-        raise SystemExit(f"ERROR: sc_table.h5 not found: {martini_h5}")
+        raise SystemExit(f"ERROR: martini.h5 not found: {martini_h5}")
     for path in [rama_library, rama_sheet_mixing, hbond_energy, reference_state_rama, sidechain_lib]:
         if not path.exists():
             raise SystemExit(f"ERROR: required Upside input not found: {path}")
 
     with h5py.File(martini_h5, "r") as sc_lib:
+        sc_grp = sc_lib["sc_table"] if "sc_table" in sc_lib else sc_lib
         required_sc_datasets = [
             "restype_order",
             "target_order",
@@ -3304,29 +3222,22 @@ def inject_stage7_sc_table_nodes(
             "rotamer_angular_energy_kj_mol",
             "rotamer_angular_profile",
         ]
-        missing_sc_datasets = [name for name in required_sc_datasets if name not in sc_lib]
+        missing_sc_datasets = [name for name in required_sc_datasets if name not in sc_grp]
         if missing_sc_datasets:
             missing_text = ", ".join(missing_sc_datasets)
             raise SystemExit(
                 f"ERROR: {martini_h5} is missing required rotamer-resolved SC datasets: {missing_text}. "
-                "Rebuild sc_table.h5 by running SC-training/run_local.sh."
+                "Regenerate martini.h5 via build_martini_tables()."
             )
-        restype_order = decode_string_array(sc_lib["restype_order"])
-        target_order = decode_string_array(sc_lib["target_order"])
-        grid_nm = sc_lib["grid_nm"][:].astype(np.float32)
-        cos_theta_grid = sc_lib["cos_theta_grid"][:].astype(np.float32)
-        rotamer_count = sc_lib["rotamer_count"][:].astype(np.int32)
-        rotamer_probability_fixed = sc_lib["rotamer_probability_fixed"][:].astype(np.float32)
-        rotamer_radial_energy_kj_mol = sc_lib["rotamer_radial_energy_kj_mol"][:].astype(np.float32)
-        rotamer_angular_energy_kj_mol = sc_lib["rotamer_angular_energy_kj_mol"][:].astype(np.float32)
-        rotamer_angular_profile = sc_lib["rotamer_angular_profile"][:].astype(np.float32)
-        # LJ/Coulomb separated tables (optional for backward compat)
-        rotamer_lj_radial_energy_kj_mol = _read_optional_float32(sc_lib, "rotamer_lj_radial_energy_kj_mol")
-        rotamer_lj_angular_energy_kj_mol = _read_optional_float32(sc_lib, "rotamer_lj_angular_energy_kj_mol")
-        rotamer_lj_angular_profile = _read_optional_float32(sc_lib, "rotamer_lj_angular_profile")
-        rotamer_coul_radial_energy_kj_mol = _read_optional_float32(sc_lib, "rotamer_coul_radial_energy_kj_mol")
-        rotamer_coul_angular_energy_kj_mol = _read_optional_float32(sc_lib, "rotamer_coul_angular_energy_kj_mol")
-        rotamer_coul_angular_profile = _read_optional_float32(sc_lib, "rotamer_coul_angular_profile")
+        restype_order = decode_string_array(sc_grp["restype_order"])
+        target_order = decode_string_array(sc_grp["target_order"])
+        grid_nm = sc_grp["grid_nm"][:].astype(np.float32)
+        cos_theta_grid = sc_grp["cos_theta_grid"][:].astype(np.float32)
+        rotamer_count = sc_grp["rotamer_count"][:].astype(np.int32)
+        rotamer_probability_fixed = sc_grp["rotamer_probability_fixed"][:].astype(np.float32)
+        rotamer_radial_energy_kj_mol = sc_grp["rotamer_radial_energy_kj_mol"][:].astype(np.float32)
+        rotamer_angular_energy_kj_mol = sc_grp["rotamer_angular_energy_kj_mol"][:].astype(np.float32)
+        rotamer_angular_profile = sc_grp["rotamer_angular_profile"][:].astype(np.float32)
 
     restype_to_index = {name: i for i, name in enumerate(restype_order)}
     target_to_index = {name: i for i, name in enumerate(target_order)}
@@ -3445,12 +3356,6 @@ def inject_stage7_sc_table_nodes(
         g_sc.create_dataset("rotamer_radial_energy_kj_mol", data=rotamer_radial_energy_kj_mol, dtype=np.float32)
         g_sc.create_dataset("rotamer_angular_energy_kj_mol", data=rotamer_angular_energy_kj_mol, dtype=np.float32)
         g_sc.create_dataset("rotamer_angular_profile", data=rotamer_angular_profile, dtype=np.float32)
-        _write_optional_float32(g_sc, "rotamer_lj_radial_energy_kj_mol", rotamer_lj_radial_energy_kj_mol)
-        _write_optional_float32(g_sc, "rotamer_lj_angular_energy_kj_mol", rotamer_lj_angular_energy_kj_mol)
-        _write_optional_float32(g_sc, "rotamer_lj_angular_profile", rotamer_lj_angular_profile)
-        _write_optional_float32(g_sc, "rotamer_coul_radial_energy_kj_mol", rotamer_coul_radial_energy_kj_mol)
-        _write_optional_float32(g_sc, "rotamer_coul_angular_energy_kj_mol", rotamer_coul_angular_energy_kj_mol)
-        _write_optional_float32(g_sc, "rotamer_coul_angular_profile", rotamer_coul_angular_profile)
         g_sc.create_dataset("restype_order", data=np.asarray([np.bytes_(x) for x in restype_order], dtype="S4"))
         g_sc.create_dataset("target_order", data=np.asarray([np.bytes_(x) for x in target_order], dtype="S8"))
 
