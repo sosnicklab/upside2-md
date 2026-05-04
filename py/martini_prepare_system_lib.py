@@ -3,17 +3,15 @@ from __future__ import annotations
 
 import _pickle as cPickle
 import importlib.util
-import json
 import os
-import shutil
-import subprocess
 import sys
-import tempfile
 import types
 import warnings
 from collections import Counter, defaultdict
 from copy import deepcopy
 from pathlib import Path
+
+import math
 
 import h5py
 import numpy as np
@@ -2119,23 +2117,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         force_cap = float(os.environ.get('UPSIDE_FORCE_CAP', '0'))
         martini_potential._v_attrs.force_cap = force_cap
         
-        # PME configuration for long-range Coulomb interactions
-        use_pme = int(os.environ.get('UPSIDE_USE_PME', '1'))
-        pme_alpha = float(os.environ.get('UPSIDE_PME_ALPHA', '0.01'))
-        pme_rcut = float(os.environ.get('UPSIDE_PME_RCUT', '10.0'))
-        pme_nx = int(os.environ.get('UPSIDE_PME_NX', '32'))
-        pme_ny = int(os.environ.get('UPSIDE_PME_NY', '32'))
-        pme_nz = int(os.environ.get('UPSIDE_PME_NZ', '32'))
-        pme_order = int(os.environ.get('UPSIDE_PME_ORDER', '4'))
-        
-        martini_potential._v_attrs.use_pme = use_pme
-        martini_potential._v_attrs.pme_alpha = pme_alpha
-        martini_potential._v_attrs.pme_rcut = pme_rcut
-        martini_potential._v_attrs.pme_nx = pme_nx
-        martini_potential._v_attrs.pme_ny = pme_ny
-        martini_potential._v_attrs.pme_nz = pme_nz
-        martini_potential._v_attrs.pme_order = pme_order
-
         martini_potential._v_attrs.x_len = x_len
         martini_potential._v_attrs.y_len = y_len
         martini_potential._v_attrs.z_len = z_len
@@ -2149,20 +2130,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         soften_lj = int(os.environ.get('UPSIDE_SOFTEN_LJ', '0'))
         lj_alpha = float(os.environ.get('UPSIDE_LJ_ALPHA', '1.0'))
         
-        # PME configuration via environment variables
-        # UPSIDE_USE_PME: 1 to enable Particle Mesh Ewald for long-range Coulomb
-        # UPSIDE_PME_ALPHA: PME screening parameter (default: 0.2)
-        # UPSIDE_PME_RCUT: Real space cutoff in Angstroms (default: 10.0)
-        # UPSIDE_PME_NX/NY/NZ: Grid dimensions (default: 32, should be powers of 2)
-        # UPSIDE_PME_ORDER: B-spline interpolation order (default: 4)
-        use_pme = int(os.environ.get('UPSIDE_USE_PME', '0'))
-        pme_alpha = float(os.environ.get('UPSIDE_PME_ALPHA', '0.01'))
-        pme_rcut = float(os.environ.get('UPSIDE_PME_RCUT', '10.0'))
-        pme_nx = int(os.environ.get('UPSIDE_PME_NX', '32'))
-        pme_ny = int(os.environ.get('UPSIDE_PME_NY', '32'))
-        pme_nz = int(os.environ.get('UPSIDE_PME_NZ', '32'))
-        pme_order = int(os.environ.get('UPSIDE_PME_ORDER', '4'))
-
         # Set stage-specific softening parameters
         martini_potential._v_attrs.coulomb_soften = params['coulomb_soften']
         if params['coulomb_soften']:
@@ -2171,42 +2138,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         if params['lj_soften']:
             martini_potential._v_attrs.lj_soften_alpha = params['lj_alpha']
         
-        # PME configuration
-        martini_potential._v_attrs.use_pme = use_pme
-        if use_pme:
-            martini_potential._v_attrs.pme_alpha = pme_alpha
-            martini_potential._v_attrs.pme_rcut = pme_rcut
-            print(f"PME enabled: alpha={pme_alpha}, rcut={pme_rcut}, grid={pme_nx}x{pme_ny}x{pme_nz}, order={pme_order}")
-        else:
-            print("PME disabled: using standard Coulomb cutoff")
-
-        # Ewald summation configuration via environment variables
-        # UPSIDE_EWALD_ENABLE: 1 to enable Ewald summation for long-range Coulomb
-        # UPSIDE_EWALD_ALPHA: Ewald screening parameter in 1/Angstrom (default: 0.2)
-        # UPSIDE_EWALD_KMAX: k-space cutoff (default: 5)
-        # UPSIDE_EWALD_USE_CARDINAL_BSPLINE: 1 to approximate trig via periodic cardinal cubic B-spline
-        # UPSIDE_EWALD_BSPLINE_GRID: lookup grid size for the periodic trig table
-        ewald_enabled = int(os.environ.get('UPSIDE_EWALD_ENABLE', '0'))
-        ewald_alpha = float(os.environ.get('UPSIDE_EWALD_ALPHA', '0.2'))
-        ewald_kmax = int(os.environ.get('UPSIDE_EWALD_KMAX', '5'))
-        ewald_use_cardinal_bspline = int(os.environ.get('UPSIDE_EWALD_USE_CARDINAL_BSPLINE', '1'))
-        ewald_bspline_grid = int(os.environ.get('UPSIDE_EWALD_BSPLINE_GRID', '16384'))
-
-        martini_potential._v_attrs.ewald_enabled = ewald_enabled
-        if ewald_enabled:
-            martini_potential._v_attrs.ewald_alpha = ewald_alpha
-            martini_potential._v_attrs.ewald_kmax = ewald_kmax
-            martini_potential._v_attrs.ewald_use_cardinal_bspline = ewald_use_cardinal_bspline
-            martini_potential._v_attrs.ewald_bspline_grid = ewald_bspline_grid
-            print(f"Ewald summation enabled: alpha={ewald_alpha} A^-1, kmax={ewald_kmax}, cardinal_bspline={ewald_use_cardinal_bspline}, grid={ewald_bspline_grid}")
-        else:
-            print("Ewald summation disabled")
-
         # Periodic boundary potential removed - using NVT ensemble without boundaries
-        
-        # PME node creation removed - using Coulomb spline tables instead
-        
-        # NPT barostat configuration removed - using NVT ensemble without boundaries
+
 
         # Create atom indices and charges arrays for the potential
         t.create_array(martini_potential, 'atom_indices', obj=np.arange(n_atoms))
@@ -2461,281 +2394,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     
     print(f"Preparation summary saved to: {summary_file}")
 
-def require_h5import():
-    exe = shutil.which("h5import")
-    if not exe:
-        raise SystemExit("ERROR: h5import was not found in PATH")
-    return exe
-
-
-def read_sc_table(path: Path):
-    if not path.exists():
-        raise SystemExit(f"ERROR: SC table JSON not found: {path}")
-    return json.loads(path.read_text())
-
-
-def normalize_string(value):
-    return "" if value is None else str(value)
-
-
-def build_factorized_sc_table(sc_table):
-    tables_by_residue = sc_table.get("tables_by_residue")
-    if not isinstance(tables_by_residue, dict) or not tables_by_residue:
-        raise SystemExit("ERROR: sc_table.json is missing non-empty tables_by_residue")
-
-    residues = list(tables_by_residue)
-    first_residue = residues[0]
-    targets = list(tables_by_residue[first_residue])
-    if not targets:
-        raise SystemExit("ERROR: first residue has no target tables")
-
-    reference_grid = np.asarray(
-        tables_by_residue[first_residue][targets[0]]["grid_nm"], dtype=np.float32
-    )
-    if reference_grid.ndim != 1 or reference_grid.size < 2:
-        raise SystemExit("ERROR: invalid radial grid in sc_table.json")
-    reference_cos_grid = np.asarray(
-        tables_by_residue[first_residue][targets[0]]["cos_theta_grid"], dtype=np.float32
-    )
-    if reference_cos_grid.ndim != 1 or reference_cos_grid.size < 2:
-        raise SystemExit("ERROR: invalid cos(theta) grid in sc_table.json")
-
-    max_rotamer = 0
-    for residue in residues:
-        for target in targets:
-            entry = tables_by_residue[residue][target]
-            max_rotamer = max(max_rotamer, int(entry.get("rotamer_count", 0)))
-    if max_rotamer < 1:
-        raise SystemExit("ERROR: no rotamer-resolved SC tables found in sc_table.json")
-
-    radial_energy = np.zeros((len(residues), len(targets), reference_grid.size), dtype=np.float32)
-    angular_energy = np.zeros((len(residues), len(targets), reference_grid.size), dtype=np.float32)
-    angular_profile = np.zeros(
-        (len(residues), len(targets), reference_cos_grid.size), dtype=np.float32
-    )
-    rotamer_count = np.zeros((len(residues),), dtype=np.float32)
-    rotamer_probability_fixed = np.zeros((len(residues), max_rotamer), dtype=np.float32)
-    rotamer_radial_energy = np.zeros(
-        (len(residues), max_rotamer, len(targets), reference_grid.size), dtype=np.float32
-    )
-    rotamer_angular_energy = np.zeros(
-        (len(residues), max_rotamer, len(targets), reference_grid.size), dtype=np.float32
-    )
-    rotamer_angular_profile = np.zeros(
-        (len(residues), max_rotamer, len(targets), reference_cos_grid.size), dtype=np.float32
-    )
-
-    for ri, residue in enumerate(residues):
-        residue_tables = tables_by_residue[residue]
-        missing_targets = sorted(set(targets) - set(residue_tables))
-        extra_targets = sorted(set(residue_tables) - set(targets))
-        if missing_targets or extra_targets:
-            raise SystemExit(
-                f"ERROR: target mismatch for residue {residue}: "
-                f"missing={missing_targets} extra={extra_targets}"
-            )
-
-        for ti, target in enumerate(targets):
-            entry = residue_tables[target]
-            entry_rot_count = int(entry.get("rotamer_count", 0))
-            if entry_rot_count < 1 or entry_rot_count > max_rotamer:
-                raise SystemExit(
-                    f"ERROR: invalid rotamer_count for residue {residue} target {target}: "
-                    f"{entry_rot_count}"
-                )
-            if ti == 0:
-                rotamer_count[ri] = float(entry_rot_count)
-                prob_row = np.asarray(entry.get("rotamer_probability_fixed", []), dtype=np.float32)
-                if prob_row.shape != (entry_rot_count,):
-                    raise SystemExit(
-                        f"ERROR: rotamer_probability_fixed shape mismatch for residue {residue}: "
-                        f"{prob_row.shape} vs {(entry_rot_count,)}"
-                    )
-                rotamer_probability_fixed[ri, :entry_rot_count] = prob_row
-            elif int(rotamer_count[ri]) != entry_rot_count:
-                raise SystemExit(
-                    f"ERROR: inconsistent rotamer_count for residue {residue}: "
-                    f"{int(rotamer_count[ri])} vs {entry_rot_count}"
-                )
-
-            grid = np.asarray(entry["grid_nm"], dtype=np.float32)
-            if grid.shape != reference_grid.shape or not np.allclose(grid, reference_grid):
-                raise SystemExit(
-                    f"ERROR: non-uniform radial grid for residue {residue} target {target}"
-                )
-            cos_grid = np.asarray(entry["cos_theta_grid"], dtype=np.float32)
-            if cos_grid.shape != reference_cos_grid.shape or not np.allclose(cos_grid, reference_cos_grid):
-                raise SystemExit(
-                    f"ERROR: non-uniform cos(theta) grid for residue {residue} target {target}"
-                )
-
-            radial_row = np.asarray(entry["radial_energy_kj_mol"], dtype=np.float32)
-            angular_row = np.asarray(entry["angular_energy_kj_mol"], dtype=np.float32)
-            profile_row = np.asarray(entry["angular_profile"], dtype=np.float32)
-            rot_radial = np.asarray(entry["rotamer_radial_energy_kj_mol"], dtype=np.float32)
-            rot_angular = np.asarray(entry["rotamer_angular_energy_kj_mol"], dtype=np.float32)
-            rot_profile = np.asarray(entry["rotamer_angular_profile"], dtype=np.float32)
-
-            if radial_row.shape != reference_grid.shape:
-                raise SystemExit(
-                    f"ERROR: radial_energy_kj_mol shape mismatch for residue {residue} "
-                    f"target {target}: {radial_row.shape} vs {reference_grid.shape}"
-                )
-            if angular_row.shape != reference_grid.shape:
-                raise SystemExit(
-                    f"ERROR: angular_energy_kj_mol shape mismatch for residue {residue} "
-                    f"target {target}: {angular_row.shape} vs {reference_grid.shape}"
-                )
-            if profile_row.shape != reference_cos_grid.shape:
-                raise SystemExit(
-                    f"ERROR: angular_profile shape mismatch for residue {residue} target {target}: "
-                    f"{profile_row.shape} vs {reference_cos_grid.shape}"
-                )
-            if rot_radial.shape != (entry_rot_count, reference_grid.size):
-                raise SystemExit(
-                    f"ERROR: rotamer_radial_energy_kj_mol shape mismatch for residue {residue} "
-                    f"target {target}: {rot_radial.shape} vs {(entry_rot_count, reference_grid.size)}"
-                )
-            if rot_angular.shape != (entry_rot_count, reference_grid.size):
-                raise SystemExit(
-                    f"ERROR: rotamer_angular_energy_kj_mol shape mismatch for residue {residue} "
-                    f"target {target}: {rot_angular.shape} vs {(entry_rot_count, reference_grid.size)}"
-                )
-            if rot_profile.shape != (entry_rot_count, reference_cos_grid.size):
-                raise SystemExit(
-                    f"ERROR: rotamer_angular_profile shape mismatch for residue {residue} "
-                    f"target {target}: {rot_profile.shape} vs {(entry_rot_count, reference_cos_grid.size)}"
-                )
-
-            radial_energy[ri, ti, :] = radial_row
-            angular_energy[ri, ti, :] = angular_row
-            angular_profile[ri, ti, :] = profile_row
-            rotamer_radial_energy[ri, :entry_rot_count, ti, :] = rot_radial
-            rotamer_angular_energy[ri, :entry_rot_count, ti, :] = rot_angular
-            rotamer_angular_profile[ri, :entry_rot_count, ti, :] = rot_profile
-
-    return (
-        residues,
-        targets,
-        reference_grid,
-        reference_cos_grid,
-        radial_energy,
-        angular_energy,
-        angular_profile,
-        rotamer_count,
-        rotamer_probability_fixed,
-        rotamer_radial_energy,
-        rotamer_angular_energy,
-        rotamer_angular_profile,
-    )
-
-
-def write_text_h5_dataset(h5import_exe: str, tmpdir: Path, output_h5: Path, dataset_path: str, values):
-    txt_path = tmpdir / f"{dataset_path.strip('/').replace('/', '__')}.txt"
-    cfg_path = tmpdir / f"{dataset_path.strip('/').replace('/', '__')}.cfg"
-    txt_path.write_text("".join(f"{normalize_string(v)}\n" for v in values))
-    cfg_path.write_text(f"PATH {dataset_path}\nINPUT-CLASS STR\n")
-    subprocess.run(
-        [h5import_exe, str(txt_path), "-c", str(cfg_path), "-o", str(output_h5)],
-        check=True,
-    )
-
-
-def write_float_h5_dataset(
-    h5import_exe: str,
-    tmpdir: Path,
-    output_h5: Path,
-    dataset_path: str,
-    array: np.ndarray,
-):
-    arr = np.asarray(array, dtype=np.float32)
-    bin_path = tmpdir / f"{dataset_path.strip('/').replace('/', '__')}.bin"
-    cfg_path = tmpdir / f"{dataset_path.strip('/').replace('/', '__')}.cfg"
-    arr.tofile(bin_path)
-    dims = " ".join(str(x) for x in arr.shape)
-    cfg_path.write_text(
-        "\n".join(
-            [
-                f"PATH {dataset_path}",
-                "INPUT-CLASS FP",
-                "INPUT-SIZE 32",
-                "INPUT-BYTE-ORDER LE",
-                f"RANK {arr.ndim}",
-                f"DIMENSION-SIZES {dims}",
-                "OUTPUT-CLASS FP",
-                "OUTPUT-SIZE 32",
-                "OUTPUT-ARCHITECTURE NATIVE",
-                "",
-            ]
-        )
-    )
-    subprocess.run(
-        [h5import_exe, str(bin_path), "-c", str(cfg_path), "-o", str(output_h5)],
-        check=True,
-    )
-
-
-def build_sc_martini_h5(sc_table_json: Path, output_h5: Path):
-    h5import_exe = require_h5import()
-    sc_table_path = Path(sc_table_json).expanduser().resolve()
-    output_h5 = Path(output_h5).expanduser().resolve()
-    output_h5.parent.mkdir(parents=True, exist_ok=True)
-    if output_h5.exists():
-        output_h5.unlink()
-
-    sc_table = read_sc_table(sc_table_path)
-    (
-        residues,
-        targets,
-        grid_nm,
-        cos_theta_grid,
-        radial_energy_kj_mol,
-        angular_energy_kj_mol,
-        angular_profile,
-        rotamer_count,
-        rotamer_probability_fixed,
-        rotamer_radial_energy_kj_mol,
-        rotamer_angular_energy_kj_mol,
-        rotamer_angular_profile,
-    ) = build_factorized_sc_table(sc_table)
-
-    with tempfile.TemporaryDirectory(prefix="build_sc_martini_h5.") as tmp:
-        tmpdir = Path(tmp)
-        write_text_h5_dataset(h5import_exe, tmpdir, output_h5, "/schema", [sc_table.get("schema", "")])
-        write_text_h5_dataset(
-            h5import_exe, tmpdir, output_h5, "/forcefield_name", [sc_table.get("forcefield_name", "")]
-        )
-        write_text_h5_dataset(
-            h5import_exe, tmpdir, output_h5, "/created_at_utc", [sc_table.get("created_at_utc", "")]
-        )
-        write_text_h5_dataset(
-            h5import_exe, tmpdir, output_h5, "/manifest_path", [sc_table.get("manifest_path", "")]
-        )
-        write_text_h5_dataset(h5import_exe, tmpdir, output_h5, "/restype_order", residues)
-        write_text_h5_dataset(h5import_exe, tmpdir, output_h5, "/target_order", targets)
-        write_float_h5_dataset(h5import_exe, tmpdir, output_h5, "/grid_nm", grid_nm)
-        write_float_h5_dataset(h5import_exe, tmpdir, output_h5, "/cos_theta_grid", cos_theta_grid)
-        write_float_h5_dataset(h5import_exe, tmpdir, output_h5, "/rotamer_count", rotamer_count)
-        write_float_h5_dataset(
-            h5import_exe, tmpdir, output_h5, "/rotamer_probability_fixed", rotamer_probability_fixed
-        )
-        write_float_h5_dataset(h5import_exe, tmpdir, output_h5, "/radial_energy_kj_mol", radial_energy_kj_mol)
-        write_float_h5_dataset(h5import_exe, tmpdir, output_h5, "/angular_energy_kj_mol", angular_energy_kj_mol)
-        write_float_h5_dataset(h5import_exe, tmpdir, output_h5, "/angular_profile", angular_profile)
-        write_float_h5_dataset(
-            h5import_exe, tmpdir, output_h5, "/rotamer_radial_energy_kj_mol", rotamer_radial_energy_kj_mol
-        )
-        write_float_h5_dataset(
-            h5import_exe, tmpdir, output_h5, "/rotamer_angular_energy_kj_mol", rotamer_angular_energy_kj_mol
-        )
-        write_float_h5_dataset(
-            h5import_exe, tmpdir, output_h5, "/rotamer_angular_profile", rotamer_angular_profile
-        )
-
-    print(
-        f"Built {output_h5} from {sc_table_path} with {len(residues)} residues, "
-        f"{len(targets)} targets, {cos_theta_grid.size} angular points, {grid_nm.size} radial points"
-    )
 
 
 def require_group(root, path):
@@ -3291,7 +2949,7 @@ def build_env_rows(inp, target_to_index):
         env_target_index.append(target_idx)
 
     if not env_atom_index:
-        raise ValueError("No non-protein dry-MARTINI particles matched martini.h5 target_order")
+        raise ValueError("No non-protein dry-MARTINI particles matched martini.h5 sc_table target_order")
 
     return np.asarray(env_atom_index, dtype=np.int32), np.asarray(env_target_index, dtype=np.int32)
 
@@ -3443,6 +3101,86 @@ def inject_backbone_nodes(
             ds[...] = remap_atom_index_array(ds[:], atom_map).astype(ds.dtype, copy=False)
 
 
+def inject_particles_table(up_file: Path, martini_h5: Path):
+    up_file = Path(up_file).expanduser().resolve()
+    martini_h5 = Path(martini_h5).expanduser().resolve()
+
+    if not martini_h5.exists():
+        raise SystemExit(f"ERROR: martini.h5 not found: {martini_h5}")
+
+    with h5py.File(martini_h5, "r") as src:
+        pg = src["particles"]
+        eps_arr = pg["unique_eps_eup"][:].astype(np.float64)
+        sig_arr = pg["unique_sig_ang"][:].astype(np.float64)
+        qq_arr = pg["unique_charge_product"][:].astype(np.float64)
+        combined_grids = pg["combined_energy_grids"][:].astype(np.float64)
+        n_triples = len(eps_arr)
+
+    GRID_N = 1000
+    R_MIN = 0.0
+    R_MAX = 12.0
+
+    with h5py.File(up_file, "r+") as up:
+        g = up["/input/potential/martini_potential"]
+
+        lj_soften = bool(int(g.attrs.get("lj_soften", 0)))
+        lj_soften_alpha = float(g.attrs.get("lj_soften_alpha", 0.0))
+        coulomb_soften = bool(int(g.attrs.get("coulomb_soften", 0)))
+        slater_alpha = float(g.attrs.get("slater_alpha", 0.0))
+        has_softening = (lj_soften and lj_soften_alpha > 0.0) or coulomb_soften
+
+        if has_softening:
+            coulomb_k_native = float(g.attrs["coulomb_constant_native_kj_mol_nm_e2"])
+            energy_conv = float(g.attrs["energy_conversion_kj_per_eup"])
+            length_conv = float(g.attrs["length_conversion_angstrom_per_nm"])
+            coulomb_k = coulomb_k_native * (length_conv / energy_conv)
+            lj_alpha = float(lj_soften_alpha) if lj_soften else 0.0
+            slater = float(slater_alpha) if coulomb_soften else 0.0
+
+            for idx in range(n_triples):
+                eps = float(eps_arr[idx])
+                sig = float(sig_arr[idx])
+                qq = float(qq_arr[idx])
+                for i in range(GRID_N):
+                    r = R_MIN + i * (R_MAX - R_MIN) / (GRID_N - 1)
+                    if r == 0.0:
+                        r = 1.0e-6
+
+                    # LJ component with optional soft-core
+                    if eps != 0.0 and sig != 0.0:
+                        if lj_soften and lj_alpha > 0.0:
+                            x = r / sig
+                            t = (x * x) ** 3 + lj_alpha
+                            inv_t = 1.0 / t
+                            lj = 4.0 * eps * (inv_t * inv_t - inv_t)
+                        else:
+                            x = sig / r
+                            x6 = (x * x) ** 3
+                            lj = 4.0 * eps * (x6 * x6 - x6)
+                    else:
+                        lj = 0.0
+
+                    # Coulomb component with optional softening
+                    if abs(qq) > 1e-10:
+                        coul = coulomb_k * qq / r
+                        if coulomb_soften:
+                            alpha_r = slater * r
+                            coul *= 1.0 - (1.0 + alpha_r * 0.5) * math.exp(-alpha_r)
+                    else:
+                        coul = 0.0
+
+                    combined_grids[idx, i] = lj + coul
+
+        g.create_dataset("unique_eps_eup", data=eps_arr, dtype=np.float64)
+        g.create_dataset("unique_sig_ang", data=sig_arr, dtype=np.float64)
+        g.create_dataset("unique_charge_product", data=qq_arr, dtype=np.float64)
+        g.create_dataset("combined_energy_grids", data=combined_grids, dtype=np.float64)
+        g.attrs["n_combined_triples"] = np.int32(n_triples)
+        g.attrs["r_min_ang"] = np.float32(R_MIN)
+        g.attrs["r_max_ang"] = np.float32(R_MAX)
+        g.attrs["n_points"] = np.int32(GRID_N)
+
+
 def inject_stage7_sc_table_nodes(
     up_file: Path,
     martini_h5: Path,
@@ -3472,6 +3210,7 @@ def inject_stage7_sc_table_nodes(
             raise SystemExit(f"ERROR: required Upside input not found: {path}")
 
     with h5py.File(martini_h5, "r") as sc_lib:
+        sc_grp = sc_lib["sc_table"] if "sc_table" in sc_lib else sc_lib
         required_sc_datasets = [
             "restype_order",
             "target_order",
@@ -3483,22 +3222,22 @@ def inject_stage7_sc_table_nodes(
             "rotamer_angular_energy_kj_mol",
             "rotamer_angular_profile",
         ]
-        missing_sc_datasets = [name for name in required_sc_datasets if name not in sc_lib]
+        missing_sc_datasets = [name for name in required_sc_datasets if name not in sc_grp]
         if missing_sc_datasets:
             missing_text = ", ".join(missing_sc_datasets)
             raise SystemExit(
                 f"ERROR: {martini_h5} is missing required rotamer-resolved SC datasets: {missing_text}. "
-                "Rebuild martini.h5 with the integrated martini_prepare_system.py build-sc-martini-h5 command."
+                "Regenerate martini.h5 via build_martini_tables()."
             )
-        restype_order = decode_string_array(sc_lib["restype_order"])
-        target_order = decode_string_array(sc_lib["target_order"])
-        grid_nm = sc_lib["grid_nm"][:].astype(np.float32)
-        cos_theta_grid = sc_lib["cos_theta_grid"][:].astype(np.float32)
-        rotamer_count = sc_lib["rotamer_count"][:].astype(np.int32)
-        rotamer_probability_fixed = sc_lib["rotamer_probability_fixed"][:].astype(np.float32)
-        rotamer_radial_energy_kj_mol = sc_lib["rotamer_radial_energy_kj_mol"][:].astype(np.float32)
-        rotamer_angular_energy_kj_mol = sc_lib["rotamer_angular_energy_kj_mol"][:].astype(np.float32)
-        rotamer_angular_profile = sc_lib["rotamer_angular_profile"][:].astype(np.float32)
+        restype_order = decode_string_array(sc_grp["restype_order"])
+        target_order = decode_string_array(sc_grp["target_order"])
+        grid_nm = sc_grp["grid_nm"][:].astype(np.float32)
+        cos_theta_grid = sc_grp["cos_theta_grid"][:].astype(np.float32)
+        rotamer_count = sc_grp["rotamer_count"][:].astype(np.int32)
+        rotamer_probability_fixed = sc_grp["rotamer_probability_fixed"][:].astype(np.float32)
+        rotamer_radial_energy_kj_mol = sc_grp["rotamer_radial_energy_kj_mol"][:].astype(np.float32)
+        rotamer_angular_energy_kj_mol = sc_grp["rotamer_angular_energy_kj_mol"][:].astype(np.float32)
+        rotamer_angular_profile = sc_grp["rotamer_angular_profile"][:].astype(np.float32)
 
     restype_to_index = {name: i for i, name in enumerate(restype_order)}
     target_to_index = {name: i for i, name in enumerate(target_order)}

@@ -2,8 +2,6 @@
 #include "deriv_engine.h"
 #include "h5_support.h"
 #include <vector>
-#include <map>
-#include <mutex>
 
 namespace simulation_box {
 
@@ -89,40 +87,5 @@ void get_pressure(const DerivEngine& engine, float& pxy, float& pz);
 float get_volume(const DerivEngine& engine);
 
 } // namespace npt
-
-namespace ewald {
-
-struct EwaldSettings {
-    bool  enabled = false;
-    float alpha = 0.2f;          // Ewald screening parameter (1/Angstrom)
-    int   kmax = 5;              // k-space cutoff (number of k-vectors per dimension)
-    float coulomb_k = 31.775347952181f; // Coulomb constant (includes epsilon_r=15)
-    bool  use_cardinal_bspline = true;  // approximate trig via periodic cubic B-spline
-    int   bspline_grid = 16384;         // lookup grid size for periodic trig table
-};
-
-struct EwaldState {
-    EwaldSettings settings;
-    float box_x = 0.f, box_y = 0.f, box_z = 0.f;
-    int n_atom = 0;
-    std::vector<float> charges;
-    std::vector<float> kx, ky, kz;
-    std::vector<float> k2;
-    std::vector<float> k_prefactor;
-    float self_energy = 0.f;          // Ewald self-energy correction (constant)
-    float reciprocal_energy = 0.f;    // last computed reciprocal energy
-};
-
-void initialize_ewald(hid_t config_root, DerivEngine& engine);
-
-void update_kvectors(DerivEngine& engine);
-
-void compute_ewald_reciprocal(DerivEngine& engine);
-
-bool is_enabled(const DerivEngine& engine);
-
-float get_reciprocal_energy(const DerivEngine& engine);
-
-} // namespace ewald
 
 } // namespace simulation_box

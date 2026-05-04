@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:pubmed.ncbi.nlm.nih.gov)",
+      "WebFetch(domain:cgmartini.nl)",
+      "WebFetch(domain:datapdf.com)",
+      "Bash(make -j4)",
+      "Bash(python3 *)",
+      "Bash(/Users/yinhan/Documents/upside2-md/.venv/bin/python3 *)",
+      "Bash(awk '{print $4}' /Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid/hybrid_prep/hybrid_packed.MARTINI.pdb)",
+      "Bash(awk '{print $4}')"
+    ]
+  }
+}

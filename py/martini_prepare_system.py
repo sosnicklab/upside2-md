@@ -13,10 +13,10 @@ from pathlib import Path
 
 import numpy as np
 
+from martini_build_tables import build_martini_tables
 from martini_prepare_system_lib import (
     build_backbone_with_virtual_bb,
     center_of_mass,
-    build_sc_martini_h5,
     convert_stage,
     compute_lipid_residue_indices,
     coords,
@@ -24,6 +24,7 @@ from martini_prepare_system_lib import (
     extract_protein_backbone_atoms_from_aa,
     infer_effective_ion_volume_fraction_from_template,
     infer_protein_charge_from_residues,
+    inject_particles_table,
     inject_stage7_sc_table_nodes,
     lipid_resname,
     map_backbone_types_from_martinize_fallback,
@@ -53,9 +54,6 @@ DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS = 200
 DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS = 150
 DEFAULT_NPT_TAU = 4.0
 DEFAULT_NPT_INTERVAL = 10
-DEFAULT_EWALD_ENABLE = 1
-DEFAULT_EWALD_ALPHA = 0.2
-DEFAULT_EWALD_KMAX = 5
 DEFAULT_PROD_70_BAROSTAT_TYPE = 1
 DEFAULT_MARTINI_ENERGY_CONVERSION = 2.914952774272
 DEFAULT_MARTINI_LENGTH_CONVERSION = 10.0
@@ -734,22 +732,13 @@ def ensure_sc_martini_library(args):
     import h5py
 
     library = args.sc_martini_library
-    need_build = True
-    if library.exists():
-        with h5py.File(library, "r") as h5:
-            missing = [name for name in SC_LIBRARY_REQUIRED_DATASETS if name not in h5]
-        need_build = bool(missing)
-        if need_build:
-            print(f"NOTICE: {library} is missing required SC datasets; rebuilding it.")
-    if need_build:
-        if not args.sc_martini_table_json.exists():
-            raise FileNotFoundError(args.sc_martini_table_json)
-        print(f"Building {library} from {args.sc_martini_table_json}")
-        build_sc_martini_h5(args.sc_martini_table_json, library)
+    if not library.exists():
+        raise FileNotFoundError(library)
     with h5py.File(library, "r") as h5:
-        missing = [name for name in SC_LIBRARY_REQUIRED_DATASETS if name not in h5]
+        sc_grp = h5["sc_table"] if "sc_table" in h5 else h5
+        missing = [name for name in SC_LIBRARY_REQUIRED_DATASETS if name not in sc_grp]
     if missing:
-        raise ValueError(f"{library} missing required datasets after build: {','.join(missing)}")
+        raise ValueError(f"{library} missing required SC datasets: {','.join(missing)}")
 
 
 def assert_hybrid_stage_active(up_file: Path, expected_stage: str, expected_activation: str):
@@ -800,9 +789,6 @@ def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable:
         "UPSIDE_NPT_INTERVAL": str(args.npt_interval),
         "UPSIDE_NPT_SEMI": "1",
         "UPSIDE_NPT_DEBUG": "1",
-        "UPSIDE_EWALD_ENABLE": str(args.ewald_enable),
-        "UPSIDE_EWALD_ALPHA": str(args.ewald_alpha),
-        "UPSIDE_EWALD_KMAX": str(args.ewald_kmax),
         "UPSIDE_BILAYER_LIPIDHEAD_FC": str(lipidhead_fc),
     }
 
@@ -828,6 +814,7 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
     inject_hybrid_mapping(target_file, args.hybrid_mapping_file)
     set_hybrid_control_mode(target_file, args.hybrid_preprod_activation_stage)
     set_stage_label(target_file, stage_label)
+    inject_particles_table(up_file=target_file, martini_h5=args.martini_table_h5)
     if stage_label == "production":
         ensure_sc_martini_library(args)
         set_hybrid_control_mode(target_file, "production")
@@ -1046,8 +1033,8 @@ def normalize_hybrid_workflow_args(args):
     args.upside_executable = args.upside_home / "obj" / "upside"
     args.martini_ff_dir = args.upside_home / "parameters" / "dryMARTINI"
     args.mass_ff_file = args.martini_ff_dir / "dry_martini_v2.1.itp"
-    args.sc_martini_library = args.upside_home / "parameters" / "ff_2.1" / "martini.h5"
-    args.sc_martini_table_json = args.upside_home / "SC-training" / "runs" / "default" / "results" / "assembled" / "sc_table.json"
+    args.martini_table_h5 = args.run_dir / "martini.h5"
+    args.sc_martini_library = args.martini_table_h5
     args.upside_rama_library = args.upside_home / "parameters" / "common" / "rama.dat"
     args.upside_rama_sheet_mixing = args.upside_home / "parameters" / "ff_2.1" / "sheet"
     args.upside_hbond_energy = args.upside_home / "parameters" / "ff_2.1" / "hbond.h5"
@@ -1064,9 +1051,6 @@ def normalize_hybrid_workflow_args(args):
     args.sc_env_po4_z_hold_steps = DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS
     args.npt_tau = DEFAULT_NPT_TAU
     args.npt_interval = DEFAULT_NPT_INTERVAL
-    args.ewald_enable = DEFAULT_EWALD_ENABLE
-    args.ewald_alpha = DEFAULT_EWALD_ALPHA
-    args.ewald_kmax = DEFAULT_EWALD_KMAX
     args.prod_70_barostat_type = DEFAULT_PROD_70_BAROSTAT_TYPE
     args.martini_energy_conversion = DEFAULT_MARTINI_ENERGY_CONVERSION
     args.martini_length_conversion = DEFAULT_MARTINI_LENGTH_CONVERSION
@@ -1177,6 +1161,14 @@ def run_hybrid_workflow_command(argv):
         return
 
     prepare_workflow_hybrid_artifacts(args)
+
+    build_martini_tables(
+        output_path=args.martini_table_h5,
+        dry_ff_path=args.mass_ff_file,
+        martinize_path=args.upside_home / "py" / "martinize.py",
+        sidechain_lib_path=args.upside_home / "parameters" / "ff_2.1" / "sidechain.h5",
+        forcefield_name="martini22",
+    )
 
     files = {
         "prepared_60": args.checkpoint_dir / f"{args.pdb_id}.stage_6.0.prepared.up",
