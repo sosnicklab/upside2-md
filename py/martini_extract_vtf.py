@@ -243,6 +243,89 @@ def write_vtf_frame(fh, pos):
         fh.write(f"{x:.3f} {y:.3f} {z:.3f}\n")
 
 
+def build_cg_lipid_ghost_info(struct_h5, ghost_scale=5.0):
+    """Read compose_vector6d data and build CG lipid ghost particle info.
+
+    Returns None if no CG lipids are present, else a dict with:
+      - cg_pos_indices: (n_cg,) int — indices of CG lipids in the output atom list
+      - ghost_positions_for_frame: callable(pos_array) → (n_cg, 3) ghost positions
+      - direction: (n_cg, 3) float — unit direction vectors
+      - ghost_scale: float
+    """
+    cv6_path = "input/potential/compose_vector6d"
+    if cv6_path not in struct_h5:
+        return None
+
+    cv6 = struct_h5[cv6_path]
+    if "elem_index" not in cv6 or "direction" not in cv6:
+        return None
+
+    elem_index = np.asarray(cv6["elem_index"][:], dtype=int)  # maps CG→pos atom index
+    direction = np.asarray(cv6["direction"][:], dtype=np.float32)
+
+    if elem_index.size == 0:
+        return None
+
+    return {
+        "cg_pos_indices": elem_index,
+        "direction": direction,
+        "ghost_scale": ghost_scale,
+    }
+
+
+def extend_with_ghost_atoms(mapping, ghost_info, out_bonds):
+    """Extend mapping arrays and bonds with CG lipid ghost atoms."""
+    n_cg = ghost_info["cg_pos_indices"].size
+    cg_idx = ghost_info["cg_pos_indices"]
+    n_orig = mapping["output_atom_names"].shape[0]
+
+    # Ghost atom name/type
+    ghost_names = np.array(["CGH"] * n_cg, dtype=object)
+    ghost_resnames = np.array(["DOPC"] * n_cg, dtype=object)
+    ghost_resids = np.array(mapping["output_residue_ids"], dtype=int)[cg_idx]
+    ghost_chain_ids = np.array(["X"] * n_cg, dtype=object)
+
+    mapping["output_atom_names"] = np.concatenate([
+        mapping["output_atom_names"], ghost_names,
+    ])
+    mapping["output_residue_names"] = np.concatenate([
+        mapping["output_residue_names"], ghost_resnames,
+    ])
+    mapping["output_residue_ids"] = np.concatenate([
+        mapping["output_residue_ids"], ghost_resids,
+    ])
+    mapping["output_chain_ids"] = np.concatenate([
+        mapping["output_chain_ids"], ghost_chain_ids,
+    ])
+
+    # Add bonds: CG lipid ↔ ghost atom
+    for gi in range(n_cg):
+        cg_atom = int(cg_idx[gi])
+        ghost_atom = n_orig + gi
+        out_bonds.append((cg_atom, ghost_atom))
+
+    # Store mapping for frame extension
+    ghost_info["_ghost_start"] = n_orig
+    ghost_info["_n_ghost"] = n_cg
+
+    print(f"CG lipid ghosts: {n_cg} ghost atoms added for direction visualization "
+          f"(scale={ghost_info['ghost_scale']} Å)")
+
+
+def extend_frame_with_ghosts(frame, ghost_info):
+    """Extend a frame's position array with ghost particle positions."""
+    if ghost_info is None or "_ghost_start" not in ghost_info:
+        return frame
+
+    cg_idx = ghost_info["cg_pos_indices"]
+    direction = ghost_info["direction"]
+    scale = ghost_info["ghost_scale"]
+    n_ghost = ghost_info["_n_ghost"]
+
+    ghost_pos = frame[cg_idx] + direction * scale
+    return np.concatenate([frame, ghost_pos], axis=0)
+
+
 def list_output_groups(traj_h5):
     groups = []
     for name in traj_h5.keys():
@@ -638,7 +721,15 @@ def extract_trajectory(
     )
 
     print(f"Particles (input): {n_particles}")
-    print(f"Particles (output): {mapping['output_atom_names'].shape[0]}")
+    n_output_particles = mapping['output_atom_names'].shape[0]
+    print(f"Particles (output): {n_output_particles}")
+
+    # Check for CG lipid vector particles and add ghost atoms for direction visualization
+    ghost_info = build_cg_lipid_ghost_info(struct_h5)
+    if ghost_info is not None:
+        extend_with_ghost_atoms(mapping, ghost_info, out_bonds)
+        print(f"Particles (output+ghost): {mapping['output_atom_names'].shape[0]}")
+
     print(f"Frames: {n_frame_total}")
     print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
 
@@ -677,11 +768,13 @@ def extract_trajectory(
 
             out_frame = centralize_system(
                 out_frame,
-                mapping["output_residue_names"],
+                mapping["output_residue_names"][:n_output_particles],
                 x_len,
                 y_len,
                 z_len,
             )
+            if ghost_info is not None:
+                out_frame = extend_frame_with_ghosts(out_frame, ghost_info)
             if np.isnan(out_frame).any():
                 raise ValueError(f"NaN coordinates found in frame {frame_idx} for group {output_group}")
             write_vtf_frame(f, out_frame)

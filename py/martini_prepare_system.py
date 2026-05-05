@@ -25,6 +25,7 @@ from martini_prepare_system_lib import (
     infer_effective_ion_volume_fraction_from_template,
     infer_protein_charge_from_residues,
     inject_particles_table,
+    inject_cg_lipid_nodes,
     inject_stage7_sc_table_nodes,
     lipid_resname,
     map_backbone_types_from_martinize_fallback,
@@ -650,11 +651,33 @@ def inject_hybrid_mapping(up_file: Path, mapping_file: Path):
         dst_inp = dst.require_group("input")
         base_n_atom = int(dst_inp["pos"].shape[0])
         src_mem = src_inp["hybrid_env_topology"]["protein_membership"][:].astype(np.int32)
+
+        # If CG lipid coarse-graining reduced the atom count, remap the membership
+        old_to_new = None
         if base_n_atom != int(src_mem.shape[0]):
-            raise ValueError(
-                f"Hybrid mapping n_atom mismatch for {up_file}: up has {base_n_atom}, "
-                f"mapping has {src_mem.shape[0]}"
-            )
+            remap_grp = dst_inp.get("hybrid_remap")
+            if remap_grp is not None and "old_to_new" in remap_grp:
+                old_to_new = remap_grp["old_to_new"][:].astype(np.int32)
+                n_old = int(remap_grp.attrs["n_old"])
+                if n_old == src_mem.shape[0]:
+                    print(f"  Remapping hybrid membership from {n_old} → {base_n_atom} atoms "
+                          f"(CG lipid coarse-graining)")
+                    new_membership = np.full(base_n_atom, 0, dtype=np.int32)
+                    for old_idx in range(n_old):
+                        new_idx = old_to_new[old_idx]
+                        new_membership[new_idx] = src_mem[old_idx]
+                    src_mem = new_membership
+                else:
+                    raise ValueError(
+                        f"CG remap n_old={n_old} doesn't match mapping "
+                        f"n_atom={src_mem.shape[0]}"
+                    )
+            else:
+                raise ValueError(
+                    f"Hybrid mapping n_atom mismatch for {up_file}: up has {base_n_atom}, "
+                    f"mapping has {src_mem.shape[0]}, and no CG lipid remap data found"
+                )
+
         for group in groups:
             if group not in src_inp:
                 raise ValueError(f"Missing mapping group in {mapping_file}: /input/{group}")
@@ -667,12 +690,27 @@ def inject_hybrid_mapping(up_file: Path, mapping_file: Path):
             if group in dst_inp:
                 del dst_inp[group]
             src.copy(src_inp[group], dst_inp, name=group)
+
+        # If we remapped membership, fix up the stored membership in the output
+        if old_to_new is not None and "protein_membership" in dst_inp["hybrid_env_topology"]:
+            del dst_inp["hybrid_env_topology"]["protein_membership"]
+            dst_inp["hybrid_env_topology"].create_dataset(
+                "protein_membership", data=src_mem.astype(np.int32))
+
         bb_grp = dst_inp["hybrid_bb_map"]
         env_grp = dst_inp["hybrid_env_topology"]
         if bb_grp["atom_indices"].shape[0] != bb_grp["bb_residue_index"].shape[0]:
             raise ValueError("hybrid_bb_map atom_indices/bb_residue_index size mismatch")
         if bb_grp["atom_indices"].shape[1] != 4:
             raise ValueError("hybrid_bb_map/atom_indices must have shape (n_bb,4)")
+
+        # Remap BB atom_indices through old_to_new if CG lipids changed atom ordering
+        if old_to_new is not None:
+            bb_indices = bb_grp["atom_indices"][:].astype(np.int32)
+            bb_remapped = old_to_new[bb_indices]
+            del dst_inp["hybrid_bb_map"]["atom_indices"]
+            dst_inp["hybrid_bb_map"].create_dataset("atom_indices", data=bb_remapped.astype(np.int32))
+
         bb_grp.attrs["atom_index_space"] = np.bytes_("stage_runtime")
         bb_grp.attrs["reference_index_space"] = np.bytes_("stage_runtime")
         bb_grp.attrs["reference_index_offset"] = np.int32(0)
@@ -829,6 +867,11 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
             reference_state_rama=args.upside_reference_state_rama,
         )
         assert_hybrid_stage_active(target_file, "production", "production")
+        # SC placement node must exist before CG lipid node injection
+        # so that cg_lipid_sc (CG↔SC) can find it.
+        inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.martini_table_h5)
+    else:
+        inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.martini_table_h5)
     if npt_enable:
         set_barostat_type(target_file, barostat_type)
 
@@ -1073,6 +1116,48 @@ def normalize_hybrid_workflow_args(args):
     return args
 
 
+def _detect_has_bonded_lipids(packed_pdb_path: Path) -> bool:
+    """Check if packed PDB has dryMARTINI lipid residues with internal bonds.
+
+    In the current workflow, build_cg_lipid_array() in convert_stage() collapses
+    14-bead DOPC into single CGL vector particles (no internal bonds). This
+    function detects whether the packed PDB contains multi-bead lipid residues
+    that would produce bonds if CG coarse-graining were not applied.
+
+    Returns True if the final system would have dryMARTINI bonded lipids
+    requiring pre-7.0 equilibrium stages.
+    """
+    dopc_atom_count = 0
+    dopc_residue_count = 0
+    seen_residues = set()
+    with open(packed_pdb_path) as f:
+        for line in f:
+            if not line.startswith(("ATOM", "HETATM")):
+                continue
+            resname = line[17:21].strip().upper()
+            if resname in ("DOPC", "DOP"):
+                dopc_atom_count += 1
+                resid = line[22:26]
+                seen_residues.add(resid)
+    dopc_residue_count = len(seen_residues)
+
+    # DOPC residues with 14 beads would produce bonds in a pure dryMARTINI
+    # topology.  However, build_cg_lipid_array() in convert_stage() collapses
+    # them into single CGL vector particles with no internal bonds or angles.
+    # Therefore pre-7.0 equilibrium stages (which gradually relax lipid-head
+    # bond restraints) are never needed under the current CG-lipid architecture.
+    has_bonded = False
+    if dopc_atom_count > 0:
+        avg_beads = dopc_atom_count / max(dopc_residue_count, 1)
+        print(f"  Packed PDB: {dopc_atom_count} DOPC atoms in {dopc_residue_count} residues "
+              f"({avg_beads:.0f} beads/residue)")
+        print(f"  CG lipid mode active → DOPC collapsed to CGL → no bonded dryMARTINI lipids")
+    else:
+        print(f"  Packed PDB: 0 DOPC atoms → no bonded dryMARTINI lipids")
+    print(f"  Pre-7.0 equilibrium stages needed: {has_bonded}")
+    return has_bonded
+
+
 def run_hybrid_workflow_command(argv):
     parser = argparse.ArgumentParser(description="Run the hybrid 1RKL dry-MARTINI workflow.")
     parser.add_argument("--pdb-id", default=env_default("PDB_ID", "1rkl"))
@@ -1162,13 +1247,63 @@ def run_hybrid_workflow_command(argv):
 
     prepare_workflow_hybrid_artifacts(args)
 
-    build_martini_tables(
-        output_path=args.martini_table_h5,
-        dry_ff_path=args.mass_ff_file,
-        martinize_path=args.upside_home / "py" / "martinize.py",
-        sidechain_lib_path=args.upside_home / "parameters" / "ff_2.1" / "sidechain.h5",
-        forcefield_name="martini22",
-    )
+    # Extract reference DOPC bead positions from bilayer PDB for CG lipid quadspline fitting
+    cg_lipid_config = None
+    try:
+        from martini_prepare_system_lib import _DOPC_ATOM_NAMES
+
+        bilayer_pdb = workflow_path(args.bilayer_pdb).resolve()
+        dopc_atoms = []
+        with open(bilayer_pdb) as f:
+            for line in f:
+                if not line.startswith(("ATOM", "HETATM")):
+                    continue
+                resname = line[17:21].strip().upper()
+                if resname not in ("DOPC", "DOP"):
+                    continue
+                aname = line[12:16].strip().upper()
+                x = float(line[30:38])
+                y = float(line[38:46])
+                z = float(line[46:54])
+                dopc_atoms.append({"name": aname, "x": x, "y": y, "z": z})
+
+        n_per_lipid = 14
+        if len(dopc_atoms) >= n_per_lipid:
+            first = dopc_atoms[:n_per_lipid]
+            com = np.mean([[a["x"], a["y"], a["z"]] for a in first], axis=0)
+            ref_bead_positions = np.array(
+                [[a["x"] - com[0], a["y"] - com[1], a["z"] - com[2]] for a in first]
+            )
+            ref_bead_positions_nm = ref_bead_positions * 0.1
+
+            from martini_build_tables import _DOPC_BEAD_TYPES
+
+            cg_lipid_config = {
+                "ref_bead_positions_nm": ref_bead_positions_nm,
+                "bead_types": list(_DOPC_BEAD_TYPES),
+            }
+            print(f"Extracted CG lipid reference from {bilayer_pdb.name}: "
+                  f"{len(dopc_atoms)} DOPC atoms ({len(dopc_atoms) // n_per_lipid} lipids)")
+        else:
+            print(f"Fewer than {n_per_lipid} DOPC atoms in {bilayer_pdb}, "
+                  f"skipping CG lipid table build")
+    except Exception as e:
+        print(f"Could not extract CG lipid reference positions: {e}")
+
+    skip_build = os.environ.get("UPSIDE_SKIP_MARTINI_BUILD", "")
+    if skip_build and args.martini_table_h5.exists():
+        print(f"UPSIDE_SKIP_MARTINI_BUILD set, reusing existing {args.martini_table_h5}")
+    else:
+        build_martini_tables(
+            output_path=args.martini_table_h5,
+            dry_ff_path=args.mass_ff_file,
+            martinize_path=args.upside_home / "py" / "martinize.py",
+            sidechain_lib_path=args.upside_home / "parameters" / "ff_2.1" / "sidechain.h5",
+            forcefield_name="martini22",
+            cg_lipid_config=cg_lipid_config,
+        )
+
+    needs_pre70 = _detect_has_bonded_lipids(args.hybrid_packed_pdb)
 
     files = {
         "prepared_60": args.checkpoint_dir / f"{args.pdb_id}.stage_6.0.prepared.up",
@@ -1188,52 +1323,62 @@ def run_hybrid_workflow_command(argv):
         "stage_70": args.checkpoint_dir / f"{args.pdb_id}.stage_7.0.up",
     }
 
-    prepare_stage_file(args, files["prepared_60"], "minimization", 1, 0, 0, "minimization")
-    shutil.copy2(files["prepared_60"], files["stage_60"])
-    run_minimization_stage(args, "6.0", files["stage_60"], args.min_60_max_iter)
-    extract_stage_vtf(args, "6.0", files["stage_60"], "1")
+    if needs_pre70:
+        print("=== Bonded dryMARTINI lipids detected → running full pre-7.0 equilibrium ===")
+        prepare_stage_file(args, files["prepared_60"], "minimization", 1, 0, 0, "minimization")
+        shutil.copy2(files["prepared_60"], files["stage_60"])
+        run_minimization_stage(args, "6.0", files["stage_60"], args.min_60_max_iter)
+        extract_stage_vtf(args, "6.0", files["stage_60"], "1")
 
-    prepare_stage_file(args, files["prepared_61"], "npt_prod", 1, 0, 0, "minimization")
-    shutil.copy2(files["prepared_61"], files["stage_61"])
-    handoff_initial_position(args, files["stage_60"], files["stage_61"])
-    run_minimization_stage(args, "6.1", files["stage_61"], args.min_61_max_iter)
-    extract_stage_vtf(args, "6.1", files["stage_61"], "1")
+        prepare_stage_file(args, files["prepared_61"], "npt_prod", 1, 0, 0, "minimization")
+        shutil.copy2(files["prepared_61"], files["stage_61"])
+        handoff_initial_position(args, files["stage_60"], files["stage_61"])
+        run_minimization_stage(args, "6.1", files["stage_61"], args.min_61_max_iter)
+        extract_stage_vtf(args, "6.1", files["stage_61"], "1")
 
-    prepare_stage_file(args, files["stage_62"], "npt_equil", 1, 0, 200, "minimization")
-    handoff_initial_position(args, files["stage_61"], files["stage_62"])
-    run_md_stage(args, "6.2", files["stage_62"], files["stage_62"], args.eq_62_nsteps, args.eq_time_step, args.eq_frame_steps)
-    extract_stage_vtf(args, "6.2", files["stage_62"], "1")
+        prepare_stage_file(args, files["stage_62"], "npt_equil", 1, 0, 200, "minimization")
+        handoff_initial_position(args, files["stage_61"], files["stage_62"])
+        run_md_stage(args, "6.2", files["stage_62"], files["stage_62"], args.eq_62_nsteps, args.eq_time_step, args.eq_frame_steps)
+        extract_stage_vtf(args, "6.2", files["stage_62"], "1")
 
-    prepare_stage_file(args, files["prepared_63"], "npt_equil_reduced", 1, 0, 100, "minimization")
-    shutil.copy2(files["prepared_63"], files["stage_63"])
-    handoff_initial_position(args, files["stage_62"], files["stage_63"])
-    run_md_stage(args, "6.3", files["stage_63"], files["stage_63"], args.eq_63_nsteps, args.eq_time_step, args.eq_frame_steps)
-    extract_stage_vtf(args, "6.3", files["stage_63"], "1")
+        prepare_stage_file(args, files["prepared_63"], "npt_equil_reduced", 1, 0, 100, "minimization")
+        shutil.copy2(files["prepared_63"], files["stage_63"])
+        handoff_initial_position(args, files["stage_62"], files["stage_63"])
+        run_md_stage(args, "6.3", files["stage_63"], files["stage_63"], args.eq_63_nsteps, args.eq_time_step, args.eq_frame_steps)
+        extract_stage_vtf(args, "6.3", files["stage_63"], "1")
 
-    prepare_stage_file(args, files["prepared_64"], "npt_prod", 1, 0, 50, "minimization")
-    shutil.copy2(files["prepared_64"], files["stage_64"])
-    handoff_initial_position(args, files["stage_63"], files["stage_64"])
-    run_md_stage(args, "6.4", files["stage_64"], files["stage_64"], args.eq_64_nsteps, args.eq_time_step, args.eq_frame_steps)
-    extract_stage_vtf(args, "6.4", files["stage_64"], "1")
+        prepare_stage_file(args, files["prepared_64"], "npt_prod", 1, 0, 50, "minimization")
+        shutil.copy2(files["prepared_64"], files["stage_64"])
+        handoff_initial_position(args, files["stage_63"], files["stage_64"])
+        run_md_stage(args, "6.4", files["stage_64"], files["stage_64"], args.eq_64_nsteps, args.eq_time_step, args.eq_frame_steps)
+        extract_stage_vtf(args, "6.4", files["stage_64"], "1")
 
-    prepare_stage_file(args, files["prepared_65"], "npt_prod", 1, 0, 20, "minimization")
-    shutil.copy2(files["prepared_65"], files["stage_65"])
-    handoff_initial_position(args, files["stage_64"], files["stage_65"])
-    run_md_stage(args, "6.5", files["stage_65"], files["stage_65"], args.eq_65_nsteps, args.eq_time_step, args.eq_frame_steps)
-    extract_stage_vtf(args, "6.5", files["stage_65"], "1")
+        prepare_stage_file(args, files["prepared_65"], "npt_prod", 1, 0, 20, "minimization")
+        shutil.copy2(files["prepared_65"], files["stage_65"])
+        handoff_initial_position(args, files["stage_64"], files["stage_65"])
+        run_md_stage(args, "6.5", files["stage_65"], files["stage_65"], args.eq_65_nsteps, args.eq_time_step, args.eq_frame_steps)
+        extract_stage_vtf(args, "6.5", files["stage_65"], "1")
 
-    prepare_stage_file(args, files["prepared_66"], "npt_prod", 1, 0, 10, "minimization")
-    shutil.copy2(files["prepared_66"], files["stage_66"])
-    handoff_initial_position(args, files["stage_65"], files["stage_66"])
-    run_md_stage(args, "6.6", files["stage_66"], files["stage_66"], args.eq_66_nsteps, args.eq_time_step, args.eq_frame_steps)
-    extract_stage_vtf(args, "6.6", files["stage_66"], "1")
+        prepare_stage_file(args, files["prepared_66"], "npt_prod", 1, 0, 10, "minimization")
+        shutil.copy2(files["prepared_66"], files["stage_66"])
+        handoff_initial_position(args, files["stage_65"], files["stage_66"])
+        run_md_stage(args, "6.6", files["stage_66"], files["stage_66"], args.eq_66_nsteps, args.eq_time_step, args.eq_frame_steps)
+        extract_stage_vtf(args, "6.6", files["stage_66"], "1")
 
-    prepare_stage_file(args, files["prepared_70"], "npt_prod", args.prod_70_npt_enable, args.prod_70_barostat_type, 0, "production")
-    shutil.copy2(files["prepared_70"], files["stage_70"])
-    handoff_initial_position(args, files["stage_66"], files["stage_70"], "production_hybrid")
-    assert_hybrid_stage_active(files["stage_70"], "production", "production")
-    run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
-    extract_stage_vtf(args, "7.0", files["stage_70"], "2")
+        prepare_stage_file(args, files["prepared_70"], "npt_prod", args.prod_70_npt_enable, args.prod_70_barostat_type, 0, "production")
+        shutil.copy2(files["prepared_70"], files["stage_70"])
+        handoff_initial_position(args, files["stage_66"], files["stage_70"], "production_hybrid")
+        assert_hybrid_stage_active(files["stage_70"], "production", "production")
+        run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
+        extract_stage_vtf(args, "7.0", files["stage_70"], "2")
+    else:
+        print("=== No bonded dryMARTINI lipids → skipping to stage 7.0 production ===")
+        prepare_stage_file(args, files["prepared_70"], "npt_prod", args.prod_70_npt_enable, args.prod_70_barostat_type, 0, "production")
+        shutil.copy2(files["prepared_70"], files["stage_70"])
+        assert_hybrid_stage_active(files["stage_70"], "production", "production")
+        run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
+        extract_stage_vtf(args, "7.0", files["stage_70"], "2")
+
     print("=== Workflow Complete ===")
 
 

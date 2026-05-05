@@ -151,6 +151,181 @@ def canonical_lipid_resname(resname: str) -> str:
     return resname
 
 
+# DOPC 14-bead atom names in ITP order (indices 0-13)
+_DOPC_ATOM_NAMES = [
+    "NC3", "PO4", "GL1", "GL2",
+    "C1A", "C2A", "D3A", "C4A", "C5A",
+    "C1B", "C2B", "D3B", "C4B", "C5B",
+]
+
+
+def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
+                          atom_names, residue_names, chain_ids, seg_ids):
+    """Coarse-grain 14-bead DOPC molecules into single 6D vector particles.
+
+    For each DOPC residue:
+      - COM: geometric center of all 14 beads
+      - Direction: normalized vector from head (NC3) to tail midpoint (C5A, C5B)
+
+    Returns
+    -------
+    new_positions : (n_new, 3) float
+    new_atom_types : (n_new,) S
+    new_charges : (n_new,) float
+    new_residue_ids : (n_new,) int
+    new_atom_names : (n_new,) S
+    new_residue_names : (n_new,) S
+    new_chain_ids : (n_new,) S
+    new_seg_ids : (n_new,) S
+    lipid_directions : (n_lipid, 3) float  -- unit direction vectors
+    cg_lipid_indices : (n_lipid,) int     -- indices of CG lipids in the new arrays
+    lipid_to_atom_map : list[list[int]]    -- original atom index per lipid
+    ref_bead_positions : (n_lipid, 14, 3)  -- bead positions relative to COM (Ångstrom)
+    """
+    n_atoms = len(initial_positions)
+    is_dopc = np.array([
+        residue_names[i].upper() in ("DOPC", "DOP")
+        for i in range(n_atoms)
+    ])
+
+    if not np.any(is_dopc):
+        n_a = len(initial_positions)
+        return (initial_positions, atom_types, charges, residue_ids,
+                atom_names, residue_names, chain_ids, seg_ids,
+                np.empty((0, 3), dtype=float),
+                np.empty(0, dtype=int),
+                [],
+                np.empty((0, 14, 3), dtype=float),
+                np.arange(n_a, dtype=int))
+
+    # Group DOPC atoms by residue
+    dopc_indices = np.where(is_dopc)[0]
+    lipid_groups = []
+    current_group = [dopc_indices[0]]
+    for idx in dopc_indices[1:]:
+        if residue_ids[idx] == residue_ids[current_group[-1]]:
+            current_group.append(idx)
+        else:
+            lipid_groups.append(current_group)
+            current_group = [idx]
+    lipid_groups.append(current_group)
+
+    n_lipid = len(lipid_groups)
+    print(f"Found {n_lipid} DOPC lipids ({sum(len(g) for g in lipid_groups)} beads)")
+
+    # Build atom-name → position map for each lipid to get beads in ITP order
+    lipid_directions = np.zeros((n_lipid, 3), dtype=float)
+    lipid_to_atom_map = []
+    ref_bead_positions = np.zeros((n_lipid, 14, 3), dtype=float)
+    cg_positions = np.zeros((n_lipid, 3), dtype=float)
+
+    for li, group in enumerate(lipid_groups):
+        name_to_pos = {}
+        for ai in group:
+            name_to_pos[atom_names[ai].upper()] = initial_positions[ai]
+        lipid_to_atom_map.append(group)
+
+        # Get bead positions in ITP order
+        bead_pos = np.zeros((14, 3), dtype=float)
+        for bi, aname in enumerate(_DOPC_ATOM_NAMES):
+            if aname in name_to_pos:
+                bead_pos[bi] = name_to_pos[aname]
+            else:
+                raise ValueError(
+                    f"DOPC lipid residue {residue_ids[group[0]]} missing atom '{aname}'"
+                )
+
+        # COM: geometric center
+        com = np.mean(bead_pos, axis=0)
+        cg_positions[li] = com
+
+        # Reference bead positions relative to COM
+        ref_bead_positions[li] = bead_pos - com
+
+        # Direction: head (NC3) → tail midpoint (C5A, C5B)
+        head_pos = bead_pos[0]  # NC3
+        tail_mid = (bead_pos[8] + bead_pos[13]) / 2.0  # C5A + C5B
+        direction = tail_mid - head_pos
+        norm = np.linalg.norm(direction)
+        if norm < 1e-8:
+            # Fallback: use first principal component of bead positions
+            centered = bead_pos - com
+            _, _, vh = np.linalg.svd(centered, full_matrices=False)
+            direction = vh[0]
+            norm = np.linalg.norm(direction)
+        lipid_directions[li] = direction / norm
+
+    # Build new arrays: keep non-DOPC atoms, replace each DOPC group with 1 CG particle
+    n_new = n_atoms - sum(len(g) for g in lipid_groups) + n_lipid
+    old_to_new = np.full(n_atoms, -1, dtype=int)
+
+    new_positions = np.zeros((n_new, 3), dtype=float)
+    new_atom_types = np.empty(n_new, dtype='<U8')
+    new_charges = np.zeros(n_new, dtype=float)
+    new_residue_ids = np.zeros(n_new, dtype=int)
+    new_atom_names = np.empty(n_new, dtype='<U8')
+    new_residue_names = np.empty(n_new, dtype='<U8')
+    new_chain_ids = np.empty(n_new, dtype='<U8')
+    new_seg_ids = np.empty(n_new, dtype='<U8')
+
+    cg_lipid_indices = np.zeros(n_lipid, dtype=int)
+    write_pos = 0
+
+    for li, group in enumerate(lipid_groups):
+        # Copy non-DOPC atoms before this group
+        prev_end = lipid_groups[li - 1][-1] + 1 if li > 0 else 0
+        group_start = group[0]
+        if group_start > prev_end:
+            count = group_start - prev_end
+            old_to_new[prev_end:group_start] = np.arange(write_pos, write_pos + count)
+            new_positions[write_pos:write_pos + count] = initial_positions[prev_end:group_start]
+            new_atom_types[write_pos:write_pos + count] = atom_types[prev_end:group_start]
+            new_charges[write_pos:write_pos + count] = charges[prev_end:group_start]
+            new_residue_ids[write_pos:write_pos + count] = residue_ids[prev_end:group_start]
+            new_atom_names[write_pos:write_pos + count] = atom_names[prev_end:group_start]
+            new_residue_names[write_pos:write_pos + count] = residue_names[prev_end:group_start]
+            new_chain_ids[write_pos:write_pos + count] = chain_ids[prev_end:group_start]
+            new_seg_ids[write_pos:write_pos + count] = seg_ids[prev_end:group_start]
+            write_pos += count
+
+        # Insert CG lipid particle
+        cg_lipid_indices[li] = write_pos
+        for ai in group:
+            old_to_new[ai] = write_pos
+        new_positions[write_pos] = cg_positions[li]
+        new_atom_types[write_pos] = "CGL"
+        new_charges[write_pos] = 0.0
+        new_residue_ids[write_pos] = residue_ids[group[0]]
+        new_atom_names[write_pos] = "CGL"
+        new_residue_names[write_pos] = "DOPC"
+        new_chain_ids[write_pos] = chain_ids[group[0]]
+        new_seg_ids[write_pos] = seg_ids[group[0]]
+        write_pos += 1
+
+    # Copy remaining non-DOPC atoms after the last lipid group
+    last_end = lipid_groups[-1][-1] + 1
+    if last_end < n_atoms:
+        count = n_atoms - last_end
+        old_to_new[last_end:n_atoms] = np.arange(write_pos, write_pos + count)
+        new_positions[write_pos:write_pos + count] = initial_positions[last_end:n_atoms]
+        new_atom_types[write_pos:write_pos + count] = atom_types[last_end:n_atoms]
+        new_charges[write_pos:write_pos + count] = charges[last_end:n_atoms]
+        new_residue_ids[write_pos:write_pos + count] = residue_ids[last_end:n_atoms]
+        new_atom_names[write_pos:write_pos + count] = atom_names[last_end:n_atoms]
+        new_residue_names[write_pos:write_pos + count] = residue_names[last_end:n_atoms]
+        new_chain_ids[write_pos:write_pos + count] = chain_ids[last_end:n_atoms]
+        new_seg_ids[write_pos:write_pos + count] = seg_ids[last_end:n_atoms]
+        write_pos += count
+
+    print(f"CG lipid coarse-graining: {n_atoms} → {n_new} atoms "
+          f"({n_lipid} CG lipids, {n_atoms - sum(len(g) for g in lipid_groups)} non-lipid)")
+
+    return (new_positions, new_atom_types, new_charges, new_residue_ids,
+            new_atom_names, new_residue_names, new_chain_ids, new_seg_ids,
+            lipid_directions, cg_lipid_indices, lipid_to_atom_map, ref_bead_positions,
+            old_to_new)
+
+
 def infer_protein_charge_from_residues(protein_atoms):
     charged_res = {"ASP": -1, "GLU": -1, "LYS": 1, "ARG": 1}
     seen = set()
@@ -1615,7 +1790,17 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     chain_ids = np.array(chain_ids)
     seg_ids = np.array(seg_ids)
     n_atoms = len(initial_positions)
-    
+
+    # --- CG lipid coarse-graining: collapse 14-bead DOPC → single 6D vector particles ---
+    (initial_positions, atom_types, charges, residue_ids,
+     atom_names, residue_names, chain_ids, seg_ids,
+     lipid_directions, cg_lipid_indices, lipid_to_atom_map,
+     ref_bead_positions, old_to_new_map) = build_cg_lipid_array(
+        initial_positions, atom_types, charges, residue_ids,
+        atom_names, residue_names, chain_ids, seg_ids)
+    n_atoms = len(initial_positions)
+    n_cg_lipids = len(cg_lipid_indices)
+
     # Read box dimensions from CRYST1 record
     print(f"Reading box dimensions from {input_pdb_file}...")
     with open(input_pdb_file, 'r') as f:
@@ -1772,54 +1957,10 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     lipid_restraint_ref_pos = []
     lipid_restraint_spring_xyz = []
     
-    # Create DOPC bonds and angles (for both lipid and mixed systems)
-    dopc_molecules = [mol for mol in molecules if mol[0] == 'DOPC']  # unified label
-    
-    for mol_idx, (_, atom_names_mol, atom_indices) in enumerate(dopc_molecules):
-        name_to_idx = {name: idx for name, idx in zip(atom_names_mol, atom_indices)}
-        
-        # Create bonds for this lipid
-        for i, (bond_idx1, bond_idx2) in enumerate(dopc_bonds):
-            if bond_idx1 < len(dopc_bead_types) and bond_idx2 < len(dopc_bead_types):
-                atom1_name = atom_names_mol[bond_idx1]
-                atom2_name = atom_names_mol[bond_idx2]
-                atom1 = name_to_idx[atom1_name]
-                atom2 = name_to_idx[atom2_name]
-                bonds_list.append([atom1, atom2])
-                bond_lengths_list.append(dopc_bond_lengths[i] * 10.0)  # nm to Å
-                bond_force_constants_list.append(dopc_bond_force_constants[i] * bond_conversion)  # kJ/mol/nm² to E_up/Å²
-        
-        # Create angles for this lipid
-        for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(dopc_angles):
-            if (angle_idx1 < len(dopc_bead_types) and angle_idx2 < len(dopc_bead_types) and 
-                angle_idx3 < len(dopc_bead_types)):
-                atom1_name = atom_names_mol[angle_idx1]
-                atom2_name = atom_names_mol[angle_idx2]
-                atom3_name = atom_names_mol[angle_idx3]
-                atom1 = name_to_idx[atom1_name]
-                atom2 = name_to_idx[atom2_name]
-                atom3 = name_to_idx[atom3_name]
-                angles_list.append([atom1, atom2, atom3])
-                angle_equil_deg_list.append(dopc_angle_equil_deg[i])
-                angle_force_constants_list.append(dopc_angle_force_constants[i] * angle_conversion)  # kJ/mol/deg² to E_up/deg²
-
-        # Apply stage-specific lipid head-group restraints from dry MARTINI topology
-        # (e.g., BILAYER_LIPIDHEAD_FC=200/100/50/20/10 for stages 6.2-6.6).
-        for restraint in dopc_position_restraints:
-            local_idx = restraint['i']
-            if 0 <= local_idx < len(atom_indices):
-                atom_idx = atom_indices[local_idx]
-                lipid_restraint_indices.append(atom_idx)
-                lipid_restraint_ref_pos.append(initial_positions[atom_idx].tolist())
-                lipid_restraint_spring_xyz.append([
-                    restraint['fx'] * bond_conversion,
-                    restraint['fy'] * bond_conversion,
-                    restraint['fz'] * bond_conversion,
-                ])
-    
-    print(f"Created {len(bonds_list)} bonds for {dopc_count} DOPC lipids")
-    print(f"Created {len(angles_list)} angles for {dopc_count} DOPC lipids")
-    print(f"Created {len(lipid_restraint_indices)} lipid position restraints (BILAYER_LIPIDHEAD_FC={stage_lipidhead_fc:g})")
+    # CG lipids have no internal bonds/angles — skip per-bead DOPC topology.
+    if n_cg_lipids > 0:
+        print(f"CG lipid mode: {n_cg_lipids} DOPC lipids coarse-grained to single 6D vector particles "
+              f"(no internal bonds/angles/restraints)")
     
     # Create protein connectivity if available
     protein_bond_count = 0
@@ -1938,6 +2079,62 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         mom_array._v_attrs.initialized = True
         
         # Create mass array (required by UPSIDE)
+        # Register CG lipid mass (sum of 14 DOPC bead masses) if not already present
+        if n_cg_lipids > 0 and "CGL" not in martini_masses:
+            cgl_mass = sum(martini_masses.get(bt, 0.0) for bt in dopc_bead_types)
+            martini_masses["CGL"] = cgl_mass
+            print(f"CG lipid mass: {cgl_mass:.1f} g/mol (sum of {len(dopc_bead_types)} DOPC beads)")
+
+        # Extend martini_table with effective CGL LJ parameters for isotropic
+        # CG lipid ↔ dryMARTINI particle interactions (ions, water, BB, env).
+        if n_cg_lipids > 0 and ("CGL", "CGL") not in martini_table:
+            martini_h5_path = Path(run_dir) / "martini.h5"
+            if martini_h5_path.exists():
+                # Read effective LJ from pre-built martini.h5 to ensure
+                # consistency with the combined energy grids already stored there.
+                with h5py.File(martini_h5_path, "r") as _mh5:
+                    eff_grp = _mh5["cg_lipid_table/effective_lj"]
+                    target_types = [t.decode("ascii") if isinstance(t, bytes) else str(t)
+                                  for t in eff_grp["target_types"][:]]
+                    sigmas = eff_grp["sigma_nm"][:]
+                    epsilons = eff_grp["epsilon_kj_mol"][:]
+                for tgt_type, sigma_nm, epsilon_kj in zip(target_types, sigmas, epsilons):
+                    martini_table[("CGL", tgt_type)] = (float(sigma_nm), float(epsilon_kj))
+                    martini_table[(tgt_type, "CGL")] = (float(sigma_nm), float(epsilon_kj))
+            else:
+                from martini_build_tables import _compute_cgl_effective_lj_params
+                ref_nm = ref_bead_positions[0].astype(np.float64) * 0.1  # first lipid, Å → nm
+                ff_pair_params = {}
+                for (t1, t2), (sigma, eps) in martini_table.items():
+                    ff_pair_params[(t1, t2)] = {"sigma_nm": sigma, "epsilon_kj_mol": eps}
+                effective_lj = _compute_cgl_effective_lj_params(
+                    ref_bead_positions_nm=ref_nm,
+                    bead_types=list(dopc_bead_types),
+                    pair_params=ff_pair_params,
+                )
+                for tgt_type, eff in effective_lj.items():
+                    s = eff["sigma_nm"]
+                    e = eff["epsilon_kj_mol"]
+                    martini_table[("CGL", tgt_type)] = (s, e)
+                    martini_table[(tgt_type, "CGL")] = (s, e)
+            # CGL↔CGL self-interaction: use orientation-averaged two-lipid fit
+            from martini_build_tables import _compute_cgl_self_lj
+            ref_nm = ref_bead_positions[0].astype(np.float64) * 0.1  # first lipid, Å → nm
+            ff_pair_params = {}
+            for (t1, t2), (sigma, eps) in martini_table.items():
+                ff_pair_params[(t1, t2)] = {"sigma_nm": sigma, "epsilon_kj_mol": eps}
+            cgl_self_eps_eup, cgl_self_sig_ang = _compute_cgl_self_lj(
+                ref_bead_positions_nm=ref_nm,
+                bead_types=list(dopc_bead_types),
+                pair_params=ff_pair_params,
+            )
+            cgl_self_eps_kj = float(cgl_self_eps_eup) * energy_conversion
+            cgl_self_sig_nm = float(cgl_self_sig_ang) / length_conversion
+            martini_table[("CGL", "CGL")] = (cgl_self_sig_nm, cgl_self_eps_kj)
+            n_types = len([k for k in martini_table if k[0] == "CGL"])
+            print(f"Extended martini_table with CGL entries for {n_types} target types "
+                  f"(CGL↔CGL: sigma={cgl_self_sig_nm:.3f} nm, eps={cgl_self_eps_kj:.3f} kJ/mol)")
+
         mass = np.zeros(n_atoms, dtype='f4')
         for i, atom_type in enumerate(atom_types):
             # Get mass from force field file, raise error if not found
@@ -2038,7 +2235,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         for i, resname in enumerate(residue_names):
             if resname in protein_residues:
                 particle_class[i] = b"PROTEIN"
-            elif resname == 'DOP':
+            elif resname == 'DOP' or resname == 'DOPC':
                 particle_class[i] = b"LIPID"
             elif resname == 'W':
                 particle_class[i] = b"WATER"
@@ -2369,7 +2566,26 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             t.create_array(restraint_group, 'spring_const_xyz', obj=spring_xyz)
             # Backward-compatible scalar spring constant for older readers.
             t.create_array(restraint_group, 'spring_const', obj=np.max(spring_xyz, axis=1).astype('f4'))
-    
+
+        # --- CG Lipid 6D vector particle nodes ---
+        if n_cg_lipids > 0:
+            # compose_vector6d: combines pos (3D) with static direction (3D) → 6D
+            compose_grp = t.create_group(potential_grp, 'compose_vector6d')
+            compose_grp._v_attrs.arguments = np.array([b'pos'])
+            compose_grp._v_attrs.initialized = True
+            t.create_array(compose_grp, 'elem_index',
+                           obj=cg_lipid_indices.astype('i4'))
+            t.create_array(compose_grp, 'direction',
+                           obj=lipid_directions.astype('f4'))
+            print(f"Injected compose_vector6d node: {n_cg_lipids} CG lipid 6D particles")
+
+        # Store old→new atom index remapping for hybrid mapping injection
+        if n_cg_lipids > 0:
+            remap_grp = t.create_group(input_grp, 'hybrid_remap')
+            t.create_array(remap_grp, 'old_to_new', obj=old_to_new_map.astype('i4'))
+            remap_grp._v_attrs.n_old = int(len(old_to_new_map))
+            remap_grp._v_attrs.n_new = int(n_atoms)
+
     print(f"Created UPSIDE input file: {input_file}")
     print(f"Preparation complete!")
     
@@ -3179,6 +3395,147 @@ def inject_particles_table(up_file: Path, martini_h5: Path):
         g.attrs["r_min_ang"] = np.float32(R_MIN)
         g.attrs["r_max_ang"] = np.float32(R_MAX)
         g.attrs["n_points"] = np.int32(GRID_N)
+
+
+def inject_cg_lipid_nodes(
+    up_file: Path,
+    martini_h5: Path,
+):
+    """Inject CG lipid quadspline interaction nodes into the .up file.
+
+    Reads interaction_param from martini.h5 (cg_lipid_table group) and
+    writes cg_lipid_pair and cg_lipid_sc potential nodes.
+    """
+    up_file = Path(up_file).expanduser().resolve()
+    martini_h5 = Path(martini_h5).expanduser().resolve()
+
+    if not up_file.exists():
+        raise SystemExit(f"ERROR: stage file not found: {up_file}")
+    if not martini_h5.exists():
+        raise SystemExit(f"ERROR: martini.h5 not found: {martini_h5}")
+
+    with h5py.File(martini_h5, "r") as mh5:
+        if "cg_lipid_table" not in mh5:
+            print("  CG lipid tables not found in martini.h5, skipping CG lipid node injection")
+            return
+        cg_tab = mh5["cg_lipid_table"]
+
+        has_pair = "cg_lipid_pair" in cg_tab
+        has_sc = "cg_lipid_sc" in cg_tab
+
+    with h5py.File(up_file, "r+") as up:
+        inp = up["input"]
+        pot = inp["potential"]
+
+        if "compose_vector6d" not in pot:
+            raise SystemExit(
+                "ERROR: compose_vector6d node not found in .up file. "
+                "Run convert_stage() with CG lipids first."
+            )
+
+        with h5py.File(martini_h5, "r") as mh5:
+            if has_pair:
+                pair_grp = mh5["cg_lipid_table/cg_lipid_pair"]
+
+                # cg_lipid_pair: symmetric InteractionGraph<PosQuadSplineInteraction>
+                cg_pair = pot.create_group("cg_lipid_pair")
+                cg_pair.attrs["initialized"] = True
+                cg_pair.attrs["arguments"] = np.array([b"compose_vector6d"])
+
+                pi = cg_pair.create_group("pair_interaction")
+                pi.create_dataset(
+                    "interaction_param",
+                    data=pair_grp["interaction_param"][:].astype(np.float32),
+                )
+
+                # Element mapping: CG lipids use identity mapping (1 CG type)
+                # Shift ids by 4 bits so all shifted ids are unique —
+                # PosQuadSplineInteraction::acceptable_id_pair rejects pairs
+                # where (id1>>4) == (id2>>4).
+                with h5py.File(up_file, "r") as up_r:
+                    n_cg = up_r["input/potential/compose_vector6d/elem_index"].shape[0]
+                pi.create_dataset("index", data=np.arange(n_cg, dtype=np.int32))
+                pi.create_dataset("type", data=np.zeros(n_cg, dtype=np.int32))
+                pi.create_dataset("id", data=(np.arange(n_cg, dtype=np.int32) << 4))
+
+                print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1×1×54 params")
+
+            if has_sc:
+                # Check for SC placement node before creating cg_lipid_sc node
+                with h5py.File(up_file, "r") as up_r:
+                    has_sc_node = "placement_fixed_point_vector_only_CB" in up_r["input/potential"]
+                    if has_sc_node:
+                        sc_place = up_r["input/potential/placement_fixed_point_vector_only_CB"]
+                        n_sc = int(sc_place["affine_residue"].shape[0])
+                        cb_residue_idx = sc_place["affine_residue"][:].astype(np.int32)
+                        sequence = [
+                            s.decode("ascii") if isinstance(s, bytes) else str(s)
+                            for s in up_r["input/sequence"][:]
+                        ]
+                    else:
+                        n_sc = 0
+                        cb_residue_idx = np.empty(0, dtype=np.int32)
+                        sequence = []
+                    n_cg = up_r["input/potential/compose_vector6d/elem_index"].shape[0]
+
+                if n_sc > 0:
+                    sc_grp = mh5["cg_lipid_table/cg_lipid_sc"]
+                    sc_restype_order = [
+                        r.decode("ascii") if isinstance(r, bytes) else str(r)
+                        for r in sc_grp["restype_order"][:]
+                    ]
+                    # Build restype → type_index map for CG↔SC table
+                    restype_to_sc_type = {r: i for i, r in enumerate(sc_restype_order)}
+
+                    # Filter SC particles to only residues with CG↔SC table entries
+                    sc_indices = []
+                    sc_types = []
+                    sc_ids = []
+                    for cb_idx in range(n_sc):
+                        res_idx = int(cb_residue_idx[cb_idx])
+                        resname = sequence[res_idx] if res_idx < len(sequence) else ""
+                        type_idx = restype_to_sc_type.get(resname)
+                        if type_idx is not None:
+                            sc_indices.append(cb_idx)
+                            sc_types.append(type_idx)
+                            sc_ids.append(res_idx)
+
+                    if not sc_indices:
+                        print("  cg_lipid_sc: no residues with CG↔SC table entries, skipping SC↔CG interaction")
+                    else:
+                        sc_indices = np.array(sc_indices, dtype=np.int32)
+                        sc_types = np.array(sc_types, dtype=np.int32)
+                        sc_ids = np.array(sc_ids, dtype=np.int32)
+
+                        cg_sc = pot.create_group("cg_lipid_sc")
+                        cg_sc.attrs["initialized"] = True
+                        cg_sc.attrs["arguments"] = np.array([
+                            b"placement_fixed_point_vector_only_CB",
+                            b"compose_vector6d",
+                        ])
+
+                        psi = cg_sc.create_group("pair_interaction")
+                        psi.create_dataset(
+                            "interaction_param",
+                            data=sc_grp["interaction_param"][:].astype(np.float32),
+                        )
+
+                        psi.create_dataset("index1", data=sc_indices)
+                        psi.create_dataset("type1", data=sc_types)
+                        # Shift ids by 4 bits: PosQuadSplineInteraction::acceptable_id_pair
+                        # accepts only pairs where (id1>>4) != (id2>>4).
+                        # SC ids use residue_idx << 4 (range 0–480).
+                        psi.create_dataset("id1", data=(sc_ids << 4).astype(np.int32))
+
+                        psi.create_dataset("index2", data=np.arange(n_cg, dtype=np.int32))
+                        psi.create_dataset("type2", data=np.zeros(n_cg, dtype=np.int32))
+                        # CG lipid ids shifted into disjoint range (100000+cg_idx)<<4
+                        # so no SC↔CG pair is rejected by the id filter.
+                        psi.create_dataset("id2", data=((np.arange(n_cg, dtype=np.int32) + 100000) << 4))
+
+                    print(f"  Injected cg_lipid_sc: {len(sc_indices)} SC × {n_cg} CG lipids")
+                else:
+                    print("  cg_lipid_sc: no SC placement node found, skipping SC↔CG interaction")
 
 
 def inject_stage7_sc_table_nodes(

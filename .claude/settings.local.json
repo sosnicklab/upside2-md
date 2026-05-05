@@ -9,7 +9,9 @@
       "Bash(python3 *)",
       "Bash(/Users/yinhan/Documents/upside2-md/.venv/bin/python3 *)",
       "Bash(awk '{print $4}' /Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid/hybrid_prep/hybrid_packed.MARTINI.pdb)",
-      "Bash(awk '{print $4}')"
+      "Bash(awk '{print $4}')",
+      "Bash(rm -f /Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid/test.input.up /Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid/preparation_summary.txt)",
+      "Bash(rm -rf /Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/* /Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_test_1rkl_hybrid/logs/*)"
     ]
   }
 }

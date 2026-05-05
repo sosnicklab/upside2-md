@@ -32,6 +32,7 @@ include_directories(/opt/homebrew/opt/eigen@3/include/eigen3)
 set(ENGINE_SRC 
     main.cpp
     martini.cpp
+    martini_cg_lipid.cpp
     box.cpp
     environment.cpp
     hbond.cpp 

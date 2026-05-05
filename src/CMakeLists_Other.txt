@@ -21,6 +21,7 @@ include_directories(SYSTEM "include")
 set (ENGINE_SRC 
     main.cpp
     martini.cpp
+    martini_cg_lipid.cpp
     box.cpp
     environment.cpp
     hbond.cpp 
