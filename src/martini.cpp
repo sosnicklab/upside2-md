@@ -3993,6 +3993,9 @@ void update_martini_node_boxes(DerivEngine& engine, float scale_xy, float scale_
             }
             continue;
         }
+        if(auto* node = dynamic_cast<PotentialNode*>(n.computation.get())) {
+            node->update_box_dimensions_anisotropic(scale_xy, scale_z);
+        }
     }
 }
 

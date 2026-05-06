@@ -262,12 +262,18 @@ def build_cg_lipid_ghost_info(struct_h5, ghost_scale=5.0):
 
     elem_index = np.asarray(cv6["elem_index"][:], dtype=int)  # maps CG→pos atom index
     direction = np.asarray(cv6["direction"][:], dtype=np.float32)
+    orientation_index = (
+        np.asarray(cv6["orientation_index"][:], dtype=int)
+        if "orientation_index" in cv6
+        else None
+    )
 
     if elem_index.size == 0:
         return None
 
     return {
         "cg_pos_indices": elem_index,
+        "orientation_indices": orientation_index,
         "direction": direction,
         "ghost_scale": ghost_scale,
     }
@@ -318,9 +324,18 @@ def extend_frame_with_ghosts(frame, ghost_info):
         return frame
 
     cg_idx = ghost_info["cg_pos_indices"]
+    orientation_idx = ghost_info.get("orientation_indices")
     direction = ghost_info["direction"]
     scale = ghost_info["ghost_scale"]
     n_ghost = ghost_info["_n_ghost"]
+
+    if orientation_idx is not None and np.max(orientation_idx) < frame.shape[0]:
+        direction = frame[orientation_idx] - frame[cg_idx]
+        norm = np.linalg.norm(direction, axis=1)
+        mask = norm > 1e-12
+        if np.any(mask):
+            direction = direction.copy()
+            direction[mask] /= norm[mask, None]
 
     ghost_pos = frame[cg_idx] + direction * scale
     return np.concatenate([frame, ghost_pos], axis=0)

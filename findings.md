@@ -1,6 +1,19 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-06: The current 1RKL single-particle lipid failure has two separable causes.
+  - The inspected 1RKL stage has bad initial CGL placement: upper-leaflet CGL z extends below the midplane and same-leaflet XY spacing reaches about `2.245 Å`, while the trajectory explodes by the first saved frame.
+  - A clean 72-DOPC bilayer-only system has balanced 36/36 leaflets, expected direction signs (`lower dir_z ~= +0.995`, `upper dir_z ~= -0.993`), and no close same-leaflet XY overlaps below about `5.35 Å`.
+  - The CG lipid quadspline table was also over-amplified: radial fitting did not match Upside's clamped deBoor runtime basis, angular basis knots were incorrectly energy-converted despite being dimensionless, and refitting `V_angular(r)` by averaging `residual/(Ang1*Ang2)` amplified small angular products into huge coefficients.
+  - Runtime-matched radial fitting plus least-squares projection/clipping of `V_angular(r)` reduced the bilayer-only `V_angular` max from order `10^3 E_up` to about `19.5 E_up` and removed the immediate numerical blow-up in the isolated test.
+  - The isolated single-particle DOPC model still spreads in z over a longer NVT run, so numerical stability does not yet prove physical bilayer morphology stability.
+- 2026-05-05: The current CG lipid bilayer instability comes from mismatched training/runtime semantics, not from a missing generic damping term.
+  - `cg_lipid_pair` was fitting a full isotropic radial energy while the stage still retained CGL-CGL LJ in `martini_potential`, so the isotropic lipid-lipid term was represented twice.
+  - The CG-CG table path enabled short relaxation even though its own docstring says relaxation is invalid for CG-CG fitting; this can remove the repulsive wall that should remain in the effective interaction.
+  - CG-CG angular samples were generated relative to the global z-axis while the runtime quadspline interprets angles relative to the pair displacement vector.
+  - The generic `InteractionGraph<PosQuadSplineInteraction>` runtime path uses direct coordinate differences, so CG lipid pair and SC interactions miss minimum-image PBC even though the base MARTINI potential is PBC-aware.
+  - The shared quadspline interaction signs do not directly encode the requested lipid convention `Ang1(-n1*n12) Ang2(n2*n12)`, so the CG lipid runtime should own this convention explicitly instead of changing shared bead interaction behavior.
+  - Direct explicit-bead CG-CG sampling contains very large overlap outliers even outside the nominal CGL-CGL core. If those outliers are fit into the angular residual, they produce enormous spline coefficients and destabilize the one-particle lipid model; the isotropic CGL-CGL LJ core should own excluded volume while the angular residual remains bounded.
 - 2026-04-30: User correction: AA-direct hybrid mapping must not silently alias missing BB proxies to CA coordinates.
   - If `bb_atom_index=-1` is a sentinel, runtime must keep it as missing-proxy state and derive BB interaction sites from mapped carriers.
   - Writing BB COM coordinates into physical CA coordinates changes the protein model and breaks helicity.
@@ -523,3 +536,21 @@
   - Working rule: sequence length parity with `hybrid_bb_map` is necessary but not sufficient; stage-7 backbone/hbond node generation must also receive chain-break exclusions to avoid cross-segment backbone chemistry artifacts.
 - 2026-04-30: Hybrid MARTINI nonbonded path should fail fast if table coverage is incomplete.
   - Working rule: when policy requires spline-only LJ/Coulomb (except Ewald), remove analytic fallback branches from runtime pair evaluation and throw explicit runtime errors if a nonzero interaction lacks a corresponding spline.
+
+## 2026-05-06 (Dynamic Single-Particle Lipid Orientation)
+- The prior single-particle CGL lipid orientation was static in practice:
+  - `cg_lipid_pair` produced direction derivatives,
+  - but `compose_vector6d` discarded them because lipid directions were copied from a fixed HDF5 `direction` dataset.
+- A minimal rotatable-vector representation can be added without creating extra interacting lipid beads:
+  - append one hidden `CGLD` site per CGL lipid,
+  - constrain CGL-CGLD distance with a harmonic bond,
+  - compute the direction from normalized CGL-to-CGLD displacement,
+  - propagate the normalized-vector derivative to both sites.
+- The dynamic-vector bilayer-only smoke confirms vectors now rotate:
+  - direction norms remain exactly unit-length in diagnostics,
+  - 5000-step max/mean angular changes reached `149.876/65.677 deg`.
+- The bilayer still spreads in `z` over 5000 steps, though less than the static-vector run:
+  - static-vector final `z_std=13.384 Å`,
+  - dynamic-vector final `z_std=10.390 Å`.
+- Lesson:
+  - when a directional potential is intended to rotate coarse particles, verify the full derivative path from pair evaluator through the coordinate node to physical integrator coordinates; accumulating a derivative on a virtual direction component is not sufficient if the upstream node drops it.

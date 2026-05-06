@@ -1687,10 +1687,24 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     protein_position_restraints = []
 
     protein_atoms_for_mapping, _ = parse_pdb(Path(input_pdb_file))
-    protein_backbone_atoms_for_mapping, _ = extract_protein_backbone_atoms_from_aa(protein_atoms_for_mapping)
-    bb_type_by_residue = map_backbone_types_from_martinize_fallback(
-        protein_backbone_atoms_for_mapping
-    )
+    protein_like_atoms = [
+        atom for atom in protein_atoms_for_mapping
+        if atom["resname"].upper() in {
+            'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS',
+            'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP',
+            'TYR', 'VAL', 'HID', 'HIE', 'HIP', 'HSD', 'HSE', 'HSP', 'CYX',
+        }
+    ]
+    if protein_like_atoms:
+        protein_backbone_atoms_for_mapping, _ = extract_protein_backbone_atoms_from_aa(
+            protein_atoms_for_mapping
+        )
+        bb_type_by_residue = map_backbone_types_from_martinize_fallback(
+            protein_backbone_atoms_for_mapping
+        )
+    else:
+        protein_backbone_atoms_for_mapping = []
+        bb_type_by_residue = {}
     
     
     protein_residue_names = {
@@ -1800,6 +1814,60 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         atom_names, residue_names, chain_ids, seg_ids)
     n_atoms = len(initial_positions)
     n_cg_lipids = len(cg_lipid_indices)
+
+    cg_lipid_orientation_indices = np.zeros(0, dtype=np.int32)
+    cg_lipid_orientation_length_ang = float(
+        os.environ.get('UPSIDE_CG_LIPID_ORIENTATION_LENGTH', '5.0')
+    )
+    cg_lipid_orientation_bond_fc = float(
+        os.environ.get('UPSIDE_CG_LIPID_ORIENTATION_BOND_FC', '20.0')
+    )
+    cg_lipid_orientation_mass_g = 0.0
+    if n_cg_lipids > 0:
+        bead_masses = np.array(
+            [martini_masses.get(bt, 0.0) for bt in dopc_bead_types],
+            dtype=np.float64,
+        )
+        inertia_values = []
+        for rel_pos, direction in zip(ref_bead_positions, lipid_directions):
+            direction = np.asarray(direction, dtype=np.float64)
+            direction /= max(float(np.linalg.norm(direction)), 1e-12)
+            rel_pos = np.asarray(rel_pos, dtype=np.float64)
+            parallel = rel_pos @ direction
+            r2_perp = np.sum(rel_pos * rel_pos, axis=1) - parallel * parallel
+            inertia_values.append(float(np.sum(bead_masses * np.maximum(r2_perp, 0.0))))
+        mean_inertia = float(np.mean(inertia_values)) if inertia_values else 0.0
+        cg_lipid_orientation_mass_g = max(
+            mean_inertia / max(cg_lipid_orientation_length_ang ** 2, 1e-12),
+            12.0,
+        )
+        cg_lipid_orientation_indices = np.arange(
+            n_atoms, n_atoms + n_cg_lipids, dtype=np.int32
+        )
+        orientation_positions = (
+            initial_positions[cg_lipid_indices]
+            + cg_lipid_orientation_length_ang * lipid_directions
+        )
+        initial_positions = np.vstack([initial_positions, orientation_positions])
+        atom_types = np.concatenate([
+            atom_types.astype('<U4'),
+            np.array(['CGLD'] * n_cg_lipids, dtype='<U4'),
+        ])
+        charges = np.concatenate([charges, np.zeros(n_cg_lipids, dtype=charges.dtype)])
+        residue_ids = np.concatenate([residue_ids, residue_ids[cg_lipid_indices]])
+        atom_names = np.concatenate([
+            atom_names.astype('<U4'),
+            np.array(['CGLD'] * n_cg_lipids, dtype='<U4'),
+        ])
+        residue_names = np.concatenate([residue_names, residue_names[cg_lipid_indices]])
+        chain_ids = np.concatenate([chain_ids, chain_ids[cg_lipid_indices]])
+        seg_ids = np.concatenate([seg_ids, seg_ids[cg_lipid_indices]])
+        n_atoms = len(initial_positions)
+        print(
+            f"Added {n_cg_lipids} hidden CGLD orientation sites "
+            f"(length={cg_lipid_orientation_length_ang:.3f} Å, "
+            f"mass={cg_lipid_orientation_mass_g:.3f} g/mol)"
+        )
 
     # Read box dimensions from CRYST1 record
     print(f"Reading box dimensions from {input_pdb_file}...")
@@ -1960,7 +2028,16 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     # CG lipids have no internal bonds/angles — skip per-bead DOPC topology.
     if n_cg_lipids > 0:
         print(f"CG lipid mode: {n_cg_lipids} DOPC lipids coarse-grained to single 6D vector particles "
-              f"(no internal bonds/angles/restraints)")
+              f"with dynamic orientation sites")
+        for cgl_i, orient_i in zip(cg_lipid_indices, cg_lipid_orientation_indices):
+            bonds_list.append([int(cgl_i), int(orient_i)])
+            bond_lengths_list.append(cg_lipid_orientation_length_ang)
+            bond_force_constants_list.append(cg_lipid_orientation_bond_fc)
+        print(
+            f"Added {n_cg_lipids} CGL-CGLD orientation bonds "
+            f"(r0={cg_lipid_orientation_length_ang:.3f} Å, "
+            f"k={cg_lipid_orientation_bond_fc:.3f} E_up/Å²)"
+        )
     
     # Create protein connectivity if available
     protein_bond_count = 0
@@ -2035,7 +2112,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     
     # Center and wrap positions
     print(f"\n=== Preparing Final Structure ===")
-    center = np.mean(initial_positions, axis=0)
+    center_mask = atom_types != "CGLD"
+    center = np.mean(initial_positions[center_mask], axis=0)
     centered_positions = initial_positions - center
     half_box = np.array([x_len/2, y_len/2, z_len/2])
     centered_positions = (centered_positions + half_box) % (2*half_box) - half_box
@@ -2084,6 +2162,9 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             cgl_mass = sum(martini_masses.get(bt, 0.0) for bt in dopc_bead_types)
             martini_masses["CGL"] = cgl_mass
             print(f"CG lipid mass: {cgl_mass:.1f} g/mol (sum of {len(dopc_bead_types)} DOPC beads)")
+        if n_cg_lipids > 0:
+            martini_masses["CGLD"] = cg_lipid_orientation_mass_g
+            print(f"CG lipid orientation-site mass: {cg_lipid_orientation_mass_g:.3f} g/mol")
 
         # Extend martini_table with effective CGL LJ parameters for isotropic
         # CG lipid ↔ dryMARTINI particle interactions (ions, water, BB, env).
@@ -2134,6 +2215,16 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             n_types = len([k for k in martini_table if k[0] == "CGL"])
             print(f"Extended martini_table with CGL entries for {n_types} target types "
                   f"(CGL↔CGL: sigma={cgl_self_sig_nm:.3f} nm, eps={cgl_self_eps_kj:.3f} kJ/mol)")
+        if n_cg_lipids > 0:
+            all_martini_types = set()
+            for t1, t2 in martini_table.keys():
+                all_martini_types.add(t1)
+                all_martini_types.add(t2)
+            all_martini_types.update(str(x) for x in np.unique(atom_types))
+            all_martini_types.add("CGLD")
+            for tgt_type in all_martini_types:
+                martini_table[("CGLD", tgt_type)] = (0.0, 0.0)
+                martini_table[(tgt_type, "CGLD")] = (0.0, 0.0)
 
         mass = np.zeros(n_atoms, dtype='f4')
         for i, atom_type in enumerate(atom_types):
@@ -2573,10 +2664,16 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             compose_grp = t.create_group(potential_grp, 'compose_vector6d')
             compose_grp._v_attrs.arguments = np.array([b'pos'])
             compose_grp._v_attrs.initialized = True
+            compose_grp._v_attrs.x_len = x_len
+            compose_grp._v_attrs.y_len = y_len
+            compose_grp._v_attrs.z_len = z_len
+            compose_grp._v_attrs.orientation_length_ang = cg_lipid_orientation_length_ang
             t.create_array(compose_grp, 'elem_index',
                            obj=cg_lipid_indices.astype('i4'))
             t.create_array(compose_grp, 'direction',
                            obj=lipid_directions.astype('f4'))
+            t.create_array(compose_grp, 'orientation_index',
+                           obj=cg_lipid_orientation_indices.astype('i4'))
             print(f"Injected compose_vector6d node: {n_cg_lipids} CG lipid 6D particles")
 
         # Store old→new atom index remapping for hybrid mapping injection
@@ -3332,6 +3429,21 @@ def inject_particles_table(up_file: Path, martini_h5: Path):
         combined_grids = pg["combined_energy_grids"][:].astype(np.float64)
         n_triples = len(eps_arr)
 
+    has_zero_triple = np.any(
+        (np.abs(eps_arr) < 1e-12)
+        & (np.abs(sig_arr) < 1e-12)
+        & (np.abs(qq_arr) < 1e-12)
+    )
+    if not has_zero_triple:
+        eps_arr = np.concatenate([eps_arr, np.array([0.0], dtype=np.float64)])
+        sig_arr = np.concatenate([sig_arr, np.array([0.0], dtype=np.float64)])
+        qq_arr = np.concatenate([qq_arr, np.array([0.0], dtype=np.float64)])
+        combined_grids = np.vstack([
+            combined_grids,
+            np.zeros((1, combined_grids.shape[1]), dtype=np.float64),
+        ])
+        n_triples = len(eps_arr)
+
     GRID_N = 1000
     R_MIN = 0.0
     R_MAX = 12.0
@@ -3426,6 +3538,12 @@ def inject_cg_lipid_nodes(
     with h5py.File(up_file, "r+") as up:
         inp = up["input"]
         pot = inp["potential"]
+        box_attrs = {}
+        if "martini_potential" in pot:
+            martini_pot = pot["martini_potential"]
+            for attr_name in ("x_len", "y_len", "z_len"):
+                if attr_name in martini_pot.attrs:
+                    box_attrs[attr_name] = np.float32(martini_pot.attrs[attr_name])
 
         if "compose_vector6d" not in pot:
             raise SystemExit(
@@ -3437,10 +3555,17 @@ def inject_cg_lipid_nodes(
             if has_pair:
                 pair_grp = mh5["cg_lipid_table/cg_lipid_pair"]
 
-                # cg_lipid_pair: symmetric InteractionGraph<PosQuadSplineInteraction>
+                # cg_lipid_pair: symmetric directional residual over CG lipid vectors.
                 cg_pair = pot.create_group("cg_lipid_pair")
                 cg_pair.attrs["initialized"] = True
                 cg_pair.attrs["arguments"] = np.array([b"compose_vector6d"])
+                for attr_name, attr_value in box_attrs.items():
+                    cg_pair.attrs[attr_name] = attr_value
+                cg_pair.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
+                cg_pair.attrs["radial_mode"] = "residual_zero_isotropic"
+                for attr_name in ("knot_spacing_ang", "cutoff_ang", "taper_width_ang"):
+                    if attr_name in pair_grp.attrs:
+                        cg_pair.attrs[attr_name] = np.float32(pair_grp.attrs[attr_name])
 
                 pi = cg_pair.create_group("pair_interaction")
                 pi.create_dataset(
@@ -3513,6 +3638,9 @@ def inject_cg_lipid_nodes(
                             b"placement_fixed_point_vector_only_CB",
                             b"compose_vector6d",
                         ])
+                        for attr_name, attr_value in box_attrs.items():
+                            cg_sc.attrs[attr_name] = attr_value
+                        cg_sc.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
 
                         psi = cg_sc.create_group("pair_interaction")
                         psi.create_dataset(

@@ -801,9 +801,17 @@ def _fit_radial_bspline(
     knot_vector: np.ndarray,
     smooth: float = 0.0,
 ) -> np.ndarray:
-    """Fit clamped cubic B-spline control points (for radial functions)."""
-    basis = _cubic_bspline_basis_values(t_samples, knot_vector)
-    n_control = basis.shape[1]
+    """Fit control points for Upside's clamped deBoor radial evaluator."""
+    n_control = len(knot_vector) - 4
+    basis = np.zeros((len(t_samples), n_control), dtype=np.float64)
+    for si, t in enumerate(t_samples):
+        t = float(t)
+        if t <= 1.0:
+            basis[si, 0:3] = (1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0)
+        elif t >= n_control - 2:
+            basis[si, n_control - 3:n_control] = (1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0)
+        else:
+            basis[si, :] = _deBoor_uniform_basis_weights(t, n_control)
 
     if smooth > 0.0:
         D2 = np.zeros((n_control - 2, n_control), dtype=np.float64)
@@ -1198,6 +1206,34 @@ def _compute_cg_pair_energy(
     return total_energy
 
 
+def _direction_with_dot_np(axis: np.ndarray, dot_value: float, phi: float) -> np.ndarray:
+    """Return a unit vector v with dot(v, axis)=dot_value."""
+    axis = np.asarray(axis, dtype=np.float64)
+    axis_norm = float(np.linalg.norm(axis))
+    if axis_norm <= 1e-12:
+        raise ValueError("axis must be non-zero")
+    axis = axis / axis_norm
+
+    if abs(axis[0]) < 0.9:
+        tangent1 = np.cross(axis, np.array([1.0, 0.0, 0.0], dtype=np.float64))
+    else:
+        tangent1 = np.cross(axis, np.array([0.0, 1.0, 0.0], dtype=np.float64))
+    tangent1 /= np.linalg.norm(tangent1)
+    tangent2 = np.cross(axis, tangent1)
+
+    c = float(np.clip(dot_value, -1.0, 1.0))
+    s = math.sqrt(max(0.0, 1.0 - c * c))
+    return c * axis + s * (math.cos(phi) * tangent1 + math.sin(phi) * tangent2)
+
+
+def _directions_with_dot_np(axis: np.ndarray, dot_grid: np.ndarray, phi_values: np.ndarray) -> np.ndarray:
+    dirs = np.zeros((len(dot_grid), len(phi_values), 3), dtype=np.float64)
+    for ia, dot_value in enumerate(dot_grid):
+        for ip, phi in enumerate(phi_values):
+            dirs[ia, ip] = _direction_with_dot_np(axis, float(dot_value), float(phi))
+    return dirs
+
+
 def _fit_cg_lipid_quadspline(
     ref_bead_positions_nm: np.ndarray,
     bead_types: list,
@@ -1210,6 +1246,8 @@ def _fit_cg_lipid_quadspline(
     azimuthal_count: int = 2,
     relax_steps: int = 0,
     dist_min_nm: float = 0.25,
+    knot_spacing_ang: float = 1.4,
+    residual_cap_kj_mol: float | None = 50.0,
 ) -> dict:
     """Fit 54 B-spline quadspline parameters for CG lipid ↔ CG lipid interactions.
 
@@ -1235,11 +1273,9 @@ def _fit_cg_lipid_quadspline(
     n_radial = r_count
 
     phi_values = np.linspace(0.0, 2.0 * np.pi, azimuthal_count, endpoint=False)
-    sin_theta = np.sqrt(np.maximum(0.0, 1.0 - cos_theta_grid ** 2))
-    all_dirs = np.zeros((n_angle, azimuthal_count, 3), dtype=np.float64)
-    for ia, (ct, st) in enumerate(zip(cos_theta_grid, sin_theta)):
-        for ip, phi in enumerate(phi_values):
-            all_dirs[ia, ip] = [st * np.cos(phi), st * np.sin(phi), ct]
+    n12_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    dirs1 = _directions_with_dot_np(-n12_axis, cos_theta_grid, phi_values)
+    dirs2 = _directions_with_dot_np(n12_axis, cos_theta_grid, phi_values)
 
     energy_grid = np.zeros((n_radial, n_angle, n_angle), dtype=np.float64)
     ref_nm = np.asarray(ref_bead_positions_nm, dtype=np.float64)
@@ -1254,9 +1290,9 @@ def _fit_cg_lipid_quadspline(
             for ia2 in range(n_angle):
                 energy_sum = 0.0
                 for ip1 in range(azimuthal_count):
-                    dir1 = all_dirs[ia1, ip1]
+                    dir1 = dirs1[ia1, ip1]
                     for ip2 in range(azimuthal_count):
-                        dir2 = all_dirs[ia2, ip2]
+                        dir2 = dirs2[ia2, ip2]
                         energy_sum += _compute_cg_pair_energy(
                             r_nm, dir1, dir2, ref_nm, ref_nm,
                             bead_types, bead_types,
@@ -1268,11 +1304,18 @@ def _fit_cg_lipid_quadspline(
                 energy_grid[ir, ia1, ia2] = energy_sum / (azimuthal_count * azimuthal_count)
 
     # --- Two-sided SVD factorization ---
-    # V_radial(r) = mean over all angles
-    v_radial = np.mean(energy_grid, axis=(1, 2))  # (n_radial,)
+    # V_radial(r) is already represented by the effective CGL-CGL LJ term in
+    # martini_potential. Use the angle-average only as the baseline for fitting
+    # the residual directional correction.
+    v_radial_sampled = np.mean(energy_grid, axis=(1, 2))  # (n_radial,)
+    v_radial = np.zeros(n_radial, dtype=np.float64)
 
     # Residual: E(r, cosθ1, cosθ2) - V_radial(r)
-    residual = energy_grid - v_radial[:, None, None]  # (n_radial, n_angle, n_angle)
+    residual = energy_grid - v_radial_sampled[:, None, None]  # (n_radial, n_angle, n_angle)
+    if residual_cap_kj_mol is not None and residual_cap_kj_mol > 0.0:
+        residual_fit = np.clip(residual, -float(residual_cap_kj_mol), float(residual_cap_kj_mol))
+    else:
+        residual_fit = residual
 
     # Collect u_r and v_r from SVD of each r-slice
     u_all = np.zeros((n_radial, n_angle), dtype=np.float64)
@@ -1280,7 +1323,7 @@ def _fit_cg_lipid_quadspline(
     s_all = np.zeros(n_radial, dtype=np.float64)
 
     for ir in range(n_radial):
-        mat = residual[ir]  # (n_angle, n_angle)
+        mat = residual_fit[ir]  # (n_angle, n_angle)
         if np.allclose(mat, 0.0):
             u_all[ir] = 0.0
             v_all[ir] = 0.0
@@ -1334,13 +1377,20 @@ def _fit_cg_lipid_quadspline(
     for ir in range(n_radial):
         mask = denom_abs > 1e-6
         if mask.any():
-            v_angular[ir] = np.mean(residual[ir][mask] / ang1_ang2[mask])
+            basis = ang1_ang2[mask]
+            target = residual_fit[ir][mask]
+            denom = float(np.dot(basis, basis))
+            if denom > 1e-15:
+                v_angular[ir] = float(np.dot(target, basis) / denom)
+    if residual_cap_kj_mol is not None and residual_cap_kj_mol > 0.0:
+        cap = float(residual_cap_kj_mol)
+        v_angular = np.clip(v_angular, -cap, cap)
 
     smooth_v_angular = v_angular.copy()
 
-    # Compute RMS error
-    recon = v_radial[:, None, None] + ang1[None, :, None] * ang2[None, None, :] * smooth_v_angular[:, None, None]
-    rms_error = float(np.sqrt(np.mean((energy_grid - recon) ** 2)))
+    # Compute RMS error for the directional residual fit.
+    recon = ang1[None, :, None] * ang2[None, None, :] * smooth_v_angular[:, None, None]
+    rms_error = float(np.sqrt(np.mean((residual_fit - recon) ** 2)))
 
     # --- Fit B-splines ---
     # Convert energy from kJ/mol to E_up for storage
@@ -1352,12 +1402,12 @@ def _fit_cg_lipid_quadspline(
     t_angular = (cos_theta_grid + 1.0) * inv_dtheta + 1.0  # ∈ [1, 13]
 
     # Fit using exact C++ deBoor algorithm (not Cox-de Boor with knot vector)
-    ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01) * inv_conv
-    ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01) * inv_conv
+    ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01)
+    ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01)
 
     # Radial B-spline: 12 control points, clamped cubic, t = r_Å / KNOT_SPACING
     n_knot_radial = 12
-    knot_spacing = 0.7  # KNOT_SPACING from bead_interaction.h
+    knot_spacing = float(knot_spacing_ang)
     t_radial_ang = r_values * 10.0 / knot_spacing  # nm to Å, then to spline parameter
     rad_knot_vector = np.zeros(n_knot_radial + 4, dtype=np.float64)
     rad_knot_vector[4:-4] = np.arange(1, n_knot_radial - 3, dtype=np.float64)
@@ -1377,11 +1427,15 @@ def _fit_cg_lipid_quadspline(
         "interaction_param": interaction_param,
         "rms_error": rms_error,
         "v_radial_raw": v_radial,
+        "v_radial_sampled_raw": v_radial_sampled,
+        "residual_cap_kj_mol": residual_cap_kj_mol,
         "ang1_raw": ang1,
         "ang2_raw": ang2,
         "v_angular_raw": smooth_v_angular,
         "r_values_nm": r_values,
         "cos_theta_grid": cos_theta_grid,
+        "knot_spacing_ang": knot_spacing,
+        "cutoff_ang": float((n_knot_radial - 2) * knot_spacing),
     }
 
 
@@ -1419,15 +1473,12 @@ def _fit_cg_lipid_sc_quadspline(
     n_radial = r_count
 
     phi_values = np.linspace(0.0, 2.0 * np.pi, azimuthal_count, endpoint=False)
-    sin_theta = np.sqrt(np.maximum(0.0, 1.0 - cos_theta_grid ** 2))
-    cg_dirs = np.zeros((n_angle, azimuthal_count, 3), dtype=np.float64)
-    for ia, (ct, st) in enumerate(zip(cos_theta_grid, sin_theta)):
-        for ip, phi in enumerate(phi_values):
-            cg_dirs[ia, ip] = [st * np.cos(phi), st * np.sin(phi), ct]
 
     ref_nm = np.asarray(ref_bead_positions_nm, dtype=np.float64)
     cb_anchor = np.asarray(cb_anchor_nm, dtype=np.float64)
     cb_vec = np.asarray(cb_vector_unit, dtype=np.float64)
+    cb_vec /= max(float(np.linalg.norm(cb_vec)), 1e-12)
+    sc_to_cg_dirs = _directions_with_dot_np(-cb_vec, cos_theta_grid, phi_values)
     n_rotamer = len(rotamer_centers_nm)
 
     # Pre-build SC bead position arrays for each rotamer
@@ -1448,14 +1499,13 @@ def _fit_cg_lipid_sc_quadspline(
 
     for ir, r_nm in enumerate(r_values):
         for ia_cg in range(n_angle):
-            dir_cg = cg_dirs[ia_cg, 0]
-
             for ia_sc in range(n_angle):
                 energy_sum = 0.0
                 weight_sum = 0.0
                 for ip in range(azimuthal_count):
-                    dir_to_cg = cg_dirs[ia_sc, ip]
+                    dir_to_cg = sc_to_cg_dirs[ia_sc, ip]
                     cg_com = r_nm * dir_to_cg
+                    dir_cg = _direction_with_dot_np(dir_to_cg, cos_theta_grid[ia_cg], 0.0)
 
                     R_cg = _rotation_to_align_z_np(dir_cg)
                     cg_positions = cg_com[None, :] + (R_cg @ ref_nm.T).T
@@ -1543,8 +1593,8 @@ def _fit_cg_lipid_sc_quadspline(
     inv_dtheta = (n_knot_angular - 3) / 2.0
     t_angular = (cos_theta_grid + 1.0) * inv_dtheta + 1.0
 
-    ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01) * inv_conv
-    ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01) * inv_conv
+    ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01)
+    ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01)
 
     n_knot_radial = 12
     knot_spacing = 0.7
@@ -2006,21 +2056,23 @@ def _build_cg_lipid_tables(
           f"(CG: {_cg_r}r×{_cg_ct}²θ×{_cg_az}²φ, "
           f"SC: {_sc_r}r×{_sc_ct}²θ×{_sc_az}²φ)")
 
-    # CG ↔ CG quadspline — bond-constrained relaxation at each sample point.
-    # The particles table provides the isotropic repulsive core (sigma=1.5 nm);
-    # the quadspline captures orientation-dependent attraction via Ang1/Ang2/V_ang.
-    relax_steps = 120
+    # CG ↔ CG quadspline. Keep the particles table as the isotropic core and
+    # fit only the residual directional correction; do not relax CG-CG samples.
+    relax_steps = 0
     result_cg = _fit_cg_lipid_quadspline(
         ref_bead_positions_nm=ref_nm,
         bead_types=bead_types,
         bead_charges=bead_charges,
         pair_params=pair_params,
-        r_min_nm=r_min_nm,
-        r_max_nm=r_max_nm,
+        r_min_nm=0.70,
+        r_max_nm=1.40,
         r_count=min(r_count, _cg_r),
         cos_theta_count=min(cos_theta_count, _cg_ct),
         azimuthal_count=_cg_az,
         relax_steps=relax_steps,
+        dist_min_nm=0.25,
+        knot_spacing_ang=1.4,
+        residual_cap_kj_mol=50.0,
     )
     print(f"  CG↔CG: RMS error = {result_cg['rms_error']:.4f} kJ/mol, "
           f"max|Ang1| = {float(np.max(np.abs(result_cg['ang1_raw']))):.3f}")
@@ -2086,7 +2138,16 @@ def _build_cg_lipid_tables(
     )
     cg_pair_grp.attrs["n_cg_types"] = 1
     cg_pair_grp.attrs["rms_error_kj_mol"] = np.float32(result_cg["rms_error"])
-    cg_pair_grp.attrs["schema"] = "cg_lipid_quadspline_v1"
+    cg_pair_grp.attrs["schema"] = "cg_lipid_quadspline_v2"
+    cg_pair_grp.attrs["radial_mode"] = "residual_zero_isotropic"
+    cg_pair_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
+    cg_pair_grp.attrs["fit_relax_steps"] = np.int32(0)
+    cg_pair_grp.attrs["fit_r_min_nm"] = np.float32(0.70)
+    cg_pair_grp.attrs["fit_r_max_nm"] = np.float32(1.40)
+    cg_pair_grp.attrs["knot_spacing_ang"] = np.float32(result_cg["knot_spacing_ang"])
+    cg_pair_grp.attrs["cutoff_ang"] = np.float32(result_cg["cutoff_ang"])
+    cg_pair_grp.attrs["taper_width_ang"] = np.float32(result_cg["knot_spacing_ang"])
+    cg_pair_grp.attrs["residual_cap_kj_mol"] = np.float32(result_cg["residual_cap_kj_mol"])
 
     # CG ↔ SC
     cg_sc_grp = cg_grp.create_group("cg_lipid_sc")

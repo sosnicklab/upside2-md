@@ -1,5 +1,47 @@
 # Progress Log
 
+## 2026-05-06 (CG Lipid Bilayer-Only Isolation)
+- Started follow-up after the user reported the latest `run_sim_1rkl.sh` output remains unstable.
+- Plan:
+  - audit current 1RKL CGL initial placement and CG lipid node/table attrs;
+  - build and run a smaller bilayer-only single-particle DOPC test with the same active CGL-CGL LJ and `cg_lipid_pair` interactions.
+- Audited current 1RKL stage output:
+  - CGL directions are unit vectors with expected leaflet signs, but placement is not clean;
+  - upper-leaflet split includes CGL z down to about `-3.69 Å`;
+  - same-leaflet XY nearest-neighbor distance reaches about `2.245 Å`;
+  - trajectory is already blown up by the first saved frame, with CGL z reaching about `49,535 Å`.
+- Added `example/16.MARTINI/test_cg_bilayer/run_test.py` and `run_test.sh`.
+- Patched `py/martini_prepare_system_lib.py` so lipid-only DOPC PDBs can pass through `convert_stage()` without protein backbone atoms.
+- Patched `py/martini_build_tables.py` to fit CG lipid quadsplines with runtime-matched clamped radial deBoor basis, dimensionless angular basis knots, and bounded least-squares `V_angular`.
+- Verification:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py example/16.MARTINI/test_cg_bilayer/run_test.py` passed;
+  - `./example/16.MARTINI/test_cg_bilayer/run_test.sh --skip-build --skip-stage --skip-run` passed;
+  - bilayer-only 100-step run passed, `max_disp=0.100 Å`;
+  - bilayer-only 5000-step run stayed finite, but z spread grew from `6.512 Å` to `13.384 Å`.
+
+## 2026-05-05 (CG Lipid Quadspline Bilayer Stabilization)
+- Started implementation of the directional single-particle CG lipid stabilization plan for `example/16.MARTINI/run_sim_1rkl.sh`.
+- Logged the main root causes:
+  - full radial CG-CG spline double-counted the base CGL-CGL LJ interaction;
+  - CG-CG fitting used relaxation despite the fitter warning that relaxation erases the pair repulsive wall;
+  - angular training axes did not match runtime pair-axis semantics;
+  - generic quadspline runtime interactions did not use minimum-image PBC;
+  - the requested lipid angular sign convention should be explicit in the CG lipid runtime rather than hidden in shared bead interaction code.
+- Patched `py/martini_build_tables.py`:
+  - CG-CG table fitting now uses pair-axis angular sampling with `Ang1(-n1 dot n12)` / `Ang2(n2 dot n12)`;
+  - CG-CG fitting now leaves `V_radial` zero, fits only a bounded directional residual, uses no relaxation, and records the new schema/fit attrs;
+  - CG-SC sampling now aligns the SC and CG angular variables with the same runtime pair-axis convention.
+- Patched `src/martini_cg_lipid.cpp`:
+  - replaced generic interaction-graph evaluation with CG-specific quadspline loops;
+  - added minimum-image PBC, explicit angular signs, finite cutoff/taper, and node-local spline range attrs.
+- Patched workflow injection/runtime support:
+  - `inject_cg_lipid_nodes()` now copies box dimensions and CG pair spline-range attrs into CG lipid potential nodes;
+  - `update_martini_node_boxes()` now dispatches the virtual potential-node box updater for nodes outside the hardcoded MARTINI list.
+- Verification:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py` passed;
+  - `cmake --build obj --target upside` passed;
+  - focused CG-CG fit on the test DOPC reference produced zero radial knots, finite angular knots (`max |V_angular knot| ~= 92.46 E_up`), and `cutoff_ang=14.0`.
+
 ## 2026-04-30 (Hybrid AA-Direct Forensic Regression Fix)
 - Reopened the hybrid AA-direct instability as a strict HEAD-vs-working-tree forensic pass focused on `src/martini.cpp` and `py/martini_prepare_system*.py`.
 - Confirmed and fixed the main C++ regressions:
@@ -991,3 +1033,23 @@
 - Verification:
   - `cmake --build obj --target upside` passed.
   - Short production replay (`/tmp/rkl_splinecheck.up`) ran successfully after changes; no missing-spline runtime error was triggered.
+
+## 2026-05-06 (Dynamic Single-Particle Lipid Orientation)
+- Actions taken:
+  - Added hidden `CGLD` orientation carrier sites for each single-particle CGL lipid during stage conversion.
+  - Added CGL-CGLD harmonic bonds and zero nonbonded rows for `CGLD`.
+  - Updated `compose_vector6d` to compute lipid vectors dynamically from CGL-to-CGLD displacement and propagate directional derivatives back to both sites.
+  - Updated bilayer-only diagnostics and VTF extraction to use dynamic orientation sites when present.
+- Files modified:
+  - `py/martini_prepare_system_lib.py`
+  - `src/martini_cg_lipid.cpp`
+  - `example/16.MARTINI/test_cg_bilayer/run_test.py`
+  - `py/martini_extract_vtf.py`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile py/martini_prepare_system_lib.py py/martini_extract_vtf.py example/16.MARTINI/test_cg_bilayer/run_test.py` passed.
+  - `source .venv/bin/activate && source source.sh && cmake --build obj --target upside` passed.
+  - 100-step bilayer-only run with dynamic orientation stayed finite and reported vector rotation up to `1.122 deg`.
+  - 5000-step bilayer-only run stayed finite with unit-norm dynamic directions; final `z_std=10.390 Å`, improved from the previous static-vector `13.384 Å` but still not bilayer-stable.

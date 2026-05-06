@@ -1,4 +1,124 @@
 
+## 2026-05-06 Dynamic CG Lipid Orientation Sites
+
+### Project Goal
+- Allow single-particle DOPC lipid vectors to rotate during simulation instead of remaining fixed at their initial directions.
+- Preserve the one physical CGL COM particle model while adding a hidden orientation carrier that receives torque through the existing directional potential.
+
+### Architecture & Key Decisions
+- Add one hidden noninteracting orientation site per CGL lipid (`CGLD`) during stage conversion.
+- Compute each runtime lipid direction as the normalized minimum-image displacement from CGL COM to its orientation site when `compose_vector6d/orientation_index` exists.
+- Propagate direction derivatives back to both CGL COM and orientation site through the normalized-vector Jacobian.
+- Keep existing static `compose_vector6d/direction` behavior as a fallback for old stage files.
+- Constrain the CGL-CGLD distance with a harmonic bond using the existing bond infrastructure.
+
+### Execution Phases
+- [x] Phase 1: Inspect existing bond and pair table infrastructure for a minimal dynamic-orientation implementation.
+- [x] Phase 2: Patch stage conversion to append CGLD sites, masses, zero nonbonded interactions, and CGL-CGLD bonds.
+- [x] Phase 3: Patch `compose_vector6d` runtime to derive and backpropagate dynamic directions.
+- [x] Phase 4: Update bilayer-only diagnostics to report direction rotation.
+- [x] Phase 5: Run syntax/build and bilayer-only smoke verification, then record results.
+
+### Known Errors / Blockers
+- The dynamic orientation carrier now receives torque, but the bilayer-only smoke still spreads in `z` over `5000` steps; remaining instability is a force-model/calibration issue rather than a fixed-vector implementation bug.
+- The dynamic direction minimum-image box in `compose_vector6d` is read from stage attrs; if future NPT runs enable large box changes, this path should be upgraded to consume live box updates.
+
+### Review
+- Added hidden `CGLD` orientation sites during CG lipid conversion:
+  - one site per CGL particle;
+  - zero charge and zero nonbonded interactions;
+  - harmonic CGL-CGLD bond through existing `dist_spring`;
+  - orientation length and bond force constant configurable via `UPSIDE_CG_LIPID_ORIENTATION_LENGTH` and `UPSIDE_CG_LIPID_ORIENTATION_BOND_FC`.
+- Updated `compose_vector6d` so runtime lipid directions are normalized CGL-to-CGLD displacements when `orientation_index` exists, with direction derivatives propagated back to both particles.
+- Updated bilayer-only and VTF diagnostics to derive displayed CGL directions from orientation sites when present.
+- Verification:
+  - `python3 -m py_compile py/martini_prepare_system_lib.py py/martini_extract_vtf.py example/16.MARTINI/test_cg_bilayer/run_test.py` passed;
+  - `cmake --build obj --target upside` passed;
+  - 100-step bilayer-only dynamic-vector smoke stayed finite and reported direction rotation up to `1.122 deg`;
+  - 5000-step bilayer-only dynamic-vector run stayed finite, directions remained normalized, and direction rotation reached `149.876 deg` max / `65.677 deg` mean;
+  - 5000-step `z_std` improved from the previous static-vector `13.384 Å` to `10.390 Å`, but the bilayer is not yet physically stable.
+
+## 2026-05-06 CG Lipid Bilayer-Only Isolation
+
+### Project Goal
+- Verify whether the single-particle DOPC instability starts from bad initial placement or from the CG lipid force model itself.
+- Add a smaller bilayer-only test for single-particle DOPC lipids and use it to assess short-horizon stability without protein/interface terms.
+
+### Architecture & Key Decisions
+- First audit the latest `run_sim_1rkl.sh` generated stage files: CGL positions, direction vectors, bilayer leaflet separation, XY nearest-neighbor spacing, box attrs, and whether CG lipid nodes use the intended table attrs.
+- Build the bilayer-only example using existing MARTINI preparation/conversion utilities rather than inventing a separate file format.
+- Keep the base CGL-CGL LJ and `cg_lipid_pair` active in the isolated test; do not disable the CG lipid directional correction just to make the test pass.
+- Use short smoke simulations for local diagnosis, then document whether a longer run remains required for physical stability.
+
+### Execution Phases
+- [x] Phase 1: Inspect current 1RKL output and verify initial single-particle lipid placement.
+- [x] Phase 2: Add or adapt a bilayer-only single-particle DOPC test workflow.
+- [x] Phase 3: Run the bilayer-only workflow and short stability smoke test.
+- [x] Phase 4: Analyze bilayer-only trajectory geometry/energy and identify the next root cause.
+- [x] Phase 5: Record findings, verification, and residual blockers.
+
+### Known Errors / Blockers
+- The latest inspected 1RKL artifact has bad CGL placement: upper-leaflet CGL z reaches below the midplane and same-leaflet XY nearest-neighbor distance drops to about `2.245 Å`.
+- A bilayer-only NVT test stays finite after `5000` steps with the corrected table, but the single-particle model spreads in `z`; long-lived bilayer morphology still needs a physical stabilization target beyond this numerical smoke test.
+
+### Review
+- Added `example/16.MARTINI/test_cg_bilayer/run_test.py` and `run_test.sh` for a stripped 72-DOPC bilayer-only single-particle workflow.
+- Fixed lipid-only stage conversion in `py/martini_prepare_system_lib.py` so DOPC-only MARTINI PDBs do not require fake protein backbone atoms.
+- Fixed CG lipid table generation in `py/martini_build_tables.py`:
+  - angular basis knots remain dimensionless;
+  - radial B-spline fitting now uses the same clamped deBoor basis as runtime;
+  - `V_angular(r)` is fit by least-squares projection and clipped to the residual cap instead of averaging residual/product ratios.
+- Verification:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py example/16.MARTINI/test_cg_bilayer/run_test.py` passed;
+  - bilayer-only table rebuild produced `radial maxabs=0`, `V_angular maxabs=19.5169 E_up`;
+  - 100-step DOPC-only smoke stayed finite with max CGL displacement `0.100 Å`;
+  - 5000-step DOPC-only run stayed finite, with `z_std` growing from `6.512 Å` to `13.384 Å`.
+
+## 2026-05-05 CG Lipid Quadspline Bilayer Stabilization
+
+### Project Goal
+- Stabilize the single-particle directional CG lipid workflow used by `example/16.MARTINI/run_sim_1rkl.sh`.
+- Make the generated CG lipid spline table and runtime evaluator match the intended directional potential:
+  `V = kappa * (V_radial(r12) + Ang1(-n1*n12) * Ang2(n2*n12) * V_angular(r12))`.
+- Preserve the active dry-MARTINI environment interactions; do not disable SC-env, BB-env, or the base MARTINI lipid interactions.
+
+### Architecture & Key Decisions
+- Keep the dry-MARTINI CGL-CGL LJ interaction in `martini_potential` as the isotropic excluded-volume core.
+- Convert `cg_lipid_pair` into a residual directional correction by zeroing its fitted isotropic radial component and fitting only the orientation-dependent angular residual.
+- Do not relax lipid internal beads while fitting CG-CG tables; relaxation can erase the repulsive wall and overfit an already represented isotropic term.
+- Fit the CG-CG residual outside the CGL-CGL core over `7-14 Å` with a CG-specific radial knot spacing, rather than training a huge angular correction on bead-overlap configurations.
+- Bound the CG-CG directional residual during SVD fitting so explicit-bead overlap outliers are left to the isotropic CGL-CGL core instead of becoming enormous angular spline coefficients.
+- Train angular samples in the same pair-axis sign convention used at runtime: lipid 1 uses `-n1 dot n12`, lipid 2 uses `n2 dot n12`.
+- Replace the generic CG lipid `InteractionGraph` runtime path with CG-specific evaluators that use minimum-image periodic distances and the explicit sign convention above.
+- Apply a finite-range taper to the CG residual quadspline correction so the right-clamped radial spline cannot become a constant all-to-all attraction beyond the fitted range.
+- Treat CG lipid directions as static vector descriptors for this stabilization pass. Direction derivatives are accumulated where the upstream node can consume them, but `compose_vector6d` still drops lipid-direction derivatives.
+
+### Execution Phases
+- [x] Phase 1: Record current workflow findings and add a stabilization plan.
+- [x] Phase 2: Patch CG lipid table generation for residual CG-CG fitting and runtime-aligned angular sampling.
+- [x] Phase 3: Patch runtime CG lipid pair/SC evaluators for minimum-image PBC and explicit angular signs.
+- [x] Phase 4: Regenerate/check the focused table artifacts and run syntax/build/smoke verification.
+- [x] Phase 5: Document review results and residual physical risks.
+
+### Known Errors / Blockers
+- Full bilayer stability is a physical validation problem and may require a longer workflow run than the local smoke tests can finish in one turn.
+- Dynamic lipid orientation/rotational DOFs are intentionally deferred; this patch stabilizes the current static-direction model rather than adding a new integrator state.
+
+### Review
+- Fixed table generation:
+  - CG-CG fitting now uses `relax_steps=0`;
+  - CG-CG angular samples use the runtime pair-axis convention `Ang1(-n1 dot n12)` and `Ang2(n2 dot n12)`;
+  - `cg_lipid_pair` stores a zero isotropic radial channel and a bounded directional residual over `7-14 Å`;
+  - generated tables record schema, angle convention, radial mode, fit range, residual cap, knot spacing, and cutoff attrs.
+- Fixed runtime evaluation:
+  - `cg_lipid_pair` and `cg_lipid_sc` now use CG-specific evaluators with minimum-image PBC, explicit angular signs, and finite-range tapering;
+  - NPT box updates now reach CG lipid potential nodes through the `PotentialNode` virtual box updater;
+  - stage injection copies box dimensions and CG pair spline-range attrs into CG lipid nodes.
+- Verification:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py` passed;
+  - `cmake --build obj --target upside` passed;
+  - focused CG-CG fit on the test DOPC reference produced zero radial knots, finite angular knots (`max |V_angular knot| ~= 92.46 E_up`), and `cutoff_ang=14.0`.
+
 ## 2026-04-30 Hybrid AA-Direct Forensic Regression Fix
 
 ### Project Goal
