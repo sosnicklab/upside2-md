@@ -1,4 +1,48 @@
 
+## 2026-05-06 Full Directional CG Lipid Bilayer Stabilization
+
+### Project Goal
+- Stabilize the single-particle DOPC bilayer over time without permanent leaflet restraints.
+- Replace the unstable combination of large isotropic CGL-CGL LJ plus one residual directional mode with a full directional CGL-CGL spline table.
+- Preserve the single physical CGL particle plus hidden rotatable CGLD orientation carrier.
+
+### Architecture & Key Decisions
+- Use `cg_lipid_pair` as the only physical CGL-CGL interaction when CG lipid tables are present.
+- Keep CGL interactions with water, ions, protein dry-MARTINI sites, SC-env, and BB-env intact.
+- Fit a full multi-mode directional table:
+  `V(r,a1,a2) = V0(r) + sum_m A_m(a1) * B_m(a2) * Vm(r)`.
+- Default to four residual SVD modes, explicit tail-tail and side-by-side cohesion modes, clamped radial splines, and the existing angular spline basis.
+- Keep old static `direction` fallback, but require regenerated CG lipid table artifacts for the new CGL-CGL pair schema.
+- Add initial CGL geometry conditioning only as preparation, not as a production-time restraint.
+
+### Execution Phases
+- [x] Phase 1: Patch table generation for full multi-mode CGL-CGL fitting and validation diagnostics.
+- [x] Phase 2: Patch C++ `cg_lipid_pair` runtime to consume full multi-mode params and preserve derivative propagation.
+- [x] Phase 3: Patch stage injection so CGL-CGL `martini_potential` coefficients are zeroed when `cg_lipid_pair` is active.
+- [x] Phase 4: Add CGL-only initial bilayer conditioning and stronger bilayer-only diagnostics.
+- [x] Phase 5: Run syntax/build/table/bilayer verification and document final behavior.
+
+### Known Errors / Blockers
+- Longer and larger bilayer validation remains a calibration problem, but the 72-DOPC bilayer-only test no longer shows monotonic thickness spreading through `50000` steps.
+
+### Review
+- Implemented `cg_lipid_quadspline_v3`:
+  - CGL-CGL pair params are now variable-length full multimode splines;
+  - table contains `V0(r)`, four residual SVD modes, one explicit tail-tail cohesion mode, and one explicit same-leaflet side-by-side cohesion mode;
+  - `kappa` scaling applies only to energy-valued radial channels, not dimensionless angular splines.
+- Removed the unstable CGL-CGL isotropic core:
+  - CGL-CGL rows in `martini_potential` are zero when CG lipid pair tables are active;
+  - CGL interactions with other dry-MARTINI targets remain table-driven.
+- Added preparation-only CGL spacing conditioning:
+  - same-leaflet XY nearest-neighbor min/p05 improved from `5.347/5.524 Å` to `7.000/7.000 Å`;
+  - CGLD orientation sites move with their CGL partners.
+- Verification:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py example/16.MARTINI/test_cg_bilayer/run_test.py` passed;
+  - `cmake --build obj --target upside` passed;
+  - regenerated bilayer-only table stores `schema=cg_lipid_quadspline_v3`, `n_modes=6`, `n_radial=14`, and `1×1×278` CGL-CGL params;
+  - 100-step bilayer-only smoke stayed finite with initial potential `-39.46 E_up`;
+  - 50000-step bilayer-only run stayed finite and slab-like: `z_std` changed from `6.512 Å` to `5.968 Å` at time `100`, with unit-normalized dynamic vectors.
+
 ## 2026-05-06 Dynamic CG Lipid Orientation Sites
 
 ### Project Goal

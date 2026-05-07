@@ -1053,3 +1053,25 @@
   - `source .venv/bin/activate && source source.sh && cmake --build obj --target upside` passed.
   - 100-step bilayer-only run with dynamic orientation stayed finite and reported vector rotation up to `1.122 deg`.
   - 5000-step bilayer-only run stayed finite with unit-norm dynamic directions; final `z_std=10.390 Å`, improved from the previous static-vector `13.384 Å` but still not bilayer-stable.
+
+## 2026-05-06 (Full Directional CG Lipid Bilayer Stabilization)
+- Actions taken:
+  - Replaced residual-only CGL-CGL table generation with `cg_lipid_quadspline_v3`, a variable-length full multimode directional spline.
+  - Added explicit hydrophobic cohesion modes for interleaflet tail-tail and same-leaflet side-by-side packing.
+  - Changed CGL-CGL entries in `martini_potential` to zero when `cg_lipid_pair` is active, preventing double counting and removing the large isotropic CGL-CGL core.
+  - Added preparation-only initial CGL spacing conditioning, moving CGLD orientation sites with their parent CGL particles.
+  - Updated C++ `cg_lipid_pair` to read variable-length multimode parameters and preserve derivatives through the dynamic orientation path.
+- Files modified:
+  - `py/martini_build_tables.py`
+  - `py/martini_prepare_system_lib.py`
+  - `src/martini_cg_lipid.cpp`
+  - `example/16.MARTINI/test_cg_bilayer/run_test.py`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py example/16.MARTINI/test_cg_bilayer/run_test.py` passed.
+  - `source .venv/bin/activate && source source.sh && cmake --build obj --target upside` passed.
+  - Regenerated bilayer-only table stores `schema=cg_lipid_quadspline_v3`, `n_modes=6`, `n_radial=14`, and `1×1×278` CGL-CGL params.
+  - 100-step bilayer-only smoke stayed finite with initial potential `-39.46 E_up`.
+  - 50000-step bilayer-only run stayed finite and slab-like: `z_std=6.512 Å` initially, `5.753 Å` at time `25`, and `5.968 Å` at time `100`.

@@ -239,13 +239,27 @@ def report_initial_geometry(up_file: Path) -> None:
 def report_table() -> None:
     with h5py.File(MARTINI_H5, "r") as h5:
         param = h5["cg_lipid_table/cg_lipid_pair/interaction_param"][:].reshape(-1)
+        attrs = dict(h5["cg_lipid_table/cg_lipid_pair"].attrs)
+        n_radial = int(attrs.get("n_radial", 12))
+        n_modes = int(attrs.get("n_modes", 1))
+        n_angular = int(attrs.get("n_angular", 15))
+    print("CG lipid table")
+    if attrs.get("schema") == "cg_lipid_quadspline_v3":
+        v0 = param[:n_radial]
+        mode_stride = 2 * n_angular + n_radial
+        mode_radial = np.array([
+            param[n_radial + m * mode_stride + 2 * n_angular:
+                  n_radial + m * mode_stride + 2 * n_angular + n_radial]
+            for m in range(n_modes)
+        ])
+        print(f"  v0 maxabs={float(np.max(np.abs(v0))):.6g}")
+        print(f"  mode radial maxabs={float(np.max(np.abs(mode_radial))):.6g}")
+    else:
         radial = param[30:42]
         angular = param[42:54]
-        attrs = dict(h5["cg_lipid_table/cg_lipid_pair"].attrs)
-    print("CG lipid table")
-    print(f"  radial maxabs={float(np.max(np.abs(radial))):.6g}")
-    print(f"  angular maxabs={float(np.max(np.abs(angular))):.6g}")
-    for key in ("radial_mode", "angle_convention", "cutoff_ang", "knot_spacing_ang"):
+        print(f"  radial maxabs={float(np.max(np.abs(radial))):.6g}")
+        print(f"  angular maxabs={float(np.max(np.abs(angular))):.6g}")
+    for key in ("schema", "radial_mode", "angle_convention", "n_modes", "n_radial", "cutoff_ang", "knot_spacing_ang"):
         if key in attrs:
             print(f"  {key}={attrs[key]}")
 

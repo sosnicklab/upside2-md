@@ -1890,6 +1890,70 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     # Print system parameters
     print(f"Box dimensions: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
     print(f"Box volume: {x_len * y_len * z_len:.1f} Å³")
+    if n_cg_lipids > 0 and int(os.environ.get("UPSIDE_CG_LIPID_CONDITION_INITIAL", "1")):
+        target_nn = float(os.environ.get("UPSIDE_CG_LIPID_MIN_LEAFLET_NN", "7.0"))
+        max_step = float(os.environ.get("UPSIDE_CG_LIPID_CONDITION_MAX_STEP", "0.25"))
+        n_iter = int(os.environ.get("UPSIDE_CG_LIPID_CONDITION_STEPS", "100"))
+        cgl_pos = initial_positions[cg_lipid_indices]
+        leaflet_split = float(np.median(cgl_pos[:, 2]))
+        leaflet_masks = (cgl_pos[:, 2] <= leaflet_split, cgl_pos[:, 2] > leaflet_split)
+
+        def _same_leaflet_nn_stats() -> tuple[float, float]:
+            values = []
+            for leaflet_mask in leaflet_masks:
+                ids = np.where(leaflet_mask)[0]
+                if ids.size < 2:
+                    continue
+                xy = initial_positions[cg_lipid_indices[ids], :2]
+                for local_i in range(ids.size):
+                    delta = xy - xy[local_i]
+                    delta[:, 0] -= x_len * np.round(delta[:, 0] / x_len)
+                    delta[:, 1] -= y_len * np.round(delta[:, 1] / y_len)
+                    dist = np.sqrt(np.sum(delta * delta, axis=1))
+                    dist[local_i] = np.inf
+                    values.append(float(np.min(dist)))
+            if not values:
+                return float("nan"), float("nan")
+            arr = np.asarray(values, dtype=np.float64)
+            return float(np.min(arr)), float(np.percentile(arr, 5.0))
+
+        start_min, start_p05 = _same_leaflet_nn_stats()
+        for _ in range(max(n_iter, 0)):
+            delta_xy = np.zeros((n_cg_lipids, 2), dtype=np.float64)
+            for leaflet_mask in leaflet_masks:
+                ids = np.where(leaflet_mask)[0]
+                for local_a in range(ids.size):
+                    ia = int(ids[local_a])
+                    for local_b in range(local_a + 1, ids.size):
+                        ib = int(ids[local_b])
+                        dxy = initial_positions[cg_lipid_indices[ib], :2] - initial_positions[cg_lipid_indices[ia], :2]
+                        dxy[0] -= x_len * np.round(dxy[0] / x_len)
+                        dxy[1] -= y_len * np.round(dxy[1] / y_len)
+                        dist = float(np.sqrt(np.dot(dxy, dxy)))
+                        if dist <= 1e-8 or dist >= target_nn:
+                            continue
+                        push = 0.5 * (target_nn - dist) * dxy / dist
+                        delta_xy[ia] -= push
+                        delta_xy[ib] += push
+            norms = np.sqrt(np.sum(delta_xy * delta_xy, axis=1))
+            max_norm = float(np.max(norms)) if norms.size else 0.0
+            if max_norm <= 1e-8:
+                break
+            if max_norm > max_step:
+                delta_xy *= max_step / max_norm
+            initial_positions[cg_lipid_indices, :2] += delta_xy
+            if cg_lipid_orientation_indices.size == n_cg_lipids:
+                initial_positions[cg_lipid_orientation_indices, :2] += delta_xy
+            initial_positions[cg_lipid_indices, 0] %= x_len
+            initial_positions[cg_lipid_indices, 1] %= y_len
+            if cg_lipid_orientation_indices.size == n_cg_lipids:
+                initial_positions[cg_lipid_orientation_indices, 0] %= x_len
+                initial_positions[cg_lipid_orientation_indices, 1] %= y_len
+        end_min, end_p05 = _same_leaflet_nn_stats()
+        print(
+            "Conditioned initial CGL same-leaflet XY spacing: "
+            f"min/p05 {start_min:.3f}/{start_p05:.3f} -> {end_min:.3f}/{end_p05:.3f} Å"
+        )
     print(f"Total atoms: {n_atoms}")
     
     # Group atoms into molecules by chain (for proteins) or residue ID (for other molecules)
@@ -2198,23 +2262,13 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     e = eff["epsilon_kj_mol"]
                     martini_table[("CGL", tgt_type)] = (s, e)
                     martini_table[(tgt_type, "CGL")] = (s, e)
-            # CGL↔CGL self-interaction: use orientation-averaged two-lipid fit
-            from martini_build_tables import _compute_cgl_self_lj
-            ref_nm = ref_bead_positions[0].astype(np.float64) * 0.1  # first lipid, Å → nm
-            ff_pair_params = {}
-            for (t1, t2), (sigma, eps) in martini_table.items():
-                ff_pair_params[(t1, t2)] = {"sigma_nm": sigma, "epsilon_kj_mol": eps}
-            cgl_self_eps_eup, cgl_self_sig_ang = _compute_cgl_self_lj(
-                ref_bead_positions_nm=ref_nm,
-                bead_types=list(dopc_bead_types),
-                pair_params=ff_pair_params,
-            )
-            cgl_self_eps_kj = float(cgl_self_eps_eup) * energy_conversion
-            cgl_self_sig_nm = float(cgl_self_sig_ang) / length_conversion
-            martini_table[("CGL", "CGL")] = (cgl_self_sig_nm, cgl_self_eps_kj)
+            # CGL↔CGL is represented by the full directional cg_lipid_pair node.
+            # Keep the particles-table interaction at zero to avoid double
+            # counting and the unstable large isotropic CGL-CGL core.
+            martini_table[("CGL", "CGL")] = (0.0, 0.0)
             n_types = len([k for k in martini_table if k[0] == "CGL"])
             print(f"Extended martini_table with CGL entries for {n_types} target types "
-                  f"(CGL↔CGL: sigma={cgl_self_sig_nm:.3f} nm, eps={cgl_self_eps_kj:.3f} kJ/mol)")
+                  f"(CGL↔CGL supplied by cg_lipid_pair)")
         if n_cg_lipids > 0:
             all_martini_types = set()
             for t1, t2 in martini_table.keys():
@@ -3566,6 +3620,9 @@ def inject_cg_lipid_nodes(
                 for attr_name in ("knot_spacing_ang", "cutoff_ang", "taper_width_ang"):
                     if attr_name in pair_grp.attrs:
                         cg_pair.attrs[attr_name] = np.float32(pair_grp.attrs[attr_name])
+                for attr_name in ("n_modes", "n_radial", "n_angular"):
+                    if attr_name in pair_grp.attrs:
+                        cg_pair.attrs[attr_name] = np.int32(pair_grp.attrs[attr_name])
 
                 pi = cg_pair.create_group("pair_interaction")
                 pi.create_dataset(
@@ -3583,7 +3640,8 @@ def inject_cg_lipid_nodes(
                 pi.create_dataset("type", data=np.zeros(n_cg, dtype=np.int32))
                 pi.create_dataset("id", data=(np.arange(n_cg, dtype=np.int32) << 4))
 
-                print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1×1×54 params")
+                n_param = int(pair_grp["interaction_param"].shape[-1])
+                print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1×1×{n_param} params")
 
             if has_sc:
                 # Check for SC placement node before creating cg_lipid_sc node

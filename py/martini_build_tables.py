@@ -1234,6 +1234,21 @@ def _directions_with_dot_np(axis: np.ndarray, dot_grid: np.ndarray, phi_values: 
     return dirs
 
 
+def _canonicalize_lipid_reference_to_z(ref_bead_positions_nm: np.ndarray) -> np.ndarray:
+    ref = np.asarray(ref_bead_positions_nm, dtype=np.float64)
+    direction = ((ref[8] + ref[13]) * 0.5) - ref[0]
+    direction /= max(float(np.linalg.norm(direction)), 1e-12)
+    z_axis = direction
+    if abs(z_axis[0]) < 0.99:
+        x_axis = np.cross([1.0, 0.0, 0.0], z_axis)
+    else:
+        x_axis = np.cross([0.0, 1.0, 0.0], z_axis)
+    x_axis /= max(float(np.linalg.norm(x_axis)), 1e-12)
+    y_axis = np.cross(z_axis, x_axis)
+    rot_local_to_ref = np.array([x_axis, y_axis, z_axis], dtype=np.float64).T
+    return (rot_local_to_ref.T @ ref.T).T
+
+
 def _fit_cg_lipid_quadspline(
     ref_bead_positions_nm: np.ndarray,
     bead_types: list,
@@ -1247,25 +1262,25 @@ def _fit_cg_lipid_quadspline(
     relax_steps: int = 0,
     dist_min_nm: float = 0.25,
     knot_spacing_ang: float = 1.4,
-    residual_cap_kj_mol: float | None = 50.0,
+    residual_cap_kj_mol: float | None = 250.0,
+    energy_cap_kj_mol: float | None = 500.0,
+    tail_cohesion_kj_mol: float = 500.0,
+    tail_cohesion_center_nm: float = 1.20,
+    tail_cohesion_width_nm: float = 0.25,
+    side_cohesion_kj_mol: float = 800.0,
+    side_cohesion_center_nm: float = 0.80,
+    side_cohesion_width_nm: float = 0.20,
+    side_cohesion_angle_width: float = 0.45,
+    n_modes: int = 4,
+    n_knot_radial: int = 14,
 ) -> dict:
-    """Fit 54 B-spline quadspline parameters for CG lipid ↔ CG lipid interactions.
+    """Fit full multi-mode B-spline parameters for CG lipid ↔ CG lipid interactions.
 
     Samples the energy landscape E(r, cosθ1, cosθ2) and decomposes via:
-      E(r, cosθ1, cosθ2) ≈ V_radial(r) + Ang1(cosθ1) * Ang2(cosθ2) * V_angular(r)
+      E(r, cosθ1, cosθ2) ≈ V0(r) + Σm Ang1_m(cosθ1) * Ang2_m(cosθ2) * Vm(r)
 
-    When relax_steps=0 (default), uses a distance floor (dist_min_nm) to bound
-    LJ energies at short range while preserving the repulsive core. When
-    relax_steps > 0, uses bond-constrained relaxation (suitable for SC↔CG but
-    NOT for CG↔CG — relaxation destroys the repulsive wall).
-
-    Returns dict with keys:
-      - ang1_knots: (15,) float — Ang1 B-spline control points (E_up)
-      - ang2_knots: (15,) float — Ang2 B-spline control points (E_up)
-      - v_radial_knots: (12,) float — V_radial B-spline control points (E_up)
-      - v_angular_knots: (12,) float — V_angular B-spline control points (E_up)
-      - interaction_param: (54,) float — concatenated [ang1, ang2, v_radial, v_angular]
-      - rms_error: float
+    The CGL-CGL isotropic core is not supplied by martini_potential for this
+    schema; V0(r) is therefore the true angular mean, not a residual baseline.
     """
     r_values = np.asarray(_linspace(r_min_nm, r_max_nm, r_count), dtype=np.float64)
     cos_theta_grid = np.asarray(_linspace(-1.0, 1.0, cos_theta_count), dtype=np.float64)
@@ -1278,12 +1293,12 @@ def _fit_cg_lipid_quadspline(
     dirs2 = _directions_with_dot_np(n12_axis, cos_theta_grid, phi_values)
 
     energy_grid = np.zeros((n_radial, n_angle, n_angle), dtype=np.float64)
-    ref_nm = np.asarray(ref_bead_positions_nm, dtype=np.float64)
+    ref_nm = _canonicalize_lipid_reference_to_z(ref_bead_positions_nm)
 
     total_samples = n_radial * n_angle * n_angle * azimuthal_count * azimuthal_count
     print(f"  Sampling CG↔CG energy: {n_radial} radial × {n_angle}² angular "
           f"× {azimuthal_count}² azimuthal = {total_samples} samples, "
-          f"relax={relax_steps}")
+          f"relax={relax_steps}, modes={n_modes}")
 
     for ir, r_nm in enumerate(r_values):
         for ia1 in range(n_angle):
@@ -1303,139 +1318,171 @@ def _fit_cg_lipid_quadspline(
                         )
                 energy_grid[ir, ia1, ia2] = energy_sum / (azimuthal_count * azimuthal_count)
 
-    # --- Two-sided SVD factorization ---
-    # V_radial(r) is already represented by the effective CGL-CGL LJ term in
-    # martini_potential. Use the angle-average only as the baseline for fitting
-    # the residual directional correction.
-    v_radial_sampled = np.mean(energy_grid, axis=(1, 2))  # (n_radial,)
-    v_radial = np.zeros(n_radial, dtype=np.float64)
+    if tail_cohesion_kj_mol > 0.0:
+        tail_selector = 0.5 * (1.0 - cos_theta_grid)
+        radial_well = np.exp(
+            -0.5 * ((r_values - float(tail_cohesion_center_nm)) / float(tail_cohesion_width_nm)) ** 2
+        )
+        energy_grid += (
+            -float(tail_cohesion_kj_mol)
+            * radial_well[:, None, None]
+            * np.outer(tail_selector, tail_selector)[None, :, :]
+        )
 
-    # Residual: E(r, cosθ1, cosθ2) - V_radial(r)
-    residual = energy_grid - v_radial_sampled[:, None, None]  # (n_radial, n_angle, n_angle)
+    if energy_cap_kj_mol is not None and energy_cap_kj_mol > 0.0:
+        fit_grid = np.clip(
+            energy_grid,
+            -float(energy_cap_kj_mol),
+            float(energy_cap_kj_mol),
+        )
+    else:
+        fit_grid = energy_grid
+
+    v_radial = np.mean(fit_grid, axis=(1, 2))
+    residual = fit_grid - v_radial[:, None, None]
     if residual_cap_kj_mol is not None and residual_cap_kj_mol > 0.0:
         residual_fit = np.clip(residual, -float(residual_cap_kj_mol), float(residual_cap_kj_mol))
     else:
         residual_fit = residual
 
-    # Collect u_r and v_r from SVD of each r-slice
-    u_all = np.zeros((n_radial, n_angle), dtype=np.float64)
-    v_all = np.zeros((n_radial, n_angle), dtype=np.float64)
-    s_all = np.zeros(n_radial, dtype=np.float64)
+    mode_ang1 = []
+    mode_ang2 = []
+    mode_radial = []
+    residual_remaining = residual_fit.copy()
+    for mode_idx in range(int(n_modes)):
+        u_all = np.zeros((n_radial, n_angle), dtype=np.float64)
+        v_all = np.zeros((n_radial, n_angle), dtype=np.float64)
+        s_all = np.zeros(n_radial, dtype=np.float64)
+        for ir in range(n_radial):
+            mat = residual_remaining[ir]
+            if np.allclose(mat, 0.0):
+                continue
+            u, s, vh = np.linalg.svd(mat, full_matrices=False)
+            if len(s) == 0:
+                continue
+            u_all[ir] = u[:, 0]
+            v_all[ir] = vh[0, :]
+            s_all[ir] = s[0]
 
-    for ir in range(n_radial):
-        mat = residual_fit[ir]  # (n_angle, n_angle)
-        if np.allclose(mat, 0.0):
-            u_all[ir] = 0.0
-            v_all[ir] = 0.0
-            s_all[ir] = 0.0
-            continue
-        u, s, vh = np.linalg.svd(mat, full_matrices=False)
-        u_all[ir] = u[:, 0]
-        v_all[ir] = vh[0, :]
-        s_all[ir] = s[0]
+        ref_idx = int(np.argmax(np.abs(s_all)))
+        u_ref = u_all[ref_idx].copy()
+        v_ref = v_all[ref_idx].copy()
+        for ir in range(n_radial):
+            if np.dot(u_all[ir], u_ref) < 0.0:
+                u_all[ir] *= -1.0
+                v_all[ir] *= -1.0
 
-    # Make sign-consistent across r: align u_r with u_ref (use largest |s| slice)
-    ref_idx = int(np.argmax(np.abs(s_all)))
-    u_ref = u_all[ref_idx].copy()
-    v_ref = v_all[ref_idx].copy()
-    for ir in range(n_radial):
-        if np.dot(u_all[ir], u_ref) < 0.0:
-            u_all[ir] *= -1.0
-            v_all[ir] *= -1.0
+        weights = np.abs(s_all)
+        if float(weights.sum()) > 1e-15:
+            ang1 = np.average(u_all, axis=0, weights=weights)
+            ang2 = np.average(v_all, axis=0, weights=weights)
+        else:
+            ang1 = np.zeros(n_angle)
+            ang2 = np.zeros(n_angle)
 
-    # Ang1 = mean of u_r (weighted by |s_r|)
-    abs_s = np.abs(s_all)
-    total_s = abs_s.sum()
-    if total_s > 1e-15:
-        ang1 = np.average(u_all, axis=0, weights=abs_s)
-        ang2 = np.average(v_all, axis=0, weights=abs_s)
-    else:
-        ang1 = np.zeros(n_angle)
-        ang2 = np.zeros(n_angle)
+        ang_sym = 0.5 * (ang1 + ang2)
+        ang1 = ang_sym.copy()
+        ang2 = ang_sym.copy()
+        max_abs = max(float(np.max(np.abs(ang1))), float(np.max(np.abs(ang2))), 1e-15)
+        ang1 /= max_abs
+        ang2 /= max_abs
 
-    # Ensure Ang1(cosθ) has same sign convention as cosθ (head→tail direction convention)
-    if float(np.dot(ang1, cos_theta_grid)) < 0.0:
-        ang1 *= -1.0
-        ang2 *= -1.0
+        basis = np.outer(ang1, ang2)
+        denom = float(np.dot(basis.ravel(), basis.ravel()))
+        vm = np.zeros(n_radial, dtype=np.float64)
+        if denom > 1e-15:
+            for ir in range(n_radial):
+                vm[ir] = float(np.dot(residual_remaining[ir].ravel(), basis.ravel()) / denom)
+            if residual_cap_kj_mol is not None and residual_cap_kj_mol > 0.0:
+                cap = float(residual_cap_kj_mol)
+                vm = np.clip(vm, -cap, cap)
+            residual_remaining -= basis[None, :, :] * vm[:, None, None]
 
-    # Symmetrize: for self-interaction, Ang1(θ) must equal Ang2(θ) so that
-    # E(r, θ1, θ2) = E(r, θ2, θ1) and the is_compatible check passes.
-    ang_sym = (ang1 + ang2) / 2.0
-    ang1 = ang_sym.copy()
-    ang2 = ang_sym.copy()
+        mode_ang1.append(ang1)
+        mode_ang2.append(ang2)
+        mode_radial.append(vm)
 
-    # Normalize: max(|Ang1|) = max(|Ang2|) = 1
-    max_ang1 = float(np.max(np.abs(ang1)))
-    if max_ang1 > 1e-15:
-        ang1 /= max_ang1
-        ang2 /= max_ang1
+    if tail_cohesion_kj_mol > 0.0:
+        tail_selector = 0.5 * (1.0 - cos_theta_grid)
+        radial_well = np.exp(
+            -0.5 * ((r_values - float(tail_cohesion_center_nm)) / float(tail_cohesion_width_nm)) ** 2
+        )
+        mode_ang1.append(tail_selector.copy())
+        mode_ang2.append(tail_selector.copy())
+        mode_radial.append(-float(tail_cohesion_kj_mol) * radial_well)
 
-    # Refit V_angular from residual using symmetrized angular functions
-    ang1_ang2 = np.outer(ang1, ang2)
-    denom_abs = np.abs(ang1_ang2)
-    v_angular = np.zeros(n_radial, dtype=np.float64)
-    for ir in range(n_radial):
-        mask = denom_abs > 1e-6
-        if mask.any():
-            basis = ang1_ang2[mask]
-            target = residual_fit[ir][mask]
-            denom = float(np.dot(basis, basis))
-            if denom > 1e-15:
-                v_angular[ir] = float(np.dot(target, basis) / denom)
-    if residual_cap_kj_mol is not None and residual_cap_kj_mol > 0.0:
-        cap = float(residual_cap_kj_mol)
-        v_angular = np.clip(v_angular, -cap, cap)
+    if side_cohesion_kj_mol > 0.0:
+        side_selector = np.exp(
+            -0.5 * (cos_theta_grid / max(float(side_cohesion_angle_width), 1e-6)) ** 2
+        )
+        radial_well = np.exp(
+            -0.5 * ((r_values - float(side_cohesion_center_nm)) / float(side_cohesion_width_nm)) ** 2
+        )
+        mode_ang1.append(side_selector.copy())
+        mode_ang2.append(side_selector.copy())
+        mode_radial.append(-float(side_cohesion_kj_mol) * radial_well)
 
-    smooth_v_angular = v_angular.copy()
+    recon = v_radial[:, None, None]
+    for ang1, ang2, vm in zip(mode_ang1, mode_ang2, mode_radial):
+        recon = recon + np.outer(ang1, ang2)[None, :, :] * vm[:, None, None]
+    target_grid = v_radial[:, None, None] + residual_fit
+    rms_error = float(np.sqrt(np.mean((target_grid - recon) ** 2)))
 
-    # Compute RMS error for the directional residual fit.
-    recon = ang1[None, :, None] * ang2[None, None, :] * smooth_v_angular[:, None, None]
-    rms_error = float(np.sqrt(np.mean((residual_fit - recon) ** 2)))
-
-    # --- Fit B-splines ---
-    # Convert energy from kJ/mol to E_up for storage
     inv_conv = 1.0 / ENERGY_CONVERSION_KJ_PER_EUP
 
-    # Angular B-spline: 15 control points, uniform deBoor, t = (cosθ+1)*6 + 1
     n_knot_angular = 15
-    inv_dtheta = (n_knot_angular - 3) / 2.0  # = 6.0
-    t_angular = (cos_theta_grid + 1.0) * inv_dtheta + 1.0  # ∈ [1, 13]
+    inv_dtheta = (n_knot_angular - 3) / 2.0
+    t_angular = (cos_theta_grid + 1.0) * inv_dtheta + 1.0
 
-    # Fit using exact C++ deBoor algorithm (not Cox-de Boor with knot vector)
-    ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01)
-    ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01)
-
-    # Radial B-spline: 12 control points, clamped cubic, t = r_Å / KNOT_SPACING
-    n_knot_radial = 12
     knot_spacing = float(knot_spacing_ang)
-    t_radial_ang = r_values * 10.0 / knot_spacing  # nm to Å, then to spline parameter
+    t_radial_ang = r_values * 10.0 / knot_spacing
     rad_knot_vector = np.zeros(n_knot_radial + 4, dtype=np.float64)
     rad_knot_vector[4:-4] = np.arange(1, n_knot_radial - 3, dtype=np.float64)
-    rad_knot_vector[-4:] = rad_knot_vector[-5]  # last 4 = same value (clamped end)
+    rad_knot_vector[-4:] = rad_knot_vector[-5]
 
-    v_radial_knots = _fit_radial_bspline(t_radial_ang, v_radial, rad_knot_vector, smooth=0.01) * inv_conv
-    v_angular_knots = _fit_radial_bspline(t_radial_ang, smooth_v_angular, rad_knot_vector, smooth=1.0) * inv_conv
+    v0_knots = _fit_radial_bspline(t_radial_ang, v_radial, rad_knot_vector, smooth=0.01) * inv_conv
+    param_parts = [v0_knots]
+    ang1_knots_all = []
+    ang2_knots_all = []
+    vm_knots_all = []
+    for ang1, ang2, vm in zip(mode_ang1, mode_ang2, mode_radial):
+        ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01)
+        ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01)
+        vm_knots = _fit_radial_bspline(t_radial_ang, vm, rad_knot_vector, smooth=1.0) * inv_conv
+        ang1_knots_all.append(ang1_knots)
+        ang2_knots_all.append(ang2_knots)
+        vm_knots_all.append(vm_knots)
+        param_parts.extend([ang1_knots, ang2_knots, vm_knots])
 
-    # Concatenate into 54-param array
-    interaction_param = np.concatenate([ang1_knots, ang2_knots, v_radial_knots, v_angular_knots])
+    interaction_param = np.concatenate(param_parts)
 
     return {
-        "ang1_knots": ang1_knots,
-        "ang2_knots": ang2_knots,
-        "v_radial_knots": v_radial_knots,
-        "v_angular_knots": v_angular_knots,
+        "v0_knots": v0_knots,
+        "ang1_knots": np.asarray(ang1_knots_all),
+        "ang2_knots": np.asarray(ang2_knots_all),
+        "v_mode_knots": np.asarray(vm_knots_all),
         "interaction_param": interaction_param,
         "rms_error": rms_error,
         "v_radial_raw": v_radial,
-        "v_radial_sampled_raw": v_radial_sampled,
         "residual_cap_kj_mol": residual_cap_kj_mol,
-        "ang1_raw": ang1,
-        "ang2_raw": ang2,
-        "v_angular_raw": smooth_v_angular,
+        "energy_cap_kj_mol": energy_cap_kj_mol,
+        "tail_cohesion_kj_mol": tail_cohesion_kj_mol,
+        "tail_cohesion_center_nm": tail_cohesion_center_nm,
+        "tail_cohesion_width_nm": tail_cohesion_width_nm,
+        "side_cohesion_kj_mol": side_cohesion_kj_mol,
+        "side_cohesion_center_nm": side_cohesion_center_nm,
+        "side_cohesion_width_nm": side_cohesion_width_nm,
+        "side_cohesion_angle_width": side_cohesion_angle_width,
+        "ang1_raw": np.asarray(mode_ang1),
+        "ang2_raw": np.asarray(mode_ang2),
+        "v_angular_raw": np.asarray(mode_radial),
         "r_values_nm": r_values,
         "cos_theta_grid": cos_theta_grid,
         "knot_spacing_ang": knot_spacing,
         "cutoff_ang": float((n_knot_radial - 2) * knot_spacing),
+        "n_modes": int(len(mode_radial)),
+        "n_radial": int(n_knot_radial),
+        "n_angular": int(n_knot_angular),
     }
 
 
@@ -2065,17 +2112,41 @@ def _build_cg_lipid_tables(
         bead_charges=bead_charges,
         pair_params=pair_params,
         r_min_nm=0.70,
-        r_max_nm=1.40,
+        r_max_nm=1.68,
         r_count=min(r_count, _cg_r),
         cos_theta_count=min(cos_theta_count, _cg_ct),
         azimuthal_count=_cg_az,
         relax_steps=relax_steps,
         dist_min_nm=0.25,
         knot_spacing_ang=1.4,
-        residual_cap_kj_mol=50.0,
+        residual_cap_kj_mol=250.0,
+        tail_cohesion_kj_mol=float(os.environ.get("UPSIDE_CG_LIPID_TAIL_COHESION_KJ_MOL", "1000.0")),
+        tail_cohesion_center_nm=float(os.environ.get("UPSIDE_CG_LIPID_TAIL_COHESION_CENTER_NM", "1.20")),
+        tail_cohesion_width_nm=float(os.environ.get("UPSIDE_CG_LIPID_TAIL_COHESION_WIDTH_NM", "0.25")),
+        side_cohesion_kj_mol=float(os.environ.get("UPSIDE_CG_LIPID_SIDE_COHESION_KJ_MOL", "800.0")),
+        side_cohesion_center_nm=float(os.environ.get("UPSIDE_CG_LIPID_SIDE_COHESION_CENTER_NM", "0.80")),
+        side_cohesion_width_nm=float(os.environ.get("UPSIDE_CG_LIPID_SIDE_COHESION_WIDTH_NM", "0.20")),
+        side_cohesion_angle_width=float(os.environ.get("UPSIDE_CG_LIPID_SIDE_COHESION_ANGLE_WIDTH", "0.45")),
+        n_modes=4,
+        n_knot_radial=14,
     )
     print(f"  CG↔CG: RMS error = {result_cg['rms_error']:.4f} kJ/mol, "
-          f"max|Ang1| = {float(np.max(np.abs(result_cg['ang1_raw']))):.3f}")
+          f"modes = {result_cg['n_modes']}, "
+          f"max|V0| = {float(np.max(np.abs(result_cg['v_radial_raw']))):.3f} kJ/mol")
+    print(
+        "  CG↔CG tail cohesion: "
+        f"depth={result_cg['tail_cohesion_kj_mol']:.3f} kJ/mol, "
+        f"center={result_cg['tail_cohesion_center_nm']:.3f} nm, "
+        f"width={result_cg['tail_cohesion_width_nm']:.3f} nm"
+    )
+    print(
+        "  CG↔CG side cohesion: "
+        f"depth={result_cg['side_cohesion_kj_mol']:.3f} kJ/mol, "
+        f"center={result_cg['side_cohesion_center_nm']:.3f} nm, "
+        f"width={result_cg['side_cohesion_width_nm']:.3f} nm"
+    )
+    cg_pair_scale = float(os.environ.get("UPSIDE_CG_LIPID_PAIR_SCALE", "0.02"))
+    print(f"  CG↔CG table scale kappa = {cg_pair_scale:.6g}")
 
     # CG ↔ SC quadspline
     orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
@@ -2132,22 +2203,45 @@ def _build_cg_lipid_tables(
 
     # CG ↔ CG pair
     cg_pair_grp = cg_grp.create_group("cg_lipid_pair")
+    pair_param = result_cg["interaction_param"].astype(np.float64, copy=True)
+    nr = int(result_cg["n_radial"])
+    na = int(result_cg["n_angular"])
+    pair_param[:nr] *= cg_pair_scale
+    mode_stride = 2 * na + nr
+    for mode_idx in range(int(result_cg["n_modes"])):
+        radial_start = nr + mode_idx * mode_stride + 2 * na
+        pair_param[radial_start:radial_start + nr] *= cg_pair_scale
+    pair_param = pair_param.astype(np.float32)
     cg_pair_grp.create_dataset(
         "interaction_param",
-        data=result_cg["interaction_param"].reshape(1, 1, 54).astype(np.float32),
+        data=pair_param.reshape(1, 1, pair_param.size),
     )
     cg_pair_grp.attrs["n_cg_types"] = 1
     cg_pair_grp.attrs["rms_error_kj_mol"] = np.float32(result_cg["rms_error"])
-    cg_pair_grp.attrs["schema"] = "cg_lipid_quadspline_v2"
-    cg_pair_grp.attrs["radial_mode"] = "residual_zero_isotropic"
+    cg_pair_grp.attrs["schema"] = "cg_lipid_quadspline_v3"
+    cg_pair_grp.attrs["radial_mode"] = "full_multimode"
     cg_pair_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
     cg_pair_grp.attrs["fit_relax_steps"] = np.int32(0)
     cg_pair_grp.attrs["fit_r_min_nm"] = np.float32(0.70)
-    cg_pair_grp.attrs["fit_r_max_nm"] = np.float32(1.40)
+    cg_pair_grp.attrs["fit_r_max_nm"] = np.float32(1.68)
+    cg_pair_grp.attrs["n_modes"] = np.int32(result_cg["n_modes"])
+    cg_pair_grp.attrs["n_radial"] = np.int32(result_cg["n_radial"])
+    cg_pair_grp.attrs["n_angular"] = np.int32(result_cg["n_angular"])
+    cg_pair_grp.attrs["pair_scale"] = np.float32(cg_pair_scale)
     cg_pair_grp.attrs["knot_spacing_ang"] = np.float32(result_cg["knot_spacing_ang"])
     cg_pair_grp.attrs["cutoff_ang"] = np.float32(result_cg["cutoff_ang"])
     cg_pair_grp.attrs["taper_width_ang"] = np.float32(result_cg["knot_spacing_ang"])
     cg_pair_grp.attrs["residual_cap_kj_mol"] = np.float32(result_cg["residual_cap_kj_mol"])
+    cg_pair_grp.attrs["energy_cap_kj_mol"] = np.float32(result_cg["energy_cap_kj_mol"])
+    cg_pair_grp.attrs["tail_cohesion_kj_mol"] = np.float32(result_cg["tail_cohesion_kj_mol"])
+    cg_pair_grp.attrs["tail_cohesion_center_nm"] = np.float32(result_cg["tail_cohesion_center_nm"])
+    cg_pair_grp.attrs["tail_cohesion_width_nm"] = np.float32(result_cg["tail_cohesion_width_nm"])
+    cg_pair_grp.attrs["side_cohesion_kj_mol"] = np.float32(result_cg["side_cohesion_kj_mol"])
+    cg_pair_grp.attrs["side_cohesion_center_nm"] = np.float32(result_cg["side_cohesion_center_nm"])
+    cg_pair_grp.attrs["side_cohesion_width_nm"] = np.float32(result_cg["side_cohesion_width_nm"])
+    cg_pair_grp.attrs["side_cohesion_angle_width"] = np.float32(result_cg["side_cohesion_angle_width"])
+    cg_pair_grp.create_dataset("v0_raw_kj_mol", data=result_cg["v_radial_raw"].astype(np.float32))
+    cg_pair_grp.create_dataset("mode_radial_raw_kj_mol", data=result_cg["v_angular_raw"].astype(np.float32))
 
     # CG ↔ SC
     cg_sc_grp = cg_grp.create_group("cg_lipid_sc")
@@ -2163,7 +2257,10 @@ def _build_cg_lipid_tables(
     cg_sc_grp.attrs["n_cg_types"] = 1
     cg_sc_grp.attrs["schema"] = "cg_lipid_sc_quadspline_v1"
 
-    print(f"  Stored: CG↔CG (1×1×54), CG↔SC ({n_sc_types}×1×54) in {h5.filename}")
+    print(
+        f"  Stored: CG↔CG (1×1×{pair_param.size}), "
+        f"CG↔SC ({n_sc_types}×1×54) in {h5.filename}"
+    )
 
     # Extend particles group with CGL syntype for isotropic LJ interactions
     # (CG lipid ↔ ions/water/BB/env beads)

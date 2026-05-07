@@ -35,7 +35,7 @@ Upside is a molecular dynamics simulation package for protein folding and confor
 The rules for **Backward Compatibility**, **Function Signatures**, and **Deprecation** DO NOT apply to the following active development files:
 - `example/16.MARTINI/*`
 - `src/box.*`
-- `src/martini.cpp`
+- `src/martini*`
 - `py/martini_*.py`
 
 **CRITICAL RULE FOR THESE FILES:** Keep them impeccably clean. Do not build layers of disabled code, do not leave commented-out legacy blocks, and do not write wrapper functions for old implementations. You must completely remove old or unused code and write the new implementations directly.

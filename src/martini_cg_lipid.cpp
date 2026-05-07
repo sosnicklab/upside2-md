@@ -50,9 +50,28 @@ static vector<float> read_param_dataset(hid_t grp, int& n_type1, int& n_type2) {
     return out;
 }
 
+static vector<float> read_param_dataset_any(
+        hid_t grp, int& n_type1, int& n_type2, int& n_param) {
+    vector<hsize_t> sz = get_dset_size(3, grp, "interaction_param");
+    n_type1 = int(sz[0]);
+    n_type2 = int(sz[1]);
+    n_param = int(sz[2]);
+    vector<float> out(n_type1 * n_type2 * n_param, 0.f);
+    traverse_dset<3, float>(grp, "interaction_param",
+            [&](size_t i, size_t j, size_t k, float v) {
+        out[(i * n_type2 + j) * n_param + k] = v;
+    });
+    return out;
+}
+
 static inline const float* param_ptr(
         const vector<float>& param, int n_type2, int type1, int type2) {
     return &param[(type1 * n_type2 + type2) * CG_LIPID_N_PARAM];
+}
+
+static inline const float* param_ptr(
+        const vector<float>& param, int n_type2, int n_param, int type1, int type2) {
+    return &param[(type1 * n_type2 + type2) * n_param];
 }
 
 static inline float clamp_angle(float x) {
@@ -99,6 +118,80 @@ static bool eval_quadspline(
     float raw_d_dr = (vr.y() + ang1.x() * ang2.x() * va.y()) / knot_spacing;
     float raw_d_da1 = ang1.y() * CG_LIPID_INV_DTHETA * ang2.x() * va.x();
     float raw_d_da2 = ang2.y() * CG_LIPID_INV_DTHETA * ang1.x() * va.x();
+
+    float taper = 1.f;
+    float d_taper_dr = 0.f;
+    taper_width = std::max(taper_width, 1e-6f);
+    float taper_start = cutoff - taper_width;
+    if(r > taper_start) {
+        float u = (cutoff - r) / taper_width;
+        u = std::max(0.f, std::min(1.f, u));
+        taper = u * u * (3.f - 2.f * u);
+        d_taper_dr = -6.f * u * (1.f - u) / taper_width;
+    }
+
+    out.value = taper * raw_value;
+    out.d_dr = taper * raw_d_dr + raw_value * d_taper_dr;
+    out.d_da1 = taper * raw_d_da1;
+    out.d_da2 = taper * raw_d_da2;
+    return true;
+}
+
+static inline float angular_spline_coord(float cos_angle, int n_angular) {
+    float inv_dtheta = float(n_angular - 3) * 0.5f;
+    float t = (clamp_angle(cos_angle) + 1.f) * inv_dtheta + 1.f;
+    return std::max(1.0001f, std::min(float(n_angular - 2) - 0.0001f, t));
+}
+
+static bool eval_multimode_pair(
+        const float* p,
+        int n_modes,
+        int n_angular,
+        int n_radial,
+        const float dr[3],
+        const float n1[3],
+        const float n2[3],
+        float knot_spacing,
+        float cutoff,
+        float taper_width,
+        QuadsplineEval& out) {
+
+    float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+    if(r2 <= 1e-12f) return false;
+
+    float r = sqrtf(r2);
+    if(r >= cutoff) return false;
+
+    float inv_r = 1.f / r;
+    float unit[3] = {dr[0] * inv_r, dr[1] * inv_r, dr[2] * inv_r};
+
+    float a1 = -(n1[0] * unit[0] + n1[1] * unit[1] + n1[2] * unit[2]);
+    float a2 =  (n2[0] * unit[0] + n2[1] * unit[1] + n2[2] * unit[2]);
+    float a1_coord = angular_spline_coord(a1, n_angular);
+    float a2_coord = angular_spline_coord(a2, n_angular);
+    float inv_dtheta = float(n_angular - 3) * 0.5f;
+    float radial_coord = r / knot_spacing;
+
+    Vec<2> v0 = clamped_deBoor_value_and_deriv(p, radial_coord, n_radial);
+    float raw_value = v0.x();
+    float raw_d_dr = v0.y() / knot_spacing;
+    float raw_d_da1 = 0.f;
+    float raw_d_da2 = 0.f;
+
+    const float* mode = p + n_radial;
+    for(int m = 0; m < n_modes; ++m) {
+        const float* a1_ptr = mode;
+        const float* a2_ptr = mode + n_angular;
+        const float* v_ptr = mode + 2 * n_angular;
+        Vec<2> ang1 = deBoor_value_and_deriv(a1_ptr, a1_coord);
+        Vec<2> ang2 = deBoor_value_and_deriv(a2_ptr, a2_coord);
+        Vec<2> vm = clamped_deBoor_value_and_deriv(v_ptr, radial_coord, n_radial);
+        raw_value += ang1.x() * ang2.x() * vm.x();
+        raw_d_dr += ang1.x() * ang2.x() * vm.y() / knot_spacing;
+        raw_d_da1 += ang1.y() * inv_dtheta * ang2.x() * vm.x();
+        raw_d_da2 += ang2.y() * inv_dtheta * ang1.x() * vm.x();
+        mode += 2 * n_angular + n_radial;
+    }
 
     float taper = 1.f;
     float d_taper_dr = 0.f;
@@ -307,6 +400,10 @@ struct CGLipidPairPotential : public PotentialNode {
     vector<int> id;
     int n_type1;
     int n_type2;
+    int n_param;
+    int n_modes;
+    int n_radial;
+    int n_angular;
     float box_x;
     float box_y;
     float box_z;
@@ -332,18 +429,25 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     , cg_pos(cg_pos_)
     , n_type1(0)
     , n_type2(0)
+    , n_param(0)
+    , n_modes(read_attribute<int>(grp, ".", "n_modes", 0))
+    , n_radial(read_attribute<int>(grp, ".", "n_radial", CG_LIPID_N_RADIAL))
+    , n_angular(read_attribute<int>(grp, ".", "n_angular", CG_LIPID_N_ANGULAR))
     , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
     , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
     , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
     , knot_spacing(read_attribute<float>(grp, ".", "knot_spacing_ang", CG_LIPID_DEFAULT_KNOT_SPACING))
     , cutoff(read_attribute<float>(grp, ".", "cutoff_ang",
-                (CG_LIPID_N_RADIAL - 2) * CG_LIPID_DEFAULT_KNOT_SPACING))
+                float(n_radial - 2) * CG_LIPID_DEFAULT_KNOT_SPACING))
     , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
 {
     check_elem_width(cg_pos, 6);
     H5Obj pi_obj = open_group(grp, "pair_interaction");
     hid_t pi = pi_obj.get();
-    interaction_param = read_param_dataset(pi, n_type1, n_type2);
+    interaction_param = read_param_dataset_any(pi, n_type1, n_type2, n_param);
+    int expected_n_param = n_radial + n_modes * (2 * n_angular + n_radial);
+    if(n_modes <= 0 || n_radial <= 3 || n_angular <= 3 || n_param != expected_n_param)
+        throw string("cg_lipid_pair requires full multimode params with matching n_modes/n_radial/n_angular attrs");
     index = read_int_dataset(pi, "index");
     type = read_int_dataset(pi, "type");
     id = read_int_dataset(pi, "id");
@@ -372,7 +476,8 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
                 simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
 
             QuadsplineEval e;
-            if(eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
+            if(eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                        n_modes, n_angular, n_radial,
                         dr, n1, n2, knot_spacing, cutoff, taper_width, e))
                 total += e.value;
         }
@@ -401,7 +506,8 @@ void CGLipidPairPotential::propagate_deriv() {
                 simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
 
             QuadsplineEval e;
-            if(!eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
+            if(!eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                        n_modes, n_angular, n_radial,
                         dr, n1, n2, knot_spacing, cutoff, taper_width, e))
                 continue;
 

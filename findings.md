@@ -554,3 +554,20 @@
   - dynamic-vector final `z_std=10.390 Å`.
 - Lesson:
   - when a directional potential is intended to rotate coarse particles, verify the full derivative path from pair evaluator through the coordinate node to physical integrator coordinates; accumulating a derivative on a virtual direction component is not sufficient if the upstream node drops it.
+
+## 2026-05-06 (Full Directional CG Lipid Bilayer Stabilization)
+- The unstable bilayer was not caused only by frozen vectors:
+  - the residual-only directional table left the large isotropic CGL-CGL LJ core active;
+  - that core strongly repelled same-leaflet neighbors at the observed initial spacing;
+  - the residual directional term did not provide enough cohesive tail-tail or same-leaflet packing attraction.
+- The stable local bilayer-only configuration uses:
+  - `cg_lipid_quadspline_v3` full multimode CGL-CGL table;
+  - zero CGL-CGL `martini_potential` coefficients when `cg_lipid_pair` is active;
+  - explicit tail-tail and side-by-side cohesion modes;
+  - `UPSIDE_CG_LIPID_PAIR_SCALE=0.02` default, applied only to radial energy channels;
+  - initial same-leaflet CGL spacing conditioning to min/p05 `7.000/7.000 Å`.
+- Verification result:
+  - 72-DOPC bilayer-only `50000`-step NVT run stayed finite and slab-like;
+  - `z_std` went from `6.512 Å` initially to `5.968 Å` at time `100`.
+- Lesson:
+  - when scaling spline tables with dimensionless angular factors, scale only energy-valued radial channels; scaling angular channels as well changes the effective energy by extra powers of the scale factor.
