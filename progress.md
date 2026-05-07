@@ -1,5 +1,26 @@
 # Progress Log
 
+## 2026-05-07 (1RKL VTF/LJ Stability Fix)
+- Started implementation of the VTF ghost remapping and CGL-ion startup stability plan.
+- Confirmed from current outputs that HDF5 frame 0 CGL positions are initially slab-like and ion bonds are not present in `dist_spring`.
+- Identified two root causes to patch:
+  - `py/martini_extract_vtf.py` uses original HDF5 CGL indices after mode-2 output atom remapping, creating CGH bonds to ions/protein atoms.
+  - CGL effective LJ against ions uses orientation-averaged lipid-vs-point sigma near `1.8 nm`, while the workflow places ions with only `4 Å` exclusion.
+- Modified `py/martini_extract_vtf.py` so CGH ghost atoms are attached to remapped output CGL atoms while deriving their direction from original CGL/CGLD coordinates.
+- Modified `py/martini_build_tables.py` and `py/martini_prepare_system_lib.py` to cap non-CGL effective CGL LJ sigma at `0.9 nm` by default, including stale `martini.h5` reuse.
+- Modified `py/martini_prepare_system_lib.py` debug summaries to report CGL-ion/protein nearest distances and LJ totals/maxima.
+- Modified `example/16.MARTINI/run_sim_1rkl.sh` and `py/martini_prepare_system.py` so default ion placement cutoff is `10.0 Å`.
+- Added `DEBUG_RIGID_PROTEIN=1` / `--debug-rigid-protein 1` to inject production-stage protein atoms into `/input/fix_rigid/atom_indices`.
+- Verification:
+  - `python3 -m py_compile py/martini_extract_vtf.py py/martini_build_tables.py py/martini_prepare_system_lib.py py/martini_prepare_system.py` passed;
+  - shell syntax checks for the 1RKL/1AFO MARTINI workflows passed;
+  - re-extracted VTF has 282 `CGL-CGH` bonds and zero CGH bonds sourced from ions/protein;
+  - old unstable stage debug metrics report CGL-ion LJ max `97404.794 E_up` and sum `145929.948 E_up`;
+  - applying the new sigma cap to the same old geometry reduces estimated CGL-ion LJ max to `22.167 E_up` and sum to `22.963 E_up`;
+  - fast initial-debug rerun at `outputs/debug_1rkl_ljfix_initial` reports min CGL-ion distance `21.028 Å` and no warnings;
+  - rigid debug injection fixed 155 protein atoms in a copied stage file;
+  - `git diff --check` passed.
+
 ## 2026-05-07 (DOPC-Sidechain Directional Table Audit)
 - Audited the DOPC-DOPC and DOPC-sidechain CG lipid table paths in `py/martini_build_tables.py`, `py/martini_prepare_system_lib.py`, and `src/martini_cg_lipid.cpp`.
 - Found that DOPC-DOPC used full multimode `cg_lipid_quadspline_v3`, while DOPC-sidechain still used fixed 54-parameter `cg_lipid_sc_quadspline_v1`.

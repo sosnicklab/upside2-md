@@ -1,6 +1,12 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-07: The strange first VTF frame in the latest 1RKL output had a visualization bug and a separate real dynamics bug.
+  - HDF5 frame 0 CGL positions are initially slab-like and `dist_spring` has zero ion bonds; the apparent ion/protein attachments came from `py/martini_extract_vtf.py` using original HDF5 CGL indices after mode-2 output remapping.
+  - Correct VTF extraction must remap original CGL indices to output atom indices before adding CGH direction-marker bonds; verified regenerated VTF has 282 `CGL-CGH` bonds and zero CGH bonds sourced from ions/protein.
+  - The real launch instability was dominated by CGL-ion effective LJ: old CGL-ion sigma was about `17.9 Å`, the closest ion was `6.366 Å`, and the old generated `martini_potential` had CGL-ion LJ max `97404.794 E_up` / sum `145929.948 E_up`.
+  - The correct fix is not to disable hybrid protein/environment physics; cap only the isotropic CGL-vs-non-CGL effective LJ radius and place ions with a CGL-aware cutoff. With a `0.9 nm` sigma cap, the same old geometry estimates only `22.167 E_up` max CGL-ion LJ.
+  - Debug summaries should always include CGL-ion/protein nearest-distance and LJ metrics when diagnosing single-particle lipid failures.
 - 2026-05-07: DOPC-sidechain was not using the same directional CG table method as single-particle DOPC-DOPC.
   - DOPC-DOPC used `cg_lipid_quadspline_v3`, full multimode params, and `eval_multimode_pair()`.
   - DOPC-sidechain still used fixed 54-parameter `cg_lipid_sc_quadspline_v1` and runtime `eval_quadspline()`.

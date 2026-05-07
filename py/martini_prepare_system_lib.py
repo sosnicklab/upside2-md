@@ -43,6 +43,17 @@ CANONICAL_AFFINE_REF = np.array(
     dtype=np.float32,
 )
 CANONICAL_AFFINE_REF -= CANONICAL_AFFINE_REF.mean(axis=0, keepdims=True)
+
+
+def _cgl_effective_lj_sigma_cap_nm() -> float:
+    raw = os.environ.get("UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM", "0.9")
+    try:
+        cap = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM={raw!r}") from exc
+    if cap <= 0.0:
+        return float("inf")
+    return cap
 CB_PLACEMENT = np.array([[0.0, 0.94375626, 1.2068012]], dtype=np.float32)
 CB_VECTOR = CB_PLACEMENT / np.linalg.norm(CB_PLACEMENT, axis=1, keepdims=True)
 N_BIT_ROTAMER = 4
@@ -319,6 +330,85 @@ def _debug_leaflet_stats(pos, atom_types, box_lengths):
     return out
 
 
+def _debug_cgl_partner_stats(
+    pos,
+    atom_types,
+    particle_classes,
+    box_lengths,
+    martini_pairs=None,
+    martini_coefficient_indices=None,
+    martini_coefficients=None,
+):
+    cgl_mask = np.asarray([str(x).strip().upper() == "CGL" for x in atom_types], dtype=bool)
+    if not np.any(cgl_mask):
+        return {}
+
+    class_upper = np.asarray([str(x).strip().upper() for x in particle_classes], dtype=object)
+    partner_masks = {
+        "ion": class_upper == "ION",
+        "protein": class_upper == "PROTEIN",
+    }
+    out = {}
+    cgl_idx = np.where(cgl_mask)[0]
+    cgl_pos = pos[cgl_idx]
+    for name, mask in partner_masks.items():
+        partner_idx = np.where(mask)[0]
+        if partner_idx.size == 0:
+            out[name] = {
+                "partner_count": 0,
+                "min_distance_ang": None,
+                "lj_pair_count": 0,
+                "lj_sum_eup": None,
+                "lj_max_eup": None,
+            }
+            continue
+
+        partner_pos = pos[partner_idx]
+        delta = partner_pos[:, None, :] - cgl_pos[None, :, :]
+        delta = _minimum_image_delta(delta.reshape(-1, 3), box_lengths).reshape(
+            partner_idx.size, cgl_idx.size, 3
+        )
+        dist = np.sqrt(np.sum(delta * delta, axis=2))
+        stats = {
+            "partner_count": int(partner_idx.size),
+            "min_distance_ang": float(np.min(dist)),
+            "lj_pair_count": 0,
+            "lj_sum_eup": None,
+            "lj_max_eup": None,
+        }
+
+        if (
+            martini_pairs is not None
+            and martini_coefficient_indices is not None
+            and martini_coefficients is not None
+        ):
+            pair_cgl = cgl_mask[martini_pairs[:, 0]] | cgl_mask[martini_pairs[:, 1]]
+            pair_partner = mask[martini_pairs[:, 0]] | mask[martini_pairs[:, 1]]
+            pair_mask = pair_cgl & pair_partner
+            if np.any(pair_mask):
+                pairs = martini_pairs[pair_mask]
+                coeff_idx = martini_coefficient_indices[pair_mask]
+                coeff = martini_coefficients[coeff_idx]
+                d = pos[pairs[:, 1]] - pos[pairs[:, 0]]
+                d = _minimum_image_delta(d, box_lengths)
+                r = np.maximum(np.sqrt(np.sum(d * d, axis=1)), 1.0e-6)
+                eps = coeff[:, 0].astype(np.float64)
+                sigma = coeff[:, 1].astype(np.float64)
+                active = (eps != 0.0) & (sigma != 0.0)
+                lj = np.zeros(r.shape[0], dtype=np.float64)
+                sr = sigma[active] / r[active]
+                sr2 = sr * sr
+                sr6 = sr2 * sr2 * sr2
+                lj[active] = 4.0 * eps[active] * (sr6 * sr6 - sr6)
+                stats.update({
+                    "lj_pair_count": int(r.shape[0]),
+                    "lj_sum_eup": float(np.sum(lj)),
+                    "lj_max_eup": float(np.max(lj)),
+                })
+        out[name] = stats
+    return out
+
+
 def write_stage_debug_outputs(up_file: Path, debug_dir: Path | None = None, prefix: str | None = None):
     """Write PDB/topology diagnostics for a generated MARTINI stage input."""
     enabled = os.environ.get("UPSIDE_WRITE_DEBUG_PDB", "1").strip().lower()
@@ -370,6 +460,22 @@ def write_stage_debug_outputs(up_file: Path, debug_dir: Path | None = None, pref
                 bond_r0 = np.asarray(spring["equil_dist"][:], dtype=np.float64)
             if "spring_const" in spring:
                 bond_k = np.asarray(spring["spring_const"][:], dtype=np.float64)
+
+        martini_pairs = None
+        martini_coefficient_indices = None
+        martini_coefficients = None
+        if pot is not None and "martini_potential" in pot:
+            mpot = pot["martini_potential"]
+            if (
+                "pairs" in mpot
+                and "coefficient_indices" in mpot
+                and "coefficients" in mpot
+            ):
+                martini_pairs = np.asarray(mpot["pairs"][:], dtype=np.int32)
+                martini_coefficient_indices = np.asarray(
+                    mpot["coefficient_indices"][:], dtype=np.int64
+                )
+                martini_coefficients = np.asarray(mpot["coefficients"][:], dtype=np.float64)
 
         orientation_pairs = np.zeros((0, 2), dtype=np.int32)
         orientation_lengths = np.zeros(0, dtype=np.float64)
@@ -490,6 +596,21 @@ def write_stage_debug_outputs(up_file: Path, debug_dir: Path | None = None, pref
                 f"{cgl_cgld_molecule_mismatch_count} CGLD sites do not share the parent CGL molecule_id; "
                 "regenerate this input with the patched converter"
             )
+    cgl_partner_stats = _debug_cgl_partner_stats(
+        pos,
+        atom_types,
+        particle_classes,
+        box_lengths,
+        martini_pairs=martini_pairs,
+        martini_coefficient_indices=martini_coefficient_indices,
+        martini_coefficients=martini_coefficients,
+    )
+    ion_lj_max = cgl_partner_stats.get("ion", {}).get("lj_max_eup")
+    if ion_lj_max is not None and ion_lj_max > 100.0:
+        warnings_list.append(
+            f"CGL-ion LJ max {ion_lj_max:.3f} E_up exceeds 100 E_up; "
+            "check ion placement cutoff and CGL effective LJ sigma"
+        )
 
     summary = {
         "up_file": str(up_file),
@@ -521,6 +642,7 @@ def write_stage_debug_outputs(up_file: Path, debug_dir: Path | None = None, pref
             "mean": float(np.mean(orientation_lengths)) if orientation_lengths.size else None,
         },
         "leaflet_stats": _debug_leaflet_stats(pos, atom_types, box_lengths),
+        "cgl_partner_stats": cgl_partner_stats,
         "hidden_particle_types": {
             "CGLD": int(cgld_count),
         },
@@ -666,6 +788,7 @@ def write_initial_structure_debug_outputs(
         "cgl_cgld_bond_count": int(cgl_cgld_bond_count),
         "unexpected_bond_count": int(unexpected_bond_count),
         "leaflet_stats": _debug_leaflet_stats(pos, atom_types, box_lengths),
+        "cgl_partner_stats": _debug_cgl_partner_stats(pos, atom_types, particle_classes, box_lengths),
         "warnings": warnings_list,
         "source": "in_memory_initial_structure",
     }
@@ -2821,6 +2944,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         # Extend martini_table with effective CGL LJ parameters for isotropic
         # CG lipid ↔ dryMARTINI particle interactions (ions, water, BB, env).
         if n_cg_lipids > 0 and ("CGL", "CGL") not in martini_table:
+            cgl_sigma_cap_nm = _cgl_effective_lj_sigma_cap_nm()
             martini_h5_path = Path(run_dir) / "martini.h5"
             if martini_h5_path.exists():
                 # Read effective LJ from pre-built martini.h5 to ensure
@@ -2832,8 +2956,9 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     sigmas = eff_grp["sigma_nm"][:]
                     epsilons = eff_grp["epsilon_kj_mol"][:]
                 for tgt_type, sigma_nm, epsilon_kj in zip(target_types, sigmas, epsilons):
-                    martini_table[("CGL", tgt_type)] = (float(sigma_nm), float(epsilon_kj))
-                    martini_table[(tgt_type, "CGL")] = (float(sigma_nm), float(epsilon_kj))
+                    capped_sigma = min(float(sigma_nm), cgl_sigma_cap_nm)
+                    martini_table[("CGL", tgt_type)] = (capped_sigma, float(epsilon_kj))
+                    martini_table[(tgt_type, "CGL")] = (capped_sigma, float(epsilon_kj))
             else:
                 from martini_build_tables import _compute_cgl_effective_lj_params
                 ref_nm = ref_bead_positions[0].astype(np.float64) * 0.1  # first lipid, Å → nm
@@ -2846,7 +2971,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     pair_params=ff_pair_params,
                 )
                 for tgt_type, eff in effective_lj.items():
-                    s = eff["sigma_nm"]
+                    s = min(float(eff["sigma_nm"]), cgl_sigma_cap_nm)
                     e = eff["epsilon_kj_mol"]
                     martini_table[("CGL", tgt_type)] = (s, e)
                     martini_table[(tgt_type, "CGL")] = (s, e)

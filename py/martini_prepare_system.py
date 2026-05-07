@@ -759,6 +759,33 @@ def set_hybrid_production_controls(up_file: Path, args):
         grp.attrs["nonprotein_hs_force_cap"] = np.float32(args.nonprotein_hs_force_cap)
 
 
+def set_debug_rigid_protein(up_file: Path):
+    import h5py
+
+    with h5py.File(up_file, "r+") as h5:
+        inp = h5["/input"]
+        atom_indices = np.zeros(0, dtype=np.int32)
+        if "particle_class" in inp:
+            classes = np.asarray([
+                x.decode("ascii") if isinstance(x, (bytes, np.bytes_)) else str(x)
+                for x in inp["particle_class"][:]
+            ], dtype=object)
+            atom_indices = np.where(np.char.upper(classes.astype(str)) == "PROTEIN")[0].astype(np.int32)
+        if atom_indices.size == 0 and "hybrid_env_topology/protein_membership" in inp:
+            membership = np.asarray(inp["hybrid_env_topology/protein_membership"][:], dtype=np.int32)
+            atom_indices = np.where(membership >= 0)[0].astype(np.int32)
+
+        if atom_indices.size == 0:
+            raise ValueError(f"{up_file}: DEBUG_RIGID_PROTEIN requested but no protein atoms were found")
+
+        if "fix_rigid" in inp:
+            del inp["fix_rigid"]
+        grp = inp.create_group("fix_rigid")
+        grp.attrs["enable"] = np.int8(1)
+        grp.create_dataset("atom_indices", data=atom_indices, dtype=np.int32)
+        print(f"DEBUG_RIGID_PROTEIN: fixed {atom_indices.size} protein atoms in {up_file}")
+
+
 def set_barostat_type(up_file: Path, barostat_type: int):
     import tables as tb
 
@@ -1083,6 +1110,8 @@ def run_stage70_continuation(args, source_file: Path, output_file: Path, stage_l
             "Production continuation requires restart-valid /output/mom in the source stage. "
             "Regenerate the previous production stage with the current workflow so momentum is recorded."
         )
+    if args.debug_rigid_protein:
+        set_debug_rigid_protein(output_file)
     assert_hybrid_stage_active(output_file, "production", "production")
     run_md_stage(args, stage_label, output_file, output_file, args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
     extract_stage_vtf(args, stage_label, output_file, "2")
@@ -1124,6 +1153,7 @@ def normalize_hybrid_workflow_args(args):
     args.bar_1_to_eup_per_a3 = DEFAULT_BAR_1_TO_EUP_PER_A3
     args.compressibility_3e4_bar_inv_to_a3_per_eup = DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP
     args.protein_env_interface_scale = DEFAULT_PROTEIN_ENV_INTERFACE_SCALE
+    args.debug_rigid_protein = bool(args.debug_rigid_protein)
     args.extract_vtf_script = workflow_path(args.extract_vtf_script).resolve()
     args.continue_stage_70_from = workflow_path(args.continue_stage_70_from).resolve() if args.continue_stage_70_from else None
     args.continue_stage_70_output = workflow_path(args.continue_stage_70_output).resolve() if args.continue_stage_70_output else None
@@ -1193,7 +1223,7 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--extract-vtf-script", default=env_default("EXTRACT_VTF_SCRIPT", str(PY_DIR / "martini_extract_vtf.py")))
     parser.add_argument("--salt-molar", type=float, default=env_float("SALT_MOLAR", 0.15))
     parser.add_argument("--protein-lipid-cutoff", type=float, default=env_float("PROTEIN_LIPID_CUTOFF", 4.5))
-    parser.add_argument("--ion-cutoff", type=float, default=env_float("ION_CUTOFF", 4.0))
+    parser.add_argument("--ion-cutoff", type=float, default=env_float("ION_CUTOFF", 10.0))
     parser.add_argument("--xy-scale", type=float, default=env_float("XY_SCALE", 1.0))
     parser.add_argument("--box-padding-xy", type=float, default=env_float("BOX_PADDING_XY", 0.0))
     parser.add_argument("--box-padding-z", type=float, default=env_float("BOX_PADDING_Z", 20.0))
@@ -1231,6 +1261,7 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--auto-continue-from-previous-run", type=int, default=env_int("AUTO_CONTINUE_FROM_PREVIOUS_RUN", 0))
     parser.add_argument("--auto-continue-glob", default=env_default("AUTO_CONTINUE_GLOB", ""))
     parser.add_argument("--initial-debug-only", type=int, default=env_int("INITIAL_DEBUG_ONLY", 0))
+    parser.add_argument("--debug-rigid-protein", type=int, default=env_int("DEBUG_RIGID_PROTEIN", 0))
     args = parser.parse_args(argv)
     if args.runtime_pdb_id is None:
         args.runtime_pdb_id = f"{args.pdb_id}_hybrid"
@@ -1398,6 +1429,8 @@ def run_hybrid_workflow_command(argv):
         prepare_stage_file(args, files["prepared_70"], "npt_prod", args.prod_70_npt_enable, args.prod_70_barostat_type, 0, "production")
         shutil.copy2(files["prepared_70"], files["stage_70"])
         handoff_initial_position(args, files["stage_66"], files["stage_70"], "production_hybrid")
+        if args.debug_rigid_protein:
+            set_debug_rigid_protein(files["stage_70"])
         assert_hybrid_stage_active(files["stage_70"], "production", "production")
         run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
         extract_stage_vtf(args, "7.0", files["stage_70"], "2")
@@ -1405,6 +1438,8 @@ def run_hybrid_workflow_command(argv):
         print("=== No bonded dryMARTINI lipids → skipping to stage 7.0 production ===")
         prepare_stage_file(args, files["prepared_70"], "npt_prod", args.prod_70_npt_enable, args.prod_70_barostat_type, 0, "production")
         shutil.copy2(files["prepared_70"], files["stage_70"])
+        if args.debug_rigid_protein:
+            set_debug_rigid_protein(files["stage_70"])
         assert_hybrid_stage_active(files["stage_70"], "production", "production")
         run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
         extract_stage_vtf(args, "7.0", files["stage_70"], "2")

@@ -237,6 +237,13 @@ def centralize_system(frame_pos, residue_names, x_len, y_len, z_len):
     return out
 
 
+def minimum_image_delta(delta, box_lengths):
+    out = np.asarray(delta, dtype=np.float32)
+    box = np.asarray(box_lengths, dtype=np.float32).reshape(1, 3)
+    safe_box = np.where(box > 0.0, box, 1.0)
+    return out - safe_box * np.round(out / safe_box)
+
+
 def write_vtf_frame(fh, pos):
     fh.write("\ntimestep ordered\n")
     for x, y, z in pos:
@@ -247,9 +254,9 @@ def build_cg_lipid_ghost_info(struct_h5, ghost_scale=5.0):
     """Read compose_vector6d data and build CG lipid ghost particle info.
 
     Returns None if no CG lipids are present, else a dict with:
-      - cg_pos_indices: (n_cg,) int — indices of CG lipids in the output atom list
-      - ghost_positions_for_frame: callable(pos_array) → (n_cg, 3) ghost positions
-      - direction: (n_cg, 3) float — unit direction vectors
+      - elem_indices: (n_cg,) int — original HDF5 indices of CG lipids
+      - orientation_indices: (n_cg,) int or None — original HDF5 CGLD indices
+      - direction: (n_cg, 3) float — static fallback unit direction vectors
       - ghost_scale: float
     """
     cv6_path = "input/potential/compose_vector6d"
@@ -272,7 +279,7 @@ def build_cg_lipid_ghost_info(struct_h5, ghost_scale=5.0):
         return None
 
     return {
-        "cg_pos_indices": elem_index,
+        "elem_indices": elem_index,
         "orientation_indices": orientation_index,
         "direction": direction,
         "ghost_scale": ghost_scale,
@@ -281,14 +288,30 @@ def build_cg_lipid_ghost_info(struct_h5, ghost_scale=5.0):
 
 def extend_with_ghost_atoms(mapping, ghost_info, out_bonds):
     """Extend mapping arrays and bonds with CG lipid ghost atoms."""
-    n_cg = ghost_info["cg_pos_indices"].size
-    cg_idx = ghost_info["cg_pos_indices"]
+    elem_idx = ghost_info["elem_indices"]
+    orig_to_output = mapping.get("orig_to_output", {})
+    output_cg_idx = []
+    source_ordinals = []
+    for ordinal, original_idx in enumerate(elem_idx):
+        output_idx = orig_to_output.get(int(original_idx))
+        if output_idx is None:
+            continue
+        output_cg_idx.append(int(output_idx))
+        source_ordinals.append(int(ordinal))
+    output_cg_idx = np.asarray(output_cg_idx, dtype=int)
+    source_ordinals = np.asarray(source_ordinals, dtype=int)
+    n_cg = int(output_cg_idx.size)
+    if n_cg == 0:
+        ghost_info["_ghost_start"] = None
+        ghost_info["_n_ghost"] = 0
+        return
+
     n_orig = mapping["output_atom_names"].shape[0]
 
     # Ghost atom name/type
     ghost_names = np.array(["CGH"] * n_cg, dtype=object)
     ghost_resnames = np.array(["DOPC"] * n_cg, dtype=object)
-    ghost_resids = np.array(mapping["output_residue_ids"], dtype=int)[cg_idx]
+    ghost_resids = np.array(mapping["output_residue_ids"], dtype=int)[output_cg_idx]
     ghost_chain_ids = np.array(["X"] * n_cg, dtype=object)
 
     mapping["output_atom_names"] = np.concatenate([
@@ -306,38 +329,54 @@ def extend_with_ghost_atoms(mapping, ghost_info, out_bonds):
 
     # Add bonds: CG lipid ↔ ghost atom
     for gi in range(n_cg):
-        cg_atom = int(cg_idx[gi])
+        cg_atom = int(output_cg_idx[gi])
         ghost_atom = n_orig + gi
+        cg_name = str(mapping["output_atom_names"][cg_atom]).strip().upper()
+        if cg_name != "CGL":
+            raise ValueError(
+                f"CG lipid ghost source remapped to non-CGL atom {cg_atom} ({cg_name})"
+            )
         out_bonds.append((cg_atom, ghost_atom))
 
     # Store mapping for frame extension
     ghost_info["_ghost_start"] = n_orig
     ghost_info["_n_ghost"] = n_cg
+    ghost_info["_output_cg_indices"] = output_cg_idx
+    ghost_info["_source_ordinals"] = source_ordinals
 
     print(f"CG lipid ghosts: {n_cg} ghost atoms added for direction visualization "
           f"(scale={ghost_info['ghost_scale']} Å)")
 
 
-def extend_frame_with_ghosts(frame, ghost_info):
+def extend_frame_with_ghosts(frame, ghost_info, source_frame=None, box_lengths=None):
     """Extend a frame's position array with ghost particle positions."""
     if ghost_info is None or "_ghost_start" not in ghost_info:
         return frame
+    if ghost_info.get("_n_ghost", 0) == 0:
+        return frame
 
-    cg_idx = ghost_info["cg_pos_indices"]
+    output_cg_idx = ghost_info["_output_cg_indices"]
+    source_ordinals = ghost_info["_source_ordinals"]
+    elem_idx = ghost_info["elem_indices"][source_ordinals]
     orientation_idx = ghost_info.get("orientation_indices")
-    direction = ghost_info["direction"]
+    direction = ghost_info["direction"][source_ordinals]
     scale = ghost_info["ghost_scale"]
-    n_ghost = ghost_info["_n_ghost"]
 
-    if orientation_idx is not None and np.max(orientation_idx) < frame.shape[0]:
-        direction = frame[orientation_idx] - frame[cg_idx]
+    if source_frame is not None and orientation_idx is not None:
+        orient_idx = orientation_idx[source_ordinals]
+        if np.max(orient_idx) < source_frame.shape[0] and np.max(elem_idx) < source_frame.shape[0]:
+            direction = source_frame[orient_idx] - source_frame[elem_idx]
+            if box_lengths is not None:
+                direction = minimum_image_delta(direction, box_lengths)
+        else:
+            direction = np.asarray(direction, dtype=np.float32)
         norm = np.linalg.norm(direction, axis=1)
         mask = norm > 1e-12
         if np.any(mask):
             direction = direction.copy()
             direction[mask] /= norm[mask, None]
 
-    ghost_pos = frame[cg_idx] + direction * scale
+    ghost_pos = frame[output_cg_idx] + direction * scale
     return np.concatenate([frame, ghost_pos], axis=0)
 
 
@@ -547,6 +586,7 @@ def build_mode1_mapping(
     return {
         "mode": 1,
         "martini_indices": martini_indices,
+        "orig_to_output": {int(orig): int(out) for out, orig in enumerate(martini_indices)},
         "include_aa_backbone": include_aa_backbone,
         "bb_map": bb_map,
         "output_atom_names": np.array(out_atom_names, dtype=object),
@@ -610,6 +650,7 @@ def build_mode2_mapping(
     return {
         "mode": 2,
         "non_protein_idx": non_protein_idx,
+        "orig_to_output": {int(orig): int(out) for out, orig in enumerate(non_protein_idx)},
         "bb_map": bb_map,
         "output_atom_names": np.array(out_atom_names, dtype=object),
         "output_residue_names": np.array(out_res_names, dtype=object),
@@ -789,7 +830,12 @@ def extract_trajectory(
                 z_len,
             )
             if ghost_info is not None:
-                out_frame = extend_frame_with_ghosts(out_frame, ghost_info)
+                out_frame = extend_frame_with_ghosts(
+                    out_frame,
+                    ghost_info,
+                    source_frame=frame,
+                    box_lengths=(x_len, y_len, z_len),
+                )
             if np.isnan(out_frame).any():
                 raise ValueError(f"NaN coordinates found in frame {frame_idx} for group {output_group}")
             write_vtf_frame(f, out_frame)

@@ -1719,6 +1719,17 @@ def _rotation_to_align_z_np(dir_vec: np.ndarray) -> np.ndarray:
     return np.array([x_axis, y_axis, z_axis]).T
 
 
+def _cgl_effective_lj_sigma_cap_nm() -> float:
+    raw = os.environ.get("UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM", "0.9")
+    try:
+        cap = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM={raw!r}") from exc
+    if cap <= 0.0:
+        return float("inf")
+    return cap
+
+
 def _compute_cgl_effective_lj_params(
     ref_bead_positions_nm: np.ndarray,
     bead_types: list,
@@ -1760,6 +1771,7 @@ def _compute_cgl_effective_lj_params(
             self_params_cache[bt] = p
         return self_params_cache[bt]
 
+    sigma_cap_nm = _cgl_effective_lj_sigma_cap_nm()
     result: dict = {}
     for target_type in all_types:
         bead_params = []
@@ -1816,9 +1828,15 @@ def _compute_cgl_effective_lj_params(
             sigma_eff = r_values[imin] / (2.0 ** (1.0 / 6.0))
             epsilon_eff = 0.01
 
-        sigma_eff = max(0.1, min(sigma_eff, 5.0))
+        uncapped_sigma_eff = max(0.1, min(sigma_eff, 5.0))
+        sigma_eff = min(uncapped_sigma_eff, sigma_cap_nm)
         epsilon_eff = max(0.01, min(epsilon_eff, 100.0))
-        result[target_type] = {"sigma_nm": sigma_eff, "epsilon_kj_mol": epsilon_eff}
+        result[target_type] = {
+            "sigma_nm": sigma_eff,
+            "epsilon_kj_mol": epsilon_eff,
+            "uncapped_sigma_nm": uncapped_sigma_eff,
+            "sigma_cap_nm": sigma_cap_nm,
+        }
 
     return result
 
@@ -2339,10 +2357,16 @@ def _build_cg_lipid_tables(
     eff_types = sorted(effective_lj.keys())
     eff_sigmas = np.array([effective_lj[t]["sigma_nm"] for t in eff_types], dtype=np.float32)
     eff_epsilons = np.array([effective_lj[t]["epsilon_kj_mol"] for t in eff_types], dtype=np.float32)
+    eff_uncapped_sigmas = np.array(
+        [effective_lj[t].get("uncapped_sigma_nm", effective_lj[t]["sigma_nm"]) for t in eff_types],
+        dtype=np.float32,
+    )
     eff_types_enc = np.array([np.bytes_(t) for t in eff_types], dtype="S8")
     eff_grp.create_dataset("target_types", data=eff_types_enc)
     eff_grp.create_dataset("sigma_nm", data=eff_sigmas)
     eff_grp.create_dataset("epsilon_kj_mol", data=eff_epsilons)
+    eff_grp.create_dataset("uncapped_sigma_nm", data=eff_uncapped_sigmas)
+    eff_grp.attrs["max_effective_sigma_nm"] = np.float32(_cgl_effective_lj_sigma_cap_nm())
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------

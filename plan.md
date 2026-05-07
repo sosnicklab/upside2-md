@@ -1,4 +1,48 @@
 
+## 2026-05-07 1RKL VTF Ghost Mapping and CGL-Ion Startup Stability
+
+### Project Goal
+- Fix the strange first-frame VTF visualization in `example/16.MARTINI/outputs/martini_test_1rkl_hybrid`.
+- Remove the artificial single-particle lipid/ion startup clash that destabilizes `run_sim_1rkl.sh`.
+- Add diagnostics that make CGL-ion/protein proximity visible before running expensive pair table generation and dynamics.
+
+### Architecture & Key Decisions
+- Treat the current HDF5 stage input as the source of truth: frame 0 CGL coordinates are slab-like and ions are not truly bonded.
+- Fix VTF CG lipid ghost atoms by remapping original HDF5 CGL indices to output atom indices before adding CGH atoms and bonds.
+- Keep the directional CGL-CGL spline table and protein SC/BB environment interactions enabled.
+- Cap only the isotropic effective CGL LJ used against non-CGL dry-MARTINI particle types; the current orientation-averaged lipid-vs-point fit creates a nonphysical `~1.8 nm` sigma for ions.
+- Increase the default 1RKL ion placement cutoff to match the capped CGL effective radius.
+
+### Execution Phases
+- [x] Phase 1: Patch VTF CGH atom/bond/position remapping.
+- [x] Phase 2: Cap non-CGL effective CGL LJ parameters and annotate table attrs.
+- [x] Phase 3: Add CGL-ion/protein debug metrics to generated JSON summaries.
+- [x] Phase 4: Update 1RKL default ion cutoff and validate scripts.
+- [x] Phase 5: Re-extract current VTF and verify no CGH bonds originate from ions/protein.
+- [x] Phase 6: Regenerate/debug-check a 1RKL initial input and verify the CGL-ion LJ spike is removed.
+- [x] Phase 7: Add an optional rigid-protein debug mode for production lipid-stability isolation.
+
+### Known Errors / Blockers
+- Current output VTF uses original HDF5 atom indices for CGL ghost bonds after mode-2 remapping, so CGH atoms appear attached to NA/CL/protein atoms.
+- Current CGL-ion effective LJ has sigma near `17.9 Å`; ions placed at `~6-8 Å` produce an initial ion-lipid energy spike of roughly `145k E_up`.
+
+### Review
+- Fixed `py/martini_extract_vtf.py` so CGH direction-marker atoms use original HDF5 CGL/CGLD vectors but attach to remapped output CGL atom indices.
+- Capped non-CGL effective CGL LJ sigma at `UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM=0.9` by default in table generation and in stage conversion, including stale `martini.h5` reuse.
+- Changed default `ION_CUTOFF` for the 1RKL workflows and direct `martini_prepare_system.py` use from `4.0 Å` to `10.0 Å`.
+- Added `cgl_partner_stats` to debug summaries, including nearest CGL-ion/protein distances and generated `martini_potential` LJ totals/maxima when pair tables are present.
+- Added `DEBUG_RIGID_PROTEIN=1` / `--debug-rigid-protein 1`, which injects `/input/fix_rigid/atom_indices` for protein atoms in production stage files without disabling protein-environment interactions.
+- Verification:
+  - `python3 -m py_compile py/martini_extract_vtf.py py/martini_build_tables.py py/martini_prepare_system_lib.py py/martini_prepare_system.py` passed;
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/run_sim_1rkl_outlipid.sh example/16.MARTINI/run_sim_1afo.sh example/16.MARTINI/run_sim_1afo_outlipid.sh` passed;
+  - re-extracted current `1rkl.stage_7.0.up` to `/tmp/1rkl.stage_7.0.fixed.vtf`; all `282` CGH bonds are `CGL-CGH` and `0` CGH bonds originate from ions/protein;
+  - current unstable stage debug summary now reports the old root cause: CGL-ion LJ max `97404.794 E_up`, CGL-ion LJ sum `145929.948 E_up`, and min CGL-ion distance `6.366 Å`;
+  - with the sigma cap applied to the same old geometry, the estimated CGL-ion LJ sum drops to `22.963 E_up` and max pair to `22.167 E_up`;
+  - `INITIAL_DEBUG_ONLY=1 RUN_DIR=outputs/debug_1rkl_ljfix_initial PREP_SEED=12345 SEED=12345 bash example/16.MARTINI/run_sim_1rkl.sh` completed and generated debug PDB/JSON without `martini.h5`;
+  - new initial-debug JSON reports min CGL-ion distance `21.028 Å`, no warnings, and no ion bonds;
+  - direct rigid debug injection fixed `155` protein atoms in a copied stage file;
+  - `git diff --check` passed.
+
 ## 2026-05-07 DOPC-DOPC vs DOPC-Sidechain Directional Table Audit
 
 ### Project Goal
