@@ -39,6 +39,7 @@ from martini_prepare_system_lib import (
     validate_hybrid_mapping,
     write_hybrid_mapping_h5,
     write_pdb,
+    write_stage_debug_outputs,
 )
 
 
@@ -828,6 +829,7 @@ def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable:
         "UPSIDE_NPT_SEMI": "1",
         "UPSIDE_NPT_DEBUG": "1",
         "UPSIDE_BILAYER_LIPIDHEAD_FC": str(lipidhead_fc),
+        "UPSIDE_WRITE_DEBUG_PDB": "0",
     }
 
 
@@ -874,6 +876,27 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
         inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.martini_table_h5)
     if npt_enable:
         set_barostat_type(target_file, barostat_type)
+    write_stage_debug_outputs(target_file, debug_dir=args.run_dir / "debug")
+
+
+def write_stage70_initial_debug_files(args):
+    print("=== Stage 7.0 Initial Debug PDB Export ===")
+    with temporary_env({
+        **stage_conversion_env(args, "7.0", "npt_prod", args.prod_70_npt_enable, 0),
+        "UPSIDE_INITIAL_DEBUG_ONLY": "1",
+        "UPSIDE_INITIAL_DEBUG_PREFIX": f"{args.pdb_id}.stage_7.0",
+    }):
+        run_prepare_command(
+            [
+                "--mode", args.universal_prep_mode,
+                "--pdb-id", args.runtime_pdb_id,
+                "--runtime-pdb-output", str(args.runtime_pdb_file),
+                "--prepare-structure", "0",
+                "--stage", "npt_prod",
+                "--run-dir", str(args.run_dir),
+                "--summary-json", str(args.hybrid_prep_dir / "stage_7.0.initial_debug.summary.json"),
+            ]
+        )
 
 
 def handoff_initial_position(args, input_file: Path, output_file: Path, mode="default", previous_dt=None):
@@ -980,6 +1003,7 @@ def run_md_stage(args, stage_label: str, input_file: Path, output_file: Path, ns
     ]
     if input_momentum_restart_valid(output_file):
         cmd.append("--restart-using-momentum")
+    write_stage_debug_outputs(output_file, debug_dir=args.run_dir / "debug")
     run_checked(cmd, log_file=args.log_dir / f"stage_{stage_label}.log")
     mark_output_restart_state(output_file, nsteps, dt)
 
@@ -1206,6 +1230,7 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--previous-stage7-file", default=env_default("PREVIOUS_STAGE7_FILE", ""))
     parser.add_argument("--auto-continue-from-previous-run", type=int, default=env_int("AUTO_CONTINUE_FROM_PREVIOUS_RUN", 0))
     parser.add_argument("--auto-continue-glob", default=env_default("AUTO_CONTINUE_GLOB", ""))
+    parser.add_argument("--initial-debug-only", type=int, default=env_int("INITIAL_DEBUG_ONLY", 0))
     args = parser.parse_args(argv)
     if args.runtime_pdb_id is None:
         args.runtime_pdb_id = f"{args.pdb_id}_hybrid"
@@ -1246,6 +1271,11 @@ def run_hybrid_workflow_command(argv):
         return
 
     prepare_workflow_hybrid_artifacts(args)
+    write_stage70_initial_debug_files(args)
+
+    if int(args.initial_debug_only):
+        print("=== Initial Debug Only Complete ===")
+        return
 
     # Extract reference DOPC bead positions from bilayer PDB for CG lipid quadspline fitting
     cg_lipid_config = None

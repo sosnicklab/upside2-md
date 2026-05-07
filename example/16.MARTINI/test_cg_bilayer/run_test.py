@@ -136,6 +136,7 @@ def convert_and_inject() -> None:
         convert_stage,
         inject_cg_lipid_nodes,
         inject_particles_table,
+        write_stage_debug_outputs,
     )
 
     os.environ["UPSIDE_RUNTIME_PDB_FILE"] = str(RUNTIME_PDB.resolve())
@@ -146,6 +147,7 @@ def convert_and_inject() -> None:
     convert_stage(pdb_id=PDB_ID, stage="minimization", run_dir=str(RUN_DIR))
     inject_particles_table(UP_FILE, MARTINI_H5)
     inject_cg_lipid_nodes(UP_FILE, MARTINI_H5)
+    write_stage_debug_outputs(UP_FILE, debug_dir=RUN_DIR / "debug")
 
 
 def _normalize_pos(pos: np.ndarray) -> np.ndarray:

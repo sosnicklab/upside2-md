@@ -40,6 +40,8 @@ done
 PDB_ID="${PDB_ID:-1rkl}"
 RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-${PDB_ID}_hybrid}"
 RUN_DIR="${RUN_DIR:-outputs/martini_test_1rkl_hybrid}"
+UPSIDE_WRITE_DEBUG_PDB="${UPSIDE_WRITE_DEBUG_PDB:-1}"
+export UPSIDE_WRITE_DEBUG_PDB
 
 PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/${PDB_ID}.pdb}"
 BILAYER_PDB="${BILAYER_PDB:-${UPSIDE_HOME}/parameters/dryMARTINI/DOPC.pdb}"
@@ -73,6 +75,7 @@ EQ_64_NSTEPS="${EQ_64_NSTEPS:-500}"
 EQ_65_NSTEPS="${EQ_65_NSTEPS:-500}"
 EQ_66_NSTEPS="${EQ_66_NSTEPS:-500}"
 PROD_70_NSTEPS="${PROD_70_NSTEPS:-10000}"
+INITIAL_DEBUG_ONLY="${INITIAL_DEBUG_ONLY:-0}"
 
 EQ_TIME_STEP="${EQ_TIME_STEP:-0.010}"
 PROD_TIME_STEP="${PROD_TIME_STEP:-0.002}"
@@ -173,6 +176,7 @@ python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
     --eq-65-nsteps "${EQ_65_NSTEPS}" \
     --eq-66-nsteps "${EQ_66_NSTEPS}" \
     --prod-70-nsteps "${PROD_70_NSTEPS}" \
+    --initial-debug-only "${INITIAL_DEBUG_ONLY}" \
     --eq-time-step "${EQ_TIME_STEP}" \
     --prod-time-step "${PROD_TIME_STEP}" \
     --min-time-step "${MIN_TIME_STEP}" \

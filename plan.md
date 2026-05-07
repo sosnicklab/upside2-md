@@ -1,4 +1,61 @@
 
+## 2026-05-06 Initial Structure Debug PDB Export
+
+### Project Goal
+- Generate visualization-ready PDB diagnostics for every generated MARTINI input so incorrect initial structures can be debugged before simulation.
+- Prove whether apparent ion bonds are real HDF5 topology or visualization artifacts.
+- Make hidden CGLD orientation sites inspectable without confusing normal bilayer visualization.
+- Generate a dedicated single-particle lipid bilayer PDB containing only physical CGL lipid particles.
+
+### Architecture & Key Decisions
+- Add a reusable stage-input debug exporter in `py/martini_prepare_system_lib.py`.
+- Emit debug files under the simulation output directory `debug/`, keyed by the `.up` filename stem.
+- Write two PDBs: all particles including CGLD, and a visible model excluding CGLD.
+- Write a third bilayer-only PDB containing only physical `CGL` particles.
+- Do not write PDB `CONECT`; actual topology is reported in a TSV from `/input/potential/dist_spring/id`.
+- Fix CGLD `molecule_ids` to match parent CGL particles so molecule grouping is not misleading.
+
+### Execution Phases
+- [x] Phase 1: Implement debug PDB/TSV/JSON export from generated `.up` inputs.
+- [x] Phase 2: Wire debug export into simple stage conversion and finalized hybrid checkpoint generation.
+- [x] Phase 3: Fix CGLD molecule metadata.
+- [x] Phase 4: Run syntax and small bilayer input generation verification.
+- [x] Phase 5: Inspect generated debug reports and document whether ions are truly bonded.
+- [x] Phase 6: Add and verify a dedicated single-particle lipid bilayer PDB export.
+- [x] Phase 7: Add a fast `run_sim_1rkl.sh` initial-debug mode that writes PDBs after packing/CG conversion and exits before MARTINI table generation, pair-list generation, and dynamics.
+- [x] Phase 8: Export debug PDBs for the actual `run_sim_1rkl.sh` stage files passed to simulation during full runs, and make the default apply to all example/16.MARTINI shell workflows.
+- [x] Phase 9: Emit the stage-7 single-particle lipid PDB in normal workflow runs immediately after packing, not only under `INITIAL_DEBUG_ONLY=1`.
+
+### Known Errors / Blockers
+- Existing `outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up` was generated before the CGLD molecule-id fix; its debug summary now reports `282` CGLD molecule-id mismatches. Regenerate the workflow input to clear this stale metadata.
+- User correction: the first implementation verified the bilayer-only test and prepared-stage export, but did not prove that `run_sim_1rkl.sh` emits a bilayer PDB for the exact stage-7 simulation input.
+- User correction: full stage conversion is too slow for visual initial-structure debugging because it computes MARTINI pair interactions; the workflow needs a PDB-only path that skips `martini.h5` generation/use and pair-list generation.
+- User correction: normal `run_sim_1rkl.sh` and inherited workflows still need to generate the single-particle lipid PDB without requiring users to set `INITIAL_DEBUG_ONLY=1`.
+
+### Review
+- Added `write_stage_debug_outputs()`:
+  - writes `<stem>.input_debug.visible.pdb`, `<stem>.input_debug.all.pdb`, `<stem>.input_debug.bilayer.pdb`, `<stem>.input_debug.bonds.tsv`, and `<stem>.input_debug.summary.json`;
+  - omits PDB `CONECT` so viewers do not invent misleading bond topology from the debug PDB;
+  - records true `dist_spring` topology, CGLD vector lengths, lipid leaflet stats, particle counts, and warnings.
+- Wired debug export into `convert_stage()`, finalized hybrid `prepare_stage_file()`, and the bilayer-only test workflow.
+- Normal hybrid workflow runs now call the same fast stage-7 initial-debug export immediately after packing, before MARTINI table building.
+- Added `INITIAL_DEBUG_ONLY=1` / `--initial-debug-only` for `run_sim_1rkl.sh` and inherited workflows (`1rkl_outlipid`, `1afo`, `1afo_outlipid`):
+  - performs real workflow packing and CG lipid conversion;
+  - writes stage-7 debug PDB/TSV/JSON files;
+  - exits before MARTINI table generation, HDF5 pair-list generation, and dynamics.
+- Full runs also export debug PDBs immediately before each MD stage from the exact `.up` file passed to `upside`.
+- Fixed generated `molecule_ids` so each CGLD orientation site shares the parent CGL lipid molecule.
+- Verification:
+  - `python3 -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py example/16.MARTINI/test_cg_bilayer/run_test.py` passed;
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh example/16.MARTINI/run_sim_1rkl_outlipid.sh example/16.MARTINI/run_sim_1afo.sh example/16.MARTINI/run_sim_1afo_outlipid.sh` passed;
+  - `python example/16.MARTINI/test_cg_bilayer/run_test.py --skip-build --skip-run` generated debug PDB/TSV/JSON files;
+  - bilayer-only debug summary reports `ion_bond_count=0`, `bond_count=72`, `cgl_cgld_bond_count=72`, `molecule_id_count=72`, and no warnings;
+  - bilayer-only `<stem>.input_debug.bilayer.pdb` contains exactly `72` physical `CGL` atom records, no `CGLD`, and no ions;
+  - `INITIAL_DEBUG_ONLY=1 RUN_DIR=outputs/debug_1rkl_initial_only bash example/16.MARTINI/run_sim_1rkl.sh` generated 1RKL stage-7 debug files without `martini.h5`;
+  - generated 1RKL bilayer PDB contains `282` physical `CGL` atom records, no `CGLD`, no ions;
+  - generated 1RKL summary reports `ion_bond_count=0`, `bond_count=282`, all bonds are CGL-CGLD, and no warnings.
+  - normal `run_sim_1rkl.sh` with `RUN_DIR=outputs/debug_1rkl_normal_generates_pdb` generated `debug/1rkl.stage_7.0.input_debug.bilayer.pdb` before table building; the file contains `282` CGL atom records, no `CGLD`, no ions.
+
 ## 2026-05-06 Full Directional CG Lipid Bilayer Stabilization
 
 ### Project Goal

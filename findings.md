@@ -1,6 +1,21 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-06: User correction: `run_sim_1rkl.sh` initial-structure debugging must not require the expensive MARTINI table or pair-list generation path.
+  - Rule: use `INITIAL_DEBUG_ONLY=1` for visual initial-structure debugging. This runs real packing and CG conversion, writes PDB/TSV/JSON diagnostics, and exits before `martini.h5` generation/use, HDF5 nonbonded pair-list generation, and dynamics.
+  - Normal fresh workflow runs must also emit the same single-particle lipid PDB immediately after packing, before table generation, so users do not need to opt into debug-only mode just to get the artifact.
+  - Verified 1RKL debug output under `example/16.MARTINI/outputs/debug_1rkl_initial_only/debug/`: the bilayer-only PDB has 282 physical CGL particles, no CGLD, and no ions.
+  - Verified normal `run_sim_1rkl.sh` output under `example/16.MARTINI/outputs/debug_1rkl_normal_generates_pdb/debug/`: `1rkl.stage_7.0.input_debug.bilayer.pdb` is generated before table building and has 282 physical CGL particles, no CGLD, and no ions.
+  - The generated 1RKL topology report has 282 true bonds, all CGL-CGLD orientation bonds; `ion_bond_count=0`.
+  - The generated 1RKL CGL leaflet stats after conditioning have same-leaflet nearest-neighbor min/p05 of about 7.0 Å, and CGL-protein minimum distance is about 7.60 Å.
+- 2026-05-06: User correction: debug PDB export must include an explicit single-particle lipid bilayer PDB, not just all-particle and visible whole-system views.
+  - Rule: when debugging the CG lipid bilayer, always emit a CGL-only PDB (`*.input_debug.bilayer.pdb`) that excludes protein, ions, water, and hidden CGLD orientation sites.
+  - The bilayer-only test artifact now contains exactly the 72 physical CGL particles, making the single-particle lipid slab directly inspectable.
+- 2026-05-06: Initial-structure debug export separates actual topology from visualization artifacts.
+  - The current existing 1RKL stage-7 HDF5 input has `282` true `dist_spring` bonds and all are CGL-CGLD orientation bonds; `ion_bond_count=0`.
+  - The ion-bond appearance in a viewer is therefore not coming from `/input/potential/dist_spring/id`; it is likely viewer bond inference or a stale visualization format.
+  - The same existing 1RKL stage predates the CGLD molecule-id fix: all `282` CGLD sites have molecule IDs different from their parent CGL, which can make hidden orientation sites look like a separate chunk in molecule-based visualization.
+  - Newly generated bilayer-only input has corrected CGLD molecule IDs (`72` molecules for `72` CGL/CGLD pairs) and no debug warnings.
 - 2026-05-06: The current 1RKL single-particle lipid failure has two separable causes.
   - The inspected 1RKL stage has bad initial CGL placement: upper-leaflet CGL z extends below the midplane and same-leaflet XY spacing reaches about `2.245 Å`, while the trajectory explodes by the first saved frame.
   - A clean 72-DOPC bilayer-only system has balanced 36/36 leaflets, expected direction signs (`lower dir_z ~= +0.995`, `upper dir_z ~= -0.993`), and no close same-leaflet XY overlaps below about `5.35 Å`.
