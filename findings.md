@@ -1,6 +1,11 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-07: DOPC-sidechain was not using the same directional CG table method as single-particle DOPC-DOPC.
+  - DOPC-DOPC used `cg_lipid_quadspline_v3`, full multimode params, and `eval_multimode_pair()`.
+  - DOPC-sidechain still used fixed 54-parameter `cg_lipid_sc_quadspline_v1` and runtime `eval_quadspline()`.
+  - Both paths used the same angular sign convention, `ang1=-n1_dot_n12;ang2=n2_dot_n12`, but the radial/mode schema and evaluator were different.
+  - Resolution: use `cg_lipid_sc_quadspline_v2` with full multimode params and the same evaluator style as DOPC-DOPC, while retaining SC-specific rotamer averaging and lipid-against-fixed-SC relaxation.
 - 2026-05-06: User correction: `run_sim_1rkl.sh` initial-structure debugging must not require the expensive MARTINI table or pair-list generation path.
   - Rule: use `INITIAL_DEBUG_ONLY=1` for visual initial-structure debugging. This runs real packing and CG conversion, writes PDB/TSV/JSON diagnostics, and exits before `martini.h5` generation/use, HDF5 nonbonded pair-list generation, and dynamics.
   - Normal fresh workflow runs must also emit the same single-particle lipid PDB immediately after packing, before table generation, so users do not need to opt into debug-only mode just to get the artifact.

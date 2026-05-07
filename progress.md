@@ -1,5 +1,17 @@
 # Progress Log
 
+## 2026-05-07 (DOPC-Sidechain Directional Table Audit)
+- Audited the DOPC-DOPC and DOPC-sidechain CG lipid table paths in `py/martini_build_tables.py`, `py/martini_prepare_system_lib.py`, and `src/martini_cg_lipid.cpp`.
+- Found that DOPC-DOPC used full multimode `cg_lipid_quadspline_v3`, while DOPC-sidechain still used fixed 54-parameter `cg_lipid_sc_quadspline_v1`.
+- Modified `py/martini_build_tables.py` so DOPC-sidechain emits `cg_lipid_sc_quadspline_v2` full multimode params with source order `(SC, CG)`.
+- Modified `src/martini_cg_lipid.cpp` so `cg_lipid_sc` can evaluate full multimode params through the same evaluator style as DOPC-DOPC.
+- Modified `py/martini_prepare_system_lib.py` so injected `cg_lipid_sc` nodes carry the multimode radial/angular attrs.
+- Verification:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py` passed;
+  - `cmake --build obj --target upside` passed;
+  - direct coarse table-generation check produced `cg_lipid_sc` shape `(1,1,190)` with `schema=cg_lipid_sc_quadspline_v2`, `radial_mode=full_multimode`, `n_modes=4`, `n_radial=14`, `n_angular=15`;
+  - `git diff --check` passed.
+
 ## 2026-05-06 (Initial Structure Debug PDB Export)
 - Added initial-structure debug exports for generated MARTINI `.up` inputs:
   - visible PDB excluding hidden `CGLD` orientation sites;

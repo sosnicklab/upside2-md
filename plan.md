@@ -1,4 +1,48 @@
 
+## 2026-05-07 DOPC-DOPC vs DOPC-Sidechain Directional Table Audit
+
+### Project Goal
+- Verify whether the DOPC-sidechain coarse-grained table calculation uses the same directional method as the single-particle DOPC-DOPC interaction.
+- Identify any mismatch in angular sign convention, radial spline construction, orientation relaxation/sampling, unit conversion, or runtime evaluation.
+
+### Architecture & Key Decisions
+- Treat DOPC-DOPC as the reference implementation for directional single-particle lipid interactions.
+- Compare generation code and runtime code, not just HDF5 schema names.
+- Do not modify physics until the mismatch, if any, is proven from source and/or generated table attrs.
+- Revised Decision: DOPC-sidechain must use the same full multimode directional table layout and runtime evaluator style as DOPC-DOPC, with SC-specific rotamer averaging retained.
+
+### Execution Phases
+- [x] Phase 1: Locate DOPC-DOPC and DOPC-sidechain table generation paths.
+- [x] Phase 2: Compare angular sign convention, radial basis, mode schema, relaxation, and sampling.
+- [x] Phase 3: Compare runtime evaluator paths and injected HDF5 attrs.
+- [x] Phase 4: Report whether they are equivalent or patch the mismatch.
+
+### Known Errors / Blockers
+- Source audit found a real mismatch: DOPC-DOPC uses `cg_lipid_quadspline_v3` full multimode params, but DOPC-sidechain still uses fixed 54-parameter `cg_lipid_sc_quadspline_v1`.
+
+### Review
+- DOPC-DOPC reference path:
+  - `_fit_cg_lipid_quadspline()` builds `cg_lipid_quadspline_v3`;
+  - table layout is full multimode: `V0(r) + sum_m Ang1_m(a1) * Ang2_m(a2) * Vm(r)`;
+  - runtime uses `eval_multimode_pair()` with `ang1=-n1_dot_n12;ang2=n2_dot_n12`.
+- Original DOPC-sidechain path was not equivalent:
+  - `_fit_cg_lipid_sc_quadspline()` emitted fixed 54-parameter `cg_lipid_sc_quadspline_v1`;
+  - runtime used the older single-mode `eval_quadspline()` path;
+  - radial knots/default cutoff differed from the DOPC-DOPC full multimode table.
+- Patched DOPC-sidechain to use the same full multimode parameter layout and runtime evaluator style:
+  - `cg_lipid_sc_quadspline_v2`;
+  - full multimode variable-length params;
+  - same angle convention and source order;
+  - same 15 angular knots, 14 radial knots, 1.4 Å radial knot spacing, 16.8 Å cutoff, and taper attrs;
+  - retained SC-specific rotamer averaging and lipid-against-fixed-SC relaxation.
+- Verification:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py` passed;
+  - `cmake --build obj --target upside` passed;
+  - direct coarse table-generation check produced `cg_lipid_pair` shape `(1,1,278)` with `schema=cg_lipid_quadspline_v3`, `n_modes=6`, `n_radial=14`, `n_angular=15`;
+  - the same check produced `cg_lipid_sc` shape `(1,1,190)` with `schema=cg_lipid_sc_quadspline_v2`, `radial_mode=full_multimode`, `angle_convention=ang1=-n1_dot_n12;ang2=n2_dot_n12`, `n_modes=4`, `n_radial=14`, `n_angular=15`;
+  - `git diff --check` passed.
+
+
 ## 2026-05-06 Initial Structure Debug PDB Export
 
 ### Project Goal

@@ -537,6 +537,10 @@ struct CGLipidSCPotential : public PotentialNode {
     vector<int> id2;
     int n_type1;
     int n_type2;
+    int n_param;
+    int n_modes;
+    int n_radial;
+    int n_angular;
     float box_x;
     float box_y;
     float box_z;
@@ -563,6 +567,10 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
     , cg_pos(cg_pos_)
     , n_type1(0)
     , n_type2(0)
+    , n_param(0)
+    , n_modes(read_attribute<int>(grp, ".", "n_modes", 0))
+    , n_radial(read_attribute<int>(grp, ".", "n_radial", CG_LIPID_N_RADIAL))
+    , n_angular(read_attribute<int>(grp, ".", "n_angular", CG_LIPID_N_ANGULAR))
     , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
     , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
     , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
@@ -575,7 +583,14 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
     check_elem_width(cg_pos, 6);
     H5Obj pi_obj = open_group(grp, "pair_interaction");
     hid_t pi = pi_obj.get();
-    interaction_param = read_param_dataset(pi, n_type1, n_type2);
+    interaction_param = read_param_dataset_any(pi, n_type1, n_type2, n_param);
+    int expected_n_param = n_radial + n_modes * (2 * n_angular + n_radial);
+    if(n_modes > 0) {
+        if(n_radial <= 3 || n_angular <= 3 || n_param != expected_n_param)
+            throw string("cg_lipid_sc full multimode params require matching n_modes/n_radial/n_angular attrs");
+    } else if(n_param != CG_LIPID_N_PARAM) {
+        throw string("cg_lipid_sc legacy params must have last dimension 54");
+    }
     index1 = read_int_dataset(pi, "index1");
     type1 = read_int_dataset(pi, "type1");
     id1 = read_int_dataset(pi, "id1");
@@ -611,9 +626,16 @@ void CGLipidSCPotential::compute_value(ComputeMode mode) {
                 simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
 
             QuadsplineEval e;
-            if(eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
-                        dr, n1, n2, knot_spacing, cutoff, taper_width, e))
-                total += e.value;
+            bool ok = false;
+            if(n_modes > 0) {
+                ok = eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                        n_modes, n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+            } else {
+                ok = eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
+                        dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+            }
+            if(ok) total += e.value;
         }
     }
     potential = total;
@@ -642,8 +664,16 @@ void CGLipidSCPotential::propagate_deriv() {
                 simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
 
             QuadsplineEval e;
-            if(!eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
-                        dr, n1, n2, knot_spacing, cutoff, taper_width, e))
+            bool ok = false;
+            if(n_modes > 0) {
+                ok = eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                        n_modes, n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+            } else {
+                ok = eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
+                        dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+            }
+            if(!ok)
                 continue;
 
             float dpos1[3] = {0.f, 0.f, 0.f};

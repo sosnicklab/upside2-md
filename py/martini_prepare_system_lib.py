@@ -4276,6 +4276,13 @@ def inject_cg_lipid_nodes(
                         for attr_name, attr_value in box_attrs.items():
                             cg_sc.attrs[attr_name] = attr_value
                         cg_sc.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
+                        cg_sc.attrs["radial_mode"] = sc_grp.attrs.get("radial_mode", "full_multimode")
+                        for attr_name in ("knot_spacing_ang", "cutoff_ang", "taper_width_ang"):
+                            if attr_name in sc_grp.attrs:
+                                cg_sc.attrs[attr_name] = np.float32(sc_grp.attrs[attr_name])
+                        for attr_name in ("n_modes", "n_radial", "n_angular"):
+                            if attr_name in sc_grp.attrs:
+                                cg_sc.attrs[attr_name] = np.int32(sc_grp.attrs[attr_name])
 
                         psi = cg_sc.create_group("pair_interaction")
                         psi.create_dataset(

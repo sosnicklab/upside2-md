@@ -1505,14 +1505,17 @@ def _fit_cg_lipid_sc_quadspline(
     cos_theta_count: int = 9,
     azimuthal_count: int = 4,
     relax_steps: int = 120,
+    n_modes: int = 4,
+    n_knot_radial: int = 14,
+    knot_spacing_ang: float = 1.4,
+    residual_cap_kj_mol: float | None = 250.0,
+    energy_cap_kj_mol: float | None = 500.0,
 ) -> dict:
-    """Fit 54 B-spline quadspline parameters for CG lipid ↔ Sidechain interactions.
+    """Fit full multimode B-spline params for sidechain ↔ CG lipid interactions.
 
-    Uses bond-constrained minimization at each sample point so that CG lipid
-    bond stretching absorbs LJ repulsion against fixed SC beads, keeping
-    energies O(100 kJ/mol) and SVD-factorizable.
-
-    Returns dict with same keys as _fit_cg_lipid_quadspline.
+    The parameter layout matches _fit_cg_lipid_quadspline:
+      V0(r) + sum_m Ang1_m(a_sc) * Ang2_m(a_cg) * Vm(r)
+    where source1 is the sidechain vector and source2 is the CG lipid vector.
     """
     r_values = np.asarray(_linspace(r_min_nm, r_max_nm, r_count), dtype=np.float64)
     cos_theta_grid = np.asarray(_linspace(-1.0, 1.0, cos_theta_count), dtype=np.float64)
@@ -1521,8 +1524,7 @@ def _fit_cg_lipid_sc_quadspline(
 
     phi_values = np.linspace(0.0, 2.0 * np.pi, azimuthal_count, endpoint=False)
 
-    ref_nm = np.asarray(ref_bead_positions_nm, dtype=np.float64)
-    cb_anchor = np.asarray(cb_anchor_nm, dtype=np.float64)
+    ref_nm = _canonicalize_lipid_reference_to_z(ref_bead_positions_nm)
     cb_vec = np.asarray(cb_vector_unit, dtype=np.float64)
     cb_vec /= max(float(np.linalg.norm(cb_vec)), 1e-12)
     sc_to_cg_dirs = _directions_with_dot_np(-cb_vec, cos_theta_grid, phi_values)
@@ -1539,14 +1541,14 @@ def _fit_cg_lipid_sc_quadspline(
 
     print(f"  Sampling CG↔SC energy for target={target_type}: "
           f"{n_radial} radial × {n_angle}² angular × {azimuthal_count} azimuthal, "
-          f"relax={relax_steps}")
+          f"relax={relax_steps}, modes={n_modes}")
 
-    # Energy grid: (n_radial, n_angle_cg, n_angle_sc)
+    # Energy grid: (n_radial, n_angle_sc, n_angle_cg), matching runtime source order.
     energy_grid = np.zeros((n_radial, n_angle, n_angle), dtype=np.float64)
 
     for ir, r_nm in enumerate(r_values):
-        for ia_cg in range(n_angle):
-            for ia_sc in range(n_angle):
+        for ia_sc in range(n_angle):
+            for ia_cg in range(n_angle):
                 energy_sum = 0.0
                 weight_sum = 0.0
                 for ip in range(azimuthal_count):
@@ -1581,57 +1583,77 @@ def _fit_cg_lipid_sc_quadspline(
                         energy_sum += w * pair_energy
                         weight_sum += w
 
-                energy_grid[ir, ia_cg, ia_sc] = energy_sum / max(weight_sum, 1e-15)
+                energy_grid[ir, ia_sc, ia_cg] = energy_sum / max(weight_sum, 1e-15)
 
-    # Two-sided SVD factorization (same as _fit_cg_lipid_quadspline)
-    v_radial = np.mean(energy_grid, axis=(1, 2))
-    residual = energy_grid - v_radial[:, None, None]
-
-    u_all = np.zeros((n_radial, n_angle), dtype=np.float64)
-    v_all = np.zeros((n_radial, n_angle), dtype=np.float64)
-    s_all = np.zeros(n_radial, dtype=np.float64)
-
-    for ir in range(n_radial):
-        mat = residual[ir]
-        if np.allclose(mat, 0.0):
-            continue
-        u, s, vh = np.linalg.svd(mat, full_matrices=False)
-        u_all[ir] = u[:, 0]
-        v_all[ir] = vh[0, :]
-        s_all[ir] = s[0]
-
-    ref_idx = int(np.argmax(np.abs(s_all)))
-    u_ref = u_all[ref_idx].copy()
-    for ir in range(n_radial):
-        if np.dot(u_all[ir], u_ref) < 0.0:
-            u_all[ir] *= -1.0
-            v_all[ir] *= -1.0
-
-    abs_s = np.abs(s_all)
-    total_s = abs_s.sum()
-    if total_s > 1e-15:
-        ang1 = np.average(u_all, axis=0, weights=abs_s)
-        ang2 = np.average(v_all, axis=0, weights=abs_s)
+    if energy_cap_kj_mol is not None and energy_cap_kj_mol > 0.0:
+        fit_grid = np.clip(energy_grid, -float(energy_cap_kj_mol), float(energy_cap_kj_mol))
     else:
-        ang1 = np.zeros(n_angle)
-        ang2 = np.zeros(n_angle)
+        fit_grid = energy_grid
 
-    if float(np.dot(ang1, cos_theta_grid)) < 0.0:
-        ang1 *= -1.0
-        ang2 *= -1.0
-
-    max_ang1 = float(np.max(np.abs(ang1)))
-    if max_ang1 > 1e-15:
-        ang1 /= max_ang1
-        ang2 *= max_ang1
-        s_all_eff = s_all * max_ang1
+    v_radial = np.mean(fit_grid, axis=(1, 2))
+    residual = fit_grid - v_radial[:, None, None]
+    if residual_cap_kj_mol is not None and residual_cap_kj_mol > 0.0:
+        residual_fit = np.clip(residual, -float(residual_cap_kj_mol), float(residual_cap_kj_mol))
     else:
-        s_all_eff = s_all
+        residual_fit = residual
 
-    v_angular = s_all_eff.copy()
+    mode_ang1 = []
+    mode_ang2 = []
+    mode_radial = []
+    residual_remaining = residual_fit.copy()
+    for _ in range(int(n_modes)):
+        u_all = np.zeros((n_radial, n_angle), dtype=np.float64)
+        v_all = np.zeros((n_radial, n_angle), dtype=np.float64)
+        s_all = np.zeros(n_radial, dtype=np.float64)
+        for ir in range(n_radial):
+            mat = residual_remaining[ir]
+            if np.allclose(mat, 0.0):
+                continue
+            u, s, vh = np.linalg.svd(mat, full_matrices=False)
+            if len(s) == 0:
+                continue
+            u_all[ir] = u[:, 0]
+            v_all[ir] = vh[0, :]
+            s_all[ir] = s[0]
 
-    recon = v_radial[:, None, None] + ang1[None, :, None] * ang2[None, None, :] * v_angular[:, None, None]
-    rms_error = float(np.sqrt(np.mean((energy_grid - recon) ** 2)))
+        ref_idx = int(np.argmax(np.abs(s_all)))
+        u_ref = u_all[ref_idx].copy()
+        for ir in range(n_radial):
+            if np.dot(u_all[ir], u_ref) < 0.0:
+                u_all[ir] *= -1.0
+                v_all[ir] *= -1.0
+
+        weights = np.abs(s_all)
+        if float(weights.sum()) > 1e-15:
+            ang1 = np.average(u_all, axis=0, weights=weights)
+            ang2 = np.average(v_all, axis=0, weights=weights)
+        else:
+            ang1 = np.zeros(n_angle)
+            ang2 = np.zeros(n_angle)
+
+        max_abs = max(float(np.max(np.abs(ang1))), float(np.max(np.abs(ang2))), 1e-15)
+        ang1 /= max_abs
+        ang2 /= max_abs
+
+        basis = np.outer(ang1, ang2)
+        denom = float(np.dot(basis.ravel(), basis.ravel()))
+        vm = np.zeros(n_radial, dtype=np.float64)
+        if denom > 1e-15:
+            for ir in range(n_radial):
+                vm[ir] = float(np.dot(residual_remaining[ir].ravel(), basis.ravel()) / denom)
+            if residual_cap_kj_mol is not None and residual_cap_kj_mol > 0.0:
+                vm = np.clip(vm, -float(residual_cap_kj_mol), float(residual_cap_kj_mol))
+            residual_remaining -= basis[None, :, :] * vm[:, None, None]
+
+        mode_ang1.append(ang1)
+        mode_ang2.append(ang2)
+        mode_radial.append(vm)
+
+    recon = v_radial[:, None, None]
+    for ang1, ang2, vm in zip(mode_ang1, mode_ang2, mode_radial):
+        recon = recon + np.outer(ang1, ang2)[None, :, :] * vm[:, None, None]
+    target_grid = v_radial[:, None, None] + residual_fit
+    rms_error = float(np.sqrt(np.mean((target_grid - recon) ** 2)))
 
     # Fit B-splines
     inv_conv = 1.0 / ENERGY_CONVERSION_KJ_PER_EUP
@@ -1640,36 +1662,48 @@ def _fit_cg_lipid_sc_quadspline(
     inv_dtheta = (n_knot_angular - 3) / 2.0
     t_angular = (cos_theta_grid + 1.0) * inv_dtheta + 1.0
 
-    ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01)
-    ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01)
-
-    n_knot_radial = 12
-    knot_spacing = 0.7
+    knot_spacing = float(knot_spacing_ang)
     t_radial_ang = r_values * 10.0 / knot_spacing
     rad_knot_vector = np.zeros(n_knot_radial + 4, dtype=np.float64)
     rad_knot_vector[4:-4] = np.arange(1, n_knot_radial - 3, dtype=np.float64)
     rad_knot_vector[-4:] = rad_knot_vector[-5]
 
-    v_radial_knots = _fit_radial_bspline(t_radial_ang, v_radial, rad_knot_vector, smooth=0.01) * inv_conv
-    v_angular_knots = _fit_radial_bspline(t_radial_ang, v_angular, rad_knot_vector, smooth=1.0) * inv_conv
+    v0_knots = _fit_radial_bspline(t_radial_ang, v_radial, rad_knot_vector, smooth=0.01) * inv_conv
+    param_parts = [v0_knots]
+    ang1_knots_all = []
+    ang2_knots_all = []
+    vm_knots_all = []
+    for ang1, ang2, vm in zip(mode_ang1, mode_ang2, mode_radial):
+        ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01)
+        ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01)
+        vm_knots = _fit_radial_bspline(t_radial_ang, vm, rad_knot_vector, smooth=1.0) * inv_conv
+        ang1_knots_all.append(ang1_knots)
+        ang2_knots_all.append(ang2_knots)
+        vm_knots_all.append(vm_knots)
+        param_parts.extend([ang1_knots, ang2_knots, vm_knots])
 
-    # ang1 = CG angular, ang2 = SC angular (from SVD: rows=CG angle, cols=SC angle)
-    # quadspline Ang1 → source1 (SC), Ang2 → source2 (CG), so store [SC_ang, CG_ang, ...]
-    interaction_param = np.concatenate([ang2_knots, ang1_knots, v_radial_knots, v_angular_knots])
+    interaction_param = np.concatenate(param_parts)
 
     return {
-        "ang1_knots": ang1_knots,
-        "ang2_knots": ang2_knots,
-        "v_radial_knots": v_radial_knots,
-        "v_angular_knots": v_angular_knots,
+        "v0_knots": v0_knots,
+        "ang1_knots": np.asarray(ang1_knots_all),
+        "ang2_knots": np.asarray(ang2_knots_all),
+        "v_mode_knots": np.asarray(vm_knots_all),
         "interaction_param": interaction_param,
         "rms_error": rms_error,
         "v_radial_raw": v_radial,
-        "ang1_raw": ang1,
-        "ang2_raw": ang2,
-        "v_angular_raw": v_angular,
+        "residual_cap_kj_mol": residual_cap_kj_mol,
+        "energy_cap_kj_mol": energy_cap_kj_mol,
+        "ang1_raw": np.asarray(mode_ang1),
+        "ang2_raw": np.asarray(mode_ang2),
+        "v_angular_raw": np.asarray(mode_radial),
         "r_values_nm": r_values,
         "cos_theta_grid": cos_theta_grid,
+        "knot_spacing_ang": knot_spacing,
+        "cutoff_ang": float((n_knot_radial - 2) * knot_spacing),
+        "n_modes": int(len(mode_radial)),
+        "n_radial": int(n_knot_radial),
+        "n_angular": int(n_knot_angular),
     }
 
 
@@ -2154,11 +2188,17 @@ def _build_cg_lipid_tables(
 
     residues = [r for r in active_residue_names
                 if r in residue_map and residue_map[r] and r in orientation_map]
+    sc_n_modes = int(os.environ.get("UPSIDE_CG_LIPID_SC_N_MODES", "4"))
+    sc_n_radial = 14
+    sc_n_angular = 15
+    sc_knot_spacing_ang = 1.4
+    sc_n_param = sc_n_radial + sc_n_modes * (2 * sc_n_angular + sc_n_radial)
+    sc_rms_error = np.zeros(len(residues), dtype=np.float32)
 
     if not residues:
         print("  cg_lipid_sc: no active residues with sidechains, skipping")
         n_sc_types = 0
-        interaction_param_sc = np.zeros((0, 1, 54), dtype=np.float64)
+        interaction_param_sc = np.zeros((0, 1, sc_n_param), dtype=np.float64)
         sc_residue_names = []
     else:
         cb_anchor_nm = [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG]
@@ -2166,7 +2206,7 @@ def _build_cg_lipid_tables(
         relax_steps = 120
 
         n_sc_types = len(residues)
-        interaction_param_sc = np.zeros((n_sc_types, 1, 54), dtype=np.float64)
+        interaction_param_sc = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float64)
         sc_residue_names = []
 
         for ri, residue in enumerate(residues):
@@ -2193,10 +2233,15 @@ def _build_cg_lipid_tables(
                 cos_theta_count=min(cos_theta_count, _sc_ct),
                 azimuthal_count=min(azimuthal_count, _sc_az),
                 relax_steps=relax_steps,
+                n_modes=sc_n_modes,
+                n_knot_radial=sc_n_radial,
+                knot_spacing_ang=sc_knot_spacing_ang,
             )
             interaction_param_sc[ri, 0, :] = result_sc["interaction_param"]
+            sc_rms_error[ri] = np.float32(result_sc["rms_error"])
             sc_residue_names.append(residue)
-            print(f"  CG↔SC({residue}): RMS error = {result_sc['rms_error']:.4f} kJ/mol")
+            print(f"  CG↔SC({residue}): RMS error = {result_sc['rms_error']:.4f} kJ/mol, "
+                  f"modes = {result_sc['n_modes']}")
 
     # Store in HDF5
     cg_grp = h5.create_group("cg_lipid_table")
@@ -2253,13 +2298,27 @@ def _build_cg_lipid_tables(
         "restype_order",
         data=np.asarray([np.bytes_(x) for x in sc_residue_names], dtype="S4"),
     )
+    cg_sc_grp.create_dataset("rms_error_kj_mol", data=sc_rms_error[:n_sc_types])
     cg_sc_grp.attrs["n_sc_types"] = n_sc_types
     cg_sc_grp.attrs["n_cg_types"] = 1
-    cg_sc_grp.attrs["schema"] = "cg_lipid_sc_quadspline_v1"
+    cg_sc_grp.attrs["schema"] = "cg_lipid_sc_quadspline_v2"
+    cg_sc_grp.attrs["radial_mode"] = "full_multimode"
+    cg_sc_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
+    cg_sc_grp.attrs["fit_relax_steps"] = np.int32(120 if n_sc_types else 0)
+    cg_sc_grp.attrs["fit_r_min_nm"] = np.float32(r_min_nm)
+    cg_sc_grp.attrs["fit_r_max_nm"] = np.float32(r_max_nm)
+    cg_sc_grp.attrs["n_modes"] = np.int32(sc_n_modes)
+    cg_sc_grp.attrs["n_radial"] = np.int32(sc_n_radial)
+    cg_sc_grp.attrs["n_angular"] = np.int32(sc_n_angular)
+    cg_sc_grp.attrs["knot_spacing_ang"] = np.float32(sc_knot_spacing_ang)
+    cg_sc_grp.attrs["cutoff_ang"] = np.float32((sc_n_radial - 2) * sc_knot_spacing_ang)
+    cg_sc_grp.attrs["taper_width_ang"] = np.float32(sc_knot_spacing_ang)
+    cg_sc_grp.attrs["residual_cap_kj_mol"] = np.float32(250.0)
+    cg_sc_grp.attrs["energy_cap_kj_mol"] = np.float32(500.0)
 
     print(
         f"  Stored: CG↔CG (1×1×{pair_param.size}), "
-        f"CG↔SC ({n_sc_types}×1×54) in {h5.filename}"
+        f"CG↔SC ({n_sc_types}×1×{interaction_param_sc.shape[-1]}) in {h5.filename}"
     )
 
     # Extend particles group with CGL syntype for isotropic LJ interactions
