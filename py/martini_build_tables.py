@@ -1684,6 +1684,9 @@ def _fit_cg_lipid_sc_quadspline(
 
     interaction_param = np.concatenate(param_parts)
 
+    taper_width_ang = knot_spacing
+    cutoff_ang = float(r_values[-1] * 10.0 + taper_width_ang)
+
     return {
         "v0_knots": v0_knots,
         "ang1_knots": np.asarray(ang1_knots_all),
@@ -1700,7 +1703,8 @@ def _fit_cg_lipid_sc_quadspline(
         "r_values_nm": r_values,
         "cos_theta_grid": cos_theta_grid,
         "knot_spacing_ang": knot_spacing,
-        "cutoff_ang": float((n_knot_radial - 2) * knot_spacing),
+        "cutoff_ang": cutoff_ang,
+        "taper_width_ang": taper_width_ang,
         "n_modes": int(len(mode_radial)),
         "n_radial": int(n_knot_radial),
         "n_angular": int(n_knot_angular),
@@ -2210,6 +2214,8 @@ def _build_cg_lipid_tables(
     sc_n_radial = 14
     sc_n_angular = 15
     sc_knot_spacing_ang = 1.4
+    sc_taper_width_ang = sc_knot_spacing_ang
+    sc_cutoff_ang = float(r_max_nm * 10.0 + sc_taper_width_ang)
     sc_n_param = sc_n_radial + sc_n_modes * (2 * sc_n_angular + sc_n_radial)
     sc_rms_error = np.zeros(len(residues), dtype=np.float32)
 
@@ -2257,6 +2263,7 @@ def _build_cg_lipid_tables(
             )
             interaction_param_sc[ri, 0, :] = result_sc["interaction_param"]
             sc_rms_error[ri] = np.float32(result_sc["rms_error"])
+            sc_cutoff_ang = min(sc_cutoff_ang, float(result_sc["cutoff_ang"]))
             sc_residue_names.append(residue)
             print(f"  CG↔SC({residue}): RMS error = {result_sc['rms_error']:.4f} kJ/mol, "
                   f"modes = {result_sc['n_modes']}")
@@ -2329,8 +2336,8 @@ def _build_cg_lipid_tables(
     cg_sc_grp.attrs["n_radial"] = np.int32(sc_n_radial)
     cg_sc_grp.attrs["n_angular"] = np.int32(sc_n_angular)
     cg_sc_grp.attrs["knot_spacing_ang"] = np.float32(sc_knot_spacing_ang)
-    cg_sc_grp.attrs["cutoff_ang"] = np.float32((sc_n_radial - 2) * sc_knot_spacing_ang)
-    cg_sc_grp.attrs["taper_width_ang"] = np.float32(sc_knot_spacing_ang)
+    cg_sc_grp.attrs["cutoff_ang"] = np.float32(sc_cutoff_ang)
+    cg_sc_grp.attrs["taper_width_ang"] = np.float32(sc_taper_width_ang)
     cg_sc_grp.attrs["residual_cap_kj_mol"] = np.float32(250.0)
     cg_sc_grp.attrs["energy_cap_kj_mol"] = np.float32(500.0)
 

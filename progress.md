@@ -1,5 +1,20 @@
 # Progress Log
 
+## 2026-05-07 (1RKL CG-SC Range Stabilization)
+- Implemented the selected CG lipid-sidechain range fix:
+  - `py/martini_build_tables.py` now writes `cg_lipid_sc.cutoff_ang = fit_r_max_nm * 10 + taper_width_ang` instead of deriving the cutoff from the full radial knot count;
+  - `py/martini_prepare_system_lib.py` caps stale injected `cg_lipid_sc` cutoffs using `fit_r_max_nm` and `taper_width_ang`, so existing `martini.h5` files with `16.8 Å` SC cutoff inject as `8.4 Å`;
+  - stage debug JSON now records active `cg_lipid_sc` attrs and CGL-near-protein radial counts;
+  - `src/main.cpp` progress logging now separates `protein_potential`, `cg_lipid_pair`, and `cg_lipid_sc`.
+- Verification:
+  - Python compilation passed for the modified MARTINI Python modules;
+  - `cmake --build obj --target upside` passed with existing warnings only;
+  - stale-table injection on the current 1RKL output converted `cg_lipid_sc.cutoff_ang` from `16.8 Å` in `martini.h5` to `8.4 Å` in the injected stage;
+  - stage debug JSON now includes `cg_lipid_sc_attrs.cutoff_ang=8.4` and protein-near CGL counts;
+  - 100-step smoke printed the new separated terms and started with `cg_lipid_sc=-3.65 E_up`;
+  - 10000-step temp validation ended with Rg `12.7 Å`, `cg_lipid_sc=-100.27 E_up`, and no protein collapse;
+  - `git diff --check` passed.
+
 ## 2026-05-07 (1RKL VTF/LJ Stability Fix)
 - Started implementation of the VTF ghost remapping and CGL-ion startup stability plan.
 - Confirmed from current outputs that HDF5 frame 0 CGL positions are initially slab-like and ion bonds are not present in `dist_spring`.

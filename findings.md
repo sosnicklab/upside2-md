@@ -1,6 +1,11 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-07: The latest 1RKL protein collapse is dominated by overlong `cg_lipid_sc`, not by ion bonds or fixed lipid vectors.
+  - Existing output has `cg_lipid_sc.fit_r_max_nm=0.7` but runtime `cutoff_ang=16.8`, extending the fitted sidechain-lipid attraction far beyond its sampled `7.0 Å` support.
+  - Component diagnostics showed `cg_lipid_sc` growing from about `-86 E_up` at frame 0 to about `-2488 E_up` by frame 200, while protein Rg collapsed from about `12.8 Å` to `8.6 Å`.
+  - Static and full-run tests with `cutoff_ang=8.4` (`7.0 Å` fit support plus `1.4 Å` taper) kept protein Rg near `12.6-12.8 Å` over 10000 steps while preserving active SC-env and BB-env interactions.
+  - The production progress label `prot_potential` was misleading because it included `cg_lipid_pair` and `cg_lipid_sc`; those terms need separate reporting for future diagnostics.
 - 2026-05-07: The strange first VTF frame in the latest 1RKL output had a visualization bug and a separate real dynamics bug.
   - HDF5 frame 0 CGL positions are initially slab-like and `dist_spring` has zero ion bonds; the apparent ion/protein attachments came from `py/martini_extract_vtf.py` using original HDF5 CGL indices after mode-2 output remapping.
   - Correct VTF extraction must remap original CGL indices to output atom indices before adding CGH direction-marker bonds; verified regenerated VTF has 282 `CGL-CGH` bonds and zero CGH bonds sourced from ions/protein.

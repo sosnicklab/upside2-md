@@ -215,11 +215,21 @@ static inline bool is_sc_env_interface_term_name(const std::string& name) {
            is_prefix("martini_sc_table_potential", name);
 }
 
+static inline bool is_cg_lipid_pair_term_name(const std::string& name) {
+    return is_prefix("cg_lipid_pair", name);
+}
+
+static inline bool is_cg_lipid_sc_term_name(const std::string& name) {
+    return is_prefix("cg_lipid_sc", name);
+}
+
 struct HybridProteinPotentialComponents {
     double upside_protein_potential = 0.0;
     double sc_env_interface_potential = 0.0;
     double bb_env_interface_potential = 0.0;
-    double total() const {
+    double cg_lipid_pair_potential = 0.0;
+    double cg_lipid_sc_potential = 0.0;
+    double protein_total() const {
         return upside_protein_potential + sc_env_interface_potential + bb_env_interface_potential;
     }
 };
@@ -232,6 +242,14 @@ static HybridProteinPotentialComponents compute_hybrid_protein_potential_compone
         double p = static_cast<double>(pot_node.potential);
         if(is_sc_env_interface_term_name(n.name)) {
             out.sc_env_interface_potential += p;
+            continue;
+        }
+        if(is_cg_lipid_pair_term_name(n.name)) {
+            out.cg_lipid_pair_potential += p;
+            continue;
+        }
+        if(is_cg_lipid_sc_term_name(n.name)) {
+            out.cg_lipid_sc_potential += p;
             continue;
         }
         if(is_dry_martini_term_name(n.name)) continue;
@@ -1184,7 +1202,7 @@ try {
                             if(sys.martini_hybrid_progress) {
                                 double rg = compute_protein_rg(sys);
                                 auto prot_components = compute_hybrid_protein_potential_components(sys.engine);
-                                double prot_potential = prot_components.total();
+                                double protein_potential = prot_components.protein_total();
                                 printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds",
                                        duration_print_width, display_elapsed,
                                        duration_print_width, display_duration_total,
@@ -1192,8 +1210,10 @@ try {
                                        get_n_hbond(sys.engine));
                                 if(rg >= 0.0) printf(" %5.1f Rg,", rg);
                                 else          printf("  N/A Rg,");
-                                printf(" prot_potential % .2f total_potential % .2f\n",
-                                       prot_potential,
+                                printf(" protein_potential % .2f cg_lipid_pair % .2f cg_lipid_sc % .2f total_potential % .2f\n",
+                                       protein_potential,
+                                       prot_components.cg_lipid_pair_potential,
+                                       prot_components.cg_lipid_sc_potential,
                                        sys.engine.potential);
                             } else {
                                 printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, potential % .2f\n",

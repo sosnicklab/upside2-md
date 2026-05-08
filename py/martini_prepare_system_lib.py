@@ -369,9 +369,20 @@ def _debug_cgl_partner_stats(
             partner_idx.size, cgl_idx.size, 3
         )
         dist = np.sqrt(np.sum(delta * delta, axis=2))
+        dist_flat = dist.reshape(-1)
         stats = {
             "partner_count": int(partner_idx.size),
             "min_distance_ang": float(np.min(dist)),
+            "cgl_count_within_ang": {
+                f"{radius:g}": int(np.count_nonzero(np.any(dist <= radius, axis=0)))
+                for radius in (6.0, 8.0, 10.0, 12.0, 14.0, 16.0)
+            },
+            "pair_annulus_counts_ang": {
+                f"{lo:g}-{hi:g}": int(np.count_nonzero((dist_flat >= lo) & (dist_flat < hi)))
+                for lo, hi in ((0.0, 10.0), (10.0, 15.0), (15.0, 20.0),
+                               (20.0, 25.0), (25.0, 30.0), (30.0, 40.0),
+                               (40.0, 55.0))
+            },
             "lj_pair_count": 0,
             "lj_sum_eup": None,
             "lj_max_eup": None,
@@ -407,6 +418,44 @@ def _debug_cgl_partner_stats(
                 })
         out[name] = stats
     return out
+
+
+def _debug_scalar_attr_value(value):
+    if isinstance(value, bytes):
+        return value.decode("ascii", errors="replace")
+    arr = np.asarray(value)
+    if arr.shape == ():
+        item = arr.item()
+        if isinstance(item, bytes):
+            return item.decode("ascii", errors="replace")
+        if isinstance(item, np.generic):
+            return item.item()
+        return item
+    return [
+        x.decode("ascii", errors="replace") if isinstance(x, bytes) else x.item() if isinstance(x, np.generic) else x
+        for x in arr.tolist()
+    ]
+
+
+def _debug_selected_attrs(group, attr_names):
+    out = {}
+    for attr_name in attr_names:
+        if attr_name in group.attrs:
+            out[attr_name] = _debug_scalar_attr_value(group.attrs[attr_name])
+    return out
+
+
+def _cg_lipid_sc_runtime_cutoff_ang(sc_attrs):
+    if "cutoff_ang" not in sc_attrs:
+        return None
+    cutoff_ang = float(sc_attrs["cutoff_ang"])
+    taper_width_ang = float(sc_attrs.get("taper_width_ang", sc_attrs.get("knot_spacing_ang", 0.0)))
+    if taper_width_ang <= 0.0:
+        return cutoff_ang
+    if "fit_r_max_nm" not in sc_attrs:
+        return cutoff_ang
+    fitted_support_ang = float(sc_attrs["fit_r_max_nm"]) * 10.0 + taper_width_ang
+    return min(cutoff_ang, fitted_support_ang)
 
 
 def write_stage_debug_outputs(up_file: Path, debug_dir: Path | None = None, prefix: str | None = None):
@@ -476,6 +525,24 @@ def write_stage_debug_outputs(up_file: Path, debug_dir: Path | None = None, pref
                     mpot["coefficient_indices"][:], dtype=np.int64
                 )
                 martini_coefficients = np.asarray(mpot["coefficients"][:], dtype=np.float64)
+
+        cg_lipid_sc_attrs = {}
+        if pot is not None and "cg_lipid_sc" in pot:
+            cg_lipid_sc_attrs = _debug_selected_attrs(
+                pot["cg_lipid_sc"],
+                (
+                    "schema",
+                    "radial_mode",
+                    "angle_convention",
+                    "fit_r_max_nm",
+                    "knot_spacing_ang",
+                    "cutoff_ang",
+                    "taper_width_ang",
+                    "n_modes",
+                    "n_radial",
+                    "n_angular",
+                ),
+            )
 
         orientation_pairs = np.zeros((0, 2), dtype=np.int32)
         orientation_lengths = np.zeros(0, dtype=np.float64)
@@ -643,6 +710,7 @@ def write_stage_debug_outputs(up_file: Path, debug_dir: Path | None = None, pref
         },
         "leaflet_stats": _debug_leaflet_stats(pos, atom_types, box_lengths),
         "cgl_partner_stats": cgl_partner_stats,
+        "cg_lipid_sc_attrs": cg_lipid_sc_attrs,
         "hidden_particle_types": {
             "CGLD": int(cgld_count),
         },
@@ -4385,6 +4453,7 @@ def inject_cg_lipid_nodes(
                             sc_types.append(type_idx)
                             sc_ids.append(res_idx)
 
+                    injected_cutoff_ang = None
                     if not sc_indices:
                         print("  cg_lipid_sc: no residues with CG↔SC table entries, skipping SC↔CG interaction")
                     else:
@@ -4400,11 +4469,17 @@ def inject_cg_lipid_nodes(
                         ])
                         for attr_name, attr_value in box_attrs.items():
                             cg_sc.attrs[attr_name] = attr_value
+                        if "schema" in sc_grp.attrs:
+                            cg_sc.attrs["schema"] = sc_grp.attrs["schema"]
                         cg_sc.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
                         cg_sc.attrs["radial_mode"] = sc_grp.attrs.get("radial_mode", "full_multimode")
-                        for attr_name in ("knot_spacing_ang", "cutoff_ang", "taper_width_ang"):
+                        for attr_name in ("knot_spacing_ang", "taper_width_ang", "fit_r_min_nm", "fit_r_max_nm"):
                             if attr_name in sc_grp.attrs:
                                 cg_sc.attrs[attr_name] = np.float32(sc_grp.attrs[attr_name])
+                        cutoff_ang = _cg_lipid_sc_runtime_cutoff_ang(sc_grp.attrs)
+                        if cutoff_ang is not None:
+                            cg_sc.attrs["cutoff_ang"] = np.float32(cutoff_ang)
+                            injected_cutoff_ang = float(cutoff_ang)
                         for attr_name in ("n_modes", "n_radial", "n_angular"):
                             if attr_name in sc_grp.attrs:
                                 cg_sc.attrs[attr_name] = np.int32(sc_grp.attrs[attr_name])
@@ -4428,7 +4503,13 @@ def inject_cg_lipid_nodes(
                         # so no SC↔CG pair is rejected by the id filter.
                         psi.create_dataset("id2", data=((np.arange(n_cg, dtype=np.int32) + 100000) << 4))
 
-                    print(f"  Injected cg_lipid_sc: {len(sc_indices)} SC × {n_cg} CG lipids")
+                    if injected_cutoff_ang is not None:
+                        print(
+                            f"  Injected cg_lipid_sc: {len(sc_indices)} SC × {n_cg} CG lipids, "
+                            f"cutoff={injected_cutoff_ang:.3f} Å"
+                        )
+                    else:
+                        print(f"  Injected cg_lipid_sc: {len(sc_indices)} SC × {n_cg} CG lipids")
                 else:
                     print("  cg_lipid_sc: no SC placement node found, skipping SC↔CG interaction")
 

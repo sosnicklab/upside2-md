@@ -1,4 +1,42 @@
 
+## 2026-05-07 1RKL CG-SC Range Stabilization
+
+### Project Goal
+- Stop the hybrid 1RKL protein collapse caused by nonphysical long-range CG lipid-sidechain attraction.
+- Keep the directional single-particle lipid model and protein/environment interface interactions enabled.
+- Make production logs distinguish protein stability from CG lipid energetic terms.
+
+### Architecture & Key Decisions
+- The DOPC-sidechain table is fitted only through `fit_r_max_nm=0.7` (`7.0 Å`), so runtime use must not extend the attractive fitted table to the old `16.8 Å` cutoff.
+- Use a compact physical support of `fit_r_max_nm * 10 + taper_width_ang`, which is `8.4 Å` with the current `1.4 Å` taper.
+- Keep the DOPC-DOPC `cg_lipid_pair` cutoff at its existing support; this fix is specific to `cg_lipid_sc`.
+- Add a stale-table guard during HDF5 stage injection so old `martini.h5` files with `cg_lipid_sc.cutoff_ang=16.8` are capped without requiring users to rebuild tables before debugging.
+- Update logging so `cg_lipid_pair` and `cg_lipid_sc` no longer inflate the reported protein potential.
+
+### Execution Phases
+- [x] Phase 1: Patch CG lipid-sidechain table generation and stale-table injection cutoff handling.
+- [x] Phase 2: Add debug summary visibility for the active `cg_lipid_sc` cutoff and CGL-protein radial density.
+- [x] Phase 3: Patch runtime log component accounting for protein, CGL-CGL, and CGL-SC potentials.
+- [x] Phase 4: Run syntax/build and focused stale-table/short-run validation.
+
+### Known Errors / Blockers
+- Existing 1RKL output uses `cg_lipid_sc.cutoff_ang=16.8` even though the fitted SC radial support is only `7.0 Å`, causing lipid particles to over-attract the protein and collapse it over time.
+- Current `prot_potential` logging includes `cg_lipid_pair` and `cg_lipid_sc`, obscuring whether the protein itself is destabilizing.
+
+### Review
+- Patched `py/martini_build_tables.py` so newly generated `cg_lipid_sc` tables store cutoff as fitted support plus taper (`8.4 Å` for current 1RKL/DOPC-sidechain settings), while leaving `cg_lipid_pair` unchanged.
+- Patched `py/martini_prepare_system_lib.py` so stale `martini.h5` files with `cg_lipid_sc.cutoff_ang=16.8` inject into stages with the capped `8.4 Å` runtime cutoff.
+- Added debug summary fields for active `cg_lipid_sc` attrs and CGL-near-protein distance counts.
+- Patched `src/main.cpp` hybrid progress logging to report `protein_potential`, `cg_lipid_pair`, and `cg_lipid_sc` separately.
+- Verification:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py py/martini_prepare_system.py` passed;
+  - `cmake --build obj --target upside` passed with pre-existing warnings only;
+  - stale-table injection test converted old table attrs `cutoff_ang=16.8`, `fit_r_max_nm=0.7`, `taper_width_ang=1.4` into injected `cutoff_ang=8.4`;
+  - generated stage debug JSON reports the injected `cg_lipid_sc` cutoff and protein-near CGL counts;
+  - 100-step smoke printed separated terms and started from `cg_lipid_sc=-3.65 E_up`;
+  - 10000-step temp validation kept protein Rg near `12.3-12.8 Å`, ending at `12.7 Å`; `cg_lipid_sc` ended near `-100.27 E_up` instead of the previous multi-thousand `E_up` collapse driver;
+  - `git diff --check` passed.
+
 ## 2026-05-07 1RKL VTF Ghost Mapping and CGL-Ion Startup Stability
 
 ### Project Goal
