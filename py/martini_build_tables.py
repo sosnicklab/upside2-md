@@ -1264,13 +1264,6 @@ def _fit_cg_lipid_quadspline(
     knot_spacing_ang: float = 1.4,
     residual_cap_kj_mol: float | None = 250.0,
     energy_cap_kj_mol: float | None = 500.0,
-    tail_cohesion_kj_mol: float = 500.0,
-    tail_cohesion_center_nm: float = 1.20,
-    tail_cohesion_width_nm: float = 0.25,
-    side_cohesion_kj_mol: float = 800.0,
-    side_cohesion_center_nm: float = 0.80,
-    side_cohesion_width_nm: float = 0.20,
-    side_cohesion_angle_width: float = 0.45,
     n_modes: int = 4,
     n_knot_radial: int = 14,
 ) -> dict:
@@ -1317,17 +1310,6 @@ def _fit_cg_lipid_quadspline(
                             dist_min_nm=dist_min_nm,
                         )
                 energy_grid[ir, ia1, ia2] = energy_sum / (azimuthal_count * azimuthal_count)
-
-    if tail_cohesion_kj_mol > 0.0:
-        tail_selector = 0.5 * (1.0 - cos_theta_grid)
-        radial_well = np.exp(
-            -0.5 * ((r_values - float(tail_cohesion_center_nm)) / float(tail_cohesion_width_nm)) ** 2
-        )
-        energy_grid += (
-            -float(tail_cohesion_kj_mol)
-            * radial_well[:, None, None]
-            * np.outer(tail_selector, tail_selector)[None, :, :]
-        )
 
     if energy_cap_kj_mol is not None and energy_cap_kj_mol > 0.0:
         fit_grid = np.clip(
@@ -1402,26 +1384,6 @@ def _fit_cg_lipid_quadspline(
         mode_ang2.append(ang2)
         mode_radial.append(vm)
 
-    if tail_cohesion_kj_mol > 0.0:
-        tail_selector = 0.5 * (1.0 - cos_theta_grid)
-        radial_well = np.exp(
-            -0.5 * ((r_values - float(tail_cohesion_center_nm)) / float(tail_cohesion_width_nm)) ** 2
-        )
-        mode_ang1.append(tail_selector.copy())
-        mode_ang2.append(tail_selector.copy())
-        mode_radial.append(-float(tail_cohesion_kj_mol) * radial_well)
-
-    if side_cohesion_kj_mol > 0.0:
-        side_selector = np.exp(
-            -0.5 * (cos_theta_grid / max(float(side_cohesion_angle_width), 1e-6)) ** 2
-        )
-        radial_well = np.exp(
-            -0.5 * ((r_values - float(side_cohesion_center_nm)) / float(side_cohesion_width_nm)) ** 2
-        )
-        mode_ang1.append(side_selector.copy())
-        mode_ang2.append(side_selector.copy())
-        mode_radial.append(-float(side_cohesion_kj_mol) * radial_well)
-
     recon = v_radial[:, None, None]
     for ang1, ang2, vm in zip(mode_ang1, mode_ang2, mode_radial):
         recon = recon + np.outer(ang1, ang2)[None, :, :] * vm[:, None, None]
@@ -1466,13 +1428,6 @@ def _fit_cg_lipid_quadspline(
         "v_radial_raw": v_radial,
         "residual_cap_kj_mol": residual_cap_kj_mol,
         "energy_cap_kj_mol": energy_cap_kj_mol,
-        "tail_cohesion_kj_mol": tail_cohesion_kj_mol,
-        "tail_cohesion_center_nm": tail_cohesion_center_nm,
-        "tail_cohesion_width_nm": tail_cohesion_width_nm,
-        "side_cohesion_kj_mol": side_cohesion_kj_mol,
-        "side_cohesion_center_nm": side_cohesion_center_nm,
-        "side_cohesion_width_nm": side_cohesion_width_nm,
-        "side_cohesion_angle_width": side_cohesion_angle_width,
         "ang1_raw": np.asarray(mode_ang1),
         "ang2_raw": np.asarray(mode_ang2),
         "v_angular_raw": np.asarray(mode_radial),
@@ -2176,31 +2131,12 @@ def _build_cg_lipid_tables(
         dist_min_nm=0.25,
         knot_spacing_ang=1.4,
         residual_cap_kj_mol=250.0,
-        tail_cohesion_kj_mol=float(os.environ.get("UPSIDE_CG_LIPID_TAIL_COHESION_KJ_MOL", "1000.0")),
-        tail_cohesion_center_nm=float(os.environ.get("UPSIDE_CG_LIPID_TAIL_COHESION_CENTER_NM", "1.20")),
-        tail_cohesion_width_nm=float(os.environ.get("UPSIDE_CG_LIPID_TAIL_COHESION_WIDTH_NM", "0.25")),
-        side_cohesion_kj_mol=float(os.environ.get("UPSIDE_CG_LIPID_SIDE_COHESION_KJ_MOL", "800.0")),
-        side_cohesion_center_nm=float(os.environ.get("UPSIDE_CG_LIPID_SIDE_COHESION_CENTER_NM", "0.80")),
-        side_cohesion_width_nm=float(os.environ.get("UPSIDE_CG_LIPID_SIDE_COHESION_WIDTH_NM", "0.20")),
-        side_cohesion_angle_width=float(os.environ.get("UPSIDE_CG_LIPID_SIDE_COHESION_ANGLE_WIDTH", "0.45")),
         n_modes=4,
         n_knot_radial=14,
     )
     print(f"  CG↔CG: RMS error = {result_cg['rms_error']:.4f} kJ/mol, "
           f"modes = {result_cg['n_modes']}, "
           f"max|V0| = {float(np.max(np.abs(result_cg['v_radial_raw']))):.3f} kJ/mol")
-    print(
-        "  CG↔CG tail cohesion: "
-        f"depth={result_cg['tail_cohesion_kj_mol']:.3f} kJ/mol, "
-        f"center={result_cg['tail_cohesion_center_nm']:.3f} nm, "
-        f"width={result_cg['tail_cohesion_width_nm']:.3f} nm"
-    )
-    print(
-        "  CG↔CG side cohesion: "
-        f"depth={result_cg['side_cohesion_kj_mol']:.3f} kJ/mol, "
-        f"center={result_cg['side_cohesion_center_nm']:.3f} nm, "
-        f"width={result_cg['side_cohesion_width_nm']:.3f} nm"
-    )
     cg_pair_scale = float(os.environ.get("UPSIDE_CG_LIPID_PAIR_SCALE", "0.02"))
     print(f"  CG↔CG table scale kappa = {cg_pair_scale:.6g}")
 
@@ -2303,13 +2239,6 @@ def _build_cg_lipid_tables(
     cg_pair_grp.attrs["taper_width_ang"] = np.float32(result_cg["knot_spacing_ang"])
     cg_pair_grp.attrs["residual_cap_kj_mol"] = np.float32(result_cg["residual_cap_kj_mol"])
     cg_pair_grp.attrs["energy_cap_kj_mol"] = np.float32(result_cg["energy_cap_kj_mol"])
-    cg_pair_grp.attrs["tail_cohesion_kj_mol"] = np.float32(result_cg["tail_cohesion_kj_mol"])
-    cg_pair_grp.attrs["tail_cohesion_center_nm"] = np.float32(result_cg["tail_cohesion_center_nm"])
-    cg_pair_grp.attrs["tail_cohesion_width_nm"] = np.float32(result_cg["tail_cohesion_width_nm"])
-    cg_pair_grp.attrs["side_cohesion_kj_mol"] = np.float32(result_cg["side_cohesion_kj_mol"])
-    cg_pair_grp.attrs["side_cohesion_center_nm"] = np.float32(result_cg["side_cohesion_center_nm"])
-    cg_pair_grp.attrs["side_cohesion_width_nm"] = np.float32(result_cg["side_cohesion_width_nm"])
-    cg_pair_grp.attrs["side_cohesion_angle_width"] = np.float32(result_cg["side_cohesion_angle_width"])
     cg_pair_grp.create_dataset("v0_raw_kj_mol", data=result_cg["v_radial_raw"].astype(np.float32))
     cg_pair_grp.create_dataset("mode_radial_raw_kj_mol", data=result_cg["v_angular_raw"].astype(np.float32))
 
