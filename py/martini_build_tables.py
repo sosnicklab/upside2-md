@@ -1631,7 +1631,7 @@ def _fit_cg_lipid_sc_quadspline(
     for ang1, ang2, vm in zip(mode_ang1, mode_ang2, mode_radial):
         ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01)
         ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01)
-        vm_knots = _fit_radial_bspline(t_radial_ang, vm, rad_knot_vector, smooth=0.01) * inv_conv
+        vm_knots = _fit_radial_bspline(t_radial_ang, vm, rad_knot_vector, smooth=1.0) * inv_conv
         ang1_knots_all.append(ang1_knots)
         ang2_knots_all.append(ang2_knots)
         vm_knots_all.append(vm_knots)
