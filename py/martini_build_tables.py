@@ -1410,7 +1410,7 @@ def _fit_cg_lipid_quadspline(
     for ang1, ang2, vm in zip(mode_ang1, mode_ang2, mode_radial):
         ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01)
         ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01)
-        vm_knots = _fit_radial_bspline(t_radial_ang, vm, rad_knot_vector, smooth=1.0) * inv_conv
+        vm_knots = _fit_radial_bspline(t_radial_ang, vm, rad_knot_vector, smooth=0.01) * inv_conv
         ang1_knots_all.append(ang1_knots)
         ang2_knots_all.append(ang2_knots)
         vm_knots_all.append(vm_knots)
@@ -1631,7 +1631,7 @@ def _fit_cg_lipid_sc_quadspline(
     for ang1, ang2, vm in zip(mode_ang1, mode_ang2, mode_radial):
         ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01)
         ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01)
-        vm_knots = _fit_radial_bspline(t_radial_ang, vm, rad_knot_vector, smooth=1.0) * inv_conv
+        vm_knots = _fit_radial_bspline(t_radial_ang, vm, rad_knot_vector, smooth=0.01) * inv_conv
         ang1_knots_all.append(ang1_knots)
         ang2_knots_all.append(ang2_knots)
         vm_knots_all.append(vm_knots)
@@ -2115,8 +2115,9 @@ def _build_cg_lipid_tables(
           f"SC: {_sc_r}r×{_sc_ct}²θ×{_sc_az}²φ)")
 
     # CG ↔ CG quadspline. Keep the particles table as the isotropic core and
-    # fit only the residual directional correction; do not relax CG-CG samples.
-    relax_steps = 0
+    # fit only the residual directional correction; moderate bead relaxation
+    # to soften unphysical rigid-body overlaps while preserving repulsive core.
+    relax_steps = 50
     result_cg = _fit_cg_lipid_quadspline(
         ref_bead_positions_nm=ref_nm,
         bead_types=bead_types,
@@ -2137,7 +2138,7 @@ def _build_cg_lipid_tables(
     print(f"  CG↔CG: RMS error = {result_cg['rms_error']:.4f} kJ/mol, "
           f"modes = {result_cg['n_modes']}, "
           f"max|V0| = {float(np.max(np.abs(result_cg['v_radial_raw']))):.3f} kJ/mol")
-    cg_pair_scale = float(os.environ.get("UPSIDE_CG_LIPID_PAIR_SCALE", "0.02"))
+    cg_pair_scale = float(os.environ.get("UPSIDE_CG_LIPID_PAIR_SCALE", "1.0"))
     print(f"  CG↔CG table scale kappa = {cg_pair_scale:.6g}")
 
     # CG ↔ SC quadspline
