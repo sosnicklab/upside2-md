@@ -730,9 +730,145 @@ void OrientationSpring::compute_value(ComputeMode mode) {
 }
 
 // ===================================================================
+// CGLipidIsotropicPotential — isotropic radial B-spline for CGL ↔ other types
+// ===================================================================
+// Handles CGL interactions with water, ions, backbone, and env beads.
+// V0-only (n_modes=0): pure radial B-spline, no angular dependence.
+struct CGLipidIsotropicPotential : public PotentialNode {
+    CoordNode& cg_pos;
+    CoordNode& tgt_pos;
+    vector<float> interaction_param;
+    vector<int> index1;
+    vector<int> type1;
+    vector<int> id1;
+    vector<int> index2;
+    vector<int> type2;
+    vector<int> id2;
+    int n_type1;
+    int n_type2;
+    int n_param;
+    int n_modes;
+    int n_radial;
+    float knot_spacing;
+    float cutoff;
+
+    CGLipidIsotropicPotential(hid_t grp, CoordNode& cg_pos_, CoordNode& tgt_pos_);
+    virtual void compute_value(ComputeMode mode) override;
+    virtual void propagate_deriv() override;
+    virtual void set_param(const vector<float>& new_param) override {
+        if(new_param.size() == interaction_param.size()) interaction_param = new_param;
+    }
+};
+
+CGLipidIsotropicPotential::CGLipidIsotropicPotential(
+        hid_t grp, CoordNode& cg_pos_, CoordNode& tgt_pos_)
+    : PotentialNode()
+    , cg_pos(cg_pos_)
+    , tgt_pos(tgt_pos_)
+    , n_type1(0)
+    , n_type2(0)
+    , n_param(0)
+    , n_modes(read_attribute<int>(grp, ".", "n_modes", 0))
+    , n_radial(read_attribute<int>(grp, ".", "n_radial", 14))
+    , knot_spacing(read_attribute<float>(grp, ".", "knot_spacing_ang", 1.4f))
+    , cutoff(read_attribute<float>(grp, ".", "cutoff_ang",
+                float(n_radial - 2) * 1.4f))
+{
+    check_elem_width(cg_pos, 6);
+    // tgt_pos may be 3D (water, ions) or 6D (backbone) — only positions used.
+
+    H5Obj pi_obj = open_group(grp, "pair_interaction");
+    hid_t pi = pi_obj.get();
+    interaction_param = read_param_dataset_any(pi, n_type1, n_type2, n_param);
+    index1 = read_int_dataset(pi, "index1");
+    type1 = read_int_dataset(pi, "type1");
+    id1 = read_int_dataset(pi, "id1");
+    index2 = read_int_dataset(pi, "index2");
+    type2 = read_int_dataset(pi, "type2");
+    id2 = read_int_dataset(pi, "id2");
+    if(index1.size() != type1.size() || index1.size() != id1.size())
+        throw string("cg_lipid_isotropic source1 index/type/id size mismatch");
+    if(index2.size() != type2.size() || index2.size() != id2.size())
+        throw string("cg_lipid_isotropic source2 index/type/id size mismatch");
+}
+
+void CGLipidIsotropicPotential::compute_value(ComputeMode mode) {
+    (void)mode;
+    VecArray cg = cg_pos.output;
+    VecArray tgt = tgt_pos.output;
+    float total = 0.f;
+
+    for(size_t ai = 0; ai < index1.size(); ++ai) {
+        for(size_t bi = 0; bi < index2.size(); ++bi) {
+            if((id1[ai] >> 4) == (id2[bi] >> 4)) continue;
+            int t1 = type1[ai];
+            int t2 = type2[bi];
+            if(t1 < 0 || t1 >= n_type1 || t2 < 0 || t2 >= n_type2) continue;
+
+            float dx = tgt(0, index2[bi]) - cg(0, index1[ai]);
+            float dy = tgt(1, index2[bi]) - cg(1, index1[ai]);
+            float dz = tgt(2, index2[bi]) - cg(2, index1[ai]);
+            float r2 = dx*dx + dy*dy + dz*dz;
+            if(r2 <= 1e-12f) continue;
+            float r = sqrtf(r2);
+            if(r >= cutoff) continue;
+
+            float t = r / knot_spacing;
+            Vec<2> v0 = clamped_deBoor_value_and_deriv(
+                param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                t, n_radial);
+            total += v0.x();
+        }
+    }
+    potential = total;
+}
+
+void CGLipidIsotropicPotential::propagate_deriv() {
+    VecArray cg = cg_pos.output;
+    VecArray cg_sens = cg_pos.sens;
+    VecArray tgt = tgt_pos.output;
+    VecArray tgt_sens = tgt_pos.sens;
+
+    for(size_t ai = 0; ai < index1.size(); ++ai) {
+        for(size_t bi = 0; bi < index2.size(); ++bi) {
+            if((id1[ai] >> 4) == (id2[bi] >> 4)) continue;
+            int t1 = type1[ai];
+            int t2 = type2[bi];
+            if(t1 < 0 || t1 >= n_type1 || t2 < 0 || t2 >= n_type2) continue;
+
+            float dx = tgt(0, index2[bi]) - cg(0, index1[ai]);
+            float dy = tgt(1, index2[bi]) - cg(1, index1[ai]);
+            float dz = tgt(2, index2[bi]) - cg(2, index1[ai]);
+            float r2 = dx*dx + dy*dy + dz*dz;
+            if(r2 <= 1e-12f) continue;
+            float r = sqrtf(r2);
+            if(r >= cutoff) continue;
+
+            float t = r / knot_spacing;
+            Vec<2> v0 = clamped_deBoor_value_and_deriv(
+                param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                t, n_radial);
+            float d_dr = v0.y() / knot_spacing;
+            float inv_r = 1.f / r;
+            float fx = d_dr * dx * inv_r;
+            float fy = d_dr * dy * inv_r;
+            float fz = d_dr * dz * inv_r;
+
+            cg_sens(0, index1[ai]) -= fx;
+            cg_sens(1, index1[ai]) -= fy;
+            cg_sens(2, index1[ai]) -= fz;
+            tgt_sens(0, index2[bi]) += fx;
+            tgt_sens(1, index2[bi]) += fy;
+            tgt_sens(2, index2[bi]) += fz;
+        }
+    }
+}
+
+// ===================================================================
 // Node registration
 // ===================================================================
 static RegisterNodeType<ComposeVector6D, 1> _reg_cv("compose_vector6d");
 static RegisterNodeType<CGLipidPairPotential, 1> _reg_cg_pair("cg_lipid_pair");
 static RegisterNodeType<CGLipidSCPotential, 2> _reg_cg_sc("cg_lipid_sc");
 static RegisterNodeType<OrientationSpring, 1> _reg_orient("cg_lipid_orientation_spring");
+static RegisterNodeType<CGLipidIsotropicPotential, 2> _reg_cg_iso("cg_lipid_isotropic");

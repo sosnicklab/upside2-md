@@ -3043,11 +3043,13 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     e = eff["epsilon_kj_mol"]
                     martini_table[("CGL", tgt_type)] = (s, e)
                     martini_table[(tgt_type, "CGL")] = (s, e)
-            # CGL↔CGL is represented by the full directional cg_lipid_pair node.
-            # CGL↔SC is represented by the full directional cg_lipid_sc node.
-            # Zero both in the particles table — the quadsplines are the sole
-            # interaction; an isotropic MartiniPotential on top would double-count.
+            # CGL↔CGL → directional cg_lipid_pair quadspline
+            # CGL↔SC  → directional cg_lipid_sc quadspline
+            # CGL↔X   → isotropic radial B-spline (cg_lipid_isotropic)
+            # Zero all MartiniPotential CGL↔* entries — every interaction is
+            # supplied by a spline table; MartiniPotential would double-count.
             n_sc_zeroed = 0
+            n_iso_zeroed = 0
             if martini_h5_path.exists():
                 with h5py.File(martini_h5_path, "r") as _mh5:
                     cglt = _mh5.get("cg_lipid_table")
@@ -3060,10 +3062,18 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                                     martini_table[("CGL", bt)] = (0.0, 0.0)
                                     martini_table[(bt, "CGL")] = (0.0, 0.0)
                                     n_sc_zeroed += 1
+                        iso_grp = cglt.get("cg_lipid_isotropic")
+                        if iso_grp is not None and "target_order" in iso_grp:
+                            for bt_bytes in iso_grp["target_order"][:]:
+                                bt = bt_bytes.decode("ascii") if isinstance(bt_bytes, bytes) else str(bt_bytes)
+                                if ("CGL", bt) in martini_table:
+                                    martini_table[("CGL", bt)] = (0.0, 0.0)
+                                    martini_table[(bt, "CGL")] = (0.0, 0.0)
+                                    n_iso_zeroed += 1
             martini_table[("CGL", "CGL")] = (0.0, 0.0)
-            n_types = len([k for k in martini_table if k[0] == "CGL"])
-            print(f"Extended martini_table with CGL entries for {n_types} target types "
-                  f"(CGL↔CGL and CGL↔SC({n_sc_zeroed} types) supplied by quadsplines)")
+            print(f"Extended martini_table with CGL entries, "
+                  f"zeroed CGL↔CGL and CGL↔SC({n_sc_zeroed} types) "
+                  f"and CGL↔isotropic({n_iso_zeroed} types) — all handled by splines")
         if n_cg_lipids > 0:
             all_martini_types = set()
             for t1, t2 in martini_table.keys():
@@ -4544,6 +4554,80 @@ def inject_cg_lipid_nodes(
                         print(f"  Injected cg_lipid_sc: {len(sc_indices)} SC × {n_cg} CG lipids")
                 else:
                     print("  cg_lipid_sc: no SC placement node found, skipping SC↔CG interaction")
+
+            # --- cg_lipid_isotropic: isotropic radial B-spline for CGL ↔ other types ---
+            # Pairs CGL particles with water, ions, and env particles (placement_identity).
+            with h5py.File(martini_h5, "r") as mh5:
+                cglt = mh5.get("cg_lipid_table")
+                if cglt is not None and "cg_lipid_isotropic" in cglt:
+                    iso_grp = cglt["cg_lipid_isotropic"]
+                    iso_target_order = [
+                        t.decode("ascii") if isinstance(t, bytes) else str(t)
+                        for t in iso_grp["target_order"][:]
+                    ]
+                    # Type names → type indices come from the martini.h5 particles table
+                    pt_type_order = [
+                        x.decode("ascii") if isinstance(x, bytes) else str(x)
+                        for x in mh5["particles/type_order"][:]
+                    ]
+                    tgt_name_to_idx = {n: i for i, n in enumerate(pt_type_order)}
+                    iso_tgt_indices = {tgt_name_to_idx[t] for t in iso_target_order
+                                       if t in tgt_name_to_idx}
+
+                    # Find particles in placement_identity matching target types
+                    with h5py.File(up_file, "r") as up_r:
+                        ident_grp = up_r["input/potential"].get("placement_identity")
+                        if ident_grp is not None:
+                            ident_types = ident_grp["type"][:].astype(np.int32)
+                            ident_ids = ident_grp["id"][:].astype(np.int32)
+
+                            iso_idx2 = []
+                            iso_type2 = []
+                            iso_id2 = []
+                            for idx in range(len(ident_types)):
+                                if int(ident_types[idx]) in iso_tgt_indices:
+                                    iso_idx2.append(idx)
+                                    iso_type2.append(int(ident_types[idx]))
+                                    iso_id2.append(int(ident_ids[idx]))
+
+                            n_cg_lipids = up_r["input/potential/compose_vector6d/elem_index"].shape[0]
+
+                            if iso_idx2:
+                                iso_node = pot.create_group("cg_lipid_isotropic")
+                                iso_node.attrs["initialized"] = True
+                                iso_node.attrs["arguments"] = np.array([
+                                    b"compose_vector6d",
+                                    b"placement_identity",
+                                ])
+                                for attr_name, attr_value in box_attrs.items():
+                                    iso_node.attrs[attr_name] = attr_value
+                                for attr_name in ("n_modes", "n_radial", "n_angular",
+                                                   "knot_spacing_ang", "cutoff_ang"):
+                                    if attr_name in iso_grp.attrs:
+                                        val = iso_grp.attrs[attr_name]
+                                        iso_node.attrs[attr_name] = np.int32(val) \
+                                            if attr_name.startswith("n_") else np.float32(val)
+
+                                iso_pi = iso_node.create_group("pair_interaction")
+                                iso_pi.create_dataset(
+                                    "interaction_param",
+                                    data=iso_grp["interaction_param"][:].astype(np.float32),
+                                )
+                                # Source1: CGL particles
+                                iso_pi.create_dataset("index1", data=np.arange(n_cg_lipids, dtype=np.int32))
+                                iso_pi.create_dataset("type1", data=np.zeros(n_cg_lipids, dtype=np.int32))
+                                iso_pi.create_dataset("id1", data=((np.arange(n_cg_lipids, dtype=np.int32) + 200000) << 4))
+                                # Source2: matched identity particles
+                                iso_pi.create_dataset("index2", data=np.array(iso_idx2, dtype=np.int32))
+                                iso_pi.create_dataset("type2", data=np.array(iso_type2, dtype=np.int32))
+                                iso_pi.create_dataset("id2", data=np.array(iso_id2, dtype=np.int32))
+
+                                print(f"  Injected cg_lipid_isotropic: {n_cg_lipids} CGL × {len(iso_idx2)} "
+                                      f"other particles ({len(iso_target_order)} target types)")
+                            else:
+                                print("  cg_lipid_isotropic: no matching identity particles, skipping")
+                        else:
+                            print("  cg_lipid_isotropic: no placement_identity node, skipping")
 
 
 def inject_stage7_sc_table_nodes(

@@ -2228,7 +2228,7 @@ def _build_cg_lipid_tables(
     cg_pair_grp.attrs["schema"] = "cg_lipid_quadspline_v3"
     cg_pair_grp.attrs["radial_mode"] = "full_multimode"
     cg_pair_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
-    cg_pair_grp.attrs["fit_relax_steps"] = np.int32(0)
+    cg_pair_grp.attrs["fit_relax_steps"] = np.int32(relax_steps)
     cg_pair_grp.attrs["fit_r_min_nm"] = np.float32(0.70)
     cg_pair_grp.attrs["fit_r_max_nm"] = np.float32(1.68)
     cg_pair_grp.attrs["n_modes"] = np.int32(result_cg["n_modes"])
@@ -2316,6 +2316,98 @@ def _build_cg_lipid_tables(
     eff_grp.create_dataset("epsilon_kj_mol", data=eff_epsilons)
     eff_grp.create_dataset("uncapped_sigma_nm", data=eff_uncapped_sigmas)
     eff_grp.attrs["max_effective_sigma_nm"] = np.float32(_cgl_effective_lj_sigma_cap_nm())
+
+    # Build isotropic radial B-spline tables for CGL ↔ all other types
+    # (water, ions, BB, env — everything not already covered by a quadspline).
+    # After this, MartiniPotential CGL↔X can be zeroed for ALL X.
+    _build_cgl_isotropic_table(
+        h5, cg_grp, effective_lj,
+        sc_bead_types=set(sc_bead_types) if sc_residue_names else set(),
+    )
+    print()
+
+
+def _build_cgl_isotropic_table(
+    h5: h5py.File,
+    cg_grp: h5py.Group,
+    effective_lj: dict,
+    sc_bead_types: set = None,
+    energy_conv: float = ENERGY_CONVERSION_KJ_PER_EUP,
+    length_conv: float = LENGTH_CONVERSION_A_PER_NM,
+    n_knot_radial: int = 14,
+    knot_spacing_ang: float = 1.4,
+) -> None:
+    """Build isotropic radial B-spline tables (V0 only, no angular modes).
+
+    Covers every target type not already handled by a dedicated quadspline
+    (i.e. not CGL itself and not SC bead types).
+    """
+    if sc_bead_types is None:
+        sc_bead_types = set()
+
+    # Filter: keep types that have no dedicated quadspline.
+    target_types = sorted(
+        t for t in effective_lj
+        if t != "CGL" and t not in sc_bead_types
+    )
+    if not target_types:
+        print("  cg_lipid_isotropic: no remaining target types, skipping")
+        return
+
+    n_types = len(target_types)
+    n_param = n_knot_radial
+
+    interaction_param = np.zeros((n_types, 1, n_param), dtype=np.float64)
+
+    rad_knot_vector = np.zeros(n_knot_radial + 4, dtype=np.float64)
+    rad_knot_vector[4:-4] = np.arange(1, n_knot_radial - 3, dtype=np.float64)
+    rad_knot_vector[-4:] = rad_knot_vector[-5]
+
+    # Sample densely for an accurate B-spline fit.
+    r_min_ang = float(knot_spacing_ang) + 0.1
+    r_max_ang = float((n_knot_radial - 2) * knot_spacing_ang)
+    n_sample = 200
+    r_sample_ang = np.linspace(r_min_ang, r_max_ang, n_sample)
+    t_sample = r_sample_ang / knot_spacing_ang
+
+    for ti, tgt_type in enumerate(target_types):
+        eff = effective_lj[tgt_type]
+        eps_eup = float(eff["epsilon_kj_mol"]) / energy_conv
+        sig_ang = float(eff["sigma_nm"]) * length_conv
+
+        y = np.zeros(n_sample, dtype=np.float64)
+        if eps_eup != 0.0 and sig_ang != 0.0:
+            for i, r in enumerate(r_sample_ang):
+                sr = sig_ang / max(r, 0.1 * sig_ang)
+                sr6 = sr * sr * sr * sr * sr * sr
+                y[i] = 4.0 * eps_eup * (sr6 * sr6 - sr6)
+
+        control = _fit_radial_bspline(t_sample, y, rad_knot_vector, smooth=0.01)
+        interaction_param[ti, 0, :] = control
+
+    iso_grp = cg_grp.create_group("cg_lipid_isotropic")
+    iso_grp.create_dataset(
+        "interaction_param",
+        data=interaction_param.astype(np.float32),
+    )
+    iso_grp.create_dataset(
+        "target_order",
+        data=np.asarray([np.bytes_(x) for x in target_types], dtype="S8"),
+    )
+    iso_grp.attrs["n_target_types"] = np.int32(n_types)
+    iso_grp.attrs["n_cg_types"] = np.int32(1)
+    iso_grp.attrs["schema"] = "cg_lipid_isotropic_v1"
+    iso_grp.attrs["n_modes"] = np.int32(0)
+    iso_grp.attrs["n_radial"] = np.int32(n_knot_radial)
+    iso_grp.attrs["n_angular"] = np.int32(15)
+    iso_grp.attrs["knot_spacing_ang"] = np.float32(knot_spacing_ang)
+    cutoff_ang = float((n_knot_radial - 2) * knot_spacing_ang)
+    iso_grp.attrs["cutoff_ang"] = np.float32(cutoff_ang)
+
+    print(f"  cg_lipid_isotropic: {n_types} target types, "
+          f"{n_knot_radial} radial knots, cutoff={cutoff_ang:.1f} Å")
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
