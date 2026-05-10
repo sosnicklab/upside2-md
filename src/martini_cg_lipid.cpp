@@ -688,8 +688,51 @@ void CGLipidSCPotential::propagate_deriv() {
 }
 
 // ===================================================================
+// OrientationSpring — penalizes angular deviation from reference direction
+// ===================================================================
+struct OrientationSpring : public PotentialNode {
+    CoordNode& cg_pos;
+    int n_elem;
+    vector<float> ref_dir;
+    float k_orient;
+
+    OrientationSpring(hid_t grp, CoordNode& cg_pos_);
+    virtual void compute_value(ComputeMode mode) override;
+};
+
+OrientationSpring::OrientationSpring(hid_t grp, CoordNode& cg_pos_)
+    : PotentialNode()
+    , cg_pos(cg_pos_)
+    , n_elem(get_dset_size(2, grp, "ref_dir")[0])
+    , ref_dir(n_elem * 3)
+    , k_orient(read_attribute<float>(grp, ".", "k_orient", 0.f))
+{
+    check_elem_width(cg_pos, 6);
+    traverse_dset<2, float>(grp, "ref_dir", [&](size_t i, size_t d, float v) {
+        ref_dir[i * 3 + d] = v;
+    });
+}
+
+void OrientationSpring::compute_value(ComputeMode mode) {
+    float* pot = (mode == PotentialAndDerivMode) ? &potential : nullptr;
+    if(pot) *pot = 0.f;
+
+    for(int i = 0; i < n_elem; ++i) {
+        float n[3] = {cg_pos.output(3,i), cg_pos.output(4,i), cg_pos.output(5,i)};
+        float nr[3] = {ref_dir[i*3], ref_dir[i*3+1], ref_dir[i*3+2]};
+        float dot = n[0]*nr[0] + n[1]*nr[1] + n[2]*nr[2];
+        if(pot) *pot += k_orient * (1.f - dot);
+        // dE/dn = -k_orient * n_ref  (energy does not depend on position)
+        cg_pos.sens(3,i) += -k_orient * nr[0];
+        cg_pos.sens(4,i) += -k_orient * nr[1];
+        cg_pos.sens(5,i) += -k_orient * nr[2];
+    }
+}
+
+// ===================================================================
 // Node registration
 // ===================================================================
 static RegisterNodeType<ComposeVector6D, 1> _reg_cv("compose_vector6d");
 static RegisterNodeType<CGLipidPairPotential, 1> _reg_cg_pair("cg_lipid_pair");
 static RegisterNodeType<CGLipidSCPotential, 2> _reg_cg_sc("cg_lipid_sc");
+static RegisterNodeType<OrientationSpring, 1> _reg_orient("cg_lipid_orientation_spring");

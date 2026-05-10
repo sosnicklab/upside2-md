@@ -4413,6 +4413,24 @@ def inject_cg_lipid_nodes(
                 n_param = int(pair_grp["interaction_param"].shape[-1])
                 print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1×1×{n_param} params")
 
+            # Orientation spring: penalize angular deviation of CGL direction
+            # from its initial reference. The single harmonic bond between CGL
+            # and CGLD provides only quartic angular stiffness (∝ dθ⁴), allowing
+            # free wobbling at small angles. This spring adds genuine quadratic
+            # stiffness: E = k * (1 − n·n_ref) ≈ ½k·θ² for small θ.
+            orient_k = float(os.environ.get("UPSIDE_CG_LIPID_ORIENT_SPRING_K", "50.0"))
+            if orient_k > 0.0:
+                with h5py.File(up_file, "r") as up_r:
+                    compose_grp = up_r["input/potential/compose_vector6d"]
+                    ref_dir = compose_grp["direction"][:].astype(np.float32)
+                orient_grp = pot.create_group("cg_lipid_orientation_spring")
+                orient_grp.attrs["initialized"] = True
+                orient_grp.attrs["arguments"] = np.array([b"compose_vector6d"])
+                orient_grp.attrs["k_orient"] = np.float32(orient_k)
+                orient_grp.create_dataset("ref_dir", data=ref_dir)
+                print(f"  Injected cg_lipid_orientation_spring: k={orient_k:.1f} E_up, "
+                      f"{ref_dir.shape[0]} directions")
+
             if has_sc:
                 # Check for SC placement node before creating cg_lipid_sc node
                 with h5py.File(up_file, "r") as up_r:
