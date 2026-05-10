@@ -3044,12 +3044,26 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     martini_table[("CGL", tgt_type)] = (s, e)
                     martini_table[(tgt_type, "CGL")] = (s, e)
             # CGL↔CGL is represented by the full directional cg_lipid_pair node.
-            # Keep the particles-table interaction at zero to avoid double
-            # counting and the unstable large isotropic CGL-CGL core.
+            # CGL↔SC is represented by the full directional cg_lipid_sc node.
+            # Zero both in the particles table — the quadsplines are the sole
+            # interaction; an isotropic MartiniPotential on top would double-count.
+            n_sc_zeroed = 0
+            if martini_h5_path.exists():
+                with h5py.File(martini_h5_path, "r") as _mh5:
+                    cglt = _mh5.get("cg_lipid_table")
+                    if cglt is not None:
+                        sc_grp = cglt.get("cg_lipid_sc")
+                        if sc_grp is not None and "sc_bead_types" in sc_grp:
+                            for bt_bytes in sc_grp["sc_bead_types"][:]:
+                                bt = bt_bytes.decode("ascii") if isinstance(bt_bytes, bytes) else str(bt_bytes)
+                                if ("CGL", bt) in martini_table:
+                                    martini_table[("CGL", bt)] = (0.0, 0.0)
+                                    martini_table[(bt, "CGL")] = (0.0, 0.0)
+                                    n_sc_zeroed += 1
             martini_table[("CGL", "CGL")] = (0.0, 0.0)
             n_types = len([k for k in martini_table if k[0] == "CGL"])
             print(f"Extended martini_table with CGL entries for {n_types} target types "
-                  f"(CGL↔CGL supplied by cg_lipid_pair)")
+                  f"(CGL↔CGL and CGL↔SC({n_sc_zeroed} types) supplied by quadsplines)")
         if n_cg_lipids > 0:
             all_martini_types = set()
             for t1, t2 in martini_table.keys():

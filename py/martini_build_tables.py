@@ -2271,6 +2271,18 @@ def _build_cg_lipid_tables(
     cg_sc_grp.attrs["residual_cap_kj_mol"] = np.float32(250.0)
     cg_sc_grp.attrs["energy_cap_kj_mol"] = np.float32(500.0)
 
+    # Store the SC bead type names covered by this quadspline so that
+    # convert_stage() can zero the corresponding MartiniPotential entries.
+    if sc_residue_names:
+        sc_bead_types_set: set = set()
+        for r in sc_residue_names:
+            sc_bead_types_set.update(str(bt) for bt in residue_map.get(r, []))
+        sc_bead_types = sorted(sc_bead_types_set)
+        cg_sc_grp.create_dataset(
+            "sc_bead_types",
+            data=np.asarray([np.bytes_(x) for x in sc_bead_types], dtype="S8"),
+        )
+
     print(
         f"  Stored: CG↔CG (1×1×{pair_param.size}), "
         f"CG↔SC ({n_sc_types}×1×{interaction_param_sc.shape[-1]}) in {h5.filename}"
