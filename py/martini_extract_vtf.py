@@ -250,14 +250,15 @@ def write_vtf_frame(fh, pos):
         fh.write(f"{x:.3f} {y:.3f} {z:.3f}\n")
 
 
-def build_cg_lipid_ghost_info(struct_h5, ghost_scale=5.0):
-    """Read compose_vector6d data and build CG lipid ghost particle info.
+def build_cg_lipid_vector_info(struct_h5):
+    """Read compose_vector6d data and build CG lipid display-vector info.
 
     Returns None if no CG lipids are present, else a dict with:
       - elem_indices: (n_cg,) int — original HDF5 indices of CG lipids
       - orientation_indices: (n_cg,) int or None — original HDF5 CGLD indices
       - direction: (n_cg, 3) float — static fallback unit direction vectors
-      - ghost_scale: float
+      - head_offsets: (n_cg,) float — hydrophilic endpoint offsets in Angstrom
+      - tail_offsets: (n_cg,) float — hydrophobic endpoint offsets in Angstrom
     """
     cv6_path = "input/potential/compose_vector6d"
     if cv6_path not in struct_h5:
@@ -274,21 +275,35 @@ def build_cg_lipid_ghost_info(struct_h5, ghost_scale=5.0):
         if "orientation_index" in cv6
         else None
     )
+    fallback_span = float(cv6.attrs.get("orientation_length_ang", 5.0))
+    head_offsets = (
+        np.asarray(cv6["display_head_offset_ang"][:], dtype=np.float32)
+        if "display_head_offset_ang" in cv6
+        else np.full(elem_index.shape[0], -fallback_span, dtype=np.float32)
+    )
+    tail_offsets = (
+        np.asarray(cv6["display_tail_offset_ang"][:], dtype=np.float32)
+        if "display_tail_offset_ang" in cv6
+        else np.full(elem_index.shape[0], fallback_span, dtype=np.float32)
+    )
 
     if elem_index.size == 0:
         return None
+    if head_offsets.shape[0] != elem_index.shape[0] or tail_offsets.shape[0] != elem_index.shape[0]:
+        raise ValueError("CG lipid VTF endpoint-offset metadata length mismatch")
 
     return {
         "elem_indices": elem_index,
         "orientation_indices": orientation_index,
         "direction": direction,
-        "ghost_scale": ghost_scale,
+        "head_offsets": head_offsets,
+        "tail_offsets": tail_offsets,
     }
 
 
-def extend_with_ghost_atoms(mapping, ghost_info, out_bonds):
-    """Extend mapping arrays and bonds with CG lipid ghost atoms."""
-    elem_idx = ghost_info["elem_indices"]
+def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
+    """Convert visible CGL centers into hydrophilic endpoints and append tail endpoints."""
+    elem_idx = vector_info["elem_indices"]
     orig_to_output = mapping.get("orig_to_output", {})
     output_cg_idx = []
     source_ordinals = []
@@ -302,65 +317,72 @@ def extend_with_ghost_atoms(mapping, ghost_info, out_bonds):
     source_ordinals = np.asarray(source_ordinals, dtype=int)
     n_cg = int(output_cg_idx.size)
     if n_cg == 0:
-        ghost_info["_ghost_start"] = None
-        ghost_info["_n_ghost"] = 0
+        vector_info["_tail_start"] = None
+        vector_info["_n_vectors"] = 0
         return
 
     n_orig = mapping["output_atom_names"].shape[0]
 
-    # Ghost atom name/type
-    ghost_names = np.array(["CGH"] * n_cg, dtype=object)
-    ghost_resnames = np.array(["DOPC"] * n_cg, dtype=object)
-    ghost_resids = np.array(mapping["output_residue_ids"], dtype=int)[output_cg_idx]
-    ghost_chain_ids = np.array(["X"] * n_cg, dtype=object)
+    hydrophilic_names = np.array(["LIPH"] * n_cg, dtype=object)
+    hydrophilic_types = np.array(["HYDROPHILIC"] * n_cg, dtype=object)
+    hydrophobic_names = np.array(["LIPT"] * n_cg, dtype=object)
+    hydrophobic_types = np.array(["HYDROPHOBIC"] * n_cg, dtype=object)
+    hydrophobic_resnames = np.array(["DOPC"] * n_cg, dtype=object)
+    hydrophobic_resids = np.array(mapping["output_residue_ids"], dtype=int)[output_cg_idx]
+    hydrophobic_chain_ids = np.array(mapping["output_chain_ids"], dtype=object)[output_cg_idx]
+
+    mapping["output_atom_names"][output_cg_idx] = hydrophilic_names
+    mapping["output_atom_types"][output_cg_idx] = hydrophilic_types
 
     mapping["output_atom_names"] = np.concatenate([
-        mapping["output_atom_names"], ghost_names,
+        mapping["output_atom_names"], hydrophobic_names,
+    ])
+    mapping["output_atom_types"] = np.concatenate([
+        mapping["output_atom_types"], hydrophobic_types,
     ])
     mapping["output_residue_names"] = np.concatenate([
-        mapping["output_residue_names"], ghost_resnames,
+        mapping["output_residue_names"], hydrophobic_resnames,
     ])
     mapping["output_residue_ids"] = np.concatenate([
-        mapping["output_residue_ids"], ghost_resids,
+        mapping["output_residue_ids"], hydrophobic_resids,
     ])
     mapping["output_chain_ids"] = np.concatenate([
-        mapping["output_chain_ids"], ghost_chain_ids,
+        mapping["output_chain_ids"], hydrophobic_chain_ids,
     ])
 
-    # Add bonds: CG lipid ↔ ghost atom
+    # Add bonds: hydrophilic endpoint ↔ hydrophobic endpoint
     for gi in range(n_cg):
-        cg_atom = int(output_cg_idx[gi])
-        ghost_atom = n_orig + gi
-        cg_name = str(mapping["output_atom_names"][cg_atom]).strip().upper()
-        if cg_name != "CGL":
+        head_atom = int(output_cg_idx[gi])
+        tail_atom = n_orig + gi
+        head_name = str(mapping["output_atom_names"][head_atom]).strip().upper()
+        if head_name != "LIPH":
             raise ValueError(
-                f"CG lipid ghost source remapped to non-CGL atom {cg_atom} ({cg_name})"
+                f"CG lipid hydrophilic endpoint remapped to unexpected atom {head_atom} ({head_name})"
             )
-        out_bonds.append((cg_atom, ghost_atom))
+        out_bonds.append((head_atom, tail_atom))
 
-    # Store mapping for frame extension
-    ghost_info["_ghost_start"] = n_orig
-    ghost_info["_n_ghost"] = n_cg
-    ghost_info["_output_cg_indices"] = output_cg_idx
-    ghost_info["_source_ordinals"] = source_ordinals
+    vector_info["_tail_start"] = n_orig
+    vector_info["_n_vectors"] = n_cg
+    vector_info["_output_head_indices"] = output_cg_idx
+    vector_info["_source_ordinals"] = source_ordinals
 
-    print(f"CG lipid ghosts: {n_cg} ghost atoms added for direction visualization "
-          f"(scale={ghost_info['ghost_scale']} Å)")
+    print(f"CG lipid vectors: {n_cg} hydrophilic/hydrophobic endpoint bonds emitted")
 
 
-def extend_frame_with_ghosts(frame, ghost_info, source_frame=None, box_lengths=None):
-    """Extend a frame's position array with ghost particle positions."""
-    if ghost_info is None or "_ghost_start" not in ghost_info:
+def extend_frame_with_lipid_vectors(frame, vector_info, source_frame=None, box_lengths=None):
+    """Replace CGL center positions with head endpoints and append tail endpoints."""
+    if vector_info is None or "_tail_start" not in vector_info:
         return frame
-    if ghost_info.get("_n_ghost", 0) == 0:
+    if vector_info.get("_n_vectors", 0) == 0:
         return frame
 
-    output_cg_idx = ghost_info["_output_cg_indices"]
-    source_ordinals = ghost_info["_source_ordinals"]
-    elem_idx = ghost_info["elem_indices"][source_ordinals]
-    orientation_idx = ghost_info.get("orientation_indices")
-    direction = ghost_info["direction"][source_ordinals]
-    scale = ghost_info["ghost_scale"]
+    output_head_idx = vector_info["_output_head_indices"]
+    source_ordinals = vector_info["_source_ordinals"]
+    elem_idx = vector_info["elem_indices"][source_ordinals]
+    orientation_idx = vector_info.get("orientation_indices")
+    direction = vector_info["direction"][source_ordinals]
+    head_offsets = vector_info["head_offsets"][source_ordinals]
+    tail_offsets = vector_info["tail_offsets"][source_ordinals]
 
     if source_frame is not None and orientation_idx is not None:
         orient_idx = orientation_idx[source_ordinals]
@@ -376,8 +398,11 @@ def extend_frame_with_ghosts(frame, ghost_info, source_frame=None, box_lengths=N
             direction = direction.copy()
             direction[mask] /= norm[mask, None]
 
-    ghost_pos = frame[output_cg_idx] + direction * scale
-    return np.concatenate([frame, ghost_pos], axis=0)
+    out = np.asarray(frame, dtype=np.float32).copy()
+    centers = out[output_head_idx].copy()
+    out[output_head_idx] = centers + direction * head_offsets[:, None]
+    tail_pos = centers + direction * tail_offsets[:, None]
+    return np.concatenate([out, tail_pos], axis=0)
 
 
 def list_output_groups(traj_h5):
@@ -550,6 +575,12 @@ def build_mode1_mapping(
         keep_mask = np.array([pc != "PROTEINAA" for pc in particle_class], dtype=bool)
         if np.any(~keep_mask):
             martini_indices = np.where(keep_mask)[0]
+    visible_mask = np.array(
+        [str(atom_names[idx]).strip().upper() != "CGLD" for idx in martini_indices],
+        dtype=bool,
+    )
+    if np.any(~visible_mask):
+        martini_indices = martini_indices[visible_mask]
 
     if (
         pdb_metadata is not None
@@ -569,6 +600,7 @@ def build_mode1_mapping(
     bb_map = build_backbone_projection_map(struct_h5, input_pos)
 
     out_atom_names = list(mart_atom_names)
+    out_atom_types = [str(name).strip() or "X" for name in mart_atom_names]
     out_res_names = list(mart_res_names)
     out_res_ids = [int(x) for x in np.asarray(mart_res_ids, dtype=int)]
     out_chain_ids = [str(x).strip() or "X" for x in np.asarray(mart_chain_ids, dtype=object)]
@@ -579,6 +611,7 @@ def build_mode1_mapping(
         ):
             for aname in bb_map["ref_atom_names"]:
                 out_atom_names.append(str(aname))
+                out_atom_types.append(str(aname))
                 out_res_names.append(str(rname))
                 out_res_ids.append(int(resid))
                 out_chain_ids.append(str(chain_id).strip() or "A")
@@ -590,6 +623,7 @@ def build_mode1_mapping(
         "include_aa_backbone": include_aa_backbone,
         "bb_map": bb_map,
         "output_atom_names": np.array(out_atom_names, dtype=object),
+        "output_atom_types": np.array(out_atom_types, dtype=object),
         "output_residue_names": np.array(out_res_names, dtype=object),
         "output_residue_ids": np.array(out_res_ids, dtype=int),
         "output_chain_ids": np.array(out_chain_ids, dtype=object),
@@ -614,6 +648,12 @@ def build_mode2_mapping(
         raise ValueError("protein_membership length mismatch")
 
     non_protein_idx = np.where(protein_membership < 0)[0]
+    visible_mask = np.array(
+        [str(atom_names[idx]).strip().upper() != "CGLD" for idx in non_protein_idx],
+        dtype=bool,
+    )
+    if np.any(~visible_mask):
+        non_protein_idx = non_protein_idx[visible_mask]
     bb_map = build_backbone_projection_map(struct_h5, input_pos)
     if bb_map is None:
         raise ValueError("Mode 2 requires /input/hybrid_bb_map with valid backbone entries")
@@ -634,6 +674,7 @@ def build_mode2_mapping(
         )
 
     out_atom_names = list(env_atom_names)
+    out_atom_types = [str(name).strip() or "X" for name in env_atom_names]
     out_res_names = list(env_res_names)
     out_res_ids = [int(x) for x in env_res_ids]
     out_chain_ids = [str(x).strip() or "X" for x in np.asarray(env_chain_ids, dtype=object)]
@@ -643,6 +684,7 @@ def build_mode2_mapping(
     ):
         for aname in bb_map["ref_atom_names"]:
             out_atom_names.append(str(aname))
+            out_atom_types.append(str(aname))
             out_res_names.append(str(rname))
             out_res_ids.append(int(resid))
             out_chain_ids.append(str(chain_id).strip() or "A")
@@ -653,6 +695,7 @@ def build_mode2_mapping(
         "orig_to_output": {int(orig): int(out) for out, orig in enumerate(non_protein_idx)},
         "bb_map": bb_map,
         "output_atom_names": np.array(out_atom_names, dtype=object),
+        "output_atom_types": np.array(out_atom_types, dtype=object),
         "output_residue_names": np.array(out_res_names, dtype=object),
         "output_residue_ids": np.array(out_res_ids, dtype=int),
         "output_chain_ids": np.array(out_chain_ids, dtype=object),
@@ -780,11 +823,10 @@ def extract_trajectory(
     n_output_particles = mapping['output_atom_names'].shape[0]
     print(f"Particles (output): {n_output_particles}")
 
-    # Check for CG lipid vector particles and add ghost atoms for direction visualization
-    ghost_info = build_cg_lipid_ghost_info(struct_h5)
-    if ghost_info is not None:
-        extend_with_ghost_atoms(mapping, ghost_info, out_bonds)
-        print(f"Particles (output+ghost): {mapping['output_atom_names'].shape[0]}")
+    vector_info = build_cg_lipid_vector_info(struct_h5)
+    if vector_info is not None:
+        extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds)
+        print(f"Particles (output+lipid-vectors): {mapping['output_atom_names'].shape[0]}")
 
     print(f"Frames: {n_frame_total}")
     print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
@@ -793,9 +835,10 @@ def extract_trajectory(
         f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
         f.write(f"# mode {mode}\n")
         f.write(f"# group {output_group}\n")
-        for i, (aname, rname, resid, chain_id) in enumerate(
+        for i, (aname, atype, rname, resid, chain_id) in enumerate(
             zip(
                 mapping["output_atom_names"],
+                mapping["output_atom_types"],
                 mapping["output_residue_names"],
                 mapping["output_residue_ids"],
                 mapping["output_chain_ids"],
@@ -804,7 +847,7 @@ def extract_trajectory(
             chain = (str(chain_id).strip() or "X")[0]
             segid = f"s{chain}"
             f.write(
-                f"atom {i} name {aname} resid {int(resid)} "
+                f"atom {i} name {aname} type {atype} resid {int(resid)} "
                 f"resname {str(rname)} segid {segid} chain {chain}\n"
             )
         for i, j in out_bonds:
@@ -829,10 +872,10 @@ def extract_trajectory(
                 y_len,
                 z_len,
             )
-            if ghost_info is not None:
-                out_frame = extend_frame_with_ghosts(
+            if vector_info is not None:
+                out_frame = extend_frame_with_lipid_vectors(
                     out_frame,
-                    ghost_info,
+                    vector_info,
                     source_frame=frame,
                     box_lengths=(x_len, y_len, z_len),
                 )

@@ -37,6 +37,62 @@
   - 10000-step temp validation kept protein Rg near `12.3-12.8 Å`, ending at `12.7 Å`; `cg_lipid_sc` ended near `-100.27 E_up` instead of the previous multi-thousand `E_up` collapse driver;
   - `git diff --check` passed.
 
+## 2026-05-12 Restore 6.0 NPT Relaxation and Two-Endpoint Lipid VTF
+
+### Project Goal
+- Restore an active rigid-protein `6.0` NPT relaxation stage before production for the current CG-lipid workflows.
+- Preserve the longer pre-production route for systems with real bonded dry-MARTINI environment particles.
+- Replace the visible one-sided lipid VTF ghost representation with hydrophilic/hydrophobic endpoint particles connected by a bond.
+
+### Architecture & Key Decisions
+- `6.0` becomes a real MD/NPT stage in the shared workflow path, using the existing non-production rigid-body protein machinery and semi-isotropic barostat handoff.
+- Add an explicit `EQ_60_NSTEPS` / `--eq-60-nsteps` control; default it to `500` to match the current short equilibration stage scale.
+- Keep the dormant `6.1-6.6` path, but trigger it on any real bonded dry-MARTINI environment particles, not only lipids. Synthetic `CGL-CGLD` orientation bonds do not count.
+- Store CG lipid display endpoint offsets derived from the original DOPC reference head/tail span so VTF extraction can render a centered hydrophilic-hydrophobic vector at the physical reference length.
+- Keep production-stage NPT behavior unchanged.
+
+### Execution Phases
+- [x] Phase 1: Restore mandatory `6.0` NPT scheduling, configuration surface, and bonded-environment routing.
+- [x] Phase 2: Persist lipid display endpoint metadata and replace VTF ghost rendering with two typed endpoint particles plus a bond.
+- [x] Phase 3: Extend focused regression coverage for `6.0`, bonded-path detection, VTF topology, and bilayer shrink reporting.
+- [x] Phase 4: Run syntax, targeted workflow, VTF, and bilayer comparison verification.
+
+### Known Errors / Blockers
+- No archived bilayer-only numerical shrink artifact from `3a98be1a4b4ebbbdf645fd1db1dcb84efa86af1e` exists in-tree, so the comparison was made against that commit's recovered stage/barostat contract plus a fresh local bilayer-only probe.
+
+### Review
+- Fresh `1rkl` workflow now runs mandatory `6.0` NPT MD, keeps the protein rigid during that stage, and hands both coordinates and box into `7.0`.
+- The extended `6.1-6.6` path remains available only when real bonded dry-MARTINI environment pairs are present; synthetic `CGL-CGLD` orientation bonds are ignored.
+- VTF extraction now emits typed hydrophilic/hydrophobic lipid endpoints with one bond per lipid and a mean first-frame displayed span of `24.270467 Å` in the reduced `1rkl` smoke artifact.
+- Bilayer-only `stage60`-contract smoke used the recovered zero-target semi-isotropic Berendsen settings and showed effectively flat short-horizon XY drift (`+0.008194 Å` over 500 steps, `z` unchanged), so there was no meaningful box shrink to claim from that isolated probe.
+
+## 2026-05-12 Direct Bilayer-Only NPT Comparison vs Dry-MARTINI
+
+### Project Goal
+- Build a bilayer-only bead-resolved dry-MARTINI NPT probe under `/Users/yinhan/Documents/upside2-md-martini/example/16.MARTINI`.
+- Run it under settings matched to the current single-particle bilayer probe and compare `Lx/Ly` relaxation directly.
+
+### Architecture & Key Decisions
+- Add only the minimal dry-MARTINI lipid-only stage-conversion support needed to prepare a DOPC-only input.
+- Keep the comparison probe separate from the hybrid protein workflow so it does not alter production orchestration.
+- Reuse the same zero-target semi-isotropic Berendsen NPT contract, timestep, frame spacing, temperature, and step count used by the current single-particle probe.
+- Compare box trajectories numerically from HDF5 output, not from console logs alone.
+
+### Execution Phases
+- [x] Phase 1: Add the dry-MARTINI lipid-only preparation probe in the external repo.
+- [x] Phase 2: Run matched dry-MARTINI and single-particle bilayer NPT jobs.
+- [x] Phase 3: Extract XY box trajectories and decide whether the single-particle model matches dry-MARTINI relaxation.
+
+### Known Errors / Blockers
+- None for this comparison pass.
+
+### Review
+- Added `/Users/yinhan/Documents/upside2-md-martini/example/16.MARTINI/test_dry_bilayer/` plus the minimal lipid-only converter guard needed by the external dry-MARTINI repo.
+- Matched `500`-step NPT probes used the same `50.091999 Å` initial XY side length, `dt=0.002`, frame spacing `25`, temperature `0.8647`, and zero-target semi-isotropic Berendsen contract.
+- The dry-MARTINI bead-resolved bilayer ended at `50.071121 Å` in XY (`-0.020878 Å` side change, `-0.083341%` XY area).
+- The current single-particle bilayer ended at `50.100193 Å` in XY (`+0.008194 Å` side change, `+0.032718%` XY area).
+- The signs differ over the matched probe, so the current single-particle bilayer NPT box response is not consistent with the bead-resolved dry-MARTINI reference on this test.
+
 ## 2026-05-07 1RKL VTF Ghost Mapping and CGL-Ion Startup Stability
 
 ### Project Goal

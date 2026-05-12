@@ -67,8 +67,8 @@ THERMOSTAT_TIMESCALE="${THERMOSTAT_TIMESCALE:-5.0}"
 THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
 STRICT_STAGE_HANDOFF="${STRICT_STAGE_HANDOFF:-1}"
 
-MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-0}"
 MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-0}"
+EQ_60_NSTEPS="${EQ_60_NSTEPS:-500}"
 EQ_62_NSTEPS="${EQ_62_NSTEPS:-500}"
 EQ_63_NSTEPS="${EQ_63_NSTEPS:-500}"
 EQ_64_NSTEPS="${EQ_64_NSTEPS:-500}"
@@ -169,8 +169,8 @@ python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
     --thermostat-timescale "${THERMOSTAT_TIMESCALE}" \
     --thermostat-interval "${THERMOSTAT_INTERVAL}" \
     --strict-stage-handoff "${STRICT_STAGE_HANDOFF}" \
-    --min-60-max-iter "${MIN_60_MAX_ITER}" \
     --min-61-max-iter "${MIN_61_MAX_ITER}" \
+    --eq-60-nsteps "${EQ_60_NSTEPS}" \
     --eq-62-nsteps "${EQ_62_NSTEPS}" \
     --eq-63-nsteps "${EQ_63_NSTEPS}" \
     --eq-64-nsteps "${EQ_64_NSTEPS}" \

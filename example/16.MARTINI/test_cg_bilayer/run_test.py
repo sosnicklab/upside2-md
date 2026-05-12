@@ -131,7 +131,7 @@ def build_tables(resolution: str) -> None:
     )
 
 
-def convert_and_inject() -> None:
+def convert_and_inject(stage: str, stage60_npt_contract: bool) -> None:
     from martini_prepare_system_lib import (
         convert_stage,
         inject_cg_lipid_nodes,
@@ -140,11 +140,22 @@ def convert_and_inject() -> None:
     )
 
     os.environ["UPSIDE_RUNTIME_PDB_FILE"] = str(RUNTIME_PDB.resolve())
-    os.environ["UPSIDE_SIMULATION_STAGE"] = "minimization"
+    os.environ["UPSIDE_SIMULATION_STAGE"] = stage
     os.environ["UPSIDE_MARTINI_ENERGY_CONVERSION"] = ENERGY_CONVERSION_KJ_PER_EUP
     os.environ["UPSIDE_MARTINI_LENGTH_CONVERSION"] = LENGTH_CONVERSION_ANG_PER_NM
+    if stage60_npt_contract:
+        os.environ["UPSIDE_NPT_ENABLE"] = "1"
+        os.environ["UPSIDE_NPT_TARGET_PXY"] = "0.0"
+        os.environ["UPSIDE_NPT_TARGET_PZ"] = "0.0"
+        os.environ["UPSIDE_NPT_TAU"] = "4.0"
+        os.environ["UPSIDE_NPT_COMPRESSIBILITY"] = "14.521180763676"
+        os.environ["UPSIDE_NPT_COMPRESSIBILITY_XY"] = "14.521180763676"
+        os.environ["UPSIDE_NPT_COMPRESSIBILITY_Z"] = "0.0"
+        os.environ["UPSIDE_NPT_INTERVAL"] = "10"
+        os.environ["UPSIDE_NPT_SEMI"] = "1"
+        os.environ["UPSIDE_NPT_DEBUG"] = "1"
 
-    convert_stage(pdb_id=PDB_ID, stage="minimization", run_dir=str(RUN_DIR))
+    convert_stage(pdb_id=PDB_ID, stage=stage, run_dir=str(RUN_DIR))
     inject_particles_table(UP_FILE, MARTINI_H5)
     inject_cg_lipid_nodes(UP_FILE, MARTINI_H5)
     write_stage_debug_outputs(UP_FILE, debug_dir=RUN_DIR / "debug")
@@ -328,6 +339,7 @@ def report_trajectory() -> None:
         dir0 = _directions_from_sites(out[0], cgl_index, orientation_index, stored_dirs, box)
         start = cgl[0]
         times = h5["output/time"][:]
+        box_series = h5["output/box"][:] if "box" in h5["output"] else None
 
     print("CGL trajectory")
     for frame in sorted({0, 1, min(5, len(cgl) - 1), len(cgl) - 1}):
@@ -345,6 +357,16 @@ def report_trajectory() -> None:
             f"dir_norm_min/max={dir_norm.min():.6f}/{dir_norm.max():.6f} "
             f"dir_angle_max/mean={dir_angle.max():.3f}/{dir_angle.mean():.3f}"
         )
+    if box_series is not None and len(box_series) > 0:
+        first_box = box_series[0].astype(np.float64)
+        last_box = box_series[-1].astype(np.float64)
+        delta = last_box - first_box
+        print(
+            "Box trajectory "
+            f"first=({first_box[0]:.6f}, {first_box[1]:.6f}, {first_box[2]:.6f}) "
+            f"last=({last_box[0]:.6f}, {last_box[1]:.6f}, {last_box[2]:.6f}) "
+            f"delta=({delta[0]:.6f}, {delta[1]:.6f}, {delta[2]:.6f})"
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -353,6 +375,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-stage", action="store_true")
     parser.add_argument("--skip-run", action="store_true")
     parser.add_argument("--resolution", choices=("coarse", "full"), default="coarse")
+    parser.add_argument(
+        "--stage",
+        choices=("minimization", "npt_equil", "npt_equil_reduced", "npt_prod"),
+        default="minimization",
+    )
+    parser.add_argument(
+        "--stage60-npt-contract",
+        action="store_true",
+        help="Enable the zero-target semi-isotropic NPT settings used by workflow stage 6.0.",
+    )
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--dt", type=float, default=0.002)
     parser.add_argument("--frame-steps", type=int, default=10)
@@ -371,7 +403,8 @@ def main() -> int:
         write_dopc_only_pdb()
 
     if not args.skip_stage:
-        convert_and_inject()
+        stage = "npt_equil" if args.stage60_npt_contract else args.stage
+        convert_and_inject(stage, args.stage60_npt_contract)
 
     report_initial_geometry(UP_FILE)
     report_table()

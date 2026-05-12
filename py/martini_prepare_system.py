@@ -1170,46 +1170,73 @@ def normalize_hybrid_workflow_args(args):
     return args
 
 
-def _detect_has_bonded_lipids(packed_pdb_path: Path) -> bool:
-    """Check if packed PDB has dryMARTINI lipid residues with internal bonds.
+def _decode_stage_strings(values):
+    out = []
+    for value in np.asarray(values):
+        if isinstance(value, (bytes, np.bytes_)):
+            out.append(value.decode("utf-8", errors="ignore").strip())
+        else:
+            out.append(str(value).strip())
+    return np.asarray(out, dtype=object)
 
-    In the current workflow, build_cg_lipid_array() in convert_stage() collapses
-    14-bead DOPC into single CGL vector particles (no internal bonds). This
-    function detects whether the packed PDB contains multi-bead lipid residues
-    that would produce bonds if CG coarse-graining were not applied.
 
-    Returns True if the final system would have dryMARTINI bonded lipids
-    requiring pre-7.0 equilibrium stages.
-    """
-    dopc_atom_count = 0
-    dopc_residue_count = 0
-    seen_residues = set()
-    with open(packed_pdb_path) as f:
-        for line in f:
-            if not line.startswith(("ATOM", "HETATM")):
+def _detect_has_bonded_environment_particles(up_file: Path) -> bool:
+    """Return True when the stage has real bonded dry-MARTINI environment pairs."""
+    import h5py
+
+    with h5py.File(up_file, "r") as h5:
+        bond_path = "/input/potential/dist_spring/id"
+        if bond_path not in h5:
+            print("  No dist_spring bonds found in stage input")
+            print("  Extended pre-7.0 equilibrium stages needed: False")
+            return False
+
+        bonds = np.asarray(h5[bond_path][:], dtype=np.int64)
+        if bonds.ndim != 2 or bonds.shape[1] < 2 or bonds.size == 0:
+            print("  Empty dist_spring bond list in stage input")
+            print("  Extended pre-7.0 equilibrium stages needed: False")
+            return False
+
+        inp = h5["/input"]
+        atom_types = (
+            _decode_stage_strings(inp["type"][:])
+            if "type" in inp
+            else np.asarray([""] * int(inp["pos"].shape[0]), dtype=object)
+        )
+        env_mask = None
+        membership_path = "/input/hybrid_env_topology/protein_membership"
+        if membership_path in h5:
+            membership = np.asarray(h5[membership_path][:], dtype=np.int32)
+            env_mask = membership < 0
+        elif "particle_class" in inp:
+            classes = np.char.upper(_decode_stage_strings(inp["particle_class"][:]).astype(str))
+            env_mask = (classes != "PROTEIN") & (classes != "PROTEINAA")
+        else:
+            env_mask = np.ones(atom_types.shape[0], dtype=bool)
+
+        bonded_env_pairs = []
+        ignored_orientation_bonds = 0
+        for raw_i, raw_j in bonds[:, :2]:
+            i = int(raw_i)
+            j = int(raw_j)
+            if i < 0 or j < 0 or i >= atom_types.shape[0] or j >= atom_types.shape[0]:
                 continue
-            resname = line[17:21].strip().upper()
-            if resname in ("DOPC", "DOP"):
-                dopc_atom_count += 1
-                resid = line[22:26]
-                seen_residues.add(resid)
-    dopc_residue_count = len(seen_residues)
+            pair_types = {str(atom_types[i]).strip().upper(), str(atom_types[j]).strip().upper()}
+            if pair_types == {"CGL", "CGLD"}:
+                ignored_orientation_bonds += 1
+                continue
+            if bool(env_mask[i]) and bool(env_mask[j]):
+                bonded_env_pairs.append((i, j, tuple(sorted(pair_types))))
 
-    # DOPC residues with 14 beads would produce bonds in a pure dryMARTINI
-    # topology.  However, build_cg_lipid_array() in convert_stage() collapses
-    # them into single CGL vector particles with no internal bonds or angles.
-    # Therefore pre-7.0 equilibrium stages (which gradually relax lipid-head
-    # bond restraints) are never needed under the current CG-lipid architecture.
-    has_bonded = False
-    if dopc_atom_count > 0:
-        avg_beads = dopc_atom_count / max(dopc_residue_count, 1)
-        print(f"  Packed PDB: {dopc_atom_count} DOPC atoms in {dopc_residue_count} residues "
-              f"({avg_beads:.0f} beads/residue)")
-        print(f"  CG lipid mode active → DOPC collapsed to CGL → no bonded dryMARTINI lipids")
-    else:
-        print(f"  Packed PDB: 0 DOPC atoms → no bonded dryMARTINI lipids")
-    print(f"  Pre-7.0 equilibrium stages needed: {has_bonded}")
-    return has_bonded
+    print(f"  Ignored synthetic CGL-CGLD orientation bonds: {ignored_orientation_bonds}")
+    print(f"  Real bonded dry-MARTINI environment pairs: {len(bonded_env_pairs)}")
+    if bonded_env_pairs:
+        preview = ", ".join(
+            f"{i}:{j}({'/'.join(pair_types)})" for i, j, pair_types in bonded_env_pairs[:5]
+        )
+        print(f"  Example bonded environment pairs: {preview}")
+    print(f"  Extended pre-7.0 equilibrium stages needed: {bool(bonded_env_pairs)}")
+    return bool(bonded_env_pairs)
 
 
 def run_hybrid_workflow_command(argv):
@@ -1237,8 +1264,8 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--thermostat-timescale", type=float, default=env_float("THERMOSTAT_TIMESCALE", 5.0))
     parser.add_argument("--thermostat-interval", type=int, default=env_int("THERMOSTAT_INTERVAL", -1))
     parser.add_argument("--strict-stage-handoff", type=int, default=env_int("STRICT_STAGE_HANDOFF", 1))
-    parser.add_argument("--min-60-max-iter", type=int, default=env_int("MIN_60_MAX_ITER", 0))
     parser.add_argument("--min-61-max-iter", type=int, default=env_int("MIN_61_MAX_ITER", 0))
+    parser.add_argument("--eq-60-nsteps", type=int, default=env_int("EQ_60_NSTEPS", 500))
     parser.add_argument("--eq-62-nsteps", type=int, default=env_int("EQ_62_NSTEPS", 500))
     parser.add_argument("--eq-63-nsteps", type=int, default=env_int("EQ_63_NSTEPS", 500))
     parser.add_argument("--eq-64-nsteps", type=int, default=env_int("EQ_64_NSTEPS", 500))
@@ -1364,8 +1391,6 @@ def run_hybrid_workflow_command(argv):
             cg_lipid_config=cg_lipid_config,
         )
 
-    needs_pre70 = _detect_has_bonded_lipids(args.hybrid_packed_pdb)
-
     files = {
         "prepared_60": args.checkpoint_dir / f"{args.pdb_id}.stage_6.0.prepared.up",
         "stage_60": args.checkpoint_dir / f"{args.pdb_id}.stage_6.0.up",
@@ -1384,12 +1409,23 @@ def run_hybrid_workflow_command(argv):
         "stage_70": args.checkpoint_dir / f"{args.pdb_id}.stage_7.0.up",
     }
 
+    print("=== Stage 6.0: rigid-protein NPT box relaxation ===")
+    prepare_stage_file(args, files["prepared_60"], "npt_equil", 1, 0, 0, "minimization")
+    shutil.copy2(files["prepared_60"], files["stage_60"])
+    run_md_stage(
+        args,
+        "6.0",
+        files["stage_60"],
+        files["stage_60"],
+        args.eq_60_nsteps,
+        args.eq_time_step,
+        args.eq_frame_steps,
+    )
+    extract_stage_vtf(args, "6.0", files["stage_60"], "1")
+    needs_pre70 = _detect_has_bonded_environment_particles(files["stage_60"])
+
     if needs_pre70:
-        print("=== Bonded dryMARTINI lipids detected → running full pre-7.0 equilibrium ===")
-        prepare_stage_file(args, files["prepared_60"], "minimization", 1, 0, 0, "minimization")
-        shutil.copy2(files["prepared_60"], files["stage_60"])
-        run_minimization_stage(args, "6.0", files["stage_60"], args.min_60_max_iter)
-        extract_stage_vtf(args, "6.0", files["stage_60"], "1")
+        print("=== Bonded dry-MARTINI environment detected -> running extended pre-7.0 equilibrium ===")
 
         prepare_stage_file(args, files["prepared_61"], "npt_prod", 1, 0, 0, "minimization")
         shutil.copy2(files["prepared_61"], files["stage_61"])
@@ -1435,9 +1471,10 @@ def run_hybrid_workflow_command(argv):
         run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
         extract_stage_vtf(args, "7.0", files["stage_70"], "2")
     else:
-        print("=== No bonded dryMARTINI lipids → skipping to stage 7.0 production ===")
+        print("=== No bonded dry-MARTINI environment pairs -> handoff from stage 6.0 to stage 7.0 ===")
         prepare_stage_file(args, files["prepared_70"], "npt_prod", args.prod_70_npt_enable, args.prod_70_barostat_type, 0, "production")
         shutil.copy2(files["prepared_70"], files["stage_70"])
+        handoff_initial_position(args, files["stage_60"], files["stage_70"], "production_hybrid")
         if args.debug_rigid_protein:
             set_debug_rigid_protein(files["stage_70"])
         assert_hybrid_stage_active(files["stage_70"], "production", "production")

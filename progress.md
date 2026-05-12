@@ -1,5 +1,41 @@
 # Progress Log
 
+## 2026-05-12 (Restore 6.0 NPT Relaxation and Lipid VTF Vectors)
+- Started implementation of the agreed workflow repair:
+  - mandatory rigid-protein `6.0` NPT MD stage before `7.0`;
+  - retained extended pre-production branch for systems with real bonded dry-MARTINI environment particles;
+  - VTF lipid rendering rewritten from center-plus-ghost to hydrophilic/hydrophobic endpoint vectors.
+- Current work is scoped to the shared MARTINI Python workflow/extractor path so `1rkl`, `1afo`, and inherited outlipid wrappers stay aligned.
+- Implemented:
+  - active `EQ_60_NSTEPS` / `--eq-60-nsteps` control and direct `6.0 -> 7.0` handoff for CG-lipid workflows;
+  - real bonded-environment detection from stage HDF5 `dist_spring` records while ignoring synthetic `CGL-CGLD` orientation bonds;
+  - reference-derived lipid display endpoint metadata plus two-endpoint VTF rendering with `HYDROPHILIC` / `HYDROPHOBIC` atom types;
+  - bilayer-only test support for the restored `6.0` NPT contract and printed output-box deltas;
+  - cleanup of now-unused `MIN_60_MAX_ITER` launcher/parser surface.
+- Verification:
+  - reduced fresh `1rkl` workflow smoke completed through `6.0 -> 7.0`;
+  - stage `6.0` handed `110.454002,110.454002,97.551003 Å` into `7.0`;
+  - rigid-protein pair-distance drift over stage `6.0` stayed at max `0.00004835 Å`;
+  - VTF smoke emitted `282` hydrophilic endpoints, `282` hydrophobic endpoints, and `282` lipid endpoint bonds in both stage `6.0` and `7.0`;
+  - first-frame displayed lipid vector span in stage `7.0` averaged `24.270467 Å`;
+  - bilayer-only restored-contract NPT smoke stayed finite for `500` steps and reported XY box delta `(+0.008194, +0.008194) Å`, `z` delta `0`;
+  - Python compilation, shell syntax checks, and `git diff --check` passed.
+
+## 2026-05-12 (Direct Dry-MARTINI vs Single-Particle Bilayer NPT Comparison)
+- Reopened the box-relaxation question as a direct model-to-model test after the user pointed to `/Users/yinhan/Documents/upside2-md-martini`.
+- Found that the dry-MARTINI repo has the hybrid MARTINI workflow but no bilayer-only probe, and its converter still raises on lipid-only PDB inputs because it unconditionally extracts protein backbone atoms.
+- Implemented in the external dry-MARTINI repo:
+  - lipid-only converter guard in `py/martini_prepare_system_lib.py`;
+  - dedicated bilayer-only runner at `example/16.MARTINI/test_dry_bilayer/run_test.py`;
+  - shell wrapper plus local ignore rules for generated probe artifacts.
+- Verification:
+  - external Python syntax check passed;
+  - external shell syntax check passed;
+  - dry bilayer-only input prepared as `72` DOPC lipids / `1008` beads with `936` bonds and `720` angles;
+  - matched dry-MARTINI `500`-step NPT run completed and ended with XY side `50.091999 -> 50.071121 Å`, XY area `-0.083341%`;
+  - matched current single-particle `500`-step NPT run completed and ended with XY side `50.091999 -> 50.100193 Å`, XY area `+0.032718%`;
+  - conclusion: the single-particle bilayer does not reproduce the bead-resolved dry-MARTINI XY relaxation sign under this matched probe.
+
 ## 2026-05-07 (1RKL CG-SC Range Stabilization)
 - Implemented the selected CG lipid-sidechain range fix:
   - `py/martini_build_tables.py` now writes `cg_lipid_sc.cutoff_ang = fit_r_max_nm * 10 + taper_width_ang` instead of deriving the cutoff from the full radial knot count;

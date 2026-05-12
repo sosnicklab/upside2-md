@@ -1,6 +1,9 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-12: User clarification for the restored pre-production branch: preserve it for any real bonded dry-MARTINI environment particles, not just bonded lipids.
+  - Rule: workflow routing must distinguish physical environment bonds from synthetic CG lipid orientation helpers such as `CGL-CGLD`.
+  - Consequence: the always-on `6.0` stage covers the current CG-lipid path, while `6.1-6.6` remain available only when genuine bonded environment topology is present.
 - 2026-05-07: The latest 1RKL protein collapse is dominated by overlong `cg_lipid_sc`, not by ion bonds or fixed lipid vectors.
   - Existing output has `cg_lipid_sc.fit_r_max_nm=0.7` but runtime `cutoff_ang=16.8`, extending the fitted sidechain-lipid attraction far beyond its sampled `7.0 Å` support.
   - Component diagnostics showed `cg_lipid_sc` growing from about `-86 E_up` at frame 0 to about `-2488 E_up` by frame 200, while protein Rg collapsed from about `12.8 Å` to `8.6 Å`.
@@ -602,3 +605,13 @@
   - `z_std` went from `6.512 Å` initially to `5.968 Å` at time `100`.
 - Lesson:
   - when scaling spline tables with dimensionless angular factors, scale only energy-valued radial channels; scaling angular channels as well changes the effective energy by extra powers of the scale factor.
+- 2026-05-12: Historical commit `3a98be1a4b4ebbbdf645fd1db1dcb84efa86af1e` kept the hybrid stage-6 branch available, with `6.0` prepared under NPT-enabled preproduction settings and later stage-6 MD/barostat relaxations on the extended bonded-environment route.
+  - Working rule: when restoring the current CG-lipid path, preserve the historical stage-6 barostat contract and recover an explicit active `6.0` MD relaxation without deleting the bonded-environment branch.
+- 2026-05-12: The fresh bilayer-only probe using the recovered `6.0` zero-target semi-isotropic NPT contract did not show meaningful short-horizon shrink: `50.091999 -> 50.100193 Å` in `x/y` over `500` steps, with `z=85 Å` unchanged.
+  - Working rule: describe this verification as a contract and trend check, not as proof of a historical shrink magnitude unless an archived comparison artifact is available.
+- 2026-05-12: The user supplied `/Users/yinhan/Documents/upside2-md-martini` as the bead-resolved dry-MARTINI reference repo for the required bilayer-only NPT comparison.
+  - Working rule: for this box-relaxation question, compare the current single-particle model against a fresh dry-MARTINI bilayer-only run from that repo rather than treating historical workflow shape as a sufficient proxy.
+- 2026-05-12: Direct matched bilayer-only NPT comparison shows opposite XY box trends over `500` steps:
+  - bead-resolved dry-MARTINI: `50.091999 -> 50.071121 Å`, area `-0.083341%`;
+  - current single-particle model: `50.091999 -> 50.100193 Å`, area `+0.032718%`.
+  - Working rule: do not describe the current single-particle NPT box response as dry-MARTINI-consistent until its XY relaxation sign and scale agree in this direct bilayer-only comparison.

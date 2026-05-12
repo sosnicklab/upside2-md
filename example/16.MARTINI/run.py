@@ -14,8 +14,8 @@ run_dir = "./outputs/martini_test_1rkl_hybrid"
 salt_molar = 0.15
 protein_lipid_cutoff = 4.5
 
-min_60_max_iter = 500
 min_61_max_iter = 500
+eq_60_nsteps = 500
 eq_62_nsteps = 500
 eq_63_nsteps = 500
 eq_64_nsteps = 500
@@ -46,8 +46,8 @@ env_updates = {
     "RUN_DIR": run_dir,
     "SALT_MOLAR": salt_molar,
     "PROTEIN_LIPID_CUTOFF": protein_lipid_cutoff,
-    "MIN_60_MAX_ITER": min_60_max_iter,
     "MIN_61_MAX_ITER": min_61_max_iter,
+    "EQ_60_NSTEPS": eq_60_nsteps,
     "EQ_62_NSTEPS": eq_62_nsteps,
     "EQ_63_NSTEPS": eq_63_nsteps,
     "EQ_64_NSTEPS": eq_64_nsteps,

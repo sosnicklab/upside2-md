@@ -13,6 +13,7 @@ The MARTINI workflow helper scripts used by `run_sim_1rkl.sh` live under `../../
 
 The workflow now defaults to the same thermostat timescale as the standard Upside examples (`tau = 5.0`) unless you override `THERMOSTAT_TIMESCALE`.
 Its hybrid stages still use smaller explicit timesteps than the standard examples for stability, so any repo-wide physical time calibration borrowed from those examples should be revalidated before applying it literally to stage `7.0`.
+Fresh workflow runs now execute a rigid-protein `6.0` NPT box-relaxation stage before handing coordinates and box dimensions into `7.0`.  Adjust its length with `EQ_60_NSTEPS` when you need a shorter or longer packing pass.
 Production stage `7.0` still defaults to NVT (`PROD_70_NPT_ENABLE=0`).  That is useful for stability comparisons, but it also means membrane packing can drift away from the dry-MARTINI reference even when the interface coupling is otherwise reasonable.
 
 You can also run the shell workflow directly:
@@ -26,6 +27,8 @@ To test packing with production NPT enabled, override:
 `PROD_70_NPT_ENABLE=1`
 
 The workflow already uses the semi-isotropic barostat settings defined in `run_sim_1rkl.sh`, so this keeps `x/y` coupled while leaving `z` compressibility at the configured normal setting.
+
+Generated VTF files render each CG lipid as two visible particles connected by one bond: a hydrophilic endpoint and a hydrophobic endpoint.  Their separation follows the source DOPC head-to-tail reference span rather than the hidden runtime orientation-site bond length.
 
 ## Packing Analysis
 

@@ -922,6 +922,8 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
     cg_lipid_indices : (n_lipid,) int     -- indices of CG lipids in the new arrays
     lipid_to_atom_map : list[list[int]]    -- original atom index per lipid
     ref_bead_positions : (n_lipid, 14, 3)  -- bead positions relative to COM (Ångstrom)
+    display_head_offsets : (n_lipid,) float -- hydrophilic endpoint offset along direction (Å)
+    display_tail_offsets : (n_lipid,) float -- hydrophobic endpoint offset along direction (Å)
     """
     n_atoms = len(initial_positions)
     is_dopc = np.array([
@@ -937,6 +939,8 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
                 np.empty(0, dtype=int),
                 [],
                 np.empty((0, 14, 3), dtype=float),
+                np.empty(0, dtype=float),
+                np.empty(0, dtype=float),
                 np.arange(n_a, dtype=int))
 
     # Group DOPC atoms by residue
@@ -958,6 +962,8 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
     lipid_directions = np.zeros((n_lipid, 3), dtype=float)
     lipid_to_atom_map = []
     ref_bead_positions = np.zeros((n_lipid, 14, 3), dtype=float)
+    display_head_offsets = np.zeros(n_lipid, dtype=float)
+    display_tail_offsets = np.zeros(n_lipid, dtype=float)
     cg_positions = np.zeros((n_lipid, 3), dtype=float)
 
     for li, group in enumerate(lipid_groups):
@@ -994,7 +1000,10 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
             _, _, vh = np.linalg.svd(centered, full_matrices=False)
             direction = vh[0]
             norm = np.linalg.norm(direction)
-        lipid_directions[li] = direction / norm
+        unit_direction = direction / norm
+        lipid_directions[li] = unit_direction
+        display_head_offsets[li] = float(np.dot(head_pos - com, unit_direction))
+        display_tail_offsets[li] = float(np.dot(tail_mid - com, unit_direction))
 
     # Build new arrays: keep non-DOPC atoms, replace each DOPC group with 1 CG particle
     n_new = n_atoms - sum(len(g) for g in lipid_groups) + n_lipid
@@ -1064,6 +1073,7 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
     return (new_positions, new_atom_types, new_charges, new_residue_ids,
             new_atom_names, new_residue_names, new_chain_ids, new_seg_ids,
             lipid_directions, cg_lipid_indices, lipid_to_atom_map, ref_bead_positions,
+            display_head_offsets, display_tail_offsets,
             old_to_new)
 
 
@@ -2550,7 +2560,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     (initial_positions, atom_types, charges, residue_ids,
      atom_names, residue_names, chain_ids, seg_ids,
      lipid_directions, cg_lipid_indices, lipid_to_atom_map,
-     ref_bead_positions, old_to_new_map) = build_cg_lipid_array(
+     ref_bead_positions, cg_lipid_display_head_offsets,
+     cg_lipid_display_tail_offsets, old_to_new_map) = build_cg_lipid_array(
         initial_positions, atom_types, charges, residue_ids,
         atom_names, residue_names, chain_ids, seg_ids)
     n_atoms = len(initial_positions)
@@ -3520,6 +3531,10 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                            obj=lipid_directions.astype('f4'))
             t.create_array(compose_grp, 'orientation_index',
                            obj=cg_lipid_orientation_indices.astype('i4'))
+            t.create_array(compose_grp, 'display_head_offset_ang',
+                           obj=cg_lipid_display_head_offsets.astype('f4'))
+            t.create_array(compose_grp, 'display_tail_offset_ang',
+                           obj=cg_lipid_display_tail_offsets.astype('f4'))
             print(f"Injected compose_vector6d node: {n_cg_lipids} CG lipid 6D particles")
 
         # Store old→new atom index remapping for hybrid mapping injection
