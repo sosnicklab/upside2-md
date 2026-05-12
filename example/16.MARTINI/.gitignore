@@ -2,3 +2,4 @@ charmm-gui*/*
 *.txt
 ./output/*
 --stage
+*.pdf

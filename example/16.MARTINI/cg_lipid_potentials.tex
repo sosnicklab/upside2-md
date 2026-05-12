@@ -1,0 +1,291 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb,booktabs,graphicx}
+\begin{document}
+
+% ==============================================================================
+\section{Coarse-Grained Lipid Model for Hybrid All-Atom / Dry MARTINI Simulations}
+% ==============================================================================
+
+\subsection{Single-Particle CG Lipid Representation}
+
+Each DOPC lipid, comprising 14 MARTINI beads in the dry MARTINI force field~\cite{MARTINI},
+is coarse-grained to a single oriented particle carrying a 6D state vector
+$(\mathbf{r}, \hat{\mathbf{n}})$, where $\mathbf{r} \in \mathbb{R}^3$ is the
+center-of-mass position of the 14-bead lipid and $\hat{\mathbf{n}} \in S^2$ is a
+unit direction vector representing the mean lipid orientation (from the lipid
+tail toward the head group). The orientation vector is anchored by a hidden
+orientation site placed at $\mathbf{r} + \ell\,\hat{\mathbf{n}}$ with
+$\ell = 5.0\,\text{\AA}$, connected to the CG particle by a stiff harmonic bond
+$U_{\text{bond}} = \frac{1}{2}k_b(r - \ell)^2$ with
+$k_b = 20.0\,E_{\text{up}}/\text{\AA}^2$.
+
+The CG particle mass $M_{\text{CG}} = 1008.0\,\text{g/mol}$ is the sum of the
+14 DOPC bead masses; the orientation site mass accounts for the remainder such
+that the total DOPC mass is preserved.
+
+\subsection{Angle Convention}
+
+All orientation-dependent potentials use the same angle convention.  For a pair
+of interacting oriented particles with positions $\mathbf{r}_1, \mathbf{r}_2$
+and unit direction vectors $\hat{\mathbf{n}}_1, \hat{\mathbf{n}}_2$, define
+the inter-particle unit vector $\hat{\mathbf{r}}_{12} = (\mathbf{r}_2 -
+\mathbf{r}_1)/|\mathbf{r}_2 - \mathbf{r}_1|$.  The two angular coordinates are:
+\begin{align}
+  \cos\theta_1 &= -\hat{\mathbf{n}}_1 \cdot \hat{\mathbf{r}}_{12} \label{eq:ang1}\\
+  \cos\theta_2 &= +\hat{\mathbf{n}}_2 \cdot \hat{\mathbf{r}}_{12} \label{eq:ang2}
+\end{align}
+Physically, when two lipids face each other head-to-head across the bilayer
+midplane, $\cos\theta_1 \approx +1$ and $\cos\theta_2 \approx +1$.
+
+\subsection{CG Lipid -- CG Lipid Quad-Spline Potential}
+\label{sec:cg-cg}
+
+The anisotropic interaction between two CG lipid particles is described by a
+factorized quad-spline potential that separates the angular-averaged isotropic
+core from orientation-dependent modes:
+
+\begin{equation}
+\boxed{
+U_{\text{CG-CG}}(r, \cos\theta_1, \cos\theta_2)
+= V_0(r) + \sum_{m=1}^{M} A^{(1)}_m(\cos\theta_1) \;
+                               A^{(2)}_m(\cos\theta_2) \;
+                               V_m(r)
+}
+\label{eq:cg-cg}
+\end{equation}
+
+where $M = 4$ modes are retained, and all one-dimensional functions are
+represented as cubic B-splines (order $k=4$) with clamped de Boor boundary
+conditions~\cite{deBoor}:
+
+\begin{itemize}
+  \item $V_0(r)$: isotropic radial core, $N_r = 14$ control points on
+    $r \in [0, 16.8]\,\text{\AA}$, uniform knot spacing
+    $\Delta r = 1.4\,\text{\AA}$.
+  \item $A^{(1,2)}_m(\cos\theta)$: angular modulation profiles for lipid 1 and
+    lipid 2, $N_\theta = 15$ control points on $\cos\theta \in [-1, 1]$.
+  \item $V_m(r)$: radial envelope of mode $m$, $N_r = 14$ control points.
+\end{itemize}
+
+The total number of stored coefficients per CG-CG type pair is
+$N_r + M(2N_\theta + N_r) = 14 + 4(30 + 14) = 190$.
+
+\paragraph{Tapering.}
+A cubic Hermite taper $S(u) = u^2(3 - 2u)$ with
+$u = (r_{\text{cut}} - r) / w$ smoothly drives the potential to zero at the cutoff;
+the taper width $w = \Delta r = 1.4\,\text{\AA}$.
+
+\paragraph{Table Construction.}
+The potential is constructed from the underlying dry MARTINI force field by
+sampling the total nonbonded energy (Lennard-Jones plus Coulomb) between two
+explicit 14-bead DOPC lipids at a regular grid of $(r, \cos\theta_1,
+\cos\theta_2)$ values and averaging over azimuthal orientations. For each
+sampled configuration, the internal bead coordinates are first relaxed via
+steepest-descent energy minimization ($N_{\text{relax}} = 50$ steps) to avoid
+rigid-body steric clashes. The 3D energy grid
+$E(r_i, \cos\theta_{1,j}, \cos\theta_{2,k})$ is capped at
+$E_{\text{cap}} = 500\,\text{kJ/mol}$ and decomposed mode-by-mode:
+
+\begin{enumerate}
+  \item $V_0(r) = \langle E \rangle_{\cos\theta_1, \cos\theta_2}$ (angular average).
+  \item Residual $\Delta(r, \cos\theta_1, \cos\theta_2) = E - V_0$ is
+    reshaped to a matrix per radial slice; SVD extracts the dominant left and
+    right singular vectors as $A^{(1)}_m$ and $A^{(2)}_m$, with $V_m(r)$ set
+    to the corresponding singular value times the right singular vector.
+  \item The mode contribution is subtracted and the procedure repeats for
+    $M$ modes.
+\end{enumerate}
+
+Angular profiles $A^{(1,2)}_m$ are symmetrized (averaged when the two lipids
+are identical), normalized to unit maximum absolute value, and fitted with a
+cubic B-spline. Radial functions $V_0(r)$ and $V_m(r)$ are fitted with cubic
+B-splines using Tikhonov regularization (smoothing parameter $\lambda = 0.01$)
+to penalize the second derivative.  Control points at small $r$ where no
+training data exist ($r < 7.0\,\text{\AA}$, corresponding to knot indices
+$0$--$4$) are clamped to the positive energy cap
+$+E_{\text{cap}} / \kappa_E \approx +171.5\,E_{\text{up}}$ to enforce a
+repulsive steric barrier.
+
+\subsection{CG Lipid -- Sidechain Quad-Spline Potential}
+\label{sec:cg-sc}
+
+The interaction between a CG lipid particle and a protein sidechain (SC) bead
+uses the same functional form as Eq.~\ref{eq:cg-cg}, with the SC bead treated
+as source~1 ($\cos\theta_1 = -\hat{\mathbf{n}}_{\text{SC}} \cdot
+\hat{\mathbf{r}}_{12}$) and the CG lipid as source~2
+($\cos\theta_2 = +\hat{\mathbf{n}}_{\text{CG}} \cdot
+\hat{\mathbf{r}}_{12}$). The SC direction $\hat{\mathbf{n}}_{\text{SC}}$ is the
+unit vector from C$_\alpha$ to C$_\beta$.
+
+The table is built with the same grid sampling, SVD decomposition, and
+B-spline fitting procedure, but with $N_{\text{relax}} = 120$ bead relaxation
+steps and a tighter angular grid (9 $\cos\theta$ points $\times$ 4 azimuthal
+angles). Separate tables are constructed for each of the 18 standard
+proteinogenic sidechain types against the single CG lipid type.
+
+\subsection{CG Lipid Orientation Restraint}
+\label{sec:cg-spring}
+
+To provide quadratic stiffness against angular drift of the CG lipid
+orientation vector, an orientation spring potential is applied:
+
+\begin{equation}
+U_{\text{orient}}(\hat{\mathbf{n}}) = k_{\text{orient}} \,
+\bigl(1 - \hat{\mathbf{n}} \cdot \hat{\mathbf{n}}_{\text{ref}} \bigr)
+\label{eq:orient}
+\end{equation}
+
+where $\hat{\mathbf{n}}_{\text{ref}}$ is the initial orientation assigned at
+system preparation, and $k_{\text{orient}} = 50.0\,E_{\text{up}}$.
+For small angular deviations $\theta$, $1 - \cos\theta \approx \theta^2/2$,
+giving an effective harmonic restraint. The single harmonic bond anchoring the
+orientation site (Sec.~2.1) provides only quartic stiffness
+$\propto \theta^4$; this spring adds the missing quadratic term~\cite{Upside}.
+
+\subsection{CG Lipid -- Environment Isotropic Potential}
+\label{sec:cg-iso}
+
+Interactions between CG lipid particles and isotropic environment beads (water,
+ions, protein backbone carrier atoms) are described by a pure radial cubic
+B-spline with no angular dependence:
+
+\begin{equation}
+U_{\text{CG-env}}(r) = B_{\text{spline}}(r; \,\{c_k\}_{k=0}^{N_r-1})
+\label{eq:cg-iso}
+\end{equation}
+
+where $\{c_k\}$ are $N_r = 14$ control points on the same knot grid as
+$V_0(r)$. The B-spline is fitted to an effective Lennard-Jones (12,6) potential
+obtained by orientation-averaging the sum of LJ interactions between all 14
+DOPC beads and a point probe of the target environment type over a Fibonacci
+sphere of 200 directions. The effective LJ parameters $(\varepsilon_{\text{eff}},
+\sigma_{\text{eff}})$ are obtained by fitting the orientation-averaged energy.
+For the CG-CG isotropic self-term, a physically motivated override is used:
+$\sigma = 10.0\,\text{\AA}$, $\varepsilon = 1.0\,E_{\text{up}}$.
+
+\subsection{Hybrid Interface: Sidechain -- Environment Interaction}
+\label{sec:sc-env}
+
+Protein sidechain beads interact with the dry MARTINI environment (water and
+ion beads) through a factorized orientation-dependent potential:
+
+\begin{equation}
+U_{\text{SC-env}}(r, \cos\theta) = V_{\text{rad}}(r)
+                                 + A(\cos\theta) \cdot V_{\text{ang}}(r)
+\label{eq:sc-env}
+\end{equation}
+
+where $r = |\mathbf{r}_{\text{env}} - \mathbf{r}_{\text{CB}}|$ is the distance
+from the environment bead to the C$_\beta$ anchor point, and
+$\cos\theta = -(\mathbf{r}_{\text{CB}} - \mathbf{r}_{\text{env}}) \cdot
+\hat{\mathbf{n}}_{\text{SC}} / r$.
+
+\paragraph{Underlying Physics.}
+The tables are precomputed from the dry MARTINI nonbonded potential between a
+sidechain bead (placed at rotamer centers) and an environment probe
+particle:
+
+\begin{align}
+E_{\text{LJ}}(r) &= 4\varepsilon_{ij} \left[
+                    \left(\frac{\sigma_{ij}}{r}\right)^{12}
+                  - \left(\frac{\sigma_{ij}}{r}\right)^{6} \right] \label{eq:lj} \\
+E_{\text{Coul}}(r) &= \frac{k_C}{\epsilon_r} \frac{q_i q_j}{r} \label{eq:coul}
+\end{align}
+
+with $k_C = 138.935\,\text{kJ}\cdot\text{nm}\cdot\text{mol}^{-1}\cdot e^{-2}$
+and dielectric constant $\epsilon_r = 15$. At each sampled $(r, \cos\theta)$,
+the sidechain bead positions from all rotamers are placed; the total energy is
+computed as the sum over SC beads of $E_{\text{LJ}}(r_{ij}) +
+E_{\text{Coul}}(r_{ij})$, where $r_{ij}$ is the distance from each SC bead at
+its rotamer position to the probe point. The 2D energy grid
+$E(r_i, \cos\theta_j)$ is factorized via SVD:
+
+\begin{itemize}
+  \item $V_{\text{rad}}(r) = \langle E \rangle_{\cos\theta}$
+  \item Residual $\Delta(r, \cos\theta) = E - V_{\text{rad}}$, then
+    $\Delta = U \cdot S \cdot V^T$; $A(\cos\theta) = U_{:,0}$ (normalized to
+    $\max|A| = 1$) and $V_{\text{ang}}(r) = S_{00} \cdot V_{0,:}$.
+\end{itemize}
+
+The resulting tables are stored as piecewise-linear grids with 96 radial points
+($r \in [2.5, 12.0]\,\text{\AA}$) and 13 angular bins
+($\cos\theta \in [-1, 1]$). Rotamer-resolved variants are also available
+through a 1-body table used by the sidechain rotamer optimization node.
+
+\paragraph{Interface Scaling.}
+The SC-env potential is multiplied by a global interface scale factor
+$\alpha_{\text{interface}}$ (default 1.0, calibrated against implicit-membrane
+reference simulations). During the hybrid simulation startup phase, SC-env
+forces are linearly ramped from zero over $N_{\text{relax}} = 150$ steps with a
+force cap of $25.0\,E_{\text{up}}/\text{\AA}$, while backbone degrees of freedom
+are held nearly fixed by a backbone feedback mixing protocol over
+$N_{\text{hold}} = 200$ steps.
+
+\subsection{Hybrid Interface: Backbone -- Environment Interaction}
+\label{sec:bb-env}
+
+Protein backbone carrier atoms (N, C$_\alpha$, C, O) interact with the dry
+MARTINI environment through the \textbf{standard Martini potential}, which
+evaluates the combined LJ and Coulomb energy via a precomputed cubic B-spline:
+
+\begin{equation}
+U_{\text{BB-env}}(r) = B_{\text{spline}}\bigl(r; \; 4\varepsilon(\sigma^{12}r^{-12}
+                      - \sigma^6 r^{-6}) + k_C q_i q_j / (\epsilon_r r) \bigr)
+\label{eq:bb-env}
+\end{equation}
+
+The combined energy $E_{\text{LJ}}(r) + E_{\text{Coul}}(r)$ is pre-tabulated on
+a uniform grid of 1000 points per unique $(\varepsilon, \sigma, q_i q_j)$
+triple and fitted with a layered clamped B-spline~\cite{Upside}. Forces on
+backbone proxy atoms are projected onto the underlying Upside backbone degrees
+of freedom. Cross-interface BB--env pairs are scaled by
+$\alpha_{\text{interface}}$.
+
+\subsection{Martini Potential Zeroing Protocol}
+
+To prevent double-counting, all entries in the standard Martini pair-parameter
+table involving the CG lipid type (``CGL'') are explicitly set to zero
+$(\varepsilon = 0, \sigma = 0)$ after the dedicated spline tables are built:
+
+\begin{itemize}
+  \item CGL--CGL: handled entirely by $U_{\text{CG-CG}}$ (Sec.~\ref{sec:cg-cg}).
+  \item CGL--SC: handled entirely by $U_{\text{CG-SC}}$ (Sec.~\ref{sec:cg-sc}).
+  \item CGL--isotropic targets: handled entirely by $U_{\text{CG-env}}$
+    (Sec.~\ref{sec:cg-iso}).
+  \item CGLD (orientation site): zero nonbonded interactions with all types.
+\end{itemize}
+
+At runtime, the Martini potential's pair-list construction skips any pair with
+$\varepsilon = \sigma = q_i = q_j = 0$, so zeroed entries contribute no energy.
+
+\subsection{Energy Units}
+
+All potential coefficients are stored in upside energy units $E_{\text{up}}$,
+where $1\,E_{\text{up}} = 2.914952774272\,\text{kJ/mol}$. Lengths are in
+\r{A}ngstr\"{o}ms ($1\,\text{nm} = 10\,\text{\AA}$). The conversion is applied
+at table-building time (Python) and at load time (C++), with tail corrections
+subtracted so that all potentials decay smoothly to zero at their respective
+cutoffs.
+
+% ==============================================================================
+\begin{thebibliography}{9}
+
+\bibitem{MARTINI}
+Marrink, S.~J., Risselada, H.~J., Yefimov, S., Tieleman, D.~P., \& de Vries, A.~H.
+``The MARTINI Force Field: Coarse Grained Model for Biomolecular Simulations.''
+\textit{J. Phys. Chem. B}, 111(27), 7812--7824 (2007).
+
+\bibitem{deBoor}
+de Boor, C.
+``A Practical Guide to Splines.''
+Springer (1978).
+
+\bibitem{Upside}
+Jumper, J.~M., Faruk, N.~F., Freed, K.~F., \& Sosnick, T.~R.
+``Accurate calculation of side chain packing and free energy with
+applications to protein molecular dynamics.''
+\textit{PLoS Comput. Biol.}, 14(12), e1006342 (2018).
+
+\end{thebibliography}
+
+\end{document}
