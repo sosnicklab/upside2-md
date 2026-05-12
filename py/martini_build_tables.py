@@ -1403,6 +1403,12 @@ def _fit_cg_lipid_quadspline(
     rad_knot_vector[-4:] = rad_knot_vector[-5]
 
     v0_knots = _fit_radial_bspline(t_radial_ang, v_radial, rad_knot_vector, smooth=0.01) * inv_conv
+    if energy_cap_kj_mol is not None and energy_cap_kj_mol > 0.0:
+        v0_cap = float(energy_cap_kj_mol) * inv_conv
+        v0_knots = np.clip(v0_knots, -v0_cap, v0_cap)
+        n_unconstrained = 5
+        v0_knots[:n_unconstrained] = v0_cap
+    vm_cap = float(residual_cap_kj_mol) * inv_conv if (residual_cap_kj_mol is not None and residual_cap_kj_mol > 0.0) else float('inf')
     param_parts = [v0_knots]
     ang1_knots_all = []
     ang2_knots_all = []
@@ -1411,6 +1417,10 @@ def _fit_cg_lipid_quadspline(
         ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01)
         ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01)
         vm_knots = _fit_radial_bspline(t_radial_ang, vm, rad_knot_vector, smooth=0.01) * inv_conv
+        ang1_knots = np.clip(ang1_knots, -1.0, 1.0)
+        ang2_knots = np.clip(ang2_knots, -1.0, 1.0)
+        vm_knots = np.clip(vm_knots, -vm_cap, vm_cap)
+        vm_knots[:n_unconstrained] = 0.0
         ang1_knots_all.append(ang1_knots)
         ang2_knots_all.append(ang2_knots)
         vm_knots_all.append(vm_knots)
@@ -1624,6 +1634,12 @@ def _fit_cg_lipid_sc_quadspline(
     rad_knot_vector[-4:] = rad_knot_vector[-5]
 
     v0_knots = _fit_radial_bspline(t_radial_ang, v_radial, rad_knot_vector, smooth=0.01) * inv_conv
+    if energy_cap_kj_mol is not None and energy_cap_kj_mol > 0.0:
+        v0_cap = float(energy_cap_kj_mol) * inv_conv
+        v0_knots = np.clip(v0_knots, -v0_cap, v0_cap)
+        n_unconstrained = 5
+        v0_knots[:n_unconstrained] = v0_cap
+    vm_cap = float(residual_cap_kj_mol) * inv_conv if (residual_cap_kj_mol is not None and residual_cap_kj_mol > 0.0) else float('inf')
     param_parts = [v0_knots]
     ang1_knots_all = []
     ang2_knots_all = []
@@ -1632,6 +1648,10 @@ def _fit_cg_lipid_sc_quadspline(
         ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01)
         ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01)
         vm_knots = _fit_radial_bspline(t_radial_ang, vm, rad_knot_vector, smooth=0.01) * inv_conv
+        ang1_knots = np.clip(ang1_knots, -1.0, 1.0)
+        ang2_knots = np.clip(ang2_knots, -1.0, 1.0)
+        vm_knots = np.clip(vm_knots, -vm_cap, vm_cap)
+        vm_knots[:n_unconstrained] = 0.0
         ang1_knots_all.append(ang1_knots)
         ang2_knots_all.append(ang2_knots)
         vm_knots_all.append(vm_knots)
@@ -2117,7 +2137,7 @@ def _build_cg_lipid_tables(
     # CG ↔ CG quadspline. Keep the particles table as the isotropic core and
     # fit only the residual directional correction; moderate bead relaxation
     # to soften unphysical rigid-body overlaps while preserving repulsive core.
-    relax_steps = 50
+    cg_relax_steps = 50
     result_cg = _fit_cg_lipid_quadspline(
         ref_bead_positions_nm=ref_nm,
         bead_types=bead_types,
@@ -2128,7 +2148,7 @@ def _build_cg_lipid_tables(
         r_count=min(r_count, _cg_r),
         cos_theta_count=min(cos_theta_count, _cg_ct),
         azimuthal_count=_cg_az,
-        relax_steps=relax_steps,
+        relax_steps=cg_relax_steps,
         dist_min_nm=0.25,
         knot_spacing_ang=1.4,
         residual_cap_kj_mol=250.0,
@@ -2164,7 +2184,7 @@ def _build_cg_lipid_tables(
     else:
         cb_anchor_nm = [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG]
         cb_vector_unit = list(CANONICAL_CB_VECTOR_UNIT)
-        relax_steps = 120
+        sc_relax_steps = 120
 
         n_sc_types = len(residues)
         interaction_param_sc = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float64)
@@ -2193,8 +2213,7 @@ def _build_cg_lipid_tables(
                 r_count=min(r_count, _sc_r),
                 cos_theta_count=min(cos_theta_count, _sc_ct),
                 azimuthal_count=min(azimuthal_count, _sc_az),
-                relax_steps=relax_steps,
-                n_modes=sc_n_modes,
+                relax_steps=sc_relax_steps,
                 n_knot_radial=sc_n_radial,
                 knot_spacing_ang=sc_knot_spacing_ang,
             )
@@ -2228,7 +2247,7 @@ def _build_cg_lipid_tables(
     cg_pair_grp.attrs["schema"] = "cg_lipid_quadspline_v3"
     cg_pair_grp.attrs["radial_mode"] = "full_multimode"
     cg_pair_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
-    cg_pair_grp.attrs["fit_relax_steps"] = np.int32(relax_steps)
+    cg_pair_grp.attrs["fit_relax_steps"] = np.int32(cg_relax_steps)
     cg_pair_grp.attrs["fit_r_min_nm"] = np.float32(0.70)
     cg_pair_grp.attrs["fit_r_max_nm"] = np.float32(1.68)
     cg_pair_grp.attrs["n_modes"] = np.int32(result_cg["n_modes"])
@@ -2259,7 +2278,7 @@ def _build_cg_lipid_tables(
     cg_sc_grp.attrs["schema"] = "cg_lipid_sc_quadspline_v2"
     cg_sc_grp.attrs["radial_mode"] = "full_multimode"
     cg_sc_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
-    cg_sc_grp.attrs["fit_relax_steps"] = np.int32(120 if n_sc_types else 0)
+    cg_sc_grp.attrs["fit_relax_steps"] = np.int32(sc_relax_steps if n_sc_types else 0)
     cg_sc_grp.attrs["fit_r_min_nm"] = np.float32(r_min_nm)
     cg_sc_grp.attrs["fit_r_max_nm"] = np.float32(r_max_nm)
     cg_sc_grp.attrs["n_modes"] = np.int32(sc_n_modes)
