@@ -18,6 +18,12 @@ import h5py
 import numpy as np
 import tables as tb
 
+from martini_cg_lipid_params import (
+    DOPC_ATOM_NAMES,
+    derive_dopc_cg_params,
+    parse_dry_martini_masses,
+)
+
 PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
 WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
@@ -46,7 +52,7 @@ CANONICAL_AFFINE_REF -= CANONICAL_AFFINE_REF.mean(axis=0, keepdims=True)
 
 
 def _cgl_effective_lj_sigma_cap_nm() -> float:
-    raw = os.environ.get("UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM", "0.9")
+    raw = os.environ.get("UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM", "0")
     try:
         cap = float(raw)
     except ValueError as exc:
@@ -54,6 +60,40 @@ def _cgl_effective_lj_sigma_cap_nm() -> float:
     if cap <= 0.0:
         return float("inf")
     return cap
+
+
+def _decode_h5_attr(value):
+    if isinstance(value, bytes):
+        return value.decode("ascii")
+    return value
+
+
+def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
+    cglt = mh5.get("cg_lipid_table")
+    if cglt is None:
+        return
+    schema = _decode_h5_attr(cglt.attrs.get("derivation_schema", ""))
+    if schema != "dry_martini_dopc_derived_v1":
+        raise RuntimeError(
+            f"Stale CG lipid table in {source_path}: missing DOPC-derived parameter schema. "
+            "Rebuild martini.h5 before stage injection."
+        )
+    eff_grp = cglt.get("effective_lj")
+    if eff_grp is not None and "max_effective_sigma_nm" in eff_grp.attrs:
+        raise RuntimeError(
+            f"Stale CG lipid table in {source_path}: capped CGL effective LJ metadata found. "
+            "Rebuild martini.h5 so CGL-X interactions use explicit orientation-averaged spline tables."
+        )
+    n_effective_targets = 0
+    if eff_grp is not None and "target_types" in eff_grp:
+        n_effective_targets = int(eff_grp["target_types"].shape[0])
+    iso_grp = cglt.get("cg_lipid_isotropic")
+    source = _decode_h5_attr(iso_grp.attrs.get("source", "")) if iso_grp is not None else ""
+    if n_effective_targets and source != "explicit_dopc_orientation_average":
+        raise RuntimeError(
+            f"Stale CG lipid table in {source_path}: cg_lipid_isotropic source is {source!r}. "
+            "Rebuild martini.h5 so CGL-X interactions are derived from dry-MARTINI bead interactions."
+        )
 CB_PLACEMENT = np.array([[0.0, 0.94375626, 1.2068012]], dtype=np.float32)
 CB_VECTOR = CB_PLACEMENT / np.linalg.norm(CB_PLACEMENT, axis=1, keepdims=True)
 N_BIT_ROTAMER = 4
@@ -893,11 +933,7 @@ def canonical_lipid_resname(resname: str) -> str:
 
 
 # DOPC 14-bead atom names in ITP order (indices 0-13)
-_DOPC_ATOM_NAMES = [
-    "NC3", "PO4", "GL1", "GL2",
-    "C1A", "C2A", "D3A", "C4A", "C5A",
-    "C1B", "C2B", "D3B", "C4B", "C5B",
-]
+_DOPC_ATOM_NAMES = list(DOPC_ATOM_NAMES)
 
 
 def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
@@ -2114,7 +2150,6 @@ def parse_itp_file(itp_file, target_molecule=None, preprocessor_defines=None):
 
 def read_martini_masses(ff_file):
     """Read atom type masses from MARTINI force field file"""
-    masses = {}
     ff_file_path = Path(ff_file).expanduser()
     if not ff_file_path.is_absolute():
         ff_file_path = (WORKFLOW_DIR / ff_file_path).resolve()
@@ -2128,28 +2163,7 @@ def read_martini_masses(ff_file):
                         f"  Please ensure the MARTINI force field file exists and is readable.\n"
                         f"  Aborting to prevent incorrect simulation results.")
     
-    in_atomtypes = False
-    with ff_file_path.open('r') as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith('[ atomtypes ]'):
-                in_atomtypes = True
-                continue
-            elif line.startswith('['):
-                in_atomtypes = False
-                continue
-            
-            if in_atomtypes and line and not line.startswith(';'):
-                parts = line.split()
-                if len(parts) >= 2:
-                    atom_type = parts[0]
-                    try:
-                        mass = float(parts[1])
-                        masses[atom_type] = mass
-                    except ValueError:
-                        continue
-    
-    return masses
+    return parse_dry_martini_masses(ff_file_path)
 
 def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     """
@@ -2568,31 +2582,47 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     n_cg_lipids = len(cg_lipid_indices)
 
     cg_lipid_orientation_indices = np.zeros(0, dtype=np.int32)
-    cg_lipid_orientation_length_ang = float(
-        os.environ.get('UPSIDE_CG_LIPID_ORIENTATION_LENGTH', '5.0')
-    )
-    cg_lipid_orientation_bond_fc = float(
-        os.environ.get('UPSIDE_CG_LIPID_ORIENTATION_BOND_FC', '20.0')
-    )
+    cg_lipid_derived_params = None
+    cg_lipid_orientation_length_ang = 0.0
+    cg_lipid_orientation_bond_fc = 0.0
     cg_lipid_orientation_mass_g = 0.0
     if n_cg_lipids > 0:
-        bead_masses = np.array(
-            [martini_masses.get(bt, 0.0) for bt in dopc_bead_types],
-            dtype=np.float64,
+        ff_pair_params = {
+            (t1, t2): {"sigma_nm": sigma, "epsilon_kj_mol": epsilon}
+            for (t1, t2), (sigma, epsilon) in martini_table.items()
+        }
+        dopc_mass_values = [martini_masses[bt] for bt in dopc_bead_types]
+        dopc_bonds_with_params = [
+            (int(i), int(j), float(r0), float(k))
+            for (i, j), r0, k in zip(dopc_bonds, dopc_bond_lengths, dopc_bond_force_constants)
+        ]
+        cg_lipid_derived_params = derive_dopc_cg_params(
+            ref_bead_positions_nm=ref_bead_positions[0].astype(np.float64) * 0.1,
+            bead_types=dopc_bead_types,
+            pair_params=ff_pair_params,
+            bead_masses_g_mol=dopc_mass_values,
+            bonds=dopc_bonds_with_params,
+            energy_conversion_kj_per_eup=energy_conversion,
+            length_conversion_ang_per_nm=length_conversion,
         )
-        inertia_values = []
-        for rel_pos, direction in zip(ref_bead_positions, lipid_directions):
-            direction = np.asarray(direction, dtype=np.float64)
-            direction /= max(float(np.linalg.norm(direction)), 1e-12)
-            rel_pos = np.asarray(rel_pos, dtype=np.float64)
-            parallel = rel_pos @ direction
-            r2_perp = np.sum(rel_pos * rel_pos, axis=1) - parallel * parallel
-            inertia_values.append(float(np.sum(bead_masses * np.maximum(r2_perp, 0.0))))
-        mean_inertia = float(np.mean(inertia_values)) if inertia_values else 0.0
-        cg_lipid_orientation_mass_g = max(
-            mean_inertia / max(cg_lipid_orientation_length_ang ** 2, 1e-12),
-            12.0,
+        length_override = os.environ.get('UPSIDE_CG_LIPID_ORIENTATION_LENGTH')
+        cg_lipid_orientation_length_ang = float(
+            length_override if length_override is not None
+            else cg_lipid_derived_params["orientation_length_ang"]
         )
+        cg_lipid_orientation_bond_fc = float(
+            os.environ.get(
+                'UPSIDE_CG_LIPID_ORIENTATION_BOND_FC',
+                str(cg_lipid_derived_params["orientation_bond_fc_eup_a2"]),
+            )
+        )
+        if length_override is not None:
+            cg_lipid_orientation_mass_g = (
+                float(cg_lipid_derived_params["transverse_inertia_g_mol_a2"])
+                / max(cg_lipid_orientation_length_ang ** 2, 1e-12)
+            )
+        else:
+            cg_lipid_orientation_mass_g = float(cg_lipid_derived_params["orientation_mass_g_mol"])
         cg_lipid_orientation_indices = np.arange(
             n_atoms, n_atoms + n_cg_lipids, dtype=np.int32
         )
@@ -2618,7 +2648,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         print(
             f"Added {n_cg_lipids} hidden CGLD orientation sites "
             f"(length={cg_lipid_orientation_length_ang:.3f} Å, "
-            f"mass={cg_lipid_orientation_mass_g:.3f} g/mol)"
+            f"mass={cg_lipid_orientation_mass_g:.3f} g/mol, "
+            f"bond_fc={cg_lipid_orientation_bond_fc:.3f} E_up/Å²)"
         )
 
     # Read box dimensions from CRYST1 record
@@ -2643,7 +2674,12 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     print(f"Box dimensions: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
     print(f"Box volume: {x_len * y_len * z_len:.1f} Å³")
     if n_cg_lipids > 0 and int(os.environ.get("UPSIDE_CG_LIPID_CONDITION_INITIAL", "1")):
-        target_nn = float(os.environ.get("UPSIDE_CG_LIPID_MIN_LEAFLET_NN", "7.0"))
+        derived_contact_ang = (
+            float(cg_lipid_derived_params["contact_ang"])
+            if cg_lipid_derived_params is not None
+            else 7.0
+        )
+        target_nn = float(os.environ.get("UPSIDE_CG_LIPID_MIN_LEAFLET_NN", str(derived_contact_ang)))
         max_step = float(os.environ.get("UPSIDE_CG_LIPID_CONDITION_MAX_STEP", "0.25"))
         n_iter = int(os.environ.get("UPSIDE_CG_LIPID_CONDITION_STEPS", "100"))
         cgl_pos = initial_positions[cg_lipid_indices]
@@ -3023,21 +3059,20 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         # Extend martini_table with effective CGL LJ parameters for isotropic
         # CG lipid ↔ dryMARTINI particle interactions (ions, water, BB, env).
         if n_cg_lipids > 0 and ("CGL", "CGL") not in martini_table:
-            cgl_sigma_cap_nm = _cgl_effective_lj_sigma_cap_nm()
             martini_h5_path = Path(run_dir) / "martini.h5"
             if martini_h5_path.exists():
                 # Read effective LJ from pre-built martini.h5 to ensure
                 # consistency with the combined energy grids already stored there.
                 with h5py.File(martini_h5_path, "r") as _mh5:
+                    _validate_cg_lipid_table_schema(_mh5, martini_h5_path)
                     eff_grp = _mh5["cg_lipid_table/effective_lj"]
                     target_types = [t.decode("ascii") if isinstance(t, bytes) else str(t)
                                   for t in eff_grp["target_types"][:]]
                     sigmas = eff_grp["sigma_nm"][:]
                     epsilons = eff_grp["epsilon_kj_mol"][:]
                 for tgt_type, sigma_nm, epsilon_kj in zip(target_types, sigmas, epsilons):
-                    capped_sigma = min(float(sigma_nm), cgl_sigma_cap_nm)
-                    martini_table[("CGL", tgt_type)] = (capped_sigma, float(epsilon_kj))
-                    martini_table[(tgt_type, "CGL")] = (capped_sigma, float(epsilon_kj))
+                    martini_table[("CGL", tgt_type)] = (float(sigma_nm), float(epsilon_kj))
+                    martini_table[(tgt_type, "CGL")] = (float(sigma_nm), float(epsilon_kj))
             else:
                 from martini_build_tables import _compute_cgl_effective_lj_params
                 ref_nm = ref_bead_positions[0].astype(np.float64) * 0.1  # first lipid, Å → nm
@@ -3050,7 +3085,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     pair_params=ff_pair_params,
                 )
                 for tgt_type, eff in effective_lj.items():
-                    s = min(float(eff["sigma_nm"]), cgl_sigma_cap_nm)
+                    s = float(eff["sigma_nm"])
                     e = eff["epsilon_kj_mol"]
                     martini_table[("CGL", tgt_type)] = (s, e)
                     martini_table[(tgt_type, "CGL")] = (s, e)
@@ -3525,6 +3560,33 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             compose_grp._v_attrs.y_len = y_len
             compose_grp._v_attrs.z_len = z_len
             compose_grp._v_attrs.orientation_length_ang = cg_lipid_orientation_length_ang
+            compose_grp._v_attrs.orientation_mass_g_mol = cg_lipid_orientation_mass_g
+            compose_grp._v_attrs.orientation_bond_fc_eup_a2 = cg_lipid_orientation_bond_fc
+            if cg_lipid_derived_params is not None:
+                compose_grp._v_attrs.derivation_schema = "dry_martini_dopc_derived_v1"
+                for attr_name in (
+                    "contact_nm",
+                    "contact_ang",
+                    "max_sigma_nm",
+                    "orientation_length_ang",
+                    "orientation_mass_g_mol",
+                    "orientation_bond_fc_eup_a2",
+                    "transverse_inertia_g_mol_a2",
+                    "head_tail_span_ang",
+                    "tail_projection_ang",
+                    "max_perp_radius_ang",
+                    "energy_conversion_kj_per_eup",
+                    "length_conversion_ang_per_nm",
+                ):
+                    compose_grp._v_attrs[attr_name] = float(cg_lipid_derived_params[attr_name])
+                for attr_name in (
+                    "mass_source",
+                    "contact_source",
+                    "orientation_length_source",
+                    "orientation_mass_source",
+                    "orientation_bond_fc_source",
+                ):
+                    compose_grp._v_attrs[attr_name] = str(cg_lipid_derived_params[attr_name])
             t.create_array(compose_grp, 'elem_index',
                            obj=cg_lipid_indices.astype('i4'))
             t.create_array(compose_grp, 'direction',
@@ -4393,6 +4455,7 @@ def inject_cg_lipid_nodes(
         if "cg_lipid_table" not in mh5:
             print("  CG lipid tables not found in martini.h5, skipping CG lipid node injection")
             return
+        _validate_cg_lipid_table_schema(mh5, martini_h5)
         cg_tab = mh5["cg_lipid_table"]
 
         has_pair = "cg_lipid_pair" in cg_tab
@@ -4452,12 +4515,7 @@ def inject_cg_lipid_nodes(
                 n_param = int(pair_grp["interaction_param"].shape[-1])
                 print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1×1×{n_param} params")
 
-            # Orientation spring: penalize angular deviation of CGL direction
-            # from its initial reference. The single harmonic bond between CGL
-            # and CGLD provides only quartic angular stiffness (∝ dθ⁴), allowing
-            # free wobbling at small angles. This spring adds genuine quadratic
-            # stiffness: E = k * (1 − n·n_ref) ≈ ½k·θ² for small θ.
-            orient_k = float(os.environ.get("UPSIDE_CG_LIPID_ORIENT_SPRING_K", "50.0"))
+            orient_k = float(os.environ.get("UPSIDE_CG_LIPID_ORIENT_SPRING_K", "0.0"))
             if orient_k > 0.0:
                 with h5py.File(up_file, "r") as up_r:
                     compose_grp = up_r["input/potential/compose_vector6d"]

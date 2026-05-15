@@ -1,4 +1,47 @@
 
+## 2026-05-15 CG-Lipid Physical Parameter Rationalization
+
+### Project Goal
+- Remove current CG-lipid "twisting" parameters from the 1RKL MARTINI workflow where they can be derived from dry-MARTINI ITP/PDB data.
+- Keep the single-particle CGL model, active SC-env/BB-env interactions, and spline-table runtime path intact.
+- Preserve SVD/table resolution choices as numerical approximation controls.
+
+### Architecture & Key Decisions
+- Add a shared DOPC-derived geometry/force-field helper used by table building and stage conversion.
+- Derive CGL contact spacing from dry-MARTINI nonbonded sigma (`2^(1/6) * max_sigma`) instead of fixed `7.0 Å`.
+- Treat CGLD as an internal orientation-coordinate carrier:
+  - derive its length from the DOPC COM-to-tail midpoint projection;
+  - derive its mass from DOPC transverse rotational inertia;
+  - derive its bond force constant from projected DOPC bonded stiffness.
+- Remove the default `cg_lipid_orientation_spring`; do not pin lipid direction to the initial structure in normal runs.
+- Replace the global CGL-vs-non-CGL sigma cap with explicit orientation-averaged CGL-X radial spline tables.
+- Keep taper width equal to one radial knot interval and keep SVD/mode count as resolution controls.
+- Add stale-table guards so old `martini.h5` files with capped CGL LJ metadata are rejected for fresh stage injection.
+
+### Execution Phases
+- [x] Phase 1: Add DOPC derivation helper and route table/stage code through it.
+- [x] Phase 2: Patch CGL orientation mechanics, initial spacing, and CGL-X isotropic table generation.
+- [x] Phase 3: Remove default orientation spring injection and add stale-table compatibility guard.
+- [x] Phase 4: Run syntax/build/table/workflow smoke checks.
+- [x] Phase 5: Document review and remaining risks.
+
+### Known Errors / Blockers
+- Existing generated `martini.h5` files may lack the new derivation attrs and should be rebuilt rather than silently reused.
+
+### Review
+- Added `py/martini_cg_lipid_params.py` as the shared DOPC-derived parameter helper for atom names, bead types, ITP masses, contact distance, CGLD geometry/mass, and projected orientation-bond stiffness.
+- Patched table generation so CG-CG and CG-SC fitting use the derived DOPC contact radius, CGL-X isotropic tables are explicit DOPC orientation averages, and generated tables carry `dry_martini_dopc_derived_v1` attrs.
+- Patched stage conversion so CGLD length, mass, orientation bond stiffness, and same-leaflet conditioning default to derived physical values; environment overrides remain explicit overrides.
+- Removed default orientation-spring injection by setting `UPSIDE_CG_LIPID_ORIENT_SPRING_K` default to `0.0`.
+- Added stale-table validation that rejects old capped CGL effective-LJ tables before reuse or injection.
+- Verification:
+  - `python3 -m py_compile py/martini_cg_lipid_params.py py/martini_build_tables.py py/martini_prepare_system_lib.py py/martini_prepare_system.py` passed;
+  - DOPC helper sanity check gave `contact_ang=6.959265`, `orientation_length_ang=11.139272`, `orientation_mass_g_mol=77.048875`, `orientation_bond_fc_eup_a2=39.435978`, `max_sigma_nm=0.620000`;
+  - coarse table smoke built `/private/tmp/cg_lipid_derived_smoke.h5` with `cg_lipid_isotropic.source=explicit_dopc_orientation_average`, no `max_effective_sigma_nm`, and derived attrs;
+  - stale-table guard rejected a synthetic capped legacy table;
+  - `INITIAL_DEBUG_ONLY=1 RUN_DIR=outputs/cg_lipid_derived_initial_debug PREP_SEED=12345 SEED=12345 bash example/16.MARTINI/run_sim_1rkl.sh` completed, adding CGLD sites with derived defaults and conditioning same-leaflet spacing to `6.959 Å`;
+  - `git diff --check` passed.
+
 ## 2026-05-07 1RKL CG-SC Range Stabilization
 
 ### Project Goal

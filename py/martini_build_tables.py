@@ -17,6 +17,13 @@ from typing import Dict, Iterable, List, Set, Tuple
 import h5py
 import numpy as np
 
+from martini_cg_lipid_params import (
+    DOPC_BEAD_TYPES,
+    DOPC_BONDS,
+    derive_dopc_cg_params,
+    parse_dry_martini_masses,
+)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -832,29 +839,44 @@ def _fit_radial_bspline(
 # CG lipid energy sampling
 # ---------------------------------------------------------------------------
 
-# DOPC bead types in ITP order (must match _DOPC_ATOM_NAMES in martini_prepare_system_lib.py)
-_DOPC_BEAD_TYPES = [
-    "Q0", "Qa", "Na", "Na",
-    "C1", "C1", "C3", "C1", "C1",
-    "C1", "C1", "C3", "C1", "C1",
-]
+# DOPC bead types in ITP order (must match DOPC_ATOM_NAMES in martini_cg_lipid_params.py)
+_DOPC_BEAD_TYPES = list(DOPC_BEAD_TYPES)
 
 # DOPC bonded topology from dry_martini_v2.1_lipids.itp (0-based indices)
-_DOPC_BONDS: list = [
-    (0, 1, 0.450, 1250.0),   # Q0-Qa     mb_np
-    (1, 2, 0.450, 1250.0),   # Qa-Na     mb_pg1
-    (2, 3, 0.370, 1250.0),   # Na-Na     mb_gg
-    (2, 4, 0.480, 1250.0),   # Na-C1     mb_cc
-    (4, 5, 0.480, 1250.0),   # C1-C1     mb_cc
-    (5, 6, 0.480, 1250.0),   # C1-C3     mb_cc
-    (6, 7, 0.480, 1250.0),   # C3-C1     mb_cc
-    (7, 8, 0.480, 1250.0),   # C1-C1     mb_cc
-    (3, 9, 0.480, 1250.0),   # Na-C1     mb_cc
-    (9, 10, 0.480, 1250.0),  # C1-C1     mb_cc
-    (10, 11, 0.480, 1250.0), # C1-C3     mb_cc
-    (11, 12, 0.480, 1250.0), # C3-C1     mb_cc
-    (12, 13, 0.480, 1250.0), # C1-C1     mb_cc
-]
+_DOPC_BONDS: list = list(DOPC_BONDS)
+
+_CG_DERIVED_NUMERIC_ATTRS = (
+    "contact_nm",
+    "contact_ang",
+    "max_sigma_nm",
+    "orientation_length_ang",
+    "orientation_mass_g_mol",
+    "orientation_bond_fc_eup_a2",
+    "transverse_inertia_g_mol_a2",
+    "head_tail_span_ang",
+    "tail_projection_ang",
+    "max_perp_radius_ang",
+    "energy_conversion_kj_per_eup",
+    "length_conversion_ang_per_nm",
+)
+
+_CG_DERIVED_STRING_ATTRS = (
+    "mass_source",
+    "contact_source",
+    "orientation_length_source",
+    "orientation_mass_source",
+    "orientation_bond_fc_source",
+)
+
+
+def _write_cg_derived_attrs(group, derived_params: dict) -> None:
+    group.attrs["derivation_schema"] = "dry_martini_dopc_derived_v1"
+    for attr_name in _CG_DERIVED_NUMERIC_ATTRS:
+        if attr_name in derived_params:
+            group.attrs[attr_name] = np.float32(derived_params[attr_name])
+    for attr_name in _CG_DERIVED_STRING_ATTRS:
+        if attr_name in derived_params:
+            group.attrs[attr_name] = derived_params[attr_name]
 
 # Cosine-based angle potentials: V(θ) = 0.5 * k * (cos(θ) - cos(θ0))²
 _DOPC_ANGLES: list = [
@@ -1699,7 +1721,7 @@ def _rotation_to_align_z_np(dir_vec: np.ndarray) -> np.ndarray:
 
 
 def _cgl_effective_lj_sigma_cap_nm() -> float:
-    raw = os.environ.get("UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM", "0.9")
+    raw = os.environ.get("UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM", "0")
     try:
         cap = float(raw)
     except ValueError as exc:
@@ -1750,7 +1772,6 @@ def _compute_cgl_effective_lj_params(
             self_params_cache[bt] = p
         return self_params_cache[bt]
 
-    sigma_cap_nm = _cgl_effective_lj_sigma_cap_nm()
     result: dict = {}
     for target_type in all_types:
         bead_params = []
@@ -1808,13 +1829,12 @@ def _compute_cgl_effective_lj_params(
             epsilon_eff = 0.01
 
         uncapped_sigma_eff = max(0.1, min(sigma_eff, 5.0))
-        sigma_eff = min(uncapped_sigma_eff, sigma_cap_nm)
+        sigma_eff = uncapped_sigma_eff
         epsilon_eff = max(0.01, min(epsilon_eff, 100.0))
         result[target_type] = {
             "sigma_nm": sigma_eff,
             "epsilon_kj_mol": epsilon_eff,
             "uncapped_sigma_nm": uncapped_sigma_eff,
-            "sigma_cap_nm": sigma_cap_nm,
         }
 
     return result
@@ -2099,6 +2119,7 @@ def _build_cg_lipid_tables(
     ref_bead_positions_nm: np.ndarray | None = None,
     bead_types: list | None = None,
     bead_charges: list | None = None,
+    bead_masses_g_mol: dict | None = None,
     r_min_nm: float = 0.30,
     r_max_nm: float = 0.70,
     r_count: int = 24,
@@ -2120,6 +2141,26 @@ def _build_cg_lipid_tables(
         raise ValueError(f"ref_bead_positions_nm must be (14, 3), got {ref_nm.shape}")
 
     print("\n=== CG Lipid Table Building ===")
+    bead_mass_values = None
+    if bead_masses_g_mol is not None:
+        bead_mass_values = [bead_masses_g_mol[bt] for bt in bead_types]
+    derived_params = derive_dopc_cg_params(
+        ref_bead_positions_nm=ref_nm,
+        bead_types=bead_types,
+        pair_params=pair_params,
+        bead_masses_g_mol=bead_mass_values,
+        energy_conversion_kj_per_eup=ENERGY_CONVERSION_KJ_PER_EUP,
+        length_conversion_ang_per_nm=LENGTH_CONVERSION_A_PER_NM,
+    )
+    contact_nm = float(derived_params["contact_nm"])
+    sc_fit_r_max_nm = min(float(r_max_nm), contact_nm)
+    print(
+        "  DOPC-derived CGL params: "
+        f"contact={derived_params['contact_ang']:.3f} Å, "
+        f"orientation_length={derived_params['orientation_length_ang']:.3f} Å, "
+        f"orientation_mass={derived_params['orientation_mass_g_mol']:.3f} g/mol, "
+        f"orientation_bond_fc={derived_params['orientation_bond_fc_eup_a2']:.3f} E_up/Å²"
+    )
 
     # Resolution control: "coarse", "medium", or "fine" (default)
     # Coarse/medium give reasonable accuracy for testing at much lower cost.
@@ -2143,7 +2184,7 @@ def _build_cg_lipid_tables(
         bead_types=bead_types,
         bead_charges=bead_charges,
         pair_params=pair_params,
-        r_min_nm=0.70,
+        r_min_nm=contact_nm,
         r_max_nm=1.68,
         r_count=min(r_count, _cg_r),
         cos_theta_count=min(cos_theta_count, _cg_ct),
@@ -2172,7 +2213,7 @@ def _build_cg_lipid_tables(
     sc_n_angular = 15
     sc_knot_spacing_ang = 1.4
     sc_taper_width_ang = sc_knot_spacing_ang
-    sc_cutoff_ang = float(r_max_nm * 10.0 + sc_taper_width_ang)
+    sc_cutoff_ang = float(sc_fit_r_max_nm * 10.0 + sc_taper_width_ang)
     sc_n_param = sc_n_radial + sc_n_modes * (2 * sc_n_angular + sc_n_radial)
     sc_rms_error = np.zeros(len(residues), dtype=np.float32)
 
@@ -2209,7 +2250,7 @@ def _build_cg_lipid_tables(
                 cb_anchor_nm=cb_anchor_nm,
                 cb_vector_unit=cb_vector_unit,
                 r_min_nm=r_min_nm,
-                r_max_nm=r_max_nm,
+                r_max_nm=sc_fit_r_max_nm,
                 r_count=min(r_count, _sc_r),
                 cos_theta_count=min(cos_theta_count, _sc_ct),
                 azimuthal_count=min(azimuthal_count, _sc_az),
@@ -2226,6 +2267,7 @@ def _build_cg_lipid_tables(
 
     # Store in HDF5
     cg_grp = h5.create_group("cg_lipid_table")
+    _write_cg_derived_attrs(cg_grp, derived_params)
 
     # CG ↔ CG pair
     cg_pair_grp = cg_grp.create_group("cg_lipid_pair")
@@ -2248,7 +2290,7 @@ def _build_cg_lipid_tables(
     cg_pair_grp.attrs["radial_mode"] = "full_multimode"
     cg_pair_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
     cg_pair_grp.attrs["fit_relax_steps"] = np.int32(cg_relax_steps)
-    cg_pair_grp.attrs["fit_r_min_nm"] = np.float32(0.70)
+    cg_pair_grp.attrs["fit_r_min_nm"] = np.float32(contact_nm)
     cg_pair_grp.attrs["fit_r_max_nm"] = np.float32(1.68)
     cg_pair_grp.attrs["n_modes"] = np.int32(result_cg["n_modes"])
     cg_pair_grp.attrs["n_radial"] = np.int32(result_cg["n_radial"])
@@ -2259,6 +2301,7 @@ def _build_cg_lipid_tables(
     cg_pair_grp.attrs["taper_width_ang"] = np.float32(result_cg["knot_spacing_ang"])
     cg_pair_grp.attrs["residual_cap_kj_mol"] = np.float32(result_cg["residual_cap_kj_mol"])
     cg_pair_grp.attrs["energy_cap_kj_mol"] = np.float32(result_cg["energy_cap_kj_mol"])
+    _write_cg_derived_attrs(cg_pair_grp, derived_params)
     cg_pair_grp.create_dataset("v0_raw_kj_mol", data=result_cg["v_radial_raw"].astype(np.float32))
     cg_pair_grp.create_dataset("mode_radial_raw_kj_mol", data=result_cg["v_angular_raw"].astype(np.float32))
 
@@ -2280,7 +2323,7 @@ def _build_cg_lipid_tables(
     cg_sc_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
     cg_sc_grp.attrs["fit_relax_steps"] = np.int32(sc_relax_steps if n_sc_types else 0)
     cg_sc_grp.attrs["fit_r_min_nm"] = np.float32(r_min_nm)
-    cg_sc_grp.attrs["fit_r_max_nm"] = np.float32(r_max_nm)
+    cg_sc_grp.attrs["fit_r_max_nm"] = np.float32(sc_fit_r_max_nm)
     cg_sc_grp.attrs["n_modes"] = np.int32(sc_n_modes)
     cg_sc_grp.attrs["n_radial"] = np.int32(sc_n_radial)
     cg_sc_grp.attrs["n_angular"] = np.int32(sc_n_angular)
@@ -2289,6 +2332,7 @@ def _build_cg_lipid_tables(
     cg_sc_grp.attrs["taper_width_ang"] = np.float32(sc_taper_width_ang)
     cg_sc_grp.attrs["residual_cap_kj_mol"] = np.float32(250.0)
     cg_sc_grp.attrs["energy_cap_kj_mol"] = np.float32(500.0)
+    _write_cg_derived_attrs(cg_sc_grp, derived_params)
 
     # Store the SC bead type names covered by this quadspline so that
     # convert_stage() can zero the corresponding MartiniPotential entries.
@@ -2334,7 +2378,8 @@ def _build_cg_lipid_tables(
     eff_grp.create_dataset("sigma_nm", data=eff_sigmas)
     eff_grp.create_dataset("epsilon_kj_mol", data=eff_epsilons)
     eff_grp.create_dataset("uncapped_sigma_nm", data=eff_uncapped_sigmas)
-    eff_grp.attrs["max_effective_sigma_nm"] = np.float32(_cgl_effective_lj_sigma_cap_nm())
+    eff_grp.attrs["source"] = "orientation_average_metadata_not_runtime"
+    _write_cg_derived_attrs(eff_grp, derived_params)
 
     # Build isotropic radial B-spline tables for CGL ↔ all other types
     # (water, ions, BB, env — everything not already covered by a quadspline).
@@ -2342,6 +2387,11 @@ def _build_cg_lipid_tables(
     _build_cgl_isotropic_table(
         h5, cg_grp, effective_lj,
         sc_bead_types=set(sc_bead_types) if sc_residue_names else set(),
+        ref_bead_positions_nm=ref_nm,
+        bead_types=bead_types,
+        bead_charges=bead_charges,
+        pair_params=pair_params,
+        derived_params=derived_params,
     )
     print()
 
@@ -2351,6 +2401,11 @@ def _build_cgl_isotropic_table(
     cg_grp: h5py.Group,
     effective_lj: dict,
     sc_bead_types: set = None,
+    ref_bead_positions_nm: np.ndarray | None = None,
+    bead_types: list | None = None,
+    bead_charges: list | None = None,
+    pair_params: dict | None = None,
+    derived_params: dict | None = None,
     energy_conv: float = ENERGY_CONVERSION_KJ_PER_EUP,
     length_conv: float = LENGTH_CONVERSION_A_PER_NM,
     n_knot_radial: int = 14,
@@ -2382,24 +2437,66 @@ def _build_cgl_isotropic_table(
     rad_knot_vector[4:-4] = np.arange(1, n_knot_radial - 3, dtype=np.float64)
     rad_knot_vector[-4:] = rad_knot_vector[-5]
 
-    # Sample densely for an accurate B-spline fit.
+    # Sample densely for an accurate B-spline fit.  The interaction samples
+    # explicit DOPC bead-vs-target energies and only uses a bead-scale distance
+    # floor to avoid evaluating below the resolved dry-MARTINI core.
     r_min_ang = float(knot_spacing_ang) + 0.1
     r_max_ang = float((n_knot_radial - 2) * knot_spacing_ang)
     n_sample = 200
     r_sample_ang = np.linspace(r_min_ang, r_max_ang, n_sample)
     t_sample = r_sample_ang / knot_spacing_ang
+    ref_nm = np.asarray(ref_bead_positions_nm, dtype=np.float64) if ref_bead_positions_nm is not None else None
+    explicit_source = (
+        ref_nm is not None
+        and ref_nm.shape == (14, 3)
+        and bead_types is not None
+        and bead_charges is not None
+        and pair_params is not None
+    )
+    orientation_dirs = np.asarray(_fibonacci_sphere(96), dtype=np.float64)
+    offset_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
 
     for ti, tgt_type in enumerate(target_types):
-        eff = effective_lj[tgt_type]
-        eps_eup = float(eff["epsilon_kj_mol"]) / energy_conv
-        sig_ang = float(eff["sigma_nm"]) * length_conv
-
         y = np.zeros(n_sample, dtype=np.float64)
-        if eps_eup != 0.0 and sig_ang != 0.0:
-            for i, r in enumerate(r_sample_ang):
-                sr = sig_ang / max(r, 0.1 * sig_ang)
-                sr6 = sr * sr * sr * sr * sr * sr
-                y[i] = 4.0 * eps_eup * (sr6 * sr6 - sr6)
+        if explicit_source:
+            target_charge = _infer_type_charge(tgt_type)
+            bead_floor_sigmas = []
+            for bt in bead_types:
+                params = pair_params.get((bt, tgt_type)) or pair_params.get((tgt_type, bt))
+                if params is None:
+                    continue
+                bead_floor_sigmas.append(float(params["sigma_nm"]))
+            if not bead_floor_sigmas:
+                raise RuntimeError(f"No explicit DOPC bead params for CGL↔{tgt_type}")
+            dist_floor_nm = 0.8 * min(bead_floor_sigmas)
+            for i, r_ang in enumerate(r_sample_ang):
+                cg_com = offset_axis * (float(r_ang) / length_conv)
+                e_sum = 0.0
+                for direction in orientation_dirs:
+                    rot = _rotation_to_align_z_np(direction)
+                    cg_positions = cg_com[None, :] + (rot @ ref_nm.T).T
+                    e, _, _ = _compute_pair_energy_and_gradient(
+                        cg_positions,
+                        np.zeros((1, 3), dtype=np.float64),
+                        bead_types,
+                        [tgt_type],
+                        bead_charges,
+                        [target_charge],
+                        pair_params,
+                        dist_min_nm=dist_floor_nm,
+                        soft_core_alpha=0.0,
+                    )
+                    e_sum += e
+                y[i] = (e_sum / float(len(orientation_dirs))) / energy_conv
+        else:
+            eff = effective_lj[tgt_type]
+            eps_eup = float(eff["epsilon_kj_mol"]) / energy_conv
+            sig_ang = float(eff["sigma_nm"]) * length_conv
+            if eps_eup != 0.0 and sig_ang != 0.0:
+                for i, r in enumerate(r_sample_ang):
+                    sr = sig_ang / max(r, 0.1 * sig_ang)
+                    sr6 = sr * sr * sr * sr * sr * sr
+                    y[i] = 4.0 * eps_eup * (sr6 * sr6 - sr6)
 
         control = _fit_radial_bspline(t_sample, y, rad_knot_vector, smooth=0.01)
         interaction_param[ti, 0, :] = control
@@ -2422,9 +2519,35 @@ def _build_cgl_isotropic_table(
     iso_grp.attrs["knot_spacing_ang"] = np.float32(knot_spacing_ang)
     cutoff_ang = float((n_knot_radial - 2) * knot_spacing_ang)
     iso_grp.attrs["cutoff_ang"] = np.float32(cutoff_ang)
+    iso_grp.attrs["source"] = (
+        "explicit_dopc_orientation_average" if explicit_source else "legacy_effective_lj"
+    )
+    if derived_params:
+        for attr_name in (
+            "contact_nm",
+            "contact_ang",
+            "max_sigma_nm",
+            "orientation_length_ang",
+            "orientation_mass_g_mol",
+            "orientation_bond_fc_eup_a2",
+            "transverse_inertia_g_mol_a2",
+            "head_tail_span_ang",
+            "max_perp_radius_ang",
+        ):
+            if attr_name in derived_params:
+                iso_grp.attrs[attr_name] = np.float32(derived_params[attr_name])
+        for attr_name in (
+            "contact_source",
+            "orientation_length_source",
+            "orientation_mass_source",
+            "orientation_bond_fc_source",
+        ):
+            if attr_name in derived_params:
+                iso_grp.attrs[attr_name] = derived_params[attr_name]
 
     print(f"  cg_lipid_isotropic: {n_types} target types, "
-          f"{n_knot_radial} radial knots, cutoff={cutoff_ang:.1f} Å")
+          f"{n_knot_radial} radial knots, cutoff={cutoff_ang:.1f} Å, "
+          f"source={iso_grp.attrs['source']}")
 
 
 # ---------------------------------------------------------------------------
@@ -2452,6 +2575,7 @@ def build_martini_tables(
     sidechain_lib_path = Path(sidechain_lib_path).expanduser().resolve()
 
     atomtypes, pair_params = _parse_dry_forcefield(dry_ff_path)
+    atomtype_masses = parse_dry_martini_masses(dry_ff_path)
 
     if active_atom_types is None:
         active_atom_types = set(atomtypes)
@@ -2499,8 +2623,9 @@ def build_martini_tables(
                 ref_bead_positions_nm=cg_lipid_config.get("ref_bead_positions_nm"),
                 bead_types=cg_lipid_config.get("bead_types"),
                 bead_charges=cg_lipid_config.get("bead_charges"),
+                bead_masses_g_mol=atomtype_masses,
                 r_min_nm=r_min_nm,
-                r_max_nm=min(r_max_nm, 0.70),  # quadspline cutoff ~7 Å
+                r_max_nm=r_max_nm,
                 r_count=r_count,
                 cos_theta_count=cos_theta_count,
             )

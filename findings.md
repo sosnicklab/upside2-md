@@ -1,6 +1,11 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-15: Audit of current 1RKL CG-lipid stabilizers found the largest non-ITP controls in the single-particle CGL representation.
+  - DOPC-derived geometry from `parameters/dryMARTINI/DOPC.pdb` gives first-lipid head-to-tail span about `25.70 Å`, COM-to-tail projection about `11.14 Å`, max perpendicular bead radius about `4.11 Å`, and transverse rotational inertia about `9560 g/mol Å^2`.
+  - Dry-MARTINI DOPC nonbonded sigmas in `dry_martini_v2.1.itp` are `0.47-0.62 nm`, so a physically derived CGL contact threshold is `2^(1/6) * 0.62 nm = 6.96 Å`, matching the old empirical `7.0 Å` spacing closely.
+  - The old CGLD length `5.0 Å`, orientation spring `50 E_up`, CGL-vs-X sigma cap `0.9 nm`, and CGL same-leaflet spacing `7.0 Å` should be replaced or documented as derived from these force-field/geometry quantities.
+- 2026-05-15: Implementation verification showed stage conversion derives CGLD defaults from the actual packed 1RKL lipid reference, producing `length=11.631 Å`, `mass=85.427 g/mol`, `bond_fc=36.314 E_up/Å²`, and same-leaflet spacing target `6.959 Å`.
 - 2026-05-12: User clarification for the restored pre-production branch: preserve it for any real bonded dry-MARTINI environment particles, not just bonded lipids.
   - Rule: workflow routing must distinguish physical environment bonds from synthetic CG lipid orientation helpers such as `CGL-CGLD`.
   - Consequence: the always-on `6.0` stage covers the current CG-lipid path, while `6.1-6.6` remain available only when genuine bonded environment topology is present.

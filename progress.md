@@ -1,5 +1,26 @@
 # Progress Log
 
+## 2026-05-15 (CG-Lipid Physical Parameter Rationalization)
+- Started implementation of the plan to replace CG-lipid empirical stabilizers with values derived from dry-MARTINI DOPC geometry and ITP parameters.
+- Scope is limited to the current single-particle CGL table/stage-generation path; no changes to the core SC-env/BB-env interaction enablement are planned.
+- Initial implementation targets:
+  - shared DOPC-derived contact/geometry/stiffness helper;
+  - CGLD orientation carrier parameters;
+  - CGL initial spacing threshold;
+  - CGL-X isotropic table source;
+  - removal of the default orientation pinning spring;
+  - stale-table rejection for old capped tables.
+- Implemented shared DOPC-derived helper and routed `martini_build_tables.py` plus `martini_prepare_system_lib.py` through it.
+- Replaced fixed CGLD defaults with derived length/mass/bond stiffness, replaced the default same-leaflet spacing with derived contact distance, and removed the default orientation spring.
+- Replaced the capped effective-LJ CGL-X runtime source with explicit orientation-averaged CGL-X radial spline tables and added stale-table rejection for capped legacy `martini.h5` files.
+- Verification completed:
+  - syntax compile passed for the changed Python modules;
+  - DOPC derivation sanity values are `contact=6.959265 Å`, `orientation_length=11.139272 Å`, `orientation_mass=77.048875 g/mol`, `orientation_bond_fc=39.435978 E_up/Å²`;
+  - coarse table smoke generated derived attrs and explicit CGL-X isotropic source;
+  - stale guard rejected a capped legacy table;
+  - 1RKL initial-debug preparation completed with derived CGLD defaults and no MD;
+  - `git diff --check` passed.
+
 ## 2026-05-12 (Restore 6.0 NPT Relaxation and Lipid VTF Vectors)
 - Started implementation of the agreed workflow repair:
   - mandatory rigid-protein `6.0` NPT MD stage before `7.0`;
