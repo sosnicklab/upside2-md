@@ -20,6 +20,7 @@
   - stale guard rejected a capped legacy table;
   - 1RKL initial-debug preparation completed with derived CGLD defaults and no MD;
   - `git diff --check` passed.
+- Updated `example/16.MARTINI/cg_lipid_potentials.tex` to document the derived CGLD parameters, derived contact distance, disabled default orientation spring, explicit CGL-X orientation-average table construction, and stale-table rebuild requirement.
 
 ## 2026-05-12 (Restore 6.0 NPT Relaxation and Lipid VTF Vectors)
 - Started implementation of the agreed workflow repair:

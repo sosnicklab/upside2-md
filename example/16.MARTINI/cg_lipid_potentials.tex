@@ -11,17 +11,57 @@
 Each DOPC lipid, comprising 14 MARTINI beads in the dry MARTINI force field~\cite{MARTINI},
 is coarse-grained to a single oriented particle carrying a 6D state vector
 $(\mathbf{r}, \hat{\mathbf{n}})$, where $\mathbf{r} \in \mathbb{R}^3$ is the
-center-of-mass position of the 14-bead lipid and $\hat{\mathbf{n}} \in S^2$ is a
-unit direction vector representing the mean lipid orientation (from the lipid
-tail toward the head group). The orientation vector is anchored by a hidden
-orientation site placed at $\mathbf{r} + \ell\,\hat{\mathbf{n}}$ with
-$\ell = 5.0\,\text{\AA}$, connected to the CG particle by a stiff harmonic bond
-$U_{\text{bond}} = \frac{1}{2}k_b(r - \ell)^2$ with
-$k_b = 20.0\,E_{\text{up}}/\text{\AA}^2$.
+geometric center of the 14-bead lipid and $\hat{\mathbf{n}} \in S^2$ is a unit
+direction vector from the NC3 head bead toward the midpoint of the terminal tail
+beads C5A and C5B. The orientation vector is anchored by a hidden orientation
+site (``CGLD'') placed at $\mathbf{r} + \ell\,\hat{\mathbf{n}}$ and connected
+to the CG particle by a harmonic bond
+\begin{equation}
+  U_{\text{bond}} = \frac{1}{2} k_b (r - \ell)^2 .
+\end{equation}
 
-The CG particle mass $M_{\text{CG}} = 1008.0\,\text{g/mol}$ is the sum of the
-14 DOPC bead masses; the orientation site mass accounts for the remainder such
-that the total DOPC mass is preserved.
+The CGLD parameters are derived from the same DOPC reference coordinates and
+dry-MARTINI ITP data used to build the interaction tables.  Let
+$\mathbf{x}_i$ be bead positions relative to the geometric center, $m_i$ the
+dry-MARTINI bead masses, and $\hat{\mathbf{n}}$ the NC3-to-tail-midpoint unit
+axis.  The orientation length, CGLD mass, and CGL-CGLD spring constant are
+\begin{align}
+  \ell &= \left| \mathbf{x}_{\text{tail}} \cdot \hat{\mathbf{n}} \right|, \\
+  I_\perp &= \sum_i m_i \left(|\mathbf{x}_i|^2 -
+             (\mathbf{x}_i \cdot \hat{\mathbf{n}})^2 \right), \\
+  M_{\text{CGLD}} &= I_\perp / \ell^2, \\
+  k_b &= \frac{1}{\kappa_E \kappa_L^2}
+        \sum_{(i,j)\in\text{DOPC bonds}} k_{ij}
+        \left( \hat{\mathbf{d}}_{ij}\cdot\hat{\mathbf{n}} \right)^2 ,
+\end{align}
+where $\mathbf{x}_{\text{tail}}$ is the midpoint of C5A and C5B relative to the
+geometric center, $\hat{\mathbf{d}}_{ij}$ is the unit vector along DOPC bond
+$(i,j)$, $k_{ij}$ is the dry-MARTINI bond force constant in
+$\text{kJ/mol}/\text{nm}^2$, $\kappa_E = 2.914952774272\,\text{kJ/mol}/E_{\text{up}}$,
+and $\kappa_L = 10\,\text{\AA}/\text{nm}$.
+
+For \texttt{parameters/dryMARTINI/DOPC.pdb} and
+\texttt{dry\_martini\_v2.1.itp}, this gives
+$\ell = 11.139\,\text{\AA}$, $M_{\text{CGLD}} = 77.049\,\text{g/mol}$, and
+$k_b = 39.436\,E_{\text{up}}/\text{\AA}^2$ for the first reference lipid.
+The actual packed 1RKL preparation derives the same quantities from its packed
+first lipid and produced $\ell = 11.631\,\text{\AA}$,
+$M_{\text{CGLD}} = 85.427\,\text{g/mol}$, and
+$k_b = 36.314\,E_{\text{up}}/\text{\AA}^2$ in the validation run.  The CGL
+particle mass remains the sum of the 14 DOPC bead masses; CGLD is an internal
+orientation-coordinate carrier with zero nonbonded interactions, not an
+additional dry-MARTINI bead.
+
+\paragraph{Derived Contact Distance.}
+The single-particle lipid contact distance is derived from the dry-MARTINI DOPC
+nonbonded parameters rather than set independently:
+\begin{equation}
+  r_{\text{contact}} = 2^{1/6} \max_{i,j\in\text{DOPC}} \sigma_{ij}.
+\end{equation}
+For the current dry-MARTINI DOPC bead types, $\max\sigma_{ij}=0.62\,\text{nm}$,
+so $r_{\text{contact}}=6.959\,\text{\AA}$.  This value is used as the lower
+support for CGL-CGL fitting and as the default same-leaflet initial spacing
+conditioner.
 
 \subsection{Angle Convention}
 
@@ -101,8 +141,9 @@ are identical), normalized to unit maximum absolute value, and fitted with a
 cubic B-spline. Radial functions $V_0(r)$ and $V_m(r)$ are fitted with cubic
 B-splines using Tikhonov regularization (smoothing parameter $\lambda = 0.01$)
 to penalize the second derivative.  Control points at small $r$ where no
-training data exist ($r < 7.0\,\text{\AA}$, corresponding to knot indices
-$0$--$4$) are clamped to the positive energy cap
+training data exist ($r < r_{\text{contact}} \approx 6.959\,\text{\AA}$,
+corresponding to knot indices $0$--$4$ on the current grid) are clamped to the
+positive energy cap
 $+E_{\text{cap}} / \kappa_E \approx +171.5\,E_{\text{up}}$ to enforce a
 repulsive steric barrier.
 
@@ -120,14 +161,19 @@ unit vector from C$_\alpha$ to C$_\beta$.
 The table is built with the same grid sampling, SVD decomposition, and
 B-spline fitting procedure, but with $N_{\text{relax}} = 120$ bead relaxation
 steps and a tighter angular grid (9 $\cos\theta$ points $\times$ 4 azimuthal
-angles). Separate tables are constructed for each of the 18 standard
-proteinogenic sidechain types against the single CG lipid type.
+angles). Separate tables are constructed for each standard proteinogenic
+sidechain type present in the active system against the single CG lipid type.
+The fitted radial support is capped at $r_{\text{contact}}$; the runtime cutoff
+is the fitted support plus one radial knot interval, so the current DOPC
+sidechain support is approximately $6.959 + 1.4 = 8.359\,\text{\AA}$.
 
-\subsection{CG Lipid Orientation Restraint}
+\subsection{Optional CG Lipid Orientation Restraint}
 \label{sec:cg-spring}
 
-To provide quadratic stiffness against angular drift of the CG lipid
-orientation vector, an orientation spring potential is applied:
+The production model does not pin lipid directions to their initial structure.
+The CGL-CGLD bond described above provides the orientation coordinate used by
+the anisotropic spline tables, and the default orientation spring constant is
+zero.  For diagnostic runs only, an optional orientation spring may be enabled:
 
 \begin{equation}
 U_{\text{orient}}(\hat{\mathbf{n}}) = k_{\text{orient}} \,
@@ -136,11 +182,11 @@ U_{\text{orient}}(\hat{\mathbf{n}}) = k_{\text{orient}} \,
 \end{equation}
 
 where $\hat{\mathbf{n}}_{\text{ref}}$ is the initial orientation assigned at
-system preparation, and $k_{\text{orient}} = 50.0\,E_{\text{up}}$.
-For small angular deviations $\theta$, $1 - \cos\theta \approx \theta^2/2$,
-giving an effective harmonic restraint. The single harmonic bond anchoring the
-orientation site (Sec.~2.1) provides only quartic stiffness
-$\propto \theta^4$; this spring adds the missing quadratic term~\cite{Upside}.
+system preparation.  Normal workflow scripts use $k_{\text{orient}} = 0$ unless
+the user explicitly sets
+\texttt{UPSIDE\_CG\_LIPID\_ORIENT\_\allowbreak SPRING\_K}.  For small angular
+deviations $\theta$, $1 - \cos\theta \approx \theta^2/2$, so any nonzero
+diagnostic value acts as a harmonic pin to the starting direction.
 
 \subsection{CG Lipid -- Environment Isotropic Potential}
 \label{sec:cg-iso}
@@ -155,13 +201,34 @@ U_{\text{CG-env}}(r) = B_{\text{spline}}(r; \,\{c_k\}_{k=0}^{N_r-1})
 \end{equation}
 
 where $\{c_k\}$ are $N_r = 14$ control points on the same knot grid as
-$V_0(r)$. The B-spline is fitted to an effective Lennard-Jones (12,6) potential
-obtained by orientation-averaging the sum of LJ interactions between all 14
-DOPC beads and a point probe of the target environment type over a Fibonacci
-sphere of 200 directions. The effective LJ parameters $(\varepsilon_{\text{eff}},
-\sigma_{\text{eff}})$ are obtained by fitting the orientation-averaged energy.
-For the CG-CG isotropic self-term, a physically motivated override is used:
-$\sigma = 10.0\,\text{\AA}$, $\varepsilon = 1.0\,E_{\text{up}}$.
+$V_0(r)$. The B-spline is fitted directly to an explicit orientation-averaged
+dry-MARTINI DOPC--target energy, not to a capped effective Lennard-Jones
+surrogate.  For each radial sample $r$, the CGL center is placed at distance
+$r$ from a point probe of target type $X$, the 14-bead DOPC reference is rotated
+over a 96-point Fibonacci sphere, and the sampled target energy is
+\begin{equation}
+  U_{\text{CG-}X}(r)
+  =
+  \left\langle
+    \sum_{i\in\text{DOPC}}
+    \left[
+      4\varepsilon_{iX}\left(
+        \left(\frac{\sigma_{iX}}{r_{iX}}\right)^{12}
+        -
+        \left(\frac{\sigma_{iX}}{r_{iX}}\right)^6
+      \right)
+      +
+      k_C \frac{q_i q_X}{\epsilon_r r_{iX}}
+    \right]
+  \right\rangle_{\hat{\mathbf{n}}}.
+\end{equation}
+The resulting one-dimensional energy samples are converted to $E_{\text{up}}$
+and fitted directly with the radial B-spline.  The old global CGL-vs-target
+$\sigma$ cap is no longer part of the production table path; generated tables
+carry the source attribute
+\texttt{explicit\_dopc\_orientation\_average}.  Legacy \texttt{martini.h5}
+files that still contain capped CGL effective-LJ metadata are rejected and must
+be rebuilt.
 
 \subsection{Hybrid Interface: Sidechain -- Environment Interaction}
 \label{sec:sc-env}
