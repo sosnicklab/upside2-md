@@ -14,6 +14,13 @@
   - A single LIPH-LIPT bond can still look like one same-colored rod in VMD bond renderings; use two same-colored half-bonds so `Name`, `Type`, `Element`, and `ResName` coloring can split hydrophilic and hydrophobic sides directly.
   - The full NC3-to-tail span from the starting PDB can look too long for the single-particle display rod; use the DOPC-derived orientation length for the visual rod span.
   - Regenerated 1RKL VTF verification: total visual span is `11.631147 Å`, split into two `5.8156 Å` side bonds, with no companion `.vmd` file.
+- 2026-05-16: User correction: `LIPH` and `LIPT` still appeared single-colored under VMD `Name` coloring.
+  - Rule: when relying on VMD default `Name` coloring without a companion script, use built-in atom names with known default categories.
+  - Use `name N` for the hydrophilic side and `name C` for the hydrophobic side; keep `type=HYDROPHILIC/HYDROPHOBIC`, `resname=LIPH/LIPT`, and `atomicnumber=7/6` for semantic metadata.
+- 2026-05-16: User correction: use the MARTINI coloring scheme for the single-particle lipid sides.
+  - Rule: display atoms for CGL sides should reuse actual DOPC MARTINI bead categories, not generic element names.
+  - Use `PO4/Qa` for the hydrophilic side and `C1A/C1` for the hydrophobic side while keeping side-specific `resname=LIPH/LIPT`.
+  - Verified regenerated `1rkl.stage_6.0.vtf` and `1rkl.stage_7.0.vtf` both carry `564` `PO4/Qa/LIPH/15` display atoms and `564` `C1A/C1/LIPT/6` display atoms.
 - 2026-05-15: Latest `example/16.MARTINI/outputs/martini_test_1rkl_hybrid` failure is a preproduction physics omission.
   - `stage_6.0.up` contains `cg_lipid_pair`, `compose_vector6d`, `dist_spring`, and `martini_potential`, but not `martini_sc_table_1body` or `cg_lipid_sc`.
   - `stage_7.0.up` contains `martini_sc_table_1body` and `cg_lipid_sc`, but the handoff from `6.0` already has a CGL-protein clash.

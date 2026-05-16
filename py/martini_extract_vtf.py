@@ -354,12 +354,12 @@ def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
 
     n_orig = mapping["output_atom_names"].shape[0]
 
-    hydrophilic_names = np.array(["LIPH"] * n_cg, dtype=object)
-    hydrophilic_types = np.array(["HYDROPHILIC"] * n_cg, dtype=object)
+    hydrophilic_names = np.array(["PO4"] * n_cg, dtype=object)
+    hydrophilic_types = np.array(["Qa"] * n_cg, dtype=object)
     hydrophilic_resnames = np.array(["LIPH"] * n_cg, dtype=object)
-    hydrophilic_atomic_numbers = np.full(n_cg, 7, dtype=int)
-    hydrophobic_names = np.array(["LIPT"] * n_cg, dtype=object)
-    hydrophobic_types = np.array(["HYDROPHOBIC"] * n_cg, dtype=object)
+    hydrophilic_atomic_numbers = np.full(n_cg, 15, dtype=int)
+    hydrophobic_names = np.array(["C1A"] * n_cg, dtype=object)
+    hydrophobic_types = np.array(["C1"] * n_cg, dtype=object)
     hydrophobic_resnames = np.array(["LIPT"] * n_cg, dtype=object)
     hydrophobic_atomic_numbers = np.full(n_cg, 6, dtype=int)
     lipid_resids = np.array(mapping["output_residue_ids"], dtype=int)[output_cg_idx]
@@ -402,7 +402,7 @@ def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
         hydrophobic_center_atom = hydrophobic_center_start + gi
         tail_atom = hydrophobic_tail_start + gi
         head_name = str(mapping["output_atom_names"][head_atom]).strip().upper()
-        if head_name != "LIPH":
+        if head_name != "PO4":
             raise ValueError(
                 f"CG lipid hydrophilic endpoint remapped to unexpected atom {head_atom} ({head_name})"
             )

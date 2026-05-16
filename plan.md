@@ -9,9 +9,9 @@
 - Current VTF uses `name LIPH type HYDROPHILIC resname UNK` for hydrophilic endpoints and `name LIPT type HYDROPHOBIC resname DOPC` for hydrophobic endpoints, so `ResName` and `Element` coloring are not robustly distinct.
 - VTF atom records can carry `atomicnumber`; use nitrogen-like hydrophilic endpoints and carbon-like hydrophobic endpoints for `Element` coloring.
 - Drop VMD `ResType` support and do not emit companion `.vmd` files.
-- Represent each lipid as two same-colored half-rods meeting at the CGL center:
-  - hydrophilic half: `LIPH/HYDROPHILIC/LIPH/7`;
-  - hydrophobic half: `LIPT/HYDROPHOBIC/LIPT/6`.
+- Represent each lipid as two same-colored half-rods meeting at the CGL center, using actual DOPC MARTINI bead categories for VMD Martini coloring:
+  - hydrophilic half: `PO4/Qa/LIPH/15`;
+  - hydrophobic half: `C1A/C1/LIPT/6`.
 - Use the DOPC-derived `orientation_length_ang` from the starting PDB as the total visual rod span instead of the full NC3-to-tail endpoint span.
 
 ### Execution Phases
@@ -25,9 +25,9 @@
 - None.
 
 ### Review
-- Patched `py/martini_extract_vtf.py` so lipid display endpoints carry distinct `Name`, `Type`, `ResName`, and `atomicnumber` metadata:
-  - hydrophilic endpoint: `name=LIPH`, `type=HYDROPHILIC`, `resname=LIPH`, `atomicnumber=7`;
-  - hydrophobic endpoint: `name=LIPT`, `type=HYDROPHOBIC`, `resname=LIPT`, `atomicnumber=6`.
+- Patched `py/martini_extract_vtf.py` so lipid display endpoints carry distinct MARTINI `Name`, `Type`, `ResName`, and `atomicnumber` metadata:
+  - hydrophilic endpoint: `name=PO4`, `type=Qa`, `resname=LIPH`, `atomicnumber=15`;
+  - hydrophobic endpoint: `name=C1A`, `type=C1`, `resname=LIPT`, `atomicnumber=6`.
 - Added `atomicnumber` to all emitted VTF atom records, inferred from atom names/types for non-lipid particles.
 - Removed same-stem `.vmd` companion script generation and dropped `ResType` support.
 - Split each visible lipid into two side-colored half-rods so VMD can color both halves directly from VTF atom metadata.
@@ -35,7 +35,7 @@
 - Verification:
   - `python3 -m py_compile py/martini_extract_vtf.py` passed;
   - regenerated the latest 1RKL VTF;
-  - VTF atom audit found `564` hydrophilic side atoms and `564` hydrophobic side atoms with distinct `Name`, `Type`, `Element`, and `ResName` fields;
+  - VTF atom audit found `564` hydrophilic `PO4/Qa/LIPH/15` side atoms and `564` hydrophobic `C1A/C1/LIPT/6` side atoms;
   - VTF bond audit found `282` hydrophilic half-bonds and `282` hydrophobic half-bonds.
 
 ## 2026-05-15 Restore Preproduction Interface Physics

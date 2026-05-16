@@ -27,6 +27,18 @@
   - no same-stem `.vmd` file remains;
   - VTF atom audit reports `564` `LIPH/HYDROPHILIC/LIPH/7` side atoms and `564` `LIPT/HYDROPHOBIC/LIPT/6` side atoms;
   - first-frame bond audit reports `282` hydrophilic half-bonds averaging `5.815558 Å` and `282` hydrophobic half-bonds averaging `5.815589 Å`, for total visual span `11.631147 Å`.
+- Follow-up correction for VMD `Name` coloring:
+  - custom atom names `LIPH` and `LIPT` can still map to the same default VMD `Name` color;
+  - changed lipid display atom names to built-in `N` for hydrophilic side and `C` for hydrophobic side while preserving semantic `HYDROPHILIC/HYDROPHOBIC` types and `LIPH/LIPT` resnames.
+- Follow-up correction for Martini coloring:
+  - replaced the generic `N/C` display labels with DOPC MARTINI bead categories;
+  - hydrophilic side now uses `name=PO4`, `type=Qa`, `resname=LIPH`, `atomicnumber=15`;
+  - hydrophobic side now uses `name=C1A`, `type=C1`, `resname=LIPT`, `atomicnumber=6`.
+- Regenerated and audited both VTF files in `example/16.MARTINI/outputs/martini_test_1rkl_hybrid`:
+  - `1rkl.stage_6.0.vtf` and `1rkl.stage_7.0.vtf` each contain `564` `PO4/Qa/LIPH/15` side atoms and `564` `C1A/C1/LIPT/6` side atoms;
+  - `stage_6.0` half-bond means are `5.815507 Å` for `PO4-PO4` and `5.815695 Å` for `C1A-C1A`;
+  - `stage_7.0` half-bond means are `5.815601 Å` for `PO4-PO4` and `5.815585 Å` for `C1A-C1A`;
+  - no same-stem `.vmd` files exist.
 
 ## 2026-05-15 (Restore Preproduction Interface Physics)
 - Started implementation from the agreed plan after inspecting `example/16.MARTINI/outputs/martini_test_1rkl_hybrid`.
