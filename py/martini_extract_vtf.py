@@ -13,6 +13,31 @@ REPO_ROOT = PY_DIR.parent
 WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 OUTPUT_PREVIOUS_RE = re.compile(r"^output_previous_(\d+)$")
 
+ATOMIC_NUMBERS = {
+    "H": 1,
+    "C": 6,
+    "N": 7,
+    "O": 8,
+    "P": 15,
+    "S": 16,
+    "CL": 17,
+    "NA": 11,
+}
+
+
+def infer_atomic_number(atom_name, atom_type=None):
+    for raw in (atom_name, atom_type):
+        token = str(raw).strip().upper()
+        if not token:
+            continue
+        if token in ATOMIC_NUMBERS:
+            return ATOMIC_NUMBERS[token]
+        if len(token) >= 2 and token[:2] in ATOMIC_NUMBERS:
+            return ATOMIC_NUMBERS[token[:2]]
+        if token[0] in ATOMIC_NUMBERS:
+            return ATOMIC_NUMBERS[token[0]]
+    return 6
+
 
 def decode_str_array(dset):
     arr = dset[:]
@@ -257,8 +282,8 @@ def build_cg_lipid_vector_info(struct_h5):
       - elem_indices: (n_cg,) int — original HDF5 indices of CG lipids
       - orientation_indices: (n_cg,) int or None — original HDF5 CGLD indices
       - direction: (n_cg, 3) float — static fallback unit direction vectors
-      - head_offsets: (n_cg,) float — hydrophilic endpoint offsets in Angstrom
-      - tail_offsets: (n_cg,) float — hydrophobic endpoint offsets in Angstrom
+      - head_offsets: (n_cg,) float — hydrophilic outer offsets in Angstrom
+      - tail_offsets: (n_cg,) float — hydrophobic outer offsets in Angstrom
     """
     cv6_path = "input/potential/compose_vector6d"
     if cv6_path not in struct_h5:
@@ -276,12 +301,12 @@ def build_cg_lipid_vector_info(struct_h5):
         else None
     )
     fallback_span = float(cv6.attrs.get("orientation_length_ang", 5.0))
-    head_offsets = (
+    metadata_head_offsets = (
         np.asarray(cv6["display_head_offset_ang"][:], dtype=np.float32)
         if "display_head_offset_ang" in cv6
         else np.full(elem_index.shape[0], -fallback_span, dtype=np.float32)
     )
-    tail_offsets = (
+    metadata_tail_offsets = (
         np.asarray(cv6["display_tail_offset_ang"][:], dtype=np.float32)
         if "display_tail_offset_ang" in cv6
         else np.full(elem_index.shape[0], fallback_span, dtype=np.float32)
@@ -289,20 +314,26 @@ def build_cg_lipid_vector_info(struct_h5):
 
     if elem_index.size == 0:
         return None
-    if head_offsets.shape[0] != elem_index.shape[0] or tail_offsets.shape[0] != elem_index.shape[0]:
+    if metadata_head_offsets.shape[0] != elem_index.shape[0] or metadata_tail_offsets.shape[0] != elem_index.shape[0]:
         raise ValueError("CG lipid VTF endpoint-offset metadata length mismatch")
+    display_span = float(cv6.attrs.get("orientation_length_ang", 0.0))
+    if not np.isfinite(display_span) or display_span <= 0.0:
+        display_span = float(np.mean(metadata_tail_offsets - metadata_head_offsets))
+    if not np.isfinite(display_span) or display_span <= 0.0:
+        display_span = fallback_span
 
     return {
         "elem_indices": elem_index,
         "orientation_indices": orientation_index,
         "direction": direction,
-        "head_offsets": head_offsets,
-        "tail_offsets": tail_offsets,
+        "head_offsets": np.full(elem_index.shape[0], -0.5 * display_span, dtype=np.float32),
+        "tail_offsets": np.full(elem_index.shape[0], 0.5 * display_span, dtype=np.float32),
+        "display_span": display_span,
     }
 
 
 def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
-    """Convert visible CGL centers into hydrophilic endpoints and append tail endpoints."""
+    """Convert visible CGL centers into two colored half-rods."""
     elem_idx = vector_info["elem_indices"]
     orig_to_output = mapping.get("orig_to_output", {})
     output_cg_idx = []
@@ -325,52 +356,71 @@ def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
 
     hydrophilic_names = np.array(["LIPH"] * n_cg, dtype=object)
     hydrophilic_types = np.array(["HYDROPHILIC"] * n_cg, dtype=object)
+    hydrophilic_resnames = np.array(["LIPH"] * n_cg, dtype=object)
+    hydrophilic_atomic_numbers = np.full(n_cg, 7, dtype=int)
     hydrophobic_names = np.array(["LIPT"] * n_cg, dtype=object)
     hydrophobic_types = np.array(["HYDROPHOBIC"] * n_cg, dtype=object)
-    hydrophobic_resnames = np.array(["DOPC"] * n_cg, dtype=object)
-    hydrophobic_resids = np.array(mapping["output_residue_ids"], dtype=int)[output_cg_idx]
-    hydrophobic_chain_ids = np.array(mapping["output_chain_ids"], dtype=object)[output_cg_idx]
+    hydrophobic_resnames = np.array(["LIPT"] * n_cg, dtype=object)
+    hydrophobic_atomic_numbers = np.full(n_cg, 6, dtype=int)
+    lipid_resids = np.array(mapping["output_residue_ids"], dtype=int)[output_cg_idx]
+    lipid_chain_ids = np.array(mapping["output_chain_ids"], dtype=object)[output_cg_idx]
 
     mapping["output_atom_names"][output_cg_idx] = hydrophilic_names
     mapping["output_atom_types"][output_cg_idx] = hydrophilic_types
+    mapping["output_residue_names"][output_cg_idx] = hydrophilic_resnames
+    mapping["output_atomic_numbers"][output_cg_idx] = hydrophilic_atomic_numbers
 
     mapping["output_atom_names"] = np.concatenate([
-        mapping["output_atom_names"], hydrophobic_names,
+        mapping["output_atom_names"], hydrophilic_names, hydrophobic_names, hydrophobic_names,
     ])
     mapping["output_atom_types"] = np.concatenate([
-        mapping["output_atom_types"], hydrophobic_types,
+        mapping["output_atom_types"], hydrophilic_types, hydrophobic_types, hydrophobic_types,
     ])
     mapping["output_residue_names"] = np.concatenate([
-        mapping["output_residue_names"], hydrophobic_resnames,
+        mapping["output_residue_names"], hydrophilic_resnames, hydrophobic_resnames, hydrophobic_resnames,
     ])
     mapping["output_residue_ids"] = np.concatenate([
-        mapping["output_residue_ids"], hydrophobic_resids,
+        mapping["output_residue_ids"], lipid_resids, lipid_resids, lipid_resids,
     ])
     mapping["output_chain_ids"] = np.concatenate([
-        mapping["output_chain_ids"], hydrophobic_chain_ids,
+        mapping["output_chain_ids"], lipid_chain_ids, lipid_chain_ids, lipid_chain_ids,
+    ])
+    mapping["output_atomic_numbers"] = np.concatenate([
+        mapping["output_atomic_numbers"],
+        hydrophilic_atomic_numbers,
+        hydrophobic_atomic_numbers,
+        hydrophobic_atomic_numbers,
     ])
 
-    # Add bonds: hydrophilic endpoint ↔ hydrophobic endpoint
+    hydrophilic_center_start = n_orig
+    hydrophobic_center_start = n_orig + n_cg
+    hydrophobic_tail_start = n_orig + 2 * n_cg
+
     for gi in range(n_cg):
         head_atom = int(output_cg_idx[gi])
-        tail_atom = n_orig + gi
+        hydrophilic_center_atom = hydrophilic_center_start + gi
+        hydrophobic_center_atom = hydrophobic_center_start + gi
+        tail_atom = hydrophobic_tail_start + gi
         head_name = str(mapping["output_atom_names"][head_atom]).strip().upper()
         if head_name != "LIPH":
             raise ValueError(
                 f"CG lipid hydrophilic endpoint remapped to unexpected atom {head_atom} ({head_name})"
             )
-        out_bonds.append((head_atom, tail_atom))
+        out_bonds.append((head_atom, hydrophilic_center_atom))
+        out_bonds.append((hydrophobic_center_atom, tail_atom))
 
-    vector_info["_tail_start"] = n_orig
+    vector_info["_hydrophilic_center_start"] = hydrophilic_center_start
+    vector_info["_hydrophobic_center_start"] = hydrophobic_center_start
+    vector_info["_tail_start"] = hydrophobic_tail_start
     vector_info["_n_vectors"] = n_cg
     vector_info["_output_head_indices"] = output_cg_idx
     vector_info["_source_ordinals"] = source_ordinals
 
-    print(f"CG lipid vectors: {n_cg} hydrophilic/hydrophobic endpoint bonds emitted")
+    print(f"CG lipid vectors: {n_cg} hydrophilic/hydrophobic half-rod pairs emitted")
 
 
 def extend_frame_with_lipid_vectors(frame, vector_info, source_frame=None, box_lengths=None):
-    """Replace CGL center positions with head endpoints and append tail endpoints."""
+    """Replace CGL center positions with side-colored display rod atoms."""
     if vector_info is None or "_tail_start" not in vector_info:
         return frame
     if vector_info.get("_n_vectors", 0) == 0:
@@ -401,8 +451,10 @@ def extend_frame_with_lipid_vectors(frame, vector_info, source_frame=None, box_l
     out = np.asarray(frame, dtype=np.float32).copy()
     centers = out[output_head_idx].copy()
     out[output_head_idx] = centers + direction * head_offsets[:, None]
+    hydrophilic_center_pos = centers.copy()
+    hydrophobic_center_pos = centers.copy()
     tail_pos = centers + direction * tail_offsets[:, None]
-    return np.concatenate([out, tail_pos], axis=0)
+    return np.concatenate([out, hydrophilic_center_pos, hydrophobic_center_pos, tail_pos], axis=0)
 
 
 def list_output_groups(traj_h5):
@@ -604,6 +656,10 @@ def build_mode1_mapping(
     out_res_names = list(mart_res_names)
     out_res_ids = [int(x) for x in np.asarray(mart_res_ids, dtype=int)]
     out_chain_ids = [str(x).strip() or "X" for x in np.asarray(mart_chain_ids, dtype=object)]
+    out_atomic_numbers = [
+        infer_atomic_number(aname, atype)
+        for aname, atype in zip(out_atom_names, out_atom_types)
+    ]
     include_aa_backbone = bb_map is not None
     if include_aa_backbone:
         for resid, rname, chain_id in zip(
@@ -615,6 +671,7 @@ def build_mode1_mapping(
                 out_res_names.append(str(rname))
                 out_res_ids.append(int(resid))
                 out_chain_ids.append(str(chain_id).strip() or "A")
+                out_atomic_numbers.append(infer_atomic_number(aname))
 
     return {
         "mode": 1,
@@ -627,6 +684,7 @@ def build_mode1_mapping(
         "output_residue_names": np.array(out_res_names, dtype=object),
         "output_residue_ids": np.array(out_res_ids, dtype=int),
         "output_chain_ids": np.array(out_chain_ids, dtype=object),
+        "output_atomic_numbers": np.array(out_atomic_numbers, dtype=int),
     }
 
 
@@ -678,6 +736,10 @@ def build_mode2_mapping(
     out_res_names = list(env_res_names)
     out_res_ids = [int(x) for x in env_res_ids]
     out_chain_ids = [str(x).strip() or "X" for x in np.asarray(env_chain_ids, dtype=object)]
+    out_atomic_numbers = [
+        infer_atomic_number(aname, atype)
+        for aname, atype in zip(out_atom_names, out_atom_types)
+    ]
 
     for resid, rname, chain_id in zip(
         bb_map["bb_residue_index"], bb_map["bb_residue_names"], bb_map["bb_chain_ids"]
@@ -688,6 +750,7 @@ def build_mode2_mapping(
             out_res_names.append(str(rname))
             out_res_ids.append(int(resid))
             out_chain_ids.append(str(chain_id).strip() or "A")
+            out_atomic_numbers.append(infer_atomic_number(aname))
 
     return {
         "mode": 2,
@@ -699,6 +762,7 @@ def build_mode2_mapping(
         "output_residue_names": np.array(out_res_names, dtype=object),
         "output_residue_ids": np.array(out_res_ids, dtype=int),
         "output_chain_ids": np.array(out_chain_ids, dtype=object),
+        "output_atomic_numbers": np.array(out_atomic_numbers, dtype=int),
     }
 
 
@@ -827,6 +891,13 @@ def extract_trajectory(
     if vector_info is not None:
         extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds)
         print(f"Particles (output+lipid-vectors): {mapping['output_atom_names'].shape[0]}")
+        span = vector_info["tail_offsets"] - vector_info["head_offsets"]
+        print(
+            "CG lipid display span: "
+            f"mean={float(np.mean(span)):.3f} Å "
+            f"min={float(np.min(span)):.3f} Å "
+            f"max={float(np.max(span)):.3f} Å"
+        )
 
     print(f"Frames: {n_frame_total}")
     print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
@@ -835,20 +906,22 @@ def extract_trajectory(
         f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
         f.write(f"# mode {mode}\n")
         f.write(f"# group {output_group}\n")
-        for i, (aname, atype, rname, resid, chain_id) in enumerate(
+        for i, (aname, atype, rname, resid, chain_id, atomic_number) in enumerate(
             zip(
                 mapping["output_atom_names"],
                 mapping["output_atom_types"],
                 mapping["output_residue_names"],
                 mapping["output_residue_ids"],
                 mapping["output_chain_ids"],
+                mapping["output_atomic_numbers"],
             )
         ):
             chain = (str(chain_id).strip() or "X")[0]
             segid = f"s{chain}"
             f.write(
                 f"atom {i} name {aname} type {atype} resid {int(resid)} "
-                f"resname {str(rname)} segid {segid} chain {chain}\n"
+                f"resname {str(rname)} segid {segid} chain {chain} "
+                f"atomicnumber {int(atomic_number)}\n"
             )
         for i, j in out_bonds:
             f.write(f"bond {i}:{j}\n")

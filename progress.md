@@ -1,5 +1,33 @@
 # Progress Log
 
+## 2026-05-15 (VTF Lipid Endpoint Coloring)
+- Started implementation after the user reported lipid bars appear as one long same-color bar in VMD.
+- Current VTF audit:
+  - hydrophilic endpoints are `name LIPH type HYDROPHILIC resname UNK`;
+  - hydrophobic endpoints are `name LIPT type HYDROPHOBIC resname DOPC`;
+  - VTF atom records do not include `atomicnumber`, so VMD `Element` coloring cannot distinguish the endpoints.
+- Starting DOPC PDB geometry gives NC3-to-tail-midpoint span near `24.21 Å` on average; existing stage metadata gives mean endpoint span `24.27 Å`, so the bar length source is already correct.
+- Implemented distinct lipid endpoint metadata in `py/martini_extract_vtf.py`:
+  - hydrophilic endpoints now emit `LIPH/HYDROPHILIC/LIPH` with `atomicnumber=7`;
+  - hydrophobic endpoints now emit `LIPT/HYDROPHOBIC/LIPT` with `atomicnumber=6`;
+  - all other VTF atom records now include inferred `atomicnumber` values.
+- Added same-stem VMD color scripts for endpoint category colors and `ResType` mapping.
+- Verification:
+  - Python syntax check passed for `py/martini_extract_vtf.py`;
+  - regenerated `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/1rkl.stage_7.0.vtf`;
+  - generated `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/1rkl.stage_7.0.vmd`;
+  - endpoint audit found `282` hydrophilic and `282` hydrophobic endpoints with distinct `Name`, `Type`, `Element`, and `ResName` fields;
+  - first-frame endpoint span mean is `24.270496 Å` over `282` lipid bonds.
+- Follow-up correction:
+  - removed `.vmd` generation and dropped `ResType` support per user preference;
+  - changed VTF lipid rendering from one LIPH-LIPT bond to two same-colored side bonds meeting at the CGL center;
+  - shortened the visual rod to the DOPC-derived `orientation_length_ang` from the starting PDB instead of the full NC3-to-tail span.
+- Follow-up verification:
+  - regenerated `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/1rkl.stage_7.0.vtf`;
+  - no same-stem `.vmd` file remains;
+  - VTF atom audit reports `564` `LIPH/HYDROPHILIC/LIPH/7` side atoms and `564` `LIPT/HYDROPHOBIC/LIPT/6` side atoms;
+  - first-frame bond audit reports `282` hydrophilic half-bonds averaging `5.815558 Å` and `282` hydrophobic half-bonds averaging `5.815589 Å`, for total visual span `11.631147 Å`.
+
 ## 2026-05-15 (Restore Preproduction Interface Physics)
 - Started implementation from the agreed plan after inspecting `example/16.MARTINI/outputs/martini_test_1rkl_hybrid`.
 - Root cause from artifacts:

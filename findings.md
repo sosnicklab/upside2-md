@@ -1,6 +1,19 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-15: VTF lipid coloring needs endpoint-specific metadata, not only endpoint coordinates.
+  - Current extracted VTF has `282` `LIPH/HYDROPHILIC/UNK` endpoints and `282` `LIPT/HYDROPHOBIC/DOPC` endpoints.
+  - Existing stage metadata already stores DOPC-derived display offsets with mean endpoint span `24.270477 Å`; the visual length problem is metadata/coloring, not coordinate span.
+  - Superseded by the 2026-05-16 user correction: do not use companion `.vmd` scripts or `ResType` mapping for this workflow.
+- 2026-05-15: Regenerated 1RKL VTF endpoint coloring metadata is correct.
+  - `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/1rkl.stage_7.0.vtf` now contains `282` `LIPH/HYDROPHILIC/LIPH/7` endpoints and `282` `LIPT/HYDROPHOBIC/LIPT/6` endpoints.
+  - First-frame lipid endpoint bond span averages `24.270496 Å`, so the visible bar length remains at the DOPC-derived physical display length rather than growing into an artificial long same-color segment.
+- 2026-05-16: User correction on VTF lipid coloring.
+  - Rule: do not create companion `.vmd` files for this workflow; keep coloring support in the `.vtf` atom metadata only.
+  - Rule: drop `ResType` support when it requires external VMD-side mapping.
+  - A single LIPH-LIPT bond can still look like one same-colored rod in VMD bond renderings; use two same-colored half-bonds so `Name`, `Type`, `Element`, and `ResName` coloring can split hydrophilic and hydrophobic sides directly.
+  - The full NC3-to-tail span from the starting PDB can look too long for the single-particle display rod; use the DOPC-derived orientation length for the visual rod span.
+  - Regenerated 1RKL VTF verification: total visual span is `11.631147 Å`, split into two `5.8156 Å` side bonds, with no companion `.vmd` file.
 - 2026-05-15: Latest `example/16.MARTINI/outputs/martini_test_1rkl_hybrid` failure is a preproduction physics omission.
   - `stage_6.0.up` contains `cg_lipid_pair`, `compose_vector6d`, `dist_spring`, and `martini_potential`, but not `martini_sc_table_1body` or `cg_lipid_sc`.
   - `stage_7.0.up` contains `martini_sc_table_1body` and `cg_lipid_sc`, but the handoff from `6.0` already has a CGL-protein clash.
