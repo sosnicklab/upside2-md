@@ -1,5 +1,27 @@
 # Progress Log
 
+## 2026-05-15 (Restore Preproduction Interface Physics)
+- Started implementation from the agreed plan after inspecting `example/16.MARTINI/outputs/martini_test_1rkl_hybrid`.
+- Root cause from artifacts:
+  - `stage_6.0.up` lacks `martini_sc_table_1body` and `cg_lipid_sc`;
+  - `stage_7.0.up` contains those nodes, but inherits the end-of-`6.0` coordinates;
+  - `6.0` starts at min CGL-protein distance `7.61 Å` and ends at `2.27 Å`, so the clash is introduced during preproduction.
+- Implementation target: make preproduction stages carry the same physical protein/environment interface nodes as production while preserving rigid-protein preproduction mode.
+- Implemented shared hybrid interface injection in `py/martini_prepare_system.py`:
+  - preproduction stages now get `martini_sc_table_1body` and `cg_lipid_sc` before MD;
+  - production still uses `current_stage=production` / `activation_stage=production`;
+  - preproduction still uses `current_stage=minimization` / `activation_stage=minimization` with rigid-protein handling.
+- Added required-node assertions for hybrid stages so missing `martini_potential`, `martini_sc_table_1body`, or `cg_lipid_sc` fails before MD.
+- Verification:
+  - Python syntax check passed;
+  - short reused-table workflow completed through `6.0 -> 7.0`;
+  - full reused-table 10000-step workflow completed under `/private/tmp/upside_preprod_fix_full`;
+  - regenerated `6.0` contains `martini_potential`, `martini_sc_table_1body`, `cg_lipid_pair`, and `cg_lipid_sc`;
+  - `6.0` CGL-protein minimum distance ended at `5.357 Å`, avoiding the latest bad `2.275 Å` clash;
+  - production Rg ended at `13.2 Å` with range `12.8-14.1 Å`;
+  - production `cg_lipid_sc` stayed in `[-14.70, 18.88] E_up`;
+  - `git diff --check` passed.
+
 ## 2026-05-15 (CG-Lipid Physical Parameter Rationalization)
 - Started implementation of the plan to replace CG-lipid empirical stabilizers with values derived from dry-MARTINI DOPC geometry and ITP parameters.
 - Scope is limited to the current single-particle CGL table/stage-generation path; no changes to the core SC-env/BB-env interaction enablement are planned.

@@ -1,4 +1,40 @@
 
+## 2026-05-15 Restore Preproduction Interface Physics
+
+### Project Goal
+- Fix `example/16.MARTINI/run_sim_1rkl.sh` after the latest result in `outputs/martini_test_1rkl_hybrid` shows `stage_6.0` creates protein-lipid clashes before production.
+- Keep SC-env, BB-env, and CGL-SC interface interactions active; do not disable, zero, or tune physical interactions to hide the failure.
+- Preserve the restored rigid-protein `6.0` NPT relaxation stage and the direct `6.0 -> 7.0` handoff for current CG-lipid systems.
+
+### Architecture & Key Decisions
+- Root cause: `stage_6.0.up` has `cg_lipid_pair` and `martini_potential`, but lacks `martini_sc_table_1body` and `cg_lipid_sc`; `stage_7.0.up` restores them after `6.0` already moved lipids into the rigid protein.
+- Use the same hybrid interface injection path for preproduction and production stages, while keeping stage labels/activation modes distinct:
+  - preproduction: `current_stage=minimization`, `activation_stage=minimization`, rigid protein;
+  - production: `current_stage=production`, `activation_stage=production`.
+- Add assertions that hybrid stages with protein and CG lipids fail if required interface nodes are missing.
+
+### Execution Phases
+- [x] Phase 1: Refactor hybrid interface node injection so preproduction stages get `martini_sc_table_1body` and `cg_lipid_sc`.
+- [x] Phase 2: Add required-node assertions for hybrid preproduction and production stages.
+- [x] Phase 3: Verify regenerated `6.0` no longer creates the observed CGL-protein clash.
+- [x] Phase 4: Document results and residual risks.
+
+### Known Errors / Blockers
+- None remaining for the reproduced `6.0` handoff failure.
+
+### Review
+- Added shared hybrid interface injection in `py/martini_prepare_system.py` so preproduction and production stages both carry `martini_sc_table_1body`, `cg_lipid_sc`, `cg_lipid_pair`, and `martini_potential`.
+- Kept preproduction as `current_stage=minimization`, `activation_stage=minimization`, and rigid-protein mode; production remains `current_stage=production`, `activation_stage=production`.
+- Added required-node assertions so hybrid stages with CG lipids fail before MD if physical interface nodes are missing.
+- Verification:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed;
+  - regenerated `/private/tmp/upside_preprod_fix_full/checkpoints/1rkl.stage_6.0.up` contains all required interface nodes;
+  - `6.0` CGL-protein minimum distance is `7.608 Å` at input and `5.357 Å` after 500 steps, instead of the latest bad `2.275 Å`;
+  - `6.0` 3D CGL-CGL nearest distance improves from `6.233 Å` to `7.126 Å`;
+  - 10000-step production smoke ends at Rg `13.2 Å` with observed range `12.8-14.1 Å`, not the bad `17.9 Å` drift;
+  - production `cg_lipid_sc` starts at `18.88 E_up` and stays in `[-14.70, 18.88] E_up`, not the bad `1152.51 E_up` startup spike;
+  - `git diff --check` passed.
+
 ## 2026-05-15 CG-Lipid Physical Parameter Rationalization
 
 ### Project Goal

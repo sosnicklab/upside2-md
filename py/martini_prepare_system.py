@@ -807,11 +807,17 @@ def ensure_sc_martini_library(args):
         raise ValueError(f"{library} missing required SC datasets: {','.join(missing)}")
 
 
-def assert_hybrid_stage_active(up_file: Path, expected_stage: str, expected_activation: str):
+def assert_hybrid_stage_active(
+    up_file: Path,
+    expected_stage: str,
+    expected_activation: str,
+    require_interface_nodes: bool = False,
+):
     import h5py
 
     with h5py.File(up_file, "r") as h5:
         inp = h5["/input"]
+        pot = inp["potential"]
         stage = h5_as_text(inp["stage_parameters"].attrs.get("current_stage", b"")).strip()
         hy = inp["hybrid_control"].attrs
         enable = int(hy.get("enable", 0))
@@ -821,8 +827,24 @@ def assert_hybrid_stage_active(up_file: Path, expected_stage: str, expected_acti
                 f"{up_file}: expected stage={expected_stage}, activation={expected_activation}, enable=1; "
                 f"got stage={stage}, activation={activation}, enable={enable}"
             )
-        if "martini_sc_table_1body" not in inp["potential"] and expected_stage == "production":
-            raise ValueError(f"{up_file}: missing production martini_sc_table_1body node")
+        if require_interface_nodes:
+            missing = [
+                node
+                for node in ("martini_potential", "martini_sc_table_1body")
+                if node not in pot
+            ]
+            atom_names = []
+            if "atom_names" in inp:
+                atom_names = [
+                    x.decode("ascii") if isinstance(x, (bytes, np.bytes_)) else str(x)
+                    for x in inp["atom_names"][:]
+                ]
+            if any(name.strip().upper() == "CGL" for name in atom_names) and "cg_lipid_sc" not in pot:
+                missing.append("cg_lipid_sc")
+            if missing:
+                raise ValueError(
+                    f"{up_file}: missing required hybrid interface node(s): {', '.join(missing)}"
+                )
         env_membership = inp["hybrid_env_topology"]["protein_membership"][:]
         if not np.any(env_membership < 0):
             raise ValueError(f"{up_file}: no non-protein environment targets found")
@@ -860,6 +882,30 @@ def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable:
     }
 
 
+def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, activation_stage: str):
+    ensure_sc_martini_library(args)
+    set_hybrid_control_mode(target_file, activation_stage)
+    set_hybrid_production_controls(target_file, args)
+    inject_stage7_sc_table_nodes(
+        up_file=target_file,
+        martini_h5=args.sc_martini_library,
+        upside_home=args.upside_home,
+        rama_library=args.upside_rama_library,
+        rama_sheet_mixing=args.upside_rama_sheet_mixing,
+        hbond_energy=args.upside_hbond_energy,
+        reference_state_rama=args.upside_reference_state_rama,
+    )
+    # SC placement node must exist before CG lipid node injection
+    # so that cg_lipid_sc (CG↔SC) can find it.
+    inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.martini_table_h5)
+    assert_hybrid_stage_active(
+        target_file,
+        current_stage,
+        activation_stage,
+        require_interface_nodes=True,
+    )
+
+
 def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: int, barostat_type: int, lipidhead_fc: float, stage_label: str):
     with temporary_env(stage_conversion_env(args, stage_label, prepare_stage, npt_enable, lipidhead_fc)):
         run_prepare_command(
@@ -883,24 +929,14 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
     set_stage_label(target_file, stage_label)
     inject_particles_table(up_file=target_file, martini_h5=args.martini_table_h5)
     if stage_label == "production":
-        ensure_sc_martini_library(args)
-        set_hybrid_control_mode(target_file, "production")
-        set_hybrid_production_controls(target_file, args)
-        inject_stage7_sc_table_nodes(
-            up_file=target_file,
-            martini_h5=args.sc_martini_library,
-            upside_home=args.upside_home,
-            rama_library=args.upside_rama_library,
-            rama_sheet_mixing=args.upside_rama_sheet_mixing,
-            hbond_energy=args.upside_hbond_energy,
-            reference_state_rama=args.upside_reference_state_rama,
-        )
-        assert_hybrid_stage_active(target_file, "production", "production")
-        # SC placement node must exist before CG lipid node injection
-        # so that cg_lipid_sc (CG↔SC) can find it.
-        inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.martini_table_h5)
+        inject_hybrid_interface_nodes(args, target_file, "production", "production")
     else:
-        inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.martini_table_h5)
+        inject_hybrid_interface_nodes(
+            args,
+            target_file,
+            stage_label,
+            args.hybrid_preprod_activation_stage,
+        )
     if npt_enable:
         set_barostat_type(target_file, barostat_type)
     write_stage_debug_outputs(target_file, debug_dir=args.run_dir / "debug")

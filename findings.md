@@ -1,6 +1,14 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-15: Latest `example/16.MARTINI/outputs/martini_test_1rkl_hybrid` failure is a preproduction physics omission.
+  - `stage_6.0.up` contains `cg_lipid_pair`, `compose_vector6d`, `dist_spring`, and `martini_potential`, but not `martini_sc_table_1body` or `cg_lipid_sc`.
+  - `stage_7.0.up` contains `martini_sc_table_1body` and `cg_lipid_sc`, but the handoff from `6.0` already has a CGL-protein clash.
+  - Trajectory inspection: `6.0` input has min CGL-protein distance `7.608 Å` and same-leaflet CGL minima near `6.959 Å`; `6.0` final has min CGL-protein distance `2.275 Å` and upper-leaflet same-leaflet minimum `0.588 Å`.
+  - Rule: rigid preproduction may keep protein geometry fixed, but it must not omit active SC-env/BB-env/CGL-SC interface physics when relaxing lipids around the protein.
+- 2026-05-15: Verification of the preproduction-interface fix shows the old same-leaflet XY diagnostic can look low when median-z leaflet assignment mixes tilted or crossing lipids; use 3D CGL-CGL nearest distance as the clash check.
+  - Fixed reused-table `6.0` output: min CGL-protein distance `5.357 Å`, 3D CGL-CGL nearest distance `7.126 Å`, and CGL-CGL p05 nearest distance `7.675 Å`.
+  - Fixed 10000-step production output: Rg range `12.8-14.1 Å`, final Rg `13.2 Å`, and `cg_lipid_sc` range `[-14.70, 18.88] E_up`.
 - 2026-05-15: Audit of current 1RKL CG-lipid stabilizers found the largest non-ITP controls in the single-particle CGL representation.
   - DOPC-derived geometry from `parameters/dryMARTINI/DOPC.pdb` gives first-lipid head-to-tail span about `25.70 Å`, COM-to-tail projection about `11.14 Å`, max perpendicular bead radius about `4.11 Å`, and transverse rotational inertia about `9560 g/mol Å^2`.
   - Dry-MARTINI DOPC nonbonded sigmas in `dry_martini_v2.1.itp` are `0.47-0.62 nm`, so a physically derived CGL contact threshold is `2^(1/6) * 0.62 nm = 6.96 Å`, matching the old empirical `7.0 Å` spacing closely.
