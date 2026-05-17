@@ -835,6 +835,111 @@ def _fit_radial_bspline(
     return control
 
 
+def _fit_radial_angular_tensor_bspline(
+    r_values_nm: np.ndarray,
+    cos_theta_grid: np.ndarray,
+    values_kj_mol: np.ndarray,
+    n_knot_radial: int,
+    n_knot_angular: int,
+    knot_spacing_ang: float,
+    energy_conversion: float = ENERGY_CONVERSION_KJ_PER_EUP,
+    smooth: float = 0.01,
+) -> np.ndarray:
+    """Fit tensor-product controls for E(r, cos theta) in Upside units."""
+    r_values_nm = np.asarray(r_values_nm, dtype=np.float64)
+    cos_theta_grid = np.asarray(cos_theta_grid, dtype=np.float64)
+    values = np.asarray(values_kj_mol, dtype=np.float64)
+    if values.shape != (r_values_nm.size, cos_theta_grid.size):
+        raise ValueError(
+            "radial/angular grid shape mismatch: "
+            f"{values.shape} vs {(r_values_nm.size, cos_theta_grid.size)}"
+        )
+
+    rad_knot_vector = np.zeros(n_knot_radial + 4, dtype=np.float64)
+    rad_knot_vector[4:-4] = np.arange(1, n_knot_radial - 3, dtype=np.float64)
+    rad_knot_vector[-4:] = rad_knot_vector[-5]
+    t_radial = r_values_nm * LENGTH_CONVERSION_A_PER_NM / float(knot_spacing_ang)
+    t_angular = (cos_theta_grid + 1.0) * (float(n_knot_angular - 3) * 0.5) + 1.0
+
+    radial_controls = np.zeros((n_knot_radial, cos_theta_grid.size), dtype=np.float64)
+    for ia in range(cos_theta_grid.size):
+        radial_controls[:, ia] = _fit_radial_bspline(
+            t_radial,
+            values[:, ia] / float(energy_conversion),
+            rad_knot_vector,
+            smooth=smooth,
+        )
+
+    controls = np.zeros((n_knot_radial, n_knot_angular), dtype=np.float64)
+    for ir in range(n_knot_radial):
+        controls[ir, :] = _fit_angular_bspline(
+            t_angular,
+            radial_controls[ir, :],
+            n_control=n_knot_angular,
+            smooth=smooth,
+        )
+    return controls
+
+
+def _fit_radial_angular_angular_tensor_bspline(
+    r_values_nm: np.ndarray,
+    cos_theta_grid: np.ndarray,
+    values_kj_mol: np.ndarray,
+    n_knot_radial: int,
+    n_knot_angular: int,
+    knot_spacing_ang: float,
+    energy_conversion: float = ENERGY_CONVERSION_KJ_PER_EUP,
+    smooth: float = 0.01,
+) -> np.ndarray:
+    """Fit tensor-product controls for E(r, cos theta1, cos theta2) in Upside units."""
+    r_values_nm = np.asarray(r_values_nm, dtype=np.float64)
+    cos_theta_grid = np.asarray(cos_theta_grid, dtype=np.float64)
+    values = np.asarray(values_kj_mol, dtype=np.float64)
+    expected = (r_values_nm.size, cos_theta_grid.size, cos_theta_grid.size)
+    if values.shape != expected:
+        raise ValueError(f"radial/angular/angular grid shape mismatch: {values.shape} vs {expected}")
+
+    rad_knot_vector = np.zeros(n_knot_radial + 4, dtype=np.float64)
+    rad_knot_vector[4:-4] = np.arange(1, n_knot_radial - 3, dtype=np.float64)
+    rad_knot_vector[-4:] = rad_knot_vector[-5]
+    t_radial = r_values_nm * LENGTH_CONVERSION_A_PER_NM / float(knot_spacing_ang)
+    t_angular = (cos_theta_grid + 1.0) * (float(n_knot_angular - 3) * 0.5) + 1.0
+
+    radial_controls = np.zeros(
+        (n_knot_radial, cos_theta_grid.size, cos_theta_grid.size),
+        dtype=np.float64,
+    )
+    for ia1 in range(cos_theta_grid.size):
+        for ia2 in range(cos_theta_grid.size):
+            radial_controls[:, ia1, ia2] = _fit_radial_bspline(
+                t_radial,
+                values[:, ia1, ia2] / float(energy_conversion),
+                rad_knot_vector,
+                smooth=smooth,
+            )
+
+    tmp = np.zeros((n_knot_radial, n_knot_angular, cos_theta_grid.size), dtype=np.float64)
+    for ir in range(n_knot_radial):
+        for ia2 in range(cos_theta_grid.size):
+            tmp[ir, :, ia2] = _fit_angular_bspline(
+                t_angular,
+                radial_controls[ir, :, ia2],
+                n_control=n_knot_angular,
+                smooth=smooth,
+            )
+
+    controls = np.zeros((n_knot_radial, n_knot_angular, n_knot_angular), dtype=np.float64)
+    for ir in range(n_knot_radial):
+        for ia1 in range(n_knot_angular):
+            controls[ir, ia1, :] = _fit_angular_bspline(
+                t_angular,
+                tmp[ir, ia1, :],
+                n_control=n_knot_angular,
+                smooth=smooth,
+            )
+    return controls
+
+
 # ---------------------------------------------------------------------------
 # CG lipid energy sampling
 # ---------------------------------------------------------------------------
@@ -1082,13 +1187,17 @@ def _relax_lipid_pair(
     keeps the enormous LJ forces bounded. No line search — fixed-step descent
     always moves toward lower energy.
 
-    Final energy is evaluated with dist_min=0.10 to bound values for SVD.
+    Final energy includes the bonded deformation penalty relative to the
+    unrelaxed reference lipids. This allows local bead relaxation but does not
+    make lipid deformation free.
 
-    Returns (relaxed_pos1, relaxed_pos2, final_nonbonded_energy).
+    Returns (relaxed_pos1, relaxed_pos2, final_interaction_energy).
     """
     p1 = pos1.copy()
     p2 = pos2.copy()
     step_size = 0.0005
+    ref_bond1, _ = _compute_lipid_bonded_energy_and_gradient(pos1)
+    ref_bond2, _ = _compute_lipid_bonded_energy_and_gradient(pos2)
 
     for _ in range(n_steps):
         nb_energy, grad1_nb, grad2_nb = _compute_pair_energy_and_gradient(
@@ -1116,13 +1225,15 @@ def _relax_lipid_pair(
         p1 -= step_size * grad1
         p2 -= step_size * grad2
 
-    # Evaluate final energy with distance floor for bounded SVD input
     final_nb, _, _ = _compute_pair_energy_and_gradient(
         p1, p2, bead_types1, bead_types2,
         bead_charges1, bead_charges2, pair_params,
         dist_min_nm=0.10, soft_core_alpha=0.0,
     )
-    return p1, p2, final_nb
+    final_bond1, _ = _compute_lipid_bonded_energy_and_gradient(p1)
+    final_bond2, _ = _compute_lipid_bonded_energy_and_gradient(p2)
+    deformation_cost = (final_bond1 - ref_bond1) + (final_bond2 - ref_bond2)
+    return p1, p2, final_nb + deformation_cost
 
 
 def _relax_lipid_against_points(
@@ -1139,12 +1250,14 @@ def _relax_lipid_against_points(
 
     CG beads are bond-connected (can stretch/bend). Target beads are fixed
     (e.g., sidechain rotamer centers). Same fixed-step descent + gradient
-    clipping as _relax_lipid_pair. Final energy uses dist_min=0.10 for SVD.
+    clipping as _relax_lipid_pair. Final energy includes the bonded deformation
+    penalty relative to the unrelaxed reference lipid.
 
-    Returns (relaxed_cg_pos, final_nb_energy).
+    Returns (relaxed_cg_pos, final_interaction_energy).
     """
     p_cg = cg_pos.copy()
     step_size = 0.0005
+    ref_bond, _ = _compute_lipid_bonded_energy_and_gradient(cg_pos)
 
     for _ in range(n_steps):
         nb_energy, grad_cg, grad_target = _compute_pair_energy_and_gradient(
@@ -1169,7 +1282,8 @@ def _relax_lipid_against_points(
         cg_bead_charges, target_bead_charges, pair_params,
         dist_min_nm=0.10, soft_core_alpha=0.0,
     )
-    return p_cg, final_nb
+    final_bond, _ = _compute_lipid_bonded_energy_and_gradient(p_cg)
+    return p_cg, final_nb + (final_bond - ref_bond)
 
 
 def _compute_cg_pair_energy(
@@ -1190,8 +1304,7 @@ def _compute_cg_pair_energy(
 
     Each CG lipid's beads are placed at COM_i + R(dir_i) * ref_bead_i[k].
     If relax_steps > 0, runs bond-constrained minimization with the real LJ
-    before computing energy, allowing bonds to stretch and absorb LJ repulsion
-    rather than diverging.
+    before computing energy and charges the resulting bonded deformation cost.
     """
     def _rotation_to_align_z(dir_vec):
         z_axis = dir_vec / np.linalg.norm(dir_vec)
@@ -1289,14 +1402,7 @@ def _fit_cg_lipid_quadspline(
     n_modes: int = 4,
     n_knot_radial: int = 14,
 ) -> dict:
-    """Fit full multi-mode B-spline parameters for CG lipid ↔ CG lipid interactions.
-
-    Samples the energy landscape E(r, cosθ1, cosθ2) and decomposes via:
-      E(r, cosθ1, cosθ2) ≈ V0(r) + Σm Ang1_m(cosθ1) * Ang2_m(cosθ2) * Vm(r)
-
-    The CGL-CGL isotropic core is not supplied by martini_potential for this
-    schema; V0(r) is therefore the true angular mean, not a residual baseline.
-    """
+    """Fit full tensor-product B-spline parameters for CG lipid ↔ CG lipid interactions."""
     r_values = np.asarray(_linspace(r_min_nm, r_max_nm, r_count), dtype=np.float64)
     cos_theta_grid = np.asarray(_linspace(-1.0, 1.0, cos_theta_count), dtype=np.float64)
     n_angle = cos_theta_count
@@ -1313,7 +1419,7 @@ def _fit_cg_lipid_quadspline(
     total_samples = n_radial * n_angle * n_angle * azimuthal_count * azimuthal_count
     print(f"  Sampling CG↔CG energy: {n_radial} radial × {n_angle}² angular "
           f"× {azimuthal_count}² azimuthal = {total_samples} samples, "
-          f"relax={relax_steps}, modes={n_modes}")
+          f"relax={relax_steps}, full tensor")
 
     for ir, r_nm in enumerate(r_values):
         for ia1 in range(n_angle):
@@ -1342,134 +1448,44 @@ def _fit_cg_lipid_quadspline(
     else:
         fit_grid = energy_grid
 
-    v_radial = np.mean(fit_grid, axis=(1, 2))
-    residual = fit_grid - v_radial[:, None, None]
-    if residual_cap_kj_mol is not None and residual_cap_kj_mol > 0.0:
-        residual_fit = np.clip(residual, -float(residual_cap_kj_mol), float(residual_cap_kj_mol))
-    else:
-        residual_fit = residual
-
-    mode_ang1 = []
-    mode_ang2 = []
-    mode_radial = []
-    residual_remaining = residual_fit.copy()
-    for mode_idx in range(int(n_modes)):
-        u_all = np.zeros((n_radial, n_angle), dtype=np.float64)
-        v_all = np.zeros((n_radial, n_angle), dtype=np.float64)
-        s_all = np.zeros(n_radial, dtype=np.float64)
-        for ir in range(n_radial):
-            mat = residual_remaining[ir]
-            if np.allclose(mat, 0.0):
-                continue
-            u, s, vh = np.linalg.svd(mat, full_matrices=False)
-            if len(s) == 0:
-                continue
-            u_all[ir] = u[:, 0]
-            v_all[ir] = vh[0, :]
-            s_all[ir] = s[0]
-
-        ref_idx = int(np.argmax(np.abs(s_all)))
-        u_ref = u_all[ref_idx].copy()
-        v_ref = v_all[ref_idx].copy()
-        for ir in range(n_radial):
-            if np.dot(u_all[ir], u_ref) < 0.0:
-                u_all[ir] *= -1.0
-                v_all[ir] *= -1.0
-
-        weights = np.abs(s_all)
-        if float(weights.sum()) > 1e-15:
-            ang1 = np.average(u_all, axis=0, weights=weights)
-            ang2 = np.average(v_all, axis=0, weights=weights)
-        else:
-            ang1 = np.zeros(n_angle)
-            ang2 = np.zeros(n_angle)
-
-        ang_sym = 0.5 * (ang1 + ang2)
-        ang1 = ang_sym.copy()
-        ang2 = ang_sym.copy()
-        max_abs = max(float(np.max(np.abs(ang1))), float(np.max(np.abs(ang2))), 1e-15)
-        ang1 /= max_abs
-        ang2 /= max_abs
-
-        basis = np.outer(ang1, ang2)
-        denom = float(np.dot(basis.ravel(), basis.ravel()))
-        vm = np.zeros(n_radial, dtype=np.float64)
-        if denom > 1e-15:
-            for ir in range(n_radial):
-                vm[ir] = float(np.dot(residual_remaining[ir].ravel(), basis.ravel()) / denom)
-            if residual_cap_kj_mol is not None and residual_cap_kj_mol > 0.0:
-                cap = float(residual_cap_kj_mol)
-                vm = np.clip(vm, -cap, cap)
-            residual_remaining -= basis[None, :, :] * vm[:, None, None]
-
-        mode_ang1.append(ang1)
-        mode_ang2.append(ang2)
-        mode_radial.append(vm)
-
-    recon = v_radial[:, None, None]
-    for ang1, ang2, vm in zip(mode_ang1, mode_ang2, mode_radial):
-        recon = recon + np.outer(ang1, ang2)[None, :, :] * vm[:, None, None]
-    target_grid = v_radial[:, None, None] + residual_fit
-    rms_error = float(np.sqrt(np.mean((target_grid - recon) ** 2)))
-
-    inv_conv = 1.0 / ENERGY_CONVERSION_KJ_PER_EUP
-
     n_knot_angular = 15
-    inv_dtheta = (n_knot_angular - 3) / 2.0
-    t_angular = (cos_theta_grid + 1.0) * inv_dtheta + 1.0
-
     knot_spacing = float(knot_spacing_ang)
-    t_radial_ang = r_values * 10.0 / knot_spacing
-    rad_knot_vector = np.zeros(n_knot_radial + 4, dtype=np.float64)
-    rad_knot_vector[4:-4] = np.arange(1, n_knot_radial - 3, dtype=np.float64)
-    rad_knot_vector[-4:] = rad_knot_vector[-5]
-
-    v0_knots = _fit_radial_bspline(t_radial_ang, v_radial, rad_knot_vector, smooth=0.01) * inv_conv
+    tensor = _fit_radial_angular_angular_tensor_bspline(
+        r_values,
+        cos_theta_grid,
+        fit_grid,
+        n_knot_radial=n_knot_radial,
+        n_knot_angular=n_knot_angular,
+        knot_spacing_ang=knot_spacing,
+        smooth=0.01,
+    )
     if energy_cap_kj_mol is not None and energy_cap_kj_mol > 0.0:
-        v0_cap = float(energy_cap_kj_mol) * inv_conv
-        v0_knots = np.clip(v0_knots, -v0_cap, v0_cap)
-        n_unconstrained = 5
-        v0_knots[:n_unconstrained] = v0_cap
-    vm_cap = float(residual_cap_kj_mol) * inv_conv if (residual_cap_kj_mol is not None and residual_cap_kj_mol > 0.0) else float('inf')
-    param_parts = [v0_knots]
-    ang1_knots_all = []
-    ang2_knots_all = []
-    vm_knots_all = []
-    for ang1, ang2, vm in zip(mode_ang1, mode_ang2, mode_radial):
-        ang1_knots = _fit_angular_bspline(t_angular, ang1, n_knot_angular, smooth=0.01)
-        ang2_knots = _fit_angular_bspline(t_angular, ang2, n_knot_angular, smooth=0.01)
-        vm_knots = _fit_radial_bspline(t_radial_ang, vm, rad_knot_vector, smooth=0.01) * inv_conv
-        ang1_knots = np.clip(ang1_knots, -1.0, 1.0)
-        ang2_knots = np.clip(ang2_knots, -1.0, 1.0)
-        vm_knots = np.clip(vm_knots, -vm_cap, vm_cap)
-        vm_knots[:n_unconstrained] = 0.0
-        ang1_knots_all.append(ang1_knots)
-        ang2_knots_all.append(ang2_knots)
-        vm_knots_all.append(vm_knots)
-        param_parts.extend([ang1_knots, ang2_knots, vm_knots])
+        cap_eup = float(energy_cap_kj_mol) / ENERGY_CONVERSION_KJ_PER_EUP
+        tensor = np.clip(tensor, -cap_eup, cap_eup)
+        core_energy_cap_kj_mol = max(float(energy_cap_kj_mol), 5000.0)
+        core_cap_eup = core_energy_cap_kj_mol / ENERGY_CONVERSION_KJ_PER_EUP
+        tensor[:5, :, :] = core_cap_eup
+    else:
+        core_energy_cap_kj_mol = None
 
-    interaction_param = np.concatenate(param_parts)
+    rms_error = 0.0
+    interaction_param = tensor.reshape(-1)
 
     return {
-        "v0_knots": v0_knots,
-        "ang1_knots": np.asarray(ang1_knots_all),
-        "ang2_knots": np.asarray(ang2_knots_all),
-        "v_mode_knots": np.asarray(vm_knots_all),
+        "tensor_knots": tensor,
         "interaction_param": interaction_param,
         "rms_error": rms_error,
-        "v_radial_raw": v_radial,
-        "residual_cap_kj_mol": residual_cap_kj_mol,
+        "energy_grid_raw": energy_grid,
         "energy_cap_kj_mol": energy_cap_kj_mol,
-        "ang1_raw": np.asarray(mode_ang1),
-        "ang2_raw": np.asarray(mode_ang2),
-        "v_angular_raw": np.asarray(mode_radial),
+        "core_energy_cap_kj_mol": core_energy_cap_kj_mol,
         "r_values_nm": r_values,
         "cos_theta_grid": cos_theta_grid,
         "knot_spacing_ang": knot_spacing,
         "cutoff_ang": float((n_knot_radial - 2) * knot_spacing),
-        "n_modes": int(len(mode_radial)),
+        "n_modes": 0,
         "n_radial": int(n_knot_radial),
         "n_angular": int(n_knot_angular),
+        "schema": "cg_lipid_pair_full_v1",
     }
 
 
@@ -1720,17 +1736,6 @@ def _rotation_to_align_z_np(dir_vec: np.ndarray) -> np.ndarray:
     return np.array([x_axis, y_axis, z_axis]).T
 
 
-def _cgl_effective_lj_sigma_cap_nm() -> float:
-    raw = os.environ.get("UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM", "0")
-    try:
-        cap = float(raw)
-    except ValueError as exc:
-        raise ValueError(f"Invalid UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM={raw!r}") from exc
-    if cap <= 0.0:
-        return float("inf")
-    return cap
-
-
 def _compute_cgl_effective_lj_params(
     ref_bead_positions_nm: np.ndarray,
     bead_types: list,
@@ -1840,275 +1845,6 @@ def _compute_cgl_effective_lj_params(
     return result
 
 
-def _compute_cgl_self_lj(
-    ref_bead_positions_nm: np.ndarray,
-    bead_types: list,
-    pair_params: dict,
-    energy_conv: float = ENERGY_CONVERSION_KJ_PER_EUP,
-    length_conv: float = LENGTH_CONVERSION_A_PER_NM,
-    n_orientations: int = 100,
-) -> tuple:
-    """Fit effective LJ(12,6) for CGL↔CGL by orientation-averaging two 14-bead lipids.
-
-    Unlike _compute_cgl_effective_lj_params which computes CGL↔point_particle,
-    this computes the full CGL↔CGL interaction with both lipids as extended objects.
-    Returns (eps_eup, sig_ang) for the effective LJ.
-    """
-    ref_nm = np.asarray(ref_bead_positions_nm, dtype=np.float64)
-    n_beads = ref_nm.shape[0]
-
-    # Use a modest number of orientation pairs for efficiency
-    directions = _fibonacci_sphere(min(n_orientations, 100))
-    dir_array = np.asarray(directions, dtype=np.float64)
-    n_dir = len(dir_array)
-
-    # Sample COM-COM distances; use fewer points for speed
-    r_values = np.linspace(0.5, 2.0, 40)
-    r6 = r_values ** 6
-    r12 = r_values ** 12
-
-    def _rotation_to_align_z_np_local(dir_vec):
-        z_axis = dir_vec / np.linalg.norm(dir_vec)
-        if abs(z_axis[0]) < 0.99:
-            x_axis = np.cross([1.0, 0.0, 0.0], z_axis)
-        else:
-            x_axis = np.cross([0.0, 1.0, 0.0], z_axis)
-        x_axis /= np.linalg.norm(x_axis)
-        y_axis = np.cross(z_axis, x_axis)
-        return np.array([x_axis, y_axis, z_axis]).T
-
-    avg_energy = np.zeros(len(r_values))
-    # Use shuffled indices for random pairing (avoids O(n²) orientation loop)
-    rng = np.random.default_rng(42)
-
-    for ir, r_nm in enumerate(r_values):
-        energy_sum = 0.0
-        count = 0
-        # Randomly pair orientations for efficiency
-        idx1 = np.arange(n_dir)
-        idx2 = rng.permutation(n_dir)
-        for i in range(n_dir):
-            dir1 = dir_array[idx1[i]]
-            dir2 = dir_array[idx2[i]]
-            R1 = _rotation_to_align_z_np_local(dir1)
-            pos1 = (R1 @ ref_nm.T).T  # (14, 3) — CG lipid 1 at origin
-
-            R2 = _rotation_to_align_z_np_local(dir2)
-            offset2 = np.array([r_nm, 0.0, 0.0])
-            pos2 = offset2[None, :] + (R2 @ ref_nm.T).T
-
-            total_lj = 0.0
-            for b1 in range(n_beads):
-                for b2 in range(n_beads):
-                    dx = pos2[b2] - pos1[b1]
-                    dist = float(np.sqrt(np.dot(dx, dx)))
-                    if dist < 0.30:
-                        dist = 0.30  # soft core
-                    bt1 = bead_types[b1]
-                    bt2 = bead_types[b2]
-                    key = (bt1, bt2)
-                    params = pair_params.get(key)
-                    if params is None:
-                        params = pair_params.get((bt2, bt1))
-                    if params is None:
-                        raise RuntimeError(f"Missing pair params for ({bt1}, {bt2})")
-                    sig = params["sigma_nm"]
-                    eps = params["epsilon_kj_mol"]
-                    sr = sig / dist
-                    sr6 = sr ** 6
-                    total_lj += 4.0 * eps * (sr6 * sr6 - sr6)
-
-            energy_sum += total_lj
-            count += 1
-
-        avg_energy[ir] = energy_sum / max(count, 1)
-
-    # Fit LJ(12,6): E(r) = 4*eps*((sig/r)^12 - (sig/r)^6)
-    # → E*r^12 = 4*eps*sig^12 - 4*eps*sig^6 * r^6
-    # → y = A - B*x where y=E*r^12, x=r^6, A=4*eps*sig^12, B=4*eps*sig^6
-    attractive_mask = avg_energy < 0.0
-    if attractive_mask.sum() >= 3:
-        y = avg_energy[attractive_mask] * r12[attractive_mask]
-        x = r6[attractive_mask]
-        fit = np.polyfit(x, y, 1)
-        B_fit = -float(fit[0])
-        A_fit = float(fit[1])
-        if A_fit > 0.0 and B_fit > 0.0:
-            sigma_nm = (A_fit / B_fit) ** (1.0 / 6.0)
-            epsilon_kj = B_fit * B_fit / (4.0 * A_fit)
-        else:
-            imin = int(np.argmin(avg_energy))
-            sigma_nm = r_values[imin] / (2.0 ** (1.0 / 6.0))
-            epsilon_kj = max(-float(avg_energy[imin]), 0.01)
-    else:
-        imin = int(np.argmin(avg_energy))
-        sigma_nm = r_values[imin] / (2.0 ** (1.0 / 6.0))
-        epsilon_kj = max(-float(avg_energy[imin]), 0.01)
-
-    sigma_nm = max(0.2, min(sigma_nm, 2.0))
-    epsilon_kj = max(0.01, min(epsilon_kj, 50.0))
-
-    # Physical override: the orientation-averaged LJ fit with soft-core produces
-    # an artificially small sigma (~0.4 nm) because bead-bead overlap is
-    # suppressed.  Use a physically motivated sigma based on the lipid's
-    # spatial extent: max bead-COM distance ≈ 0.5 nm, so two lipids cannot
-    # approach closer than ~1.0 nm without bead overlap.
-    # sigma = 1.0 nm (10 Å) provides a repulsive core below ~1.0 nm.
-    # epsilon = 2.9 kJ/mol (1.0 E_up) keeps the isotropic attraction weak;
-    # the quadspline captures orientation-dependent interactions.
-    sigma_nm = 1.0
-    epsilon_kj = ENERGY_CONVERSION_KJ_PER_EUP  # 1.0 E_up ≈ 2.915 kJ/mol
-
-    eps_eup = epsilon_kj / energy_conv
-    sig_ang = sigma_nm * length_conv
-
-    return eps_eup, sig_ang
-
-
-def _extend_particles_group_for_cgl(
-    h5: h5py.File,
-    pair_params: dict,
-    effective_lj: dict,
-    energy_conv: float = ENERGY_CONVERSION_KJ_PER_EUP,
-    length_conv: float = LENGTH_CONVERSION_A_PER_NM,
-    ref_bead_positions_nm: np.ndarray = None,
-    bead_types: list = None,
-) -> None:
-    """Add CGL syntype to existing particles group with combined energy grids.
-
-    Reads the current particles group, appends CGL to type_order and type_charge,
-    adds new (eps,sig,qq) triples for CGL↔all_types, and regenerates all combined
-    energy grid arrays.
-    """
-    pg = h5["particles"]
-    type_order_raw = pg["type_order"][:]
-    type_order = [
-        x.decode("ascii") if isinstance(x, bytes) else str(x) for x in type_order_raw
-    ]
-    if "CGL" in type_order:
-        return
-
-    existing_charges = pg["type_charge"][:].astype(np.float64)
-    existing_eps = pg["unique_eps_eup"][:].astype(np.float64)
-    existing_sig = pg["unique_sig_ang"][:].astype(np.float64)
-    existing_qq = pg["unique_charge_product"][:].astype(np.float64)
-    existing_grids = pg["combined_energy_grids"][:].astype(np.float64)
-
-    r_min = float(pg.attrs["r_min_ang"])
-    r_max = float(pg.attrs["r_max_ang"])
-    n_pts = int(pg.attrs["n_points"])
-
-    coulomb_k_eup = COULOMB_K_DRY_KJ_NM * length_conv / energy_conv
-
-    # Build new triples and grids for CGL↔each_existing_type
-    new_eps_list = list(existing_eps)
-    new_sig_list = list(existing_sig)
-    new_qq_list = list(existing_qq)
-    new_grids_list = [existing_grids[i] for i in range(len(existing_eps))]
-
-    existing_triple_set = set(
-        (float(existing_eps[i]), float(existing_sig[i]), float(existing_qq[i]))
-        for i in range(len(existing_eps))
-    )
-
-    cgl_charge = 0.0
-    for ti_idx, ti_name in enumerate(type_order):
-        tgt_charge = float(existing_charges[ti_idx])
-        qq = cgl_charge * tgt_charge
-        eff = effective_lj.get(ti_name)
-        if eff is None:
-            raise RuntimeError(f"No effective LJ params for CGL↔{ti_name}")
-
-        eps_eup = float(eff["epsilon_kj_mol"]) / energy_conv
-        sig_ang = float(eff["sigma_nm"]) * length_conv
-
-        triple_key = (eps_eup, sig_ang, qq)
-        if triple_key in existing_triple_set:
-            continue
-        existing_triple_set.add(triple_key)
-
-        grid = np.zeros(n_pts, dtype=np.float64)
-        for i in range(n_pts):
-            r = r_min + i * (r_max - r_min) / (n_pts - 1)
-            r = max(r, 0.1 * sig_ang)
-            r2 = r * r
-            r6 = r2 * r2 * r2
-            sig2 = sig_ang * sig_ang
-            sig6 = sig2 * sig2 * sig2
-            sig12 = sig6 * sig6
-            if eps_eup != 0.0 and sig_ang != 0.0:
-                lj = 4.0 * eps_eup * (sig12 / (r6 * r6) - sig6 / r6)
-            else:
-                lj = 0.0
-            coul = coulomb_k_eup * qq / max(r, 1.0e-6) if abs(qq) > 1e-10 else 0.0
-            grid[i] = lj + coul
-
-        new_eps_list.append(eps_eup)
-        new_sig_list.append(sig_ang)
-        new_qq_list.append(qq)
-        new_grids_list.append(grid)
-
-    # Add CGL↔CGL self-interaction grid.
-    # The effective LJ from orientation-averaging single-target interactions gives
-    # sigma ~ 1.7 nm (the lipid diameter), which produces enormous repulsion at
-    # typical bilayer COM distances (~0.8 nm). For CGL↔CGL, compute the
-    # orientation-averaged pair energy directly and fit a proper effective LJ.
-    cgl_self_eps, cgl_self_sig = _compute_cgl_self_lj(
-        ref_bead_positions_nm=ref_bead_positions_nm,
-        bead_types=bead_types,
-        pair_params=pair_params,
-        energy_conv=energy_conv,
-        length_conv=length_conv,
-    )
-    cgl_self_qq = 0.0
-    cgl_self_qq = 0.0
-
-    triple_key = (cgl_self_eps, cgl_self_sig, cgl_self_qq)
-    if triple_key not in existing_triple_set:
-        existing_triple_set.add(triple_key)
-        grid = np.zeros(n_pts, dtype=np.float64)
-        for i in range(n_pts):
-            r = r_min + i * (r_max - r_min) / (n_pts - 1)
-            r = max(r, 0.1 * cgl_self_sig)
-            r2 = r * r
-            r6 = r2 * r2 * r2
-            sig2 = cgl_self_sig * cgl_self_sig
-            sig6 = sig2 * sig2 * sig2
-            sig12 = sig6 * sig6
-            lj = 4.0 * cgl_self_eps * (sig12 / (r6 * r6) - sig6 / r6)
-            grid[i] = lj
-        new_eps_list.append(cgl_self_eps)
-        new_sig_list.append(cgl_self_sig)
-        new_qq_list.append(cgl_self_qq)
-        new_grids_list.append(grid)
-
-    # Update type_order and type_charge
-    new_type_order = type_order + ["CGL"]
-    new_type_charges = np.concatenate([existing_charges, np.array([cgl_charge], dtype=np.float64)])
-
-    # Rebuild combined arrays
-    n_triples = len(new_eps_list)
-    all_grids = np.zeros((n_triples, n_pts), dtype=np.float64)
-    for idx, grid in enumerate(new_grids_list):
-        all_grids[idx, :] = grid
-
-    # Delete and recreate datasets
-    for ds_name in ["type_order", "type_charge", "unique_eps_eup", "unique_sig_ang",
-                     "unique_charge_product", "combined_energy_grids"]:
-        del pg[ds_name]
-
-    pg.create_dataset("type_order",
-                       data=np.asarray([np.bytes_(x) for x in new_type_order], dtype="S8"))
-    pg.create_dataset("type_charge", data=new_type_charges.astype(np.float32))
-    pg.create_dataset("unique_eps_eup", data=np.asarray(new_eps_list, dtype=np.float64))
-    pg.create_dataset("unique_sig_ang", data=np.asarray(new_sig_list, dtype=np.float64))
-    pg.create_dataset("unique_charge_product", data=np.asarray(new_qq_list, dtype=np.float64))
-    pg.create_dataset("combined_energy_grids", data=all_grids, dtype=np.float64)
-
-    print(f"  particles: extended with CGL → {n_triples} combined triples, "
-          f"{len(new_type_order)} types")
-
-
 def _build_cg_lipid_tables(
     h5: h5py.File,
     pair_params: dict,
@@ -2175,9 +1911,8 @@ def _build_cg_lipid_tables(
           f"(CG: {_cg_r}r×{_cg_ct}²θ×{_cg_az}²φ, "
           f"SC: {_sc_r}r×{_sc_ct}²θ×{_sc_az}²φ)")
 
-    # CG ↔ CG quadspline. Keep the particles table as the isotropic core and
-    # fit only the residual directional correction; moderate bead relaxation
-    # to soften unphysical rigid-body overlaps while preserving repulsive core.
+    # CG ↔ CG directional spline. Fit the full dry-MARTINI-derived energy
+    # tensor directly; no empirical runtime scaling is applied.
     cg_relax_steps = 50
     result_cg = _fit_cg_lipid_quadspline(
         ref_bead_positions_nm=ref_nm,
@@ -2196,11 +1931,11 @@ def _build_cg_lipid_tables(
         n_modes=4,
         n_knot_radial=14,
     )
-    print(f"  CG↔CG: RMS error = {result_cg['rms_error']:.4f} kJ/mol, "
-          f"modes = {result_cg['n_modes']}, "
-          f"max|V0| = {float(np.max(np.abs(result_cg['v_radial_raw']))):.3f} kJ/mol")
-    cg_pair_scale = float(os.environ.get("UPSIDE_CG_LIPID_PAIR_SCALE", "1.0"))
-    print(f"  CG↔CG table scale kappa = {cg_pair_scale:.6g}")
+    print(
+        "  CG↔CG: full tensor table "
+        f"{result_cg['n_radial']}r×{result_cg['n_angular']}²angular, "
+        f"max|E| = {float(np.max(np.abs(result_cg['energy_grid_raw']))):.3f} kJ/mol"
+    )
 
     # CG ↔ SC quadspline
     orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
@@ -2271,23 +2006,15 @@ def _build_cg_lipid_tables(
 
     # CG ↔ CG pair
     cg_pair_grp = cg_grp.create_group("cg_lipid_pair")
-    pair_param = result_cg["interaction_param"].astype(np.float64, copy=True)
-    nr = int(result_cg["n_radial"])
-    na = int(result_cg["n_angular"])
-    pair_param[:nr] *= cg_pair_scale
-    mode_stride = 2 * na + nr
-    for mode_idx in range(int(result_cg["n_modes"])):
-        radial_start = nr + mode_idx * mode_stride + 2 * na
-        pair_param[radial_start:radial_start + nr] *= cg_pair_scale
-    pair_param = pair_param.astype(np.float32)
+    pair_param = result_cg["interaction_param"].astype(np.float32)
     cg_pair_grp.create_dataset(
         "interaction_param",
         data=pair_param.reshape(1, 1, pair_param.size),
     )
     cg_pair_grp.attrs["n_cg_types"] = 1
     cg_pair_grp.attrs["rms_error_kj_mol"] = np.float32(result_cg["rms_error"])
-    cg_pair_grp.attrs["schema"] = "cg_lipid_quadspline_v3"
-    cg_pair_grp.attrs["radial_mode"] = "full_multimode"
+    cg_pair_grp.attrs["schema"] = result_cg["schema"]
+    cg_pair_grp.attrs["radial_mode"] = "full_tensor"
     cg_pair_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
     cg_pair_grp.attrs["fit_relax_steps"] = np.int32(cg_relax_steps)
     cg_pair_grp.attrs["fit_r_min_nm"] = np.float32(contact_nm)
@@ -2295,15 +2022,14 @@ def _build_cg_lipid_tables(
     cg_pair_grp.attrs["n_modes"] = np.int32(result_cg["n_modes"])
     cg_pair_grp.attrs["n_radial"] = np.int32(result_cg["n_radial"])
     cg_pair_grp.attrs["n_angular"] = np.int32(result_cg["n_angular"])
-    cg_pair_grp.attrs["pair_scale"] = np.float32(cg_pair_scale)
     cg_pair_grp.attrs["knot_spacing_ang"] = np.float32(result_cg["knot_spacing_ang"])
     cg_pair_grp.attrs["cutoff_ang"] = np.float32(result_cg["cutoff_ang"])
     cg_pair_grp.attrs["taper_width_ang"] = np.float32(result_cg["knot_spacing_ang"])
-    cg_pair_grp.attrs["residual_cap_kj_mol"] = np.float32(result_cg["residual_cap_kj_mol"])
     cg_pair_grp.attrs["energy_cap_kj_mol"] = np.float32(result_cg["energy_cap_kj_mol"])
+    if result_cg.get("core_energy_cap_kj_mol") is not None:
+        cg_pair_grp.attrs["core_energy_cap_kj_mol"] = np.float32(result_cg["core_energy_cap_kj_mol"])
     _write_cg_derived_attrs(cg_pair_grp, derived_params)
-    cg_pair_grp.create_dataset("v0_raw_kj_mol", data=result_cg["v_radial_raw"].astype(np.float32))
-    cg_pair_grp.create_dataset("mode_radial_raw_kj_mol", data=result_cg["v_angular_raw"].astype(np.float32))
+    cg_pair_grp.create_dataset("energy_grid_raw_kj_mol", data=result_cg["energy_grid_raw"].astype(np.float32))
 
     # CG ↔ SC
     cg_sc_grp = cg_grp.create_group("cg_lipid_sc")
@@ -2351,20 +2077,18 @@ def _build_cg_lipid_tables(
         f"CG↔SC ({n_sc_types}×1×{interaction_param_sc.shape[-1]}) in {h5.filename}"
     )
 
-    # Extend particles group with CGL syntype for isotropic LJ interactions
-    # (CG lipid ↔ ions/water/BB/env beads)
-    print("  Computing effective CGL LJ parameters for particles table extension...")
+    # Effective LJ parameters are retained only as target-type metadata for
+    # directional CGL-target table construction. Generic MartiniPotential CGL
+    # pairs are excluded during stage conversion.
+    print("  Computing CGL target-type metadata...")
     effective_lj = _compute_cgl_effective_lj_params(
         ref_bead_positions_nm=ref_nm,
         bead_types=bead_types,
         pair_params=pair_params,
     )
-    _extend_particles_group_for_cgl(h5, pair_params, effective_lj,
-                                     ref_bead_positions_nm=ref_nm,
-                                     bead_types=bead_types)
 
     # Store effective LJ parameters so convert_stage() can read them back
-    # instead of recomputing with potentially different lipid conformations.
+    # instead of recomputing target metadata with different lipid conformations.
     eff_grp = cg_grp.create_group("effective_lj")
     eff_types = sorted(effective_lj.keys())
     eff_sigmas = np.array([effective_lj[t]["sigma_nm"] for t in eff_types], dtype=np.float32)
@@ -2381,12 +2105,10 @@ def _build_cg_lipid_tables(
     eff_grp.attrs["source"] = "orientation_average_metadata_not_runtime"
     _write_cg_derived_attrs(eff_grp, derived_params)
 
-    # Build isotropic radial B-spline tables for CGL ↔ all other types
-    # (water, ions, BB, env — everything not already covered by a quadspline).
-    # After this, MartiniPotential CGL↔X can be zeroed for ALL X.
-    _build_cgl_isotropic_table(
+    # Build directional B-spline tables for CGL ↔ all non-CGL target types.
+    # After this, MartiniPotential CGL↔X can be omitted for ALL X.
+    _build_cgl_target_table(
         h5, cg_grp, effective_lj,
-        sc_bead_types=set(sc_bead_types) if sc_residue_names else set(),
         ref_bead_positions_nm=ref_nm,
         bead_types=bead_types,
         bead_charges=bead_charges,
@@ -2396,11 +2118,10 @@ def _build_cg_lipid_tables(
     print()
 
 
-def _build_cgl_isotropic_table(
+def _build_cgl_target_table(
     h5: h5py.File,
     cg_grp: h5py.Group,
     effective_lj: dict,
-    sc_bead_types: set = None,
     ref_bead_positions_nm: np.ndarray | None = None,
     bead_types: list | None = None,
     bead_charges: list | None = None,
@@ -2409,42 +2130,29 @@ def _build_cgl_isotropic_table(
     energy_conv: float = ENERGY_CONVERSION_KJ_PER_EUP,
     length_conv: float = LENGTH_CONVERSION_A_PER_NM,
     n_knot_radial: int = 14,
+    n_knot_angular: int = 15,
     knot_spacing_ang: float = 1.4,
+    energy_cap_kj_mol: float | None = 500.0,
 ) -> None:
-    """Build isotropic radial B-spline tables (V0 only, no angular modes).
-
-    Covers every target type not already handled by a dedicated quadspline
-    (i.e. not CGL itself and not SC bead types).
-    """
-    if sc_bead_types is None:
-        sc_bead_types = set()
-
-    # Filter: keep types that have no dedicated quadspline.
-    target_types = sorted(
-        t for t in effective_lj
-        if t != "CGL" and t not in sc_bead_types
-    )
+    """Build directional tensor B-spline tables for CGL ↔ point targets."""
+    target_types = sorted(t for t in effective_lj if t != "CGL")
     if not target_types:
-        print("  cg_lipid_isotropic: no remaining target types, skipping")
+        print("  cg_lipid_target: no target types, skipping")
         return
 
     n_types = len(target_types)
-    n_param = n_knot_radial
-
-    interaction_param = np.zeros((n_types, 1, n_param), dtype=np.float64)
-
-    rad_knot_vector = np.zeros(n_knot_radial + 4, dtype=np.float64)
-    rad_knot_vector[4:-4] = np.arange(1, n_knot_radial - 3, dtype=np.float64)
-    rad_knot_vector[-4:] = rad_knot_vector[-5]
+    n_param = n_knot_radial * n_knot_angular
+    interaction_param = np.zeros((1, n_types, n_param), dtype=np.float64)
 
     # Sample densely for an accurate B-spline fit.  The interaction samples
     # explicit DOPC bead-vs-target energies and only uses a bead-scale distance
     # floor to avoid evaluating below the resolved dry-MARTINI core.
     r_min_ang = float(knot_spacing_ang) + 0.1
     r_max_ang = float((n_knot_radial - 2) * knot_spacing_ang)
-    n_sample = 200
+    n_sample = 80
     r_sample_ang = np.linspace(r_min_ang, r_max_ang, n_sample)
-    t_sample = r_sample_ang / knot_spacing_ang
+    r_sample_nm = r_sample_ang / length_conv
+    cos_theta_grid = np.asarray(_linspace(-1.0, 1.0, 9), dtype=np.float64)
     ref_nm = np.asarray(ref_bead_positions_nm, dtype=np.float64) if ref_bead_positions_nm is not None else None
     explicit_source = (
         ref_nm is not None
@@ -2453,31 +2161,35 @@ def _build_cgl_isotropic_table(
         and bead_charges is not None
         and pair_params is not None
     )
-    orientation_dirs = np.asarray(_fibonacci_sphere(96), dtype=np.float64)
-    offset_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    if not explicit_source:
+        raise RuntimeError("cg_lipid_target requires explicit DOPC bead geometry and dry-MARTINI parameters")
+    ref_nm = _canonicalize_lipid_reference_to_z(ref_nm)
+    target_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    phi_values = np.linspace(0.0, 2.0 * np.pi, 4, endpoint=False)
+    orientation_dirs = _directions_with_dot_np(target_axis, cos_theta_grid, phi_values)
 
     for ti, tgt_type in enumerate(target_types):
-        y = np.zeros(n_sample, dtype=np.float64)
-        if explicit_source:
-            target_charge = _infer_type_charge(tgt_type)
-            bead_floor_sigmas = []
-            for bt in bead_types:
-                params = pair_params.get((bt, tgt_type)) or pair_params.get((tgt_type, bt))
-                if params is None:
-                    continue
-                bead_floor_sigmas.append(float(params["sigma_nm"]))
-            if not bead_floor_sigmas:
-                raise RuntimeError(f"No explicit DOPC bead params for CGL↔{tgt_type}")
-            dist_floor_nm = 0.8 * min(bead_floor_sigmas)
-            for i, r_ang in enumerate(r_sample_ang):
-                cg_com = offset_axis * (float(r_ang) / length_conv)
+        energy_grid = np.zeros((n_sample, cos_theta_grid.size), dtype=np.float64)
+        target_charge = _infer_type_charge(tgt_type)
+        bead_floor_sigmas = []
+        for bt in bead_types:
+            params = pair_params.get((bt, tgt_type)) or pair_params.get((tgt_type, bt))
+            if params is None:
+                continue
+            bead_floor_sigmas.append(float(params["sigma_nm"]))
+        if not bead_floor_sigmas:
+            raise RuntimeError(f"No explicit DOPC bead params for CGL↔{tgt_type}")
+        dist_floor_nm = 0.8 * min(bead_floor_sigmas)
+        for ir, r_nm in enumerate(r_sample_nm):
+            target_pos = np.array([[float(r_nm), 0.0, 0.0]], dtype=np.float64)
+            for ia in range(cos_theta_grid.size):
                 e_sum = 0.0
-                for direction in orientation_dirs:
+                for direction in orientation_dirs[ia]:
                     rot = _rotation_to_align_z_np(direction)
-                    cg_positions = cg_com[None, :] + (rot @ ref_nm.T).T
+                    cg_positions = (rot @ ref_nm.T).T
                     e, _, _ = _compute_pair_energy_and_gradient(
                         cg_positions,
-                        np.zeros((1, 3), dtype=np.float64),
+                        target_pos,
                         bead_types,
                         [tgt_type],
                         bead_charges,
@@ -2487,67 +2199,64 @@ def _build_cgl_isotropic_table(
                         soft_core_alpha=0.0,
                     )
                     e_sum += e
-                y[i] = (e_sum / float(len(orientation_dirs))) / energy_conv
+                energy_grid[ir, ia] = e_sum / float(phi_values.size)
+
+        if energy_cap_kj_mol is not None and energy_cap_kj_mol > 0.0:
+            fit_grid = np.clip(
+                energy_grid,
+                -float(energy_cap_kj_mol),
+                float(energy_cap_kj_mol),
+            )
         else:
-            eff = effective_lj[tgt_type]
-            eps_eup = float(eff["epsilon_kj_mol"]) / energy_conv
-            sig_ang = float(eff["sigma_nm"]) * length_conv
-            if eps_eup != 0.0 and sig_ang != 0.0:
-                for i, r in enumerate(r_sample_ang):
-                    sr = sig_ang / max(r, 0.1 * sig_ang)
-                    sr6 = sr * sr * sr * sr * sr * sr
-                    y[i] = 4.0 * eps_eup * (sr6 * sr6 - sr6)
+            fit_grid = energy_grid
 
-        control = _fit_radial_bspline(t_sample, y, rad_knot_vector, smooth=0.01)
-        interaction_param[ti, 0, :] = control
+        control = _fit_radial_angular_tensor_bspline(
+            r_sample_nm,
+            cos_theta_grid,
+            fit_grid,
+            n_knot_radial=n_knot_radial,
+            n_knot_angular=n_knot_angular,
+            knot_spacing_ang=knot_spacing_ang,
+            energy_conversion=energy_conv,
+            smooth=0.01,
+        )
+        if energy_cap_kj_mol is not None and energy_cap_kj_mol > 0.0:
+            cap_eup = float(energy_cap_kj_mol) / float(energy_conv)
+            control = np.clip(control, -cap_eup, cap_eup)
+            n_core = max(1, min(n_knot_radial, int(np.ceil(r_min_ang / knot_spacing_ang))))
+            control[:n_core, :] = cap_eup
+        interaction_param[0, ti, :] = control.reshape(-1)
 
-    iso_grp = cg_grp.create_group("cg_lipid_isotropic")
-    iso_grp.create_dataset(
+    target_grp = cg_grp.create_group("cg_lipid_target")
+    target_grp.create_dataset(
         "interaction_param",
         data=interaction_param.astype(np.float32),
     )
-    iso_grp.create_dataset(
+    target_grp.create_dataset(
         "target_order",
         data=np.asarray([np.bytes_(x) for x in target_types], dtype="S8"),
     )
-    iso_grp.attrs["n_target_types"] = np.int32(n_types)
-    iso_grp.attrs["n_cg_types"] = np.int32(1)
-    iso_grp.attrs["schema"] = "cg_lipid_isotropic_v1"
-    iso_grp.attrs["n_modes"] = np.int32(0)
-    iso_grp.attrs["n_radial"] = np.int32(n_knot_radial)
-    iso_grp.attrs["n_angular"] = np.int32(15)
-    iso_grp.attrs["knot_spacing_ang"] = np.float32(knot_spacing_ang)
+    target_grp.attrs["n_target_types"] = np.int32(n_types)
+    target_grp.attrs["n_cg_types"] = np.int32(1)
+    target_grp.attrs["schema"] = "cg_lipid_target_v1"
+    target_grp.attrs["n_modes"] = np.int32(0)
+    target_grp.attrs["n_radial"] = np.int32(n_knot_radial)
+    target_grp.attrs["n_angular"] = np.int32(n_knot_angular)
+    target_grp.attrs["knot_spacing_ang"] = np.float32(knot_spacing_ang)
     cutoff_ang = float((n_knot_radial - 2) * knot_spacing_ang)
-    iso_grp.attrs["cutoff_ang"] = np.float32(cutoff_ang)
-    iso_grp.attrs["source"] = (
-        "explicit_dopc_orientation_average" if explicit_source else "legacy_effective_lj"
-    )
+    target_grp.attrs["cutoff_ang"] = np.float32(cutoff_ang)
+    target_grp.attrs["taper_width_ang"] = np.float32(knot_spacing_ang)
+    if energy_cap_kj_mol is not None and energy_cap_kj_mol > 0.0:
+        target_grp.attrs["energy_cap_kj_mol"] = np.float32(energy_cap_kj_mol)
+        target_grp.attrs["unresolved_core_clamped"] = np.int8(1)
+    target_grp.attrs["source"] = "explicit_dopc_directional"
+    target_grp.attrs["angle_convention"] = "ang=n_cgl_dot_n12"
     if derived_params:
-        for attr_name in (
-            "contact_nm",
-            "contact_ang",
-            "max_sigma_nm",
-            "orientation_length_ang",
-            "orientation_mass_g_mol",
-            "orientation_bond_fc_eup_a2",
-            "transverse_inertia_g_mol_a2",
-            "head_tail_span_ang",
-            "max_perp_radius_ang",
-        ):
-            if attr_name in derived_params:
-                iso_grp.attrs[attr_name] = np.float32(derived_params[attr_name])
-        for attr_name in (
-            "contact_source",
-            "orientation_length_source",
-            "orientation_mass_source",
-            "orientation_bond_fc_source",
-        ):
-            if attr_name in derived_params:
-                iso_grp.attrs[attr_name] = derived_params[attr_name]
+        _write_cg_derived_attrs(target_grp, derived_params)
 
-    print(f"  cg_lipid_isotropic: {n_types} target types, "
-          f"{n_knot_radial} radial knots, cutoff={cutoff_ang:.1f} Å, "
-          f"source={iso_grp.attrs['source']}")
+    print(f"  cg_lipid_target: {n_types} target types, "
+          f"{n_knot_radial} radial × {n_knot_angular} angular knots, "
+          f"cutoff={cutoff_ang:.1f} Å, source={target_grp.attrs['source']}")
 
 
 # ---------------------------------------------------------------------------

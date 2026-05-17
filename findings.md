@@ -1,6 +1,27 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-17: Focused hybrid validation after preserving all protein-env paths identified two implementation-level physics errors.
+  - `cg_lipid_target` should include the virtual MARTINI `BB` proxy site, but not also the `N/CA/C/O` backbone carrier atoms as independent dry-MARTINI targets. Including both double-counts the same backbone physical site.
+  - Forces from CGL-target interactions on a virtual `BB` proxy must be projected through the same hybrid BB proxy-to-carrier map as the standard Martini BB-env potential.
+  - A standalone 50k-step bilayer-only run passed, while the hybrid copied artifact collapsed only when target forces could drive lipids through the old soft CGL-CGL core; this isolates the remaining instability to the unresolved bead-overlap core, not to missing or excluded protein-env interactions.
+  - The physical table fix is a hard finite CGL-CGL unresolved core (`5000 kJ/mol`) with sampled non-core spline coefficients still capped at `500 kJ/mol`; stale tables lacking this attr must be rejected rather than reused.
+- 2026-05-17: User correction on CGL-target inclusion during protein-instability debugging.
+  - Rule: do not exclude `BB` or other protein/environment targets from `cg_lipid_target` to stabilize the protein.
+  - Rule: if a newly added CG-lipid interface destabilizes a previously working protein-env path, correct the physics, table construction, force routing, or restart/handoff semantics while keeping the full interface present.
+- 2026-05-17: User correction after short copied-HDF5 validation: the fresh `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/1rkl.stage_7.0.vtf` still shows protein instability.
+  - Rule: copied-artifact short runs are useful triage, but final acceptance must inspect the exact fresh output path the user names.
+  - Rule: when a user reports persistent instability after a proposed physical fix, re-open the diagnosis and verify the exact VTF/HDF5 trajectory before adding more model changes.
+- 2026-05-17: User reminder on physical-model integrity during 1RKL bilayer/protein stabilization.
+  - Rule: do not interpret a passing short trajectory as acceptable if it was achieved by weakening, scaling, disabling, or restraining interactions.
+  - Rule: acceptable fixes must be physical table-construction or handoff-semantics fixes, such as charging bonded deformation during explicit-bead relaxation, clamping unresolved spline cores to excluded-volume repulsion, and using canonical force-field reference geometry for potential tables.
+  - Rule: when diagnosing bilayer orientation near a protein, distinguish actual parallel rods (`abs(n_z)` small) from simple global-z leaflet sign mismatches; report absolute bilayer-normal alignment and 3D CGL-CGL nearest-neighbor distances.
+- 2026-05-16: User correction on CG-lipid orientation physics.
+  - Rule: do not repair bilayer orientation with an orientation spring, z-axis pin, empirical pair scale, or disabled interactions.
+  - Rule: CGLD should be treated as the endpoint of the physical orientation vector; pair interactions must apply derivatives to the vector through the CGLD coordinate, not through a separate orientation parameter.
+  - Rule: radial or orientation-averaged CGL-target interactions cannot torque the single-particle lipid correctly. CGL-target interactions need directional tables over `(r, n_CGL.rhat)` built from explicit DOPC bead-target dry-MARTINI energies.
+  - Rule: generic Martini pair lists should exclude `CGL` and `CGLD`; CGL-CGL, CGL-SC, and CGL-target interactions should be owned by dedicated spline nodes to avoid double-counting and hidden-site nonbonded artifacts.
+  - Verification of the current bilayer-only probe: `1000` steps with the stage-6.0 NPT contract kept all lipids physically oriented (`bad_parallel=0`, `bad_flip=0`) and preserved CGL-CGLD length near the DOPC-derived `11.139 Å`.
 - 2026-05-15: VTF lipid coloring needs endpoint-specific metadata, not only endpoint coordinates.
   - Current extracted VTF has `282` `LIPH/HYDROPHILIC/UNK` endpoints and `282` `LIPT/HYDROPHOBIC/DOPC` endpoints.
   - Existing stage metadata already stores DOPC-derived display offsets with mean endpoint span `24.270477 Å`; the visual length problem is metadata/coloring, not coordinate span.

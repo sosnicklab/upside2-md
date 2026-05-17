@@ -1,5 +1,71 @@
 # Progress Log
 
+## 2026-05-17 (1RKL Protein/Bilayer Stability Regression)
+- Recorded user correction that `cg_lipid_target` must not exclude `BB` or any other protein/environment target. Updated the active plan: the remaining fix must preserve complete interface inclusion and correct the physics instead.
+- Identified a physical force-routing bug introduced with directional `cg_lipid_target`: target forces on active virtual `BB` proxy sites were written directly to `pos.sens` instead of being projected through the hybrid BB carrier map.
+- Focused validation after BB projection still destabilized by the first saved frame. Target-list audit found `cg_lipid_target` contained `124` backbone carrier atoms plus the `31` physical `BB` proxy sites and `93` environment particles; the carriers are nonphysical duplicates of the BB interaction site.
+- After removing carrier duplicates, a 50k-step focused hybrid run no longer instantly unfolded the protein, but one same-leaflet CGL-CGL distance collapsed below `0.2 Å` by late frames. A matching 50k-step bilayer-only run passed, isolating the remaining issue to target-force penetration of an artificially cheap CGL-CGL excluded-volume core.
+- Tested a monotone ramp in the unresolved core; rejected it because it lowered part of the barrier and worsened collapse. Tested a higher CGL-CGL core cap (`5000 kJ/mol`), which prevented same-leaflet overlap through 50k focused hybrid steps.
+- Implemented the accepted physical fixes in code:
+  - `cg_lipid_target` now keeps the physical `BB` proxy site and environment targets while skipping duplicate `N/CA/C/O` backbone carriers as independent targets;
+  - CGL-target forces on virtual `BB` proxy sites are projected to backbone carriers through the hybrid runtime map;
+  - generated CGL-CGL tables store a `5000 kJ/mol` unresolved-core cap while sampled non-core coefficients stay capped at `500 kJ/mol`;
+  - stale `martini.h5` files lacking the CGL-CGL hard-core attr are rejected before stage injection.
+- Updated `example/16.MARTINI/cg_lipid_potentials.tex` to describe the BB proxy target semantics and the finite hard-core CGL-CGL excluded-volume cap.
+- Verification after the final code updates:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed;
+  - `cmake --build obj --target upside` passed;
+  - stale guard rejects the current old `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/martini.h5` with an explicit rebuild message for the missing CGL-CGL core cap;
+  - `git diff --check` passed.
+- Started investigation after the user reported the latest `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/1rkl.stage_7.0.vtf` shows the protein completely unfolding.
+- Added a dedicated plan section to separate protein-unfolding diagnosis from the previous bilayer-only orientation validation.
+- Investigation targets:
+  - geometry and component-energy trajectories in current `stage_6.0` and `stage_7.0`;
+  - bilayer orientation/distribution in the same 1RKL run;
+  - injected node schemas and pair lists, especially CGL-target, CGL-SC, and generic Martini pair ownership.
+- Root cause isolated:
+  - the reported production artifact shows lipid collapse before full protein unfolding;
+  - stage 7 had stale box attributes on non-`martini_potential` PBC nodes after NPT handoff;
+  - the copied artifact patched only for CGL-CGL still failed, while full-resolution bilayer-only CGL-CGL passed at `dt=0.01`, isolating the remaining hybrid issue to CGL-target table construction.
+- Implemented physical fixes:
+  - charged dry-MARTINI bonded deformation during explicit-bead lipid relaxation in table fitting;
+  - capped and repulsive-clamped CGL-target unresolved spline cores;
+  - used canonical dry-MARTINI `DOPC.pdb` as the CG-lipid table reference geometry;
+  - updated NPT handoff to sync box attrs on all PBC-aware potential nodes.
+- Updated `example/16.MARTINI/cg_lipid_potentials.tex` for the current model.
+- Patched copied validation artifacts in `example/16.MARTINI/outputs/martini_test_1rkl_hybrid_pairpatch_check` instead of rerunning the full workflow.
+- Validation:
+  - full-resolution bilayer-only run passed for `1000` steps at `dt=0.002`;
+  - full-resolution bilayer-only run passed for `500` steps at stage-6 `dt=0.01`;
+  - patched 1RKL stage 6 short run kept final 3D CGL-CGL nearest min/p05/mean `6.945/7.182/7.737 Å`;
+  - patched 1RKL stage 7 `5000`-step short run kept protein Rg near folded values (`12.8 -> 11.4 Å`) and had no parallel lipid vectors (`abs(n_z)<0.35` count `0`).
+- Verification:
+  - Python syntax compile passed;
+  - `cmake --build obj --target upside` passed;
+  - `git diff --check` passed.
+
+## 2026-05-16 (Physical CG-Lipid Orientation Model)
+- Started implementation after confirming the `stage_7.1` orientation failure is present in checkpoint coordinates, not just VTF rendering.
+- Root causes identified from current artifacts:
+  - CGL-CGLD orientation is a hidden endpoint coordinate;
+  - CGL-CGL and CGL-SC can apply orientation derivatives, but CGL-target interactions are radial-only or absent;
+  - CGL and CGLD are included in generic `martini_potential` pair lists, even when coefficients are zero;
+  - bilayer-only saved run develops near-parallel lipids and severe leaflet z-spread.
+- Implementation plan recorded in `plan.md`: full CGL-CGL table, directional CGL-target table, CGL/CGLD generic pair exclusion, bilayer-only validation, and TeX model update.
+- Implemented full tensor CGL-CGL table generation in `py/martini_build_tables.py` with schema `cg_lipid_pair_full_v1` and removed the environment-driven pair scaling path.
+- Implemented directional CGL-target table generation with schema `cg_lipid_target_v1`, source `explicit_dopc_directional`, and angle convention `ang=n_cgl_dot_n12`.
+- Removed stale generic CGL particles-table extension and the old effective CGL-CGL LJ fallback so no hard-coded CGL generic LJ parameters remain in the production table path.
+- Implemented runtime support in `src/martini_cg_lipid.cpp` for full CGL-CGL tensor tables and CGL-target tensor tables; removed the unused orientation spring runtime class and registration path.
+- Patched `py/martini_prepare_system_lib.py` so generic `martini_potential` pair generation excludes `CGL` and `CGLD`; dedicated spline nodes own CGL-CGL, CGL-SC, and CGL-target interactions.
+- Extended `example/16.MARTINI/test_cg_bilayer/run_test.py` with pass/fail diagnostics for aligned leaflet orientation, flips, leaflet crossings, CGL-CGLD length, and same-leaflet overlap.
+- Updated `example/16.MARTINI/cg_lipid_potentials.tex` to describe the full tensor CGL-CGL model, directional CGL-target model, and generic-pair ownership protocol.
+- Verification:
+  - Python syntax check passed for `py/martini_build_tables.py`, `py/martini_prepare_system_lib.py`, and `example/16.MARTINI/test_cg_bilayer/run_test.py`;
+  - `cmake --build obj --target upside` passed;
+  - bilayer-only run passed: final aligned orientation `z` min/p05/mean `0.550/0.819/0.952`, `bad_parallel=0`, `bad_flip=0`, leaflet crossings `0/0`, same-leaflet nearest-neighbor min/p05 `6.484/6.811 Å`, CGL-CGLD length min/max/RMSD `10.677/11.548/0.175 Å`;
+  - regenerated bilayer stage audit found `0` generic Martini pairs touching `CGL` or `CGLD`, and injected `cg_lipid_pair` uses `schema=cg_lipid_pair_full_v1` with parameter shape `(1, 1, 3150)`;
+  - `git diff --check` passed.
+
 ## 2026-05-15 (VTF Lipid Endpoint Coloring)
 - Started implementation after the user reported lipid bars appear as one long same-color bar in VMD.
 - Current VTF audit:
@@ -1277,3 +1343,8 @@
   - Regenerated bilayer-only table stores `schema=cg_lipid_quadspline_v3`, `n_modes=6`, `n_radial=14`, and `1×1×278` CGL-CGL params.
   - 100-step bilayer-only smoke stayed finite with initial potential `-39.46 E_up`.
   - 50000-step bilayer-only run stayed finite and slab-like: `z_std=6.512 Å` initially, `5.753 Å` at time `25`, and `5.968 Å` at time `100`.
+### 2026-05-17 Fresh 1RKL Stage 7 Instability Re-Audit
+- Re-inspected the current `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/1rkl.stage_7.0.vtf` and matching HDF5/logs instead of relying on copied validation artifacts.
+- Found the fresh trajectory stays compact by radius of gyration but loses internal protein structure while production kinetic energy is far above target.
+- Identified a stage handoff bug: preproduction `stage_6.0` momenta were copied into `stage_7.0` and marked restart-valid, so production ran with hot NPT/preproduction velocities.
+- Patched `py/martini_prepare_system_lib.py` so preproduction-to-production handoff transfers coordinates/box only and forces production velocity reinitialization; exact production-to-production momentum restart remains supported.

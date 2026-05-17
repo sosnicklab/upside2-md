@@ -1,6 +1,7 @@
 #include "deriv_engine.h"
 #include "spline.h"
 #include "box.h"
+#include "martini_hybrid_runtime.h"
 #include "state_logger.h"
 
 #include <algorithm>
@@ -25,6 +26,12 @@ struct QuadsplineEval {
     float d_dr;
     float d_da1;
     float d_da2;
+};
+
+struct TargetSplineEval {
+    float value;
+    float d_dr;
+    float d_da;
 };
 
 static vector<int> read_int_dataset(hid_t grp, const char* name) {
@@ -208,6 +215,196 @@ static bool eval_multimode_pair(
     out.d_dr = taper * raw_d_dr + raw_value * d_taper_dr;
     out.d_da1 = taper * raw_d_da1;
     out.d_da2 = taper * raw_d_da2;
+    return true;
+}
+
+static void clamped_uniform_bspline_basis(
+        float x,
+        int n_knot,
+        float w[4],
+        float dw[4],
+        int& base) {
+    for(int i = 0; i < 4; ++i) {
+        w[i] = 0.f;
+        dw[i] = 0.f;
+    }
+    if(x <= 1.f) {
+        base = 0;
+        w[0] = 1.f / 6.f;
+        w[1] = 2.f / 3.f;
+        w[2] = 1.f / 6.f;
+        return;
+    }
+    if(x >= float(n_knot - 2)) {
+        base = n_knot - 3;
+        w[0] = 1.f / 6.f;
+        w[1] = 2.f / 3.f;
+        w[2] = 1.f / 6.f;
+        return;
+    }
+
+    int x_bin = int(x);
+    base = x_bin - 1;
+    float excess = x - float(x_bin);
+
+    for(int ci = 0; ci < 4; ++ci) {
+        float c0[4] = {0.f, 0.f, 0.f, 0.f};
+        c0[ci] = 1.f;
+        const float u[4] = {-2.f, -1.f, 0.f, 0.f};
+
+        float yu1 = excess - u[0];
+        float yu2 = excess - u[1];
+        float yu3 = excess - u[2];
+
+        float a11 = yu1 / 3.f;
+        float a12 = yu2 / 3.f;
+        float a13 = yu3 / 3.f;
+        float c11 = (1.f - a11) * c0[0] + a11 * c0[1];
+        float c12 = (1.f - a12) * c0[1] + a12 * c0[2];
+        float c13 = (1.f - a13) * c0[2] + a13 * c0[3];
+
+        float d11 = c0[1] - c0[0];
+        float d12 = c0[2] - c0[1];
+        float d13 = c0[3] - c0[2];
+
+        float a22 = yu2 / 2.f;
+        float a23 = yu3 / 2.f;
+        float c22 = (1.f - a22) * c11 + a22 * c12;
+        float c23 = (1.f - a23) * c12 + a23 * c13;
+        float d22 = (1.f - a22) * d11 + a22 * d12;
+        float d23 = (1.f - a23) * d12 + a23 * d13;
+
+        float a33 = yu3;
+        w[ci] = (1.f - a33) * c22 + a33 * c23;
+        dw[ci] = (1.f - a33) * d22 + a33 * d23;
+    }
+}
+
+static bool eval_full_pair_tensor(
+        const float* p,
+        int n_angular,
+        int n_radial,
+        const float dr[3],
+        const float n1[3],
+        const float n2[3],
+        float knot_spacing,
+        float cutoff,
+        float taper_width,
+        QuadsplineEval& out) {
+
+    float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+    if(r2 <= 1e-12f) return false;
+    float r = sqrtf(r2);
+    if(r >= cutoff) return false;
+
+    float inv_r = 1.f / r;
+    float unit[3] = {dr[0] * inv_r, dr[1] * inv_r, dr[2] * inv_r};
+    float a1 = -(n1[0] * unit[0] + n1[1] * unit[1] + n1[2] * unit[2]);
+    float a2 =  (n2[0] * unit[0] + n2[1] * unit[1] + n2[2] * unit[2]);
+
+    float wr[4], dwr[4], wa1[4], dwa1[4], wa2[4], dwa2[4];
+    int br = 0, ba1 = 0, ba2 = 0;
+    clamped_uniform_bspline_basis(r / knot_spacing, n_radial, wr, dwr, br);
+    clamped_uniform_bspline_basis(angular_spline_coord(a1, n_angular), n_angular, wa1, dwa1, ba1);
+    clamped_uniform_bspline_basis(angular_spline_coord(a2, n_angular), n_angular, wa2, dwa2, ba2);
+    float inv_dtheta = float(n_angular - 3) * 0.5f;
+
+    float raw_value = 0.f;
+    float raw_d_dr = 0.f;
+    float raw_d_da1 = 0.f;
+    float raw_d_da2 = 0.f;
+    for(int ir = 0; ir < 4; ++ir) {
+        int rr = br + ir;
+        if(rr < 0 || rr >= n_radial) continue;
+        for(int i1 = 0; i1 < 4; ++i1) {
+            int aa1 = ba1 + i1;
+            if(aa1 < 0 || aa1 >= n_angular) continue;
+            for(int i2 = 0; i2 < 4; ++i2) {
+                int aa2 = ba2 + i2;
+                if(aa2 < 0 || aa2 >= n_angular) continue;
+                float coeff = p[(rr * n_angular + aa1) * n_angular + aa2];
+                raw_value += wr[ir] * wa1[i1] * wa2[i2] * coeff;
+                raw_d_dr += dwr[ir] * wa1[i1] * wa2[i2] * coeff / knot_spacing;
+                raw_d_da1 += wr[ir] * dwa1[i1] * wa2[i2] * coeff * inv_dtheta;
+                raw_d_da2 += wr[ir] * wa1[i1] * dwa2[i2] * coeff * inv_dtheta;
+            }
+        }
+    }
+
+    float taper = 1.f;
+    float d_taper_dr = 0.f;
+    taper_width = std::max(taper_width, 1e-6f);
+    float taper_start = cutoff - taper_width;
+    if(r > taper_start) {
+        float u = (cutoff - r) / taper_width;
+        u = std::max(0.f, std::min(1.f, u));
+        taper = u * u * (3.f - 2.f * u);
+        d_taper_dr = -6.f * u * (1.f - u) / taper_width;
+    }
+
+    out.value = taper * raw_value;
+    out.d_dr = taper * raw_d_dr + raw_value * d_taper_dr;
+    out.d_da1 = taper * raw_d_da1;
+    out.d_da2 = taper * raw_d_da2;
+    return true;
+}
+
+static bool eval_cg_target_tensor(
+        const float* p,
+        int n_angular,
+        int n_radial,
+        const float dr[3],
+        const float n_cg[3],
+        float knot_spacing,
+        float cutoff,
+        float taper_width,
+        TargetSplineEval& out) {
+
+    float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+    if(r2 <= 1e-12f) return false;
+    float r = sqrtf(r2);
+    if(r >= cutoff) return false;
+
+    float inv_r = 1.f / r;
+    float unit[3] = {dr[0] * inv_r, dr[1] * inv_r, dr[2] * inv_r};
+    float a = n_cg[0] * unit[0] + n_cg[1] * unit[1] + n_cg[2] * unit[2];
+
+    float wr[4], dwr[4], wa[4], dwa[4];
+    int br = 0, ba = 0;
+    clamped_uniform_bspline_basis(r / knot_spacing, n_radial, wr, dwr, br);
+    clamped_uniform_bspline_basis(angular_spline_coord(a, n_angular), n_angular, wa, dwa, ba);
+    float inv_dtheta = float(n_angular - 3) * 0.5f;
+
+    float raw_value = 0.f;
+    float raw_d_dr = 0.f;
+    float raw_d_da = 0.f;
+    for(int ir = 0; ir < 4; ++ir) {
+        int rr = br + ir;
+        if(rr < 0 || rr >= n_radial) continue;
+        for(int ia = 0; ia < 4; ++ia) {
+            int aa = ba + ia;
+            if(aa < 0 || aa >= n_angular) continue;
+            float coeff = p[rr * n_angular + aa];
+            raw_value += wr[ir] * wa[ia] * coeff;
+            raw_d_dr += dwr[ir] * wa[ia] * coeff / knot_spacing;
+            raw_d_da += wr[ir] * dwa[ia] * coeff * inv_dtheta;
+        }
+    }
+
+    float taper = 1.f;
+    float d_taper_dr = 0.f;
+    taper_width = std::max(taper_width, 1e-6f);
+    float taper_start = cutoff - taper_width;
+    if(r > taper_start) {
+        float u = (cutoff - r) / taper_width;
+        u = std::max(0.f, std::min(1.f, u));
+        taper = u * u * (3.f - 2.f * u);
+        d_taper_dr = -6.f * u * (1.f - u) / taper_width;
+    }
+
+    out.value = taper * raw_value;
+    out.d_dr = taper * raw_d_dr + raw_value * d_taper_dr;
+    out.d_da = taper * raw_d_da;
     return true;
 }
 
@@ -404,6 +601,7 @@ struct CGLipidPairPotential : public PotentialNode {
     int n_modes;
     int n_radial;
     int n_angular;
+    bool full_tensor;
     float box_x;
     float box_y;
     float box_z;
@@ -433,6 +631,7 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     , n_modes(read_attribute<int>(grp, ".", "n_modes", 0))
     , n_radial(read_attribute<int>(grp, ".", "n_radial", CG_LIPID_N_RADIAL))
     , n_angular(read_attribute<int>(grp, ".", "n_angular", CG_LIPID_N_ANGULAR))
+    , full_tensor(false)
     , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
     , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
     , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
@@ -446,7 +645,9 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     hid_t pi = pi_obj.get();
     interaction_param = read_param_dataset_any(pi, n_type1, n_type2, n_param);
     int expected_n_param = n_radial + n_modes * (2 * n_angular + n_radial);
-    if(n_modes <= 0 || n_radial <= 3 || n_angular <= 3 || n_param != expected_n_param)
+    int expected_tensor_param = n_radial * n_angular * n_angular;
+    full_tensor = (n_modes == 0 && n_radial > 3 && n_angular > 3 && n_param == expected_tensor_param);
+    if(!full_tensor && (n_modes <= 0 || n_radial <= 3 || n_angular <= 3 || n_param != expected_n_param))
         throw string("cg_lipid_pair requires full multimode params with matching n_modes/n_radial/n_angular attrs");
     index = read_int_dataset(pi, "index");
     type = read_int_dataset(pi, "type");
@@ -476,9 +677,14 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
                 simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
 
             QuadsplineEval e;
-            if(eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+            bool ok = full_tensor
+                ? eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                        n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff, taper_width, e)
+                : eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
                         n_modes, n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff, taper_width, e))
+                        dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+            if(ok)
                 total += e.value;
         }
     }
@@ -506,9 +712,14 @@ void CGLipidPairPotential::propagate_deriv() {
                 simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
 
             QuadsplineEval e;
-            if(!eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+            bool ok = full_tensor
+                ? eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                        n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff, taper_width, e)
+                : eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
                         n_modes, n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff, taper_width, e))
+                        dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+            if(!ok)
                 continue;
 
             float dpos1[3] = {0.f, 0.f, 0.f};
@@ -688,53 +899,9 @@ void CGLipidSCPotential::propagate_deriv() {
 }
 
 // ===================================================================
-// OrientationSpring — penalizes angular deviation from reference direction
+// CGLipidTargetPotential — directional CGL ↔ point-target term
 // ===================================================================
-struct OrientationSpring : public PotentialNode {
-    CoordNode& cg_pos;
-    int n_elem;
-    vector<float> ref_dir;
-    float k_orient;
-
-    OrientationSpring(hid_t grp, CoordNode& cg_pos_);
-    virtual void compute_value(ComputeMode mode) override;
-};
-
-OrientationSpring::OrientationSpring(hid_t grp, CoordNode& cg_pos_)
-    : PotentialNode()
-    , cg_pos(cg_pos_)
-    , n_elem(get_dset_size(2, grp, "ref_dir")[0])
-    , ref_dir(n_elem * 3)
-    , k_orient(read_attribute<float>(grp, ".", "k_orient", 0.f))
-{
-    check_elem_width(cg_pos, 6);
-    traverse_dset<2, float>(grp, "ref_dir", [&](size_t i, size_t d, float v) {
-        ref_dir[i * 3 + d] = v;
-    });
-}
-
-void OrientationSpring::compute_value(ComputeMode mode) {
-    float* pot = (mode == PotentialAndDerivMode) ? &potential : nullptr;
-    if(pot) *pot = 0.f;
-
-    for(int i = 0; i < n_elem; ++i) {
-        float n[3] = {cg_pos.output(3,i), cg_pos.output(4,i), cg_pos.output(5,i)};
-        float nr[3] = {ref_dir[i*3], ref_dir[i*3+1], ref_dir[i*3+2]};
-        float dot = n[0]*nr[0] + n[1]*nr[1] + n[2]*nr[2];
-        if(pot) *pot += k_orient * (1.f - dot);
-        // dE/dn = -k_orient * n_ref  (energy does not depend on position)
-        cg_pos.sens(3,i) += -k_orient * nr[0];
-        cg_pos.sens(4,i) += -k_orient * nr[1];
-        cg_pos.sens(5,i) += -k_orient * nr[2];
-    }
-}
-
-// ===================================================================
-// CGLipidIsotropicPotential — isotropic radial B-spline for CGL ↔ other types
-// ===================================================================
-// Handles CGL interactions with water, ions, backbone, and env beads.
-// V0-only (n_modes=0): pure radial B-spline, no angular dependence.
-struct CGLipidIsotropicPotential : public PotentialNode {
+struct CGLipidTargetPotential : public PotentialNode {
     CoordNode& cg_pos;
     CoordNode& tgt_pos;
     vector<float> interaction_param;
@@ -749,18 +916,28 @@ struct CGLipidIsotropicPotential : public PotentialNode {
     int n_param;
     int n_modes;
     int n_radial;
+    int n_angular;
+    float box_x;
+    float box_y;
+    float box_z;
     float knot_spacing;
     float cutoff;
+    float taper_width;
 
-    CGLipidIsotropicPotential(hid_t grp, CoordNode& cg_pos_, CoordNode& tgt_pos_);
+    CGLipidTargetPotential(hid_t grp, CoordNode& cg_pos_, CoordNode& tgt_pos_);
     virtual void compute_value(ComputeMode mode) override;
     virtual void propagate_deriv() override;
     virtual void set_param(const vector<float>& new_param) override {
         if(new_param.size() == interaction_param.size()) interaction_param = new_param;
     }
+    virtual void update_box_dimensions_anisotropic(float scale_xy, float scale_z) override {
+        box_x *= scale_xy;
+        box_y *= scale_xy;
+        box_z *= scale_z;
+    }
 };
 
-CGLipidIsotropicPotential::CGLipidIsotropicPotential(
+CGLipidTargetPotential::CGLipidTargetPotential(
         hid_t grp, CoordNode& cg_pos_, CoordNode& tgt_pos_)
     : PotentialNode()
     , cg_pos(cg_pos_)
@@ -770,9 +947,14 @@ CGLipidIsotropicPotential::CGLipidIsotropicPotential(
     , n_param(0)
     , n_modes(read_attribute<int>(grp, ".", "n_modes", 0))
     , n_radial(read_attribute<int>(grp, ".", "n_radial", 14))
+    , n_angular(read_attribute<int>(grp, ".", "n_angular", 15))
+    , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
+    , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
+    , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
     , knot_spacing(read_attribute<float>(grp, ".", "knot_spacing_ang", 1.4f))
     , cutoff(read_attribute<float>(grp, ".", "cutoff_ang",
                 float(n_radial - 2) * 1.4f))
+    , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
 {
     check_elem_width(cg_pos, 6);
     // tgt_pos may be 3D (water, ions) or 6D (backbone) — only positions used.
@@ -780,6 +962,8 @@ CGLipidIsotropicPotential::CGLipidIsotropicPotential(
     H5Obj pi_obj = open_group(grp, "pair_interaction");
     hid_t pi = pi_obj.get();
     interaction_param = read_param_dataset_any(pi, n_type1, n_type2, n_param);
+    if(n_modes != 0 || n_radial <= 3 || n_angular <= 3 || n_param != n_radial * n_angular)
+        throw string("cg_lipid_target requires tensor params with n_radial*n_angular coefficients");
     index1 = read_int_dataset(pi, "index1");
     type1 = read_int_dataset(pi, "type1");
     id1 = read_int_dataset(pi, "id1");
@@ -787,12 +971,12 @@ CGLipidIsotropicPotential::CGLipidIsotropicPotential(
     type2 = read_int_dataset(pi, "type2");
     id2 = read_int_dataset(pi, "id2");
     if(index1.size() != type1.size() || index1.size() != id1.size())
-        throw string("cg_lipid_isotropic source1 index/type/id size mismatch");
+        throw string("cg_lipid_target source1 index/type/id size mismatch");
     if(index2.size() != type2.size() || index2.size() != id2.size())
-        throw string("cg_lipid_isotropic source2 index/type/id size mismatch");
+        throw string("cg_lipid_target source2 index/type/id size mismatch");
 }
 
-void CGLipidIsotropicPotential::compute_value(ComputeMode mode) {
+void CGLipidTargetPotential::compute_value(ComputeMode mode) {
     (void)mode;
     VecArray cg = cg_pos.output;
     VecArray tgt = tgt_pos.output;
@@ -805,25 +989,25 @@ void CGLipidIsotropicPotential::compute_value(ComputeMode mode) {
             int t2 = type2[bi];
             if(t1 < 0 || t1 >= n_type1 || t2 < 0 || t2 >= n_type2) continue;
 
-            float dx = tgt(0, index2[bi]) - cg(0, index1[ai]);
-            float dy = tgt(1, index2[bi]) - cg(1, index1[ai]);
-            float dz = tgt(2, index2[bi]) - cg(2, index1[ai]);
-            float r2 = dx*dx + dy*dy + dz*dz;
-            if(r2 <= 1e-12f) continue;
-            float r = sqrtf(r2);
-            if(r >= cutoff) continue;
+            float x1[3], n1[3], dr[3];
+            load_vec6(cg, index1[ai], x1, n1);
+            dr[0] = tgt(0, index2[bi]) - x1[0];
+            dr[1] = tgt(1, index2[bi]) - x1[1];
+            dr[2] = tgt(2, index2[bi]) - x1[2];
+            if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
+                simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
 
-            float t = r / knot_spacing;
-            Vec<2> v0 = clamped_deBoor_value_and_deriv(
+            TargetSplineEval e;
+            if(eval_cg_target_tensor(
                 param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                t, n_radial);
-            total += v0.x();
+                n_angular, n_radial, dr, n1, knot_spacing, cutoff, taper_width, e))
+                total += e.value;
         }
     }
     potential = total;
 }
 
-void CGLipidIsotropicPotential::propagate_deriv() {
+void CGLipidTargetPotential::propagate_deriv() {
     VecArray cg = cg_pos.output;
     VecArray cg_sens = cg_pos.sens;
     VecArray tgt = tgt_pos.output;
@@ -836,30 +1020,50 @@ void CGLipidIsotropicPotential::propagate_deriv() {
             int t2 = type2[bi];
             if(t1 < 0 || t1 >= n_type1 || t2 < 0 || t2 >= n_type2) continue;
 
-            float dx = tgt(0, index2[bi]) - cg(0, index1[ai]);
-            float dy = tgt(1, index2[bi]) - cg(1, index1[ai]);
-            float dz = tgt(2, index2[bi]) - cg(2, index1[ai]);
-            float r2 = dx*dx + dy*dy + dz*dz;
-            if(r2 <= 1e-12f) continue;
-            float r = sqrtf(r2);
-            if(r >= cutoff) continue;
+            float x1[3], n1[3], dr[3];
+            load_vec6(cg, index1[ai], x1, n1);
+            dr[0] = tgt(0, index2[bi]) - x1[0];
+            dr[1] = tgt(1, index2[bi]) - x1[1];
+            dr[2] = tgt(2, index2[bi]) - x1[2];
+            if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
+                simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
 
-            float t = r / knot_spacing;
-            Vec<2> v0 = clamped_deBoor_value_and_deriv(
+            TargetSplineEval e;
+            if(!eval_cg_target_tensor(
                 param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                t, n_radial);
-            float d_dr = v0.y() / knot_spacing;
-            float inv_r = 1.f / r;
-            float fx = d_dr * dx * inv_r;
-            float fy = d_dr * dy * inv_r;
-            float fz = d_dr * dz * inv_r;
+                n_angular, n_radial, dr, n1, knot_spacing, cutoff, taper_width, e))
+                continue;
 
-            cg_sens(0, index1[ai]) -= fx;
-            cg_sens(1, index1[ai]) -= fy;
-            cg_sens(2, index1[ai]) -= fz;
-            tgt_sens(0, index2[bi]) += fx;
-            tgt_sens(1, index2[bi]) += fy;
-            tgt_sens(2, index2[bi]) += fz;
+            float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+            float r = sqrtf(std::max(r2, 1e-12f));
+            float inv_r = 1.f / r;
+            float unit[3] = {dr[0] * inv_r, dr[1] * inv_r, dr[2] * inv_r};
+            float a = n1[0] * unit[0] + n1[1] * unit[1] + n1[2] * unit[2];
+            float dpos[3] = {
+                e.d_dr * unit[0] + e.d_da * (n1[0] - a * unit[0]) * inv_r,
+                e.d_dr * unit[1] + e.d_da * (n1[1] - a * unit[1]) * inv_r,
+                e.d_dr * unit[2] + e.d_da * (n1[2] - a * unit[2]) * inv_r,
+            };
+            float ddir[3] = {
+                e.d_da * unit[0],
+                e.d_da * unit[1],
+                e.d_da * unit[2],
+            };
+
+            cg_sens(0, index1[ai]) -= dpos[0];
+            cg_sens(1, index1[ai]) -= dpos[1];
+            cg_sens(2, index1[ai]) -= dpos[2];
+            cg_sens(3, index1[ai]) += ddir[0];
+            cg_sens(4, index1[ai]) += ddir[1];
+            cg_sens(5, index1[ai]) += ddir[2];
+            Vec<3> tgt_grad = make_vec3(dpos[0], dpos[1], dpos[2]);
+            bool projected = martini_hybrid::project_bb_proxy_gradient_for_coord(
+                tgt_pos, tgt_sens, tgt_pos.n_elem, index2[bi], tgt_grad);
+            if(!projected) {
+                tgt_sens(0, index2[bi]) += dpos[0];
+                tgt_sens(1, index2[bi]) += dpos[1];
+                tgt_sens(2, index2[bi]) += dpos[2];
+            }
         }
     }
 }
@@ -870,5 +1074,4 @@ void CGLipidIsotropicPotential::propagate_deriv() {
 static RegisterNodeType<ComposeVector6D, 1> _reg_cv("compose_vector6d");
 static RegisterNodeType<CGLipidPairPotential, 1> _reg_cg_pair("cg_lipid_pair");
 static RegisterNodeType<CGLipidSCPotential, 2> _reg_cg_sc("cg_lipid_sc");
-static RegisterNodeType<OrientationSpring, 1> _reg_orient("cg_lipid_orientation_spring");
-static RegisterNodeType<CGLipidIsotropicPotential, 2> _reg_cg_iso("cg_lipid_isotropic");
+static RegisterNodeType<CGLipidTargetPotential, 2> _reg_cg_target("cg_lipid_target");

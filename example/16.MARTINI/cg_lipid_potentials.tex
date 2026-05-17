@@ -77,38 +77,27 @@ the inter-particle unit vector $\hat{\mathbf{r}}_{12} = (\mathbf{r}_2 -
 Physically, when two lipids face each other head-to-head across the bilayer
 midplane, $\cos\theta_1 \approx +1$ and $\cos\theta_2 \approx +1$.
 
-\subsection{CG Lipid -- CG Lipid Quad-Spline Potential}
+\subsection{CG Lipid -- CG Lipid Tensor-Spline Potential}
 \label{sec:cg-cg}
 
-The anisotropic interaction between two CG lipid particles is described by a
-factorized quad-spline potential that separates the angular-averaged isotropic
-core from orientation-dependent modes:
+The interaction between two CG lipid particles is described by a full tensor
+product cubic B-spline over distance and both lipid-facing angular coordinates:
 
 \begin{equation}
 \boxed{
 U_{\text{CG-CG}}(r, \cos\theta_1, \cos\theta_2)
-= V_0(r) + \sum_{m=1}^{M} A^{(1)}_m(\cos\theta_1) \;
-                               A^{(2)}_m(\cos\theta_2) \;
-                               V_m(r)
+= \sum_{i=0}^{N_r-1}\sum_{j=0}^{N_\theta-1}\sum_{k=0}^{N_\theta-1}
+  c_{ijk}\,B_i(r)\,B_j(\cos\theta_1)\,B_k(\cos\theta_2)
 }
 \label{eq:cg-cg}
 \end{equation}
 
-where $M = 4$ modes are retained, and all one-dimensional functions are
-represented as cubic B-splines (order $k=4$) with clamped de Boor boundary
-conditions~\cite{deBoor}:
-
-\begin{itemize}
-  \item $V_0(r)$: isotropic radial core, $N_r = 14$ control points on
-    $r \in [0, 16.8]\,\text{\AA}$, uniform knot spacing
-    $\Delta r = 1.4\,\text{\AA}$.
-  \item $A^{(1,2)}_m(\cos\theta)$: angular modulation profiles for lipid 1 and
-    lipid 2, $N_\theta = 15$ control points on $\cos\theta \in [-1, 1]$.
-  \item $V_m(r)$: radial envelope of mode $m$, $N_r = 14$ control points.
-\end{itemize}
-
-The total number of stored coefficients per CG-CG type pair is
-$N_r + M(2N_\theta + N_r) = 14 + 4(30 + 14) = 190$.
+where $B_i$, $B_j$, and $B_k$ are cubic B-spline basis functions with clamped
+de Boor boundary conditions~\cite{deBoor}.  The current table uses
+$N_r = 14$ radial control points on $r \in [0, 16.8]\,\text{\AA}$ with
+$\Delta r = 1.4\,\text{\AA}$, and $N_\theta = 15$ angular control points on
+$\cos\theta \in [-1, 1]$.  The total stored coefficient count per CGL-CGL type
+pair is $N_r N_\theta^2 = 3150$.
 
 \paragraph{Tapering.}
 A cubic Hermite taper $S(u) = u^2(3 - 2u)$ with
@@ -120,32 +109,21 @@ The potential is constructed from the underlying dry MARTINI force field by
 sampling the total nonbonded energy (Lennard-Jones plus Coulomb) between two
 explicit 14-bead DOPC lipids at a regular grid of $(r, \cos\theta_1,
 \cos\theta_2)$ values and averaging over azimuthal orientations. For each
-sampled configuration, the internal bead coordinates are first relaxed via
+sampled configuration, the internal bead coordinates are first relaxed by
 steepest-descent energy minimization ($N_{\text{relax}} = 50$ steps) to avoid
-rigid-body steric clashes. The 3D energy grid
-$E(r_i, \cos\theta_{1,j}, \cos\theta_{2,k})$ is capped at
-$E_{\text{cap}} = 500\,\text{kJ/mol}$ and decomposed mode-by-mode:
-
-\begin{enumerate}
-  \item $V_0(r) = \langle E \rangle_{\cos\theta_1, \cos\theta_2}$ (angular average).
-  \item Residual $\Delta(r, \cos\theta_1, \cos\theta_2) = E - V_0$ is
-    reshaped to a matrix per radial slice; SVD extracts the dominant left and
-    right singular vectors as $A^{(1)}_m$ and $A^{(2)}_m$, with $V_m(r)$ set
-    to the corresponding singular value times the right singular vector.
-  \item The mode contribution is subtracted and the procedure repeats for
-    $M$ modes.
-\end{enumerate}
-
-Angular profiles $A^{(1,2)}_m$ are symmetrized (averaged when the two lipids
-are identical), normalized to unit maximum absolute value, and fitted with a
-cubic B-spline. Radial functions $V_0(r)$ and $V_m(r)$ are fitted with cubic
-B-splines using Tikhonov regularization (smoothing parameter $\lambda = 0.01$)
-to penalize the second derivative.  Control points at small $r$ where no
-training data exist ($r < r_{\text{contact}} \approx 6.959\,\text{\AA}$,
-corresponding to knot indices $0$--$4$ on the current grid) are clamped to the
-positive energy cap
-$+E_{\text{cap}} / \kappa_E \approx +171.5\,E_{\text{up}}$ to enforce a
-repulsive steric barrier.
+rigid-body steric clashes.  The sampled energy includes the dry-MARTINI bonded
+deformation penalty relative to the unrelaxed DOPC reference, so relaxation can
+resolve local steric stress but cannot remove excluded-volume cost for free.
+The sampled 3D energy grid is capped at
+$E_{\text{cap}} = 500\,\text{kJ/mol}$, converted to $E_{\text{up}}$, and fitted
+directly to the tensor coefficients $c_{ijk}$ with Tikhonov regularization on
+radial curvature.  No SVD, angular averaging, orientation restraint, or
+empirical scaling is applied.  Control points at small $r$ where no training
+data exist ($r < r_{\text{contact}} \approx 6.959\,\text{\AA}$, corresponding
+to knot indices $0$--$4$ on the current grid) are clamped to
+$5000\,\text{kJ/mol}$ ($\approx 1715.3\,E_{\text{up}}$).  This is a finite
+hard-core representation of unresolved dry-MARTINI bead overlap; the sampled
+non-core coefficients remain bounded by $500\,\text{kJ/mol}$.
 
 \subsection{CG Lipid -- Sidechain Quad-Spline Potential}
 \label{sec:cg-sc}
@@ -161,53 +139,40 @@ unit vector from C$_\alpha$ to C$_\beta$.
 The table is built with the same grid sampling, SVD decomposition, and
 B-spline fitting procedure, but with $N_{\text{relax}} = 120$ bead relaxation
 steps and a tighter angular grid (9 $\cos\theta$ points $\times$ 4 azimuthal
-angles). Separate tables are constructed for each standard proteinogenic
+angles). The relaxed explicit-bead samples also retain the bonded deformation
+penalty relative to the unrelaxed DOPC reference. Separate tables are constructed for each standard proteinogenic
 sidechain type present in the active system against the single CG lipid type.
 The fitted radial support is capped at $r_{\text{contact}}$; the runtime cutoff
 is the fitted support plus one radial knot interval, so the current DOPC
 sidechain support is approximately $6.959 + 1.4 = 8.359\,\text{\AA}$.
 
-\subsection{Optional CG Lipid Orientation Restraint}
-\label{sec:cg-spring}
-
-The production model does not pin lipid directions to their initial structure.
-The CGL-CGLD bond described above provides the orientation coordinate used by
-the anisotropic spline tables, and the default orientation spring constant is
-zero.  For diagnostic runs only, an optional orientation spring may be enabled:
-
-\begin{equation}
-U_{\text{orient}}(\hat{\mathbf{n}}) = k_{\text{orient}} \,
-\bigl(1 - \hat{\mathbf{n}} \cdot \hat{\mathbf{n}}_{\text{ref}} \bigr)
-\label{eq:orient}
-\end{equation}
-
-where $\hat{\mathbf{n}}_{\text{ref}}$ is the initial orientation assigned at
-system preparation.  Normal workflow scripts use $k_{\text{orient}} = 0$ unless
-the user explicitly sets
-\texttt{UPSIDE\_CG\_LIPID\_ORIENT\_\allowbreak SPRING\_K}.  For small angular
-deviations $\theta$, $1 - \cos\theta \approx \theta^2/2$, so any nonzero
-diagnostic value acts as a harmonic pin to the starting direction.
-
-\subsection{CG Lipid -- Environment Isotropic Potential}
+\subsection{CG Lipid -- Target Directional Potential}
 \label{sec:cg-iso}
 
-Interactions between CG lipid particles and isotropic environment beads (water,
-ions, protein backbone carrier atoms) are described by a pure radial cubic
-B-spline with no angular dependence:
+Interactions between CG lipid particles and non-sidechain dry-MARTINI target
+particles (water, ions, protein backbone proxy sites, and other point
+environment sites) use a directional cubic B-spline over distance and lipid
+orientation:
 
 \begin{equation}
-U_{\text{CG-env}}(r) = B_{\text{spline}}(r; \,\{c_k\}_{k=0}^{N_r-1})
+U_{\text{CG-target}}(r, \cos\theta)
+= \sum_{i=0}^{N_r-1}\sum_{j=0}^{N_\theta-1}
+  c_{ij}^{(X)}\,B_i(r)\,B_j(\cos\theta),
 \label{eq:cg-iso}
 \end{equation}
 
-where $\{c_k\}$ are $N_r = 14$ control points on the same knot grid as
-$V_0(r)$. The B-spline is fitted directly to an explicit orientation-averaged
-dry-MARTINI DOPC--target energy, not to a capped effective Lennard-Jones
-surrogate.  For each radial sample $r$, the CGL center is placed at distance
-$r$ from a point probe of target type $X$, the 14-bead DOPC reference is rotated
-over a 96-point Fibonacci sphere, and the sampled target energy is
+where $\cos\theta = \hat{\mathbf{n}}_{\text{CGL}}\cdot\hat{\mathbf{r}}_{12}$
+and $X$ is the target MARTINI type.  The table uses $N_r=14$ radial and
+$N_\theta=15$ angular control points.  It is fitted directly to explicit
+DOPC--target dry-MARTINI bead energies, not to a capped effective
+Lennard-Jones surrogate and not to an orientation average.  For each radial
+sample $r$ and angular sample $\cos\theta$, the CGL center is placed at
+distance $r$ from a point probe of target type $X$, the 14-bead DOPC reference
+is oriented so its CGL vector has the requested dot product with
+$\hat{\mathbf{r}}_{12}$, internal bead relaxation is charged by the same
+relative bonded deformation penalty, and azimuthal rotations are averaged:
 \begin{equation}
-  U_{\text{CG-}X}(r)
+  U_{\text{CG-}X}(r,\cos\theta)
   =
   \left\langle
     \sum_{i\in\text{DOPC}}
@@ -220,15 +185,22 @@ over a 96-point Fibonacci sphere, and the sampled target energy is
       +
       k_C \frac{q_i q_X}{\epsilon_r r_{iX}}
     \right]
-  \right\rangle_{\hat{\mathbf{n}}}.
+  \right\rangle_{\phi}.
 \end{equation}
-The resulting one-dimensional energy samples are converted to $E_{\text{up}}$
-and fitted directly with the radial B-spline.  The old global CGL-vs-target
-$\sigma$ cap is no longer part of the production table path; generated tables
-carry the source attribute
-\texttt{explicit\_dopc\_orientation\_average}.  Legacy \texttt{martini.h5}
-files that still contain capped CGL effective-LJ metadata are rejected and must
-be rebuilt.
+The resulting two-dimensional energy samples are capped at
+$E_{\text{cap}}=500\,\text{kJ/mol}$, converted to $E_{\text{up}}$, and fitted
+directly with the tensor-product spline.  The unsampled radial core below the
+first explicit target samples is clamped to the positive cap, representing an
+unresolved excluded-volume core rather than allowing spline extrapolation to
+create artificial short-range wells or force spikes.  The old global
+CGL-vs-target $\sigma$ cap and radial orientation-averaged table are no longer
+part of the production path; generated tables carry the source attribute
+\texttt{explicit\_dopc\_directional}.  Legacy \texttt{martini.h5} files that
+still contain capped CGL effective-LJ metadata are rejected and must be rebuilt.
+Backbone carrier atoms (N, C$_\alpha$, C, O) are not added as independent
+CGL-target particles: the physical backbone target is the virtual MARTINI BB
+proxy site, and forces on that proxy are projected back to the underlying
+Upside backbone carriers.
 
 \subsection{Hybrid Interface: Sidechain -- Environment Interaction}
 \label{sec:sc-env}
@@ -308,22 +280,26 @@ backbone proxy atoms are projected onto the underlying Upside backbone degrees
 of freedom. Cross-interface BB--env pairs are scaled by
 $\alpha_{\text{interface}}$.
 
-\subsection{Martini Potential Zeroing Protocol}
+\subsection{Martini Pair Ownership Protocol}
 
-To prevent double-counting, all entries in the standard Martini pair-parameter
-table involving the CG lipid type (``CGL'') are explicitly set to zero
-$(\varepsilon = 0, \sigma = 0)$ after the dedicated spline tables are built:
+To prevent double-counting and to keep the hidden CGLD site as an internal
+orientation coordinate, the generic Martini pair-list construction excludes
+all pairs that contain CGL or CGLD.  Every physical interaction involving the
+single-particle lipid is owned by a dedicated spline node:
 
 \begin{itemize}
   \item CGL--CGL: handled entirely by $U_{\text{CG-CG}}$ (Sec.~\ref{sec:cg-cg}).
   \item CGL--SC: handled entirely by $U_{\text{CG-SC}}$ (Sec.~\ref{sec:cg-sc}).
-  \item CGL--isotropic targets: handled entirely by $U_{\text{CG-env}}$
+  \item CGL--target: handled entirely by $U_{\text{CG-target}}$
     (Sec.~\ref{sec:cg-iso}).
-  \item CGLD (orientation site): zero nonbonded interactions with all types.
+  \item CGLD: carries the orientation coordinate and its harmonic CGL-CGLD bond
+    only; it is not a generic nonbonded particle.
 \end{itemize}
 
-At runtime, the Martini potential's pair-list construction skips any pair with
-$\varepsilon = \sigma = q_i = q_j = 0$, so zeroed entries contribute no energy.
+This means CGL-CGL torque, CGL-SC torque, and CGL-target torque act directly on
+the CGLD-position-derived vector through the same coordinate derivatives used
+for position forces.  The model does not include an orientation spring or any
+z-axis pinning term.
 
 \subsection{Energy Units}
 

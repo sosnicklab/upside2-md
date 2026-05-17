@@ -1781,6 +1781,22 @@ std::shared_ptr<const HybridRuntimeState> get_state_for_coord(const CoordNode& c
     return it->second;
 }
 
+bool project_bb_proxy_gradient_for_coord(
+        const CoordNode& coord,
+        VecArray pos_sens,
+        int n_atom,
+        int atom_idx,
+        const Vec<3>& grad) {
+    auto st = get_state_for_coord(coord);
+    if(!st || !st->enabled || !st->active) return false;
+    if(atom_role_class_at(*st, atom_idx) != ROLE_BB) return false;
+    if(bb_map_index_for_proxy(*st, atom_idx) < 0) return false;
+
+    Vec<3> routed_grad = compute_sc_backbone_feedback_mix(*st) * grad;
+    project_bb_proxy_gradient_if_active(*st, pos_sens, n_atom, atom_idx, routed_grad);
+    return true;
+}
+
 inline bool skip_pair_if_intra_protein(const HybridRuntimeState& st, int i, int j) {
     if(!st.enabled || !st.active || !st.exclude_intra_protein_martini) return false;
     return !allow_intra_protein_pair_if_active(st, i, j);

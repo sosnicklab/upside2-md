@@ -51,17 +51,6 @@ CANONICAL_AFFINE_REF = np.array(
 CANONICAL_AFFINE_REF -= CANONICAL_AFFINE_REF.mean(axis=0, keepdims=True)
 
 
-def _cgl_effective_lj_sigma_cap_nm() -> float:
-    raw = os.environ.get("UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM", "0")
-    try:
-        cap = float(raw)
-    except ValueError as exc:
-        raise ValueError(f"Invalid UPSIDE_CG_LIPID_MAX_EFFECTIVE_SIGMA_NM={raw!r}") from exc
-    if cap <= 0.0:
-        return float("inf")
-    return cap
-
-
 def _decode_h5_attr(value):
     if isinstance(value, bytes):
         return value.decode("ascii")
@@ -82,18 +71,27 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
     if eff_grp is not None and "max_effective_sigma_nm" in eff_grp.attrs:
         raise RuntimeError(
             f"Stale CG lipid table in {source_path}: capped CGL effective LJ metadata found. "
-            "Rebuild martini.h5 so CGL-X interactions use explicit orientation-averaged spline tables."
+            "Rebuild martini.h5 so CGL-X interactions use explicit directional spline tables."
         )
     n_effective_targets = 0
     if eff_grp is not None and "target_types" in eff_grp:
         n_effective_targets = int(eff_grp["target_types"].shape[0])
-    iso_grp = cglt.get("cg_lipid_isotropic")
-    source = _decode_h5_attr(iso_grp.attrs.get("source", "")) if iso_grp is not None else ""
-    if n_effective_targets and source != "explicit_dopc_orientation_average":
+    target_grp = cglt.get("cg_lipid_target")
+    source = _decode_h5_attr(target_grp.attrs.get("source", "")) if target_grp is not None else ""
+    if n_effective_targets and source != "explicit_dopc_directional":
         raise RuntimeError(
-            f"Stale CG lipid table in {source_path}: cg_lipid_isotropic source is {source!r}. "
+            f"Stale CG lipid table in {source_path}: cg_lipid_target source is {source!r}. "
             "Rebuild martini.h5 so CGL-X interactions are derived from dry-MARTINI bead interactions."
         )
+    pair_grp = cglt.get("cg_lipid_pair")
+    if pair_grp is not None:
+        core_cap = float(pair_grp.attrs.get("core_energy_cap_kj_mol", 0.0))
+        if core_cap < 5000.0:
+            raise RuntimeError(
+                f"Stale CG lipid table in {source_path}: cg_lipid_pair core cap is "
+                f"{core_cap:.1f} kJ/mol. Rebuild martini.h5 so CGL-CGL bead-overlap "
+                "uses the hard excluded-volume core."
+            )
 CB_PLACEMENT = np.array([[0.0, 0.94375626, 1.2068012]], dtype=np.float32)
 CB_VECTOR = CB_PLACEMENT / np.linalg.norm(CB_PLACEMENT, axis=1, keepdims=True)
 N_BIT_ROTAMER = 4
@@ -3056,8 +3054,9 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             martini_masses["CGLD"] = cg_lipid_orientation_mass_g
             print(f"CG lipid orientation-site mass: {cg_lipid_orientation_mass_g:.3f} g/mol")
 
-        # Extend martini_table with effective CGL LJ parameters for isotropic
-        # CG lipid ↔ dryMARTINI particle interactions (ions, water, BB, env).
+        # Register CGL/CGLD type metadata. CGL interactions are injected as
+        # dedicated dry-MARTINI-derived spline nodes below, not as generic LJ
+        # MartiniPotential pairs.
         if n_cg_lipids > 0 and ("CGL", "CGL") not in martini_table:
             martini_h5_path = Path(run_dir) / "martini.h5"
             if martini_h5_path.exists():
@@ -3089,37 +3088,16 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     e = eff["epsilon_kj_mol"]
                     martini_table[("CGL", tgt_type)] = (s, e)
                     martini_table[(tgt_type, "CGL")] = (s, e)
-            # CGL↔CGL → directional cg_lipid_pair quadspline
-            # CGL↔SC  → directional cg_lipid_sc quadspline
-            # CGL↔X   → isotropic radial B-spline (cg_lipid_isotropic)
-            # Zero all MartiniPotential CGL↔* entries — every interaction is
-            # supplied by a spline table; MartiniPotential would double-count.
-            n_sc_zeroed = 0
-            n_iso_zeroed = 0
+            # CGL interactions are supplied by dedicated spline nodes:
+            # CGL↔CGL → cg_lipid_pair, CGL↔SC → cg_lipid_sc,
+            # CGL↔X → cg_lipid_target.  Generic MartiniPotential pairs
+            # involving CGL/CGLD are omitted below to avoid double-counting and
+            # to keep CGLD as an internal orientation coordinate.
             if martini_h5_path.exists():
                 with h5py.File(martini_h5_path, "r") as _mh5:
-                    cglt = _mh5.get("cg_lipid_table")
-                    if cglt is not None:
-                        sc_grp = cglt.get("cg_lipid_sc")
-                        if sc_grp is not None and "sc_bead_types" in sc_grp:
-                            for bt_bytes in sc_grp["sc_bead_types"][:]:
-                                bt = bt_bytes.decode("ascii") if isinstance(bt_bytes, bytes) else str(bt_bytes)
-                                if ("CGL", bt) in martini_table:
-                                    martini_table[("CGL", bt)] = (0.0, 0.0)
-                                    martini_table[(bt, "CGL")] = (0.0, 0.0)
-                                    n_sc_zeroed += 1
-                        iso_grp = cglt.get("cg_lipid_isotropic")
-                        if iso_grp is not None and "target_order" in iso_grp:
-                            for bt_bytes in iso_grp["target_order"][:]:
-                                bt = bt_bytes.decode("ascii") if isinstance(bt_bytes, bytes) else str(bt_bytes)
-                                if ("CGL", bt) in martini_table:
-                                    martini_table[("CGL", bt)] = (0.0, 0.0)
-                                    martini_table[(bt, "CGL")] = (0.0, 0.0)
-                                    n_iso_zeroed += 1
+                    _validate_cg_lipid_table_schema(_mh5, martini_h5_path)
             martini_table[("CGL", "CGL")] = (0.0, 0.0)
-            print(f"Extended martini_table with CGL entries, "
-                  f"zeroed CGL↔CGL and CGL↔SC({n_sc_zeroed} types) "
-                  f"and CGL↔isotropic({n_iso_zeroed} types) — all handled by splines")
+            print("Registered CGL mass/type metadata; CGL interactions are handled by spline nodes")
         if n_cg_lipids > 0:
             all_martini_types = set()
             for t1, t2 in martini_table.keys():
@@ -3427,9 +3405,17 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             additional_by_i[i].add(j)
 
         for i in range(n_atoms):
+            if atom_type_strings[i].upper() in {"CGL", "CGLD"}:
+                continue
             if i + 1 >= n_atoms:
                 continue
             js = np.arange(i + 1, n_atoms, dtype=np.int32)
+            if n_cg_lipids > 0 and js.size:
+                non_cgl_mask = np.array(
+                    [atom_type_strings[int(j)].upper() not in {"CGL", "CGLD"} for j in js],
+                    dtype=bool,
+                )
+                js = js[non_cgl_mask]
             bonded_js = bonded_by_i.get(i)
             additional_js = additional_by_i.get(i)
             if bonded_js:
@@ -3470,7 +3456,10 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         print(f"Excluded {excluded_additional_count} additional pairs from ITP exclusions")
         print(f"Wrote {total_pairs_written} non-bonded pairs with {len(unique_coeffs)} unique coefficient rows")
         martini_potential._v_attrs.optimized_format = 1
-        t.create_array(martini_potential, 'coefficients', obj=np.array(unique_coeffs, dtype='f4'))
+        coeff_array = np.array(unique_coeffs, dtype='f4')
+        if coeff_array.size == 0:
+            coeff_array = np.zeros((0, 4), dtype='f4')
+        t.create_array(martini_potential, 'coefficients', obj=coeff_array)
         
         # Calculate representative epsilon and sigma from the coefficients array
         # These are required by the C++ interface but not used in computation
@@ -3483,9 +3472,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             martini_potential._v_attrs.epsilon = median_epsilon
             martini_potential._v_attrs.sigma = median_sigma
         else:
-            raise ValueError("FATAL ERROR: No interaction coefficients found.\n"
-                           f"  This indicates no non-bonded interactions were defined.\n"
-                           f"  Aborting to prevent incorrect simulation results.")
+            martini_potential._v_attrs.epsilon = 0.0
+            martini_potential._v_attrs.sigma = 0.0
 
         # Add bonded potentials mirroring original run_martini.py
         # Bonds: dist_spring
@@ -3923,19 +3911,20 @@ def set_initial_position(input_file, output_file):
             del f["/input/pos"]
         f.create_dataset("/input/pos", data=last_pos)
 
-        if last_mom is not None:
+        if release_from_preprod:
+            if "/input/mom" in f:
+                del f["/input/mom"]
+            mom_dtype = last_mom.dtype if last_mom is not None else target_pos.dtype
+            mom_ds = f.create_dataset(
+                "/input/mom",
+                data=np.zeros((target_n, 3, 1), dtype=mom_dtype),
+            )
+            mom_ds.attrs["restart_valid"] = np.int8(0)
+        elif last_mom is not None:
             if last_mom.shape[0] != target_n:
                 merged_mom = f["/input/mom"][:] if "/input/mom" in f else np.zeros((target_n, 3, 1), dtype=last_mom.dtype)
                 merged_mom[: min(last_mom.shape[0], target_n), :, :] = last_mom[: min(last_mom.shape[0], target_n), :, :]
                 last_mom = merged_mom
-            if release_from_preprod and "/input/hybrid_env_topology/protein_membership" in f:
-                protein_membership = np.asarray(
-                    f["/input/hybrid_env_topology/protein_membership"][:], dtype=np.int32
-                )
-                if protein_membership.shape[0] == last_mom.shape[0]:
-                    protein_mask = protein_membership >= 0
-                    if np.any(protein_mask):
-                        last_mom[protein_mask, :, :] = 0.0
             if "/input/mom" in f:
                 del f["/input/mom"]
             mom_ds = f.create_dataset("/input/mom", data=last_mom)
@@ -3947,13 +3936,19 @@ def set_initial_position(input_file, output_file):
             transition_step = source_transition_start + source_elapsed_steps
             f["/input/hybrid_control"].attrs["sc_env_transition_step_start"] = np.int32(transition_step)
 
-        if last_box is not None and "/input/potential/martini_potential" in f:
-            pot_grp = f["/input/potential/martini_potential"]
-            pot_grp.attrs["x_len"] = float(last_box[0])
-            pot_grp.attrs["y_len"] = float(last_box[1])
-            pot_grp.attrs["z_len"] = float(last_box[2])
+        if last_box is not None and "/input/potential" in f:
+            n_updated = 0
+            for pot_grp in f["/input/potential"].values():
+                if not isinstance(pot_grp, h5py.Group):
+                    continue
+                if all(k in pot_grp.attrs for k in ("x_len", "y_len", "z_len")):
+                    pot_grp.attrs["x_len"] = float(last_box[0])
+                    pot_grp.attrs["y_len"] = float(last_box[1])
+                    pot_grp.attrs["z_len"] = float(last_box[2])
+                    n_updated += 1
             print(
-                f"Updated box dimensions: x={last_box[0]:.3f}, y={last_box[1]:.3f}, z={last_box[2]:.3f}"
+                f"Updated box dimensions for {n_updated} potential nodes: "
+                f"x={last_box[0]:.3f}, y={last_box[1]:.3f}, z={last_box[2]:.3f}"
             )
 
 
@@ -4481,14 +4476,16 @@ def inject_cg_lipid_nodes(
             if has_pair:
                 pair_grp = mh5["cg_lipid_table/cg_lipid_pair"]
 
-                # cg_lipid_pair: symmetric directional residual over CG lipid vectors.
+                # cg_lipid_pair: symmetric directional tensor over CG lipid vectors.
                 cg_pair = pot.create_group("cg_lipid_pair")
                 cg_pair.attrs["initialized"] = True
                 cg_pair.attrs["arguments"] = np.array([b"compose_vector6d"])
                 for attr_name, attr_value in box_attrs.items():
                     cg_pair.attrs[attr_name] = attr_value
+                if "schema" in pair_grp.attrs:
+                    cg_pair.attrs["schema"] = pair_grp.attrs["schema"]
                 cg_pair.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
-                cg_pair.attrs["radial_mode"] = "residual_zero_isotropic"
+                cg_pair.attrs["radial_mode"] = pair_grp.attrs.get("radial_mode", "full_tensor")
                 for attr_name in ("knot_spacing_ang", "cutoff_ang", "taper_width_ang"):
                     if attr_name in pair_grp.attrs:
                         cg_pair.attrs[attr_name] = np.float32(pair_grp.attrs[attr_name])
@@ -4514,19 +4511,6 @@ def inject_cg_lipid_nodes(
 
                 n_param = int(pair_grp["interaction_param"].shape[-1])
                 print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1×1×{n_param} params")
-
-            orient_k = float(os.environ.get("UPSIDE_CG_LIPID_ORIENT_SPRING_K", "0.0"))
-            if orient_k > 0.0:
-                with h5py.File(up_file, "r") as up_r:
-                    compose_grp = up_r["input/potential/compose_vector6d"]
-                    ref_dir = compose_grp["direction"][:].astype(np.float32)
-                orient_grp = pot.create_group("cg_lipid_orientation_spring")
-                orient_grp.attrs["initialized"] = True
-                orient_grp.attrs["arguments"] = np.array([b"compose_vector6d"])
-                orient_grp.attrs["k_orient"] = np.float32(orient_k)
-                orient_grp.create_dataset("ref_dir", data=ref_dir)
-                print(f"  Injected cg_lipid_orientation_spring: k={orient_k:.1f} E_up, "
-                      f"{ref_dir.shape[0]} directions")
 
             if has_sc:
                 # Check for SC placement node before creating cg_lipid_sc node
@@ -4628,79 +4612,85 @@ def inject_cg_lipid_nodes(
                 else:
                     print("  cg_lipid_sc: no SC placement node found, skipping SC↔CG interaction")
 
-            # --- cg_lipid_isotropic: isotropic radial B-spline for CGL ↔ other types ---
-            # Pairs CGL particles with water, ions, and env particles (placement_identity).
-            with h5py.File(martini_h5, "r") as mh5:
-                cglt = mh5.get("cg_lipid_table")
-                if cglt is not None and "cg_lipid_isotropic" in cglt:
-                    iso_grp = cglt["cg_lipid_isotropic"]
-                    iso_target_order = [
+            target_grp = mh5["cg_lipid_table"].get("cg_lipid_target")
+            if target_grp is not None:
+                target_order = [
+                    t.decode("ascii") if isinstance(t, bytes) else str(t)
+                    for t in target_grp["target_order"][:]
+                ]
+                target_type_to_idx = {name: idx for idx, name in enumerate(target_order)}
+
+                with h5py.File(up_file, "r") as up_r:
+                    atom_types = [
                         t.decode("ascii") if isinstance(t, bytes) else str(t)
-                        for t in iso_grp["target_order"][:]
+                        for t in up_r["input/type"][:]
                     ]
-                    # Type names → type indices come from the martini.h5 particles table
-                    pt_type_order = [
-                        x.decode("ascii") if isinstance(x, bytes) else str(x)
-                        for x in mh5["particles/type_order"][:]
-                    ]
-                    tgt_name_to_idx = {n: i for i, n in enumerate(pt_type_order)}
-                    iso_tgt_indices = {tgt_name_to_idx[t] for t in iso_target_order
-                                       if t in tgt_name_to_idx}
+                    n_cg_lipids = up_r["input/potential/compose_vector6d/elem_index"].shape[0]
+                    backbone_carrier_idx = set()
+                    bb_proxy_idx = set()
+                    if "hybrid_bb_map" in up_r["input"]:
+                        bb_map = up_r["input/hybrid_bb_map"]
+                        if "atom_indices" in bb_map and "atom_mask" in bb_map:
+                            bb_atom_indices = np.asarray(bb_map["atom_indices"][:], dtype=np.int32)
+                            bb_atom_mask = np.asarray(bb_map["atom_mask"][:], dtype=np.int32)
+                            valid_carriers = bb_atom_indices[bb_atom_mask != 0]
+                            backbone_carrier_idx = {
+                                int(v) for v in valid_carriers.ravel().tolist() if int(v) >= 0
+                            }
+                        if "bb_atom_index" in bb_map:
+                            bb_proxy_idx = {
+                                int(v) for v in np.asarray(bb_map["bb_atom_index"][:], dtype=np.int32).ravel().tolist()
+                                if int(v) >= 0
+                            }
 
-                    # Find particles in placement_identity matching target types
-                    with h5py.File(up_file, "r") as up_r:
-                        ident_grp = up_r["input/potential"].get("placement_identity")
-                        if ident_grp is not None:
-                            ident_types = ident_grp["type"][:].astype(np.int32)
-                            ident_ids = ident_grp["id"][:].astype(np.int32)
+                target_idx = []
+                target_types = []
+                target_ids = []
+                for atom_idx, atom_type in enumerate(atom_types):
+                    if atom_type.upper() in {"CGL", "CGLD"}:
+                        continue
+                    if atom_idx in backbone_carrier_idx and atom_idx not in bb_proxy_idx:
+                        continue
+                    type_idx = target_type_to_idx.get(atom_type)
+                    if type_idx is None:
+                        continue
+                    target_idx.append(atom_idx)
+                    target_types.append(type_idx)
+                    target_ids.append((atom_idx + 300000) << 4)
 
-                            iso_idx2 = []
-                            iso_type2 = []
-                            iso_id2 = []
-                            for idx in range(len(ident_types)):
-                                if int(ident_types[idx]) in iso_tgt_indices:
-                                    iso_idx2.append(idx)
-                                    iso_type2.append(int(ident_types[idx]))
-                                    iso_id2.append(int(ident_ids[idx]))
+                if target_idx:
+                    target_node = pot.create_group("cg_lipid_target")
+                    target_node.attrs["initialized"] = True
+                    target_node.attrs["arguments"] = np.array([b"compose_vector6d", b"pos"])
+                    for attr_name, attr_value in box_attrs.items():
+                        target_node.attrs[attr_name] = attr_value
+                    for attr_name in ("schema", "source", "angle_convention"):
+                        if attr_name in target_grp.attrs:
+                            target_node.attrs[attr_name] = target_grp.attrs[attr_name]
+                    for attr_name in ("n_modes", "n_radial", "n_angular"):
+                        if attr_name in target_grp.attrs:
+                            target_node.attrs[attr_name] = np.int32(target_grp.attrs[attr_name])
+                    for attr_name in ("knot_spacing_ang", "cutoff_ang", "taper_width_ang"):
+                        if attr_name in target_grp.attrs:
+                            target_node.attrs[attr_name] = np.float32(target_grp.attrs[attr_name])
 
-                            n_cg_lipids = up_r["input/potential/compose_vector6d/elem_index"].shape[0]
-
-                            if iso_idx2:
-                                iso_node = pot.create_group("cg_lipid_isotropic")
-                                iso_node.attrs["initialized"] = True
-                                iso_node.attrs["arguments"] = np.array([
-                                    b"compose_vector6d",
-                                    b"placement_identity",
-                                ])
-                                for attr_name, attr_value in box_attrs.items():
-                                    iso_node.attrs[attr_name] = attr_value
-                                for attr_name in ("n_modes", "n_radial", "n_angular",
-                                                   "knot_spacing_ang", "cutoff_ang"):
-                                    if attr_name in iso_grp.attrs:
-                                        val = iso_grp.attrs[attr_name]
-                                        iso_node.attrs[attr_name] = np.int32(val) \
-                                            if attr_name.startswith("n_") else np.float32(val)
-
-                                iso_pi = iso_node.create_group("pair_interaction")
-                                iso_pi.create_dataset(
-                                    "interaction_param",
-                                    data=iso_grp["interaction_param"][:].astype(np.float32),
-                                )
-                                # Source1: CGL particles
-                                iso_pi.create_dataset("index1", data=np.arange(n_cg_lipids, dtype=np.int32))
-                                iso_pi.create_dataset("type1", data=np.zeros(n_cg_lipids, dtype=np.int32))
-                                iso_pi.create_dataset("id1", data=((np.arange(n_cg_lipids, dtype=np.int32) + 200000) << 4))
-                                # Source2: matched identity particles
-                                iso_pi.create_dataset("index2", data=np.array(iso_idx2, dtype=np.int32))
-                                iso_pi.create_dataset("type2", data=np.array(iso_type2, dtype=np.int32))
-                                iso_pi.create_dataset("id2", data=np.array(iso_id2, dtype=np.int32))
-
-                                print(f"  Injected cg_lipid_isotropic: {n_cg_lipids} CGL × {len(iso_idx2)} "
-                                      f"other particles ({len(iso_target_order)} target types)")
-                            else:
-                                print("  cg_lipid_isotropic: no matching identity particles, skipping")
-                        else:
-                            print("  cg_lipid_isotropic: no placement_identity node, skipping")
+                    target_pi = target_node.create_group("pair_interaction")
+                    target_pi.create_dataset(
+                        "interaction_param",
+                        data=target_grp["interaction_param"][:].astype(np.float32),
+                    )
+                    target_pi.create_dataset("index1", data=np.arange(n_cg_lipids, dtype=np.int32))
+                    target_pi.create_dataset("type1", data=np.zeros(n_cg_lipids, dtype=np.int32))
+                    target_pi.create_dataset("id1", data=((np.arange(n_cg_lipids, dtype=np.int32) + 200000) << 4))
+                    target_pi.create_dataset("index2", data=np.array(target_idx, dtype=np.int32))
+                    target_pi.create_dataset("type2", data=np.array(target_types, dtype=np.int32))
+                    target_pi.create_dataset("id2", data=np.array(target_ids, dtype=np.int32))
+                    print(
+                        f"  Injected cg_lipid_target: {n_cg_lipids} CGL × {len(target_idx)} "
+                        f"target particles ({len(target_order)} target types)"
+                    )
+                else:
+                    print("  cg_lipid_target: no matching target particles, skipping")
 
 
 def inject_stage7_sc_table_nodes(

@@ -663,7 +663,7 @@ def inject_hybrid_mapping(up_file: Path, mapping_file: Path):
                 if n_old == src_mem.shape[0]:
                     print(f"  Remapping hybrid membership from {n_old} → {base_n_atom} atoms "
                           f"(CG lipid coarse-graining)")
-                    new_membership = np.full(base_n_atom, 0, dtype=np.int32)
+                    new_membership = np.full(base_n_atom, -1, dtype=np.int32)
                     for old_idx in range(n_old):
                         new_idx = old_to_new[old_idx]
                         new_membership[new_idx] = src_mem[old_idx]
@@ -848,6 +848,17 @@ def assert_hybrid_stage_active(
         env_membership = inp["hybrid_env_topology"]["protein_membership"][:]
         if not np.any(env_membership < 0):
             raise ValueError(f"{up_file}: no non-protein environment targets found")
+        if "type" in inp:
+            atom_types = np.asarray([
+                h5_as_text(x).strip().upper() for x in inp["type"][:]
+            ], dtype=object)
+            lipid_internal = np.isin(atom_types, ["CGL", "CGLD"])
+            if np.any(lipid_internal & (env_membership >= 0)):
+                bad = np.where(lipid_internal & (env_membership >= 0))[0][:8]
+                raise ValueError(
+                    f"{up_file}: CGL/CGLD sites must not have protein membership; "
+                    f"bad indices={bad.tolist()}"
+                )
     print(f"Hybrid activation verified: stage={expected_stage}, activation_stage={expected_activation}, enable=1")
 
 
@@ -1371,14 +1382,16 @@ def run_hybrid_workflow_command(argv):
         print("=== Initial Debug Only Complete ===")
         return
 
-    # Extract reference DOPC bead positions from bilayer PDB for CG lipid quadspline fitting
+    # Extract the canonical dry-MARTINI DOPC bead reference for CG lipid table fitting.
+    # The system bilayer PDB still controls placement; the potential uses the force-field
+    # reference lipid so table coefficients do not depend on one packed snapshot conformation.
     cg_lipid_config = None
     try:
         from martini_prepare_system_lib import _DOPC_ATOM_NAMES
 
-        bilayer_pdb = workflow_path(args.bilayer_pdb).resolve()
+        table_ref_pdb = (args.upside_home / "parameters" / "dryMARTINI" / "DOPC.pdb").resolve()
         dopc_atoms = []
-        with open(bilayer_pdb) as f:
+        with open(table_ref_pdb) as f:
             for line in f:
                 if not line.startswith(("ATOM", "HETATM")):
                     continue
@@ -1406,10 +1419,10 @@ def run_hybrid_workflow_command(argv):
                 "ref_bead_positions_nm": ref_bead_positions_nm,
                 "bead_types": list(_DOPC_BEAD_TYPES),
             }
-            print(f"Extracted CG lipid reference from {bilayer_pdb.name}: "
+            print(f"Extracted CG lipid table reference from {table_ref_pdb.name}: "
                   f"{len(dopc_atoms)} DOPC atoms ({len(dopc_atoms) // n_per_lipid} lipids)")
         else:
-            print(f"Fewer than {n_per_lipid} DOPC atoms in {bilayer_pdb}, "
+            print(f"Fewer than {n_per_lipid} DOPC atoms in {table_ref_pdb}, "
                   f"skipping CG lipid table build")
     except Exception as e:
         print(f"Could not extract CG lipid reference positions: {e}")

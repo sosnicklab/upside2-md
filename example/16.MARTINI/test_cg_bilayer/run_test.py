@@ -194,14 +194,24 @@ def _directions_from_sites(
 ) -> np.ndarray:
     if orientation_index is None:
         return stored_dirs.astype(np.float64)
-    dr = pos[orientation_index] - pos[cgl_index]
-    box_arr = np.array(box, dtype=np.float64)
-    dr -= box_arr * np.round(dr / box_arr)
-    norm = np.linalg.norm(dr, axis=1)
+    dr, norm = _orientation_vectors_from_sites(pos, cgl_index, orientation_index, box)
     dirs = stored_dirs.astype(np.float64).copy()
     mask = norm > 1e-12
     dirs[mask] = dr[mask] / norm[mask, None]
     return dirs
+
+
+def _orientation_vectors_from_sites(
+    pos: np.ndarray,
+    cgl_index: np.ndarray,
+    orientation_index: np.ndarray,
+    box: tuple[float, float, float],
+) -> tuple[np.ndarray, np.ndarray]:
+    dr = pos[orientation_index] - pos[cgl_index]
+    box_arr = np.array(box, dtype=np.float64)
+    dr -= box_arr * np.round(dr / box_arr)
+    norm = np.linalg.norm(dr, axis=1)
+    return dr, norm
 
 
 def _load_cgl_geometry(up_file: Path) -> tuple[np.ndarray, np.ndarray, tuple[float, float, float]]:
@@ -256,8 +266,18 @@ def report_table() -> None:
         n_radial = int(attrs.get("n_radial", 12))
         n_modes = int(attrs.get("n_modes", 1))
         n_angular = int(attrs.get("n_angular", 15))
+        target_grp = h5["cg_lipid_table"].get("cg_lipid_target")
+        target_attrs = dict(target_grp.attrs) if target_grp is not None else {}
+        target_param = target_grp["interaction_param"][:] if target_grp is not None else None
     print("CG lipid table")
-    if attrs.get("schema") == "cg_lipid_quadspline_v3":
+    if attrs.get("schema") == "cg_lipid_pair_full_v1":
+        tensor = param.reshape(n_radial, n_angular, n_angular)
+        print(
+            f"  tensor shape={tensor.shape} "
+            f"min/max={float(tensor.min()):.6g}/{float(tensor.max()):.6g} "
+            f"maxabs={float(np.max(np.abs(tensor))):.6g}"
+        )
+    elif attrs.get("schema") == "cg_lipid_quadspline_v3":
         v0 = param[:n_radial]
         mode_stride = 2 * n_angular + n_radial
         mode_radial = np.array([
@@ -275,6 +295,15 @@ def report_table() -> None:
     for key in ("schema", "radial_mode", "angle_convention", "n_modes", "n_radial", "cutoff_ang", "knot_spacing_ang"):
         if key in attrs:
             print(f"  {key}={attrs[key]}")
+    if target_param is not None:
+        print(
+            "CG lipid target table "
+            f"shape={target_param.shape} "
+            f"maxabs={float(np.max(np.abs(target_param))):.6g}"
+        )
+        for key in ("schema", "source", "angle_convention", "n_modes", "n_radial", "n_angular", "cutoff_ang"):
+            if key in target_attrs:
+                print(f"  target {key}={target_attrs[key]}")
 
 
 def run_short_dynamics(steps: int, dt: float, frame_steps: int) -> bool:
@@ -318,7 +347,19 @@ def run_short_dynamics(steps: int, dt: float, frame_steps: int) -> bool:
     return True
 
 
-def report_trajectory() -> None:
+def _frame_box(box_series: np.ndarray | None, frame: int, fallback: tuple[float, float, float]) -> tuple[float, float, float]:
+    if box_series is None or len(box_series) == 0:
+        return fallback
+    row = np.asarray(box_series[frame], dtype=np.float64).reshape(-1)
+    return float(row[0]), float(row[1]), float(row[2])
+
+
+def _leaflet_nearest_xy(cgl_frame: np.ndarray, mask: np.ndarray, box: tuple[float, float, float]) -> tuple[float, float, float]:
+    nn = _nearest_xy(cgl_frame[mask, :2], box[:2])
+    return float(nn.min()), float(np.percentile(nn, 5)), float(nn.mean())
+
+
+def report_trajectory() -> bool:
     with h5py.File(SIM_FILE, "r") as h5:
         out = _normalize_pos(h5["output/pos"][:]).astype(np.float64)
         cv = h5["input/potential/compose_vector6d"]
@@ -335,27 +376,48 @@ def report_trajectory() -> None:
             float(pot.attrs["y_len"]),
             float(pot.attrs["z_len"]),
         )
-        cgl = out[:, cgl_index, :]
-        dir0 = _directions_from_sites(out[0], cgl_index, orientation_index, stored_dirs, box)
-        start = cgl[0]
         times = h5["output/time"][:]
         box_series = h5["output/box"][:] if "box" in h5["output"] else None
+        cgl = out[:, cgl_index, :]
+        start = cgl[0]
+        median_z0 = float(np.median(start[:, 2]))
+        lower = start[:, 2] <= median_z0
+        upper = ~lower
+        box0 = _frame_box(box_series, 0, box)
+        dir0 = _directions_from_sites(out[0], cgl_index, orientation_index, stored_dirs, box0)
+        expected_sign = np.ones(len(cgl_index), dtype=np.float64)
+        expected_sign[lower] = 1.0 if float(np.mean(dir0[lower, 2])) >= 0.0 else -1.0
+        expected_sign[upper] = 1.0 if float(np.mean(dir0[upper, 2])) >= 0.0 else -1.0
+        contact_ang = 6.959265
+        cg_pair = h5["input/potential"].get("cg_lipid_pair")
+        if cg_pair is not None and "contact_ang" in cg_pair.attrs:
+            contact_ang = float(cg_pair.attrs["contact_ang"])
 
     print("CGL trajectory")
+    ok = bool(np.isfinite(cgl).all())
+    final_frame = len(cgl) - 1
     for frame in sorted({0, 1, min(5, len(cgl) - 1), len(cgl) - 1}):
         disp = np.sqrt(np.sum((cgl[frame] - start) ** 2, axis=1))
         z = cgl[frame, :, 2]
-        dirs = _directions_from_sites(out[frame], cgl_index, orientation_index, stored_dirs, box)
+        frame_box = _frame_box(box_series, frame, box)
+        dirs = _directions_from_sites(out[frame], cgl_index, orientation_index, stored_dirs, frame_box)
         dir_norm = np.linalg.norm(dirs, axis=1)
         dir_dot = np.sum(dirs * dir0, axis=1)
         dir_angle = np.degrees(np.arccos(np.clip(dir_dot, -1.0, 1.0)))
+        aligned_z = expected_sign * dirs[:, 2]
+        lower_nn = _leaflet_nearest_xy(cgl[frame], lower, frame_box)
+        upper_nn = _leaflet_nearest_xy(cgl[frame], upper, frame_box)
         print(
             f"  frame={frame} time={float(times[frame]):.6g} "
             f"finite={bool(np.isfinite(cgl[frame]).all())} "
             f"z_min/z_max/z_std={z.min():.3f}/{z.max():.3f}/{z.std():.3f} "
             f"max_disp={disp.max():.3f} mean_disp={disp.mean():.3f} "
             f"dir_norm_min/max={dir_norm.min():.6f}/{dir_norm.max():.6f} "
-            f"dir_angle_max/mean={dir_angle.max():.3f}/{dir_angle.mean():.3f}"
+            f"dir_angle_max/mean={dir_angle.max():.3f}/{dir_angle.mean():.3f} "
+            f"aligned_z_min/p05/mean={aligned_z.min():.3f}/"
+            f"{np.percentile(aligned_z, 5):.3f}/{aligned_z.mean():.3f} "
+            f"nn_lower_min/p05={lower_nn[0]:.3f}/{lower_nn[1]:.3f} "
+            f"nn_upper_min/p05={upper_nn[0]:.3f}/{upper_nn[1]:.3f}"
         )
     if box_series is not None and len(box_series) > 0:
         first_box = box_series[0].astype(np.float64)
@@ -367,6 +429,46 @@ def report_trajectory() -> None:
             f"last=({last_box[0]:.6f}, {last_box[1]:.6f}, {last_box[2]:.6f}) "
             f"delta=({delta[0]:.6f}, {delta[1]:.6f}, {delta[2]:.6f})"
         )
+
+    final_box = _frame_box(box_series, final_frame, box)
+    final_dirs = _directions_from_sites(out[final_frame], cgl_index, orientation_index, stored_dirs, final_box)
+    final_aligned_z = expected_sign * final_dirs[:, 2]
+    bad_parallel = int(np.sum(final_aligned_z < 0.35))
+    bad_flip = int(np.sum(final_aligned_z < 0.0))
+    lower_cross = int(np.sum(cgl[final_frame, lower, 2] > median_z0 + 2.0))
+    upper_cross = int(np.sum(cgl[final_frame, upper, 2] < median_z0 - 2.0))
+    lower_nn = _leaflet_nearest_xy(cgl[final_frame], lower, final_box)
+    upper_nn = _leaflet_nearest_xy(cgl[final_frame], upper, final_box)
+    min_nn = min(lower_nn[0], upper_nn[0])
+    p05_nn = min(lower_nn[1], upper_nn[1])
+    print("CGL validation")
+    print(
+        f"  aligned_z min/p05/mean={final_aligned_z.min():.3f}/"
+        f"{np.percentile(final_aligned_z, 5):.3f}/{final_aligned_z.mean():.3f} "
+        f"bad_parallel={bad_parallel} bad_flip={bad_flip}"
+    )
+    print(
+        f"  leaflet crossings lower/upper={lower_cross}/{upper_cross} "
+        f"same_leaflet_nn_min/p05={min_nn:.3f}/{p05_nn:.3f} "
+        f"contact_ang={contact_ang:.3f}"
+    )
+    if orientation_index is not None:
+        _, initial_len = _orientation_vectors_from_sites(out[0], cgl_index, orientation_index, box0)
+        _, final_len = _orientation_vectors_from_sites(out[final_frame], cgl_index, orientation_index, final_box)
+        ref_len = float(np.median(initial_len))
+        len_min = float(final_len.min())
+        len_max = float(final_len.max())
+        len_rms = float(np.sqrt(np.mean((final_len - ref_len) ** 2)))
+        print(
+            f"  CGL-CGLD length ref={ref_len:.3f} "
+            f"min/max/rmsdev={len_min:.3f}/{len_max:.3f}/{len_rms:.3f}"
+        )
+        ok = ok and len_min > 0.75 * ref_len and len_max < 1.25 * ref_len
+    ok = ok and bad_parallel == 0 and bad_flip == 0
+    ok = ok and lower_cross == 0 and upper_cross == 0
+    ok = ok and min_nn >= 0.50 * contact_ang and p05_nn >= 0.65 * contact_ang
+    print(f"  validation={'PASS' if ok else 'FAIL'}")
+    return ok
 
 
 def parse_args() -> argparse.Namespace:
@@ -412,7 +514,7 @@ def main() -> int:
     if not args.skip_run:
         ok = run_short_dynamics(args.steps, args.dt, args.frame_steps)
         if ok:
-            report_trajectory()
+            ok = report_trajectory()
         return 0 if ok else 1
 
     return 0
