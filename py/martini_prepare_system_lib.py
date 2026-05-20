@@ -69,6 +69,8 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         )
     charge_source = _decode_h5_attr(cglt.attrs.get("bead_charge_source", ""))
     lipid_net_charge = float(cglt.attrs.get("lipid_net_charge", 999.0))
+    bead_cutoff_nm = float(cglt.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
+    bead_cutoff_source = _decode_h5_attr(cglt.attrs.get("bead_nonbonded_cutoff_source", ""))
     if (
         charge_source != "dry_martini_v2.1_lipids.itp:DOPC_atoms"
         or abs(lipid_net_charge) > 1.0e-5
@@ -77,6 +79,16 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
             f"Stale CG lipid table in {source_path}: DOPC bead charges are not the "
             "neutral molecule charges from dry_martini_v2.1_lipids.itp. Rebuild martini.h5 "
             "so NC3 contributes +1 and PO4 contributes -1 in CG-lipid table projections."
+        )
+    if (
+        abs(bead_cutoff_nm - 1.2) > 1.0e-6
+        or bead_cutoff_source != "generic_martini_potential_cutoff"
+    ):
+        raise RuntimeError(
+            f"Stale CG lipid table in {source_path}: explicit DOPC table projections "
+            "do not record the generic dry-MARTINI bead-level nonbonded cutoff. "
+            "Rebuild martini.h5 so CG-lipid tables do not include bead LJ/Coulomb tails "
+            "beyond the runtime MARTINI cutoff."
         )
     eff_grp = cglt.get("effective_lj")
     if eff_grp is not None and "max_effective_sigma_nm" in eff_grp.attrs:
@@ -99,41 +111,53 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         azimuthal_average = _decode_h5_attr(target_grp.attrs.get("azimuthal_average", ""))
         excluded_area_source = _decode_h5_attr(target_grp.attrs.get("excluded_area_source", ""))
         excluded_area_nonnegative_rows = int(target_grp.attrs.get("excluded_area_nonnegative_rows", 0))
+        bead_cutoff_nm = float(target_grp.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
         if (
             core_source != "first_resolved_dry_martini_energy_expectation"
             or azimuthal_average != "energy_expectation"
             or excluded_area_source != "dopc_contact_nonnegative_controls"
             or excluded_area_nonnegative_rows <= 0
+            or abs(bead_cutoff_nm - 1.2) > 1.0e-6
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_target lacks the "
-                "dry-MARTINI energy-expectation unresolved-core boundary and DOPC-contact "
-                "nonnegative excluded-area controls. Rebuild martini.h5 so CGL-target bead "
-                "overlap is represented by force-field-derived table values."
+                "dry-MARTINI energy-expectation unresolved-core boundary, DOPC-contact "
+                "nonnegative excluded-area controls, or bead-level nonbonded cutoff. "
+                "Rebuild martini.h5 so CGL-target bead overlap is represented by "
+                "force-field-derived table values."
             )
     pair_grp = cglt.get("cg_lipid_pair")
     if pair_grp is not None:
         core_source = _decode_h5_attr(pair_grp.attrs.get("unresolved_core_source", ""))
         azimuthal_average = _decode_h5_attr(pair_grp.attrs.get("azimuthal_average", ""))
         excluded_area_source = _decode_h5_attr(pair_grp.attrs.get("excluded_area_source", ""))
+        isotropic_background_source = _decode_h5_attr(pair_grp.attrs.get("isotropic_background_source", ""))
+        attractive_control_source = _decode_h5_attr(pair_grp.attrs.get("attractive_control_source", ""))
         excluded_area_nonnegative_rows = int(pair_grp.attrs.get("excluded_area_nonnegative_rows", 0))
         fit_relax_steps = int(pair_grp.attrs.get("fit_relax_steps", -1))
         fit_r_min_nm = float(pair_grp.attrs.get("fit_r_min_nm", 999.0))
+        bead_cutoff_nm = float(pair_grp.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
         has_old_caps = "energy_cap_kj_mol" in pair_grp.attrs
         if (
             core_source != "max_first_sampled_dry_martini_energy_expectation"
             or azimuthal_average != "energy_expectation"
             or excluded_area_source != "wca_dopc_contact_kbt"
+            or isotropic_background_source != "attractive_radial_angular_mean_subtracted"
+            or attractive_control_source != "nontransferable_many_neighbor_cgl_cgl_attraction_removed"
             or excluded_area_nonnegative_rows <= 0
             or fit_relax_steps != 50
             or fit_r_min_nm > 0.500001
+            or abs(bead_cutoff_nm - 1.2) > 1.0e-6
             or has_old_caps
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_pair lacks the "
-                "dry-MARTINI direct short-range samples and DOPC-contact WCA excluded-area "
-                "term. Rebuild martini.h5 so CGL-CGL bead overlap is represented by "
-                "force-field-derived table values rather than a chosen cap."
+                "dry-MARTINI direct short-range samples, DOPC-contact WCA excluded-area "
+                "term, attractive isotropic-background subtraction, or bead-level "
+                "nonbonded cutoff, or still contains non-transferable attractive "
+                "CGL-CGL controls. Rebuild martini.h5 so CGL-CGL bead overlap and "
+                "orientation residuals are represented by force-field-derived repulsive "
+                "table values rather than many-neighbor cohesive tails."
             )
     sc_grp = cglt.get("cg_lipid_sc")
     if sc_grp is not None:
@@ -142,6 +166,7 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         azimuthal_average = _decode_h5_attr(sc_grp.attrs.get("azimuthal_average", ""))
         excluded_area_source = _decode_h5_attr(sc_grp.attrs.get("excluded_area_source", ""))
         excluded_area_nonnegative_rows = int(sc_grp.attrs.get("excluded_area_nonnegative_rows", 0))
+        bead_cutoff_nm = float(sc_grp.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
         has_old_caps = "energy_cap_kj_mol" in sc_grp.attrs or "residual_cap_kj_mol" in sc_grp.attrs
         if n_sc_types > 0 and (
             has_old_caps
@@ -149,12 +174,14 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
             or azimuthal_average != "energy_expectation"
             or excluded_area_source != "dopc_contact_nonnegative_controls"
             or excluded_area_nonnegative_rows <= 0
+            or abs(bead_cutoff_nm - 1.2) > 1.0e-6
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_sc lacks the "
                 "dry-MARTINI sampled short-range core, DOPC-contact excluded-area controls, "
-                "or still carries fixed fitting caps. Rebuild martini.h5 so CGL-SC overlap "
-                "is represented by force-field-derived table values."
+                "bead-level nonbonded cutoff, or still carries fixed fitting caps. "
+                "Rebuild martini.h5 so CGL-SC overlap is represented by force-field-derived "
+                "table values."
             )
 CB_PLACEMENT = np.array([[0.0, 0.94375626, 1.2068012]], dtype=np.float32)
 CB_VECTOR = CB_PLACEMENT / np.linalg.norm(CB_PLACEMENT, axis=1, keepdims=True)

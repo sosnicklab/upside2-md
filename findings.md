@@ -1,6 +1,13 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-20: 1RKL stage-7 continuation failure from CGL-CGL many-neighbor attraction.
+  - The exact output uses a fixed square stage-7 box; the apparent XY ellipse is membrane morphology/coordinate drift, not anisotropic box-vector drift.
+  - The total potential descent is dominated by CGL-CGL: CGL-CGL interacting pairs increase from about `2,794` at stage-7 start to over `6,200` by the end of `7.2`.
+  - Rigid-protein copied-HDF5 relaxation still drives `cg_lipid_pair` from about `-90.9k` to `-116.7k E_up`, ruling out protein release timing as the root cause.
+  - Rule: explicit DOPC-derived CG-lipid projections must use the same bead-level dry-MARTINI nonbonded cutoff as the generic runtime MARTINI potential; otherwise hidden bead LJ/Coulomb tails become nonphysical long-range CGL attractions.
+  - Rule: isolated DOPC-DOPC attractive controls are not automatically transferable to an additive many-neighbor single-particle membrane. CGL-CGL should keep excluded-volume and orientation-compatibility controls; non-transferable attractive CGL-CGL controls act as an energy sink and must be rejected by table metadata.
+  - Copied-HDF5 validation with attractive CGL-CGL controls removed kept final CGL nearest-neighbor min/p05/mean `6.278/6.729/7.821 Å`, XY aspect `1.08`, hbond sum `26.75`, CA RMSD `4.16 Å`, and Rg `12.47 Å` over `10k` total stage-7 steps.
 - 2026-05-20: User correction after residual 1RKL validation.
   - Rule: do not close a stability fix based only on a sibling validation directory when the user is inspecting a specific output path; audit or regenerate the exact named artifact.
   - Rule: protein secondary-structure stability needs an explicit retention metric such as hbond count plus aligned CA RMSD, not only protein Rg and lipid contact distances.

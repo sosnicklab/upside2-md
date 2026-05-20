@@ -38,6 +38,7 @@ DEFAULT_PRODUCTION_KBT_KJ_MOL = DEFAULT_PRODUCTION_TEMP_UPSIDE * ENERGY_CONVERSI
 PARTICLES_GRID_N = 1000
 PARTICLES_R_MIN_A = 0.0
 PARTICLES_R_MAX_A = 12.0
+DRY_MARTINI_NONBONDED_CUTOFF_NM = PARTICLES_R_MAX_A * ANGSTROM_TO_NM
 
 CANONICAL_RESIDUES = (
     "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY",
@@ -1038,6 +1039,7 @@ def _compute_pair_energy_and_gradient(
     pair_params: dict,
     dist_min_nm: float = 0.20,
     soft_core_alpha: float = 0.0,
+    cutoff_nm: float | None = DRY_MARTINI_NONBONDED_CUTOFF_NM,
 ) -> tuple:
     """Compute non-bonded (LJ+Coulomb) energy and per-bead gradients for a pair of lipids.
 
@@ -1060,6 +1062,8 @@ def _compute_pair_energy_and_gradient(
             dx = pos2[j] - pos1[i]
             dist_sq = float(np.dot(dx, dx))
             dist = float(np.sqrt(dist_sq))
+            if cutoff_nm is not None and dist > float(cutoff_nm):
+                continue
             eff_dist = max(dist, dist_min_nm)
 
             key = (bead_types1[i], bead_types2[j])
@@ -1232,6 +1236,7 @@ def _relax_lipid_pair(
         p1, p2, bead_types1, bead_types2,
         bead_charges1, bead_charges2, pair_params,
         dist_min_nm=0.10, soft_core_alpha=0.0,
+        cutoff_nm=DRY_MARTINI_NONBONDED_CUTOFF_NM,
     )
     final_bond1, _ = _compute_lipid_bonded_energy_and_gradient(p1)
     final_bond2, _ = _compute_lipid_bonded_energy_and_gradient(p2)
@@ -1284,6 +1289,7 @@ def _relax_lipid_against_points(
         p_cg, target_positions, cg_bead_types, target_bead_types,
         cg_bead_charges, target_bead_charges, pair_params,
         dist_min_nm=0.10, soft_core_alpha=0.0,
+        cutoff_nm=DRY_MARTINI_NONBONDED_CUTOFF_NM,
     )
     final_bond, _ = _compute_lipid_bonded_energy_and_gradient(p_cg)
     return p_cg, final_nb + (final_bond - ref_bond)
@@ -1340,6 +1346,7 @@ def _compute_cg_pair_energy(
         pos1, pos2, bead_types1, bead_types2,
         bead_charges1, bead_charges2, pair_params,
         dist_min_nm=dist_min_nm, soft_core_alpha=0.0,
+        cutoff_nm=DRY_MARTINI_NONBONDED_CUTOFF_NM,
     )
     return total_energy
 
@@ -1449,6 +1456,11 @@ def _fit_cg_lipid_quadspline(
                     energy += 4.0 * DEFAULT_PRODUCTION_KBT_KJ_MOL * (sr6 * sr6 - sr6) + DEFAULT_PRODUCTION_KBT_KJ_MOL
                 energy_grid[ir, ia1, ia2] = energy
 
+    radial_mean = energy_grid.mean(axis=(1, 2))
+    attractive_background = np.minimum(radial_mean, 0.0)
+    if np.any(attractive_background < 0.0):
+        energy_grid = energy_grid - attractive_background[:, None, None]
+
     n_knot_angular = 15
     knot_spacing = float(knot_spacing_ang)
     tensor = _fit_radial_angular_angular_tensor_bspline(
@@ -1477,6 +1489,9 @@ def _fit_cg_lipid_quadspline(
         )
         if excluded_area_rows > 0:
             tensor[:excluded_area_rows, :, :] = np.maximum(tensor[:excluded_area_rows, :, :], 0.0)
+    attractive_control_count = int(np.count_nonzero(tensor < 0.0))
+    if attractive_control_count:
+        tensor = np.maximum(tensor, 0.0)
     rms_error = 0.0
     interaction_param = tensor.reshape(-1)
 
@@ -1485,13 +1500,17 @@ def _fit_cg_lipid_quadspline(
         "interaction_param": interaction_param,
         "rms_error": rms_error,
         "energy_grid_raw": energy_grid,
+        "attractive_radial_background_kj_mol": attractive_background,
         "azimuthal_average": "energy_expectation",
+        "isotropic_background_source": "attractive_radial_angular_mean_subtracted",
         "excluded_area_source": (
             "wca_dopc_contact_kbt"
             if excluded_area_wca_nm is not None
             else ""
         ),
         "excluded_area_nonnegative_rows": int(excluded_area_rows),
+        "attractive_control_source": "nontransferable_many_neighbor_cgl_cgl_attraction_removed",
+        "attractive_control_count": attractive_control_count,
         "core_boundary_source": "max_first_sampled_dry_martini_energy_expectation",
         "core_boundary_row": int(n_core),
         "unresolved_core_rows": int(n_core),
@@ -2041,6 +2060,8 @@ def _build_cg_lipid_tables(
     cg_grp = h5.create_group("cg_lipid_table")
     cg_grp.attrs["bead_charge_source"] = "dry_martini_v2.1_lipids.itp:DOPC_atoms"
     cg_grp.attrs["lipid_net_charge"] = np.float32(sum(bead_charges))
+    cg_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
+    cg_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
     cg_grp.create_dataset("bead_charges", data=np.asarray(bead_charges, dtype=np.float32))
     _write_cg_derived_attrs(cg_grp, derived_params)
 
@@ -2057,6 +2078,8 @@ def _build_cg_lipid_tables(
     cg_pair_grp.attrs["radial_mode"] = "full_tensor"
     cg_pair_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
     cg_pair_grp.attrs["fit_relax_steps"] = np.int32(cg_relax_steps)
+    cg_pair_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
+    cg_pair_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
     cg_pair_grp.attrs["fit_r_min_nm"] = np.float32(result_cg["r_values_nm"][0])
     cg_pair_grp.attrs["fit_r_max_nm"] = np.float32(1.68)
     cg_pair_grp.attrs["n_modes"] = np.int32(result_cg["n_modes"])
@@ -2066,15 +2089,25 @@ def _build_cg_lipid_tables(
     cg_pair_grp.attrs["cutoff_ang"] = np.float32(result_cg["cutoff_ang"])
     cg_pair_grp.attrs["taper_width_ang"] = np.float32(result_cg["knot_spacing_ang"])
     cg_pair_grp.attrs["azimuthal_average"] = result_cg["azimuthal_average"]
+    cg_pair_grp.attrs["isotropic_background_source"] = result_cg["isotropic_background_source"]
+    cg_pair_grp.attrs["isotropic_background_min_kj_mol"] = np.float32(
+        float(np.min(result_cg["attractive_radial_background_kj_mol"]))
+    )
     cg_pair_grp.attrs["excluded_area_source"] = result_cg["excluded_area_source"]
     cg_pair_grp.attrs["excluded_area_epsilon_kj_mol"] = np.float32(DEFAULT_PRODUCTION_KBT_KJ_MOL)
     cg_pair_grp.attrs["excluded_area_nonnegative_rows"] = np.int32(result_cg["excluded_area_nonnegative_rows"])
+    cg_pair_grp.attrs["attractive_control_source"] = result_cg["attractive_control_source"]
+    cg_pair_grp.attrs["attractive_control_count"] = np.int32(result_cg["attractive_control_count"])
     cg_pair_grp.attrs["unresolved_core_source"] = result_cg["core_boundary_source"]
     cg_pair_grp.attrs["unresolved_core_boundary_row"] = np.int32(result_cg["core_boundary_row"])
     cg_pair_grp.attrs["unresolved_core_rows"] = np.int32(result_cg["unresolved_core_rows"])
     cg_pair_grp.attrs["unresolved_core_energy_kj_mol"] = np.float32(result_cg["unresolved_core_energy_kj_mol"])
     _write_cg_derived_attrs(cg_pair_grp, derived_params)
     cg_pair_grp.create_dataset("energy_grid_raw_kj_mol", data=result_cg["energy_grid_raw"].astype(np.float32))
+    cg_pair_grp.create_dataset(
+        "attractive_radial_background_kj_mol",
+        data=result_cg["attractive_radial_background_kj_mol"].astype(np.float32),
+    )
 
     # CG ↔ SC
     cg_sc_grp = cg_grp.create_group("cg_lipid_sc")
@@ -2093,6 +2126,8 @@ def _build_cg_lipid_tables(
     cg_sc_grp.attrs["radial_mode"] = "full_multimode"
     cg_sc_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
     cg_sc_grp.attrs["fit_relax_steps"] = np.int32(sc_relax_steps if n_sc_types else 0)
+    cg_sc_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
+    cg_sc_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
     cg_sc_grp.attrs["fit_r_min_nm"] = np.float32(r_min_nm)
     cg_sc_grp.attrs["fit_r_max_nm"] = np.float32(sc_fit_r_max_nm)
     cg_sc_grp.attrs["n_modes"] = np.int32(sc_n_modes)
@@ -2302,6 +2337,8 @@ def _build_cgl_target_table(
     target_grp.attrs["excluded_area_nonnegative_rows"] = np.int32(nonnegative_rows)
     target_grp.attrs["source"] = "explicit_dopc_directional"
     target_grp.attrs["angle_convention"] = "ang=n_cgl_dot_n12"
+    target_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
+    target_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
     if derived_params:
         _write_cg_derived_attrs(target_grp, derived_params)
 

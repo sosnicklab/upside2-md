@@ -108,7 +108,9 @@ the taper width $w = \Delta r = 1.4\,\text{\AA}$.
 The potential is constructed from the underlying dry MARTINI force field by
 sampling the total nonbonded energy (Lennard-Jones plus Coulomb) between two
 explicit 14-bead DOPC lipids at a regular grid of $(r, \cos\theta_1,
-\cos\theta_2)$ values. The CGL--CGL grid is always sampled at the full
+\cos\theta_2)$ values.  Bead--bead terms are included only within the same
+$12\,\text{\AA}$ dry-MARTINI nonbonded cutoff used by the runtime generic
+MARTINI potential. The CGL--CGL grid is always sampled at the full
 resolution ($16$ radial values, $7$ angular values, and $2$ azimuths per
 lipid), including when reduced-resolution table generation is requested for
 other terms, because reduced CGL--CGL angular sampling admits unphysical
@@ -128,7 +130,16 @@ U_{\text{DOPC-DOPC}}(r,\cos\theta_1,\cos\theta_2,\phi_1,\phi_2)
 \end{equation}
 This avoids pairwise PMF overcounting of missing azimuthal relaxation in a
 many-lipid additive Hamiltonian while still deriving the table directly from
-the dry-MARTINI force field.  The sampled CGL-center range starts at
+the dry-MARTINI force field.  The attractive radial angular mean of each
+sampled row is subtracted before fitting.  Positive radial means are left
+unchanged.  This removes the isotropic cohesive background of an isolated
+DOPC--DOPC pair, which is not transferable as an additive many-neighbor
+single-particle membrane interaction, while preserving dry-MARTINI excluded
+volume and orientation-dependent residuals.  After spline fitting, remaining
+negative CGL--CGL controls are set to zero for the same reason: the CGL--CGL
+node represents excluded-volume and orientation-compatibility physics in the
+one-particle membrane, not a many-neighbor hydrophobic cohesion term.  The
+sampled CGL-center range starts at
 $r=5.0\,\text{\AA}$, below the DOPC-derived excluded-area contact distance
 $r_{\text{contact}}=6.959\,\text{\AA}$. Inside that excluded-area domain a
 Weeks--Chandler--Andersen area term is added with
@@ -141,7 +152,7 @@ excluded-volume states.  Rows below the first sampled distance are unresolved
 by the spline samples, so they are assigned a finite inner barrier from the
 maximum first sampled dry-MARTINI energy expectation.  This inner barrier is
 therefore tied to the sampled dry-MARTINI table, not to a chosen numeric cap.
-No sampled-energy clipping, SVD, orientation restraint, empirical scaling,
+No sampled-energy clipping, SVD, orientation restraint, empirical pair scaling,
 pairwise PMF, or flat maximum-energy contact core is applied.
 
 \subsection{CG Lipid -- Sidechain Quad-Spline Potential}
