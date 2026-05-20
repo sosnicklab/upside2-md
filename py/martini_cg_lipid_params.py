@@ -24,6 +24,12 @@ DOPC_BEAD_TYPES = (
     "C1", "C1", "C3", "C1", "C1",
 )
 
+DOPC_BEAD_CHARGES = (
+    1.0, -1.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0,
+)
+
 # DOPC bonded topology from dry_martini_v2.1_lipids.itp (0-based indices).
 DOPC_BONDS = (
     (0, 1, 0.450, 1250.0),

@@ -1,6 +1,88 @@
 # Progress Log
 
+## 2026-05-20 (1RKL Residual Protein Stability Debug)
+- Actions taken:
+  - Reopened the debug after the user reported the exact `martini_test_1rkl_hybrid/1rkl.stage_7.0.vtf` still looks unchanged and loses secondary structure.
+  - Added a stricter plan requirement to audit the exact output path and include hbond/CA secondary-structure proxies in validation.
+  - Audited the exact regenerated output and found the remaining failure is CGL-SC sub-contact attraction, not stale charge/target tables or first-pass lipid collapse.
+  - Validated two copied-HDF5 CGL-SC patches; only the DOPC-contact nonnegative-control patch preserved secondary-structure proxies.
+  - Implemented DOPC-contact nonnegative CGL-SC controls in table generation, stale-table validation, and model documentation.
+  - Re-audited the reported 1RKL stage-7 output and direct copied-HDF5 validation artifacts.
+  - Found that stage minimization was not promoted into subsequent MD input, so stage-6 MD started from the unminimized coordinates.
+  - Updated minimization handoff to promote final minimized coordinates/box into `/input`, clear restart momentum, and write minimization logs separately.
+  - Added explicit DOPC molecule charges for CG-lipid table fitting and stale-table validation for neutral DOPC charge metadata.
+  - Added CGL-target DOPC-contact nonnegative excluded-area controls to remove attractive spline overshoot in short-range target rows without disabling any interface path.
+  - Updated `cg_lipid_potentials.tex`, `plan.md`, and `findings.md`.
+- Files modified:
+  - `py/martini_cg_lipid_params.py`
+  - `py/martini_build_tables.py`
+  - `py/martini_prepare_system.py`
+  - `py/martini_prepare_system_lib.py`
+  - `example/16.MARTINI/cg_lipid_potentials.tex`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification:
+  - Direct copied-HDF5 1RKL target-table validation in `example/16.MARTINI/outputs/martini_test_1rkl_hybrid_chargefix` completed 10000 stage-7 steps.
+  - Direct copied-HDF5 CGL-SC contact-control validation in `example/16.MARTINI/outputs/martini_test_1rkl_hybrid_sc_contactcheck` completed 10000 stage-7 steps.
+  - Exact bad output final metrics: hbond `1.22`, CA RMSD `5.86 Å`, CGL-SC `-1319 E_up`, CGL-CGL min/p05 `5.605/5.933 Å`.
+  - CGL-SC contact-control validation final metrics: hbond `17.96`, CA RMSD `3.66 Å`, CGL-SC `-73.6 E_up`, CGL-CGL min/p05 `5.781/5.982 Å`.
+  - Extracted `example/16.MARTINI/outputs/martini_test_1rkl_hybrid_sc_contactcheck/1rkl.stage_7.0.vtf` for inspection.
+  - Stale guard now rejects the reported exact `martini.h5` and accepts the patched CGL-SC contact-control validation `martini.h5`.
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py py/martini_prepare_system.py py/martini_cg_lipid_params.py` passed.
+  - `git diff --check` passed.
+  - Final CA RMSD improved from `5.203 Å` to `3.902 Å`; final Rg stayed `12.861 Å`.
+  - Final CGL-protein min/p05 improved from `2.620/9.248 Å` to `3.722/8.385 Å`.
+  - `python3 -m py_compile py/martini_cg_lipid_params.py py/martini_build_tables.py py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
+  - Stale guard rejects the reported old `martini.h5` for missing neutral DOPC molecule-charge metadata and accepts the regenerated validation `martini.h5`.
+  - `git diff --check` passed.
+
+## 2026-05-19 (1RKL/1AFO Protein Stability Debug)
+- Actions taken:
+  - Audited `martini_test_1rkl_hybrid` and `martini_test_1afo_hybrid` logs/HDF5 geometry and found the shared failure is lipid collapse before protein deformation.
+  - Rejected no-relax rigid CGL-CGL sampling and broad WCA floors as too stiff or unphysical for the current spline/timestep.
+  - Updated CGL-CGL table generation so unresolved inner rows use the maximum first sampled dry-MARTINI energy expectation with the DOPC-contact WCA excluded-area projection.
+  - Added a default physical stage-6.0 minimization before rigid-protein NPT MD (`MIN_60_MAX_ITER=500`) and documented it as handoff relaxation, not force scaling.
+  - Updated stale-table validation to reject old first-resolved CGL-CGL core artifacts and updated `cg_lipid_potentials.tex`.
+- Files modified:
+  - `py/martini_build_tables.py`
+  - `py/martini_prepare_system.py`
+  - `py/martini_prepare_system_lib.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/cg_lipid_potentials.tex`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification:
+  - Direct 1RKL copied-HDF5 validation with source-equivalent CGL-CGL table and minimized stage-6 handoff kept final stage-7 CGL-CGL nearest-neighbor min/p05 at `5.968/6.200 Å`, CGL-protein min/p05 at `5.197/9.729 Å`, CA RMSD at `4.23 Å`, and Rg at `12.61 Å`.
+  - Bad reference stage-7 ends with CGL-CGL nearest-neighbor min/p05 `0.067/0.215 Å`, CGL-protein min/p05 `0.267/1.328 Å`, CA RMSD `8.81 Å`, and Rg `8.94 Å`.
+  - Bilayer-only source regeneration passed: `bash example/16.MARTINI/test_cg_bilayer/run_test.sh --resolution coarse --stage60-npt-contract --steps 1000 --dt 0.01 --frame-steps 50`.
+  - Bilayer final metrics: aligned-z min/p05/mean `0.664/0.838/0.936`, `bad_parallel=0`, `bad_flip=0`, leaflet crossings `0/0`, same-leaflet nearest-neighbor min/p05 `4.708/5.650 Å`.
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system.py py/martini_prepare_system_lib.py example/16.MARTINI/test_cg_bilayer/run_test.py` passed.
+  - `git diff --check` passed.
+
 ## 2026-05-17 (1RKL Protein/Bilayer Stability Regression)
+- Continued the bilayer/protein stability debug after the user asked for a full physics audit of protein-lipid and lipid-lipid terms.
+- Rejected a divergent WCA CGL-CGL excluded-area projection sampled to `1.4 Å`: it generated `~3.7e8 E_up` spline controls and blew up the bilayer immediately.
+- Replaced it with a physically bounded DOPC-contact WCA projection sampled from `5.0 Å` to the normal table range, with `epsilon=kBT` and `sigma=r_contact/2^(1/6)`.
+- Added nonnegative CGL-CGL spline controls only in rows inside the DOPC-derived excluded-area domain and recorded `excluded_area_nonnegative_rows` in `martini.h5`.
+- Found that the reduced coarse CGL-CGL grid still allowed same-leaflet overlap; changed resolution handling so CGL-CGL always uses the validated full grid while coarse/medium only reduce sidechain table construction.
+- Bilayer-only validation:
+  - `bash example/16.MARTINI/test_cg_bilayer/run_test.sh --resolution full --steps 5000 --frame-steps 100` passed.
+  - `bash example/16.MARTINI/test_cg_bilayer/run_test.sh --resolution coarse --steps 5000 --frame-steps 100` passed after forcing full CGL-CGL sampling under coarse mode.
+  - final coarse-harness metrics: aligned-z min/p05/mean `0.431/0.695/0.898`, `bad_parallel=0`, `bad_flip=0`, crossings `0/0`, same-leaflet nearest-neighbor min/p05 `4.937/5.769 Å`, and CGL-CGLD RMSD `0.275 Å`.
+- Table audit:
+  - fresh bilayer `martini.h5` carries `fit_r_min_nm=0.5`, `fit_relax_steps=50`, `azimuthal_average=energy_expectation`, `excluded_area_source=wca_dopc_contact_kbt`, `excluded_area_epsilon_kj_mol=2.5205595`, `excluded_area_nonnegative_rows=5`, and no energy-cap attr;
+  - stale `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/martini.h5` is rejected by the schema guard.
+- Removed inactive table-builder cap branches from the clean-slate MARTINI code; cap attribute names now only appear in stale-table rejection checks.
+- Updated `example/16.MARTINI/cg_lipid_potentials.tex` with the current CGL-CGL model and validation rationale.
+- Reopened the PMF table change after the user reported the new `example/16.MARTINI/outputs` run aggregates the bilayer into overlapping branches while the protein remains stable.
+- New debugging targets:
+  - determine whether additive pairwise PMF over unresolved lipid azimuths caused many-body over-attraction;
+  - verify whether SC-env and BB-env interaction nodes are present and nonzero in the current output;
+  - replace PMF aggregation with a physical table treatment that preserves excluded volume without arbitrary caps or disabled protein-env interactions.
+- Reopened the CG-lipid stability fix after the user correctly flagged the fixed `5000 kJ/mol` core cap as nonphysical.
+- Updated the plan and lessons: arbitrary caps are not acceptable model physics; finite spline behavior must be derived from dry-MARTINI energy-expectation boundary values or removed.
 - Recorded user correction that `cg_lipid_target` must not exclude `BB` or any other protein/environment target. Updated the active plan: the remaining fix must preserve complete interface inclusion and correct the physics instead.
 - Identified a physical force-routing bug introduced with directional `cg_lipid_target`: target forces on active virtual `BB` proxy sites were written directly to `pos.sens` instead of being projected through the hybrid BB carrier map.
 - Focused validation after BB projection still destabilized by the first saved frame. Target-list audit found `cg_lipid_target` contained `124` backbone carrier atoms plus the `31` physical `BB` proxy sites and `93` environment particles; the carriers are nonphysical duplicates of the BB interaction site.
@@ -9,14 +91,23 @@
 - Implemented the accepted physical fixes in code:
   - `cg_lipid_target` now keeps the physical `BB` proxy site and environment targets while skipping duplicate `N/CA/C/O` backbone carriers as independent targets;
   - CGL-target forces on virtual `BB` proxy sites are projected to backbone carriers through the hybrid runtime map;
-  - generated CGL-CGL tables store a `5000 kJ/mol` unresolved-core cap while sampled non-core coefficients stay capped at `500 kJ/mol`;
-  - stale `martini.h5` files lacking the CGL-CGL hard-core attr are rejected before stage injection.
-- Updated `example/16.MARTINI/cg_lipid_potentials.tex` to describe the BB proxy target semantics and the finite hard-core CGL-CGL excluded-volume cap.
+  - generated CGL-CGL and CGL-target tables now use dry-MARTINI energy-expectation samples and fill unresolved radial knots from the first resolved energy-expectation boundary, removing the fixed `5000 kJ/mol` cap;
+  - stale `martini.h5` files lacking the CGL-CGL energy-expectation unresolved-core attrs are rejected before stage injection.
+- Updated `example/16.MARTINI/cg_lipid_potentials.tex` to describe the BB proxy target semantics and the energy-expectation-derived CGL-CGL/CGL-target unresolved cores.
 - Verification after the final code updates:
   - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed;
   - `cmake --build obj --target upside` passed;
-  - stale guard rejects the current old `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/martini.h5` with an explicit rebuild message for the missing CGL-CGL core cap;
+  - stale guard rejects the current old `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/martini.h5` with an explicit rebuild message for the missing CGL-CGL energy-expectation unresolved-core attrs;
   - `git diff --check` passed.
+- Rejected and replaced the additive PMF implementation:
+  - CGL-CGL azimuthal samples now use dry-MARTINI energy expectation;
+  - CGL-target azimuthal samples now use dry-MARTINI energy expectation;
+  - unresolved radial spline knots are filled from the first resolved energy-expectation boundary row;
+  - generated tables store `azimuthal_average=energy_expectation` and `unresolved_core_source=first_resolved_dry_martini_energy_expectation`, not `core_energy_cap_kj_mol`.
+- Energy-expectation table validation:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system.py py/martini_prepare_system_lib.py example/16.MARTINI/test_cg_bilayer/run_test.py` passed;
+  - pending: regenerate `example/16.MARTINI/test_cg_bilayer/run/martini.h5` through the energy-expectation path;
+  - pending: run a bilayer-only smoke test and record orientation/spacing metrics before closing this task.
 - Started investigation after the user reported the latest `example/16.MARTINI/outputs/martini_test_1rkl_hybrid/1rkl.stage_7.0.vtf` shows the protein completely unfolding.
 - Added a dedicated plan section to separate protein-unfolding diagnosis from the previous bilayer-only orientation validation.
 - Investigation targets:

@@ -98,6 +98,8 @@ def _read_first_dopc_reference() -> tuple[np.ndarray, list[str]]:
 def build_tables(resolution: str) -> None:
     from martini_build_tables import build_martini_tables
 
+    os.environ["UPSIDE_CG_LIPID_RESOLUTION"] = resolution
+
     ref_bead_positions_nm, bead_types = _read_first_dopc_reference()
     dry_ff = REPO_ROOT / "parameters" / "dryMARTINI" / "dry_martini_v2.1.itp"
     martinize = REPO_ROOT / "py" / "martinize.py"

@@ -1048,7 +1048,49 @@ def run_minimization_stage(args, stage_label: str, up_file: Path, max_iter: int)
         "--min-force-tol", "1e-3",
         "--min-step", "0.01",
     ]
-    run_checked(cmd, log_file=args.log_dir / f"stage_{stage_label}.log")
+    run_checked(cmd, log_file=args.log_dir / f"stage_{stage_label}.min.log")
+    promote_minimized_state_to_input(up_file)
+
+
+def promote_minimized_state_to_input(up_file: Path):
+    import h5py
+    import numpy as np
+
+    with h5py.File(up_file, "r+") as h5:
+        if "/output/pos" not in h5 or h5["/output/pos"].shape[0] == 0:
+            raise RuntimeError(f"{up_file} has no minimized output/pos to promote")
+        last_pos = h5["/output/pos"][-1, 0, :, :][:, :, np.newaxis]
+        if "/input/pos" in h5:
+            del h5["/input/pos"]
+        h5.create_dataset("/input/pos", data=last_pos)
+
+        if "/input/mom" in h5:
+            del h5["/input/mom"]
+        mom = h5.create_dataset(
+            "/input/mom",
+            data=np.zeros(last_pos.shape, dtype=last_pos.dtype),
+        )
+        mom.attrs["restart_valid"] = np.int8(0)
+
+        last_box = None
+        if "/output/box" in h5 and h5["/output/box"].shape[0] > 0:
+            last_box = np.asarray(h5["/output/box"][-1], dtype=float).reshape(-1)
+        if last_box is not None and last_box.size >= 3 and "/input/potential" in h5:
+            n_updated = 0
+            for pot_grp in h5["/input/potential"].values():
+                if not isinstance(pot_grp, h5py.Group):
+                    continue
+                if all(k in pot_grp.attrs for k in ("x_len", "y_len", "z_len")):
+                    pot_grp.attrs["x_len"] = float(last_box[0])
+                    pot_grp.attrs["y_len"] = float(last_box[1])
+                    pot_grp.attrs["z_len"] = float(last_box[2])
+                    n_updated += 1
+            print(
+                f"Promoted minimized state to input and updated {n_updated} potential node boxes: "
+                f"x={last_box[0]:.3f}, y={last_box[1]:.3f}, z={last_box[2]:.3f}"
+            )
+        else:
+            print("Promoted minimized state to input")
 
 
 def run_md_stage(args, stage_label: str, input_file: Path, output_file: Path, nsteps: int, dt: float, frame_steps: int):
@@ -1311,6 +1353,7 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--thermostat-timescale", type=float, default=env_float("THERMOSTAT_TIMESCALE", 5.0))
     parser.add_argument("--thermostat-interval", type=int, default=env_int("THERMOSTAT_INTERVAL", -1))
     parser.add_argument("--strict-stage-handoff", type=int, default=env_int("STRICT_STAGE_HANDOFF", 1))
+    parser.add_argument("--min-60-max-iter", type=int, default=env_int("MIN_60_MAX_ITER", 500))
     parser.add_argument("--min-61-max-iter", type=int, default=env_int("MIN_61_MAX_ITER", 0))
     parser.add_argument("--eq-60-nsteps", type=int, default=env_int("EQ_60_NSTEPS", 500))
     parser.add_argument("--eq-62-nsteps", type=int, default=env_int("EQ_62_NSTEPS", 500))
@@ -1413,11 +1456,12 @@ def run_hybrid_workflow_command(argv):
             )
             ref_bead_positions_nm = ref_bead_positions * 0.1
 
-            from martini_build_tables import _DOPC_BEAD_TYPES
+            from martini_build_tables import _DOPC_BEAD_TYPES, _DOPC_BEAD_CHARGES
 
             cg_lipid_config = {
                 "ref_bead_positions_nm": ref_bead_positions_nm,
                 "bead_types": list(_DOPC_BEAD_TYPES),
+                "bead_charges": list(_DOPC_BEAD_CHARGES),
             }
             print(f"Extracted CG lipid table reference from {table_ref_pdb.name}: "
                   f"{len(dopc_atoms)} DOPC atoms ({len(dopc_atoms) // n_per_lipid} lipids)")
@@ -1461,6 +1505,7 @@ def run_hybrid_workflow_command(argv):
     print("=== Stage 6.0: rigid-protein NPT box relaxation ===")
     prepare_stage_file(args, files["prepared_60"], "npt_equil", 1, 0, 0, "minimization")
     shutil.copy2(files["prepared_60"], files["stage_60"])
+    run_minimization_stage(args, "6.0", files["stage_60"], args.min_60_max_iter)
     run_md_stage(
         args,
         "6.0",
