@@ -76,6 +76,7 @@ EQ_63_NSTEPS="${EQ_63_NSTEPS:-500}"
 EQ_64_NSTEPS="${EQ_64_NSTEPS:-500}"
 EQ_65_NSTEPS="${EQ_65_NSTEPS:-500}"
 EQ_66_NSTEPS="${EQ_66_NSTEPS:-500}"
+PROD_70_BURNIN_NSTEPS="${PROD_70_BURNIN_NSTEPS:-40000}"
 PROD_70_NSTEPS="${PROD_70_NSTEPS:-10000}"
 INITIAL_DEBUG_ONLY="${INITIAL_DEBUG_ONLY:-0}"
 DEBUG_RIGID_PROTEIN="${DEBUG_RIGID_PROTEIN:-0}"
@@ -179,6 +180,7 @@ python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
     --eq-64-nsteps "${EQ_64_NSTEPS}" \
     --eq-65-nsteps "${EQ_65_NSTEPS}" \
     --eq-66-nsteps "${EQ_66_NSTEPS}" \
+    --prod-70-burnin-nsteps "${PROD_70_BURNIN_NSTEPS}" \
     --prod-70-nsteps "${PROD_70_NSTEPS}" \
     --initial-debug-only "${INITIAL_DEBUG_ONLY}" \
     --debug-rigid-protein "${DEBUG_RIGID_PROTEIN}" \

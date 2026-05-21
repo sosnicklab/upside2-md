@@ -518,8 +518,9 @@ def generate_random_seed():
     return seed if seed != 0 else 1
 
 
-def run_checked(cmd, cwd=None, log_file=None):
-    print(" ".join(str(x) for x in cmd))
+def run_checked(cmd, cwd=None, log_file=None, echo=True):
+    if echo:
+        print(" ".join(str(x) for x in cmd))
     if log_file is None:
         subprocess.run([str(x) for x in cmd], cwd=str(cwd) if cwd else None, check=True)
         return
@@ -537,7 +538,8 @@ def run_checked(cmd, cwd=None, log_file=None):
         )
         assert proc.stdout is not None
         for line in proc.stdout:
-            print(line, end="")
+            if echo:
+                print(line, end="")
             log.write(line)
         rc = proc.wait()
     if rc != 0:
@@ -1097,7 +1099,16 @@ def promote_minimized_state_to_input(up_file: Path):
             print("Promoted minimized state to input")
 
 
-def run_md_stage(args, stage_label: str, input_file: Path, output_file: Path, nsteps: int, dt: float, frame_steps: int):
+def run_md_stage(
+    args,
+    stage_label: str,
+    input_file: Path,
+    output_file: Path,
+    nsteps: int,
+    dt: float,
+    frame_steps: int,
+    echo: bool = True,
+):
     effective_frame_steps = int(frame_steps)
     if effective_frame_steps >= int(nsteps):
         effective_frame_steps = max(1, int(nsteps) // 10)
@@ -1123,8 +1134,68 @@ def run_md_stage(args, stage_label: str, input_file: Path, output_file: Path, ns
     if input_momentum_restart_valid(output_file):
         cmd.append("--restart-using-momentum")
     write_stage_debug_outputs(output_file, debug_dir=args.run_dir / "debug")
-    run_checked(cmd, log_file=args.log_dir / f"stage_{stage_label}.log")
+    run_checked(cmd, log_file=args.log_dir / f"stage_{stage_label}.log", echo=echo)
     mark_output_restart_state(output_file, nsteps, dt)
+
+
+def promote_md_output_state_to_input(up_file: Path, elapsed_steps: int):
+    import h5py
+    import numpy as np
+
+    with h5py.File(up_file, "r+") as h5:
+        if "/output/pos" not in h5 or h5["/output/pos"].shape[0] == 0:
+            raise RuntimeError(f"{up_file} has no MD output/pos to promote")
+        if "/output/mom" not in h5 or h5["/output/mom"].shape[0] == 0:
+            raise RuntimeError(f"{up_file} has no MD output/mom to promote")
+
+        last_pos = h5["/output/pos"][-1, 0, :, :][:, :, np.newaxis]
+        last_mom = h5["/output/mom"][-1, 0, :, :][:, :, np.newaxis]
+        if "/input/pos" in h5:
+            del h5["/input/pos"]
+        if "/input/mom" in h5:
+            del h5["/input/mom"]
+        h5.create_dataset("/input/pos", data=last_pos)
+        mom = h5.create_dataset("/input/mom", data=last_mom)
+        mom.attrs["restart_valid"] = np.int8(1)
+
+        if "/input/hybrid_control" in h5:
+            ctrl = h5["/input/hybrid_control"].attrs
+            start = int(ctrl.get("sc_env_transition_step_start", 0))
+            ctrl["sc_env_transition_step_start"] = np.int32(start + int(elapsed_steps))
+
+        last_box = None
+        if "/output/box" in h5 and h5["/output/box"].shape[0] > 0:
+            last_box = np.asarray(h5["/output/box"][-1], dtype=float).reshape(-1)
+        if last_box is not None and last_box.size >= 3 and "/input/potential" in h5:
+            for pot_grp in h5["/input/potential"].values():
+                if not isinstance(pot_grp, h5py.Group):
+                    continue
+                if all(k in pot_grp.attrs for k in ("x_len", "y_len", "z_len")):
+                    pot_grp.attrs["x_len"] = float(last_box[0])
+                    pot_grp.attrs["y_len"] = float(last_box[1])
+                    pot_grp.attrs["z_len"] = float(last_box[2])
+
+        del h5["/output"]
+
+
+def run_stage70_burnin(args, stage_file: Path):
+    nsteps = int(args.prod_70_burnin_nsteps)
+    if nsteps <= 0:
+        print("=== Stage 7.0: Production-Hamiltonian burn-in skipped (nsteps <= 0) ===")
+        return
+    print(f"=== Stage 7.0: Production-Hamiltonian burn-in ({nsteps} steps) ===")
+    run_md_stage(
+        args,
+        "7.0.burnin",
+        stage_file,
+        stage_file,
+        nsteps,
+        args.prod_time_step,
+        args.prod_frame_steps,
+        echo=False,
+    )
+    promote_md_output_state_to_input(stage_file, nsteps)
+    print(f"Promoted stage-7 burn-in final state to production input: {stage_file}")
 
 
 def extract_stage_vtf(args, stage_label: str, stage_file: Path, mode: str):
@@ -1365,6 +1436,7 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--eq-64-nsteps", type=int, default=env_int("EQ_64_NSTEPS", 500))
     parser.add_argument("--eq-65-nsteps", type=int, default=env_int("EQ_65_NSTEPS", 500))
     parser.add_argument("--eq-66-nsteps", type=int, default=env_int("EQ_66_NSTEPS", 500))
+    parser.add_argument("--prod-70-burnin-nsteps", type=int, default=env_int("PROD_70_BURNIN_NSTEPS", 40000))
     parser.add_argument("--prod-70-nsteps", type=int, default=env_int("PROD_70_NSTEPS", 10000))
     parser.add_argument("--eq-time-step", type=float, default=env_float("EQ_TIME_STEP", 0.010))
     parser.add_argument("--prod-time-step", type=float, default=env_float("PROD_TIME_STEP", 0.002))
@@ -1566,6 +1638,7 @@ def run_hybrid_workflow_command(argv):
             set_debug_rigid_protein(files["stage_70"])
         assert_hybrid_stage_active(files["stage_70"], "production", "production")
         run_minimization_stage(args, "7.0", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
+        run_stage70_burnin(args, files["stage_70"])
         run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
         extract_stage_vtf(args, "7.0", files["stage_70"], "2")
     else:
@@ -1577,6 +1650,7 @@ def run_hybrid_workflow_command(argv):
             set_debug_rigid_protein(files["stage_70"])
         assert_hybrid_stage_active(files["stage_70"], "production", "production")
         run_minimization_stage(args, "7.0", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
+        run_stage70_burnin(args, files["stage_70"])
         run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
         extract_stage_vtf(args, "7.0", files["stage_70"], "2")
 

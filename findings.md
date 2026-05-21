@@ -1,6 +1,12 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-21: User correction on 1AFO multi-chunk drift.
+  - Rule: do not judge residual equilibration from a single production chunk when later restart chunks exist.  Compare absolute component baselines across all chunks, including `1afo.1.log`, `1afo.2.log`, and `1afo.3.log`, before concluding a system has plateaued.
+  - The previous statement that 1AFO was flat was only true for `1afo.0.log` first-to-last and is insufficient for the user's reported multi-chunk accumulation from about `-700 E_up` to below `-1000 E_up`.
+  - Reanalysis showed restart bookkeeping is consistent: momentum is valid, transition starts advance by `10000` steps per chunk, and chunk handoff potentials are continuous.
+  - The shared residual is production-Hamiltonian interface relaxation, mainly `cg_lipid_sc` and `cg_lipid_target`, not a continuing ion sink.  Copied continuations from current 1AFO and 1RKL stage-7.3 endpoints fluctuate around the already-relaxed basin.
+  - Accepted correction: run an explicit stage-7 burn-in under the same production Hamiltonian before the named production segment.  Promote final burn-in positions and momenta to `/input`, advance `sc_env_transition_step_start`, clear `/output`, and then start logged production.  This preserves physics and reclassifies equilibration rather than hiding it as production.
 - 2026-05-21: Follow-up after ion-target split shows residual 1RKL relaxation, not a continuing ion sink.
   - Current `1rkl.0-2.log` still contain substantial relaxation from the corrected stage-7 launch, mostly in `cg_lipid_target` with smaller `cg_lipid_sc` relaxation, but the latest chunk is much closer to stationary behavior: `1rkl.3.log` total potential changes only `-28 E_up` first-to-last.
   - A copied continuation from current `1rkl.stage_7.3.up` final coordinates and momenta ran 10k more steps over 60 public time units with total potential `-1045.92 -> -1062.16 E_up`, range `[-1138.67, -981.46]`, and first/last fifth mean delta `-34.37 E_up`; this is fluctuation-scale behavior compared with the previous thousand-`E_up` ion adsorption sink.

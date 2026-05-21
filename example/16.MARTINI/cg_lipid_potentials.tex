@@ -451,6 +451,17 @@ stage-preserving minimization of stage 7 before MD using
 BB--environment, CGL--SC, CGL--target, CGL--CGL, generic Martini, ion, and
 bonded terms active under the same production Hamiltonian that the subsequent
 MD uses.
+The minimization is followed by an explicit stage-7 burn-in under that same
+production Hamiltonian before the named production segment is written.  This
+burn-in is not a parameter change: it is ordinary NVT dynamics with the
+production timestep, physical masses, active hybrid interactions, recorded
+momenta, and the normal hybrid transition counter.  Its final positions and
+momenta are promoted to \texttt{/input}, the burn-in \texttt{/output} is
+cleared, and the public production chunk then starts from the equilibrated
+interface.  Current 1AFO and 1RKL checks show that this is the window in which
+CGL--SC and CGL--target contacts relax into their production basin; copied
+continuations after this window fluctuate around the same total-potential
+range instead of repeating the large early drop.
 
 \subsection{Energy Units}
 

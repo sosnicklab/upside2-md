@@ -48,14 +48,18 @@
 - [x] Phase 12: Validate on copied exact artifacts and update documentation.
 
 ### Known Errors / Blockers
-- Latest user report has been rechecked.  The current `1rkl.*.log` still shows large relaxation in early chunks, but the latest 1RKL state continues without the previous one-way ion sink.  `1afo.0.log` has near-zero first-to-last total-potential change with compensating component relaxation.
-- No new model/code change is indicated from this pass.  The remaining 1RKL behavior is mostly production-basin equilibration after the corrected ion-target split, not a continuing CGL-ion adsorption artifact.
+- User correction: later `1afo.*.log` chunks also show slow total-potential accumulation, from about `-700 E_up` in `1afo.0.log` to below `-1000 E_up` in `1afo.3.log`.  The previous conclusion based on only `1afo.0.log` was incomplete.
+- Reopen the bug as a common residual multi-chunk drift problem.  Compare 1AFO and 1RKL by absolute component levels across chunks, not only first-to-last changes within a single chunk.
 
 ### Follow-up Investigation
 - [x] Phase 13: Quantify residual component drift in current `example/16.MARTINI/1rkl.*.log`.
 - [x] Phase 14: Audit ion spatial behavior, ion-energy ownership, and whether ions are double-counted or missing physical interactions.
 - [x] Phase 15: Identify the smallest physical correction, if the drift is not just normal slow equilibration.
 - [x] Phase 16: Validate on copied exact artifacts and update documentation/task notes.
+- [x] Phase 17: Parse all current 1AFO and 1RKL chunks by component, including chunk-to-chunk absolute baselines.
+- [x] Phase 18: Inspect matching stage HDF5 files for restart-state consistency, production counters, momentum, component ownership, and structural/contact trends.
+- [x] Phase 19: Isolate the common residual sink and implement the smallest physical/runtime correction.
+- [x] Phase 20: Validate copied continuations for both systems and update docs/task notes.
 
 ### Review
 - The Predescu coefficient pattern in the shared overload is consistent with the paper; no shared `DerivEngine` implementation change is made.
@@ -81,3 +85,10 @@
   - Current `1afo.0.log` total potential is flat first-to-last (`-730.55 -> -730.09 E_up`) despite expected compensation among protein, CGL-pair, CGL-SC, and CGL-target terms.
   - Ion audit found zero generic CGL-ion pairs in both checked stage-7 files.  Ions remain in generic dry-MARTINI ion/protein and ion/ion pairs, and CGL-ion target controls are nonnegative excluded volume.
   - 1RKL and 1AFO ion-CGL minimum distances remain above `16 A` over the saved trajectories, with stable ion-z distributions; there is no evidence of residual ion adsorption to CGL.
+- Reopened 1AFO multi-chunk drift:
+  - 1AFO drops from about `-730 E_up` in `1afo.0.log` to about `-1001 E_up` in `1afo.3.log`; the main slow components are `cg_lipid_sc` and `cg_lipid_target`.
+  - Restart state is consistent: output momentum is valid, transition starts advance by `10000` steps per chunk, and first saved potentials match the prior final potential.
+  - Copied continuations from the current 1AFO and 1RKL stage-7.3 endpoints fluctuate around the current basin instead of continuing the large early drop.  The residual drift is the stage-7 production-Hamiltonian interface relaxation window.
+  - Decision: add an explicit stage-7 burn-in/equilibration under the same production Hamiltonian before the named production segment.  Preserve all interactions, physical masses, momenta, and hybrid transition counters; do not alter tables or force-field parameters.
+  - Implementation: `PROD_70_BURNIN_NSTEPS` defaults to `40000`.  The workflow runs burn-in with production `dt=0.002`, records momentum, promotes final burn-in positions/momenta to `/input`, advances `sc_env_transition_step_start`, deletes burn-in `/output`, and then runs the named production chunk.
+  - Validation: a copied 1AFO burn-in smoke test promoted restart-valid input momentum, cleared `/output`, advanced the transition counter, and a follow-on `--restart-using-momentum` MD run succeeded.

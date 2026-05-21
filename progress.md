@@ -51,9 +51,14 @@
   - Ran a copied 10k-step continuation from the current 1RKL stage-7.3 final state.  The previous one-way ion-target sink did not reappear.
   - Audited ion ownership in 1RKL and 1AFO stage-7 HDF5 files: generic MARTINI has ion/protein and ion/ion pairs, zero CGL-ion pairs, and the CGL-ion target node is excluded-volume-only.
   - Added the ion validation invariant and current distance checks to `example/16.MARTINI/cg_lipid_potentials.tex`.
+  - Reopened the analysis after the user pointed out that `1afo.1-3.log` keep dropping.  Parsed all chunks and confirmed 1AFO total potential moves from about `-730` to `-1001 E_up`.
+  - Verified restart metadata is continuous and valid; the residual drift is not from momentum loss or transition-counter reset.
+  - Added an explicit stage-7 production-Hamiltonian burn-in before named production.  Burn-in uses the same MD settings, then promotes final positions/momenta to `/input`, advances the hybrid transition counter, clears `/output`, and starts the logged production segment from the relaxed interface.
 - Files modified:
   - `src/main.cpp`
   - `py/martini_prepare_system_lib.py`
+  - `py/martini_prepare_system.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
   - `example/16.MARTINI/cg_lipid_potentials.tex`
   - `plan.md`
   - `progress.md`
@@ -65,3 +70,6 @@
   - Current log parse: `1rkl.3.log` total potential `-999.31 -> -1027.34 E_up`; `1afo.0.log` total potential `-730.55 -> -730.09 E_up`.
   - Current 1RKL copied continuation: 201 frames over 60 public time units, total potential `-1045.92 -> -1062.16 E_up`, range `[-1138.67, -981.46]`, first/last fifth mean delta `-34.37 E_up`.
   - Ion checks: 1RKL final ion-CGL minimum `16.76 A`; 1AFO final ion-CGL minimum `16.83 A`; both checked files have zero generic CGL-ion pairs.
+  - Current 1AFO copied continuation from stage-7.3 final state: 201 frames over 60 public time units, total potential `-992.58 -> -1019.87 E_up`, range `[-1071.79, -955.46]`, first/last fifth mean delta `-13.81 E_up`.
+  - `python3 -m py_compile py/martini_prepare_system.py` passed.
+  - Burn-in smoke test on copied `/private/tmp/1afo.burnin_smoke.up` promoted `/input/pos` and restart-valid `/input/mom`, cleared `/output`, advanced `sc_env_transition_step_start` by the burn-in step count, and allowed a follow-on `--restart-using-momentum` MD run.
