@@ -258,6 +258,20 @@ Backbone carrier atoms (N, C$_\alpha$, C, O) are not added as independent
 CGL-target particles: the physical backbone target is the virtual MARTINI BB
 proxy site, and forces on that proxy are projected back to the underlying
 Upside backbone carriers.
+Mobile ions are handled separately from BB/protein targets.  The directional
+DOPC--ion energy-expectation table is not used as an attractive additive
+many-ion potential, because the single-particle lipid model has integrated out
+the explicit DOPC headgroup beads and does not include the corresponding
+hydration/solvent ion PMF.  Applying the attractive DOPC--ion well to every
+mobile ion produces a slow artificial ion adsorption sink: the protein remains
+geometrically stable, but \texttt{cg\_lipid\_target} and therefore
+\texttt{total\_potential} keep decreasing over restart chunks.  The runtime
+therefore splits ion targets into a separate CGL--ion node whose controls are
+derived from the current \texttt{cg\_lipid\_target} table by retaining only
+nonnegative values.  This preserves CGL--ion excluded volume while leaving the
+BB/protein CGL-target interaction unchanged.  The MARTINI log reports
+\texttt{cg\_lipid\_target} separately, so \texttt{protein\_potential} contains
+only Upside protein terms plus explicit SC-env and BB-env interface terms.
 
 \subsection{Hybrid Interface: Sidechain -- Environment Interaction}
 \label{sec:sc-env}
@@ -368,6 +382,66 @@ is to remove residual packing stress from the generated bilayer/protein
 configuration before finite-timestep MD and production handoff.  It is not a
 restraint, force scaling, interaction exclusion, or model parameter.
 
+\subsection{Stage-7 Production Handoff and MARTINI Integration}
+
+The standard Upside integrator implementation follows the three-stage HOH
+coefficient convention of Predescu et al.~\cite{Predescu2012}.  In that
+convention the per-stage momentum and position coefficients each sum to the
+number of stages $q$; for the three-stage method,
+\begin{align}
+  \sum_i a_i &= 3, &
+  \sum_i b_i &= 3 .
+\end{align}
+Consequently the parameter called $\Delta t$ in the HOH formula is the average
+time per force evaluation, and one outer application advances a transit time
+$q\Delta t$.  The shared Upside command-line scheduling already accounts for
+this convention by using an internal public-time factor of three for the
+standard Verlet path.  Existing Upside workflows and timestep choices are
+calibrated to that engine semantics, so the hybrid workflow keeps the same
+public-time convention.
+
+The hybrid dry-MARTINI workflow keeps the same shared Upside integrator rather
+than introducing a separate MARTINI integrator.  The production input timestep
+remains $0.002$ in Upside command-line units; reducing it to $0.0006666667$
+would make the public Upside timescale three times slower than the original
+workflow convention.  The issue in the hybrid workflow is therefore not that
+the Predescu coefficients are incorrect or that the protein timescale should be
+rescaled; it is that the
+single-particle MARTINI model combines physical MARTINI masses, a stiff
+CGL--CGLD orientation carrier, tabulated CGL interface forces, and a
+rigid-to-flexible protein handoff that were not part of the original
+Upside-trained protein-only dynamics.
+
+The command-line usage follows the same defaults as the ordinary Upside
+examples.  The workflow does not pass \texttt{--integrator v}, because Verlet
+is the default integrator, and it does not pass \texttt{--inner-step}, which is
+only needed for the multi-step integrator.  The MD stages do pass
+\texttt{--time-step} deliberately: equilibration uses $0.010$ and production
+uses $0.002$ to set the MARTINI integration timestep while preserving the
+standard public-time factor of three.  Minimization stages do not pass
+\texttt{--time-step}; the minimizer is controlled by its own
+\texttt{--min-step} parameter.
+
+The dry-MARTINI masses are retained in the runtime HDF5.  Removing masses makes
+the CGL and CGLD degrees of freedom artificially light and destabilizes the
+stiff orientation coordinate.  Scaling pair energies by particle mass is also
+not a valid substitute for a mass matrix: a pair potential is a scalar shared
+by two particles with generally different masses, and mass-weighting the
+energy would change the configurational Boltzmann distribution rather than only
+the inertial response.
+
+Stage 7 also changes the mechanical state of the system: stage 6 keeps the
+protein rigid while relaxing the lipid/protein environment, whereas production
+releases the protein under the full hybrid Hamiltonian.  Without a production
+handoff relaxation, the first production segment spends a substantial part of
+its trajectory lowering internal protein energy instead of fluctuating around a
+prepared production basin.  Therefore the workflow performs an opt-in
+stage-preserving minimization of stage 7 before MD using
+\texttt{--minimize-preserve-stage}.  This minimization keeps SC--environment,
+BB--environment, CGL--SC, CGL--target, CGL--CGL, generic Martini, ion, and
+bonded terms active under the same production Hamiltonian that the subsequent
+MD uses.
+
 \subsection{Energy Units}
 
 All potential coefficients are stored in upside energy units $E_{\text{up}}$,
@@ -395,6 +469,14 @@ Jumper, J.~M., Faruk, N.~F., Freed, K.~F., \& Sosnick, T.~R.
 ``Accurate calculation of side chain packing and free energy with
 applications to protein molecular dynamics.''
 \textit{PLoS Comput. Biol.}, 14(12), e1006342 (2018).
+
+\bibitem{Predescu2012}
+Predescu, C., Lippert, R.~A., Eastwood, M.~P., Ierardi, D.~J., Xu, H.,
+Jensen, M.~O., Bowers, K.~J., Gullingsrud, J., Rendleman, C.~A.,
+Dror, R.~O., \& Shaw, D.~E.
+``Computationally efficient molecular dynamics integrators with improved
+sampling accuracy.''
+\textit{Molecular Physics}, 110(9--10), 967--983 (2012).
 
 \end{thebibliography}
 

@@ -4723,6 +4723,10 @@ def inject_cg_lipid_nodes(
                         t.decode("ascii") if isinstance(t, bytes) else str(t)
                         for t in up_r["input/type"][:]
                     ]
+                    atom_names = [
+                        t.decode("ascii") if isinstance(t, bytes) else str(t)
+                        for t in up_r["input/atom_names"][:]
+                    ]
                     n_cg_lipids = up_r["input/potential/compose_vector6d/elem_index"].shape[0]
                     backbone_carrier_idx = set()
                     bb_proxy_idx = set()
@@ -4744,6 +4748,7 @@ def inject_cg_lipid_nodes(
                 target_idx = []
                 target_types = []
                 target_ids = []
+                target_is_ion = []
                 for atom_idx, atom_type in enumerate(atom_types):
                     if atom_type.upper() in {"CGL", "CGLD"}:
                         continue
@@ -4755,37 +4760,62 @@ def inject_cg_lipid_nodes(
                     target_idx.append(atom_idx)
                     target_types.append(type_idx)
                     target_ids.append((atom_idx + 300000) << 4)
+                    atom_name = atom_names[atom_idx].upper() if atom_idx < len(atom_names) else ""
+                    target_is_ion.append(atom_name in {"NA", "CL"})
 
                 if target_idx:
-                    target_node = pot.create_group("cg_lipid_target")
-                    target_node.attrs["initialized"] = True
-                    target_node.attrs["arguments"] = np.array([b"compose_vector6d", b"pos"])
-                    for attr_name, attr_value in box_attrs.items():
-                        target_node.attrs[attr_name] = attr_value
-                    for attr_name in ("schema", "source", "angle_convention"):
-                        if attr_name in target_grp.attrs:
-                            target_node.attrs[attr_name] = target_grp.attrs[attr_name]
-                    for attr_name in ("n_modes", "n_radial", "n_angular"):
-                        if attr_name in target_grp.attrs:
-                            target_node.attrs[attr_name] = np.int32(target_grp.attrs[attr_name])
-                    for attr_name in ("knot_spacing_ang", "cutoff_ang", "taper_width_ang"):
-                        if attr_name in target_grp.attrs:
-                            target_node.attrs[attr_name] = np.float32(target_grp.attrs[attr_name])
+                    target_idx_arr = np.array(target_idx, dtype=np.int32)
+                    target_types_arr = np.array(target_types, dtype=np.int32)
+                    target_ids_arr = np.array(target_ids, dtype=np.int32)
+                    target_is_ion_arr = np.array(target_is_ion, dtype=bool)
+                    base_params = target_grp["interaction_param"][:].astype(np.float32)
+                    cg_index = np.arange(n_cg_lipids, dtype=np.int32)
+                    cg_type = np.zeros(n_cg_lipids, dtype=np.int32)
+                    cg_id = ((cg_index + 200000) << 4).astype(np.int32)
 
-                    target_pi = target_node.create_group("pair_interaction")
-                    target_pi.create_dataset(
-                        "interaction_param",
-                        data=target_grp["interaction_param"][:].astype(np.float32),
-                    )
-                    target_pi.create_dataset("index1", data=np.arange(n_cg_lipids, dtype=np.int32))
-                    target_pi.create_dataset("type1", data=np.zeros(n_cg_lipids, dtype=np.int32))
-                    target_pi.create_dataset("id1", data=((np.arange(n_cg_lipids, dtype=np.int32) + 200000) << 4))
-                    target_pi.create_dataset("index2", data=np.array(target_idx, dtype=np.int32))
-                    target_pi.create_dataset("type2", data=np.array(target_types, dtype=np.int32))
-                    target_pi.create_dataset("id2", data=np.array(target_ids, dtype=np.int32))
+                    def write_target_node(node_name, mask, interaction_param, source_override=None):
+                        target_node = pot.create_group(node_name)
+                        target_node.attrs["initialized"] = True
+                        target_node.attrs["arguments"] = np.array([b"compose_vector6d", b"pos"])
+                        for attr_name, attr_value in box_attrs.items():
+                            target_node.attrs[attr_name] = attr_value
+                        for attr_name in ("schema", "source", "angle_convention"):
+                            if attr_name in target_grp.attrs:
+                                target_node.attrs[attr_name] = target_grp.attrs[attr_name]
+                        if source_override is not None:
+                            target_node.attrs["source"] = source_override
+                        for attr_name in ("n_modes", "n_radial", "n_angular"):
+                            if attr_name in target_grp.attrs:
+                                target_node.attrs[attr_name] = np.int32(target_grp.attrs[attr_name])
+                        for attr_name in ("knot_spacing_ang", "cutoff_ang", "taper_width_ang"):
+                            if attr_name in target_grp.attrs:
+                                target_node.attrs[attr_name] = np.float32(target_grp.attrs[attr_name])
+
+                        target_pi = target_node.create_group("pair_interaction")
+                        target_pi.create_dataset("interaction_param", data=interaction_param)
+                        target_pi.create_dataset("index1", data=cg_index)
+                        target_pi.create_dataset("type1", data=cg_type)
+                        target_pi.create_dataset("id1", data=cg_id)
+                        target_pi.create_dataset("index2", data=target_idx_arr[mask])
+                        target_pi.create_dataset("type2", data=target_types_arr[mask])
+                        target_pi.create_dataset("id2", data=target_ids_arr[mask])
+
+                    non_ion_mask = ~target_is_ion_arr
+                    ion_mask = target_is_ion_arr
+                    if np.any(non_ion_mask):
+                        write_target_node("cg_lipid_target", non_ion_mask, base_params)
+                    if np.any(ion_mask):
+                        ion_params = np.maximum(base_params, np.float32(0.0))
+                        write_target_node(
+                            "cg_lipid_target_ion_excluded_volume",
+                            ion_mask,
+                            ion_params,
+                            source_override="explicit_dopc_ion_excluded_volume_from_current_target_table",
+                        )
                     print(
                         f"  Injected cg_lipid_target: {n_cg_lipids} CGL × {len(target_idx)} "
-                        f"target particles ({len(target_order)} target types)"
+                        f"target particles ({len(target_order)} target types; "
+                        f"{int(np.sum(target_is_ion_arr))} ion targets use excluded-volume controls)"
                     )
                 else:
                     print("  cg_lipid_target: no matching target particles, skipping")

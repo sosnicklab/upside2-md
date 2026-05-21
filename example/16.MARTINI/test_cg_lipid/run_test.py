@@ -132,7 +132,6 @@ def step4_run_minimization():
             "--minimize",
             "--min-max-iter", "100",
             "--temperature", "0.8647",
-            "--time-step", "0.01",
             "--seed", "42",
             "--frame-interval", "1.0",
             "--duration-steps", "0",

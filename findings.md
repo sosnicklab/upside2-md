@@ -1,6 +1,25 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-21: Residual 1RKL/1AFO energy drift is a CGL-target ion adsorption artifact.
+  - The progress log's old `protein_potential` bucket included `cg_lipid_target`, so it made the protein appear to be the large energy sink even when internal Upside protein terms were small and stable.
+  - Per-node diagnostics on copied final-frame HDF5 files showed the real total-potential drift is dominated by `cg_lipid_target`, not CGL-CGL or CGL-SC.
+  - Splitting target particles by class showed mobile ions dominate the long-term sink: 1RKL stage 7.3 was about `-1558 E_up` from BB targets and `-3401 E_up` from ion targets, and one copied continuation lowered the ion target further to about `-4170 E_up`.
+  - Rule: the directional explicit-DOPC CGL-target table is appropriate for BB/protein targets, but mobile ions must not reuse the attractive DOPC-ion energy well as an additive many-ion potential in the single-particle lipid model. The missing hydrated/solvent ion PMF makes this a non-transferable ion adsorption well.
+  - Accepted correction: split mobile ions into a separate CGL-ion node derived from the current `cg_lipid_target` table by retaining only nonnegative controls. This preserves excluded volume and leaves BB/protein CGL-target interactions active.
+  - Rule: MARTINI progress logs must report `cg_lipid_target` separately from `protein_potential`; otherwise future diagnostics will misattribute environmental target relaxation to the protein.
+- 2026-05-20: Predescu integrator convention and MARTINI-specific opt-in dynamics.
+  - Predescu et al. 2012 define HOH integrator coefficients so each coefficient set sums to the number of stages `q`; with this convention, `dt` is the average time per force evaluation and one outer integrator application advances `q*dt`.
+  - The shared `DerivEngine::integration_cycle(VecArray,float,float,IntegratorType)` coefficient pattern `(1.5-3a, 1.5-3a, 6a)` and `(3b, 3-6b, 3b)` is consistent with that convention for `q=3`; do not change it for MARTINI-only behavior.
+  - Rule: do not alter shared C++ integrator semantics used by ordinary Upside/master workflows to fix MARTINI-only dynamics.
+  - Rule: when adding a generic CLI switch for MARTINI needs, the default behavior must remain semantic parity for non-MARTINI workflows unless the user explicitly approves broader changes.
+  - The hybrid MARTINI issue is not that Predescu coefficients are mathematically wrong; it is that this workflow combines physical dry-MARTINI masses, stiff CGL-CGLD orientation carriers, active tabulated interface forces, and a rigid stage-6 to flexible production release. It needs the shared `v` integrator with the original Upside public-time convention, physical masses, and production-Hamiltonian minimization at stage-7 handoff.
+  - Removing `/input/mass` from a copied stage-7 artifact failed: total potential `-505.9 -> -24239.58 E_up`, Rg `12.7 -> 14.9 A`, kinetic ratio `5.70`.
+  - Scaling pair energies by mass is not physical because it changes the scalar potential and thus the configurational distribution; per-particle mass-weighted forces for a pair would also not be a single conservative pair potential.
+  - Comparing `example/02.ReplicaExchangeSimulation/run.py` and `example/08.MembraneSimulation/0.normal.run.py` against `/Users/yinhan/Documents/upside2-md-master` showed ordinary Upside workflows rely on default `--integrator v`, `--time-step 0.009`, and public-time scheduling with `inner_step=3`.
+  - Master still supports explicit `--time-step` through `py/run_upside.py`, and explicit `--integrator mv`/`--inner-step` appear in multi-step/curvature examples. The MARTINI workflow should not pass redundant `--integrator v` or `--inner-step`; it should pass MD `--time-step` only where MARTINI intentionally needs non-default equilibration/production timesteps.
+  - Rule: do not divide a MARTINI timestep by three to reinterpret the Predescu stages. That silently slows the public Upside timescale relative to original workflows. Keep master-compatible `v` scheduling and convert frame/restart intervals with `3*dt`.
+  - Shared `v` with physical masses, `dt=0.002`, and restored `inner_step=3` scheduling passed the copied 10k-step timing check: output time `0.0 -> 60.0`, frame spacing `0.3`, restart public timestep `0.006`, final Rg about `12.9 A`, and kinetic ratio `0.972`.
 - 2026-05-20: 1RKL stage-7 continuation failure from CGL-CGL many-neighbor attraction.
   - The exact output uses a fixed square stage-7 box; the apparent XY ellipse is membrane morphology/coordinate drift, not anisotropic box-vector drift.
   - The total potential descent is dominated by CGL-CGL: CGL-CGL interacting pairs increase from about `2,794` at stage-7 start to over `6,200` by the end of `7.2`.

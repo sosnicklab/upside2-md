@@ -62,6 +62,7 @@ DEFAULT_MARTINI_LENGTH_CONVERSION = 10.0
 DEFAULT_BAR_1_TO_EUP_PER_A3 = 0.000020659477
 DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP = 14.521180763676
 DEFAULT_PROTEIN_ENV_INTERFACE_SCALE = 1.0
+UPSIDE_V_INNER_STEP = 3
 
 
 def parse_prepare_args(argv=None):
@@ -975,12 +976,13 @@ def write_stage70_initial_debug_files(args):
 
 def handoff_initial_position(args, input_file: Path, output_file: Path, mode="default", previous_dt=None):
     preserve_transition = "1" if mode == "production_restart" and previous_dt is not None else "0"
+    public_dt = (float(previous_dt) * UPSIDE_V_INNER_STEP) if previous_dt is not None else 0.0
     with temporary_env(
         {
             "UPSIDE_SET_INITIAL_STRICT_COPY": str(args.strict_stage_handoff),
             "UPSIDE_SET_INITIAL_RECENTER_PRODUCTION": "0",
             "UPSIDE_SET_INITIAL_PRESERVE_HYBRID_TRANSITION": preserve_transition,
-            "UPSIDE_SET_INITIAL_TIME_STEP": str(previous_dt or 0),
+            "UPSIDE_SET_INITIAL_TIME_STEP": str(public_dt),
         }
     ):
         set_initial_position(input_file, output_file)
@@ -1007,14 +1009,15 @@ def output_restart_state_valid(up_file: Path):
 def mark_output_restart_state(up_file: Path, nsteps: int, dt: float):
     import h5py
 
-    expected_time = float(nsteps) * float(dt)
+    public_dt = float(dt) * UPSIDE_V_INNER_STEP
+    expected_time = float(nsteps) * public_dt
     with h5py.File(up_file, "r+") as h5:
         if "/output/time" not in h5 or h5["/output/time"].shape[0] == 0:
             raise RuntimeError(f"{up_file} has no output/time; cannot mark restart state")
         if "/output/mom" not in h5 or h5["/output/mom"].shape[0] == 0:
             raise RuntimeError(f"{up_file} has no output/mom; cannot mark restart state")
         final_time = float(h5["/output/time"][-1])
-        tolerance = max(1e-6, abs(float(dt)) * 0.51)
+        tolerance = max(1e-6, abs(public_dt) * 0.51)
         if abs(final_time - expected_time) > tolerance:
             raise RuntimeError(
                 f"{up_file} final output time {final_time:.10g} does not match expected {expected_time:.10g}"
@@ -1022,10 +1025,11 @@ def mark_output_restart_state(up_file: Path, nsteps: int, dt: float):
         h5["/output/mom"].attrs["restart_final_state_valid"] = np.int8(1)
         h5["/output/mom"].attrs["restart_duration_steps"] = np.int64(nsteps)
         h5["/output/mom"].attrs["restart_time_step"] = float(dt)
+        h5["/output/mom"].attrs["restart_public_time_step"] = public_dt
         h5["/output/mom"].attrs["restart_final_time"] = final_time
 
 
-def run_minimization_stage(args, stage_label: str, up_file: Path, max_iter: int):
+def run_minimization_stage(args, stage_label: str, up_file: Path, max_iter: int, preserve_stage: bool = False):
     if int(max_iter) <= 0:
         print(f"=== Stage {stage_label}: Minimization skipped (max_iter <= 0) ===")
         return
@@ -1036,11 +1040,9 @@ def run_minimization_stage(args, stage_label: str, up_file: Path, max_iter: int)
         "--duration", "0",
         "--frame-interval", "1",
         "--temperature", args.temperature,
-        "--time-step", args.min_time_step,
         "--thermostat-timescale", args.thermostat_timescale,
         "--thermostat-interval", args.thermostat_interval,
         "--seed", args.seed,
-        "--integrator", "v",
         "--disable-recentering",
         "--minimize",
         "--min-max-iter", max_iter,
@@ -1048,6 +1050,8 @@ def run_minimization_stage(args, stage_label: str, up_file: Path, max_iter: int)
         "--min-force-tol", "1e-3",
         "--min-step", "0.01",
     ]
+    if preserve_stage:
+        cmd.append("--minimize-preserve-stage")
     run_checked(cmd, log_file=args.log_dir / f"stage_{stage_label}.min.log")
     promote_minimized_state_to_input(up_file)
 
@@ -1098,7 +1102,7 @@ def run_md_stage(args, stage_label: str, input_file: Path, output_file: Path, ns
     if effective_frame_steps >= int(nsteps):
         effective_frame_steps = max(1, int(nsteps) // 10)
         print(f"NOTICE: frame_steps ({frame_steps}) >= nsteps ({nsteps}); using frame_steps={effective_frame_steps}")
-    frame_interval = f"{effective_frame_steps * float(dt):.10g}"
+    frame_interval = f"{effective_frame_steps * float(dt) * UPSIDE_V_INNER_STEP:.10g}"
     if input_file.resolve() != output_file.resolve():
         shutil.copy2(input_file, output_file)
         handoff_initial_position(args, input_file, output_file)
@@ -1113,7 +1117,6 @@ def run_md_stage(args, stage_label: str, input_file: Path, output_file: Path, ns
         "--thermostat-timescale", args.thermostat_timescale,
         "--thermostat-interval", args.thermostat_interval,
         "--seed", args.seed,
-        "--integrator", "v",
         "--disable-recentering",
         "--record-momentum",
     ]
@@ -1355,6 +1358,7 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--strict-stage-handoff", type=int, default=env_int("STRICT_STAGE_HANDOFF", 1))
     parser.add_argument("--min-60-max-iter", type=int, default=env_int("MIN_60_MAX_ITER", 500))
     parser.add_argument("--min-61-max-iter", type=int, default=env_int("MIN_61_MAX_ITER", 0))
+    parser.add_argument("--min-70-max-iter", type=int, default=env_int("MIN_70_MAX_ITER", 500))
     parser.add_argument("--eq-60-nsteps", type=int, default=env_int("EQ_60_NSTEPS", 500))
     parser.add_argument("--eq-62-nsteps", type=int, default=env_int("EQ_62_NSTEPS", 500))
     parser.add_argument("--eq-63-nsteps", type=int, default=env_int("EQ_63_NSTEPS", 500))
@@ -1364,7 +1368,6 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--prod-70-nsteps", type=int, default=env_int("PROD_70_NSTEPS", 10000))
     parser.add_argument("--eq-time-step", type=float, default=env_float("EQ_TIME_STEP", 0.010))
     parser.add_argument("--prod-time-step", type=float, default=env_float("PROD_TIME_STEP", 0.002))
-    parser.add_argument("--min-time-step", type=float, default=env_float("MIN_TIME_STEP", 0.010))
     parser.add_argument("--eq-frame-steps", type=int, default=env_int("EQ_FRAME_STEPS", 1000))
     parser.add_argument("--prod-frame-steps", type=int, default=env_int("PROD_FRAME_STEPS", 50))
     parser.add_argument("--prod-70-npt-enable", type=int, default=env_int("PROD_70_NPT_ENABLE", 0))
@@ -1562,6 +1565,7 @@ def run_hybrid_workflow_command(argv):
         if args.debug_rigid_protein:
             set_debug_rigid_protein(files["stage_70"])
         assert_hybrid_stage_active(files["stage_70"], "production", "production")
+        run_minimization_stage(args, "7.0", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
         run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
         extract_stage_vtf(args, "7.0", files["stage_70"], "2")
     else:
@@ -1572,6 +1576,7 @@ def run_hybrid_workflow_command(argv):
         if args.debug_rigid_protein:
             set_debug_rigid_protein(files["stage_70"])
         assert_hybrid_stage_active(files["stage_70"], "production", "production")
+        run_minimization_stage(args, "7.0", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
         run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
         extract_stage_vtf(args, "7.0", files["stage_70"], "2")
 

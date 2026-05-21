@@ -69,6 +69,7 @@ STRICT_STAGE_HANDOFF="${STRICT_STAGE_HANDOFF:-1}"
 
 MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-500}"
 MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-0}"
+MIN_70_MAX_ITER="${MIN_70_MAX_ITER:-500}"
 EQ_60_NSTEPS="${EQ_60_NSTEPS:-500}"
 EQ_62_NSTEPS="${EQ_62_NSTEPS:-500}"
 EQ_63_NSTEPS="${EQ_63_NSTEPS:-500}"
@@ -81,7 +82,6 @@ DEBUG_RIGID_PROTEIN="${DEBUG_RIGID_PROTEIN:-0}"
 
 EQ_TIME_STEP="${EQ_TIME_STEP:-0.010}"
 PROD_TIME_STEP="${PROD_TIME_STEP:-0.002}"
-MIN_TIME_STEP="${MIN_TIME_STEP:-0.010}"
 EQ_FRAME_STEPS="${EQ_FRAME_STEPS:-1000}"
 PROD_FRAME_STEPS="${PROD_FRAME_STEPS:-50}"
 PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-0}"
@@ -172,6 +172,7 @@ python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
     --strict-stage-handoff "${STRICT_STAGE_HANDOFF}" \
     --min-60-max-iter "${MIN_60_MAX_ITER}" \
     --min-61-max-iter "${MIN_61_MAX_ITER}" \
+    --min-70-max-iter "${MIN_70_MAX_ITER}" \
     --eq-60-nsteps "${EQ_60_NSTEPS}" \
     --eq-62-nsteps "${EQ_62_NSTEPS}" \
     --eq-63-nsteps "${EQ_63_NSTEPS}" \
@@ -183,7 +184,6 @@ python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
     --debug-rigid-protein "${DEBUG_RIGID_PROTEIN}" \
     --eq-time-step "${EQ_TIME_STEP}" \
     --prod-time-step "${PROD_TIME_STEP}" \
-    --min-time-step "${MIN_TIME_STEP}" \
     --eq-frame-steps "${EQ_FRAME_STEPS}" \
     --prod-frame-steps "${PROD_FRAME_STEPS}" \
     --prod-70-npt-enable "${PROD_70_NPT_ENABLE}" \

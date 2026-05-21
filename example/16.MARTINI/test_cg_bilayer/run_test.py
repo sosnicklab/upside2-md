@@ -310,7 +310,7 @@ def report_table() -> None:
 
 def run_short_dynamics(steps: int, dt: float, frame_steps: int) -> bool:
     shutil.copy2(UP_FILE, SIM_FILE)
-    frame_interval = dt * frame_steps
+    frame_interval = 3.0 * dt * frame_steps
     print(f"Running {steps} steps, dt={dt}, frame_interval={frame_interval}")
     result = subprocess.run(
         [
@@ -330,8 +330,6 @@ def run_short_dynamics(steps: int, dt: float, frame_steps: int) -> bool:
             "-1",
             "--seed",
             "42",
-            "--integrator",
-            "v",
             "--disable-recentering",
             "--record-momentum",
         ],

@@ -1,25 +1,60 @@
 # Progress Log
 
-## 2026-05-20 (1RKL Replica-2 Shape and Box Drift Debug)
+## 2026-05-20 (1RKL Production Energy Drift Debug)
 - Actions taken:
-  - Reopened the 1RKL stability debug for the exact output path after the user reported residual trajectory-0 secondary-structure drift, trajectory-2 protein deformation, XY bilayer ellipse formation, and monotonic box `total_potential` lowering.
-  - Replaced the completed old plan with an active plan focused on per-replica metrics, box/barostat behavior, and direct copied-HDF5 validation.
-  - Audited stage-7 HDF5/log artifacts and found stage 7 uses a fixed square box, while CGL-CGL contact count and `cg_lipid_pair` energy drift strongly over `7.0 -> 7.2`.
-  - Quantified geometry: stage-7 XY aspect ratio grows from about `1.09` to `1.31`, CGL nearest-neighbor p05 decreases from about `6.50 Å` to `5.68 Å`, and protein hbond retention collapses during `7.1`.
-  - Selected copied-HDF5 validation: rigid-protein membrane relaxation under the same Hamiltonian, then production release from the relaxed membrane.
-  - Found rigid-protein relaxation and bead-cutoff-only CGL-CGL patches still fail: both continue strong `cg_lipid_pair` energy descent.
-  - Implemented CG-lipid table changes so explicit DOPC projections use the generic dry-MARTINI bead cutoff, subtract attractive CGL-CGL radial background, and remove remaining attractive CGL-CGL controls.
-  - Updated stale-table validation and `cg_lipid_potentials.tex`.
-  - Validated the accepted CGL-CGL control patch by directly modifying copied HDF5 files from the reported output.
+  - Started a focused debug pass for monotonic `protein_potential` and `total_potential` drift in `example/16.MARTINI/1rkl.*.log`.
+  - Replaced the completed prior plan with an active plan specific to the integrator/runtime energy drift report.
+  - Parsed all four reported logs: `protein_potential` drops from about `-219` to `-9017 E_up`, while `cg_lipid_pair` and `cg_lipid_sc` remain comparatively bounded.
+  - Checked the Predescu et al. 2012 convention and corrected the diagnosis: the shared three-stage coefficient sums are intentional because one outer application advances `q*dt`; `dt` is average time per force evaluation.
+  - Confirmed `src/deriv_engine.cpp` has no remaining diff, preserving shared Upside/master integrator behavior.
+  - Found the remaining issue is production release from a rigid-protein preproduction state plus MARTINI-specific physical masses/orientation carriers needing a smaller production input timestep under the shared integrator.
+  - Direct stage-7 minimization failed because C++ minimization always switched to the preproduction `"minimization"` stage, even for production-stage files.
+  - Updated direction after user constraint: restored the default shared `v` integrator and default minimization switch behavior.
+  - Added opt-in `--minimize-preserve-stage` and wired only the MARTINI stage-7 handoff minimization to use it.
+  - Validated an intermediate opt-in integrator path, then rejected it to preserve claims inherited from original Upside.
+  - Documented the Predescu convention and MARTINI-specific rationale in `example/16.MARTINI/cg_lipid_potentials.tex`.
+  - Reopened final design after user concern that a separate MARTINI integrator weakens claims inherited from original Upside; testing shared `--integrator v` with unit-mass/no-mass HDF5 on copied artifacts.
+  - Unit-mass/no-mass copied validation failed badly: total potential `-505.9 -> -24239.58 E_up`, Rg `12.7 -> 14.9 A`, kinetic ratio `5.70`.
+  - Rejected mass-scaled pair energies as nonphysical because they change the scalar potential and are not a conservative pair potential for two different masses.
+  - Compared original Upside examples against master and found they rely on default `--integrator v`, `--time-step 0.009`, and master public-time scheduling with `inner_step=3`.
+  - Restored master-compatible `v` public-time scheduling and reverted MARTINI production `PROD_TIME_STEP` to `0.002`; the previous `0.0006666667` choice would have slowed public Upside time by three.
+  - Updated MARTINI frame/restart bookkeeping so frame intervals, restart validation, and production continuation use `3*dt` public time.
+  - Checked `/Users/yinhan/Documents/upside2-md-master`: `--time-step` exists through `py/run_upside.py`, while explicit `--integrator mv` and `--inner-step` are used only by multistep/curvature workflows.
+  - Removed redundant explicit `--integrator v` from MARTINI MD paths and tests; removed minimization-only `--time-step` and the unused `MIN_TIME_STEP` wrapper option.
+  - Updated `example/16.MARTINI/cg_lipid_potentials.tex` with the final timestep/integrator convention.
 - Files modified:
-  - `py/martini_build_tables.py`
+  - `plan.md`
+  - `progress.md`
+  - `src/main.cpp`
+  - `py/martini_prepare_system.py`
+  - `example/16.MARTINI/run_sim_1rkl.sh`
+  - `example/16.MARTINI/cg_lipid_potentials.tex`
+- Verification:
+  - `python3 -m py_compile py/martini_prepare_system.py` passed.
+  - `python3 -m py_compile example/16.MARTINI/test_cg_bilayer/run_test.py example/16.MARTINI/test_cg_lipid/run_test.py` passed.
+  - `cmake --build obj -j 4` passed.
+  - Copied-HDF5 timing validation: `/private/tmp/1rkl.stage_7.0.timescale_test.up`; `output/time` `0.0 -> 60.0`, frame spacing `0.3`, `restart_public_time_step=0.006`, final Rg about `12.9 A`, kinetic ratio `0.972`.
+  - Default-integrator smoke test without `--integrator v`: `/private/tmp/1rkl.stage_7.0.default_v_smoke.up` wrote times `[0.0, 0.3, 0.6]`.
+  - MARTINI workflow/test paths no longer contain `--integrator`, `--inner-step`, `MIN_TIME_STEP`, or `args.min_time_step`.
+  - `git diff --check` passed.
+
+## 2026-05-21 (Residual 1RKL/1AFO Energy Drift)
+- Actions taken:
+  - Re-parsed current `1rkl.*.log` and `1afo.*.log`; Rg stays stable while reported `protein_potential` and `total_potential` drift downward.
+  - Added per-node diagnostic output and found the reported `protein_potential` was misclassified: `cg_lipid_target` was being included in the protein bucket.
+  - Split copied final-frame HDF5 diagnostics into BB-target and ion-target nodes.  The long-term sink is dominated by CGL-target interactions with mobile ions.
+  - Updated C++ progress accounting so `cg_lipid_target` is logged separately and excluded from `protein_potential`.
+  - Updated CGL-target injection so mobile ions are written to a separate CGL-ion excluded-volume node derived from the current target table with negative controls clipped to zero; BB/protein target interactions remain unchanged.
+  - Documented the ion-target rationale in `example/16.MARTINI/cg_lipid_potentials.tex`.
+  - Restored the accidentally overwritten `1rkl.stage_7.0.up` `/output` trajectory by rerunning the logged MD command.
+- Files modified:
+  - `src/main.cpp`
   - `py/martini_prepare_system_lib.py`
   - `example/16.MARTINI/cg_lipid_potentials.tex`
   - `plan.md`
   - `progress.md`
 - Verification:
-  - Copied-HDF5 accepted validation: `example/16.MARTINI/outputs/martini_test_1rkl_hybrid_repcheck/checkpoints/1rkl.stage_7.0.up` plus continuation `1rkl.stage_7.1.up`, `10k` total steps.
-  - Final metrics: hbond sum `26.75`, CA RMSD `4.16 Å`, Rg `12.47 Å`, XY aspect `1.08`, CGL nearest-neighbor min/p05/mean `6.278/6.729/7.821 Å`.
-  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py` passed.
-  - Stale guard rejects the reported old `martini.h5`.
-  - `git diff --check` passed.
+  - `python3 -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py example/16.MARTINI/test_cg_bilayer/run_test.py example/16.MARTINI/test_cg_lipid/run_test.py` passed.
+  - `cmake --build obj -j 4` passed with only existing warnings.
+  - Copied 1RKL diagnostics showed normal `cg_lipid_target` continuation drove ion target from about `-3401` to `-4170 E_up` over one extra chunk.
+  - Copied 1RKL ion-excluded-volume continuation from the first corrected stage-7 result fluctuated around roughly `-700` to `-900 E_up` instead of accumulating by thousands.

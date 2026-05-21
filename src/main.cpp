@@ -223,12 +223,17 @@ static inline bool is_cg_lipid_sc_term_name(const std::string& name) {
     return is_prefix("cg_lipid_sc", name);
 }
 
+static inline bool is_cg_lipid_target_term_name(const std::string& name) {
+    return is_prefix("cg_lipid_target", name);
+}
+
 struct HybridProteinPotentialComponents {
     double upside_protein_potential = 0.0;
     double sc_env_interface_potential = 0.0;
     double bb_env_interface_potential = 0.0;
     double cg_lipid_pair_potential = 0.0;
     double cg_lipid_sc_potential = 0.0;
+    double cg_lipid_target_potential = 0.0;
     double protein_total() const {
         return upside_protein_potential + sc_env_interface_potential + bb_env_interface_potential;
     }
@@ -252,11 +257,25 @@ static HybridProteinPotentialComponents compute_hybrid_protein_potential_compone
             out.cg_lipid_sc_potential += p;
             continue;
         }
+        if(is_cg_lipid_target_term_name(n.name)) {
+            out.cg_lipid_target_potential += p;
+            continue;
+        }
         if(is_dry_martini_term_name(n.name)) continue;
         out.upside_protein_potential += p;
     }
     out.bb_env_interface_potential = martini_hybrid::get_last_bb_env_interface_potential(engine);
     return out;
+}
+
+static void print_potential_components(const DerivEngine& engine, const char* label) {
+    printf("Potential components %s:\n", label ? label : "");
+    for(const auto& n : engine.nodes) {
+        if(!n.computation->potential_term) continue;
+        const auto& pot_node = dynamic_cast<const PotentialNode&>(*n.computation.get());
+        printf("  %-36s % .6f\n", n.name.c_str(), static_cast<double>(pot_node.potential));
+    }
+    printf("  %-36s % .6f\n", "TOTAL", static_cast<double>(engine.potential));
 }
 
 static double compute_logged_kinetic_energy(System* sys) {
@@ -655,6 +674,9 @@ try {
     ValueArg<double> min_energy_tol_arg("", "min-energy-tol", "Minimization energy tolerance", false, 1e-6, "float", cmd);
     ValueArg<double> min_force_tol_arg("", "min-force-tol", "Minimization force tolerance", false, 1e-6, "float", cmd);
     ValueArg<double> min_step_arg("", "min-step", "Minimization initial step size", false, 0.1, "float", cmd);
+    SwitchArg minimize_preserve_stage_arg("", "minimize-preserve-stage",
+            "Run minimization under the current stage Hamiltonian instead of switching to the minimization stage",
+            cmd, false);
 
     ValueArg<string> input_arg("i", "input", "h5df input file for position", false, "not_Defined_By_user", "string", cmd);
     ValueArg<string> input_base_arg("", "input-base", "h5df input files base for positions", false, "not_Defined_By_user", "string_list", cmd);
@@ -678,6 +700,8 @@ try {
             "of the potential for the initial structure.  This may give strange answers for native structures "
             "(no steric clashes may given an agreement of NaN) or random structures (where bonds and angles are "
             "exactly at their equilibrium values).  Interpret these results at your own risk.", cmd, false);
+    SwitchArg dump_potential_components_arg("", "dump-potential-components",
+            "(developer use only) print per-node potential components when logging frames", cmd, false);
     SwitchArg record_momentum_arg("", "record-momentum",
             "record the momentum (so that the trajectory can be exactly restarted)"
             " the momentum will be recorded in output.mom ",
@@ -714,7 +738,7 @@ try {
 
 
         float dt = time_step_arg.getValue();
-        int inner_step = 1;
+        int inner_step = 3;
         if  (integrator_arg.getValue() == "mv" )
             inner_step = inner_step_arg.getValue();
 
@@ -747,7 +771,7 @@ try {
             ? max(1,int(mc_interval_arg.getValue()/(inner_step*dt))) 
             : 0;
 
-        double display_duration_total = use_duration_steps ? static_cast<double>(n_round) : duration;
+        double display_duration_total = duration;
         int duration_print_width = ceil(log(1+display_duration_total)/log(10));
 
         bool do_recenter = !disable_recenter_arg.getValue();
@@ -1121,6 +1145,8 @@ try {
         for(System& sys: systems) {
             sys.engine.compute(PotentialAndDerivMode);
             if(verbose) printf(" % .2f", sys.engine.potential);
+            if(verbose && dump_potential_components_arg.getValue())
+                print_potential_components(sys.engine, "initial");
         }
         if(verbose) printf("\n");
 
@@ -1135,12 +1161,11 @@ try {
                 for(System& sys: systems) {
                     const std::string stage_before_min =
                         martini_stage_params::get_current_stage(&sys.engine);
-                    // Switch to minimization stage before minimization
-                    martini_stage_params::switch_simulation_stage(&sys.engine, "minimization");
+                    if(!minimize_preserve_stage_arg.getValue())
+                        martini_stage_params::switch_simulation_stage(&sys.engine, "minimization");
                     martini_run_minimization(sys.engine, it, etol, ftol, mstep, verbose);
-                    // Restore the pre-minimization stage so production-only logic
-                    // is not spuriously activated for pre-production files.
-                    martini_stage_params::switch_simulation_stage(&sys.engine, stage_before_min);
+                    if(!minimize_preserve_stage_arg.getValue())
+                        martini_stage_params::switch_simulation_stage(&sys.engine, stage_before_min);
                     // Save a frame immediately after minimization so downstream stages can pick it up
                     // This ensures /output/pos exists even if duration is 0
                     sys.engine.compute(PotentialAndDerivMode);
@@ -1196,9 +1221,7 @@ try {
                         sys.logger->collect_samples();
 
                         if(verbose) {
-                            double display_elapsed = use_duration_steps
-                                ? static_cast<double>(nr)
-                                : nr*double(dt*inner_step);
+                            double display_elapsed = nr*double(dt*inner_step);
                             if(sys.martini_hybrid_progress) {
                                 double rg = compute_protein_rg(sys);
                                 auto prot_components = compute_hybrid_protein_potential_components(sys.engine);
@@ -1210,10 +1233,11 @@ try {
                                        get_n_hbond(sys.engine));
                                 if(rg >= 0.0) printf(" %5.1f Rg,", rg);
                                 else          printf("  N/A Rg,");
-                                printf(" protein_potential % .2f cg_lipid_pair % .2f cg_lipid_sc % .2f total_potential % .2f\n",
+                                printf(" protein_potential % .2f cg_lipid_pair % .2f cg_lipid_sc % .2f cg_lipid_target % .2f total_potential % .2f\n",
                                        protein_potential,
                                        prot_components.cg_lipid_pair_potential,
                                        prot_components.cg_lipid_sc_potential,
+                                       prot_components.cg_lipid_target_potential,
                                        sys.engine.potential);
                             } else {
                                 printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, potential % .2f\n",
@@ -1224,6 +1248,8 @@ try {
                                        sys.engine.potential);
                             }
                         }
+                        if(verbose && dump_potential_components_arg.getValue())
+                            print_potential_components(sys.engine, "frame");
                         fflush(stdout);
                     }
 
