@@ -48,7 +48,14 @@
 - [x] Phase 12: Validate on copied exact artifacts and update documentation.
 
 ### Known Errors / Blockers
-- Existing generated checkpoint outputs were produced with the old attractive CGL-ion target node.  The source fix applies when the workflow prepares/injects new stage files; patching old checkpoints in place would make their stored trajectories inconsistent with their input potential metadata.
+- Latest user report has been rechecked.  The current `1rkl.*.log` still shows large relaxation in early chunks, but the latest 1RKL state continues without the previous one-way ion sink.  `1afo.0.log` has near-zero first-to-last total-potential change with compensating component relaxation.
+- No new model/code change is indicated from this pass.  The remaining 1RKL behavior is mostly production-basin equilibration after the corrected ion-target split, not a continuing CGL-ion adsorption artifact.
+
+### Follow-up Investigation
+- [x] Phase 13: Quantify residual component drift in current `example/16.MARTINI/1rkl.*.log`.
+- [x] Phase 14: Audit ion spatial behavior, ion-energy ownership, and whether ions are double-counted or missing physical interactions.
+- [x] Phase 15: Identify the smallest physical correction, if the drift is not just normal slow equilibration.
+- [x] Phase 16: Validate on copied exact artifacts and update documentation/task notes.
 
 ### Review
 - The Predescu coefficient pattern in the shared overload is consistent with the paper; no shared `DerivEngine` implementation change is made.
@@ -68,3 +75,9 @@
   - The old `protein_potential` log bucket included `cg_lipid_target`; actual Upside protein internal energy is not the multi-thousand-`E_up` sink.
   - The real `total_potential` drift is dominated by `cg_lipid_target`, especially mobile ions.  In 1RKL stage 7.3, split diagnostics gave about `-1558 E_up` from BB targets and `-3401 E_up` from ion targets; another copied continuation drove the ion part to about `-4170 E_up`.
   - The fix splits mobile ions out of the CGL-target node and derives an excluded-volume-only ion table from the current `cg_lipid_target` table by clipping negative controls to zero, while leaving BB/protein targets unchanged.
+- Follow-up review after the ion-target split:
+  - Current `1rkl.0-2.log` still contain visible production relaxation, but by `1rkl.3.log` total potential changes only `-28 E_up` first-to-last; the largest remaining component changes are `cg_lipid_target` `-42.6 E_up` and `cg_lipid_sc` `-29.0 E_up`.
+  - A copied continuation from current `1rkl.stage_7.3.up` final coordinates/momenta ran 10k more steps over 60 public time units: total potential first/last `-1045.9 -> -1062.2 E_up`, range `[-1138.7, -981.5]`, and first/last fifth means differ by `-34.4 E_up`.
+  - Current `1afo.0.log` total potential is flat first-to-last (`-730.55 -> -730.09 E_up`) despite expected compensation among protein, CGL-pair, CGL-SC, and CGL-target terms.
+  - Ion audit found zero generic CGL-ion pairs in both checked stage-7 files.  Ions remain in generic dry-MARTINI ion/protein and ion/ion pairs, and CGL-ion target controls are nonnegative excluded volume.
+  - 1RKL and 1AFO ion-CGL minimum distances remain above `16 A` over the saved trajectories, with stable ion-z distributions; there is no evidence of residual ion adsorption to CGL.

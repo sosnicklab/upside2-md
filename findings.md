@@ -1,6 +1,12 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-21: Follow-up after ion-target split shows residual 1RKL relaxation, not a continuing ion sink.
+  - Current `1rkl.0-2.log` still contain substantial relaxation from the corrected stage-7 launch, mostly in `cg_lipid_target` with smaller `cg_lipid_sc` relaxation, but the latest chunk is much closer to stationary behavior: `1rkl.3.log` total potential changes only `-28 E_up` first-to-last.
+  - A copied continuation from current `1rkl.stage_7.3.up` final coordinates and momenta ran 10k more steps over 60 public time units with total potential `-1045.92 -> -1062.16 E_up`, range `[-1138.67, -981.46]`, and first/last fifth mean delta `-34.37 E_up`; this is fluctuation-scale behavior compared with the previous thousand-`E_up` ion adsorption sink.
+  - Current `1afo.0.log` total potential is flat first-to-last (`-730.55 -> -730.09 E_up`), with compensation among protein, CGL-pair, CGL-SC, and CGL-target components.
+  - Ion ownership audit: 1RKL and 1AFO stage-7 HDF5 files have zero generic CGL-ion pairs, while ions remain in generic dry-MARTINI ion/protein and ion/ion pairs.  CGL-ion interactions are owned by the excluded-volume-only target node.
+  - Ion spatial audit: final ion-CGL minima are `16.76 A` for 1RKL and `16.83 A` for 1AFO, and ion-z distributions do not collapse toward the membrane.  This supports trusting ion behavior as generic dry-MARTINI ion behavior plus a CGL excluded-volume boundary, not an attractive DOPC-ion PMF.
 - 2026-05-21: Residual 1RKL/1AFO energy drift is a CGL-target ion adsorption artifact.
   - The progress log's old `protein_potential` bucket included `cg_lipid_target`, so it made the protein appear to be the large energy sink even when internal Upside protein terms were small and stable.
   - Per-node diagnostics on copied final-frame HDF5 files showed the real total-potential drift is dominated by `cg_lipid_target`, not CGL-CGL or CGL-SC.

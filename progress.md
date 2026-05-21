@@ -47,6 +47,10 @@
   - Updated CGL-target injection so mobile ions are written to a separate CGL-ion excluded-volume node derived from the current target table with negative controls clipped to zero; BB/protein target interactions remain unchanged.
   - Documented the ion-target rationale in `example/16.MARTINI/cg_lipid_potentials.tex`.
   - Restored the accidentally overwritten `1rkl.stage_7.0.up` `/output` trajectory by rerunning the logged MD command.
+  - Rechecked the current logs after the user's follow-up.  `1rkl.0-2.log` still show early production relaxation, while `1rkl.3.log` is much closer to stationary behavior; `1afo.0.log` has essentially flat total potential first-to-last.
+  - Ran a copied 10k-step continuation from the current 1RKL stage-7.3 final state.  The previous one-way ion-target sink did not reappear.
+  - Audited ion ownership in 1RKL and 1AFO stage-7 HDF5 files: generic MARTINI has ion/protein and ion/ion pairs, zero CGL-ion pairs, and the CGL-ion target node is excluded-volume-only.
+  - Added the ion validation invariant and current distance checks to `example/16.MARTINI/cg_lipid_potentials.tex`.
 - Files modified:
   - `src/main.cpp`
   - `py/martini_prepare_system_lib.py`
@@ -58,3 +62,6 @@
   - `cmake --build obj -j 4` passed with only existing warnings.
   - Copied 1RKL diagnostics showed normal `cg_lipid_target` continuation drove ion target from about `-3401` to `-4170 E_up` over one extra chunk.
   - Copied 1RKL ion-excluded-volume continuation from the first corrected stage-7 result fluctuated around roughly `-700` to `-900 E_up` instead of accumulating by thousands.
+  - Current log parse: `1rkl.3.log` total potential `-999.31 -> -1027.34 E_up`; `1afo.0.log` total potential `-730.55 -> -730.09 E_up`.
+  - Current 1RKL copied continuation: 201 frames over 60 public time units, total potential `-1045.92 -> -1062.16 E_up`, range `[-1138.67, -981.46]`, first/last fifth mean delta `-34.37 E_up`.
+  - Ion checks: 1RKL final ion-CGL minimum `16.76 A`; 1AFO final ion-CGL minimum `16.83 A`; both checked files have zero generic CGL-ion pairs.

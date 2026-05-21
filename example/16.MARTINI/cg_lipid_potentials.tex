@@ -272,6 +272,16 @@ nonnegative values.  This preserves CGL--ion excluded volume while leaving the
 BB/protein CGL-target interaction unchanged.  The MARTINI log reports
 \texttt{cg\_lipid\_target} separately, so \texttt{protein\_potential} contains
 only Upside protein terms plus explicit SC-env and BB-env interface terms.
+The validation invariant is that ions remain ordinary dry-MARTINI particles in
+the generic pair potential for ion--ion and ion--protein interactions, while
+generic pair construction excludes direct CGL--ion pairs so CGL--ion physics is
+owned only by the excluded-volume target node.  Current 1RKL and 1AFO stage-7
+checks have zero generic CGL--ion pairs, nonnegative CGL--ion target controls,
+and no ion adsorption to CGL sites over the saved trajectories: the minimum
+ion--CGL distance remains above $16\,\text{\AA}$, and the ion $z$ distribution
+does not collapse toward the membrane.  Therefore ion behavior should be
+judged from the generic dry-MARTINI ion interactions plus the excluded-volume
+CGL boundary, not from an attractive DOPC--ion single-particle PMF.
 
 \subsection{Hybrid Interface: Sidechain -- Environment Interaction}
 \label{sec:sc-env}
