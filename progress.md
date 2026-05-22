@@ -54,6 +54,11 @@
   - Reopened the analysis after the user pointed out that `1afo.1-3.log` keep dropping.  Parsed all chunks and confirmed 1AFO total potential moves from about `-730` to `-1001 E_up`.
   - Verified restart metadata is continuous and valid; the residual drift is not from momentum loss or transition-counter reset.
   - Added an explicit stage-7 production-Hamiltonian burn-in before named production.  Burn-in uses the same MD settings, then promotes final positions/momenta to `/input`, advances the hybrid transition counter, clears `/output`, and starts the logged production segment from the relaxed interface.
+  - Reopened the latest 1RKL drift after the user reported `-800 -> -1100 E_up` across fresh logs.  Parsed the current logs and confirmed the active sink was still `cg_lipid_target`, not `cg_lipid_pair`.
+  - Found the exact generated `martini_test_1rkl_hybrid` stage-7 checkpoints were using terminal `Qd`/`Qa` BB proxy targets in the attractive `cg_lipid_target` node.
+  - Replaced the intermediate charged-target split after the user correction: the final model uses uniform neutral dry-MARTINI backbone typing, with all protein backbone carrier atoms and virtual BB proxies set to `P5`/zero-charge consistently across generic MARTINI, BB-env, and CGL-target paths.
+  - Patched the existing 1RKL stage-7 checkpoints in place without regenerating `martini.h5`: all 31 BB proxy targets are back in `cg_lipid_target` as neutral `P5`, the rejected charged-target node is absent, and ion targets remain in their excluded-volume node.
+  - Updated `cg_lipid_potentials.tex` to document the neutral-backbone model choice and why the charged head/tail convention is not used in this CGL projection.
 - Files modified:
   - `src/main.cpp`
   - `py/martini_prepare_system_lib.py`
@@ -73,3 +78,21 @@
   - Current 1AFO copied continuation from stage-7.3 final state: 201 frames over 60 public time units, total potential `-992.58 -> -1019.87 E_up`, range `[-1071.79, -955.46]`, first/last fifth mean delta `-13.81 E_up`.
   - `python3 -m py_compile py/martini_prepare_system.py` passed.
   - Burn-in smoke test on copied `/private/tmp/1afo.burnin_smoke.up` promoted `/input/pos` and restart-valid `/input/mom`, cleared `/output`, advanced `sc_env_transition_step_start` by the burn-in step count, and allowed a follow-on `--restart-using-momentum` MD run.
+  - Existing 1RKL stage-7 checkpoint check: the first 155 protein atoms are `P5`/zero-charge, `hybrid_bb_map/bb_type` is all `P5`, `cg_lipid_target` has all 31 neutral BB proxy targets, no `cg_lipid_target_charged_excluded_volume` node remains, and `cg_lipid_target_ion_excluded_volume` has 93 ion targets with nonnegative controls.
+  - Copied continuation validation from old charged-model coordinates: first 10k-step run re-equilibrated total potential `85.55 -> -13.30 E_up`; second run had total potential `-13.30 -> -26.54 E_up`, range `[-73.93, 23.57]`, first/last fifth means `-1.60 -> -35.71 E_up`; third run had total potential `-26.54 -> -33.78 E_up`, range `[-58.95, 63.38]`, first/last fifth means `-22.91 -> -12.66 E_up`, and kinetic ratio `1.017`.
+  - Final checks passed: `python3 -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py example/16.MARTINI/test_cg_bilayer/run_test.py example/16.MARTINI/test_cg_lipid/run_test.py`, `bash -n example/16.MARTINI/run_sim_1rkl.sh`, HDF5 artifact invariants for all checked 1RKL stage-7 files, and `git diff --check`.
+
+## 2026-05-21 (Latest 1RKL Drift and Ion Ownership Recheck)
+- Actions taken:
+  - Re-parsed only the actual production sections of `example/16.MARTINI/1rkl.0-4.log`.
+  - Audited current `1rkl.stage_7.0-4.up` checkpoints for ion pair ownership and CGL-ion target ownership.
+  - Scanned `run_sim_1rkl.sh` and the Python workflow it calls for stage order, minimization, burn-in, continuation, timestep, and interaction ownership.
+- Results:
+  - Production total potential still drifts from `111.75` to `-2.21 E_up` across the five logs. The remaining drift is mainly `cg_lipid_pair` and `cg_lipid_sc`; `cg_lipid_target` is flat overall.
+  - A copied continuation from `1rkl.stage_7.4.up` is still not stationary: total-potential first/last fifth means `-6.37 -> -41.05 E_up`.
+  - Ions are not excluded from protein: current stage-7 checkpoints contain `14,415` generic ion-protein MARTINI pairs, including both backbone carriers and BB proxies, plus `4,278` ion-ion pairs.
+  - Ions do not have generic ion-CGL/CGLD pairs because all CGL/CGLD interactions are deliberately owned by CGL spline nodes. Ion-CGL coupling is the dedicated excluded-volume CGL target node with all 93 ions as targets.
+- Verification:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
+  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
+  - `git diff --check` passed.

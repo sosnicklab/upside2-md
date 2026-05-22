@@ -48,8 +48,9 @@
 - [x] Phase 12: Validate on copied exact artifacts and update documentation.
 
 ### Known Errors / Blockers
-- User correction: later `1afo.*.log` chunks also show slow total-potential accumulation, from about `-700 E_up` in `1afo.0.log` to below `-1000 E_up` in `1afo.3.log`.  The previous conclusion based on only `1afo.0.log` was incomplete.
-- Reopen the bug as a common residual multi-chunk drift problem.  Compare 1AFO and 1RKL by absolute component levels across chunks, not only first-to-last changes within a single chunk.
+- Active blocker: user reports exact `example/16.MARTINI/1rkl.*.log` still moves from about `+100` to `-20 E_up` over five trajectories. Re-parse the exact logs before considering the drift resolved.
+- User verification request: confirm ion handling is not an ion-protein or ion-lipid exclusion. Ions must still interact physically through generic MARTINI ion-protein, ion-ion, ion-water, and available non-CGL lipid/environment pair paths; only direct CGL/CGLD generic pairs are excluded because CGL physics is owned by dedicated spline nodes.
+- User correction applied: the inconsistent CGL-only `Qa`/`Qd` charge removal has been replaced by a coherent alternate dry-MARTINI protein-backbone model where charged head/tail BB typing is disabled and all backbone carrier/proxy interactions use neutral `P5` consistently.
 
 ### Follow-up Investigation
 - [x] Phase 13: Quantify residual component drift in current `example/16.MARTINI/1rkl.*.log`.
@@ -60,6 +61,12 @@
 - [x] Phase 18: Inspect matching stage HDF5 files for restart-state consistency, production counters, momentum, component ownership, and structural/contact trends.
 - [x] Phase 19: Isolate the common residual sink and implement the smallest physical/runtime correction.
 - [x] Phase 20: Validate copied continuations for both systems and update docs/task notes.
+- [x] Phase 21: Parse fresh post-burn-in 1RKL logs and confirm the burn-in stage was applied.
+- [x] Phase 22: Inspect post-burn-in stage checkpoints for component, contact, ion, CGL-SC, and CGL-target trends across trajectories.
+- [x] Phase 23: Identify and patch the real residual physical/runtime source without altering force-field parameters.
+- [x] Phase 24: Identify terminal charged BB proxy targets as the remaining CGL-target sink and reject the inconsistent CGL-only charged-target split.
+- [x] Phase 25: Replace charged-target-only patch with consistent neutral `P5` backbone typing across generated code paths and existing stage-7 artifacts.
+- [x] Phase 26: Parse exact current 1RKL logs, audit ion pair ownership in the actual current artifacts, and scan `run_sim_1rkl.sh` for physical-model consistency.
 
 ### Review
 - The Predescu coefficient pattern in the shared overload is consistent with the paper; no shared `DerivEngine` implementation change is made.
@@ -92,3 +99,15 @@
   - Decision: add an explicit stage-7 burn-in/equilibration under the same production Hamiltonian before the named production segment.  Preserve all interactions, physical masses, momenta, and hybrid transition counters; do not alter tables or force-field parameters.
   - Implementation: `PROD_70_BURNIN_NSTEPS` defaults to `40000`.  The workflow runs burn-in with production `dt=0.002`, records momentum, promotes final burn-in positions/momenta to `/input`, advances `sc_env_transition_step_start`, deletes burn-in `/output`, and then runs the named production chunk.
   - Validation: a copied 1AFO burn-in smoke test promoted restart-valid input momentum, cleared `/output`, advanced the transition counter, and a follow-on `--restart-using-momentum` MD run succeeded.
+- Reopened 1RKL post-burn-in drift:
+  - Fresh logs did include the new burn-in, and restart bookkeeping is continuous.
+  - Per-pair CGL-target evaluation showed the remaining sink is dominated by two charged terminal backbone proxy targets (`Qd`/`Qa`, atom indices 124 and 154), not by mobile ions.
+  - Rejected intermediate fix: splitting only the CGL-target interaction for `Qa`/`Qd` is inconsistent because the dry-MARTINI protein remains charged in other interaction paths.
+  - Final decision: use the alternate uniform neutral dry-MARTINI protein-backbone model. All protein backbone carrier atoms and virtual BB proxies are `P5` with zero charge; generic MARTINI pairs, BB-env, and CGL-target now share the same backbone definition. The charged head/tail convention is not used because its terminal charged BB--DOPC well is not transferable to the additive single-particle CGL projection.
+  - Existing `martini_test_1rkl_hybrid` stage-7 checkpoints were patched in place: first 155 protein atoms are `P5`/zero-charge, `hybrid_bb_map/bb_type` is all `P5`, `cg_lipid_target` owns all 31 neutral BB proxy targets, `cg_lipid_target_charged_excluded_volume` is absent, and `cg_lipid_target_ion_excluded_volume` still owns 93 ions with nonnegative controls.
+  - Validation: a first copied 10k-step continuation re-equilibrated old charged-model coordinates (`85.55 -> -13.30 E_up`, first/last fifth means `59.35 -> 8.89 E_up`). The next continuation was fluctuation-scale (`-13.30 -> -26.54 E_up`, range `[-73.93, 23.57]`, first/last fifth means `-1.60 -> -35.71 E_up`), and a third continuation reversed the mean change (`-22.91 -> -12.66 E_up`, range `[-58.95, 63.38]`, kinetic ratio `1.017`).
+- Latest 1RKL production recheck:
+  - Exact production sections in `1rkl.0-4.log` still are not stationary: production total potential moves `111.75 -> -2.21 E_up`, and a copied continuation from `1rkl.stage_7.4.up` has first/last fifth means `-6.37 -> -41.05 E_up`.
+  - This is not an ion-protein exclusion or old CGL-target ion sink. Current stage-7 files contain `14,415` generic ion-protein pairs (`11,532` ion-backbone-carrier and `2,883` ion-BB-proxy), `4,278` ion-ion pairs, zero generic ion-CGL/CGLD pairs, and a dedicated CGL-ion excluded-volume target node containing all 93 ions.
+  - Remaining drift is mainly CGL-CGL strain release plus CGL-SC contact relaxation: across `1rkl.0-4.log`, `cg_lipid_pair` changes `350.80 -> 294.28 E_up`, `cg_lipid_sc` changes `-85.23 -> -151.68 E_up`, while `cg_lipid_target` is approximately flat (`-31.51 -> -29.01 E_up`).
+  - Workflow scan: current design uses physical masses, shared Upside integrator semantics, explicit production-Hamiltonian minimization, explicit burn-in, same-Hamiltonian production continuations, CGL-owned lipid interactions, and generic MARTINI non-CGL ion/protein pairs. No force scaling, disabled SC-env/BB-env, or parameter-zeroing was found. The open issue is insufficient stationarity of the production basin, not an ion exclusion.

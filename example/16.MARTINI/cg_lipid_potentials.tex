@@ -258,20 +258,30 @@ Backbone carrier atoms (N, C$_\alpha$, C, O) are not added as independent
 CGL-target particles: the physical backbone target is the virtual MARTINI BB
 proxy site, and forces on that proxy are projected back to the underlying
 Upside backbone carriers.
-Mobile ions are handled separately from BB/protein targets.  The directional
-DOPC--ion energy-expectation table is not used as an attractive additive
-many-ion potential, because the single-particle lipid model has integrated out
-the explicit DOPC headgroup beads and does not include the corresponding
-hydration/solvent ion PMF.  Applying the attractive DOPC--ion well to every
-mobile ion produces a slow artificial ion adsorption sink: the protein remains
-geometrically stable, but \texttt{cg\_lipid\_target} and therefore
-\texttt{total\_potential} keep decreasing over restart chunks.  The runtime
-therefore splits ion targets into a separate CGL--ion node whose controls are
-derived from the current \texttt{cg\_lipid\_target} table by retaining only
-nonnegative values.  This preserves CGL--ion excluded volume while leaving the
-BB/protein CGL-target interaction unchanged.  The MARTINI log reports
-\texttt{cg\_lipid\_target} separately, so \texttt{protein\_potential} contains
-only Upside protein terms plus explicit SC-env and BB-env interface terms.
+This workflow uses the uniform neutral dry-MARTINI backbone model: all
+backbone carrier atoms and all virtual BB proxy sites are typed as
+\texttt{P5} with zero charge.  The charged \texttt{Qd}/\texttt{Qa}
+head/tail BB convention is an alternate CHARMM-GUI/Martini protein model, but
+it is not used here because its terminal charged BB--DOPC well is not
+transferable to the additive single-particle CGL projection.  Applying that
+well to terminal BB proxies produced a slow artificial adsorption sink: the
+protein remained geometrically stable, but \texttt{cg\_lipid\_target} and
+therefore \texttt{total\_potential} kept decreasing over restart chunks.
+Choosing the neutral backbone model keeps the dry-MARTINI protein definition
+consistent across generic MARTINI pairs, BB-env, and CGL-target interactions;
+it is not a CGL-only charge removal.
+Mobile ions are still handled separately from BB/protein targets.  The
+directional DOPC--ion energy-expectation table is not used as an attractive
+additive many-ion potential, because the single-particle lipid model has
+integrated out the explicit DOPC headgroup beads and does not include the
+corresponding hydration/solvent ion PMF.  The runtime therefore splits ion
+targets into a separate CGL--ion node whose controls are derived from the
+current \texttt{cg\_lipid\_target} table by retaining only nonnegative values.
+This preserves CGL--ion excluded volume while leaving neutral BB/protein
+CGL-target attraction unchanged.  The MARTINI log reports all
+\texttt{cg\_lipid\_target*} nodes in the \texttt{cg\_lipid\_target} bucket, so
+\texttt{protein\_potential} contains only Upside protein terms plus explicit
+SC-env and BB-env interface terms.
 The validation invariant is that ions remain ordinary dry-MARTINI particles in
 the generic pair potential for ion--ion and ion--protein interactions, while
 generic pair construction excludes direct CGL--ion pairs so CGL--ion physics is
@@ -279,9 +289,16 @@ owned only by the excluded-volume target node.  Current 1RKL and 1AFO stage-7
 checks have zero generic CGL--ion pairs, nonnegative CGL--ion target controls,
 and no ion adsorption to CGL sites over the saved trajectories: the minimum
 ion--CGL distance remains above $16\,\text{\AA}$, and the ion $z$ distribution
-does not collapse toward the membrane.  Therefore ion behavior should be
-judged from the generic dry-MARTINI ion interactions plus the excluded-volume
-CGL boundary, not from an attractive DOPC--ion single-particle PMF.
+does not collapse toward the membrane.  A copied 1RKL continuation with the
+uniform neutral BB model re-equilibrates the old terminal-proxy well and then
+fluctuates without the monotonic multi-hundred-$E_{\text{up}}$
+\texttt{cg\_lipid\_target} drop seen in the original logs: after the first
+re-equilibration continuation, two further 10k-step continuations had
+first/last fifth total-potential means of $-1.60\rightarrow -35.71$ and
+$-22.91\rightarrow -12.66\,E_{\text{up}}$, with the latter reversing the sign
+of the mean change.  Therefore ion behavior should be judged from the generic
+dry-MARTINI ion interactions plus the excluded-volume CGL boundary, not from
+an attractive DOPC--ion single-particle PMF.
 
 \subsection{Hybrid Interface: Sidechain -- Environment Interaction}
 \label{sec:sc-env}
