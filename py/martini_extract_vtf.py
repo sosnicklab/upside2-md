@@ -316,9 +316,9 @@ def build_cg_lipid_vector_info(struct_h5):
         return None
     if metadata_head_offsets.shape[0] != elem_index.shape[0] or metadata_tail_offsets.shape[0] != elem_index.shape[0]:
         raise ValueError("CG lipid VTF endpoint-offset metadata length mismatch")
-    display_span = float(cv6.attrs.get("orientation_length_ang", 0.0))
+    display_span = float(np.mean(metadata_tail_offsets - metadata_head_offsets))
     if not np.isfinite(display_span) or display_span <= 0.0:
-        display_span = float(np.mean(metadata_tail_offsets - metadata_head_offsets))
+        display_span = float(cv6.attrs.get("head_tail_span_ang", 0.0))
     if not np.isfinite(display_span) or display_span <= 0.0:
         display_span = fallback_span
 
@@ -326,8 +326,8 @@ def build_cg_lipid_vector_info(struct_h5):
         "elem_indices": elem_index,
         "orientation_indices": orientation_index,
         "direction": direction,
-        "head_offsets": np.full(elem_index.shape[0], -0.5 * display_span, dtype=np.float32),
-        "tail_offsets": np.full(elem_index.shape[0], 0.5 * display_span, dtype=np.float32),
+        "head_offsets": metadata_head_offsets,
+        "tail_offsets": metadata_tail_offsets,
         "display_span": display_span,
     }
 
