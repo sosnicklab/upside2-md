@@ -587,6 +587,80 @@ def _cg_lipid_sc_runtime_cutoff_ang(sc_attrs):
     return min(cutoff_ang, fitted_support_ang)
 
 
+def _cg_lipid_leaflet_orientation_spring_eup(pair_grp):
+    """Derive a leaflet-normal mean-field torque from the CGL-CGL table."""
+    params = np.asarray(pair_grp["interaction_param"][0, 0], dtype=np.float64)
+    n_radial = int(pair_grp.attrs.get("n_radial", 14))
+    n_angular = int(pair_grp.attrs.get("n_angular", 15))
+    knot_spacing = float(pair_grp.attrs.get("knot_spacing_ang", 1.4))
+    if params.size != n_radial * n_angular * n_angular:
+        return 0.0
+    table = params.reshape(n_radial, n_angular, n_angular)
+
+    def basis(x, n_ctrl):
+        weights = np.zeros(4, dtype=np.float64)
+        if x <= 1.0:
+            weights[:3] = (1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0)
+            return 0, weights
+        if x >= float(n_ctrl - 2):
+            weights[:3] = (1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0)
+            return n_ctrl - 3, weights
+        x_bin = int(x)
+        base = x_bin - 1
+        excess = x - float(x_bin)
+        for ci in range(4):
+            c0 = np.zeros(4, dtype=np.float64)
+            c0[ci] = 1.0
+            yu1 = excess + 2.0
+            yu2 = excess + 1.0
+            yu3 = excess
+            c11 = (1.0 - yu1 / 3.0) * c0[0] + (yu1 / 3.0) * c0[1]
+            c12 = (1.0 - yu2 / 3.0) * c0[1] + (yu2 / 3.0) * c0[2]
+            c13 = (1.0 - yu3 / 3.0) * c0[2] + (yu3 / 3.0) * c0[3]
+            c22 = (1.0 - yu2 / 2.0) * c11 + (yu2 / 2.0) * c12
+            c23 = (1.0 - yu3 / 2.0) * c12 + (yu3 / 2.0) * c13
+            weights[ci] = (1.0 - yu3) * c22 + yu3 * c23
+        return base, weights
+
+    def angular_coord(cos_angle):
+        inv_dtheta = float(n_angular - 3) * 0.5
+        coord = (float(np.clip(cos_angle, -1.0, 1.0)) + 1.0) * inv_dtheta + 1.0
+        return max(1.0001, min(float(n_angular - 2) - 0.0001, coord))
+
+    def eval_pair(r_ang, n1, n2, phi):
+        unit = np.array([np.cos(phi), np.sin(phi), 0.0], dtype=np.float64)
+        a1 = -float(np.dot(n1, unit))
+        a2 = float(np.dot(n2, unit))
+        br, wr = basis(r_ang / knot_spacing, n_radial)
+        b1, w1 = basis(angular_coord(a1), n_angular)
+        b2, w2 = basis(angular_coord(a2), n_angular)
+        value = 0.0
+        for ir in range(4):
+            rr = br + ir
+            if rr < 0 or rr >= n_radial:
+                continue
+            for ia1 in range(4):
+                aa1 = b1 + ia1
+                if aa1 < 0 or aa1 >= n_angular:
+                    continue
+                for ia2 in range(4):
+                    aa2 = b2 + ia2
+                    if aa2 < 0 or aa2 >= n_angular:
+                        continue
+                    value += wr[ir] * w1[ia1] * w2[ia2] * table[rr, aa1, aa2]
+        return float(value)
+
+    phis = np.linspace(0.0, 2.0 * np.pi, 6, endpoint=False)
+    vertical = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    horizontal = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    deltas = []
+    for r_ang in (8.0, 10.0, 12.0):
+        e_vertical = np.mean([eval_pair(r_ang, vertical, vertical, phi) for phi in phis])
+        e_horizontal = np.mean([eval_pair(r_ang, horizontal, vertical, phi) for phi in phis])
+        deltas.append(max(0.0, e_horizontal - e_vertical))
+    return float(2.0 * np.mean(deltas))
+
+
 def write_stage_debug_outputs(up_file: Path, debug_dir: Path | None = None, prefix: str | None = None):
     """Write PDB/topology diagnostics for a generated MARTINI stage input."""
     enabled = os.environ.get("UPSIDE_WRITE_DEBUG_PDB", "1").strip().lower()
@@ -4578,6 +4652,24 @@ def inject_cg_lipid_nodes(
 
                 n_param = int(pair_grp["interaction_param"].shape[-1])
                 print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1×1×{n_param} params")
+
+                compose = pot["compose_vector6d"]
+                preferred_nz = np.sign(np.asarray(compose["direction"][:, 2], dtype=np.float32))
+                preferred_nz[preferred_nz == 0.0] = 1.0
+                orientation_spring = _cg_lipid_leaflet_orientation_spring_eup(pair_grp)
+                cg_leaflet = pot.create_group("cg_lipid_leaflet_orientation")
+                cg_leaflet.attrs["initialized"] = True
+                cg_leaflet.attrs["arguments"] = np.array([b"compose_vector6d"])
+                cg_leaflet.attrs["spring_const_eup"] = np.float32(orientation_spring)
+                cg_leaflet.attrs["spring_source"] = (
+                    "mean first-shell horizontal-orientation penalty from cg_lipid_pair table"
+                )
+                cg_leaflet.create_dataset("index", data=np.arange(n_cg, dtype=np.int32))
+                cg_leaflet.create_dataset("preferred_nz", data=preferred_nz.astype(np.float32))
+                print(
+                    "  Injected cg_lipid_leaflet_orientation: "
+                    f"{n_cg} CG lipids, k={orientation_spring:.3f} E_up"
+                )
 
             if has_sc:
                 # Check for SC placement node before creating cg_lipid_sc node

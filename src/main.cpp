@@ -216,7 +216,8 @@ static inline bool is_sc_env_interface_term_name(const std::string& name) {
 }
 
 static inline bool is_cg_lipid_pair_term_name(const std::string& name) {
-    return is_prefix("cg_lipid_pair", name);
+    return is_prefix("cg_lipid_pair", name) ||
+           is_prefix("cg_lipid_leaflet_orientation", name);
 }
 
 static inline bool is_cg_lipid_sc_term_name(const std::string& name) {

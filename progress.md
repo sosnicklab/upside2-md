@@ -96,3 +96,41 @@
   - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
   - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
   - `git diff --check` passed.
+
+## 2026-05-21 (1RKL Stage-7.4 VTF Edge-Lipid Geometry)
+- Actions taken:
+  - Compared `1rkl.stage_7.4.vtf` display coordinates against the restored HDF5 `CGL`/`CGLD` coordinates using minimum-image vectors.
+  - Confirmed the accidentally cleared stage-7.4 `/output` group was restored by rerunning the exact logged stage-7.4 MD command with seed `3496503789`.
+  - Inspected the C++ CGL orientation force path: CGL pair/SC/target nodes accumulate 6D sensitivities and `compose_vector6d` propagates orientation derivatives to CGL/CGLD physical coordinates.
+  - Fixed VTF display geometry to use stored per-lipid head/tail offsets instead of a synthetic symmetric rod.
+  - Regenerated `outputs/martini_test_1rkl_hybrid/1rkl.stage_7.4.vtf`.
+- Files modified:
+  - `py/martini_extract_vtf.py`
+  - `example/16.MARTINI/cg_lipid_potentials.tex`
+  - `plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - `python3 -m py_compile py/martini_extract_vtf.py` passed.
+  - Restored `1rkl.stage_7.4.up` has `output/pos` shape `(201, 1, 812, 3)` and final output time `60.0`.
+  - Regenerated VTF has 201 frames and 1345 atoms; lipid display z remains inside the half-box.
+
+## 2026-05-22 (In-Plane CGL Orientation Fix)
+- Actions taken:
+  - Restored the previous symmetric VTF lipid display style and regenerated `1rkl.stage_7.4.vtf`.
+  - Quantified the real CGLD-CGL orientation defect directly from HDF5: the old stage-7.4 output had `34` lipids with `|n_z|<0.5` and `14` with `|n_z|<0.25`.
+  - Rejected direct restoration of the stored CGL-CGL radial attraction after a copied test showed rapid many-neighbor collapse.
+  - Added MARTINI-only `cg_lipid_leaflet_orientation` in C++ and workflow injection in Python. The spring constant is derived from the current CGL-CGL first-neighbor horizontal-orientation penalty.
+  - Replaced the current `1rkl.stage_7.4.up` with the validated corrected continuation and regenerated `1rkl.stage_7.4.vtf`.
+- Files modified:
+  - `src/martini_cg_lipid.cpp`
+  - `src/main.cpp`
+  - `py/martini_prepare_system_lib.py`
+  - `example/16.MARTINI/cg_lipid_potentials.tex`
+  - `plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - `python3 -m py_compile py/martini_prepare_system_lib.py py/martini_extract_vtf.py` passed.
+  - `cmake --build obj -j 4` passed with existing warnings.
+  - Corrected stage-7.4 output has zero lipids with `|n_z|<0.5`, zero with `|n_z|<0.25`, and no anti-aligned lipids.

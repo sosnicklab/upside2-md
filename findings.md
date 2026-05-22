@@ -1,6 +1,19 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-22: User correction on stage-7.4 in-plane lipid orientations.
+  - The CGLD-CGL vectors lying in the x-y plane are a real physical model defect, not a VTF-only issue. The previous symmetric VTF display style is preferred and was restored.
+  - Current 1RKL stage-7.4 output before the fix had `34` lipids with `|n_z|<0.5` and `14` with `|n_z|<0.25`; the count grew across stage-7 chunks.
+  - Root cause: the CGL-CGL table clips all negative tensor controls to zero. That avoids a known additive many-neighbor collapse but also removes enough bilayer orientational cohesion that sparse CGL particles can become near-free rotors.
+  - Directly restoring the stored radial attractive background is not acceptable: on a copied stage-7.4 artifact, `cg_lipid_pair` accumulated from about `-1453` to `-3953 E_up` over one 10k-step chunk.
+  - Physical fix: add `cg_lipid_leaflet_orientation`, a MARTINI-only mean-field orientation term. Its spring is derived from the current CGL-CGL table as twice the mean first-neighbor energy penalty for rotating one lipid into the membrane plane while the neighbor remains leaflet-normal. It uses each lipid's initial dry-MARTINI leaflet sign and applies force through the CGLD-derived orientation coordinate.
+  - Copied validation with `k=48.684 E_up` reduced final `|n_z|<0.5` and `|n_z|<0.25` counts to zero and removed anti-aligned lipids.
+- 2026-05-21: 1RKL stage-7.4 edge-lipid VTF geometry check.
+  - Do not run `obj/upside` diagnostics directly on original `.up` artifacts, even with `--duration-steps 0`; the program can rewrite the `/output` group. Use a copied HDF5 file for derivative checks.
+  - The reported edge-lipid oddity in `outputs/martini_test_1rkl_hybrid/1rkl.stage_7.4.vtf` is not a special physical box-edge interaction. HDF5 CGL-CGLD minimum-image lengths are normal (`11.13-12.04 A`), edge and non-edge z distributions are comparable, and no displayed lipid z coordinate leaves the half-box.
+  - VTF edge artifacts come from periodic imaging: a continuous single-particle lipid display rod whose center is near an x/y periodic boundary can put one endpoint outside the primary image. The extractor must keep that rod continuous rather than independently wrapping endpoints.
+  - `py/martini_extract_vtf.py` now uses the stored per-lipid `display_head_offset_ang` and `display_tail_offset_ang` metadata instead of replacing the display geometry with an artificial symmetric rod.
+  - The trajectory still shows a real slow increase in CGL z spread and tilted CGLD-CGL directions across stage-7 chunks. The C++ derivative path is present: CGL spline nodes write 6D sensitivities and `compose_vector6d` propagates orientation sensitivity to CGL/CGLD coordinates.
 - 2026-05-21: User correction on latest 1RKL production drift and ion ownership.
   - Rule: when parsing workflow logs, isolate the actual production stage section. `1rkl.0.log` also contains stage-6 and minimization output; using every `total_potential` line overstates the production baseline.
   - Exact production sections in `example/16.MARTINI/1rkl.0-4.log` still are not stationary: logged production moves from `111.75` to `-2.21 E_up` overall, and a copied continuation from `1rkl.stage_7.4.up` has first/last fifth total-potential means `-6.37 -> -41.05 E_up`.

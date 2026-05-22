@@ -49,6 +49,8 @@
 
 ### Known Errors / Blockers
 - Active blocker: user reports exact `example/16.MARTINI/1rkl.*.log` still moves from about `+100` to `-20 E_up` over five trajectories. Re-parse the exact logs before considering the drift resolved.
+- Active blocker: user reports `outputs/martini_test_1rkl_hybrid/1rkl.stage_7.4.vtf` shows edge lipids with strange z coordinates and orientations. Determine whether this is a VTF periodic-wrapping/rendering bug or a real CGL/CGLD orientation dynamics problem.
+- User correction: treat in-plane CGLD-CGL orientation vectors as a real physical defect. Restore the previous VTF display style and debug why single-particle lipid orientations can rotate into the x-y plane.
 - User verification request: confirm ion handling is not an ion-protein or ion-lipid exclusion. Ions must still interact physically through generic MARTINI ion-protein, ion-ion, ion-water, and available non-CGL lipid/environment pair paths; only direct CGL/CGLD generic pairs are excluded because CGL physics is owned by dedicated spline nodes.
 - User correction applied: the inconsistent CGL-only `Qa`/`Qd` charge removal has been replaced by a coherent alternate dry-MARTINI protein-backbone model where charged head/tail BB typing is disabled and all backbone carrier/proxy interactions use neutral `P5` consistently.
 
@@ -67,6 +69,8 @@
 - [x] Phase 24: Identify terminal charged BB proxy targets as the remaining CGL-target sink and reject the inconsistent CGL-only charged-target split.
 - [x] Phase 25: Replace charged-target-only patch with consistent neutral `P5` backbone typing across generated code paths and existing stage-7 artifacts.
 - [x] Phase 26: Parse exact current 1RKL logs, audit ion pair ownership in the actual current artifacts, and scan `run_sim_1rkl.sh` for physical-model consistency.
+- [x] Phase 27: Debug edge lipid geometry in `1rkl.stage_7.4.vtf` by comparing VTF rendering coordinates with HDF5 minimum-image CGL/CGLD orientation vectors.
+- [x] Phase 28: Revert the VTF display style change, quantify in-plane orientation states directly from `1rkl.stage_7.4.vtf`/HDF5, and identify the physical/runtime root cause without parameter twisting.
 
 ### Review
 - The Predescu coefficient pattern in the shared overload is consistent with the paper; no shared `DerivEngine` implementation change is made.
@@ -111,3 +115,9 @@
   - This is not an ion-protein exclusion or old CGL-target ion sink. Current stage-7 files contain `14,415` generic ion-protein pairs (`11,532` ion-backbone-carrier and `2,883` ion-BB-proxy), `4,278` ion-ion pairs, zero generic ion-CGL/CGLD pairs, and a dedicated CGL-ion excluded-volume target node containing all 93 ions.
   - Remaining drift is mainly CGL-CGL strain release plus CGL-SC contact relaxation: across `1rkl.0-4.log`, `cg_lipid_pair` changes `350.80 -> 294.28 E_up`, `cg_lipid_sc` changes `-85.23 -> -151.68 E_up`, while `cg_lipid_target` is approximately flat (`-31.51 -> -29.01 E_up`).
   - Workflow scan: current design uses physical masses, shared Upside integrator semantics, explicit production-Hamiltonian minimization, explicit burn-in, same-Hamiltonian production continuations, CGL-owned lipid interactions, and generic MARTINI non-CGL ion/protein pairs. No force scaling, disabled SC-env/BB-env, or parameter-zeroing was found. The open issue is insufficient stationarity of the production basin, not an ion exclusion.
+- Edge-lipid VTF geometry recheck:
+  - The HDF5 stage-7.4 endpoint is not showing a special physical box-edge problem. CGL-CGLD minimum-image orientation lengths remain normal (`11.13-12.04 A`) and edge lipid CGL/CGLD z ranges are comparable to non-edge lipids; no lipid display atoms are outside the z half-box.
+  - User correction accepted: the in-plane CGLD-CGL orientations are a real physical defect, not just VTF display. The previous symmetric VTF display style was restored.
+  - Root cause: the CGL-CGL tensor table had all negative controls clipped to zero, leaving a largely repulsive lipid-lipid term. Sparse single-particle lipids could therefore rotate into the membrane plane as nearly free rotors. Restoring the stored radial attraction directly was rejected: a copied test drove `cg_lipid_pair` from about `-1453` to `-3953 E_up` over one chunk, showing additive many-neighbor collapse.
+  - Fix: add MARTINI-only `cg_lipid_leaflet_orientation`, a mean-field orientation term derived from the existing CGL-CGL first-neighbor horizontal-orientation penalty. It uses the initial dry-MARTINI leaflet sign and propagates through the same CGLD orientation coordinate.
+  - Validation on a copied stage-7.4 continuation: original output had `34` lipids with `|n_z|<0.5` and `14` with `|n_z|<0.25`; the leaflet-normal node reduced both counts to `0`, with no anti-aligned lipids. The corrected `1rkl.stage_7.4.up` and `1rkl.stage_7.4.vtf` have been regenerated.

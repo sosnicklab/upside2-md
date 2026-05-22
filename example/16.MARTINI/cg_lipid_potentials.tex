@@ -52,6 +52,13 @@ particle mass remains the sum of the 14 DOPC bead masses; CGLD is an internal
 orientation-coordinate carrier with zero nonbonded interactions, not an
 additional dry-MARTINI bead.
 
+VTF trajectory output expands each CGL particle only for visualization.  The
+displayed endpoints use a symmetric rod with the CGL center at the midpoint;
+these display atoms are not simulation particles.  At periodic box boundaries a
+continuous lipid display rod can legitimately have an endpoint outside the
+primary image.  This is a periodic visualization artifact, not an extra force or
+a physical box edge.
+
 \paragraph{Derived Contact Distance.}
 The single-particle lipid contact distance is derived from the dry-MARTINI DOPC
 nonbonded parameters rather than set independently:
@@ -396,8 +403,27 @@ single-particle lipid is owned by a dedicated spline node:
 
 This means CGL-CGL torque, CGL-SC torque, and CGL-target torque act directly on
 the CGLD-position-derived vector through the same coordinate derivatives used
-for position forces.  The model does not include an orientation spring or any
-z-axis pinning term.
+for position forces.
+
+\paragraph{Leaflet-normal orientation mean field.}
+The pairwise CGL-CGL table is intentionally not made attractive by restoring the
+full dry-MARTINI radial background, because doing so creates a many-neighbor
+collapse in the additive one-particle representation.  However, a planar bilayer
+still has a physical leaflet normal: lower-leaflet DOPC axes point toward
+$+z$ and upper-leaflet axes point toward $-z$.  The hybrid model therefore adds
+a mean-field orientation term
+\begin{equation}
+  U_{\text{leaflet}} =
+  \frac{1}{2} k_{\text{leaflet}}(\hat n_z - s_i)^2 ,
+\end{equation}
+where $s_i$ is the initial dry-MARTINI leaflet sign of lipid $i$.  The force is
+applied to the CGLD-derived orientation coordinate, not to display atoms.  The
+constant $k_{\text{leaflet}}$ is derived from the current CGL-CGL spline table:
+it is twice the average first-neighbor energy penalty for rotating one lipid
+from the leaflet normal into the membrane plane while the neighboring lipid
+remains leaflet-normal.  This preserves the physical orientational consequence
+of the existing dry-MARTINI table without reintroducing the unstable radial
+many-neighbor attraction.
 
 \subsection{Stage-6 Relaxation Protocol}
 

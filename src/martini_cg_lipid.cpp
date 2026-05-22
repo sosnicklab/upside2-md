@@ -1069,9 +1069,61 @@ void CGLipidTargetPotential::propagate_deriv() {
 }
 
 // ===================================================================
+// CGLipidLeafletOrientationPotential — mean-field leaflet normal torque
+// ===================================================================
+struct CGLipidLeafletOrientationPotential : public PotentialNode {
+    CoordNode& cg_pos;
+    vector<int> index;
+    vector<float> preferred_nz;
+    float spring_const;
+
+    CGLipidLeafletOrientationPotential(hid_t grp, CoordNode& cg_pos_)
+        : PotentialNode()
+        , cg_pos(cg_pos_)
+        , spring_const(read_attribute<float>(grp, ".", "spring_const_eup", 0.f))
+    {
+        check_elem_width(cg_pos, 6);
+        index = read_int_dataset(grp, "index");
+        vector<hsize_t> sz = get_dset_size(1, grp, "preferred_nz");
+        if(sz[0] != index.size())
+            throw string("cg_lipid_leaflet_orientation preferred_nz size mismatch");
+        preferred_nz.resize(index.size());
+        traverse_dset<1, float>(grp, "preferred_nz", [&](size_t i, float v) {
+            preferred_nz[i] = v >= 0.f ? 1.f : -1.f;
+        });
+        if(!(spring_const >= 0.f))
+            throw string("cg_lipid_leaflet_orientation spring_const_eup must be nonnegative");
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        (void)mode;
+        VecArray cg = cg_pos.output;
+        potential = 0.f;
+        for(size_t i = 0; i < index.size(); ++i) {
+            int idx = index[i];
+            if(idx < 0 || idx >= cg_pos.n_elem) continue;
+            float delta = cg(5, idx) - preferred_nz[i];
+            potential += 0.5f * spring_const * delta * delta;
+        }
+    }
+
+    virtual void propagate_deriv() override {
+        VecArray cg = cg_pos.output;
+        VecArray cg_sens = cg_pos.sens;
+        for(size_t i = 0; i < index.size(); ++i) {
+            int idx = index[i];
+            if(idx < 0 || idx >= cg_pos.n_elem) continue;
+            float delta = cg(5, idx) - preferred_nz[i];
+            cg_sens(5, idx) += spring_const * delta;
+        }
+    }
+};
+
+// ===================================================================
 // Node registration
 // ===================================================================
 static RegisterNodeType<ComposeVector6D, 1> _reg_cv("compose_vector6d");
 static RegisterNodeType<CGLipidPairPotential, 1> _reg_cg_pair("cg_lipid_pair");
 static RegisterNodeType<CGLipidSCPotential, 2> _reg_cg_sc("cg_lipid_sc");
 static RegisterNodeType<CGLipidTargetPotential, 2> _reg_cg_target("cg_lipid_target");
+static RegisterNodeType<CGLipidLeafletOrientationPotential, 1> _reg_cg_leaflet_orientation("cg_lipid_leaflet_orientation");
