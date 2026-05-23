@@ -18,11 +18,8 @@ import h5py
 import numpy as np
 import tables as tb
 
-from martini_cg_lipid_params import (
-    DOPC_ATOM_NAMES,
-    derive_dopc_cg_params,
-    parse_dry_martini_masses,
-)
+from martini_cg_lipid_params import derive_dopc_cg_params
+from martini_itp_reader import parse_itp_atomtype_masses
 
 PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
@@ -1095,8 +1092,19 @@ def canonical_lipid_resname(resname: str) -> str:
     return resname
 
 
-# DOPC 14-bead atom names in ITP order (indices 0-13)
-_DOPC_ATOM_NAMES = list(DOPC_ATOM_NAMES)
+# Lazy-loaded from ITP at first use.
+_DOPC_ATOM_NAMES: list | None = None
+
+
+def _ensure_dopc_atom_names(lipids_itp_path: Path | None = None) -> list:
+    global _DOPC_ATOM_NAMES
+    if _DOPC_ATOM_NAMES is not None:
+        return _DOPC_ATOM_NAMES
+    if lipids_itp_path is None:
+        lipids_itp_path = REPO_ROOT / "parameters" / "dryMARTINI" / "dry_martini_v2.1_lipids.itp"
+    from martini_itp_reader import parse_dopc_from_itp
+    _DOPC_ATOM_NAMES = parse_dopc_from_itp(lipids_itp_path)["atom_names"]
+    return _DOPC_ATOM_NAMES
 
 
 def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
@@ -1124,6 +1132,7 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
     display_head_offsets : (n_lipid,) float -- hydrophilic endpoint offset along direction (Å)
     display_tail_offsets : (n_lipid,) float -- hydrophobic endpoint offset along direction (Å)
     """
+    dopc_atom_names = _ensure_dopc_atom_names()
     n_atoms = len(initial_positions)
     is_dopc = np.array([
         residue_names[i].upper() in ("DOPC", "DOP")
@@ -1173,7 +1182,7 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
 
         # Get bead positions in ITP order
         bead_pos = np.zeros((14, 3), dtype=float)
-        for bi, aname in enumerate(_DOPC_ATOM_NAMES):
+        for bi, aname in enumerate(dopc_atom_names):
             if aname in name_to_pos:
                 bead_pos[bi] = name_to_pos[aname]
             else:
@@ -2302,7 +2311,7 @@ def read_martini_masses(ff_file):
                         f"  Please ensure the MARTINI force field file exists and is readable.\n"
                         f"  Aborting to prevent incorrect simulation results.")
     
-    return parse_dry_martini_masses(ff_file_path)
+    return parse_itp_atomtype_masses(ff_file_path)
 
 def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     """

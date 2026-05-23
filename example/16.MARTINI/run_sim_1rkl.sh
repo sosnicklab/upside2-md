@@ -147,6 +147,15 @@ if [ -n "${CONTINUE_STAGE_70_FROM}" ]; then
     echo "Detected continuation source: ${CONTINUE_STAGE_70_FROM}"
 fi
 
+MARTINI_FF_DIR="${UPSIDE_HOME}/parameters/dryMARTINI"
+if [ ! -f "${MARTINI_FF_DIR}/particle.h5" ] || \
+   [ ! -f "${MARTINI_FF_DIR}/sidechain.h5" ] || \
+   [ ! -f "${MARTINI_FF_DIR}/dopc.h5" ] || \
+   [ ! -f "${MARTINI_FF_DIR}/interlipid.h5" ]; then
+    echo "One or more MARTINI parameter files missing. Generating..."
+    python3 "${PROJECT_ROOT}/py/martini_gen_params.py" --upside-home "${UPSIDE_HOME}"
+fi
+
 python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
     --pdb-id "${PDB_ID}" \
     --runtime-pdb-id "${RUNTIME_PDB_ID}" \

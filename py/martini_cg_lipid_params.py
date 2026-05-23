@@ -1,51 +1,21 @@
 #!/usr/bin/env python3
-"""Shared dry-MARTINI DOPC-derived parameters for single-particle CG lipids."""
+"""Shared dry-MARTINI DOPC-derived parameters for single-particle CG lipids.
+
+All DOPC-specific bead data (atom names, bead types, charges, bonds, angles)
+is read from the ITP files via ``martini_itp_reader``.  This module only
+contains the *derivation* logic that turns raw ITP data into coarse-grained
+single-particle lipid parameters.
+"""
 
 from __future__ import annotations
 
 import math
-from pathlib import Path
 from typing import Iterable
 
 import numpy as np
 
 ENERGY_CONVERSION_KJ_PER_EUP = 2.914952774272
 LENGTH_CONVERSION_A_PER_NM = 10.0
-
-DOPC_ATOM_NAMES = (
-    "NC3", "PO4", "GL1", "GL2",
-    "C1A", "C2A", "D3A", "C4A", "C5A",
-    "C1B", "C2B", "D3B", "C4B", "C5B",
-)
-
-DOPC_BEAD_TYPES = (
-    "Q0", "Qa", "Na", "Na",
-    "C1", "C1", "C3", "C1", "C1",
-    "C1", "C1", "C3", "C1", "C1",
-)
-
-DOPC_BEAD_CHARGES = (
-    1.0, -1.0, 0.0, 0.0,
-    0.0, 0.0, 0.0, 0.0, 0.0,
-    0.0, 0.0, 0.0, 0.0, 0.0,
-)
-
-# DOPC bonded topology from dry_martini_v2.1_lipids.itp (0-based indices).
-DOPC_BONDS = (
-    (0, 1, 0.450, 1250.0),
-    (1, 2, 0.450, 1250.0),
-    (2, 3, 0.370, 1250.0),
-    (2, 4, 0.480, 1250.0),
-    (4, 5, 0.480, 1250.0),
-    (5, 6, 0.480, 1250.0),
-    (6, 7, 0.480, 1250.0),
-    (7, 8, 0.480, 1250.0),
-    (3, 9, 0.480, 1250.0),
-    (9, 10, 0.480, 1250.0),
-    (10, 11, 0.480, 1250.0),
-    (11, 12, 0.480, 1250.0),
-    (12, 13, 0.480, 1250.0),
-)
 
 
 def _pair_param(pair_params: dict, type_i: str, type_j: str) -> dict | None:
@@ -65,37 +35,12 @@ def dopc_max_sigma_nm(bead_types: Iterable[str], pair_params: dict) -> float:
     return max(sigmas)
 
 
-def parse_dry_martini_masses(ff_file: str | Path) -> dict[str, float]:
-    """Read dry-MARTINI atomtype masses from an ITP file."""
-    ff_path = Path(ff_file).expanduser().resolve()
-    masses: dict[str, float] = {}
-    in_atomtypes = False
-    with ff_path.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.split(";", 1)[0].strip()
-            if not line:
-                continue
-            if line.startswith("["):
-                in_atomtypes = line.replace(" ", "") == "[atomtypes]"
-                continue
-            if not in_atomtypes:
-                continue
-            parts = line.split()
-            if len(parts) < 2:
-                continue
-            try:
-                masses[parts[0]] = float(parts[1])
-            except ValueError:
-                continue
-    return masses
-
-
 def derive_dopc_cg_params(
     ref_bead_positions_nm: np.ndarray,
     bead_types: Iterable[str],
     pair_params: dict,
     bead_masses_g_mol: Iterable[float] | None = None,
-    bonds: Iterable[tuple[int, int, float, float]] = DOPC_BONDS,
+    bonds: Iterable[tuple[int, int, float, float]] | None = None,
     energy_conversion_kj_per_eup: float = ENERGY_CONVERSION_KJ_PER_EUP,
     length_conversion_ang_per_nm: float = LENGTH_CONVERSION_A_PER_NM,
 ) -> dict:
@@ -104,7 +49,14 @@ def derive_dopc_cg_params(
     The returned values are in Upside stage units where noted.  This keeps the
     single-particle lipid model tied to the dry-MARTINI bead geometry and ITP
     parameters instead of standalone stabilization constants.
+
+    *bonds* must be provided explicitly (no default).  Use
+    ``martini_itp_reader.parse_dopc_from_itp()`` to obtain them.
     """
+    if bonds is None:
+        raise TypeError("derive_dopc_cg_params() requires bonds= (no default); "
+                        "parse them from the ITP via martini_itp_reader")
+
     ref_nm = np.asarray(ref_bead_positions_nm, dtype=np.float64)
     if ref_nm.shape != (14, 3):
         raise ValueError(f"ref_bead_positions_nm must have shape (14,3), got {ref_nm.shape}")

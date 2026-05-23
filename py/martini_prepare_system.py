@@ -13,7 +13,6 @@ from pathlib import Path
 
 import numpy as np
 
-from martini_build_tables import build_martini_tables
 from martini_prepare_system_lib import (
     build_backbone_with_virtual_bb,
     center_of_mass,
@@ -800,7 +799,7 @@ def set_barostat_type(up_file: Path, barostat_type: int):
 def ensure_sc_martini_library(args):
     import h5py
 
-    library = args.sc_martini_library
+    library = args.sidechain_h5
     if not library.exists():
         raise FileNotFoundError(library)
     with h5py.File(library, "r") as h5:
@@ -902,7 +901,7 @@ def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, a
     set_hybrid_production_controls(target_file, args)
     inject_stage7_sc_table_nodes(
         up_file=target_file,
-        martini_h5=args.sc_martini_library,
+        martini_h5=args.sidechain_h5,
         upside_home=args.upside_home,
         rama_library=args.upside_rama_library,
         rama_sheet_mixing=args.upside_rama_sheet_mixing,
@@ -911,7 +910,7 @@ def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, a
     )
     # SC placement node must exist before CG lipid node injection
     # so that cg_lipid_sc (CG↔SC) can find it.
-    inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.martini_table_h5)
+    inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.dopc_h5)
     assert_hybrid_stage_active(
         target_file,
         current_stage,
@@ -941,7 +940,7 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
     inject_hybrid_mapping(target_file, args.hybrid_mapping_file)
     set_hybrid_control_mode(target_file, args.hybrid_preprod_activation_stage)
     set_stage_label(target_file, stage_label)
-    inject_particles_table(up_file=target_file, martini_h5=args.martini_table_h5)
+    inject_particles_table(up_file=target_file, martini_h5=args.particle_h5)
     if stage_label == "production":
         inject_hybrid_interface_nodes(args, target_file, "production", "production")
     else:
@@ -1292,8 +1291,10 @@ def normalize_hybrid_workflow_args(args):
     args.upside_executable = args.upside_home / "obj" / "upside"
     args.martini_ff_dir = args.upside_home / "parameters" / "dryMARTINI"
     args.mass_ff_file = args.martini_ff_dir / "dry_martini_v2.1.itp"
-    args.martini_table_h5 = args.run_dir / "martini.h5"
-    args.sc_martini_library = args.martini_table_h5
+    args.particle_h5 = args.martini_ff_dir / "particle.h5"
+    args.sidechain_h5 = args.martini_ff_dir / "sidechain.h5"
+    args.dopc_h5 = args.martini_ff_dir / "dopc.h5"
+    args.interlipid_h5 = args.martini_ff_dir / "interlipid.h5"
     args.upside_rama_library = args.upside_home / "parameters" / "common" / "rama.dat"
     args.upside_rama_sheet_mixing = args.upside_home / "parameters" / "ff_2.1" / "sheet"
     args.upside_hbond_energy = args.upside_home / "parameters" / "ff_2.1" / "hbond.h5"
@@ -1402,6 +1403,35 @@ def _detect_has_bonded_environment_particles(up_file: Path) -> bool:
     return bool(bonded_env_pairs)
 
 
+def ensure_martini_parameter_libraries(args):
+    """Check all four pre-generated .h5 files exist under parameters/dryMARTINI/.
+
+    If any are missing, print a clear error telling the user to run the
+    generation script.  Coverage checks and incremental append are future
+    enhancements; for now this is an existence gate.
+    """
+    required = [
+        (args.particle_h5, "particle.h5"),
+        (args.sidechain_h5, "sidechain.h5"),
+        (args.dopc_h5, "dopc.h5"),
+        (args.interlipid_h5, "interlipid.h5"),
+    ]
+    missing = []
+    for path, name in required:
+        if not path.exists():
+            missing.append(name)
+    if missing:
+        raise RuntimeError(
+            f"MARTINI parameter files not found under {args.martini_ff_dir}: "
+            + ", ".join(missing)
+            + "\nRun 'python py/martini_gen_params.py --upside-home "
+            + str(args.upside_home) + "' to generate them."
+        )
+    print("MARTINI parameter libraries found:")
+    for _, name in required:
+        print(f"  {name}")
+
+
 def run_hybrid_workflow_command(argv):
     parser = argparse.ArgumentParser(description="Run the hybrid 1RKL dry-MARTINI workflow.")
     parser.add_argument("--pdb-id", default=env_default("PDB_ID", "1rkl"))
@@ -1500,64 +1530,7 @@ def run_hybrid_workflow_command(argv):
         print("=== Initial Debug Only Complete ===")
         return
 
-    # Extract the canonical dry-MARTINI DOPC bead reference for CG lipid table fitting.
-    # The system bilayer PDB still controls placement; the potential uses the force-field
-    # reference lipid so table coefficients do not depend on one packed snapshot conformation.
-    cg_lipid_config = None
-    try:
-        from martini_prepare_system_lib import _DOPC_ATOM_NAMES
-
-        table_ref_pdb = (args.upside_home / "parameters" / "dryMARTINI" / "DOPC.pdb").resolve()
-        dopc_atoms = []
-        with open(table_ref_pdb) as f:
-            for line in f:
-                if not line.startswith(("ATOM", "HETATM")):
-                    continue
-                resname = line[17:21].strip().upper()
-                if resname not in ("DOPC", "DOP"):
-                    continue
-                aname = line[12:16].strip().upper()
-                x = float(line[30:38])
-                y = float(line[38:46])
-                z = float(line[46:54])
-                dopc_atoms.append({"name": aname, "x": x, "y": y, "z": z})
-
-        n_per_lipid = 14
-        if len(dopc_atoms) >= n_per_lipid:
-            first = dopc_atoms[:n_per_lipid]
-            com = np.mean([[a["x"], a["y"], a["z"]] for a in first], axis=0)
-            ref_bead_positions = np.array(
-                [[a["x"] - com[0], a["y"] - com[1], a["z"] - com[2]] for a in first]
-            )
-            ref_bead_positions_nm = ref_bead_positions * 0.1
-
-            from martini_build_tables import _DOPC_BEAD_TYPES, _DOPC_BEAD_CHARGES
-
-            cg_lipid_config = {
-                "ref_bead_positions_nm": ref_bead_positions_nm,
-                "bead_types": list(_DOPC_BEAD_TYPES),
-                "bead_charges": list(_DOPC_BEAD_CHARGES),
-            }
-            print(f"Extracted CG lipid table reference from {table_ref_pdb.name}: "
-                  f"{len(dopc_atoms)} DOPC atoms ({len(dopc_atoms) // n_per_lipid} lipids)")
-        else:
-            print(f"Fewer than {n_per_lipid} DOPC atoms in {table_ref_pdb}, "
-                  f"skipping CG lipid table build")
-    except Exception as e:
-        print(f"Could not extract CG lipid reference positions: {e}")
-
-    skip_build = os.environ.get("UPSIDE_SKIP_MARTINI_BUILD", "")
-    if skip_build and args.martini_table_h5.exists():
-        print(f"UPSIDE_SKIP_MARTINI_BUILD set, reusing existing {args.martini_table_h5}")
-    else:
-        build_martini_tables(
-            output_path=args.martini_table_h5,
-            dry_ff_path=args.mass_ff_file,
-            martinize_path=args.upside_home / "py" / "martinize.py",
-            sidechain_lib_path=args.upside_home / "parameters" / "ff_2.1" / "sidechain.h5",
-            forcefield_name="martini22",
-            cg_lipid_config=cg_lipid_config,
-        )
+    ensure_martini_parameter_libraries(args)
 
     files = {
         "prepared_60": args.checkpoint_dir / f"{args.pdb_id}.stage_6.0.prepared.up",

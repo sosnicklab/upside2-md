@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Build a per-run martini.h5 with combined LJ+Coulomb spline tables.
+"""Build MARTINI combined LJ+Coulomb spline tables from ITP-derived parameters.
 
-Generates particle-particle combined energy grids and sidechain-environment
-orientation-aware combined energy tables, trimmed to only the types and
-residues actually present in the current system.
+All particle-type data and bead-level parameters are read from ITP files via
+``martini_itp_reader`` — nothing is hardcoded here.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import math
 import os
 from pathlib import Path
@@ -17,12 +15,12 @@ from typing import Dict, Iterable, List, Set, Tuple
 import h5py
 import numpy as np
 
-from martini_cg_lipid_params import (
-    DOPC_BEAD_TYPES,
-    DOPC_BEAD_CHARGES,
-    DOPC_BONDS,
-    derive_dopc_cg_params,
-    parse_dry_martini_masses,
+from martini_cg_lipid_params import derive_dopc_cg_params
+from martini_itp_reader import (
+    infer_charge_from_atomtype,
+    load_martini_forcefield,
+    parse_dry_forcefield,
+    parse_itp_atomtype_masses,
 )
 
 # ---------------------------------------------------------------------------
@@ -46,9 +44,6 @@ CANONICAL_RESIDUES = (
     "SER", "THR", "TRP", "TYR", "VAL",
 )
 
-POSITIVE_TYPES = {"Qda", "Qd", "SQda", "SQd"}
-NEGATIVE_TYPES = {"Qa", "SQa"}
-
 CANONICAL_CB_POSITION_ANG = (0.0, 0.94375626, 1.2068012)
 _cb_norm = math.sqrt(sum(x * x for x in CANONICAL_CB_POSITION_ANG))
 CANONICAL_CB_VECTOR_UNIT = tuple(x / _cb_norm for x in CANONICAL_CB_POSITION_ANG)
@@ -56,18 +51,25 @@ CANONICAL_CB_VECTOR_UNIT = tuple(x / _cb_norm for x in CANONICAL_CB_POSITION_ANG
 SCHEMA_PARTICLES = "martini_particles_combined_v1"
 SCHEMA_SC = "martini_sc_combined_v1"
 
+# Lazy-loaded from ITP at first CG lipid table build.
+_CURRENT_CG_BONDS: list | None = None
+_CURRENT_CG_ANGLES: list | None = None
+
+
+def _ensure_cg_bonds_angles(lipids_itp_path: Path):
+    """Load DOPC bonds/angles from ITP once, cache at module level."""
+    global _CURRENT_CG_BONDS, _CURRENT_CG_ANGLES
+    if _CURRENT_CG_BONDS is not None:
+        return
+    from martini_itp_reader import parse_dopc_from_itp
+    dopc = parse_dopc_from_itp(lipids_itp_path)
+    _CURRENT_CG_BONDS = list(dopc["bonds"])
+    _CURRENT_CG_ANGLES = list(dopc["angles"])
+
 
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
-
-def _infer_type_charge(bead_type: str) -> float:
-    bt = bead_type.strip()
-    if bt in POSITIVE_TYPES:
-        return 1.0
-    if bt in NEGATIVE_TYPES:
-        return -1.0
-    return 0.0
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -166,81 +168,6 @@ def _factorize_one_sided_orientation(
         [float(x) for x in angular_radial],
         rms_error,
     )
-
-
-# ---------------------------------------------------------------------------
-# Forcefield parsing
-# ---------------------------------------------------------------------------
-
-def _parse_dry_forcefield(
-    ff_path: Path,
-) -> Tuple[List[str], Dict[Tuple[str, str], Dict[str, float]]]:
-    macros: Dict[str, Tuple[float, float]] = {}
-    atomtypes: List[str] = []
-    pair_params: Dict[Tuple[str, str], Dict[str, float]] = {}
-    section = ""
-
-    with ff_path.open("r", encoding="utf-8", errors="ignore") as fh:
-        for raw in fh:
-            stripped = raw.split(";", 1)[0].strip()
-            if not stripped:
-                continue
-            if stripped.startswith("#define"):
-                parts = stripped.split()
-                if len(parts) == 4:
-                    try:
-                        macros[parts[1]] = (float(parts[2]), float(parts[3]))
-                    except ValueError:
-                        pass
-                continue
-            if stripped.startswith("[") and stripped.endswith("]"):
-                section = stripped[1:-1].strip().lower()
-                continue
-            parts = stripped.split()
-            if section == "atomtypes":
-                atomtypes.append(parts[0])
-                continue
-            if section != "nonbond_params":
-                continue
-            if len(parts) < 4 or parts[2] != "1":
-                continue
-            type_i, type_j = parts[0], parts[1]
-            if len(parts) == 4:
-                macro = parts[3]
-                if macro not in macros:
-                    raise RuntimeError(f"Unknown dry-MARTINI macro '{macro}' in {ff_path}")
-                sigma_nm, epsilon_kj = macros[macro]
-            else:
-                sigma_nm = float(parts[3])
-                epsilon_kj = float(parts[4])
-            payload = {"sigma_nm": sigma_nm, "epsilon_kj_mol": epsilon_kj}
-            pair_params[(type_i, type_j)] = payload
-            pair_params[(type_j, type_i)] = payload
-    return atomtypes, pair_params
-
-
-def _load_martini_forcefield(
-    martinize_path: Path, forcefield_name: str
-) -> Dict[str, List[str]]:
-    spec = importlib.util.spec_from_file_location(
-        "sc_training_martinize_runtime", martinize_path
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load martinize module from {martinize_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    if not hasattr(module, forcefield_name):
-        raise RuntimeError(f"Forcefield '{forcefield_name}' not found in {martinize_path}")
-    ff = getattr(module, forcefield_name)()
-    residue_map: Dict[str, List[str]] = {}
-    for residue in CANONICAL_RESIDUES:
-        raw = ff.sidechains.get(residue, [])
-        if not raw:
-            residue_map[residue] = []
-            continue
-        bead_tokens = [str(tok).strip() for tok in raw[0] if str(tok).strip()]
-        residue_map[residue] = [tok for tok in bead_tokens if tok != "D"]
-    return residue_map
 
 
 def _load_sidechain_orientation_library(
@@ -349,8 +276,8 @@ def _build_particles_group(
     if not active_types:
         active_types = list(atomtypes)
 
-    charges = np.asarray([_infer_type_charge(t) for t in atomtypes], dtype=np.float32)
-    type_to_charge = {t: _infer_type_charge(t) for t in atomtypes}
+    charges = np.asarray([infer_charge_from_atomtype(t) for t in atomtypes], dtype=np.float32)
+    type_to_charge = {t: infer_charge_from_atomtype(t) for t in atomtypes}
 
     # Find unique (eps, sig) pairs for active types (pair with self and cross)
     unique_eps_sig: Set[Tuple[float, float]] = set()
@@ -585,7 +512,7 @@ def _build_sc_table_group(
             raise RuntimeError(
                 f"Missing orientation geometry for residue {residue} in {sidechain_lib_path}"
             )
-        bead_charges = [_infer_type_charge(bt) for bt in bead_types]
+        bead_charges = [infer_charge_from_atomtype(bt) for bt in bead_types]
         residue_tasks.append((residue, bead_types, bead_charges, orientation))
 
     if not residue_tasks:
@@ -607,7 +534,7 @@ def _build_sc_table_group(
                 sidechain_bead_types=bead_types,
                 sidechain_bead_charges=bead_charges,
                 target_type=target_type,
-                target_charge=_infer_type_charge(target_type),
+                target_charge=infer_charge_from_atomtype(target_type),
                 rotamer_centers_nm=orientation["center_nm"],
                 rotamer_weights=orientation["weight"],
                 pair_params=pair_params,
@@ -947,13 +874,6 @@ def _fit_radial_angular_angular_tensor_bspline(
 # CG lipid energy sampling
 # ---------------------------------------------------------------------------
 
-# DOPC bead types in ITP order (must match DOPC_ATOM_NAMES in martini_cg_lipid_params.py)
-_DOPC_BEAD_TYPES = list(DOPC_BEAD_TYPES)
-_DOPC_BEAD_CHARGES = list(DOPC_BEAD_CHARGES)
-
-# DOPC bonded topology from dry_martini_v2.1_lipids.itp (0-based indices)
-_DOPC_BONDS: list = list(DOPC_BONDS)
-
 _CG_DERIVED_NUMERIC_ATTRS = (
     "contact_nm",
     "contact_ang",
@@ -987,21 +907,6 @@ def _write_cg_derived_attrs(group, derived_params: dict) -> None:
         if attr_name in derived_params:
             group.attrs[attr_name] = derived_params[attr_name]
 
-# Cosine-based angle potentials: V(θ) = 0.5 * k * (cos(θ) - cos(θ0))²
-_DOPC_ANGLES: list = [
-    (1, 2, 3, 120.0, 25.0),    # Qa-Na-Na      ma_pgg
-    (1, 2, 4, 180.0, 25.0),    # Qa-Na-C1      ma_pgc
-    (2, 4, 5, 180.0, 35.0),    # Na-C1-C1      ma_gcc
-    (4, 5, 6, 180.0, 35.0),    # C1-C1-C3      ma_ccc
-    (5, 6, 7, 120.0, 45.0),    # C1-C3-C1      ma_cdc
-    (6, 7, 8, 180.0, 35.0),    # C3-C1-C1      ma_ccc
-    (3, 9, 10, 180.0, 35.0),   # Na-C1-C1      ma_gcc
-    (9, 10, 11, 180.0, 35.0),  # C1-C1-C3      ma_ccc
-    (10, 11, 12, 120.0, 45.0), # C1-C3-C1      ma_cdc
-    (11, 12, 13, 180.0, 35.0), # C3-C1-C1      ma_ccc
-]
-
-
 def _compute_lipid_bonded_energy(positions: np.ndarray) -> float:
     """Compute harmonic bond + cosine-based angle energy for ONE DOPC lipid.
 
@@ -1009,13 +914,12 @@ def _compute_lipid_bonded_energy(positions: np.ndarray) -> float:
     Returns energy in kJ/mol.
     """
     energy = 0.0
-    # Bonds: V(r) = 0.5 * k * (r - r0)²
-    for i, j, r0, k in _DOPC_BONDS:
+    for i, j, r0, k in _CURRENT_CG_BONDS:
         dr = positions[i] - positions[j]
         r = float(np.sqrt(np.dot(dr, dr)))
         energy += 0.5 * k * (r - r0) ** 2
     # Angles: V(θ) = 0.5 * k * (cos(θ) - cos(θ0))²
-    for i, j, k_idx, theta0_deg, k_ang in _DOPC_ANGLES:
+    for i, j, k_idx, theta0_deg, k_ang in _CURRENT_CG_ANGLES:
         r_ij = positions[i] - positions[j]
         r_kj = positions[k_idx] - positions[j]
         d_ij = float(np.sqrt(np.dot(r_ij, r_ij)))
@@ -1137,8 +1041,7 @@ def _compute_lipid_bonded_energy_and_gradient(positions: np.ndarray):
     energy = 0.0
     grad = np.zeros_like(positions)
 
-    # Bonds: V(r) = 0.5 * k * (r - r0)²
-    for i, j, r0, k in _DOPC_BONDS:
+    for i, j, r0, k in _CURRENT_CG_BONDS:
         dr = positions[i] - positions[j]
         r = float(np.sqrt(np.dot(dr, dr)))
         if r < 1e-10:
@@ -1150,7 +1053,7 @@ def _compute_lipid_bonded_energy_and_gradient(positions: np.ndarray):
         grad[j] -= g
 
     # Angles: V(θ) = 0.5 * k * (cos(θ) - cos(θ0))²
-    for i, j, k_idx, theta0_deg, k_ang in _DOPC_ANGLES:
+    for i, j, k_idx, theta0_deg, k_ang in _CURRENT_CG_ANGLES:
         r_ij = positions[i] - positions[j]
         r_kj = positions[k_idx] - positions[j]
         d_ij = float(np.sqrt(np.dot(r_ij, r_ij)))
@@ -1902,6 +1805,7 @@ def _build_cg_lipid_tables(
     bead_types: list | None = None,
     bead_charges: list | None = None,
     bead_masses_g_mol: dict | None = None,
+    lipids_itp_path: Path | None = None,
     r_min_nm: float = 0.30,
     r_max_nm: float = 0.70,
     r_count: int = 24,
@@ -1913,14 +1817,16 @@ def _build_cg_lipid_tables(
         print("  cg_lipid_table: no reference bead positions provided, skipping")
         return
 
-    if bead_types is None:
-        bead_types = _DOPC_BEAD_TYPES
-    if bead_charges is None:
-        if list(bead_types) == _DOPC_BEAD_TYPES:
-            bead_charges = list(_DOPC_BEAD_CHARGES)
-        else:
-            bead_charges = [_infer_type_charge(bt) for bt in bead_types]
+    if bead_types is None or bead_charges is None:
+        raise ValueError(
+            "bead_types and bead_charges must be provided; "
+            "parse them from the ITP via martini_itp_reader.parse_dopc_from_itp()"
+        )
+
     bead_charges = [float(q) for q in bead_charges]
+
+    if lipids_itp_path is not None:
+        _ensure_cg_bonds_angles(lipids_itp_path)
 
     ref_nm = np.asarray(ref_bead_positions_nm, dtype=np.float64)
     if ref_nm.shape != (14, 3):
@@ -1935,6 +1841,7 @@ def _build_cg_lipid_tables(
         bead_types=bead_types,
         pair_params=pair_params,
         bead_masses_g_mol=bead_mass_values,
+        bonds=_CURRENT_CG_BONDS,
         energy_conversion_kj_per_eup=ENERGY_CONVERSION_KJ_PER_EUP,
         length_conversion_ang_per_nm=LENGTH_CONVERSION_A_PER_NM,
     )
@@ -1990,7 +1897,7 @@ def _build_cg_lipid_tables(
 
     # CG ↔ SC quadspline
     orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
-    residue_map = _load_martini_forcefield(martinize_path, forcefield_name)
+    residue_map = load_martini_forcefield(martinize_path, forcefield_name)
 
     residues = [r for r in active_residue_names
                 if r in residue_map and residue_map[r] and r in orientation_map]
@@ -2021,7 +1928,7 @@ def _build_cg_lipid_tables(
 
         for ri, residue in enumerate(residues):
             sc_bead_types = residue_map[residue]
-            sc_bead_charges = [_infer_type_charge(bt) for bt in sc_bead_types]
+            sc_bead_charges = [infer_charge_from_atomtype(bt) for bt in sc_bead_types]
             orientation = orientation_map[residue]
 
             result_sc = _fit_cg_lipid_sc_quadspline(
@@ -2257,7 +2164,7 @@ def _build_cgl_target_table(
 
     for ti, tgt_type in enumerate(target_types):
         energy_grid = np.zeros((n_sample, cos_theta_grid.size), dtype=np.float64)
-        target_charge = _infer_type_charge(tgt_type)
+        target_charge = infer_charge_from_atomtype(tgt_type)
         bead_floor_sigmas = []
         for bt in bead_types:
             params = pair_params.get((bt, tgt_type)) or pair_params.get((tgt_type, bt))
@@ -2351,81 +2258,119 @@ def _build_cgl_target_table(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def build_martini_tables(
+# ---------------------------------------------------------------------------
+# Public pre-generation entry points (used by martini_gen_params.py)
+# ---------------------------------------------------------------------------
+
+def build_particle_h5(
+    output_path: Path,
+    dry_ff_path: Path,
+) -> None:
+    """Generate particle.h5 with ALL particle types from the ITP."""
+    output_path = Path(output_path).expanduser().resolve()
+    dry_ff_path = Path(dry_ff_path).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
+    with h5py.File(output_path, "w") as h5:
+        h5.attrs["schema"] = SCHEMA_PARTICLES
+        _build_particles_group(h5, atomtypes, pair_params, set(atomtypes))
+    print(f"Built {output_path} ({len(atomtypes)} types)")
+
+
+def build_sidechain_h5(
     output_path: Path,
     dry_ff_path: Path,
     martinize_path: Path,
     sidechain_lib_path: Path,
     forcefield_name: str = "martini22",
-    active_residue_names: List[str] | None = None,
-    active_atom_types: Set[str] | None = None,
-    r_min_nm: float = 0.25,
-    r_max_nm: float = 1.20,
-    r_count: int = 96,
-    direction_count: int = 24,
-    cos_theta_count: int = 13,
-    cg_lipid_config: dict | None = None,
-) -> Path:
+) -> None:
+    """Generate sidechain.h5 with ALL residues × ALL target types."""
     output_path = Path(output_path).expanduser().resolve()
-    dry_ff_path = Path(dry_ff_path).expanduser().resolve()
     martinize_path = Path(martinize_path).expanduser().resolve()
     sidechain_lib_path = Path(sidechain_lib_path).expanduser().resolve()
-
-    atomtypes, pair_params = _parse_dry_forcefield(dry_ff_path)
-    atomtype_masses = parse_dry_martini_masses(dry_ff_path)
-
-    if active_atom_types is None:
-        active_atom_types = set(atomtypes)
-    if active_residue_names is None:
-        active_residue_names = list(CANONICAL_RESIDUES)
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
+    residue_map = load_martini_forcefield(martinize_path, forcefield_name)
     with h5py.File(output_path, "w") as h5:
-        h5.attrs["schema"] = "martini_combined_v1"
-        h5.attrs["created_for_run"] = str(output_path.parent.name)
-
-        print(f"Building martini tables -> {output_path}")
-
-        _build_particles_group(
-            h5, atomtypes, pair_params, active_atom_types,
+        h5.attrs["schema"] = SCHEMA_SC
+        _build_sc_table_group(
+            h5, residue_map, pair_params, sidechain_lib_path,
+            active_residue_names=list(CANONICAL_RESIDUES),
+            active_target_types=atomtypes,
         )
-
-        residue_map = _load_martini_forcefield(martinize_path, forcefield_name)
-
-        # Determine active target types from active atom types (non-protein env types)
-        sc_active_targets = sorted(
-            t for t in active_atom_types if t in atomtypes
-        )
-        if sc_active_targets:
-            _build_sc_table_group(
-                h5, residue_map, pair_params, sidechain_lib_path,
-                active_residue_names=list(active_residue_names),
-                active_target_types=sc_active_targets,
-                r_min_nm=r_min_nm, r_max_nm=r_max_nm, r_count=r_count,
-                direction_count=direction_count, cos_theta_count=cos_theta_count,
-            )
-        else:
-            print("  sc_table: no active target types, skipping")
-
-        # Build CG lipid tables if configuration is provided
-        if cg_lipid_config is not None:
-            _build_cg_lipid_tables(
-                h5,
-                pair_params=pair_params,
-                sidechain_lib_path=sidechain_lib_path,
-                martinize_path=martinize_path,
-                forcefield_name=forcefield_name,
-                active_residue_names=list(active_residue_names),
-                ref_bead_positions_nm=cg_lipid_config.get("ref_bead_positions_nm"),
-                bead_types=cg_lipid_config.get("bead_types"),
-                bead_charges=cg_lipid_config.get("bead_charges"),
-                bead_masses_g_mol=atomtype_masses,
-                r_min_nm=r_min_nm,
-                r_max_nm=r_max_nm,
-                r_count=r_count,
-                cos_theta_count=cos_theta_count,
-            )
-
     print(f"Built {output_path}")
-    return output_path
+
+
+def build_dopc_h5(
+    output_path: Path,
+    dry_ff_path: Path,
+    lipids_itp_path: Path,
+    martinize_path: Path,
+    sidechain_lib_path: Path,
+    dopc_pdb_path: Path,
+    forcefield_name: str = "martini22",
+) -> None:
+    """Generate dopc.h5 with DOPC CG lipid tables."""
+    output_path = Path(output_path).expanduser().resolve()
+    dry_ff_path = Path(dry_ff_path).expanduser().resolve()
+    lipids_itp_path = Path(lipids_itp_path).expanduser().resolve()
+    martinize_path = Path(martinize_path).expanduser().resolve()
+    sidechain_lib_path = Path(sidechain_lib_path).expanduser().resolve()
+    dopc_pdb_path = Path(dopc_pdb_path).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    from martini_itp_reader import parse_dopc_from_itp
+
+    atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
+    atomtype_masses = parse_itp_atomtype_masses(dry_ff_path)
+    dopc = parse_dopc_from_itp(lipids_itp_path)
+
+    with open(dopc_pdb_path) as f:
+        dopc_atoms = []
+        for line in f:
+            if not line.startswith(("ATOM", "HETATM")):
+                continue
+            resname = line[17:21].strip().upper()
+            if resname not in ("DOPC", "DOP"):
+                continue
+            x = float(line[30:38])
+            y = float(line[38:46])
+            z = float(line[46:54])
+            dopc_atoms.append([x, y, z])
+
+    n_per_lipid = 14
+    first = dopc_atoms[:n_per_lipid]
+    com = np.mean(first, axis=0)
+    ref_bead_positions_nm = np.array(
+        [[a[0] - com[0], a[1] - com[1], a[2] - com[2]] for a in first]
+    ) * 0.1
+
+    with h5py.File(output_path, "w") as h5:
+        _build_cg_lipid_tables(
+            h5,
+            pair_params=pair_params,
+            sidechain_lib_path=sidechain_lib_path,
+            martinize_path=martinize_path,
+            forcefield_name=forcefield_name,
+            active_residue_names=list(CANONICAL_RESIDUES),
+            ref_bead_positions_nm=ref_bead_positions_nm,
+            bead_types=dopc["bead_types"],
+            bead_charges=dopc["bead_charges"],
+            bead_masses_g_mol=atomtype_masses,
+            lipids_itp_path=lipids_itp_path,
+        )
+    print(f"Built {output_path}")
+
+
+def build_interlipid_h5(output_path: Path) -> None:
+    """Generate interlipid.h5 as an empty placeholder."""
+    output_path = Path(output_path).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(output_path, "w") as h5:
+        g = h5.create_group("cross_lipid")
+        g.attrs["schema"] = "cross_lipid_v1"
+        g.attrs["n_lipid_types"] = 1
+        g.create_dataset("interaction_param", data=np.zeros((0,), dtype=np.float64))
+    print(f"Built {output_path} (empty cross-lipid placeholder)")
