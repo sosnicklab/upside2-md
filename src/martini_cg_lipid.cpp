@@ -1,7 +1,7 @@
 #include "deriv_engine.h"
 #include "spline.h"
 #include "box.h"
-#include "martini_hybrid_runtime.h"
+#include "martini.h"
 #include "state_logger.h"
 
 #include <algorithm>

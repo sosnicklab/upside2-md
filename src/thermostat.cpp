@@ -1,5 +1,5 @@
 #include "deriv_engine.h"
-#include "main.h"
+#include "martini.h"
 #include "thermostat.h"
 #include "timing.h"
 #include "random.h"

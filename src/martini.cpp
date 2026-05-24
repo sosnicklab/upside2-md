@@ -1,3 +1,4 @@
+#include "martini.h"
 #include "deriv_engine.h"
 #include "timing.h"
 #include "state_logger.h"
@@ -19,10 +20,6 @@
 
 using namespace h5;
 using namespace std;
-
-// ===================== FIX RIGID FUNCTIONALITY =====================
-// Implementation of fix rigid constraints for both minimization and MD
-// This allows certain atoms to be held fixed at their initial positions
 
 namespace martini_fix_rigid {
 
@@ -803,10 +800,6 @@ std::vector<int> get_z_fixed_atoms(const DerivEngine& engine) {
 }
 
 } // namespace martini_fix_rigid
-
-namespace martini_stage_params {
-std::string get_current_stage(DerivEngine* engine);
-}
 
 namespace martini_hybrid {
 static std::mutex g_hybrid_mutex;
@@ -4167,10 +4160,6 @@ void martini_run_minimization(DerivEngine& engine,
     prev_potential = engine.potential;
     if(verbose) printf("MIN: Final potential %.6f after %d iterations\n", prev_potential, iter);
 }
-
-// ===================== STAGE-SPECIFIC PARAMETERS =====================
-// Implementation of stage-specific parameter switching for MARTINI simulations
-// This allows different parameter sets for minimization vs production stages
 
 namespace martini_stage_params {
 

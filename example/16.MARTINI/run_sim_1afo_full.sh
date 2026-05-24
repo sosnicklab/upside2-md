@@ -9,30 +9,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BASE_WORKFLOW_SCRIPT="${BASE_WORKFLOW_SCRIPT:-}"
-
-if [ -z "${BASE_WORKFLOW_SCRIPT}" ]; then
-    for candidate_dir in \
-        "${UPSIDE_PROJECT_ROOT:-}/example/16.MARTINI" \
-        "${SLURM_SUBMIT_DIR:-}" \
-        "${SLURM_SUBMIT_DIR:-}/example/16.MARTINI" \
-        "${PWD}" \
-        "${PWD}/example/16.MARTINI" \
-        "${SCRIPT_DIR}"
-    do
-        if [ -n "${candidate_dir}" ] && [ -f "${candidate_dir}/run_sim_1rkl_full.sh" ]; then
-            BASE_WORKFLOW_SCRIPT="${candidate_dir}/run_sim_1rkl_full.sh"
-            break
-        fi
-    done
-fi
-
-if [ -z "${BASE_WORKFLOW_SCRIPT}" ]; then
-    echo "ERROR: could not locate run_sim_1rkl_full.sh." >&2
-    exit 1
-fi
-
-PROJECT_ROOT="${UPSIDE_PROJECT_ROOT:-$(cd "$(dirname "${BASE_WORKFLOW_SCRIPT}")/../.." && pwd)}"
+PROJECT_ROOT="${UPSIDE_PROJECT_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 
 if [ -f /etc/profile.d/modules.sh ]; then
     source /etc/profile.d/modules.sh
@@ -42,7 +19,7 @@ if command -v module >/dev/null 2>&1; then
     module load python/3.11.9 || true
     module load cmake || true
     module load openmpi || true
-    module load "${UPSIDE_HDF5_MODULE:-${HYBRID_SWEEP_HDF5_MODULE:-hdf5/1.14.3}}" || true
+    module load "${UPSIDE_HDF5_MODULE:-hdf5/1.14.3}" || true
 fi
 
 if [ -f "${PROJECT_ROOT}/.venv/bin/activate" ]; then
@@ -55,11 +32,10 @@ export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export PYTHONPATH="${PROJECT_ROOT}/py${PYTHONPATH:+:$PYTHONPATH}"
 export PATH="${PROJECT_ROOT}/obj:$PATH"
 
-export RUN_DIR="${RUN_DIR:-outputs/martini_test_1afo_hybrid_full}"
-export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1afo_hybrid_full}"
-export PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/1AFO.pdb}"
+export PDB_ID="${PDB_ID:-1afo}"
 export LIPID_RESOLUTION="${LIPID_RESOLUTION:-full}"
-export AUTO_CONTINUE_FROM_PREVIOUS_RUN="${AUTO_CONTINUE_FROM_PREVIOUS_RUN:-1}"
-export AUTO_CONTINUE_GLOB="${AUTO_CONTINUE_GLOB:-martini_test_1afo_hybrid_full/checkpoints/1afo.stage_7*.up}"
+export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1afo_hybrid_full}"
+export RUN_DIR="${RUN_DIR:-outputs/martini_1afo_hybrid_full}"
+export PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/1AFO.pdb}"
 
-exec "${BASE_WORKFLOW_SCRIPT}" "PDB_ID=${PDB_ID:-1afo}" "$@"
+exec "${SCRIPT_DIR}/run_sim_hybrid.sh" "$@"

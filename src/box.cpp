@@ -1,4 +1,5 @@
 #include "box.h"
+#include "martini.h"
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
@@ -8,21 +9,6 @@
 #include <vector>
 
 using namespace h5;
-
-namespace martini_fix_rigid {
-std::vector<int> get_fixed_atoms(const DerivEngine& engine);
-std::vector<int> get_z_fixed_atoms(const DerivEngine& engine);
-}
-
-// Local helper to check if an HDF5 attribute exists
-// (Mirrors the function in martini.cpp)
-static inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* attr_name) {
-    hid_t obj_id = H5Oopen(loc_id, obj_name, H5P_DEFAULT);
-    if (obj_id < 0) return false;
-    htri_t exists = H5Aexists(obj_id, attr_name);
-    H5Oclose(obj_id);
-    return exists > 0;
-}
 
 namespace simulation_box {
 
@@ -62,41 +48,23 @@ static inline float volume_xyz(float x, float y, float z) { return x * y * z; }
 // Attempt to read barostat settings from H5 config
 static BarostatSettings read_barostat_settings(hid_t root) {
     BarostatSettings s;
-    try {
-        if(h5_exists(root, "/input/barostat")) {
-            auto grp = open_group(root, "/input/barostat");
-            if(attribute_exists(grp.get(), ".", "enable"))
-                s.enabled = read_attribute<int>(grp.get(), ".", "enable") != 0;
-            if(attribute_exists(grp.get(), ".", "target_p_xy"))
-                s.target_p_xy = read_attribute<float>(grp.get(), ".", "target_p_xy");
-            if(attribute_exists(grp.get(), ".", "target_p_z"))
-                s.target_p_z = read_attribute<float>(grp.get(), ".", "target_p_z");
-            if(attribute_exists(grp.get(), ".", "tau_p"))
-                s.tau_p = read_attribute<float>(grp.get(), ".", "tau_p");
-            if(attribute_exists(grp.get(), ".", "interval"))
-                s.interval = read_attribute<int>(grp.get(), ".", "interval");
-            if(attribute_exists(grp.get(), ".", "compressibility"))
-                s.compressibility = read_attribute<float>(grp.get(), ".", "compressibility");
-            s.compressibility_xy = s.compressibility;
-            s.compressibility_z = s.compressibility;
-            if(attribute_exists(grp.get(), ".", "compressibility_xy"))
-                s.compressibility_xy = read_attribute<float>(grp.get(), ".", "compressibility_xy");
-            if(attribute_exists(grp.get(), ".", "compressibility_z"))
-                s.compressibility_z = read_attribute<float>(grp.get(), ".", "compressibility_z");
-            if(attribute_exists(grp.get(), ".", "semi_isotropic"))
-                s.semi_isotropic = read_attribute<int>(grp.get(), ".", "semi_isotropic") != 0;
-            // Read barostat type: 0 = Berendsen (default), 1 = Parrinello-Rahman
-            if(attribute_exists(grp.get(), ".", "type")) {
-                int type_int = read_attribute<int>(grp.get(), ".", "type");
-                if(type_int == 1) {
-                    s.type = BarostatType::ParrinelloRahman;
-                } else {
-                    s.type = BarostatType::Berendsen;
-                }
-            }
+    if(h5_exists(root, "/input/barostat")) {
+        auto grp = open_group(root, "/input/barostat");
+        s.enabled = read_attribute<int>(grp.get(), ".", "enable", int(s.enabled)) != 0;
+        s.target_p_xy = read_attribute<float>(grp.get(), ".", "target_p_xy", s.target_p_xy);
+        s.target_p_z = read_attribute<float>(grp.get(), ".", "target_p_z", s.target_p_z);
+        s.tau_p = read_attribute<float>(grp.get(), ".", "tau_p", s.tau_p);
+        s.interval = read_attribute<int>(grp.get(), ".", "interval", s.interval);
+        s.compressibility = read_attribute<float>(grp.get(), ".", "compressibility", s.compressibility);
+        s.compressibility_xy = read_attribute<float>(grp.get(), ".", "compressibility_xy", s.compressibility);
+        s.compressibility_z = read_attribute<float>(grp.get(), ".", "compressibility_z", s.compressibility);
+        s.semi_isotropic = read_attribute<int>(grp.get(), ".", "semi_isotropic", int(s.semi_isotropic)) != 0;
+        int type_int = read_attribute<int>(grp.get(), ".", "type", 0);
+        if(type_int == 1) {
+            s.type = BarostatType::ParrinelloRahman;
+        } else {
+            s.type = BarostatType::Berendsen;
         }
-    } catch(...) {
-        s.enabled = false;
     }
     return s;
 }

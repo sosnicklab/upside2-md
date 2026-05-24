@@ -38,7 +38,6 @@ from martini_prepare_system_lib import (
     validate_hybrid_mapping,
     write_hybrid_mapping_h5,
     write_pdb,
-    write_stage_debug_outputs,
 )
 
 
@@ -770,33 +769,6 @@ def set_hybrid_production_controls(up_file: Path, args):
         grp.attrs["nonprotein_hs_force_cap"] = np.float32(args.nonprotein_hs_force_cap)
 
 
-def set_debug_rigid_protein(up_file: Path):
-    import h5py
-
-    with h5py.File(up_file, "r+") as h5:
-        inp = h5["/input"]
-        atom_indices = np.zeros(0, dtype=np.int32)
-        if "particle_class" in inp:
-            classes = np.asarray([
-                x.decode("ascii") if isinstance(x, (bytes, np.bytes_)) else str(x)
-                for x in inp["particle_class"][:]
-            ], dtype=object)
-            atom_indices = np.where(np.char.upper(classes.astype(str)) == "PROTEIN")[0].astype(np.int32)
-        if atom_indices.size == 0 and "hybrid_env_topology/protein_membership" in inp:
-            membership = np.asarray(inp["hybrid_env_topology/protein_membership"][:], dtype=np.int32)
-            atom_indices = np.where(membership >= 0)[0].astype(np.int32)
-
-        if atom_indices.size == 0:
-            raise ValueError(f"{up_file}: DEBUG_RIGID_PROTEIN requested but no protein atoms were found")
-
-        if "fix_rigid" in inp:
-            del inp["fix_rigid"]
-        grp = inp.create_group("fix_rigid")
-        grp.attrs["enable"] = np.int8(1)
-        grp.create_dataset("atom_indices", data=atom_indices, dtype=np.int32)
-        print(f"DEBUG_RIGID_PROTEIN: fixed {atom_indices.size} protein atoms in {up_file}")
-
-
 def set_barostat_type(up_file: Path, barostat_type: int):
     import tables as tb
 
@@ -900,9 +872,7 @@ def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable:
         "UPSIDE_NPT_COMPRESSIBILITY_Z": "0.0",
         "UPSIDE_NPT_INTERVAL": str(args.npt_interval),
         "UPSIDE_NPT_SEMI": "1",
-        "UPSIDE_NPT_DEBUG": "1",
         "UPSIDE_BILAYER_LIPIDHEAD_FC": str(lipidhead_fc),
-        "UPSIDE_WRITE_DEBUG_PDB": "0",
         "UPSIDE_LIPID_RESOLUTION": str(getattr(args, "lipid_resolution", "coarse")),
     }
 
@@ -967,27 +937,6 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
         )
     if npt_enable:
         set_barostat_type(target_file, barostat_type)
-    write_stage_debug_outputs(target_file, debug_dir=args.run_dir / "debug")
-
-
-def write_stage70_initial_debug_files(args):
-    print("=== Stage 7.0 Initial Debug PDB Export ===")
-    with temporary_env({
-        **stage_conversion_env(args, "7.0", "npt_prod", args.prod_70_npt_enable, 0),
-        "UPSIDE_INITIAL_DEBUG_ONLY": "1",
-        "UPSIDE_INITIAL_DEBUG_PREFIX": f"{args.pdb_id}.stage_7.0",
-    }):
-        run_prepare_command(
-            [
-                "--mode", args.universal_prep_mode,
-                "--pdb-id", args.runtime_pdb_id,
-                "--runtime-pdb-output", str(args.runtime_pdb_file),
-                "--prepare-structure", "0",
-                "--stage", "npt_prod",
-                "--run-dir", str(args.run_dir),
-                "--summary-json", str(args.hybrid_prep_dir / "stage_7.0.initial_debug.summary.json"),
-            ]
-        )
 
 
 def handoff_initial_position(args, input_file: Path, output_file: Path, mode="default", previous_dt=None):
@@ -1147,7 +1096,6 @@ def run_md_stage(
     ]
     if input_momentum_restart_valid(output_file):
         cmd.append("--restart-using-momentum")
-    write_stage_debug_outputs(output_file, debug_dir=args.run_dir / "debug")
     run_checked(cmd, log_file=args.log_dir / f"stage_{stage_label}.log", echo=echo)
     mark_output_restart_state(output_file, nsteps, dt)
 
@@ -1243,16 +1191,6 @@ def infer_next_stage70_label_from_source(source_file: Path, pdb_id: str):
 
 
 def resolve_continuation_outputs(args):
-    if args.previous_run_dir or args.previous_stage7_file:
-        raise ValueError(
-            "Legacy continuation discovery flags are no longer supported. "
-            "Use --continue-stage-70-from with an explicit source stage file."
-        )
-    if args.auto_continue_from_previous_run or args.auto_continue_glob:
-        raise ValueError(
-            "Auto continuation discovery is no longer supported. "
-            "Use --continue-stage-70-from with an explicit source stage file."
-        )
     if args.continue_stage_70_from is None:
         return None, None, None
     source = args.continue_stage_70_from.resolve()
@@ -1287,8 +1225,6 @@ def run_stage70_continuation(args, source_file: Path, output_file: Path, stage_l
             "Production continuation requires restart-valid /output/mom in the source stage. "
             "Regenerate the previous production stage with the current workflow so momentum is recorded."
         )
-    if args.debug_rigid_protein:
-        set_debug_rigid_protein(output_file)
     assert_hybrid_stage_active(output_file, "production", "production")
     run_md_stage(args, stage_label, output_file, output_file, args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
     extract_stage_vtf(args, stage_label, output_file, "2")
@@ -1332,12 +1268,9 @@ def normalize_hybrid_workflow_args(args):
     args.bar_1_to_eup_per_a3 = DEFAULT_BAR_1_TO_EUP_PER_A3
     args.compressibility_3e4_bar_inv_to_a3_per_eup = DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP
     args.protein_env_interface_scale = DEFAULT_PROTEIN_ENV_INTERFACE_SCALE
-    args.debug_rigid_protein = bool(args.debug_rigid_protein)
     args.extract_vtf_script = workflow_path(args.extract_vtf_script).resolve()
     args.continue_stage_70_from = workflow_path(args.continue_stage_70_from).resolve() if args.continue_stage_70_from else None
     args.continue_stage_70_output = workflow_path(args.continue_stage_70_output).resolve() if args.continue_stage_70_output else None
-    args.previous_stage7_file = workflow_path(args.previous_stage7_file).resolve() if args.previous_stage7_file else None
-    args.previous_run_dir = workflow_path(args.previous_run_dir).resolve() if args.previous_run_dir else None
     if args.prep_seed is None:
         args.prep_seed = generate_random_seed()
     if args.seed is None:
@@ -1422,8 +1355,7 @@ def ensure_martini_parameter_libraries(args):
     """Check all four pre-generated .h5 files exist under parameters/dryMARTINI/.
 
     If any are missing, print a clear error telling the user to run the
-    generation script.  Coverage checks and incremental append are future
-    enhancements; for now this is an existence gate.
+    generation script.
     """
     required = [
         (args.particle_h5, "particle.h5"),
@@ -1495,12 +1427,6 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--continue-stage-70-from", default=env_default("CONTINUE_STAGE_70_FROM", ""))
     parser.add_argument("--continue-stage-70-output", default=env_default("CONTINUE_STAGE_70_OUTPUT", ""))
     parser.add_argument("--continue-stage-70-label", default=env_default("CONTINUE_STAGE_70_LABEL", ""))
-    parser.add_argument("--previous-run-dir", default=env_default("PREVIOUS_RUN_DIR", ""))
-    parser.add_argument("--previous-stage7-file", default=env_default("PREVIOUS_STAGE7_FILE", ""))
-    parser.add_argument("--auto-continue-from-previous-run", type=int, default=env_int("AUTO_CONTINUE_FROM_PREVIOUS_RUN", 0))
-    parser.add_argument("--auto-continue-glob", default=env_default("AUTO_CONTINUE_GLOB", ""))
-    parser.add_argument("--initial-debug-only", type=int, default=env_int("INITIAL_DEBUG_ONLY", 0))
-    parser.add_argument("--debug-rigid-protein", type=int, default=env_int("DEBUG_RIGID_PROTEIN", 0))
     parser.add_argument(
         "--lipid-resolution",
         choices=["coarse", "full"],
@@ -1514,7 +1440,6 @@ def run_hybrid_workflow_command(argv):
         args.protein_aa_pdb = f"pdb/{args.pdb_id}.pdb"
     if args.bilayer_pdb is None:
         args.bilayer_pdb = str(Path(args.upside_home) / "parameters" / "dryMARTINI" / "DOPC.pdb")
-    args.auto_continue_from_previous_run = bool(args.auto_continue_from_previous_run)
     args.prep_seed = int(args.prep_seed) if args.prep_seed not in (None, "") else None
     args.seed = int(args.seed) if args.seed not in (None, "") else None
     args = normalize_hybrid_workflow_args(args)
@@ -1547,12 +1472,6 @@ def run_hybrid_workflow_command(argv):
         return
 
     prepare_workflow_hybrid_artifacts(args)
-    write_stage70_initial_debug_files(args)
-
-    if int(args.initial_debug_only):
-        print("=== Initial Debug Only Complete ===")
-        return
-
     ensure_martini_parameter_libraries(args)
 
     files = {
@@ -1588,6 +1507,16 @@ def run_hybrid_workflow_command(argv):
     )
     extract_stage_vtf(args, "6.0", files["stage_60"], "1")
     needs_pre70 = _detect_has_bonded_environment_particles(files["stage_60"])
+
+    def run_stage70_handoff(source_stage: Path):
+        prepare_stage_file(args, files["prepared_70"], "npt_prod", args.prod_70_npt_enable, args.prod_70_barostat_type, 0, "production")
+        shutil.copy2(files["prepared_70"], files["stage_70"])
+        handoff_initial_position(args, source_stage, files["stage_70"], "production_hybrid")
+        assert_hybrid_stage_active(files["stage_70"], "production", "production")
+        run_minimization_stage(args, "7.0", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
+        run_stage70_burnin(args, files["stage_70"])
+        run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
+        extract_stage_vtf(args, "7.0", files["stage_70"], "2")
 
     if needs_pre70:
         print("=== Bonded dry-MARTINI environment detected -> running extended pre-7.0 equilibrium ===")
@@ -1626,29 +1555,10 @@ def run_hybrid_workflow_command(argv):
         handoff_initial_position(args, files["stage_65"], files["stage_66"])
         run_md_stage(args, "6.6", files["stage_66"], files["stage_66"], args.eq_66_nsteps, args.eq_time_step, args.eq_frame_steps)
         extract_stage_vtf(args, "6.6", files["stage_66"], "1")
-
-        prepare_stage_file(args, files["prepared_70"], "npt_prod", args.prod_70_npt_enable, args.prod_70_barostat_type, 0, "production")
-        shutil.copy2(files["prepared_70"], files["stage_70"])
-        handoff_initial_position(args, files["stage_66"], files["stage_70"], "production_hybrid")
-        if args.debug_rigid_protein:
-            set_debug_rigid_protein(files["stage_70"])
-        assert_hybrid_stage_active(files["stage_70"], "production", "production")
-        run_minimization_stage(args, "7.0", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
-        run_stage70_burnin(args, files["stage_70"])
-        run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
-        extract_stage_vtf(args, "7.0", files["stage_70"], "2")
+        run_stage70_handoff(files["stage_66"])
     else:
         print("=== No bonded dry-MARTINI environment pairs -> handoff from stage 6.0 to stage 7.0 ===")
-        prepare_stage_file(args, files["prepared_70"], "npt_prod", args.prod_70_npt_enable, args.prod_70_barostat_type, 0, "production")
-        shutil.copy2(files["prepared_70"], files["stage_70"])
-        handoff_initial_position(args, files["stage_60"], files["stage_70"], "production_hybrid")
-        if args.debug_rigid_protein:
-            set_debug_rigid_protein(files["stage_70"])
-        assert_hybrid_stage_active(files["stage_70"], "production", "production")
-        run_minimization_stage(args, "7.0", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
-        run_stage70_burnin(args, files["stage_70"])
-        run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
-        extract_stage_vtf(args, "7.0", files["stage_70"], "2")
+        run_stage70_handoff(files["stage_60"])
 
     print("=== Workflow Complete ===")
 

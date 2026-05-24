@@ -1,6 +1,6 @@
 #include "deriv_engine.h"
+#include "martini.h"
 #include "timing.h"
-#include "main.h"
 #include <map>
 #include <algorithm>
 #include <memory>
@@ -10,11 +10,6 @@
 using namespace h5;
 
 using namespace std;
-
-namespace martini_fix_rigid {
-std::vector<int> get_fixed_atoms(const DerivEngine& engine);
-std::vector<int> get_z_fixed_atoms(const DerivEngine& engine);
-}
 
 static std::vector<unsigned char> build_fixed_mask(const DerivEngine& engine, int n_atom) {
     std::vector<unsigned char> mask(static_cast<size_t>(std::max(0, n_atom)), 0);

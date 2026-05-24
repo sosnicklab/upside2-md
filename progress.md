@@ -1,136 +1,51 @@
 # Progress Log
 
-## 2026-05-20 (1RKL Production Energy Drift Debug)
+## 2026-05-24 MARTINI Workflow Cleanup
 - Actions taken:
-  - Started a focused debug pass for monotonic `protein_potential` and `total_potential` drift in `example/16.MARTINI/1rkl.*.log`.
-  - Replaced the completed prior plan with an active plan specific to the integrator/runtime energy drift report.
-  - Parsed all four reported logs: `protein_potential` drops from about `-219` to `-9017 E_up`, while `cg_lipid_pair` and `cg_lipid_sc` remain comparatively bounded.
-  - Checked the Predescu et al. 2012 convention and corrected the diagnosis: the shared three-stage coefficient sums are intentional because one outer application advances `q*dt`; `dt` is average time per force evaluation.
-  - Confirmed `src/deriv_engine.cpp` has no remaining diff, preserving shared Upside/master integrator behavior.
-  - Found the remaining issue is production release from a rigid-protein preproduction state plus MARTINI-specific physical masses/orientation carriers needing a smaller production input timestep under the shared integrator.
-  - Direct stage-7 minimization failed because C++ minimization always switched to the preproduction `"minimization"` stage, even for production-stage files.
-  - Updated direction after user constraint: restored the default shared `v` integrator and default minimization switch behavior.
-  - Added opt-in `--minimize-preserve-stage` and wired only the MARTINI stage-7 handoff minimization to use it.
-  - Validated an intermediate opt-in integrator path, then rejected it to preserve claims inherited from original Upside.
-  - Documented the Predescu convention and MARTINI-specific rationale in `example/16.MARTINI/cg_lipid_potentials.tex`.
-  - Reopened final design after user concern that a separate MARTINI integrator weakens claims inherited from original Upside; testing shared `--integrator v` with unit-mass/no-mass HDF5 on copied artifacts.
-  - Unit-mass/no-mass copied validation failed badly: total potential `-505.9 -> -24239.58 E_up`, Rg `12.7 -> 14.9 A`, kinetic ratio `5.70`.
-  - Rejected mass-scaled pair energies as nonphysical because they change the scalar potential and are not a conservative pair potential for two different masses.
-  - Compared original Upside examples against master and found they rely on default `--integrator v`, `--time-step 0.009`, and master public-time scheduling with `inner_step=3`.
-  - Restored master-compatible `v` public-time scheduling and reverted MARTINI production `PROD_TIME_STEP` to `0.002`; the previous `0.0006666667` choice would have slowed public Upside time by three.
-  - Updated MARTINI frame/restart bookkeeping so frame intervals, restart validation, and production continuation use `3*dt` public time.
-  - Checked `/Users/yinhan/Documents/upside2-md-master`: `--time-step` exists through `py/run_upside.py`, while explicit `--integrator mv` and `--inner-step` are used only by multistep/curvature workflows.
-  - Removed redundant explicit `--integrator v` from MARTINI MD paths and tests; removed minimization-only `--time-step` and the unused `MIN_TIME_STEP` wrapper option.
-  - Updated `example/16.MARTINI/cg_lipid_potentials.tex` with the final timestep/integrator convention.
+  - Replaced stale drift-debug task notes with the current cleanup plan.
+  - Added `run_sim_hybrid.sh` as the shared MARTINI launcher.
+  - Converted 1RKL/1AFO coarse/full scripts into thin wrappers with system and
+    resolution defaults.
+  - Removed Python debug-only workflow switches and debug PDB/JSON/TSV writers
+    from production preparation paths.
+  - Consolidated stage-7 production handoff into a single helper used by both
+    direct and extended equilibration flows.
+  - Added `src/martini.h`, reduced `src/main.h` to the C entry point, and routed
+    C++ MARTINI users through the new header.
+  - Removed the C++ potential-component dump flag and shortened hybrid progress
+    output to `protein_potential` plus `total_potential`.
+  - Fixed `run_sim_hybrid.sh` so legacy `source.sh` is sourced before enabling
+    `set -u`, avoiding unbound `PYTHONPATH` failures from clean shells.
 - Files modified:
   - `plan.md`
   - `progress.md`
-  - `src/main.cpp`
-  - `py/martini_prepare_system.py`
+  - `example/16.MARTINI/run_sim_hybrid.sh`
   - `example/16.MARTINI/run_sim_1rkl.sh`
-  - `example/16.MARTINI/cg_lipid_potentials.tex`
-- Verification:
-  - `python3 -m py_compile py/martini_prepare_system.py` passed.
-  - `python3 -m py_compile example/16.MARTINI/test_cg_bilayer/run_test.py example/16.MARTINI/test_cg_lipid/run_test.py` passed.
-  - `cmake --build obj -j 4` passed.
-  - Copied-HDF5 timing validation: `/private/tmp/1rkl.stage_7.0.timescale_test.up`; `output/time` `0.0 -> 60.0`, frame spacing `0.3`, `restart_public_time_step=0.006`, final Rg about `12.9 A`, kinetic ratio `0.972`.
-  - Default-integrator smoke test without `--integrator v`: `/private/tmp/1rkl.stage_7.0.default_v_smoke.up` wrote times `[0.0, 0.3, 0.6]`.
-  - MARTINI workflow/test paths no longer contain `--integrator`, `--inner-step`, `MIN_TIME_STEP`, or `args.min_time_step`.
-  - `git diff --check` passed.
-
-## 2026-05-21 (Residual 1RKL/1AFO Energy Drift)
-- Actions taken:
-  - Re-parsed current `1rkl.*.log` and `1afo.*.log`; Rg stays stable while reported `protein_potential` and `total_potential` drift downward.
-  - Added per-node diagnostic output and found the reported `protein_potential` was misclassified: `cg_lipid_target` was being included in the protein bucket.
-  - Split copied final-frame HDF5 diagnostics into BB-target and ion-target nodes.  The long-term sink is dominated by CGL-target interactions with mobile ions.
-  - Updated C++ progress accounting so `cg_lipid_target` is logged separately and excluded from `protein_potential`.
-  - Updated CGL-target injection so mobile ions are written to a separate CGL-ion excluded-volume node derived from the current target table with negative controls clipped to zero; BB/protein target interactions remain unchanged.
-  - Documented the ion-target rationale in `example/16.MARTINI/cg_lipid_potentials.tex`.
-  - Restored the accidentally overwritten `1rkl.stage_7.0.up` `/output` trajectory by rerunning the logged MD command.
-  - Rechecked the current logs after the user's follow-up.  `1rkl.0-2.log` still show early production relaxation, while `1rkl.3.log` is much closer to stationary behavior; `1afo.0.log` has essentially flat total potential first-to-last.
-  - Ran a copied 10k-step continuation from the current 1RKL stage-7.3 final state.  The previous one-way ion-target sink did not reappear.
-  - Audited ion ownership in 1RKL and 1AFO stage-7 HDF5 files: generic MARTINI has ion/protein and ion/ion pairs, zero CGL-ion pairs, and the CGL-ion target node is excluded-volume-only.
-  - Added the ion validation invariant and current distance checks to `example/16.MARTINI/cg_lipid_potentials.tex`.
-  - Reopened the analysis after the user pointed out that `1afo.1-3.log` keep dropping.  Parsed all chunks and confirmed 1AFO total potential moves from about `-730` to `-1001 E_up`.
-  - Verified restart metadata is continuous and valid; the residual drift is not from momentum loss or transition-counter reset.
-  - Added an explicit stage-7 production-Hamiltonian burn-in before named production.  Burn-in uses the same MD settings, then promotes final positions/momenta to `/input`, advances the hybrid transition counter, clears `/output`, and starts the logged production segment from the relaxed interface.
-  - Reopened the latest 1RKL drift after the user reported `-800 -> -1100 E_up` across fresh logs.  Parsed the current logs and confirmed the active sink was still `cg_lipid_target`, not `cg_lipid_pair`.
-  - Found the exact generated `martini_test_1rkl_hybrid` stage-7 checkpoints were using terminal `Qd`/`Qa` BB proxy targets in the attractive `cg_lipid_target` node.
-  - Replaced the intermediate charged-target split after the user correction: the final model uses uniform neutral dry-MARTINI backbone typing, with all protein backbone carrier atoms and virtual BB proxies set to `P5`/zero-charge consistently across generic MARTINI, BB-env, and CGL-target paths.
-  - Patched the existing 1RKL stage-7 checkpoints in place without regenerating `martini.h5`: all 31 BB proxy targets are back in `cg_lipid_target` as neutral `P5`, the rejected charged-target node is absent, and ion targets remain in their excluded-volume node.
-  - Updated `cg_lipid_potentials.tex` to document the neutral-backbone model choice and why the charged head/tail convention is not used in this CGL projection.
-- Files modified:
-  - `src/main.cpp`
+  - `example/16.MARTINI/run_sim_1afo.sh`
+  - `example/16.MARTINI/run_sim_1rkl_full.sh`
+  - `example/16.MARTINI/run_sim_1afo_full.sh`
+  - `py/martini_prepare_system.py`
   - `py/martini_prepare_system_lib.py`
-  - `py/martini_prepare_system.py`
-  - `example/16.MARTINI/run_sim_1rkl.sh`
-  - `example/16.MARTINI/cg_lipid_potentials.tex`
-  - `plan.md`
-  - `progress.md`
-- Verification:
-  - `python3 -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py example/16.MARTINI/test_cg_bilayer/run_test.py example/16.MARTINI/test_cg_lipid/run_test.py` passed.
-  - `cmake --build obj -j 4` passed with only existing warnings.
-  - Copied 1RKL diagnostics showed normal `cg_lipid_target` continuation drove ion target from about `-3401` to `-4170 E_up` over one extra chunk.
-  - Copied 1RKL ion-excluded-volume continuation from the first corrected stage-7 result fluctuated around roughly `-700` to `-900 E_up` instead of accumulating by thousands.
-  - Current log parse: `1rkl.3.log` total potential `-999.31 -> -1027.34 E_up`; `1afo.0.log` total potential `-730.55 -> -730.09 E_up`.
-  - Current 1RKL copied continuation: 201 frames over 60 public time units, total potential `-1045.92 -> -1062.16 E_up`, range `[-1138.67, -981.46]`, first/last fifth mean delta `-34.37 E_up`.
-  - Ion checks: 1RKL final ion-CGL minimum `16.76 A`; 1AFO final ion-CGL minimum `16.83 A`; both checked files have zero generic CGL-ion pairs.
-  - Current 1AFO copied continuation from stage-7.3 final state: 201 frames over 60 public time units, total potential `-992.58 -> -1019.87 E_up`, range `[-1071.79, -955.46]`, first/last fifth mean delta `-13.81 E_up`.
-  - `python3 -m py_compile py/martini_prepare_system.py` passed.
-  - Burn-in smoke test on copied `/private/tmp/1afo.burnin_smoke.up` promoted `/input/pos` and restart-valid `/input/mom`, cleared `/output`, advanced `sc_env_transition_step_start` by the burn-in step count, and allowed a follow-on `--restart-using-momentum` MD run.
-  - Existing 1RKL stage-7 checkpoint check: the first 155 protein atoms are `P5`/zero-charge, `hybrid_bb_map/bb_type` is all `P5`, `cg_lipid_target` has all 31 neutral BB proxy targets, no `cg_lipid_target_charged_excluded_volume` node remains, and `cg_lipid_target_ion_excluded_volume` has 93 ion targets with nonnegative controls.
-  - Copied continuation validation from old charged-model coordinates: first 10k-step run re-equilibrated total potential `85.55 -> -13.30 E_up`; second run had total potential `-13.30 -> -26.54 E_up`, range `[-73.93, 23.57]`, first/last fifth means `-1.60 -> -35.71 E_up`; third run had total potential `-26.54 -> -33.78 E_up`, range `[-58.95, 63.38]`, first/last fifth means `-22.91 -> -12.66 E_up`, and kinetic ratio `1.017`.
-  - Final checks passed: `python3 -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py example/16.MARTINI/test_cg_bilayer/run_test.py example/16.MARTINI/test_cg_lipid/run_test.py`, `bash -n example/16.MARTINI/run_sim_1rkl.sh`, HDF5 artifact invariants for all checked 1RKL stage-7 files, and `git diff --check`.
-
-## 2026-05-21 (Latest 1RKL Drift and Ion Ownership Recheck)
-- Actions taken:
-  - Re-parsed only the actual production sections of `example/16.MARTINI/1rkl.0-4.log`.
-  - Audited current `1rkl.stage_7.0-4.up` checkpoints for ion pair ownership and CGL-ion target ownership.
-  - Scanned `run_sim_1rkl.sh` and the Python workflow it calls for stage order, minimization, burn-in, continuation, timestep, and interaction ownership.
-- Results:
-  - Production total potential still drifts from `111.75` to `-2.21 E_up` across the five logs. The remaining drift is mainly `cg_lipid_pair` and `cg_lipid_sc`; `cg_lipid_target` is flat overall.
-  - A copied continuation from `1rkl.stage_7.4.up` is still not stationary: total-potential first/last fifth means `-6.37 -> -41.05 E_up`.
-  - Ions are not excluded from protein: current stage-7 checkpoints contain `14,415` generic ion-protein MARTINI pairs, including both backbone carriers and BB proxies, plus `4,278` ion-ion pairs.
-  - Ions do not have generic ion-CGL/CGLD pairs because all CGL/CGLD interactions are deliberately owned by CGL spline nodes. Ion-CGL coupling is the dedicated excluded-volume CGL target node with all 93 ions as targets.
-- Verification:
-  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh` passed.
-  - `git diff --check` passed.
-
-## 2026-05-21 (1RKL Stage-7.4 VTF Edge-Lipid Geometry)
-- Actions taken:
-  - Compared `1rkl.stage_7.4.vtf` display coordinates against the restored HDF5 `CGL`/`CGLD` coordinates using minimum-image vectors.
-  - Confirmed the accidentally cleared stage-7.4 `/output` group was restored by rerunning the exact logged stage-7.4 MD command with seed `3496503789`.
-  - Inspected the C++ CGL orientation force path: CGL pair/SC/target nodes accumulate 6D sensitivities and `compose_vector6d` propagates orientation derivatives to CGL/CGLD physical coordinates.
-  - Fixed VTF display geometry to use stored per-lipid head/tail offsets instead of a synthetic symmetric rod.
-  - Regenerated `outputs/martini_test_1rkl_hybrid/1rkl.stage_7.4.vtf`.
-- Files modified:
-  - `py/martini_extract_vtf.py`
-  - `example/16.MARTINI/cg_lipid_potentials.tex`
-  - `plan.md`
-  - `findings.md`
-  - `progress.md`
-- Verification:
-  - `python3 -m py_compile py/martini_extract_vtf.py` passed.
-  - Restored `1rkl.stage_7.4.up` has `output/pos` shape `(201, 1, 812, 3)` and final output time `60.0`.
-  - Regenerated VTF has 201 frames and 1345 atoms; lipid display z remains inside the half-box.
-
-## 2026-05-22 (In-Plane CGL Orientation Fix)
-- Actions taken:
-  - Restored the previous symmetric VTF lipid display style and regenerated `1rkl.stage_7.4.vtf`.
-  - Quantified the real CGLD-CGL orientation defect directly from HDF5: the old stage-7.4 output had `34` lipids with `|n_z|<0.5` and `14` with `|n_z|<0.25`.
-  - Rejected direct restoration of the stored CGL-CGL radial attraction after a copied test showed rapid many-neighbor collapse.
-  - Added MARTINI-only `cg_lipid_leaflet_orientation` in C++ and workflow injection in Python. The spring constant is derived from the current CGL-CGL first-neighbor horizontal-orientation penalty.
-  - Replaced the current `1rkl.stage_7.4.up` with the validated corrected continuation and regenerated `1rkl.stage_7.4.vtf`.
-- Files modified:
+  - `src/martini.h`
+  - `src/main.h`
+  - `src/main.cpp`
+  - `src/box.cpp`
+  - `src/martini.cpp`
   - `src/martini_cg_lipid.cpp`
-  - `src/main.cpp`
-  - `py/martini_prepare_system_lib.py`
-  - `example/16.MARTINI/cg_lipid_potentials.tex`
-  - `plan.md`
-  - `findings.md`
-  - `progress.md`
+  - `src/deriv_engine.cpp`
+  - `src/thermostat.cpp`
+  - `src/martini_hybrid_runtime.h` removed after merging its declaration into
+    `src/martini.h`.
 - Verification:
-  - `python3 -m py_compile py/martini_prepare_system_lib.py py/martini_extract_vtf.py` passed.
-  - `cmake --build obj -j 4` passed with existing warnings.
-  - Corrected stage-7.4 output has zero lipids with `|n_z|<0.5`, zero with `|n_z|<0.25`, and no anti-aligned lipids.
+  - `bash -n` passed for all MARTINI run scripts.
+  - Reproduced the launcher from a clean shell with `PYTHONPATH`,
+    `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, and `LD_LIBRARY_PATH` unset; it now
+    reaches argument parsing instead of failing in `source.sh`.
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
+  - `python3 py/martini_prepare_system.py run-hybrid-workflow --help` passed
+    and exposes no removed debug/restart compatibility flags.
+  - Final scan found no active debug workflow controls or component dump format
+    strings in the edited files.
+  - `git diff --check` passed for the edited files.
+  - `cmake --build obj` passed; remaining warnings are pre-existing compiler
+    warnings in unrelated code paths.

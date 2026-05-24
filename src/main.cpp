@@ -1,4 +1,5 @@
 #include "main.h"
+#include "martini.h"
 #include "monte_carlo_sampler.h"
 #include "h5_support.h"
 #include <tclap/CmdLine.h>
@@ -20,36 +21,10 @@
 #include <cmath>
 
 
-#include "box.h"  // Simulation box PBC and NPT barostat
+#include "box.h"
 
 using namespace std;
 using namespace h5;
-
-// ---- NPT barostat hooks (implemented in box.cpp) ----
-namespace simulation_box {
-    namespace npt {
-        void register_barostat_for_engine(hid_t config_root, DerivEngine& engine);
-        void maybe_apply_barostat(DerivEngine& engine,
-                                  const VecArray& mom,
-                                  int n_atom,
-                                  uint64_t round_num,
-                                  float dt,
-                                  int inner_step,
-                                  int verbose,
-                                  bool print_now);
-        void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz);
-        void get_pressure(const DerivEngine& engine, float& pxy, float& pz);
-        float get_volume(const DerivEngine& engine);
-        bool is_enabled(const DerivEngine& engine);
-    }
-}
-
-// ---- Fix Rigid hooks (implemented in martini.cpp) ----
-namespace martini_fix_rigid {
-    void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine);
-    void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv);
-    void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom);
-}
 
 // If any stop signal is received (currently we trap sigterm and sigint)
 // we increment any_stop_signal_received.
@@ -215,26 +190,17 @@ static inline bool is_sc_env_interface_term_name(const std::string& name) {
            is_prefix("martini_sc_table_potential", name);
 }
 
-static inline bool is_cg_lipid_pair_term_name(const std::string& name) {
+static inline bool is_cg_lipid_term_name(const std::string& name) {
     return is_prefix("cg_lipid_pair", name) ||
-           is_prefix("cg_lipid_leaflet_orientation", name);
-}
-
-static inline bool is_cg_lipid_sc_term_name(const std::string& name) {
-    return is_prefix("cg_lipid_sc", name);
-}
-
-static inline bool is_cg_lipid_target_term_name(const std::string& name) {
-    return is_prefix("cg_lipid_target", name);
+           is_prefix("cg_lipid_leaflet_orientation", name) ||
+           is_prefix("cg_lipid_sc", name) ||
+           is_prefix("cg_lipid_target", name);
 }
 
 struct HybridProteinPotentialComponents {
     double upside_protein_potential = 0.0;
     double sc_env_interface_potential = 0.0;
     double bb_env_interface_potential = 0.0;
-    double cg_lipid_pair_potential = 0.0;
-    double cg_lipid_sc_potential = 0.0;
-    double cg_lipid_target_potential = 0.0;
     double protein_total() const {
         return upside_protein_potential + sc_env_interface_potential + bb_env_interface_potential;
     }
@@ -250,33 +216,11 @@ static HybridProteinPotentialComponents compute_hybrid_protein_potential_compone
             out.sc_env_interface_potential += p;
             continue;
         }
-        if(is_cg_lipid_pair_term_name(n.name)) {
-            out.cg_lipid_pair_potential += p;
-            continue;
-        }
-        if(is_cg_lipid_sc_term_name(n.name)) {
-            out.cg_lipid_sc_potential += p;
-            continue;
-        }
-        if(is_cg_lipid_target_term_name(n.name)) {
-            out.cg_lipid_target_potential += p;
-            continue;
-        }
-        if(is_dry_martini_term_name(n.name)) continue;
+        if(is_dry_martini_term_name(n.name) || is_cg_lipid_term_name(n.name)) continue;
         out.upside_protein_potential += p;
     }
     out.bb_env_interface_potential = martini_hybrid::get_last_bb_env_interface_potential(engine);
     return out;
-}
-
-static void print_potential_components(const DerivEngine& engine, const char* label) {
-    printf("Potential components %s:\n", label ? label : "");
-    for(const auto& n : engine.nodes) {
-        if(!n.computation->potential_term) continue;
-        const auto& pot_node = dynamic_cast<const PotentialNode&>(*n.computation.get());
-        printf("  %-36s % .6f\n", n.name.c_str(), static_cast<double>(pot_node.potential));
-    }
-    printf("  %-36s % .6f\n", "TOTAL", static_cast<double>(engine.potential));
 }
 
 static double compute_logged_kinetic_energy(System* sys) {
@@ -669,7 +613,6 @@ try {
             "Default is verlet.",
             false, "", "v, mv", cmd);
     ValueArg<int> inner_step_arg("", "inner-step", "inner step for the integrator", false, 3, "int", cmd);
-    // Minimization controls (ported from prior branch)
     SwitchArg enable_min_arg("", "minimize", "Run an energy minimization before MD", cmd, false);
     ValueArg<int> min_max_iter_arg("", "min-max-iter", "Minimization max iterations", false, 1000, "int", cmd);
     ValueArg<double> min_energy_tol_arg("", "min-energy-tol", "Minimization energy tolerance", false, 1e-6, "float", cmd);
@@ -701,8 +644,6 @@ try {
             "of the potential for the initial structure.  This may give strange answers for native structures "
             "(no steric clashes may given an agreement of NaN) or random structures (where bonds and angles are "
             "exactly at their equilibrium values).  Interpret these results at your own risk.", cmd, false);
-    SwitchArg dump_potential_components_arg("", "dump-potential-components",
-            "(developer use only) print per-node potential components when logging frames", cmd, false);
     SwitchArg record_momentum_arg("", "record-momentum",
             "record the momentum (so that the trajectory can be exactly restarted)"
             " the momentum will be recorded in output.mom ",
@@ -1146,14 +1087,11 @@ try {
         for(System& sys: systems) {
             sys.engine.compute(PotentialAndDerivMode);
             if(verbose) printf(" % .2f", sys.engine.potential);
-            if(verbose && dump_potential_components_arg.getValue())
-                print_potential_components(sys.engine, "initial");
         }
         if(verbose) printf("\n");
 
             // Optional pre-run minimization
             if(enable_min_arg.getValue()) {
-                void martini_run_minimization(DerivEngine&, int, double, double, double, int);
                 int it = min_max_iter_arg.getValue();
                 double etol = min_energy_tol_arg.getValue();
                 double ftol = min_force_tol_arg.getValue();
@@ -1234,11 +1172,8 @@ try {
                                        get_n_hbond(sys.engine));
                                 if(rg >= 0.0) printf(" %5.1f Rg,", rg);
                                 else          printf("  N/A Rg,");
-                                printf(" protein_potential % .2f cg_lipid_pair % .2f cg_lipid_sc % .2f cg_lipid_target % .2f total_potential % .2f\n",
+                                printf(" protein_potential % .2f total_potential % .2f\n",
                                        protein_potential,
-                                       prot_components.cg_lipid_pair_potential,
-                                       prot_components.cg_lipid_sc_potential,
-                                       prot_components.cg_lipid_target_potential,
                                        sys.engine.potential);
                             } else {
                                 printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, potential % .2f\n",
@@ -1249,8 +1184,6 @@ try {
                                        sys.engine.potential);
                             }
                         }
-                        if(verbose && dump_potential_components_arg.getValue())
-                            print_potential_components(sys.engine, "frame");
                         fflush(stdout);
                     }
 

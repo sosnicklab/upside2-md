@@ -1,6 +1,12 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-24: User correction on `run_sim_1rkl.sh` environment bootstrap.
+  - `source.sh` appends variables such as `PYTHONPATH`, `CPLUS_INCLUDE_PATH`,
+    `LIBRARY_PATH`, and `LD_LIBRARY_PATH` without default guards.
+  - Working rule: shell launchers that source legacy project bootstrap scripts
+    must not enable `set -u` until after bootstrap has completed, unless every
+    sourced script has been audited for unset-variable safety.
 - 2026-05-22: User correction on stage-7.4 in-plane lipid orientations.
   - The CGLD-CGL vectors lying in the x-y plane are a real physical model defect, not a VTF-only issue. The previous symmetric VTF display style is preferred and was restored.
   - Current 1RKL stage-7.4 output before the fix had `34` lipids with `|n_z|<0.5` and `14` with `|n_z|<0.25`; the count grew across stage-7 chunks.
