@@ -671,7 +671,7 @@ def inject_hybrid_mapping(up_file: Path, mapping_file: Path):
                 old_to_new = remap_grp["old_to_new"][:].astype(np.int32)
                 n_old = int(remap_grp.attrs["n_old"])
                 if n_old == src_mem.shape[0]:
-                    print(f"  Remapping hybrid membership from {n_old} → {base_n_atom} atoms "
+                    print(f"  Remapping hybrid membership from {n_old} -> {base_n_atom} atoms "
                           f"(CG lipid coarse-graining)")
                     new_membership = np.full(base_n_atom, -1, dtype=np.int32)
                     for old_idx in range(n_old):
@@ -891,7 +891,7 @@ def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, a
         reference_state_rama=args.upside_reference_state_rama,
     )
     # SC placement node must exist before CG lipid node injection
-    # so that cg_lipid_sc (CG↔SC) can find it.
+    # so that cg_lipid_sc (CG-SC) can find it.
     lipid_res = getattr(args, "lipid_resolution", "coarse")
     if lipid_res != "full":
         inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.dopc_h5)

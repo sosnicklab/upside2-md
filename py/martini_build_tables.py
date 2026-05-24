@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Build MARTINI combined LJ+Coulomb spline tables from ITP-derived parameters.
-
-All particle-type data and bead-level parameters are read from ITP files via
-``martini_itp_reader`` — nothing is hardcoded here.
-"""
+"""Build dry-MARTINI spline tables from ITP-derived parameters."""
 
 from __future__ import annotations
 
@@ -22,10 +18,6 @@ from martini_itp_reader import (
     parse_dry_forcefield,
     parse_itp_atomtype_masses,
 )
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 COULOMB_K_DRY_KJ_NM = 138.935458 / 15.0
 ENERGY_CONVERSION_KJ_PER_EUP = 2.914952774272
@@ -65,11 +57,6 @@ def _ensure_cg_bonds_angles(lipids_itp_path: Path):
     dopc = parse_dopc_from_itp(lipids_itp_path)
     _CURRENT_CG_BONDS = list(dopc["bonds"])
     _CURRENT_CG_ANGLES = list(dopc["angles"])
-
-
-# ---------------------------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------------------------
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -260,10 +247,6 @@ def _load_sidechain_orientation_library(
     return residue_info
 
 
-# ---------------------------------------------------------------------------
-# Particle-particle combined grids
-# ---------------------------------------------------------------------------
-
 def _build_particles_group(
     h5: h5py.File,
     atomtypes: List[str],
@@ -349,10 +332,6 @@ def _build_particles_group(
         f"{len(active_types)} active types, {PARTICLES_GRID_N} radial points"
     )
 
-
-# ---------------------------------------------------------------------------
-# Sidechain-environment combined tables
-# ---------------------------------------------------------------------------
 
 def _run_sc_task(
     residue: str,
@@ -603,9 +582,6 @@ def _build_sc_table_group(
     )
 
 
-# ---------------------------------------------------------------------------
-# Uniform deBoor B-spline utilities (matching C++ spline.h)
-# ---------------------------------------------------------------------------
 # The C++ deBoor_value_and_deriv in spline.h implements uniform cubic B-spline
 # evaluation with integer knot spacing. It does NOT use a custom knot vector.
 # We replicate that algorithm here for fitting control points that the C++ can
@@ -625,7 +601,7 @@ def _deBoor_uniform_basis_weights(t: float, n_control: int) -> np.ndarray:
 
     Note: The C++ code reads 4 consecutive floats starting at x_bin-1. At the
     upper boundary (x_bin+2 >= n_control), it reads into the next array in
-    memory (Ang1→Ang2). The 4th coefficient weight is zero for integer t, so
+    memory (Ang1 to Ang2). The 4th coefficient weight is zero for integer t, so
     this is harmless. We allow x_bin up to n_control-1 (one-past-end read).
     """
     w = np.zeros(n_control, dtype=np.float64)
@@ -870,10 +846,6 @@ def _fit_radial_angular_angular_tensor_bspline(
     return controls
 
 
-# ---------------------------------------------------------------------------
-# CG lipid energy sampling
-# ---------------------------------------------------------------------------
-
 _CG_DERIVED_NUMERIC_ATTRS = (
     "contact_nm",
     "contact_ang",
@@ -918,7 +890,7 @@ def _compute_lipid_bonded_energy(positions: np.ndarray) -> float:
         dr = positions[i] - positions[j]
         r = float(np.sqrt(np.dot(dr, dr)))
         energy += 0.5 * k * (r - r0) ** 2
-    # Angles: V(θ) = 0.5 * k * (cos(θ) - cos(θ0))²
+    # Angles: V(theta) = 0.5 * k * (cos(theta) - cos(theta0))^2
     for i, j, k_idx, theta0_deg, k_ang in _CURRENT_CG_ANGLES:
         r_ij = positions[i] - positions[j]
         r_kj = positions[k_idx] - positions[j]
@@ -1052,7 +1024,7 @@ def _compute_lipid_bonded_energy_and_gradient(positions: np.ndarray):
         grad[i] += g
         grad[j] -= g
 
-    # Angles: V(θ) = 0.5 * k * (cos(θ) - cos(θ0))²
+    # Angles: V(theta) = 0.5 * k * (cos(theta) - cos(theta0))^2
     for i, j, k_idx, theta0_deg, k_ang in _CURRENT_CG_ANGLES:
         r_ij = positions[i] - positions[j]
         r_kj = positions[k_idx] - positions[j]
@@ -1094,7 +1066,7 @@ def _relax_lipid_pair(
     Uses dist_min=0.01 during relaxation (purely numerical safety) so the
     energy surface retains genuine gradients everywhere, allowing the descent
     to push overlapping beads apart. Gradient clipping (max_disp=0.005 nm/step)
-    keeps the enormous LJ forces bounded. No line search — fixed-step descent
+    keeps the enormous LJ forces bounded. No line search; fixed-step descent
     always moves toward lower energy.
 
     Final energy includes the bonded deformation penalty relative to the
@@ -1314,7 +1286,7 @@ def _fit_cg_lipid_quadspline(
     n_modes: int = 4,
     n_knot_radial: int = 14,
 ) -> dict:
-    """Fit full tensor-product B-spline parameters for CG lipid ↔ CG lipid interactions."""
+    """Fit full tensor-product B-spline parameters for CG lipid-CG lipid interactions."""
     r_values = np.asarray(_linspace(r_min_nm, r_max_nm, r_count), dtype=np.float64)
     cos_theta_grid = np.asarray(_linspace(-1.0, 1.0, cos_theta_count), dtype=np.float64)
     n_angle = cos_theta_count
@@ -1329,8 +1301,8 @@ def _fit_cg_lipid_quadspline(
     ref_nm = _canonicalize_lipid_reference_to_z(ref_bead_positions_nm)
 
     total_samples = n_radial * n_angle * n_angle * azimuthal_count * azimuthal_count
-    print(f"  Sampling CG↔CG energy: {n_radial} radial × {n_angle}² angular "
-          f"× {azimuthal_count}² azimuthal = {total_samples} samples, "
+    print(f"  Sampling CG-CG energy: {n_radial} radial x {n_angle}^2 angular "
+          f"x {azimuthal_count}^2 azimuthal = {total_samples} samples, "
           f"relax={relax_steps}, full tensor")
 
     for ir, r_nm in enumerate(r_values):
@@ -1453,7 +1425,7 @@ def _fit_cg_lipid_sc_quadspline(
     knot_spacing_ang: float = 1.4,
     excluded_area_contact_nm: float | None = None,
 ) -> dict:
-    """Fit full multimode B-spline params for sidechain ↔ CG lipid interactions.
+    """Fit full multimode B-spline params for sidechain-CG lipid interactions.
 
     The parameter layout matches _fit_cg_lipid_quadspline:
       V0(r) + sum_m Ang1_m(a_sc) * Ang2_m(a_cg) * Vm(r)
@@ -1481,8 +1453,8 @@ def _fit_cg_lipid_sc_quadspline(
         else:
             rotamer_sc_positions.append(center)
 
-    print(f"  Sampling CG↔SC energy for target={target_type}: "
-          f"{n_radial} radial × {n_angle}² angular × {azimuthal_count} azimuthal, "
+    print(f"  Sampling CG-SC energy for target={target_type}: "
+          f"{n_radial} radial x {n_angle}^2 angular x {azimuthal_count} azimuthal, "
           f"relax={relax_steps}, modes={n_modes}")
 
     # Energy grid: (n_radial, n_angle_sc, n_angle_cg), matching runtime source order.
@@ -1699,7 +1671,7 @@ def _compute_cgl_effective_lj_params(
     Orientation-averages the total LJ interaction between all 14 DOPC beads and a
     point particle of each target type, then fits effective LJ(12,6) parameters.
 
-    Returns dict: target_type → dict(sigma_nm=float, epsilon_kj_mol=float)
+    Returns dict: target_type to dict(sigma_nm=float, epsilon_kj_mol=float)
     """
     ref_nm = np.asarray(ref_bead_positions_nm, dtype=np.float64)
     n_beads = ref_nm.shape[0]
@@ -1812,7 +1784,7 @@ def _build_cg_lipid_tables(
     cos_theta_count: int = 13,
     azimuthal_count: int = 4,
 ) -> None:
-    """Build CG lipid pair and CG lipid ↔ SC quadspline tables and store in HDF5."""
+    """Build CG lipid pair and CG lipid-SC quadspline tables and store in HDF5."""
     if ref_bead_positions_nm is None:
         print("  cg_lipid_table: no reference bead positions provided, skipping")
         return
@@ -1849,10 +1821,10 @@ def _build_cg_lipid_tables(
     sc_fit_r_max_nm = min(float(r_max_nm), contact_nm)
     print(
         "  DOPC-derived CGL params: "
-        f"contact={derived_params['contact_ang']:.3f} Å, "
-        f"orientation_length={derived_params['orientation_length_ang']:.3f} Å, "
+        f"contact={derived_params['contact_ang']:.3f} A, "
+        f"orientation_length={derived_params['orientation_length_ang']:.3f} A, "
         f"orientation_mass={derived_params['orientation_mass_g_mol']:.3f} g/mol, "
-        f"orientation_bond_fc={derived_params['orientation_bond_fc_eup_a2']:.3f} E_up/Å²"
+        f"orientation_bond_fc={derived_params['orientation_bond_fc_eup_a2']:.3f} E_up/A^2"
     )
 
     # Resolution control: "coarse", "medium", or "fine" (default).  The CGL-CGL
@@ -1866,10 +1838,10 @@ def _build_cg_lipid_tables(
     else:
         _cg_r, _cg_ct, _cg_az, _sc_r, _sc_ct, _sc_az = 16, 7, 2, 16, 9, 4
     print(f"  CG lipid resolution: {_res} "
-          f"(CG: {_cg_r}r×{_cg_ct}²θ×{_cg_az}²φ, "
-          f"SC: {_sc_r}r×{_sc_ct}²θ×{_sc_az}²φ)")
+          f"(CG: {_cg_r}r x {_cg_ct}^2 theta x {_cg_az}^2 phi, "
+          f"SC: {_sc_r}r x {_sc_ct}^2 theta x {_sc_az}^2 phi)")
 
-    # CG ↔ CG directional spline. Hidden bead relaxation is charged against the
+    # CG-CG directional spline. Hidden bead relaxation is charged against the
     # canonical DOPC bonded reference, so short-range overlap remains costly.
     cg_relax_steps = 50
     result_cg = _fit_cg_lipid_quadspline(
@@ -1890,12 +1862,12 @@ def _build_cg_lipid_tables(
         n_knot_radial=14,
     )
     print(
-        "  CG↔CG: full tensor table "
-        f"{result_cg['n_radial']}r×{result_cg['n_angular']}²angular, "
+        "  CG-CG: full tensor table "
+        f"{result_cg['n_radial']}r x {result_cg['n_angular']}^2 angular, "
         f"max|E| = {float(np.max(np.abs(result_cg['energy_grid_raw']))):.3f} kJ/mol"
     )
 
-    # CG ↔ SC quadspline
+    # CG-SC quadspline
     orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
     residue_map = load_martini_forcefield(martinize_path, forcefield_name)
 
@@ -1960,7 +1932,7 @@ def _build_cg_lipid_tables(
             sc_short_range_core_rows[ri] = np.int32(result_sc["short_range_core_rows"])
             sc_cutoff_ang = min(sc_cutoff_ang, float(result_sc["cutoff_ang"]))
             sc_residue_names.append(residue)
-            print(f"  CG↔SC({residue}): RMS error = {result_sc['rms_error']:.4f} kJ/mol, "
+            print(f"  CG-SC({residue}): RMS error = {result_sc['rms_error']:.4f} kJ/mol, "
                   f"modes = {result_sc['n_modes']}")
 
     # Store in HDF5
@@ -1972,7 +1944,7 @@ def _build_cg_lipid_tables(
     cg_grp.create_dataset("bead_charges", data=np.asarray(bead_charges, dtype=np.float32))
     _write_cg_derived_attrs(cg_grp, derived_params)
 
-    # CG ↔ CG pair
+    # CG-CG pair
     cg_pair_grp = cg_grp.create_group("cg_lipid_pair")
     pair_param = result_cg["interaction_param"].astype(np.float32)
     cg_pair_grp.create_dataset(
@@ -2016,7 +1988,7 @@ def _build_cg_lipid_tables(
         data=result_cg["attractive_radial_background_kj_mol"].astype(np.float32),
     )
 
-    # CG ↔ SC
+    # CG-SC
     cg_sc_grp = cg_grp.create_group("cg_lipid_sc")
     cg_sc_grp.create_dataset(
         "interaction_param",
@@ -2068,8 +2040,8 @@ def _build_cg_lipid_tables(
         )
 
     print(
-        f"  Stored: CG↔CG (1×1×{pair_param.size}), "
-        f"CG↔SC ({n_sc_types}×1×{interaction_param_sc.shape[-1]}) in {h5.filename}"
+        f"  Stored: CG-CG (1x1x{pair_param.size}), "
+        f"CG-SC ({n_sc_types}x1x{interaction_param_sc.shape[-1]}) in {h5.filename}"
     )
 
     # Effective LJ parameters are retained only as target-type metadata for
@@ -2100,8 +2072,8 @@ def _build_cg_lipid_tables(
     eff_grp.attrs["source"] = "orientation_average_metadata_not_runtime"
     _write_cg_derived_attrs(eff_grp, derived_params)
 
-    # Build directional B-spline tables for CGL ↔ all non-CGL target types.
-    # After this, MartiniPotential CGL↔X can be omitted for ALL X.
+    # Build directional B-spline tables for CGL against all non-CGL target types.
+    # After this, MartiniPotential CGL-X can be omitted for all X.
     _build_cgl_target_table(
         h5, cg_grp, effective_lj,
         ref_bead_positions_nm=ref_nm,
@@ -2128,7 +2100,7 @@ def _build_cgl_target_table(
     n_knot_angular: int = 15,
     knot_spacing_ang: float = 1.4,
 ) -> None:
-    """Build directional tensor B-spline tables for CGL ↔ point targets."""
+    """Build directional tensor B-spline tables for CGL-point targets."""
     target_types = sorted(t for t in effective_lj if t != "CGL")
     if not target_types:
         print("  cg_lipid_target: no target types, skipping")
@@ -2172,7 +2144,7 @@ def _build_cgl_target_table(
                 continue
             bead_floor_sigmas.append(float(params["sigma_nm"]))
         if not bead_floor_sigmas:
-            raise RuntimeError(f"No explicit DOPC bead params for CGL↔{tgt_type}")
+            raise RuntimeError(f"No explicit DOPC bead params for CGL-{tgt_type}")
         dist_floor_nm = 0.8 * min(bead_floor_sigmas)
         for ir, r_nm in enumerate(r_sample_nm):
             target_pos = np.array([[float(r_nm), 0.0, 0.0]], dtype=np.float64)
@@ -2250,23 +2222,15 @@ def _build_cgl_target_table(
         _write_cg_derived_attrs(target_grp, derived_params)
 
     print(f"  cg_lipid_target: {n_types} target types, "
-          f"{n_knot_radial} radial × {n_knot_angular} angular knots, "
-          f"cutoff={cutoff_ang:.1f} Å, source={target_grp.attrs['source']}")
+          f"{n_knot_radial} radial x {n_knot_angular} angular knots, "
+          f"cutoff={cutoff_ang:.1f} A, source={target_grp.attrs['source']}")
 
-
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Public pre-generation entry points (used by martini_gen_params.py)
-# ---------------------------------------------------------------------------
 
 def build_particle_h5(
     output_path: Path,
     dry_ff_path: Path,
 ) -> None:
-    """Generate particle.h5 with ALL particle types from the ITP."""
+    """Generate particle.h5 with all particle types from the ITP."""
     output_path = Path(output_path).expanduser().resolve()
     dry_ff_path = Path(dry_ff_path).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2285,7 +2249,7 @@ def build_sidechain_h5(
     sidechain_lib_path: Path,
     forcefield_name: str = "martini22",
 ) -> None:
-    """Generate sidechain.h5 with ALL residues × ALL target types."""
+    """Generate sidechain.h5 with all residues and target types."""
     output_path = Path(output_path).expanduser().resolve()
     martinize_path = Path(martinize_path).expanduser().resolve()
     sidechain_lib_path = Path(sidechain_lib_path).expanduser().resolve()

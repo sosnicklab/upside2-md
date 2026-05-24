@@ -1809,14 +1809,10 @@ void clear_hybrid_for_engine(DerivEngine* engine) {
 }
 } // namespace martini_hybrid
 
-// ===================== MASS STORAGE FOR INTEGRATORS =====================
-// Global mass storage for MARTINI integrators to use proper masses instead of unit mass
-
 namespace martini_masses {
     static std::mutex g_mass_mutex;
     static std::map<DerivEngine*, std::vector<float>> g_masses;
-    
-    // Load masses from H5 file for a given engine
+
     void load_masses_for_engine(DerivEngine* engine, hid_t config_root) {
         std::lock_guard<std::mutex> lk(g_mass_mutex);
         auto& masses = g_masses[engine];
@@ -1948,9 +1944,9 @@ struct DihedralSpring : public PotentialNode
         // Store max_spring as member variable
         this->max_spring = max_spring;
         
-        // Set spline range for dihedral angles (typically -π to π radians)
-        dihedral_min = -M_PI_F;  // -180°
-        dihedral_max = M_PI_F;   // +180°
+        // Set spline range for dihedral angles (typically -pi to pi radians)
+        dihedral_min = -M_PI_F;
+        dihedral_max = M_PI_F;
         
         // Use periodic dihedral potential: V = k * (1 + cos(n*phi - phi0))
         // For MARTINI, n=1 (multiplicity=1) and phi0 is the equilibrium angle
@@ -2060,10 +2056,10 @@ struct DihedralSpring : public PotentialNode
                     for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
                 }
             } else if(p.dihedral_type == 2) {
-                // Harmonic dihedral: V = 0.5 * k * (phi - phi0)²
+                // Harmonic dihedral: V = 0.5 * k * (phi - phi0)^2
                 if(pot) *pot += 0.5f * p.spring_constant * delta_phi * delta_phi;
                 
-                // Force is the derivative of V = 0.5 * k * (phi - phi0)²
+                // Force is the derivative of V = 0.5 * k * (phi - phi0)^2
                 // dV/dphi = k * (phi - phi0) = k * delta_phi
                 auto s = Float4(p.spring_constant * delta_phi);
                 for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
@@ -2113,7 +2109,7 @@ struct MartiniPotential : public PotentialNode
     // Box dimensions used for minimum-image pair displacements under PBC/NPT.
     float box_x, box_y, box_z;
     
-    // Combined LJ+Coulomb spline — one spline per (eps, sig, qq) triple
+    // Combined LJ+Coulomb spline, one spline per (eps, sig, qq) triple.
     std::map<std::tuple<float, float, float>, LayeredClampedSpline1D<1>> combined_splines;
 
     float r_min, r_max;
@@ -3612,7 +3608,7 @@ struct DistSpring : public PotentialNode
         if(attribute_exists(grp, ".", "bond_r_max")) {
             bond_r_max = read_attribute<float>(grp, ".", "bond_r_max");
         } else {
-            // heuristic default: at least 2x the largest equilibrium distance or 5 Å
+            // heuristic default: at least 2x the largest equilibrium distance or 5 A
             bond_r_max = std::max(2.0f * max_equil, 5.0f);
         }
         // Define and store a GLOBAL delta-r domain shared by all bonds corresponding to r in [0, bond_r_max]
@@ -3762,10 +3758,10 @@ struct AngleSpring : public PotentialNode
         // Store max_spring as member variable
         this->max_spring = max_spring;
         
-        // Set spline range for delta_cos = cos(θ) - cos(θ₀)
+        // Set spline range for delta_cos = cos(theta) - cos(theta0)
         // Find the range of cos(equilibrium angles) to set proper delta_cos bounds
-        float min_cos_equil = 1.0f;  // cos(0°) = 1
-        float max_cos_equil = -1.0f; // cos(180°) = -1
+        float min_cos_equil = 1.0f;
+        float max_cos_equil = -1.0f;
         for(const auto& p : params) {
             float cos_equil = cosf(p.equil_angle_deg * M_PI / 180.0f);
             min_cos_equil = std::min(min_cos_equil, cos_equil);

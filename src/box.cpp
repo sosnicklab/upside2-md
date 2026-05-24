@@ -12,8 +12,6 @@ using namespace h5;
 
 namespace simulation_box {
 
-// ===================== PBC UTILITIES =====================
-
 void wrap_positions(VecArray pos, int n_atom, float box_x, float box_y, float box_z) {
     for(int i = 0; i < n_atom; ++i) {
         float x = pos(0, i);
@@ -33,8 +31,6 @@ void wrap_positions(VecArray pos, int n_atom, float box_x, float box_y, float bo
         pos(2, i) = z;
     }
 }
-
-// ===================== NPT BAROSTAT =====================
 
 namespace npt {
 
@@ -96,7 +92,6 @@ static void apply_semi_isotropic_scaling(DerivEngine& engine, float scale_xy, fl
         }
     }
     
-    // Also update node box dimensions
     update_node_boxes(engine, scale_xy, scale_z);
 }
 
@@ -234,7 +229,7 @@ static void apply_parrinello_rahman_barostat(BarostatState& st,
 
         // Compute scaling factors from velocities
         // scale = exp(v * dt / box_dim)
-        // For small v*dt, scale ≈ 1 + v*dt/box_dim
+        // For small v*dt, scale is approximately 1 + v*dt/box_dim.
         float avg_box_xy = 0.5f * (bx + by);
         scale_xy = 1.0f + (st.box_vel_xy * delta_t) / avg_box_xy;
         scale_z = 1.0f + (st.box_vel_z * delta_t) / bz;
@@ -415,7 +410,6 @@ bool is_enabled(const DerivEngine& engine) {
     return false;
 }
 
-// Placeholder for updating node boxes - will be implemented in martini.cpp
 void update_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
     NodeBoxUpdater updater = g_node_box_updater.load(std::memory_order_relaxed);
     if(updater) updater(engine, scale_xy, scale_z);

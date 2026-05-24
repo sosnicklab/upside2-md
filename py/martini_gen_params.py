@@ -3,10 +3,10 @@
 
 Generates the four parameter files under ``parameters/dryMARTINI/``:
 
-    particle.h5      – all 38 particle-type pair LJ+Coulomb energy grids
-    sidechain.h5     – all 20 residues × 38 target SC orientation tables
-    dopc.h5          – DOPC CG lipid directional splines
-    interlipid.h5    – cross-lipid placeholder (empty)
+    particle.h5      - all 38 particle-type pair LJ+Coulomb energy grids
+    sidechain.h5     - all 20 residues x 38 target SC orientation tables
+    dopc.h5          - DOPC CG lipid directional splines
+    interlipid.h5    - cross-lipid placeholder (empty)
 
 Run this once after cloning or when the .itp files change:
 

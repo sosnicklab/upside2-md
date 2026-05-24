@@ -1,6 +1,14 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-24: User correction on cleanup depth.
+  - Removing debug switches is not enough for this task. The required bar is a
+    branch-vs-master cleanup of all MARTINI Python/C++ additions: straighten the
+    workflow logic, match local master style, reduce duplicate implementations,
+    and remove generated-looking structure.
+  - Working rule: after visible debug cleanup, inspect the actual diff against
+    `/Users/yinhan/Documents/upside2-md-master` and normalize new code against
+    nearby master patterns before calling the refactor complete.
 - 2026-05-24: User correction on `run_sim_1rkl.sh` environment bootstrap.
   - `source.sh` appends variables such as `PYTHONPATH`, `CPLUS_INCLUDE_PATH`,
     `LIBRARY_PATH`, and `LD_LIBRARY_PATH` without default guards.

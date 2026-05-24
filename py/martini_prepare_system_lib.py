@@ -18,7 +18,7 @@ import numpy as np
 import tables as tb
 
 from martini_cg_lipid_params import derive_dopc_cg_params
-from martini_itp_reader import parse_itp_atomtype_masses
+from martini_itp_reader import parse_dry_forcefield, parse_itp_atomtype_masses, parse_itp_file
 
 PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
@@ -45,6 +45,36 @@ CANONICAL_AFFINE_REF = np.array(
     dtype=np.float32,
 )
 CANONICAL_AFFINE_REF -= CANONICAL_AFFINE_REF.mean(axis=0, keepdims=True)
+STAGE_PARAMS = {
+    "minimization": {
+        "lj_soften": 1,
+        "lj_alpha": 0.2,
+        "coulomb_soften": 1,
+        "slater_alpha": 2.0,
+        "barostat_type": 0,
+    },
+    "npt_equil": {
+        "lj_soften": 1,
+        "lj_alpha": 0.2,
+        "coulomb_soften": 1,
+        "slater_alpha": 2.0,
+        "barostat_type": 0,
+    },
+    "npt_equil_reduced": {
+        "lj_soften": 1,
+        "lj_alpha": 0.05,
+        "coulomb_soften": 1,
+        "slater_alpha": 0.5,
+        "barostat_type": 0,
+    },
+    "npt_prod": {
+        "lj_soften": 0,
+        "lj_alpha": 0.0,
+        "coulomb_soften": 0,
+        "slater_alpha": 0.0,
+        "barostat_type": 1,
+    },
+}
 
 
 def _decode_h5_attr(value):
@@ -432,9 +462,9 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
     lipid_directions : (n_lipid, 3) float  -- unit direction vectors
     cg_lipid_indices : (n_lipid,) int     -- indices of CG lipids in the new arrays
     lipid_to_atom_map : list[list[int]]    -- original atom index per lipid
-    ref_bead_positions : (n_lipid, 14, 3)  -- bead positions relative to COM (Ångstrom)
-    display_head_offsets : (n_lipid,) float -- hydrophilic endpoint offset along direction (Å)
-    display_tail_offsets : (n_lipid,) float -- hydrophobic endpoint offset along direction (Å)
+    ref_bead_positions : (n_lipid, 14, 3)  -- bead positions relative to COM (A)
+    display_head_offsets : (n_lipid,) float -- hydrophilic endpoint offset along direction (A)
+    display_tail_offsets : (n_lipid,) float -- hydrophobic endpoint offset along direction (A)
     """
     dopc_atom_names = _ensure_dopc_atom_names()
     n_atoms = len(initial_positions)
@@ -470,7 +500,7 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
     n_lipid = len(lipid_groups)
     print(f"Found {n_lipid} DOPC lipids ({sum(len(g) for g in lipid_groups)} beads)")
 
-    # Build atom-name → position map for each lipid to get beads in ITP order
+    # Build atom-name to position map for each lipid to get beads in ITP order.
     lipid_directions = np.zeros((n_lipid, 3), dtype=float)
     lipid_to_atom_map = []
     ref_bead_positions = np.zeros((n_lipid, 14, 3), dtype=float)
@@ -501,7 +531,7 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
         # Reference bead positions relative to COM
         ref_bead_positions[li] = bead_pos - com
 
-        # Direction: head (NC3) → tail midpoint (C5A, C5B)
+        # Direction: head (NC3) to tail midpoint (C5A, C5B).
         head_pos = bead_pos[0]  # NC3
         tail_mid = (bead_pos[8] + bead_pos[13]) / 2.0  # C5A + C5B
         direction = tail_mid - head_pos
@@ -579,7 +609,7 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
         new_seg_ids[write_pos:write_pos + count] = seg_ids[last_end:n_atoms]
         write_pos += count
 
-    print(f"CG lipid coarse-graining: {n_atoms} → {n_new} atoms "
+    print(f"CG lipid coarse-graining: {n_atoms} -> {n_new} atoms "
           f"({n_lipid} CG lipids, {n_atoms - sum(len(g) for g in lipid_groups)} non-lipid)")
 
     return (new_positions, new_atom_types, new_charges, new_residue_ids,
@@ -1242,9 +1272,6 @@ def write_hybrid_mapping_h5(
             break_grp.create_dataset("chain_counts", data=chain_counts, dtype=np.int32)
 
 
-# -----------------------------------------------------------------------------
-# Stage Conversion Helpers
-# -----------------------------------------------------------------------------
 def runtime_input_pdb_path(script_dir, pdb_id):
     """Resolve runtime protein+bilayer PDB path with optional override."""
     override = os.environ.get("UPSIDE_RUNTIME_PDB_FILE", "").strip()
@@ -1254,378 +1281,16 @@ def runtime_input_pdb_path(script_dir, pdb_id):
 
 
 def read_martini3_nonbond_params(itp_file):
-    """
-    Read MARTINI nonbonded parameters from the main .itp file
-    Returns a dictionary mapping (type1, type2) tuples to (sigma, epsilon) values
-    """
-    martini_table = {}
-    
-    if not os.path.exists(itp_file):
-        print(f"Error: MARTINI parameter file '{itp_file}' not found!")
-        return martini_table
-    
-    with open(itp_file, 'r') as f:
-        lines = f.readlines()
-    
-    # Parse #define macros for dry MARTINI style nonbond_params entries
-    macro_params = {}
-    for raw in lines:
-        line = raw.split(';', 1)[0].strip()
-        if not line.startswith('#define'):
-            continue
-        parts = line.split()
-        # Format: #define m_VI 0.47 2.700
-        if len(parts) >= 4:
-            macro_name = parts[1]
-            try:
-                sigma = float(parts[2])
-                epsilon = float(parts[3])
-                macro_params[macro_name] = (sigma, epsilon)
-            except ValueError:
-                continue
-
-    # Find the nonbond_params section
-    in_nonbond_params = False
-    param_count = 0
-    
-    for i, line in enumerate(lines):
-        line = line.split(';', 1)[0].strip()
-        
-        # Check for nonbond_params section start
-        if line == '[ nonbond_params ]' or line == '[nonbond_params]':
-            in_nonbond_params = True
-            continue
-        elif line.startswith('[') and line.endswith(']') and line != '[ nonbond_params ]' and line != '[nonbond_params]':
-            if in_nonbond_params:
-                break
-            in_nonbond_params = False
-            continue
-        
-        # Parse nonbond_params lines
-        if in_nonbond_params and line and not line.startswith(';'):
-            parts = line.split()
-            if len(parts) >= 5:
-                type1 = parts[0]
-                type2 = parts[1]
-                try:
-                    _func = int(parts[2])
-                except ValueError:
-                    continue
-                try:
-                    sigma = float(parts[3])  # nm
-                    epsilon = float(parts[4])  # kJ/mol
-                except ValueError:
-                    # Dry MARTINI often uses a macro token in column 4
-                    macro = parts[3]
-                    if macro not in macro_params:
-                        continue
-                    sigma, epsilon = macro_params[macro]
-
-                # Store both orientations for easy lookup
-                martini_table[(type1, type2)] = (sigma, epsilon)
-                martini_table[(type2, type1)] = (sigma, epsilon)
-                param_count += 1
-            elif len(parts) >= 4:
-                # Alternative dry MARTINI format: type1 type2 func macro
-                type1 = parts[0]
-                type2 = parts[1]
-                try:
-                    _func = int(parts[2])
-                except ValueError:
-                    continue
-                macro = parts[3]
-                if macro not in macro_params:
-                    continue
-                sigma, epsilon = macro_params[macro]
-                martini_table[(type1, type2)] = (sigma, epsilon)
-                martini_table[(type2, type1)] = (sigma, epsilon)
-                param_count += 1
-    
+    _, pair_params = parse_dry_forcefield(itp_file)
+    martini_table = {
+        key: (value["sigma_nm"], value["epsilon_kj_mol"])
+        for key, value in pair_params.items()
+    }
     print(f"Read {len(martini_table)//2} unique nonbonded parameter pairs")
     return martini_table
 
-# --- Helpers: read MARTINI protein topology (ITP) for protein bead typing and connectivity ---
-def parse_itp_file(itp_file, target_molecule=None, preprocessor_defines=None):
-    """
-    Universal ITP parser to read MARTINI topology files.
-    Returns a dictionary with parsed sections: atoms, bonds, angles, dihedrals, etc.
-    If target_molecule is specified, only returns data for that specific molecule type.
-    """
-    topology = {
-        'atoms': [],
-        'bonds': [], 
-        'angles': [],
-        'dihedrals': [],
-        'position_restraints': [],
-        'exclusions': [],
-        'moleculetype': None,
-        'molecules': {}  # Store multiple molecule types
-    }
-    
-    if not os.path.exists(itp_file):
-        print(f"Warning: ITP file {itp_file} not found")
-        return topology
-    
-    current_section = None
-    current_molecule = None
-    current_mol_data = None
-    macro_defs = {}
-    if preprocessor_defines:
-        for macro_name, macro_value in preprocessor_defines.items():
-            if isinstance(macro_value, (list, tuple)):
-                macro_defs[macro_name] = [float(x) for x in macro_value]
-            else:
-                macro_defs[macro_name] = [float(macro_value)]
-    pp_stack = []
-    current_active = True
-
-    def parse_macro_value(tok, macro_index=None):
-        # Try direct float
-        try:
-            return float(tok)
-        except ValueError:
-            pass
-        # Try macro lookup
-        values = macro_defs.get(tok)
-        if values is None:
-            raise ValueError(f"Unknown macro '{tok}'")
-        if macro_index is None:
-            if not values:
-                raise ValueError(f"Macro '{tok}' has no values")
-            return values[0]
-        if macro_index < len(values):
-            return values[macro_index]
-        if values:
-            return values[-1]
-        raise ValueError(f"Macro '{tok}' has no values")
-    
-    with open(itp_file, 'r') as f:
-        for line in f:
-            line = line.split(';', 1)[0].strip()
-            
-            # Skip empty lines and comments
-            if not line:
-                continue
-
-            # Handle a minimal preprocessor subset so dry MARTINI #ifndef/#else blocks
-            # resolve to a single active topology branch.
-            if line.startswith('#ifdef') or line.startswith('#ifndef'):
-                parts = line.split()
-                macro_name = parts[1] if len(parts) >= 2 else ""
-                is_defined = macro_name in macro_defs
-                cond = is_defined if line.startswith('#ifdef') else (not is_defined)
-                pp_stack.append((current_active, cond))
-                current_active = current_active and cond
-                continue
-            if line.startswith('#else'):
-                if pp_stack:
-                    parent_active, cond = pp_stack[-1]
-                    cond = not cond
-                    pp_stack[-1] = (parent_active, cond)
-                    current_active = parent_active and cond
-                continue
-            if line.startswith('#endif'):
-                if pp_stack:
-                    parent_active, _cond = pp_stack.pop()
-                    current_active = parent_active
-                continue
-            if not current_active:
-                continue
-
-            # Parse and store macro definitions used in dry MARTINI lipids
-            if line.startswith('#define'):
-                parts = line.split()
-                if len(parts) >= 3:
-                    macro_name = parts[1]
-                    macro_vals = []
-                    for tok in parts[2:]:
-                        try:
-                            macro_vals.append(float(tok))
-                        except ValueError:
-                            break
-                    if macro_vals:
-                        macro_defs[macro_name] = macro_vals
-                continue
-
-            # Ignore preprocessor directives like #ifdef/#ifndef/#endif/#include
-            if line.startswith('#'):
-                continue
-            
-            # Check for section headers
-            if line.startswith('[') and line.endswith(']'):
-                section_name = line[1:-1].strip().lower()
-                current_section = section_name
-                continue
-            
-            # Parse based on current section
-            if current_section == 'moleculetype':
-                parts = line.split()
-                if len(parts) >= 1:
-                    current_molecule = parts[0]
-                    if topology['moleculetype'] is None:
-                        topology['moleculetype'] = current_molecule
-                    
-                    # Initialize data structure for this molecule
-                    current_mol_data = {
-                        'atoms': [],
-                        'bonds': [],
-                        'angles': [],
-                        'dihedrals': [],
-                        'position_restraints': [],
-                        'exclusions': []
-                    }
-                    topology['molecules'][current_molecule] = current_mol_data
-            
-            elif current_section == 'atoms' and current_mol_data is not None:
-                parts = line.split()
-                if len(parts) >= 6:
-                    try:
-                        atom_data = {
-                            'id': int(parts[0]),
-                            'type': parts[1],
-                            'resnr': int(parts[2]),
-                            'residue': parts[3],
-                            'atom': parts[4],
-                            'cgnr': int(parts[5]),
-                            'charge': 0.0,
-                            'mass': 0.0
-                        }
-                        # Parse charge and mass more carefully
-                        # Charge is typically in column 6 (0-indexed), mass in column 7
-                        if len(parts) >= 7:
-                            try:
-                                atom_data['charge'] = float(parts[6])
-                            except ValueError:
-                                pass
-                        if len(parts) >= 8:
-                            try:
-                                atom_data['mass'] = float(parts[7])
-                            except ValueError:
-                                pass
-                        current_mol_data['atoms'].append(atom_data)
-                        topology['atoms'].append(atom_data)
-                    except (ValueError, IndexError):
-                        continue
-            
-            elif current_section == 'bonds' and current_mol_data is not None:
-                parts = line.split()
-                if len(parts) >= 3:
-                    try:
-                        bond_data = {
-                            'i': int(parts[0]) - 1,  # Convert to 0-indexed
-                            'j': int(parts[1]) - 1,
-                            'func': int(parts[2]),
-                            'r0': 0.0,
-                            'k': 0.0
-                        }
-                        if len(parts) >= 5:
-                            bond_data['r0'] = parse_macro_value(parts[3], macro_index=0)  # nm
-                            bond_data['k'] = parse_macro_value(parts[4], macro_index=1)   # kJ/mol/nm²
-                        elif len(parts) >= 4:
-                            # Dry MARTINI alias form: i j func macro
-                            bond_data['r0'] = parse_macro_value(parts[3], macro_index=0)
-                            bond_data['k'] = parse_macro_value(parts[3], macro_index=1)
-                        current_mol_data['bonds'].append(bond_data)
-                        topology['bonds'].append(bond_data)
-                    except (ValueError, IndexError):
-                        continue
-            
-            elif current_section == 'angles' and current_mol_data is not None:
-                parts = line.split()
-                if len(parts) >= 5:
-                    try:
-                        angle_data = {
-                            'i': int(parts[0]) - 1,  # Convert to 0-indexed
-                            'j': int(parts[1]) - 1,
-                            'k': int(parts[2]) - 1,
-                            'func': int(parts[3]),
-                            'theta0': 0.0,  # degrees
-                            'force_k': 0.0  # kJ/mol/rad²
-                        }
-                        if len(parts) >= 6:
-                            angle_data['theta0'] = parse_macro_value(parts[4], macro_index=0)
-                            angle_data['force_k'] = parse_macro_value(parts[5], macro_index=1)
-                        else:
-                            # Dry MARTINI alias form: i j k func macro
-                            angle_data['theta0'] = parse_macro_value(parts[4], macro_index=0)
-                            angle_data['force_k'] = parse_macro_value(parts[4], macro_index=1)
-                        current_mol_data['angles'].append(angle_data)
-                        topology['angles'].append(angle_data)
-                    except (ValueError, IndexError):
-                        continue
-            
-            elif current_section == 'dihedrals' and current_mol_data is not None:
-                parts = line.split()
-                if len(parts) >= 5:
-                    try:
-                        dihedral_data = {
-                            'i': int(parts[0]) - 1,  # Convert to 0-indexed
-                            'j': int(parts[1]) - 1,
-                            'k': int(parts[2]) - 1,
-                            'l': int(parts[3]) - 1,
-                            'func': int(parts[4]),
-                            'phi0': 0.0,
-                            'k': 0.0,
-                            'mult': 1
-                        }
-                        if len(parts) >= 7:
-                            dihedral_data['phi0'] = float(parts[5])  # degrees
-                            dihedral_data['k'] = float(parts[6])     # kJ/mol
-                        if len(parts) >= 8:
-                            dihedral_data['mult'] = int(parts[7])
-                        current_mol_data['dihedrals'].append(dihedral_data)
-                        topology['dihedrals'].append(dihedral_data)
-                    except (ValueError, IndexError):
-                        continue
-
-            elif current_section == 'position_restraints' and current_mol_data is not None:
-                parts = line.split()
-                if len(parts) >= 5:
-                    try:
-                        restraint_data = {
-                            'i': int(parts[0]) - 1,  # Convert to 0-indexed
-                            'func': int(parts[1]),
-                            'fx': parse_macro_value(parts[2]),
-                            'fy': parse_macro_value(parts[3]),
-                            'fz': parse_macro_value(parts[4]),
-                        }
-                        current_mol_data['position_restraints'].append(restraint_data)
-                        topology['position_restraints'].append(restraint_data)
-                    except (ValueError, IndexError):
-                        continue
-            
-            elif current_section == 'exclusions' and current_mol_data is not None:
-                parts = line.split()
-                if len(parts) >= 2:
-                    try:
-                        # Convert to 0-indexed and add all pairs
-                        atoms = [int(part)-1 for part in parts]
-                        for i in range(len(atoms)):
-                            for j in range(i+1, len(atoms)):
-                                exclusion = (atoms[i], atoms[j])
-                                current_mol_data['exclusions'].append(exclusion)
-                                topology['exclusions'].append(exclusion)
-                    except ValueError:
-                        continue
-    
-    # If target_molecule is specified, return only that molecule's data
-    if target_molecule and target_molecule in topology['molecules']:
-        mol_data = topology['molecules'][target_molecule]
-        return {
-            'atoms': mol_data['atoms'],
-            'bonds': mol_data['bonds'],
-            'angles': mol_data['angles'],
-            'dihedrals': mol_data['dihedrals'],
-            'position_restraints': mol_data['position_restraints'],
-            'exclusions': mol_data['exclusions'],
-            'moleculetype': target_molecule,
-            'molecules': {target_molecule: mol_data}
-        }
-    
-    return topology
 
 def read_martini_masses(ff_file):
-    """Read atom type masses from MARTINI force field file"""
     ff_file_path = Path(ff_file).expanduser()
     if not ff_file_path.is_absolute():
         ff_file_path = (WORKFLOW_DIR / ff_file_path).resolve()
@@ -1633,37 +1298,24 @@ def read_martini_masses(ff_file):
         ff_file_path = ff_file_path.resolve()
     
     if not ff_file_path.exists():
-        raise ValueError(f"FATAL ERROR: Force field file '{ff_file}' not found.\n"
-                        f"  Full path: {ff_file_path}\n"
-                        f"  This file is required for atom type masses.\n"
-                        f"  Please ensure the MARTINI force field file exists and is readable.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
+        raise ValueError(
+            f"Force-field file '{ff_file}' not found; expected {ff_file_path}"
+        )
     
     return parse_itp_atomtype_masses(ff_file_path)
 
+
 def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
-    """
-    Main preparation function with stage-specific parameterization
-    
-    Args:
-        stage: Simulation stage ('minimization', 'npt_equil', 'npt_equil_reduced', 'npt_prod')
-        run_dir: Optional run directory (default: outputs/martini_test)
-    """
+    """Build the HDF5 input for one MARTINI workflow stage."""
+    if 'UPSIDE_HOME' not in os.environ:
+        raise ValueError("UPSIDE_HOME is required")
 
-    # Get UPSIDE home directory
-    upside_path = os.environ['UPSIDE_HOME']
-
-    # Resolve PDB ID from explicit argument first, then legacy CLI fallback.
     if pdb_id is None:
         if len(sys.argv) > 1:
             pdb_id = sys.argv[1]
         else:
-            raise ValueError("FATAL ERROR: No PDB ID provided.\n"
-                            f"  Usage: python {sys.argv[0]} <pdb_id>\n"
-                            f"  Example: python {sys.argv[0]} 1rkl\n"
-                            f"  Aborting to prevent incorrect simulation results.")
+            raise ValueError(f"No PDB ID provided; usage: python {sys.argv[0]} <pdb_id>")
 
-    # Get run directory from function parameter or use default
     if run_dir is None:
         if len(sys.argv) > 2 and sys.argv[2] != '--stage':
             run_dir = sys.argv[2]
@@ -1671,9 +1323,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             run_dir = "outputs/martini_test"
     os.makedirs(run_dir, exist_ok=True)
 
-    # Get stage from environment variable or use default
     stage = os.environ.get('UPSIDE_SIMULATION_STAGE', stage)
-    print(f"Preparing for stage: {stage}")
 
     lipid_resolution = os.environ.get('UPSIDE_LIPID_RESOLUTION', 'coarse')
     if lipid_resolution not in ("coarse", "full"):
@@ -1682,56 +1332,18 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         )
     print(f"Lipid resolution: {lipid_resolution}")
 
-    # Stage-specific parameterization
-    stage_params = {
-        'minimization': {
-            'lj_soften': 1,
-            'lj_alpha': 0.2,
-            'coulomb_soften': 1,
-            'slater_alpha': 2.0,
-            'barostat_type': 0  # Berendsen
-        },
-        'npt_equil': {
-            'lj_soften': 1,
-            'lj_alpha': 0.2,
-            'coulomb_soften': 1,
-            'slater_alpha': 2.0,
-            'barostat_type': 0  # Berendsen
-        },
-        'npt_equil_reduced': {
-            'lj_soften': 1,
-            'lj_alpha': 0.05,
-            'coulomb_soften': 1,
-            'slater_alpha': 0.5,
-            'barostat_type': 0  # Berendsen
-        },
-        'npt_prod': {
-            'lj_soften': 0,
-            'lj_alpha': 0.0,
-            'coulomb_soften': 0,
-            'slater_alpha': 0.0,
-            'barostat_type': 1  # Parrinello-Rahman
-        }
-    }
-
-    if stage not in stage_params:
-        valid = ", ".join(sorted(stage_params))
+    if stage not in STAGE_PARAMS:
+        valid = ", ".join(sorted(STAGE_PARAMS))
         raise ValueError(f"Unknown MARTINI preparation stage {stage!r}; expected one of: {valid}")
-    params = stage_params[stage]
+    params = STAGE_PARAMS[stage]
     stage_lipidhead_fc = float(os.environ.get('UPSIDE_BILAYER_LIPIDHEAD_FC', '0'))
 
-
-    # Configuration
-    strict_from_martini_pdb = True
-    include_protein = True
-    
-    print("=== Dry MARTINI Protein-Lipid System Preparation ===")
-    print(f"PDB ID: {pdb_id}")
+    print(f"Preparing MARTINI stage {stage} for {pdb_id}")
+    print(f"Lipid resolution: {lipid_resolution}")
     print(f"Output directory: {run_dir}")
     
     workflow_dir = str(WORKFLOW_DIR)
-    # Read dry MARTINI parameter files
-    print("\n=== Reading Dry MARTINI Parameters ===")
+    print("Reading dry MARTINI parameters")
     ff_dir = Path(
         os.environ.get('UPSIDE_MARTINI_FF_DIR', str(REPO_ROOT / "parameters" / "dryMARTINI"))
     ).expanduser()
@@ -1742,8 +1354,9 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     ff_path = str(ff_dir)
 
     if not os.path.isdir(ff_path):
-        raise ValueError(f"FATAL ERROR: Force-field directory '{ff_path}' not found.\n"
-                        "  Set UPSIDE_MARTINI_FF_DIR to a valid dry-MARTINI force-field directory.")
+        raise ValueError(
+            f"Force-field directory '{ff_path}' not found; set UPSIDE_MARTINI_FF_DIR"
+        )
 
     ff_files = sorted(os.listdir(ff_path))
     print(f"Using force-field directory: {ff_path}")
@@ -1753,32 +1366,25 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         if os.path.exists(path):
             return path
         if required:
-            raise ValueError(f"FATAL ERROR: Required dry MARTINI file '{name}' not found in '{ff_path}'.\n"
-                            f"  Available: {ff_files}")
+            raise ValueError(
+                f"Required dry MARTINI file '{name}' not found in '{ff_path}'. Available: {ff_files}"
+            )
         return None
 
-    # Read nonbonded parameters
     martini_param_file = pick_ff_file("dry_martini_v2.1.itp")
     martini_table = read_martini3_nonbond_params(martini_param_file)
     
     if not martini_table:
-        raise ValueError(f"FATAL ERROR: Could not read MARTINI parameters from '{martini_param_file}'\n"
-                        f"  This file is required for proper force field parameterization.\n"
-                        f"  Please ensure the dry MARTINI parameter file exists and is readable.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
+        raise ValueError(f"Could not read MARTINI parameters from '{martini_param_file}'")
     
-    print("=== Mixed Protein-Lipid System Detected ===")
     print("Protein runtime representation: AA backbone carriers only (N/CA/C/O)")
     
-    # For both protein and lipid systems, we need DOPC parameters
-    # Parse DOPC topology from ITP file
     dopc_param_file = pick_ff_file("dry_martini_v2.1_lipids.itp")
     lipid_preproc_defs = {}
     if stage_lipidhead_fc > 0.0:
         lipid_preproc_defs['BILAYER_LIPIDHEAD_FC'] = stage_lipidhead_fc
     full_topology = parse_itp_file(dopc_param_file, preprocessor_defines=lipid_preproc_defs)
     
-    # Try to find DOPC or similar molecule
     dopc_molecule = None
     for mol_name in full_topology['molecules'].keys():
         if 'DOPC' in mol_name.upper() or 'DOP' in mol_name.upper():
@@ -1791,31 +1397,25 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         )
     else:
         available_molecules = list(full_topology['molecules'].keys())
-        raise ValueError(f"FATAL ERROR: DOPC molecule not found in '{dopc_param_file}'.\n"
-                        f"  Available molecules: {available_molecules}\n"
-                        f"  Please ensure DOPC is defined in the phospholipid parameter file.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
+        raise ValueError(
+            f"DOPC molecule not found in '{dopc_param_file}'. Available molecules: {available_molecules}"
+        )
     
     dopc_bead_types = [atom['type'] for atom in dopc_topology['atoms']]
     dopc_charges = [atom['charge'] for atom in dopc_topology['atoms']]
-    # Create mapping from atom names to bead types and charges
     dopc_atom_to_type = {atom['atom']: atom['type'] for atom in dopc_topology['atoms']}
     dopc_atom_to_charge = {atom['atom']: atom['charge'] for atom in dopc_topology['atoms']}
     print(f"Read DOPC topology: {len(dopc_bead_types)} bead types from {dopc_param_file}")
     
-    # Parse ion topologies from ITP file
     ion_param_file = pick_ff_file("dry_martini_v2.1_ions.itp", required=False)
     if ion_param_file:
         ion_topology = parse_itp_file(ion_param_file)
-        # Extract NA and CL atoms specifically
-        # In MARTINI ion ITP files, residue name is "ION" and atom name is "NA" or "CL"
         na_atoms = [atom for atom in ion_topology['atoms'] if atom['atom'].upper() == 'NA']
         cl_atoms = [atom for atom in ion_topology['atoms'] if atom['atom'].upper() == 'CL']
         
-        # For standard ions, use the first occurrence (standard chloride is TQ5, not SQ5n which is for acetate)
         na_bead_types = [na_atoms[0]['type']] if na_atoms else []
         na_charges = [na_atoms[0]['charge']] if na_atoms else []
-        cl_bead_types = [cl_atoms[0]['type']] if cl_atoms else []  # Use first CL (TQ5), not acetate CL (SQ5n)
+        cl_bead_types = [cl_atoms[0]['type']] if cl_atoms else []
         cl_charges = [cl_atoms[0]['charge']] if cl_atoms else []
         print(f"Ion topology loaded: NA={len(na_bead_types)} type(s), CL={len(cl_bead_types)} type(s)")
     else:
@@ -1823,7 +1423,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         cl_bead_types, cl_charges = [], []
         print("Ion topology file not found in selected FF")
     
-    # Parse water topology from ITP file
     water_param_file = pick_ff_file("dry_martini_v2.1_solvents.itp", required=False)
     if water_param_file:
         water_topology = parse_itp_file(water_param_file)
@@ -1835,39 +1434,26 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         water_bead_types, water_charges = [], []
         print("Water topology file not found in selected FF")
     
-    # Read bead masses from force field file
-    mass_file = martini_param_file
-    martini_masses = read_martini_masses(mass_file)
+    martini_masses = read_martini_masses(martini_param_file)
     print(f"Read {len(martini_masses)} atom type masses from force field file")
     
-    # Read DOPC bonds and angles from parsed topology (for both lipid and mixed systems)
     dopc_bonds = [(bond['i'], bond['j']) for bond in dopc_topology['bonds']]
-    dopc_bond_lengths = [bond['r0'] for bond in dopc_topology['bonds']]  # nm
-    dopc_bond_force_constants = [bond['k'] for bond in dopc_topology['bonds']]  # kJ/mol/nm²
+    dopc_bond_lengths = [bond['r0'] for bond in dopc_topology['bonds']]
+    dopc_bond_force_constants = [bond['k'] for bond in dopc_topology['bonds']]
     
     dopc_angles = [(angle['i'], angle['j'], angle['k']) for angle in dopc_topology['angles']]
-    dopc_angle_equil_deg = [angle['theta0'] for angle in dopc_topology['angles']]  # degrees
-    dopc_angle_force_constants = [angle['force_k'] for angle in dopc_topology['angles']]  # kJ/mol/rad²
+    dopc_angle_equil_deg = [angle['theta0'] for angle in dopc_topology['angles']]
+    dopc_angle_force_constants = [angle['force_k'] for angle in dopc_topology['angles']]
     dopc_position_restraints = dopc_topology.get('position_restraints', [])
     
     print(f"Read DOPC connectivity: {len(dopc_bonds)} bonds, {len(dopc_angles)} angles")
     
-    # Validate that required topology data was found
     if not dopc_bonds:
-        raise ValueError(f"FATAL ERROR: No DOPC bonds found in topology from '{dopc_param_file}'.\n"
-                        f"  This indicates incomplete molecule definition.\n"
-                        f"  Please ensure DOPC bonds are properly defined in the phospholipid parameter file.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
+        raise ValueError(f"No DOPC bonds found in topology from '{dopc_param_file}'")
     
     if not dopc_angles:
-        raise ValueError(f"FATAL ERROR: No DOPC angles found in topology from '{dopc_param_file}'.\n"
-                        f"  This indicates incomplete molecule definition.\n"
-                        f"  Please ensure DOPC angles are properly defined in the phospholipid parameter file.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
+        raise ValueError(f"No DOPC angles found in topology from '{dopc_param_file}'")
     
-    # Unit conversions for mapping native MARTINI units into the active
-    # simulation unit system. These must be provided explicitly rather than
-    # baked into the generator.
     energy_conversion_raw = os.environ.get('UPSIDE_MARTINI_ENERGY_CONVERSION', '').strip()
     length_conversion_raw = os.environ.get('UPSIDE_MARTINI_LENGTH_CONVERSION', '').strip()
     if not energy_conversion_raw:
@@ -1882,47 +1468,22 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     if length_conversion <= 0.0:
         raise ValueError("UPSIDE_MARTINI_LENGTH_CONVERSION must be positive")
 
-    # Pressure conversion (for NPT simulations):
-    # 1 atm = 101325 Pa = 101.325 kJ/m³
-    # 1 atm = 1.01325e-28 kJ/Å³
-    # 1 atm = (1.01325e-28 kJ/Å³) × (6.02214e23 mol⁻¹) / (2.914952774272 kJ/mol)
-    # 1 atm = 0.000020933 E_up/Å³
-    # 1 bar = 0.986923 atm = 0.000020659 E_up/Å³
-    # For LAMMPS real units compatibility, use 1 bar = 0.000020659 E_up/Å³
-    pressure_conversion_bar_to_eup = 0.000020659  # bar → E_up/Å³
+    pressure_conversion_bar_to_eup = 0.000020659
+    bond_conversion = 1.0 / (energy_conversion * length_conversion ** 2)
+    angle_conversion = 1.0 / energy_conversion
+    dihedral_conversion = 1.0 / energy_conversion
 
-    # Bonds: kJ/mol/nm² → E_up/Å²
-    # = (kJ/mol → E_up) / (nm² → Å²)
-    # = (1/energy_conversion) / (length_conversion²)
-    bond_conversion = 1.0 / (energy_conversion * length_conversion ** 2)  # ≈ 0.003406
-
-    # Angles: kJ/mol/deg² → E_up/deg²
-    # = (kJ/mol → E_up) (degrees stay the same)
-    angle_conversion = 1.0 / energy_conversion  # ≈ 0.343
-
-    # Dihedrals: kJ/mol → E_up
-    dihedral_conversion = 1.0 / energy_conversion  # ≈ 0.343
-
-    print("\n=== MARTINI Unit Conversions ===")
-    print(f"Bond lengths (nm -> Å): 0.40 nm -> 4.0 Å")
-    print(f"Bond force constants (kJ/mol/nm² -> E_up/Å²): 7000.0 -> {7000.0 * bond_conversion:.3f}")
-    print(f"Angle equilibrium (degrees): 108.0°")
-    print(f"Angle force constants (kJ/mol/deg² -> E_up/deg²): 21.5 -> {21.5 * angle_conversion:.6f}")
-    print(f"Dihedral force constants (kJ/mol -> E_up): 400.0 -> {400.0 * dihedral_conversion:.6f}")
-    print(f"Pressure (bar -> E_up/Å³): 1 bar -> {pressure_conversion_bar_to_eup:.9f}")
-    print(f"Energy conversion factor: {energy_conversion} (kJ/mol -> E_up)")
-    print(f"Length conversion: 1 nm = {length_conversion} Å, so 1 nm² = {length_conversion**2} Å²")
-    print(f"Bond conversion factor: {bond_conversion:.6f} (divide by energy_conv × length_conv²)")
-    print(f"Angle conversion factor: {angle_conversion:.6f} (divide by energy_conv)")
-    print(f"Dihedral conversion factor: {dihedral_conversion:.6f} (divide by energy_conv)")
+    print(
+        "Unit conversions: "
+        f"energy={energy_conversion:g} kJ/mol per E_up, "
+        f"length={length_conversion:g} A/nm, "
+        f"pressure={pressure_conversion_bar_to_eup:.9f} E_up/A^3 per bar"
+    )
     
-    # Read PDB file
-    if strict_from_martini_pdb or include_protein:
-        input_pdb_file = runtime_input_pdb_path(workflow_dir, pdb_id)
-        print(f"\nUsing MARTINI PDB as base structure: {input_pdb_file}")
+    input_pdb_file = runtime_input_pdb_path(workflow_dir, pdb_id)
+    print(f"Using MARTINI PDB as base structure: {input_pdb_file}")
     
-    # Read PDB and populate arrays
-    print(f"\n=== Reading PDB Structure ===")
+    print("Reading PDB structure")
     initial_positions = []
     atom_types = []
     charges = []
@@ -1996,8 +1557,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             if is_protein:
                 if atom_name not in {"N", "CA", "C", "O", "BB"}:
                     raise ValueError(
-                        f"FATAL ERROR: Protein atom '{atom_name}' in residue '{residue_name}' is not one of N/CA/C/O/BB.\n"
-                        "Runtime AA protein representation must be backbone-only."
+                        f"Protein atom '{atom_name}' in residue '{residue_name}' is not one of N/CA/C/O/BB"
                     )
                 icode = line[26:27].strip()
                 res_key = (chain_id, residue_id, icode, residue_name)
@@ -2010,41 +1570,34 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     charge = dopc_atom_to_charge[atom_name]
                 else:
                     available_atom_names = sorted(dopc_atom_to_type.keys())
-                    raise ValueError(f"FATAL ERROR: Unknown DOPC atom '{atom_name}' in residue '{residue_name}'.\n"
-                                   f"  Available DOPC atom names: {available_atom_names}\n"
-                                   f"  This indicates incomplete DOPC topology mapping.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                    raise ValueError(
+                        f"Unknown DOPC atom '{atom_name}' in residue '{residue_name}'. "
+                        f"Available DOPC atom names: {available_atom_names}"
+                    )
             elif residue_name == 'W':
                 if not water_bead_types:
-                    raise ValueError(f"FATAL ERROR: No water bead types found in topology.\n"
-                                   f"  This indicates incomplete water parameter file.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                    raise ValueError("No water bead types found in topology")
                 martini_type = water_bead_types[0]
                 charge = water_charges[0]
             elif residue_name == 'NA':
                 if not na_bead_types:
-                    raise ValueError(f"FATAL ERROR: No sodium bead types found in topology.\n"
-                                   f"  This indicates incomplete ion parameter file.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                    raise ValueError("No sodium bead types found in topology")
                 martini_type = na_bead_types[0]
                 charge = na_charges[0]
             elif residue_name == 'CL':
                 if not cl_bead_types:
-                    raise ValueError(f"FATAL ERROR: No chloride bead types found in topology.\n"
-                                   f"  This indicates incomplete ion parameter file.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                    raise ValueError("No chloride bead types found in topology")
                 martini_type = cl_bead_types[0]
                 charge = cl_charges[0]
             else:
-                raise ValueError(f"FATAL ERROR: Unknown residue type '{residue_name}' for atom '{atom_name}'.\n"
-                               f"  Supported residue types: PROTEIN, DOPC, W, NA, CL\n"
-                               f"  This indicates incomplete system definition.\n"
-                               f"  Aborting to prevent incorrect simulation results.")
+                raise ValueError(
+                    f"Unknown residue type '{residue_name}' for atom '{atom_name}'. "
+                    "Supported residue types: PROTEIN, DOPC, W, NA, CL"
+                )
             
             atom_types.append(martini_type)
             charges.append(charge)
     
-    # Convert to numpy arrays
     initial_positions = np.array(initial_positions, dtype=float)
     atom_types = np.array(atom_types)
     charges = np.array(charges, dtype=float)
@@ -2055,7 +1608,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     seg_ids = np.array(seg_ids)
     n_atoms = len(initial_positions)
 
-    # --- CG lipid coarse-graining: collapse 14-bead DOPC → single 6D vector particles ---
     if lipid_resolution == "coarse":
         (initial_positions, atom_types, charges, residue_ids,
          atom_names, residue_names, chain_ids, seg_ids,
@@ -2145,12 +1697,11 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         n_atoms = len(initial_positions)
         print(
             f"Added {n_cg_lipids} hidden CGLD orientation sites "
-            f"(length={cg_lipid_orientation_length_ang:.3f} Å, "
+            f"(length={cg_lipid_orientation_length_ang:.3f} A, "
             f"mass={cg_lipid_orientation_mass_g:.3f} g/mol, "
-            f"bond_fc={cg_lipid_orientation_bond_fc:.3f} E_up/Å²)"
+            f"bond_fc={cg_lipid_orientation_bond_fc:.3f} E_up/A^2)"
         )
 
-    # Read box dimensions from CRYST1 record
     print(f"Reading box dimensions from {input_pdb_file}...")
     with open(input_pdb_file, 'r') as f:
         for line in f:
@@ -2163,14 +1714,10 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     print(f"Found CRYST1 record: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
                     break
         else:
-            raise ValueError(f"FATAL ERROR: No CRYST1 record found in PDB file '{input_pdb_file}'.\n"
-                           f"  Box dimensions are required for proper simulation setup.\n"
-                           f"  Please ensure the PDB file contains a CRYST1 record with box dimensions.\n"
-                           f"  Aborting to prevent incorrect simulation results.")
+            raise ValueError(f"No CRYST1 record found in PDB file '{input_pdb_file}'")
     
-    # Print system parameters
     print(f"Box dimensions: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
-    print(f"Box volume: {x_len * y_len * z_len:.1f} Å³")
+    print(f"Box volume: {x_len * y_len * z_len:.1f} A^3")
     if lipid_resolution == "coarse" and n_cg_lipids > 0 and int(os.environ.get("UPSIDE_CG_LIPID_CONDITION_INITIAL", "1")):
         derived_contact_ang = (
             float(cg_lipid_derived_params["contact_ang"])
@@ -2238,7 +1785,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         end_min, end_p05 = _same_leaflet_nn_stats()
         print(
             "Conditioned initial CGL same-leaflet XY spacing: "
-            f"min/p05 {start_min:.3f}/{start_p05:.3f} -> {end_min:.3f}/{end_p05:.3f} Å"
+            f"min/p05 {start_min:.3f}/{start_p05:.3f} -> {end_min:.3f}/{end_p05:.3f} A"
         )
     print(f"Total atoms: {n_atoms}")
     
@@ -2314,11 +1861,10 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         unique_resnames = set(residue_names_in_mol)
         if mol_type != 'PROTEIN':
             if len(unique_resnames) > 1:
-                raise ValueError(f"FATAL ERROR: Molecule {i} contains mixed residue types: {unique_resnames}\n"
-                               f"  This indicates incorrect molecule grouping.\n"
-                               f"  Molecule atoms: {atoms}\n"
-                               f"  Residue names: {residue_names_in_mol}\n"
-                               f"  Aborting to prevent incorrect simulation results.")
+                raise ValueError(
+                    f"Molecule {i} contains mixed residue types: {unique_resnames}; "
+                    f"atoms={atoms}, residue_names={residue_names_in_mol}"
+                )
         else:
             pass
     
@@ -2358,14 +1904,12 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         mol_counts['DOPC'] = n_cg_lipids
         dopc_count = n_cg_lipids
     
-    print(f"\n=== Molecule Summary ===")
+    print("\nMolecule summary")
     for moltype, count in mol_counts.items():
         print(f"{moltype}: {count} molecules")
     
-    # Create bonds and angles
-    print(f"\n=== Creating Connectivity ===")
+    print("\nCreating connectivity")
     
-    # Initialize lists for bonds and angles
     bonds_list = []
     bond_lengths_list = []
     bond_force_constants_list = []
@@ -2380,7 +1924,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     lipid_restraint_ref_pos = []
     lipid_restraint_spring_xyz = []
     
-    # CG lipids have no internal bonds/angles — skip per-bead DOPC topology.
     if lipid_resolution == "coarse" and n_cg_lipids > 0:
         print(f"CG lipid mode: {n_cg_lipids} DOPC lipids coarse-grained to single 6D vector particles "
               f"with dynamic orientation sites")
@@ -2390,8 +1933,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             bond_force_constants_list.append(cg_lipid_orientation_bond_fc)
         print(
             f"Added {n_cg_lipids} CGL-CGLD orientation bonds "
-            f"(r0={cg_lipid_orientation_length_ang:.3f} Å, "
-            f"k={cg_lipid_orientation_bond_fc:.3f} E_up/Å²)"
+            f"(r0={cg_lipid_orientation_length_ang:.3f} A, "
+            f"k={cg_lipid_orientation_bond_fc:.3f} E_up/A^2)"
         )
     elif lipid_resolution == "full":
         dopc_molecules = [mol for mol in molecules if mol[0] == 'DOPC']
@@ -2443,57 +1986,45 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
               f"{n_lipid_angles} angles, {len(lipid_restraint_indices)} restraints "
               f"across {len(dopc_molecules)} lipids")
     
-    # Create protein connectivity if available
     protein_bond_count = 0
     protein_angle_count = 0
     protein_dihedral_count = 0
     protein_constraint_count = 0
     
     if protein_bonds or protein_constraints:
-        print("\n=== Protein Connectivity ===")
+        print("\nProtein connectivity")
         print(f"Found {len(protein_bonds)} bonds, {len(protein_angles)} angles, {len(protein_dihedrals)} dihedrals")
         print(f"Found {len(protein_constraints)} constraints, {len(protein_position_restraints)} position restraints")
         
-        # Add protein bonds to the bond list
         for i, j, r0_nm, k_kj in protein_bonds:
-            # Convert MARTINI units to UPSIDE units
-            r0_angstrom = r0_nm * 10.0  # nm to Å
-            k_upside = k_kj * bond_conversion  # kJ/mol/nm² to E_up/Å²
+            r0_angstrom = r0_nm * 10.0
+            k_upside = k_kj * bond_conversion
             
-            # Add to bond list (assuming protein atoms come first in the system)
             bonds_list.append([i, j])
             bond_lengths_list.append(r0_angstrom)
             bond_force_constants_list.append(k_upside)
             protein_bond_count += 1
         
-        # Add protein constraints as bonds with large spring constants
         for i, j, r0_nm, k_kj in protein_constraints:
-            # Convert MARTINI units to UPSIDE units
-            r0_angstrom = r0_nm * 10.0  # nm to Å
-            k_upside = k_kj * bond_conversion  # kJ/mol/nm² to E_up/Å²
+            r0_angstrom = r0_nm * 10.0
+            k_upside = k_kj * bond_conversion
             
-            # Add to bond list
             bonds_list.append([i, j])
             bond_lengths_list.append(r0_angstrom)
             bond_force_constants_list.append(k_upside)
             protein_constraint_count += 1
         
-        # Add protein angles to the angle list
         for i, j, k, theta0_deg, k_kj in protein_angles:
-            # Convert MARTINI units to UPSIDE units
-            theta0_upside = theta0_deg  # degrees (same unit)
-            k_upside = k_kj * angle_conversion  # kJ/mol/deg² to E_up/deg²
+            theta0_upside = theta0_deg
+            k_upside = k_kj * angle_conversion
             
-            # Add to angle list
             angles_list.append([i, j, k])
             angle_equil_deg_list.append(theta0_upside)
             angle_force_constants_list.append(k_upside)
             protein_angle_count += 1
         
-        # Add protein dihedrals to the dihedral list
         for i, j, k, l, phi0_deg, k_kj, func_type in protein_dihedrals:
-            # Convert MARTINI units to UPSIDE units
-            phi0_upside = phi0_deg  # degrees (same unit)
+            phi0_upside = phi0_deg
             k_upside = k_kj * dihedral_conversion  # kJ/mol to E_up
             
             # Add to dihedral list
@@ -2514,8 +2045,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     print(f"Total system angles: {len(angles_list)}")
     print(f"Total system dihedrals: {len(dihedrals_list)}")
     
-    # Center and wrap positions
-    print(f"\n=== Preparing Final Structure ===")
+    print("\nPreparing final structure")
     if lipid_resolution == "coarse":
         center_mask = atom_types != "CGLD"
     else:
@@ -2539,8 +2069,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         else:
             particle_class[i] = b"OTHER"
 
-    # Create UPSIDE input file
-    print(f"\n=== Creating UPSIDE Input File ===")
+    print("\nCreating UPSIDE input file")
     input_file = f"{run_dir}/test.input.up"
     
     with tb.open_file(input_file, 'w') as t:
@@ -2635,13 +2164,11 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
 
         mass = np.zeros(n_atoms, dtype='f4')
         for i, atom_type in enumerate(atom_types):
-            # Get mass from force field file, raise error if not found
             if atom_type not in martini_masses:
-                raise ValueError(f"FATAL ERROR: Mass not found for atom type '{atom_type}' (atom index {i}).\n"
-                                f"  Available atom types with masses: {sorted(martini_masses.keys())}\n"
-                                f"  This indicates incomplete force field parameters.\n"
-                                f"  Aborting to prevent incorrect simulation results.")
-            # Divide by 12.0 for reduced mass units (1 unit = 12 g/mol)
+                raise ValueError(
+                    f"Mass not found for atom type '{atom_type}' (atom index {i}); "
+                    f"available atom types: {sorted(martini_masses.keys())}"
+                )
             mass[i] = martini_masses[atom_type] / 12.0
         
         mass_array = t.create_array(input_grp, 'mass', obj=mass)
@@ -2672,32 +2199,23 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         min_angle_fc = np.array([angle[4] for angle in protein_angles], dtype='f4')
         t.create_array(min_angles_grp, 'force_constants', obj=min_angle_fc)
         
-        # Store production stage angle parameters (regular angles)
         prod_angles_grp = t.create_group(stage_grp, 'production_angles')
-        # For production, we'd use different angle parameters (not NORMANG)
-        # For now, use the same as minimization but this could be different
         prod_angle_fc = np.array([angle[4] for angle in protein_angles], dtype='f4')
         t.create_array(prod_angles_grp, 'force_constants', obj=prod_angle_fc)
         
         print(f"Stage-specific parameters: minimization bonds={len(min_bond_fc)}, production bonds={len(prod_bond_fc)}")
         print(f"Stage-specific parameters: minimization angles={len(min_angle_fc)}, production angles={len(prod_angle_fc)}")
         
-        # ===================== NPT BAROSTAT CONFIGURATION =====================
-        # Create barostat configuration group for NPT simulations
-        # Settings are read from environment variables (set by run_sim_bilayer.sh)
         barostat_enable = int(os.environ.get('UPSIDE_NPT_ENABLE', '0'))
         if barostat_enable:
-            print(f"\n=== Creating NPT Barostat Configuration ===")
+            print("\nCreating NPT barostat configuration")
             barostat_grp = t.create_group(input_grp, 'barostat')
             barostat_grp._v_attrs.enable = barostat_enable
-            # Default: 1 bar = 0.000020659 E_up/Angstrom^3 (from 1 atm = 0.000020933215)
             barostat_grp._v_attrs.target_p_xy = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '0.000020659'))
             barostat_grp._v_attrs.target_p_z = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '0.000020659'))
             barostat_grp._v_attrs.tau_p = float(os.environ.get('UPSIDE_NPT_TAU', '1.0'))
-            # Legacy isotropic compressibility (kept for compatibility)
             legacy_compressibility = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '14.521180763676'))
             barostat_grp._v_attrs.compressibility = legacy_compressibility
-            # Axis-specific compressibility for semi-isotropic membrane coupling
             barostat_grp._v_attrs.compressibility_xy = float(
                 os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_XY', str(legacy_compressibility))
             )
@@ -2706,8 +2224,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             )
             barostat_grp._v_attrs.interval = int(os.environ.get('UPSIDE_NPT_INTERVAL', '10'))
             barostat_grp._v_attrs.semi_isotropic = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
-            barostat_grp._v_attrs.debug = int(os.environ.get('UPSIDE_NPT_DEBUG', '1'))
-            # Barostat type: 0 = Berendsen (default), 1 = Parrinello-Rahman
             barostat_grp._v_attrs.type = params['barostat_type']
             print(f"  Enabled: {barostat_enable}")
             print(f"  Type: {'Parrinello-Rahman' if barostat_grp._v_attrs.type == 1 else 'Berendsen'}")
@@ -2718,7 +2234,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             print(f"  Tau_p: {barostat_grp._v_attrs.tau_p}")
             print(f"  Interval: {barostat_grp._v_attrs.interval} steps")
         else:
-            print(f"\n=== NPT Barostat Disabled (NVT mode) ===")
+            print("\nNPT barostat disabled (NVT mode)")
         
         # Create type array
         type_array = t.create_array(input_grp, 'type', obj=atom_types.astype('S4'))
@@ -2878,11 +2394,10 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                 sigma_nm, epsilon_kj = martini_table[(type2, type1)]
             else:
                 available_types = sorted(set([t[0] for t in martini_table.keys()] + [t[1] for t in martini_table.keys()]))
-                raise ValueError(f"FATAL ERROR: Missing interaction parameters for bead type pair ({type1}, {type2})\n"
-                               f"  Atom index: {atom_i} ({type1})\n"
-                               f"  This indicates incomplete MARTINI force field parameters.\n"
-                               f"  Available bead types in parameter table: {available_types}\n"
-                               f"  Aborting to prevent incorrect simulation results.")
+                raise ValueError(
+                    f"Missing interaction parameters for bead type pair ({type1}, {type2}) "
+                    f"at atom index {atom_i}; available bead types: {available_types}"
+                )
 
             epsilon = np.float32(epsilon_kj / energy_conversion)
             sigma = np.float32(sigma_nm * length_conversion)
@@ -3062,9 +2577,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             # Backward-compatible scalar spring constant for older readers.
             t.create_array(restraint_group, 'spring_const', obj=np.max(spring_xyz, axis=1).astype('f4'))
 
-        # --- CG Lipid 6D vector particle nodes ---
         if lipid_resolution == "coarse" and n_cg_lipids > 0:
-            # compose_vector6d: combines pos (3D) with static direction (3D) → 6D
             compose_grp = t.create_group(potential_grp, 'compose_vector6d')
             compose_grp._v_attrs.arguments = np.array([b'pos'])
             compose_grp._v_attrs.initialized = True
@@ -3111,7 +2624,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                            obj=cg_lipid_display_tail_offsets.astype('f4'))
             print(f"Injected compose_vector6d node: {n_cg_lipids} CG lipid 6D particles")
 
-        # Store old→new atom index remapping for hybrid mapping injection
         if lipid_resolution == "coarse" and n_cg_lipids > 0:
             remap_grp = t.create_group(input_grp, 'hybrid_remap')
             t.create_array(remap_grp, 'old_to_new', obj=old_to_new_map.astype('i4'))
@@ -3119,15 +2631,14 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             remap_grp._v_attrs.n_new = int(n_atoms)
 
     print(f"Created UPSIDE input file: {input_file}")
-    print(f"Preparation complete!")
+    print("Preparation complete")
     
-    # Save preparation summary
     summary_file = f"{run_dir}/preparation_summary.txt"
     with open(summary_file, 'w') as f:
-        f.write("=== MARTINI 3.0 Preparation Summary ===\n")
+        f.write("MARTINI preparation summary\n")
         f.write(f"PDB ID: {pdb_id}\n")
         f.write(f"Total atoms: {n_atoms}\n")
-        f.write(f"Box dimensions: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å\n")
+        f.write(f"Box dimensions: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} A\n")
         f.write(f"Total bonds: {len(bonds_list)}\n")
         f.write(f"Total angles: {len(angles_list)}\n")
         f.write(f"Total dihedrals: {len(dihedrals_list)}\n")
@@ -4022,7 +3533,7 @@ def inject_cg_lipid_nodes(
                 )
 
                 # Element mapping: CG lipids use identity mapping (1 CG type)
-                # Shift ids by 4 bits so all shifted ids are unique —
+                # Shift ids by 4 bits so all shifted ids are unique:
                 # PosQuadSplineInteraction::acceptable_id_pair rejects pairs
                 # where (id1>>4) == (id2>>4).
                 with h5py.File(up_file, "r") as up_r:
@@ -4032,7 +3543,7 @@ def inject_cg_lipid_nodes(
                 pi.create_dataset("id", data=(np.arange(n_cg, dtype=np.int32) << 4))
 
                 n_param = int(pair_grp["interaction_param"].shape[-1])
-                print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1×1×{n_param} params")
+                print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1x1x{n_param} params")
 
                 compose = pot["compose_vector6d"]
                 preferred_nz = np.sign(np.asarray(compose["direction"][:, 2], dtype=np.float32))
@@ -4076,10 +3587,10 @@ def inject_cg_lipid_nodes(
                         r.decode("ascii") if isinstance(r, bytes) else str(r)
                         for r in sc_grp["restype_order"][:]
                     ]
-                    # Build restype → type_index map for CG↔SC table
+                    # Build restype to type_index map for CG-SC table.
                     restype_to_sc_type = {r: i for i, r in enumerate(sc_restype_order)}
 
-                    # Filter SC particles to only residues with CG↔SC table entries
+                    # Filter SC particles to residues with CG-SC table entries.
                     sc_indices = []
                     sc_types = []
                     sc_ids = []
@@ -4094,7 +3605,7 @@ def inject_cg_lipid_nodes(
 
                     injected_cutoff_ang = None
                     if not sc_indices:
-                        print("  cg_lipid_sc: no residues with CG↔SC table entries, skipping SC↔CG interaction")
+                        print("  cg_lipid_sc: no residues with CG-SC table entries, skipping SC-CG interaction")
                     else:
                         sc_indices = np.array(sc_indices, dtype=np.int32)
                         sc_types = np.array(sc_types, dtype=np.int32)
@@ -4140,24 +3651,24 @@ def inject_cg_lipid_nodes(
                         psi.create_dataset("type1", data=sc_types)
                         # Shift ids by 4 bits: PosQuadSplineInteraction::acceptable_id_pair
                         # accepts only pairs where (id1>>4) != (id2>>4).
-                        # SC ids use residue_idx << 4 (range 0–480).
+                        # SC ids use residue_idx << 4.
                         psi.create_dataset("id1", data=(sc_ids << 4).astype(np.int32))
 
                         psi.create_dataset("index2", data=np.arange(n_cg, dtype=np.int32))
                         psi.create_dataset("type2", data=np.zeros(n_cg, dtype=np.int32))
                         # CG lipid ids shifted into disjoint range (100000+cg_idx)<<4
-                        # so no SC↔CG pair is rejected by the id filter.
+                        # so no SC-CG pair is rejected by the id filter.
                         psi.create_dataset("id2", data=((np.arange(n_cg, dtype=np.int32) + 100000) << 4))
 
                     if injected_cutoff_ang is not None:
                         print(
-                            f"  Injected cg_lipid_sc: {len(sc_indices)} SC × {n_cg} CG lipids, "
-                            f"cutoff={injected_cutoff_ang:.3f} Å"
+                            f"  Injected cg_lipid_sc: {len(sc_indices)} SC x {n_cg} CG lipids, "
+                            f"cutoff={injected_cutoff_ang:.3f} A"
                         )
                     else:
-                        print(f"  Injected cg_lipid_sc: {len(sc_indices)} SC × {n_cg} CG lipids")
+                        print(f"  Injected cg_lipid_sc: {len(sc_indices)} SC x {n_cg} CG lipids")
                 else:
-                    print("  cg_lipid_sc: no SC placement node found, skipping SC↔CG interaction")
+                    print("  cg_lipid_sc: no SC placement node found, skipping SC-CG interaction")
 
             target_grp = mh5["cg_lipid_table"].get("cg_lipid_target")
             if target_grp is not None:
@@ -4263,7 +3774,7 @@ def inject_cg_lipid_nodes(
                             source_override="explicit_dopc_ion_excluded_volume_from_current_target_table",
                         )
                     print(
-                        f"  Injected cg_lipid_target: {n_cg_lipids} CGL × {len(target_idx)} "
+                        f"  Injected cg_lipid_target: {n_cg_lipids} CGL x {len(target_idx)} "
                         f"target particles ({len(target_order)} target types; "
                         f"{int(np.sum(target_is_ion_arr))} ion targets use excluded-volume controls)"
                     )

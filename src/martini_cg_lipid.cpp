@@ -464,9 +464,6 @@ static void accumulate_deriv(
 
 }  // namespace
 
-// ===================================================================
-// ComposeVector6D — Combines 3D positions with static 3D directions
-// ===================================================================
 struct ComposeVector6D : public CoordNode {
     CoordNode& pos;
     vector<int> elem_index;
@@ -586,9 +583,6 @@ void ComposeVector6D::propagate_deriv() {
     }
 }
 
-// ===================================================================
-// CGLipidPairPotential — directional residual CG lipid ↔ CG lipid term
-// ===================================================================
 struct CGLipidPairPotential : public PotentialNode {
     CoordNode& cg_pos;
     vector<float> interaction_param;
@@ -733,9 +727,6 @@ void CGLipidPairPotential::propagate_deriv() {
     }
 }
 
-// ===================================================================
-// CGLipidSCPotential — directional sidechain ↔ CG lipid term
-// ===================================================================
 struct CGLipidSCPotential : public PotentialNode {
     CoordNode& sc_pos;
     CoordNode& cg_pos;
@@ -898,9 +889,6 @@ void CGLipidSCPotential::propagate_deriv() {
     }
 }
 
-// ===================================================================
-// CGLipidTargetPotential — directional CGL ↔ point-target term
-// ===================================================================
 struct CGLipidTargetPotential : public PotentialNode {
     CoordNode& cg_pos;
     CoordNode& tgt_pos;
@@ -957,7 +945,7 @@ CGLipidTargetPotential::CGLipidTargetPotential(
     , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
 {
     check_elem_width(cg_pos, 6);
-    // tgt_pos may be 3D (water, ions) or 6D (backbone) — only positions used.
+    // Targets may be 3D particles or 6D backbone sites; only positions are used.
 
     H5Obj pi_obj = open_group(grp, "pair_interaction");
     hid_t pi = pi_obj.get();
@@ -1068,9 +1056,6 @@ void CGLipidTargetPotential::propagate_deriv() {
     }
 }
 
-// ===================================================================
-// CGLipidLeafletOrientationPotential — mean-field leaflet normal torque
-// ===================================================================
 struct CGLipidLeafletOrientationPotential : public PotentialNode {
     CoordNode& cg_pos;
     vector<int> index;
@@ -1119,9 +1104,6 @@ struct CGLipidLeafletOrientationPotential : public PotentialNode {
     }
 };
 
-// ===================================================================
-// Node registration
-// ===================================================================
 static RegisterNodeType<ComposeVector6D, 1> _reg_cv("compose_vector6d");
 static RegisterNodeType<CGLipidPairPotential, 1> _reg_cg_pair("cg_lipid_pair");
 static RegisterNodeType<CGLipidSCPotential, 2> _reg_cg_sc("cg_lipid_sc");

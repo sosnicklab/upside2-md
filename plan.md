@@ -1,4 +1,4 @@
-## 2026-05-24 MARTINI Workflow Cleanup
+## 2026-05-24 MARTINI Branch Cleanup
 
 ### Project Goal
 - Straighten the current MARTINI C++/Python workflow logic for the active files:
@@ -8,6 +8,9 @@
   lipid-resolution class: stage order, defaults, restart rules, output layout,
   and production log format.
 - Remove debug-only user-facing controls and debug progress output.
+- Normalize all branch-only MARTINI Python/C++ code against the master checkout
+  at `/Users/yinhan/Documents/upside2-md-master`: style, naming, ownership
+  boundaries, and duplication.
 - Keep all physical MARTINI/Upside interface interactions active; do not disable,
   scale, or retune SC-env, BB-env, CGL-CGL, CGL-SC, CGL-target, CGL-ion excluded
   volume, or leaflet-orientation physics.
@@ -26,26 +29,31 @@
 - Keep MARTINI minimization and `--duration-steps` support because the workflow
   relies on them for production handoff and exact step-count semantics.
 - Keep generated outputs unstaged and avoid any git state-changing commands.
+- Prefer removing branch-only wrapper layers and duplicated readers/calculators
+  when an existing standard-library or project helper path is available.
 
 ### Execution Phases
-- [x] Phase 1: Update task notes and keep progress concise.
-- [x] Phase 2: Add shared launcher and convert 1RKL/1AFO scripts to wrappers.
-- [x] Phase 3: Remove debug-only Python workflow paths and duplicated stage-7
-      orchestration.
-- [x] Phase 4: Clean C++ public declarations and progress logging.
-- [x] Phase 5: Run syntax/build/log-format verification and document results.
+- [x] Phase 1: Remove debug-only workflow controls and output.
+- [x] Phase 2: Audit branch-vs-master diff and identify duplicate/new-code
+      cleanup targets.
+- [x] Phase 3: Refactor MARTINI Python scripts for style and logic.
+- [x] Phase 4: Refactor MARTINI C++ sources and main/box deltas for style and
+      ownership.
+- [x] Phase 5: Re-run syntax/build/log-format verification and document review.
 
 ### Known Errors / Blockers
 - None.
 
 ### Review
-- Shared launch semantics now live in `example/16.MARTINI/run_sim_hybrid.sh`;
-  1RKL/1AFO coarse/full scripts only set system-specific defaults.
-- Python workflow no longer exposes or invokes debug-only initial-structure or
-  stage-debug output paths. Stage 7 production handoff uses one helper path for
-  direct and extended equilibration flows.
-- MARTINI C++ declarations moved to `src/martini.h`; `src/main.h` is back to the
-  public `upside_main` entry point. The hybrid progress line reports
-  `protein_potential` and `total_potential` only.
-- Verification passed: Python compile, shell syntax, debug-log scan, and
-  `cmake --build obj`.
+- Moved the generic MARTINI topology parser from stage conversion into
+  `py/martini_itp_reader.py`, and removed the duplicated parser from
+  `py/martini_prepare_system_lib.py`.
+- Removed section banners, debug wording, verbose generated-looking diagnostics,
+  and non-ASCII progress text from the MARTINI Python/C++ files touched in this
+  cleanup.
+- Restored `src/main.h` to master parity, kept master-style OpenMP scheduling in
+  `src/main.cpp`, and preserved the required hybrid progress line:
+  `protein_potential ... total_potential ...` without CGL component debug terms.
+- Verification passed: Python compile, shell syntax, workflow help, clean-shell
+  launcher bootstrap check, C++ build, `git diff --check`, ASCII/style scan, and
+  removed-debug-control scan. Remaining C++ build warnings are pre-existing.

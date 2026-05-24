@@ -279,11 +279,11 @@ def build_cg_lipid_vector_info(struct_h5):
     """Read compose_vector6d data and build CG lipid display-vector info.
 
     Returns None if no CG lipids are present, else a dict with:
-      - elem_indices: (n_cg,) int — original HDF5 indices of CG lipids
-      - orientation_indices: (n_cg,) int or None — original HDF5 CGLD indices
-      - direction: (n_cg, 3) float — static fallback unit direction vectors
-      - head_offsets: (n_cg,) float — hydrophilic outer offsets in Angstrom
-      - tail_offsets: (n_cg,) float — hydrophobic outer offsets in Angstrom
+      - elem_indices: (n_cg,) int, original HDF5 indices of CG lipids
+      - orientation_indices: (n_cg,) int or None, original HDF5 CGLD indices
+      - direction: (n_cg, 3) float, static fallback unit direction vectors
+      - head_offsets: (n_cg,) float, hydrophilic outer offsets in Angstrom
+      - tail_offsets: (n_cg,) float, hydrophobic outer offsets in Angstrom
     """
     cv6_path = "input/potential/compose_vector6d"
     if cv6_path not in struct_h5:
@@ -293,7 +293,7 @@ def build_cg_lipid_vector_info(struct_h5):
     if "elem_index" not in cv6 or "direction" not in cv6:
         return None
 
-    elem_index = np.asarray(cv6["elem_index"][:], dtype=int)  # maps CG→pos atom index
+    elem_index = np.asarray(cv6["elem_index"][:], dtype=int)  # maps CG to pos atom index
     direction = np.asarray(cv6["direction"][:], dtype=np.float32)
     orientation_index = (
         np.asarray(cv6["orientation_index"][:], dtype=int)
@@ -894,9 +894,9 @@ def extract_trajectory(
         span = vector_info["tail_offsets"] - vector_info["head_offsets"]
         print(
             "CG lipid display span: "
-            f"mean={float(np.mean(span)):.3f} Å "
-            f"min={float(np.min(span)):.3f} Å "
-            f"max={float(np.max(span)):.3f} Å"
+            f"mean={float(np.mean(span)):.3f} A "
+            f"min={float(np.min(span)):.3f} A "
+            f"max={float(np.max(span)):.3f} A"
         )
 
     print(f"Frames: {n_frame_total}")

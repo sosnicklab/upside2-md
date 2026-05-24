@@ -16,6 +16,13 @@
     output to `protein_potential` plus `total_potential`.
   - Fixed `run_sim_hybrid.sh` so legacy `source.sh` is sourced before enabling
     `set -u`, avoiding unbound `PYTHONPATH` failures from clean shells.
+  - Consolidated MARTINI ITP topology parsing into `py/martini_itp_reader.py`
+    and removed the duplicated parser from `py/martini_prepare_system_lib.py`.
+  - Cleaned branch-only MARTINI Python/C++ style: removed banner sections,
+    debug/generator-looking wording, verbose conversion printouts, and
+    non-ASCII progress/comment text while leaving physical interactions intact.
+  - Restored `src/main.h` to master parity and kept `src/main.cpp` closer to
+    master output/threading style.
 - Files modified:
   - `plan.md`
   - `progress.md`
@@ -26,6 +33,10 @@
   - `example/16.MARTINI/run_sim_1afo_full.sh`
   - `py/martini_prepare_system.py`
   - `py/martini_prepare_system_lib.py`
+  - `py/martini_itp_reader.py`
+  - `py/martini_build_tables.py`
+  - `py/martini_extract_vtf.py`
+  - `py/martini_gen_params.py`
   - `src/martini.h`
   - `src/main.h`
   - `src/main.cpp`
@@ -41,11 +52,13 @@
   - Reproduced the launcher from a clean shell with `PYTHONPATH`,
     `CPLUS_INCLUDE_PATH`, `LIBRARY_PATH`, and `LD_LIBRARY_PATH` unset; it now
     reaches argument parsing instead of failing in `source.sh`.
-  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_gen_params.py py/martini_build_tables.py py/martini_cg_lipid_params.py py/martini_extract_vtf.py py/martini_itp_reader.py` passed.
   - `python3 py/martini_prepare_system.py run-hybrid-workflow --help` passed
     and exposes no removed debug/restart compatibility flags.
   - Final scan found no active debug workflow controls or component dump format
     strings in the edited files.
+  - Final ASCII/style scan found no non-ASCII text in edited MARTINI Python/C++
+    files.
   - `git diff --check` passed for the edited files.
   - `cmake --build obj` passed; remaining warnings are pre-existing compiler
     warnings in unrelated code paths.

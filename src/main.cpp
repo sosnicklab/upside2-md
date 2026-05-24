@@ -20,6 +20,9 @@
 #include <cstdlib>
 #include <cmath>
 
+#if defined(_OPENMP)
+#include <omp.h>
+#endif
 
 #include "box.h"
 
@@ -175,6 +178,18 @@ static double compute_protein_rg(const System& sys) {
         rg2 += mag2(load_vec<3>(sys.engine.pos->output, ai)-com);
     }
     return sqrt(rg2/n_backbone);
+}
+
+static double compute_all_atom_rg(const System& sys) {
+    float3 com = make_vec3(0.f, 0.f, 0.f);
+    for(int na=0; na<sys.n_atom; ++na)
+        com += load_vec<3>(sys.engine.pos->output, na);
+    com *= 1.f/sys.n_atom;
+
+    double rg2 = 0.0;
+    for(int na=0; na<sys.n_atom; ++na)
+        rg2 += mag2(load_vec<3>(sys.engine.pos->output, na)-com);
+    return sqrt(rg2/sys.n_atom);
 }
 
 static inline bool is_dry_martini_term_name(const std::string& name) {
@@ -819,6 +834,7 @@ try {
         // all exceptions.  To avoid crashing callers, we simply record the presence of an exception
         // then exit immediately after the block.
         bool error_exit_omp = false;
+        #pragma omp critical
         for(int ns=0; ns<n_system; ++ns) try {
             System* sys = &systems[ns];  // a pointer here makes later lambda's more natural
             sys->random_seed = base_random_seed + ns;
@@ -1125,6 +1141,7 @@ try {
         auto tstart = chrono::high_resolution_clock::now();
         while(systems[0].round_num < n_round && received_signal==NO_SIGNAL) {
             int last_start = systems[0].round_num;
+            #pragma omp parallel for schedule(static,1)
             for(int ns=0; ns<int(systems.size()); ++ns) {
                 System& sys = systems[ns];
                 for(bool do_break=false; (!do_break) && (sys.round_num<n_round); ++sys.round_num) {
@@ -1176,12 +1193,13 @@ try {
                                        protein_potential,
                                        sys.engine.potential);
                             } else {
-                                printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, potential % .2f\n",
+                                double rg = compute_all_atom_rg(sys);
+                                printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg %5.1f A, potential % 8.2f\n",
                                        duration_print_width, display_elapsed,
                                        duration_print_width, display_duration_total,
                                        ns, sys.temperature,
                                        get_n_hbond(sys.engine),
-                                       sys.engine.potential);
+                                       rg, sys.engine.potential);
                             }
                         }
                         fflush(stdout);
