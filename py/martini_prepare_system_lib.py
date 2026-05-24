@@ -1385,12 +1385,36 @@ def _collect_complete_backbone_residue_order(backbone_atoms):
 
 
 def map_backbone_types_from_martinize_fallback(backbone_atoms):
-    # Use the neutral backbone-only model for the hybrid AA-direct workflow.
-    # The charged head/tail BB model is an alternate CHARMM-GUI/Martini
-    # convention, but in this single-particle CGL projection its terminal
-    # Qd/Qa wells are not transferable as additive many-target PMFs.
+    # Use martinize fallback behavior with secondary structure fixed to coil ("C"):
+    # default/backbone override table + charged termini/chain-break endpoints.
     residue_order = _collect_complete_backbone_residue_order(backbone_atoms)
-    return {key: "P5" for key in residue_order}
+    coil_column = 8
+    bb_default = ("N0", "Nda", "N0", "Nd", "Na", "Nda", "Nda", "P5", "P5")
+    bb_residue_override = {
+        "ALA": ("C5", "N0", "C5", "N0", "N0", "N0", "N0", "P4", "P4"),
+        "PRO": ("C5", "N0", "C5", "N0", "Na", "N0", "N0", "Na", "Na"),
+        "HYP": ("C5", "N0", "C5", "N0", "N0", "N0", "N0", "Na", "Na"),
+    }
+    out = {}
+    for key in residue_order:
+        resname = key[3].upper()
+        table = bb_residue_override.get(resname, bb_default)
+        out[key] = table[coil_column]
+
+    # Match martinize charged-termini behavior: each fragment endpoint is
+    # assigned charged backbone bead types (Qd/Qa) in residue order.
+    if residue_order:
+        out[residue_order[0]] = "Qd"
+        out[residue_order[-1]] = "Qa"
+        for i in range(1, len(residue_order)):
+            prev = residue_order[i - 1]
+            curr = residue_order[i]
+            chain_break = curr[0] != prev[0]
+            seq_break = curr[1] != (prev[1] + 1)
+            if chain_break or seq_break:
+                out[curr] = "Qd"
+                out[prev] = "Qa"
+    return out
 
 
 def compute_lipid_residue_indices(bilayer_atoms):
