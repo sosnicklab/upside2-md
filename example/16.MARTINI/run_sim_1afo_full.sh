@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=1afo_hybrid
+#SBATCH --job-name=1afo_hybrid_full
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --time=36:00:00
 #SBATCH --ntasks=1
@@ -20,15 +20,15 @@ if [ -z "${BASE_WORKFLOW_SCRIPT}" ]; then
         "${PWD}/example/16.MARTINI" \
         "${SCRIPT_DIR}"
     do
-        if [ -n "${candidate_dir}" ] && [ -f "${candidate_dir}/run_sim_1rkl.sh" ]; then
-            BASE_WORKFLOW_SCRIPT="${candidate_dir}/run_sim_1rkl.sh"
+        if [ -n "${candidate_dir}" ] && [ -f "${candidate_dir}/run_sim_1rkl_full.sh" ]; then
+            BASE_WORKFLOW_SCRIPT="${candidate_dir}/run_sim_1rkl_full.sh"
             break
         fi
     done
 fi
 
 if [ -z "${BASE_WORKFLOW_SCRIPT}" ]; then
-    echo "ERROR: could not locate run_sim_1rkl.sh." >&2
+    echo "ERROR: could not locate run_sim_1rkl_full.sh." >&2
     exit 1
 fi
 
@@ -55,10 +55,11 @@ export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export PYTHONPATH="${PROJECT_ROOT}/py${PYTHONPATH:+:$PYTHONPATH}"
 export PATH="${PROJECT_ROOT}/obj:$PATH"
 
-export RUN_DIR="${RUN_DIR:-outputs/martini_test_1afo_hybrid}"
-export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1afo_hybrid}"
+export RUN_DIR="${RUN_DIR:-outputs/martini_test_1afo_hybrid_full}"
+export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1afo_hybrid_full}"
 export PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/1AFO.pdb}"
+export LIPID_RESOLUTION="${LIPID_RESOLUTION:-full}"
 export AUTO_CONTINUE_FROM_PREVIOUS_RUN="${AUTO_CONTINUE_FROM_PREVIOUS_RUN:-1}"
-export AUTO_CONTINUE_GLOB="${AUTO_CONTINUE_GLOB:-martini_test_1afo_hybrid/checkpoints/1afo.stage_7*.up}"
+export AUTO_CONTINUE_GLOB="${AUTO_CONTINUE_GLOB:-martini_test_1afo_hybrid_full/checkpoints/1afo.stage_7*.up}"
 
 exec "${BASE_WORKFLOW_SCRIPT}" "PDB_ID=${PDB_ID:-1afo}" "$@"

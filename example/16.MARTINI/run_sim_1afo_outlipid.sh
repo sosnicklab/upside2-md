@@ -67,6 +67,6 @@ export PROTEIN_LIPID_CUTOFF="${PROTEIN_LIPID_CUTOFF:-5.0}"
 export PROTEIN_LIPID_MIN_GAP="${PROTEIN_LIPID_MIN_GAP:-5.0}"
 export PROTEIN_LIPID_CUTOFF_MAX="${PROTEIN_LIPID_CUTOFF_MAX:-10.0}"
 export AUTO_CONTINUE_FROM_PREVIOUS_RUN="${AUTO_CONTINUE_FROM_PREVIOUS_RUN:-1}"
-export AUTO_CONTINUE_GLOB="${AUTO_CONTINUE_GLOB:-martini_test_1afo_outlipid*/checkpoints/1afo.stage_7*.up}"
+export AUTO_CONTINUE_GLOB="${AUTO_CONTINUE_GLOB:-martini_test_1afo_outlipid/checkpoints/1afo.stage_7*.up}"
 
 exec "${BASE_WORKFLOW_SCRIPT}" "$@"

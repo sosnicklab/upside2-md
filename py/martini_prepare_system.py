@@ -112,6 +112,12 @@ def parse_prepare_args(argv=None):
         help="Requested minimum gap in Angstrom between the protein surface and the lipid surface for outside-of-bilayer placement.",
     )
     parser.add_argument("--summary-json", default=None)
+    parser.add_argument(
+        "--lipid-resolution",
+        choices=["coarse", "full"],
+        default=os.environ.get("UPSIDE_LIPID_RESOLUTION", "coarse"),
+        help="DOPC lipid representation: coarse (single CGL particle) or full (14-bead ITP topology)",
+    )
     return parser.parse_args(argv)
 
 
@@ -403,6 +409,7 @@ def run_stage_conversion(args, runtime_pdb: Path):
 
     os.environ["UPSIDE_RUNTIME_PDB_FILE"] = str(runtime_pdb)
     os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
+    os.environ["UPSIDE_LIPID_RESOLUTION"] = str(getattr(args, "lipid_resolution", "coarse"))
 
     try:
         convert_stage(
@@ -417,6 +424,7 @@ def run_stage_conversion(args, runtime_pdb: Path):
             os.environ["UPSIDE_RUNTIME_PDB_FILE"] = prev_pdb
 
         os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
+        os.environ.pop("UPSIDE_LIPID_RESOLUTION", None)
 
 
 def write_summary(path: Path, payload):
@@ -596,6 +604,7 @@ def prepare_workflow_hybrid_artifacts(args):
                 "--protein-surface-gap", str(args.protein_surface_gap),
                 "--seed", str(args.prep_seed),
                 "--summary-json", str(args.hybrid_prep_dir / "hybrid_prep_summary.json"),
+                "--lipid-resolution", args.lipid_resolution,
             ]
         )
         if not args.hybrid_packed_pdb.exists():
@@ -814,6 +823,7 @@ def assert_hybrid_stage_active(
     expected_stage: str,
     expected_activation: str,
     require_interface_nodes: bool = False,
+    lipid_resolution: str = "coarse",
 ):
     import h5py
 
@@ -835,14 +845,15 @@ def assert_hybrid_stage_active(
                 for node in ("martini_potential", "martini_sc_table_1body")
                 if node not in pot
             ]
-            atom_names = []
-            if "atom_names" in inp:
-                atom_names = [
-                    x.decode("ascii") if isinstance(x, (bytes, np.bytes_)) else str(x)
-                    for x in inp["atom_names"][:]
-                ]
-            if any(name.strip().upper() == "CGL" for name in atom_names) and "cg_lipid_sc" not in pot:
-                missing.append("cg_lipid_sc")
+            if lipid_resolution != "full":
+                atom_names = []
+                if "atom_names" in inp:
+                    atom_names = [
+                        x.decode("ascii") if isinstance(x, (bytes, np.bytes_)) else str(x)
+                        for x in inp["atom_names"][:]
+                    ]
+                if any(name.strip().upper() == "CGL" for name in atom_names) and "cg_lipid_sc" not in pot:
+                    missing.append("cg_lipid_sc")
             if missing:
                 raise ValueError(
                     f"{up_file}: missing required hybrid interface node(s): {', '.join(missing)}"
@@ -850,7 +861,7 @@ def assert_hybrid_stage_active(
         env_membership = inp["hybrid_env_topology"]["protein_membership"][:]
         if not np.any(env_membership < 0):
             raise ValueError(f"{up_file}: no non-protein environment targets found")
-        if "type" in inp:
+        if lipid_resolution != "full" and "type" in inp:
             atom_types = np.asarray([
                 h5_as_text(x).strip().upper() for x in inp["type"][:]
             ], dtype=object)
@@ -892,6 +903,7 @@ def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable:
         "UPSIDE_NPT_DEBUG": "1",
         "UPSIDE_BILAYER_LIPIDHEAD_FC": str(lipidhead_fc),
         "UPSIDE_WRITE_DEBUG_PDB": "0",
+        "UPSIDE_LIPID_RESOLUTION": str(getattr(args, "lipid_resolution", "coarse")),
     }
 
 
@@ -910,12 +922,15 @@ def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, a
     )
     # SC placement node must exist before CG lipid node injection
     # so that cg_lipid_sc (CG↔SC) can find it.
-    inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.dopc_h5)
+    lipid_res = getattr(args, "lipid_resolution", "coarse")
+    if lipid_res != "full":
+        inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.dopc_h5)
     assert_hybrid_stage_active(
         target_file,
         current_stage,
         activation_stage,
         require_interface_nodes=True,
+        lipid_resolution=lipid_res,
     )
 
 
@@ -1413,9 +1428,11 @@ def ensure_martini_parameter_libraries(args):
     required = [
         (args.particle_h5, "particle.h5"),
         (args.sidechain_h5, "sidechain.h5"),
-        (args.dopc_h5, "dopc.h5"),
         (args.interlipid_h5, "interlipid.h5"),
     ]
+    lipid_res = getattr(args, "lipid_resolution", "coarse")
+    if lipid_res != "full":
+        required.append((args.dopc_h5, "dopc.h5"))
     missing = []
     for path, name in required:
         if not path.exists():
@@ -1484,6 +1501,12 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--auto-continue-glob", default=env_default("AUTO_CONTINUE_GLOB", ""))
     parser.add_argument("--initial-debug-only", type=int, default=env_int("INITIAL_DEBUG_ONLY", 0))
     parser.add_argument("--debug-rigid-protein", type=int, default=env_int("DEBUG_RIGID_PROTEIN", 0))
+    parser.add_argument(
+        "--lipid-resolution",
+        choices=["coarse", "full"],
+        default=env_default("LIPID_RESOLUTION", "coarse"),
+        help="DOPC lipid representation: coarse (single CGL particle) or full (14-bead ITP topology)",
+    )
     args = parser.parse_args(argv)
     if args.runtime_pdb_id is None:
         args.runtime_pdb_id = f"{args.pdb_id}_hybrid"
