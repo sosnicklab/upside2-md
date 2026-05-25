@@ -1,66 +1,61 @@
-# 2026-05-25 1RKL Bend and MARTINI Equivalence Audit
+# 2026-05-25 1AFO Coarse First-Frame Bend
 
 ## Project Goal
-- Debug the new strange bend in the 1RKL single-particle lipid result.
-- Ensure charged terminal BB typing is physically consistent: every protein
-  strand/fragment has an N-terminal `Qd` and C-terminal `Qa`, including broken
-  proteins such as 1AFO, in both full-resolution and single-particle lipid
-  workflows.
-- Audit lipid-lipid and lipid-sidechain interaction ownership/equivalence
-  between full-resolution lipid and single-particle CGL workflows.
-- Fix confirmed bugs without disabling, scaling away, or bypassing hybrid
-  protein/environment interactions.
+- Debug why `example/16.MARTINI/outputs/martini_1afo_hybrid` has one bent
+  helix at the very first production frame while
+  `martini_1afo_hybrid_full` has both helices relatively straight.
+- Determine whether the issue is in stage-7 minimization, burn-in promotion,
+  VTF/output extraction, or CGL interface physics.
+- Fix only confirmed bugs with a physical change: no disabled, scaled-away, or
+  bypassed SC-env, BB-env, lipid-lipid, CGL-SC, or CGL-target interactions.
 
 ## Architecture & Key Decisions
-- Keep all SC-env, BB-env, lipid-lipid, CGL-CGL, CGL-SC, CGL-target, and
-  generic dry-MARTINI interactions active.
-- Treat single-particle lipid as a coarse-grained representation of the same
-  dry-MARTINI DOPC model, not a different protein or lipid force field.
-- First audit exact current HDF5 outputs and generated nodes before editing
-  model code again.
-- Use copied HDF5 files for runtime checks; do not run diagnostics directly on
-  original output checkpoints.
-- Terminal charge assignment must be residue-fragment based and must not depend
-  on whether lipids are explicit DOPC or CGL.
-- User correction: N/CA/C/O carrier atoms must still receive the intended force
-  contributions from both sidechain/rotamer coupling and backbone/environment
-  coupling.  Do not fix full/coarse mismatch by removing their environment
-  force path.
-- Revised direction: verify the C++ derivative accumulation path.  Carrier
-  atoms need additive force accumulation from sidechain/rotamer and projected
-  backbone/environment paths; direct carrier forces, when present, must be
-  added to the carrier atom and not re-projected as BB-proxy forces.
-- Confirmed C++ bug: mapped N/CA/C/O carriers were treated as projectable BB
-  proxy sites because they have `ROLE_BB` and a BB map index.  Direct carrier
-  forces must be added to the carrier atom; only virtual BB proxy forces should
-  be projected through the BB map.
+- Compare exact existing HDF5 outputs first; do not infer from previous copied
+  probes.
+- Use copied files for any runtime diagnostics that could write to HDF5.
+- Treat the single-particle lipid as a coarse-grained version of the explicit
+  DOPC model. Differences must come from valid coarse-graining, not missing
+  force paths or workflow bookkeeping.
+- N/CA/C/O carrier atoms must continue to receive additive force contributions
+  from sidechain/rotamer coupling and projected BB-proxy environment coupling.
+  Only true virtual BB proxy gradients are projected through the BB map.
+- Stage handoff must be physically conservative: if minimization or burn-in is
+  performed, the promoted `/input` coordinates/momenta/box must correspond to
+  the intended state and the first saved production frame must match that
+  state.
 
 ## Execution Phases
-- [x] Phase 1: Identify the exact 1RKL single-particle bend timing and compare
-      geometry against full-resolution lipid outputs.
-- [x] Phase 2: Audit terminal BB type/charge assignment for 1RKL and broken
-      1AFO in both workflows.
-- [x] Phase 3: Audit lipid-lipid and lipid-SC ownership/equivalence between
-      full-resolution and single-particle workflows.
-- [x] Phase 4: Isolate and implement the smallest physical bug fix.
-- [x] Phase 5: Run focused verification and update the MARTINI documentation.
+- [x] Phase 1: Quantify 1AFO coarse/full helix geometry at stage-6 output,
+      stage-7 prepared input, stage-7 minimized/burn-in handoff, and stage-7
+      first output frame.
+- [x] Phase 2: Compare CGL target, CGL-SC, BB proxy, terminal charge, and
+      chain-break metadata between coarse and full stage-7 files.
+- [x] Phase 3: Inspect minimization and burn-in workflow code for stale
+      coordinate promotion, wrong output frame source, or coarse-only node
+      injection differences.
+- [x] Phase 4: Implement the smallest physical bug fix and update MARTINI
+      documentation if model behavior changes.
+- [x] Phase 5: Verify with focused copied-file regeneration/minimization and
+      geometry metrics before reporting completion.
 
 ## Known Errors / Blockers
-- Existing `example/16.MARTINI/outputs` artifacts are stale with respect to the
-  C++ projection fix until the workflows are rerun.
-- A copied 1RKL run with every carrier added as an independent CGL target failed
-  (`hbond=6.5`, kinetic ratio `2.096`; after projection correction, 10k-step
-  hbond still fell to `9.6`), so independent CGL target copies are rejected.
+- The old `martini_1afo_hybrid` stage-7 output was stale relative to the
+  current C++ force-routing binary. Its stage-7 minimization log started from
+  `162.96 E_up`, while the current binary evaluates the same prepared file at
+  `2867.25 E_up` and minimizes to a different physical basin.
+- The ignored generated files under
+  `example/16.MARTINI/outputs/martini_1afo_hybrid` were regenerated for
+  stage 7 from the current binary. Source code did not need another physics
+  change beyond the already-applied direct-vs-projected carrier routing fix.
 
 ## Review
-- Corrected after user feedback: N/CA/C/O carrier atoms remain force
-  accumulation sites for sidechain/rotamer and backbone/environment
-  contributions. The fix is not to remove their force path; it is to prevent
-  direct carrier gradients from being re-projected as virtual BB-proxy
-  gradients.
-- Final accepted implementation keeps CGL targets on BB proxies and non-protein
-  point targets, keeps charged BB endpoints per fragment, and routes true
-  virtual BB-proxy gradients through the BB map only.
-- Focused validation passed: C++ build, Python compile, 1RKL 40k-equivalent
-  copied probe (`hbond=31.43`, kinetic ratio `0.989`), and 1AFO fragment target
-  audit (`72` BB proxies plus `98` ions, no missing BB proxy targets).
+- The minimizer itself was not the source of the first-frame bend: copied
+  minimization-only geometry changed 1AFO fragment bends only from
+  `40.50/42.89 deg` to `40.07/42.19 deg`.
+- The first production frame comes after a 40k-step stage-7 burn-in promotion,
+  not immediately after minimization. With the current binary, that promoted
+  coarse state has fragment bends `28.98/21.38 deg` and hbond `82.37`.
+- Updated generated output verification:
+  `martini_1afo_hybrid/checkpoints/1afo.stage_7.0.up` now has first-frame
+  fragment bends `28.98/21.38 deg` and final hbond `84.70`; the VTF was
+  regenerated from that checkpoint.

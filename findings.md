@@ -1,6 +1,23 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-25: 1AFO first-frame coarse output after carrier routing fix.
+  - The user-observed first-frame bend in
+    `example/16.MARTINI/outputs/martini_1afo_hybrid` was not caused by the
+    minimizer. On a copied current-binary minimization-only check, fragment
+    bends changed only `40.50/42.89 deg -> 40.07/42.19 deg`.
+  - The first production frame is the promoted endpoint of the 40k-step stage-7
+    burn-in, not the raw minimized structure. This matters for diagnosis:
+    frame 0 can reflect burn-in dynamics even when the minimizer is harmless.
+  - The existing generated coarse output was stale relative to the current C++
+    force-routing binary. Its old stage-7 minimization log started at
+    `162.96 E_up`, while the same prepared file evaluated with the current
+    binary starts at `2867.25 E_up` and minimizes to a different state.
+  - Regenerating the coarse stage-7 handoff with the current binary kept the
+    physical interface active and produced production-frame-0 fragment bends
+    `28.98/21.38 deg`, first/last hbond `82.37/84.70`. The ignored generated
+    checkpoint and VTF under `outputs/martini_1afo_hybrid` were replaced with
+    this current-binary result.
 - 2026-05-25: User correction on N/CA/C/O force ownership.
   - Rule: do not infer "BB proxy only" CGL targeting as excluding force
     contributions from backbone carrier atoms. N/CA/C/O carriers must

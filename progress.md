@@ -1,5 +1,38 @@
 # Progress Log
 
+## 2026-05-25 1AFO Current-Output First-Frame Audit
+- Actions taken:
+  - Rechecked the exact generated coarse/full 1AFO stage-7 HDF5 and VTF outputs
+    under `example/16.MARTINI/outputs`.
+  - Confirmed stage-7 prepared input is shared and not newly bent; the first
+    saved production frame is after the stage-7 burn-in promotion, not directly
+    after minimization.
+  - Ran a copied current-binary minimization-only check from
+    `1afo.stage_7.0.prepared.up`; minimization did not introduce the bend.
+  - Ran copied current-binary 40k-step burn-in plus 10k-step production for
+    coarse 1AFO and regenerated the ignored generated stage-7 checkpoint and
+    VTF in `outputs/martini_1afo_hybrid`.
+- Files modified:
+  - `plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `example/16.MARTINI/outputs/martini_1afo_hybrid/checkpoints/1afo.stage_7.0.up`
+    (ignored generated output)
+  - `example/16.MARTINI/outputs/martini_1afo_hybrid/1afo.stage_7.0.vtf`
+    (ignored generated output)
+- Test results:
+  - Copied minimization-only geometry:
+    `40.50/42.89 deg -> 40.07/42.19 deg`, so the minimizer was not the bend
+    source.
+  - Current-binary coarse production frame 0 after burn-in promotion:
+    fragment bends `28.98/21.38 deg`, hbond `82.37`.
+  - Current-binary coarse production final frame:
+    fragment bends `43.44/20.78 deg`, hbond `84.70`.
+- Failures and fixes:
+  - The previous generated coarse stage-7 artifact was stale relative to the
+    current C++ binary: its logged minimization started at `162.96 E_up`; the
+    current binary evaluates the same prepared file at `2867.25 E_up`.
+
 ## 2026-05-25 1RKL Additive Carrier Force Routing
 - Actions taken:
   - Audited current 1RKL and 1AFO full/coarse HDF5 outputs for terminal BB
