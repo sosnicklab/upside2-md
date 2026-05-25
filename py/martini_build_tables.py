@@ -49,7 +49,6 @@ _CURRENT_CG_ANGLES: list | None = None
 
 
 def _ensure_cg_bonds_angles(lipids_itp_path: Path):
-    """Load DOPC bonds/angles from ITP once, cache at module level."""
     global _CURRENT_CG_BONDS, _CURRENT_CG_ANGLES
     if _CURRENT_CG_BONDS is not None:
         return
@@ -57,6 +56,11 @@ def _ensure_cg_bonds_angles(lipids_itp_path: Path):
     dopc = parse_dopc_from_itp(lipids_itp_path)
     _CURRENT_CG_BONDS = list(dopc["bonds"])
     _CURRENT_CG_ANGLES = list(dopc["angles"])
+
+
+def compute_dopc_bonded_energy(positions: np.ndarray, lipids_itp_path: Path) -> float:
+    _ensure_cg_bonds_angles(lipids_itp_path)
+    return _compute_lipid_bonded_energy(positions)
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -2224,6 +2228,72 @@ def _build_cgl_target_table(
     print(f"  cg_lipid_target: {n_types} target types, "
           f"{n_knot_radial} radial x {n_knot_angular} angular knots, "
           f"cutoff={cutoff_ang:.1f} A, source={target_grp.attrs['source']}")
+
+
+def build_martini_tables(
+    output_path: Path,
+    dry_ff_path: Path,
+    martinize_path: Path,
+    sidechain_lib_path: Path,
+    forcefield_name: str = "martini22",
+    active_residue_names: Iterable[str] | None = None,
+    active_atom_types: Set[str] | None = None,
+    r_count: int = 24,
+    direction_count: int = 16,
+    cos_theta_count: int = 13,
+    cg_lipid_config: dict | None = None,
+) -> None:
+    output_path = Path(output_path).expanduser().resolve()
+    dry_ff_path = Path(dry_ff_path).expanduser().resolve()
+    martinize_path = Path(martinize_path).expanduser().resolve()
+    sidechain_lib_path = Path(sidechain_lib_path).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
+    residue_map = load_martini_forcefield(martinize_path, forcefield_name)
+    active_residue_names = list(active_residue_names or CANONICAL_RESIDUES)
+    active_atom_types = set(active_atom_types or atomtypes)
+
+    cg_lipid_config = dict(cg_lipid_config or {})
+    bead_types = cg_lipid_config.get("bead_types")
+    bead_charges = cg_lipid_config.get("bead_charges")
+    lipids_itp_path = cg_lipid_config.get("lipids_itp_path")
+    if lipids_itp_path is None:
+        candidate = dry_ff_path.parent / "dry_martini_v2.1_lipids.itp"
+        lipids_itp_path = candidate if candidate.exists() else None
+
+    if bead_types is not None and bead_charges is None:
+        bead_charges = [infer_charge_from_atomtype(bt) for bt in bead_types]
+
+    with h5py.File(output_path, "w") as h5:
+        h5.attrs["schema"] = "martini_combined_v1"
+        _build_particles_group(h5, atomtypes, pair_params, active_atom_types)
+        _build_sc_table_group(
+            h5,
+            residue_map,
+            pair_params,
+            sidechain_lib_path,
+            active_residue_names=active_residue_names,
+            active_target_types=sorted(active_atom_types),
+        )
+        if cg_lipid_config:
+            _build_cg_lipid_tables(
+                h5,
+                pair_params=pair_params,
+                sidechain_lib_path=sidechain_lib_path,
+                martinize_path=martinize_path,
+                forcefield_name=forcefield_name,
+                active_residue_names=active_residue_names,
+                ref_bead_positions_nm=cg_lipid_config.get("ref_bead_positions_nm"),
+                bead_types=bead_types,
+                bead_charges=bead_charges,
+                bead_masses_g_mol=parse_itp_atomtype_masses(dry_ff_path),
+                lipids_itp_path=Path(lipids_itp_path) if lipids_itp_path else None,
+                r_count=r_count,
+                cos_theta_count=cos_theta_count,
+                azimuthal_count=direction_count,
+            )
+    print(f"Built {output_path}")
 
 
 def build_particle_h5(

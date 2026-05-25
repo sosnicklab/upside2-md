@@ -220,10 +220,6 @@ namespace {
         }
 };
 
-struct PosQuadSplineInteractionAsymmetric : public PosQuadSplineInteraction {
-    constexpr static bool symmetric = false;
-};
-
 typedef PosQuadSplineInteraction preferred_bead_type;
 
 #endif

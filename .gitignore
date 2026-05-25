@@ -27,3 +27,4 @@ source.sh
 .vscode/*
 .venv/
 .claude/scheduled_tasks.lock
+parameters/dryMARTINI/*.h5

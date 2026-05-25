@@ -26,7 +26,8 @@ def step1_build_tables():
     print("=== Step 1: Build martini tables ===")
     RUN_DIR.mkdir(parents=True, exist_ok=True)
 
-    from martini_build_tables import build_martini_tables, _compute_lipid_bonded_energy
+    from martini_build_tables import build_martini_tables, compute_dopc_bonded_energy
+    from martini_itp_reader import parse_dopc_from_itp
 
     # Parse DOPC reference bead positions from the test PDB
     atoms = []
@@ -56,26 +57,23 @@ def step1_build_tables():
     )
     ref_bead_positions_nm = ref_bead_positions * 0.1  # Å → nm
 
-    # Verify bond energy of reference positions is reasonable
-    ref_bonded = _compute_lipid_bonded_energy(ref_bead_positions_nm)
+    ff_dir = Path(os.environ.get("UPSIDE_MARTINI_FF_DIR", REPO_ROOT / "parameters" / "dryMARTINI"))
+    dry_ff = ff_dir / "dry_martini_v2.1.itp"
+    lipids_itp = ff_dir / "dry_martini_v2.1_lipids.itp"
+    sc_lib = REPO_ROOT / "parameters" / "ff_2.1" / "sidechain.h5"
+    martinize = REPO_ROOT / "py" / "martinize.py"
+    dopc = parse_dopc_from_itp(lipids_itp)
+
+    ref_bonded = compute_dopc_bonded_energy(ref_bead_positions_nm, lipids_itp)
     print(f"  Reference bonded energy: {ref_bonded:.2f} kJ/mol (should be small)")
     if ref_bonded > 500.0:
         print(f"  WARNING: Reference positions have high bonded energy; PDB may need relaxation")
 
-    bead_types = [
-        "Q0", "Qa", "Na", "Na",
-        "C1", "C1", "C3", "C1", "C1",
-        "C1", "C1", "C3", "C1", "C1",
-    ]
-
-    ff_dir = Path(os.environ.get("UPSIDE_MARTINI_FF_DIR", REPO_ROOT / "parameters" / "dryMARTINI"))
-    dry_ff = ff_dir / "dry_martini_v2.1.itp"
-    sc_lib = REPO_ROOT / "parameters" / "ff_2.1" / "sidechain.h5"
-    martinize = REPO_ROOT / "py" / "martinize.py"
-
     cg_lipid_config = {
         "ref_bead_positions_nm": ref_bead_positions_nm,
-        "bead_types": bead_types,
+        "bead_types": dopc["bead_types"],
+        "bead_charges": dopc["bead_charges"],
+        "lipids_itp_path": lipids_itp,
     }
 
     build_martini_tables(
@@ -84,6 +82,7 @@ def step1_build_tables():
         martinize_path=martinize,
         sidechain_lib_path=sc_lib,
         forcefield_name="martini22",
+        active_residue_names=("GLY",),
         cg_lipid_config=cg_lipid_config,
     )
     print(f"  Built: {MARTINI_H5}")

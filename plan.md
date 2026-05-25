@@ -1,42 +1,51 @@
-## 2026-05-24 MARTINI Python Runner
+# 2026-05-24 MARTINI Branch Cleanup
 
-### Project Goal
-- Update `example/16.MARTINI/run.py` so it follows the compact style of the
-  other example `run.py` scripts.
-- Make it runnable from a local Mac shell or from Slurm.
-- Accept an OPM-style input PDB and drive the existing MARTINI hybrid workflow.
-- Add a lipid representation toggle for `coarse` CG-lipid and `full`
-  single-particle/full bead mode.
-- Expose lipid composition configuration, currently restricted to 100% DOPC.
+## Project Goal
+- Rewrite the MARTINI additions on `martini-dev` so they are concise, closer to
+  master style, and easier to maintain.
+- Preserve the current physical model and keep `example/16.MARTINI` workflows at
+  metric parity with the current branch.
+- Treat generated MARTINI parameter files as rebuildable artifacts.
 
-### Architecture & Key Decisions
-- Keep `run.py` as a thin orchestrator. Reuse `py/martini_prepare_system.py
-  run-hybrid-workflow` and do not duplicate stage-generation or simulation
-  logic.
-- Use environment variables only for the lower-level workflow settings already
-  consumed by the MARTINI scripts.
-- For Slurm mode, write a small self-contained submission script that sets the
-  project environment explicitly and sets `UPSIDE_SKIP_SOURCE_SH=1`.
-- Do not alter MARTINI force-field physics or interaction tables.
+## Architecture & Key Decisions
+- Scope is MARTINI-only: `src/box.*`, `src/martini*`, shared C++ files touched
+  for MARTINI support, `py/martini_*`, and `example/16.MARTINI`.
+- `py/martinize.py` is vendored third-party code. Do not edit, format, delete,
+  annotate, or otherwise touch it.
+- Restore master parity in shared files unless the MARTINI workflow needs the
+  change.
+- Keep all SC-env, BB-env, CGL-CGL, CGL-SC, and CGL-target interactions active.
+- Use metric parity, not byte-identical trajectories, as workflow acceptance.
 
-- [x] Phase 1: Inspect existing `run.py`, example runner style, and workflow
-      arguments.
-- [x] Phase 2: Rewrite `example/16.MARTINI/run.py` as the shared runner.
-- [x] Phase 3: Verify syntax/help and document behavior.
+## Execution Phases
+- [x] Phase 0: Capture baseline checks and short-run metrics where practical.
+- [x] Phase 1: Remove unused placeholder code and restore accidental shared
+      changes.
+- [x] Phase 2: Split `src/martini.cpp` by subsystem and update build files.
+- [x] Phase 3: Deduplicate C++ integration/helpers without changing runtime
+      semantics.
+- [x] Phase 4: Clean MARTINI Python modules and example wrappers.
+- [x] Phase 5: Run build/tests and record parity results.
 
-### Known Errors / Blockers
-- None.
+## Known Errors / Blockers
+- Full 1RKL/1AFO production workflow parity was not rerun in this cleanup pass;
+  the focused CG-lipid workflow was used as the executable MARTINI check.
+- Larger structural refactors from Claude's proposal, such as splitting
+  `py/martini_prepare_system_lib.py` and refactoring shared integrator internals,
+  should only be done with a dedicated parity baseline because they carry a
+  wider workflow risk than the verified cleanup pass here.
 
-### Review
-- Rewrote `example/16.MARTINI/run.py` in the editable style used by the other
-  example runners.
-- The runner now accepts an OPM-oriented protein PDB path, validates the current
-  100% DOPC lipid composition setting, and maps `lipid_model` to the existing
-  workflow's `--lipid-resolution`.
-- Local mode sets `UPSIDE_HOME`, `PATH`, and `PYTHONPATH` and generates missing
-  MARTINI parameter files before running the workflow.
-- Slurm mode writes and submits a self-contained batch script with module loads,
-  repo `.venv` activation, explicit environment exports, and
-  `UPSIDE_SKIP_SOURCE_SH=1`.
-- Verification passed: `python3 -m py_compile`, style/ASCII scan, and
-  `git diff --check`.
+## Review
+- `src/martini.cpp` was split into subsystem files with shared private
+  declarations in `src/martini_internal.h`; build files were updated.
+- Restored shared files toward master style where MARTINI did not need the
+  change, removed unused MARTINI placeholders, and left `py/martinize.py`
+  untouched.
+- Deleted generated dry-MARTINI HDF5 artifacts from version control scope and
+  ignored regenerated copies.
+- Verification passed:
+  - `python3 -m py_compile` for MARTINI Python modules and example scripts.
+  - `cmake --build obj`.
+  - `git diff --check`.
+  - `example/16.MARTINI/test_cg_lipid/run_test.py` completed table build,
+    stage conversion, table injection, and minimization.

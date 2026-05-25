@@ -102,10 +102,7 @@ def upside_config(fasta,
                   memb_scale=1.,
                   ):
     
-    # Get the Python interpreter path
-    python_path = sys.executable
-    
-    args = [python_path, os.path.join(py_source_dir, 'upside_config.py'), '--fasta=%s'%fasta, '--output=%s'%output]
+    args = [os.path.join(py_source_dir, 'upside_config.py'), '--fasta=%s'%fasta, '--output=%s'%output]
 
     if initial_structure:
         args.append('--initial-structure=%s'%initial_structure)

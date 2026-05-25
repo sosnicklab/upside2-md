@@ -1,6 +1,19 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-24: MARTINI cleanup verification.
+  - `example/16.MARTINI/test_cg_lipid/run_test.py` is a practical short
+    executable check for the cleanup because it covers MARTINI table generation,
+    stage conversion, CG-lipid node injection, and minimization without running
+    full production trajectories.
+  - The minimal DOPC+GLY fixture should pass `active_residue_names=("GLY",)` to
+    table generation. Building every sidechain table is unnecessary for that
+    fixture and turns a focused smoke test into a long parameter-generation run.
+- 2026-05-24: User correction on `py/martinize.py`.
+  - `py/martinize.py` is third-party vendored code and must not be edited,
+    formatted, annotated, deleted, or otherwise touched during MARTINI cleanup.
+  - Working rule: isolate any dependency on martinize behind project-owned
+    wrappers, but leave the vendored source byte-unchanged.
 - 2026-05-24: User correction on cleanup depth.
   - Removing debug switches is not enough for this task. The required bar is a
     branch-vs-master cleanup of all MARTINI Python/C++ additions: straighten the

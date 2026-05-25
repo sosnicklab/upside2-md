@@ -21,6 +21,11 @@ include_directories(SYSTEM "include")
 set (ENGINE_SRC 
     main.cpp
     martini.cpp
+    martini_fix_rigid.cpp
+    martini_hybrid.cpp
+    martini_masses.cpp
+    martini_potential.cpp
+    martini_stage_params.cpp
     martini_cg_lipid.cpp
     box.cpp
     environment.cpp
