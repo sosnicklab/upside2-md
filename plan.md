@@ -1,51 +1,47 @@
-# 2026-05-24 MARTINI Branch Cleanup
+# 2026-05-24 MARTINI Secondary-Structure Divergence
 
 ## Project Goal
-- Rewrite the MARTINI additions on `martini-dev` so they are concise, closer to
-  master style, and easier to maintain.
-- Preserve the current physical model and keep `example/16.MARTINI` workflows at
-  metric parity with the current branch.
-- Treat generated MARTINI parameter files as rebuildable artifacts.
+- Find why protein secondary-structure results differ between the full-scale
+  lipid workflow and the single-particle lipid workflow under
+  `example/16.MARTINI`.
+- Identify actual bugs, fix them with minimal code changes, and verify the
+  workflows use consistent protein/environment physics.
 
 ## Architecture & Key Decisions
-- Scope is MARTINI-only: `src/box.*`, `src/martini*`, shared C++ files touched
-  for MARTINI support, `py/martini_*`, and `example/16.MARTINI`.
-- `py/martinize.py` is vendored third-party code. Do not edit, format, delete,
-  annotate, or otherwise touch it.
-- Restore master parity in shared files unless the MARTINI workflow needs the
-  change.
-- Keep all SC-env, BB-env, CGL-CGL, CGL-SC, and CGL-target interactions active.
-- Use metric parity, not byte-identical trajectories, as workflow acceptance.
+- Treat the single-particle lipid model as a CG representation of the same
+  dry-MARTINI lipid environment, not a separate protein force field.
+- Keep SC-env, BB-env, CGL-CGL, CGL-SC, and CGL-target interactions active.
+- Compare workflow scripts, generated inputs, and existing outputs before
+  editing runtime code.
+- Do not change shared physics parameters unless diagnostics show a direct bug.
+- Root-cause decision: coarse CGL-SC was applied as a standalone CB potential,
+  while full-resolution DOPC-SC entered the sidechain rotamer one-body energy.
+  The physical fix is to feed the dry-MARTINI-derived CGL-SC spline into the
+  rotamer solver as a one-body term, preserving active CGL-SC forces through
+  rotamer probabilities instead of bypassing sidechain conformation selection.
+- Runtime node decision: the rotamer-coupled CGL-SC term is named
+  `cg_lipid_rotamer_sc` to avoid the deriv-engine prefix collision with the
+  legacy standalone `cg_lipid_sc` node type.
 
 ## Execution Phases
-- [x] Phase 0: Capture baseline checks and short-run metrics where practical.
-- [x] Phase 1: Remove unused placeholder code and restore accidental shared
-      changes.
-- [x] Phase 2: Split `src/martini.cpp` by subsystem and update build files.
-- [x] Phase 3: Deduplicate C++ integration/helpers without changing runtime
-      semantics.
-- [x] Phase 4: Clean MARTINI Python modules and example wrappers.
-- [x] Phase 5: Run build/tests and record parity results.
+- [x] Phase 1: Inventory relevant full-scale and single-particle workflows and
+      output artifacts.
+- [x] Phase 2: Compare generated HDF5 inputs and logs for force-field/node
+      differences that can affect protein secondary structure.
+- [x] Phase 3: Isolate root cause and implement the smallest correct fix.
+- [x] Phase 4: Run focused verification and document residual risks.
 
 ## Known Errors / Blockers
-- Full 1RKL/1AFO production workflow parity was not rerun in this cleanup pass;
-  the focused CG-lipid workflow was used as the executable MARTINI check.
-- Larger structural refactors from Claude's proposal, such as splitting
-  `py/martini_prepare_system_lib.py` and refactoring shared integrator internals,
-  should only be done with a dedicated parity baseline because they carry a
-  wider workflow risk than the verified cleanup pass here.
+- None yet.
 
 ## Review
-- `src/martini.cpp` was split into subsystem files with shared private
-  declarations in `src/martini_internal.h`; build files were updated.
-- Restored shared files toward master style where MARTINI did not need the
-  change, removed unused MARTINI placeholders, and left `py/martinize.py`
-  untouched.
-- Deleted generated dry-MARTINI HDF5 artifacts from version control scope and
-  ignored regenerated copies.
-- Verification passed:
-  - `python3 -m py_compile` for MARTINI Python modules and example scripts.
-  - `cmake --build obj`.
-  - `git diff --check`.
-  - `example/16.MARTINI/test_cg_lipid/run_test.py` completed table build,
-    stage conversion, table injection, and minimization.
+- Root cause: full lipid mode exposed explicit DOPC beads to
+  `martini_sc_table_1body`, but single-particle lipid mode only exposed ions
+  there; its CGL-SC table was evaluated outside the rotamer one-body solver.
+- Fix: inject `cg_lipid_rotamer_sc` as a rotamer one-body coordinate node using
+  the existing dry-MARTINI CGL-SC spline, append it to `rotamer` arguments, and
+  refresh generated `cg_lipid_*` nodes when reinjecting a prepared file.
+- Verification: Python syntax check passed, C++ build passed, copied 1RKL
+  injection produced 117/117 matched rotamer rows and 282 CGL targets, and a
+  one-step `obj/upside` smoke test ran with nonzero `rotamer_1body_energy2`
+  entries from the new CGL-SC one-body channel.

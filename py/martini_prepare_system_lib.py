@@ -3469,7 +3469,7 @@ def inject_cg_lipid_nodes(
     """Inject CG lipid quadspline interaction nodes into the .up file.
 
     Reads interaction_param from martini.h5 (cg_lipid_table group) and
-    writes cg_lipid_pair and cg_lipid_sc potential nodes.
+    writes cg_lipid_pair and CGL-SC rotamer one-body nodes.
     """
     up_file = Path(up_file).expanduser().resolve()
     martini_h5 = Path(martini_h5).expanduser().resolve()
@@ -3504,6 +3504,9 @@ def inject_cg_lipid_nodes(
                 "ERROR: compose_vector6d node not found in .up file. "
                 "Run convert_stage() with CG lipids first."
             )
+        for existing_node in list(pot.keys()):
+            if existing_node.startswith("cg_lipid_"):
+                del pot[existing_node]
 
         with h5py.File(martini_h5, "r") as mh5:
             if has_pair:
@@ -3564,20 +3567,32 @@ def inject_cg_lipid_nodes(
                 )
 
             if has_sc:
-                # Check for SC placement node before creating cg_lipid_sc node
+                # Check for rotamer placement nodes before creating the CGL-SC
+                # one-body term that feeds the rotamer solver.
                 with h5py.File(up_file, "r") as up_r:
-                    has_sc_node = "placement_fixed_point_vector_only_CB" in up_r["input/potential"]
+                    pot_r = up_r["input/potential"]
+                    has_sc_node = (
+                        "placement_fixed_point_vector_only" in pot_r
+                        and "rotamer" in pot_r
+                    )
                     if has_sc_node:
-                        sc_place = up_r["input/potential/placement_fixed_point_vector_only_CB"]
+                        sc_place = pot_r["placement_fixed_point_vector_only"]
+                        rotamer = pot_r["rotamer"]
                         n_sc = int(sc_place["affine_residue"].shape[0])
-                        cb_residue_idx = sc_place["affine_residue"][:].astype(np.int32)
+                        sc_residue_idx = sc_place["affine_residue"][:].astype(np.int32)
                         sequence = [
                             s.decode("ascii") if isinstance(s, bytes) else str(s)
                             for s in up_r["input/sequence"][:]
                         ]
+                        rot_ids = rotamer["pair_interaction"]["id"][:].astype(np.int32)
+                        rot_index = rotamer["pair_interaction"]["index"][:].astype(np.int32)
+                        row_rotamer_idx = np.zeros(n_sc, dtype=np.int32)
+                        valid_rot = (rot_index >= 0) & (rot_index < n_sc)
+                        row_rotamer_idx[rot_index[valid_rot]] = rot_ids[valid_rot] & 0xF
                     else:
                         n_sc = 0
-                        cb_residue_idx = np.empty(0, dtype=np.int32)
+                        sc_residue_idx = np.empty(0, dtype=np.int32)
+                        row_rotamer_idx = np.empty(0, dtype=np.int32)
                         sequence = []
                     n_cg = up_r["input/potential/compose_vector6d/elem_index"].shape[0]
 
@@ -3590,31 +3605,24 @@ def inject_cg_lipid_nodes(
                     # Build restype to type_index map for CG-SC table.
                     restype_to_sc_type = {r: i for i, r in enumerate(sc_restype_order)}
 
-                    # Filter SC particles to residues with CG-SC table entries.
-                    sc_indices = []
-                    sc_types = []
-                    sc_ids = []
-                    for cb_idx in range(n_sc):
-                        res_idx = int(cb_residue_idx[cb_idx])
+                    row_types = np.full(n_sc, -1, dtype=np.int32)
+                    matched_rows = 0
+                    for row_idx in range(n_sc):
+                        res_idx = int(sc_residue_idx[row_idx])
                         resname = sequence[res_idx] if res_idx < len(sequence) else ""
                         type_idx = restype_to_sc_type.get(resname)
                         if type_idx is not None:
-                            sc_indices.append(cb_idx)
-                            sc_types.append(type_idx)
-                            sc_ids.append(res_idx)
+                            row_types[row_idx] = type_idx
+                            matched_rows += 1
 
                     injected_cutoff_ang = None
-                    if not sc_indices:
-                        print("  cg_lipid_sc: no residues with CG-SC table entries, skipping SC-CG interaction")
+                    if matched_rows == 0:
+                        print("  cg_lipid_rotamer_sc: no residues with CG-SC table entries, skipping SC-CG interaction")
                     else:
-                        sc_indices = np.array(sc_indices, dtype=np.int32)
-                        sc_types = np.array(sc_types, dtype=np.int32)
-                        sc_ids = np.array(sc_ids, dtype=np.int32)
-
-                        cg_sc = pot.create_group("cg_lipid_sc")
+                        cg_sc = pot.create_group("cg_lipid_rotamer_sc")
                         cg_sc.attrs["initialized"] = True
                         cg_sc.attrs["arguments"] = np.array([
-                            b"placement_fixed_point_vector_only_CB",
+                            b"placement_fixed_point_vector_only",
                             b"compose_vector6d",
                         ])
                         for attr_name, attr_value in box_attrs.items():
@@ -3647,28 +3655,30 @@ def inject_cg_lipid_nodes(
                             data=sc_grp["interaction_param"][:].astype(np.float32),
                         )
 
-                        psi.create_dataset("index1", data=sc_indices)
-                        psi.create_dataset("type1", data=sc_types)
-                        # Shift ids by 4 bits: PosQuadSplineInteraction::acceptable_id_pair
-                        # accepts only pairs where (id1>>4) != (id2>>4).
-                        # SC ids use residue_idx << 4.
-                        psi.create_dataset("id1", data=(sc_ids << 4).astype(np.int32))
+                        psi.create_dataset("type1", data=row_types)
+                        psi.create_dataset("row_residue_index", data=sc_residue_idx.astype(np.int32))
+                        psi.create_dataset("row_rotamer_index", data=row_rotamer_idx.astype(np.int32))
 
                         psi.create_dataset("index2", data=np.arange(n_cg, dtype=np.int32))
                         psi.create_dataset("type2", data=np.zeros(n_cg, dtype=np.int32))
-                        # CG lipid ids shifted into disjoint range (100000+cg_idx)<<4
-                        # so no SC-CG pair is rejected by the id filter.
                         psi.create_dataset("id2", data=((np.arange(n_cg, dtype=np.int32) + 100000) << 4))
 
-                    if injected_cutoff_ang is not None:
-                        print(
-                            f"  Injected cg_lipid_sc: {len(sc_indices)} SC x {n_cg} CG lipids, "
-                            f"cutoff={injected_cutoff_ang:.3f} A"
-                        )
-                    else:
-                        print(f"  Injected cg_lipid_sc: {len(sc_indices)} SC x {n_cg} CG lipids")
+                        rotamer = pot["rotamer"]
+                        rot_args = list(rotamer.attrs["arguments"])
+                        if b"cg_lipid_rotamer_sc" not in rot_args:
+                            rotamer.attrs["arguments"] = np.asarray(
+                                rot_args + [np.bytes_("cg_lipid_rotamer_sc")]
+                            )
+
+                        if injected_cutoff_ang is not None:
+                            print(
+                                f"  Injected cg_lipid_rotamer_sc: {matched_rows}/{n_sc} rotamer rows x {n_cg} CG lipids, "
+                                f"cutoff={injected_cutoff_ang:.3f} A"
+                            )
+                        else:
+                            print(f"  Injected cg_lipid_rotamer_sc: {matched_rows}/{n_sc} rotamer rows x {n_cg} CG lipids")
                 else:
-                    print("  cg_lipid_sc: no SC placement node found, skipping SC-CG interaction")
+                    print("  cg_lipid_rotamer_sc: no rotamer placement node found, skipping SC-CG interaction")
 
             target_grp = mh5["cg_lipid_table"].get("cg_lipid_target")
             if target_grp is not None:

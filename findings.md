@@ -1,6 +1,24 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-24: Secondary-structure divergence between full lipid and
+  single-particle lipid workflows.
+  - Full-resolution lipid mode feeds explicit DOPC sidechain environment
+    contacts into the sidechain rotamer one-body path through
+    `martini_sc_table_1body`; in the checked 1RKL output this node saw 4041
+    environment atoms.
+  - Single-particle lipid mode had `martini_sc_table_1body` seeing only ions
+    (93 atoms in the checked 1RKL output), while the dry-MARTINI-derived
+    CGL-SC table was evaluated as a standalone `cg_lipid_sc` CB potential.
+    This kept CGL-SC active but bypassed rotamer probabilities, so the coarse
+    workflow used a different sidechain/lipid coupling path from full mode.
+  - Physical fix: keep the same CGL-SC spline active but inject it as the
+    rotamer one-body coordinate node `cg_lipid_rotamer_sc`, appended to the
+    `rotamer` arguments. The generated standalone `cg_lipid_sc` node is removed
+    on reinjection to avoid double-counting.
+  - Runtime lesson: Upside node type names are prefix-matched, so new registered
+    node names must not start with an existing registered type such as
+    `cg_lipid_sc`.
 - 2026-05-24: MARTINI cleanup verification.
   - `example/16.MARTINI/test_cg_lipid/run_test.py` is a practical short
     executable check for the cleanup because it covers MARTINI table generation,

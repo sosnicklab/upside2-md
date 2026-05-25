@@ -1,46 +1,34 @@
 # Progress Log
 
-## 2026-05-24 MARTINI Branch Cleanup
+## 2026-05-24 MARTINI Secondary-Structure Divergence
 - Actions taken:
-  - Restored low-risk shared-file changes toward master style and removed unused
-    MARTINI placeholders.
-  - Split the MARTINI C++ implementation into focused subsystem files and added
-    a private internal header for cross-file declarations.
-  - Removed generated dry-MARTINI HDF5 artifacts from source control scope and
-    added an ignore rule for regenerated copies.
-  - Added a public MARTINI table-builder facade used by the CG-lipid example and
-    made the minimal test parse DOPC topology from the ITP instead of duplicating
-    bead metadata.
-  - Scoped the minimal CG-lipid test to GLY so it does not fit unused sidechain
-    tables.
+  - Compared full-resolution and single-particle lipid stage-7 inputs/logs.
+  - Found that coarse mode kept CGL-SC active, but evaluated it as a standalone
+    CB potential rather than through the sidechain rotamer one-body solver.
+  - Added a rotamer-coupled CGL-SC node, `cg_lipid_rotamer_sc`, and made CG
+    lipid node injection refresh generated `cg_lipid_*` nodes to avoid stale
+    standalone SC terms.
+  - Updated the CG lipid derivation document to describe the runtime ownership
+    change.
 - Files modified:
-  - `.gitignore`
-  - `example/16.MARTINI/readme.md`
-  - `example/16.MARTINI/test_cg_lipid/run_test.py`
-  - `parameters/dryMARTINI/*.h5` generated artifacts removed
   - `plan.md`
-  - `progress.md`
   - `findings.md`
-  - `py/martini_build_tables.py`
-  - `py/run_upside.py`
-  - `py/upside_martini.py` removed
-  - `src/CMakeLists_M1.txt`
-  - `src/CMakeLists_Other.txt`
-  - `src/bead_interaction.h`
-  - `src/extra_particles.h` removed
-  - `src/martini*.cpp`
-  - `src/martini_internal.h`
-  - `src/rotamer.cpp`
-  - `src/state_logger.h`
-- Verification:
-  - `python3 -m py_compile` passed for MARTINI Python modules and examples.
-  - `cmake --build obj` passed.
-  - `git diff --check` passed.
-  - `git diff -- py/martinize.py` is empty.
-  - `example/16.MARTINI/test_cg_lipid/run_test.py` passed: generated
-    `martini.h5`, converted the stage, injected CG-lipid nodes, and completed
-    minimization with final potential `-183.983780`.
-  - Full production workflow parity was not rerun because it is expensive; this
-    is documented in `plan.md`.
-  - Wider refactors from Claude's proposal that need their own parity baseline
-    are documented as remaining risk in `plan.md`.
+  - `progress.md`
+  - `py/martini_prepare_system.py`
+  - `py/martini_prepare_system_lib.py`
+  - `src/martini_cg_lipid.cpp`
+  - `example/16.MARTINI/cg_lipid_potentials.tex`
+- Test results:
+  - `source .venv/bin/activate && source source.sh && python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py`
+    passed.
+  - `source .venv/bin/activate && source source.sh && cmake --build obj`
+    passed.
+  - Copied 1RKL stage-7 injection generated `cg_lipid_rotamer_sc`, removed the
+    old `cg_lipid_sc`, matched 117/117 rotamer rows, and connected 282 CGL
+    particles.
+  - One-step `obj/upside` smoke test on `/private/tmp/cgl_sc_1body_test.up`
+    passed; output contained nonzero `rotamer_1body_energy2` CGL-SC entries.
+- Failures and fixes:
+  - Initial smoke test failed because `cg_lipid_sc_1body` collided with the
+    legacy registered prefix `cg_lipid_sc`; renamed the new node to
+    `cg_lipid_rotamer_sc`.

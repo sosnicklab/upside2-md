@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace std;
@@ -925,6 +926,186 @@ struct CGLipidTargetPotential : public PotentialNode {
     }
 };
 
+struct CGLipidSCOneBody : public CoordNode {
+    CoordNode& sc_pos;
+    CoordNode& cg_pos;
+    vector<float> interaction_param;
+    vector<int> row_type;
+    vector<int> row_residue_index;
+    vector<int> row_rotamer_index;
+    vector<int> row_group_count;
+    vector<int> index2;
+    vector<int> type2;
+    vector<int> id2;
+    int n_type1;
+    int n_type2;
+    int n_param;
+    int n_modes;
+    int n_radial;
+    int n_angular;
+    float box_x;
+    float box_y;
+    float box_z;
+    float knot_spacing;
+    float cutoff;
+    float taper_width;
+
+    CGLipidSCOneBody(hid_t grp, CoordNode& sc_pos_, CoordNode& cg_pos_)
+        : CoordNode(sc_pos_.n_elem, 1)
+        , sc_pos(sc_pos_)
+        , cg_pos(cg_pos_)
+        , n_type1(0)
+        , n_type2(0)
+        , n_param(0)
+        , n_modes(read_attribute<int>(grp, ".", "n_modes", 0))
+        , n_radial(read_attribute<int>(grp, ".", "n_radial", CG_LIPID_N_RADIAL))
+        , n_angular(read_attribute<int>(grp, ".", "n_angular", CG_LIPID_N_ANGULAR))
+        , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
+        , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
+        , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
+        , knot_spacing(read_attribute<float>(grp, ".", "knot_spacing_ang", CG_LIPID_DEFAULT_KNOT_SPACING))
+        , cutoff(read_attribute<float>(grp, ".", "cutoff_ang",
+                    (CG_LIPID_N_RADIAL - 2) * CG_LIPID_DEFAULT_KNOT_SPACING))
+        , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
+    {
+        check_elem_width(sc_pos, 6);
+        check_elem_width(cg_pos, 6);
+        H5Obj pi_obj = open_group(grp, "pair_interaction");
+        hid_t pi = pi_obj.get();
+        interaction_param = read_param_dataset_any(pi, n_type1, n_type2, n_param);
+        int expected_n_param = n_radial + n_modes * (2 * n_angular + n_radial);
+        if(n_modes > 0) {
+            if(n_radial <= 3 || n_angular <= 3 || n_param != expected_n_param)
+                throw string("cg_lipid_rotamer_sc full multimode params require matching n_modes/n_radial/n_angular attrs");
+        } else if(n_param != CG_LIPID_N_PARAM) {
+            throw string("cg_lipid_rotamer_sc legacy params must have last dimension 54");
+        }
+
+        row_type = read_int_dataset(pi, "type1");
+        row_residue_index = read_int_dataset(pi, "row_residue_index");
+        row_rotamer_index = read_int_dataset(pi, "row_rotamer_index");
+        index2 = read_int_dataset(pi, "index2");
+        type2 = read_int_dataset(pi, "type2");
+        id2 = read_int_dataset(pi, "id2");
+        if(int(row_type.size()) != n_elem ||
+            int(row_residue_index.size()) != n_elem ||
+            int(row_rotamer_index.size()) != n_elem) {
+            throw string("cg_lipid_rotamer_sc row datasets must match source1 n_elem");
+        }
+        if(index2.size() != type2.size() || index2.size() != id2.size())
+            throw string("cg_lipid_rotamer_sc source2 index/type/id size mismatch");
+
+        row_group_count.assign(n_elem, 1);
+        unordered_map<uint64_t, int> group_counts;
+        group_counts.reserve(static_cast<size_t>(n_elem) * 2u);
+        for(int i = 0; i < n_elem; ++i) {
+            uint64_t key = (uint64_t(uint32_t(row_residue_index[i])) << 32)
+                         | uint32_t(row_rotamer_index[i]);
+            group_counts[key] += 1;
+        }
+        for(int i = 0; i < n_elem; ++i) {
+            uint64_t key = (uint64_t(uint32_t(row_residue_index[i])) << 32)
+                         | uint32_t(row_rotamer_index[i]);
+            auto it = group_counts.find(key);
+            row_group_count[i] = (it == group_counts.end() || it->second < 1) ? 1 : it->second;
+        }
+    }
+
+    virtual void compute_value(ComputeMode mode) override {
+        (void)mode;
+        fill(output, 0.f);
+        VecArray sc = sc_pos.output;
+        VecArray cg = cg_pos.output;
+
+        for(int ai = 0; ai < n_elem; ++ai) {
+            int t1 = row_type[ai];
+            if(t1 < 0 || t1 >= n_type1) continue;
+            for(size_t bi = 0; bi < index2.size(); ++bi) {
+                int t2 = type2[bi];
+                if(t2 < 0 || t2 >= n_type2) continue;
+
+                float x1[3], n1[3], x2[3], n2[3], dr[3];
+                load_vec6(sc, ai, x1, n1);
+                load_vec6(cg, index2[bi], x2, n2);
+                dr[0] = x2[0] - x1[0];
+                dr[1] = x2[1] - x1[1];
+                dr[2] = x2[2] - x1[2];
+                if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
+                    simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
+
+                QuadsplineEval e;
+                bool ok = false;
+                if(n_modes > 0) {
+                    ok = eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                            n_modes, n_angular, n_radial,
+                            dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                } else {
+                    ok = eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
+                            dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                }
+                if(ok) output(0, ai) += e.value;
+            }
+        }
+        for(int ai = 0; ai < n_elem; ++ai)
+            output(0, ai) /= float(std::max(1, row_group_count[ai]));
+    }
+
+    virtual void propagate_deriv() override {
+        VecArray sc = sc_pos.output;
+        VecArray sc_sens = sc_pos.sens;
+        VecArray cg = cg_pos.output;
+        VecArray cg_sens = cg_pos.sens;
+
+        for(int ai = 0; ai < n_elem; ++ai) {
+            float row_scale = sens(0, ai);
+            if(row_scale == 0.f) continue;
+            int t1 = row_type[ai];
+            if(t1 < 0 || t1 >= n_type1) continue;
+            row_scale /= float(std::max(1, row_group_count[ai]));
+
+            for(size_t bi = 0; bi < index2.size(); ++bi) {
+                int t2 = type2[bi];
+                if(t2 < 0 || t2 >= n_type2) continue;
+
+                float x1[3], n1[3], x2[3], n2[3], dr[3];
+                load_vec6(sc, ai, x1, n1);
+                load_vec6(cg, index2[bi], x2, n2);
+                dr[0] = x2[0] - x1[0];
+                dr[1] = x2[1] - x1[1];
+                dr[2] = x2[2] - x1[2];
+                if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
+                    simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
+
+                QuadsplineEval e;
+                bool ok = false;
+                if(n_modes > 0) {
+                    ok = eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                            n_modes, n_angular, n_radial,
+                            dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                } else {
+                    ok = eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
+                            dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                }
+                if(!ok) continue;
+
+                float dpos1[3] = {0.f, 0.f, 0.f};
+                float ddir1[3] = {0.f, 0.f, 0.f};
+                float dpos2[3] = {0.f, 0.f, 0.f};
+                float ddir2[3] = {0.f, 0.f, 0.f};
+                accumulate_deriv(dr, n1, n2, e, dpos1, ddir1, dpos2, ddir2);
+                for(int d = 0; d < 3; ++d) {
+                    dpos1[d] *= row_scale;
+                    ddir1[d] *= row_scale;
+                    dpos2[d] *= row_scale;
+                    ddir2[d] *= row_scale;
+                }
+                add_vec6_sens(sc_sens, ai, dpos1, ddir1);
+                add_vec6_sens(cg_sens, index2[bi], dpos2, ddir2);
+            }
+        }
+    }
+};
+
 CGLipidTargetPotential::CGLipidTargetPotential(
         hid_t grp, CoordNode& cg_pos_, CoordNode& tgt_pos_)
     : PotentialNode()
@@ -1107,5 +1288,6 @@ struct CGLipidLeafletOrientationPotential : public PotentialNode {
 static RegisterNodeType<ComposeVector6D, 1> _reg_cv("compose_vector6d");
 static RegisterNodeType<CGLipidPairPotential, 1> _reg_cg_pair("cg_lipid_pair");
 static RegisterNodeType<CGLipidSCPotential, 2> _reg_cg_sc("cg_lipid_sc");
+static RegisterNodeType<CGLipidSCOneBody, 2> _reg_cg_sc_1body("cg_lipid_rotamer_sc");
 static RegisterNodeType<CGLipidTargetPotential, 2> _reg_cg_target("cg_lipid_target");
 static RegisterNodeType<CGLipidLeafletOrientationPotential, 1> _reg_cg_leaflet_orientation("cg_lipid_leaflet_orientation");

@@ -824,8 +824,8 @@ def assert_hybrid_stage_active(
                         x.decode("ascii") if isinstance(x, (bytes, np.bytes_)) else str(x)
                         for x in inp["atom_names"][:]
                     ]
-                if any(name.strip().upper() == "CGL" for name in atom_names) and "cg_lipid_sc" not in pot:
-                    missing.append("cg_lipid_sc")
+                if any(name.strip().upper() == "CGL" for name in atom_names) and "cg_lipid_rotamer_sc" not in pot:
+                    missing.append("cg_lipid_rotamer_sc")
             if missing:
                 raise ValueError(
                     f"{up_file}: missing required hybrid interface node(s): {', '.join(missing)}"
@@ -890,8 +890,8 @@ def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, a
         hbond_energy=args.upside_hbond_energy,
         reference_state_rama=args.upside_reference_state_rama,
     )
-    # SC placement node must exist before CG lipid node injection
-    # so that cg_lipid_sc (CG-SC) can find it.
+    # Rotamer placement nodes must exist before CG lipid node injection
+    # so that cg_lipid_rotamer_sc can feed the rotamer solver.
     lipid_res = getattr(args, "lipid_resolution", "coarse")
     if lipid_res != "full":
         inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.dopc_h5)

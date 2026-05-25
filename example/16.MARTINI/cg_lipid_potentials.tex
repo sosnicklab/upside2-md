@@ -199,6 +199,21 @@ the runtime cutoff is the fitted support plus one radial knot interval, so the
 current DOPC sidechain support is approximately
 $6.959 + 1.4 = 8.359\,\text{\AA}$.
 
+\paragraph{Runtime Rotamer Coupling.}
+In production inputs the CGL--SC table is evaluated as a rotamer one-body term,
+\texttt{cg\_lipid\_rotamer\_sc}, rather than as an independent CB-only potential.
+For each sidechain placement row and each CGL particle, the node evaluates the
+same dry-MARTINI-derived CGL--SC spline above and writes one scalar energy row
+with the same row ordering as \texttt{placement\_fixed\_point\_vector\_only}.
+That scalar is passed to the sidechain rotamer solver together with the ordinary
+SC--environment one-body table, so CGL--SC energetics affect rotamer
+probabilities and protein conformational forces through the same path used by
+the full-resolution explicit-lipid workflow.  This changes only the ownership of
+the runtime term: the CGL--SC interaction remains active and uses the same spline
+coefficients, cutoff, and coordinate derivatives.  The older standalone
+\texttt{cg\_lipid\_sc} node is not generated for new inputs, preventing
+double-counting outside the rotamer probability model.
+
 \subsection{CG Lipid -- Target Directional Potential}
 \label{sec:cg-iso}
 
@@ -317,7 +332,9 @@ an attractive DOPC--ion single-particle PMF.
 \label{sec:sc-env}
 
 Protein sidechain beads interact with the dry MARTINI environment (water and
-ion beads) through a factorized orientation-dependent potential:
+ion beads in full-resolution lipid mode, and water, ion, and CGL environment
+terms in single-particle lipid mode) through orientation-dependent one-body
+potentials:
 
 \begin{equation}
 U_{\text{SC-env}}(r, \cos\theta) = V_{\text{rad}}(r)
@@ -360,7 +377,13 @@ $E(r_i, \cos\theta_j)$ is factorized via SVD:
 The resulting tables are stored as piecewise-linear grids with 96 radial points
 ($r \in [2.5, 12.0]\,\text{\AA}$) and 13 angular bins
 ($\cos\theta \in [-1, 1]$). Rotamer-resolved variants are also available
-through a 1-body table used by the sidechain rotamer optimization node.
+through a 1-body table used by the sidechain rotamer optimization node.  In
+single-particle lipid mode, the CGL--SC spline from Sec.~\ref{sec:cg-sc} is
+injected as an additional rotamer one-body term rather than as a separate
+potential acting directly on a fixed sidechain center.  This preserves the same
+physical CGL--SC interaction while letting lipid contacts bias the sidechain
+rotamer ensemble, matching the ownership used by explicit DOPC sidechain
+environment terms in full-resolution lipid mode.
 
 \paragraph{Interface Scaling.}
 The SC-env potential is multiplied by a global interface scale factor
@@ -400,16 +423,19 @@ single-particle lipid is owned by a dedicated spline node:
 
 \begin{itemize}
   \item CGL--CGL: handled entirely by $U_{\text{CG-CG}}$ (Sec.~\ref{sec:cg-cg}).
-  \item CGL--SC: handled entirely by $U_{\text{CG-SC}}$ (Sec.~\ref{sec:cg-sc}).
+  \item CGL--SC: handled by the dry-MARTINI-derived $U_{\text{CG-SC}}$
+    spline (Sec.~\ref{sec:cg-sc}) through the rotamer one-body node
+    \texttt{cg\_lipid\_rotamer\_sc}; it is not added again as a generic or
+    standalone CB potential.
   \item CGL--target: handled entirely by $U_{\text{CG-target}}$
     (Sec.~\ref{sec:cg-iso}).
   \item CGLD: carries the orientation coordinate and its harmonic CGL-CGLD bond
     only; it is not a generic nonbonded particle.
 \end{itemize}
 
-This means CGL-CGL torque, CGL-SC torque, and CGL-target torque act directly on
-the CGLD-position-derived vector through the same coordinate derivatives used
-for position forces.
+This means CGL-CGL torque, rotamer-weighted CGL-SC torque, and CGL-target
+torque act directly on the CGLD-position-derived vector through the same
+coordinate derivatives used for position forces.
 
 \paragraph{Leaflet-normal orientation mean field.}
 The pairwise CGL-CGL table is intentionally not made attractive by restoring the
