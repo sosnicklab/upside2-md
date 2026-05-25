@@ -3719,6 +3719,7 @@ def inject_cg_lipid_nodes(
                 target_types = []
                 target_ids = []
                 target_is_ion = []
+                target_is_charged_bb = []
                 for atom_idx, atom_type in enumerate(atom_types):
                     if atom_type.upper() in {"CGL", "CGLD"}:
                         continue
@@ -3733,12 +3734,14 @@ def inject_cg_lipid_nodes(
                     atom_name = atom_names[atom_idx].upper() if atom_idx < len(atom_names) else ""
                     is_ion = atom_name in {"NA", "CL"}
                     target_is_ion.append(is_ion)
+                    target_is_charged_bb.append(atom_idx in bb_proxy_idx and atom_type in {"Qd", "Qa"})
 
                 if target_idx:
                     target_idx_arr = np.array(target_idx, dtype=np.int32)
                     target_types_arr = np.array(target_types, dtype=np.int32)
                     target_ids_arr = np.array(target_ids, dtype=np.int32)
                     target_is_ion_arr = np.array(target_is_ion, dtype=bool)
+                    target_is_charged_bb_arr = np.array(target_is_charged_bb, dtype=bool)
                     base_params = target_grp["interaction_param"][:].astype(np.float32)
                     cg_index = np.arange(n_cg_lipids, dtype=np.int32)
                     cg_type = np.zeros(n_cg_lipids, dtype=np.int32)
@@ -3771,21 +3774,30 @@ def inject_cg_lipid_nodes(
                         target_pi.create_dataset("type2", data=target_types_arr[mask])
                         target_pi.create_dataset("id2", data=target_ids_arr[mask])
 
-                    non_ion_mask = ~target_is_ion_arr
+                    ev_params = np.maximum(base_params, np.float32(0.0))
+                    charged_bb_mask = target_is_charged_bb_arr
+                    non_ion_mask = (~target_is_ion_arr) & (~charged_bb_mask)
                     ion_mask = target_is_ion_arr
                     if np.any(non_ion_mask):
                         write_target_node("cg_lipid_target", non_ion_mask, base_params)
+                    if np.any(charged_bb_mask):
+                        write_target_node(
+                            "cg_lipid_target_charged_bb_excluded_volume",
+                            charged_bb_mask,
+                            ev_params,
+                            source_override="explicit_dopc_charged_bb_excluded_volume_from_current_target_table",
+                        )
                     if np.any(ion_mask):
-                        ion_params = np.maximum(base_params, np.float32(0.0))
                         write_target_node(
                             "cg_lipid_target_ion_excluded_volume",
                             ion_mask,
-                            ion_params,
+                            ev_params,
                             source_override="explicit_dopc_ion_excluded_volume_from_current_target_table",
                         )
                     print(
                         f"  Injected cg_lipid_target: {n_cg_lipids} CGL x {len(target_idx)} "
                         f"target particles ({len(target_order)} target types; "
+                        f"{int(np.sum(target_is_charged_bb_arr))} charged BB and "
                         f"{int(np.sum(target_is_ion_arr))} ion targets use excluded-volume controls)"
                     )
                 else:

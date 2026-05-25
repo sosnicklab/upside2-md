@@ -297,36 +297,37 @@ MARTINI-LJ pair potentials rather than through directional CGL spline
 tables.
 The charged BB bead types (\texttt{Qd}, \texttt{Qa}) are part of the
 standard dry-MARTINI v2.1 force field and have complete nonbonded
-cross-interactions with all other particle types.
-Mobile ions are still handled separately from BB/protein targets.  The
-directional DOPC--ion energy-expectation table is not used as an attractive
-additive many-ion potential, because the single-particle lipid model has
-integrated out the explicit DOPC headgroup beads and does not include the
-corresponding hydration/solvent ion PMF.  The runtime therefore splits ion
-targets into a separate CGL--ion node whose controls are derived from the
-current \texttt{cg\_lipid\_target} table by retaining only nonnegative values.
-This preserves CGL--ion excluded volume while leaving BB/protein
-CGL-target attraction unchanged.  The MARTINI log reports all
-\texttt{cg\_lipid\_target*} nodes in the \texttt{cg\_lipid\_target} bucket, so
-\texttt{protein\_potential} contains only Upside protein terms plus explicit
-SC-env and BB-env interface terms.
-The validation invariant is that ions remain ordinary dry-MARTINI particles in
-the generic pair potential for ion--ion and ion--protein interactions, while
-generic pair construction excludes direct CGL--ion pairs so CGL--ion physics is
-owned only by the excluded-volume target node.  Current 1RKL and 1AFO stage-7
-checks have zero generic CGL--ion pairs, nonnegative CGL--ion target controls,
-and no ion adsorption to CGL sites over the saved trajectories: the minimum
-ion--CGL distance remains above $16\,\text{\AA}$, and the ion $z$ distribution
-does not collapse toward the membrane.  A copied 1RKL continuation with the
-charged-termini BB model re-equilibrates the terminal-proxy well and then
-fluctuates without the monotonic multi-hundred-$E_{\text{up}}$
-\texttt{cg\_lipid\_target} drop seen in the original logs: after the first
-re-equilibration continuation, two further 10k-step continuations had
-first/last fifth total-potential means of $-1.60\rightarrow -35.71$ and
-$-22.91\rightarrow -12.66\,E_{\text{up}}$, with the latter reversing the sign
-of the mean change.  Therefore ion behavior should be judged from the generic
-dry-MARTINI ion interactions plus the excluded-volume CGL boundary, not from
-an attractive DOPC--ion single-particle PMF.
+cross-interactions with all other particle types.  In single-particle CGL
+mode, however, the directional explicit-DOPC PMF for charged terminal BB
+targets is not used as an attractive additive CGL--terminal potential.  The
+explicit table contains headgroup, solvent, and ion response that is no
+longer represented explicitly after the lipid has been collapsed into a CGL
+particle.  Reusing that charged-target well as an additive CGL projection can
+over-stabilize terminal adsorption and bend exposed helices.  The runtime
+therefore splits \texttt{Qd}/\texttt{Qa} BB proxy targets into
+\texttt{cg\_lipid\_target\_charged\_bb\_excluded\_volume}, whose controls are
+derived from the current \texttt{cg\_lipid\_target} table by retaining only
+nonnegative values.  This keeps the CGL excluded-volume boundary for charged
+termini while leaving their dry-MARTINI charge in the generic nonbonded model
+and their BB-env hybrid coupling intact.
+Mobile ions are handled by the same transferability rule.  The directional
+DOPC--ion energy-expectation table is not used as an attractive additive
+many-ion potential, because the single-particle lipid model has integrated out
+the explicit DOPC headgroup beads and does not include the corresponding
+hydration/solvent ion PMF.  The runtime splits ion targets into a separate
+CGL--ion node whose controls also retain only nonnegative values.  Ordinary
+uncharged BB/protein targets continue to use the full CGL-target projection.
+The MARTINI log reports all \texttt{cg\_lipid\_target*} nodes in the
+\texttt{cg\_lipid\_target} bucket, so \texttt{protein\_potential} contains
+only Upside protein terms plus explicit SC-env and BB-env interface terms.
+The validation invariant is that ions and charged termini remain ordinary
+dry-MARTINI particles in generic interactions, while direct CGL interactions
+with these charged targets are owned by excluded-volume target nodes.
+A copied 1AFO stage-7 burn-in diagnostic from the same minimized handoff state
+kept the second helix near a $40^\circ$ half-chain angle after 40k steps with
+charged \texttt{Qd}/\texttt{Qa} CGL controls made nonnegative, whereas the
+original attractive charged-target projection started production near
+$90^\circ$.
 
 \subsection{Hybrid Interface: Sidechain -- Environment Interaction}
 \label{sec:sc-env}

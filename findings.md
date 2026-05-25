@@ -1,6 +1,30 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-25: 1AFO single-particle lipid helix bend after the CGL-SC rotamer
+  fix.
+  - Current `example/16.MARTINI/outputs/martini_1afo_hybrid` artifacts are not
+    stale: stage-7 contains `cg_lipid_rotamer_sc`, so the remaining 1AFO bend is
+    a second issue.
+  - Geometry audit showed the coarse single-particle chain-1 helix is already
+    bent at stage-7 production frame 0 (`~89.7 deg` half-chain angle), while the
+    full-lipid chain remains near `45 deg`.  Stage-6 output and stage-7
+    prepared input are not bent; the kink is introduced during the 40k-step
+    stage-7 burn-in, not by handoff minimization.
+  - The driver is the charged terminal BB target projection: explicit-DOPC
+    `Qd`/`Qa` directional PMF rows are non-transferable as an additive
+    single-particle CGL attraction after lipid headgroup, solvent, and ion
+    response have been integrated out.
+  - Physical fix: keep `Qd`/`Qa` charged in the dry-MARTINI protein definition
+    and generic interactions, but split charged BB proxy targets into
+    `cg_lipid_target_charged_bb_excluded_volume` with nonnegative CGL controls.
+    Ordinary uncharged BB/protein targets still use the full CGL-target table;
+    ions continue to use their excluded-volume target node.
+  - Verification on a regenerated copied 1AFO stage-7 file produced 68 ordinary
+    CGL targets, 4 charged-BB excluded-volume targets, and 98 ion
+    excluded-volume targets.  A full 40k-step burn-in from the regenerated
+    minimized handoff ended with chain angles `32.3 deg` and `36.9 deg`, versus
+    the old coarse output's `37.3 deg` and `85.7 deg`.
 - 2026-05-24: Secondary-structure divergence between full lipid and
   single-particle lipid workflows.
   - Full-resolution lipid mode feeds explicit DOPC sidechain environment
@@ -68,9 +92,13 @@
 - 2026-05-21: Root cause of the latest 1RKL `-800 -> -1100 E_up` drift.
   - Component parsing confirmed the current drift is dominated by `cg_lipid_target` (for example `1rkl.1.log` target `-1007.93 -> -1280.76 E_up`) while `cg_lipid_pair` is not the main sink.
   - The dominant residual target sink came from terminal charged BB proxy targets (`Qd`/`Qa`) using an explicit-DOPC charged-point attractive well in the additive single-particle CGL projection.
-  - User correction accepted: do not remove charge only from the CGL-target interaction while leaving the dry-MARTINI protein definition charged. That is an inconsistent mixed model.
-  - Final model choice: use the alternate uniform neutral dry-MARTINI protein-backbone model. All protein backbone carrier atoms and virtual BB proxies are `P5` with zero charge, so generic MARTINI pairs, BB-env, and CGL-target use the same backbone definition. The charged head/tail BB convention is not used because its terminal charged BB--DOPC well is not transferable to the additive CGL target projection.
-  - Existing 1RKL stage-7 checkpoints were patched in place without regenerating `martini.h5`: the first 155 protein atoms are `P5`/zero-charge, `hybrid_bb_map/bb_type` is all `P5`, `cg_lipid_target` owns all 31 neutral BB proxies, the rejected `cg_lipid_target_charged_excluded_volume` node is absent, and `cg_lipid_target_ion_excluded_volume` keeps 93 ion targets with nonnegative controls.
+  - User correction accepted: do not simply remove charge from the CGL-target
+    interaction while leaving the dry-MARTINI protein definition charged.
+    Superseded resolution: keep charged terminal BB types in the dry-MARTINI
+    protein definition and route only their direct CGL single-particle
+    projection through an excluded-volume target node, because the full
+    explicit-DOPC charged-target PMF is not transferable as an additive CGL
+    attraction.
   - Validation: the first copied 10k-step continuation re-equilibrated old charged-model coordinates (`85.55 -> -13.30 E_up`, first/last fifth means `59.35 -> 8.89 E_up`). The next continuation had total potential `-13.30 -> -26.54 E_up`, range `[-73.93, 23.57]`, first/last fifth means `-1.60 -> -35.71 E_up`; a third continuation reversed the mean change (`-22.91 -> -12.66 E_up`, range `[-58.95, 63.38]`, kinetic ratio `1.017`). This removes the monotonic multi-hundred-`E_up` target sink and leaves fluctuation-scale wandering after re-equilibration.
 - 2026-05-21: User correction after explicit burn-in.
   - Rule: do not classify residual production drift as solved just because copied continuations from older endpoints fluctuate.  Re-run or inspect the exact fresh logs generated after the workflow change and confirm the intended burn-in was actually applied.
