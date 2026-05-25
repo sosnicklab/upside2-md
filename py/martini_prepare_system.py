@@ -833,6 +833,55 @@ def assert_hybrid_stage_active(
         env_membership = inp["hybrid_env_topology"]["protein_membership"][:]
         if not np.any(env_membership < 0):
             raise ValueError(f"{up_file}: no non-protein environment targets found")
+        if "hybrid_bb_map" in inp:
+            bb_map = inp["hybrid_bb_map"]
+            bb_idx = np.asarray(bb_map["bb_atom_index"][:], dtype=np.int32)
+            bb_types = np.asarray([h5_as_text(x).strip() for x in bb_map["bb_type"][:]], dtype=object)
+            charges = np.asarray(inp["charges"][:], dtype=float) if "charges" in inp else None
+            if "chain_break" in inp:
+                chain_first = np.asarray(inp["chain_break"]["chain_first_residue"][:], dtype=np.int32)
+                first_res = np.concatenate((np.asarray([0], dtype=np.int32), chain_first))
+            else:
+                first_res = np.asarray([0], dtype=np.int32)
+            next_res = np.concatenate((first_res[1:], np.asarray([len(bb_idx)], dtype=np.int32)))
+            for start, stop in zip(first_res, next_res):
+                if stop <= start:
+                    continue
+                end = int(stop - 1)
+                start = int(start)
+                if bb_types[start] != "Qd" or bb_types[end] != "Qa":
+                    raise ValueError(
+                        f"{up_file}: strand residues {start}-{end} must have Qd/Qa BB endpoints; "
+                        f"got {bb_types[start]!r}/{bb_types[end]!r}"
+                    )
+                if charges is not None:
+                    q_start = float(charges[int(bb_idx[start])])
+                    q_end = float(charges[int(bb_idx[end])])
+                    if abs(q_start - 1.0) > 1.0e-6 or abs(q_end + 1.0) > 1.0e-6:
+                        raise ValueError(
+                            f"{up_file}: strand residues {start}-{end} BB endpoint charges must be +1/-1; "
+                            f"got {q_start:g}/{q_end:g}"
+                        )
+            if lipid_resolution != "full":
+                proxy_idx = np.asarray(bb_idx, dtype=np.int32)
+                target_nodes = [
+                    node
+                    for node in ("cg_lipid_target", "cg_lipid_target_charged_bb_excluded_volume")
+                    if node in pot and "pair_interaction" in pot[node]
+                ]
+                if target_nodes:
+                    target_idx = np.concatenate(
+                        [
+                            np.asarray(pot[node]["pair_interaction"]["index2"][:], dtype=np.int32)
+                            for node in target_nodes
+                        ]
+                    )
+                    missing_proxies = np.setdiff1d(proxy_idx, target_idx, assume_unique=False)
+                    if missing_proxies.size:
+                        raise ValueError(
+                            f"{up_file}: CGL target nodes are missing BB proxy target(s): "
+                            f"{missing_proxies[:8].tolist()}"
+                        )
         if lipid_resolution != "full" and "type" in inp:
             atom_types = np.asarray([
                 h5_as_text(x).strip().upper() for x in inp["type"][:]

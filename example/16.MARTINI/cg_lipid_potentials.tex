@@ -276,10 +276,13 @@ longer part of the production path; generated tables carry the source
 attribute \texttt{explicit\_dopc\_directional} and energy-expectation metadata.
 Legacy \texttt{martini.h5} files that still contain capped CGL effective-LJ
 metadata are rejected and must be rebuilt.
-Backbone carrier atoms (N, C$_\alpha$, C, O) are not added as independent
-CGL-target particles: the physical backbone target is the virtual MARTINI BB
-proxy site, and forces on that proxy are projected back to the underlying
-Upside backbone carriers.
+Backbone carrier atoms (N, C$_\alpha$, C, O) are not independent CGL-target
+particles.  The lipid/backbone target is the virtual MARTINI BB proxy site, and
+forces on that proxy are projected onto the underlying Upside backbone
+coordinates.  Carrier atoms still accumulate forces from sidechain/rotamer
+coupling and from the projected backbone/environment path; if a direct carrier
+force is present in another node, it is added to that carrier atom rather than
+being re-projected as a BB-proxy force.
 The dry-MARTINI backbone model follows the martinize fallback convention
 with secondary structure fixed to coil (``C''): each residue is assigned a
 MARTINI bead type from the coil column of the standard martinize
@@ -398,9 +401,13 @@ $N_{\text{hold}} = 200$ steps.
 \subsection{Hybrid Interface: Backbone -- Environment Interaction}
 \label{sec:bb-env}
 
-Protein backbone carrier atoms (N, C$_\alpha$, C, O) interact with the dry
-MARTINI environment through the \textbf{standard Martini potential}, which
-evaluates the combined LJ and Coulomb energy via a precomputed cubic B-spline:
+Protein backbone fragments interact with the dry MARTINI environment through
+the virtual MARTINI BB proxy site.  The proxy represents the residue-level
+MARTINI BB bead, while the N, C$_\alpha$, C, and O carriers are the Upside
+backbone coordinates that receive projected BB-proxy forces and forces from
+sidechain/rotamer coupling.  BB--environment contacts use the \textbf{standard
+Martini potential}, which evaluates the combined LJ and Coulomb energy via a
+precomputed cubic B-spline:
 
 \begin{equation}
 U_{\text{BB-env}}(r) = B_{\text{spline}}\bigl(r; \; 4\varepsilon(\sigma^{12}r^{-12}
@@ -410,9 +417,12 @@ U_{\text{BB-env}}(r) = B_{\text{spline}}\bigl(r; \; 4\varepsilon(\sigma^{12}r^{-
 
 The combined energy $E_{\text{LJ}}(r) + E_{\text{Coul}}(r)$ is pre-tabulated on
 a uniform grid of 1000 points per unique $(\varepsilon, \sigma, q_i q_j)$
-triple and fitted with a layered clamped B-spline~\cite{Upside}. Forces on
-backbone proxy atoms are projected onto the underlying Upside backbone degrees
-of freedom. Cross-interface BB--env pairs are scaled by
+triple and fitted with a layered clamped B-spline~\cite{Upside}. Forces on the
+virtual backbone proxy atoms are projected onto the underlying Upside backbone
+degrees of freedom.  Carrier atoms are never treated as virtual BB proxies for
+projection: direct carrier sensitivities are accumulated directly on the
+carrier coordinates, so sidechain/rotamer forces and projected backbone forces
+are additive. Cross-interface BB--env pairs are scaled by
 $\alpha_{\text{interface}}$.
 
 \subsection{Martini Pair Ownership Protocol}
@@ -429,7 +439,8 @@ single-particle lipid is owned by a dedicated spline node:
     \texttt{cg\_lipid\_rotamer\_sc}; it is not added again as a generic or
     standalone CB potential.
   \item CGL--target: handled entirely by $U_{\text{CG-target}}$
-    (Sec.~\ref{sec:cg-iso}).
+    (Sec.~\ref{sec:cg-iso}) against water, ions, virtual BB proxy sites, and
+    other non-sidechain point targets.
   \item CGLD: carries the orientation coordinate and its harmonic CGL-CGLD bond
     only; it is not a generic nonbonded particle.
 \end{itemize}
@@ -437,6 +448,18 @@ single-particle lipid is owned by a dedicated spline node:
 This means CGL-CGL torque, rotamer-weighted CGL-SC torque, and CGL-target
 torque act directly on the CGLD-position-derived vector through the same
 coordinate derivatives used for position forces.
+
+With this ownership, full-resolution and single-particle lipid modes expose the
+same physical protein interfaces at different lipid resolution.  Full mode
+uses explicit DOPC beads in the generic MARTINI pair potential and the
+SC-environment one-body table.  Single-particle mode replaces explicit
+DOPC--DOPC with the CGL--CGL spline and replaces explicit DOPC--SC with the
+CGL--SC rotamer one-body spline, while both modes keep BB--environment contacts
+on the same charged or neutral virtual BB proxy sites and route those forces to
+the same carrier coordinates.  Terminal fragment endpoints remain opposite
+charged in both modes: each fragment starts with \texttt{Qd} backbone sites
+carrying $+1$ charge and ends with \texttt{Qa} backbone sites carrying $-1$
+charge.
 
 \paragraph{Leaflet-normal orientation mean field.}
 The pairwise CGL-CGL table is intentionally not made attractive by restoring the

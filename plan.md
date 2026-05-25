@@ -1,49 +1,66 @@
-# 2026-05-25 1AFO Coarse-Lipid Helix Bend
+# 2026-05-25 1RKL Bend and MARTINI Equivalence Audit
 
 ## Project Goal
-- Diagnose why one helix still bends in the 1AFO single-particle lipid
-  workflow while both helices remain straight in the full-resolution lipid
-  workflow.
-- Determine whether the observed artifact is from stale outputs, incomplete
-  CGL-SC rotamer coupling, or another physical mismatch in the coarse lipid
-  model.
-- Fix any confirmed bug without disabling, weakening, or bypassing hybrid
+- Debug the new strange bend in the 1RKL single-particle lipid result.
+- Ensure charged terminal BB typing is physically consistent: every protein
+  strand/fragment has an N-terminal `Qd` and C-terminal `Qa`, including broken
+  proteins such as 1AFO, in both full-resolution and single-particle lipid
+  workflows.
+- Audit lipid-lipid and lipid-sidechain interaction ownership/equivalence
+  between full-resolution lipid and single-particle CGL workflows.
+- Fix confirmed bugs without disabling, scaling away, or bypassing hybrid
   protein/environment interactions.
 
 ## Architecture & Key Decisions
-- Keep SC-env, BB-env, CGL-CGL, CGL-SC, and CGL-target interactions active.
-- Treat full DOPC and single-particle CGL as alternate representations of the
-  same dry-MARTINI lipid environment.
-- The current 1AFO coarse outputs already contain `cg_lipid_rotamer_sc`; the
-  remaining bend is not from stale missing CGL-SC coupling.
+- Keep all SC-env, BB-env, lipid-lipid, CGL-CGL, CGL-SC, CGL-target, and
+  generic dry-MARTINI interactions active.
+- Treat single-particle lipid as a coarse-grained representation of the same
+  dry-MARTINI DOPC model, not a different protein or lipid force field.
+- First audit exact current HDF5 outputs and generated nodes before editing
+  model code again.
 - Use copied HDF5 files for runtime checks; do not run diagnostics directly on
   original output checkpoints.
-- The 1AFO kink is introduced during stage-7 burn-in, not during the stage-7
-  handoff minimization.
-- Charged terminal BB bead types (`Qd`, `Qa`) must stay charged in the generic
-  dry-MARTINI force field, but the single-particle CGL target projection should
-  treat those terminal targets like ions: excluded-volume-only against CGL.  The
-  directional explicit-DOPC charged-target PMF is not transferable as an
-  additive attraction to the CGL projection after lipid headgroup, solvent, and
-  ion degrees of freedom have been integrated out.
+- Terminal charge assignment must be residue-fragment based and must not depend
+  on whether lipids are explicit DOPC or CGL.
+- User correction: N/CA/C/O carrier atoms must still receive the intended force
+  contributions from both sidechain/rotamer coupling and backbone/environment
+  coupling.  Do not fix full/coarse mismatch by removing their environment
+  force path.
+- Revised direction: verify the C++ derivative accumulation path.  Carrier
+  atoms need additive force accumulation from sidechain/rotamer and projected
+  backbone/environment paths; direct carrier forces, when present, must be
+  added to the carrier atom and not re-projected as BB-proxy forces.
+- Confirmed C++ bug: mapped N/CA/C/O carriers were treated as projectable BB
+  proxy sites because they have `ROLE_BB` and a BB map index.  Direct carrier
+  forces must be added to the carrier atom; only virtual BB proxy forces should
+  be projected through the BB map.
 
 ## Execution Phases
-- [x] Phase 1: Check whether the current 1AFO coarse outputs were regenerated
-      with `cg_lipid_rotamer_sc` or are stale.
-- [x] Phase 2: Quantify 1AFO helix geometry and component energies in coarse
-      versus full outputs.
-- [x] Phase 3: Isolate any remaining implementation or model mismatch and make
-      the smallest physical fix.
-- [x] Phase 4: Run focused verification and document residual risks.
-
-## Review
-- Implemented `cg_lipid_target_charged_bb_excluded_volume` for charged
-  terminal BB proxy targets only.  The fix keeps charged termini in the
-  dry-MARTINI protein model while preventing reuse of the non-transferable
-  attractive explicit-DOPC charged-target PMF as an additive CGL attraction.
-- Verification on a regenerated copied 1AFO stage-7 burn-in kept both helices
-  in the straight/full-lipid range: final half-chain angles were `32.34 deg`
-  and `36.88 deg`, versus `37.33 deg` and `85.72 deg` in the old coarse output.
+- [x] Phase 1: Identify the exact 1RKL single-particle bend timing and compare
+      geometry against full-resolution lipid outputs.
+- [x] Phase 2: Audit terminal BB type/charge assignment for 1RKL and broken
+      1AFO in both workflows.
+- [x] Phase 3: Audit lipid-lipid and lipid-SC ownership/equivalence between
+      full-resolution and single-particle workflows.
+- [x] Phase 4: Isolate and implement the smallest physical bug fix.
+- [x] Phase 5: Run focused verification and update the MARTINI documentation.
 
 ## Known Errors / Blockers
-- None yet.
+- Existing `example/16.MARTINI/outputs` artifacts are stale with respect to the
+  C++ projection fix until the workflows are rerun.
+- A copied 1RKL run with every carrier added as an independent CGL target failed
+  (`hbond=6.5`, kinetic ratio `2.096`; after projection correction, 10k-step
+  hbond still fell to `9.6`), so independent CGL target copies are rejected.
+
+## Review
+- Corrected after user feedback: N/CA/C/O carrier atoms remain force
+  accumulation sites for sidechain/rotamer and backbone/environment
+  contributions. The fix is not to remove their force path; it is to prevent
+  direct carrier gradients from being re-projected as virtual BB-proxy
+  gradients.
+- Final accepted implementation keeps CGL targets on BB proxies and non-protein
+  point targets, keeps charged BB endpoints per fragment, and routes true
+  virtual BB-proxy gradients through the BB map only.
+- Focused validation passed: C++ build, Python compile, 1RKL 40k-equivalent
+  copied probe (`hbond=31.43`, kinetic ratio `0.989`), and 1AFO fragment target
+  audit (`72` BB proxies plus `98` ions, no missing BB proxy targets).

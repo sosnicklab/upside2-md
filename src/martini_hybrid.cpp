@@ -954,6 +954,7 @@ bool project_bb_proxy_gradient_for_coord(
     auto st = get_state_for_coord(coord);
     if(!st || !st->enabled || !st->active) return false;
     if(atom_role_class_at(*st, atom_idx) != ROLE_BB) return false;
+    if(atom_is_backbone_carrier_at(*st, atom_idx)) return false;
     if(bb_map_index_for_proxy(*st, atom_idx) < 0) return false;
 
     Vec<3> routed_grad = compute_sc_backbone_feedback_mix(*st) * grad;

@@ -1,6 +1,39 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-25: User correction on N/CA/C/O force ownership.
+  - Rule: do not infer "BB proxy only" CGL targeting as excluding force
+    contributions from backbone carrier atoms. N/CA/C/O carriers must
+    accumulate sidechain/rotamer and backbone-environment contributions
+    additively.
+  - Corrected diagnosis: mapped N/CA/C/O carrier atoms have `ROLE_BB` and a BB
+    map index, so the C++ derivative path was treating direct carrier
+    sensitivities as projectable virtual BB-proxy sensitivities. Direct carrier
+    gradients must be added directly to the carrier coordinate; only true
+    virtual BB proxies are projected through the BB map.
+  - Rejected model: adding all N/CA/C/O carriers as independent CGL targets
+    double-counts the hidden backbone representation. A copied 1RKL probe with
+    carrier CGL targets collapsed to final hbond `6.5` over 40k steps; after
+    the C++ projection fix, a 10k carrier-target probe still fell to hbond
+    `9.6`.
+  - Accepted model: CGL target sites include BB proxies and non-protein point
+    targets, not independent N/CA/C/O carrier copies. Carrier atoms still
+    receive sidechain/rotamer forces and projected BB-proxy forces. If another
+    node ever applies a direct carrier gradient, it stays direct and is not
+    re-projected.
+  - Verification: the copied 1RKL proxy-target/additive-force probe held hbond
+    `31.43` at the 40k-equivalent endpoint with kinetic ratio `0.989`, versus
+    the stale coarse output final hbond `23.71`. The 1AFO current injection
+    produced `182 CGL x 170` targets (`72` BB proxies plus `98` ions), with
+    both fragments retaining `Qd/+1` and `Qa/-1` endpoints.
+- 2026-05-25: 1RKL single-particle lipid bend after charged-endpoint fix.
+  - Terminal endpoint typing was already correct in the current generated HDF5:
+    1RKL has `Qd/+1` and `Qa/-1` endpoint BB proxies in both coarse and full
+    modes; 1AFO has the same charged endpoints on both fragments
+    (`0-35` and `36-71`) in both modes.
+  - Superseded assumption: full/coarse mismatch should not be fixed by making
+    N/CA/C/O carrier atoms environment-inactive. The physical invariant is
+    additive force accumulation with correct direct-vs-projected C++ routing.
 - 2026-05-25: 1AFO single-particle lipid helix bend after the CGL-SC rotamer
   fix.
   - Current `example/16.MARTINI/outputs/martini_1afo_hybrid` artifacts are not

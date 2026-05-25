@@ -752,11 +752,13 @@ struct MartiniPotential : public PotentialNode
             bool i_projected = false;
             bool j_projected = false;
             if(hybrid_state && i_is_protein && i_role == martini_hybrid::ROLE_BB &&
+               !martini_hybrid::atom_is_backbone_carrier_at(*hybrid_state, i) &&
                martini_hybrid::bb_map_index_for_proxy(*hybrid_state, i) >= 0) {
                 martini_hybrid::project_bb_proxy_gradient_if_active(*hybrid_state, pos1_sens, n_atom, i, gi);
                 i_projected = true;
             }
             if(hybrid_state && j_is_protein && j_role == martini_hybrid::ROLE_BB &&
+               !martini_hybrid::atom_is_backbone_carrier_at(*hybrid_state, j) &&
                martini_hybrid::bb_map_index_for_proxy(*hybrid_state, j) >= 0) {
                 martini_hybrid::project_bb_proxy_gradient_if_active(*hybrid_state, pos1_sens, n_atom, j, gj);
                 j_projected = true;

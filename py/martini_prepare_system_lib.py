@@ -1147,14 +1147,24 @@ def derive_chain_break_metadata(bb_entries):
     if not bb_entries:
         return np.array([], dtype=np.int32), np.array([], dtype=np.int32)
 
-    chain_ids = [str(entry.get("bb_chain", "")).strip() or " " for entry in bb_entries]
-    chain_first_residue = [
-        residue_index
-        for residue_index in range(1, len(chain_ids))
-        if chain_ids[residue_index] != chain_ids[residue_index - 1]
-    ]
-    n_chains = len(chain_first_residue) + 1
-    return np.asarray(chain_first_residue, dtype=np.int32), np.ones(n_chains, dtype=np.int32)
+    chain_first_residue = []
+    chain_counts = [1]
+    prev_chain = str(bb_entries[0].get("bb_chain", "")).strip() or " "
+    prev_resseq = int(bb_entries[0].get("bb_resseq", 0))
+    for residue_index, entry in enumerate(bb_entries[1:], start=1):
+        chain = str(entry.get("bb_chain", "")).strip() or " "
+        resseq = int(entry.get("bb_resseq", residue_index))
+        chain_break = chain != prev_chain
+        seq_break = (not chain_break) and resseq != prev_resseq + 1
+        if chain_break or seq_break:
+            chain_first_residue.append(residue_index)
+            if chain_break:
+                chain_counts.append(1)
+            else:
+                chain_counts[-1] += 1
+        prev_chain = chain
+        prev_resseq = resseq
+    return np.asarray(chain_first_residue, dtype=np.int32), np.asarray(chain_counts, dtype=np.int32)
 
 
 def write_hybrid_mapping_h5(
