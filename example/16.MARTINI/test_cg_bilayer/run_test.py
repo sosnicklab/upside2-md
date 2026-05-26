@@ -90,9 +90,11 @@ def _read_first_dopc_reference() -> tuple[np.ndarray, list[str]]:
     com = coords.mean(axis=0)
     ref_bead_positions_nm = (coords - com) * 0.1
 
-    from martini_build_tables import _DOPC_BEAD_TYPES
+    from martini_itp_reader import parse_dopc_from_itp
 
-    return ref_bead_positions_nm, list(_DOPC_BEAD_TYPES)
+    lipids_itp = REPO_ROOT / "parameters" / "dryMARTINI" / "dry_martini_v2.1_lipids.itp"
+    dopc = parse_dopc_from_itp(lipids_itp)
+    return ref_bead_positions_nm, list(dopc["bead_types"])
 
 
 def build_tables(resolution: str) -> None:
@@ -133,12 +135,34 @@ def build_tables(resolution: str) -> None:
     )
 
 
+def assemble_installed_tables() -> None:
+    """Assemble the runtime test table from installed particle and DOPC tables."""
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    ff_dir = REPO_ROOT / "parameters" / "dryMARTINI"
+    particle_h5 = ff_dir / "particle.h5"
+    dopc_h5 = ff_dir / "dopc.h5"
+    if not particle_h5.exists() or not dopc_h5.exists():
+        missing = [str(path) for path in (particle_h5, dopc_h5) if not path.exists()]
+        raise RuntimeError(f"Missing installed dry-MARTINI table(s): {', '.join(missing)}")
+
+    with h5py.File(MARTINI_H5, "w") as dst:
+        for src_path in (particle_h5, dopc_h5):
+            with h5py.File(src_path, "r") as src:
+                for key, value in src.attrs.items():
+                    if key not in dst.attrs:
+                        dst.attrs[key] = value
+                for key in src.keys():
+                    if key in dst:
+                        del dst[key]
+                    src.copy(key, dst, name=key)
+    print(f"Assembled installed dry-MARTINI tables: {MARTINI_H5}")
+
+
 def convert_and_inject(stage: str, stage60_npt_contract: bool) -> None:
     from martini_prepare_system_lib import (
         convert_stage,
         inject_cg_lipid_nodes,
         inject_particles_table,
-        write_stage_debug_outputs,
     )
 
     os.environ["UPSIDE_RUNTIME_PDB_FILE"] = str(RUNTIME_PDB.resolve())
@@ -160,7 +184,6 @@ def convert_and_inject(stage: str, stage60_npt_contract: bool) -> None:
     convert_stage(pdb_id=PDB_ID, stage=stage, run_dir=str(RUN_DIR))
     inject_particles_table(UP_FILE, MARTINI_H5)
     inject_cg_lipid_nodes(UP_FILE, MARTINI_H5)
-    write_stage_debug_outputs(UP_FILE, debug_dir=RUN_DIR / "debug")
 
 
 def _normalize_pos(pos: np.ndarray) -> np.ndarray:
@@ -476,6 +499,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--skip-stage", action="store_true")
     parser.add_argument("--skip-run", action="store_true")
+    parser.add_argument(
+        "--use-installed-tables",
+        action="store_true",
+        help="Use parameters/dryMARTINI particle.h5+dopc.h5; this is the default unless --rebuild-tables is set.",
+    )
+    parser.add_argument(
+        "--rebuild-tables",
+        action="store_true",
+        help="Refit local MARTINI tables before the bilayer run instead of using installed tables.",
+    )
     parser.add_argument("--resolution", choices=("coarse", "full"), default="coarse")
     parser.add_argument(
         "--stage",
@@ -500,7 +533,10 @@ def main() -> int:
 
     if not args.skip_build:
         write_dopc_only_pdb()
-        build_tables(args.resolution)
+        if args.rebuild_tables:
+            build_tables(args.resolution)
+        else:
+            assemble_installed_tables()
     elif not RUNTIME_PDB.exists():
         write_dopc_only_pdb()
 

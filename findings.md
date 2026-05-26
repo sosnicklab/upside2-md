@@ -1,6 +1,66 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-26: User correction on direction-vector spline variables and
+  table-build speed.
+  - Rule: describe and implement the CG potentials in terms of the runtime
+    direction vectors. Table generation must rotate the resolved SC and CGL
+    bead models over those sampled direction vectors: one orientable object for
+    SC-particle and CGL-particle, both orientable objects for SC-CGL and
+    CGL-CGL.
+  - Rule: do not present around-vector bead-frame averaging as the physical
+    requirement. If an implementation samples unresolved bead-frame rotations
+    around a direction vector, document it only as secondary quadrature for
+    resolved bead placement and keep the direction-vector spline coordinates
+    primary.
+  - Parallel table construction should follow Slurm CPU allocation conventions:
+    prefer an explicit `UPSIDE_MARTINI_TABLE_WORKERS`, otherwise use
+    `SLURM_CPUS_PER_TASK`/`SLURM_CPUS_ON_NODE`, and only then local CPU count.
+    This matches the sweep infrastructure pattern where `--cpus-per-task` is
+    set by generated Slurm scripts.
+- 2026-05-25: CGL-only bilayer validation of updated CGL-CGL runtime path.
+  - The validation harness should exercise installed production spline tables
+    (`particle.h5` plus `dopc.h5`) by default; local table refitting is a
+    separate rebuild check and can be much slower.
+  - A 72-lipid CGL-only DOPC bilayer with only CGL-CGL and CGL-CGLD runtime
+    terms passed 200-step and 2000-step NVT checks after removing the separate
+    leaflet-normal orientation spring. The 2000-step check showed no leaflet
+    flips/crossings and kept CGL-CGLD lengths close to the canonical
+    `11.139 A` orientation length.
+- 2026-05-25: User correction on CG table orientation sampling.
+  - Rule: CGL-CGL, CGL-SC, CGL-target, and SC-particle spline tables must not be
+    derived from one default lipid or sidechain orientation. They must be fit
+    from resolved dry-MARTINI bead energies after rotating the full-resolution
+    lipid and sidechain bead models over the sampled CG orientation variables.
+  - Runtime CG lipid geometry must not be re-derived from the first packed
+    lipid in a simulation box. The packed distribution may provide initial
+    positions and leaflet directions, but the CG model geometry must be
+    canonical and consistent with the resolved model used to build the tables.
+  - Working rule: when diagnosing full-resolution versus single-particle
+    lipid mismatches, first distinguish table-generation physics from runtime
+    particle instantiation. A table can be orientation-resolved while runtime
+    `compose_vector6d` metadata is still physically inconsistent.
+- 2026-05-25: User correction on CGL orientation ownership.
+  - Rule: do not add a separate CGL leaflet-normal orientation potential when
+    the CGL-CGL spline table already has lipid orientation coordinates, unless
+    a distinct many-body coarse-grained orientation term is explicitly derived
+    and documented. Otherwise the orientation physics is double-counted.
+  - Audit finding: `parameters/ff_2.1/sidechain.h5` stores one sidechain
+    placement bead per rotamer, while MARTINI sidechain definitions can have
+    multiple beads. A resolved sidechain table cannot be made physical by
+    inventing missing MARTINI bead positions; it needs a real geometry source
+    or an explicit one-placement-bead model statement.
+  - Resolution: use the Upside rotamer center/vector as the sidechain pose and
+    expand it with MARTINI sidechain bead offsets derived from `martinize.py`
+    bond lengths/connectivity. SC-env and CGL-SC table generation then evaluate
+    all resolved MARTINI sidechain beads for each rotamer.
+- 2026-05-25: User correction on sidechain table ownership.
+  - There is no dry-MARTINI SC-SC interaction table in this workflow. The
+    SC-particle table is shared in both lipid modes for non-CGL environment
+    particles. Full-resolution lipid mode also uses SC-particle for explicit
+    lipid beads, while CGLipid mode replaces only the explicit-lipid part with
+    SC-CGL. Do not describe the ordinary Upside rotamer `pair_interaction`
+    table as the dry-MARTINI SC-SC path for this task.
 - 2026-05-25: 1AFO first-frame coarse output after carrier routing fix.
   - The user-observed first-frame bend in
     `example/16.MARTINI/outputs/martini_1afo_hybrid` was not caused by the

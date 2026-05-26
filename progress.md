@@ -1,123 +1,117 @@
 # Progress Log
 
-## 2026-05-25 1AFO Current-Output First-Frame Audit
+## 2026-05-26 MARTINI H5 Rebuild Scripts
 - Actions taken:
-  - Rechecked the exact generated coarse/full 1AFO stage-7 HDF5 and VTF outputs
-    under `example/16.MARTINI/outputs`.
-  - Confirmed stage-7 prepared input is shared and not newly bent; the first
-    saved production frame is after the stage-7 burn-in promotion, not directly
-    after minimization.
-  - Ran a copied current-binary minimization-only check from
-    `1afo.stage_7.0.prepared.up`; minimization did not introduce the bend.
-  - Ran copied current-binary 40k-step burn-in plus 10k-step production for
-    coarse 1AFO and regenerated the ignored generated stage-7 checkpoint and
-    VTF in `outputs/martini_1afo_hybrid`.
+  - Added local M1 rebuild script for all dry-MARTINI `.h5` files.
+  - Added Slurm rebuild script for all dry-MARTINI `.h5` files.
+  - Both scripts call `py/martini_gen_params.py --force --upside-home <repo>`
+    so outputs are written under `parameters/dryMARTINI`.
 - Files modified:
   - `plan.md`
-  - `findings.md`
   - `progress.md`
-  - `example/16.MARTINI/outputs/martini_1afo_hybrid/checkpoints/1afo.stage_7.0.up`
-    (ignored generated output)
-  - `example/16.MARTINI/outputs/martini_1afo_hybrid/1afo.stage_7.0.vtf`
-    (ignored generated output)
+  - `example/16.MARTINI/build_martini_h5_m1.sh`
+  - `example/16.MARTINI/build_martini_h5_slurm.sh`
 - Test results:
-  - Copied minimization-only geometry:
-    `40.50/42.89 deg -> 40.07/42.19 deg`, so the minimizer was not the bend
-    source.
-  - Current-binary coarse production frame 0 after burn-in promotion:
-    fragment bends `28.98/21.38 deg`, hbond `82.37`.
-  - Current-binary coarse production final frame:
-    fragment bends `43.44/20.78 deg`, hbond `84.70`.
-- Failures and fixes:
-  - The previous generated coarse stage-7 artifact was stale relative to the
-    current C++ binary: its logged minimization started at `162.96 E_up`; the
-    current binary evaluates the same prepared file at `2867.25 E_up`.
+  - `bash -n example/16.MARTINI/build_martini_h5_m1.sh` passed.
+  - `bash -n example/16.MARTINI/build_martini_h5_slurm.sh` passed.
+  - Both scripts are executable.
+- Not run:
+  - Full table regeneration, because it is long-running and rewrites
+    production parameter files.
 
-## 2026-05-25 1RKL Additive Carrier Force Routing
+## 2026-05-26 Direction-Vector MARTINI Table Builds
 - Actions taken:
-  - Audited current 1RKL and 1AFO full/coarse HDF5 outputs for terminal BB
-    endpoint types, endpoint charges, generic MARTINI pair ownership, and CGL
-    node ownership.
-  - Rejected the earlier BB-proxy-only carrier exclusion after the user
-    correction: N/CA/C/O carriers must still accumulate sidechain/rotamer and
-    backbone-environment force contributions.
-  - Found the implementation bug in the C++ projection path: mapped N/CA/C/O
-    carriers have `ROLE_BB` plus a BB map index, so direct carrier gradients
-    were being routed through BB-proxy projection instead of being added
-    directly.
-  - Updated the projection checks so only true virtual BB proxies are projected;
-    direct carrier gradients remain direct.
-  - Kept CGL targets proxy-based rather than adding independent N/CA/C/O carrier
-    target copies, because copied 1RKL probes showed independent carrier
-    targets collapse the secondary structure.
-  - Fixed fragment metadata and validation so every residue fragment, including
-    broken 1AFO strands, is checked for `Qd/+1` and `Qa/-1` BB endpoints in
-    both full and coarse workflows.
-  - Updated `example/16.MARTINI/cg_lipid_potentials.tex` to document additive
-    carrier force accumulation and direct-vs-projected gradient routing.
+  - Audited SC-particle, CGL-particle, SC-CGL, and CGL-CGL table construction
+    for direction-vector sampling completeness.
+  - Reopened the previous around-vector wording after the user clarified that
+    direction vectors are the intended potential inputs.
+  - Changed optional around-vector bead-frame quadrature to default to one
+    sample and renamed the exposed controls/metadata to bead-frame terminology.
+  - Updated `example/16.MARTINI/cg_lipid_potentials.tex` so CGL-CGL, SC-CGL,
+    CGL-particle, and SC-particle sections describe direction-vector sampling
+    as the physical spline input.
+  - Added multiprocessing across independent table slices, using
+    `UPSIDE_MARTINI_TABLE_WORKERS` first, then Slurm CPU allocation variables,
+    then local CPU count.
+  - Confirmed `py/martini_gen_params.py --help` exposes bead-frame controls
+    rather than the previous around-vector control wording.
 - Files modified:
   - `plan.md`
   - `findings.md`
   - `progress.md`
-  - `src/martini_hybrid.cpp`
-  - `src/martini_potential.cpp`
-  - `py/martini_prepare_system.py`
-  - `py/martini_prepare_system_lib.py`
+  - `py/martini_build_tables.py`
+  - `py/martini_gen_params.py`
   - `example/16.MARTINI/cg_lipid_potentials.tex`
 - Test results:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_gen_params.py py/martini_prepare_system_lib.py py/martini_prepare_system.py example/16.MARTINI/test_cg_bilayer/run_test.py` passed.
+  - Focused CGL-CGL smoke generated a `3 x 3 x 3` raw grid with
+    `azimuthal_count=2` and `bead_frame_count=2`.
+  - Focused CGL-particle smoke generated a C1/Qa target table with
+    `orientation_sampling=cgl_direction_vector` and `cgl_bead_frame_count=2`.
+  - Focused SC-particle smoke generated a PHE x C1 table with
+    `orientation_sampling=target_direction_vector_grid` and
+    `sidechain_bead_frame_count=2`.
+  - Focused PHE SC-CGL smoke generated parameters with
+    `sidechain_bead_frame_count=2` and `cg_bead_frame_count=2`.
+  - `git diff --check` passed.
+- Failures and fixes:
+  - The local sandbox blocks process-pool semaphore queries, so smoke tests
+    printed the intended worker count and fell back to one worker. The code
+    keeps multiprocessing enabled for normal M1/Slurm environments.
+
+## 2026-05-25 Orientation-Resolved MARTINI CG Tables
+- Actions taken:
+  - Re-scoped the active task around the corrected physical requirement:
+    CG lipid and CG sidechain spline tables must be generated by rotating
+    resolved full-resolution bead models over sampled orientations.
+  - Documented that runtime CG lipid geometry must not be derived from one
+    packed lipid conformation.
+  - Changed coarse runtime CGLD geometry to derive from canonical
+    `parameters/dryMARTINI/DOPC.pdb` rather than the first packed lipid.
+  - Removed the extra `cg_lipid_leaflet_orientation` potential; CGL
+    orientational forces are owned by the orientation-dependent spline tables.
+  - Changed SC-particle and SC-CGL table fitting to expand each rotamer
+    center/vector into resolved MARTINI sidechain bead positions from MARTINI
+    bonded geometry.
+  - Corrected the model notes: SC-particle is shared in both lipid modes for
+    non-CGL environment particles; full-resolution mode also uses it for
+    explicit lipid beads, while CGLipid mode replaces only explicit-lipid
+    SC-particle contacts with SC-CGL. There is no dry-MARTINI SC-SC table.
+  - Updated the CGL-only bilayer test harness to use installed production
+    `particle.h5` plus `dopc.h5` by default, while keeping `--rebuild-tables`
+    for explicit local table refits.
+- Files modified:
+  - `plan.md`
+  - `findings.md`
+  - `progress.md`
+  - `example/16.MARTINI/test_cg_bilayer/run_test.py`
+  - `py/martini_build_tables.py`
+  - `py/martini_prepare_system_lib.py`
+  - `src/martini_cg_lipid.cpp`
+  - `src/main.cpp`
+  - `example/16.MARTINI/cg_lipid_potentials.tex`
+- Test results:
+  - `python3 -m py_compile example/16.MARTINI/test_cg_bilayer/run_test.py py/martini_build_tables.py py/martini_prepare_system_lib.py py/martini_prepare_system.py` passed.
+  - Canonical DOPC runtime geometry check reproduced current table metadata:
+    `orientation_length_ang=11.139272`, `orientation_mass_g_mol=77.048875`,
+    `orientation_bond_fc_eup_a2=39.435978`; canonical display offsets are
+    `head=-14.558480 A`, `tail=11.139272 A`.
+  - Focused PHE SC-env table smoke test generated a resolved 3-bead PHE table.
+  - Focused PHE SC-CGL smoke test exercised the two-azimuth resolved-sidechain
+    fitting path.
+  - CGL-only bilayer validation with installed production tables passed:
+    200-step default smoke and 2000-step NVT run. The 2000-step run had no
+    flips, no leaflet crossings, same-leaflet nearest-neighbor min/p05
+    `6.304/6.483 A`, and CGL-CGLD length min/max/rmsdev
+    `10.732/11.515/0.161 A`.
+  - Existing stale 1AFO coarse output fails the new compose/table geometry
+    guard, as expected, until regenerated.
   - `cmake --build obj` passed.
-  - `python3 -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py`
-    passed.
-  - Copied 1RKL proxy-target/additive-force probe passed stage validation,
-    minimized from `657.02` to `60.93 E_up`, and completed 40k-equivalent MD
-    with final hbond `31.43` and kinetic ratio `0.989`; the stale coarse output
-    ends at hbond `23.71`.
-  - Rejected independent carrier CGL targets: 40k probe final hbond `6.5`;
-    after projection correction, 10k probe still fell to hbond `9.6`.
-  - Current 1AFO CGL injection on a copied file produced `182 CGL x 170`
-    target particles (`72` BB proxies plus `98` ions), retained both fragment
-    endpoint pairs (`0-35` and `36-71`) as `Qd/+1` and `Qa/-1`, and missed no
-    BB proxy target.
 - Failures and fixes:
-  - A temporary 1AFO injection using the small `test_cg_lipid` table skipped
-    `cg_lipid_rotamer_sc` because that fixture lacks CG-SC table entries; the
-    endpoint and target-count validation was rerun without treating that
-    fixture limitation as a production missing-node failure.
-
-## 2026-05-25 1AFO Coarse-Lipid Helix Bend
-- Actions taken:
-  - Confirmed current 1AFO coarse outputs already include
-    `cg_lipid_rotamer_sc`; the remaining bend was not stale missing CGL-SC
-    coupling.
-  - Localized the kink to stage-7 burn-in: stage-6 output and stage-7 prepared
-    input were not bent, and handoff minimization alone did not bend either
-    helix.
-  - Tested charged-terminal CGL controls on copied HDF5 artifacts and found the
-    coarse chain-1 bend disappears when `Qd`/`Qa` BB proxy CGL controls are
-    excluded-volume-only.
-  - Implemented a physical split for charged BB proxy targets:
-    `cg_lipid_target_charged_bb_excluded_volume` keeps nonnegative CGL controls
-    while ordinary BB/protein targets keep the full CGL-target table.
-  - Updated `example/16.MARTINI/cg_lipid_potentials.tex` to document why the
-    explicit-DOPC charged-terminal PMF is not transferable to the additive CGL
-    projection.
-- Files modified:
-  - `plan.md`
-  - `findings.md`
-  - `progress.md`
-  - `py/martini_prepare_system_lib.py`
-  - `example/16.MARTINI/cg_lipid_potentials.tex`
-- Test results:
-  - `python3 -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py`
-    passed.
-  - Regenerated CGL nodes on `/private/tmp/1afo_charged_bb_split_inject.up`:
-    68 ordinary CGL targets, 4 charged-BB excluded-volume targets, and 98 ion
-    excluded-volume targets; charged-BB and ion control minima are `0.0`.
-  - One-step `obj/upside` smoke test on the regenerated copied HDF5 passed.
-  - Full generated-path 1AFO stage-7 handoff plus 40k-step burn-in on
-    `/private/tmp/1afo_generated_split_stage7_burnin.up` passed; final helix
-    half-chain angles were `32.34 deg` and `36.88 deg`, compared with the old
-    coarse output's `37.33 deg` and `85.72 deg`.
-- Failures and fixes:
-  - Initial copied injection check used the wrong example-local DOPC HDF5 path;
-    reran with root `parameters/dryMARTINI/dopc.h5`.
+  - Initial full-sidechain smoke test failed because the Upside rotamer library
+    has one placement bead per rotamer. The fix now derives MARTINI SC bead
+    offsets from `martinize.py` and places them at each rotamer center/vector.
+  - The old CGL-only bilayer harness imported removed helper symbols and tried
+    to refit tables by default. It now reads DOPC bead types from the ITP parser,
+    skips obsolete debug output calls, and defaults to installed production
+    tables for runtime validation.

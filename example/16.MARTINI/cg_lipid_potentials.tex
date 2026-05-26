@@ -43,14 +43,16 @@ and $\kappa_L = 10\,\text{\AA}/\text{nm}$.
 For \texttt{parameters/dryMARTINI/DOPC.pdb} and
 \texttt{dry\_martini\_v2.1.itp}, this gives
 $\ell = 11.139\,\text{\AA}$, $M_{\text{CGLD}} = 77.049\,\text{g/mol}$, and
-$k_b = 39.436\,E_{\text{up}}/\text{\AA}^2$ for the first reference lipid.
-The actual packed 1RKL preparation derives the same quantities from its packed
-first lipid and produced $\ell = 11.631\,\text{\AA}$,
-$M_{\text{CGLD}} = 85.427\,\text{g/mol}$, and
-$k_b = 36.314\,E_{\text{up}}/\text{\AA}^2$ in the validation run.  The CGL
-particle mass remains the sum of the 14 DOPC bead masses; CGLD is an internal
-orientation-coordinate carrier with zero nonbonded interactions, not an
-additional dry-MARTINI bead.
+$k_b = 39.436\,E_{\text{up}}/\text{\AA}^2$ for the canonical reference lipid.
+These values are used for every single-particle DOPC preparation.  Packed
+lipid conformations provide only the initial CGL positions and leaflet
+directions; they do not redefine $\ell$, $M_{\text{CGLD}}$, $k_b$, display
+span, or the interaction-table geometry.  This keeps the runtime CGLD
+orientation carrier consistent with the canonical resolved DOPC model used to
+fit the spline tables and makes the coarse lipid model independent of the
+particular packed lipid distribution.  The CGL particle mass remains the sum of
+the 14 DOPC bead masses; CGLD is an internal orientation-coordinate carrier
+with zero nonbonded interactions, not an additional dry-MARTINI bead.
 
 VTF trajectory output expands each CGL particle only for visualization.  The
 displayed endpoints use a symmetric rod with the CGL center at the midpoint;
@@ -126,15 +128,24 @@ coordinates are relaxed by steepest-descent energy minimization
 ($N_{\text{relax}} = 50$ steps). The sampled energy includes the dry-MARTINI
 bonded deformation penalty relative to the unrelaxed DOPC reference, so local
 steric stress can relax but deformation is not free.
-Unresolved azimuthal rotations are integrated as a dry-MARTINI energy
+Direction-vector azimuths are integrated as a dry-MARTINI energy
 expectation:
 \begin{equation}
 U_{\text{CG-CG}}(r,\cos\theta_1,\cos\theta_2)
 =
 \left\langle
-U_{\text{DOPC-DOPC}}(r,\cos\theta_1,\cos\theta_2,\phi_1,\phi_2)
+U_{\text{DOPC-DOPC}}(r,\cos\theta_1,\cos\theta_2,
+\phi_1,\phi_2)
 \right\rangle_{\phi_1,\phi_2}.
 \end{equation}
+Here $\phi_1$ and $\phi_2$ are the azimuths of the two CGL orientation vectors
+around the interparticle axis.  The runtime potential takes the two CGL
+direction vectors as input and evaluates their projections onto
+$\hat{\mathbf{r}}_{12}$.  Table generation therefore rotates the resolved DOPC
+bead model over these sampled direction vectors rather than deriving a table
+from one default orientation.  Optional bead-frame quadrature around each
+sampled direction vector can be enabled for convergence tests, but it is not a
+separate runtime coordinate.
 This avoids pairwise PMF overcounting of missing azimuthal relaxation in a
 many-lipid additive Hamiltonian while still deriving the table directly from
 the dry-MARTINI force field.  The attractive radial angular mean of each
@@ -165,7 +176,7 @@ pairwise PMF, or flat maximum-energy contact core is applied.
 \subsection{CG Lipid -- Sidechain Quad-Spline Potential}
 \label{sec:cg-sc}
 
-The interaction between a CG lipid particle and a protein sidechain (SC) bead
+The interaction between a CG lipid particle and a protein sidechain (SC)
 uses the same functional form as Eq.~\ref{eq:cg-cg}, with the SC bead treated
 as source~1 ($\cos\theta_1 = -\hat{\mathbf{n}}_{\text{SC}} \cdot
 \hat{\mathbf{r}}_{12}$) and the CG lipid as source~2
@@ -175,11 +186,17 @@ unit vector from C$_\alpha$ to C$_\beta$.
 
 The table is built from the same dry-MARTINI energy expectation, using
 $N_{\text{relax}} = 120$ bead relaxation steps and a tighter angular grid
-(9 $\cos\theta$ points $\times$ 4 azimuthal angles).  The relaxed
-explicit-bead samples also retain the bonded deformation penalty relative to
-the unrelaxed DOPC reference.  Separate tables are constructed for each
-standard proteinogenic sidechain type present in the active system against the
-single CG lipid type.
+(9 $\cos\theta$ points $\times$ 4 sidechain azimuths $\times$ 4 CGL azimuths).
+For each sidechain rotamer, all resolved dry-MARTINI sidechain bead positions
+are used; the fit does not collapse a multi-bead sidechain to its rotamer
+center.  The sidechain bead model and the DOPC bead model are independently
+rotated over the sampled SC and CGL direction vectors.  Optional bead-frame
+quadrature around each sampled direction vector can be enabled when checking
+convergence of the resolved-bead projection, but the spline coordinates remain
+the runtime direction-vector projections.  The relaxed explicit-bead samples
+also retain the bonded deformation penalty relative to the unrelaxed DOPC reference.  Separate
+tables are constructed for each standard proteinogenic sidechain type present
+in the active system against the single CG lipid type.
 
 For compactness the sidechain table is stored as a low-rank angular
 decomposition plus radial B-splines, but the fit no longer clips the sampled
@@ -233,8 +250,8 @@ where $\cos\theta = \hat{\mathbf{n}}_{\text{CGL}}\cdot\hat{\mathbf{r}}_{12}$
 and $X$ is the target MARTINI type.  The table uses $N_r=14$ radial and
 $N_\theta=15$ angular control points.  It is fitted directly to explicit
 DOPC--target dry-MARTINI bead energies, not to a capped effective
-Lennard-Jones surrogate and not to an orientation average.  For each radial
-sample $r$ and angular sample $\cos\theta$, the CGL center is placed at
+Lennard-Jones surrogate or a radial orientation-averaged Lennard-Jones
+replacement.  For each radial sample $r$ and angular sample $\cos\theta$, the CGL center is placed at
 distance $r$ from a point probe of target type $X$, the 14-bead DOPC reference
 is oriented so its CGL vector has the requested dot product with
 $\hat{\mathbf{r}}_{12}$, internal bead relaxation is charged by the same
@@ -261,6 +278,10 @@ The DOPC bead charges used in this projection are the molecule charges from
 $-1$, and the remaining DOPC beads are neutral.  They are not inferred from
 bead type alone, because the Q0 type is context-dependent and treating NC3 as
 neutral would make the projected DOPC particle net negative.
+The expectation includes the azimuth of the CGL direction vector around
+$\hat{\mathbf{r}}_{12}$.  Thus the CGL--target table is a projection of the
+resolved lipid direction-vector sampling onto the runtime variables
+$(r,\cos\theta)$, not a table built from one default lipid orientation.
 The resulting two-dimensional energy-expectation samples are converted to
 $E_{\text{up}}$ and fitted directly with the tensor-product spline.  The
 unsampled radial core below the first explicit target samples is filled from
@@ -353,8 +374,7 @@ $\cos\theta = -(\mathbf{r}_{\text{CB}} - \mathbf{r}_{\text{env}}) \cdot
 
 \paragraph{Underlying Physics.}
 The tables are precomputed from the dry MARTINI nonbonded potential between a
-sidechain bead (placed at rotamer centers) and an environment probe
-particle:
+resolved sidechain rotamer and an environment probe particle:
 
 \begin{align}
 E_{\text{LJ}}(r) &= 4\varepsilon_{ij} \left[
@@ -368,7 +388,10 @@ and dielectric constant $\epsilon_r = 15$. At each sampled $(r, \cos\theta)$,
 the sidechain bead positions from all rotamers are placed; the total energy is
 computed as the sum over SC beads of $E_{\text{LJ}}(r_{ij}) +
 E_{\text{Coul}}(r_{ij})$, where $r_{ij}$ is the distance from each SC bead at
-its rotamer position to the probe point. The 2D energy grid
+its rotamer position to the probe point.  For each rotamer, the resolved
+sidechain bead model is placed over the sampled SC direction vector used by
+the runtime table.  Optional bead-frame quadrature around that direction can
+be enabled for projection-convergence checks. The 2D energy grid
 $E(r_i, \cos\theta_j)$ is factorized via SVD:
 
 \begin{itemize}
@@ -383,11 +406,13 @@ The resulting tables are stored as piecewise-linear grids with 96 radial points
 ($\cos\theta \in [-1, 1]$). Rotamer-resolved variants are also available
 through a 1-body table used by the sidechain rotamer optimization node.  In
 single-particle lipid mode, the CGL--SC spline from Sec.~\ref{sec:cg-sc} is
-injected as an additional rotamer one-body term rather than as a separate
-potential acting directly on a fixed sidechain center.  This preserves the same
-physical CGL--SC interaction while letting lipid contacts bias the sidechain
-rotamer ensemble, matching the ownership used by explicit DOPC sidechain
-environment terms in full-resolution lipid mode.
+injected as an additional rotamer one-body term for the collapsed lipid
+particle.  The ordinary SC--particle table remains active in both lipid modes
+for non-CGL environment particles such as water and ions.  Full-resolution
+lipid mode also uses the SC--particle table for explicit DOPC beads; CGLipid
+mode replaces only those explicit-lipid SC--particle contacts with the SC--CGL
+spline.  This preserves sidechain-environment ownership while letting lipid
+contacts bias the sidechain rotamer ensemble.
 
 \paragraph{Interface Scaling.}
 The SC-env potential is multiplied by a global interface scale factor
@@ -452,34 +477,15 @@ coordinate derivatives used for position forces.
 With this ownership, full-resolution and single-particle lipid modes expose the
 same physical protein interfaces at different lipid resolution.  Full mode
 uses explicit DOPC beads in the generic MARTINI pair potential and the
-SC-environment one-body table.  Single-particle mode replaces explicit
-DOPC--DOPC with the CGL--CGL spline and replaces explicit DOPC--SC with the
-CGL--SC rotamer one-body spline, while both modes keep BB--environment contacts
-on the same charged or neutral virtual BB proxy sites and route those forces to
-the same carrier coordinates.  Terminal fragment endpoints remain opposite
+SC-particle one-body table.  Single-particle mode keeps the same SC-particle
+table for non-CGL environment particles, replaces explicit DOPC--DOPC with the
+CGL--CGL spline, and replaces explicit DOPC--SC-particle contacts with the
+CGL--SC rotamer one-body spline.  Both modes keep BB--environment contacts on
+the same charged or neutral virtual BB proxy sites and route those forces to the
+same carrier coordinates.  Terminal fragment endpoints remain opposite
 charged in both modes: each fragment starts with \texttt{Qd} backbone sites
 carrying $+1$ charge and ends with \texttt{Qa} backbone sites carrying $-1$
 charge.
-
-\paragraph{Leaflet-normal orientation mean field.}
-The pairwise CGL-CGL table is intentionally not made attractive by restoring the
-full dry-MARTINI radial background, because doing so creates a many-neighbor
-collapse in the additive one-particle representation.  However, a planar bilayer
-still has a physical leaflet normal: lower-leaflet DOPC axes point toward
-$+z$ and upper-leaflet axes point toward $-z$.  The hybrid model therefore adds
-a mean-field orientation term
-\begin{equation}
-  U_{\text{leaflet}} =
-  \frac{1}{2} k_{\text{leaflet}}(\hat n_z - s_i)^2 ,
-\end{equation}
-where $s_i$ is the initial dry-MARTINI leaflet sign of lipid $i$.  The force is
-applied to the CGLD-derived orientation coordinate, not to display atoms.  The
-constant $k_{\text{leaflet}}$ is derived from the current CGL-CGL spline table:
-it is twice the average first-neighbor energy penalty for rotating one lipid
-from the leaflet normal into the membrane plane while the neighboring lipid
-remains leaflet-normal.  This preserves the physical orientational consequence
-of the existing dry-MARTINI table without reintroducing the unstable radial
-many-neighbor attraction.
 
 \subsection{Stage-6 Relaxation Protocol}
 
@@ -570,6 +576,22 @@ where $1\,E_{\text{up}} = 2.914952774272\,\text{kJ/mol}$. Lengths are in
 at table-building time (Python) and at load time (C++), with tail corrections
 subtracted so that all potentials decay smoothly to zero at their respective
 cutoffs.
+
+\subsection{Parallel Table Generation}
+
+The dry-MARTINI parameter generator parallelizes independent table slices while
+keeping all HDF5 writes in the parent process.  SC--particle tables are split by
+residue and target type, CGL--SC tables by residue type, CGL--target tables by
+target type, and the CGL--CGL tensor by radial/angular grid point.  The worker
+count is controlled by \texttt{UPSIDE\_MARTINI\_TABLE\_WORKERS}; if it is not
+set, Slurm allocations \texttt{SLURM\_CPUS\_PER\_TASK} or
+\texttt{SLURM\_CPUS\_ON\_NODE} are used, otherwise the local CPU count is used
+with a conservative cap for interactive M1 macOS builds.  The one-shot
+generator also accepts \texttt{--workers}, \texttt{--bead-frame-count},
+\texttt{--sc-bead-frame-count}, and \texttt{--cgl-bead-frame-count}.  The bead-frame
+controls are optional quadrature around sampled direction vectors; they do not
+change the runtime spline variables, disable interactions, or scale any
+physical term.
 
 % ==============================================================================
 \begin{thebibliography}{9}

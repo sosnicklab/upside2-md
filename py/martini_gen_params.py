@@ -18,6 +18,7 @@ Pass ``--force`` to regenerate files that already exist.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -36,7 +37,43 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Overwrite existing .h5 files instead of skipping them",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help=(
+            "Parallel table-build workers. Defaults to UPSIDE_MARTINI_TABLE_WORKERS, "
+            "then Slurm CPU allocation, then local CPU count."
+        ),
+    )
+    parser.add_argument(
+        "--bead-frame-count",
+        type=int,
+        default=None,
+        help="Set optional bead-frame samples around each sampled direction vector.",
+    )
+    parser.add_argument(
+        "--sc-bead-frame-count",
+        type=int,
+        default=None,
+        help="Set optional SC bead-frame samples for SC-particle and SC-CGL tables.",
+    )
+    parser.add_argument(
+        "--cgl-bead-frame-count",
+        type=int,
+        default=None,
+        help="Set optional CGL bead-frame samples for CGL-particle, SC-CGL, and CGL-CGL tables.",
+    )
     args = parser.parse_args(argv)
+
+    if args.workers is not None:
+        os.environ["UPSIDE_MARTINI_TABLE_WORKERS"] = str(max(1, int(args.workers)))
+    if args.bead_frame_count is not None:
+        os.environ["UPSIDE_MARTINI_BEAD_FRAME_COUNT"] = str(max(1, int(args.bead_frame_count)))
+    if args.sc_bead_frame_count is not None:
+        os.environ["UPSIDE_MARTINI_SC_BEAD_FRAME_COUNT"] = str(max(1, int(args.sc_bead_frame_count)))
+    if args.cgl_bead_frame_count is not None:
+        os.environ["UPSIDE_MARTINI_CGL_BEAD_FRAME_COUNT"] = str(max(1, int(args.cgl_bead_frame_count)))
 
     if args.upside_home:
         repo_root = Path(args.upside_home).expanduser().resolve()
@@ -102,6 +139,13 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Upside home: {repo_root}")
     print(f"Output directory: {output_dir}")
+    print(
+        "Parallel workers: "
+        f"{os.environ.get('UPSIDE_MARTINI_TABLE_WORKERS', 'auto')}; "
+        "optional bead-frame samples: "
+        f"SC={os.environ.get('UPSIDE_MARTINI_SC_BEAD_FRAME_COUNT', os.environ.get('UPSIDE_MARTINI_BEAD_FRAME_COUNT', '1'))}, "
+        f"CGL={os.environ.get('UPSIDE_MARTINI_CGL_BEAD_FRAME_COUNT', os.environ.get('UPSIDE_MARTINI_BEAD_FRAME_COUNT', '1'))}"
+    )
     print()
 
     for output_path, builder_name in files_to_generate.items():

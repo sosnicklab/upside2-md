@@ -1,0 +1,58 @@
+#!/bin/bash
+#SBATCH --job-name=martini_h5
+#SBATCH --output=slurm-%x-%j.out
+#SBATCH --time=48:00:00
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=64G
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+if [ -f /etc/profile.d/modules.sh ]; then
+    source /etc/profile.d/modules.sh
+fi
+
+if command -v module >/dev/null 2>&1; then
+    HDF5_MODULE=hdf5/1.14.3
+    if [ -n "${HYBRID_SWEEP_HDF5_MODULE+x}" ]; then
+        HDF5_MODULE="${HYBRID_SWEEP_HDF5_MODULE}"
+    fi
+    if [ -n "${UPSIDE_HDF5_MODULE+x}" ]; then
+        HDF5_MODULE="${UPSIDE_HDF5_MODULE}"
+    fi
+    module load python/3.11.9 || true
+    module load cmake || true
+    module load openmpi || true
+    module load "${HDF5_MODULE}" || true
+fi
+
+if [ -f "${PROJECT_ROOT}/.venv/bin/activate" ]; then
+    source "${PROJECT_ROOT}/.venv/bin/activate"
+fi
+
+export UPSIDE_HOME="${PROJECT_ROOT}"
+export UPSIDE_SKIP_SOURCE_SH=1
+export PYTHONUNBUFFERED=1
+export PATH="${PROJECT_ROOT}/obj:$PATH"
+export PYTHONPATH="${PROJECT_ROOT}/py${PYTHONPATH:+:$PYTHONPATH}"
+
+if [ -z "${UPSIDE_MARTINI_TABLE_WORKERS+x}" ]; then
+    if [ -n "${SLURM_CPUS_PER_TASK+x}" ]; then
+        UPSIDE_MARTINI_TABLE_WORKERS="${SLURM_CPUS_PER_TASK}"
+    else
+        UPSIDE_MARTINI_TABLE_WORKERS=1
+    fi
+    export UPSIDE_MARTINI_TABLE_WORKERS
+fi
+
+echo "Regenerating dry-MARTINI .h5 files under ${PROJECT_ROOT}/parameters/dryMARTINI"
+echo "Using ${UPSIDE_MARTINI_TABLE_WORKERS} MARTINI table worker(s)"
+
+python3 "${PROJECT_ROOT}/py/martini_gen_params.py" \
+    --upside-home "${PROJECT_ROOT}" \
+    --force \
+    --workers "${UPSIDE_MARTINI_TABLE_WORKERS}" \
+    "$@"

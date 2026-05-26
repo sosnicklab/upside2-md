@@ -209,6 +209,47 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
                 "Rebuild martini.h5 so CGL-SC overlap is represented by force-field-derived "
                 "table values."
             )
+
+
+def _validate_compose_vector6d_cg_attrs(compose_grp, cg_table_grp, source_path: Path) -> None:
+    float_attrs = (
+        "contact_nm",
+        "contact_ang",
+        "max_sigma_nm",
+        "orientation_length_ang",
+        "orientation_mass_g_mol",
+        "orientation_bond_fc_eup_a2",
+        "transverse_inertia_g_mol_a2",
+        "head_tail_span_ang",
+        "tail_projection_ang",
+        "max_perp_radius_ang",
+    )
+    missing = [
+        name for name in float_attrs
+        if name not in compose_grp.attrs or name not in cg_table_grp.attrs
+    ]
+    if missing:
+        missing_text = ", ".join(missing)
+        raise RuntimeError(
+            f"CG lipid geometry metadata is incomplete for {source_path}: {missing_text}. "
+            "Regenerate the stage file and MARTINI tables from the same canonical DOPC model."
+        )
+    mismatches = []
+    for name in float_attrs:
+        compose_value = float(compose_grp.attrs[name])
+        table_value = float(cg_table_grp.attrs[name])
+        tol = max(1.0e-5, 1.0e-5 * max(abs(compose_value), abs(table_value), 1.0))
+        if abs(compose_value - table_value) > tol:
+            mismatches.append(f"{name}: compose={compose_value:.6g}, table={table_value:.6g}")
+    if mismatches:
+        mismatch_text = "; ".join(mismatches)
+        raise RuntimeError(
+            f"CG lipid runtime geometry does not match {source_path}: {mismatch_text}. "
+            "Regenerate the stage file so CGL/CGLD coordinates use the same canonical "
+            "DOPC geometry as the orientation-dependent spline tables."
+        )
+
+
 CB_PLACEMENT = np.array([[0.0, 0.94375626, 1.2068012]], dtype=np.float32)
 CB_VECTOR = CB_PLACEMENT / np.linalg.norm(CB_PLACEMENT, axis=1, keepdims=True)
 N_BIT_ROTAMER = 4
@@ -329,80 +370,6 @@ def _cg_lipid_sc_runtime_cutoff_ang(sc_attrs):
     return min(cutoff_ang, fitted_support_ang)
 
 
-def _cg_lipid_leaflet_orientation_spring_eup(pair_grp):
-    """Derive a leaflet-normal mean-field torque from the CGL-CGL table."""
-    params = np.asarray(pair_grp["interaction_param"][0, 0], dtype=np.float64)
-    n_radial = int(pair_grp.attrs.get("n_radial", 14))
-    n_angular = int(pair_grp.attrs.get("n_angular", 15))
-    knot_spacing = float(pair_grp.attrs.get("knot_spacing_ang", 1.4))
-    if params.size != n_radial * n_angular * n_angular:
-        return 0.0
-    table = params.reshape(n_radial, n_angular, n_angular)
-
-    def basis(x, n_ctrl):
-        weights = np.zeros(4, dtype=np.float64)
-        if x <= 1.0:
-            weights[:3] = (1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0)
-            return 0, weights
-        if x >= float(n_ctrl - 2):
-            weights[:3] = (1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0)
-            return n_ctrl - 3, weights
-        x_bin = int(x)
-        base = x_bin - 1
-        excess = x - float(x_bin)
-        for ci in range(4):
-            c0 = np.zeros(4, dtype=np.float64)
-            c0[ci] = 1.0
-            yu1 = excess + 2.0
-            yu2 = excess + 1.0
-            yu3 = excess
-            c11 = (1.0 - yu1 / 3.0) * c0[0] + (yu1 / 3.0) * c0[1]
-            c12 = (1.0 - yu2 / 3.0) * c0[1] + (yu2 / 3.0) * c0[2]
-            c13 = (1.0 - yu3 / 3.0) * c0[2] + (yu3 / 3.0) * c0[3]
-            c22 = (1.0 - yu2 / 2.0) * c11 + (yu2 / 2.0) * c12
-            c23 = (1.0 - yu3 / 2.0) * c12 + (yu3 / 2.0) * c13
-            weights[ci] = (1.0 - yu3) * c22 + yu3 * c23
-        return base, weights
-
-    def angular_coord(cos_angle):
-        inv_dtheta = float(n_angular - 3) * 0.5
-        coord = (float(np.clip(cos_angle, -1.0, 1.0)) + 1.0) * inv_dtheta + 1.0
-        return max(1.0001, min(float(n_angular - 2) - 0.0001, coord))
-
-    def eval_pair(r_ang, n1, n2, phi):
-        unit = np.array([np.cos(phi), np.sin(phi), 0.0], dtype=np.float64)
-        a1 = -float(np.dot(n1, unit))
-        a2 = float(np.dot(n2, unit))
-        br, wr = basis(r_ang / knot_spacing, n_radial)
-        b1, w1 = basis(angular_coord(a1), n_angular)
-        b2, w2 = basis(angular_coord(a2), n_angular)
-        value = 0.0
-        for ir in range(4):
-            rr = br + ir
-            if rr < 0 or rr >= n_radial:
-                continue
-            for ia1 in range(4):
-                aa1 = b1 + ia1
-                if aa1 < 0 or aa1 >= n_angular:
-                    continue
-                for ia2 in range(4):
-                    aa2 = b2 + ia2
-                    if aa2 < 0 or aa2 >= n_angular:
-                        continue
-                    value += wr[ir] * w1[ia1] * w2[ia2] * table[rr, aa1, aa2]
-        return float(value)
-
-    phis = np.linspace(0.0, 2.0 * np.pi, 6, endpoint=False)
-    vertical = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-    horizontal = np.array([1.0, 0.0, 0.0], dtype=np.float64)
-    deltas = []
-    for r_ang in (8.0, 10.0, 12.0):
-        e_vertical = np.mean([eval_pair(r_ang, vertical, vertical, phi) for phi in phis])
-        e_horizontal = np.mean([eval_pair(r_ang, horizontal, vertical, phi) for phi in phis])
-        deltas.append(max(0.0, e_horizontal - e_vertical))
-    return float(2.0 * np.mean(deltas))
-
-
 def coords(atoms):
     return np.array([[a["x"], a["y"], a["z"]] for a in atoms], dtype=float)
 
@@ -439,6 +406,48 @@ def _ensure_dopc_atom_names(lipids_itp_path: Path | None = None) -> list:
     from martini_itp_reader import parse_dopc_from_itp
     _DOPC_ATOM_NAMES = parse_dopc_from_itp(lipids_itp_path)["atom_names"]
     return _DOPC_ATOM_NAMES
+
+
+def load_canonical_dopc_reference_nm(ff_dir: Path) -> np.ndarray:
+    """Return canonical DOPC bead positions relative to COM in nm."""
+    ff_dir = Path(ff_dir).expanduser().resolve()
+    dopc_pdb_path = ff_dir / "DOPC.pdb"
+    lipids_itp_path = ff_dir / "dry_martini_v2.1_lipids.itp"
+    if not dopc_pdb_path.exists():
+        raise ValueError(f"Canonical DOPC reference not found: {dopc_pdb_path}")
+    atom_order = _ensure_dopc_atom_names(lipids_itp_path if lipids_itp_path.exists() else None)
+    atoms, _ = parse_pdb(dopc_pdb_path)
+
+    lipid_groups = []
+    current_key = None
+    current_atoms = []
+    for atom in atoms:
+        if not lipid_resname(atom["resname"]):
+            continue
+        key = (atom["chain"], atom["resseq"], atom["icode"], canonical_lipid_resname(atom["resname"]))
+        if current_key is None or key == current_key:
+            current_atoms.append(atom)
+            current_key = key
+        else:
+            lipid_groups.append(current_atoms)
+            current_atoms = [atom]
+            current_key = key
+    if current_atoms:
+        lipid_groups.append(current_atoms)
+    if not lipid_groups:
+        raise ValueError(f"No DOPC lipid found in canonical reference {dopc_pdb_path}")
+
+    name_to_pos = {
+        atom["name"].upper(): np.array([atom["x"], atom["y"], atom["z"]], dtype=np.float64)
+        for atom in lipid_groups[0]
+    }
+    missing = [name for name in atom_order if name.upper() not in name_to_pos]
+    if missing:
+        missing_text = ", ".join(missing)
+        raise ValueError(f"Canonical DOPC reference {dopc_pdb_path} missing beads: {missing_text}")
+    positions_ang = np.asarray([name_to_pos[name.upper()] for name in atom_order], dtype=np.float64)
+    com_ang = np.mean(positions_ang, axis=0)
+    return (positions_ang - com_ang) * 0.1
 
 
 def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
@@ -1647,6 +1656,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     cg_lipid_orientation_bond_fc = 0.0
     cg_lipid_orientation_mass_g = 0.0
     if lipid_resolution == "coarse" and n_cg_lipids > 0:
+        canonical_ref_nm = load_canonical_dopc_reference_nm(ff_dir)
         ff_pair_params = {
             (t1, t2): {"sigma_nm": sigma, "epsilon_kj_mol": epsilon}
             for (t1, t2), (sigma, epsilon) in martini_table.items()
@@ -1657,7 +1667,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             for (i, j), r0, k in zip(dopc_bonds, dopc_bond_lengths, dopc_bond_force_constants)
         ]
         cg_lipid_derived_params = derive_dopc_cg_params(
-            ref_bead_positions_nm=ref_bead_positions[0].astype(np.float64) * 0.1,
+            ref_bead_positions_nm=canonical_ref_nm,
             bead_types=dopc_bead_types,
             pair_params=ff_pair_params,
             bead_masses_g_mol=dopc_mass_values,
@@ -1665,24 +1675,20 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             energy_conversion_kj_per_eup=energy_conversion,
             length_conversion_ang_per_nm=length_conversion,
         )
-        length_override = os.environ.get('UPSIDE_CG_LIPID_ORIENTATION_LENGTH')
-        cg_lipid_orientation_length_ang = float(
-            length_override if length_override is not None
-            else cg_lipid_derived_params["orientation_length_ang"]
+        cg_lipid_orientation_length_ang = float(cg_lipid_derived_params["orientation_length_ang"])
+        cg_lipid_orientation_bond_fc = float(cg_lipid_derived_params["orientation_bond_fc_eup_a2"])
+        cg_lipid_orientation_mass_g = float(cg_lipid_derived_params["orientation_mass_g_mol"])
+        cg_lipid_display_tail_offsets = np.full(
+            n_cg_lipids,
+            float(cg_lipid_derived_params["tail_projection_ang"]),
+            dtype=float,
         )
-        cg_lipid_orientation_bond_fc = float(
-            os.environ.get(
-                'UPSIDE_CG_LIPID_ORIENTATION_BOND_FC',
-                str(cg_lipid_derived_params["orientation_bond_fc_eup_a2"]),
-            )
+        cg_lipid_display_head_offsets = np.full(
+            n_cg_lipids,
+            float(cg_lipid_derived_params["tail_projection_ang"])
+            - float(cg_lipid_derived_params["head_tail_span_ang"]),
+            dtype=float,
         )
-        if length_override is not None:
-            cg_lipid_orientation_mass_g = (
-                float(cg_lipid_derived_params["transverse_inertia_g_mol_a2"])
-                / max(cg_lipid_orientation_length_ang ** 2, 1e-12)
-            )
-        else:
-            cg_lipid_orientation_mass_g = float(cg_lipid_derived_params["orientation_mass_g_mol"])
         cg_lipid_orientation_indices = np.arange(
             n_atoms, n_atoms + n_cg_lipids, dtype=np.int32
         )
@@ -2143,12 +2149,11 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                         martini_table[(tgt_type, "CGL")] = (float(sigma_nm), float(epsilon_kj))
                 else:
                     from martini_build_tables import _compute_cgl_effective_lj_params
-                    ref_nm = ref_bead_positions[0].astype(np.float64) * 0.1
                     ff_pair_params = {}
                     for (t1, t2), (sigma, eps) in martini_table.items():
                         ff_pair_params[(t1, t2)] = {"sigma_nm": sigma, "epsilon_kj_mol": eps}
                     effective_lj = _compute_cgl_effective_lj_params(
-                        ref_bead_positions_nm=ref_nm,
+                        ref_bead_positions_nm=canonical_ref_nm,
                         bead_types=list(dopc_bead_types),
                         pair_params=ff_pair_params,
                     )
@@ -3514,6 +3519,12 @@ def inject_cg_lipid_nodes(
                 "ERROR: compose_vector6d node not found in .up file. "
                 "Run convert_stage() with CG lipids first."
             )
+        with h5py.File(martini_h5, "r") as mh5:
+            _validate_compose_vector6d_cg_attrs(
+                pot["compose_vector6d"],
+                mh5["cg_lipid_table"],
+                martini_h5,
+            )
         for existing_node in list(pot.keys()):
             if existing_node.startswith("cg_lipid_"):
                 del pot[existing_node]
@@ -3557,24 +3568,6 @@ def inject_cg_lipid_nodes(
 
                 n_param = int(pair_grp["interaction_param"].shape[-1])
                 print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1x1x{n_param} params")
-
-                compose = pot["compose_vector6d"]
-                preferred_nz = np.sign(np.asarray(compose["direction"][:, 2], dtype=np.float32))
-                preferred_nz[preferred_nz == 0.0] = 1.0
-                orientation_spring = _cg_lipid_leaflet_orientation_spring_eup(pair_grp)
-                cg_leaflet = pot.create_group("cg_lipid_leaflet_orientation")
-                cg_leaflet.attrs["initialized"] = True
-                cg_leaflet.attrs["arguments"] = np.array([b"compose_vector6d"])
-                cg_leaflet.attrs["spring_const_eup"] = np.float32(orientation_spring)
-                cg_leaflet.attrs["spring_source"] = (
-                    "mean first-shell horizontal-orientation penalty from cg_lipid_pair table"
-                )
-                cg_leaflet.create_dataset("index", data=np.arange(n_cg, dtype=np.int32))
-                cg_leaflet.create_dataset("preferred_nz", data=preferred_nz.astype(np.float32))
-                print(
-                    "  Injected cg_lipid_leaflet_orientation: "
-                    f"{n_cg} CG lipids, k={orientation_spring:.3f} E_up"
-                )
 
             if has_sc:
                 # Check for rotamer placement nodes before creating the CGL-SC
