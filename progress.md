@@ -1,5 +1,35 @@
 # Progress Log
 
+## 2026-05-26 Stage-7 1AFO/1RKL Debug
+- Actions taken:
+  - Compared stage-7 prepared inputs, promoted production inputs, and output
+    frame 0 for `martini_1afo_hybrid`, `martini_1afo_hybrid_full`,
+    `martini_1rkl_hybrid`, and `martini_1rkl_hybrid_full`.
+  - Identified two force-field bugs: an unphysical negative SC-particle
+    factorization well affecting full-resolution lipid burn-in, and missing
+    many-body leaflet-normal control for dynamic CGLD orientations.
+  - Replaced SC-particle SVD residual factorization with a physical
+    lower-bound radial plus nonnegative angular penalty decomposition.
+  - Added `cg_lipid_leaflet_orientation`, with spring constant derived from the
+    raw CGL-CGL dry-MARTINI table.
+  - Added thread fallback for table builds when process pools are disallowed.
+  - Updated `example/16.MARTINI/cg_lipid_potentials.tex`.
+- Files modified:
+  - `py/martini_build_tables.py`
+  - `py/martini_prepare_system_lib.py`
+  - `src/martini_cg_lipid.cpp`
+  - `example/16.MARTINI/cg_lipid_potentials.tex`
+  - `findings.md`
+  - `progress.md`
+- Test results:
+  - Existing stage-7 prepared protein coordinates match reference mapping
+    (`RMSD=0.000 A`); frame-0 bends come from burn-in-promoted input state.
+  - Temporary rebuilt SC-particle table had runtime minimum `-17.3 kJ/mol`,
+    versus `-4.7e11 kJ/mol` from the stale table.
+  - Copied 1AFO CGL stage injected `182` leaflet terms with
+    `k=99.289 E_up`; a 4000-step engine run kept all CGL vectors upright
+    (`min |n_z|=0.765`, zero below `0.5`).
+
 ## 2026-05-26 MARTINI H5 Rebuild Scripts
 - Actions taken:
   - Added local M1 rebuild script for all dry-MARTINI `.h5` files.

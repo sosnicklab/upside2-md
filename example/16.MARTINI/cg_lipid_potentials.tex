@@ -170,8 +170,28 @@ excluded-volume states.  Rows below the first sampled distance are unresolved
 by the spline samples, so they are assigned a finite inner barrier from the
 maximum first sampled dry-MARTINI energy expectation.  This inner barrier is
 therefore tied to the sampled dry-MARTINI table, not to a chosen numeric cap.
-No sampled-energy clipping, SVD, orientation restraint, empirical pair scaling,
-pairwise PMF, or flat maximum-energy contact core is applied.
+No sampled-energy clipping, SVD, empirical pair scaling, pairwise PMF, or flat
+maximum-energy contact core is applied.
+
+\paragraph{Leaflet-normal orientation term.}
+The collapsed CGL particle removes the many explicit DOPC bead contacts that
+otherwise keep lipid tail axes aligned with the leaflet normal.  The pair spline
+above still supplies CGL--CGL excluded volume and orientation compatibility, but
+the isolated pair table is not a many-neighbor membrane orientational field.
+Production CGL inputs therefore add a one-body leaflet-normal term on the same
+dynamic CGLD-derived orientation coordinate,
+\begin{equation}
+U_{\text{leaflet}} = \frac{1}{2} k_{\text{leaflet}}
+    \left(n_z - n_z^0\right)^2 ,
+\end{equation}
+where $n_z$ is the CGL orientation-vector $z$ component and
+$n_z^0 \in \{-1,+1\}$ is assigned from the initial leaflet direction.  The
+spring constant is not tuned from trajectory appearance.  It is derived from
+the raw CGL--CGL dry-MARTINI table by comparing, at the first-neighbor contact
+radius, the table energy for in-plane CGL axes against the vertical same-leaflet
+orientation.  This keeps the term tied to the same resolved-lipid physics used
+to build $U_{\text{CG-CG}}$ and prevents CGLD from becoming an unconstrained
+display coordinate during minimization or burn-in.
 
 \subsection{CG Lipid -- Sidechain Quad-Spline Potential}
 \label{sec:cg-sc}
@@ -392,14 +412,22 @@ its rotamer position to the probe point.  For each rotamer, the resolved
 sidechain bead model is placed over the sampled SC direction vector used by
 the runtime table.  Optional bead-frame quadrature around that direction can
 be enabled for projection-convergence checks. The 2D energy grid
-$E(r_i, \cos\theta_j)$ is factorized via SVD:
+$E(r_i, \cos\theta_j)$ is stored as a lower-bound radial table plus a
+nonnegative angular penalty:
 
 \begin{itemize}
-  \item $V_{\text{rad}}(r) = \langle E \rangle_{\cos\theta}$
-  \item Residual $\Delta(r, \cos\theta) = E - V_{\text{rad}}$, then
-    $\Delta = U \cdot S \cdot V^T$; $A(\cos\theta) = U_{:,0}$ (normalized to
-    $\max|A| = 1$) and $V_{\text{ang}}(r) = S_{00} \cdot V_{0,:}$.
+  \item $V_{\text{rad}}(r) = \min_{\cos\theta} E(r, \cos\theta)$
+  \item Residual $\Delta(r, \cos\theta) =
+    \max(E(r, \cos\theta) - V_{\text{rad}}(r), 0)$ is fit with one
+    nonnegative rank-1 mode, $A(\cos\theta) V_{\text{ang}}(r)$, with
+    $A \ge 0$ and $V_{\text{ang}} \ge 0$.
 \end{itemize}
+
+This reconstruction can overestimate some orientations but cannot create an
+orientation-specific attraction below the sampled dry-MARTINI minimum at the
+same radius.  That lower-bound property is required for explicit DOPC beads,
+because a negative SVD residual inside a repulsive core can otherwise become an
+unphysical lipid--sidechain well during minimization and burn-in.
 
 The resulting tables are stored as piecewise-linear grids with 96 radial points
 ($r \in [2.5, 12.0]\,\text{\AA}$) and 13 angular bins
@@ -468,11 +496,13 @@ single-particle lipid is owned by a dedicated spline node:
     other non-sidechain point targets.
   \item CGLD: carries the orientation coordinate and its harmonic CGL-CGLD bond
     only; it is not a generic nonbonded particle.
+  \item CGL leaflet orientation: handled by \texttt{cg\_lipid\_leaflet\_orientation},
+    with its spring constant derived from the raw CGL--CGL dry-MARTINI table.
 \end{itemize}
 
-This means CGL-CGL torque, rotamer-weighted CGL-SC torque, and CGL-target
-torque act directly on the CGLD-position-derived vector through the same
-coordinate derivatives used for position forces.
+This means CGL-CGL torque, rotamer-weighted CGL-SC torque, CGL-target torque,
+and leaflet-normal torque act directly on the CGLD-position-derived vector
+through the same coordinate derivatives used for position forces.
 
 With this ownership, full-resolution and single-particle lipid modes expose the
 same physical protein interfaces at different lipid resolution.  Full mode
@@ -591,7 +621,9 @@ generator also accepts \texttt{--workers}, \texttt{--bead-frame-count},
 \texttt{--sc-bead-frame-count}, and \texttt{--cgl-bead-frame-count}.  The bead-frame
 controls are optional quadrature around sampled direction vectors; they do not
 change the runtime spline variables, disable interactions, or scale any
-physical term.
+physical term.  Process workers are used first; if an environment disallows
+process-pool semaphores, the generator falls back to a thread pool with the
+same worker count rather than serializing the build.
 
 % ==============================================================================
 \begin{thebibliography}{9}

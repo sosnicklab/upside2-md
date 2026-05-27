@@ -370,6 +370,40 @@ def _cg_lipid_sc_runtime_cutoff_ang(sc_attrs):
     return min(cutoff_ang, fitted_support_ang)
 
 
+def _derive_cg_lipid_leaflet_orientation_k(pair_grp):
+    if "leaflet_orientation_k_eup" in pair_grp.attrs:
+        return (
+            float(pair_grp.attrs["leaflet_orientation_k_eup"]),
+            str(pair_grp.attrs.get("leaflet_orientation_k_source", "cg_lipid_pair_attr")),
+        )
+    if "energy_grid_raw_kj_mol" not in pair_grp:
+        return 0.0, "missing_energy_grid_raw"
+
+    raw = np.asarray(pair_grp["energy_grid_raw_kj_mol"][:], dtype=np.float64)
+    if raw.ndim != 3 or raw.shape[1] < 3 or raw.shape[2] < 3:
+        return 0.0, "invalid_energy_grid_raw"
+    fit_min = float(pair_grp.attrs.get("fit_r_min_nm", 0.50))
+    fit_max = float(pair_grp.attrs.get("fit_r_max_nm", 1.68))
+    contact_nm = float(pair_grp.attrs.get("contact_nm", 0.70))
+    energy_conv = float(pair_grp.attrs.get("energy_conversion_kj_per_eup", 2.914952774272))
+    if energy_conv <= 0.0:
+        return 0.0, "invalid_energy_conversion"
+
+    r_values = np.linspace(fit_min, fit_max, raw.shape[0])
+    ir = int(np.argmin(np.abs(r_values - contact_nm)))
+    mid = raw.shape[1] // 2
+    vertical = float(raw[ir, mid, mid])
+    penalties = []
+    for ia in (0, raw.shape[1] - 1):
+        penalties.append(max(0.0, float(raw[ir, ia, mid]) - vertical))
+        penalties.append(max(0.0, float(raw[ir, mid, ia]) - vertical))
+    penalty_eup = float(np.mean(penalties) / energy_conv)
+    return (
+        max(0.0, 2.0 * penalty_eup),
+        "first_neighbor_in_plane_penalty_from_cg_lipid_pair_raw_grid",
+    )
+
+
 def coords(atoms):
     return np.array([[a["x"], a["y"], a["z"]] for a in atoms], dtype=float)
 
@@ -3568,6 +3602,32 @@ def inject_cg_lipid_nodes(
 
                 n_param = int(pair_grp["interaction_param"].shape[-1])
                 print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1x1x{n_param} params")
+
+                leaflet_k, leaflet_k_source = _derive_cg_lipid_leaflet_orientation_k(pair_grp)
+                if leaflet_k > 0.0:
+                    with h5py.File(up_file, "r") as up_r:
+                        cv = up_r["input/potential/compose_vector6d"]
+                        elem_index = np.asarray(cv["elem_index"][:], dtype=np.int32)
+                        orientation_index = np.asarray(cv["orientation_index"][:], dtype=np.int32)
+                        pos = np.asarray(up_r["input/pos"][:, :, 0], dtype=np.float32)
+                    initial_direction = pos[orientation_index] - pos[elem_index]
+                    norm = np.linalg.norm(initial_direction, axis=1)
+                    valid = norm > 1.0e-6
+                    initial_nz = np.zeros(n_cg, dtype=np.float32)
+                    initial_nz[valid] = initial_direction[valid, 2] / norm[valid]
+                    target_nz = np.where(initial_nz >= 0.0, 1.0, -1.0).astype(np.float32)
+
+                    leaflet = pot.create_group("cg_lipid_leaflet_orientation")
+                    leaflet.attrs["initialized"] = True
+                    leaflet.attrs["arguments"] = np.array([b"compose_vector6d"])
+                    leaflet.attrs["spring_const"] = np.float32(leaflet_k)
+                    leaflet.attrs["source"] = leaflet_k_source
+                    leaflet.create_dataset("index", data=np.arange(n_cg, dtype=np.int32))
+                    leaflet.create_dataset("target_nz", data=target_nz)
+                    print(
+                        "  Injected cg_lipid_leaflet_orientation: "
+                        f"{n_cg} CG lipids, k={leaflet_k:.3f} E_up"
+                    )
 
             if has_sc:
                 # Check for rotamer placement nodes before creating the CGL-SC

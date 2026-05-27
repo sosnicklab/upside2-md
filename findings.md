@@ -1,6 +1,27 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-05-26: Stage-7 1AFO/1RKL diagnostic root causes.
+  - The protein coordinates in `*.stage_7.0.prepared.up` match the HDF5
+    reference/PDB mapping for 1AFO and 1RKL; the apparent VTF frame-0 damage is
+    the promoted endpoint of stage-7 burn-in, not a raw PDB import mismatch.
+  - Full-resolution lipid mode exposed an SC-particle table factorization bug:
+    the old SVD residual created runtime reconstructions as low as
+    `-4.7e11 kJ/mol`, which is an unphysical lipid-sidechain well and explains
+    helix bending/unfolding during burn-in.  The accepted table decomposition
+    uses the minimum sampled orientation as the radial lower bound plus a
+    nonnegative angular penalty, so it cannot create attractions below the
+    sampled dry-MARTINI minimum at a radius.
+  - Coarse CGL lipids in stale 1AFO output tilted during burn-in even though the
+    prepared CGLD-CGL vectors were initially upright.  A separate CGL
+    orientation term is acceptable here because it is a distinct many-body
+    leaflet-normal field derived from the raw CGL-CGL dry-MARTINI orientation
+    table, not a tuned visual restraint and not a replacement for CGL-CGL,
+    CGL-SC, or CGL-target spline torques.
+  - In sandboxed environments process-pool semaphores can be unavailable.  The
+    dry-MARTINI table builder should keep process workers as the default for
+    M1/Slurm but fall back to a thread pool with the same worker count instead
+    of serializing the build.
 - 2026-05-26: User correction on direction-vector spline variables and
   table-build speed.
   - Rule: describe and implement the CG potentials in terms of the runtime

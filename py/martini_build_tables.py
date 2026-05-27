@@ -7,7 +7,7 @@ import math
 import os
 import importlib.util
 import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Set, Tuple
 
@@ -92,8 +92,9 @@ def _parallel_map_ordered(label: str, func: Callable[[Any], Any], tasks: list) -
         with ProcessPoolExecutor(max_workers=workers, mp_context=context) as pool:
             return list(pool.map(func, tasks))
     except (OSError, PermissionError) as exc:
-        print(f"  Parallel {label}: falling back to 1 worker ({exc})")
-        return [func(task) for task in tasks]
+        print(f"  Parallel {label}: process workers unavailable ({exc}); using threads")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(func, tasks))
 
 
 def _bead_frame_angles(count: int) -> np.ndarray:
@@ -193,29 +194,31 @@ def _factorize_one_sided_orientation(
     cos_theta_grid: List[float],
 ) -> Tuple[List[float], List[float], List[float], float]:
     sampled = np.asarray(sampled_energy_grid, dtype=np.float64)
-    radial = sampled.mean(axis=0)
-    residual = sampled - radial[None, :]
+    radial = sampled.min(axis=0)
+    residual = np.maximum(sampled - radial[None, :], 0.0)
 
     if np.allclose(residual, 0.0):
         angular_profile = np.zeros(sampled.shape[0], dtype=np.float64)
         angular_radial = np.zeros(sampled.shape[1], dtype=np.float64)
         rms_error = 0.0
     else:
-        u, s, vh = np.linalg.svd(residual, full_matrices=False)
-        angular_profile = u[:, 0].copy()
-        angular_radial = (s[0] * vh[0, :]).copy()
-        profile_mean = float(angular_profile.mean())
-        if abs(profile_mean) > 1.0e-12:
-            radial = radial + profile_mean * angular_radial
-            angular_profile = angular_profile - profile_mean
-        if float(np.dot(angular_profile, np.asarray(cos_theta_grid, dtype=np.float64))) < 0.0:
-            angular_profile *= -1.0
-            angular_radial *= -1.0
-        max_abs = float(np.max(np.abs(angular_profile)))
-        if max_abs > 0.0:
-            angular_profile /= max_abs
-            angular_radial *= max_abs
-        rms_error = float(np.sqrt(np.mean((sampled - (radial[None, :] + angular_profile[:, None] * angular_radial[None, :])) ** 2)))
+        angular_profile = residual.mean(axis=1)
+        if float(np.max(angular_profile)) <= 0.0:
+            angular_profile = np.ones(sampled.shape[0], dtype=np.float64)
+        angular_radial = np.zeros(sampled.shape[1], dtype=np.float64)
+
+        for _ in range(32):
+            denom_profile = max(float(np.dot(angular_profile, angular_profile)), 1.0e-30)
+            angular_radial = np.maximum((angular_profile @ residual) / denom_profile, 0.0)
+            denom_radial = max(float(np.dot(angular_radial, angular_radial)), 1.0e-30)
+            angular_profile = np.maximum((residual @ angular_radial) / denom_radial, 0.0)
+            max_profile = float(np.max(angular_profile))
+            if max_profile > 0.0:
+                angular_profile /= max_profile
+                angular_radial *= max_profile
+
+        reconstruction = radial[None, :] + angular_profile[:, None] * angular_radial[None, :]
+        rms_error = float(np.sqrt(np.mean((sampled - reconstruction) ** 2)))
 
     return (
         [float(x) for x in radial],
