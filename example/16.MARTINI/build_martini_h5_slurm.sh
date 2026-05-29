@@ -48,11 +48,21 @@ if [ -z "${UPSIDE_MARTINI_TABLE_WORKERS+x}" ]; then
     export UPSIDE_MARTINI_TABLE_WORKERS
 fi
 
-echo "Regenerating dry-MARTINI .h5 files under ${PROJECT_ROOT}/parameters/dryMARTINI"
-echo "Using ${UPSIDE_MARTINI_TABLE_WORKERS} MARTINI table worker(s)"
+# Hidden-bead relaxation is always enabled.  The rigid-geometry table path
+# has been removed; every interaction involving DOPC or SC beads is relaxed
+# during table construction to produce a physically realistic effective pair
+# potential.
+UPSIDE_MARTINI_FIT_RELAX_STEPS=50
+export UPSIDE_MARTINI_FIT_RELAX_STEPS
 
+echo "Regenerating dry-MARTINI .h5 files under ${PROJECT_ROOT}/parameters/dryMARTINI"
+echo "Using ${UPSIDE_MARTINI_TABLE_WORKERS} MARTINI table worker(s), ${UPSIDE_MARTINI_FIT_RELAX_STEPS} fit relax step(s)"
+
+# --fit-relax-steps comes after "$@" so that any caller-supplied value
+# cannot accidentally disable relaxation.
 python3 "${PROJECT_ROOT}/py/martini_gen_params.py" \
     --upside-home "${PROJECT_ROOT}" \
     --force \
     --workers "${UPSIDE_MARTINI_TABLE_WORKERS}" \
-    "$@"
+    "$@" \
+    --fit-relax-steps "${UPSIDE_MARTINI_FIT_RELAX_STEPS}"

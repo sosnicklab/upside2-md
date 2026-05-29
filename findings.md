@@ -8,16 +8,23 @@
   - Full-resolution lipid mode exposed an SC-particle table factorization bug:
     the old SVD residual created runtime reconstructions as low as
     `-4.7e11 kJ/mol`, which is an unphysical lipid-sidechain well and explains
-    helix bending/unfolding during burn-in.  The accepted table decomposition
-    uses the minimum sampled orientation as the radial lower bound plus a
-    nonnegative angular penalty, so it cannot create attractions below the
-    sampled dry-MARTINI minimum at a radius.
-  - Coarse CGL lipids in stale 1AFO output tilted during burn-in even though the
-    prepared CGLD-CGL vectors were initially upright.  A separate CGL
-    orientation term is acceptable here because it is a distinct many-body
-    leaflet-normal field derived from the raw CGL-CGL dry-MARTINI orientation
-    table, not a tuned visual restraint and not a replacement for CGL-CGL,
-    CGL-SC, or CGL-target spline torques.
+    helix bending/unfolding during burn-in.  The corrected decomposition keeps
+    the orientation-average radial term and signed leading SVD mode in the
+    resolved range, shifts rows upward only to prevent falling below the sampled
+    dry-MARTINI minimum, and makes unresolved hard-core rows finite radial
+    barriers to avoid float-storage cancellation wells.
+  - User correction: do not add a standalone CGL orientation potential.  CGL
+    orientation behavior must come from the CGL--CGL spline in `dopc.h5`.
+    The CGL--CGL table should retain the resolved dry-MARTINI lipid--lipid
+    attractions instead of stripping a radial background and replacing it with
+    a separate correction.
+  - User correction: do not use hidden-bead relaxation when tabulating CGL--CGL
+    or SC--CGL direction-vector tables.  The table entries should be direct
+    dry-MARTINI nonbonded energies from rotated full-resolution lipid and
+    sidechain bead geometries at the sampled direction vectors.
+  - HDF5 parameter generation should be atomic: write to a sibling temporary
+    file and replace the production `.h5` only after the build succeeds, so an
+    interrupted expensive table build cannot leave `dopc.h5` as a placeholder.
   - In sandboxed environments process-pool semaphores can be unavailable.  The
     dry-MARTINI table builder should keep process workers as the default for
     M1/Slurm but fall back to a thread pool with the same worker count instead
@@ -206,8 +213,10 @@
   - Current 1RKL stage-7.4 output before the fix had `34` lipids with `|n_z|<0.5` and `14` with `|n_z|<0.25`; the count grew across stage-7 chunks.
   - Root cause: the CGL-CGL table clips all negative tensor controls to zero. That avoids a known additive many-neighbor collapse but also removes enough bilayer orientational cohesion that sparse CGL particles can become near-free rotors.
   - Directly restoring the stored radial attractive background is not acceptable: on a copied stage-7.4 artifact, `cg_lipid_pair` accumulated from about `-1453` to `-3953 E_up` over one 10k-step chunk.
-  - Physical fix: add `cg_lipid_leaflet_orientation`, a MARTINI-only mean-field orientation term. Its spring is derived from the current CGL-CGL table as twice the mean first-neighbor energy penalty for rotating one lipid into the membrane plane while the neighbor remains leaflet-normal. It uses each lipid's initial dry-MARTINI leaflet sign and applies force through the CGLD-derived orientation coordinate.
-  - Copied validation with `k=48.684 E_up` reduced final `|n_z|<0.5` and `|n_z|<0.25` counts to zero and removed anti-aligned lipids.
+  - Superseded fix: do not add `cg_lipid_leaflet_orientation`. The accepted
+    direction is to retain the full resolved dry-MARTINI lipid--lipid
+    attraction in the CGL--CGL spline stored in `dopc.h5` and avoid any
+    separate one-body or long-range orientation correction.
 - 2026-05-21: 1RKL stage-7.4 edge-lipid VTF geometry check.
   - Do not run `obj/upside` diagnostics directly on original `.up` artifacts, even with `--duration-steps 0`; the program can rewrite the `/output` group. Use a copied HDF5 file for derivative checks.
   - The reported edge-lipid oddity in `outputs/martini_test_1rkl_hybrid/1rkl.stage_7.4.vtf` is not a special physical box-edge interaction. HDF5 CGL-CGLD minimum-image lengths are normal (`11.13-12.04 A`), edge and non-edge z distributions are comparable, and no displayed lipid z coordinate leaves the half-box.
@@ -975,3 +984,8 @@
   - bead-resolved dry-MARTINI: `50.091999 -> 50.071121 Å`, area `-0.083341%`;
   - current single-particle model: `50.091999 -> 50.100193 Å`, area `+0.032718%`.
   - Working rule: do not describe the current single-particle NPT box response as dry-MARTINI-consistent until its XY relaxation sign and scale agree in this direct bilayer-only comparison.
+- 2026-05-28: B-spline angular underdetermination causes spurious CG-CG energy features.
+  - Rule: the number of angular B-spline control points must not greatly exceed the number of angular data samples. With 15×15=225 angular controls fitting 7×7=49 data points per radial distance (4.6× underdetermination), Tikhonov regularization with λ=0.01 is too weak to prevent oscillations between sample points. These spurious features create unphysical orientational preferences in simulation.
+  - Fix: reduce n_knot_angular from 15 to min(cos_theta_count + 2, 15) = 9, increase smooth from 0.01 to 0.1. This reduces angular std by 62-70% and eliminates most out-of-bounds interpolated values.
+  - The same pattern exists in the SC-CGL table (9²=81 data → 15²=225 controls, 2.8× ratio) but is less severe.
+  - When fitting tensor-product B-splines to underdetermined data, prefer matching knot resolution to data resolution over weak regularization. Weak regularization with excess DOFs creates interpolation artifacts that look like physical structure but are not.

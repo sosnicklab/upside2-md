@@ -1,17 +1,86 @@
 # Progress Log
 
+## 2026-05-28 CG-CG B-Spline Angular Regularization Fix
+- Actions taken:
+  - Diagnosed root cause of messy bilayer orientation: CG-CG B-spline had severe
+    angular underdetermination (15×15=225 controls fitting 7×7=49 data points per
+    radial distance). With Tikhonov λ=0.01, the fit created spurious angular
+    oscillations between sample points, producing unphysical orientational energy
+    features not present in the underlying force field.
+  - Added `n_knot_angular` and `cg_smooth` parameters to `_fit_cg_lipid_quadspline`.
+  - Changed call site in `_build_cg_lipid_tables` to use
+    `n_knot_angular=min(_cg_ct + 2, 15) = 9` and `cg_smooth=0.1`.
+  - Rebuilt `dopc.h5` cg_lipid_pair group: 14×9² = 1134 params (was 3150).
+  - Bilayer test PASSES: validation=PASS, no flips, no crossings.
+  - Angular fine-grid std reduced 62-70% across all radial distances.
+  - Updated `cg_lipid_potentials.tex` with new N_θ=9 and regularization rationale.
+- Files modified:
+  - `py/martini_build_tables.py` — added params, updated call site
+  - `example/16.MARTINI/build_martini_h5_m1_temp.sh` — updated call for rebuild
+  - `example/16.MARTINI/cg_lipid_potentials.tex` — N_θ 15→9, added regularization section
+  - `parameters/dryMARTINI/dopc.h5` — regenerated cg_lipid_pair
+  - `plan.md` — updated with diagnosis and fix
+  - `findings.md` — added B-spline underdetermination lesson
+  - `progress.md` — this entry
+- Remaining:
+  - Full protein+lipid workflow re-run needed to verify orientation improvement.
+  - SC-CGL table has similar (less severe) underdetermination; not yet addressed.
+
+## 2026-05-27 Full-Lipid/CGL Correction
+- Actions taken:
+  - Removed the standalone `cg_lipid_leaflet_orientation` runtime potential and
+    injection path.
+  - Changed CGL--CGL table generation so `dopc.h5` retains the resolved
+    dry-MARTINI lipid--lipid attraction instead of subtracting/clipping the
+    attractive background and adding a separate orientation correction.
+  - Reworked SC-particle factorization for full-resolution lipid mode: signed
+    SVD is retained in the resolved range, but rows are floored against sampled
+    dry-MARTINI minima and unresolved hard-core rows are finite radial barriers.
+  - Updated `cg_lipid_potentials.tex` and lessons to reflect the user's
+    correction.
+  - Removed hidden-bead relaxation from CGL--CGL and SC--CGL table generation;
+    tables now use direct rotated full-resolution bead geometries at sampled
+    direction vectors.
+  - Made MARTINI `.h5` builders write through sibling temp files and atomically
+    replace completed outputs.
+  - Regenerated `parameters/dryMARTINI/dopc.h5` and `sidechain.h5`.
+- Verification:
+  - Python compile and C++ build passed after removing the CGL orientation node.
+  - Temporary rebuilt SC table:
+    reconstruction min/max `-17.31/1.04e6 kJ/mol`, no huge negative wells.
+  - CGL--CGL smoke table retained attractive controls in `dopc.h5` path:
+    sampled raw min/max `-30.67/1.59e6 kJ/mol`, fitted controls
+    `-10.52/5.45e5 E_up`, `attractive_control_source=retained_full_resolved_dry_martini_pair_table`.
+  - Final `dopc.h5` check: CGL--CGL `fit_relax_steps=0`,
+    `isotropic_background_source=none_full_resolved_dry_martini_pair_table`,
+    `excluded_area_nonnegative_rows=0`, retained attractive controls
+    (`count=434`), and SC--CGL `fit_relax_steps=0`.
+  - Final `sidechain.h5` check: SC-particle reconstruction min/max
+    `-15.68/9.62e5 kJ/mol`; no huge negative lipid-sidechain well remains.
+  - Current stage files keep termini charged: 1AFO fragments are
+    `(0,36) Qd->Qa` and `(36,72) Qd->Qa`; 1RKL is `(0,31) Qd->Qa`, in both
+    CGLipid and full-resolution outputs.
+  - `python3 -m py_compile ...`, `cmake --build obj`, and `git diff --check`
+    passed.
+- Failure and fix:
+  - A copied trajectory test from `stage_7.0.prepared.up` was invalid because
+    that file is pre-minimization and has severe full-lipid clashes; the run was
+    stopped after NaNs. Use regenerated workflow handoff, not prepared files,
+    for trajectory validation.
+  - A sandboxed DOPC rebuild fell back to threads and was too slow; rerunning
+    outside the sandbox used process workers and completed the regenerated
+    `dopc.h5`.
+
 ## 2026-05-26 Stage-7 1AFO/1RKL Debug
 - Actions taken:
   - Compared stage-7 prepared inputs, promoted production inputs, and output
     frame 0 for `martini_1afo_hybrid`, `martini_1afo_hybrid_full`,
     `martini_1rkl_hybrid`, and `martini_1rkl_hybrid_full`.
-  - Identified two force-field bugs: an unphysical negative SC-particle
-    factorization well affecting full-resolution lipid burn-in, and missing
-    many-body leaflet-normal control for dynamic CGLD orientations.
-  - Replaced SC-particle SVD residual factorization with a physical
-    lower-bound radial plus nonnegative angular penalty decomposition.
-  - Added `cg_lipid_leaflet_orientation`, with spring constant derived from the
-    raw CGL-CGL dry-MARTINI table.
+  - Identified a force-field bug: an unphysical negative SC-particle
+    factorization well affecting full-resolution lipid burn-in.
+  - An intermediate `cg_lipid_leaflet_orientation` attempt was removed on
+    2026-05-27; CGL orientation behavior now belongs in the `dopc.h5`
+    CGL--CGL spline table.
   - Added thread fallback for table builds when process pools are disallowed.
   - Updated `example/16.MARTINI/cg_lipid_potentials.tex`.
 - Files modified:
@@ -26,9 +95,6 @@
     (`RMSD=0.000 A`); frame-0 bends come from burn-in-promoted input state.
   - Temporary rebuilt SC-particle table had runtime minimum `-17.3 kJ/mol`,
     versus `-4.7e11 kJ/mol` from the stale table.
-  - Copied 1AFO CGL stage injected `182` leaflet terms with
-    `k=99.289 E_up`; a 4000-step engine run kept all CGL vectors upright
-    (`min |n_z|=0.765`, zero below `0.5`).
 
 ## 2026-05-26 MARTINI H5 Rebuild Scripts
 - Actions taken:

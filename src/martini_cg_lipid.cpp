@@ -617,54 +617,6 @@ struct CGLipidPairPotential : public PotentialNode {
     }
 };
 
-struct CGLipidLeafletOrientation : public PotentialNode {
-    CoordNode& cg_pos;
-    vector<int> index;
-    vector<float> target_nz;
-    float spring_const;
-
-    CGLipidLeafletOrientation(hid_t grp, CoordNode& cg_pos_);
-    virtual void compute_value(ComputeMode mode) override;
-    virtual void propagate_deriv() override;
-};
-
-CGLipidLeafletOrientation::CGLipidLeafletOrientation(hid_t grp, CoordNode& cg_pos_)
-    : PotentialNode()
-    , cg_pos(cg_pos_)
-    , spring_const(read_attribute<float>(grp, ".", "spring_const", 0.f))
-{
-    check_elem_width(cg_pos, 6);
-    index = read_int_dataset(grp, "index");
-    target_nz.resize(index.size());
-    traverse_dset<1, float>(grp, "target_nz", [&](size_t i, float v) {
-        target_nz[i] = v;
-    });
-    if(target_nz.size() != index.size())
-        throw string("cg_lipid_leaflet_orientation index/target_nz size mismatch");
-}
-
-void CGLipidLeafletOrientation::compute_value(ComputeMode mode) {
-    (void)mode;
-    VecArray cg = cg_pos.output;
-    float total = 0.f;
-    for(size_t i = 0; i < index.size(); ++i) {
-        int idx = index[i];
-        float diff = cg(5, idx) - target_nz[i];
-        total += 0.5f * spring_const * diff * diff;
-    }
-    potential = total;
-}
-
-void CGLipidLeafletOrientation::propagate_deriv() {
-    VecArray cg = cg_pos.output;
-    VecArray cg_sens = cg_pos.sens;
-    for(size_t i = 0; i < index.size(); ++i) {
-        int idx = index[i];
-        float diff = cg(5, idx) - target_nz[i];
-        cg_sens(5, idx) += spring_const * diff;
-    }
-}
-
 CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     : PotentialNode()
     , cg_pos(cg_pos_)
@@ -1286,7 +1238,6 @@ void CGLipidTargetPotential::propagate_deriv() {
 }
 
 static RegisterNodeType<ComposeVector6D, 1> _reg_cv("compose_vector6d");
-static RegisterNodeType<CGLipidLeafletOrientation, 1> _reg_cg_leaflet("cg_lipid_leaflet_orientation");
 static RegisterNodeType<CGLipidPairPotential, 1> _reg_cg_pair("cg_lipid_pair");
 static RegisterNodeType<CGLipidSCPotential, 2> _reg_cg_sc("cg_lipid_sc");
 static RegisterNodeType<CGLipidSCOneBody, 2> _reg_cg_sc_1body("cg_lipid_rotamer_sc");

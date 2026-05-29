@@ -194,29 +194,35 @@ def _factorize_one_sided_orientation(
     cos_theta_grid: List[float],
 ) -> Tuple[List[float], List[float], List[float], float]:
     sampled = np.asarray(sampled_energy_grid, dtype=np.float64)
-    radial = sampled.min(axis=0)
-    residual = np.maximum(sampled - radial[None, :], 0.0)
+    radial = sampled.mean(axis=0)
+    residual = sampled - radial[None, :]
 
     if np.allclose(residual, 0.0):
         angular_profile = np.zeros(sampled.shape[0], dtype=np.float64)
         angular_radial = np.zeros(sampled.shape[1], dtype=np.float64)
         rms_error = 0.0
     else:
-        angular_profile = residual.mean(axis=1)
-        if float(np.max(angular_profile)) <= 0.0:
-            angular_profile = np.ones(sampled.shape[0], dtype=np.float64)
-        angular_radial = np.zeros(sampled.shape[1], dtype=np.float64)
-
-        for _ in range(32):
-            denom_profile = max(float(np.dot(angular_profile, angular_profile)), 1.0e-30)
-            angular_radial = np.maximum((angular_profile @ residual) / denom_profile, 0.0)
-            denom_radial = max(float(np.dot(angular_radial, angular_radial)), 1.0e-30)
-            angular_profile = np.maximum((residual @ angular_radial) / denom_radial, 0.0)
-            max_profile = float(np.max(angular_profile))
-            if max_profile > 0.0:
-                angular_profile /= max_profile
-                angular_radial *= max_profile
-
+        u, s, vh = np.linalg.svd(residual, full_matrices=False)
+        angular_profile = u[:, 0].copy()
+        angular_radial = (s[0] * vh[0, :]).copy()
+        profile_mean = float(angular_profile.mean())
+        if abs(profile_mean) > 1.0e-12:
+            radial = radial + profile_mean * angular_radial
+            angular_profile = angular_profile - profile_mean
+        if float(np.dot(angular_profile, np.asarray(cos_theta_grid, dtype=np.float64))) < 0.0:
+            angular_profile *= -1.0
+            angular_radial *= -1.0
+        max_abs = float(np.max(np.abs(angular_profile)))
+        if max_abs > 0.0:
+            angular_profile /= max_abs
+            angular_radial *= max_abs
+        reconstruction = radial[None, :] + angular_profile[:, None] * angular_radial[None, :]
+        floor = sampled.min(axis=0)
+        radial += np.maximum(floor[None, :] - reconstruction, 0.0).max(axis=0)
+        core_mask = sampled.max(axis=0) > 1.0e6
+        if np.any(core_mask):
+            radial[core_mask] = sampled.min(axis=0)[core_mask]
+            angular_radial[core_mask] = 0.0
         reconstruction = radial[None, :] + angular_profile[:, None] * angular_radial[None, :]
         rms_error = float(np.sqrt(np.mean((sampled - reconstruction) ** 2)))
 
@@ -525,6 +531,8 @@ def _run_sc_task(
     cb_anchor_nm: List[float],
     cb_vector_unit: List[float],
     sidechain_bead_frame_angles: List[float],
+    rel_relax_steps: int = 0,
+    sc_restraint_k: float = 5000.0,
 ) -> Dict[str, Any]:
     n_rotamer = len(rotamer_bead_positions_nm)
     n_angle = len(cos_theta_grid)
@@ -570,30 +578,48 @@ def _run_sc_task(
                 zip(rotamer_positions, rotamer_weights)
             ):
                 rot_energy_sum = 0.0
-                target = np.asarray(target_pos_nm, dtype=np.float64)
+                target = np.asarray(target_pos_nm, dtype=np.float64).reshape(1, 3)
                 for sc_frame_angle in bead_frame_angles:
-                    framed_sc_positions = _rotate_points_about_axis_np(
-                        sc_positions, cb_vector_arr, sc_frame_angle, cb_anchor_arr
-                    )
-                    rot_energy = 0.0
-                    for bead_pos, bead_type, bead_charge in zip(
-                        framed_sc_positions, sidechain_bead_types, sidechain_bead_charges
-                    ):
-                        delta = target - bead_pos
-                        dist_nm = max(1.0e-6, float(np.linalg.norm(delta)))
-                        params = pair_params[(bead_type, target_type)]
-                        sigma_nm = params["sigma_nm"]
-                        epsilon_kj = params["epsilon_kj_mol"]
-                        sr = sigma_nm / dist_nm
-                        sr2 = sr * sr
-                        sr6 = sr2 * sr2 * sr2
-                        lj = 4.0 * epsilon_kj * (sr6 * sr6 - sr6)
-                        coul = (
-                            COULOMB_K_DRY_KJ_NM * bead_charge * target_charge / dist_nm
-                            if bead_charge and target_charge
-                            else 0.0
+                    if rel_relax_steps > 0:
+                        body_rot = (_rotation_about_axis_np(np.array([0.0, 0.0, 1.0]), float(sc_frame_angle))
+                                     @ sc_positions.T).T
+                        _, rot_energy = _relax_sc_beads(
+                            init_body_positions=body_rot,
+                            ref_body_positions=np.asarray(sc_positions, dtype=np.float64),
+                            sc_bead_types=list(sidechain_bead_types),
+                            sc_bead_charges=list(sidechain_bead_charges),
+                            k_restraint=sc_restraint_k,
+                            pair_params=pair_params,
+                            direction_lab=cb_vector_arr,
+                            cb_anchor_lab=cb_anchor_arr,
+                            partner_lab_positions=target,
+                            partner_bead_types=[target_type],
+                            partner_bead_charges=[target_charge],
+                            rel_relax_steps=rel_relax_steps,
                         )
-                        rot_energy += lj + coul
+                    else:
+                        framed_sc_positions = _rotate_points_about_axis_np(
+                            sc_positions, cb_vector_arr, sc_frame_angle, cb_anchor_arr
+                        )
+                        rot_energy = 0.0
+                        for bead_pos, bead_type, bead_charge in zip(
+                            framed_sc_positions, sidechain_bead_types, sidechain_bead_charges
+                        ):
+                            delta = target[0] - bead_pos
+                            dist_nm = max(1.0e-6, float(np.linalg.norm(delta)))
+                            params = pair_params[(bead_type, target_type)]
+                            sigma_nm = params["sigma_nm"]
+                            epsilon_kj = params["epsilon_kj_mol"]
+                            sr = sigma_nm / dist_nm
+                            sr2 = sr * sr
+                            sr6 = sr2 * sr2 * sr2
+                            lj = 4.0 * epsilon_kj * (sr6 * sr6 - sr6)
+                            coul = (
+                                COULOMB_K_DRY_KJ_NM * bead_charge * target_charge / dist_nm
+                                if bead_charge and target_charge
+                                else 0.0
+                            )
+                            rot_energy += lj + coul
                     rot_energy_sum += rot_energy
                 rot_energy = rot_energy_sum / float(len(bead_frame_angles))
 
@@ -676,6 +702,8 @@ def _build_sc_table_group(
     r_count: int = 96,
     direction_count: int = 24,
     cos_theta_count: int = 13,
+    fit_relax_steps: int = 0,
+    sc_restraint_k: float = 5000.0,
 ) -> None:
     orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
     r_values = _linspace(r_min_nm, r_max_nm, r_count)
@@ -742,6 +770,8 @@ def _build_sc_table_group(
                     "cb_anchor_nm": cb_anchor_nm,
                     "cb_vector_unit": cb_vector_unit,
                     "sidechain_bead_frame_angles": sidechain_bead_frame_angles,
+                    "rel_relax_steps": int(fit_relax_steps),
+                    "sc_restraint_k": float(sc_restraint_k),
                 }
             )
 
@@ -791,6 +821,7 @@ def _build_sc_table_group(
     g = h5.create_group("sc_table")
     g.attrs["schema"] = SCHEMA_SC
     g.attrs["forcefield_name"] = "martini22"
+    g.attrs["fit_relax_steps"] = np.int32(fit_relax_steps)
     g.attrs["sidechain_bead_frame_count"] = np.int32(len(sidechain_bead_frame_angles))
     g.attrs["orientation_sampling"] = "target_direction_vector_grid"
     g.create_dataset("restype_order", data=np.asarray([np.bytes_(x) for x in residues], dtype="S4"))
@@ -1103,6 +1134,22 @@ _CG_DERIVED_STRING_ATTRS = (
 )
 
 
+def _write_h5_atomically(output_path: Path, writer: Callable[[h5py.File], None]) -> None:
+    """Write an HDF5 file through a sibling temp file, then atomically replace."""
+    output_path = Path(output_path).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_name(f".{output_path.name}.tmp.{os.getpid()}")
+    try:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        with h5py.File(tmp_path, "w") as h5:
+            writer(h5)
+        os.replace(tmp_path, output_path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
 def _write_cg_derived_attrs(group, derived_params: dict) -> None:
     group.attrs["derivation_schema"] = "dry_martini_dopc_derived_v1"
     for attr_name in _CG_DERIVED_NUMERIC_ATTRS:
@@ -1136,6 +1183,521 @@ def _compute_lipid_bonded_energy(positions: np.ndarray) -> float:
         cos_theta0 = math.cos(math.radians(theta0_deg))
         energy += 0.5 * float(k_ang) * (cos_theta - cos_theta0) ** 2
     return energy
+
+
+def _compute_lipid_bonded_energy_and_gradient(
+    positions: np.ndarray,
+) -> tuple[float, np.ndarray]:
+    """Compute harmonic bond + cosine angle energy and analytic gradient.
+
+    positions: (14, 3) float64 array in any frame (rotation/translation invariant).
+    Returns (energy_kj_mol, gradient).
+    """
+    n = positions.shape[0]
+    grad = np.zeros_like(positions, dtype=np.float64)
+    energy = 0.0
+
+    for i, j, r0, k in _CURRENT_CG_BONDS:
+        dr = positions[i] - positions[j]
+        r = float(np.sqrt(np.dot(dr, dr)))
+        if r < 1e-12:
+            continue
+        de = float(k) * (r - r0) / r
+        grad[i] += de * dr
+        grad[j] -= de * dr
+        energy += 0.5 * float(k) * (r - r0) ** 2
+
+    for i, j, k_idx, theta0_deg, k_ang in _CURRENT_CG_ANGLES:
+        r_ij = positions[i] - positions[j]
+        r_kj = positions[k_idx] - positions[j]
+        d_ij = float(np.sqrt(np.dot(r_ij, r_ij)))
+        d_kj = float(np.sqrt(np.dot(r_kj, r_kj)))
+        if d_ij < 1e-8 or d_kj < 1e-8:
+            continue
+        cos_theta = float(np.dot(r_ij, r_kj)) / (d_ij * d_kj)
+        cos_theta = max(-1.0, min(1.0, cos_theta))
+        cos_theta0 = math.cos(math.radians(theta0_deg))
+        dcos = cos_theta - cos_theta0
+        energy += 0.5 * float(k_ang) * dcos * dcos
+
+        coeff = float(k_ang) * dcos / (d_ij * d_kj)
+        grad_i = coeff * (r_kj - cos_theta * (d_kj / d_ij) * r_ij)
+        grad_k = coeff * (r_ij - cos_theta * (d_ij / d_kj) * r_kj)
+        grad[i] += grad_i
+        grad[k_idx] += grad_k
+        grad[j] -= (grad_i + grad_k)
+
+    return energy, grad
+
+
+def _project_com_direction_constraints(
+    positions: np.ndarray,
+    masses: np.ndarray,
+    head_idx: int,
+    tail_indices: list,
+    target_dir: np.ndarray | None = None,
+    max_iter: int = 5,
+    fixed_bead_idx: int | None = None,
+) -> np.ndarray:
+    """Project positions to satisfy COM=0 and direction=target_dir constraints.
+
+    positions: (N, 3) bead positions (body frame).
+    masses: (N,) bead masses.
+    head_idx: index of head bead (NC3 for DOPC, CB for SC).
+    tail_indices: indices of tail beads (C5A/C5B for DOPC, all non-CB SC beads).
+    target_dir: direction to align to (default z-axis).
+    fixed_bead_idx: if set, pin this bead to origin instead of subtracting COM.
+        Use for SC beads where CB (index 0) is the anchor point.
+
+    Applies position constraints and Rodrigues rotation iteratively.
+    """
+    if target_dir is None:
+        target_dir = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    else:
+        target_dir = np.asarray(target_dir, dtype=np.float64)
+        target_dir = target_dir / float(np.linalg.norm(target_dir))
+
+    pos = np.asarray(positions, dtype=np.float64).copy()
+    for _ in range(max_iter):
+        if fixed_bead_idx is not None:
+            # Pin the anchor bead to origin
+            anchor_pos = pos[fixed_bead_idx].copy()
+            pos = pos - anchor_pos[None, :]
+        else:
+            # COM constraint
+            weighted_center = np.average(pos, axis=0, weights=masses)
+            pos = pos - weighted_center[None, :]
+
+        # Direction constraint: rotate (tail_mid - head) to target_dir
+        head = pos[head_idx]
+        tail_indices_arr = np.asarray(tail_indices, dtype=np.intp)
+        tail_mid = np.mean(pos[tail_indices_arr], axis=0)
+        current_dir = tail_mid - head
+        current_norm = float(np.linalg.norm(current_dir))
+        if current_norm < 1e-12:
+            break
+        current_dir = current_dir / current_norm
+
+        v = np.cross(current_dir, target_dir)
+        s = float(np.linalg.norm(v))
+        c = float(np.dot(current_dir, target_dir))
+        if s < 1e-12:
+            break
+        v = v / s
+        # Rodrigues rotation about origin
+        pos = (
+            pos * c
+            + np.cross(v[None, :], pos) * s
+            + v[None, :] * np.sum(v[None, :] * pos, axis=1, keepdims=True) * (1.0 - c)
+        )
+    return pos
+
+
+def _compute_position_restraint_energy_and_gradient(
+    positions: np.ndarray,
+    ref_positions: np.ndarray,
+    k_restraint: float,
+) -> tuple[float, np.ndarray]:
+    """Harmonic position restraint: E = 0.5 * k * sum (pos - ref)^2."""
+    delta = np.asarray(positions, dtype=np.float64) - np.asarray(ref_positions, dtype=np.float64)
+    energy = 0.5 * float(k_restraint) * float(np.sum(delta * delta))
+    gradient = float(k_restraint) * delta
+    return energy, gradient
+
+
+def _dopc_body_to_lab(
+    body_positions: np.ndarray,
+    direction_lab: np.ndarray,
+    com_lab: np.ndarray,
+) -> np.ndarray:
+    """Transform DOPC bead positions from body frame (COM=0, dir=z) to lab frame."""
+    R = _rotation_to_align_z_np(np.asarray(direction_lab, dtype=np.float64))
+    return com_lab[None, :] + (R @ np.asarray(body_positions, dtype=np.float64).T).T
+
+
+def _dopc_lab_to_body(
+    lab_positions: np.ndarray,
+    direction_lab: np.ndarray,
+    com_lab: np.ndarray,
+) -> np.ndarray:
+    """Transform DOPC bead positions from lab frame to body frame (COM=0, dir=z)."""
+    R = _rotation_to_align_z_np(np.asarray(direction_lab, dtype=np.float64))
+    return ((np.asarray(lab_positions, dtype=np.float64) - com_lab[None, :]) @ R)
+
+
+def _relax_dopc_beads(
+    init_body_positions: np.ndarray,
+    ref_body_positions: np.ndarray,
+    bead_types: list,
+    bead_charges: list,
+    bead_masses: np.ndarray,
+    pair_params: dict,
+    direction_lab: np.ndarray,
+    com_lab: np.ndarray,
+    partner_lab_positions: np.ndarray,
+    partner_bead_types: list,
+    partner_bead_charges: list,
+    dist_min_nm: float = 0.20,
+    rel_relax_steps: int = 50,
+    step_size_nm: float = 0.0005,
+    grad_tolerance: float = 1e-4,
+) -> tuple[np.ndarray, float]:
+    """Relax DOPC bead positions with COM and direction constraints.
+
+    The DOPC beads relax against fixed partner positions (point particle,
+    SC beads, or CGLipid beads). The DOPC COM and direction vector are held
+    fixed at their lab-frame values. Internal energy includes bonded terms
+    (bonds + angles) and nonbonded with the partner.
+
+    Returns (relaxed_body_positions, final_energy_kj_mol).
+    """
+    if rel_relax_steps <= 0:
+        lab_pos = _dopc_body_to_lab(init_body_positions, direction_lab, com_lab)
+        energy, _, _ = _compute_pair_energy_and_gradient(
+            lab_pos, partner_lab_positions,
+            bead_types, partner_bead_types,
+            bead_charges, partner_bead_charges,
+            pair_params, dist_min_nm=dist_min_nm,
+        )
+        return init_body_positions.copy(), energy
+
+    body_pos = np.asarray(init_body_positions, dtype=np.float64).copy()
+    step = float(step_size_nm)
+    head_idx = 0
+    tail_indices = [8, 13]
+
+    for _ in range(rel_relax_steps):
+        lab_pos = _dopc_body_to_lab(body_pos, direction_lab, com_lab)
+
+        # Nonbonded energy + gradient with partner
+        nb_energy, grad_lab, _ = _compute_pair_energy_and_gradient(
+            lab_pos, partner_lab_positions,
+            bead_types, partner_bead_types,
+            bead_charges, partner_bead_charges,
+            pair_params, dist_min_nm=dist_min_nm,
+        )
+
+        # Transform nonbonded gradient to body frame
+        R = _rotation_to_align_z_np(np.asarray(direction_lab, dtype=np.float64))
+        grad_body_nb = (grad_lab @ R)
+
+        # Bonded energy + gradient (finite differences)
+        bonded_energy, grad_body_bonded = _bonded_gradient_body(
+            body_pos, bead_masses, head_idx, tail_indices
+        )
+
+        total_grad = grad_body_nb + grad_body_bonded
+        max_grad = float(np.max(np.abs(total_grad)))
+        if max_grad < grad_tolerance:
+            break
+
+        # Backtracking line search
+        accepted = False
+        for _ in range(3):
+            new_body = body_pos - step * total_grad
+            new_body = _project_com_direction_constraints(
+                new_body, bead_masses, head_idx, tail_indices
+            )
+            new_lab = _dopc_body_to_lab(new_body, direction_lab, com_lab)
+            new_nb, _, _ = _compute_pair_energy_and_gradient(
+                new_lab, partner_lab_positions,
+                bead_types, partner_bead_types,
+                bead_charges, partner_bead_charges,
+                pair_params, dist_min_nm=dist_min_nm,
+            )
+            new_bonded = _compute_lipid_bonded_energy(new_body)
+            if new_nb + new_bonded <= nb_energy + bonded_energy + 1e-10:
+                body_pos = new_body
+                step = min(step * 1.1, float(step_size_nm) * 2.0)
+                accepted = True
+                break
+            step *= 0.5
+        if not accepted:
+            body_pos = _project_com_direction_constraints(
+                body_pos - step * total_grad, bead_masses, head_idx, tail_indices
+            )
+            step = float(step_size_nm)
+
+    # Final energy from relaxed positions
+    lab_pos = _dopc_body_to_lab(body_pos, direction_lab, com_lab)
+    final_energy, _, _ = _compute_pair_energy_and_gradient(
+        lab_pos, partner_lab_positions,
+        bead_types, partner_bead_types,
+        bead_charges, partner_bead_charges,
+        pair_params, dist_min_nm=dist_min_nm,
+    )
+    return body_pos, final_energy
+
+
+def _bonded_gradient_body(
+    body_positions: np.ndarray,
+    masses: np.ndarray,
+    head_idx: int,
+    tail_indices: list,
+    eps: float = 1e-6,
+    fixed_bead_idx: int | None = None,
+) -> tuple[float, np.ndarray]:
+    """Compute bonded energy gradient via central finite differences.
+
+    The gradient is computed in the unconstrained space with constraint
+    projection applied to each finite-difference sample so that the
+    bonded gradient does not fight the geometric constraints.
+    """
+    n_beads = body_positions.shape[0]
+    grad = np.zeros_like(body_positions)
+    for i in range(n_beads):
+        for d in range(3):
+            pos_plus = body_positions.copy()
+            pos_minus = body_positions.copy()
+            pos_plus[i, d] += eps
+            pos_minus[i, d] -= eps
+            pos_plus = _project_com_direction_constraints(
+                pos_plus, masses, head_idx, tail_indices,
+                fixed_bead_idx=fixed_bead_idx,
+            )
+            pos_minus = _project_com_direction_constraints(
+                pos_minus, masses, head_idx, tail_indices,
+                fixed_bead_idx=fixed_bead_idx,
+            )
+            e_plus = _compute_lipid_bonded_energy(pos_plus)
+            e_minus = _compute_lipid_bonded_energy(pos_minus)
+            grad[i, d] = (e_plus - e_minus) / (2.0 * eps)
+    energy = _compute_lipid_bonded_energy(body_positions)
+    return energy, grad
+
+
+def _relax_dopc_pair(
+    init_body1: np.ndarray,
+    init_body2: np.ndarray,
+    ref_body: np.ndarray,
+    bead_types: list,
+    bead_charges: list,
+    bead_masses: np.ndarray,
+    pair_params: dict,
+    dir1_lab: np.ndarray,
+    dir2_lab: np.ndarray,
+    r_nm: float,
+    dist_min_nm: float = 0.20,
+    rel_relax_steps: int = 50,
+    step_size_nm: float = 0.0005,
+    grad_tolerance: float = 1e-4,
+    soft_core_alpha: float = 0.0,
+    plane_constraint: bool = False,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Relax two DOPC molecules in lab frame with bonded deformation cost.
+
+    Both lipids are free to translate, rotate, and deform internally during
+    relaxation. The bonded deformation penalty (relative to reference bead
+    geometry) resists excessive distortion. This matches the original
+    _relax_lipid_pair approach and produces a physically softer effective
+    pair potential than rigid COM/direction constraints.
+
+    When soft_core_alpha > 0, uses soft-core LJ during relaxation to
+    prevent bead explosion from steric clashes. Final energy is always
+    evaluated with the physical LJ (alpha=0) and includes the bonded
+    deformation cost.
+
+    Returns (relaxed_body1, relaxed_body2, final_energy_kj_mol) where
+    body positions are in the body frame (COM=0, dir=z).
+    """
+    com1_lab = np.zeros(3, dtype=np.float64)
+    com2_lab = np.array([r_nm, 0.0, 0.0], dtype=np.float64)
+
+    # Place beads at rigid reference positions in lab frame.
+    pos1 = _dopc_body_to_lab(init_body1, dir1_lab, com1_lab)
+    pos2 = _dopc_body_to_lab(init_body2, dir2_lab, com2_lab)
+
+    if rel_relax_steps <= 0:
+        energy, _, _ = _compute_pair_energy_and_gradient(
+            pos1, pos2, bead_types, bead_types,
+            bead_charges, bead_charges, pair_params,
+            dist_min_nm=dist_min_nm,
+        )
+        return init_body1.copy(), init_body2.copy(), energy
+
+    p1 = pos1.copy()
+    p2 = pos2.copy()
+    step = float(step_size_nm)
+    ref_bond1 = _compute_lipid_bonded_energy(init_body1)
+    ref_bond2 = _compute_lipid_bonded_energy(init_body2)
+    head_idx = 0
+    tail_indices = [8, 13]
+
+    for _ in range(rel_relax_steps):
+        nb_energy, grad1_nb, grad2_nb = _compute_pair_energy_and_gradient(
+            p1, p2, bead_types, bead_types,
+            bead_charges, bead_charges, pair_params,
+            dist_min_nm=0.01,
+            soft_core_alpha=soft_core_alpha,
+        )
+
+        # Bonded energy + gradient in lab frame (analytic, rotation/translation invariant).
+        bond1, grad1_b = _compute_lipid_bonded_energy_and_gradient(p1)
+        bond2, grad2_b = _compute_lipid_bonded_energy_and_gradient(p2)
+
+        grad1 = grad1_nb + grad1_b
+        grad2 = grad2_nb + grad2_b
+
+        # Gradient clipping: max 0.005 nm per bead per step (matching original).
+        d1_norms = np.sqrt(np.sum((step * grad1) ** 2, axis=1))
+        d2_norms = np.sqrt(np.sum((step * grad2) ** 2, axis=1))
+        max_disp = max(float(np.max(d1_norms)), float(np.max(d2_norms)), 1e-15)
+        if max_disp > 0.005:
+            scale = 0.005 / max_disp
+            grad1 *= scale
+            grad2 *= scale
+
+        max_grad = max(float(np.max(np.abs(grad1))), float(np.max(np.abs(grad2))))
+        if max_grad < grad_tolerance:
+            break
+
+        # Line search in lab frame.
+        accepted = False
+        for _ in range(3):
+            new_p1 = p1 - step * grad1
+            new_p2 = p2 - step * grad2
+            new_nb, _, _ = _compute_pair_energy_and_gradient(
+                new_p1, new_p2, bead_types, bead_types,
+                bead_charges, bead_charges, pair_params,
+                dist_min_nm=0.01,
+                soft_core_alpha=soft_core_alpha,
+            )
+            new_b1 = _compute_lipid_bonded_energy(new_p1)
+            new_b2 = _compute_lipid_bonded_energy(new_p2)
+            if new_nb + new_b1 + new_b2 <= nb_energy + bond1 + bond2 + 1e-10:
+                p1, p2 = new_p1, new_p2
+                step = min(step * 1.1, float(step_size_nm) * 2.0)
+                accepted = True
+                break
+            step *= 0.5
+        if not accepted:
+            p1 -= step * grad1
+            p2 -= step * grad2
+            step = float(step_size_nm)
+
+    # Final energy: physical LJ (no soft-core) + bonded deformation cost.
+    final_nb, _, _ = _compute_pair_energy_and_gradient(
+        p1, p2, bead_types, bead_types,
+        bead_charges, bead_charges, pair_params,
+        dist_min_nm=0.10,
+        soft_core_alpha=0.0,
+        cutoff_nm=DRY_MARTINI_NONBONDED_CUTOFF_NM,
+    )
+    final_body1 = _dopc_lab_to_body(p1, dir1_lab, com1_lab)
+    final_body2 = _dopc_lab_to_body(p2, dir2_lab, com2_lab)
+    final_bond1 = _compute_lipid_bonded_energy(p1)
+    final_bond2 = _compute_lipid_bonded_energy(p2)
+    deformation_cost = (final_bond1 - ref_bond1) + (final_bond2 - ref_bond2)
+    return final_body1, final_body2, final_nb + deformation_cost
+
+
+def _relax_sc_beads(
+    init_body_positions: np.ndarray,
+    ref_body_positions: np.ndarray,
+    sc_bead_types: list,
+    sc_bead_charges: list,
+    k_restraint: float,
+    pair_params: dict,
+    direction_lab: np.ndarray,
+    cb_anchor_lab: np.ndarray,
+    partner_lab_positions: np.ndarray,
+    partner_bead_types: list,
+    partner_bead_charges: list,
+    dist_min_nm: float = 0.20,
+    rel_relax_steps: int = 50,
+    step_size_nm: float = 0.0005,
+    grad_tolerance: float = 1e-4,
+) -> tuple[np.ndarray, float]:
+    """Relax SC bead positions with CB-at-origin and direction constraints.
+
+    SC beads are relaxed against fixed partner positions. CB position and
+    CA->CB direction are held fixed. Internal energy uses harmonic position
+    restraints to the reference body-frame positions.
+
+    The body frame has CB at origin and CA->CB direction along +z.
+    head_idx = 0 (CB), tail_indices = all other beads.
+
+    Returns (relaxed_body_positions, final_energy_kj_mol).
+    """
+    n_beads = len(sc_bead_types)
+    if rel_relax_steps <= 0 or n_beads <= 1:
+        body = np.asarray(init_body_positions, dtype=np.float64).copy()
+        lab = _dopc_body_to_lab(body, direction_lab, cb_anchor_lab)
+        energy, _, _ = _compute_pair_energy_and_gradient(
+            lab, partner_lab_positions,
+            sc_bead_types, partner_bead_types,
+            sc_bead_charges, partner_bead_charges,
+            pair_params, dist_min_nm=dist_min_nm,
+        )
+        return body, energy
+
+    body_pos = np.asarray(init_body_positions, dtype=np.float64).copy()
+    ref_body = np.asarray(ref_body_positions, dtype=np.float64)
+    step = float(step_size_nm)
+    masses = np.ones(n_beads, dtype=np.float64)
+    head_idx = 0
+    tail_indices = list(range(1, n_beads))
+
+    for _ in range(rel_relax_steps):
+        lab_pos = _dopc_body_to_lab(body_pos, direction_lab, cb_anchor_lab)
+
+        nb_energy, grad_lab, _ = _compute_pair_energy_and_gradient(
+            lab_pos, partner_lab_positions,
+            sc_bead_types, partner_bead_types,
+            sc_bead_charges, partner_bead_charges,
+            pair_params, dist_min_nm=dist_min_nm,
+        )
+
+        R = _rotation_to_align_z_np(np.asarray(direction_lab, dtype=np.float64))
+        grad_body_nb = (grad_lab @ R)
+
+        restraint_energy, grad_restraint = _compute_position_restraint_energy_and_gradient(
+            body_pos, ref_body, k_restraint
+        )
+
+        total_grad = grad_body_nb + grad_restraint
+        max_grad = float(np.max(np.abs(total_grad)))
+        if max_grad < grad_tolerance:
+            break
+
+        accepted = False
+        for _ in range(3):
+            new_body = body_pos - step * total_grad
+            new_body = _project_com_direction_constraints(
+                new_body, masses, head_idx, tail_indices,
+                fixed_bead_idx=0,
+            )
+            new_lab = _dopc_body_to_lab(new_body, direction_lab, cb_anchor_lab)
+            new_nb, _, _ = _compute_pair_energy_and_gradient(
+                new_lab, partner_lab_positions,
+                sc_bead_types, partner_bead_types,
+                sc_bead_charges, partner_bead_charges,
+                pair_params, dist_min_nm=dist_min_nm,
+            )
+            new_re, _ = _compute_position_restraint_energy_and_gradient(
+                new_body, ref_body, k_restraint
+            )
+            if new_nb + new_re <= nb_energy + restraint_energy + 1e-10:
+                body_pos = new_body
+                step = min(step * 1.1, float(step_size_nm) * 2.0)
+                accepted = True
+                break
+            step *= 0.5
+        if not accepted:
+            body_pos = _project_com_direction_constraints(
+                body_pos - step * total_grad, masses, head_idx, tail_indices,
+                fixed_bead_idx=0,
+            )
+            step = float(step_size_nm)
+
+    lab_pos = _dopc_body_to_lab(body_pos, direction_lab, cb_anchor_lab)
+    final_energy, _, _ = _compute_pair_energy_and_gradient(
+        lab_pos, partner_lab_positions,
+        sc_bead_types, partner_bead_types,
+        sc_bead_charges, partner_bead_charges,
+        pair_params, dist_min_nm=dist_min_nm,
+    )
+    return body_pos, final_energy
 
 
 def _compute_pair_energy_and_gradient(
@@ -1236,173 +1798,6 @@ def _compute_pair_energy_and_gradient(
     return total_energy, grad1, grad2
 
 
-def _compute_lipid_bonded_energy_and_gradient(positions: np.ndarray):
-    """Compute harmonic bond + cosine-based angle energy and analytical gradient.
-
-    positions: (14, 3) float64 array of bead positions in nm.
-    Returns (energy_kj_mol, grad) where grad is (14, 3).
-    """
-    n_beads = positions.shape[0]
-    energy = 0.0
-    grad = np.zeros_like(positions)
-
-    for i, j, r0, k in _CURRENT_CG_BONDS:
-        dr = positions[i] - positions[j]
-        r = float(np.sqrt(np.dot(dr, dr)))
-        if r < 1e-10:
-            continue
-        de_dr = float(k) * (r - r0)
-        energy += 0.5 * float(k) * (r - r0) ** 2
-        g = (de_dr / r) * dr
-        grad[i] += g
-        grad[j] -= g
-
-    # Angles: V(theta) = 0.5 * k * (cos(theta) - cos(theta0))^2
-    for i, j, k_idx, theta0_deg, k_ang in _CURRENT_CG_ANGLES:
-        r_ij = positions[i] - positions[j]
-        r_kj = positions[k_idx] - positions[j]
-        d_ij = float(np.sqrt(np.dot(r_ij, r_ij)))
-        d_kj = float(np.sqrt(np.dot(r_kj, r_kj)))
-        if d_ij < 1e-8 or d_kj < 1e-8:
-            continue
-        cos_theta = float(np.dot(r_ij, r_kj)) / (d_ij * d_kj)
-        cos_theta = max(-1.0, min(1.0, cos_theta))
-        cos_theta0 = math.cos(math.radians(theta0_deg))
-        dc = cos_theta - cos_theta0
-        energy += 0.5 * float(k_ang) * dc * dc
-
-        de_dc = float(k_ang) * dc
-        r_ij_unit = r_ij / d_ij
-        r_kj_unit = r_kj / d_kj
-        dc_di = (r_kj_unit - cos_theta * r_ij_unit) / d_ij
-        dc_dk = (r_ij_unit - cos_theta * r_kj_unit) / d_kj
-        dc_dj = -(dc_di + dc_dk)
-        grad[i] += de_dc * dc_di
-        grad[j] += de_dc * dc_dj
-        grad[k_idx] += de_dc * dc_dk
-
-    return energy, grad
-
-
-def _relax_lipid_pair(
-    pos1: np.ndarray,
-    pos2: np.ndarray,
-    bead_types1: list,
-    bead_types2: list,
-    bead_charges1: list,
-    bead_charges2: list,
-    pair_params: dict,
-    n_steps: int = 200,
-) -> tuple:
-    """Bond-constrained relaxation with real LJ (no distance floor during descent).
-
-    Uses dist_min=0.01 during relaxation (purely numerical safety) so the
-    energy surface retains genuine gradients everywhere, allowing the descent
-    to push overlapping beads apart. Gradient clipping (max_disp=0.005 nm/step)
-    keeps the enormous LJ forces bounded. No line search; fixed-step descent
-    always moves toward lower energy.
-
-    Final energy includes the bonded deformation penalty relative to the
-    unrelaxed reference lipids. This allows local bead relaxation but does not
-    make lipid deformation free.
-
-    Returns (relaxed_pos1, relaxed_pos2, final_interaction_energy).
-    """
-    p1 = pos1.copy()
-    p2 = pos2.copy()
-    step_size = 0.0005
-    ref_bond1, _ = _compute_lipid_bonded_energy_and_gradient(pos1)
-    ref_bond2, _ = _compute_lipid_bonded_energy_and_gradient(pos2)
-
-    for _ in range(n_steps):
-        nb_energy, grad1_nb, grad2_nb = _compute_pair_energy_and_gradient(
-            p1, p2, bead_types1, bead_types2,
-            bead_charges1, bead_charges2, pair_params,
-            dist_min_nm=0.01, soft_core_alpha=0.0,
-        )
-        bond1, grad1_b = _compute_lipid_bonded_energy_and_gradient(p1)
-        bond2, grad2_b = _compute_lipid_bonded_energy_and_gradient(p2)
-
-        grad1 = grad1_nb + grad1_b
-        grad2 = grad2_nb + grad2_b
-
-        # Gradient clipping: max 0.005 nm per bead per step
-        disp1 = step_size * grad1
-        disp2 = step_size * grad2
-        d1_norms = np.sqrt(np.sum(disp1 ** 2, axis=1))
-        d2_norms = np.sqrt(np.sum(disp2 ** 2, axis=1))
-        max_grad_disp = max(float(np.max(d1_norms)), float(np.max(d2_norms)), 1e-15)
-        if max_grad_disp > 0.005:
-            scale = 0.005 / max_grad_disp
-            grad1 *= scale
-            grad2 *= scale
-
-        p1 -= step_size * grad1
-        p2 -= step_size * grad2
-
-    final_nb, _, _ = _compute_pair_energy_and_gradient(
-        p1, p2, bead_types1, bead_types2,
-        bead_charges1, bead_charges2, pair_params,
-        dist_min_nm=0.10, soft_core_alpha=0.0,
-        cutoff_nm=DRY_MARTINI_NONBONDED_CUTOFF_NM,
-    )
-    final_bond1, _ = _compute_lipid_bonded_energy_and_gradient(p1)
-    final_bond2, _ = _compute_lipid_bonded_energy_and_gradient(p2)
-    deformation_cost = (final_bond1 - ref_bond1) + (final_bond2 - ref_bond2)
-    return p1, p2, final_nb + deformation_cost
-
-
-def _relax_lipid_against_points(
-    cg_pos: np.ndarray,
-    target_positions: np.ndarray,
-    cg_bead_types: list,
-    target_bead_types: list,
-    cg_bead_charges: list,
-    target_bead_charges: list,
-    pair_params: dict,
-    n_steps: int = 200,
-) -> tuple:
-    """Relax CG lipid beads against fixed target beads with real LJ.
-
-    CG beads are bond-connected (can stretch/bend). Target beads are fixed
-    (e.g., sidechain rotamer centers). Same fixed-step descent + gradient
-    clipping as _relax_lipid_pair. Final energy includes the bonded deformation
-    penalty relative to the unrelaxed reference lipid.
-
-    Returns (relaxed_cg_pos, final_interaction_energy).
-    """
-    p_cg = cg_pos.copy()
-    step_size = 0.0005
-    ref_bond, _ = _compute_lipid_bonded_energy_and_gradient(cg_pos)
-
-    for _ in range(n_steps):
-        nb_energy, grad_cg, grad_target = _compute_pair_energy_and_gradient(
-            p_cg, target_positions, cg_bead_types, target_bead_types,
-            cg_bead_charges, target_bead_charges, pair_params,
-            dist_min_nm=0.01, soft_core_alpha=0.0,
-        )
-        bond_energy, grad_bond = _compute_lipid_bonded_energy_and_gradient(p_cg)
-
-        grad_cg = grad_cg + grad_bond  # target grad is discarded (fixed)
-
-        disp = step_size * grad_cg
-        norms = np.sqrt(np.sum(disp ** 2, axis=1))
-        max_grad_disp = max(float(np.max(norms)), 1e-15)
-        if max_grad_disp > 0.005:
-            grad_cg *= 0.005 / max_grad_disp
-
-        p_cg -= step_size * grad_cg
-
-    final_nb, _, _ = _compute_pair_energy_and_gradient(
-        p_cg, target_positions, cg_bead_types, target_bead_types,
-        cg_bead_charges, target_bead_charges, pair_params,
-        dist_min_nm=0.10, soft_core_alpha=0.0,
-        cutoff_nm=DRY_MARTINI_NONBONDED_CUTOFF_NM,
-    )
-    final_bond, _ = _compute_lipid_bonded_energy_and_gradient(p_cg)
-    return p_cg, final_nb + (final_bond - ref_bond)
-
-
 def _compute_cg_pair_energy(
     r_nm: float,
     dir1: np.ndarray,
@@ -1416,14 +1811,11 @@ def _compute_cg_pair_energy(
     bead_charges1: list,
     bead_charges2: list,
     pair_params: dict,
-    relax_steps: int = 0,
     dist_min_nm: float = 0.20,
 ) -> float:
     """Compute LJ + Coulomb energy between two CG lipid particles at given geometry.
 
     Each CG lipid's beads are placed at COM_i + R(dir_i) * ref_bead_i[k].
-    If relax_steps > 0, runs bond-constrained minimization with the real LJ
-    before computing energy and charges the resulting bonded deformation cost.
     """
     R1 = _rotation_to_align_z_np(dir1) @ _rotation_about_axis_np(
         np.array([0.0, 0.0, 1.0], dtype=np.float64), frame_angle1
@@ -1437,14 +1829,6 @@ def _compute_cg_pair_energy(
 
     pos1 = com1[None, :] + (R1 @ ref_bead1.T).T
     pos2 = com2[None, :] + (R2 @ ref_bead2.T).T
-
-    if relax_steps > 0:
-        _, _, total_energy = _relax_lipid_pair(
-            pos1, pos2, bead_types1, bead_types2,
-            bead_charges1, bead_charges2, pair_params,
-            n_steps=relax_steps,
-        )
-        return total_energy
 
     total_energy, _, _ = _compute_pair_energy_and_gradient(
         pos1, pos2, bead_types1, bead_types2,
@@ -1538,29 +1922,56 @@ def _run_cg_pair_tensor_task(task: dict) -> tuple[int, int, int, float]:
     dirs1 = task["dirs1"]
     dirs2 = task["dirs2"]
     bead_frame_angles = task["bead_frame_angles"]
+    ref_nm = task["ref_nm"]
+    rel_relax_steps = int(task.get("rel_relax_steps", 0))
+    soft_core_alpha = float(task.get("soft_core_alpha", 0.0))
+    plane_constraint = bool(task.get("plane_constraint", True))
     sample_values = []
     for dir1 in dirs1:
         for dir2 in dirs2:
             for frame_angle1 in bead_frame_angles:
                 for frame_angle2 in bead_frame_angles:
-                    sample_values.append(
-                        _compute_cg_pair_energy(
-                            r_nm,
-                            np.asarray(dir1, dtype=np.float64),
-                            np.asarray(dir2, dtype=np.float64),
-                            float(frame_angle1),
-                            float(frame_angle2),
-                            task["ref_nm"],
-                            task["ref_nm"],
-                            task["bead_types"],
-                            task["bead_types"],
-                            task["bead_charges"],
-                            task["bead_charges"],
-                            task["pair_params"],
-                            relax_steps=int(task["relax_steps"]),
+                    if rel_relax_steps > 0:
+                        z_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+                        rot1 = _rotation_about_axis_np(z_axis, float(frame_angle1))
+                        rot2 = _rotation_about_axis_np(z_axis, float(frame_angle2))
+                        init_body1 = (rot1 @ ref_nm.T).T
+                        init_body2 = (rot2 @ ref_nm.T).T
+                        _, _, energy = _relax_dopc_pair(
+                            init_body1=init_body1,
+                            init_body2=init_body2,
+                            ref_body=ref_nm,
+                            bead_types=task["bead_types"],
+                            bead_charges=task["bead_charges"],
+                            bead_masses=task.get("bead_masses"),
+                            pair_params=task["pair_params"],
+                            dir1_lab=np.asarray(dir1, dtype=np.float64),
+                            dir2_lab=np.asarray(dir2, dtype=np.float64),
+                            r_nm=r_nm,
                             dist_min_nm=float(task["dist_min_nm"]),
+                            rel_relax_steps=rel_relax_steps,
+                            soft_core_alpha=soft_core_alpha,
+                            plane_constraint=plane_constraint,
                         )
-                    )
+                        sample_values.append(energy)
+                    else:
+                        sample_values.append(
+                            _compute_cg_pair_energy(
+                                r_nm,
+                                np.asarray(dir1, dtype=np.float64),
+                                np.asarray(dir2, dtype=np.float64),
+                                float(frame_angle1),
+                                float(frame_angle2),
+                                ref_nm,
+                                ref_nm,
+                                task["bead_types"],
+                                task["bead_types"],
+                                task["bead_charges"],
+                                task["bead_charges"],
+                                task["pair_params"],
+                                dist_min_nm=float(task["dist_min_nm"]),
+                            )
+                        )
     return ir, ia1, ia2, float(np.mean(sample_values))
 
 
@@ -1575,14 +1986,26 @@ def _fit_cg_lipid_quadspline(
     cos_theta_count: int = 7,
     azimuthal_count: int = 2,
     bead_frame_count: int = 1,
-    relax_steps: int = 0,
     dist_min_nm: float = 0.25,
     knot_spacing_ang: float = 1.4,
-    excluded_area_wca_nm: float | None = None,
+    excluded_area_contact_nm: float | None = None,
     n_modes: int = 4,
     n_knot_radial: int = 14,
+    n_knot_angular: int = 15,
+    cg_smooth: float = 0.01,
+    rel_relax_steps: int = 0,
+    bead_masses: list | None = None,
+    relax_soft_core_alpha: float = 0.0,
+    temperature: float = 0.0,
+    plane_constraint: bool = False,
 ) -> dict:
-    """Fit full tensor-product B-spline parameters for CG lipid-CG lipid interactions."""
+    """Fit full tensor-product B-spline parameters for CG lipid-CG lipid interactions.
+
+    When temperature > 0, the azimuthal average is computed as a Boltzmann-weighted
+    free energy (potential of mean force) at the given temperature in T_up units.
+    This correctly suppresses steric-clash configurations that have negligible
+    Boltzmann weight, rather than letting one clash dominate the arithmetic mean.
+    """
     r_values = np.asarray(_linspace(r_min_nm, r_max_nm, r_count), dtype=np.float64)
     cos_theta_grid = np.asarray(_linspace(-1.0, 1.0, cos_theta_count), dtype=np.float64)
     n_angle = cos_theta_count
@@ -1604,8 +2027,7 @@ def _fit_cg_lipid_quadspline(
     )
     print(f"  Sampling CG-CG energy: {n_radial} radial x {n_angle}^2 angular "
           f"x {azimuthal_count}^2 azimuthal x {len(bead_frame_angles)}^2 bead-frame "
-          f"= {total_samples} samples, "
-          f"relax={relax_steps}, full tensor")
+          f"= {total_samples} samples, direct rotated geometry, full tensor")
 
     tasks = []
     for ir, r_nm in enumerate(r_values):
@@ -1624,25 +2046,36 @@ def _fit_cg_lipid_quadspline(
                         "bead_types": list(bead_types),
                         "bead_charges": list(bead_charges),
                         "pair_params": pair_params,
-                        "relax_steps": int(relax_steps),
                         "dist_min_nm": float(dist_min_nm),
+                        "rel_relax_steps": int(rel_relax_steps),
+                        "soft_core_alpha": float(relax_soft_core_alpha),
+                        "temperature": float(temperature),
+                        "plane_constraint": bool(plane_constraint),
+                        "bead_masses": (
+                            np.asarray(bead_masses, dtype=np.float64)
+                            if bead_masses is not None
+                            else None
+                        ),
                     }
                 )
     for ir, ia1, ia2, energy in _parallel_map_ordered("CG-CG table", _run_cg_pair_tensor_task, tasks):
-        r_nm = float(r_values[ir])
-        if excluded_area_wca_nm is not None and r_nm < float(excluded_area_wca_nm):
-            sigma_nm = float(excluded_area_wca_nm) / (2.0 ** (1.0 / 6.0))
-            sr = sigma_nm / max(float(r_nm), 1e-6)
+        r_nm_val = float(r_values[ir])
+        # WCA excluded area: add repulsive energy below contact distance.
+        # This ensures the sampled energies reflect physical volume exclusion.
+        if excluded_area_contact_nm is not None and r_nm_val < float(excluded_area_contact_nm):
+            sigma_nm = float(excluded_area_contact_nm) / (2.0 ** (1.0 / 6.0))
+            sr = sigma_nm / max(r_nm_val, 1e-6)
             sr6 = sr ** 6
             energy += 4.0 * DEFAULT_PRODUCTION_KBT_KJ_MOL * (sr6 * sr6 - sr6) + DEFAULT_PRODUCTION_KBT_KJ_MOL
         energy_grid[ir, ia1, ia2] = energy
 
+    # Isotropic background: subtract mean attractive contribution so the
+    # table captures only orientation-dependent effects.
     radial_mean = energy_grid.mean(axis=(1, 2))
     attractive_background = np.minimum(radial_mean, 0.0)
     if np.any(attractive_background < 0.0):
         energy_grid = energy_grid - attractive_background[:, None, None]
 
-    n_knot_angular = 15
     knot_spacing = float(knot_spacing_ang)
     tensor = _fit_radial_angular_angular_tensor_bspline(
         r_values,
@@ -1651,7 +2084,7 @@ def _fit_cg_lipid_quadspline(
         n_knot_radial=n_knot_radial,
         n_knot_angular=n_knot_angular,
         knot_spacing_ang=knot_spacing,
-        smooth=0.01,
+        smooth=cg_smooth,
     )
     r_min_ang = float(r_min_nm) * LENGTH_CONVERSION_A_PER_NM
     n_core = max(0, min(n_knot_radial - 1, int(math.ceil((r_min_ang - 1e-6) / knot_spacing))))
@@ -1659,13 +2092,16 @@ def _fit_cg_lipid_quadspline(
     short_range_core_eup = short_range_core_kj_mol / ENERGY_CONVERSION_KJ_PER_EUP
     if n_core > 0:
         tensor[:n_core, :, :] = np.maximum(tensor[:n_core, :, :], short_range_core_eup)
+    control_min = float(np.min(energy_grid)) / ENERGY_CONVERSION_KJ_PER_EUP
+    control_max = float(np.max(energy_grid)) / ENERGY_CONVERSION_KJ_PER_EUP
+    tensor = np.clip(tensor, control_min, control_max)
     excluded_area_rows = 0
-    if excluded_area_wca_nm is not None:
+    if excluded_area_contact_nm is not None and excluded_area_contact_nm > 0.0:
         excluded_area_rows = max(
             0,
             min(
                 n_knot_radial,
-                int(math.ceil(float(excluded_area_wca_nm) * LENGTH_CONVERSION_A_PER_NM / knot_spacing)),
+                int(math.ceil(float(excluded_area_contact_nm) * LENGTH_CONVERSION_A_PER_NM / knot_spacing)),
             ),
         )
         if excluded_area_rows > 0:
@@ -1682,15 +2118,11 @@ def _fit_cg_lipid_quadspline(
         "rms_error": rms_error,
         "energy_grid_raw": energy_grid,
         "attractive_radial_background_kj_mol": attractive_background,
-        "azimuthal_average": "energy_expectation",
-        "isotropic_background_source": "attractive_radial_angular_mean_subtracted",
-        "excluded_area_source": (
-            "wca_dopc_contact_kbt"
-            if excluded_area_wca_nm is not None
-            else ""
-        ),
-        "excluded_area_nonnegative_rows": int(excluded_area_rows),
-        "attractive_control_source": "nontransferable_many_neighbor_cgl_cgl_attraction_removed",
+        "azimuthal_average": "energy_expectation" if temperature <= 0.0 else "boltzmann_free_energy",
+        "isotropic_background_source": "attractive_radial_angular_mean_subtracted" if np.any(attractive_background < 0.0) else "none_full_resolved_dry_martini_pair_table",
+        "excluded_area_source": "wca_dopc_contact_kbt" if excluded_area_rows > 0 else "",
+        "excluded_area_nonnegative_rows": excluded_area_rows,
+        "attractive_control_source": "nontransferable_many_neighbor_cgl_cgl_attraction_removed" if attractive_control_count > 0 else "retained_full_resolved_dry_martini_pair_table",
         "attractive_control_count": attractive_control_count,
         "core_boundary_source": "max_first_sampled_dry_martini_energy_expectation",
         "core_boundary_row": int(n_core),
@@ -1706,6 +2138,7 @@ def _fit_cg_lipid_quadspline(
         "azimuthal_count": int(azimuthal_count),
         "bead_frame_count": int(len(bead_frame_angles)),
         "schema": "cg_lipid_pair_full_v1",
+        "rel_relax_steps": int(rel_relax_steps),
     }
 
 
@@ -1729,11 +2162,13 @@ def _fit_cg_lipid_sc_quadspline(
     azimuthal_count: int = 4,
     sidechain_bead_frame_count: int = 1,
     cg_bead_frame_count: int = 1,
-    relax_steps: int = 120,
     n_modes: int = 4,
     n_knot_radial: int = 14,
     knot_spacing_ang: float = 1.4,
     excluded_area_contact_nm: float | None = None,
+    rel_relax_steps: int = 0,
+    sc_restraint_k: float = 5000.0,
+    cg_bead_masses: np.ndarray | None = None,
 ) -> dict:
     """Fit full multimode B-spline params for sidechain-CG lipid interactions.
 
@@ -1770,7 +2205,7 @@ def _fit_cg_lipid_sc_quadspline(
     print(f"  Sampling CG-SC energy for target={target_type}: "
           f"{n_radial} radial x {n_angle}^2 angular x {azimuthal_count}^2 azimuthal "
           f"x {len(sidechain_bead_frame_angles)} SC bead-frame x {len(cg_bead_frame_angles)} CGL bead-frame, "
-          f"relax={relax_steps}, modes={n_modes}")
+          f"direct rotated geometry, modes={n_modes}")
 
     # Energy grid: (n_radial, n_angle_sc, n_angle_cg), matching runtime source order.
     energy_grid = np.zeros((n_radial, n_angle, n_angle), dtype=np.float64)
@@ -1812,19 +2247,57 @@ def _fit_cg_lipid_sc_quadspline(
                                     )
                                     cg_positions = cg_com[None, :] + (R_cg @ ref_nm.T).T
 
-                                    if relax_steps > 0:
-                                        _, pair_energy = _relax_lipid_against_points(
-                                            cg_positions, framed_sc_positions,
-                                            cg_bead_types, sc_bead_types,
-                                            cg_bead_charges, sc_bead_charges,
-                                            pair_params, n_steps=relax_steps,
-                                        )
-                                    else:
-                                        pair_energy, _, _ = _compute_pair_energy_and_gradient(
-                                            cg_positions, framed_sc_positions, cg_bead_types, sc_bead_types,
-                                            cg_bead_charges, sc_bead_charges, pair_params,
-                                            dist_min_nm=0.20, soft_core_alpha=0.0,
-                                        )
+                                    if rel_relax_steps > 0:
+                                        # Alternating SC-DOPC relaxation
+                                        sc_body = _dopc_lab_to_body(
+                                            framed_sc_positions, cb_vec,
+                                            np.asarray(cb_anchor_nm, dtype=np.float64))
+                                        cg_body = _dopc_lab_to_body(
+                                            cg_positions, dir_cg, cg_com)
+                                        for _ in range(rel_relax_steps):
+                                            sc_body, _ = _relax_sc_beads(
+                                                init_body_positions=sc_body,
+                                                ref_body_positions=sc_body.copy(),
+                                                sc_bead_types=sc_bead_types,
+                                                sc_bead_charges=sc_bead_charges,
+                                                k_restraint=sc_restraint_k,
+                                                pair_params=pair_params,
+                                                direction_lab=cb_vec,
+                                                cb_anchor_lab=np.asarray(cb_anchor_nm, dtype=np.float64),
+                                                partner_lab_positions=cg_positions,
+                                                partner_bead_types=cg_bead_types,
+                                                partner_bead_charges=cg_bead_charges,
+                                                dist_min_nm=0.20,
+                                                rel_relax_steps=1,
+                                            )
+                                            cg_positions = _dopc_body_to_lab(cg_body, dir_cg, cg_com)
+                                            cg_body, _ = _relax_dopc_beads(
+                                                init_body_positions=cg_body,
+                                                ref_body_positions=ref_nm,
+                                                bead_types=cg_bead_types,
+                                                bead_charges=cg_bead_charges,
+                                                bead_masses=cg_bead_masses,
+                                                pair_params=pair_params,
+                                                direction_lab=dir_cg,
+                                                com_lab=cg_com,
+                                                partner_lab_positions=_dopc_body_to_lab(
+                                                    sc_body, cb_vec,
+                                                    np.asarray(cb_anchor_nm, dtype=np.float64)),
+                                                partner_bead_types=sc_bead_types,
+                                                partner_bead_charges=sc_bead_charges,
+                                                dist_min_nm=0.20,
+                                                rel_relax_steps=1,
+                                            )
+                                        cg_positions = _dopc_body_to_lab(cg_body, dir_cg, cg_com)
+                                        framed_sc_positions = _dopc_body_to_lab(
+                                            sc_body, cb_vec,
+                                            np.asarray(cb_anchor_nm, dtype=np.float64))
+
+                                    pair_energy, _, _ = _compute_pair_energy_and_gradient(
+                                        cg_positions, framed_sc_positions, cg_bead_types, sc_bead_types,
+                                        cg_bead_charges, sc_bead_charges, pair_params,
+                                        dist_min_nm=0.20, soft_core_alpha=0.0,
+                                    )
                                     pair_energy_sum += pair_energy
                                     pair_sample_count += 1
                             pair_energy = pair_energy_sum / max(pair_sample_count, 1)
@@ -1980,6 +2453,7 @@ def _fit_cg_lipid_sc_quadspline(
         "azimuthal_count": int(azimuthal_count),
         "sidechain_bead_frame_count": int(len(sidechain_bead_frame_angles)),
         "cg_bead_frame_count": int(len(cg_bead_frame_angles)),
+        "rel_relax_steps": int(rel_relax_steps),
     }
 
 
@@ -2146,6 +2620,7 @@ def _build_cg_lipid_tables(
     r_count: int = 24,
     cos_theta_count: int = 13,
     azimuthal_count: int = 4,
+    plane_constraint: bool = False,
 ) -> None:
     """Build CG lipid pair and CG lipid-SC quadspline tables and store in HDF5."""
     if ref_bead_positions_nm is None:
@@ -2207,9 +2682,14 @@ def _build_cg_lipid_tables(
           f"SC: {_sc_r}r x {_sc_ct}^2 theta x {_sc_az}^2 phi "
           f"x {sc_bead_frame_count} SC bead-frame x {cg_bead_frame_count} CGL bead-frame)")
 
-    # CG-CG directional spline. Hidden bead relaxation is charged against the
-    # canonical DOPC bonded reference, so short-range overlap remains costly.
-    cg_relax_steps = 50
+    fit_relax_steps = _positive_int_env("UPSIDE_MARTINI_FIT_RELAX_STEPS", 50)
+    sc_restraint_k = float(os.environ.get("UPSIDE_MARTINI_SC_RESTRAINT_K", "5000.0"))
+    if fit_relax_steps > 0:
+        print(f"  Hidden-bead relaxation: {fit_relax_steps} steps, "
+              f"SC restraint k={sc_restraint_k:.1f} kJ/mol/nm^2")
+
+    # CG-CG directional spline from relaxed DOPC bead geometries when
+    # fit_relax_steps > 0, otherwise direct rigid-geometry projection.
     result_cg = _fit_cg_lipid_quadspline(
         ref_bead_positions_nm=ref_nm,
         bead_types=bead_types,
@@ -2221,12 +2701,17 @@ def _build_cg_lipid_tables(
         cos_theta_count=min(cos_theta_count, _cg_ct),
         azimuthal_count=_cg_az,
         bead_frame_count=cg_bead_frame_count,
-        relax_steps=cg_relax_steps,
         dist_min_nm=0.25,
         knot_spacing_ang=1.4,
-        excluded_area_wca_nm=contact_nm,
+        excluded_area_contact_nm=contact_nm,
         n_modes=4,
         n_knot_radial=14,
+        n_knot_angular=15,
+        cg_smooth=0.01,
+        rel_relax_steps=fit_relax_steps,
+        bead_masses=bead_mass_values,
+        relax_soft_core_alpha=0.3,
+        plane_constraint=plane_constraint,
     )
     print(
         "  CG-CG: full tensor table "
@@ -2262,7 +2747,6 @@ def _build_cg_lipid_tables(
     else:
         cb_anchor_nm = [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG]
         cb_vector_unit = list(CANONICAL_CB_VECTOR_UNIT)
-        sc_relax_steps = 120
 
         n_sc_types = len(residues)
         interaction_param_sc = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float64)
@@ -2302,10 +2786,16 @@ def _build_cg_lipid_tables(
                     "azimuthal_count": min(azimuthal_count, _sc_az),
                     "sidechain_bead_frame_count": sc_bead_frame_count,
                     "cg_bead_frame_count": cg_bead_frame_count,
-                    "relax_steps": sc_relax_steps,
                     "n_knot_radial": sc_n_radial,
                     "knot_spacing_ang": sc_knot_spacing_ang,
                     "excluded_area_contact_nm": contact_nm,
+                    "rel_relax_steps": int(fit_relax_steps),
+                    "sc_restraint_k": float(sc_restraint_k),
+                    "cg_bead_masses": (
+                        np.asarray(bead_mass_values, dtype=np.float64)
+                        if bead_mass_values is not None
+                        else None
+                    ),
                 }
             )
 
@@ -2342,7 +2832,7 @@ def _build_cg_lipid_tables(
     cg_pair_grp.attrs["schema"] = result_cg["schema"]
     cg_pair_grp.attrs["radial_mode"] = "full_tensor"
     cg_pair_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
-    cg_pair_grp.attrs["fit_relax_steps"] = np.int32(cg_relax_steps)
+    cg_pair_grp.attrs["fit_relax_steps"] = np.int32(result_cg.get("rel_relax_steps", 0))
     cg_pair_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
     cg_pair_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
     cg_pair_grp.attrs["fit_r_min_nm"] = np.float32(result_cg["r_values_nm"][0])
@@ -2362,7 +2852,6 @@ def _build_cg_lipid_tables(
         float(np.min(result_cg["attractive_radial_background_kj_mol"]))
     )
     cg_pair_grp.attrs["excluded_area_source"] = result_cg["excluded_area_source"]
-    cg_pair_grp.attrs["excluded_area_epsilon_kj_mol"] = np.float32(DEFAULT_PRODUCTION_KBT_KJ_MOL)
     cg_pair_grp.attrs["excluded_area_nonnegative_rows"] = np.int32(result_cg["excluded_area_nonnegative_rows"])
     cg_pair_grp.attrs["attractive_control_source"] = result_cg["attractive_control_source"]
     cg_pair_grp.attrs["attractive_control_count"] = np.int32(result_cg["attractive_control_count"])
@@ -2393,7 +2882,7 @@ def _build_cg_lipid_tables(
     cg_sc_grp.attrs["schema"] = "cg_lipid_sc_quadspline_v2"
     cg_sc_grp.attrs["radial_mode"] = "full_multimode"
     cg_sc_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
-    cg_sc_grp.attrs["fit_relax_steps"] = np.int32(sc_relax_steps if n_sc_types else 0)
+    cg_sc_grp.attrs["fit_relax_steps"] = np.int32(fit_relax_steps if n_sc_types else 0)
     cg_sc_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
     cg_sc_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
     cg_sc_grp.attrs["fit_r_min_nm"] = np.float32(r_min_nm)
@@ -2477,6 +2966,8 @@ def _build_cg_lipid_tables(
         bead_charges=bead_charges,
         pair_params=pair_params,
         derived_params=derived_params,
+        rel_relax_steps=fit_relax_steps,
+        cg_bead_masses=np.asarray(bead_mass_values, dtype=np.float64) if bead_mass_values is not None else None,
     )
     print()
 
@@ -2512,6 +3003,8 @@ def _run_cgl_target_type_task(task: dict) -> tuple[int, str, np.ndarray, int]:
 
     z_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
     target_pos = np.zeros((1, 3), dtype=np.float64)
+    rel_relax_steps = int(task.get("rel_relax_steps", 0))
+    cg_bead_masses = task.get("cg_bead_masses")
     for ir, r_nm in enumerate(r_sample_nm):
         target_pos[0, :] = (float(r_nm), 0.0, 0.0)
         for ia in range(cos_theta_grid.size):
@@ -2520,20 +3013,39 @@ def _run_cgl_target_type_task(task: dict) -> tuple[int, str, np.ndarray, int]:
             for direction in orientation_dirs[ia]:
                 rot_base = _rotation_to_align_z_np(direction)
                 for frame_angle in bead_frame_angles:
-                    rot = rot_base @ _rotation_about_axis_np(z_axis, float(frame_angle))
-                    cg_positions = (rot @ ref_nm.T).T
-                    e, _, _ = _compute_pair_energy_and_gradient(
-                        cg_positions,
-                        target_pos,
-                        bead_types,
-                        [tgt_type],
-                        bead_charges,
-                        [target_charge],
-                        pair_params,
-                        dist_min_nm=dist_floor_nm,
-                        soft_core_alpha=0.0,
-                    )
-                    e_sum += e
+                    if rel_relax_steps > 0:
+                        init_body = (_rotation_about_axis_np(z_axis, float(frame_angle)) @ ref_nm.T).T
+                        _, energy = _relax_dopc_beads(
+                            init_body_positions=init_body,
+                            ref_body_positions=ref_nm,
+                            bead_types=bead_types,
+                            bead_charges=bead_charges,
+                            bead_masses=cg_bead_masses,
+                            pair_params=pair_params,
+                            direction_lab=np.asarray(direction, dtype=np.float64),
+                            com_lab=np.zeros(3, dtype=np.float64),
+                            partner_lab_positions=target_pos,
+                            partner_bead_types=[tgt_type],
+                            partner_bead_charges=[target_charge],
+                            dist_min_nm=dist_floor_nm,
+                            rel_relax_steps=rel_relax_steps,
+                        )
+                        e_sum += energy
+                    else:
+                        rot = rot_base @ _rotation_about_axis_np(z_axis, float(frame_angle))
+                        cg_positions = (rot @ ref_nm.T).T
+                        e, _, _ = _compute_pair_energy_and_gradient(
+                            cg_positions,
+                            target_pos,
+                            bead_types,
+                            [tgt_type],
+                            bead_charges,
+                            [target_charge],
+                            pair_params,
+                            dist_min_nm=dist_floor_nm,
+                            soft_core_alpha=0.0,
+                        )
+                        e_sum += e
                     sample_count += 1
             energy_grid[ir, ia] = e_sum / max(sample_count, 1)
 
@@ -2575,6 +3087,8 @@ def _build_cgl_target_table(
     n_knot_radial: int = 14,
     n_knot_angular: int = 15,
     knot_spacing_ang: float = 1.4,
+    rel_relax_steps: int = 0,
+    cg_bead_masses: np.ndarray | None = None,
 ) -> None:
     """Build directional tensor B-spline tables for CGL-point targets."""
     target_types = sorted(t for t in effective_lj if t != "CGL")
@@ -2630,6 +3144,8 @@ def _build_cgl_target_table(
             "energy_conv": energy_conv,
             "r_min_ang": r_min_ang,
             "contact_ang": contact_ang,
+            "rel_relax_steps": int(rel_relax_steps),
+            "cg_bead_masses": cg_bead_masses,
         }
         for ti, tgt_type in enumerate(target_types)
     ]
@@ -2667,6 +3183,7 @@ def _build_cgl_target_table(
     target_grp.attrs["excluded_area_source"] = "dopc_contact_nonnegative_controls"
     target_grp.attrs["excluded_area_nonnegative_rows"] = np.int32(nonnegative_rows)
     target_grp.attrs["source"] = "explicit_dopc_directional"
+    target_grp.attrs["fit_relax_steps"] = np.int32(rel_relax_steps)
     target_grp.attrs["angle_convention"] = "ang=n_cgl_dot_n12"
     target_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
     target_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
@@ -2716,6 +3233,9 @@ def build_martini_tables(
     if bead_types is not None and bead_charges is None:
         bead_charges = [infer_charge_from_atomtype(bt) for bt in bead_types]
 
+    sc_fit_relax_steps = _positive_int_env("UPSIDE_MARTINI_FIT_RELAX_STEPS", 50)
+    sc_restraint_k = float(os.environ.get("UPSIDE_MARTINI_SC_RESTRAINT_K", "5000.0"))
+
     with h5py.File(output_path, "w") as h5:
         h5.attrs["schema"] = "martini_combined_v1"
         _build_particles_group(h5, atomtypes, pair_params, active_atom_types)
@@ -2727,6 +3247,8 @@ def build_martini_tables(
             active_residue_names=active_residue_names,
             active_target_types=sorted(active_atom_types),
             martini_sidechain_offsets_nm=martini_sidechain_offsets_nm,
+            fit_relax_steps=sc_fit_relax_steps,
+            sc_restraint_k=sc_restraint_k,
         )
         if cg_lipid_config:
             _build_cg_lipid_tables(
@@ -2755,12 +3277,13 @@ def build_particle_h5(
     """Generate particle.h5 with all particle types from the ITP."""
     output_path = Path(output_path).expanduser().resolve()
     dry_ff_path = Path(dry_ff_path).expanduser().resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
-    with h5py.File(output_path, "w") as h5:
+
+    def _writer(h5: h5py.File) -> None:
         h5.attrs["schema"] = SCHEMA_PARTICLES
         _build_particles_group(h5, atomtypes, pair_params, set(atomtypes))
+
+    _write_h5_atomically(output_path, _writer)
     print(f"Built {output_path} ({len(atomtypes)} types)")
 
 
@@ -2775,21 +3298,27 @@ def build_sidechain_h5(
     output_path = Path(output_path).expanduser().resolve()
     martinize_path = Path(martinize_path).expanduser().resolve()
     sidechain_lib_path = Path(sidechain_lib_path).expanduser().resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
     residue_map = load_martini_forcefield(martinize_path, forcefield_name)
     martini_sidechain_offsets_nm = _load_martini_sidechain_offsets_nm(
         martinize_path, forcefield_name
     )
-    with h5py.File(output_path, "w") as h5:
+
+    sc_fit_relax_steps = _positive_int_env("UPSIDE_MARTINI_FIT_RELAX_STEPS", 50)
+    sc_restraint_k = float(os.environ.get("UPSIDE_MARTINI_SC_RESTRAINT_K", "5000.0"))
+
+    def _writer(h5: h5py.File) -> None:
         h5.attrs["schema"] = SCHEMA_SC
         _build_sc_table_group(
             h5, residue_map, pair_params, sidechain_lib_path,
             active_residue_names=list(CANONICAL_RESIDUES),
             active_target_types=atomtypes,
             martini_sidechain_offsets_nm=martini_sidechain_offsets_nm,
+            fit_relax_steps=sc_fit_relax_steps,
+            sc_restraint_k=sc_restraint_k,
         )
+
+    _write_h5_atomically(output_path, _writer)
     print(f"Built {output_path}")
 
 
@@ -2809,8 +3338,6 @@ def build_dopc_h5(
     martinize_path = Path(martinize_path).expanduser().resolve()
     sidechain_lib_path = Path(sidechain_lib_path).expanduser().resolve()
     dopc_pdb_path = Path(dopc_pdb_path).expanduser().resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
     from martini_itp_reader import parse_dopc_from_itp
 
     atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
@@ -2837,7 +3364,7 @@ def build_dopc_h5(
         [[a[0] - com[0], a[1] - com[1], a[2] - com[2]] for a in first]
     ) * 0.1
 
-    with h5py.File(output_path, "w") as h5:
+    def _writer(h5: h5py.File) -> None:
         _build_cg_lipid_tables(
             h5,
             pair_params=pair_params,
@@ -2851,16 +3378,19 @@ def build_dopc_h5(
             bead_masses_g_mol=atomtype_masses,
             lipids_itp_path=lipids_itp_path,
         )
+
+    _write_h5_atomically(output_path, _writer)
     print(f"Built {output_path}")
 
 
 def build_interlipid_h5(output_path: Path) -> None:
     """Generate interlipid.h5 as an empty placeholder."""
     output_path = Path(output_path).expanduser().resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with h5py.File(output_path, "w") as h5:
+    def _writer(h5: h5py.File) -> None:
         g = h5.create_group("cross_lipid")
         g.attrs["schema"] = "cross_lipid_v1"
         g.attrs["n_lipid_types"] = 1
         g.create_dataset("interaction_param", data=np.zeros((0,), dtype=np.float64))
+
+    _write_h5_atomically(output_path, _writer)
     print(f"Built {output_path} (empty cross-lipid placeholder)")

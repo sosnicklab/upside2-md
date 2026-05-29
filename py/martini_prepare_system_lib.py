@@ -156,34 +156,28 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
     if pair_grp is not None:
         core_source = _decode_h5_attr(pair_grp.attrs.get("unresolved_core_source", ""))
         azimuthal_average = _decode_h5_attr(pair_grp.attrs.get("azimuthal_average", ""))
-        excluded_area_source = _decode_h5_attr(pair_grp.attrs.get("excluded_area_source", ""))
         isotropic_background_source = _decode_h5_attr(pair_grp.attrs.get("isotropic_background_source", ""))
         attractive_control_source = _decode_h5_attr(pair_grp.attrs.get("attractive_control_source", ""))
-        excluded_area_nonnegative_rows = int(pair_grp.attrs.get("excluded_area_nonnegative_rows", 0))
         fit_relax_steps = int(pair_grp.attrs.get("fit_relax_steps", -1))
         fit_r_min_nm = float(pair_grp.attrs.get("fit_r_min_nm", 999.0))
         bead_cutoff_nm = float(pair_grp.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
         has_old_caps = "energy_cap_kj_mol" in pair_grp.attrs
         if (
-            core_source != "max_first_sampled_dry_martini_energy_expectation"
-            or azimuthal_average != "energy_expectation"
-            or excluded_area_source != "wca_dopc_contact_kbt"
-            or isotropic_background_source != "attractive_radial_angular_mean_subtracted"
-            or attractive_control_source != "nontransferable_many_neighbor_cgl_cgl_attraction_removed"
-            or excluded_area_nonnegative_rows <= 0
-            or fit_relax_steps != 50
+            core_source not in ("max_first_sampled_dry_martini_energy_expectation", "median_first_sampled_dry_martini_energy")
+            or azimuthal_average not in ("energy_expectation", "boltzmann_free_energy")
+            or isotropic_background_source not in ("none_full_resolved_dry_martini_pair_table", "attractive_radial_angular_mean_subtracted")
+            or attractive_control_source not in ("retained_full_resolved_dry_martini_pair_table", "nontransferable_many_neighbor_cgl_cgl_attraction_removed")
+            or fit_relax_steps <= 0
             or fit_r_min_nm > 0.500001
             or abs(bead_cutoff_nm - 1.2) > 1.0e-6
             or has_old_caps
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_pair lacks the "
-                "dry-MARTINI direct short-range samples, DOPC-contact WCA excluded-area "
-                "term, attractive isotropic-background subtraction, or bead-level "
-                "nonbonded cutoff, or still contains non-transferable attractive "
-                "CGL-CGL controls. Rebuild martini.h5 so CGL-CGL bead overlap and "
-                "orientation residuals are represented by force-field-derived repulsive "
-                "table values rather than many-neighbor cohesive tails."
+                "dry-MARTINI direct rotated-geometry samples, full resolved lipid-lipid "
+                "attractions, or bead-level nonbonded cutoff. Rebuild martini.h5 so "
+                "CGL-CGL interactions are represented by the force-field-derived spline "
+                "table rather than a separate correction or stripped cohesive background."
             )
     sc_grp = cglt.get("cg_lipid_sc")
     if sc_grp is not None:
@@ -192,6 +186,7 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         azimuthal_average = _decode_h5_attr(sc_grp.attrs.get("azimuthal_average", ""))
         excluded_area_source = _decode_h5_attr(sc_grp.attrs.get("excluded_area_source", ""))
         excluded_area_nonnegative_rows = int(sc_grp.attrs.get("excluded_area_nonnegative_rows", 0))
+        fit_relax_steps = int(sc_grp.attrs.get("fit_relax_steps", -1))
         bead_cutoff_nm = float(sc_grp.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
         has_old_caps = "energy_cap_kj_mol" in sc_grp.attrs or "residual_cap_kj_mol" in sc_grp.attrs
         if n_sc_types > 0 and (
@@ -200,11 +195,12 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
             or azimuthal_average != "energy_expectation"
             or excluded_area_source != "dopc_contact_nonnegative_controls"
             or excluded_area_nonnegative_rows <= 0
+            or fit_relax_steps <= 0
             or abs(bead_cutoff_nm - 1.2) > 1.0e-6
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_sc lacks the "
-                "dry-MARTINI sampled short-range core, DOPC-contact excluded-area controls, "
+                "dry-MARTINI direct rotated-geometry short-range core, DOPC-contact excluded-area controls, "
                 "bead-level nonbonded cutoff, or still carries fixed fitting caps. "
                 "Rebuild martini.h5 so CGL-SC overlap is represented by force-field-derived "
                 "table values."
@@ -368,40 +364,6 @@ def _cg_lipid_sc_runtime_cutoff_ang(sc_attrs):
         return cutoff_ang
     fitted_support_ang = float(sc_attrs["fit_r_max_nm"]) * 10.0 + taper_width_ang
     return min(cutoff_ang, fitted_support_ang)
-
-
-def _derive_cg_lipid_leaflet_orientation_k(pair_grp):
-    if "leaflet_orientation_k_eup" in pair_grp.attrs:
-        return (
-            float(pair_grp.attrs["leaflet_orientation_k_eup"]),
-            str(pair_grp.attrs.get("leaflet_orientation_k_source", "cg_lipid_pair_attr")),
-        )
-    if "energy_grid_raw_kj_mol" not in pair_grp:
-        return 0.0, "missing_energy_grid_raw"
-
-    raw = np.asarray(pair_grp["energy_grid_raw_kj_mol"][:], dtype=np.float64)
-    if raw.ndim != 3 or raw.shape[1] < 3 or raw.shape[2] < 3:
-        return 0.0, "invalid_energy_grid_raw"
-    fit_min = float(pair_grp.attrs.get("fit_r_min_nm", 0.50))
-    fit_max = float(pair_grp.attrs.get("fit_r_max_nm", 1.68))
-    contact_nm = float(pair_grp.attrs.get("contact_nm", 0.70))
-    energy_conv = float(pair_grp.attrs.get("energy_conversion_kj_per_eup", 2.914952774272))
-    if energy_conv <= 0.0:
-        return 0.0, "invalid_energy_conversion"
-
-    r_values = np.linspace(fit_min, fit_max, raw.shape[0])
-    ir = int(np.argmin(np.abs(r_values - contact_nm)))
-    mid = raw.shape[1] // 2
-    vertical = float(raw[ir, mid, mid])
-    penalties = []
-    for ia in (0, raw.shape[1] - 1):
-        penalties.append(max(0.0, float(raw[ir, ia, mid]) - vertical))
-        penalties.append(max(0.0, float(raw[ir, mid, ia]) - vertical))
-    penalty_eup = float(np.mean(penalties) / energy_conv)
-    return (
-        max(0.0, 2.0 * penalty_eup),
-        "first_neighbor_in_plane_penalty_from_cg_lipid_pair_raw_grid",
-    )
 
 
 def coords(atoms):
@@ -3602,32 +3564,6 @@ def inject_cg_lipid_nodes(
 
                 n_param = int(pair_grp["interaction_param"].shape[-1])
                 print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1x1x{n_param} params")
-
-                leaflet_k, leaflet_k_source = _derive_cg_lipid_leaflet_orientation_k(pair_grp)
-                if leaflet_k > 0.0:
-                    with h5py.File(up_file, "r") as up_r:
-                        cv = up_r["input/potential/compose_vector6d"]
-                        elem_index = np.asarray(cv["elem_index"][:], dtype=np.int32)
-                        orientation_index = np.asarray(cv["orientation_index"][:], dtype=np.int32)
-                        pos = np.asarray(up_r["input/pos"][:, :, 0], dtype=np.float32)
-                    initial_direction = pos[orientation_index] - pos[elem_index]
-                    norm = np.linalg.norm(initial_direction, axis=1)
-                    valid = norm > 1.0e-6
-                    initial_nz = np.zeros(n_cg, dtype=np.float32)
-                    initial_nz[valid] = initial_direction[valid, 2] / norm[valid]
-                    target_nz = np.where(initial_nz >= 0.0, 1.0, -1.0).astype(np.float32)
-
-                    leaflet = pot.create_group("cg_lipid_leaflet_orientation")
-                    leaflet.attrs["initialized"] = True
-                    leaflet.attrs["arguments"] = np.array([b"compose_vector6d"])
-                    leaflet.attrs["spring_const"] = np.float32(leaflet_k)
-                    leaflet.attrs["source"] = leaflet_k_source
-                    leaflet.create_dataset("index", data=np.arange(n_cg, dtype=np.int32))
-                    leaflet.create_dataset("target_nz", data=target_nz)
-                    print(
-                        "  Injected cg_lipid_leaflet_orientation: "
-                        f"{n_cg} CG lipids, k={leaflet_k:.3f} E_up"
-                    )
 
             if has_sc:
                 # Check for rotamer placement nodes before creating the CGL-SC

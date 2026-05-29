@@ -64,6 +64,24 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Set optional CGL bead-frame samples for CGL-particle, SC-CGL, and CGL-CGL tables.",
     )
+    parser.add_argument(
+        "--fit-relax-steps",
+        type=int,
+        default=None,
+        help=(
+            "Number of hidden-bead relaxation steps during table construction. "
+            "Default: UPSIDE_MARTINI_FIT_RELAX_STEPS env var, or 0 (no relaxation)."
+        ),
+    )
+    parser.add_argument(
+        "--sc-restraint-k",
+        type=float,
+        default=None,
+        help=(
+            "Harmonic position restraint force constant (kJ/mol/nm^2) for SC bead "
+            "relaxation. Default: UPSIDE_MARTINI_SC_RESTRAINT_K env var, or 5000.0."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.workers is not None:
@@ -74,6 +92,10 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["UPSIDE_MARTINI_SC_BEAD_FRAME_COUNT"] = str(max(1, int(args.sc_bead_frame_count)))
     if args.cgl_bead_frame_count is not None:
         os.environ["UPSIDE_MARTINI_CGL_BEAD_FRAME_COUNT"] = str(max(1, int(args.cgl_bead_frame_count)))
+    if args.fit_relax_steps is not None:
+        os.environ["UPSIDE_MARTINI_FIT_RELAX_STEPS"] = str(max(0, int(args.fit_relax_steps)))
+    if args.sc_restraint_k is not None:
+        os.environ["UPSIDE_MARTINI_SC_RESTRAINT_K"] = str(max(0.0, float(args.sc_restraint_k)))
 
     if args.upside_home:
         repo_root = Path(args.upside_home).expanduser().resolve()

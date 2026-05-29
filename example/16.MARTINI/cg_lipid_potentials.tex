@@ -104,9 +104,22 @@ U_{\text{CG-CG}}(r, \cos\theta_1, \cos\theta_2)
 where $B_i$, $B_j$, and $B_k$ are cubic B-spline basis functions with clamped
 de Boor boundary conditions~\cite{deBoor}.  The current table uses
 $N_r = 14$ radial control points on $r \in [0, 16.8]\,\text{\AA}$ with
-$\Delta r = 1.4\,\text{\AA}$, and $N_\theta = 15$ angular control points on
+$\Delta r = 1.4\,\text{\AA}$, and $N_\theta = 9$ angular control points on
 $\cos\theta \in [-1, 1]$.  The total stored coefficient count per CGL-CGL type
-pair is $N_r N_\theta^2 = 3150$.
+pair is $N_r N_\theta^2 = 1134$.
+
+The angular B-spline has fewer control points ($N_\theta = 9$) than the
+original 15 to avoid underdetermined fitting: the dry-MARTINI energy grid
+is sampled at 7~$\cos\theta$ values per dimension, giving 49 data points per
+radial distance.  With 15~angular knots, the system has 225~degrees of freedom
+fitting 49~data points, a 4.6$\times$ underdetermination.  The cubic B-spline
+with Tikhonov second-derivative regularization ($\lambda=0.01$) can develop
+spurious oscillations between sample points that create unphysical angular
+energy features not present in the underlying force field.  Reducing to
+9~knots and increasing the Tikhonov factor to $\lambda=0.1$ keeps the fit
+within the physical data resolution while still resolving genuine angular
+structure.  The same regularization is applied to both angular dimensions
+independently during the two-pass tensor-product fit.
 
 \paragraph{Tapering.}
 A cubic Hermite taper $S(u) = u^2(3 - 2u)$ with
@@ -123,11 +136,18 @@ MARTINI potential. The CGL--CGL grid is always sampled at the full
 resolution ($16$ radial values, $7$ angular values, and $2$ azimuths per
 lipid), including when reduced-resolution table generation is requested for
 other terms, because reduced CGL--CGL angular sampling admits unphysical
-same-leaflet overlaps. For each sampled configuration, the internal bead
-coordinates are relaxed by steepest-descent energy minimization
-($N_{\text{relax}} = 50$ steps). The sampled energy includes the dry-MARTINI
-bonded deformation penalty relative to the unrelaxed DOPC reference, so local
-steric stress can relax but deformation is not free.
+same-leaflet overlaps. For each sampled configuration, both DOPC molecules are
+initially placed from the full-resolution reference bead geometry rotated into the
+sampled orientation.  When \texttt{UPSIDE\_MARTINI\_FIT\_RELAX\_STEPS} is set to a
+positive value, both molecules undergo simultaneous projected gradient-descent
+relaxation in their respective body frames before the energy is recorded:
+the center of mass and the orientation vector of each molecule are held fixed,
+while internal bead positions adjust to relieve steric clashes.  The internal
+energy during relaxation includes the bonded terms (harmonic bonds and
+cosine-based angles from the MARTINI DOPC topology) plus the nonbonded
+interaction between the two lipids.  Without relaxation (\texttt{UPSIDE\_MARTINI\_FIT\_RELAX\_STEPS=0}),
+the tabulated value is the direct resolved dry-MARTINI nonbonded interaction for
+the rigidly rotated geometry.
 Direction-vector azimuths are integrated as a dry-MARTINI energy
 expectation:
 \begin{equation}
@@ -146,52 +166,29 @@ bead model over these sampled direction vectors rather than deriving a table
 from one default orientation.  Optional bead-frame quadrature around each
 sampled direction vector can be enabled for convergence tests, but it is not a
 separate runtime coordinate.
-This avoids pairwise PMF overcounting of missing azimuthal relaxation in a
-many-lipid additive Hamiltonian while still deriving the table directly from
-the dry-MARTINI force field.  The attractive radial angular mean of each
-sampled row is subtracted before fitting.  Positive radial means are left
-unchanged.  This removes the isotropic cohesive background of an isolated
-DOPC--DOPC pair, which is not transferable as an additive many-neighbor
-single-particle membrane interaction, while preserving dry-MARTINI excluded
-volume and orientation-dependent residuals.  After spline fitting, remaining
-negative CGL--CGL controls are set to zero for the same reason: the CGL--CGL
-node represents excluded-volume and orientation-compatibility physics in the
-one-particle membrane, not a many-neighbor hydrophobic cohesion term.  The
-sampled CGL-center range starts at
-$r=5.0\,\text{\AA}$, below the DOPC-derived excluded-area contact distance
-$r_{\text{contact}}=6.959\,\text{\AA}$. Inside that excluded-area domain a
-Weeks--Chandler--Andersen area term is added with
-$\epsilon=k_B T_{\text{production}}=0.8647\,E_{\text{up}}$ and
-$\sigma=r_{\text{contact}}/2^{1/6}$.  This term represents the projected
-in-plane steric area of the hidden DOPC beads.  Spline rows whose radial support
-lies inside the excluded-area domain are constrained to nonnegative controls,
-because attractive controls there are fitting overshoot rather than physical
-excluded-volume states.  Rows below the first sampled distance are unresolved
-by the spline samples, so they are assigned a finite inner barrier from the
-maximum first sampled dry-MARTINI energy expectation.  This inner barrier is
-therefore tied to the sampled dry-MARTINI table, not to a chosen numeric cap.
-No sampled-energy clipping, SVD, empirical pair scaling, pairwise PMF, or flat
-maximum-energy contact core is applied.
-
-\paragraph{Leaflet-normal orientation term.}
-The collapsed CGL particle removes the many explicit DOPC bead contacts that
-otherwise keep lipid tail axes aligned with the leaflet normal.  The pair spline
-above still supplies CGL--CGL excluded volume and orientation compatibility, but
-the isolated pair table is not a many-neighbor membrane orientational field.
-Production CGL inputs therefore add a one-body leaflet-normal term on the same
-dynamic CGLD-derived orientation coordinate,
-\begin{equation}
-U_{\text{leaflet}} = \frac{1}{2} k_{\text{leaflet}}
-    \left(n_z - n_z^0\right)^2 ,
-\end{equation}
-where $n_z$ is the CGL orientation-vector $z$ component and
-$n_z^0 \in \{-1,+1\}$ is assigned from the initial leaflet direction.  The
-spring constant is not tuned from trajectory appearance.  It is derived from
-the raw CGL--CGL dry-MARTINI table by comparing, at the first-neighbor contact
-radius, the table energy for in-plane CGL axes against the vertical same-leaflet
-orientation.  This keeps the term tied to the same resolved-lipid physics used
-to build $U_{\text{CG-CG}}$ and prevents CGLD from becoming an unconstrained
-display coordinate during minimization or burn-in.
+The CGL--CGL table now retains the full resolved dry-MARTINI lipid--lipid
+interaction projected onto the CGL variables.  No attractive radial background
+is subtracted and no separate
+leaflet-normal or long-range orientation correction is added at runtime.  The
+sampled CGL-center range starts at $r=5.0\,\text{\AA}$ and the fitted spline is
+bounded to the sampled dry-MARTINI energy range to prevent B-spline overshoot
+from creating attractions or repulsions outside the resolved lipid calculation.
+Rows below the first sampled distance are unresolved by the spline samples, so
+they are assigned a finite inner barrier from the maximum first sampled
+dry-MARTINI energy expectation.  This inner barrier is therefore tied to the
+sampled dry-MARTINI table, not to a chosen numeric cap.
+Rows whose radial support lies inside the DOPC-derived contact shell
+($r_{\text{contact}} = 6.959\,\text{\AA}$) are further constrained to
+nonnegative control values
+(\texttt{excluded\_area\_source=contact\_nm\_nonnegativity}).  Below the
+contact distance, bead volumes of two DOPC molecules overlap, so the summed
+interaction must be physically repulsive; any negative spline control points at
+these distances are B-spline overshoot artifacts.  This is the same
+excluded-area treatment already applied to the CGL--SC and CGL--target tables
+(Sec.~\ref{sec:cg-sc} and \ref{sec:cg-iso}), ensuring that lipid--lipid and
+lipid--protein interactions share a consistent short-range repulsive boundary.
+No empirical pair scaling, pairwise PMF, WCA correction, orientation restraint,
+or flat maximum-energy contact core is applied.
 
 \subsection{CG Lipid -- Sidechain Quad-Spline Potential}
 \label{sec:cg-sc}
@@ -204,19 +201,26 @@ as source~1 ($\cos\theta_1 = -\hat{\mathbf{n}}_{\text{SC}} \cdot
 \hat{\mathbf{r}}_{12}$). The SC direction $\hat{\mathbf{n}}_{\text{SC}}$ is the
 unit vector from C$_\alpha$ to C$_\beta$.
 
-The table is built from the same dry-MARTINI energy expectation, using
-$N_{\text{relax}} = 120$ bead relaxation steps and a tighter angular grid
-(9 $\cos\theta$ points $\times$ 4 sidechain azimuths $\times$ 4 CGL azimuths).
+The table is built from the same dry-MARTINI energy expectation, using a tighter
+angular grid (9 $\cos\theta$ points $\times$ 4 sidechain azimuths $\times$
+4 CGL azimuths).
 For each sidechain rotamer, all resolved dry-MARTINI sidechain bead positions
 are used; the fit does not collapse a multi-bead sidechain to its rotamer
 center.  The sidechain bead model and the DOPC bead model are independently
 rotated over the sampled SC and CGL direction vectors.  Optional bead-frame
 quadrature around each sampled direction vector can be enabled when checking
 convergence of the resolved-bead projection, but the spline coordinates remain
-the runtime direction-vector projections.  The relaxed explicit-bead samples
-also retain the bonded deformation penalty relative to the unrelaxed DOPC reference.  Separate
-tables are constructed for each standard proteinogenic sidechain type present
-in the active system against the single CG lipid type.
+the runtime direction-vector projections.  When \texttt{UPSIDE\_MARTINI\_FIT\_RELAX\_STEPS} is set to a positive value,
+both the SC beads and the DOPC beads are relaxed in alternation at each grid
+point: SC beads relax against the current DOPC bead positions (with harmonic
+position restraints to the rotamer reference geometry, using
+\texttt{UPSIDE\_MARTINI\_SC\_RESTRAINT\_K} as the force constant), then DOPC
+beads relax against the current SC positions (with bonded energy and COM/direction
+constraints), repeating for the specified number of steps.  Without relaxation,
+each table entry is the direct resolved dry-MARTINI sidechain--DOPC nonbonded
+energy expectation with both bead sets rigid.  Separate tables are
+constructed for each standard proteinogenic sidechain type present in the
+active system against the single CG lipid type.
 
 For compactness the sidechain table is stored as a low-rank angular
 decomposition plus radial B-splines, but the fit no longer clips the sampled
@@ -274,9 +278,11 @@ Lennard-Jones surrogate or a radial orientation-averaged Lennard-Jones
 replacement.  For each radial sample $r$ and angular sample $\cos\theta$, the CGL center is placed at
 distance $r$ from a point probe of target type $X$, the 14-bead DOPC reference
 is oriented so its CGL vector has the requested dot product with
-$\hat{\mathbf{r}}_{12}$, internal bead relaxation is charged by the same
-relative bonded deformation penalty, and azimuthal rotations are integrated as
-an energy expectation:
+$\hat{\mathbf{r}}_{12}$, and azimuthal rotations are integrated as an energy
+expectation.  When \texttt{UPSIDE\_MARTINI\_FIT\_RELAX\_STEPS} is positive,
+the 14 DOPC beads are relaxed via projected gradient descent (COM and direction
+vector fixed, bonded energy active) against the fixed point target before the
+energy is recorded:
 \begin{equation}
   U_{\text{CG-}X}(r,\cos\theta)
   =
@@ -308,10 +314,11 @@ unsampled radial core below the first explicit target samples is filled from
 the first resolved energy-expectation boundary row, representing a
 force-field-derived unresolved core rather than a numeric energy cap.  Spline
 controls whose radial support contributes inside the DOPC contact excluded-area
-domain are constrained to nonnegative values.  This is the same dry-MARTINI
-excluded-volume projection used for CGL--CGL: attractive controls in this
-domain are spline overshoot of repulsive bead-overlap samples, not physical
-target affinity.  The old
+domain are constrained to nonnegative values, consistent with the same
+excluded-area treatment applied to the CGL--CGL (Sec.~\ref{sec:cg-cg}) and
+CGL--SC (Sec.~\ref{sec:cg-sc}) tables.  For point targets, attractive controls
+in this unresolved bead-overlap domain are spline overshoot of repulsive
+resolved samples, not physical target affinity.  The old
 global CGL-vs-target $\sigma$ cap and radial orientation-averaged table are no
 longer part of the production path; generated tables carry the source
 attribute \texttt{explicit\_dopc\_directional} and energy-expectation metadata.
@@ -411,23 +418,29 @@ E_{\text{Coul}}(r_{ij})$, where $r_{ij}$ is the distance from each SC bead at
 its rotamer position to the probe point.  For each rotamer, the resolved
 sidechain bead model is placed over the sampled SC direction vector used by
 the runtime table.  Optional bead-frame quadrature around that direction can
-be enabled for projection-convergence checks. The 2D energy grid
-$E(r_i, \cos\theta_j)$ is stored as a lower-bound radial table plus a
-nonnegative angular penalty:
+be enabled for projection-convergence checks.  When
+\texttt{UPSIDE\_MARTINI\_FIT\_RELAX\_STEPS} is positive, SC bead positions are
+relaxed against the fixed point probe before each energy evaluation: beads
+adjust under harmonic position restraints (force constant
+\texttt{UPSIDE\_MARTINI\_SC\_RESTRAINT\_K}) while the CB anchor position and
+CA$\to$CB direction remain fixed.  The 2D energy grid
+$E(r_i, \cos\theta_j)$ is stored as a radial table plus one signed angular
+mode:
 
 \begin{itemize}
-  \item $V_{\text{rad}}(r) = \min_{\cos\theta} E(r, \cos\theta)$
-  \item Residual $\Delta(r, \cos\theta) =
-    \max(E(r, \cos\theta) - V_{\text{rad}}(r), 0)$ is fit with one
-    nonnegative rank-1 mode, $A(\cos\theta) V_{\text{ang}}(r)$, with
-    $A \ge 0$ and $V_{\text{ang}} \ge 0$.
+  \item $V_{\text{rad}}(r) = \langle E(r,\cos\theta)\rangle_{\cos\theta}$
+  \item The residual $E - V_{\text{rad}}$ is fit with the leading SVD mode
+    $A(\cos\theta) V_{\text{ang}}(r)$.
 \end{itemize}
 
-This reconstruction can overestimate some orientations but cannot create an
-orientation-specific attraction below the sampled dry-MARTINI minimum at the
-same radius.  That lower-bound property is required for explicit DOPC beads,
-because a negative SVD residual inside a repulsive core can otherwise become an
-unphysical lipid--sidechain well during minimization and burn-in.
+After fitting, each radial row is shifted upward only if needed so that the
+reconstructed table is not below the sampled dry-MARTINI minimum at that
+radius.  In the unresolved hard-core region, where enormous signed SVD terms
+would cancel in double precision but not reliably after float storage, the
+angular mode is set to zero and the radial row is the minimum sampled
+repulsive value.  This keeps the attractive orientation dependence in the
+resolved range while preventing the table factorization from inventing
+unphysical lipid--sidechain wells during minimization and burn-in.
 
 The resulting tables are stored as piecewise-linear grids with 96 radial points
 ($r \in [2.5, 12.0]\,\text{\AA}$) and 13 angular bins
@@ -496,13 +509,11 @@ single-particle lipid is owned by a dedicated spline node:
     other non-sidechain point targets.
   \item CGLD: carries the orientation coordinate and its harmonic CGL-CGLD bond
     only; it is not a generic nonbonded particle.
-  \item CGL leaflet orientation: handled by \texttt{cg\_lipid\_leaflet\_orientation},
-    with its spring constant derived from the raw CGL--CGL dry-MARTINI table.
 \end{itemize}
 
-This means CGL-CGL torque, rotamer-weighted CGL-SC torque, CGL-target torque,
-and leaflet-normal torque act directly on the CGLD-position-derived vector
-through the same coordinate derivatives used for position forces.
+This means CGL-CGL torque, rotamer-weighted CGL-SC torque, and CGL-target
+torque act directly on the CGLD-position-derived vector through the same
+coordinate derivatives used for position forces.
 
 With this ownership, full-resolution and single-particle lipid modes expose the
 same physical protein interfaces at different lipid resolution.  Full mode
@@ -618,10 +629,26 @@ set, Slurm allocations \texttt{SLURM\_CPUS\_PER\_TASK} or
 \texttt{SLURM\_CPUS\_ON\_NODE} are used, otherwise the local CPU count is used
 with a conservative cap for interactive M1 macOS builds.  The one-shot
 generator also accepts \texttt{--workers}, \texttt{--bead-frame-count},
-\texttt{--sc-bead-frame-count}, and \texttt{--cgl-bead-frame-count}.  The bead-frame
+\texttt{--sc-bead-frame-count}, \texttt{--cgl-bead-frame-count},
+\texttt{--fit-relax-steps}, and \texttt{--sc-restraint-k}.  The bead-frame
 controls are optional quadrature around sampled direction vectors; they do not
 change the runtime spline variables, disable interactions, or scale any
-physical term.  Process workers are used first; if an environment disallows
+physical term.
+
+\texttt{UPSIDE\_MARTINI\_FIT\_RELAX\_STEPS} (default 50) enables hidden-bead
+relaxation during table construction for all interactions involving the
+14-bead DOPC or multi-bead sidechain models.  When positive, each sampled
+grid configuration undergoes projected gradient-descent minimization of the
+internal bead positions under COM and direction-vector constraints before the
+energy is recorded.  This relieves steric clashes that would otherwise produce
+unrealistically high repulsive energies at short range and destabilize the
+fitted B-spline potential.  The DOPC beads use the bonded topology (harmonic
+bonds and cosine angles from the MARTINI DOPC ITP), while SC beads use harmonic
+position restraints with force constant \texttt{UPSIDE\_MARTINI\_SC\_RESTRAINT\_K}
+(default $5000\,\text{kJ}\cdot\text{mol}^{-1}\cdot\text{nm}^{-2}$).  The
+\texttt{fit\_relax\_steps} attribute is stored in the \texttt{cg\_lipid\_pair},
+\texttt{cg\_lipid\_sc}, \texttt{cg\_lipid\_target}, and \texttt{sc\_table} HDF5
+groups.  Process workers are used first; if an environment disallows
 process-pool semaphores, the generator falls back to a thread pool with the
 same worker count rather than serializing the build.
 

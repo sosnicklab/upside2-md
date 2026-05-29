@@ -74,7 +74,7 @@ def write_dopc_only_pdb() -> Path:
     return RUNTIME_PDB
 
 
-def _read_first_dopc_reference() -> tuple[np.ndarray, list[str]]:
+def _read_first_dopc_reference() -> tuple[np.ndarray, list[str], list[float]]:
     atoms = []
     with RUNTIME_PDB.open() as f:
         for line in f:
@@ -94,7 +94,7 @@ def _read_first_dopc_reference() -> tuple[np.ndarray, list[str]]:
 
     lipids_itp = REPO_ROOT / "parameters" / "dryMARTINI" / "dry_martini_v2.1_lipids.itp"
     dopc = parse_dopc_from_itp(lipids_itp)
-    return ref_bead_positions_nm, list(dopc["bead_types"])
+    return ref_bead_positions_nm, list(dopc["bead_types"]), list(dopc["bead_charges"])
 
 
 def build_tables(resolution: str) -> None:
@@ -102,7 +102,7 @@ def build_tables(resolution: str) -> None:
 
     os.environ["UPSIDE_CG_LIPID_RESOLUTION"] = resolution
 
-    ref_bead_positions_nm, bead_types = _read_first_dopc_reference()
+    ref_bead_positions_nm, bead_types, bead_charges = _read_first_dopc_reference()
     dry_ff = REPO_ROOT / "parameters" / "dryMARTINI" / "dry_martini_v2.1.itp"
     martinize = REPO_ROOT / "py" / "martinize.py"
     sc_lib = REPO_ROOT / "parameters" / "ff_2.1" / "sidechain.h5"
@@ -131,6 +131,7 @@ def build_tables(resolution: str) -> None:
         cg_lipid_config={
             "ref_bead_positions_nm": ref_bead_positions_nm,
             "bead_types": bead_types,
+            "bead_charges": bead_charges,
         },
     )
 
