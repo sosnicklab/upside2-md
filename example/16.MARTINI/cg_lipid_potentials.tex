@@ -582,6 +582,40 @@ is to remove residual packing stress from the generated bilayer/protein
 configuration before finite-timestep MD and production handoff.  It is not a
 restraint, force scaling, interaction exclusion, or model parameter.
 
+During stage-6 minimization the protein is held as a rigid body (all protein
+atoms in a single rigid group), permitting center-of-mass translation and rigid
+rotation while keeping the protein fold intact.  To prevent the rigid protein
+from drifting into the lipid beads---which would exploit the attractive
+Lennard-Jones wells of the CG-CG pair table and collapse the bilayer onto the
+protein---harmonic position restraints are applied to all protein atoms before
+minimization:
+
+\begin{equation}
+  U_{\text{restraint}} = \frac{1}{2}\,k \sum_{i\in\text{protein}}
+  \left| \mathbf{r}_i - \mathbf{r}_i^{\text{ref}} \right|^2,
+  \qquad k = 10.0\,E_{\text{up}}/\text{\AA}^2 .
+\end{equation}
+
+The reference positions $\mathbf{r}_i^{\text{ref}}$ are the initial protein
+coordinates from the stage-6 preparation step.  Because the atoms are in a
+rigid group, the per-atom restraint forces are collected by the rigid-body
+solver into a net center-of-mass restoring force $\mathbf{F}_{\text{COM}} =
+-k\,N_{\text{protein}}\,(\mathbf{R}_{\text{COM}} -
+\mathbf{R}_{\text{COM}}^{\text{ref}})$ and a net restoring torque, so the
+protein is held near its initial configuration while lipid beads relax around
+it.  After minimization converges, the position restraints are removed before
+the NPT MD phase begins.  This protocol is standard in protein--lipid
+simulation setup and a physical harmonic potential, not a parameter twist or
+force cap.
+
+Dense protein/lipid packings, such as the 236-residue 1RKL system embedded in a
+bilayer of 282 DOPC molecules, are most susceptible to the drift instability
+because the ratio of lipid beads to protein surface area is high; sparser
+packings like the 570-residue 1AFO system with the same 282-lipid box are
+naturally less prone to overshoot.  The position-restraint protocol makes the
+minimization robust to seed-to-seed packing variation without changing the
+underlying force field.
+
 \subsection{Stage-7 Production Handoff and MARTINI Integration}
 
 The standard Upside integrator implementation follows the three-stage HOH
