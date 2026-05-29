@@ -608,13 +608,16 @@ the NPT MD phase begins.  This protocol is standard in protein--lipid
 simulation setup and a physical harmonic potential, not a parameter twist or
 force cap.
 
-Dense protein/lipid packings, such as the 236-residue 1RKL system embedded in a
-bilayer of 282 DOPC molecules, are most susceptible to the drift instability
-because the ratio of lipid beads to protein surface area is high; sparser
-packings like the 570-residue 1AFO system with the same 282-lipid box are
-naturally less prone to overshoot.  The position-restraint protocol makes the
-minimization robust to seed-to-seed packing variation without changing the
-underlying force field.
+The minimization overshoot is seed-dependent: some random placements of the
+protein in the bilayer produce initial configurations where the
+steepest-descent path leads from the repulsive initial state into the
+attractive LJ wells of the CG-CG pair table.  Systems with a smaller protein
+surface area relative to the lipid count (e.g., 236-residue 1RKL with 282
+DOPC lipids) are more susceptible because the same number of lipid beads are
+concentrated around fewer protein surface points, producing larger net
+directional forces on the rigid protein body.  The position-restraint
+protocol makes the minimization robust to this seed-to-seed variation
+without changing the underlying force field.
 
 \subsection{Stage-7 Production Handoff and MARTINI Integration}
 
