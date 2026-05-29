@@ -193,7 +193,7 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
             has_old_caps
             or short_core_source != "max_first_sampled_dry_martini_energy_expectation"
             or azimuthal_average != "energy_expectation"
-            or excluded_area_source != "dopc_contact_nonnegative_controls"
+            or excluded_area_source not in ("dopc_contact_nonnegative_controls", "wca_dopc_contact_kbt")
             or excluded_area_nonnegative_rows <= 0
             or fit_relax_steps <= 0
             or abs(bead_cutoff_nm - 1.2) > 1.0e-6

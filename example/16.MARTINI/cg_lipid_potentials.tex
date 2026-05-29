@@ -104,22 +104,17 @@ U_{\text{CG-CG}}(r, \cos\theta_1, \cos\theta_2)
 where $B_i$, $B_j$, and $B_k$ are cubic B-spline basis functions with clamped
 de Boor boundary conditions~\cite{deBoor}.  The current table uses
 $N_r = 14$ radial control points on $r \in [0, 16.8]\,\text{\AA}$ with
-$\Delta r = 1.4\,\text{\AA}$, and $N_\theta = 9$ angular control points on
+$\Delta r = 1.4\,\text{\AA}$, and $N_\theta = 15$ angular control points on
 $\cos\theta \in [-1, 1]$.  The total stored coefficient count per CGL-CGL type
-pair is $N_r N_\theta^2 = 1134$.
+pair is $N_r N_\theta^2 = 3150$.
 
-The angular B-spline has fewer control points ($N_\theta = 9$) than the
-original 15 to avoid underdetermined fitting: the dry-MARTINI energy grid
-is sampled at 7~$\cos\theta$ values per dimension, giving 49 data points per
-radial distance.  With 15~angular knots, the system has 225~degrees of freedom
-fitting 49~data points, a 4.6$\times$ underdetermination.  The cubic B-spline
-with Tikhonov second-derivative regularization ($\lambda=0.01$) can develop
-spurious oscillations between sample points that create unphysical angular
-energy features not present in the underlying force field.  Reducing to
-9~knots and increasing the Tikhonov factor to $\lambda=0.1$ keeps the fit
-within the physical data resolution while still resolving genuine angular
-structure.  The same regularization is applied to both angular dimensions
-independently during the two-pass tensor-product fit.
+The angular B-spline uses $N_\theta = 15$ control points per angular dimension,
+matching the original table design.  The tensor-product cubic B-spline fit
+employs a small second-derivative smoothness penalty
+(\texttt{cg\_smooth}=0.01) to suppress noise while preserving the physical
+resolution of the 7~$\cos\theta$ samples per dimension.  The fit is performed
+as two successive tensor-product passes (one angular dimension per pass) on
+the azimuthally averaged dry-MARTINI energy expectation.
 
 \paragraph{Tapering.}
 A cubic Hermite taper $S(u) = u^2(3 - 2u)$ with
@@ -139,15 +134,25 @@ other terms, because reduced CGL--CGL angular sampling admits unphysical
 same-leaflet overlaps. For each sampled configuration, both DOPC molecules are
 initially placed from the full-resolution reference bead geometry rotated into the
 sampled orientation.  When \texttt{UPSIDE\_MARTINI\_FIT\_RELAX\_STEPS} is set to a
-positive value, both molecules undergo simultaneous projected gradient-descent
-relaxation in their respective body frames before the energy is recorded:
-the center of mass and the orientation vector of each molecule are held fixed,
-while internal bead positions adjust to relieve steric clashes.  The internal
-energy during relaxation includes the bonded terms (harmonic bonds and
-cosine-based angles from the MARTINI DOPC topology) plus the nonbonded
-interaction between the two lipids.  Without relaxation (\texttt{UPSIDE\_MARTINI\_FIT\_RELAX\_STEPS=0}),
+positive value, both molecules undergo simultaneous gradient-descent relaxation
+in the lab frame before the energy is recorded: both molecules are free to
+translate and rotate, with gradient steps clipped at $0.005\,\text{nm}$ per step
+to prevent bead explosion from steep steric forces.  The relaxation uses a
+close-approach distance \texttt{dist\_min\_nm}=0.01\,\text{nm} to allow beads to
+pass through one another during minimization, avoiding unphysical trapping in
+local overlap configurations.  The internal energy during relaxation includes
+the bonded terms (harmonic bonds and cosine-based angles from the MARTINI DOPC
+topology) plus the nonbonded interaction between the two lipids.  After
+relaxation, the final energy is recorded at \texttt{dist\_min\_nm}=0.10\,\text{nm}
+and a bonded deformation cost $\sum (k_b/2)(b_{\text{final}} -
+b_{\text{ref}})^2 + \sum (k_a/2)(\cos\theta_{\text{final}} -
+\cos\theta_{\text{ref}})^2$ is added to account for internal strain induced by
+the relaxation.  Without relaxation (\texttt{UPSIDE\_MARTINI\_FIT\_RELAX\_STEPS=0}),
 the tabulated value is the direct resolved dry-MARTINI nonbonded interaction for
-the rigidly rotated geometry.
+the rigidly rotated geometry.  No soft-core potential is used during
+relaxation (\texttt{relax\_soft\_core\_alpha}=0.0), as soft-core smoothing
+disables LJ repulsion and permits unphysical bead overlap that catastrophically
+inflates the final recorded energy.
 Direction-vector azimuths are integrated as a dry-MARTINI energy
 expectation:
 \begin{equation}
@@ -166,29 +171,68 @@ bead model over these sampled direction vectors rather than deriving a table
 from one default orientation.  Optional bead-frame quadrature around each
 sampled direction vector can be enabled for convergence tests, but it is not a
 separate runtime coordinate.
-The CGL--CGL table now retains the full resolved dry-MARTINI lipid--lipid
-interaction projected onto the CGL variables.  No attractive radial background
-is subtracted and no separate
-leaflet-normal or long-range orientation correction is added at runtime.  The
-sampled CGL-center range starts at $r=5.0\,\text{\AA}$ and the fitted spline is
-bounded to the sampled dry-MARTINI energy range to prevent B-spline overshoot
-from creating attractions or repulsions outside the resolved lipid calculation.
-Rows below the first sampled distance are unresolved by the spline samples, so
-they are assigned a finite inner barrier from the maximum first sampled
-dry-MARTINI energy expectation.  This inner barrier is therefore tied to the
-sampled dry-MARTINI table, not to a chosen numeric cap.
-Rows whose radial support lies inside the DOPC-derived contact shell
-($r_{\text{contact}} = 6.959\,\text{\AA}$) are further constrained to
-nonnegative control values
-(\texttt{excluded\_area\_source=contact\_nm\_nonnegativity}).  Below the
-contact distance, bead volumes of two DOPC molecules overlap, so the summed
-interaction must be physically repulsive; any negative spline control points at
-these distances are B-spline overshoot artifacts.  This is the same
-excluded-area treatment already applied to the CGL--SC and CGL--target tables
+The CG-CG table is constructed from the azimuthally averaged dry-MARTINI
+lipid--lipid energy expectation with three physical corrections applied to
+ensure a stable and transferable coarse-grained potential:
+
+\paragraph{WCA Excluded Area.}
+At distances below the DOPC-derived contact shell ($r_{\text{contact}} =
+6.959\,\text{\AA}$), a WCA (Weeks--Chandler--Andersen) repulsive energy is
+added to each sampled grid point:
+\begin{equation}
+  U_{\text{WCA}}(r) =
+  \begin{cases}
+    4k_BT \left[\left(\frac{\sigma}{r}\right)^{12} -
+    \left(\frac{\sigma}{r}\right)^6\right] + k_BT, & r < r_{\text{contact}} \\
+    0, & r \geq r_{\text{contact}}
+  \end{cases}
+\end{equation}
+with $\sigma = r_{\text{contact}} / 2^{1/6}$ and $k_BT$ taken at production
+temperature.  Below the contact distance, bead volumes of two DOPC molecules
+overlap, so the summed interaction must be physically repulsive.  The WCA
+contribution ensures that the sampled energy is strictly repulsive at short
+range before the B-spline fit.
+
+\paragraph{Isotropic Background Subtraction.}
+For each radial distance, the angular-mean attractive contribution is computed
+and subtracted from the energy grid:
+\begin{equation}
+  U_{\text{bg}}(r) = \min\left(0,\;
+  \langle U_{\text{DOPC-DOPC}}(r,\cos\theta_1,\cos\theta_2)
+  \rangle_{\cos\theta_1,\cos\theta_2}\right).
+\end{equation}
+This removes the mean attractive background that would otherwise be amplified
+by the B-spline fit in underdetermined angular regions, while preserving the
+orientation-dependent structure.  The isotropic background is stored separately
+as \texttt{attractive\_radial\_background\_kj\_mol} and the source is recorded
+as \texttt{attractive\_radial\_angular\_mean\_subtracted}.
+
+\paragraph{Attractive Removal.}
+After B-spline fitting, all negative control points are clamped to zero
+(\texttt{attractive\_control\_source=nontransferable\_many\_neighbor\_cgl\_cgl%
+\_attraction\_removed}).  In a dense bilayer, many-body lipid--lipid
+interactions screen individual pair attractions; retaining fitted attractions
+in the two-body CG-CG table would double-count attractive contributions that
+are physically mediated by neighboring lipids.  Setting all negative spline
+controls to zero removes these nontransferable attractions.
+
+\paragraph{Unresolved Core.}
+Radial rows below the first sampled distance ($r < 5.0\,\text{\AA}$) are
+unresolved by the spline samples.  These rows are filled with the maximum
+energy from the first sampled row (\texttt{unresolved\_core\_source=
+max\_first\_sampled\_dry\_martini\_energy\_expectation}), providing a
+force-field-derived inner barrier tied to the sampled dry-MARTINI table.
+
+\paragraph{Excluded-Area Nonnegativity.}
+After attractive removal and core filling, radial rows whose support lies
+inside the DOPC-derived contact shell are further constrained to nonnegative
+control values (\texttt{excluded\_area\_source=contact\_nm\_nonnegativity}).
+Below the contact distance, bead volumes of two DOPC molecules overlap, so the
+summed interaction must be physically repulsive; any negative spline control
+points at these distances are B-spline overshoot artifacts.  This is the same
+excluded-area treatment applied to the CGL--SC and CGL--target tables
 (Sec.~\ref{sec:cg-sc} and \ref{sec:cg-iso}), ensuring that lipid--lipid and
 lipid--protein interactions share a consistent short-range repulsive boundary.
-No empirical pair scaling, pairwise PMF, WCA correction, orientation restraint,
-or flat maximum-energy contact core is applied.
 
 \subsection{CG Lipid -- Sidechain Quad-Spline Potential}
 \label{sec:cg-sc}

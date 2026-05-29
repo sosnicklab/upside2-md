@@ -750,6 +750,34 @@ def set_hybrid_control_mode(up_file: Path, activation_stage: str, preprod_mode="
         grp.attrs["preprod_protein_mode"] = np.bytes_(preprod_mode)
 
 
+def inject_protein_position_restraints(up_file: Path, spring_const: float = 10.0):
+    import h5py
+
+    with h5py.File(up_file, "r+") as h5:
+        pm = h5["/input/hybrid_env_topology/protein_membership"][:]
+        protein_atoms = np.where(pm == -1)[0].astype(np.int32)
+        if len(protein_atoms) == 0:
+            return
+        ref_pos = np.asarray(h5["/input/pos"][:][protein_atoms, :, 0], dtype=np.float32)
+        grp = h5.require_group("/input/potential/restraint_position")
+        grp.attrs["arguments"] = np.array([np.bytes_("pos")])
+        for name in ("restraint_indices", "ref_pos", "spring_const"):
+            if name in grp:
+                del grp[name]
+        grp.create_dataset("restraint_indices", data=protein_atoms)
+        grp.create_dataset("ref_pos", data=ref_pos)
+        grp.create_dataset("spring_const", data=np.full(len(protein_atoms), float(spring_const), dtype=np.float32))
+
+
+def remove_protein_position_restraints(up_file: Path):
+    import h5py
+
+    with h5py.File(up_file, "r+") as h5:
+        path = "/input/potential/restraint_position"
+        if path in h5:
+            del h5[path]
+
+
 def set_hybrid_production_controls(up_file: Path, args):
     import h5py
 
@@ -1544,7 +1572,9 @@ def run_hybrid_workflow_command(argv):
     print("=== Stage 6.0: rigid-protein NPT box relaxation ===")
     prepare_stage_file(args, files["prepared_60"], "npt_equil", 1, 0, 0, "minimization")
     shutil.copy2(files["prepared_60"], files["stage_60"])
+    inject_protein_position_restraints(files["stage_60"])
     run_minimization_stage(args, "6.0", files["stage_60"], args.min_60_max_iter)
+    remove_protein_position_restraints(files["stage_60"])
     run_md_stage(
         args,
         "6.0",

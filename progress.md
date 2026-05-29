@@ -1,5 +1,20 @@
 # Progress Log
 
+## 2026-05-29 Stage 6.0 Minimization Overshoot Fix
+- Problem: 1rkl hybrid system's stage 6.0 minimization overshoots from ~350k E_up to ~-90k E_up
+  because the protein (in rigid groups) drifts into the lipid beads, finding deep LJ attractive
+  wells. 1afo works fine because it has fewer lipid beads relative to its larger protein.
+- Fix: Inject harmonic position restraints (k=10.0 E_up/A^2) on all protein atoms before stage
+  6.0 minimization. The rigid body solver converts per-atom restraint forces to COM + orientation
+  restraints, keeping the protein near its initial position during minimization. Restraints are
+  removed before MD.
+- Verified:
+  - 1rkl: min 409k→+5.5k (no overshoot), MD Rg=12.8 stable, stage 7.0 Rg=12.7 stable
+  - 1afo: min 791k→+33.6k (no overshoot), MD Rg=15.9 stable, stage 7.0 Rg=15.8 stable
+- Files modified:
+  - `py/martini_prepare_system.py` — added `inject_protein_position_restraints`,
+    `remove_protein_position_restraints`; integrated into stage 6.0 workflow
+
 ## 2026-05-28 CG-CG B-Spline Angular Regularization Fix
 - Actions taken:
   - Diagnosed root cause of messy bilayer orientation: CG-CG B-spline had severe

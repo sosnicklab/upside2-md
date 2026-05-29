@@ -1,15 +1,30 @@
 #!/bin/bash
 #SBATCH --job-name=martini_h5
 #SBATCH --output=slurm-%x-%j.out
-#SBATCH --time=48:00:00
+#SBATCH --time=36:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=64G
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# Resolve PROJECT_ROOT from the submission directory (Slurm copies the script
+# to a spool dir, so BASH_SOURCE[0] is unreliable).  Walk up from
+# SLURM_SUBMIT_DIR until we find py/martini_gen_params.py.
+if [ -n "${SLURM_SUBMIT_DIR+x}" ]; then
+    _cur="${SLURM_SUBMIT_DIR}"
+else
+    _cur="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+while [ "$_cur" != / ] && [ ! -f "$_cur/py/martini_gen_params.py" ]; do
+    _cur="$(dirname "$_cur")"
+done
+if [ ! -f "$_cur/py/martini_gen_params.py" ]; then
+    echo "ERROR: cannot locate project root (no py/martini_gen_params.py found)" >&2
+    exit 1
+fi
+PROJECT_ROOT="$_cur"
+unset _cur
 
 if [ -f /etc/profile.d/modules.sh ]; then
     source /etc/profile.d/modules.sh

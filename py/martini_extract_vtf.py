@@ -407,6 +407,7 @@ def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
                 f"CG lipid hydrophilic endpoint remapped to unexpected atom {head_atom} ({head_name})"
             )
         out_bonds.append((head_atom, hydrophilic_center_atom))
+        out_bonds.append((hydrophilic_center_atom, hydrophobic_center_atom))
         out_bonds.append((hydrophobic_center_atom, tail_atom))
 
     vector_info["_hydrophilic_center_start"] = hydrophilic_center_start
