@@ -7,13 +7,25 @@ Upside is a molecular dynamics simulation package for protein folding and confor
 * **No "Debugging" Exclusions:** Do not disable or bypass these hybrid interface interactions to circumvent crashes, optimize performance, or troubleshoot workflow scripts. Disabling them completely breaks the physical model of the Upside simulation. 
 * **Strict Adherence:** Any generated script, parameter modification, or configuration must 100% respect this physical model.
 
+## Upside dry-MARTINI Interface System Constraints
+**CRITICAL: The following system constraints must be applied AT ALL TIMES for any Upside dry-MARTINI interface development.**
+
+### Hard Constraints (Strictly Mandatory)
+* **Physical Accuracy:** All interactions must remain strictly physical. Do not apply any parameter tweaking or twisting.
+* **Force Field Sourcing:** All calculations must be derived directly from the `.itp` force field files.
+* **No Artificial Potentials:** Do not apply any additional orientation potentials to the coarse-grained lipids (CGLs).
+* **No Force or Energy Capping:** Do not apply any force or energy capping. These artificial limits are unphysical and strictly prohibited.
+
+### Soft Constraints (Flexible)
+* **Universal Methodology:** Aim to keep the computational method universally consistent across all interaction pairs (CGL-CGL, SC-CGL, CGL-particle, SC-particle). However, if enforcing a universal method proves technically prohibitive, you may break this rule and adapt the methodology per interaction type, provided all hard constraints are still met.
+
 ## Development Rules
 * **Backward Compatibility**: Modifications to C++ source files must not break existing function calls or the Python-to-C++ interface.
 * **Function Signatures**: When adding parameters to an existing function, the additional parameters must be optional (i.e., provide default values).
 * **Master Branch Parity**: The `master` branch is the gold standard; all modifications must produce results identical to those of the `master` branch for existing simulation configurations.
 * **Memory Layout**: Do not reorder existing member variables in classes accessed by Python to avoid memory corruption.
 * **Deprecation**: Mark old functions as deprecated instead of removing them to support legacy scripts.
-* **Physical Interactions**: Except for the Upside core, which uses a trained force field for protein dynamics, everything else should be physical. "Twisting parameters to make it work" is not allowed.
+* **Physical Interactions**: Except for the Upside core, which uses a trained force field for protein dynamics, everything else should be physical.
 * **Spline Table Only**: During simulations, all interactions computed by Upside should use a spline table. Even if two particles have a simple Lennard-Jones potential, their interaction potentials need to be written to an .h5 file before the simulation, and Upside needs to read them from the .h5 file.
 
 ### The "Clean Slate" Exception
@@ -69,6 +81,7 @@ Rules:
 * For Slurm jobs: prefer module load + repo `.venv` activation + explicit `UPSIDE_HOME/PATH/PYTHONPATH`.
 * If a Slurm wrapper sets up the environment itself, it should set `UPSIDE_SKIP_SOURCE_SH=1` before invoking lower-level workflow scripts so they do not re-enter the local-only bootstrap path.
 * A proper Slurm job for this project should complete these steps in order:
+
 1. Resolve `PROJECT_ROOT` explicitly.
 2. Source `/etc/profile.d/modules.sh` when available.
 3. Load the required modules: Python, CMake, OpenMPI, and HDF5.
@@ -77,8 +90,6 @@ Rules:
 6. Prepend `PROJECT_ROOT/obj` to `PATH`.
 7. Prepend `PROJECT_ROOT/py` to `PYTHONPATH`.
 8. Set `UPSIDE_SKIP_SOURCE_SH=1` if the wrapper is handing off to lower-level workflow scripts that would otherwise source the local Mac bootstrap.
-
-
 
 Example Slurm wrapper skeleton:
 

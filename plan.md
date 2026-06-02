@@ -1,8 +1,8 @@
-**Observations:**
-In the workflows `example/16.MARTINI/run_sim_1afo.sh` and `example/16.MARTINI/run_sim_1rkl.sh`, the overall coarse-grained lipid (CGL) orientation appears correct. However, anomalous CGL orientations are visible at the box boundaries and at the protein-bilayer interfaces. Additionally, the gap between the protein and the bilayer appears unusually wide.
+**Observations & Primary Objective:**
+In the workflows `example/16.MARTINI/run_sim_1afo.sh` and `example/16.MARTINI/run_sim_1rkl.sh`, the coarse-grained lipid (CGL) orientation appears largely correct in the bulk. However, the critical issue is that **anomalous, unphysical CGL orientations are visible directly at the protein-bilayer interfaces** (as well as at the box boundaries).
 
 **Action Required:**
-Please review the simulation results (`example/16.MARTINI/outputs/martini_1afo_hybrid/1afo.stage_7.0.vtf` and `example/16.MARTINI/outputs/martini_1rkl_hybrid/1rkl.stage_7.0.vtf`) to determine whether these anomalies are artifacts of the force field or the visualization, and debug accordingly.
+The explicit goal of this task is to **fix the distorted CGL orientations around the protein**. Please review the simulation results (`example/16.MARTINI/outputs/martini_1afo_hybrid/1afo.stage_7.0.vtf` and `example/16.MARTINI/outputs/martini_1rkl_hybrid/1rkl.stage_7.0.vtf`) to determine whether these interfacial artifacts stem from the force field parameterization or the visualization software, and correct them accordingly.
 
 **Potential Fitting Methodology:**
 To systematically calculate and fit the potentials, evaluate the pairwise interactions between two entities (molecules or coarse-grained particles) in a simulation box using the dryMARTINI force field. The full spline table potential is constructed by exhaustively sampling the configurational space through the following sequence:
@@ -35,12 +35,12 @@ $$V = \kappa \left[ V_{\text{radial}}(r_{12}) + \text{Ang}(\cos \theta) \cdot V_
 
 
 **Testing & Iterative Validation Protocol:**
-To ensure stability and accuracy across complex interfaces, the force field must be developed through a strict, iterative validation loop:
+To ensure stability and accurately resolve the interfacial orientations, the force field must be developed through a strict, iterative validation loop:
 
 1. **Phase 1 (Bilayer Baseline):** Construct the CGL-CGL force field first. Test this potential exclusively on a bilayer-only model to verify the formation of a structurally stable bilayer with consistent, physically realistic CGL orientations.
 2. **Phase 2 (Comprehensive Application):** Once the CGL-CGL baseline is validated, apply the validated fitting method to generate all remaining potential forms (SC-CGL, SC-particle, CGL-particle).
 3. **Phase 3 (Hybrid System Validation):** Test the complete, integrated force field on the target hybrid protein-membrane systems (`1afo` and `1rkl`).
-4. **Phase 4 (Iterative Refinement):** Evaluate the hybrid simulations against three strict success metrics: a stable bilayer, consistent CGL orientations (particularly at boundaries and interfaces), and stable protein structures. If any of these metrics fail, the underlying generation methodology must be adjusted, and the entire pipeline—starting over from Phase 1—must be repeated until the systems are fully stabilized.
+4. **Phase 4 (Iterative Refinement):** Evaluate the hybrid simulations against three strict success metrics: a stable bilayer, **consistent CGL orientations (especially eliminating the anomalous alignments at the protein interface)**, and stable protein structures. If any of these metrics fail, the underlying generation methodology must be adjusted, and the entire pipeline—starting over from Phase 1—must be repeated until the systems are fully stabilized.
 
 **System Constraints:**
 
