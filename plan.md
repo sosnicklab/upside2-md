@@ -1,42 +1,61 @@
-# 2026-05-27 MARTINI Full-Lipid Secondary Structure and CGL Table Fix
+**Observations:**
+In the workflows `example/16.MARTINI/run_sim_1afo.sh` and `example/16.MARTINI/run_sim_1rkl.sh`, the overall coarse-grained lipid (CGL) orientation appears correct. However, anomalous CGL orientations are visible at the box boundaries and at the protein-bilayer interfaces. Additionally, the gap between the protein and the bilayer appears unusually wide.
 
-## Project Goal
-- Fix bilayer orientation in CG-lipid simulations. Lipids around protein are "messy."
-- All fixes must be physical — no parameter twisting, no additional orientational potentials.
-- Everything must derive from ITP force field files.
+**Action Required:**
+Please review the simulation results (`example/16.MARTINI/outputs/martini_1afo_hybrid/1afo.stage_7.0.vtf` and `example/16.MARTINI/outputs/martini_1rkl_hybrid/1rkl.stage_7.0.vtf`) to determine whether these anomalies are artifacts of the force field or the visualization, and debug accordingly.
 
-## Architecture & Key Decisions
-- **Root cause identified (2026-05-28)**: The CG-CG B-spline had severe angular underdetermination.
-  15×15=225 angular control points fitted to 7×7=49 angular data points per radial distance
-  (4.6× underdetermination). With Tikhonov regularization λ=0.01, the B-spline developed
-  spurious oscillations between sample points, creating unphysical angular energy features.
-- **Fix**: Reduce `n_knot_angular` from 15 to `min(cos_theta_count + 2, 15)` = 9, and increase
-  `smooth` from 0.01 to 0.1. This matches knot resolution to data resolution and provides
-  adequate regularization.
-- The same underdetermination pattern exists in the SC-CGL table (9²=81 data → 15²=225 controls,
-  2.8× ratio) but is less severe. Not yet addressed.
-- No additional orientation potentials. No parameter twisting. B-spline coefficients are
-  fully derived from ITP-defined bead interactions.
+**Potential Fitting Methodology:**
+To systematically calculate and fit the potentials, evaluate the pairwise interactions between two entities (molecules or coarse-grained particles) in a simulation box using the dryMARTINI force field. The full spline table potential is constructed by exhaustively sampling the configurational space through the following sequence:
 
-## Execution Phases
-- [x] Phase 1: Remove `cg_lipid_leaflet_orientation` code, injection, and docs.
-- [x] Phase 2: Audit current regenerated `sidechain.h5` and full-resolution stage files.
-- [x] Phase 3: Patch the confirmed full-resolution force-field bug physically.
-- [x] Phase 4: Add CG-CG excluded-area nonnegativity (contact_nm_nonnegativity).
-- [x] Phase 5: Diagnose root cause of messy bilayer orientation → angular B-spline underdetermination.
-- [x] Phase 6: Fix CG-CG B-spline: n_knot_angular=9, cg_smooth=0.1. Bilayer test PASSES.
-- [ ] Phase 7: Re-run full protein+lipid workflow to verify orientation improvement.
+1. **Spatial and Orientational Sampling:** Place the first entity at the origin and systematically translate the second entity across a range of radial distances within a surrounding sphere. At each coordinate, rotate both entities through all possible relative orientations (if one entity is an isotropic particle, rotate only the molecule).
+2. **Energy Minimization (Steric Relaxation):** Because exhaustive spatial sampling artificially forces molecules into close proximity, high-energy steric clashes are inevitable. A rigorous energy minimization step must be applied at each configuration to resolve these overlaps before recording the interaction. This prevents unphysical repulsive spikes from corrupting the spline table.
+3. **Conformational Constraint (Plane/Axis Restriction):** During sampling, the movement of the molecules must be restricted along the axis or plane of their molecular vectors. Without this constraint, coarse-grained lipids are prone to unnatural lateral bending and distortion when subjected to artificial orientations. This restriction ensures that the calculated potentials reflect stable, physically realistic lipid conformations.
+4. **Orientation Vector Definition (Relative vs. Absolute Reference Frames):** Unlike protein side chains, which possess a fixed absolute orientation anchored to a rigid backbone root, a coarse-grained lipid (CGL) exists in a rotationally invariant fluid environment. The absolute spatial orientation of a single CGL is physically meaningless; the interaction energy is dictated entirely by its *relative* orientation to its neighbors. Therefore, while absolute spatial coordinates are discarded, the orientational vectors ($\mathbf{n}$) must be strictly retained to preserve the anisotropic, cylindrical geometry of the molecules (preventing them from being mathematically treated as isotropic spheres):
+* **CGL:** Defined by its macroscopic principal axis (e.g., primary head group to terminal tail bead).
+* **Side Chain (SC):** Defined by its standard root-to-tip axis.
 
-## Known Errors / Blockers
-- Full workflow re-run needed to confirm the B-spline fix resolves orientation in protein+lipid system.
-- SC-CGL table may have similar (less severe) underdetermination issue; not yet addressed.
-- r[5] (8.9 Å) has an extreme raw energy value (1971.7 kJ/mol) that dominates the B-spline fit.
-  May need investigation of relaxation convergence at this distance.
 
-## Files Changed
-| File | Change |
-|---|---|
-| `py/martini_build_tables.py` | Added `n_knot_angular`, `cg_smooth` params to `_fit_cg_lipid_quadspline`; call site passes `n_knot_angular=min(_cg_ct+2,15)`, `cg_smooth=0.1` |
-| `example/16.MARTINI/build_martini_h5_m1_temp.sh` | Updated to pass new B-spline params |
-| `example/16.MARTINI/cg_lipid_potentials.tex` | Updated N_theta 15→9, added regularization rationale |
-| `parameters/dryMARTINI/dopc.h5` | Regenerated with 9×9 angular knots, smooth=0.1 |
+
+**Suggested Mathematical Formulations (Optional):**
+*Note: The following mathematical potential forms and Singular Value Decomposition (SVD) strategies are provided as suggestions only. You are not strictly required to use these exact equations, provided you adhere to the hard constraints listed below.*
+
+First, the purely distance-dependent baseline, $V_{\text{radial}}(r_{12})$, is extracted by averaging the interaction energy over all sampled orientations at each specific distance $r_{12}$. Once this isotropic baseline is subtracted, SVD is applied to the anisotropic residual.
+
+* **Suggested Form 1: CGL-CGL & SC-CGL (Two-Vector Interactions)**
+To ensure the potential relies strictly on relative alignment, the interaction incorporates three distinct relative angular dependencies:
+
+$$V = \kappa \left[ V_{\text{radial}}(r_{12}) + \text{Ang}_1(-\mathbf{n}_1 \cdot \mathbf{n}_{12}) \cdot \text{Ang}_2(\mathbf{n}_2 \cdot \mathbf{n}_{12}) \cdot \text{Ang}_3(\mathbf{n}_1 \cdot \mathbf{n}_2) \cdot V_{\text{angular}}(r_{12}) \right]$$
+
+
+* **Suggested Form 2: CGL-Particle & SC-Particle (Vector-Point Interactions)**
+The interaction depends solely on the particle's spatial position relative to the molecule's axis, defined by a single relative angle $\theta$:
+
+$$V = \kappa \left[ V_{\text{radial}}(r_{12}) + \text{Ang}(\cos \theta) \cdot V_{\text{angular}}(r_{12}) \right]$$
+
+
+
+**Testing & Iterative Validation Protocol:**
+To ensure stability and accuracy across complex interfaces, the force field must be developed through a strict, iterative validation loop:
+
+1. **Phase 1 (Bilayer Baseline):** Construct the CGL-CGL force field first. Test this potential exclusively on a bilayer-only model to verify the formation of a structurally stable bilayer with consistent, physically realistic CGL orientations.
+2. **Phase 2 (Comprehensive Application):** Once the CGL-CGL baseline is validated, apply the validated fitting method to generate all remaining potential forms (SC-CGL, SC-particle, CGL-particle).
+3. **Phase 3 (Hybrid System Validation):** Test the complete, integrated force field on the target hybrid protein-membrane systems (`1afo` and `1rkl`).
+4. **Phase 4 (Iterative Refinement):** Evaluate the hybrid simulations against three strict success metrics: a stable bilayer, consistent CGL orientations (particularly at boundaries and interfaces), and stable protein structures. If any of these metrics fail, the underlying generation methodology must be adjusted, and the entire pipeline—starting over from Phase 1—must be repeated until the systems are fully stabilized.
+
+**System Constraints:**
+
+* **Hard Constraints (Strictly Mandatory):**
+* **Physical Accuracy:** All interactions must remain strictly physical. Do not apply any parameter tweaking or twisting.
+* **Force Field Sourcing:** All calculations must be derived directly from the `.itp` force field files.
+* **No Artificial Potentials:** Do not apply any additional orientation potentials to the CGLs.
+* **No Force or Energy Capping:** Do not apply any force or energy capping. These artificial limits are unphysical and strictly prohibited.
+
+
+* **Soft Constraints (Flexible):**
+* **Universal Methodology:** Aim to keep the computational method universally consistent across all interaction pairs (CGL-CGL, SC-CGL, CGL-particle, SC-particle). However, if enforcing a universal method proves technically prohibitive, you may break this rule and adapt the methodology per interaction type, provided all hard constraints are still met.
+
+
+
+**Documentation Requirement:**
+
+* **Manuscript Preparation:** Continuously update `example/16.MARTINI/cg_lipid_potentials.tex` concurrently with the debugging and validation process. This file must accurately document the final, tested procedures so that it is fully prepared to serve as the Methods section of a publication.
