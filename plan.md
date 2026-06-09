@@ -1,42 +1,50 @@
-# 2026-05-27 MARTINI Full-Lipid Secondary Structure and CGL Table Fix
+**Context & Role:**
+You are an expert computational biophysicist and simulation software developer. Your task is to debug, develop, and iterate on a hybrid simulation interface combining the UPSIDE (vector-based side chain) and dry-MARTINI force fields.
 
-## Project Goal
-- Fix bilayer orientation in CG-lipid simulations. Lipids around protein are "messy."
-- All fixes must be physical — no parameter twisting, no additional orientational potentials.
-- Everything must derive from ITP force field files.
+**Current State & Objective:**
+We currently use a dry-MARTINI `.itp` file to calculate interactions between an UPSIDE particle (typically a side chain, SC) and a dry-MARTINI particle. The current implementation yields imperfect results that seem to rely on "twisting" parameters, but it is partially functional. The current output data and simulation results are available for your review at `example/16.MARTINI/outputs/*`.
 
-## Architecture & Key Decisions
-- **Root cause identified (2026-05-28)**: The CG-CG B-spline had severe angular underdetermination.
-  15×15=225 angular control points fitted to 7×7=49 angular data points per radial distance
-  (4.6× underdetermination). With Tikhonov regularization λ=0.01, the B-spline developed
-  spurious oscillations between sample points, creating unphysical angular energy features.
-- **Fix**: Reduce `n_knot_angular` from 15 to `min(cos_theta_count + 2, 15)` = 9, and increase
-  `smooth` from 0.01 to 0.1. This matches knot resolution to data resolution and provides
-  adequate regularization.
-- The same underdetermination pattern exists in the SC-CGL table (9²=81 data → 15²=225 controls,
-  2.8× ratio) but is less severe. Not yet addressed.
-- No additional orientation potentials. No parameter twisting. B-spline coefficients are
-  fully derived from ITP-defined bead interactions.
+Your core objective is to take this a step further: train a force field (FF) that uses a single vector particle to represent a DOPC lipid (Coarse-Grained Lipid, CGL). Because the current model somewhat works, you must prioritize small, incremental modifications to the existing implementation based on the data in the outputs directory. However, every modification must remain strictly physical. Do not compromise thermodynamic or structural accuracy for convenience.
 
-## Execution Phases
-- [x] Phase 1: Remove `cg_lipid_leaflet_orientation` code, injection, and docs.
-- [x] Phase 2: Audit current regenerated `sidechain.h5` and full-resolution stage files.
-- [x] Phase 3: Patch the confirmed full-resolution force-field bug physically.
-- [x] Phase 4: Add CG-CG excluded-area nonnegativity (contact_nm_nonnegativity).
-- [x] Phase 5: Diagnose root cause of messy bilayer orientation → angular B-spline underdetermination.
-- [x] Phase 6: Fix CG-CG B-spline: n_knot_angular=9, cg_smooth=0.1. Bilayer test PASSES.
-- [ ] Phase 7: Re-run full protein+lipid workflow to verify orientation improvement.
+**Known Defects to Address:**
+Based on the current outputs, the model exhibits two specific physical defects that you must resolve:
 
-## Known Errors / Blockers
-- Full workflow re-run needed to confirm the B-spline fix resolves orientation in protein+lipid system.
-- SC-CGL table may have similar (less severe) underdetermination issue; not yet addressed.
-- r[5] (8.9 Å) has an extreme raw energy value (1971.7 kJ/mol) that dominates the B-spline fit.
-  May need investigation of relaxation convergence at this distance.
+1. **Bilayer-Protein Gap:** There is an unphysical spatial gap between the CGL bilayer and the embedded protein. Your modifications to the CGL-SC interaction parameters must facilitate proper solvation and packing of the CGL particles against the protein side chains.
+2. **Orientational Artifacts:** The CGL orientations are problematic both in the immediate vicinity of the protein and at the periodic box boundaries. You must ensure the orientational dependencies (especially when interacting with SCs or evaluating CGL-CGL interactions across boundaries) maintain a stable, physical bilayer structure without artificial flipping or distortion.
 
-## Files Changed
-| File | Change |
-|---|---|
-| `py/martini_build_tables.py` | Added `n_knot_angular`, `cg_smooth` params to `_fit_cg_lipid_quadspline`; call site passes `n_knot_angular=min(_cg_ct+2,15)`, `cg_smooth=0.1` |
-| `example/16.MARTINI/build_martini_h5_m1_temp.sh` | Updated to pass new B-spline params |
-| `example/16.MARTINI/cg_lipid_potentials.tex` | Updated N_theta 15→9, added regularization rationale |
-| `parameters/dryMARTINI/dopc.h5` | Regenerated with 9×9 angular knots, smooth=0.1 |
+**Mathematical Framework & Required Modifications:**
+For SC-SC interactions, UPSIDE uses the following potential:
+
+
+$$V=\kappa(V_{radial}(r_{12})+Ang_1(-\mathbf{n}_1 \cdot \mathbf{n}_{12}) \cdot Ang_2(\mathbf{n}_2 \cdot \mathbf{n}_{12}) \cdot V_{angular}(r_{12}))$$
+
+You must modify and implement this potential for our specific topological scenarios:
+
+1. **SC-Particle Interaction:** Standard dry-MARTINI particles lack directionality. Modify the potential to require fewer parameters (removing orientation dependence on the particle side).
+2. **CGL-CGL and CGL-SC Interactions:** The single-vector CGL representation is not purely radial. Formulate the extra parameters needed to capture the anisotropic nature of the lipid vector, specifically targeting the packing and orientational defects mentioned above.
+
+**Strict Implementation Constraints:**
+To achieve the mathematically proper result, you must strictly adhere to the following constraints throughout development and testing:
+
+* **No Parameter Twisting:** The physics must dictate the stability, not arbitrary scaling factors.
+* **No Force or Energy Capping:** The potential definitions must naturally avoid singularities or exploding forces.
+* **No Thermodynamic Cheating:** It is strictly forbidden to lower the temperature, drastically reduce the timestep ($dt$), or alter thermostat/barostat controls to make the system artificially slow just to bypass stability tests. Stability must be a consequence of the correct potential geometry and parameters.
+* **No Additional Orientation Potentials:** Do not add ad-hoc orientation potentials on CGL interactions; the core modified UPSIDE potential must handle it natively.
+* **Decomposition Strategy:** Utilize Singular Value Decomposition (SVD) or similar algorithms to decompose the potentials into sums and products of single-parameter potentials. UPSIDE assumes that single-parameter potentials are smooth, which will drastically reduce the data points required for training.
+
+**Execution Plan & Testing Workflow:**
+Please execute the development and testing in the following specific phases:
+
+* **Phase 1: Pure CGL Bilayer Debugging.** Debug and iterate on a CGL-only bilayer model. Do not move forward until this is physically correct. Criteria for success: The bilayer is stable without parameter twisting or thermodynamic cheating, boundary orientational artifacts are resolved, and the CGL orientations are physically realistic for a DOPC membrane.
+* **Phase 2: Full System Integration.** Once the pure CGL bilayer works perfectly, apply the method to SC-CGL, CGL-particle, and SC-particle interactions. You must specifically verify that the bilayer-protein gap and near-protein orientational defects are resolved. Run and verify the results through the following specific workflow scripts:
+* `example/16.MARTINI/run_sim_1afo.sh`
+* `example/16.MARTINI/run_sim_1rkl.sh`
+* `example/16.MARTINI/run_sim_1rkl_full.sh`
+* `example/16.MARTINI/run_sim_1afo_full.sh`
+
+
+
+**Suggested Training Methodologies:**
+
+* **Directional Restraints:** Apply a directional restraint to two interacting molecules, allowing movement only along the line connecting their centers of mass (COM), and then relax the system. Use this to filter out unwanted orthogonal movements during training.
+* **Time Integration:** Maintain the same timestep ($dt$) and core integration settings between the UPSIDE core and dry-MARTINI particles if possible. Provide a rationale if they must differ, keeping in mind the anti-cheating constraint above.
