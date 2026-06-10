@@ -1,6 +1,35 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-10: Method-section documentation rule.
+  - User correction: paper methods should present the accepted physical model
+    as one logical derivation, not as accumulated patches or debugging history.
+    When updating `cg_lipid_potentials.tex`, remove superseded mechanisms
+    instead of explaining why each old workaround was abandoned.
+- 2026-06-10: Phase 2C physical acceptance findings.
+  - Rule: active dry-MARTINI table builds must not use finite physical-distance
+    floors such as `0.10 nm`. A near-zero `1e-6 nm` guard is acceptable only as
+    a numerical singularity guard for exact bead overlap and must be recorded
+    as metadata (`sample_dist_min_source=numerical_zero_guard_only`).
+  - Accepted SC-CGL representation: extended-support full tensor over the three
+    runtime coordinates `(r, sidechain direction angle, CGL direction angle)`,
+    with an invertible transformed control. This replaces the unsafe 4-mode
+    separable SC-CGL representation without adding normalization, interaction
+    scaling, hidden relaxation, capping, or a standalone CGL orientation
+    potential.
+  - Accepted SC-particle representation: direct full radial-by-angular rotamer
+    table consumed by the runtime node. The older separable
+    `rotamer_angular_energy_kj_mol` artifact remains only as legacy H5 data and
+    is not used when `rotamer_full_energy_kj_mol` is present.
+  - Accepted CGL-CGL representation: three runtime coordinates, not four
+    runtime parameters. CGL-CGL uses an explicit tempered two-body PMF over
+    unresolved axial/azimuthal bead-frame coordinates; this is a documented
+    two-body representability choice, not many-neighbor normalization or an
+    added orientation potential.
+  - Fresh no-floor validation completed for 1RKL and 1AFO in both CGL and
+    full-resolution lipid modes. Production logs were finite and stable, CGL
+    lipids had no leaflet crossings, full DOPC leaflet separations remained
+    stable, and protein hbond/Rg observables stayed bounded through production.
 - 2026-05-26: Stage-7 1AFO/1RKL diagnostic root causes.
   - The protein coordinates in `*.stage_7.0.prepared.up` match the HDF5
     reference/PDB mapping for 1AFO and 1RKL; the apparent VTF frame-0 damage is
@@ -46,6 +75,58 @@
     `SLURM_CPUS_PER_TASK`/`SLURM_CPUS_ON_NODE`, and only then local CPU count.
     This matches the sweep infrastructure pattern where `--cpus-per-task` is
     set by generated Slurm scripts.
+- 2026-06-09: User correction on Phase 2C scope.
+  - Rule: the accepted CGL-CGL method may use three runtime table parameters,
+    but the implementation priority remains a transferable two-body model. Do
+    not make many-neighbor normalization the first-choice fix, because the same
+    method must extend to SC-CGL where that normalization has no clear physical
+    analogue.
+  - Rule: SC-CGL, SC-particle, and CGL-particle must be rebuilt and tested with
+    the same physical direct-geometry philosophy as CGL-CGL: no capping, no
+    hidden relaxation, no empirical interaction disabling, and no added
+    standalone CGL orientation potential.
+- 2026-06-09: Phase 2C direct-table runtime findings.
+  - CGL-target Boltzmann-weight controls are numerically fragile for charged
+    target hard cores. In float32, hard-core rows underflow to a flat reduced
+    free-energy plateau with weak restoring force. An invertible
+    `log1p((E - E_ref) / kBT)` reduced-PMF control preserves the same physical
+    two-body PMF while keeping the spline representable.
+  - CGL runtime spline evaluation previously clamped radial coordinates below
+    one knot spacing with zero derivative. That is an implicit force cap even
+    when the H5 table contains a physical repulsive core. Low-end radial
+    evaluation must preserve a restoring slope.
+  - The latest 1RKL coarse probe shows radial extrapolation alone is not
+    sufficient: stage-6 minimization still drives same-leaflet CGL centers into
+    sub-Angstrom contacts. The next diagnosis must compare raw direct CGL-CGL
+    PMF samples, fitted controls, and runtime derivatives at the collapsed
+    geometries before changing the model.
+  - CGL-CGL direct PMF sampling must include the overlap core. Starting the raw
+    grid at `5 A` missed a physical `10^3-10^4 E_up` wall at `0.35-2 A` for
+    the collapsed angular sector and left sub-`5 A` behavior to extrapolation.
+  - Raw-energy CGL-CGL fitting is also numerically unsafe once the physical core
+    is included: true extreme-angle hard cores at long COM range can bleed into
+    ordinary angular sectors. The same invertible `log1p` reduced-PMF control
+    used for CGL-target keeps the two-body physical PMF while avoiding that
+    spline artifact.
+  - Table H5 metadata is not sufficient validation for transformed spline
+    controls. The generated runtime `.up` node must also carry
+    `log1p_reduced_transform`, `boltzmann_temperature_upside`,
+    `energy_transform`, `spline_control_quantity`, and the
+    `pair_interaction/reference_energy_eup` dataset. If injection drops those
+    fields, Upside silently interprets log controls as raw energies and weakens
+    the physical hard core by orders of magnitude.
+  - Production-temperature Boltzmann CGL-CGL PMF still collapsed the focused
+    dense CGL-only bilayer after runtime transform injection was fixed, while
+    direct energy expectation was too stiff and launched the bilayer. The
+    current passing CGL-only table is an explicit tempered two-body PMF over
+    unresolved axial/azimuthal coordinates. This is not many-neighbor
+    normalization, hidden relaxation, capping, or a standalone orientation
+    potential, but it is a real modeling parameter and must remain visible in
+    H5 metadata and reports.
+  - Superseded by the 2026-06-10 full-tensor/no-floor validation: the
+    4-mode separable SC-CGL representation was not safe for extended support,
+    but the extended full tensor with transformed control now passes the fresh
+    1RKL/1AFO CGL/full validation matrix.
 - 2026-05-25: CGL-only bilayer validation of updated CGL-CGL runtime path.
   - The validation harness should exercise installed production spline tables
     (`particle.h5` plus `dopc.h5`) by default; local table refitting is a
@@ -332,7 +413,7 @@
   - Rule: acceptable fixes must be physical table-construction or handoff-semantics fixes, such as charging bonded deformation during explicit-bead relaxation, clamping unresolved spline cores to excluded-volume repulsion, and using canonical force-field reference geometry for potential tables.
   - Rule: when diagnosing bilayer orientation near a protein, distinguish actual parallel rods (`abs(n_z)` small) from simple global-z leaflet sign mismatches; report absolute bilayer-normal alignment and 3D CGL-CGL nearest-neighbor distances.
 - 2026-05-16: User correction on CG-lipid orientation physics.
-  - Rule: do not repair bilayer orientation with an orientation spring, z-axis pin, empirical pair scale, or disabled interactions.
+  - Rule: do not repair bilayer orientation with an orientation spring, z-axis pin, empirical pair scale, or disabled interactions. Treat CGL-CGL many-neighbor normalization as a fallback only after transferable two-body table construction is exhausted, because the same CGL method must extend to CGL-SC where normalization has no clean analogue.
   - Rule: CGLD should be treated as the endpoint of the physical orientation vector; pair interactions must apply derivatives to the vector through the CGLD coordinate, not through a separate orientation parameter.
   - Rule: radial or orientation-averaged CGL-target interactions cannot torque the single-particle lipid correctly. CGL-target interactions need directional tables over `(r, n_CGL.rhat)` built from explicit DOPC bead-target dry-MARTINI energies.
   - Rule: generic Martini pair lists should exclude `CGL` and `CGLD`; CGL-CGL, CGL-SC, and CGL-target interactions should be owned by dedicated spline nodes to avoid double-counting and hidden-site nonbonded artifacts.

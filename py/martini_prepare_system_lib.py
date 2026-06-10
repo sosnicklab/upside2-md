@@ -138,17 +138,27 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         excluded_area_source = _decode_h5_attr(target_grp.attrs.get("excluded_area_source", ""))
         excluded_area_nonnegative_rows = int(target_grp.attrs.get("excluded_area_nonnegative_rows", 0))
         bead_cutoff_nm = float(target_grp.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
+        energy_transform = _decode_h5_attr(target_grp.attrs.get("energy_transform", ""))
+        control_quantity = _decode_h5_attr(target_grp.attrs.get("spline_control_quantity", ""))
+        log1p_reduced_transform = int(target_grp.attrs.get("log1p_reduced_transform", 0))
         if (
-            core_source != "first_resolved_dry_martini_energy_expectation"
-            or azimuthal_average != "energy_expectation"
-            or excluded_area_source != "dopc_contact_nonnegative_controls"
-            or excluded_area_nonnegative_rows <= 0
+            core_source not in (
+                "first_resolved_dry_martini_energy_expectation",
+                "angular_resolved_first_sampled_dry_martini_energy",
+            )
+            or azimuthal_average != "boltzmann_free_energy"
+            or energy_transform != "log1p_reduced_pmf"
+            or control_quantity != "log1p_reduced_free_energy"
+            or log1p_reduced_transform != 1
+            or "reference_energy_eup" not in target_grp
+            or excluded_area_source != "none_full_resolved_dry_martini_cgl_target_table"
+            or excluded_area_nonnegative_rows != 0
             or abs(bead_cutoff_nm - 1.2) > 1.0e-6
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_target lacks the "
-                "dry-MARTINI energy-expectation unresolved-core boundary, DOPC-contact "
-                "nonnegative excluded-area controls, or bead-level nonbonded cutoff. "
+                "dry-MARTINI log1p reduced-free-energy PMF transform, direct physical "
+                "CGL-target metadata, or bead-level nonbonded cutoff. "
                 "Rebuild martini.h5 so CGL-target bead overlap is represented by "
                 "force-field-derived table values."
             )
@@ -161,20 +171,32 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         fit_relax_steps = int(pair_grp.attrs.get("fit_relax_steps", -1))
         fit_r_min_nm = float(pair_grp.attrs.get("fit_r_min_nm", 999.0))
         bead_cutoff_nm = float(pair_grp.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
+        excluded_area_source = _decode_h5_attr(pair_grp.attrs.get("excluded_area_source", ""))
+        excluded_area_nonnegative_rows = int(pair_grp.attrs.get("excluded_area_nonnegative_rows", 0))
         has_old_caps = "energy_cap_kj_mol" in pair_grp.attrs
         if (
-            core_source not in ("max_first_sampled_dry_martini_energy_expectation", "median_first_sampled_dry_martini_energy")
-            or azimuthal_average not in ("energy_expectation", "boltzmann_free_energy")
+            core_source not in (
+                "max_first_sampled_dry_martini_energy_expectation",
+                "median_first_sampled_dry_martini_energy",
+                "angular_resolved_first_sampled_dry_martini_energy",
+            )
+            or azimuthal_average not in (
+                "energy_expectation",
+                "boltzmann_free_energy",
+                "tempered_boltzmann_free_energy",
+            )
             or isotropic_background_source not in ("none_full_resolved_dry_martini_pair_table", "attractive_radial_angular_mean_subtracted")
             or attractive_control_source not in ("retained_full_resolved_dry_martini_pair_table", "nontransferable_many_neighbor_cgl_cgl_attraction_removed")
-            or fit_relax_steps <= 0
+            or fit_relax_steps != 0
             or fit_r_min_nm > 0.500001
             or abs(bead_cutoff_nm - 1.2) > 1.0e-6
+            or excluded_area_source != "none_full_resolved_dry_martini_pair_table"
+            or excluded_area_nonnegative_rows != 0
             or has_old_caps
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_pair lacks the "
-                "dry-MARTINI direct rotated-geometry samples, full resolved lipid-lipid "
+                "dry-MARTINI direct rotated-geometry samples without hidden-bead relaxation, full resolved lipid-lipid "
                 "attractions, or bead-level nonbonded cutoff. Rebuild martini.h5 so "
                 "CGL-CGL interactions are represented by the force-field-derived spline "
                 "table rather than a separate correction or stripped cohesive background."
@@ -184,24 +206,35 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         n_sc_types = int(sc_grp.attrs.get("n_sc_types", 0))
         short_core_source = _decode_h5_attr(sc_grp.attrs.get("short_range_core_source", ""))
         azimuthal_average = _decode_h5_attr(sc_grp.attrs.get("azimuthal_average", ""))
+        azimuthal_average_temperature = float(sc_grp.attrs.get("azimuthal_average_temperature_upside", 0.0))
         excluded_area_source = _decode_h5_attr(sc_grp.attrs.get("excluded_area_source", ""))
+        radial_support_source = _decode_h5_attr(sc_grp.attrs.get("radial_support_source", ""))
+        energy_transform = _decode_h5_attr(sc_grp.attrs.get("energy_transform", ""))
+        control_quantity = _decode_h5_attr(sc_grp.attrs.get("spline_control_quantity", ""))
+        log1p_reduced_transform = int(sc_grp.attrs.get("log1p_reduced_transform", 0))
         excluded_area_nonnegative_rows = int(sc_grp.attrs.get("excluded_area_nonnegative_rows", 0))
         fit_relax_steps = int(sc_grp.attrs.get("fit_relax_steps", -1))
         bead_cutoff_nm = float(sc_grp.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
         has_old_caps = "energy_cap_kj_mol" in sc_grp.attrs or "residual_cap_kj_mol" in sc_grp.attrs
         if n_sc_types > 0 and (
             has_old_caps
-            or short_core_source != "max_first_sampled_dry_martini_energy_expectation"
+            or short_core_source != "angular_resolved_first_sampled_dry_martini_energy"
             or azimuthal_average != "energy_expectation"
-            or excluded_area_source not in ("dopc_contact_nonnegative_controls", "wca_dopc_contact_kbt")
-            or excluded_area_nonnegative_rows <= 0
-            or fit_relax_steps <= 0
+            or abs(azimuthal_average_temperature) > 1.0e-6
+            or energy_transform != "log1p_reduced_energy_expectation"
+            or control_quantity != "log1p_reduced_energy_expectation"
+            or log1p_reduced_transform != 1
+            or "reference_energy_eup" not in sc_grp
+            or excluded_area_source != "none_full_resolved_dry_martini_sc_cgl_table"
+            or radial_support_source != "max_dopc_bead_radius_plus_dry_martini_cutoff"
+            or excluded_area_nonnegative_rows != 0
+            or fit_relax_steps != 0
             or abs(bead_cutoff_nm - 1.2) > 1.0e-6
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_sc lacks the "
-                "dry-MARTINI direct rotated-geometry short-range core, DOPC-contact excluded-area controls, "
-                "bead-level nonbonded cutoff, or still carries fixed fitting caps. "
+                "dry-MARTINI direct rotated-geometry full-tensor log1p energy expectation without hidden-bead relaxation, "
+                "direct physical excluded-area metadata, extended SC-CGL support, bead-level nonbonded cutoff, or still carries fixed fitting caps. "
                 "Rebuild martini.h5 so CGL-SC overlap is represented by force-field-derived "
                 "table values."
             )
@@ -214,7 +247,6 @@ def _validate_compose_vector6d_cg_attrs(compose_grp, cg_table_grp, source_path: 
         "max_sigma_nm",
         "orientation_length_ang",
         "orientation_mass_g_mol",
-        "orientation_bond_fc_eup_a2",
         "transverse_inertia_g_mol_a2",
         "head_tail_span_ang",
         "tail_projection_ang",
@@ -444,6 +476,37 @@ def load_canonical_dopc_reference_nm(ff_dir: Path) -> np.ndarray:
     positions_ang = np.asarray([name_to_pos[name.upper()] for name in atom_order], dtype=np.float64)
     com_ang = np.mean(positions_ang, axis=0)
     return (positions_ang - com_ang) * 0.1
+
+
+def canonicalize_lipid_reference_to_z_nm(ref_bead_positions_nm: np.ndarray) -> np.ndarray:
+    ref = np.asarray(ref_bead_positions_nm, dtype=np.float64)
+    direction = ((ref[8] + ref[13]) * 0.5) - ref[0]
+    direction /= max(float(np.linalg.norm(direction)), 1.0e-12)
+    if abs(direction[0]) < 0.99:
+        x_axis = np.cross([1.0, 0.0, 0.0], direction)
+    else:
+        x_axis = np.cross([0.0, 1.0, 0.0], direction)
+    x_axis /= max(float(np.linalg.norm(x_axis)), 1.0e-12)
+    y_axis = np.cross(direction, x_axis)
+    rot_local_to_ref = np.array([x_axis, y_axis, direction], dtype=np.float64).T
+    return (rot_local_to_ref.T @ ref.T).T
+
+
+def cgl_swept_bead_min_distance_ang(
+    cgl_to_target: np.ndarray,
+    cgl_direction: np.ndarray,
+    bead_axial_offsets_ang: np.ndarray,
+    bead_radial_offsets_ang: np.ndarray,
+) -> float:
+    direction = np.asarray(cgl_direction, dtype=np.float64)
+    direction /= max(float(np.linalg.norm(direction)), 1.0e-12)
+    rel = np.asarray(cgl_to_target, dtype=np.float64)
+    parallel = float(np.dot(rel, direction))
+    perp2 = max(0.0, float(np.dot(rel, rel)) - parallel * parallel)
+    perp = math.sqrt(perp2)
+    radial_gap = np.maximum(0.0, perp - bead_radial_offsets_ang)
+    dist2 = (parallel - bead_axial_offsets_ang) ** 2 + radial_gap * radial_gap
+    return float(math.sqrt(float(np.min(dist2))))
 
 
 def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
@@ -1736,12 +1799,65 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             if cg_lipid_derived_params is not None
             else 7.0
         )
-        target_nn = float(os.environ.get("UPSIDE_CG_LIPID_MIN_LEAFLET_NN", str(derived_contact_ang)))
-        max_step = float(os.environ.get("UPSIDE_CG_LIPID_CONDITION_MAX_STEP", "0.25"))
-        n_iter = int(os.environ.get("UPSIDE_CG_LIPID_CONDITION_STEPS", "100"))
+        max_step = float(os.environ.get("UPSIDE_CG_LIPID_CONDITION_MAX_STEP", "0.50"))
+        n_iter = int(os.environ.get("UPSIDE_CG_LIPID_CONDITION_STEPS", "300"))
         cgl_pos = initial_positions[cg_lipid_indices]
         leaflet_split = float(np.median(cgl_pos[:, 2]))
         leaflet_masks = (cgl_pos[:, 2] <= leaflet_split, cgl_pos[:, 2] > leaflet_split)
+        lower_ids = np.where(leaflet_masks[0])[0]
+        upper_ids = np.where(leaflet_masks[1])[0]
+        leaflet_count = max(int(lower_ids.size), int(upper_ids.size), 1)
+        area_per_lipid = (x_len * y_len) / float(leaflet_count)
+        hex_nn_ang = math.sqrt(2.0 * area_per_lipid / math.sqrt(3.0))
+        default_nn = max(derived_contact_ang, 0.95 * hex_nn_ang)
+        target_nn = float(os.environ.get("UPSIDE_CG_LIPID_MIN_LEAFLET_NN", str(default_nn)))
+        target_clearance = float(
+            os.environ.get(
+                "UPSIDE_CG_LIPID_MIN_TARGET_CLEARANCE",
+                str(derived_contact_ang),
+            )
+        )
+        target_bead_clearance = float(
+            os.environ.get(
+                "UPSIDE_CG_LIPID_MIN_TARGET_BEAD_CLEARANCE",
+                str(derived_contact_ang),
+            )
+        )
+        canonical_body_ang = canonicalize_lipid_reference_to_z_nm(canonical_ref_nm) * 10.0
+        bead_axial_offsets = canonical_body_ang[:, 2].astype(np.float64)
+        bead_radial_offsets = np.sqrt(
+            np.sum(canonical_body_ang[:, :2] * canonical_body_ang[:, :2], axis=1)
+        ).astype(np.float64)
+        non_lipid_target_indices = np.array(
+            [
+                idx for idx, atom_type in enumerate(atom_types)
+                if str(atom_type) not in {"CGL", "CGLD"}
+            ],
+            dtype=np.int32,
+        )
+        if cg_lipid_derived_params is not None:
+            default_z_sep = (
+                2.0 * float(cg_lipid_derived_params["orientation_length_ang"])
+                + derived_contact_ang
+            )
+        else:
+            default_z_sep = 0.0
+        target_z_sep = float(os.environ.get("UPSIDE_CG_LIPID_MIN_LEAFLET_Z_SEP", str(default_z_sep)))
+        if lower_ids.size and upper_ids.size and target_z_sep > 0.0:
+            lower_mean_z = float(np.mean(initial_positions[cg_lipid_indices[lower_ids], 2]))
+            upper_mean_z = float(np.mean(initial_positions[cg_lipid_indices[upper_ids], 2]))
+            current_z_sep = upper_mean_z - lower_mean_z
+            if current_z_sep > 0.0 and current_z_sep < target_z_sep:
+                dz = 0.5 * (target_z_sep - current_z_sep)
+                initial_positions[cg_lipid_indices[lower_ids], 2] -= dz
+                initial_positions[cg_lipid_indices[upper_ids], 2] += dz
+                if cg_lipid_orientation_indices.size == n_cg_lipids:
+                    initial_positions[cg_lipid_orientation_indices[lower_ids], 2] -= dz
+                    initial_positions[cg_lipid_orientation_indices[upper_ids], 2] += dz
+                print(
+                    "Conditioned initial CGL leaflet z separation: "
+                    f"{current_z_sep:.3f} -> {target_z_sep:.3f} A"
+                )
 
         def _same_leaflet_nn_stats() -> tuple[float, float]:
             values = []
@@ -1763,6 +1879,131 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             return float(np.min(arr)), float(np.percentile(arr, 5.0))
 
         start_min, start_p05 = _same_leaflet_nn_stats()
+        start_target_min = float("nan")
+        end_target_min = float("nan")
+        start_target_bead_min = float("nan")
+        end_target_bead_min = float("nan")
+
+        def _cgl_target_min_distance() -> float:
+            if non_lipid_target_indices.size == 0:
+                return float("nan")
+            cgl_xyz = initial_positions[cg_lipid_indices]
+            target_xyz = initial_positions[non_lipid_target_indices]
+            min_dist = float("inf")
+            for xyz in cgl_xyz:
+                delta = target_xyz - xyz
+                delta[:, 0] -= x_len * np.round(delta[:, 0] / x_len)
+                delta[:, 1] -= y_len * np.round(delta[:, 1] / y_len)
+                delta[:, 2] -= z_len * np.round(delta[:, 2] / z_len)
+                dist = np.sqrt(np.sum(delta * delta, axis=1))
+                if dist.size:
+                    min_dist = min(min_dist, float(np.min(dist)))
+            return min_dist
+
+        def _cgl_target_min_swept_bead_distance() -> float:
+            if non_lipid_target_indices.size == 0:
+                return float("nan")
+            target_xyz = initial_positions[non_lipid_target_indices]
+            min_dist = float("inf")
+            for ia in range(n_cg_lipids):
+                cgl_xyz = initial_positions[cg_lipid_indices[ia]]
+                if cg_lipid_orientation_indices.size == n_cg_lipids:
+                    orient_vec = initial_positions[cg_lipid_orientation_indices[ia]] - cgl_xyz
+                    orient_vec[0] -= x_len * np.round(orient_vec[0] / x_len)
+                    orient_vec[1] -= y_len * np.round(orient_vec[1] / y_len)
+                    orient_vec[2] -= z_len * np.round(orient_vec[2] / z_len)
+                else:
+                    orient_vec = lipid_directions[ia]
+                rel = target_xyz - cgl_xyz[None, :]
+                rel[:, 0] -= x_len * np.round(rel[:, 0] / x_len)
+                rel[:, 1] -= y_len * np.round(rel[:, 1] / y_len)
+                rel[:, 2] -= z_len * np.round(rel[:, 2] / z_len)
+                for vec in rel:
+                    dist = cgl_swept_bead_min_distance_ang(
+                        vec,
+                        orient_vec,
+                        bead_axial_offsets,
+                        bead_radial_offsets,
+                    )
+                    min_dist = min(min_dist, dist)
+            return min_dist
+
+        start_target_min = _cgl_target_min_distance()
+        start_target_bead_min = _cgl_target_min_swept_bead_distance()
+
+        def _apply_cgl_xy_delta(delta_xy: np.ndarray) -> bool:
+            norms = np.sqrt(np.sum(delta_xy * delta_xy, axis=1))
+            max_norm = float(np.max(norms)) if norms.size else 0.0
+            if max_norm <= 1e-8:
+                return False
+            if max_norm > max_step:
+                delta_xy *= max_step / max_norm
+            initial_positions[cg_lipid_indices, :2] += delta_xy
+            if cg_lipid_orientation_indices.size == n_cg_lipids:
+                initial_positions[cg_lipid_orientation_indices, :2] += delta_xy
+            initial_positions[cg_lipid_indices, 0] %= x_len
+            initial_positions[cg_lipid_indices, 1] %= y_len
+            if cg_lipid_orientation_indices.size == n_cg_lipids:
+                initial_positions[cg_lipid_orientation_indices, 0] %= x_len
+                initial_positions[cg_lipid_orientation_indices, 1] %= y_len
+            return True
+
+        def _accumulate_target_clearance_delta(delta_xy: np.ndarray) -> None:
+            if non_lipid_target_indices.size == 0:
+                return
+            target_xyz = initial_positions[non_lipid_target_indices]
+            if target_clearance > 0.0:
+                for ia in range(n_cg_lipids):
+                    cgl_xyz = initial_positions[cg_lipid_indices[ia]]
+                    delta = cgl_xyz[None, :] - target_xyz
+                    delta[:, 0] -= x_len * np.round(delta[:, 0] / x_len)
+                    delta[:, 1] -= y_len * np.round(delta[:, 1] / y_len)
+                    delta[:, 2] -= z_len * np.round(delta[:, 2] / z_len)
+                    dist3 = np.sqrt(np.sum(delta * delta, axis=1))
+                    close = np.where((dist3 > 1e-8) & (dist3 < target_clearance))[0]
+                    if close.size == 0:
+                        continue
+                    for j in close:
+                        dxy = delta[j, :2]
+                        rxy = float(np.sqrt(np.dot(dxy, dxy)))
+                        if rxy <= 1e-8:
+                            angle = 2.399963229728653 * float(ia + 1)
+                            dxy = np.array([math.cos(angle), math.sin(angle)], dtype=np.float64)
+                            rxy = 1.0
+                        push = (target_clearance - float(dist3[j])) * dxy / rxy
+                        delta_xy[ia] += push
+            if target_bead_clearance > 0.0:
+                for ia in range(n_cg_lipids):
+                    cgl_xyz = initial_positions[cg_lipid_indices[ia]]
+                    if cg_lipid_orientation_indices.size == n_cg_lipids:
+                        orient_vec = initial_positions[cg_lipid_orientation_indices[ia]] - cgl_xyz
+                        orient_vec[0] -= x_len * np.round(orient_vec[0] / x_len)
+                        orient_vec[1] -= y_len * np.round(orient_vec[1] / y_len)
+                        orient_vec[2] -= z_len * np.round(orient_vec[2] / z_len)
+                    else:
+                        orient_vec = lipid_directions[ia]
+                    rel = target_xyz - cgl_xyz[None, :]
+                    rel[:, 0] -= x_len * np.round(rel[:, 0] / x_len)
+                    rel[:, 1] -= y_len * np.round(rel[:, 1] / y_len)
+                    rel[:, 2] -= z_len * np.round(rel[:, 2] / z_len)
+                    for vec in rel:
+                        dist = cgl_swept_bead_min_distance_ang(
+                            vec,
+                            orient_vec,
+                            bead_axial_offsets,
+                            bead_radial_offsets,
+                        )
+                        if dist <= 1.0e-8 or dist >= target_bead_clearance:
+                            continue
+                        dxy = -vec[:2]
+                        rxy = float(np.sqrt(np.dot(dxy, dxy)))
+                        if rxy <= 1.0e-8:
+                            angle = 2.399963229728653 * float(ia + 1)
+                            dxy = np.array([math.cos(angle), math.sin(angle)], dtype=np.float64)
+                            rxy = 1.0
+                        push = (target_bead_clearance - dist) * dxy / rxy
+                        delta_xy[ia] += push
+
         for _ in range(max(n_iter, 0)):
             delta_xy = np.zeros((n_cg_lipids, 2), dtype=np.float64)
             for leaflet_mask in leaflet_masks:
@@ -1780,25 +2021,33 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                         push = 0.5 * (target_nn - dist) * dxy / dist
                         delta_xy[ia] -= push
                         delta_xy[ib] += push
-            norms = np.sqrt(np.sum(delta_xy * delta_xy, axis=1))
-            max_norm = float(np.max(norms)) if norms.size else 0.0
-            if max_norm <= 1e-8:
+            _accumulate_target_clearance_delta(delta_xy)
+            if not _apply_cgl_xy_delta(delta_xy):
                 break
-            if max_norm > max_step:
-                delta_xy *= max_step / max_norm
-            initial_positions[cg_lipid_indices, :2] += delta_xy
-            if cg_lipid_orientation_indices.size == n_cg_lipids:
-                initial_positions[cg_lipid_orientation_indices, :2] += delta_xy
-            initial_positions[cg_lipid_indices, 0] %= x_len
-            initial_positions[cg_lipid_indices, 1] %= y_len
-            if cg_lipid_orientation_indices.size == n_cg_lipids:
-                initial_positions[cg_lipid_orientation_indices, 0] %= x_len
-                initial_positions[cg_lipid_orientation_indices, 1] %= y_len
+        for _ in range(max(n_iter, 0)):
+            delta_xy = np.zeros((n_cg_lipids, 2), dtype=np.float64)
+            _accumulate_target_clearance_delta(delta_xy)
+            if not _apply_cgl_xy_delta(delta_xy):
+                break
         end_min, end_p05 = _same_leaflet_nn_stats()
+        end_target_min = _cgl_target_min_distance()
+        end_target_bead_min = _cgl_target_min_swept_bead_distance()
         print(
             "Conditioned initial CGL same-leaflet XY spacing: "
             f"min/p05 {start_min:.3f}/{start_p05:.3f} -> {end_min:.3f}/{end_p05:.3f} A"
         )
+        if np.isfinite(start_target_min) and np.isfinite(end_target_min):
+            print(
+                "Conditioned initial CGL-target clearance: "
+                f"min {start_target_min:.3f} -> {end_target_min:.3f} A "
+                f"(target {target_clearance:.3f} A)"
+            )
+        if np.isfinite(start_target_bead_min) and np.isfinite(end_target_bead_min):
+            print(
+                "Conditioned initial CGL swept-bead target clearance: "
+                f"min {start_target_bead_min:.3f} -> {end_target_bead_min:.3f} A "
+                f"(target {target_bead_clearance:.3f} A)"
+            )
     print(f"Total atoms: {n_atoms}")
     
     # Group atoms into molecules by chain (for proteins) or residue ID (for other molecules)
@@ -2607,6 +2856,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     "orientation_length_ang",
                     "orientation_mass_g_mol",
                     "orientation_bond_fc_eup_a2",
+                    "orientation_projected_bond_fc_eup_a2",
+                    "orientation_carrier_bond_fc_factor",
                     "transverse_inertia_g_mol_a2",
                     "head_tail_span_ang",
                     "tail_projection_ang",
@@ -2621,6 +2872,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     "orientation_length_source",
                     "orientation_mass_source",
                     "orientation_bond_fc_source",
+                    "orientation_projected_bond_fc_source",
                 ):
                     compose_grp._v_attrs[attr_name] = str(cg_lipid_derived_params[attr_name])
             t.create_array(compose_grp, 'elem_index',
@@ -3539,6 +3791,18 @@ def inject_cg_lipid_nodes(
                     cg_pair.attrs["schema"] = pair_grp.attrs["schema"]
                 cg_pair.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
                 cg_pair.attrs["radial_mode"] = pair_grp.attrs.get("radial_mode", "full_tensor")
+                for attr_name in (
+                    "energy_transform",
+                    "spline_control_quantity",
+                ):
+                    if attr_name in pair_grp.attrs:
+                        cg_pair.attrs[attr_name] = pair_grp.attrs[attr_name]
+                for attr_name in (
+                    "log1p_reduced_transform",
+                    "boltzmann_temperature_upside",
+                ):
+                    if attr_name in pair_grp.attrs:
+                        cg_pair.attrs[attr_name] = pair_grp.attrs[attr_name]
                 for attr_name in ("knot_spacing_ang", "cutoff_ang", "taper_width_ang"):
                     if attr_name in pair_grp.attrs:
                         cg_pair.attrs[attr_name] = np.float32(pair_grp.attrs[attr_name])
@@ -3551,6 +3815,11 @@ def inject_cg_lipid_nodes(
                     "interaction_param",
                     data=pair_grp["interaction_param"][:].astype(np.float32),
                 )
+                if "reference_energy_eup" in pair_grp:
+                    pi.create_dataset(
+                        "reference_energy_eup",
+                        data=pair_grp["reference_energy_eup"][:].astype(np.float32),
+                    )
 
                 # Element mapping: CG lipids use identity mapping (1 CG type)
                 # Shift ids by 4 bits so all shifted ids are unique:
@@ -3633,9 +3902,25 @@ def inject_cg_lipid_nodes(
                         for attr_name in ("knot_spacing_ang", "taper_width_ang", "fit_r_min_nm", "fit_r_max_nm"):
                             if attr_name in sc_grp.attrs:
                                 cg_sc.attrs[attr_name] = np.float32(sc_grp.attrs[attr_name])
-                        for attr_name in ("short_range_core_source", "excluded_area_source"):
+                        for attr_name in (
+                            "short_range_core_source",
+                            "excluded_area_source",
+                            "radial_support_source",
+                            "azimuthal_average",
+                            "azimuthal_average_temperature_upside",
+                            "energy_transform",
+                            "spline_control_quantity",
+                        ):
                             if attr_name in sc_grp.attrs:
                                 cg_sc.attrs[attr_name] = sc_grp.attrs[attr_name]
+                        if "log1p_reduced_transform" in sc_grp.attrs:
+                            cg_sc.attrs["log1p_reduced_transform"] = np.int32(
+                                sc_grp.attrs["log1p_reduced_transform"]
+                            )
+                        if "boltzmann_temperature_upside" in sc_grp.attrs:
+                            cg_sc.attrs["boltzmann_temperature_upside"] = np.float32(
+                                sc_grp.attrs["boltzmann_temperature_upside"]
+                            )
                         if "excluded_area_nonnegative_rows" in sc_grp.attrs:
                             cg_sc.attrs["excluded_area_nonnegative_rows"] = np.int32(
                                 sc_grp.attrs["excluded_area_nonnegative_rows"]
@@ -3653,6 +3938,11 @@ def inject_cg_lipid_nodes(
                             "interaction_param",
                             data=sc_grp["interaction_param"][:].astype(np.float32),
                         )
+                        if "reference_energy_eup" in sc_grp:
+                            psi.create_dataset(
+                                "reference_energy_eup",
+                                data=sc_grp["reference_energy_eup"][:].astype(np.float32),
+                            )
 
                         psi.create_dataset("type1", data=row_types)
                         psi.create_dataset("row_residue_index", data=sc_residue_idx.astype(np.int32))
@@ -3717,8 +4007,6 @@ def inject_cg_lipid_nodes(
                 target_idx = []
                 target_types = []
                 target_ids = []
-                target_is_ion = []
-                target_is_charged_bb = []
                 for atom_idx, atom_type in enumerate(atom_types):
                     if atom_type.upper() in {"CGL", "CGLD"}:
                         continue
@@ -3730,74 +4018,62 @@ def inject_cg_lipid_nodes(
                     target_idx.append(atom_idx)
                     target_types.append(type_idx)
                     target_ids.append((atom_idx + 300000) << 4)
-                    atom_name = atom_names[atom_idx].upper() if atom_idx < len(atom_names) else ""
-                    is_ion = atom_name in {"NA", "CL"}
-                    target_is_ion.append(is_ion)
-                    target_is_charged_bb.append(atom_idx in bb_proxy_idx and atom_type in {"Qd", "Qa"})
 
                 if target_idx:
                     target_idx_arr = np.array(target_idx, dtype=np.int32)
                     target_types_arr = np.array(target_types, dtype=np.int32)
                     target_ids_arr = np.array(target_ids, dtype=np.int32)
-                    target_is_ion_arr = np.array(target_is_ion, dtype=bool)
-                    target_is_charged_bb_arr = np.array(target_is_charged_bb, dtype=bool)
                     base_params = target_grp["interaction_param"][:].astype(np.float32)
                     cg_index = np.arange(n_cg_lipids, dtype=np.int32)
                     cg_type = np.zeros(n_cg_lipids, dtype=np.int32)
                     cg_id = ((cg_index + 200000) << 4).astype(np.int32)
 
-                    def write_target_node(node_name, mask, interaction_param, source_override=None):
+                    def write_target_node(node_name, interaction_param):
                         target_node = pot.create_group(node_name)
                         target_node.attrs["initialized"] = True
                         target_node.attrs["arguments"] = np.array([b"compose_vector6d", b"pos"])
                         for attr_name, attr_value in box_attrs.items():
                             target_node.attrs[attr_name] = attr_value
-                        for attr_name in ("schema", "source", "angle_convention"):
+                        for attr_name in (
+                            "schema",
+                            "source",
+                            "angle_convention",
+                            "energy_transform",
+                            "spline_control_quantity",
+                        ):
                             if attr_name in target_grp.attrs:
                                 target_node.attrs[attr_name] = target_grp.attrs[attr_name]
-                        if source_override is not None:
-                            target_node.attrs["source"] = source_override
                         for attr_name in ("n_modes", "n_radial", "n_angular"):
+                            if attr_name in target_grp.attrs:
+                                target_node.attrs[attr_name] = np.int32(target_grp.attrs[attr_name])
+                        for attr_name in ("boltzmann_weight_transform", "log1p_reduced_transform"):
                             if attr_name in target_grp.attrs:
                                 target_node.attrs[attr_name] = np.int32(target_grp.attrs[attr_name])
                         for attr_name in ("knot_spacing_ang", "cutoff_ang", "taper_width_ang"):
                             if attr_name in target_grp.attrs:
                                 target_node.attrs[attr_name] = np.float32(target_grp.attrs[attr_name])
+                        for attr_name in ("boltzmann_temperature_upside", "minimum_boltzmann_weight"):
+                            if attr_name in target_grp.attrs:
+                                target_node.attrs[attr_name] = np.float32(target_grp.attrs[attr_name])
 
                         target_pi = target_node.create_group("pair_interaction")
                         target_pi.create_dataset("interaction_param", data=interaction_param)
+                        if "reference_energy_eup" in target_grp:
+                            target_pi.create_dataset(
+                                "reference_energy_eup",
+                                data=target_grp["reference_energy_eup"][:].astype(np.float32),
+                            )
                         target_pi.create_dataset("index1", data=cg_index)
                         target_pi.create_dataset("type1", data=cg_type)
                         target_pi.create_dataset("id1", data=cg_id)
-                        target_pi.create_dataset("index2", data=target_idx_arr[mask])
-                        target_pi.create_dataset("type2", data=target_types_arr[mask])
-                        target_pi.create_dataset("id2", data=target_ids_arr[mask])
+                        target_pi.create_dataset("index2", data=target_idx_arr)
+                        target_pi.create_dataset("type2", data=target_types_arr)
+                        target_pi.create_dataset("id2", data=target_ids_arr)
 
-                    ev_params = np.maximum(base_params, np.float32(0.0))
-                    charged_bb_mask = target_is_charged_bb_arr
-                    non_ion_mask = (~target_is_ion_arr) & (~charged_bb_mask)
-                    ion_mask = target_is_ion_arr
-                    if np.any(non_ion_mask):
-                        write_target_node("cg_lipid_target", non_ion_mask, base_params)
-                    if np.any(charged_bb_mask):
-                        write_target_node(
-                            "cg_lipid_target_charged_bb_excluded_volume",
-                            charged_bb_mask,
-                            ev_params,
-                            source_override="explicit_dopc_charged_bb_excluded_volume_from_current_target_table",
-                        )
-                    if np.any(ion_mask):
-                        write_target_node(
-                            "cg_lipid_target_ion_excluded_volume",
-                            ion_mask,
-                            ev_params,
-                            source_override="explicit_dopc_ion_excluded_volume_from_current_target_table",
-                        )
+                    write_target_node("cg_lipid_target", base_params)
                     print(
                         f"  Injected cg_lipid_target: {n_cg_lipids} CGL x {len(target_idx)} "
-                        f"target particles ({len(target_order)} target types; "
-                        f"{int(np.sum(target_is_charged_bb_arr))} charged BB and "
-                        f"{int(np.sum(target_is_ion_arr))} ion targets use excluded-volume controls)"
+                        f"target particles ({len(target_order)} target types; physical direct table)"
                     )
                 else:
                     print("  cg_lipid_target: no matching target particles, skipping")
@@ -3843,6 +4119,7 @@ def inject_stage7_sc_table_nodes(
             "rotamer_radial_energy_kj_mol",
             "rotamer_angular_energy_kj_mol",
             "rotamer_angular_profile",
+            "rotamer_full_energy_kj_mol",
         ]
         missing_sc_datasets = [name for name in required_sc_datasets if name not in sc_grp]
         if missing_sc_datasets:
@@ -3860,6 +4137,7 @@ def inject_stage7_sc_table_nodes(
         rotamer_radial_energy_kj_mol = sc_grp["rotamer_radial_energy_kj_mol"][:].astype(np.float32)
         rotamer_angular_energy_kj_mol = sc_grp["rotamer_angular_energy_kj_mol"][:].astype(np.float32)
         rotamer_angular_profile = sc_grp["rotamer_angular_profile"][:].astype(np.float32)
+        rotamer_full_energy_kj_mol = sc_grp["rotamer_full_energy_kj_mol"][:].astype(np.float32)
 
     restype_to_index = {name: i for i, name in enumerate(restype_order)}
     target_to_index = {name: i for i, name in enumerate(target_order)}
@@ -3978,6 +4256,7 @@ def inject_stage7_sc_table_nodes(
         g_sc.create_dataset("rotamer_radial_energy_kj_mol", data=rotamer_radial_energy_kj_mol, dtype=np.float32)
         g_sc.create_dataset("rotamer_angular_energy_kj_mol", data=rotamer_angular_energy_kj_mol, dtype=np.float32)
         g_sc.create_dataset("rotamer_angular_profile", data=rotamer_angular_profile, dtype=np.float32)
+        g_sc.create_dataset("rotamer_full_energy_kj_mol", data=rotamer_full_energy_kj_mol, dtype=np.float32)
         g_sc.create_dataset("restype_order", data=np.asarray([np.bytes_(x) for x in restype_order], dtype="S4"))
         g_sc.create_dataset("target_order", data=np.asarray([np.bytes_(x) for x in target_order], dtype="S8"))
 

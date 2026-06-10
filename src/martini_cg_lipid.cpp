@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -40,6 +41,15 @@ static vector<int> read_int_dataset(hid_t grp, const char* name) {
     vector<int> out(sz[0]);
     traverse_dset<1, int32_t>(grp, name, [&](size_t i, int32_t v) {
         out[i] = v;
+    });
+    return out;
+}
+
+static vector<float> read_float_dataset(hid_t grp, const char* name) {
+    vector<hsize_t> sz = get_dset_size(2, grp, name);
+    vector<float> out(sz[0] * sz[1], 0.f);
+    traverse_dset<2, float>(grp, name, [&](size_t i, size_t j, float v) {
+        out[i * sz[1] + j] = v;
     });
     return out;
 }
@@ -91,6 +101,16 @@ static inline float angular_spline_coord(float cos_angle) {
     return std::max(1.0001f, std::min(float(CG_LIPID_N_ANGULAR - 2) - 0.0001f, t));
 }
 
+static inline Vec<2> radial_deBoor_value_and_deriv(
+        const float* bspline_coeff, const float x, int n_knot) {
+    if(x < 1.f) {
+        constexpr float x0 = 1.0001f;
+        Vec<2> v = deBoor_value_and_deriv(bspline_coeff, x0);
+        return make_vec2(v.x() + (x - x0) * v.y(), v.y());
+    }
+    return clamped_deBoor_value_and_deriv(bspline_coeff, x, n_knot);
+}
+
 static bool eval_quadspline(
         const float* p,
         const float dr[3],
@@ -116,9 +136,9 @@ static bool eval_quadspline(
     Vec<2> ang1 = deBoor_value_and_deriv(p, angular_spline_coord(a1));
     Vec<2> ang2 = deBoor_value_and_deriv(p + CG_LIPID_N_ANGULAR, angular_spline_coord(a2));
     float radial_coord = r / knot_spacing;
-    Vec<2> vr = clamped_deBoor_value_and_deriv(
+    Vec<2> vr = radial_deBoor_value_and_deriv(
             p + 2 * CG_LIPID_N_ANGULAR, radial_coord, CG_LIPID_N_RADIAL);
-    Vec<2> va = clamped_deBoor_value_and_deriv(
+    Vec<2> va = radial_deBoor_value_and_deriv(
             p + 2 * CG_LIPID_N_ANGULAR + CG_LIPID_N_RADIAL,
             radial_coord, CG_LIPID_N_RADIAL);
 
@@ -180,7 +200,7 @@ static bool eval_multimode_pair(
     float inv_dtheta = float(n_angular - 3) * 0.5f;
     float radial_coord = r / knot_spacing;
 
-    Vec<2> v0 = clamped_deBoor_value_and_deriv(p, radial_coord, n_radial);
+    Vec<2> v0 = radial_deBoor_value_and_deriv(p, radial_coord, n_radial);
     float raw_value = v0.x();
     float raw_d_dr = v0.y() / knot_spacing;
     float raw_d_da1 = 0.f;
@@ -193,7 +213,7 @@ static bool eval_multimode_pair(
         const float* v_ptr = mode + 2 * n_angular;
         Vec<2> ang1 = deBoor_value_and_deriv(a1_ptr, a1_coord);
         Vec<2> ang2 = deBoor_value_and_deriv(a2_ptr, a2_coord);
-        Vec<2> vm = clamped_deBoor_value_and_deriv(v_ptr, radial_coord, n_radial);
+        Vec<2> vm = radial_deBoor_value_and_deriv(v_ptr, radial_coord, n_radial);
         raw_value += ang1.x() * ang2.x() * vm.x();
         raw_d_dr += ang1.x() * ang2.x() * vm.y() / knot_spacing;
         raw_d_da1 += ang1.y() * inv_dtheta * ang2.x() * vm.x();
@@ -281,6 +301,23 @@ static void clamped_uniform_bspline_basis(
     }
 }
 
+static void radial_uniform_bspline_basis(
+        float x,
+        int n_knot,
+        float w[4],
+        float dw[4],
+        int& base) {
+    if(x < 1.f) {
+        constexpr float x0 = 1.0001f;
+        clamped_uniform_bspline_basis(x0, n_knot, w, dw, base);
+        float dx = x - x0;
+        for(int i = 0; i < 4; ++i)
+            w[i] += dx * dw[i];
+        return;
+    }
+    clamped_uniform_bspline_basis(x, n_knot, w, dw, base);
+}
+
 static bool eval_full_pair_tensor(
         const float* p,
         int n_angular,
@@ -305,7 +342,7 @@ static bool eval_full_pair_tensor(
 
     float wr[4], dwr[4], wa1[4], dwa1[4], wa2[4], dwa2[4];
     int br = 0, ba1 = 0, ba2 = 0;
-    clamped_uniform_bspline_basis(r / knot_spacing, n_radial, wr, dwr, br);
+    radial_uniform_bspline_basis(r / knot_spacing, n_radial, wr, dwr, br);
     clamped_uniform_bspline_basis(angular_spline_coord(a1, n_angular), n_angular, wa1, dwa1, ba1);
     clamped_uniform_bspline_basis(angular_spline_coord(a2, n_angular), n_angular, wa2, dwa2, ba2);
     float inv_dtheta = float(n_angular - 3) * 0.5f;
@@ -372,7 +409,7 @@ static bool eval_cg_target_tensor(
 
     float wr[4], dwr[4], wa[4], dwa[4];
     int br = 0, ba = 0;
-    clamped_uniform_bspline_basis(r / knot_spacing, n_radial, wr, dwr, br);
+    radial_uniform_bspline_basis(r / knot_spacing, n_radial, wr, dwr, br);
     clamped_uniform_bspline_basis(angular_spline_coord(a, n_angular), n_angular, wa, dwa, ba);
     float inv_dtheta = float(n_angular - 3) * 0.5f;
 
@@ -407,6 +444,24 @@ static bool eval_cg_target_tensor(
     out.d_dr = taper * raw_d_dr + raw_value * d_taper_dr;
     out.d_da = taper * raw_d_da;
     return true;
+}
+
+static inline void compute_cutoff_taper(
+        float r,
+        float cutoff,
+        float taper_width,
+        float& taper,
+        float& d_taper_dr) {
+    taper = 1.f;
+    d_taper_dr = 0.f;
+    taper_width = std::max(taper_width, 1e-6f);
+    float taper_start = cutoff - taper_width;
+    if(r > taper_start) {
+        float u = (cutoff - r) / taper_width;
+        u = std::max(0.f, std::min(1.f, u));
+        taper = u * u * (3.f - 2.f * u);
+        d_taper_dr = -6.f * u * (1.f - u) / taper_width;
+    }
 }
 
 static inline void load_vec6(VecArray data, int idx, float pos[3], float dir[3]) {
@@ -590,6 +645,7 @@ struct CGLipidPairPotential : public PotentialNode {
     vector<int> index;
     vector<int> type;
     vector<int> id;
+    vector<float> reference_energy_eup;
     int n_type1;
     int n_type2;
     int n_param;
@@ -603,6 +659,8 @@ struct CGLipidPairPotential : public PotentialNode {
     float knot_spacing;
     float cutoff;
     float taper_width;
+    bool log1p_reduced_transform;
+    float boltzmann_temperature;
 
     CGLipidPairPotential(hid_t grp, CoordNode& cg_pos);
     virtual void compute_value(ComputeMode mode) override;
@@ -634,6 +692,8 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     , cutoff(read_attribute<float>(grp, ".", "cutoff_ang",
                 float(n_radial - 2) * CG_LIPID_DEFAULT_KNOT_SPACING))
     , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
+    , log1p_reduced_transform(read_attribute<int>(grp, ".", "log1p_reduced_transform", 0) != 0)
+    , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
 {
     check_elem_width(cg_pos, 6);
     H5Obj pi_obj = open_group(grp, "pair_interaction");
@@ -644,6 +704,15 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     full_tensor = (n_modes == 0 && n_radial > 3 && n_angular > 3 && n_param == expected_tensor_param);
     if(!full_tensor && (n_modes <= 0 || n_radial <= 3 || n_angular <= 3 || n_param != expected_n_param))
         throw string("cg_lipid_pair requires full multimode params with matching n_modes/n_radial/n_angular attrs");
+    if(H5Lexists(pi, "reference_energy_eup", H5P_DEFAULT) > 0) {
+        reference_energy_eup = read_float_dataset(pi, "reference_energy_eup");
+        if(int(reference_energy_eup.size()) != n_type1 * n_type2)
+            throw string("cg_lipid_pair reference_energy_eup shape mismatch");
+    } else {
+        reference_energy_eup.assign(n_type1 * n_type2, 0.f);
+    }
+    if(log1p_reduced_transform && boltzmann_temperature <= 0.f)
+        throw string("cg_lipid_pair log1p-reduced transform requires positive temperature");
     index = read_int_dataset(pi, "index");
     type = read_int_dataset(pi, "type");
     id = read_int_dataset(pi, "id");
@@ -675,12 +744,35 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
             bool ok = full_tensor
                 ? eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
                         n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff, taper_width, e)
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e)
                 : eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
                         n_modes, n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff, taper_width, e);
-            if(ok)
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e);
+            if(ok) {
+                if(log1p_reduced_transform) {
+                    float scale = boltzmann_temperature * expf(e.value);
+                    e.value = reference_energy_eup[t1 * n_type2 + t2]
+                            + boltzmann_temperature * expm1f(e.value);
+                    e.d_dr *= scale;
+                    e.d_da1 *= scale;
+                    e.d_da2 *= scale;
+
+                    float r = sqrtf(std::max(
+                                dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
+                                1e-12f));
+                    float taper = 1.f;
+                    float d_taper_dr = 0.f;
+                    compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
+                    float energy = e.value;
+                    e.value = taper * energy;
+                    e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+                    e.d_da1 *= taper;
+                    e.d_da2 *= taper;
+                }
                 total += e.value;
+            }
         }
     }
     potential = total;
@@ -710,12 +802,34 @@ void CGLipidPairPotential::propagate_deriv() {
             bool ok = full_tensor
                 ? eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
                         n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff, taper_width, e)
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e)
                 : eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
                         n_modes, n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e);
             if(!ok)
                 continue;
+            if(log1p_reduced_transform) {
+                float scale = boltzmann_temperature * expf(e.value);
+                e.value = reference_energy_eup[t1 * n_type2 + t2]
+                        + boltzmann_temperature * expm1f(e.value);
+                e.d_dr *= scale;
+                e.d_da1 *= scale;
+                e.d_da2 *= scale;
+
+                float r = sqrtf(std::max(
+                            dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
+                            1e-12f));
+                float taper = 1.f;
+                float d_taper_dr = 0.f;
+                compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
+                float energy = e.value;
+                e.value = taper * energy;
+                e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+                e.d_da1 *= taper;
+                e.d_da2 *= taper;
+            }
 
             float dpos1[3] = {0.f, 0.f, 0.f};
             float ddir1[3] = {0.f, 0.f, 0.f};
@@ -738,18 +852,22 @@ struct CGLipidSCPotential : public PotentialNode {
     vector<int> index2;
     vector<int> type2;
     vector<int> id2;
+    vector<float> reference_energy_eup;
     int n_type1;
     int n_type2;
     int n_param;
     int n_modes;
     int n_radial;
     int n_angular;
+    bool full_tensor;
     float box_x;
     float box_y;
     float box_z;
     float knot_spacing;
     float cutoff;
     float taper_width;
+    bool log1p_reduced_transform;
+    float boltzmann_temperature;
 
     CGLipidSCPotential(hid_t grp, CoordNode& sc_pos, CoordNode& cg_pos);
     virtual void compute_value(ComputeMode mode) override;
@@ -774,6 +892,7 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
     , n_modes(read_attribute<int>(grp, ".", "n_modes", 0))
     , n_radial(read_attribute<int>(grp, ".", "n_radial", CG_LIPID_N_RADIAL))
     , n_angular(read_attribute<int>(grp, ".", "n_angular", CG_LIPID_N_ANGULAR))
+    , full_tensor(false)
     , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
     , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
     , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
@@ -781,6 +900,8 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
     , cutoff(read_attribute<float>(grp, ".", "cutoff_ang",
                 (CG_LIPID_N_RADIAL - 2) * CG_LIPID_DEFAULT_KNOT_SPACING))
     , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
+    , log1p_reduced_transform(read_attribute<int>(grp, ".", "log1p_reduced_transform", 0) != 0)
+    , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
 {
     check_elem_width(sc_pos, 6);
     check_elem_width(cg_pos, 6);
@@ -788,12 +909,23 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
     hid_t pi = pi_obj.get();
     interaction_param = read_param_dataset_any(pi, n_type1, n_type2, n_param);
     int expected_n_param = n_radial + n_modes * (2 * n_angular + n_radial);
-    if(n_modes > 0) {
+    int expected_tensor_param = n_radial * n_angular * n_angular;
+    full_tensor = (n_modes == 0 && n_radial > 3 && n_angular > 3 && n_param == expected_tensor_param);
+    if(!full_tensor && n_modes > 0) {
         if(n_radial <= 3 || n_angular <= 3 || n_param != expected_n_param)
             throw string("cg_lipid_sc full multimode params require matching n_modes/n_radial/n_angular attrs");
-    } else if(n_param != CG_LIPID_N_PARAM) {
+    } else if(!full_tensor && n_param != CG_LIPID_N_PARAM) {
         throw string("cg_lipid_sc legacy params must have last dimension 54");
     }
+    if(H5Lexists(pi, "reference_energy_eup", H5P_DEFAULT) > 0) {
+        reference_energy_eup = read_float_dataset(pi, "reference_energy_eup");
+        if(int(reference_energy_eup.size()) != n_type1 * n_type2)
+            throw string("cg_lipid_sc reference_energy_eup shape mismatch");
+    } else {
+        reference_energy_eup.assign(n_type1 * n_type2, 0.f);
+    }
+    if(log1p_reduced_transform && boltzmann_temperature <= 0.f)
+        throw string("cg_lipid_sc log1p-reduced transform requires positive temperature");
     index1 = read_int_dataset(pi, "index1");
     type1 = read_int_dataset(pi, "type1");
     id1 = read_int_dataset(pi, "id1");
@@ -830,15 +962,44 @@ void CGLipidSCPotential::compute_value(ComputeMode mode) {
 
             QuadsplineEval e;
             bool ok = false;
-            if(n_modes > 0) {
+            if(full_tensor) {
+                ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                        n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e);
+            } else if(n_modes > 0) {
                 ok = eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
                         n_modes, n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e);
             } else {
                 ok = eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
-                        dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e);
             }
-            if(ok) total += e.value;
+            if(ok) {
+                if(log1p_reduced_transform) {
+                    float scale = boltzmann_temperature * expf(e.value);
+                    e.value = reference_energy_eup[t1 * n_type2 + t2]
+                            + boltzmann_temperature * expm1f(e.value);
+                    e.d_dr *= scale;
+                    e.d_da1 *= scale;
+                    e.d_da2 *= scale;
+
+                    float r = sqrtf(std::max(
+                                dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
+                                1e-12f));
+                    float taper = 1.f;
+                    float d_taper_dr = 0.f;
+                    compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
+                    float energy = e.value;
+                    e.value = taper * energy;
+                    e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+                    e.d_da1 *= taper;
+                    e.d_da2 *= taper;
+                }
+                total += e.value;
+            }
         }
     }
     potential = total;
@@ -868,16 +1029,43 @@ void CGLipidSCPotential::propagate_deriv() {
 
             QuadsplineEval e;
             bool ok = false;
-            if(n_modes > 0) {
+            if(full_tensor) {
+                ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                        n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e);
+            } else if(n_modes > 0) {
                 ok = eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
                         n_modes, n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e);
             } else {
                 ok = eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
-                        dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e);
             }
             if(!ok)
                 continue;
+            if(log1p_reduced_transform) {
+                float scale = boltzmann_temperature * expf(e.value);
+                e.value = reference_energy_eup[t1 * n_type2 + t2]
+                        + boltzmann_temperature * expm1f(e.value);
+                e.d_dr *= scale;
+                e.d_da1 *= scale;
+                e.d_da2 *= scale;
+
+                float r = sqrtf(std::max(
+                            dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
+                            1e-12f));
+                float taper = 1.f;
+                float d_taper_dr = 0.f;
+                compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
+                float energy = e.value;
+                e.value = taper * energy;
+                e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+                e.d_da1 *= taper;
+                e.d_da2 *= taper;
+            }
 
             float dpos1[3] = {0.f, 0.f, 0.f};
             float ddir1[3] = {0.f, 0.f, 0.f};
@@ -900,6 +1088,7 @@ struct CGLipidTargetPotential : public PotentialNode {
     vector<int> index2;
     vector<int> type2;
     vector<int> id2;
+    vector<float> reference_energy_eup;
     int n_type1;
     int n_type2;
     int n_param;
@@ -912,6 +1101,10 @@ struct CGLipidTargetPotential : public PotentialNode {
     float knot_spacing;
     float cutoff;
     float taper_width;
+    bool boltzmann_weight_transform;
+    bool log1p_reduced_transform;
+    float boltzmann_temperature;
+    float minimum_boltzmann_weight;
 
     CGLipidTargetPotential(hid_t grp, CoordNode& cg_pos_, CoordNode& tgt_pos_);
     virtual void compute_value(ComputeMode mode) override;
@@ -937,18 +1130,22 @@ struct CGLipidSCOneBody : public CoordNode {
     vector<int> index2;
     vector<int> type2;
     vector<int> id2;
+    vector<float> reference_energy_eup;
     int n_type1;
     int n_type2;
     int n_param;
     int n_modes;
     int n_radial;
     int n_angular;
+    bool full_tensor;
     float box_x;
     float box_y;
     float box_z;
     float knot_spacing;
     float cutoff;
     float taper_width;
+    bool log1p_reduced_transform;
+    float boltzmann_temperature;
 
     CGLipidSCOneBody(hid_t grp, CoordNode& sc_pos_, CoordNode& cg_pos_)
         : CoordNode(sc_pos_.n_elem, 1)
@@ -960,6 +1157,7 @@ struct CGLipidSCOneBody : public CoordNode {
         , n_modes(read_attribute<int>(grp, ".", "n_modes", 0))
         , n_radial(read_attribute<int>(grp, ".", "n_radial", CG_LIPID_N_RADIAL))
         , n_angular(read_attribute<int>(grp, ".", "n_angular", CG_LIPID_N_ANGULAR))
+        , full_tensor(false)
         , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
         , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
         , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
@@ -967,6 +1165,8 @@ struct CGLipidSCOneBody : public CoordNode {
         , cutoff(read_attribute<float>(grp, ".", "cutoff_ang",
                     (CG_LIPID_N_RADIAL - 2) * CG_LIPID_DEFAULT_KNOT_SPACING))
         , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
+        , log1p_reduced_transform(read_attribute<int>(grp, ".", "log1p_reduced_transform", 0) != 0)
+        , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
     {
         check_elem_width(sc_pos, 6);
         check_elem_width(cg_pos, 6);
@@ -974,12 +1174,23 @@ struct CGLipidSCOneBody : public CoordNode {
         hid_t pi = pi_obj.get();
         interaction_param = read_param_dataset_any(pi, n_type1, n_type2, n_param);
         int expected_n_param = n_radial + n_modes * (2 * n_angular + n_radial);
-        if(n_modes > 0) {
+        int expected_tensor_param = n_radial * n_angular * n_angular;
+        full_tensor = (n_modes == 0 && n_radial > 3 && n_angular > 3 && n_param == expected_tensor_param);
+        if(!full_tensor && n_modes > 0) {
             if(n_radial <= 3 || n_angular <= 3 || n_param != expected_n_param)
                 throw string("cg_lipid_rotamer_sc full multimode params require matching n_modes/n_radial/n_angular attrs");
-        } else if(n_param != CG_LIPID_N_PARAM) {
+        } else if(!full_tensor && n_param != CG_LIPID_N_PARAM) {
             throw string("cg_lipid_rotamer_sc legacy params must have last dimension 54");
         }
+        if(H5Lexists(pi, "reference_energy_eup", H5P_DEFAULT) > 0) {
+            reference_energy_eup = read_float_dataset(pi, "reference_energy_eup");
+            if(int(reference_energy_eup.size()) != n_type1 * n_type2)
+                throw string("cg_lipid_rotamer_sc reference_energy_eup shape mismatch");
+        } else {
+            reference_energy_eup.assign(n_type1 * n_type2, 0.f);
+        }
+        if(log1p_reduced_transform && boltzmann_temperature <= 0.f)
+            throw string("cg_lipid_rotamer_sc log1p-reduced transform requires positive temperature");
 
         row_type = read_int_dataset(pi, "type1");
         row_residue_index = read_int_dataset(pi, "row_residue_index");
@@ -1035,15 +1246,44 @@ struct CGLipidSCOneBody : public CoordNode {
 
                 QuadsplineEval e;
                 bool ok = false;
-                if(n_modes > 0) {
+                if(full_tensor) {
+                    ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                            n_angular, n_radial,
+                            dr, n1, n2, knot_spacing, cutoff,
+                            log1p_reduced_transform ? 0.f : taper_width, e);
+                } else if(n_modes > 0) {
                     ok = eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
                             n_modes, n_angular, n_radial,
-                            dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                            dr, n1, n2, knot_spacing, cutoff,
+                            log1p_reduced_transform ? 0.f : taper_width, e);
                 } else {
                     ok = eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
-                            dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                            dr, n1, n2, knot_spacing, cutoff,
+                            log1p_reduced_transform ? 0.f : taper_width, e);
                 }
-                if(ok) output(0, ai) += e.value;
+                if(ok) {
+                    if(log1p_reduced_transform) {
+                        float scale = boltzmann_temperature * expf(e.value);
+                        e.value = reference_energy_eup[t1 * n_type2 + t2]
+                                + boltzmann_temperature * expm1f(e.value);
+                        e.d_dr *= scale;
+                        e.d_da1 *= scale;
+                        e.d_da2 *= scale;
+
+                        float r = sqrtf(std::max(
+                                    dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
+                                    1e-12f));
+                        float taper = 1.f;
+                        float d_taper_dr = 0.f;
+                        compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
+                        float energy = e.value;
+                        e.value = taper * energy;
+                        e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+                        e.d_da1 *= taper;
+                        e.d_da2 *= taper;
+                    }
+                    output(0, ai) += e.value;
+                }
             }
         }
         for(int ai = 0; ai < n_elem; ++ai)
@@ -1078,15 +1318,42 @@ struct CGLipidSCOneBody : public CoordNode {
 
                 QuadsplineEval e;
                 bool ok = false;
-                if(n_modes > 0) {
+                if(full_tensor) {
+                    ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                            n_angular, n_radial,
+                            dr, n1, n2, knot_spacing, cutoff,
+                            log1p_reduced_transform ? 0.f : taper_width, e);
+                } else if(n_modes > 0) {
                     ok = eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
                             n_modes, n_angular, n_radial,
-                            dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                            dr, n1, n2, knot_spacing, cutoff,
+                            log1p_reduced_transform ? 0.f : taper_width, e);
                 } else {
                     ok = eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
-                            dr, n1, n2, knot_spacing, cutoff, taper_width, e);
+                            dr, n1, n2, knot_spacing, cutoff,
+                            log1p_reduced_transform ? 0.f : taper_width, e);
                 }
                 if(!ok) continue;
+                if(log1p_reduced_transform) {
+                    float scale = boltzmann_temperature * expf(e.value);
+                    e.value = reference_energy_eup[t1 * n_type2 + t2]
+                            + boltzmann_temperature * expm1f(e.value);
+                    e.d_dr *= scale;
+                    e.d_da1 *= scale;
+                    e.d_da2 *= scale;
+
+                    float r = sqrtf(std::max(
+                                dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
+                                1e-12f));
+                    float taper = 1.f;
+                    float d_taper_dr = 0.f;
+                    compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
+                    float energy = e.value;
+                    e.value = taper * energy;
+                    e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+                    e.d_da1 *= taper;
+                    e.d_da2 *= taper;
+                }
 
                 float dpos1[3] = {0.f, 0.f, 0.f};
                 float ddir1[3] = {0.f, 0.f, 0.f};
@@ -1120,11 +1387,16 @@ CGLipidTargetPotential::CGLipidTargetPotential(
     , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
     , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
     , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
-    , knot_spacing(read_attribute<float>(grp, ".", "knot_spacing_ang", 1.4f))
-    , cutoff(read_attribute<float>(grp, ".", "cutoff_ang",
-                float(n_radial - 2) * 1.4f))
-    , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
-{
+        , knot_spacing(read_attribute<float>(grp, ".", "knot_spacing_ang", 1.4f))
+        , cutoff(read_attribute<float>(grp, ".", "cutoff_ang",
+                    float(n_radial - 2) * 1.4f))
+        , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
+        , boltzmann_weight_transform(read_attribute<int>(grp, ".", "boltzmann_weight_transform", 0) != 0)
+        , log1p_reduced_transform(read_attribute<int>(grp, ".", "log1p_reduced_transform", 0) != 0)
+        , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
+        , minimum_boltzmann_weight(read_attribute<float>(
+                    grp, ".", "minimum_boltzmann_weight", numeric_limits<float>::min()))
+    {
     check_elem_width(cg_pos, 6);
     // Targets may be 3D particles or 6D backbone sites; only positions are used.
 
@@ -1133,6 +1405,20 @@ CGLipidTargetPotential::CGLipidTargetPotential(
     interaction_param = read_param_dataset_any(pi, n_type1, n_type2, n_param);
     if(n_modes != 0 || n_radial <= 3 || n_angular <= 3 || n_param != n_radial * n_angular)
         throw string("cg_lipid_target requires tensor params with n_radial*n_angular coefficients");
+    if(H5Lexists(pi, "reference_energy_eup", H5P_DEFAULT) > 0) {
+        reference_energy_eup = read_float_dataset(pi, "reference_energy_eup");
+        if(int(reference_energy_eup.size()) != n_type1 * n_type2)
+            throw string("cg_lipid_target reference_energy_eup shape mismatch");
+        if(!log1p_reduced_transform && !boltzmann_weight_transform)
+            boltzmann_weight_transform = true;
+    } else {
+        reference_energy_eup.assign(n_type1 * n_type2, 0.f);
+    }
+    if(log1p_reduced_transform && boltzmann_weight_transform)
+        throw string("cg_lipid_target cannot enable both Boltzmann-weight and log1p-reduced transforms");
+    if((boltzmann_weight_transform || log1p_reduced_transform) && boltzmann_temperature <= 0.f)
+        throw string("cg_lipid_target transformed PMF requires positive temperature");
+    minimum_boltzmann_weight = std::max(minimum_boltzmann_weight, numeric_limits<float>::min());
     index1 = read_int_dataset(pi, "index1");
     type1 = read_int_dataset(pi, "type1");
     id1 = read_int_dataset(pi, "id1");
@@ -1169,8 +1455,40 @@ void CGLipidTargetPotential::compute_value(ComputeMode mode) {
             TargetSplineEval e;
             if(eval_cg_target_tensor(
                 param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                n_angular, n_radial, dr, n1, knot_spacing, cutoff, taper_width, e))
+                n_angular, n_radial, dr, n1, knot_spacing, cutoff,
+                (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e))
+            {
+                bool transformed = false;
+                if(boltzmann_weight_transform) {
+                    float weight = std::max(e.value, minimum_boltzmann_weight);
+                    float scale = -boltzmann_temperature / weight;
+                    e.value = reference_energy_eup[t1 * n_type2 + t2]
+                            - boltzmann_temperature * logf(weight);
+                    e.d_dr *= scale;
+                    e.d_da *= scale;
+                    transformed = true;
+                } else if(log1p_reduced_transform) {
+                    float scale = boltzmann_temperature * expf(e.value);
+                    e.value = reference_energy_eup[t1 * n_type2 + t2]
+                            + boltzmann_temperature * expm1f(e.value);
+                    e.d_dr *= scale;
+                    e.d_da *= scale;
+                    transformed = true;
+                }
+                if(transformed) {
+                    float r = sqrtf(std::max(
+                                dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
+                                1e-12f));
+                    float taper = 1.f;
+                    float d_taper_dr = 0.f;
+                    compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
+                    float energy = e.value;
+                    e.value = taper * energy;
+                    e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+                    e.d_da *= taper;
+                }
                 total += e.value;
+            }
         }
     }
     potential = total;
@@ -1200,11 +1518,38 @@ void CGLipidTargetPotential::propagate_deriv() {
             TargetSplineEval e;
             if(!eval_cg_target_tensor(
                 param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                n_angular, n_radial, dr, n1, knot_spacing, cutoff, taper_width, e))
+                n_angular, n_radial, dr, n1, knot_spacing, cutoff,
+                (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e))
                 continue;
+            bool transformed = false;
+            if(boltzmann_weight_transform) {
+                float weight = std::max(e.value, minimum_boltzmann_weight);
+                float scale = -boltzmann_temperature / weight;
+                e.value = reference_energy_eup[t1 * n_type2 + t2]
+                        - boltzmann_temperature * logf(weight);
+                e.d_dr *= scale;
+                e.d_da *= scale;
+                transformed = true;
+            } else if(log1p_reduced_transform) {
+                float scale = boltzmann_temperature * expf(e.value);
+                e.value = reference_energy_eup[t1 * n_type2 + t2]
+                        + boltzmann_temperature * expm1f(e.value);
+                e.d_dr *= scale;
+                e.d_da *= scale;
+                transformed = true;
+            }
 
             float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
             float r = sqrtf(std::max(r2, 1e-12f));
+            if(transformed) {
+                float taper = 1.f;
+                float d_taper_dr = 0.f;
+                compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
+                float energy = e.value;
+                e.value = taper * energy;
+                e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+                e.d_da *= taper;
+            }
             float inv_r = 1.f / r;
             float unit[3] = {dr[0] * inv_r, dr[1] * inv_r, dr[2] * inv_r};
             float a = n1[0] * unit[0] + n1[1] * unit[1] + n1[2] * unit[2];

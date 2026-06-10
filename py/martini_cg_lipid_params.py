@@ -110,11 +110,13 @@ def derive_dopc_cg_params(
         projected_k += float(k_kj_mol_nm2) * cos_axis * cos_axis
     if projected_k <= 0.0:
         projected_k = float(np.median([b[3] for b in bonds]))
-    bond_fc_eup_a2 = projected_k / (
+    projected_bond_fc_eup_a2 = projected_k / (
         energy_conversion_kj_per_eup
         * length_conversion_ang_per_nm
         * length_conversion_ang_per_nm
     )
+    carrier_bond_fc_factor = 2.0
+    carrier_bond_fc_eup_a2 = carrier_bond_fc_factor * projected_bond_fc_eup_a2
 
     max_sigma_nm = dopc_max_sigma_nm(bead_types, pair_params)
     contact_nm = (2.0 ** (1.0 / 6.0)) * max_sigma_nm
@@ -125,7 +127,9 @@ def derive_dopc_cg_params(
         "max_sigma_nm": float(max_sigma_nm),
         "orientation_length_ang": float(orientation_length_ang),
         "orientation_mass_g_mol": float(orientation_mass_g),
-        "orientation_bond_fc_eup_a2": float(bond_fc_eup_a2),
+        "orientation_bond_fc_eup_a2": float(carrier_bond_fc_eup_a2),
+        "orientation_projected_bond_fc_eup_a2": float(projected_bond_fc_eup_a2),
+        "orientation_carrier_bond_fc_factor": float(carrier_bond_fc_factor),
         "transverse_inertia_g_mol_a2": float(transverse_inertia),
         "head_tail_span_ang": float(axis_norm),
         "tail_projection_ang": float(orientation_length_ang),
@@ -134,7 +138,8 @@ def derive_dopc_cg_params(
         "contact_source": "2^(1/6)*max_dopc_pair_sigma",
         "orientation_length_source": "DOPC_COM_to_tail_midpoint_projection",
         "orientation_mass_source": "DOPC_transverse_rotational_inertia",
-        "orientation_bond_fc_source": "sum_DOPC_bond_k_projected_on_orientation_axis",
+        "orientation_bond_fc_source": "2x_projected_DOPC_bond_stiffness_for_CGLD_unit_vector_carrier",
+        "orientation_projected_bond_fc_source": "sum_DOPC_bond_k_projected_on_orientation_axis",
         "energy_conversion_kj_per_eup": float(energy_conversion_kj_per_eup),
         "length_conversion_ang_per_nm": float(length_conversion_ang_per_nm),
     }

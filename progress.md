@@ -1,5 +1,77 @@
 # Progress Log
 
+## 2026-06-10 Phase 2D JCTC Method Rewrite
+- Actions taken:
+  - Rewrote `example/16.MARTINI/cg_lipid_potentials.tex` as a coherent methods section for the accepted direct dry-MARTINI geometry model.
+  - Removed obsolete method blocks describing hidden-bead relaxation, finite distance floors, WCA/excluded-area projections, force caps, separable SC-CGL/SC-particle assumptions, and staged debugging choices.
+  - Documented CGL-CGL, SC-CGL, CGL-particle, and SC-particle table construction, unresolved-coordinate averaging, log1p inverse transforms, runtime ownership, units, and validation criteria.
+- Files modified:
+  - `example/16.MARTINI/cg_lipid_potentials.tex`
+  - `plan.md`
+- Verification:
+  - H5 metadata was rechecked against `parameters/dryMARTINI/dopc.h5` and `parameters/dryMARTINI/sidechain.h5`.
+  - Stale-term scan found only explicit negative statements such as no twisting coordinate, no normalization, no nonnegative projection, and no force cap.
+  - `pdflatex -interaction=nonstopmode -halt-on-error -output-directory=/tmp/upside2_tex_check example/16.MARTINI/cg_lipid_potentials.tex` passed and produced a 6-page PDF.
+
+## 2026-06-10 Phase 2C Direct-Geometry Hybrid Acceptance
+- Actions taken:
+  - Rebuilt `sidechain.h5` and `dopc.h5` after removing active `0.10 nm` dry-MARTINI pair-distance floors from SC-particle and SC-CGL table generation. Active tables now use only a `1e-6 nm` numerical singularity guard.
+  - Added the CGL-target `log1p((E - E_ref) / kBT)` reduced-PMF spline control and runtime inverse transform so charged target hard cores remain physical without float32 Boltzmann-weight underflow.
+  - Added the same runtime inverse-transform support for CGL-CGL pair tables and fixed `inject_cg_lipid_nodes()` so generated stage `.up` files copy `log1p_reduced_transform`, `boltzmann_temperature_upside`, `energy_transform`, `spline_control_quantity`, and `reference_energy_eup`.
+  - Added radial low-end extrapolation in the CGL spline evaluators to remove the zero-derivative plateau below the first radial knot.
+  - Replaced the 4-mode separable SC-CGL path with an extended-support full tensor and transformed control.
+  - Replaced separable SC-particle runtime use with a direct full radial-by-angular rotamer table and removed SC-env runtime force caps from the physical validation path.
+  - Ran the requested fresh validation matrix after the no-floor rebuild: 1RKL/1AFO with CGL lipids and 1RKL/1AFO with full-resolution lipids.
+- Files modified:
+  - `py/martini_build_tables.py`
+  - `py/martini_prepare_system.py`
+  - `py/martini_prepare_system_lib.py`
+  - `src/martini_cg_lipid.cpp`
+  - `src/martini_internal.h`
+  - `src/martini_potential.cpp`
+  - `parameters/dryMARTINI/sidechain.h5`
+  - `parameters/dryMARTINI/dopc.h5`
+- Verification:
+  - `python -m py_compile py/martini_build_tables.py py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
+  - `make -C obj -j2` passed.
+  - Production H5 metadata audit confirmed direct geometry, `fit_relax_steps=0`, no pair scaling, no many-neighbor normalization, no hidden relaxation, no standalone CGL orientation potential, `sample_dist_min_nm=1e-6`, CGL-target `log1p_reduced_transform=1`, and CGL-CGL `log1p_reduced_transform=1`.
+  - Runtime stage-7 `.up` audit confirmed CGL-CGL pair transform metadata and `pair_interaction/reference_energy_eup` are present after injection.
+  - Focused CGL-only 50k bilayer validation passed: aligned-z min/p05/mean `0.953/0.966/0.988`, no flips/crossings, same-leaflet NN min/p05 `6.470/6.471 A`, CGL-CGLD RMS length deviation `0.105 A`.
+  - 1RKL CGL completed: aligned-z min/p05/mean/finalmean `-0.374/0.860/0.942/0.939`, no leaflet crossings, final NN p05 lower/upper `6.890/6.755 A`; protein production last20 hbonds/Rg/total `28.54/12.13/-5653.6`; kinetic ratio `0.989`.
+  - 1AFO CGL completed: aligned-z min/p05/mean/finalmean `0.798/0.913/0.971/0.971`, no leaflet crossings, final NN p05 lower/upper `7.458/6.967 A`; protein production last20 hbonds/Rg/total `70.19/14.66/-3218.9`; kinetic ratio `0.932`.
+  - 1RKL full-resolution completed: DOPC leaflet separation `13.160 -> 13.055 A`, head-tail `|dz|` final p05/mean `8.095/13.249 A`; protein production last20 hbonds/Rg/total `25.08/13.44/-23906.9`; kinetic ratio `0.994`.
+  - 1AFO full-resolution completed: DOPC leaflet separation `11.783 -> 11.613 A`, head-tail `|dz|` final p05/mean `7.975/13.386 A`; protein production last20 hbonds/Rg/total `54.24/14.30/-15685.6`; kinetic ratio `0.986`.
+
+## 2026-06-09 CGL-CGL Table Conditioning and Bilayer Smoke
+- Actions taken:
+  - Restored production table-fit conditioning in `py/martini_build_tables.py`: CGL-CGL angular controls now follow the actual sampled angular grid (`7 -> 9`), SC-CGL uses `9 -> 11`, and both use stronger angular smoothing.
+  - Enforced direct rotated-geometry CGL table generation by making `UPSIDE_MARTINI_FIT_RELAX_STEPS=0` valid/default and rejecting hidden-bead relaxation for CGL-CGL/SC-CGL.
+  - Rebuilt `parameters/dryMARTINI/dopc.h5` atomically with direct-geometry metadata.
+  - Fixed CGL-CGL table physics inconsistencies: retained resolved dry-MARTINI attractions, implemented Boltzmann free-energy averaging for unresolved CGL-CGL azimuthal samples, and changed unresolved short-range rows to angular-resolved first-shell controls.
+  - Extended CGL-CGL radial support to `42 A`, increased unresolved CGL bead-frame sampling to `8`, restored extended-table smoothing to `0.1` after a failed `0.5` trial, and kept normalization deferred.
+  - Added initial CGL leaflet z de-overlap and area-derived same-leaflet XY conditioning for coarse bilayer preparation.
+  - Treated CGLD as a numerical unit-vector carrier by using explicit `2.0x` carrier stiffness over the projected DOPC bonded stiffness while retaining projected stiffness metadata.
+- Files modified:
+  - `py/martini_build_tables.py`
+  - `py/martini_cg_lipid_params.py`
+  - `py/martini_prepare_system_lib.py`
+  - `example/16.MARTINI/build_martini_h5_m1.sh`
+  - `example/16.MARTINI/build_martini_h5_slurm.sh`
+  - `example/16.MARTINI/build_martini_h5_m1_temp.sh`
+  - `example/16.MARTINI/cg_lipid_potentials.tex`
+  - `parameters/dryMARTINI/dopc.h5`
+  - `plan.md`
+  - `progress.md`
+- Verification:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py py/martini_gen_params.py` passed.
+  - `bash -n` passed for the M1, Slurm, and temporary M1 MARTINI H5 rebuild scripts.
+  - `git diff --check` passed before the production rebuild.
+  - Reduced temporary PHE table build passed with `fit_relax_steps=0`, expected CGL-CGL/SC-CGL metadata, and expected SC parameter shape.
+  - Installed `dopc.h5` CGL-CGL metadata now has `fit_smooth=0.1`, `fit_r_max_nm=4.2`, `n_radial=32`, `cutoff_ang=42.0`, `cgl_bead_frame_count=8`, and `azimuthal_average=boltzmann_free_energy`.
+  - Focused installed-table 200-step CGL-only bilayer smoke passed: no flips or leaflet crossings, aligned-z min/p05/mean `0.527/0.786/0.930`, same-leaflet NN min/p05 `4.369/5.230 A`, CGL-CGLD length min/max/rmsdev `10.679/13.475/0.648 A`.
+- Current blocker:
+  - Full protein+lipid workflows remain unverified after the focused CGL-only pass.
+
 ## 2026-05-29 Stage 6.0 Minimization Overshoot Fix
 - Problem: 1rkl hybrid system's stage 6.0 minimization overshoots from ~350k E_up to ~-90k E_up
   because the protein (in rigid groups) drifts into the lipid beads, finding deep LJ attractive

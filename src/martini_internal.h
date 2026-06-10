@@ -38,8 +38,8 @@ struct HybridRuntimeState {
     std::vector<unsigned char> atom_role_class;
     std::vector<unsigned char> atom_backbone_carrier_mask;
     bool has_prev_bb = false;
-    float sc_env_lj_force_cap = 25.0f;
-    float sc_env_coul_force_cap = 25.0f;
+    float sc_env_lj_force_cap = 0.0f;
+    float sc_env_coul_force_cap = 0.0f;
     int sc_env_relax_steps = 150;
     int sc_env_backbone_hold_steps = 200;
     int sc_env_po4_z_hold_steps = 150;

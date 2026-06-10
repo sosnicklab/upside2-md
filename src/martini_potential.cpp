@@ -1128,8 +1128,6 @@ struct MartiniScTablePotential : public PotentialNode
                 Vec<3> point_grad = dVdr * displace_unitvec +
                                     (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec);
                 Vec<3> vector_grad = -dVdcoord * displace_unitvec;
-                martini_hybrid::cap_force_vector(point_grad, hybrid_state->sc_env_lj_force_cap);
-                martini_hybrid::cap_force_vector(vector_grad, hybrid_state->sc_env_lj_force_cap);
                 Vec<6> grad_cb_full;
                 store<0,3>(grad_cb_full, point_grad);
                 store<3,6>(grad_cb_full, vector_grad);
@@ -1186,6 +1184,8 @@ struct MartiniScTableOneBody : public CoordNode
     vector<float> angular_left_value;
     vector<float> angular_left_slope;
     vector<float> angular_profile_table;
+    bool use_full_tensor;
+    vector<float> full_table;
 
     struct ActiveContact {
         int row;
@@ -1207,6 +1207,10 @@ struct MartiniScTableOneBody : public CoordNode
 
     inline int profile_index(int layer, int angle_idx) const {
         return layer * n_angle + angle_idx;
+    }
+
+    inline int full_index(int layer, int grid_idx, int angle_idx) const {
+        return (layer * n_grid + grid_idx) * n_angle + angle_idx;
     }
 
     inline int layer_index(int residue_idx, int rotamer_idx, int target_idx) const {
@@ -1378,6 +1382,55 @@ struct MartiniScTableOneBody : public CoordNode
         dVdcoord = (value_hi - value_lo) / cos_step;
     }
 
+    inline void evaluate_full_tensor_value_and_deriv(
+            float& value,
+            float& dVdr,
+            float& dVdcoord,
+            int layer,
+            float dist,
+            float angular_coord) const {
+        int angle_idx = 0;
+        int angle_next = 0;
+        float angle_frac = 0.f;
+        bool angle_deriv = false;
+
+        if(n_angle > 1) {
+            if(angular_coord <= cos_start) {
+                angle_idx = 0;
+                angle_next = 0;
+            } else if(angular_coord >= cos_end) {
+                angle_idx = n_angle - 1;
+                angle_next = n_angle - 1;
+            } else {
+                float angle_coord = (angular_coord - cos_start) / cos_step;
+                angle_idx = int(floorf(angle_coord));
+                if(angle_idx < 0) angle_idx = 0;
+                if(angle_idx > n_angle - 2) angle_idx = n_angle - 2;
+                angle_next = angle_idx + 1;
+                angle_frac = angle_coord - float(angle_idx);
+                angle_deriv = true;
+            }
+        }
+
+        float radial_coord = (dist - grid_start_ang) / grid_step_ang;
+        int grid_idx = int(floorf(radial_coord));
+        if(grid_idx < 0) grid_idx = 0;
+        if(grid_idx > n_grid - 2) grid_idx = n_grid - 2;
+        float radial_frac = radial_coord - float(grid_idx);
+
+        float v00 = full_table[full_index(layer, grid_idx, angle_idx)];
+        float v10 = full_table[full_index(layer, grid_idx + 1, angle_idx)];
+        float v01 = full_table[full_index(layer, grid_idx, angle_next)];
+        float v11 = full_table[full_index(layer, grid_idx + 1, angle_next)];
+        float v0 = (1.f - radial_frac) * v00 + radial_frac * v10;
+        float v1 = (1.f - radial_frac) * v01 + radial_frac * v11;
+        value = (1.f - angle_frac) * v0 + angle_frac * v1;
+        dVdr = ((1.f - angle_frac) * (v10 - v00) + angle_frac * (v11 - v01)) / grid_step_ang;
+        dVdcoord = angle_deriv
+            ? ((1.f - radial_frac) * (v01 - v00) + radial_frac * (v11 - v10)) / cos_step
+            : 0.f;
+    }
+
     MartiniScTableOneBody(hid_t grp, CoordNode& pos_, CoordNode& cb_pos_):
         CoordNode(get_dset_size(1, grp, "row_residue_index")[0], 1),
         n_row(get_dset_size(1, grp, "row_residue_index")[0]),
@@ -1415,6 +1468,8 @@ struct MartiniScTableOneBody : public CoordNode
         angular_left_value(n_layer, 0.f),
         angular_left_slope(n_layer, 0.f),
         angular_profile_table(n_layer * n_angle, 0.f),
+        use_full_tensor(h5_exists(grp, "rotamer_full_energy_kj_mol")),
+        full_table(n_layer * n_grid * n_angle, 0.f),
         cache_buffer(read_attribute<float>(grp, ".", "cache_buffer", 1.f)),
         active_contacts_valid(false),
         cached_box_x(0.f),
@@ -1435,6 +1490,9 @@ struct MartiniScTableOneBody : public CoordNode
         check_size(grp, "rotamer_count", n_restype);
         check_size(grp, "rotamer_angular_energy_kj_mol", n_restype, n_rotamer_max, n_target, n_grid);
         check_size(grp, "rotamer_angular_profile", n_restype, n_rotamer_max, n_target, n_angle);
+        if(use_full_tensor) {
+            check_size(grp, "rotamer_full_energy_kj_mol", n_restype, n_rotamer_max, n_target, n_grid, n_angle);
+        }
 
         if(!(energy_conversion_kj_per_eup > 0.f) || !(length_conversion_angstrom_per_nm > 0.f)) {
             throw string("martini_sc_table_1body unit-conversion attrs must be positive");
@@ -1538,6 +1596,23 @@ struct MartiniScTableOneBody : public CoordNode
                     angular_profile_table[profile_index(layer_index(int(ir), int(iro), int(it)), int(ia))] = x;
                 });
 
+        if(use_full_tensor) {
+            vector<float> full_native(n_layer * n_grid * n_angle, 0.f);
+            traverse_dset<5,float>(grp, "rotamer_full_energy_kj_mol",
+                    [&](size_t ir, size_t iro, size_t it, size_t ig, size_t ia, float x) {
+                        full_native[full_index(layer_index(int(ir), int(iro), int(it)), int(ig), int(ia))] = x;
+                    });
+            for(int layer = 0; layer < n_layer; ++layer) {
+                for(int ia = 0; ia < n_angle; ++ia) {
+                    float tail = full_native[full_index(layer, n_grid - 1, ia)];
+                    for(int ig = 0; ig < n_grid; ++ig) {
+                        full_table[full_index(layer, ig, ia)] =
+                            (full_native[full_index(layer, ig, ia)] - tail) / energy_conversion_kj_per_eup;
+                    }
+                }
+            }
+        }
+
         for(int layer = 0; layer < n_layer; ++layer) {
             float radial_tail = radial_native[radial_index(layer, n_grid - 1)];
             float angular_tail = angular_native[radial_index(layer, n_grid - 1)];
@@ -1603,12 +1678,18 @@ struct MartiniScTableOneBody : public CoordNode
             float radial_value = 0.f, radial_dVdr = 0.f;
             float angular_value = 0.f, angular_dVdr = 0.f;
             float ang1_value = 0.f, dAng1dcoord = 0.f;
-            evaluate_component_value_and_deriv(
-                radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-            evaluate_component_value_and_deriv(
-                angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-            evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
-            output(0, irow) += radial_value + ang1_value * angular_value;
+            if(use_full_tensor) {
+                evaluate_full_tensor_value_and_deriv(
+                    radial_value, radial_dVdr, dAng1dcoord, layer, dist, angular_coord);
+                output(0, irow) += radial_value;
+            } else {
+                evaluate_component_value_and_deriv(
+                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+                evaluate_component_value_and_deriv(
+                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+                output(0, irow) += radial_value + ang1_value * angular_value;
+            }
         }
 
         for(int irow = 0; irow < n_row; ++irow) {
@@ -1673,21 +1754,26 @@ struct MartiniScTableOneBody : public CoordNode
             float radial_value = 0.f, radial_dVdr = 0.f;
             float angular_value = 0.f, angular_dVdr = 0.f;
             float ang1_value = 0.f, dAng1dcoord = 0.f;
-            evaluate_component_value_and_deriv(
-                radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-            evaluate_component_value_and_deriv(
-                angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-            evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
-            dVdr = radial_dVdr + ang1_value * angular_dVdr;
-            dVdcoord = dAng1dcoord * angular_value;
+            if(use_full_tensor) {
+                evaluate_full_tensor_value_and_deriv(
+                    radial_value, radial_dVdr, dAng1dcoord, layer, dist, angular_coord);
+                dVdr = radial_dVdr;
+                dVdcoord = dAng1dcoord;
+            } else {
+                evaluate_component_value_and_deriv(
+                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
+                evaluate_component_value_and_deriv(
+                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
+                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
+                dVdr = radial_dVdr + ang1_value * angular_dVdr;
+                dVdcoord = dAng1dcoord * angular_value;
+            }
             if(!std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
 
             Vec<3> point_grad = row_scale * (
                 dVdr * displace_unitvec +
                 (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec));
             Vec<3> vector_grad = row_scale * (-dVdcoord * displace_unitvec);
-            martini_hybrid::cap_force_vector(point_grad, hybrid_state->sc_env_lj_force_cap);
-            martini_hybrid::cap_force_vector(vector_grad, hybrid_state->sc_env_lj_force_cap);
             Vec<6> grad_cb_full;
             store<0,3>(grad_cb_full, point_grad);
             store<3,6>(grad_cb_full, vector_grad);

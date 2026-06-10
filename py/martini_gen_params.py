@@ -166,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         f"{os.environ.get('UPSIDE_MARTINI_TABLE_WORKERS', 'auto')}; "
         "optional bead-frame samples: "
         f"SC={os.environ.get('UPSIDE_MARTINI_SC_BEAD_FRAME_COUNT', os.environ.get('UPSIDE_MARTINI_BEAD_FRAME_COUNT', '1'))}, "
-        f"CGL={os.environ.get('UPSIDE_MARTINI_CGL_BEAD_FRAME_COUNT', os.environ.get('UPSIDE_MARTINI_BEAD_FRAME_COUNT', '1'))}"
+        f"CGL={os.environ.get('UPSIDE_MARTINI_CGL_BEAD_FRAME_COUNT', os.environ.get('UPSIDE_MARTINI_BEAD_FRAME_COUNT', '4'))}"
     )
     print()
 

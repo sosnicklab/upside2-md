@@ -45,8 +45,8 @@ PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
 WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 
-DEFAULT_SC_ENV_LJ_FORCE_CAP = 25.0
-DEFAULT_SC_ENV_COUL_FORCE_CAP = 25.0
+DEFAULT_SC_ENV_LJ_FORCE_CAP = 0.0
+DEFAULT_SC_ENV_COUL_FORCE_CAP = 0.0
 DEFAULT_NONPROTEIN_HS_FORCE_CAP = 100.0
 DEFAULT_SC_ENV_PO4_Z_CLAMP_ENABLE = 1
 DEFAULT_SC_ENV_RELAX_STEPS = 150
@@ -481,6 +481,7 @@ SC_LIBRARY_REQUIRED_DATASETS = [
     "rotamer_radial_energy_kj_mol",
     "rotamer_angular_energy_kj_mol",
     "rotamer_angular_profile",
+    "rotamer_full_energy_kj_mol",
 ]
 
 
