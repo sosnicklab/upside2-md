@@ -1843,9 +1843,17 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         )
         if cg_lipid_derived_params is not None:
             default_z_sep = 2.0 * float(cg_lipid_derived_params["tail_projection_ang"])
+            default_cross_leaflet_xy = float(cg_lipid_derived_params["max_perp_radius_ang"])
         else:
             default_z_sep = 0.0
+            default_cross_leaflet_xy = 0.0
         target_z_sep = float(os.environ.get("UPSIDE_CG_LIPID_MIN_LEAFLET_Z_SEP", str(default_z_sep)))
+        target_cross_leaflet_xy = float(
+            os.environ.get(
+                "UPSIDE_CG_LIPID_MIN_CROSS_LEAFLET_XY",
+                str(default_cross_leaflet_xy),
+            )
+        )
         if lower_ids.size and upper_ids.size and target_z_sep > 0.0:
             lower_mean_z = float(np.mean(initial_positions[cg_lipid_indices[lower_ids], 2]))
             upper_mean_z = float(np.mean(initial_positions[cg_lipid_indices[upper_ids], 2]))
@@ -1881,7 +1889,26 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             arr = np.asarray(values, dtype=np.float64)
             return float(np.min(arr)), float(np.percentile(arr, 5.0))
 
+        def _cross_leaflet_xy_stats() -> tuple[float, float]:
+            if lower_ids.size == 0 or upper_ids.size == 0:
+                return float("nan"), float("nan")
+            lower_xy = initial_positions[cg_lipid_indices[lower_ids], :2]
+            upper_xy = initial_positions[cg_lipid_indices[upper_ids], :2]
+            values = []
+            for xy in lower_xy:
+                delta = upper_xy - xy[None, :]
+                delta[:, 0] -= x_len * np.round(delta[:, 0] / x_len)
+                delta[:, 1] -= y_len * np.round(delta[:, 1] / y_len)
+                dist = np.sqrt(np.sum(delta * delta, axis=1))
+                if dist.size:
+                    values.append(float(np.min(dist)))
+            if not values:
+                return float("nan"), float("nan")
+            arr = np.asarray(values, dtype=np.float64)
+            return float(np.min(arr)), float(np.percentile(arr, 5.0))
+
         start_min, start_p05 = _same_leaflet_nn_stats()
+        start_cross_min, start_cross_p05 = _cross_leaflet_xy_stats()
         start_target_min = float("nan")
         end_target_min = float("nan")
         start_target_bead_min = float("nan")
@@ -2024,6 +2051,20 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                         push = 0.5 * (target_nn - dist) * dxy / dist
                         delta_xy[ia] -= push
                         delta_xy[ib] += push
+            if target_cross_leaflet_xy > 0.0:
+                for ia in lower_ids:
+                    ia = int(ia)
+                    for ib in upper_ids:
+                        ib = int(ib)
+                        dxy = initial_positions[cg_lipid_indices[ib], :2] - initial_positions[cg_lipid_indices[ia], :2]
+                        dxy[0] -= x_len * np.round(dxy[0] / x_len)
+                        dxy[1] -= y_len * np.round(dxy[1] / y_len)
+                        dist = float(np.sqrt(np.dot(dxy, dxy)))
+                        if dist <= 1e-8 or dist >= target_cross_leaflet_xy:
+                            continue
+                        push = 0.5 * (target_cross_leaflet_xy - dist) * dxy / dist
+                        delta_xy[ia] -= push
+                        delta_xy[ib] += push
             _accumulate_target_clearance_delta(delta_xy)
             if not _apply_cgl_xy_delta(delta_xy):
                 break
@@ -2033,12 +2074,20 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             if not _apply_cgl_xy_delta(delta_xy):
                 break
         end_min, end_p05 = _same_leaflet_nn_stats()
+        end_cross_min, end_cross_p05 = _cross_leaflet_xy_stats()
         end_target_min = _cgl_target_min_distance()
         end_target_bead_min = _cgl_target_min_swept_bead_distance()
         print(
             "Conditioned initial CGL same-leaflet XY spacing: "
             f"min/p05 {start_min:.3f}/{start_p05:.3f} -> {end_min:.3f}/{end_p05:.3f} A"
         )
+        if np.isfinite(start_cross_min) and np.isfinite(end_cross_min):
+            print(
+                "Conditioned initial CGL cross-leaflet XY spacing: "
+                f"min/p05 {start_cross_min:.3f}/{start_cross_p05:.3f} -> "
+                f"{end_cross_min:.3f}/{end_cross_p05:.3f} A "
+                f"(target {target_cross_leaflet_xy:.3f} A)"
+            )
         if np.isfinite(start_target_min) and np.isfinite(end_target_min):
             print(
                 "Conditioned initial CGL-target clearance: "

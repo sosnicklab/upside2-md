@@ -1,6 +1,31 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-10: Correction on CGL gap diagnosis.
+  - User correction: a visible CGL gap with a horizontal particle must be mapped
+    from VTF atom/rod ordinal back to the HDF5 CGL/CGLD indices before calling
+    it a visualization-only issue. Aggregate tail-gap or percentile alignment
+    metrics can miss a single visually obvious bad lipid.
+  - Rule: for reported CGL visual defects, parse the VTF, identify bad displayed
+    rod ordinals, map them to `compose_vector6d/elem_index` and
+    `orientation_index`, then compare prepared, minimized, burn-in, and
+    production HDF5 geometry.
+  - The active `martini_1afo_hybrid` horizontal particle was a real trajectory
+    geometry issue: VTF ordinal `104` / residue `130` mapped to HDF5 CGL/CGLD
+    `464/736`. It started upright in the prepared file, but had an opposite
+    leaflet CGL only `2.542 A` away laterally. Initial CGL conditioning must
+    include opposite-leaflet lateral de-overlap derived from the DOPC
+    perpendicular bead envelope, not only same-leaflet spacing.
+- 2026-06-10: CGL VTF display envelope.
+  - CGL centerline tail-gap metrics alone can be visually misleading in VMD
+    because `martini_extract_vtf.py` emits synthetic head/tail rod atoms, while
+    the physical CGL table represents a resolved DOPC bead envelope with
+    nonzero perpendicular radius. If the VTF omits CGL display radii, a viewer
+    can show an apparent bilayer gap even when the centerline tails overlap and
+    the resolved bead envelope overlaps by several Angstroms.
+  - Rule: CGL visualization should carry `max_perp_radius_ang` as display
+    radius metadata in VTF output. This is a rendering attribute only; it must
+    not be used as a simulation cap, interaction scale, or added potential.
 - 2026-06-10: Phase 3 artifact root causes.
   - CGL leaflet classification in hybrid preparation should use the CGL
     direction sign when both leaflet signs are available. Median-COM splitting

@@ -321,6 +321,9 @@ def build_cg_lipid_vector_info(struct_h5):
         display_span = float(cv6.attrs.get("head_tail_span_ang", 0.0))
     if not np.isfinite(display_span) or display_span <= 0.0:
         display_span = fallback_span
+    display_radius = float(cv6.attrs.get("max_perp_radius_ang", 0.0))
+    if not np.isfinite(display_radius) or display_radius <= 0.0:
+        display_radius = 1.7
 
     return {
         "elem_indices": elem_index,
@@ -329,6 +332,7 @@ def build_cg_lipid_vector_info(struct_h5):
         "head_offsets": metadata_head_offsets,
         "tail_offsets": metadata_tail_offsets,
         "display_span": display_span,
+        "display_radius": display_radius,
     }
 
 
@@ -362,13 +366,20 @@ def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
     hydrophobic_types = np.array(["C1"] * n_cg, dtype=object)
     hydrophobic_resnames = np.array(["LIPT"] * n_cg, dtype=object)
     hydrophobic_atomic_numbers = np.full(n_cg, 6, dtype=int)
+    display_radius = float(vector_info.get("display_radius", 1.7))
     lipid_resids = np.array(mapping["output_residue_ids"], dtype=int)[output_cg_idx]
     lipid_chain_ids = np.array(mapping["output_chain_ids"], dtype=object)[output_cg_idx]
+    output_radii = mapping.get("output_atom_radii")
+    if output_radii is None:
+        output_radii = np.full(mapping["output_atom_names"].shape[0], np.nan, dtype=np.float32)
+    else:
+        output_radii = np.asarray(output_radii, dtype=np.float32)
 
     mapping["output_atom_names"][output_cg_idx] = hydrophilic_names
     mapping["output_atom_types"][output_cg_idx] = hydrophilic_types
     mapping["output_residue_names"][output_cg_idx] = hydrophilic_resnames
     mapping["output_atomic_numbers"][output_cg_idx] = hydrophilic_atomic_numbers
+    output_radii[output_cg_idx] = display_radius
 
     mapping["output_atom_names"] = np.concatenate([
         mapping["output_atom_names"], hydrophilic_names, hydrophobic_names, hydrophobic_names,
@@ -390,6 +401,10 @@ def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
         hydrophilic_atomic_numbers,
         hydrophobic_atomic_numbers,
         hydrophobic_atomic_numbers,
+    ])
+    mapping["output_atom_radii"] = np.concatenate([
+        output_radii,
+        np.full(3 * n_cg, display_radius, dtype=np.float32),
     ])
 
     hydrophilic_center_start = n_orig
@@ -899,6 +914,7 @@ def extract_trajectory(
             f"min={float(np.min(span)):.3f} A "
             f"max={float(np.max(span)):.3f} A"
         )
+        print(f"CG lipid display radius: {float(vector_info['display_radius']):.3f} A")
 
     print(f"Frames: {n_frame_total}")
     print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
@@ -907,6 +923,7 @@ def extract_trajectory(
         f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
         f.write(f"# mode {mode}\n")
         f.write(f"# group {output_group}\n")
+        output_radii = mapping.get("output_atom_radii")
         for i, (aname, atype, rname, resid, chain_id, atomic_number) in enumerate(
             zip(
                 mapping["output_atom_names"],
@@ -919,10 +936,15 @@ def extract_trajectory(
         ):
             chain = (str(chain_id).strip() or "X")[0]
             segid = f"s{chain}"
+            radius_field = ""
+            if output_radii is not None:
+                radius = float(output_radii[i])
+                if np.isfinite(radius) and radius > 0.0:
+                    radius_field = f" radius {radius:.3f}"
             f.write(
                 f"atom {i} name {aname} type {atype} resid {int(resid)} "
                 f"resname {str(rname)} segid {segid} chain {chain} "
-                f"atomicnumber {int(atomic_number)}\n"
+                f"atomicnumber {int(atomic_number)}{radius_field}\n"
             )
         for i, j in out_bonds:
             f.write(f"bond {i}:{j}\n")

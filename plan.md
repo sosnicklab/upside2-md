@@ -1,6 +1,6 @@
 # Project Goal
 
-Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) force field for the UPSIDE/dry-MARTINI hybrid workflow. The current active task is to debug the user-observed CGL bilayer gap / horizontally trapped CGL artifact in `martini_1rkl_hybrid` and `martini_1afo_hybrid`, plus secondary-structure disruption in `martini_1afo_hybrid_full`, without disabling SC-env/BB-env interactions, adding ad-hoc CGL orientation potentials, capping forces, arbitrary scaling, or twisting parameters.
+Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) force field for the UPSIDE/dry-MARTINI hybrid workflow. The current active task is resolved: the still-visible large CGL bilayer gap and horizontally lying CGL particle in `martini_1afo_hybrid` were traced to an actual HDF5 CGL orientation failure caused by cross-leaflet CGL lateral near-overlaps in the prepared coarse initial condition, and fixed without disabling SC-env/BB-env interactions, adding ad-hoc CGL orientation potentials, capping forces, arbitrary scaling, or twisting parameters.
 
 # Architecture & Key Decisions
 
@@ -42,6 +42,20 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 - Hybrid protein-lipid packing clearance defaults should be derived from the active dry-MARTINI DOPC nonbonded contact distance, not from a stale hardcoded Angstrom value. This is a physical dry-MARTINI exclusion distance used during preparation, not an interaction scaling or cap.
 
 # Execution Phases
+
+- [x] Phase 5: Resolve current visible `martini_1afo_hybrid` CGL gap / horizontal particle.
+  - [x] Parse the active VTF and identify the exact displayed CGL rod(s) lying horizontally in the mid-gap.
+  - [x] Map displayed VTF rod indices back to HDF5 CGL/CGLD indices and compare raw, centralized, and minimum-image direction vectors.
+  - [x] Determine whether the artifact is caused by VTF centralization/wrapping, stale VTF output, or actual HDF5 trajectory geometry.
+  - [x] Implement the smallest physical or visualization-only fix consistent with the cause.
+  - [x] Regenerate the affected VTF/workflow output and verify no horizontal mid-gap CGL remains.
+
+- [x] Phase 4: Follow-up visualization and 1RKL full-lipid helix audit.
+  - [x] Compare CGL physical COM/vector geometry against VTF display head/tail construction.
+  - [x] Inspect `martini_extract_vtf.py` display offsets/radii and determine whether the remaining visible gap is caused by rendering representation.
+  - [x] Quantify 1RKL full-lipid protein hbond/Rg and local helix geometry over the reported/current trajectory.
+  - [x] Decide whether code changes are needed; if so, keep them to visualization or physically justified preparation fixes only.
+  - [x] Re-run targeted validation after any change.
 
 - [x] Phase 3: Reproduce and fix current reported artifacts.
   - [x] Identify whether the reported artifacts are present in current outputs or are stale visualization/analysis results.
@@ -95,6 +109,9 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 # Known Errors / Blockers
 
 - Phase 3 reported artifacts are resolved in regenerated outputs. Root causes were preparation/staging defaults, not disabled interactions: median-COM CGL leaflet classification misclassified wrapped/tiled lipids near the bilayer center; the previous CGL z conditioning added a display-tail contact gap; full-lipid 1AFO used a stale protein-lipid packing clearance below the dry-MARTINI DOPC contact distance.
+- Phase 5 current `martini_1afo_hybrid` artifact is resolved in the active output. The visible horizontal particle was VTF rod ordinal `104`, residue `130`, and mapped to HDF5 CGL/CGLD indices `464/736`; the defective output had final aligned-z `0.244` and was born during dynamics from a prepared cross-leaflet lateral near-overlap (`2.542 A`). CGL preparation now conditions opposite-leaflet lateral CGL spacing using the DOPC-derived `max_perp_radius_ang` envelope. Active regenerated `martini_1afo_hybrid` final frame: aligned-z min/p05/mean `0.700/0.881/0.954`, bad mid-gap HDF5 CGLs `[]`, bad mid-gap VTF rods `[]`, ordinal `104` aligned-z `0.890`, hbond first/final/min/last20 `85.87/85.02/74.68/80.78`, Rg first/final/last20 `15.26/15.38/15.47 A`.
+- Phase 4 CGL gap follow-up points to visualization, not a physical bilayer void. Active `martini_1rkl_hybrid` final frame has CGL centerline tail overlap `-2.487 A` and resolved bead-envelope overlap `-10.715 A`; active `martini_1afo_hybrid` final frame has centerline tail overlap `-0.922 A` and bead-envelope overlap `-9.150 A`. The VTF exporter now emits CGL display radii from `max_perp_radius_ang=4.114 A`.
+- Phase 4 1RKL full-lipid helix check does not show global de-folding. DSSP helix count is `14 -> 18` from production frame 0 to final, hbond first/final/min/last20 is `21.30/23.85/12.55/23.94`, and Rg first/final/last20 is `13.14/13.08/13.08 A`. The largest final local C-alpha i-to-i+4 stretch is around resseq `25-29` (`+3.34 A`), consistent with a small local C-terminal deformation rather than a workflow-wide loss of secondary structure.
 - Fresh Phase 3 CGL validation passes. `1RKL` CGL final: tail gap `-0.513 A`, aligned-z min/p05/mean `0.599/0.873/0.955`, no bad-parallel CGLs, no flips, no central COM lipids, no leaflet crossings, same-leaflet NN min/p05 `6.254/6.927 A`, protein last20 hbond/Rg `29.88/11.74`. `1AFO` CGL final: tail gap `-0.754 A`, aligned-z min/p05/mean `0.797/0.886/0.962`, no bad-parallel CGLs, no flips, no central COM lipids, no leaflet crossings, same-leaflet NN min/p05 `6.331/6.909 A`, protein last20 hbond/Rg `74.29/15.45`.
 - Fresh Phase 3 1AFO full-lipid validation improves the disrupted protein output. Old output production hbond first/final/min/last20 was `33.35/31.27/23.89/32.69` with Rg last20 `15.99`; regenerated output is `35.67/53.69/29.24/50.07` with Rg last20 `15.11`.
 - Focused 50k CGL-only bilayer validation passes with the installed two-body path after runtime log-control injection, tempered CGL-CGL PMF, and no `0.10 nm` table-build distance floor: aligned-z min/p05/mean `0.953/0.966/0.988`, no flips/crossings, same-leaflet NN min/p05 `6.470/6.471 A`, CGL-CGLD RMS length deviation `0.105 A`.
@@ -103,4 +120,4 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 
 # Review
 
-Phase 2A code-level implementation passed syntax checks, wrapper syntax checks, `git diff --check`, and a reduced temporary table build. Phase 2B focused CGL-only validation passes without CGL-CGL normalization. Phase 2C now passes the requested fresh validation matrix on 1RKL and 1AFO with both CGL and full-resolution lipid models using physical direct-geometry tables. Phase 2D rewrote the TeX method section around the accepted model and passed a local `pdflatex` compile check. Phase 2E re-audited the four requested interaction classes and found no active twist parameter, capping, arbitrary interaction scaling, or added CGL orientation potential in the installed tables or no-floor stage-7 files. Phase 3 reproduced the user-reported artifacts in current outputs, fixed the preparation/staging causes with physical defaults, and passed regenerated default-length 1RKL/1AFO CGL plus 1AFO full-lipid validations.
+Phase 2A code-level implementation passed syntax checks, wrapper syntax checks, `git diff --check`, and a reduced temporary table build. Phase 2B focused CGL-only validation passes without CGL-CGL normalization. Phase 2C now passes the requested fresh validation matrix on 1RKL and 1AFO with both CGL and full-resolution lipid models using physical direct-geometry tables. Phase 2D rewrote the TeX method section around the accepted model and passed a local `pdflatex` compile check. Phase 2E re-audited the four requested interaction classes and found no active twist parameter, capping, arbitrary interaction scaling, or added CGL orientation potential in the installed tables or no-floor stage-7 files. Phase 3 reproduced the user-reported artifacts in current outputs, fixed the preparation/staging causes with physical defaults, and passed regenerated default-length 1RKL/1AFO CGL plus 1AFO full-lipid validations. Phase 4 fixed the CGL VTF display envelope and found no evidence that the current 1RKL full-lipid local helix deformation requires a physical-model change. Phase 5 corrected the remaining active `martini_1afo_hybrid` horizontal CGL by adding physical initial cross-leaflet CGL lateral de-overlap and replacing the active output with a validated regenerated run.

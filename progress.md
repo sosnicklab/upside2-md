@@ -1,5 +1,43 @@
 # Progress Log
 
+## 2026-06-10 Phase 5 Active 1AFO Horizontal CGL Fix
+- Actions taken:
+  - Reproduced the user's current visible `martini_1afo_hybrid` artifact in both VTF and HDF5. The horizontal rod is VTF ordinal `104`, residue `130`, mapping to HDF5 CGL/CGLD indices `464/736`.
+  - Corrected the previous display-only diagnosis: the active output had an actual horizontal CGL, with final aligned-z `0.244` and bad mid-gap HDF5/VTF index `[104]`.
+  - Traced the cause to the prepared coarse initial condition: the bad CGL started upright, but its nearest opposite-leaflet CGL was only `2.542 A` away laterally; the prepared 1AFO bilayer had cross-leaflet nearest-XY min/p05 `0.796/1.819 A`.
+  - Added initial-condition-only cross-leaflet CGL lateral de-overlap using the DOPC-derived `max_perp_radius_ang` envelope. This does not add a runtime potential, cap, scaling, or orientation restraint.
+  - Ran a short 1AFO CGL probe and a default-length 1AFO CGL validation under `outputs/phase5_1afo_crossxy_*`; both removed the bad mid-gap horizontal CGL.
+  - Preserved the defective active output as `example/16.MARTINI/outputs/martini_1afo_hybrid.pre_crossxy_backup_20260610_154545`.
+  - Replaced active `example/16.MARTINI/outputs/martini_1afo_hybrid` with the validated default-length regenerated run.
+- Files modified:
+  - `py/martini_prepare_system_lib.py`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification:
+  - `python -m py_compile py/martini_prepare_system_lib.py py/martini_prepare_system.py py/martini_extract_vtf.py` passed before workflow validation.
+  - Default validation `outputs/phase5_1afo_crossxy_final`: final aligned-z min/p05/mean `0.700/0.881/0.954`, bad mid-gap HDF5 CGLs `[]`, bad mid-gap VTF rods `[]`.
+  - Active `outputs/martini_1afo_hybrid`: final aligned-z min/p05/mean `0.700/0.881/0.954`, bad mid-gap HDF5 CGLs `[]`, bad mid-gap VTF rods `[]`, ordinal `104` aligned-z `0.890`.
+  - Active protein observables stayed stable: hbond first/final/min/last20 `85.87/85.02/74.68/80.78`, Rg first/final/last20 `15.26/15.38/15.47 A`.
+
+## 2026-06-10 Phase 4 Visualization and 1RKL Full-Lipid Follow-up
+- Actions taken:
+  - Rechecked the active `outputs/martini_1rkl_hybrid` and `outputs/martini_1afo_hybrid` CGL trajectories that the VTFs are generated from.
+  - Confirmed the apparent remaining CGL bilayer gap is a display issue: centerline tail endpoints already overlap and the resolved DOPC bead envelope overlaps substantially across the midplane.
+  - Patched `py/martini_extract_vtf.py` so synthetic CGL display atoms emit a VTF `radius` equal to the canonical DOPC max perpendicular bead radius (`4.114 A`).
+  - Regenerated `example/16.MARTINI/outputs/martini_1rkl_hybrid/1rkl.stage_7.0.vtf` and `example/16.MARTINI/outputs/martini_1afo_hybrid/1afo.stage_7.0.vtf`.
+  - Audited `outputs/martini_1rkl_hybrid_full/checkpoints/1rkl.stage_7.0.up` for the reported small alpha-helix de-folding.
+- Files modified:
+  - `py/martini_extract_vtf.py`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification:
+  - `python -m py_compile py/martini_extract_vtf.py` passed.
+  - Regenerated VTFs contain `radius 4.114` on CGL display atoms.
+  - CGL final-frame metrics: 1RKL centerline tail gap `-2.487 A`, bead-envelope gap `-10.715 A`; 1AFO centerline tail gap `-0.922 A`, bead-envelope gap `-9.150 A`; neither has bad-parallel CGLs, flips, central COM lipids, or leaflet crossings.
+  - 1RKL full-lipid protein metrics: DSSP helix count `14 -> 18` from production frame 0 to final, hbond first/final/min/last20 `21.30/23.85/12.55/23.94`, Rg first/final/last20 `13.14/13.08/13.08 A`; largest final local CA i-to-i+4 stretch is resseq `25-29` at `+3.34 A`.
+
 ## 2026-06-10 Phase 3 Reported Artifact Reproduction
 - Actions taken:
   - Started a fresh debug pass for the user-reported CGL bilayer gap / trapped horizontal CGL and 1AFO full-lipid secondary-structure disruption.
