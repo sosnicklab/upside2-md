@@ -79,6 +79,9 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
   - [x] Remove obsolete descriptions of hidden-bead relaxation, distance floors, force caps, WCA/excluded-area projections, and staged debugging choices.
   - [x] Describe the accepted direct dry-MARTINI geometry, unresolved-coordinate averaging, log1p spline transforms, table ownership, and validation matrix.
   - [x] Verify the TeX no longer contradicts the installed H5 metadata or physical-model constraints.
+- [x] Phase 2E: Re-audit CGL-CGL, SC-CGL, SC-particle, and CGL-particle physical integrity after the method rewrite.
+  - [x] Confirm installed H5 tables have no twist coordinate, capping attributes, excluded-area projections, hidden relaxation, or interaction scaling.
+  - [x] Confirm generated no-floor stage-7 `.up` files use unity protein-environment scale, zero SC-env force caps, zero generic Martini force cap, and no CGL orientation/twist nodes.
 
 # Known Errors / Blockers
 
@@ -88,4 +91,4 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 
 # Review
 
-Phase 2A code-level implementation passed syntax checks, wrapper syntax checks, `git diff --check`, and a reduced temporary table build. Phase 2B focused CGL-only validation passes without CGL-CGL normalization. Phase 2C now passes the requested fresh validation matrix on 1RKL and 1AFO with both CGL and full-resolution lipid models using physical direct-geometry tables. Phase 2D rewrote the TeX method section around the accepted model and passed a local `pdflatex` compile check.
+Phase 2A code-level implementation passed syntax checks, wrapper syntax checks, `git diff --check`, and a reduced temporary table build. Phase 2B focused CGL-only validation passes without CGL-CGL normalization. Phase 2C now passes the requested fresh validation matrix on 1RKL and 1AFO with both CGL and full-resolution lipid models using physical direct-geometry tables. Phase 2D rewrote the TeX method section around the accepted model and passed a local `pdflatex` compile check. Phase 2E re-audited the four requested interaction classes and found no active twist parameter, capping, arbitrary interaction scaling, or added CGL orientation potential in the installed tables or no-floor stage-7 files.

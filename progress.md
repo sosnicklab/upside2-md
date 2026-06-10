@@ -1,5 +1,16 @@
 # Progress Log
 
+## 2026-06-10 Phase 2E Physical Integrity Re-audit
+- Actions taken:
+  - Re-audited installed `dopc.h5` and `sidechain.h5` metadata for CGL-CGL, SC-CGL, CGL-particle, and SC-particle.
+  - Searched active table-generation, preparation, and runtime code for twist/orientation nodes, cap attributes, force caps, excluded-area projections, normalization, and interface scales.
+  - Audited the four no-floor stage-7 `.up` files from the accepted 1RKL/1AFO CGL/full validation matrix.
+- Verification:
+  - All four table classes passed assertions for `fit_relax_steps=0`, `sample_dist_min_nm=1e-6`, numerical-zero-guard metadata, no excluded-area rows/projections, no cap attributes, and direct retained dry-MARTINI source metadata.
+  - CGL-CGL and SC-CGL use full tensors with `n_modes=0`; unresolved axial/bead-frame sampling is table-generation quadrature, not a runtime twist coordinate.
+  - Stage-7 files have `protein_env_interface_scale=1.0`, `sc_env_lj_force_cap=0.0`, `sc_env_coul_force_cap=0.0`, generic Martini `force_cap=0.0`, and no CGL leaflet/orientation/twist nodes.
+  - Caveat: CGLD still has the documented numerical carrier bond and its `2x` stiffness metadata. That is separate from the four audited nonbonded table interactions and is not an added CGL orientation potential.
+
 ## 2026-06-10 Phase 2D JCTC Method Rewrite
 - Actions taken:
   - Rewrote `example/16.MARTINI/cg_lipid_potentials.tex` as a coherent methods section for the accepted direct dry-MARTINI geometry model.
