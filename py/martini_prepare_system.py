@@ -13,6 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
+from martini_cg_lipid_params import dopc_max_sigma_nm
+from martini_itp_reader import parse_dopc_from_itp, parse_dry_forcefield
 from martini_prepare_system_lib import (
     build_backbone_with_virtual_bb,
     center_of_mass,
@@ -61,6 +63,16 @@ DEFAULT_BAR_1_TO_EUP_PER_A3 = 0.000020659477
 DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP = 14.521180763676
 DEFAULT_PROTEIN_ENV_INTERFACE_SCALE = 1.0
 UPSIDE_V_INNER_STEP = 3
+
+
+def derive_dopc_contact_clearance_angstrom(upside_home: Path) -> float:
+    ff_dir = Path(upside_home) / "parameters" / "dryMARTINI"
+    dry_ff_path = ff_dir / "dry_martini_v2.1.itp"
+    lipids_itp_path = ff_dir / "dry_martini_v2.1_lipids.itp"
+    _atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
+    dopc = parse_dopc_from_itp(lipids_itp_path)
+    max_sigma_nm = dopc_max_sigma_nm(dopc["bead_types"], pair_params)
+    return float((2.0 ** (1.0 / 6.0)) * max_sigma_nm * DEFAULT_MARTINI_LENGTH_CONVERSION)
 
 
 def parse_prepare_args(argv=None):
@@ -1469,7 +1481,7 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--bilayer-pdb", default=env_default("BILAYER_PDB", None))
     parser.add_argument("--extract-vtf-script", default=env_default("EXTRACT_VTF_SCRIPT", str(PY_DIR / "martini_extract_vtf.py")))
     parser.add_argument("--salt-molar", type=float, default=env_float("SALT_MOLAR", 0.15))
-    parser.add_argument("--protein-lipid-cutoff", type=float, default=env_float("PROTEIN_LIPID_CUTOFF", 4.5))
+    parser.add_argument("--protein-lipid-cutoff", type=float, default=env_float("PROTEIN_LIPID_CUTOFF", 0.0))
     parser.add_argument("--ion-cutoff", type=float, default=env_float("ION_CUTOFF", 10.0))
     parser.add_argument("--xy-scale", type=float, default=env_float("XY_SCALE", 1.0))
     parser.add_argument("--box-padding-xy", type=float, default=env_float("BOX_PADDING_XY", 0.0))
@@ -1477,7 +1489,7 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--protein-placement-mode", choices=["embed", "outside-top", "outside-bottom"], default=env_default("PROTEIN_PLACEMENT_MODE", "embed"))
     parser.add_argument("--protein-orientation-mode", choices=["input", "lay-flat"], default=env_default("PROTEIN_ORIENTATION_MODE", "input"))
     parser.add_argument("--protein-surface-gap", type=float, default=env_float("PROTEIN_SURFACE_GAP", 6.0))
-    parser.add_argument("--protein-lipid-min-gap", type=float, default=env_float("PROTEIN_LIPID_MIN_GAP", 4.5))
+    parser.add_argument("--protein-lipid-min-gap", type=float, default=env_float("PROTEIN_LIPID_MIN_GAP", 0.0))
     parser.add_argument("--protein-lipid-cutoff-step", type=float, default=env_float("PROTEIN_LIPID_CUTOFF_STEP", 0.5))
     parser.add_argument("--protein-lipid-cutoff-max", type=float, default=env_float("PROTEIN_LIPID_CUTOFF_MAX", 8.0))
     parser.add_argument("--temperature", type=float, default=env_float("TEMPERATURE", 0.8647))
@@ -1521,6 +1533,12 @@ def run_hybrid_workflow_command(argv):
     args.prep_seed = int(args.prep_seed) if args.prep_seed not in (None, "") else None
     args.seed = int(args.seed) if args.seed not in (None, "") else None
     args = normalize_hybrid_workflow_args(args)
+    if args.protein_lipid_cutoff <= 0.0 or args.protein_lipid_min_gap <= 0.0:
+        contact_clearance = derive_dopc_contact_clearance_angstrom(args.upside_home)
+        if args.protein_lipid_cutoff <= 0.0:
+            args.protein_lipid_cutoff = contact_clearance
+        if args.protein_lipid_min_gap <= 0.0:
+            args.protein_lipid_min_gap = contact_clearance
 
     if not args.upside_executable.exists():
         raise FileNotFoundError(args.upside_executable)

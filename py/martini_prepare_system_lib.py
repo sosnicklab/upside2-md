@@ -1802,8 +1802,14 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         max_step = float(os.environ.get("UPSIDE_CG_LIPID_CONDITION_MAX_STEP", "0.50"))
         n_iter = int(os.environ.get("UPSIDE_CG_LIPID_CONDITION_STEPS", "300"))
         cgl_pos = initial_positions[cg_lipid_indices]
-        leaflet_split = float(np.median(cgl_pos[:, 2]))
-        leaflet_masks = (cgl_pos[:, 2] <= leaflet_split, cgl_pos[:, 2] > leaflet_split)
+        direction_z = np.asarray(lipid_directions[:, 2], dtype=np.float64)
+        lower_by_direction = direction_z > 0.0
+        upper_by_direction = direction_z < 0.0
+        if np.any(lower_by_direction) and np.any(upper_by_direction):
+            leaflet_masks = (lower_by_direction, upper_by_direction)
+        else:
+            leaflet_split = float(np.median(cgl_pos[:, 2]))
+            leaflet_masks = (cgl_pos[:, 2] <= leaflet_split, cgl_pos[:, 2] > leaflet_split)
         lower_ids = np.where(leaflet_masks[0])[0]
         upper_ids = np.where(leaflet_masks[1])[0]
         leaflet_count = max(int(lower_ids.size), int(upper_ids.size), 1)
@@ -1836,10 +1842,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             dtype=np.int32,
         )
         if cg_lipid_derived_params is not None:
-            default_z_sep = (
-                2.0 * float(cg_lipid_derived_params["orientation_length_ang"])
-                + derived_contact_ang
-            )
+            default_z_sep = 2.0 * float(cg_lipid_derived_params["tail_projection_ang"])
         else:
             default_z_sep = 0.0
         target_z_sep = float(os.environ.get("UPSIDE_CG_LIPID_MIN_LEAFLET_Z_SEP", str(default_z_sep)))

@@ -1,6 +1,22 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-10: Phase 3 artifact root causes.
+  - CGL leaflet classification in hybrid preparation should use the CGL
+    direction sign when both leaflet signs are available. Median-COM splitting
+    can misclassify wrapped or tiled lower-leaflet CGLs whose COMs sit near the
+    bilayer center, creating apparent midplane/horizontal trapped lipids before
+    production dynamics starts.
+  - CGL initial z conditioning should use the DOPC-derived display-tail
+    zero-gap scale (`2 * tail_projection_ang`) as the default. The older
+    `2 * tail_projection_ang + contact` spacing created a visible central
+    display gap, while removing z conditioning entirely left over-interdigitated
+    CGL COM planes that could relax into horizontal rods.
+  - Hybrid protein-lipid packing clearance should be derived from the active
+    dry-MARTINI DOPC maximum nonbonded contact distance. The old `4.5 A`
+    default was below the derived `6.959 A` DOPC contact, so full-lipid 1AFO
+    could enter stage-7 burn-in with protein-lipid contacts inside the physical
+    dry-MARTINI core and lose secondary structure.
 - 2026-06-10: Method-section documentation rule.
   - User correction: paper methods should present the accepted physical model
     as one logical derivation, not as accumulated patches or debugging history.

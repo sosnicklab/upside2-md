@@ -1,5 +1,33 @@
 # Progress Log
 
+## 2026-06-10 Phase 3 Reported Artifact Reproduction
+- Actions taken:
+  - Started a fresh debug pass for the user-reported CGL bilayer gap / trapped horizontal CGL and 1AFO full-lipid secondary-structure disruption.
+  - Updated `plan.md` to make the contradiction between prior pass metrics and current observed artifacts the active blocker.
+  - Reproduced the CGL artifact directly in `.up` files: current 1RKL CGL stage-7 has five bad CGL vectors, including three near-horizontal midplane lipids and two upper-leaflet classified lipids crossed into the lower leaflet; current 1AFO CGL has two crossed CGLs.
+  - Found the 1RKL CGL issue is already present in stage-6 prepared input for four tiled corner lipids because median-COM leaflet classification misclassifies lower-leaflet lipids whose COMs sit near the bilayer center.
+  - Reproduced the 1AFO full-lipid protein disruption in stage-7 burn-in: the hbond score starts near 92 after stage-7 minimization but drops to roughly 33 before production output.
+  - Patched CGL preparation to classify leaflets by CGL direction when both signs are present and to stop default z-expansion of CGL COM planes beyond the resolved DOPC geometry.
+  - Patched hybrid workflow defaults so protein-lipid packing clearance is derived from dry-MARTINI DOPC max contact distance unless explicitly overridden.
+  - First fresh CGL rerun showed the no-z-expansion variant starts from too-overlapped CGL COM planes and leaves horizontal CGL vectors after minimization/production. Revised the default z conditioning to the derived zero-gap display-tail spacing `2 * tail_projection_ang`, replacing the old gap-producing `2 * tail_projection_ang + contact`.
+  - Zero-gap short CGL probes passed the CGL artifact checks:
+    - 1RKL final `aligned_z min/p05/mean=0.701/0.849/0.955`, `bad_parallel=0`, `bad_flip=0`, no central COM lipids, no leaflet crossings, same-leaflet NN min/p05 `6.818/7.190 A`.
+    - 1AFO final `aligned_z min/p05/mean=0.790/0.876/0.959`, `bad_parallel=0`, `bad_flip=0`, no central COM lipids, no leaflet crossings, same-leaflet NN min/p05 `6.994/7.206 A`.
+  - Default-length regenerated CGL runs passed the reported artifact checks:
+    - 1RKL final `tail_gap=-0.513 A`, `aligned_z min/p05/mean=0.599/0.873/0.955`, `bad_parallel=0`, `bad_flip=0`, no central COM lipids, no leaflet crossings, same-leaflet NN min/p05 `6.254/6.927 A`, protein last20 hbond/Rg `29.88/11.74`.
+    - 1AFO final `tail_gap=-0.754 A`, `aligned_z min/p05/mean=0.797/0.886/0.962`, `bad_parallel=0`, `bad_flip=0`, no central COM lipids, no leaflet crossings, same-leaflet NN min/p05 `6.331/6.909 A`, protein last20 hbond/Rg `74.29/15.45`.
+  - Regenerated 1AFO full-lipid run improved secondary-structure retention relative to the old output: hbond first/final/min/last20 changed from `33.35/31.27/23.89/32.69` to `35.67/53.69/29.24/50.07`; Rg last20 changed from `15.99` to `15.11`.
+- Files modified:
+  - `plan.md`
+  - `progress.md`
+  - `py/martini_prepare_system.py`
+  - `py/martini_prepare_system_lib.py`
+  - `example/16.MARTINI/run_sim_hybrid.sh`
+- Verification:
+  - `python -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
+  - `bash -n example/16.MARTINI/run_sim_hybrid.sh` passed.
+  - Fresh default-length workflows completed: `run_sim_1rkl.sh`, `run_sim_1afo.sh`, and `run_sim_1afo_full.sh` under `example/16.MARTINI/outputs/phase3_*`.
+
 ## 2026-06-10 Phase 2E Physical Integrity Re-audit
 - Actions taken:
   - Re-audited installed `dopc.h5` and `sidechain.h5` metadata for CGL-CGL, SC-CGL, CGL-particle, and SC-particle.

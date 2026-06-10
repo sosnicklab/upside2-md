@@ -1,6 +1,6 @@
 # Project Goal
 
-Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) force field for the UPSIDE/dry-MARTINI hybrid workflow. The current focus is to remove CGL bilayer orientational artifacts and close the unphysical bilayer-protein gap without disabling SC-env or BB-env interactions, adding ad-hoc orientation terms, capping forces/energies, or changing thermostat/timestep settings to hide instability.
+Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) force field for the UPSIDE/dry-MARTINI hybrid workflow. The current active task is to debug the user-observed CGL bilayer gap / horizontally trapped CGL artifact in `martini_1rkl_hybrid` and `martini_1afo_hybrid`, plus secondary-structure disruption in `martini_1afo_hybrid_full`, without disabling SC-env/BB-env interactions, adding ad-hoc CGL orientation potentials, capping forces, arbitrary scaling, or twisting parameters.
 
 # Architecture & Key Decisions
 
@@ -17,7 +17,7 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 - CGL-CGL unresolved short-range rows should preserve angular dependence from the first sampled radial shell instead of copying one worst-case angular clash into every orientation.
 - CGL-CGL radial support must cover the extended resolved lipid bead geometry, not only the CGL COM contact distance. A COM cutoff of `16.8 A` truncates physically relevant tail-tail contacts for head-to-tail CGL vectors and leaves the bilayer smoke dominated by cross-leaflet repulsion.
 - CGL-particle radial support must also cover the extended resolved lipid bead geometry, not only the CGL COM contact distance. A target can interact with any resolved DOPC bead represented by the CGL vector.
-- Coarse initial CGL bilayers must not inherit over-interdigitated COM planes from wrapped/full-lipid fixtures. Preparation may condition the initial CGL/CGLD leaflet z separation to the DOPC-derived tail-to-tail scale plus a finite tail contact gap while moving orientation sites with their parent CGL particles.
+- Coarse initial CGL bilayers must not inherit wrapped/full-lipid fixture artifacts. Preparation conditions CGL/CGLD leaflet membership from the CGL direction sign when available and sets the default CGL leaflet COM separation to the DOPC-derived display-tail zero-gap scale while moving orientation sites with their parent CGL particles.
 - Coarse initial same-leaflet CGL spacing should use the box area per leaflet lipid when available, not only the bead contact distance. The contact distance is a lower bound for excluded volume, not a physically packed bilayer lattice spacing.
 - Coarse initial CGL conditioning in hybrid systems must also preserve protein/ion target clearance. Lipid COM moves that improve CGL-CGL packing must not create CGL-target overlaps after hybrid packing.
 - Hybrid CGL initial conditioning must clear targets against the swept resolved DOPC bead geometry, not only against the CGL COM. The CGL-particle table integrates unresolved axial bead-frame rotations, so initial placement must avoid target overlaps with that swept two-body geometry.
@@ -39,8 +39,17 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 - Dry-MARTINI training artifacts remain in native units. Runtime conversion into Upside units happens in the table-building/simulation path.
 - All simulation interactions computed by Upside must be spline-table based, except existing Ewald behavior.
 - Full workflow verification must use regenerated handoff artifacts, not stale output directories or pre-minimization prepared files.
+- Hybrid protein-lipid packing clearance defaults should be derived from the active dry-MARTINI DOPC nonbonded contact distance, not from a stale hardcoded Angstrom value. This is a physical dry-MARTINI exclusion distance used during preparation, not an interaction scaling or cap.
 
 # Execution Phases
+
+- [x] Phase 3: Reproduce and fix current reported artifacts.
+  - [x] Identify whether the reported artifacts are present in current outputs or are stale visualization/analysis results.
+  - [x] Audit `example/16.MARTINI/run_sim_*.sh` and generated stage files for differences between CGL and full-resolution lipid workflows.
+  - [x] Quantify bilayer gap, CGL orientation, leaflet separation, trapped CGL events, and protein secondary-structure / hbond retention from trajectories.
+  - [x] Trace root cause to physical table generation, runtime injection, initial packing, workflow staging, or visualization/export.
+  - [x] Implement the smallest physical fix and regenerate only required artifacts.
+  - [x] Re-run targeted validations, then the affected `run_sim_*.sh` workflows.
 
 - [x] Phase 1: Establish a stable CGL-only bilayer path using dynamic CGL vectors and production spline tables.
 - [x] Phase 2A: Repair angular spline conditioning in production table builds.
@@ -85,10 +94,13 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 
 # Known Errors / Blockers
 
-- No current blockers. Focused 50k CGL-only bilayer validation passes with the installed two-body path after runtime log-control injection, tempered CGL-CGL PMF, and no `0.10 nm` table-build distance floor: aligned-z min/p05/mean `0.953/0.966/0.988`, no flips/crossings, same-leaflet NN min/p05 `6.470/6.471 A`, CGL-CGLD RMS length deviation `0.105 A`.
+- Phase 3 reported artifacts are resolved in regenerated outputs. Root causes were preparation/staging defaults, not disabled interactions: median-COM CGL leaflet classification misclassified wrapped/tiled lipids near the bilayer center; the previous CGL z conditioning added a display-tail contact gap; full-lipid 1AFO used a stale protein-lipid packing clearance below the dry-MARTINI DOPC contact distance.
+- Fresh Phase 3 CGL validation passes. `1RKL` CGL final: tail gap `-0.513 A`, aligned-z min/p05/mean `0.599/0.873/0.955`, no bad-parallel CGLs, no flips, no central COM lipids, no leaflet crossings, same-leaflet NN min/p05 `6.254/6.927 A`, protein last20 hbond/Rg `29.88/11.74`. `1AFO` CGL final: tail gap `-0.754 A`, aligned-z min/p05/mean `0.797/0.886/0.962`, no bad-parallel CGLs, no flips, no central COM lipids, no leaflet crossings, same-leaflet NN min/p05 `6.331/6.909 A`, protein last20 hbond/Rg `74.29/15.45`.
+- Fresh Phase 3 1AFO full-lipid validation improves the disrupted protein output. Old output production hbond first/final/min/last20 was `33.35/31.27/23.89/32.69` with Rg last20 `15.99`; regenerated output is `35.67/53.69/29.24/50.07` with Rg last20 `15.11`.
+- Focused 50k CGL-only bilayer validation passes with the installed two-body path after runtime log-control injection, tempered CGL-CGL PMF, and no `0.10 nm` table-build distance floor: aligned-z min/p05/mean `0.953/0.966/0.988`, no flips/crossings, same-leaflet NN min/p05 `6.470/6.471 A`, CGL-CGLD RMS length deviation `0.105 A`.
 - Fresh no-floor CGL-mode workflow validation passes. `1RKL` CGL: aligned-z min/p05/mean/finalmean `-0.374/0.860/0.942/0.939`, no leaflet crossings, final NN p05 lower/upper `6.890/6.755 A`, production last20 hbonds/Rg/total `28.54/12.13/-5653.6`, kinetic ratio `0.989`. `1AFO` CGL: aligned-z min/p05/mean/finalmean `0.798/0.913/0.971/0.971`, no leaflet crossings, final NN p05 lower/upper `7.458/6.967 A`, production last20 hbonds/Rg/total `70.19/14.66/-3218.9`, kinetic ratio `0.932`.
 - Fresh no-floor full-resolution lipid workflow validation passes. `1RKL` full: DOPC leaflet separation `13.160 -> 13.055 A`, head-tail `|dz|` final p05/mean `8.095/13.249 A`, production last20 hbonds/Rg/total `25.08/13.44/-23906.9`, kinetic ratio `0.994`. `1AFO` full: DOPC leaflet separation `11.783 -> 11.613 A`, head-tail `|dz|` final p05/mean `7.975/13.386 A`, production last20 hbonds/Rg/total `54.24/14.30/-15685.6`, kinetic ratio `0.986`.
 
 # Review
 
-Phase 2A code-level implementation passed syntax checks, wrapper syntax checks, `git diff --check`, and a reduced temporary table build. Phase 2B focused CGL-only validation passes without CGL-CGL normalization. Phase 2C now passes the requested fresh validation matrix on 1RKL and 1AFO with both CGL and full-resolution lipid models using physical direct-geometry tables. Phase 2D rewrote the TeX method section around the accepted model and passed a local `pdflatex` compile check. Phase 2E re-audited the four requested interaction classes and found no active twist parameter, capping, arbitrary interaction scaling, or added CGL orientation potential in the installed tables or no-floor stage-7 files.
+Phase 2A code-level implementation passed syntax checks, wrapper syntax checks, `git diff --check`, and a reduced temporary table build. Phase 2B focused CGL-only validation passes without CGL-CGL normalization. Phase 2C now passes the requested fresh validation matrix on 1RKL and 1AFO with both CGL and full-resolution lipid models using physical direct-geometry tables. Phase 2D rewrote the TeX method section around the accepted model and passed a local `pdflatex` compile check. Phase 2E re-audited the four requested interaction classes and found no active twist parameter, capping, arbitrary interaction scaling, or added CGL orientation potential in the installed tables or no-floor stage-7 files. Phase 3 reproduced the user-reported artifacts in current outputs, fixed the preparation/staging causes with physical defaults, and passed regenerated default-length 1RKL/1AFO CGL plus 1AFO full-lipid validations.
