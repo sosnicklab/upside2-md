@@ -6,6 +6,10 @@
     as one logical derivation, not as accumulated patches or debugging history.
     When updating `cg_lipid_potentials.tex`, remove superseded mechanisms
     instead of explaining why each old workaround was abandoned.
+  - User correction: do not imply the CGL potential is tied to a global bilayer
+    direction. Bilayer-normal alignment is a validation criterion for the
+    tested membrane systems; the actual CGL tables use local pair coordinates
+    and should be described as rotationally invariant.
 - 2026-06-10: Phase 2C physical acceptance findings.
   - Rule: active dry-MARTINI table builds must not use finite physical-distance
     floors such as `0.10 nm`. A near-zero `1e-6 nm` guard is acceptable only as

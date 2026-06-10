@@ -158,7 +158,9 @@ each CGL direction and eight axial bead-frame rotations for each lipid.  The
 unresolved-coordinate average is a tempered two-body PMF with
 $\tau=10.0$ in Upside temperature units.  This retains the direct dry-MARTINI
 lipid-lipid energy while representing the free energy of the unresolved axial
-degrees of freedom in a dense single-vector bilayer.
+degrees of freedom in the single-vector representation.  The spline coordinates
+are local pair coordinates, so the table is rotationally invariant and does not
+assume a global membrane normal.
 
 The installed CGL--CGL group uses schema
 \texttt{cg\_lipid\_pair\_full\_v1}, $120$ radial controls, $9$ controls for
@@ -297,17 +299,20 @@ energy expression, or fitted surface.
 \subsection{Validation Criteria}
 
 The physical table set is validated on both isolated CGL bilayers and hybrid
-protein-bilayer systems.  Acceptance requires a stable bilayer, CGL directions
-aligned with leaflet normals, no persistent same-leaflet collapse, no lipid
-leaflet crossings, stable protein radius of gyration, stable hydrogen-bond
-counts, and no loss of protein secondary structure during production.  The
-current no-floor validation matrix passes for 1RKL and 1AFO in both CGL and
-full-resolution lipid workflows.  In CGL mode, final same-leaflet nearest
-neighbor fifth percentiles are at least $6.75~\text{\AA}$ and orientation
-fifth percentiles remain above $0.86$ after equilibration.  In full-resolution
-lipid mode, DOPC leaflet separation and head-tail $|dz|$ distributions remain
-stable while protein hydrogen-bond and radius-of-gyration observables fluctuate
-around production basins.
+protein-bilayer systems because those are the target applications tested here.
+For bilayer simulations, acceptance requires a stable bilayer, CGL directions
+aligned with the local leaflet normals, no persistent same-leaflet collapse, no
+lipid leaflet crossings, stable protein radius of gyration, stable hydrogen-bond
+counts, and no loss of protein secondary structure during production.  This is
+a validation criterion for bilayer geometry, not a constraint built into the CGL
+potential: the runtime interactions depend on local pair distances and local
+direction-vector projections.  The current no-floor validation matrix passes
+for 1RKL and 1AFO in both CGL and full-resolution lipid workflows.  In CGL
+mode, final same-leaflet nearest neighbor fifth percentiles are at least
+$6.75~\text{\AA}$ and orientation fifth percentiles remain above $0.86$ after
+equilibration.  In full-resolution lipid mode, DOPC leaflet separation and
+head-tail $|dz|$ distributions remain stable while protein hydrogen-bond and
+radius-of-gyration observables fluctuate around production basins.
 
 \subsection{Units}
 
