@@ -28,6 +28,10 @@
     energies. The active path forbids hidden-bead relaxation
     (`fit_relax_steps=0`) and averages unresolved azimuthal/bead-frame samples
     as a tempered two-body PMF.
+  - The current SC-CGL table also integrates out hidden SC/CGL bead-frame
+    states, but it uses weighted energy expectation rather than a PMF or
+    tempered PMF. This distinction should be preserved in methods text and
+    reports.
   - Installed `parameters/dryMARTINI/dopc.h5` records
     `azimuthal_count=4`, `cgl_bead_frame_count=8`, `n_radial=120`,
     `n_angular=9`, `sample_dist_min_source=numerical_zero_guard_only`, and

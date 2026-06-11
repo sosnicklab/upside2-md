@@ -7,7 +7,7 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 - Runtime CGL orientation must come from the vector-particle spline interactions, especially CGL-CGL and SC-CGL. Do not add a standalone CGL orientation potential.
 - Table generation must evaluate direct dry-MARTINI nonbonded energies from rotated full-resolution bead geometries over the sampled runtime direction-vector coordinates.
 - CGL-CGL tables must retain the resolved dry-MARTINI lipid-lipid attraction in the spline. Do not subtract it into an absent radial background or replace it with a separate orientation correction.
-- Revised Decision: CGL-CGL unresolved azimuthal/bead-frame samples should use a tempered direct PMF as the next two-body model. After fixing runtime log-control injection, a 50k bilayer-only validation with the production-temperature Boltzmann pair PMF still collapsed same-leaflet packing (`p05 ~3.86 A`) and produced a flip, so the pair PMF remains too favorable for independently chosen hidden axial rotations in a dense single-vector bilayer. Direct energy expectation was too stiff and launched the bilayer apart. A tempered PMF keeps direct dry-MARTINI energies and the three runtime coordinates while avoiding capping, normalization, hidden relaxation, or an added orientation potential. SC-CGL/CGL-target remain production-temperature Boltzmann PMFs unless their own validation shows the same dense-phase representability failure.
+- Revised Decision: CGL-CGL unresolved azimuthal/bead-frame samples should use a tempered direct PMF as the next two-body model. After fixing runtime log-control injection, a 50k bilayer-only validation with the production-temperature Boltzmann pair PMF still collapsed same-leaflet packing (`p05 ~3.86 A`) and produced a flip, so the pair PMF remains too favorable for independently chosen hidden axial rotations in a dense single-vector bilayer. Direct energy expectation was too stiff and launched the bilayer apart. A tempered PMF keeps direct dry-MARTINI energies and the three runtime coordinates while avoiding capping, normalization, hidden relaxation, or an added orientation potential. SC-CGL currently uses weighted energy expectation over hidden states, while CGL-target uses a production-temperature PMF.
 - CGL axial bead-frame rotation is an unresolved coordinate in the single-vector lipid. CGL-CGL and CGL-SC table generation should sample multiple rotations around the CGL axis; CGL-CGL uses a tempered two-body PMF for dense-bilayer transferability.
 - Revised Decision: SC-CGL now uses the extended-support full tensor and invertible transformed control, analogous to the successful CGL-CGL/CGL-target representation. This is still a two-body direct-geometry spline table and does not introduce normalization, capping, hidden relaxation, interaction scaling, or a standalone CGL orientation potential.
 - Phase 2C implementation result: the accepted hybrid surface uses direct rotated dry-MARTINI geometry for CGL-CGL, SC-CGL, CGL-particle, and SC-particle. Active table builds use only a near-zero numerical singularity guard (`1e-6 nm`) rather than physical-distance capping.
@@ -46,6 +46,11 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 
 # Execution Phases
 
+- [x] Phase 8: Clean up `cg_lipid_potentials.tex` after the CGL-CGL/SC-CGL averaging discussion.
+  - [x] Rewrite unresolved-coordinate equations as one coherent method.
+  - [x] Make CGL-CGL tempered PMF and SC-CGL weighted energy expectation explicit.
+  - [x] Verify the TeX compiles.
+
 - [x] Phase 7: Fix 1AFO full-lipid stage-7 secondary-structure distortion.
   - [x] Reproduce the reported VTF distortion against HDF5 coordinates and stage logs.
   - [x] Trace onset to stage-7 production burn-in, not VTF export or stage-6 preparation.
@@ -59,10 +64,12 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 
 # Known Errors / Blockers
 
+- None for Phase 8. The methods TeX now distinguishes hidden rigid-body orientations from internal DOPC conformations, derives weighted expectation and PMF reductions, documents CGL-CGL tempered PMF, and documents SC-CGL weighted energy expectation.
 - None for Phase 7. The structure-typed but unrestrained-burn-in validation `outputs/phase7_1afo_full_secondary_types` failed and was not promoted. The accepted validation `outputs/phase7_1afo_full_burnin_restraint` uses full-strength SC-env/BB-env interactions, applies protein position restraints only during stage-7 burn-in, removes those restraints before production, and has replaced the active `outputs/martini_1afo_hybrid_full` output. The previous active output is backed up as `outputs/martini_1afo_hybrid_full.pre_phase7_burnin_restraint_backup_20260611_152618`.
 
 # Review
 
+- Phase 8 TeX cleanup passed two `pdflatex -interaction=nonstopmode -halt-on-error cg_lipid_potentials.tex` runs from the repo-root environment. LaTeX reported only small pre-existing-style overfull boxes, not errors.
 - Active `martini_1afo_hybrid_full` stage-7 metrics after the fix: hbond first/final/min/last20 `86.74/72.97/62.61/69.77`, Rg first/final/last20 `15.81/15.60/15.55 A`, within-chain final CA consecutive min/p50/max `3.23/3.77/4.31 A`, within-chain final CA(i)-CA(i+4) min/p50/max `4.65/6.29/12.30 A`.
 - Production restraint audit: `/input/potential/restraint_position` is absent from the active stage-7 production file.
 - Mapping provenance: `61` structure-geometry residues, `7` coil fallback residues, and `4` terminal charge overrides.

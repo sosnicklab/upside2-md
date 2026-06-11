@@ -76,41 +76,72 @@ native dry-MARTINI units; conversion to Upside units is applied only when
 tables are written to or read from simulation HDF5 files.
 
 The table builder evaluates this direct bead energy on rigidly rotated
-geometries.  It does not relax hidden beads, soften Lennard-Jones cores, add
-WCA terms, subtract isotropic backgrounds, remove attractive controls, scale
-specific interactions, or cap forces.  Exact bead coincidence is avoided only
-by the numerical singularity guard
+geometries.  The canonical DOPC body is not internally deformed during table
+construction; tail bending and other DOPC conformational fluctuations are
+therefore not sampled by the current CGL tables.  The unresolved coordinates
+defined below are rigid-body bead-frame orientations that are absent from the
+runtime CGL state.  The builder does not relax hidden beads, soften
+Lennard-Jones cores, add WCA terms, subtract isotropic backgrounds, remove
+attractive controls, scale specific interactions, or cap forces.  Exact bead
+coincidence is avoided only by the numerical singularity guard
 \begin{equation}
   d_{\mathrm{eval}}=\max(d,10^{-6}~\mathrm{nm}),
 \end{equation}
 which is recorded in each HDF5 group as a numerical zero guard.  This guard is
 far below any physical bead radius and is not a model parameter.
 
-\subsection{Unresolved Coordinates and Spline Transform}
+\subsection{Unresolved Coordinates, Averages, and Spline Transform}
 
 The runtime CGL state resolves only $\mathbf{R}$ and $\hat{\mathbf{n}}$.
-Rotations of the 14-bead DOPC reference around $\hat{\mathbf{n}}$, and
-azimuthal directions that are not determined by a runtime angle, are integrated
-out during table generation.  For a fixed runtime coordinate $x$, let
-$U(x,\omega)$ be the explicit dry-MARTINI energy for unresolved coordinate
-$\omega$ with quadrature weight $w_\omega$.  The builder uses either the
-weighted energy expectation
+A rigid 14-bead DOPC body, however, still has a rotation around
+$\hat{\mathbf{n}}$ that leaves the CGL state unchanged.  Pair coordinates such
+as $(r,a_1,a_2)$ also do not fully specify all azimuthal placements of the
+two local direction vectors around the pair axis.  These missing rigid-body
+orientations are denoted by $\omega$.  They are hidden because different
+values of $\omega$ give the same runtime coordinates but different resolved
+bead positions and therefore different dry-MARTINI energies.
+
+For a fixed runtime coordinate $x$, let $U(x,\omega)$ be the explicit
+dry-MARTINI energy for one hidden orientation $\omega$ with quadrature weight
+$w_\omega$.  Continuous integration over hidden coordinates is approximated by
+the sampled quadrature
+\begin{equation}
+  \int d\omega\, f(\omega)
+  \simeq
+  \sum_\omega w_\omega f(\omega).
+\end{equation}
+The current tables use two different hidden-state reductions.  The first is
+the weighted energy expectation
 \begin{equation}
   \bar{U}(x)=
   \frac{\sum_\omega w_\omega U(x,\omega)}
        {\sum_\omega w_\omega},
 \end{equation}
-or the finite-temperature potential of mean force
+which integrates out the hidden coordinates by averaging the sampled energies
+directly.  The second is the finite-temperature potential of mean force (PMF)
 \begin{equation}
   F_\tau(x)=
   -k_B\tau\log
   \frac{\sum_\omega w_\omega\exp[-U(x,\omega)/(k_B\tau)]}
        {\sum_\omega w_\omega}.
 \end{equation}
-Here $\tau$ is an averaging temperature in Upside temperature units.  The
-finite-temperature form is used when the unresolved coordinate represents a
-transferable two-body free energy; the expectation form is used when the
-direct averaged energy is the intended table.
+Here $\tau$ is an averaging temperature in Upside temperature units.  The PMF
+is a log-sum-exp, or soft-minimum, over the sampled hidden energies.  As
+$\tau\rightarrow 0$, the lowest-energy hidden orientation dominates.  As
+$\tau$ becomes large compared with the spread in $U(x,\omega)$, the result
+approaches the arithmetic energy average up to an additive constant.  The
+averaging temperature changes the statistical weighting of sampled hidden
+orientations; it is not an energy scale factor and it does not alter the
+dry-MARTINI-to-Upside unit conversion.
+
+The present model uses these reductions as follows.  CGL--CGL uses a tempered
+PMF with $\tau=10.0$ to avoid letting every lipid-lipid pair independently
+select only its most favorable hidden rigid twist in a dense bilayer.  SC--CGL
+uses the weighted energy expectation over side-chain and CGL hidden states.
+CGL--particle uses a production-temperature PMF over the unresolved CGL
+orientations.  The choice is recorded in HDF5 metadata as
+\texttt{azimuthal\_average} and
+\texttt{azimuthal\_average\_temperature\_upside}.
 
 CGL spline tables store a numerically conditioned control surface rather than
 raw energies:
@@ -157,10 +188,13 @@ specified separation.  The table averages over four azimuthal directions for
 each CGL direction and eight axial bead-frame rotations for each lipid.  The
 unresolved-coordinate average is a tempered two-body PMF with
 $\tau=10.0$ in Upside temperature units.  This retains the direct dry-MARTINI
-lipid-lipid energy while representing the free energy of the unresolved axial
-degrees of freedom in the single-vector representation.  The spline coordinates
-are local pair coordinates, so the table is rotationally invariant and does not
-assume a global membrane normal.
+lipid-lipid energy while integrating out the unresolved rigid orientations in
+the single-vector representation.  These hidden orientations are not internal
+DOPC conformations: the tails remain in the canonical rigid geometry during
+sampling.  Increasing $\tau$ makes more sampled rigid orientations contribute
+to the effective energy instead of allowing only the best hidden orientation
+to dominate.  The spline coordinates are local pair coordinates, so the table
+is rotationally invariant and does not assume a global membrane normal.
 
 The installed CGL--CGL group uses schema
 \texttt{cg\_lipid\_pair\_full\_v1}, $120$ radial controls, $9$ controls for
@@ -191,9 +225,25 @@ For each residue type, the builder places all dry-MARTINI side-chain beads
 from the rotamer library and all DOPC beads from the canonical CGL geometry.
 It samples four azimuthal directions, one side-chain bead-frame rotation, and
 eight CGL bead-frame rotations.  Rotamer probabilities enter as quadrature
-weights.  The accepted SC--CGL table uses the direct weighted energy
-expectation over unresolved coordinates rather than a separable radial/angular
-factorization.
+weights.  Thus the microscopic energy is
+$U(r,a_{\mathrm{SC}},a_{\mathrm{CGL}},
+\omega_{\mathrm{SC}},\omega_{\mathrm{CGL}})$, and the active table stores
+\begin{equation}
+  \bar{U}_{\mathrm{SC-CGL}}(r,a_{\mathrm{SC}},a_{\mathrm{CGL}})
+  =
+  \frac{\sum_{\omega_{\mathrm{SC}},\omega_{\mathrm{CGL}}}
+  w_{\omega_{\mathrm{SC}}}w_{\omega_{\mathrm{CGL}}}
+  U(r,a_{\mathrm{SC}},a_{\mathrm{CGL}},
+  \omega_{\mathrm{SC}},\omega_{\mathrm{CGL}})}
+  {\sum_{\omega_{\mathrm{SC}},\omega_{\mathrm{CGL}}}
+  w_{\omega_{\mathrm{SC}}}w_{\omega_{\mathrm{CGL}}}} .
+\end{equation}
+This is direct weighted energy expectation, not a PMF or tempered PMF.  The
+tempered PMF was introduced for the CGL--CGL dense lipid-packing problem;
+SC--CGL has not shown the same pairwise hidden-twist over-selection failure in
+the accepted validation matrix.  The active SC--CGL table also avoids the old
+separable radial/angular factorization by storing the full tensor over
+$(r,a_{\mathrm{SC}},a_{\mathrm{CGL}})$.
 
 The installed SC--CGL group uses schema
 \texttt{cg\_lipid\_sc\_full\_tensor\_v1}, $21$ radial controls, $11$ controls
@@ -332,6 +382,17 @@ into Upside units.
 Marrink, S.~J., Risselada, H.~J., Yefimov, S., Tieleman, D.~P., and de Vries, A.~H.
 ``The MARTINI Force Field: Coarse Grained Model for Biomolecular Simulations.''
 \textit{J. Phys. Chem. B}, 111(27), 7812--7824 (2007).
+
+\bibitem{KirkwoodPMF}
+Kirkwood, J.~G.
+``Statistical Mechanics of Fluid Mixtures.''
+\textit{J. Chem. Phys.}, 3, 300--313 (1935).
+
+\bibitem{CGPMF}
+Tsourtis, A., Harmandaris, V., and Tsagkarogiannis, D.
+``Parameterization of Coarse-grained Molecular Interactions through Potential
+of Mean Force Calculations and Cluster Expansions Techniques.''
+\textit{Entropy}, 19(8), 395 (2017).
 
 \bibitem{deBoor}
 de Boor, C.

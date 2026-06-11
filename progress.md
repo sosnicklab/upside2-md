@@ -1,5 +1,20 @@
 # Progress Log
 
+## 2026-06-11 CGL Averaging Methods TeX Cleanup
+- Actions taken:
+  - Rewrote the unresolved-coordinate section of `cg_lipid_potentials.tex` to define hidden rigid-body orientations, quadrature weights, weighted energy expectation, and PMF/tempered PMF in one flow.
+  - Clarified that current CGL tables sample rigid canonical DOPC bead geometries, not internal tail conformations.
+  - Made CGL-CGL tempered PMF and SC-CGL weighted energy expectation explicit, including the SC-CGL two-hidden-variable equation.
+  - Added PMF/coarse-graining references for Kirkwood and a PMF-based coarse-graining paper.
+- Files modified:
+  - `example/16.MARTINI/cg_lipid_potentials.tex`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification:
+  - `pdflatex -interaction=nonstopmode -halt-on-error cg_lipid_potentials.tex` passed twice from the repo-root environment.
+  - `git diff --check -- example/16.MARTINI/cg_lipid_potentials.tex plan.md` passed.
+
 ## 2026-06-11 1AFO Full-Lipid Secondary-Structure Fix
 - Actions taken:
   - Added structure-derived MARTINI backbone proxy typing for protein BB beads when no protein ITP supplies secondary structure.
