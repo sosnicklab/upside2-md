@@ -1,5 +1,40 @@
 # Progress Log
 
+## 2026-06-11 1AFO Full-Lipid Secondary-Structure Fix
+- Actions taken:
+  - Added structure-derived MARTINI backbone proxy typing for protein BB beads when no protein ITP supplies secondary structure.
+  - Added BB mapping provenance fields for secondary-structure label and type source.
+  - Fixed stage-6 protein position restraints to select protein membership entries instead of environment atoms.
+- Files modified:
+  - `py/martini_prepare_system_lib.py`
+  - `py/martini_prepare_system.py`
+  - `example/16.MARTINI/run_sim_hybrid.sh`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification so far:
+  - `python -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py` passed.
+  - `bash -n` passed for the 1AFO/1RKL full and CGL workflow scripts.
+  - 1AFO structure-derived BB mapping reports 61 structure-geometry residues, 7 coil fallback residues, and 4 terminal charge overrides.
+  - Fresh validation `outputs/phase7_1afo_full_secondary_types` failed: stage-6.6 stayed intact (`hbond ~94.74`, `Rg ~15.86 A`), but stage-7 burn-in promoted a damaged input (`hbond ~33.17`, CA RMSD from stage-6.6 final `~6.94 A`) and production finished at `hbond ~26.88`.
+  - The failed validation was not promoted to the active `outputs/martini_1afo_hybrid_full` directory.
+  - Virtual BB proxies stayed at their N/CA/C/O COMs within `~1e-6 A`, so BB proxy drift is not the remaining cause.
+  - Added burn-in-only protein position restraints for stage 7.0, with full-strength SC-env/BB-env interactions still enabled and restraints removed before production.
+  - Validated `outputs/phase7_1afo_full_burnin_restraint` with the same seeds as the failed run: stage-7 hbond first/final/min/last20 `86.74/72.97/62.61/69.77`, Rg first/final/last20 `15.81/15.60/15.55 A`, and no production restraint remained in the final `.up`.
+  - Preserved the previous active output as `example/16.MARTINI/outputs/martini_1afo_hybrid_full.pre_phase7_burnin_restraint_backup_20260611_152618`.
+  - Replaced active `example/16.MARTINI/outputs/martini_1afo_hybrid_full` with the validated run.
+
+## 2026-06-11 CGL-CGL Training Path Audit
+- Actions taken:
+  - Traced the active CGL-CGL generation path through `py/martini_build_tables.py`, `py/martini_gen_params.py`, and `example/16.MARTINI/cg_lipid_potentials.tex`.
+  - Confirmed installed `parameters/dryMARTINI/dopc.h5` metadata matches the direct rotated-geometry CGL-CGL path.
+- Files modified:
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification:
+  - Read `cg_lipid_pair` metadata directly from `dopc.h5`: `fit_relax_steps=0`, `azimuthal_count=4`, `cgl_bead_frame_count=8`, `azimuthal_average=tempered_boltzmann_free_energy`, `energy_transform=log1p_reduced_tempered_pmf`, and no excluded-area projection.
+
 ## 2026-06-10 Phase 5 Active 1AFO Horizontal CGL Fix
 - Actions taken:
   - Reproduced the user's current visible `martini_1afo_hybrid` artifact in both VTF and HDF5. The horizontal rod is VTF ordinal `104`, residue `130`, mapping to HDF5 CGL/CGLD indices `464/736`.

@@ -1,6 +1,38 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-11: 1AFO full-lipid stage-7 secondary-structure fix.
+  - VTF distortion in `outputs/martini_1afo_hybrid_full/1afo.stage_7.0.vtf`
+    was real trajectory geometry and originated during stage-7
+    production-Hamiltonian burn-in. The damaged production frame 0 was the
+    promoted burn-in endpoint, not a VTF export artifact.
+  - Full-resolution hybrid protein BB proxy types must be structure-derived
+    when no protein ITP secondary structure is supplied. The old fallback
+    treated the 1AFO helices as coil and typed most BB proxies as `P5`; the
+    corrected 1AFO mapping has 61 structure-geometry residues, 7 coil fallback
+    residues, and 4 terminal charge overrides.
+  - Stage-6 protein position restraints must select `protein_membership >= 0`.
+    The previous selector restrained environment atoms (`protein_membership ==
+    -1`) and left the protein unrestrained.
+  - Structure-derived BB typing alone was not sufficient: the unrestrained
+    stage-7 burn-in still promoted a damaged input. Virtual BB proxies stayed
+    at the N/CA/C/O COM, so proxy drift was not the cause.
+  - Accepted workflow fix: stage-7 burn-in may restrain protein positions as an
+    equilibration protocol while all SC-env/BB-env interactions remain
+    full-strength. The restraints must be removed before recorded production;
+    the accepted active 1AFO full-lipid stage-7 production file has no
+    `/input/potential/restraint_position` group.
+- 2026-06-11: CGL-CGL training path snapshot.
+  - The current CGL-CGL force-field table is generated from two rigid,
+    canonical 14-bead DOPC geometries using direct dry-MARTINI LJ+Coulomb bead
+    energies. The active path forbids hidden-bead relaxation
+    (`fit_relax_steps=0`) and averages unresolved azimuthal/bead-frame samples
+    as a tempered two-body PMF.
+  - Installed `parameters/dryMARTINI/dopc.h5` records
+    `azimuthal_count=4`, `cgl_bead_frame_count=8`, `n_radial=120`,
+    `n_angular=9`, `sample_dist_min_source=numerical_zero_guard_only`, and
+    `energy_transform=log1p_reduced_tempered_pmf` for
+    `cg_lipid_table/cg_lipid_pair`.
 - 2026-06-10: Correction on CGL gap diagnosis.
   - User correction: a visible CGL gap with a horizontal particle must be mapped
     from VTF atom/rod ordinal back to the HDF5 CGL/CGLD indices before calling

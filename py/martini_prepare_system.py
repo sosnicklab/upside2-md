@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +31,7 @@ from martini_prepare_system_lib import (
     inject_stage7_sc_table_nodes,
     lipid_resname,
     map_backbone_types_from_martinize_fallback,
+    map_backbone_types_from_structure,
     parse_pdb,
     place_ions,
     remove_overlapping_lipids,
@@ -57,6 +59,7 @@ DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS = 150
 DEFAULT_NPT_TAU = 4.0
 DEFAULT_NPT_INTERVAL = 10
 DEFAULT_PROD_70_BAROSTAT_TYPE = 1
+DEFAULT_STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING = 10.0
 DEFAULT_MARTINI_ENERGY_CONVERSION = 2.914952774272
 DEFAULT_MARTINI_LENGTH_CONVERSION = 10.0
 DEFAULT_BAR_1_TO_EUP_PER_A3 = 0.000020659477
@@ -351,8 +354,17 @@ def prepare_mixed_structure(args, runtime_pdb):
         rng=rng,
     )
 
-    bb_type_by_residue = map_backbone_types_from_martinize_fallback(protein_backbone_atoms)
-    protein_atoms, bb_entries = build_backbone_with_virtual_bb(protein_backbone_atoms, bb_type_by_residue)
+    (
+        bb_type_by_residue,
+        bb_secondary_by_residue,
+        bb_type_source_by_residue,
+    ) = map_backbone_types_from_structure(protein_backbone_atoms)
+    protein_atoms, bb_entries = build_backbone_with_virtual_bb(
+        protein_backbone_atoms,
+        bb_type_by_residue,
+        bb_secondary_by_residue=bb_secondary_by_residue,
+        bb_type_source_by_residue=bb_type_source_by_residue,
+    )
     all_atoms = protein_atoms + bilayer_kept + ion_atoms
     write_pdb(runtime_pdb, all_atoms, box_lengths)
     protein_xyz_final = coords(protein_backbone_atoms)
@@ -374,7 +386,17 @@ def prepare_mixed_structure(args, runtime_pdb):
 
         mapping_summary["protein_aa_pdb"] = str(protein_aa_pdb)
         mapping_summary["mapping_h5"] = str(mapping_h5)
-        mapping_summary["bb_fallback_typed_residues"] = int(len(bb_type_by_residue))
+        mapping_summary["bb_structure_typed_residues"] = int(
+            sum(1 for source in bb_type_source_by_residue.values() if source == "structure_geometry")
+        )
+        mapping_summary["bb_fallback_typed_residues"] = int(
+            sum(1 for source in bb_type_source_by_residue.values() if source == "coil_geometry_fallback")
+        )
+        mapping_summary["bb_secondary_counts"] = dict(sorted(Counter(bb_secondary_by_residue.values()).items()))
+        mapping_summary["bb_type_counts"] = dict(sorted(Counter(bb_type_by_residue.values()).items()))
+        mapping_summary["bb_type_source_counts"] = dict(
+            sorted(Counter(bb_type_source_by_residue.values()).items())
+        )
         mapping_summary["bb_map_entries"] = int(len(bb_entries))
 
         if args.hybrid_bb_map_json_output:
@@ -768,7 +790,7 @@ def inject_protein_position_restraints(up_file: Path, spring_const: float = 10.0
 
     with h5py.File(up_file, "r+") as h5:
         pm = h5["/input/hybrid_env_topology/protein_membership"][:]
-        protein_atoms = np.where(pm == -1)[0].astype(np.int32)
+        protein_atoms = np.where(pm >= 0)[0].astype(np.int32)
         if len(protein_atoms) == 0:
             return
         ref_pos = np.asarray(h5["/input/pos"][:][protein_atoms, :, 0], dtype=np.float32)
@@ -1350,6 +1372,8 @@ def normalize_hybrid_workflow_args(args):
     args.sc_env_relax_steps = DEFAULT_SC_ENV_RELAX_STEPS
     args.sc_env_backbone_hold_steps = DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS
     args.sc_env_po4_z_hold_steps = DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS
+    if not np.isfinite(float(args.stage_70_burnin_protein_restraint_spring)):
+        raise ValueError("stage_70_burnin_protein_restraint_spring must be finite")
     args.npt_tau = DEFAULT_NPT_TAU
     args.npt_interval = DEFAULT_NPT_INTERVAL
     args.prod_70_barostat_type = DEFAULT_PROD_70_BAROSTAT_TYPE
@@ -1507,6 +1531,14 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--eq-66-nsteps", type=int, default=env_int("EQ_66_NSTEPS", 500))
     parser.add_argument("--prod-70-burnin-nsteps", type=int, default=env_int("PROD_70_BURNIN_NSTEPS", 40000))
     parser.add_argument("--prod-70-nsteps", type=int, default=env_int("PROD_70_NSTEPS", 10000))
+    parser.add_argument(
+        "--stage-70-burnin-protein-restraint-spring",
+        type=float,
+        default=env_float(
+            "STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING",
+            DEFAULT_STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING,
+        ),
+    )
     parser.add_argument("--eq-time-step", type=float, default=env_float("EQ_TIME_STEP", 0.010))
     parser.add_argument("--prod-time-step", type=float, default=env_float("PROD_TIME_STEP", 0.002))
     parser.add_argument("--eq-frame-steps", type=int, default=env_int("EQ_FRAME_STEPS", 1000))
@@ -1612,7 +1644,13 @@ def run_hybrid_workflow_command(argv):
         handoff_initial_position(args, source_stage, files["stage_70"], "production_hybrid")
         assert_hybrid_stage_active(files["stage_70"], "production", "production")
         run_minimization_stage(args, "7.0", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
+        if float(args.stage_70_burnin_protein_restraint_spring) > 0.0:
+            inject_protein_position_restraints(
+                files["stage_70"],
+                spring_const=float(args.stage_70_burnin_protein_restraint_spring),
+            )
         run_stage70_burnin(args, files["stage_70"])
+        remove_protein_position_restraints(files["stage_70"])
         run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
         extract_stage_vtf(args, "7.0", files["stage_70"], "2")
 

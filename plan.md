@@ -1,6 +1,6 @@
 # Project Goal
 
-Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) force field for the UPSIDE/dry-MARTINI hybrid workflow. The current active task is resolved: the still-visible large CGL bilayer gap and horizontally lying CGL particle in `martini_1afo_hybrid` were traced to an actual HDF5 CGL orientation failure caused by cross-leaflet CGL lateral near-overlaps in the prepared coarse initial condition, and fixed without disabling SC-env/BB-env interactions, adding ad-hoc CGL orientation potentials, capping forces, arbitrary scaling, or twisting parameters.
+Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) force field for the UPSIDE/dry-MARTINI hybrid workflow. The active task is to fix the distorted secondary structure in `example/16.MARTINI/outputs/martini_1afo_hybrid_full/1afo.stage_7.0.vtf` without disabling, capping, or scaling down required SC-env/BB-env interactions.
 
 # Architecture & Key Decisions
 
@@ -40,8 +40,37 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 - All simulation interactions computed by Upside must be spline-table based, except existing Ewald behavior.
 - Full workflow verification must use regenerated handoff artifacts, not stale output directories or pre-minimization prepared files.
 - Hybrid protein-lipid packing clearance defaults should be derived from the active dry-MARTINI DOPC nonbonded contact distance, not from a stale hardcoded Angstrom value. This is a physical dry-MARTINI exclusion distance used during preparation, not an interaction scaling or cap.
+- Full-resolution hybrid protein BB proxy types must come from structure-derived secondary structure when no protein ITP is supplied. The previous coil-only martinize fallback typed all 1AFO helical BB proxies mostly as `P5`, making full-lipid BB-env interactions physically wrong for a transmembrane helix while keeping the interactions enabled.
+- Stage-6 protein position restraints must select protein atoms (`protein_membership >= 0`), not environment atoms.
+- Stage-7 production-Hamiltonian burn-in may use protein position restraints as an equilibration protocol, provided SC-env and BB-env interactions remain present at full scale and the restraints are removed before the recorded production segment. This is not an interaction scale, cap, or exclusion; it prevents the equilibration handoff from using a distorted protein endpoint as the production starting structure.
 
 # Execution Phases
+
+- [x] Phase 7: Fix 1AFO full-lipid stage-7 secondary-structure distortion.
+  - [x] Reproduce the reported VTF distortion against HDF5 coordinates and stage logs.
+  - [x] Trace onset to stage-7 production burn-in, not VTF export or stage-6 preparation.
+  - [x] Implement structure-derived MARTINI BB proxy typing and mapping provenance.
+  - [x] Fix the protein position-restraint selector bug.
+  - [x] Run compile/syntax checks.
+  - [x] Diagnose remaining stage-7 burn-in force source after structure-derived BB typing.
+  - [x] Implement the next physically justified fix.
+  - [x] Regenerate and validate a fresh 1AFO full-lipid workflow.
+  - [x] Replace the active output only after validation passes.
+
+# Known Errors / Blockers
+
+- None for Phase 7. The structure-typed but unrestrained-burn-in validation `outputs/phase7_1afo_full_secondary_types` failed and was not promoted. The accepted validation `outputs/phase7_1afo_full_burnin_restraint` uses full-strength SC-env/BB-env interactions, applies protein position restraints only during stage-7 burn-in, removes those restraints before production, and has replaced the active `outputs/martini_1afo_hybrid_full` output. The previous active output is backed up as `outputs/martini_1afo_hybrid_full.pre_phase7_burnin_restraint_backup_20260611_152618`.
+
+# Review
+
+- Active `martini_1afo_hybrid_full` stage-7 metrics after the fix: hbond first/final/min/last20 `86.74/72.97/62.61/69.77`, Rg first/final/last20 `15.81/15.60/15.55 A`, within-chain final CA consecutive min/p50/max `3.23/3.77/4.31 A`, within-chain final CA(i)-CA(i+4) min/p50/max `4.65/6.29/12.30 A`.
+- Production restraint audit: `/input/potential/restraint_position` is absent from the active stage-7 production file.
+- Mapping provenance: `61` structure-geometry residues, `7` coil fallback residues, and `4` terminal charge overrides.
+
+- [x] Phase 6: Document current CGL-CGL training/sampling path.
+  - [x] Trace active generator and method documentation.
+  - [x] Verify installed `parameters/dryMARTINI/dopc.h5` metadata.
+  - [x] Answer the user's CGL-CGL rigidity and sampling questions without changing force-field files.
 
 - [x] Phase 5: Resolve current visible `martini_1afo_hybrid` CGL gap / horizontal particle.
   - [x] Parse the active VTF and identify the exact displayed CGL rod(s) lying horizontally in the mid-gap.

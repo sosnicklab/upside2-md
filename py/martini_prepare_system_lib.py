@@ -27,6 +27,13 @@ WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 NA_AVOGADRO = 6.02214076e23
 BB_COMPONENT_NAMES = ("N", "CA", "C", "O")
 BB_COMPONENT_MASSES = (14.0, 12.0, 12.0, 16.0)
+MARTINIZE_BB_SS_ORDER = ("F", "E", "H", "1", "2", "3", "T", "S", "C")
+MARTINIZE_BB_DEFAULT = ("N0", "Nda", "N0", "Nd", "Na", "Nda", "Nda", "P5", "P5")
+MARTINIZE_BB_RESIDUE_OVERRIDE = {
+    "ALA": ("C5", "N0", "C5", "N0", "N0", "N0", "N0", "P4", "P4"),
+    "PRO": ("C5", "N0", "C5", "N0", "Na", "N0", "N0", "Na", "Na"),
+    "HYP": ("C5", "N0", "C5", "N0", "N0", "N0", "N0", "Na", "Na"),
+}
 BB_TYPE_CHARGE = {
     "Qd": 1.0,
     "Qa": -1.0,
@@ -786,37 +793,196 @@ def _collect_complete_backbone_residue_order(backbone_atoms):
     return valid_order
 
 
-def map_backbone_types_from_martinize_fallback(backbone_atoms):
-    # Use martinize fallback behavior with secondary structure fixed to coil ("C"):
-    # default/backbone override table + charged termini/chain-break endpoints.
-    residue_order = _collect_complete_backbone_residue_order(backbone_atoms)
-    coil_column = 8
-    bb_default = ("N0", "Nda", "N0", "Nd", "Na", "Nda", "Nda", "P5", "P5")
-    bb_residue_override = {
-        "ALA": ("C5", "N0", "C5", "N0", "N0", "N0", "N0", "P4", "P4"),
-        "PRO": ("C5", "N0", "C5", "N0", "Na", "N0", "N0", "Na", "Na"),
-        "HYP": ("C5", "N0", "C5", "N0", "N0", "N0", "N0", "Na", "Na"),
-    }
-    out = {}
-    for key in residue_order:
-        resname = key[3].upper()
-        table = bb_residue_override.get(resname, bb_default)
-        out[key] = table[coil_column]
+def _complete_backbone_residue_groups(backbone_atoms):
+    residue_groups = defaultdict(dict)
+    residue_order = []
+    for atom in backbone_atoms:
+        key = residue_key(atom)
+        role = atom["name"].strip().upper()
+        if key not in residue_groups:
+            residue_order.append(key)
+        residue_groups[key][role] = atom
 
-    # Match martinize charged-termini behavior: each fragment endpoint is
-    # assigned charged backbone bead types (Qd/Qa) in residue order.
+    valid_order = []
+    valid_groups = {}
+    for key in residue_order:
+        group = residue_groups[key]
+        if not all(role in group for role in BB_COMPONENT_NAMES):
+            continue
+        valid_order.append(key)
+        valid_groups[key] = group
+    if not valid_order:
+        raise ValueError("Cannot map BB types: no complete N/CA/C/O residue rows.")
+    return valid_order, valid_groups
+
+
+def _atom_xyz(atom):
+    return np.array([float(atom["x"]), float(atom["y"]), float(atom["z"])], dtype=np.float64)
+
+
+def _dihedral_degrees(p0, p1, p2, p3):
+    b0 = p0 - p1
+    b1 = p2 - p1
+    b2 = p3 - p2
+    norm_b1 = np.linalg.norm(b1)
+    if norm_b1 < 1.0e-8:
+        return None
+    b1 = b1 / norm_b1
+    v = b0 - np.dot(b0, b1) * b1
+    w = b2 - np.dot(b2, b1) * b1
+    norm_v = np.linalg.norm(v)
+    norm_w = np.linalg.norm(w)
+    if norm_v < 1.0e-8 or norm_w < 1.0e-8:
+        return None
+    x = np.dot(v, w)
+    y = np.dot(np.cross(b1, v), w)
+    return float(np.degrees(np.arctan2(y, x)))
+
+
+def _same_chain_adjacent(prev_key, curr_key):
+    return curr_key[0] == prev_key[0] and curr_key[1] == prev_key[1] + 1
+
+
+def _raw_secondary_from_geometry(residue_order, residue_groups):
+    raw = {key: "C" for key in residue_order}
+    ca_pos = {key: _atom_xyz(residue_groups[key]["CA"]) for key in residue_order}
+    raw_list = ["C"] * len(residue_order)
+
+    for i, key in enumerate(residue_order):
+        helix_like = False
+        if 0 < i < len(residue_order) - 1:
+            prev_key = residue_order[i - 1]
+            next_key = residue_order[i + 1]
+            if _same_chain_adjacent(prev_key, key) and _same_chain_adjacent(key, next_key):
+                prev_group = residue_groups[prev_key]
+                curr_group = residue_groups[key]
+                next_group = residue_groups[next_key]
+                phi = _dihedral_degrees(
+                    _atom_xyz(prev_group["C"]),
+                    _atom_xyz(curr_group["N"]),
+                    _atom_xyz(curr_group["CA"]),
+                    _atom_xyz(curr_group["C"]),
+                )
+                psi = _dihedral_degrees(
+                    _atom_xyz(curr_group["N"]),
+                    _atom_xyz(curr_group["CA"]),
+                    _atom_xyz(curr_group["C"]),
+                    _atom_xyz(next_group["N"]),
+                )
+                if phi is not None and psi is not None and -100.0 <= phi <= -30.0 and -85.0 <= psi <= 15.0:
+                    helix_like = True
+
+        for offset in (-4, 4):
+            j = i + offset
+            if helix_like or j < 0 or j >= len(residue_order):
+                continue
+            other_key = residue_order[j]
+            if other_key[0] != key[0]:
+                continue
+            dist = float(np.linalg.norm(ca_pos[key] - ca_pos[other_key]))
+            if 4.8 <= dist <= 6.8:
+                helix_like = True
+
+        if helix_like:
+            raw_list[i] = "H"
+
+    for i in range(1, len(raw_list) - 1):
+        if (
+            raw_list[i] == "C"
+            and raw_list[i - 1] == "H"
+            and raw_list[i + 1] == "H"
+            and residue_order[i - 1][0] == residue_order[i][0] == residue_order[i + 1][0]
+        ):
+            raw_list[i] = "H"
+
+    i = 0
+    while i < len(raw_list):
+        if raw_list[i] != "H":
+            i += 1
+            continue
+        j = i + 1
+        while j < len(raw_list) and raw_list[j] == "H" and residue_order[j][0] == residue_order[i][0]:
+            j += 1
+        if j - i < 4:
+            for k in range(i, j):
+                raw_list[k] = "C"
+        i = j
+
+    for key, ss in zip(residue_order, raw_list):
+        raw[key] = ss
+    return raw
+
+
+def _apply_martinize_helix_labels(residue_order, raw_secondary):
+    labels = {key: raw_secondary.get(key, "C") for key in residue_order}
+    i = 0
+    while i < len(residue_order):
+        key = residue_order[i]
+        if raw_secondary.get(key, "C") != "H":
+            i += 1
+            continue
+        j = i + 1
+        while (
+            j < len(residue_order)
+            and residue_order[j][0] == residue_order[i][0]
+            and raw_secondary.get(residue_order[j], "C") == "H"
+        ):
+            j += 1
+        run_len = j - i
+        if run_len < 4:
+            for k in range(i, j):
+                labels[residue_order[k]] = "C"
+        else:
+            for offset, k in enumerate(range(i, j)):
+                if offset < min(4, run_len):
+                    labels[residue_order[k]] = "1"
+                elif run_len - offset <= 4:
+                    labels[residue_order[k]] = "2"
+                else:
+                    labels[residue_order[k]] = "H"
+        i = j
+    return labels
+
+
+def _martinize_bb_type_for_residue(resname, secondary_structure):
+    table = MARTINIZE_BB_RESIDUE_OVERRIDE.get(resname.upper(), MARTINIZE_BB_DEFAULT)
+    try:
+        return table[MARTINIZE_BB_SS_ORDER.index(str(secondary_structure).upper())]
+    except ValueError:
+        return table[MARTINIZE_BB_SS_ORDER.index("C")]
+
+
+def map_backbone_types_from_structure(backbone_atoms):
+    residue_order, residue_groups = _complete_backbone_residue_groups(backbone_atoms)
+    raw_secondary = _raw_secondary_from_geometry(residue_order, residue_groups)
+    secondary_by_residue = _apply_martinize_helix_labels(residue_order, raw_secondary)
+    type_by_residue = {}
+    source_by_residue = {}
+    for key in residue_order:
+        ss = secondary_by_residue[key]
+        type_by_residue[key] = _martinize_bb_type_for_residue(key[3], ss)
+        source_by_residue[key] = "structure_geometry" if ss in {"H", "1", "2", "3"} else "coil_geometry_fallback"
+
     if residue_order:
-        out[residue_order[0]] = "Qd"
-        out[residue_order[-1]] = "Qa"
+        terminal_overrides = [(residue_order[0], "Qd"), (residue_order[-1], "Qa")]
         for i in range(1, len(residue_order)):
             prev = residue_order[i - 1]
             curr = residue_order[i]
             chain_break = curr[0] != prev[0]
             seq_break = curr[1] != (prev[1] + 1)
             if chain_break or seq_break:
-                out[curr] = "Qd"
-                out[prev] = "Qa"
-    return out
+                terminal_overrides.append((curr, "Qd"))
+                terminal_overrides.append((prev, "Qa"))
+        for key, bb_type in terminal_overrides:
+            type_by_residue[key] = bb_type
+            source_by_residue[key] = "terminal_charge_override"
+
+    return type_by_residue, secondary_by_residue, source_by_residue
+
+
+def map_backbone_types_from_martinize_fallback(backbone_atoms):
+    type_by_residue, _, _ = map_backbone_types_from_structure(backbone_atoms)
+    return type_by_residue
 
 
 def compute_lipid_residue_indices(bilayer_atoms):
@@ -1100,7 +1266,12 @@ def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng):
     return placed
 
 
-def collect_backbone_only_bb_map(backbone_atoms, bb_type_by_residue):
+def collect_backbone_only_bb_map(
+    backbone_atoms,
+    bb_type_by_residue,
+    bb_secondary_by_residue=None,
+    bb_type_source_by_residue=None,
+):
     residue_groups = defaultdict(dict)
     for atom_idx, atom in enumerate(backbone_atoms):
         key = residue_key(atom)
@@ -1121,6 +1292,8 @@ def collect_backbone_only_bb_map(backbone_atoms, bb_type_by_residue):
             atom = backbone_atoms[role_map[role]]
             coords_row.append([float(atom["x"]), float(atom["y"]), float(atom["z"])])
         bb_type = str(bb_type_by_residue.get(key, "P5")).strip()
+        bb_secondary = str((bb_secondary_by_residue or {}).get(key, "C")).strip() or "C"
+        bb_type_source = str((bb_type_source_by_residue or {}).get(key, "legacy_default")).strip()
         bb_entries.append(
             {
                 "bb_residue_index": seq_idx,
@@ -1129,6 +1302,8 @@ def collect_backbone_only_bb_map(backbone_atoms, bb_type_by_residue):
                 "bb_icode": str(key[2]),
                 "bb_atom_index": -1,
                 "bb_type": bb_type,
+                "bb_secondary_structure": bb_secondary,
+                "bb_type_source": bb_type_source,
                 "atom_indices": idxs,
                 "atom_mask": [1, 1, 1, 1],
                 "weights": weights,
@@ -1136,7 +1311,7 @@ def collect_backbone_only_bb_map(backbone_atoms, bb_type_by_residue):
                 "reference_atom_coords": coords_row,
                 "bb_comment": (
                     f"Backbone-only BB map resid={seq_idx} resseq={key[1]} chain={key[0]} "
-                    f"type={bb_type} atom_indices={idxs}"
+                    f"type={bb_type} ss={bb_secondary} source={bb_type_source} atom_indices={idxs}"
                 ),
             }
         )
@@ -1145,7 +1320,12 @@ def collect_backbone_only_bb_map(backbone_atoms, bb_type_by_residue):
     return bb_entries
 
 
-def build_backbone_with_virtual_bb(backbone_atoms, bb_type_by_residue):
+def build_backbone_with_virtual_bb(
+    backbone_atoms,
+    bb_type_by_residue,
+    bb_secondary_by_residue=None,
+    bb_type_source_by_residue=None,
+):
     residue_groups = defaultdict(dict)
     for atom_idx, atom in enumerate(backbone_atoms):
         key = residue_key(atom)
@@ -1177,6 +1357,8 @@ def build_backbone_with_virtual_bb(backbone_atoms, bb_type_by_residue):
             com /= wsum
 
         bb_type = str(bb_type_by_residue.get(key, "P5")).strip()
+        bb_secondary = str((bb_secondary_by_residue or {}).get(key, "C")).strip() or "C"
+        bb_type_source = str((bb_type_source_by_residue or {}).get(key, "legacy_default")).strip()
         proxy = deepcopy(backbone_atoms[role_map["CA"]])
         proxy["name"] = "BB"
         proxy["x"] = float(com[0])
@@ -1195,6 +1377,8 @@ def build_backbone_with_virtual_bb(backbone_atoms, bb_type_by_residue):
                 "bb_icode": str(key[2]),
                 "bb_atom_index": bb_atom_index,
                 "bb_type": bb_type,
+                "bb_secondary_structure": bb_secondary,
+                "bb_type_source": bb_type_source,
                 "atom_indices": idxs,
                 "atom_mask": [1, 1, 1, 1],
                 "weights": weights,
@@ -1202,7 +1386,8 @@ def build_backbone_with_virtual_bb(backbone_atoms, bb_type_by_residue):
                 "reference_atom_coords": coords_row,
                 "bb_comment": (
                     f"Backbone virtual BB map resid={seq_idx} resseq={key[1]} chain={key[0]} "
-                    f"type={bb_type} bb_atom_index={bb_atom_index} atom_indices={idxs}"
+                    f"type={bb_type} ss={bb_secondary} source={bb_type_source} "
+                    f"bb_atom_index={bb_atom_index} atom_indices={idxs}"
                 ),
             }
         )
@@ -1289,6 +1474,20 @@ def write_hybrid_mapping_h5(
             "bb_type",
             data=np.array(
                 [str(b.get("bb_type", "P5")).strip() for b in bb_entries],
+                dtype=h5py.string_dtype(encoding="utf-8"),
+            ),
+        )
+        bb_grp.create_dataset(
+            "bb_secondary_structure",
+            data=np.array(
+                [str(b.get("bb_secondary_structure", "C")).strip() or "C" for b in bb_entries],
+                dtype=h5py.string_dtype(encoding="utf-8"),
+            ),
+        )
+        bb_grp.create_dataset(
+            "bb_type_source",
+            data=np.array(
+                [str(b.get("bb_type_source", "legacy_default")).strip() for b in bb_entries],
                 dtype=h5py.string_dtype(encoding="utf-8"),
             ),
         )

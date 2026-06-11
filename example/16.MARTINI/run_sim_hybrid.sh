@@ -88,6 +88,7 @@ EQ_65_NSTEPS="${EQ_65_NSTEPS:-500}"
 EQ_66_NSTEPS="${EQ_66_NSTEPS:-500}"
 PROD_70_BURNIN_NSTEPS="${PROD_70_BURNIN_NSTEPS:-40000}"
 PROD_70_NSTEPS="${PROD_70_NSTEPS:-10000}"
+STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING="${STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING:-10.0}"
 
 EQ_TIME_STEP="${EQ_TIME_STEP:-0.010}"
 PROD_TIME_STEP="${PROD_TIME_STEP:-0.002}"
@@ -190,6 +191,7 @@ python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
     --eq-66-nsteps "${EQ_66_NSTEPS}" \
     --prod-70-burnin-nsteps "${PROD_70_BURNIN_NSTEPS}" \
     --prod-70-nsteps "${PROD_70_NSTEPS}" \
+    --stage-70-burnin-protein-restraint-spring "${STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING}" \
     --eq-time-step "${EQ_TIME_STEP}" \
     --prod-time-step "${PROD_TIME_STEP}" \
     --eq-frame-steps "${EQ_FRAME_STEPS}" \
