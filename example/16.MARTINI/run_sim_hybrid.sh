@@ -143,7 +143,6 @@ MARTINI_FF_DIR="${UPSIDE_HOME}/parameters/dryMARTINI"
 required_params=(
     "${MARTINI_FF_DIR}/particle.h5"
     "${MARTINI_FF_DIR}/sidechain.h5"
-    "${MARTINI_FF_DIR}/interlipid.h5"
 )
 if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
     required_params+=("${MARTINI_FF_DIR}/dopc.h5")

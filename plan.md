@@ -1,6 +1,6 @@
 # Project Goal
 
-Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) force field for the UPSIDE/dry-MARTINI hybrid workflow. The active task is to apply one uniform hidden-state reduction method, tempered PMF with `tau=10.0`, to CGL-CGL, SC-CGL, CGL-particle, and SC-particle interactions, then validate the `example/16.MARTINI` workflows while explicitly checking whether this configurational coarse-graining damages dynamics-sensitive observables.
+Build and maintain a physically defensible single-vector DOPC coarse-grained lipid (CGL) force field for the UPSIDE/dry-MARTINI hybrid workflow. The active cleanup task is to keep the hybrid C++/Python implementation aligned with the current tempered-PMF/direct-geometry schema by removing unused compatibility paths, stale versioned metadata, scaffold code, and dead controls without changing the physical interaction model.
 
 # Architecture & Key Decisions
 
@@ -47,6 +47,24 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 - Revised Experimental Decision: Phase 11 uses the same `tau=10.0` tempered PMF hidden-state reduction for CGL-CGL, SC-CGL, CGL-particle, and SC-particle. This is a uniform configurational PMF over unresolved rigid orientations, not a guarantee of correct real-time dynamics. Validation must therefore check structure and dynamics-adjacent observables rather than assuming the PMF preserves kinetics.
 
 # Execution Phases
+
+- [x] Phase 15: Clean up `cg_lipid_potentials.tex` to match the cleaned hybrid implementation.
+  - [x] Inspect the current TeX for patch-history language, stale mixed-method descriptions, removed attrs/files, and contradictions with regenerated H5 metadata.
+  - [x] Rewrite the method flow as one coherent derivation for the current direct-geometry tempered-PMF tables.
+  - [x] Verify the TeX compiles and document any remaining caveats.
+
+- [x] Phase 14: Clean up hybrid-interface C++ and Python code.
+  - [x] Inventory active hybrid-interface source files and generated-schema entry points.
+  - [x] Identify unused scaffolding, obsolete compatibility branches, stale experiment/version metadata, and dead helper code in `src/martini*`, `src/box.*`, and `py/martini_*.py`.
+  - [x] Remove only code proven unused by call-site search or superseded active schema; keep runtime physics and spline-table semantics unchanged.
+  - [x] Run Python compile checks, C++ build checks, regenerated-H5 metadata audits, and at least a lightweight workflow preparation/simulation smoke test.
+  - [x] Document remaining cleanup risks or intentionally retained legacy interfaces.
+
+- [x] Phase 13: Diagnose reported CGL bilayer visual gap and messy orientation.
+  - [x] Identify the relevant current CGL output directories under `example/16.MARTINI/outputs`.
+  - [x] Quantify physical CGL leaflet geometry: COM separation, centerline tail gap, resolved bead-envelope gap, orientation distributions, flips, and crossings.
+  - [x] Compare physical HDF5 geometry against VTF display geometry to determine whether the gap is real or visualization-driven.
+  - [x] Decide whether a physical preparation/table fix or visualization/export adjustment is warranted.
 
 - [x] Phase 12: Physical-integrity audit of the uniform tempered-PMF implementation.
   - [x] Audit source code for twist/torsion coordinates, force caps, arbitrary interaction scaling, and standalone CGL orientation potentials.
@@ -104,7 +122,9 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 
 # Known Errors / Blockers
 
+- None for Phase 14. The initial rebuild check exposed two stale cleanup surfaces and both were fixed: `example/16.MARTINI/build_martini_h5_m1.sh` still passed removed fit-relax controls, and `py/martini_prepare_system.py` still wrote scalar protein position restraints while the cleaned runtime expects `spring_const_xyz`.
 - Phase 11 dynamics caveat: the focused 1RKL coarse structural diagnostic passes after a corrected production restart, but CGL lateral COM dynamics are faster than the active full-resolution DOPC COM reference at longer short-time lags. At lag `15.0` time units, CGL MSD is `1.400 A^2` and full DOPC COM MSD is `0.470 A^2`, implying an approximate effective-time scale factor of `0.34` for that observable on this short trajectory. This is a calibration issue, not something the tempered PMF itself can guarantee.
+- Phase 13 result: the current active coarse VTF gap is not a physical bilayer void. Direction-sign leaflet assignment gives no CGL flips or leaflet crossings in active `martini_1afo_hybrid` or `martini_1rkl_hybrid`; final tail-centerline gaps are negative (`-4.897 A` for 1AFO, `-3.807 A` for 1RKL), so the CGL tail centerlines overlap across the midplane. The visible gap comes from sparse vector rendering and viewer treatment of the synthetic CGL display radius, not from missing central attraction. The orientation looks somewhat noisy because CGL rods tilt thermally; final aligned-z min/p05/mean is `0.478/0.846/0.947` for 1AFO and `0.711/0.837/0.943` for 1RKL.
 - Phase 12 physical-integrity audit passed. Installed `dopc.h5` and `sidechain.h5`, plus the Phase 11 prepared/production `.up` files, have no CGL twist/orientation-potential node, no active force caps, no arbitrary interaction scaling, no hidden relaxation, no excluded-area/nonnegative projection, and no active duplicate-row normalization. A stale unread `nonprotein_hs_force_cap=100` metadata default was found and cleaned to `0.0`.
 - Phase 10 result: the universal production-temperature PMF experiment fails on the first coarse validation workflow, `run_sim_1rkl.sh`. The workflow completed, but the final bilayer/protein metrics are unacceptable: CGL aligned-z min/p05/mean `-0.063/0.448/0.821`, `bad_parallel=7`, `bad_flip=1`, leaflet crossings `4/4`, same-leaflet NN min/p05 `2.285/2.886 A`, protein hbond first/final/min/last20 `28.74/6.93/0.56/6.43`, and protein Rg first/final/last20 `12.56/10.40/10.37 A`. The remaining three workflows are intentionally not launched until the model decision is revised, because the one-method production-PMF model already fails the required acceptance criteria.
 - Phase 9 result: the universal `tau=10.0` tempered-PMF experiment fails the coarse CGL-orientation criterion. All four workflows completed, and protein/full-lipid metrics stayed stable, but final coarse CGL orientations contained flipped rods: `1AFO` had `bad_parallel=2`, `bad_flip=2`; `1RKL` had `bad_parallel=4`, `bad_flip=4`. Same-leaflet spacing and leaflet crossing checks did not indicate bilayer collapse, so the failure is specifically orientation transferability of the one-method table scheme. No physical fix was applied because the direct conclusion is that applying the same tempered-PMF reduction to all four pair classes does not work as a production model.
@@ -113,9 +133,12 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 
 # Review
 
+- Phase 15 TeX cleanup replaced the patch-history methods text with a single current-method description covering the CGL coordinate, rigid resolved dry-MARTINI energy, uniform `tau=10.0` tempered-PMF hidden-orientation reduction, log1p spline transform, CGL-CGL, SC-CGL, CGL-particle, SC-particle, runtime ownership, numerical evaluation, validation scope, and units. `pdflatex -interaction=nonstopmode -halt-on-error cg_lipid_potentials.tex` passed from the repo environment; LaTeX reported only overfull-box warnings from long HDF5 schema strings.
+- Phase 14 cleanup passed: Python compile for touched Martini modules, `bash -n` for MARTINI workflow wrappers, full C++ `make -C obj -j4`, regenerated `parameters/dryMARTINI/{particle,sidechain,dopc}.h5`, stale metadata audit for cap/scale/relax/schema markers, `example/16.MARTINI/test_cg_bilayer/run_test.sh`, and a short isolated 1RKL hybrid smoke in `outputs/phase14_1rkl_smoke2` through stage 6.0, stage 7.0 burn-in, stage 7.0 production, and VTF extraction. Runtime stage files contain SC-CGL full tensor `(18, 1, 2541)` and CGL-target `(1, 38, 25038)` tables with no removed force-cap/interface-scale/fit-relax attrs.
 - Phase 8 TeX cleanup passed two `pdflatex -interaction=nonstopmode -halt-on-error cg_lipid_potentials.tex` runs from the repo-root environment. LaTeX reported only small pre-existing-style overfull boxes, not errors.
 - Phase 11 uniform tempered-PMF implementation passed Python compile checks, H5 metadata validation for CGL-CGL/SC-CGL/CGL-particle/SC-particle, and a `pdflatex -interaction=nonstopmode -halt-on-error cg_lipid_potentials.tex` check. Focused 1RKL coarse structural validation passed, but CGL lateral MSD remains faster than the full-resolution DOPC COM reference at longer short-time lags, so lipid dynamics need effective-time calibration or a separate dissipative/friction model.
 - Phase 12 audit checks passed after setting the stale unread `nonprotein_hs_force_cap` default and Phase 11 checkpoint attributes to zero. `py_compile` passed for the touched Python files. The audit verified CGL-CGL, SC-CGL, CGL-particle, and SC-particle tables use `tau=10.0` tempered PMF with `fit_relax_steps=0`, `sample_dist_min_nm=1e-6`, no cap/scale attrs, and no twist attrs; runtime `martini_potential/force_cap=0`, `protein_env_interface_scale=1`, SC-env force caps are zero, and no CGL orientation/twist potential nodes are present.
+- Phase 13 diagnostic used stored `compose_vector6d/direction` signs for leaflet assignment. Median-z leaflet splitting can falsely report flips in wrapped/tiled CGL outputs; with the stored signs the active 1AFO and 1RKL coarse outputs have zero flips, zero crossings, overlapping tail centerlines, and acceptable same-leaflet spacing. No force-field or preparation change was made.
 - Active `martini_1afo_hybrid_full` stage-7 metrics after the fix: hbond first/final/min/last20 `86.74/72.97/62.61/69.77`, Rg first/final/last20 `15.81/15.60/15.55 A`, within-chain final CA consecutive min/p50/max `3.23/3.77/4.31 A`, within-chain final CA(i)-CA(i+4) min/p50/max `4.65/6.29/12.30 A`.
 - Production restraint audit: `/input/potential/restraint_position` is absent from the active stage-7 production file.
 - Mapping provenance: `61` structure-geometry residues, `7` coil fallback residues, and `4` terminal charge overrides.

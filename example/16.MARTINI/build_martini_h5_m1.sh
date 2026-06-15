@@ -29,18 +29,15 @@ if [ -z "${UPSIDE_MARTINI_TABLE_WORKERS+x}" ]; then
     export UPSIDE_MARTINI_TABLE_WORKERS
 fi
 
-# CGL tables must use direct rotated dry-MARTINI bead geometry.
-UPSIDE_MARTINI_FIT_RELAX_STEPS=0
+# CGL tables use direct rotated dry-MARTINI bead geometry.
 UPSIDE_MARTINI_CGL_BEAD_FRAME_COUNT=8
-export UPSIDE_MARTINI_FIT_RELAX_STEPS
 export UPSIDE_MARTINI_CGL_BEAD_FRAME_COUNT
 
 echo "Regenerating dry-MARTINI .h5 files under ${PROJECT_ROOT}/parameters/dryMARTINI"
-echo "Using ${UPSIDE_MARTINI_TABLE_WORKERS} MARTINI table worker(s), ${UPSIDE_MARTINI_FIT_RELAX_STEPS} fit relax step(s), ${UPSIDE_MARTINI_CGL_BEAD_FRAME_COUNT} CGL bead-frame sample(s)"
+echo "Using ${UPSIDE_MARTINI_TABLE_WORKERS} MARTINI table worker(s), ${UPSIDE_MARTINI_CGL_BEAD_FRAME_COUNT} CGL bead-frame sample(s)"
 
 python3 "${PROJECT_ROOT}/py/martini_gen_params.py" \
     --upside-home "${PROJECT_ROOT}" \
     --force \
     --workers "${UPSIDE_MARTINI_TABLE_WORKERS}" \
-    --fit-relax-steps "${UPSIDE_MARTINI_FIT_RELAX_STEPS}" \
     "$@"

@@ -330,47 +330,12 @@ float compute_sc_backbone_feedback_mix(const HybridRuntimeState& st) {
     return float(st.sc_env_transition_step) / float(final_hold_step);
 }
 
-static inline bool active_sc_env_force_ramp_enabled(const HybridRuntimeState& st) {
-    return st.enabled &&
-           st.active &&
-           st.sc_env_relax_steps > 0 &&
-           st.sc_env_transition_step < static_cast<uint64_t>(st.sc_env_relax_steps);
-}
-
 static inline bool active_sc_env_po4_z_hold_enabled(const HybridRuntimeState& st) {
     return st.enabled &&
            st.active &&
            st.sc_env_po4_z_clamp_enabled &&
            st.sc_env_po4_z_hold_steps > 0 &&
            st.sc_env_transition_step < static_cast<uint64_t>(st.sc_env_po4_z_hold_steps);
-}
-
-static inline bool active_cross_interface_pair(
-        const HybridRuntimeState& st,
-        bool i_is_protein,
-        bool j_is_protein) {
-    return st.enabled && st.active && (i_is_protein != j_is_protein);
-}
-
-float active_interface_interaction_scale(
-        const HybridRuntimeState& st,
-        bool i_is_protein,
-        bool j_is_protein) {
-    return active_cross_interface_pair(st, i_is_protein, j_is_protein)
-               ? st.protein_env_interface_scale
-               : 1.f;
-}
-
-bool deterministic_startup_pair_cap_enabled(
-        const HybridRuntimeState& st,
-        bool i_is_protein,
-        bool j_is_protein,
-        unsigned char i_role,
-        unsigned char j_role) {
-    if(!active_sc_env_force_ramp_enabled(st)) return false;
-    if(i_is_protein == j_is_protein) return false;
-    unsigned char protein_role = i_is_protein ? i_role : j_role;
-    return protein_role == ROLE_BB || protein_role == ROLE_SC;
 }
 
 void initialize_sc_env_po4_z_reference(
@@ -416,7 +381,7 @@ static inline bool allow_protein_pair_by_rule(const HybridRuntimeState& st, int 
     (void)j;
     // In the direct-Upside active stage, protein internal MARTINI proxy terms
     // are bookkeeping only. Keeping any proxy-proxy protein interaction live
-    // leaks legacy bonded/nonbonded energy into the production bucket without
+    // adds proxy bonded/nonbonded energy to the production bucket without
     // feeding that force back through the Upside carrier path.
     return false;
 }
@@ -504,11 +469,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.exclude_intra_protein_martini =
         (read_attribute<int>(ctrl.get(), ".", "exclude_intra_protein_martini", 1) != 0);
     out.preprod_rigid = (out.preprod_mode == "rigid" || out.preprod_mode == "rigid_body");
-    out.protein_env_interface_scale =
-        read_attribute<float>(ctrl.get(), ".", "protein_env_interface_scale", out.protein_env_interface_scale);
-    out.sc_env_lj_force_cap = read_attribute<float>(ctrl.get(), ".", "sc_env_lj_force_cap", out.sc_env_lj_force_cap);
-    out.sc_env_coul_force_cap = read_attribute<float>(ctrl.get(), ".", "sc_env_coul_force_cap", out.sc_env_coul_force_cap);
-    out.sc_env_relax_steps = read_attribute<int>(ctrl.get(), ".", "sc_env_relax_steps", out.sc_env_relax_steps);
     out.sc_env_backbone_hold_steps =
         read_attribute<int>(ctrl.get(), ".", "sc_env_backbone_hold_steps", out.sc_env_backbone_hold_steps);
     out.sc_env_po4_z_hold_steps =
@@ -518,14 +478,8 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     int transition_start = read_attribute<int>(ctrl.get(), ".", "sc_env_transition_step_start", 0);
     out.sc_env_transition_step_start = static_cast<uint64_t>(std::max(0, transition_start));
     out.sc_env_transition_step = out.sc_env_transition_step_start;
-    if(out.sc_env_lj_force_cap < 0.f) out.sc_env_lj_force_cap = 0.f;
-    if(out.sc_env_coul_force_cap < 0.f) out.sc_env_coul_force_cap = 0.f;
-    if(out.sc_env_relax_steps < 1) out.sc_env_relax_steps = 1;
     if(out.sc_env_backbone_hold_steps < 0) out.sc_env_backbone_hold_steps = 0;
     if(out.sc_env_po4_z_hold_steps < 0) out.sc_env_po4_z_hold_steps = 0;
-    if(!(out.protein_env_interface_scale > 0.f) || !std::isfinite(out.protein_env_interface_scale)) {
-        throw string("hybrid_control/protein_env_interface_scale must be finite and > 0");
-    }
 
     if(!out.enabled) {
         return out;
@@ -911,24 +865,6 @@ double get_last_bb_env_interface_potential(const DerivEngine& engine) {
     auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
     if(it == g_hybrid_state.end() || !it->second) return 0.0;
     return static_cast<double>(it->second->bb_env_interface_potential);
-}
-
-float compute_sc_force_uncap_mix(const HybridRuntimeState& st) {
-    if(st.sc_env_relax_steps <= 1) return 1.f;
-
-    uint64_t final_ramp_step = static_cast<uint64_t>(st.sc_env_relax_steps - 1);
-    if(st.sc_env_transition_step >= final_ramp_step) return 1.f;
-
-    return float(st.sc_env_transition_step) / float(final_ramp_step);
-}
-
-void cap_force_vector(Vec<3>& force, float cap_mag) {
-    if(!(cap_mag > 0.f)) return;
-    float force2 = mag2(force);
-    float cap2 = cap_mag * cap_mag;
-    if(force2 > cap2 && force2 > 0.f) {
-        force *= cap_mag / sqrtf(force2);
-    }
 }
 
 bool preproduction_requires_rigid(const DerivEngine& engine) {

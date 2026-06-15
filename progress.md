@@ -1,5 +1,20 @@
 # Progress Log
 
+## 2026-06-14 Phase 13 CGL Gap / Orientation Diagnostic
+- Actions taken:
+  - Rechecked active coarse outputs under `example/16.MARTINI/outputs/martini_1afo_hybrid` and `example/16.MARTINI/outputs/martini_1rkl_hybrid`.
+  - Quantified CGL leaflet geometry from HDF5 `output/pos` and compared it to the synthetic VTF display geometry.
+  - Corrected the diagnostic assignment to use stored `input/potential/compose_vector6d/direction` signs instead of median-z splitting, which can mislabel wrapped/tiled CGL lipids.
+- Files modified:
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification:
+  - Active 1AFO coarse final: direction-sign aligned-z min/p05/mean `0.478/0.846/0.947`, no flips, no leaflet crossings, same-leaflet XY NN p05 lower/upper `7.593/6.958 A`, tail-centerline gap `-4.897 A`.
+  - Active 1RKL coarse final: direction-sign aligned-z min/p05/mean `0.711/0.837/0.943`, no flips, no leaflet crossings, same-leaflet XY NN p05 lower/upper `7.160/6.365 A`, tail-centerline gap `-3.807 A`.
+  - The active VTF files already contain `radius 4.114` for CGL display atoms, derived from the DOPC perpendicular bead envelope. If the viewer ignores that radius or displays only sparse rods/points, the bilayer center can look visually open despite overlapping physical/display envelopes.
+  - No force-field, preparation, or visualization code change was made.
+
 ## 2026-06-14 Phase 11 Universal Tempered-PMF Debug
 - Actions taken:
   - Switched the active experiment to the user's required single method: `tau=10.0` tempered PMF for CGL-CGL, SC-CGL, CGL-particle, and SC-particle.
@@ -513,3 +528,14 @@
   - SC-CGL: `boltzmann_free_energy`, `azimuthal_average_temperature_upside=0.8647`, `energy_transform=log1p_reduced_pmf`, `n_sc_types=18`.
   - CGL-particle: `boltzmann_free_energy`, `azimuthal_average_temperature_upside=0.8647`, `energy_transform=log1p_reduced_pmf`, `n_target_types=38`.
   - SC-particle: `boltzmann_free_energy`, `azimuthal_average_temperature_upside=0.8647`, full radial-angular runtime grid.
+# Phase 14 cleanup
+
+- Removed dead hybrid-interface cap/scale controls, hidden-relaxation table code, obsolete schema/version labels, and stale `interlipid.h5` requirements from the active C++/Python hybrid path.
+- Fixed two cleanup regressions found by verification: removed stale `--fit-relax-steps` use from `example/16.MARTINI/build_martini_h5_m1.sh`, and updated protein burn-in restraints to write `spring_const_xyz` in `py/martini_prepare_system.py`.
+- Verification passed: Python compile checks, shell syntax checks, C++ `make -C obj -j4`, `git diff --check`, regenerated dry-MARTINI H5 files, stale metadata audits, `test_cg_bilayer/run_test.sh`, and a short isolated 1RKL hybrid smoke through stage 7.0 production plus VTF extraction.
+
+# Phase 15 TeX cleanup
+
+- Rewrote `example/16.MARTINI/cg_lipid_potentials.tex` as a coherent current-method document instead of a sequence of historical patches.
+- Removed stale mixed-method language, `_v1` schema names, fit-relax metadata, weighted-expectation alternative text, and references to legacy retained datasets.
+- Verified with `pdflatex -interaction=nonstopmode -halt-on-error cg_lipid_potentials.tex`; compile passed with only overfull-box warnings from long schema strings.

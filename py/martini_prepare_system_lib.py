@@ -95,7 +95,7 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
     if cglt is None:
         return
     schema = _decode_h5_attr(cglt.attrs.get("derivation_schema", ""))
-    if schema != "dry_martini_dopc_derived_v1":
+    if schema != "dry_martini_dopc_derived":
         raise RuntimeError(
             f"Stale CG lipid table in {source_path}: missing DOPC-derived parameter schema. "
             "Rebuild martini.h5 before stage injection."
@@ -177,7 +177,6 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         azimuthal_average = _decode_h5_attr(pair_grp.attrs.get("azimuthal_average", ""))
         isotropic_background_source = _decode_h5_attr(pair_grp.attrs.get("isotropic_background_source", ""))
         attractive_control_source = _decode_h5_attr(pair_grp.attrs.get("attractive_control_source", ""))
-        fit_relax_steps = int(pair_grp.attrs.get("fit_relax_steps", -1))
         fit_r_min_nm = float(pair_grp.attrs.get("fit_r_min_nm", 999.0))
         bead_cutoff_nm = float(pair_grp.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
         azimuthal_average_temperature = float(pair_grp.attrs.get("azimuthal_average_temperature_upside", 0.0))
@@ -186,7 +185,7 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         log1p_reduced_transform = int(pair_grp.attrs.get("log1p_reduced_transform", 0))
         excluded_area_source = _decode_h5_attr(pair_grp.attrs.get("excluded_area_source", ""))
         excluded_area_nonnegative_rows = int(pair_grp.attrs.get("excluded_area_nonnegative_rows", 0))
-        has_old_caps = "energy_cap_kj_mol" in pair_grp.attrs
+        has_removed_caps = "energy_cap_kj_mol" in pair_grp.attrs
         if (
             core_source not in (
                 "max_first_sampled_dry_martini_energy_expectation",
@@ -201,16 +200,15 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
             or "reference_energy_eup" not in pair_grp
             or isotropic_background_source not in ("none_full_resolved_dry_martini_pair_table", "attractive_radial_angular_mean_subtracted")
             or attractive_control_source not in ("retained_full_resolved_dry_martini_pair_table", "nontransferable_many_neighbor_cgl_cgl_attraction_removed")
-            or fit_relax_steps != 0
             or fit_r_min_nm > 0.500001
             or abs(bead_cutoff_nm - 1.2) > 1.0e-6
             or excluded_area_source != "none_full_resolved_dry_martini_pair_table"
             or excluded_area_nonnegative_rows != 0
-            or has_old_caps
+            or has_removed_caps
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_pair lacks the "
-                "dry-MARTINI direct rotated-geometry tempered-PMF samples without hidden-bead relaxation, full resolved lipid-lipid "
+                "dry-MARTINI direct rotated-geometry tempered-PMF samples, full resolved lipid-lipid "
                 "attractions, or bead-level nonbonded cutoff. Rebuild martini.h5 so "
                 "CGL-CGL interactions are represented by the force-field-derived spline "
                 "table rather than a separate correction or stripped cohesive background."
@@ -227,11 +225,10 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         control_quantity = _decode_h5_attr(sc_grp.attrs.get("spline_control_quantity", ""))
         log1p_reduced_transform = int(sc_grp.attrs.get("log1p_reduced_transform", 0))
         excluded_area_nonnegative_rows = int(sc_grp.attrs.get("excluded_area_nonnegative_rows", 0))
-        fit_relax_steps = int(sc_grp.attrs.get("fit_relax_steps", -1))
         bead_cutoff_nm = float(sc_grp.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
-        has_old_caps = "energy_cap_kj_mol" in sc_grp.attrs or "residual_cap_kj_mol" in sc_grp.attrs
+        has_removed_caps = "energy_cap_kj_mol" in sc_grp.attrs or "residual_cap_kj_mol" in sc_grp.attrs
         if n_sc_types > 0 and (
-            has_old_caps
+            has_removed_caps
             or short_core_source != "angular_resolved_first_sampled_dry_martini_energy"
             or azimuthal_average != "tempered_boltzmann_free_energy"
             or abs(azimuthal_average_temperature - 10.0) > 1.0e-6
@@ -242,12 +239,11 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
             or excluded_area_source != "none_full_resolved_dry_martini_sc_cgl_table"
             or radial_support_source != "max_dopc_bead_radius_plus_dry_martini_cutoff"
             or excluded_area_nonnegative_rows != 0
-            or fit_relax_steps != 0
             or abs(bead_cutoff_nm - 1.2) > 1.0e-6
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_sc lacks the "
-                "dry-MARTINI direct rotated-geometry full-tensor log1p tempered-PMF without hidden-bead relaxation, "
+                "dry-MARTINI direct rotated-geometry full-tensor log1p tempered-PMF, "
                 "direct physical excluded-area metadata, extended SC-CGL support, bead-level nonbonded cutoff, or still carries fixed fitting caps. "
                 "Rebuild martini.h5 so CGL-SC overlap is represented by force-field-derived "
                 "table values."
@@ -1300,7 +1296,7 @@ def collect_backbone_only_bb_map(
             coords_row.append([float(atom["x"]), float(atom["y"]), float(atom["z"])])
         bb_type = str(bb_type_by_residue.get(key, "P5")).strip()
         bb_secondary = str((bb_secondary_by_residue or {}).get(key, "C")).strip() or "C"
-        bb_type_source = str((bb_type_source_by_residue or {}).get(key, "legacy_default")).strip()
+        bb_type_source = str((bb_type_source_by_residue or {}).get(key, "structure_default")).strip()
         bb_entries.append(
             {
                 "bb_residue_index": seq_idx,
@@ -1365,7 +1361,7 @@ def build_backbone_with_virtual_bb(
 
         bb_type = str(bb_type_by_residue.get(key, "P5")).strip()
         bb_secondary = str((bb_secondary_by_residue or {}).get(key, "C")).strip() or "C"
-        bb_type_source = str((bb_type_source_by_residue or {}).get(key, "legacy_default")).strip()
+        bb_type_source = str((bb_type_source_by_residue or {}).get(key, "structure_default")).strip()
         proxy = deepcopy(backbone_atoms[role_map["CA"]])
         proxy["name"] = "BB"
         proxy["x"] = float(com[0])
@@ -1443,10 +1439,7 @@ def write_hybrid_mapping_h5(
         ctrl.attrs["preprod_protein_mode"] = b"rigid_body"
         ctrl.attrs["preprod_lipid_headgroup_roles"] = b"PO4"
         ctrl.attrs["exclude_intra_protein_martini"] = np.int8(1)
-        ctrl.attrs["production_nonprotein_hard_sphere"] = np.int8(0)
-        ctrl.attrs["protein_env_interface_scale"] = np.float32(1.0)
         ctrl.attrs["virtual_backbone_com_mode"] = np.int8(1)
-        ctrl.attrs["schema_version"] = np.int32(1)
 
         bb_grp = inp.create_group("hybrid_bb_map")
         bb_grp.attrs["atom_index_space"] = b"protein_aa_pdb_0based"
@@ -1494,7 +1487,7 @@ def write_hybrid_mapping_h5(
         bb_grp.create_dataset(
             "bb_type_source",
             data=np.array(
-                [str(b.get("bb_type_source", "legacy_default")).strip() for b in bb_entries],
+                [str(b.get("bb_type_source", "structure_default")).strip() for b in bb_entries],
                 dtype=h5py.string_dtype(encoding="utf-8"),
             ),
         )
@@ -2732,13 +2725,13 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             barostat_grp._v_attrs.target_p_xy = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '0.000020659'))
             barostat_grp._v_attrs.target_p_z = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '0.000020659'))
             barostat_grp._v_attrs.tau_p = float(os.environ.get('UPSIDE_NPT_TAU', '1.0'))
-            legacy_compressibility = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '14.521180763676'))
-            barostat_grp._v_attrs.compressibility = legacy_compressibility
+            base_compressibility = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '14.521180763676'))
+            barostat_grp._v_attrs.compressibility = base_compressibility
             barostat_grp._v_attrs.compressibility_xy = float(
-                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_XY', str(legacy_compressibility))
+                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_XY', str(base_compressibility))
             )
             barostat_grp._v_attrs.compressibility_z = float(
-                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_Z', str(legacy_compressibility))
+                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_Z', str(base_compressibility))
             )
             barostat_grp._v_attrs.interval = int(os.environ.get('UPSIDE_NPT_INTERVAL', '10'))
             barostat_grp._v_attrs.semi_isotropic = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
@@ -2830,23 +2823,10 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         martini_potential._v_attrs.cutoff = 12.0
         martini_potential._v_attrs.cache_buffer = 1.0
         martini_potential._v_attrs.initialized = True
-        force_cap = float(os.environ.get('UPSIDE_FORCE_CAP', '0'))
-        martini_potential._v_attrs.force_cap = force_cap
-        
+
         martini_potential._v_attrs.x_len = x_len
         martini_potential._v_attrs.y_len = y_len
         martini_potential._v_attrs.z_len = z_len
-        # Optional softening controls via environment variables
-        # UPSIDE_SOFTEN_COULOMB: 1 to enable Slater softening for Coulomb
-        # UPSIDE_SLATER_ALPHA: float value for Slater alpha (1/Angstrom)
-        # UPSIDE_SOFTEN_LJ: 1 to enable soft-core LJ
-        # UPSIDE_LJ_ALPHA: float value for LJ softening alpha (dimensionless)
-        soften_coul = int(os.environ.get('UPSIDE_SOFTEN_COULOMB', '0'))
-        slater_alpha = float(os.environ.get('UPSIDE_SLATER_ALPHA', '1.0'))
-        soften_lj = int(os.environ.get('UPSIDE_SOFTEN_LJ', '0'))
-        lj_alpha = float(os.environ.get('UPSIDE_LJ_ALPHA', '1.0'))
-        
-        # Set stage-specific softening parameters
         martini_potential._v_attrs.coulomb_soften = params['coulomb_soften']
         if params['coulomb_soften']:
             martini_potential._v_attrs.slater_alpha = params['slater_alpha']
@@ -3071,12 +3051,9 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             dihedral_group._v_attrs.y_len = y_len
             dihedral_group._v_attrs.z_len = z_len
             t.create_array(dihedral_group, 'id', obj=np.array(dihedrals_list, dtype=int))
-            # Some builds of UPSIDE expect 'equil_dist' for this potential; write both names for compatibility
             eq_deg = np.array(dihedral_equil_deg_list, dtype='f4')
             t.create_array(dihedral_group, 'equil_angle_deg', obj=eq_deg)
-            t.create_array(dihedral_group, 'equil_dist', obj=eq_deg)
             t.create_array(dihedral_group, 'spring_const', obj=np.array(dihedral_force_constants_list, dtype='f4'))
-            # Store dihedral type information (1=periodic, 2=harmonic)
             t.create_array(dihedral_group, 'dihedral_type', obj=np.array(dihedral_type_list, dtype=int))
 
         # Position restraints (dry MARTINI lipid-head ramp before production)
@@ -3092,8 +3069,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             )
             spring_xyz = np.array(lipid_restraint_spring_xyz, dtype='f4')
             t.create_array(restraint_group, 'spring_const_xyz', obj=spring_xyz)
-            # Backward-compatible scalar spring constant for older readers.
-            t.create_array(restraint_group, 'spring_const', obj=np.max(spring_xyz, axis=1).astype('f4'))
 
         if lipid_resolution == "coarse" and n_cg_lipids > 0:
             compose_grp = t.create_group(potential_grp, 'compose_vector6d')
@@ -3106,7 +3081,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             compose_grp._v_attrs.orientation_mass_g_mol = cg_lipid_orientation_mass_g
             compose_grp._v_attrs.orientation_bond_fc_eup_a2 = cg_lipid_orientation_bond_fc
             if cg_lipid_derived_params is not None:
-                compose_grp._v_attrs.derivation_schema = "dry_martini_dopc_derived_v1"
+                compose_grp._v_attrs.derivation_schema = "dry_martini_dopc_derived"
                 for attr_name in (
                     "contact_nm",
                     "contact_ang",
@@ -3212,17 +3187,9 @@ def validate_hybrid_mapping(mapping_h5: Path, n_atom: int | None = None):
             "activation_stage",
             "preprod_protein_mode",
             "exclude_intra_protein_martini",
-            "schema_version",
         ]:
             if attr not in ctrl.attrs:
                 raise ValueError(f"Missing hybrid_control attr: {attr}")
-
-        if "protein_env_interface_scale" in ctrl.attrs:
-            interface_scale = float(ctrl.attrs["protein_env_interface_scale"])
-            if not np.isfinite(interface_scale) or interface_scale <= 0.0:
-                raise ValueError(
-                    "hybrid_control/protein_env_interface_scale must be finite and > 0"
-                )
 
         bb_atom_idx = require_dataset(bb, "bb_atom_index")[:]
         bb_atom_map = require_dataset(bb, "atom_indices")[:]

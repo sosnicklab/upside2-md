@@ -1,6 +1,28 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-14: Phase 14 cleanup verification lesson.
+  - When removing an H5 reader fallback, audit every writer that can create
+    that node, including transient workflow helpers. The cleaned
+    `restraint_position` runtime correctly requires `spring_const_xyz`, but
+    stage-7 burn-in still wrote the old scalar `spring_const` until the short
+    hybrid smoke exercised that path.
+  - Wrapper scripts are part of the schema surface. Removing generator options
+    such as fit-relax controls also requires updating build wrappers before
+    regenerated-H5 validation can be trusted.
+- 2026-06-14: Current active CGL gap/orientation diagnostic.
+  - The reported central CGL bilayer gap in active coarse outputs is not a
+    physical void in the HDF5 trajectory. Using stored CGL direction signs for
+    leaflet assignment, active 1AFO and 1RKL coarse stage-7 finals have no CGL
+    flips, no leaflet crossings, and negative tail-centerline gaps
+    (`-4.897 A` and `-3.807 A` respectively).
+  - Median-z leaflet splitting can falsely report flips in wrapped/tiled CGL
+    systems. For CGL orientation diagnostics, use
+    `input/potential/compose_vector6d/direction` when present.
+  - The VTF files already carry `radius 4.114` on synthetic CGL display atoms.
+    A viewer/rendering mode that ignores atom radius or emphasizes only sparse
+    rods/points can still show an apparent center gap even though the DOPC bead
+    envelope represented by the CGL vector overlaps across the midplane.
 - 2026-06-14: Physical-integrity audit of uniform tempered PMF.
   - The active uniform tempered-PMF implementation satisfies the requested
     physical-design constraints in the audited artifacts: no CGL twist

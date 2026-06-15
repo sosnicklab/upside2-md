@@ -3,45 +3,43 @@
 
 \begin{document}
 
-\section{Single-Particle Lipid Model for Hybrid Simulations}
+\section{Single-Vector dry-MARTINI Lipid Model}
 
-\subsection{Coarse Lipid Coordinates}
+\subsection{Coarse Lipid State}
 
-We represent each dry-MARTINI DOPC molecule by one oriented coarse lipid
-particle, denoted CGL.  The coarse position $\mathbf{R}$ is the geometric
-center of the 14 dry-MARTINI DOPC beads, and the coarse direction
-$\hat{\mathbf{n}}$ is the unit vector from the NC3 head bead to the midpoint of
-the terminal tail beads C5A and C5B.  The resolved DOPC bead coordinates used
-below are first centered at $\mathbf{R}=\mathbf{0}$ and rotated so that this
-head-to-tail axis is the canonical lipid axis.
+Each dry-MARTINI DOPC molecule is represented by one oriented coarse lipid
+particle, CGL.  Its position $\mathbf{R}$ is the geometric center of the
+14 dry-MARTINI DOPC beads.  Its direction $\hat{\mathbf{n}}$ is the unit vector
+from the NC3 head bead to the midpoint of the terminal C5A and C5B tail beads.
+The canonical resolved DOPC geometry used for table generation is centered at
+$\mathbf{R}=\mathbf{0}$ and rotated so that this head-to-tail vector lies on
+the body-frame lipid axis.
 
-Upside stores oriented particles through ordinary Cartesian sites.  The CGL
-orientation is therefore carried by a companion site, CGLD, at
+Upside stores the direction using a companion Cartesian site, CGLD,
 \begin{equation}
-  \mathbf{R}_{\mathrm{CGLD}}=\mathbf{R}+\ell\hat{\mathbf{n}},
+  \mathbf{R}_{\mathrm{CGLD}} = \mathbf{R}+\ell\hat{\mathbf{n}},
 \end{equation}
-connected to CGL by a harmonic bond,
+with harmonic carrier energy
 \begin{equation}
-  U_{\mathrm{CGL-CGLD}} =
+  U_{\mathrm{CGLD}} =
   \frac{1}{2}k_{\mathrm{CGLD}}
   \left(|\mathbf{R}_{\mathrm{CGLD}}-\mathbf{R}|-\ell\right)^2 .
 \end{equation}
-CGLD is a numerical orientation carrier, not a dry-MARTINI bead.  It has no
-nonbonded interactions and no separate orientation potential.  All lipid
-orientation preferences in the simulation come from the two-body spline
-interactions described below.
+CGLD is a numerical direction carrier, not a dry-MARTINI bead.  It has no
+nonbonded interactions and no standalone orientation potential.  All CGL
+orientation preferences come from the tabulated two-body interactions below.
 
-The carrier parameters are derived from the same canonical DOPC geometry and
-dry-MARTINI bonded topology used to build the nonbonded tables.  If
-$\mathbf{x}_i$ and $m_i$ are the centered DOPC bead positions and masses,
+The carrier length, mass, and bond stiffness are derived from the canonical
+DOPC geometry and bonded topology.  With centered bead positions
+$\mathbf{x}_i$, bead masses $m_i$, and tail midpoint
+$\mathbf{x}_{\mathrm{tail}}$,
 \begin{align}
   \ell &= \left|\mathbf{x}_{\mathrm{tail}}\cdot\hat{\mathbf{n}}\right|,\\
   I_\perp &= \sum_i m_i
   \left(|\mathbf{x}_i|^2-(\mathbf{x}_i\cdot\hat{\mathbf{n}})^2\right),\\
   M_{\mathrm{CGLD}} &= I_\perp/\ell^2 .
 \end{align}
-The projected dry-MARTINI bonded stiffness along the CGL axis is retained as
-metadata,
+The projected dry-MARTINI bonded stiffness is
 \begin{equation}
   k_{\mathrm{proj}} =
   \frac{1}{\kappa_E\kappa_L^2}
@@ -50,358 +48,277 @@ metadata,
 \end{equation}
 where $k_{ij}$ is in $\mathrm{kJ\,mol^{-1}\,nm^{-2}}$,
 $\kappa_E=2.914952774272~\mathrm{kJ\,mol^{-1}}/E_{\mathrm{up}}$, and
-$\kappa_L=10~\text{\AA}/\mathrm{nm}$.  The runtime carrier bond uses
-$k_{\mathrm{CGLD}}=2k_{\mathrm{proj}}$ to keep the numerical direction vector
-well constrained under tabulated torques.  For the current DOPC reference
-geometry this gives $\ell=11.139~\text{\AA}$,
-$M_{\mathrm{CGLD}}=77.049~\mathrm{g\,mol^{-1}}$,
-$k_{\mathrm{proj}}=39.436~E_{\mathrm{up}}\text{\AA}^{-2}$, and
-$k_{\mathrm{CGLD}}=78.872~E_{\mathrm{up}}\text{\AA}^{-2}$.
+$\kappa_L=10~\text{\AA}/\mathrm{nm}$.  Runtime uses
+$k_{\mathrm{CGLD}}=2k_{\mathrm{proj}}$ for a stiff numerical direction
+carrier.  For the DOPC reference geometry,
+\[
+  \ell=11.139~\text{\AA},\quad
+  M_{\mathrm{CGLD}}=77.049~\mathrm{g\,mol^{-1}},\quad
+  k_{\mathrm{CGLD}}=78.872~E_{\mathrm{up}}\text{\AA}^{-2}.
+\]
 
-\subsection{Underlying Dry-MARTINI Energy}
+\subsection{Resolved dry-MARTINI Energy}
 
-All lipid-environment tables are built from explicit dry-MARTINI bead
-geometries.  For bead pair $i,j$ separated by $d$,
+All CGL tables are generated from explicit dry-MARTINI bead energies.  For bead
+pair $i,j$ separated by distance $d$,
 \begin{equation}
   u_{ij}(d) =
-  4\epsilon_{ij}\left[\left(\frac{\sigma_{ij}}{d}\right)^{12}
+  4\epsilon_{ij}
+  \left[\left(\frac{\sigma_{ij}}{d}\right)^{12}
   -\left(\frac{\sigma_{ij}}{d}\right)^6\right]
-  + \frac{k_e q_i q_j}{d},
-  \qquad d < r_c ,
+  +\frac{k_e q_i q_j}{d},
+  \qquad d<r_c,
 \end{equation}
-and $u_{ij}=0$ outside the dry-MARTINI nonbonded cutoff
-$r_c=1.2~\mathrm{nm}$.  Bead types, Lennard-Jones parameters, charges, and
-masses are read from the dry-MARTINI topology.  Training artifacts remain in
-native dry-MARTINI units; conversion to Upside units is applied only when
-tables are written to or read from simulation HDF5 files.
+and $u_{ij}=0$ for $d\ge r_c$, with dry-MARTINI cutoff
+$r_c=1.2~\mathrm{nm}$.  Bead types, Lennard-Jones parameters, charges, masses,
+and bonded topology are read from the dry-MARTINI files.
 
-The table builder evaluates this direct bead energy on rigidly rotated
-geometries.  The canonical DOPC body is not internally deformed during table
-construction; tail bending and other DOPC conformational fluctuations are
-therefore not sampled by the current CGL tables.  The unresolved coordinates
-defined below are rigid-body bead-frame orientations that are absent from the
-runtime CGL state.  The builder does not relax hidden beads, soften
-Lennard-Jones cores, add WCA terms, subtract isotropic backgrounds, remove
-attractive controls, scale specific interactions, or cap forces.  Exact bead
-coincidence is avoided only by the numerical singularity guard
+The table builder evaluates these energies on rigidly rotated canonical bead
+geometries.  The CGL model integrates out unresolved rigid orientations of the
+canonical bodies, not internal conformational changes of DOPC.  In particular,
+the table generation does not bend DOPC tails or relax hidden beads.  The model
+also does not introduce force caps, interaction scaling, nonnegative
+projections, excluded-area corrections, WCA replacements, or a separate CGL
+orientation term.  A numerical singularity guard,
 \begin{equation}
   d_{\mathrm{eval}}=\max(d,10^{-6}~\mathrm{nm}),
 \end{equation}
-which is recorded in each HDF5 group as a numerical zero guard.  This guard is
-far below any physical bead radius and is not a model parameter.
+is used only to avoid division by zero at exact bead coincidence.
 
-\subsection{Unresolved Coordinates, Averages, and Spline Transform}
-
-The runtime CGL state resolves only $\mathbf{R}$ and $\hat{\mathbf{n}}$.
-A rigid 14-bead DOPC body, however, still has a rotation around
-$\hat{\mathbf{n}}$ that leaves the CGL state unchanged.  Pair coordinates such
-as $(r,a_1,a_2)$ also do not fully specify all azimuthal placements of the
-two local direction vectors around the pair axis.  These missing rigid-body
-orientations are denoted by $\omega$.  They are hidden because different
-values of $\omega$ give the same runtime coordinates but different resolved
-bead positions and therefore different dry-MARTINI energies.
-
-For a fixed runtime coordinate $x$, let $U(x,\omega)$ be the explicit
-dry-MARTINI energy for one hidden orientation $\omega$ with quadrature weight
-$w_\omega$.  Continuous integration over hidden coordinates is approximated by
-the sampled quadrature
+Source dry-MARTINI parameters remain in native units.  Conversion to Upside
+units is explicit in table generation and runtime loading:
 \begin{equation}
-  \int d\omega\, f(\omega)
-  \simeq
-  \sum_\omega w_\omega f(\omega).
+  1~E_{\mathrm{up}}=2.914952774272~\mathrm{kJ\,mol^{-1}},
+  \qquad 1~\mathrm{nm}=10~\text{\AA}.
 \end{equation}
-Two hidden-state reductions are useful to distinguish.  The first is
-the weighted energy expectation
-\begin{equation}
-  \bar{U}(x)=
-  \frac{\sum_\omega w_\omega U(x,\omega)}
-       {\sum_\omega w_\omega},
-\end{equation}
-which integrates out the hidden coordinates by averaging the sampled energies
-directly.  The second is the finite-temperature potential of mean force (PMF)
+
+\subsection{Hidden Orientations and Tempered PMF}
+
+The runtime CGL state resolves only $\mathbf{R}$ and $\hat{\mathbf{n}}$.  A
+rigid DOPC body with the same $\mathbf{R}$ and $\hat{\mathbf{n}}$ can still be
+rotated around $\hat{\mathbf{n}}$.  Pair coordinates also leave unresolved
+azimuthal placements of direction vectors around the pair axis.  These
+unresolved rigid-body coordinates are denoted collectively by $\omega$.
+
+For a runtime coordinate $x$, let $U(x,\omega)$ be the explicit bead energy for
+one hidden orientation and let $w_\omega$ be its quadrature weight.  The model
+uses a tempered potential of mean force for all hidden-orientation reductions:
 \begin{equation}
   F_\tau(x)=
-  -k_B\tau\log
-  \frac{\sum_\omega w_\omega\exp[-U(x,\omega)/(k_B\tau)]}
-       {\sum_\omega w_\omega}.
+  -k_B\tau
+  \log
+  \frac{\sum_\omega w_\omega
+  \exp[-U(x,\omega)/(k_B\tau)]}
+  {\sum_\omega w_\omega},
+  \qquad \tau=10.0 .
 \end{equation}
-Here $\tau$ is an averaging temperature in Upside temperature units.  The PMF
-is a log-sum-exp, or soft-minimum, over the sampled hidden energies.  As
-$\tau\rightarrow 0$, the lowest-energy hidden orientation dominates.  As
-$\tau$ becomes large compared with the spread in $U(x,\omega)$, the result
-approaches the arithmetic energy average up to an additive constant.  The
-averaging temperature changes the statistical weighting of sampled hidden
-orientations; it is not an energy scale factor and it does not alter the
-dry-MARTINI-to-Upside unit conversion.
+The discrete sum is the quadrature approximation to integration over hidden
+rigid orientations.  The weights $w_\omega$ belong to the quadrature measure;
+they are not moved outside the energy.  The parameter $\tau$ controls how
+strongly the log-sum-exp is dominated by low-energy hidden states.  Low
+$\tau$ approaches selection of the best hidden orientation, while high $\tau$
+allows more sampled orientations to contribute.  It is not a unit-conversion
+factor and it does not multiply the resulting force field.
 
-The active one-method experiment uses the tempered PMF for every unresolved
-orientation average: CGL--CGL, SC--CGL, CGL--particle, and SC--particle all use
-$\tau=10.0$.  For CGL--CGL this avoids letting every lipid-lipid pair
-independently select only its most favorable hidden rigid twist in a dense
-bilayer.  Applying the same reduction to the protein-lipid and side-chain
-particle tables keeps the hidden-state rule uniform across the whole
-environment interface.  The choice is recorded in HDF5 metadata as
-\texttt{azimuthal\_average} and
-\texttt{azimuthal\_average\_temperature\_upside}.
+This tempering is especially important for CGL--CGL interactions in a dense
+bilayer.  An ordinary production-temperature two-body PMF can be dominated by
+rare favorable hidden bead-frame rotations.  In a many-neighbor membrane, each
+pair cannot independently realize its own best hidden rigid orientation with a
+single physical lipid body.  Tempering reduces that soft-minimum dominance and
+keeps more unresolved orientational entropy in the effective pair potential.
+The same tempered-PMF rule is used for CGL--CGL, SC--CGL, CGL--particle, and
+SC--particle tables so that the hybrid interface has one hidden-state reduction
+method.
 
-CGL spline tables store a numerically conditioned control surface rather than
-raw energies:
+\subsection{Spline Control Transform}
+
+CGL tables store a conditioned control variable instead of raw energy.  If
+$E(x)=F_\tau(x)$ and $E_0=\min_x E(x)$ for one type pair, the stored spline
+control is
 \begin{equation}
   y(x)=\log\left[1+\frac{E(x)-E_0}{k_BT_0}\right],
-  \qquad
-  E_0=\min_x E(x),
+  \qquad T_0=0.8647 .
 \end{equation}
-where $E(x)$ is either $\bar{U}(x)$ or $F_\tau(x)$ and
-$T_0=0.8647$ is the production transform temperature.  Runtime evaluation
-applies the exact inverse
+At runtime the exact inverse is applied,
 \begin{equation}
   E(x)=E_0+k_BT_0\left[\exp(y(x))-1\right],
 \end{equation}
-with derivatives multiplied by $k_BT_0\exp(y)$.  This transformation preserves
-the physical two-body surface while making both attractive wells and steep
-repulsive cores representable by single-precision spline coefficients.
+and derivatives are multiplied by $k_BT_0\exp(y)$.  This transform preserves
+the physical two-body surface while representing both attractive wells and
+steep repulsive cores with single-precision spline coefficients.
 
-\subsection{CGL--CGL Potential}
+\subsection{CGL--CGL Table}
 
 For two CGL particles define
-$\hat{\mathbf{r}}_{12}=(\mathbf{R}_2-\mathbf{R}_1)/r$ and
 \begin{equation}
-  a_1=-\hat{\mathbf{n}}_1\cdot\hat{\mathbf{r}}_{12},\qquad
+  \hat{\mathbf{r}}_{12}=
+  \frac{\mathbf{R}_2-\mathbf{R}_1}{|\mathbf{R}_2-\mathbf{R}_1|},
+  \qquad
+  a_1=-\hat{\mathbf{n}}_1\cdot\hat{\mathbf{r}}_{12},
+  \qquad
   a_2= \hat{\mathbf{n}}_2\cdot\hat{\mathbf{r}}_{12}.
 \end{equation}
-The CGL--CGL runtime potential is a full tensor-product spline,
+The runtime potential is a full tensor-product spline over
+$(r,a_1,a_2)$:
 \begin{equation}
   U_{\mathrm{CGL-CGL}}(r,a_1,a_2)
   =
-  E_0+k_BT_0\left[
-  \exp\left(
-  \sum_{ijk} c_{ijk}B_i(r)B_j(a_1)B_k(a_2)
-  \right)-1\right].
+  E_0+k_BT_0
+  \left[
+  \exp\left(\sum_{ijk} c_{ijk}B_i(r)B_j(a_1)B_k(a_2)\right)-1
+  \right].
 \end{equation}
-The runtime potential has exactly three scalar coordinates:
-$r,a_1,a_2$.  It has no twisting coordinate and no standalone orientation
-term.  Axial bead-frame rotations and azimuthal samples are unresolved
-coordinates in the table generation integral.
+There is no fourth twisting coordinate.  The axial bead-frame rotations and
+azimuthal placements are hidden variables integrated out during table
+generation.
 
-For each sampled $(r,a_1,a_2)$, two canonical 14-bead DOPC molecules are
-rigidly rotated to the corresponding CGL directions and translated to the
-specified separation.  The table averages over four azimuthal directions for
-each CGL direction and eight axial bead-frame rotations for each lipid.  The
-unresolved-coordinate average is a tempered two-body PMF with
-$\tau=10.0$ in Upside temperature units.  This retains the direct dry-MARTINI
-lipid-lipid energy while integrating out the unresolved rigid orientations in
-the single-vector representation.  These hidden orientations are not internal
-DOPC conformations: the tails remain in the canonical rigid geometry during
-sampling.  Increasing $\tau$ makes more sampled rigid orientations contribute
-to the effective energy instead of allowing only the best hidden orientation
-to dominate.  The spline coordinates are local pair coordinates, so the table
-is rotationally invariant and does not assume a global membrane normal.
+For each sampled $(r,a_1,a_2)$, two canonical 14-bead DOPC bodies are rigidly
+rotated and translated into the corresponding pair geometry.  The quadrature
+uses four azimuthal samples for each direction vector and eight axial
+bead-frame rotations for each lipid.  The radial support extends to twice the
+maximum resolved DOPC bead radius plus the dry-MARTINI cutoff, so tail-tail
+contacts are included even when CGL centers are far apart.
 
-The installed CGL--CGL group uses schema
-\texttt{cg\_lipid\_pair\_full\_v1}, $120$ radial controls, $9$ controls for
-each angular coordinate, radial spacing $0.35~\text{\AA}$, and cutoff
-$41.3~\text{\AA}$.  The radial support is derived from twice the maximum
-resolved DOPC bead radius plus the dry-MARTINI cutoff, so long tail-tail
-contacts are included even when the CGL centers are far apart.  The stored
-control quantity is the log1p-reduced tempered free energy.  Metadata records
-zero fit-relaxation steps, no excluded-area term, and zero excluded-area rows.
+The regenerated HDF5 group is \texttt{cg\_lipid\_pair} with schema
+\texttt{cg\_lipid\_pair\_full}.  It stores $120$ radial controls, $9$ controls
+for each angular coordinate, radial spacing $0.35~\text{\AA}$, cutoff
+$41.3~\text{\AA}$, the log1p-reduced tempered free energy, and
+\texttt{n\_modes=0} for the full tensor representation.
 
-\subsection{SC--CGL Potential}
+\subsection{SC--CGL Table}
 
-Protein side chains interact with CGL particles through the same direct
-resolved-geometry construction.  Each Upside side-chain state supplies a
-center and direction for a dry-MARTINI side-chain bead geometry.  For an
-SC--CGL pair define
+Protein side chains interact with CGL particles through a direct resolved
+side-chain geometry against the canonical DOPC geometry.  For an SC--CGL pair,
 \begin{equation}
   a_{\mathrm{SC}}=-\hat{\mathbf{n}}_{\mathrm{SC}}\cdot\hat{\mathbf{r}},
   \qquad
   a_{\mathrm{CGL}}=\hat{\mathbf{n}}_{\mathrm{CGL}}\cdot\hat{\mathbf{r}},
 \end{equation}
 where $\hat{\mathbf{r}}$ points from the side-chain center to the CGL center.
-The table is a full tensor over
-$(r,a_{\mathrm{SC}},a_{\mathrm{CGL}})$ with the same inverse log1p transform
-used for CGL--CGL.
-
-For each residue type, the builder places all dry-MARTINI side-chain beads
-from the rotamer library and all DOPC beads from the canonical CGL geometry.
-It samples four azimuthal directions, one side-chain bead-frame rotation, and
-eight CGL bead-frame rotations.  Rotamer probabilities enter as quadrature
-weights.  Thus the microscopic energy is
-$U(r,a_{\mathrm{SC}},a_{\mathrm{CGL}},
-\omega_{\mathrm{SC}},\omega_{\mathrm{CGL}})$, and the active table stores
+For residue type $s$, the table stores
 \begin{equation}
-  \begin{aligned}
-  &F_{\tau,\mathrm{SC-CGL}}(r,a_{\mathrm{SC}},a_{\mathrm{CGL}}) \\
-  &\quad =
-  -k_B\tau\log
-  \frac{
-  \sum_{\omega_{\mathrm{SC}},\omega_{\mathrm{CGL}}}
-  w_{\omega_{\mathrm{SC}}}w_{\omega_{\mathrm{CGL}}}
-  \exp[-U(r,a_{\mathrm{SC}},a_{\mathrm{CGL}},
-  \omega_{\mathrm{SC}},\omega_{\mathrm{CGL}})/(k_B\tau)]
-  }{
-  \sum_{\omega_{\mathrm{SC}},\omega_{\mathrm{CGL}}}
-  w_{\omega_{\mathrm{SC}}}w_{\omega_{\mathrm{CGL}}}
-  } .
-  \end{aligned}
+  U_{s,\mathrm{CGL}}(r,a_{\mathrm{SC}},a_{\mathrm{CGL}})
+  =
+  E_{0,s}+k_BT_0
+  \left[
+  \exp\left(
+  \sum_{ijk} c^{(s)}_{ijk}
+  B_i(r)B_j(a_{\mathrm{SC}})B_k(a_{\mathrm{CGL}})
+  \right)-1
+  \right].
 \end{equation}
-The averaging temperature is the same $\tau=10.0$ used for CGL--CGL.  This is
-a configurational average over sampled rigid side-chain and CGL orientations,
-not an internal relaxation of the DOPC tails.  The active SC--CGL table also
-avoids the old separable radial/angular factorization by storing the full
-tensor over
-$(r,a_{\mathrm{SC}},a_{\mathrm{CGL}})$.
 
-The installed SC--CGL group uses schema
-\texttt{cg\_lipid\_sc\_full\_tensor\_v1}, $21$ radial controls, $11$ controls
-for each angular coordinate, radial spacing $1.4~\text{\AA}$, and cutoff
-$26.6~\text{\AA}$.  The stored quantity is the log1p-reduced tempered free
-energy.  Runtime nodes evaluate this table for CGL contacts with
-side-chain placements and pass the resulting energy rows into the Upside
-rotamer machinery; the interaction is not normalized by the number of
-neighboring lipids.
+The microscopic energy includes all dry-MARTINI side-chain beads for a rotamer
+state and all 14 DOPC beads for the CGL body.  Rotamer probabilities and
+bead-frame samples provide the quadrature weights in the tempered PMF.  The
+table uses four azimuthal samples, one side-chain bead-frame sample, and eight
+CGL bead-frame samples.  It is a full tensor over the two angular coordinates,
+not a separable radial-plus-angular factorization.
 
-\subsection{CGL--Particle Potential}
+The regenerated HDF5 group is \texttt{cg\_lipid\_sc} with schema
+\texttt{cg\_lipid\_sc\_full\_tensor}.  It stores $18$ explicit side-chain
+types, $21$ radial controls, $11$ controls for each angular coordinate,
+radial spacing $1.4~\text{\AA}$, cutoff $26.6~\text{\AA}$, the
+log1p-reduced tempered free energy, and \texttt{n\_modes=0}.  Runtime evaluates
+this table for side-chain rotamer placements and passes the row energies to
+the Upside rotamer solver.
 
-Non-side-chain point particles, including backbone proxy sites, ions, and
-other dry-MARTINI target types, interact with CGL through a direct
-DOPC-target PMF.  For a target at separation vector $\mathbf{r}$,
+\subsection{CGL--Particle Table}
+
+Backbone proxy sites, ions, and other non-side-chain dry-MARTINI target types
+interact with CGL through a two-dimensional direct DOPC-target table.  For a
+target particle,
 \begin{equation}
   a_{\mathrm{CGL}}=
   \hat{\mathbf{n}}_{\mathrm{CGL}}\cdot\hat{\mathbf{r}} .
 \end{equation}
-The runtime potential is a two-dimensional spline over $(r,a_{\mathrm{CGL}})$
-with the inverse log1p transform.  For each target type, the builder evaluates
-the explicit energy between the 14 DOPC beads and one target particle of that
-type, averages over four CGL azimuthal directions and one CGL bead-frame
-rotation, and stores the same $\tau=10.0$ tempered PMF used by the other
-interaction classes.
+The table evaluates the dry-MARTINI energy between the 14 DOPC beads and one
+target particle of each target type, then applies the same $\tau=10.0$
+tempered PMF over hidden CGL rigid orientations.  Charged targets use this
+same direct physical table; there is no separate ion or backbone excluded
+volume correction.
 
-The installed CGL--particle group uses schema \texttt{cg\_lipid\_target\_v1},
-$78$ radial controls, $321$ angular controls, radial spacing
-$0.35~\text{\AA}$, and cutoff $26.6~\text{\AA}$.  Charged targets use this
-same direct physical table as all other target types.  There is no separate
-charged-backbone or ion excluded-volume projection, and no nonnegative row
-projection is applied.
+The regenerated HDF5 group is \texttt{cg\_lipid\_target} with schema
+\texttt{cg\_lipid\_target}.  It stores $38$ target types, $78$ radial
+controls, $321$ angular controls, radial spacing $0.35~\text{\AA}$, cutoff
+$26.6~\text{\AA}$, the log1p-reduced tempered free energy, and
+\texttt{n\_modes=0}.
 
-\subsection{SC--Particle Potential for Full-Resolution Lipid Simulations}
+\subsection{SC--Particle Table}
 
-When lipids are kept as explicit dry-MARTINI particles rather than collapsed
-to CGL, protein side chains interact with environment particles through a
-direct side-chain-particle table.  For each residue type, target type, rotamer,
+Full-resolution lipid simulations retain explicit dry-MARTINI lipid beads.
+In that mode, protein side chains interact with environment particles through
+a direct SC--particle table.  For each residue type, target type, rotamer,
 radius $r$, and angle
 \begin{equation}
-  a_{\mathrm{SC}}=
-  \hat{\mathbf{n}}_{\mathrm{SC}}\cdot\hat{\mathbf{r}},
+  a_{\mathrm{SC}}=\hat{\mathbf{n}}_{\mathrm{SC}}\cdot\hat{\mathbf{r}},
 \end{equation}
-the builder evaluates the dry-MARTINI nonbonded energy between the resolved
-side-chain beads and the target particle.  The active runtime representation
-is the full radial-angular grid
-\texttt{rotamer\_full\_energy\_kj\_mol}; separable radial and angular datasets
-are retained only as legacy metadata and are not the physical validation path.
-For each rotamer and target type, unresolved side-chain bead-frame samples are
-reduced as
-\begin{equation}
-  \begin{aligned}
-  F_{\tau,\mathrm{SC-particle}}(r,a_{\mathrm{SC}})
-  &=
-  -k_B\tau\log
-  \frac{
-  \sum_{\omega_{\mathrm{SC}}}w_{\omega_{\mathrm{SC}}}
-  \exp[-U(r,a_{\mathrm{SC}},\omega_{\mathrm{SC}})/(k_B\tau)]
-  }{
-  \sum_{\omega_{\mathrm{SC}}}w_{\omega_{\mathrm{SC}}}
-  }, \\
-  \tau&=10.0.
-  \end{aligned}
-\end{equation}
+the builder evaluates the dry-MARTINI energy between the resolved side-chain
+beads and the target particle, then applies the same $\tau=10.0$ tempered PMF
+over unresolved side-chain bead-frame samples.  The runtime representation is
+a full radial-angular grid for each rotamer and target type.
 
-The installed SC--particle group uses schema
-\texttt{martini\_sc\_combined\_v1}, $96$ radial samples from $0.25$ to
-$1.20~\mathrm{nm}$ and $13$ angular samples.  The stored quantity is direct
-rotamer tempered free energy in dry-MARTINI units, with a full radial-angular
-runtime representation.  The table is converted to Upside units during runtime
-evaluation.  No SC-environment force cap is used.
+The regenerated HDF5 file \texttt{sidechain.h5} uses schema
+\texttt{martini\_sc\_combined}.  The \texttt{sc\_table} group stores $96$
+radial samples from $0.25$ to $1.20~\mathrm{nm}$, $13$ angular samples,
+\texttt{relaxation=rigid\_rotated\_geometry}, and
+\texttt{azimuthal\_average=tempered\_boltzmann\_free\_energy}.  The table is
+stored in dry-MARTINI units and converted to Upside units during runtime
+evaluation.
 
-\subsection{Runtime Interaction Ownership}
+\subsection{Runtime Ownership}
 
-The hybrid Hamiltonian assigns each interaction class to one owner so that
-physical terms are neither omitted nor double counted:
+Each physical interaction class has one runtime owner:
 \begin{itemize}
-  \item CGL--CGL interactions are evaluated only by the
-  \texttt{cg\_lipid\_pair} table.
-  \item CGL--side-chain interactions are evaluated by the
-  \texttt{cg\_lipid\_sc} table and coupled to the Upside rotamer solver.
-  \item CGL--non-side-chain particle interactions are evaluated by the
-  CGL--particle target table.
-  \item CGLD has no nonbonded interactions; it only carries the CGL direction.
-  \item Full-resolution dry-MARTINI lipid particles use the generic
-  dry-MARTINI particle potential and the direct SC--particle table.
-  \item Protein backbone-environment and side-chain-environment interface
-  interactions remain active in both CGL and full-resolution lipid workflows.
+  \item CGL--CGL interactions are evaluated by \texttt{cg\_lipid\_pair}.
+  \item SC--CGL interactions are evaluated by \texttt{cg\_lipid\_sc} and the
+        Upside rotamer machinery.
+  \item CGL--non-side-chain target interactions are evaluated by
+        \texttt{cg\_lipid\_target}.
+  \item CGLD has no nonbonded interactions and only carries the CGL direction.
+  \item Full-resolution dry-MARTINI particles use the generic dry-MARTINI
+        particle potential and the SC--particle table.
 \end{itemize}
-Backbone proxy sites provide dry-MARTINI target positions for environment
-coupling, while forces are projected back to the Upside backbone carriers.
-Electrostatics and generic dry-MARTINI particle interactions follow the
-existing Upside runtime ownership for those terms.  All CGL-specific
-interactions are read from HDF5 spline tables; no analytic CGL Lennard-Jones
-or orientation correction is introduced at runtime.
+Protein side-chain and backbone interactions with the dry-MARTINI environment
+remain present at full strength.  Backbone proxy sites provide dry-MARTINI
+target positions for environment coupling, and their forces are projected back
+to the Upside backbone carriers.  All CGL-specific interactions are read from
+HDF5 spline tables; no analytic CGL Lennard-Jones term or extra orientation
+correction is introduced at runtime.
 
-\subsection{Numerical Implementation}
+\subsection{Numerical Evaluation}
 
 Spline coefficients are stored in HDF5 before simulation and loaded by the
 Upside C++ runtime.  CGL--CGL and SC--CGL use cubic tensor-product splines over
-radius and two angular coordinates; CGL--particle uses a cubic tensor-product
-spline over radius and one angular coordinate.  The angular coordinate is
-clamped to $[-1,1]$.  At radii below the first sampled shell, the runtime uses
-the first in-domain radial slope rather than flattening the force.  This
-preserves the repulsive dry-MARTINI core represented in the table and avoids a
-numerical force cap.
+one radial and two angular coordinates.  CGL--particle uses a cubic
+tensor-product spline over one radial and one angular coordinate.  Angular
+coordinates are clamped to $[-1,1]$.  At radii below the first sampled shell,
+runtime evaluation extrapolates from the first in-domain radial slope rather
+than flattening the force, preserving the repulsive core represented by the
+table.
 
-The HDF5 metadata is part of the model contract.  Current experimental tables
-record zero fit-relaxation steps, a $10^{-6}~\mathrm{nm}$ numerical distance
-guard, $\tau=10.0$ tempered hidden-state averaging, log1p-reduced transforms
-for CGL spline tables, and zero excluded-area rows.  Preparation code rejects
-stale CGL tables that carry old capping, excluded-area, relaxation,
-non-tempered averaging, or missing-transform metadata.
+The HDF5 metadata is part of the model contract.  Regenerated tables record
+the numerical distance guard, the tempered-PMF averaging temperature, the
+log1p transform metadata for CGL tables, and the full-tensor schemas described
+above.  Preparation rejects CGL tables whose metadata does not match this
+contract.
 
-Independent table slices are parallelized during generation, but HDF5 writes
-remain in the parent process.  Worker count is controlled by an environment
-variable or by the active Slurm CPU allocation.
-Parallelization changes only wall-clock time; it does not alter the quadrature,
-energy expression, or fitted surface.
+\subsection{Validation Scope}
 
-\subsection{Validation Criteria}
+The model is validated on isolated CGL bilayers and hybrid protein-bilayer
+systems.  Acceptance criteria include stable bilayer packing, CGL directions
+consistent with leaflet orientation, no persistent same-leaflet collapse, no
+lipid leaflet crossings, stable protein radius of gyration, stable
+hydrogen-bond counts, and preservation of protein secondary structure during
+production.  These checks validate the bilayer applications; they are not
+constraints embedded in the potential, which depends only on local pair
+distances and local direction-vector projections.
 
-The physical table set is validated on both isolated CGL bilayers and hybrid
-protein-bilayer systems because those are the target applications tested here.
-For bilayer simulations, acceptance requires a stable bilayer, CGL directions
-aligned with the local leaflet normals, no persistent same-leaflet collapse, no
-lipid leaflet crossings, stable protein radius of gyration, stable hydrogen-bond
-counts, and no loss of protein secondary structure during production.  This is
-a validation criterion for bilayer geometry, not a constraint built into the CGL
-potential: the runtime interactions depend on local pair distances and local
-direction-vector projections.  A focused uniform-tempered 1RKL diagnostic
-passed structural checks, with no CGL flips or leaflet crossings, same-leaflet
-nearest-neighbor fifth percentiles above $6.8~\text{\AA}$, stable hydrogen-bond
-counts, and stable radius of gyration.  The same diagnostic shows that
-tempered PMF is not a dynamics model by itself: CGL lateral MSD grows faster
-than full-resolution DOPC center-of-mass MSD at longer short lags.  Lipid
-dynamics therefore require either an effective-time calibration for the
-reported observable or a separate friction/dissipative model; the PMF
-averaging equation only defines the configurational potential.
-
-\subsection{Units}
-
-Upside uses Angstroms for length and $E_{\mathrm{up}}$ for energy, with
-\begin{equation}
-  1~E_{\mathrm{up}}=2.914952774272~\mathrm{kJ\,mol^{-1}},
-  \qquad 1~\mathrm{nm}=10~\text{\AA}.
-\end{equation}
-Dry-MARTINI source parameters and side-chain training artifacts remain in
-native dry-MARTINI units.  Conversion factors are explicit in table generation
-and runtime loading so that HDF5 training artifacts are not silently rewritten
-into Upside units.
+The tempered PMF defines a configurational coarse-grained potential.  It does
+not by itself guarantee microscopic lipid dynamics.  Dynamics-sensitive
+observables such as lateral diffusion or orientation autocorrelation therefore
+require comparison to reference trajectories and, if needed, an effective-time
+calibration or a separate dissipative model.
 
 \begin{thebibliography}{9}
 

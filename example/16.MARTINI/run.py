@@ -114,7 +114,6 @@ env["PYTHONPATH"] = "{}{}{}".format(upside_utils_dir, os.pathsep, env.get("PYTHO
 required_params = [
     upside_path / "parameters" / "dryMARTINI" / "particle.h5",
     upside_path / "parameters" / "dryMARTINI" / "sidechain.h5",
-    upside_path / "parameters" / "dryMARTINI" / "interlipid.h5",
 ]
 if lipid_resolution == "coarse":
     required_params.append(upside_path / "parameters" / "dryMARTINI" / "dopc.h5")

@@ -856,10 +856,8 @@ struct CGLipidSCPotential : public PotentialNode {
     int n_type1;
     int n_type2;
     int n_param;
-    int n_modes;
     int n_radial;
     int n_angular;
-    bool full_tensor;
     float box_x;
     float box_y;
     float box_z;
@@ -889,10 +887,8 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
     , n_type1(0)
     , n_type2(0)
     , n_param(0)
-    , n_modes(read_attribute<int>(grp, ".", "n_modes", 0))
     , n_radial(read_attribute<int>(grp, ".", "n_radial", CG_LIPID_N_RADIAL))
     , n_angular(read_attribute<int>(grp, ".", "n_angular", CG_LIPID_N_ANGULAR))
-    , full_tensor(false)
     , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
     , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
     , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
@@ -908,15 +904,9 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
     H5Obj pi_obj = open_group(grp, "pair_interaction");
     hid_t pi = pi_obj.get();
     interaction_param = read_param_dataset_any(pi, n_type1, n_type2, n_param);
-    int expected_n_param = n_radial + n_modes * (2 * n_angular + n_radial);
     int expected_tensor_param = n_radial * n_angular * n_angular;
-    full_tensor = (n_modes == 0 && n_radial > 3 && n_angular > 3 && n_param == expected_tensor_param);
-    if(!full_tensor && n_modes > 0) {
-        if(n_radial <= 3 || n_angular <= 3 || n_param != expected_n_param)
-            throw string("cg_lipid_sc full multimode params require matching n_modes/n_radial/n_angular attrs");
-    } else if(!full_tensor && n_param != CG_LIPID_N_PARAM) {
-        throw string("cg_lipid_sc legacy params must have last dimension 54");
-    }
+    if(n_radial <= 3 || n_angular <= 3 || n_param != expected_tensor_param)
+        throw string("cg_lipid_sc requires full tensor params matching n_radial*n_angular*n_angular");
     if(H5Lexists(pi, "reference_energy_eup", H5P_DEFAULT) > 0) {
         reference_energy_eup = read_float_dataset(pi, "reference_energy_eup");
         if(int(reference_energy_eup.size()) != n_type1 * n_type2)
@@ -962,21 +952,10 @@ void CGLipidSCPotential::compute_value(ComputeMode mode) {
 
             QuadsplineEval e;
             bool ok = false;
-            if(full_tensor) {
-                ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                        n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff,
-                        log1p_reduced_transform ? 0.f : taper_width, e);
-            } else if(n_modes > 0) {
-                ok = eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                        n_modes, n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff,
-                        log1p_reduced_transform ? 0.f : taper_width, e);
-            } else {
-                ok = eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
-                        dr, n1, n2, knot_spacing, cutoff,
-                        log1p_reduced_transform ? 0.f : taper_width, e);
-            }
+            ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                    n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e);
             if(ok) {
                 if(log1p_reduced_transform) {
                     float scale = boltzmann_temperature * expf(e.value);
@@ -1029,21 +1008,10 @@ void CGLipidSCPotential::propagate_deriv() {
 
             QuadsplineEval e;
             bool ok = false;
-            if(full_tensor) {
-                ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                        n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff,
-                        log1p_reduced_transform ? 0.f : taper_width, e);
-            } else if(n_modes > 0) {
-                ok = eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                        n_modes, n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff,
-                        log1p_reduced_transform ? 0.f : taper_width, e);
-            } else {
-                ok = eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
-                        dr, n1, n2, knot_spacing, cutoff,
-                        log1p_reduced_transform ? 0.f : taper_width, e);
-            }
+            ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                    n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e);
             if(!ok)
                 continue;
             if(log1p_reduced_transform) {
@@ -1134,10 +1102,8 @@ struct CGLipidSCOneBody : public CoordNode {
     int n_type1;
     int n_type2;
     int n_param;
-    int n_modes;
     int n_radial;
     int n_angular;
-    bool full_tensor;
     float box_x;
     float box_y;
     float box_z;
@@ -1154,10 +1120,8 @@ struct CGLipidSCOneBody : public CoordNode {
         , n_type1(0)
         , n_type2(0)
         , n_param(0)
-        , n_modes(read_attribute<int>(grp, ".", "n_modes", 0))
         , n_radial(read_attribute<int>(grp, ".", "n_radial", CG_LIPID_N_RADIAL))
         , n_angular(read_attribute<int>(grp, ".", "n_angular", CG_LIPID_N_ANGULAR))
-        , full_tensor(false)
         , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
         , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
         , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
@@ -1173,15 +1137,9 @@ struct CGLipidSCOneBody : public CoordNode {
         H5Obj pi_obj = open_group(grp, "pair_interaction");
         hid_t pi = pi_obj.get();
         interaction_param = read_param_dataset_any(pi, n_type1, n_type2, n_param);
-        int expected_n_param = n_radial + n_modes * (2 * n_angular + n_radial);
         int expected_tensor_param = n_radial * n_angular * n_angular;
-        full_tensor = (n_modes == 0 && n_radial > 3 && n_angular > 3 && n_param == expected_tensor_param);
-        if(!full_tensor && n_modes > 0) {
-            if(n_radial <= 3 || n_angular <= 3 || n_param != expected_n_param)
-                throw string("cg_lipid_rotamer_sc full multimode params require matching n_modes/n_radial/n_angular attrs");
-        } else if(!full_tensor && n_param != CG_LIPID_N_PARAM) {
-            throw string("cg_lipid_rotamer_sc legacy params must have last dimension 54");
-        }
+        if(n_radial <= 3 || n_angular <= 3 || n_param != expected_tensor_param)
+            throw string("cg_lipid_rotamer_sc requires full tensor params matching n_radial*n_angular*n_angular");
         if(H5Lexists(pi, "reference_energy_eup", H5P_DEFAULT) > 0) {
             reference_energy_eup = read_float_dataset(pi, "reference_energy_eup");
             if(int(reference_energy_eup.size()) != n_type1 * n_type2)
@@ -1246,21 +1204,10 @@ struct CGLipidSCOneBody : public CoordNode {
 
                 QuadsplineEval e;
                 bool ok = false;
-                if(full_tensor) {
-                    ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                            n_angular, n_radial,
-                            dr, n1, n2, knot_spacing, cutoff,
-                            log1p_reduced_transform ? 0.f : taper_width, e);
-                } else if(n_modes > 0) {
-                    ok = eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                            n_modes, n_angular, n_radial,
-                            dr, n1, n2, knot_spacing, cutoff,
-                            log1p_reduced_transform ? 0.f : taper_width, e);
-                } else {
-                    ok = eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
-                            dr, n1, n2, knot_spacing, cutoff,
-                            log1p_reduced_transform ? 0.f : taper_width, e);
-                }
+                ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                        n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e);
                 if(ok) {
                     if(log1p_reduced_transform) {
                         float scale = boltzmann_temperature * expf(e.value);
@@ -1318,21 +1265,10 @@ struct CGLipidSCOneBody : public CoordNode {
 
                 QuadsplineEval e;
                 bool ok = false;
-                if(full_tensor) {
-                    ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                            n_angular, n_radial,
-                            dr, n1, n2, knot_spacing, cutoff,
-                            log1p_reduced_transform ? 0.f : taper_width, e);
-                } else if(n_modes > 0) {
-                    ok = eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                            n_modes, n_angular, n_radial,
-                            dr, n1, n2, knot_spacing, cutoff,
-                            log1p_reduced_transform ? 0.f : taper_width, e);
-                } else {
-                    ok = eval_quadspline(param_ptr(interaction_param, n_type2, t1, t2),
-                            dr, n1, n2, knot_spacing, cutoff,
-                            log1p_reduced_transform ? 0.f : taper_width, e);
-                }
+                ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                        n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e);
                 if(!ok) continue;
                 if(log1p_reduced_transform) {
                     float scale = boltzmann_temperature * expf(e.value);

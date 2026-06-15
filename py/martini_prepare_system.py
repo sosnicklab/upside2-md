@@ -49,11 +49,7 @@ PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
 WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 
-DEFAULT_SC_ENV_LJ_FORCE_CAP = 0.0
-DEFAULT_SC_ENV_COUL_FORCE_CAP = 0.0
-DEFAULT_NONPROTEIN_HS_FORCE_CAP = 0.0
 DEFAULT_SC_ENV_PO4_Z_CLAMP_ENABLE = 1
-DEFAULT_SC_ENV_RELAX_STEPS = 150
 DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS = 200
 DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS = 150
 DEFAULT_NPT_TAU = 4.0
@@ -64,7 +60,6 @@ DEFAULT_MARTINI_ENERGY_CONVERSION = 2.914952774272
 DEFAULT_MARTINI_LENGTH_CONVERSION = 10.0
 DEFAULT_BAR_1_TO_EUP_PER_A3 = 0.000020659477
 DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP = 14.521180763676
-DEFAULT_PROTEIN_ENV_INTERFACE_SCALE = 1.0
 UPSIDE_V_INNER_STEP = 3
 
 
@@ -796,12 +791,13 @@ def inject_protein_position_restraints(up_file: Path, spring_const: float = 10.0
         ref_pos = np.asarray(h5["/input/pos"][:][protein_atoms, :, 0], dtype=np.float32)
         grp = h5.require_group("/input/potential/restraint_position")
         grp.attrs["arguments"] = np.array([np.bytes_("pos")])
-        for name in ("restraint_indices", "ref_pos", "spring_const"):
+        for name in ("restraint_indices", "ref_pos", "spring_const", "spring_const_xyz"):
             if name in grp:
                 del grp[name]
         grp.create_dataset("restraint_indices", data=protein_atoms)
         grp.create_dataset("ref_pos", data=ref_pos)
-        grp.create_dataset("spring_const", data=np.full(len(protein_atoms), float(spring_const), dtype=np.float32))
+        spring_xyz = np.full((len(protein_atoms), 3), float(spring_const), dtype=np.float32)
+        grp.create_dataset("spring_const_xyz", data=spring_xyz)
 
 
 def remove_protein_position_restraints(up_file: Path):
@@ -816,20 +812,11 @@ def remove_protein_position_restraints(up_file: Path):
 def set_hybrid_production_controls(up_file: Path, args):
     import h5py
 
-    scale = float(args.protein_env_interface_scale)
-    if not np.isfinite(scale) or scale <= 0.0:
-        raise ValueError(f"protein_env_interface_scale must be finite and > 0, got {scale!r}")
     with h5py.File(up_file, "r+") as h5:
         grp = h5.require_group("input").require_group("hybrid_control")
-        grp.attrs["production_nonprotein_hard_sphere"] = np.int8(0)
-        grp.attrs["protein_env_interface_scale"] = np.float32(scale)
-        grp.attrs["sc_env_lj_force_cap"] = np.float32(args.sc_env_lj_force_cap)
-        grp.attrs["sc_env_coul_force_cap"] = np.float32(args.sc_env_coul_force_cap)
-        grp.attrs["sc_env_relax_steps"] = np.int32(args.sc_env_relax_steps)
         grp.attrs["sc_env_backbone_hold_steps"] = np.int32(args.sc_env_backbone_hold_steps)
         grp.attrs["sc_env_po4_z_hold_steps"] = np.int32(args.sc_env_po4_z_hold_steps)
         grp.attrs["sc_env_po4_z_clamp_enabled"] = np.int8(1 if args.sc_env_po4_z_clamp_enable else 0)
-        grp.attrs["nonprotein_hs_force_cap"] = np.float32(args.nonprotein_hs_force_cap)
 
 
 def set_barostat_type(up_file: Path, barostat_type: int):
@@ -1357,7 +1344,6 @@ def normalize_hybrid_workflow_args(args):
     args.particle_h5 = args.martini_ff_dir / "particle.h5"
     args.sidechain_h5 = args.martini_ff_dir / "sidechain.h5"
     args.dopc_h5 = args.martini_ff_dir / "dopc.h5"
-    args.interlipid_h5 = args.martini_ff_dir / "interlipid.h5"
     args.upside_rama_library = args.upside_home / "parameters" / "common" / "rama.dat"
     args.upside_rama_sheet_mixing = args.upside_home / "parameters" / "ff_2.1" / "sheet"
     args.upside_hbond_energy = args.upside_home / "parameters" / "ff_2.1" / "hbond.h5"
@@ -1365,11 +1351,7 @@ def normalize_hybrid_workflow_args(args):
     args.universal_prep_mode = "both"
     args.hybrid_validate = True
     args.hybrid_preprod_activation_stage = "minimization"
-    args.sc_env_lj_force_cap = DEFAULT_SC_ENV_LJ_FORCE_CAP
-    args.sc_env_coul_force_cap = DEFAULT_SC_ENV_COUL_FORCE_CAP
-    args.nonprotein_hs_force_cap = DEFAULT_NONPROTEIN_HS_FORCE_CAP
     args.sc_env_po4_z_clamp_enable = DEFAULT_SC_ENV_PO4_Z_CLAMP_ENABLE
-    args.sc_env_relax_steps = DEFAULT_SC_ENV_RELAX_STEPS
     args.sc_env_backbone_hold_steps = DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS
     args.sc_env_po4_z_hold_steps = DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS
     if not np.isfinite(float(args.stage_70_burnin_protein_restraint_spring)):
@@ -1381,7 +1363,6 @@ def normalize_hybrid_workflow_args(args):
     args.martini_length_conversion = DEFAULT_MARTINI_LENGTH_CONVERSION
     args.bar_1_to_eup_per_a3 = DEFAULT_BAR_1_TO_EUP_PER_A3
     args.compressibility_3e4_bar_inv_to_a3_per_eup = DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP
-    args.protein_env_interface_scale = DEFAULT_PROTEIN_ENV_INTERFACE_SCALE
     args.extract_vtf_script = workflow_path(args.extract_vtf_script).resolve()
     args.continue_stage_70_from = workflow_path(args.continue_stage_70_from).resolve() if args.continue_stage_70_from else None
     args.continue_stage_70_output = workflow_path(args.continue_stage_70_output).resolve() if args.continue_stage_70_output else None
@@ -1474,7 +1455,6 @@ def ensure_martini_parameter_libraries(args):
     required = [
         (args.particle_h5, "particle.h5"),
         (args.sidechain_h5, "sidechain.h5"),
-        (args.interlipid_h5, "interlipid.h5"),
     ]
     lipid_res = getattr(args, "lipid_resolution", "coarse")
     if lipid_res != "full":

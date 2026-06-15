@@ -66,40 +66,18 @@ struct DihedralSpring : public PotentialNode
     {
         int n_dep = 4;  // number of atoms that each term depends on 
         check_size(grp, "id",           n_elem, n_dep);
-        check_size(grp, "equil_dist",   n_elem);
+        check_size(grp, "equil_angle_deg", n_elem);
         check_size(grp, "spring_const", n_elem);
 
         auto& p = params;
-        traverse_dset<2,int>  (grp, "id",           [&](size_t i, size_t j, int   x) {p[i].atom[j]  =x;});
-        traverse_dset<1,float>(grp, "equil_dist",   [&](size_t i,           float x) {p[i].equil_dihedral =x;});
-        traverse_dset<1,float>(grp, "spring_const", [&](size_t i,           float x) {p[i].spring_constant=x;});
-        // Read dihedral type (1=periodic, 2=harmonic), default to periodic if not present
-        if(attribute_exists(grp, ".", "dihedral_type")) {
-            traverse_dset<1,int>(grp, "dihedral_type", [&](size_t i, int x) {p[i].dihedral_type = x;});
-        } else {
-            // Default to periodic dihedrals for backward compatibility
-            for(auto& param : params) param.dihedral_type = 1;
-        }
+        traverse_dset<2,int>  (grp, "id",              [&](size_t i, size_t j, int   x) {p[i].atom[j]  =x;});
+        traverse_dset<1,float>(grp, "equil_angle_deg", [&](size_t i,           float x) {p[i].equil_dihedral =x;});
+        traverse_dset<1,float>(grp, "spring_const",    [&](size_t i,           float x) {p[i].spring_constant=x;});
+        traverse_dset<1,int>(grp, "dihedral_type", [&](size_t i, int x) {p[i].dihedral_type = x;});
 
-        // Read box dimensions (same as MartiniPotential)
-        // Support both individual dimensions and legacy wall_box_size
-        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
-            // New format: separate x, y, z dimensions
-            box_x = read_attribute<float>(grp, ".", "x_len");
-            box_y = read_attribute<float>(grp, ".", "y_len");
-            box_z = read_attribute<float>(grp, ".", "z_len");
-        } else {
-            // Legacy format: wall boundaries
-            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
-            box_x = wall_xhi - wall_xlo;
-            box_y = wall_yhi - wall_ylo;
-            box_z = wall_zhi - wall_zlo;
-        }
+        box_x = read_attribute<float>(grp, ".", "x_len");
+        box_y = read_attribute<float>(grp, ".", "y_len");
+        box_z = read_attribute<float>(grp, ".", "z_len");
         
         // Initialize spline parameters for dihedral potential
         // Find the range of equilibrium dihedrals and spring constants
@@ -272,7 +250,6 @@ struct MartiniPotential : public PotentialNode
     vector<pair<int,int>> pairs;
     
     float epsilon, sigma, lj_cutoff, coul_cutoff;
-    bool force_cap;
     float energy_conversion_kj_per_eup;
     float length_conversion_angstrom_per_nm;
     float coulomb_constant_native_kj_mol_nm_e2;
@@ -391,11 +368,6 @@ struct MartiniPotential : public PotentialNode
             coulomb_constant_native_kj_mol_nm_e2 *
             (length_conversion_angstrom_per_nm / energy_conversion_kj_per_eup);
 
-        force_cap = true;
-        if(attribute_exists(grp, ".", "force_cap")) {
-            force_cap = read_attribute<int>(grp, ".", "force_cap") != 0;
-        }
-        
         // Read box dimensions for minimum-image displacements.
         if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
             box_x = read_attribute<float>(grp, ".", "x_len");
@@ -419,75 +391,36 @@ struct MartiniPotential : public PotentialNode
 
         auto n_pair = get_dset_size(2, grp, "pairs")[0];
         
-        // Check if we have the optimized format (coefficient_indices) or the original format
-        bool optimized_format = false;
-        if(attribute_exists(grp, ".", "optimized_format")) {
-            optimized_format = read_attribute<int>(grp, ".", "optimized_format") != 0;
-        }
+        if(read_attribute<int>(grp, ".", "optimized_format", 0) == 0)
+            throw string("martini_potential requires optimized coefficient_indices format");
 
-        // Declare unique_coeff at function scope so it's available later
         std::vector<array<float,4>> unique_coeff;
 
-        if(optimized_format) {
-            // Load unique coefficients
-            auto n_unique_coeff = get_dset_size(2, grp, "coefficients")[0];
-            check_size(grp, "coefficient_indices", n_pair);
+        auto n_unique_coeff = get_dset_size(2, grp, "coefficients")[0];
+        check_size(grp, "coefficient_indices", n_pair);
 
-            unique_coeff.resize(n_unique_coeff);
-            traverse_dset<2,float>(grp, "coefficients", [&](size_t nc, size_t d, float x) {
-                unique_coeff[nc][d] = x;
-            });
-            
-            // Load coefficient indices
-            std::vector<long> coeff_indices;
-            coeff_indices.resize(n_pair);
-            traverse_dset<1,long>(grp, "coefficient_indices", [&](size_t np, long x) {
-                coeff_indices[np] = x;
-            });
-            
-            // Load pairs
-            pairs.resize(n_pair);
-            traverse_dset<2,int>(grp, "pairs", [&](size_t np, size_t d, int x) {
-                if(d == 0) pairs[np].first = x;
-                else pairs[np].second = x;
-            });
+        unique_coeff.resize(n_unique_coeff);
+        traverse_dset<2,float>(grp, "coefficients", [&](size_t nc, size_t d, float x) {
+            unique_coeff[nc][d] = x;
+        });
 
-            pair_param_index.resize(n_pair);
-            for(size_t np = 0; np < n_pair; ++np) {
-                long idx = coeff_indices[np];
-                if(idx >= 0 && idx < (long)n_unique_coeff) {
-                    pair_param_index[np] = uint32_t(idx);
-                } else {
-                    throw string("Invalid coefficient index in martini_potential");
-                }
-            }
-        } else {
-            check_size(grp, "coefficients", n_pair, 4);
-            
-            pairs.resize(n_pair);
-            traverse_dset<2,int>(grp, "pairs", [&](size_t np, size_t d, int x) {
-                if(d == 0) pairs[np].first = x;
-                else pairs[np].second = x;
-            });
+        std::vector<long> coeff_indices(n_pair);
+        traverse_dset<1,long>(grp, "coefficient_indices", [&](size_t np, long x) {
+            coeff_indices[np] = x;
+        });
 
-            vector<array<float,4>> coeff_rows(n_pair);
-            traverse_dset<2,float>(grp, "coefficients", [&](size_t np, size_t d, float x) {
-                coeff_rows[np][d] = x;
-            });
+        pairs.resize(n_pair);
+        traverse_dset<2,int>(grp, "pairs", [&](size_t np, size_t d, int x) {
+            if(d == 0) pairs[np].first = x;
+            else pairs[np].second = x;
+        });
 
-            std::map<array<float,4>, uint32_t> coeff_to_index;
-            pair_param_index.resize(n_pair);
-            for(size_t np = 0; np < n_pair; ++np) {
-                auto it = coeff_to_index.find(coeff_rows[np]);
-                if(it == coeff_to_index.end()) {
-                    uint32_t idx = uint32_t(unique_coeff.size());
-                    coeff_to_index.insert(std::make_pair(coeff_rows[np], idx));
-                    unique_coeff.push_back(coeff_rows[np]);
-                    pair_param_index[np] = idx;
-                } else {
-                    pair_param_index[np] = it->second;
-                }
-            }
+        pair_param_index.resize(n_pair);
+        for(size_t np = 0; np < n_pair; ++np) {
+            long idx = coeff_indices[np];
+            if(idx < 0 || idx >= (long)n_unique_coeff)
+                throw string("Invalid coefficient index in martini_potential");
+            pair_param_index[np] = uint32_t(idx);
         }
         
         // Find all epsilon/sigma pairs for separate LJ splines
@@ -600,30 +533,16 @@ struct MartiniPotential : public PotentialNode
             hybrid_state &&
             hybrid_state->enabled &&
             hybrid_state->active);
-        float sc_force_uncap_mix = 1.f;
         float sc_backbone_feedback_mix = 1.f;
         if(active_hybrid_startup && mutable_hybrid) {
-            sc_force_uncap_mix = martini_hybrid::compute_sc_force_uncap_mix(*mutable_hybrid);
             sc_backbone_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*mutable_hybrid);
         }
-
-        auto cap_force_vector = [&](Vec<3>& f, float cap_mag) {
-            if(!(cap_mag > 0.f)) return;
-            float f2 = mag2(f);
-            float c2 = cap_mag * cap_mag;
-            if(f2 > c2 && f2 > 0.f) {
-                f *= (cap_mag / sqrtf(f2));
-            }
-        };
 
         auto eval_pair_force = [&](const Vec<3>& pa,
                                    const Vec<3>& pb,
                                    const PairParam& param,
-                                   float interaction_scale,
                                    float& pair_potential,
-                                   Vec<3>& pair_force,
-                                   float force_cap_mag,
-                                   float capped_to_regular_mix) -> bool {
+                                   Vec<3>& pair_force) -> bool {
             auto dr = pa - pb;
             if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
                 dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
@@ -636,8 +555,6 @@ struct MartiniPotential : public PotentialNode
             float cutoff = max(lj_cutoff, coul_cutoff);
             if(dist > cutoff) return false;
 
-            float cap_mix = std::max(0.f, std::min(capped_to_regular_mix, 1.f));
-
             if(param.combined_spline) {
                 float r_coord = (dist - r_min) / (r_max - r_min) * 999.0f;
                 float result[2];
@@ -648,16 +565,7 @@ struct MartiniPotential : public PotentialNode
                 float dE_dr = deriv_spline * coord_scale;
                 float force_mag = -dE_dr;
                 if(std::isfinite(pot) && std::isfinite(force_mag)) {
-                    Vec<3> force_uncapped = (force_mag/dist) * dr;
-                    Vec<3> force = force_uncapped;
-                    if(force_cap_mag > 0.f && cap_mix < 1.f) {
-                        cap_force_vector(force, force_cap_mag);
-                        if(cap_mix > 0.f) {
-                            force = ((1.f - cap_mix) * force) + (cap_mix * force_uncapped);
-                        }
-                    }
-                    pot *= interaction_scale;
-                    force *= interaction_scale;
+                    Vec<3> force = (force_mag/dist) * dr;
                     pair_potential += pot;
                     pair_force += force;
                 }
@@ -718,22 +626,7 @@ struct MartiniPotential : public PotentialNode
 
             Vec<3> force = make_zero<3>();
             float pair_pot = 0.f;
-            float startup_force_cap = 0.f;
-            float startup_cap_mix = 1.f;
-            if(hybrid_state &&
-               martini_hybrid::deterministic_startup_pair_cap_enabled(
-                   *hybrid_state, i_is_protein, j_is_protein, i_role, j_role)) {
-                startup_force_cap = max(hybrid_state->sc_env_lj_force_cap,
-                                        hybrid_state->sc_env_coul_force_cap);
-                startup_cap_mix = sc_force_uncap_mix;
-            }
-            float interface_scale = hybrid_state
-                                        ? martini_hybrid::active_interface_interaction_scale(
-                                              *hybrid_state, i_is_protein, j_is_protein)
-                                        : 1.f;
-            if(!eval_pair_force(p1, p2, param, interface_scale, pair_pot, force,
-                                startup_force_cap,
-                                startup_cap_mix)) {
+            if(!eval_pair_force(p1, p2, param, pair_pot, force)) {
                 continue;
             }
             if(pot) *pot += pair_pot;
@@ -1069,7 +962,6 @@ struct MartiniScTablePotential : public PotentialNode
 
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
-        float interface_scale = hybrid_state->protein_env_interface_scale;
         float protein_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*hybrid_state);
 
         VecArray posc = pos.output;
@@ -1119,9 +1011,6 @@ struct MartiniScTablePotential : public PotentialNode
                 dVdcoord = dAng1dcoord * angular_value;
 
                 if(!std::isfinite(value) || !std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
-                value *= interface_scale;
-                dVdr *= interface_scale;
-                dVdcoord *= interface_scale;
                 potential += value;
 
                 if(dist <= 1.0e-6f) continue;
@@ -1639,7 +1528,6 @@ struct MartiniScTableOneBody : public CoordNode
 
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
-        float interface_scale = hybrid_state->protein_env_interface_scale;
 
         VecArray posc = pos.output;
         VecArray cbc = cb_pos.output;
@@ -1694,7 +1582,7 @@ struct MartiniScTableOneBody : public CoordNode
 
         for(int irow = 0; irow < n_row; ++irow) {
             int group_count = std::max(1, row_group_count[irow]);
-            output(0, irow) = interface_scale * (output(0, irow) / float(group_count));
+            output(0, irow) = output(0, irow) / float(group_count);
         }
     }
 
@@ -1703,7 +1591,6 @@ struct MartiniScTableOneBody : public CoordNode
 
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
-        float interface_scale = hybrid_state->protein_env_interface_scale;
         float protein_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*hybrid_state);
 
         VecArray posc = pos.output;
@@ -1726,7 +1613,7 @@ struct MartiniScTableOneBody : public CoordNode
             int residue_idx = row_residue_table_index[irow];
             int rotamer_idx = row_rotamer_index[irow];
             int group_count = std::max(1, row_group_count[irow]);
-            row_scale = interface_scale * (row_scale / float(group_count));
+            row_scale = row_scale / float(group_count);
 
             Vec<6> cb_site = load_vec<6>(cbc, cb_idx);
             Vec<3> cbp = extract<0,3>(cb_site);
@@ -2137,12 +2024,7 @@ struct PositionRestraint : public PotentialNode
     {
         check_size(grp, "restraint_indices", n_elem);
         check_size(grp, "ref_pos", n_elem, 3);
-        bool has_spring_const_xyz = h5_exists(grp, "spring_const_xyz");
-        if(has_spring_const_xyz) {
-            check_size(grp, "spring_const_xyz", n_elem, 3);
-        } else {
-            check_size(grp, "spring_const", n_elem);
-        }
+        check_size(grp, "spring_const_xyz", n_elem, 3);
 
         auto& p = params;
         traverse_dset<1,int>(grp, "restraint_indices", [&](size_t i, int x) {p[i].atom_index = x;});
@@ -2151,17 +2033,11 @@ struct PositionRestraint : public PotentialNode
             else if(j == 1) p[i].ref_pos.y() = x;
             else if(j == 2) p[i].ref_pos.z() = x;
         });
-        if(has_spring_const_xyz) {
-            traverse_dset<2,float>(grp, "spring_const_xyz", [&](size_t i, size_t j, float x) {
-                if(j == 0) p[i].spring_const_xyz.x() = x;
-                else if(j == 1) p[i].spring_const_xyz.y() = x;
-                else if(j == 2) p[i].spring_const_xyz.z() = x;
-            });
-        } else {
-            traverse_dset<1,float>(grp, "spring_const", [&](size_t i, float x) {
-                p[i].spring_const_xyz = make_vec3(x, x, x);
-            });
-        }
+        traverse_dset<2,float>(grp, "spring_const_xyz", [&](size_t i, size_t j, float x) {
+            if(j == 0) p[i].spring_const_xyz.x() = x;
+            else if(j == 1) p[i].spring_const_xyz.y() = x;
+            else if(j == 2) p[i].spring_const_xyz.z() = x;
+        });
 
     }
 
@@ -2201,8 +2077,6 @@ struct PositionRestraint : public PotentialNode
 };
 static RegisterNodeType<PositionRestraint, 1> position_restraint_node("restraint_position");
 
-// Explicit registrar to ensure node types are available at runtime
-// Even if some linkers strip unused static objects, this guarantees registration
 namespace {
 void update_martini_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
     if(!std::isfinite(scale_xy) || !std::isfinite(scale_z)) return;
