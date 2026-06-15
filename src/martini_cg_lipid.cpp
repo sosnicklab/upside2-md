@@ -36,6 +36,11 @@ struct TargetSplineEval {
     float d_da;
 };
 
+struct CGLPairIndex {
+    size_t first;
+    size_t second;
+};
+
 static vector<int> read_int_dataset(hid_t grp, const char* name) {
     vector<hsize_t> sz = get_dset_size(1, grp, name);
     vector<int> out(sz[0]);
@@ -518,6 +523,58 @@ static void accumulate_deriv(
     }
 }
 
+static inline void center_dr(
+        VecArray first,
+        int first_idx,
+        VecArray second,
+        int second_idx,
+        float box_x,
+        float box_y,
+        float box_z,
+        float dr[3]) {
+    dr[0] = second(0, second_idx) - first(0, first_idx);
+    dr[1] = second(1, second_idx) - first(1, first_idx);
+    dr[2] = second(2, second_idx) - first(2, first_idx);
+    if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
+        simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
+}
+
+static bool cached_positions_moved(
+        VecArray pos,
+        const vector<int>& index,
+        const vector<float>& cached_pos,
+        float max_disp2) {
+    if(cached_pos.size() != index.size() * 3u)
+        return true;
+    for(size_t i = 0; i < index.size(); ++i) {
+        int idx = index[i];
+        float dx = pos(0, idx) - cached_pos[3 * i];
+        float dy = pos(1, idx) - cached_pos[3 * i + 1];
+        float dz = pos(2, idx) - cached_pos[3 * i + 2];
+        if(dx * dx + dy * dy + dz * dz >= max_disp2)
+            return true;
+    }
+    return false;
+}
+
+static void cache_positions(
+        VecArray pos,
+        const vector<int>& index,
+        vector<float>& cached_pos) {
+    cached_pos.resize(index.size() * 3u);
+    for(size_t i = 0; i < index.size(); ++i) {
+        int idx = index[i];
+        cached_pos[3 * i] = pos(0, idx);
+        cached_pos[3 * i + 1] = pos(1, idx);
+        cached_pos[3 * i + 2] = pos(2, idx);
+    }
+}
+
+static inline float cgl_pairlist_disp_threshold2(float cache_buffer) {
+    float half_buffer = 0.5f * cache_buffer;
+    return half_buffer * half_buffer;
+}
+
 }  // namespace
 
 struct ComposeVector6D : public CoordNode {
@@ -661,8 +718,16 @@ struct CGLipidPairPotential : public PotentialNode {
     float taper_width;
     bool log1p_reduced_transform;
     float boltzmann_temperature;
+    float cache_buffer;
+    float cached_box_x;
+    float cached_box_y;
+    float cached_box_z;
+    bool pairlist_valid;
+    vector<float> cached_pos;
+    vector<CGLPairIndex> active_pairs;
 
     CGLipidPairPotential(hid_t grp, CoordNode& cg_pos);
+    void ensure_pairlist(VecArray cg);
     virtual void compute_value(ComputeMode mode) override;
     virtual void propagate_deriv() override;
     virtual void set_param(const vector<float>& new_param) override {
@@ -672,6 +737,7 @@ struct CGLipidPairPotential : public PotentialNode {
         box_x *= scale_xy;
         box_y *= scale_xy;
         box_z *= scale_z;
+        pairlist_valid = false;
     }
 };
 
@@ -694,6 +760,11 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
     , log1p_reduced_transform(read_attribute<int>(grp, ".", "log1p_reduced_transform", 0) != 0)
     , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
+    , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
+    , cached_box_x(0.f)
+    , cached_box_y(0.f)
+    , cached_box_z(0.f)
+    , pairlist_valid(false)
 {
     check_elem_width(cg_pos, 6);
     H5Obj pi_obj = open_group(grp, "pair_interaction");
@@ -720,96 +791,64 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
         throw string("cg_lipid_pair index/type/id size mismatch");
 }
 
+void CGLipidPairPotential::ensure_pairlist(VecArray cg) {
+    bool rebuild = !pairlist_valid || cache_buffer <= 0.f ||
+        cached_box_x != box_x || cached_box_y != box_y || cached_box_z != box_z ||
+        cached_positions_moved(cg, index, cached_pos, cgl_pairlist_disp_threshold2(cache_buffer));
+    if(!rebuild)
+        return;
+
+    active_pairs.clear();
+    float pairlist_cutoff = cutoff + cache_buffer;
+    float pairlist_cutoff2 = pairlist_cutoff * pairlist_cutoff;
+    for(size_t ai = 0; ai < index.size(); ++ai) {
+        int t1 = type[ai];
+        if(t1 < 0 || t1 >= n_type1) continue;
+        for(size_t bi = ai + 1; bi < index.size(); ++bi) {
+            if((id[ai] >> 4) == (id[bi] >> 4)) continue;
+            int t2 = type[bi];
+            if(t2 < 0 || t2 >= n_type2) continue;
+            float dr[3];
+            center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+            float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+            if(r2 < pairlist_cutoff2)
+                active_pairs.push_back({ai, bi});
+        }
+    }
+    cache_positions(cg, index, cached_pos);
+    cached_box_x = box_x;
+    cached_box_y = box_y;
+    cached_box_z = box_z;
+    pairlist_valid = true;
+}
+
 void CGLipidPairPotential::compute_value(ComputeMode mode) {
     (void)mode;
     VecArray cg = cg_pos.output;
+    ensure_pairlist(cg);
     float total = 0.f;
-    for(size_t ai = 0; ai < index.size(); ++ai) {
-        for(size_t bi = ai + 1; bi < index.size(); ++bi) {
-            if((id[ai] >> 4) == (id[bi] >> 4)) continue;
-            int t1 = type[ai];
-            int t2 = type[bi];
-            if(t1 < 0 || t1 >= n_type1 || t2 < 0 || t2 >= n_type2) continue;
+    for(const CGLPairIndex& pair : active_pairs) {
+        size_t ai = pair.first;
+        size_t bi = pair.second;
+        int t1 = type[ai];
+        int t2 = type[bi];
 
-            float x1[3], n1[3], x2[3], n2[3], dr[3];
-            load_vec6(cg, index[ai], x1, n1);
-            load_vec6(cg, index[bi], x2, n2);
-            dr[0] = x2[0] - x1[0];
-            dr[1] = x2[1] - x1[1];
-            dr[2] = x2[2] - x1[2];
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
-                simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
+        float x1[3], n1[3], x2[3], n2[3], dr[3];
+        load_vec6(cg, index[ai], x1, n1);
+        load_vec6(cg, index[bi], x2, n2);
+        center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
 
-            QuadsplineEval e;
-            bool ok = full_tensor
-                ? eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                        n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff,
-                        log1p_reduced_transform ? 0.f : taper_width, e)
-                : eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                        n_modes, n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff,
-                        log1p_reduced_transform ? 0.f : taper_width, e);
-            if(ok) {
-                if(log1p_reduced_transform) {
-                    float scale = boltzmann_temperature * expf(e.value);
-                    e.value = reference_energy_eup[t1 * n_type2 + t2]
-                            + boltzmann_temperature * expm1f(e.value);
-                    e.d_dr *= scale;
-                    e.d_da1 *= scale;
-                    e.d_da2 *= scale;
-
-                    float r = sqrtf(std::max(
-                                dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
-                                1e-12f));
-                    float taper = 1.f;
-                    float d_taper_dr = 0.f;
-                    compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
-                    float energy = e.value;
-                    e.value = taper * energy;
-                    e.d_dr = taper * e.d_dr + energy * d_taper_dr;
-                    e.d_da1 *= taper;
-                    e.d_da2 *= taper;
-                }
-                total += e.value;
-            }
-        }
-    }
-    potential = total;
-}
-
-void CGLipidPairPotential::propagate_deriv() {
-    VecArray cg = cg_pos.output;
-    VecArray cg_sens = cg_pos.sens;
-
-    for(size_t ai = 0; ai < index.size(); ++ai) {
-        for(size_t bi = ai + 1; bi < index.size(); ++bi) {
-            if((id[ai] >> 4) == (id[bi] >> 4)) continue;
-            int t1 = type[ai];
-            int t2 = type[bi];
-            if(t1 < 0 || t1 >= n_type1 || t2 < 0 || t2 >= n_type2) continue;
-
-            float x1[3], n1[3], x2[3], n2[3], dr[3];
-            load_vec6(cg, index[ai], x1, n1);
-            load_vec6(cg, index[bi], x2, n2);
-            dr[0] = x2[0] - x1[0];
-            dr[1] = x2[1] - x1[1];
-            dr[2] = x2[2] - x1[2];
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
-                simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
-
-            QuadsplineEval e;
-            bool ok = full_tensor
-                ? eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                        n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff,
-                        log1p_reduced_transform ? 0.f : taper_width, e)
-                : eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                        n_modes, n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff,
-                        log1p_reduced_transform ? 0.f : taper_width, e);
-            if(!ok)
-                continue;
+        QuadsplineEval e;
+        bool ok = full_tensor
+            ? eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                    n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e)
+            : eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                    n_modes, n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e);
+        if(ok) {
             if(log1p_reduced_transform) {
                 float scale = boltzmann_temperature * expf(e.value);
                 e.value = reference_energy_eup[t1 * n_type2 + t2]
@@ -830,15 +869,68 @@ void CGLipidPairPotential::propagate_deriv() {
                 e.d_da1 *= taper;
                 e.d_da2 *= taper;
             }
-
-            float dpos1[3] = {0.f, 0.f, 0.f};
-            float ddir1[3] = {0.f, 0.f, 0.f};
-            float dpos2[3] = {0.f, 0.f, 0.f};
-            float ddir2[3] = {0.f, 0.f, 0.f};
-            accumulate_deriv(dr, n1, n2, e, dpos1, ddir1, dpos2, ddir2);
-            add_vec6_sens(cg_sens, index[ai], dpos1, ddir1);
-            add_vec6_sens(cg_sens, index[bi], dpos2, ddir2);
+            total += e.value;
         }
+    }
+    potential = total;
+}
+
+void CGLipidPairPotential::propagate_deriv() {
+    VecArray cg = cg_pos.output;
+    VecArray cg_sens = cg_pos.sens;
+    ensure_pairlist(cg);
+
+    for(const CGLPairIndex& pair : active_pairs) {
+        size_t ai = pair.first;
+        size_t bi = pair.second;
+        int t1 = type[ai];
+        int t2 = type[bi];
+
+        float x1[3], n1[3], x2[3], n2[3], dr[3];
+        load_vec6(cg, index[ai], x1, n1);
+        load_vec6(cg, index[bi], x2, n2);
+        center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+
+        QuadsplineEval e;
+        bool ok = full_tensor
+            ? eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                    n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e)
+            : eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                    n_modes, n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e);
+        if(!ok)
+            continue;
+        if(log1p_reduced_transform) {
+            float scale = boltzmann_temperature * expf(e.value);
+            e.value = reference_energy_eup[t1 * n_type2 + t2]
+                    + boltzmann_temperature * expm1f(e.value);
+            e.d_dr *= scale;
+            e.d_da1 *= scale;
+            e.d_da2 *= scale;
+
+            float r = sqrtf(std::max(
+                        dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
+                        1e-12f));
+            float taper = 1.f;
+            float d_taper_dr = 0.f;
+            compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
+            float energy = e.value;
+            e.value = taper * energy;
+            e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+            e.d_da1 *= taper;
+            e.d_da2 *= taper;
+        }
+
+        float dpos1[3] = {0.f, 0.f, 0.f};
+        float ddir1[3] = {0.f, 0.f, 0.f};
+        float dpos2[3] = {0.f, 0.f, 0.f};
+        float ddir2[3] = {0.f, 0.f, 0.f};
+        accumulate_deriv(dr, n1, n2, e, dpos1, ddir1, dpos2, ddir2);
+        add_vec6_sens(cg_sens, index[ai], dpos1, ddir1);
+        add_vec6_sens(cg_sens, index[bi], dpos2, ddir2);
     }
 }
 
@@ -866,8 +958,17 @@ struct CGLipidSCPotential : public PotentialNode {
     float taper_width;
     bool log1p_reduced_transform;
     float boltzmann_temperature;
+    float cache_buffer;
+    float cached_box_x;
+    float cached_box_y;
+    float cached_box_z;
+    bool pairlist_valid;
+    vector<float> cached_pos1;
+    vector<float> cached_pos2;
+    vector<CGLPairIndex> active_pairs;
 
     CGLipidSCPotential(hid_t grp, CoordNode& sc_pos, CoordNode& cg_pos);
+    void ensure_pairlist(VecArray sc, VecArray cg);
     virtual void compute_value(ComputeMode mode) override;
     virtual void propagate_deriv() override;
     virtual void set_param(const vector<float>& new_param) override {
@@ -877,6 +978,7 @@ struct CGLipidSCPotential : public PotentialNode {
         box_x *= scale_xy;
         box_y *= scale_xy;
         box_z *= scale_z;
+        pairlist_valid = false;
     }
 };
 
@@ -898,6 +1000,11 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
     , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
     , log1p_reduced_transform(read_attribute<int>(grp, ".", "log1p_reduced_transform", 0) != 0)
     , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
+    , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
+    , cached_box_x(0.f)
+    , cached_box_y(0.f)
+    , cached_box_z(0.f)
+    , pairlist_valid(false)
 {
     check_elem_width(sc_pos, 6);
     check_elem_width(cg_pos, 6);
@@ -928,92 +1035,63 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
         throw string("cg_lipid_sc source2 index/type/id size mismatch");
 }
 
+void CGLipidSCPotential::ensure_pairlist(VecArray sc, VecArray cg) {
+    bool rebuild = !pairlist_valid || cache_buffer <= 0.f ||
+        cached_box_x != box_x || cached_box_y != box_y || cached_box_z != box_z ||
+        cached_positions_moved(sc, index1, cached_pos1, cgl_pairlist_disp_threshold2(cache_buffer)) ||
+        cached_positions_moved(cg, index2, cached_pos2, cgl_pairlist_disp_threshold2(cache_buffer));
+    if(!rebuild)
+        return;
+
+    active_pairs.clear();
+    float pairlist_cutoff = cutoff + cache_buffer;
+    float pairlist_cutoff2 = pairlist_cutoff * pairlist_cutoff;
+    for(size_t ai = 0; ai < index1.size(); ++ai) {
+        int t1 = type1[ai];
+        if(t1 < 0 || t1 >= n_type1) continue;
+        for(size_t bi = 0; bi < index2.size(); ++bi) {
+            if((id1[ai] >> 4) == (id2[bi] >> 4)) continue;
+            int t2 = type2[bi];
+            if(t2 < 0 || t2 >= n_type2) continue;
+            float dr[3];
+            center_dr(sc, index1[ai], cg, index2[bi], box_x, box_y, box_z, dr);
+            float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+            if(r2 < pairlist_cutoff2)
+                active_pairs.push_back({ai, bi});
+        }
+    }
+    cache_positions(sc, index1, cached_pos1);
+    cache_positions(cg, index2, cached_pos2);
+    cached_box_x = box_x;
+    cached_box_y = box_y;
+    cached_box_z = box_z;
+    pairlist_valid = true;
+}
+
 void CGLipidSCPotential::compute_value(ComputeMode mode) {
     (void)mode;
     VecArray sc = sc_pos.output;
     VecArray cg = cg_pos.output;
+    ensure_pairlist(sc, cg);
     float total = 0.f;
 
-    for(size_t ai = 0; ai < index1.size(); ++ai) {
-        for(size_t bi = 0; bi < index2.size(); ++bi) {
-            if((id1[ai] >> 4) == (id2[bi] >> 4)) continue;
-            int t1 = type1[ai];
-            int t2 = type2[bi];
-            if(t1 < 0 || t1 >= n_type1 || t2 < 0 || t2 >= n_type2) continue;
+    for(const CGLPairIndex& pair : active_pairs) {
+        size_t ai = pair.first;
+        size_t bi = pair.second;
+        int t1 = type1[ai];
+        int t2 = type2[bi];
 
-            float x1[3], n1[3], x2[3], n2[3], dr[3];
-            load_vec6(sc, index1[ai], x1, n1);
-            load_vec6(cg, index2[bi], x2, n2);
-            dr[0] = x2[0] - x1[0];
-            dr[1] = x2[1] - x1[1];
-            dr[2] = x2[2] - x1[2];
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
-                simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
+        float x1[3], n1[3], x2[3], n2[3], dr[3];
+        load_vec6(sc, index1[ai], x1, n1);
+        load_vec6(cg, index2[bi], x2, n2);
+        center_dr(sc, index1[ai], cg, index2[bi], box_x, box_y, box_z, dr);
 
-            QuadsplineEval e;
-            bool ok = false;
-            ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                    n_angular, n_radial,
-                    dr, n1, n2, knot_spacing, cutoff,
-                    log1p_reduced_transform ? 0.f : taper_width, e);
-            if(ok) {
-                if(log1p_reduced_transform) {
-                    float scale = boltzmann_temperature * expf(e.value);
-                    e.value = reference_energy_eup[t1 * n_type2 + t2]
-                            + boltzmann_temperature * expm1f(e.value);
-                    e.d_dr *= scale;
-                    e.d_da1 *= scale;
-                    e.d_da2 *= scale;
-
-                    float r = sqrtf(std::max(
-                                dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
-                                1e-12f));
-                    float taper = 1.f;
-                    float d_taper_dr = 0.f;
-                    compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
-                    float energy = e.value;
-                    e.value = taper * energy;
-                    e.d_dr = taper * e.d_dr + energy * d_taper_dr;
-                    e.d_da1 *= taper;
-                    e.d_da2 *= taper;
-                }
-                total += e.value;
-            }
-        }
-    }
-    potential = total;
-}
-
-void CGLipidSCPotential::propagate_deriv() {
-    VecArray sc = sc_pos.output;
-    VecArray sc_sens = sc_pos.sens;
-    VecArray cg = cg_pos.output;
-    VecArray cg_sens = cg_pos.sens;
-
-    for(size_t ai = 0; ai < index1.size(); ++ai) {
-        for(size_t bi = 0; bi < index2.size(); ++bi) {
-            if((id1[ai] >> 4) == (id2[bi] >> 4)) continue;
-            int t1 = type1[ai];
-            int t2 = type2[bi];
-            if(t1 < 0 || t1 >= n_type1 || t2 < 0 || t2 >= n_type2) continue;
-
-            float x1[3], n1[3], x2[3], n2[3], dr[3];
-            load_vec6(sc, index1[ai], x1, n1);
-            load_vec6(cg, index2[bi], x2, n2);
-            dr[0] = x2[0] - x1[0];
-            dr[1] = x2[1] - x1[1];
-            dr[2] = x2[2] - x1[2];
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
-                simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
-
-            QuadsplineEval e;
-            bool ok = false;
-            ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                    n_angular, n_radial,
-                    dr, n1, n2, knot_spacing, cutoff,
-                    log1p_reduced_transform ? 0.f : taper_width, e);
-            if(!ok)
-                continue;
+        QuadsplineEval e;
+        bool ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                n_angular, n_radial,
+                dr, n1, n2, knot_spacing, cutoff,
+                log1p_reduced_transform ? 0.f : taper_width, e);
+        if(ok) {
             if(log1p_reduced_transform) {
                 float scale = boltzmann_temperature * expf(e.value);
                 e.value = reference_energy_eup[t1 * n_type2 + t2]
@@ -1034,15 +1112,65 @@ void CGLipidSCPotential::propagate_deriv() {
                 e.d_da1 *= taper;
                 e.d_da2 *= taper;
             }
-
-            float dpos1[3] = {0.f, 0.f, 0.f};
-            float ddir1[3] = {0.f, 0.f, 0.f};
-            float dpos2[3] = {0.f, 0.f, 0.f};
-            float ddir2[3] = {0.f, 0.f, 0.f};
-            accumulate_deriv(dr, n1, n2, e, dpos1, ddir1, dpos2, ddir2);
-            add_vec6_sens(sc_sens, index1[ai], dpos1, ddir1);
-            add_vec6_sens(cg_sens, index2[bi], dpos2, ddir2);
+            total += e.value;
         }
+    }
+    potential = total;
+}
+
+void CGLipidSCPotential::propagate_deriv() {
+    VecArray sc = sc_pos.output;
+    VecArray sc_sens = sc_pos.sens;
+    VecArray cg = cg_pos.output;
+    VecArray cg_sens = cg_pos.sens;
+    ensure_pairlist(sc, cg);
+
+    for(const CGLPairIndex& pair : active_pairs) {
+        size_t ai = pair.first;
+        size_t bi = pair.second;
+        int t1 = type1[ai];
+        int t2 = type2[bi];
+
+        float x1[3], n1[3], x2[3], n2[3], dr[3];
+        load_vec6(sc, index1[ai], x1, n1);
+        load_vec6(cg, index2[bi], x2, n2);
+        center_dr(sc, index1[ai], cg, index2[bi], box_x, box_y, box_z, dr);
+
+        QuadsplineEval e;
+        bool ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                n_angular, n_radial,
+                dr, n1, n2, knot_spacing, cutoff,
+                log1p_reduced_transform ? 0.f : taper_width, e);
+        if(!ok)
+            continue;
+        if(log1p_reduced_transform) {
+            float scale = boltzmann_temperature * expf(e.value);
+            e.value = reference_energy_eup[t1 * n_type2 + t2]
+                    + boltzmann_temperature * expm1f(e.value);
+            e.d_dr *= scale;
+            e.d_da1 *= scale;
+            e.d_da2 *= scale;
+
+            float r = sqrtf(std::max(
+                        dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
+                        1e-12f));
+            float taper = 1.f;
+            float d_taper_dr = 0.f;
+            compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
+            float energy = e.value;
+            e.value = taper * energy;
+            e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+            e.d_da1 *= taper;
+            e.d_da2 *= taper;
+        }
+
+        float dpos1[3] = {0.f, 0.f, 0.f};
+        float ddir1[3] = {0.f, 0.f, 0.f};
+        float dpos2[3] = {0.f, 0.f, 0.f};
+        float ddir2[3] = {0.f, 0.f, 0.f};
+        accumulate_deriv(dr, n1, n2, e, dpos1, ddir1, dpos2, ddir2);
+        add_vec6_sens(sc_sens, index1[ai], dpos1, ddir1);
+        add_vec6_sens(cg_sens, index2[bi], dpos2, ddir2);
     }
 }
 
@@ -1073,8 +1201,17 @@ struct CGLipidTargetPotential : public PotentialNode {
     bool log1p_reduced_transform;
     float boltzmann_temperature;
     float minimum_boltzmann_weight;
+    float cache_buffer;
+    float cached_box_x;
+    float cached_box_y;
+    float cached_box_z;
+    bool pairlist_valid;
+    vector<float> cached_pos1;
+    vector<float> cached_pos2;
+    vector<CGLPairIndex> active_pairs;
 
     CGLipidTargetPotential(hid_t grp, CoordNode& cg_pos_, CoordNode& tgt_pos_);
+    void ensure_pairlist(VecArray cg, VecArray tgt);
     virtual void compute_value(ComputeMode mode) override;
     virtual void propagate_deriv() override;
     virtual void set_param(const vector<float>& new_param) override {
@@ -1084,6 +1221,7 @@ struct CGLipidTargetPotential : public PotentialNode {
         box_x *= scale_xy;
         box_y *= scale_xy;
         box_z *= scale_z;
+        pairlist_valid = false;
     }
 };
 
@@ -1095,6 +1233,7 @@ struct CGLipidSCOneBody : public CoordNode {
     vector<int> row_residue_index;
     vector<int> row_rotamer_index;
     vector<int> row_group_count;
+    vector<int> row_index;
     vector<int> index2;
     vector<int> type2;
     vector<int> id2;
@@ -1112,6 +1251,14 @@ struct CGLipidSCOneBody : public CoordNode {
     float taper_width;
     bool log1p_reduced_transform;
     float boltzmann_temperature;
+    float cache_buffer;
+    float cached_box_x;
+    float cached_box_y;
+    float cached_box_z;
+    bool pairlist_valid;
+    vector<float> cached_pos1;
+    vector<float> cached_pos2;
+    vector<CGLPairIndex> active_pairs;
 
     CGLipidSCOneBody(hid_t grp, CoordNode& sc_pos_, CoordNode& cg_pos_)
         : CoordNode(sc_pos_.n_elem, 1)
@@ -1131,6 +1278,11 @@ struct CGLipidSCOneBody : public CoordNode {
         , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
         , log1p_reduced_transform(read_attribute<int>(grp, ".", "log1p_reduced_transform", 0) != 0)
         , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
+        , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
+        , cached_box_x(0.f)
+        , cached_box_y(0.f)
+        , cached_box_z(0.f)
+        , pairlist_valid(false)
     {
         check_elem_width(sc_pos, 6);
         check_elem_width(cg_pos, 6);
@@ -1164,6 +1316,10 @@ struct CGLipidSCOneBody : public CoordNode {
         if(index2.size() != type2.size() || index2.size() != id2.size())
             throw string("cg_lipid_rotamer_sc source2 index/type/id size mismatch");
 
+        row_index.resize(n_elem);
+        for(int i = 0; i < n_elem; ++i)
+            row_index[i] = i;
+
         row_group_count.assign(n_elem, 1);
         unordered_map<uint64_t, int> group_counts;
         group_counts.reserve(static_cast<size_t>(n_elem) * 2u);
@@ -1180,96 +1336,69 @@ struct CGLipidSCOneBody : public CoordNode {
         }
     }
 
+    void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
+        box_x *= scale_xy;
+        box_y *= scale_xy;
+        box_z *= scale_z;
+        pairlist_valid = false;
+    }
+
+    void ensure_pairlist(VecArray sc, VecArray cg) {
+        bool rebuild = !pairlist_valid || cache_buffer <= 0.f ||
+            cached_box_x != box_x || cached_box_y != box_y || cached_box_z != box_z ||
+            cached_positions_moved(sc, row_index, cached_pos1, cgl_pairlist_disp_threshold2(cache_buffer)) ||
+            cached_positions_moved(cg, index2, cached_pos2, cgl_pairlist_disp_threshold2(cache_buffer));
+        if(!rebuild)
+            return;
+
+        active_pairs.clear();
+        float pairlist_cutoff = cutoff + cache_buffer;
+        float pairlist_cutoff2 = pairlist_cutoff * pairlist_cutoff;
+        for(int ai = 0; ai < n_elem; ++ai) {
+            int t1 = row_type[ai];
+            if(t1 < 0 || t1 >= n_type1) continue;
+            for(size_t bi = 0; bi < index2.size(); ++bi) {
+                int t2 = type2[bi];
+                if(t2 < 0 || t2 >= n_type2) continue;
+                float dr[3];
+                center_dr(sc, ai, cg, index2[bi], box_x, box_y, box_z, dr);
+                float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+                if(r2 < pairlist_cutoff2)
+                    active_pairs.push_back({size_t(ai), bi});
+            }
+        }
+        cache_positions(sc, row_index, cached_pos1);
+        cache_positions(cg, index2, cached_pos2);
+        cached_box_x = box_x;
+        cached_box_y = box_y;
+        cached_box_z = box_z;
+        pairlist_valid = true;
+    }
+
     virtual void compute_value(ComputeMode mode) override {
         (void)mode;
         fill(output, 0.f);
         VecArray sc = sc_pos.output;
         VecArray cg = cg_pos.output;
+        ensure_pairlist(sc, cg);
 
-        for(int ai = 0; ai < n_elem; ++ai) {
+        for(const CGLPairIndex& pair : active_pairs) {
+            int ai = int(pair.first);
+            size_t bi = pair.second;
             int t1 = row_type[ai];
-            if(t1 < 0 || t1 >= n_type1) continue;
-            for(size_t bi = 0; bi < index2.size(); ++bi) {
-                int t2 = type2[bi];
-                if(t2 < 0 || t2 >= n_type2) continue;
+            int t2 = type2[bi];
 
-                float x1[3], n1[3], x2[3], n2[3], dr[3];
-                load_vec6(sc, ai, x1, n1);
-                load_vec6(cg, index2[bi], x2, n2);
-                dr[0] = x2[0] - x1[0];
-                dr[1] = x2[1] - x1[1];
-                dr[2] = x2[2] - x1[2];
-                if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
-                    simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
+            float x1[3], n1[3], x2[3], n2[3], dr[3];
+            load_vec6(sc, ai, x1, n1);
+            load_vec6(cg, index2[bi], x2, n2);
+            center_dr(sc, ai, cg, index2[bi], box_x, box_y, box_z, dr);
 
-                QuadsplineEval e;
-                bool ok = false;
-                ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                        n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff,
-                        log1p_reduced_transform ? 0.f : taper_width, e);
-                if(ok) {
-                    if(log1p_reduced_transform) {
-                        float scale = boltzmann_temperature * expf(e.value);
-                        e.value = reference_energy_eup[t1 * n_type2 + t2]
-                                + boltzmann_temperature * expm1f(e.value);
-                        e.d_dr *= scale;
-                        e.d_da1 *= scale;
-                        e.d_da2 *= scale;
-
-                        float r = sqrtf(std::max(
-                                    dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
-                                    1e-12f));
-                        float taper = 1.f;
-                        float d_taper_dr = 0.f;
-                        compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
-                        float energy = e.value;
-                        e.value = taper * energy;
-                        e.d_dr = taper * e.d_dr + energy * d_taper_dr;
-                        e.d_da1 *= taper;
-                        e.d_da2 *= taper;
-                    }
-                    output(0, ai) += e.value;
-                }
-            }
-        }
-        for(int ai = 0; ai < n_elem; ++ai)
-            output(0, ai) /= float(std::max(1, row_group_count[ai]));
-    }
-
-    virtual void propagate_deriv() override {
-        VecArray sc = sc_pos.output;
-        VecArray sc_sens = sc_pos.sens;
-        VecArray cg = cg_pos.output;
-        VecArray cg_sens = cg_pos.sens;
-
-        for(int ai = 0; ai < n_elem; ++ai) {
-            float row_scale = sens(0, ai);
-            if(row_scale == 0.f) continue;
-            int t1 = row_type[ai];
-            if(t1 < 0 || t1 >= n_type1) continue;
-            row_scale /= float(std::max(1, row_group_count[ai]));
-
-            for(size_t bi = 0; bi < index2.size(); ++bi) {
-                int t2 = type2[bi];
-                if(t2 < 0 || t2 >= n_type2) continue;
-
-                float x1[3], n1[3], x2[3], n2[3], dr[3];
-                load_vec6(sc, ai, x1, n1);
-                load_vec6(cg, index2[bi], x2, n2);
-                dr[0] = x2[0] - x1[0];
-                dr[1] = x2[1] - x1[1];
-                dr[2] = x2[2] - x1[2];
-                if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
-                    simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
-
-                QuadsplineEval e;
-                bool ok = false;
-                ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                        n_angular, n_radial,
-                        dr, n1, n2, knot_spacing, cutoff,
-                        log1p_reduced_transform ? 0.f : taper_width, e);
-                if(!ok) continue;
+            QuadsplineEval e;
+            bool ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                    n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e);
+            if(ok) {
                 if(log1p_reduced_transform) {
                     float scale = boltzmann_temperature * expf(e.value);
                     e.value = reference_energy_eup[t1 * n_type2 + t2]
@@ -1290,21 +1419,74 @@ struct CGLipidSCOneBody : public CoordNode {
                     e.d_da1 *= taper;
                     e.d_da2 *= taper;
                 }
-
-                float dpos1[3] = {0.f, 0.f, 0.f};
-                float ddir1[3] = {0.f, 0.f, 0.f};
-                float dpos2[3] = {0.f, 0.f, 0.f};
-                float ddir2[3] = {0.f, 0.f, 0.f};
-                accumulate_deriv(dr, n1, n2, e, dpos1, ddir1, dpos2, ddir2);
-                for(int d = 0; d < 3; ++d) {
-                    dpos1[d] *= row_scale;
-                    ddir1[d] *= row_scale;
-                    dpos2[d] *= row_scale;
-                    ddir2[d] *= row_scale;
-                }
-                add_vec6_sens(sc_sens, ai, dpos1, ddir1);
-                add_vec6_sens(cg_sens, index2[bi], dpos2, ddir2);
+                output(0, ai) += e.value;
             }
+        }
+        for(int ai = 0; ai < n_elem; ++ai)
+            output(0, ai) /= float(std::max(1, row_group_count[ai]));
+    }
+
+    virtual void propagate_deriv() override {
+        VecArray sc = sc_pos.output;
+        VecArray sc_sens = sc_pos.sens;
+        VecArray cg = cg_pos.output;
+        VecArray cg_sens = cg_pos.sens;
+        ensure_pairlist(sc, cg);
+
+        for(const CGLPairIndex& pair : active_pairs) {
+            int ai = int(pair.first);
+            size_t bi = pair.second;
+            float row_scale = sens(0, ai);
+            if(row_scale == 0.f) continue;
+            int t1 = row_type[ai];
+            int t2 = type2[bi];
+            row_scale /= float(std::max(1, row_group_count[ai]));
+
+            float x1[3], n1[3], x2[3], n2[3], dr[3];
+            load_vec6(sc, ai, x1, n1);
+            load_vec6(cg, index2[bi], x2, n2);
+            center_dr(sc, ai, cg, index2[bi], box_x, box_y, box_z, dr);
+
+            QuadsplineEval e;
+            bool ok = eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                    n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e);
+            if(!ok) continue;
+            if(log1p_reduced_transform) {
+                float scale = boltzmann_temperature * expf(e.value);
+                e.value = reference_energy_eup[t1 * n_type2 + t2]
+                        + boltzmann_temperature * expm1f(e.value);
+                e.d_dr *= scale;
+                e.d_da1 *= scale;
+                e.d_da2 *= scale;
+
+                float r = sqrtf(std::max(
+                            dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
+                            1e-12f));
+                float taper = 1.f;
+                float d_taper_dr = 0.f;
+                compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
+                float energy = e.value;
+                e.value = taper * energy;
+                e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+                e.d_da1 *= taper;
+                e.d_da2 *= taper;
+            }
+
+            float dpos1[3] = {0.f, 0.f, 0.f};
+            float ddir1[3] = {0.f, 0.f, 0.f};
+            float dpos2[3] = {0.f, 0.f, 0.f};
+            float ddir2[3] = {0.f, 0.f, 0.f};
+            accumulate_deriv(dr, n1, n2, e, dpos1, ddir1, dpos2, ddir2);
+            for(int d = 0; d < 3; ++d) {
+                dpos1[d] *= row_scale;
+                ddir1[d] *= row_scale;
+                dpos2[d] *= row_scale;
+                ddir2[d] *= row_scale;
+            }
+            add_vec6_sens(sc_sens, ai, dpos1, ddir1);
+            add_vec6_sens(cg_sens, index2[bi], dpos2, ddir2);
         }
     }
 };
@@ -1332,6 +1514,11 @@ CGLipidTargetPotential::CGLipidTargetPotential(
         , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
         , minimum_boltzmann_weight(read_attribute<float>(
                     grp, ".", "minimum_boltzmann_weight", numeric_limits<float>::min()))
+        , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
+        , cached_box_x(0.f)
+        , cached_box_y(0.f)
+        , cached_box_z(0.f)
+        , pairlist_valid(false)
     {
     check_elem_width(cg_pos, 6);
     // Targets may be 3D particles or 6D backbone sites; only positions are used.
@@ -1367,96 +1554,62 @@ CGLipidTargetPotential::CGLipidTargetPotential(
         throw string("cg_lipid_target source2 index/type/id size mismatch");
 }
 
+void CGLipidTargetPotential::ensure_pairlist(VecArray cg, VecArray tgt) {
+    bool rebuild = !pairlist_valid || cache_buffer <= 0.f ||
+        cached_box_x != box_x || cached_box_y != box_y || cached_box_z != box_z ||
+        cached_positions_moved(cg, index1, cached_pos1, cgl_pairlist_disp_threshold2(cache_buffer)) ||
+        cached_positions_moved(tgt, index2, cached_pos2, cgl_pairlist_disp_threshold2(cache_buffer));
+    if(!rebuild)
+        return;
+
+    active_pairs.clear();
+    float pairlist_cutoff = cutoff + cache_buffer;
+    float pairlist_cutoff2 = pairlist_cutoff * pairlist_cutoff;
+    for(size_t ai = 0; ai < index1.size(); ++ai) {
+        int t1 = type1[ai];
+        if(t1 < 0 || t1 >= n_type1) continue;
+        for(size_t bi = 0; bi < index2.size(); ++bi) {
+            if((id1[ai] >> 4) == (id2[bi] >> 4)) continue;
+            int t2 = type2[bi];
+            if(t2 < 0 || t2 >= n_type2) continue;
+            float dr[3];
+            center_dr(cg, index1[ai], tgt, index2[bi], box_x, box_y, box_z, dr);
+            float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+            if(r2 < pairlist_cutoff2)
+                active_pairs.push_back({ai, bi});
+        }
+    }
+    cache_positions(cg, index1, cached_pos1);
+    cache_positions(tgt, index2, cached_pos2);
+    cached_box_x = box_x;
+    cached_box_y = box_y;
+    cached_box_z = box_z;
+    pairlist_valid = true;
+}
+
 void CGLipidTargetPotential::compute_value(ComputeMode mode) {
     (void)mode;
     VecArray cg = cg_pos.output;
     VecArray tgt = tgt_pos.output;
+    ensure_pairlist(cg, tgt);
     float total = 0.f;
 
-    for(size_t ai = 0; ai < index1.size(); ++ai) {
-        for(size_t bi = 0; bi < index2.size(); ++bi) {
-            if((id1[ai] >> 4) == (id2[bi] >> 4)) continue;
-            int t1 = type1[ai];
-            int t2 = type2[bi];
-            if(t1 < 0 || t1 >= n_type1 || t2 < 0 || t2 >= n_type2) continue;
+    for(const CGLPairIndex& pair : active_pairs) {
+        size_t ai = pair.first;
+        size_t bi = pair.second;
+        int t1 = type1[ai];
+        int t2 = type2[bi];
 
-            float x1[3], n1[3], dr[3];
-            load_vec6(cg, index1[ai], x1, n1);
-            dr[0] = tgt(0, index2[bi]) - x1[0];
-            dr[1] = tgt(1, index2[bi]) - x1[1];
-            dr[2] = tgt(2, index2[bi]) - x1[2];
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
-                simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
+        float x1[3], n1[3], dr[3];
+        load_vec6(cg, index1[ai], x1, n1);
+        center_dr(cg, index1[ai], tgt, index2[bi], box_x, box_y, box_z, dr);
 
-            TargetSplineEval e;
-            if(eval_cg_target_tensor(
-                param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                n_angular, n_radial, dr, n1, knot_spacing, cutoff,
-                (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e))
-            {
-                bool transformed = false;
-                if(boltzmann_weight_transform) {
-                    float weight = std::max(e.value, minimum_boltzmann_weight);
-                    float scale = -boltzmann_temperature / weight;
-                    e.value = reference_energy_eup[t1 * n_type2 + t2]
-                            - boltzmann_temperature * logf(weight);
-                    e.d_dr *= scale;
-                    e.d_da *= scale;
-                    transformed = true;
-                } else if(log1p_reduced_transform) {
-                    float scale = boltzmann_temperature * expf(e.value);
-                    e.value = reference_energy_eup[t1 * n_type2 + t2]
-                            + boltzmann_temperature * expm1f(e.value);
-                    e.d_dr *= scale;
-                    e.d_da *= scale;
-                    transformed = true;
-                }
-                if(transformed) {
-                    float r = sqrtf(std::max(
-                                dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
-                                1e-12f));
-                    float taper = 1.f;
-                    float d_taper_dr = 0.f;
-                    compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
-                    float energy = e.value;
-                    e.value = taper * energy;
-                    e.d_dr = taper * e.d_dr + energy * d_taper_dr;
-                    e.d_da *= taper;
-                }
-                total += e.value;
-            }
-        }
-    }
-    potential = total;
-}
-
-void CGLipidTargetPotential::propagate_deriv() {
-    VecArray cg = cg_pos.output;
-    VecArray cg_sens = cg_pos.sens;
-    VecArray tgt = tgt_pos.output;
-    VecArray tgt_sens = tgt_pos.sens;
-
-    for(size_t ai = 0; ai < index1.size(); ++ai) {
-        for(size_t bi = 0; bi < index2.size(); ++bi) {
-            if((id1[ai] >> 4) == (id2[bi] >> 4)) continue;
-            int t1 = type1[ai];
-            int t2 = type2[bi];
-            if(t1 < 0 || t1 >= n_type1 || t2 < 0 || t2 >= n_type2) continue;
-
-            float x1[3], n1[3], dr[3];
-            load_vec6(cg, index1[ai], x1, n1);
-            dr[0] = tgt(0, index2[bi]) - x1[0];
-            dr[1] = tgt(1, index2[bi]) - x1[1];
-            dr[2] = tgt(2, index2[bi]) - x1[2];
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f)
-                simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
-
-            TargetSplineEval e;
-            if(!eval_cg_target_tensor(
-                param_ptr(interaction_param, n_type2, n_param, t1, t2),
-                n_angular, n_radial, dr, n1, knot_spacing, cutoff,
-                (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e))
-                continue;
+        TargetSplineEval e;
+        if(eval_cg_target_tensor(
+            param_ptr(interaction_param, n_type2, n_param, t1, t2),
+            n_angular, n_radial, dr, n1, knot_spacing, cutoff,
+            (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e))
+        {
             bool transformed = false;
             if(boltzmann_weight_transform) {
                 float weight = std::max(e.value, minimum_boltzmann_weight);
@@ -1474,10 +1627,10 @@ void CGLipidTargetPotential::propagate_deriv() {
                 e.d_da *= scale;
                 transformed = true;
             }
-
-            float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-            float r = sqrtf(std::max(r2, 1e-12f));
             if(transformed) {
+                float r = sqrtf(std::max(
+                            dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
+                            1e-12f));
                 float taper = 1.f;
                 float d_taper_dr = 0.f;
                 compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
@@ -1486,34 +1639,91 @@ void CGLipidTargetPotential::propagate_deriv() {
                 e.d_dr = taper * e.d_dr + energy * d_taper_dr;
                 e.d_da *= taper;
             }
-            float inv_r = 1.f / r;
-            float unit[3] = {dr[0] * inv_r, dr[1] * inv_r, dr[2] * inv_r};
-            float a = n1[0] * unit[0] + n1[1] * unit[1] + n1[2] * unit[2];
-            float dpos[3] = {
-                e.d_dr * unit[0] + e.d_da * (n1[0] - a * unit[0]) * inv_r,
-                e.d_dr * unit[1] + e.d_da * (n1[1] - a * unit[1]) * inv_r,
-                e.d_dr * unit[2] + e.d_da * (n1[2] - a * unit[2]) * inv_r,
-            };
-            float ddir[3] = {
-                e.d_da * unit[0],
-                e.d_da * unit[1],
-                e.d_da * unit[2],
-            };
+            total += e.value;
+        }
+    }
+    potential = total;
+}
 
-            cg_sens(0, index1[ai]) -= dpos[0];
-            cg_sens(1, index1[ai]) -= dpos[1];
-            cg_sens(2, index1[ai]) -= dpos[2];
-            cg_sens(3, index1[ai]) += ddir[0];
-            cg_sens(4, index1[ai]) += ddir[1];
-            cg_sens(5, index1[ai]) += ddir[2];
-            Vec<3> tgt_grad = make_vec3(dpos[0], dpos[1], dpos[2]);
-            bool projected = martini_hybrid::project_bb_proxy_gradient_for_coord(
-                tgt_pos, tgt_sens, tgt_pos.n_elem, index2[bi], tgt_grad);
-            if(!projected) {
-                tgt_sens(0, index2[bi]) += dpos[0];
-                tgt_sens(1, index2[bi]) += dpos[1];
-                tgt_sens(2, index2[bi]) += dpos[2];
-            }
+void CGLipidTargetPotential::propagate_deriv() {
+    VecArray cg = cg_pos.output;
+    VecArray cg_sens = cg_pos.sens;
+    VecArray tgt = tgt_pos.output;
+    VecArray tgt_sens = tgt_pos.sens;
+    ensure_pairlist(cg, tgt);
+
+    for(const CGLPairIndex& pair : active_pairs) {
+        size_t ai = pair.first;
+        size_t bi = pair.second;
+        int t1 = type1[ai];
+        int t2 = type2[bi];
+
+        float x1[3], n1[3], dr[3];
+        load_vec6(cg, index1[ai], x1, n1);
+        center_dr(cg, index1[ai], tgt, index2[bi], box_x, box_y, box_z, dr);
+
+        TargetSplineEval e;
+        if(!eval_cg_target_tensor(
+            param_ptr(interaction_param, n_type2, n_param, t1, t2),
+            n_angular, n_radial, dr, n1, knot_spacing, cutoff,
+            (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e))
+            continue;
+        bool transformed = false;
+        if(boltzmann_weight_transform) {
+            float weight = std::max(e.value, minimum_boltzmann_weight);
+            float scale = -boltzmann_temperature / weight;
+            e.value = reference_energy_eup[t1 * n_type2 + t2]
+                    - boltzmann_temperature * logf(weight);
+            e.d_dr *= scale;
+            e.d_da *= scale;
+            transformed = true;
+        } else if(log1p_reduced_transform) {
+            float scale = boltzmann_temperature * expf(e.value);
+            e.value = reference_energy_eup[t1 * n_type2 + t2]
+                    + boltzmann_temperature * expm1f(e.value);
+            e.d_dr *= scale;
+            e.d_da *= scale;
+            transformed = true;
+        }
+
+        float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+        float r = sqrtf(std::max(r2, 1e-12f));
+        if(transformed) {
+            float taper = 1.f;
+            float d_taper_dr = 0.f;
+            compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
+            float energy = e.value;
+            e.value = taper * energy;
+            e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+            e.d_da *= taper;
+        }
+        float inv_r = 1.f / r;
+        float unit[3] = {dr[0] * inv_r, dr[1] * inv_r, dr[2] * inv_r};
+        float a = n1[0] * unit[0] + n1[1] * unit[1] + n1[2] * unit[2];
+        float dpos[3] = {
+            e.d_dr * unit[0] + e.d_da * (n1[0] - a * unit[0]) * inv_r,
+            e.d_dr * unit[1] + e.d_da * (n1[1] - a * unit[1]) * inv_r,
+            e.d_dr * unit[2] + e.d_da * (n1[2] - a * unit[2]) * inv_r,
+        };
+        float ddir[3] = {
+            e.d_da * unit[0],
+            e.d_da * unit[1],
+            e.d_da * unit[2],
+        };
+
+        cg_sens(0, index1[ai]) -= dpos[0];
+        cg_sens(1, index1[ai]) -= dpos[1];
+        cg_sens(2, index1[ai]) -= dpos[2];
+        cg_sens(3, index1[ai]) += ddir[0];
+        cg_sens(4, index1[ai]) += ddir[1];
+        cg_sens(5, index1[ai]) += ddir[2];
+        Vec<3> tgt_grad = make_vec3(dpos[0], dpos[1], dpos[2]);
+        bool projected = martini_hybrid::project_bb_proxy_gradient_for_coord(
+            tgt_pos, tgt_sens, tgt_pos.n_elem, index2[bi], tgt_grad);
+        if(!projected) {
+            tgt_sens(0, index2[bi]) += dpos[0];
+            tgt_sens(1, index2[bi]) += dpos[1];
+            tgt_sens(2, index2[bi]) += dpos[2];
         }
     }
 }

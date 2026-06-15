@@ -1,5 +1,22 @@
 # Progress Log
 
+## 2026-06-14 Phase 16 CGL Pairlist Acceleration
+- Actions taken:
+  - Added cached pairlists to the CGL-specific runtime loops: CGL-CGL, SC-CGL, CGL-rotamer-SC, and CGL-target.
+  - Pairlists use each table's existing physical cutoff plus `pairlist_buffer_ang` for rebuild safety; the spline evaluator still applies the true table cutoff and taper for every active pair.
+  - Invalidated caches on box changes and when any cached endpoint moves by at least half the buffer.
+- Files modified:
+  - `src/martini_cg_lipid.cpp`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification:
+  - `make -C obj -j4` passed after the C++ change.
+  - `example/16.MARTINI/test_cg_bilayer/run_test.sh` passed: aligned-z min/p05/mean `0.621/0.947/0.984`, no bad-parallel CGLs, no flips, no leaflet crossings, same-leaflet NN p05 `7.821 A`, and `validation=PASS`.
+  - `run_sim_1rkl.sh` smoke under `outputs/phase16_1rkl_pairlist_smoke` completed through stage 7.0.
+  - A 5000-step direct 1RKL stage-7 run completed with finite energies at `3335.10 us/systems/step`, close to the current full-lipid timing range.
+  - Final short-run metrics: aligned-z min/p05/mean `0.092/0.860/0.951`, `bad_parallel=3`, `bad_flip=0`, leaflet crossings `0/0`, same-leaflet NN p05 lower/upper `7.244/7.265 A`, hbond first/final/min/last20 `4.50/21.23/4.50/22.35`, and Rg final `13.09 A`.
+
 ## 2026-06-14 Phase 13 CGL Gap / Orientation Diagnostic
 - Actions taken:
   - Rechecked active coarse outputs under `example/16.MARTINI/outputs/martini_1afo_hybrid` and `example/16.MARTINI/outputs/martini_1rkl_hybrid`.

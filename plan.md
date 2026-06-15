@@ -48,6 +48,12 @@ Build and maintain a physically defensible single-vector DOPC coarse-grained lip
 
 # Execution Phases
 
+- [x] Phase 16: Add exact pairlist acceleration for CGL-specific runtime nodes.
+  - [x] Implement cached pairlists for CGL-CGL, SC-CGL, CGL-rotamer-SC, and CGL-target loops using each table's existing cutoff plus a rebuild buffer.
+  - [x] Keep force-field semantics unchanged: no interaction removal inside the table cutoff, no shorter physical cutoff, no cap/scale/orientation potential.
+  - [x] Build C++ and run focused smoke/short stability tests comparing runtime behavior.
+  - [x] Benchmark coarse 1RKL against the current full-lipid timing enough to confirm the bottleneck is reduced.
+
 - [x] Phase 15: Clean up `cg_lipid_potentials.tex` to match the cleaned hybrid implementation.
   - [x] Inspect the current TeX for patch-history language, stale mixed-method descriptions, removed attrs/files, and contradictions with regenerated H5 metadata.
   - [x] Rewrite the method flow as one coherent derivation for the current direct-geometry tempered-PMF tables.
@@ -132,6 +138,8 @@ Build and maintain a physically defensible single-vector DOPC coarse-grained lip
 - None for Phase 7. The structure-typed but unrestrained-burn-in validation `outputs/phase7_1afo_full_secondary_types` failed and was not promoted. The accepted validation `outputs/phase7_1afo_full_burnin_restraint` uses full-strength SC-env/BB-env interactions, applies protein position restraints only during stage-7 burn-in, removes those restraints before production, and has replaced the active `outputs/martini_1afo_hybrid_full` output. The previous active output is backed up as `outputs/martini_1afo_hybrid_full.pre_phase7_burnin_restraint_backup_20260611_152618`.
 
 # Review
+
+- Phase 16 implementation keeps the physical table cutoffs unchanged and adds only exact neighbor-cache pruning outside each table cutoff plus a `pairlist_buffer_ang` rebuild buffer. Focused checks passed: C++ rebuild, bilayer-only smoke validation, full 1RKL workflow smoke, and a 5000-step direct 1RKL stage-7 stability run.
 
 - Phase 15 TeX cleanup replaced the patch-history methods text with a single current-method description covering the CGL coordinate, rigid resolved dry-MARTINI energy, uniform `tau=10.0` tempered-PMF hidden-orientation reduction, log1p spline transform, CGL-CGL, SC-CGL, CGL-particle, SC-particle, runtime ownership, numerical evaluation, validation scope, and units. `pdflatex -interaction=nonstopmode -halt-on-error cg_lipid_potentials.tex` passed from the repo environment; LaTeX reported only overfull-box warnings from long HDF5 schema strings.
 - Phase 14 cleanup passed: Python compile for touched Martini modules, `bash -n` for MARTINI workflow wrappers, full C++ `make -C obj -j4`, regenerated `parameters/dryMARTINI/{particle,sidechain,dopc}.h5`, stale metadata audit for cap/scale/relax/schema markers, `example/16.MARTINI/test_cg_bilayer/run_test.sh`, and a short isolated 1RKL hybrid smoke in `outputs/phase14_1rkl_smoke2` through stage 6.0, stage 7.0 burn-in, stage 7.0 production, and VTF extraction. Runtime stage files contain SC-CGL full tensor `(18, 1, 2541)` and CGL-target `(1, 38, 25038)` tables with no removed force-cap/interface-scale/fit-relax attrs.

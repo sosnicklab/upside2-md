@@ -1,6 +1,20 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-14: Exact CGL pairlist acceleration.
+  - It is physically safe to skip CGL-specific pair evaluations only when the
+    pair is outside the table cutoff plus a rebuild buffer, because the runtime
+    spline evaluator still enforces the original table cutoff and taper for
+    every active pair. This is a neighbor-cache optimization, not a shorter
+    force-field cutoff.
+  - Rebuilding when any endpoint moves by at least half the buffer preserves
+    the standard pairlist safety condition: a pair that was outside
+    `cutoff + buffer` cannot enter the true `cutoff` before the list is
+    rebuilt.
+  - The first 1RKL coarse timing check after this change ran at
+    `3335.10 us/systems/step` for a 5000-step stage-7 trajectory, bringing the
+    CGL workflow into the same range as the current full-lipid timing instead
+    of being dominated by dense CGL loops.
 - 2026-06-14: Phase 14 cleanup verification lesson.
   - When removing an H5 reader fallback, audit every writer that can create
     that node, including transient workflow helpers. The cleaned
