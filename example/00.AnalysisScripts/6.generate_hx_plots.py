@@ -1,13 +1,10 @@
-import os
-import pickle
-import sqlite3
-from pathlib import Path
+#!/usr/bin/env python
+
+import os, pickle, sqlite3
 
 import matplotlib
-
 if 'MPLBACKEND' not in os.environ:
     matplotlib.use('Agg')
-
 import matplotlib as mpl
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
@@ -20,27 +17,17 @@ from cycler import cycler
 from helpers import hxfunctions_clean as hxf
 
 
-DEFAULT_PREFIX = 'glpg'
-DEFAULT_STATE = 'pd9'
-DEFAULT_TEMPERATURE_K = 296.0
-DEFAULT_PD_CORR = 9.0
-DEFAULT_RESIDUE_OFFSET = 66
-DEFAULT_DSEQ = -1
-DEFAULT_SEQUENCE = (
-    "GSSHHHHHHSSGLVPRGSHMAALRERAGPVTWVMMIACVVVFIAMQILGDQEVMLWLAWPFDPTLKFEFWRYFTHALMHFSLMHILFNLLWWWYLGGAVEKRLGSGKLIVITLISALLSGYVQQKFSGPWFGGLTGVVYALMGYVWLRGERDPQSGIYLQRGLIIFALIWIVAGWFDLFGMSMANGAHIAGLAVGLAMAFVDSLNARKRK"
+default_prefix = 'glpg'
+default_state = 'pd9'
+default_temperature_k = 296.0
+default_pd_corr = 9.0
+default_residue_offset = 66
+default_dseq = -1
+default_sequence = (
+    'GSSHHHHHHSSGLVPRGSHMAALRERAGPVTWVMMIACVVVFIAMQILGDQEVMLWLAWPFDPTLKFEFWRYFTHALMHFSLMHILFNLLWWWYLGGAVEKRLGSGKLIVITLISALLSGYVQQKFSGPWFGGLTGVVYALMGYVWLRGERDPQSGIYLQRGLIIFALIWIVAGWFDLFGMSMANGAHIAGLAVGLAMAFVDSLNARKRK'
 )
-DEFAULT_SS_RANGES = [[29, 47], [82, 102], [106, 126], [135, 151], [162, 175], [183, 207]]
-DEFAULT_UPSIDE_TEMPS = [0.70, 0.75, 0.80, 0.85, 0.90]
-
-
-mycolors = mpl.color_sequences['tab10']
-plt.rc('axes', prop_cycle=(cycler(color=mycolors)))
-
-plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial', 'Tahoma', 'DejaVu Sans', 'Lucida Grande', 'Verdana']
-plt.rcParams['font.family'] = 'monospace'
-plt.rcParams['font.monospace'] = ['Source Code Pro', 'Consolas', 'Courier New']
-plt.rcParams['font.size'] = 18
+default_ss_ranges = [[29, 47], [82, 102], [106, 126], [135, 151], [162, 175], [183, 207]]
+default_upside_temps = [0.70, 0.75, 0.80, 0.85, 0.90]
 
 
 def parse_float_list(raw_value, default_values):
@@ -51,7 +38,7 @@ def parse_float_list(raw_value, default_values):
 
 def parse_ss_ranges(raw_value):
     if raw_value is None or raw_value.strip() == '':
-        return [list(item) for item in DEFAULT_SS_RANGES]
+        return [list(item) for item in default_ss_ranges]
 
     ranges = []
     for item in raw_value.split(','):
@@ -63,19 +50,8 @@ def parse_ss_ranges(raw_value):
     return ranges
 
 
-def resolve_path(path_value, default_path):
-    if path_value is None or path_value.strip() == '':
-        return default_path
-    return Path(path_value).expanduser()
-
-
-def require_file(path_obj, description):
-    if not path_obj.is_file():
-        raise FileNotFoundError(f"Missing {description}: {path_obj}")
-
-
 def load_fit_table(db_path):
-    connection = sqlite3.connect(str(db_path))
+    connection = sqlite3.connect(db_path)
     try:
         cursor = connection.cursor()
         cursor.execute('SELECT key, value FROM Dict')
@@ -88,56 +64,50 @@ def load_fit_table(db_path):
         loaded[key_blob] = pickle.loads(value_blob)
 
     if b'fits' in loaded:
-        print("Successfully loaded fit data using key b'fits'")
+        print('loaded fit data (key b\'fits\')')
         return loaded[b'fits']
     if 'fits' in loaded:
-        print("Successfully loaded fit data using key 'fits'")
+        print('loaded fit data (key \'fits\')')
         return loaded['fits']
 
     available_keys = list(loaded.keys())
-    raise KeyError(f"'fits' key not found in {db_path}. Available keys: {available_keys}")
-
-
-def save_figure(fig, output_path):
-    fig.tight_layout()
-    fig.savefig(output_path)
-    plt.close(fig)
-    print(f"Saved plot: {output_path}")
+    raise KeyError('\'fits\' key not found in %s. Available: %s' % (db_path, available_keys))
 
 
 def main():
-    prefix = os.environ.get('hx_plot_prefix', DEFAULT_PREFIX).strip()
-    state = os.environ.get('hx_plot_state', os.environ.get('protein_state', DEFAULT_STATE)).strip()
+    prefix = os.environ.get('hx_plot_prefix', default_prefix).strip()
+    state = os.environ.get('hx_plot_state', os.environ.get('protein_state', default_state)).strip()
     pdb_id = os.environ.get('pdb_id', 'glpG-RKRK-79HIS').strip()
 
-    work_dir = Path(os.environ.get('hx_plot_work_dir', '.')).expanduser().resolve()
-    output_dir = resolve_path(os.environ.get('hx_plot_output_dir'), work_dir).resolve()
-    results_dir = resolve_path(os.environ.get('hx_plot_results_dir'), work_dir / 'results').resolve()
+    work_dir = os.path.expanduser(os.environ.get('hx_plot_work_dir', '.'))
+    output_dir = os.path.expanduser(os.environ.get('hx_plot_output_dir', work_dir))
+    results_dir = os.path.expanduser(os.environ.get('hx_plot_results_dir', '%s/results' % work_dir))
 
-    dfout_path = resolve_path(os.environ.get('hx_plot_dfout_path'), work_dir / f'{prefix}-dfout-{state}.csv').resolve()
-    fitdata_path = resolve_path(os.environ.get('hx_plot_fitdata_path'), work_dir / f'{prefix}-fitdata-{state}').resolve()
-    dg_path = resolve_path(os.environ.get('hx_plot_dg_path'), work_dir / f'{prefix}-dg.csv').resolve()
-    resid_path = resolve_path(os.environ.get('hx_plot_resid_path'), results_dir / f'{pdb_id}.resid').resolve()
+    dfout_path = os.path.expanduser(os.environ.get('hx_plot_dfout_path', '%s/%s-dfout-%s.csv' % (work_dir, prefix, state)))
+    fitdata_path = os.path.expanduser(os.environ.get('hx_plot_fitdata_path', '%s/%s-fitdata-%s' % (work_dir, prefix, state)))
+    dg_path = os.path.expanduser(os.environ.get('hx_plot_dg_path', '%s/%s-dg.csv' % (work_dir, prefix)))
+    resid_path = os.path.expanduser(os.environ.get('hx_plot_resid_path', '%s/%s.resid' % (results_dir, pdb_id)))
 
-    sequence = os.environ.get('hx_plot_sequence', DEFAULT_SEQUENCE).strip()
+    sequence = os.environ.get('hx_plot_sequence', default_sequence).strip()
     ss_ranges = parse_ss_ranges(os.environ.get('hx_plot_ss_ranges'))
-    pD_corr = float(os.environ.get('hx_plot_pd_corr', str(DEFAULT_PD_CORR)))
-    temperature_k = float(os.environ.get('hx_plot_temperature_k', str(DEFAULT_TEMPERATURE_K)))
-    residue_offset = int(os.environ.get('hx_plot_residue_offset', str(DEFAULT_RESIDUE_OFFSET)))
-    dseq = int(os.environ.get('hx_plot_dseq', str(DEFAULT_DSEQ)))
-    upside_temps = parse_float_list(os.environ.get('hx_plot_upside_temps'), DEFAULT_UPSIDE_TEMPS)
+    pD_corr = float(os.environ.get('hx_plot_pd_corr', str(default_pd_corr)))
+    temperature_k = float(os.environ.get('hx_plot_temperature_k', str(default_temperature_k)))
+    residue_offset = int(os.environ.get('hx_plot_residue_offset', str(default_residue_offset)))
+    dseq = int(os.environ.get('hx_plot_dseq', str(default_dseq)))
+    upside_temps = parse_float_list(os.environ.get('hx_plot_upside_temps'), default_upside_temps)
 
-    require_file(dfout_path, 'HX fit summary CSV')
-    require_file(fitdata_path, 'HX fit database')
-    require_file(dg_path, 'simulation dG CSV')
-    require_file(resid_path, 'residue ID file')
-    output_dir.mkdir(parents=True, exist_ok=True)
+    for path, desc in [(dfout_path, 'HX fit summary CSV'), (fitdata_path, 'HX fit database'),
+                       (dg_path, 'simulation dG CSV'), (resid_path, 'residue ID file')]:
+        if not os.path.isfile(path):
+            raise FileNotFoundError('Missing %s: %s' % (desc, path))
 
-    print(f'Loading HX plot inputs from {work_dir}')
-    print(f'Using dfout file: {dfout_path}')
-    print(f'Using fit database: {fitdata_path}')
-    print(f'Using dG file: {dg_path}')
-    print(f'Using resid file: {resid_path}')
+    os.makedirs(output_dir, exist_ok=True)
+
+    print('loading HX plot inputs from %s' % work_dir)
+    print('dfout: %s' % dfout_path)
+    print('fit db: %s' % fitdata_path)
+    print('dG: %s' % dg_path)
+    print('resid: %s' % resid_path)
 
     kchem = hxf.getkchem(sequence, pD_corr, temperature_k)
     dfout = pd.read_csv(dfout_path)
@@ -148,7 +118,7 @@ def main():
     for _, row in dfout.iterrows():
         label = row['lab']
         if label not in fit_table:
-            print(f"Warning: Label {label} not found in fit data. Skipping.")
+            print('label %s not found in fit data, skipping' % label)
             mybkc.append(np.nan)
             mybkcerr.append(np.nan)
             continue
@@ -168,10 +138,18 @@ def main():
     dGups = np.loadtxt(dg_path, delimiter=',')
     if dGups.ndim == 1:
         dGups = dGups[np.newaxis, :]
-    print(f"Simulation data loaded. Shape: {dGups.shape}")
+    print('sim data loaded, shape: %s' % str(dGups.shape))
 
     resis = np.loadtxt(resid_path)
-    print(f"Loaded residues from {resid_path}")
+    print('loaded residues from %s' % resid_path)
+
+    mycolors = mpl.color_sequences['tab10']
+    plt.rc('axes', prop_cycle=(cycler(color=mycolors)))
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['Arial', 'Tahoma', 'DejaVu Sans', 'Lucida Grande', 'Verdana']
+    plt.rcParams['font.family'] = 'monospace'
+    plt.rcParams['font.monospace'] = ['Source Code Pro', 'Consolas', 'Courier New']
+    plt.rcParams['font.size'] = 18
 
     fig, ax = plt.subplots(figsize=(8, 5))
     cmap = cm.plasma_r
@@ -195,7 +173,7 @@ def main():
             resis + residue_offset + 1,
             dgs,
             'o-',
-            label='T = {:.2f}'.format(temp),
+            label='T = %.2f' % temp,
             ms=6,
             markerfacecolor=mycolors[index % len(mycolors)],
             markeredgecolor='k',
@@ -217,14 +195,18 @@ def main():
 
     ax.set_ylim(0, 17)
     ax.set_xlim(residue_offset - 5, len(sequence) + residue_offset + 5)
-    exp_patch = patches.Patch(color='k', lw=1, label=f'{state} exp')
+    exp_patch = patches.Patch(color='k', lw=1, label='%s exp' % state)
     handles, labels = ax.get_legend_handles_labels()
     handles.append(exp_patch)
     labels.append(exp_patch.get_label())
     ax.set_xlabel('residue')
     ax.set_ylabel('$\\Delta$G$_{HX,ave}$ (kcal/mol)')
     ax.legend(handles=handles, labels=labels, handleheight=0.1, handlelength=1, bbox_to_anchor=(1.05, 1), loc='upper left')
-    save_figure(fig, output_dir / 'hx_overview_plot.png')
+
+    fig.tight_layout()
+    fig.savefig('%s/hx_overview_plot.png' % output_dir)
+    plt.close(fig)
+    print('saved: %s/hx_overview_plot.png' % output_dir)
 
     valid_indices = resis.astype(int)
     valid_indices = valid_indices[(valid_indices >= 0) & (valid_indices < len(kchem))]
@@ -237,7 +219,7 @@ def main():
     mythxs = 10.0 ** np.arange(-2, 7, 0.2)
     DGpred = []
 
-    print('Calculating predictions...')
+    print('calculating predictions...')
     for _, row in df1.iterrows():
         try:
             x1, x2 = list(map(int, row['lab'].split('-')))
@@ -267,10 +249,10 @@ def main():
 
             DGpred.append(dgpred)
         except Exception as exc:
-            print(f"Error processing segment {row['lab']}: {exc}")
+            print('error processing segment %s: %s' % (row['lab'], exc))
 
     if len(DGpred) == 0:
-        print('Warning: No predictions generated. Check segment alignments or kchem data.')
+        print('no predictions generated, check segment alignments or kchem data')
         return
 
     DGpred = np.transpose(np.asarray(DGpred), axes=(1, 0, 2))
@@ -286,7 +268,7 @@ def main():
             markerfacecolor='none',
             mew=1.5,
             color=mycolors[index % len(mycolors)],
-            label='T = {:.2f}'.format(temp),
+            label='T = %.2f' % temp,
         )
 
     ax.plot([-2.5, 17], [-2.5, 17], '--', color='k', zorder=0)
@@ -299,7 +281,11 @@ def main():
     ax.set_yticks([0, 5, 10, 15])
     ax.set_xlabel('$\\Delta$G$_{HX,ave}^{exp}$ (kcal/mol)')
     ax.set_ylabel('$\\Delta$G$_{HX,ave}^{pred}$ (kcal/mol)')
-    save_figure(fig, output_dir / 'hx_correlation_plot.png')
+
+    fig.tight_layout()
+    fig.savefig('%s/hx_correlation_plot.png' % output_dir)
+    plt.close(fig)
+    print('saved: %s/hx_correlation_plot.png' % output_dir)
 
     fig, ax = plt.subplots(figsize=(8, 5))
     for ss_start, ss_end in ss_ranges:
@@ -322,7 +308,7 @@ def main():
             y1 = x1 - 0.5 + residue_offset + 2
             y2 = x2 + dseq + 0.5 + residue_offset
             ax.hlines(dgu, y1, y2, colors=mycolors[index % len(mycolors)], linewidth=3)
-        legend_patches.append(patches.Patch(color=mycolors[index % len(mycolors)], lw=1, label='T = {:.2f}'.format(temp)))
+        legend_patches.append(patches.Patch(color=mycolors[index % len(mycolors)], lw=1, label='T = %.2f' % temp))
 
     for _, row in df1.iterrows():
         dg_value = row['dgs']
@@ -340,7 +326,7 @@ def main():
     ax.set_xlim(residue_offset - 5, len(sequence) + residue_offset + 5)
     ax.set_xlabel('residue')
     ax.set_ylabel('$\\Delta$G$_{HX,ave}$ (kcal/mol)')
-    legend_patches.append(patches.Patch(color='k', lw=1, label=f'{state} exp'))
+    legend_patches.append(patches.Patch(color='k', lw=1, label='%s exp' % state))
     ax.legend(
         handles=legend_patches,
         labels=[patch.get_label() for patch in legend_patches],
@@ -349,7 +335,11 @@ def main():
         bbox_to_anchor=(1.05, 1),
         loc='upper left',
     )
-    save_figure(fig, output_dir / 'hx_prediction_segments.png')
+
+    fig.tight_layout()
+    fig.savefig('%s/hx_prediction_segments.png' % output_dir)
+    plt.close(fig)
+    print('saved: %s/hx_prediction_segments.png' % output_dir)
 
 
 if __name__ == '__main__':

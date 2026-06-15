@@ -1,52 +1,41 @@
-import os
+#!/usr/bin/env python
+
+import csv, glob, os, sys, runpy
 
 import numpy as np
 import scipy as sp
+import pandas as pd
 import matplotlib
 if 'MPLBACKEND' not in os.environ:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.font_manager
-from matplotlib.font_manager import FontProperties
 import matplotlib.cm as cm
-from matplotlib.ticker import LogLocator
-import pymbar  # for MBAR analysis
-from pymbar import timeseries  # for timeseries analysis
-import csv
-import pandas as pd
-import sys
-import runpy
 import matplotlib.backends.backend_pdf as pdf
+from matplotlib.font_manager import FontProperties
+from matplotlib.ticker import LogLocator
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize_scalar
 
-SANS_SERIF_FONTS = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+import pymbar
+from pymbar import timeseries
+
+sans_serif_fonts = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
 
 analysis_mode = os.environ.get('analysis_mode', 'uptake').strip().lower()
 
-
-def ensure_env_defaults(defaults):
-    for name, value in defaults.items():
-        os.environ.setdefault(name, value)
-
-
 if analysis_mode in ('stability', 'stability_hxms'):
-    ensure_env_defaults(
-        {
-            'pdb_id': 'glpG-RKRK-79HIS',
-            'sim_id': 'memb_test',
-            'n_rep': '48',
-            'start_frame': '100',
-            'T_targets': '0.80,0.85,0.90',
-            'target_T': '0.8',
-            'm_sens': '0.04',
-            'reference_temperature': '0.85',
-        }
-    )
+    os.environ.setdefault('pdb_id', 'glpG-RKRK-79HIS')
+    os.environ.setdefault('sim_id', 'memb_test')
+    os.environ.setdefault('n_rep', '48')
+    os.environ.setdefault('start_frame', '100')
+    os.environ.setdefault('T_targets', '0.80,0.85,0.90')
+    os.environ.setdefault('target_T', '0.8')
+    os.environ.setdefault('m_sens', '0.04')
+    os.environ.setdefault('reference_temperature', '0.85')
     runpy.run_module('helpers.calc_hdx_ht', run_name='__main__')
     raise SystemExit(0)
 if analysis_mode != 'uptake':
-    raise SystemExit("Unsupported analysis_mode for 4.calc_D_uptake.py: {}".format(analysis_mode))
+    raise SystemExit('unsupported analysis_mode: %s' % analysis_mode)
 
 
 def bool_env(name, default):
@@ -56,17 +45,17 @@ def bool_env(name, default):
     return raw.strip().lower() in ('1', 'true', 'yes', 'y', 'on')
 
 
-pdb_id = os.environ.get('pdb_id', 'glpG-RKRK-79HIS')  # CHECKME
-sim_id = os.environ.get('sim_id', 'memb_test')  # CHECKME
-start_frame = int(os.environ.get('start_frame', '100'))  # CHECKME
+pdb_id = os.environ.get('pdb_id', 'glpG-RKRK-79HIS')  # checkme
+sim_id = os.environ.get('sim_id', 'memb_test')  # checkme
+start_frame = int(os.environ.get('start_frame', '100'))  # checkme
 
-HXMS_method = os.environ.get('HXMS_method', 'D_norm_uptake')  # CHECKME
-protein_state = os.environ.get('protein_state', 'pd9')  # CHECKME
-exp_data_file = os.environ.get('exp_data_file', 'GlpG psWT Sub final peptides up sum 11192024.csv')  # CHECKME
+HXMS_method = os.environ.get('HXMS_method', 'D_norm_uptake')  # checkme
+protein_state = os.environ.get('protein_state', 'pd9')  # checkme
+exp_data_file = os.environ.get('exp_data_file', 'GlpG psWT Sub final peptides up sum 11192024.csv')  # checkme
 skip_experiment_data = bool_env('skip_experiment_data', False)
 
 work_dir = './'
-n_rep = int(os.environ.get('n_rep', '48'))  # CHECKME
+n_rep = int(os.environ.get('n_rep', '48'))  # checkme
 
 input_dir = '{}/inputs'.format(work_dir)
 output_dir = '{}/outputs'.format(work_dir)
@@ -78,11 +67,9 @@ pdb_dir = '{}/pdb'.format(work_dir)
 os.makedirs(fig_dir, exist_ok=True)
 os.makedirs(result_dir, exist_ok=True)
 
-# ============================================
 # set kchem params
-# ============================================
 
-mol_type = os.environ.get('mol_type', 'poly').strip().lower()  # CHECKME
+mol_type = os.environ.get('mol_type', 'poly').strip().lower()  # checkme
 
 aa = ['A', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'K', 'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W', 'Y']
 
@@ -94,8 +81,8 @@ Ea_asp = 1
 Ea_glu = 1.083
 Ea_his = 7.5
 
-single_T = bool_env('single_T', True)  # CHECKME
-legacy_T_range = np.array([0.85], dtype=float)
+single_T = bool_env('single_T', True)  # checkme
+legacy_T_range = np.array([1.14], dtype=float)
 # legacy_T_range = np.array([0.84, 0.85, 0.92, 0.99, 1.1], dtype=float)
 
 T_search_range = (0.7, 1.2)
@@ -112,7 +99,7 @@ T_ref_K = 293.0
 T_acid_K = 278.0
 
 # for calculation of protein HX in D2O
-pD_corr = float(os.environ.get('pD_corr', '6.70'))  # CHECKME pD_read+0.4
+pD_corr = float(os.environ.get('pD_corr', '6.70'))  # checkme pD_read+0.4
 legacy_Kws = np.array([14.96], dtype=float)
 D_plus = np.power(10, -pD_corr)
 legacy_od_minus_map = {
@@ -139,9 +126,7 @@ elif mol_type == 'oligo':
 else:
     sys.exit()
 
-# ============================================
 # load data
-# ============================================
 
 Pot = []
 Rg = []
@@ -237,25 +222,17 @@ def sanitize_peptides(peptide_starts, peptide_ends, peptide_labels, sequence_str
             start = int(start)
             end = int(end)
         except (TypeError, ValueError):
-            print('WARNING: Skipping {} peptide with non-integer bounds: {} {}'.format(source_name, start, end))
+            print('skip peptide (bad bounds): %s %s' % (start, end))
             continue
 
         if start < 1 or end < start or end > len(sequence_str):
-            print('WARNING: Skipping {} peptide outside sequence bounds: {}-{}'.format(source_name, start, end))
+            print('skip peptide (out of bounds): %s %s-%s' % (source_name, start, end))
             continue
 
         expected_label = sequence_str[start - 1:end]
         label = label.strip()
         if label and label != expected_label:
-            print(
-                'WARNING: {} peptide {}-{} sequence mismatch ({} != {}). Using residue bounds.'.format(
-                    source_name,
-                    start,
-                    end,
-                    label,
-                    expected_label,
-                )
-            )
+            print('seq mismatch %s %s-%s (%s != %s), using bounds' % (source_name, start, end, label, expected_label))
 
         valid_starts.append(start)
         valid_ends.append(end)
@@ -270,26 +247,33 @@ def sanitize_peptides(peptide_starts, peptide_ends, peptide_labels, sequence_str
 
 def load_legacy_inputs():
     if skip_experiment_data:
-        print('Skipping HXMS reference input loading because skip_experiment_data is enabled.')
+        print('skip_experiment_data enabled, skipping HXMS ref load')
+        return np.array([]), np.array([]), np.array([]), np.array([])
+
+    base = '%s/%s' % (output_dir, sim_id)
+    time_pattern = '%s_%s_time_peps_*.npy' % (pdb_id, HXMS_method)
+    time_matches = glob.glob('%s/%s' % (base, time_pattern))
+    if not time_matches:
+        time_matches = glob.glob('%s/%s_time_peps_%s.npy' % (base, pdb_id, HXMS_method, protein_state))
+    if not time_matches:
+        print('legacy time grid not found, skipping')
         return np.array([]), np.array([]), np.array([]), np.array([])
 
     try:
-        legacy_time_log = np.load(
-            '{}/{}/{}_{}_time_peps_{}.npy'.format(output_dir, sim_id, pdb_id, HXMS_method, protein_state)
-        )
-    except FileNotFoundError:
-        print('WARNING: Legacy HXMS time grid not found. Skipping legacy workflow.')
+        legacy_time_log = np.load(time_matches[0])
+    except Exception as exc:
+        print('failed to load legacy time grid: %s' % exc)
         return np.array([]), np.array([]), np.array([]), np.array([])
 
     try:
         with open('{}/{}/{}_pep_ids.csv'.format(output_dir, sim_id, pdb_id), 'r', encoding='utf-8-sig') as f:
             rows = list(csv.reader(f))
     except FileNotFoundError:
-        print('WARNING: Legacy peptide ID file not found. Skipping legacy workflow.')
+        print('legacy peptide ID file not found, skipping')
         return np.array([]), np.array([]), np.array([]), np.array([])
 
     if len(rows) < 3:
-        print('WARNING: Legacy peptide ID file is incomplete. Skipping legacy workflow.')
+        print('legacy peptide ID file incomplete, skipping')
         return np.array([]), np.array([]), np.array([]), np.array([])
 
     legacy_times = build_time_grid_from_log_times(legacy_time_log)
@@ -301,9 +285,9 @@ def load_optional_array(path, description):
     try:
         return np.load(path)
     except FileNotFoundError:
-        print('WARNING: {} not found: {}'.format(description, path))
+        print('%s not found: %s' % (description, path))
     except Exception as exc:
-        print('WARNING: Failed to load {} ({}): {}'.format(description, path, exc))
+        print('failed to load %s (%s): %s' % (description, path, exc))
     return None
 
 
@@ -311,14 +295,23 @@ def load_legacy_reference_curves():
     if skip_experiment_data:
         return None
 
-    peps = load_optional_array(
-        '{}/{}/{}_{}_peps_{}.npy'.format(output_dir, sim_id, pdb_id, HXMS_method, protein_state),
-        'legacy peptide list',
-    )
-    d_norm_peps = load_optional_array(
-        '{}/{}/{}_{}_d_norm_peps_{}.npy'.format(output_dir, sim_id, pdb_id, HXMS_method, protein_state),
-        'legacy peptide uptake curves',
-    )
+    base = '%s/%s' % (output_dir, sim_id)
+    peps = None
+    d_norm_peps = None
+
+    for suffix, desc in [('_peps_*.npy', 'legacy peptide list'), ('_d_norm_peps_*.npy', 'legacy peptide uptake curves')]:
+        matches = glob.glob('%s/%s_%s%s' % (base, pdb_id, HXMS_method, suffix))
+        if not matches:
+            matches = glob.glob('%s/%s_%s%s%s.npy' % (base, pdb_id, HXMS_method, suffix.replace('*', ''), protein_state))
+        if not matches:
+            print('%s not found in %s' % (desc, base))
+            return None
+        arr = np.load(matches[0])
+        if suffix == '_peps_*.npy':
+            peps = arr
+        else:
+            d_norm_peps = arr
+
     if peps is None or d_norm_peps is None:
         return None
 
@@ -330,47 +323,22 @@ def load_legacy_reference_curves():
 
 def load_experimental_data():
     if skip_experiment_data:
-        print('Skipping experimental data loading because skip_experiment_data is enabled.')
+        print('skip_experiment_data enabled, skipping exp data load')
         return pd.DataFrame()
 
-    col_names = [
-        'Protein State',
-        'Protein',
-        'Start',
-        'End',
-        'Sequence',
-        'Peptide Mass',
-        'RT (min)',
-        'Deut Time (sec)',
-        'maxD',
-        'Theor Uptake #D',
-        '#D',
-        '%D',
-        'Conf Interval (#D)',
-        '#Rep',
-        'Confidence',
-        'Stddev',
-    ]
-
+    exp_csv_path = '%s/%s' % (pdb_dir, exp_data_file)
     try:
-        exp_df = pd.read_csv(
-            exp_data_file,
-            skiprows=3,
-            header=None,
-            names=col_names,
-            usecols=range(16),
-            encoding='utf-8-sig',
-        )
+        exp_df = pd.read_csv(exp_csv_path, encoding='utf-8-sig')
     except FileNotFoundError:
-        print('WARNING: Experimental data file not found: {}'.format(exp_data_file))
+        print('exp data file not found: %s' % exp_csv_path)
         return pd.DataFrame()
     except Exception as exc:
-        print('WARNING: Failed to load experimental data: {}'.format(exc))
+        print('failed to load exp data: %s' % exc)
         return pd.DataFrame()
 
     exp_df.columns = exp_df.columns.str.strip()
     exp_df['Protein State'] = exp_df['Protein State'].astype(str).str.strip()
-    exp_df = exp_df[exp_df['Protein State'] == protein_state].copy()
+    exp_df = exp_df[exp_df['Protein State'].str.contains(protein_state, na=False)].copy()
     exp_df['Deut Time (sec)'] = pd.to_numeric(exp_df['Deut Time (sec)'], errors='coerce')
     exp_df['%D'] = pd.to_numeric(exp_df['%D'], errors='coerce')
     exp_df['Start'] = pd.to_numeric(exp_df['Start'], errors='coerce')
@@ -378,11 +346,11 @@ def load_experimental_data():
     exp_df = exp_df.dropna(subset=['Deut Time (sec)', '%D', 'Start', 'End'])
 
     if exp_df.empty:
-        print("WARNING: Experimental data loaded, but no valid rows matched protein state '{}'.".format(protein_state))
+        print("no rows matched protein state '%s'" % protein_state)
         return pd.DataFrame()
 
-    print('Successfully loaded experimental data from {}.'.format(exp_data_file))
-    print("Found {} unique peptides for '{}'.".format(len(exp_df[['Start', 'End']].drop_duplicates()), protein_state))
+    print('loaded exp data: %s' % exp_csv_path)
+    print('%d unique peptides for %s' % (len(exp_df[['Start', 'End']].drop_duplicates()), protein_state))
     return exp_df
 
 
@@ -447,7 +415,7 @@ def normalize_uptake(actual, theoretical):
     return norm_actual, norm_theoretical
 
 
-def is_non_decreasing(values, atol=1e-10):
+def nondecreasing(values, atol=1e-10):
     if values.size < 2:
         return True
     return bool(np.all(np.diff(values) >= -atol))
@@ -455,13 +423,13 @@ def is_non_decreasing(values, atol=1e-10):
 
 def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temperature_mode):
     if len(times) == 0:
-        print('WARNING: T={} skipped because no time grid is available.'.format(T_target))
+        print('T=%.3f skipped, no time grid' % T_target)
         return None
 
     try:
         real_K, Ft_a, Ft_b, Ft_w, OD_minus, pKc_asp, pKc_glu, pKc_his = calculate_temperature_parameters(T_target, temperature_mode)
     except Exception as exc:
-        print('WARNING: T={} failed during temperature parameter calculation: {}'.format(T_target, exc))
+        print('T=%.3f failed T param calc: %s' % (T_target, exc))
         return None
 
     lambda_ma = [0, -0.54, np.log10(np.power(10, -0.90 - pD_corr) / (np.power(10, -pKc_asp) + np.power(10, -pD_corr)) + np.power(10, 0.90 - pKc_asp) / (np.power(10, -pKc_asp) + np.power(10, -pD_corr))), np.log10(np.power(10, -0.60 - pD_corr) / (np.power(10, -pKc_glu) + np.power(10, -pD_corr)) + np.power(10, -0.90 - pKc_glu) / (np.power(10, -pKc_glu) + np.power(10, -pD_corr))), -0.52, -0.22, np.log10(np.power(10, -0.80 - pD_corr) / (np.power(10, -pKc_his) + np.power(10, -pD_corr)) + np.power(10, -pKc_his) / (np.power(10, -pKc_his) + np.power(10, -pD_corr))), -0.91, -0.56, -0.57, -0.64, -0.58, 0, -0.47, -0.59, -0.437992278, -0.79, -0.739022273, -0.4, -0.41]
@@ -510,7 +478,8 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
     k_chem_Up = k_chem[res]
     u_n = (cE0 / (T_target * kB)).flatten()
     log_w1 = mbar0._computeUnnormalizedLogWeights(u_n)
-    w1 = np.exp(log_w1)
+    max_log = np.max(log_w1)
+    w1 = np.exp(log_w1 - max_log)
     w1 /= np.sum(w1)
 
     k_obs = np.zeros(n_res)
@@ -524,7 +493,7 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
             k_obs[r] = k_chem_Up[r] * (1 - mean_pf[r])
 
     if np.min(np.subtract(k_chem_Up, k_obs)) < 0:
-        print('WARNING: T={} skipped because k_obs exceeded k_chem.'.format(T_target))
+        print('T=%.3f skipped, k_obs > k_chem' % T_target)
         return None
 
     D = []
@@ -555,11 +524,11 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
             D_pep_theor = np.sum(D_theor[start_idx:end_idx], axis=0)
             D_norm_pep, D_norm_pep_theor = normalize_uptake(D_pep, D_pep_theor)
 
-            if not is_non_decreasing(D_pep) or not is_non_decreasing(D_pep_theor):
-                print('WARNING: T={} skipped because peptide uptake was not monotonic.'.format(T_target))
+            if not nondecreasing(D_pep) or not nondecreasing(D_pep_theor):
+                print('T=%.3f skipped, peptide uptake not monotonic' % T_target)
                 return None
-            if not is_non_decreasing(D_norm_pep) or not is_non_decreasing(D_norm_pep_theor):
-                print('WARNING: T={} skipped because normalized peptide uptake was not monotonic.'.format(T_target))
+            if not nondecreasing(D_norm_pep) or not nondecreasing(D_norm_pep_theor):
+                print('T=%.3f skipped, norm peptide uptake not monotonic' % T_target)
                 return None
 
             D_peps.append(D_pep)
@@ -573,10 +542,10 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
         D_norm_peps_theors = np.asarray(D_norm_peps_theors)
 
         if np.nanmin(np.subtract(D_peps_theors, D_peps)) < 0:
-            print('WARNING: T={} skipped because peptide uptake exceeded theoretical uptake.'.format(T_target))
+            print('T=%.3f skipped, peptide uptake > theoretical' % T_target)
             return None
         if np.nanmin(np.subtract(D_norm_peps_theors, D_norm_peps)) < 0:
-            print('WARNING: T={} skipped because normalized peptide uptake exceeded theoretical uptake.'.format(T_target))
+            print('T=%.3f skipped, norm peptide uptake > theoretical' % T_target)
             return None
     else:
         empty_shape = (0, len(times))
@@ -589,17 +558,17 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
     D_res_theor = np.sum(D_theor, axis=0)
     D_norm_res, D_norm_res_theor = normalize_uptake(D_res, D_res_theor)
 
-    if not is_non_decreasing(D_res) or not is_non_decreasing(D_res_theor):
-        print('WARNING: T={} skipped because full-protein uptake was not monotonic.'.format(T_target))
+    if not nondecreasing(D_res) or not nondecreasing(D_res_theor):
+        print('T=%.3f skipped, full-protein uptake not monotonic' % T_target)
         return None
-    if not is_non_decreasing(D_norm_res) or not is_non_decreasing(D_norm_res_theor):
-        print('WARNING: T={} skipped because normalized full-protein uptake was not monotonic.'.format(T_target))
+    if not nondecreasing(D_norm_res) or not nondecreasing(D_norm_res_theor):
+        print('T=%.3f skipped, norm full-protein uptake not monotonic' % T_target)
         return None
     if np.nanmin(np.subtract(D_res_theor, D_res)) < 0:
-        print('WARNING: T={} skipped because full-protein uptake exceeded theoretical uptake.'.format(T_target))
+        print('T=%.3f skipped, full-protein uptake > theoretical' % T_target)
         return None
     if np.nanmin(np.subtract(D_norm_res_theor, D_norm_res)) < 0:
-        print('WARNING: T={} skipped because normalized full-protein uptake exceeded theoretical uptake.'.format(T_target))
+        print('T=%.3f skipped, norm full-protein uptake > theoretical' % T_target)
         return None
 
     return {
@@ -650,12 +619,12 @@ def collect_temperature_slices(T_targets, times, peptide_starts, peptide_ends, t
     return np.asarray(valid_T_targets, dtype=float), collected
 
 
-def build_colors(num_colors):
-    if num_colors <= 0:
+def get_colors(n):
+    if n <= 0:
         return []
-    if num_colors == 1:
+    if n == 1:
         return cm.viridis(np.array([0.6]))
-    return cm.viridis(np.linspace(0, 0.9, num_colors))
+    return cm.viridis(np.linspace(0, 0.9, n))
 
 
 def expand_residue_values(values):
@@ -722,8 +691,11 @@ def export_r_square_summary(T_targets, peptide_labels, plot_data, legacy_referen
             if np.count_nonzero(finite_mask) < 2:
                 continue
 
-            r_value = sp.stats.linregress(sim_curve[finite_mask], exp_curve[finite_mask]).rvalue
-            peptide_r2_values.append(r_value ** 2)
+            try:
+                r_value = sp.stats.linregress(sim_curve[finite_mask], exp_curve[finite_mask]).rvalue
+                peptide_r2_values.append(r_value ** 2)
+            except ValueError:
+                continue
 
         compared_counts.append(len(peptide_r2_values))
         if peptide_r2_values:
@@ -753,16 +725,16 @@ def plot_peptide_pdf(output_path, times, T_targets, peptide_labels, peptide_star
     pdf_pages = pdf.PdfPages(output_path)
 
     if not has_peptide_plot_data(peptide_labels, uptake_plot):
-        print('Skipping {} because no peptide data is available.'.format(output_path))
+        print('skip %s, no peptide data' % output_path)
         pdf_pages.close()
         return
 
-    colors = build_colors(len(T_targets))
+    colors = get_colors(len(T_targets))
     for p, peptide_label in enumerate(peptide_labels):
         fig = plt.figure()
         ax = plt.subplot(111)
         plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
+        plt.rcParams['font.sans-serif'] = sans_serif_fonts
 
         if np.isnan(uptake_plot[:, p]).any() or np.isnan(theor_plot[:, p]).any():
             plt.close()
@@ -814,14 +786,14 @@ def plot_full_protein_png(output_path, times, T_targets, uptake_plot, theor_plot
     fig = plt.figure()
     ax = plt.subplot(111)
     plt.rcParams['font.family'] = 'sans-serif'
-    plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
+    plt.rcParams['font.sans-serif'] = sans_serif_fonts
 
     if uptake_plot.shape[0] == 0:
-        print('Skipping {} because no full-protein data is available.'.format(output_path))
+        print('skip %s, no full-protein data' % output_path)
         plt.close()
         return
 
-    colors = build_colors(len(T_targets))
+    colors = get_colors(len(T_targets))
     for tt, (T_target, uptake, theoretical) in enumerate(zip(T_targets, uptake_plot, theor_plot)):
         color = colors[tt]
         ax.plot(times, uptake, label='T = {:.3f}'.format(T_target), color=color)
@@ -850,7 +822,7 @@ def export_legacy_outputs(times, peptide_labels, peptide_starts, peptide_ends, T
     has_full_protein_data = has_full_protein_plot_data(plot_data['D_res'])
 
     if not has_peptide_data and not has_full_protein_data:
-        print('Legacy workflow produced no output files.')
+        print('legacy workflow: no output')
         return
 
     if has_peptide_data:
@@ -882,9 +854,9 @@ def export_legacy_outputs(times, peptide_labels, peptide_starts, peptide_ends, T
         )
     else:
         if skip_experiment_data:
-            print('Skipping peptide-level legacy exports because skip_experiment_data is enabled.')
+            print('skip_experiment_data enabled, skipping peptide exports')
         else:
-            print('WARNING: No peptide definitions available. Skipping peptide-level legacy exports.')
+            print('no peptide defs, skipping peptide exports')
 
     if has_full_protein_data:
         plot_full_protein_png(
@@ -906,7 +878,7 @@ def export_legacy_outputs(times, peptide_labels, peptide_starts, peptide_ends, T
             '%D Uptake Prediction at Upside T Slices',
         )
     else:
-        print('WARNING: No full-protein legacy uptake data available.')
+        print('no full-protein legacy uptake data')
 
     if single_T and len(T_targets) == 1 and has_full_protein_data:
         if has_peptide_data:
@@ -927,7 +899,7 @@ def export_experimental_outputs(times, peptide_labels, peptide_starts, peptide_e
     has_full_protein_data = has_full_protein_plot_data(plot_data['D_res'])
 
     if not has_peptide_data and not has_full_protein_data:
-        print('Experimental workflow produced no output files.')
+        print('exp workflow: no output')
         return
 
     if has_peptide_data:
@@ -958,7 +930,7 @@ def export_experimental_outputs(times, peptide_labels, peptide_starts, peptide_e
             exp_df=exp_df,
         )
     else:
-        print('WARNING: No peptide definitions available. Skipping peptide-level experimental exports.')
+        print('no peptide defs, skipping exp peptide exports')
 
     if has_full_protein_data:
         plot_full_protein_png(
@@ -980,7 +952,7 @@ def export_experimental_outputs(times, peptide_labels, peptide_starts, peptide_e
             '%D Uptake Prediction at Optimal T = {:.3f}'.format(T_targets[0]),
         )
     else:
-        print('WARNING: No full-protein experimental uptake data available.')
+        print('no full-protein exp uptake data')
 
     if has_peptide_data:
         np.save('{}/{}_percentD_peps_EXP.npy'.format(result_dir, pdb_id), peptide_labels)
@@ -1000,20 +972,19 @@ legacy_times, legacy_pep_starts, legacy_pep_ends, legacy_pep_labels = load_legac
 if len(legacy_times) == 0:
     legacy_times = build_default_time_grid()
     if skip_experiment_data:
-        print('Using default simulation-only time grid because skip_experiment_data is enabled.')
+        print('using default time grid (skip_experiment_data)')
     else:
-        print('WARNING: Legacy HXMS time grid unavailable. Using default simulation-only time grid.')
+        print('legacy time grid unavailable, using default')
 
 exp_df = load_experimental_data()
 exp_pep_starts, exp_pep_ends, exp_pep_labels = build_experimental_peptides(exp_df)
 
-# ============================================
 # mbar
-# ============================================
 
 kB = 1.0
-T = np.array(T)
-beta = kB * T ** (-1)
+T_arr = np.array(T)
+T_mean = np.mean(T_arr[:, start_frame:], axis=1)
+beta = kB * T_mean ** (-1)
 
 cE0 = Pot[:, start_frame:]
 
@@ -1025,9 +996,7 @@ for k in range(n_rep):
         reducedPot0[k, l] = beta[l] * cE0[k]
 mbar0 = pymbar.MBAR(reducedPot0, FNs, verbose=True)
 
-# ============================================
 # legacy workflow
-# ============================================
 
 legacy_valid_T_targets, legacy_plot_data = collect_temperature_slices(
     legacy_T_range,
@@ -1049,9 +1018,7 @@ export_r_square_summary(legacy_valid_T_targets, legacy_pep_labels, legacy_plot_d
 if single_T and len(legacy_valid_T_targets) == 1:
     export_percentd_feature_table(calculate_all_hdx_data(legacy_valid_T_targets[0], legacy_times, legacy_pep_starts, legacy_pep_ends, 'legacy'))
 
-# ============================================
 # experimental optimization workflow
-# ============================================
 
 exp_times = build_default_time_grid()
 
@@ -1081,14 +1048,7 @@ def calculate_total_error(T_target):
                 fill_value=(D_norm_peps[p][0], D_norm_peps[p][-1]),
             )
         except Exception as exc:
-            print(
-                'WARNING: Interpolation failed for peptide {}-{} at T={}: {}'.format(
-                    exp_pep_starts[p],
-                    exp_pep_ends[p],
-                    T_target,
-                    exc,
-                )
-            )
+            print('interp failed peptide %s-%s T=%.3f: %s' % (exp_pep_starts[p], exp_pep_ends[p], T_target, exc))
             continue
 
         exp_times_sec = peptide_exp_data['Deut Time (sec)'].values
@@ -1096,13 +1056,12 @@ def calculate_total_error(T_target):
         sim_uptake_at_exp_times = sim_curve_interp(exp_times_sec)
         total_squared_error += np.sum((sim_uptake_at_exp_times - exp_uptake_pct) ** 2)
 
-    print('Testing T = {:.5f}, Total Squared Error = {:.2f}'.format(T_target, total_squared_error))
+    print('T=%.5f error=%.2f' % (T_target, total_squared_error))
     return total_squared_error
 
 
 if not exp_df.empty and len(exp_pep_labels) > 0:
-    print('--- Starting Temperature Optimization ---')
-    print('Minimizing error, ignoring peptides overlapping with res 1-11.')
+    print('optimizing T (ignoring res 1-11)...')
 
     opt_result = minimize_scalar(
         calculate_total_error,
@@ -1112,9 +1071,7 @@ if not exp_df.empty and len(exp_pep_labels) > 0:
     )
 
     T_optimal = float(opt_result.x)
-    print('--- Optimization Finished ---')
-    print('Optimal T found: {:.5f}'.format(T_optimal))
-    print('Minimum Error: {:.2f}'.format(opt_result.fun))
+    print('T_optimal = %.5f, min_error = %.2f' % (T_optimal, opt_result.fun))
 
     exp_valid_T_targets, exp_plot_data = collect_temperature_slices(
         np.array([T_optimal]),
@@ -1134,8 +1091,8 @@ if not exp_df.empty and len(exp_pep_labels) > 0:
     )
 else:
     if skip_experiment_data:
-        print('Skipping experimental optimization workflow because skip_experiment_data is enabled.')
+        print('skip_experiment_data enabled, skipping optimization')
     else:
-        print('WARNING: No experimental data or peptides found. Skipping experimental optimization workflow.')
+        print('no exp data or peptides, skipping optimization')
 
-print('Script finished.')
+print('done.')
