@@ -1,43 +1,36 @@
 # Project Goal
 
-Improve the performance of the dry-MARTINI/Upside hybrid interface for CGL particles by reducing unnecessary CGL pairlist work while preserving the validated physical table potentials and hybrid interface interactions.
+Ensure the 1RKL and 1AFO CGL hybrid workflows use the same CGL cutoff rules and verify that the CGL lipid model is faster than the full-resolution lipid model for both systems.
 
 # Architecture & Key Decisions
 
 - Do not disable, scale, or bypass SC-env, BB-env, SC-CGL, CGL-target, or CGL-CGL interactions.
-- CGL tables remain direct dry-MARTINI-derived spline tables. The table cutoff and taper are the physical force-field boundary.
-- The performance change should target runtime candidate-pair construction, not the table energy surface.
-- Because a CGL particle is a vector representing an extended DOPC body, the broad spherical support can be replaced only by a conservative directional support test: keep every pair that could place any represented DOPC bead pair within the dry-MARTINI cutoff.
-- CGL-specific code under `src/martini_cg_lipid.cpp` is in the clean-slate set, so keep the implementation direct and remove any unused scaffolding introduced during the change.
-- Apply the first directional filter to CGL-CGL and CGL-target pairs. Keep SC-CGL on its current spherical support until a side-chain body extent is stored explicitly enough to make a directional filter conservative for every rotamer row.
+- CGL cutoff metadata should be model/table driven, not protein/workflow specific.
+- 1RKL and 1AFO may differ in protein size and particle counts, but the CGL-CGL and CGL-target cutoff parameters must come from the same `dopc.h5` metadata and runtime defaults.
+- Performance acceptance is system-local: compare 1RKL CGL against 1RKL full lipid, and 1AFO CGL against 1AFO full lipid.
 
 # Execution Phases
 
-- [x] Phase 1: Inspect current CGL cutoff and pairlist paths.
-- [x] Phase 2: Identify how dry-MARTINI cutoff and CGL geometry metadata are written into H5.
-- [x] Phase 3: Implement conservative directional CGL pairlist filtering with minimal runtime scope.
-- [x] Phase 4: Verify with build/tests and, if practical, compare pair counts or runtime behavior.
-- [x] Phase 5: Document results and any residual risks.
+- [x] Phase 1: Compare CGL cutoff metadata and runtime attrs across active 1RKL and 1AFO coarse outputs.
+- [x] Phase 2: Compare active coarse/full stage-7 timings for 1RKL and 1AFO.
+- [x] Phase 3: Fix any workflow-specific cutoff divergence.
+- [x] Phase 4: Rebuild/regenerate only if needed, then verify both systems.
+- [x] Phase 5: Update project notes with the cutoff and performance result.
 
 # Known Errors / Blockers
 
-- Stale hybrid `.up` files created before this change do not contain
-  `compose_vector6d/max_axis_radius_ang`; reinjection correctly rejects them.
-  Verification requiring CGL-target nodes must use a freshly generated stage.
+- None currently.
 
 # Review
 
-- Implemented directional CGL pairlist filtering for CGL-CGL and CGL-target by
-  testing the CGL capsule envelope against the dry-MARTINI 1.2 nm bead cutoff
-  plus the pairlist buffer. The spline table cutoff/taper and force-field
-  surface are unchanged.
-- Added `max_axis_radius_ang` to DOPC-derived CGL metadata and propagated
-  `bead_nonbonded_cutoff_nm`, `length_conversion_ang_per_nm`,
-  `max_axis_radius_ang`, and `max_perp_radius_ang` into runtime CGL-CGL and
-  CGL-target nodes.
-- Pairlist cache invalidation now accounts for CGL vector rotation by treating
-  endpoint rotation as body motion scaled by the CGL axial radius.
-- Verification passed: Python compile, C++ build, regenerated MARTINI H5 files,
-  rebuilt `dopc.h5` metadata audit, focused CGL bilayer smoke, fresh short 1RKL
-  hybrid smoke through stage 7.0, and candidate-count audit on the fresh 1RKL
-  stage.
+- Active 1RKL and 1AFO coarse outputs use the same CGL cutoff metadata:
+  CGL-CGL `cutoff_ang=41.3`, CGL-target `cutoff_ang=26.6`, SC-CGL `cutoff_ang=26.6`,
+  bead nonbonded cutoff `1.2 nm`, DOPC axis radius `14.55848 A`, and DOPC perpendicular radius `4.114344 A`.
+- The 1RKL and 1AFO wrapper scripts do not set separate CGL cutoffs; both delegate to `run_sim_hybrid.sh`.
+- Current active stage-7 timing comparisons pass the performance requirement:
+  1RKL CGL `1707.99 us/systems/step` versus full lipid `3328.29 us/systems/step`;
+  1AFO CGL `1923.47 us/systems/step` versus full lipid `2522.99 us/systems/step`.
+- Current active CGL orientation checks are clean:
+  1RKL aligned-z min/p05/mean `0.770/0.849/0.949`, no bad-parallel or flipped rods;
+  1AFO aligned-z min/p05/mean `0.832/0.864/0.961`, no bad-parallel or flipped rods.
+- No code change was needed because there was no cutoff divergence to fix.

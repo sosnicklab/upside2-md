@@ -1,6 +1,34 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-15: Cross-system CGL cutoff/performance check.
+  - User correction: 1RKL and 1AFO must use the same CGL cutoff rules; do not
+    validate or discuss the cutoff change using only one of the two protein
+    examples.
+  - Active 1RKL and 1AFO coarse outputs use identical CGL runtime cutoff
+    metadata: CGL-CGL `41.3 A`, CGL-target `26.6 A`, SC-CGL `26.6 A`,
+    bead-level nonbonded cutoff `1.2 nm`, DOPC axis radius `14.55848 A`, and
+    DOPC perpendicular radius `4.114344 A`.
+  - Current active stage-7 performance satisfies the expected ordering for both
+    examples: 1RKL CGL/full `1707.99/3328.29 us/systems/step`; 1AFO CGL/full
+    `1923.47/2522.99 us/systems/step`.
+- 2026-06-15: Current post-directional-pairlist validation.
+  - The old active `martini_1rkl_hybrid` stage-7 output contained real CGL
+    orientation defects rather than only a VTF rendering issue: the final frame
+    had three `aligned-z < 0.70` rods, and two were already bad at the
+    production handoff.
+  - Regenerating the default 1RKL coarse hybrid output with the current
+    directional CGL pairlist produced clean final geometry: aligned-z
+    min/p05/mean `0.770/0.849/0.949`, `bad_parallel=0`, `bad_flip=0`, and no
+    leaflet crossings.
+  - Current measured performance does not support another cutoff change:
+    active 1RKL coarse CGL hybrid is `1707.99 us/systems/step` versus
+    full-resolution lipid `3328.29 us/systems/step`; same-size DOPC-only CGL
+    bilayer is `350.29 us/systems/step` versus full-resolution lipid
+    `797.32 us/systems/step`.
+  - Next performance work should start from a fresh profile. SC-CGL should not
+    be directionally narrowed unless side-chain extent bounds make the filter
+    conservative for all rotamers.
 - 2026-06-15: CGL directional pairlist correction.
   - User correction: because `dopc.h5` CGL tables are trained from two DOPC
     molecules, a center-distance cutoff that admits a third DOPC-sized gap is
