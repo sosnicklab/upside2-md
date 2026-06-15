@@ -1,6 +1,12 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-15: Hybrid cleanup style rule.
+  - User correction: cleanup is not only deletion of stale code. The hybrid
+    interface should match the human-written master branch style across C++,
+    Python, shell, and Markdown. Avoid generated-sounding comments, debugging
+    chronology, patch-history explanations, and compatibility wrappers in the
+    active-development files.
 - 2026-06-14: Exact CGL pairlist acceleration.
   - It is physically safe to skip CGL-specific pair evaluations only when the
     pair is outside the table cutoff plus a rebuild buffer, because the runtime

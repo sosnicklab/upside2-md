@@ -1,5 +1,28 @@
 # Progress Log
 
+## 2026-06-15 Phase 17 Master-Style Hybrid Cleanup
+- Actions taken:
+  - Compared the current hybrid-interface files with `/Users/yinhan/Documents/upside2-md-master`; outside `example/00.AnalysisScripts`, the MARTINI interface is mostly new code rather than a direct modification of master files.
+  - Factored repeated CGL runtime transform/taper handling in `src/martini_cg_lipid.cpp`.
+  - Removed stale fit-relax controls from `example/16.MARTINI/build_martini_h5_slurm.sh`.
+  - Simplified `py/martini_gen_params.py` and corrected its top-level wording.
+  - Rewrote `example/16.MARTINI/readme.md` as a concise usage note.
+- Files modified:
+  - `src/martini_cg_lipid.cpp`
+  - `py/martini_gen_params.py`
+  - `example/16.MARTINI/build_martini_h5_slurm.sh`
+  - `example/16.MARTINI/readme.md`
+  - `plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - Python compile passed for all `py/martini_*.py` files.
+  - `bash -n` passed for the MARTINI build and run wrappers.
+  - `make -C obj -j4` passed.
+  - `git diff --check` passed for the edited files.
+  - `example/16.MARTINI/test_cg_bilayer/run_test.sh` passed with `validation=PASS`.
+  - Short 1RKL hybrid smoke under `outputs/phase17_cleanup_1rkl_smoke` completed through stage 7.0 and VTF extraction.
+
 ## 2026-06-14 Phase 16 CGL Pairlist Acceleration
 - Actions taken:
   - Added cached pairlists to the CGL-specific runtime loops: CGL-CGL, SC-CGL, CGL-rotamer-SC, and CGL-target.

@@ -469,6 +469,86 @@ static inline void compute_cutoff_taper(
     }
 }
 
+static inline float norm_dr(const float dr[3]) {
+    return sqrtf(std::max(
+                dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
+                1e-12f));
+}
+
+static inline void apply_transformed_taper(
+        QuadsplineEval& e,
+        const float dr[3],
+        float cutoff,
+        float taper_width) {
+    float taper = 1.f;
+    float d_taper_dr = 0.f;
+    compute_cutoff_taper(norm_dr(dr), cutoff, taper_width, taper, d_taper_dr);
+    float energy = e.value;
+    e.value = taper * energy;
+    e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+    e.d_da1 *= taper;
+    e.d_da2 *= taper;
+}
+
+static inline void apply_transformed_taper(
+        TargetSplineEval& e,
+        const float dr[3],
+        float cutoff,
+        float taper_width) {
+    float taper = 1.f;
+    float d_taper_dr = 0.f;
+    compute_cutoff_taper(norm_dr(dr), cutoff, taper_width, taper, d_taper_dr);
+    float energy = e.value;
+    e.value = taper * energy;
+    e.d_dr = taper * e.d_dr + energy * d_taper_dr;
+    e.d_da *= taper;
+}
+
+static inline void apply_log1p_reduced_transform(
+        QuadsplineEval& e,
+        float reference_energy,
+        float boltzmann_temperature,
+        const float dr[3],
+        float cutoff,
+        float taper_width) {
+    float deriv_scale = boltzmann_temperature * expf(e.value);
+    e.value = reference_energy + boltzmann_temperature * expm1f(e.value);
+    e.d_dr *= deriv_scale;
+    e.d_da1 *= deriv_scale;
+    e.d_da2 *= deriv_scale;
+    apply_transformed_taper(e, dr, cutoff, taper_width);
+}
+
+static inline void apply_log1p_reduced_transform(
+        TargetSplineEval& e,
+        float reference_energy,
+        float boltzmann_temperature,
+        const float dr[3],
+        float cutoff,
+        float taper_width) {
+    float deriv_scale = boltzmann_temperature * expf(e.value);
+    e.value = reference_energy + boltzmann_temperature * expm1f(e.value);
+    e.d_dr *= deriv_scale;
+    e.d_da *= deriv_scale;
+    apply_transformed_taper(e, dr, cutoff, taper_width);
+}
+
+static inline void apply_boltzmann_weight_transform(
+        TargetSplineEval& e,
+        float reference_energy,
+        float boltzmann_temperature,
+        float minimum_boltzmann_weight,
+        const float dr[3],
+        float cutoff,
+        float taper_width) {
+    float weight = std::max(e.value, minimum_boltzmann_weight);
+    float deriv_scale = -boltzmann_temperature / weight;
+    e.value = reference_energy - boltzmann_temperature * logf(weight);
+    e.d_dr *= deriv_scale;
+    e.d_da *= deriv_scale;
+    apply_transformed_taper(e, dr, cutoff, taper_width);
+}
+
 static inline void load_vec6(VecArray data, int idx, float pos[3], float dir[3]) {
     pos[0] = data(0, idx);
     pos[1] = data(1, idx);
@@ -849,26 +929,10 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
                     dr, n1, n2, knot_spacing, cutoff,
                     log1p_reduced_transform ? 0.f : taper_width, e);
         if(ok) {
-            if(log1p_reduced_transform) {
-                float scale = boltzmann_temperature * expf(e.value);
-                e.value = reference_energy_eup[t1 * n_type2 + t2]
-                        + boltzmann_temperature * expm1f(e.value);
-                e.d_dr *= scale;
-                e.d_da1 *= scale;
-                e.d_da2 *= scale;
-
-                float r = sqrtf(std::max(
-                            dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
-                            1e-12f));
-                float taper = 1.f;
-                float d_taper_dr = 0.f;
-                compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
-                float energy = e.value;
-                e.value = taper * energy;
-                e.d_dr = taper * e.d_dr + energy * d_taper_dr;
-                e.d_da1 *= taper;
-                e.d_da2 *= taper;
-            }
+            if(log1p_reduced_transform)
+                apply_log1p_reduced_transform(
+                        e, reference_energy_eup[t1 * n_type2 + t2],
+                        boltzmann_temperature, dr, cutoff, taper_width);
             total += e.value;
         }
     }
@@ -903,26 +967,10 @@ void CGLipidPairPotential::propagate_deriv() {
                     log1p_reduced_transform ? 0.f : taper_width, e);
         if(!ok)
             continue;
-        if(log1p_reduced_transform) {
-            float scale = boltzmann_temperature * expf(e.value);
-            e.value = reference_energy_eup[t1 * n_type2 + t2]
-                    + boltzmann_temperature * expm1f(e.value);
-            e.d_dr *= scale;
-            e.d_da1 *= scale;
-            e.d_da2 *= scale;
-
-            float r = sqrtf(std::max(
-                        dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
-                        1e-12f));
-            float taper = 1.f;
-            float d_taper_dr = 0.f;
-            compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
-            float energy = e.value;
-            e.value = taper * energy;
-            e.d_dr = taper * e.d_dr + energy * d_taper_dr;
-            e.d_da1 *= taper;
-            e.d_da2 *= taper;
-        }
+        if(log1p_reduced_transform)
+            apply_log1p_reduced_transform(
+                    e, reference_energy_eup[t1 * n_type2 + t2],
+                    boltzmann_temperature, dr, cutoff, taper_width);
 
         float dpos1[3] = {0.f, 0.f, 0.f};
         float ddir1[3] = {0.f, 0.f, 0.f};
@@ -1092,26 +1140,10 @@ void CGLipidSCPotential::compute_value(ComputeMode mode) {
                 dr, n1, n2, knot_spacing, cutoff,
                 log1p_reduced_transform ? 0.f : taper_width, e);
         if(ok) {
-            if(log1p_reduced_transform) {
-                float scale = boltzmann_temperature * expf(e.value);
-                e.value = reference_energy_eup[t1 * n_type2 + t2]
-                        + boltzmann_temperature * expm1f(e.value);
-                e.d_dr *= scale;
-                e.d_da1 *= scale;
-                e.d_da2 *= scale;
-
-                float r = sqrtf(std::max(
-                            dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
-                            1e-12f));
-                float taper = 1.f;
-                float d_taper_dr = 0.f;
-                compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
-                float energy = e.value;
-                e.value = taper * energy;
-                e.d_dr = taper * e.d_dr + energy * d_taper_dr;
-                e.d_da1 *= taper;
-                e.d_da2 *= taper;
-            }
+            if(log1p_reduced_transform)
+                apply_log1p_reduced_transform(
+                        e, reference_energy_eup[t1 * n_type2 + t2],
+                        boltzmann_temperature, dr, cutoff, taper_width);
             total += e.value;
         }
     }
@@ -1143,26 +1175,10 @@ void CGLipidSCPotential::propagate_deriv() {
                 log1p_reduced_transform ? 0.f : taper_width, e);
         if(!ok)
             continue;
-        if(log1p_reduced_transform) {
-            float scale = boltzmann_temperature * expf(e.value);
-            e.value = reference_energy_eup[t1 * n_type2 + t2]
-                    + boltzmann_temperature * expm1f(e.value);
-            e.d_dr *= scale;
-            e.d_da1 *= scale;
-            e.d_da2 *= scale;
-
-            float r = sqrtf(std::max(
-                        dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
-                        1e-12f));
-            float taper = 1.f;
-            float d_taper_dr = 0.f;
-            compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
-            float energy = e.value;
-            e.value = taper * energy;
-            e.d_dr = taper * e.d_dr + energy * d_taper_dr;
-            e.d_da1 *= taper;
-            e.d_da2 *= taper;
-        }
+        if(log1p_reduced_transform)
+            apply_log1p_reduced_transform(
+                    e, reference_energy_eup[t1 * n_type2 + t2],
+                    boltzmann_temperature, dr, cutoff, taper_width);
 
         float dpos1[3] = {0.f, 0.f, 0.f};
         float ddir1[3] = {0.f, 0.f, 0.f};
@@ -1399,26 +1415,10 @@ struct CGLipidSCOneBody : public CoordNode {
                     dr, n1, n2, knot_spacing, cutoff,
                     log1p_reduced_transform ? 0.f : taper_width, e);
             if(ok) {
-                if(log1p_reduced_transform) {
-                    float scale = boltzmann_temperature * expf(e.value);
-                    e.value = reference_energy_eup[t1 * n_type2 + t2]
-                            + boltzmann_temperature * expm1f(e.value);
-                    e.d_dr *= scale;
-                    e.d_da1 *= scale;
-                    e.d_da2 *= scale;
-
-                    float r = sqrtf(std::max(
-                                dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
-                                1e-12f));
-                    float taper = 1.f;
-                    float d_taper_dr = 0.f;
-                    compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
-                    float energy = e.value;
-                    e.value = taper * energy;
-                    e.d_dr = taper * e.d_dr + energy * d_taper_dr;
-                    e.d_da1 *= taper;
-                    e.d_da2 *= taper;
-                }
+                if(log1p_reduced_transform)
+                    apply_log1p_reduced_transform(
+                            e, reference_energy_eup[t1 * n_type2 + t2],
+                            boltzmann_temperature, dr, cutoff, taper_width);
                 output(0, ai) += e.value;
             }
         }
@@ -1453,26 +1453,10 @@ struct CGLipidSCOneBody : public CoordNode {
                     dr, n1, n2, knot_spacing, cutoff,
                     log1p_reduced_transform ? 0.f : taper_width, e);
             if(!ok) continue;
-            if(log1p_reduced_transform) {
-                float scale = boltzmann_temperature * expf(e.value);
-                e.value = reference_energy_eup[t1 * n_type2 + t2]
-                        + boltzmann_temperature * expm1f(e.value);
-                e.d_dr *= scale;
-                e.d_da1 *= scale;
-                e.d_da2 *= scale;
-
-                float r = sqrtf(std::max(
-                            dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
-                            1e-12f));
-                float taper = 1.f;
-                float d_taper_dr = 0.f;
-                compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
-                float energy = e.value;
-                e.value = taper * energy;
-                e.d_dr = taper * e.d_dr + energy * d_taper_dr;
-                e.d_da1 *= taper;
-                e.d_da2 *= taper;
-            }
+            if(log1p_reduced_transform)
+                apply_log1p_reduced_transform(
+                        e, reference_energy_eup[t1 * n_type2 + t2],
+                        boltzmann_temperature, dr, cutoff, taper_width);
 
             float dpos1[3] = {0.f, 0.f, 0.f};
             float ddir1[3] = {0.f, 0.f, 0.f};
@@ -1610,34 +1594,15 @@ void CGLipidTargetPotential::compute_value(ComputeMode mode) {
             n_angular, n_radial, dr, n1, knot_spacing, cutoff,
             (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e))
         {
-            bool transformed = false;
             if(boltzmann_weight_transform) {
-                float weight = std::max(e.value, minimum_boltzmann_weight);
-                float scale = -boltzmann_temperature / weight;
-                e.value = reference_energy_eup[t1 * n_type2 + t2]
-                        - boltzmann_temperature * logf(weight);
-                e.d_dr *= scale;
-                e.d_da *= scale;
-                transformed = true;
+                apply_boltzmann_weight_transform(
+                        e, reference_energy_eup[t1 * n_type2 + t2],
+                        boltzmann_temperature, minimum_boltzmann_weight,
+                        dr, cutoff, taper_width);
             } else if(log1p_reduced_transform) {
-                float scale = boltzmann_temperature * expf(e.value);
-                e.value = reference_energy_eup[t1 * n_type2 + t2]
-                        + boltzmann_temperature * expm1f(e.value);
-                e.d_dr *= scale;
-                e.d_da *= scale;
-                transformed = true;
-            }
-            if(transformed) {
-                float r = sqrtf(std::max(
-                            dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2],
-                            1e-12f));
-                float taper = 1.f;
-                float d_taper_dr = 0.f;
-                compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
-                float energy = e.value;
-                e.value = taper * energy;
-                e.d_dr = taper * e.d_dr + energy * d_taper_dr;
-                e.d_da *= taper;
+                apply_log1p_reduced_transform(
+                        e, reference_energy_eup[t1 * n_type2 + t2],
+                        boltzmann_temperature, dr, cutoff, taper_width);
             }
             total += e.value;
         }
@@ -1668,35 +1633,19 @@ void CGLipidTargetPotential::propagate_deriv() {
             n_angular, n_radial, dr, n1, knot_spacing, cutoff,
             (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e))
             continue;
-        bool transformed = false;
         if(boltzmann_weight_transform) {
-            float weight = std::max(e.value, minimum_boltzmann_weight);
-            float scale = -boltzmann_temperature / weight;
-            e.value = reference_energy_eup[t1 * n_type2 + t2]
-                    - boltzmann_temperature * logf(weight);
-            e.d_dr *= scale;
-            e.d_da *= scale;
-            transformed = true;
+            apply_boltzmann_weight_transform(
+                    e, reference_energy_eup[t1 * n_type2 + t2],
+                    boltzmann_temperature, minimum_boltzmann_weight,
+                    dr, cutoff, taper_width);
         } else if(log1p_reduced_transform) {
-            float scale = boltzmann_temperature * expf(e.value);
-            e.value = reference_energy_eup[t1 * n_type2 + t2]
-                    + boltzmann_temperature * expm1f(e.value);
-            e.d_dr *= scale;
-            e.d_da *= scale;
-            transformed = true;
+            apply_log1p_reduced_transform(
+                    e, reference_energy_eup[t1 * n_type2 + t2],
+                    boltzmann_temperature, dr, cutoff, taper_width);
         }
 
         float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
         float r = sqrtf(std::max(r2, 1e-12f));
-        if(transformed) {
-            float taper = 1.f;
-            float d_taper_dr = 0.f;
-            compute_cutoff_taper(r, cutoff, taper_width, taper, d_taper_dr);
-            float energy = e.value;
-            e.value = taper * energy;
-            e.d_dr = taper * e.d_dr + energy * d_taper_dr;
-            e.d_da *= taper;
-        }
         float inv_r = 1.f / r;
         float unit[3] = {dr[0] * inv_r, dr[1] * inv_r, dr[2] * inv_r};
         float a = n1[0] * unit[0] + n1[1] * unit[1] + n1[2] * unit[2];

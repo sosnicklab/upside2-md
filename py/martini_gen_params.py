@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""One-shot pre-generation of MARTINI parameter .h5 files.
+"""Build dry-MARTINI parameter HDF5 files.
 
-Generates the MARTINI parameter files under ``parameters/dryMARTINI/``:
+The generated files live under ``parameters/dryMARTINI``:
 
-    particle.h5      - all 38 particle-type pair LJ+Coulomb energy grids
-    sidechain.h5     - all 20 residues x 38 target SC orientation tables
-    dopc.h5          - DOPC CG lipid directional splines
+    particle.h5
+    sidechain.h5
+    dopc.h5
 
-Run this once after cloning or when the .itp files change:
+Typical use:
 
     python py/martini_gen_params.py --upside-home /path/to/repo
 
-Pass ``--force`` to regenerate files that already exist.
+Use ``--force`` to replace existing files.
 """
 
 from __future__ import annotations
@@ -83,7 +83,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: UPSIDE_HOME does not exist: {repo_root}", file=sys.stderr)
         return 1
 
-    # Resolve required paths
     dry_ff_path = repo_root / "parameters" / "dryMARTINI" / "dry_martini_v2.1.itp"
     lipids_itp_path = repo_root / "parameters" / "dryMARTINI" / "dry_martini_v2.1_lipids.itp"
     dopc_pdb_path = repo_root / "parameters" / "dryMARTINI" / "DOPC.pdb"
@@ -98,38 +97,32 @@ def main(argv: list[str] | None = None) -> int:
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    files_to_generate = {
-        output_dir / "particle.h5": "build_particle_h5",
-        output_dir / "sidechain.h5": "build_sidechain_h5",
-        output_dir / "dopc.h5": "build_dopc_h5",
-    }
-
     from martini_build_tables import (
         build_particle_h5,
         build_sidechain_h5,
         build_dopc_h5,
     )
 
-    builders: dict = {
-        "build_particle_h5": lambda: build_particle_h5(
-            output_path=output_dir / "particle.h5",
-            dry_ff_path=dry_ff_path,
-        ),
-        "build_sidechain_h5": lambda: build_sidechain_h5(
-            output_path=output_dir / "sidechain.h5",
-            dry_ff_path=dry_ff_path,
-            martinize_path=martinize_path,
-            sidechain_lib_path=sidechain_lib_path,
-        ),
-        "build_dopc_h5": lambda: build_dopc_h5(
-            output_path=output_dir / "dopc.h5",
-            dry_ff_path=dry_ff_path,
-            lipids_itp_path=lipids_itp_path,
-            martinize_path=martinize_path,
-            sidechain_lib_path=sidechain_lib_path,
-            dopc_pdb_path=dopc_pdb_path,
-        ),
-    }
+    builders = [
+        (output_dir / "particle.h5", build_particle_h5, {
+            "output_path": output_dir / "particle.h5",
+            "dry_ff_path": dry_ff_path,
+        }),
+        (output_dir / "sidechain.h5", build_sidechain_h5, {
+            "output_path": output_dir / "sidechain.h5",
+            "dry_ff_path": dry_ff_path,
+            "martinize_path": martinize_path,
+            "sidechain_lib_path": sidechain_lib_path,
+        }),
+        (output_dir / "dopc.h5", build_dopc_h5, {
+            "output_path": output_dir / "dopc.h5",
+            "dry_ff_path": dry_ff_path,
+            "lipids_itp_path": lipids_itp_path,
+            "martinize_path": martinize_path,
+            "sidechain_lib_path": sidechain_lib_path,
+            "dopc_pdb_path": dopc_pdb_path,
+        }),
+    ]
 
     print(f"Upside home: {repo_root}")
     print(f"Output directory: {output_dir}")
@@ -142,12 +135,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     print()
 
-    for output_path, builder_name in files_to_generate.items():
+    for output_path, builder, kwargs in builders:
         if output_path.exists() and not args.force:
             print(f"Skipping {output_path.name} (already exists, use --force to overwrite)")
             continue
         print(f"Generating {output_path.name} ...")
-        builders[builder_name]()
+        builder(**kwargs)
         print()
 
     print("All MARTINI parameter files generated successfully.")

@@ -1,38 +1,48 @@
-This example shows:
-1. how to run the hybrid dry-MARTINI + Upside membrane workflow
-2. how to launch the workflow through the python wrapper `run.py`
-3. how to generate VTF output for visualization from the stage workflow
+This example runs hybrid Upside/dry-MARTINI membrane systems.
 
-Similar to the other examples, you can use the python script `run.py` in this folder:
+Setup:
 
+```bash
 source ../../.venv/bin/activate
 source ../../source.sh
-python run.py
+```
 
-Edit the settings near the top of `run.py` to change the PDB id, run
-directory, salt concentration, lipid representation, or stage lengths.  The
-MARTINI workflow helper scripts live under `../../py/`.
+Build the dry-MARTINI HDF5 tables when the force-field inputs change:
 
-The workflow now defaults to the same thermostat timescale as the standard Upside examples (`tau = 5.0`) unless you override `THERMOSTAT_TIMESCALE`.
-Its hybrid stages still use smaller explicit timesteps than the standard examples for stability, so any repo-wide physical time calibration borrowed from those examples should be revalidated before applying it literally to stage `7.0`.
-Fresh workflow runs now execute a rigid-protein `6.0` NPT box-relaxation stage before handing coordinates and box dimensions into `7.0`.  Adjust its length with `EQ_60_NSTEPS` when you need a shorter or longer packing pass.
-Production stage `7.0` defaults to NVT (`PROD_70_NPT_ENABLE=0`).  That is
-useful for stability comparisons, but membrane packing can drift away from the
-dry-MARTINI reference when production NPT is disabled.
+```bash
+bash build_martini_h5_m1.sh
+```
 
-You can also run the shell workflow directly:
+Run a coarse-lipid 1RKL system:
 
+```bash
 bash run_sim_1rkl.sh
+```
 
-The default results are stored in `outputs/martini_1rkl_hybrid`.  The workflow
-writes stage checkpoints, logs, and VTF files there.
+Run the same system with full-resolution DOPC:
 
-To test packing with production NPT enabled, override:
+```bash
+bash run_sim_1rkl_full.sh
+```
 
-`PROD_70_NPT_ENABLE=1`
+The shell wrappers call `run_sim_hybrid.sh`. Common overrides are environment
+variables:
 
-The workflow uses the semi-isotropic barostat settings from
-`run_sim_hybrid.sh`, so this keeps `x/y` coupled while using the configured
-normal-direction compressibility.
+```bash
+RUN_DIR=outputs/test_1rkl \
+RUNTIME_PDB_ID=test_1rkl \
+EQ_60_NSTEPS=500 \
+PROD_70_NSTEPS=10000 \
+bash run_sim_1rkl.sh
+```
 
-Generated VTF files render each CG lipid as two visible particles connected by one bond: a hydrophilic endpoint and a hydrophobic endpoint.  Their separation follows the source DOPC head-to-tail reference span rather than the hidden runtime orientation-site bond length.
+The Python wrapper exposes the same workflow through editable settings near the
+top of `run.py`:
+
+```bash
+python run.py
+```
+
+Outputs are written under `outputs/`. Each run contains stage checkpoints, logs,
+and VTF files. In coarse-lipid mode, VTF output represents each CGL particle as a
+head endpoint and a tail endpoint connected by one display bond.

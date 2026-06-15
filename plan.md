@@ -1,6 +1,6 @@
 # Project Goal
 
-Build and maintain a physically defensible single-vector DOPC coarse-grained lipid (CGL) force field for the UPSIDE/dry-MARTINI hybrid workflow. The active cleanup task is to keep the hybrid C++/Python implementation aligned with the current tempered-PMF/direct-geometry schema by removing unused compatibility paths, stale versioned metadata, scaffold code, and dead controls without changing the physical interaction model.
+Build and maintain a physically defensible single-vector DOPC coarse-grained lipid (CGL) force field for the UPSIDE/dry-MARTINI hybrid workflow. The active task is a master-style hybrid-interface cleanup: compare against `/Users/yinhan/Documents/upside2-md-master` while ignoring `example/00.AnalysisScripts`, then rewrite or simplify the hybrid C++/Python interface so it reads like the human-written codebase instead of accumulated patches, without changing the validated physical model.
 
 # Architecture & Key Decisions
 
@@ -47,6 +47,14 @@ Build and maintain a physically defensible single-vector DOPC coarse-grained lip
 - Revised Experimental Decision: Phase 11 uses the same `tau=10.0` tempered PMF hidden-state reduction for CGL-CGL, SC-CGL, CGL-particle, and SC-particle. This is a uniform configurational PMF over unresolved rigid orientations, not a guarantee of correct real-time dynamics. Validation must therefore check structure and dynamics-adjacent observables rather than assuming the PMF preserves kinetics.
 
 # Execution Phases
+
+- [x] Phase 17: Master-style hybrid-interface cleanup.
+  - [x] Compare current hybrid-interface source against `/Users/yinhan/Documents/upside2-md-master`, excluding `/Users/yinhan/Documents/upside2-md-master/example/00.AnalysisScripts`.
+  - [x] Identify patch-layered code, duplicated helpers, stale branches, inconsistent style, and unclear ownership boundaries in `src/martini*`, `src/box.*`, `py/martini_*.py`, and `example/16.MARTINI`.
+  - [x] Rewrite the worst hybrid-interface surfaces directly, preserving current physical semantics: no disabled SC-env/BB-env interactions, no force caps, no arbitrary scaling, no twisting/orientation potential, no shortened physical CGL cutoff.
+  - [x] Keep active-development files clean rather than backward-compatible: remove unused compatibility scaffolds instead of wrapping old implementations.
+  - [x] Make C++, Python, shell, and Markdown read like normal human-maintained project code: concise names, minimal comments, no debugging chronology, no generated-sounding explanations.
+  - [x] Verify with C++ build, Python compile checks, shell syntax checks, focused H5/schema audits, and at least one short hybrid workflow smoke.
 
 - [x] Phase 16: Add exact pairlist acceleration for CGL-specific runtime nodes.
   - [x] Implement cached pairlists for CGL-CGL, SC-CGL, CGL-rotamer-SC, and CGL-target loops using each table's existing cutoff plus a rebuild buffer.
@@ -139,6 +147,7 @@ Build and maintain a physically defensible single-vector DOPC coarse-grained lip
 
 # Review
 
+- Phase 17 cleanup pass compared the hybrid files with the master checkout and found that the MARTINI interface is mostly new code rather than divergent master code. The cleanup therefore focused on style and structure: factored repeated CGL runtime transform/taper logic, removed the stale Slurm fit-relax build path, simplified `martini_gen_params.py`, and rewrote the example README as a concise usage note. Verification passed: Python compile, shell syntax checks, C++ build, bilayer smoke validation, and a short 1RKL hybrid smoke through stage 7.0 and VTF extraction.
 - Phase 16 implementation keeps the physical table cutoffs unchanged and adds only exact neighbor-cache pruning outside each table cutoff plus a `pairlist_buffer_ang` rebuild buffer. Focused checks passed: C++ rebuild, bilayer-only smoke validation, full 1RKL workflow smoke, and a 5000-step direct 1RKL stage-7 stability run.
 
 - Phase 15 TeX cleanup replaced the patch-history methods text with a single current-method description covering the CGL coordinate, rigid resolved dry-MARTINI energy, uniform `tau=10.0` tempered-PMF hidden-orientation reduction, log1p spline transform, CGL-CGL, SC-CGL, CGL-particle, SC-particle, runtime ownership, numerical evaluation, validation scope, and units. `pdflatex -interaction=nonstopmode -halt-on-error cg_lipid_potentials.tex` passed from the repo environment; LaTeX reported only overfull-box warnings from long HDF5 schema strings.
