@@ -1,5 +1,65 @@
 # Progress Log
 
+## 2026-06-14 Phase 11 Universal Tempered-PMF Debug
+- Actions taken:
+  - Switched the active experiment to the user's required single method: `tau=10.0` tempered PMF for CGL-CGL, SC-CGL, CGL-particle, and SC-particle.
+  - Tightened the SC-CGL table guard so this experiment rejects non-tempered SC-CGL metadata.
+  - Stopped an obsolete mixed-method rebuild that was launched after the production-PMF failure.
+- Files modified:
+  - `py/martini_build_tables.py`
+  - `py/martini_prepare_system_lib.py`
+  - `plan.md`
+  - `findings.md`
+  - `progress.md`
+- Verification:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py py/martini_gen_params.py py/martini_prepare_system.py` passed.
+  - `UPSIDE_MARTINI_TABLE_WORKERS=8 ./example/16.MARTINI/build_martini_h5_m1.sh` completed.
+  - Metadata audit passed: CGL-CGL, SC-CGL, CGL-particle, and SC-particle all report `azimuthal_average=tempered_boltzmann_free_energy`; the three CGL-specific tables use `energy_transform=log1p_reduced_tempered_pmf`.
+  - Focused 1RKL coarse run under `outputs/phase11_tempered_all_1rkl_hybrid` reached stage-7 burn-in frame 223/240 before the wrapper was interrupted without a logged physics crash. Burn-in observables remained stable around `29-33` hbonds and `12.7-12.8 A` Rg.
+  - Debugged a manual restart mistake: `current_stage` must remain `production`; setting it to `7.1` caused a huge initial potential and NaNs. A corrected restart from the partial burn-in endpoint gave finite initial potential `-3971.84`.
+  - Corrected diagnostic production `1rkl.stage_7.2.up` passed structural checks: CGL aligned-z min/p05/mean `0.767/0.845/0.949`, no bad-parallel CGLs, no flips, no leaflet crossings, same-leaflet NN p05 lower/upper `6.886/7.266 A`, protein hbond first/final/min/last20 `30.21/34.80/25.01/34.73`, Rg first/final/last20 `12.59/12.66/12.72 A`, kinetic ratio `0.975`.
+  - Generated `example/16.MARTINI/outputs/phase11_tempered_all_1rkl_hybrid/1rkl.stage_7.2.vtf`.
+  - Dynamics diagnostic: CGL lateral MSD vs active full-resolution DOPC COM MSD was nearly equal at lag `0.3` time units (`0.001800` vs `0.001798 A^2`) but diverged by lag `15.0` (`1.400` vs `0.470 A^2`); orientation autocorrelation over the CGL run stayed high (`0.975` at lag `15.0`).
+  - Tightened CGL-CGL and CGL-particle stale-table guards so Phase 11 rejects production-PMF tables instead of accepting mixed metadata.
+  - Updated `example/16.MARTINI/cg_lipid_potentials.tex` to describe uniform `tau=10.0` tempered PMF for CGL-CGL, SC-CGL, CGL-particle, and SC-particle, including the dynamics limitation.
+  - Recompiled the TeX method note successfully; only small overfull boxes remain.
+
+## 2026-06-14 Phase 12 Physical-Integrity Audit
+- Actions taken:
+  - Audited source, installed dry-MARTINI H5 tables, and Phase 11 prepared/production `.up` files for twist coordinates, force caps, arbitrary scaling, hidden relaxation, excluded-area projections, and extra orientation potentials.
+  - Found stale unread `nonprotein_hs_force_cap=100.0` metadata. Set the generator default and Phase 11 checkpoint attributes to `0.0` to avoid misleading future audits.
+- Files modified:
+  - `py/martini_prepare_system.py`
+  - `plan.md`
+  - `progress.md`
+  - Phase 11 checkpoint `.up` attributes under `example/16.MARTINI/outputs/phase11_tempered_all_1rkl_hybrid/checkpoints/`
+- Verification:
+  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_build_tables.py` passed.
+  - Installed CGL-CGL, SC-CGL, and CGL-particle tables all use `tempered_boltzmann_free_energy` at `tau=10.0`, `fit_relax_steps=0`, `sample_dist_min_nm=1e-6`, no cap/scale attrs, and no twist attrs.
+  - Installed SC-particle table uses `tempered_boltzmann_free_energy` at `tau=10.0`, `fit_relax_steps=0`, `relaxation=rigid_rotated_geometry`, and no cap/scale attrs.
+  - Phase 11 runtime files have no CGL twist/orientation-potential node, `martini_potential/force_cap=0`, `protein_env_interface_scale=1`, SC-env caps zero, no production restraint node, and neutral duplicate-row multiplicity (`1` for every residue/rotamer key).
+
+## 2026-06-14 Phase 10 Universal Production-PMF Experiment
+- Actions taken:
+  - Routed CGL-CGL, SC-CGL, CGL-particle, and SC-particle table generation through production-temperature PMF hidden-state averaging.
+  - Rebuilt `parameters/dryMARTINI/dopc.h5` and `parameters/dryMARTINI/sidechain.h5`.
+  - Audited generated metadata: all four interaction classes now report `azimuthal_average=boltzmann_free_energy` at `0.8647 T_up`.
+  - Confirmed SC-CGL is generated for 18 explicit sidechain types, not 20; ALA and GLY have no explicit sidechain bead geometry in the active MARTINI sidechain library/mapping.
+  - Ran `example/16.MARTINI/run_sim_1rkl.sh` under `outputs/phase10_pmf_all_1rkl_hybrid`.
+- Files modified:
+  - `py/martini_build_tables.py`
+  - `py/martini_prepare_system_lib.py`
+  - `parameters/dryMARTINI/dopc.h5`
+  - `parameters/dryMARTINI/sidechain.h5`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Verification:
+  - `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py py/martini_gen_params.py py/martini_prepare_system.py` passed.
+  - `UPSIDE_MARTINI_TABLE_WORKERS=8 ./example/16.MARTINI/build_martini_h5_m1.sh` completed.
+  - The 1RKL coarse workflow completed, but failed validation: final CGL aligned-z min/p05/mean `-0.063/0.448/0.821`, `bad_parallel=7`, `bad_flip=1`, leaflet crossings `4/4`, same-leaflet NN min/p05 `2.285/2.886 A`, protein hbond first/final/min/last20 `28.74/6.93/0.56/6.43`, and Rg first/final/last20 `12.56/10.40/10.37 A`.
+  - The remaining three Phase 10 workflows were not launched because the first coarse workflow already fails the required stable bilayer, CGL orientation, and protein-stability criteria.
+
 ## 2026-06-11 CGL Averaging Methods TeX Cleanup
 - Actions taken:
   - Rewrote the unresolved-coordinate section of `cg_lipid_potentials.tex` to define hidden rigid-body orientations, quadrature weights, weighted energy expectation, and PMF/tempered PMF in one flow.
@@ -425,3 +485,31 @@
     to refit tables by default. It now reads DOPC bead types from the ITP parser,
     skips obsolete debug output calls, and defaults to installed production
     tables for runtime validation.
+# Phase 9 Universal Tempered-PMF Validation
+
+- Rebuilt dry-MARTINI table artifacts with `tau=10.0` tempered PMF applied to CGL-CGL, SC-CGL, CGL-particle, and SC-particle table generation.
+- Audited installed H5 metadata: all four interaction classes report tempered hidden-state averaging with `azimuthal_average_temperature_upside=10.0`; CGL-CGL, SC-CGL, and CGL-particle use log1p reduced tempered-PMF controls; SC-particle uses the full radial-angular grid with tempered averaging metadata.
+- Completed fresh coarse workflows in isolated output directories:
+  - `outputs/phase9_tempered_all_1afo_hybrid`
+  - `outputs/phase9_tempered_all_1rkl_hybrid`
+- Completed fresh full-lipid workflows in isolated output directories:
+  - `outputs/phase9_tempered_all_1afo_hybrid_full`
+  - `outputs/phase9_tempered_all_1rkl_hybrid_full`
+- Quantitative result: the universal tempered-PMF scheme does not pass the coarse CGL-orientation acceptance criteria.
+  - `1AFO` coarse: final aligned-z min/p05/mean `-0.979/0.841/0.928`, `bad_parallel=2`, `bad_flip=2`, same-leaflet NN min/p05 `4.688/6.899 A`, no leaflet crossings, protein hbond/Rg last20 `83.02/15.94 A`.
+  - `1RKL` coarse: final aligned-z min/p05/mean `-0.986/0.823/0.913`, `bad_parallel=4`, `bad_flip=4`, same-leaflet NN min/p05 `3.931/6.856 A`, no leaflet crossings, protein hbond/Rg last20 `28.95/12.28 A`.
+  - `1AFO` full: DOPC leaflet COM separation `11.689 -> 11.699 A`, no leaflet crossings, protein hbond/Rg last20 `82.54/14.93 A`, helix-labeled CA(i)-CA(i+4) final p50 `5.83 A`.
+  - `1RKL` full: DOPC leaflet COM separation `13.461 -> 13.380 A`, no leaflet crossings, protein hbond/Rg last20 `32.09/12.86 A`, helix-labeled CA(i)-CA(i+4) final p50 `6.19 A`.
+- Diagnostic: the coarse failures are orientation flips, not bilayer collapse or protein unfolding. Several bad CGL rods are already wrong by the first recorded production frame or appear during the stage-7 burn-in; applying the same high-temperature PMF reduction to every pair class is therefore not a valid production model.
+
+# Phase 10 Universal Production-PMF Validation
+
+- Updated the active table-generation call sites so CGL-CGL, SC-CGL, CGL-particle, and SC-particle all use production-temperature PMF hidden-state averaging rather than `tau=10.0` tempering.
+- Updated the SC-CGL stale-table guard to accept non-tempered PMF metadata (`boltzmann_free_energy`, `log1p_reduced_pmf`, `log1p_reduced_free_energy`) while preserving the existing direct-geometry/no-cap checks.
+- Syntax check passed: `python3 -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py py/martini_gen_params.py py/martini_prepare_system.py`.
+- Rebuilt `particle.h5`, `sidechain.h5`, `dopc.h5`, and `interlipid.h5` successfully with `UPSIDE_MARTINI_TABLE_WORKERS=8`.
+- H5 audit passed:
+  - CGL-CGL: `boltzmann_free_energy`, `azimuthal_average_temperature_upside=0.8647`, `energy_transform=log1p_reduced_pmf`.
+  - SC-CGL: `boltzmann_free_energy`, `azimuthal_average_temperature_upside=0.8647`, `energy_transform=log1p_reduced_pmf`, `n_sc_types=18`.
+  - CGL-particle: `boltzmann_free_energy`, `azimuthal_average_temperature_upside=0.8647`, `energy_transform=log1p_reduced_pmf`, `n_target_types=38`.
+  - SC-particle: `boltzmann_free_energy`, `azimuthal_average_temperature_upside=0.8647`, full radial-angular runtime grid.

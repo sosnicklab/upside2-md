@@ -110,7 +110,7 @@ the sampled quadrature
   \simeq
   \sum_\omega w_\omega f(\omega).
 \end{equation}
-The current tables use two different hidden-state reductions.  The first is
+Two hidden-state reductions are useful to distinguish.  The first is
 the weighted energy expectation
 \begin{equation}
   \bar{U}(x)=
@@ -134,12 +134,13 @@ averaging temperature changes the statistical weighting of sampled hidden
 orientations; it is not an energy scale factor and it does not alter the
 dry-MARTINI-to-Upside unit conversion.
 
-The present model uses these reductions as follows.  CGL--CGL uses a tempered
-PMF with $\tau=10.0$ to avoid letting every lipid-lipid pair independently
-select only its most favorable hidden rigid twist in a dense bilayer.  SC--CGL
-uses the weighted energy expectation over side-chain and CGL hidden states.
-CGL--particle uses a production-temperature PMF over the unresolved CGL
-orientations.  The choice is recorded in HDF5 metadata as
+The active one-method experiment uses the tempered PMF for every unresolved
+orientation average: CGL--CGL, SC--CGL, CGL--particle, and SC--particle all use
+$\tau=10.0$.  For CGL--CGL this avoids letting every lipid-lipid pair
+independently select only its most favorable hidden rigid twist in a dense
+bilayer.  Applying the same reduction to the protein-lipid and side-chain
+particle tables keeps the hidden-state rule uniform across the whole
+environment interface.  The choice is recorded in HDF5 metadata as
 \texttt{azimuthal\_average} and
 \texttt{azimuthal\_average\_temperature\_upside}.
 
@@ -229,27 +230,33 @@ weights.  Thus the microscopic energy is
 $U(r,a_{\mathrm{SC}},a_{\mathrm{CGL}},
 \omega_{\mathrm{SC}},\omega_{\mathrm{CGL}})$, and the active table stores
 \begin{equation}
-  \bar{U}_{\mathrm{SC-CGL}}(r,a_{\mathrm{SC}},a_{\mathrm{CGL}})
-  =
-  \frac{\sum_{\omega_{\mathrm{SC}},\omega_{\mathrm{CGL}}}
+  \begin{aligned}
+  &F_{\tau,\mathrm{SC-CGL}}(r,a_{\mathrm{SC}},a_{\mathrm{CGL}}) \\
+  &\quad =
+  -k_B\tau\log
+  \frac{
+  \sum_{\omega_{\mathrm{SC}},\omega_{\mathrm{CGL}}}
   w_{\omega_{\mathrm{SC}}}w_{\omega_{\mathrm{CGL}}}
-  U(r,a_{\mathrm{SC}},a_{\mathrm{CGL}},
-  \omega_{\mathrm{SC}},\omega_{\mathrm{CGL}})}
-  {\sum_{\omega_{\mathrm{SC}},\omega_{\mathrm{CGL}}}
-  w_{\omega_{\mathrm{SC}}}w_{\omega_{\mathrm{CGL}}}} .
+  \exp[-U(r,a_{\mathrm{SC}},a_{\mathrm{CGL}},
+  \omega_{\mathrm{SC}},\omega_{\mathrm{CGL}})/(k_B\tau)]
+  }{
+  \sum_{\omega_{\mathrm{SC}},\omega_{\mathrm{CGL}}}
+  w_{\omega_{\mathrm{SC}}}w_{\omega_{\mathrm{CGL}}}
+  } .
+  \end{aligned}
 \end{equation}
-This is direct weighted energy expectation, not a PMF or tempered PMF.  The
-tempered PMF was introduced for the CGL--CGL dense lipid-packing problem;
-SC--CGL has not shown the same pairwise hidden-twist over-selection failure in
-the accepted validation matrix.  The active SC--CGL table also avoids the old
-separable radial/angular factorization by storing the full tensor over
+The averaging temperature is the same $\tau=10.0$ used for CGL--CGL.  This is
+a configurational average over sampled rigid side-chain and CGL orientations,
+not an internal relaxation of the DOPC tails.  The active SC--CGL table also
+avoids the old separable radial/angular factorization by storing the full
+tensor over
 $(r,a_{\mathrm{SC}},a_{\mathrm{CGL}})$.
 
 The installed SC--CGL group uses schema
 \texttt{cg\_lipid\_sc\_full\_tensor\_v1}, $21$ radial controls, $11$ controls
 for each angular coordinate, radial spacing $1.4~\text{\AA}$, and cutoff
-$26.6~\text{\AA}$.  The stored quantity is the log1p-reduced energy
-expectation.  Runtime nodes evaluate this table for CGL contacts with
+$26.6~\text{\AA}$.  The stored quantity is the log1p-reduced tempered free
+energy.  Runtime nodes evaluate this table for CGL contacts with
 side-chain placements and pass the resulting energy rows into the Upside
 rotamer machinery; the interaction is not normalized by the number of
 neighboring lipids.
@@ -267,7 +274,8 @@ The runtime potential is a two-dimensional spline over $(r,a_{\mathrm{CGL}})$
 with the inverse log1p transform.  For each target type, the builder evaluates
 the explicit energy between the 14 DOPC beads and one target particle of that
 type, averages over four CGL azimuthal directions and one CGL bead-frame
-rotation, and stores a production-temperature PMF.
+rotation, and stores the same $\tau=10.0$ tempered PMF used by the other
+interaction classes.
 
 The installed CGL--particle group uses schema \texttt{cg\_lipid\_target\_v1},
 $78$ radial controls, $321$ angular controls, radial spacing
@@ -291,12 +299,28 @@ side-chain beads and the target particle.  The active runtime representation
 is the full radial-angular grid
 \texttt{rotamer\_full\_energy\_kj\_mol}; separable radial and angular datasets
 are retained only as legacy metadata and are not the physical validation path.
+For each rotamer and target type, unresolved side-chain bead-frame samples are
+reduced as
+\begin{equation}
+  \begin{aligned}
+  F_{\tau,\mathrm{SC-particle}}(r,a_{\mathrm{SC}})
+  &=
+  -k_B\tau\log
+  \frac{
+  \sum_{\omega_{\mathrm{SC}}}w_{\omega_{\mathrm{SC}}}
+  \exp[-U(r,a_{\mathrm{SC}},\omega_{\mathrm{SC}})/(k_B\tau)]
+  }{
+  \sum_{\omega_{\mathrm{SC}}}w_{\omega_{\mathrm{SC}}}
+  }, \\
+  \tau&=10.0.
+  \end{aligned}
+\end{equation}
 
 The installed SC--particle group uses schema
 \texttt{martini\_sc\_combined\_v1}, $96$ radial samples from $0.25$ to
 $1.20~\mathrm{nm}$ and $13$ angular samples.  The stored quantity is direct
-rotamer free energy in dry-MARTINI units, with a full radial-angular runtime
-representation.  The table is converted to Upside units during runtime
+rotamer tempered free energy in dry-MARTINI units, with a full radial-angular
+runtime representation.  The table is converted to Upside units during runtime
 evaluation.  No SC-environment force cap is used.
 
 \subsection{Runtime Interaction Ownership}
@@ -334,11 +358,12 @@ the first in-domain radial slope rather than flattening the force.  This
 preserves the repulsive dry-MARTINI core represented in the table and avoids a
 numerical force cap.
 
-The HDF5 metadata is part of the model contract.  Current accepted tables
+The HDF5 metadata is part of the model contract.  Current experimental tables
 record zero fit-relaxation steps, a $10^{-6}~\mathrm{nm}$ numerical distance
-guard, log1p-reduced transforms for CGL spline tables, and zero excluded-area
-rows.  Preparation code rejects stale CGL tables that carry old capping,
-excluded-area, relaxation, or missing-transform metadata.
+guard, $\tau=10.0$ tempered hidden-state averaging, log1p-reduced transforms
+for CGL spline tables, and zero excluded-area rows.  Preparation code rejects
+stale CGL tables that carry old capping, excluded-area, relaxation,
+non-tempered averaging, or missing-transform metadata.
 
 Independent table slices are parallelized during generation, but HDF5 writes
 remain in the parent process.  Worker count is controlled by an environment
@@ -356,13 +381,15 @@ lipid leaflet crossings, stable protein radius of gyration, stable hydrogen-bond
 counts, and no loss of protein secondary structure during production.  This is
 a validation criterion for bilayer geometry, not a constraint built into the CGL
 potential: the runtime interactions depend on local pair distances and local
-direction-vector projections.  The current no-floor validation matrix passes
-for 1RKL and 1AFO in both CGL and full-resolution lipid workflows.  In CGL
-mode, final same-leaflet nearest neighbor fifth percentiles are at least
-$6.75~\text{\AA}$ and orientation fifth percentiles remain above $0.86$ after
-equilibration.  In full-resolution lipid mode, DOPC leaflet separation and
-head-tail $|dz|$ distributions remain stable while protein hydrogen-bond and
-radius-of-gyration observables fluctuate around production basins.
+direction-vector projections.  A focused uniform-tempered 1RKL diagnostic
+passed structural checks, with no CGL flips or leaflet crossings, same-leaflet
+nearest-neighbor fifth percentiles above $6.8~\text{\AA}$, stable hydrogen-bond
+counts, and stable radius of gyration.  The same diagnostic shows that
+tempered PMF is not a dynamics model by itself: CGL lateral MSD grows faster
+than full-resolution DOPC center-of-mass MSD at longer short lags.  Lipid
+dynamics therefore require either an effective-time calibration for the
+reported observable or a separate friction/dissipative model; the PMF
+averaging equation only defines the configurational potential.
 
 \subsection{Units}
 

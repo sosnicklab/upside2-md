@@ -28,6 +28,8 @@ LENGTH_CONVERSION_A_PER_NM = 10.0
 ANGSTROM_TO_NM = 0.1
 DEFAULT_PRODUCTION_TEMP_UPSIDE = 0.8647
 DEFAULT_PRODUCTION_KBT_KJ_MOL = DEFAULT_PRODUCTION_TEMP_UPSIDE * ENERGY_CONVERSION_KJ_PER_EUP
+DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE = 10.0
+DEFAULT_PMF_AVERAGE_TEMP_UPSIDE = DEFAULT_PRODUCTION_TEMP_UPSIDE
 PARTICLES_GRID_N = 1000
 PARTICLES_R_MIN_A = 0.0
 PARTICLES_R_MAX_A = 12.0
@@ -790,7 +792,15 @@ def _run_sc_task(
         "rotamer_full_energy_kj_mol": rotamer_angular_energy,
         "factorization_rms_error": rms_error,
         "sidechain_bead_frame_count": len(bead_frame_angles),
-        "azimuthal_average": "energy_expectation" if temperature <= 0.0 else "boltzmann_free_energy",
+        "azimuthal_average": (
+            "energy_expectation"
+            if temperature <= 0.0
+            else (
+                "tempered_boltzmann_free_energy"
+                if abs(float(temperature) - DEFAULT_PRODUCTION_TEMP_UPSIDE) > 1e-8
+                else "boltzmann_free_energy"
+            )
+        ),
     }
 
 
@@ -813,6 +823,7 @@ def _build_sc_table_group(
     cos_theta_count: int = 13,
     fit_relax_steps: int = 0,
     sc_restraint_k: float = 5000.0,
+    average_temperature: float = DEFAULT_PRODUCTION_TEMP_UPSIDE,
 ) -> None:
     orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
     r_values = _linspace(r_min_nm, r_max_nm, r_count)
@@ -882,7 +893,7 @@ def _build_sc_table_group(
                     "rel_relax_steps": int(fit_relax_steps),
                     "sc_restraint_k": float(sc_restraint_k),
                     "dist_min_nm": NUMERICAL_DISTANCE_GUARD_NM,
-                    "temperature": DEFAULT_PRODUCTION_TEMP_UPSIDE,
+                    "temperature": float(average_temperature),
                 }
             )
 
@@ -941,6 +952,7 @@ def _build_sc_table_group(
     g.attrs["sidechain_bead_frame_count"] = np.int32(len(sidechain_bead_frame_angles))
     g.attrs["orientation_sampling"] = "target_direction_vector_grid"
     g.attrs["azimuthal_average"] = first.get("azimuthal_average", "")
+    g.attrs["azimuthal_average_temperature_upside"] = np.float32(average_temperature)
     g.attrs["excluded_area_source"] = "none_direct_dry_martini_sc_particle_table"
     g.attrs["attractive_control_source"] = "retained_direct_dry_martini_sc_particle_table"
     g.attrs["isotropic_background_source"] = "none_direct_dry_martini_sc_particle_table"
@@ -2755,8 +2767,24 @@ def _fit_cg_lipid_sc_quadspline(
             "sidechain_bead_frame_count": int(len(sidechain_bead_frame_angles)),
             "cg_bead_frame_count": int(len(cg_bead_frame_angles)),
             "rel_relax_steps": int(rel_relax_steps),
-            "energy_transform": "log1p_reduced_energy_expectation",
-            "spline_control_quantity": "log1p_reduced_energy_expectation",
+            "energy_transform": (
+                "log1p_reduced_energy_expectation"
+                if average_temperature <= 0.0
+                else (
+                    "log1p_reduced_tempered_pmf"
+                    if abs(average_temperature - float(temperature)) > 1e-8
+                    else "log1p_reduced_pmf"
+                )
+            ),
+            "spline_control_quantity": (
+                "log1p_reduced_energy_expectation"
+                if average_temperature <= 0.0
+                else (
+                    "log1p_reduced_tempered_free_energy"
+                    if abs(average_temperature - float(temperature)) > 1e-8
+                    else "log1p_reduced_free_energy"
+                )
+            ),
         }
 
     radial_mean = energy_grid.mean(axis=(1, 2))
@@ -3195,7 +3223,7 @@ def _build_cg_lipid_tables(
         bead_masses=bead_mass_values,
         relax_soft_core_alpha=0.0,
         temperature=DEFAULT_PRODUCTION_TEMP_UPSIDE,
-        average_temperature=10.0,
+        average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
         plane_constraint=plane_constraint,
     )
     print(
@@ -3283,7 +3311,7 @@ def _build_cg_lipid_tables(
                     "rel_relax_steps": int(fit_relax_steps),
                     "sc_restraint_k": float(sc_restraint_k),
                     "temperature": DEFAULT_PRODUCTION_TEMP_UPSIDE,
-                    "average_temperature": 0.0,
+                    "average_temperature": DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
                     "cg_bead_masses": (
                         np.asarray(bead_mass_values, dtype=np.float64)
                         if bead_mass_values is not None
@@ -3522,6 +3550,7 @@ def _build_cg_lipid_tables(
         rel_relax_steps=fit_relax_steps,
         cg_bead_masses=np.asarray(bead_mass_values, dtype=np.float64) if bead_mass_values is not None else None,
         temperature=DEFAULT_PRODUCTION_TEMP_UPSIDE,
+        average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
     )
     print()
 
@@ -3543,6 +3572,7 @@ def _run_cgl_target_type_task(task: dict) -> tuple[int, str, np.ndarray]:
     energy_conv = float(task["energy_conv"])
     r_min_ang = float(task["r_min_ang"])
     temperature = float(task.get("temperature", 0.0))
+    average_temperature = float(task.get("average_temperature", temperature))
 
     energy_grid = np.zeros((len(r_sample_nm), cos_theta_grid.size), dtype=np.float64)
     target_charge = infer_charge_from_atomtype(tgt_type)
@@ -3594,7 +3624,7 @@ def _run_cgl_target_type_task(task: dict) -> tuple[int, str, np.ndarray]:
                         sample_energies.append(float(e))
             energy_grid[ir, ia] = _boltzmann_free_energy_kj_mol(
                 sample_energies,
-                temperature,
+                average_temperature,
             )
 
     reference_energy_kj_mol = float(np.min(energy_grid))
@@ -3623,12 +3653,16 @@ def _build_cgl_target_table(
     rel_relax_steps: int = 0,
     cg_bead_masses: np.ndarray | None = None,
     temperature: float = 0.0,
+    average_temperature: float | None = None,
 ) -> None:
     """Build directional tensor B-spline tables for CGL-point targets."""
     target_types = sorted(t for t in effective_lj if t != "CGL")
     if not target_types:
         print("  cg_lipid_target: no target types, skipping")
         return
+    if average_temperature is None:
+        average_temperature = temperature
+    average_temperature = float(average_temperature)
 
     # Sample densely for an accurate B-spline fit.  The interaction samples
     # explicit DOPC bead-vs-target energies and only uses a near-zero numerical
@@ -3686,6 +3720,7 @@ def _build_cgl_target_table(
             "rel_relax_steps": int(rel_relax_steps),
             "cg_bead_masses": cg_bead_masses,
             "temperature": float(temperature),
+            "average_temperature": float(average_temperature),
         }
         for ti, tgt_type in enumerate(target_types)
     ]
@@ -3723,12 +3758,37 @@ def _build_cgl_target_table(
     cutoff_ang = float((n_knot_radial - 2) * knot_spacing_ang)
     target_grp.attrs["cutoff_ang"] = np.float32(cutoff_ang)
     target_grp.attrs["taper_width_ang"] = np.float32(knot_spacing_ang)
-    target_grp.attrs["azimuthal_average"] = "energy_expectation" if temperature <= 0.0 else "boltzmann_free_energy"
-    target_grp.attrs["energy_transform"] = "log1p_reduced_pmf"
+    target_grp.attrs["azimuthal_average"] = (
+        "energy_expectation"
+        if average_temperature <= 0.0
+        else (
+            "tempered_boltzmann_free_energy"
+            if abs(average_temperature - float(temperature)) > 1e-8
+            else "boltzmann_free_energy"
+        )
+    )
+    target_grp.attrs["azimuthal_average_temperature_upside"] = np.float32(average_temperature)
+    target_grp.attrs["energy_transform"] = (
+        "log1p_reduced_energy_expectation"
+        if average_temperature <= 0.0
+        else (
+            "log1p_reduced_tempered_pmf"
+            if abs(average_temperature - float(temperature)) > 1e-8
+            else "log1p_reduced_pmf"
+        )
+    )
     target_grp.attrs["log1p_reduced_transform"] = np.int32(1)
     target_grp.attrs["boltzmann_weight_transform"] = np.int32(0)
     target_grp.attrs["boltzmann_temperature_upside"] = np.float32(temperature)
-    target_grp.attrs["spline_control_quantity"] = "log1p_reduced_free_energy"
+    target_grp.attrs["spline_control_quantity"] = (
+        "log1p_reduced_energy_expectation"
+        if average_temperature <= 0.0
+        else (
+            "log1p_reduced_tempered_free_energy"
+            if abs(average_temperature - float(temperature)) > 1e-8
+            else "log1p_reduced_free_energy"
+        )
+    )
     target_grp.attrs["unresolved_core_source"] = "angular_resolved_first_sampled_dry_martini_energy"
     target_grp.attrs["excluded_area_source"] = "none_full_resolved_dry_martini_cgl_target_table"
     target_grp.attrs["excluded_area_nonnegative_rows"] = np.int32(0)
@@ -3810,6 +3870,7 @@ def build_martini_tables(
             martini_sidechain_offsets_nm=martini_sidechain_offsets_nm,
             fit_relax_steps=sc_fit_relax_steps,
             sc_restraint_k=sc_restraint_k,
+            average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
         )
         if cg_lipid_config:
             _build_cg_lipid_tables(
@@ -3877,6 +3938,7 @@ def build_sidechain_h5(
             martini_sidechain_offsets_nm=martini_sidechain_offsets_nm,
             fit_relax_steps=sc_fit_relax_steps,
             sc_restraint_k=sc_restraint_k,
+            average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
         )
 
     _write_h5_atomically(output_path, _writer)

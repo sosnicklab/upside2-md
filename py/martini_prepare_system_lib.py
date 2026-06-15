@@ -142,6 +142,7 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
     if target_grp is not None:
         core_source = _decode_h5_attr(target_grp.attrs.get("unresolved_core_source", ""))
         azimuthal_average = _decode_h5_attr(target_grp.attrs.get("azimuthal_average", ""))
+        azimuthal_average_temperature = float(target_grp.attrs.get("azimuthal_average_temperature_upside", 0.0))
         excluded_area_source = _decode_h5_attr(target_grp.attrs.get("excluded_area_source", ""))
         excluded_area_nonnegative_rows = int(target_grp.attrs.get("excluded_area_nonnegative_rows", 0))
         bead_cutoff_nm = float(target_grp.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
@@ -153,9 +154,10 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
                 "first_resolved_dry_martini_energy_expectation",
                 "angular_resolved_first_sampled_dry_martini_energy",
             )
-            or azimuthal_average != "boltzmann_free_energy"
-            or energy_transform != "log1p_reduced_pmf"
-            or control_quantity != "log1p_reduced_free_energy"
+            or azimuthal_average != "tempered_boltzmann_free_energy"
+            or abs(azimuthal_average_temperature - 10.0) > 1.0e-6
+            or energy_transform != "log1p_reduced_tempered_pmf"
+            or control_quantity != "log1p_reduced_tempered_free_energy"
             or log1p_reduced_transform != 1
             or "reference_energy_eup" not in target_grp
             or excluded_area_source != "none_full_resolved_dry_martini_cgl_target_table"
@@ -164,7 +166,7 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_target lacks the "
-                "dry-MARTINI log1p reduced-free-energy PMF transform, direct physical "
+                "dry-MARTINI log1p reduced tempered-PMF transform, direct physical "
                 "CGL-target metadata, or bead-level nonbonded cutoff. "
                 "Rebuild martini.h5 so CGL-target bead overlap is represented by "
                 "force-field-derived table values."
@@ -178,6 +180,10 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         fit_relax_steps = int(pair_grp.attrs.get("fit_relax_steps", -1))
         fit_r_min_nm = float(pair_grp.attrs.get("fit_r_min_nm", 999.0))
         bead_cutoff_nm = float(pair_grp.attrs.get("bead_nonbonded_cutoff_nm", -1.0))
+        azimuthal_average_temperature = float(pair_grp.attrs.get("azimuthal_average_temperature_upside", 0.0))
+        energy_transform = _decode_h5_attr(pair_grp.attrs.get("energy_transform", ""))
+        control_quantity = _decode_h5_attr(pair_grp.attrs.get("spline_control_quantity", ""))
+        log1p_reduced_transform = int(pair_grp.attrs.get("log1p_reduced_transform", 0))
         excluded_area_source = _decode_h5_attr(pair_grp.attrs.get("excluded_area_source", ""))
         excluded_area_nonnegative_rows = int(pair_grp.attrs.get("excluded_area_nonnegative_rows", 0))
         has_old_caps = "energy_cap_kj_mol" in pair_grp.attrs
@@ -187,11 +193,12 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
                 "median_first_sampled_dry_martini_energy",
                 "angular_resolved_first_sampled_dry_martini_energy",
             )
-            or azimuthal_average not in (
-                "energy_expectation",
-                "boltzmann_free_energy",
-                "tempered_boltzmann_free_energy",
-            )
+            or azimuthal_average != "tempered_boltzmann_free_energy"
+            or abs(azimuthal_average_temperature - 10.0) > 1.0e-6
+            or energy_transform != "log1p_reduced_tempered_pmf"
+            or control_quantity != "log1p_reduced_tempered_free_energy"
+            or log1p_reduced_transform != 1
+            or "reference_energy_eup" not in pair_grp
             or isotropic_background_source not in ("none_full_resolved_dry_martini_pair_table", "attractive_radial_angular_mean_subtracted")
             or attractive_control_source not in ("retained_full_resolved_dry_martini_pair_table", "nontransferable_many_neighbor_cgl_cgl_attraction_removed")
             or fit_relax_steps != 0
@@ -203,7 +210,7 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_pair lacks the "
-                "dry-MARTINI direct rotated-geometry samples without hidden-bead relaxation, full resolved lipid-lipid "
+                "dry-MARTINI direct rotated-geometry tempered-PMF samples without hidden-bead relaxation, full resolved lipid-lipid "
                 "attractions, or bead-level nonbonded cutoff. Rebuild martini.h5 so "
                 "CGL-CGL interactions are represented by the force-field-derived spline "
                 "table rather than a separate correction or stripped cohesive background."
@@ -226,10 +233,10 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         if n_sc_types > 0 and (
             has_old_caps
             or short_core_source != "angular_resolved_first_sampled_dry_martini_energy"
-            or azimuthal_average != "energy_expectation"
-            or abs(azimuthal_average_temperature) > 1.0e-6
-            or energy_transform != "log1p_reduced_energy_expectation"
-            or control_quantity != "log1p_reduced_energy_expectation"
+            or azimuthal_average != "tempered_boltzmann_free_energy"
+            or abs(azimuthal_average_temperature - 10.0) > 1.0e-6
+            or energy_transform != "log1p_reduced_tempered_pmf"
+            or control_quantity != "log1p_reduced_tempered_free_energy"
             or log1p_reduced_transform != 1
             or "reference_energy_eup" not in sc_grp
             or excluded_area_source != "none_full_resolved_dry_martini_sc_cgl_table"
@@ -240,7 +247,7 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         ):
             raise RuntimeError(
                 f"Stale CG lipid table in {source_path}: cg_lipid_sc lacks the "
-                "dry-MARTINI direct rotated-geometry full-tensor log1p energy expectation without hidden-bead relaxation, "
+                "dry-MARTINI direct rotated-geometry full-tensor log1p tempered-PMF without hidden-bead relaxation, "
                 "direct physical excluded-area metadata, extended SC-CGL support, bead-level nonbonded cutoff, or still carries fixed fitting caps. "
                 "Rebuild martini.h5 so CGL-SC overlap is represented by force-field-derived "
                 "table values."

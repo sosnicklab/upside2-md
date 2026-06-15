@@ -1,13 +1,13 @@
 # Project Goal
 
-Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) force field for the UPSIDE/dry-MARTINI hybrid workflow. The active task is to fix the distorted secondary structure in `example/16.MARTINI/outputs/martini_1afo_hybrid_full/1afo.stage_7.0.vtf` without disabling, capping, or scaling down required SC-env/BB-env interactions.
+Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) force field for the UPSIDE/dry-MARTINI hybrid workflow. The active task is to apply one uniform hidden-state reduction method, tempered PMF with `tau=10.0`, to CGL-CGL, SC-CGL, CGL-particle, and SC-particle interactions, then validate the `example/16.MARTINI` workflows while explicitly checking whether this configurational coarse-graining damages dynamics-sensitive observables.
 
 # Architecture & Key Decisions
 
 - Runtime CGL orientation must come from the vector-particle spline interactions, especially CGL-CGL and SC-CGL. Do not add a standalone CGL orientation potential.
 - Table generation must evaluate direct dry-MARTINI nonbonded energies from rotated full-resolution bead geometries over the sampled runtime direction-vector coordinates.
 - CGL-CGL tables must retain the resolved dry-MARTINI lipid-lipid attraction in the spline. Do not subtract it into an absent radial background or replace it with a separate orientation correction.
-- Revised Decision: CGL-CGL unresolved azimuthal/bead-frame samples should use a tempered direct PMF as the next two-body model. After fixing runtime log-control injection, a 50k bilayer-only validation with the production-temperature Boltzmann pair PMF still collapsed same-leaflet packing (`p05 ~3.86 A`) and produced a flip, so the pair PMF remains too favorable for independently chosen hidden axial rotations in a dense single-vector bilayer. Direct energy expectation was too stiff and launched the bilayer apart. A tempered PMF keeps direct dry-MARTINI energies and the three runtime coordinates while avoiding capping, normalization, hidden relaxation, or an added orientation potential. SC-CGL currently uses weighted energy expectation over hidden states, while CGL-target uses a production-temperature PMF.
+- Revised Decision: CGL-CGL unresolved azimuthal/bead-frame samples should use a tempered direct PMF as the next two-body model. After fixing runtime log-control injection, a 50k bilayer-only validation with the production-temperature Boltzmann pair PMF still collapsed same-leaflet packing (`p05 ~3.86 A`) and produced a flip, so the pair PMF remains too favorable for independently chosen hidden axial rotations in a dense single-vector bilayer. Direct energy expectation was too stiff and launched the bilayer apart. A tempered PMF keeps direct dry-MARTINI energies and the three runtime coordinates while avoiding capping, normalization, hidden relaxation, or an added orientation potential.
 - CGL axial bead-frame rotation is an unresolved coordinate in the single-vector lipid. CGL-CGL and CGL-SC table generation should sample multiple rotations around the CGL axis; CGL-CGL uses a tempered two-body PMF for dense-bilayer transferability.
 - Revised Decision: SC-CGL now uses the extended-support full tensor and invertible transformed control, analogous to the successful CGL-CGL/CGL-target representation. This is still a two-body direct-geometry spline table and does not introduce normalization, capping, hidden relaxation, interaction scaling, or a standalone CGL orientation potential.
 - Phase 2C implementation result: the accepted hybrid surface uses direct rotated dry-MARTINI geometry for CGL-CGL, SC-CGL, CGL-particle, and SC-particle. Active table builds use only a near-zero numerical singularity guard (`1e-6 nm`) rather than physical-distance capping.
@@ -43,8 +43,48 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 - Full-resolution hybrid protein BB proxy types must come from structure-derived secondary structure when no protein ITP is supplied. The previous coil-only martinize fallback typed all 1AFO helical BB proxies mostly as `P5`, making full-lipid BB-env interactions physically wrong for a transmembrane helix while keeping the interactions enabled.
 - Stage-6 protein position restraints must select protein atoms (`protein_membership >= 0`), not environment atoms.
 - Stage-7 production-Hamiltonian burn-in may use protein position restraints as an equilibration protocol, provided SC-env and BB-env interactions remain present at full scale and the restraints are removed before the recorded production segment. This is not an interaction scale, cap, or exclusion; it prevents the equilibration handoff from using a distorted protein endpoint as the production starting structure.
+- Experimental Decision: Phase 10 deliberately applies production-temperature PMF hidden-state averaging, without tempering, to CGL-CGL, SC-CGL, CGL-particle, and SC-particle. This is the user's preferred one-method model if it validates. Runtime interactions remain full-strength and spline/table based; no SC-env/BB-env interaction may be disabled, capped, or scaled down to force a pass.
+- Revised Experimental Decision: Phase 11 uses the same `tau=10.0` tempered PMF hidden-state reduction for CGL-CGL, SC-CGL, CGL-particle, and SC-particle. This is a uniform configurational PMF over unresolved rigid orientations, not a guarantee of correct real-time dynamics. Validation must therefore check structure and dynamics-adjacent observables rather than assuming the PMF preserves kinetics.
 
 # Execution Phases
+
+- [x] Phase 12: Physical-integrity audit of the uniform tempered-PMF implementation.
+  - [x] Audit source code for twist/torsion coordinates, force caps, arbitrary interaction scaling, and standalone CGL orientation potentials.
+  - [x] Audit installed H5 table metadata and datasets for cap/scaling/orientation-potential markers.
+  - [x] Audit generated runtime `.up` files from the focused Phase 11 run for the same physical-integrity markers.
+  - [x] Report whether the active implementation satisfies the physical-design constraints.
+
+- [x] Phase 11: Universal tempered-PMF force-field experiment with dynamics caveat.
+  - [x] Revise generator defaults so CGL-CGL, SC-CGL, CGL-particle, and SC-particle all use `tau=10.0` tempered PMF.
+  - [x] Rebuild `parameters/dryMARTINI/dopc.h5` and `parameters/dryMARTINI/sidechain.h5`.
+  - [x] Audit rebuilt H5 metadata for all four interaction classes.
+  - [x] Run focused coarse validation first, then decide whether to run the remaining workflows based on bilayer/protein stability.
+  - [x] Quantify dynamics-sensitive observables available from the generated trajectories, including CGL lateral MSD and orientation autocorrelation when the output cadence is sufficient.
+  - [x] Decide whether the dynamics mismatch can be handled by reporting/calibrating an effective time scale, or whether the force-field reduction itself must change.
+  - [x] Report structural stability and the limitations of interpreting dynamics from tempered-PMF trajectories.
+
+- [x] Phase 10: Universal production-PMF force-field experiment.
+  - [x] Route CGL-CGL, SC-CGL, CGL-particle, and SC-particle table generation through production-temperature PMF hidden-state averaging.
+  - [x] Rebuild `parameters/dryMARTINI/dopc.h5` and `parameters/dryMARTINI/sidechain.h5`.
+  - [x] Audit rebuilt H5 metadata for all four interaction classes.
+  - [ ] Run `example/16.MARTINI/run_sim_1afo.sh`.
+  - [x] Run `example/16.MARTINI/run_sim_1rkl.sh`.
+  - [ ] Run `example/16.MARTINI/run_sim_1afo_full.sh`.
+  - [ ] Run `example/16.MARTINI/run_sim_1rkl_full.sh`.
+  - [x] Quantify bilayer stability, CGL orientation, and protein Rg/hbond for the first completed coarse workflow.
+  - [x] Report whether the one-method production-PMF model works across all pairs.
+
+- [x] Phase 9: Universal tempered-PMF force-field experiment.
+  - [x] Route CGL-CGL, SC-CGL, CGL-particle, and SC-particle table generation through `tau=10.0` hidden-state PMF averaging.
+  - [x] Rebuild `parameters/dryMARTINI/dopc.h5` and `parameters/dryMARTINI/sidechain.h5`.
+  - [x] Audit rebuilt H5 metadata for all four interaction classes.
+  - [x] Run `example/16.MARTINI/run_sim_1afo.sh`.
+  - [x] Run `example/16.MARTINI/run_sim_1rkl.sh`.
+  - [x] Run `example/16.MARTINI/run_sim_1afo_full.sh`.
+  - [x] Run `example/16.MARTINI/run_sim_1rkl_full.sh`.
+  - [x] Quantify bilayer stability, CGL orientation, protein Rg/hbond, and secondary-structure stability.
+  - [x] Iterate only with physically justified table/representation fixes if validation fails.
+  - [x] Report whether one tempered-PMF method works across all pairs.
 
 - [x] Phase 8: Clean up `cg_lipid_potentials.tex` after the CGL-CGL/SC-CGL averaging discussion.
   - [x] Rewrite unresolved-coordinate equations as one coherent method.
@@ -64,12 +104,18 @@ Build a physically defensible single-vector DOPC coarse-grained lipid (CGL) forc
 
 # Known Errors / Blockers
 
-- None for Phase 8. The methods TeX now distinguishes hidden rigid-body orientations from internal DOPC conformations, derives weighted expectation and PMF reductions, documents CGL-CGL tempered PMF, and documents SC-CGL weighted energy expectation.
+- Phase 11 dynamics caveat: the focused 1RKL coarse structural diagnostic passes after a corrected production restart, but CGL lateral COM dynamics are faster than the active full-resolution DOPC COM reference at longer short-time lags. At lag `15.0` time units, CGL MSD is `1.400 A^2` and full DOPC COM MSD is `0.470 A^2`, implying an approximate effective-time scale factor of `0.34` for that observable on this short trajectory. This is a calibration issue, not something the tempered PMF itself can guarantee.
+- Phase 12 physical-integrity audit passed. Installed `dopc.h5` and `sidechain.h5`, plus the Phase 11 prepared/production `.up` files, have no CGL twist/orientation-potential node, no active force caps, no arbitrary interaction scaling, no hidden relaxation, no excluded-area/nonnegative projection, and no active duplicate-row normalization. A stale unread `nonprotein_hs_force_cap=100` metadata default was found and cleaned to `0.0`.
+- Phase 10 result: the universal production-temperature PMF experiment fails on the first coarse validation workflow, `run_sim_1rkl.sh`. The workflow completed, but the final bilayer/protein metrics are unacceptable: CGL aligned-z min/p05/mean `-0.063/0.448/0.821`, `bad_parallel=7`, `bad_flip=1`, leaflet crossings `4/4`, same-leaflet NN min/p05 `2.285/2.886 A`, protein hbond first/final/min/last20 `28.74/6.93/0.56/6.43`, and protein Rg first/final/last20 `12.56/10.40/10.37 A`. The remaining three workflows are intentionally not launched until the model decision is revised, because the one-method production-PMF model already fails the required acceptance criteria.
+- Phase 9 result: the universal `tau=10.0` tempered-PMF experiment fails the coarse CGL-orientation criterion. All four workflows completed, and protein/full-lipid metrics stayed stable, but final coarse CGL orientations contained flipped rods: `1AFO` had `bad_parallel=2`, `bad_flip=2`; `1RKL` had `bad_parallel=4`, `bad_flip=4`. Same-leaflet spacing and leaflet crossing checks did not indicate bilayer collapse, so the failure is specifically orientation transferability of the one-method table scheme. No physical fix was applied because the direct conclusion is that applying the same tempered-PMF reduction to all four pair classes does not work as a production model.
+- None for Phase 8. The methods TeX now distinguishes hidden rigid-body orientations from internal DOPC conformations and derives weighted expectation and PMF reductions; the Phase 11 update supersedes the earlier mixed-method text with uniform `tau=10.0` tempered PMF.
 - None for Phase 7. The structure-typed but unrestrained-burn-in validation `outputs/phase7_1afo_full_secondary_types` failed and was not promoted. The accepted validation `outputs/phase7_1afo_full_burnin_restraint` uses full-strength SC-env/BB-env interactions, applies protein position restraints only during stage-7 burn-in, removes those restraints before production, and has replaced the active `outputs/martini_1afo_hybrid_full` output. The previous active output is backed up as `outputs/martini_1afo_hybrid_full.pre_phase7_burnin_restraint_backup_20260611_152618`.
 
 # Review
 
 - Phase 8 TeX cleanup passed two `pdflatex -interaction=nonstopmode -halt-on-error cg_lipid_potentials.tex` runs from the repo-root environment. LaTeX reported only small pre-existing-style overfull boxes, not errors.
+- Phase 11 uniform tempered-PMF implementation passed Python compile checks, H5 metadata validation for CGL-CGL/SC-CGL/CGL-particle/SC-particle, and a `pdflatex -interaction=nonstopmode -halt-on-error cg_lipid_potentials.tex` check. Focused 1RKL coarse structural validation passed, but CGL lateral MSD remains faster than the full-resolution DOPC COM reference at longer short-time lags, so lipid dynamics need effective-time calibration or a separate dissipative/friction model.
+- Phase 12 audit checks passed after setting the stale unread `nonprotein_hs_force_cap` default and Phase 11 checkpoint attributes to zero. `py_compile` passed for the touched Python files. The audit verified CGL-CGL, SC-CGL, CGL-particle, and SC-particle tables use `tau=10.0` tempered PMF with `fit_relax_steps=0`, `sample_dist_min_nm=1e-6`, no cap/scale attrs, and no twist attrs; runtime `martini_potential/force_cap=0`, `protein_env_interface_scale=1`, SC-env force caps are zero, and no CGL orientation/twist potential nodes are present.
 - Active `martini_1afo_hybrid_full` stage-7 metrics after the fix: hbond first/final/min/last20 `86.74/72.97/62.61/69.77`, Rg first/final/last20 `15.81/15.60/15.55 A`, within-chain final CA consecutive min/p50/max `3.23/3.77/4.31 A`, within-chain final CA(i)-CA(i+4) min/p50/max `4.65/6.29/12.30 A`.
 - Production restraint audit: `/input/potential/restraint_position` is absent from the active stage-7 production file.
 - Mapping provenance: `61` structure-geometry residues, `7` coil fallback residues, and `4` terminal charge overrides.

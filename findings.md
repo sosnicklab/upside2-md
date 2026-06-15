@@ -1,6 +1,105 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-14: Physical-integrity audit of uniform tempered PMF.
+  - The active uniform tempered-PMF implementation satisfies the requested
+    physical-design constraints in the audited artifacts: no CGL twist
+    coordinate, no standalone CGL orientation potential, no active force cap,
+    no arbitrary interaction scaling, no hidden-bead relaxation, and no
+    excluded-area/nonnegative projection.
+  - Installed `dopc.h5` CGL-CGL, SC-CGL, and CGL-particle tables all use
+    `tempered_boltzmann_free_energy` at `tau=10.0`, `fit_relax_steps=0`,
+    `sample_dist_min_nm=1e-6`, and no cap/scale/twist attrs.
+  - Installed `sidechain.h5` SC-particle table uses
+    `tempered_boltzmann_free_energy` at `tau=10.0`, `fit_relax_steps=0`,
+    `relaxation=rigid_rotated_geometry`, and no cap/scale attrs.
+  - Runtime Phase 11 `.up` audit passed: no CGL twist/orientation-potential
+    node, `martini_potential/force_cap=0`, `protein_env_interface_scale=1`,
+    SC-env force caps zero, no production restraint node, and duplicate
+    residue/rotamer row multiplicity is one for both SC-CGL and SC-particle.
+  - A stale unread `nonprotein_hs_force_cap=100.0` metadata default was found.
+    It was not read by the active C++ runtime, but it was changed to `0.0` in
+    the generator default and Phase 11 checkpoint attrs to avoid misleading
+    future audits.
+- 2026-06-14: User decision after production-PMF failure.
+  - The model requirement is now one hidden-state reduction method for all
+    four interaction classes. Since production-temperature PMF failed on the
+    first coarse workflow, the next active experiment is uniform tempered PMF
+    with `tau=10.0` for CGL-CGL, SC-CGL, CGL-particle, and SC-particle.
+  - Dynamics caveat: a tempered PMF is a configurational coarse-graining over
+    unresolved rigid orientations. It can improve structural transferability,
+    but it is not expected to preserve microscopic kinetics or diffusion
+    constants automatically. Dynamics claims require separate calibration or
+    comparison to reference trajectories.
+  - Focused 1RKL diagnostic with uniform tempered PMF passed structural
+    metrics after correcting a manual restart stage-label mistake: no CGL
+    flips/crossings, aligned-z p05 `0.845`, same-leaflet NN p05 at least
+    `6.886 A`, protein hbond last20 `34.73`, and Rg last20 `12.72 A`.
+  - The dynamics mismatch remains: compared with active full-resolution DOPC
+    COM motion, CGL lateral MSD is about `3x` larger at lag `15.0` time units
+    (`1.400` vs `0.470 A^2`). The practical resolution is an effective-time
+    calibration for lipid lateral dynamics, or a separate dissipative/friction
+    model; changing the PMF averaging method alone cannot guarantee kinetic
+    matching.
+  - Restart lesson: `stage_label` used for files/logs is not the same as the
+    runtime `/input/stage_parameters/current_stage`. Manual production
+    restarts must leave `current_stage=production`; setting it to a numeric
+    label such as `7.1` can activate the wrong runtime stage semantics and
+    produce invalid energies.
+- 2026-06-14: Universal production-temperature PMF validation result.
+  - Applying production-temperature PMF hidden-state averaging uniformly to
+    CGL-CGL, SC-CGL, CGL-particle, and SC-particle fails on the first coarse
+    workflow tested (`run_sim_1rkl.sh`).
+  - The failure is not a workflow crash. The run completed, but the final CGL
+    bilayer collapsed: aligned-z min/p05/mean `-0.063/0.448/0.821`,
+    `bad_parallel=7`, `bad_flip=1`, leaflet crossings `4/4`, and same-leaflet
+    nearest-neighbor min/p05 `2.285/2.886 A`.
+  - Protein observables failed at the same time: hbond first/final/min/last20
+    `28.74/6.93/0.56/6.43` and Rg first/final/last20
+    `12.56/10.40/10.37 A`.
+  - This supports the earlier concern that production-temperature pair PMFs are
+    too attractive for dense CGL-CGL packing because the hidden axial states are
+    independently optimized by the pair PMF. A single production-PMF rule across
+    all pair classes is therefore not acceptable without a new physical
+    representation.
+  - SC-CGL implementation/cost check: the generated SC-CGL table has 18
+    explicit sidechain types and `18 x 1 x 2541` spline parameters
+    (`21 x 11 x 11` per residue). It does include CGL hidden frame sampling,
+    but `sidechain_bead_frame_count=1` in the active table and ALA/GLY are not
+    explicit sidechain types. Therefore SC-CGL need not dominate wall time over
+    CGL-CGL, whose grid is `120 x 9 x 9` and whose hidden samples evaluate two
+    14-bead DOPC geometries.
+- 2026-06-14: Universal tempered-PMF validation result.
+  - Applying the same `tau=10.0` tempered-PMF hidden-state reduction to
+    CGL-CGL, SC-CGL, CGL-particle, and SC-particle is not a valid production
+    model for the current Phase 9 validation matrix.
+  - All four requested workflows completed, and the proteins/full-resolution
+    bilayers remained stable by hbond/Rg and DOPC leaflet metrics. The failure
+    is specific to coarse CGL orientation: final `1AFO` coarse had
+    `bad_parallel=2`, `bad_flip=2`; final `1RKL` coarse had
+    `bad_parallel=4`, `bad_flip=4`.
+  - The bad CGL rods were present by the first recorded production frame or
+    appeared during the stage-7 burn-in, while same-leaflet spacing and leaflet
+    crossing checks stayed acceptable. This points to loss of orientation
+    transferability when the high-temperature PMF reduction is applied to the
+    hybrid CGL-target/SC-CGL surface, not to a global bilayer collapse.
+  - Current lesson: keep the dense CGL-CGL tempered-PMF choice separate from
+    the less densely packed SC-CGL, SC-particle, and CGL-particle reductions
+    unless a new physical representation is validated. A single hidden-state
+    averaging rule across all pair classes is too blunt for this model.
+  - User correction: do not overinterpret the Phase 9 flipped CGLs as proof
+    that tempered CGL-CGL itself is wrong; CGL-CGL was already using tempered
+    PMF before this experiment, and rare flips can be seed sensitive. The
+    cleaner preferred experiment is production-temperature PMF, without
+    tempering, applied uniformly to CGL-CGL, SC-CGL, SC-particle, and
+    CGL-particle.
+  - Phase 10 implementation check: SC-CGL generation is one task per explicit
+    sidechain type, not one task per residue instance in a simulation. The
+    active MARTINI sidechain set is 18 types; ALA and GLY have no explicit
+    sidechain bead geometry in the orientation library/mapping and are skipped.
+    CGL-CGL can still appear more expensive because each unresolved sample
+    evaluates a 14-by-14 DOPC bead pair set, while SC-CGL evaluates 14 times
+    the sidechain bead count.
 - 2026-06-11: 1AFO full-lipid stage-7 secondary-structure fix.
   - VTF distortion in `outputs/martini_1afo_hybrid_full/1afo.stage_7.0.vtf`
     was real trajectory geometry and originated during stage-7
