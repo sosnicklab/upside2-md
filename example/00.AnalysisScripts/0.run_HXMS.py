@@ -1,29 +1,25 @@
-import os
+#!/usr/bin/env python
+
+import csv, math, os
+from collections import OrderedDict
+from math import ceil
 
 import numpy as np
 import scipy as sp
+import pandas as pd
 import matplotlib
 if 'MPLBACKEND' not in os.environ:
     matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.font_manager
-from matplotlib.font_manager import FontProperties
-import pymbar  # for MBAR analysis
-from pymbar import timeseries  # for timeseries analysis
-import csv
-import pandas as pd
-from collections import OrderedDict
-import math
 import matplotlib.backends.backend_pdf as pdf
+from matplotlib.font_manager import FontProperties
 from scipy.optimize import curve_fit
-from math import ceil
 
-SANS_SERIF_FONTS = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
+sans_serif_fonts = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
 
 try:
     from helpers.function import str_exp, plot_uptake
 except ImportError:
-    # Fallback to the standard stretched-exponential form when the helper module is absent.
     def str_exp(t, k, b):
         return 100 * (1 - np.exp(-np.power(k * t, b)))
 
@@ -31,9 +27,9 @@ except ImportError:
         return str_exp(t, k, b)
 
 
-pdb_id = os.environ.get('pdb_id', 'glpG-RKRK-79HIS')  # CHECKME
-sim_id = os.environ.get('sim_id', 'memb_test')  # CHECKME
-hxms_subworkflow = os.environ.get('HXMS_SUBWORKFLOW', 'all').strip().lower()  # CHECKME
+pdb_id = os.environ.get('pdb_id', 'glpG-RKRK-79HIS')  # checkme
+sim_id = os.environ.get('sim_id', 'memb_test')  # checkme
+hxms_subworkflow = os.environ.get('HXMS_SUBWORKFLOW', 'all').strip().lower()  # checkme
 
 work_dir = './'
 input_dir = '{}/inputs'.format(work_dir)
@@ -182,7 +178,7 @@ def run_normalized_workflow(state_names, peptides_plot, pep_ind, pep_list, timep
     for state_name, df_array, allnorm in zip(state_names, df_arrays, allnorms):
         fig = plt.figure(figsize=(4 * n, 3 * m), facecolor='w')
         plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
+        plt.rcParams['font.sans-serif'] = sans_serif_fonts
 
         for p in pep_ind:
             masks = ~np.isnan(allnorm[p][plot_time_s:plot_time_e])
@@ -275,7 +271,7 @@ def run_stretched_exp_workflow(state_names, peptides_plot, pep_ind, pep_list, ti
                     )
                     fit_Th.append(plot_uptake(thopt[0], thopt[1], t_int))
                 except Exception as exc:
-                    print('--> WARNING: Could not fit peptide {} ({}). Error: {}'.format(p, pep_list[p], exc))
+                    print('could not fit peptide %s (%s): %s' % (p, pep_list[p], exc))
                     fit_D.append([np.nan for _ in range(len(peptides_plot))])
                     fit_Th.append([np.nan for _ in range(len(peptides_plot))])
             else:
@@ -294,7 +290,7 @@ def run_stretched_exp_workflow(state_names, peptides_plot, pep_ind, pep_list, ti
     for state_name, df_plot, fit_d, fit_th in zip(state_names, df_plots, fit_Ds, fit_Ths):
         fig = plt.figure(figsize=(4 * n, 3 * m), facecolor='w')
         plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
+        plt.rcParams['font.sans-serif'] = sans_serif_fonts
 
         for p in pep_ind:
             series = df_plot[p][1:].astype(np.double)
@@ -325,21 +321,26 @@ def run_stretched_exp_workflow(state_names, peptides_plot, pep_ind, pep_list, ti
         np.save('{}/{}/{}_stretch_exp_d_norm_theor_{}.npy'.format(output_dir, sim_id, pdb_id, state_name), [fit_th[p] for p in range(len(pep_list))])
 
 
-uptake_df = load_uptake_dataframe()
-state_names, state_frames = build_state_frames(uptake_df)
-peptides, peptides_plot, pep_starts, pep_ends, pep_nums = build_peptide_metadata(state_frames[0])
-timepoints = build_timepoints(state_frames)
+def main():
+    uptake_df = load_uptake_dataframe()
+    state_names, state_frames = build_state_frames(uptake_df)
+    peptides, peptides_plot, pep_starts, pep_ends, pep_nums = build_peptide_metadata(state_frames[0])
+    timepoints = build_timepoints(state_frames)
 
-export_peptide_ids(pep_starts, pep_ends, peptides_plot)
+    export_peptide_ids(pep_starts, pep_ends, peptides_plot)
 
-df_arrays, df_kchems, df_maxs = build_uptake_arrays(state_frames, peptides, timepoints)
-pep_list, pep_ind = build_peptide_indexes(pep_nums)
+    df_arrays, df_kchems, df_maxs = build_uptake_arrays(state_frames, peptides, timepoints)
+    pep_list, pep_ind = build_peptide_indexes(pep_nums)
 
-if hxms_subworkflow not in {'all', 'normalized', 'stretched'}:
-    raise SystemExit('Unsupported HXMS_SUBWORKFLOW: {}'.format(hxms_subworkflow))
+    if hxms_subworkflow not in {'all', 'normalized', 'stretched'}:
+        raise SystemExit('unsupported HXMS_SUBWORKFLOW: %s' % hxms_subworkflow)
 
-if hxms_subworkflow in {'all', 'normalized'}:
-    run_normalized_workflow(state_names, peptides_plot, pep_ind, pep_list, timepoints, df_arrays, df_kchems)
+    if hxms_subworkflow in {'all', 'normalized'}:
+        run_normalized_workflow(state_names, peptides_plot, pep_ind, pep_list, timepoints, df_arrays, df_kchems)
 
-if hxms_subworkflow in {'all', 'stretched'}:
-    run_stretched_exp_workflow(state_names, peptides_plot, pep_ind, pep_list, timepoints, df_arrays, df_kchems)
+    if hxms_subworkflow in {'all', 'stretched'}:
+        run_stretched_exp_workflow(state_names, peptides_plot, pep_ind, pep_list, timepoints, df_arrays, df_kchems)
+
+
+if __name__ == '__main__':
+    main()

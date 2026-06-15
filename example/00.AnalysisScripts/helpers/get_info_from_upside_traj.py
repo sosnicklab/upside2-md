@@ -41,6 +41,11 @@ def main():
     parser.add_argument('--last', type=int, default=None, help='(default none) the last frame')
     args = parser.parse_args()
 
+    if not os.path.isfile(args.input_h5):
+        raise FileNotFoundError('cannot read trajectory file: %s' % args.input_h5)
+    if args.top is not None and not os.path.isfile(args.top):
+        raise FileNotFoundError('cannot read topology file: %s' % args.top)
+
     first  = args.start
     stride = args.stride
     last   = args.last
