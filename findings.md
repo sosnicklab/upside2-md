@@ -1,6 +1,13 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-15: CGL directional pairlist correction.
+  - User correction: because `dopc.h5` CGL tables are trained from two DOPC
+    molecules, a center-distance cutoff that admits a third DOPC-sized gap is
+    not a defensible runtime candidate rule. Pairlist filtering should use the
+    represented DOPC bead envelope plus the dry-MARTINI bead nonbonded cutoff;
+    the wider two-body radial table support should not drive candidate-pair
+    work when the two represented molecules cannot have bead-level contact.
 - 2026-06-15: Hybrid cleanup style rule.
   - User correction: cleanup is not only deletion of stale code. The hybrid
     interface should match the human-written master branch style across C++,

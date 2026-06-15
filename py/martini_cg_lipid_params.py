@@ -84,6 +84,7 @@ def derive_dopc_cg_params(
     projection_ang = rel_ang @ unit_axis
     r2_perp = np.sum(rel_ang * rel_ang, axis=1) - projection_ang * projection_ang
     r2_perp = np.maximum(r2_perp, 0.0)
+    max_axis_radius_ang = float(np.max(np.abs(projection_ang)))
 
     if bead_masses_g_mol is None:
         masses = np.full(14, 72.0, dtype=np.float64)
@@ -133,6 +134,7 @@ def derive_dopc_cg_params(
         "transverse_inertia_g_mol_a2": float(transverse_inertia),
         "head_tail_span_ang": float(axis_norm),
         "tail_projection_ang": float(orientation_length_ang),
+        "max_axis_radius_ang": max_axis_radius_ang,
         "max_perp_radius_ang": float(np.sqrt(np.max(r2_perp))),
         "mass_source": mass_source,
         "contact_source": "2^(1/6)*max_dopc_pair_sigma",

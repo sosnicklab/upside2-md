@@ -260,6 +260,7 @@ def _validate_compose_vector6d_cg_attrs(compose_grp, cg_table_grp, source_path: 
         "transverse_inertia_g_mol_a2",
         "head_tail_span_ang",
         "tail_projection_ang",
+        "max_axis_radius_ang",
         "max_perp_radius_ang",
     )
     missing = [
@@ -3094,6 +3095,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     "transverse_inertia_g_mol_a2",
                     "head_tail_span_ang",
                     "tail_projection_ang",
+                    "max_axis_radius_ang",
                     "max_perp_radius_ang",
                     "energy_conversion_kj_per_eup",
                     "length_conversion_ang_per_nm",
@@ -4031,6 +4033,14 @@ def inject_cg_lipid_nodes(
                 for attr_name in ("knot_spacing_ang", "cutoff_ang", "taper_width_ang"):
                     if attr_name in pair_grp.attrs:
                         cg_pair.attrs[attr_name] = np.float32(pair_grp.attrs[attr_name])
+                for attr_name in (
+                    "bead_nonbonded_cutoff_nm",
+                    "length_conversion_ang_per_nm",
+                    "max_axis_radius_ang",
+                    "max_perp_radius_ang",
+                ):
+                    if attr_name in pair_grp.attrs:
+                        cg_pair.attrs[attr_name] = np.float32(pair_grp.attrs[attr_name])
                 for attr_name in ("n_modes", "n_radial", "n_angular"):
                     if attr_name in pair_grp.attrs:
                         cg_pair.attrs[attr_name] = np.int32(pair_grp.attrs[attr_name])
@@ -4275,6 +4285,14 @@ def inject_cg_lipid_nodes(
                             if attr_name in target_grp.attrs:
                                 target_node.attrs[attr_name] = np.int32(target_grp.attrs[attr_name])
                         for attr_name in ("knot_spacing_ang", "cutoff_ang", "taper_width_ang"):
+                            if attr_name in target_grp.attrs:
+                                target_node.attrs[attr_name] = np.float32(target_grp.attrs[attr_name])
+                        for attr_name in (
+                            "bead_nonbonded_cutoff_nm",
+                            "length_conversion_ang_per_nm",
+                            "max_axis_radius_ang",
+                            "max_perp_radius_ang",
+                        ):
                             if attr_name in target_grp.attrs:
                                 target_node.attrs[attr_name] = np.float32(target_grp.attrs[attr_name])
                         for attr_name in ("boltzmann_temperature_upside", "minimum_boltzmann_weight"):

@@ -1272,6 +1272,7 @@ _CG_DERIVED_NUMERIC_ATTRS = (
     "transverse_inertia_g_mol_a2",
     "head_tail_span_ang",
     "tail_projection_ang",
+    "max_axis_radius_ang",
     "max_perp_radius_ang",
     "energy_conversion_kj_per_eup",
     "length_conversion_ang_per_nm",

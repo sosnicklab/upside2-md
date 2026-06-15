@@ -41,6 +41,13 @@ struct CGLPairIndex {
     size_t second;
 };
 
+struct CGLBodySupport {
+    bool enabled;
+    float axis_radius;
+    float perp_radius;
+    float bead_cutoff;
+};
+
 static vector<int> read_int_dataset(hid_t grp, const char* name) {
     vector<hsize_t> sz = get_dset_size(1, grp, name);
     vector<int> out(sz[0]);
@@ -650,9 +657,146 @@ static void cache_positions(
     }
 }
 
+static bool cached_cgl_bodies_moved(
+        VecArray cg,
+        const vector<int>& index,
+        const vector<float>& cached_body,
+        float axis_radius,
+        float max_disp2) {
+    if(cached_body.size() != index.size() * 6u)
+        return true;
+    float max_disp = sqrtf(std::max(max_disp2, 0.f));
+    for(size_t i = 0; i < index.size(); ++i) {
+        int idx = index[i];
+        float dx = cg(0, idx) - cached_body[6 * i];
+        float dy = cg(1, idx) - cached_body[6 * i + 1];
+        float dz = cg(2, idx) - cached_body[6 * i + 2];
+        float dn0 = cg(3, idx) - cached_body[6 * i + 3];
+        float dn1 = cg(4, idx) - cached_body[6 * i + 4];
+        float dn2 = cg(5, idx) - cached_body[6 * i + 5];
+        float body_disp = sqrtf(dx * dx + dy * dy + dz * dz)
+                        + axis_radius * sqrtf(dn0 * dn0 + dn1 * dn1 + dn2 * dn2);
+        if(body_disp >= max_disp)
+            return true;
+    }
+    return false;
+}
+
+static void cache_cgl_bodies(
+        VecArray cg,
+        const vector<int>& index,
+        vector<float>& cached_body) {
+    cached_body.resize(index.size() * 6u);
+    for(size_t i = 0; i < index.size(); ++i) {
+        int idx = index[i];
+        for(int d = 0; d < 6; ++d)
+            cached_body[6 * i + d] = cg(d, idx);
+    }
+}
+
 static inline float cgl_pairlist_disp_threshold2(float cache_buffer) {
     float half_buffer = 0.5f * cache_buffer;
     return half_buffer * half_buffer;
+}
+
+static inline float dot3(const float a[3], const float b[3]) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+static inline float clamp_range(float x, float lo, float hi) {
+    return std::max(lo, std::min(hi, x));
+}
+
+static CGLBodySupport read_cgl_body_support(hid_t grp) {
+    float length_conv = read_attribute<float>(grp, ".", "length_conversion_ang_per_nm", 10.f);
+    float bead_cutoff_nm = read_attribute<float>(grp, ".", "bead_nonbonded_cutoff_nm", 0.f);
+    CGLBodySupport out;
+    out.axis_radius = read_attribute<float>(grp, ".", "max_axis_radius_ang", 0.f);
+    out.perp_radius = read_attribute<float>(grp, ".", "max_perp_radius_ang", 0.f);
+    out.bead_cutoff = bead_cutoff_nm * length_conv;
+    out.enabled = out.axis_radius > 0.f && out.perp_radius > 0.f && out.bead_cutoff > 0.f;
+    return out;
+}
+
+static float cgl_point_distance2(const float dr[3], const float n[3], float axis_radius) {
+    float s = clamp_range(dot3(n, dr), -axis_radius, axis_radius);
+    float d0 = dr[0] - s * n[0];
+    float d1 = dr[1] - s * n[1];
+    float d2 = dr[2] - s * n[2];
+    return d0 * d0 + d1 * d1 + d2 * d2;
+}
+
+static float cgl_cgl_distance2(
+        const float dr[3],
+        const float n1[3],
+        const float n2[3],
+        float axis_radius) {
+    float b = dot3(n1, n2);
+    float d1 = dot3(n1, dr);
+    float d2 = dot3(n2, dr);
+    float best = std::numeric_limits<float>::max();
+    auto add_candidate = [&](float s, float t) {
+        float d0 = dr[0] + t * n2[0] - s * n1[0];
+        float d1v = dr[1] + t * n2[1] - s * n1[1];
+        float d2v = dr[2] + t * n2[2] - s * n1[2];
+        best = std::min(best, d0 * d0 + d1v * d1v + d2v * d2v);
+    };
+
+    float denom = 1.f - b * b;
+    if(fabsf(denom) > 1e-6f) {
+        float s = (d1 - b * d2) / denom;
+        float t = (b * d1 - d2) / denom;
+        if(s >= -axis_radius && s <= axis_radius &&
+           t >= -axis_radius && t <= axis_radius) {
+            add_candidate(s, t);
+        }
+    }
+
+    for(float s : {-axis_radius, axis_radius}) {
+        float t = clamp_range(b * s - d2, -axis_radius, axis_radius);
+        add_candidate(s, t);
+    }
+    for(float t : {-axis_radius, axis_radius}) {
+        float s = clamp_range(d1 + b * t, -axis_radius, axis_radius);
+        add_candidate(s, t);
+    }
+    return best;
+}
+
+static bool cgl_cgl_pairlist_candidate(
+        VecArray cg,
+        int idx1,
+        int idx2,
+        const float dr[3],
+        const CGLBodySupport& support,
+        float cache_buffer,
+        float fallback_cutoff2) {
+    if(!support.enabled) {
+        float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+        return r2 < fallback_cutoff2;
+    }
+    float x1[3], n1[3], x2[3], n2[3];
+    load_vec6(cg, idx1, x1, n1);
+    load_vec6(cg, idx2, x2, n2);
+    float contact = support.bead_cutoff + cache_buffer + 2.f * support.perp_radius;
+    return cgl_cgl_distance2(dr, n1, n2, support.axis_radius) < contact * contact;
+}
+
+static bool cgl_target_pairlist_candidate(
+        VecArray cg,
+        int idx_cg,
+        const float dr[3],
+        const CGLBodySupport& support,
+        float cache_buffer,
+        float fallback_cutoff2) {
+    if(!support.enabled) {
+        float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+        return r2 < fallback_cutoff2;
+    }
+    float x[3], n[3];
+    load_vec6(cg, idx_cg, x, n);
+    float contact = support.bead_cutoff + cache_buffer + support.perp_radius;
+    return cgl_point_distance2(dr, n, support.axis_radius) < contact * contact;
 }
 
 }  // namespace
@@ -799,11 +943,12 @@ struct CGLipidPairPotential : public PotentialNode {
     bool log1p_reduced_transform;
     float boltzmann_temperature;
     float cache_buffer;
+    CGLBodySupport body_support;
     float cached_box_x;
     float cached_box_y;
     float cached_box_z;
     bool pairlist_valid;
-    vector<float> cached_pos;
+    vector<float> cached_body;
     vector<CGLPairIndex> active_pairs;
 
     CGLipidPairPotential(hid_t grp, CoordNode& cg_pos);
@@ -841,6 +986,7 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     , log1p_reduced_transform(read_attribute<int>(grp, ".", "log1p_reduced_transform", 0) != 0)
     , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
     , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
+    , body_support(read_cgl_body_support(grp))
     , cached_box_x(0.f)
     , cached_box_y(0.f)
     , cached_box_z(0.f)
@@ -874,7 +1020,8 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
 void CGLipidPairPotential::ensure_pairlist(VecArray cg) {
     bool rebuild = !pairlist_valid || cache_buffer <= 0.f ||
         cached_box_x != box_x || cached_box_y != box_y || cached_box_z != box_z ||
-        cached_positions_moved(cg, index, cached_pos, cgl_pairlist_disp_threshold2(cache_buffer));
+        cached_cgl_bodies_moved(cg, index, cached_body, body_support.axis_radius,
+                cgl_pairlist_disp_threshold2(cache_buffer));
     if(!rebuild)
         return;
 
@@ -890,12 +1037,12 @@ void CGLipidPairPotential::ensure_pairlist(VecArray cg) {
             if(t2 < 0 || t2 >= n_type2) continue;
             float dr[3];
             center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
-            float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-            if(r2 < pairlist_cutoff2)
+            if(cgl_cgl_pairlist_candidate(
+                    cg, index[ai], index[bi], dr, body_support, cache_buffer, pairlist_cutoff2))
                 active_pairs.push_back({ai, bi});
         }
     }
-    cache_positions(cg, index, cached_pos);
+    cache_cgl_bodies(cg, index, cached_body);
     cached_box_x = box_x;
     cached_box_y = box_y;
     cached_box_z = box_z;
@@ -1218,11 +1365,12 @@ struct CGLipidTargetPotential : public PotentialNode {
     float boltzmann_temperature;
     float minimum_boltzmann_weight;
     float cache_buffer;
+    CGLBodySupport body_support;
     float cached_box_x;
     float cached_box_y;
     float cached_box_z;
     bool pairlist_valid;
-    vector<float> cached_pos1;
+    vector<float> cached_body1;
     vector<float> cached_pos2;
     vector<CGLPairIndex> active_pairs;
 
@@ -1499,6 +1647,7 @@ CGLipidTargetPotential::CGLipidTargetPotential(
         , minimum_boltzmann_weight(read_attribute<float>(
                     grp, ".", "minimum_boltzmann_weight", numeric_limits<float>::min()))
         , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
+        , body_support(read_cgl_body_support(grp))
         , cached_box_x(0.f)
         , cached_box_y(0.f)
         , cached_box_z(0.f)
@@ -1541,7 +1690,8 @@ CGLipidTargetPotential::CGLipidTargetPotential(
 void CGLipidTargetPotential::ensure_pairlist(VecArray cg, VecArray tgt) {
     bool rebuild = !pairlist_valid || cache_buffer <= 0.f ||
         cached_box_x != box_x || cached_box_y != box_y || cached_box_z != box_z ||
-        cached_positions_moved(cg, index1, cached_pos1, cgl_pairlist_disp_threshold2(cache_buffer)) ||
+        cached_cgl_bodies_moved(cg, index1, cached_body1, body_support.axis_radius,
+                cgl_pairlist_disp_threshold2(cache_buffer)) ||
         cached_positions_moved(tgt, index2, cached_pos2, cgl_pairlist_disp_threshold2(cache_buffer));
     if(!rebuild)
         return;
@@ -1558,12 +1708,12 @@ void CGLipidTargetPotential::ensure_pairlist(VecArray cg, VecArray tgt) {
             if(t2 < 0 || t2 >= n_type2) continue;
             float dr[3];
             center_dr(cg, index1[ai], tgt, index2[bi], box_x, box_y, box_z, dr);
-            float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
-            if(r2 < pairlist_cutoff2)
+            if(cgl_target_pairlist_candidate(
+                    cg, index1[ai], dr, body_support, cache_buffer, pairlist_cutoff2))
                 active_pairs.push_back({ai, bi});
         }
     }
-    cache_positions(cg, index1, cached_pos1);
+    cache_cgl_bodies(cg, index1, cached_body1);
     cache_positions(tgt, index2, cached_pos2);
     cached_box_x = box_x;
     cached_box_y = box_y;
