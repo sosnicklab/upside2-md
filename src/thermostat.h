@@ -1,6 +1,7 @@
 #include "deriv_engine.h"
 #include <cstdint>
 #include <cmath>
+#include <vector>
 
 struct OrnsteinUhlenbeckThermostat
         // following the notation in Gillespie, 1996
@@ -20,6 +21,7 @@ struct OrnsteinUhlenbeckThermostat
 
         float temp;
         float noise_scale;
+        std::vector<float> atom_timescale;
 
         OrnsteinUhlenbeckThermostat() {}
         OrnsteinUhlenbeckThermostat(uint32_t random_seed_, float timescale_, float temp_, float delta_t_):
@@ -35,6 +37,8 @@ struct OrnsteinUhlenbeckThermostat
             temp      = temp_;      update_parameters(); return *this;}
         OrnsteinUhlenbeckThermostat& set_delta_t  (float delta_t_)   {
             delta_t   = delta_t_;   update_parameters(); return *this;}
+        OrnsteinUhlenbeckThermostat& set_atom_timescale(const std::vector<float>& atom_timescale_) {
+            atom_timescale = atom_timescale_; return *this;}
 
         void apply(VecArray mom, int n_atom, DerivEngine* engine = nullptr);
 };

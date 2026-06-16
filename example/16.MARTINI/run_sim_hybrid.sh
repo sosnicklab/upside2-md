@@ -74,6 +74,7 @@ PROTEIN_LIPID_CUTOFF_MAX="${PROTEIN_LIPID_CUTOFF_MAX:-8.0}"
 
 TEMPERATURE="${TEMPERATURE:-0.8647}"
 THERMOSTAT_TIMESCALE="${THERMOSTAT_TIMESCALE:-5.0}"
+CG_LIPID_THERMOSTAT_TIMESCALE="${CG_LIPID_THERMOSTAT_TIMESCALE:-0.0}"
 THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
 STRICT_STAGE_HANDOFF="${STRICT_STAGE_HANDOFF:-1}"
 
@@ -177,6 +178,7 @@ python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
     --protein-lipid-cutoff-max "${PROTEIN_LIPID_CUTOFF_MAX}" \
     --temperature "${TEMPERATURE}" \
     --thermostat-timescale "${THERMOSTAT_TIMESCALE}" \
+    --cg-lipid-thermostat-timescale "${CG_LIPID_THERMOSTAT_TIMESCALE}" \
     --thermostat-interval "${THERMOSTAT_INTERVAL}" \
     --strict-stage-handoff "${STRICT_STAGE_HANDOFF}" \
     --min-60-max-iter "${MIN_60_MAX_ITER}" \

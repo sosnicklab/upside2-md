@@ -2688,6 +2688,21 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         mass_array._v_attrs.shape = mass.shape
         mass_array._v_attrs.n_atoms = n_atoms
         mass_array._v_attrs.initialized = True
+
+        cgl_tau = float(os.environ.get("CG_LIPID_THERMOSTAT_TIMESCALE", "0.0") or "0.0")
+        if lipid_resolution == "coarse" and n_cg_lipids > 0 and cgl_tau > 0.0:
+            global_tau = float(os.environ.get("THERMOSTAT_TIMESCALE", "5.0") or "5.0")
+            thermostat_timescale = np.full(n_atoms, global_tau, dtype="f4")
+            cgl_mask = np.isin(atom_types.astype(str), np.array(["CGL", "CGLD"], dtype=object))
+            thermostat_timescale[cgl_mask] = np.float32(cgl_tau)
+            tau_array = t.create_array(input_grp, "thermostat_timescale", obj=thermostat_timescale)
+            tau_array._v_attrs.arguments = np.array([b"thermostat_timescale"])
+            tau_array._v_attrs.shape = thermostat_timescale.shape
+            tau_array._v_attrs.n_atoms = n_atoms
+            tau_array._v_attrs.initialized = True
+            tau_array._v_attrs.global_timescale = np.float32(global_tau)
+            tau_array._v_attrs.cg_lipid_timescale = np.float32(cgl_tau)
+            tau_array._v_attrs.cg_lipid_atom_types = np.array([b"CGL", b"CGLD"])
         
         print("Hybrid stage files use AA backbone carriers (N/CA/C/O) for protein runtime representation")
         

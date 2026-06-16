@@ -60,7 +60,8 @@ DEFAULT_MARTINI_ENERGY_CONVERSION = 2.914952774272
 DEFAULT_MARTINI_LENGTH_CONVERSION = 10.0
 DEFAULT_BAR_1_TO_EUP_PER_A3 = 0.000020659477
 DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP = 14.521180763676
-UPSIDE_V_INNER_STEP = 3
+MARTINI_MD_INTEGRATOR = "mv"
+MARTINI_MD_INNER_STEP = 1
 
 
 def derive_dopc_contact_clearance_angstrom(upside_home: Path) -> float:
@@ -973,6 +974,8 @@ def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable:
         "UPSIDE_NPT_SEMI": "1",
         "UPSIDE_BILAYER_LIPIDHEAD_FC": str(lipidhead_fc),
         "UPSIDE_LIPID_RESOLUTION": str(getattr(args, "lipid_resolution", "coarse")),
+        "THERMOSTAT_TIMESCALE": str(args.thermostat_timescale),
+        "CG_LIPID_THERMOSTAT_TIMESCALE": str(getattr(args, "cg_lipid_thermostat_timescale", 0.0)),
     }
 
 
@@ -1040,7 +1043,7 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
 
 def handoff_initial_position(args, input_file: Path, output_file: Path, mode="default", previous_dt=None):
     preserve_transition = "1" if mode == "production_restart" and previous_dt is not None else "0"
-    public_dt = (float(previous_dt) * UPSIDE_V_INNER_STEP) if previous_dt is not None else 0.0
+    public_dt = (float(previous_dt) * MARTINI_MD_INNER_STEP) if previous_dt is not None else 0.0
     with temporary_env(
         {
             "UPSIDE_SET_INITIAL_STRICT_COPY": str(args.strict_stage_handoff),
@@ -1073,7 +1076,7 @@ def output_restart_state_valid(up_file: Path):
 def mark_output_restart_state(up_file: Path, nsteps: int, dt: float):
     import h5py
 
-    public_dt = float(dt) * UPSIDE_V_INNER_STEP
+    public_dt = float(dt) * MARTINI_MD_INNER_STEP
     expected_time = float(nsteps) * public_dt
     with h5py.File(up_file, "r+") as h5:
         if "/output/time" not in h5 or h5["/output/time"].shape[0] == 0:
@@ -1175,7 +1178,7 @@ def run_md_stage(
     if effective_frame_steps >= int(nsteps):
         effective_frame_steps = max(1, int(nsteps) // 10)
         print(f"NOTICE: frame_steps ({frame_steps}) >= nsteps ({nsteps}); using frame_steps={effective_frame_steps}")
-    frame_interval = f"{effective_frame_steps * float(dt) * UPSIDE_V_INNER_STEP:.10g}"
+    frame_interval = f"{effective_frame_steps * float(dt) * MARTINI_MD_INNER_STEP:.10g}"
     if input_file.resolve() != output_file.resolve():
         shutil.copy2(input_file, output_file)
         handoff_initial_position(args, input_file, output_file)
@@ -1187,6 +1190,8 @@ def run_md_stage(
         "--frame-interval", frame_interval,
         "--temperature", args.temperature,
         "--time-step", dt,
+        "--integrator", MARTINI_MD_INTEGRATOR,
+        "--inner-step", str(MARTINI_MD_INNER_STEP),
         "--thermostat-timescale", args.thermostat_timescale,
         "--thermostat-interval", args.thermostat_interval,
         "--seed", args.seed,
@@ -1498,6 +1503,7 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--protein-lipid-cutoff-max", type=float, default=env_float("PROTEIN_LIPID_CUTOFF_MAX", 8.0))
     parser.add_argument("--temperature", type=float, default=env_float("TEMPERATURE", 0.8647))
     parser.add_argument("--thermostat-timescale", type=float, default=env_float("THERMOSTAT_TIMESCALE", 5.0))
+    parser.add_argument("--cg-lipid-thermostat-timescale", type=float, default=env_float("CG_LIPID_THERMOSTAT_TIMESCALE", 0.0))
     parser.add_argument("--thermostat-interval", type=int, default=env_int("THERMOSTAT_INTERVAL", -1))
     parser.add_argument("--strict-stage-handoff", type=int, default=env_int("STRICT_STAGE_HANDOFF", 1))
     parser.add_argument("--min-60-max-iter", type=int, default=env_int("MIN_60_MAX_ITER", 500))

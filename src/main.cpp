@@ -254,6 +254,24 @@ static double compute_logged_kinetic_energy(System* sys) {
     return (0.5/sys->n_atom) * sum_kin;
 }
 
+static vector<float> read_atom_thermostat_timescales(hid_t config_root, int n_atom) {
+    vector<float> out;
+    if(!h5_exists(config_root, "/input/thermostat_timescale")) return out;
+
+    auto shape = get_dset_size(1, config_root, "/input/thermostat_timescale");
+    if(shape.size() != 1u || shape[0] != static_cast<hsize_t>(n_atom)) {
+        throw string("/input/thermostat_timescale must have one positive value per atom");
+    }
+
+    out.assign(static_cast<size_t>(n_atom), 0.f);
+    traverse_dset<1,float>(config_root, "/input/thermostat_timescale",
+            [&](size_t i, float tau) {
+                if(!(tau > 0.f)) throw string("/input/thermostat_timescale values must be positive");
+                out[i] = tau;
+            });
+    return out;
+}
+
 double stod_strict(const std::string& s) {
     size_t nchar = -1u;
     double x = stod(s, &nchar);
@@ -952,6 +970,7 @@ try {
                     1e8);
             sys->set_temperature(sys->initial_temperature);
             sys->thermostat.set_delta_t(thermostat_interval*inner_step*dt);  // set true thermostat interval  //  FIXME inner_step
+            sys->thermostat.set_atom_timescale(read_atom_thermostat_timescales(sys->config.get(), sys->n_atom));
 
             sys->mom.reset(3, sys->n_atom);
             if (restart_using_momentum_arg.getValue()) { // initialize momentum using input.mom if requested
@@ -1181,10 +1200,12 @@ try {
                                 double rg = compute_protein_rg(sys);
                                 auto prot_components = compute_hybrid_protein_potential_components(sys.engine);
                                 double protein_potential = prot_components.protein_total();
-                                printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds",
-                                       duration_print_width, display_elapsed,
-                                       duration_print_width, display_duration_total,
-                                       ns, sys.temperature,
+                                printf("step %d / %llu time %.3g system %2i temperature %.2f hbonds %5.1f",
+                                       nr,
+                                       static_cast<unsigned long long>(n_round),
+                                       display_elapsed,
+                                       ns,
+                                       sys.temperature,
                                        get_n_hbond(sys.engine));
                                 if(rg >= 0.0) printf(" %5.1f Rg,", rg);
                                 else          printf("  N/A Rg,");

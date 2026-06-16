@@ -1,6 +1,156 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-16: 1RKL MARTINI secondary-structure regression.
+  - User-reported bad VTFs in both `martini_1rkl_hybrid` and
+    `martini_1rkl_hybrid_full` share the same generated runtime setting:
+    `--temperature 1.2`.
+  - Root cause is the uncommitted wrapper change in
+    `example/16.MARTINI/run_sim_hybrid.sh` that changed the default
+    `TEMPERATURE` from committed `0.8647` to `1.2`.
+  - Current bad-output metrics: CGL stage-7 hbond sum `23.92 -> 14.28`, CA Rg
+    `12.73 -> 14.02 A`; full-lipid stage-7 hbond sum `26.38 -> 15.45`, CA Rg
+    `12.69 -> 13.73 A`.
+  - Controlled copied-checkpoint test from the same CGL stage-7 start:
+    `T=0.8647` gives hbond final `33.48`, last-20 mean `32.15`, CA RMSD max
+    `1.03 A`; `T=1.2` gives hbond final `22.30`, last-20 mean `21.55`, CA RMSD
+    max `1.34 A`.
+  - Rule: do not change wrapper default temperature while debugging MARTINI
+    timescale/integrator behavior. Temperature changes affect protein
+    secondary-structure stability and must be explicit experimental inputs.
+  - Hybrid verbose progress logs should print actual MD step counts. Do not put
+    rounded elapsed time in the leading progress field, because short frame
+    intervals can repeat the same integer and look like duplicate steps.
+- 2026-06-15: User correction on CGL diffusion target.
+  - Do not use full-resolution DOPC diffusion as the calibration target for
+    this task. The requested target is the CGL diffusion expected under the
+    Upside core time mapping of `40 ps` per integration step.
+  - The required deliverable is a dissipation sweep: dissipation constant on
+    the x-axis, measured CGL diffusion on the y-axis, and a horizontal target
+    line for the expected diffusion rate under the 40 ps/step mapping.
+  - Rule: when the user asks for a timescale calibration, define the target
+    conversion explicitly before comparing against any convenient reference
+    trajectory.
+- 2026-06-16: User correction on final CGL timescale interpretation.
+  - Keep Upside core and dry-MARTINI runtime settings uniform when possible,
+    including the same simulation timestep.
+  - Hybrid MARTINI workflow time accounting must be explicit. Do not hide the
+    old `3x` inner-step multiplier in frame intervals or restarts. The MARTINI
+    workflow should not expose a separate inner-step knob; use one internal
+    `MARTINI_MD_INNER_STEP=1` constant for frame intervals, restart public
+    time, and the `upside --inner-step` argument.
+  - Short native-mass checks support that default: explicit `--integrator mv
+    --inner-step 1` completed 20k steps for both the CGL-only bilayer and the
+    1RKL protein-bilayer checkpoint. Both outputs ended at `time_final=40.0`
+    for `nsteps=20000`, `time_step=0.002`; bilayer geometry passed in both,
+    and the protein-bilayer run passed protein stability with final CA RMSD
+    `1.65 A`.
+  - The primary dry-MARTINI timescale estimate should come from measured
+    CGL-only bilayer lateral diffusion compared with a real DOPC diffusion
+    reference. The Upside `40 ps/step` mapping is a comparison point, not a
+    fitted target to force by unstable mass/friction settings.
+  - Scientific Reports 9, 1508 (2019), DOI
+    `10.1038/s41598-018-37814-x`, reports DOPC diffusion values useful as
+    references: simulated unlabeled DOPC `8.4 +/- 0.4 um^2/s`, dilute FCS
+    tracer about `12 um^2/s`, and an estimated pure-DOPC value about
+    `14 um^2/s` after correcting for dye hydrodynamic drag.
+  - Do not use 1RKL/protein-bilayer trajectories to measure the dry-MARTINI
+    lipid timescale; protein crowding and protein-lipid perturbation make that
+    diffusion value system-specific. Use protein-bilayer runs as stability
+    checks only.
+  - The observable is lateral diffusion, computed from `xy` MSD with
+    `D_xy = slope(MSD_xy) / 4`; do not use 3D diffusion for bilayer lipid
+    timescale calibration.
+  - Native-mass CGL-only bilayer measurement at `tau=5` and
+    `time_step=0.002` gives lateral diffusion `0.017319996 A^2/native_time`,
+    or `0.008659998 um^2/s` under the Upside `40 ps/step` mapping. Compared
+    with real-DOPC references, this implies effective dry-MARTINI steps of
+    `0.041238 ps` for `8.4 um^2/s`, `0.028867 ps` for `12.0 um^2/s`, and
+    `0.024743 ps` for `14.0 um^2/s`.
+  - Rule: report CGL-only bilayer lateral diffusion in native units and infer
+    the dry-MARTINI ps/step explicitly from the chosen real-DOPC reference. Do
+    not present low-mass unstable target crossings or protein-bilayer
+    diffusion as valid dry-MARTINI lipid timescale measurements.
+- 2026-06-15: CGL-specific diffusion calibration path.
+  - The runtime OU thermostat previously accepted only one global
+    `--thermostat-timescale`; MARTINI mass-aware noise was already present,
+    but no per-particle dissipation control existed.
+  - Added optional `/input/thermostat_timescale` semantics: absent dataset means
+    existing global behavior, present dataset gives one positive OU timescale
+    per atom.
+  - Coarse hybrid stage generation now writes CGL/CGLD-specific thermostat
+    timescales only when `CG_LIPID_THERMOSTAT_TIMESCALE` (or
+    `--cg-lipid-thermostat-timescale`) is positive. Non-CGL atoms remain at
+    the global `THERMOSTAT_TIMESCALE`.
+  - Short 1RKL smoke with `CG_LIPID_THERMOSTAT_TIMESCALE=8.0` completed through
+    stage 7.0 and produced `248` atoms at global timescale `5.0` plus `550`
+    CGL/CGLD atoms at timescale `8.0`.
+  - Added a local lateral-diffusion analyzer. For the corrected target, use
+    `40 ps` per actual integration step, not full DOPC comparison. With
+    production `time_step=0.002`, `1 native time = 20 ns`.
+  - The dissipation sweep over `tau=5,10,20,50,100,200,500` did not reach the
+    40 ps/step target candidate of `0.5 um^2/s` (`1.0 A^2/native_time`).
+    Measured CGL diffusion stayed around `0.012-0.016 um^2/s`, with the best
+    point at `tau=20`, `gamma=0.05`, `D=0.015631 um^2/s`.
+  - Current conclusion: no defensible production CGL dissipation constant can
+    be selected from dissipation-only tuning in this tested hybrid setup. The
+    best point is about `32x` below the target line.
+  - Native active coarse 1RKL CGL masses are much heavier than protein carrier
+    atoms: `CGL=84 m_up` (`1008 g/mol`), `CGLD=6.42074 m_up` (`77.05 g/mol`),
+    while `N/CA/C/O=6 m_up` (`72 g/mol`).
+  - A copied-input diagnostic with `CGL/CGLD mass=1.0 m_up` was numerically
+    stable for 5000-step stage-7 runs across `tau=5,10,20,50,100,200,500`.
+    The best measured point was `tau=10`, `gamma=0.1`, `D=0.101894 um^2/s`,
+    which is still about `4.9x` below the `0.5 um^2/s` target line.
+  - Working rule: do not infer CGL kinetic timescale from geometric bead size
+    alone. Check the effective mass and dense-bilayer caging/friction response
+    directly, and keep any mass retuning explicit as dynamics calibration
+    rather than a hidden force-field change.
+  - User correction: timestep setup must remain uniform across the hybrid
+    simulation and consistent with other Upside examples. Keep `--time-step
+    0.002` for the whole system during CGL/dry-MARTINI sweeps; do not introduce
+    a dry-MARTINI-only timestep or CGL-only subcycling to solve calibration.
+  - Multi-mass sweeps with the uniform `time_step=0.002` completed without
+    short-run numerical failures for `CGL/CGLD mass=0.5,0.25,0.1,0.05,0.02,
+    0.015,0.01,0.005 m_up`.
+  - The first direct crossing of the `0.5 um^2/s` target was at
+    `mass=0.015 m_up`, `tau=5`, `gamma=0.2`, with measured
+    `D=0.500349 um^2/s`. The log-interpolated recommendation for that mass is
+    `tau=5.0635`, `gamma=0.19749`.
+  - Lighter masses also cross the target but overshoot more strongly in the
+    tested grid: `mass=0.01 m_up` recommends `tau=18.64`, `gamma=0.05365`;
+    `mass=0.005 m_up` recommends `tau=18.06`, `gamma=0.05536`. Prefer the
+    least aggressive mass reduction that crosses the target, pending longer
+    validation.
+  - Longer validation rejects `mass=0.015 m_up` at the uniform production
+    timestep. The 20k-step bilayer-only copied-input run failed with CGL
+    leaflet crossings `14/35`, `bad_parallel=26`, `bad_flip=45`, and
+    same-leaflet nearest-neighbor minimum `0.040 A`. The native-mass
+    bilayer-only control passed the same 20k-step run, so this is a mass
+    override problem rather than a generic test-input failure.
+  - The 20k-step 1RKL protein-bilayer validation with `mass=0.015 m_up` and
+    `tau=5.0635` also failed CGL geometry: leaflet crossings `30/4`,
+    `bad_parallel=8`, `bad_flip=2`, and same-leaflet nearest-neighbor minimum
+    `0.120 A`. Protein coordinates stayed finite, but CA Rg drifted
+    `12.71 -> 14.33 A`, final CA RMSD was `5.52 A`, and hbond last-20 mean
+    fell to `24.19`.
+  - The `mass=0.015` gamma/diffusion data do not show the expected
+    Stokes-Einstein `D proportional 1/gamma` behavior. Linear fit quality was
+    `R^2=0.507` for `D` versus `tau=1/gamma`, with a negative slope; `D`
+    versus `gamma` had `R^2=0.715`, which is not the expected friction
+    scaling. Treat the short-run diffusion crossing as a noisy unstable-regime
+    artifact, not a valid kinetic calibration.
+  - Added a stability-gated mass/tau workflow that runs standalone bilayer
+    validation first, then protein-bilayer validation, then CGL diffusion only
+    for points that pass both geometry gates. The workflow keeps the same
+    uniform `time_step=0.002` for all atoms and writes `gamma` versus diffusion
+    plots with failed points marked separately.
+  - Stable-gated sweeps over `mass=0.02,0.03,0.05,0.1,0.2,0.5,1.0 m_up` and
+    `tau=5,10,20,50` found no valid calibration point. All `mass<=0.5` rows
+    failed standalone bilayer geometry; `mass=1.0,tau=5` passed standalone
+    bilayer and protein stability, but the protein-bilayer CGL geometry failed.
+    Therefore no production CGL dissipation constant is recommended from the
+    tested low-to-moderate mass range.
 - 2026-06-15: Cross-system CGL cutoff/performance check.
   - User correction: 1RKL and 1AFO must use the same CGL cutoff rules; do not
     validate or discuss the cutoff change using only one of the two protein
@@ -605,13 +755,10 @@
   - The shared `DerivEngine::integration_cycle(VecArray,float,float,IntegratorType)` coefficient pattern `(1.5-3a, 1.5-3a, 6a)` and `(3b, 3-6b, 3b)` is consistent with that convention for `q=3`; do not change it for MARTINI-only behavior.
   - Rule: do not alter shared C++ integrator semantics used by ordinary Upside/master workflows to fix MARTINI-only dynamics.
   - Rule: when adding a generic CLI switch for MARTINI needs, the default behavior must remain semantic parity for non-MARTINI workflows unless the user explicitly approves broader changes.
-  - The hybrid MARTINI issue is not that Predescu coefficients are mathematically wrong; it is that this workflow combines physical dry-MARTINI masses, stiff CGL-CGLD orientation carriers, active tabulated interface forces, and a rigid stage-6 to flexible production release. It needs the shared `v` integrator with the original Upside public-time convention, physical masses, and production-Hamiltonian minimization at stage-7 handoff.
+  - The hybrid MARTINI issue is not that Predescu coefficients are mathematically wrong; it is that this workflow combines physical dry-MARTINI masses, stiff CGL-CGLD orientation carriers, active tabulated interface forces, and a rigid stage-6 to flexible production release.
   - Removing `/input/mass` from a copied stage-7 artifact failed: total potential `-505.9 -> -24239.58 E_up`, Rg `12.7 -> 14.9 A`, kinetic ratio `5.70`.
   - Scaling pair energies by mass is not physical because it changes the scalar potential and thus the configurational distribution; per-particle mass-weighted forces for a pair would also not be a single conservative pair potential.
-  - Comparing `example/02.ReplicaExchangeSimulation/run.py` and `example/08.MembraneSimulation/0.normal.run.py` against `/Users/yinhan/Documents/upside2-md-master` showed ordinary Upside workflows rely on default `--integrator v`, `--time-step 0.009`, and public-time scheduling with `inner_step=3`.
-  - Master still supports explicit `--time-step` through `py/run_upside.py`, and explicit `--integrator mv`/`--inner-step` appear in multi-step/curvature examples. The MARTINI workflow should not pass redundant `--integrator v` or `--inner-step`; it should pass MD `--time-step` only where MARTINI intentionally needs non-default equilibration/production timesteps.
-  - Rule: do not divide a MARTINI timestep by three to reinterpret the Predescu stages. That silently slows the public Upside timescale relative to original workflows. Keep master-compatible `v` scheduling and convert frame/restart intervals with `3*dt`.
-  - Shared `v` with physical masses, `dt=0.002`, and restored `inner_step=3` scheduling passed the copied 10k-step timing check: output time `0.0 -> 60.0`, frame spacing `0.3`, restart public timestep `0.006`, final Rg about `12.9 A`, and kinetic ratio `0.972`.
+  - Superseded timing conclusion: do not restore MARTINI workflow public-time scheduling to `inner_step=3`. The active requirement is fixed 1:1 slow/fast stepping for MARTINI, implemented with explicit `mv` and internal `MARTINI_MD_INNER_STEP=1`, while leaving shared C++ integrator semantics unchanged.
 - 2026-05-20: 1RKL stage-7 continuation failure from CGL-CGL many-neighbor attraction.
   - The exact output uses a fixed square stage-7 box; the apparent XY ellipse is membrane morphology/coordinate drift, not anisotropic box-vector drift.
   - The total potential descent is dominated by CGL-CGL: CGL-CGL interacting pairs increase from about `2,794` at stage-7 start to over `6,200` by the end of `7.2`.
