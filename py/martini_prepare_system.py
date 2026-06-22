@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -98,6 +99,7 @@ def parse_prepare_args(argv=None):
     parser.add_argument("--box-padding-xy", type=float, default=0.0)
     parser.add_argument("--box-padding-z", type=float, default=20.0)
     parser.add_argument("--salt-molar", type=float, default=0.15)
+    parser.add_argument("--explicit-ions", type=int, choices=[0, 1], default=1)
     parser.add_argument("--ion-cutoff", type=float, default=4.0)
     parser.add_argument("--seed", type=int, default=2026)
 
@@ -332,23 +334,28 @@ def prepare_mixed_structure(args, runtime_pdb):
         if args.protein_net_charge is not None
         else int(infer_protein_charge_from_residues(protein_backbone_atoms))
     )
-    salt_pairs = estimate_salt_pairs(
-        box_lengths=box_lengths,
-        salt_molar=float(args.salt_molar),
-        effective_volume_fraction=effective_vol_frac,
-    )
-    n_na = int(salt_pairs + max(0, -protein_charge))
-    n_cl = int(salt_pairs + max(0, protein_charge))
-
-    rng = np.random.default_rng(int(args.seed))
-    ion_atoms = place_ions(
-        atoms=packed_atoms,
-        box_lengths=box_lengths,
-        n_na=n_na,
-        n_cl=n_cl,
-        cutoff=float(args.ion_cutoff),
-        rng=rng,
-    )
+    if int(args.explicit_ions):
+        salt_pairs = estimate_salt_pairs(
+            box_lengths=box_lengths,
+            salt_molar=float(args.salt_molar),
+            effective_volume_fraction=effective_vol_frac,
+        )
+        n_na = int(salt_pairs + max(0, -protein_charge))
+        n_cl = int(salt_pairs + max(0, protein_charge))
+        rng = np.random.default_rng(int(args.seed))
+        ion_atoms = place_ions(
+            atoms=packed_atoms,
+            box_lengths=box_lengths,
+            n_na=n_na,
+            n_cl=n_cl,
+            cutoff=float(args.ion_cutoff),
+            rng=rng,
+        )
+    else:
+        salt_pairs = 0
+        n_na = 0
+        n_cl = 0
+        ion_atoms = []
 
     (
         bb_type_by_residue,
@@ -413,6 +420,7 @@ def prepare_mixed_structure(args, runtime_pdb):
         "target_xy_side_angstrom": float(target_side),
         "box_angstrom": [float(v) for v in box_lengths],
         "protein_charge_used": int(protein_charge),
+        "explicit_ions": int(args.explicit_ions),
         "salt_pairs_target": int(salt_pairs),
         "na_added": int(n_na),
         "cl_added": int(n_cl),
@@ -545,6 +553,13 @@ def env_float(name, default):
     return float(os.environ.get(name, str(default)))
 
 
+def parse_positive_float_list(value, label):
+    values = [float(part) for part in str(value).replace(",", " ").split()]
+    if not values or any(v <= 0.0 for v in values):
+        raise ValueError(f"{label} must contain one or more positive numbers")
+    return values
+
+
 def workflow_path(value, base=WORKFLOW_DIR):
     path = Path(value).expanduser()
     return path if path.is_absolute() else base / path
@@ -558,8 +573,12 @@ def generate_random_seed():
 def run_checked(cmd, cwd=None, log_file=None, echo=True):
     if echo:
         print(" ".join(str(x) for x in cmd))
+    start = time.perf_counter()
     if log_file is None:
         subprocess.run([str(x) for x in cmd], cwd=str(cwd) if cwd else None, check=True)
+        elapsed = time.perf_counter() - start
+        if echo:
+            print(f"[workflow timing] command finished in {elapsed:.3f} s")
         return
 
     log_file = Path(log_file)
@@ -579,6 +598,9 @@ def run_checked(cmd, cwd=None, log_file=None, echo=True):
                 print(line, end="")
             log.write(line)
         rc = proc.wait()
+    elapsed = time.perf_counter() - start
+    if echo:
+        print(f"[workflow timing] command finished in {elapsed:.3f} s")
     if rc != 0:
         raise subprocess.CalledProcessError(rc, [str(x) for x in cmd])
 
@@ -624,6 +646,7 @@ def prepare_workflow_hybrid_artifacts(args):
                 "--hybrid-bb-map-json-output", str(args.hybrid_prep_dir / "hybrid_bb_map.json"),
                 "--bilayer-pdb", str(workflow_path(args.bilayer_pdb).resolve()),
                 "--salt-molar", str(args.salt_molar),
+                "--explicit-ions", str(args.explicit_ions),
                 "--protein-lipid-cutoff", f"{cutoff:.6g}",
                 "--ion-cutoff", str(args.ion_cutoff),
                 "--xy-scale", str(args.xy_scale),
@@ -979,6 +1002,98 @@ def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable:
     }
 
 
+def apply_cgl_transport_metadata(args, target_file: Path):
+    lipid_res = getattr(args, "lipid_resolution", "coarse")
+    if lipid_res == "full":
+        return
+    mass_scale = float(getattr(args, "cg_lipid_mass_scale", 1.0))
+    enable_gle = bool(int(getattr(args, "cgl_gle_enable", 0)))
+    replace_markovian = bool(int(getattr(args, "cgl_gle_replace_markovian", 0)))
+    if mass_scale == 1.0 and not enable_gle:
+        return
+    if mass_scale <= 0.0:
+        raise ValueError("cg_lipid_mass_scale must be positive")
+
+    import h5py
+
+    def decode_names(values):
+        out = []
+        for value in values:
+            if isinstance(value, bytes):
+                out.append(value.decode("ascii", errors="ignore").strip())
+            else:
+                out.append(str(value).strip())
+        return np.asarray(out, dtype=object)
+
+    with h5py.File(target_file, "r+") as h5:
+        atom_types = decode_names(h5["/input/type"][:])
+        cgl_mask = atom_types == "CGL"
+        if not np.any(cgl_mask):
+            raise ValueError(f"{target_file} has no CGL atoms")
+
+        mass = np.asarray(h5["/input/mass"][:], dtype=np.float32)
+        base_mass = mass.copy()
+        mass[cgl_mask] = base_mass[cgl_mask] * np.float32(mass_scale)
+        del h5["/input/mass"]
+        h5.create_dataset("/input/mass", data=mass)
+
+        global_tau = float(args.thermostat_timescale)
+        cgl_tau = float(getattr(args, "cg_lipid_thermostat_timescale", 0.0))
+        if cgl_tau <= 0.0:
+            cgl_tau = global_tau
+        tau = (
+            np.asarray(h5["/input/thermostat_timescale"][:], dtype=np.float32)
+            if "/input/thermostat_timescale" in h5
+            else np.full(atom_types.shape[0], global_tau, dtype=np.float32)
+        )
+        tau[cgl_mask] = np.float32(1.0e8 if enable_gle and replace_markovian else cgl_tau)
+        if "/input/thermostat_timescale" in h5:
+            del h5["/input/thermostat_timescale"]
+        dset = h5.create_dataset("/input/thermostat_timescale", data=tau)
+        dset.attrs["global_timescale"] = np.float32(global_tau)
+        dset.attrs["cg_lipid_timescale"] = np.float32(cgl_tau)
+        dset.attrs["cgl_timescale"] = np.float32(cgl_tau)
+        dset.attrs["cg_lipid_mass_scale"] = np.float32(mass_scale)
+        dset.attrs["cgl_mass_scale"] = np.float32(mass_scale)
+        dset.attrs["cgl_gle_replace_markovian"] = np.int8(1 if enable_gle and replace_markovian else 0)
+
+        if "/input/cgl_gle" in h5:
+            del h5["/input/cgl_gle"]
+        if enable_gle:
+            memory_text = getattr(args, "cgl_gle_memory_taus", "") or str(getattr(args, "cgl_gle_memory_tau", 1.0))
+            coupling_text = getattr(args, "cgl_gle_couplings", "") or str(getattr(args, "cgl_gle_coupling", 1.0))
+            memory_tau = parse_positive_float_list(memory_text, "CGL GLE memory tau")
+            coupling = parse_positive_float_list(coupling_text, "CGL GLE coupling")
+            if len(memory_tau) != len(coupling):
+                raise ValueError("CGL GLE memory tau and coupling lists must have the same length")
+            n_mode = len(memory_tau)
+            cgl_indices = np.where(cgl_mask)[0].astype(np.int32)
+            gle = h5.create_group("/input/cgl_gle")
+            gle.attrs["enabled"] = np.int32(1)
+            gle.attrs["schema"] = "cgl_exponential_memory_gle_v2" if n_mode > 1 else "cgl_exponential_memory_gle_v1"
+            gle.attrs["transport_model"] = (
+                "fdt_markovian_embedding_sum_of_exponential_memory_kernels"
+                if n_mode > 1
+                else "fdt_markovian_embedding_exponential_memory_kernel"
+            )
+            gle.attrs["n_mode"] = np.int32(n_mode)
+            gle.attrs["memory_tau"] = np.float32(memory_tau[0])
+            gle.attrs["coupling"] = np.float32(coupling[0])
+            gle.attrs["replace_markovian_cgl_thermostat"] = np.int8(1 if replace_markovian else 0)
+            gle.attrs["zero_frequency_friction_source"] = (
+                "m_cgl*sum_i(coupling_i^2*memory_tau_i)_for_free_particle_limit"
+            )
+            gle.attrs["conservative_forcefield_changed"] = np.int8(0)
+            gle.attrs["one_particle_cgl_preserved"] = np.int8(1)
+            gle.create_dataset("atom_index", data=cgl_indices)
+            if n_mode > 1:
+                gle.create_dataset("memory_tau", data=np.asarray(memory_tau, dtype=np.float32))
+                gle.create_dataset("coupling", data=np.asarray(coupling, dtype=np.float32))
+                gle.create_dataset("aux_momentum", data=np.zeros((n_mode, cgl_indices.size, 3), dtype=np.float32))
+            else:
+                gle.create_dataset("aux_momentum", data=np.zeros((cgl_indices.size, 3), dtype=np.float32))
+
+
 def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, activation_stage: str):
     ensure_sc_martini_library(args)
     set_hybrid_control_mode(target_file, activation_stage)
@@ -997,6 +1112,7 @@ def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, a
     lipid_res = getattr(args, "lipid_resolution", "coarse")
     if lipid_res != "full":
         inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.dopc_h5)
+        apply_cgl_transport_metadata(args, target_file)
     assert_hybrid_stage_active(
         target_file,
         current_stage,
@@ -1007,6 +1123,7 @@ def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, a
 
 
 def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: int, barostat_type: int, lipidhead_fc: float, stage_label: str):
+    start = time.perf_counter()
     with temporary_env(stage_conversion_env(args, stage_label, prepare_stage, npt_enable, lipidhead_fc)):
         run_prepare_command(
             [
@@ -1036,9 +1153,14 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
             target_file,
             stage_label,
             args.hybrid_preprod_activation_stage,
-        )
+    )
     if npt_enable:
         set_barostat_type(target_file, barostat_type)
+    elapsed = time.perf_counter() - start
+    print(
+        f"[workflow timing] stage {stage_label} preparation/injection finished "
+        f"in {elapsed:.3f} s -> {target_file}"
+    )
 
 
 def handoff_initial_position(args, input_file: Path, output_file: Path, mode="default", previous_dt=None):
@@ -1073,6 +1195,49 @@ def output_restart_state_valid(up_file: Path):
         return int(h5["/output/mom"].attrs.get("restart_final_state_valid", 0)) != 0
 
 
+def promote_cgl_gle_aux_momentum(h5):
+    if "/input/cgl_gle" not in h5 or "/output/cgl_gle_aux_momentum" not in h5:
+        return
+    aux_out = h5["/output/cgl_gle_aux_momentum"]
+    if aux_out.shape[0] == 0:
+        return
+    if aux_out.ndim != 4:
+        raise ValueError("output/cgl_gle_aux_momentum must have shape n_frame x n_mode x n_cgl x 3")
+    last_aux_all_modes = np.asarray(aux_out[-1], dtype=np.float32)
+    last_aux = last_aux_all_modes[0] if last_aux_all_modes.shape[0] == 1 else last_aux_all_modes
+    gle = h5["/input/cgl_gle"]
+    if "aux_momentum" in gle:
+        del gle["aux_momentum"]
+    gle.create_dataset("aux_momentum", data=last_aux)
+    gle.attrs["aux_momentum_restart_source"] = "output/cgl_gle_aux_momentum[-1]"
+
+
+def promote_cgl_orientation_state(h5):
+    orient_in_path = "/input/potential/cgl_orientation_state"
+    if orient_in_path not in h5:
+        return
+
+    orient_grp = h5[orient_in_path]
+    if "/output/cgl_orientation" in h5 and h5["/output/cgl_orientation"].shape[0] > 0:
+        last_direction = np.asarray(h5["/output/cgl_orientation"][-1, 0, :, :], dtype=np.float32)
+        if "direction" in orient_grp:
+            del orient_grp["direction"]
+        orient_grp.create_dataset("direction", data=last_direction)
+        orient_grp.attrs["direction_restart_source"] = "output/cgl_orientation[-1]"
+
+    if "/output/cgl_orientation_mom" in h5 and h5["/output/cgl_orientation_mom"].shape[0] > 0:
+        last_mom = np.asarray(h5["/output/cgl_orientation_mom"][-1, 0, :, :], dtype=np.float32)
+        if "/input/cgl_orientation_mom" in h5:
+            del h5["/input/cgl_orientation_mom"]
+        h5.create_dataset("/input/cgl_orientation_mom", data=last_mom)
+        h5["/input/cgl_orientation_mom"].attrs["restart_source"] = "output/cgl_orientation_mom[-1]"
+
+
+def promote_cgl_restart_state(h5):
+    promote_cgl_gle_aux_momentum(h5)
+    promote_cgl_orientation_state(h5)
+
+
 def mark_output_restart_state(up_file: Path, nsteps: int, dt: float):
     import h5py
 
@@ -1094,6 +1259,7 @@ def mark_output_restart_state(up_file: Path, nsteps: int, dt: float):
         h5["/output/mom"].attrs["restart_time_step"] = float(dt)
         h5["/output/mom"].attrs["restart_public_time_step"] = public_dt
         h5["/output/mom"].attrs["restart_final_time"] = final_time
+        promote_cgl_restart_state(h5)
 
 
 def run_minimization_stage(args, stage_label: str, up_file: Path, max_iter: int, preserve_stage: bool = False):
@@ -1216,6 +1382,7 @@ def promote_md_output_state_to_input(up_file: Path, elapsed_steps: int):
 
         last_pos = h5["/output/pos"][-1, 0, :, :][:, :, np.newaxis]
         last_mom = h5["/output/mom"][-1, 0, :, :][:, :, np.newaxis]
+        promote_cgl_restart_state(h5)
         if "/input/pos" in h5:
             del h5["/input/pos"]
         if "/input/mom" in h5:
@@ -1276,6 +1443,8 @@ def extract_stage_vtf(args, stage_label: str, stage_file: Path, mode: str):
         args.runtime_pdb_id,
         "--mode",
         mode,
+        "--cg-lipid-display",
+        args.cg_lipid_vtf_display,
         "--split-segments",
     ]
     run_checked(cmd)
@@ -1322,8 +1491,11 @@ def run_stage70_continuation(args, source_file: Path, output_file: Path, stage_l
         raise ValueError(
             "Production continuation requires a source stage generated by the current workflow with "
             "a validated final restart state. Regenerate the previous production stage with the current workflow."
-        )
+    )
     handoff_initial_position(args, source_file, output_file, "production_restart", args.prod_time_step)
+    import h5py
+    with h5py.File(output_file, "r+") as h5:
+        promote_cgl_restart_state(h5)
     if not input_momentum_restart_valid(output_file):
         raise ValueError(
             "Production continuation requires restart-valid /output/mom in the source stage. "
@@ -1348,7 +1520,7 @@ def normalize_hybrid_workflow_args(args):
     args.mass_ff_file = args.martini_ff_dir / "dry_martini_v2.1.itp"
     args.particle_h5 = args.martini_ff_dir / "particle.h5"
     args.sidechain_h5 = args.martini_ff_dir / "sidechain.h5"
-    args.dopc_h5 = args.martini_ff_dir / "dopc.h5"
+    args.dopc_h5 = workflow_path(args.dopc_h5).resolve() if args.dopc_h5 else args.martini_ff_dir / "dopc.h5"
     args.upside_rama_library = args.upside_home / "parameters" / "common" / "rama.dat"
     args.upside_rama_sheet_mixing = args.upside_home / "parameters" / "ff_2.1" / "sheet"
     args.upside_hbond_energy = args.upside_home / "parameters" / "ff_2.1" / "hbond.h5"
@@ -1489,7 +1661,13 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--protein-aa-pdb", default=env_default("PROTEIN_AA_PDB", None))
     parser.add_argument("--bilayer-pdb", default=env_default("BILAYER_PDB", None))
     parser.add_argument("--extract-vtf-script", default=env_default("EXTRACT_VTF_SCRIPT", str(PY_DIR / "martini_extract_vtf.py")))
+    parser.add_argument(
+        "--cg-lipid-vtf-display",
+        choices=["rod", "center"],
+        default=env_default("CGL_VTF_DISPLAY_MODE", "rod"),
+    )
     parser.add_argument("--salt-molar", type=float, default=env_float("SALT_MOLAR", 0.15))
+    parser.add_argument("--explicit-ions", type=int, choices=[0, 1], default=env_int("EXPLICIT_IONS", 1))
     parser.add_argument("--protein-lipid-cutoff", type=float, default=env_float("PROTEIN_LIPID_CUTOFF", 0.0))
     parser.add_argument("--ion-cutoff", type=float, default=env_float("ION_CUTOFF", 10.0))
     parser.add_argument("--xy-scale", type=float, default=env_float("XY_SCALE", 1.0))
@@ -1504,6 +1682,18 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--temperature", type=float, default=env_float("TEMPERATURE", 0.8647))
     parser.add_argument("--thermostat-timescale", type=float, default=env_float("THERMOSTAT_TIMESCALE", 5.0))
     parser.add_argument("--cg-lipid-thermostat-timescale", type=float, default=env_float("CG_LIPID_THERMOSTAT_TIMESCALE", 0.0))
+    parser.add_argument("--cg-lipid-mass-scale", type=float, default=env_float("CG_LIPID_MASS_SCALE", 1.0))
+    parser.add_argument("--cgl-gle-enable", type=int, choices=[0, 1], default=env_int("CGL_GLE_ENABLE", 0))
+    parser.add_argument("--cgl-gle-memory-tau", type=float, default=env_float("CGL_GLE_MEMORY_TAU", 1.0))
+    parser.add_argument("--cgl-gle-coupling", type=float, default=env_float("CGL_GLE_COUPLING", 1.0))
+    parser.add_argument("--cgl-gle-memory-taus", default=env_default("CGL_GLE_MEMORY_TAUS", ""))
+    parser.add_argument("--cgl-gle-couplings", default=env_default("CGL_GLE_COUPLINGS", ""))
+    parser.add_argument(
+        "--cgl-gle-replace-markovian",
+        type=int,
+        choices=[0, 1],
+        default=env_int("CGL_GLE_REPLACE_MARKOVIAN", 0),
+    )
     parser.add_argument("--thermostat-interval", type=int, default=env_int("THERMOSTAT_INTERVAL", -1))
     parser.add_argument("--strict-stage-handoff", type=int, default=env_int("STRICT_STAGE_HANDOFF", 1))
     parser.add_argument("--min-60-max-iter", type=int, default=env_int("MIN_60_MAX_ITER", 500))
@@ -1541,6 +1731,7 @@ def run_hybrid_workflow_command(argv):
         default=env_default("LIPID_RESOLUTION", "coarse"),
         help="DOPC lipid representation: coarse (single CGL particle) or full (14-bead ITP topology)",
     )
+    parser.add_argument("--dopc-h5", default=env_default("DOPC_H5", ""))
     args = parser.parse_args(argv)
     if args.runtime_pdb_id is None:
         args.runtime_pdb_id = f"{args.pdb_id}_hybrid"

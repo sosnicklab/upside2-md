@@ -46,6 +46,28 @@ if [ "${LIPID_RESOLUTION}" != "coarse" ] && [ "${LIPID_RESOLUTION}" != "full" ];
     exit 1
 fi
 
+coarse_hybrid_args=()
+if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
+    export UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE="${UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE:-25.0}"
+    export EXPLICIT_IONS="${EXPLICIT_IONS:-1}"
+    export CG_LIPID_MASS_SCALE="${CG_LIPID_MASS_SCALE:-0.012}"
+    export CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE="${CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE:-0.008}"
+    export CGL_GLE_ENABLE="${CGL_GLE_ENABLE:-1}"
+    export CGL_GLE_MEMORY_TAUS="${CGL_GLE_MEMORY_TAUS:-0.2,2.0}"
+    export CGL_GLE_COUPLINGS="${CGL_GLE_COUPLINGS:-0.30375,0.2205}"
+    export CGL_GLE_REPLACE_MARKOVIAN="${CGL_GLE_REPLACE_MARKOVIAN:-1}"
+    export PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-1}"
+    export CGL_VTF_DISPLAY_MODE="${CGL_VTF_DISPLAY_MODE:-rod}"
+    coarse_hybrid_args=(
+        --explicit-ions "${EXPLICIT_IONS}"
+        --cg-lipid-mass-scale "${CG_LIPID_MASS_SCALE}"
+        --cgl-gle-enable "${CGL_GLE_ENABLE}"
+        --cgl-gle-memory-taus "${CGL_GLE_MEMORY_TAUS}"
+        --cgl-gle-couplings "${CGL_GLE_COUPLINGS}"
+        --cgl-gle-replace-markovian "${CGL_GLE_REPLACE_MARKOVIAN}"
+    )
+fi
+
 if [ "${LIPID_RESOLUTION}" = "full" ]; then
     default_suffix="_hybrid_full"
 else
@@ -58,6 +80,7 @@ PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/${PDB_ID}.pdb}"
 BILAYER_PDB="${BILAYER_PDB:-${UPSIDE_HOME}/parameters/dryMARTINI/DOPC.pdb}"
 UNIVERSAL_PREP_SCRIPT="${UNIVERSAL_PREP_SCRIPT:-${PROJECT_ROOT}/py/martini_prepare_system.py}"
 EXTRACT_VTF_SCRIPT="${EXTRACT_VTF_SCRIPT:-${PROJECT_ROOT}/py/martini_extract_vtf.py}"
+CGL_VTF_DISPLAY_MODE="${CGL_VTF_DISPLAY_MODE:-rod}"
 
 SALT_MOLAR="${SALT_MOLAR:-0.15}"
 PROTEIN_LIPID_CUTOFF="${PROTEIN_LIPID_CUTOFF:-0.0}"
@@ -156,51 +179,61 @@ for param_file in "${required_params[@]}"; do
     fi
 done
 
-python3 "${UNIVERSAL_PREP_SCRIPT}" run-hybrid-workflow \
-    --pdb-id "${PDB_ID}" \
-    --runtime-pdb-id "${RUNTIME_PDB_ID}" \
-    --upside-home "${UPSIDE_HOME}" \
-    --run-dir "${RUN_DIR}" \
-    --protein-aa-pdb "${PROTEIN_AA_PDB}" \
-    --bilayer-pdb "${BILAYER_PDB}" \
-    --extract-vtf-script "${EXTRACT_VTF_SCRIPT}" \
-    --salt-molar "${SALT_MOLAR}" \
-    --protein-lipid-cutoff "${PROTEIN_LIPID_CUTOFF}" \
-    --ion-cutoff "${ION_CUTOFF}" \
-    --xy-scale "${XY_SCALE}" \
-    --box-padding-xy "${BOX_PADDING_XY}" \
-    --box-padding-z "${BOX_PADDING_Z}" \
-    --protein-placement-mode "${PROTEIN_PLACEMENT_MODE}" \
-    --protein-orientation-mode "${PROTEIN_ORIENTATION_MODE}" \
-    --protein-surface-gap "${PROTEIN_SURFACE_GAP}" \
-    --protein-lipid-min-gap "${PROTEIN_LIPID_MIN_GAP}" \
-    --protein-lipid-cutoff-step "${PROTEIN_LIPID_CUTOFF_STEP}" \
-    --protein-lipid-cutoff-max "${PROTEIN_LIPID_CUTOFF_MAX}" \
-    --temperature "${TEMPERATURE}" \
-    --thermostat-timescale "${THERMOSTAT_TIMESCALE}" \
-    --cg-lipid-thermostat-timescale "${CG_LIPID_THERMOSTAT_TIMESCALE}" \
-    --thermostat-interval "${THERMOSTAT_INTERVAL}" \
-    --strict-stage-handoff "${STRICT_STAGE_HANDOFF}" \
-    --min-60-max-iter "${MIN_60_MAX_ITER}" \
-    --min-61-max-iter "${MIN_61_MAX_ITER}" \
-    --min-70-max-iter "${MIN_70_MAX_ITER}" \
-    --eq-60-nsteps "${EQ_60_NSTEPS}" \
-    --eq-62-nsteps "${EQ_62_NSTEPS}" \
-    --eq-63-nsteps "${EQ_63_NSTEPS}" \
-    --eq-64-nsteps "${EQ_64_NSTEPS}" \
-    --eq-65-nsteps "${EQ_65_NSTEPS}" \
-    --eq-66-nsteps "${EQ_66_NSTEPS}" \
-    --prod-70-burnin-nsteps "${PROD_70_BURNIN_NSTEPS}" \
-    --prod-70-nsteps "${PROD_70_NSTEPS}" \
-    --stage-70-burnin-protein-restraint-spring "${STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING}" \
-    --eq-time-step "${EQ_TIME_STEP}" \
-    --prod-time-step "${PROD_TIME_STEP}" \
-    --eq-frame-steps "${EQ_FRAME_STEPS}" \
-    --prod-frame-steps "${PROD_FRAME_STEPS}" \
-    --prod-70-npt-enable "${PROD_70_NPT_ENABLE}" \
-    --lipid-resolution "${LIPID_RESOLUTION}" \
-    --prep-seed "${PREP_SEED}" \
-    --seed "${SEED}" \
-    --continue-stage-70-from "${CONTINUE_STAGE_70_FROM}" \
-    --continue-stage-70-output "${CONTINUE_STAGE_70_OUTPUT}" \
+workflow_args=(
+    run-hybrid-workflow
+    --pdb-id "${PDB_ID}"
+    --runtime-pdb-id "${RUNTIME_PDB_ID}"
+    --upside-home "${UPSIDE_HOME}"
+    --run-dir "${RUN_DIR}"
+    --protein-aa-pdb "${PROTEIN_AA_PDB}"
+    --bilayer-pdb "${BILAYER_PDB}"
+    --extract-vtf-script "${EXTRACT_VTF_SCRIPT}"
+    --cg-lipid-vtf-display "${CGL_VTF_DISPLAY_MODE}"
+    --salt-molar "${SALT_MOLAR}"
+)
+if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
+    workflow_args+=("${coarse_hybrid_args[@]}")
+fi
+workflow_args+=(
+    --protein-lipid-cutoff "${PROTEIN_LIPID_CUTOFF}"
+    --ion-cutoff "${ION_CUTOFF}"
+    --xy-scale "${XY_SCALE}"
+    --box-padding-xy "${BOX_PADDING_XY}"
+    --box-padding-z "${BOX_PADDING_Z}"
+    --protein-placement-mode "${PROTEIN_PLACEMENT_MODE}"
+    --protein-orientation-mode "${PROTEIN_ORIENTATION_MODE}"
+    --protein-surface-gap "${PROTEIN_SURFACE_GAP}"
+    --protein-lipid-min-gap "${PROTEIN_LIPID_MIN_GAP}"
+    --protein-lipid-cutoff-step "${PROTEIN_LIPID_CUTOFF_STEP}"
+    --protein-lipid-cutoff-max "${PROTEIN_LIPID_CUTOFF_MAX}"
+    --temperature "${TEMPERATURE}"
+    --thermostat-timescale "${THERMOSTAT_TIMESCALE}"
+    --cg-lipid-thermostat-timescale "${CG_LIPID_THERMOSTAT_TIMESCALE}"
+    --thermostat-interval "${THERMOSTAT_INTERVAL}"
+    --strict-stage-handoff "${STRICT_STAGE_HANDOFF}"
+    --min-60-max-iter "${MIN_60_MAX_ITER}"
+    --min-61-max-iter "${MIN_61_MAX_ITER}"
+    --min-70-max-iter "${MIN_70_MAX_ITER}"
+    --eq-60-nsteps "${EQ_60_NSTEPS}"
+    --eq-62-nsteps "${EQ_62_NSTEPS}"
+    --eq-63-nsteps "${EQ_63_NSTEPS}"
+    --eq-64-nsteps "${EQ_64_NSTEPS}"
+    --eq-65-nsteps "${EQ_65_NSTEPS}"
+    --eq-66-nsteps "${EQ_66_NSTEPS}"
+    --prod-70-burnin-nsteps "${PROD_70_BURNIN_NSTEPS}"
+    --prod-70-nsteps "${PROD_70_NSTEPS}"
+    --stage-70-burnin-protein-restraint-spring "${STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING}"
+    --eq-time-step "${EQ_TIME_STEP}"
+    --prod-time-step "${PROD_TIME_STEP}"
+    --eq-frame-steps "${EQ_FRAME_STEPS}"
+    --prod-frame-steps "${PROD_FRAME_STEPS}"
+    --prod-70-npt-enable "${PROD_70_NPT_ENABLE}"
+    --lipid-resolution "${LIPID_RESOLUTION}"
+    --prep-seed "${PREP_SEED}"
+    --seed "${SEED}"
+    --continue-stage-70-from "${CONTINUE_STAGE_70_FROM}"
+    --continue-stage-70-output "${CONTINUE_STAGE_70_OUTPUT}"
     --continue-stage-70-label "${CONTINUE_STAGE_70_LABEL}"
+)
+
+python3 "${UNIVERSAL_PREP_SCRIPT}" "${workflow_args[@]}"

@@ -13,8 +13,9 @@ Upside is a molecular dynamics simulation package for protein folding and confor
 * **Master Branch Parity**: The `master` branch is the gold standard; all modifications must produce results identical to those of the `master` branch for existing simulation configurations.
 * **Memory Layout**: Do not reorder existing member variables in classes accessed by Python to avoid memory corruption.
 * **Deprecation**: Mark old functions as deprecated instead of removing them to support legacy scripts.
-* **Physical Interactions**: Except for the Upside core, which uses a trained force field for protein dynamics, everything else should be physical. "Twisting parameters to make it work" is not allowed.
+* **Physical Interactions**: Except for the Upside core, which uses a trained force field for protein dynamics, everything else should be physical. "Twisting parameters to make it work" is not allowed. No arbitrary capping, and no additional orientational potential for CGL. The CGL force field should not contain information of the bilayer. A stable bilayer should be a result of correct force field evolving, not something you twist parameters into.
 * **Spline Table Only**: During simulations, all interactions computed by Upside should use a spline table. Even if two particles have a simple Lennard-Jones potential, their interaction potentials need to be written to an .h5 file before the simulation, and Upside needs to read them from the .h5 file.
+* **H5 Force Field Files**: Do not make version numbers for h5 force field files. Backup the old ones and overwrite them.
 
 ### The "Clean Slate" Exception
 The rules for **Backward Compatibility**, **Function Signatures**, and **Deprecation** DO NOT apply to the following active development files:
@@ -69,6 +70,7 @@ Rules:
 * For Slurm jobs: prefer module load + repo `.venv` activation + explicit `UPSIDE_HOME/PATH/PYTHONPATH`.
 * If a Slurm wrapper sets up the environment itself, it should set `UPSIDE_SKIP_SOURCE_SH=1` before invoking lower-level workflow scripts so they do not re-enter the local-only bootstrap path.
 * A proper Slurm job for this project should complete these steps in order:
+
 1. Resolve `PROJECT_ROOT` explicitly.
 2. Source `/etc/profile.d/modules.sh` when available.
 3. Load the required modules: Python, CMake, OpenMPI, and HDF5.
@@ -77,8 +79,6 @@ Rules:
 6. Prepend `PROJECT_ROOT/obj` to `PATH`.
 7. Prepend `PROJECT_ROOT/py` to `PYTHONPATH`.
 8. Set `UPSIDE_SKIP_SOURCE_SH=1` if the wrapper is handing off to lower-level workflow scripts that would otherwise source the local Mac bootstrap.
-
-
 
 Example Slurm wrapper skeleton:
 

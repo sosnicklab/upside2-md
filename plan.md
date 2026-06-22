@@ -1,32 +1,53 @@
 # Project Goal
 
-Debug the recent regression that makes both `example/16.MARTINI/outputs/martini_1rkl_hybrid_full/1rkl.stage_7.0.vtf` and `example/16.MARTINI/outputs/martini_1rkl_hybrid/1rkl.stage_7.0.vtf` show unstable protein secondary structure compared with the last committed version.
+Fix the coarse hybrid 1AFO/1RKL workflows so their outputs retain salt ions
+and place CGL particles on the same lipid-center z convention as the matching
+full-resolution workflows. Remove diagnostic scripts that are not required by
+`run_sim_1afo_full.sh`, `run_sim_1afo.sh`, `run_sim_1rkl_full.sh`, or
+`run_sim_1rkl.sh`.
 
 # Architecture & Key Decisions
 
-- Treat this as a regression against `HEAD`; use read-only git commands only.
-- Do not disable or scale hybrid interface interactions to hide the issue.
-- Compare behavior from HDF5/log metrics, not only VTF visualization.
-- Focus first on changes shared by full-lipid and CGL workflows, because both outputs regress.
-- Keep fixes minimal and local to the regression cause.
+- Preserve all hybrid SC-env and BB-env interactions; do not disable or scale
+  physical interactions to avoid workflow problems.
+- Keep edits scoped to the MARTINI example workflow and preparation code unless
+  evidence points elsewhere.
+- Treat the full-resolution scripts as the reference for salt retention and
+  lipid COM z placement.
+- Do not use git write operations. All edits remain unstaged.
 
 # Execution Phases
 
-- [x] Phase 1: Inventory changed files and identify workflow/runtime changes common to both full and CGL 1RKL outputs.
-- [x] Phase 2: Quantify protein secondary-structure/protein-stability metrics from current full and CGL stage-7 outputs.
-- [x] Phase 3: Run controlled copied-checkpoint tests to isolate the temperature regression.
-- [x] Phase 4: Implement the minimal fix.
-- [x] Phase 5: Update findings/progress with the root cause, verification, and any remaining risk.
-- [x] Phase 6: Fix hybrid progress logging to print actual MD step counts instead of rounded elapsed time.
+- [x] Inspect current workflow scripts, shared wrappers, and local status.
+- [x] Identify why coarse 1AFO/1RKL lose salt ions while full workflows retain
+  them.
+- [x] Identify why coarse CGL z coordinates diverge from full DOPC COM z
+  placement.
+- [x] Implement the smallest workflow/preparation fix.
+- [x] Remove unused diagnostic scripts not needed by the four requested
+  workflows.
+- [x] Verify syntax and run targeted output/preparation checks.
 
 # Known Errors / Blockers
 
-- Existing `martini_1rkl_hybrid` and `martini_1rkl_hybrid_full` stage-7 outputs were generated before the fix with `--temperature 1.2`; they should be regenerated to replace the bad VTF/HDF5 artifacts.
+- None.
 
 # Review
 
-- Root cause: `example/16.MARTINI/run_sim_hybrid.sh` accidentally changed the default `TEMPERATURE` from the committed `0.8647` to `1.2`. Both reported bad outputs were generated with `--temperature 1.2`.
-- Current bad output metrics confirm secondary-structure loss: CGL hbond sum `23.92 -> 14.28`, CA Rg `12.73 -> 14.02 A`; full-lipid hbond sum `26.38 -> 15.45`, CA Rg `12.69 -> 13.73 A`.
-- Controlled copied-checkpoint test from the same CGL stage-7 start isolated temperature as the cause. At `T=0.8647`, hbond final `33.48`, hbond last-20 mean `32.15`, CA RMSD max `1.03 A`; at `T=1.2`, hbond final `22.30`, hbond last-20 mean `21.55`, CA RMSD max `1.34 A`.
-- Fix applied: restored `TEMPERATURE="${TEMPERATURE:-0.8647}"` in `run_sim_hybrid.sh`.
-- Progress logging fix applied: hybrid verbose logs now print actual MD steps as `step nr / n_round time ...` instead of rounded elapsed time in the leading field. A copied 120-step smoke run printed `step 0 / 120`, `step 50 / 120`, and `step 100 / 120`.
+- Root cause for missing salts: the coarse branch of
+  `run_sim_hybrid.sh` defaulted `EXPLICIT_IONS=0`, while full-resolution runs
+  retained the preparer default of explicit ions enabled.
+- Root cause for CGL z mismatch: CGL particles were initially placed at DOPC
+  geometric COMs, then an automatic leaflet z-separation conditioning step
+  shifted the upper and lower leaflets apart. Full-resolution DOPC does not
+  apply this shift.
+- Fix applied: coarse hybrid workflows now default `EXPLICIT_IONS=1`, and CGL
+  z-separation conditioning defaults to `0.0` so source DOPC COM z placement is
+  preserved unless explicitly overridden by `UPSIDE_CG_LIPID_MIN_LEAFLET_Z_SEP`.
+- Cleanup applied: removed untracked diagnostic scripts that are not referenced
+  by `run_sim_1afo_full.sh`, `run_sim_1afo.sh`, `run_sim_1rkl_full.sh`,
+  `run_sim_1rkl.sh`, their shared wrapper, or `py/`.
+- Verification: Python and shell syntax checks passed. Targeted coarse prep
+  produced salts for both reported systems: 1RKL `48` NA / `45` CL and 1AFO
+  `47` NA / `51` CL. CGL z matched source DOPC COM z with max absolute
+  difference `1.4e-14 A` for 1RKL and `2.8e-14 A` for 1AFO.

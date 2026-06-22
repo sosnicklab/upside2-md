@@ -63,6 +63,30 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Set optional CGL bead-frame samples for CGL-particle, SC-CGL, and CGL-CGL tables.",
     )
+    parser.add_argument(
+        "--isolated-dopc-conformer-count",
+        type=int,
+        default=2,
+        help="Number of isolated bonded DOPC conformers for the default CGL projection.",
+    )
+    parser.add_argument(
+        "--isolated-dopc-conformer-seed",
+        type=int,
+        default=1729,
+        help="Random seed for isolated bonded DOPC conformer sampling.",
+    )
+    parser.add_argument(
+        "--isolated-dopc-conformer-mc-steps",
+        type=int,
+        default=2000,
+        help="Metropolis steps between isolated bonded DOPC conformer samples.",
+    )
+    parser.add_argument(
+        "--isolated-dopc-conformer-sigma-nm",
+        type=float,
+        default=0.025,
+        help="Cartesian proposal sigma in nm for isolated bonded DOPC conformer sampling.",
+    )
     args = parser.parse_args(argv)
 
     if args.workers is not None:
@@ -121,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
             "martinize_path": martinize_path,
             "sidechain_lib_path": sidechain_lib_path,
             "dopc_pdb_path": dopc_pdb_path,
+            "isolated_conformer_count": max(1, int(args.isolated_dopc_conformer_count)),
+            "isolated_conformer_seed": int(args.isolated_dopc_conformer_seed),
+            "isolated_conformer_mc_steps": max(1, int(args.isolated_dopc_conformer_mc_steps)),
+            "isolated_conformer_proposal_sigma_nm": float(args.isolated_dopc_conformer_sigma_nm),
         }),
     ]
 

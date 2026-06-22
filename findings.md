@@ -1,6 +1,1221 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-22: Coarse hybrid salt and CGL z-placement fix.
+  - Missing salt ions in `run_sim_1afo.sh` and `run_sim_1rkl.sh` came from
+    the coarse branch of `run_sim_hybrid.sh` overriding the preparer's default
+    with `EXPLICIT_IONS=0`. Full-resolution workflows did not apply that
+    coarse-only override.
+  - CGL z-coordinate mismatch came from post-COM initial conditioning:
+    `build_cg_lipid_array` placed each CGL at the geometric COM of its source
+    DOPC beads, but the later default leaflet z-separation step shifted upper
+    and lower leaflet CGL positions apart. Default z-separation conditioning is
+    now disabled by setting its default target to `0.0`; explicit
+    `UPSIDE_CG_LIPID_MIN_LEAFLET_Z_SEP` overrides still work.
+  - Targeted verification showed explicit-ion preparation adds salts for both
+    reported systems: 1RKL `48` NA / `45` CL and 1AFO `47` NA / `51` CL. Direct
+    CGL collapse matches source DOPC COM z with max absolute difference
+    `1.4e-14 A` for 1RKL and `2.8e-14 A` for 1AFO.
+- 2026-06-20: Retained CGL output geometry and speed.
+  - Current retained-output measurement confirms the user observation:
+    1RKL CGL lipid top/bottom p95/p05 extend `18.15 A/10.75 A` beyond the
+    protein p95/p05, compared with `6.93 A/7.11 A` in full resolution. 1AFO
+    CGL extends `12.17 A/7.78 A`, compared with `3.26 A/4.21 A` full.
+  - VTF rendering was a major visualization amplifier: each physical CGL was
+    expanded into a synthetic head/tail display rod with median span
+    `~25.6 A`. This is not force-field physics. User correction: do not hide
+    the rods; the rods should remain visible and should use full-resolution
+    DOPC bead-derived display offsets. New coarse workflows now keep rod
+    display as the default and preserve the per-lipid offsets computed while
+    collapsing full-resolution DOPC into CGL.
+  - User correction: the request was to check whether CGL runs are slow
+    because H5 files are being regenerated, not to disable the missing-H5
+    fallback. The retained 1RKL/1AFO CGL logs show no `martini_gen_params.py`
+    or `Generating...` messages, all runs report `MARTINI parameter libraries
+    found`, and the parameter-H5 mtimes predate the retained checkpoints.
+    The over-broad coarse missing-H5 fail-fast guard was removed.
+  - CGL runtime slowness is partly kernel overhead, not only preparation.
+    Skipping potential-value spline accumulation in derivative-only CGL nodes
+    improves a copied 1AFO 1000-step benchmark from `3.6 s` to `2.9 s`
+    without changing the logged initial/checkpoint energies, but full
+    resolution is still `2.6 s`. Further speedup should target CGL
+    orientation/table kernels and pair evaluation count, not physical
+    parameter shortcuts.
+  - Retained stage-7 timing confirms CGL is slower inside MD: 1RKL CGL
+    production is `3889 us/step` versus `3436 us/step` full, and 1AFO CGL is
+    `3709 us/step` versus `2488 us/step` full. This is consistent with the
+    active one-particle CGL kernels: `cg_lipid_pair`, `cg_lipid_rotamer_sc`,
+    and especially `cg_lipid_target` use orientation-resolved spline tables
+    despite the lower particle count.
+  - Lesson: distinguish physical CGL centers from visualization rods when
+    interpreting bilayer top/bottom in VMD, but do not remove rods to avoid
+    the issue. Fix rod length/placement from the corresponding full-resolution
+    DOPC geometry, and keep physical CGL-center alignment as a separate model
+    validation question.
+  - Lesson: when the user asks whether a suspected cause is responsible,
+    first prove or falsify that cause from logs/files. Do not replace that
+    diagnostic with a guard or behavior change unless the evidence shows the
+    guard is needed.
+- 2026-06-20: Strict isolated-conformer CGL result.
+  - Semi-isotropic NPT alone does not fix the single-conformer strict-H5
+    Stokes-Einstein break. Under NPT, the old strict table gives stable
+    geometry and a target-like point but still drops from `D40=0.241` at
+    scale `1.1` to `0.106` at scale `1.2`, with mobility-line `R2=0.52`.
+  - Implemented a strict-transferable isolated DOPC bonded-conformer ensemble:
+    conformers are sampled by Metropolis moves under the dry-MARTINI DOPC ITP
+    bond/angle energy only, at `T=0.8647`, with no bilayer trajectory,
+    bilayer PMF, force matching, IBI, thickness target, capping, or
+    orientation potential.
+  - Promoted `parameters/dryMARTINI/dopc.h5` now records
+    `dopc_reference_source=isolated_dopc_itp_bonded_mc_ensemble`,
+    `dopc_reference_conformer_count=2`, `correction_layer=none`,
+    `force_match_enabled=0`, `ibi_enabled=0`, `fluid_pmf_pair_sample_count=0`,
+    and no diagnostic IBI/force-match datasets.
+  - CGL-only 288-lipid no-ion NPT validation at converted experimental
+    temperature passes at the target point:
+    `mass_scale=0.012`, `rotational_tau=0.008`, `memory_taus=0.2,2.0`,
+    `couplings=0.30375,0.2205` gives `D40=0.257 um^2/s`, fit `R2=0.999`,
+    no leaflet crossings, `min |n_z|=0.961`, and same-leaflet minimum
+    `6.20 A`.
+  - Stokes-Einstein status is improved but not perfect: local target-side
+    scales `0.7,0.75,0.8` give `D40=0.290,0.257,0.240` with line
+    `R2=0.984`; broader `0.7-1.2` gives `R2=0.950`, with a noisy
+    non-monotonic `0.9/1.0` pair. Replicates are still needed for a final
+    robust transport claim.
+  - Direct 1RKL and 1AFO coarse hybrid workflows with the new default H5 and
+    GLE settings complete through stage 7 with all hybrid interactions active,
+    exact `T=0.8647`, no explicit ions, and NPT enabled. Protein proxies are
+    stable over the 10k production windows: 1RKL hbond sum `26.6 -> 27.3`
+    with max `36.7`, Rg `12.7 -> 13.7`; 1AFO hbond sum `86.0 -> 78.3`,
+    Rg `15.8 -> 15.5`.
+  - Follow-up geometry audit: the protein-hybrid CGL geometry failure was a
+    validator artifact. The old median-z leaflet labels misassigned
+    near-midplane/ambiguous CGL centers; same-leaflet minima near `3.1-3.3 A`
+    were actually opposite-leaflet pairs separated by `~29 A` in z and with
+    opposite orientation signs. The corrected orientation-sign leaflet gate
+    passes current 1RKL and 1AFO: no orientation sign flips, same-leaflet
+    minimum spacing `>=6.25 A`, leaflet separation `~30.1 A`, and
+    `min |n_z| >= 0.941`. Remaining risk is replicate robustness, not a known
+    physical leaflet failure in these outputs.
+  - Independent protein-hybrid replicate validation now passes. 1RKL rep2
+    keeps hbond sum `27.70 -> 31.05` within `25.57-35.37`, Rg
+    `12.68 -> 13.12 A`, exact `T=0.8647`, no orientation-sign leaflet
+    crossings, same-leaflet spacing `6.28 A`, leaflet separation `30.07 A`,
+    and `min |n_z|=0.962`. 1AFO rep2 keeps hbond sum `84.86 -> 82.35`
+    within `74.28-88.43`, Rg `15.82 -> 15.37 A`, exact `T=0.8647`, no
+    orientation-sign leaflet crossings, same-leaflet spacing `6.29 A`,
+    leaflet separation `30.29 A`, and `min |n_z|=0.956`.
+  - Current conclusion: the strict isolated-conformer one-particle CGL model
+    is physical under the stated constraints and passes CGL-only plus
+    replicated 1RKL/1AFO hybrid stability gates. The remaining limitation is
+    transport statistics, not a known protein-bilayer failure: local
+    CGL-only Stokes-Einstein behavior near the target point is acceptable,
+    while broader/replicate diffusion-line validation is still recommended.
+  - H5 method audit for the installed artifacts: CGL-CGL, CGL-SC,
+    CGL-particle, and SC-particle all record the same base generation
+    contract, `explicit_dry_martini_constituent_projection`, using
+    `_compute_pair_energy_and_gradient`, dry-MARTINI LJ/Coulomb terms,
+    `1.2 nm` cutoff, `1e-6 nm` distance guard, native dry-MARTINI to Upside
+    unit metadata, no correction layer, and `Tavg=25.0`. The source/target
+    ensembles differ by family as expected. The representation is not
+    identical: SC-particle stores `direct_rotamer_free_energy_kj_mol` on a
+    full radial/angular grid, while CGL-CGL, CGL-SC, and CGL-particle store
+    log1p-reduced CGL spline/table representations.
+  - Corrected plot interpretation: diffusion versus raw GLE coupling scale is
+    not the Stokes-Einstein plot. The SE check should use diffusion versus
+    relative mobility, `1 / coupling_scale`, for fixed-shape GLE scans. The
+    final isolated-conformer data are locally acceptable near the selected
+    point (`0.70,0.75,0.80` scales give mobility-fit `R2=0.979`), but the
+    broad scan is not a robust SE validation (`R2=0.947` and the `0.90/1.00`
+    points are non-monotonic). Do not claim broad Stokes-Einstein linearity
+    from the current single-seed scan.
+- 2026-06-20: Strict CGL force-field provenance correction.
+  - User constraint: production CGL force fields must not contain bilayer
+    target information. The bilayer must emerge from a transferable
+    dry-MARTINI molecular force-field projection, not from fitting CGL
+    parameters to bilayer thickness, leaflet separation, or protein-bilayer
+    alignment.
+  - Consequence: prior PMF, force-matched, and IBI CGL-CGL tables are
+    diagnostic-only even if they pass short stability and clock gates. Their
+    metadata (`correction_layer`, `force_match_enabled`, `ibi_enabled`, or
+    nonzero `fluid_pmf_pair_sample_count`) must be rejected by production
+    injection.
+  - Additional provenance issue: a direct CGL projection can still inherit
+    bilayer information if its default reference coordinates are copied from
+    a bilayer PDB template. Production DOPC CGL tables should instead use an
+    isolated DOPC reference generated from ITP bonded geometry unless an
+    explicitly transferable isolated-conformer ensemble is provided.
+  - Lesson: do not describe bilayer-observable table training as physical
+    production FF under this requirement. It is a diagnostic optimizer, not a
+    transferable force field.
+- 2026-06-20: Strict-transferable CGL-only clock check.
+  - Rebuilt `parameters/dryMARTINI/dopc.h5` from isolated
+    `isolated_dopc_itp_bond_angle_tree` DOPC geometry with direct
+    dry-MARTINI constituent projection. The installed CGL-CGL metadata has
+    `correction_layer=none`, `force_match_enabled=0`, `ibi_enabled=0`,
+    `fluid_pmf_pair_sample_count=0`, and no force-match/IBI diagnostic
+    datasets.
+  - Production validation passes the clean installed H5 at
+    `UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE=25.0` and rejects a retained
+    IBI diagnostic H5 with the new bilayer-trained metadata error.
+  - 72-lipid strict-H5 checks are stable but noisy near the target. The
+    larger 288-lipid ion-free bilayer gives a clean physical drag line at
+    converted experimental temperature `T=0.8647`: GLE coupling scales
+    `1.0, 1.5, 1.8` give `D40=0.946, 0.254, 0.130 um^2/s`, all stable, with
+    mobility-line `R2=0.998`.
+  - Current strict-production CGL clock candidate:
+    `mass_scale=0.012`, `rotational_tau=0.008`,
+    `memory_taus=0.2,2.0`, `couplings=0.6075,0.441`. This matches the
+    `~0.25 um^2/s` 40-ps-step target in the 288-lipid CGL-only bilayer
+    without bilayer-derived FF information.
+  - Short no-burn-in protein smokes do not yet prove hybrid stability. 1RKL
+    keeps hbond stable (`30.98 -> 32.58`) and CGL orientations upright, but
+    the old median-plane leaflet gate flags six near-midplane CGL COM
+    relabelings. 1AFO keeps compact log Rg and upright CGL orientations, but
+    hbond drops `92.74 -> 73.14` over 10k steps. Before changing parameters,
+    rerun with less abbreviated/default equilibration; if the 1AFO loss
+    persists, inspect transferable CGL-SC/CGL-target projection and handoff.
+  - Longer 100k 288-lipid bilayer-only validation changes the conclusion:
+    the earlier `1.5x` GLE point cages at long time (`D40=0.089 um^2/s`),
+    so it is not a correct-clock point. Lower drag remains geometrically
+    stable with upright CGL orientations and no leaflet crossings. Long-run
+    `D40` values for coupling scales `0.8, 1.0, 1.1, 1.2, 1.3, 1.5` are
+    `0.300, 0.298, 0.278, 0.099, 0.083, 0.089 um^2/s`.
+  - The best strict-H5 long-run timescale point is currently
+    `memory_taus=0.2,2.0`, `couplings=0.4455,0.3234`, `mass_scale=0.012`,
+    `rotational_tau=0.008`, giving `D40=0.278 um^2/s`, stable geometry,
+    `min |n_z|=0.939`, and no leaflet crossings. It is only provisional:
+    the long-run Stokes-Einstein line fails (`R2=0.64` over all six points)
+    because diffusion drops sharply between coupling scales `1.1` and `1.2`.
+- 2026-06-20: Retained CGL outputs still fail bilayer/protein alignment.
+  - The user-observed VMD issue is real in retained outputs. In
+    `outputs/martini_1rkl_hybrid`, CGL display endpoints extend about
+    `+16.6 A/-12.6 A` beyond the protein 95th/5th z extents, while
+    full-scale 1RKL is only about `+0.8 A/-1.5 A`.
+  - Retained 1RKL CGL also shows a secondary-structure proxy loss:
+    `output/hbond` total drops `27.75 -> 21.93`; retained full-scale 1RKL
+    stays `34.15 -> 33.18`. This supports the visual concern that the
+    protein is starting to destabilize in the CGL bilayer-gap region.
+  - Current promoted CGL parameters improve short 1RKL hbond stability
+    (`30.47 -> 32.19`) but do not fully fix bilayer/protein z alignment.
+    Full-DOPC mapped lipid COM 95th percentile is `11.35 A`, while current
+    CGL center 95th percentile is `18.01 A`.
+  - A second sampled-bin IBI update can pull CGL centers closer to the
+    full-DOPC COM target (`center p95=13.94 A`, display top excess `+5.8 A`)
+    but destabilizes protein in a 10k smoke (`hbond 30.39 -> 22.33`,
+    rising protein potential, kinetic ratio `1.600`). Do not promote IBI-2.
+  - Timing finding: retained and current CGL workflows are slower in
+    wall-clock because stage preparation/injection repeats expensive CGL
+    table/node work for stage 6 and stage 7. The current 1RKL CGL smoke spent
+    about `190 s` in two prepare/inject phases versus `24.5 s` in 10k
+    stage-7 MD.
+  - Rule: do not repair the alignment by changing only VTF display offsets.
+    The physical issue is CGL-center axial distribution relative to mapped
+    full-DOPC COMs and protein-interface stability. The next table-training
+    objective must include both bilayer COM/thickness and protein hbond
+    stability gates.
+- 2026-06-20: Physical CGL bilayer-gap fix candidate.
+  - A sampled-bin IBI update to only the CGL-CGL pair table can remove the
+    stage-7 protein-bilayer leaflet gap without adding runtime restraints or
+    orientation potentials. The source candidate
+    `example/16.MARTINI/outputs/dopc_tavg25_1rkl_full_target_vs_cgl_thickness_ibi1.h5`
+    has been promoted to `parameters/dryMARTINI/dopc.h5`.
+  - The IBI candidate uses the existing physical policy: sampled
+    full-DOPC/model distribution ratios update sampled CGL-CGL bins, while
+    unsampled bins and the direct dry-MARTINI overlap core are preserved.
+    CGL-SC, CGL-target, SC-particle, and generic MARTINI tables remain active
+    from the base H5.
+  - The candidate table changes transport; the old GLE couplings
+    `0.22,0.16` become too fast (`D40=1.426 um^2/s`). Increasing only the
+    FDT GLE drag to `couplings=0.528,0.384` with
+    `memory_taus=0.2,2.0`, `mass_scale=0.012`, and
+    `rotational_tau=0.008` gives `D40=0.2539 um^2/s` at the `40 ps/step`
+    clock.
+  - The Stokes-Einstein check is acceptable on this fixed table over a wide
+    physical drag range: coupling scales `1.0,1.6,2.4,3.0` give
+    `D40=1.426,0.516,0.254,0.200 um^2/s`, monotonic in mobility with
+    linear-fit `R2=0.997`.
+  - Default stage-7 protein-bilayer gates pass with this promoted table:
+    1RKL final center separation/tail gap `30.13 A/-2.83 A`, 1AFO
+    `29.96 A/-2.68 A`, both with final CGL orientation
+    `|n_z| min/p05/mean` around `0.94/0.966/0.988` and stable protein log
+    proxies. Direct no-override 1RKL smoke also completed through stage 7 and
+    injected GLE couplings `[0.528,0.384]`.
+- 2026-06-20: Direct coarse hybrid wrapper failure.
+  - `example/16.MARTINI/1rkl.out` and `example/16.MARTINI/1afo.out` failed
+    before MD because the direct wrappers did not export the accepted
+    cleaned-H5 runtime defaults; the validator therefore compared installed
+    `Tavg=25.0` CGL metadata against fallback `Tavg=10.0`.
+  - The H5 files were not stale. Direct coarse hybrid runs must default to
+    `UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE=25.0`, no explicit ions,
+    `TEMPERATURE=0.8647`, `CG_LIPID_MASS_SCALE=0.012`,
+    `CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE=0.008`, and the selected
+    two-mode FDT GLE (`taus=0.2,2.0`, `couplings=0.22,0.16`,
+    `replace_markovian=1`) unless the caller intentionally overrides them.
+  - Follow-on correction: full-resolution wrappers failed immediately because
+    macOS bash with `set -u` treats `"${empty_array[@]}"` as an unbound
+    variable. Coarse-only wrapper arguments must be appended conditionally to
+    a non-empty command array, and both coarse and full branches must be
+    smoke-tested after wrapper changes.
+- 2026-06-20: CGL bilayer gap in retained protein-bilayer outputs.
+  - `outputs/martini_1rkl_hybrid` has a real bilayer-thickness problem, not
+    only a VMD rendering artifact. In stage 7, CGL center leaflet separation
+    is `~42.4 A` and the displayed hydrophobic tail endpoint gap is
+    `~10.2 A`.
+  - The gap is not caused solely by the 40k stage-7 burn-in: a no-burn-in
+    10k stage-7 control still expands from `~33.1 A` to `~42.5 A`.
+  - `outputs/martini_1afo_hybrid` shows the same global geometry
+    (`~41.4 A` center separation, `~10.3 A` displayed hydrophobic gap), so
+    this is not a 1RKL-local protein artifact.
+  - Bead-resolved `parameters/dryMARTINI/DOPC.pdb` has PO4-PO4 separation
+    `~36.5 A` and tail means nearly meeting. The current CGL protein-bilayer
+    outputs must therefore fail a bilayer-thickness/tail-contact gate even
+    though their CGL orientation vectors remain mostly normal.
+  - Rule: do not hide this by extending VTF display rods or adding a
+    thickness restraint. The physical fix should retrain/rebuild the CGL-CGL
+    conservative table against mapped full-DOPC cross-leaflet/thickness
+    observables and then rerun CGL-only, 1RKL, and 1AFO gates.
+- 2026-06-19: Cleaned H5 promotion and CGL-only retest.
+  - Rebuilt a protein-compatible DOPC H5 at `Tavg=25.0`, but the resulting
+    CGL-CGL numeric table was not the accepted clock table. It was stable in
+    the 288-lipid ion-free CGL-only gate but too slow: production-only
+    `D40=0.151 um^2/s` after 25% discard.
+  - Installed final `parameters/dryMARTINI/dopc.h5` is a merged clean H5:
+    accepted CGL-only CGL-CGL/CGL-target tables plus rebuilt current
+    CGL-SC/protein-interface tables. Installed
+    `parameters/dryMARTINI/sidechain.h5` is rebuilt with the same
+    `Tavg=25.0` setting.
+  - Metadata now agrees across CGL-CGL, CGL-SC, CGL-particle, and
+    SC-particle tables for the shared projection family, unit conversion,
+    cutoff, numerical guard, and tempered averaging temperature. The installed
+    CGL-CGL table is bitwise identical to
+    `example/16.MARTINI/outputs/dopc_npt100k_forcematch_radial_tavg25_cglonly.h5`.
+  - Cleaned-H5 CGL-only retest at converted experimental temperature
+    `T=0.8647`, `mass_scale=0.012`, `memory_taus=0.2,2.0`,
+    `couplings=0.22,0.16`, and `rotational_tau=0.008` passed: full-run
+    `D40=0.262 um^2/s`, production-only `D40=0.246 um^2/s` after 25%
+    discard, stable geometry, no leaflet crossing, and orientation gate pass.
+- 2026-06-19: Cleaned-H5 retained protein validation.
+  - Runtime validation with the cleaned `Tavg=25.0` H5 requires exporting
+    `UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE=25.0`; leaving the runtime
+    default at `10.0` correctly rejects the cleaned H5 during schema
+    validation.
+  - 1RKL CGL/no-ion 20k production passes with all hybrid interface nodes
+    active and no production `restraint_position`: finite potential
+    `-1759.6..-1629.5`, exact `T=0.8647`, Rg `11.72..12.59 A`, final
+    H-bond sum `30.84`, final CGL `min abs(n_z)=0.871`, no CGL below
+    `0.7`, no orientation flips, and final same-leaflet spacing `7.54 A`.
+  - 1AFO CGL/no-ion 20k production also passes: finite potential
+    `-1155.5..-1056.9`, exact `T=0.8647`, Rg `15.37..15.85 A`, final
+    H-bond sum `76.87`, final CGL `min abs(n_z)=0.944`, no CGL below
+    `0.7`, no orientation flips, and final same-leaflet spacing `7.44 A`.
+  - 1RKL full-resolution/no-ion 20k production passes as a full-DOPC
+    control: finite potential `-22237.4..-21858.5`, exact `T=0.8647`, Rg
+    `12.53..13.02 A`, final H-bond sum `34.24`, active
+    `martini_potential` and `martini_sc_table_1body`, and no production
+    restraint.
+  - 1AFO full-resolution/no-ion fails during the extended full-DOPC handoff
+    before a valid production run: stage-7 burn-in loses all H-bonds, Rg
+    reaches `3.0e6 A` with final logged Rg `1.54e5 A`, and total potential is
+    `~1e16..1e19`. This is a full-resolution packing/barostat/handoff
+    blocker, not a CGL H5 failure.
+- 2026-06-19: Physical/H5/stability verification audit.
+  - Active one-particle CGL production paths have no twist coordinate, no
+    standalone orientation potential/restraint, and no active runtime
+    force/energy cap. The dynamic CGL orientation is a rotational state with
+    FDT-consistent damping/noise; stale capped CGL table metadata is rejected
+    during injection.
+  - SC/env and BB/env interactions are not disabled: generic pairs that would
+    double-count are replaced by `cg_lipid_rotamer_sc`, `cg_lipid_target`,
+    `martini_potential`, `martini_sc_table_1body`, and BB proxy projection
+    nodes. The remaining caveat is short hybrid startup hold/ramp controls
+    for SC/backbone and PO4 handoff; these are not CGL orientation
+    potentials, but they are a production-startup control.
+  - Current H5 generation is method-consistent by contract for CGL-CGL,
+    CGL-SC, CGL-particle, and SC-particle: explicit dry-MARTINI constituent
+    bead/rotamer projections with tempered Boltzmann averaging and runtime
+    spline tables. The strict consistency mismatch is parameterization, not
+    algorithm: the accepted CGL-only timescale H5 uses tempered averaging
+    temperature `25.0`, while the installed/full protein-compatible H5 and
+    SC-particle tables use `10.0`.
+  - Retained HDF5 evidence proves the 288-lipid CGL-only bilayer and selected
+    1RKL CGL 20k checkpoint. 1RKL full-resolution, 1AFO full-resolution, and
+    1AFO CGL currently have transcript evidence only; their referenced
+    checkpoint/VTF outputs are missing locally, so independent bilayer/CGL
+    orientation and secondary-structure rechecks require regeneration.
+- 2026-06-18: No-ion one-particle CGL GLE retune outcome.
+  - All tests used converted experimental temperature `T=0.8647`, one CGL
+    particle per DOPC, unchanged conservative spline tables, no explicit ions,
+    and `mass_scale=0.012` so each lipid CGL is approximately one Upside mass
+    unit.
+  - `coupling=0.248`, `memory_tau=1.0`, `rotational_tau=0.008` is the best
+    CGL-only timescale point found: 100k CGL-only `D40=0.252 um^2/s`, fit
+    `R2=0.99975`, final `min abs(n_z)=0.911`, and stable bilayer geometry.
+    It is not promotable because the no-ion 1RKL smoke final frame has one
+    CGL below `abs(n_z)=0.7`.
+  - `coupling=0.250`, `rotational_tau=0.008` is the best current 1RKL
+    stability point: 20k no-ion 1RKL keeps finite energy, exact temperature,
+    protein Rg `12.63..13.27 A`, final H-bond sum `27.44`, no leaflet
+    crossing, final `min abs(n_z)=0.721`, and same-leaflet 3D spacing above
+    `7 A`. It is not a correct-clock point because CGL-only `D40=0.209
+    um^2/s`, implying about `48 ps/step` against the `0.25 um^2/s` target.
+  - Stronger rotational damping (`rotational_tau=0.006`) did not repair the
+    physical transport gate. Single-seed 100k CGL-only
+    `coupling=0.236,0.240,0.242,0.244` gave
+    `D40=0.211,0.228,0.305,0.289`; the target-window response is not
+    Stokes-Einstein monotonic in `1/(coupling^2*memory_tau)`.
+  - Current conclusion: mass scaling plus FDT-consistent translational GLE and
+    rotational Langevin damping alone has not produced a one-particle CGL that
+    simultaneously matches the 40 ps/step clock, passes 1RKL bilayer stability,
+    and passes the Stokes-Einstein linearity check.
+- 2026-06-18: Multi-exponential one-particle CGL GLE.
+  - Implemented H5 schema `cgl_exponential_memory_gle_v2` as a finite sum of
+    exponential memory kernels with positive `memory_tau[]` and `coupling[]`,
+    plus one auxiliary momentum per CGL per mode. The runtime update remains
+    FDT-consistent, preserves one CGL particle per lipid, and does not change
+    conservative spline interactions or add orientation potentials.
+  - Smoke validation confirmed `input/cgl_gle/aux_momentum` shape
+    `(n_mode,n_cgl,3)`, output shape `(frames,n_mode,n_cgl,3)`, and exact
+    restart promotion for all modes.
+  - Best tested kernel:
+    `memory_taus=0.2,2.0`, `couplings=0.22,0.16`,
+    `rotational_tau=0.008`, `mass_scale=0.012`, no explicit ions. CGL-only
+    100k gives `D40=0.234 um^2/s`, which is closer to the target than the
+    previous stable single-mode point (`0.209`) but still slow.
+  - The same kernel passes a 20k no-ion 1RKL stability gate: final
+    `min abs(n_z)=0.731`, no CGL below `0.7`, no leaflet crossing, final
+    same-leaflet 3D spacing `6.90..7.00 A`, exact temperature, and compact
+    protein metrics.
+  - It still fails the Stokes-Einstein requirement. Fixed-shape coupling
+    scaling `0.90..1.10` produced `D40=0.267,0.297,0.234,0.241,0.194`
+    versus mobility coordinate `1/sum(c_i^2 tau_i)`, with line `R2=0.65`.
+    Therefore multi-exponential GLE is not yet a fully physical clock match.
+- 2026-06-18: Reference-fit GLE from full-DOPC COM dynamics.
+  - The full-resolution DOPC NPT reference trajectory has COM diffusion
+    `3.277 um^2/s` in physical time and `13.108 um^2/s` after the standard
+    Martini `x4` time correction, so the bead-resolved dry-MARTINI reference
+    is not the source of the CGL clock mismatch.
+  - Fitting the mapped lateral COM VACF with `memory_taus=0.2,2.0` produced a
+    good normalized VACF fit (`R2=0.983`) but collapsed to a native-clock
+    short-memory kernel: `couplings=2.595,2.5e-7`.
+  - Using the fitted short-memory shape with target-scaled couplings did not
+    recover the required CGL transport. CGL-only 100k checks at
+    `coupling=0.45,0.55,0.65`, `rotational_tau=0.008`, and
+    `mass_scale=0.012` were geometrically stable but gave
+    `D40=0.189,0.141,0.199`, with no Stokes-Einstein linearity.
+  - Conclusion: within the current one-particle CGL representation, physical
+    transport-model changes alone have been exhausted. The next acceptable
+    physical change should alter the trained conservative one-particle CGL
+    bilayer target/model class, not add capping, force scaling, hidden
+    particles, DPD, or an orientation restraint.
+- 2026-06-19: Pair-only IBI correction on the radial force-matched CGL-CGL
+  table.
+  - Added a caging/order diagnostic for mapped full-DOPC versus one-particle
+    CGL trajectories. The long `c0p30` CGL model has a structural first-shell
+    mismatch: coordination is higher than target by `0.55`, pair probability
+    is excessive near `7.875 A`, and first-shell orientation-dot is higher by
+    `0.111`.
+  - Built a physical sampled-bin IBI candidate on top of the radial
+    force-matched full H5:
+    `example/16.MARTINI/outputs/dopc_npt100k_forcematch_radial_ibi_c0p30long_tavg25_full.h5`.
+    Only `cg_lipid_table/cg_lipid_pair` is replaced. All CGL-target,
+    CGL-SC, CGL-particle, and SC-particle metadata are copied from the full
+    base H5. The direct overlap core and unsampled bins are retained.
+  - The IBI update touched `1944/5880` sampled non-core tensor bins with
+    `deltaU=-17.541..16.583 kJ/mol`.
+  - The new table is stable but not promotable. Short 20k runs are mobile and
+    target-like at `scale=2.55` (`D40=0.241`), but 100k runs still cage:
+    `scale=1.6 D40=0.226`, `scale=2.0 D40=0.177`,
+    `scale=2.55 D40=0.141`. The best full-run point has block diffusion
+    `0.771,0.191,0.113,0.096`, so apparent target diffusion is dominated by
+    an initial transient.
+  - Conclusion: pair-distribution IBI on the current one-particle pair table
+    does not remove long-time caging. The next physical conservative change
+    needs a model class that directly represents bilayer packing cooperativity
+    or area/undulation response, not another pair-only sampled-bin correction.
+- 2026-06-19: Stokes-Einstein recheck of the accepted two-mode GLE candidate.
+  - User clarified that `D40=0.234 um^2/s` is acceptable against the
+    `0.25 um^2/s` clock target, so the active question is the transport
+    relation rather than exact target matching.
+  - Repeating the common fixed-shape coupling scales with new seeds kept the
+    CGL-only bilayer geometrically stable but produced much slower diffusion:
+    `scale=0.95 D40=0.085`, `scale=1.00 D40=0.127`,
+    `scale=1.05 D40=0.062 um^2/s`.
+  - Combining old and new seeds at the common scales gives seed means
+    `0.191`, `0.180`, and `0.151 um^2/s` for scales `0.95`, `1.00`, and
+    `1.05`, with a monotonic mean line versus
+    `1/sum(c_i^2 tau_i)` (`R2=0.905`). However, the seed standard deviations
+    are `0.150`, `0.076`, and `0.126 um^2/s`, too large to validate a
+    robust Stokes-Einstein relation.
+  - Block diffusion shows the failure mode is real trajectory aging/slowing,
+    not only a fitting artifact. Old near-target runs stayed mobile across
+    blocks, e.g. old `scale=1.00` blocks
+    `0.238,0.166,0.319,0.213`. New repeats commonly start mobile then slow:
+    new `scale=1.00` blocks `0.335,0.115,0.059,0.081`; new `scale=1.05`
+    blocks `0.178,0.111,0.040,0.015`.
+  - Conclusion: the original two-mode point is acceptable on absolute clock
+    for a favorable seed and remains stable, but it is not yet physically
+    validated because diffusion is not seed-robust and the Stokes-Einstein
+    gate is dominated by slow-state/caging variability.
+- 2026-06-19: 288-lipid ion-free CGL-only Stokes-Einstein validation.
+  - Added a calibration-runner `--cgl-bilayer-pdb` input and a reproducible
+    2x2 DOPC PDB tiler. The generated template
+    `example/16.MARTINI/outputs/dopc_2x2_ionfree.pdb` contains 288 DOPC
+    lipids, 4032 atoms, box `100.184 x 100.184 x 85.000 A`, and no template
+    ions.
+  - Added production-only block analysis by allowing
+    `analyze_cgl_diffusion_blocks.py` to discard an initial trajectory
+    fraction before the MSD fit and block split.
+  - The full protein-compatible force-matched H5 is rejected by the current
+    strict CGL-target validator before MD. For the strict ion-free CGL-only
+    bilayer gate there are no target particles, so the correct artifact is
+    the CGL-only CGL-CGL H5:
+    `example/16.MARTINI/outputs/dopc_npt100k_forcematch_radial_tavg25_cglonly.h5`.
+    A full protein-interface H5 still needs current CGL-target metadata before
+    final protein validation.
+  - Smoke test at `memory_taus=0.2,2.0`, `couplings=0.22,0.16`,
+    `mass_scale=0.012`, `rotational_tau=0.008`, and `T=0.8647` passed with
+    288 CGL particles only, stable geometry, and short-run `D40=0.224`.
+  - Six 100k production runs over scales `0.95,1.00,1.05` with two seeds per
+    scale were all geometrically stable and target-like after discarding the
+    first 25% of frames. Production-only `D40` means:
+    `0.95 -> 0.241 +/- 0.019`, `1.00 -> 0.265 +/- 0.026`,
+    `1.05 -> 0.255 +/- 0.003 um^2/s`.
+  - The narrow target window is too flat/noisy for a standalone SE validation:
+    production-only means over `0.95,1.00,1.05` fit versus
+    `1/sum(c_i^2 tau_i)` with negative slope and `R2=0.413`.
+  - Wider physical endpoints show the expected friction response without
+    geometry failure: `0.80 -> D40=0.327`, `1.20 -> D40=0.175` after 25%
+    discard. The production-only wide subset `0.80,1.00,1.20` gives a
+    positive SE fit with `R2=0.926`; all five scale means give a positive fit
+    with `R2=0.832`. Full-run means give `R2=0.996` for the wide subset and
+    `R2=0.947` across all five means.
+  - Conclusion: the severe SE failure in the 72-lipid runs was largely a
+    finite-size/template-ion/initial-state artifact. In the 288-lipid ion-free
+    bilayer the two-mode GLE is physically friction-responsive over a wider
+    mobility span and has acceptable target-window diffusion. The practical
+    parameter set remains `couplings=0.22,0.16` because it has prior no-ion
+    1RKL stability evidence and gives production-only 288-lipid
+    `D40=0.265 +/- 0.026 um^2/s`.
+
+## Lessons / User Corrections
+- User correction: `D40=0.234 um^2/s` for the original two-mode CGL GLE is
+  acceptable against the `0.25 um^2/s` target. Do not over-optimize the
+  absolute diffusion value once it is in that window. The active decision
+  criterion is whether the physical transport model passes the
+  Stokes-Einstein relation robustly.
+
+- User correction: keep exactly one CGL particle per lipid. Do not recommend
+  or start a multi-site CGL representation unless the user explicitly reopens
+  that option. Within the one-particle constraint, physical next attempts
+  must be conservative model-class changes such as trained density/area terms,
+  not hidden particles, orientation restraints, capping, or friction-only
+  tuning.
+
+- 2026-06-18: One-particle conservative density correction tests.
+  - Added a table-driven `cg_lipid_density` runtime term that preserves exactly
+    one CGL particle per lipid. It evaluates `sum_i F(rho_i)` where
+    `rho_i=sum_j w(r_ij)` over CGL centers. It applies center forces only,
+    has no orientation derivative, no CGLD marker, no cap, no force scaling,
+    and no additional orientation potential.
+  - Built
+    `example/16.MARTINI/outputs/dopc_npt100k_forcematch_radial_densityre_tavg25_cglonly.h5`
+    from the radial force-matched pair table plus a relative-entropy
+    local-density embedding. The density kernel cutoff was derived from the
+    full-DOPC same-leaflet CGL-center RDF first minimum (`9.875 A`), and the
+    embedding used `F=kBT ln(P_model(rho)/P_target(rho))` from the full-DOPC
+    target and long caged CGL model.
+  - Relative-entropy density was geometrically stable but worsened transport.
+    Short NVT `tau=14,17,20` gave `D40=0.101,0.175,0.171` with
+    Stokes-Einstein `R2=0.712`; `tau=20,23,26` gave
+    `D40=0.174,0.147,0.146` with negative slope and `R2=0.765`.
+    Distribution inspection showed the full-DOPC target had a broader
+    high-density tail than the caged CGL model, so the valid
+    relative-entropy update introduced attractive high-density wells and
+    increased local caging.
+  - Built
+    `example/16.MARTINI/outputs/dopc_npt100k_forcematch_radial_densityharmonic_tavg25_cglonly.h5`
+    using the same density kernel but a target-fluctuation harmonic embedding:
+    `F=0.5*(kBT/var_target_rho)*(rho-mean_target_rho)^2`, with
+    `mean rho=0.250`, `var rho=0.03596`, and
+    `k=70.1 kJ/mol/rho^2` from the full-DOPC distribution.
+  - Harmonic density was also stable but failed the transport relation:
+    `tau=14,17,20` gave `D40=0.242,0.166,0.200`, with negative fitted
+    Stokes-Einstein slope and `R2=0.308`. The target-like `tau=14` point is
+    not promotable because the required linearity check fails.
+  - Current conclusion: within one-particle Markovian Langevin CGL,
+    conservative local-density many-body corrections can stabilize geometry
+    but still do not produce the requested physical clock plus
+    Stokes-Einstein behavior. The next physical one-particle option should be
+    an FDT-consistent generalized Langevin / memory-kernel implicit-solvent
+    model fitted from mapped full-DOPC COM dynamics, not more conservative
+    fitting layers.
+  - Implemented the one-particle CGL GLE option as an FDT-consistent
+    exponential memory kernel with an auxiliary momentum Markovian embedding.
+    It is activated only through `/input/cgl_gle`, preserves exactly one CGL
+    particle per lipid, leaves the conservative CGL spline tables unchanged,
+    and can replace the ordinary Markovian CGL thermostat for translational
+    transport.
+  - CGL-only GLE scans used the radial force-matched conservative table
+    `example/16.MARTINI/outputs/dopc_npt100k_forcematch_radial_tavg25_cglonly.h5`
+    at production temperature `T=0.8647`. The useful physical mass setting is
+    `mass_scale=0.012`, close to one Upside mass unit for each 14-bead DOPC
+    CGL. `mass_scale=0.02` stayed stable but was too slow and nonlinear.
+  - Long 100k GLE transport points with `mass_scale=0.012`,
+    `memory_tau=1.0`, and `rotational_tau=0.03` were geometrically stable:
+    `c=0.65,0.50,0.40,0.28` gave `D40=0.140,0.134,0.193,0.277` in single
+    long runs, with MSD-fit `R2>=0.993`. Adding a second `c=0.28` seed gave
+    `D40=0.403`, so the weak-coupling edge is fast and seed-sensitive.
+  - The 100k transport line is now qualitatively Stokes-Einstein consistent
+    when using the correct GLE coordinate `1/(coupling^2*memory_tau)`:
+    the long-point mean line for `c=0.65,0.50,0.40,0.28` gives `R2=0.968`.
+    However, the production coupling is not yet seed-robust. Direct 100k
+    target-window tests gave `c=0.295 -> D40=0.225` and
+    `c=0.303 -> D40=0.230`, while `c=0.28` gave `0.277/0.403`. Current
+    recommendation is to treat `coupling=0.29..0.30` as the practical window
+    and run more seeds before protein-bilayer validation.
+  - Follow-up target-window robustness selected `coupling=0.30` as the
+    conservative stable CGL-only candidate. Two 100k seeds at `c=0.29`
+    were reproducibly fast (`D40=0.298,0.289`), but the 500k check failed
+    same-leaflet geometry (`same_leaflet_min_xy=0.184 A`), so `c=0.29` is
+    rejected. Two 100k seeds at `c=0.30` gave `D40=0.192,0.245`, and the
+    500k check stayed stable. In the 500k stable run, the short-lag linear
+    regime gives `D40=0.249..0.252` for max lag 100 native-time, while the
+    full long-lag fit to 500 native-time gives `D40=0.206`. Five 200-time
+    blocks remain mobile and target-like (`D40=0.238,0.254,0.277,0.231,0.323`),
+    so there is no long-time caging signal. Use `c=0.30` for the first
+    protein-bilayer stability test, but report both short-lag and long-lag
+    diffusion estimates.
+  - Protein-bilayer workflow integration requires a full H5, not the
+    CGL-only screening H5. The CGL-only radial force-matched table lacks the
+    CGL-target/protein-interface metadata needed by `inject_cg_lipid_nodes`.
+    The full compatible file built for 1RKL is
+    `example/16.MARTINI/outputs/dopc_npt100k_forcematch_radial_tavg25_full.h5`,
+    with CGL-CGL, CGL-SC, CGL-particle, and SC/protein-interface tables using
+    the same force-matched CGL-CGL target and table-generation contract.
+  - `py/martini_prepare_system.py` now injects CGL transport metadata into
+    every coarse hybrid stage, including mass scaling, replacement of the
+    ordinary Markovian CGL thermostat, and `/input/cgl_gle` restart state.
+    GLE auxiliary momentum must be part of restart state; finalization now
+    promotes `/output/cgl_gle_aux_momentum[-1]` into
+    `/input/cgl_gle/aux_momentum`.
+  - CGL dynamic orientation is also restart state. A continuation must promote
+    `/output/cgl_orientation[-1]` into
+    `/input/potential/cgl_orientation_state/direction` and
+    `/output/cgl_orientation_mom[-1]` into `/input/cgl_orientation_mom`.
+    Without this, a production restart combines final coordinates with stale
+    orientation vectors and can produce a false instability. The bad 100k
+    continuation had initial potential `14940`; after restart promotion the
+    same source starts at `-2968.68`.
+  - First 1RKL validation with the selected candidate completed a smoke run
+    and a 20k-step continuation with all hybrid interactions active. The
+    20k continuation stayed finite at `T=0.8647`, protein Rg stayed
+    `12.65..13.23 A`, and the bilayer did not exchange leaflets under a
+    two-cluster z assignment. The minimum same-monolayer CGL 3D spacing was
+    `6.35 A`, final same-monolayer 3D minimum was `6.89 A`, and leaflet
+    center separation was `32.9 A` at the final frame.
+  - Lesson: do not use the median z value alone to classify leaflets when the
+    leaflet counts are unequal or the bilayer/protein placement shifts the z
+    distribution. It can mark opposite-leaflet particles as same leaflet and
+    create false XY-overlap alarms. Use sign-based or two-cluster z leaflet
+    assignment and report full 3D separation plus z separation for close XY
+    pairs.
+  - Restart-fixed 100k 1RKL continuation with explicit ions is numerically and
+    protein-stable but not yet bilayer-orientation stable. It keeps finite
+    energy, exact `T=0.8647`, protein Rg `12.10..13.99 A`, final H-bond sum
+    `27.3`, no leaflet exchange, and minimum same-monolayer CGL 3D spacing
+    `6.03 A`; however final CGL orientation has `min abs(n_z)=0.00035`,
+    mean `0.659`, and `120/275` lipids below the CGL-only `0.70` threshold.
+  - The tilted CGLs are strongly associated with explicit ions in the
+    implicit-water hybrid setup: at the final restart-fixed 100k frame,
+    `15/15` lipids with `abs(n_z)<0.1` and `109/120` lipids with
+    `abs(n_z)<0.7` are nearest to ION targets. This points to mobile naked
+    ions as the current physical-model problem. The correct next test is an
+    implicit-salt/no-explicit-ion preparation, not friction retuning, table
+    capping, or an added orientation potential.
+  - `EXPLICIT_IONS=0` now exists for hybrid preparation. It is not validated
+    yet: first smoke attempts generated larger non-comparable bilayers
+    (`773` and `565` CGL lipids) and were interrupted in the CGL conditioning
+    loop before MD. A controlled no-ion packing path with comparable bilayer
+    size/geometry remains the next step.
+
+- 2026-06-17: Dynamic one-particle vector CGL long-time gate.
+  - Dynamic CGL orientation is implemented without fixed vectors or CGLD
+    atoms. `compose_vector6d` consumes `pos` and `cgl_orientation_state`, and
+    `/output/cgl_orientation` stays unit-normalized.
+  - Short 20k scans can overestimate lateral diffusion because the bilayer has
+    an initially mobile relaxation period. Long 100k CGL-only validation is
+    now required before any protein-bilayer test.
+  - Best short-run dynamic candidate tested: `Tavg=25`, production
+    `T=0.8647`, `mass_scale=0.02`, translational tau `9`, rotational tau `1`,
+    native transverse inertia. It gave 4/4 stable 20k seeds with mean
+    `D40=0.244 +/- 0.074 um^2/s`, but a 100k run gave only
+    `D40=0.034 um^2/s`.
+  - Higher CGL table tempering did not fix the long-time cage: `Tavg=30`
+    remained slow and failed orientation; `Tavg=50` produced severe
+    orientation failure and unphysical diffusion artifacts.
+  - Current conclusion: mass scaling, translational Langevin tau, rotational
+    Langevin tau, and simple higher-tempered H5 tables are insufficient to
+    match the Upside-core clock while preserving long-time CGL bilayer
+    stability. The next physical change should be conservative-table
+    retraining/rebuilding for the dynamic vector CGL against a fluid bilayer
+    target, not more thermostat tuning.
+  - Correction: do not promote an ensemble CGL table built with capped or
+    subsampled conformer-pair combinations unless convergence is explicitly
+    demonstrated. The table builder should average all conformer pairs for the
+    selected physical conformer ensemble.
+  - Implemented a clean ensemble-table path that samples DOPC conformers from
+    a full-resolution Upside trajectory and averages all conformer pairs for
+    the selected ensemble. The temporary conformer-pair cap was removed before
+    validation.
+  - The first ensemble table derived scalar orientation properties from the
+    mean conformer geometry, which underestimated transverse inertia. The
+    table builder now derives scalar properties per conformer and averages
+    those physical scalars.
+  - Corrected table:
+    `example/16.MARTINI/outputs/dopc_ensemble2_allpairs_tavg25_scalaravg.h5`.
+    It uses two full-DOPC trajectory conformers, all four conformer-pair
+    combinations, `Tavg=25`, runtime Boltzmann temperature `0.8647`,
+    transverse inertia `9381.587 g mol^-1 A^2`, orientation length
+    `12.496 A`, and orientation mass `60.084 g/mol`.
+  - Short CGL-only scans with the corrected table and rotational tau `0.1`
+    found a stable narrow window at translational `tau=5.5,6.0,6.5`, but it
+    is not promotable: `D40=0.173,0.176,0.212 um^2/s`, below the
+    `0.25 um^2/s` target, and Stokes-Einstein `R2=0.815`. Higher tau values
+    fail the orientation gate. This remains a conservative table/training
+    definition problem, not something to fix by adding an orientation
+    potential or by pushing rotational friction further.
+  - Improved trajectory conformer sampling to select evenly across the
+    frame-lipid pool after relaxation instead of tying conformer index to one
+    frame and one lipid index. CGL-CGL bead-energy sampling was vectorized;
+    a scalar/vectorized check matched to `1.9e-6 kJ/mol` sorted max
+    difference.
+  - Built CGL-only screening table
+    `example/16.MARTINI/outputs/dopc_ensemble4_allpairs_tavg25_framelipid_cglonly.h5`
+    from four full-DOPC trajectory conformers, all 16 conformer-pair
+    combinations, `Tavg=25`, runtime Boltzmann temperature `0.8647`, no
+    conservative cap attributes, no CGLD, and no SC-CGL table. This H5 is for
+    bilayer screening only; protein-bilayer validation still requires a full
+    SC-CGL table.
+  - Four-conformer short screens: rotational tau `0.1` failed geometry at
+    translational `tau=4.0,4.5,5.0` and `5.5,6.0,6.5` due one nearly
+    membrane-parallel lipid. Stronger physical rotational damping
+    (`rot_tau=0.03`, FDT-consistent) passed at `tau=4.0,4.5,5.0` with
+    `D40=0.243,0.398,0.702 um^2/s` and Stokes-Einstein `R2=0.966`.
+  - Long 100k validation rejects the four-conformer screening table:
+    `tau=4.0`, `rot_tau=0.03` remained geometrically stable but slowed to
+    `D40=0.054 um^2/s`. Four equal-time blocks gave
+    `D40=0.212,0.041,0.045,0.085`, confirming long-time caging rather than a
+    short-fit artifact.
+  - Current conclusion remains: direct pair-energy CGL tables, even with a
+    broader trajectory conformer ensemble and physical rotational damping,
+    do not maintain target long-time diffusion. The next physical table
+    change should be PMF/relative-entropy/force-matching against an
+    equilibrated fluid-bilayer CGL pair distribution, not isolated two-lipid
+    direct-energy averaging.
+  - Implemented a fluid-bilayer PMF CGL-CGL table option. The final tested
+    table,
+    `example/16.MARTINI/outputs/dopc_fluidpmf4_oriented_contactcore_tavg25_cglonly.h5`,
+    uses a full-DOPC orientation-resolved PMF in runtime coordinates
+    `(r, -n1 dot n12, n2 dot n12)`, reverse-pair symmetrization, direct
+    dry-MARTINI bead-energy overlap core below the DOPC-derived CGL contact
+    distance, `Tavg=25`, production `T=0.8647`, no cap attributes, no CGLD,
+    and no SC-CGL table for CGL-only screening.
+  - Radial-only PMF was rejected: it produced target-like short diffusion but
+    caused leaflet crossing because it removed orientation/leaflet
+    information. The orientation-resolved PMF fixed geometry and kept all
+    tested high-tau points stable.
+  - Orientation-resolved PMF short scans: `tau=8,11,14` passed geometry with
+    `D40=0.137,0.188,0.357` and Stokes-Einstein `R2=0.913`. A higher
+    `tau=20,30,40` scan was stable and `tau=20` was target-like
+    (`D40=0.236`), but the three-point line check failed due mobility
+    saturation at high tau.
+  - Long 100k validation rejects the current PMF table. `tau=14` gave
+    `D40=0.033`; `tau=20` gave `D40=0.097`, with block values
+    `0.281,0.065,0.021,0.012`. Geometry remained stable, so the blocker is
+    long-time caging, not bilayer breakup or orientation failure.
+  - Current conclusion: the PMF idea is physically cleaner and stabilizes
+    bilayer geometry, but the available short, small, NVT full-DOPC reference
+    is not a sufficient fluid-bilayer target for long-time CGL mobility. The
+    next physical requirement is a better equilibrated full-DOPC reference
+    trajectory, preferably larger and semi-isotropic/NPT at the target
+    temperature/area, before another PMF or relative-entropy table rebuild.
+  - Added an NPT-capable full-DOPC reference runner using the existing
+    semi-isotropic barostat metadata. The 20k full-DOPC NPT reference ran at
+    `T=0.8647` (`303.15 K`), `1 bar`, area per lipid `69.70 A^2`, finite
+    energy/box, and no NC3 leaflet sign changes.
+  - Built
+    `example/16.MARTINI/outputs/dopc_npt20k_fluidpmf4_oriented_contactcore_tavg25_cglonly.h5`
+    from that NPT reference: four conformers, all 16 conformer-pair direct
+    core combinations, 1,027,512 ordered fluid-PMF pair samples, 1,569
+    occupied tensor bins, `Tavg=25`, production `T=0.8647`, no cap attrs,
+    no CGLD, and no SC-CGL table for CGL-only screening.
+  - The NPT-derived PMF table passed a low-tau short Stokes-Einstein screen:
+    `tau=8,11,14` gave `D40=0.132,0.160,0.198` with `R2=0.993` and all
+    geometry gates passing. The target-window short scan at `tau=17,20,23`
+    was geometrically stable and `tau=20` was target-like (`D40=0.247`), but
+    the three-point high-tau line check failed (`R2=0.376`).
+  - Long 100k validation rejects the 20k NPT-derived PMF table. `tau=20`
+    gave full-run `D40=0.109`; block `D40` values were
+    `0.279,0.129,0.049,0.116`, and 19 CGL orientations became near-parallel
+    to the membrane. This is still not promotable to 1RKL. The next physical
+    step is a longer and/or larger full-DOPC reference before PMF rebuild,
+    not additional CGL thermostat tuning or orientation potentials.
+  - Extended the full-DOPC NPT reference to 100k at `T=0.8647` (`303.15 K`)
+    and 1 bar. It remained stable with area per lipid `69.70 A^2`, finite
+    energy/box, no NC3 leaflet sign changes, and full-DOPC lateral diffusion
+    `3.28 um^2/s` in physical units (`13.11 um^2/s` with the usual MARTINI
+    `x4` acceleration).
+  - Built
+    `example/16.MARTINI/outputs/dopc_npt100k_fluidpmf4_oriented_contactcore_tavg25_cglonly.h5`
+    from the 100k NPT reference. PMF coverage improved to 2,561,112 ordered
+    pair samples, 121 occupied radial bins, and 2,986 occupied tensor bins.
+    The table kept the direct dry-MARTINI overlap core, had `Tavg=25`,
+    production `T=0.8647`, no cap attrs, no CGLD, and no SC-CGL table for
+    CGL-only screening.
+  - The 100k-NPT PMF table improved short-run orientation geometry but failed
+    the Stokes-Einstein requirement. In NVT, `tau=8,11,14` gave
+    `D40=0.137,0.161,0.138` with `R2≈0`; `tau=17,20,23` gave
+    `D40=0.247,0.212,0.358` with `R2=0.532`. Enabling the same
+    semi-isotropic NPT ensemble for CGL kept geometry stable but still failed
+    linearity: `tau=17,20,23` gave `D40=0.195,0.119,0.315`, `R2=0.371`.
+  - Current conclusion: one-shot pair PMF from the small 72-lipid reference,
+    even with longer NPT sampling and CGL NPT screening, does not produce a
+    physical linear transport regime. The next physical change should be an
+    iterative relative-entropy/IBI or force-matching refinement of the
+    dynamic-vector CGL-CGL table against full-DOPC CGL-center/orientation
+    distributions, with pressure/area included in the target. Do not proceed
+    by thermostat tuning, capping, orientation potentials, or 1RKL testing.
+  - Implemented center/orientation pair-distribution extraction for both
+    full-DOPC trajectories and dynamic one-particle CGL trajectories, then
+    added sampled-bin relative-entropy/IBI table updates. The update rule is
+    `U_new = U_old + kBT ln(P_model/P_target)`; unsampled bins retain the
+    existing conservative table value, and the direct overlap core is
+    preserved. No caps, force scaling, CGLD marker, fixed orientation, or
+    additional orientation potential were introduced.
+  - Built
+    `example/16.MARTINI/outputs/dopc_npt100k_fluidpmf4_ibi1_tau17model_tavg25_cglonly.h5`.
+    Metadata: target/model samples `2,561,112/1,027,512`, sampled tensor bins
+    `1058/7007`, correction range `-15.079..9.360 kJ/mol`, production
+    `T=0.8647`, `Tavg=25`, no cap attrs, and no SC-CGL table for screening.
+  - IBI-1 short NVT gates improved: `tau=8,11,14` gave
+    `D40=0.071,0.107,0.184` with `R2=0.958`; `tau=14,15.5,17` gave
+    `D40=0.137,0.187,0.243` with `R2=0.999`. Geometry passed throughout.
+    However, the 100k `tau=17` gate failed badly: full-run `D40=0.014`;
+    four 50-native-time blocks gave `D40=0.165,0.049,0.030,0.019`.
+    IBI-1 is not promotable to 1RKL.
+  - Added a previous-table base-energy path so IBI-2 is truly iterative:
+    `U_2 = U_1 + kBT ln(P_1/P_target)`, using the IBI-1 raw CGL-CGL energy
+    grid as the conservative base. Built
+    `example/16.MARTINI/outputs/dopc_npt100k_fluidpmf4_ibi2_tau17longmodel_tavg25_cglonly.h5`
+    from the caged 100k IBI-1 model. Metadata: target/model samples
+    `2,561,112/3,839,112`, sampled bins `1149/7007`, correction range
+    `-19.244..9.339 kJ/mol`, production `T=0.8647`, `Tavg=25`, no cap attrs.
+  - IBI-2 stayed geometrically stable but did not solve transport:
+    `tau=14,15.5,17` gave `D40=0.086,0.137,0.174` with `R2=0.993`, and
+    `tau=20,23,26` gave `D40=0.126,0.100,0.136` with `R2=0.064`.
+    The current evidence says pairwise one-particle vector CGL distribution
+    matching is insufficient for the requested clock unless the target/model
+    representation is changed more fundamentally.
+  - H5 generation consistency update: SC-particle, CGL-particle, CGL-SC, and
+    CGL-CGL now share a documented base-table contract in generated metadata:
+    explicit dry-MARTINI constituent LJ/Coulomb projection over the relevant
+    physical rotamer/conformer/orientation ensemble, with the same unit
+    contract, nonbonded cutoff, and numerical distance guard recorded. The
+    SC-particle path now uses the same `_compute_pair_energy_and_gradient`
+    helper as the CGL paths instead of its own ad hoc LJ/Coulomb loop.
+  - Important limitation: CGL-CGL fluid-PMF/IBI remains a recorded correction
+    layer on top of the common base table, not the universal method for all
+    interactions. Applying those corrections to CGL-SC, CGL-particle, or
+    SC-particle would require a corresponding physical protein/interface
+    target ensemble; doing it without that target would be an unphysical
+    parameter twist.
+  - Implemented first CGL-CGL force-matching target:
+    radial generalized force projection from the 100k full-DOPC NPT
+    reference. The full-DOPC H5 does not store forces, so the implementation
+    recomputes bead-level dry-MARTINI pair forces from trajectory coordinates,
+    projects each lipid-lipid pair onto
+    `(r, -n1 dot n12, n2 dot n12)`, integrates `dU/dr` along radial tensor
+    bins, preserves the direct overlap core, and leaves unsampled bins at the
+    existing physical base value.
+  - Built
+    `example/16.MARTINI/outputs/dopc_npt100k_forcematch_radial_tavg25_cglonly.h5`.
+    Metadata: 100 full-DOPC frames, 511,200 ordered pair-force samples,
+    2,482/7,007 tensor bins updated, production `T=0.8647`, `Tavg=25`, no
+    cap attrs, no SC-CGL table for screening.
+  - Radial force matching improved the CGL-only bilayer relative to IBI but
+    did not pass the hard timescale gate. Short `tau=14,17,20` was stable and
+    line-like (`D40=0.118,0.187,0.219`, `R2=0.958`), while `tau=20,23,26`
+    reached target-like short diffusion but failed linearity
+    (`D40=0.291,0.295,0.359`, `R2=0.796`). Long 100k validations still slowed:
+    `tau=20` full `D40=0.213`, block `0.288,0.198,0.160,0.151`; `tau=26`
+    full `D40=0.195`, block `0.247,0.232,0.193,0.176`.
+  - Current conclusion: radial projected force matching is a substantial
+    improvement but still leaves long-time slowing. The next physical
+    conservative-table change should include angular generalized
+    forces/torques in the CGL-CGL fit, or move to a more expressive physical
+    CGL orientation representation. Do not try to force this table through by
+    changing only Langevin friction.
+  - Implemented generalized CGL-CGL force matching by projecting recomputed
+    dry-MARTINI bead forces and torques onto `dU/dr`,
+    `dU/d(-n1 dot n12)`, and `dU/d(n2 dot n12)`, then least-squares fitting
+    a conservative tensor energy grid. The implementation preserves the
+    direct overlap core, retains unsampled bins, adds no runtime potential,
+    and uses no capping or force scaling.
+  - Built
+    `example/16.MARTINI/outputs/dopc_npt100k_forcematch_generalized_tavg25_cglonly.h5`.
+    Metadata: 100 full-DOPC frames, 511,200 ordered pair-force samples,
+    2,516/7,007 tensor bins updated, 6,043 LS equations, LS residual RMS
+    `18.99 kJ/mol`, production `T=0.8647`, `Tavg=25`, no cap attrs, no
+    SC-CGL table for screening.
+  - First generalized short screens reject this table before long validation:
+    `tau=14,17,20` is geometrically stable but nonlinear
+    (`D40=0.168,0.211,0.185`, `R2=0.148`); `tau=20,23,26` is also stable
+    but nonlinear (`D40=0.196,0.195,0.317`, `R2=0.744`). Because individual
+    MSD fits are clean and geometry passes, the blocker is the transport
+    relation, not bilayer breakup. The next physical check is a
+    stricter-sampling generalized rebuild with more reference frames and
+    higher per-bin count threshold before moving to a different
+    representation.
+  - Built stricter generalized table
+    `example/16.MARTINI/outputs/dopc_npt100k_forcematch_generalized_frames300_mincount12_tavg25_cglonly.h5`
+    with 300 full-DOPC frames, 1,533,600 ordered force samples, 2,510 updated
+    tensor bins, min-count 12, production `T=0.8647`, and no cap attrs. The
+    generalized LS residual worsened to `25.37 kJ/mol`, indicating the
+    pairwise one-particle vector coordinates cannot cleanly represent the
+    projected full-DOPC force/torque field.
+  - The stricter generalized table failed short CGL-only validation:
+    `tau=14` and `tau=20` failed orientation geometry; only `tau=17` passed
+    geometry and it was too slow (`D40=0.125`). Current conclusion:
+    generalized pair force matching is exhausted for the one-particle vector
+    CGL representation. The next physical direction should be a more
+    expressive lipid representation, preferably explicit physical multi-site
+    CGL sites such as head/body-tail or head/two-tail sites with spline
+    tables trained consistently from dry-MARTINI/full-DOPC targets. A
+    one-particle many-body density/area-compressibility conservative term is
+    a secondary option only if it is trained to physical bilayer targets and
+    not used as a diffusion-tuning knob.
+- 2026-06-17: Vector-only CGL reimplementation after user removed the need
+  for a CGLD particle; fixed orientation later rejected by user.
+  - Coarse CGL setup now writes one particle per DOPC lipid. It no longer
+    appends CGLD orientation sites, no longer creates CGL-CGLD bonds, no
+    longer registers CGLD nonbonded exclusions, and no longer writes
+    `compose_vector6d/orientation_index`.
+  - Runtime `compose_vector6d` already supports the no-`orientation_index`
+    path: it uses the stored `direction` vector and propagates translational
+    derivatives to the CGL center only. The generated DOPC-only CGL bilayer has
+    88 atoms: 72 CGL plus 8 NA and 8 CL.
+  - The scan used the existing `Tavg=25` CGL table and production temperature
+    `T=0.8647`, so the bilayer was simulated at the experimental converted
+    temperature. No conservative spline interactions were flattened, capped,
+    or disabled.
+  - Smoke H5 validation confirmed no `CGLD` atom types, no
+    `compose_vector6d/orientation_index`, no orientation bonds, and zero
+    CGLD thermostatting.
+  - Stokes-Einstein checks pass for vector-only CGL at `mass_scale=0.02`.
+    `tau=2.5,3.5,5.0` gave stable `D40=0.0586,0.0923,0.1397 um^2/s` with
+    `R2=0.9997`. `tau=7.0,8.5,10.0` gave stable
+    `D40=0.2277,0.3613,0.6105 um^2/s` with `R2=0.9705`.
+  - Best fixed-vector diagnostic candidate for the `56x` target is `mass_scale=0.02`,
+    `tau=6.0`: 4/4 stable 20k seeds with `D40=0.239 +/- 0.054 um^2/s`.
+    `tau=7.0` was also stable in 5/5 seeds but faster/noisier:
+    `0.308 +/- 0.100 um^2/s`.
+  - User correction: CGL orientation must not be fixed. These fixed-vector
+    scans are only a diagnostic baseline proving that removing CGLD removes
+    marker instability; they are not a promotable physical CGL model.
+  - Lesson: when the requested model is a vector particle, confirm whether the
+    vector is a dynamic state before treating stored direction metadata as an
+    acceptable implementation.
+- 2026-06-17: Physical high-tempering continuation after user disallowed
+  twisting/capping/orientation potentials.
+  - Built separate copied DOPC CGL H5 files at table averaging temperatures
+    `Tavg=25.0` and `Tavg=30.0` under `example/16.MARTINI/outputs/`.
+    Metadata verified that production Boltzmann temperature stayed
+    `0.8647`; only `azimuthal_average_temperature_upside` changed.
+  - Rejected CGLD constraint-style marker fixes. Fixed-center projection,
+    mass-weighted constraints, and removing independent CGLD bath coupling
+    produced unphysical diffusion or orientation tumbling. The rejected runtime
+    and CLI paths were removed after testing.
+  - `Tavg=30`, `cgl_mass_scale=0.02`, native CGLD mass gave target-like
+    diffusion but failed the orientation geometry gate for all
+    `tau=18,20,22` single-seed points.
+  - `Tavg=25`, `cgl_mass_scale=0.02`, native CGLD mass, shared tau passed the
+    broad single-seed scan: `tau=18,20,22` had
+    `D40=0.240,0.286,0.391 um^2/s`, all geometry-stable, with
+    Stokes-Einstein `R2=0.950`.
+  - Seed replicates remain the blocker. `Tavg=25`, `mass=0.02`, `tau=18.0`
+    gave 3/4 stable seeds with all-seed mean `D40=0.250 +/- 0.038` and
+    stable-seed mean `0.238 +/- 0.035`. `tau=18.5` gave 3/4 stable seeds but
+    was too fast/noisy: stable-seed mean `0.301 +/- 0.092`.
+  - Refining mass/friction found isolated target-like stable points, e.g.
+    `mass=0.015,tau=16` (`D40=0.257` in one scan), but did not produce a
+    three-point stable Stokes-Einstein window. Do not promote a protein-bilayer
+    validation candidate yet.
+  - A marker-projection internal-orientation implementation was tested and
+    rejected, then removed. At `Tavg=25`, `CGL mass=0.02`, `cgl_tau=18`,
+    `cgld_tau=18,5,2,1,0.5,0.2,0.1`, all short scans failed orientation
+    geometry and many produced unphysical `D40` values from several to hundreds
+    of `um^2/s`.
+  - Increasing only CGLD inertia is stabilizing but too slow. With
+    `Tavg=25`, `CGL mass=0.02`, `tau=18`, `CGLD mass scale=5` gave stable
+    `D40=0.0677`; scale `10` gave stable `0.0344`; scale `2` still failed
+    orientation. Raising CGL tau for `CGLD mass scale=5` reached only
+    `D40=0.130` at stable `tau=30`; `tau=35` failed geometry. Lowering CGL
+    mass to `0.01` with `CGLD mass scale=5` remained too slow and failed at
+    `tau=30`.
+  - Current conclusion: the hidden-marker representation is the blocker. The
+    next physical implementation must be a real rotational state variable for
+    CGL orientation, not a projected atom or another conservative orientation
+    parameter.
+- 2026-06-17: CGL `56x` target scan after rejecting DPD.
+  - DPD was rejected because this MARTINI hybrid model uses implicit water.
+    Do not add pairwise DPD transport to this workflow.
+  - With a `56x` coarse-graining factor against the estimated pure-DOPC
+    reference, the working CGL target under the Upside-core `40 ps/step` clock
+    is `14 / 56 = 0.25 um^2/s`.
+  - Added CGL/CGLD decoupled thermostat support to
+    `example/16.MARTINI/cgl_timescale_calibration.py`.
+  - Rebuilt a separate DOPC CGL table at tempered average temperature
+    `20.0`: `example/16.MARTINI/outputs/dopc_tempered_20.h5`. Production
+    scans still used the experimental converted temperature `T=0.8647`.
+  - Best broad scan with `cgl_mass_scale=0.02`, native CGLD mass, shared tau,
+    and `Tavg=20`: stable `tau=18,20,22` gave `D40=0.204,0.301,0.447` and
+    passed the Stokes-Einstein line check (`R2=0.987`).
+  - Seed replicates near the target are promising but not production-ready:
+    `tau=18.5` had 3/4 stable 20k seeds with stable-seed mean
+    `D40=0.259 +/- 0.024 um^2/s`; `tau=19` had 3/4 stable seeds with mean
+    `0.293 +/- 0.036`; `tau=18` had 3/4 stable seeds with mean `0.247` but
+    high scatter.
+  - Decoupling CGLD tau to `15` stabilized one scan but broke the
+    Stokes-Einstein trend. Scaling the orientation carrier bond by `4x` also
+    did not help; lower tau points failed geometry and the stable points were
+    insufficient for linearity.
+  - Current recommendation: do not promote a protein-bilayer parameter yet.
+    The physical H5-tempering + mass-scaling path makes the target plausible,
+    but the remaining CGLD orientation-marker failures need a cleaner rigid
+    orientation treatment or longer robustness testing before protein
+    validation.
+- 2026-06-17: Full-resolution dry-MARTINI DOPC mismatch audit.
+  - Added a full-resolution DOPC COM diffusion analyzer and runner:
+    `example/16.MARTINI/analyze_dopc_diffusion.py` and
+    `example/16.MARTINI/full_dopc_diffusion_reference.py`.
+  - Fixed `inject_particles_table` for full-resolution MARTINI: the runtime
+    expects `coefficient_indices` to reference the local `coefficients` rows,
+    so injected spline grids must be ordered in that same local row order.
+  - The canonical `parameters/dryMARTINI/DOPC.pdb` is not directly stable for
+    full-resolution production Upside MD. It has hard-core inter-lipid
+    contacts that give initial production energy around `6.7e12 E_up` and
+    immediate coordinate blow-up. A GROMACS steepest-descent minimization using
+    the dry-MARTINI topology was needed to produce
+    `example/16.MARTINI/outputs/full_dopc_gmx_relax/em.upside.pdb`.
+  - Stable full-DOPC 20k-step Upside runs at `T=0.8647` (`303.15 K`),
+    `time_step=0.002`, `inner_step=1` gave:
+    `tau=5 D40=0.004993 um^2/s`, `tau=10 D40=0.005190 um^2/s`,
+    `tau=20 D40=0.004871 um^2/s`.
+  - The physical Upside time unit derived from project units is
+    `0.20289664298287868 ps`; therefore `time_step=0.002` is
+    `0.00040579328596575736 ps`, not a Martini-like `40 ps` step.
+  - The same trajectories convert to raw physical diffusion
+    `4.92, 5.12, 4.80 um^2/s` for `tau=5,10,20`; applying the common Martini
+    `4x` effective-time convention gives `19.69, 20.47, 19.21 um^2/s`.
+    This is reasonably close to the Dry Martini SI DOPC-equivalent value
+    `24.5 um^2/s`, given the tested run is at `303.15 K` while the SI row is
+    at `310 K`, and the local trajectory covers only about `8.12 ps` raw
+    physical time.
+  - The `tau=5` full-DOPC run was geometrically stable: final nonbonded
+    minimum distance `4.07 A`, no pairs below `3 A`, area/lipid `69.70 A^2`,
+    PO4-PO4 thickness `39.78 A`.
+  - Stokes-Einstein check failed for full-DOPC in this range:
+    `D40` versus `tau` slope `-1.15e-5`, `R^2=0.298`.
+  - Source audit found no mass-aware Langevin/integrator bug. The `mv`
+    integrator updates coordinates with `dt / mass` when MARTINI masses are
+    registered, and the OU thermostat scales random momentum kicks with
+    `sqrt(mass)`.
+  - A same-topology GROMACS NVT diagnostic from the minimized 72-lipid setup
+    was also slow and poorly linear over 1 ns. This points at the local small,
+    minimized, NVT setup/analysis horizon as a poor paper reproduction, not an
+    Upside-integrator-only explanation.
+  - Current interpretation: the apparent paper mismatch was mainly an
+    accounting error from using the empirical Upside-core `40 ps/step` mapping
+    as the physical dry-MARTINI clock. Keep those clocks separate. A rigorous
+    paper-level comparison still requires a larger equilibrated DOPC bilayer,
+    semi-isotropic/NPT conditions, `310 K`, and ns-us production analysis.
+- 2026-06-17: Stokes-Einstein diagnostic fix.
+  - The previous diffusion analyzers used a single-time-origin MSD
+    (`r(t)-r(0)` only). That is too noisy for the short 72-lipid trajectories
+    used here and can make a three-point `D` versus `tau` test fail even when
+    the individual MSD fits look linear.
+  - Updated both CGL and full-DOPC analyzers to use multi-time-origin lateral
+    MSD up to `max_lag_fraction=0.5`, reporting the lag-time fit window and
+    sample counts. The CGL calibration runner now passes this setting through.
+  - Reanalyzing the existing full-DOPC `tau=5,10,20` trajectories with the
+    multi-origin estimator changes the trend from negative to positive, but it
+    still fails the three-point line check because `tau=20` is slightly below
+    `tau=10` on this short trajectory (`R2=0.476`). Treat this as a poor
+    diagnostic window, not as proof of an integrator defect.
+  - Native-mass CGL at `tau=2.5,5,10`, `T=0.8647`, `time_step=0.002`, 20k
+    steps passes the Stokes-Einstein line-fit gate:
+    `D_native=0.02307,0.04006,0.08175 A^2/native_time`, `R2=0.9977`, all
+    three rows geometry-stable. Artifacts:
+    `example/16.MARTINI/outputs/cgl_stokes_fix_native_tau2p5_5_10/`.
+  - Matched full-DOPC from the GROMACS-minimized PDB at `tau=2.5,5,10`,
+    `T=0.8647`, `time_step=0.002`, 20k steps also passes the current
+    line-fit gate: `D_native=0.005835,0.009000,0.011219 A^2/native_time`,
+    `R2=0.9175`. Artifacts:
+    `example/16.MARTINI/outputs/full_dopc_stokes_fix_tau2p5_5_10/`.
+  - Rule for future calibration scans: choose tau windows inside the stable,
+    monotonic friction-controlled regime. Do not include high-tau points that
+    fail geometry or enter saturated/noisy dense-bilayer mobility unless the
+    purpose is explicitly to show breakdown of Stokes-Einstein scaling.
+- 2026-06-17: User correction on physical CGL timescale matching.
+  - Do not twist CGL potentials, flatten mobility barriers, weaken spline
+    tables, or otherwise change physical interactions solely to make CGL match
+    the Upside-core `40 ps/step` empirical clock.
+  - Any CGL table rebuild must be justified by a physical inconsistency in the
+    current coarse-graining input, ensemble, temperature, structural target, or
+    transport model. A diffusion target alone is not enough.
+  - Valid outcomes include concluding that the single-particle CGL
+    representation has a separate physical clock, or adopting a physically
+    motivated transport model such as momentum-conserving thermostatting, but
+    not arbitrary parameter tuning.
+  - User clarified that mass scaling is acceptable because the Upside core uses
+    unit masses. Exact core-like CGL mass checks were therefore run:
+    `CGL=1.0 m_up` with native `CGLD`, and `CGL=1.0 m_up` with
+    `CGLD=1.0 m_up`.
+  - Exact unit-mass results still do not reach the `40 ps/step` target. Best
+    stable row is `CGL=1.0 m_up`, `CGLD=1.0 m_up`, `tau=5`, with
+    `D40=0.1331 um^2/s`; `tau=10` and `20` fail orientation/packing. This is
+    still about `13x` below a very lenient DOPC/8 target, `26x` below DOPC/4,
+    and `105x` below `14 um^2/s`.
+- 2026-06-17: Reported dry-MARTINI DOPC lateral diffusion target.
+  - The ACS Figshare SI for Arnarez et al., Dry Martini
+    (`10.1021/ct500477k.s001`) reports the DOPC-equivalent row as `dry`,
+    `310 K`, `small`, `PC`, tail entry `DV` with `CCDC/CCDC` tails. Its
+    lateral diffusion is `2.45e-2` in units of `1e-5 cm^2/s`, i.e.
+    `24.5 um^2/s` with `0.5 um^2/s` reported error.
+  - The matching wet Martini row is `5.89e-2 x 1e-5 cm^2/s`, i.e.
+    `58.9 um^2/s`, so dry Martini is about `2.4x` slower than wet Martini for
+    this DOPC-equivalent bilayer in the SI table.
+  - This creates a real target-definition issue: comparing CGL directly to
+    experimental DOPC values around `8-14 um^2/s` is not the same as matching
+    the dry-MARTINI model's own reported dynamics. If the goal is to preserve
+    dry-MARTINI kinetics under the Upside runtime, the calibration reference
+    should be the dry-MARTINI DOPC SI value, with explicit handling of Martini
+    effective-time scaling.
+  - Collapsing 14-bead DOPC into CGL can justify a separate effective-time
+    factor, but the measured stable CGL scan would require a very large one:
+    `24.5 / 0.046216 = 530x` to make the best stable row match raw
+    dry-MARTINI DOPC, or `14 / 0.046216 = 303x` to match the pure-DOPC
+    experimental reference. Ordinary Martini-style factors near `4-10x` do not
+    make the current stable CGL diffusion plausible at `40 ps/step`.
+- 2026-06-16: Higher CGL table tempering test.
+  - The current `dopc.h5` has two temperature concepts. Runtime
+    `boltzmann_temperature_upside=0.8647` reconstructs physical spline
+    energies from the log1p-reduced table. Rebuild-time
+    `azimuthal_average_temperature_upside=10.0` controls the tempered PMF
+    averaging used to generate the table.
+  - Changing `boltzmann_temperature_upside` in an already-built input is not a
+    valid test of higher PMF tempering; it rescales stored log1p-reduced energy
+    deviations. A meaningful test requires rebuilding `dopc.h5`.
+  - Added `UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE` as a table-generation
+    and validation setting. The default remains `10.0`, preserving current
+    behavior. Added `--dopc-h5` and `--tempered-average-temp` to
+    `example/16.MARTINI/cgl_timescale_calibration.py` for copied-table scans.
+  - Built copied high-temper tables:
+    `example/16.MARTINI/outputs/cgl_tempered_tables/temp20/dopc.h5` and
+    `example/16.MARTINI/outputs/cgl_tempered_tables/temp50/dopc.h5`.
+  - Native-mass `T_avg=20` scan (`tau=5,10,20,50,100`, 20k steps): stable
+    rows were only `tau=5` and `tau=10`, with `D40=0.019804` and
+    `0.022046 um^2/s`. Higher tau rows failed geometry.
+  - Native-mass `T_avg=50` scan: stable rows were again only `tau=5` and
+    `tau=10`, with `D40=0.013194` and `0.019805 um^2/s`. Higher tau rows
+    failed geometry.
+  - Combined `T_avg=50` with `mass_scale=0.5,0.3,0.2,0.1` and
+    `tau=5,10,20`. Only `mass_scale=0.5,tau=5` passed geometry
+    (`D40=0.019653 um^2/s`). The fastest row,
+    `mass_scale=0.1,tau=20`, reached `D40=0.503283 um^2/s` but failed with
+    `8` flips, `13` bad-orientation rods, and same-leaflet minimum `0.443 A`.
+  - Conclusion: higher tempered table generation at `T_avg=20` or `50` does
+    not resolve the timescale/stability problem. It can change diffusion, but
+    the rows that move toward the target still fail CGL orientation/geometry.
+  - Updated next direction: decouple translational and rotational CGL dynamics
+    before further table tempering. Specifically, scan lower CGL center mass
+    while keeping CGLD orientation mass and/or orientation damping/stiffness
+    near native values, then validate whether diffusion can increase without
+    rod flips.
+- 2026-06-16: CGL mass-scale/dissipation scan result.
+  - Ran a 40-point CGL-only bilayer scan under
+    `example/16.MARTINI/outputs/cgl_timescale_scan_20k/`:
+    `mass_scale=1.0,0.8,0.6,0.5,0.4,0.3,0.2,0.1`, `tau=5,10,20,50,100`,
+    `nsteps=20000`, `time_step=0.002`.
+  - Stable-gated points remained far below the DOPC target under a `40 ps/step`
+    mapping. The best stable point was `mass_scale=0.2,tau=5`, with
+    `D40=0.046216 um^2/s`; compared with the `14 um^2/s` pure-DOPC reference,
+    this is about `303x` too slow. Native-mass stable points were
+    `D40=0.013215` at `tau=5` and `0.030222` at `tau=10`.
+  - Rows closest to the target were unstable. The closest row,
+    `mass_scale=0.2,tau=100`, reached `D40=7.003 um^2/s` but failed with
+    leaflet crossings `1/1`, `14` flips, `34` bad-orientation rods, and low
+    diffusion-fit quality `R^2=0.663`.
+  - Dominant failure mode across unstable rows was CGL orientation failure:
+    `31` rows had bad orientation alignment, `22` had flips, `6` had
+    same-leaflet overlaps, and `1` had leaflet crossing.
+  - No mass scale had at least three stable tau points, so no candidate passed
+    the Stokes-Einstein requirement. Native mass and `mass_scale=0.8` had only
+    two stable tau points; all lower mass scales had one or zero.
+  - Conclusion: uniform CGL/CGLD mass scaling plus scalar Langevin dissipation
+    cannot defensibly match the Upside core `~40 ps/step` timescale while
+    preserving bilayer stability. The failure happens before protein-bilayer
+    validation, so protein-bilayer checks are not needed to reject this
+    parameter family.
+  - Next directions that preserve hybrid physical interactions:
+    1. Decouple CGL translational and rotational dynamics: lower only the CGL
+       center mass while keeping CGLD orientation mass/spring/rotational
+       damping stable, then rescan diffusion and orientation.
+    2. If dynamics-only decoupling is insufficient, regenerate the CGL-CGL
+       spline table with a mobility-calibrated lateral barrier/corrugation
+       while preserving area, thickness, orientation, and DOPC structural
+       observables.
+    3. Consider an implicit-water-compatible transport model instead of
+       independent OU Langevin friction. It must not require explicit water
+       or disable physical interactions.
+- 2026-06-16: Rebuilt CGL-only timescale calibration workflow.
+  - Current checkout did not contain the previously documented calibration
+    source files; only stale `__pycache__` entries were present. Recreated the
+    workflow as `example/16.MARTINI/analyze_lipid_diffusion.py` and
+    `example/16.MARTINI/cgl_timescale_calibration.py`.
+  - The CGL-only bilayer input can be built from
+    `parameters/dryMARTINI/DOPC.pdb` through the existing preparation API, but
+    it must also inject `particle.h5` and `dopc.h5`; conversion alone leaves
+    runtime nodes without the required spline-table data.
+  - Mass scaling is implemented as a multiplier on existing `CGL` and `CGLD`
+    masses in copied HDF5 inputs, preserving their relative inertia. CGL
+    friction is controlled through `/input/thermostat_timescale`, while
+    non-CGL atoms keep the global thermostat timescale.
+  - The analyzer computes lateral diffusion from unwrapped `xy` CGL MSD with
+    `D_xy = slope(MSD_xy) / 4` and reports the effective MD step implied by
+    DOPC references from Scientific Reports 9, 1508 (2019),
+    `https://www.nature.com/articles/s41598-018-37814-x`: simulated
+    unlabeled DOPC `8.4 um^2/s`, dilute FCS tracer about `12 um^2/s`, and
+    estimated pure DOPC about `14 um^2/s`.
+  - Stokes-Einstein validation is now explicit: for each fixed mass scale,
+    stable-gated points are fit as `D_xy` versus `tau = 1/gamma`. At least
+    three stable tau points are required for a meaningful line-fit decision;
+    two points are reported but marked `insufficient_stable_points`.
+  - A short verification grid under
+    `example/16.MARTINI/outputs/cgl_timescale_grid_2k/` ran
+    `mass_scale=1.0,0.5,0.1` by `tau=5,20` for `2000` steps. Native mass
+    passed bilayer geometry at both tau values. `mass_scale=0.5` and `0.1`
+    failed orientation geometry, even though lower mass increased apparent
+    diffusion.
+  - Current short-grid values under a `40 ps/step` mapping: native mass gives
+    `0.0283-0.0412 um^2/s`; failed `mass_scale=0.1` gives
+    `0.332-0.503 um^2/s`. The latter cannot be used for calibration because
+    it fails the stability gate.
+  - No production parameter is recommended from the short grid. A valid
+    recommendation requires longer trajectories, at least three stable tau
+    points per candidate mass scale, and a supplied protein-bilayer stability
+    check through `--protein-input`.
 - 2026-06-16: 1RKL MARTINI secondary-structure regression.
   - User-reported bad VTFs in both `martini_1rkl_hybrid` and
     `martini_1rkl_hybrid_full` share the same generated runtime setting:
@@ -1391,6 +2606,34 @@
   - use `pydssp` for secondary-structure classification and backbone-type mapping.
 - Lesson:
   - when the user specifies a physics-level representation change, do not keep a “nearly equivalent” proxy-particle compromise; implement the exact particle set and force-routing semantics requested.
+- 2026-06-20: Half-step IBI candidate status.
+  - Added explicit sampled-bin IBI under-relaxation for CGL-CGL table training.
+    This is recorded as `ibi_step_size` plus raw/applied correction metadata in
+    the H5. It is a table-optimizer line-search parameter, not a runtime force
+    cap, interaction scale, or orientation restraint.
+  - Full-step IBI2 remains rejected: it improves apparent bilayer thickness
+    but drives 1RKL hbond sum to `22.33` in the short smoke and shows upward
+    potential drift.
+  - 0.75-step IBI is also rejected: 1RKL `avg_kinetic_energy/1.5kT=1.682`
+    and potential drift are unacceptable.
+  - Half-step IBI is the best current CGL-CGL table candidate. With
+    `mass_scale=0.012`, `rotational_tau=0.008`, two-mode GLE
+    `memory_taus=0.2,2.0`, and `couplings=0.405,0.294`, the 20k CGL-only
+    point gives `D40=0.254 um^2/s`, fit `R2=0.994`, stable geometry, and
+    `min |n_z|=0.957`. The paired 1RKL 10k no-burnin smoke keeps final hbond
+    sum `30.00`, exact temperature, and final `min |n_z|=0.958`.
+  - This is not promotable yet. The short coupling line
+    `0.38,0.405,0.42,0.46` gives `D40=0.346,0.254,0.213,0.205`, which is
+    monotonic but has Stokes-Einstein line `R2=0.82`; longer replicated
+    CGL-only checks are required before changing defaults or installed H5s.
+  - The VTF-reported large CGL bilayer span is partly a visualization
+    representation problem. The extractor emits only two endpoint atoms per
+    CGL with fixed display span `25.698 A`, so endpoint atoms dominate visual
+    percentiles compared with full DOPC's 14 beads per lipid. A physical
+    display fix should reconstruct a bead cloud from stored DOPC reference
+    geometry or table metadata; do not shorten display rods by an arbitrary
+    factor.
+
 - 2026-04-29: Local runtime verification for the AA-direct MARTINI workflow is currently blocked by an environment dependency gap.
   - `python3 py/martini_prepare_system.py run-hybrid-workflow ...` fails at import time with `ModuleNotFoundError: No module named 'tables'` from `py/martini_prepare_system_lib.py`.
   - Static verification (`py_compile`) and C++ build still pass, but end-to-end runtime checks require installing `tables` in the active `.venv`.

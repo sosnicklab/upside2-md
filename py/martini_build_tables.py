@@ -28,7 +28,9 @@ LENGTH_CONVERSION_A_PER_NM = 10.0
 ANGSTROM_TO_NM = 0.1
 DEFAULT_PRODUCTION_TEMP_UPSIDE = 0.8647
 DEFAULT_PRODUCTION_KBT_KJ_MOL = DEFAULT_PRODUCTION_TEMP_UPSIDE * ENERGY_CONVERSION_KJ_PER_EUP
-DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE = 10.0
+DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE = float(
+    os.environ.get("UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE", "10.0")
+)
 DEFAULT_PMF_AVERAGE_TEMP_UPSIDE = DEFAULT_PRODUCTION_TEMP_UPSIDE
 PARTICLES_GRID_N = 1000
 PARTICLES_R_MIN_A = 0.0
@@ -142,11 +144,40 @@ def _bead_frame_count(kind: str, default: int = 1) -> int:
     return default
 
 
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _write_common_table_contract_attrs(
+    group: h5py.Group,
+    table_family: str,
+    source_object: str,
+    target_object: str,
+    projection_ensemble: str,
+    runtime_representation: str,
+    correction_layer: str = "none",
+) -> None:
+    group.attrs["table_generation_contract"] = "explicit_dry_martini_constituent_projection"
+    group.attrs["table_family"] = table_family
+    group.attrs["source_object"] = source_object
+    group.attrs["target_object"] = target_object
+    group.attrs["projection_ensemble"] = projection_ensemble
+    group.attrs["base_energy_source"] = "dry_martini_pair_params_lj_coulomb"
+    group.attrs["base_energy_helper"] = "_compute_pair_energy_and_gradient"
+    group.attrs["correction_layer"] = correction_layer
+    group.attrs["unit_contract"] = "native_dry_martini_nm_kjmol_e_to_upside_runtime_attrs"
+    group.attrs["runtime_representation"] = runtime_representation
+    group.attrs["nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
+    group.attrs["numerical_distance_guard_nm"] = np.float32(NUMERICAL_DISTANCE_GUARD_NM)
+
+
 def _cg_lipid_pair_radial_support(
     ref_bead_positions_nm: np.ndarray,
     knot_spacing_ang: float,
 ) -> tuple[float, int]:
     ref = np.asarray(ref_bead_positions_nm, dtype=np.float64)
+    if ref.ndim == 3:
+        ref = ref.reshape(-1, 3)
     max_radius_nm = float(np.max(np.linalg.norm(ref, axis=1)))
     cutoff_nm = DRY_MARTINI_NONBONDED_CUTOFF_NM + 2.0 * max_radius_nm
     n_knot_radial = int(math.ceil(cutoff_nm * LENGTH_CONVERSION_A_PER_NM / knot_spacing_ang)) + 2
@@ -159,6 +190,8 @@ def _cg_lipid_target_radial_support(
     knot_spacing_ang: float,
 ) -> tuple[float, int]:
     ref = np.asarray(ref_bead_positions_nm, dtype=np.float64)
+    if ref.ndim == 3:
+        ref = ref.reshape(-1, 3)
     max_radius_nm = float(np.max(np.linalg.norm(ref, axis=1)))
     cutoff_nm = DRY_MARTINI_NONBONDED_CUTOFF_NM + max_radius_nm
     n_knot_radial = int(math.ceil(cutoff_nm * LENGTH_CONVERSION_A_PER_NM / knot_spacing_ang)) + 2
@@ -687,25 +720,16 @@ def _run_sc_task(
                     framed_sc_positions = _rotate_points_about_axis_np(
                         sc_positions, cb_vector_arr, sc_frame_angle, cb_anchor_arr
                     )
-                    rot_energy = 0.0
-                    for bead_pos, bead_type, bead_charge in zip(
-                        framed_sc_positions, sidechain_bead_types, sidechain_bead_charges
-                    ):
-                        delta = target[0] - bead_pos
-                        dist_nm = max(1.0e-6, float(np.linalg.norm(delta)))
-                        params = pair_params[(bead_type, target_type)]
-                        sigma_nm = params["sigma_nm"]
-                        epsilon_kj = params["epsilon_kj_mol"]
-                        sr = sigma_nm / dist_nm
-                        sr2 = sr * sr
-                        sr6 = sr2 * sr2 * sr2
-                        lj = 4.0 * epsilon_kj * (sr6 * sr6 - sr6)
-                        coul = (
-                            COULOMB_K_DRY_KJ_NM * bead_charge * target_charge / dist_nm
-                            if bead_charge and target_charge
-                            else 0.0
-                        )
-                        rot_energy += lj + coul
+                    rot_energy, _, _ = _compute_pair_energy_and_gradient(
+                        framed_sc_positions,
+                        target,
+                        sidechain_bead_types,
+                        [target_type],
+                        sidechain_bead_charges,
+                        [target_charge],
+                        pair_params,
+                        dist_min_nm=dist_min_nm,
+                    )
                     _accumulate_sample_on_cos_grid(
                         cos_theta,
                         float(rot_energy),
@@ -926,6 +950,14 @@ def _build_sc_table_group(
             ).transpose(0, 2, 1)
 
     g = h5.create_group("sc_table")
+    _write_common_table_contract_attrs(
+        g,
+        table_family="SC-particle",
+        source_object="sidechain_rotamer_bead_ensemble",
+        target_object="dry_martini_particle_type",
+        projection_ensemble="sidechain_rotamers_x_sidechain_bead_frame_x_target_direction_grid",
+        runtime_representation="full_radial_angular_grid",
+    )
     g.attrs["schema"] = SCHEMA_SC
     g.attrs["forcefield_name"] = "martini22"
     g.attrs["sample_dist_min_nm"] = np.float32(NUMERICAL_DISTANCE_GUARD_NM)
@@ -1426,6 +1458,95 @@ def _compute_cg_pair_energy(
     return total_energy
 
 
+def _lipid_pair_param_matrices(
+    bead_types1: list,
+    bead_types2: list,
+    bead_charges1: list,
+    bead_charges2: list,
+    pair_params: dict,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    n1 = len(bead_types1)
+    n2 = len(bead_types2)
+    sigma = np.zeros((n1, n2), dtype=np.float64)
+    epsilon = np.zeros((n1, n2), dtype=np.float64)
+    charge_product = np.zeros((n1, n2), dtype=np.float64)
+    for i, bt1 in enumerate(bead_types1):
+        for j, bt2 in enumerate(bead_types2):
+            params = pair_params.get((bt1, bt2))
+            if params is None:
+                params = pair_params.get((bt2, bt1))
+            if params is None:
+                raise RuntimeError(f"Missing pair params for ({bt1}, {bt2})")
+            sigma[i, j] = float(params["sigma_nm"])
+            epsilon[i, j] = float(params["epsilon_kj_mol"])
+            charge_product[i, j] = float(bead_charges1[i]) * float(bead_charges2[j])
+    return sigma, epsilon, charge_product
+
+
+def _cg_lipid_configurations(
+    dirs: np.ndarray,
+    bead_frame_angles: np.ndarray,
+    ref_nm: np.ndarray,
+) -> np.ndarray:
+    z_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    configs = []
+    refs = np.asarray(ref_nm, dtype=np.float64)
+    for dir_vec in np.asarray(dirs, dtype=np.float64):
+        r_base = _rotation_to_align_z_np(np.asarray(dir_vec, dtype=np.float64))
+        for frame_angle in bead_frame_angles:
+            rot = r_base @ _rotation_about_axis_np(z_axis, float(frame_angle))
+            for ref_conf in refs:
+                configs.append((rot @ ref_conf.T).T)
+    return np.asarray(configs, dtype=np.float64)
+
+
+def _compute_cg_pair_energy_samples_vectorized(
+    r_nm: float,
+    dirs1: np.ndarray,
+    dirs2: np.ndarray,
+    bead_frame_angles: np.ndarray,
+    ref_nm: np.ndarray,
+    bead_types: list,
+    bead_charges: list,
+    pair_params: dict,
+    dist_min_nm: float,
+    chunk_size: int = 16,
+) -> np.ndarray:
+    configs1 = _cg_lipid_configurations(dirs1, bead_frame_angles, ref_nm)
+    configs2 = _cg_lipid_configurations(dirs2, bead_frame_angles, ref_nm)
+    configs2 = configs2 + np.array([float(r_nm), 0.0, 0.0], dtype=np.float64)[None, None, :]
+
+    sigma, epsilon, charge_product = _lipid_pair_param_matrices(
+        bead_types,
+        bead_types,
+        bead_charges,
+        bead_charges,
+        pair_params,
+    )
+    sigma = sigma[None, None, :, :]
+    epsilon = epsilon[None, None, :, :]
+    charge_product = charge_product[None, None, :, :]
+    charged = charge_product != 0.0
+
+    out = []
+    chunk_size = max(1, int(chunk_size))
+    for start in range(0, configs1.shape[0], chunk_size):
+        p1 = configs1[start : start + chunk_size]
+        delta = configs2[None, :, None, :, :] - p1[:, None, :, None, :]
+        dist = np.sqrt(np.sum(delta * delta, axis=-1))
+        active = dist <= DRY_MARTINI_NONBONDED_CUTOFF_NM
+        eff_dist = np.maximum(dist, float(dist_min_nm))
+        sr = sigma / eff_dist
+        sr2 = sr * sr
+        sr6 = sr2 * sr2 * sr2
+        energy = 4.0 * epsilon * (sr6 * sr6 - sr6)
+        coulomb = COULOMB_K_DRY_KJ_NM * charge_product / eff_dist
+        energy = np.where(active, energy, 0.0)
+        energy = energy + np.where(active & charged & (dist > 1.0e-10), coulomb, 0.0)
+        out.append(np.sum(energy, axis=(2, 3)).reshape(-1))
+    return np.concatenate(out)
+
+
 def _direction_with_dot_np(axis: np.ndarray, dot_value: float, phi: float) -> np.ndarray:
     """Return a unit vector v with dot(v, axis)=dot_value."""
     axis = np.asarray(axis, dtype=np.float64)
@@ -1501,6 +1622,1004 @@ def _canonicalize_lipid_reference_to_z(ref_bead_positions_nm: np.ndarray) -> np.
     return (rot_local_to_ref.T @ ref.T).T
 
 
+def _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm: np.ndarray) -> np.ndarray:
+    refs = np.asarray(ref_bead_positions_nm, dtype=np.float64)
+    if refs.shape == (14, 3):
+        refs = refs[None, :, :]
+    if refs.ndim != 3 or refs.shape[1:] != (14, 3):
+        raise ValueError(f"lipid reference ensemble must be (14, 3) or (n, 14, 3), got {refs.shape}")
+    return np.asarray([_canonicalize_lipid_reference_to_z(ref) for ref in refs], dtype=np.float64)
+
+
+def _reference_summary_geometry(ref_bead_positions_nm: np.ndarray) -> np.ndarray:
+    refs = _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm)
+    return np.mean(refs, axis=0)
+
+
+def _unit_perpendicular(vector: np.ndarray) -> np.ndarray:
+    vector = np.asarray(vector, dtype=np.float64)
+    trial = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    if abs(float(np.dot(vector, trial))) > 0.9:
+        trial = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+    perp = trial - vector * float(np.dot(vector, trial))
+    norm = float(np.linalg.norm(perp))
+    if norm <= 1.0e-12:
+        raise ValueError("Cannot construct perpendicular vector for ITP DOPC reference")
+    return perp / norm
+
+
+def _place_bonded_bead(
+    positions: np.ndarray,
+    atom_i: int,
+    atom_j: int,
+    atom_k: int,
+    bond_length_nm: float,
+    angle_deg: float,
+    bend_sign: float = 1.0,
+) -> None:
+    p_i = positions[int(atom_i)]
+    p_j = positions[int(atom_j)]
+    u = p_i - p_j
+    norm = float(np.linalg.norm(u))
+    if norm <= 1.0e-12:
+        raise ValueError("Cannot place ITP DOPC reference bead from coincident parent atoms")
+    u /= norm
+    theta = math.radians(float(angle_deg))
+    perp = _unit_perpendicular(u) * (1.0 if bend_sign >= 0.0 else -1.0)
+    direction = math.cos(theta) * u + math.sin(theta) * perp
+    positions[int(atom_k)] = p_j + float(bond_length_nm) * direction
+
+
+def _build_dopc_reference_from_itp_topology(dopc: dict) -> np.ndarray:
+    """Construct an isolated DOPC reference from ITP bonded geometry only.
+
+    The reference is a deterministic tree embedding of the DOPC topology.  It
+    avoids using a bilayer-template PDB conformation while still preserving the
+    dry-MARTINI bond lengths and available bond-angle preferences.
+    """
+    atom_names = list(dopc["atom_names"])
+    if len(atom_names) != 14:
+        raise ValueError(f"DOPC topology must have 14 beads, got {len(atom_names)}")
+    bonds = {(min(i, j), max(i, j)): (float(r0), float(k)) for i, j, r0, k in dopc["bonds"]}
+    angles = {(i, j, k): (float(theta), float(force_k)) for i, j, k, theta, force_k in dopc["angles"]}
+
+    def bond(i: int, j: int) -> float:
+        key = (min(i, j), max(i, j))
+        if key not in bonds:
+            raise ValueError(f"Missing DOPC bond {atom_names[i]}-{atom_names[j]}")
+        return bonds[key][0]
+
+    def angle(i: int, j: int, k: int, default: float = 180.0) -> float:
+        if (i, j, k) in angles:
+            return angles[(i, j, k)][0]
+        if (k, j, i) in angles:
+            return angles[(k, j, i)][0]
+        return float(default)
+
+    pos = np.full((14, 3), np.nan, dtype=np.float64)
+    # Head/glycerol scaffold.  The exact global orientation is irrelevant; the
+    # table builder canonicalizes the final head-to-tail axis.
+    pos[2] = np.array([0.0, 0.0, 0.0], dtype=np.float64)  # GL1
+    pos[1] = np.array([0.0, 0.0, -bond(1, 2)], dtype=np.float64)  # PO4
+    pos[0] = pos[1] + np.array([0.0, 0.0, -bond(0, 1)], dtype=np.float64)  # NC3
+    _place_bonded_bead(pos, 1, 2, 3, bond(2, 3), angle(1, 2, 3), bend_sign=1.0)  # GL2
+    _place_bonded_bead(pos, 1, 2, 4, bond(2, 4), angle(1, 2, 4), bend_sign=-1.0)  # C1A
+
+    # A tail: GL1-C1A-C2A-D3A-C4A-C5A.
+    chain_a = [2, 4, 5, 6, 7, 8]
+    for prev, cur, nxt in zip(chain_a[:-2], chain_a[1:-1], chain_a[2:]):
+        _place_bonded_bead(pos, prev, cur, nxt, bond(cur, nxt), angle(prev, cur, nxt), bend_sign=-1.0)
+
+    # B tail starts from GL2.  The ITP has no GL1-GL2-C1B angle, so place the
+    # branch roughly parallel to the A tail before following explicit angles.
+    tail_axis = pos[4] - pos[2]
+    tail_axis /= float(np.linalg.norm(tail_axis))
+    pos[9] = pos[3] + bond(3, 9) * tail_axis
+    chain_b = [3, 9, 10, 11, 12, 13]
+    for prev, cur, nxt in zip(chain_b[:-2], chain_b[1:-1], chain_b[2:]):
+        _place_bonded_bead(pos, prev, cur, nxt, bond(cur, nxt), angle(prev, cur, nxt), bend_sign=1.0)
+
+    if not np.all(np.isfinite(pos)):
+        raise ValueError("Failed to construct finite ITP-derived DOPC reference")
+    pos -= np.mean(pos, axis=0)
+    return pos
+
+
+def sample_isolated_dopc_bonded_conformers(
+    dopc: dict,
+    lipids_itp_path: Path,
+    conformer_count: int = 2,
+    temperature_upside: float = DEFAULT_PRODUCTION_TEMP_UPSIDE,
+    seed: int = 1729,
+    mc_steps_per_conformer: int = 2000,
+    proposal_sigma_nm: float = 0.025,
+) -> np.ndarray:
+    """Sample isolated DOPC conformers from dry-MARTINI bonded terms only.
+
+    This is intentionally protein-free and bilayer-free.  It broadens the
+    direct constituent projection with intramolecular bonded flexibility while
+    avoiding bilayer PMFs, IBI targets, force matching, or template conformers.
+    """
+    conformer_count = max(1, int(conformer_count))
+    base = _build_dopc_reference_from_itp_topology(dopc)
+    if conformer_count == 1:
+        return _canonicalize_lipid_reference_ensemble_to_z(base)
+
+    kbt = float(temperature_upside) * ENERGY_CONVERSION_KJ_PER_EUP
+    if kbt <= 0.0:
+        raise ValueError("isolated DOPC conformer temperature must be positive")
+    steps_per_conformer = max(1, int(mc_steps_per_conformer))
+    sigma = float(proposal_sigma_nm)
+    if sigma <= 0.0:
+        raise ValueError("isolated DOPC conformer proposal sigma must be positive")
+
+    rng = np.random.default_rng(int(seed))
+    current = np.asarray(base, dtype=np.float64).copy()
+    current -= current.mean(axis=0, keepdims=True)
+    current_energy = compute_dopc_bonded_energy(current, lipids_itp_path)
+    refs = [current.copy()]
+    accepted = 0
+    attempted = 0
+
+    while len(refs) < conformer_count:
+        for _ in range(steps_per_conformer):
+            attempted += 1
+            trial = current.copy()
+            bead = int(rng.integers(0, trial.shape[0]))
+            trial[bead] += rng.normal(0.0, sigma, size=3)
+            trial -= trial.mean(axis=0, keepdims=True)
+            trial_energy = compute_dopc_bonded_energy(trial, lipids_itp_path)
+            delta = trial_energy - current_energy
+            if delta <= 0.0 or float(rng.random()) < math.exp(-delta / kbt):
+                current = trial
+                current_energy = trial_energy
+                accepted += 1
+        refs.append(current.copy())
+
+    acceptance = accepted / max(1, attempted)
+    print(
+        "  Sampled isolated DOPC bonded conformers: "
+        f"{len(refs)} conformer(s), acceptance={acceptance:.3f}, "
+        f"T={temperature_upside:.4f} Upside, seed={int(seed)}"
+    )
+    return _canonicalize_lipid_reference_ensemble_to_z(np.asarray(refs, dtype=np.float64))
+
+
+def _derive_dopc_cg_params_from_reference_ensemble(
+    ref_bead_positions_nm: np.ndarray,
+    bead_types: list,
+    pair_params: dict,
+    bead_masses_g_mol: list | None,
+    bonds: list | None,
+) -> dict:
+    refs = _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm)
+    per_conf = [
+        derive_dopc_cg_params(
+            ref_bead_positions_nm=ref,
+            bead_types=bead_types,
+            pair_params=pair_params,
+            bead_masses_g_mol=bead_masses_g_mol,
+            bonds=bonds,
+            energy_conversion_kj_per_eup=ENERGY_CONVERSION_KJ_PER_EUP,
+            length_conversion_ang_per_nm=LENGTH_CONVERSION_A_PER_NM,
+        )
+        for ref in refs
+    ]
+    out = dict(per_conf[0])
+    mean_attrs = (
+        "orientation_length_ang",
+        "orientation_bond_fc_eup_a2",
+        "orientation_projected_bond_fc_eup_a2",
+        "transverse_inertia_g_mol_a2",
+        "head_tail_span_ang",
+        "tail_projection_ang",
+    )
+    for name in mean_attrs:
+        out[name] = float(np.mean([float(p[name]) for p in per_conf]))
+    max_attrs = (
+        "max_axis_radius_ang",
+        "max_perp_radius_ang",
+    )
+    for name in max_attrs:
+        out[name] = float(np.max([float(p[name]) for p in per_conf]))
+    out["orientation_mass_g_mol"] = (
+        float(out["transverse_inertia_g_mol_a2"])
+        / max(float(out["orientation_length_ang"]) ** 2, 1.0e-12)
+    )
+    out["conformer_count"] = int(refs.shape[0])
+    out["orientation_length_source"] = "ensemble_mean_DOPC_COM_to_tail_midpoint_projection"
+    out["orientation_mass_source"] = "ensemble_mean_DOPC_transverse_rotational_inertia"
+    out["orientation_bond_fc_source"] = "ensemble_mean_2x_projected_DOPC_bond_stiffness"
+    out["orientation_projected_bond_fc_source"] = "ensemble_mean_sum_DOPC_bond_k_projected_on_orientation_axis"
+    return out
+
+
+def _cg_lipid_conformer_pair_indices(n_conformer: int) -> list[tuple[int, int]]:
+    n_conformer = int(n_conformer)
+    if n_conformer < 1:
+        raise ValueError("n_conformer must be positive")
+    return [(i, j) for i in range(n_conformer) for j in range(n_conformer)]
+
+
+def _decode_h5_string_array(values) -> list[str]:
+    return [
+        x.decode("ascii", errors="ignore").strip() if isinstance(x, bytes) else str(x).strip()
+        for x in values
+    ]
+
+
+def _read_output_box_lengths_ang(h5: h5py.File) -> np.ndarray | None:
+    if "/output/box" in h5 and h5["/output/box"].shape[0] > 0:
+        box = np.asarray(h5["/output/box"][-1], dtype=np.float64).reshape(-1)
+        if box.size >= 3 and np.all(box[:3] > 0.0):
+            return box[:3]
+    for path in (
+        "/input/potential/martini_potential",
+        "/input/potential/cg_lipid_pair",
+        "/input/potential/dist_spring",
+    ):
+        if path in h5:
+            attrs = h5[path].attrs
+            if all(name in attrs for name in ("x_len", "y_len", "z_len")):
+                box = np.asarray([attrs["x_len"], attrs["y_len"], attrs["z_len"]], dtype=np.float64)
+                if np.all(box > 0.0):
+                    return box
+    return None
+
+
+def load_dopc_conformers_from_upside_h5(
+    up_file: Path,
+    max_conformers: int = 4,
+    frame_start_fraction: float = 0.5,
+) -> np.ndarray:
+    """Extract centered DOPC 14-bead conformers from a full-resolution Upside trajectory."""
+    up_file = Path(up_file).expanduser().resolve()
+    max_conformers = max(1, int(max_conformers))
+    with h5py.File(up_file, "r") as h5:
+        if "/output/pos" not in h5:
+            raise RuntimeError(f"{up_file} is missing /output/pos")
+        atom_names = _decode_h5_string_array(h5["/input/atom_names"][:])
+        particle_class = (
+            _decode_h5_string_array(h5["/input/particle_class"][:])
+            if "/input/particle_class" in h5
+            else [""] * len(atom_names)
+        )
+        molecule_ids = np.asarray(h5["/input/molecule_ids"][:], dtype=np.int64)
+        pos = h5["/output/pos"]
+        n_frame = int(pos.shape[0])
+        box_ang = _read_output_box_lengths_ang(h5)
+
+        lipid_molecules = []
+        for mol_id in sorted(set(int(x) for x in molecule_ids)):
+            idx = np.where(molecule_ids == mol_id)[0]
+            if idx.size != 14:
+                continue
+            if any(particle_class[i] and particle_class[i] != "LIPID" for i in idx):
+                continue
+            names = [atom_names[i] for i in idx]
+            if names[:4] != ["NC3", "PO4", "GL1", "GL2"]:
+                continue
+            lipid_molecules.append(idx)
+        if not lipid_molecules:
+            raise RuntimeError(f"No 14-bead DOPC lipid molecules found in {up_file}")
+
+        first_frame = int(round(float(frame_start_fraction) * float(max(0, n_frame - 1))))
+        frame_candidates = list(range(first_frame, n_frame))
+        if not frame_candidates:
+            frame_candidates = [n_frame - 1]
+        n_pool = len(frame_candidates) * len(lipid_molecules)
+        n_sample = min(max_conformers, n_pool)
+        if n_sample < max_conformers:
+            print(
+                f"  Requested {max_conformers} DOPC conformers but only "
+                f"{n_pool} frame-lipid samples are available"
+            )
+        sample_linear = np.linspace(0, n_pool - 1, n_sample)
+        sample_indices = []
+        seen = set()
+        for value in sample_linear:
+            idx = int(round(float(value)))
+            if idx in seen:
+                continue
+            seen.add(idx)
+            sample_indices.append(idx)
+        conformers = []
+        n_lipid = len(lipid_molecules)
+        for sample_idx in sample_indices:
+            frame = frame_candidates[sample_idx // n_lipid]
+            lipid = lipid_molecules[sample_idx % n_lipid]
+            beads_ang = np.asarray(pos[frame, 0, lipid, :], dtype=np.float64)
+            delta = beads_ang - beads_ang[0][None, :]
+            if box_ang is not None:
+                delta -= box_ang[None, :] * np.round(delta / box_ang[None, :])
+            beads_ang = beads_ang[0][None, :] + delta
+            beads_nm = (beads_ang - np.mean(beads_ang, axis=0)[None, :]) * ANGSTROM_TO_NM
+            conformers.append(beads_nm)
+    refs = _canonicalize_lipid_reference_ensemble_to_z(np.asarray(conformers, dtype=np.float64))
+    print(
+        f"  Loaded {refs.shape[0]} DOPC conformers from {up_file} "
+        f"using evenly spaced frame-lipid samples from a pool of {n_pool}"
+    )
+    return refs
+
+
+def _dopc_lipid_molecules_from_upside_h5(h5: h5py.File, up_file: Path) -> list[np.ndarray]:
+    atom_names = _decode_h5_string_array(h5["/input/atom_names"][:])
+    particle_class = (
+        _decode_h5_string_array(h5["/input/particle_class"][:])
+        if "/input/particle_class" in h5
+        else [""] * len(atom_names)
+    )
+    molecule_ids = np.asarray(h5["/input/molecule_ids"][:], dtype=np.int64)
+    lipid_molecules = []
+    for mol_id in sorted(set(int(x) for x in molecule_ids)):
+        idx = np.where(molecule_ids == mol_id)[0]
+        if idx.size != 14:
+            continue
+        if any(particle_class[i] and particle_class[i] != "LIPID" for i in idx):
+            continue
+        names = [atom_names[i] for i in idx]
+        if names[:4] != ["NC3", "PO4", "GL1", "GL2"]:
+            continue
+        lipid_molecules.append(idx)
+    if not lipid_molecules:
+        raise RuntimeError(f"No 14-bead DOPC lipid molecules found in {up_file}")
+    return lipid_molecules
+
+
+def _extract_cgl_centers_and_orientations_from_frame(
+    frame_pos_ang: np.ndarray,
+    lipid_molecules: list[np.ndarray],
+    box_ang: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    centers = []
+    directions = []
+    for lipid in lipid_molecules:
+        beads_ang = np.asarray(frame_pos_ang[lipid, :], dtype=np.float64)
+        delta = beads_ang - beads_ang[0][None, :]
+        if box_ang is not None:
+            delta -= box_ang[None, :] * np.round(delta / box_ang[None, :])
+        beads_ang = beads_ang[0][None, :] + delta
+        center = np.mean(beads_ang, axis=0)
+        direction = ((beads_ang[8] + beads_ang[13]) * 0.5) - beads_ang[0]
+        norm = float(np.linalg.norm(direction))
+        if norm <= 1.0e-12:
+            continue
+        centers.append(center)
+        directions.append(direction / norm)
+    if not centers:
+        raise RuntimeError("No valid DOPC centers/orientations extracted from frame")
+    return np.asarray(centers, dtype=np.float64), np.asarray(directions, dtype=np.float64)
+
+
+def _cgl_particle_indices_from_upside_h5(h5: h5py.File) -> np.ndarray:
+    if "/input/type" not in h5:
+        return np.zeros(0, dtype=np.int64)
+    atom_types = _decode_h5_string_array(h5["/input/type"][:])
+    return np.asarray([i for i, name in enumerate(atom_types) if name == "CGL"], dtype=np.int64)
+
+
+def _extract_dynamic_cgl_centers_and_orientations_from_frame(
+    h5: h5py.File,
+    frame: int,
+    cgl_indices: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    centers = np.asarray(h5["/output/pos"][frame, 0, cgl_indices, :], dtype=np.float64)
+    if "/output/cgl_orientation" in h5:
+        directions = np.asarray(h5["/output/cgl_orientation"][frame, 0, :, :], dtype=np.float64)
+    elif "/input/potential/cgl_orientation_state/direction" in h5:
+        directions = np.asarray(h5["/input/potential/cgl_orientation_state/direction"][:], dtype=np.float64)
+    else:
+        raise RuntimeError("CGL trajectory lacks /output/cgl_orientation and input orientation state")
+    if directions.shape != centers.shape:
+        raise RuntimeError(
+            f"CGL orientation shape {directions.shape} does not match center shape {centers.shape}"
+        )
+    norm = np.linalg.norm(directions, axis=1)
+    valid = norm > 1.0e-12
+    if not np.any(valid):
+        raise RuntimeError("No valid CGL orientations extracted from frame")
+    return centers[valid], directions[valid] / norm[valid, None]
+
+
+def _grid_edges_from_centers(values: np.ndarray, lo: float | None = None, hi: float | None = None) -> np.ndarray:
+    values = np.asarray(values, dtype=np.float64)
+    edges = np.empty(values.size + 1, dtype=np.float64)
+    edges[1:-1] = 0.5 * (values[:-1] + values[1:])
+    if values.size > 1:
+        edges[0] = values[0] - 0.5 * float(values[1] - values[0])
+        edges[-1] = values[-1] + 0.5 * float(values[-1] - values[-2])
+    else:
+        edges[0] = values[0] - 0.5
+        edges[-1] = values[0] + 0.5
+    if lo is not None:
+        edges[0] = float(lo)
+    if hi is not None:
+        edges[-1] = float(hi)
+    return edges
+
+
+def _center_orientation_pair_counts_from_upside_h5(
+    up_file: Path,
+    r_values_nm: np.ndarray,
+    cos_theta_grid: np.ndarray,
+    frame_start_fraction: float = 0.5,
+) -> dict:
+    up_file = Path(up_file).expanduser().resolve()
+    r_values_nm = np.asarray(r_values_nm, dtype=np.float64)
+    if r_values_nm.ndim != 1 or r_values_nm.size < 2:
+        raise ValueError("r_values_nm must be a 1D grid with at least two points")
+    cos_theta_grid = np.asarray(cos_theta_grid, dtype=np.float64)
+    edges_nm = _grid_edges_from_centers(r_values_nm, lo=0.0)
+    angle_edges = _grid_edges_from_centers(cos_theta_grid, lo=-1.0, hi=1.0)
+
+    counts = np.zeros((r_values_nm.size, cos_theta_grid.size, cos_theta_grid.size), dtype=np.float64)
+    with h5py.File(up_file, "r") as h5:
+        if "/output/pos" not in h5:
+            raise RuntimeError(f"{up_file} is missing /output/pos")
+        cgl_indices = _cgl_particle_indices_from_upside_h5(h5)
+        if cgl_indices.size:
+            source_kind = "dynamic_vector_cgl"
+            lipid_molecules = []
+        else:
+            source_kind = "full_dopc"
+            lipid_molecules = _dopc_lipid_molecules_from_upside_h5(h5, up_file)
+        pos = h5["/output/pos"]
+        n_frame = int(pos.shape[0])
+        first_frame = int(round(float(frame_start_fraction) * float(max(0, n_frame - 1))))
+        frame_indices = list(range(first_frame, n_frame))
+        if not frame_indices:
+            frame_indices = [n_frame - 1]
+        box_ang = _read_output_box_lengths_ang(h5)
+        for frame in frame_indices:
+            if source_kind == "dynamic_vector_cgl":
+                centers_ang, directions = _extract_dynamic_cgl_centers_and_orientations_from_frame(
+                    h5,
+                    frame,
+                    cgl_indices,
+                )
+            else:
+                centers_ang, directions = _extract_cgl_centers_and_orientations_from_frame(
+                    np.asarray(pos[frame, 0, :, :], dtype=np.float64),
+                    lipid_molecules,
+                    box_ang,
+                )
+            for i in range(centers_ang.shape[0] - 1):
+                delta = centers_ang[i + 1 :, :] - centers_ang[i][None, :]
+                if box_ang is not None:
+                    delta -= box_ang[None, :] * np.round(delta / box_ang[None, :])
+                r_ang = np.linalg.norm(delta, axis=1)
+                valid = r_ang > 1.0e-12
+                if not np.any(valid):
+                    continue
+                delta = delta[valid]
+                r_ang = r_ang[valid]
+                n12 = delta / r_ang[:, None]
+                dir1 = directions[i][None, :]
+                dir2 = directions[i + 1 :, :][valid]
+                a1 = -np.sum(dir1 * n12, axis=1)
+                a2 = np.sum(dir2 * n12, axis=1)
+                r_nm = r_ang * ANGSTROM_TO_NM
+                samples = np.column_stack([r_nm, a1, a2])
+                reverse_samples = np.column_stack([r_nm, a2, a1])
+                hist, _ = np.histogramdd(
+                    np.vstack([samples, reverse_samples]),
+                    bins=(edges_nm, angle_edges, angle_edges),
+                )
+                counts += hist.astype(np.float64)
+    print(
+        f"  Loaded center/orientation pair counts from {up_file}: "
+        f"{int(np.sum(counts))} ordered pair samples, source={source_kind}, "
+        f"{int(np.count_nonzero(counts > 0.0))}/{counts.size} occupied tensor bins"
+    )
+    return {
+        "counts": counts,
+        "occupied": counts > 0.0,
+        "source": source_kind,
+        "frame_start_fraction": float(frame_start_fraction),
+        "pair_sample_count": int(np.sum(counts)),
+        "occupied_radial_bins": int(np.count_nonzero(np.any(counts > 0.0, axis=(1, 2)))),
+        "occupied_tensor_bins": int(np.count_nonzero(counts > 0.0)),
+    }
+
+
+def _fluid_bilayer_pair_pmf_from_upside_h5(
+    up_file: Path,
+    r_values_nm: np.ndarray,
+    cos_theta_grid: np.ndarray,
+    temperature_upside: float,
+    frame_start_fraction: float = 0.5,
+) -> dict:
+    dist = _center_orientation_pair_counts_from_upside_h5(
+        up_file,
+        r_values_nm,
+        cos_theta_grid,
+        frame_start_fraction=frame_start_fraction,
+    )
+    counts = np.asarray(dist["counts"], dtype=np.float64)
+    r_values_nm = np.asarray(r_values_nm, dtype=np.float64)
+    edges_nm = _grid_edges_from_centers(r_values_nm, lo=0.0)
+
+    shell_volume = (4.0 * math.pi / 3.0) * (edges_nm[1:] ** 3 - edges_nm[:-1] ** 3)
+    density = counts / np.maximum(shell_volume[:, None, None], 1.0e-12)
+    finite = density > 0.0
+    pmf = np.full_like(counts, np.nan, dtype=np.float64)
+    if np.any(finite):
+        kbt = float(temperature_upside) * ENERGY_CONVERSION_KJ_PER_EUP
+        pmf[finite] = -kbt * np.log(density[finite])
+        pmf[finite] -= float(np.min(pmf[finite]))
+    print(
+        f"  Loaded fluid-bilayer orientation-resolved PMF from {up_file}: "
+        f"{int(np.sum(counts))} ordered lipid-pair samples, "
+        f"{int(np.count_nonzero(finite))}/{counts.size} occupied tensor bins"
+    )
+    return {
+        "pmf_kj_mol": pmf,
+        "counts": counts,
+        "occupied": finite,
+        "source": "full_dopc_fluid_bilayer_oriented_pair_pmf",
+        "frame_start_fraction": float(dist["frame_start_fraction"]),
+        "pair_sample_count": int(dist["pair_sample_count"]),
+        "occupied_radial_bins": int(np.count_nonzero(np.any(finite, axis=(1, 2)))),
+        "occupied_tensor_bins": int(np.count_nonzero(finite)),
+    }
+
+
+def _relative_entropy_pair_ibi_correction_from_upside_h5(
+    target_up_file: Path,
+    model_up_file: Path,
+    r_values_nm: np.ndarray,
+    cos_theta_grid: np.ndarray,
+    temperature_upside: float,
+    target_frame_start_fraction: float = 0.5,
+    model_frame_start_fraction: float = 0.5,
+    step_size: float = 1.0,
+) -> dict:
+    step_size = float(step_size)
+    if not (0.0 < step_size <= 1.0):
+        raise ValueError(f"IBI step_size must be in (0, 1], got {step_size}")
+    target = _center_orientation_pair_counts_from_upside_h5(
+        target_up_file,
+        r_values_nm,
+        cos_theta_grid,
+        frame_start_fraction=target_frame_start_fraction,
+    )
+    model = _center_orientation_pair_counts_from_upside_h5(
+        model_up_file,
+        r_values_nm,
+        cos_theta_grid,
+        frame_start_fraction=model_frame_start_fraction,
+    )
+    target_counts = np.asarray(target["counts"], dtype=np.float64)
+    model_counts = np.asarray(model["counts"], dtype=np.float64)
+    target_total = max(float(np.sum(target_counts)), 1.0)
+    model_total = max(float(np.sum(model_counts)), 1.0)
+    target_probability = target_counts / target_total
+    model_probability = model_counts / model_total
+    sampled = (target_counts > 0.0) & (model_counts > 0.0)
+    raw_correction = np.full_like(target_counts, np.nan, dtype=np.float64)
+    kbt = float(temperature_upside) * ENERGY_CONVERSION_KJ_PER_EUP
+    raw_correction[sampled] = kbt * np.log(model_probability[sampled] / target_probability[sampled])
+    correction = raw_correction * step_size
+    raw_finite = raw_correction[np.isfinite(raw_correction)]
+    finite = correction[np.isfinite(correction)]
+    if raw_finite.size:
+        raw_corr_min = float(np.min(raw_finite))
+        raw_corr_max = float(np.max(raw_finite))
+        raw_corr_mean = float(np.mean(raw_finite))
+    else:
+        raw_corr_min = raw_corr_max = raw_corr_mean = 0.0
+    if finite.size:
+        corr_min = float(np.min(finite))
+        corr_max = float(np.max(finite))
+        corr_mean = float(np.mean(finite))
+    else:
+        corr_min = corr_max = corr_mean = 0.0
+    print(
+        f"  IBI CGL-CGL correction from target={target_up_file} and model={model_up_file}: "
+        f"{int(np.count_nonzero(sampled))}/{sampled.size} sampled tensor bins, "
+        f"raw deltaU range {raw_corr_min:.3f}..{raw_corr_max:.3f} kJ/mol, "
+        f"applied step={step_size:.3f} range {corr_min:.3f}..{corr_max:.3f} kJ/mol"
+    )
+    return {
+        "correction_kj_mol": correction,
+        "raw_correction_kj_mol": raw_correction,
+        "sampled": sampled,
+        "target_counts": target_counts,
+        "model_counts": model_counts,
+        "target_pair_sample_count": int(target["pair_sample_count"]),
+        "model_pair_sample_count": int(model["pair_sample_count"]),
+        "target_occupied_tensor_bins": int(target["occupied_tensor_bins"]),
+        "model_occupied_tensor_bins": int(model["occupied_tensor_bins"]),
+        "sampled_tensor_bins": int(np.count_nonzero(sampled)),
+        "target_frame_start_fraction": float(target_frame_start_fraction),
+        "model_frame_start_fraction": float(model_frame_start_fraction),
+        "step_size": step_size,
+        "raw_correction_min_kj_mol": raw_corr_min,
+        "raw_correction_max_kj_mol": raw_corr_max,
+        "raw_correction_mean_kj_mol": raw_corr_mean,
+        "correction_min_kj_mol": corr_min,
+        "correction_max_kj_mol": corr_max,
+        "correction_mean_kj_mol": corr_mean,
+    }
+
+
+def _cgl_density_frames_from_upside_h5(
+    up_file: Path,
+    frame_start_fraction: float = 0.5,
+    max_frames: int = 400,
+) -> list[tuple[np.ndarray, np.ndarray | None]]:
+    up_file = Path(up_file).expanduser().resolve()
+    with h5py.File(up_file, "r") as h5:
+        if "/output/pos" not in h5:
+            raise RuntimeError(f"{up_file} is missing /output/pos")
+        pos = h5["/output/pos"]
+        n_frame = int(pos.shape[0])
+        first_frame = int(round(float(frame_start_fraction) * float(max(0, n_frame - 1))))
+        frames = list(range(first_frame, n_frame))
+        if not frames:
+            frames = [n_frame - 1]
+        max_frames = max(1, int(max_frames))
+        if len(frames) > max_frames:
+            pick = np.linspace(0, len(frames) - 1, max_frames, dtype=int)
+            frames = [frames[int(i)] for i in pick]
+
+        cgl_indices = _cgl_particle_indices_from_upside_h5(h5)
+        if cgl_indices.size:
+            source_kind = "dynamic_vector_cgl"
+            lipid_molecules = []
+        else:
+            source_kind = "full_dopc"
+            lipid_molecules = _dopc_lipid_molecules_from_upside_h5(h5, up_file)
+        box_ang = _read_output_box_lengths_ang(h5)
+        out = []
+        for frame in frames:
+            if source_kind == "dynamic_vector_cgl":
+                centers_ang, _ = _extract_dynamic_cgl_centers_and_orientations_from_frame(
+                    h5,
+                    frame,
+                    cgl_indices,
+                )
+            else:
+                centers_ang, _ = _extract_cgl_centers_and_orientations_from_frame(
+                    np.asarray(pos[frame, 0, :, :], dtype=np.float64),
+                    lipid_molecules,
+                    box_ang,
+                )
+            out.append((centers_ang.astype(np.float64), None if box_ang is None else box_ang.astype(np.float64)))
+    print(f"  Loaded {len(out)} local-density frames from {up_file}, source={source_kind}")
+    return out
+
+
+def _minimum_image_ang(delta: np.ndarray, box_ang: np.ndarray | None) -> np.ndarray:
+    out = np.asarray(delta, dtype=np.float64).copy()
+    if box_ang is None:
+        return out
+    box = np.asarray(box_ang, dtype=np.float64)
+    valid = box > 0.0
+    out[..., valid] -= box[valid] * np.round(out[..., valid] / box[valid])
+    return out
+
+
+def _derive_density_kernel_cutoff_ang(
+    target_frames: list[tuple[np.ndarray, np.ndarray | None]],
+    hist_max_ang: float = 24.0,
+) -> tuple[float, dict]:
+    distances = []
+    for centers_ang, box_ang in target_frames:
+        if centers_ang.shape[0] < 4:
+            continue
+        mid_z = float(np.median(centers_ang[:, 2]))
+        for mask in (centers_ang[:, 2] <= mid_z, centers_ang[:, 2] > mid_z):
+            xy = centers_ang[mask, :2]
+            if xy.shape[0] < 2:
+                continue
+            box_xy = None if box_ang is None else box_ang[:2]
+            for i in range(xy.shape[0] - 1):
+                delta = xy[i + 1 :, :] - xy[i][None, :]
+                if box_xy is not None:
+                    delta -= box_xy[None, :] * np.round(delta / box_xy[None, :])
+                r = np.sqrt(np.sum(delta * delta, axis=1))
+                distances.append(r)
+    if not distances:
+        raise RuntimeError("Cannot derive density kernel cutoff: no same-leaflet distances")
+    distances = np.concatenate(distances)
+    distances = distances[(distances > 1.0e-6) & (distances < float(hist_max_ang))]
+    if distances.size < 100:
+        raise RuntimeError("Cannot derive density kernel cutoff: too few same-leaflet distances")
+    edges = np.linspace(0.0, float(hist_max_ang), 97)
+    counts, edges = np.histogram(distances, bins=edges)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    peak_window = (centers >= 4.0) & (centers <= 12.0)
+    if not np.any(peak_window):
+        raise RuntimeError("Cannot derive density kernel cutoff: no first-shell peak window")
+    peak_candidates = np.where(peak_window)[0]
+    peak_idx = int(peak_candidates[int(np.argmax(counts[peak_candidates]))])
+    search = np.arange(peak_idx + 1, len(centers))
+    search = search[centers[search] <= 18.0]
+    min_idx = None
+    for idx in search:
+        if idx <= 0 or idx >= len(counts) - 1:
+            continue
+        if counts[idx] <= counts[idx - 1] and counts[idx] <= counts[idx + 1]:
+            min_idx = int(idx)
+            break
+    if min_idx is None and search.size:
+        min_idx = int(search[int(np.argmin(counts[search]))])
+    if min_idx is None:
+        min_idx = int(np.argmin(np.abs(centers - min(18.0, 1.45 * centers[peak_idx]))))
+    cutoff = float(centers[min_idx])
+    cutoff = max(8.0, min(18.0, cutoff))
+    return cutoff, {
+        "rdf_hist_centers_ang": centers,
+        "rdf_hist_counts": counts.astype(np.float64),
+        "rdf_first_peak_ang": float(centers[peak_idx]),
+        "rdf_first_minimum_ang": cutoff,
+        "rdf_distance_sample_count": int(distances.size),
+    }
+
+
+def _density_kernel_values(r_ang: np.ndarray, cutoff_ang: float) -> np.ndarray:
+    x = np.asarray(r_ang, dtype=np.float64) / float(cutoff_ang)
+    out = np.zeros_like(x, dtype=np.float64)
+    inside = x < 1.0
+    y = 1.0 - x[inside] * x[inside]
+    out[inside] = y * y
+    return out
+
+
+def _local_density_samples(
+    frames: list[tuple[np.ndarray, np.ndarray | None]],
+    cutoff_ang: float,
+) -> np.ndarray:
+    samples = []
+    for centers_ang, box_ang in frames:
+        n = centers_ang.shape[0]
+        rho = np.zeros(n, dtype=np.float64)
+        for i in range(n - 1):
+            delta = _minimum_image_ang(centers_ang[i + 1 :, :] - centers_ang[i][None, :], box_ang)
+            r = np.sqrt(np.sum(delta * delta, axis=1))
+            valid = (r > 1.0e-12) & (r < float(cutoff_ang))
+            if not np.any(valid):
+                continue
+            w = _density_kernel_values(r[valid], cutoff_ang)
+            idx = np.where(valid)[0] + i + 1
+            rho[i] += float(np.sum(w))
+            np.add.at(rho, idx, w)
+        samples.append(rho)
+    if not samples:
+        raise RuntimeError("No local-density samples were computed")
+    return np.concatenate(samples)
+
+
+def _build_relative_entropy_density_table(
+    target_up_file: Path,
+    model_up_file: Path,
+    temperature_upside: float = DEFAULT_PRODUCTION_TEMP_UPSIDE,
+    target_frame_start_fraction: float = 0.5,
+    model_frame_start_fraction: float = 0.5,
+    max_frames: int = 400,
+    n_kernel: int = 24,
+    n_embedding: int = 32,
+    n_hist: int = 96,
+    pseudocount: float = 0.5,
+    smooth: float = 1.0e-3,
+) -> dict:
+    target_frames = _cgl_density_frames_from_upside_h5(
+        target_up_file,
+        frame_start_fraction=target_frame_start_fraction,
+        max_frames=max_frames,
+    )
+    model_frames = _cgl_density_frames_from_upside_h5(
+        model_up_file,
+        frame_start_fraction=model_frame_start_fraction,
+        max_frames=max_frames,
+    )
+    cutoff_ang, cutoff_meta = _derive_density_kernel_cutoff_ang(target_frames)
+
+    target_rho = _local_density_samples(target_frames, cutoff_ang)
+    model_rho = _local_density_samples(model_frames, cutoff_ang)
+    rho_lo = float(min(np.min(target_rho), np.min(model_rho)))
+    rho_hi = float(max(np.max(target_rho), np.max(model_rho)))
+    pad = max(0.05 * (rho_hi - rho_lo), 0.05)
+    rho_min = max(0.0, rho_lo - pad)
+    rho_max = rho_hi + pad
+    hist_edges = np.linspace(rho_min, rho_max, int(n_hist) + 1, dtype=np.float64)
+    hist_centers = 0.5 * (hist_edges[:-1] + hist_edges[1:])
+    target_counts, _ = np.histogram(target_rho, bins=hist_edges)
+    model_counts, _ = np.histogram(model_rho, bins=hist_edges)
+    target_prob = (target_counts.astype(np.float64) + float(pseudocount))
+    model_prob = (model_counts.astype(np.float64) + float(pseudocount))
+    target_prob /= float(np.sum(target_prob))
+    model_prob /= float(np.sum(model_prob))
+    kbt = float(temperature_upside) * ENERGY_CONVERSION_KJ_PER_EUP
+    correction_kj_mol = kbt * np.log(model_prob / target_prob)
+    correction_kj_mol -= float(np.average(correction_kj_mol, weights=target_prob))
+
+    kernel_spacing = float(cutoff_ang) / float(int(n_kernel) - 2)
+    kernel_knot_vector = np.zeros(int(n_kernel) + 4, dtype=np.float64)
+    kernel_knot_vector[4:-4] = np.arange(1, int(n_kernel) - 3, dtype=np.float64)
+    kernel_knot_vector[-4:] = kernel_knot_vector[-5]
+    kernel_r = np.linspace(0.0, float(cutoff_ang), 160, dtype=np.float64)
+    kernel_coeff = _fit_radial_bspline(
+        kernel_r / kernel_spacing,
+        _density_kernel_values(kernel_r, cutoff_ang),
+        kernel_knot_vector,
+        smooth=0.0,
+    )
+
+    rho_spacing = (rho_max - rho_min) / float(int(n_embedding) - 3)
+    emb_knot_vector = np.zeros(int(n_embedding) + 4, dtype=np.float64)
+    emb_knot_vector[4:-4] = np.arange(1, int(n_embedding) - 3, dtype=np.float64)
+    emb_knot_vector[-4:] = emb_knot_vector[-5]
+    emb_t = 1.0 + (hist_centers - rho_min) / rho_spacing
+    embedding_coeff = _fit_radial_bspline(
+        emb_t,
+        correction_kj_mol / ENERGY_CONVERSION_KJ_PER_EUP,
+        emb_knot_vector,
+        smooth=float(smooth),
+    )
+
+    finite = correction_kj_mol[np.isfinite(correction_kj_mol)]
+    print(
+        f"  CGL density correction: cutoff={cutoff_ang:.3f} A, "
+        f"rho={rho_min:.3f}..{rho_max:.3f}, "
+        f"deltaU={float(np.min(finite)):.3f}..{float(np.max(finite)):.3f} kJ/mol"
+    )
+    return {
+        "kernel_coeff": kernel_coeff.astype(np.float32),
+        "embedding_coeff": embedding_coeff.astype(np.float32),
+        "kernel_cutoff_ang": float(cutoff_ang),
+        "kernel_knot_spacing_ang": float(kernel_spacing),
+        "kernel_n_knot": int(n_kernel),
+        "embedding_rho_min": float(rho_min),
+        "embedding_rho_max": float(rho_max),
+        "embedding_rho_spacing": float(rho_spacing),
+        "embedding_n_knot": int(n_embedding),
+        "target_rho": target_rho.astype(np.float32),
+        "model_rho": model_rho.astype(np.float32),
+        "rho_hist_centers": hist_centers.astype(np.float32),
+        "target_counts": target_counts.astype(np.float32),
+        "model_counts": model_counts.astype(np.float32),
+        "correction_kj_mol": correction_kj_mol.astype(np.float32),
+        "pseudocount": float(pseudocount),
+        "smooth": float(smooth),
+        "target_frame_count": int(len(target_frames)),
+        "model_frame_count": int(len(model_frames)),
+        "target_sample_count": int(target_rho.size),
+        "model_sample_count": int(model_rho.size),
+        "target_frame_start_fraction": float(target_frame_start_fraction),
+        "model_frame_start_fraction": float(model_frame_start_fraction),
+        "target_upside_h5_path": str(Path(target_up_file).expanduser().resolve()),
+        "model_upside_h5_path": str(Path(model_up_file).expanduser().resolve()),
+        **cutoff_meta,
+    }
+
+
+def add_cg_lipid_density_table_to_h5(
+    base_h5_path: Path,
+    output_path: Path,
+    target_upside_h5_path: Path,
+    model_upside_h5_path: Path,
+    temperature_upside: float = DEFAULT_PRODUCTION_TEMP_UPSIDE,
+    target_frame_start_fraction: float = 0.5,
+    model_frame_start_fraction: float = 0.5,
+    max_frames: int = 400,
+) -> None:
+    base_h5_path = Path(base_h5_path).expanduser().resolve()
+    output_path = Path(output_path).expanduser().resolve()
+    density = _build_relative_entropy_density_table(
+        target_upside_h5_path,
+        model_upside_h5_path,
+        temperature_upside=temperature_upside,
+        target_frame_start_fraction=target_frame_start_fraction,
+        model_frame_start_fraction=model_frame_start_fraction,
+        max_frames=max_frames,
+    )
+
+    def _writer(h5: h5py.File) -> None:
+        with h5py.File(base_h5_path, "r") as src:
+            for key, value in src.attrs.items():
+                h5.attrs[key] = value
+            for key in src.keys():
+                src.copy(key, h5)
+        if "cg_lipid_table" not in h5:
+            raise RuntimeError(f"{base_h5_path} lacks cg_lipid_table")
+        cg_grp = h5["cg_lipid_table"]
+        if "cg_lipid_density" in cg_grp:
+            del cg_grp["cg_lipid_density"]
+        dens = cg_grp.create_group("cg_lipid_density")
+        dens.attrs["schema"] = "cg_lipid_density_relative_entropy_v1"
+        dens.attrs["source"] = "relative_entropy_local_density_target_full_dopc_model_one_particle_cgl"
+        dens.attrs["runtime_representation"] = "sum_i_F_of_local_density_spline_kernel"
+        dens.attrs["correction_layer"] = "conservative_many_body_local_density"
+        dens.attrs["one_particle_cgl_preserved"] = np.int32(1)
+        dens.attrs["orientation_potential"] = np.int32(0)
+        dens.attrs["force_applies_to"] = "cgl_centers_only"
+        dens.attrs["kernel_source"] = "compact_quadratic_kernel_with_cutoff_from_full_dopc_same_leaflet_center_rdf_first_minimum"
+        dens.attrs["embedding_update_rule"] = "F_density=kBT*ln(P_model(rho)/P_target(rho))"
+        dens.attrs["boltzmann_temperature_upside"] = np.float32(temperature_upside)
+        dens.attrs["energy_conversion_kj_per_eup"] = np.float32(ENERGY_CONVERSION_KJ_PER_EUP)
+        dens.attrs["length_conversion_ang_per_nm"] = np.float32(LENGTH_CONVERSION_A_PER_NM)
+        for attr_name in (
+            "kernel_cutoff_ang",
+            "kernel_knot_spacing_ang",
+            "kernel_n_knot",
+            "embedding_rho_min",
+            "embedding_rho_max",
+            "embedding_rho_spacing",
+            "embedding_n_knot",
+            "pseudocount",
+            "smooth",
+            "target_frame_count",
+            "model_frame_count",
+            "target_sample_count",
+            "model_sample_count",
+            "target_frame_start_fraction",
+            "model_frame_start_fraction",
+            "target_upside_h5_path",
+            "model_upside_h5_path",
+            "rdf_first_peak_ang",
+            "rdf_first_minimum_ang",
+            "rdf_distance_sample_count",
+        ):
+            value = density[attr_name]
+            if isinstance(value, (int, np.integer)):
+                dens.attrs[attr_name] = np.int32(value)
+            elif isinstance(value, (float, np.floating)):
+                dens.attrs[attr_name] = np.float32(value)
+            else:
+                dens.attrs[attr_name] = value
+        dens.create_dataset("kernel_coeff", data=density["kernel_coeff"])
+        dens.create_dataset("embedding_coeff", data=density["embedding_coeff"])
+        dens.create_dataset("target_rho", data=density["target_rho"])
+        dens.create_dataset("model_rho", data=density["model_rho"])
+        dens.create_dataset("rho_hist_centers", data=density["rho_hist_centers"])
+        dens.create_dataset("target_counts", data=density["target_counts"])
+        dens.create_dataset("model_counts", data=density["model_counts"])
+        dens.create_dataset("correction_kj_mol", data=density["correction_kj_mol"])
+        dens.create_dataset("rdf_hist_centers_ang", data=density["rdf_hist_centers_ang"].astype(np.float32))
+        dens.create_dataset("rdf_hist_counts", data=density["rdf_hist_counts"].astype(np.float32))
+
+    _write_h5_atomically(output_path, _writer)
+    print(f"Built {output_path} with cg_lipid_density")
+
+
+def _load_cg_lipid_pair_energy_grid_from_h5(
+    table_h5_path: Path,
+    expected_shape: tuple[int, int, int],
+    r_values_nm: np.ndarray,
+) -> np.ndarray:
+    table_h5_path = Path(table_h5_path).expanduser().resolve()
+    with h5py.File(table_h5_path, "r") as h5:
+        if "/cg_lipid_table/cg_lipid_pair" in h5:
+            pair_grp = h5["/cg_lipid_table/cg_lipid_pair"]
+        elif "/input/potential/cg_lipid_pair" in h5:
+            pair_grp = h5["/input/potential/cg_lipid_pair"]
+        else:
+            raise RuntimeError(f"{table_h5_path} lacks a CGL pair table")
+        if "energy_grid_raw_kj_mol" not in pair_grp:
+            raise RuntimeError(f"{table_h5_path} lacks cg_lipid_pair/energy_grid_raw_kj_mol")
+        energy_grid = np.asarray(pair_grp["energy_grid_raw_kj_mol"][:], dtype=np.float64)
+        if energy_grid.shape != expected_shape:
+            raise RuntimeError(
+                f"{table_h5_path} energy grid shape {energy_grid.shape} "
+                f"does not match expected {expected_shape}"
+            )
+        fit_r_min_nm = float(pair_grp.attrs.get("fit_r_min_nm", r_values_nm[0]))
+        fit_r_max_nm = float(pair_grp.attrs.get("fit_r_max_nm", r_values_nm[-1]))
+        if (
+            abs(fit_r_min_nm - float(r_values_nm[0])) > 1.0e-6
+            or abs(fit_r_max_nm - float(r_values_nm[-1])) > 1.0e-6
+        ):
+            raise RuntimeError(
+                f"{table_h5_path} radial support {fit_r_min_nm:.6f}-{fit_r_max_nm:.6f} nm "
+                f"does not match expected {float(r_values_nm[0]):.6f}-{float(r_values_nm[-1]):.6f} nm"
+            )
+    print(f"  CGL-CGL: loaded previous pair energy grid from {table_h5_path}")
+    return energy_grid
+
+
 def _run_cg_pair_tensor_task(task: dict) -> tuple[int, int, int, float]:
     ir = int(task["ir"])
     ia1 = int(task["ia1"])
@@ -1509,32 +2628,445 @@ def _run_cg_pair_tensor_task(task: dict) -> tuple[int, int, int, float]:
     dirs1 = task["dirs1"]
     dirs2 = task["dirs2"]
     bead_frame_angles = task["bead_frame_angles"]
-    ref_nm = task["ref_nm"]
+    ref_nm = np.asarray(task["ref_nm"], dtype=np.float64)
+    if ref_nm.ndim == 2:
+        ref_nm = ref_nm[None, :, :]
+    conformer_pairs = task.get("conformer_pairs")
+    if conformer_pairs is None:
+        conformer_pairs = _cg_lipid_conformer_pair_indices(ref_nm.shape[0])
     temperature = float(task.get("temperature", 0.0))
-    sample_values = []
-    for dir1 in dirs1:
-        for dir2 in dirs2:
-            for frame_angle1 in bead_frame_angles:
-                for frame_angle2 in bead_frame_angles:
-                    sample_values.append(
-                        _compute_cg_pair_energy(
-                            r_nm,
-                            np.asarray(dir1, dtype=np.float64),
-                            np.asarray(dir2, dtype=np.float64),
-                            float(frame_angle1),
-                            float(frame_angle2),
-                            ref_nm,
-                            ref_nm,
-                            task["bead_types"],
-                            task["bead_types"],
-                            task["bead_charges"],
-                            task["bead_charges"],
-                            task["pair_params"],
-                            dist_min_nm=float(task["dist_min_nm"]),
-                        )
-                    )
-    values = np.asarray(sample_values, dtype=np.float64)
+    all_pairs = _cg_lipid_conformer_pair_indices(ref_nm.shape[0])
+    if list(conformer_pairs) != all_pairs:
+        sample_values = []
+        for dir1 in dirs1:
+            for dir2 in dirs2:
+                for frame_angle1 in bead_frame_angles:
+                    for frame_angle2 in bead_frame_angles:
+                        for i_conf, j_conf in conformer_pairs:
+                            sample_values.append(
+                                _compute_cg_pair_energy(
+                                    r_nm,
+                                    np.asarray(dir1, dtype=np.float64),
+                                    np.asarray(dir2, dtype=np.float64),
+                                    float(frame_angle1),
+                                    float(frame_angle2),
+                                    ref_nm[int(i_conf)],
+                                    ref_nm[int(j_conf)],
+                                    task["bead_types"],
+                                    task["bead_types"],
+                                    task["bead_charges"],
+                                    task["bead_charges"],
+                                    task["pair_params"],
+                                    dist_min_nm=float(task["dist_min_nm"]),
+                                )
+                            )
+        values = np.asarray(sample_values, dtype=np.float64)
+    else:
+        values = _compute_cg_pair_energy_samples_vectorized(
+            r_nm,
+            dirs1,
+            dirs2,
+            bead_frame_angles,
+            ref_nm,
+            task["bead_types"],
+            task["bead_charges"],
+            task["pair_params"],
+            dist_min_nm=float(task["dist_min_nm"]),
+        )
     return ir, ia1, ia2, _boltzmann_free_energy_kj_mol(values, temperature)
+
+
+def _extract_dopc_beads_centers_orientations_from_frame(
+    frame_pos_ang: np.ndarray,
+    lipid_molecules: list[np.ndarray],
+    box_ang: np.ndarray | None,
+) -> tuple[list[np.ndarray], np.ndarray, np.ndarray]:
+    bead_frames = []
+    centers = []
+    directions = []
+    for lipid in lipid_molecules:
+        beads_ang = np.asarray(frame_pos_ang[lipid, :], dtype=np.float64)
+        delta = beads_ang - beads_ang[0][None, :]
+        if box_ang is not None:
+            delta -= box_ang[None, :] * np.round(delta / box_ang[None, :])
+        beads_ang = beads_ang[0][None, :] + delta
+        center = np.mean(beads_ang, axis=0)
+        direction = ((beads_ang[8] + beads_ang[13]) * 0.5) - beads_ang[0]
+        norm = float(np.linalg.norm(direction))
+        if norm <= 1.0e-12:
+            continue
+        bead_frames.append(beads_ang)
+        centers.append(center)
+        directions.append(direction / norm)
+    if not bead_frames:
+        raise RuntimeError("No valid DOPC bead frames extracted from frame")
+    return bead_frames, np.asarray(centers, dtype=np.float64), np.asarray(directions, dtype=np.float64)
+
+
+def _least_squares_generalized_force_energy_grid(
+    r_values_nm: np.ndarray,
+    cos_theta_grid: np.ndarray,
+    base_energy_grid_kj_mol: np.ndarray,
+    sampled: np.ndarray,
+    counts: np.ndarray,
+    mean_dudr: np.ndarray,
+    mean_duda1: np.ndarray,
+    mean_duda2: np.ndarray,
+    min_count: int,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    var_index = np.full(sampled.shape, -1, dtype=np.int32)
+    sampled_indices = np.argwhere(sampled)
+    for idx, (ir, ia1, ia2) in enumerate(sampled_indices):
+        var_index[int(ir), int(ia1), int(ia2)] = int(idx)
+    n_var = int(sampled_indices.shape[0])
+    if n_var == 0:
+        return (
+            np.asarray(base_energy_grid_kj_mol, dtype=np.float64).copy(),
+            np.zeros_like(sampled, dtype=bool),
+            {
+                "lsq_variable_count": 0,
+                "lsq_equation_count": 0,
+                "lsq_residual_rms_kj_mol": 0.0,
+                "lsq_solver": "none_no_sampled_bins",
+            },
+        )
+
+    rows = []
+    cols = []
+    data = []
+    rhs = []
+    graph = [[] for _ in range(n_var)]
+
+    def add_difference_equation(lo_key, hi_key, delta_coord: float, deriv_value: float, weight: float) -> None:
+        row = len(rhs)
+        lo = int(var_index[lo_key])
+        hi = int(var_index[hi_key])
+        rows.extend([row, row])
+        cols.extend([lo, hi])
+        data.extend([-weight, weight])
+        rhs.append(weight * float(deriv_value) * float(delta_coord))
+        graph[lo].append(hi)
+        graph[hi].append(lo)
+
+    count_scale = math.sqrt(float(max(1, int(min_count))))
+    n_r, n_a1, n_a2 = sampled.shape
+    for ir in range(n_r):
+        for ia1 in range(n_a1):
+            for ia2 in range(n_a2):
+                if not sampled[ir, ia1, ia2]:
+                    continue
+                if ir + 1 < n_r and sampled[ir + 1, ia1, ia2]:
+                    deriv = 0.5 * (float(mean_dudr[ir, ia1, ia2]) + float(mean_dudr[ir + 1, ia1, ia2]))
+                    if np.isfinite(deriv):
+                        weight = math.sqrt(min(float(counts[ir, ia1, ia2]), float(counts[ir + 1, ia1, ia2]))) / count_scale
+                        add_difference_equation(
+                            (ir, ia1, ia2),
+                            (ir + 1, ia1, ia2),
+                            float(r_values_nm[ir + 1] - r_values_nm[ir]),
+                            deriv,
+                            weight,
+                        )
+                if ia1 + 1 < n_a1 and sampled[ir, ia1 + 1, ia2]:
+                    deriv = 0.5 * (float(mean_duda1[ir, ia1, ia2]) + float(mean_duda1[ir, ia1 + 1, ia2]))
+                    if np.isfinite(deriv):
+                        weight = math.sqrt(min(float(counts[ir, ia1, ia2]), float(counts[ir, ia1 + 1, ia2]))) / count_scale
+                        add_difference_equation(
+                            (ir, ia1, ia2),
+                            (ir, ia1 + 1, ia2),
+                            float(cos_theta_grid[ia1 + 1] - cos_theta_grid[ia1]),
+                            deriv,
+                            weight,
+                        )
+                if ia2 + 1 < n_a2 and sampled[ir, ia1, ia2 + 1]:
+                    deriv = 0.5 * (float(mean_duda2[ir, ia1, ia2]) + float(mean_duda2[ir, ia1, ia2 + 1]))
+                    if np.isfinite(deriv):
+                        weight = math.sqrt(min(float(counts[ir, ia1, ia2]), float(counts[ir, ia1, ia2 + 1]))) / count_scale
+                        add_difference_equation(
+                            (ir, ia1, ia2),
+                            (ir, ia1, ia2 + 1),
+                            float(cos_theta_grid[ia2 + 1] - cos_theta_grid[ia2]),
+                            deriv,
+                            weight,
+                        )
+
+    seen = np.zeros(n_var, dtype=bool)
+    for start in range(n_var):
+        if seen[start]:
+            continue
+        stack = [start]
+        component = []
+        seen[start] = True
+        while stack:
+            node = stack.pop()
+            component.append(node)
+            for nb in graph[node]:
+                if not seen[nb]:
+                    seen[nb] = True
+                    stack.append(nb)
+        anchor = max(
+            component,
+            key=lambda idx: (
+                int(sampled_indices[idx, 0]),
+                float(counts[tuple(sampled_indices[idx])]),
+            ),
+        )
+        key = tuple(int(x) for x in sampled_indices[anchor])
+        weight = math.sqrt(float(counts[key])) / count_scale
+        row = len(rhs)
+        rows.append(row)
+        cols.append(anchor)
+        data.append(weight)
+        rhs.append(weight * float(base_energy_grid_kj_mol[key]))
+
+    if not rhs:
+        return (
+            np.asarray(base_energy_grid_kj_mol, dtype=np.float64).copy(),
+            np.zeros_like(sampled, dtype=bool),
+            {
+                "lsq_variable_count": n_var,
+                "lsq_equation_count": 0,
+                "lsq_residual_rms_kj_mol": 0.0,
+                "lsq_solver": "none_no_equations",
+            },
+        )
+
+    b = np.asarray(rhs, dtype=np.float64)
+    solver = "scipy.sparse.linalg.lsqr"
+    try:
+        from scipy import sparse
+        from scipy.sparse import linalg as sparse_linalg
+
+        matrix = sparse.coo_matrix(
+            (np.asarray(data, dtype=np.float64), (np.asarray(rows), np.asarray(cols))),
+            shape=(len(rhs), n_var),
+        ).tocsr()
+        solution = sparse_linalg.lsqr(matrix, b, atol=1.0e-8, btol=1.0e-8, iter_lim=10000)[0]
+        residual = matrix @ solution - b
+    except Exception:
+        solver = "numpy.linalg.lstsq"
+        matrix = np.zeros((len(rhs), n_var), dtype=np.float64)
+        for row, col, value in zip(rows, cols, data):
+            matrix[int(row), int(col)] += float(value)
+        solution = np.linalg.lstsq(matrix, b, rcond=None)[0]
+        residual = matrix @ solution - b
+
+    energy = np.asarray(base_energy_grid_kj_mol, dtype=np.float64).copy()
+    updated = np.zeros_like(sampled, dtype=bool)
+    for idx, key in enumerate(sampled_indices):
+        ikey = tuple(int(x) for x in key)
+        energy[ikey] = float(solution[idx])
+        updated[ikey] = True
+    rms = float(np.sqrt(np.mean(np.asarray(residual, dtype=np.float64) ** 2))) if residual.size else 0.0
+    return energy, updated, {
+        "lsq_variable_count": n_var,
+        "lsq_equation_count": int(len(rhs)),
+        "lsq_residual_rms_kj_mol": rms,
+        "lsq_solver": solver,
+    }
+
+
+def _force_matched_pair_energy_from_upside_h5(
+    up_file: Path,
+    r_values_nm: np.ndarray,
+    cos_theta_grid: np.ndarray,
+    base_energy_grid_kj_mol: np.ndarray,
+    bead_types: list,
+    bead_charges: list,
+    pair_params: dict,
+    core_min_nm: float,
+    frame_start_fraction: float = 0.5,
+    max_frames: int = 100,
+    min_count: int = 4,
+    mode: str = "radial",
+) -> dict:
+    up_file = Path(up_file).expanduser().resolve()
+    mode = str(mode).strip().lower()
+    if mode not in {"radial", "generalized"}:
+        raise ValueError(f"force_match_mode must be 'radial' or 'generalized', got {mode!r}")
+    r_values_nm = np.asarray(r_values_nm, dtype=np.float64)
+    cos_theta_grid = np.asarray(cos_theta_grid, dtype=np.float64)
+    r_edges = _grid_edges_from_centers(r_values_nm, lo=0.0)
+    angle_edges = _grid_edges_from_centers(cos_theta_grid, lo=-1.0, hi=1.0)
+    counts = np.zeros(base_energy_grid_kj_mol.shape, dtype=np.float64)
+    dudr_sum = np.zeros_like(counts)
+    duda1_sum = np.zeros_like(counts)
+    duda2_sum = np.zeros_like(counts)
+    angular_counts = np.zeros_like(counts)
+
+    with h5py.File(up_file, "r") as h5:
+        if "/output/pos" not in h5:
+            raise RuntimeError(f"{up_file} is missing /output/pos")
+        lipid_molecules = _dopc_lipid_molecules_from_upside_h5(h5, up_file)
+        pos = h5["/output/pos"]
+        n_frame = int(pos.shape[0])
+        first_frame = int(round(float(frame_start_fraction) * float(max(0, n_frame - 1))))
+        frame_indices = list(range(first_frame, n_frame))
+        if not frame_indices:
+            frame_indices = [n_frame - 1]
+        max_frames = max(1, int(max_frames))
+        if len(frame_indices) > max_frames:
+            select = np.linspace(0, len(frame_indices) - 1, max_frames)
+            frame_indices = [frame_indices[int(round(float(x)))] for x in select]
+        box_ang = _read_output_box_lengths_ang(h5)
+
+        for frame in frame_indices:
+            bead_frames_ang, centers_ang, directions = _extract_dopc_beads_centers_orientations_from_frame(
+                np.asarray(pos[frame, 0, :, :], dtype=np.float64),
+                lipid_molecules,
+                box_ang,
+            )
+            for i in range(len(bead_frames_ang) - 1):
+                for j in range(i + 1, len(bead_frames_ang)):
+                    delta_ang = centers_ang[j] - centers_ang[i]
+                    if box_ang is not None:
+                        delta_ang -= box_ang * np.round(delta_ang / box_ang)
+                    r_ang = float(np.linalg.norm(delta_ang))
+                    if r_ang <= 1.0e-12:
+                        continue
+                    r_nm = r_ang * ANGSTROM_TO_NM
+                    ir = int(np.searchsorted(r_edges, r_nm, side="right") - 1)
+                    if ir < 0 or ir >= r_values_nm.size:
+                        continue
+                    n12 = delta_ang / r_ang
+                    a1 = float(-np.dot(directions[i], n12))
+                    a2 = float(np.dot(directions[j], n12))
+                    ia1 = int(np.searchsorted(angle_edges, a1, side="right") - 1)
+                    ia2 = int(np.searchsorted(angle_edges, a2, side="right") - 1)
+                    if ia1 < 0 or ia1 >= cos_theta_grid.size or ia2 < 0 or ia2 >= cos_theta_grid.size:
+                        continue
+
+                    shifted_j_ang = bead_frames_ang[j] + (centers_ang[i] + delta_ang - centers_ang[j])[None, :]
+                    _, grad_i, grad_j = _compute_pair_energy_and_gradient(
+                        bead_frames_ang[i] * ANGSTROM_TO_NM,
+                        shifted_j_ang * ANGSTROM_TO_NM,
+                        bead_types,
+                        bead_types,
+                        bead_charges,
+                        bead_charges,
+                        pair_params,
+                        dist_min_nm=NUMERICAL_DISTANCE_GUARD_NM,
+                    )
+                    force_i = -np.sum(grad_i, axis=0)
+                    force_j = -np.sum(grad_j, axis=0)
+                    dudr = float(np.dot(force_i, n12))
+
+                    counts[ir, ia1, ia2] += 1.0
+                    dudr_sum[ir, ia1, ia2] += dudr
+
+                    if mode == "generalized":
+                        center_i_nm = centers_ang[i] * ANGSTROM_TO_NM
+                        center_j_shift_nm = (centers_ang[i] + delta_ang) * ANGSTROM_TO_NM
+                        beads_i_nm = bead_frames_ang[i] * ANGSTROM_TO_NM
+                        shifted_j_nm = shifted_j_ang * ANGSTROM_TO_NM
+                        torque_i = np.sum(np.cross(beads_i_nm - center_i_nm[None, :], -grad_i), axis=0)
+                        torque_j = np.sum(np.cross(shifted_j_nm - center_j_shift_nm[None, :], -grad_j), axis=0)
+                        axis1 = np.cross(directions[i], n12)
+                        axis2 = np.cross(n12, directions[j])
+                        axis1_norm2 = float(np.dot(axis1, axis1))
+                        axis2_norm2 = float(np.dot(axis2, axis2))
+                        if axis1_norm2 > 1.0e-8 and axis2_norm2 > 1.0e-8:
+                            duda1 = float(np.dot(torque_i, axis1) / axis1_norm2)
+                            duda2 = float(np.dot(torque_j, axis2) / axis2_norm2)
+                            angular_counts[ir, ia1, ia2] += 1.0
+                            duda1_sum[ir, ia1, ia2] += duda1
+                            duda2_sum[ir, ia1, ia2] += duda2
+
+                    e_rev = -n12
+                    dudr_rev = float(np.dot(force_j, e_rev))
+                    counts[ir, ia2, ia1] += 1.0
+                    dudr_sum[ir, ia2, ia1] += dudr_rev
+                    if mode == "generalized":
+                        axis1_rev = np.cross(directions[j], e_rev)
+                        axis2_rev = np.cross(e_rev, directions[i])
+                        axis1_rev_norm2 = float(np.dot(axis1_rev, axis1_rev))
+                        axis2_rev_norm2 = float(np.dot(axis2_rev, axis2_rev))
+                        if axis1_rev_norm2 > 1.0e-8 and axis2_rev_norm2 > 1.0e-8:
+                            duda1_rev = float(np.dot(torque_j, axis1_rev) / axis1_rev_norm2)
+                            duda2_rev = float(np.dot(torque_i, axis2_rev) / axis2_rev_norm2)
+                            angular_counts[ir, ia2, ia1] += 1.0
+                            duda1_sum[ir, ia2, ia1] += duda1_rev
+                            duda2_sum[ir, ia2, ia1] += duda2_rev
+
+    mean_dudr = np.full_like(counts, np.nan, dtype=np.float64)
+    sampled = counts >= float(max(1, int(min_count)))
+    mean_dudr[sampled] = dudr_sum[sampled] / counts[sampled]
+    mean_duda1 = np.full_like(counts, np.nan, dtype=np.float64)
+    mean_duda2 = np.full_like(counts, np.nan, dtype=np.float64)
+    angular_sampled = angular_counts >= float(max(1, int(min_count)))
+    mean_duda1[angular_sampled] = duda1_sum[angular_sampled] / angular_counts[angular_sampled]
+    mean_duda2[angular_sampled] = duda2_sum[angular_sampled] / angular_counts[angular_sampled]
+    energy = np.asarray(base_energy_grid_kj_mol, dtype=np.float64).copy()
+    updated = np.zeros_like(sampled, dtype=bool)
+    core_mask = r_values_nm[:, None, None] >= float(core_min_nm)
+    sampled &= core_mask
+    lsq_info = {
+        "lsq_variable_count": 0,
+        "lsq_equation_count": 0,
+        "lsq_residual_rms_kj_mol": 0.0,
+        "lsq_solver": "radial_segment_integration",
+    }
+
+    if mode == "generalized":
+        generalized_sampled = sampled & angular_sampled
+        energy, updated, lsq_info = _least_squares_generalized_force_energy_grid(
+            r_values_nm,
+            cos_theta_grid,
+            base_energy_grid_kj_mol,
+            generalized_sampled,
+            counts,
+            mean_dudr,
+            mean_duda1,
+            mean_duda2,
+            min_count=min_count,
+        )
+        sampled = generalized_sampled
+    else:
+        for ia1 in range(cos_theta_grid.size):
+            for ia2 in range(cos_theta_grid.size):
+                valid = np.where(sampled[:, ia1, ia2])[0]
+                if valid.size < 2:
+                    continue
+                breaks = np.where(np.diff(valid) > 1)[0]
+                segment_starts = np.r_[0, breaks + 1]
+                segment_ends = np.r_[breaks, valid.size - 1]
+                for start_idx, end_idx in zip(segment_starts, segment_ends):
+                    segment = valid[start_idx : end_idx + 1]
+                    if segment.size < 2:
+                        continue
+                    high = int(segment[-1])
+                    energy[high, ia1, ia2] = base_energy_grid_kj_mol[high, ia1, ia2]
+                    updated[high, ia1, ia2] = True
+                    for pos_idx in range(segment.size - 2, -1, -1):
+                        lo = int(segment[pos_idx])
+                        hi = int(segment[pos_idx + 1])
+                        dr = float(r_values_nm[hi] - r_values_nm[lo])
+                        avg_dudr = 0.5 * (float(mean_dudr[lo, ia1, ia2]) + float(mean_dudr[hi, ia1, ia2]))
+                        energy[lo, ia1, ia2] = energy[hi, ia1, ia2] - avg_dudr * dr
+                        updated[lo, ia1, ia2] = True
+
+    print(
+        f"  CGL-CGL {mode} force matching from {up_file}: "
+        f"{int(np.sum(counts))} ordered pair-force samples, "
+        f"{int(np.count_nonzero(updated))}/{updated.size} tensor bins updated"
+    )
+    return {
+        "energy_grid_kj_mol": energy,
+        "counts": counts,
+        "mean_dudr_kj_mol_nm": mean_dudr,
+        "mean_duda1_kj_mol": mean_duda1,
+        "mean_duda2_kj_mol": mean_duda2,
+        "angular_counts": angular_counts,
+        "updated": updated,
+        "mode": mode,
+        "frame_count": int(len(frame_indices)),
+        "pair_force_sample_count": int(np.sum(counts)),
+        "updated_tensor_bins": int(np.count_nonzero(updated)),
+        "sampled_tensor_bins": int(np.count_nonzero(sampled)),
+        "frame_start_fraction": float(frame_start_fraction),
+        "max_frames": int(max_frames),
+        "min_count": int(min_count),
+        **lsq_info,
+    }
 
 
 def _fit_cg_lipid_quadspline(
@@ -1556,6 +3088,20 @@ def _fit_cg_lipid_quadspline(
     cg_smooth: float = 0.01,
     temperature: float = 0.0,
     average_temperature: float | None = None,
+    fluid_pair_pmf_upside_h5_path: Path | None = None,
+    fluid_pair_pmf_frame_start_fraction: float = 0.5,
+    fluid_pair_pmf_core_min_nm: float = 0.0,
+    force_match_upside_h5_path: Path | None = None,
+    force_match_frame_start_fraction: float = 0.5,
+    force_match_max_frames: int = 100,
+    force_match_min_count: int = 4,
+    force_match_mode: str = "radial",
+    ibi_base_pair_h5_path: Path | None = None,
+    ibi_target_upside_h5_path: Path | None = None,
+    ibi_model_upside_h5_path: Path | None = None,
+    ibi_target_frame_start_fraction: float = 0.5,
+    ibi_model_frame_start_fraction: float = 0.5,
+    ibi_step_size: float = 1.0,
 ) -> dict:
     """Fit full tensor-product B-spline parameters for CG lipid-CG lipid interactions.
 
@@ -1577,42 +3123,117 @@ def _fit_cg_lipid_quadspline(
     dirs1 = _directions_with_dot_np(-n12_axis, cos_theta_grid, phi_values)
     dirs2 = _directions_with_dot_np(n12_axis, cos_theta_grid, phi_values)
 
-    energy_grid = np.zeros((n_radial, n_angle, n_angle), dtype=np.float64)
-    ref_nm = _canonicalize_lipid_reference_to_z(ref_bead_positions_nm)
+    ref_nm = _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm)
+    conformer_pairs = _cg_lipid_conformer_pair_indices(ref_nm.shape[0])
 
     bead_frame_angles = _bead_frame_angles(bead_frame_count)
-    total_samples = (
-        n_radial * n_angle * n_angle
-        * azimuthal_count * azimuthal_count
-        * len(bead_frame_angles) * len(bead_frame_angles)
-    )
-    print(f"  Sampling CG-CG energy: {n_radial} radial x {n_angle}^2 angular "
-          f"x {azimuthal_count}^2 azimuthal x {len(bead_frame_angles)}^2 bead-frame "
-          f"= {total_samples} samples, direct rotated geometry, full tensor")
+    if ibi_base_pair_h5_path is not None:
+        energy_grid = _load_cg_lipid_pair_energy_grid_from_h5(
+            ibi_base_pair_h5_path,
+            (n_radial, n_angle, n_angle),
+            r_values,
+        )
+    else:
+        energy_grid = np.zeros((n_radial, n_angle, n_angle), dtype=np.float64)
+        total_samples = (
+            n_radial * n_angle * n_angle
+            * azimuthal_count * azimuthal_count
+            * len(bead_frame_angles) * len(bead_frame_angles)
+            * len(conformer_pairs)
+        )
+        print(f"  Sampling CG-CG energy: {n_radial} radial x {n_angle}^2 angular "
+              f"x {azimuthal_count}^2 azimuthal x {len(bead_frame_angles)}^2 bead-frame "
+              f"x {len(conformer_pairs)} conformer-pairs = {total_samples} samples, "
+              "direct rotated ensemble geometry, full tensor")
 
-    tasks = []
-    for ir, r_nm in enumerate(r_values):
-        for ia1 in range(n_angle):
-            for ia2 in range(n_angle):
-                tasks.append(
-                    {
-                        "ir": ir,
-                        "ia1": ia1,
-                        "ia2": ia2,
-                        "r_nm": float(r_nm),
-                        "dirs1": dirs1[ia1],
-                        "dirs2": dirs2[ia2],
-                        "bead_frame_angles": bead_frame_angles,
-                        "ref_nm": ref_nm,
-                        "bead_types": list(bead_types),
-                        "bead_charges": list(bead_charges),
-                        "pair_params": pair_params,
-                        "dist_min_nm": float(dist_min_nm),
-                        "temperature": average_temperature,
-                    }
-                )
-    for ir, ia1, ia2, energy in _parallel_map_ordered("CG-CG table", _run_cg_pair_tensor_task, tasks):
-        energy_grid[ir, ia1, ia2] = energy
+        tasks = []
+        for ir, r_nm in enumerate(r_values):
+            for ia1 in range(n_angle):
+                for ia2 in range(n_angle):
+                    tasks.append(
+                        {
+                            "ir": ir,
+                            "ia1": ia1,
+                            "ia2": ia2,
+                            "r_nm": float(r_nm),
+                            "dirs1": dirs1[ia1],
+                            "dirs2": dirs2[ia2],
+                            "bead_frame_angles": bead_frame_angles,
+                            "ref_nm": ref_nm,
+                            "bead_types": list(bead_types),
+                            "bead_charges": list(bead_charges),
+                            "pair_params": pair_params,
+                            "dist_min_nm": float(dist_min_nm),
+                            "temperature": average_temperature,
+                            "conformer_pairs": conformer_pairs,
+                        }
+                    )
+        for ir, ia1, ia2, energy in _parallel_map_ordered("CG-CG table", _run_cg_pair_tensor_task, tasks):
+            energy_grid[ir, ia1, ia2] = energy
+
+    fluid_pmf = None
+    if fluid_pair_pmf_upside_h5_path is not None and ibi_base_pair_h5_path is None:
+        fluid_pmf = _fluid_bilayer_pair_pmf_from_upside_h5(
+            fluid_pair_pmf_upside_h5_path,
+            r_values,
+            cos_theta_grid,
+            temperature_upside=temperature,
+            frame_start_fraction=fluid_pair_pmf_frame_start_fraction,
+        )
+        occupied = np.asarray(fluid_pmf["occupied"], dtype=bool)
+        pmf = np.asarray(fluid_pmf["pmf_kj_mol"], dtype=np.float64)
+        if float(fluid_pair_pmf_core_min_nm) > 0.0:
+            occupied &= r_values[:, None, None] >= float(fluid_pair_pmf_core_min_nm)
+        energy_grid[occupied] = pmf[occupied]
+        print(
+            "  CGL-CGL: using fluid-bilayer orientation-resolved PMF for occupied bins "
+            "outside the direct dry-MARTINI overlap core"
+        )
+
+    force_match = None
+    if force_match_upside_h5_path is not None:
+        force_match = _force_matched_pair_energy_from_upside_h5(
+            force_match_upside_h5_path,
+            r_values,
+            cos_theta_grid,
+            energy_grid,
+            bead_types=bead_types,
+            bead_charges=bead_charges,
+            pair_params=pair_params,
+            core_min_nm=fluid_pair_pmf_core_min_nm,
+            frame_start_fraction=force_match_frame_start_fraction,
+            max_frames=force_match_max_frames,
+            min_count=force_match_min_count,
+            mode=force_match_mode,
+        )
+        energy_grid = np.asarray(force_match["energy_grid_kj_mol"], dtype=np.float64)
+
+    ibi_correction = None
+    if ibi_model_upside_h5_path is not None:
+        if ibi_target_upside_h5_path is None:
+            if fluid_pair_pmf_upside_h5_path is None:
+                raise ValueError("IBI correction requires a target trajectory or fluid_pair_pmf_upside_h5_path")
+            ibi_target_upside_h5_path = fluid_pair_pmf_upside_h5_path
+        ibi_correction = _relative_entropy_pair_ibi_correction_from_upside_h5(
+            ibi_target_upside_h5_path,
+            ibi_model_upside_h5_path,
+            r_values,
+            cos_theta_grid,
+            temperature_upside=temperature,
+            target_frame_start_fraction=ibi_target_frame_start_fraction,
+            model_frame_start_fraction=ibi_model_frame_start_fraction,
+            step_size=ibi_step_size,
+        )
+        ibi_mask = np.asarray(ibi_correction["sampled"], dtype=bool)
+        if float(fluid_pair_pmf_core_min_nm) > 0.0:
+            ibi_mask &= r_values[:, None, None] >= float(fluid_pair_pmf_core_min_nm)
+        delta_u = np.asarray(ibi_correction["correction_kj_mol"], dtype=np.float64)
+        energy_grid[ibi_mask] += delta_u[ibi_mask]
+        print(
+            "  CGL-CGL: applied relative-entropy/IBI correction in "
+            f"{int(np.count_nonzero(ibi_mask))}/{ibi_mask.size} sampled non-core bins "
+            f"with step={float(ibi_correction['step_size']):.3f}"
+        )
 
     reference_energy_kj_mol = float(np.min(energy_grid))
     kbt_kj_mol = float(temperature) * ENERGY_CONVERSION_KJ_PER_EUP
@@ -1667,12 +3288,50 @@ def _fit_cg_lipid_quadspline(
             else ("energy_expectation" if average_temperature <= 0.0 else "boltzmann_free_energy")
         ),
         "azimuthal_average_temperature_upside": float(average_temperature),
-        "isotropic_background_source": "none_full_resolved_dry_martini_pair_table",
-        "excluded_area_source": "none_full_resolved_dry_martini_pair_table",
+        "isotropic_background_source": (
+            "full_dopc_projected_generalized_force_matching"
+            if force_match is not None and force_match["mode"] == "generalized"
+            else "full_dopc_projected_radial_force_matching"
+            if force_match is not None
+            else (
+            "fluid_bilayer_orientation_resolved_pair_pmf"
+            if fluid_pmf is not None
+            else "none_full_resolved_dry_martini_pair_table"
+            )
+        ),
+        "excluded_area_source": (
+            "direct_dry_martini_overlap_core_for_force_matched_table"
+            if force_match is not None
+            else (
+            "direct_dry_martini_overlap_core_for_fluid_pmf_table"
+            if fluid_pmf is not None
+            else "none_full_resolved_dry_martini_pair_table"
+            )
+        ),
         "excluded_area_nonnegative_rows": 0,
-        "attractive_control_source": "retained_full_resolved_dry_martini_pair_table",
+        "attractive_control_source": (
+            "full_dopc_projected_generalized_force_matching"
+            if force_match is not None and force_match["mode"] == "generalized"
+            else "full_dopc_projected_radial_force_matching"
+            if force_match is not None
+            else (
+            "fluid_bilayer_orientation_resolved_pair_pmf"
+            if fluid_pmf is not None
+            else "retained_full_resolved_dry_martini_pair_table"
+            )
+        ),
         "attractive_control_count": attractive_control_count,
-        "core_boundary_source": "angular_resolved_first_sampled_dry_martini_energy",
+        "core_boundary_source": (
+            "force_matched_generalized_projection_plus_direct_dry_martini_overlap_core"
+            if force_match is not None and force_match["mode"] == "generalized"
+            else "force_matched_radial_projection_plus_direct_dry_martini_overlap_core"
+            if force_match is not None
+            else (
+            "fluid_bilayer_radial_pmf_plus_direct_dry_martini_overlap_core"
+            if fluid_pmf is not None
+            else "angular_resolved_first_sampled_dry_martini_energy"
+            )
+        ),
         "core_boundary_row": int(n_core),
         "unresolved_core_rows": int(n_core),
         "unresolved_core_energy_kj_mol": short_range_core_kj_mol,
@@ -1686,8 +3345,101 @@ def _fit_cg_lipid_quadspline(
         "fit_smooth": float(cg_smooth),
         "azimuthal_count": int(azimuthal_count),
         "bead_frame_count": int(len(bead_frame_angles)),
+        "conformer_count": int(ref_nm.shape[0]),
+        "conformer_pair_count": int(len(conformer_pairs)),
         "schema": "cg_lipid_pair_full",
         "sample_dist_min_nm": float(dist_min_nm),
+        "ibi_base_pair_h5_path": (
+            "" if ibi_base_pair_h5_path is None else str(Path(ibi_base_pair_h5_path).expanduser().resolve())
+        ),
+        "fluid_pmf_pair_sample_count": 0 if fluid_pmf is None else int(fluid_pmf["pair_sample_count"]),
+        "fluid_pmf_occupied_radial_bins": 0 if fluid_pmf is None else int(fluid_pmf["occupied_radial_bins"]),
+        "fluid_pmf_occupied_tensor_bins": 0 if fluid_pmf is None else int(fluid_pmf["occupied_tensor_bins"]),
+        "fluid_pmf_frame_start_fraction": (
+            0.0 if fluid_pmf is None else float(fluid_pmf["frame_start_fraction"])
+        ),
+        "fluid_pmf_core_min_nm": float(fluid_pair_pmf_core_min_nm) if fluid_pmf is not None else 0.0,
+        "force_match_enabled": int(force_match is not None),
+        "force_match_frame_count": 0 if force_match is None else int(force_match["frame_count"]),
+        "force_match_pair_force_sample_count": 0 if force_match is None else int(force_match["pair_force_sample_count"]),
+        "force_match_sampled_tensor_bins": 0 if force_match is None else int(force_match["sampled_tensor_bins"]),
+        "force_match_updated_tensor_bins": 0 if force_match is None else int(force_match["updated_tensor_bins"]),
+        "force_match_frame_start_fraction": 0.0 if force_match is None else float(force_match["frame_start_fraction"]),
+        "force_match_max_frames": 0 if force_match is None else int(force_match["max_frames"]),
+        "force_match_min_count": 0 if force_match is None else int(force_match["min_count"]),
+        "force_match_mode": "" if force_match is None else str(force_match["mode"]),
+        "force_match_lsq_variable_count": 0 if force_match is None else int(force_match["lsq_variable_count"]),
+        "force_match_lsq_equation_count": 0 if force_match is None else int(force_match["lsq_equation_count"]),
+        "force_match_lsq_residual_rms_kj_mol": (
+            0.0 if force_match is None else float(force_match["lsq_residual_rms_kj_mol"])
+        ),
+        "force_match_lsq_solver": "" if force_match is None else str(force_match["lsq_solver"]),
+        "force_match_counts": (
+            np.zeros_like(energy_grid, dtype=np.float64)
+            if force_match is None
+            else np.asarray(force_match["counts"], dtype=np.float64)
+        ),
+        "force_match_mean_dudr_kj_mol_nm": (
+            np.full_like(energy_grid, np.nan, dtype=np.float64)
+            if force_match is None
+            else np.asarray(force_match["mean_dudr_kj_mol_nm"], dtype=np.float64)
+        ),
+        "force_match_mean_duda1_kj_mol": (
+            np.full_like(energy_grid, np.nan, dtype=np.float64)
+            if force_match is None
+            else np.asarray(force_match["mean_duda1_kj_mol"], dtype=np.float64)
+        ),
+        "force_match_mean_duda2_kj_mol": (
+            np.full_like(energy_grid, np.nan, dtype=np.float64)
+            if force_match is None
+            else np.asarray(force_match["mean_duda2_kj_mol"], dtype=np.float64)
+        ),
+        "force_match_angular_counts": (
+            np.zeros_like(energy_grid, dtype=np.float64)
+            if force_match is None
+            else np.asarray(force_match["angular_counts"], dtype=np.float64)
+        ),
+        "force_match_updated": (
+            np.zeros_like(energy_grid, dtype=np.int8)
+            if force_match is None
+            else np.asarray(force_match["updated"], dtype=np.int8)
+        ),
+        "ibi_enabled": int(ibi_correction is not None),
+        "ibi_target_pair_sample_count": 0 if ibi_correction is None else int(ibi_correction["target_pair_sample_count"]),
+        "ibi_model_pair_sample_count": 0 if ibi_correction is None else int(ibi_correction["model_pair_sample_count"]),
+        "ibi_target_occupied_tensor_bins": 0 if ibi_correction is None else int(ibi_correction["target_occupied_tensor_bins"]),
+        "ibi_model_occupied_tensor_bins": 0 if ibi_correction is None else int(ibi_correction["model_occupied_tensor_bins"]),
+        "ibi_sampled_tensor_bins": 0 if ibi_correction is None else int(ibi_correction["sampled_tensor_bins"]),
+        "ibi_target_frame_start_fraction": 0.0 if ibi_correction is None else float(ibi_correction["target_frame_start_fraction"]),
+        "ibi_model_frame_start_fraction": 0.0 if ibi_correction is None else float(ibi_correction["model_frame_start_fraction"]),
+        "ibi_step_size": 0.0 if ibi_correction is None else float(ibi_correction["step_size"]),
+        "ibi_raw_correction_min_kj_mol": (
+            0.0 if ibi_correction is None else float(ibi_correction["raw_correction_min_kj_mol"])
+        ),
+        "ibi_raw_correction_max_kj_mol": (
+            0.0 if ibi_correction is None else float(ibi_correction["raw_correction_max_kj_mol"])
+        ),
+        "ibi_raw_correction_mean_kj_mol": (
+            0.0 if ibi_correction is None else float(ibi_correction["raw_correction_mean_kj_mol"])
+        ),
+        "ibi_correction_min_kj_mol": 0.0 if ibi_correction is None else float(ibi_correction["correction_min_kj_mol"]),
+        "ibi_correction_max_kj_mol": 0.0 if ibi_correction is None else float(ibi_correction["correction_max_kj_mol"]),
+        "ibi_correction_mean_kj_mol": 0.0 if ibi_correction is None else float(ibi_correction["correction_mean_kj_mol"]),
+        "ibi_correction_grid_kj_mol": (
+            np.full_like(energy_grid, np.nan, dtype=np.float64)
+            if ibi_correction is None
+            else np.asarray(ibi_correction["correction_kj_mol"], dtype=np.float64)
+        ),
+        "ibi_target_counts": (
+            np.zeros_like(energy_grid, dtype=np.float64)
+            if ibi_correction is None
+            else np.asarray(ibi_correction["target_counts"], dtype=np.float64)
+        ),
+        "ibi_model_counts": (
+            np.zeros_like(energy_grid, dtype=np.float64)
+            if ibi_correction is None
+            else np.asarray(ibi_correction["model_counts"], dtype=np.float64)
+        ),
         "energy_transform": (
             "log1p_reduced_energy_expectation"
             if average_temperature <= 0.0
@@ -1755,7 +3507,7 @@ def _fit_cg_lipid_sc_quadspline(
     sidechain_bead_frame_angles = _bead_frame_angles(sidechain_bead_frame_count)
     cg_bead_frame_angles = _bead_frame_angles(cg_bead_frame_count)
 
-    ref_nm = _canonicalize_lipid_reference_to_z(ref_bead_positions_nm)
+    ref_nm = _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm)
     cb_vec = np.asarray(cb_vector_unit, dtype=np.float64)
     cb_vec /= max(float(np.linalg.norm(cb_vec)), 1e-12)
     sc_to_cg_dirs = _directions_with_dot_np(-cb_vec, cos_theta_grid, phi_values)
@@ -1775,7 +3527,7 @@ def _fit_cg_lipid_sc_quadspline(
     print(f"  Sampling CG-SC energy for target={target_type}: "
           f"{n_radial} radial x {n_angle}^2 angular x {azimuthal_count}^2 azimuthal "
           f"x {len(sidechain_bead_frame_angles)} SC bead-frame x {len(cg_bead_frame_angles)} CGL bead-frame, "
-          f"direct rotated geometry, modes={n_modes}")
+          f"x {ref_nm.shape[0]} conformers, direct rotated ensemble geometry, modes={n_modes}")
 
     # Energy grid: (n_radial, n_angle_sc, n_angle_cg), matching runtime source order.
     energy_grid = np.zeros((n_radial, n_angle, n_angle), dtype=np.float64)
@@ -1813,15 +3565,16 @@ def _fit_cg_lipid_sc_quadspline(
                                         np.array([0.0, 0.0, 1.0], dtype=np.float64),
                                         float(cg_frame_angle),
                                     )
-                                    cg_positions = cg_com[None, :] + (R_cg @ ref_nm.T).T
+                                    for ref_conf in ref_nm:
+                                        cg_positions = cg_com[None, :] + (R_cg @ ref_conf.T).T
 
-                                    pair_energy, _, _ = _compute_pair_energy_and_gradient(
-                                        cg_positions, framed_sc_positions, cg_bead_types, sc_bead_types,
-                                        cg_bead_charges, sc_bead_charges, pair_params,
-                                        dist_min_nm=NUMERICAL_DISTANCE_GUARD_NM,
-                                    )
-                                    sample_energies.append(float(pair_energy))
-                                    sample_weights.append(float(w))
+                                        pair_energy, _, _ = _compute_pair_energy_and_gradient(
+                                            cg_positions, framed_sc_positions, cg_bead_types, sc_bead_types,
+                                            cg_bead_charges, sc_bead_charges, pair_params,
+                                            dist_min_nm=NUMERICAL_DISTANCE_GUARD_NM,
+                                        )
+                                        sample_energies.append(float(pair_energy))
+                                        sample_weights.append(float(w))
 
                 energy_grid[ir, ia_sc, ia_cg] = _boltzmann_free_energy_kj_mol(
                     sample_energies,
@@ -1903,6 +3656,7 @@ def _fit_cg_lipid_sc_quadspline(
             "azimuthal_average_temperature_upside": float(average_temperature),
             "sidechain_bead_frame_count": int(len(sidechain_bead_frame_angles)),
             "cg_bead_frame_count": int(len(cg_bead_frame_angles)),
+            "conformer_count": int(ref_nm.shape[0]),
             "energy_transform": (
                 "log1p_reduced_energy_expectation"
                 if average_temperature <= 0.0
@@ -2106,7 +3860,9 @@ def _run_cgl_effective_lj_task(task: dict) -> tuple[str, dict]:
     target_type = str(task["target_type"])
     bead_types = task["bead_types"]
     pair_params = task["pair_params"]
-    ref_nm = task["ref_nm"]
+    ref_nm = np.asarray(task["ref_nm"], dtype=np.float64)
+    if ref_nm.ndim == 2:
+        ref_nm = ref_nm[None, :, :]
     dir_array = task["dir_array"]
     bead_frame_angles = task["bead_frame_angles"]
     r_values = task["r_values"]
@@ -2140,21 +3896,22 @@ def _run_cgl_effective_lj_task(task: dict) -> tuple[str, dict]:
             target_pos = float(r) * dir_vec
             for frame_angle in bead_frame_angles:
                 rot = _rotation_about_axis_np(z_axis, float(frame_angle))
-                framed_ref = (rot @ ref_nm.T).T
-                total_lj = 0.0
-                for bead_pos, params in zip(framed_ref, bead_params):
-                    d = target_pos - bead_pos
-                    dist = float(math.sqrt(float(np.dot(d, d))))
-                    if dist < 0.001:
-                        dist = 0.001
-                    sig = params["sigma_nm"]
-                    eps = params["epsilon_kj_mol"]
-                    sr = sig / dist
-                    sr2 = sr * sr
-                    sr6 = sr2 * sr2 * sr2
-                    total_lj += 4.0 * eps * (sr6 * sr6 - sr6)
-                energy_sum += total_lj
-                sample_count += 1
+                for ref_conf in ref_nm:
+                    framed_ref = (rot @ ref_conf.T).T
+                    total_lj = 0.0
+                    for bead_pos, params in zip(framed_ref, bead_params):
+                        d = target_pos - bead_pos
+                        dist = float(math.sqrt(float(np.dot(d, d))))
+                        if dist < 0.001:
+                            dist = 0.001
+                        sig = params["sigma_nm"]
+                        eps = params["epsilon_kj_mol"]
+                        sr = sig / dist
+                        sr2 = sr * sr
+                        sr6 = sr2 * sr2 * sr2
+                        total_lj += 4.0 * eps * (sr6 * sr6 - sr6)
+                    energy_sum += total_lj
+                    sample_count += 1
         avg_energy[ir] = energy_sum / max(sample_count, 1)
 
     attractive_mask = avg_energy < 0.0
@@ -2183,6 +3940,7 @@ def _run_cgl_effective_lj_task(task: dict) -> tuple[str, dict]:
         "uncapped_sigma_nm": uncapped_sigma_eff,
         "orientation_count": len(dir_array),
         "bead_frame_count": int(len(bead_frame_angles)),
+        "conformer_count": int(ref_nm.shape[0]),
     }
 
 
@@ -2203,8 +3961,8 @@ def _compute_cgl_effective_lj_params(
 
     Returns dict: target_type to dict(sigma_nm=float, epsilon_kj_mol=float)
     """
-    ref_nm = _canonicalize_lipid_reference_to_z(np.asarray(ref_bead_positions_nm, dtype=np.float64))
-    n_beads = ref_nm.shape[0]
+    ref_nm = _canonicalize_lipid_reference_ensemble_to_z(np.asarray(ref_bead_positions_nm, dtype=np.float64))
+    n_beads = ref_nm.shape[1]
     if n_beads != len(bead_types):
         raise ValueError(f"Bead count mismatch: {n_beads} positions vs {len(bead_types)} types")
 
@@ -2247,6 +4005,18 @@ def _build_cg_lipid_tables(
     r_count: int = 24,
     cos_theta_count: int = 13,
     azimuthal_count: int = 4,
+    fluid_pair_pmf_upside_h5_path: Path | None = None,
+    fluid_pair_pmf_frame_start_fraction: float = 0.5,
+    force_match_upside_h5_path: Path | None = None,
+    force_match_frame_start_fraction: float = 0.5,
+    force_match_max_frames: int = 100,
+    force_match_min_count: int = 4,
+    force_match_mode: str = "radial",
+    ibi_base_pair_h5_path: Path | None = None,
+    ibi_target_upside_h5_path: Path | None = None,
+    ibi_model_upside_h5_path: Path | None = None,
+    ibi_target_frame_start_fraction: float = 0.5,
+    ibi_model_frame_start_fraction: float = 0.5,
 ) -> None:
     """Build CG lipid pair and CG lipid-SC quadspline tables and store in HDF5."""
     if ref_bead_positions_nm is None:
@@ -2265,21 +4035,23 @@ def _build_cg_lipid_tables(
         _ensure_cg_bonds_angles(lipids_itp_path)
 
     ref_nm = np.asarray(ref_bead_positions_nm, dtype=np.float64)
-    if ref_nm.shape != (14, 3):
-        raise ValueError(f"ref_bead_positions_nm must be (14, 3), got {ref_nm.shape}")
+    if ref_nm.shape == (14, 3):
+        ref_ensemble_nm = _canonicalize_lipid_reference_ensemble_to_z(ref_nm)
+    elif ref_nm.ndim == 3 and ref_nm.shape[1:] == (14, 3):
+        ref_ensemble_nm = _canonicalize_lipid_reference_ensemble_to_z(ref_nm)
+    else:
+        raise ValueError(f"ref_bead_positions_nm must be (14, 3) or (n, 14, 3), got {ref_nm.shape}")
 
     print("\n=== CG Lipid Table Building ===")
     bead_mass_values = None
     if bead_masses_g_mol is not None:
         bead_mass_values = [bead_masses_g_mol[bt] for bt in bead_types]
-    derived_params = derive_dopc_cg_params(
-        ref_bead_positions_nm=ref_nm,
+    derived_params = _derive_dopc_cg_params_from_reference_ensemble(
+        ref_bead_positions_nm=ref_ensemble_nm,
         bead_types=bead_types,
         pair_params=pair_params,
         bead_masses_g_mol=bead_mass_values,
         bonds=_CURRENT_CG_BONDS,
-        energy_conversion_kj_per_eup=ENERGY_CONVERSION_KJ_PER_EUP,
-        length_conversion_ang_per_nm=LENGTH_CONVERSION_A_PER_NM,
     )
     contact_nm = float(derived_params["contact_nm"])
     print(
@@ -2293,9 +4065,9 @@ def _build_cg_lipid_tables(
     # Resolution control: "coarse", "medium", or "fine" (default).
     _res = os.environ.get("UPSIDE_CG_LIPID_RESOLUTION", "fine").strip().lower()
     cg_knot_spacing_ang = 0.35
-    cg_r_max_nm, cg_n_radial = _cg_lipid_pair_radial_support(ref_nm, cg_knot_spacing_ang)
+    cg_r_max_nm, cg_n_radial = _cg_lipid_pair_radial_support(ref_ensemble_nm, cg_knot_spacing_ang)
     sc_knot_spacing_ang = 1.4
-    sc_fit_r_max_nm, sc_n_radial = _cg_lipid_target_radial_support(ref_nm, sc_knot_spacing_ang)
+    sc_fit_r_max_nm, sc_n_radial = _cg_lipid_target_radial_support(ref_ensemble_nm, sc_knot_spacing_ang)
     if _res == "coarse":
         _cg_r, _cg_ct, _cg_az, _sc_r, _sc_ct, _sc_az = 16, 7, 2, 8, 5, 2
     elif _res == "medium":
@@ -2324,13 +4096,13 @@ def _build_cg_lipid_tables(
         "source=max_DOPC_bead_radius_plus_dry_MARTINI_cutoff"
     )
 
-    print("  CGL tables use direct rotated rigid geometry")
+    print(f"  CGL tables use direct rotated ensemble geometry ({ref_ensemble_nm.shape[0]} conformer(s))")
 
     # CG-CG directional spline from direct rotated DOPC bead geometries.
     cg_n_angular = min(cg_cos_theta_count + 2, 15)
     cg_fit_smooth = 0.1
     result_cg = _fit_cg_lipid_quadspline(
-        ref_bead_positions_nm=ref_nm,
+        ref_bead_positions_nm=ref_ensemble_nm,
         bead_types=bead_types,
         bead_charges=bead_charges,
         pair_params=pair_params,
@@ -2348,6 +4120,19 @@ def _build_cg_lipid_tables(
         cg_smooth=cg_fit_smooth,
         temperature=DEFAULT_PRODUCTION_TEMP_UPSIDE,
         average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
+        fluid_pair_pmf_upside_h5_path=fluid_pair_pmf_upside_h5_path,
+        fluid_pair_pmf_frame_start_fraction=fluid_pair_pmf_frame_start_fraction,
+        fluid_pair_pmf_core_min_nm=contact_nm,
+        force_match_upside_h5_path=force_match_upside_h5_path,
+        force_match_frame_start_fraction=force_match_frame_start_fraction,
+        force_match_max_frames=force_match_max_frames,
+        force_match_min_count=force_match_min_count,
+        force_match_mode=force_match_mode,
+        ibi_base_pair_h5_path=ibi_base_pair_h5_path,
+        ibi_target_upside_h5_path=ibi_target_upside_h5_path,
+        ibi_model_upside_h5_path=ibi_model_upside_h5_path,
+        ibi_target_frame_start_fraction=ibi_target_frame_start_fraction,
+        ibi_model_frame_start_fraction=ibi_model_frame_start_fraction,
     )
     print(
         "  CG-CG: full tensor table "
@@ -2364,6 +4149,9 @@ def _build_cg_lipid_tables(
 
     residues = [r for r in active_residue_names
                 if r in residue_map and residue_map[r] and r in orientation_map]
+    if _truthy_env("UPSIDE_CG_LIPID_SKIP_SC"):
+        print("  cg_lipid_sc: skipping SC-CGL table generation for CGL-only screening")
+        residues = []
     sc_n_modes = 0
     sc_n_angular = min(sc_cos_theta_count + 2, 15)
     sc_angular_smooth = 0.1
@@ -2407,7 +4195,7 @@ def _build_cg_lipid_tables(
                 {
                     "ri": ri,
                     "residue": residue,
-                    "ref_bead_positions_nm": ref_nm,
+                    "ref_bead_positions_nm": ref_ensemble_nm,
                     "cg_bead_types": list(bead_types),
                     "cg_bead_charges": list(bead_charges),
                     "target_type": "CGL",
@@ -2457,11 +4245,39 @@ def _build_cg_lipid_tables(
     cg_grp.attrs["lipid_net_charge"] = np.float32(sum(bead_charges))
     cg_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
     cg_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
+    cg_grp.attrs["conformer_count"] = np.int32(ref_ensemble_nm.shape[0])
+    cg_grp.attrs["conformer_source"] = "dynamic_vector_cgl_reference_ensemble"
     cg_grp.create_dataset("bead_charges", data=np.asarray(bead_charges, dtype=np.float32))
+    cg_grp.create_dataset("ref_bead_positions_nm", data=ref_ensemble_nm.astype(np.float32))
     _write_cg_derived_attrs(cg_grp, derived_params)
 
     # CG-CG pair
     cg_pair_grp = cg_grp.create_group("cg_lipid_pair")
+    if int(result_cg.get("force_match_enabled", 0)):
+        cg_pair_correction = (
+            "projected_generalized_force_matching"
+            if str(result_cg.get("force_match_mode", "")) == "generalized"
+            else "projected_radial_force_matching"
+        )
+    elif int(result_cg.get("ibi_enabled", 0)):
+        cg_pair_correction = (
+            "iterative_ibi_sampled_bins"
+            if result_cg.get("ibi_base_pair_h5_path")
+            else "fluid_pmf_ibi_sampled_bins"
+        )
+    elif int(result_cg.get("fluid_pmf_pair_sample_count", 0)) > 0:
+        cg_pair_correction = "fluid_pmf_sampled_bins"
+    else:
+        cg_pair_correction = "none"
+    _write_common_table_contract_attrs(
+        cg_pair_grp,
+        table_family="CGL-CGL",
+        source_object="dopc_cgl_constituent_bead_ensemble",
+        target_object="dopc_cgl_constituent_bead_ensemble",
+        projection_ensemble="cgl_conformer_pairs_x_two_cgl_orientations_x_bead_frames",
+        runtime_representation="log1p_reduced_tensor_bspline",
+        correction_layer=cg_pair_correction,
+    )
     pair_param = result_cg["interaction_param"].astype(np.float32)
     cg_pair_grp.create_dataset(
         "interaction_param",
@@ -2493,6 +4309,8 @@ def _build_cg_lipid_tables(
     cg_pair_grp.attrs["fit_smooth"] = np.float32(result_cg["fit_smooth"])
     cg_pair_grp.attrs["azimuthal_count"] = np.int32(result_cg["azimuthal_count"])
     cg_pair_grp.attrs["cgl_bead_frame_count"] = np.int32(result_cg["bead_frame_count"])
+    cg_pair_grp.attrs["conformer_count"] = np.int32(result_cg["conformer_count"])
+    cg_pair_grp.attrs["conformer_pair_count"] = np.int32(result_cg["conformer_pair_count"])
     cg_pair_grp.attrs["orientation_sampling"] = "both_cgl_direction_vectors"
     cg_pair_grp.attrs["knot_spacing_ang"] = np.float32(result_cg["knot_spacing_ang"])
     cg_pair_grp.attrs["cutoff_ang"] = np.float32(result_cg["cutoff_ang"])
@@ -2513,8 +4331,119 @@ def _build_cg_lipid_tables(
     cg_pair_grp.attrs["unresolved_core_boundary_row"] = np.int32(result_cg["core_boundary_row"])
     cg_pair_grp.attrs["unresolved_core_rows"] = np.int32(result_cg["unresolved_core_rows"])
     cg_pair_grp.attrs["unresolved_core_energy_kj_mol"] = np.float32(result_cg["unresolved_core_energy_kj_mol"])
+    cg_pair_grp.attrs["fluid_pmf_pair_sample_count"] = np.int64(result_cg.get("fluid_pmf_pair_sample_count", 0))
+    cg_pair_grp.attrs["fluid_pmf_occupied_radial_bins"] = np.int32(result_cg.get("fluid_pmf_occupied_radial_bins", 0))
+    cg_pair_grp.attrs["fluid_pmf_occupied_tensor_bins"] = np.int32(result_cg.get("fluid_pmf_occupied_tensor_bins", 0))
+    cg_pair_grp.attrs["fluid_pmf_frame_start_fraction"] = np.float32(
+        result_cg.get("fluid_pmf_frame_start_fraction", 0.0)
+    )
+    cg_pair_grp.attrs["fluid_pmf_core_min_nm"] = np.float32(result_cg.get("fluid_pmf_core_min_nm", 0.0))
+    cg_pair_grp.attrs["force_match_enabled"] = np.int32(result_cg.get("force_match_enabled", 0))
+    cg_pair_grp.attrs["force_match_mode"] = result_cg.get("force_match_mode", "")
+    cg_pair_grp.attrs["force_match_projection"] = (
+        "radial_and_angular_generalized_forces_on_cgl_pair_coordinates"
+        if result_cg.get("force_match_mode", "") == "generalized"
+        else "radial_generalized_force_on_cgl_pair_coordinate"
+    )
+    cg_pair_grp.attrs["force_match_boundary_condition"] = (
+        "connected_component_high_r_anchor_keeps_base_energy_constant"
+        if result_cg.get("force_match_mode", "") == "generalized"
+        else "segment_high_r_keeps_base_energy_constant"
+    )
+    cg_pair_grp.attrs["force_match_unsampled_bin_policy"] = "retain_existing_table_value"
+    cg_pair_grp.attrs["force_match_frame_count"] = np.int32(result_cg.get("force_match_frame_count", 0))
+    cg_pair_grp.attrs["force_match_pair_force_sample_count"] = np.int64(
+        result_cg.get("force_match_pair_force_sample_count", 0)
+    )
+    cg_pair_grp.attrs["force_match_sampled_tensor_bins"] = np.int32(
+        result_cg.get("force_match_sampled_tensor_bins", 0)
+    )
+    cg_pair_grp.attrs["force_match_updated_tensor_bins"] = np.int32(
+        result_cg.get("force_match_updated_tensor_bins", 0)
+    )
+    cg_pair_grp.attrs["force_match_frame_start_fraction"] = np.float32(
+        result_cg.get("force_match_frame_start_fraction", 0.0)
+    )
+    cg_pair_grp.attrs["force_match_max_frames"] = np.int32(result_cg.get("force_match_max_frames", 0))
+    cg_pair_grp.attrs["force_match_min_count"] = np.int32(result_cg.get("force_match_min_count", 0))
+    cg_pair_grp.attrs["force_match_lsq_variable_count"] = np.int32(
+        result_cg.get("force_match_lsq_variable_count", 0)
+    )
+    cg_pair_grp.attrs["force_match_lsq_equation_count"] = np.int32(
+        result_cg.get("force_match_lsq_equation_count", 0)
+    )
+    cg_pair_grp.attrs["force_match_lsq_residual_rms_kj_mol"] = np.float32(
+        result_cg.get("force_match_lsq_residual_rms_kj_mol", 0.0)
+    )
+    cg_pair_grp.attrs["force_match_lsq_solver"] = result_cg.get("force_match_lsq_solver", "")
+    cg_pair_grp.attrs["ibi_enabled"] = np.int32(result_cg.get("ibi_enabled", 0))
+    cg_pair_grp.attrs["ibi_update_rule"] = "U_new=U_old+kBT*ln(P_model/P_target)_sampled_bins_only"
+    cg_pair_grp.attrs["ibi_unsampled_bin_policy"] = "retain_existing_table_value"
+    cg_pair_grp.attrs["ibi_base_pair_h5_path"] = result_cg.get("ibi_base_pair_h5_path", "")
+    cg_pair_grp.attrs["ibi_target_pair_sample_count"] = np.int64(result_cg.get("ibi_target_pair_sample_count", 0))
+    cg_pair_grp.attrs["ibi_model_pair_sample_count"] = np.int64(result_cg.get("ibi_model_pair_sample_count", 0))
+    cg_pair_grp.attrs["ibi_target_occupied_tensor_bins"] = np.int32(result_cg.get("ibi_target_occupied_tensor_bins", 0))
+    cg_pair_grp.attrs["ibi_model_occupied_tensor_bins"] = np.int32(result_cg.get("ibi_model_occupied_tensor_bins", 0))
+    cg_pair_grp.attrs["ibi_sampled_tensor_bins"] = np.int32(result_cg.get("ibi_sampled_tensor_bins", 0))
+    cg_pair_grp.attrs["ibi_target_frame_start_fraction"] = np.float32(
+        result_cg.get("ibi_target_frame_start_fraction", 0.0)
+    )
+    cg_pair_grp.attrs["ibi_model_frame_start_fraction"] = np.float32(
+        result_cg.get("ibi_model_frame_start_fraction", 0.0)
+    )
+    cg_pair_grp.attrs["ibi_step_size"] = np.float32(result_cg.get("ibi_step_size", 0.0))
+    cg_pair_grp.attrs["ibi_raw_correction_min_kj_mol"] = np.float32(
+        result_cg.get("ibi_raw_correction_min_kj_mol", 0.0)
+    )
+    cg_pair_grp.attrs["ibi_raw_correction_max_kj_mol"] = np.float32(
+        result_cg.get("ibi_raw_correction_max_kj_mol", 0.0)
+    )
+    cg_pair_grp.attrs["ibi_raw_correction_mean_kj_mol"] = np.float32(
+        result_cg.get("ibi_raw_correction_mean_kj_mol", 0.0)
+    )
+    cg_pair_grp.attrs["ibi_correction_min_kj_mol"] = np.float32(result_cg.get("ibi_correction_min_kj_mol", 0.0))
+    cg_pair_grp.attrs["ibi_correction_max_kj_mol"] = np.float32(result_cg.get("ibi_correction_max_kj_mol", 0.0))
+    cg_pair_grp.attrs["ibi_correction_mean_kj_mol"] = np.float32(result_cg.get("ibi_correction_mean_kj_mol", 0.0))
     _write_cg_derived_attrs(cg_pair_grp, derived_params)
     cg_pair_grp.create_dataset("energy_grid_raw_kj_mol", data=result_cg["energy_grid_raw"].astype(np.float32))
+    if int(result_cg.get("force_match_enabled", 0)):
+        cg_pair_grp.create_dataset(
+            "force_match_counts",
+            data=result_cg["force_match_counts"].astype(np.float32),
+        )
+        cg_pair_grp.create_dataset(
+            "force_match_mean_dudr_kj_mol_nm",
+            data=result_cg["force_match_mean_dudr_kj_mol_nm"].astype(np.float32),
+        )
+        cg_pair_grp.create_dataset(
+            "force_match_mean_duda1_kj_mol",
+            data=result_cg["force_match_mean_duda1_kj_mol"].astype(np.float32),
+        )
+        cg_pair_grp.create_dataset(
+            "force_match_mean_duda2_kj_mol",
+            data=result_cg["force_match_mean_duda2_kj_mol"].astype(np.float32),
+        )
+        cg_pair_grp.create_dataset(
+            "force_match_angular_counts",
+            data=result_cg["force_match_angular_counts"].astype(np.float32),
+        )
+        cg_pair_grp.create_dataset(
+            "force_match_updated",
+            data=result_cg["force_match_updated"].astype(np.int8),
+        )
+    if int(result_cg.get("ibi_enabled", 0)):
+        cg_pair_grp.create_dataset(
+            "ibi_correction_grid_kj_mol",
+            data=result_cg["ibi_correction_grid_kj_mol"].astype(np.float32),
+        )
+        cg_pair_grp.create_dataset(
+            "ibi_target_counts",
+            data=result_cg["ibi_target_counts"].astype(np.float32),
+        )
+        cg_pair_grp.create_dataset(
+            "ibi_model_counts",
+            data=result_cg["ibi_model_counts"].astype(np.float32),
+        )
     cg_pair_grp.create_dataset(
         "attractive_radial_background_kj_mol",
         data=result_cg["attractive_radial_background_kj_mol"].astype(np.float32),
@@ -2522,6 +4451,14 @@ def _build_cg_lipid_tables(
 
     # CG-SC
     cg_sc_grp = cg_grp.create_group("cg_lipid_sc")
+    _write_common_table_contract_attrs(
+        cg_sc_grp,
+        table_family="CGL-SC",
+        source_object="sidechain_rotamer_bead_ensemble",
+        target_object="dopc_cgl_constituent_bead_ensemble",
+        projection_ensemble="sidechain_rotamers_x_cgl_conformers_x_two_orientations_x_bead_frames",
+        runtime_representation="log1p_reduced_tensor_bspline",
+    )
     cg_sc_grp.create_dataset(
         "interaction_param",
         data=interaction_param_sc.astype(np.float32),
@@ -2556,6 +4493,7 @@ def _build_cg_lipid_tables(
     cg_sc_grp.attrs["azimuthal_count"] = np.int32(sc_azimuthal_count if n_sc_types else 0)
     cg_sc_grp.attrs["sidechain_bead_frame_count"] = np.int32(sc_bead_frame_count if n_sc_types else 0)
     cg_sc_grp.attrs["cgl_bead_frame_count"] = np.int32(cg_bead_frame_count if n_sc_types else 0)
+    cg_sc_grp.attrs["conformer_count"] = np.int32(ref_ensemble_nm.shape[0])
     cg_sc_grp.attrs["orientation_sampling"] = "sidechain_and_cgl_direction_vectors"
     cg_sc_grp.attrs["knot_spacing_ang"] = np.float32(sc_knot_spacing_ang)
     cg_sc_grp.attrs["cutoff_ang"] = np.float32(sc_cutoff_ang)
@@ -2626,7 +4564,7 @@ def _build_cg_lipid_tables(
     # pairs are excluded during stage conversion.
     print("  Computing CGL target-type metadata...")
     effective_lj = _compute_cgl_effective_lj_params(
-        ref_bead_positions_nm=ref_nm,
+        ref_bead_positions_nm=ref_ensemble_nm,
         bead_types=bead_types,
         pair_params=pair_params,
         bead_frame_count=cg_bead_frame_count,
@@ -2649,6 +4587,7 @@ def _build_cg_lipid_tables(
     eff_grp.create_dataset("uncapped_sigma_nm", data=eff_uncapped_sigmas)
     eff_grp.attrs["source"] = "orientation_average_metadata_not_runtime"
     eff_grp.attrs["cgl_bead_frame_count"] = np.int32(cg_bead_frame_count)
+    eff_grp.attrs["conformer_count"] = np.int32(ref_ensemble_nm.shape[0])
     eff_grp.attrs["orientation_sampling"] = "fibonacci_cgl_direction_vectors"
     _write_cg_derived_attrs(eff_grp, derived_params)
 
@@ -2656,7 +4595,7 @@ def _build_cg_lipid_tables(
     # After this, MartiniPotential CGL-X can be omitted for all X.
     _build_cgl_target_table(
         h5, cg_grp, effective_lj,
-        ref_bead_positions_nm=ref_nm,
+        ref_bead_positions_nm=ref_ensemble_nm,
         bead_types=bead_types,
         bead_charges=bead_charges,
         pair_params=pair_params,
@@ -2673,7 +4612,9 @@ def _run_cgl_target_type_task(task: dict) -> tuple[int, str, np.ndarray]:
     bead_types = task["bead_types"]
     bead_charges = task["bead_charges"]
     pair_params = task["pair_params"]
-    ref_nm = task["ref_nm"]
+    ref_nm = np.asarray(task["ref_nm"], dtype=np.float64)
+    if ref_nm.ndim == 2:
+        ref_nm = ref_nm[None, :, :]
     r_sample_nm = task["r_sample_nm"]
     cos_theta_grid = task["cos_theta_grid"]
     orientation_dirs = task["orientation_dirs"]
@@ -2699,18 +4640,19 @@ def _run_cgl_target_type_task(task: dict) -> tuple[int, str, np.ndarray]:
                 rot_base = _rotation_to_align_z_np(direction)
                 for frame_angle in bead_frame_angles:
                     rot = rot_base @ _rotation_about_axis_np(z_axis, float(frame_angle))
-                    cg_positions = (rot @ ref_nm.T).T
-                    e, _, _ = _compute_pair_energy_and_gradient(
-                        cg_positions,
-                        target_pos,
-                        bead_types,
-                        [tgt_type],
-                        bead_charges,
-                        [target_charge],
-                        pair_params,
-                        dist_min_nm=1e-6,
-                    )
-                    sample_energies.append(float(e))
+                    for ref_conf in ref_nm:
+                        cg_positions = (rot @ ref_conf.T).T
+                        e, _, _ = _compute_pair_energy_and_gradient(
+                            cg_positions,
+                            target_pos,
+                            bead_types,
+                            [tgt_type],
+                            bead_charges,
+                            [target_charge],
+                            pair_params,
+                            dist_min_nm=1e-6,
+                        )
+                        sample_energies.append(float(e))
             energy_grid[ir, ia] = _boltzmann_free_energy_kj_mol(
                 sample_energies,
                 average_temperature,
@@ -2757,15 +4699,15 @@ def _build_cgl_target_table(
     ref_nm = np.asarray(ref_bead_positions_nm, dtype=np.float64) if ref_bead_positions_nm is not None else None
     explicit_source = (
         ref_nm is not None
-        and ref_nm.shape == (14, 3)
+        and (ref_nm.shape == (14, 3) or (ref_nm.ndim == 3 and ref_nm.shape[1:] == (14, 3)))
         and bead_types is not None
         and bead_charges is not None
         and pair_params is not None
     )
     if not explicit_source:
         raise RuntimeError("cg_lipid_target requires explicit DOPC bead geometry and dry-MARTINI parameters")
-    ref_nm = _canonicalize_lipid_reference_to_z(ref_nm)
-    max_radius_ang = float(np.max(np.linalg.norm(ref_nm, axis=1)) * length_conv)
+    ref_nm = _canonicalize_lipid_reference_ensemble_to_z(ref_nm)
+    max_radius_ang = float(np.max(np.linalg.norm(ref_nm.reshape(-1, 3), axis=1)) * length_conv)
     extended_radial_count = (
         int(math.ceil((max_radius_ang + DRY_MARTINI_NONBONDED_CUTOFF_NM * length_conv) / knot_spacing_ang))
         + 2
@@ -2816,6 +4758,14 @@ def _build_cgl_target_table(
         reference_energy_eup[0, ti] = float(reference_energy_kj_mol) / float(energy_conv)
 
     target_grp = cg_grp.create_group("cg_lipid_target")
+    _write_common_table_contract_attrs(
+        target_grp,
+        table_family="CGL-particle",
+        source_object="dopc_cgl_constituent_bead_ensemble",
+        target_object="dry_martini_particle_type",
+        projection_ensemble="cgl_conformers_x_cgl_orientations_x_bead_frames",
+        runtime_representation="log1p_reduced_radial_angular_bspline",
+    )
     target_grp.create_dataset(
         "interaction_param",
         data=interaction_param.astype(np.float32),
@@ -2838,6 +4788,7 @@ def _build_cgl_target_table(
     target_grp.attrs["radial_sample_count"] = np.int32(len(r_sample_ang))
     target_grp.attrs["angular_sample_count"] = np.int32(len(cos_theta_grid))
     target_grp.attrs["cgl_bead_frame_count"] = np.int32(len(bead_frame_angles))
+    target_grp.attrs["conformer_count"] = np.int32(ref_nm.shape[0])
     target_grp.attrs["orientation_sampling"] = "cgl_direction_vector"
     target_grp.attrs["knot_spacing_ang"] = np.float32(knot_spacing_ang)
     cutoff_ang = float((n_knot_radial - 2) * knot_spacing_ang)
@@ -2882,7 +4833,7 @@ def _build_cgl_target_table(
     target_grp.attrs["sample_dist_min_source"] = "numerical_zero_guard_only"
     target_grp.attrs["isotropic_background_source"] = "none_full_resolved_dry_martini_cgl_target_table"
     target_grp.attrs["attractive_control_source"] = "retained_full_resolved_dry_martini_cgl_target_table"
-    target_grp.attrs["relaxation"] = "rigid_rotated_geometry"
+    target_grp.attrs["relaxation"] = "ensemble_rotated_geometry"
     target_grp.attrs["angle_convention"] = "ang=n_cgl_dot_n12"
     target_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
     target_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
@@ -3022,6 +4973,26 @@ def build_dopc_h5(
     sidechain_lib_path: Path,
     dopc_pdb_path: Path,
     forcefield_name: str = "martini22",
+    conformer_upside_h5_path: Path | None = None,
+    conformer_count: int = 4,
+    conformer_frame_start_fraction: float = 0.5,
+    isolated_conformer_count: int = 2,
+    isolated_conformer_temperature_upside: float = DEFAULT_PRODUCTION_TEMP_UPSIDE,
+    isolated_conformer_seed: int = 1729,
+    isolated_conformer_mc_steps: int = 2000,
+    isolated_conformer_proposal_sigma_nm: float = 0.025,
+    fluid_pair_pmf_upside_h5_path: Path | None = None,
+    fluid_pair_pmf_frame_start_fraction: float = 0.5,
+    force_match_upside_h5_path: Path | None = None,
+    force_match_frame_start_fraction: float = 0.5,
+    force_match_max_frames: int = 100,
+    force_match_min_count: int = 4,
+    force_match_mode: str = "radial",
+    ibi_base_pair_h5_path: Path | None = None,
+    ibi_target_upside_h5_path: Path | None = None,
+    ibi_model_upside_h5_path: Path | None = None,
+    ibi_target_frame_start_fraction: float = 0.5,
+    ibi_model_frame_start_fraction: float = 0.5,
 ) -> None:
     """Generate dopc.h5 with DOPC CG lipid tables."""
     output_path = Path(output_path).expanduser().resolve()
@@ -3036,27 +5007,39 @@ def build_dopc_h5(
     atomtype_masses = parse_itp_atomtype_masses(dry_ff_path)
     dopc = parse_dopc_from_itp(lipids_itp_path)
 
-    with open(dopc_pdb_path) as f:
-        dopc_atoms = []
-        for line in f:
-            if not line.startswith(("ATOM", "HETATM")):
-                continue
-            resname = line[17:21].strip().upper()
-            if resname not in ("DOPC", "DOP"):
-                continue
-            x = float(line[30:38])
-            y = float(line[38:46])
-            z = float(line[46:54])
-            dopc_atoms.append([x, y, z])
-
-    n_per_lipid = 14
-    first = dopc_atoms[:n_per_lipid]
-    com = np.mean(first, axis=0)
-    ref_bead_positions_nm = np.array(
-        [[a[0] - com[0], a[1] - com[1], a[2] - com[2]] for a in first]
-    ) * 0.1
+    if conformer_upside_h5_path is not None:
+        ref_bead_positions_nm = load_dopc_conformers_from_upside_h5(
+            conformer_upside_h5_path,
+            max_conformers=conformer_count,
+            frame_start_fraction=conformer_frame_start_fraction,
+        )
+        reference_source = "full_resolution_upside_conformer_trajectory"
+    else:
+        ref_bead_positions_nm = sample_isolated_dopc_bonded_conformers(
+            dopc,
+            lipids_itp_path=lipids_itp_path,
+            conformer_count=isolated_conformer_count,
+            temperature_upside=isolated_conformer_temperature_upside,
+            seed=isolated_conformer_seed,
+            mc_steps_per_conformer=isolated_conformer_mc_steps,
+            proposal_sigma_nm=isolated_conformer_proposal_sigma_nm,
+        )
+        reference_source = "isolated_dopc_itp_bonded_mc_ensemble"
 
     def _writer(h5: h5py.File) -> None:
+        h5.attrs["dopc_reference_source"] = reference_source
+        h5.attrs["dopc_reference_conformer_count"] = np.int32(
+            int(np.asarray(ref_bead_positions_nm).reshape(-1, 14, 3).shape[0])
+        )
+        if conformer_upside_h5_path is None:
+            h5.attrs["dopc_isolated_conformer_temperature_upside"] = np.float32(
+                isolated_conformer_temperature_upside
+            )
+            h5.attrs["dopc_isolated_conformer_seed"] = np.int32(isolated_conformer_seed)
+            h5.attrs["dopc_isolated_conformer_mc_steps"] = np.int32(isolated_conformer_mc_steps)
+            h5.attrs["dopc_isolated_conformer_proposal_sigma_nm"] = np.float32(
+                isolated_conformer_proposal_sigma_nm
+            )
         _build_cg_lipid_tables(
             h5,
             pair_params=pair_params,
@@ -3069,6 +5052,18 @@ def build_dopc_h5(
             bead_charges=dopc["bead_charges"],
             bead_masses_g_mol=atomtype_masses,
             lipids_itp_path=lipids_itp_path,
+            fluid_pair_pmf_upside_h5_path=fluid_pair_pmf_upside_h5_path,
+            fluid_pair_pmf_frame_start_fraction=fluid_pair_pmf_frame_start_fraction,
+            force_match_upside_h5_path=force_match_upside_h5_path,
+            force_match_frame_start_fraction=force_match_frame_start_fraction,
+            force_match_max_frames=force_match_max_frames,
+            force_match_min_count=force_match_min_count,
+            force_match_mode=force_match_mode,
+            ibi_base_pair_h5_path=ibi_base_pair_h5_path,
+            ibi_target_upside_h5_path=ibi_target_upside_h5_path,
+            ibi_model_upside_h5_path=ibi_model_upside_h5_path,
+            ibi_target_frame_start_fraction=ibi_target_frame_start_fraction,
+            ibi_model_frame_start_fraction=ibi_model_frame_start_fraction,
         )
 
     _write_h5_atomically(output_path, _writer)

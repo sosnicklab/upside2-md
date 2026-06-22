@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+struct H5Logger;
+
 namespace martini_fix_rigid {
 void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine);
 void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv);
@@ -50,6 +52,24 @@ void load_masses_for_engine(DerivEngine* engine, hid_t config_root);
 float get_mass(DerivEngine* engine, int atom_index);
 void clear_masses_for_engine(DerivEngine* engine);
 bool has_masses(DerivEngine* engine);
+}
+
+namespace martini_cg_lipid {
+void register_dynamic_orientation_for_engine(DerivEngine* engine, hid_t config_root, uint32_t random_seed);
+void clear_dynamic_orientation_for_engine(DerivEngine* engine);
+bool has_dynamic_orientation(DerivEngine* engine);
+void set_dynamic_orientation_temperature(DerivEngine* engine, float temperature);
+void set_dynamic_orientation_thermostat_delta_t(DerivEngine* engine, float delta_t);
+void apply_dynamic_orientation_thermostat(DerivEngine* engine);
+void integrate_dynamic_orientation(DerivEngine* engine, float dt);
+void add_dynamic_orientation_loggers(DerivEngine* engine, H5Logger& logger, bool record_momentum);
+void register_cgl_gle_for_engine(DerivEngine* engine, hid_t config_root, uint32_t random_seed);
+void clear_cgl_gle_for_engine(DerivEngine* engine);
+bool has_cgl_gle(DerivEngine* engine);
+void set_cgl_gle_temperature(DerivEngine* engine, float temperature);
+void set_cgl_gle_delta_t(DerivEngine* engine, float delta_t);
+void apply_cgl_gle_thermostat(DerivEngine* engine, VecArray mom);
+void add_cgl_gle_loggers(DerivEngine* engine, H5Logger& logger, bool record_aux);
 }
 
 void martini_run_minimization(DerivEngine& engine,

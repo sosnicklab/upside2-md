@@ -275,7 +275,49 @@ def write_vtf_frame(fh, pos):
         fh.write(f"{x:.3f} {y:.3f} {z:.3f}\n")
 
 
-def build_cg_lipid_vector_info(struct_h5):
+def read_dopc_template_display_offsets(pdb_file):
+    residues = {}
+    if not pdb_file or not os.path.exists(pdb_file):
+        return None
+    with open(pdb_file, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if not (line.startswith("ATOM") or line.startswith("HETATM")):
+                continue
+            resname = line[17:21].strip().upper()
+            if resname not in {"DOPC", "DOP"}:
+                continue
+            resid = int(line[22:26])
+            atom_name = line[12:16].strip().upper()
+            xyz = np.array(
+                [float(line[30:38]), float(line[38:46]), float(line[46:54])],
+                dtype=np.float64,
+            )
+            residues.setdefault(resid, {})[atom_name] = xyz
+
+    head_offsets = []
+    tail_offsets = []
+    for atoms in residues.values():
+        required = {"NC3", "C5A", "C5B"}
+        if not required.issubset(atoms):
+            continue
+        bead_pos = np.asarray(list(atoms.values()), dtype=np.float64)
+        com = np.mean(bead_pos, axis=0)
+        head_pos = atoms["NC3"]
+        tail_mid = 0.5 * (atoms["C5A"] + atoms["C5B"])
+        direction = tail_mid - head_pos
+        norm = float(np.linalg.norm(direction))
+        if norm <= 1e-8:
+            continue
+        direction /= norm
+        head_offsets.append(float(np.dot(head_pos - com, direction)))
+        tail_offsets.append(float(np.dot(tail_mid - com, direction)))
+
+    if not head_offsets or not tail_offsets:
+        return None
+    return float(np.median(head_offsets)), float(np.median(tail_offsets))
+
+
+def build_cg_lipid_vector_info(struct_h5, rod_geometry="h5", reference_pdb=None):
     """Read compose_vector6d data and build CG lipid display-vector info.
 
     Returns None if no CG lipids are present, else a dict with:
@@ -316,6 +358,14 @@ def build_cg_lipid_vector_info(struct_h5):
         return None
     if metadata_head_offsets.shape[0] != elem_index.shape[0] or metadata_tail_offsets.shape[0] != elem_index.shape[0]:
         raise ValueError("CG lipid VTF endpoint-offset metadata length mismatch")
+    if rod_geometry == "template":
+        template_offsets = read_dopc_template_display_offsets(reference_pdb)
+        if template_offsets is not None:
+            head_offset, tail_offset = template_offsets
+            metadata_head_offsets = np.full(elem_index.shape[0], head_offset, dtype=np.float32)
+            metadata_tail_offsets = np.full(elem_index.shape[0], tail_offset, dtype=np.float32)
+        else:
+            print(f"WARNING: could not read DOPC template offsets from {reference_pdb}; using H5 rod offsets")
     display_span = float(np.mean(metadata_tail_offsets - metadata_head_offsets))
     if not np.isfinite(display_span) or display_span <= 0.0:
         display_span = float(cv6.attrs.get("head_tail_span_ang", 0.0))
@@ -471,6 +521,18 @@ def extend_frame_with_lipid_vectors(frame, vector_info, source_frame=None, box_l
     hydrophobic_center_pos = centers.copy()
     tail_pos = centers + direction * tail_offsets[:, None]
     return np.concatenate([out, hydrophilic_center_pos, hydrophobic_center_pos, tail_pos], axis=0)
+
+
+def copy_output_mapping(mapping):
+    out = {}
+    for key, value in mapping.items():
+        if isinstance(value, np.ndarray):
+            out[key] = value.copy()
+        elif isinstance(value, dict):
+            out[key] = value.copy()
+        else:
+            out[key] = value
+    return out
 
 
 def list_output_groups(traj_h5):
@@ -846,6 +908,23 @@ def parse_args():
     parser.add_argument("pdb_id", nargs="?", default=None, help="PDB id for pdb/<id>.MARTINI.pdb metadata")
     parser.add_argument("--mode", type=int, choices=(1, 2), default=1, help="output mode (default: 1)")
     parser.add_argument(
+        "--cg-lipid-display",
+        choices=("rod", "center"),
+        default="rod",
+        help="CGL VTF style: rod writes synthetic head/tail display atoms; center writes the physical CGL particle only.",
+    )
+    parser.add_argument(
+        "--cg-lipid-rod-geometry",
+        choices=("h5", "template"),
+        default="h5",
+        help="Rod endpoint offsets: h5 uses stored per-lipid metadata; template uses median full-resolution DOPC bead geometry.",
+    )
+    parser.add_argument(
+        "--cg-lipid-reference-pdb",
+        default=str(REPO_ROOT / "parameters" / "dryMARTINI" / "DOPC.pdb"),
+        help="Full-resolution DOPC PDB used when --cg-lipid-rod-geometry=template.",
+    )
+    parser.add_argument(
         "--split-segments",
         action="store_true",
         help="Write one output file per output_previous_* / output trajectory segment instead of combining them.",
@@ -867,10 +946,15 @@ def extract_trajectory(
     pdb_id,
     mode,
     output_group,
+    cg_lipid_display,
+    cg_lipid_rod_geometry,
+    cg_lipid_reference_pdb,
 ):
     fmt = output_file.split(".")[-1].lower()
     if fmt != "vtf":
         raise ValueError("Output file must be .vtf")
+    mapping = copy_output_mapping(mapping)
+    out_bonds = list(out_bonds)
 
     print(f"Extracting trajectory from: {input_file}")
     print(f"Structure source: {structure_file}")
@@ -903,8 +987,13 @@ def extract_trajectory(
     n_output_particles = mapping['output_atom_names'].shape[0]
     print(f"Particles (output): {n_output_particles}")
 
-    vector_info = build_cg_lipid_vector_info(struct_h5)
-    if vector_info is not None:
+    vector_info = build_cg_lipid_vector_info(
+        struct_h5,
+        rod_geometry=cg_lipid_rod_geometry,
+        reference_pdb=cg_lipid_reference_pdb,
+    )
+    use_lipid_rods = vector_info is not None and cg_lipid_display == "rod"
+    if use_lipid_rods:
         extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds)
         print(f"Particles (output+lipid-vectors): {mapping['output_atom_names'].shape[0]}")
         span = vector_info["tail_offsets"] - vector_info["head_offsets"]
@@ -915,6 +1004,9 @@ def extract_trajectory(
             f"max={float(np.max(span)):.3f} A"
         )
         print(f"CG lipid display radius: {float(vector_info['display_radius']):.3f} A")
+        print(f"CG lipid rod geometry: {cg_lipid_rod_geometry}")
+    elif vector_info is not None:
+        print("CG lipid display: center-only physical CGL particles")
 
     print(f"Frames: {n_frame_total}")
     print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
@@ -968,7 +1060,7 @@ def extract_trajectory(
                 y_len,
                 z_len,
             )
-            if vector_info is not None:
+            if use_lipid_rods:
                 out_frame = extend_frame_with_lipid_vectors(
                     out_frame,
                     vector_info,
@@ -1089,6 +1181,9 @@ def main():
                     pdb_id,
                     mode,
                     output_group=target_group,
+                    cg_lipid_display=args.cg_lipid_display,
+                    cg_lipid_rod_geometry=args.cg_lipid_rod_geometry,
+                    cg_lipid_reference_pdb=args.cg_lipid_reference_pdb,
                 )
             else:
                 print(f"Found {len(output_groups)} trajectory segments; writing one file per segment.")
@@ -1108,6 +1203,9 @@ def main():
                         pdb_id,
                         mode,
                         output_group=output_group,
+                        cg_lipid_display=args.cg_lipid_display,
+                        cg_lipid_rod_geometry=args.cg_lipid_rod_geometry,
+                        cg_lipid_reference_pdb=args.cg_lipid_reference_pdb,
                     )
                     print(f"Wrote segment {segment_index}: {segment_output_file} ({output_group})")
         else:
@@ -1126,6 +1224,9 @@ def main():
                 pdb_id,
                 mode,
                 output_group=target_group,
+                cg_lipid_display=args.cg_lipid_display,
+                cg_lipid_rod_geometry=args.cg_lipid_rod_geometry,
+                cg_lipid_reference_pdb=args.cg_lipid_reference_pdb,
             )
 
 

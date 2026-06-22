@@ -2,12 +2,15 @@
 #include "spline.h"
 #include "box.h"
 #include "martini.h"
+#include "random.h"
 #include "state_logger.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -62,6 +65,15 @@ static vector<float> read_float_dataset(hid_t grp, const char* name) {
     vector<float> out(sz[0] * sz[1], 0.f);
     traverse_dset<2, float>(grp, name, [&](size_t i, size_t j, float v) {
         out[i * sz[1] + j] = v;
+    });
+    return out;
+}
+
+static vector<float> read_float_dataset_1d(hid_t grp, const char* name) {
+    vector<hsize_t> sz = get_dset_size(1, grp, name);
+    vector<float> out(sz[0], 0.f);
+    traverse_dset<1, float>(grp, name, [&](size_t i, float v) {
+        out[i] = v;
     });
     return out;
 }
@@ -801,17 +813,139 @@ static bool cgl_target_pairlist_candidate(
 
 }  // namespace
 
+struct CGLOrientationState : public CoordNode {
+    float rotational_inertia;
+    float thermostat_timescale;
+
+    CGLOrientationState(hid_t grp)
+        : CoordNode(int(h5::get_dset_size(2, grp, "direction")[0]), 3)
+        , rotational_inertia(read_attribute<float>(grp, ".", "rotational_inertia_up", 1.f))
+        , thermostat_timescale(read_attribute<float>(grp, ".", "rotational_thermostat_timescale", 5.f))
+    {
+        if(rotational_inertia <= 0.f)
+            throw string("cgl_orientation_state rotational_inertia_up must be positive");
+        if(thermostat_timescale <= 0.f)
+            throw string("cgl_orientation_state rotational_thermostat_timescale must be positive");
+
+        traverse_dset<2, float>(grp, "direction", [&](size_t i, size_t d, float v) {
+            output(int(d), int(i)) = v;
+        });
+        for(int i = 0; i < n_elem; ++i) {
+            float3 n = load_vec<3>(output, i);
+            float norm = mag(n);
+            if(norm <= 1e-6f)
+                throw string("cgl_orientation_state direction contains a zero vector");
+            store_vec(output, i, n / norm);
+        }
+    }
+
+    virtual void compute_value(ComputeMode) override {}
+    virtual void propagate_deriv() override {}
+};
+
+namespace {
+
+struct CGLDynamicOrientationRuntime {
+    CGLOrientationState* state = nullptr;
+    VecArrayStorage angular_momentum;
+    float temperature = 1.f;
+    float thermostat_delta_t = 0.f;
+    uint32_t random_seed = 0u;
+    uint64_t thermostat_invocations = 0u;
+
+    CGLDynamicOrientationRuntime(CGLOrientationState* state_, uint32_t random_seed_)
+        : state(state_)
+        , angular_momentum(3, state_ ? state_->n_elem : 1)
+        , random_seed(random_seed_)
+    {
+        fill(angular_momentum, 0.f);
+    }
+};
+
+static std::map<DerivEngine*, std::unique_ptr<CGLDynamicOrientationRuntime>>& orientation_runtime_map() {
+    static std::map<DerivEngine*, std::unique_ptr<CGLDynamicOrientationRuntime>> m;
+    return m;
+}
+
+static CGLDynamicOrientationRuntime* get_orientation_runtime(DerivEngine* engine) {
+    auto& m = orientation_runtime_map();
+    auto it = m.find(engine);
+    return it == m.end() ? nullptr : it->second.get();
+}
+
+struct CGLGLERuntime {
+    vector<int> atom_index;
+    vector<float> memory_tau;
+    vector<float> coupling;
+    VecArrayStorage aux_momentum;
+    float temperature = 1.f;
+    float delta_t = 0.f;
+    uint32_t random_seed = 0u;
+    uint64_t thermostat_invocations = 0u;
+
+    CGLGLERuntime(
+            const vector<int>& atom_index_,
+            uint32_t random_seed_,
+            const vector<float>& memory_tau_,
+            const vector<float>& coupling_)
+        : atom_index(atom_index_)
+        , memory_tau(memory_tau_)
+        , coupling(coupling_)
+        , aux_momentum(3, int(std::max<size_t>(1, atom_index_.size() * memory_tau_.size())))
+        , random_seed(random_seed_)
+    {
+        fill(aux_momentum, 0.f);
+    }
+
+    int n_mode() const { return int(memory_tau.size()); }
+    int aux_index(int mode, int lipid) const {
+        return mode * int(atom_index.size()) + lipid;
+    }
+};
+
+static std::map<DerivEngine*, std::unique_ptr<CGLGLERuntime>>& cgl_gle_runtime_map() {
+    static std::map<DerivEngine*, std::unique_ptr<CGLGLERuntime>> m;
+    return m;
+}
+
+static CGLGLERuntime* get_cgl_gle_runtime(DerivEngine* engine) {
+    auto& m = cgl_gle_runtime_map();
+    auto it = m.find(engine);
+    return it == m.end() ? nullptr : it->second.get();
+}
+
+static float3 project_tangent(float3 v, const float3& n) {
+    return v - n * dot(v, n);
+}
+
+static float3 rotate_unit_vector(const float3& n, const float3& omega, float dt) {
+    float omega_mag = mag(omega);
+    if(omega_mag <= 1e-8f) return n;
+    float angle = omega_mag * dt;
+    float3 axis = omega / omega_mag;
+    float c = cosf(angle);
+    float s = sinf(angle);
+    float3 out = n * c + cross(axis, n) * s + axis * (dot(axis, n) * (1.f - c));
+    float out_norm = mag(out);
+    return out_norm > 1e-8f ? out / out_norm : n;
+}
+
+}  // namespace
+
 struct ComposeVector6D : public CoordNode {
     CoordNode& pos;
+    CoordNode* orientation_state;
     vector<int> elem_index;
     vector<int> orientation_index;
     vector<float> direction;
     bool dynamic_orientation;
+    bool state_orientation;
     float box_x;
     float box_y;
     float box_z;
 
     ComposeVector6D(hid_t grp, CoordNode& pos_node);
+    ComposeVector6D(hid_t grp, const ArgList& arguments);
 
     virtual void compute_value(ComputeMode mode) override;
     virtual void propagate_deriv() override;
@@ -820,7 +954,9 @@ struct ComposeVector6D : public CoordNode {
 ComposeVector6D::ComposeVector6D(hid_t grp, CoordNode& pos_node)
     : CoordNode(h5::get_dset_size(1, grp, "elem_index")[0], 6)
     , pos(pos_node)
+    , orientation_state(nullptr)
     , dynamic_orientation(h5_exists(grp, "orientation_index"))
+    , state_orientation(false)
     , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
     , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
     , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
@@ -851,14 +987,38 @@ ComposeVector6D::ComposeVector6D(hid_t grp, CoordNode& pos_node)
     fill(output, 0.f);
 }
 
+ComposeVector6D::ComposeVector6D(hid_t grp, const ArgList& arguments)
+    : ComposeVector6D(grp, *arguments.at(0))
+{
+    if(arguments.size() == 2u) {
+        orientation_state = arguments.at(1);
+        check_elem_width(*orientation_state, 3);
+        if(orientation_state->n_elem != n_elem)
+            throw string("compose_vector6d orientation state size must match elem_index");
+        state_orientation = true;
+        dynamic_orientation = false;
+    } else if(arguments.size() != 1u) {
+        throw string("compose_vector6d expects pos or pos plus cgl_orientation_state");
+    }
+}
+
 void ComposeVector6D::compute_value(ComputeMode) {
     VecArray posc = pos.output;
+    VecArray orient = orientation_state ? orientation_state->output : VecArray();
     for (int i = 0; i < n_elem; i++) {
         int ai = elem_index[i];
         output(0, i) = posc(0, ai);
         output(1, i) = posc(1, ai);
         output(2, i) = posc(2, ai);
-        if(dynamic_orientation) {
+        if(state_orientation) {
+            float3 n = load_vec<3>(orient, i);
+            float norm = mag(n);
+            if(norm > 1e-6f) n /= norm;
+            else n = make_vec3(direction[i * 3], direction[i * 3 + 1], direction[i * 3 + 2]);
+            output(3, i) = n.x();
+            output(4, i) = n.y();
+            output(5, i) = n.z();
+        } else if(dynamic_orientation) {
             int oi = orientation_index[i];
             float dr[3] = {
                 posc(0, oi) - posc(0, ai),
@@ -889,11 +1049,27 @@ void ComposeVector6D::compute_value(ComputeMode) {
 void ComposeVector6D::propagate_deriv() {
     VecArray pos_sens = pos.sens;
     VecArray posc = pos.output;
+    VecArray orient_sens = orientation_state ? orientation_state->sens : VecArray();
+    VecArray orient = orientation_state ? orientation_state->output : VecArray();
     for (int i = 0; i < n_elem; i++) {
         int ai = elem_index[i];
         pos_sens(0, ai) += sens(0, i);
         pos_sens(1, ai) += sens(1, i);
         pos_sens(2, ai) += sens(2, i);
+
+        if(state_orientation) {
+            float3 n = load_vec<3>(orient, i);
+            float norm2 = dot(n, n);
+            if(norm2 <= 1e-12f) continue;
+            float norm = sqrtf(norm2);
+            n /= norm;
+            float3 g = make_vec3(sens(3, i), sens(4, i), sens(5, i));
+            g = (g - n * dot(g, n)) / norm;
+            orient_sens(0, i) += g.x();
+            orient_sens(1, i) += g.y();
+            orient_sens(2, i) += g.z();
+            continue;
+        }
 
         if(!dynamic_orientation) continue;
 
@@ -1051,6 +1227,10 @@ void CGLipidPairPotential::ensure_pairlist(VecArray cg) {
 
 void CGLipidPairPotential::compute_value(ComputeMode mode) {
     (void)mode;
+    if(mode == DerivMode) {
+        potential = 0.f;
+        return;
+    }
     VecArray cg = cg_pos.output;
     ensure_pairlist(cg);
     float total = 0.f;
@@ -1126,6 +1306,142 @@ void CGLipidPairPotential::propagate_deriv() {
         accumulate_deriv(dr, n1, n2, e, dpos1, ddir1, dpos2, ddir2);
         add_vec6_sens(cg_sens, index[ai], dpos1, ddir1);
         add_vec6_sens(cg_sens, index[bi], dpos2, ddir2);
+    }
+}
+
+struct CGLipidDensityPotential : public PotentialNode {
+    CoordNode& cg_pos;
+    vector<int> index;
+    vector<float> kernel_coeff;
+    vector<float> embedding_coeff;
+    int n_kernel;
+    int n_embedding;
+    float box_x;
+    float box_y;
+    float box_z;
+    float kernel_spacing;
+    float kernel_cutoff;
+    float rho_min;
+    float rho_spacing;
+
+    CGLipidDensityPotential(hid_t grp, CoordNode& cg_pos);
+    void accumulate_density(VecArray cg, vector<float>& rho) const;
+    virtual void compute_value(ComputeMode mode) override;
+    virtual void propagate_deriv() override;
+    virtual void set_param(const vector<float>& new_param) override {
+        if(new_param.size() == embedding_coeff.size()) embedding_coeff = new_param;
+    }
+    virtual void update_box_dimensions_anisotropic(float scale_xy, float scale_z) override {
+        box_x *= scale_xy;
+        box_y *= scale_xy;
+        box_z *= scale_z;
+    }
+};
+
+CGLipidDensityPotential::CGLipidDensityPotential(hid_t grp, CoordNode& cg_pos_)
+    : PotentialNode()
+    , cg_pos(cg_pos_)
+    , n_kernel(read_attribute<int>(grp, ".", "kernel_n_knot", 0))
+    , n_embedding(read_attribute<int>(grp, ".", "embedding_n_knot", 0))
+    , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
+    , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
+    , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
+    , kernel_spacing(read_attribute<float>(grp, ".", "kernel_knot_spacing_ang", 0.f))
+    , kernel_cutoff(read_attribute<float>(grp, ".", "kernel_cutoff_ang", 0.f))
+    , rho_min(read_attribute<float>(grp, ".", "embedding_rho_min", 0.f))
+    , rho_spacing(read_attribute<float>(grp, ".", "embedding_rho_spacing", 0.f))
+{
+    check_elem_width(cg_pos, 6);
+    index = read_int_dataset(grp, "index");
+    kernel_coeff = read_float_dataset_1d(grp, "kernel_coeff");
+    embedding_coeff = read_float_dataset_1d(grp, "embedding_coeff");
+    if(index.empty()) throw string("cg_lipid_density requires at least one CGL index");
+    if(n_kernel <= 3) n_kernel = int(kernel_coeff.size());
+    if(n_embedding <= 3) n_embedding = int(embedding_coeff.size());
+    if(int(kernel_coeff.size()) != n_kernel)
+        throw string("cg_lipid_density kernel_coeff size does not match kernel_n_knot");
+    if(int(embedding_coeff.size()) != n_embedding)
+        throw string("cg_lipid_density embedding_coeff size does not match embedding_n_knot");
+    if(kernel_spacing <= 0.f || kernel_cutoff <= 0.f || rho_spacing <= 0.f)
+        throw string("cg_lipid_density requires positive kernel/embedding spacing and cutoff");
+}
+
+void CGLipidDensityPotential::accumulate_density(VecArray cg, vector<float>& rho) const {
+    rho.assign(index.size(), 0.f);
+    for(size_t ai = 0; ai < index.size(); ++ai) {
+        for(size_t bi = ai + 1; bi < index.size(); ++bi) {
+            float dr[3];
+            center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+            float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+            if(r2 <= 1e-12f) continue;
+            float r = sqrtf(r2);
+            if(r >= kernel_cutoff) continue;
+            Vec<2> w = radial_deBoor_value_and_deriv(
+                    kernel_coeff.data(), r / kernel_spacing, n_kernel);
+            rho[ai] += w.x();
+            rho[bi] += w.x();
+        }
+    }
+}
+
+void CGLipidDensityPotential::compute_value(ComputeMode mode) {
+    (void)mode;
+    if(mode == DerivMode) {
+        potential = 0.f;
+        return;
+    }
+    VecArray cg = cg_pos.output;
+    vector<float> rho;
+    accumulate_density(cg, rho);
+    float total = 0.f;
+    for(float r: rho) {
+        float coord = 1.f + (r - rho_min) / rho_spacing;
+        Vec<2> emb = clamped_deBoor_value_and_deriv(
+                embedding_coeff.data(), coord, n_embedding);
+        total += emb.x();
+    }
+    potential = total;
+}
+
+void CGLipidDensityPotential::propagate_deriv() {
+    VecArray cg = cg_pos.output;
+    VecArray cg_sens = cg_pos.sens;
+    vector<float> rho;
+    accumulate_density(cg, rho);
+    vector<float> dF_drho(index.size(), 0.f);
+    for(size_t i = 0; i < index.size(); ++i) {
+        float coord = 1.f + (rho[i] - rho_min) / rho_spacing;
+        Vec<2> emb = clamped_deBoor_value_and_deriv(
+                embedding_coeff.data(), coord, n_embedding);
+        dF_drho[i] = emb.y() / rho_spacing;
+    }
+
+    for(size_t ai = 0; ai < index.size(); ++ai) {
+        for(size_t bi = ai + 1; bi < index.size(); ++bi) {
+            float dr[3];
+            center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+            float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+            if(r2 <= 1e-12f) continue;
+            float r = sqrtf(r2);
+            if(r >= kernel_cutoff) continue;
+            Vec<2> w = radial_deBoor_value_and_deriv(
+                    kernel_coeff.data(), r / kernel_spacing, n_kernel);
+            float dE_dr = (dF_drho[ai] + dF_drho[bi]) * w.y() / kernel_spacing;
+            float inv_r = 1.f / r;
+            float dpos1[3] = {
+                -dE_dr * dr[0] * inv_r,
+                -dE_dr * dr[1] * inv_r,
+                -dE_dr * dr[2] * inv_r,
+            };
+            float dpos2[3] = {
+                 dE_dr * dr[0] * inv_r,
+                 dE_dr * dr[1] * inv_r,
+                 dE_dr * dr[2] * inv_r,
+            };
+            float zero[3] = {0.f, 0.f, 0.f};
+            add_vec6_sens(cg_sens, index[ai], dpos1, zero);
+            add_vec6_sens(cg_sens, index[bi], dpos2, zero);
+        }
     }
 }
 
@@ -1265,6 +1581,10 @@ void CGLipidSCPotential::ensure_pairlist(VecArray sc, VecArray cg) {
 
 void CGLipidSCPotential::compute_value(ComputeMode mode) {
     (void)mode;
+    if(mode == DerivMode) {
+        potential = 0.f;
+        return;
+    }
     VecArray sc = sc_pos.output;
     VecArray cg = cg_pos.output;
     ensure_pairlist(sc, cg);
@@ -1723,6 +2043,10 @@ void CGLipidTargetPotential::ensure_pairlist(VecArray cg, VecArray tgt) {
 
 void CGLipidTargetPotential::compute_value(ComputeMode mode) {
     (void)mode;
+    if(mode == DerivMode) {
+        potential = 0.f;
+        return;
+    }
     VecArray cg = cg_pos.output;
     VecArray tgt = tgt_pos.output;
     ensure_pairlist(cg, tgt);
@@ -1827,8 +2151,247 @@ void CGLipidTargetPotential::propagate_deriv() {
     }
 }
 
-static RegisterNodeType<ComposeVector6D, 1> _reg_cv("compose_vector6d");
+namespace martini_cg_lipid {
+
+void register_dynamic_orientation_for_engine(DerivEngine* engine, hid_t config_root, uint32_t random_seed) {
+    if(!engine) return;
+    clear_dynamic_orientation_for_engine(engine);
+    int idx = engine->get_idx("cgl_orientation_state", false);
+    if(idx < 0) return;
+    auto* state = dynamic_cast<CGLOrientationState*>(engine->nodes[idx].computation.get());
+    if(!state) throw string("cgl_orientation_state node has unexpected type");
+    auto runtime = std::unique_ptr<CGLDynamicOrientationRuntime>(
+        new CGLDynamicOrientationRuntime(state, random_seed));
+
+    if(h5_exists(config_root, "/input/cgl_orientation_mom")) {
+        auto shape = get_dset_size(2, config_root, "/input/cgl_orientation_mom");
+        if(shape[0] != hsize_t(state->n_elem) || shape[1] != 3u)
+            throw string("/input/cgl_orientation_mom shape must be n_cgl x 3");
+        traverse_dset<2, float>(config_root, "/input/cgl_orientation_mom",
+                [&](size_t i, size_t d, float v) {
+            runtime->angular_momentum(int(d), int(i)) = v;
+        });
+        for(int i = 0; i < state->n_elem; ++i) {
+            float3 n = normalized(load_vec<3>(state->output, i));
+            float3 l = project_tangent(load_vec<3>(runtime->angular_momentum, i), n);
+            store_vec(runtime->angular_momentum, i, l);
+        }
+    }
+    orientation_runtime_map()[engine] = std::move(runtime);
+}
+
+void clear_dynamic_orientation_for_engine(DerivEngine* engine) {
+    orientation_runtime_map().erase(engine);
+}
+
+bool has_dynamic_orientation(DerivEngine* engine) {
+    return get_orientation_runtime(engine) != nullptr;
+}
+
+void set_dynamic_orientation_temperature(DerivEngine* engine, float temperature) {
+    auto* runtime = get_orientation_runtime(engine);
+    if(runtime) runtime->temperature = temperature;
+}
+
+void set_dynamic_orientation_thermostat_delta_t(DerivEngine* engine, float delta_t) {
+    auto* runtime = get_orientation_runtime(engine);
+    if(runtime) runtime->thermostat_delta_t = delta_t;
+}
+
+void apply_dynamic_orientation_thermostat(DerivEngine* engine) {
+    auto* runtime = get_orientation_runtime(engine);
+    if(!runtime || runtime->thermostat_delta_t <= 0.f) return;
+    auto* state = runtime->state;
+    float tau = state->thermostat_timescale;
+    float mom_scale = expf(-runtime->thermostat_delta_t / tau);
+    float noise_scale = sqrtf(
+        state->rotational_inertia * runtime->temperature *
+        std::max(0.f, 1.f - mom_scale * mom_scale));
+    for(int i = 0; i < state->n_elem; ++i) {
+        RandomGenerator random(
+            runtime->random_seed,
+            CGL_ORIENTATION_THERMOSTAT_RANDOM_STREAM,
+            uint32_t(i),
+            runtime->thermostat_invocations);
+        float3 n = normalized(load_vec<3>(state->output, i));
+        float3 l = project_tangent(load_vec<3>(runtime->angular_momentum, i), n);
+        float3 kick = project_tangent(random.normal3(), n) * noise_scale;
+        l = project_tangent(l * mom_scale + kick, n);
+        store_vec(runtime->angular_momentum, i, l);
+    }
+    runtime->thermostat_invocations++;
+}
+
+void integrate_dynamic_orientation(DerivEngine* engine, float dt) {
+    auto* runtime = get_orientation_runtime(engine);
+    if(!runtime) return;
+    auto* state = runtime->state;
+    for(int i = 0; i < state->n_elem; ++i) {
+        float3 n = normalized(load_vec<3>(state->output, i));
+        float3 grad = load_vec<3>(state->sens, i);
+        float3 torque = -cross(n, grad);
+        float3 l = project_tangent(load_vec<3>(runtime->angular_momentum, i) + torque * dt, n);
+        float3 omega = l / state->rotational_inertia;
+        n = rotate_unit_vector(n, omega, dt);
+        l = project_tangent(l, n);
+        store_vec(state->output, i, n);
+        store_vec(runtime->angular_momentum, i, l);
+    }
+}
+
+void add_dynamic_orientation_loggers(DerivEngine* engine, H5Logger& logger, bool record_momentum) {
+    auto* runtime = get_orientation_runtime(engine);
+    if(!runtime) return;
+    auto* state = runtime->state;
+    logger.add_logger<float>("cgl_orientation", {1, state->n_elem, 3}, [state](float* buffer) {
+        VecArray orient = state->output;
+        for(int i = 0; i < state->n_elem; ++i)
+            for(int d = 0; d < 3; ++d)
+                buffer[i * 3 + d] = orient(d, i);
+    });
+    if(record_momentum) {
+        logger.add_logger<float>("cgl_orientation_mom", {1, state->n_elem, 3}, [runtime](float* buffer) {
+            VecArray mom = runtime->angular_momentum;
+            for(int i = 0; i < runtime->state->n_elem; ++i)
+            for(int d = 0; d < 3; ++d)
+                buffer[i * 3 + d] = mom(d, i);
+        });
+    }
+}
+
+void register_cgl_gle_for_engine(DerivEngine* engine, hid_t config_root, uint32_t random_seed) {
+    if(!engine) return;
+    cgl_gle_runtime_map().erase(engine);
+    if(!h5_exists(config_root, "/input/cgl_gle")) return;
+
+    H5Obj gle_obj = open_group(config_root, "/input/cgl_gle");
+    hid_t grp = gle_obj.get();
+    int enabled = read_attribute<int>(grp, ".", "enabled", 1);
+    if(!enabled) return;
+
+    vector<int> atom_index = read_int_dataset(grp, "atom_index");
+    if(atom_index.empty())
+        throw string("/input/cgl_gle/atom_index must contain at least one CGL atom");
+    vector<float> memory_tau;
+    vector<float> coupling;
+    if(H5Lexists(grp, "memory_tau", H5P_DEFAULT) > 0) {
+        memory_tau = read_float_dataset_1d(grp, "memory_tau");
+    } else {
+        memory_tau.push_back(read_attribute<float>(grp, ".", "memory_tau", 0.f));
+    }
+    if(H5Lexists(grp, "coupling", H5P_DEFAULT) > 0) {
+        coupling = read_float_dataset_1d(grp, "coupling");
+    } else {
+        coupling.push_back(read_attribute<float>(grp, ".", "coupling", 0.f));
+    }
+    if(memory_tau.empty() || coupling.empty() || memory_tau.size() != coupling.size())
+        throw string("/input/cgl_gle memory_tau and coupling must have the same positive length");
+    for(size_t m = 0; m < memory_tau.size(); ++m) {
+        if(memory_tau[m] <= 0.f || coupling[m] <= 0.f)
+            throw string("/input/cgl_gle requires positive memory_tau and coupling values");
+    }
+
+    auto runtime = std::unique_ptr<CGLGLERuntime>(
+        new CGLGLERuntime(atom_index, random_seed, memory_tau, coupling));
+    if(H5Lexists(grp, "aux_momentum", H5P_DEFAULT) > 0) {
+        int n_mode = runtime->n_mode();
+        if(n_mode == 1) {
+            auto shape = get_dset_size(2, grp, "aux_momentum");
+            if(shape[0] != hsize_t(atom_index.size()) || shape[1] != 3u)
+                throw string("/input/cgl_gle/aux_momentum shape must be n_cgl x 3 for single-mode GLE");
+            traverse_dset<2, float>(grp, "aux_momentum", [&](size_t i, size_t d, float v) {
+                runtime->aux_momentum(int(d), runtime->aux_index(0, int(i))) = v;
+            });
+        } else {
+            auto shape = get_dset_size(3, grp, "aux_momentum");
+            if(shape[0] != hsize_t(n_mode) || shape[1] != hsize_t(atom_index.size()) || shape[2] != 3u)
+                throw string("/input/cgl_gle/aux_momentum shape must be n_mode x n_cgl x 3 for multi-mode GLE");
+            traverse_dset<3, float>(grp, "aux_momentum", [&](size_t m, size_t i, size_t d, float v) {
+                runtime->aux_momentum(int(d), runtime->aux_index(int(m), int(i))) = v;
+            });
+        }
+    }
+    cgl_gle_runtime_map()[engine] = std::move(runtime);
+}
+
+void clear_cgl_gle_for_engine(DerivEngine* engine) {
+    cgl_gle_runtime_map().erase(engine);
+}
+
+bool has_cgl_gle(DerivEngine* engine) {
+    return get_cgl_gle_runtime(engine) != nullptr;
+}
+
+void set_cgl_gle_temperature(DerivEngine* engine, float temperature) {
+    auto* runtime = get_cgl_gle_runtime(engine);
+    if(runtime) runtime->temperature = temperature;
+}
+
+void set_cgl_gle_delta_t(DerivEngine* engine, float delta_t) {
+    auto* runtime = get_cgl_gle_runtime(engine);
+    if(runtime) runtime->delta_t = delta_t;
+}
+
+void apply_cgl_gle_thermostat(DerivEngine* engine, VecArray mom) {
+    auto* runtime = get_cgl_gle_runtime(engine);
+    if(!runtime || runtime->delta_t <= 0.f) return;
+
+    bool have_masses = martini_masses::has_masses(engine);
+
+    for(size_t i = 0; i < runtime->atom_index.size(); ++i) {
+        int atom = runtime->atom_index[i];
+        if(atom < 0 || atom >= engine->pos->n_atom) continue;
+        float mass = have_masses ? martini_masses::get_mass(engine, atom) : 1.f;
+        float3 p = load_vec<3>(mom, atom);
+        float sqrt_mass = (mass > 0.f) ? sqrtf(mass) : 1.f;
+        for(int mode = 0; mode < runtime->n_mode(); ++mode) {
+            float angle = runtime->coupling[mode] * runtime->delta_t;
+            float c = cosf(angle);
+            float s = sinf(angle);
+            float ou_scale = expf(-runtime->delta_t / runtime->memory_tau[mode]);
+            float noise_scale = sqrtf(
+                runtime->temperature * std::max(0.f, 1.f - ou_scale * ou_scale)) * sqrt_mass;
+            uint32_t random_atom = uint32_t(atom) ^ (uint32_t(mode + 1) * 0x9e3779b9u);
+            RandomGenerator random(
+                runtime->random_seed,
+                CGL_GLE_THERMOSTAT_RANDOM_STREAM,
+                random_atom,
+                runtime->thermostat_invocations);
+
+            int aux_idx = runtime->aux_index(mode, int(i));
+            float3 a = load_vec<3>(runtime->aux_momentum, aux_idx);
+            float3 p_rot = p * c - a * s;
+            float3 a_rot = p * s + a * c;
+            float3 a_next = a_rot * ou_scale + random.normal3() * noise_scale;
+            p = p_rot;
+            store_vec(runtime->aux_momentum, aux_idx, a_next);
+        }
+        store_vec(mom, atom, p);
+    }
+    runtime->thermostat_invocations++;
+}
+
+void add_cgl_gle_loggers(DerivEngine* engine, H5Logger& logger, bool record_aux) {
+    auto* runtime = get_cgl_gle_runtime(engine);
+    if(!runtime || !record_aux) return;
+    logger.add_logger<float>("cgl_gle_aux_momentum", {runtime->n_mode(), int(runtime->atom_index.size()), 3},
+            [runtime](float* buffer) {
+        VecArray aux = runtime->aux_momentum;
+        int n_cgl = int(runtime->atom_index.size());
+        for(int mode = 0; mode < runtime->n_mode(); ++mode)
+            for(int i = 0; i < n_cgl; ++i)
+                for(int d = 0; d < 3; ++d)
+                    buffer[(mode * n_cgl + i) * 3 + d] =
+                        aux(d, runtime->aux_index(mode, i));
+    });
+}
+
+}  // namespace martini_cg_lipid
+
+static RegisterNodeType<CGLOrientationState, 0> _reg_cg_orientation("cgl_orientation_state");
+static RegisterNodeType<ComposeVector6D, -1> _reg_cv("compose_vector6d");
 static RegisterNodeType<CGLipidPairPotential, 1> _reg_cg_pair("cg_lipid_pair");
+static RegisterNodeType<CGLipidDensityPotential, 1> _reg_cg_density("cg_lipid_density");
 static RegisterNodeType<CGLipidSCPotential, 2> _reg_cg_sc("cg_lipid_sc");
 static RegisterNodeType<CGLipidSCOneBody, 2> _reg_cg_sc_1body("cg_lipid_rotamer_sc");
 static RegisterNodeType<CGLipidTargetPotential, 2> _reg_cg_target("cg_lipid_target");
