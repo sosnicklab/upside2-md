@@ -1,36 +1,41 @@
 # Progress Log
 
-## Current Task: Coarse Salt/CGL Z Fix And Diagnostic Cleanup
+## Current Task: Persisted CGL Output Geometry Issue
 
 - Actions taken:
-  - Initialized a focused task plan for the salt-ion, CGL z-coordinate, and
-    diagnostic cleanup issues.
-  - Restored the coarse workflow default to include explicit ions.
-  - Changed default CGL initial z conditioning so CGL particles remain at the
-    source DOPC geometric COM z unless an explicit z-separation override is
-    requested.
-  - Removed untracked diagnostic scripts not referenced by the four requested
-    workflows or shared preparation path.
+  - Inspected the named 1AFO/1RKL H5/VTF outputs and confirmed salts are
+    present in the current prep summaries.
+  - Found that VTF rod mode was moving the original CGL atom to a PO4 display
+    endpoint instead of preserving the physical CGL center.
+  - Found that 1RKL CGL center outliers are introduced during stage-6
+    minimization and inherited by stage 7.
+  - Fixed rod-mode extraction so the physical CGL center atom is preserved in
+    VTF output.
+  - Reverted the mass-default and CGL z-restraint changes after user correction:
+    they suppress CGL z motion by destroying the calibrated timescale and are
+    invalid fixes.
+  - Identified the remaining 1RKL minimizer ejection as seed/basin-sensitive:
+    seed `2026` fails, while `11`, `22`, and `2027` pass under calibrated CGL
+    dynamics.
+  - Added bounded coarse-CGL stage-6 geometry rejection/retry that regenerates
+    stage-0 packing and reruns stage 6 with incremented seeds.
+  - Confirmed no leftover unneeded diagnostic scripts remain in
+    `example/16.MARTINI`.
 - Files modified:
-  - `example/16.MARTINI/run_sim_hybrid.sh`
-  - `py/martini_prepare_system_lib.py`
   - `plan.md`
   - `progress.md`
+  - `findings.md`
+  - `py/martini_extract_vtf.py`
+  - `py/martini_prepare_system.py`
 - Verification:
-  - `python3 -m py_compile py/martini_prepare_system.py
-    py/martini_prepare_system_lib.py` passed after sourcing `.venv` and
-    `source.sh`.
-  - `bash -n` passed for `run_sim_hybrid.sh`, `run_sim_1rkl.sh`,
-    `run_sim_1rkl_full.sh`, `run_sim_1afo.sh`, and `run_sim_1afo_full.sh`.
-  - Targeted 1RKL preparation under `/tmp/upside2_md_verify_salt_cgl` produced
-    `48` NA atoms and `45` CL atoms with explicit ions enabled; direct CGL
-    collapse produced `276` CGL particles for `276` DOPC lipids, with max
-    absolute CGL z minus source DOPC COM z `1.4e-14 A`.
-  - Targeted 1AFO preparation under `/tmp/upside2_md_verify_salt_cgl_1afo`
-    produced `47` NA atoms and `51` CL atoms with explicit ions enabled;
-    direct CGL collapse produced `176` CGL particles for `176` DOPC lipids,
-    with max absolute CGL z minus source DOPC COM z `2.8e-14 A`.
-  - A full stage conversion was intentionally stopped because CGL
-    target-clearance conditioning is expensive for a quick verification; the
-    lower-level prep/collapse check covers the reported salt and initial z
-    placement bugs.
+  - Python syntax checks passed for `py/martini_prepare_system.py`,
+    `py/martini_prepare_system_lib.py`, and `py/martini_extract_vtf.py`.
+  - Shell syntax checks passed for `run_sim_hybrid.sh`, `run_sim_1rkl.sh`,
+    `run_sim_1afo.sh`, `run_sim_1rkl_full.sh`, and `run_sim_1afo_full.sh`.
+  - The shortened geometry run that relied on mass/restraint changes is invalid
+    evidence and should not be used.
+  - 1RKL retry test with bad seeds `2026/2026` rejected the first stage-6
+    geometry and passed after retrying with `2027/2027`; final CGL mass stayed
+    at calibrated `1.008` Upside units and wrapped CGL z outliers were `0`.
+  - 1AFO retry-enabled test with `2026/2026` passed without retry; final CGL
+    mass stayed at `1.008` and wrapped CGL z outliers were `0`.

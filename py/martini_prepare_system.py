@@ -1652,6 +1652,38 @@ def ensure_martini_parameter_libraries(args):
         print(f"  {name}")
 
 
+def cgl_wrapped_z_outliers(up_file: Path, max_abs_z: float = 30.0):
+    import h5py
+
+    with h5py.File(up_file, "r") as h5:
+        cgl_path = "/input/potential/compose_vector6d/elem_index"
+        if cgl_path not in h5:
+            return []
+        cgl_idx = h5[cgl_path][:].astype(np.int32)
+        if cgl_idx.size == 0:
+            return []
+        if "/output/pos" in h5 and h5["/output/pos"].shape[0] > 0:
+            pos = np.asarray(h5["/output/pos"][-1, 0, :, :], dtype=np.float32)
+        else:
+            pos = np.asarray(h5["/input/pos"][:, :, 0], dtype=np.float32)
+        z = pos[cgl_idx, 2].astype(np.float64)
+        box_z = None
+        if "/output/box" in h5 and h5["/output/box"].shape[0] > 0:
+            last_box = np.asarray(h5["/output/box"][-1]).reshape(-1)
+            if last_box.size >= 3 and last_box[2] > 0.0:
+                box_z = float(last_box[2])
+        if box_z is None and "/input/potential/martini_potential" in h5:
+            pot = h5["/input/potential/martini_potential"]
+            if "z_len" in pot.attrs and float(pot.attrs["z_len"]) > 0.0:
+                box_z = float(pot.attrs["z_len"])
+        if box_z is not None:
+            z_check = z - box_z * np.round(z / box_z)
+        else:
+            z_check = z
+        bad = np.where(np.abs(z_check) > float(max_abs_z))[0]
+        return [(int(i), float(z[i]), float(z_check[i])) for i in bad]
+
+
 def run_hybrid_workflow_command(argv):
     parser = argparse.ArgumentParser(description="Run the hybrid 1RKL dry-MARTINI workflow.")
     parser.add_argument("--pdb-id", default=env_default("PDB_ID", "1rkl"))
@@ -1776,7 +1808,6 @@ def run_hybrid_workflow_command(argv):
         run_stage70_continuation(args, source, output, label)
         return
 
-    prepare_workflow_hybrid_artifacts(args)
     ensure_martini_parameter_libraries(args)
 
     files = {
@@ -1797,21 +1828,48 @@ def run_hybrid_workflow_command(argv):
         "stage_70": args.checkpoint_dir / f"{args.pdb_id}.stage_7.0.up",
     }
 
-    print("=== Stage 6.0: rigid-protein NPT box relaxation ===")
-    prepare_stage_file(args, files["prepared_60"], "npt_equil", 1, 0, 0, "minimization")
-    shutil.copy2(files["prepared_60"], files["stage_60"])
-    inject_protein_position_restraints(files["stage_60"])
-    run_minimization_stage(args, "6.0", files["stage_60"], args.min_60_max_iter)
-    remove_protein_position_restraints(files["stage_60"])
-    run_md_stage(
-        args,
-        "6.0",
-        files["stage_60"],
-        files["stage_60"],
-        args.eq_60_nsteps,
-        args.eq_time_step,
-        args.eq_frame_steps,
-    )
+    max_stage60_attempts = 1
+    if args.lipid_resolution == "coarse":
+        max_stage60_attempts = max(1, int(os.environ.get("UPSIDE_CG_LIPID_STAGE6_RETRY_ATTEMPTS", "3")))
+    base_prep_seed = int(args.prep_seed)
+    base_seed = int(args.seed)
+    stage60_outliers = []
+    for attempt in range(max_stage60_attempts):
+        if attempt:
+            args.prep_seed = base_prep_seed + attempt
+            args.seed = base_seed + attempt
+            print(
+                "Retrying stage 6.0 with new seeds after CGL geometry rejection: "
+                f"prep_seed={args.prep_seed} seed={args.seed}"
+            )
+        prepare_workflow_hybrid_artifacts(args)
+        print("=== Stage 6.0: rigid-protein NPT box relaxation ===")
+        prepare_stage_file(args, files["prepared_60"], "npt_equil", 1, 0, 0, "minimization")
+        shutil.copy2(files["prepared_60"], files["stage_60"])
+        inject_protein_position_restraints(files["stage_60"])
+        run_minimization_stage(args, "6.0", files["stage_60"], args.min_60_max_iter)
+        remove_protein_position_restraints(files["stage_60"])
+        run_md_stage(
+            args,
+            "6.0",
+            files["stage_60"],
+            files["stage_60"],
+            args.eq_60_nsteps,
+            args.eq_time_step,
+            args.eq_frame_steps,
+        )
+        stage60_outliers = cgl_wrapped_z_outliers(files["stage_60"])
+        if not stage60_outliers:
+            break
+        print(
+            "Rejected stage 6.0 CGL geometry: "
+            f"{len(stage60_outliers)} wrapped-z outlier(s), first={stage60_outliers[:5]}"
+        )
+    if stage60_outliers:
+        raise RuntimeError(
+            "Stage 6.0 CGL geometry failed after "
+            f"{max_stage60_attempts} attempt(s): {stage60_outliers[:10]}"
+        )
     extract_stage_vtf(args, "6.0", files["stage_60"], "1")
     needs_pre70 = _detect_has_bonded_environment_particles(files["stage_60"])
 

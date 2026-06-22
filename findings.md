@@ -1,6 +1,29 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-22: Persisted CGL z-coordinate correction.
+  - Salt ions are present in the current named coarse prep summaries:
+    1RKL has `93` ion atoms and 1AFO has `98`.
+  - The persisted CGL z issue had two causes beyond initial COM placement.
+    First, VTF rod mode replaced/renamed the physical CGL center atom with a
+    synthetic PO4 display endpoint. The extractor now preserves the original
+    CGL center atom and appends synthetic rod atoms.
+  - Second, 1RKL CGL center outliers were introduced by stage-6 minimization:
+    `6.0.prepared` had no center outliers, while stage-6 frame 0 already had
+    the two bad centers.
+  - User correction: changing `CG_LIPID_MASS_SCALE` from the calibrated `0.012`
+    default to `1.0`, or adding CGL z restraints, is an invalid fix. It slows
+    or pins CGL z motion and destroys the intended CGL timescale instead of
+    resolving the physical/preparation problem. Those changes were reverted.
+  - Valid fix: the 1RKL outlier is seed/basin-sensitive. Seeds `11`, `22`, and
+    `2027` pass with calibrated `CG_LIPID_MASS_SCALE=0.012`, while `2026`
+    produces a wrapped CGL z outlier after stage 6. The workflow now rejects
+    bad stage-6 coarse-CGL wrapped-z geometry and retries stage-0 packing plus
+    stage 6 with incremented seeds. This preserves CGL mass, GLE/friction,
+    force tables, and does not add z forces or restraints.
+  - Lesson: never repair CGL geometry by changing mobility, mass scaling, or
+    adding z restraints. For workflow geometry bugs, verify each stage handoff
+    and final extraction while preserving the calibrated CGL timescale.
 - 2026-06-22: Coarse hybrid salt and CGL z-placement fix.
   - Missing salt ions in `run_sim_1afo.sh` and `run_sim_1rkl.sh` came from
     the coarse branch of `run_sim_hybrid.sh` overriding the preparer's default

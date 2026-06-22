@@ -387,7 +387,7 @@ def build_cg_lipid_vector_info(struct_h5, rod_geometry="h5", reference_pdb=None)
 
 
 def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
-    """Convert visible CGL centers into two colored half-rods."""
+    """Add synthetic atoms for two colored CG lipid half-rods."""
     elem_idx = vector_info["elem_indices"]
     orig_to_output = mapping.get("orig_to_output", {})
     output_cg_idx = []
@@ -406,8 +406,6 @@ def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
         vector_info["_n_vectors"] = 0
         return
 
-    n_orig = mapping["output_atom_names"].shape[0]
-
     hydrophilic_names = np.array(["PO4"] * n_cg, dtype=object)
     hydrophilic_types = np.array(["Qa"] * n_cg, dtype=object)
     hydrophilic_resnames = np.array(["LIPH"] * n_cg, dtype=object)
@@ -425,56 +423,69 @@ def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
     else:
         output_radii = np.asarray(output_radii, dtype=np.float32)
 
-    mapping["output_atom_names"][output_cg_idx] = hydrophilic_names
-    mapping["output_atom_types"][output_cg_idx] = hydrophilic_types
-    mapping["output_residue_names"][output_cg_idx] = hydrophilic_resnames
-    mapping["output_atomic_numbers"][output_cg_idx] = hydrophilic_atomic_numbers
-    output_radii[output_cg_idx] = display_radius
-
+    n_orig = mapping["output_atom_names"].shape[0]
     mapping["output_atom_names"] = np.concatenate([
-        mapping["output_atom_names"], hydrophilic_names, hydrophobic_names, hydrophobic_names,
+        mapping["output_atom_names"],
+        hydrophilic_names,
+        hydrophilic_names,
+        hydrophobic_names,
+        hydrophobic_names,
     ])
     mapping["output_atom_types"] = np.concatenate([
-        mapping["output_atom_types"], hydrophilic_types, hydrophobic_types, hydrophobic_types,
+        mapping["output_atom_types"],
+        hydrophilic_types,
+        hydrophilic_types,
+        hydrophobic_types,
+        hydrophobic_types,
     ])
     mapping["output_residue_names"] = np.concatenate([
-        mapping["output_residue_names"], hydrophilic_resnames, hydrophobic_resnames, hydrophobic_resnames,
+        mapping["output_residue_names"],
+        hydrophilic_resnames,
+        hydrophilic_resnames,
+        hydrophobic_resnames,
+        hydrophobic_resnames,
     ])
     mapping["output_residue_ids"] = np.concatenate([
-        mapping["output_residue_ids"], lipid_resids, lipid_resids, lipid_resids,
+        mapping["output_residue_ids"],
+        lipid_resids,
+        lipid_resids,
+        lipid_resids,
+        lipid_resids,
     ])
     mapping["output_chain_ids"] = np.concatenate([
-        mapping["output_chain_ids"], lipid_chain_ids, lipid_chain_ids, lipid_chain_ids,
+        mapping["output_chain_ids"],
+        lipid_chain_ids,
+        lipid_chain_ids,
+        lipid_chain_ids,
+        lipid_chain_ids,
     ])
     mapping["output_atomic_numbers"] = np.concatenate([
         mapping["output_atomic_numbers"],
+        hydrophilic_atomic_numbers,
         hydrophilic_atomic_numbers,
         hydrophobic_atomic_numbers,
         hydrophobic_atomic_numbers,
     ])
     mapping["output_atom_radii"] = np.concatenate([
         output_radii,
-        np.full(3 * n_cg, display_radius, dtype=np.float32),
+        np.full(4 * n_cg, display_radius, dtype=np.float32),
     ])
 
-    hydrophilic_center_start = n_orig
-    hydrophobic_center_start = n_orig + n_cg
-    hydrophobic_tail_start = n_orig + 2 * n_cg
+    hydrophilic_head_start = n_orig
+    hydrophilic_center_start = n_orig + n_cg
+    hydrophobic_center_start = n_orig + 2 * n_cg
+    hydrophobic_tail_start = n_orig + 3 * n_cg
 
     for gi in range(n_cg):
-        head_atom = int(output_cg_idx[gi])
+        head_atom = hydrophilic_head_start + gi
         hydrophilic_center_atom = hydrophilic_center_start + gi
         hydrophobic_center_atom = hydrophobic_center_start + gi
         tail_atom = hydrophobic_tail_start + gi
-        head_name = str(mapping["output_atom_names"][head_atom]).strip().upper()
-        if head_name != "PO4":
-            raise ValueError(
-                f"CG lipid hydrophilic endpoint remapped to unexpected atom {head_atom} ({head_name})"
-            )
         out_bonds.append((head_atom, hydrophilic_center_atom))
         out_bonds.append((hydrophilic_center_atom, hydrophobic_center_atom))
         out_bonds.append((hydrophobic_center_atom, tail_atom))
 
+    vector_info["_hydrophilic_head_start"] = hydrophilic_head_start
     vector_info["_hydrophilic_center_start"] = hydrophilic_center_start
     vector_info["_hydrophobic_center_start"] = hydrophobic_center_start
     vector_info["_tail_start"] = hydrophobic_tail_start
@@ -486,13 +497,13 @@ def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
 
 
 def extend_frame_with_lipid_vectors(frame, vector_info, source_frame=None, box_lengths=None):
-    """Replace CGL center positions with side-colored display rod atoms."""
+    """Append side-colored display rod atoms while preserving CGL centers."""
     if vector_info is None or "_tail_start" not in vector_info:
         return frame
     if vector_info.get("_n_vectors", 0) == 0:
         return frame
 
-    output_head_idx = vector_info["_output_head_indices"]
+    output_center_idx = vector_info["_output_head_indices"]
     source_ordinals = vector_info["_source_ordinals"]
     elem_idx = vector_info["elem_indices"][source_ordinals]
     orientation_idx = vector_info.get("orientation_indices")
@@ -515,12 +526,12 @@ def extend_frame_with_lipid_vectors(frame, vector_info, source_frame=None, box_l
             direction[mask] /= norm[mask, None]
 
     out = np.asarray(frame, dtype=np.float32).copy()
-    centers = out[output_head_idx].copy()
-    out[output_head_idx] = centers + direction * head_offsets[:, None]
+    centers = out[output_center_idx].copy()
+    head_pos = centers + direction * head_offsets[:, None]
     hydrophilic_center_pos = centers.copy()
     hydrophobic_center_pos = centers.copy()
     tail_pos = centers + direction * tail_offsets[:, None]
-    return np.concatenate([out, hydrophilic_center_pos, hydrophobic_center_pos, tail_pos], axis=0)
+    return np.concatenate([out, head_pos, hydrophilic_center_pos, hydrophobic_center_pos, tail_pos], axis=0)
 
 
 def copy_output_mapping(mapping):
