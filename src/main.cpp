@@ -713,7 +713,7 @@ try {
 
 
         float dt = time_step_arg.getValue();
-        int inner_step = 3;
+        int inner_step = 1;
         if  (integrator_arg.getValue() == "mv" )
             inner_step = inner_step_arg.getValue();
 

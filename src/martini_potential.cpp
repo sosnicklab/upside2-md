@@ -531,7 +531,6 @@ struct MartiniPotential : public PotentialNode
         const float kMinDistance = 1.0e-6f;
         const bool active_hybrid_startup = (
             hybrid_state &&
-            hybrid_state->enabled &&
             hybrid_state->active);
         float sc_backbone_feedback_mix = 1.f;
         if(active_hybrid_startup && mutable_hybrid) {
@@ -603,7 +602,7 @@ struct MartiniPotential : public PotentialNode
             auto j_role = hybrid_state
                               ? martini_hybrid::atom_role_class_at(*hybrid_state, j)
                               : martini_hybrid::ROLE_OTHER;
-            if(hybrid_state && hybrid_state->enabled && hybrid_state->active) {
+            if(hybrid_state && hybrid_state->active) {
                 bool i_carrier_env_pair =
                     i_is_protein &&
                     !j_is_protein &&
@@ -961,7 +960,7 @@ struct MartiniScTablePotential : public PotentialNode
         potential = 0.f;
 
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
-        if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
+        if(!hybrid_state || !hybrid_state->active) return;
         float protein_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*hybrid_state);
 
         VecArray posc = pos.output;
@@ -1527,7 +1526,7 @@ struct MartiniScTableOneBody : public CoordNode
         fill(output, 0.f);
 
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
-        if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
+        if(!hybrid_state || !hybrid_state->active) return;
 
         VecArray posc = pos.output;
         VecArray cbc = cb_pos.output;
@@ -1590,7 +1589,7 @@ struct MartiniScTableOneBody : public CoordNode
         Timer timer(string("d_martini_sc_table_1body"));
 
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
-        if(!hybrid_state || !hybrid_state->enabled || !hybrid_state->active) return;
+        if(!hybrid_state || !hybrid_state->active) return;
         float protein_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*hybrid_state);
 
         VecArray posc = pos.output;

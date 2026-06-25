@@ -1,6 +1,46 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-25: dryMARTINI interface refactor setup.
+  - Scope must be derived from diffs against
+    `/Users/yinhan/Documents/upside2-md-master`, not from guessing or broad
+    cleanup.
+  - `example/00.AnalysisScripts` is explicitly excluded as a style baseline
+    because it is also AI-generated.
+  - Active dryMARTINI development files should be cleaned directly instead of
+    accumulating compatibility wrappers, commented-out legacy code, or patched
+    layers.
+  - Diff result: core dryMARTINI source/interface files are additive relative
+    to master. Practical refactor scope should exclude generated outputs,
+    caches, PDFs, checkpoints, and backup H5 artifacts.
+  - Master style baseline is direct, helper-oriented code with simple parsing
+    and close-to-use C++ node logic. The current dryMARTINI interface benefits
+    most from making workflow order explicit rather than changing validated
+    physics/table kernels.
+  - Follow-up audit: development H5 backups such as `*.h5.*.bak` and stale
+    temp H5 outputs should not remain in the working directory. Keep only the
+    canonical force-field H5 names (`dopc.h5`, `particle.h5`, `sidechain.h5`)
+    plus workflow mapping outputs.
+  - Inactive runtime flags should not be used inside the clean-slate
+    dryMARTINI interface. Hybrid control, stage parameters, fixed-rigid setup,
+    barostat setup, and CGL GLE setup should be activated by the presence of
+    their configuration group and by explicit stage labels. The
+    `force_match_enabled` and `ibi_enabled` strings are retained only as stale
+    force-field provenance metadata checks; they are not runtime disable
+    switches.
+  - User correction / verification: the general multi-step integrator was not
+    added only for dryMARTINI. The master checkout already contains `mv`,
+    `--inner-step`, `build_integrator_levels`, and the multi-step overload.
+    Do not delete general engine integrator support as AI-written dryMARTINI
+    code. The dryMARTINI cleanup should only ensure the MARTINI workflow does
+    not invoke that path.
+  - User correction / verification: command-construction checks were
+    insufficient for the integrator cleanup. The dryMARTINI command no longer
+    passed `--inner-step`, but the Upside driver still initialized
+    `inner_step=3` for `--integrator v`, so real simulations logged time at
+    three times the requested `dt`. For integrator or time-accounting changes,
+    always run at least one real `upside` checkpoint smoke test and inspect
+    `/output/time`, not just the generated command line.
 - 2026-06-22: Persisted CGL z-coordinate correction.
   - Salt ions are present in the current named coarse prep summaries:
     1RKL has `93` ion atoms and 1AFO has `98`.

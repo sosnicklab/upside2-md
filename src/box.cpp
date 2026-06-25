@@ -46,7 +46,6 @@ static BarostatSettings read_barostat_settings(hid_t root) {
     BarostatSettings s;
     if(h5_exists(root, "/input/barostat")) {
         auto grp = open_group(root, "/input/barostat");
-        s.enabled = read_attribute<int>(grp.get(), ".", "enable", int(s.enabled)) != 0;
         s.target_p_xy = read_attribute<float>(grp.get(), ".", "target_p_xy", s.target_p_xy);
         s.target_p_z = read_attribute<float>(grp.get(), ".", "target_p_z", s.target_p_z);
         s.tau_p = read_attribute<float>(grp.get(), ".", "tau_p", s.tau_p);
@@ -265,9 +264,9 @@ static void apply_parrinello_rahman_barostat(BarostatState& st,
 }
 
 void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
+    if(!h5_exists(config_root, "/input/barostat")) return;
     BarostatSettings s = read_barostat_settings(config_root);
-    if(!s.enabled) return;
-    
+
     float bx = 0.f, by = 0.f, bz = 0.f;
     try {
         // Try to get box dimensions from various sources
@@ -321,10 +320,9 @@ void maybe_apply_barostat(DerivEngine& engine,
     std::lock_guard<std::mutex> lk(g_baro_mutex);
     auto it = g_baro_state.find(&engine);
     if(it == g_baro_state.end()) return;
-    
+
     auto& st = it->second;
     auto& s = st.settings;
-    if(!s.enabled) return;
 
     if(s.interval <= 0) return;
     if(round_num == 0 || (round_num % s.interval) != 0) return;
@@ -394,7 +392,7 @@ void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz)
     bx = by = bz = 0.f;
     std::lock_guard<std::mutex> lk(g_baro_mutex);
     auto it = g_baro_state.find(const_cast<DerivEngine*>(&engine));
-    if(it != g_baro_state.end() && it->second.settings.enabled) {
+    if(it != g_baro_state.end()) {
         bx = it->second.box_x;
         by = it->second.box_y;
         bz = it->second.box_z;
@@ -404,10 +402,7 @@ void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz)
 bool is_enabled(const DerivEngine& engine) {
     std::lock_guard<std::mutex> lk(g_baro_mutex);
     auto it = g_baro_state.find(const_cast<DerivEngine*>(&engine));
-    if(it != g_baro_state.end()) {
-        return it->second.settings.enabled;
-    }
-    return false;
+    return it != g_baro_state.end();
 }
 
 void update_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
@@ -418,7 +413,7 @@ void update_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
 void get_pressure(const DerivEngine& engine, float& pxy, float& pz) {
     std::lock_guard<std::mutex> lk(g_baro_mutex);
     auto it = g_baro_state.find(const_cast<DerivEngine*>(&engine));
-    if(it != g_baro_state.end() && it->second.settings.enabled) {
+    if(it != g_baro_state.end()) {
         pxy = it->second.last_pxy_inst;
         pz = it->second.last_pz_inst;
     } else {

@@ -45,7 +45,7 @@ struct CGLPairIndex {
 };
 
 struct CGLBodySupport {
-    bool enabled;
+    bool has_geometry;
     float axis_radius;
     float perp_radius;
     float bead_cutoff;
@@ -726,7 +726,7 @@ static CGLBodySupport read_cgl_body_support(hid_t grp) {
     out.axis_radius = read_attribute<float>(grp, ".", "max_axis_radius_ang", 0.f);
     out.perp_radius = read_attribute<float>(grp, ".", "max_perp_radius_ang", 0.f);
     out.bead_cutoff = bead_cutoff_nm * length_conv;
-    out.enabled = out.axis_radius > 0.f && out.perp_radius > 0.f && out.bead_cutoff > 0.f;
+    out.has_geometry = out.axis_radius > 0.f && out.perp_radius > 0.f && out.bead_cutoff > 0.f;
     return out;
 }
 
@@ -783,7 +783,7 @@ static bool cgl_cgl_pairlist_candidate(
         const CGLBodySupport& support,
         float cache_buffer,
         float fallback_cutoff2) {
-    if(!support.enabled) {
+    if(!support.has_geometry) {
         float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
         return r2 < fallback_cutoff2;
     }
@@ -801,7 +801,7 @@ static bool cgl_target_pairlist_candidate(
         const CGLBodySupport& support,
         float cache_buffer,
         float fallback_cutoff2) {
-    if(!support.enabled) {
+    if(!support.has_geometry) {
         float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
         return r2 < fallback_cutoff2;
     }
@@ -2266,8 +2266,6 @@ void register_cgl_gle_for_engine(DerivEngine* engine, hid_t config_root, uint32_
 
     H5Obj gle_obj = open_group(config_root, "/input/cgl_gle");
     hid_t grp = gle_obj.get();
-    int enabled = read_attribute<int>(grp, ".", "enabled", 1);
-    if(!enabled) return;
 
     vector<int> atom_index = read_int_dataset(grp, "atom_index");
     if(atom_index.empty())

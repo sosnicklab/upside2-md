@@ -50,7 +50,6 @@ PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
 WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 
-DEFAULT_SC_ENV_PO4_Z_CLAMP_ENABLE = 1
 DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS = 200
 DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS = 150
 DEFAULT_NPT_TAU = 4.0
@@ -61,8 +60,7 @@ DEFAULT_MARTINI_ENERGY_CONVERSION = 2.914952774272
 DEFAULT_MARTINI_LENGTH_CONVERSION = 10.0
 DEFAULT_BAR_1_TO_EUP_PER_A3 = 0.000020659477
 DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP = 14.521180763676
-MARTINI_MD_INTEGRATOR = "mv"
-MARTINI_MD_INNER_STEP = 1
+MARTINI_MD_INTEGRATOR = "v"
 
 
 def derive_dopc_contact_clearance_angstrom(upside_home: Path) -> float:
@@ -541,16 +539,30 @@ def temporary_env(updates):
                 os.environ[key] = value
 
 
+class Config:
+    @staticmethod
+    def text(name, default):
+        return os.environ.get(name, default)
+
+    @staticmethod
+    def integer(name, default):
+        return int(os.environ.get(name, str(default)))
+
+    @staticmethod
+    def floating(name, default):
+        return float(os.environ.get(name, str(default)))
+
+
 def env_default(name, default):
-    return os.environ.get(name, default)
+    return Config.text(name, default)
 
 
 def env_int(name, default):
-    return int(os.environ.get(name, str(default)))
+    return Config.integer(name, default)
 
 
 def env_float(name, default):
-    return float(os.environ.get(name, str(default)))
+    return Config.floating(name, default)
 
 
 def parse_positive_float_list(value, label):
@@ -790,7 +802,6 @@ def set_stage_label(up_file: Path, stage_label: str):
 
     with h5py.File(up_file, "r+") as h5:
         grp = h5.require_group("input").require_group("stage_parameters")
-        grp.attrs["enable"] = np.int8(1)
         grp.attrs["current_stage"] = np.bytes_(stage_label)
 
 
@@ -799,7 +810,6 @@ def set_hybrid_control_mode(up_file: Path, activation_stage: str, preprod_mode="
 
     with h5py.File(up_file, "r+") as h5:
         grp = h5.require_group("input").require_group("hybrid_control")
-        grp.attrs["enable"] = np.int8(1)
         grp.attrs["activation_stage"] = np.bytes_(activation_stage)
         grp.attrs["preprod_protein_mode"] = np.bytes_(preprod_mode)
 
@@ -840,7 +850,6 @@ def set_hybrid_production_controls(up_file: Path, args):
         grp = h5.require_group("input").require_group("hybrid_control")
         grp.attrs["sc_env_backbone_hold_steps"] = np.int32(args.sc_env_backbone_hold_steps)
         grp.attrs["sc_env_po4_z_hold_steps"] = np.int32(args.sc_env_po4_z_hold_steps)
-        grp.attrs["sc_env_po4_z_clamp_enabled"] = np.int8(1 if args.sc_env_po4_z_clamp_enable else 0)
 
 
 def set_barostat_type(up_file: Path, barostat_type: int):
@@ -878,12 +887,11 @@ def assert_hybrid_stage_active(
         pot = inp["potential"]
         stage = h5_as_text(inp["stage_parameters"].attrs.get("current_stage", b"")).strip()
         hy = inp["hybrid_control"].attrs
-        enable = int(hy.get("enable", 0))
         activation = h5_as_text(hy.get("activation_stage", b"")).strip()
-        if stage != expected_stage or enable != 1 or activation != expected_activation:
+        if stage != expected_stage or activation != expected_activation:
             raise ValueError(
-                f"{up_file}: expected stage={expected_stage}, activation={expected_activation}, enable=1; "
-                f"got stage={stage}, activation={activation}, enable={enable}"
+                f"{up_file}: expected stage={expected_stage}, activation={expected_activation}; "
+                f"got stage={stage}, activation={activation}"
             )
         if require_interface_nodes:
             missing = [
@@ -967,7 +975,7 @@ def assert_hybrid_stage_active(
                     f"{up_file}: CGL/CGLD sites must not have protein membership; "
                     f"bad indices={bad.tolist()}"
                 )
-    print(f"Hybrid activation verified: stage={expected_stage}, activation_stage={expected_activation}, enable=1")
+    print(f"Hybrid activation verified: stage={expected_stage}, activation_stage={expected_activation}")
 
 
 def stage_npt_targets(stage_label: str, args):
@@ -1007,10 +1015,7 @@ def apply_cgl_transport_metadata(args, target_file: Path):
     if lipid_res == "full":
         return
     mass_scale = float(getattr(args, "cg_lipid_mass_scale", 1.0))
-    enable_gle = bool(int(getattr(args, "cgl_gle_enable", 0)))
     replace_markovian = bool(int(getattr(args, "cgl_gle_replace_markovian", 0)))
-    if mass_scale == 1.0 and not enable_gle:
-        return
     if mass_scale <= 0.0:
         raise ValueError("cg_lipid_mass_scale must be positive")
 
@@ -1046,7 +1051,7 @@ def apply_cgl_transport_metadata(args, target_file: Path):
             if "/input/thermostat_timescale" in h5
             else np.full(atom_types.shape[0], global_tau, dtype=np.float32)
         )
-        tau[cgl_mask] = np.float32(1.0e8 if enable_gle and replace_markovian else cgl_tau)
+        tau[cgl_mask] = np.float32(1.0e8 if replace_markovian else cgl_tau)
         if "/input/thermostat_timescale" in h5:
             del h5["/input/thermostat_timescale"]
         dset = h5.create_dataset("/input/thermostat_timescale", data=tau)
@@ -1055,43 +1060,41 @@ def apply_cgl_transport_metadata(args, target_file: Path):
         dset.attrs["cgl_timescale"] = np.float32(cgl_tau)
         dset.attrs["cg_lipid_mass_scale"] = np.float32(mass_scale)
         dset.attrs["cgl_mass_scale"] = np.float32(mass_scale)
-        dset.attrs["cgl_gle_replace_markovian"] = np.int8(1 if enable_gle and replace_markovian else 0)
+        dset.attrs["cgl_gle_replace_markovian"] = np.int8(1 if replace_markovian else 0)
 
         if "/input/cgl_gle" in h5:
             del h5["/input/cgl_gle"]
-        if enable_gle:
-            memory_text = getattr(args, "cgl_gle_memory_taus", "") or str(getattr(args, "cgl_gle_memory_tau", 1.0))
-            coupling_text = getattr(args, "cgl_gle_couplings", "") or str(getattr(args, "cgl_gle_coupling", 1.0))
-            memory_tau = parse_positive_float_list(memory_text, "CGL GLE memory tau")
-            coupling = parse_positive_float_list(coupling_text, "CGL GLE coupling")
-            if len(memory_tau) != len(coupling):
-                raise ValueError("CGL GLE memory tau and coupling lists must have the same length")
-            n_mode = len(memory_tau)
-            cgl_indices = np.where(cgl_mask)[0].astype(np.int32)
-            gle = h5.create_group("/input/cgl_gle")
-            gle.attrs["enabled"] = np.int32(1)
-            gle.attrs["schema"] = "cgl_exponential_memory_gle_v2" if n_mode > 1 else "cgl_exponential_memory_gle_v1"
-            gle.attrs["transport_model"] = (
-                "fdt_markovian_embedding_sum_of_exponential_memory_kernels"
-                if n_mode > 1
-                else "fdt_markovian_embedding_exponential_memory_kernel"
-            )
-            gle.attrs["n_mode"] = np.int32(n_mode)
-            gle.attrs["memory_tau"] = np.float32(memory_tau[0])
-            gle.attrs["coupling"] = np.float32(coupling[0])
-            gle.attrs["replace_markovian_cgl_thermostat"] = np.int8(1 if replace_markovian else 0)
-            gle.attrs["zero_frequency_friction_source"] = (
-                "m_cgl*sum_i(coupling_i^2*memory_tau_i)_for_free_particle_limit"
-            )
-            gle.attrs["conservative_forcefield_changed"] = np.int8(0)
-            gle.attrs["one_particle_cgl_preserved"] = np.int8(1)
-            gle.create_dataset("atom_index", data=cgl_indices)
-            if n_mode > 1:
-                gle.create_dataset("memory_tau", data=np.asarray(memory_tau, dtype=np.float32))
-                gle.create_dataset("coupling", data=np.asarray(coupling, dtype=np.float32))
-                gle.create_dataset("aux_momentum", data=np.zeros((n_mode, cgl_indices.size, 3), dtype=np.float32))
-            else:
-                gle.create_dataset("aux_momentum", data=np.zeros((cgl_indices.size, 3), dtype=np.float32))
+        memory_text = getattr(args, "cgl_gle_memory_taus", "") or str(getattr(args, "cgl_gle_memory_tau", 1.0))
+        coupling_text = getattr(args, "cgl_gle_couplings", "") or str(getattr(args, "cgl_gle_coupling", 1.0))
+        memory_tau = parse_positive_float_list(memory_text, "CGL GLE memory tau")
+        coupling = parse_positive_float_list(coupling_text, "CGL GLE coupling")
+        if len(memory_tau) != len(coupling):
+            raise ValueError("CGL GLE memory tau and coupling lists must have the same length")
+        n_mode = len(memory_tau)
+        cgl_indices = np.where(cgl_mask)[0].astype(np.int32)
+        gle = h5.create_group("/input/cgl_gle")
+        gle.attrs["schema"] = "cgl_exponential_memory_gle"
+        gle.attrs["transport_model"] = (
+            "fdt_markovian_embedding_sum_of_exponential_memory_kernels"
+            if n_mode > 1
+            else "fdt_markovian_embedding_exponential_memory_kernel"
+        )
+        gle.attrs["n_mode"] = np.int32(n_mode)
+        gle.attrs["memory_tau"] = np.float32(memory_tau[0])
+        gle.attrs["coupling"] = np.float32(coupling[0])
+        gle.attrs["replace_markovian_cgl_thermostat"] = np.int8(1 if replace_markovian else 0)
+        gle.attrs["zero_frequency_friction_source"] = (
+            "m_cgl*sum_i(coupling_i^2*memory_tau_i)_for_free_particle_limit"
+        )
+        gle.attrs["conservative_forcefield_changed"] = np.int8(0)
+        gle.attrs["one_particle_cgl_preserved"] = np.int8(1)
+        gle.create_dataset("atom_index", data=cgl_indices)
+        if n_mode > 1:
+            gle.create_dataset("memory_tau", data=np.asarray(memory_tau, dtype=np.float32))
+            gle.create_dataset("coupling", data=np.asarray(coupling, dtype=np.float32))
+            gle.create_dataset("aux_momentum", data=np.zeros((n_mode, cgl_indices.size, 3), dtype=np.float32))
+        else:
+            gle.create_dataset("aux_momentum", data=np.zeros((cgl_indices.size, 3), dtype=np.float32))
 
 
 def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, activation_stage: str):
@@ -1165,7 +1168,7 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
 
 def handoff_initial_position(args, input_file: Path, output_file: Path, mode="default", previous_dt=None):
     preserve_transition = "1" if mode == "production_restart" and previous_dt is not None else "0"
-    public_dt = (float(previous_dt) * MARTINI_MD_INNER_STEP) if previous_dt is not None else 0.0
+    public_dt = float(previous_dt) if previous_dt is not None else 0.0
     with temporary_env(
         {
             "UPSIDE_SET_INITIAL_STRICT_COPY": str(args.strict_stage_handoff),
@@ -1241,7 +1244,7 @@ def promote_cgl_restart_state(h5):
 def mark_output_restart_state(up_file: Path, nsteps: int, dt: float):
     import h5py
 
-    public_dt = float(dt) * MARTINI_MD_INNER_STEP
+    public_dt = float(dt)
     expected_time = float(nsteps) * public_dt
     with h5py.File(up_file, "r+") as h5:
         if "/output/time" not in h5 or h5["/output/time"].shape[0] == 0:
@@ -1344,7 +1347,7 @@ def run_md_stage(
     if effective_frame_steps >= int(nsteps):
         effective_frame_steps = max(1, int(nsteps) // 10)
         print(f"NOTICE: frame_steps ({frame_steps}) >= nsteps ({nsteps}); using frame_steps={effective_frame_steps}")
-    frame_interval = f"{effective_frame_steps * float(dt) * MARTINI_MD_INNER_STEP:.10g}"
+    frame_interval = f"{effective_frame_steps * float(dt):.10g}"
     if input_file.resolve() != output_file.resolve():
         shutil.copy2(input_file, output_file)
         handoff_initial_position(args, input_file, output_file)
@@ -1357,7 +1360,6 @@ def run_md_stage(
         "--temperature", args.temperature,
         "--time-step", dt,
         "--integrator", MARTINI_MD_INTEGRATOR,
-        "--inner-step", str(MARTINI_MD_INNER_STEP),
         "--thermostat-timescale", args.thermostat_timescale,
         "--thermostat-interval", args.thermostat_interval,
         "--seed", args.seed,
@@ -1528,7 +1530,6 @@ def normalize_hybrid_workflow_args(args):
     args.universal_prep_mode = "both"
     args.hybrid_validate = True
     args.hybrid_preprod_activation_stage = "minimization"
-    args.sc_env_po4_z_clamp_enable = DEFAULT_SC_ENV_PO4_Z_CLAMP_ENABLE
     args.sc_env_backbone_hold_steps = DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS
     args.sc_env_po4_z_hold_steps = DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS
     if not np.isfinite(float(args.stage_70_burnin_protein_restraint_spring)):
@@ -1684,8 +1685,7 @@ def cgl_wrapped_z_outliers(up_file: Path, max_abs_z: float = 30.0):
         return [(int(i), float(z[i]), float(z_check[i])) for i in bad]
 
 
-def run_hybrid_workflow_command(argv):
-    parser = argparse.ArgumentParser(description="Run the hybrid 1RKL dry-MARTINI workflow.")
+def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--pdb-id", default=env_default("PDB_ID", "1rkl"))
     parser.add_argument("--runtime-pdb-id", default=env_default("RUNTIME_PDB_ID", None))
     parser.add_argument("--upside-home", default=env_default("UPSIDE_HOME", str(REPO_ROOT)))
@@ -1715,7 +1715,6 @@ def run_hybrid_workflow_command(argv):
     parser.add_argument("--thermostat-timescale", type=float, default=env_float("THERMOSTAT_TIMESCALE", 5.0))
     parser.add_argument("--cg-lipid-thermostat-timescale", type=float, default=env_float("CG_LIPID_THERMOSTAT_TIMESCALE", 0.0))
     parser.add_argument("--cg-lipid-mass-scale", type=float, default=env_float("CG_LIPID_MASS_SCALE", 1.0))
-    parser.add_argument("--cgl-gle-enable", type=int, choices=[0, 1], default=env_int("CGL_GLE_ENABLE", 0))
     parser.add_argument("--cgl-gle-memory-tau", type=float, default=env_float("CGL_GLE_MEMORY_TAU", 1.0))
     parser.add_argument("--cgl-gle-coupling", type=float, default=env_float("CGL_GLE_COUPLING", 1.0))
     parser.add_argument("--cgl-gle-memory-taus", default=env_default("CGL_GLE_MEMORY_TAUS", ""))
@@ -1764,6 +1763,11 @@ def run_hybrid_workflow_command(argv):
         help="DOPC lipid representation: coarse (single CGL particle) or full (14-bead ITP topology)",
     )
     parser.add_argument("--dopc-h5", default=env_default("DOPC_H5", ""))
+
+
+def parse_hybrid_workflow_args(argv):
+    parser = argparse.ArgumentParser(description="Run the hybrid dry-MARTINI workflow.")
+    add_hybrid_workflow_arguments(parser)
     args = parser.parse_args(argv)
     if args.runtime_pdb_id is None:
         args.runtime_pdb_id = f"{args.pdb_id}_hybrid"
@@ -1781,6 +1785,10 @@ def run_hybrid_workflow_command(argv):
         if args.protein_lipid_min_gap <= 0.0:
             args.protein_lipid_min_gap = contact_clearance
 
+    return args
+
+
+def validate_hybrid_workflow_args(args):
     if not args.upside_executable.exists():
         raise FileNotFoundError(args.upside_executable)
     for required in [
@@ -1794,23 +1802,9 @@ def run_hybrid_workflow_command(argv):
         if not required.exists():
             raise FileNotFoundError(required)
 
-    source, output, label = resolve_continuation_outputs(args)
-    print("=== Hybrid Dry MARTINI Workflow ===")
-    print(f"Protein ID: {args.pdb_id}")
-    print(f"Runtime PDB ID: {args.runtime_pdb_id}")
-    print(f"Preparation seed: {args.prep_seed}")
-    print(f"Simulation seed: {args.seed}")
-    print(f"Run directory: {args.run_dir}")
-    if source:
-        print("Continuation mode: production only")
-        print(f"Continuation source: {source}")
-        print(f"Continuation output: {output}")
-        run_stage70_continuation(args, source, output, label)
-        return
 
-    ensure_martini_parameter_libraries(args)
-
-    files = {
+def workflow_stage_files(args):
+    return {
         "prepared_60": args.checkpoint_dir / f"{args.pdb_id}.stage_6.0.prepared.up",
         "stage_60": args.checkpoint_dir / f"{args.pdb_id}.stage_6.0.up",
         "prepared_61": args.checkpoint_dir / f"{args.pdb_id}.stage_6.1.prepared.up",
@@ -1828,9 +1822,24 @@ def run_hybrid_workflow_command(argv):
         "stage_70": args.checkpoint_dir / f"{args.pdb_id}.stage_7.0.up",
     }
 
+
+def print_hybrid_workflow_summary(args, source=None, output=None):
+    print("=== Hybrid Dry MARTINI Workflow ===")
+    print(f"Protein ID: {args.pdb_id}")
+    print(f"Runtime PDB ID: {args.runtime_pdb_id}")
+    print(f"Preparation seed: {args.prep_seed}")
+    print(f"Simulation seed: {args.seed}")
+    print(f"Run directory: {args.run_dir}")
+    if source:
+        print("Continuation mode: production only")
+        print(f"Continuation source: {source}")
+        print(f"Continuation output: {output}")
+
+
+def run_stage60_relaxation(args, files):
     max_stage60_attempts = 1
     if args.lipid_resolution == "coarse":
-        max_stage60_attempts = max(1, int(os.environ.get("UPSIDE_CG_LIPID_STAGE6_RETRY_ATTEMPTS", "3")))
+        max_stage60_attempts = max(1, Config.integer("UPSIDE_CG_LIPID_STAGE6_RETRY_ATTEMPTS", 3))
     base_prep_seed = int(args.prep_seed)
     base_seed = int(args.seed)
     stage60_outliers = []
@@ -1871,65 +1880,106 @@ def run_hybrid_workflow_command(argv):
             f"{max_stage60_attempts} attempt(s): {stage60_outliers[:10]}"
         )
     extract_stage_vtf(args, "6.0", files["stage_60"], "1")
-    needs_pre70 = _detect_has_bonded_environment_particles(files["stage_60"])
+    return files["stage_60"]
 
-    def run_stage70_handoff(source_stage: Path):
-        prepare_stage_file(args, files["prepared_70"], "npt_prod", args.prod_70_npt_enable, args.prod_70_barostat_type, 0, "production")
-        shutil.copy2(files["prepared_70"], files["stage_70"])
-        handoff_initial_position(args, source_stage, files["stage_70"], "production_hybrid")
-        assert_hybrid_stage_active(files["stage_70"], "production", "production")
-        run_minimization_stage(args, "7.0", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
-        if float(args.stage_70_burnin_protein_restraint_spring) > 0.0:
-            inject_protein_position_restraints(
-                files["stage_70"],
-                spring_const=float(args.stage_70_burnin_protein_restraint_spring),
-            )
-        run_stage70_burnin(args, files["stage_70"])
-        remove_protein_position_restraints(files["stage_70"])
-        run_md_stage(args, "7.0", files["stage_70"], files["stage_70"], args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
-        extract_stage_vtf(args, "7.0", files["stage_70"], "2")
 
-    if needs_pre70:
-        print("=== Bonded dry-MARTINI environment detected -> running extended pre-7.0 equilibrium ===")
+def run_stage70_handoff(args, files, source_stage: Path):
+    prepare_stage_file(
+        args,
+        files["prepared_70"],
+        "npt_prod",
+        args.prod_70_npt_enable,
+        args.prod_70_barostat_type,
+        0,
+        "production",
+    )
+    shutil.copy2(files["prepared_70"], files["stage_70"])
+    handoff_initial_position(args, source_stage, files["stage_70"], "production_hybrid")
+    assert_hybrid_stage_active(files["stage_70"], "production", "production")
+    run_minimization_stage(args, "7.0", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
+    if float(args.stage_70_burnin_protein_restraint_spring) > 0.0:
+        inject_protein_position_restraints(
+            files["stage_70"],
+            spring_const=float(args.stage_70_burnin_protein_restraint_spring),
+        )
+    run_stage70_burnin(args, files["stage_70"])
+    remove_protein_position_restraints(files["stage_70"])
+    run_md_stage(
+        args,
+        "7.0",
+        files["stage_70"],
+        files["stage_70"],
+        args.prod_70_nsteps,
+        args.prod_time_step,
+        args.prod_frame_steps,
+    )
+    extract_stage_vtf(args, "7.0", files["stage_70"], "2")
 
-        prepare_stage_file(args, files["prepared_61"], "npt_prod", 1, 0, 0, "minimization")
-        shutil.copy2(files["prepared_61"], files["stage_61"])
-        handoff_initial_position(args, files["stage_60"], files["stage_61"])
-        run_minimization_stage(args, "6.1", files["stage_61"], args.min_61_max_iter)
-        extract_stage_vtf(args, "6.1", files["stage_61"], "1")
 
-        prepare_stage_file(args, files["stage_62"], "npt_equil", 1, 0, 200, "minimization")
-        handoff_initial_position(args, files["stage_61"], files["stage_62"])
-        run_md_stage(args, "6.2", files["stage_62"], files["stage_62"], args.eq_62_nsteps, args.eq_time_step, args.eq_frame_steps)
-        extract_stage_vtf(args, "6.2", files["stage_62"], "1")
+def run_pre70_equilibration(args, files):
+    print("=== Bonded dry-MARTINI environment detected -> running extended pre-7.0 equilibrium ===")
 
-        prepare_stage_file(args, files["prepared_63"], "npt_equil_reduced", 1, 0, 100, "minimization")
-        shutil.copy2(files["prepared_63"], files["stage_63"])
-        handoff_initial_position(args, files["stage_62"], files["stage_63"])
-        run_md_stage(args, "6.3", files["stage_63"], files["stage_63"], args.eq_63_nsteps, args.eq_time_step, args.eq_frame_steps)
-        extract_stage_vtf(args, "6.3", files["stage_63"], "1")
+    prepare_stage_file(args, files["prepared_61"], "npt_prod", 1, 0, 0, "minimization")
+    shutil.copy2(files["prepared_61"], files["stage_61"])
+    handoff_initial_position(args, files["stage_60"], files["stage_61"])
+    run_minimization_stage(args, "6.1", files["stage_61"], args.min_61_max_iter)
+    extract_stage_vtf(args, "6.1", files["stage_61"], "1")
 
-        prepare_stage_file(args, files["prepared_64"], "npt_prod", 1, 0, 50, "minimization")
-        shutil.copy2(files["prepared_64"], files["stage_64"])
-        handoff_initial_position(args, files["stage_63"], files["stage_64"])
-        run_md_stage(args, "6.4", files["stage_64"], files["stage_64"], args.eq_64_nsteps, args.eq_time_step, args.eq_frame_steps)
-        extract_stage_vtf(args, "6.4", files["stage_64"], "1")
+    prepare_stage_file(args, files["stage_62"], "npt_equil", 1, 0, 200, "minimization")
+    handoff_initial_position(args, files["stage_61"], files["stage_62"])
+    run_md_stage(args, "6.2", files["stage_62"], files["stage_62"], args.eq_62_nsteps, args.eq_time_step, args.eq_frame_steps)
+    extract_stage_vtf(args, "6.2", files["stage_62"], "1")
 
-        prepare_stage_file(args, files["prepared_65"], "npt_prod", 1, 0, 20, "minimization")
-        shutil.copy2(files["prepared_65"], files["stage_65"])
-        handoff_initial_position(args, files["stage_64"], files["stage_65"])
-        run_md_stage(args, "6.5", files["stage_65"], files["stage_65"], args.eq_65_nsteps, args.eq_time_step, args.eq_frame_steps)
-        extract_stage_vtf(args, "6.5", files["stage_65"], "1")
+    prepare_stage_file(args, files["prepared_63"], "npt_equil_reduced", 1, 0, 100, "minimization")
+    shutil.copy2(files["prepared_63"], files["stage_63"])
+    handoff_initial_position(args, files["stage_62"], files["stage_63"])
+    run_md_stage(args, "6.3", files["stage_63"], files["stage_63"], args.eq_63_nsteps, args.eq_time_step, args.eq_frame_steps)
+    extract_stage_vtf(args, "6.3", files["stage_63"], "1")
 
-        prepare_stage_file(args, files["prepared_66"], "npt_prod", 1, 0, 10, "minimization")
-        shutil.copy2(files["prepared_66"], files["stage_66"])
-        handoff_initial_position(args, files["stage_65"], files["stage_66"])
-        run_md_stage(args, "6.6", files["stage_66"], files["stage_66"], args.eq_66_nsteps, args.eq_time_step, args.eq_frame_steps)
-        extract_stage_vtf(args, "6.6", files["stage_66"], "1")
-        run_stage70_handoff(files["stage_66"])
+    prepare_stage_file(args, files["prepared_64"], "npt_prod", 1, 0, 50, "minimization")
+    shutil.copy2(files["prepared_64"], files["stage_64"])
+    handoff_initial_position(args, files["stage_63"], files["stage_64"])
+    run_md_stage(args, "6.4", files["stage_64"], files["stage_64"], args.eq_64_nsteps, args.eq_time_step, args.eq_frame_steps)
+    extract_stage_vtf(args, "6.4", files["stage_64"], "1")
+
+    prepare_stage_file(args, files["prepared_65"], "npt_prod", 1, 0, 20, "minimization")
+    shutil.copy2(files["prepared_65"], files["stage_65"])
+    handoff_initial_position(args, files["stage_64"], files["stage_65"])
+    run_md_stage(args, "6.5", files["stage_65"], files["stage_65"], args.eq_65_nsteps, args.eq_time_step, args.eq_frame_steps)
+    extract_stage_vtf(args, "6.5", files["stage_65"], "1")
+
+    prepare_stage_file(args, files["prepared_66"], "npt_prod", 1, 0, 10, "minimization")
+    shutil.copy2(files["prepared_66"], files["stage_66"])
+    handoff_initial_position(args, files["stage_65"], files["stage_66"])
+    run_md_stage(args, "6.6", files["stage_66"], files["stage_66"], args.eq_66_nsteps, args.eq_time_step, args.eq_frame_steps)
+    extract_stage_vtf(args, "6.6", files["stage_66"], "1")
+    return files["stage_66"]
+
+
+def run_fresh_hybrid_workflow(args):
+    ensure_martini_parameter_libraries(args)
+    files = workflow_stage_files(args)
+    stage60 = run_stage60_relaxation(args, files)
+
+    if _detect_has_bonded_environment_particles(stage60):
+        stage70_source = run_pre70_equilibration(args, files)
     else:
         print("=== No bonded dry-MARTINI environment pairs -> handoff from stage 6.0 to stage 7.0 ===")
-        run_stage70_handoff(files["stage_60"])
+        stage70_source = stage60
+
+    run_stage70_handoff(args, files, stage70_source)
+
+
+def run_hybrid_workflow_command(argv):
+    args = parse_hybrid_workflow_args(argv)
+    validate_hybrid_workflow_args(args)
+
+    source, output, label = resolve_continuation_outputs(args)
+    print_hybrid_workflow_summary(args, source, output)
+    if source:
+        run_stage70_continuation(args, source, output, label)
+    else:
+        run_fresh_hybrid_workflow(args)
 
     print("=== Workflow Complete ===")
 

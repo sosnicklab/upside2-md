@@ -35,7 +35,6 @@ enum class BarostatType {
 };
 
 struct BarostatSettings {
-    bool  enabled = false;
     bool  semi_isotropic = true;
     BarostatType type = BarostatType::Berendsen;
     int   interval = 0;           // steps between applications

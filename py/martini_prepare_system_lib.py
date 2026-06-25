@@ -1513,7 +1513,6 @@ def write_hybrid_mapping_h5(
         inp = h5.create_group("input")
 
         ctrl = inp.create_group("hybrid_control")
-        ctrl.attrs["enable"] = np.int8(1)
         ctrl.attrs["activation_stage"] = b"minimization"
         ctrl.attrs["preprod_protein_mode"] = b"rigid_body"
         ctrl.attrs["preprod_lipid_headgroup_roles"] = b"PO4"
@@ -2707,7 +2706,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         
         # Create stage-specific parameters group (always create this)
         stage_grp = t.create_group(input_grp, 'stage_parameters')
-        stage_grp._v_attrs.enable = 1
         stage_grp._v_attrs.current_stage = b'minimization'
         
         # Store minimization stage bond parameters (large spring constants)
@@ -2736,7 +2734,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         if barostat_enable:
             print("\nCreating NPT barostat configuration")
             barostat_grp = t.create_group(input_grp, 'barostat')
-            barostat_grp._v_attrs.enable = barostat_enable
             barostat_grp._v_attrs.target_p_xy = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '0.000020659'))
             barostat_grp._v_attrs.target_p_z = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '0.000020659'))
             barostat_grp._v_attrs.tau_p = float(os.environ.get('UPSIDE_NPT_TAU', '1.0'))
@@ -3220,7 +3217,6 @@ def validate_hybrid_mapping(mapping_h5: Path, n_atom: int | None = None):
         env = require_group(inp, "hybrid_env_topology")
 
         for attr in [
-            "enable",
             "activation_stage",
             "preprod_protein_mode",
             "exclude_intra_protein_martini",

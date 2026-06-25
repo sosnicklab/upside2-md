@@ -28,7 +28,7 @@ static std::map<const CoordNode*, std::shared_ptr<HybridRuntimeState>> g_hybrid_
 
 static std::vector<int> active_protein_proxy_fixed_atoms(const HybridRuntimeState& st) {
     std::vector<int> atoms;
-    if(!st.enabled || !st.active) return atoms;
+    if(!st.active) return atoms;
     atoms.reserve(st.protein_membership.size());
     for(size_t atom_idx = 0; atom_idx < st.protein_membership.size(); ++atom_idx) {
         if(st.protein_membership[atom_idx] < 0) continue;
@@ -109,7 +109,7 @@ void refresh_bb_positions_if_active(
         const HybridRuntimeState& st,
         VecArray pos,
         int n_atom) {
-    if(!st.enabled || !st.active) return;
+    if(!st.active) return;
     refresh_backbone_o_positions_if_active(st, pos, n_atom);
     for(size_t k = 0; k < st.n_bb; ++k) {
         int bb = st.bb_atom_index[k];
@@ -206,7 +206,7 @@ static inline void mat_transpose(const float A[3][3], float AT[3][3]) {
 }
 
 static void refresh_backbone_o_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom) {
-    if(!st.enabled || !st.active) return;
+    if(!st.active) return;
     if(st.bb_reference_atom_coords.size() != st.n_bb) return;
     if(st.bb_reference_runtime_atom_indices.size() != st.n_bb) return;
 
@@ -315,8 +315,7 @@ static inline bool is_env_po4_atom(const HybridRuntimeState& st, int atom) {
 }
 
 static inline bool active_sc_env_backbone_hold_enabled(const HybridRuntimeState& st) {
-    return st.enabled &&
-           st.active &&
+    return st.active &&
            st.sc_env_backbone_hold_steps > 0 &&
            st.sc_env_transition_step < static_cast<uint64_t>(st.sc_env_backbone_hold_steps);
 }
@@ -331,9 +330,7 @@ float compute_sc_backbone_feedback_mix(const HybridRuntimeState& st) {
 }
 
 static inline bool active_sc_env_po4_z_hold_enabled(const HybridRuntimeState& st) {
-    return st.enabled &&
-           st.active &&
-           st.sc_env_po4_z_clamp_enabled &&
+    return st.active &&
            st.sc_env_po4_z_hold_steps > 0 &&
            st.sc_env_transition_step < static_cast<uint64_t>(st.sc_env_po4_z_hold_steps);
 }
@@ -387,13 +384,13 @@ static inline bool allow_protein_pair_by_rule(const HybridRuntimeState& st, int 
 }
 
 bool allow_intra_protein_pair_if_active(const HybridRuntimeState& st, int i, int j) {
-    if(!st.enabled || !st.active) return true;
+    if(!st.active) return true;
     if(!same_protein_membership_pair(st, i, j)) return true;
     return allow_protein_pair_by_rule(st, i, j);
 }
 
 bool allow_multibody_term_if_active(const HybridRuntimeState& st, const index_t* atoms, int n_atom_dep) {
-    if(!st.enabled || !st.active) return true;
+    if(!st.active) return true;
     for(int a = 0; a < n_atom_dep; ++a) {
         for(int b = a + 1; b < n_atom_dep; ++b) {
             int ia = atoms[a];
@@ -463,7 +460,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.has_config = true;
 
     auto ctrl = open_group(root, "/input/hybrid_control");
-    out.enabled = (read_attribute<int>(ctrl.get(), ".", "enable", 0) != 0);
     out.activation_stage = read_string_attribute_or_default(ctrl.get(), "activation_stage", "production");
     out.preprod_mode = read_string_attribute_or_default(ctrl.get(), "preprod_protein_mode", "rigid");
     out.exclude_intra_protein_martini =
@@ -473,20 +469,14 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         read_attribute<int>(ctrl.get(), ".", "sc_env_backbone_hold_steps", out.sc_env_backbone_hold_steps);
     out.sc_env_po4_z_hold_steps =
         read_attribute<int>(ctrl.get(), ".", "sc_env_po4_z_hold_steps", out.sc_env_po4_z_hold_steps);
-    out.sc_env_po4_z_clamp_enabled =
-        (read_attribute<int>(ctrl.get(), ".", "sc_env_po4_z_clamp_enabled", out.sc_env_po4_z_clamp_enabled ? 1 : 0) != 0);
     int transition_start = read_attribute<int>(ctrl.get(), ".", "sc_env_transition_step_start", 0);
     out.sc_env_transition_step_start = static_cast<uint64_t>(std::max(0, transition_start));
     out.sc_env_transition_step = out.sc_env_transition_step_start;
     if(out.sc_env_backbone_hold_steps < 0) out.sc_env_backbone_hold_steps = 0;
     if(out.sc_env_po4_z_hold_steps < 0) out.sc_env_po4_z_hold_steps = 0;
 
-    if(!out.enabled) {
-        return out;
-    }
-
     if(!h5_exists(root, "/input/hybrid_bb_map")) {
-        throw string("Hybrid mode enabled but /input/hybrid_bb_map is missing");
+        throw string("Hybrid control requires /input/hybrid_bb_map");
     }
     {
         auto bb = open_group(root, "/input/hybrid_bb_map");
@@ -564,7 +554,7 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             out.protein_membership[i] = v;
         });
     } else {
-        throw string("Hybrid mode enabled but /input/hybrid_env_topology is missing");
+        throw string("Hybrid control requires /input/hybrid_env_topology");
     }
     out.atom_role_class.assign(static_cast<size_t>(n_atom), ROLE_OTHER);
     out.atom_backbone_carrier_mask.assign(static_cast<size_t>(n_atom), 0u);
@@ -598,7 +588,7 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         });
     }
 
-    if(out.sc_env_po4_z_clamp_enabled && !out.protein_membership.empty()) {
+    if(!out.protein_membership.empty()) {
         out.sc_env_po4_env_mask.assign(static_cast<size_t>(n_atom), 0u);
         if(has_roles) {
             for(int i = 0; i < n_atom; ++i) {
@@ -751,6 +741,32 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     return out;
 }
 
+static inline bool enforce_preprod_rigid_stage(
+        const HybridRuntimeState& st,
+        const std::string& stage) {
+    return st.preprod_rigid && (stage != "production");
+}
+
+static void apply_stage_fixing(
+        DerivEngine& engine,
+        HybridRuntimeState& st,
+        const std::string& stage) {
+    if(enforce_preprod_rigid_stage(st, stage)) {
+        martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
+        martini_fix_rigid::set_dynamic_rigid_groups(engine, {st.preprod_fixed_atom_indices});
+        martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st.preprod_z_fixed_atom_indices);
+        return;
+    }
+
+    martini_fix_rigid::clear_dynamic_rigid_groups(engine);
+    martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_protein_proxy_fixed_atoms(st));
+    if(active_sc_env_po4_z_hold_enabled(st)) {
+        martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st.sc_env_po4_z_hold_atom_indices);
+    } else {
+        martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
+    }
+}
+
 void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     auto it = g_hybrid_state.find(engine);
@@ -758,7 +774,7 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
     auto st = it->second;
     if(!st) return;
     bool was_active = st->active;
-    if(!st->enabled) {
+    if(!st->has_config) {
         st->active = false;
         st->has_prev_bb = false;
         st->prev_bb_pos.clear();
@@ -780,46 +796,20 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         st->bb_env_interface_potential = 0.f;
         st->sc_env_transition_step = st->sc_env_transition_step_start;
     }
-    bool enforce_preprod_rigid = st->preprod_rigid && (stage != "production");
-    if(enforce_preprod_rigid) {
-        martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
-        martini_fix_rigid::set_dynamic_rigid_groups(*engine, {st->preprod_fixed_atom_indices});
-        martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->preprod_z_fixed_atom_indices);
-    } else {
-        martini_fix_rigid::clear_dynamic_rigid_groups(*engine);
-        martini_fix_rigid::set_dynamic_fixed_atoms(*engine, active_protein_proxy_fixed_atoms(*st));
-        if(active_sc_env_po4_z_hold_enabled(*st)) {
-            martini_fix_rigid::set_dynamic_z_fixed_atoms(*engine, st->sc_env_po4_z_hold_atom_indices);
-        } else {
-            martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
-        }
-    }
+    apply_stage_fixing(*engine, *st, stage);
 }
 
 void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
     auto parsed = read_hybrid_settings(config_root, engine.pos->n_elem);
     auto current_stage = martini_stage_params::get_current_stage(&engine);
-    parsed.active = parsed.enabled && (current_stage == parsed.activation_stage);
+    parsed.active = parsed.has_config && (current_stage == parsed.activation_stage);
 
     auto st = std::make_shared<HybridRuntimeState>(std::move(parsed));
 
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     g_hybrid_state[&engine] = st;
     g_hybrid_state_by_coord[static_cast<const CoordNode*>(engine.pos)] = st;
-    bool enforce_preprod_rigid = st->enabled && st->preprod_rigid && (current_stage != "production");
-    if(enforce_preprod_rigid) {
-        martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
-        martini_fix_rigid::set_dynamic_rigid_groups(engine, {st->preprod_fixed_atom_indices});
-        martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
-    } else {
-        martini_fix_rigid::clear_dynamic_rigid_groups(engine);
-        martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_protein_proxy_fixed_atoms(*st));
-        if(active_sc_env_po4_z_hold_enabled(*st)) {
-            martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->sc_env_po4_z_hold_atom_indices);
-        } else {
-            martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
-        }
-    }
+    apply_stage_fixing(engine, *st, current_stage);
 }
 
 void refresh_transition_holds_for_engine(DerivEngine& engine) {
@@ -828,30 +818,18 @@ void refresh_transition_holds_for_engine(DerivEngine& engine) {
     if(it == g_hybrid_state.end() || !it->second) return;
     auto st = it->second;
     std::string current_stage = martini_stage_params::get_current_stage(&engine);
-    bool enforce_preprod_rigid = st->preprod_rigid && (current_stage != "production");
-    if(enforce_preprod_rigid) {
-        martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
-        martini_fix_rigid::set_dynamic_rigid_groups(engine, {st->preprod_fixed_atom_indices});
-        martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->preprod_z_fixed_atom_indices);
-        return;
-    }
-    martini_fix_rigid::clear_dynamic_rigid_groups(engine);
-    martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_protein_proxy_fixed_atoms(*st));
-    if(st->enabled && st->active &&
+    if(!enforce_preprod_rigid_stage(*st, current_stage) &&
+       st->active &&
        st->sc_env_transition_step < std::numeric_limits<uint64_t>::max()) {
         st->sc_env_transition_step += 1;
     }
-    if(active_sc_env_po4_z_hold_enabled(*st)) {
-        martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st->sc_env_po4_z_hold_atom_indices);
-    } else {
-        martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
-    }
+    apply_stage_fixing(engine, *st, current_stage);
 }
 
 bool is_hybrid_enabled(const DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
-    return it != g_hybrid_state.end() && it->second && it->second->enabled;
+    return it != g_hybrid_state.end() && it->second && it->second->has_config;
 }
 
 bool is_hybrid_active(const DerivEngine& engine) {
@@ -888,7 +866,7 @@ bool project_bb_proxy_gradient_for_coord(
         int atom_idx,
         const Vec<3>& grad) {
     auto st = get_state_for_coord(coord);
-    if(!st || !st->enabled || !st->active) return false;
+    if(!st || !st->active) return false;
     if(atom_role_class_at(*st, atom_idx) != ROLE_BB) return false;
     if(atom_is_backbone_carrier_at(*st, atom_idx)) return false;
     if(bb_map_index_for_proxy(*st, atom_idx) < 0) return false;
@@ -899,7 +877,7 @@ bool project_bb_proxy_gradient_for_coord(
 }
 
 bool skip_pair_if_intra_protein(const HybridRuntimeState& st, int i, int j) {
-    if(!st.enabled || !st.active || !st.exclude_intra_protein_martini) return false;
+    if(!st.active || !st.exclude_intra_protein_martini) return false;
     return !allow_intra_protein_pair_if_active(st, i, j);
 }
 

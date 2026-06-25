@@ -552,14 +552,11 @@ std::vector<int> read_fix_rigid_settings(hid_t root) {
     try {
         if(h5_exists(root, "/input/fix_rigid")) {
             auto grp = open_group(root, "/input/fix_rigid");
-            int enable = read_attribute<int>(grp.get(), ".", "enable", 0);
-            if(enable) {
-                // Read atom indices to fix
-                if(h5_exists(grp.get(), "atom_indices")) {
-                    traverse_dset<1,int>(grp.get(), "atom_indices", [&](size_t i, int atom_idx) {
-                        fixed_atoms.push_back(atom_idx);
-                    });
-                }
+            // Read atom indices to fix
+            if(h5_exists(grp.get(), "atom_indices")) {
+                traverse_dset<1,int>(grp.get(), "atom_indices", [&](size_t i, int atom_idx) {
+                    fixed_atoms.push_back(atom_idx);
+                });
             }
         }
     } catch(...) { 

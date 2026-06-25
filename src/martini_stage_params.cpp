@@ -34,62 +34,59 @@ struct StageParamData {
     std::string stage;
     std::map<std::string, std::vector<float>> bond_params;
     std::map<std::string, std::vector<float>> angle_params;
-    bool enabled;
+    bool has_config;
 };
 
 StageParamData read_stage_param_settings(hid_t root) {
     StageParamData data;
-    data.enabled = false;
+    data.has_config = false;
     
     try {
         if(h5_exists(root, "/input/stage_parameters")) {
             auto grp = open_group(root, "/input/stage_parameters");
-            int enable = read_attribute<int>(grp.get(), ".", "enable", 0);
-            if(enable) {
-                data.enabled = true;
-                
-                // Set default stage and allow override from H5.
-                data.stage = "production";
-                data.stage = martini_hybrid::read_string_attribute_or_default(
-                    grp.get(), "current_stage", data.stage);
-                
-                // Read bond parameters for different stages
-                if(h5_exists(grp.get(), "minimization_bonds")) {
-                    auto min_grp = open_group(grp.get(), "minimization_bonds");
-                    // Read bond force constants
-                    if(h5_exists(min_grp.get(), "force_constants")) {
-                        traverse_dset<1,float>(min_grp.get(), "force_constants", [&](size_t i, float fc) {
-                            data.bond_params["minimization"].push_back(fc);
-                        });
-                    }
+            data.has_config = true;
+
+            // Set default stage and allow override from H5.
+            data.stage = "production";
+            data.stage = martini_hybrid::read_string_attribute_or_default(
+                grp.get(), "current_stage", data.stage);
+
+            // Read bond parameters for different stages
+            if(h5_exists(grp.get(), "minimization_bonds")) {
+                auto min_grp = open_group(grp.get(), "minimization_bonds");
+                // Read bond force constants
+                if(h5_exists(min_grp.get(), "force_constants")) {
+                    traverse_dset<1,float>(min_grp.get(), "force_constants", [&](size_t i, float fc) {
+                        data.bond_params["minimization"].push_back(fc);
+                    });
                 }
-                
-                if(h5_exists(grp.get(), "production_bonds")) {
-                    auto prod_grp = open_group(grp.get(), "production_bonds");
-                    if(h5_exists(prod_grp.get(), "force_constants")) {
-                        traverse_dset<1,float>(prod_grp.get(), "force_constants", [&](size_t i, float fc) {
-                            data.bond_params["production"].push_back(fc);
-                        });
-                    }
+            }
+
+            if(h5_exists(grp.get(), "production_bonds")) {
+                auto prod_grp = open_group(grp.get(), "production_bonds");
+                if(h5_exists(prod_grp.get(), "force_constants")) {
+                    traverse_dset<1,float>(prod_grp.get(), "force_constants", [&](size_t i, float fc) {
+                        data.bond_params["production"].push_back(fc);
+                    });
                 }
-                
-                // Read angle parameters for different stages
-                if(h5_exists(grp.get(), "minimization_angles")) {
-                    auto min_grp = open_group(grp.get(), "minimization_angles");
-                    if(h5_exists(min_grp.get(), "force_constants")) {
-                        traverse_dset<1,float>(min_grp.get(), "force_constants", [&](size_t i, float fc) {
-                            data.angle_params["minimization"].push_back(fc);
-                        });
-                    }
+            }
+
+            // Read angle parameters for different stages
+            if(h5_exists(grp.get(), "minimization_angles")) {
+                auto min_grp = open_group(grp.get(), "minimization_angles");
+                if(h5_exists(min_grp.get(), "force_constants")) {
+                    traverse_dset<1,float>(min_grp.get(), "force_constants", [&](size_t i, float fc) {
+                        data.angle_params["minimization"].push_back(fc);
+                    });
                 }
-                
-                if(h5_exists(grp.get(), "production_angles")) {
-                    auto prod_grp = open_group(grp.get(), "production_angles");
-                    if(h5_exists(prod_grp.get(), "force_constants")) {
-                        traverse_dset<1,float>(prod_grp.get(), "force_constants", [&](size_t i, float fc) {
-                            data.angle_params["production"].push_back(fc);
-                        });
-                    }
+            }
+
+            if(h5_exists(grp.get(), "production_angles")) {
+                auto prod_grp = open_group(grp.get(), "production_angles");
+                if(h5_exists(prod_grp.get(), "force_constants")) {
+                    traverse_dset<1,float>(prod_grp.get(), "force_constants", [&](size_t i, float fc) {
+                        data.angle_params["production"].push_back(fc);
+                    });
                 }
             }
         }
@@ -104,7 +101,7 @@ void register_stage_params_for_engine(DerivEngine* engine, hid_t root) {
     std::lock_guard<std::mutex> lock(g_stage_mutex);
     
     auto data = read_stage_param_settings(root);
-    if(data.enabled) {
+    if(data.has_config) {
         g_current_stage[engine] = data.stage;
         g_stage_bond_params[engine] = data.bond_params;
         g_stage_angle_params[engine] = data.angle_params;

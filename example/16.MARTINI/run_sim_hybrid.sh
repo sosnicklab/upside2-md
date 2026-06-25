@@ -52,7 +52,6 @@ if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
     export EXPLICIT_IONS="${EXPLICIT_IONS:-1}"
     export CG_LIPID_MASS_SCALE="${CG_LIPID_MASS_SCALE:-0.012}"
     export CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE="${CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE:-0.008}"
-    export CGL_GLE_ENABLE="${CGL_GLE_ENABLE:-1}"
     export CGL_GLE_MEMORY_TAUS="${CGL_GLE_MEMORY_TAUS:-0.2,2.0}"
     export CGL_GLE_COUPLINGS="${CGL_GLE_COUPLINGS:-0.30375,0.2205}"
     export CGL_GLE_REPLACE_MARKOVIAN="${CGL_GLE_REPLACE_MARKOVIAN:-1}"
@@ -61,7 +60,6 @@ if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
     coarse_hybrid_args=(
         --explicit-ions "${EXPLICIT_IONS}"
         --cg-lipid-mass-scale "${CG_LIPID_MASS_SCALE}"
-        --cgl-gle-enable "${CGL_GLE_ENABLE}"
         --cgl-gle-memory-taus "${CGL_GLE_MEMORY_TAUS}"
         --cgl-gle-couplings "${CGL_GLE_COUPLINGS}"
         --cgl-gle-replace-markovian "${CGL_GLE_REPLACE_MARKOVIAN}"
@@ -155,6 +153,25 @@ find_latest_stage7() {
     fi
 }
 
+ensure_martini_parameter_files() {
+    local martini_ff_dir="${UPSIDE_HOME}/parameters/dryMARTINI"
+    local param_file=""
+    local required_params=(
+        "${martini_ff_dir}/particle.h5"
+        "${martini_ff_dir}/sidechain.h5"
+    )
+    if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
+        required_params+=("${martini_ff_dir}/dopc.h5")
+    fi
+    for param_file in "${required_params[@]}"; do
+        if [ ! -f "${param_file}" ]; then
+            echo "One or more MARTINI parameter files missing. Generating..."
+            python3 "${PROJECT_ROOT}/py/martini_gen_params.py" --upside-home "${UPSIDE_HOME}"
+            break
+        fi
+    done
+}
+
 if [ -z "${CONTINUE_STAGE_70_FROM}" ]; then
     CONTINUE_STAGE_70_FROM="$(find_latest_stage7)"
 fi
@@ -163,21 +180,7 @@ if [ -n "${CONTINUE_STAGE_70_FROM}" ]; then
     echo "Detected continuation source: ${CONTINUE_STAGE_70_FROM}"
 fi
 
-MARTINI_FF_DIR="${UPSIDE_HOME}/parameters/dryMARTINI"
-required_params=(
-    "${MARTINI_FF_DIR}/particle.h5"
-    "${MARTINI_FF_DIR}/sidechain.h5"
-)
-if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
-    required_params+=("${MARTINI_FF_DIR}/dopc.h5")
-fi
-for param_file in "${required_params[@]}"; do
-    if [ ! -f "${param_file}" ]; then
-        echo "One or more MARTINI parameter files missing. Generating..."
-        python3 "${PROJECT_ROOT}/py/martini_gen_params.py" --upside-home "${UPSIDE_HOME}"
-        break
-    fi
-done
+ensure_martini_parameter_files
 
 workflow_args=(
     run-hybrid-workflow

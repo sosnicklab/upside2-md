@@ -15,7 +15,6 @@ enum AtomRoleClass : unsigned char {
 
 struct HybridRuntimeState {
     bool has_config = false;
-    bool enabled = false;
     bool active = false;
     bool exclude_intra_protein_martini = true;
     bool preprod_rigid = true;
@@ -39,7 +38,6 @@ struct HybridRuntimeState {
     bool has_prev_bb = false;
     int sc_env_backbone_hold_steps = 200;
     int sc_env_po4_z_hold_steps = 150;
-    bool sc_env_po4_z_clamp_enabled = false;
     uint64_t sc_env_transition_step = 0;
     uint64_t sc_env_transition_step_start = 0;
     std::vector<unsigned char> sc_env_po4_env_mask;
