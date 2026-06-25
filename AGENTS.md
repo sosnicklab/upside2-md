@@ -21,6 +21,7 @@ Upside is a molecular dynamics simulation package for protein folding and confor
 * **Master Repository Path**: Use `/Users/yinhan/Documents/upside2-md-master` as the master repository reference for all file diffs and code comparisons.
 * **Architectural Integrity**: Clean up and thoroughly rewrite the dryMARTINI interface code (including Python, C++, and MD scripts) to ensure a straight, logical, and cohesive architecture.
 * **Code Quality**: Eliminate the current fragmented, patch-on-patch structure introduced by previous AI iterations.
+* **Inactive Flags**: Completely remove any inactive, disabled, or unused configuration flags within the diffed scope. Do not leave them as commented-out code or dead toggles. 
 * **Stylistic Matching**: Exactly match the formatting, naming conventions, and style of the human-written code found in the master repository.
 * **Exclusions**: Completely ignore `/Users/yinhan/Documents/upside2-md-master/example/00.AnalysisScripts` for style reference, as it is AI-written and not a valid baseline.
 
@@ -145,3 +146,4 @@ Training artifacts under `SC-training/` stay in native dry-MARTINI units.
 * Training outputs and forcefield parameters are authored in native dry-MARTINI units (`nm`, `kJ/mol`, `e`).
 * The simulation code must not bake dry-MARTINI to Upside conversion numbers into the training artifacts.
 * The simulation code must receive the required unit-conversion factors as explicit parameters or attributes when converting native dry-MARTINI quantities into Upside runtime units.
+
