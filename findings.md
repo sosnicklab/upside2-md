@@ -1,6 +1,33 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-25: CGL leaflet-distance source investigation.
+  - Retained hybrid VTF outputs overstate physical leaflet distance when
+    synthetic rod endpoints are treated as leaflet centers. In the retained
+    stage-7 H5 checkpoints, physical CGL center separations are about `30 A`,
+    while VTF head endpoint separations are about `57 A`.
+  - The shared C++ minimum-image helper only applied one box-length correction.
+    That is wrong for unwrapped diffusive coordinates and can corrupt long
+    CGL diffusion/timescale validation once particles move by more than one
+    periodic image. The helper should use rounded box-image reduction.
+  - The standalone preparer claimed bilayer-only support but exposed only the
+    hybrid workflow. A real CGL-only validation path needs a direct
+    `prepare --mode bilayer` route so validation does not fake a protein.
+  - The installed `parameters/dryMARTINI/dopc.h5` records
+    `azimuthal_average_temperature_upside=25.0`; the schema validator default
+    must match that installed table contract when
+    `UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE` is unset.
+  - Pure CGL bilayer conversion legitimately creates zero generic MARTINI
+    nonbonded pairs because CGL-CGL interactions are handled by spline nodes.
+    The generic MARTINI potential must accept an empty optimized pair table as
+    a no-op rather than requiring unused spline grids.
+  - Bilayer-only validation with the current installed CGL pair table still
+    fails geometry: source DOPC CGL COM separation is `12.77 A`, but a short
+    CGL-only run expands toward `33 A`. A controlled energy scan of the same
+    CGL-only checkpoint shows total pair energy is much lower near `24 A`
+    than near the source COM separation. This means the current one-particle
+    CGL conservative pair table favors a widened center separation; PBC and
+    workflow fixes alone do not solve the physical model issue.
 - 2026-06-25: dryMARTINI interface refactor setup.
   - Scope must be derived from diffs against
     `/Users/yinhan/Documents/upside2-md-master`, not from guessing or broad

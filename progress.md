@@ -1,6 +1,47 @@
 # Progress Log
 
-## Current Task: dryMARTINI Interface Refactor
+## Current Task: CGL Leaflet-Distance Source Investigation
+
+- Actions taken:
+  - Reviewed existing `plan.md`, `findings.md`, and `progress.md`.
+  - Reframed the active plan around source-code causes of excessive CGL
+    leaflet separation and bilayer-only validation.
+  - Quantified retained 1RKL/1AFO hybrid outputs. Physical CGL center leaflet
+    separation is about 30 A; VTF synthetic rod endpoints inflate apparent
+    head/head separation to about 57 A.
+  - Patched the shared C++ PBC minimum-image helper to use rounded box-image
+    reduction instead of a single add/subtract.
+  - Added `prepare --mode bilayer` so a CGL-only bilayer can be generated
+    without faking a protein.
+  - Generated a 72-CGL bilayer-only input under
+    `example/16.MARTINI/outputs/codex_cgl_bilayer_pbc`.
+  - Fixed the CGL table validator default to match the installed `Tavg=25.0`
+    H5 contract.
+  - Patched the generic MARTINI potential to accept zero optimized pair rows
+    as a no-op, which is required for pure CGL-only spline-node systems.
+  - Ran a short CGL-only bilayer validation and a center-separation energy
+    scan. The validation still fails geometry because the current installed
+    one-particle CGL pair table favors a wider CGL-center separation than the
+    source DOPC COM geometry.
+- Files modified:
+  - `src/box.h`
+  - `src/martini_potential.cpp`
+  - `py/martini_prepare_system.py`
+  - `py/martini_prepare_system_lib.py`
+  - `plan.md`
+  - `progress.md`
+  - `findings.md`
+- Test results:
+  - Python compile passed for dryMARTINI Python files.
+  - `make -C obj upside -j2` passed.
+  - Bilayer-only prepare/conversion passed.
+  - Bilayer-only CGL spline-node injection passed.
+  - Short bilayer-only CGL MD ran, but geometry failed: source DOPC CGL COM
+    separation `12.77 A` expanded toward `33 A`.
+  - Energy scan confirmed the current pair table is lower in total energy near
+    `24 A` than near the source COM separation.
+
+## Previous Task Summary: dryMARTINI Interface Refactor
 
 - Actions taken:
   - Compared dryMARTINI-related Python, C++, parameter, and MARTINI example
@@ -61,9 +102,7 @@
     `ibi_enabled`).
   - Command-construction check shows `--integrator v`, no `--inner-step`, and
     direct `dt` timing (`frame_interval=0.01` for 5 frames at `dt=0.002`).
-  - Direct binary smoke test on a copied checkpoint now writes final time
-    `0.1` for 10 steps at `dt=0.01` with `--integrator v`.
+  - Direct binary smoke test on a copied checkpoint wrote final time `0.1` for
+    10 steps at `dt=0.01` with `--integrator v`.
   - Short isolated workflow checks completed for `1rkl`, `1rkl_full`, `1afo`,
     and `1afo_full` under `example/16.MARTINI/outputs/codex_verify_*`.
-    Stage 6.0 final time is `0.2` for 20 steps at `dt=0.01`; stage 7.0 final
-    time is `0.04` for 20 steps at `dt=0.002`.

@@ -81,7 +81,7 @@ def parse_prepare_args(argv=None):
             "to UPSIDE input."
         )
     )
-    parser.add_argument("--mode", choices=["both"], required=True)
+    parser.add_argument("--mode", choices=["bilayer", "both"], required=True)
     parser.add_argument("--pdb-id", required=True, help="Runtime PDB id for stage conversion")
     parser.add_argument("--runtime-pdb-output", default=None)
     parser.add_argument("--prepare-structure", type=int, default=1, choices=[0, 1])
@@ -439,6 +439,90 @@ def prepare_mixed_structure(args, runtime_pdb):
     return summary
 
 
+def prepare_bilayer_structure(args, runtime_pdb):
+    if not args.bilayer_pdb:
+        raise ValueError("--bilayer-pdb is required for mode=bilayer")
+
+    bilayer_pdb = Path(args.bilayer_pdb).expanduser().resolve()
+    if not bilayer_pdb.exists():
+        raise FileNotFoundError(f"Bilayer PDB not found: {bilayer_pdb}")
+
+    bilayer_atoms, bilayer_box = parse_pdb(bilayer_pdb)
+    bilayer_lipid_atoms = [dict(a) for a in bilayer_atoms if lipid_resname(a["resname"])]
+    if not bilayer_lipid_atoms:
+        raise ValueError("No lipid residues found in bilayer template.")
+
+    lipid_xyz = coords(bilayer_lipid_atoms)
+    bmin = lipid_xyz.min(axis=0)
+    bmax = lipid_xyz.max(axis=0)
+    base_side = max(float(bmax[0] - bmin[0]), float(bmax[1] - bmin[1]))
+    target_side = base_side * float(max(1.0, args.xy_scale))
+    if target_side > base_side * 1.000001:
+        center_xy = 0.5 * (bmin[:2] + bmax[:2])
+        target_xy_min = center_xy - 0.5 * target_side
+        target_xy_max = center_xy + 0.5 * target_side
+        bilayer_lipid_atoms = tile_and_crop_bilayer_lipids(
+            bilayer_atoms=bilayer_atoms,
+            bilayer_box=bilayer_box,
+            target_xy_min=target_xy_min,
+            target_xy_max=target_xy_max,
+        )
+
+    box_lengths = set_box_from_lipid_xy(
+        all_atoms=bilayer_lipid_atoms,
+        lipid_atoms=bilayer_lipid_atoms,
+        pad_z=float(args.box_padding_z),
+        force_square_xy=True,
+        center_lipid_in_z=True,
+    )
+
+    effective_vol_frac = infer_effective_ion_volume_fraction_from_template(
+        bilayer_atoms=bilayer_atoms,
+        bilayer_box=bilayer_box,
+        salt_molar=float(args.salt_molar),
+    )
+    if int(args.explicit_ions):
+        salt_pairs = estimate_salt_pairs(
+            box_lengths=box_lengths,
+            salt_molar=float(args.salt_molar),
+            effective_volume_fraction=effective_vol_frac,
+        )
+        rng = np.random.default_rng(int(args.seed))
+        ion_atoms = place_ions(
+            atoms=bilayer_lipid_atoms,
+            box_lengths=box_lengths,
+            n_na=int(salt_pairs),
+            n_cl=int(salt_pairs),
+            cutoff=float(args.ion_cutoff),
+            rng=rng,
+        )
+    else:
+        salt_pairs = 0
+        ion_atoms = []
+
+    all_atoms = bilayer_lipid_atoms + ion_atoms
+    write_pdb(runtime_pdb, all_atoms, box_lengths)
+    lipid_xyz_final = coords(bilayer_lipid_atoms)
+    return {
+        "mode": "bilayer",
+        "input_bilayer_pdb": str(bilayer_pdb),
+        "runtime_pdb": str(runtime_pdb),
+        "xy_scale": float(args.xy_scale),
+        "base_xy_side_angstrom": float(base_side),
+        "target_xy_side_angstrom": float(target_side),
+        "box_angstrom": [float(v) for v in box_lengths],
+        "explicit_ions": int(args.explicit_ions),
+        "salt_pairs_target": int(salt_pairs),
+        "na_added": int(salt_pairs) if int(args.explicit_ions) else 0,
+        "cl_added": int(salt_pairs) if int(args.explicit_ions) else 0,
+        "bilayer_atoms_kept": int(len(bilayer_lipid_atoms)),
+        "ion_atoms_added": int(len(ion_atoms)),
+        "total_atoms": int(len(all_atoms)),
+        "lipid_final_z_min": float(lipid_xyz_final[:, 2].min()),
+        "lipid_final_z_max": float(lipid_xyz_final[:, 2].max()),
+    }
+
+
 def run_stage_conversion(args, runtime_pdb: Path):
     prev_pdb = os.environ.get("UPSIDE_RUNTIME_PDB_FILE")
 
@@ -483,7 +567,10 @@ def run_prepare_command(argv):
     }
 
     if args.prepare_structure:
-        summary.update(prepare_mixed_structure(args, runtime_pdb))
+        if args.mode == "bilayer":
+            summary.update(prepare_bilayer_structure(args, runtime_pdb))
+        else:
+            summary.update(prepare_mixed_structure(args, runtime_pdb))
     else:
         if not runtime_pdb.exists():
             raise FileNotFoundError(
@@ -1986,9 +2073,13 @@ def run_hybrid_workflow_command(argv):
 
 if __name__ == "__main__":
     argv = sys.argv[1:]
-    if not argv or argv[0] != "run-hybrid-workflow":
+    if argv and argv[0] == "prepare":
+        run_prepare_command(argv[1:])
+    elif argv and argv[0] == "run-hybrid-workflow":
+        run_hybrid_workflow_command(argv[1:])
+    else:
         raise SystemExit(
             "Unsupported command. Use:\n"
+            "  martini_prepare_system.py prepare [options]\n"
             "  martini_prepare_system.py run-hybrid-workflow [options]"
         )
-    run_hybrid_workflow_command(argv[1:])

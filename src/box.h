@@ -1,28 +1,23 @@
 #pragma once
 #include "deriv_engine.h"
 #include "h5_support.h"
+#include <cmath>
 #include <vector>
 
 namespace simulation_box {
 
 inline Vec<3,float> minimum_image(const Vec<3,float>& dr, float box_x, float box_y, float box_z) {
     Vec<3,float> out = dr;
-    if (out.x() >  0.5f * box_x) out.x() -= box_x;
-    if (out.x() < -0.5f * box_x) out.x() += box_x;
-    if (out.y() >  0.5f * box_y) out.y() -= box_y;
-    if (out.y() < -0.5f * box_y) out.y() += box_y;
-    if (out.z() >  0.5f * box_z) out.z() -= box_z;
-    if (out.z() < -0.5f * box_z) out.z() += box_z;
+    if(box_x > 0.f) out.x() -= box_x * roundf(out.x() / box_x);
+    if(box_y > 0.f) out.y() -= box_y * roundf(out.y() / box_y);
+    if(box_z > 0.f) out.z() -= box_z * roundf(out.z() / box_z);
     return out;
 }
 
 inline void minimum_image_scalar(float& dx, float& dy, float& dz, float box_x, float box_y, float box_z) {
-    if (dx >  0.5f * box_x) dx -= box_x;
-    if (dx < -0.5f * box_x) dx += box_x;
-    if (dy >  0.5f * box_y) dy -= box_y;
-    if (dy < -0.5f * box_y) dy += box_y;
-    if (dz >  0.5f * box_z) dz -= box_z;
-    if (dz < -0.5f * box_z) dz += box_z;
+    if(box_x > 0.f) dx -= box_x * roundf(dx / box_x);
+    if(box_y > 0.f) dy -= box_y * roundf(dy / box_y);
+    if(box_z > 0.f) dz -= box_z * roundf(dz / box_z);
 }
 
 void wrap_positions(VecArray pos, int n_atom, float box_x, float box_y, float box_z);

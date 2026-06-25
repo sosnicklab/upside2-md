@@ -46,7 +46,7 @@ TWOPI = 2.0 * np.pi
 
 
 def expected_cg_lipid_tempered_average_temp_upside():
-    return float(os.environ.get("UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE", "10.0"))
+    return float(os.environ.get("UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE", "25.0"))
 CANONICAL_AFFINE_REF = np.array(
     [
         [-1.19280531, -0.83127186, 0.0],

@@ -1,9 +1,9 @@
 # Project Goal
 
-Refactor the AI-written dryMARTINI interface code by comparing this repository
-against `/Users/yinhan/Documents/upside2-md-master`, then rewriting only the
-diff-isolated dryMARTINI Python, C++, and MD script surface into a cohesive,
-linear architecture that matches the human-written master style.
+Find and fix the source-code cause of excessive leaflet separation in the
+dryMARTINI Upside hybrid CGL bilayer, without tuning parameters, disabling
+hybrid interactions, adding orientational/z restraints, or baking bilayer
+target information into the CGL force field.
 
 # Architecture & Key Decisions
 
@@ -52,36 +52,41 @@ linear architecture that matches the human-written master style.
   an active `inner_step` of `1`; only explicit `--integrator mv` should read
   and apply `--inner-step`. Otherwise `--integrator v` still advances and logs
   time as if it were three inner steps, which breaks dryMARTINI restart timing.
+- Current investigation must validate a bilayer-only CGL model before judging
+  protein-hybrid outputs. Required gates are: two coherent leaflets, CGL centers
+  evenly distributed in x-y, CGL orientations consistent with leaflet normals,
+  leaflet separation comparable to the initialized physical bilayer, and
+  lateral diffusion compared to DOPC after the `14 * 4` coarse-graining factor.
+- Parameter twisting is out of scope. Valid fixes must come from setup,
+  coordinate persistence, unit conversion, wrapping, force/table application,
+  integrator/time accounting, or output/extraction bugs.
 
 # Execution Phases
 
-- [x] Compare dryMARTINI-related current files against master and record exact
-      refactor scope.
-- [x] Read human-written master code around the changed surfaces to extract
-      local formatting, naming, and control-flow conventions.
-- [x] Refactor the scoped Python/scripts/C++ code into a cohesive, linear
-      implementation without changing physical behavior.
-- [x] Run focused syntax/build/test verification and inspect diffs for
-      accidental scope expansion.
-- [x] Document results and any blockers.
-- [x] Audit versioned dryMARTINI development artifacts and simplify any
-      unnecessary refactor indirection.
-- [x] Remove inactive/disable flags from the dryMARTINI interface where they
-      can bypass mandatory hybrid dryMARTINI behavior.
-- [x] Remove the dryMARTINI workflow multi-step integrator path and verify the
-      standard integrator command line, restart timing, and build.
-- [x] Triage `example/16.MARTINI/*.out` failures and identify the common
-      workflow regression.
-- [x] Patch the smallest dryMARTINI workflow/source surface needed to restore
-      the simulations without disabling physical interactions.
-- [x] Re-run focused verification and document the result.
+- [x] Preserve prior refactor/timing results as background context.
+- [x] Quantify the reported retained VTF outputs and separate physical CGL
+      centers from visualization rods.
+- [x] Trace CGL-only and hybrid setup/runtime code for source-level causes of
+      excessive leaflet distance.
+- [x] Implement the smallest source-level fix, if a root cause is confirmed.
+- [x] Resolve CGL table metadata validation for bilayer-only spline-node
+      injection.
+- [x] Validate with a bilayer-only CGL run before interpreting hybrid protein
+      systems.
+- [x] Document evidence, remaining risks, and verification results.
 
 # Known Errors / Blockers
 
-- None currently. The reported `example/16.MARTINI/*.out` failures shared one
-  root cause: stage 6.0 wrote final time `15` while the workflow expected `5`
-  because the driver initialized `inner_step=3` even when `--integrator v` was
-  selected.
+- Current user-reported failure: retained hybrid outputs
+  `example/16.MARTINI/outputs/martini_1rkl_hybrid/1rkl.stage_7.0.vtf` and
+  `example/16.MARTINI/outputs/martini_1afo_hybrid/1afo.stage_7.0.vtf` appear
+  to have a larger-than-expected CGL leaflet distance.
+- Bilayer-only validation now runs but fails the geometry target. With the
+  current installed one-particle CGL pair table, the DOPC template CGL COM
+  separation starts at `12.77 A`, while a short CGL-only run expands toward
+  `33 A`. Energy scans show the current pair table favors wider center
+  separation, with much lower total pair energy near `24 A` than near the
+  source COM separation.
 
 # Review
 

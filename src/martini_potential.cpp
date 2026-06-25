@@ -422,6 +422,10 @@ struct MartiniPotential : public PotentialNode
                 throw string("Invalid coefficient index in martini_potential");
             pair_param_index[np] = uint32_t(idx);
         }
+
+        if(n_pair == 0) {
+            return;
+        }
         
         // Find all epsilon/sigma pairs for separate LJ splines
         std::set<std::pair<float, float>> unique_lj_params;
