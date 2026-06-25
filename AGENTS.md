@@ -3,9 +3,9 @@ Upside is a molecular dynamics simulation package for protein folding and confor
 
 ## Physical Model Integrity
 **CRITICAL: Do not modify, scale to zero, or disable core physics interactions.**
-* **Hybrid Interface Interactions:** The interaction potentials between the protein Side Chains and the dry-MARTINI environment (SC-env), as well as the protein Backbone and the dry-MARTINI environment (BB-env), must **NEVER** be turned off.
-* **No "Debugging" Exclusions:** Do not disable or bypass these hybrid interface interactions to circumvent crashes, optimize performance, or troubleshoot workflow scripts. Disabling them completely breaks the physical model of the Upside simulation. 
-* **Strict Adherence:** Any generated script, parameter modification, or configuration must 100% respect this physical model.
+* **Hybrid Interface Interactions**: The interaction potentials between the protein Side Chains and the dry-MARTINI environment (SC-env), as well as the protein Backbone and the dry-MARTINI environment (BB-env), must **NEVER** be turned off.
+* **No "Debugging" Exclusions**: Do not disable or bypass these hybrid interface interactions to circumvent crashes, optimize performance, or troubleshoot workflow scripts. Disabling them completely breaks the physical model of the Upside simulation.
+* **Strict Adherence**: Any generated script, parameter modification, or configuration must 100% respect this physical model.
 
 ## Development Rules
 * **Backward Compatibility**: Modifications to C++ source files must not break existing function calls or the Python-to-C++ interface.
@@ -17,14 +17,17 @@ Upside is a molecular dynamics simulation package for protein folding and confor
 * **Spline Table Only**: During simulations, all interactions computed by Upside should use a spline table. Even if two particles have a simple Lennard-Jones potential, their interaction potentials need to be written to an .h5 file before the simulation, and Upside needs to read them from the .h5 file.
 * **H5 Force Field Files**: Do not make version numbers for h5 force field files. Backup the old ones and overwrite them.
 
-### The "Clean Slate" Exception
-The rules for **Backward Compatibility**, **Function Signatures**, and **Deprecation** DO NOT apply to the following active development files:
-- `example/16.MARTINI/*`
-- `src/box.*`
-- `src/martini*`
-- `py/martini_*.py`
+### dryMARTINI Interface Refactoring Rules
+* **Master Repository Path**: Use `/Users/yinhan/Documents/upside2-md-master` as the master repository reference for all file diffs and code comparisons.
+* **Architectural Integrity**: Clean up and thoroughly rewrite the dryMARTINI interface code (including Python, C++, and MD scripts) to ensure a straight, logical, and cohesive architecture.
+* **Code Quality**: Eliminate the current fragmented, patch-on-patch structure introduced by previous AI iterations.
+* **Stylistic Matching**: Exactly match the formatting, naming conventions, and style of the human-written code found in the master repository.
+* **Exclusions**: Completely ignore `/Users/yinhan/Documents/upside2-md-master/example/00.AnalysisScripts` for style reference, as it is AI-written and not a valid baseline.
 
-  **CRITICAL RULE FOR THESE FILES:** Keep them impeccably clean. Do not build layers of disabled code, do not leave commented-out legacy blocks, and do not write wrapper functions for old implementations. You must completely remove old or unused code and write the new implementations directly.
+### The "Clean Slate" Exception
+The rules for **Backward Compatibility**, **Function Signatures**, and **Deprecation** DO NOT apply to the code actively being developed. You must determine this scope by diffing the current repository against the master repository. 
+
+**CRITICAL RULE FOR DIFFED FILES:** Keep the actively modified or newly added interface files impeccably clean. Do not build layers of disabled code, do not leave commented-out legacy blocks, and do not write wrapper functions for old implementations. You must completely remove old or unused code and write the new implementations directly.
 
 ### Environment Setup
 Crucial: You must run these commands from the project root before running anything in this project:
