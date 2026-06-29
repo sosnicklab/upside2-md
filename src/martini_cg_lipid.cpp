@@ -4,6 +4,7 @@
 #include "martini.h"
 #include "random.h"
 #include "state_logger.h"
+#include <H5Apublic.h> // for H5Aexists
 
 #include <algorithm>
 #include <cmath>
@@ -51,6 +52,71 @@ struct CGLBodySupport {
     float bead_cutoff;
 };
 
+struct ImplicitCompactionField {
+    vector<float> survival;
+    vector<float> contact_field;
+    vector<float> contact_slope;
+    vector<float> response_slope;
+    vector<float> extended;
+    vector<float> pair_weight;
+    vector<float> pair_distance;
+    vector<float> gap_coord;
+    vector<float> gap_weight_sum;
+    vector<uint8_t> leaflet_side;
+    vector<int> dominant_pair;
+};
+
+static inline float implicit_compaction_contact_field_from_survival(
+        float survival,
+        float contact_field_cap) {
+    float clamped_survival = std::max(survival, 1.0e-6f);
+    float contact_field = -logf(clamped_survival);
+    if(contact_field_cap > 0.f)
+        contact_field = std::min(contact_field, contact_field_cap);
+    return contact_field;
+}
+
+static inline float implicit_compaction_probability_from_field(
+        float contact_field,
+        float isolated_compact_probability,
+        float local_field_scale) {
+    if(local_field_scale <= 0.f)
+        return 1.f - expf(-contact_field);
+
+    if(isolated_compact_probability <= 0.f)
+        return 1.f - expf(-local_field_scale * contact_field);
+
+    float p0 = std::max(1.0e-6f, std::min(1.f - 1.0e-6f, isolated_compact_probability));
+    float compact_logit = logf(p0 / (1.f - p0)) + local_field_scale * contact_field;
+    return 1.f / (1.f + expf(-compact_logit));
+}
+
+static inline float implicit_compaction_probability_field_slope(
+        float contact_field,
+        float isolated_compact_probability,
+        float local_field_scale) {
+    if(local_field_scale <= 0.f)
+        return expf(-contact_field);
+
+    if(isolated_compact_probability <= 0.f)
+        return local_field_scale * expf(-local_field_scale * contact_field);
+
+    float probability = implicit_compaction_probability_from_field(
+            contact_field,
+            isolated_compact_probability,
+            local_field_scale);
+    return local_field_scale * probability * (1.f - probability);
+}
+
+struct MeanFieldPairControl {
+    float base_control;
+    float corr_ee;
+    float corr_ec;
+    float corr_cc;
+    float distance;
+    bool valid;
+};
+
 static vector<int> read_int_dataset(hid_t grp, const char* name) {
     vector<hsize_t> sz = get_dset_size(1, grp, name);
     vector<int> out(sz[0]);
@@ -78,6 +144,45 @@ static vector<float> read_float_dataset_1d(hid_t grp, const char* name) {
     return out;
 }
 
+struct TemperatureScaleTable {
+    vector<float> value;
+    int n_mode = 1;
+};
+
+static TemperatureScaleTable make_uniform_temperature_scale(size_t n_temp, float scale) {
+    TemperatureScaleTable out;
+    out.value.assign(n_temp, scale);
+    out.n_mode = 1;
+    return out;
+}
+
+static TemperatureScaleTable read_temperature_scale_table(
+        hid_t grp, const char* name, size_t expected_n_temp, size_t expected_n_mode) {
+    H5Obj dset = h5_obj(H5Dclose, H5Dopen2(grp, name, H5P_DEFAULT));
+    H5Obj space = h5_obj(H5Sclose, H5Dget_space(dset.get()));
+    int ndims = H5Sget_simple_extent_ndims(space.get());
+    if(ndims < 0)
+        throw string("hdf5 error while reading /input/cgl_gle/") + name;
+
+    TemperatureScaleTable out;
+    if(ndims == 1) {
+        out.value = read_float_dataset_1d(grp, name);
+        if(out.value.size() != expected_n_temp)
+            throw string("/input/cgl_gle ") + name + " length must match temperature_grid length";
+        out.n_mode = 1;
+        return out;
+    }
+    if(ndims == 2) {
+        vector<hsize_t> sz = get_dset_size(2, grp, name);
+        if(sz[0] != expected_n_temp || sz[1] != expected_n_mode)
+            throw string("/input/cgl_gle ") + name + " shape must be n_temp x n_mode";
+        out.value = read_float_dataset(grp, name);
+        out.n_mode = int(sz[1]);
+        return out;
+    }
+    throw string("/input/cgl_gle ") + name + " must be a 1D or 2D float dataset";
+}
+
 static vector<float> read_param_dataset(hid_t grp, int& n_type1, int& n_type2) {
     vector<hsize_t> sz = get_dset_size(3, grp, "interaction_param");
     if(sz[2] != CG_LIPID_N_PARAM)
@@ -102,6 +207,24 @@ static vector<float> read_param_dataset_any(
     traverse_dset<3, float>(grp, "interaction_param",
             [&](size_t i, size_t j, size_t k, float v) {
         out[(i * n_type2 + j) * n_param + k] = v;
+    });
+    return out;
+}
+
+static vector<float> read_named_param_dataset_any(
+        hid_t grp,
+        const char* name,
+        int expected_type1,
+        int expected_type2,
+        int expected_param) {
+    vector<hsize_t> sz = get_dset_size(3, grp, name);
+    if(int(sz[0]) != expected_type1
+            || int(sz[1]) != expected_type2
+            || int(sz[2]) != expected_param)
+        throw string(name) + " shape mismatch";
+    vector<float> out(size_t(expected_type1) * size_t(expected_type2) * size_t(expected_param), 0.f);
+    traverse_dset<3, float>(grp, name, [&](size_t i, size_t j, size_t k, float v) {
+        out[(i * expected_type2 + j) * expected_param + k] = v;
     });
     return out;
 }
@@ -133,6 +256,22 @@ static inline Vec<2> radial_deBoor_value_and_deriv(
         return make_vec2(v.x() + (x - x0) * v.y(), v.y());
     }
     return clamped_deBoor_value_and_deriv(bspline_coeff, x, n_knot);
+}
+
+static inline Vec<2> extrapolated_deBoor_value_and_deriv(
+        const float* bspline_coeff, const float x, int n_knot) {
+    constexpr float eps = 1.0e-4f;
+    float left_x = 1.f + eps;
+    float right_x = float(n_knot - 2) - eps;
+    if(x <= 1.f) {
+        Vec<2> v = deBoor_value_and_deriv(bspline_coeff, left_x);
+        return make_vec2(v.x() + (x - left_x) * v.y(), v.y());
+    }
+    if(x >= float(n_knot - 2)) {
+        Vec<2> v = deBoor_value_and_deriv(bspline_coeff, right_x);
+        return make_vec2(v.x() + (x - right_x) * v.y(), v.y());
+    }
+    return deBoor_value_and_deriv(bspline_coeff, x);
 }
 
 static bool eval_quadspline(
@@ -552,6 +691,59 @@ static inline void apply_log1p_reduced_transform(
     apply_transformed_taper(e, dr, cutoff, taper_width);
 }
 
+static inline float clamp_probability(float p) {
+    return std::max(1.0e-5f, std::min(1.0f - 1.0e-5f, p));
+}
+
+static inline float logistic(float x) {
+    if(x >= 0.f) {
+        float e = expf(-x);
+        return 1.f / (1.f + e);
+    } else {
+        float e = expf(x);
+        return e / (1.f + e);
+    }
+}
+
+static inline float logit(float p) {
+    p = clamp_probability(p);
+    return logf(p / (1.f - p));
+}
+
+static inline float binary_state_relative_entropy(
+        float compact_probability,
+        float isolated_compact_probability,
+        float boltzmann_temperature) {
+    float s = clamp_probability(compact_probability);
+    float p0 = clamp_probability(isolated_compact_probability);
+    return boltzmann_temperature * (
+            s * logf(s / p0)
+            + (1.f - s) * logf((1.f - s) / (1.f - p0)));
+}
+
+static inline void compute_compaction_weights(
+        float compact_i,
+        float compact_j,
+        float& w_ee,
+        float& w_ec,
+        float& w_cc) {
+    w_ee = (1.f - compact_i) * (1.f - compact_j);
+    w_ec = compact_i * (1.f - compact_j) + (1.f - compact_i) * compact_j;
+    w_cc = compact_i * compact_j;
+}
+
+static inline float transformed_pair_scale_from_control(
+        float control_value,
+        float boltzmann_temperature,
+        float distance,
+        float cutoff,
+        float taper_width) {
+    float taper = 1.f;
+    float d_taper_dr = 0.f;
+    compute_cutoff_taper(distance, cutoff, taper_width, taper, d_taper_dr);
+    return boltzmann_temperature * expf(control_value) * taper;
+}
+
 static inline void apply_boltzmann_weight_transform(
         TargetSplineEval& e,
         float reference_energy,
@@ -638,6 +830,22 @@ static inline void center_dr(
         simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
 }
 
+static vector<uint8_t> classify_leaflets_by_median_z(
+        VecArray cg, const vector<int>& index) {
+    vector<float> z_values;
+    z_values.reserve(index.size());
+    for(int idx: index) z_values.push_back(cg(2, idx));
+    vector<float> sorted_z = z_values;
+    auto mid_it = sorted_z.begin() + sorted_z.size() / 2u;
+    nth_element(sorted_z.begin(), mid_it, sorted_z.end());
+    float mid_z = *mid_it;
+
+    vector<uint8_t> side(index.size(), 0u);
+    for(size_t i = 0; i < index.size(); ++i)
+        side[i] = uint8_t(z_values[i] > mid_z);
+    return side;
+}
+
 static bool cached_positions_moved(
         VecArray pos,
         const vector<int>& index,
@@ -717,6 +925,226 @@ static inline float dot3(const float a[3], const float b[3]) {
 
 static inline float clamp_range(float x, float lo, float hi) {
     return std::max(lo, std::min(hi, x));
+}
+
+static inline float cgl_cross_leaflet_face_weight(
+        const float dr[3],
+        const float n1[3],
+        const float n2[3],
+        float radial_cutoff_ang,
+        float face_cos_min,
+        bool smooth) {
+    float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+    if(r2 <= 1e-12f) return 0.f;
+    float r = sqrtf(r2);
+    if(r > radial_cutoff_ang) return 0.f;
+    float inv_r = 1.f / r;
+    float unit[3] = {dr[0] * inv_r, dr[1] * inv_r, dr[2] * inv_r};
+    float a1 = -(n1[0] * unit[0] + n1[1] * unit[1] + n1[2] * unit[2]);
+    float a2 =  (n2[0] * unit[0] + n2[1] * unit[1] + n2[2] * unit[2]);
+    float face1 = -a1;
+    float face2 = -a2;
+    if(!smooth)
+        return (face1 >= face_cos_min && face2 >= face_cos_min) ? 1.f : 0.f;
+    float ang_denom = std::max(1.f - face_cos_min, 1e-6f);
+    float w1 = clamp_range((face1 - face_cos_min) / ang_denom, 0.f, 1.f);
+    float w2 = clamp_range((face2 - face_cos_min) / ang_denom, 0.f, 1.f);
+    float wr = clamp_range(1.f - r / std::max(radial_cutoff_ang, 1e-6f), 0.f, 1.f);
+    return wr * w1 * w2;
+}
+
+static bool eval_cgl_cross_leaflet_face_weight(
+        const float dr[3],
+        const float n1[3],
+        const float n2[3],
+        float radial_cutoff_ang,
+        float face_cos_min,
+        bool smooth,
+        QuadsplineEval& out) {
+    out.value = 0.f;
+    out.d_dr = 0.f;
+    out.d_da1 = 0.f;
+    out.d_da2 = 0.f;
+    if(!smooth)
+        return false;
+    float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+    if(r2 <= 1e-12f)
+        return false;
+    float r = sqrtf(r2);
+    if(r >= radial_cutoff_ang)
+        return false;
+    float inv_r = 1.f / r;
+    float unit[3] = {dr[0] * inv_r, dr[1] * inv_r, dr[2] * inv_r};
+    float a1 = -(n1[0] * unit[0] + n1[1] * unit[1] + n1[2] * unit[2]);
+    float a2 =  (n2[0] * unit[0] + n2[1] * unit[1] + n2[2] * unit[2]);
+    float face1 = -a1;
+    float face2 = -a2;
+    float ang_denom = std::max(1.f - face_cos_min, 1e-6f);
+    float w1 = clamp_range((face1 - face_cos_min) / ang_denom, 0.f, 1.f);
+    float w2 = clamp_range((face2 - face_cos_min) / ang_denom, 0.f, 1.f);
+    float wr = clamp_range(1.f - r / std::max(radial_cutoff_ang, 1e-6f), 0.f, 1.f);
+    if(w1 <= 0.f || w2 <= 0.f || wr <= 0.f)
+        return false;
+    float dw1_da1 = (w1 < 1.f) ? (-1.f / ang_denom) : 0.f;
+    float dw2_da2 = (w2 < 1.f) ? (-1.f / ang_denom) : 0.f;
+    float dwr_dr = (wr < 1.f) ? (-1.f / std::max(radial_cutoff_ang, 1e-6f)) : 0.f;
+    out.value = wr * w1 * w2;
+    out.d_dr = dwr_dr * w1 * w2;
+    out.d_da1 = wr * dw1_da1 * w2;
+    out.d_da2 = wr * w1 * dw2_da2;
+    return true;
+}
+
+static ImplicitCompactionField build_gap_response_compaction_field(
+        VecArray cg,
+        const vector<int>& index,
+        const vector<CGLPairIndex>& active_pairs,
+        float box_x,
+        float box_y,
+        float box_z,
+        const vector<float>& gap_response_coeff,
+        int gap_response_n_knot,
+        float gap_response_coord_min_ang,
+        float gap_response_coord_spacing_ang,
+        float gap_response_radial_cutoff_ang,
+        float gap_response_face_cos_min,
+        float gap_response_fallback_ang,
+        bool gap_response_smooth_weight) {
+    ImplicitCompactionField field;
+    field.survival.assign(index.size(), 1.f);
+    field.contact_field.assign(index.size(), 0.f);
+    field.contact_slope.assign(index.size(), 0.f);
+    field.response_slope.assign(index.size(), 0.f);
+    field.extended.assign(index.size(), 0.f);
+    field.pair_weight.assign(active_pairs.size(), 0.f);
+    field.pair_distance.assign(active_pairs.size(), 0.f);
+    field.gap_coord.assign(index.size(), gap_response_fallback_ang > 0.f ? gap_response_fallback_ang : 0.f);
+    field.gap_weight_sum.assign(index.size(), 0.f);
+    if(index.empty())
+        return field;
+
+    field.leaflet_side = classify_leaflets_by_median_z(cg, index);
+    field.dominant_pair.assign(index.size(), -1);
+    vector<float> gap_weighted_sum(index.size(), 0.f);
+    for(size_t pidx = 0; pidx < active_pairs.size(); ++pidx) {
+        const CGLPairIndex& pair = active_pairs[pidx];
+        size_t ai = pair.first;
+        size_t bi = pair.second;
+        if(field.leaflet_side[ai] == field.leaflet_side[bi]) continue;
+        float x1[3], n1[3], x2[3], n2[3], dr[3];
+        load_vec6(cg, index[ai], x1, n1);
+        load_vec6(cg, index[bi], x2, n2);
+        center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+        float w = cgl_cross_leaflet_face_weight(
+                dr, n1, n2,
+                gap_response_radial_cutoff_ang,
+                gap_response_face_cos_min,
+                gap_response_smooth_weight);
+        if(w <= 0.f) continue;
+        float r = norm_dr(dr);
+        field.pair_weight[pidx] = w;
+        field.pair_distance[pidx] = r;
+        gap_weighted_sum[ai] += w * r;
+        gap_weighted_sum[bi] += w * r;
+        field.gap_weight_sum[ai] += w;
+        field.gap_weight_sum[bi] += w;
+    }
+    for(size_t i = 0; i < field.extended.size(); ++i) {
+        float gap = gap_response_fallback_ang > 0.f ? gap_response_fallback_ang : gap_response_radial_cutoff_ang;
+        if(field.gap_weight_sum[i] > 1.0e-12f)
+            gap = gap_weighted_sum[i] / field.gap_weight_sum[i];
+        field.gap_coord[i] = gap;
+        if(gap_response_coeff.empty() || gap_response_n_knot <= 3 || gap_response_coord_spacing_ang <= 0.f)
+            continue;
+        float coord = 1.f + (gap - gap_response_coord_min_ang) / gap_response_coord_spacing_ang;
+        Vec<2> response = clamped_deBoor_value_and_deriv(
+                gap_response_coeff.data(),
+                coord,
+                gap_response_n_knot);
+        field.extended[i] = clamp_probability(response.x());
+        field.response_slope[i] = response.y() / gap_response_coord_spacing_ang;
+    }
+    return field;
+}
+
+static void propagate_gap_response_compaction_sens(
+        VecArray cg,
+        VecArray cg_sens,
+        const vector<int>& index,
+        const vector<CGLPairIndex>& active_pairs,
+        float box_x,
+        float box_y,
+        float box_z,
+        const ImplicitCompactionField& field,
+        const vector<float>& implicit_q_sens,
+        float gap_response_radial_cutoff_ang,
+        float gap_response_face_cos_min,
+        bool gap_response_smooth_weight) {
+    if(index.empty() || field.leaflet_side.empty())
+        return;
+    for(size_t pidx = 0; pidx < active_pairs.size(); ++pidx) {
+        const CGLPairIndex& pair = active_pairs[pidx];
+        size_t ai = pair.first;
+        size_t bi = pair.second;
+        if(field.leaflet_side[ai] == field.leaflet_side[bi]) continue;
+        float w = field.pair_weight[pidx];
+        if(w <= 0.f) continue;
+        float r = field.pair_distance[pidx];
+        float lambda_r = 0.f;
+        float lambda_w = 0.f;
+        if(field.gap_weight_sum[ai] > 1.0e-12f) {
+            float pref = implicit_q_sens[ai] * field.response_slope[ai]
+                / field.gap_weight_sum[ai];
+            lambda_r += pref * w;
+            lambda_w += pref * (r - field.gap_coord[ai]);
+        }
+        if(field.gap_weight_sum[bi] > 1.0e-12f) {
+            float pref = implicit_q_sens[bi] * field.response_slope[bi]
+                / field.gap_weight_sum[bi];
+            lambda_r += pref * w;
+            lambda_w += pref * (r - field.gap_coord[bi]);
+        }
+        if(fabsf(lambda_r) <= 1.0e-12f
+                && (!gap_response_smooth_weight || fabsf(lambda_w) <= 1.0e-12f))
+            continue;
+
+        float x1[3], n1[3], x2[3], n2[3], dr[3];
+        load_vec6(cg, index[ai], x1, n1);
+        load_vec6(cg, index[bi], x2, n2);
+        center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+
+        if(fabsf(lambda_r) > 1.0e-12f) {
+            QuadsplineEval r_eval = {0.f, lambda_r, 0.f, 0.f};
+            float dpos1[3] = {0.f, 0.f, 0.f};
+            float ddir1[3] = {0.f, 0.f, 0.f};
+            float dpos2[3] = {0.f, 0.f, 0.f};
+            float ddir2[3] = {0.f, 0.f, 0.f};
+            accumulate_deriv(dr, n1, n2, r_eval, dpos1, ddir1, dpos2, ddir2);
+            add_vec6_sens(cg_sens, index[ai], dpos1, ddir1);
+            add_vec6_sens(cg_sens, index[bi], dpos2, ddir2);
+        }
+
+        if(gap_response_smooth_weight && fabsf(lambda_w) > 1.0e-12f) {
+            QuadsplineEval w_eval;
+            if(!eval_cgl_cross_leaflet_face_weight(
+                        dr, n1, n2,
+                        gap_response_radial_cutoff_ang,
+                        gap_response_face_cos_min,
+                        gap_response_smooth_weight,
+                        w_eval))
+                continue;
+            w_eval.d_dr *= lambda_w;
+            w_eval.d_da1 *= lambda_w;
+            w_eval.d_da2 *= lambda_w;
+            float dpos1[3] = {0.f, 0.f, 0.f};
+            float ddir1[3] = {0.f, 0.f, 0.f};
+            float dpos2[3] = {0.f, 0.f, 0.f};
+            float ddir2[3] = {0.f, 0.f, 0.f};
+            accumulate_deriv(dr, n1, n2, w_eval, dpos1, ddir1, dpos2, ddir2);
+            add_vec6_sens(cg_sens, index[ai], dpos1, ddir1);
+            add_vec6_sens(cg_sens, index[bi], dpos2, ddir2);
+        }
+    }
 }
 
 static CGLBodySupport read_cgl_body_support(hid_t grp) {
@@ -843,15 +1271,47 @@ struct CGLOrientationState : public CoordNode {
     virtual void propagate_deriv() override {}
 };
 
+struct CGLCompactionState : public CoordNode {
+    float mass;
+    float thermostat_timescale;
+    float coord_min;
+    float coord_max;
+
+    CGLCompactionState(hid_t grp)
+        : CoordNode(int(h5::get_dset_size(1, grp, "value")[0]), 1)
+        , mass(read_attribute<float>(grp, ".", "mass_up", 1.f))
+        , thermostat_timescale(read_attribute<float>(grp, ".", "thermostat_timescale", 5.f))
+        , coord_min(read_attribute<float>(grp, ".", "self_coord_min_ang", -1e6f))
+        , coord_max(read_attribute<float>(grp, ".", "self_coord_max_ang", 1e6f))
+    {
+        if(mass <= 0.f)
+            throw string("cgl_compaction_state mass_up must be positive");
+        if(thermostat_timescale <= 0.f)
+            throw string("cgl_compaction_state thermostat_timescale must be positive");
+        if(!(coord_max > coord_min))
+            throw string("cgl_compaction_state requires self_coord_max_ang > self_coord_min_ang");
+
+        traverse_dset<1, float>(grp, "value", [&](size_t i, float v) {
+            output(0, int(i)) = std::max(coord_min, std::min(coord_max, v));
+        });
+    }
+
+    virtual void compute_value(ComputeMode) override {}
+    virtual void propagate_deriv() override {}
+};
+
 namespace {
 
 struct CGLDynamicOrientationRuntime {
     CGLOrientationState* state = nullptr;
     VecArrayStorage angular_momentum;
     float temperature = 1.f;
+    float hidden_state_temperature = -1.f;
     float thermostat_delta_t = 0.f;
     uint32_t random_seed = 0u;
     uint64_t thermostat_invocations = 0u;
+    bool hidden_state_initialized = false;
+    bool temperature_is_set = false;
 
     CGLDynamicOrientationRuntime(CGLOrientationState* state_, uint32_t random_seed_)
         : state(state_)
@@ -873,24 +1333,74 @@ static CGLDynamicOrientationRuntime* get_orientation_runtime(DerivEngine* engine
     return it == m.end() ? nullptr : it->second.get();
 }
 
+struct CGLDynamicCompactionRuntime {
+    CGLCompactionState* state = nullptr;
+    VecArrayStorage momentum;
+    float temperature = 1.f;
+    float hidden_state_temperature = -1.f;
+    float thermostat_delta_t = 0.f;
+    uint32_t random_seed = 0u;
+    uint64_t thermostat_invocations = 0u;
+    bool hidden_state_initialized = false;
+    bool temperature_is_set = false;
+
+    CGLDynamicCompactionRuntime(CGLCompactionState* state_, uint32_t random_seed_)
+        : state(state_)
+        , momentum(1, state_ ? state_->n_elem : 1)
+        , random_seed(random_seed_)
+    {
+        fill(momentum, 0.f);
+    }
+};
+
+static std::map<DerivEngine*, std::unique_ptr<CGLDynamicCompactionRuntime>>& compaction_runtime_map() {
+    static std::map<DerivEngine*, std::unique_ptr<CGLDynamicCompactionRuntime>> m;
+    return m;
+}
+
+static CGLDynamicCompactionRuntime* get_compaction_runtime(DerivEngine* engine) {
+    auto& m = compaction_runtime_map();
+    auto it = m.find(engine);
+    return it == m.end() ? nullptr : it->second.get();
+}
+
 struct CGLGLERuntime {
     vector<int> atom_index;
+    vector<float> base_memory_tau;
     vector<float> memory_tau;
+    vector<float> base_coupling;
     vector<float> coupling;
+    vector<float> temperature_grid;
+    TemperatureScaleTable coupling_scale;
+    TemperatureScaleTable memory_tau_scale;
     VecArrayStorage aux_momentum;
     float temperature = 1.f;
+    float hidden_state_temperature = -1.f;
     float delta_t = 0.f;
     uint32_t random_seed = 0u;
     uint64_t thermostat_invocations = 0u;
+    vector<double> linear_step_matrix;
+    vector<double> noise_cholesky_unit;
+    bool hidden_state_initialized = false;
+    bool temperature_is_set = false;
+    bool linear_step_ready = false;
 
     CGLGLERuntime(
             const vector<int>& atom_index_,
             uint32_t random_seed_,
             const vector<float>& memory_tau_,
-            const vector<float>& coupling_)
+            const vector<float>& coupling_,
+            const vector<float>& temperature_grid_,
+            const TemperatureScaleTable& coupling_scale_,
+            const TemperatureScaleTable& memory_tau_scale_)
         : atom_index(atom_index_)
+        , base_memory_tau(memory_tau_)
         , memory_tau(memory_tau_)
+        , base_coupling(coupling_)
         , coupling(coupling_)
+        , temperature_grid(temperature_grid_)
+        , coupling_scale(coupling_scale_)
+        , memory_tau_scale(memory_tau_scale_)
         , aux_momentum(3, int(std::max<size_t>(1, atom_index_.size() * memory_tau_.size())))
         , random_seed(random_seed_)
     {
@@ -898,6 +1408,7 @@ struct CGLGLERuntime {
     }
 
     int n_mode() const { return int(memory_tau.size()); }
+    int linear_step_dim() const { return n_mode() + 1; }
     int aux_index(int mode, int lipid) const {
         return mode * int(atom_index.size()) + lipid;
     }
@@ -914,8 +1425,270 @@ static CGLGLERuntime* get_cgl_gle_runtime(DerivEngine* engine) {
     return it == m.end() ? nullptr : it->second.get();
 }
 
+static inline bool attribute_exists_local(hid_t loc_id, const char* obj_name, const char* attr_name) {
+    if(!obj_name || obj_name[0] == '\0' || (obj_name[0] == '.' && obj_name[1] == '\0')) {
+        htri_t exists = H5Aexists(loc_id, attr_name);
+        return exists > 0;
+    }
+
+    hid_t obj_id = H5Oopen(loc_id, obj_name, H5P_DEFAULT);
+    if(obj_id < 0) return false;
+    htri_t exists = H5Aexists(obj_id, attr_name);
+    H5Oclose(obj_id);
+    return exists > 0;
+}
+
+static inline double& dense_square_at(vector<double>& m, int n, int row, int col) {
+    return m[size_t(row) * size_t(n) + size_t(col)];
+}
+
+static inline double dense_square_at(const vector<double>& m, int n, int row, int col) {
+    return m[size_t(row) * size_t(n) + size_t(col)];
+}
+
+static vector<double> dense_square_identity(int n) {
+    vector<double> out(size_t(n) * size_t(n), 0.0);
+    for(int i = 0; i < n; ++i)
+        dense_square_at(out, n, i, i) = 1.0;
+    return out;
+}
+
+static vector<double> dense_square_multiply(const vector<double>& a, const vector<double>& b, int n) {
+    vector<double> out(size_t(n) * size_t(n), 0.0);
+    for(int i = 0; i < n; ++i) {
+        for(int k = 0; k < n; ++k) {
+            double aik = dense_square_at(a, n, i, k);
+            if(aik == 0.0) continue;
+            for(int j = 0; j < n; ++j)
+                dense_square_at(out, n, i, j) += aik * dense_square_at(b, n, k, j);
+        }
+    }
+    return out;
+}
+
+static vector<double> dense_square_transpose(const vector<double>& a, int n) {
+    vector<double> out(size_t(n) * size_t(n), 0.0);
+    for(int i = 0; i < n; ++i)
+        for(int j = 0; j < n; ++j)
+            dense_square_at(out, n, j, i) = dense_square_at(a, n, i, j);
+    return out;
+}
+
+static double dense_square_max_abs(const vector<double>& a) {
+    double out = 0.0;
+    for(double x : a)
+        out = std::max(out, fabs(x));
+    return out;
+}
+
+static vector<double> dense_square_exponential(const vector<double>& a, int n) {
+    vector<double> result = dense_square_identity(n);
+    vector<double> term = dense_square_identity(n);
+    for(int k = 1; k <= 128; ++k) {
+        vector<double> next = dense_square_multiply(term, a, n);
+        double inv_k = 1.0 / double(k);
+        for(size_t i = 0; i < next.size(); ++i)
+            next[i] *= inv_k;
+        term.swap(next);
+        for(size_t i = 0; i < result.size(); ++i)
+            result[i] += term[i];
+        if(dense_square_max_abs(term) < 1.0e-14)
+            break;
+    }
+    return result;
+}
+
+static bool dense_square_cholesky_lower(vector<double>& a, int n) {
+    for(int i = 0; i < n; ++i) {
+        for(int j = 0; j <= i; ++j) {
+            double sum = dense_square_at(a, n, i, j);
+            for(int k = 0; k < j; ++k)
+                sum -= dense_square_at(a, n, i, k) * dense_square_at(a, n, j, k);
+
+            if(i == j) {
+                if(sum < -1.0e-10)
+                    return false;
+                dense_square_at(a, n, i, j) = sqrt(std::max(sum, 1.0e-12));
+            } else {
+                dense_square_at(a, n, i, j) = sum / dense_square_at(a, n, j, j);
+            }
+        }
+        for(int j = i + 1; j < n; ++j)
+            dense_square_at(a, n, i, j) = 0.0;
+    }
+    return true;
+}
+
+static void update_cgl_gle_linear_step(CGLGLERuntime* runtime) {
+    if(!runtime) return;
+    // Build the exact linear-Gaussian step for the coupled physical momentum
+    // plus GLE auxiliary momenta using the Van Loan block exponential.
+
+    int n_mode = runtime->n_mode();
+    int n_state = runtime->linear_step_dim();
+    runtime->linear_step_matrix.assign(size_t(n_state) * size_t(n_state), 0.0);
+    runtime->noise_cholesky_unit.assign(size_t(n_state) * size_t(n_state), 0.0);
+    runtime->linear_step_ready = false;
+
+    if(runtime->delta_t <= 0.f || n_mode <= 0)
+        return;
+
+    vector<double> drift(size_t(n_state) * size_t(n_state), 0.0);
+    for(int mode = 0; mode < n_mode; ++mode) {
+        double coupling = runtime->coupling[size_t(mode)];
+        double inv_tau = 1.0 / std::max(double(runtime->memory_tau[size_t(mode)]), 1.0e-12);
+        dense_square_at(drift, n_state, 0, mode + 1) = -coupling;
+        dense_square_at(drift, n_state, mode + 1, 0) = coupling;
+        dense_square_at(drift, n_state, mode + 1, mode + 1) = -inv_tau;
+    }
+
+    vector<double> diffusion(size_t(n_state) * size_t(n_state), 0.0);
+    for(int mode = 0; mode < n_mode; ++mode) {
+        double inv_tau = 1.0 / std::max(double(runtime->memory_tau[size_t(mode)]), 1.0e-12);
+        dense_square_at(diffusion, n_state, mode + 1, mode + 1) = 2.0 * inv_tau;
+    }
+
+    int block_dim = 2 * n_state;
+    vector<double> van_loan(size_t(block_dim) * size_t(block_dim), 0.0);
+    for(int i = 0; i < n_state; ++i) {
+        for(int j = 0; j < n_state; ++j) {
+            double scaled_drift = double(runtime->delta_t) * dense_square_at(drift, n_state, i, j);
+            dense_square_at(van_loan, block_dim, i, j) = scaled_drift;
+            dense_square_at(van_loan, block_dim, i, j + n_state) =
+                double(runtime->delta_t) * dense_square_at(diffusion, n_state, i, j);
+            dense_square_at(van_loan, block_dim, i + n_state, j + n_state) =
+                -double(runtime->delta_t) * dense_square_at(drift, n_state, j, i);
+        }
+    }
+
+    vector<double> block_exp = dense_square_exponential(van_loan, block_dim);
+    vector<double> propagator(size_t(n_state) * size_t(n_state), 0.0);
+    vector<double> cross(size_t(n_state) * size_t(n_state), 0.0);
+    for(int i = 0; i < n_state; ++i) {
+        for(int j = 0; j < n_state; ++j) {
+            dense_square_at(propagator, n_state, i, j) = dense_square_at(block_exp, block_dim, i, j);
+            dense_square_at(cross, n_state, i, j) = dense_square_at(block_exp, block_dim, i, j + n_state);
+        }
+    }
+
+    vector<double> covariance = dense_square_multiply(
+        cross, dense_square_transpose(propagator, n_state), n_state);
+    for(int i = 0; i < n_state; ++i)
+        for(int j = i + 1; j < n_state; ++j) {
+            double sym = 0.5 * (dense_square_at(covariance, n_state, i, j)
+                    + dense_square_at(covariance, n_state, j, i));
+            dense_square_at(covariance, n_state, i, j) = sym;
+            dense_square_at(covariance, n_state, j, i) = sym;
+        }
+
+    if(!dense_square_cholesky_lower(covariance, n_state))
+        throw string("cgl_gle exact linear step produced a non-positive covariance");
+
+    runtime->linear_step_matrix.swap(propagator);
+    runtime->noise_cholesky_unit.swap(covariance);
+    runtime->linear_step_ready = true;
+}
+
+static float cgl_gle_transport_scale_at_temperature(
+        const vector<float>& temperature_grid,
+        const TemperatureScaleTable& scale,
+        int mode,
+        float temperature) {
+    if(temperature_grid.empty() || scale.value.empty()) return 1.f;
+    int scale_mode = scale.n_mode == 1 ? 0 : mode;
+    if(temperature <= temperature_grid.front()) return scale.value[scale_mode];
+    if(temperature >= temperature_grid.back()) return scale.value[(int(temperature_grid.size()) - 1) * scale.n_mode + scale_mode];
+
+    auto upper = std::upper_bound(temperature_grid.begin(), temperature_grid.end(), temperature);
+    int upper_idx = int(upper - temperature_grid.begin());
+    int lower_idx = upper_idx - 1;
+    float lower_t = temperature_grid[lower_idx];
+    float upper_t = temperature_grid[upper_idx];
+    float alpha = (temperature - lower_t) / (upper_t - lower_t);
+    float lower_scale = scale.value[lower_idx * scale.n_mode + scale_mode];
+    float upper_scale = scale.value[upper_idx * scale.n_mode + scale_mode];
+    return lower_scale + alpha * (upper_scale - lower_scale);
+}
+
+static void update_cgl_gle_transport_for_temperature(CGLGLERuntime* runtime) {
+    if(!runtime) return;
+    for(size_t mode = 0; mode < runtime->coupling.size(); ++mode) {
+        float coupling_scale = cgl_gle_transport_scale_at_temperature(
+            runtime->temperature_grid, runtime->coupling_scale, int(mode), runtime->temperature);
+        float memory_tau_scale = cgl_gle_transport_scale_at_temperature(
+            runtime->temperature_grid, runtime->memory_tau_scale, int(mode), runtime->temperature);
+        runtime->coupling[mode] = runtime->base_coupling[mode] * coupling_scale;
+        runtime->memory_tau[mode] = runtime->base_memory_tau[mode] * memory_tau_scale;
+    }
+    update_cgl_gle_linear_step(runtime);
+}
+
+static float3 project_tangent(float3 v, const float3& n);
+
+template <class Runtime>
+static float hidden_state_reference_temperature(const Runtime* runtime) {
+    if(!runtime) return -1.f;
+    if(runtime->hidden_state_temperature > 0.f) return runtime->hidden_state_temperature;
+    if(runtime->temperature_is_set && runtime->temperature > 0.f) return runtime->temperature;
+    return -1.f;
+}
+
+static inline bool hidden_state_temperature_changed(float old_temperature, float new_temperature) {
+    return old_temperature > 0.f && new_temperature > 0.f
+        && fabsf(new_temperature - old_temperature) > 1e-6f;
+}
+
+static inline float hidden_state_temperature_scale(float old_temperature, float new_temperature) {
+    return sqrtf(new_temperature / old_temperature);
+}
+
+static void rescale_dynamic_compaction_hidden_state(
+        CGLDynamicCompactionRuntime* runtime,
+        float old_temperature,
+        float new_temperature) {
+    if(!runtime || !runtime->state || !hidden_state_temperature_changed(old_temperature, new_temperature)) return;
+    float scale = hidden_state_temperature_scale(old_temperature, new_temperature);
+    for(int i = 0; i < runtime->state->n_elem; ++i)
+        runtime->momentum(0, i) *= scale;
+    runtime->hidden_state_temperature = new_temperature;
+}
+
+static void rescale_dynamic_orientation_hidden_state(
+        CGLDynamicOrientationRuntime* runtime,
+        float old_temperature,
+        float new_temperature) {
+    if(!runtime || !runtime->state || !hidden_state_temperature_changed(old_temperature, new_temperature)) return;
+    float scale = hidden_state_temperature_scale(old_temperature, new_temperature);
+    for(int i = 0; i < runtime->state->n_elem; ++i) {
+        float3 n = normalized(load_vec<3>(runtime->state->output, i));
+        float3 l = project_tangent(load_vec<3>(runtime->angular_momentum, i), n) * scale;
+        store_vec(runtime->angular_momentum, i, l);
+    }
+    runtime->hidden_state_temperature = new_temperature;
+}
+
+static void rescale_cgl_gle_hidden_state(
+        CGLGLERuntime* runtime,
+        float old_temperature,
+        float new_temperature) {
+    if(!runtime || !hidden_state_temperature_changed(old_temperature, new_temperature)) return;
+    float scale = hidden_state_temperature_scale(old_temperature, new_temperature);
+    int n_cgl = int(runtime->atom_index.size());
+    for(int mode = 0; mode < runtime->n_mode(); ++mode) {
+        for(int i = 0; i < n_cgl; ++i) {
+            int aux_idx = runtime->aux_index(mode, i);
+            store_vec(runtime->aux_momentum, aux_idx, load_vec<3>(runtime->aux_momentum, aux_idx) * scale);
+        }
+    }
+    runtime->hidden_state_temperature = new_temperature;
+}
+
 static float3 project_tangent(float3 v, const float3& n) {
     return v - n * dot(v, n);
+}
+
+static inline float clamp_scalar(float x, float lo, float hi) {
+    return std::max(lo, std::min(hi, x));
 }
 
 static float3 rotate_unit_vector(const float3& n, const float3& omega, float dt) {
@@ -1096,9 +1869,68 @@ void ComposeVector6D::propagate_deriv() {
     }
 }
 
+struct CGLipidCompactionSelfPotential : public PotentialNode {
+    CoordNode& compaction_state;
+    vector<float> self_coeff;
+    int n_knot;
+    float coord_min;
+    float coord_spacing;
+
+    CGLipidCompactionSelfPotential(hid_t grp, CoordNode& compaction_state_);
+    virtual void compute_value(ComputeMode mode) override;
+    virtual void propagate_deriv() override;
+};
+
+CGLipidCompactionSelfPotential::CGLipidCompactionSelfPotential(
+        hid_t grp, CoordNode& compaction_state_)
+    : PotentialNode()
+    , compaction_state(compaction_state_)
+    , n_knot(read_attribute<int>(grp, ".", "self_n_knot", 0))
+    , coord_min(read_attribute<float>(grp, ".", "self_coord_min_ang", 0.f))
+    , coord_spacing(read_attribute<float>(grp, ".", "self_coord_spacing_ang", 0.f))
+{
+    check_elem_width(compaction_state, 1);
+    self_coeff = read_float_dataset_1d(grp, "self_coeff");
+    if(n_knot <= 3) n_knot = int(self_coeff.size());
+    if(int(self_coeff.size()) != n_knot)
+        throw string("cg_lipid_compaction_self self_coeff size does not match self_n_knot");
+    if(coord_spacing <= 0.f)
+        throw string("cg_lipid_compaction_self requires positive self_coord_spacing_ang");
+}
+
+void CGLipidCompactionSelfPotential::compute_value(ComputeMode mode) {
+    (void)mode;
+    if(mode == DerivMode) {
+        potential = 0.f;
+        return;
+    }
+    VecArray state = compaction_state.output;
+    float total = 0.f;
+    for(int i = 0; i < compaction_state.n_elem; ++i) {
+        float coord = 1.f + (state(0, i) - coord_min) / coord_spacing;
+        Vec<2> v = extrapolated_deBoor_value_and_deriv(self_coeff.data(), coord, n_knot);
+        total += v.x();
+    }
+    potential = total;
+}
+
+void CGLipidCompactionSelfPotential::propagate_deriv() {
+    VecArray state = compaction_state.output;
+    VecArray sens = compaction_state.sens;
+    for(int i = 0; i < compaction_state.n_elem; ++i) {
+        float coord = 1.f + (state(0, i) - coord_min) / coord_spacing;
+        Vec<2> v = extrapolated_deBoor_value_and_deriv(self_coeff.data(), coord, n_knot);
+        sens(0, i) += v.y() / coord_spacing;
+    }
+}
+
 struct CGLipidPairPotential : public PotentialNode {
     CoordNode& cg_pos;
+    CoordNode* compaction_state;
     vector<float> interaction_param;
+    vector<float> delta_extended_extended;
+    vector<float> delta_extended_compact;
+    vector<float> delta_compact_compact;
     vector<int> index;
     vector<int> type;
     vector<int> id;
@@ -1118,6 +1950,27 @@ struct CGLipidPairPotential : public PotentialNode {
     float taper_width;
     bool log1p_reduced_transform;
     float boltzmann_temperature;
+    bool has_compaction_correction;
+    bool implicit_compaction_response;
+    bool implicit_compaction_mean_field;
+    bool implicit_compaction_gap_response;
+    bool implicit_compaction_smooth;
+    float implicit_compaction_local_field_scale;
+    float implicit_compaction_contact_field_cap;
+    bool implicit_compaction_max_contact;
+    float compact_state_center;
+    float extended_state_center;
+    float compact_state_probability;
+    float implicit_face_cos_min;
+    float implicit_radial_cutoff_ang;
+    vector<float> gap_response_coeff;
+    int gap_response_n_knot;
+    float gap_response_coord_min_ang;
+    float gap_response_coord_spacing_ang;
+    float gap_response_radial_cutoff_ang;
+    float gap_response_face_cos_min;
+    float gap_response_fallback_ang;
+    bool gap_response_smooth_weight;
     float cache_buffer;
     CGLBodySupport body_support;
     float cached_box_x;
@@ -1128,7 +1981,10 @@ struct CGLipidPairPotential : public PotentialNode {
     vector<CGLPairIndex> active_pairs;
 
     CGLipidPairPotential(hid_t grp, CoordNode& cg_pos);
+    CGLipidPairPotential(hid_t grp, const ArgList& arguments);
     void ensure_pairlist(VecArray cg);
+    ImplicitCompactionField build_implicit_compaction_field(VecArray cg) const;
+    vector<float> solve_mean_field_compaction(VecArray cg) const;
     virtual void compute_value(ComputeMode mode) override;
     virtual void propagate_deriv() override;
     virtual void set_param(const vector<float>& new_param) override {
@@ -1145,6 +2001,7 @@ struct CGLipidPairPotential : public PotentialNode {
 CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     : PotentialNode()
     , cg_pos(cg_pos_)
+    , compaction_state(nullptr)
     , n_type1(0)
     , n_type2(0)
     , n_param(0)
@@ -1161,6 +2018,29 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
     , log1p_reduced_transform(read_attribute<int>(grp, ".", "log1p_reduced_transform", 0) != 0)
     , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
+    , has_compaction_correction(false)
+    , implicit_compaction_response(read_attribute<int>(grp, ".", "implicit_compaction_response", 0) != 0)
+    , implicit_compaction_mean_field(read_attribute<int>(grp, ".", "implicit_compaction_mean_field", 0) != 0)
+    , implicit_compaction_gap_response(read_attribute<int>(grp, ".", "implicit_compaction_gap_response", 0) != 0)
+    , implicit_compaction_smooth(read_attribute<int>(grp, ".", "implicit_compaction_smooth", 0) != 0)
+    , implicit_compaction_local_field_scale(
+            read_attribute<float>(grp, ".", "implicit_compaction_local_field_scale", 0.f))
+    , implicit_compaction_contact_field_cap(
+            read_attribute<float>(grp, ".", "implicit_compaction_contact_field_cap", 0.f))
+    , implicit_compaction_max_contact(
+            read_attribute<int>(grp, ".", "implicit_compaction_max_contact", 0) != 0)
+    , compact_state_center(read_attribute<float>(grp, ".", "compact_state_center_ang", 0.f))
+    , extended_state_center(read_attribute<float>(grp, ".", "extended_state_center_ang", 0.f))
+    , compact_state_probability(read_attribute<float>(grp, ".", "compact_state_probability", 0.5f))
+    , implicit_face_cos_min(read_attribute<float>(grp, ".", "implicit_compaction_face_cos_min", 0.f))
+    , implicit_radial_cutoff_ang(read_attribute<float>(grp, ".", "implicit_compaction_radial_cutoff_ang", 0.f))
+    , gap_response_n_knot(read_attribute<int>(grp, ".", "gap_response_n_knot", 0))
+    , gap_response_coord_min_ang(read_attribute<float>(grp, ".", "gap_response_coord_min_ang", 0.f))
+    , gap_response_coord_spacing_ang(read_attribute<float>(grp, ".", "gap_response_coord_spacing_ang", 0.f))
+    , gap_response_radial_cutoff_ang(read_attribute<float>(grp, ".", "gap_response_radial_cutoff_ang", 0.f))
+    , gap_response_face_cos_min(read_attribute<float>(grp, ".", "gap_response_face_cos_min", 0.f))
+    , gap_response_fallback_ang(read_attribute<float>(grp, ".", "gap_response_fallback_ang", 0.f))
+    , gap_response_smooth_weight(read_attribute<int>(grp, ".", "gap_response_smooth_weight", 0) != 0)
     , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
     , body_support(read_cgl_body_support(grp))
     , cached_box_x(0.f)
@@ -1191,6 +2071,252 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     id = read_int_dataset(pi, "id");
     if(index.size() != type.size() || index.size() != id.size())
         throw string("cg_lipid_pair index/type/id size mismatch");
+    if(H5Lexists(pi, "delta_extended_extended", H5P_DEFAULT) > 0
+            || H5Lexists(pi, "delta_extended_compact", H5P_DEFAULT) > 0
+            || H5Lexists(pi, "delta_compact_compact", H5P_DEFAULT) > 0) {
+        if(!full_tensor)
+            throw string("cg_lipid_pair compaction correction requires a full tensor base table");
+        if(!log1p_reduced_transform)
+            throw string("cg_lipid_pair compaction correction requires log1p_reduced_transform");
+        delta_extended_extended = read_float_dataset_1d(pi, "delta_extended_extended");
+        delta_extended_compact = read_float_dataset_1d(pi, "delta_extended_compact");
+        delta_compact_compact = read_float_dataset_1d(pi, "delta_compact_compact");
+        if(int(delta_extended_extended.size()) != n_param
+                || int(delta_extended_compact.size()) != n_param
+                || int(delta_compact_compact.size()) != n_param)
+            throw string("cg_lipid_pair compaction correction size must match interaction_param");
+        if(!(fabsf(compact_state_center - extended_state_center) > 1.0e-6f))
+            throw string("cg_lipid_pair requires distinct compact_state_center_ang and extended_state_center_ang");
+        has_compaction_correction = true;
+    }
+    if(H5Lexists(pi, "gap_response_coeff", H5P_DEFAULT) > 0) {
+        gap_response_coeff = read_float_dataset_1d(pi, "gap_response_coeff");
+        if(gap_response_n_knot <= 3)
+            gap_response_n_knot = int(gap_response_coeff.size());
+        if(int(gap_response_coeff.size()) != gap_response_n_knot)
+            throw string("cg_lipid_pair gap_response_coeff size does not match gap_response_n_knot");
+        if(gap_response_coord_spacing_ang <= 0.f || gap_response_radial_cutoff_ang <= 0.f)
+            throw string("cg_lipid_pair gap response requires positive coordinate spacing and radial cutoff");
+        if(gap_response_fallback_ang <= 0.f)
+            gap_response_fallback_ang = gap_response_radial_cutoff_ang;
+    } else {
+        implicit_compaction_gap_response = false;
+    }
+}
+
+CGLipidPairPotential::CGLipidPairPotential(hid_t grp, const ArgList& arguments)
+    : CGLipidPairPotential(grp, *arguments.at(0))
+{
+    if(arguments.size() == 2u) {
+        compaction_state = arguments.at(1);
+        check_elem_width(*compaction_state, 1);
+        if(compaction_state->n_elem != int(index.size()))
+            throw string("cg_lipid_pair compaction state size must match index size");
+        if(!has_compaction_correction)
+            throw string("cg_lipid_pair received cgl_compaction_state but lacks compaction correction datasets");
+    } else if(arguments.size() != 1u) {
+        throw string("cg_lipid_pair expects compose_vector6d or compose_vector6d plus cgl_compaction_state");
+    } else if(has_compaction_correction && !implicit_compaction_response && !implicit_compaction_mean_field) {
+        throw string("cg_lipid_pair compaction correction datasets require cgl_compaction_state");
+    }
+}
+
+ImplicitCompactionField CGLipidPairPotential::build_implicit_compaction_field(VecArray cg) const {
+    ImplicitCompactionField field;
+    field.survival.assign(index.size(), 1.f);
+    field.contact_field.assign(index.size(), 0.f);
+    field.contact_slope.assign(index.size(), 0.f);
+    field.response_slope.assign(index.size(), 0.f);
+    field.extended.assign(index.size(), 0.f);
+    field.pair_weight.assign(active_pairs.size(), 0.f);
+    field.pair_distance.assign(active_pairs.size(), 0.f);
+    field.gap_coord.assign(index.size(), gap_response_fallback_ang > 0.f ? gap_response_fallback_ang : 0.f);
+    field.gap_weight_sum.assign(index.size(), 0.f);
+    if(!implicit_compaction_response || !has_compaction_correction)
+        return field;
+    if(implicit_compaction_gap_response) {
+        return build_gap_response_compaction_field(
+                cg,
+                index,
+                active_pairs,
+                box_x,
+                box_y,
+                box_z,
+                gap_response_coeff,
+                gap_response_n_knot,
+                gap_response_coord_min_ang,
+                gap_response_coord_spacing_ang,
+                gap_response_radial_cutoff_ang,
+                gap_response_face_cos_min,
+                gap_response_fallback_ang,
+                gap_response_smooth_weight);
+    }
+    field.leaflet_side = classify_leaflets_by_median_z(cg, index);
+    field.dominant_pair.assign(index.size(), -1);
+    for(size_t pidx = 0; pidx < active_pairs.size(); ++pidx) {
+        const CGLPairIndex& pair = active_pairs[pidx];
+        size_t ai = pair.first;
+        size_t bi = pair.second;
+        if(field.leaflet_side[ai] == field.leaflet_side[bi]) continue;
+        float x1[3], n1[3], x2[3], n2[3], dr[3];
+        load_vec6(cg, index[ai], x1, n1);
+        load_vec6(cg, index[bi], x2, n2);
+        center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+        float w = cgl_cross_leaflet_face_weight(
+                dr, n1, n2,
+                implicit_radial_cutoff_ang,
+                implicit_face_cos_min,
+                implicit_compaction_smooth);
+        if(w <= 0.f) continue;
+        field.pair_weight[pidx] = w;
+        if(implicit_compaction_max_contact) {
+            float contact = -logf(std::max(1.f - w, 1.0e-6f));
+            if(contact > field.contact_field[ai]) {
+                field.contact_field[ai] = contact;
+                field.dominant_pair[ai] = int(pidx);
+            }
+            if(contact > field.contact_field[bi]) {
+                field.contact_field[bi] = contact;
+                field.dominant_pair[bi] = int(pidx);
+            }
+        } else {
+            field.survival[ai] *= std::max(0.f, 1.f - w);
+            field.survival[bi] *= std::max(0.f, 1.f - w);
+        }
+    }
+    for(size_t i = 0; i < field.extended.size(); ++i) {
+        float raw_contact_field = implicit_compaction_max_contact
+            ? field.contact_field[i]
+            : -logf(std::max(field.survival[i], 1.0e-6f));
+        float contact_field = implicit_compaction_max_contact
+            ? ((implicit_compaction_contact_field_cap > 0.f)
+                    ? std::min(raw_contact_field, implicit_compaction_contact_field_cap)
+                    : raw_contact_field)
+            : implicit_compaction_contact_field_from_survival(
+                    field.survival[i],
+                    implicit_compaction_contact_field_cap);
+        field.contact_field[i] = contact_field;
+        field.extended[i] = implicit_compaction_probability_from_field(
+                contact_field,
+                compact_state_probability,
+                implicit_compaction_local_field_scale);
+        if(implicit_compaction_contact_field_cap > 0.f
+                && raw_contact_field >= implicit_compaction_contact_field_cap)
+            field.contact_slope[i] = 0.f;
+        else
+            field.contact_slope[i] = implicit_compaction_probability_field_slope(
+                    contact_field,
+                    compact_state_probability,
+                    implicit_compaction_local_field_scale);
+    }
+    return field;
+}
+
+vector<float> CGLipidPairPotential::solve_mean_field_compaction(VecArray cg) const {
+    vector<float> compact(index.size(), clamp_probability(compact_state_probability));
+    if(!has_compaction_correction || !implicit_compaction_mean_field)
+        return compact;
+
+    vector<MeanFieldPairControl> pair_ctrl(active_pairs.size(), MeanFieldPairControl{0.f, 0.f, 0.f, 0.f, 0.f, false});
+    for(size_t pidx = 0; pidx < active_pairs.size(); ++pidx) {
+        const CGLPairIndex& pair = active_pairs[pidx];
+        size_t ai = pair.first;
+        size_t bi = pair.second;
+        int t1 = type[ai];
+        int t2 = type[bi];
+
+        float x1[3], n1[3], x2[3], n2[3], dr[3];
+        load_vec6(cg, index[ai], x1, n1);
+        load_vec6(cg, index[bi], x2, n2);
+        center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+
+        QuadsplineEval base = {0.f, 0.f, 0.f, 0.f};
+        bool ok = full_tensor
+            ? eval_full_pair_tensor(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                    n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, base)
+            : eval_multimode_pair(param_ptr(interaction_param, n_type2, n_param, t1, t2),
+                    n_modes, n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, base);
+        if(!ok)
+            continue;
+
+        QuadsplineEval e_ee = {0.f, 0.f, 0.f, 0.f};
+        QuadsplineEval e_ec = {0.f, 0.f, 0.f, 0.f};
+        QuadsplineEval e_cc = {0.f, 0.f, 0.f, 0.f};
+        bool ok_ee = eval_full_pair_tensor(
+                delta_extended_extended.data(), n_angular, n_radial,
+                dr, n1, n2, knot_spacing, cutoff,
+                log1p_reduced_transform ? 0.f : taper_width, e_ee);
+        bool ok_ec = eval_full_pair_tensor(
+                delta_extended_compact.data(), n_angular, n_radial,
+                dr, n1, n2, knot_spacing, cutoff,
+                log1p_reduced_transform ? 0.f : taper_width, e_ec);
+        bool ok_cc = eval_full_pair_tensor(
+                delta_compact_compact.data(), n_angular, n_radial,
+                dr, n1, n2, knot_spacing, cutoff,
+                log1p_reduced_transform ? 0.f : taper_width, e_cc);
+
+        MeanFieldPairControl& ctrl = pair_ctrl[pidx];
+        ctrl.base_control = base.value;
+        ctrl.corr_ee = ok_ee ? e_ee.value : 0.f;
+        ctrl.corr_ec = ok_ec ? e_ec.value : 0.f;
+        ctrl.corr_cc = ok_cc ? e_cc.value : 0.f;
+        ctrl.distance = norm_dr(dr);
+        ctrl.valid = ok_ee || ok_ec || ok_cc;
+    }
+
+    float logit_p0 = logit(compact_state_probability);
+    float inv_kbt = 1.f / std::max(boltzmann_temperature, 1.0e-6f);
+    vector<float> field(index.size(), 0.f);
+    for(int iter = 0; iter < 24; ++iter) {
+        std::fill(field.begin(), field.end(), 0.f);
+        for(size_t pidx = 0; pidx < active_pairs.size(); ++pidx) {
+            const MeanFieldPairControl& ctrl = pair_ctrl[pidx];
+            if(!ctrl.valid)
+                continue;
+            const CGLPairIndex& pair = active_pairs[pidx];
+            size_t ai = pair.first;
+            size_t bi = pair.second;
+            float si = compact[ai];
+            float sj = compact[bi];
+            float w_ee = 0.f;
+            float w_ec = 0.f;
+            float w_cc = 0.f;
+            compute_compaction_weights(si, sj, w_ee, w_ec, w_cc);
+            float control_value = ctrl.base_control
+                + w_ee * ctrl.corr_ee
+                + w_ec * ctrl.corr_ec
+                + w_cc * ctrl.corr_cc;
+            float scale = log1p_reduced_transform
+                ? transformed_pair_scale_from_control(
+                        control_value,
+                        boltzmann_temperature,
+                        ctrl.distance,
+                        cutoff,
+                        taper_width)
+                : 1.f;
+            float du_dsi = (1.f - sj) * (ctrl.corr_ec - ctrl.corr_ee)
+                + sj * (ctrl.corr_cc - ctrl.corr_ec);
+            float du_dsj = (1.f - si) * (ctrl.corr_ec - ctrl.corr_ee)
+                + si * (ctrl.corr_cc - ctrl.corr_ec);
+            field[ai] += scale * du_dsi;
+            field[bi] += scale * du_dsj;
+        }
+
+        float max_delta = 0.f;
+        for(size_t i = 0; i < compact.size(); ++i) {
+            float updated = logistic(logit_p0 - inv_kbt * field[i]);
+            float blended = 0.5f * compact[i] + 0.5f * updated;
+            max_delta = std::max(max_delta, fabsf(blended - compact[i]));
+            compact[i] = clamp_probability(blended);
+        }
+        if(max_delta < 1.0e-5f)
+            break;
+    }
+    return compact;
 }
 
 void CGLipidPairPotential::ensure_pairlist(VecArray cg) {
@@ -1232,8 +2358,15 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
         return;
     }
     VecArray cg = cg_pos.output;
+    VecArray comp = compaction_state ? compaction_state->output : VecArray();
     ensure_pairlist(cg);
+    ImplicitCompactionField implicit_field = build_implicit_compaction_field(cg);
+    vector<float> mean_field_compact = solve_mean_field_compaction(cg);
     float total = 0.f;
+    if(has_compaction_correction && implicit_compaction_mean_field && !compaction_state) {
+        for(float s : mean_field_compact)
+            total += binary_state_relative_entropy(s, compact_state_probability, boltzmann_temperature);
+    }
     for(const CGLPairIndex& pair : active_pairs) {
         size_t ai = pair.first;
         size_t bi = pair.second;
@@ -1256,6 +2389,64 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
                     dr, n1, n2, knot_spacing, cutoff,
                     log1p_reduced_transform ? 0.f : taper_width, e);
         if(ok) {
+            if(has_compaction_correction && (compaction_state || implicit_compaction_response || implicit_compaction_mean_field)) {
+                float w_ee = 0.f;
+                float w_ec = 0.f;
+                float w_cc = 0.f;
+                if(compaction_state) {
+                    float ci = comp(0, int(ai));
+                    float cj = comp(0, int(bi));
+                    float denom = compact_state_center - extended_state_center;
+                    if(fabsf(denom) < 1.0e-6f)
+                        denom = (denom >= 0.f) ? 1.0e-6f : -1.0e-6f;
+                    float si = (ci - extended_state_center) / denom;
+                    float sj = (cj - extended_state_center) / denom;
+                    compute_compaction_weights(si, sj, w_ee, w_ec, w_cc);
+                } else if(implicit_compaction_mean_field) {
+                    float si = mean_field_compact[ai];
+                    float sj = mean_field_compact[bi];
+                    compute_compaction_weights(si, sj, w_ee, w_ec, w_cc);
+                } else {
+                    // Cross-leaflet face contact should raise the compact-state weight.
+                    float qi = implicit_field.extended[ai];
+                    float qj = implicit_field.extended[bi];
+                    compute_compaction_weights(qi, qj, w_ee, w_ec, w_cc);
+                }
+
+                QuadsplineEval e_ee = {0.f, 0.f, 0.f, 0.f};
+                QuadsplineEval e_ec = {0.f, 0.f, 0.f, 0.f};
+                QuadsplineEval e_cc = {0.f, 0.f, 0.f, 0.f};
+                bool ok_ee = eval_full_pair_tensor(
+                        delta_extended_extended.data(), n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e_ee);
+                bool ok_ec = eval_full_pair_tensor(
+                        delta_extended_compact.data(), n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e_ec);
+                bool ok_cc = eval_full_pair_tensor(
+                        delta_compact_compact.data(), n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e_cc);
+                if(ok_ee) {
+                    e.value += w_ee * e_ee.value;
+                    e.d_dr += w_ee * e_ee.d_dr;
+                    e.d_da1 += w_ee * e_ee.d_da1;
+                    e.d_da2 += w_ee * e_ee.d_da2;
+                }
+                if(ok_ec) {
+                    e.value += w_ec * e_ec.value;
+                    e.d_dr += w_ec * e_ec.d_dr;
+                    e.d_da1 += w_ec * e_ec.d_da1;
+                    e.d_da2 += w_ec * e_ec.d_da2;
+                }
+                if(ok_cc) {
+                    e.value += w_cc * e_cc.value;
+                    e.d_dr += w_cc * e_cc.d_dr;
+                    e.d_da1 += w_cc * e_cc.d_da1;
+                    e.d_da2 += w_cc * e_cc.d_da2;
+                }
+            }
             if(log1p_reduced_transform)
                 apply_log1p_reduced_transform(
                         e, reference_energy_eup[t1 * n_type2 + t2],
@@ -1269,9 +2460,15 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
 void CGLipidPairPotential::propagate_deriv() {
     VecArray cg = cg_pos.output;
     VecArray cg_sens = cg_pos.sens;
+    VecArray comp = compaction_state ? compaction_state->output : VecArray();
+    VecArray comp_sens = compaction_state ? compaction_state->sens : VecArray();
     ensure_pairlist(cg);
+    ImplicitCompactionField implicit_field = build_implicit_compaction_field(cg);
+    vector<float> mean_field_compact = solve_mean_field_compaction(cg);
+    vector<float> implicit_q_sens(index.size(), 0.f);
 
-    for(const CGLPairIndex& pair : active_pairs) {
+    for(size_t pidx = 0; pidx < active_pairs.size(); ++pidx) {
+        const CGLPairIndex& pair = active_pairs[pidx];
         size_t ai = pair.first;
         size_t bi = pair.second;
         int t1 = type[ai];
@@ -1294,18 +2491,200 @@ void CGLipidPairPotential::propagate_deriv() {
                     log1p_reduced_transform ? 0.f : taper_width, e);
         if(!ok)
             continue;
-        if(log1p_reduced_transform)
+        float comp_ctrl_sens_ai = 0.f;
+        float comp_ctrl_sens_bi = 0.f;
+        float implicit_ctrl_sens_ai = 0.f;
+        float implicit_ctrl_sens_bi = 0.f;
+        if(has_compaction_correction && (compaction_state || implicit_compaction_response || implicit_compaction_mean_field)) {
+            float w_ee = 0.f;
+            float w_ec = 0.f;
+            float w_cc = 0.f;
+            float d_w_ee_d_si = 0.f;
+            float d_w_ec_d_si = 0.f;
+            float d_w_cc_d_si = 0.f;
+            float d_w_ee_d_sj = 0.f;
+            float d_w_ec_d_sj = 0.f;
+            float d_w_cc_d_sj = 0.f;
+            float dsi_dci = 0.f;
+            float dsj_dcj = 0.f;
+            if(compaction_state) {
+                float ci = comp(0, int(ai));
+                float cj = comp(0, int(bi));
+                float denom = compact_state_center - extended_state_center;
+                if(fabsf(denom) < 1.0e-6f)
+                    denom = (denom >= 0.f) ? 1.0e-6f : -1.0e-6f;
+                float si = (ci - extended_state_center) / denom;
+                float sj = (cj - extended_state_center) / denom;
+                dsi_dci = 1.f / denom;
+                dsj_dcj = 1.f / denom;
+                compute_compaction_weights(si, sj, w_ee, w_ec, w_cc);
+                d_w_ee_d_si = -(1.f - sj);
+                d_w_ec_d_si = 1.f - 2.f * sj;
+                d_w_cc_d_si = sj;
+                d_w_ee_d_sj = -(1.f - si);
+                d_w_ec_d_sj = 1.f - 2.f * si;
+                d_w_cc_d_sj = si;
+            } else if(implicit_compaction_mean_field) {
+                float si = mean_field_compact[ai];
+                float sj = mean_field_compact[bi];
+                compute_compaction_weights(si, sj, w_ee, w_ec, w_cc);
+            } else {
+                float qi = implicit_field.extended[ai];
+                float qj = implicit_field.extended[bi];
+                compute_compaction_weights(qi, qj, w_ee, w_ec, w_cc);
+            }
+
+            QuadsplineEval e_ee = {0.f, 0.f, 0.f, 0.f};
+            QuadsplineEval e_ec = {0.f, 0.f, 0.f, 0.f};
+            QuadsplineEval e_cc = {0.f, 0.f, 0.f, 0.f};
+            bool ok_ee = eval_full_pair_tensor(
+                    delta_extended_extended.data(), n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e_ee);
+            bool ok_ec = eval_full_pair_tensor(
+                    delta_extended_compact.data(), n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e_ec);
+            bool ok_cc = eval_full_pair_tensor(
+                    delta_compact_compact.data(), n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e_cc);
+            if(ok_ee) {
+                e.value += w_ee * e_ee.value;
+                e.d_dr += w_ee * e_ee.d_dr;
+                e.d_da1 += w_ee * e_ee.d_da1;
+                e.d_da2 += w_ee * e_ee.d_da2;
+            }
+            if(ok_ec) {
+                e.value += w_ec * e_ec.value;
+                e.d_dr += w_ec * e_ec.d_dr;
+                e.d_da1 += w_ec * e_ec.d_da1;
+                e.d_da2 += w_ec * e_ec.d_da2;
+            }
+            if(ok_cc) {
+                e.value += w_cc * e_cc.value;
+                e.d_dr += w_cc * e_cc.d_dr;
+                e.d_da1 += w_cc * e_cc.d_da1;
+                e.d_da2 += w_cc * e_cc.d_da2;
+            }
+
+            float corr_ee = ok_ee ? e_ee.value : 0.f;
+            float corr_ec = ok_ec ? e_ec.value : 0.f;
+            float corr_cc = ok_cc ? e_cc.value : 0.f;
+            if(compaction_state) {
+                comp_ctrl_sens_ai = dsi_dci * (
+                        d_w_ee_d_si * corr_ee
+                        + d_w_ec_d_si * corr_ec
+                        + d_w_cc_d_si * corr_cc);
+                comp_ctrl_sens_bi = dsj_dcj * (
+                        d_w_ee_d_sj * corr_ee
+                        + d_w_ec_d_sj * corr_ec
+                        + d_w_cc_d_sj * corr_cc);
+            } else if(!implicit_compaction_mean_field) {
+                float qi = implicit_field.extended[ai];
+                float qj = implicit_field.extended[bi];
+                implicit_ctrl_sens_ai = (
+                        (qj - 1.f) * corr_ee
+                        + (1.f - 2.f * qj) * corr_ec
+                        + qj * corr_cc);
+                implicit_ctrl_sens_bi = (
+                        (qi - 1.f) * corr_ee
+                        + (1.f - 2.f * qi) * corr_ec
+                        + qi * corr_cc);
+            }
+        }
+        if(log1p_reduced_transform) {
+            float taper = 1.f;
+            float d_taper_dr = 0.f;
+            compute_cutoff_taper(norm_dr(dr), cutoff, taper_width, taper, d_taper_dr);
+            float control_value = e.value;
+            float control_scale = boltzmann_temperature * expf(control_value) * taper;
             apply_log1p_reduced_transform(
                     e, reference_energy_eup[t1 * n_type2 + t2],
                     boltzmann_temperature, dr, cutoff, taper_width);
+            comp_ctrl_sens_ai *= control_scale;
+            comp_ctrl_sens_bi *= control_scale;
+            implicit_ctrl_sens_ai *= control_scale;
+            implicit_ctrl_sens_bi *= control_scale;
+        }
 
         float dpos1[3] = {0.f, 0.f, 0.f};
         float ddir1[3] = {0.f, 0.f, 0.f};
         float dpos2[3] = {0.f, 0.f, 0.f};
         float ddir2[3] = {0.f, 0.f, 0.f};
         accumulate_deriv(dr, n1, n2, e, dpos1, ddir1, dpos2, ddir2);
+        if(compaction_state && has_compaction_correction) {
+            comp_sens(0, int(ai)) += comp_ctrl_sens_ai;
+            comp_sens(0, int(bi)) += comp_ctrl_sens_bi;
+        } else if(has_compaction_correction && implicit_compaction_response) {
+            implicit_q_sens[ai] += implicit_ctrl_sens_ai;
+            implicit_q_sens[bi] += implicit_ctrl_sens_bi;
+        }
         add_vec6_sens(cg_sens, index[ai], dpos1, ddir1);
         add_vec6_sens(cg_sens, index[bi], dpos2, ddir2);
+    }
+
+    if(has_compaction_correction && implicit_compaction_response && !compaction_state) {
+        if(implicit_compaction_gap_response) {
+            propagate_gap_response_compaction_sens(
+                    cg,
+                    cg_sens,
+                    index,
+                    active_pairs,
+                    box_x,
+                    box_y,
+                    box_z,
+                    implicit_field,
+                    implicit_q_sens,
+                    gap_response_radial_cutoff_ang,
+                    gap_response_face_cos_min,
+                    gap_response_smooth_weight);
+        } else if(implicit_compaction_smooth) {
+            for(size_t pidx = 0; pidx < active_pairs.size(); ++pidx) {
+                const CGLPairIndex& pair = active_pairs[pidx];
+                size_t ai = pair.first;
+                size_t bi = pair.second;
+                if(implicit_field.leaflet_side.empty()) break;
+                if(implicit_field.leaflet_side[ai] == implicit_field.leaflet_side[bi]) continue;
+                float w = implicit_field.pair_weight[pidx];
+                if(w <= 0.f || w >= 1.f) continue;
+                float denom = std::max(1.f - w, 1.0e-6f);
+                float lambda = 0.f;
+                if(implicit_compaction_max_contact) {
+                    if(int(pidx) == implicit_field.dominant_pair[ai])
+                        lambda += implicit_q_sens[ai] * (implicit_field.contact_slope[ai] / denom);
+                    if(int(pidx) == implicit_field.dominant_pair[bi])
+                        lambda += implicit_q_sens[bi] * (implicit_field.contact_slope[bi] / denom);
+                } else {
+                    lambda = implicit_q_sens[ai] * (implicit_field.contact_slope[ai] / denom)
+                           + implicit_q_sens[bi] * (implicit_field.contact_slope[bi] / denom);
+                }
+                if(fabsf(lambda) <= 1.0e-12f) continue;
+
+                float x1[3], n1[3], x2[3], n2[3], dr[3];
+                load_vec6(cg, index[ai], x1, n1);
+                load_vec6(cg, index[bi], x2, n2);
+                center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+                QuadsplineEval w_eval;
+                if(!eval_cgl_cross_leaflet_face_weight(
+                            dr, n1, n2,
+                            implicit_radial_cutoff_ang,
+                            implicit_face_cos_min,
+                            implicit_compaction_smooth,
+                            w_eval))
+                    continue;
+                w_eval.d_dr *= lambda;
+                w_eval.d_da1 *= lambda;
+                w_eval.d_da2 *= lambda;
+                float dpos1[3] = {0.f, 0.f, 0.f};
+                float ddir1[3] = {0.f, 0.f, 0.f};
+                float dpos2[3] = {0.f, 0.f, 0.f};
+                float ddir2[3] = {0.f, 0.f, 0.f};
+                accumulate_deriv(dr, n1, n2, w_eval, dpos1, ddir1, dpos2, ddir2);
+                add_vec6_sens(cg_sens, index[ai], dpos1, ddir1);
+                add_vec6_sens(cg_sens, index[bi], dpos2, ddir2);
+            }
+        }
     }
 }
 
@@ -1368,8 +2747,10 @@ CGLipidDensityPotential::CGLipidDensityPotential(hid_t grp, CoordNode& cg_pos_)
 
 void CGLipidDensityPotential::accumulate_density(VecArray cg, vector<float>& rho) const {
     rho.assign(index.size(), 0.f);
+    vector<uint8_t> leaflet_side = classify_leaflets_by_median_z(cg, index);
     for(size_t ai = 0; ai < index.size(); ++ai) {
         for(size_t bi = ai + 1; bi < index.size(); ++bi) {
+            if(leaflet_side[ai] != leaflet_side[bi]) continue;
             float dr[3];
             center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
             float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
@@ -1408,6 +2789,7 @@ void CGLipidDensityPotential::propagate_deriv() {
     VecArray cg_sens = cg_pos.sens;
     vector<float> rho;
     accumulate_density(cg, rho);
+    vector<uint8_t> leaflet_side = classify_leaflets_by_median_z(cg, index);
     vector<float> dF_drho(index.size(), 0.f);
     for(size_t i = 0; i < index.size(); ++i) {
         float coord = 1.f + (rho[i] - rho_min) / rho_spacing;
@@ -1418,6 +2800,7 @@ void CGLipidDensityPotential::propagate_deriv() {
 
     for(size_t ai = 0; ai < index.size(); ++ai) {
         for(size_t bi = ai + 1; bi < index.size(); ++bi) {
+            if(leaflet_side[ai] != leaflet_side[bi]) continue;
             float dr[3];
             center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
             float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
@@ -1445,10 +2828,393 @@ void CGLipidDensityPotential::propagate_deriv() {
     }
 }
 
+struct CGLipidContactEmbeddingPotential : public PotentialNode {
+    CoordNode& cg_pos;
+    vector<int> index;
+    vector<float> embedding_coeff;
+    int n_embedding;
+    float box_x;
+    float box_y;
+    float box_z;
+    float coord_min;
+    float coord_spacing;
+    float radial_cutoff;
+    float face_cos_min;
+    bool smooth_weight;
+
+    CGLipidContactEmbeddingPotential(hid_t grp, CoordNode& cg_pos);
+    void accumulate_contact_field(
+            VecArray cg,
+            vector<float>& survival,
+            vector<float>& contact,
+            vector<CGLPairIndex>* pairs = nullptr,
+            vector<float>* pair_weight = nullptr) const;
+    virtual void compute_value(ComputeMode mode) override;
+    virtual void propagate_deriv() override;
+    virtual void set_param(const vector<float>& new_param) override {
+        if(new_param.size() == embedding_coeff.size()) embedding_coeff = new_param;
+    }
+    virtual void update_box_dimensions_anisotropic(float scale_xy, float scale_z) override {
+        box_x *= scale_xy;
+        box_y *= scale_xy;
+        box_z *= scale_z;
+        radial_cutoff *= scale_xy;
+    }
+};
+
+CGLipidContactEmbeddingPotential::CGLipidContactEmbeddingPotential(hid_t grp, CoordNode& cg_pos_)
+    : PotentialNode()
+    , cg_pos(cg_pos_)
+    , n_embedding(read_attribute<int>(grp, ".", "embedding_n_knot", 0))
+    , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
+    , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
+    , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
+    , coord_min(read_attribute<float>(grp, ".", "embedding_coord_min", 0.f))
+    , coord_spacing(read_attribute<float>(grp, ".", "embedding_coord_spacing", 0.f))
+    , radial_cutoff(read_attribute<float>(grp, ".", "contact_radial_cutoff_ang", 0.f))
+    , face_cos_min(read_attribute<float>(grp, ".", "contact_face_cos_min", 0.f))
+    , smooth_weight(read_attribute<int>(grp, ".", "contact_smooth_weight", 0) != 0)
+{
+    check_elem_width(cg_pos, 6);
+    index = read_int_dataset(grp, "index");
+    embedding_coeff = read_float_dataset_1d(grp, "embedding_coeff");
+    if(index.empty())
+        throw string("cg_lipid_contact_embedding requires at least one CGL index");
+    if(n_embedding <= 3)
+        n_embedding = int(embedding_coeff.size());
+    if(int(embedding_coeff.size()) != n_embedding)
+        throw string("cg_lipid_contact_embedding embedding_coeff size does not match embedding_n_knot");
+    if(coord_spacing <= 0.f || radial_cutoff <= 0.f)
+        throw string("cg_lipid_contact_embedding requires positive embedding spacing and radial cutoff");
+}
+
+void CGLipidContactEmbeddingPotential::accumulate_contact_field(
+        VecArray cg,
+        vector<float>& survival,
+        vector<float>& contact,
+        vector<CGLPairIndex>* pairs,
+        vector<float>* pair_weight) const {
+    survival.assign(index.size(), 1.f);
+    contact.assign(index.size(), 0.f);
+    vector<uint8_t> leaflet_side = classify_leaflets_by_median_z(cg, index);
+    if(pairs) pairs->clear();
+    if(pair_weight) pair_weight->clear();
+
+    for(size_t ai = 0; ai < index.size(); ++ai) {
+        for(size_t bi = ai + 1; bi < index.size(); ++bi) {
+            if(leaflet_side[ai] == leaflet_side[bi]) continue;
+            float x1[3], n1[3], x2[3], n2[3], dr[3];
+            load_vec6(cg, index[ai], x1, n1);
+            load_vec6(cg, index[bi], x2, n2);
+            center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+            float w = cgl_cross_leaflet_face_weight(
+                    dr, n1, n2,
+                    radial_cutoff,
+                    face_cos_min,
+                    smooth_weight);
+            if(w <= 0.f)
+                continue;
+            survival[ai] *= std::max(0.f, 1.f - w);
+            survival[bi] *= std::max(0.f, 1.f - w);
+            if(pairs) pairs->push_back({ai, bi});
+            if(pair_weight) pair_weight->push_back(w);
+        }
+    }
+    for(size_t i = 0; i < contact.size(); ++i)
+        contact[i] = 1.f - survival[i];
+}
+
+void CGLipidContactEmbeddingPotential::compute_value(ComputeMode mode) {
+    (void)mode;
+    if(mode == DerivMode) {
+        potential = 0.f;
+        return;
+    }
+    VecArray cg = cg_pos.output;
+    vector<float> survival;
+    vector<float> contact;
+    accumulate_contact_field(cg, survival, contact);
+    float total = 0.f;
+    for(float q : contact) {
+        float coord = 1.f + (q - coord_min) / coord_spacing;
+        Vec<2> emb = clamped_deBoor_value_and_deriv(
+                embedding_coeff.data(), coord, n_embedding);
+        total += emb.x();
+    }
+    potential = total;
+}
+
+void CGLipidContactEmbeddingPotential::propagate_deriv() {
+    VecArray cg = cg_pos.output;
+    VecArray cg_sens = cg_pos.sens;
+    vector<float> survival;
+    vector<float> contact;
+    vector<CGLPairIndex> pairs;
+    vector<float> pair_weight;
+    accumulate_contact_field(cg, survival, contact, &pairs, &pair_weight);
+    vector<float> dF_dq(index.size(), 0.f);
+    for(size_t i = 0; i < index.size(); ++i) {
+        float coord = 1.f + (contact[i] - coord_min) / coord_spacing;
+        Vec<2> emb = clamped_deBoor_value_and_deriv(
+                embedding_coeff.data(), coord, n_embedding);
+        dF_dq[i] = emb.y() / coord_spacing;
+    }
+
+    if(!smooth_weight)
+        return;
+
+    for(size_t pidx = 0; pidx < pairs.size(); ++pidx) {
+        size_t ai = pairs[pidx].first;
+        size_t bi = pairs[pidx].second;
+        float w = pair_weight[pidx];
+        if(w <= 0.f || w >= 1.f)
+            continue;
+        float denom = std::max(1.f - w, 1.0e-6f);
+        float lambda = dF_dq[ai] * (survival[ai] / denom)
+                     + dF_dq[bi] * (survival[bi] / denom);
+        if(fabsf(lambda) <= 1.0e-12f)
+            continue;
+
+        float x1[3], n1[3], x2[3], n2[3], dr[3];
+        load_vec6(cg, index[ai], x1, n1);
+        load_vec6(cg, index[bi], x2, n2);
+        center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+        QuadsplineEval w_eval;
+        if(!eval_cgl_cross_leaflet_face_weight(
+                    dr, n1, n2,
+                    radial_cutoff,
+                    face_cos_min,
+                    smooth_weight,
+                    w_eval))
+            continue;
+        w_eval.d_dr *= lambda;
+        w_eval.d_da1 *= lambda;
+        w_eval.d_da2 *= lambda;
+        float dpos1[3] = {0.f, 0.f, 0.f};
+        float ddir1[3] = {0.f, 0.f, 0.f};
+        float dpos2[3] = {0.f, 0.f, 0.f};
+        float ddir2[3] = {0.f, 0.f, 0.f};
+        accumulate_deriv(dr, n1, n2, w_eval, dpos1, ddir1, dpos2, ddir2);
+        add_vec6_sens(cg_sens, index[ai], dpos1, ddir1);
+        add_vec6_sens(cg_sens, index[bi], dpos2, ddir2);
+    }
+}
+
+struct CGLipidGapEmbeddingPotential : public PotentialNode {
+    CoordNode& cg_pos;
+    vector<int> index;
+    vector<float> embedding_coeff;
+    int n_embedding;
+    float box_x;
+    float box_y;
+    float box_z;
+    float coord_min;
+    float coord_spacing;
+    float radial_cutoff;
+    float face_cos_min;
+    float fallback_gap;
+    bool smooth_weight;
+
+    CGLipidGapEmbeddingPotential(hid_t grp, CoordNode& cg_pos);
+    void accumulate_gap_field(
+            VecArray cg,
+            vector<float>& gap,
+            vector<float>& gap_weight_sum,
+            vector<CGLPairIndex>* pairs = nullptr,
+            vector<float>* pair_weight = nullptr,
+            vector<float>* pair_distance = nullptr) const;
+    virtual void compute_value(ComputeMode mode) override;
+    virtual void propagate_deriv() override;
+    virtual void set_param(const vector<float>& new_param) override {
+        if(new_param.size() == embedding_coeff.size()) embedding_coeff = new_param;
+    }
+    virtual void update_box_dimensions_anisotropic(float scale_xy, float scale_z) override {
+        box_x *= scale_xy;
+        box_y *= scale_xy;
+        box_z *= scale_z;
+        radial_cutoff *= scale_xy;
+        fallback_gap *= scale_xy;
+    }
+};
+
+CGLipidGapEmbeddingPotential::CGLipidGapEmbeddingPotential(hid_t grp, CoordNode& cg_pos_)
+    : PotentialNode()
+    , cg_pos(cg_pos_)
+    , n_embedding(read_attribute<int>(grp, ".", "embedding_n_knot", 0))
+    , box_x(read_attribute<float>(grp, ".", "x_len", 0.f))
+    , box_y(read_attribute<float>(grp, ".", "y_len", 0.f))
+    , box_z(read_attribute<float>(grp, ".", "z_len", 0.f))
+    , coord_min(read_attribute<float>(grp, ".", "embedding_coord_min", 0.f))
+    , coord_spacing(read_attribute<float>(grp, ".", "embedding_coord_spacing", 0.f))
+    , radial_cutoff(read_attribute<float>(grp, ".", "gap_radial_cutoff_ang", 0.f))
+    , face_cos_min(read_attribute<float>(grp, ".", "gap_face_cos_min", 0.f))
+    , fallback_gap(read_attribute<float>(grp, ".", "gap_fallback_ang", 0.f))
+    , smooth_weight(read_attribute<int>(grp, ".", "gap_smooth_weight", 0) != 0)
+{
+    check_elem_width(cg_pos, 6);
+    index = read_int_dataset(grp, "index");
+    embedding_coeff = read_float_dataset_1d(grp, "embedding_coeff");
+    if(index.empty())
+        throw string("cg_lipid_gap_embedding requires at least one CGL index");
+    if(n_embedding <= 3)
+        n_embedding = int(embedding_coeff.size());
+    if(int(embedding_coeff.size()) != n_embedding)
+        throw string("cg_lipid_gap_embedding embedding_coeff size does not match embedding_n_knot");
+    if(coord_spacing <= 0.f || radial_cutoff <= 0.f)
+        throw string("cg_lipid_gap_embedding requires positive embedding spacing and radial cutoff");
+    if(fallback_gap <= 0.f)
+        fallback_gap = radial_cutoff;
+}
+
+void CGLipidGapEmbeddingPotential::accumulate_gap_field(
+        VecArray cg,
+        vector<float>& gap,
+        vector<float>& gap_weight_sum,
+        vector<CGLPairIndex>* pairs,
+        vector<float>* pair_weight,
+        vector<float>* pair_distance) const {
+    gap.assign(index.size(), fallback_gap);
+    gap_weight_sum.assign(index.size(), 0.f);
+    vector<float> gap_weighted_sum(index.size(), 0.f);
+    vector<uint8_t> leaflet_side = classify_leaflets_by_median_z(cg, index);
+    if(pairs) pairs->clear();
+    if(pair_weight) pair_weight->clear();
+    if(pair_distance) pair_distance->clear();
+
+    for(size_t ai = 0; ai < index.size(); ++ai) {
+        for(size_t bi = ai + 1; bi < index.size(); ++bi) {
+            if(leaflet_side[ai] == leaflet_side[bi]) continue;
+            float x1[3], n1[3], x2[3], n2[3], dr[3];
+            load_vec6(cg, index[ai], x1, n1);
+            load_vec6(cg, index[bi], x2, n2);
+            center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+            float w = cgl_cross_leaflet_face_weight(
+                    dr, n1, n2,
+                    radial_cutoff,
+                    face_cos_min,
+                    smooth_weight);
+            if(w <= 0.f)
+                continue;
+            float r = norm_dr(dr);
+            gap_weighted_sum[ai] += w * r;
+            gap_weighted_sum[bi] += w * r;
+            gap_weight_sum[ai] += w;
+            gap_weight_sum[bi] += w;
+            if(pairs) pairs->push_back({ai, bi});
+            if(pair_weight) pair_weight->push_back(w);
+            if(pair_distance) pair_distance->push_back(r);
+        }
+    }
+    for(size_t i = 0; i < gap.size(); ++i) {
+        if(gap_weight_sum[i] > 1.0e-12f)
+            gap[i] = gap_weighted_sum[i] / gap_weight_sum[i];
+    }
+}
+
+void CGLipidGapEmbeddingPotential::compute_value(ComputeMode mode) {
+    (void)mode;
+    if(mode == DerivMode) {
+        potential = 0.f;
+        return;
+    }
+    VecArray cg = cg_pos.output;
+    vector<float> gap;
+    vector<float> gap_weight_sum;
+    accumulate_gap_field(cg, gap, gap_weight_sum);
+    float total = 0.f;
+    for(float g : gap) {
+        float coord = 1.f + (g - coord_min) / coord_spacing;
+        Vec<2> emb = clamped_deBoor_value_and_deriv(
+                embedding_coeff.data(), coord, n_embedding);
+        total += emb.x();
+    }
+    potential = total;
+}
+
+void CGLipidGapEmbeddingPotential::propagate_deriv() {
+    VecArray cg = cg_pos.output;
+    VecArray cg_sens = cg_pos.sens;
+    vector<float> gap;
+    vector<float> gap_weight_sum;
+    vector<CGLPairIndex> pairs;
+    vector<float> pair_weight;
+    vector<float> pair_distance;
+    accumulate_gap_field(cg, gap, gap_weight_sum, &pairs, &pair_weight, &pair_distance);
+    vector<float> dF_dg(index.size(), 0.f);
+    for(size_t i = 0; i < index.size(); ++i) {
+        float coord = 1.f + (gap[i] - coord_min) / coord_spacing;
+        Vec<2> emb = clamped_deBoor_value_and_deriv(
+                embedding_coeff.data(), coord, n_embedding);
+        dF_dg[i] = emb.y() / coord_spacing;
+    }
+
+    for(size_t pidx = 0; pidx < pairs.size(); ++pidx) {
+        size_t ai = pairs[pidx].first;
+        size_t bi = pairs[pidx].second;
+        float w = pair_weight[pidx];
+        if(w <= 0.f)
+            continue;
+        float r = pair_distance[pidx];
+        float lambda_r = 0.f;
+        float lambda_w = 0.f;
+        if(gap_weight_sum[ai] > 1.0e-12f) {
+            float inv_sum = 1.f / gap_weight_sum[ai];
+            lambda_r += dF_dg[ai] * (w * inv_sum);
+            lambda_w += dF_dg[ai] * ((r - gap[ai]) * inv_sum);
+        }
+        if(gap_weight_sum[bi] > 1.0e-12f) {
+            float inv_sum = 1.f / gap_weight_sum[bi];
+            lambda_r += dF_dg[bi] * (w * inv_sum);
+            lambda_w += dF_dg[bi] * ((r - gap[bi]) * inv_sum);
+        }
+        if(fabsf(lambda_r) <= 1.0e-12f && (!smooth_weight || fabsf(lambda_w) <= 1.0e-12f))
+            continue;
+
+        float x1[3], n1[3], x2[3], n2[3], dr[3];
+        load_vec6(cg, index[ai], x1, n1);
+        load_vec6(cg, index[bi], x2, n2);
+        center_dr(cg, index[ai], cg, index[bi], box_x, box_y, box_z, dr);
+
+        if(fabsf(lambda_r) > 1.0e-12f) {
+            QuadsplineEval r_eval = {0.f, lambda_r, 0.f, 0.f};
+            float dpos1[3] = {0.f, 0.f, 0.f};
+            float ddir1[3] = {0.f, 0.f, 0.f};
+            float dpos2[3] = {0.f, 0.f, 0.f};
+            float ddir2[3] = {0.f, 0.f, 0.f};
+            accumulate_deriv(dr, n1, n2, r_eval, dpos1, ddir1, dpos2, ddir2);
+            add_vec6_sens(cg_sens, index[ai], dpos1, ddir1);
+            add_vec6_sens(cg_sens, index[bi], dpos2, ddir2);
+        }
+
+        if(smooth_weight && fabsf(lambda_w) > 1.0e-12f) {
+            QuadsplineEval w_eval;
+            if(!eval_cgl_cross_leaflet_face_weight(
+                        dr, n1, n2,
+                        radial_cutoff,
+                        face_cos_min,
+                        smooth_weight,
+                        w_eval))
+                continue;
+            w_eval.d_dr *= lambda_w;
+            w_eval.d_da1 *= lambda_w;
+            w_eval.d_da2 *= lambda_w;
+            float dpos1[3] = {0.f, 0.f, 0.f};
+            float ddir1[3] = {0.f, 0.f, 0.f};
+            float dpos2[3] = {0.f, 0.f, 0.f};
+            float ddir2[3] = {0.f, 0.f, 0.f};
+            accumulate_deriv(dr, n1, n2, w_eval, dpos1, ddir1, dpos2, ddir2);
+            add_vec6_sens(cg_sens, index[ai], dpos1, ddir1);
+            add_vec6_sens(cg_sens, index[bi], dpos2, ddir2);
+        }
+    }
+}
+
 struct CGLipidSCPotential : public PotentialNode {
     CoordNode& sc_pos;
     CoordNode& cg_pos;
     vector<float> interaction_param;
+    vector<float> delta_extended;
+    vector<float> delta_compact;
     vector<int> index1;
     vector<int> type1;
     vector<int> id1;
@@ -1469,6 +3235,15 @@ struct CGLipidSCPotential : public PotentialNode {
     float taper_width;
     bool log1p_reduced_transform;
     float boltzmann_temperature;
+    bool has_compaction_correction;
+    bool implicit_compaction_gap_response;
+    int gap_response_n_knot;
+    float gap_response_coord_min_ang;
+    float gap_response_coord_spacing_ang;
+    float gap_response_radial_cutoff_ang;
+    float gap_response_face_cos_min;
+    float gap_response_fallback_ang;
+    bool gap_response_smooth_weight;
     float cache_buffer;
     float cached_box_x;
     float cached_box_y;
@@ -1477,6 +3252,8 @@ struct CGLipidSCPotential : public PotentialNode {
     vector<float> cached_pos1;
     vector<float> cached_pos2;
     vector<CGLPairIndex> active_pairs;
+    vector<CGLPairIndex> active_cg_pairs;
+    vector<float> gap_response_coeff;
 
     CGLipidSCPotential(hid_t grp, CoordNode& sc_pos, CoordNode& cg_pos);
     void ensure_pairlist(VecArray sc, VecArray cg);
@@ -1511,6 +3288,15 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
     , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
     , log1p_reduced_transform(read_attribute<int>(grp, ".", "log1p_reduced_transform", 0) != 0)
     , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
+    , has_compaction_correction(false)
+    , implicit_compaction_gap_response(read_attribute<int>(grp, ".", "implicit_compaction_gap_response", 0) != 0)
+    , gap_response_n_knot(read_attribute<int>(grp, ".", "gap_response_n_knot", 0))
+    , gap_response_coord_min_ang(read_attribute<float>(grp, ".", "gap_response_coord_min_ang", 0.f))
+    , gap_response_coord_spacing_ang(read_attribute<float>(grp, ".", "gap_response_coord_spacing_ang", 0.f))
+    , gap_response_radial_cutoff_ang(read_attribute<float>(grp, ".", "gap_response_radial_cutoff_ang", 0.f))
+    , gap_response_face_cos_min(read_attribute<float>(grp, ".", "gap_response_face_cos_min", 0.f))
+    , gap_response_fallback_ang(read_attribute<float>(grp, ".", "gap_response_fallback_ang", 0.f))
+    , gap_response_smooth_weight(read_attribute<int>(grp, ".", "gap_response_smooth_weight", 0) != 0)
     , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
     , cached_box_x(0.f)
     , cached_box_y(0.f)
@@ -1534,6 +3320,29 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
     }
     if(log1p_reduced_transform && boltzmann_temperature <= 0.f)
         throw string("cg_lipid_sc log1p-reduced transform requires positive temperature");
+    if(H5Lexists(pi, "delta_extended", H5P_DEFAULT) > 0
+            || H5Lexists(pi, "delta_compact", H5P_DEFAULT) > 0) {
+        if(!log1p_reduced_transform)
+            throw string("cg_lipid_sc compaction correction requires log1p_reduced_transform");
+        delta_extended = read_named_param_dataset_any(pi, "delta_extended", n_type1, n_type2, n_param);
+        delta_compact = read_named_param_dataset_any(pi, "delta_compact", n_type1, n_type2, n_param);
+        has_compaction_correction = true;
+        if(H5Lexists(pi, "gap_response_coeff", H5P_DEFAULT) > 0) {
+            gap_response_coeff = read_float_dataset_1d(pi, "gap_response_coeff");
+            if(gap_response_n_knot <= 3)
+                gap_response_n_knot = int(gap_response_coeff.size());
+            if(int(gap_response_coeff.size()) != gap_response_n_knot)
+                throw string("cg_lipid_sc gap_response_coeff size does not match gap_response_n_knot");
+        } else {
+            implicit_compaction_gap_response = false;
+        }
+        if(!implicit_compaction_gap_response)
+            throw string("cg_lipid_sc compaction correction currently requires implicit gap response metadata");
+        if(gap_response_coord_spacing_ang <= 0.f || gap_response_radial_cutoff_ang <= 0.f)
+            throw string("cg_lipid_sc gap response requires positive coordinate spacing and radial cutoff");
+        if(gap_response_fallback_ang <= 0.f)
+            gap_response_fallback_ang = gap_response_radial_cutoff_ang;
+    }
     index1 = read_int_dataset(pi, "index1");
     type1 = read_int_dataset(pi, "type1");
     id1 = read_int_dataset(pi, "id1");
@@ -1555,6 +3364,7 @@ void CGLipidSCPotential::ensure_pairlist(VecArray sc, VecArray cg) {
         return;
 
     active_pairs.clear();
+    active_cg_pairs.clear();
     float pairlist_cutoff = cutoff + cache_buffer;
     float pairlist_cutoff2 = pairlist_cutoff * pairlist_cutoff;
     for(size_t ai = 0; ai < index1.size(); ++ai) {
@@ -1569,6 +3379,19 @@ void CGLipidSCPotential::ensure_pairlist(VecArray sc, VecArray cg) {
             float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
             if(r2 < pairlist_cutoff2)
                 active_pairs.push_back({ai, bi});
+        }
+    }
+    if(has_compaction_correction) {
+        float cg_cutoff = std::max(gap_response_radial_cutoff_ang, 0.f) + cache_buffer;
+        float cg_cutoff2 = cg_cutoff * cg_cutoff;
+        for(size_t ai = 0; ai < index2.size(); ++ai) {
+            for(size_t bi = ai + 1; bi < index2.size(); ++bi) {
+                float dr[3];
+                center_dr(cg, index2[ai], cg, index2[bi], box_x, box_y, box_z, dr);
+                float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+                if(r2 < cg_cutoff2)
+                    active_cg_pairs.push_back({ai, bi});
+            }
         }
     }
     cache_positions(sc, index1, cached_pos1);
@@ -1589,6 +3412,24 @@ void CGLipidSCPotential::compute_value(ComputeMode mode) {
     VecArray cg = cg_pos.output;
     ensure_pairlist(sc, cg);
     float total = 0.f;
+    ImplicitCompactionField implicit_field;
+    if(has_compaction_correction) {
+        implicit_field = build_gap_response_compaction_field(
+                cg,
+                index2,
+                active_cg_pairs,
+                box_x,
+                box_y,
+                box_z,
+                gap_response_coeff,
+                gap_response_n_knot,
+                gap_response_coord_min_ang,
+                gap_response_coord_spacing_ang,
+                gap_response_radial_cutoff_ang,
+                gap_response_face_cos_min,
+                gap_response_fallback_ang,
+                gap_response_smooth_weight);
+    }
 
     for(const CGLPairIndex& pair : active_pairs) {
         size_t ai = pair.first;
@@ -1607,6 +3448,34 @@ void CGLipidSCPotential::compute_value(ComputeMode mode) {
                 dr, n1, n2, knot_spacing, cutoff,
                 log1p_reduced_transform ? 0.f : taper_width, e);
         if(ok) {
+            if(has_compaction_correction) {
+                QuadsplineEval e_ext = {0.f, 0.f, 0.f, 0.f};
+                QuadsplineEval e_comp = {0.f, 0.f, 0.f, 0.f};
+                bool ok_ext = eval_full_pair_tensor(
+                        param_ptr(delta_extended, n_type2, n_param, t1, t2),
+                        n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e_ext);
+                bool ok_comp = eval_full_pair_tensor(
+                        param_ptr(delta_compact, n_type2, n_param, t1, t2),
+                        n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e_comp);
+                float q = implicit_field.extended[bi];
+                if(ok_ext) {
+                    float w = 1.f - q;
+                    e.value += w * e_ext.value;
+                    e.d_dr += w * e_ext.d_dr;
+                    e.d_da1 += w * e_ext.d_da1;
+                    e.d_da2 += w * e_ext.d_da2;
+                }
+                if(ok_comp) {
+                    e.value += q * e_comp.value;
+                    e.d_dr += q * e_comp.d_dr;
+                    e.d_da1 += q * e_comp.d_da1;
+                    e.d_da2 += q * e_comp.d_da2;
+                }
+            }
             if(log1p_reduced_transform)
                 apply_log1p_reduced_transform(
                         e, reference_energy_eup[t1 * n_type2 + t2],
@@ -1623,6 +3492,25 @@ void CGLipidSCPotential::propagate_deriv() {
     VecArray cg = cg_pos.output;
     VecArray cg_sens = cg_pos.sens;
     ensure_pairlist(sc, cg);
+    ImplicitCompactionField implicit_field;
+    vector<float> implicit_q_sens(index2.size(), 0.f);
+    if(has_compaction_correction) {
+        implicit_field = build_gap_response_compaction_field(
+                cg,
+                index2,
+                active_cg_pairs,
+                box_x,
+                box_y,
+                box_z,
+                gap_response_coeff,
+                gap_response_n_knot,
+                gap_response_coord_min_ang,
+                gap_response_coord_spacing_ang,
+                gap_response_radial_cutoff_ang,
+                gap_response_face_cos_min,
+                gap_response_fallback_ang,
+                gap_response_smooth_weight);
+    }
 
     for(const CGLPairIndex& pair : active_pairs) {
         size_t ai = pair.first;
@@ -1642,10 +3530,49 @@ void CGLipidSCPotential::propagate_deriv() {
                 log1p_reduced_transform ? 0.f : taper_width, e);
         if(!ok)
             continue;
+        float q_ctrl_sens = 0.f;
+        if(has_compaction_correction) {
+            QuadsplineEval e_ext = {0.f, 0.f, 0.f, 0.f};
+            QuadsplineEval e_comp = {0.f, 0.f, 0.f, 0.f};
+            bool ok_ext = eval_full_pair_tensor(
+                    param_ptr(delta_extended, n_type2, n_param, t1, t2),
+                    n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e_ext);
+            bool ok_comp = eval_full_pair_tensor(
+                    param_ptr(delta_compact, n_type2, n_param, t1, t2),
+                    n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e_comp);
+            float q = implicit_field.extended[bi];
+            float corr_ext = ok_ext ? e_ext.value : 0.f;
+            float corr_comp = ok_comp ? e_comp.value : 0.f;
+            if(ok_ext) {
+                float w = 1.f - q;
+                e.value += w * e_ext.value;
+                e.d_dr += w * e_ext.d_dr;
+                e.d_da1 += w * e_ext.d_da1;
+                e.d_da2 += w * e_ext.d_da2;
+            }
+            if(ok_comp) {
+                e.value += q * e_comp.value;
+                e.d_dr += q * e_comp.d_dr;
+                e.d_da1 += q * e_comp.d_da1;
+                e.d_da2 += q * e_comp.d_da2;
+            }
+            q_ctrl_sens = corr_comp - corr_ext;
+        }
         if(log1p_reduced_transform)
+        {
+            float taper = 1.f;
+            float d_taper_dr = 0.f;
+            compute_cutoff_taper(norm_dr(dr), cutoff, taper_width, taper, d_taper_dr);
+            float control_scale = boltzmann_temperature * expf(e.value) * taper;
+            q_ctrl_sens *= control_scale;
             apply_log1p_reduced_transform(
                     e, reference_energy_eup[t1 * n_type2 + t2],
                     boltzmann_temperature, dr, cutoff, taper_width);
+        }
 
         float dpos1[3] = {0.f, 0.f, 0.f};
         float ddir1[3] = {0.f, 0.f, 0.f};
@@ -1654,13 +3581,31 @@ void CGLipidSCPotential::propagate_deriv() {
         accumulate_deriv(dr, n1, n2, e, dpos1, ddir1, dpos2, ddir2);
         add_vec6_sens(sc_sens, index1[ai], dpos1, ddir1);
         add_vec6_sens(cg_sens, index2[bi], dpos2, ddir2);
+        if(has_compaction_correction)
+            implicit_q_sens[bi] += q_ctrl_sens;
     }
+    if(has_compaction_correction)
+        propagate_gap_response_compaction_sens(
+                cg,
+                cg_sens,
+                index2,
+                active_cg_pairs,
+                box_x,
+                box_y,
+                box_z,
+                implicit_field,
+                implicit_q_sens,
+                gap_response_radial_cutoff_ang,
+                gap_response_face_cos_min,
+                gap_response_smooth_weight);
 }
 
 struct CGLipidTargetPotential : public PotentialNode {
     CoordNode& cg_pos;
     CoordNode& tgt_pos;
     vector<float> interaction_param;
+    vector<float> delta_extended;
+    vector<float> delta_compact;
     vector<int> index1;
     vector<int> type1;
     vector<int> id1;
@@ -1684,6 +3629,15 @@ struct CGLipidTargetPotential : public PotentialNode {
     bool log1p_reduced_transform;
     float boltzmann_temperature;
     float minimum_boltzmann_weight;
+    bool has_compaction_correction;
+    bool implicit_compaction_gap_response;
+    int gap_response_n_knot;
+    float gap_response_coord_min_ang;
+    float gap_response_coord_spacing_ang;
+    float gap_response_radial_cutoff_ang;
+    float gap_response_face_cos_min;
+    float gap_response_fallback_ang;
+    bool gap_response_smooth_weight;
     float cache_buffer;
     CGLBodySupport body_support;
     float cached_box_x;
@@ -1693,6 +3647,8 @@ struct CGLipidTargetPotential : public PotentialNode {
     vector<float> cached_body1;
     vector<float> cached_pos2;
     vector<CGLPairIndex> active_pairs;
+    vector<CGLPairIndex> active_cg_pairs;
+    vector<float> gap_response_coeff;
 
     CGLipidTargetPotential(hid_t grp, CoordNode& cg_pos_, CoordNode& tgt_pos_);
     void ensure_pairlist(VecArray cg, VecArray tgt);
@@ -1713,6 +3669,8 @@ struct CGLipidSCOneBody : public CoordNode {
     CoordNode& sc_pos;
     CoordNode& cg_pos;
     vector<float> interaction_param;
+    vector<float> delta_extended;
+    vector<float> delta_compact;
     vector<int> row_type;
     vector<int> row_residue_index;
     vector<int> row_rotamer_index;
@@ -1735,6 +3693,15 @@ struct CGLipidSCOneBody : public CoordNode {
     float taper_width;
     bool log1p_reduced_transform;
     float boltzmann_temperature;
+    bool has_compaction_correction;
+    bool implicit_compaction_gap_response;
+    int gap_response_n_knot;
+    float gap_response_coord_min_ang;
+    float gap_response_coord_spacing_ang;
+    float gap_response_radial_cutoff_ang;
+    float gap_response_face_cos_min;
+    float gap_response_fallback_ang;
+    bool gap_response_smooth_weight;
     float cache_buffer;
     float cached_box_x;
     float cached_box_y;
@@ -1743,6 +3710,8 @@ struct CGLipidSCOneBody : public CoordNode {
     vector<float> cached_pos1;
     vector<float> cached_pos2;
     vector<CGLPairIndex> active_pairs;
+    vector<CGLPairIndex> active_cg_pairs;
+    vector<float> gap_response_coeff;
 
     CGLipidSCOneBody(hid_t grp, CoordNode& sc_pos_, CoordNode& cg_pos_)
         : CoordNode(sc_pos_.n_elem, 1)
@@ -1762,6 +3731,15 @@ struct CGLipidSCOneBody : public CoordNode {
         , taper_width(read_attribute<float>(grp, ".", "taper_width_ang", knot_spacing))
         , log1p_reduced_transform(read_attribute<int>(grp, ".", "log1p_reduced_transform", 0) != 0)
         , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
+        , has_compaction_correction(false)
+        , implicit_compaction_gap_response(read_attribute<int>(grp, ".", "implicit_compaction_gap_response", 0) != 0)
+        , gap_response_n_knot(read_attribute<int>(grp, ".", "gap_response_n_knot", 0))
+        , gap_response_coord_min_ang(read_attribute<float>(grp, ".", "gap_response_coord_min_ang", 0.f))
+        , gap_response_coord_spacing_ang(read_attribute<float>(grp, ".", "gap_response_coord_spacing_ang", 0.f))
+        , gap_response_radial_cutoff_ang(read_attribute<float>(grp, ".", "gap_response_radial_cutoff_ang", 0.f))
+        , gap_response_face_cos_min(read_attribute<float>(grp, ".", "gap_response_face_cos_min", 0.f))
+        , gap_response_fallback_ang(read_attribute<float>(grp, ".", "gap_response_fallback_ang", 0.f))
+        , gap_response_smooth_weight(read_attribute<int>(grp, ".", "gap_response_smooth_weight", 0) != 0)
         , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
         , cached_box_x(0.f)
         , cached_box_y(0.f)
@@ -1785,6 +3763,29 @@ struct CGLipidSCOneBody : public CoordNode {
         }
         if(log1p_reduced_transform && boltzmann_temperature <= 0.f)
             throw string("cg_lipid_rotamer_sc log1p-reduced transform requires positive temperature");
+        if(H5Lexists(pi, "delta_extended", H5P_DEFAULT) > 0
+                || H5Lexists(pi, "delta_compact", H5P_DEFAULT) > 0) {
+            if(!log1p_reduced_transform)
+                throw string("cg_lipid_rotamer_sc compaction correction requires log1p_reduced_transform");
+            delta_extended = read_named_param_dataset_any(pi, "delta_extended", n_type1, n_type2, n_param);
+            delta_compact = read_named_param_dataset_any(pi, "delta_compact", n_type1, n_type2, n_param);
+            has_compaction_correction = true;
+            if(H5Lexists(pi, "gap_response_coeff", H5P_DEFAULT) > 0) {
+                gap_response_coeff = read_float_dataset_1d(pi, "gap_response_coeff");
+                if(gap_response_n_knot <= 3)
+                    gap_response_n_knot = int(gap_response_coeff.size());
+                if(int(gap_response_coeff.size()) != gap_response_n_knot)
+                    throw string("cg_lipid_rotamer_sc gap_response_coeff size does not match gap_response_n_knot");
+            } else {
+                implicit_compaction_gap_response = false;
+            }
+            if(!implicit_compaction_gap_response)
+                throw string("cg_lipid_rotamer_sc compaction correction currently requires implicit gap response metadata");
+            if(gap_response_coord_spacing_ang <= 0.f || gap_response_radial_cutoff_ang <= 0.f)
+                throw string("cg_lipid_rotamer_sc gap response requires positive coordinate spacing and radial cutoff");
+            if(gap_response_fallback_ang <= 0.f)
+                gap_response_fallback_ang = gap_response_radial_cutoff_ang;
+        }
 
         row_type = read_int_dataset(pi, "type1");
         row_residue_index = read_int_dataset(pi, "row_residue_index");
@@ -1836,6 +3837,7 @@ struct CGLipidSCOneBody : public CoordNode {
             return;
 
         active_pairs.clear();
+        active_cg_pairs.clear();
         float pairlist_cutoff = cutoff + cache_buffer;
         float pairlist_cutoff2 = pairlist_cutoff * pairlist_cutoff;
         for(int ai = 0; ai < n_elem; ++ai) {
@@ -1849,6 +3851,19 @@ struct CGLipidSCOneBody : public CoordNode {
                 float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
                 if(r2 < pairlist_cutoff2)
                     active_pairs.push_back({size_t(ai), bi});
+            }
+        }
+        if(has_compaction_correction) {
+            float cg_cutoff = std::max(gap_response_radial_cutoff_ang, 0.f) + cache_buffer;
+            float cg_cutoff2 = cg_cutoff * cg_cutoff;
+            for(size_t ai = 0; ai < index2.size(); ++ai) {
+                for(size_t bi = ai + 1; bi < index2.size(); ++bi) {
+                    float dr[3];
+                    center_dr(cg, index2[ai], cg, index2[bi], box_x, box_y, box_z, dr);
+                    float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+                    if(r2 < cg_cutoff2)
+                        active_cg_pairs.push_back({ai, bi});
+                }
             }
         }
         cache_positions(sc, row_index, cached_pos1);
@@ -1865,6 +3880,24 @@ struct CGLipidSCOneBody : public CoordNode {
         VecArray sc = sc_pos.output;
         VecArray cg = cg_pos.output;
         ensure_pairlist(sc, cg);
+        ImplicitCompactionField implicit_field;
+        if(has_compaction_correction) {
+            implicit_field = build_gap_response_compaction_field(
+                    cg,
+                    index2,
+                    active_cg_pairs,
+                    box_x,
+                    box_y,
+                    box_z,
+                    gap_response_coeff,
+                    gap_response_n_knot,
+                    gap_response_coord_min_ang,
+                    gap_response_coord_spacing_ang,
+                    gap_response_radial_cutoff_ang,
+                    gap_response_face_cos_min,
+                    gap_response_fallback_ang,
+                    gap_response_smooth_weight);
+        }
 
         for(const CGLPairIndex& pair : active_pairs) {
             int ai = int(pair.first);
@@ -1883,6 +3916,34 @@ struct CGLipidSCOneBody : public CoordNode {
                     dr, n1, n2, knot_spacing, cutoff,
                     log1p_reduced_transform ? 0.f : taper_width, e);
             if(ok) {
+                if(has_compaction_correction) {
+                    QuadsplineEval e_ext = {0.f, 0.f, 0.f, 0.f};
+                    QuadsplineEval e_comp = {0.f, 0.f, 0.f, 0.f};
+                    bool ok_ext = eval_full_pair_tensor(
+                            param_ptr(delta_extended, n_type2, n_param, t1, t2),
+                            n_angular, n_radial,
+                            dr, n1, n2, knot_spacing, cutoff,
+                            log1p_reduced_transform ? 0.f : taper_width, e_ext);
+                    bool ok_comp = eval_full_pair_tensor(
+                            param_ptr(delta_compact, n_type2, n_param, t1, t2),
+                            n_angular, n_radial,
+                            dr, n1, n2, knot_spacing, cutoff,
+                            log1p_reduced_transform ? 0.f : taper_width, e_comp);
+                    float q = implicit_field.extended[bi];
+                    if(ok_ext) {
+                        float w = 1.f - q;
+                        e.value += w * e_ext.value;
+                        e.d_dr += w * e_ext.d_dr;
+                        e.d_da1 += w * e_ext.d_da1;
+                        e.d_da2 += w * e_ext.d_da2;
+                    }
+                    if(ok_comp) {
+                        e.value += q * e_comp.value;
+                        e.d_dr += q * e_comp.d_dr;
+                        e.d_da1 += q * e_comp.d_da1;
+                        e.d_da2 += q * e_comp.d_da2;
+                    }
+                }
                 if(log1p_reduced_transform)
                     apply_log1p_reduced_transform(
                             e, reference_energy_eup[t1 * n_type2 + t2],
@@ -1900,6 +3961,25 @@ struct CGLipidSCOneBody : public CoordNode {
         VecArray cg = cg_pos.output;
         VecArray cg_sens = cg_pos.sens;
         ensure_pairlist(sc, cg);
+        ImplicitCompactionField implicit_field;
+        vector<float> implicit_q_sens(index2.size(), 0.f);
+        if(has_compaction_correction) {
+            implicit_field = build_gap_response_compaction_field(
+                    cg,
+                    index2,
+                    active_cg_pairs,
+                    box_x,
+                    box_y,
+                    box_z,
+                    gap_response_coeff,
+                    gap_response_n_knot,
+                    gap_response_coord_min_ang,
+                    gap_response_coord_spacing_ang,
+                    gap_response_radial_cutoff_ang,
+                    gap_response_face_cos_min,
+                    gap_response_fallback_ang,
+                    gap_response_smooth_weight);
+        }
 
         for(const CGLPairIndex& pair : active_pairs) {
             int ai = int(pair.first);
@@ -1921,10 +4001,49 @@ struct CGLipidSCOneBody : public CoordNode {
                     dr, n1, n2, knot_spacing, cutoff,
                     log1p_reduced_transform ? 0.f : taper_width, e);
             if(!ok) continue;
+            float q_ctrl_sens = 0.f;
+            if(has_compaction_correction) {
+                QuadsplineEval e_ext = {0.f, 0.f, 0.f, 0.f};
+                QuadsplineEval e_comp = {0.f, 0.f, 0.f, 0.f};
+                bool ok_ext = eval_full_pair_tensor(
+                        param_ptr(delta_extended, n_type2, n_param, t1, t2),
+                        n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e_ext);
+                bool ok_comp = eval_full_pair_tensor(
+                        param_ptr(delta_compact, n_type2, n_param, t1, t2),
+                        n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e_comp);
+                float q = implicit_field.extended[bi];
+                float corr_ext = ok_ext ? e_ext.value : 0.f;
+                float corr_comp = ok_comp ? e_comp.value : 0.f;
+                if(ok_ext) {
+                    float w = 1.f - q;
+                    e.value += w * e_ext.value;
+                    e.d_dr += w * e_ext.d_dr;
+                    e.d_da1 += w * e_ext.d_da1;
+                    e.d_da2 += w * e_ext.d_da2;
+                }
+                if(ok_comp) {
+                    e.value += q * e_comp.value;
+                    e.d_dr += q * e_comp.d_dr;
+                    e.d_da1 += q * e_comp.d_da1;
+                    e.d_da2 += q * e_comp.d_da2;
+                }
+                q_ctrl_sens = corr_comp - corr_ext;
+            }
             if(log1p_reduced_transform)
+            {
+                float taper = 1.f;
+                float d_taper_dr = 0.f;
+                compute_cutoff_taper(norm_dr(dr), cutoff, taper_width, taper, d_taper_dr);
+                float control_scale = boltzmann_temperature * expf(e.value) * taper;
+                q_ctrl_sens *= control_scale;
                 apply_log1p_reduced_transform(
                         e, reference_energy_eup[t1 * n_type2 + t2],
                         boltzmann_temperature, dr, cutoff, taper_width);
+            }
 
             float dpos1[3] = {0.f, 0.f, 0.f};
             float ddir1[3] = {0.f, 0.f, 0.f};
@@ -1939,7 +4058,23 @@ struct CGLipidSCOneBody : public CoordNode {
             }
             add_vec6_sens(sc_sens, ai, dpos1, ddir1);
             add_vec6_sens(cg_sens, index2[bi], dpos2, ddir2);
+            if(has_compaction_correction)
+                implicit_q_sens[bi] += row_scale * q_ctrl_sens;
         }
+        if(has_compaction_correction)
+            propagate_gap_response_compaction_sens(
+                    cg,
+                    cg_sens,
+                    index2,
+                    active_cg_pairs,
+                    box_x,
+                    box_y,
+                    box_z,
+                    implicit_field,
+                    implicit_q_sens,
+                    gap_response_radial_cutoff_ang,
+                    gap_response_face_cos_min,
+                    gap_response_smooth_weight);
     }
 };
 
@@ -1966,6 +4101,15 @@ CGLipidTargetPotential::CGLipidTargetPotential(
         , boltzmann_temperature(read_attribute<float>(grp, ".", "boltzmann_temperature_upside", 0.f))
         , minimum_boltzmann_weight(read_attribute<float>(
                     grp, ".", "minimum_boltzmann_weight", numeric_limits<float>::min()))
+        , has_compaction_correction(false)
+        , implicit_compaction_gap_response(read_attribute<int>(grp, ".", "implicit_compaction_gap_response", 0) != 0)
+        , gap_response_n_knot(read_attribute<int>(grp, ".", "gap_response_n_knot", 0))
+        , gap_response_coord_min_ang(read_attribute<float>(grp, ".", "gap_response_coord_min_ang", 0.f))
+        , gap_response_coord_spacing_ang(read_attribute<float>(grp, ".", "gap_response_coord_spacing_ang", 0.f))
+        , gap_response_radial_cutoff_ang(read_attribute<float>(grp, ".", "gap_response_radial_cutoff_ang", 0.f))
+        , gap_response_face_cos_min(read_attribute<float>(grp, ".", "gap_response_face_cos_min", 0.f))
+        , gap_response_fallback_ang(read_attribute<float>(grp, ".", "gap_response_fallback_ang", 0.f))
+        , gap_response_smooth_weight(read_attribute<int>(grp, ".", "gap_response_smooth_weight", 0) != 0)
         , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
         , body_support(read_cgl_body_support(grp))
         , cached_box_x(0.f)
@@ -1994,6 +4138,29 @@ CGLipidTargetPotential::CGLipidTargetPotential(
         throw string("cg_lipid_target cannot enable both Boltzmann-weight and log1p-reduced transforms");
     if((boltzmann_weight_transform || log1p_reduced_transform) && boltzmann_temperature <= 0.f)
         throw string("cg_lipid_target transformed PMF requires positive temperature");
+    if(H5Lexists(pi, "delta_extended", H5P_DEFAULT) > 0
+            || H5Lexists(pi, "delta_compact", H5P_DEFAULT) > 0) {
+        if(!log1p_reduced_transform)
+            throw string("cg_lipid_target compaction correction requires log1p_reduced_transform");
+        delta_extended = read_named_param_dataset_any(pi, "delta_extended", n_type1, n_type2, n_param);
+        delta_compact = read_named_param_dataset_any(pi, "delta_compact", n_type1, n_type2, n_param);
+        has_compaction_correction = true;
+        if(H5Lexists(pi, "gap_response_coeff", H5P_DEFAULT) > 0) {
+            gap_response_coeff = read_float_dataset_1d(pi, "gap_response_coeff");
+            if(gap_response_n_knot <= 3)
+                gap_response_n_knot = int(gap_response_coeff.size());
+            if(int(gap_response_coeff.size()) != gap_response_n_knot)
+                throw string("cg_lipid_target gap_response_coeff size does not match gap_response_n_knot");
+        } else {
+            implicit_compaction_gap_response = false;
+        }
+        if(!implicit_compaction_gap_response)
+            throw string("cg_lipid_target compaction correction currently requires implicit gap response metadata");
+        if(gap_response_coord_spacing_ang <= 0.f || gap_response_radial_cutoff_ang <= 0.f)
+            throw string("cg_lipid_target gap response requires positive coordinate spacing and radial cutoff");
+        if(gap_response_fallback_ang <= 0.f)
+            gap_response_fallback_ang = gap_response_radial_cutoff_ang;
+    }
     minimum_boltzmann_weight = std::max(minimum_boltzmann_weight, numeric_limits<float>::min());
     index1 = read_int_dataset(pi, "index1");
     type1 = read_int_dataset(pi, "type1");
@@ -2017,6 +4184,7 @@ void CGLipidTargetPotential::ensure_pairlist(VecArray cg, VecArray tgt) {
         return;
 
     active_pairs.clear();
+    active_cg_pairs.clear();
     float pairlist_cutoff = cutoff + cache_buffer;
     float pairlist_cutoff2 = pairlist_cutoff * pairlist_cutoff;
     for(size_t ai = 0; ai < index1.size(); ++ai) {
@@ -2031,6 +4199,19 @@ void CGLipidTargetPotential::ensure_pairlist(VecArray cg, VecArray tgt) {
             if(cgl_target_pairlist_candidate(
                     cg, index1[ai], dr, body_support, cache_buffer, pairlist_cutoff2))
                 active_pairs.push_back({ai, bi});
+        }
+    }
+    if(has_compaction_correction) {
+        float cg_cutoff = std::max(gap_response_radial_cutoff_ang, 0.f) + cache_buffer;
+        float cg_cutoff2 = cg_cutoff * cg_cutoff;
+        for(size_t ai = 0; ai < index1.size(); ++ai) {
+            for(size_t bi = ai + 1; bi < index1.size(); ++bi) {
+                float dr[3];
+                center_dr(cg, index1[ai], cg, index1[bi], box_x, box_y, box_z, dr);
+                float r2 = dr[0] * dr[0] + dr[1] * dr[1] + dr[2] * dr[2];
+                if(r2 < cg_cutoff2)
+                    active_cg_pairs.push_back({ai, bi});
+            }
         }
     }
     cache_cgl_bodies(cg, index1, cached_body1);
@@ -2051,6 +4232,24 @@ void CGLipidTargetPotential::compute_value(ComputeMode mode) {
     VecArray tgt = tgt_pos.output;
     ensure_pairlist(cg, tgt);
     float total = 0.f;
+    ImplicitCompactionField implicit_field;
+    if(has_compaction_correction) {
+        implicit_field = build_gap_response_compaction_field(
+                cg,
+                index1,
+                active_cg_pairs,
+                box_x,
+                box_y,
+                box_z,
+                gap_response_coeff,
+                gap_response_n_knot,
+                gap_response_coord_min_ang,
+                gap_response_coord_spacing_ang,
+                gap_response_radial_cutoff_ang,
+                gap_response_face_cos_min,
+                gap_response_fallback_ang,
+                gap_response_smooth_weight);
+    }
 
     for(const CGLPairIndex& pair : active_pairs) {
         size_t ai = pair.first;
@@ -2068,6 +4267,30 @@ void CGLipidTargetPotential::compute_value(ComputeMode mode) {
             n_angular, n_radial, dr, n1, knot_spacing, cutoff,
             (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e))
         {
+            if(has_compaction_correction) {
+                TargetSplineEval e_ext = {0.f, 0.f, 0.f};
+                TargetSplineEval e_comp = {0.f, 0.f, 0.f};
+                bool ok_ext = eval_cg_target_tensor(
+                        param_ptr(delta_extended, n_type2, n_param, t1, t2),
+                        n_angular, n_radial, dr, n1, knot_spacing, cutoff,
+                        (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e_ext);
+                bool ok_comp = eval_cg_target_tensor(
+                        param_ptr(delta_compact, n_type2, n_param, t1, t2),
+                        n_angular, n_radial, dr, n1, knot_spacing, cutoff,
+                        (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e_comp);
+                float q = implicit_field.extended[ai];
+                if(ok_ext) {
+                    float w = 1.f - q;
+                    e.value += w * e_ext.value;
+                    e.d_dr += w * e_ext.d_dr;
+                    e.d_da += w * e_ext.d_da;
+                }
+                if(ok_comp) {
+                    e.value += q * e_comp.value;
+                    e.d_dr += q * e_comp.d_dr;
+                    e.d_da += q * e_comp.d_da;
+                }
+            }
             if(boltzmann_weight_transform) {
                 apply_boltzmann_weight_transform(
                         e, reference_energy_eup[t1 * n_type2 + t2],
@@ -2090,6 +4313,25 @@ void CGLipidTargetPotential::propagate_deriv() {
     VecArray tgt = tgt_pos.output;
     VecArray tgt_sens = tgt_pos.sens;
     ensure_pairlist(cg, tgt);
+    ImplicitCompactionField implicit_field;
+    vector<float> implicit_q_sens(index1.size(), 0.f);
+    if(has_compaction_correction) {
+        implicit_field = build_gap_response_compaction_field(
+                cg,
+                index1,
+                active_cg_pairs,
+                box_x,
+                box_y,
+                box_z,
+                gap_response_coeff,
+                gap_response_n_knot,
+                gap_response_coord_min_ang,
+                gap_response_coord_spacing_ang,
+                gap_response_radial_cutoff_ang,
+                gap_response_face_cos_min,
+                gap_response_fallback_ang,
+                gap_response_smooth_weight);
+    }
 
     for(const CGLPairIndex& pair : active_pairs) {
         size_t ai = pair.first;
@@ -2107,12 +4349,45 @@ void CGLipidTargetPotential::propagate_deriv() {
             n_angular, n_radial, dr, n1, knot_spacing, cutoff,
             (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e))
             continue;
+        float q_ctrl_sens = 0.f;
+        if(has_compaction_correction) {
+            TargetSplineEval e_ext = {0.f, 0.f, 0.f};
+            TargetSplineEval e_comp = {0.f, 0.f, 0.f};
+            bool ok_ext = eval_cg_target_tensor(
+                    param_ptr(delta_extended, n_type2, n_param, t1, t2),
+                    n_angular, n_radial, dr, n1, knot_spacing, cutoff,
+                    (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e_ext);
+            bool ok_comp = eval_cg_target_tensor(
+                    param_ptr(delta_compact, n_type2, n_param, t1, t2),
+                    n_angular, n_radial, dr, n1, knot_spacing, cutoff,
+                    (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e_comp);
+            float q = implicit_field.extended[ai];
+            float corr_ext = ok_ext ? e_ext.value : 0.f;
+            float corr_comp = ok_comp ? e_comp.value : 0.f;
+            if(ok_ext) {
+                float w = 1.f - q;
+                e.value += w * e_ext.value;
+                e.d_dr += w * e_ext.d_dr;
+                e.d_da += w * e_ext.d_da;
+            }
+            if(ok_comp) {
+                e.value += q * e_comp.value;
+                e.d_dr += q * e_comp.d_dr;
+                e.d_da += q * e_comp.d_da;
+            }
+            q_ctrl_sens = corr_comp - corr_ext;
+        }
         if(boltzmann_weight_transform) {
             apply_boltzmann_weight_transform(
                     e, reference_energy_eup[t1 * n_type2 + t2],
                     boltzmann_temperature, minimum_boltzmann_weight,
                     dr, cutoff, taper_width);
         } else if(log1p_reduced_transform) {
+            float taper = 1.f;
+            float d_taper_dr = 0.f;
+            compute_cutoff_taper(norm_dr(dr), cutoff, taper_width, taper, d_taper_dr);
+            float control_scale = boltzmann_temperature * expf(e.value) * taper;
+            q_ctrl_sens *= control_scale;
             apply_log1p_reduced_transform(
                     e, reference_energy_eup[t1 * n_type2 + t2],
                     boltzmann_temperature, dr, cutoff, taper_width);
@@ -2148,10 +4423,140 @@ void CGLipidTargetPotential::propagate_deriv() {
             tgt_sens(1, index2[bi]) += dpos[1];
             tgt_sens(2, index2[bi]) += dpos[2];
         }
+        if(has_compaction_correction)
+            implicit_q_sens[ai] += q_ctrl_sens;
     }
+    if(has_compaction_correction)
+        propagate_gap_response_compaction_sens(
+                cg,
+                cg_sens,
+                index1,
+                active_cg_pairs,
+                box_x,
+                box_y,
+                box_z,
+                implicit_field,
+                implicit_q_sens,
+                gap_response_radial_cutoff_ang,
+                gap_response_face_cos_min,
+                gap_response_smooth_weight);
 }
 
 namespace martini_cg_lipid {
+
+void register_dynamic_compaction_for_engine(DerivEngine* engine, hid_t config_root, uint32_t random_seed) {
+    if(!engine) return;
+    clear_dynamic_compaction_for_engine(engine);
+    int idx = engine->get_idx("cgl_compaction_state", false);
+    if(idx < 0) return;
+    auto* state = dynamic_cast<CGLCompactionState*>(engine->nodes[idx].computation.get());
+    if(!state) throw string("cgl_compaction_state node has unexpected type");
+    auto runtime = std::unique_ptr<CGLDynamicCompactionRuntime>(
+        new CGLDynamicCompactionRuntime(state, random_seed));
+
+    if(h5_exists(config_root, "/input/cgl_compaction_mom")) {
+        auto shape = get_dset_size(1, config_root, "/input/cgl_compaction_mom");
+        if(shape[0] != hsize_t(state->n_elem))
+            throw string("/input/cgl_compaction_mom shape must be n_cgl");
+        traverse_dset<1, float>(config_root, "/input/cgl_compaction_mom",
+                [&](size_t i, float v) {
+            runtime->momentum(0, int(i)) = v;
+        });
+        runtime->hidden_state_initialized = true;
+        runtime->hidden_state_temperature = read_attribute<float>(
+            config_root, "/input/cgl_compaction_mom", "restart_temperature", -1.f);
+    }
+    compaction_runtime_map()[engine] = std::move(runtime);
+}
+
+void clear_dynamic_compaction_for_engine(DerivEngine* engine) {
+    compaction_runtime_map().erase(engine);
+}
+
+bool has_dynamic_compaction(DerivEngine* engine) {
+    return get_compaction_runtime(engine) != nullptr;
+}
+
+void set_dynamic_compaction_temperature(DerivEngine* engine, float temperature) {
+    auto* runtime = get_compaction_runtime(engine);
+    if(!runtime) return;
+    if(temperature > 0.f) {
+        if(runtime->hidden_state_initialized) {
+            float old_temperature = hidden_state_reference_temperature(runtime);
+            if(hidden_state_temperature_changed(old_temperature, temperature))
+                rescale_dynamic_compaction_hidden_state(runtime, old_temperature, temperature);
+            runtime->hidden_state_temperature = temperature;
+        }
+    }
+    runtime->temperature = temperature;
+    runtime->temperature_is_set = true;
+}
+
+void set_dynamic_compaction_thermostat_delta_t(DerivEngine* engine, float delta_t) {
+    auto* runtime = get_compaction_runtime(engine);
+    if(runtime) runtime->thermostat_delta_t = delta_t;
+}
+
+void apply_dynamic_compaction_thermostat(DerivEngine* engine) {
+    auto* runtime = get_compaction_runtime(engine);
+    if(!runtime || runtime->thermostat_delta_t <= 0.f) return;
+    auto* state = runtime->state;
+    float mom_scale = expf(-runtime->thermostat_delta_t / state->thermostat_timescale);
+    float noise_scale = sqrtf(
+        state->mass * runtime->temperature *
+        std::max(0.f, 1.f - mom_scale * mom_scale));
+    for(int i = 0; i < state->n_elem; ++i) {
+        RandomGenerator random(
+            runtime->random_seed,
+            CGL_COMPACTION_THERMOSTAT_RANDOM_STREAM,
+            uint32_t(i),
+            runtime->thermostat_invocations);
+        runtime->momentum(0, i) = runtime->momentum(0, i) * mom_scale
+            + noise_scale * random.normal().x();
+    }
+    if(!runtime->hidden_state_initialized && runtime->temperature > 0.f) {
+        runtime->hidden_state_initialized = true;
+        runtime->hidden_state_temperature = runtime->temperature;
+    }
+    runtime->thermostat_invocations++;
+}
+
+void integrate_dynamic_compaction(DerivEngine* engine, float dt) {
+    auto* runtime = get_compaction_runtime(engine);
+    if(!runtime) return;
+    auto* state = runtime->state;
+    for(int i = 0; i < state->n_elem; ++i) {
+        float p = runtime->momentum(0, i) - state->sens(0, i) * dt;
+        float c = state->output(0, i) + (p / state->mass) * dt;
+        if(c < state->coord_min) {
+            c = state->coord_min;
+            if(p < 0.f) p = 0.f;
+        } else if(c > state->coord_max) {
+            c = state->coord_max;
+            if(p > 0.f) p = 0.f;
+        }
+        state->output(0, i) = c;
+        runtime->momentum(0, i) = p;
+    }
+}
+
+void add_dynamic_compaction_loggers(DerivEngine* engine, H5Logger& logger, bool record_momentum) {
+    auto* runtime = get_compaction_runtime(engine);
+    if(!runtime) return;
+    auto* state = runtime->state;
+    logger.add_logger<float>("cgl_compaction", {1, state->n_elem}, [state](float* buffer) {
+        VecArray coord = state->output;
+        for(int i = 0; i < state->n_elem; ++i)
+            buffer[i] = coord(0, i);
+    });
+    if(record_momentum) {
+        logger.add_logger<float>("cgl_compaction_mom", {1, state->n_elem}, [runtime](float* buffer) {
+            VecArray mom = runtime->momentum;
+            for(int i = 0; i < runtime->state->n_elem; ++i)
+                buffer[i] = mom(0, i);
+        });
+    }
+}
 
 void register_dynamic_orientation_for_engine(DerivEngine* engine, hid_t config_root, uint32_t random_seed) {
     if(!engine) return;
@@ -2176,6 +4581,9 @@ void register_dynamic_orientation_for_engine(DerivEngine* engine, hid_t config_r
             float3 l = project_tangent(load_vec<3>(runtime->angular_momentum, i), n);
             store_vec(runtime->angular_momentum, i, l);
         }
+        runtime->hidden_state_initialized = true;
+        runtime->hidden_state_temperature = read_attribute<float>(
+            config_root, "/input/cgl_orientation_mom", "restart_temperature", -1.f);
     }
     orientation_runtime_map()[engine] = std::move(runtime);
 }
@@ -2190,7 +4598,17 @@ bool has_dynamic_orientation(DerivEngine* engine) {
 
 void set_dynamic_orientation_temperature(DerivEngine* engine, float temperature) {
     auto* runtime = get_orientation_runtime(engine);
-    if(runtime) runtime->temperature = temperature;
+    if(!runtime) return;
+    if(temperature > 0.f) {
+        if(runtime->hidden_state_initialized) {
+            float old_temperature = hidden_state_reference_temperature(runtime);
+            if(hidden_state_temperature_changed(old_temperature, temperature))
+                rescale_dynamic_orientation_hidden_state(runtime, old_temperature, temperature);
+            runtime->hidden_state_temperature = temperature;
+        }
+    }
+    runtime->temperature = temperature;
+    runtime->temperature_is_set = true;
 }
 
 void set_dynamic_orientation_thermostat_delta_t(DerivEngine* engine, float delta_t) {
@@ -2218,6 +4636,10 @@ void apply_dynamic_orientation_thermostat(DerivEngine* engine) {
         float3 kick = project_tangent(random.normal3(), n) * noise_scale;
         l = project_tangent(l * mom_scale + kick, n);
         store_vec(runtime->angular_momentum, i, l);
+    }
+    if(!runtime->hidden_state_initialized && runtime->temperature > 0.f) {
+        runtime->hidden_state_initialized = true;
+        runtime->hidden_state_temperature = runtime->temperature;
     }
     runtime->thermostat_invocations++;
 }
@@ -2272,6 +4694,9 @@ void register_cgl_gle_for_engine(DerivEngine* engine, hid_t config_root, uint32_
         throw string("/input/cgl_gle/atom_index must contain at least one CGL atom");
     vector<float> memory_tau;
     vector<float> coupling;
+    vector<float> temperature_grid;
+    TemperatureScaleTable coupling_scale;
+    TemperatureScaleTable memory_tau_scale;
     if(H5Lexists(grp, "memory_tau", H5P_DEFAULT) > 0) {
         memory_tau = read_float_dataset_1d(grp, "memory_tau");
     } else {
@@ -2288,9 +4713,39 @@ void register_cgl_gle_for_engine(DerivEngine* engine, hid_t config_root, uint32_
         if(memory_tau[m] <= 0.f || coupling[m] <= 0.f)
             throw string("/input/cgl_gle requires positive memory_tau and coupling values");
     }
+    bool have_temperature_grid = H5Lexists(grp, "temperature_grid", H5P_DEFAULT) > 0;
+    bool have_coupling_scale = H5Lexists(grp, "coupling_scale", H5P_DEFAULT) > 0;
+    bool have_memory_tau_scale = H5Lexists(grp, "memory_tau_scale", H5P_DEFAULT) > 0;
+    if(!have_temperature_grid && (have_coupling_scale || have_memory_tau_scale))
+        throw string("/input/cgl_gle temperature_grid is required when coupling_scale or memory_tau_scale is present");
+    if(have_temperature_grid) {
+        temperature_grid = read_float_dataset_1d(grp, "temperature_grid");
+        coupling_scale = have_coupling_scale
+            ? read_temperature_scale_table(grp, "coupling_scale", temperature_grid.size(), coupling.size())
+            : make_uniform_temperature_scale(temperature_grid.size(), 1.f);
+        memory_tau_scale = have_memory_tau_scale
+            ? read_temperature_scale_table(grp, "memory_tau_scale", temperature_grid.size(), memory_tau.size())
+            : make_uniform_temperature_scale(temperature_grid.size(), 1.f);
+        if(temperature_grid.size() < 2u)
+            throw string("/input/cgl_gle temperature_grid must have length at least 2");
+        for(size_t i = 0; i < temperature_grid.size(); ++i) {
+            if(temperature_grid[i] <= 0.f)
+                throw string("/input/cgl_gle temperature_grid, coupling_scale, and memory_tau_scale must contain positive values");
+            if(i && temperature_grid[i] <= temperature_grid[i-1])
+                throw string("/input/cgl_gle temperature_grid must be strictly increasing");
+        }
+        for(float scale : coupling_scale.value)
+            if(scale <= 0.f)
+                throw string("/input/cgl_gle temperature_grid, coupling_scale, and memory_tau_scale must contain positive values");
+        for(float scale : memory_tau_scale.value)
+            if(scale <= 0.f)
+                throw string("/input/cgl_gle temperature_grid, coupling_scale, and memory_tau_scale must contain positive values");
+    }
 
     auto runtime = std::unique_ptr<CGLGLERuntime>(
-        new CGLGLERuntime(atom_index, random_seed, memory_tau, coupling));
+        new CGLGLERuntime(
+            atom_index, random_seed, memory_tau, coupling, temperature_grid, coupling_scale, memory_tau_scale));
+    bool aux_momentum_nonzero = false;
     if(H5Lexists(grp, "aux_momentum", H5P_DEFAULT) > 0) {
         int n_mode = runtime->n_mode();
         if(n_mode == 1) {
@@ -2299,6 +4754,7 @@ void register_cgl_gle_for_engine(DerivEngine* engine, hid_t config_root, uint32_
                 throw string("/input/cgl_gle/aux_momentum shape must be n_cgl x 3 for single-mode GLE");
             traverse_dset<2, float>(grp, "aux_momentum", [&](size_t i, size_t d, float v) {
                 runtime->aux_momentum(int(d), runtime->aux_index(0, int(i))) = v;
+                aux_momentum_nonzero = aux_momentum_nonzero || fabsf(v) > 0.f;
             });
         } else {
             auto shape = get_dset_size(3, grp, "aux_momentum");
@@ -2306,7 +4762,14 @@ void register_cgl_gle_for_engine(DerivEngine* engine, hid_t config_root, uint32_
                 throw string("/input/cgl_gle/aux_momentum shape must be n_mode x n_cgl x 3 for multi-mode GLE");
             traverse_dset<3, float>(grp, "aux_momentum", [&](size_t m, size_t i, size_t d, float v) {
                 runtime->aux_momentum(int(d), runtime->aux_index(int(m), int(i))) = v;
+                aux_momentum_nonzero = aux_momentum_nonzero || fabsf(v) > 0.f;
             });
+        }
+        bool have_restart_attr = attribute_exists_local(grp, ".", "aux_momentum_restart_source");
+        if(have_restart_attr || aux_momentum_nonzero) {
+            runtime->hidden_state_initialized = true;
+            runtime->hidden_state_temperature = read_attribute<float>(
+                grp, ".", "aux_momentum_restart_temperature", -1.f);
         }
     }
     cgl_gle_runtime_map()[engine] = std::move(runtime);
@@ -2322,49 +4785,85 @@ bool has_cgl_gle(DerivEngine* engine) {
 
 void set_cgl_gle_temperature(DerivEngine* engine, float temperature) {
     auto* runtime = get_cgl_gle_runtime(engine);
-    if(runtime) runtime->temperature = temperature;
+    if(!runtime) return;
+    if(temperature > 0.f) {
+        if(runtime->hidden_state_initialized) {
+            float old_temperature = hidden_state_reference_temperature(runtime);
+            if(hidden_state_temperature_changed(old_temperature, temperature))
+                rescale_cgl_gle_hidden_state(runtime, old_temperature, temperature);
+            runtime->hidden_state_temperature = temperature;
+        }
+    }
+    runtime->temperature = temperature;
+    runtime->temperature_is_set = true;
+    update_cgl_gle_transport_for_temperature(runtime);
 }
 
 void set_cgl_gle_delta_t(DerivEngine* engine, float delta_t) {
     auto* runtime = get_cgl_gle_runtime(engine);
-    if(runtime) runtime->delta_t = delta_t;
+    if(!runtime) return;
+    runtime->delta_t = delta_t;
+    update_cgl_gle_linear_step(runtime);
 }
 
 void apply_cgl_gle_thermostat(DerivEngine* engine, VecArray mom) {
     auto* runtime = get_cgl_gle_runtime(engine);
-    if(!runtime || runtime->delta_t <= 0.f) return;
+    if(!runtime || runtime->delta_t <= 0.f || !runtime->linear_step_ready) return;
 
     bool have_masses = martini_masses::has_masses(engine);
+    int n_state = runtime->linear_step_dim();
+    vector<double> state(size_t(n_state), 0.0);
+    vector<double> noise(size_t(n_state), 0.0);
+    vector<double> updated(size_t(n_state), 0.0);
 
     for(size_t i = 0; i < runtime->atom_index.size(); ++i) {
         int atom = runtime->atom_index[i];
         if(atom < 0 || atom >= engine->pos->n_atom) continue;
         float mass = have_masses ? martini_masses::get_mass(engine, atom) : 1.f;
         float3 p = load_vec<3>(mom, atom);
-        float sqrt_mass = (mass > 0.f) ? sqrtf(mass) : 1.f;
-        for(int mode = 0; mode < runtime->n_mode(); ++mode) {
-            float angle = runtime->coupling[mode] * runtime->delta_t;
-            float c = cosf(angle);
-            float s = sinf(angle);
-            float ou_scale = expf(-runtime->delta_t / runtime->memory_tau[mode]);
-            float noise_scale = sqrtf(
-                runtime->temperature * std::max(0.f, 1.f - ou_scale * ou_scale)) * sqrt_mass;
-            uint32_t random_atom = uint32_t(atom) ^ (uint32_t(mode + 1) * 0x9e3779b9u);
-            RandomGenerator random(
-                runtime->random_seed,
-                CGL_GLE_THERMOSTAT_RANDOM_STREAM,
-                random_atom,
-                runtime->thermostat_invocations);
+        double noise_scale = sqrt(std::max(0.f, runtime->temperature) * std::max(mass, 0.f));
+        uint32_t random_atom = uint32_t(atom);
+        RandomGenerator random(
+            runtime->random_seed,
+            CGL_GLE_THERMOSTAT_RANDOM_STREAM,
+            random_atom,
+            runtime->thermostat_invocations);
 
-            int aux_idx = runtime->aux_index(mode, int(i));
-            float3 a = load_vec<3>(runtime->aux_momentum, aux_idx);
-            float3 p_rot = p * c - a * s;
-            float3 a_rot = p * s + a * c;
-            float3 a_next = a_rot * ou_scale + random.normal3() * noise_scale;
-            p = p_rot;
-            store_vec(runtime->aux_momentum, aux_idx, a_next);
+        float3 next_p = p;
+        for(int d = 0; d < 3; ++d) {
+            state[0] = p[d];
+            for(int mode = 0; mode < runtime->n_mode(); ++mode)
+                state[size_t(mode + 1)] = runtime->aux_momentum(d, runtime->aux_index(mode, int(i)));
+
+            int noise_pos = 0;
+            while(noise_pos < n_state) {
+                float4 z = random.normal();
+                noise[size_t(noise_pos++)] = z.x();
+                if(noise_pos < n_state) noise[size_t(noise_pos++)] = z.y();
+                if(noise_pos < n_state) noise[size_t(noise_pos++)] = z.z();
+                if(noise_pos < n_state) noise[size_t(noise_pos++)] = z.w();
+            }
+
+            for(int row = 0; row < n_state; ++row) {
+                double value = 0.0;
+                for(int col = 0; col < n_state; ++col)
+                    value += dense_square_at(runtime->linear_step_matrix, n_state, row, col) * state[size_t(col)];
+                double stochastic = 0.0;
+                for(int col = 0; col <= row; ++col)
+                    stochastic += dense_square_at(runtime->noise_cholesky_unit, n_state, row, col) * noise[size_t(col)];
+                updated[size_t(row)] = value + noise_scale * stochastic;
+            }
+
+            next_p[d] = float(updated[0]);
+            for(int mode = 0; mode < runtime->n_mode(); ++mode)
+                runtime->aux_momentum(d, runtime->aux_index(mode, int(i))) = float(updated[size_t(mode + 1)]);
         }
+        p = next_p;
         store_vec(mom, atom, p);
+    }
+    if(!runtime->hidden_state_initialized && runtime->temperature > 0.f) {
+        runtime->hidden_state_initialized = true;
+        runtime->hidden_state_temperature = runtime->temperature;
     }
     runtime->thermostat_invocations++;
 }
@@ -2386,10 +4885,14 @@ void add_cgl_gle_loggers(DerivEngine* engine, H5Logger& logger, bool record_aux)
 
 }  // namespace martini_cg_lipid
 
+static RegisterNodeType<CGLCompactionState, 0> _reg_cg_compaction("cgl_compaction_state");
 static RegisterNodeType<CGLOrientationState, 0> _reg_cg_orientation("cgl_orientation_state");
 static RegisterNodeType<ComposeVector6D, -1> _reg_cv("compose_vector6d");
-static RegisterNodeType<CGLipidPairPotential, 1> _reg_cg_pair("cg_lipid_pair");
+static RegisterNodeType<CGLipidCompactionSelfPotential, 1> _reg_cg_compaction_self("cg_lipid_compaction_self");
+static RegisterNodeType<CGLipidPairPotential, -1> _reg_cg_pair("cg_lipid_pair");
 static RegisterNodeType<CGLipidDensityPotential, 1> _reg_cg_density("cg_lipid_density");
+static RegisterNodeType<CGLipidContactEmbeddingPotential, 1> _reg_cg_contact_embedding("cg_lipid_contact_embedding");
+static RegisterNodeType<CGLipidGapEmbeddingPotential, 1> _reg_cg_gap_embedding("cg_lipid_gap_embedding");
 static RegisterNodeType<CGLipidSCPotential, 2> _reg_cg_sc("cg_lipid_sc");
 static RegisterNodeType<CGLipidSCOneBody, 2> _reg_cg_sc_1body("cg_lipid_rotamer_sc");
 static RegisterNodeType<CGLipidTargetPotential, 2> _reg_cg_target("cg_lipid_target");

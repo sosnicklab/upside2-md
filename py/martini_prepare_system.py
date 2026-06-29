@@ -579,8 +579,36 @@ def run_prepare_command(argv):
             )
 
     if args.stage:
-        run_stage_conversion(args, runtime_pdb)
-        summary["upside_input"] = str(Path(args.run_dir).expanduser().resolve() / "test.input.up")
+        with temporary_env(
+            {
+                "UPSIDE_HOME": os.environ.get("UPSIDE_HOME", str(REPO_ROOT)),
+                "UPSIDE_MARTINI_FF_DIR": os.environ.get(
+                    "UPSIDE_MARTINI_FF_DIR",
+                    str(REPO_ROOT / "parameters" / "dryMARTINI"),
+                ),
+                "UPSIDE_MARTINI_ENERGY_CONVERSION": os.environ.get(
+                    "UPSIDE_MARTINI_ENERGY_CONVERSION",
+                    str(DEFAULT_MARTINI_ENERGY_CONVERSION),
+                ),
+                "UPSIDE_MARTINI_LENGTH_CONVERSION": os.environ.get(
+                    "UPSIDE_MARTINI_LENGTH_CONVERSION",
+                    str(DEFAULT_MARTINI_LENGTH_CONVERSION),
+                ),
+            }
+        ):
+            run_stage_conversion(args, runtime_pdb)
+        target_file = Path(args.run_dir).expanduser().resolve() / "test.input.up"
+        if args.mode == "bilayer" and args.lipid_resolution != "full":
+            ff_dir = Path(
+                os.environ.get(
+                    "UPSIDE_MARTINI_FF_DIR",
+                    str(REPO_ROOT / "parameters" / "dryMARTINI"),
+                )
+            ).expanduser().resolve()
+            inject_particles_table(up_file=target_file, martini_h5=ff_dir / "particle.h5")
+            inject_cg_lipid_nodes(up_file=target_file, martini_h5=ff_dir / "dopc.h5")
+            apply_cgl_transport_metadata(args, target_file)
+        summary["upside_input"] = str(target_file)
 
     if args.summary_json:
         summary_path = Path(args.summary_json).expanduser().resolve()
@@ -657,6 +685,31 @@ def parse_positive_float_list(value, label):
     if not values or any(v <= 0.0 for v in values):
         raise ValueError(f"{label} must contain one or more positive numbers")
     return values
+
+
+def parse_optional_positive_float_list(value, label):
+    text = str(value).strip()
+    return parse_positive_float_list(text, label) if text else []
+
+
+def parse_optional_positive_float_table(value, label):
+    text = str(value).strip()
+    if not text:
+        return []
+    if ";" not in text:
+        return parse_positive_float_list(text, label)
+    rows = []
+    for row_text in text.split(";"):
+        row_text = row_text.strip()
+        if not row_text:
+            continue
+        rows.append(parse_positive_float_list(row_text, label))
+    if not rows:
+        return []
+    n_col = len(rows[0])
+    if any(len(row) != n_col for row in rows[1:]):
+        raise ValueError(f"{label} rows must all have the same length")
+    return rows
 
 
 def workflow_path(value, base=WORKFLOW_DIR):
@@ -1101,8 +1154,8 @@ def apply_cgl_transport_metadata(args, target_file: Path):
     lipid_res = getattr(args, "lipid_resolution", "coarse")
     if lipid_res == "full":
         return
-    mass_scale = float(getattr(args, "cg_lipid_mass_scale", 1.0))
-    replace_markovian = bool(int(getattr(args, "cgl_gle_replace_markovian", 0)))
+    mass_scale = float(getattr(args, "cg_lipid_mass_scale", env_float("CG_LIPID_MASS_SCALE", 1.0)))
+    replace_markovian = bool(int(getattr(args, "cgl_gle_replace_markovian", env_int("CGL_GLE_REPLACE_MARKOVIAN", 0))))
     if mass_scale <= 0.0:
         raise ValueError("cg_lipid_mass_scale must be positive")
 
@@ -1129,8 +1182,8 @@ def apply_cgl_transport_metadata(args, target_file: Path):
         del h5["/input/mass"]
         h5.create_dataset("/input/mass", data=mass)
 
-        global_tau = float(args.thermostat_timescale)
-        cgl_tau = float(getattr(args, "cg_lipid_thermostat_timescale", 0.0))
+        global_tau = float(getattr(args, "thermostat_timescale", env_float("THERMOSTAT_TIMESCALE", 5.0)))
+        cgl_tau = float(getattr(args, "cg_lipid_thermostat_timescale", env_float("CG_LIPID_THERMOSTAT_TIMESCALE", 0.0)))
         if cgl_tau <= 0.0:
             cgl_tau = global_tau
         tau = (
@@ -1151,13 +1204,55 @@ def apply_cgl_transport_metadata(args, target_file: Path):
 
         if "/input/cgl_gle" in h5:
             del h5["/input/cgl_gle"]
-        memory_text = getattr(args, "cgl_gle_memory_taus", "") or str(getattr(args, "cgl_gle_memory_tau", 1.0))
-        coupling_text = getattr(args, "cgl_gle_couplings", "") or str(getattr(args, "cgl_gle_coupling", 1.0))
+        memory_text = getattr(args, "cgl_gle_memory_taus", env_default("CGL_GLE_MEMORY_TAUS", "")) or str(
+            getattr(args, "cgl_gle_memory_tau", env_float("CGL_GLE_MEMORY_TAU", 1.0))
+        )
+        coupling_text = getattr(args, "cgl_gle_couplings", env_default("CGL_GLE_COUPLINGS", "")) or str(
+            getattr(args, "cgl_gle_coupling", env_float("CGL_GLE_COUPLING", 1.0))
+        )
         memory_tau = parse_positive_float_list(memory_text, "CGL GLE memory tau")
         coupling = parse_positive_float_list(coupling_text, "CGL GLE coupling")
         if len(memory_tau) != len(coupling):
             raise ValueError("CGL GLE memory tau and coupling lists must have the same length")
+        temperature_grid = parse_optional_positive_float_list(
+            getattr(args, "cgl_gle_temperature_grid", env_default("CGL_GLE_TEMPERATURE_GRID", "")),
+            "CGL GLE temperature grid",
+        )
+        coupling_scale = parse_optional_positive_float_table(
+            getattr(args, "cgl_gle_coupling_scales", env_default("CGL_GLE_COUPLING_SCALES", "")),
+            "CGL GLE coupling scale",
+        )
+        memory_tau_scale = parse_optional_positive_float_table(
+            getattr(args, "cgl_gle_memory_tau_scales", env_default("CGL_GLE_MEMORY_TAU_SCALES", "")),
+            "CGL GLE memory tau scale",
+        )
+        if not temperature_grid and (coupling_scale or memory_tau_scale):
+            raise ValueError("CGL GLE temperature grid is required when temperature-dependent GLE scales are provided")
+        if temperature_grid:
+            if len(temperature_grid) < 2:
+                raise ValueError("CGL GLE temperature grid requires at least two temperatures")
+            if any(t2 <= t1 for t1, t2 in zip(temperature_grid, temperature_grid[1:])):
+                raise ValueError("CGL GLE temperature grid must be strictly increasing")
+            if not coupling_scale:
+                coupling_scale = [1.0] * len(temperature_grid)
+            if not memory_tau_scale:
+                memory_tau_scale = [1.0] * len(temperature_grid)
+            def normalize_temperature_scale(scale, scale_name):
+                if scale and isinstance(scale[0], (list, tuple)):
+                    if len(scale) != len(temperature_grid):
+                        raise ValueError(f"CGL GLE temperature grid and {scale_name} rows must have the same length")
+                    if any(len(row) != n_mode for row in scale):
+                        raise ValueError(f"CGL GLE {scale_name} rows must each have length n_mode={n_mode}")
+                    return np.asarray(scale, dtype=np.float32)
+                if len(scale) != len(temperature_grid):
+                    raise ValueError(f"CGL GLE temperature grid and {scale_name} must have the same length")
+                return np.asarray(scale, dtype=np.float32)
         n_mode = len(memory_tau)
+        coupling_scale_array = None
+        memory_tau_scale_array = None
+        if temperature_grid:
+            coupling_scale_array = normalize_temperature_scale(coupling_scale, "coupling scales")
+            memory_tau_scale_array = normalize_temperature_scale(memory_tau_scale, "memory tau scales")
         cgl_indices = np.where(cgl_mask)[0].astype(np.int32)
         gle = h5.create_group("/input/cgl_gle")
         gle.attrs["schema"] = "cgl_exponential_memory_gle"
@@ -1175,7 +1270,13 @@ def apply_cgl_transport_metadata(args, target_file: Path):
         )
         gle.attrs["conservative_forcefield_changed"] = np.int8(0)
         gle.attrs["one_particle_cgl_preserved"] = np.int8(1)
+        gle.attrs["temperature_scaled_coupling"] = np.int8(1 if temperature_grid else 0)
+        gle.attrs["temperature_scaled_memory_tau"] = np.int8(1 if temperature_grid else 0)
         gle.create_dataset("atom_index", data=cgl_indices)
+        if temperature_grid:
+            gle.create_dataset("temperature_grid", data=np.asarray(temperature_grid, dtype=np.float32))
+            gle.create_dataset("coupling_scale", data=coupling_scale_array)
+            gle.create_dataset("memory_tau_scale", data=memory_tau_scale_array)
         if n_mode > 1:
             gle.create_dataset("memory_tau", data=np.asarray(memory_tau, dtype=np.float32))
             gle.create_dataset("coupling", data=np.asarray(coupling, dtype=np.float32))
@@ -1300,6 +1401,43 @@ def promote_cgl_gle_aux_momentum(h5):
         del gle["aux_momentum"]
     gle.create_dataset("aux_momentum", data=last_aux)
     gle.attrs["aux_momentum_restart_source"] = "output/cgl_gle_aux_momentum[-1]"
+    restart_temperature = read_last_output_temperature(h5)
+    if restart_temperature is not None:
+        gle.attrs["aux_momentum_restart_temperature"] = np.float32(restart_temperature)
+
+
+def read_last_output_temperature(h5):
+    if "/output/temperature" not in h5 or h5["/output/temperature"].shape[0] == 0:
+        return None
+    last_temperature = np.asarray(h5["/output/temperature"][-1], dtype=np.float32).reshape(-1)
+    if last_temperature.size == 0:
+        return None
+    return float(last_temperature[0])
+
+
+def promote_cgl_compaction_state(h5):
+    compaction_in_path = "/input/potential/cgl_compaction_state"
+    if compaction_in_path not in h5:
+        return
+
+    compaction_grp = h5[compaction_in_path]
+    restart_temperature = read_last_output_temperature(h5)
+
+    if "/output/cgl_compaction" in h5 and h5["/output/cgl_compaction"].shape[0] > 0:
+        last_value = np.asarray(h5["/output/cgl_compaction"][-1, 0, :], dtype=np.float32)
+        if "value" in compaction_grp:
+            del compaction_grp["value"]
+        compaction_grp.create_dataset("value", data=last_value)
+        compaction_grp.attrs["value_restart_source"] = "output/cgl_compaction[-1]"
+
+    if "/output/cgl_compaction_mom" in h5 and h5["/output/cgl_compaction_mom"].shape[0] > 0:
+        last_mom = np.asarray(h5["/output/cgl_compaction_mom"][-1, 0, :], dtype=np.float32)
+        if "/input/cgl_compaction_mom" in h5:
+            del h5["/input/cgl_compaction_mom"]
+        mom = h5.create_dataset("/input/cgl_compaction_mom", data=last_mom)
+        mom.attrs["restart_source"] = "output/cgl_compaction_mom[-1]"
+        if restart_temperature is not None:
+            mom.attrs["restart_temperature"] = np.float32(restart_temperature)
 
 
 def promote_cgl_orientation_state(h5):
@@ -1308,6 +1446,7 @@ def promote_cgl_orientation_state(h5):
         return
 
     orient_grp = h5[orient_in_path]
+    restart_temperature = read_last_output_temperature(h5)
     if "/output/cgl_orientation" in h5 and h5["/output/cgl_orientation"].shape[0] > 0:
         last_direction = np.asarray(h5["/output/cgl_orientation"][-1, 0, :, :], dtype=np.float32)
         if "direction" in orient_grp:
@@ -1319,11 +1458,14 @@ def promote_cgl_orientation_state(h5):
         last_mom = np.asarray(h5["/output/cgl_orientation_mom"][-1, 0, :, :], dtype=np.float32)
         if "/input/cgl_orientation_mom" in h5:
             del h5["/input/cgl_orientation_mom"]
-        h5.create_dataset("/input/cgl_orientation_mom", data=last_mom)
-        h5["/input/cgl_orientation_mom"].attrs["restart_source"] = "output/cgl_orientation_mom[-1]"
+        mom = h5.create_dataset("/input/cgl_orientation_mom", data=last_mom)
+        mom.attrs["restart_source"] = "output/cgl_orientation_mom[-1]"
+        if restart_temperature is not None:
+            mom.attrs["restart_temperature"] = np.float32(restart_temperature)
 
 
 def promote_cgl_restart_state(h5):
+    promote_cgl_compaction_state(h5)
     promote_cgl_gle_aux_momentum(h5)
     promote_cgl_orientation_state(h5)
 
@@ -1806,6 +1948,9 @@ def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--cgl-gle-coupling", type=float, default=env_float("CGL_GLE_COUPLING", 1.0))
     parser.add_argument("--cgl-gle-memory-taus", default=env_default("CGL_GLE_MEMORY_TAUS", ""))
     parser.add_argument("--cgl-gle-couplings", default=env_default("CGL_GLE_COUPLINGS", ""))
+    parser.add_argument("--cgl-gle-temperature-grid", default=env_default("CGL_GLE_TEMPERATURE_GRID", ""))
+    parser.add_argument("--cgl-gle-coupling-scales", default=env_default("CGL_GLE_COUPLING_SCALES", ""))
+    parser.add_argument("--cgl-gle-memory-tau-scales", default=env_default("CGL_GLE_MEMORY_TAU_SCALES", ""))
     parser.add_argument(
         "--cgl-gle-replace-markovian",
         type=int,

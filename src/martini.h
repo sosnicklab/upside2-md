@@ -55,6 +55,14 @@ bool has_masses(DerivEngine* engine);
 }
 
 namespace martini_cg_lipid {
+void register_dynamic_compaction_for_engine(DerivEngine* engine, hid_t config_root, uint32_t random_seed);
+void clear_dynamic_compaction_for_engine(DerivEngine* engine);
+bool has_dynamic_compaction(DerivEngine* engine);
+void set_dynamic_compaction_temperature(DerivEngine* engine, float temperature);
+void set_dynamic_compaction_thermostat_delta_t(DerivEngine* engine, float delta_t);
+void apply_dynamic_compaction_thermostat(DerivEngine* engine);
+void integrate_dynamic_compaction(DerivEngine* engine, float dt);
+void add_dynamic_compaction_loggers(DerivEngine* engine, H5Logger& logger, bool record_momentum);
 void register_dynamic_orientation_for_engine(DerivEngine* engine, hid_t config_root, uint32_t random_seed);
 void clear_dynamic_orientation_for_engine(DerivEngine* engine);
 bool has_dynamic_orientation(DerivEngine* engine);

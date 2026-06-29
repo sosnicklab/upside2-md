@@ -28,3 +28,4 @@ source.sh
 .venv/
 .claude/scheduled_tasks.lock
 parameters/dryMARTINI/*.h5
+*.pdf

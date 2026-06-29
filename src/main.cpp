@@ -207,6 +207,7 @@ static inline bool is_sc_env_interface_term_name(const std::string& name) {
 
 static inline bool is_cg_lipid_term_name(const std::string& name) {
     return is_prefix("cg_lipid_pair", name) ||
+           is_prefix("cg_lipid_compaction_self", name) ||
            is_prefix("cg_lipid_density", name) ||
            is_prefix("cg_lipid_sc", name) ||
            is_prefix("cg_lipid_target", name);
@@ -932,6 +933,8 @@ try {
             martini_stage_params::register_stage_params_for_engine(&sys->engine, sys->config.get());
             // Register hybrid MARTINI/Upside metadata for this engine (read from H5)
             martini_hybrid::register_hybrid_for_engine(sys->config.get(), sys->engine);
+            martini_cg_lipid::register_dynamic_compaction_for_engine(
+                    &sys->engine, sys->config.get(), sys->random_seed);
             martini_cg_lipid::register_dynamic_orientation_for_engine(
                     &sys->engine, sys->config.get(), sys->random_seed);
             martini_cg_lipid::register_cgl_gle_for_engine(
@@ -976,6 +979,9 @@ try {
             sys->set_temperature(sys->initial_temperature);
             sys->thermostat.set_delta_t(thermostat_interval*inner_step*dt);  // set true thermostat interval  //  FIXME inner_step
             sys->thermostat.set_atom_timescale(read_atom_thermostat_timescales(sys->config.get(), sys->n_atom));
+            martini_cg_lipid::set_dynamic_compaction_temperature(&sys->engine, sys->temperature);
+            martini_cg_lipid::set_dynamic_compaction_thermostat_delta_t(
+                    &sys->engine, thermostat_interval*inner_step*dt);
             martini_cg_lipid::set_dynamic_orientation_temperature(&sys->engine, sys->temperature);
             martini_cg_lipid::set_dynamic_orientation_thermostat_delta_t(
                     &sys->engine, thermostat_interval*inner_step*dt);
@@ -1003,6 +1009,7 @@ try {
             else {
                 for(int d: range(3)) for(int na: range(sys->n_atom)) sys->mom(d,na) = 0.f;
                 sys->thermostat.apply(sys->mom, sys->n_atom, &sys->engine); // initial thermalization if it's a fresh start
+                martini_cg_lipid::apply_dynamic_compaction_thermostat(&sys->engine);
                 martini_cg_lipid::apply_dynamic_orientation_thermostat(&sys->engine);
                 martini_cg_lipid::apply_cgl_gle_thermostat(&sys->engine, sys->mom);
             }
@@ -1029,6 +1036,8 @@ try {
                         });
                 
             }
+            martini_cg_lipid::add_dynamic_compaction_loggers(
+                    &sys->engine, *sys->logger, record_momentum_arg.getValue());
             martini_cg_lipid::add_dynamic_orientation_loggers(
                     &sys->engine, *sys->logger, record_momentum_arg.getValue());
             martini_cg_lipid::add_cgl_gle_loggers(
@@ -1250,9 +1259,11 @@ try {
                         // Handle simulated annealing if applicable
                         if(anneal_factor != 1.)
                             sys.set_temperature(anneal_temp(sys.initial_temperature, inner_step*dt*(sys.round_num+1)));
+                        martini_cg_lipid::set_dynamic_compaction_temperature(&sys.engine, sys.temperature);
                         martini_cg_lipid::set_dynamic_orientation_temperature(&sys.engine, sys.temperature);
                         martini_cg_lipid::set_cgl_gle_temperature(&sys.engine, sys.temperature);
                         sys.thermostat.apply(sys.mom, sys.n_atom, &sys.engine);
+                        martini_cg_lipid::apply_dynamic_compaction_thermostat(&sys.engine);
                         martini_cg_lipid::apply_dynamic_orientation_thermostat(&sys.engine);
                         martini_cg_lipid::apply_cgl_gle_thermostat(&sys.engine, sys.mom);
                     }
@@ -1315,6 +1326,7 @@ try {
         if(passed_time_lim) {fprintf(stderr, "Passed time limit\n");}
         for(auto& sys: systems) {
             sys.logger = shared_ptr<H5Logger>(); // release shared_ptr, which also flushes data during destructor
+            martini_cg_lipid::clear_dynamic_compaction_for_engine(&sys.engine);
             martini_cg_lipid::clear_dynamic_orientation_for_engine(&sys.engine);
         }
 

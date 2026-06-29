@@ -52,8 +52,12 @@ if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
     export EXPLICIT_IONS="${EXPLICIT_IONS:-1}"
     export CG_LIPID_MASS_SCALE="${CG_LIPID_MASS_SCALE:-0.012}"
     export CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE="${CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE:-0.008}"
+    export UPSIDE_CGL_COMPACTION_IMPLICIT_RESPONSE="${UPSIDE_CGL_COMPACTION_IMPLICIT_RESPONSE:-1}"
     export CGL_GLE_MEMORY_TAUS="${CGL_GLE_MEMORY_TAUS:-0.2,2.0}"
     export CGL_GLE_COUPLINGS="${CGL_GLE_COUPLINGS:-0.30375,0.2205}"
+    export CGL_GLE_TEMPERATURE_GRID="${CGL_GLE_TEMPERATURE_GRID:-0.7,0.8,0.8647,0.9,1.0,1.1,1.2}"
+    export CGL_GLE_COUPLING_SCALES="${CGL_GLE_COUPLING_SCALES:-1,1;1,1;1,1;1.013,1.057;1.05,1.22;1.20,1.39;1.50,1.50}"
+    export CGL_GLE_MEMORY_TAU_SCALES="${CGL_GLE_MEMORY_TAU_SCALES:-0.33,0.33;0.50,0.50;1,1;0.85,0.95;1.10,1.33;1.35,1.58;1.70,1.70}"
     export CGL_GLE_REPLACE_MARKOVIAN="${CGL_GLE_REPLACE_MARKOVIAN:-1}"
     export PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-1}"
     export CGL_VTF_DISPLAY_MODE="${CGL_VTF_DISPLAY_MODE:-rod}"
@@ -64,6 +68,13 @@ if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
         --cgl-gle-couplings "${CGL_GLE_COUPLINGS}"
         --cgl-gle-replace-markovian "${CGL_GLE_REPLACE_MARKOVIAN}"
     )
+    if [ -n "${CGL_GLE_TEMPERATURE_GRID}" ] || [ -n "${CGL_GLE_COUPLING_SCALES}" ] || [ -n "${CGL_GLE_MEMORY_TAU_SCALES}" ]; then
+        coarse_hybrid_args+=(
+            --cgl-gle-temperature-grid "${CGL_GLE_TEMPERATURE_GRID}"
+            --cgl-gle-coupling-scales "${CGL_GLE_COUPLING_SCALES}"
+            --cgl-gle-memory-tau-scales "${CGL_GLE_MEMORY_TAU_SCALES}"
+        )
+    fi
 fi
 
 if [ "${LIPID_RESOLUTION}" = "full" ]; then

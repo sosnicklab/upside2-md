@@ -177,6 +177,7 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
                 "force-field-derived table values."
             )
     pair_grp = cglt.get("cg_lipid_pair")
+    compaction_grp = cglt.get("cg_lipid_compaction")
     if pair_grp is not None:
         core_source = _decode_h5_attr(pair_grp.attrs.get("unresolved_core_source", ""))
         azimuthal_average = _decode_h5_attr(pair_grp.attrs.get("azimuthal_average", ""))
@@ -195,8 +196,9 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
         ibi_enabled = int(pair_grp.attrs.get("ibi_enabled", 0))
         fluid_pmf_pair_sample_count = int(pair_grp.attrs.get("fluid_pmf_pair_sample_count", 0))
         has_removed_caps = "energy_cap_kj_mol" in pair_grp.attrs
+        has_source_compaction = correction_layer == "source_derived_compaction_state"
         has_bilayer_training = (
-            correction_layer != "none"
+            correction_layer not in ("none", "source_derived_compaction_state")
             or force_match_enabled != 0
             or ibi_enabled != 0
             or fluid_pmf_pair_sample_count != 0
@@ -231,6 +233,7 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
             or excluded_area_source != "none_full_resolved_dry_martini_pair_table"
             or excluded_area_nonnegative_rows != 0
             or has_removed_caps
+            or (has_source_compaction and compaction_grp is None)
             or has_bilayer_training
         ):
             raise RuntimeError(
@@ -240,6 +243,31 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
                 "PMF/force-match/IBI correction metadata. Rebuild martini.h5 so CGL-CGL "
                 "interactions are represented by the transferable dry-MARTINI constituent "
                 "force-field projection rather than a bilayer-specific correction."
+            )
+    if compaction_grp is not None:
+        required_dsets = (
+            "self_coeff",
+            "delta_extended_extended",
+            "delta_extended_compact",
+            "delta_compact_compact",
+        )
+        missing_dsets = [name for name in required_dsets if name not in compaction_grp]
+        if (
+            _decode_h5_attr(compaction_grp.attrs.get("schema", "")) != "cg_lipid_compaction_v1"
+            or float(compaction_grp.attrs.get("boltzmann_temperature_upside", 0.0)) <= 0.0
+            or float(compaction_grp.attrs.get("thermostat_timescale", 0.0)) <= 0.0
+            or float(compaction_grp.attrs.get("mass_up", 0.0)) <= 0.0
+            or float(compaction_grp.attrs.get("self_coord_spacing_ang", 0.0)) <= 0.0
+            or int(compaction_grp.attrs.get("self_n_knot", 0)) <= 3
+            or float(compaction_grp.attrs.get("compact_state_center_ang", 0.0))
+                == float(compaction_grp.attrs.get("extended_state_center_ang", 0.0))
+            or missing_dsets
+        ):
+            missing_text = ", ".join(missing_dsets)
+            raise RuntimeError(
+                f"Stale CG lipid compaction table in {source_path}: missing/invalid "
+                f"compaction-state metadata ({missing_text}). Rebuild martini.h5 so "
+                "the CGL compaction redesign is sourced from the isolated DOPC ensemble."
             )
     sc_grp = cglt.get("cg_lipid_sc")
     if sc_grp is not None:
@@ -598,6 +626,16 @@ def cgl_swept_bead_min_distance_ang(
     return float(math.sqrt(float(np.min(dist2))))
 
 
+def _dopc_tail_extension_from_beads_ang(bead_pos_ang: np.ndarray) -> float:
+    bead_pos = np.asarray(bead_pos_ang, dtype=np.float64)
+    head = bead_pos[0]
+    tail_mid = 0.5 * (bead_pos[8] + bead_pos[13])
+    extension = float(np.linalg.norm(tail_mid - head))
+    if extension <= 1.0e-12:
+        raise ValueError("Cannot derive DOPC axial extension from a zero head-tail axis")
+    return extension
+
+
 def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
                           atom_names, residue_names, chain_ids, seg_ids):
     """Coarse-grain 14-bead DOPC molecules into single 6D vector particles.
@@ -622,6 +660,8 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
     ref_bead_positions : (n_lipid, 14, 3)  -- bead positions relative to COM (A)
     display_head_offsets : (n_lipid,) float -- hydrophilic endpoint offset along direction (A)
     display_tail_offsets : (n_lipid,) float -- hydrophobic endpoint offset along direction (A)
+    initial_compaction_ang : (n_lipid,) float -- hidden axial-extension
+        coordinate stored under the legacy dataset name (A)
     """
     dopc_atom_names = _ensure_dopc_atom_names()
     n_atoms = len(initial_positions)
@@ -638,6 +678,7 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
                 np.empty(0, dtype=int),
                 [],
                 np.empty((0, 14, 3), dtype=float),
+                np.empty(0, dtype=float),
                 np.empty(0, dtype=float),
                 np.empty(0, dtype=float),
                 np.arange(n_a, dtype=int))
@@ -663,6 +704,7 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
     ref_bead_positions = np.zeros((n_lipid, 14, 3), dtype=float)
     display_head_offsets = np.zeros(n_lipid, dtype=float)
     display_tail_offsets = np.zeros(n_lipid, dtype=float)
+    initial_compaction_ang = np.zeros(n_lipid, dtype=float)
     cg_positions = np.zeros((n_lipid, 3), dtype=float)
 
     for li, group in enumerate(lipid_groups):
@@ -703,6 +745,7 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
         lipid_directions[li] = unit_direction
         display_head_offsets[li] = float(np.dot(head_pos - com, unit_direction))
         display_tail_offsets[li] = float(np.dot(tail_mid - com, unit_direction))
+        initial_compaction_ang[li] = _dopc_tail_extension_from_beads_ang(bead_pos)
 
     # Build new arrays: keep non-DOPC atoms, replace each DOPC group with 1 CG particle
     n_new = n_atoms - sum(len(g) for g in lipid_groups) + n_lipid
@@ -773,7 +816,7 @@ def build_cg_lipid_array(initial_positions, atom_types, charges, residue_ids,
             new_atom_names, new_residue_names, new_chain_ids, new_seg_ids,
             lipid_directions, cg_lipid_indices, lipid_to_atom_map, ref_bead_positions,
             display_head_offsets, display_tail_offsets,
-            old_to_new)
+            initial_compaction_ang, old_to_new)
 
 
 def infer_protein_charge_from_residues(protein_atoms):
@@ -1968,7 +2011,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
          atom_names, residue_names, chain_ids, seg_ids,
          lipid_directions, cg_lipid_indices, lipid_to_atom_map,
          ref_bead_positions, cg_lipid_display_head_offsets,
-         cg_lipid_display_tail_offsets, old_to_new_map) = build_cg_lipid_array(
+         cg_lipid_display_tail_offsets, cg_lipid_initial_compaction_ang,
+         old_to_new_map) = build_cg_lipid_array(
             initial_positions, atom_types, charges, residue_ids,
             atom_names, residue_names, chain_ids, seg_ids)
     else:
@@ -1980,6 +2024,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         ref_bead_positions = np.empty((0, len(dopc_bead_types), 3), dtype=float)
         cg_lipid_display_head_offsets = np.empty(0, dtype=float)
         cg_lipid_display_tail_offsets = np.empty(0, dtype=float)
+        cg_lipid_initial_compaction_ang = np.empty(0, dtype=float)
         old_to_new_map = np.arange(n_atoms, dtype=np.int32)
         print(f"Full-resolution mode: keeping all {n_lipid_mols} DOPC lipids "
               f"({n_lipid_atoms} beads) as individual particles")
@@ -3152,6 +3197,8 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                            obj=cg_lipid_display_head_offsets.astype('f4'))
             t.create_array(compose_grp, 'display_tail_offset_ang',
                            obj=cg_lipid_display_tail_offsets.astype('f4'))
+            t.create_array(compose_grp, 'initial_compaction_ang',
+                           obj=cg_lipid_initial_compaction_ang.astype('f4'))
             print(f"Injected compose_vector6d node: {n_cg_lipids} CG lipid 6D particles")
 
         if lipid_resolution == "coarse" and n_cg_lipids > 0:
@@ -3332,6 +3379,16 @@ def env_bool(name, default=False):
     return value not in ("0", "false", "no", "off", "")
 
 
+def env_float(name, default):
+    raw = os.getenv(name)
+    if raw is None:
+        return float(default)
+    value = str(raw).strip()
+    if not value:
+        return float(default)
+    return float(value)
+
+
 def recenter_protein_for_production(h5f, pos, box_lengths):
     if box_lengths is None:
         return pos
@@ -3411,6 +3468,28 @@ def set_initial_position(input_file, output_file):
         if "/output/mom" in f and f["/output/mom"].shape[0] > 0:
             last_mom = f["/output/mom"][-1, 0, :, :]
             last_mom = last_mom[:, :, np.newaxis]
+        last_cgl_compaction = None
+        if "/output/cgl_compaction" in f and f["/output/cgl_compaction"].shape[0] > 0:
+            last_cgl_compaction = np.asarray(
+                f["/output/cgl_compaction"][-1, 0, :],
+                dtype=np.float32,
+            )
+        elif "/input/potential/cgl_compaction_state/value" in f:
+            last_cgl_compaction = np.asarray(
+                f["/input/potential/cgl_compaction_state/value"][:],
+                dtype=np.float32,
+            )
+        last_cgl_compaction_mom = None
+        if "/output/cgl_compaction_mom" in f and f["/output/cgl_compaction_mom"].shape[0] > 0:
+            last_cgl_compaction_mom = np.asarray(
+                f["/output/cgl_compaction_mom"][-1, 0, :],
+                dtype=np.float32,
+            )
+        elif "/input/cgl_compaction_mom" in f:
+            last_cgl_compaction_mom = np.asarray(
+                f["/input/cgl_compaction_mom"][:],
+                dtype=np.float32,
+            )
 
         source_stage = ""
         if "/input/stage_parameters" in f:
@@ -3485,6 +3564,23 @@ def set_initial_position(input_file, output_file):
             mom_ds.attrs["restart_valid"] = np.int8(1)
         elif "/input/mom" in f:
             f["/input/mom"].attrs["restart_valid"] = np.int8(0)
+
+        if last_cgl_compaction is not None and "/input/potential/cgl_compaction_state/value" in f:
+            ds = f["/input/potential/cgl_compaction_state/value"]
+            target_compaction = np.asarray(ds[:], dtype=np.float32)
+            target_compaction[: min(target_compaction.size, last_cgl_compaction.size)] = (
+                last_cgl_compaction[: min(target_compaction.size, last_cgl_compaction.size)]
+            )
+            ds[...] = target_compaction.astype(ds.dtype, copy=False)
+        if last_cgl_compaction_mom is not None and "/input/potential/cgl_compaction_state/value" in f:
+            n_compaction = int(f["/input/potential/cgl_compaction_state/value"].shape[0])
+            target_mom = np.zeros((n_compaction,), dtype=np.float32)
+            target_mom[: min(n_compaction, last_cgl_compaction_mom.size)] = (
+                last_cgl_compaction_mom[: min(n_compaction, last_cgl_compaction_mom.size)]
+            )
+            if "/input/cgl_compaction_mom" in f:
+                del f["/input/cgl_compaction_mom"]
+            f.create_dataset("/input/cgl_compaction_mom", data=target_mom)
 
         if preserve_hybrid_transition and source_stage == "production" and "/input/hybrid_control" in f:
             transition_step = source_transition_start + source_elapsed_steps
@@ -4048,7 +4144,10 @@ def inject_cg_lipid_nodes(
         cg_tab = mh5["cg_lipid_table"]
 
         has_pair = "cg_lipid_pair" in cg_tab
+        has_compaction = "cg_lipid_compaction" in cg_tab
         has_density = "cg_lipid_density" in cg_tab
+        has_contact_embedding = "cg_lipid_contact_embedding" in cg_tab
+        has_gap_embedding = "cg_lipid_gap_embedding" in cg_tab
         has_sc = "cg_lipid_sc" in cg_tab
 
     with h5py.File(up_file, "r+") as up:
@@ -4076,18 +4175,166 @@ def inject_cg_lipid_nodes(
                 mh5["cg_lipid_table"],
                 martini_h5,
             )
+        if has_compaction and "initial_compaction_ang" not in pot["compose_vector6d"]:
+            raise SystemExit(
+                "ERROR: compose_vector6d lacks initial_compaction_ang. "
+                "Regenerate the coarse stage file before injecting the compaction-aware CGL tables."
+            )
         for existing_node in list(pot.keys()):
-            if existing_node.startswith("cg_lipid_"):
+            if existing_node.startswith("cg_lipid_") or existing_node == "cgl_compaction_state":
                 del pot[existing_node]
 
         with h5py.File(martini_h5, "r") as mh5:
+            implicit_mean_field = has_compaction and env_bool(
+                "UPSIDE_CGL_COMPACTION_MEAN_FIELD_RESPONSE",
+                False,
+            )
+            implicit_compaction = (not implicit_mean_field) and has_compaction and env_bool(
+                "UPSIDE_CGL_COMPACTION_IMPLICIT_RESPONSE",
+                False,
+            )
+            comp_grp = mh5["cg_lipid_table/cg_lipid_compaction"] if has_compaction else None
+
+            def copy_single_cgl_compaction(node, pair_interaction, table_grp):
+                if (
+                    comp_grp is None
+                    or not implicit_compaction
+                    or "gap_response_coeff" not in comp_grp
+                    or "delta_extended" not in table_grp
+                    or "delta_compact" not in table_grp
+                ):
+                    return False
+                node.attrs["implicit_compaction_response"] = np.int32(1)
+                node.attrs["implicit_compaction_gap_response"] = np.int32(1)
+                for attr_name in (
+                    "compact_state_center_ang",
+                    "extended_state_center_ang",
+                    "compact_state_probability",
+                ):
+                    if attr_name in table_grp.attrs:
+                        node.attrs[attr_name] = np.float32(table_grp.attrs[attr_name])
+                    elif attr_name in comp_grp.attrs:
+                        node.attrs[attr_name] = np.float32(comp_grp.attrs[attr_name])
+                for attr_name in (
+                    "gap_response_coord_min_ang",
+                    "gap_response_coord_spacing_ang",
+                    "gap_response_n_knot",
+                    "gap_response_radial_cutoff_ang",
+                    "gap_response_face_cos_min",
+                    "gap_response_smooth_weight",
+                    "gap_response_fallback_ang",
+                ):
+                    node.attrs[attr_name] = comp_grp.attrs[attr_name]
+                pair_interaction.create_dataset(
+                    "delta_extended",
+                    data=table_grp["delta_extended"][:].astype(np.float32),
+                )
+                pair_interaction.create_dataset(
+                    "delta_compact",
+                    data=table_grp["delta_compact"][:].astype(np.float32),
+                )
+                pair_interaction.create_dataset(
+                    "gap_response_coeff",
+                    data=comp_grp["gap_response_coeff"][:].astype(np.float32),
+                )
+                return True
+
+            if has_compaction:
+                if not implicit_compaction and not implicit_mean_field:
+                    comp_state = pot.create_group("cgl_compaction_state")
+                    comp_state.attrs["initialized"] = True
+                    comp_state.attrs["arguments"] = np.array([], dtype="S1")
+                    for attr_name in (
+                        "mass_up",
+                        "thermostat_timescale",
+                        "self_coord_min_ang",
+                        "self_coord_max_ang",
+                    ):
+                        comp_state.attrs[attr_name] = np.float32(comp_grp.attrs[attr_name])
+                    comp_state.create_dataset(
+                        "value",
+                        data=pot["compose_vector6d"]["initial_compaction_ang"][:].astype(np.float32),
+                    )
+
+                    comp_self = pot.create_group("cg_lipid_compaction_self")
+                    comp_self.attrs["initialized"] = True
+                    comp_self.attrs["arguments"] = np.array([b"cgl_compaction_state"])
+                    for attr_name in (
+                        "self_coord_min_ang",
+                        "self_coord_spacing_ang",
+                        "self_n_knot",
+                    ):
+                        comp_self.attrs[attr_name] = comp_grp.attrs[attr_name]
+                    comp_self.create_dataset(
+                        "self_coeff",
+                        data=comp_grp["self_coeff"][:].astype(np.float32),
+                    )
+
             if has_pair:
                 pair_grp = mh5["cg_lipid_table/cg_lipid_pair"]
+                comp_grp = mh5["cg_lipid_table/cg_lipid_compaction"] if has_compaction else None
 
                 # cg_lipid_pair: symmetric directional tensor over CG lipid vectors.
                 cg_pair = pot.create_group("cg_lipid_pair")
                 cg_pair.attrs["initialized"] = True
-                cg_pair.attrs["arguments"] = np.array([b"compose_vector6d"])
+                if has_compaction:
+                    if "gap_response_coeff" in comp_grp:
+                        for attr_name in (
+                            "gap_response_coord_min_ang",
+                            "gap_response_coord_spacing_ang",
+                            "gap_response_n_knot",
+                            "gap_response_radial_cutoff_ang",
+                            "gap_response_face_cos_min",
+                            "gap_response_smooth_weight",
+                            "gap_response_fallback_ang",
+                        ):
+                            cg_pair.attrs[attr_name] = comp_grp.attrs[attr_name]
+                    if implicit_mean_field:
+                        cg_pair.attrs["arguments"] = np.array([b"compose_vector6d"])
+                        cg_pair.attrs["implicit_compaction_mean_field"] = np.int32(1)
+                    elif implicit_compaction:
+                        cg_pair.attrs["arguments"] = np.array([b"compose_vector6d"])
+                        cg_pair.attrs["implicit_compaction_response"] = np.int32(1)
+                        if "gap_response_coeff" in comp_grp:
+                            cg_pair.attrs["implicit_compaction_gap_response"] = np.int32(1)
+                        else:
+                            cg_pair.attrs["implicit_compaction_smooth"] = np.int32(
+                                str(comp_grp.attrs.get("mask_mode", "binary")).strip().lower() == "smooth"
+                            )
+                            local_field_scale = env_float(
+                                "UPSIDE_CGL_COMPACTION_IMPLICIT_LOCAL_FIELD_SCALE",
+                                0.0,
+                            )
+                            if abs(local_field_scale) > 0.0:
+                                cg_pair.attrs["implicit_compaction_local_field_scale"] = np.float32(
+                                    local_field_scale
+                                )
+                            contact_field_cap = env_float(
+                                "UPSIDE_CGL_COMPACTION_IMPLICIT_CONTACT_FIELD_CAP",
+                                0.0,
+                            )
+                            if contact_field_cap > 0.0:
+                                cg_pair.attrs["implicit_compaction_contact_field_cap"] = np.float32(
+                                    contact_field_cap
+                                )
+                            if env_bool("UPSIDE_CGL_COMPACTION_IMPLICIT_MAX_CONTACT", False):
+                                cg_pair.attrs["implicit_compaction_max_contact"] = np.int32(1)
+                            cg_pair.attrs["implicit_compaction_face_cos_min"] = np.float32(
+                                comp_grp.attrs.get("face_cos_min", np.float32(0.0))
+                            )
+                            cg_pair.attrs["implicit_compaction_radial_cutoff_ang"] = np.float32(
+                                float(comp_grp.attrs.get("radial_cutoff_nm", np.float32(0.0))) * 10.0
+                            )
+                    else:
+                        cg_pair.attrs["arguments"] = np.array([b"compose_vector6d", b"cgl_compaction_state"])
+                    for attr_name in (
+                        "compact_state_center_ang",
+                        "extended_state_center_ang",
+                        "compact_state_probability",
+                    ):
+                        cg_pair.attrs[attr_name] = np.float32(comp_grp.attrs[attr_name])
+                else:
+                    cg_pair.attrs["arguments"] = np.array([b"compose_vector6d"])
                 for attr_name, attr_value in box_attrs.items():
                     cg_pair.attrs[attr_name] = attr_value
                 if "schema" in pair_grp.attrs:
@@ -4131,6 +4378,21 @@ def inject_cg_lipid_nodes(
                         "reference_energy_eup",
                         data=pair_grp["reference_energy_eup"][:].astype(np.float32),
                     )
+                if has_compaction:
+                    for dataset_name in (
+                        "delta_extended_extended",
+                        "delta_extended_compact",
+                        "delta_compact_compact",
+                    ):
+                        pi.create_dataset(
+                            dataset_name,
+                            data=comp_grp[dataset_name][:].astype(np.float32),
+                        )
+                    if "gap_response_coeff" in comp_grp:
+                        pi.create_dataset(
+                            "gap_response_coeff",
+                            data=comp_grp["gap_response_coeff"][:].astype(np.float32),
+                        )
 
                 # Element mapping: CG lipids use identity mapping (1 CG type)
                 # Shift ids by 4 bits so all shifted ids are unique:
@@ -4143,7 +4405,13 @@ def inject_cg_lipid_nodes(
                 pi.create_dataset("id", data=(np.arange(n_cg, dtype=np.int32) << 4))
 
                 n_param = int(pair_grp["interaction_param"].shape[-1])
-                print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1x1x{n_param} params")
+                if has_compaction:
+                    print(
+                        "  Injected cg_lipid_pair: "
+                        f"{n_cg} CG lipids, 1x1x{n_param} base params plus compaction corrections"
+                    )
+                else:
+                    print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1x1x{n_param} params")
 
             if has_density:
                 density_grp = mh5["cg_lipid_table/cg_lipid_density"]
@@ -4167,6 +4435,50 @@ def inject_cg_lipid_nodes(
                     "  Injected cg_lipid_density: "
                     f"{n_cg} CG lipids, kernel={cg_density.attrs['kernel_n_knot']}, "
                     f"embedding={cg_density.attrs['embedding_n_knot']}"
+                )
+
+            if has_contact_embedding:
+                embed_grp = mh5["cg_lipid_table/cg_lipid_contact_embedding"]
+                with h5py.File(up_file, "r") as up_r:
+                    n_cg = up_r["input/potential/compose_vector6d/elem_index"].shape[0]
+
+                cg_embed = pot.create_group("cg_lipid_contact_embedding")
+                cg_embed.attrs["initialized"] = True
+                cg_embed.attrs["arguments"] = np.array([b"compose_vector6d"])
+                for attr_name, attr_value in box_attrs.items():
+                    cg_embed.attrs[attr_name] = attr_value
+                for attr_name, attr_value in embed_grp.attrs.items():
+                    cg_embed.attrs[attr_name] = attr_value
+                cg_embed.create_dataset("index", data=np.arange(n_cg, dtype=np.int32))
+                cg_embed.create_dataset(
+                    "embedding_coeff",
+                    data=embed_grp["embedding_coeff"][:].astype(np.float32),
+                )
+                print(
+                    "  Injected cg_lipid_contact_embedding: "
+                    f"{n_cg} CG lipids, embedding={cg_embed.attrs['embedding_n_knot']}"
+                )
+
+            if has_gap_embedding:
+                embed_grp = mh5["cg_lipid_table/cg_lipid_gap_embedding"]
+                with h5py.File(up_file, "r") as up_r:
+                    n_cg = up_r["input/potential/compose_vector6d/elem_index"].shape[0]
+
+                cg_embed = pot.create_group("cg_lipid_gap_embedding")
+                cg_embed.attrs["initialized"] = True
+                cg_embed.attrs["arguments"] = np.array([b"compose_vector6d"])
+                for attr_name, attr_value in box_attrs.items():
+                    cg_embed.attrs[attr_name] = attr_value
+                for attr_name, attr_value in embed_grp.attrs.items():
+                    cg_embed.attrs[attr_name] = attr_value
+                cg_embed.create_dataset("index", data=np.arange(n_cg, dtype=np.int32))
+                cg_embed.create_dataset(
+                    "embedding_coeff",
+                    data=embed_grp["embedding_coeff"][:].astype(np.float32),
+                )
+                print(
+                    "  Injected cg_lipid_gap_embedding: "
+                    f"{n_cg} CG lipids, embedding={cg_embed.attrs['embedding_n_knot']}"
                 )
 
             if has_sc:
@@ -4238,6 +4550,14 @@ def inject_cg_lipid_nodes(
                             if attr_name in sc_grp.attrs:
                                 cg_sc.attrs[attr_name] = np.float32(sc_grp.attrs[attr_name])
                         for attr_name in (
+                            "bead_nonbonded_cutoff_nm",
+                            "length_conversion_ang_per_nm",
+                            "max_axis_radius_ang",
+                            "max_perp_radius_ang",
+                        ):
+                            if attr_name in sc_grp.attrs:
+                                cg_sc.attrs[attr_name] = np.float32(sc_grp.attrs[attr_name])
+                        for attr_name in (
                             "short_range_core_source",
                             "excluded_area_source",
                             "radial_support_source",
@@ -4286,6 +4606,7 @@ def inject_cg_lipid_nodes(
                         psi.create_dataset("index2", data=np.arange(n_cg, dtype=np.int32))
                         psi.create_dataset("type2", data=np.zeros(n_cg, dtype=np.int32))
                         psi.create_dataset("id2", data=((np.arange(n_cg, dtype=np.int32) + 100000) << 4))
+                        copy_single_cgl_compaction(cg_sc, psi, sc_grp)
 
                         rotamer = pot["rotamer"]
                         rot_args = list(rotamer.attrs["arguments"])
@@ -4412,6 +4733,7 @@ def inject_cg_lipid_nodes(
                         target_pi.create_dataset("index2", data=target_idx_arr)
                         target_pi.create_dataset("type2", data=target_types_arr)
                         target_pi.create_dataset("id2", data=target_ids_arr)
+                        copy_single_cgl_compaction(target_node, target_pi, target_grp)
 
                     write_target_node("cg_lipid_target", base_params)
                     print(

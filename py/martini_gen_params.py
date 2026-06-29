@@ -76,6 +76,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Random seed for isolated bonded DOPC conformer sampling.",
     )
     parser.add_argument(
+        "--isolated-dopc-conformer-burnin-steps",
+        type=int,
+        default=5000,
+        help="Metropolis burn-in steps before recording isolated bonded DOPC conformers.",
+    )
+    parser.add_argument(
         "--isolated-dopc-conformer-mc-steps",
         type=int,
         default=2000,
@@ -147,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
             "dopc_pdb_path": dopc_pdb_path,
             "isolated_conformer_count": max(1, int(args.isolated_dopc_conformer_count)),
             "isolated_conformer_seed": int(args.isolated_dopc_conformer_seed),
+            "isolated_conformer_burnin_steps": max(0, int(args.isolated_dopc_conformer_burnin_steps)),
             "isolated_conformer_mc_steps": max(1, int(args.isolated_dopc_conformer_mc_steps)),
             "isolated_conformer_proposal_sigma_nm": float(args.isolated_dopc_conformer_sigma_nm),
         }),

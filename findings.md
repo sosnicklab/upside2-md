@@ -1,6 +1,548 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-28: Temperature-trend diagnosis does not support forcing the CGL
+  bilayer onto a single linear diffusion target over the full tested window.
+  - The tested Upside range maps to a very broad physical window:
+    `T=0.7, 0.8, 0.8647, 0.9, 1.0, 1.1, 1.2`
+    correspond to about
+    `245.4, 280.5, 303.2, 315.5, 350.6, 385.6, 420.7 K`.
+  - Under the retained exact-step `v12` branch, the rough late-half
+    single-origin diffusion metric follows a smooth monotone trend and is
+    already close to a mild Arrhenius-like continuation; the strongest
+    mismatch came from treating that whole span as one linear-in-`T` target.
+  - The high-temperature endpoint is the cleanest real transport defect:
+    `T=1.2` has near-correct kinetic temperature (`avg_kinetic/1.5kT≈1.04`)
+    but remains slow under the old endpoint friction, which points to excess
+    imposed dissipation rather than a hidden-state startup bug.
+  - Validated retained hot-end refinement:
+    keep the exact-step branch but soften only the `T=1.2` endpoint to
+    `coupling_scale=[1.50,1.50]` and `memory_tau_scale=[1.70,1.70]`.
+    The direct endpoint validation from the `v13` branch gives
+    `D_ratio_linear≈1.02`, `sep_late≈16.51 A`, zero flips, and strong
+    orientation, so that endpoint is safe to keep.
+  - Low-temperature source-level and schedule follow-ups were rejected:
+    - broad low-`T` spectral rebalance (`v13`) oversped `T=0.7..0.9`
+    - full fresh-state GLE stationary initialization (`v14`) improved `0.7`
+      and `0.8` but oversped `0.9` and `1.2`
+    - auxiliary-only fresh-state initialization (`v15`) slowed the whole
+      branch badly
+  - Practical conclusion:
+    keep the exact-step runtime, keep the accepted low-mid schedule knots,
+    keep only the validated softer `1.2` endpoint, and do not retain any of
+    the fresh-state initialization variants.
+- 2026-06-28: Retained next transport fix is an exact linear CGL GLE runtime
+  step plus explicit low-mid temperature knots.
+  - The old multi-mode CGL GLE runtime updated each mode sequentially against
+    the physical momentum. That split update is not the exact propagator of
+    the coupled linear Markovian embedding and it became the next real
+    source-level defect once the restart-state bug was fixed.
+  - `src/martini_cg_lipid.cpp` now precomputes the exact linear-Gaussian step
+    for the coupled physical momentum plus GLE auxiliary momenta using the
+    Van Loan block exponential and applies that step directly at each CGL GLE
+    thermostat invocation.
+  - The exact-step runtime keeps the bilayer structurally correct in fresh
+    seed-matched reduced-bilayer reruns from `T=0.7` to `1.2`:
+    `sep_late≈16.40, 16.42, 16.42, 16.48, 16.44, 16.52 A`,
+    `sep_max≈18.03, 18.00, 17.86, 18.00, 17.47, 17.83 A`,
+    zero flips, and strong late-half orientation at
+    `T=0.7, 0.8, 0.9, 1.0, 1.1, 1.2`.
+  - The exact-step runtime alone fixed the worst midrange drift at `T=1.0`
+    and `1.1`, but `0.8` and `0.9` were still too dependent on the long
+    interpolation segment from `0.7` to `0.8647`.
+  - Retained schedule refinement after the runtime fix:
+    `temperature_grid=[0.7,0.8,0.8647,0.9,1.0,1.1,1.2]`,
+    `coupling_scale=[[1,1],[1,1],[1,1],[1.013,1.057],[1.05,1.22],[1.20,1.39],[1.55,1.55]]`,
+    and
+    `memory_tau_scale=[[0.33,0.33],[0.50,0.50],[1,1],[0.85,0.95],[1.10,1.33],[1.35,1.58],[1.83,1.83]]`.
+  - Validation artifacts:
+    `example/16.MARTINI/outputs/codex_bilayer_temp_scan_transportfix_v12_exactgle_seedmatched/`
+    now contains the retained exact-step reruns, plus explicit `0.8` and
+    `0.9` knot probes and a direct `1.2` endpoint check.
+  - Continuity metric result:
+    under the same late-half single-origin diffusion slope metric used for the
+    earlier scan summaries, the retained exact-step branch gives about
+    `D_ratio_linear≈0.82, 1.07, 0.87, 1.00, 1.00, 0.87` at
+    `T=0.7, 0.8, 0.9, 1.0, 1.1, 1.2`, respectively.
+  - Important interpretation constraint:
+    the repository now contains multiple diffusion estimators
+    (late-half single-origin and multi-origin MSD helpers) that do not agree
+    on the absolute clock. Comparisons across branches must keep the estimator
+    fixed. The retained branch above is anchored to the same late-half
+    single-origin metric used in the earlier temperature-scan summaries.
+- 2026-06-28: Final retained hidden-state source fix is restart-state
+  preservation and temperature-rescaling only; fresh-start thermalization is
+  rejected.
+  - `py/martini_prepare_system.py` now promotes the missing bilayer compaction
+    restart state:
+    `output/cgl_compaction[-1] -> input/potential/cgl_compaction_state/value`
+    and
+    `output/cgl_compaction_mom[-1] -> input/cgl_compaction_mom`,
+    with `restart_temperature` metadata written from `output/temperature[-1]`.
+  - The same restart-temperature metadata is now written for
+    `input/cgl_orientation_mom` and `input/cgl_gle/aux_momentum`
+    (via group attrs on `/input/cgl_gle`).
+  - `src/martini_cg_lipid.cpp` now reads those preserved restart states and
+    rescales them by `sqrt(T_new / T_old)` when the target simulation
+    temperature changes.
+  - Fresh-start hidden-state thermalization was tested and rejected.
+    Thermalizing every hidden state changed the accepted bilayer branch
+    substantially:
+    - full hidden-state thermalization (`v9`) sped up fresh `0.7`, `0.8`,
+      `0.9`, `1.0`, and `1.1` probes relative to `v7`
+    - partial thermalization with zero fresh GLE memory (`v10`) distorted the
+      fresh branch in the opposite direction and even shifted the
+      `T=0.8647` anchor strongly
+  - Final retained policy:
+    fresh starts stay on the legacy zero-hidden-state path that was actually
+    validated for the accepted bilayer transport branch, while true restart
+    states are preserved and temperature-rescaled.
+  - Validation:
+    - fresh matched-seed bilayer reruns at `T=0.8`, `0.9`, and `1.0` under
+      `example/16.MARTINI/outputs/codex_bilayer_temp_scan_transportfix_v11_restartfix_only_seedmatched/`
+      reproduce the original `v7` metrics exactly
+    - copied hybrid stage-7 checkpoint
+      `restart_promotion_1rkl_stage7.up` now receives
+      `input/cgl_orientation_mom` plus
+      `/input/cgl_gle` restart attrs with `restart_temperature=0.8647`
+    - copied bilayer dynamic-compaction smoke
+      `dyncomp_restart_cycle.up` now receives
+      `input/cgl_compaction_mom` with
+      `restart_source=output/cgl_compaction_mom[-1]` and
+      `restart_temperature=0.8647`, and a short rerun at `T=0.9` completes
+      successfully
+  - Interpretation:
+    the real source bug in this phase was restart-state loss/mismatch, not the
+    fresh-start bilayer transport law. The accepted fresh bilayer branch
+    remains `v7`; the new code fixes continuation correctness without
+    perturbing that branch.
+- 2026-06-28: Seed-matched mode-resolved temperature calibration is the best
+  retained fix for the current CGL transport instability.
+  - Extended `/input/cgl_gle` end-to-end so the preparation path can write and
+    the runtime can read a shared `temperature_grid` plus 2D
+    `coupling_scale[n_temp, n_mode]` and `memory_tau_scale[n_temp, n_mode]`.
+  - Verified the writer path directly with
+    `example/16.MARTINI/outputs/codex_cgl_gle_writer_smoke/test.input.up`,
+    which contains the expected 2D scale tables.
+  - Important debugging result:
+    schedule comparisons must be seed-matched. Changing the transport law and
+    the random seed simultaneously makes endpoint changes look larger or
+    smaller than they really are.
+  - Best retained schedule:
+    `example/16.MARTINI/outputs/codex_bilayer_temp_scan_transportfix_v7_piecewise_modegrid_seedmatched/`
+    with
+    `temperature_grid=[0.7, 0.8647, 1.0, 1.1, 1.2]`,
+    `coupling_scale=[[1,1],[1,1],[1.05,1.22],[1.20,1.39],[1.55,1.55]]`, and
+    `memory_tau_scale=[[0.33,0.33],[1,1],[1.10,1.33],[1.35,1.58],[1.83,1.83]]`.
+  - Wired that retained schedule into the default coarse-hybrid launcher via
+    `example/16.MARTINI/run_sim_hybrid.sh`, while preserving environment
+    overrides for explicit sweeps.
+  - Retained seed-matched temperature scan summary for that branch:
+    - `0.7`: `D_ratio_linear=0.848`, `sep_late=16.386 A`
+    - `0.8`: `0.921`, `16.457 A`
+    - `0.8647`: `1.009`, `16.409 A`
+    - `0.9`: `0.726`, `16.352 A`
+    - `1.0`: `0.778`, `16.551 A`
+    - `1.1`: `1.082`, `16.436 A`
+    - `1.2`: `0.985`, `16.453 A`
+  - Structural gate result:
+    every retained temperature passes the bilayer checks
+    (`sep_late<16.8 A`, `sep_max<18.2 A`, zero flips, strong `|n_z|`, and low
+    `6x6` occupancy variance).
+  - Rejected follow-up:
+    the `v8` mid-knot refinement improved `T=1.0` but made `T=0.9` much too
+    slow (`D_ratio_linear≈0.58`), so `v7` remains the kept branch.
+  - Interpretation:
+    the source-code bug is fixed and the remaining transport spread is now a
+    calibration-quality issue, not a missing runtime feature or a conservative
+    bilayer-force defect.
+- 2026-06-28: Temperature-stable CGL transport implementation and current
+  validation limit.
+  - Implemented a source-level extension of `/input/cgl_gle` so the CGL GLE
+    runtime can now interpolate a shared `temperature_grid` with independent
+    `coupling_scale` and `memory_tau_scale`.
+  - `py/martini_prepare_system.py` now writes those optional calibration
+    datasets, `src/martini_cg_lipid.cpp` now applies them at
+    `set_cgl_gle_temperature()`, and `example/16.MARTINI/run_sim_hybrid.sh`
+    now passes the new env-backed transport metadata through the coarse hybrid
+    workflow.
+  - Debugging result:
+    coupling-only temperature scaling is not sufficient.  Lowering coupling at
+    low temperature weakens the p--auxiliary exchange too much and produces an
+    overheated under-thermostatted branch.  In contrast, shortening
+    `memory_tau` corrects the low-temperature slowdown while preserving the
+    structural bilayer.
+  - High-temperature overspeed requires the opposite combination:
+    longer `memory_tau` alone is too weak, while stronger coupling plus longer
+    `memory_tau` can pull `T=1.2` back onto the accepted diffusion target
+    without hurting leaflet structure.
+  - Best endpoint probes with the new runtime:
+    - low `T` probe with shorter `memory_tau` gives
+      `T=0.7 D≈0.189..0.215 A^2/tu` depending on seed, with
+      `sep_late≈16.38..16.39 A`, zero flips, and `p05(|n_z|)≈0.989`
+    - high `T` mixed probe with stronger coupling and longer `memory_tau`
+      gives `T=1.2 D≈0.342 A^2/tu`, `sep_late≈16.46 A`, and
+      `p05(|n_z|)≈0.985`
+  - Full `0.7..1.2` single-replica scans remain noisy in the middle of the
+    range even though structure stays clean.  Two different smooth
+    calibrations can both fix the endpoints, but the mid-range diffusion still
+    shifts appreciably with the sampled trajectory.
+  - Practical conclusion:
+    the architectural temperature-stability bug in the runtime is fixed, but a
+    statistically reliable final calibration still requires replicate-averaged
+    or longer-horizon diffusion fitting.  The next task is not another force
+    field rewrite; it is a better transport-calibration protocol.
+- 2026-06-28: Temperature-instability diagnosis after the exact-288 scan.
+  - Computed the live gap-response compaction observable directly from the scan
+    trajectories using the same clamped uniform cubic B-spline basis as the C++
+    runtime.
+  - The mean local compaction-response state is essentially unchanged across
+    the full scan:
+    `q_mean≈0.9606..0.9620`, `q_std≈0.0076..0.0079`.
+  - The corresponding weighted cross-leaflet gap coordinate is also nearly
+    invariant:
+    `gap_mean≈18.49..18.59 A`, `gap_std≈0.50..0.63 A`.
+  - Interpretation:
+    the large diffusion drift with temperature is not being driven by a major
+    equilibrium shift in the implicit compact/extended state occupancy.  The
+    bilayer structure and the average local compaction field stay nearly
+    constant while transport changes strongly.
+  - Most likely cause:
+    the current fixed two-mode CGL GLE was calibrated at one production state,
+    while the many-body gap-response correction leaves a temperature-sensitive
+    internal roughness / barrier-crossing contribution to the effective
+    lateral mobility.  In other words, the problem is primarily dynamical, not
+    structural.
+- 2026-06-28: Exact-288 CGL bilayer temperature scan from `T=0.7` to `1.2`.
+  - Reused the accepted exact-288 branch
+    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_bilayer_npt288_exact_pairrelax_targetgapstate_transportscan_long/validate100_pairrelax_targetgapstate_s2p0_t25.up`
+    and ran fresh `100`-time-unit replicas at `0.7`, `0.8`, `0.9`, `1.0`,
+    `1.1`, and `1.2`, with the retained `0.8647` run analyzed as the control.
+  - Structural behavior remains clean across the whole tested window:
+    zero late-half leaflet-assignment flips at every temperature, late-half
+    leaflet separation tightly clustered around `16.38--16.50 A`,
+    `p05(|n_z|)=0.9839..0.9899`, low-wavevector structure factor
+    `S_low-k≈0.036..0.051`, late-half `6x6` occupancy `cv≈0.20..0.22`, and
+    same-leaflet NN `p05≈6.48..6.61 A`.
+  - Conclusion on structure:
+    the accepted gap-response compaction model is structurally robust for the
+    exact-288 CGL bilayer over `0.7--1.2`.
+  - Transport does not remain calibrated over the same range.
+    Using the same late-half diffusion estimator as the scan summary,
+    `D_xy` changes from `0.0918 A^2/tu` at `0.7` to `0.6653 A^2/tu` at `1.2`,
+    versus the retained control `0.2620 A^2/tu` at `0.8647`.
+  - Relative to a simple linear-in-temperature extrapolation from the validated
+    `0.8647` point, the current transport branch is too slow at low
+    temperature (`0.7`: `0.43x`; `0.8`: `0.72x`) and too fast at high
+    temperature (`1.0`: `1.38x`; `1.1`: `1.86x`; `1.2`: `1.83x`).
+  - Practical interpretation:
+    the current CGL model is structurally stable over the scan, but it is not
+    fully valid over `0.7--1.2` if correct time scale is part of the validity
+    definition.  The present GLE transport calibration is local to the
+    production neighborhood around `T=0.8647`.
+- 2026-06-28: Literature framing for the one-particle manuscript rewrite.
+  - Classical one-particle or near-one-particle membrane models
+    (Drouffe--Maggs--Leibler; Noguchi--Gompper; Yuan et al.) are useful context
+    because they show that orientable single-site membranes can remain fluid,
+    but they are not direct templates for this project.
+  - The manuscript should make the distinction explicit:
+    this repository's CGL model is not a generic solvent-free membrane ansatz;
+    it is a dryMARTINI constituent projection coupled to the Upside runtime and
+    corrected only through source-derived local compaction response terms.
+  - The dryMARTINI citation should remain central because the interface is a
+    dryMARTINI-to-Upside bridge, not a new standalone membrane force field.
+- 2026-06-27: Accepted CGL method extended into the live hybrid CGL-bearing paths.
+  - The accepted exact-288 bilayer-only reference remains
+    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_bilayer_npt288_exact_pairrelax_targetgapstate_transportscan_long/validate100_pairrelax_targetgapstate_s2p0_t25.up`:
+    `12.77 -> 16.25 A`, zero flips, strong orientation, correct `x-y`
+    packing, and long-horizon `D_xy≈0.232..0.253 A^2/tu`.
+  - The live hybrid families that actually need the compaction / implicit
+    gap-response method are `cg_lipid_pair`, `cg_lipid_rotamer_sc`
+    (SC-CGL), and `cg_lipid_target` (CGL-particle / CGL-BB proxy).
+    Direct `SC-particle` remains the separate `sidechain.h5/sc_table` path and
+    should not be forced into a fake CGL hidden-state model.
+  - Extended `py/martini_build_tables.py` so `cg_lipid_sc` and
+    `cg_lipid_target` now carry source-derived single-CGL
+    `delta_extended` / `delta_compact` correction surfaces plus the compact /
+    extended state metadata needed by the implicit gap-response runtime path.
+  - Added a retrofit path for the canonical
+    `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5` so the
+    accepted pair-table branch could be preserved exactly while injecting the
+    single-CGL compact/extended correction surfaces required by the hybrid
+    SC-CGL and CGL-particle nodes.
+  - Found a real injector bug in `py/martini_prepare_system_lib.py`:
+    `cg_lipid_pair` could receive `gap_response_coeff` without the required
+    gap-response attrs. The runtime constructor in
+    `src/martini_cg_lipid.cpp` correctly rejects that inconsistent state.
+    Fix: always copy the required gap-response attrs whenever
+    `gap_response_coeff` is copied into the pair node.
+  - Found the matching workflow bug:
+    the coarse hybrid driver was not defaulting
+    `UPSIDE_CGL_COMPACTION_IMPLICIT_RESPONSE=1`, so reruns could silently
+    miss the accepted implicit-response branch. Fixed in
+    `example/16.MARTINI/run_sim_hybrid.sh`.
+  - Fresh hybrid reruns confirm that the leaflet-distance bug is fixed without
+    destabilizing the proteins:
+    - old `1rkl` late-half leaflet separation `29.99 A` -> new `16.394 A`
+    - old `1afo` late-half leaflet separation `29.59 A` -> new `16.379 A`
+    - `1rkl` late-half `mean |n_z|=0.9933`, NN `mean=7.33 A`, `p05=6.25 A`
+    - `1afo` late-half `mean |n_z|=0.9927`, NN `mean=7.48 A`, `p05=6.58 A`
+  - Protein stability on the corrected hybrid runs is acceptable overall:
+    - `1rkl`: backbone RMSD `median=1.87 A`, `last=2.58 A`, `max=2.63 A`,
+      DSSP match `final=0.742`, `late-half mean=0.789`
+    - `1afo`: backbone RMSD `median=2.74 A`, `last=2.99 A`, `max=3.20 A`,
+      DSSP match `final=0.986`, `late-half mean=0.987`
+  - Interpretation: `1afo` is cleanly accepted. `1rkl` is not regressed
+    relative to the old hybrid run and is clearly bilayer-correct, but its
+    final-frame helix retention remains only moderate, so any follow-up work
+    should target protein-quality refinement rather than the leaflet-distance
+    bug.
+- 2026-06-27: Standalone bilayer transport-path bug and long-horizon timescale closure.
+  - Found a real source-path bug in `py/martini_prepare_system.py`: the
+    standalone `prepare --mode bilayer` path injected `particle.h5` and
+    `dopc.h5`, but it did not call `apply_cgl_transport_metadata()`. The
+    exact-288 bilayer-only inputs that previously looked structurally good
+    therefore lacked the calibrated `/input/cgl_gle` transport node entirely.
+  - Found a second source-path bug in
+    `py/martini_prepare_system.py::apply_cgl_transport_metadata()`: the
+    standalone path assumed hybrid-workflow CLI args existed and silently fell
+    back to hardcoded defaults instead of the documented env-backed transport
+    contract. The fix now reads the same env-backed mass, thermostat, and GLE
+    settings on standalone bilayer preparation.
+  - With the real transport path active, the direct target-gap-state exact-288
+    bilayer remains structurally correct over `20` time units, but the raw
+    hybrid-default transport setting is far too fast:
+    `12.77 -> 16.92 A`, zero flips, `p05 |n_z|=0.984`, and
+    `D_xy≈8.09 A^2/tu`.
+  - A conservative same-leaflet density channel is not the missing timescale
+    fix. Adding the existing full-DOPC `cg_lipid_density` correction to the
+    target-gap-state branch improves short-horizon in-plane packing quality,
+    but every `100`-unit density-assisted run still ages into the same slow
+    late regime:
+    `scale=2.5 D≈0.030`, `scale=3.0 D≈0.039`, `scale=3.9 D≈0.023 A^2/tu`.
+  - The accepted bilayer-only transport calibration is the transport-fixed
+    direct target-gap-state branch at `2.0x` CGL GLE coupling under
+    `example/16.MARTINI/outputs/codex_bilayer_npt288_exact_pairrelax_targetgapstate_transportscan_long/validate100_pairrelax_targetgapstate_s2p0_t25.up`.
+    Over `100` time units it keeps the exact-288 bilayer structurally clean:
+    `12.77 -> 16.25 A`, `sep_max=17.75 A`, zero flips,
+    final `p05 |n_z|=0.989`, final `min |n_z|=0.963`, and
+    late-half `avg_kinetic_energy/1.5kT=1.262`.
+  - That same accepted branch closes the timescale gate on the long horizon:
+    late-half single-origin lateral diffusion is
+    `D_xy≈0.23185 A^2/tu`, and the last-quarter block is
+    `D_xy≈0.25329 A^2/tu`, which matches the established
+    `~0.25 A^2/tu` native target window.
+  - Double-checked the accepted branch for lateral uniformity on the exact-288
+    bilayer. Leaflet-by-leaflet `x-y` diagnostics on the last `25` and `50`
+    time units show no clustering or large voids:
+    low-wavevector structure factors stay very small
+    (`S_low-k mean≈0.037..0.046`, `max≈0.058..0.087` over the late half),
+    coarse `6x6` occupancy grids have no empty bins and low count variation
+    (`cv≈0.214..0.220` at mean occupancy `4.0`), and finer `8x8` grids show
+    at most about `0.24..0.35` empty bins on average at mean occupancy `2.25`.
+    Those count variances are well below the corresponding Poisson values
+    (`0.50` for `6x6`, `0.67` for `8x8`), which is the expected signature of a
+    laterally well-packed fluid rather than phase-separated clustering.
+  - Same-leaflet nearest-neighbor spacing on that accepted branch remains
+    broad but not collapsed: late-half `p05≈6.79..6.82 A`,
+    `mean≈7.57 A`, with nearest-neighbor `cv≈0.063..0.064`.
+    So the accepted bilayer relaxes from the prepared lattice-like spacing,
+    but it stays evenly spread across the `x-y` plane.
+  - Generated a center-only physical-CGL VTF for direct inspection at
+    `example/16.MARTINI/outputs/codex_bilayer_npt288_exact_pairrelax_targetgapstate_transportscan_long/validate100_pairrelax_targetgapstate_s2p0_t25_center.vtf`
+    so leaflet distance can be checked without the synthetic rod-endpoint
+    inflation.
+- 2026-06-27: Direct target-gap-state projection and target-gap PMF redesign.
+  - Added new source helpers in `py/martini_build_tables.py` so the gap-based
+    structural channel can be trained directly from full-DOPC target data
+    instead of only from target-vs-model histograms:
+    `_sampled_frame_indices()`,
+    `_cross_leaflet_gap_distance_for_frame()`,
+    `_full_dopc_gap_and_compaction_samples_from_upside_h5()`,
+    `_load_physical_compaction_state_centers_from_h5()`, and
+    `_fit_gap_compact_probability_response()`.
+  - Extended `add_cg_lipid_gap_compaction_response_to_h5()` with an optional
+    direct full-DOPC `local gap -> compact-state` mode. It projects each
+    target lipid's axial head-to-tail extension onto the physical compaction
+    centers from a reference compaction H5, rather than fitting only a
+    widened-model classifier.
+  - On
+    `example/16.MARTINI/outputs/codex_bilayer_npt288_exact_pairrelax_targetgapstate/`,
+    that direct target-gap-state response is the best non-mean-field branch so
+    far. The exact-288 short smoke improves to `12.77 -> 14.10 A`, zero
+    flips, `p05 |n_z|=0.984`, `min |n_z|=0.973`, and
+    `avg_kinetic_energy/1.5kT=3.83`.
+  - The same branch also passes the `20`-unit exact-288 structural gate:
+    `12.77 -> 16.48 A`, `sep_max=17.05 A`, zero flips,
+    `p05 |n_z|=0.981`, `min |n_z|=0.963`, and
+    `avg_kinetic_energy/1.5kT=1.19`.
+  - That branch still fails the timescale gate. The `20`-unit diffusion fit is
+    only `D_xy ≈ 0.060 A^2/tu`, compared with the established
+    `~0.25 A^2/tu` clock target. So the local-gap structural observable is now
+    good enough, but the pair-compaction correction surfaces remain too
+    dissipative once they are activated strongly enough to hold the bilayer.
+  - The binary-face version of the same direct target-gap-state map reaches
+    essentially identical long-`20` behavior
+    (`12.77 -> 16.59 A`, zero flips, `p05 |n_z|=0.985`,
+    `D_xy ≈ 0.061 A^2/tu`), which localizes the remaining slowdown to the
+    correction surfaces themselves rather than to the smooth-vs-binary
+    face-weight derivative.
+  - Added a second conservative builder path:
+    `_build_target_gap_pmf_embedding_table()` and
+    `add_cg_lipid_target_gap_pmf_embedding_table_to_h5()`, which write a
+    direct target PMF over the local cross-leaflet gap into the existing
+    `cg_lipid_gap_embedding` runtime node.
+  - Pure conservative target-gap PMF is not sufficient by itself. On the
+    pair-only base
+    `example/16.MARTINI/outputs/codex_bilayer_npt288_exact_paironly_targetgappmf/`,
+    the short smoke reaches only `12.77 -> 24.12 A` with zero flips,
+    `p05 |n_z|=0.922`, and `avg_kinetic_energy/1.5kT=105.1`.
+  - Stacking that same target-gap PMF on top of the validated same-leaflet
+    density base also fails structurally
+    (`example/16.MARTINI/outputs/codex_bilayer_npt288_exact_density_targetgappmf/`):
+    short smoke `12.77 -> 27.29 A`, zero flips,
+    `p05 |n_z|=0.907`, `min |n_z|=0.662`.
+  - Current interpretation: the correct local structural coordinate is now in
+    hand, but the remaining transport defect is specifically in how the
+    pair-compaction correction surfaces encode the missing tail-compaction
+    physics. A purely conservative local-gap field is too weak on its own,
+    while the current pair-compaction surfaces are still too dissipative when
+    driven strongly enough to keep the leaflet distance correct.
+- 2026-06-27: Local interleaflet-gap structural field and gap-driven compaction response.
+  - Direct descriptor audits on the exact full-DOPC 288-lipid target show that
+    the old cross-leaflet contact probability is nearly saturated and is a
+    poor structural coordinate for the missing tail-compaction response.
+    Same-leaflet density is also essentially uncorrelated with the full-DOPC
+    axial compaction coordinate. In contrast, the weighted opposite-leaflet
+    face-to-face CGL center distance is meaningfully predictive:
+    the live audit gave `corr(compaction, weighted_cross_r) ≈ -0.513` and
+    `corr(compaction, weighted_cross_dz) ≈ -0.552`.
+  - Added a new source-level conservative many-body builder/runtime path for
+    `cg_lipid_gap_embedding`:
+    `_cross_leaflet_gap_distance_samples()`,
+    `_build_relative_entropy_gap_embedding_table()`,
+    `add_cg_lipid_gap_embedding_table_to_h5()`,
+    the injector support in `py/martini_prepare_system_lib.py`, and the new
+    `CGLipidGapEmbeddingPotential` node in `src/martini_cg_lipid.cpp`.
+  - Pure gap embedding alone does not solve the exact-288 gate. On
+    `example/16.MARTINI/outputs/codex_bilayer_npt288_exact_gapembed/`,
+    the short smoke gives `12.99 -> 25.52 A`, `p05 |n_z|=0.677`,
+    `min |n_z|=0.162`, `1` flip, and
+    `avg_kinetic_energy/1.5kT=208.1`.
+  - The next source method reused that same local-gap observable to drive the
+    compaction-aware pair-correction surfaces from the previously best
+    mean-field branch, but without solving a mean-field state at runtime.
+    Added:
+    `_build_gap_compaction_response_table()`,
+    `add_cg_lipid_gap_compaction_response_to_h5()`, injector support for
+    `gap_response_coeff`, and runtime support in `CGLipidPairPotential` for a
+    gap-driven implicit compaction response.
+  - Found and fixed a real source bug in that new classifier fit: the initial
+    monotone projection included empty leading histogram bins and therefore
+    capped the learned compact-probability response near `0.5`. Restricting
+    the monotone projection to the occupied support raises the compact branch
+    to about `0.83` at bilayer-like local gaps.
+  - Corrected gap-driven compaction response is the first non-mean-field
+    branch with a promising timescale. On
+    `example/16.MARTINI/outputs/codex_bilayer_npt288_exact_pairrelax_gapresponse/`,
+    the exact-288 short smoke gives `12.99 -> 17.89 A`, zero flips,
+    `p05 |n_z|=0.967`, `min |n_z|=0.927`, and
+    `avg_kinetic_energy/1.5kT=15.36`.
+  - That branch is still not acceptable at longer times. The `20`-unit exact
+    gate relaxes back to `12.99 -> 38.25 A` with zero flips and strong
+    orientation (`p05 |n_z|=0.967`, `min |n_z|=0.488`), but the thermostat
+    and transport are now much better than the mean-field branch:
+    `avg_kinetic_energy/1.5kT=1.37` and
+    `D_xy ≈ 0.165 A^2/tu`.
+  - Current interpretation: the new local-gap structural channel is the first
+    source-derived redesign that materially improves the structure-timescale
+    tradeoff in the right direction, but its learned compactness response is
+    still too weak to hold the leaflet distance over `20` time units.
+- 2026-06-27: Pair-relax total-energy audit and first contact-embedding many-body prototype.
+  - Patched `py/martini_build_tables.py` so
+    `_pair_conditioned_tail_relaxation_effective_energy()` now returns the
+    same total effective energy used during the dimer relaxation search, and
+    annotated the written H5 tables with
+    `pair_relaxation_energy_basis=total_effective_energy_kj_mol`.
+  - Rebuilt a fresh static pair-relax table at
+    `example/16.MARTINI/outputs/codex_bilayer_npt288_exact_pairrelax_totalfix/dopc_pairrelax_totalfix.h5`.
+    The new table changes `6524 / 11340` spline controls, but the exact-288
+    static pair-relax smoke is bitwise identical to the old run:
+    final leaflet separation `33.64 A`, final `p05 |n_z|=0.759`,
+    final `min |n_z|=0.086`, zero flips, and identical coordinates/orientation
+    arrays frame-by-frame. Conclusion: that source bug is real in the stored
+    debug grids, but it does not affect the physically sampled region that
+    sets the exact-288 acceptance gate.
+  - The pre-existing mean-field compaction branch is the first method that
+    solves structure cleanly for long times. On
+    `example/16.MARTINI/outputs/codex_bilayer_npt288_exact_pairrelax_meanfield_proto/validate_pairrelax_meanfield_proto_t25.up`,
+    the exact-288 bilayer stayed at `12.77 -> 16.57 A` for `100` time units
+    with zero flips, final `p05 |n_z|=0.984`, final `min |n_z|=0.974`, and
+    `avg_kinetic_energy/1.5kT=1.006`.
+  - That same mean-field branch still fails the timescale gate. The `100`-unit
+    lateral-diffusion fit gives `D_xy = 0.0163 A^2/tu`, which is
+    `0.00815 um^2/s` under the `20 ns / native time` mapping and
+    `0.456 um^2/s` after the required `14 * 4` coarse-graining factor. The
+    structural channel is therefore right in spirit, but pair-conditioned
+    compaction remains too dissipative.
+  - Implemented a new local-many-body builder path in
+    `py/martini_build_tables.py` for
+    `cg_lipid_contact_embedding`, including:
+    `_cgl_contact_frames_from_upside_h5()`,
+    `_pair_cross_leaflet_face_weight()`,
+    `_cross_leaflet_contact_samples()`,
+    `_build_relative_entropy_contact_embedding_table()`, and
+    `add_cg_lipid_contact_embedding_table_to_h5()`.
+  - The first pure contact-embedding prototype trained against the exact
+    full-DOPC 288-lipid target produced a moderate learned field
+    (`deltaU = -3.776 .. 20.109 kJ/mol` over the contact coordinate), but the
+    short exact-288 smoke is still not acceptable:
+    `12.77 -> 23.86 A`, final `p05 |n_z|=0.913`,
+    final `min |n_z|=0.728`, zero flips, and
+    `avg_kinetic_energy/1.5kT=102.96`.
+  - Stacking that same contact embedding on top of the validated same-leaflet
+    density H5 does not change the short smoke at all: the
+    density-plus-contact run is bitwise identical to the pure contact-embedding
+    trajectory. So the current contact field is not yet the right structural
+    replacement either.
+- 2026-06-27: Literature-guided one-particle bilayer redesign audit.
+  - Primary literature signal from Yuan et al. (`Phys. Rev. E` 82, 011905,
+    DOI `10.1103/PhysRevE.82.011905`), Noguchi (`J. Chem. Phys.` 134, 055101,
+    DOI `10.1063/1.3541246`), and Cooke, Kremer, Deserno
+    (`Phys. Rev. E` 72, 011506, DOI `10.1103/PhysRevE.72.011506`) is
+    consistent: successful minimal / one-particle membrane models do not ask a
+    single opposite-leaflet pair PMF to carry both bilayer structure and
+    transport. They separate a structural channel (orientation coupling,
+    packing / many-body terms, or short-range local attraction) from the
+    diffusion timescale.
+  - That literature signal matches the live source diagnostics here. The CGL
+    issue is specifically a missing local tail-compaction response channel;
+    more pair-PMF twisting does not solve it.
+  - A new source-level runtime branch was implemented in
+    `src/martini_cg_lipid.cpp` and `py/martini_prepare_system_lib.py` so the
+    implicit pair-relax response can use configurable local contact-field maps
+    instead of only the original direct gating.
+  - Floored local-field variants prove the activation law is real: on the
+    exact 288-lipid gate they improve `20`-unit structure materially
+    (`scale=1.6`: `sep=14.56 A`, zero flips, `p05 |n_z|=0.986`,
+    `D≈0.182 A^2/tu`), but at `100` units they still cage badly
+    (`sep=14.97 A`, zero flips, `D≈0.055 A^2/tu`).
+  - Floor-free cooperative variants improve that long-time caging somewhat and
+    keep strong structure (`scale=1.25`: `100`-unit `sep=15.93 A`,
+    zero flips, `p05 |n_z|=0.938`, `D≈0.074 A^2/tu`), but they still do not
+    preserve the desired timescale.
+  - Capping the accumulated cross-leaflet contact field is the first branch
+    that materially improves the `20`-unit tradeoff:
+    `scale=1.25, cap=0.7` gives `sep=15.22 A`, zero flips,
+    `p05 |n_z|=0.985`, and `D≈0.180 A^2/tu`; `cap=1.0` gives a tighter
+    `14.28 A` with `D≈0.162 A^2/tu`. However, that `20`-unit improvement does
+    not survive to `100` units: capped runs fall back to
+    `D≈0.054..0.059 A^2/tu`.
+  - Updated conclusion: activation remapping alone cannot satisfy both the
+    exact-288 structure gate and the long-time diffusion gate. The remaining
+    defect is now localized to the structural correction surface / many-body
+    source, not just to whether the compaction state is explicit, mean-field,
+    gated, cooperative, or capped.
 - 2026-06-25: CGL leaflet-distance source investigation.
   - Retained hybrid VTF outputs overstate physical leaflet distance when
     synthetic rod endpoints are treated as leaflet centers. In the retained
@@ -28,6 +570,332 @@
     than near the source COM separation. This means the current one-particle
     CGL conservative pair table favors a widened center separation; PBC and
     workflow fixes alone do not solve the physical model issue.
+  - User correction: rebuilding the CGL pair table at `Tavg=0.8647` is not a
+    valid fix. That removes the intended tempering in the tempered PMF and
+    causes lipid aggregation. Any source fix must preserve the `Tavg=25.0`
+    tempered-PMF contract and instead correct the bug inside the valid
+    tempered generation/evaluation path.
+  - User correction: the real source of the widened leaflet spacing is the
+    training ensemble. The current DOPC reference conformers keep the tails too
+    extended, while the bilayer DOPC tails are compacted. That mismatch makes
+    CGL-CGL tables push opposite leaflets too far apart. The fix should focus
+    on the DOPC conformer source used during table construction, not on
+    changing the tempered-PMF thermodynamic contract.
+  - Direct geometry audit confirmed the mismatch: the bonded-only isolated
+    reference ensemble has much larger distal-tail lateral radii than the
+    bilayer DOPC template, especially at `C4A/C5A/C4B/C5B`.
+  - Validated source fix: the isolated DOPC conformer sampler should include
+    dry-MARTINI intramolecular nonbonded LJ/Coulomb terms in addition to the
+    bonded terms. This compacts the isolated tail ensemble without inserting
+    bilayer observables or changing the tempered-PMF contract.
+  - Integrated validation: a temporary pair-only H5 built from the current
+    source records
+    `dopc_reference_source=isolated_dopc_itp_bonded_plus_intramolecular_nonbonded_mc_ensemble`,
+    `dopc_reference_conformer_count=2`,
+    `azimuthal_average_temperature_upside=25.0`, and
+    `energy_transform=log1p_reduced_tempered_pmf`.
+  - Bilayer-only 72-CGL short NVT comparison after the source fix:
+    canonical baseline `12.77 -> 42.22 A`,
+    integrated rebuilt pair table `12.77 -> 32.36 A`.
+    The integrated pair table is numerically identical to the earlier
+    prototype pair-only validation artifact (`interaction_param` max absolute
+    difference `0.0`).
+  - A larger 404-CGL semi-isotropic NPT stress test with the same rebuilt pair
+    table and calibrated GLE stays on the transport target
+    (`D40=0.251..0.258 um^2/s`, DOPC-equivalent `14.0..14.4 um^2/s`) but still
+    fails the bilayer gate badly: late leaflet separation is `33..45 A`,
+    `83/404` lipids flip orientation sign at least once, late
+    `p05 |n_z|=0.139`, and same-leaflet nearest-neighbor spacing collapses to
+    `p05=1.83..2.61 A` with final cross-leaflet XY minimum `0.49 A`.
+  - The exact ion-free 288-lipid acceptance system can be recreated directly
+    from `parameters/dryMARTINI/DOPC.pdb` with `--xy-scale 1.70`, yielding
+    `288` DOPC lipids in a `106.837 x 106.837 x 82.809 A` box. This is the
+    right gate for CGL-only bilayer acceptance.
+  - On that exact 288-lipid acceptance system, the current integrated
+    bonded-plus-intramolecular pair table still fails within `1000` steps:
+    leaflet separation grows from `12.77 A` to `33.61 A`, final
+    `min |n_z|=0.934`, and startup heating is extreme
+    (`avg_kinetic_energy/1.5kT=123.6`).
+  - Exact-288 short screens show that the current source direction is still
+    the least-bad one. `dopc_paironly_canonicalref_tavg25.h5`,
+    `dopc_paironly_tailcompact_tavg25.h5`,
+    `dopc_paironly_pdbrefs_tavg25.h5`, and
+    `dopc_paironly_orientcompact_tavg25.h5` all blow up immediately, while
+    `dopc_paironly_bondedplusnb_tavg25.h5` remains finite with no flips.
+  - Direct tail-shape comparison against the full DOPC bilayer template gives
+    a clearer picture of the remaining mismatch. Distal-tail radial mean is
+    `0.315 nm` in the full DOPC template, `0.502 nm` in the current `2k`
+    bonded-plus-intramolecular isolated ensemble, and `0.364 nm` in a longer
+    `20k` isolated sample. The longer sample is geometrically closer to the
+    template, but its pair table becomes catastrophically unstable when mixed
+    with the raw seed conformer.
+  - New source-level bug: `sample_isolated_dopc_bonded_conformers()` stores
+    the unequilibrated ITP-built starting conformer before any MC relaxation.
+    That hard-codes the extended-tail seed into every default reference
+    ensemble. Experimental post-burn-in-only tables improve the exact
+    288-lipid smoke from `33.61 A` to `31.36 A`, raise final `min |n_z|`
+    from `0.934` to `0.973`, and reduce startup heating from `123.6` to
+    `48.3`, but still do not pass the leaflet-distance gate.
+  - New source-level inconsistency: `py/martini_build_tables.py` still
+    defaulted the tempered CGL table average temperature to `10.0`, while the
+    validator, wrappers, and installed table contract all require `25.0`.
+    Canonical table generation must default to `25.0` when the environment
+    override is unset.
+  - Landed source-path fixes:
+    `py/martini_build_tables.py` now defaults the tempered average
+    temperature to `25.0`, performs an explicit isolated-conformer burn-in,
+    and records only post-burn-in conformers; `py/martini_gen_params.py` now
+    exposes the burn-in through the CLI.
+  - Fresh exact-288 validation from the patched source path improves the
+    canonical short smoke materially:
+    `12.77 -> 25.71 A`, zero flips, final `p05 |n_z|=0.909`, but still with
+    one strong late orientation outlier (`final min |n_z|=0.265`) and
+    elevated startup heating (`avg_kinetic_energy/1.5kT=95.9`).
+  - Source-side adequacy scans still do not pass the canonical acceptance
+    gate. With the patched path, `3` post-burn-in conformers revert to
+    `31.03 A`, and `10000` burn-in steps with `2` conformers blow up to
+    `40.43 A` with `83` flips.
+  - Direct full-resolution DOPC conformer training is not sufficient by
+    itself. A CGL table rebuilt from a short full-resolution 72-DOPC bilayer
+    trajectory widens the exact-288 smoke badly (`56.31 A`), and disabling the
+    synthetic CGL bead-frame rotation in that path still fails (`34.21 A`
+    with `66` flips). This means the remaining blocker is not just the
+    isolated-conformer source.
+  - The accepted conservative correction path does contain a real source bug:
+    `_derive_density_kernel_cutoff_ang()` derives the density kernel from
+    same-leaflet packing, but `_local_density_samples()` originally accumulated
+    density over all neighbors in 3D. Restricting the density update to
+    same-leaflet neighbors is the consistent source fix.
+  - The matching runtime path also contained the same inconsistency.
+    `src/martini_cg_lipid.cpp` originally accumulated `cg_lipid_density`
+    over all pairs, even after the Python training path was restricted to
+    same-leaflet neighbors. The runtime density force must match the statistic
+    used to build the correction table.
+  - That same-leaflet density fix is real but still not sufficient on its own.
+    Before the fix, exact-288 density corrections trained against
+    full-resolution targets improved the best sourcefix smoke only to
+    `25.49..25.68 A`. After the fix, the best exact-288 short smoke is
+    `12.77 -> 25.03 A` with zero flips, final `p05 |n_z|=0.914`,
+    final `min |n_z|=0.628`, and `avg_kinetic_energy/1.5kT=91.7`.
+  - Matching the C++ runtime statistic improves that case only marginally:
+    `12.77 -> 24.96 A`, zero flips, final `p05 |n_z|=0.907`,
+    final `min |n_z|=0.619`, `avg_kinetic_energy/1.5kT=97.5`. This confirms
+    the density mismatch was real but secondary, not the dominant cause of the
+    remaining leaflet-distance error.
+  - Pair-specific bilayer-trained IBI correction is intentionally rejected by
+    the current validator as non-transferable, so that path is not an allowed
+    fix under the project rules.
+  - Rejected source hypotheses:
+    a mixed torsion/local isolated-conformer sampler diverges on the exact
+    288-lipid gate (`39.09 A`, `223` flips, `avg_kinetic_energy/1.5kT=414`);
+    head-anchored CGL re-centering also diverges catastrophically.
+  - Updated conclusion: including intramolecular nonbonded terms and removing
+    the raw seed from the canonical source path are both real fixes, but they
+    are still not sufficient. The remaining blocker is deeper than the raw
+    seed alone: the current transferable one-particle projection still does
+    not yield a canonical table that satisfies the exact 288-lipid structure
+    and orientation gate.
+  - A pure one-particle center remapping is unlikely to be the missing fix.
+    The isolated and full-template DOPC bead clouds differ strongly in tail
+    compaction, but their axial support-center shift differs by only about
+    `0.03 nm` (`0.32 A`) per leaflet, which is far too small to explain the
+    remaining `~12 A` bilayer-thickness error.
+  - A richer rigid isolated hidden-state basis also fails. An `8`-conformer,
+    `20k`-burn-in isolated ensemble worsens the exact-288 smoke to
+    `12.77 -> 37.70 A`, even though orientation quality stays finite. That
+    rules out “just sample the isolated ensemble harder” as the main fix.
+  - A naive pair-conditioned best-energy relaxation during table building is
+    also not viable. A short-range tail-relaxation prototype causes immediate
+    catastrophic divergence on the exact-288 gate (`288` flips,
+    `avg_kinetic_energy/1.5kT~1.4e9`). That experimental path was removed
+    rather than left dormant.
+  - Updated redesign decision: the remaining physically coherent path is to
+    expose compaction explicitly in the coarse model, not to keep inflating the
+    rigid one-particle PMF basis. The redesign should preserve the existing
+    hybrid interface while adding a compaction degree of freedom for CGL.
+  - Standalone bilayer validation had two real source-path bugs that only
+    showed up once the compaction prototype needed a fresh exact-288 input:
+    `martini_prepare_system.py prepare --mode bilayer` did not seed the
+    required dry-MARTINI unit-conversion env vars before stage conversion, and
+    it also stopped after stage conversion instead of injecting the canonical
+    `particle.h5` and `dopc.h5` CGL nodes. Both were fixed in source.
+  - The first compaction prototype exposed a crucial representation bug:
+    state-conditioned CGL corrections cannot be attached as raw-energy deltas
+    after the base `cg_lipid_pair` inverse `log1p` transform when the base
+    spline itself stores reduced control values. That mismatch causes immediate
+    catastrophic attraction on the exact-288 gate.
+  - Re-centering the compaction correction around the original base pair table
+    is necessary but not sufficient. The corrections must also live in the same
+    pre-transform `log1p` spline-control representation as the base table and
+    be combined before the runtime inverse transform and taper.
+  - After moving the compaction correction into control space, a broad
+    two-state correction still destabilizes orientation badly on the exact
+    288-lipid gate (`12.77 -> 29.38 A`, final `p05 |n_z|=0.107`,
+    `avg_kinetic_energy/1.5kT=144.4`). Restricting the control-space correction
+    to face-to-face angular modes stabilizes the prototype materially
+    (`12.77 -> 25.88 A`, zero sign flips relative to frame 0,
+    final `p05 |n_z|=0.870`, final `min |n_z|=0.569`,
+    `avg_kinetic_energy/1.5kT=53.3`), but it still misses the leaflet-distance
+    target and does not beat the earlier `24.96 A` short exact-288 baseline.
+  - The current hidden coordinate is probably wrong. In the exact full-DOPC
+    288-lipid template, isolated-vs-bilayer separation is much larger in axial
+    tail extension (`tail_mid_len_A: 16.82 isolated vs 24.21 full`) than in
+    distal-tail perpendicular radius (`3.38 isolated vs 3.24 full`). The next
+    redesign should not keep using perpendicular radius as the only hidden
+    state.
+  - Re-ran that descriptor comparison directly from the live source path
+    before editing again. The isolated 32-conformer pool still gives
+    `tail_mid_len_A: 16.82`, `distal_axial_mean_A: 16.20`, `perp_A: 3.38`,
+    while the canonical DOPC bilayer template gives
+    `tail_mid_len_A: 24.21`, `distal_axial_mean_A: 22.63`, `perp_A: 3.24`.
+    The axial coordinate gap is real in the current codebase and is the right
+    next source-level hidden state to test.
+  - A quick axial-length state audit supports that conclusion. Using a short
+    vs long `tail_mid_len_A` split on the isolated 32-conformer pool makes the
+    mixed short/long pair surface the least repulsive at the nearest exact-288
+    cross-leaflet geometry (`4420 kJ/mol` vs base `8481 kJ/mol`), which is a
+    stronger signal than the current radius-based split.
+  - Implemented that axial hidden coordinate in source while keeping the same
+    scalar hidden-state plumbing and rebuilt a temporary exact-288 validation
+    H5 with `UPSIDE_CG_LIPID_SKIP_SC=1`. The rebuilt table records
+    `coordinate_name=head_to_tail_midpoint_length_ang`,
+    `compact_state_center_ang=13.381 A`, and
+    `extended_state_center_ang=19.615 A`.
+  - The fresh exact-288 stage input confirms why the axial state is hard for
+    the current runtime to use directly: the initial bilayer hidden-coordinate
+    distribution sits well above the isolated-source support
+    (`mean 24.21 A`, `p05 19.50 A`, `p95 28.38 A`), while the isolated
+    self-PMF support only spans `11.12 .. 21.58 A`.
+  - The broad axial-state correction is not acceptable. The exact-288 smoke
+    ends at `12.77 -> 32.58 A` with `106` lipids flipping sign relative to
+    frame 0, final `p05 |n_z|=0.080`, final `min |n_z|=0.029`, and
+    `avg_kinetic_energy/1.5kT=324.9`.
+  - Restricting the axial correction to the face-to-face sector stabilizes it
+    immediately, but does not close the remaining gap. Both smooth and binary
+    face masks give essentially the same exact-288 smoke:
+    `12.77 -> 25.88 A`, zero flips, final `p05 |n_z|≈0.868`,
+    final `min |n_z|≈0.58`, and `avg_kinetic_energy/1.5kT≈70.7`.
+  - The obvious follow-on variants do not materially improve that masked axial
+    result. Merging the previous best same-leaflet density correction,
+    replacing the dynamic hidden state with the masked mixed
+    `extended-compact` branch directly, and fixing the runtime hidden-state
+    dead zones (pair-weight clamp and flat self-PMF tails outside the isolated
+    spline support) all leave the exact-288 smoke effectively unchanged at
+    `~25.88 A`.
+  - New redesign implication: the blocker is no longer just the scalar
+    coordinate definition or a runtime coupling bug. The full two-state
+    isolated-source correction family appears to saturate at the same stable
+    but too-wide bilayer once it is localized to the physically relevant
+    cross-leaflet sector. The next method likely needs a richer pair-conditioned
+    relaxation than a bilinear blend of two isolated per-lipid states.
+  - Current redesign decision: the next physically coherent source fix should
+    compute a localized pair-conditioned tail-relaxation correction directly
+    from two interacting DOPC lipids, rather than trying to route the response
+    through a per-lipid hidden state derived from isolated conformers.
+  - The first localized pair-conditioned relaxation patch exposed a real
+    source-path bug in the experimental table writer: recomputing
+    `reference_energy_eup` from the corrected grid let one inaccessible,
+    over-corrected near-core bin become the global pair reference, which drove
+    the entire runtime table catastrophically negative. Preserving the original
+    pair-table reference energy fixes that failure mode.
+  - With that reference-energy fix in place, a localized pair-conditioned
+    collective axial tail-compaction correction becomes the current best exact
+    288-lipid short smoke among the redesigns tested so far:
+    `12.99 -> 23.45 A`, zero flips, final `p05 |n_z|=0.910`,
+    final `min |n_z|=0.768`, `avg_kinetic_energy/1.5kT=96.5`.
+    It is still not acceptable, but it is materially better than the earlier
+    `24.96..25.88 A` plateau.
+  - That same pair-conditioned family still appears to plateau once pushed
+    beyond the narrow stable face-contact sector. Broadening the correction to
+    `cos(theta) >= 0`, adding the same-leaf density term, or splitting the
+    collective mode into chain-resolved compaction variables all either
+    regress toward `24.8..25.0 A` or destabilize orientation and kinetic
+    energy completely.
+  - Experimental lesson from the compaction-aware path: the existing axial
+    `cg_lipid_compaction` correction tensors are not a drop-in overlay on top
+    of the new pair-relaxation base table. Their tensor sizes differ, so the
+    next redesign must rebuild any compaction-aware correction against the new
+    base representation rather than copying the old compaction group directly.
+  - Smooth face-weighted dynamic compaction against the preserved-reference
+    pair-relax base does not improve the masked dynamic plateau. The exact-288
+    short smoke stays at `12.99 -> 25.01 A` with zero flips, final
+    `p05 |n_z|≈0.79`, final `min |n_z|≈0.68`, and postprocessed
+    `avg_kinetic_energy/1.5kT≈47.2`.
+  - Found a real source bug in the pair-conditioned relaxation builder: the
+    dimer relaxation path had not been rotating the DOPC bead clouds into the
+    requested pair orientation before evaluating energies. The old `23.45 A`
+    best static pair-relax result was therefore partly benefiting from an
+    inconsistent dimer geometry.
+  - After fixing that orientation bug and matching the pair-relax builder to
+    the base table's azimuthal and bead-frame averaging contract, the
+    physically consistent pair-relax family regresses badly on the exact-288
+    gate. The corrected short smoke lands at `12.99 -> 33.52..33.69 A` with
+    zero flips but poor orientation quality (`final min |n_z|≈0.086`) and
+    much hotter startup (`avg_kinetic_energy/1.5kT≈140`).
+  - Extending that corrected dimer relaxation with an explicit lateral
+    tail-collapse mode does not recover the old improvement. The richer
+    axial-plus-radial pair-relax search remains at `33.69 A` on the exact-288
+    short smoke.
+  - Added an implicit compaction-response runtime path:
+    `UPSIDE_CGL_COMPACTION_IMPLICIT_RESPONSE=1` now skips the thermostatted
+    `cgl_compaction_state` node during injection, and `cg_lipid_pair` derives
+    an instantaneous extended-state fraction from cross-leaflet face contacts.
+    On the masked pairrelax+compaction exact-288 H5 this is effectively
+    identical to the dynamic masked result:
+    `12.99 -> 24.98 A`, zero flips, final `p05 |n_z|≈0.793`,
+    final `min |n_z|≈0.647`, postprocessed
+    `avg_kinetic_energy/1.5kT≈47.37`.
+  - New redesign implication after those source tests: the remaining blocker
+    is no longer the hidden-state friction alone. Once the pair-relax builder
+    is made physically consistent, that family collapses, and removing the
+    explicit hidden-state dynamics does not move the `~25 A` compaction-aware
+    plateau. The next valid method must replace the current
+    isolated-state/axial-relax correction family with a richer pair-conditioned
+    or many-body compaction model, not just reweight the same tensors.
+  - Lesson: when a training-ensemble fix looks promising on a small probe or a
+    dilute stress test, rerun the exact acceptance geometry before treating it
+    as validated. Here the 72-CGL and 404-CGL probes improved while the exact
+    288-lipid acceptance bilayer still failed quickly.
+  - Lesson: when generator defaults and runtime validators disagree on a table
+    contract, fix the generator default in source before trusting any rebuild
+    comparisons. Here the build path still silently defaulted to `Tavg=10.0`
+    even though the accepted CGL contract is `25.0`.
+  - Lesson: when a table encodes a specific thermodynamic contract, do not
+    “fix” bad behavior by changing that contract to match runtime temperature.
+    First prove whether the bug is in table construction, conversion, or
+    runtime evaluation under the original intended contract.
+  - Lesson: when the user identifies a structural training mismatch, verify the
+    actual reference ensemble geometry before auditing low-level runtime math.
+    Table-building bugs can be upstream in the training conformers even when
+    the PMF transform and spline evaluation are internally consistent.
+  - Lesson: when a correction term is derived from a specific coarse statistic,
+    audit that the sampling code measures the same statistic. Here the density
+    kernel was trained on same-leaflet packing but the runtime correction data
+    path originally counted all neighbors.
+  - Lesson: when a statistic mismatch is fixed in the training path, audit the
+    matching runtime force path immediately. Here the Python same-leaflet
+    density fix landed first, but the C++ runtime still applied the old
+    all-neighbor statistic.
+  - Lesson: before investing in a mapping-only redesign, compare the measured
+    geometric shift to the actual physical error scale. Here the support-center
+    shift difference is only `0.32 A` per leaflet, so center remapping alone
+    cannot plausibly fix a `~12 A` leaflet-separation failure.
+  - Lesson: when a richer hidden-state basis makes the acceptance gate worse,
+    stop scaling up the same approximation. Here the `8`-conformer isolated
+    ensemble increased leaflet separation to `37.70 A`, so the limitation is
+    structural, not just under-sampling.
+  - Lesson: do not leave failed experimental source paths as optional env
+    toggles in active dry-MARTINI files. Remove them after the test and record
+    the result in `findings.md` instead.
+  - Lesson: when adding a hidden-state correction on top of an existing spline
+    table, verify that the hidden-state term lives in the same runtime
+    representation as the base spline. Here the base CGL pair table stored a
+    reduced control grid, so a raw-energy hidden-state delta was not additive
+    at the runtime evaluation point.
+  - Lesson: when a fresh validation path uses a standalone preparer instead of
+    the main workflow wrapper, rerun the exact acceptance route itself. The
+    workflow may already seed required env vars and post-conversion injections
+    that the standalone path silently lacks.
 - 2026-06-25: dryMARTINI interface refactor setup.
   - Scope must be derived from diffs against
     `/Users/yinhan/Documents/upside2-md-master`, not from guessing or broad
@@ -589,6 +1457,14 @@
     `D40=0.265 +/- 0.026 um^2/s`.
 
 ## Lessons / User Corrections
+- 2026-06-27: Hybrid interaction-family audit before extending a CGL state model.
+  - Working rule: when the user asks to apply a CGL method across interaction
+    families, first confirm which runtime nodes actually carry a live CGL
+    source or target. Extend the compaction-state machinery only to those
+    CGL-bearing paths (`cg_lipid_pair`, `cg_lipid_rotamer_sc`,
+    `cg_lipid_target`) and keep direct non-CGL tables such as
+    `sidechain.h5/sc_table` on their own physical contract.
+
 - User correction: `D40=0.234 um^2/s` for the original two-mode CGL GLE is
   acceptable against the `0.25 um^2/s` target. Do not over-optimize the
   absolute diffusion value once it is in that window. The active decision
@@ -2572,6 +3448,11 @@
   - because `O` contributes about `0.2963` of each `BB` COM weight, that is a real correctness issue, but fixing it cleanly requires projecting `O` feedback through the `N/CA/C -> O` reconstruction map rather than merely freezing `O`.
 
 ## Lessons
+- 2026-06-28: Keep transport comparisons seed-matched unless the goal is
+  explicit seed-robustness measurement.
+  - Working rule: when comparing kinetic schedules, hold the random seeds fixed
+    across candidate runs. Otherwise schedule changes and seed noise get mixed
+    together and the comparison is not trustworthy.
 - 2026-04-02: A subsystem replacement is not complete while prep/export helpers still emit the retired schema.
   - Working rule: after removing a runtime path, search the preparation and validation scripts for the same groups, attrs, and helper names. If the active workflow no longer consumes them, delete that export/validation code instead of leaving inert compatibility baggage behind.
 - 2026-04-02: A direct-carrier rewrite is not complete until startup gating and legacy proxy bookkeeping are both ported or removed.
