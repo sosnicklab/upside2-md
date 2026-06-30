@@ -66,8 +66,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--isolated-dopc-conformer-count",
         type=int,
-        default=2,
-        help="Number of isolated bonded DOPC conformers for the default CGL projection.",
+        default=8,
+        help="Number of representative isolated DOPC conformers used for the default CGL projection.",
+    )
+    parser.add_argument(
+        "--isolated-dopc-conformer-pool-count",
+        type=int,
+        default=32,
+        help="Number of isolated bonded DOPC conformers sampled before selecting representative CGL reference conformers.",
     )
     parser.add_argument(
         "--isolated-dopc-conformer-seed",
@@ -92,6 +98,73 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=0.025,
         help="Cartesian proposal sigma in nm for isolated bonded DOPC conformer sampling.",
+    )
+    parser.add_argument(
+        "--dopc-target-overlay-base-h5",
+        default=None,
+        help=(
+            "Optional base dopc.h5 to preserve pair/SC/compaction tables from while "
+            "rebuilding only effective_lj and cg_lipid_target from the representative "
+            "isolated-DOPC ensemble."
+        ),
+    )
+    parser.add_argument(
+        "--dopc-target-overlay-output",
+        default=None,
+        help="Optional output path for the target-overlay dopc.h5.",
+    )
+    parser.add_argument(
+        "--dopc-target-overlay-rebuild-sc",
+        action="store_true",
+        help=(
+            "Also rebuild cg_lipid_sc from the representative isolated-DOPC ensemble "
+            "instead of preserving the base SC table."
+        ),
+    )
+    parser.add_argument(
+        "--dopc-target-overlay-preserve-target",
+        action="store_true",
+        help=(
+            "Preserve the base effective_lj and cg_lipid_target tables instead of "
+            "rebuilding them in the overlay."
+        ),
+    )
+    parser.add_argument(
+        "--dopc-target-overlay-reference-up-file",
+        action="append",
+        default=None,
+        help=(
+            "Optional full-resolution Upside trajectory to use as the interface-reference "
+            "DOPC conformer source for the overlay. Provide multiple times to pool "
+            "bulk-bilayer conformers across trajectories."
+        ),
+    )
+    parser.add_argument(
+        "--dopc-target-overlay-reference-conformer-count",
+        type=int,
+        default=12,
+        help=(
+            "Number of conformers to retain from the pooled full-resolution overlay "
+            "reference trajectories when --dopc-target-overlay-reference-up-file is used."
+        ),
+    )
+    parser.add_argument(
+        "--dopc-target-overlay-reference-frame-start-fraction",
+        type=float,
+        default=0.5,
+        help=(
+            "Fraction of the full-resolution reference trajectory to discard before "
+            "sampling overlay DOPC conformers."
+        ),
+    )
+    parser.add_argument(
+        "--dopc-target-overlay-reference-min-protein-xy-distance-ang",
+        type=float,
+        default=0.0,
+        help=(
+            "If positive, exclude full-resolution overlay reference lipids whose center "
+            "lies within this XY distance of any non-lipid particle."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -131,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         build_particle_h5,
         build_sidechain_h5,
         build_dopc_h5,
+        build_dopc_target_overlay_h5,
     )
 
     builders = [
@@ -152,6 +226,10 @@ def main(argv: list[str] | None = None) -> int:
             "sidechain_lib_path": sidechain_lib_path,
             "dopc_pdb_path": dopc_pdb_path,
             "isolated_conformer_count": max(1, int(args.isolated_dopc_conformer_count)),
+            "isolated_conformer_pool_count": max(
+                int(args.isolated_dopc_conformer_count),
+                int(args.isolated_dopc_conformer_pool_count),
+            ),
             "isolated_conformer_seed": int(args.isolated_dopc_conformer_seed),
             "isolated_conformer_burnin_steps": max(0, int(args.isolated_dopc_conformer_burnin_steps)),
             "isolated_conformer_mc_steps": max(1, int(args.isolated_dopc_conformer_mc_steps)),
@@ -177,6 +255,52 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Generating {output_path.name} ...")
         builder(**kwargs)
         print()
+
+    if bool(args.dopc_target_overlay_base_h5) != bool(args.dopc_target_overlay_output):
+        print(
+            "ERROR: --dopc-target-overlay-base-h5 and --dopc-target-overlay-output "
+            "must be provided together",
+            file=sys.stderr,
+        )
+        return 1
+    if args.dopc_target_overlay_base_h5 and args.dopc_target_overlay_output:
+        overlay_output = Path(args.dopc_target_overlay_output).expanduser().resolve()
+        if overlay_output.exists() and not args.force:
+            print(f"Skipping {overlay_output.name} (already exists, use --force to overwrite)")
+        else:
+            print(f"Generating {overlay_output.name} ...")
+            build_dopc_target_overlay_h5(
+                base_h5_path=Path(args.dopc_target_overlay_base_h5).expanduser().resolve(),
+                output_path=overlay_output,
+                dry_ff_path=dry_ff_path,
+                lipids_itp_path=lipids_itp_path,
+                martinize_path=martinize_path,
+                sidechain_lib_path=sidechain_lib_path,
+                rebuild_sc=bool(args.dopc_target_overlay_rebuild_sc),
+                rebuild_target=not bool(args.dopc_target_overlay_preserve_target),
+                conformer_upside_h5_paths=(
+                    [Path(path).expanduser().resolve() for path in args.dopc_target_overlay_reference_up_file]
+                    if args.dopc_target_overlay_reference_up_file
+                    else None
+                ),
+                conformer_count=max(1, int(args.dopc_target_overlay_reference_conformer_count)),
+                conformer_frame_start_fraction=float(
+                    args.dopc_target_overlay_reference_frame_start_fraction
+                ),
+                conformer_min_nonlipid_xy_distance_ang=float(
+                    args.dopc_target_overlay_reference_min_protein_xy_distance_ang
+                ),
+                isolated_conformer_count=max(1, int(args.isolated_dopc_conformer_count)),
+                isolated_conformer_pool_count=max(
+                    int(args.isolated_dopc_conformer_count),
+                    int(args.isolated_dopc_conformer_pool_count),
+                ),
+                isolated_conformer_seed=int(args.isolated_dopc_conformer_seed),
+                isolated_conformer_burnin_steps=max(0, int(args.isolated_dopc_conformer_burnin_steps)),
+                isolated_conformer_mc_steps=max(1, int(args.isolated_dopc_conformer_mc_steps)),
+                isolated_conformer_proposal_sigma_nm=float(args.isolated_dopc_conformer_sigma_nm),
+            )
+            print()
 
     print("All MARTINI parameter files generated successfully.")
     return 0

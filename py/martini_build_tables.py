@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import math
 import os
+import shutil
 import importlib.util
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -2467,6 +2468,12 @@ def _build_single_cgl_state_delta_radial_angular(
     compact_energy_grid_kj_mol: np.ndarray,
     reference_energy_eup: float,
     temperature_upside: float,
+    r_values_nm: np.ndarray | None = None,
+    cos_theta_grid: np.ndarray | None = None,
+    n_knot_radial: int | None = None,
+    n_knot_angular: int | None = None,
+    knot_spacing_ang: float | None = None,
+    smooth: float = 0.01,
 ) -> dict:
     base_control = _log1p_reduced_control_from_energy_grid(
         base_energy_grid_kj_mol,
@@ -2483,9 +2490,41 @@ def _build_single_cgl_state_delta_radial_angular(
         reference_energy_eup,
         temperature_upside,
     )
+    delta_extended_grid = extended_control - base_control
+    delta_compact_grid = compact_control - base_control
+    if (
+        r_values_nm is not None
+        and cos_theta_grid is not None
+        and n_knot_radial is not None
+        and n_knot_angular is not None
+        and knot_spacing_ang is not None
+    ):
+        delta_extended = _fit_radial_angular_tensor_bspline(
+            np.asarray(r_values_nm, dtype=np.float64),
+            np.asarray(cos_theta_grid, dtype=np.float64),
+            np.asarray(delta_extended_grid, dtype=np.float64),
+            int(n_knot_radial),
+            int(n_knot_angular),
+            float(knot_spacing_ang),
+            energy_conversion=1.0,
+            smooth=float(smooth),
+        ).reshape(-1)
+        delta_compact = _fit_radial_angular_tensor_bspline(
+            np.asarray(r_values_nm, dtype=np.float64),
+            np.asarray(cos_theta_grid, dtype=np.float64),
+            np.asarray(delta_compact_grid, dtype=np.float64),
+            int(n_knot_radial),
+            int(n_knot_angular),
+            float(knot_spacing_ang),
+            energy_conversion=1.0,
+            smooth=float(smooth),
+        ).reshape(-1)
+    else:
+        delta_extended = delta_extended_grid.reshape(-1)
+        delta_compact = delta_compact_grid.reshape(-1)
     return {
-        "delta_extended": (extended_control - base_control).reshape(-1).astype(np.float32),
-        "delta_compact": (compact_control - base_control).reshape(-1).astype(np.float32),
+        "delta_extended": np.asarray(delta_extended, dtype=np.float32),
+        "delta_compact": np.asarray(delta_compact, dtype=np.float32),
         "grid_extended_kj_mol": np.asarray(extended_energy_grid_kj_mol, dtype=np.float32),
         "grid_compact_kj_mol": np.asarray(compact_energy_grid_kj_mol, dtype=np.float32),
     }
@@ -2826,6 +2865,55 @@ def _dopc_tail_extension_ang(ref_bead_positions_nm: np.ndarray) -> float:
 def _dopc_tail_extension_series_ang(ref_bead_positions_nm: np.ndarray) -> np.ndarray:
     refs = _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm)
     return np.asarray([_dopc_tail_extension_ang(ref) for ref in refs], dtype=np.float64)
+
+
+def _select_reference_ensemble_representatives(
+    ref_bead_positions_nm: np.ndarray,
+    representative_count: int,
+) -> dict:
+    refs = _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm)
+    count = max(1, int(representative_count))
+    if refs.shape[0] <= count:
+        compaction = _dopc_tail_extension_series_ang(refs)
+        return {
+            "representative_refs_nm": refs.copy(),
+            "representative_indices": np.arange(refs.shape[0], dtype=np.int32),
+            "representative_compaction_ang": compaction.astype(np.float64),
+            "pool_size": int(refs.shape[0]),
+        }
+
+    compaction = _dopc_tail_extension_series_ang(refs)
+    order = np.argsort(compaction)
+    rank_targets = np.linspace(0.0, float(order.size - 1), count)
+    selected_ranks: list[int] = []
+    used_ranks: set[int] = set()
+    for target in rank_targets:
+        base_rank = int(round(float(target)))
+        for delta in range(order.size):
+            candidate_ranks = (base_rank,) if delta == 0 else (base_rank - delta, base_rank + delta)
+            chosen = None
+            for cand in candidate_ranks:
+                if 0 <= cand < order.size and cand not in used_ranks:
+                    chosen = cand
+                    break
+            if chosen is not None:
+                used_ranks.add(chosen)
+                selected_ranks.append(chosen)
+                break
+    if len(selected_ranks) != count:
+        raise RuntimeError(
+            f"Failed to select {count} representative isolated DOPC conformers from pool of {refs.shape[0]}"
+        )
+    representative_indices = order[np.asarray(selected_ranks, dtype=np.int32)]
+    representative_indices = representative_indices[
+        np.argsort(compaction[representative_indices], kind="stable")
+    ]
+    return {
+        "representative_refs_nm": refs[representative_indices].copy(),
+        "representative_indices": representative_indices.astype(np.int32),
+        "representative_compaction_ang": compaction[representative_indices].astype(np.float64),
+        "pool_size": int(refs.shape[0]),
+    }
 
 
 def _select_compaction_state_representatives(
@@ -3211,14 +3299,13 @@ def _read_output_box_lengths_ang(h5: h5py.File) -> np.ndarray | None:
     return None
 
 
-def load_dopc_conformers_from_upside_h5(
+def _extract_dopc_conformer_pool_from_upside_h5(
     up_file: Path,
-    max_conformers: int = 4,
     frame_start_fraction: float = 0.5,
+    min_nonlipid_xy_distance_ang: float = 0.0,
 ) -> np.ndarray:
-    """Extract centered DOPC 14-bead conformers from a full-resolution Upside trajectory."""
+    """Extract a pooled set of centered 14-bead DOPC conformers from one Upside trajectory."""
     up_file = Path(up_file).expanduser().resolve()
-    max_conformers = max(1, int(max_conformers))
     with h5py.File(up_file, "r") as h5:
         if "/output/pos" not in h5:
             raise RuntimeError(f"{up_file} is missing /output/pos")
@@ -3247,42 +3334,125 @@ def load_dopc_conformers_from_upside_h5(
         if not lipid_molecules:
             raise RuntimeError(f"No 14-bead DOPC lipid molecules found in {up_file}")
 
+        nonlipid_index = np.asarray(
+            [i for i, cls in enumerate(particle_class) if cls and cls != "LIPID"],
+            dtype=np.int64,
+        )
         first_frame = int(round(float(frame_start_fraction) * float(max(0, n_frame - 1))))
         frame_candidates = list(range(first_frame, n_frame))
         if not frame_candidates:
             frame_candidates = [n_frame - 1]
-        n_pool = len(frame_candidates) * len(lipid_molecules)
-        n_sample = min(max_conformers, n_pool)
-        if n_sample < max_conformers:
-            print(
-                f"  Requested {max_conformers} DOPC conformers but only "
-                f"{n_pool} frame-lipid samples are available"
-            )
-        sample_linear = np.linspace(0, n_pool - 1, n_sample)
-        sample_indices = []
-        seen = set()
-        for value in sample_linear:
-            idx = int(round(float(value)))
-            if idx in seen:
-                continue
-            seen.add(idx)
-            sample_indices.append(idx)
+
         conformers = []
-        n_lipid = len(lipid_molecules)
-        for sample_idx in sample_indices:
-            frame = frame_candidates[sample_idx // n_lipid]
-            lipid = lipid_molecules[sample_idx % n_lipid]
-            beads_ang = np.asarray(pos[frame, 0, lipid, :], dtype=np.float64)
-            delta = beads_ang - beads_ang[0][None, :]
-            if box_ang is not None:
-                delta -= box_ang[None, :] * np.round(delta / box_ang[None, :])
-            beads_ang = beads_ang[0][None, :] + delta
-            beads_nm = (beads_ang - np.mean(beads_ang, axis=0)[None, :]) * ANGSTROM_TO_NM
-            conformers.append(beads_nm)
-    refs = _canonicalize_lipid_reference_ensemble_to_z(np.asarray(conformers, dtype=np.float64))
+        filtered_near_protein = 0
+        for frame in frame_candidates:
+            frame_pos = np.asarray(pos[frame, 0, :, :], dtype=np.float64)
+            nonlipid_pos = frame_pos[nonlipid_index, :] if nonlipid_index.size else np.zeros((0, 3), dtype=np.float64)
+            for lipid in lipid_molecules:
+                beads_ang = np.asarray(frame_pos[lipid, :], dtype=np.float64)
+                delta = beads_ang - beads_ang[0][None, :]
+                if box_ang is not None:
+                    delta -= box_ang[None, :] * np.round(delta / box_ang[None, :])
+                beads_ang = beads_ang[0][None, :] + delta
+                center_ang = np.mean(beads_ang, axis=0)
+                if min_nonlipid_xy_distance_ang > 0.0 and nonlipid_pos.size:
+                    delta_nonlipid = _minimum_image_ang(nonlipid_pos - center_ang[None, :], box_ang)
+                    min_nonlipid_xy = float(
+                        np.sqrt(np.min(np.sum(delta_nonlipid[:, :2] * delta_nonlipid[:, :2], axis=1)))
+                    )
+                    if min_nonlipid_xy < float(min_nonlipid_xy_distance_ang):
+                        filtered_near_protein += 1
+                        continue
+                beads_nm = (beads_ang - center_ang[None, :]) * ANGSTROM_TO_NM
+                conformers.append(beads_nm)
+    if not conformers:
+        raise RuntimeError(
+            f"No DOPC conformers remained after filtering {up_file} with "
+            f"min_nonlipid_xy_distance_ang={min_nonlipid_xy_distance_ang:.3f}"
+        )
+    pool = np.asarray(conformers, dtype=np.float64)
+    pool = _canonicalize_lipid_reference_ensemble_to_z(pool)
+    kept = int(pool.shape[0])
+    total = len(frame_candidates) * len(lipid_molecules)
+    if min_nonlipid_xy_distance_ang > 0.0:
+        print(
+            f"  Loaded DOPC conformer pool from {up_file}: kept {kept} of {total} "
+            f"frame-lipid samples after excluding {filtered_near_protein} near-protein lipids "
+            f"with XY cutoff {float(min_nonlipid_xy_distance_ang):.1f} A"
+        )
+    else:
+        print(
+            f"  Loaded DOPC conformer pool from {up_file}: kept {kept} of {total} "
+            f"frame-lipid samples"
+        )
+    return pool
+
+
+def load_dopc_conformers_from_upside_h5(
+    up_file: Path,
+    max_conformers: int = 4,
+    frame_start_fraction: float = 0.5,
+    min_nonlipid_xy_distance_ang: float = 0.0,
+) -> np.ndarray:
+    """Extract centered DOPC conformers from one full-resolution Upside trajectory."""
+    return load_dopc_conformers_from_upside_h5_pool(
+        [up_file],
+        max_conformers=max_conformers,
+        frame_start_fraction=frame_start_fraction,
+        min_nonlipid_xy_distance_ang=min_nonlipid_xy_distance_ang,
+    )
+
+
+def load_dopc_conformers_from_upside_h5_pool(
+    up_files: Iterable[Path],
+    max_conformers: int = 4,
+    frame_start_fraction: float = 0.5,
+    min_nonlipid_xy_distance_ang: float = 0.0,
+) -> np.ndarray:
+    """Extract centered DOPC conformers from one or more full-resolution Upside trajectories."""
+    resolved_paths = [Path(path).expanduser().resolve() for path in up_files]
+    if not resolved_paths:
+        raise RuntimeError("No Upside trajectory paths were provided for DOPC conformer extraction")
+    max_conformers = max(1, int(max_conformers))
+    pools = [
+        _extract_dopc_conformer_pool_from_upside_h5(
+            path,
+            frame_start_fraction=frame_start_fraction,
+            min_nonlipid_xy_distance_ang=min_nonlipid_xy_distance_ang,
+        )
+        for path in resolved_paths
+    ]
+    pooled = np.concatenate(pools, axis=0)
+    n_pool = int(pooled.shape[0])
+    n_sample = min(max_conformers, n_pool)
+    if n_sample < max_conformers:
+        print(
+            f"  Requested {max_conformers} DOPC conformers but only "
+            f"{n_pool} pooled frame-lipid samples are available"
+        )
+    selection = _select_reference_ensemble_representatives(
+        pooled,
+        representative_count=n_sample,
+    )
+    refs = np.asarray(selection["representative_refs_nm"], dtype=np.float64)
+    source_desc = str(resolved_paths[0]) if len(resolved_paths) == 1 else f"{len(resolved_paths)} trajectories"
+    compaction = _dopc_tail_extension_series_ang(refs)
+    if min_nonlipid_xy_distance_ang > 0.0:
+        print(
+            f"  Loaded {refs.shape[0]} DOPC conformers from {source_desc} "
+            f"using representative pooled samples after XY protein-distance filtering at "
+            f"{float(min_nonlipid_xy_distance_ang):.1f} A"
+        )
+    else:
+        print(
+            f"  Loaded {refs.shape[0]} DOPC conformers from {source_desc} "
+            f"using representative pooled samples"
+        )
     print(
-        f"  Loaded {refs.shape[0]} DOPC conformers from {up_file} "
-        f"using evenly spaced frame-lipid samples from a pool of {n_pool}"
+        f"  Bilayer reference compaction summary: mean={float(np.mean(compaction)):.3f} A, "
+        f"p25={float(np.quantile(compaction, 0.25)):.3f} A, "
+        f"median={float(np.median(compaction)):.3f} A, "
+        f"p75={float(np.quantile(compaction, 0.75)):.3f} A"
     )
     return refs
 
@@ -5214,6 +5384,9 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
     martinize_path: Path | None = None,
     sidechain_lib_path: Path | None = None,
     forcefield_name: str = "martini22",
+    include_sc: bool = True,
+    include_target: bool = True,
+    reference_dataset_name: str | None = None,
 ) -> dict:
     defaults = _default_dry_martini_repo_paths()
     dry_ff_path = Path(dry_ff_path or defaults["dry_ff_path"]).expanduser().resolve()
@@ -5262,7 +5435,16 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
         cg_grp = h5["cg_lipid_table"]
         if "cg_lipid_compaction" not in cg_grp:
             raise RuntimeError(f"{base_h5_path} lacks cg_lipid_compaction")
-        ref_ensemble_nm = np.asarray(cg_grp["ref_bead_positions_nm"][:], dtype=np.float64)
+        ref_dataset = str(reference_dataset_name or "").strip()
+        if not ref_dataset:
+            ref_dataset = (
+                "interface_ref_bead_positions_nm"
+                if "interface_ref_bead_positions_nm" in cg_grp
+                else "ref_bead_positions_nm"
+            )
+        if ref_dataset not in cg_grp:
+            raise RuntimeError(f"{base_h5_path} lacks cg_lipid_table/{ref_dataset}")
+        ref_ensemble_nm = np.asarray(cg_grp[ref_dataset][:], dtype=np.float64)
         bead_charges = list(np.asarray(cg_grp["bead_charges"][:], dtype=np.float64))
         comp_grp = cg_grp["cg_lipid_compaction"]
         compact_center_ang = float(
@@ -5293,7 +5475,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
         }
 
         sc_grp = cg_grp.get("cg_lipid_sc")
-        if sc_grp is not None:
+        if include_sc and sc_grp is not None:
             restype_order = _decode_h5_string_array(sc_grp["restype_order"][:])
             orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
             residue_map = load_martini_forcefield(martinize_path, forcefield_name)
@@ -5453,7 +5635,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
             }
 
         target_grp = cg_grp.get("cg_lipid_target")
-        if target_grp is not None:
+        if include_target and target_grp is not None:
             target_types = _decode_h5_string_array(target_grp["target_order"][:])
             n_types = len(target_types)
             n_knot_radial = int(target_grp.attrs["n_radial"])
@@ -5552,6 +5734,11 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                     compact_energy_grid_kj_mol=compact_target_results[ti],
                     reference_energy_eup=float(target_ref_energy[ti]),
                     temperature_upside=float(target_temperature),
+                    r_values_nm=r_sample_nm,
+                    cos_theta_grid=cos_theta_grid,
+                    n_knot_radial=n_knot_radial,
+                    n_knot_angular=n_knot_angular,
+                    knot_spacing_ang=knot_spacing_ang,
                 )
                 target_delta_extended[0, ti, :] = np.asarray(
                     delta["delta_extended"],
@@ -5578,7 +5765,8 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
 
     print(
         "  Single-CGL compaction retrofit: "
-        f"SC={'cg_lipid_sc' in corrections}, target={'cg_lipid_target' in corrections}, "
+        f"ref={ref_dataset}, SC={'cg_lipid_sc' in corrections}, "
+        f"target={'cg_lipid_target' in corrections}, "
         f"compact center={compact_center_ang:.3f} A, extended center={extended_center_ang:.3f} A"
     )
     return corrections
@@ -8310,6 +8498,7 @@ def _build_cgl_target_table(
     phi_values = np.linspace(0.0, 2.0 * np.pi, 4, endpoint=False)
     bead_frame_angles = _bead_frame_angles(_bead_frame_count("CGL", 1))
     orientation_dirs = _directions_with_dot_np(target_axis, cos_theta_grid, phi_values)
+    target_fit_smooth = 0.01
 
     target_tasks = [
         {
@@ -8336,7 +8525,20 @@ def _build_cgl_target_table(
     for ti, _tgt_type, control_flat, reference_energy_kj_mol, energy_grid in _parallel_map_ordered(
         "CGL-particle target table", _run_cgl_target_type_task, target_tasks
     ):
-        interaction_param[0, ti, :] = control_flat
+        control_grid = np.asarray(control_flat, dtype=np.float64).reshape(
+            len(r_sample_nm),
+            len(cos_theta_grid),
+        )
+        interaction_param[0, ti, :] = _fit_radial_angular_tensor_bspline(
+            r_sample_nm,
+            cos_theta_grid,
+            control_grid,
+            n_knot_radial=n_knot_radial,
+            n_knot_angular=n_knot_angular,
+            knot_spacing_ang=knot_spacing_ang,
+            energy_conversion=1.0,
+            smooth=target_fit_smooth,
+        ).reshape(-1)
         reference_energy_eup[0, ti] = float(reference_energy_kj_mol) / float(energy_conv)
         base_energy_grid[ti] = np.asarray(energy_grid, dtype=np.float64)
 
@@ -8387,6 +8589,12 @@ def _build_cgl_target_table(
                 compact_energy_grid_kj_mol=compact_results[ti],
                 reference_energy_eup=float(reference_energy_eup[0, ti]),
                 temperature_upside=float(temperature),
+                r_values_nm=r_sample_nm,
+                cos_theta_grid=cos_theta_grid,
+                n_knot_radial=n_knot_radial,
+                n_knot_angular=n_knot_angular,
+                knot_spacing_ang=knot_spacing_ang,
+                smooth=target_fit_smooth,
             )
             target_compaction_delta_extended[0, ti, :] = np.asarray(
                 delta["delta_extended"], dtype=np.float32
@@ -8645,9 +8853,12 @@ def build_dopc_h5(
     dopc_pdb_path: Path,
     forcefield_name: str = "martini22",
     conformer_upside_h5_path: Path | None = None,
+    conformer_upside_h5_paths: list[Path] | None = None,
     conformer_count: int = 4,
     conformer_frame_start_fraction: float = 0.5,
-    isolated_conformer_count: int = 2,
+    conformer_min_nonlipid_xy_distance_ang: float = 0.0,
+    isolated_conformer_count: int = 8,
+    isolated_conformer_pool_count: int = 32,
     isolated_conformer_temperature_upside: float = DEFAULT_PRODUCTION_TEMP_UPSIDE,
     isolated_conformer_seed: int = 1729,
     isolated_conformer_burnin_steps: int = 5000,
@@ -8678,34 +8889,48 @@ def build_dopc_h5(
     atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
     atomtype_masses = parse_itp_atomtype_masses(dry_ff_path)
     dopc = parse_dopc_from_itp(lipids_itp_path)
-
+    reference_upside_paths = []
     if conformer_upside_h5_path is not None:
-        ref_bead_positions_nm = load_dopc_conformers_from_upside_h5(
-            conformer_upside_h5_path,
-            max_conformers=conformer_count,
-            frame_start_fraction=conformer_frame_start_fraction,
+        reference_upside_paths.append(Path(conformer_upside_h5_path).expanduser().resolve())
+    if conformer_upside_h5_paths is not None:
+        reference_upside_paths.extend(
+            Path(path).expanduser().resolve() for path in conformer_upside_h5_paths
         )
-        reference_source = "full_resolution_upside_conformer_trajectory"
-    else:
-        ref_bead_positions_nm = sample_isolated_dopc_bonded_conformers(
-            dopc,
-            lipids_itp_path=lipids_itp_path,
-            pair_params=pair_params,
-            conformer_count=isolated_conformer_count,
-            temperature_upside=isolated_conformer_temperature_upside,
-            seed=isolated_conformer_seed,
-            mc_burnin_steps=isolated_conformer_burnin_steps,
-            mc_steps_per_conformer=isolated_conformer_mc_steps,
-            proposal_sigma_nm=isolated_conformer_proposal_sigma_nm,
-        )
-        reference_source = "isolated_dopc_itp_bonded_plus_intramolecular_nonbonded_mc_ensemble"
+
+    ref_bead_positions_nm, reference_source, representative_metadata = _resolve_dopc_reference_ensemble(
+        dopc=dopc,
+        pair_params=pair_params,
+        lipids_itp_path=lipids_itp_path,
+        conformer_upside_h5_path=conformer_upside_h5_path,
+        conformer_upside_h5_paths=conformer_upside_h5_paths,
+        conformer_count=conformer_count,
+        conformer_frame_start_fraction=conformer_frame_start_fraction,
+        conformer_min_nonlipid_xy_distance_ang=conformer_min_nonlipid_xy_distance_ang,
+        isolated_conformer_count=isolated_conformer_count,
+        isolated_conformer_pool_count=isolated_conformer_pool_count,
+        isolated_conformer_temperature_upside=isolated_conformer_temperature_upside,
+        isolated_conformer_seed=isolated_conformer_seed,
+        isolated_conformer_burnin_steps=isolated_conformer_burnin_steps,
+        isolated_conformer_mc_steps=isolated_conformer_mc_steps,
+        isolated_conformer_proposal_sigma_nm=isolated_conformer_proposal_sigma_nm,
+    )
 
     def _writer(h5: h5py.File) -> None:
         h5.attrs["dopc_reference_source"] = reference_source
         h5.attrs["dopc_reference_conformer_count"] = np.int32(
             int(np.asarray(ref_bead_positions_nm).reshape(-1, 14, 3).shape[0])
         )
-        if conformer_upside_h5_path is None:
+        if reference_upside_paths:
+            h5.attrs["dopc_reference_up_file_count"] = np.int32(len(reference_upside_paths))
+            h5.attrs["dopc_reference_up_files"] = np.asarray(
+                [np.bytes_(str(path)) for path in reference_upside_paths],
+                dtype="S512",
+            )
+            if conformer_min_nonlipid_xy_distance_ang > 0.0:
+                h5.attrs["dopc_reference_min_nonlipid_xy_distance_ang"] = np.float32(
+                    conformer_min_nonlipid_xy_distance_ang
+                )
+        else:
             h5.attrs["dopc_isolated_conformer_temperature_upside"] = np.float32(
                 isolated_conformer_temperature_upside
             )
@@ -8717,6 +8942,19 @@ def build_dopc_h5(
             h5.attrs["dopc_isolated_conformer_proposal_sigma_nm"] = np.float32(
                 isolated_conformer_proposal_sigma_nm
             )
+            h5.attrs["dopc_isolated_conformer_pool_count"] = np.int32(
+                int(max(int(isolated_conformer_pool_count), int(isolated_conformer_count)))
+            )
+            if representative_metadata is not None:
+                h5.attrs["dopc_isolated_conformer_representative_count"] = np.int32(
+                    int(np.asarray(representative_metadata["representative_refs_nm"]).shape[0])
+                )
+                h5.attrs["dopc_isolated_conformer_representative_compaction_min_ang"] = np.float32(
+                    float(np.min(representative_metadata["representative_compaction_ang"]))
+                )
+                h5.attrs["dopc_isolated_conformer_representative_compaction_max_ang"] = np.float32(
+                    float(np.max(representative_metadata["representative_compaction_ang"]))
+                )
         _build_cg_lipid_tables(
             h5,
             pair_params=pair_params,
@@ -8744,4 +8982,623 @@ def build_dopc_h5(
         )
 
     _write_h5_atomically(output_path, _writer)
+    print(f"Built {output_path}")
+
+
+def _resolve_dopc_reference_ensemble(
+    dopc: dict,
+    pair_params: dict,
+    lipids_itp_path: Path,
+    conformer_upside_h5_path: Path | None = None,
+    conformer_upside_h5_paths: list[Path] | None = None,
+    conformer_count: int = 4,
+    conformer_frame_start_fraction: float = 0.5,
+    conformer_min_nonlipid_xy_distance_ang: float = 0.0,
+    isolated_conformer_count: int = 8,
+    isolated_conformer_pool_count: int = 32,
+    isolated_conformer_temperature_upside: float = DEFAULT_PRODUCTION_TEMP_UPSIDE,
+    isolated_conformer_seed: int = 1729,
+    isolated_conformer_burnin_steps: int = 5000,
+    isolated_conformer_mc_steps: int = 2000,
+    isolated_conformer_proposal_sigma_nm: float = 0.025,
+) -> tuple[np.ndarray, str, dict | None]:
+    reference_upside_paths = []
+    if conformer_upside_h5_path is not None:
+        reference_upside_paths.append(Path(conformer_upside_h5_path).expanduser().resolve())
+    if conformer_upside_h5_paths is not None:
+        reference_upside_paths.extend(
+            Path(path).expanduser().resolve() for path in conformer_upside_h5_paths
+        )
+    if reference_upside_paths:
+        ref_bead_positions_nm = load_dopc_conformers_from_upside_h5_pool(
+            reference_upside_paths,
+            max_conformers=conformer_count,
+            frame_start_fraction=conformer_frame_start_fraction,
+            min_nonlipid_xy_distance_ang=conformer_min_nonlipid_xy_distance_ang,
+        )
+        if len(reference_upside_paths) == 1 and conformer_min_nonlipid_xy_distance_ang <= 0.0:
+            reference_source = "full_resolution_upside_conformer_trajectory"
+        elif len(reference_upside_paths) == 1:
+            reference_source = "full_resolution_upside_bulk_lipid_filtered_conformer_trajectory"
+        elif conformer_min_nonlipid_xy_distance_ang <= 0.0:
+            reference_source = "pooled_full_resolution_upside_conformer_trajectory"
+        else:
+            reference_source = "pooled_full_resolution_upside_bulk_lipid_filtered_conformer_trajectory"
+        return (
+            np.asarray(ref_bead_positions_nm, dtype=np.float64),
+            reference_source,
+            {
+                "source_kind": "upside_trajectory_pool",
+                "reference_paths": [str(path) for path in reference_upside_paths],
+                "min_nonlipid_xy_distance_ang": float(conformer_min_nonlipid_xy_distance_ang),
+            },
+        )
+
+    pool_count = max(int(isolated_conformer_pool_count), int(isolated_conformer_count))
+    pool_refs_nm = sample_isolated_dopc_bonded_conformers(
+        dopc,
+        lipids_itp_path=lipids_itp_path,
+        pair_params=pair_params,
+        conformer_count=pool_count,
+        temperature_upside=isolated_conformer_temperature_upside,
+        seed=isolated_conformer_seed,
+        mc_burnin_steps=isolated_conformer_burnin_steps,
+        mc_steps_per_conformer=isolated_conformer_mc_steps,
+        proposal_sigma_nm=isolated_conformer_proposal_sigma_nm,
+    )
+    representative_metadata = _select_reference_ensemble_representatives(
+        pool_refs_nm,
+        representative_count=isolated_conformer_count,
+    )
+    return (
+        np.asarray(representative_metadata["representative_refs_nm"], dtype=np.float64),
+        "isolated_dopc_itp_bonded_plus_intramolecular_nonbonded_mc_representative_ensemble",
+        {
+            **representative_metadata,
+            "source_kind": "isolated_representative",
+        },
+    )
+
+
+def _build_cgl_sc_overlay_group(
+    h5: h5py.File,
+    cg_grp: h5py.Group,
+    pair_params: dict,
+    sidechain_lib_path: Path,
+    martinize_path: Path,
+    forcefield_name: str,
+    active_residue_names: list[str],
+    ref_bead_positions_nm: np.ndarray,
+    bead_types: list,
+    bead_charges: list,
+    derived_params: dict | None = None,
+    r_min_nm: float = 0.30,
+    r_count: int = 24,
+    cos_theta_count: int = 13,
+    azimuthal_count: int = 4,
+) -> None:
+    ref_ensemble_nm = _canonicalize_lipid_reference_ensemble_to_z(
+        np.asarray(ref_bead_positions_nm, dtype=np.float64)
+    )
+    bead_charges = [float(q) for q in bead_charges]
+
+    sc_knot_spacing_ang = 1.4
+    sc_fit_r_max_nm, sc_n_radial = _cg_lipid_target_radial_support(
+        ref_ensemble_nm,
+        sc_knot_spacing_ang,
+    )
+    _res = os.environ.get("UPSIDE_CG_LIPID_RESOLUTION", "fine").strip().lower()
+    if _res == "coarse":
+        _sc_r, _sc_ct, _sc_az = 8, 5, 2
+    elif _res == "medium":
+        _sc_r, _sc_ct, _sc_az = 12, 7, 2
+    else:
+        _sc_r, _sc_ct, _sc_az = 16, 9, 4
+    sc_r_count = max(min(r_count, _sc_r), sc_n_radial)
+    sc_cos_theta_count = min(cos_theta_count, _sc_ct)
+    sc_azimuthal_count = min(azimuthal_count, _sc_az)
+    cg_bead_frame_count = _bead_frame_count("CGL", 8)
+    sc_bead_frame_count = _bead_frame_count("SC", 1)
+
+    orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
+    residue_map = load_martini_forcefield(martinize_path, forcefield_name)
+    martini_sidechain_offsets_nm = _load_martini_sidechain_offsets_nm(
+        martinize_path,
+        forcefield_name,
+    )
+
+    residues = [
+        r
+        for r in active_residue_names
+        if r in residue_map and residue_map[r] and r in orientation_map
+    ]
+    if _truthy_env("UPSIDE_CG_LIPID_SKIP_SC"):
+        print("  cg_lipid_sc overlay: skipping SC-CGL table generation for CGL-only screening")
+        residues = []
+
+    sc_n_modes = 0
+    sc_n_angular = min(sc_cos_theta_count + 2, 15)
+    sc_angular_smooth = 0.1
+    sc_taper_width_ang = sc_knot_spacing_ang
+    sc_cutoff_ang = float(sc_fit_r_max_nm * 10.0 + sc_taper_width_ang)
+    if sc_n_modes == 0:
+        sc_n_param = sc_n_radial * sc_n_angular * sc_n_angular
+    else:
+        sc_n_param = sc_n_radial + sc_n_modes * (2 * sc_n_angular + sc_n_radial)
+    sc_rms_error = np.zeros(len(residues), dtype=np.float32)
+    sc_short_range_core = np.zeros(len(residues), dtype=np.float32)
+    sc_short_range_core_rows = np.zeros(len(residues), dtype=np.int32)
+    sc_reference_energy = np.zeros(len(residues), dtype=np.float32)
+    first_sc_result = None
+
+    if not residues:
+        print("  cg_lipid_sc overlay: no active residues with sidechains, skipping")
+        n_sc_types = 0
+        interaction_param_sc = np.zeros((0, 1, sc_n_param), dtype=np.float64)
+        sc_residue_names: list[str] = []
+    else:
+        cb_anchor_nm = [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG]
+        cb_vector_unit = list(CANONICAL_CB_VECTOR_UNIT)
+
+        n_sc_types = len(residues)
+        interaction_param_sc = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float64)
+        sc_residue_names = []
+
+        sc_fit_tasks = []
+        for ri, residue in enumerate(residues):
+            sc_bead_types = residue_map[residue]
+            sc_bead_charges = [infer_charge_from_atomtype(bt) for bt in sc_bead_types]
+            orientation = orientation_map[residue]
+            sc_positions_by_rotamer = _expand_rotamer_sidechain_positions(
+                orientation,
+                residue,
+                np.asarray(martini_sidechain_offsets_nm[residue], dtype=np.float64),
+            )
+            sc_fit_tasks.append(
+                {
+                    "ri": ri,
+                    "residue": residue,
+                    "ref_bead_positions_nm": ref_ensemble_nm,
+                    "cg_bead_types": list(bead_types),
+                    "cg_bead_charges": list(bead_charges),
+                    "target_type": "CGL",
+                    "target_charge": 0.0,
+                    "rotamer_bead_positions_nm": sc_positions_by_rotamer,
+                    "rotamer_weights": orientation["weight"],
+                    "sc_bead_types": list(sc_bead_types),
+                    "sc_bead_charges": list(sc_bead_charges),
+                    "pair_params": pair_params,
+                    "cb_anchor_nm": cb_anchor_nm,
+                    "cb_vector_unit": cb_vector_unit,
+                    "r_min_nm": r_min_nm,
+                    "r_max_nm": sc_fit_r_max_nm,
+                    "r_count": sc_r_count,
+                    "cos_theta_count": sc_cos_theta_count,
+                    "azimuthal_count": sc_azimuthal_count,
+                    "sidechain_bead_frame_count": sc_bead_frame_count,
+                    "cg_bead_frame_count": cg_bead_frame_count,
+                    "n_modes": sc_n_modes,
+                    "n_knot_radial": sc_n_radial,
+                    "n_knot_angular": sc_n_angular,
+                    "angular_smooth": sc_angular_smooth,
+                    "knot_spacing_ang": sc_knot_spacing_ang,
+                    "temperature": DEFAULT_PRODUCTION_TEMP_UPSIDE,
+                    "average_temperature": DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
+                }
+            )
+
+        for ri, residue, result_sc in _parallel_map_ordered(
+            "CG-SC overlay table",
+            _fit_cg_lipid_sc_quadspline_from_dict,
+            sc_fit_tasks,
+        ):
+            if first_sc_result is None:
+                first_sc_result = result_sc
+            interaction_param_sc[ri, 0, :] = result_sc["interaction_param"]
+            sc_rms_error[ri] = np.float32(result_sc["rms_error"])
+            sc_short_range_core[ri] = np.float32(result_sc["short_range_core_kj_mol"])
+            sc_short_range_core_rows[ri] = np.int32(result_sc["short_range_core_rows"])
+            sc_reference_energy[ri] = np.float32(result_sc.get("reference_energy_eup", 0.0))
+            sc_cutoff_ang = min(sc_cutoff_ang, float(result_sc["cutoff_ang"]))
+            sc_residue_names.append(residue)
+            print(
+                f"  CG-SC overlay({residue}): RMS error = {result_sc['rms_error']:.4f} kJ/mol, "
+                f"modes = {result_sc['n_modes']}"
+            )
+
+    cg_sc_grp = cg_grp.create_group("cg_lipid_sc")
+    _write_common_table_contract_attrs(
+        cg_sc_grp,
+        table_family="CGL-SC",
+        source_object="sidechain_rotamer_bead_ensemble",
+        target_object="dopc_cgl_constituent_bead_ensemble",
+        projection_ensemble="sidechain_rotamers_x_cgl_conformers_x_two_orientations_x_bead_frames",
+        runtime_representation="log1p_reduced_tensor_bspline",
+        correction_layer="none",
+    )
+    cg_sc_grp.create_dataset(
+        "interaction_param",
+        data=interaction_param_sc.astype(np.float32),
+    )
+    cg_sc_grp.create_dataset(
+        "restype_order",
+        data=np.asarray([np.bytes_(x) for x in sc_residue_names], dtype="S4"),
+    )
+    cg_sc_grp.create_dataset(
+        "reference_energy_eup",
+        data=sc_reference_energy[:n_sc_types, None].astype(np.float32),
+    )
+    cg_sc_grp.create_dataset("rms_error_kj_mol", data=sc_rms_error[:n_sc_types])
+    cg_sc_grp.attrs["n_sc_types"] = n_sc_types
+    cg_sc_grp.attrs["n_cg_types"] = 1
+    cg_sc_grp.attrs["schema"] = (
+        "cg_lipid_sc_full_tensor" if sc_n_modes == 0 else "cg_lipid_sc_quadspline"
+    )
+    cg_sc_grp.attrs["radial_mode"] = "full_tensor" if sc_n_modes == 0 else "full_multimode"
+    cg_sc_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
+    cg_sc_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
+    cg_sc_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
+    cg_sc_grp.attrs["radial_support_source"] = "max_dopc_bead_radius_plus_dry_martini_cutoff"
+    cg_sc_grp.attrs["sample_dist_min_nm"] = np.float32(NUMERICAL_DISTANCE_GUARD_NM)
+    cg_sc_grp.attrs["sample_dist_min_source"] = "numerical_zero_guard_only"
+    cg_sc_grp.attrs["fit_r_min_nm"] = np.float32(r_min_nm)
+    cg_sc_grp.attrs["fit_r_max_nm"] = np.float32(sc_fit_r_max_nm)
+    cg_sc_grp.attrs["n_modes"] = np.int32(sc_n_modes)
+    cg_sc_grp.attrs["n_radial"] = np.int32(sc_n_radial)
+    cg_sc_grp.attrs["n_angular"] = np.int32(sc_n_angular)
+    cg_sc_grp.attrs["angular_smooth"] = np.float32(sc_angular_smooth if n_sc_types else 0.0)
+    cg_sc_grp.attrs["azimuthal_count"] = np.int32(sc_azimuthal_count if n_sc_types else 0)
+    cg_sc_grp.attrs["sidechain_bead_frame_count"] = np.int32(sc_bead_frame_count if n_sc_types else 0)
+    cg_sc_grp.attrs["cgl_bead_frame_count"] = np.int32(cg_bead_frame_count if n_sc_types else 0)
+    cg_sc_grp.attrs["conformer_count"] = np.int32(ref_ensemble_nm.shape[0])
+    cg_sc_grp.attrs["orientation_sampling"] = "sidechain_and_cgl_direction_vectors"
+    cg_sc_grp.attrs["knot_spacing_ang"] = np.float32(sc_knot_spacing_ang)
+    cg_sc_grp.attrs["cutoff_ang"] = np.float32(sc_cutoff_ang)
+    cg_sc_grp.attrs["taper_width_ang"] = np.float32(sc_taper_width_ang)
+    cg_sc_grp.attrs["azimuthal_average"] = (
+        first_sc_result["azimuthal_average"] if n_sc_types and first_sc_result is not None else ""
+    )
+    cg_sc_grp.attrs["azimuthal_average_temperature_upside"] = np.float32(
+        first_sc_result["azimuthal_average_temperature_upside"]
+        if n_sc_types and first_sc_result is not None
+        else 0.0
+    )
+    if int(sc_n_modes) == 0:
+        cg_sc_grp.attrs["energy_transform"] = (
+            first_sc_result["energy_transform"] if n_sc_types and first_sc_result is not None else ""
+        )
+        cg_sc_grp.attrs["spline_control_quantity"] = (
+            first_sc_result["spline_control_quantity"] if n_sc_types and first_sc_result is not None else ""
+        )
+        cg_sc_grp.attrs["log1p_reduced_transform"] = np.int32(1)
+        cg_sc_grp.attrs["boltzmann_temperature_upside"] = np.float32(DEFAULT_PRODUCTION_TEMP_UPSIDE)
+    cg_sc_grp.attrs["short_range_core_source"] = (
+        first_sc_result["short_range_core_source"] if n_sc_types and first_sc_result is not None else ""
+    )
+    cg_sc_grp.attrs["excluded_area_source"] = (
+        str(first_sc_result["excluded_area_source"])
+        if n_sc_types and first_sc_result
+        else ""
+    )
+    cg_sc_grp.attrs["isotropic_background_source"] = (
+        str(first_sc_result["isotropic_background_source"])
+        if n_sc_types and first_sc_result
+        else ""
+    )
+    cg_sc_grp.attrs["attractive_control_source"] = (
+        str(first_sc_result["attractive_control_source"])
+        if n_sc_types and first_sc_result
+        else ""
+    )
+    cg_sc_grp.attrs["excluded_area_nonnegative_rows"] = np.int32(
+        int(first_sc_result["excluded_area_nonnegative_rows"])
+        if n_sc_types and first_sc_result
+        else 0
+    )
+    cg_sc_grp.create_dataset("short_range_core_kj_mol", data=sc_short_range_core[:n_sc_types])
+    cg_sc_grp.create_dataset("short_range_core_rows", data=sc_short_range_core_rows[:n_sc_types])
+    if derived_params:
+        _write_cg_derived_attrs(cg_sc_grp, derived_params)
+    if sc_residue_names:
+        sc_bead_types_set: set[str] = set()
+        for residue_name in sc_residue_names:
+            sc_bead_types_set.update(str(bt) for bt in residue_map.get(residue_name, []))
+        cg_sc_grp.create_dataset(
+            "sc_bead_types",
+            data=np.asarray([np.bytes_(x) for x in sorted(sc_bead_types_set)], dtype="S8"),
+        )
+
+
+def build_dopc_target_overlay_h5(
+    base_h5_path: Path,
+    output_path: Path,
+    dry_ff_path: Path,
+    lipids_itp_path: Path,
+    martinize_path: Path | None = None,
+    sidechain_lib_path: Path | None = None,
+    forcefield_name: str = "martini22",
+    rebuild_sc: bool = False,
+    rebuild_target: bool = True,
+    conformer_upside_h5_path: Path | None = None,
+    conformer_upside_h5_paths: list[Path] | None = None,
+    conformer_count: int = 4,
+    conformer_frame_start_fraction: float = 0.5,
+    conformer_min_nonlipid_xy_distance_ang: float = 0.0,
+    isolated_conformer_count: int = 8,
+    isolated_conformer_pool_count: int = 32,
+    isolated_conformer_temperature_upside: float = DEFAULT_PRODUCTION_TEMP_UPSIDE,
+    isolated_conformer_seed: int = 1729,
+    isolated_conformer_burnin_steps: int = 5000,
+    isolated_conformer_mc_steps: int = 2000,
+    isolated_conformer_proposal_sigma_nm: float = 0.025,
+    r_min_nm: float = 0.30,
+    r_count: int = 24,
+    cos_theta_count: int = 13,
+    azimuthal_count: int = 4,
+) -> None:
+    """Preserve a base DOPC H5 and rebuild selected protein-facing CGL tables."""
+    base_h5_path = Path(base_h5_path).expanduser().resolve()
+    output_path = Path(output_path).expanduser().resolve()
+    dry_ff_path = Path(dry_ff_path).expanduser().resolve()
+    lipids_itp_path = Path(lipids_itp_path).expanduser().resolve()
+    martinize_path = Path(martinize_path).expanduser().resolve() if martinize_path else None
+    sidechain_lib_path = (
+        Path(sidechain_lib_path).expanduser().resolve() if sidechain_lib_path else None
+    )
+
+    if not base_h5_path.exists():
+        raise FileNotFoundError(base_h5_path)
+    if not rebuild_target and not rebuild_sc:
+        raise ValueError("overlay rebuild must rebuild at least one of cg_lipid_target or cg_lipid_sc")
+    if rebuild_sc and (martinize_path is None or sidechain_lib_path is None):
+        raise ValueError("rebuild_sc requires martinize_path and sidechain_lib_path")
+
+    from martini_itp_reader import parse_dopc_from_itp
+
+    atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
+    atomtype_masses = parse_itp_atomtype_masses(dry_ff_path)
+    dopc = parse_dopc_from_itp(lipids_itp_path)
+    _ensure_cg_bonds_angles(lipids_itp_path)
+    reference_upside_paths = []
+    if conformer_upside_h5_path is not None:
+        reference_upside_paths.append(Path(conformer_upside_h5_path).expanduser().resolve())
+    if conformer_upside_h5_paths is not None:
+        reference_upside_paths.extend(
+            Path(path).expanduser().resolve() for path in conformer_upside_h5_paths
+        )
+
+    ref_bead_positions_nm, reference_source, representative_metadata = _resolve_dopc_reference_ensemble(
+        dopc=dopc,
+        pair_params=pair_params,
+        lipids_itp_path=lipids_itp_path,
+        conformer_upside_h5_path=conformer_upside_h5_path,
+        conformer_upside_h5_paths=conformer_upside_h5_paths,
+        conformer_count=conformer_count,
+        conformer_frame_start_fraction=conformer_frame_start_fraction,
+        conformer_min_nonlipid_xy_distance_ang=conformer_min_nonlipid_xy_distance_ang,
+        isolated_conformer_count=isolated_conformer_count,
+        isolated_conformer_pool_count=isolated_conformer_pool_count,
+        isolated_conformer_temperature_upside=isolated_conformer_temperature_upside,
+        isolated_conformer_seed=isolated_conformer_seed,
+        isolated_conformer_burnin_steps=isolated_conformer_burnin_steps,
+        isolated_conformer_mc_steps=isolated_conformer_mc_steps,
+        isolated_conformer_proposal_sigma_nm=isolated_conformer_proposal_sigma_nm,
+    )
+    derived_params = _derive_dopc_cg_params_from_reference_ensemble(
+        ref_bead_positions_nm=ref_bead_positions_nm,
+        bead_types=dopc["bead_types"],
+        pair_params=pair_params,
+        bead_masses_g_mol=[atomtype_masses[bt] for bt in dopc["bead_types"]],
+        bonds=_CURRENT_CG_BONDS,
+    )
+
+    def _writer(h5: h5py.File) -> None:
+        with h5py.File(base_h5_path, "r") as src:
+            for key, value in src.attrs.items():
+                h5.attrs[key] = value
+            for key in src.keys():
+                src.copy(key, h5)
+
+            if "cg_lipid_table" not in h5:
+                raise RuntimeError(f"{base_h5_path} lacks cg_lipid_table")
+
+            cg_src = src["cg_lipid_table"]
+            cg_grp = h5["cg_lipid_table"]
+            group_names = []
+            if rebuild_target:
+                group_names.extend(["effective_lj", "cg_lipid_target"])
+            if rebuild_sc:
+                group_names.append("cg_lipid_sc")
+            for group_name in group_names:
+                if group_name in cg_grp:
+                    del cg_grp[group_name]
+
+            target_ref_dataset_name = "interface_ref_bead_positions_nm"
+            sc_ref_dataset_name = (
+                target_ref_dataset_name if rebuild_target else "sc_interface_ref_bead_positions_nm"
+            )
+            ref_conformer_count = int(np.asarray(ref_bead_positions_nm).reshape(-1, 14, 3).shape[0])
+            if rebuild_target:
+                if target_ref_dataset_name in cg_grp:
+                    del cg_grp[target_ref_dataset_name]
+                cg_grp.create_dataset(
+                    target_ref_dataset_name,
+                    data=np.asarray(ref_bead_positions_nm, dtype=np.float32),
+                )
+                cg_grp.attrs["interface_reference_source"] = reference_source
+                cg_grp.attrs["interface_reference_conformer_count"] = np.int32(ref_conformer_count)
+                if reference_upside_paths:
+                    cg_grp.attrs["interface_reference_up_file_count"] = np.int32(len(reference_upside_paths))
+                    cg_grp.attrs["interface_reference_up_files"] = np.asarray(
+                        [np.bytes_(str(path)) for path in reference_upside_paths],
+                        dtype="S512",
+                    )
+                    if conformer_min_nonlipid_xy_distance_ang > 0.0:
+                        cg_grp.attrs["interface_reference_min_nonlipid_xy_distance_ang"] = np.float32(
+                            conformer_min_nonlipid_xy_distance_ang
+                        )
+                elif representative_metadata is not None:
+                    cg_grp.attrs["interface_reference_pool_count"] = np.int32(
+                        int(max(int(isolated_conformer_pool_count), int(isolated_conformer_count)))
+                    )
+                    cg_grp.attrs["interface_reference_seed"] = np.int32(isolated_conformer_seed)
+                if "sc_interface_ref_bead_positions_nm" in cg_grp:
+                    del cg_grp["sc_interface_ref_bead_positions_nm"]
+                h5.attrs["dopc_interface_reference_source"] = reference_source
+                h5.attrs["dopc_interface_reference_conformer_count"] = np.int32(ref_conformer_count)
+                if reference_upside_paths:
+                    h5.attrs["dopc_interface_reference_up_file_count"] = np.int32(len(reference_upside_paths))
+                    h5.attrs["dopc_interface_reference_up_files"] = np.asarray(
+                        [np.bytes_(str(path)) for path in reference_upside_paths],
+                        dtype="S512",
+                    )
+                    if conformer_min_nonlipid_xy_distance_ang > 0.0:
+                        h5.attrs["dopc_interface_reference_min_nonlipid_xy_distance_ang"] = np.float32(
+                            conformer_min_nonlipid_xy_distance_ang
+                        )
+                elif representative_metadata is not None:
+                    h5.attrs["dopc_interface_reference_pool_count"] = np.int32(
+                        int(max(int(isolated_conformer_pool_count), int(isolated_conformer_count)))
+                    )
+                    h5.attrs["dopc_interface_reference_seed"] = np.int32(isolated_conformer_seed)
+            elif rebuild_sc:
+                if sc_ref_dataset_name in cg_grp:
+                    del cg_grp[sc_ref_dataset_name]
+                cg_grp.create_dataset(
+                    sc_ref_dataset_name,
+                    data=np.asarray(ref_bead_positions_nm, dtype=np.float32),
+                )
+                cg_grp.attrs["sc_interface_reference_source"] = reference_source
+                cg_grp.attrs["sc_interface_reference_conformer_count"] = np.int32(ref_conformer_count)
+                if reference_upside_paths:
+                    cg_grp.attrs["sc_interface_reference_up_file_count"] = np.int32(len(reference_upside_paths))
+                    cg_grp.attrs["sc_interface_reference_up_files"] = np.asarray(
+                        [np.bytes_(str(path)) for path in reference_upside_paths],
+                        dtype="S512",
+                    )
+                    if conformer_min_nonlipid_xy_distance_ang > 0.0:
+                        cg_grp.attrs["sc_interface_reference_min_nonlipid_xy_distance_ang"] = np.float32(
+                            conformer_min_nonlipid_xy_distance_ang
+                        )
+                elif representative_metadata is not None:
+                    cg_grp.attrs["sc_interface_reference_pool_count"] = np.int32(
+                        int(max(int(isolated_conformer_pool_count), int(isolated_conformer_count)))
+                    )
+                    cg_grp.attrs["sc_interface_reference_seed"] = np.int32(isolated_conformer_seed)
+                h5.attrs["dopc_interface_sc_reference_source"] = reference_source
+                h5.attrs["dopc_interface_sc_reference_conformer_count"] = np.int32(ref_conformer_count)
+                if reference_upside_paths:
+                    h5.attrs["dopc_interface_sc_reference_up_file_count"] = np.int32(
+                        len(reference_upside_paths)
+                    )
+                    h5.attrs["dopc_interface_sc_reference_up_files"] = np.asarray(
+                        [np.bytes_(str(path)) for path in reference_upside_paths],
+                        dtype="S512",
+                    )
+                    if conformer_min_nonlipid_xy_distance_ang > 0.0:
+                        h5.attrs["dopc_interface_sc_reference_min_nonlipid_xy_distance_ang"] = np.float32(
+                            conformer_min_nonlipid_xy_distance_ang
+                        )
+                elif representative_metadata is not None:
+                    h5.attrs["dopc_interface_sc_reference_pool_count"] = np.int32(
+                        int(max(int(isolated_conformer_pool_count), int(isolated_conformer_count)))
+                    )
+                    h5.attrs["dopc_interface_sc_reference_seed"] = np.int32(isolated_conformer_seed)
+
+            h5.attrs["dopc_interface_preserves_pair"] = np.int32(1)
+            h5.attrs["dopc_interface_preserves_sc"] = np.int32(0 if rebuild_sc else 1)
+            h5.attrs["dopc_interface_preserves_target"] = np.int32(0 if rebuild_target else 1)
+            h5.attrs["dopc_interface_preserves_effective_lj"] = np.int32(0 if rebuild_target else 1)
+            h5.attrs["dopc_interface_preserves_compaction"] = np.int32(1)
+            if rebuild_target:
+                effective_lj = _compute_cgl_effective_lj_params(
+                    ref_bead_positions_nm=ref_bead_positions_nm,
+                    bead_types=dopc["bead_types"],
+                    pair_params=pair_params,
+                    bead_frame_count=_bead_frame_count("CGL", 8),
+                )
+                eff_grp = cg_grp.create_group("effective_lj")
+                eff_types = sorted(effective_lj.keys())
+                eff_grp.create_dataset(
+                    "target_types",
+                    data=np.asarray([np.bytes_(t) for t in eff_types], dtype="S8"),
+                )
+                eff_grp.create_dataset(
+                    "sigma_nm",
+                    data=np.asarray([effective_lj[t]["sigma_nm"] for t in eff_types], dtype=np.float32),
+                )
+                eff_grp.create_dataset(
+                    "epsilon_kj_mol",
+                    data=np.asarray([effective_lj[t]["epsilon_kj_mol"] for t in eff_types], dtype=np.float32),
+                )
+                eff_grp.create_dataset(
+                    "uncapped_sigma_nm",
+                    data=np.asarray(
+                        [
+                            effective_lj[t].get("uncapped_sigma_nm", effective_lj[t]["sigma_nm"])
+                            for t in eff_types
+                        ],
+                        dtype=np.float32,
+                    ),
+                )
+                eff_grp.attrs["source"] = "orientation_average_metadata_not_runtime"
+                eff_grp.attrs["cgl_bead_frame_count"] = np.int32(_bead_frame_count("CGL", 8))
+                eff_grp.attrs["conformer_count"] = np.int32(ref_bead_positions_nm.shape[0])
+                eff_grp.attrs["orientation_sampling"] = "fibonacci_cgl_direction_vectors"
+                _write_cg_derived_attrs(eff_grp, derived_params)
+
+                _build_cgl_target_table(
+                    h5,
+                    cg_grp,
+                    effective_lj,
+                    ref_bead_positions_nm=ref_bead_positions_nm,
+                    bead_types=dopc["bead_types"],
+                    bead_charges=dopc["bead_charges"],
+                    pair_params=pair_params,
+                    derived_params=derived_params,
+                    temperature=DEFAULT_PRODUCTION_TEMP_UPSIDE,
+                    average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
+                    compaction_states=None,
+                )
+
+            if rebuild_sc:
+                _build_cgl_sc_overlay_group(
+                    h5,
+                    cg_grp,
+                    pair_params=pair_params,
+                    sidechain_lib_path=sidechain_lib_path,
+                    martinize_path=martinize_path,
+                    forcefield_name=forcefield_name,
+                    active_residue_names=list(CANONICAL_RESIDUES),
+                    ref_bead_positions_nm=ref_bead_positions_nm,
+                    bead_types=dopc["bead_types"],
+                    bead_charges=dopc["bead_charges"],
+                    derived_params=derived_params,
+                    r_min_nm=r_min_nm,
+                    r_count=r_count,
+                    cos_theta_count=cos_theta_count,
+                    azimuthal_count=azimuthal_count,
+                )
+                cg_grp["cg_lipid_sc"].attrs["reference_dataset_name"] = sc_ref_dataset_name
+                cg_grp["cg_lipid_sc"].attrs["reference_source"] = reference_source
+                cg_grp["cg_lipid_sc"].attrs["reference_conformer_count"] = np.int32(ref_conformer_count)
+
+    _write_h5_atomically(output_path, _writer)
+    corrections = _build_single_cgl_compaction_corrections_from_base_h5(
+        output_path,
+        dry_ff_path=dry_ff_path,
+        lipids_itp_path=lipids_itp_path,
+        martinize_path=martinize_path,
+        sidechain_lib_path=sidechain_lib_path,
+        forcefield_name=forcefield_name,
+        include_sc=bool(rebuild_sc),
+        include_target=bool(rebuild_target),
+        reference_dataset_name=(
+            "interface_ref_bead_positions_nm"
+            if rebuild_target
+            else ("sc_interface_ref_bead_positions_nm" if rebuild_sc else None)
+        ),
+    )
+    with h5py.File(output_path, "r+") as h5:
+        _apply_single_cgl_compaction_corrections_to_h5(h5["cg_lipid_table"], corrections)
     print(f"Built {output_path}")

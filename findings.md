@@ -1,6 +1,326 @@
 # Findings
 
 ## External / Technical Findings
+- 2026-06-30: Preserving the best representative target term while rebuilding
+  only `cg_lipid_sc` from the bilayer-derived bulk-DOPC ensemble is the first
+  bilayer-reference branch that improves `1rkl` without materially regressing
+  `1afo`.
+  - Source redesign:
+    `build_dopc_target_overlay_h5(...)` now supports
+    `rebuild_target=False`, so the overlay can preserve the base
+    `effective_lj` plus `cg_lipid_target` tables while rebuilding only
+    `cg_lipid_sc`.
+    The SC-only path writes its own reference dataset
+    (`sc_interface_ref_bead_positions_nm`) and SC-specific provenance attrs,
+    then regenerates only the SC compaction corrections from that dataset.
+  - Validation artifact:
+    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_rep8_sc_bulkbilayer10a_t12_rep_overlay/dopc_target_rep8_sc_bulkbilayer10a_t12_rep_overlay.h5`
+    keeps
+    `dopc_interface_reference_source=isolated representative`,
+    `dopc_interface_sc_reference_source=pooled bilayer bulk`,
+    `dopc_interface_preserves_target=1`,
+    `dopc_interface_preserves_effective_lj=1`,
+    `cg_lipid_target.conformer_count=8`,
+    `cg_lipid_sc.conformer_count=12`,
+    and zero target-direction flips over the validation runs.
+  - Clean-start `1rkl` outcome on that overlay:
+    relative to the retained representative-target baseline
+    (`validate_20260630_1rkl_cleanstart_target_rep8`),
+    the SC-only branch at
+    `validate_20260630_1rkl_cleanstart_target_rep8_sc_bulkbilayer10a_t12_rep`
+    improves the main accepted metrics:
+    - production kinetic ratio:
+      `1.262` vs `1.336`
+    - bilayer:
+      `sep_late≈16.11 A` vs `≈16.14 A`,
+      `sep_max≈16.25 A` vs `≈16.33 A`,
+      `|n_z|≈0.99333` vs `≈0.99280`,
+      `nn_p05≈6.44 A` vs `≈6.43 A`,
+      `occ_cv≈0.226` vs `≈0.210`,
+      zero flips in both
+    - protein:
+      `CA_RMSD_final/late≈2.79/2.05 A` vs `≈3.15/2.75 A`,
+      `hbond_final/late≈32.16/31.36` vs `≈30.07/29.79`
+  - Helix-occupancy caveat for `1rkl`:
+    the final frame is softer than the late-half average
+    (`helix_full_final≈0.581`, `helix_core_final≈0.72`), but the late means
+    improve over baseline (`helix_full_late≈0.684` vs `≈0.652`,
+    `helix_core_late≈0.845` vs `≈0.804`) and the last-20-frame mean stays
+    close to baseline. This supports interpreting the weaker final frame as an
+    endpoint excursion rather than a late-stage collapse.
+  - Fresh `1afo` sanity check on the same overlay:
+    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/validate_20260630_1afo_cleanstart_target_rep8_sc_bulkbilayer10a_t12_rep/`
+    stays inside the accepted envelope relative to
+    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1afo_cleanstart_target_rep8/`:
+    - production kinetic ratio:
+      `1.081` vs `1.053`
+    - bilayer:
+      `sep_late≈16.40 A` vs `≈16.38 A`,
+      `sep_max≈16.62 A` vs `≈16.60 A`,
+      `|n_z|≈0.99317` vs `≈0.99335`,
+      `nn_p05≈6.59 A` vs `≈6.61 A`,
+      `occ_cv≈0.322` vs `≈0.332`,
+      zero flips in both
+    - protein:
+      `CA_RMSD_final/late≈5.14/4.42 A` vs `≈5.14/4.55 A`,
+      `DSSP_final/late≈0.972/0.962` vs `≈0.986/0.970`,
+      `hbond_final/late≈77.74/80.93` vs `≈77.41/81.49`
+    The small DSSP / late-hbond softening does not look like a benchmark
+    failure.
+- 2026-06-30: The analysis metrics used for these clean-start hybrid
+  comparisons are now pinned down from the stage files rather than inferred by
+  eye.
+  - `kinetic_ratio` comes from the final
+    `avg_kinetic_energy/1.5kT` line in `logs/stage_7.0.log`.
+  - `orientation_flips` means the number of CGL lipids whose orientation
+    vector ever reverses sign relative to the initial production orientation,
+    not the instantaneous number of head-tail vectors that disagree with a
+    per-frame leaflet sign convention.
+  - `helix_full_*` is the simplified DSSP `H` fraction over all residues.
+  - `helix_core_*` is the simplified DSSP `H` fraction over residue indices
+    `3:28` (0-based) for `1rkl`, which exactly reproduces the retained
+    baseline metrics.
+- 2026-06-30: A direct bilayer-derived rebuild of the `cg_lipid_target`
+  interface term is not a retained `1rkl` fix, but it exposed an important
+  new builder bug and clarified the next force-field branch.
+  - Implemented a new source path that rebuilds protein-facing CGL tables from
+    pooled full-resolution bilayer trajectories instead of isolated DOPC
+    conformers.
+    The new builder can:
+    - pool one or more full-resolution Upside trajectories
+    - exclude lipids near non-lipid particles by a minimum XY distance cutoff
+    - write the filtered-trajectory provenance into the overlay H5 metadata
+  - The first version of that bilayer-reference path had a real design bug.
+    It selected the retained conformers by evenly spaced pooled frame index,
+    not by the compaction coordinate. On the tested `10 A` XY-filtered
+    pooled-bilayer source, that accidental ordering bias drove the retained
+    `12`-conformer set to a mean tail-extension of only `~18.1 A`, even though
+    the filtered bulk pool sat near `~20.7 A`.
+  - Source fix:
+    the bilayer-reference path now uses the same deterministic
+    compaction-stratified representative selector as the isolated-reference
+    redesign, rather than keeping evenly spaced file-order samples.
+    After the patch, the retained `12`-conformer bilayer set moves to
+    `mean≈20.95 A`, `median≈21.18 A`, much closer to the filtered bulk pool.
+  - Validation verdict for target-only bilayer-derived overlays:
+    both tested `1rkl` clean-start branches are rejected.
+    - Biased compact-subset branch:
+      `validate_20260630_1rkl_cleanstart_target_bulkbilayer10a_t12`
+      keeps a correct bilayer and slightly improves late mean CA RMSD, but
+      it worsens production kinetics (`avg_kinetic/1.5kT≈1.479` vs `1.336`
+      baseline), lowers late hbond signal (`≈28.41` vs `≈29.79`), and ends at
+      worse final CA RMSD (`≈3.27 A` vs `≈3.15 A`).
+    - Corrected representative branch:
+      `validate_20260630_1rkl_cleanstart_target_bulkbilayer10a_t12_rep`
+      is materially worse.
+      It keeps the bilayer ordered, but production kinetics slow further
+      (`avg_kinetic/1.5kT≈1.615`), late helix occupancy drops
+      (`≈0.622` vs `≈0.652` baseline), late core helicity drops
+      (`≈0.752` vs `≈0.804`), and late hbond signal collapses
+      (`≈22.90` vs `≈29.79`).
+  - Interpretation:
+    simply rebuilding `cg_lipid_target` from bulk bilayer conformers is not
+    the remaining universal `1rkl` fix. The retained representative-target
+    branch still beats both bilayer-derived target-only variants overall.
+    The next physically motivated branch is narrower:
+    preserve the current best target term and test whether only the
+    sidechain-facing `cg_lipid_sc` surface needs bilayer-derived retraining.
+- 2026-06-30: The first representative-SC overlay implementation still had an
+  internal compaction-consistency bug, so it was not a trustworthy test of the
+  `1rkl` root-cause hypothesis.
+  - The overlay rebuild path regenerated `cg_lipid_target` and optionally
+    `cg_lipid_sc` from the representative isolated-DOPC ensemble, but it left
+    the shared `ref_bead_positions_nm` dataset on the old baseline ensemble and
+    copied `delta_extended` / `delta_compact` correction tensors straight from
+    the old baseline file.
+  - That design is inconsistent with the user-identified defect surface.
+    The whole point of the new branch is to make the protein-facing PMFs feel
+    bilayer-like compacted tails; copying state-response tensors from the old
+    two-conformer baseline preserves exactly the stale compaction response that
+    should have been replaced.
+  - Source-level fix in progress:
+    `build_dopc_target_overlay_h5(...)` now routes compaction correction
+    regeneration through the rebuilt interface ensemble rather than inheriting
+    the baseline target/SC deltas, and the old helper that copied baseline
+    deltas into rebuilt groups was removed.
+  - Practical implication:
+    the earlier SC-overlay build attempt was aborted intentionally before
+    validation because it was using the inconsistent correction path. The next
+    retained overlay artifact must be generated from the corrected builder
+    before any `1rkl` acceptance run is interpreted.
+- 2026-06-30: Clean-start `1afo` validation confirms that the retained
+  representative-target overlay fixes the fresh-workflow bilayer without
+  recreating the old continuation-state kinetic defect, but it still leaves a
+  protein pose-drift interpretation question.
+  - The clean-start workflow must use a new `RUN_DIR`.
+    `example/16.MARTINI/run_sim_hybrid.sh` auto-detects the latest
+    `stage_7.*` checkpoint under an existing run directory and silently turns
+    the launch into a continuation unless the output path is fresh.
+  - A fresh retained-branch validation was run at
+    `example/16.MARTINI/outputs/codex_1afo_cleanstart_target_rep8/`
+    with
+    `DOPC_H5=example/16.MARTINI/outputs/codex_dopc_target_rep8_cli/dopc_target_rep8_cli.h5`,
+    `PREP_SEED=20260630`, and `SEED=20260631`.
+  - The clean-start production kinetic ratio is healthy:
+    `avg_kinetic_energy/1.5kT≈1.053`, which removes the depressed-clock caveat
+    that applied to the earlier continuation-based `1afo` validation.
+  - The bilayer remains acceptable on that fresh run:
+    late-half leaflet separation `≈16.70 A`,
+    late-half mean `|n_z|≈0.99335`,
+    late-half same-leaflet nearest-neighbor mean/p05
+    `≈7.61/6.74 A`,
+    late-half coarse `6x6` occupancy `CV≈0.332`,
+    and zero CGL orientation-sign flips over the full production segment.
+  - The protein does not show a secondary-structure collapse.
+    Against the hybrid backbone reference stored in the stage file,
+    `DSSP_final≈0.986` and `DSSP_late≈0.970`, while the late-half total hbond
+    signal (`≈81.5`) is higher than the archived coarse baseline (`≈74.2`).
+  - The remaining concern is aligned protein pose drift, not secondary
+    structure loss.
+    The clean-start overlay run ends at aligned CA RMSD `≈5.14 A` to the stage
+    reference, versus `≈3.52 A` for the archived coarse baseline. Because the
+    secondary structure and hbond signal remain strong, this suggests a looser
+    pose or tilt ensemble rather than an outright protein unfolding defect.
+    This interpretation is an inference from the measured metrics, not a
+    direct proof.
+  - Repo-context blocker for the next requested system:
+    a search across
+    `/Users/yinhan/Documents/upside2-md`,
+    `/Users/yinhan/Documents/upside2-md-master`,
+    `/Users/yinhan/Documents/upside2-md-bak`,
+    `/Users/yinhan/Documents/upside2-md-bak1`,
+    and `/Users/yinhan/Documents/upside2-md-bak2`
+    found no `elk`, `1elk`, or matching launcher/PDB artifact, so that target
+    still needs an exact identifier from the user before the second clean-start
+    validation can begin.
+- 2026-06-29: The remaining universal protein defect is in shared
+  `cg_lipid_target` force-field construction, not in per-protein workflow
+  settings.
+  - The live `dopc.h5` metadata shows that the production CGL tables were
+    built from only `2` isolated DOPC conformers:
+    `dopc_reference_conformer_count=2`,
+    `cg_lipid_pair.conformer_count=2`,
+    `cg_lipid_sc.conformer_count=2`, and
+    `cg_lipid_target.conformer_count=2`.
+  - A direct ensemble-sensitivity probe shows that the protein-facing target
+    construction is unstable under that design. For four nearby isolated-DOPC
+    seeds, the old two-conformer target support jumps from
+    `n_radial=76..84` (`r_max=2.59..2.87 nm`), while a larger eight-conformer
+    isolated ensemble narrows that spread to `n_radial=78..84`.
+  - The same probe on coarse non-core (`r>=0.6 nm`) `cg_lipid_target` PMFs
+    gives orders-of-magnitude lower seed sensitivity once the base ensemble is
+    enlarged:
+    for backbone-like `N0`, pairwise RMS variability drops from about
+    `2.66e5` to `1.56e3 kJ/mol`; for `P5`, from about `2.39e5` to
+    `4.15e2 kJ/mol`.
+  - A deterministic representative-ensemble redesign improves this further in
+    the new source path: build the default CGL tables from `8` representative
+    conformers selected across the compaction coordinate from a larger
+    `32`-conformer isolated DOPC pool, rather than from the first two MC
+    snapshots.
+  - Implemented source change:
+    `py/martini_build_tables.py` now exposes
+    `_select_reference_ensemble_representatives(...)`, and
+    `build_dopc_h5(...)` plus `py/martini_gen_params.py` now default to an
+    `8`-representative / `32`-pool isolated-DOPC reference design.
+  - Practical validation:
+    the full `dopc.h5` rebuild is too expensive to use as the first iteration
+    because it spends most of the wall clock on the already-accepted
+    `cg_lipid_pair` tensor. A narrowed experiment that rebuilds only
+    `cg_lipid_target` on top of the accepted pair table completed cleanly and
+    injected into a short coarse `1rkl stage_7.0` smoke without runtime
+    errors.
+  - Runtime smoke details:
+    `example/16.MARTINI/outputs/codex_1rkl_stage70_target_rep8_smoke/`
+    uses the rebuilt target node with
+    `n_radial=84`, `n_angular=321`, `cutoff=28.7 A`, and
+    `interaction_param/delta_*` shape `(1, 38, 26964)`;
+    the 500-step burn-in plus 200-step production replay completed with
+    temperature mean `0.8647`, hbond count rising from `31.0` to `32.7`, and
+    no initialization failure.
+  - Matching `1afo` runtime smoke also completed cleanly under the same shared
+    settings at
+    `example/16.MARTINI/outputs/codex_1afo_stage70_target_rep8_smoke/`.
+    The rebuilt target node injected successfully, minimization converged, and
+    the 500-step burn-in plus 200-step production replay ran at temperature
+    mean `0.8647` with hbond count staying in the `90.9..93.0` range.
+  - Retained practical branch:
+    keep the live `parameters/dryMARTINI/dopc.h5` on the last clean baseline
+    and build a representative-target overlay H5 that preserves the accepted
+    `cg_lipid_pair`, `cg_lipid_sc`, and `cg_lipid_compaction` tables while
+    rebuilding only `effective_lj` plus `cg_lipid_target` from the
+    `32 -> 8` isolated-DOPC representative ensemble.
+  - Implemented source support:
+    `py/martini_build_tables.py` now exposes
+    `build_dopc_target_overlay_h5(...)`, and `py/martini_gen_params.py` now
+    exposes the paired CLI flags
+    `--dopc-target-overlay-base-h5` and `--dopc-target-overlay-output`.
+    The generated overlay keeps `pair/sc/compaction conformer_count=2/2/2`
+    while setting `cg_lipid_target.conformer_count=8`.
+  - Longer benchmark validation on that branch:
+    the overlay H5 at
+    `example/16.MARTINI/outputs/codex_dopc_target_rep8/dopc_target_rep8.h5`
+    was replayed under the shared coarse settings on both benchmarks by
+    continuing from the short representative-target smoke stages.
+    Using a matched `5..10` simulation-time window:
+    - `1rkl` target-overlay vs baseline coarse:
+      CA RMSD at `t=10` is `2.10 A` vs `1.92 A`, but the total hbond signal is
+      materially better at `32.94` vs `26.15`. The bilayer remains acceptable:
+      late-window leaflet separation `16.17 A` vs `16.81 A`, mean
+      `|n_z|=0.9943` vs `0.9946`, occupancy `CV≈0.160` vs `0.160`, zero
+      flips, and same-leaflet nearest-neighbor `p05≈7.07 A` vs `6.53 A`.
+    - `1afo` target-overlay vs baseline coarse:
+      CA RMSD at `t=10` improves to `2.59 A` from `2.99 A`, and hbond signal
+      improves to `84.11` from `80.76`. The bilayer stays ordered:
+      late-window leaflet separation `15.76 A` vs `16.47 A`, mean
+      `|n_z|=0.9943` vs `0.9944`, zero flips, and same-leaflet nearest-neighbor
+      `p05≈7.04 A` vs `6.62 A`. The coarse `6x6` occupancy CV is noisier
+      (`0.341` vs `0.278`), but the nearest-neighbor spacing does not support
+      lipid aggregation.
+  - Important interpretation constraint:
+    those longer `1rkl`/`1afo` validations used production continuation from a
+    200-step smoke stage with a manually marked restart-valid final state.
+    They are useful for protein/bilayer comparison, but their kinetic ratio is
+    depressed (`avg_kinetic/1.5kT≈0.60` for `1rkl`, `≈0.70` for `1afo`), so
+    they should not be used as the transport/timescale acceptance test.
+  - Rejected follow-up in this iteration:
+    a full representative `cg_lipid_sc` rebuild on the same `32 -> 8` source
+    path is still too expensive to use as the next practical branch, and a
+    naive direct MD launch from `stage_7.0.prepared.up` is not a clean
+    comparator because that file still expects workflow-side handoff work.
+  - This is a force-field design issue, not a workflow issue. `1afo` and
+    `1rkl` share the same runtime settings; the benchmark split is more
+    consistent with cap/tilt sensitivity to the protein-facing PMF surface
+    than with any missing global stage control.
+- 2026-06-29: `1rkl` protein drift is a stage-7 activation-path defect, not a
+  stage-6 or bilayer-only transport failure.
+  - Direct checkpoint reconstruction shows `1rkl stage_6.0` keeps the native
+    DSSP string unchanged, while the cited coarse `stage_7.0` run drifts only
+    after release into unrestrained production.
+  - The promoted stage-7 burn-in input remains close to stage 6
+    (`~0.46 A` aligned backbone RMSD), so the large protein change in the
+    archived `stage_7.0` trajectory is not created by the `6.6 -> 7.0`
+    coordinate handoff itself.
+  - Replaying production from the promoted burn-in input reveals a real
+    release sensitivity in coarse `1rkl`: the archived trajectory ends around
+    `0.317 nm` protein RMSD, while a matched replay from the same burn-in
+    endpoint still drifts materially (`DSSP_match_last≈0.774`,
+    `RMSD_last≈0.259 nm`).
+  - A post-burn-in hybrid release hold can improve coarse `1rkl`.
+    The helper replay with
+    `stage_70_release_sc_env_backbone_hold_steps=2000` and
+    `stage_70_release_sc_env_po4_z_hold_steps=1500` reached
+    `DSSP_match_last≈0.839` and `RMSD_last≈0.227 nm`, while the coarse bilayer
+    stayed acceptable (`sep_last≈16.15 A`, late-half `6x6` occupancy
+    `CV≈0.147`).
+  - The same release-hold schedule is not universal.
+    Matched `1afo` replays show that the `2000/1500` and `1000/750` holds both
+    degrade the stable benchmark, so the release hold must remain opt-in
+    rather than a global workflow default.
+  - Retained interpretation:
+    keep generic source support for a post-burn-in stage-7 release hold, keep
+    the repo-wide default off, and only enable the measured hold in the coarse
+    `1rkl` launcher for now.
 - 2026-06-28: Temperature-trend diagnosis does not support forcing the CGL
   bilayer onto a single linear diffusion target over the full tested window.
   - The tested Upside range maps to a very broad physical window:
@@ -3448,6 +3768,19 @@
   - because `O` contributes about `0.2963` of each `BB` COM weight, that is a real correctness issue, but fixing it cleanly requires projecting `O` feedback through the `N/CA/C -> O` reconstruction map rather than merely freezing `O`.
 
 ## Lessons
+- 2026-06-29: When the user requires universal simulation settings, do not
+  retain a benchmark-specific workflow tweak even if it improves the failing
+  case.
+  - Working rule: treat protein-specific launcher overrides as diagnostic
+    probes only. The retained fix must come from shared force-field or shared
+    runtime logic and must be cross-checked on the stable protein benchmark
+    before calling it done.
+- 2026-06-29: Do not call a hybrid protein benchmark stable without measuring
+  the exact cited artifact.
+  - Working rule: when the user points to a named trajectory or checkpoint,
+    compute the structural metric directly from that artifact before repeating
+    any earlier stability claim based on bilayer-only validation or a
+    different protein benchmark.
 - 2026-06-28: Keep transport comparisons seed-matched unless the goal is
   explicit seed-robustness measurement.
   - Working rule: when comparing kinetic schedules, hold the random seeds fixed

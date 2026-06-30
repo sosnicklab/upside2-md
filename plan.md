@@ -1,184 +1,175 @@
 # Project Goal
 
-Stabilize the CGL bilayer transport model across the tested Upside
-temperature window without changing the accepted conservative bilayer force
-field. The structural fix for leaflet distance already holds; the remaining bug
-is the temperature dependence of the CGL lateral diffusion time scale.
+Fix the remaining `1rkl` coarse-hybrid protein defect at the shared
+force-field / implementation level without introducing protein-specific
+simulation settings, non-physical bilayer restraints, or bilayer-state terms
+inside the CGL force field.
 
 # Architecture & Key Decisions
 
-- Keep the accepted conservative CGL bilayer model unchanged.
-  The exact-288 scan already showed that leaflet separation, orientation, and
-  lateral uniformity stay correct from `T=0.7` to `T=1.2`.
-- Treat the remaining defect as a transport-model problem in the CGL GLE path.
-  The measured compaction-response state is nearly temperature-invariant across
-  the scan, so the large diffusion drift is not a conservative-structure bug.
-- Implement optional temperature-dependent scaling for the existing multi-mode
-  CGL GLE transport parameters.
-  The retained source-level fix is a shared temperature grid with mode-resolved
-  `coupling_scale` and `memory_tau_scale`, written by the preparation path and
-  interpolated by the C++ runtime.
-- Calibrate transport only with seed-matched comparisons.
-  Single `100`-time-unit trajectories are noisy enough that changing both the
-  schedule and the seed at the same time gives misleading endpoint drift.
-  Keep the original scan seeds when comparing schedules, then only use new
-  seeds after a candidate is selected.
-- Store the calibration in `/input/cgl_gle` as explicit metadata written by the
-  preparation path, then interpolate it in the C++ runtime when the simulation
-  temperature is set.
-- Use the retained exact-288 production state at `T=0.8647` as the reference
-  anchor and keep the accepted `T=1.2` endpoint from the shared-scale branch
-  when the endpoint scale values are identical.
-- Previous retained calibration baseline:
-  the seed-matched `v7` piecewise mode-resolved schedule under
-  `example/16.MARTINI/outputs/codex_bilayer_temp_scan_transportfix_v7_piecewise_modegrid_seedmatched/`
-  with temperature grid `0.7, 0.8647, 1.0, 1.1, 1.2`,
-  `coupling_scale=[[1,1],[1,1],[1.05,1.22],[1.20,1.39],[1.55,1.55]]`, and
-  `memory_tau_scale=[[0.33,0.33],[1,1],[1.10,1.33],[1.35,1.58],[1.83,1.83]]`.
-- Next source-level refinement:
-  continuation must preserve the full dynamic CGL hidden state, but the hidden
-  variables are not all the same kind of state. The retained source fix should
-  promote the missing compaction restart state (`cgl_compaction` and
-  `cgl_compaction_mom`) and rescale preserved hidden states when the target
-  simulation temperature changes, while keeping the validated fresh-start
-  behavior unchanged. Fresh hidden states should stay on the legacy zero-state
-  path unless they come from an explicit restart, because attempts to
-  thermalize them on fresh starts perturb the accepted bilayer-transport
-  branch.
-- Current retained transport branch:
-  replace the split multi-mode CGL GLE thermostat step with an exact
-  linear-Gaussian step built from the Van Loan block exponential, then keep the
-  schedule explicit around the low-mid range with
-  `temperature_grid=[0.7,0.8,0.8647,0.9,1.0,1.1,1.2]`,
-  `coupling_scale=[[1,1],[1,1],[1,1],[1.013,1.057],[1.05,1.22],[1.20,1.39],[1.50,1.50]]`,
-  and
-  `memory_tau_scale=[[0.33,0.33],[0.50,0.50],[1,1],[0.85,0.95],[1.10,1.33],[1.35,1.58],[1.70,1.70]]`.
-- Rejected follow-up:
-  the broad `v13` spectral-rebalance schedule
-  (lower coupling plus longer memory at low temperature, slightly weaker
-  high-temperature friction) preserves bilayer structure but overshoots
-  diffusion badly at `T=0.7`, `0.8`, and `0.9`.
-- Rejected source-level candidates:
-  both fresh-state GLE initialization variants were tested and rejected.
-  Full stationary initialization of CGL translational plus auxiliary momenta
-  improved `T=0.7` and `0.8` but oversped `T=0.9` and `1.2`, while
-  auxiliary-only initialization slowed the whole branch.
-- Retained interpretation of the temperature trend:
-  the tested window spans roughly `245 K` to `421 K`, so the old
-  linear-in-`T` continuation is not equally trustworthy at the endpoints.
-  The high-temperature endpoint behaves like excess thermostat friction and is
-  fixed by the validated softer `T=1.2` schedule point. Low-temperature
-  changes that try to flatten `T=0.7` toward the same linear target either
-  overspeed the midrange or slow the full branch, so they are not retained.
-- For now, evaluate time-scale stability against the internally consistent
-  linear-in-`T` continuation from the validated `T=0.8647` point. If a better
-  external DOPC temperature curve is introduced later, the same metadata path
-  should support it without another runtime redesign.
+- Treat `stage_6.0` as the structural baseline.
+  The cited `1rkl` artifact keeps native secondary structure through stage 6,
+  so the defect starts later in the hybrid workflow.
+- Separate stage-7 activation defects from equilibrium force-field defects.
+  Replays must start from the promoted stage-7 burn-in input so the diagnosis
+  targets the actual release into unrestrained production.
+- Reject benchmark-specific workflow tweaks as retained fixes.
+  A stage-7 release hold that helps `1rkl` but harms `1afo` is useful as a
+  diagnostic probe only, not as a production method.
+- Keep universal simulation settings across proteins.
+  Any retained fix must live in shared force-field construction or shared
+  runtime code and must not depend on per-protein launcher overrides.
+- Focus on the coarse protein-lipid interface before revisiting transport.
+  Current evidence points to `1rkl` coarse helix-cap / tilt sensitivity rather
+  than a bilayer-only CGL transport failure or a generic Upside core collapse.
+- Treat the default isolated-DOPC reference ensemble as part of the force
+  field, not as a harmless build shortcut.
+  The live `dopc.h5` was built from only two isolated DOPC conformers, and
+  direct probes show that this makes `cg_lipid_target` support and PMFs
+  seed-sensitive in exactly the cap-sensitive regime that differentiates
+  `1rkl` from `1afo`.
+- Retain the representative-ensemble `cg_lipid_target` overlay as the current
+  practical branch.
+  The validated near-term fix preserves the accepted pair/SC/compaction tables
+  from the clean baseline `dopc.h5` and rebuilds only `effective_lj` plus
+  `cg_lipid_target` from the `32 -> 8` isolated-DOPC representative ensemble.
+- Treat the remaining `1rkl` gap as an SC-CGL interfacial design problem until
+  disproven by clean-start validation.
+  The target-overlay branch fixed bilayer behavior and improved protein-facing
+  backbone terms, but the remaining cap / tilt mismatch is still most
+  consistent with the preserved baseline `cg_lipid_sc` surface.
+- Treat clean-start workflow validation as a separate acceptance gate.
+  The earlier continuation-based `1rkl` and `1afo` replays were sufficient to
+  compare protein and bilayer behavior, but promotion now requires a fresh
+  workflow run that goes through the normal stage-6 to stage-7 handoff in a
+  new run directory with the retained overlay H5.
+- Retain the bilayer-derived SC-only overlay as the current best candidate.
+  The latest source fix preserves the representative isolated-DOPC target term
+  and rebuilds only `cg_lipid_sc` plus its SC-specific compaction corrections
+  from the pooled bilayer-derived bulk-DOPC ensemble.
 
 # Execution Phases
 
-- [x] Re-read the relevant runtime, prep, and workflow code and confirm the
-      implementation surface for temperature-dependent CGL GLE calibration.
-- [x] Implement the new `/input/cgl_gle` temperature-calibration metadata in
-      `py/martini_prepare_system.py` and consume it in
-      `src/martini_cg_lipid.cpp`.
-- [x] Build the code and verify that legacy inputs without temperature
-      calibration still run unchanged.
-- [x] Validate the new runtime path directly by writing and reading 2D
-      `coupling_scale` / `memory_tau_scale` datasets through the prep script.
-- [x] Iterate reduced bilayer probes across multiple calibration families
-      (shared-scale, slow-mode-only, piecewise mode-resolved, and seed-matched
-      follow-ups).
-- [x] Retain the best current seed-matched calibration branch and document the
-      remaining limitation.
-- [x] Implement full CGL hidden-state restart promotion plus temperature
-      rescaling of preserved restart states, while leaving fresh-start hidden
-      states on the validated legacy path.
-- [x] Rebuild and validate the hidden-state fix on the reduced bilayer scan,
-      comparing it against the retained `v7` branch with matched seeds.
-- [x] Replace the split multi-mode CGL GLE step with an exact linear update
-      of the coupled physical and auxiliary momenta.
-- [x] Revalidate the bilayer under the exact-step runtime and insert explicit
-      `0.8` and `0.9` temperature knots where the old long interpolation
-      segment remained unstable.
-- [x] Test fresh-state CGL GLE initialization variants and reject the ones
-      that perturb the accepted bilayer transport branch.
+- [x] Quantify the `1rkl stage_7.0` defect and confirm it starts after stage 6.
+- [x] Reject stage-7 activation-hold fixes as universal settings.
+- [x] Map the failing coarse force-field terms against the localized `1rkl`
+      helix-cap and tilt defect.
+- [x] Implement and validate the representative-target overlay as the first
+      shared force-field correction.
+- [x] Run clean-start validation for `1afo` with the representative-target
+      overlay H5 and remeasure protein and bilayer behavior.
+- [x] Rebuild the representative overlay with a source-derived `cg_lipid_sc`
+      surface and validate clean-start `1rkl`.
+- [x] Replace the isolated-lipid interface reference ensemble with a
+      bilayer-derived bulk-DOPC ensemble for the protein-facing CGL tables,
+      then validate clean-start `1rkl`.
+- [x] Preserve the current best target term and rebuild only `cg_lipid_sc`
+      from the bilayer-derived bulk-DOPC ensemble, then validate clean-start
+      `1rkl`.
+- [ ] If the bilayer-derived interface branch still misses `1rkl`, isolate the
+      exact sidechain classes / force-field terms responsible and redesign that
+      shared interface term directly.
+- [x] Re-run bilayer and `1afo` sanity checks on the retained `1rkl` fix.
 
 # Known Errors / Blockers
 
-- Remaining limitation:
-  the exact-step runtime removes a real source-level discretization defect and
-  the retained softer `T=1.2` endpoint fixes the hot-end slowdown, but the low
-  endpoint is still not perfectly flat against the old linear continuation.
-  The current interpretation is that `T=0.7` is a target-definition edge case,
-  not the next clear source bug.
-- Latest rejected hypothesis:
-  broad low-temperature spectral rebalancing is too aggressive. It turns the
-  endpoint mismatch into a large overspeed and therefore is not the next fix.
-- Latest rejected source-level hypotheses:
-  fresh stationary-state GLE initialization is not retainable in either tested
-  form. Full translational-plus-auxiliary initialization overspeeds the
-  accepted branch, while auxiliary-only initialization slows it.
-- Current retained interpretation:
-  the main architectural bug in this phase was the split multi-mode GLE
-  thermostat update. After replacing it with the exact linear step, only local
-  low-mid schedule knots were needed to recover clean `T=0.8..1.1` transport
-  while preserving the correct bilayer structure.
-- Main interpretation constraint:
-  the project has one clearly accepted transport reference point, not a full
-  external DOPC temperature series. The present result should be treated as a
-  transport-stabilized internal temperature calibration, not as a final claim
-  of exact absolute DOPC transport accuracy across all temperatures.
+- The measured post-burn-in release hold remains in source as optional
+  instrumentation, but it is not a retained fix and must stay disabled by
+  default.
+- The live `parameters/dryMARTINI/dopc.h5` remains on the last clean
+  internally consistent baseline (`pair/sc/target=2/2/2` conformers).
+  The new best branch still lives as an overlay H5 plus a source-level overlay
+  builder, not as the promoted default file.
+- The representative isolated-DOPC SC overlay does not close the `1rkl` gap.
+  It improves late helix occupancy but shifts the whole helix upward relative
+  to the membrane midplane, worsens final aligned CA RMSD, and slightly
+  enlarges the leaflet spacing.
+- The runtime geometry audit has not yet found a simple target-angle or
+  cross-leaflet sign-convention bug.
+  The C++ and Python implementations agree on the core target and
+  cross-leaflet face-angle conventions checked so far.
+- The next root-cause branch is the training/reference ensemble itself:
+  the user-identified defect is bilayer-compacted DOPC tails missing from the
+  protein-facing PMF construction, so the next redesign should derive the
+  interface ensemble from bulk bilayer lipids rather than from isolated DOPC
+  conformers.
+- The target-only bilayer-derived interface rebuild is rejected.
+  Two clean-start `1rkl` runs on pooled-bilayer target-only overlays kept the
+  bilayer ordered but worsened production kinetics and overall protein
+  acceptance metrics relative to the retained representative-target baseline.
+- The SC-only bilayer-derived overlay looks retained as a force-field fix, but
+  it still has a mild endpoint-interpretation caveat for `1rkl`.
+  Late-half `1rkl` RMSD and hbond metrics improve materially, the production
+  kinetic ratio improves to `≈1.262`, and the bilayer stays correct, but the
+  final production frame has lower helix occupancy than the late-half mean.
+  The last-20-frame averages stay close to the retained baseline, so this
+  currently reads as an endpoint fluctuation rather than a clear instability.
+- Fresh `1afo` sanity validation on the SC-only overlay stays within the
+  accepted envelope rather than showing a benchmark-breaking regression.
+  Relative to the retained target-only baseline, `1afo` keeps a correct
+  bilayer and nearly unchanged production kinetics, with only a small decrease
+  in DSSP / late hbond signal that does not suggest a secondary-structure
+  collapse.
 
 # Review
 
-- Accepted reference artifact:
-  - `example/16.MARTINI/outputs/codex_bilayer_npt288_exact_pairrelax_targetgapstate_transportscan_long/validate100_pairrelax_targetgapstate_s2p0_t25.up`
-- Existing scan artifacts:
-  - `example/16.MARTINI/outputs/codex_bilayer_temp_scan_0p7_1p2/`
-- New implementation / validation artifacts:
-  - `example/16.MARTINI/outputs/codex_bilayer_temp_transportfix_v1/`
-  - `example/16.MARTINI/outputs/codex_bilayer_temp_transportfix_tauprobe/`
-  - `example/16.MARTINI/outputs/codex_bilayer_temp_transportfix_mixprobe_1p2.up`
-  - `example/16.MARTINI/outputs/codex_bilayer_temp_transportfix_mixprobe_1p2_c155.up`
-  - `example/16.MARTINI/outputs/codex_bilayer_temp_scan_transportfix_v3_0p7_1p2/`
-  - `example/16.MARTINI/outputs/codex_bilayer_temp_scan_transportfix_v4_midhigh/`
-  - `example/16.MARTINI/outputs/codex_bilayer_temp_scan_transportfix_v5_modegrid/`
-  - `example/16.MARTINI/outputs/codex_bilayer_temp_scan_transportfix_v6_piecewise_modegrid/`
-  - `example/16.MARTINI/outputs/codex_bilayer_temp_scan_transportfix_v7_piecewise_modegrid_seedmatched/`
-  - `example/16.MARTINI/outputs/codex_bilayer_temp_scan_transportfix_v8_midknot_seedmatched/`
-  - `example/16.MARTINI/outputs/codex_bilayer_temp_scan_transportfix_v12_exactgle_seedmatched/`
-  - `example/16.MARTINI/outputs/codex_cgl_gle_writer_smoke/`
-- Primary implementation files:
-  - `src/martini_cg_lipid.cpp`
-  - `py/martini_prepare_system.py`
-  - `example/16.MARTINI/run_sim_hybrid.sh`
-- Current outcome:
-  - The code now supports a shared CGL GLE temperature grid with independent
-    interpolation of mode-resolved `coupling_scale` and `memory_tau_scale`.
-  - The prep path now writes those 2D datasets correctly, and the runtime reads
-    them correctly.
-  - The prep path now also promotes the missing compaction restart state and
-    writes restart-temperature metadata for preserved CGL hidden states.
-  - The runtime now rescales preserved CGL hidden states when restart
-    temperature and target simulation temperature differ.
-  - The runtime now advances the CGL GLE hidden state with an exact
-    linear-Gaussian step instead of the old split per-mode update.
-  - The coarse hybrid launcher now defaults to the retained exact-step branch
-    while still allowing explicit overrides, with the validated softer `1.2`
-    endpoint schedule wired in by default.
-  - Structure remains robust in every retained transport probe:
-    correct leaflet separation, zero flips, strong orientation, and uniform
-    `x-y` occupancy.
-  - The final restart-state fix preserves fresh-bilayer parity exactly:
-    matched-seed fresh reruns at `T=0.8`, `0.9`, and `1.0` reproduce the
-    original `v7` metrics bit-for-bit under the retained legacy fresh-start
-    hidden-state path.
-  - The retained exact-step branch keeps the bilayer structurally correct
-    over `T=0.7..1.2` with explicit validation runs at every tested
-    temperature.
-  - Under the same late-half single-origin slope metric used for continuity
-    with the earlier scan summaries, the retained exact-step branch gave
-    about `0.82, 1.07, 0.87, 1.00, 1.00, 0.87` before the hot-end refinement,
-    and the validated softer `1.2` endpoint point lifts the hot end to about
-    `1.02` without harming bilayer structure.
+- Confirmed facts to carry forward:
+  - `1rkl stage_6.0` remains structurally stable.
+  - The large drift appears only after release into unrestrained
+    `stage_7.0` production.
+  - The previously tested `1rkl`-only release hold is not acceptable because
+    it degrades `1afo`.
+  - The most likely universal defect surface is the coarse protein-lipid
+    interface that sets helix-cap packing and tilt preferences.
+  - The current protein-facing CGL force field is underresolved at build time:
+    `cg_lipid_target` was built from a two-conformer isolated DOPC base
+    ensemble, and the old target table also misused sampled PMF values as
+    spline coefficients instead of fitted spline controls.
+  - The current best retained branch is the representative-target overlay:
+    keep the accepted baseline pair/SC/compaction tables, rebuild
+    `effective_lj` plus `cg_lipid_target` from the `32 -> 8` isolated-DOPC
+    representative ensemble, and route workflows to that H5 via `DOPC_H5`.
+  - The SC-overlay clean-start `1rkl` run did not validate as a retained fix.
+    Rebuilding `cg_lipid_sc` from the same isolated-DOPC representative
+    ensemble raises helix occupancy, but it also lifts the helix relative to
+    the bilayer center and worsens the final global pose. This means the
+    remaining defect is deeper than simply rebuilding SC-CGL from a larger
+    isolated reference ensemble.
+  - The next critical falsification step is a bilayer-derived interface
+    rebuild that samples bulk DOPC conformers from full-resolution bilayer
+    trajectories while excluding lipids near embedded proteins. If that closes
+    the `1rkl` gap, then the residual issue was the reference-ensemble design
+    itself rather than the runtime convention.
+  - That broad bilayer-derived target-only rebuild did not close the gap.
+    The next targeted falsification step is therefore SC-only:
+    keep the retained representative-target overlay fixed and replace only the
+    `cg_lipid_sc` term with a bilayer-derived bulk-ensemble retrain.
+  - That SC-only bilayer-derived retrain is now the current best branch.
+    The new overlay at
+    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_rep8_sc_bulkbilayer10a_t12_rep_overlay/dopc_target_rep8_sc_bulkbilayer10a_t12_rep_overlay.h5`
+    preserves the representative target term
+    (`target/effective conformer_count=8`, generic interface source unchanged)
+    while rebuilding only `cg_lipid_sc` from the pooled bilayer ensemble
+    (`sc conformer_count=12`, SC-specific reference dataset and compaction
+    retrofit). Clean-start `1rkl` improves to
+    `avg_kinetic/1.5kT≈1.262`, `RMSD_final/late≈2.79/2.05 A`,
+    `hbond_final/late≈32.16/31.36`, with a correct bilayer
+    (`sep_late≈16.11 A`, `|n_z|≈0.9933`, `nn_p05≈6.44 A`, `occ_cv≈0.226`,
+    zero flips). Fresh `1afo` on the same overlay keeps a correct bilayer and
+    healthy kinetics (`avg_kinetic/1.5kT≈1.081`) with only minor DSSP/hbond
+    softening relative to the retained target-only baseline.
+  - Clean-start promotion requires a new run directory. The generic launcher
+    auto-detects a prior `stage_7.*` checkpoint when `RUN_DIR` is reused, so
+    validation must use a fresh output path rather than the old continuation
+    directories.
+  - Fresh `1afo` validation on the representative-target overlay completed
+    through the normal stage-6 to stage-7 workflow at
+    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1afo_cleanstart_target_rep8/`.
+    The production branch keeps a correct bilayer
+    (`sep_late≈16.70 A`, `|n_z|≈0.9933`, `nn_p05≈6.74 A`, zero flips) and a
+    normal kinetic ratio (`avg_kinetic/1.5kT≈1.053`), while protein secondary
+    structure remains high (`DSSP_final≈0.986`, `DSSP_late≈0.970`).
+    Relative to the older coarse baseline, the clean-start overlay run has
+    better hbonds but a larger final aligned CA RMSD (`≈5.14 A` vs `≈3.52 A`),
+    so the remaining protein question is whether that extra drift is an
+    acceptable pose/tilt excursion or needs another force-field iteration.

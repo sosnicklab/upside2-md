@@ -52,6 +52,8 @@ WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 
 DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS = 200
 DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS = 150
+DEFAULT_STAGE_70_RELEASE_SC_ENV_BACKBONE_HOLD_STEPS = 0
+DEFAULT_STAGE_70_RELEASE_SC_ENV_PO4_Z_HOLD_STEPS = 0
 DEFAULT_NPT_TAU = 4.0
 DEFAULT_NPT_INTERVAL = 10
 DEFAULT_PROD_70_BAROSTAT_TYPE = 1
@@ -983,6 +985,23 @@ def remove_protein_position_restraints(up_file: Path):
             del h5[path]
 
 
+def reset_stage70_release_hybrid_transition(up_file: Path, args):
+    import h5py
+
+    with h5py.File(up_file, "r+") as h5:
+        path = "/input/hybrid_control"
+        if path not in h5:
+            return
+        ctrl = h5[path].attrs
+        ctrl["sc_env_transition_step_start"] = np.int32(0)
+        ctrl["sc_env_backbone_hold_steps"] = np.int32(
+            int(args.stage_70_release_sc_env_backbone_hold_steps)
+        )
+        ctrl["sc_env_po4_z_hold_steps"] = np.int32(
+            int(args.stage_70_release_sc_env_po4_z_hold_steps)
+        )
+
+
 def set_hybrid_production_controls(up_file: Path, args):
     import h5py
 
@@ -1763,6 +1782,10 @@ def normalize_hybrid_workflow_args(args):
     args.sc_env_po4_z_hold_steps = DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS
     if not np.isfinite(float(args.stage_70_burnin_protein_restraint_spring)):
         raise ValueError("stage_70_burnin_protein_restraint_spring must be finite")
+    if int(args.stage_70_release_sc_env_backbone_hold_steps) < 0:
+        raise ValueError("stage_70_release_sc_env_backbone_hold_steps must be nonnegative")
+    if int(args.stage_70_release_sc_env_po4_z_hold_steps) < 0:
+        raise ValueError("stage_70_release_sc_env_po4_z_hold_steps must be nonnegative")
     args.npt_tau = DEFAULT_NPT_TAU
     args.npt_interval = DEFAULT_NPT_INTERVAL
     args.prod_70_barostat_type = DEFAULT_PROD_70_BAROSTAT_TYPE
@@ -1978,6 +2001,22 @@ def add_hybrid_workflow_arguments(parser):
             DEFAULT_STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING,
         ),
     )
+    parser.add_argument(
+        "--stage-70-release-sc-env-backbone-hold-steps",
+        type=int,
+        default=env_int(
+            "STAGE_70_RELEASE_SC_ENV_BACKBONE_HOLD_STEPS",
+            DEFAULT_STAGE_70_RELEASE_SC_ENV_BACKBONE_HOLD_STEPS,
+        ),
+    )
+    parser.add_argument(
+        "--stage-70-release-sc-env-po4-z-hold-steps",
+        type=int,
+        default=env_int(
+            "STAGE_70_RELEASE_SC_ENV_PO4_Z_HOLD_STEPS",
+            DEFAULT_STAGE_70_RELEASE_SC_ENV_PO4_Z_HOLD_STEPS,
+        ),
+    )
     parser.add_argument("--eq-time-step", type=float, default=env_float("EQ_TIME_STEP", 0.010))
     parser.add_argument("--prod-time-step", type=float, default=env_float("PROD_TIME_STEP", 0.002))
     parser.add_argument("--eq-frame-steps", type=int, default=env_int("EQ_FRAME_STEPS", 1000))
@@ -2135,6 +2174,15 @@ def run_stage70_handoff(args, files, source_stage: Path):
             spring_const=float(args.stage_70_burnin_protein_restraint_spring),
         )
     run_stage70_burnin(args, files["stage_70"])
+    if (
+        int(args.prod_70_burnin_nsteps) > 0
+        and float(args.stage_70_burnin_protein_restraint_spring) > 0.0
+        and (
+            int(args.stage_70_release_sc_env_backbone_hold_steps) > 0
+            or int(args.stage_70_release_sc_env_po4_z_hold_steps) > 0
+        )
+    ):
+        reset_stage70_release_hybrid_transition(files["stage_70"], args)
     remove_protein_position_restraints(files["stage_70"])
     run_md_stage(
         args,
