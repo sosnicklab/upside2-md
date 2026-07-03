@@ -1,373 +1,352 @@
 # Progress Log
 
-## Current Task: Universal Coarse-Hybrid Protein Stability
+## Current Task: Fully Physical CGL-SC Replacement Attempt
 
 - Actions taken:
-  - Reconstructed protein-only DSSP and RMSD directly from the cited hybrid
-    checkpoints.
-  - Verified that `1rkl stage_6.0` is structurally stable and that the
-    secondary-structure loss begins only after release into unrestrained
-    `stage_7.0` production.
-  - Replayed stage-7 production from the promoted burn-in input to separate
-    activation-path defects from conservative bilayer or transport defects.
-  - Tested three activation-fix families:
-    - short restrained release after burn-in: rejected
-    - global post-burn-in hybrid transition reset / hold: rejected as a
-      universal default because it hurts `1afo`
-    - generic opt-in post-burn-in release-hold support: kept only as
-      diagnostic instrumentation, not as a retained production fix
-  - Removed the active `1rkl`-only launcher override after the user required
-    universal simulation settings across proteins.
-  - Localized the remaining coarse defect to the protein-lipid interface:
-    coarse `1rkl` loses its native tilted transmembrane pose and frays mainly
-    at the helix caps, while coarse `1afo` and the full-lipid `1rkl`
-    reference remain materially more stable.
-  - Confirmed that the shared CGL target force field is underresolved at build
-    time: the active `dopc.h5` was built from only two isolated DOPC
-    conformers, and direct ensemble probes show large seed sensitivity in the
-    protein-facing `cg_lipid_target` support and PMFs.
-  - Implemented a shared table-builder redesign to replace the old
-    two-conformer default with a deterministic representative ensemble:
-    sample a larger isolated-DOPC pool and select compaction-stratified
-    representatives for the default CGL base tables.
-  - Started a full consistent `dopc.h5` rebuild so pair, SC, and target
-    tables all use the same patched source path.
-  - Aborted that first full rebuild before any write phase after confirming it
-    was spending the wall clock in the already-accepted `cg_lipid_pair` tensor
-    rather than on the protein-facing defect surface.
-  - Rebuilt only `cg_lipid_target` on top of the accepted `dopc.h5` base using
-    the new `8`-representative / `32`-pool isolated-DOPC source path.
-  - Injected that rebuilt target node into a short coarse `1rkl stage_7.0`
-    handoff smoke and confirmed that the runtime consumed the new
-    `84 x 321` target tensor without error.
-  - Ran the matching short coarse `1afo stage_7.0` handoff smoke with the same
-    shared settings and confirmed the rebuilt target node also injects and runs
-    cleanly there.
-  - Restored `parameters/dryMARTINI/dopc.h5` to the last clean consistent
-    baseline after the two diagnostic smokes and removed the extra temporary
-    backup H5 files created during this iteration.
-  - Confirmed that a full representative `cg_lipid_sc` rebuild is still too
-    expensive to use as the next retained branch.
-  - Built a cheaper representative-target overlay H5 that preserves the
-    accepted pair/SC/compaction tables from the clean baseline and rebuilds
-    only `effective_lj` plus `cg_lipid_target` from the `32 -> 8`
-    isolated-DOPC representative ensemble.
-  - Added that overlay builder to source as
-    `build_dopc_target_overlay_h5(...)` plus CLI support in
-    `py/martini_gen_params.py`.
-  - Identified an internal inconsistency in the first representative-SC overlay
-    path before trusting it for `1rkl` validation:
-    the rebuilt interface PMFs still inherited compact/extended correction
-    tensors from the old baseline `dopc.h5`, so the branch did not actually
-    replace the stale tail-compaction response on the protein-facing SC/target
-    surface.
-  - Patched the overlay builder to regenerate interface compaction corrections
-    from the rebuilt representative ensemble instead of copying baseline
-    target/SC deltas forward, and removed the now-dead baseline-delta copy
-    helper from `py/martini_build_tables.py`.
-  - Aborted the first SC-overlay H5 generation after confirming it was still
-    using the inconsistent correction path, then restarted a fresh build on
-    the corrected compaction-consistent branch.
-  - Validated the overlay branch in longer same-settings coarse continuations
-    for both `1rkl` and `1afo`, then measured protein-only and bilayer metrics
-    directly from the resulting `stage_7.1` trajectories.
-  - Resolved the clean-start workflow path for retained-branch acceptance:
-    use a fresh `RUN_DIR` so `run_sim_hybrid.sh` cannot auto-detect an old
-    `stage_7.*` continuation source.
-  - Ran a true clean-start retained-branch `1afo` workflow in
-    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1afo_cleanstart_target_rep8/`
-    with the representative-target overlay H5 and explicit seeds.
-  - Measured the finished clean-start `1afo` production directly from the
-    stage file and confirmed a correct bilayer plus normal production kinetics,
-    while noting that the protein keeps strong secondary structure but explores
-    a looser aligned pose than the archived coarse baseline.
-  - Searched the live repo, master repo, and backup repos for the requested
-    `elk` target and found no matching input, output, or launcher artifact.
-  - Removed the aborted SC-representative overlay H5 and the aborted
-    direct-from-prepared production probe outputs after they proved
-    non-comparable.
-  - Implemented a new bilayer-derived CGL interface-reference path in the
-    overlay builder:
-    - pool one or more full-resolution Upside trajectories
-    - exclude lipids within a configurable XY distance of non-lipid particles
-    - preserve the trajectory/filter provenance in the overlay H5 metadata
-  - Identified and fixed a new source bug in that pooled-bilayer path:
-    the first implementation selected retained conformers by evenly spaced
-    pooled frame index instead of by the compaction coordinate, which biased
-    the retained ensemble toward an over-compact subset.
-    The builder now reuses the deterministic compaction-stratified
-    representative selector for the pooled bilayer ensemble too.
-  - Built and validated two bilayer-derived target-only overlay branches for
-    clean-start `1rkl`, and rejected both.
-    - first `10 A` XY-filtered pooled-bilayer branch before the selector fix
-    - corrected representative pooled-bilayer branch after the selector fix
-  - Aborted a full bilayer-derived `cg_lipid_target + cg_lipid_sc` overlay
-    build after confirming that the SC worker pool was too slow to use as the
-    first practical falsification branch.
-  - Patched the overlay builder so it can preserve the current best target
-    term while rebuilding only `cg_lipid_sc` from a bilayer-derived reference
-    ensemble.
-    The new source path keeps the base `effective_lj` plus
-    `cg_lipid_target`, writes an SC-specific reference dataset, and applies an
-    SC-only compaction retrofit.
-  - Built the new SC-only bilayer-derived overlay at
-    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_rep8_sc_bulkbilayer10a_t12_rep_overlay/dopc_target_rep8_sc_bulkbilayer10a_t12_rep_overlay.h5`
-    from the pooled `1rkl` + `1afo` full-bilayer reference ensemble with the
-    same `10 A` XY protein-distance filter and `12` retained representative
-    conformers.
-  - Ran a fresh clean-start `1rkl` workflow on that SC-only overlay and
-    re-extracted the retained acceptance metrics directly from the finished
-    stage file.
-  - Cross-checked the same overlay on a fresh clean-start `1afo` workflow to
-    verify that the `1rkl` improvement did not come from a benchmark-specific
-    regression.
-  - Reconstructed the exact clean-start metric definitions directly from the
-    stage files:
-    - kinetic ratio from the final `stage_7.0.log` summary line
-    - orientation flips from sign reversals relative to the initial CGL
-      production orientation
-    - `1rkl` helix-core occupancy from simplified DSSP on residue slice `3:28`
-      (0-based), matching the retained baseline
+  - Implemented a pooled-reference SC rebuild path in
+    `py/martini_build_tables.py` and `py/martini_gen_params.py` so a single
+    `cg_lipid_sc` retrain can combine shell-filtered full-resolution DOPC
+    conformers with representative isolated-DOPC conformers under one generic
+    fitting rule.
+  - Verified the new code path with a one-row `SER` probe overlay:
+    shell-filtered + isolated reference loading, SC overlay fit, single-CGL
+    compaction retrofit, and provenance attrs all completed cleanly.
+  - Built a first full pooled-reference candidate
+    `/private/tmp/dopc_shell15xy3d18_plusisolated_scfull_20260702.h5`
+    using `4` shell conformers plus `4` isolated conformers while preserving
+    the current shell-derived target tables.
+  - Verified the candidate runtime path on a fresh
+    `1rkl stage_6.0 -> stage_7.0` replay preparation:
+    `cg_lipid_pair`, `cg_lipid_target`, and `cg_lipid_rotamer_sc` all use
+    `cgl_compaction_state` with no retained implicit pair-response attrs once
+    stage preparation completes.
+  - Ran the matched `1rkl` replay gate for the first pooled candidate and
+    rejected it relative to the installed hydromix baseline.
+  - Added fail-loud validation for overlay rebuild completeness in
+    `py/martini_build_tables.py` and `py/martini_prepare_system_lib.py` after
+    an incomplete pooled build silently dropped the explicit SC compaction path.
+  - Rebuilt the second pooled candidate cleanly as
+    `/private/tmp/dopc_shell15xy3d18_plusiso2x4_scfull_retry_20260702.h5`,
+    verified the explicit physical runtime path again on a fresh replay prep,
+    and ran the matched `1rkl` replay gate.
+  - Rejected the second pooled candidate as well.
+    Its production replay lost a large fraction of late hbonds and worsened CA
+    RMSD materially relative to the hydromix baseline.
+  - Pivoted the active replacement route to shell-family completion:
+    rebuild the remaining nonhydrophobic SC rows from the same shell-filtered
+    reference ensemble already used by the accepted target and hydrophobic SC
+    rows.
+  - Built a matched reinjection replay harness that reuses a successful
+    prepared `stage_7.0` template, swaps in a candidate H5 with
+    `inject_cg_lipid_nodes()`, and runs the same shared `stage_6.0` handoff
+    and production seed for cleaner candidate A/B tests.
+  - Used that harness to test a targeted nonhydrophobic-only pooled candidate
+    built from the physical `4 shell + 4 isolated` SC fit while preserving the
+    installed hydrophobic shell rows.
+  - Rejected that targeted candidate as well:
+    despite high hbonds and near-baseline CGL transport, it still drove the
+    protein too vertical and too expanded in late production.
+  - Re-ran the original full pooled `4 shell + 4 isolated` candidate on the
+    same matched reinjection replay harness and rejected it there too.
+    The fair A/B confirmed the main regression is protein expansion and
+    vertical alignment in production, not a transport-timescale artifact from
+    the earlier replay setup.
+  - Pivoted the next physical iteration toward the shell reference ensemble
+    itself:
+    rebuild the nonhydrophobic shell rows from a broader full-trajectory shell
+    conformer pool rather than only the late-half shell around already
+    verticalized proteins.
+  - Built the broadened full-trajectory nonhydrophobic-shell candidate
+    `/private/tmp/dopc_shell15xy3d18_start0_nonhydrophobic_candidate_20260702.h5`
+    and ran the matched `1rkl` reinjection replay gate with the shared
+    stage-6 handoff and production seed.
+  - Rejected that broadened nonhydrophobic-shell candidate.
+    It stayed compact and well hydrogen-bonded and preserved the CGL
+    transport rate, but it became much more vertical by every tested
+    orientation surrogate.
+  - Tested the broadened hydrophobic-only shell candidate and rejected it
+    quickly after the matched `1rkl` replay showed early expansion and hbond
+    loss.
+  - Built the broadened all-row shell candidate
+    `/private/tmp/dopc_shell15xy3d18_start0_allshell_candidate_20260702.h5`
+    and ran the matched `1rkl` reinjection replay gate.
+  - Rejected the broadened all-row shell candidate as well.
+    It kept hbonds high, compacted the protein strongly, and preserved the
+    CGL lateral transport timescale, but it drove the protein almost perfectly
+    vertical by every tested axis surrogate.
+  - Inspected the shell-reference reduction rule itself and found a concrete
+    upstream bias:
+    trajectory-derived DOPC representatives are chosen by exact compaction-rank
+    endpoints, so every reduced shell ensemble always includes the absolute
+    minimum and maximum compaction conformers.
+  - Started one more shell-plus-isolated rebuild before that issue was fully
+    understood:
+    `/private/tmp/dopc_shell15xy3d18_start0_plusiso4_scfull_20260702.h5`
+    with the broadened shell pool plus `4` isolated representatives.
+    That long build is still in flight, but it uses the endpoint-biased
+    selector and is no longer the cleanest next branch.
+  - Replanned the next physical iteration around the representative-selection
+    fix instead of continuing to stack more candidates on the same biased shell
+    reduction rule.
+  - Patched `py/martini_build_tables.py` so reduced DOPC reference ensembles
+    are chosen from equal-probability compaction bins rather than from the
+    exact minimum and maximum compaction ranks.
+  - Verified the patch directly on the pooled shell reference:
+    the broadened shell reduced set moved from `4.215-30.316 A` with an
+    `8/4` (`1rkl/1afo`) split to `12.896-26.126 A` with a `6/6` split.
+  - Restarted the broadened shell-plus-isolated all-row rebuild as
+    `/private/tmp/dopc_shell15xy3d18_start0_plusiso4_scfull_midquant_20260702.h5`
+    so the next candidate isolates the representative-selection fix without
+    adding a new interaction model.
+  - Built and executed a 1-step `1rkl` stage-7 smoke harness from the shared
+    stage-6 source to verify that the matched replay path still works before
+    spending a full candidate build on it.
+  - The exact midquant shell-plus-isolated rebuild completed the expensive base
+    SC overlay, but the follow-on explicit-compaction retrofit remained too
+    expensive to finish cleanly in this turn.
+    The incomplete file was kept only as a source of the new `interaction_param`
+    table, not as a physically valid final artifact.
+  - Created a clearly marked screening-only proxy by combining that new
+    midquant shell-plus-isolated `interaction_param` table with the closest
+    completed shell-plus-isolated delta datasets, then ran a matched `1rkl`
+    replay to decide whether the selector fix was directionally promising.
+  - Rejected the shell-plus-isolated midquant branch on that screen.
+    The production replay was already expanding by `5-6` time units, so there
+    is no reason to spend another long exact-retrofit pass on this family
+    before changing the reference ensemble itself.
+  - Audited the next pooled full-bilayer branch and found another upstream
+    bias:
+    without source balancing, the reduced `4`-conformer pooled trajectory
+    reference was split `3/1` across `1rkl/1afo` by raw frame count.
+  - Patched `py/martini_build_tables.py` so pooled trajectory references are
+    balanced per source trajectory before concatenation.
+    The preferred full-bilayer reduced set is now `2/2` across
+    `1rkl/1afo`, with compactions
+    `17.143, 17.800, 23.063, 23.497 A`.
+  - Started the exact source-balanced full-bilayer plus isolated rebuild as
+    `/private/tmp/dopc_fulltraj_start0_plusiso4x4_scfull_midquant_srcbal_20260702.h5`.
+  - Diagnosed the first unreadable temp H5 from that branch as a workflow
+    collision, not a physics failure:
+    multiple whole-build `martini_gen_params.py` processes were writing the
+    same output path at once.
+  - Killed the stale competing builds and restarted one clean exact rebuild on
+    the same source-balanced branch with a single output writer.
+  - Revalidated the replay-metric path directly from the stage-7 H5 files.
+    The hydromix baseline reproduces
+    `late hbonds ~= 30.62`,
+    `late CA RMSD ~= 1.76 A`,
+    and the accepted CGL transport values
+    `Dxy_half ~= 0.421`,
+    `Dxy_quarter ~= 0.409`.
+    The rejected all-shell replay reproduces the expected near-vertical
+    orientation and faster transport.
+  - Finished the exact source-balanced full-bilayer candidate build and ran
+    the matched `1rkl` replay gate.
+    The branch stayed compact and preserved the CGL transport timescale, but
+    it was still too vertical to accept.
+  - Built a screening proxy on the same new source-balanced base SC table that
+    reused the installed SC compaction deltas.
+    That proxy stayed close to baseline and did not show the exact branch's
+    verticalization, isolating the remaining problem to the exact single-CGL
+    SC compaction-delta retrofit rather than to the rebuilt base SC table.
+  - Inspected the retrofit path and found the source mismatch directly:
+    the base SC table was fit on the pooled overlay ensemble, but the explicit
+    SC compact/extended delta endpoints were still being rebuilt from a
+    separate isolated-DOPC MC pool.
+  - Patched `py/martini_build_tables.py` so the single-CGL SC/target retrofit
+    now defaults to selecting compact and extended representative conformers
+    from the same overlay reference ensemble, matched to the stored physical
+    compaction centers, with the isolated-MC route retained only as fallback.
+  - Verified the patch with `python3 -m py_compile py/martini_build_tables.py`.
+  - Built the accepted SC-only retrofit artifact
+    `/private/tmp/dopc_fulltraj_start0_plusiso4x4_scfull_midquant_srcbal_scstateoverlay_scintf_nologin8_20260702.h5`
+    from the source-balanced full-bilayer base H5 and confirmed that only the
+    SC compact/extended delta datasets changed.
+  - Re-ran the matched `1rkl` replay on that artifact and recovered a near-
+    baseline orientation while preserving compactness and transport:
+    `late hbonds 29.08`,
+    `late Rg 12.50 A`,
+    `late CA RMSD 1.86 A`,
+    `axis_trim1 0.740`,
+    `pca_full 0.888`,
+    `Dxy_half / quarter 0.439 / 0.443`.
+  - Re-ran the same artifact on matched `1afo` replay.
+    The run completed cleanly through minimization, 40k burn-in, and 10k
+    production with seed `20260703`, then measured
+    `late hbonds 83.96`,
+    `late Rg 14.83 A`,
+    `late CA RMSD 2.68 A`,
+    `overall pca_full 0.996`,
+    `Dxy_half / quarter 0.459 / 0.456`.
+  - Compared the accepted candidate directly against the installed
+    `parameters/dryMARTINI/dopc.h5` and verified that every bilayer-only CGL
+    dataset and attr is bitwise identical.
+    The accepted promotion step changes only
+    `cg_lipid_sc/delta_extended` and `cg_lipid_sc/delta_compact`, so the
+    standalone bilayer timescale is preserved exactly.
+  - Promoted the accepted candidate into
+    `parameters/dryMARTINI/dopc.h5` and refreshed
+    `parameters/dryMARTINI/dopc.h5.bak` from the previous default artifact.
 
 - Files modified:
-  - `/Users/yinhan/Documents/upside2-md/py/martini_prepare_system.py`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_hybrid.sh`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_1rkl.sh`
   - `/Users/yinhan/Documents/upside2-md/py/martini_build_tables.py`
   - `/Users/yinhan/Documents/upside2-md/py/martini_gen_params.py`
+  - `/Users/yinhan/Documents/upside2-md/py/martini_prepare_system_lib.py`
   - `/Users/yinhan/Documents/upside2-md/plan.md`
   - `/Users/yinhan/Documents/upside2-md/findings.md`
   - `/Users/yinhan/Documents/upside2-md/progress.md`
-  - `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5`
-
-- New output artifacts:
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1rkl_stage7_ss_probe/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1rkl_stage7_release_probe/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1rkl_stage7_transitionreset_probe/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1rkl_stage7_transitionhold_probe/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1rkl_stage7_transitionhold_helperprobe/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1afo_stage7_transitionhold_helperprobe/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1afo_stage7_currentreplay/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1rkl_stage7_transitionhold1000/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1afo_stage7_transitionhold1000/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_rep8/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_rep8_cli/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_bulkbilayer10a_t12_overlay/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_bulkbilayer10a_t12_rep_overlay/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_rep8_sc_bulkbilayer10a_t12_rep_overlay/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1rkl_stage70_target_rep8_long/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1afo_stage70_target_rep8_long/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1afo_cleanstart_target_rep8/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/validate_20260630_1rkl_cleanstart_target_bulkbilayer10a_t12/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/validate_20260630_1rkl_cleanstart_target_bulkbilayer10a_t12_rep/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/validate_20260630_1rkl_cleanstart_target_rep8_sc_bulkbilayer10a_t12_rep/`
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/validate_20260630_1afo_cleanstart_target_rep8_sc_bulkbilayer10a_t12_rep/`
 
 - Verification:
-  - `python3 -m py_compile py/martini_prepare_system.py`
-  - `python3 -m py_compile py/martini_build_tables.py py/martini_gen_params.py`
-  - `bash -n example/16.MARTINI/run_sim_hybrid.sh`
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `1rkl` cited artifact diagnosis:
-    - `stage_6.0` DSSP is unchanged from start to finish
-    - cited `stage_7.0` input remains close to stage 6, but unrestrained
-      production drifts to about `0.317 nm` protein RMSD in the archived run
-  - retained `1rkl` helper replay with the opt-in `2000/1500` release hold:
-    - final DSSP match to the promoted burn-in input: `0.839`
-    - final protein RMSD to the promoted burn-in input: `0.227 nm`
-    - coarse bilayer late-half separation remains about `16.15 A`
-    - coarse bilayer late-half `6x6` occupancy CV is about `0.147`
-  - `1afo` cross-check:
-    - the same release hold is not safe as a repo-wide default
-    - a matched baseline replay without the hold keeps `1afo` at
-      `DSSP_match≈0.986`, while the hold degrades that benchmark
-  - coarse-vs-reference interpretation:
-    - coarse `1rkl` loses a large part of its initial tilt during stage 7,
-      while the full-lipid `1rkl` reference largely preserves it
-    - the helical loss is concentrated near the membrane-entry and
-      membrane-exit caps rather than in the buried helix core
-  - representative-ensemble force-field probe:
-    - four nearby seeds with the old two-conformer target design give
-      `n_radial=76..84` and coarse non-core target-PMF variability of about
-      `2.66e5 kJ/mol` RMS for `N0`
-    - the redesigned representative-ensemble path drops that same non-core
-      `N0` variability to about `1.24e3 kJ/mol` in a direct `32 -> 8`
-      representative probe
-  - short `1rkl` target-rebuild smoke:
-    - output:
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1rkl_stage70_target_rep8_smoke/`
-    - injected `cg_lipid_target` node uses `n_radial=84`,
-      `n_angular=321`, `cutoff=28.7 A`
-    - minimization plus `500` burn-in / `200` production steps completed
-      successfully under the shared coarse settings
-    - production log shows temperature mean `0.8647` and hbond count
-      `31.0 -> 32.7` over the short smoke
-  - short `1afo` target-rebuild smoke:
-    - output:
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1afo_stage70_target_rep8_smoke/`
-    - minimization plus `500` burn-in / `200` production steps completed
-      successfully under the same shared coarse settings
-    - production log shows temperature mean `0.8647` and hbond count in the
-      `90.9..93.0` range over the short smoke
-  - H5 cleanup:
-    - restored live `dopc.h5` to a consistent state with
-      `pair/sc/target conformer_count=2/2/2`
-    - removed:
-      `dopc.h5.bak_pre_refensemblefix_20260629`,
-      `dopc.h5.bak_pre_target_rep8_20260629`,
-      and `dopc.h5.bak_target_bsplinefix_20260629`
-  - representative-target overlay builder:
-    - `python3 -m py_compile py/martini_build_tables.py py/martini_gen_params.py`
-    - `python3 py/martini_gen_params.py --upside-home /Users/yinhan/Documents/upside2-md --dopc-target-overlay-base-h5 /Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5 --dopc-target-overlay-output /Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_rep8_cli/dopc_target_rep8_cli.h5`
-    - resulting CLI-built overlay keeps `pair/sc/target conformer_count=2/2/8`
-      and preserves target compaction deltas
-  - representative-SC overlay correction-path patch:
-    - `python3 -m py_compile py/martini_build_tables.py py/martini_gen_params.py`
-    - confirmed that the corrected builder now regenerates interface
-      compaction corrections after rebuilding the representative SC/target PMFs
-      instead of copying the old baseline `delta_extended` / `delta_compact`
-      tensors forward
-    - the new corrected overlay build is running at
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_rep8_sc_compact_overlay/`
-      and must complete before the next `1rkl` validation step
-  - longer representative-target benchmark validation:
-    - `1rkl` continuation output:
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1rkl_stage70_target_rep8_long/`
-    - `1afo` continuation output:
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1afo_stage70_target_rep8_long/`
-    - matched `5..10` time-window metrics:
-      `1rkl` target-overlay vs baseline coarse:
-      `RMSD_t10=2.10 A vs 1.92 A`, `hbond_t10=32.94 vs 26.15`,
-      `sep_5_10=16.17 A vs 16.81 A`, `|n_z|=0.9943 vs 0.9946`,
-      `occ_cv=0.160 vs 0.160`, zero flips, and same-leaflet `nn_p05=7.07 A vs 6.53 A`
-      `1afo` target-overlay vs baseline coarse:
-      `RMSD_t10=2.59 A vs 2.99 A`, `hbond_t10=84.11 vs 80.76`,
-      `sep_5_10=15.76 A vs 16.47 A`, `|n_z|=0.9943 vs 0.9944`,
-      `occ_cv=0.341 vs 0.278`, zero flips, and same-leaflet `nn_p05=7.04 A vs 6.62 A`
-    - continuation caveat:
-      those longer comparison runs came from 200-step smoke outputs with
-      manually marked restart-valid final states, so they are suitable for
-      protein/bilayer comparison but not for transport acceptance
-  - clean-start `1afo` retained-branch validation:
-    - output:
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_1afo_cleanstart_target_rep8/`
-    - workflow:
-      full fresh `stage_6.0 -> stage_7.0` handoff under the shared coarse
-      settings with the representative-target overlay H5, not a continuation
-    - production kinetic ratio:
-      `avg_kinetic_energy/1.5kT≈1.053`
-    - bilayer metrics:
-      `sep_initial≈16.55 A`, `sep_late≈16.70 A`, `sep_max≈16.92 A`,
-      `|n_z|_late≈0.99335`, `occ_cv_late≈0.332`,
-      `nn_mean/p05≈7.61/6.74 A`, zero flips
-    - protein metrics:
-      `DSSP_final≈0.986`, `DSSP_late≈0.970`,
-      `hbond_final/late≈77.4/81.5`
-      aligned CA RMSD to the stage reference is looser than the archived
-      coarse baseline (`final≈5.14 A` vs `≈3.52 A`), but the secondary
-      structure and hbond signal remain strong
-  - unresolved second benchmark:
-    - no local `elk` / `1elk` target exists in the live repo, master repo,
-      or backups, so that clean-start validation is blocked pending the exact
-      user-supplied identifier
-  - bilayer-derived target-only overlay builder:
-    - `python3 -m py_compile py/martini_build_tables.py py/martini_gen_params.py`
-    - first pooled-bilayer target-only overlay:
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_bulkbilayer10a_t12_overlay/dopc_target_bulkbilayer10a_t12_overlay.h5`
-      built from two full-resolution trajectories with a `10 A` non-lipid XY
-      cutoff and `12` retained conformers
-    - selector-fix verification:
-      the same pooled-bilayer source now retains a representative conformer
-      set with `mean tail extension≈20.95 A` and `median≈21.18 A`, instead of
-      the earlier biased compact subset at `mean≈18.11 A`
-    - corrected representative target-only overlay:
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_bulkbilayer10a_t12_rep_overlay/dopc_target_bulkbilayer10a_t12_rep_overlay.h5`
-  - bilayer-derived `1rkl` clean-start validation:
-    - first pooled-bilayer branch output:
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/validate_20260630_1rkl_cleanstart_target_bulkbilayer10a_t12/`
-    - corrected representative branch output:
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/validate_20260630_1rkl_cleanstart_target_bulkbilayer10a_t12_rep/`
-    - both branches keep an acceptable bilayer
-      (`sep_late≈16.34..16.37 A`, `|n_z|≈0.9935`, zero flips),
-      but both are rejected as protein fixes:
-      first branch:
-      `avg_kinetic/1.5kT≈1.479`, `RMSD_final≈3.27 A`,
-      `RMSD_late≈2.64 A`, `hbond_late≈28.41`
-      corrected representative branch:
-      `avg_kinetic/1.5kT≈1.615`, `RMSD_final≈3.34 A`,
-      `RMSD_late≈2.78 A`, `helix_late≈0.622`,
-      `helix_core_late≈0.752`, `hbond_late≈22.90`
-  - SC-only bilayer-derived overlay build:
-    - direct source build:
-      `build_dopc_target_overlay_h5(..., rebuild_sc=True, rebuild_target=False, ...)`
-      on top of
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/codex_dopc_target_rep8_cli/dopc_target_rep8_cli.h5`
-    - resulting overlay metadata:
-      preserves representative target/effective tables
-      (`conformer_count=8`), adds
-      `sc_interface_ref_bead_positions_nm`, and rebuilds
-      `cg_lipid_sc` from the pooled bilayer reference
-      (`conformer_count=12`) with an SC-only compaction retrofit
-  - fresh `1rkl` validation on the SC-only bilayer overlay:
-    - output:
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/validate_20260630_1rkl_cleanstart_target_rep8_sc_bulkbilayer10a_t12_rep/`
-    - production kinetic ratio:
-      `avg_kinetic_energy/1.5kT≈1.262`
-    - bilayer metrics:
-      `sep_late≈16.11 A`, `sep_max≈16.25 A`,
-      `|n_z|_late≈0.99333`, `occ_cv_late≈0.226`,
-      `nn_mean/p05≈7.44/6.44 A`, zero flips
-    - protein metrics:
-      `CA_RMSD_final/late≈2.79/2.05 A`,
-      `helix_full_final/late≈0.581/0.684`,
-      `helix_core_final/late≈0.72/0.845`,
-      `hbond_final/late≈32.16/31.36`
-    - endpoint note:
-      the last frame has weaker helix occupancy than the late-half mean, but
-      the last-20-frame averages stay close to the retained baseline while RMSD
-      and hbond metrics improve
-  - fresh `1afo` sanity check on the same SC-only overlay:
-    - output:
-      `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/validate_20260630_1afo_cleanstart_target_rep8_sc_bulkbilayer10a_t12_rep/`
-    - production kinetic ratio:
-      `avg_kinetic_energy/1.5kT≈1.081`
-    - bilayer metrics:
-      `sep_late≈16.40 A`, `sep_max≈16.62 A`,
-      `|n_z|_late≈0.99317`, `occ_cv_late≈0.322`,
-      `nn_mean/p05≈7.50/6.59 A`, zero flips
-    - protein metrics:
-      `CA_RMSD_final/late≈5.14/4.42 A`,
-      `DSSP_final/late≈0.972/0.962`,
-      `hbond_final/late≈77.74/80.93`
-    - interpretation:
-      slight DSSP / late-hbond softening versus the retained target-only
-      baseline, but no clear regression in bilayer behavior, kinetics, or
-      overall protein stability
+  - The one-row pooled-reference probe completed end to end and produced the
+    expected provenance:
+    shell target preserved,
+    `dopc_interface_sc_reference_source =
+    pooled_full_resolution_upside_shell_filtered_conformer_trajectory_plus_isolated_dopc_representative_ensemble`,
+    and the isolated component counts/seed were recorded.
+  - The first full pooled candidate replayed `1rkl stage_6.0 -> stage_7.0`
+    successfully with the explicit compaction-state runtime path confirmed in
+    the prepared file after stage preparation finished.
+  - Matched replay metrics for the first full pooled candidate versus the
+    hydromix baseline:
+    `late hbonds 29.67 vs 30.62`,
+    `late Rg 12.63 vs 12.76 A`,
+    `late CA RMSD 2.14 vs 1.76 A`,
+    `axis_trim1 0.792 vs 0.730`,
+    `Dxy_step_half 0.433 vs 0.421`,
+    `Dxy_step_quarter 0.440 vs 0.409`.
+    Interpretation:
+    the candidate stayed physically clean at runtime but regressed the `1rkl`
+    replay gate, so it was not carried forward to `1afo`.
+  - Matched replay metrics for the second pooled candidate versus the
+    hydromix baseline:
+    `late hbonds 19.74 vs 30.62`,
+    `late Rg 12.38 vs 12.76 A`,
+    `late CA RMSD 2.63 vs 1.76 A`,
+    `axis_trim1 0.720 vs 0.730`,
+    `Dxy_step_half 0.437 vs 0.421`,
+    `Dxy_step_quarter 0.439 vs 0.409`.
+    Interpretation:
+    more isolated bias makes the replay substantially less stable, so the
+    pooled isolated route is not the active path forward.
+  - Matched replay metrics for the nonhydrophobic-only pooled candidate versus
+    the hydromix baseline on the shared seed-controlled replay harness:
+    `late hbonds 34.26 vs 30.62`,
+    `late Rg 13.30 vs 12.76 A`,
+    `late CA RMSD 2.71 vs 1.76 A`,
+    `axis_trim1 0.819 vs 0.730`,
+    `Dxy_step_half 0.408 vs 0.421`,
+    `Dxy_step_quarter 0.411 vs 0.409`.
+    Interpretation:
+    keeping only the nonhydrophobic rows pooled is still not enough; the
+    protein remains overexpanded and too aligned with the bilayer normal.
+  - Matched replay metrics for the full pooled `4 shell + 4 isolated`
+    candidate on the same seed-controlled replay harness:
+    `late hbonds 28.40 vs 30.62`,
+    `late Rg 13.48 vs 12.76 A`,
+    `late CA RMSD 2.26 vs 1.76 A`,
+    `axis_trim1 0.809 vs 0.730`,
+    `Dxy_step_half 0.416 vs 0.421`,
+    `Dxy_step_quarter 0.415 vs 0.409`.
+    Interpretation:
+    the full pooled candidate also fails on a clean replay A/B, so the next
+    hypothesis is not “more isolated regularization” but “less biased shell
+    reference sampling.”
+  - Matched replay metrics for the broadened all-row shell candidate versus
+    the hydromix baseline:
+    `late hbonds 34.95 vs 30.62`,
+    `late Rg 11.68 vs 12.84 A`,
+    `Dxy_step_half 0.464 vs 0.421`,
+    `Dxy_step_quarter 0.461 vs 0.409`,
+    but orientation surrogates become far more vertical:
+    `axis_ee_3_22_half 0.987 vs 0.749`,
+    `axis_pca_trim1_half 0.979 vs 0.840`,
+    `axis_pca_3_22_half 0.989 vs 0.839`.
+    Interpretation:
+    broadening the shell pool alone does not fix the generic drift; it
+    amplifies the orientational bias while keeping timescale acceptable.
+  - Reference-pool audit for the shell selector:
+    with `12` representatives, the current reduction picks exact compaction
+    percentiles `0, 9.1, ..., 90.9, 100`.
+    For the broadened shell pool that means the reduced ensemble always
+    includes `4.215 A` and `30.316 A`, the absolute pool extrema.
+    That gives a concrete physical reason to patch the selection rule before
+    more expensive rebuilds.
+  - Post-patch reference-pool audit:
+    the same broadened shell pool now reduces to
+    `12.896, 15.148, 16.600, 17.738, 18.732, 19.715, 20.602, 21.479, 22.375, 23.406, 24.561, 26.126 A`
+    with an even `6/6` source split across `1rkl` and `1afo`.
+    The late-half shell pool shows the same behavior.
+  - Stage-7 harness smoke test:
+    a copied prepared template plus shared `stage_6.0.up` ran cleanly through
+    handoff, 1-step production, and VTF extraction, so the next candidate can
+    be validated immediately after the H5 build finishes.
+  - Shell-plus-isolated midquant screen result:
+    the matched `1rkl` replay started near the baseline (`hbonds 33.8`,
+    `Rg 12.7 A`) but by steps `2550-2900` had degraded to roughly
+    `hbonds 22-24` and `Rg 13.7-13.9 A`.
+    That is enough to reject the branch directionally even before finishing the
+    full production window.
+  - Source-balanced full-bilayer reference audit:
+    the preferred pooled full-bilayer reduced set is now balanced `2/2`
+    across `1rkl/1afo`,
+    instead of the previous raw-count-driven `3/1` split.
+  - Replay-metric calibration:
+    on the hydromix `1rkl` baseline H5,
+    direct analysis reproduces
+    `late hbonds 30.624`,
+    `late CA Rg 12.843 A`,
+    `late CA RMSD 1.756 A`,
+    `Dxy_half 0.421`,
+    `Dxy_quarter 0.409`.
+    On the rejected all-shell replay, the same script reproduces
+    `late hbonds 34.95`,
+    `late CA Rg 11.67 A`,
+    `late CA RMSD 1.52 A`,
+    and near-vertical PCA surrogates, confirming that the current gate is
+    measuring the same failure mode as the earlier reviews.
+  - Exact source-balanced full-bilayer `1rkl` replay:
+    `late hbonds 32.96`,
+    `late Rg 12.48 A`,
+    `late CA RMSD 1.83 A`,
+    `axis_trim1_half 0.847`,
+    `pca_full_half 0.929`,
+    `Dxy_half 0.428`,
+    `Dxy_quarter 0.430`.
+    Interpretation:
+    the branch is structurally stable and keeps the timescale close, but it is
+    still too vertical to accept as the generic fix.
+  - Proxy source-balanced `1rkl` screen with installed SC compaction deltas:
+    `late hbonds 25.87`,
+    `late Rg 12.77 A`,
+    `late CA RMSD 1.30 A`,
+    `axis_trim1_all 0.708`,
+    `Dxy_all 0.421`.
+    Interpretation:
+    the source-balanced base SC table is not the remaining failure mode; the
+    exact explicit SC compaction-delta layer is.
 
-- Retained conclusion:
-  - the `1rkl` stage-7 issue is not a bilayer-only transport defect
-  - the measured release hold is useful only as a probe and is not a valid
-    retained fix under universal settings
-  - the next root-cause surface is the shared coarse protein-lipid force-field
-    design, especially the terms that control helix-cap packing and tilt
-  - the shared force-field issue now has a concrete build-time root cause:
-    `cg_lipid_target` was both underresolved by a two-conformer isolated DOPC
-    base ensemble and, before the latest source patch, numerically distorted by
-    writing sampled PMF values directly into spline-control storage
-  - the current best retained branch is the representative-target overlay:
-    it improves the protein-facing behavior of both `1rkl` and `1afo` while
-    keeping leaflet separation, orientation, and same-leaflet spacing
-    acceptable under the shared coarse settings
-  - the direct bilayer-derived target-only retraining branch is not retained.
-    Even after fixing the pooled-bilayer representative-selector bug, the
-    `1rkl` clean-start branch slows production kinetics and weakens late
-    protein secondary-structure / hbond metrics relative to the current
-    representative-target baseline.
-  - the new best retained branch is the SC-only bilayer-derived overlay.
-    Preserving the representative target term while rebuilding only
-    `cg_lipid_sc` from the pooled bilayer ensemble improves `1rkl` on the main
-    protein and transport metrics without materially regressing `1afo`.
-  - the remaining blocker is promotion strategy rather than root-cause
-    diagnosis: decide whether to promote the SC-only overlay into the live
-    `dopc.h5` workflow default or keep it as an explicit overlay artifact until
-    the user requests the promotion step.
+- Result:
+  - A generic pooled-reference SC retrain path now exists in source and is
+    reproducible from the CLI.
+  - Both tested pooled candidates are rejected on `1rkl`, despite remaining
+    physically clean at runtime.
+  - The matched reinjection replay harness now makes further candidate tests
+    cheaper and cleaner.
+  - The shell-family completion route and the targeted nonhydrophobic pooled
+    route are both rejected on `1rkl`.
+  - The full pooled `4 shell + 4 isolated` candidate is also rejected on that
+    same fair replay harness.
+  - The broader full-trajectory nonhydrophobic-shell retry is also rejected:
+    it keeps `1rkl` compact and strongly hydrogen-bonded and preserves the
+    CGL timescale, but it drives the protein more vertical than baseline.
+  - The broadened hydrophobic-only and broadened all-row shell retries are now
+    rejected too.
+  - The representative-selector patch is implemented and verified on the shell
+    reference pool itself.
+  - The shell-plus-isolated family remains rejected even with the corrected
+    selector.
+  - The source-balanced pooled full-bilayer branch is the current best
+    physical base family.
+  - The remaining active method is to keep that base table and replace only
+    the exact SC compaction-delta retrofit with overlay-center-matched state
+    selection before re-gating `1rkl` and then `1afo`.

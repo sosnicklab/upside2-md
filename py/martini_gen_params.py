@@ -166,6 +166,49 @@ def main(argv: list[str] | None = None) -> int:
             "lies within this XY distance of any non-lipid particle."
         ),
     )
+    parser.add_argument(
+        "--dopc-target-overlay-reference-max-protein-xy-distance-ang",
+        type=float,
+        default=0.0,
+        help=(
+            "If positive, keep only full-resolution overlay reference lipids whose center "
+            "lies within this XY distance of a non-lipid particle."
+        ),
+    )
+    parser.add_argument(
+        "--dopc-target-overlay-reference-max-protein-distance-ang",
+        type=float,
+        default=0.0,
+        help=(
+            "If positive, keep only full-resolution overlay reference lipids whose center "
+            "lies within this full 3D distance of a non-lipid particle."
+        ),
+    )
+    parser.add_argument(
+        "--dopc-target-overlay-reference-include-isolated",
+        action="store_true",
+        help=(
+            "Append representative isolated-DOPC conformers to any trajectory-derived "
+            "overlay reference ensemble so rebuilt tables use one pooled physical source."
+        ),
+    )
+    parser.add_argument(
+        "--dopc-target-overlay-rebuild-sc-residue",
+        action="append",
+        default=None,
+        help=(
+            "Optional residue name to rebuild in cg_lipid_sc. Provide multiple times to "
+            "build a residue-subset SC overlay on the base lattice."
+        ),
+    )
+    parser.add_argument(
+        "--dopc-target-overlay-sc-row-source-h5",
+        default=None,
+        help=(
+            "Optional overlay H5 whose cg_lipid_sc rows should overwrite the matching rows "
+            "in the output after any requested rebuilds."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.workers is not None:
@@ -277,7 +320,13 @@ def main(argv: list[str] | None = None) -> int:
                 martinize_path=martinize_path,
                 sidechain_lib_path=sidechain_lib_path,
                 rebuild_sc=bool(args.dopc_target_overlay_rebuild_sc),
+                rebuild_sc_residue_names=args.dopc_target_overlay_rebuild_sc_residue,
                 rebuild_target=not bool(args.dopc_target_overlay_preserve_target),
+                sc_row_source_h5_path=(
+                    Path(args.dopc_target_overlay_sc_row_source_h5).expanduser().resolve()
+                    if args.dopc_target_overlay_sc_row_source_h5
+                    else None
+                ),
                 conformer_upside_h5_paths=(
                     [Path(path).expanduser().resolve() for path in args.dopc_target_overlay_reference_up_file]
                     if args.dopc_target_overlay_reference_up_file
@@ -290,6 +339,12 @@ def main(argv: list[str] | None = None) -> int:
                 conformer_min_nonlipid_xy_distance_ang=float(
                     args.dopc_target_overlay_reference_min_protein_xy_distance_ang
                 ),
+                conformer_max_nonlipid_xy_distance_ang=float(
+                    args.dopc_target_overlay_reference_max_protein_xy_distance_ang
+                ),
+                conformer_max_nonlipid_distance_ang=float(
+                    args.dopc_target_overlay_reference_max_protein_distance_ang
+                ),
                 isolated_conformer_count=max(1, int(args.isolated_dopc_conformer_count)),
                 isolated_conformer_pool_count=max(
                     int(args.isolated_dopc_conformer_count),
@@ -299,6 +354,9 @@ def main(argv: list[str] | None = None) -> int:
                 isolated_conformer_burnin_steps=max(0, int(args.isolated_dopc_conformer_burnin_steps)),
                 isolated_conformer_mc_steps=max(1, int(args.isolated_dopc_conformer_mc_steps)),
                 isolated_conformer_proposal_sigma_nm=float(args.isolated_dopc_conformer_sigma_nm),
+                append_isolated_conformers=bool(
+                    args.dopc_target_overlay_reference_include_isolated
+                ),
             )
             print()
 

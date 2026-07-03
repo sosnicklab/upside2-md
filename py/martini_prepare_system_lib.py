@@ -4194,18 +4194,20 @@ def inject_cg_lipid_nodes(
                 False,
             )
             comp_grp = mh5["cg_lipid_table/cg_lipid_compaction"] if has_compaction else None
+            enable_explicit_compaction_state = has_compaction and not implicit_mean_field
 
-            def copy_single_cgl_compaction(node, pair_interaction, table_grp):
+            def copy_single_cgl_compaction(node, pair_interaction, table_grp, use_implicit_response):
                 if (
                     comp_grp is None
-                    or not implicit_compaction
-                    or "gap_response_coeff" not in comp_grp
                     or "delta_extended" not in table_grp
                     or "delta_compact" not in table_grp
                 ):
                     return False
-                node.attrs["implicit_compaction_response"] = np.int32(1)
-                node.attrs["implicit_compaction_gap_response"] = np.int32(1)
+                if use_implicit_response and "gap_response_coeff" not in comp_grp:
+                    return False
+                if use_implicit_response:
+                    node.attrs["implicit_compaction_response"] = np.int32(1)
+                    node.attrs["implicit_compaction_gap_response"] = np.int32(1)
                 for attr_name in (
                     "compact_state_center_ang",
                     "extended_state_center_ang",
@@ -4224,7 +4226,8 @@ def inject_cg_lipid_nodes(
                     "gap_response_smooth_weight",
                     "gap_response_fallback_ang",
                 ):
-                    node.attrs[attr_name] = comp_grp.attrs[attr_name]
+                    if use_implicit_response:
+                        node.attrs[attr_name] = comp_grp.attrs[attr_name]
                 pair_interaction.create_dataset(
                     "delta_extended",
                     data=table_grp["delta_extended"][:].astype(np.float32),
@@ -4233,52 +4236,76 @@ def inject_cg_lipid_nodes(
                     "delta_compact",
                     data=table_grp["delta_compact"][:].astype(np.float32),
                 )
-                pair_interaction.create_dataset(
-                    "gap_response_coeff",
-                    data=comp_grp["gap_response_coeff"][:].astype(np.float32),
-                )
+                if use_implicit_response:
+                    pair_interaction.create_dataset(
+                        "gap_response_coeff",
+                        data=comp_grp["gap_response_coeff"][:].astype(np.float32),
+                    )
                 return True
 
-            if has_compaction:
-                if not implicit_compaction and not implicit_mean_field:
-                    comp_state = pot.create_group("cgl_compaction_state")
-                    comp_state.attrs["initialized"] = True
-                    comp_state.attrs["arguments"] = np.array([], dtype="S1")
-                    for attr_name in (
-                        "mass_up",
-                        "thermostat_timescale",
-                        "self_coord_min_ang",
-                        "self_coord_max_ang",
-                    ):
-                        comp_state.attrs[attr_name] = np.float32(comp_grp.attrs[attr_name])
-                    comp_state.create_dataset(
-                        "value",
-                        data=pot["compose_vector6d"]["initial_compaction_ang"][:].astype(np.float32),
-                    )
+            def initial_cgl_compaction_state_values():
+                values = pot["compose_vector6d"]["initial_compaction_ang"][:].astype(np.float32)
+                coord_min = float(comp_grp.attrs.get("self_coord_min_ang", np.min(values)))
+                coord_max = float(comp_grp.attrs.get("self_coord_max_ang", np.max(values)))
+                if (
+                    coord_min >= -1.0e-6
+                    and coord_max <= 1.0 + 1.0e-6
+                    and "reference_compact_center_ang" in comp_grp.attrs
+                    and "reference_extended_center_ang" in comp_grp.attrs
+                ):
+                    compact = float(comp_grp.attrs["reference_compact_center_ang"])
+                    extended = float(comp_grp.attrs["reference_extended_center_ang"])
+                    denom = compact - extended
+                    if abs(denom) > 1.0e-6:
+                        values = np.clip(
+                            (values.astype(np.float64) - extended) / denom,
+                            coord_min,
+                            coord_max,
+                        ).astype(np.float32)
+                return values
 
-                    comp_self = pot.create_group("cg_lipid_compaction_self")
-                    comp_self.attrs["initialized"] = True
-                    comp_self.attrs["arguments"] = np.array([b"cgl_compaction_state"])
-                    for attr_name in (
-                        "self_coord_min_ang",
-                        "self_coord_spacing_ang",
-                        "self_n_knot",
-                    ):
-                        comp_self.attrs[attr_name] = comp_grp.attrs[attr_name]
-                    comp_self.create_dataset(
-                        "self_coeff",
-                        data=comp_grp["self_coeff"][:].astype(np.float32),
-                    )
+            if enable_explicit_compaction_state:
+                comp_state = pot.create_group("cgl_compaction_state")
+                comp_state.attrs["initialized"] = True
+                comp_state.attrs["arguments"] = np.array([], dtype="S1")
+                for attr_name in (
+                    "mass_up",
+                    "thermostat_timescale",
+                    "self_coord_min_ang",
+                    "self_coord_max_ang",
+                ):
+                    comp_state.attrs[attr_name] = np.float32(comp_grp.attrs[attr_name])
+                comp_state.create_dataset(
+                    "value",
+                    data=initial_cgl_compaction_state_values(),
+                )
+
+                comp_self = pot.create_group("cg_lipid_compaction_self")
+                comp_self.attrs["initialized"] = True
+                comp_self.attrs["arguments"] = np.array([b"cgl_compaction_state"])
+                for attr_name in (
+                    "self_coord_min_ang",
+                    "self_coord_spacing_ang",
+                    "self_n_knot",
+                ):
+                    comp_self.attrs[attr_name] = comp_grp.attrs[attr_name]
+                comp_self.create_dataset(
+                    "self_coeff",
+                    data=comp_grp["self_coeff"][:].astype(np.float32),
+                )
 
             if has_pair:
                 pair_grp = mh5["cg_lipid_table/cg_lipid_pair"]
                 comp_grp = mh5["cg_lipid_table/cg_lipid_compaction"] if has_compaction else None
+                pair_uses_gap_response = bool(
+                    has_compaction and implicit_compaction and "gap_response_coeff" in comp_grp
+                )
 
                 # cg_lipid_pair: symmetric directional tensor over CG lipid vectors.
                 cg_pair = pot.create_group("cg_lipid_pair")
                 cg_pair.attrs["initialized"] = True
                 if has_compaction:
-                    if "gap_response_coeff" in comp_grp:
+                    if pair_uses_gap_response:
                         for attr_name in (
                             "gap_response_coord_min_ang",
                             "gap_response_coord_spacing_ang",
@@ -4388,7 +4415,7 @@ def inject_cg_lipid_nodes(
                             dataset_name,
                             data=comp_grp[dataset_name][:].astype(np.float32),
                         )
-                    if "gap_response_coeff" in comp_grp:
+                    if pair_uses_gap_response:
                         pi.create_dataset(
                             "gap_response_coeff",
                             data=comp_grp["gap_response_coeff"][:].astype(np.float32),
@@ -4513,6 +4540,15 @@ def inject_cg_lipid_nodes(
 
                 if n_sc > 0:
                     sc_grp = mh5["cg_lipid_table/cg_lipid_sc"]
+                    sc_has_compaction_deltas = (
+                        "delta_extended" in sc_grp and "delta_compact" in sc_grp
+                    )
+                    if enable_explicit_compaction_state and comp_grp is not None and not sc_has_compaction_deltas:
+                        raise RuntimeError(
+                            "cg_lipid_sc is missing delta_extended/delta_compact while the "
+                            "explicit cgl_compaction_state runtime path is enabled. "
+                            f"Rebuild {martini_h5} completely before injection."
+                        )
                     sc_restype_order = [
                         r.decode("ascii") if isinstance(r, bytes) else str(r)
                         for r in sc_grp["restype_order"][:]
@@ -4534,12 +4570,24 @@ def inject_cg_lipid_nodes(
                     if matched_rows == 0:
                         print("  cg_lipid_rotamer_sc: no residues with CG-SC table entries, skipping SC-CG interaction")
                     else:
+                        use_explicit_compaction = (
+                            enable_explicit_compaction_state
+                            and comp_grp is not None
+                            and sc_has_compaction_deltas
+                        )
                         cg_sc = pot.create_group("cg_lipid_rotamer_sc")
                         cg_sc.attrs["initialized"] = True
-                        cg_sc.attrs["arguments"] = np.array([
-                            b"placement_fixed_point_vector_only",
-                            b"compose_vector6d",
-                        ])
+                        if use_explicit_compaction:
+                            cg_sc.attrs["arguments"] = np.array([
+                                b"placement_fixed_point_vector_only",
+                                b"compose_vector6d",
+                                b"cgl_compaction_state",
+                            ])
+                        else:
+                            cg_sc.attrs["arguments"] = np.array([
+                                b"placement_fixed_point_vector_only",
+                                b"compose_vector6d",
+                            ])
                         for attr_name, attr_value in box_attrs.items():
                             cg_sc.attrs[attr_name] = attr_value
                         if "schema" in sc_grp.attrs:
@@ -4606,7 +4654,17 @@ def inject_cg_lipid_nodes(
                         psi.create_dataset("index2", data=np.arange(n_cg, dtype=np.int32))
                         psi.create_dataset("type2", data=np.zeros(n_cg, dtype=np.int32))
                         psi.create_dataset("id2", data=((np.arange(n_cg, dtype=np.int32) + 100000) << 4))
-                        copy_single_cgl_compaction(cg_sc, psi, sc_grp)
+                        copied_compaction = copy_single_cgl_compaction(
+                            cg_sc,
+                            psi,
+                            sc_grp,
+                            use_implicit_response=(not use_explicit_compaction),
+                        )
+                        if use_explicit_compaction and not copied_compaction:
+                            raise RuntimeError(
+                                "cg_lipid_rotamer_sc explicit compaction path requires "
+                                "delta_extended and delta_compact datasets"
+                            )
 
                         rotamer = pot["rotamer"]
                         rot_args = list(rotamer.attrs["arguments"])
@@ -4627,6 +4685,15 @@ def inject_cg_lipid_nodes(
 
             target_grp = mh5["cg_lipid_table"].get("cg_lipid_target")
             if target_grp is not None:
+                target_has_compaction_deltas = (
+                    "delta_extended" in target_grp and "delta_compact" in target_grp
+                )
+                if enable_explicit_compaction_state and comp_grp is not None and not target_has_compaction_deltas:
+                    raise RuntimeError(
+                        "cg_lipid_target is missing delta_extended/delta_compact while the "
+                        "explicit cgl_compaction_state runtime path is enabled. "
+                        f"Rebuild {martini_h5} completely before injection."
+                    )
                 target_order = [
                     t.decode("ascii") if isinstance(t, bytes) else str(t)
                     for t in target_grp["target_order"][:]
@@ -4685,9 +4752,19 @@ def inject_cg_lipid_nodes(
                     cg_id = ((cg_index + 200000) << 4).astype(np.int32)
 
                     def write_target_node(node_name, interaction_param):
+                        use_explicit_compaction = (
+                            enable_explicit_compaction_state
+                            and comp_grp is not None
+                            and target_has_compaction_deltas
+                        )
                         target_node = pot.create_group(node_name)
                         target_node.attrs["initialized"] = True
-                        target_node.attrs["arguments"] = np.array([b"compose_vector6d", b"pos"])
+                        if use_explicit_compaction:
+                            target_node.attrs["arguments"] = np.array(
+                                [b"compose_vector6d", b"pos", b"cgl_compaction_state"]
+                            )
+                        else:
+                            target_node.attrs["arguments"] = np.array([b"compose_vector6d", b"pos"])
                         for attr_name, attr_value in box_attrs.items():
                             target_node.attrs[attr_name] = attr_value
                         for attr_name in (
@@ -4733,7 +4810,17 @@ def inject_cg_lipid_nodes(
                         target_pi.create_dataset("index2", data=target_idx_arr)
                         target_pi.create_dataset("type2", data=target_types_arr)
                         target_pi.create_dataset("id2", data=target_ids_arr)
-                        copy_single_cgl_compaction(target_node, target_pi, target_grp)
+                        copied_compaction = copy_single_cgl_compaction(
+                            target_node,
+                            target_pi,
+                            target_grp,
+                            use_implicit_response=(not use_explicit_compaction),
+                        )
+                        if use_explicit_compaction and not copied_compaction:
+                            raise RuntimeError(
+                                "cg_lipid_target explicit compaction path requires "
+                                "delta_extended and delta_compact datasets"
+                            )
 
                     write_target_node("cg_lipid_target", base_params)
                     print(

@@ -3603,6 +3603,7 @@ void CGLipidSCPotential::propagate_deriv() {
 struct CGLipidTargetPotential : public PotentialNode {
     CoordNode& cg_pos;
     CoordNode& tgt_pos;
+    CoordNode* compaction_state;
     vector<float> interaction_param;
     vector<float> delta_extended;
     vector<float> delta_compact;
@@ -3630,6 +3631,8 @@ struct CGLipidTargetPotential : public PotentialNode {
     float boltzmann_temperature;
     float minimum_boltzmann_weight;
     bool has_compaction_correction;
+    float compact_state_center;
+    float extended_state_center;
     bool implicit_compaction_gap_response;
     int gap_response_n_knot;
     float gap_response_coord_min_ang;
@@ -3651,6 +3654,7 @@ struct CGLipidTargetPotential : public PotentialNode {
     vector<float> gap_response_coeff;
 
     CGLipidTargetPotential(hid_t grp, CoordNode& cg_pos_, CoordNode& tgt_pos_);
+    CGLipidTargetPotential(hid_t grp, const ArgList& arguments);
     void ensure_pairlist(VecArray cg, VecArray tgt);
     virtual void compute_value(ComputeMode mode) override;
     virtual void propagate_deriv() override;
@@ -3668,6 +3672,7 @@ struct CGLipidTargetPotential : public PotentialNode {
 struct CGLipidSCOneBody : public CoordNode {
     CoordNode& sc_pos;
     CoordNode& cg_pos;
+    CoordNode* compaction_state;
     vector<float> interaction_param;
     vector<float> delta_extended;
     vector<float> delta_compact;
@@ -3717,6 +3722,7 @@ struct CGLipidSCOneBody : public CoordNode {
         : CoordNode(sc_pos_.n_elem, 1)
         , sc_pos(sc_pos_)
         , cg_pos(cg_pos_)
+        , compaction_state(nullptr)
         , n_type1(0)
         , n_type2(0)
         , n_param(0)
@@ -3779,11 +3785,10 @@ struct CGLipidSCOneBody : public CoordNode {
             } else {
                 implicit_compaction_gap_response = false;
             }
-            if(!implicit_compaction_gap_response)
-                throw string("cg_lipid_rotamer_sc compaction correction currently requires implicit gap response metadata");
-            if(gap_response_coord_spacing_ang <= 0.f || gap_response_radial_cutoff_ang <= 0.f)
+            if(implicit_compaction_gap_response
+                    && (gap_response_coord_spacing_ang <= 0.f || gap_response_radial_cutoff_ang <= 0.f))
                 throw string("cg_lipid_rotamer_sc gap response requires positive coordinate spacing and radial cutoff");
-            if(gap_response_fallback_ang <= 0.f)
+            if(implicit_compaction_gap_response && gap_response_fallback_ang <= 0.f)
                 gap_response_fallback_ang = gap_response_radial_cutoff_ang;
         }
 
@@ -3821,6 +3826,25 @@ struct CGLipidSCOneBody : public CoordNode {
         }
     }
 
+    CGLipidSCOneBody(hid_t grp, const ArgList& arguments)
+        : CGLipidSCOneBody(grp, *arguments.at(0), *arguments.at(1))
+    {
+        if(arguments.size() == 3u) {
+            compaction_state = arguments.at(2);
+            check_elem_width(*compaction_state, 1);
+            if(compaction_state->n_elem != int(index2.size()))
+                throw string("cg_lipid_rotamer_sc compaction state size must match CGL count");
+            if(!has_compaction_correction)
+                throw string("cg_lipid_rotamer_sc received cgl_compaction_state but lacks compaction correction datasets");
+        } else if(arguments.size() != 2u) {
+            throw string(
+                    "cg_lipid_rotamer_sc expects placement_fixed_point_vector_only plus compose_vector6d, "
+                    "optionally with cgl_compaction_state");
+        } else if(has_compaction_correction && !implicit_compaction_gap_response) {
+            throw string("cg_lipid_rotamer_sc compaction correction currently requires implicit gap response metadata");
+        }
+    }
+
     void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
         box_x *= scale_xy;
         box_y *= scale_xy;
@@ -3853,7 +3877,7 @@ struct CGLipidSCOneBody : public CoordNode {
                     active_pairs.push_back({size_t(ai), bi});
             }
         }
-        if(has_compaction_correction) {
+        if(has_compaction_correction && !compaction_state) {
             float cg_cutoff = std::max(gap_response_radial_cutoff_ang, 0.f) + cache_buffer;
             float cg_cutoff2 = cg_cutoff * cg_cutoff;
             for(size_t ai = 0; ai < index2.size(); ++ai) {
@@ -3879,9 +3903,10 @@ struct CGLipidSCOneBody : public CoordNode {
         fill(output, 0.f);
         VecArray sc = sc_pos.output;
         VecArray cg = cg_pos.output;
+        VecArray comp = compaction_state ? compaction_state->output : VecArray();
         ensure_pairlist(sc, cg);
         ImplicitCompactionField implicit_field;
-        if(has_compaction_correction) {
+        if(has_compaction_correction && !compaction_state) {
             implicit_field = build_gap_response_compaction_field(
                     cg,
                     index2,
@@ -3929,7 +3954,9 @@ struct CGLipidSCOneBody : public CoordNode {
                             n_angular, n_radial,
                             dr, n1, n2, knot_spacing, cutoff,
                             log1p_reduced_transform ? 0.f : taper_width, e_comp);
-                    float q = implicit_field.extended[bi];
+                    float q = compaction_state
+                        ? comp(0, index2[bi])
+                        : implicit_field.extended[bi];
                     if(ok_ext) {
                         float w = 1.f - q;
                         e.value += w * e_ext.value;
@@ -3960,10 +3987,12 @@ struct CGLipidSCOneBody : public CoordNode {
         VecArray sc_sens = sc_pos.sens;
         VecArray cg = cg_pos.output;
         VecArray cg_sens = cg_pos.sens;
+        VecArray comp = compaction_state ? compaction_state->output : VecArray();
+        VecArray comp_sens = compaction_state ? compaction_state->sens : VecArray();
         ensure_pairlist(sc, cg);
         ImplicitCompactionField implicit_field;
         vector<float> implicit_q_sens(index2.size(), 0.f);
-        if(has_compaction_correction) {
+        if(has_compaction_correction && !compaction_state) {
             implicit_field = build_gap_response_compaction_field(
                     cg,
                     index2,
@@ -4015,7 +4044,9 @@ struct CGLipidSCOneBody : public CoordNode {
                         n_angular, n_radial,
                         dr, n1, n2, knot_spacing, cutoff,
                         log1p_reduced_transform ? 0.f : taper_width, e_comp);
-                float q = implicit_field.extended[bi];
+                float q = compaction_state
+                    ? comp(0, index2[bi])
+                    : implicit_field.extended[bi];
                 float corr_ext = ok_ext ? e_ext.value : 0.f;
                 float corr_comp = ok_comp ? e_comp.value : 0.f;
                 if(ok_ext) {
@@ -4058,10 +4089,12 @@ struct CGLipidSCOneBody : public CoordNode {
             }
             add_vec6_sens(sc_sens, ai, dpos1, ddir1);
             add_vec6_sens(cg_sens, index2[bi], dpos2, ddir2);
-            if(has_compaction_correction)
+            if(has_compaction_correction && compaction_state)
+                comp_sens(0, index2[bi]) += row_scale * q_ctrl_sens;
+            else if(has_compaction_correction)
                 implicit_q_sens[bi] += row_scale * q_ctrl_sens;
         }
-        if(has_compaction_correction)
+        if(has_compaction_correction && !compaction_state)
             propagate_gap_response_compaction_sens(
                     cg,
                     cg_sens,
@@ -4083,6 +4116,7 @@ CGLipidTargetPotential::CGLipidTargetPotential(
     : PotentialNode()
     , cg_pos(cg_pos_)
     , tgt_pos(tgt_pos_)
+    , compaction_state(nullptr)
     , n_type1(0)
     , n_type2(0)
     , n_param(0)
@@ -4102,6 +4136,8 @@ CGLipidTargetPotential::CGLipidTargetPotential(
         , minimum_boltzmann_weight(read_attribute<float>(
                     grp, ".", "minimum_boltzmann_weight", numeric_limits<float>::min()))
         , has_compaction_correction(false)
+        , compact_state_center(read_attribute<float>(grp, ".", "compact_state_center_ang", 0.f))
+        , extended_state_center(read_attribute<float>(grp, ".", "extended_state_center_ang", 0.f))
         , implicit_compaction_gap_response(read_attribute<int>(grp, ".", "implicit_compaction_gap_response", 0) != 0)
         , gap_response_n_knot(read_attribute<int>(grp, ".", "gap_response_n_knot", 0))
         , gap_response_coord_min_ang(read_attribute<float>(grp, ".", "gap_response_coord_min_ang", 0.f))
@@ -4154,10 +4190,8 @@ CGLipidTargetPotential::CGLipidTargetPotential(
         } else {
             implicit_compaction_gap_response = false;
         }
-        if(!implicit_compaction_gap_response)
-            throw string("cg_lipid_target compaction correction currently requires implicit gap response metadata");
         if(gap_response_coord_spacing_ang <= 0.f || gap_response_radial_cutoff_ang <= 0.f)
-            throw string("cg_lipid_target gap response requires positive coordinate spacing and radial cutoff");
+            implicit_compaction_gap_response = false;
         if(gap_response_fallback_ang <= 0.f)
             gap_response_fallback_ang = gap_response_radial_cutoff_ang;
     }
@@ -4172,6 +4206,23 @@ CGLipidTargetPotential::CGLipidTargetPotential(
         throw string("cg_lipid_target source1 index/type/id size mismatch");
     if(index2.size() != type2.size() || index2.size() != id2.size())
         throw string("cg_lipid_target source2 index/type/id size mismatch");
+}
+
+CGLipidTargetPotential::CGLipidTargetPotential(hid_t grp, const ArgList& arguments)
+    : CGLipidTargetPotential(grp, *arguments.at(0), *arguments.at(1))
+{
+    if(arguments.size() == 3u) {
+        compaction_state = arguments.at(2);
+        check_elem_width(*compaction_state, 1);
+        if(compaction_state->n_elem != int(index1.size()))
+            throw string("cg_lipid_target compaction state size must match CGL count");
+        if(!has_compaction_correction)
+            throw string("cg_lipid_target received cgl_compaction_state but lacks compaction correction datasets");
+    } else if(arguments.size() != 2u) {
+        throw string("cg_lipid_target expects compose_vector6d plus pos, optionally with cgl_compaction_state");
+    } else if(has_compaction_correction && !implicit_compaction_gap_response) {
+        throw string("cg_lipid_target compaction correction currently requires implicit gap response metadata");
+    }
 }
 
 void CGLipidTargetPotential::ensure_pairlist(VecArray cg, VecArray tgt) {
@@ -4229,11 +4280,12 @@ void CGLipidTargetPotential::compute_value(ComputeMode mode) {
         return;
     }
     VecArray cg = cg_pos.output;
+    VecArray comp = compaction_state ? compaction_state->output : VecArray();
     VecArray tgt = tgt_pos.output;
     ensure_pairlist(cg, tgt);
     float total = 0.f;
     ImplicitCompactionField implicit_field;
-    if(has_compaction_correction) {
+    if(has_compaction_correction && !compaction_state) {
         implicit_field = build_gap_response_compaction_field(
                 cg,
                 index1,
@@ -4279,6 +4331,12 @@ void CGLipidTargetPotential::compute_value(ComputeMode mode) {
                         n_angular, n_radial, dr, n1, knot_spacing, cutoff,
                         (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e_comp);
                 float q = implicit_field.extended[ai];
+                if(compaction_state) {
+                    // The dynamic compaction state is the normalized hidden
+                    // compactness coordinate on [0, 1], not the physical tail
+                    // extension used to pick representative training ensembles.
+                    q = comp(0, int(ai));
+                }
                 if(ok_ext) {
                     float w = 1.f - q;
                     e.value += w * e_ext.value;
@@ -4310,12 +4368,14 @@ void CGLipidTargetPotential::compute_value(ComputeMode mode) {
 void CGLipidTargetPotential::propagate_deriv() {
     VecArray cg = cg_pos.output;
     VecArray cg_sens = cg_pos.sens;
+    VecArray comp = compaction_state ? compaction_state->output : VecArray();
+    VecArray comp_sens = compaction_state ? compaction_state->sens : VecArray();
     VecArray tgt = tgt_pos.output;
     VecArray tgt_sens = tgt_pos.sens;
     ensure_pairlist(cg, tgt);
     ImplicitCompactionField implicit_field;
     vector<float> implicit_q_sens(index1.size(), 0.f);
-    if(has_compaction_correction) {
+    if(has_compaction_correction && !compaction_state) {
         implicit_field = build_gap_response_compaction_field(
                 cg,
                 index1,
@@ -4362,6 +4422,11 @@ void CGLipidTargetPotential::propagate_deriv() {
                     n_angular, n_radial, dr, n1, knot_spacing, cutoff,
                     (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e_comp);
             float q = implicit_field.extended[ai];
+            float q_to_compaction_sens = 0.f;
+            if(compaction_state) {
+                q = comp(0, int(ai));
+                q_to_compaction_sens = 1.f;
+            }
             float corr_ext = ok_ext ? e_ext.value : 0.f;
             float corr_comp = ok_comp ? e_comp.value : 0.f;
             if(ok_ext) {
@@ -4376,6 +4441,8 @@ void CGLipidTargetPotential::propagate_deriv() {
                 e.d_da += q * e_comp.d_da;
             }
             q_ctrl_sens = corr_comp - corr_ext;
+            if(compaction_state)
+                q_ctrl_sens *= q_to_compaction_sens;
         }
         if(boltzmann_weight_transform) {
             apply_boltzmann_weight_transform(
@@ -4423,10 +4490,12 @@ void CGLipidTargetPotential::propagate_deriv() {
             tgt_sens(1, index2[bi]) += dpos[1];
             tgt_sens(2, index2[bi]) += dpos[2];
         }
-        if(has_compaction_correction)
+        if(has_compaction_correction && compaction_state)
+            comp_sens(0, int(ai)) += q_ctrl_sens;
+        else if(has_compaction_correction)
             implicit_q_sens[ai] += q_ctrl_sens;
     }
-    if(has_compaction_correction)
+    if(has_compaction_correction && !compaction_state)
         propagate_gap_response_compaction_sens(
                 cg,
                 cg_sens,
@@ -4894,5 +4963,5 @@ static RegisterNodeType<CGLipidDensityPotential, 1> _reg_cg_density("cg_lipid_de
 static RegisterNodeType<CGLipidContactEmbeddingPotential, 1> _reg_cg_contact_embedding("cg_lipid_contact_embedding");
 static RegisterNodeType<CGLipidGapEmbeddingPotential, 1> _reg_cg_gap_embedding("cg_lipid_gap_embedding");
 static RegisterNodeType<CGLipidSCPotential, 2> _reg_cg_sc("cg_lipid_sc");
-static RegisterNodeType<CGLipidSCOneBody, 2> _reg_cg_sc_1body("cg_lipid_rotamer_sc");
-static RegisterNodeType<CGLipidTargetPotential, 2> _reg_cg_target("cg_lipid_target");
+static RegisterNodeType<CGLipidSCOneBody, -1> _reg_cg_sc_1body("cg_lipid_rotamer_sc");
+static RegisterNodeType<CGLipidTargetPotential, -1> _reg_cg_target("cg_lipid_target");
