@@ -2732,21 +2732,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         mass_array._v_attrs.n_atoms = n_atoms
         mass_array._v_attrs.initialized = True
 
-        cgl_tau = float(os.environ.get("CG_LIPID_THERMOSTAT_TIMESCALE", "0.0") or "0.0")
-        if lipid_resolution == "coarse" and n_cg_lipids > 0 and cgl_tau > 0.0:
-            global_tau = float(os.environ.get("THERMOSTAT_TIMESCALE", "5.0") or "5.0")
-            thermostat_timescale = np.full(n_atoms, global_tau, dtype="f4")
-            cgl_mask = atom_types.astype(str) == "CGL"
-            thermostat_timescale[cgl_mask] = np.float32(cgl_tau)
-            tau_array = t.create_array(input_grp, "thermostat_timescale", obj=thermostat_timescale)
-            tau_array._v_attrs.arguments = np.array([b"thermostat_timescale"])
-            tau_array._v_attrs.shape = thermostat_timescale.shape
-            tau_array._v_attrs.n_atoms = n_atoms
-            tau_array._v_attrs.initialized = True
-            tau_array._v_attrs.global_timescale = np.float32(global_tau)
-            tau_array._v_attrs.cg_lipid_timescale = np.float32(cgl_tau)
-            tau_array._v_attrs.cg_lipid_atom_types = np.array([b"CGL"])
-        
         print("Hybrid stage files use AA backbone carriers (N/CA/C/O) for protein runtime representation")
         
         # Create stage-specific parameters group (always create this)
@@ -3144,10 +3129,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                 cg_lipid_derived_params["transverse_inertia_g_mol_a2"]
             )
             orient_grp._v_attrs.rotational_thermostat_timescale = float(
-                os.environ.get(
-                    "CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE",
-                    os.environ.get("CG_LIPID_THERMOSTAT_TIMESCALE", "5.0"),
-                )
+                os.environ.get("CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE", "5.0")
             )
             t.create_array(orient_grp, 'direction', obj=lipid_directions.astype('f4'))
 
@@ -4185,18 +4167,14 @@ def inject_cg_lipid_nodes(
                 del pot[existing_node]
 
         with h5py.File(martini_h5, "r") as mh5:
-            implicit_mean_field = has_compaction and env_bool(
-                "UPSIDE_CGL_COMPACTION_MEAN_FIELD_RESPONSE",
-                False,
-            )
-            implicit_compaction = (not implicit_mean_field) and has_compaction and env_bool(
-                "UPSIDE_CGL_COMPACTION_IMPLICIT_RESPONSE",
-                False,
-            )
             comp_grp = mh5["cg_lipid_table/cg_lipid_compaction"] if has_compaction else None
-            enable_explicit_compaction_state = has_compaction and not implicit_mean_field
-
-            def copy_single_cgl_compaction(node, pair_interaction, table_grp, use_implicit_response):
+            enable_explicit_compaction_state = has_compaction
+            def copy_single_cgl_compaction(
+                node,
+                pair_interaction,
+                table_grp,
+                use_implicit_response,
+            ):
                 if (
                     comp_grp is None
                     or "delta_extended" not in table_grp
@@ -4217,17 +4195,18 @@ def inject_cg_lipid_nodes(
                         node.attrs[attr_name] = np.float32(table_grp.attrs[attr_name])
                     elif attr_name in comp_grp.attrs:
                         node.attrs[attr_name] = np.float32(comp_grp.attrs[attr_name])
-                for attr_name in (
-                    "gap_response_coord_min_ang",
-                    "gap_response_coord_spacing_ang",
-                    "gap_response_n_knot",
-                    "gap_response_radial_cutoff_ang",
-                    "gap_response_face_cos_min",
-                    "gap_response_smooth_weight",
-                    "gap_response_fallback_ang",
-                ):
-                    if use_implicit_response:
-                        node.attrs[attr_name] = comp_grp.attrs[attr_name]
+                if use_implicit_response:
+                    for attr_name in (
+                        "gap_response_coord_min_ang",
+                        "gap_response_coord_spacing_ang",
+                        "gap_response_n_knot",
+                        "gap_response_radial_cutoff_ang",
+                        "gap_response_face_cos_min",
+                        "gap_response_smooth_weight",
+                        "gap_response_fallback_ang",
+                    ):
+                        if attr_name in comp_grp.attrs:
+                            node.attrs[attr_name] = comp_grp.attrs[attr_name]
                 pair_interaction.create_dataset(
                     "delta_extended",
                     data=table_grp["delta_extended"][:].astype(np.float32),
@@ -4296,64 +4275,14 @@ def inject_cg_lipid_nodes(
 
             if has_pair:
                 pair_grp = mh5["cg_lipid_table/cg_lipid_pair"]
-                comp_grp = mh5["cg_lipid_table/cg_lipid_compaction"] if has_compaction else None
-                pair_uses_gap_response = bool(
-                    has_compaction and implicit_compaction and "gap_response_coeff" in comp_grp
-                )
 
                 # cg_lipid_pair: symmetric directional tensor over CG lipid vectors.
                 cg_pair = pot.create_group("cg_lipid_pair")
                 cg_pair.attrs["initialized"] = True
                 if has_compaction:
-                    if pair_uses_gap_response:
-                        for attr_name in (
-                            "gap_response_coord_min_ang",
-                            "gap_response_coord_spacing_ang",
-                            "gap_response_n_knot",
-                            "gap_response_radial_cutoff_ang",
-                            "gap_response_face_cos_min",
-                            "gap_response_smooth_weight",
-                            "gap_response_fallback_ang",
-                        ):
-                            cg_pair.attrs[attr_name] = comp_grp.attrs[attr_name]
-                    if implicit_mean_field:
-                        cg_pair.attrs["arguments"] = np.array([b"compose_vector6d"])
-                        cg_pair.attrs["implicit_compaction_mean_field"] = np.int32(1)
-                    elif implicit_compaction:
-                        cg_pair.attrs["arguments"] = np.array([b"compose_vector6d"])
-                        cg_pair.attrs["implicit_compaction_response"] = np.int32(1)
-                        if "gap_response_coeff" in comp_grp:
-                            cg_pair.attrs["implicit_compaction_gap_response"] = np.int32(1)
-                        else:
-                            cg_pair.attrs["implicit_compaction_smooth"] = np.int32(
-                                str(comp_grp.attrs.get("mask_mode", "binary")).strip().lower() == "smooth"
-                            )
-                            local_field_scale = env_float(
-                                "UPSIDE_CGL_COMPACTION_IMPLICIT_LOCAL_FIELD_SCALE",
-                                0.0,
-                            )
-                            if abs(local_field_scale) > 0.0:
-                                cg_pair.attrs["implicit_compaction_local_field_scale"] = np.float32(
-                                    local_field_scale
-                                )
-                            contact_field_cap = env_float(
-                                "UPSIDE_CGL_COMPACTION_IMPLICIT_CONTACT_FIELD_CAP",
-                                0.0,
-                            )
-                            if contact_field_cap > 0.0:
-                                cg_pair.attrs["implicit_compaction_contact_field_cap"] = np.float32(
-                                    contact_field_cap
-                                )
-                            if env_bool("UPSIDE_CGL_COMPACTION_IMPLICIT_MAX_CONTACT", False):
-                                cg_pair.attrs["implicit_compaction_max_contact"] = np.int32(1)
-                            cg_pair.attrs["implicit_compaction_face_cos_min"] = np.float32(
-                                comp_grp.attrs.get("face_cos_min", np.float32(0.0))
-                            )
-                            cg_pair.attrs["implicit_compaction_radial_cutoff_ang"] = np.float32(
-                                float(comp_grp.attrs.get("radial_cutoff_nm", np.float32(0.0))) * 10.0
-                            )
-                    else:
-                        cg_pair.attrs["arguments"] = np.array([b"compose_vector6d", b"cgl_compaction_state"])
+                    cg_pair.attrs["arguments"] = np.array(
+                        [b"compose_vector6d", b"cgl_compaction_state"]
+                    )
                     for attr_name in (
                         "compact_state_center_ang",
                         "extended_state_center_ang",
@@ -4414,11 +4343,6 @@ def inject_cg_lipid_nodes(
                         pi.create_dataset(
                             dataset_name,
                             data=comp_grp[dataset_name][:].astype(np.float32),
-                        )
-                    if pair_uses_gap_response:
-                        pi.create_dataset(
-                            "gap_response_coeff",
-                            data=comp_grp["gap_response_coeff"][:].astype(np.float32),
                         )
 
                 # Element mapping: CG lipids use identity mapping (1 CG type)

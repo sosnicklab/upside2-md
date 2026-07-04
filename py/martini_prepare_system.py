@@ -1165,7 +1165,6 @@ def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable:
         "UPSIDE_BILAYER_LIPIDHEAD_FC": str(lipidhead_fc),
         "UPSIDE_LIPID_RESOLUTION": str(getattr(args, "lipid_resolution", "coarse")),
         "THERMOSTAT_TIMESCALE": str(args.thermostat_timescale),
-        "CG_LIPID_THERMOSTAT_TIMESCALE": str(getattr(args, "cg_lipid_thermostat_timescale", 0.0)),
     }
 
 
@@ -1202,33 +1201,26 @@ def apply_cgl_transport_metadata(args, target_file: Path):
         h5.create_dataset("/input/mass", data=mass)
 
         global_tau = float(getattr(args, "thermostat_timescale", env_float("THERMOSTAT_TIMESCALE", 5.0)))
-        cgl_tau = float(getattr(args, "cg_lipid_thermostat_timescale", env_float("CG_LIPID_THERMOSTAT_TIMESCALE", 0.0)))
-        if cgl_tau <= 0.0:
-            cgl_tau = global_tau
         tau = (
             np.asarray(h5["/input/thermostat_timescale"][:], dtype=np.float32)
             if "/input/thermostat_timescale" in h5
             else np.full(atom_types.shape[0], global_tau, dtype=np.float32)
         )
-        tau[cgl_mask] = np.float32(1.0e8 if replace_markovian else cgl_tau)
+        tau[cgl_mask] = np.float32(1.0e8 if replace_markovian else global_tau)
         if "/input/thermostat_timescale" in h5:
             del h5["/input/thermostat_timescale"]
         dset = h5.create_dataset("/input/thermostat_timescale", data=tau)
         dset.attrs["global_timescale"] = np.float32(global_tau)
-        dset.attrs["cg_lipid_timescale"] = np.float32(cgl_tau)
-        dset.attrs["cgl_timescale"] = np.float32(cgl_tau)
+        dset.attrs["cg_lipid_timescale"] = np.float32(global_tau)
+        dset.attrs["cgl_timescale"] = np.float32(global_tau)
         dset.attrs["cg_lipid_mass_scale"] = np.float32(mass_scale)
         dset.attrs["cgl_mass_scale"] = np.float32(mass_scale)
         dset.attrs["cgl_gle_replace_markovian"] = np.int8(1 if replace_markovian else 0)
 
         if "/input/cgl_gle" in h5:
             del h5["/input/cgl_gle"]
-        memory_text = getattr(args, "cgl_gle_memory_taus", env_default("CGL_GLE_MEMORY_TAUS", "")) or str(
-            getattr(args, "cgl_gle_memory_tau", env_float("CGL_GLE_MEMORY_TAU", 1.0))
-        )
-        coupling_text = getattr(args, "cgl_gle_couplings", env_default("CGL_GLE_COUPLINGS", "")) or str(
-            getattr(args, "cgl_gle_coupling", env_float("CGL_GLE_COUPLING", 1.0))
-        )
+        memory_text = str(getattr(args, "cgl_gle_memory_taus", env_default("CGL_GLE_MEMORY_TAUS", ""))).strip()
+        coupling_text = str(getattr(args, "cgl_gle_couplings", env_default("CGL_GLE_COUPLINGS", ""))).strip()
         memory_tau = parse_positive_float_list(memory_text, "CGL GLE memory tau")
         coupling = parse_positive_float_list(coupling_text, "CGL GLE coupling")
         if len(memory_tau) != len(coupling):
@@ -1965,10 +1957,7 @@ def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--protein-lipid-cutoff-max", type=float, default=env_float("PROTEIN_LIPID_CUTOFF_MAX", 8.0))
     parser.add_argument("--temperature", type=float, default=env_float("TEMPERATURE", 0.8647))
     parser.add_argument("--thermostat-timescale", type=float, default=env_float("THERMOSTAT_TIMESCALE", 5.0))
-    parser.add_argument("--cg-lipid-thermostat-timescale", type=float, default=env_float("CG_LIPID_THERMOSTAT_TIMESCALE", 0.0))
     parser.add_argument("--cg-lipid-mass-scale", type=float, default=env_float("CG_LIPID_MASS_SCALE", 1.0))
-    parser.add_argument("--cgl-gle-memory-tau", type=float, default=env_float("CGL_GLE_MEMORY_TAU", 1.0))
-    parser.add_argument("--cgl-gle-coupling", type=float, default=env_float("CGL_GLE_COUPLING", 1.0))
     parser.add_argument("--cgl-gle-memory-taus", default=env_default("CGL_GLE_MEMORY_TAUS", ""))
     parser.add_argument("--cgl-gle-couplings", default=env_default("CGL_GLE_COUPLINGS", ""))
     parser.add_argument("--cgl-gle-temperature-grid", default=env_default("CGL_GLE_TEMPERATURE_GRID", ""))

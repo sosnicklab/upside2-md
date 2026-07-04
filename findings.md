@@ -2,6 +2,31 @@
 
 ## Lessons
 
+- When the master baseline does not contain the subsystem being cleaned, define
+  scope from the accepted workflows and the prepared-file contract rather than
+  from the raw presence of flags in the current code.
+  For this project, dead-branch cleanup has to be justified by workflow
+  reachability, not by guesswork about why an old toggle exists.
+- Do not infer the accepted dryMARTINI correction contract from stale prepared
+  files alone when the source has changed later in the same turn.
+  For this project, confirm the live contract with a fresh reinjection or a
+  controlled continuation from the same saved stage before deciding which path
+  is physically responsible.
+- When a cleanup touches a force-correction path that has a known physical role,
+  do not treat the branch as dead based only on code reachability or smoke-run
+  success.
+  First verify that the intended correction is still active in a realistic
+  stage-7 output or prepared file and that the known behavioral regression does
+  not reappear.
+- When the tracked force-field H5 is unchanged but a saved trajectory regresses,
+  isolate the runtime surface before touching table generation again.
+  A byte-for-byte `dopc.h5` match to `HEAD` means the next diagnostic should be
+  injector/runtime A/B from the same saved state, not a blind retrain or H5
+  rewrite.
+- When a cleanup or refactor request names concrete workflows for verification,
+  make those workflows part of the plan before calling the task done.
+  For this project, workflow validation is part of the deliverable, not an
+  optional follow-up.
 - Before using trajectory arrays for transport metrics, confirm the exact H5
   shape and slice the system axis explicitly.
   A mistaken read of `output/pos` as `(frame, atom, xyz)` instead of
@@ -47,6 +72,42 @@
 
 ## External / Technical Findings
 
+- 2026-07-04: The user-reported Jul 4 `stage_7.0` outputs are pre-repair
+  artifacts; they do not reflect the current injector/runtime contract.
+  - The master repository does not contain matching MARTINI workflow files or
+    MARTINI-specific `py/` / `src/` files at the corresponding paths, so the
+    cleanup scope was defined by tracing the four accepted workflows rather
+    than by pairing files line-by-line against master.
+  - The reported files were written at
+    `2026-07-04 02:07` through `02:41` local time.
+    Inspection of those saved `stage_7.0.prepared.up` files shows the older
+    implicit SC/target contract:
+    `cg_lipid_rotamer_sc.arguments = ["placement_fixed_point_vector_only", "compose_vector6d"]`,
+    `cg_lipid_target.arguments = ["compose_vector6d", "pos"]`,
+    plus `implicit_compaction_gap_response = 1` and `gap_response_coeff`.
+  - Direct reinjection with the current
+    `/Users/yinhan/Documents/upside2-md/py/martini_prepare_system_lib.py`
+    now produces the repaired committed contract:
+    `cg_lipid_pair.arguments = ["compose_vector6d", "cgl_compaction_state"]`,
+    `cg_lipid_rotamer_sc.arguments = ["placement_fixed_point_vector_only", "compose_vector6d", "cgl_compaction_state"]`,
+    and
+    `cg_lipid_target.arguments = ["compose_vector6d", "pos", "cgl_compaction_state"]`.
+  - Controlled 2,000-step stage-7.1 continuations from the same saved Jul 4
+    stage-7 sources do not show the repaired explicit path pushing the proteins
+    toward a more vertical state than the implicit-source controls.
+    `1rkl` source / implicit / repaired-explicit tilts:
+    `46.56 / 45.27 / 46.64 deg`.
+    `1afo` chain-A source / implicit / repaired-explicit tilts:
+    `18.17 / 19.93 / 19.83 deg`.
+    `1afo` chain-B source / implicit / repaired-explicit tilts:
+    `16.35 / 14.81 / 15.17 deg`.
+  - The installed
+    `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5`
+    matches `HEAD` exactly on the inspected pair, compaction, SC, and target
+    correction datasets.
+  - Interpretation:
+    the regression the user observed was tied to pre-repair stage-7 artifacts,
+    not to drift in the tracked rigid-DOPC correction tables.
 - 2026-07-03: The accepted generic fix is the overlay-center-matched SC
   compaction retrofit on the source-balanced full-bilayer base H5.
   - Accepted H5:
