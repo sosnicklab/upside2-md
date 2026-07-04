@@ -1,78 +1,77 @@
 # Progress Log
 
-## Current Task: dryMARTINI Workflow-Path Cleanup
+## Current Task: `1afo` CGL Compaction-State Repair
 
 - Actions taken:
-  - Traced the exact dryMARTINI path used by
-    `run_sim_1afo.sh`,
-    `run_sim_1rkl.sh`,
-    `run_sim_1afo_full.sh`,
-    and `run_sim_1rkl_full.sh`
-    through `example/16.MARTINI/run_sim_hybrid.sh`,
-    `py/martini_prepare_system.py`,
-    `py/martini_prepare_system_lib.py`,
-    and `src/martini_cg_lipid.cpp`.
-  - Confirmed the master repository does not carry matching MARTINI workflow or
-    MARTINI-specific `py/` / `src/` files, so the cleanup scope was defined by
-    reachable workflow behavior rather than by a one-to-one master file list.
-  - Identified that the user-reported
-    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_1rkl_hybrid/*stage_7.0*`
-    and
-    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/outputs/martini_1afo_hybrid/*stage_7.0*`
-    files were generated on Jul 4 before the current injector repair.
-    Those prepared files still carry the earlier implicit SC/target contract.
-  - Restored the current workflow-used injector/runtime path to the last
-    committed behavior for SC and target compaction correction:
-    explicit `cgl_compaction_state` arguments with `delta_extended` /
-    `delta_compact` datasets, while keeping `cg_lipid_pair` on the committed
-    explicit compaction-state path.
-  - Built controlled continuation sources from the reported stage-7 outputs and
-    reinjected the repaired CGL nodes for direct A/B verification against the
-    stale implicit-source artifacts.
+  - Rechecked the `1afo` regression against the matching full-resolution
+    workflow and confirmed they start from the same packed structure.
+  - Measured the saved coarse `stage_7.0` collapse and verified the
+    full-resolution control remains stable from the same starting pack.
+  - Inspected the installed `parameters/dryMARTINI/dopc.h5` and found that the
+    original `cg_lipid_compaction/self_coeff` was zero and that the stored
+    physical compact/extended tail centers were stale.
+  - Patched `py/martini_build_tables.py` so the compaction reference centers,
+    normalized hidden-state coordinate, and self PMF can be rebuilt from the
+    stored DOPC reference ensemble, and so stale `cg_lipid_sc` and
+    `cg_lipid_target` compaction groups are detectable.
+  - Profiled the exact pair-relaxation rebuild path and confirmed it is not a
+    practical first-line repair locally:
+    a representative pair-relax evaluation costs about `0.028 s`, implying a
+    multi-hour full re-fit.
+  - Verified in `src/martini_cg_lipid.cpp` that the runtime uses a linear
+    SC/target compaction mix and a bilinear CGL-CGL compaction mix.
+  - Replaced the slow rebuild script with an exact endpoint-remap repair that
+    uses `parameters/dryMARTINI/dopc.h5.bak` as the old physical state
+    contract and analytically rewrites the stale SC/target/pair endpoint tables
+    onto the repaired physical centers already stored in the live H5.
+  - Overwrote `parameters/dryMARTINI/dopc.h5` with that repaired artifact.
+  - Reinjected the repaired tables into copies of the saved
+    `1afo.stage_7.0.up` and `1rkl.stage_7.0.up` files and ran 10,000-step
+    production continuations from those saved stage-7 restart states.
 
 - Files modified:
-  - `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/run_sim_hybrid.sh`
   - `/Users/yinhan/Documents/upside2-md/py/martini_build_tables.py`
-  - `/Users/yinhan/Documents/upside2-md/py/martini_gen_params.py`
-  - `/Users/yinhan/Documents/upside2-md/py/martini_prepare_system.py`
-  - `/Users/yinhan/Documents/upside2-md/py/martini_prepare_system_lib.py`
   - `/Users/yinhan/Documents/upside2-md/plan.md`
-  - `/Users/yinhan/Documents/upside2-md/findings.md`
   - `/Users/yinhan/Documents/upside2-md/progress.md`
+  - `/Users/yinhan/Documents/upside2-md/rebuild_dopc_h5_once.py`
+  - `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5`
+  - `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5.bak`
 
 - Verification:
-  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_build_tables.py` passed.
-  - `make -C obj -j4` passed after restoring the runtime behavior.
-  - Direct `git show HEAD:parameters/dryMARTINI/dopc.h5` comparison confirms
-    the installed
-    `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5`
-    is byte-for-byte identical to `HEAD` on the inspected compaction datasets.
-  - Reinjection of the current
-    `/Users/yinhan/Documents/upside2-md/py/martini_prepare_system_lib.py`
-    into a reported stage-7 template now yields:
-    `cg_lipid_pair.arguments = ["compose_vector6d", "cgl_compaction_state"]`,
-    `cg_lipid_rotamer_sc.arguments = ["placement_fixed_point_vector_only", "compose_vector6d", "cgl_compaction_state"]`,
-    and
-    `cg_lipid_target.arguments = ["compose_vector6d", "pos", "cgl_compaction_state"]`.
-  - Controlled 2,000-step stage-7.1 continuations from the user-reported Jul 4
-    stage-7 sources completed for both proteins:
-    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/example/16.MARTINI/outputs/diag_1rkl_implicit_cont`,
-    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/example/16.MARTINI/outputs/diag_1rkl_explicit_cont`,
-    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/example/16.MARTINI/outputs/diag_1afo_implicit_cont`,
-    and
-    `/Users/yinhan/Documents/upside2-md/example/16.MARTINI/example/16.MARTINI/outputs/diag_1afo_explicit_cont`.
-  - Measured end-to-end / tilt from the final continuation frames:
-    `1rkl` source `34.71 A / 46.56 deg`,
-    implicit-control continuation `33.57 A / 45.27 deg`,
-    repaired explicit continuation `34.34 A / 46.64 deg`.
-    `1afo` source chain-A/B `39.17 A / 18.17 deg` and `39.10 A / 16.35 deg`;
-    implicit-control continuation `41.61 A / 19.93 deg` and `37.44 A / 14.81 deg`;
-    repaired explicit continuation `41.96 A / 19.83 deg` and `38.16 A / 15.17 deg`.
+  - `python -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py py/martini_prepare_system.py`
+    succeeded under the project environment.
+  - The repaired live H5 now reports a consistent state contract:
+    `cg_lipid_compaction`, `cg_lipid_sc`, and `cg_lipid_target` all use
+    runtime centers `0.0/1.0`, physical reference centers
+    `12.134849 / 26.963173 A`, and updated compact-state probability
+    `0.5833333`.
+  - The remapped tables differ materially from the backup old-state tables,
+    especially on the compact side:
+    `cg_lipid_sc/delta_compact` RMS shift `~1.28`,
+    `cg_lipid_target/delta_compact` RMS shift `~3.66`,
+    `cg_lipid_compaction/delta_compact_compact` RMS shift `~2.15`.
+  - `1afo` repaired continuation:
+    from the same saved final stage-7 frame, chain-center XY separation moved
+    `8.41 -> 8.79 A` and mean CGL compaction moved `0.9999 -> 0.9178`.
+  - `1rkl` repaired continuation:
+    10,000 steps completed stably; a simple full-chain backbone principal-axis
+    metric changed only `31.15 -> 28.88 deg`, which does not indicate a return
+    to the obvious vertical-collapse failure mode.
 
 - Failures and fixes:
-  - The Jul 4 `stage_7.0` artifacts the user pointed to were generated before
-    the current injector repair, so they could not be used as proof of the
-    current source behavior without a controlled rerun.
-  - The tracked correction tables in `parameters/dryMARTINI/dopc.h5` did not
-    regress; the repair work was isolated to the injector/runtime path and
-    verified from the same saved stage-7 sources.
+  - A remap-only repair of the initial compaction coordinate did not hold:
+    the state still relaxed back to the compact endpoint, which exposed the
+    missing self-PMF defect.
+  - Repairing only `cg_lipid_compaction` removed the hidden-state saturation
+    but did not recover `1afo` separation, which exposed the remaining stale
+    compact-vs-extended pair/SC/target correction tables.
+  - Rebuilding the full retrofit from stdin failed because Python
+    multiprocessing cannot reload `<stdin>` as a module, so the work was moved
+    into the real file `rebuild_dopc_h5_once.py`.
+  - The exact representative-state pair-relaxation rebuild was too expensive
+    to use as the main delivery path, so the fix was changed to an exact
+    analytical endpoint remap inside the runtime’s existing linear/bilinear
+    state model.
+  - A partial old-control `1afo` continuation was started for an extra A/B but
+    interrupted once the repaired restart already showed the expected outward
+    separation and reduced compaction saturation.

@@ -2,6 +2,11 @@
 
 ## Lessons
 
+- Do not assign causality from a coarse packed-geometry artifact without
+  checking the matching full-resolution control workflow first.
+  For this project, if full-resolution and coarse runs start from the same
+  packed `1afo` structure but only coarse collapses, the root cause is not the
+  static corridor occupancy by itself.
 - When the master baseline does not contain the subsystem being cleaned, define
   scope from the accepted workflows and the prepared-file contract rather than
   from the raw presence of flags in the current code.
@@ -69,8 +74,92 @@
   For the CGL-SC issue, the exact/proxy replay split is what showed that the
   remaining vertical bias was in the explicit SC compaction deltas, not in the
   new source-balanced base `interaction_param` table.
+- When a compaction correction model is already linear or bilinear in its
+  hidden state, do not jump straight to an expensive representative-state
+  re-fit after the physical endpoint centers move.
+  First check whether the stale tables can be reparameterized exactly from the
+  old physical centers to the new ones inside the existing model family.
 
 ## External / Technical Findings
+
+- 2026-07-04: The stale CGL compaction tables can be repaired exactly by
+  endpoint reparameterization; a fresh expensive re-fit is not required for
+  this fix.
+  - `parameters/dryMARTINI/dopc.h5.bak` preserves the old physical endpoint
+    contract:
+    `extended=13.381275 A`, `compact=19.615337 A`,
+    `compact_state_probability=0.3023485`.
+  - The repaired live
+    `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5`
+    already carried the corrected self-PMF contract:
+    `reference_extended_center_ang=12.134849 A`,
+    `reference_compact_center_ang=26.963173 A`,
+    `compact_state_probability=0.5833333`.
+  - The C++ runtime in `src/martini_cg_lipid.cpp` combines
+    `cg_lipid_sc/delta_extended` and `delta_compact` linearly in the hidden
+    compaction coordinate and combines the
+    `cg_lipid_compaction/delta_extended_extended`,
+    `delta_extended_compact`, and `delta_compact_compact` tensors bilinearly.
+  - Therefore the stale endpoint tables can be remapped analytically from the
+    old physical centers to the new ones without changing the runtime model:
+    the SC/target tables by affine endpoint evaluation and the CGL-CGL pair
+    tables by bilinear endpoint evaluation.
+  - The delivered repair now writes one consistent contract across
+    `cg_lipid_compaction`, `cg_lipid_sc`, and `cg_lipid_target`, with
+    `extended_state_center_ang=0`, `compact_state_center_ang=1`,
+    repaired physical `reference_*` attrs, and explicit provenance markers
+    (`endpoint_reparameterized_from_dopc_h5_bak` for the remapped tables).
+  - Validation from the saved stage-7 restart state moved the coarse `1afo`
+    system in the right direction:
+    the original saved `stage_7.0` source ends at `8.41 A` chain-center XY
+    separation with mean compaction `0.9999`, while the repaired 10,000-step
+    continuation from that same final frame ends at `8.79 A` separation with
+    mean compaction `0.9178`.
+  - A 10,000-step repaired `1rkl` continuation stayed in the accepted tilted
+    regime by a simple backbone principal-axis diagnostic
+    (`31.15 -> 28.88 deg` on the full-chain metric), so the fix did not
+    reproduce the obvious old vertical-collapse mode.
+
+- 2026-07-04: The current `1afo` collapse is a coarse compaction-state
+  force-field defect, not a missing-lipid packing defect.
+  - The saved coarse
+    `example/16.MARTINI/outputs/martini_1afo_hybrid/checkpoints/1afo.stage_7.0.up`
+    does show real inward drift:
+    the chain-center XY separation shrinks from about `11.50 A` to `8.41 A`
+    across the saved frames.
+  - The matching coarse and full-resolution `1afo` workflows start from the
+    same packed hybrid structure:
+    `example/16.MARTINI/outputs/martini_1afo_hybrid/hybrid_prep/hybrid_prep_summary.json`
+    and
+    `example/16.MARTINI/outputs/martini_1afo_hybrid_full/hybrid_prep/hybrid_prep_summary.json`
+    report the same lipid removal and box geometry.
+    The full-resolution stage-7 trajectory remains stable, so static corridor
+    occupancy is not the root cause by itself.
+  - The installed
+    `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5`
+    contained a broken compaction-state contract:
+    `cg_lipid_compaction/self_coeff` was zero and its physical state-center
+    metadata was stale relative to the stored DOPC reference ensemble.
+  - The coarse prepared `1afo` stage-7 file therefore mapped physical tail
+    extensions of about `17.6..31.1 A` onto a clipped hidden coordinate with
+    mean `q=0.985`, seeding almost every lipid at the compact endpoint before
+    dynamics.
+  - Repairing only the hidden-state initialization and self PMF is necessary
+    but not sufficient.
+    A controlled repaired-state continuation reduces the compact-endpoint
+    fraction from about `0.989` to about `0.176`, yet the two helices still
+    collapse inward.
+  - The remaining defect is broader than SC/target metadata alone.
+    The retrofit path had repaired the hidden-state self PMF, but it had not
+    regenerated the compact-vs-extended CGL-CGL pair tensor stored inside
+    `cg_lipid_compaction`, even though the prepared `cg_lipid_pair` node reads
+    its compact-state deltas directly from that group.
+  - `cg_lipid_sc` and `cg_lipid_target` still use stale compact/extended
+    centers (`13.381 / 19.615 A`) while the repaired `cg_lipid_compaction`
+    group now uses the correct physical centers (`12.135 / 26.963 A`), and the
+    pair tensor lacked explicit repaired-state provenance markers as well.
+    That means the compression-side and extension-side pair/SC/target
+    corrections were not being applied under one consistent state definition.
 
 - 2026-07-04: The user-reported Jul 4 `stage_7.0` outputs are pre-repair
   artifacts; they do not reflect the current injector/runtime contract.
