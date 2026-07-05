@@ -79,6 +79,17 @@
   re-fit after the physical endpoint centers move.
   First check whether the stale tables can be reparameterized exactly from the
   old physical centers to the new ones inside the existing model family.
+- Do not sign off `1rkl` on a coarse global tilt metric alone when the user is
+  concerned about shape fidelity.
+  Compare the coarse and full-resolution stage-7 morphologies directly and use
+  a bending-sensitive diagnostic, because a helix can keep an acceptable gross
+  tilt while still developing an unphysical coarse-only bend.
+- When a hidden-state force field is supposed to represent both extension and
+  compression, do not silently redefine the state contract so that realistic
+  compressed configurations collapse back onto an endpoint.
+  In this project, widening the physical compact/extended centers and clipping
+  the rebuilt self-state fit masked the compression-side response and created a
+  new coarse-only `1rkl` bending artifact.
 
 ## External / Technical Findings
 
@@ -197,6 +208,40 @@
   - Interpretation:
     the regression the user observed was tied to pre-repair stage-7 artifacts,
     not to drift in the tracked rigid-DOPC correction tables.
+- 2026-07-04: The remaining `1rkl` bend came from the repaired compaction-state
+  contract suppressing the compression side of the old pair/target force field.
+  - Direct same-start-state `1rkl` replays from
+    `example/16.MARTINI/outputs/martini_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`
+    showed that the endpoint-remapped pair tensor was the dominant new bend
+    source:
+    2,000-step backbone line-RMS
+    `current_all 3.6008 -> 4.1542`,
+    `target_old_pair_current 3.6008 -> 4.2673`,
+    `target_current_pair_old 3.6008 -> 3.9978`,
+    `sc_only 3.6008 -> 3.9630`.
+  - Longer 10,000-step `1rkl` continuations confirmed that restoring the old
+    pair/target tables alone improves but does not finish the fix:
+    `source coarse 3.6008 -> 4.6494`,
+    `target_current_pair_old 3.6008 -> 4.3774`,
+    `sc_only 3.6008 -> 4.2763`,
+    versus full-resolution
+    `3.6154 -> 3.6087`.
+  - The best generic H5 kept the current SC correction but restored the old
+    pair/target compaction tables and rebuilt the self PMF around the same old
+    physical state contract preserved in `dopc.h5.bak`
+    (`extended=13.381275 A`, `compact=19.615337 A`,
+    `compact_state_probability=0.3023485`).
+  - That delivered live H5 now reports a repaired self-state range that
+    slightly extends past the nominal endpoints
+    (`self_coord_min_ang=-0.0874`, `self_coord_max_ang=1.1418`), which keeps
+    the compression-side response available without adding any new runtime term.
+  - Validation of the delivered live H5:
+    `1rkl` 10,000-step continuation moved to
+    `line RMS 3.6008 -> 3.8695`,
+    much closer to the full-resolution control than the remapped live H5.
+    `1afo` 10,000-step continuation stayed out of the earlier collapse regime
+    with chain-center XY separation
+    `11.5248 -> 10.6894`, well above the previously bad `~8.4 A` outcome.
 - 2026-07-03: The accepted generic fix is the overlay-center-matched SC
   compaction retrofit on the source-balanced full-bilayer base H5.
   - Accepted H5:
