@@ -245,12 +245,21 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
                 "force-field projection rather than a bilayer-specific correction."
             )
     if compaction_grp is not None:
-        required_dsets = (
+        required_dsets = [
             "self_coeff",
             "delta_extended_extended",
             "delta_extended_compact",
             "delta_compact_compact",
-        )
+        ]
+        compressed_state_center = float(compaction_grp.attrs.get("compressed_state_center_ang", np.nan))
+        if np.isfinite(compressed_state_center):
+            required_dsets.extend(
+                (
+                    "delta_extended_compressed",
+                    "delta_compact_compressed",
+                    "delta_compressed_compressed",
+                )
+            )
         missing_dsets = [name for name in required_dsets if name not in compaction_grp]
         if (
             _decode_h5_attr(compaction_grp.attrs.get("schema", "")) != "cg_lipid_compaction_v1"
@@ -4189,6 +4198,7 @@ def inject_cg_lipid_nodes(
                 for attr_name in (
                     "compact_state_center_ang",
                     "extended_state_center_ang",
+                    "compressed_state_center_ang",
                     "compact_state_probability",
                 ):
                     if attr_name in table_grp.attrs:
@@ -4215,6 +4225,11 @@ def inject_cg_lipid_nodes(
                     "delta_compact",
                     data=table_grp["delta_compact"][:].astype(np.float32),
                 )
+                if "delta_compressed" in table_grp:
+                    pair_interaction.create_dataset(
+                        "delta_compressed",
+                        data=table_grp["delta_compressed"][:].astype(np.float32),
+                    )
                 if use_implicit_response:
                     pair_interaction.create_dataset(
                         "gap_response_coeff",
@@ -4288,9 +4303,11 @@ def inject_cg_lipid_nodes(
                     for attr_name in (
                         "compact_state_center_ang",
                         "extended_state_center_ang",
+                        "compressed_state_center_ang",
                         "compact_state_probability",
                     ):
-                        cg_pair.attrs[attr_name] = np.float32(comp_grp.attrs[attr_name])
+                        if attr_name in comp_grp.attrs:
+                            cg_pair.attrs[attr_name] = np.float32(comp_grp.attrs[attr_name])
                 else:
                     cg_pair.attrs["arguments"] = np.array([b"compose_vector6d"])
                 for attr_name, attr_value in box_attrs.items():
@@ -4341,11 +4358,15 @@ def inject_cg_lipid_nodes(
                         "delta_extended_extended",
                         "delta_extended_compact",
                         "delta_compact_compact",
+                        "delta_extended_compressed",
+                        "delta_compact_compressed",
+                        "delta_compressed_compressed",
                     ):
-                        pi.create_dataset(
-                            dataset_name,
-                            data=comp_grp[dataset_name][:].astype(np.float32),
-                        )
+                        if dataset_name in comp_grp:
+                            pi.create_dataset(
+                                dataset_name,
+                                data=comp_grp[dataset_name][:].astype(np.float32),
+                            )
 
                 # Element mapping: CG lipids use identity mapping (1 CG type)
                 # Shift ids by 4 bits so all shifted ids are unique:

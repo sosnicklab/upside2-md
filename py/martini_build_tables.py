@@ -8,7 +8,7 @@ import os
 import shutil
 import importlib.util
 import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Set, Tuple
 
@@ -104,9 +104,10 @@ def _parallel_map_ordered(label: str, func: Callable[[Any], Any], tasks: list) -
     except ValueError:
         context = mp.get_context()
     print(f"  Parallel {label}: {len(tasks)} tasks on {workers} worker(s)")
+    chunksize = max(1, min(128, (len(tasks) + workers * 8 - 1) // (workers * 8)))
     try:
-        with ProcessPoolExecutor(max_workers=workers, mp_context=context) as pool:
-            return list(pool.map(func, tasks))
+        with context.Pool(processes=workers) as pool:
+            return list(pool.imap(func, tasks, chunksize=chunksize))
     except (OSError, PermissionError) as exc:
         print(f"  Parallel {label}: process workers unavailable ({exc}); using threads")
         with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -1278,6 +1279,26 @@ def _fit_radial_angular_tensor_bspline(
     return controls
 
 
+def _evaluate_radial_angular_tensor_controls(
+    control_tensor: np.ndarray,
+    r_values_nm: np.ndarray,
+    cos_theta_grid: np.ndarray,
+    knot_spacing_ang: float,
+) -> np.ndarray:
+    control_tensor = np.asarray(control_tensor, dtype=np.float64)
+    r_values_nm = np.asarray(r_values_nm, dtype=np.float64)
+    cos_theta_grid = np.asarray(cos_theta_grid, dtype=np.float64)
+    if control_tensor.ndim != 2:
+        raise ValueError("radial/angular control tensor must have shape (n_radial, n_angular)")
+    n_knot_radial, n_knot_angular = control_tensor.shape
+    t_radial = r_values_nm * LENGTH_CONVERSION_A_PER_NM / float(knot_spacing_ang)
+    t_angular = (cos_theta_grid + 1.0) * (float(n_knot_angular - 3) * 0.5) + 1.0
+    radial_basis = _radial_deboor_basis_matrix(t_radial, n_knot_radial)
+    angular_basis = _deBoor_uniform_basis_matrix(t_angular, n_knot_angular)
+    radial_eval = radial_basis @ control_tensor
+    return radial_eval @ angular_basis.T
+
+
 def _fit_radial_angular_angular_tensor_bspline(
     r_values_nm: np.ndarray,
     cos_theta_grid: np.ndarray,
@@ -1659,6 +1680,30 @@ def _apply_tail_axial_compaction(
     axis = np.asarray(axis, dtype=np.float64)
     for chain_idx, chain in enumerate(_PAIR_RELAX_TAIL_CHAINS):
         if delta[chain_idx] <= 0.0:
+            continue
+        positions[chain] -= (
+            float(delta[chain_idx])
+            * tail_weights[chain, None]
+            * axis[None, :]
+        )
+    return positions
+
+
+def _apply_tail_axial_shift(
+    ref_bead_nm: np.ndarray,
+    axis: np.ndarray,
+    shift_nm: np.ndarray | float,
+    tail_weights: np.ndarray,
+) -> np.ndarray:
+    positions = np.asarray(ref_bead_nm, dtype=np.float64).copy()
+    delta = np.asarray(shift_nm, dtype=np.float64)
+    if delta.ndim == 0:
+        delta = np.full(len(_PAIR_RELAX_TAIL_CHAINS), float(delta), dtype=np.float64)
+    if delta.shape != (len(_PAIR_RELAX_TAIL_CHAINS),):
+        raise ValueError("tail axial shift expects one scalar per tail chain")
+    axis = np.asarray(axis, dtype=np.float64)
+    for chain_idx, chain in enumerate(_PAIR_RELAX_TAIL_CHAINS):
+        if abs(float(delta[chain_idx])) <= 1.0e-12:
             continue
         positions[chain] -= (
             float(delta[chain_idx])
@@ -2353,141 +2398,156 @@ def _fit_pair_compaction_result_for_states(
         "UPSIDE_CGL_COMPACTION_FIT_SMOOTH",
         float(result_cg.get("fit_smooth", 0.1) if fit_smooth is None else fit_smooth),
     )
-    state_grid_ee = _sample_cg_pair_energy_grid(
+    compressed_center_ang = compaction_states.get("compressed_center_ang")
+    has_compressed_state = (
+        "compressed_refs_nm" in compaction_states
+        and compressed_center_ang is not None
+        and np.isfinite(float(compressed_center_ang))
+        and float(compressed_center_ang) > float(compaction_states["compact_center_ang"]) + 1.0e-6
+    )
+
+    def sample_state_grid(refs_i_nm: np.ndarray, refs_j_nm: np.ndarray) -> np.ndarray:
+        return _sample_cg_pair_energy_grid(
+            refs_i_nm,
+            refs_j_nm,
+            bead_types=bead_types,
+            bead_charges=bead_charges,
+            pair_params=pair_params,
+            r_values_nm=result_cg["r_values_nm"],
+            cos_theta_grid=result_cg["cos_theta_grid"],
+            azimuthal_count=int(result_cg["azimuthal_count"]),
+            bead_frame_count=int(result_cg["bead_frame_count"]),
+            dist_min_nm=1.0e-6,
+            average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
+        )
+
+    def sample_symmetric_state_grid(refs_i_nm: np.ndarray, refs_j_nm: np.ndarray) -> np.ndarray:
+        forward = sample_state_grid(refs_i_nm, refs_j_nm)
+        reverse = sample_state_grid(refs_j_nm, refs_i_nm)
+        return 0.5 * (forward + np.swapaxes(reverse, 1, 2))
+
+    state_grid_ee = sample_state_grid(
         compaction_states["extended_refs_nm"],
         compaction_states["extended_refs_nm"],
-        bead_types=bead_types,
-        bead_charges=bead_charges,
-        pair_params=pair_params,
-        r_values_nm=result_cg["r_values_nm"],
-        cos_theta_grid=result_cg["cos_theta_grid"],
-        azimuthal_count=int(result_cg["azimuthal_count"]),
-        bead_frame_count=int(result_cg["bead_frame_count"]),
-        dist_min_nm=1.0e-6,
-        average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
     )
-    state_grid_cc = _sample_cg_pair_energy_grid(
+    state_grid_cc = sample_state_grid(
         compaction_states["compact_refs_nm"],
         compaction_states["compact_refs_nm"],
-        bead_types=bead_types,
-        bead_charges=bead_charges,
-        pair_params=pair_params,
-        r_values_nm=result_cg["r_values_nm"],
-        cos_theta_grid=result_cg["cos_theta_grid"],
-        azimuthal_count=int(result_cg["azimuthal_count"]),
-        bead_frame_count=int(result_cg["bead_frame_count"]),
-        dist_min_nm=1.0e-6,
-        average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
     )
-    state_grid_ec_forward = _sample_cg_pair_energy_grid(
+    state_grid_ec = sample_symmetric_state_grid(
         compaction_states["extended_refs_nm"],
         compaction_states["compact_refs_nm"],
-        bead_types=bead_types,
-        bead_charges=bead_charges,
-        pair_params=pair_params,
-        r_values_nm=result_cg["r_values_nm"],
-        cos_theta_grid=result_cg["cos_theta_grid"],
-        azimuthal_count=int(result_cg["azimuthal_count"]),
-        bead_frame_count=int(result_cg["bead_frame_count"]),
-        dist_min_nm=1.0e-6,
-        average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
     )
-    state_grid_ec_reverse = _sample_cg_pair_energy_grid(
-        compaction_states["compact_refs_nm"],
-        compaction_states["extended_refs_nm"],
-        bead_types=bead_types,
-        bead_charges=bead_charges,
-        pair_params=pair_params,
-        r_values_nm=result_cg["r_values_nm"],
-        cos_theta_grid=result_cg["cos_theta_grid"],
-        azimuthal_count=int(result_cg["azimuthal_count"]),
-        bead_frame_count=int(result_cg["bead_frame_count"]),
-        dist_min_nm=1.0e-6,
-        average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
-    )
-    state_grid_ec = 0.5 * (
-        state_grid_ec_forward + np.swapaxes(state_grid_ec_reverse, 1, 2)
-    )
+    state_grid_xx = None
+    state_grid_ex = None
+    state_grid_cx = None
+    if has_compressed_state:
+        state_grid_xx = sample_state_grid(
+            compaction_states["compressed_refs_nm"],
+            compaction_states["compressed_refs_nm"],
+        )
+        state_grid_ex = sample_symmetric_state_grid(
+            compaction_states["extended_refs_nm"],
+            compaction_states["compressed_refs_nm"],
+        )
+        state_grid_cx = sample_symmetric_state_grid(
+            compaction_states["compact_refs_nm"],
+            compaction_states["compressed_refs_nm"],
+        )
     if pair_relax_state_correction:
         pr_face_cos_min = _float_env("UPSIDE_CGL_PAIR_RELAX_FACE_COS_MIN", 0.5)
         pr_radial_cutoff_nm = _float_env("UPSIDE_CGL_PAIR_RELAX_RADIAL_CUTOFF_NM", 2.5)
-        corr_ee = _pair_conditioned_tail_relaxation_correction_grid(
+        def sample_relax_correction(refs_i_nm: np.ndarray, refs_j_nm: np.ndarray | None) -> dict:
+            return _pair_conditioned_tail_relaxation_correction_grid(
+                refs_i_nm,
+                refs_j_nm,
+                bead_types=bead_types,
+                bead_charges=bead_charges,
+                pair_params=pair_params,
+                lipids_itp_path=lipids_itp_path,
+                r_values_nm=result_cg["r_values_nm"],
+                cos_theta_grid=result_cg["cos_theta_grid"],
+                average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
+                azimuthal_count=int(result_cg.get("azimuthal_count", 1)),
+                bead_frame_count=int(result_cg.get("bead_frame_count", 1)),
+                face_cos_min=pr_face_cos_min,
+                radial_cutoff_nm=pr_radial_cutoff_nm,
+                dist_min_nm=1.0e-6,
+            )
+
+        def symmetric_relax_correction(refs_i_nm: np.ndarray, refs_j_nm: np.ndarray) -> np.ndarray:
+            forward = sample_relax_correction(refs_i_nm, refs_j_nm)
+            reverse = sample_relax_correction(refs_j_nm, refs_i_nm)
+            return 0.5 * (
+                np.asarray(forward["correction_grid_kj_mol"], dtype=np.float64)
+                + np.swapaxes(np.asarray(reverse["correction_grid_kj_mol"], dtype=np.float64), 1, 2)
+            )
+
+        state_grid_ee = state_grid_ee + np.asarray(
+            sample_relax_correction(compaction_states["extended_refs_nm"], None)["correction_grid_kj_mol"],
+            dtype=np.float64,
+        )
+        state_grid_cc = state_grid_cc + np.asarray(
+            sample_relax_correction(compaction_states["compact_refs_nm"], None)["correction_grid_kj_mol"],
+            dtype=np.float64,
+        )
+        state_grid_ec = state_grid_ec + symmetric_relax_correction(
             compaction_states["extended_refs_nm"],
-            None,
-            bead_types=bead_types,
-            bead_charges=bead_charges,
-            pair_params=pair_params,
-            lipids_itp_path=lipids_itp_path,
-            r_values_nm=result_cg["r_values_nm"],
-            cos_theta_grid=result_cg["cos_theta_grid"],
-            average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
-            azimuthal_count=int(result_cg.get("azimuthal_count", 1)),
-            bead_frame_count=int(result_cg.get("bead_frame_count", 1)),
-            face_cos_min=pr_face_cos_min,
-            radial_cutoff_nm=pr_radial_cutoff_nm,
-            dist_min_nm=1.0e-6,
-        )
-        corr_cc = _pair_conditioned_tail_relaxation_correction_grid(
             compaction_states["compact_refs_nm"],
-            None,
-            bead_types=bead_types,
-            bead_charges=bead_charges,
-            pair_params=pair_params,
-            lipids_itp_path=lipids_itp_path,
-            r_values_nm=result_cg["r_values_nm"],
-            cos_theta_grid=result_cg["cos_theta_grid"],
-            average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
-            azimuthal_count=int(result_cg.get("azimuthal_count", 1)),
-            bead_frame_count=int(result_cg.get("bead_frame_count", 1)),
-            face_cos_min=pr_face_cos_min,
-            radial_cutoff_nm=pr_radial_cutoff_nm,
-            dist_min_nm=1.0e-6,
         )
-        corr_ec_forward = _pair_conditioned_tail_relaxation_correction_grid(
-            compaction_states["extended_refs_nm"],
-            compaction_states["compact_refs_nm"],
-            bead_types=bead_types,
-            bead_charges=bead_charges,
-            pair_params=pair_params,
-            lipids_itp_path=lipids_itp_path,
-            r_values_nm=result_cg["r_values_nm"],
-            cos_theta_grid=result_cg["cos_theta_grid"],
-            average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
-            azimuthal_count=int(result_cg.get("azimuthal_count", 1)),
-            bead_frame_count=int(result_cg.get("bead_frame_count", 1)),
-            face_cos_min=pr_face_cos_min,
-            radial_cutoff_nm=pr_radial_cutoff_nm,
-            dist_min_nm=1.0e-6,
-        )
-        corr_ec_reverse = _pair_conditioned_tail_relaxation_correction_grid(
-            compaction_states["compact_refs_nm"],
-            compaction_states["extended_refs_nm"],
-            bead_types=bead_types,
-            bead_charges=bead_charges,
-            pair_params=pair_params,
-            lipids_itp_path=lipids_itp_path,
-            r_values_nm=result_cg["r_values_nm"],
-            cos_theta_grid=result_cg["cos_theta_grid"],
-            average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
-            azimuthal_count=int(result_cg.get("azimuthal_count", 1)),
-            bead_frame_count=int(result_cg.get("bead_frame_count", 1)),
-            face_cos_min=pr_face_cos_min,
-            radial_cutoff_nm=pr_radial_cutoff_nm,
-            dist_min_nm=1.0e-6,
-        )
-        state_grid_ee = state_grid_ee + np.asarray(corr_ee["correction_grid_kj_mol"], dtype=np.float64)
-        state_grid_cc = state_grid_cc + np.asarray(corr_cc["correction_grid_kj_mol"], dtype=np.float64)
-        state_grid_ec = state_grid_ec + 0.5 * (
-            np.asarray(corr_ec_forward["correction_grid_kj_mol"], dtype=np.float64)
-            + np.swapaxes(np.asarray(corr_ec_reverse["correction_grid_kj_mol"], dtype=np.float64), 1, 2)
-        )
+        if has_compressed_state:
+            state_grid_xx = state_grid_xx + np.asarray(
+                sample_relax_correction(compaction_states["compressed_refs_nm"], None)["correction_grid_kj_mol"],
+                dtype=np.float64,
+            )
+            state_grid_ex = state_grid_ex + symmetric_relax_correction(
+                compaction_states["extended_refs_nm"],
+                compaction_states["compressed_refs_nm"],
+            )
+            state_grid_cx = state_grid_cx + symmetric_relax_correction(
+                compaction_states["compact_refs_nm"],
+                compaction_states["compressed_refs_nm"],
+            )
     compact_probability = float(compaction_states["compact_probability"])
-    extended_probability = 1.0 - compact_probability
-    state_grid_avg = (
-        (extended_probability * extended_probability) * state_grid_ee
-        + (2.0 * compact_probability * extended_probability) * state_grid_ec
-        + (compact_probability * compact_probability) * state_grid_cc
-    )
+    state_model = str(pair_state_model).strip().lower()
+    if has_compressed_state and state_model != "bilinear":
+        raise ValueError(
+            "Compressed-state pair compaction requires the bilinear pair-state model"
+        )
+    if has_compressed_state:
+        extended_probability = float(
+            compaction_states.get("extended_probability", max(0.0, 1.0 - compact_probability))
+        )
+        compact_middle_probability = float(
+            compaction_states.get("compact_middle_probability", compact_probability)
+        )
+        compressed_probability = float(compaction_states.get("compressed_probability", 0.0))
+        total_probability = (
+            extended_probability + compact_middle_probability + compressed_probability
+        )
+        if total_probability <= 1.0e-12:
+            extended_probability = max(0.0, 1.0 - compact_probability)
+            compact_middle_probability = compact_probability
+            compressed_probability = 0.0
+            total_probability = extended_probability + compact_middle_probability
+        extended_probability /= total_probability
+        compact_middle_probability /= total_probability
+        compressed_probability /= total_probability
+        state_grid_avg = (
+            (extended_probability * extended_probability) * state_grid_ee
+            + (2.0 * extended_probability * compact_middle_probability) * state_grid_ec
+            + (compact_middle_probability * compact_middle_probability) * state_grid_cc
+            + (2.0 * extended_probability * compressed_probability) * state_grid_ex
+            + (2.0 * compact_middle_probability * compressed_probability) * state_grid_cx
+            + (compressed_probability * compressed_probability) * state_grid_xx
+        )
+    else:
+        extended_probability = 1.0 - compact_probability
+        state_grid_avg = (
+            (extended_probability * extended_probability) * state_grid_ee
+            + (2.0 * compact_probability * extended_probability) * state_grid_ec
+            + (compact_probability * compact_probability) * state_grid_cc
+        )
     base_grid_kj_mol = np.asarray(result_cg["energy_grid_raw"], dtype=np.float64)
     reference_energy_kj_mol = float(result_cg["reference_energy_eup"]) * ENERGY_CONVERSION_KJ_PER_EUP
     control_kbt_kj_mol = DEFAULT_PRODUCTION_TEMP_UPSIDE * ENERGY_CONVERSION_KJ_PER_EUP
@@ -2510,7 +2570,13 @@ def _fit_pair_compaction_result_for_states(
     correction_ee_control = to_log1p_control(state_grid_ee) - center_control_grid
     correction_ec_control = to_log1p_control(state_grid_ec) - center_control_grid
     correction_cc_control = to_log1p_control(state_grid_cc) - center_control_grid
-    state_model = str(pair_state_model).strip().lower()
+    correction_ex_control = None
+    correction_cx_control = None
+    correction_xx_control = None
+    if has_compressed_state:
+        correction_ex_control = to_log1p_control(state_grid_ex) - center_control_grid
+        correction_cx_control = to_log1p_control(state_grid_cx) - center_control_grid
+        correction_xx_control = to_log1p_control(state_grid_xx) - center_control_grid
     if state_model == "additive":
         correction_cc_control = 2.0 * correction_ec_control - correction_ee_control
     elif state_model != "bilinear":
@@ -2529,10 +2595,18 @@ def _fit_pair_compaction_result_for_states(
             correction_ee_control = np.where(compaction_face_mask, correction_ee_control, 0.0)
             correction_ec_control = np.where(compaction_face_mask, correction_ec_control, 0.0)
             correction_cc_control = np.where(compaction_face_mask, correction_cc_control, 0.0)
+            if correction_ex_control is not None:
+                correction_ex_control = np.where(compaction_face_mask, correction_ex_control, 0.0)
+                correction_cx_control = np.where(compaction_face_mask, correction_cx_control, 0.0)
+                correction_xx_control = np.where(compaction_face_mask, correction_xx_control, 0.0)
         else:
             correction_ee_control = correction_ee_control * compaction_face_weight
             correction_ec_control = correction_ec_control * compaction_face_weight
             correction_cc_control = correction_cc_control * compaction_face_weight
+            if correction_ex_control is not None:
+                correction_ex_control = correction_ex_control * compaction_face_weight
+                correction_cx_control = correction_cx_control * compaction_face_weight
+                correction_xx_control = correction_xx_control * compaction_face_weight
 
     def fit_correction_tensor(correction_grid_control: np.ndarray) -> np.ndarray:
         tensor = _fit_radial_angular_angular_tensor_bspline(
@@ -2573,6 +2647,26 @@ def _fit_pair_compaction_result_for_states(
         "pair_state_model": state_model,
         "fit_smooth": float(compaction_fit_smooth),
     }
+    if has_compressed_state:
+        compaction_result["delta_extended_compressed"] = fit_correction_tensor(
+            correction_ex_control
+        ).reshape(-1)
+        compaction_result["delta_compact_compressed"] = fit_correction_tensor(
+            correction_cx_control
+        ).reshape(-1)
+        compaction_result["delta_compressed_compressed"] = fit_correction_tensor(
+            correction_xx_control
+        ).reshape(-1)
+        compaction_result["grid_extended_compressed_kj_mol"] = state_grid_ex
+        compaction_result["grid_compact_compressed_kj_mol"] = state_grid_cx
+        compaction_result["grid_compressed_compressed_kj_mol"] = state_grid_xx
+        compaction_result["representative_compressed_count"] = int(
+            compaction_states["compressed_refs_nm"].shape[0]
+        )
+        compaction_result["compressed_pool_size"] = int(
+            compaction_states.get("compressed_pool_size", compaction_states["compressed_refs_nm"].shape[0])
+        )
+        compaction_result["compressed_center_ang"] = float(compressed_center_ang)
     if compaction_face_weight is not None:
         compaction_result["face_mask"] = np.asarray(compaction_face_weight, dtype=np.float32)
         compaction_result["face_cos_min"] = float(face_cos_min)
@@ -2599,6 +2693,7 @@ def _fit_single_cgl_state_delta_full_tensor(
     base_energy_grid_kj_mol: np.ndarray,
     extended_energy_grid_kj_mol: np.ndarray,
     compact_energy_grid_kj_mol: np.ndarray,
+    compressed_energy_grid_kj_mol: np.ndarray | None,
     reference_energy_eup: float,
     temperature_upside: float,
     r_values_nm: np.ndarray,
@@ -2636,6 +2731,13 @@ def _fit_single_cgl_state_delta_full_tensor(
         reference_energy_eup,
         temperature_upside,
     )
+    compressed_control = None
+    if compressed_energy_grid_kj_mol is not None:
+        compressed_control = _log1p_reduced_control_from_energy_grid(
+            compressed_energy_grid_kj_mol,
+            reference_energy_eup,
+            temperature_upside,
+        )
     delta_extended_grid = extended_control - base_control
     delta_compact_grid = compact_control - base_control
 
@@ -2654,18 +2756,26 @@ def _fit_single_cgl_state_delta_full_tensor(
         delta_max = float(np.max(delta_grid))
         return np.clip(tensor, delta_min, delta_max)
 
-    return {
+    payload = {
         "delta_extended": fit_delta(delta_extended_grid).reshape(-1),
         "delta_compact": fit_delta(delta_compact_grid).reshape(-1),
         "grid_extended_kj_mol": np.asarray(extended_energy_grid_kj_mol, dtype=np.float32),
         "grid_compact_kj_mol": np.asarray(compact_energy_grid_kj_mol, dtype=np.float32),
     }
+    if compressed_control is not None and compressed_energy_grid_kj_mol is not None:
+        payload["delta_compressed"] = fit_delta(compressed_control - base_control).reshape(-1)
+        payload["grid_compressed_kj_mol"] = np.asarray(
+            compressed_energy_grid_kj_mol,
+            dtype=np.float32,
+        )
+    return payload
 
 
 def _build_single_cgl_state_delta_radial_angular(
     base_energy_grid_kj_mol: np.ndarray,
     extended_energy_grid_kj_mol: np.ndarray,
     compact_energy_grid_kj_mol: np.ndarray,
+    compressed_energy_grid_kj_mol: np.ndarray | None,
     reference_energy_eup: float,
     temperature_upside: float,
     r_values_nm: np.ndarray | None = None,
@@ -2674,12 +2784,31 @@ def _build_single_cgl_state_delta_radial_angular(
     n_knot_angular: int | None = None,
     knot_spacing_ang: float | None = None,
     smooth: float = 0.01,
+    base_interaction_param: np.ndarray | None = None,
 ) -> dict:
-    base_control = _log1p_reduced_control_from_energy_grid(
-        base_energy_grid_kj_mol,
-        reference_energy_eup,
-        temperature_upside,
-    )
+    if (
+        base_interaction_param is not None
+        and r_values_nm is not None
+        and cos_theta_grid is not None
+        and n_knot_radial is not None
+        and n_knot_angular is not None
+        and knot_spacing_ang is not None
+    ):
+        base_control = _evaluate_radial_angular_tensor_controls(
+            np.asarray(base_interaction_param, dtype=np.float64).reshape(
+                int(n_knot_radial),
+                int(n_knot_angular),
+            ),
+            np.asarray(r_values_nm, dtype=np.float64),
+            np.asarray(cos_theta_grid, dtype=np.float64),
+            float(knot_spacing_ang),
+        )
+    else:
+        base_control = _log1p_reduced_control_from_energy_grid(
+            base_energy_grid_kj_mol,
+            reference_energy_eup,
+            temperature_upside,
+        )
     extended_control = _log1p_reduced_control_from_energy_grid(
         extended_energy_grid_kj_mol,
         reference_energy_eup,
@@ -2690,6 +2819,13 @@ def _build_single_cgl_state_delta_radial_angular(
         reference_energy_eup,
         temperature_upside,
     )
+    compressed_control = None
+    if compressed_energy_grid_kj_mol is not None:
+        compressed_control = _log1p_reduced_control_from_energy_grid(
+            compressed_energy_grid_kj_mol,
+            reference_energy_eup,
+            temperature_upside,
+        )
     delta_extended_grid = extended_control - base_control
     delta_compact_grid = compact_control - base_control
     if (
@@ -2719,15 +2855,35 @@ def _build_single_cgl_state_delta_radial_angular(
             energy_conversion=1.0,
             smooth=float(smooth),
         ).reshape(-1)
+        delta_compressed = None
+        if compressed_control is not None:
+            delta_compressed = _fit_radial_angular_tensor_bspline(
+                np.asarray(r_values_nm, dtype=np.float64),
+                np.asarray(cos_theta_grid, dtype=np.float64),
+                np.asarray(compressed_control - base_control, dtype=np.float64),
+                int(n_knot_radial),
+                int(n_knot_angular),
+                float(knot_spacing_ang),
+                energy_conversion=1.0,
+                smooth=float(smooth),
+            ).reshape(-1)
     else:
         delta_extended = delta_extended_grid.reshape(-1)
         delta_compact = delta_compact_grid.reshape(-1)
-    return {
+        delta_compressed = None if compressed_control is None else (compressed_control - base_control).reshape(-1)
+    payload = {
         "delta_extended": np.asarray(delta_extended, dtype=np.float32),
         "delta_compact": np.asarray(delta_compact, dtype=np.float32),
         "grid_extended_kj_mol": np.asarray(extended_energy_grid_kj_mol, dtype=np.float32),
         "grid_compact_kj_mol": np.asarray(compact_energy_grid_kj_mol, dtype=np.float32),
     }
+    if delta_compressed is not None and compressed_energy_grid_kj_mol is not None:
+        payload["delta_compressed"] = np.asarray(delta_compressed, dtype=np.float32)
+        payload["grid_compressed_kj_mol"] = np.asarray(
+            compressed_energy_grid_kj_mol,
+            dtype=np.float32,
+        )
+    return payload
 
 
 def apply_compaction_correction_to_dopc_h5(
@@ -2853,6 +3009,16 @@ def apply_compaction_correction_to_dopc_h5(
             ("grid_average_kj_mol", compaction_result["grid_average_kj_mol"]),
         ):
             comp_grp.create_dataset(name, data=np.asarray(values, dtype=np.float32))
+        for name in (
+            "delta_extended_compressed",
+            "delta_compact_compressed",
+            "delta_compressed_compressed",
+            "grid_extended_compressed_kj_mol",
+            "grid_compact_compressed_kj_mol",
+            "grid_compressed_compressed_kj_mol",
+        ):
+            if name in compaction_result:
+                comp_grp.create_dataset(name, data=np.asarray(compaction_result[name], dtype=np.float32))
         if "face_mask" in compaction_result:
             comp_grp.create_dataset("face_mask", data=np.asarray(compaction_result["face_mask"], dtype=np.float32))
     print(f"Applied compaction correction to {table_h5_path}")
@@ -3062,6 +3228,32 @@ def _dopc_tail_extension_series_ang(ref_bead_positions_nm: np.ndarray) -> np.nda
     return np.asarray([_dopc_tail_extension_ang(ref) for ref in refs], dtype=np.float64)
 
 
+def _retarget_lipid_reference_tail_extension_ang(
+    ref_bead_positions_nm: np.ndarray,
+    target_extension_ang: float,
+) -> np.ndarray:
+    ref = _canonicalize_lipid_reference_to_z(ref_bead_positions_nm)
+    target = float(target_extension_ang)
+    if not np.isfinite(target) or target <= 0.0:
+        raise ValueError(f"Target tail extension must be positive and finite, got {target_extension_ang!r}")
+    current = _dopc_tail_extension_ang(ref)
+    delta_ang = target - current
+    if abs(delta_ang) <= 1.0e-12:
+        return ref.copy()
+    axis = ((ref[8] + ref[13]) * 0.5) - ref[0]
+    axis_norm = float(np.linalg.norm(axis))
+    if axis_norm <= 1.0e-12:
+        raise ValueError("Cannot retarget lipid tail extension for a degenerate head-tail axis")
+    tail_weights = _tail_axial_compaction_weights(ref)
+    retargeted = _apply_tail_axial_shift(
+        ref,
+        axis / axis_norm,
+        -(delta_ang * ANGSTROM_TO_NM),
+        tail_weights,
+    )
+    return _canonicalize_lipid_reference_to_z(retargeted)
+
+
 def _select_reference_ensemble_representatives(
     ref_bead_positions_nm: np.ndarray,
     representative_count: int,
@@ -3228,6 +3420,79 @@ def _select_compaction_state_representatives_by_center(
     }
 
 
+def _augment_compaction_states_with_compressed_branch(
+    ref_bead_positions_nm: np.ndarray,
+    compaction_states: dict,
+    representative_count: int,
+    supplemental_refs_nm: np.ndarray | None = None,
+    sample_compaction_ang: np.ndarray | None = None,
+) -> dict:
+    compact_center = float(compaction_states["compact_center_ang"])
+    sample_values = None
+    if sample_compaction_ang is not None:
+        sample_values = np.asarray(sample_compaction_ang, dtype=np.float64)
+        sample_values = sample_values[np.isfinite(sample_values)]
+        sample_upper = sample_values[sample_values > compact_center + 1.0e-6]
+        if sample_upper.size >= max(4, int(representative_count)):
+            compressed_center = float(np.mean(sample_upper))
+            compact_refs = np.asarray(compaction_states["compact_refs_nm"], dtype=np.float64)
+            count = max(1, min(int(representative_count), compact_refs.shape[0]))
+            selected = np.arange(count, dtype=np.int32)
+            augmented = dict(compaction_states)
+            augmented["compressed_refs_nm"] = np.asarray(
+                [
+                    _retarget_lipid_reference_tail_extension_ang(ref, compressed_center)
+                    for ref in compact_refs[selected]
+                ],
+                dtype=np.float64,
+            )
+            augmented["compressed_center_ang"] = compressed_center
+            augmented["compressed_pool_size"] = int(sample_upper.size)
+            augmented["compressed_selected_compaction_ang"] = np.asarray(
+                [compressed_center] * count,
+                dtype=np.float64,
+            )
+            augmented["compressed_center_source"] = "target_compaction_high_population_mean"
+            return augmented
+
+    pool_refs = []
+    pool_compaction = []
+
+    def append_upper_tail(refs_nm: np.ndarray | None):
+        if refs_nm is None:
+            return
+        refs = _canonicalize_lipid_reference_ensemble_to_z(refs_nm)
+        compaction = _dopc_tail_extension_series_ang(refs)
+        if refs.shape[0] != compaction.size:
+            raise ValueError("Compressed compaction-state support requires matched reference conformers")
+        above_compact = compaction > compact_center + 1.0e-6
+        if not np.any(above_compact):
+            return
+        pool_refs.append(refs[above_compact])
+        pool_compaction.append(compaction[above_compact])
+
+    append_upper_tail(ref_bead_positions_nm)
+    append_upper_tail(supplemental_refs_nm)
+    if not pool_compaction:
+        return dict(compaction_states)
+
+    refs = np.concatenate(pool_refs, axis=0)
+    compaction = np.concatenate(pool_compaction, axis=0)
+    compressed_center = float(np.median(compaction))
+    order = np.argsort(np.abs(compaction - compressed_center), kind="stable")
+    count = max(1, min(int(representative_count), order.size))
+    selected = order[:count]
+    augmented = dict(compaction_states)
+    augmented["compressed_refs_nm"] = refs[selected]
+    augmented["compressed_center_ang"] = compressed_center
+    augmented["compressed_pool_size"] = int(compaction.size)
+    augmented["compressed_selected_compaction_ang"] = np.asarray(
+        compaction[selected],
+        dtype=np.float64,
+    )
+    return augmented
+
+
 def _fit_compaction_self_pmf(
     compaction_ang: np.ndarray,
     temperature_upside: float,
@@ -3297,6 +3562,385 @@ def _fit_compaction_self_pmf(
         "effective_stiffness_eup_a2": float(effective_stiffness),
         "sample_count": int(values.size),
     }
+
+
+def _single_cgl_state_reparameterized_tables(
+    delta_extended: np.ndarray,
+    delta_compact: np.ndarray,
+    grid_extended_kj_mol: np.ndarray | None,
+    grid_compact_kj_mol: np.ndarray | None,
+    source_extended_center_ang: float,
+    source_compact_center_ang: float,
+    target_extended_center_ang: float,
+    target_compact_center_ang: float,
+) -> dict:
+    denom = float(source_compact_center_ang) - float(source_extended_center_ang)
+    if abs(denom) <= 1.0e-12:
+        raise ValueError(
+            "Single-CGL endpoint reparameterization requires distinct source centers, got "
+            f"{source_extended_center_ang:.6f} / {source_compact_center_ang:.6f}"
+        )
+
+    def interp(coord_ang: float) -> tuple[float, float]:
+        compact_weight = (float(coord_ang) - float(source_extended_center_ang)) / denom
+        return 1.0 - compact_weight, compact_weight
+
+    w_ext_ext, w_ext_comp = interp(target_extended_center_ang)
+    w_cmp_ext, w_cmp_comp = interp(target_compact_center_ang)
+    delta_extended = np.asarray(delta_extended, dtype=np.float64)
+    delta_compact = np.asarray(delta_compact, dtype=np.float64)
+    payload = {
+        "delta_extended": np.asarray(
+            w_ext_ext * delta_extended + w_ext_comp * delta_compact,
+            dtype=np.float32,
+        ),
+        "delta_compact": np.asarray(
+            w_cmp_ext * delta_extended + w_cmp_comp * delta_compact,
+            dtype=np.float32,
+        ),
+    }
+    if grid_extended_kj_mol is not None and grid_compact_kj_mol is not None:
+        grid_extended = np.asarray(grid_extended_kj_mol, dtype=np.float64)
+        grid_compact = np.asarray(grid_compact_kj_mol, dtype=np.float64)
+        payload["grid_extended_kj_mol"] = np.asarray(
+            w_ext_ext * grid_extended + w_ext_comp * grid_compact,
+            dtype=np.float32,
+        )
+        payload["grid_compact_kj_mol"] = np.asarray(
+            w_cmp_ext * grid_extended + w_cmp_comp * grid_compact,
+            dtype=np.float32,
+        )
+    return payload
+
+
+def _pair_compaction_reparameterized_tables(
+    delta_extended_extended: np.ndarray,
+    delta_extended_compact: np.ndarray,
+    delta_compact_compact: np.ndarray,
+    grid_extended_extended_kj_mol: np.ndarray | None,
+    grid_extended_compact_kj_mol: np.ndarray | None,
+    grid_compact_compact_kj_mol: np.ndarray | None,
+    grid_average_kj_mol: np.ndarray | None,
+    source_extended_center_ang: float,
+    source_compact_center_ang: float,
+    target_extended_center_ang: float,
+    target_compact_center_ang: float,
+    delta_extended_compressed: np.ndarray | None = None,
+    delta_compact_compressed: np.ndarray | None = None,
+    delta_compressed_compressed: np.ndarray | None = None,
+    grid_extended_compressed_kj_mol: np.ndarray | None = None,
+    grid_compact_compressed_kj_mol: np.ndarray | None = None,
+    grid_compressed_compressed_kj_mol: np.ndarray | None = None,
+    source_compressed_center_ang: float | None = None,
+    target_compressed_center_ang: float | None = None,
+) -> dict:
+    def single_mix_weights(
+        coord_ang: float,
+        extended_center_ang: float,
+        compact_center_ang: float,
+        compressed_center_ang: float | None = None,
+    ) -> tuple[float, float, float]:
+        denom_lo = float(compact_center_ang) - float(extended_center_ang)
+        if abs(denom_lo) <= 1.0e-12:
+            raise ValueError(
+                "Pair-compaction reparameterization requires distinct extended/compact centers, got "
+                f"{extended_center_ang:.6f} / {compact_center_ang:.6f}"
+            )
+        if (
+            compressed_center_ang is None
+            or not np.isfinite(float(compressed_center_ang))
+            or float(compressed_center_ang) <= float(compact_center_ang) + 1.0e-6
+        ):
+            s = (float(coord_ang) - float(extended_center_ang)) / denom_lo
+            return 1.0 - s, s, 0.0
+        if float(coord_ang) <= float(compact_center_ang):
+            s = (float(coord_ang) - float(extended_center_ang)) / denom_lo
+            return 1.0 - s, s, 0.0
+        denom_hi = float(compressed_center_ang) - float(compact_center_ang)
+        if abs(denom_hi) <= 1.0e-12:
+            raise ValueError(
+                "Pair-compaction reparameterization requires distinct compact/compressed centers, got "
+                f"{compact_center_ang:.6f} / {compressed_center_ang:.6f}"
+            )
+        t = (float(coord_ang) - float(compact_center_ang)) / denom_hi
+        return 0.0, 1.0 - t, t
+
+    has_source_compressed = (
+        delta_extended_compressed is not None
+        and delta_compact_compressed is not None
+        and delta_compressed_compressed is not None
+        and source_compressed_center_ang is not None
+        and np.isfinite(float(source_compressed_center_ang))
+        and float(source_compressed_center_ang) > float(source_compact_center_ang) + 1.0e-6
+    )
+    has_any_source_compressed_payload = any(
+        value is not None
+        for value in (
+            delta_extended_compressed,
+            delta_compact_compressed,
+            delta_compressed_compressed,
+            grid_extended_compressed_kj_mol,
+            grid_compact_compressed_kj_mol,
+            grid_compressed_compressed_kj_mol,
+        )
+    )
+    if has_any_source_compressed_payload and not has_source_compressed:
+        raise ValueError(
+            "Pair-compaction reparameterization requires a complete compressed-state source payload"
+        )
+    has_target_compressed = (
+        target_compressed_center_ang is not None
+        and np.isfinite(float(target_compressed_center_ang))
+        and float(target_compressed_center_ang) > float(target_compact_center_ang) + 1.0e-6
+    )
+    if has_target_compressed and not has_source_compressed:
+        raise ValueError(
+            "Pair-compaction reparameterization cannot target a compressed state without compressed source tensors"
+        )
+
+    delta_ee = np.asarray(delta_extended_extended, dtype=np.float64)
+    delta_ec = np.asarray(delta_extended_compact, dtype=np.float64)
+    delta_cc = np.asarray(delta_compact_compact, dtype=np.float64)
+    delta_ex = (
+        np.asarray(delta_extended_compressed, dtype=np.float64)
+        if delta_extended_compressed is not None
+        else None
+    )
+    delta_cx = (
+        np.asarray(delta_compact_compressed, dtype=np.float64)
+        if delta_compact_compressed is not None
+        else None
+    )
+    delta_xx = (
+        np.asarray(delta_compressed_compressed, dtype=np.float64)
+        if delta_compressed_compressed is not None
+        else None
+    )
+
+    def mix(
+        coord_i_ang: float,
+        coord_j_ang: float,
+        ee: np.ndarray,
+        ec: np.ndarray,
+        cc: np.ndarray,
+        ex: np.ndarray | None = None,
+        cx: np.ndarray | None = None,
+        xx: np.ndarray | None = None,
+    ) -> np.ndarray:
+        wi_ext, wi_comp, wi_x = single_mix_weights(
+            coord_i_ang,
+            source_extended_center_ang,
+            source_compact_center_ang,
+            source_compressed_center_ang if has_source_compressed else None,
+        )
+        wj_ext, wj_comp, wj_x = single_mix_weights(
+            coord_j_ang,
+            source_extended_center_ang,
+            source_compact_center_ang,
+            source_compressed_center_ang if has_source_compressed else None,
+        )
+        out = (
+            (wi_ext * wj_ext) * ee
+            + (wi_ext * wj_comp + wi_comp * wj_ext) * ec
+            + (wi_comp * wj_comp) * cc
+        )
+        if has_source_compressed:
+            if ex is None or cx is None or xx is None:
+                raise ValueError("Compressed-state pair mix requires EX/CX/XX tensors")
+            out = out + (
+                (wi_ext * wj_x + wi_x * wj_ext) * ex
+                + (wi_comp * wj_x + wi_x * wj_comp) * cx
+                + (wi_x * wj_x) * xx
+            )
+        return out
+
+    payload = {
+        "delta_extended_extended": np.asarray(
+            mix(
+                target_extended_center_ang,
+                target_extended_center_ang,
+                delta_ee,
+                delta_ec,
+                delta_cc,
+                delta_ex,
+                delta_cx,
+                delta_xx,
+            ),
+            dtype=np.float32,
+        ),
+        "delta_extended_compact": np.asarray(
+            mix(
+                target_extended_center_ang,
+                target_compact_center_ang,
+                delta_ee,
+                delta_ec,
+                delta_cc,
+                delta_ex,
+                delta_cx,
+                delta_xx,
+            ),
+            dtype=np.float32,
+        ),
+        "delta_compact_compact": np.asarray(
+            mix(
+                target_compact_center_ang,
+                target_compact_center_ang,
+                delta_ee,
+                delta_ec,
+                delta_cc,
+                delta_ex,
+                delta_cx,
+                delta_xx,
+            ),
+            dtype=np.float32,
+        ),
+    }
+    if has_target_compressed:
+        payload["delta_extended_compressed"] = np.asarray(
+            mix(
+                target_extended_center_ang,
+                float(target_compressed_center_ang),
+                delta_ee,
+                delta_ec,
+                delta_cc,
+                delta_ex,
+                delta_cx,
+                delta_xx,
+            ),
+            dtype=np.float32,
+        )
+        payload["delta_compact_compressed"] = np.asarray(
+            mix(
+                target_compact_center_ang,
+                float(target_compressed_center_ang),
+                delta_ee,
+                delta_ec,
+                delta_cc,
+                delta_ex,
+                delta_cx,
+                delta_xx,
+            ),
+            dtype=np.float32,
+        )
+        payload["delta_compressed_compressed"] = np.asarray(
+            mix(
+                float(target_compressed_center_ang),
+                float(target_compressed_center_ang),
+                delta_ee,
+                delta_ec,
+                delta_cc,
+                delta_ex,
+                delta_cx,
+                delta_xx,
+            ),
+            dtype=np.float32,
+        )
+
+    if (
+        grid_extended_extended_kj_mol is not None
+        and grid_extended_compact_kj_mol is not None
+        and grid_compact_compact_kj_mol is not None
+    ):
+        grid_ee = np.asarray(grid_extended_extended_kj_mol, dtype=np.float64)
+        grid_ec = np.asarray(grid_extended_compact_kj_mol, dtype=np.float64)
+        grid_cc = np.asarray(grid_compact_compact_kj_mol, dtype=np.float64)
+        grid_ex = (
+            np.asarray(grid_extended_compressed_kj_mol, dtype=np.float64)
+            if grid_extended_compressed_kj_mol is not None
+            else None
+        )
+        grid_cx = (
+            np.asarray(grid_compact_compressed_kj_mol, dtype=np.float64)
+            if grid_compact_compressed_kj_mol is not None
+            else None
+        )
+        grid_xx = (
+            np.asarray(grid_compressed_compressed_kj_mol, dtype=np.float64)
+            if grid_compressed_compressed_kj_mol is not None
+            else None
+        )
+        payload["grid_extended_extended_kj_mol"] = np.asarray(
+            mix(
+                target_extended_center_ang,
+                target_extended_center_ang,
+                grid_ee,
+                grid_ec,
+                grid_cc,
+                grid_ex,
+                grid_cx,
+                grid_xx,
+            ),
+            dtype=np.float32,
+        )
+        payload["grid_extended_compact_kj_mol"] = np.asarray(
+            mix(
+                target_extended_center_ang,
+                target_compact_center_ang,
+                grid_ee,
+                grid_ec,
+                grid_cc,
+                grid_ex,
+                grid_cx,
+                grid_xx,
+            ),
+            dtype=np.float32,
+        )
+        payload["grid_compact_compact_kj_mol"] = np.asarray(
+            mix(
+                target_compact_center_ang,
+                target_compact_center_ang,
+                grid_ee,
+                grid_ec,
+                grid_cc,
+                grid_ex,
+                grid_cx,
+                grid_xx,
+            ),
+            dtype=np.float32,
+        )
+        if has_target_compressed and grid_ex is not None and grid_cx is not None and grid_xx is not None:
+            payload["grid_extended_compressed_kj_mol"] = np.asarray(
+                mix(
+                    target_extended_center_ang,
+                    float(target_compressed_center_ang),
+                    grid_ee,
+                    grid_ec,
+                    grid_cc,
+                    grid_ex,
+                    grid_cx,
+                    grid_xx,
+                ),
+                dtype=np.float32,
+            )
+            payload["grid_compact_compressed_kj_mol"] = np.asarray(
+                mix(
+                    target_compact_center_ang,
+                    float(target_compressed_center_ang),
+                    grid_ee,
+                    grid_ec,
+                    grid_cc,
+                    grid_ex,
+                    grid_cx,
+                    grid_xx,
+                ),
+                dtype=np.float32,
+            )
+            payload["grid_compressed_compressed_kj_mol"] = np.asarray(
+                mix(
+                    float(target_compressed_center_ang),
+                    float(target_compressed_center_ang),
+                    grid_ee,
+                    grid_ec,
+                    grid_cc,
+                    grid_ex,
+                    grid_cx,
+                    grid_xx,
+                ),
+                dtype=np.float32,
+            )
+        if grid_average_kj_mol is not None:
+            payload["grid_average_kj_mol"] = np.asarray(grid_average_kj_mol, dtype=np.float32)
+    return payload
 
 
 def _unit_perpendicular(vector: np.ndarray) -> np.ndarray:
@@ -5095,11 +5739,20 @@ def _cg_lipid_compaction_metadata_needs_refresh(cg_grp: h5py.Group) -> bool:
     if "cg_lipid_compaction" not in cg_grp:
         return False
     comp_grp = cg_grp["cg_lipid_compaction"]
-    required_pair_dsets = (
+    required_pair_dsets = [
         "delta_extended_extended",
         "delta_extended_compact",
         "delta_compact_compact",
-    )
+    ]
+    compressed_state_center = float(comp_grp.attrs.get("compressed_state_center_ang", np.nan))
+    if np.isfinite(compressed_state_center):
+        required_pair_dsets.extend(
+            (
+                "delta_extended_compressed",
+                "delta_compact_compressed",
+                "delta_compressed_compressed",
+            )
+        )
     if "self_coeff" not in comp_grp or any(name not in comp_grp for name in required_pair_dsets):
         return True
     self_coeff = np.asarray(comp_grp["self_coeff"][:], dtype=np.float64)
@@ -5120,6 +5773,19 @@ def _cg_lipid_compaction_metadata_needs_refresh(cg_grp: h5py.Group) -> bool:
         return True
     if "pair_compaction_state_source" not in comp_grp.attrs:
         return True
+    if np.isfinite(compressed_state_center):
+        pair_compressed = float(comp_grp.attrs.get("pair_reference_compressed_center_ang", np.nan))
+        ref_compressed = float(comp_grp.attrs.get("reference_compressed_center_ang", np.nan))
+        if not np.isfinite(pair_compressed):
+            return True
+        if np.isfinite(ref_compressed) and abs(pair_compressed - ref_compressed) > 1.0e-3:
+            return True
+    self_compaction_sample_source = _decode_h5_scalar_attr(
+        comp_grp.attrs.get("self_compaction_sample_source", "")
+    ).strip()
+    if np.isfinite(compressed_state_center) and "target_compaction_ang" in comp_grp:
+        if self_compaction_sample_source != "target_compaction_ang_projection":
+            return True
     try:
         ref_dataset = _select_cgl_compaction_reference_dataset_name(cg_grp)
         ref_ensemble_nm = np.asarray(cg_grp[ref_dataset][:], dtype=np.float64)
@@ -5144,9 +5810,56 @@ def _single_cgl_compaction_group_needs_refresh(
     extended = float(grp.attrs.get("extended_state_center_ang", np.nan))
     if abs(compact - 1.0) > 1.0e-3 or abs(extended - 0.0) > 1.0e-3:
         return True
-    if "reference_compact_center_ang" not in grp.attrs or "reference_extended_center_ang" not in grp.attrs:
+    ref_compact = float(grp.attrs.get("reference_compact_center_ang", np.nan))
+    ref_extended = float(grp.attrs.get("reference_extended_center_ang", np.nan))
+    if not np.isfinite(ref_compact) or not np.isfinite(ref_extended):
         return True
-    return "compaction_state_source" not in grp.attrs
+    if "compaction_state_source" not in grp.attrs:
+        return True
+    if "cg_lipid_compaction" not in cg_grp:
+        return True
+
+    comp_grp = cg_grp["cg_lipid_compaction"]
+    expected_ref_compact = float(comp_grp.attrs.get("reference_compact_center_ang", np.nan))
+    expected_ref_extended = float(comp_grp.attrs.get("reference_extended_center_ang", np.nan))
+    if not np.isfinite(expected_ref_compact) or not np.isfinite(expected_ref_extended):
+        return True
+    if abs(ref_compact - expected_ref_compact) > 1.0e-3:
+        return True
+    if abs(ref_extended - expected_ref_extended) > 1.0e-3:
+        return True
+    expected_runtime_compressed = float(comp_grp.attrs.get("compressed_state_center_ang", np.nan))
+    group_runtime_compressed = float(grp.attrs.get("compressed_state_center_ang", np.nan))
+    expected_ref_compressed = float(comp_grp.attrs.get("reference_compressed_center_ang", np.nan))
+    group_ref_compressed = float(grp.attrs.get("reference_compressed_center_ang", np.nan))
+    if np.isfinite(expected_runtime_compressed):
+        if "delta_compressed" not in grp or "grid_compressed_kj_mol" not in grp:
+            return True
+        if not np.isfinite(group_runtime_compressed) or abs(group_runtime_compressed - expected_runtime_compressed) > 1.0e-3:
+            return True
+        if (
+            np.isfinite(expected_ref_compressed)
+            and (
+                not np.isfinite(group_ref_compressed)
+                or abs(group_ref_compressed - expected_ref_compressed) > 1.0e-3
+            )
+        ):
+            return True
+    elif "delta_compressed" in grp or np.isfinite(group_runtime_compressed):
+        return True
+
+    expected_prob = float(comp_grp.attrs.get("compact_state_probability", np.nan))
+    group_prob = float(grp.attrs.get("compact_state_probability", np.nan))
+    if np.isfinite(expected_prob):
+        if not np.isfinite(group_prob) or abs(group_prob - expected_prob) > 1.0e-6:
+            return True
+
+    expected_source = _decode_h5_scalar_attr(comp_grp.attrs.get("compaction_state_source", "")).strip()
+    group_source = _decode_h5_scalar_attr(grp.attrs.get("compaction_state_source", "")).strip()
+    if expected_source and group_source != expected_source:
+        return True
+
+    return False
 
 
 def _fit_gap_compact_probability_response(
@@ -5912,6 +6625,9 @@ def add_cg_lipid_gap_compaction_response_to_h5(
             need_compaction_metadata = bool(
                 cg_grp is not None and _cg_lipid_compaction_metadata_needs_refresh(cg_grp)
             )
+            if need_compaction_metadata:
+                need_sc = bool(cg_grp is not None and "cg_lipid_sc" in cg_grp)
+                need_target = bool(cg_grp is not None and "cg_lipid_target" in cg_grp)
         if need_sc or need_target or need_compaction_metadata:
             single_cgl_corrections = _build_single_cgl_compaction_corrections_from_base_h5(
                 base_h5_path=base_h5_path,
@@ -6070,6 +6786,31 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
         os.environ.get("UPSIDE_CGL_COMPACTION_STATE_SOURCE", "auto").strip().lower()
         or "auto"
     )
+    compaction_pool_conformers = _positive_int_env(
+        "UPSIDE_CGL_COMPACTION_POOL_CONFORMERS", 32
+    )
+    compaction_burnin_steps = _positive_int_env(
+        "UPSIDE_CGL_COMPACTION_BURNIN_STEPS", 20000
+    )
+    compaction_steps_per_conf = _positive_int_env(
+        "UPSIDE_CGL_COMPACTION_STEPS_PER_CONFORMER", 500
+    )
+    isolated_compaction_refs_nm = None
+
+    def ensure_isolated_compaction_refs_nm() -> np.ndarray:
+        nonlocal isolated_compaction_refs_nm
+        if isolated_compaction_refs_nm is None:
+            isolated_compaction_refs_nm = sample_isolated_dopc_bonded_conformers(
+                dopc,
+                lipids_itp_path=lipids_itp_path,
+                pair_params=pair_params,
+                conformer_count=compaction_pool_conformers,
+                temperature_upside=DEFAULT_PRODUCTION_TEMP_UPSIDE,
+                seed=1777,
+                mc_burnin_steps=compaction_burnin_steps,
+                mc_steps_per_conformer=compaction_steps_per_conf,
+            )
+        return isolated_compaction_refs_nm
 
     with h5py.File(base_h5_path, "r") as h5:
         if "cg_lipid_table" not in h5:
@@ -6096,6 +6837,8 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
         compaction_coord_samples = None
         compaction_states = None
         compaction_state_source_used = None
+        compressed_center_ang = None
+        compressed_state_coord = None
         clip_compaction_state_values = False
         if compaction_state_source in (
             "reference_ensemble",
@@ -6141,25 +6884,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                     "reference_compact_center_ang / reference_extended_center_ang metadata"
                 )
         if compaction_states is None:
-            compaction_pool_conformers = _positive_int_env(
-                "UPSIDE_CGL_COMPACTION_POOL_CONFORMERS", 32
-            )
-            compaction_burnin_steps = _positive_int_env(
-                "UPSIDE_CGL_COMPACTION_BURNIN_STEPS", 20000
-            )
-            compaction_steps_per_conf = _positive_int_env(
-                "UPSIDE_CGL_COMPACTION_STEPS_PER_CONFORMER", 500
-            )
-            compaction_refs_nm = sample_isolated_dopc_bonded_conformers(
-                dopc,
-                lipids_itp_path=lipids_itp_path,
-                pair_params=pair_params,
-                conformer_count=compaction_pool_conformers,
-                temperature_upside=DEFAULT_PRODUCTION_TEMP_UPSIDE,
-                seed=1777,
-                mc_burnin_steps=compaction_burnin_steps,
-                mc_steps_per_conformer=compaction_steps_per_conf,
-            )
+            compaction_refs_nm = ensure_isolated_compaction_refs_nm()
             compaction_values_ang = _dopc_tail_extension_series_ang(compaction_refs_nm)
             compaction_states = _select_compaction_state_representatives(
                 compaction_refs_nm,
@@ -6174,21 +6899,67 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
             clip_compaction_state_values = True
         if compaction_coord_samples is None:
             raise RuntimeError("Failed to determine compaction-coordinate samples for CGL metadata repair")
+        ref_compaction_values_ang = _dopc_tail_extension_series_ang(ref_ensemble_nm)
+        compressed_supplemental_refs_nm = None
+        sample_compaction_support_ang = None
+        if "target_compaction_ang" in comp_grp:
+            sample_compaction_support_ang = np.asarray(
+                comp_grp["target_compaction_ang"][:],
+                dtype=np.float64,
+            )
+        if int(np.count_nonzero(ref_compaction_values_ang > compact_center_ang + 1.0e-6)) < max(2, compaction_representatives):
+            extra_ref_pools = []
+            for dataset_name in ("sc_interface_ref_bead_positions_nm", "ref_bead_positions_nm"):
+                if dataset_name != ref_dataset and dataset_name in cg_grp:
+                    extra_ref_pools.append(np.asarray(cg_grp[dataset_name][:], dtype=np.float64))
+            extra_ref_pools.append(np.asarray(ensure_isolated_compaction_refs_nm(), dtype=np.float64))
+            if extra_ref_pools:
+                compressed_supplemental_refs_nm = np.concatenate(extra_ref_pools, axis=0)
+        compaction_states = _augment_compaction_states_with_compressed_branch(
+            ref_ensemble_nm,
+            compaction_states,
+            representative_count=compaction_representatives,
+            supplemental_refs_nm=compressed_supplemental_refs_nm,
+            sample_compaction_ang=sample_compaction_support_ang,
+        )
+        compressed_center_ang = compaction_states.get("compressed_center_ang")
+        if compressed_center_ang is not None and float(compressed_center_ang) > compact_center_ang + 1.0e-6:
+            compressed_state_coord = float(
+                _normalize_compaction_coordinate_values(
+                    np.asarray([compressed_center_ang], dtype=np.float64),
+                    compact_center_ang=compact_center_ang,
+                    extended_center_ang=extended_center_ang,
+                    clip=False,
+                )[0]
+            )
+            clip_compaction_state_values = False
         correction_compact_probability = float(compact_probability)
         if 1.0e-6 < stored_compact_probability < 1.0 - 1.0e-6:
             correction_compact_probability = float(stored_compact_probability)
-        # When the compact/extended centers come from the same reference
-        # ensemble, the physical compression response is already encoded in
-        # that endpoint mapping and should stay within the trained endpoint
-        # interpolation family. Only stored-contract fallback paths keep the
-        # unclipped coordinate because their centers may not bound the live
-        # ensemble.
+        self_compaction_coord_samples = np.asarray(compaction_coord_samples, dtype=np.float64)
+        self_compaction_sample_source = "compaction_state_samples"
+        if compressed_state_coord is not None and "target_compaction_ang" in comp_grp:
+            self_compaction_coord_samples = np.asarray(
+                comp_grp["target_compaction_ang"][:],
+                dtype=np.float64,
+            )
+            self_compaction_sample_source = "target_compaction_ang_projection"
         compaction_state_values = _normalize_compaction_coordinate_values(
-            compaction_coord_samples,
+            self_compaction_coord_samples,
             compact_center_ang=compact_center_ang,
             extended_center_ang=extended_center_ang,
             clip=clip_compaction_state_values,
         )
+        if compressed_center_ang is not None and float(compressed_center_ang) > compact_center_ang + 1.0e-6:
+            probability_compaction_values_ang = np.asarray(self_compaction_coord_samples, dtype=np.float64)
+            ext_cmp_midpoint = 0.5 * (extended_center_ang + compact_center_ang)
+            cmp_x_midpoint = 0.5 * (compact_center_ang + float(compressed_center_ang))
+            extended_mask = probability_compaction_values_ang < ext_cmp_midpoint
+            compressed_mask = probability_compaction_values_ang >= cmp_x_midpoint
+            compact_middle_mask = (~extended_mask) & (~compressed_mask)
+            compaction_states["extended_probability"] = float(np.mean(extended_mask))
+            compaction_states["compact_middle_probability"] = float(np.mean(compact_middle_mask))
+            compaction_states["compressed_probability"] = float(np.mean(compressed_mask))
         compaction_self = _fit_compaction_self_pmf(
             compaction_state_values,
             temperature_upside=DEFAULT_PRODUCTION_TEMP_UPSIDE,
@@ -6203,6 +6974,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
             "reference_extended_center_ang": extended_center_ang,
             "compaction_state_source": compaction_state_source_used,
             "compaction_reference_dataset": ref_dataset,
+            "self_compaction_sample_source": self_compaction_sample_source,
             "cg_lipid_compaction": {
                 "self_coeff": np.asarray(compaction_self["self_coeff_eup"], dtype=np.float32),
                 "pmf_centers_ang": np.asarray(compaction_self["pmf_centers_ang"], dtype=np.float32),
@@ -6217,60 +6989,175 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                 ),
             },
         }
+        if compressed_state_coord is not None and compressed_center_ang is not None:
+            corrections["compressed_state_center_ang"] = float(compressed_state_coord)
+            corrections["reference_compressed_center_ang"] = float(compressed_center_ang)
 
         pair_grp = cg_grp.get("cg_lipid_pair")
         if include_pair_compaction and pair_grp is not None:
-            pair_relax_state_correction = "pair_relax" in _decode_h5_scalar_attr(
-                comp_grp.attrs.get("source", "")
+            source_pair_compact_ang = float(
+                comp_grp.attrs.get(
+                    "pair_reference_compact_center_ang",
+                    comp_grp.attrs.get("reference_compact_center_ang", np.nan),
+                )
             )
-            face_cos_min = (
-                float(comp_grp.attrs["face_cos_min"])
-                if "face_cos_min" in comp_grp.attrs
-                else None
+            source_pair_extended_ang = float(
+                comp_grp.attrs.get(
+                    "pair_reference_extended_center_ang",
+                    comp_grp.attrs.get("reference_extended_center_ang", np.nan),
+                )
             )
-            radial_cutoff_nm = float(comp_grp.attrs.get("radial_cutoff_nm", 2.5))
-            mask_mode = _decode_h5_scalar_attr(comp_grp.attrs.get("mask_mode", "binary")) or "binary"
-            correction_center_mode = (
-                _decode_h5_scalar_attr(comp_grp.attrs.get("correction_center_mode", "base")) or "base"
+            source_pair_compressed_ang = float(
+                comp_grp.attrs.get(
+                    "pair_reference_compressed_center_ang",
+                    comp_grp.attrs.get("reference_compressed_center_ang", np.nan),
+                )
             )
-            pair_state_model = (
-                _decode_h5_scalar_attr(comp_grp.attrs.get("pair_state_model", "bilinear")) or "bilinear"
+            has_source_pair_compressed_payload = all(
+                dataset_name in comp_grp
+                for dataset_name in (
+                    "delta_extended_compressed",
+                    "delta_compact_compressed",
+                    "delta_compressed_compressed",
+                )
             )
-            pair_energy_grid = np.asarray(pair_grp["energy_grid_raw_kj_mol"][:], dtype=np.float64)
-            n_radial, n_angle1, n_angle2 = pair_energy_grid.shape
-            if n_angle1 != n_angle2:
-                raise RuntimeError("CGL pair retrofit requires a square angular grid")
-            pair_result_cg = {
-                "energy_grid_raw": pair_energy_grid,
-                "reference_energy_eup": float(pair_grp["reference_energy_eup"][0, 0]),
-                "r_values_nm": np.linspace(
-                    float(pair_grp.attrs["fit_r_min_nm"]),
-                    float(pair_grp.attrs["fit_r_max_nm"]),
-                    int(n_radial),
-                    dtype=np.float64,
-                ),
-                "cos_theta_grid": np.linspace(-1.0, 1.0, int(n_angle1), dtype=np.float64),
-                "n_radial": int(pair_grp.attrs["n_radial"]),
-                "n_angular": int(pair_grp.attrs["n_angular"]),
-                "knot_spacing_ang": float(pair_grp.attrs["knot_spacing_ang"]),
-                "fit_smooth": float(pair_grp.attrs.get("fit_smooth", 0.1)),
-                "azimuthal_count": int(pair_grp.attrs.get("azimuthal_count", 1)),
-                "bead_frame_count": int(pair_grp.attrs.get("cgl_bead_frame_count", 1)),
-            }
-            pair_compaction = _fit_pair_compaction_result_for_states(
-                result_cg=pair_result_cg,
-                compaction_states=compaction_states,
-                bead_types=list(dopc["bead_types"]),
-                bead_charges=list(dopc["bead_charges"]),
-                pair_params=pair_params,
-                lipids_itp_path=lipids_itp_path,
-                face_cos_min=face_cos_min,
-                radial_cutoff_nm=radial_cutoff_nm,
-                pair_relax_state_correction=pair_relax_state_correction,
-                mask_mode=mask_mode,
-                correction_center_mode=correction_center_mode,
-                pair_state_model=pair_state_model,
-            )
+            if (
+                np.isfinite(source_pair_compact_ang)
+                and np.isfinite(source_pair_extended_ang)
+                and source_pair_compact_ang - source_pair_extended_ang > 1.0
+                and all(
+                    dataset_name in comp_grp
+                    for dataset_name in (
+                        "delta_extended_extended",
+                        "delta_extended_compact",
+                        "delta_compact_compact",
+                    )
+                )
+                and (
+                    compressed_state_coord is None
+                    or (
+                        has_source_pair_compressed_payload
+                        and np.isfinite(source_pair_compressed_ang)
+                        and source_pair_compressed_ang > source_pair_compact_ang + 1.0e-6
+                    )
+                )
+            ):
+                pair_compaction = _pair_compaction_reparameterized_tables(
+                    delta_extended_extended=np.asarray(
+                        comp_grp["delta_extended_extended"][:],
+                        dtype=np.float64,
+                    ),
+                    delta_extended_compact=np.asarray(
+                        comp_grp["delta_extended_compact"][:],
+                        dtype=np.float64,
+                    ),
+                    delta_compact_compact=np.asarray(
+                        comp_grp["delta_compact_compact"][:],
+                        dtype=np.float64,
+                    ),
+                    grid_extended_extended_kj_mol=np.asarray(
+                        comp_grp["grid_extended_extended_kj_mol"][:],
+                        dtype=np.float64,
+                    ) if "grid_extended_extended_kj_mol" in comp_grp else None,
+                    grid_extended_compact_kj_mol=np.asarray(
+                        comp_grp["grid_extended_compact_kj_mol"][:],
+                        dtype=np.float64,
+                    ) if "grid_extended_compact_kj_mol" in comp_grp else None,
+                    grid_compact_compact_kj_mol=np.asarray(
+                        comp_grp["grid_compact_compact_kj_mol"][:],
+                        dtype=np.float64,
+                    ) if "grid_compact_compact_kj_mol" in comp_grp else None,
+                    grid_average_kj_mol=np.asarray(
+                        comp_grp["grid_average_kj_mol"][:],
+                        dtype=np.float64,
+                    ) if "grid_average_kj_mol" in comp_grp else None,
+                    source_extended_center_ang=source_pair_extended_ang,
+                    source_compact_center_ang=source_pair_compact_ang,
+                    target_extended_center_ang=extended_center_ang,
+                    target_compact_center_ang=compact_center_ang,
+                    delta_extended_compressed=np.asarray(
+                        comp_grp["delta_extended_compressed"][:],
+                        dtype=np.float64,
+                    ) if "delta_extended_compressed" in comp_grp else None,
+                    delta_compact_compressed=np.asarray(
+                        comp_grp["delta_compact_compressed"][:],
+                        dtype=np.float64,
+                    ) if "delta_compact_compressed" in comp_grp else None,
+                    delta_compressed_compressed=np.asarray(
+                        comp_grp["delta_compressed_compressed"][:],
+                        dtype=np.float64,
+                    ) if "delta_compressed_compressed" in comp_grp else None,
+                    grid_extended_compressed_kj_mol=np.asarray(
+                        comp_grp["grid_extended_compressed_kj_mol"][:],
+                        dtype=np.float64,
+                    ) if "grid_extended_compressed_kj_mol" in comp_grp else None,
+                    grid_compact_compressed_kj_mol=np.asarray(
+                        comp_grp["grid_compact_compressed_kj_mol"][:],
+                        dtype=np.float64,
+                    ) if "grid_compact_compressed_kj_mol" in comp_grp else None,
+                    grid_compressed_compressed_kj_mol=np.asarray(
+                        comp_grp["grid_compressed_compressed_kj_mol"][:],
+                        dtype=np.float64,
+                    ) if "grid_compressed_compressed_kj_mol" in comp_grp else None,
+                    source_compressed_center_ang=float(
+                        source_pair_compressed_ang
+                    ),
+                    target_compressed_center_ang=float(compressed_center_ang)
+                    if compressed_state_coord is not None and compressed_center_ang is not None
+                    else None,
+                )
+            else:
+                pair_relax_state_correction = "pair_relax" in _decode_h5_scalar_attr(
+                    comp_grp.attrs.get("source", "")
+                )
+                face_cos_min = (
+                    float(comp_grp.attrs["face_cos_min"])
+                    if "face_cos_min" in comp_grp.attrs
+                    else None
+                )
+                radial_cutoff_nm = float(comp_grp.attrs.get("radial_cutoff_nm", 2.5))
+                mask_mode = _decode_h5_scalar_attr(comp_grp.attrs.get("mask_mode", "binary")) or "binary"
+                correction_center_mode = (
+                    _decode_h5_scalar_attr(comp_grp.attrs.get("correction_center_mode", "base")) or "base"
+                )
+                pair_state_model = (
+                    _decode_h5_scalar_attr(comp_grp.attrs.get("pair_state_model", "bilinear")) or "bilinear"
+                )
+                pair_energy_grid = np.asarray(pair_grp["energy_grid_raw_kj_mol"][:], dtype=np.float64)
+                n_radial, n_angle1, n_angle2 = pair_energy_grid.shape
+                if n_angle1 != n_angle2:
+                    raise RuntimeError("CGL pair retrofit requires a square angular grid")
+                pair_result_cg = {
+                    "energy_grid_raw": pair_energy_grid,
+                    "reference_energy_eup": float(pair_grp["reference_energy_eup"][0, 0]),
+                    "r_values_nm": np.linspace(
+                        float(pair_grp.attrs["fit_r_min_nm"]),
+                        float(pair_grp.attrs["fit_r_max_nm"]),
+                        int(n_radial),
+                        dtype=np.float64,
+                    ),
+                    "cos_theta_grid": np.linspace(-1.0, 1.0, int(n_angle1), dtype=np.float64),
+                    "n_radial": int(pair_grp.attrs["n_radial"]),
+                    "n_angular": int(pair_grp.attrs["n_angular"]),
+                    "knot_spacing_ang": float(pair_grp.attrs["knot_spacing_ang"]),
+                    "fit_smooth": float(pair_grp.attrs.get("fit_smooth", 0.1)),
+                    "azimuthal_count": int(pair_grp.attrs.get("azimuthal_count", 1)),
+                    "bead_frame_count": int(pair_grp.attrs.get("cgl_bead_frame_count", 1)),
+                }
+                pair_compaction = _fit_pair_compaction_result_for_states(
+                    result_cg=pair_result_cg,
+                    compaction_states=compaction_states,
+                    bead_types=list(dopc["bead_types"]),
+                    bead_charges=list(dopc["bead_charges"]),
+                    pair_params=pair_params,
+                    lipids_itp_path=lipids_itp_path,
+                    face_cos_min=face_cos_min,
+                    radial_cutoff_nm=radial_cutoff_nm,
+                    pair_relax_state_correction=pair_relax_state_correction,
+                    mask_mode=mask_mode,
+                    correction_center_mode=correction_center_mode,
+                    pair_state_model=pair_state_model,
+                )
             corrections["cg_lipid_compaction"].update(
                 {
                     "delta_extended_extended": np.asarray(
@@ -6282,25 +7169,49 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                     "delta_compact_compact": np.asarray(
                         pair_compaction["delta_compact_compact"], dtype=np.float32
                     ),
-                    "grid_extended_extended_kj_mol": np.asarray(
-                        pair_compaction["grid_extended_extended_kj_mol"], dtype=np.float32
-                    ),
-                    "grid_extended_compact_kj_mol": np.asarray(
-                        pair_compaction["grid_extended_compact_kj_mol"], dtype=np.float32
-                    ),
-                    "grid_compact_compact_kj_mol": np.asarray(
-                        pair_compaction["grid_compact_compact_kj_mol"], dtype=np.float32
-                    ),
-                    "grid_average_kj_mol": np.asarray(
-                        pair_compaction["grid_average_kj_mol"], dtype=np.float32
-                    ),
-                    "correction_center_mode": str(pair_compaction["correction_center_mode"]),
-                    "pair_state_model": str(pair_compaction["pair_state_model"]),
                     "pair_reference_compact_center_ang": float(compact_center_ang),
                     "pair_reference_extended_center_ang": float(extended_center_ang),
                     "pair_compaction_state_source": str(compaction_state_source_used),
                 }
             )
+            if "delta_extended_compressed" in pair_compaction:
+                corrections["cg_lipid_compaction"]["delta_extended_compressed"] = np.asarray(
+                    pair_compaction["delta_extended_compressed"],
+                    dtype=np.float32,
+                )
+                corrections["cg_lipid_compaction"]["delta_compact_compressed"] = np.asarray(
+                    pair_compaction["delta_compact_compressed"],
+                    dtype=np.float32,
+                )
+                corrections["cg_lipid_compaction"]["delta_compressed_compressed"] = np.asarray(
+                    pair_compaction["delta_compressed_compressed"],
+                    dtype=np.float32,
+                )
+                corrections["cg_lipid_compaction"]["pair_reference_compressed_center_ang"] = float(
+                    compressed_center_ang
+                )
+            for dataset_name in (
+                "grid_extended_extended_kj_mol",
+                "grid_extended_compact_kj_mol",
+                "grid_compact_compact_kj_mol",
+                "grid_extended_compressed_kj_mol",
+                "grid_compact_compressed_kj_mol",
+                "grid_compressed_compressed_kj_mol",
+                "grid_average_kj_mol",
+            ):
+                if dataset_name in pair_compaction:
+                    corrections["cg_lipid_compaction"][dataset_name] = np.asarray(
+                        pair_compaction[dataset_name],
+                        dtype=np.float32,
+                    )
+            if "correction_center_mode" in pair_compaction:
+                corrections["cg_lipid_compaction"]["correction_center_mode"] = str(
+                    pair_compaction["correction_center_mode"]
+                )
+            if "pair_state_model" in pair_compaction:
+                corrections["cg_lipid_compaction"]["pair_state_model"] = str(
+                    pair_compaction["pair_state_model"]
+                )
             if "face_mask" in pair_compaction:
                 corrections["cg_lipid_compaction"]["face_mask"] = np.asarray(
                     pair_compaction["face_mask"], dtype=np.float32
@@ -6317,292 +7228,683 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
 
         sc_grp = cg_grp.get("cg_lipid_sc")
         if include_sc and sc_grp is not None:
-            restype_order = _decode_h5_string_array(sc_grp["restype_order"][:])
-            orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
-            residue_map = load_martini_forcefield(martinize_path, forcefield_name)
-            martini_sidechain_offsets_nm = _load_martini_sidechain_offsets_nm(
-                martinize_path, forcefield_name
-            )
-            cb_anchor_nm = [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG]
-            cb_vector_unit = list(CANONICAL_CB_VECTOR_UNIT)
-            sc_n_modes = int(sc_grp.attrs.get("n_modes", 0))
-            if sc_n_modes != 0:
-                raise RuntimeError("single-CGL compaction retrofit only supports full-tensor cg_lipid_sc")
-            sc_n_radial = int(sc_grp.attrs["n_radial"])
-            sc_n_angular = int(sc_grp.attrs["n_angular"])
-            sc_r_count = sc_n_radial
-            sc_cos_theta_count = max(sc_n_angular - 2, 1)
-            sc_tasks = []
-            sc_temperature = float(
-                sc_grp.attrs.get("boltzmann_temperature_upside", DEFAULT_PRODUCTION_TEMP_UPSIDE)
-            )
-            sc_average_temperature = float(
-                sc_grp.attrs.get(
-                    "azimuthal_average_temperature_upside",
-                    DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
-                )
-            )
-            sc_angular_smooth = float(sc_grp.attrs.get("angular_smooth", 0.1))
-            for ri, residue in enumerate(restype_order):
-                if residue not in residue_map or residue not in orientation_map:
-                    raise RuntimeError(
-                        f"{base_h5_path} cg_lipid_sc residue {residue!r} is missing orientation/source data"
+            source_sc_compact_ang = float(sc_grp.attrs.get("reference_compact_center_ang", np.nan))
+            source_sc_extended_ang = float(sc_grp.attrs.get("reference_extended_center_ang", np.nan))
+            if (
+                np.isfinite(source_sc_compact_ang)
+                and np.isfinite(source_sc_extended_ang)
+                and "delta_extended" in sc_grp
+                and "delta_compact" in sc_grp
+            ):
+                corrections["cg_lipid_sc"] = {
+                    "delta_extended": np.asarray(sc_grp["delta_extended"][:], dtype=np.float32),
+                    "delta_compact": np.asarray(sc_grp["delta_compact"][:], dtype=np.float32),
+                }
+                if "grid_extended_kj_mol" in sc_grp:
+                    corrections["cg_lipid_sc"]["grid_extended_kj_mol"] = np.asarray(
+                        sc_grp["grid_extended_kj_mol"][:],
+                        dtype=np.float32,
                     )
-                sc_bead_types = residue_map[residue]
-                sc_bead_charges = [infer_charge_from_atomtype(bt) for bt in sc_bead_types]
-                orientation = orientation_map[residue]
-                sc_positions_by_rotamer = _expand_rotamer_sidechain_positions(
-                    orientation,
-                    residue,
-                    np.asarray(martini_sidechain_offsets_nm[residue], dtype=np.float64),
-                )
-                sc_tasks.append(
-                    {
-                        "ri": ri,
-                        "residue": residue,
-                        "ref_bead_positions_nm": ref_ensemble_nm,
-                        "cg_bead_types": list(dopc["bead_types"]),
-                        "cg_bead_charges": list(dopc["bead_charges"]),
-                        "target_type": "CGL",
-                        "target_charge": 0.0,
-                        "rotamer_bead_positions_nm": sc_positions_by_rotamer,
-                        "rotamer_weights": orientation["weight"],
-                        "sc_bead_types": list(sc_bead_types),
-                        "sc_bead_charges": list(sc_bead_charges),
-                        "pair_params": pair_params,
-                        "cb_anchor_nm": cb_anchor_nm,
-                        "cb_vector_unit": cb_vector_unit,
-                        "r_min_nm": float(sc_grp.attrs.get("fit_r_min_nm", 0.30)),
-                        "r_max_nm": float(sc_grp.attrs["fit_r_max_nm"]),
-                        "r_count": sc_r_count,
-                        "cos_theta_count": sc_cos_theta_count,
-                        "azimuthal_count": int(sc_grp.attrs.get("azimuthal_count", 4)),
-                        "sidechain_bead_frame_count": int(
-                            sc_grp.attrs.get("sidechain_bead_frame_count", 1)
-                        ),
-                        "cg_bead_frame_count": int(sc_grp.attrs.get("cgl_bead_frame_count", 1)),
-                        "n_modes": sc_n_modes,
-                        "n_knot_radial": sc_n_radial,
-                        "n_knot_angular": sc_n_angular,
-                        "angular_smooth": sc_angular_smooth,
-                        "knot_spacing_ang": float(sc_grp.attrs["knot_spacing_ang"]),
-                        "temperature": sc_temperature,
-                        "average_temperature": sc_average_temperature,
+                if "grid_compact_kj_mol" in sc_grp:
+                    corrections["cg_lipid_sc"]["grid_compact_kj_mol"] = np.asarray(
+                        sc_grp["grid_compact_kj_mol"][:],
+                        dtype=np.float32,
+                    )
+                if compressed_state_coord is not None:
+                    restype_order = _decode_h5_string_array(sc_grp["restype_order"][:])
+                    orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
+                    residue_map = load_martini_forcefield(martinize_path, forcefield_name)
+                    martini_sidechain_offsets_nm = _load_martini_sidechain_offsets_nm(
+                        martinize_path, forcefield_name
+                    )
+                    cb_anchor_nm = [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG]
+                    cb_vector_unit = list(CANONICAL_CB_VECTOR_UNIT)
+                    sc_n_modes = int(sc_grp.attrs.get("n_modes", 0))
+                    if sc_n_modes != 0:
+                        raise RuntimeError("single-CGL compaction retrofit only supports full-tensor cg_lipid_sc")
+                    sc_n_radial = int(sc_grp.attrs["n_radial"])
+                    sc_n_angular = int(sc_grp.attrs["n_angular"])
+                    sc_r_count = sc_n_radial
+                    sc_cos_theta_count = max(sc_n_angular - 2, 1)
+                    sc_temperature = float(
+                        sc_grp.attrs.get("boltzmann_temperature_upside", DEFAULT_PRODUCTION_TEMP_UPSIDE)
+                    )
+                    sc_average_temperature = float(
+                        sc_grp.attrs.get(
+                            "azimuthal_average_temperature_upside",
+                            DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
+                        )
+                    )
+                    sc_angular_smooth = float(sc_grp.attrs.get("angular_smooth", 0.1))
+                    sc_tasks = []
+                    for ri, residue in enumerate(restype_order):
+                        if residue not in residue_map or residue not in orientation_map:
+                            raise RuntimeError(
+                                f"{base_h5_path} cg_lipid_sc residue {residue!r} is missing orientation/source data"
+                            )
+                        sc_bead_types = residue_map[residue]
+                        sc_bead_charges = [infer_charge_from_atomtype(bt) for bt in sc_bead_types]
+                        orientation = orientation_map[residue]
+                        sc_positions_by_rotamer = _expand_rotamer_sidechain_positions(
+                            orientation,
+                            residue,
+                            np.asarray(martini_sidechain_offsets_nm[residue], dtype=np.float64),
+                        )
+                        sc_tasks.append(
+                            {
+                                "ri": ri,
+                                "residue": residue,
+                                "ref_bead_positions_nm": ref_ensemble_nm,
+                                "cg_bead_types": list(dopc["bead_types"]),
+                                "cg_bead_charges": list(dopc["bead_charges"]),
+                                "target_type": "CGL",
+                                "target_charge": 0.0,
+                                "rotamer_bead_positions_nm": sc_positions_by_rotamer,
+                                "rotamer_weights": orientation["weight"],
+                                "sc_bead_types": list(sc_bead_types),
+                                "sc_bead_charges": list(sc_bead_charges),
+                                "pair_params": pair_params,
+                                "cb_anchor_nm": cb_anchor_nm,
+                                "cb_vector_unit": cb_vector_unit,
+                                "r_min_nm": float(sc_grp.attrs.get("fit_r_min_nm", 0.30)),
+                                "r_max_nm": float(sc_grp.attrs["fit_r_max_nm"]),
+                                "r_count": sc_r_count,
+                                "cos_theta_count": sc_cos_theta_count,
+                                "azimuthal_count": int(sc_grp.attrs.get("azimuthal_count", 4)),
+                                "sidechain_bead_frame_count": int(
+                                    sc_grp.attrs.get("sidechain_bead_frame_count", 1)
+                                ),
+                                "cg_bead_frame_count": int(sc_grp.attrs.get("cgl_bead_frame_count", 1)),
+                                "n_modes": sc_n_modes,
+                                "n_knot_radial": sc_n_radial,
+                                "n_knot_angular": sc_n_angular,
+                                "angular_smooth": sc_angular_smooth,
+                                "knot_spacing_ang": float(sc_grp.attrs["knot_spacing_ang"]),
+                                "temperature": sc_temperature,
+                                "average_temperature": sc_average_temperature,
+                            }
+                        )
+                    compressed_sc_results = {
+                        ri: result_sc
+                        for ri, _residue, result_sc in _parallel_map_ordered(
+                            "CG-SC compressed-state retrofit table",
+                            _fit_cg_lipid_sc_quadspline_from_dict,
+                            [
+                                {
+                                    **task,
+                                    "ref_bead_positions_nm": np.asarray(
+                                        compaction_states["compressed_refs_nm"],
+                                        dtype=np.float64,
+                                    ),
+                                }
+                                for task in sc_tasks
+                            ],
+                        )
                     }
+                    n_sc_types = len(restype_order)
+                    sc_n_param = sc_n_radial * sc_n_angular * sc_n_angular
+                    sc_delta_compressed = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
+                    sc_grid_compressed = np.zeros(
+                        (n_sc_types, sc_r_count, sc_cos_theta_count, sc_cos_theta_count),
+                        dtype=np.float32,
+                    )
+                    for ri in range(n_sc_types):
+                        base_interaction_param = np.asarray(
+                            sc_grp["interaction_param"][ri, 0, :],
+                            dtype=np.float64,
+                        )
+                        base_reference_energy = float(
+                            np.asarray(sc_grp["reference_energy_eup"][ri, 0], dtype=np.float64)
+                        )
+                        r_values_nm = np.linspace(
+                            float(sc_grp.attrs.get("fit_r_min_nm", 0.30)),
+                            float(sc_grp.attrs["fit_r_max_nm"]),
+                            sc_r_count,
+                            dtype=np.float64,
+                        )
+                        cos_theta_grid = np.linspace(-1.0, 1.0, sc_cos_theta_count, dtype=np.float64)
+                        delta = _fit_single_cgl_state_delta_full_tensor(
+                            base_energy_grid_kj_mol=np.asarray(
+                                compressed_sc_results[ri]["energy_grid_raw"],
+                                dtype=np.float64,
+                            ),
+                            extended_energy_grid_kj_mol=np.asarray(
+                                compressed_sc_results[ri]["energy_grid_raw"],
+                                dtype=np.float64,
+                            ),
+                            compact_energy_grid_kj_mol=np.asarray(
+                                compressed_sc_results[ri]["energy_grid_raw"],
+                                dtype=np.float64,
+                            ),
+                            compressed_energy_grid_kj_mol=np.asarray(
+                                compressed_sc_results[ri]["energy_grid_raw"],
+                                dtype=np.float64,
+                            ),
+                            reference_energy_eup=base_reference_energy,
+                            base_interaction_param=base_interaction_param,
+                            temperature_upside=float(sc_temperature),
+                            r_values_nm=r_values_nm,
+                            cos_theta_grid=cos_theta_grid,
+                            n_knot_radial=sc_n_radial,
+                            n_knot_angular=sc_n_angular,
+                            knot_spacing_ang=float(sc_grp.attrs["knot_spacing_ang"]),
+                            smooth=sc_angular_smooth,
+                        )
+                        sc_delta_compressed[ri, 0, :] = np.asarray(
+                            delta["delta_compressed"],
+                            dtype=np.float32,
+                        )
+                        sc_grid_compressed[ri] = np.asarray(
+                            delta["grid_compressed_kj_mol"],
+                            dtype=np.float32,
+                        )
+                    corrections["cg_lipid_sc"]["delta_compressed"] = sc_delta_compressed
+                    corrections["cg_lipid_sc"]["grid_compressed_kj_mol"] = sc_grid_compressed
+            else:
+                restype_order = _decode_h5_string_array(sc_grp["restype_order"][:])
+                orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
+                residue_map = load_martini_forcefield(martinize_path, forcefield_name)
+                martini_sidechain_offsets_nm = _load_martini_sidechain_offsets_nm(
+                    martinize_path, forcefield_name
                 )
+                cb_anchor_nm = [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG]
+                cb_vector_unit = list(CANONICAL_CB_VECTOR_UNIT)
+                sc_n_modes = int(sc_grp.attrs.get("n_modes", 0))
+                if sc_n_modes != 0:
+                    raise RuntimeError("single-CGL compaction retrofit only supports full-tensor cg_lipid_sc")
+                sc_n_radial = int(sc_grp.attrs["n_radial"])
+                sc_n_angular = int(sc_grp.attrs["n_angular"])
+                sc_r_count = sc_n_radial
+                sc_cos_theta_count = max(sc_n_angular - 2, 1)
+                sc_tasks = []
+                sc_temperature = float(
+                    sc_grp.attrs.get("boltzmann_temperature_upside", DEFAULT_PRODUCTION_TEMP_UPSIDE)
+                )
+                sc_average_temperature = float(
+                    sc_grp.attrs.get(
+                        "azimuthal_average_temperature_upside",
+                        DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
+                    )
+                )
+                sc_angular_smooth = float(sc_grp.attrs.get("angular_smooth", 0.1))
+                for ri, residue in enumerate(restype_order):
+                    if residue not in residue_map or residue not in orientation_map:
+                        raise RuntimeError(
+                            f"{base_h5_path} cg_lipid_sc residue {residue!r} is missing orientation/source data"
+                        )
+                    sc_bead_types = residue_map[residue]
+                    sc_bead_charges = [infer_charge_from_atomtype(bt) for bt in sc_bead_types]
+                    orientation = orientation_map[residue]
+                    sc_positions_by_rotamer = _expand_rotamer_sidechain_positions(
+                        orientation,
+                        residue,
+                        np.asarray(martini_sidechain_offsets_nm[residue], dtype=np.float64),
+                    )
+                    sc_tasks.append(
+                        {
+                            "ri": ri,
+                            "residue": residue,
+                            "ref_bead_positions_nm": ref_ensemble_nm,
+                            "cg_bead_types": list(dopc["bead_types"]),
+                            "cg_bead_charges": list(dopc["bead_charges"]),
+                            "target_type": "CGL",
+                            "target_charge": 0.0,
+                            "rotamer_bead_positions_nm": sc_positions_by_rotamer,
+                            "rotamer_weights": orientation["weight"],
+                            "sc_bead_types": list(sc_bead_types),
+                            "sc_bead_charges": list(sc_bead_charges),
+                            "pair_params": pair_params,
+                            "cb_anchor_nm": cb_anchor_nm,
+                            "cb_vector_unit": cb_vector_unit,
+                            "r_min_nm": float(sc_grp.attrs.get("fit_r_min_nm", 0.30)),
+                            "r_max_nm": float(sc_grp.attrs["fit_r_max_nm"]),
+                            "r_count": sc_r_count,
+                            "cos_theta_count": sc_cos_theta_count,
+                            "azimuthal_count": int(sc_grp.attrs.get("azimuthal_count", 4)),
+                            "sidechain_bead_frame_count": int(
+                                sc_grp.attrs.get("sidechain_bead_frame_count", 1)
+                            ),
+                            "cg_bead_frame_count": int(sc_grp.attrs.get("cgl_bead_frame_count", 1)),
+                            "n_modes": sc_n_modes,
+                            "n_knot_radial": sc_n_radial,
+                            "n_knot_angular": sc_n_angular,
+                            "angular_smooth": sc_angular_smooth,
+                            "knot_spacing_ang": float(sc_grp.attrs["knot_spacing_ang"]),
+                            "temperature": sc_temperature,
+                            "average_temperature": sc_average_temperature,
+                        }
+                    )
 
-            base_sc_results = {
-                ri: result_sc
-                for ri, _residue, result_sc in _parallel_map_ordered(
-                    "CG-SC base retrofit table",
-                    _fit_cg_lipid_sc_quadspline_from_dict,
-                    sc_tasks,
+                base_sc_results = {
+                    ri: result_sc
+                    for ri, _residue, result_sc in _parallel_map_ordered(
+                        "CG-SC base retrofit table",
+                        _fit_cg_lipid_sc_quadspline_from_dict,
+                        sc_tasks,
+                    )
+                }
+                extended_sc_results = {
+                    ri: result_sc
+                    for ri, _residue, result_sc in _parallel_map_ordered(
+                        "CG-SC extended-state retrofit table",
+                        _fit_cg_lipid_sc_quadspline_from_dict,
+                        [
+                            {
+                                **task,
+                                "ref_bead_positions_nm": np.asarray(
+                                    compaction_states["extended_refs_nm"],
+                                    dtype=np.float64,
+                                ),
+                            }
+                            for task in sc_tasks
+                        ],
+                    )
+                }
+                compact_sc_results = {
+                    ri: result_sc
+                    for ri, _residue, result_sc in _parallel_map_ordered(
+                        "CG-SC compacted-state retrofit table",
+                        _fit_cg_lipid_sc_quadspline_from_dict,
+                        [
+                            {
+                                **task,
+                                "ref_bead_positions_nm": np.asarray(
+                                    compaction_states["compact_refs_nm"],
+                                    dtype=np.float64,
+                                ),
+                            }
+                            for task in sc_tasks
+                        ],
+                    )
+                }
+                compressed_sc_results = None
+                if compressed_state_coord is not None:
+                    compressed_sc_results = {
+                        ri: result_sc
+                        for ri, _residue, result_sc in _parallel_map_ordered(
+                            "CG-SC compressed-state retrofit table",
+                            _fit_cg_lipid_sc_quadspline_from_dict,
+                            [
+                                {
+                                    **task,
+                                    "ref_bead_positions_nm": np.asarray(
+                                        compaction_states["compressed_refs_nm"],
+                                        dtype=np.float64,
+                                    ),
+                                }
+                                for task in sc_tasks
+                            ],
+                        )
+                    }
+                n_sc_types = len(restype_order)
+                sc_n_param = sc_n_radial * sc_n_angular * sc_n_angular
+                sc_delta_extended = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
+                sc_delta_compact = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
+                sc_delta_compressed = (
+                    np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
+                    if compressed_sc_results is not None
+                    else None
                 )
-            }
-            extended_sc_results = {
-                ri: result_sc
-                for ri, _residue, result_sc in _parallel_map_ordered(
-                    "CG-SC extended-state retrofit table",
-                    _fit_cg_lipid_sc_quadspline_from_dict,
-                    [
-                        {
-                            **task,
-                            "ref_bead_positions_nm": np.asarray(
-                                compaction_states["extended_refs_nm"],
+                sc_grid_extended = np.zeros(
+                    (n_sc_types, sc_r_count, sc_cos_theta_count, sc_cos_theta_count),
+                    dtype=np.float32,
+                )
+                sc_grid_compact = np.zeros_like(sc_grid_extended)
+                sc_grid_compressed = (
+                    np.zeros_like(sc_grid_extended)
+                    if compressed_sc_results is not None
+                    else None
+                )
+                for ri in range(n_sc_types):
+                    base_sc = base_sc_results[ri]
+                    delta = _fit_single_cgl_state_delta_full_tensor(
+                        base_energy_grid_kj_mol=np.asarray(base_sc["energy_grid_raw"], dtype=np.float64),
+                        extended_energy_grid_kj_mol=np.asarray(
+                            extended_sc_results[ri]["energy_grid_raw"],
+                            dtype=np.float64,
+                        ),
+                        compact_energy_grid_kj_mol=np.asarray(
+                            compact_sc_results[ri]["energy_grid_raw"],
+                            dtype=np.float64,
+                        ),
+                        compressed_energy_grid_kj_mol=(
+                            np.asarray(
+                                compressed_sc_results[ri]["energy_grid_raw"],
                                 dtype=np.float64,
-                            ),
-                        }
-                        for task in sc_tasks
-                    ],
-                )
-            }
-            compact_sc_results = {
-                ri: result_sc
-                for ri, _residue, result_sc in _parallel_map_ordered(
-                    "CG-SC compacted-state retrofit table",
-                    _fit_cg_lipid_sc_quadspline_from_dict,
-                    [
-                        {
-                            **task,
-                            "ref_bead_positions_nm": np.asarray(
-                                compaction_states["compact_refs_nm"],
-                                dtype=np.float64,
-                            ),
-                        }
-                        for task in sc_tasks
-                    ],
-                )
-            }
-            n_sc_types = len(restype_order)
-            sc_n_param = sc_n_radial * sc_n_angular * sc_n_angular
-            sc_delta_extended = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
-            sc_delta_compact = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
-            sc_grid_extended = np.zeros(
-                (n_sc_types, sc_r_count, sc_cos_theta_count, sc_cos_theta_count),
-                dtype=np.float32,
-            )
-            sc_grid_compact = np.zeros_like(sc_grid_extended)
-            for ri in range(n_sc_types):
-                base_sc = base_sc_results[ri]
-                delta = _fit_single_cgl_state_delta_full_tensor(
-                    base_energy_grid_kj_mol=np.asarray(base_sc["energy_grid_raw"], dtype=np.float64),
-                    extended_energy_grid_kj_mol=np.asarray(
-                        extended_sc_results[ri]["energy_grid_raw"],
-                        dtype=np.float64,
-                    ),
-                    compact_energy_grid_kj_mol=np.asarray(
-                        compact_sc_results[ri]["energy_grid_raw"],
-                        dtype=np.float64,
-                    ),
-                    reference_energy_eup=float(base_sc["reference_energy_eup"]),
-                    base_interaction_param=np.asarray(base_sc["interaction_param"], dtype=np.float64),
-                    temperature_upside=float(sc_temperature),
-                    r_values_nm=np.asarray(base_sc["r_values_nm"], dtype=np.float64),
-                    cos_theta_grid=np.asarray(base_sc["cos_theta_grid"], dtype=np.float64),
-                    n_knot_radial=sc_n_radial,
-                    n_knot_angular=sc_n_angular,
-                    knot_spacing_ang=float(sc_grp.attrs["knot_spacing_ang"]),
-                    smooth=sc_angular_smooth,
-                )
-                sc_delta_extended[ri, 0, :] = np.asarray(delta["delta_extended"], dtype=np.float32)
-                sc_delta_compact[ri, 0, :] = np.asarray(delta["delta_compact"], dtype=np.float32)
-                sc_grid_extended[ri] = np.asarray(delta["grid_extended_kj_mol"], dtype=np.float32)
-                sc_grid_compact[ri] = np.asarray(delta["grid_compact_kj_mol"], dtype=np.float32)
-            corrections["cg_lipid_sc"] = {
-                "delta_extended": sc_delta_extended,
-                "delta_compact": sc_delta_compact,
-                "grid_extended_kj_mol": sc_grid_extended,
-                "grid_compact_kj_mol": sc_grid_compact,
-            }
+                            )
+                            if compressed_sc_results is not None
+                            else None
+                        ),
+                        reference_energy_eup=float(base_sc["reference_energy_eup"]),
+                        base_interaction_param=np.asarray(base_sc["interaction_param"], dtype=np.float64),
+                        temperature_upside=float(sc_temperature),
+                        r_values_nm=np.asarray(base_sc["r_values_nm"], dtype=np.float64),
+                        cos_theta_grid=np.asarray(base_sc["cos_theta_grid"], dtype=np.float64),
+                        n_knot_radial=sc_n_radial,
+                        n_knot_angular=sc_n_angular,
+                        knot_spacing_ang=float(sc_grp.attrs["knot_spacing_ang"]),
+                        smooth=sc_angular_smooth,
+                    )
+                    sc_delta_extended[ri, 0, :] = np.asarray(delta["delta_extended"], dtype=np.float32)
+                    sc_delta_compact[ri, 0, :] = np.asarray(delta["delta_compact"], dtype=np.float32)
+                    sc_grid_extended[ri] = np.asarray(delta["grid_extended_kj_mol"], dtype=np.float32)
+                    sc_grid_compact[ri] = np.asarray(delta["grid_compact_kj_mol"], dtype=np.float32)
+                    if sc_delta_compressed is not None and sc_grid_compressed is not None:
+                        sc_delta_compressed[ri, 0, :] = np.asarray(
+                            delta["delta_compressed"],
+                            dtype=np.float32,
+                        )
+                        sc_grid_compressed[ri] = np.asarray(
+                            delta["grid_compressed_kj_mol"],
+                            dtype=np.float32,
+                        )
+                corrections["cg_lipid_sc"] = {
+                    "delta_extended": sc_delta_extended,
+                    "delta_compact": sc_delta_compact,
+                    "grid_extended_kj_mol": sc_grid_extended,
+                    "grid_compact_kj_mol": sc_grid_compact,
+                }
+                if sc_delta_compressed is not None and sc_grid_compressed is not None:
+                    corrections["cg_lipid_sc"]["delta_compressed"] = sc_delta_compressed
+                    corrections["cg_lipid_sc"]["grid_compressed_kj_mol"] = sc_grid_compressed
 
         target_grp = cg_grp.get("cg_lipid_target")
         if include_target and target_grp is not None:
-            target_types = _decode_h5_string_array(target_grp["target_order"][:])
-            n_types = len(target_types)
-            n_knot_radial = int(target_grp.attrs["n_radial"])
-            n_knot_angular = int(target_grp.attrs["n_angular"])
-            knot_spacing_ang = float(target_grp.attrs["knot_spacing_ang"])
-            target_temperature = float(
-                target_grp.attrs.get("boltzmann_temperature_upside", DEFAULT_PRODUCTION_TEMP_UPSIDE)
-            )
-            target_average_temperature = float(
-                target_grp.attrs.get(
-                    "azimuthal_average_temperature_upside",
-                    DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
-                )
-            )
-            r_max_ang = float((n_knot_radial - 2) * knot_spacing_ang)
-            r_sample_ang = np.linspace(float(knot_spacing_ang), r_max_ang, n_knot_radial)
-            r_sample_nm = r_sample_ang / LENGTH_CONVERSION_A_PER_NM
-            t_angular_sample = np.linspace(1.0, float(n_knot_angular - 2), n_knot_angular)
-            cos_theta_grid = (t_angular_sample - 1.0) / (0.5 * float(n_knot_angular - 3)) - 1.0
-            cos_theta_grid = np.asarray(cos_theta_grid, dtype=np.float64)
-            phi_values = np.linspace(0.0, 2.0 * np.pi, 4, endpoint=False)
-            bead_frame_angles = _bead_frame_angles(
-                int(target_grp.attrs.get("cgl_bead_frame_count", 1))
-            )
-            target_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
-            orientation_dirs = _directions_with_dot_np(target_axis, cos_theta_grid, phi_values)
-            target_tasks = [
-                {
-                    "ti": ti,
-                    "target_type": tgt_type,
-                    "bead_types": list(dopc["bead_types"]),
-                    "bead_charges": bead_charges,
-                    "pair_params": pair_params,
-                    "ref_nm": ref_ensemble_nm,
-                    "r_sample_nm": r_sample_nm,
-                    "cos_theta_grid": cos_theta_grid,
-                    "orientation_dirs": orientation_dirs,
-                    "bead_frame_angles": bead_frame_angles,
-                    "temperature": target_temperature,
-                    "average_temperature": target_average_temperature,
+            source_target_compact_ang = float(target_grp.attrs.get("reference_compact_center_ang", np.nan))
+            source_target_extended_ang = float(target_grp.attrs.get("reference_extended_center_ang", np.nan))
+            if (
+                np.isfinite(source_target_compact_ang)
+                and np.isfinite(source_target_extended_ang)
+                and "delta_extended" in target_grp
+                and "delta_compact" in target_grp
+            ):
+                corrections["cg_lipid_target"] = {
+                    "delta_extended": np.asarray(target_grp["delta_extended"][:], dtype=np.float32),
+                    "delta_compact": np.asarray(target_grp["delta_compact"][:], dtype=np.float32),
                 }
-                for ti, tgt_type in enumerate(target_types)
-            ]
-            base_target_results = {
-                ti: np.asarray(energy_grid, dtype=np.float64)
-                for ti, _tgt_type, _control_flat, _ref_kj_mol, energy_grid in _parallel_map_ordered(
-                    "CGL-particle base retrofit table",
-                    _run_cgl_target_type_task,
-                    target_tasks,
-                )
-            }
-            extended_target_results = {
-                ti: np.asarray(energy_grid, dtype=np.float64)
-                for ti, _tgt_type, _control_flat, _ref_kj_mol, energy_grid in _parallel_map_ordered(
-                    "CGL-particle extended-state retrofit table",
-                    _run_cgl_target_type_task,
-                    [
+                if "grid_extended_kj_mol" in target_grp:
+                    corrections["cg_lipid_target"]["grid_extended_kj_mol"] = np.asarray(
+                        target_grp["grid_extended_kj_mol"][:],
+                        dtype=np.float32,
+                    )
+                if "grid_compact_kj_mol" in target_grp:
+                    corrections["cg_lipid_target"]["grid_compact_kj_mol"] = np.asarray(
+                        target_grp["grid_compact_kj_mol"][:],
+                        dtype=np.float32,
+                    )
+                if compressed_state_coord is not None:
+                    target_types = _decode_h5_string_array(target_grp["target_order"][:])
+                    n_types = len(target_types)
+                    n_knot_radial = int(target_grp.attrs["n_radial"])
+                    n_knot_angular = int(target_grp.attrs["n_angular"])
+                    knot_spacing_ang = float(target_grp.attrs["knot_spacing_ang"])
+                    target_temperature = float(
+                        target_grp.attrs.get("boltzmann_temperature_upside", DEFAULT_PRODUCTION_TEMP_UPSIDE)
+                    )
+                    target_average_temperature = float(
+                        target_grp.attrs.get(
+                            "azimuthal_average_temperature_upside",
+                            DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
+                        )
+                    )
+                    r_max_ang = float((n_knot_radial - 2) * knot_spacing_ang)
+                    r_sample_ang = np.linspace(float(knot_spacing_ang), r_max_ang, n_knot_radial)
+                    r_sample_nm = r_sample_ang / LENGTH_CONVERSION_A_PER_NM
+                    t_angular_sample = np.linspace(1.0, float(n_knot_angular - 2), n_knot_angular)
+                    cos_theta_grid = (t_angular_sample - 1.0) / (0.5 * float(n_knot_angular - 3)) - 1.0
+                    cos_theta_grid = np.asarray(cos_theta_grid, dtype=np.float64)
+                    phi_values = np.linspace(0.0, 2.0 * np.pi, 4, endpoint=False)
+                    bead_frame_angles = _bead_frame_angles(
+                        int(target_grp.attrs.get("cgl_bead_frame_count", 1))
+                    )
+                    target_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+                    orientation_dirs = _directions_with_dot_np(target_axis, cos_theta_grid, phi_values)
+                    target_tasks = [
                         {
-                            **task,
-                            "ref_nm": np.asarray(compaction_states["extended_refs_nm"], dtype=np.float64),
+                            "ti": ti,
+                            "target_type": tgt_type,
+                            "bead_types": list(dopc["bead_types"]),
+                            "bead_charges": bead_charges,
+                            "pair_params": pair_params,
+                            "ref_nm": ref_ensemble_nm,
+                            "r_sample_nm": r_sample_nm,
+                            "cos_theta_grid": cos_theta_grid,
+                            "orientation_dirs": orientation_dirs,
+                            "bead_frame_angles": bead_frame_angles,
+                            "temperature": target_temperature,
+                            "average_temperature": target_average_temperature,
                         }
-                        for task in target_tasks
-                    ],
+                        for ti, tgt_type in enumerate(target_types)
+                    ]
+                    compressed_target_results = {
+                        ti: np.asarray(energy_grid, dtype=np.float64)
+                        for ti, _tgt_type, _control_flat, _ref_kj_mol, energy_grid in _parallel_map_ordered(
+                            "CGL-particle compressed-state retrofit table",
+                            _run_cgl_target_type_task,
+                            [
+                                {
+                                    **task,
+                                    "ref_nm": np.asarray(
+                                        compaction_states["compressed_refs_nm"],
+                                        dtype=np.float64,
+                                    ),
+                                }
+                                for task in target_tasks
+                            ],
+                        )
+                    }
+                    target_ref_energy = np.asarray(
+                        target_grp["reference_energy_eup"][:],
+                        dtype=np.float64,
+                    ).reshape(-1)
+                    n_param = n_knot_radial * n_knot_angular
+                    target_delta_compressed = np.zeros((1, n_types, n_param), dtype=np.float32)
+                    target_grid_compressed = np.zeros(
+                        (n_types, len(r_sample_nm), len(cos_theta_grid)),
+                        dtype=np.float32,
+                    )
+                    for ti in range(n_types):
+                        base_interaction_param = np.asarray(
+                            target_grp["interaction_param"][0, ti, :],
+                            dtype=np.float64,
+                        )
+                        delta = _build_single_cgl_state_delta_radial_angular(
+                            base_energy_grid_kj_mol=compressed_target_results[ti],
+                            extended_energy_grid_kj_mol=compressed_target_results[ti],
+                            compact_energy_grid_kj_mol=compressed_target_results[ti],
+                            compressed_energy_grid_kj_mol=compressed_target_results[ti],
+                            reference_energy_eup=float(target_ref_energy[ti]),
+                            temperature_upside=float(target_temperature),
+                            r_values_nm=r_sample_nm,
+                            cos_theta_grid=cos_theta_grid,
+                            n_knot_radial=n_knot_radial,
+                            n_knot_angular=n_knot_angular,
+                            knot_spacing_ang=knot_spacing_ang,
+                            base_interaction_param=base_interaction_param,
+                        )
+                        target_delta_compressed[0, ti, :] = np.asarray(
+                            delta["delta_compressed"],
+                            dtype=np.float32,
+                        )
+                        target_grid_compressed[ti] = np.asarray(
+                            delta["grid_compressed_kj_mol"],
+                            dtype=np.float32,
+                        )
+                    corrections["cg_lipid_target"]["delta_compressed"] = target_delta_compressed
+                    corrections["cg_lipid_target"]["grid_compressed_kj_mol"] = target_grid_compressed
+            else:
+                target_types = _decode_h5_string_array(target_grp["target_order"][:])
+                n_types = len(target_types)
+                n_knot_radial = int(target_grp.attrs["n_radial"])
+                n_knot_angular = int(target_grp.attrs["n_angular"])
+                knot_spacing_ang = float(target_grp.attrs["knot_spacing_ang"])
+                target_temperature = float(
+                    target_grp.attrs.get("boltzmann_temperature_upside", DEFAULT_PRODUCTION_TEMP_UPSIDE)
                 )
-            }
-            compact_target_results = {
-                ti: np.asarray(energy_grid, dtype=np.float64)
-                for ti, _tgt_type, _control_flat, _ref_kj_mol, energy_grid in _parallel_map_ordered(
-                    "CGL-particle compacted-state retrofit table",
-                    _run_cgl_target_type_task,
-                    [
-                        {
-                            **task,
-                            "ref_nm": np.asarray(compaction_states["compact_refs_nm"], dtype=np.float64),
-                        }
-                        for task in target_tasks
-                    ],
+                target_average_temperature = float(
+                    target_grp.attrs.get(
+                        "azimuthal_average_temperature_upside",
+                        DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
+                    )
                 )
-            }
-            target_ref_energy = np.asarray(
-                target_grp["reference_energy_eup"][:],
-                dtype=np.float64,
-            ).reshape(-1)
-            n_param = n_knot_radial * n_knot_angular
-            target_delta_extended = np.zeros((1, n_types, n_param), dtype=np.float32)
-            target_delta_compact = np.zeros((1, n_types, n_param), dtype=np.float32)
-            target_grid_extended = np.zeros(
-                (n_types, len(r_sample_nm), len(cos_theta_grid)),
-                dtype=np.float32,
-            )
-            target_grid_compact = np.zeros_like(target_grid_extended)
-            for ti in range(n_types):
-                delta = _build_single_cgl_state_delta_radial_angular(
-                    base_energy_grid_kj_mol=base_target_results[ti],
-                    extended_energy_grid_kj_mol=extended_target_results[ti],
-                    compact_energy_grid_kj_mol=compact_target_results[ti],
-                    reference_energy_eup=float(target_ref_energy[ti]),
-                    temperature_upside=float(target_temperature),
-                    r_values_nm=r_sample_nm,
-                    cos_theta_grid=cos_theta_grid,
-                    n_knot_radial=n_knot_radial,
-                    n_knot_angular=n_knot_angular,
-                    knot_spacing_ang=knot_spacing_ang,
+                r_max_ang = float((n_knot_radial - 2) * knot_spacing_ang)
+                r_sample_ang = np.linspace(float(knot_spacing_ang), r_max_ang, n_knot_radial)
+                r_sample_nm = r_sample_ang / LENGTH_CONVERSION_A_PER_NM
+                t_angular_sample = np.linspace(1.0, float(n_knot_angular - 2), n_knot_angular)
+                cos_theta_grid = (t_angular_sample - 1.0) / (0.5 * float(n_knot_angular - 3)) - 1.0
+                cos_theta_grid = np.asarray(cos_theta_grid, dtype=np.float64)
+                phi_values = np.linspace(0.0, 2.0 * np.pi, 4, endpoint=False)
+                bead_frame_angles = _bead_frame_angles(
+                    int(target_grp.attrs.get("cgl_bead_frame_count", 1))
                 )
-                target_delta_extended[0, ti, :] = np.asarray(
-                    delta["delta_extended"],
+                target_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+                orientation_dirs = _directions_with_dot_np(target_axis, cos_theta_grid, phi_values)
+                target_tasks = [
+                    {
+                        "ti": ti,
+                        "target_type": tgt_type,
+                        "bead_types": list(dopc["bead_types"]),
+                        "bead_charges": bead_charges,
+                        "pair_params": pair_params,
+                        "ref_nm": ref_ensemble_nm,
+                        "r_sample_nm": r_sample_nm,
+                        "cos_theta_grid": cos_theta_grid,
+                        "orientation_dirs": orientation_dirs,
+                        "bead_frame_angles": bead_frame_angles,
+                        "temperature": target_temperature,
+                        "average_temperature": target_average_temperature,
+                    }
+                    for ti, tgt_type in enumerate(target_types)
+                ]
+                base_target_results = {
+                    ti: np.asarray(energy_grid, dtype=np.float64)
+                    for ti, _tgt_type, _control_flat, _ref_kj_mol, energy_grid in _parallel_map_ordered(
+                        "CGL-particle base retrofit table",
+                        _run_cgl_target_type_task,
+                        target_tasks,
+                    )
+                }
+                extended_target_results = {
+                    ti: np.asarray(energy_grid, dtype=np.float64)
+                    for ti, _tgt_type, _control_flat, _ref_kj_mol, energy_grid in _parallel_map_ordered(
+                        "CGL-particle extended-state retrofit table",
+                        _run_cgl_target_type_task,
+                        [
+                            {
+                                **task,
+                                "ref_nm": np.asarray(compaction_states["extended_refs_nm"], dtype=np.float64),
+                            }
+                            for task in target_tasks
+                        ],
+                    )
+                }
+                compact_target_results = {
+                    ti: np.asarray(energy_grid, dtype=np.float64)
+                    for ti, _tgt_type, _control_flat, _ref_kj_mol, energy_grid in _parallel_map_ordered(
+                        "CGL-particle compacted-state retrofit table",
+                        _run_cgl_target_type_task,
+                        [
+                            {
+                                **task,
+                                "ref_nm": np.asarray(compaction_states["compact_refs_nm"], dtype=np.float64),
+                            }
+                            for task in target_tasks
+                        ],
+                    )
+                }
+                compressed_target_results = None
+                if compressed_state_coord is not None:
+                    compressed_target_results = {
+                        ti: np.asarray(energy_grid, dtype=np.float64)
+                        for ti, _tgt_type, _control_flat, _ref_kj_mol, energy_grid in _parallel_map_ordered(
+                            "CGL-particle compressed-state retrofit table",
+                            _run_cgl_target_type_task,
+                            [
+                                {
+                                    **task,
+                                    "ref_nm": np.asarray(
+                                        compaction_states["compressed_refs_nm"],
+                                        dtype=np.float64,
+                                    ),
+                                }
+                                for task in target_tasks
+                            ],
+                        )
+                    }
+                target_ref_energy = np.asarray(
+                    target_grp["reference_energy_eup"][:],
+                    dtype=np.float64,
+                ).reshape(-1)
+                n_param = n_knot_radial * n_knot_angular
+                target_delta_extended = np.zeros((1, n_types, n_param), dtype=np.float32)
+                target_delta_compact = np.zeros((1, n_types, n_param), dtype=np.float32)
+                target_delta_compressed = (
+                    np.zeros((1, n_types, n_param), dtype=np.float32)
+                    if compressed_target_results is not None
+                    else None
+                )
+                target_grid_extended = np.zeros(
+                    (n_types, len(r_sample_nm), len(cos_theta_grid)),
                     dtype=np.float32,
                 )
-                target_delta_compact[0, ti, :] = np.asarray(
-                    delta["delta_compact"],
-                    dtype=np.float32,
+                target_grid_compact = np.zeros_like(target_grid_extended)
+                target_grid_compressed = (
+                    np.zeros_like(target_grid_extended)
+                    if compressed_target_results is not None
+                    else None
                 )
-                target_grid_extended[ti] = np.asarray(
-                    delta["grid_extended_kj_mol"],
-                    dtype=np.float32,
-                )
-                target_grid_compact[ti] = np.asarray(
-                    delta["grid_compact_kj_mol"],
-                    dtype=np.float32,
-                )
-            corrections["cg_lipid_target"] = {
-                "delta_extended": target_delta_extended,
-                "delta_compact": target_delta_compact,
-                "grid_extended_kj_mol": target_grid_extended,
-                "grid_compact_kj_mol": target_grid_compact,
-            }
+                for ti in range(n_types):
+                    delta = _build_single_cgl_state_delta_radial_angular(
+                        base_energy_grid_kj_mol=base_target_results[ti],
+                        extended_energy_grid_kj_mol=extended_target_results[ti],
+                        compact_energy_grid_kj_mol=compact_target_results[ti],
+                        compressed_energy_grid_kj_mol=(
+                            compressed_target_results[ti]
+                            if compressed_target_results is not None
+                            else None
+                        ),
+                        reference_energy_eup=float(target_ref_energy[ti]),
+                        temperature_upside=float(target_temperature),
+                        r_values_nm=r_sample_nm,
+                        cos_theta_grid=cos_theta_grid,
+                        n_knot_radial=n_knot_radial,
+                        n_knot_angular=n_knot_angular,
+                        knot_spacing_ang=knot_spacing_ang,
+                    )
+                    target_delta_extended[0, ti, :] = np.asarray(
+                        delta["delta_extended"],
+                        dtype=np.float32,
+                    )
+                    target_delta_compact[0, ti, :] = np.asarray(
+                        delta["delta_compact"],
+                        dtype=np.float32,
+                    )
+                    target_grid_extended[ti] = np.asarray(
+                        delta["grid_extended_kj_mol"],
+                        dtype=np.float32,
+                    )
+                    target_grid_compact[ti] = np.asarray(
+                        delta["grid_compact_kj_mol"],
+                        dtype=np.float32,
+                    )
+                    if target_delta_compressed is not None and target_grid_compressed is not None:
+                        target_delta_compressed[0, ti, :] = np.asarray(
+                            delta["delta_compressed"],
+                            dtype=np.float32,
+                        )
+                        target_grid_compressed[ti] = np.asarray(
+                            delta["grid_compressed_kj_mol"],
+                            dtype=np.float32,
+                        )
+                corrections["cg_lipid_target"] = {
+                    "delta_extended": target_delta_extended,
+                    "delta_compact": target_delta_compact,
+                    "grid_extended_kj_mol": target_grid_extended,
+                    "grid_compact_kj_mol": target_grid_compact,
+                }
+                if target_delta_compressed is not None and target_grid_compressed is not None:
+                    corrections["cg_lipid_target"]["delta_compressed"] = target_delta_compressed
+                    corrections["cg_lipid_target"]["grid_compressed_kj_mol"] = target_grid_compressed
 
     print(
         "  Single-CGL compaction retrofit: "
@@ -6611,6 +7913,11 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
         f"target={'cg_lipid_target' in corrections}, "
         f"state source={compaction_state_source_used}, "
         f"reference centers=({extended_center_ang:.3f}, {compact_center_ang:.3f}) A"
+        + (
+            f", compressed={float(compressed_center_ang):.3f} A"
+            if compressed_center_ang is not None and compressed_state_coord is not None
+            else ""
+        )
     )
     return corrections
 
@@ -6630,9 +7937,15 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             "delta_extended_extended",
             "delta_extended_compact",
             "delta_compact_compact",
+            "delta_extended_compressed",
+            "delta_compact_compressed",
+            "delta_compressed_compressed",
             "grid_extended_extended_kj_mol",
             "grid_extended_compact_kj_mol",
             "grid_compact_compact_kj_mol",
+            "grid_extended_compressed_kj_mol",
+            "grid_compact_compressed_kj_mol",
+            "grid_compressed_compressed_kj_mol",
             "grid_average_kj_mol",
             "face_mask",
         )
@@ -6649,6 +7962,14 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
         comp_grp.attrs["reference_extended_center_ang"] = np.float32(
             corrections["reference_extended_center_ang"]
         )
+        if "compressed_state_center_ang" in corrections:
+            comp_grp.attrs["compressed_state_center_ang"] = np.float32(
+                corrections["compressed_state_center_ang"]
+            )
+        if "reference_compressed_center_ang" in corrections:
+            comp_grp.attrs["reference_compressed_center_ang"] = np.float32(
+                corrections["reference_compressed_center_ang"]
+            )
         comp_grp.attrs["self_coord_min_ang"] = np.float32(payload["coord_min_ang"])
         comp_grp.attrs["self_coord_max_ang"] = np.float32(payload["coord_max_ang"])
         comp_grp.attrs["self_coord_spacing_ang"] = np.float32(payload["coord_spacing_ang"])
@@ -6669,6 +7990,10 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             comp_grp.attrs["pair_reference_extended_center_ang"] = np.float32(
                 payload["pair_reference_extended_center_ang"]
             )
+        if "pair_reference_compressed_center_ang" in payload:
+            comp_grp.attrs["pair_reference_compressed_center_ang"] = np.float32(
+                payload["pair_reference_compressed_center_ang"]
+            )
         if "pair_compaction_state_source" in payload:
             comp_grp.attrs["pair_compaction_state_source"] = np.bytes_(
                 str(payload["pair_compaction_state_source"])
@@ -6683,6 +8008,10 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             comp_grp.attrs["compaction_reference_dataset"] = np.bytes_(
                 str(corrections["compaction_reference_dataset"])
             )
+        if "self_compaction_sample_source" in corrections:
+            comp_grp.attrs["self_compaction_sample_source"] = np.bytes_(
+                str(corrections["self_compaction_sample_source"])
+            )
         comp_grp.create_dataset("self_coeff", data=np.asarray(payload["self_coeff"], dtype=np.float32))
         comp_grp.create_dataset(
             "pmf_centers_ang",
@@ -6696,9 +8025,15 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             "delta_extended_extended",
             "delta_extended_compact",
             "delta_compact_compact",
+            "delta_extended_compressed",
+            "delta_compact_compressed",
+            "delta_compressed_compressed",
             "grid_extended_extended_kj_mol",
             "grid_extended_compact_kj_mol",
             "grid_compact_compact_kj_mol",
+            "grid_extended_compressed_kj_mol",
+            "grid_compact_compressed_kj_mol",
+            "grid_compressed_compressed_kj_mol",
             "grid_average_kj_mol",
         ):
             if dataset_name in payload:
@@ -6719,8 +8054,10 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
         for dataset_name in (
             "delta_extended",
             "delta_compact",
+            "delta_compressed",
             "grid_extended_kj_mol",
             "grid_compact_kj_mol",
+            "grid_compressed_kj_mol",
         ):
             if dataset_name in grp:
                 del grp[dataset_name]
@@ -6734,11 +8071,24 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
         grp.attrs["reference_extended_center_ang"] = np.float32(
             corrections["reference_extended_center_ang"]
         )
+        if "compressed_state_center_ang" in corrections:
+            grp.attrs["compressed_state_center_ang"] = np.float32(
+                corrections["compressed_state_center_ang"]
+            )
+        if "reference_compressed_center_ang" in corrections:
+            grp.attrs["reference_compressed_center_ang"] = np.float32(
+                corrections["reference_compressed_center_ang"]
+            )
         if "compaction_state_source" in corrections:
             grp.attrs["compaction_state_source"] = np.bytes_(str(corrections["compaction_state_source"]))
         payload = corrections[group_name]
         grp.create_dataset("delta_extended", data=np.asarray(payload["delta_extended"], dtype=np.float32))
         grp.create_dataset("delta_compact", data=np.asarray(payload["delta_compact"], dtype=np.float32))
+        if "delta_compressed" in payload:
+            grp.create_dataset(
+                "delta_compressed",
+                data=np.asarray(payload["delta_compressed"], dtype=np.float32),
+            )
         grp.create_dataset(
             "grid_extended_kj_mol",
             data=np.asarray(payload["grid_extended_kj_mol"], dtype=np.float32),
@@ -6747,6 +8097,11 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             "grid_compact_kj_mol",
             data=np.asarray(payload["grid_compact_kj_mol"], dtype=np.float32),
         )
+        if "grid_compressed_kj_mol" in payload:
+            grp.create_dataset(
+                "grid_compressed_kj_mol",
+                data=np.asarray(payload["grid_compressed_kj_mol"], dtype=np.float32),
+            )
 
 
 def _load_cg_lipid_pair_energy_grid_from_h5(
@@ -8728,6 +10083,7 @@ def _build_cg_lipid_tables(
                         compact_sc_results[ri]["energy_grid_raw"],
                         dtype=np.float64,
                     ),
+                    compressed_energy_grid_kj_mol=None,
                     reference_energy_eup=float(base_sc["reference_energy_eup"]),
                     base_interaction_param=np.asarray(base_sc["interaction_param"], dtype=np.float64),
                     temperature_upside=float(DEFAULT_PRODUCTION_TEMP_UPSIDE),
@@ -9062,6 +10418,14 @@ def _build_cg_lipid_tables(
         comp_grp.attrs["representative_extended_count"] = np.int32(
             compaction_result["representative_extended_count"]
         )
+        if "representative_compressed_count" in compaction_result:
+            comp_grp.attrs["representative_compressed_count"] = np.int32(
+                compaction_result["representative_compressed_count"]
+            )
+        if "compressed_pool_size" in compaction_result:
+            comp_grp.attrs["compressed_pool_size"] = np.int32(
+                compaction_result["compressed_pool_size"]
+            )
         comp_grp.attrs["compaction_min_ang"] = np.float32(compaction_result["compaction_min_ang"])
         comp_grp.attrs["compaction_max_ang"] = np.float32(compaction_result["compaction_max_ang"])
         comp_grp.attrs["compaction_p05_ang"] = np.float32(compaction_result["compaction_p05_ang"])
@@ -9090,6 +10454,19 @@ def _build_cg_lipid_tables(
             "delta_compact_compact",
             data=np.asarray(compaction_result["delta_compact_compact"], dtype=np.float32),
         )
+        for dataset_name in (
+            "delta_extended_compressed",
+            "delta_compact_compressed",
+            "delta_compressed_compressed",
+            "grid_extended_compressed_kj_mol",
+            "grid_compact_compressed_kj_mol",
+            "grid_compressed_compressed_kj_mol",
+        ):
+            if dataset_name in compaction_result:
+                comp_grp.create_dataset(
+                    dataset_name,
+                    data=np.asarray(compaction_result[dataset_name], dtype=np.float32),
+                )
         comp_grp.create_dataset(
             "grid_extended_extended_kj_mol",
             data=np.asarray(compaction_result["grid_extended_extended_kj_mol"], dtype=np.float32),
@@ -9531,6 +10908,7 @@ def _build_cgl_target_table(
                 base_energy_grid_kj_mol=base_energy_grid[ti],
                 extended_energy_grid_kj_mol=extended_results[ti],
                 compact_energy_grid_kj_mol=compact_results[ti],
+                compressed_energy_grid_kj_mol=None,
                 reference_energy_eup=float(reference_energy_eup[0, ti]),
                 temperature_upside=float(temperature),
                 r_values_nm=r_sample_nm,

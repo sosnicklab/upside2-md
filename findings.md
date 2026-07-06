@@ -32,6 +32,12 @@
   make those workflows part of the plan before calling the task done.
   For this project, workflow validation is part of the deliverable, not an
   optional follow-up.
+- Do not sign off from a temporary restart or reinjected validation surface
+  when the user is judging the stock example trajectory artifact.
+  For this project, acceptance has to be checked on the actual
+  `example/16.MARTINI/outputs/.../stage_7.0.vtf` workflow surface, because a
+  fix can look good on a controlled replay while the stock production path
+  still regresses.
 - Before using trajectory arrays for transport metrics, confirm the exact H5
   shape and slice the system axis explicitly.
   A mistaken read of `output/pos` as `(frame, atom, xyz)` instead of
@@ -100,13 +106,226 @@
   For this project, injector/runtime contract bugs can be real, but they are
   secondary if the user is explicitly steering the diagnosis toward SC-CGL
   compression support.
+- When several stock-surface replay candidates all move the defect in the same
+  direction but none satisfy both benchmark systems, stop calling it a tuning
+  problem and identify the model-family limitation explicitly.
+  For this project, a two-state linear compaction contract can be too weak for
+  `1rkl` or too strong for `1afo`; once both failure modes are demonstrated on
+  fixed-seed stage-7 replay, the next step is a richer compression model, not
+  another endpoint shuffle.
 - When applying a partial H5 correction, do not delete untouched datasets from
   the same force-field group.
   For this project, replacing only the single-CGL self PMF must preserve the
   existing pair-compaction tensors inside `cg_lipid_compaction`, or the live
   H5 becomes structurally stale and the injector will reject it.
+- When a new hidden-state branch is added to one interaction family, do not
+  assume the fix is complete until every coupled force path that consumes that
+  state supports the same domain.
+  For this project, adding compressed-state support to self, SC, and target is
+  not enough if `cg_lipid_pair` still stops at `EE / EC / CC`; once `q` enters
+  the physical compressed regime, the pair path becomes the destabilizing
+  extrapolation.
+- Do not treat an early burn-in improvement as evidence that a force-field
+  branch is fixed when the user’s acceptance target is the final stock stage-7
+  trajectory.
+  For this project, a compressed pair candidate can tighten `1rkl` during
+  burn-in and still regress to worse-than-stock bending during production if a
+  late-acting physical term is still missing.
+- Before spending a full rebuild on a supplemental reference source, verify
+  that the source actually populates the targeted physical regime.
+  For this project, the isolated-DOPC conformer pool contributes zero samples
+  above the current compact center, so it cannot repair the compressed branch
+  no matter how many expensive pair-table tasks are rerun.
+- When a representative-state force path has a terminal compressed branch, do
+  not keep extrapolating the linear mixing weights beyond that branch.
+  For this project, `compute_single_compaction_mix()` was producing negative
+  compact weights and overweighted compressed tensors whenever
+  `q > compressed_state_center`; the physical fix is to saturate at the
+  terminal state, not to keep extending the line.
 
 ## External / Technical Findings
+
+- 2026-07-06: The accepted generic fix is a runtime interpolation repair plus
+  the sampled high-population `v13` H5; the higher-center `v11` H5 is rejected.
+  - Source-level bug:
+    the shared three-state compaction mixer in
+    `/Users/yinhan/Documents/upside2-md/src/martini_cg_lipid.cpp`
+    kept extrapolating the compact-to-compressed line segment for
+    `q > compressed_state_center`, which gives negative compact weights and
+    overweighted compressed corrections in the same SC, target, and pair paths.
+  - Accepted implementation:
+    saturate the three-state mix at the terminal extended/compressed branches
+    while preserving the same H5 tables and the same runtime for both systems.
+  - Accepted stock stage-7 replays with that runtime plus
+    `/private/tmp/dopc_20260706_sc_target_pair_compressed_branch_candidate_v13_targetmean_reparam.h5`
+    complete cleanly on both benchmark systems.
+    `1rkl` validation dir:
+    `/private/tmp/cgl_compression_branch_validation_1rkl_v13_targetmean_reparam_satmix_r5`
+    with late-half
+    `hbonds ~= 30.43`,
+    `Rg ~= 12.39 A`,
+    `bend RMS ~= 3.91 A`,
+    `end-to-end ~= 40.65 A`.
+    `1afo` validation dir:
+    `/private/tmp/cgl_compression_branch_validation_1afo_v13_targetmean_reparam_satmix_r1`
+    with late-half
+    `hbonds ~= 78.07`,
+    `Rg ~= 15.13 A`,
+    `bend RMS ~= 7.35 A`,
+    `end-to-end ~= 45.96 A`.
+  - Rejected follow-up:
+    the same runtime plus the higher-center
+    `/private/tmp/dopc_20260706_sc_target_pair_compressed_branch_candidate_v11_targetdist_reparam.h5`
+    still regresses `1rkl` production
+    (`hbonds ~= 28.88`, `bend RMS ~= 4.08 A`, `Rg ~= 12.81 A`),
+    so the final default path keeps `v13`, not `v11`.
+
+- 2026-07-06: The compressed-state source mismatch is between the sampled
+  full-DOPC compaction distribution and the static reference ensemble, not
+  between the static reference ensemble and isolated DOPC.
+  - The installed static reference ensembles only provide three conformers
+    above the compact center `26.963 A`:
+    `27.129 A`, `29.169 A`, and `31.164 A`.
+  - The isolated-DOPC conformer pool used by the retrofit builder contributes
+    zero conformers above that compact center.
+  - The stored full-DOPC sampled distribution in
+    `cg_lipid_compaction/target_compaction_ang` is much broader:
+    `p50 ~= 27.57 A`,
+    `p75 ~= 30.18 A`,
+    `p95 ~= 34.40 A`,
+    `max ~= 39.52 A`,
+    corresponding to normalized
+    `q p50 ~= 1.04`,
+    `q p75 ~= 1.22`,
+    `q p95 ~= 1.50`,
+    `q max ~= 1.85`.
+  - Design implication:
+    the compressed-state center must come from the sampled full-DOPC
+    distribution, and the representative compressed geometries must be
+    synthesized from the compact refs with a signed axial tail mode so the
+    state tables cover the same physical regime as the self PMF.
+
+- 2026-07-06: Propagating the sampled `32.599 A` compressed center by
+  analytical table reparameterization is directionally correct but not yet a
+  full fix for `1rkl`.
+  - Starting from the exact-v8 compressed pair candidate, the shared builder
+    can remap self, SC, target, and pair compressed-center metadata to the
+    new sampled center without re-solving the whole pair table family.
+  - On fixed-seed stock stage-7 replay for `1rkl`, that reparameterized
+    candidate keeps burn-in stable all the way through `40k` steps and
+    materially improves the late saved-state metrics over bad stock:
+    `hbonds ~= 31.03` vs `29.47`,
+    `bend RMS ~= 3.39 A` vs `3.80 A`,
+    `end-to-end ~= 45.75 A` vs `41.96 A`.
+  - However, the same candidate still over-extends during production:
+    `CA Rg ~= 13.37 A` versus
+    bad stock `12.63 A` and
+    full-resolution `12.75 A`,
+    and the aligned CA overlay remains visibly more extended than the full
+    control.
+  - Design implication:
+    the new sampled-center self/SC/target contract is useful, but the
+    compressed `EX / CX / XX` pair branch must be rebuilt exactly at that
+    center rather than only reweighted from the older `29.17 A` pair tensors.
+
+- 2026-07-06: The remaining `1rkl` bend after the self/SC/target compressed
+  fix is a pair-compaction basis defect, not a missing-lipid geometry issue.
+  - The rebuilt self PMF sourced from the stored full-DOPC compaction samples
+    removes the old boundary trap and lets the live stage-7 replay occupy a
+    true compressed regime:
+    `mean q ~= 1.56`, `p95 ~= 1.84`, `max ~= 1.8465`.
+  - Even with that repair, the stock-surface `1rkl` production replay still
+    degrades during production: backbone H-bonds fall into the `17..26` range
+    and `Rg` rises toward `13.5 A`, matching the user-reported bend.
+  - Source inspection shows why:
+    `cg_lipid_pair` still only stores and mixes
+    `delta_extended_extended`, `delta_extended_compact`, and
+    `delta_compact_compact`.
+    The explicit-compaction runtime therefore extrapolates the pair correction
+    beyond trained support once `q > compact_state_center`.
+  - Design implication:
+    the next generic fix must extend the pair path to the same explicit
+    three-state basis already used by SC/target:
+    `EE / EC / CC / EX / CX / XX`, with the same compressed-state reference
+    ensemble and no system-specific parameter branch.
+
+- 2026-07-06: The compressed pair branch must carry the pair-relaxation
+  correction, not just the rigid compressed geometry.
+  - Source-level bug fixed:
+    `_augment_compaction_states_with_compressed_branch()` had been overriding
+    the supplemented upper-tail compressed center with the sparse reference
+    ensemble maximum (`31.16 A`) instead of the representative combined
+    upper-tail median (`29.17 A`).
+  - Fast diagnostic candidate built from that corrected center:
+    `/private/tmp/dopc_20260706_sc_target_pair_compressed_branch_candidate_v7_centerfix_rigidx_preserve.h5`
+    preserved the old validated `EE / EC / CC` pair tensors and added only
+    rigid-state `EX / CX / XX` compressed pair tables.
+  - Result on stock-surface `1rkl` replay with seed `3411623971`:
+    early burn-in improved (`hbonds` and `Rg` looked better than the bad stock
+    run), but the final stage-7 output still regressed during production.
+    Final late-half metrics were:
+    `hbonds ~= 26.60`,
+    `bend RMS ~= 3.32 A`,
+    `end-to-end ~= 34.98 A`,
+    versus bad stock coarse
+    `29.47 / 2.93 A / 35.64 A`
+    and full-resolution control
+    `31.79 / 2.62 A / 37.74 A`.
+  - Interpretation:
+    adding compressed rigid pair support alone is not sufficient.
+    The missing physical term is the compressed-state
+    pair-conditioned tail-relaxation response itself, which must be extended
+    to the `EX / CX / XX` branch rather than preserved only for `EE / EC / CC`.
+
+- 2026-07-05: The stock `1rkl` bend persists because the runtime still
+  extrapolates compaction correction tables beyond their trained endpoint
+  interval.
+  - The actual stock prepared file
+    `example/16.MARTINI/outputs/martini_1rkl_hybrid/checkpoints/1rkl.stage_7.0.prepared.up`
+    already uses the live bounded compaction-state input from the installed
+    `parameters/dryMARTINI/dopc.h5`:
+    `cgl_compaction_state/value min/max/mean ~= 0.3681 / 1.0847 / 0.8149`.
+  - The saved stock production path still degrades:
+    late production H-bonds fall into the mid-20s and `Rg` rises toward
+    `13 A`, consistent with the user-reported bend in
+    `example/16.MARTINI/outputs/martini_1rkl_hybrid/1rkl.stage_7.0.vtf`.
+  - `src/martini_cg_lipid.cpp` currently uses the raw compaction coordinate in
+    all three correction families:
+    `cg_lipid_pair` converts it to normalized `si/sj` and bilinearly mixes the
+    endpoint tensors, while `cg_lipid_sc` and `cg_lipid_target` use raw `q`
+    directly as the compact weight and `1-q` as the extended weight.
+  - Because the bounded self PMF still allows modest overshoot above the
+    compact endpoint, the runtime is extrapolating SC, target, and pair
+    corrections past the trained compact state instead of saturating at that
+    endpoint.
+  - Interpretation:
+    the remaining generic fix belongs in the runtime interpolation rule, not in
+    another H5 contract rewrite.
+
+- 2026-07-05: The remaining `1rkl` defect is not repaired by any simple
+  two-state H5 contract remap.
+  - Verified on stock-surface stage-7 replay with the saved prepared files and
+    stock seeds for both systems.
+  - Rejected candidates:
+    full self+SC+target+pair endpoint reparameterization;
+    SC+target-only endpoint reparameterization;
+    SC-only endpoint reparameterization;
+    target-only endpoint reparameterization;
+    and a self-only “selected representative center” contract that moved the
+    self centers from `12.13/26.96 A` to about `15.08/24.86 A`.
+  - Common pattern:
+    stronger compact-side weighting reduces `1rkl` `Rg` but collapses the
+    local H-bond network and also degrades `1afo`.
+    Weaker compact-side weighting preserves `1afo` but leaves the original
+    `1rkl` bend.
+  - Structural implication:
+    the current one-extended / one-compact linear SC/target correction family
+    appears insufficient to represent both moderate compact states and the
+    compressed leaflet-interface states needed by `1rkl`.
+  - Design implication:
+    the next physically justified fix is likely a richer compression-response
+    representation, such as an explicit compressed-state branch, rather than
+    another affine remap of the existing two-state tables.
 
 - 2026-07-05: The remaining fresh-start defect is a clipped SC-CGL
   compression-support bug in the single-CGL self-PMF rebuild path.

@@ -1691,6 +1691,142 @@ static inline float clamp_scalar(float x, float lo, float hi) {
     return std::max(lo, std::min(hi, x));
 }
 
+struct SingleCompactionMix {
+    float w_ext;
+    float w_compact;
+    float w_compressed;
+    float dw_ext_dq;
+    float dw_compact_dq;
+    float dw_compressed_dq;
+};
+
+struct PairCompactionMix {
+    float w_ee;
+    float w_ec;
+    float w_cc;
+    float w_ex;
+    float w_cx;
+    float w_xx;
+    float dw_ee_dqi;
+    float dw_ec_dqi;
+    float dw_cc_dqi;
+    float dw_ex_dqi;
+    float dw_cx_dqi;
+    float dw_xx_dqi;
+    float dw_ee_dqj;
+    float dw_ec_dqj;
+    float dw_cc_dqj;
+    float dw_ex_dqj;
+    float dw_cx_dqj;
+    float dw_xx_dqj;
+};
+
+static inline SingleCompactionMix compute_single_compaction_mix(
+        float q,
+        float extended_state_center,
+        float compact_state_center,
+        bool has_compressed_state,
+        float compressed_state_center) {
+    float denom_lo = compact_state_center - extended_state_center;
+    if(fabsf(denom_lo) < 1.0e-6f)
+        denom_lo = (denom_lo >= 0.f) ? 1.0e-6f : -1.0e-6f;
+    if(!has_compressed_state || !(compressed_state_center > compact_state_center + 1.0e-6f)) {
+        float s = (q - extended_state_center) / denom_lo;
+        return {
+            1.f - s,
+            s,
+            0.f,
+            -1.f / denom_lo,
+            1.f / denom_lo,
+            0.f,
+        };
+    }
+    if(q <= extended_state_center) {
+        return {
+            1.f,
+            0.f,
+            0.f,
+            0.f,
+            0.f,
+            0.f,
+        };
+    }
+    if(q <= compact_state_center) {
+        float s = (q - extended_state_center) / denom_lo;
+        return {
+            1.f - s,
+            s,
+            0.f,
+            -1.f / denom_lo,
+            1.f / denom_lo,
+            0.f,
+        };
+    }
+    float denom_hi = compressed_state_center - compact_state_center;
+    if(fabsf(denom_hi) < 1.0e-6f)
+        denom_hi = 1.0e-6f;
+    if(q >= compressed_state_center) {
+        return {
+            0.f,
+            0.f,
+            1.f,
+            0.f,
+            0.f,
+            0.f,
+        };
+    }
+    float t = (q - compact_state_center) / denom_hi;
+    return {
+        0.f,
+        1.f - t,
+        t,
+        0.f,
+        -1.f / denom_hi,
+        1.f / denom_hi,
+    };
+}
+
+static inline PairCompactionMix compute_pair_compaction_mix(
+        float qi,
+        float qj,
+        float extended_state_center,
+        float compact_state_center,
+        bool has_compressed_state,
+        float compressed_state_center) {
+    SingleCompactionMix mix_i = compute_single_compaction_mix(
+            qi,
+            extended_state_center,
+            compact_state_center,
+            has_compressed_state,
+            compressed_state_center);
+    SingleCompactionMix mix_j = compute_single_compaction_mix(
+            qj,
+            extended_state_center,
+            compact_state_center,
+            has_compressed_state,
+            compressed_state_center);
+    return {
+        mix_i.w_ext * mix_j.w_ext,
+        mix_i.w_ext * mix_j.w_compact + mix_i.w_compact * mix_j.w_ext,
+        mix_i.w_compact * mix_j.w_compact,
+        mix_i.w_ext * mix_j.w_compressed + mix_i.w_compressed * mix_j.w_ext,
+        mix_i.w_compact * mix_j.w_compressed + mix_i.w_compressed * mix_j.w_compact,
+        mix_i.w_compressed * mix_j.w_compressed,
+        mix_i.dw_ext_dq * mix_j.w_ext,
+        mix_i.dw_ext_dq * mix_j.w_compact + mix_i.dw_compact_dq * mix_j.w_ext,
+        mix_i.dw_compact_dq * mix_j.w_compact,
+        mix_i.dw_ext_dq * mix_j.w_compressed + mix_i.dw_compressed_dq * mix_j.w_ext,
+        mix_i.dw_compact_dq * mix_j.w_compressed + mix_i.dw_compressed_dq * mix_j.w_compact,
+        mix_i.dw_compressed_dq * mix_j.w_compressed,
+        mix_i.w_ext * mix_j.dw_ext_dq,
+        mix_i.w_ext * mix_j.dw_compact_dq + mix_i.w_compact * mix_j.dw_ext_dq,
+        mix_i.w_compact * mix_j.dw_compact_dq,
+        mix_i.w_ext * mix_j.dw_compressed_dq + mix_i.w_compressed * mix_j.dw_ext_dq,
+        mix_i.w_compact * mix_j.dw_compressed_dq + mix_i.w_compressed * mix_j.dw_compact_dq,
+        mix_i.w_compressed * mix_j.dw_compressed_dq,
+    };
+}
+
 static float3 rotate_unit_vector(const float3& n, const float3& omega, float dt) {
     float omega_mag = mag(omega);
     if(omega_mag <= 1e-8f) return n;
@@ -1979,6 +2115,11 @@ struct CGLipidPairPotential : public PotentialNode {
     bool pairlist_valid;
     vector<float> cached_body;
     vector<CGLPairIndex> active_pairs;
+    vector<float> delta_extended_compressed;
+    vector<float> delta_compact_compressed;
+    vector<float> delta_compressed_compressed;
+    float compressed_state_center;
+    bool has_compressed_state;
 
     CGLipidPairPotential(hid_t grp, CoordNode& cg_pos);
     CGLipidPairPotential(hid_t grp, const ArgList& arguments);
@@ -2047,6 +2188,8 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     , cached_box_y(0.f)
     , cached_box_z(0.f)
     , pairlist_valid(false)
+    , compressed_state_center(read_attribute<float>(grp, ".", "compressed_state_center_ang", compact_state_center))
+    , has_compressed_state(false)
 {
     check_elem_width(cg_pos, 6);
     H5Obj pi_obj = open_group(grp, "pair_interaction");
@@ -2087,6 +2230,23 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
             throw string("cg_lipid_pair compaction correction size must match interaction_param");
         if(!(fabsf(compact_state_center - extended_state_center) > 1.0e-6f))
             throw string("cg_lipid_pair requires distinct compact_state_center_ang and extended_state_center_ang");
+        bool has_delta_ex = H5Lexists(pi, "delta_extended_compressed", H5P_DEFAULT) > 0;
+        bool has_delta_cx = H5Lexists(pi, "delta_compact_compressed", H5P_DEFAULT) > 0;
+        bool has_delta_xx = H5Lexists(pi, "delta_compressed_compressed", H5P_DEFAULT) > 0;
+        if(has_delta_ex || has_delta_cx || has_delta_xx) {
+            if(!(has_delta_ex && has_delta_cx && has_delta_xx))
+                throw string("cg_lipid_pair compressed compaction correction requires EX/CX/XX tensors together");
+            delta_extended_compressed = read_float_dataset_1d(pi, "delta_extended_compressed");
+            delta_compact_compressed = read_float_dataset_1d(pi, "delta_compact_compressed");
+            delta_compressed_compressed = read_float_dataset_1d(pi, "delta_compressed_compressed");
+            if(int(delta_extended_compressed.size()) != n_param
+                    || int(delta_compact_compressed.size()) != n_param
+                    || int(delta_compressed_compressed.size()) != n_param)
+                throw string("cg_lipid_pair compressed compaction correction size must match interaction_param");
+            if(!(compressed_state_center > compact_state_center + 1.0e-6f))
+                throw string("cg_lipid_pair delta_compressed requires compressed_state_center_ang > compact_state_center_ang");
+            has_compressed_state = true;
+        }
         has_compaction_correction = true;
     }
     if(H5Lexists(pi, "gap_response_coeff", H5P_DEFAULT) > 0) {
@@ -2393,15 +2553,24 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
                 float w_ee = 0.f;
                 float w_ec = 0.f;
                 float w_cc = 0.f;
+                float w_ex = 0.f;
+                float w_cx = 0.f;
+                float w_xx = 0.f;
                 if(compaction_state) {
                     float ci = comp(0, int(ai));
                     float cj = comp(0, int(bi));
-                    float denom = compact_state_center - extended_state_center;
-                    if(fabsf(denom) < 1.0e-6f)
-                        denom = (denom >= 0.f) ? 1.0e-6f : -1.0e-6f;
-                    float si = (ci - extended_state_center) / denom;
-                    float sj = (cj - extended_state_center) / denom;
-                    compute_compaction_weights(si, sj, w_ee, w_ec, w_cc);
+                    PairCompactionMix mix = compute_pair_compaction_mix(
+                            ci, cj,
+                            extended_state_center,
+                            compact_state_center,
+                            has_compressed_state,
+                            compressed_state_center);
+                    w_ee = mix.w_ee;
+                    w_ec = mix.w_ec;
+                    w_cc = mix.w_cc;
+                    w_ex = mix.w_ex;
+                    w_cx = mix.w_cx;
+                    w_xx = mix.w_xx;
                 } else if(implicit_compaction_mean_field) {
                     float si = mean_field_compact[ai];
                     float sj = mean_field_compact[bi];
@@ -2416,6 +2585,9 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
                 QuadsplineEval e_ee = {0.f, 0.f, 0.f, 0.f};
                 QuadsplineEval e_ec = {0.f, 0.f, 0.f, 0.f};
                 QuadsplineEval e_cc = {0.f, 0.f, 0.f, 0.f};
+                QuadsplineEval e_ex = {0.f, 0.f, 0.f, 0.f};
+                QuadsplineEval e_cx = {0.f, 0.f, 0.f, 0.f};
+                QuadsplineEval e_xx = {0.f, 0.f, 0.f, 0.f};
                 bool ok_ee = eval_full_pair_tensor(
                         delta_extended_extended.data(), n_angular, n_radial,
                         dr, n1, n2, knot_spacing, cutoff,
@@ -2428,6 +2600,23 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
                         delta_compact_compact.data(), n_angular, n_radial,
                         dr, n1, n2, knot_spacing, cutoff,
                         log1p_reduced_transform ? 0.f : taper_width, e_cc);
+                bool ok_ex = false;
+                bool ok_cx = false;
+                bool ok_xx = false;
+                if(compaction_state && has_compressed_state) {
+                    ok_ex = eval_full_pair_tensor(
+                            delta_extended_compressed.data(), n_angular, n_radial,
+                            dr, n1, n2, knot_spacing, cutoff,
+                            log1p_reduced_transform ? 0.f : taper_width, e_ex);
+                    ok_cx = eval_full_pair_tensor(
+                            delta_compact_compressed.data(), n_angular, n_radial,
+                            dr, n1, n2, knot_spacing, cutoff,
+                            log1p_reduced_transform ? 0.f : taper_width, e_cx);
+                    ok_xx = eval_full_pair_tensor(
+                            delta_compressed_compressed.data(), n_angular, n_radial,
+                            dr, n1, n2, knot_spacing, cutoff,
+                            log1p_reduced_transform ? 0.f : taper_width, e_xx);
+                }
                 if(ok_ee) {
                     e.value += w_ee * e_ee.value;
                     e.d_dr += w_ee * e_ee.d_dr;
@@ -2445,6 +2634,24 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
                     e.d_dr += w_cc * e_cc.d_dr;
                     e.d_da1 += w_cc * e_cc.d_da1;
                     e.d_da2 += w_cc * e_cc.d_da2;
+                }
+                if(ok_ex) {
+                    e.value += w_ex * e_ex.value;
+                    e.d_dr += w_ex * e_ex.d_dr;
+                    e.d_da1 += w_ex * e_ex.d_da1;
+                    e.d_da2 += w_ex * e_ex.d_da2;
+                }
+                if(ok_cx) {
+                    e.value += w_cx * e_cx.value;
+                    e.d_dr += w_cx * e_cx.d_dr;
+                    e.d_da1 += w_cx * e_cx.d_da1;
+                    e.d_da2 += w_cx * e_cx.d_da2;
+                }
+                if(ok_xx) {
+                    e.value += w_xx * e_xx.value;
+                    e.d_dr += w_xx * e_xx.d_dr;
+                    e.d_da1 += w_xx * e_xx.d_da1;
+                    e.d_da2 += w_xx * e_xx.d_da2;
                 }
             }
             if(log1p_reduced_transform)
@@ -2499,31 +2706,48 @@ void CGLipidPairPotential::propagate_deriv() {
             float w_ee = 0.f;
             float w_ec = 0.f;
             float w_cc = 0.f;
+            float w_ex = 0.f;
+            float w_cx = 0.f;
+            float w_xx = 0.f;
             float d_w_ee_d_si = 0.f;
             float d_w_ec_d_si = 0.f;
             float d_w_cc_d_si = 0.f;
             float d_w_ee_d_sj = 0.f;
             float d_w_ec_d_sj = 0.f;
             float d_w_cc_d_sj = 0.f;
-            float dsi_dci = 0.f;
-            float dsj_dcj = 0.f;
+            float d_w_ex_d_qi = 0.f;
+            float d_w_cx_d_qi = 0.f;
+            float d_w_xx_d_qi = 0.f;
+            float d_w_ex_d_qj = 0.f;
+            float d_w_cx_d_qj = 0.f;
+            float d_w_xx_d_qj = 0.f;
             if(compaction_state) {
                 float ci = comp(0, int(ai));
                 float cj = comp(0, int(bi));
-                float denom = compact_state_center - extended_state_center;
-                if(fabsf(denom) < 1.0e-6f)
-                    denom = (denom >= 0.f) ? 1.0e-6f : -1.0e-6f;
-                float si = (ci - extended_state_center) / denom;
-                float sj = (cj - extended_state_center) / denom;
-                dsi_dci = 1.f / denom;
-                dsj_dcj = 1.f / denom;
-                compute_compaction_weights(si, sj, w_ee, w_ec, w_cc);
-                d_w_ee_d_si = -(1.f - sj);
-                d_w_ec_d_si = 1.f - 2.f * sj;
-                d_w_cc_d_si = sj;
-                d_w_ee_d_sj = -(1.f - si);
-                d_w_ec_d_sj = 1.f - 2.f * si;
-                d_w_cc_d_sj = si;
+                PairCompactionMix mix = compute_pair_compaction_mix(
+                        ci, cj,
+                        extended_state_center,
+                        compact_state_center,
+                        has_compressed_state,
+                        compressed_state_center);
+                w_ee = mix.w_ee;
+                w_ec = mix.w_ec;
+                w_cc = mix.w_cc;
+                w_ex = mix.w_ex;
+                w_cx = mix.w_cx;
+                w_xx = mix.w_xx;
+                d_w_ee_d_si = mix.dw_ee_dqi;
+                d_w_ec_d_si = mix.dw_ec_dqi;
+                d_w_cc_d_si = mix.dw_cc_dqi;
+                d_w_ex_d_qi = mix.dw_ex_dqi;
+                d_w_cx_d_qi = mix.dw_cx_dqi;
+                d_w_xx_d_qi = mix.dw_xx_dqi;
+                d_w_ee_d_sj = mix.dw_ee_dqj;
+                d_w_ec_d_sj = mix.dw_ec_dqj;
+                d_w_cc_d_sj = mix.dw_cc_dqj;
+                d_w_ex_d_qj = mix.dw_ex_dqj;
+                d_w_cx_d_qj = mix.dw_cx_dqj;
+                d_w_xx_d_qj = mix.dw_xx_dqj;
             } else if(implicit_compaction_mean_field) {
                 float si = mean_field_compact[ai];
                 float sj = mean_field_compact[bi];
@@ -2537,6 +2761,9 @@ void CGLipidPairPotential::propagate_deriv() {
             QuadsplineEval e_ee = {0.f, 0.f, 0.f, 0.f};
             QuadsplineEval e_ec = {0.f, 0.f, 0.f, 0.f};
             QuadsplineEval e_cc = {0.f, 0.f, 0.f, 0.f};
+            QuadsplineEval e_ex = {0.f, 0.f, 0.f, 0.f};
+            QuadsplineEval e_cx = {0.f, 0.f, 0.f, 0.f};
+            QuadsplineEval e_xx = {0.f, 0.f, 0.f, 0.f};
             bool ok_ee = eval_full_pair_tensor(
                     delta_extended_extended.data(), n_angular, n_radial,
                     dr, n1, n2, knot_spacing, cutoff,
@@ -2549,6 +2776,23 @@ void CGLipidPairPotential::propagate_deriv() {
                     delta_compact_compact.data(), n_angular, n_radial,
                     dr, n1, n2, knot_spacing, cutoff,
                     log1p_reduced_transform ? 0.f : taper_width, e_cc);
+            bool ok_ex = false;
+            bool ok_cx = false;
+            bool ok_xx = false;
+            if(compaction_state && has_compressed_state) {
+                ok_ex = eval_full_pair_tensor(
+                        delta_extended_compressed.data(), n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e_ex);
+                ok_cx = eval_full_pair_tensor(
+                        delta_compact_compressed.data(), n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e_cx);
+                ok_xx = eval_full_pair_tensor(
+                        delta_compressed_compressed.data(), n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e_xx);
+            }
             if(ok_ee) {
                 e.value += w_ee * e_ee.value;
                 e.d_dr += w_ee * e_ee.d_dr;
@@ -2567,19 +2811,46 @@ void CGLipidPairPotential::propagate_deriv() {
                 e.d_da1 += w_cc * e_cc.d_da1;
                 e.d_da2 += w_cc * e_cc.d_da2;
             }
+            if(ok_ex) {
+                e.value += w_ex * e_ex.value;
+                e.d_dr += w_ex * e_ex.d_dr;
+                e.d_da1 += w_ex * e_ex.d_da1;
+                e.d_da2 += w_ex * e_ex.d_da2;
+            }
+            if(ok_cx) {
+                e.value += w_cx * e_cx.value;
+                e.d_dr += w_cx * e_cx.d_dr;
+                e.d_da1 += w_cx * e_cx.d_da1;
+                e.d_da2 += w_cx * e_cx.d_da2;
+            }
+            if(ok_xx) {
+                e.value += w_xx * e_xx.value;
+                e.d_dr += w_xx * e_xx.d_dr;
+                e.d_da1 += w_xx * e_xx.d_da1;
+                e.d_da2 += w_xx * e_xx.d_da2;
+            }
 
             float corr_ee = ok_ee ? e_ee.value : 0.f;
             float corr_ec = ok_ec ? e_ec.value : 0.f;
             float corr_cc = ok_cc ? e_cc.value : 0.f;
+            float corr_ex = ok_ex ? e_ex.value : 0.f;
+            float corr_cx = ok_cx ? e_cx.value : 0.f;
+            float corr_xx = ok_xx ? e_xx.value : 0.f;
             if(compaction_state) {
-                comp_ctrl_sens_ai = dsi_dci * (
+                comp_ctrl_sens_ai =
                         d_w_ee_d_si * corr_ee
                         + d_w_ec_d_si * corr_ec
-                        + d_w_cc_d_si * corr_cc);
-                comp_ctrl_sens_bi = dsj_dcj * (
+                        + d_w_cc_d_si * corr_cc
+                        + d_w_ex_d_qi * corr_ex
+                        + d_w_cx_d_qi * corr_cx
+                        + d_w_xx_d_qi * corr_xx;
+                comp_ctrl_sens_bi =
                         d_w_ee_d_sj * corr_ee
                         + d_w_ec_d_sj * corr_ec
-                        + d_w_cc_d_sj * corr_cc);
+                        + d_w_cc_d_sj * corr_cc
+                        + d_w_ex_d_qj * corr_ex
+                        + d_w_cx_d_qj * corr_cx
+                        + d_w_xx_d_qj * corr_xx;
             } else if(!implicit_compaction_mean_field) {
                 float qi = implicit_field.extended[ai];
                 float qj = implicit_field.extended[bi];
@@ -3607,6 +3878,7 @@ struct CGLipidTargetPotential : public PotentialNode {
     vector<float> interaction_param;
     vector<float> delta_extended;
     vector<float> delta_compact;
+    vector<float> delta_compressed;
     vector<int> index1;
     vector<int> type1;
     vector<int> id1;
@@ -3652,6 +3924,8 @@ struct CGLipidTargetPotential : public PotentialNode {
     vector<CGLPairIndex> active_pairs;
     vector<CGLPairIndex> active_cg_pairs;
     vector<float> gap_response_coeff;
+    float compressed_state_center;
+    bool has_compressed_state;
 
     CGLipidTargetPotential(hid_t grp, CoordNode& cg_pos_, CoordNode& tgt_pos_);
     CGLipidTargetPotential(hid_t grp, const ArgList& arguments);
@@ -3676,6 +3950,7 @@ struct CGLipidSCOneBody : public CoordNode {
     vector<float> interaction_param;
     vector<float> delta_extended;
     vector<float> delta_compact;
+    vector<float> delta_compressed;
     vector<int> row_type;
     vector<int> row_residue_index;
     vector<int> row_rotamer_index;
@@ -3717,6 +3992,10 @@ struct CGLipidSCOneBody : public CoordNode {
     vector<CGLPairIndex> active_pairs;
     vector<CGLPairIndex> active_cg_pairs;
     vector<float> gap_response_coeff;
+    float compact_state_center;
+    float extended_state_center;
+    float compressed_state_center;
+    bool has_compressed_state;
 
     CGLipidSCOneBody(hid_t grp, CoordNode& sc_pos_, CoordNode& cg_pos_)
         : CoordNode(sc_pos_.n_elem, 1)
@@ -3751,6 +4030,10 @@ struct CGLipidSCOneBody : public CoordNode {
         , cached_box_y(0.f)
         , cached_box_z(0.f)
         , pairlist_valid(false)
+        , compact_state_center(read_attribute<float>(grp, ".", "compact_state_center_ang", 1.f))
+        , extended_state_center(read_attribute<float>(grp, ".", "extended_state_center_ang", 0.f))
+        , compressed_state_center(read_attribute<float>(grp, ".", "compressed_state_center_ang", 1.f))
+        , has_compressed_state(false)
     {
         check_elem_width(sc_pos, 6);
         check_elem_width(cg_pos, 6);
@@ -3776,6 +4059,12 @@ struct CGLipidSCOneBody : public CoordNode {
             delta_extended = read_named_param_dataset_any(pi, "delta_extended", n_type1, n_type2, n_param);
             delta_compact = read_named_param_dataset_any(pi, "delta_compact", n_type1, n_type2, n_param);
             has_compaction_correction = true;
+            if(H5Lexists(pi, "delta_compressed", H5P_DEFAULT) > 0) {
+                delta_compressed = read_named_param_dataset_any(pi, "delta_compressed", n_type1, n_type2, n_param);
+                if(!(compressed_state_center > compact_state_center + 1.0e-6f))
+                    throw string("cg_lipid_rotamer_sc delta_compressed requires compressed_state_center_ang > compact_state_center_ang");
+                has_compressed_state = true;
+            }
             if(H5Lexists(pi, "gap_response_coeff", H5P_DEFAULT) > 0) {
                 gap_response_coeff = read_float_dataset_1d(pi, "gap_response_coeff");
                 if(gap_response_n_knot <= 3)
@@ -3944,6 +4233,7 @@ struct CGLipidSCOneBody : public CoordNode {
                 if(has_compaction_correction) {
                     QuadsplineEval e_ext = {0.f, 0.f, 0.f, 0.f};
                     QuadsplineEval e_comp = {0.f, 0.f, 0.f, 0.f};
+                    QuadsplineEval e_cmpd = {0.f, 0.f, 0.f, 0.f};
                     bool ok_ext = eval_full_pair_tensor(
                             param_ptr(delta_extended, n_type2, n_param, t1, t2),
                             n_angular, n_radial,
@@ -3954,21 +4244,37 @@ struct CGLipidSCOneBody : public CoordNode {
                             n_angular, n_radial,
                             dr, n1, n2, knot_spacing, cutoff,
                             log1p_reduced_transform ? 0.f : taper_width, e_comp);
+                    bool ok_cmpd = has_compressed_state && eval_full_pair_tensor(
+                            param_ptr(delta_compressed, n_type2, n_param, t1, t2),
+                            n_angular, n_radial,
+                            dr, n1, n2, knot_spacing, cutoff,
+                            log1p_reduced_transform ? 0.f : taper_width, e_cmpd);
                     float q = compaction_state
                         ? comp(0, index2[bi])
                         : implicit_field.extended[bi];
+                    SingleCompactionMix mix = compute_single_compaction_mix(
+                            q,
+                            extended_state_center,
+                            compact_state_center,
+                            has_compressed_state && ok_cmpd,
+                            compressed_state_center);
                     if(ok_ext) {
-                        float w = 1.f - q;
-                        e.value += w * e_ext.value;
-                        e.d_dr += w * e_ext.d_dr;
-                        e.d_da1 += w * e_ext.d_da1;
-                        e.d_da2 += w * e_ext.d_da2;
+                        e.value += mix.w_ext * e_ext.value;
+                        e.d_dr += mix.w_ext * e_ext.d_dr;
+                        e.d_da1 += mix.w_ext * e_ext.d_da1;
+                        e.d_da2 += mix.w_ext * e_ext.d_da2;
                     }
                     if(ok_comp) {
-                        e.value += q * e_comp.value;
-                        e.d_dr += q * e_comp.d_dr;
-                        e.d_da1 += q * e_comp.d_da1;
-                        e.d_da2 += q * e_comp.d_da2;
+                        e.value += mix.w_compact * e_comp.value;
+                        e.d_dr += mix.w_compact * e_comp.d_dr;
+                        e.d_da1 += mix.w_compact * e_comp.d_da1;
+                        e.d_da2 += mix.w_compact * e_comp.d_da2;
+                    }
+                    if(ok_cmpd) {
+                        e.value += mix.w_compressed * e_cmpd.value;
+                        e.d_dr += mix.w_compressed * e_cmpd.d_dr;
+                        e.d_da1 += mix.w_compressed * e_cmpd.d_da1;
+                        e.d_da2 += mix.w_compressed * e_cmpd.d_da2;
                     }
                 }
                 if(log1p_reduced_transform)
@@ -4034,6 +4340,7 @@ struct CGLipidSCOneBody : public CoordNode {
             if(has_compaction_correction) {
                 QuadsplineEval e_ext = {0.f, 0.f, 0.f, 0.f};
                 QuadsplineEval e_comp = {0.f, 0.f, 0.f, 0.f};
+                QuadsplineEval e_cmpd = {0.f, 0.f, 0.f, 0.f};
                 bool ok_ext = eval_full_pair_tensor(
                         param_ptr(delta_extended, n_type2, n_param, t1, t2),
                         n_angular, n_radial,
@@ -4044,25 +4351,44 @@ struct CGLipidSCOneBody : public CoordNode {
                         n_angular, n_radial,
                         dr, n1, n2, knot_spacing, cutoff,
                         log1p_reduced_transform ? 0.f : taper_width, e_comp);
+                bool ok_cmpd = has_compressed_state && eval_full_pair_tensor(
+                        param_ptr(delta_compressed, n_type2, n_param, t1, t2),
+                        n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e_cmpd);
                 float q = compaction_state
                     ? comp(0, index2[bi])
                     : implicit_field.extended[bi];
                 float corr_ext = ok_ext ? e_ext.value : 0.f;
                 float corr_comp = ok_comp ? e_comp.value : 0.f;
+                float corr_cmpd = ok_cmpd ? e_cmpd.value : 0.f;
+                SingleCompactionMix mix = compute_single_compaction_mix(
+                        q,
+                        extended_state_center,
+                        compact_state_center,
+                        has_compressed_state && ok_cmpd,
+                        compressed_state_center);
                 if(ok_ext) {
-                    float w = 1.f - q;
-                    e.value += w * e_ext.value;
-                    e.d_dr += w * e_ext.d_dr;
-                    e.d_da1 += w * e_ext.d_da1;
-                    e.d_da2 += w * e_ext.d_da2;
+                    e.value += mix.w_ext * e_ext.value;
+                    e.d_dr += mix.w_ext * e_ext.d_dr;
+                    e.d_da1 += mix.w_ext * e_ext.d_da1;
+                    e.d_da2 += mix.w_ext * e_ext.d_da2;
                 }
                 if(ok_comp) {
-                    e.value += q * e_comp.value;
-                    e.d_dr += q * e_comp.d_dr;
-                    e.d_da1 += q * e_comp.d_da1;
-                    e.d_da2 += q * e_comp.d_da2;
+                    e.value += mix.w_compact * e_comp.value;
+                    e.d_dr += mix.w_compact * e_comp.d_dr;
+                    e.d_da1 += mix.w_compact * e_comp.d_da1;
+                    e.d_da2 += mix.w_compact * e_comp.d_da2;
                 }
-                q_ctrl_sens = corr_comp - corr_ext;
+                if(ok_cmpd) {
+                    e.value += mix.w_compressed * e_cmpd.value;
+                    e.d_dr += mix.w_compressed * e_cmpd.d_dr;
+                    e.d_da1 += mix.w_compressed * e_cmpd.d_da1;
+                    e.d_da2 += mix.w_compressed * e_cmpd.d_da2;
+                }
+                q_ctrl_sens = mix.dw_ext_dq * corr_ext
+                    + mix.dw_compact_dq * corr_comp
+                    + mix.dw_compressed_dq * corr_cmpd;
             }
             if(log1p_reduced_transform)
             {
@@ -4152,6 +4478,8 @@ CGLipidTargetPotential::CGLipidTargetPotential(
         , cached_box_y(0.f)
         , cached_box_z(0.f)
         , pairlist_valid(false)
+        , compressed_state_center(read_attribute<float>(grp, ".", "compressed_state_center_ang", compact_state_center))
+        , has_compressed_state(false)
     {
     check_elem_width(cg_pos, 6);
     // Targets may be 3D particles or 6D backbone sites; only positions are used.
@@ -4181,6 +4509,12 @@ CGLipidTargetPotential::CGLipidTargetPotential(
         delta_extended = read_named_param_dataset_any(pi, "delta_extended", n_type1, n_type2, n_param);
         delta_compact = read_named_param_dataset_any(pi, "delta_compact", n_type1, n_type2, n_param);
         has_compaction_correction = true;
+        if(H5Lexists(pi, "delta_compressed", H5P_DEFAULT) > 0) {
+            delta_compressed = read_named_param_dataset_any(pi, "delta_compressed", n_type1, n_type2, n_param);
+            if(!(compressed_state_center > compact_state_center + 1.0e-6f))
+                throw string("cg_lipid_target delta_compressed requires compressed_state_center_ang > compact_state_center_ang");
+            has_compressed_state = true;
+        }
         if(H5Lexists(pi, "gap_response_coeff", H5P_DEFAULT) > 0) {
             gap_response_coeff = read_float_dataset_1d(pi, "gap_response_coeff");
             if(gap_response_n_knot <= 3)
@@ -4322,6 +4656,7 @@ void CGLipidTargetPotential::compute_value(ComputeMode mode) {
             if(has_compaction_correction) {
                 TargetSplineEval e_ext = {0.f, 0.f, 0.f};
                 TargetSplineEval e_comp = {0.f, 0.f, 0.f};
+                TargetSplineEval e_cmpd = {0.f, 0.f, 0.f};
                 bool ok_ext = eval_cg_target_tensor(
                         param_ptr(delta_extended, n_type2, n_param, t1, t2),
                         n_angular, n_radial, dr, n1, knot_spacing, cutoff,
@@ -4330,23 +4665,39 @@ void CGLipidTargetPotential::compute_value(ComputeMode mode) {
                         param_ptr(delta_compact, n_type2, n_param, t1, t2),
                         n_angular, n_radial, dr, n1, knot_spacing, cutoff,
                         (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e_comp);
+                bool ok_cmpd = has_compressed_state && eval_cg_target_tensor(
+                        param_ptr(delta_compressed, n_type2, n_param, t1, t2),
+                        n_angular, n_radial, dr, n1, knot_spacing, cutoff,
+                        (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e_cmpd);
                 float q = implicit_field.extended[ai];
                 if(compaction_state) {
-                    // The dynamic compaction state is the normalized hidden
-                    // compactness coordinate on [0, 1], not the physical tail
-                    // extension used to pick representative training ensembles.
+                    // The dynamic compaction state lives in the runtime hidden
+                    // coordinate, not the physical tail-extension units used
+                    // to pick representative training ensembles.  It may move
+                    // modestly above the compact endpoint when an explicit
+                    // compressed-tail branch is present.
                     q = comp(0, int(ai));
                 }
+                SingleCompactionMix mix = compute_single_compaction_mix(
+                        q,
+                        extended_state_center,
+                        compact_state_center,
+                        has_compressed_state && ok_cmpd,
+                        compressed_state_center);
                 if(ok_ext) {
-                    float w = 1.f - q;
-                    e.value += w * e_ext.value;
-                    e.d_dr += w * e_ext.d_dr;
-                    e.d_da += w * e_ext.d_da;
+                    e.value += mix.w_ext * e_ext.value;
+                    e.d_dr += mix.w_ext * e_ext.d_dr;
+                    e.d_da += mix.w_ext * e_ext.d_da;
                 }
                 if(ok_comp) {
-                    e.value += q * e_comp.value;
-                    e.d_dr += q * e_comp.d_dr;
-                    e.d_da += q * e_comp.d_da;
+                    e.value += mix.w_compact * e_comp.value;
+                    e.d_dr += mix.w_compact * e_comp.d_dr;
+                    e.d_da += mix.w_compact * e_comp.d_da;
+                }
+                if(ok_cmpd) {
+                    e.value += mix.w_compressed * e_cmpd.value;
+                    e.d_dr += mix.w_compressed * e_cmpd.d_dr;
+                    e.d_da += mix.w_compressed * e_cmpd.d_da;
                 }
             }
             if(boltzmann_weight_transform) {
@@ -4413,6 +4764,7 @@ void CGLipidTargetPotential::propagate_deriv() {
         if(has_compaction_correction) {
             TargetSplineEval e_ext = {0.f, 0.f, 0.f};
             TargetSplineEval e_comp = {0.f, 0.f, 0.f};
+            TargetSplineEval e_cmpd = {0.f, 0.f, 0.f};
             bool ok_ext = eval_cg_target_tensor(
                     param_ptr(delta_extended, n_type2, n_param, t1, t2),
                     n_angular, n_radial, dr, n1, knot_spacing, cutoff,
@@ -4421,6 +4773,10 @@ void CGLipidTargetPotential::propagate_deriv() {
                     param_ptr(delta_compact, n_type2, n_param, t1, t2),
                     n_angular, n_radial, dr, n1, knot_spacing, cutoff,
                     (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e_comp);
+            bool ok_cmpd = has_compressed_state && eval_cg_target_tensor(
+                    param_ptr(delta_compressed, n_type2, n_param, t1, t2),
+                    n_angular, n_radial, dr, n1, knot_spacing, cutoff,
+                    (boltzmann_weight_transform || log1p_reduced_transform) ? 0.f : taper_width, e_cmpd);
             float q = implicit_field.extended[ai];
             float q_to_compaction_sens = 0.f;
             if(compaction_state) {
@@ -4429,18 +4785,31 @@ void CGLipidTargetPotential::propagate_deriv() {
             }
             float corr_ext = ok_ext ? e_ext.value : 0.f;
             float corr_comp = ok_comp ? e_comp.value : 0.f;
+            float corr_cmpd = ok_cmpd ? e_cmpd.value : 0.f;
+            SingleCompactionMix mix = compute_single_compaction_mix(
+                    q,
+                    extended_state_center,
+                    compact_state_center,
+                    has_compressed_state && ok_cmpd,
+                    compressed_state_center);
             if(ok_ext) {
-                float w = 1.f - q;
-                e.value += w * e_ext.value;
-                e.d_dr += w * e_ext.d_dr;
-                e.d_da += w * e_ext.d_da;
+                e.value += mix.w_ext * e_ext.value;
+                e.d_dr += mix.w_ext * e_ext.d_dr;
+                e.d_da += mix.w_ext * e_ext.d_da;
             }
             if(ok_comp) {
-                e.value += q * e_comp.value;
-                e.d_dr += q * e_comp.d_dr;
-                e.d_da += q * e_comp.d_da;
+                e.value += mix.w_compact * e_comp.value;
+                e.d_dr += mix.w_compact * e_comp.d_dr;
+                e.d_da += mix.w_compact * e_comp.d_da;
             }
-            q_ctrl_sens = corr_comp - corr_ext;
+            if(ok_cmpd) {
+                e.value += mix.w_compressed * e_cmpd.value;
+                e.d_dr += mix.w_compressed * e_cmpd.d_dr;
+                e.d_da += mix.w_compressed * e_cmpd.d_da;
+            }
+            q_ctrl_sens = mix.dw_ext_dq * corr_ext
+                + mix.dw_compact_dq * corr_comp
+                + mix.dw_compressed_dq * corr_cmpd;
             if(compaction_state)
                 q_ctrl_sens *= q_to_compaction_sens;
         }
